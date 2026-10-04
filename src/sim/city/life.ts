@@ -12,6 +12,7 @@ import { createVehicle, snapshot, type Vehicle } from '../vehicles/state';
 import { assignOccupancy } from '../vehicles/kerbStops';
 import { planFrom } from '../routing/router';
 import { type Population, type Resident, derivePopulation } from './population';
+import { OwnCars, personGender, type TripReason } from '../agents/cars';
 
 /**
  * The residents' days: The Sims inside SimCity.
@@ -118,6 +119,32 @@ export class CityLife {
   /** Trips that could not be made: no door on a footway, no route. */
   stranded = 0;
   completed = 0;
+  /**
+   * Residents as agents (`?agents=1`, `sim/agents`): each car is the resident's
+   * own, parked in a bay and driven by them, instead of a car made at the kerb
+   * for one trip and deleted at the end of it. Null: the old trips.
+   */
+  cars: OwnCars | null = null;
+
+  /** Switches the residents' own cars on or off; the city is read again either way. */
+  useAgents(on: boolean): void {
+    this.cars = on ? new OwnCars() : null;
+    this.accessFor = '';
+  }
+
+  /**
+   * Sends a resident who is in a building to another one now, the way their
+   * diary would (by their own car if it is near and the other end has a free
+   * bay, on foot otherwise). The player's "go there", and the probes' way to
+   * make a trip happen. Returns how they set off, or null.
+   */
+  goTo(w: SimWorld, resident: number, to: BuildingId): 'walk' | 'drive' | null {
+    const r = this.byResident.get(resident);
+    const d = this.diaries.get(resident);
+    if (!r || !d || d.at === null || d.at === to) return null;
+    const started = this.start(w, r, d, { at: this.minutes(w) % 1440, from: d.at, to }, true, true);
+    return started === 'walk' || started === 'drive' ? started : null;
+  }
 
   /** Minutes since midnight of the first day, from the simulation clock. */
   minutes(w: SimWorld): number {
@@ -130,6 +157,11 @@ export class CityLife {
   /** Moves the clock on: everybody's diary catches up, a queue at a time. */
   skip(minutes: number): void {
     this.skipped += Math.max(0, minutes);
+  }
+
+  /** The point on the footway a building is entered from, or null. */
+  doorOf(building: BuildingId): { readonly x: number; readonly y: number } | null {
+    return this.doors.get(building) ?? null;
   }
 
   /** Where a resident is now: a building, or null on the way. */
@@ -182,6 +214,7 @@ export class CityLife {
     if (accessKey !== this.accessFor) this.readAccess(w, accessKey);
 
     this.arrivals(w);
+    this.cars?.step(w, (id) => { const t = this.trips.get(id); if (t) this.arrive(t); });
     this.lookClock += DT;
     if (this.lookClock < LOOK_EVERY) return;
     this.lookClock = 0;
@@ -277,6 +310,13 @@ export class CityLife {
       }
       if (best) this.doors.set(b.id, { x: best.x, y: best.y });
     }
+    // The bays read again, and every car owner's car parked near where they are.
+    this.cars?.rebuild(w, this.population.residents, (id) => {
+      const r = this.byResident.get(id);
+      const at = this.diaries.get(id)?.at ?? r?.home;
+      const door = at === undefined || at === null ? undefined : this.doors.get(at);
+      return at === undefined || at === null || !door ? null : { building: at, door };
+    });
   }
 
   private kerbOf(w: SimWorld, building: BuildingId): Kerb | null {
@@ -307,7 +347,21 @@ export class CityLife {
     const to = this.doors.get(e.to);
     if (!from || !to) { this.stranded++; return 'skip'; }
     const far = Math.hypot(to.x - from.x, to.y - from.y) > DRIVE_FROM;
-    const kerbA = r.hasCar && far ? this.kerbOf(w, e.from) : null;
+    const cars = this.cars;
+    if (cars && far && r.hasCar) {
+      // An agent takes their own car, if it is near and a bay is free at the
+      // other end; otherwise they walk. No car is ever made at the kerb.
+      if (!canDrive) return 'wait';
+      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time };
+      if (cars.start(w, r, trip.id, e.from, from, e.to, to, reasonOf(r, e))) {
+        trip.agent = OwnCars.personOf(r.id);
+        this.trips.set(trip.id, trip);
+        d.at = null;
+        this.moved();
+        return 'drive';
+      }
+    }
+    const kerbA = !cars && r.hasCar && far ? this.kerbOf(w, e.from) : null;
     const kerbB = kerbA ? this.kerbOf(w, e.to) : null;
     if (kerbA && kerbB && kerbA.lanelet !== kerbB.lanelet) {
       if (!canDrive) return 'wait';
@@ -327,9 +381,12 @@ export class CityLife {
     const walk = w.pedEngine.walkTrip;
     if (!walk) { this.stranded++; return 'skip'; }
     const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time };
-    const id = walk.call(w.pedEngine, w, {
-      trip: trip.id, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, seed: r.seed, ageClass: r.ageClass,
-    });
+    // An agent walks as themselves: the same body on every walk and in their car.
+    const person = cars ? OwnCars.personOf(r.id) : undefined;
+    const id = walk.call(w.pedEngine, w, person === undefined
+      ? { trip: trip.id, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, seed: r.seed, ageClass: r.ageClass }
+      : { trip: trip.id, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, seed: personGender(person) === 'f' ? 1 : 0,
+        ageClass: r.ageClass, person });
     if (id === null) { this.stranded++; return 'skip'; }
     trip.agent = id;
     this.trips.set(trip.id, trip);
@@ -343,7 +400,11 @@ export class CityLife {
     for (const id of w.pedEngine.takeArrivals?.(w) ?? []) {
       const t = this.trips.get(id);
       if (t && t.mode === 'walk') this.arrive(t);
+      // A walk to or from an agent's own car: the car trip goes on.
+      else if (t && this.cars) this.cars.walkEnded(id);
     }
+    // The agents' cars are never deleted at the kerb: `OwnCars` parks them.
+    if (this.cars) return;
     // Straight over the map: a trip ended here is deleted as it is passed,
     // which a Map's iteration allows; a copy of every trip each tick was garbage.
     for (const t of this.trips.values()) {
@@ -385,13 +446,23 @@ export class CityLife {
   private giveUp(w: SimWorld): void {
     for (const t of [...this.trips.values()]) {
       if (w.clock.time - t.started < TRIP_LIMIT) continue;
-      if (t.mode === 'drive') {
+      if (this.cars && t.mode === 'drive') this.cars.abandon(w, t.id);
+      else if (t.mode === 'drive') {
         const v = w.vehicles.get(t.agent as Vehicle['id']);
         if (v) w.removeVehicle(v);
       }
       this.arrive(t);
     }
   }
+}
+
+/** Why a resident is making a trip, as the player is told when they look at them. */
+function reasonOf(r: Resident, e: Entry): TripReason {
+  if (e.to === r.home) return 'home';
+  if (e.to === r.work) return r.ageClass === 'child' ? 'school' : 'work';
+  if (r.lunch && e.to === r.lunch.to) return 'lunch';
+  if (r.errand && e.to === r.errand.to) return 'errand';
+  return 'outing';
 }
 
 /**

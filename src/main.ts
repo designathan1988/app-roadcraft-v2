@@ -508,6 +508,9 @@ if (new URLSearchParams(location.search).get('people') === 'crowd') {
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
 } else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
+// `?agents=1`: every resident is one person all day with their own car, parked
+// in a real bay and driven by them (`sim/agents`); no car is made at the kerb.
+if (new URLSearchParams(location.search).get('agents') === '1') sim.city.useAgents(true);
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';

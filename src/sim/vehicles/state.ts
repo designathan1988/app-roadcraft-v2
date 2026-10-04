@@ -238,6 +238,26 @@ export interface Vehicle {
 
   /** Previous kinematics, for render interpolation. */
   prev: Kinematics;
+
+  /**
+   * A car OFF the road (`sim/agents`): parked in a bay, or manoeuvring between
+   * the bay and its lane. Such a car is not in `SimWorld.vehicles` and no
+   * stage of the traffic simulation reads it; its pose is this, written only
+   * by the agents' stage, and drawn by the renderer like any other car.
+   */
+  free: FreePose | null;
+}
+
+/** A body centre and heading, now and at the previous tick (for interpolation). */
+export interface FreePose {
+  x: number;
+  y: number;
+  angle: number;
+  px: number;
+  py: number;
+  pangle: number;
+  /** The building whose lot it stands on or crosses, for the height it is drawn at; null off any lot. */
+  lot: number | null;
 }
 
 export function snapshot(v: Vehicle): Kinematics {
@@ -304,5 +324,6 @@ export function createVehicle(
     shadow: null,
     constraints: emptyConstraints(),
     prev: base,
+    free: null,
   };
 }

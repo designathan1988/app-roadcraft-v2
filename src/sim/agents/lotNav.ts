@@ -1,0 +1,230 @@
+import { m } from '@world/units';
+import type { Building, BuildingElement, ElementKind } from '@world/buildings/types';
+
+/**
+ * Driving inside a car park: a grid over the lot, its cells blocked where a
+ * car cannot go (walls, the stalls themselves, fences, hedges, trees, posts),
+ * and the distance from every free cell to the nearest way out onto a street.
+ * A car leaving its stall follows that distance down the aisles to the exit;
+ * one arriving drives the same way in reverse. Grid path planning with a
+ * multi-source distance field, as car-park and crowd navigation commonly do;
+ * the path is then pulled taut and driven as smooth curves (`manoeuvre.ts`).
+ *
+ * All coordinates here are the building's local frame (the lot's own axes).
+ */
+
+/** Cell size of the grid. */
+const CELL = m(0.75);
+/** Kept between a car's centreline and anything solid: half a car's width and a little. */
+const CLEARANCE = m(1.1);
+/** What a car cannot drive through on a lot. */
+const SOLID: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  'stair', 'ramp', 'pillar', 'wall', 'fence', 'tree', 'bench', 'planter', 'railing', 'rocks', 'clock', 'hedge',
+  'shrub', 'bin', 'lamp', 'bollard', 'parking',
+]);
+
+export interface LotRect { readonly x: number; readonly y: number; readonly w: number; readonly d: number }
+
+export interface LotGrid {
+  readonly x0: number;
+  readonly y0: number;
+  readonly nx: number;
+  readonly ny: number;
+  /** 1 where a car's centre may not be. */
+  readonly blocked: Uint8Array;
+  /** Distance to the nearest exit along free cells; Infinity where none is reached. */
+  readonly dist: Float32Array;
+  /** Which exit each cell's distance leads to (index into the exits given), or -1. */
+  readonly exitOf: Int32Array;
+}
+
+/** The corners of an element's box in the local frame, turned by its angle. */
+function elementCorners(el: BuildingElement): { x: number; y: number }[] {
+  const alongY = el.facing === 0 || el.facing === 2;
+  const sx = (alongY ? el.w : el.d) / 2;
+  const sy = (alongY ? el.d : el.w) / 2;
+  const c = Math.cos(el.angle ?? 0), s = Math.sin(el.angle ?? 0);
+  return [[-sx, -sy], [sx, -sy], [sx, sy], [-sx, sy]].map(([a, b]) => ({ x: el.x + a! * c - b! * s, y: el.y + a! * s + b! * c }));
+}
+
+function inside(ring: readonly { x: number; y: number }[], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i]!, c = ring[j]!;
+    if ((a.y > y) !== (c.y > y) && x < ((c.x - a.x) * (y - a.y)) / (c.y - a.y) + a.x) hit = !hit;
+  }
+  return hit;
+}
+
+/**
+ * The lot's grid: `walls` are the buildings' footprints already in this
+ * building's local frame; `exits` the points (local) cars leave the lot by.
+ */
+export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonly { x: number; y: number }[])[],
+  exits: readonly { readonly inner: { x: number; y: number }; readonly edge: { x: number; y: number } }[]): LotGrid {
+  const x0 = lot.x, y0 = lot.y;
+  const nx = Math.max(1, Math.ceil(lot.w / CELL)), ny = Math.max(1, Math.ceil(lot.d / CELL));
+  const solid = new Uint8Array(nx * ny);
+  const solids = (b.elements ?? []).filter((el) => SOLID.has(el.kind)).map(elementCorners);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = x0 + (i + 0.5) * CELL, y = y0 + (j + 0.5) * CELL;
+      if (solids.some((ring) => inside(ring, x, y)) || walls.some((ring) => inside(ring, x, y))) solid[j * nx + i] = 1;
+    }
+  }
+  // Grown by the clearance: a free cell is one a car's centre can stand on.
+  const blocked = new Uint8Array(nx * ny);
+  const r = Math.ceil(CLEARANCE / CELL);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      if (!solid[j * nx + i]) continue;
+      for (let dj = -r; dj <= r; dj++) {
+        for (let di = -r; di <= r; di++) {
+          if (di * di + dj * dj > r * r) continue;
+          const a = i + di, c = j + dj;
+          if (a >= 0 && a < nx && c >= 0 && c < ny) blocked[c * nx + a] = 1;
+        }
+      }
+    }
+  }
+  // Distance from the exits over free cells (Dijkstra, eight neighbours).
+  const dist = new Float32Array(nx * ny).fill(Infinity);
+  const exitOf = new Int32Array(nx * ny).fill(-1);
+  const heap: number[] = [];
+  const push = (cell: number): void => {
+    heap.push(cell);
+    let k = heap.length - 1;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (dist[heap[p]!]! <= dist[heap[k]!]!) break;
+      [heap[p], heap[k]] = [heap[k]!, heap[p]!];
+      k = p;
+    }
+  };
+  const pop = (): number => {
+    const top = heap[0]!;
+    const last = heap.pop()!;
+    if (heap.length > 0) {
+      heap[0] = last;
+      let k = 0;
+      for (;;) {
+        const a = 2 * k + 1, c = a + 1;
+        let s = k;
+        if (a < heap.length && dist[heap[a]!]! < dist[heap[s]!]!) s = a;
+        if (c < heap.length && dist[heap[c]!]! < dist[heap[s]!]!) s = c;
+        if (s === k) break;
+        [heap[s], heap[k]] = [heap[k]!, heap[s]!];
+        k = s;
+      }
+    }
+    return top;
+  };
+  const grid0 = { x0, y0, nx, ny, blocked };
+  exits.forEach((ex, n) => {
+    // A way out only where the line to the lot's edge is free: through a gate, not a fence.
+    if (!sees(grid0, ex.inner, ex.edge)) return;
+    const e = ex.inner;
+    const i = Math.floor((e.x - x0) / CELL), j = Math.floor((e.y - y0) / CELL);
+    if (i < 0 || i >= nx || j < 0 || j >= ny) return;
+    const cell = j * nx + i;
+    if (blocked[cell] || dist[cell]! === 0) return;
+    dist[cell] = 0;
+    exitOf[cell] = n;
+    push(cell);
+  });
+  const done = new Uint8Array(nx * ny);
+  while (heap.length > 0) {
+    const cell = pop();
+    if (done[cell]) continue;
+    done[cell] = 1;
+    const i = cell % nx, j = (cell - i) / nx;
+    for (let dj = -1; dj <= 1; dj++) {
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const a = i + di, c = j + dj;
+        if (a < 0 || a >= nx || c < 0 || c >= ny) continue;
+        const n = c * nx + a;
+        if (blocked[n] || done[n]) continue;
+        // No cutting a blocked corner diagonally.
+        if (di && dj && (blocked[j * nx + a] || blocked[c * nx + i])) continue;
+        const d = dist[cell]! + (di && dj ? Math.SQRT2 : 1) * CELL;
+        if (d < dist[n]!) { dist[n] = d; exitOf[n] = exitOf[cell]!; push(n); }
+      }
+    }
+  }
+  return { x0, y0, nx, ny, blocked, dist, exitOf };
+}
+
+/** The free cell nearest a local point within a few cells, or -1. */
+function freeCellNear(g: LotGrid, x: number, y: number): number {
+  const i0 = Math.floor((x - g.x0) / CELL), j0 = Math.floor((y - g.y0) / CELL);
+  let best = -1, bestD = Infinity;
+  for (let dj = -3; dj <= 3; dj++) {
+    for (let di = -3; di <= 3; di++) {
+      const i = i0 + di, j = j0 + dj;
+      if (i < 0 || i >= g.nx || j < 0 || j >= g.ny) continue;
+      const cell = j * g.nx + i;
+      if (g.blocked[cell] || !Number.isFinite(g.dist[cell]!)) continue;
+      const d = di * di + dj * dj;
+      if (d < bestD) { bestD = d; best = cell; }
+    }
+  }
+  return best;
+}
+
+const centre = (g: LotGrid, cell: number): { x: number; y: number } => {
+  const i = cell % g.nx;
+  return { x: g.x0 + (i + 0.5) * CELL, y: g.y0 + ((cell - i) / g.nx + 0.5) * CELL };
+};
+
+/** Whether the straight line between two local points crosses only free cells. */
+function sees(g: Pick<LotGrid, "x0" | "y0" | "nx" | "ny" | "blocked">, a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const steps = Math.max(1, Math.ceil(len / (CELL * 0.5)));
+  for (let k = 0; k <= steps; k++) {
+    const x = a.x + ((b.x - a.x) * k) / steps, y = a.y + ((b.y - a.y) * k) / steps;
+    const i = Math.floor((x - g.x0) / CELL), j = Math.floor((y - g.y0) / CELL);
+    if (i < 0 || i >= g.nx || j < 0 || j >= g.ny || g.blocked[j * g.nx + i]) return false;
+  }
+  return true;
+}
+
+/**
+ * The way from a local point (in front of a stall) down the aisles to the
+ * nearest exit: the cells walked downhill on the distance field, pulled taut
+ * so only the turns remain. Null when the point reaches no exit.
+ */
+export function wayOut(g: LotGrid, x: number, y: number): { points: { x: number; y: number }[]; exit: number } | null {
+  let cell = freeCellNear(g, x, y);
+  if (cell < 0) return null;
+  const exit = g.exitOf[cell]!;
+  const cells = [cell];
+  for (let guard = 0; guard < g.nx * g.ny && g.dist[cell]! > 0; guard++) {
+    const i = cell % g.nx, j = (cell - i) / g.nx;
+    let next = -1, nd = g.dist[cell]!;
+    for (let dj = -1; dj <= 1; dj++) {
+      for (let di = -1; di <= 1; di++) {
+        const a = i + di, c = j + dj;
+        if ((!di && !dj) || a < 0 || a >= g.nx || c < 0 || c >= g.ny) continue;
+        const n = c * g.nx + a;
+        if (g.dist[n]! < nd) { nd = g.dist[n]!; next = n; }
+      }
+    }
+    if (next < 0) break;
+    cell = next;
+    cells.push(cell);
+  }
+  // String pulling: from each kept point, the farthest cell still in sight.
+  const pts = cells.map((c) => centre(g, c));
+  const out = [{ x, y }];
+  let at = { x, y };
+  let k = 0;
+  while (k < pts.length - 1) {
+    let far = k + 1;
+    for (let n = pts.length - 1; n > k + 1; n--) if (sees(g, at, pts[n]!)) { far = n; break; }
+    at = pts[far]!;
+    out.push(at);
+    k = far;
+  }
+  return { points: out, exit };
+}

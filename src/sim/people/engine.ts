@@ -38,7 +38,18 @@ export interface PedestrianEngine {
   walkTrip?(w: SimWorld, trip: ResidentWalk): number | null;
   /** The trips (by `ResidentWalk.trip`) that ended since the last call. */
   takeArrivals?(w: SimWorld): number[];
+  /**
+   * The walkable point nearest `(x, y)` within `reach`, or null: where a person
+   * stepping off the footway towards a parked car leaves it (`sim/agents`).
+   */
+  walkableNear?(w: SimWorld, x: number, y: number, reach: number): { x: number; y: number } | null;
 }
+
+/**
+ * First id of the resident agents' own person ids (`sim/agents`): far above
+ * the footway's numbering and the seat people's (`kerbStops` PERSON_BASE).
+ */
+export const AGENT_PERSON_BASE = 1 << 25;
 
 export interface ResidentWalk {
   /** The city's id for this trip, handed back when it ends. */
@@ -49,6 +60,14 @@ export interface ResidentWalk {
   readonly toY: number;
   readonly seed: number;
   readonly ageClass: PersonAgeClass;
+  /**
+   * The person's own id, kept for life (`sim/agents`): the walker is drawn as
+   * this person (`personHash`), so the same resident looks the same on every
+   * walk, in their car and out of it. Absent, the engine numbers a new walker.
+   */
+  readonly person?: number;
+  /** Farthest `from` and `to` may be from the walkable area; the engine's own default when absent. */
+  readonly reach?: number;
 }
 
 /**

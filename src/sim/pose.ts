@@ -85,6 +85,12 @@ function bodyOffset(k: Kinematics, length: number): number {
  * spinning the long way through 359 degrees.
  */
 export function vehiclePose(w: SimWorld, v: Vehicle, alpha: number): Pose | null {
+  // Off the road (parked, or manoeuvring to or from a bay): its own pose.
+  const free = v.free;
+  if (free) {
+    const t = clamp(alpha, 0, 1);
+    return { p: { x: lerp(free.px, free.x, t), y: lerp(free.py, free.y, t) }, angle: lerpAngle(free.pangle, free.angle, t) };
+  }
   const frame = axleFrame(w, v, v, v.archetype.length);
   if (!frame) return null;
   const t = clamp(alpha, 0, 1);

@@ -1,11 +1,11 @@
 import earcut from 'earcut';
 import clipping from 'polygon-clipping';
 import { resolveBlocks } from '@world/buildings/blocks';
-import { lotSurfaces } from '@world/buildings/lots';
+import { type LotSurface as LotPlane, lotSurfaces } from '@world/buildings/lots';
 import { POOL_SINK } from '@world/buildings/pads';
 import { deriveSpaces } from '@world/buildings/spaces';
 import { slotFor } from './lightSlots';
-import { worldToLocal } from '@world/buildings/geometry';
+import { localToWorld, worldToLocal } from '@world/buildings/geometry';
 import { FURNITURE_KINDS, FURNITURE_SIZE, type Furniture, type FurnitureKind, interiorAt } from '@world/buildings/interior';
 import { asPolygon, edgeFrame, localFootprint, volumeSides } from '@world/buildings/footprints';
 import {
@@ -1162,8 +1162,8 @@ const POOL_TILE = paint({ finish: 'ceramic', colour: 0x9fd0dc });
  */
 function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, groundAt: GroundAt, shell: Shell,
   parts: Record<PartKind, Placement[]>, buildingFloor?: number, pavedAt?: PavedAt,
-  onLot?: (el: BuildingElement) => boolean): void {
-  if (lots.length === 0) return;
+  onLot?: (el: BuildingElement) => boolean): LotGround | undefined {
+  if (lots.length === 0) return lotGroundOf(b, [], buildingFloor);
   const e = new Emitter(b, shell, parts);
   const at = (lx: number, ly: number): number => {
     const w = e.L(lx, ly, 0);
@@ -1254,6 +1254,41 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
       emitElement(e, piece, z, Math.min(low, z) - m(0.3), look, height);
     }
   }
+  return lotGroundOf(b, surfaces, level);
+}
+
+/**
+ * The ground of a building's lots as drawn: each lot's surface, and the level
+ * a parking bay outside every lot is laid at. What a car standing in a bay
+ * stands on (`render/agents.ts`).
+ */
+export interface LotGround {
+  /** Height of the drawn surface at a world point on a lot or a bay; NaN elsewhere. */
+  heightAt(x: number, y: number): number;
+}
+
+function lotGroundOf(b: Building, surfaces: readonly LotPlane[], level: number | undefined): LotGround | undefined {
+  const bays = (b.elements ?? []).filter((el) => el.kind === 'parking').map((el) => {
+    const [x0, y0, x1, y1] = elementRect(el);
+    return [localToWorld(b, x0, y0), localToWorld(b, x1, y0), localToWorld(b, x1, y1), localToWorld(b, x0, y1)];
+  });
+  if (surfaces.length === 0 && bays.length === 0) return undefined;
+  return {
+    heightAt(x, y) {
+      for (const s of surfaces) if (insideRing(s.ring, x, y)) return s.heightAt(x, y);
+      if (level !== undefined) for (const ring of bays) if (insideRing(ring, x, y)) return level;
+      return NaN;
+    },
+  };
+}
+
+function insideRing(ring: readonly { x: number; y: number }[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i]!, c = ring[j]!;
+    if ((a.y > y) !== (c.y > y) && x < ((c.x - a.x) * (y - a.y)) / (c.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
 }
 
 const ELEMENT_CONCRETE: Paint = paint({ finish: 'concrete', colour: 0xcfcac0 });
@@ -2362,6 +2397,8 @@ export interface BuildingChunk {
   readonly furniture?: Readonly<Partial<Record<FurnitureKind, PartBatch>>>;
   /** Flags flown from its masts, drawn by the cloth layer (`flagLayer.ts`). */
   readonly flags?: readonly FlagInstance[];
+  /** The ground of its lots and parking bays as drawn; absent when it has none. */
+  readonly lotGround?: LotGround;
 }
 
 /** Column-major T * Ry * S, written straight into `out` at `offset`. */
@@ -2397,7 +2434,7 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
     ? emitBuilding({ ...resolved, volumes: closed }, groundAt, shell, parts, pavedAt, furnished, inLot, designedFloor)
     : undefined;
   flagSink = null;
-  emitLots(resolved, lots, closed.length === 0, groundAt, shell, parts, floor, pavedAt, inLot);
+  const lotGround = emitLots(resolved, lots, closed.length === 0, groundAt, shell, parts, floor, pavedAt, inLot);
   const batches = {} as Record<PartKind, PartBatch>;
   for (const kind of PART_KINDS) {
     const list = parts[kind];
@@ -2437,7 +2474,8 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
     (furniture ??= {})[kind] = { matrices, colours: null, count: list.length };
   }
   const out = furniture ? { shells, parts: batches, furniture } : { shells, parts: batches };
-  return flags.length ? { ...out, flags } : out;
+  const withGround = lotGround ? { ...out, lotGround } : out;
+  return flags.length ? { ...withGround, flags } : withGround;
 }
 
 /**

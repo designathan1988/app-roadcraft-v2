@@ -64,6 +64,8 @@ import { DOOR_SWING, createKerbFigure, kerbFigure, occupantPlays, type Play } fr
  * so nothing can be simulated that cannot be drawn.
  */
 const MAX_VEHICLES = FLEET_CEILING;
+/** No cars off the road (residents without agents). */
+const NO_VEHICLES: readonly SimVehicle[] = [];
 const MAX_PEDS = PED_CEILING;
 /** Two-wheeler riders' own batches (frames, wheels, helmets). */
 const MAX_RIDERS = 400;
@@ -115,6 +117,8 @@ const SIDES = [1, -1] as const;
  * of them would be a wider change than the thing it expresses.
  */
 interface LampState {
+  /** Headlamp colour: lit, or the unlit lens of a parked car. */
+  head: number;
   tail: number;
   /** Lit indicator side: +1 left, -1 right, 0 none. Already includes the flash. */
   indicate: number;
@@ -222,6 +226,9 @@ const PLATE = 0xf0efe6;
 const DESTINATION = 0xffb13b;
 const HEADLAMP = 0xfff3c4;
 const TAILLAMP = 0xff3b2f;
+/** A parked car's lamps, switched off: clear and red lenses, unlit. */
+const HEADLAMP_OFF = 0x8c8f8e;
+const TAILLAMP_OFF = 0x5e1712;
 /** A tail lamp with the brakes on. */
 const BRAKELAMP = 0xff1a08;
 /** The amber of an indicator, on the side the vehicle is moving towards. */
@@ -542,7 +549,8 @@ function instanced(
 }
 
 export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () => void = () => {},
-  groundAt?: (x: number, y: number) => number): AgentMeshes {
+  groundAt?: (x: number, y: number) => number,
+  lotAt?: (building: number, x: number, y: number) => number): AgentMeshes {
   // Paint, trim and the cabin read a vertex colour that multiplies the
   // instance colour: one body geometry carries its black-outs, seams, seats
   // and carpet in one draw. Every geometry drawn with them is built by
@@ -950,7 +958,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     placeWheels(plan, band);
 
     place(car.trim, 0, 0, 0, 1, 1, 1, -1);
-    for (const l of model.headlamps) place(lamps, l.x, -l.z, l.y, l.sx, l.sy, l.sz, HEADLAMP);
+    for (const l of model.headlamps) place(lamps, l.x, -l.z, l.y, l.sx, l.sy, l.sz, lamp.head);
     for (const l of model.taillamps) place(lamps, l.x, -l.z, l.y, l.sx, l.sy, l.sz, lamp.tail);
     for (const l of model.indicators) {
       // `lamp.indicate` is +1 for left, and the model's left is -Z.
@@ -1219,7 +1227,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
 
 
   /** Refreshed for every vehicle, read by whichever body builder runs. */
-  const lamp: LampState = { tail: TAILLAMP, indicate: 0, steer: 0, spin: 0, crank: 0 };
+  const lamp: LampState = { head: HEADLAMP, tail: TAILLAMP, indicate: 0, steer: 0, spin: 0, crank: 0 };
   const odometer = new WheelOdometer();
   // One elevation callback for every vehicle and pedestrian drawn this frame.
   // A closure per entity - `elevationAt(world, x, y, seg)` with the segment
@@ -1229,6 +1237,21 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   let currentWorld: SimWorld | undefined;
   let currentSegment: SegmentId | undefined;
   const elevationOnCurrent = (x: number, y: number): number => elevationAt(currentWorld!, x, y, currentSegment);
+  /**
+   * The height a car off the road stands at: its lot's surface as drawn, or the
+   * road's where it crosses the footway on its way in or out. Kept per car while
+   * it stands still: a parked car's ground is asked once.
+   */
+  const offRoadDecks = new WeakMap<SimVehicle, { x: number; y: number; deck: number }>();
+  const offRoadDeck = (world: SimWorld, v: SimVehicle, x: number, y: number): number => {
+    const known = offRoadDecks.get(v);
+    if (known && known.x === x && known.y === y) return known.deck;
+    const lot = v.free?.lot ?? null;
+    const onLot = lot !== null && lotAt ? lotAt(lot, x, y) : NaN;
+    const deck = Number.isFinite(onLot) ? onLot : elevationAt(world, x, y, undefined);
+    offRoadDecks.set(v, { x, y, deck });
+    return deck;
+  };
   // `vehicleLook` by id: it is a pure function of the id and the seat count,
   // and it was rebuilding the same ten-field object for every vehicle every
   // frame. Pruned like the suspension, on the frame counter.
@@ -1262,14 +1285,18 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       rowsDrawn = zoom >= occupantZoom * 1.6 ? Infinity : 0;
 
       let drawn = 0;
-      for (const vehicle of world.vehiclesInIdOrder()) {
+      // The traffic, then the residents' own cars off the road: parked in their
+      // bays or manoeuvring in and out (`sim/agents`), on the ground of the lot.
+      const offRoad = world.city.cars?.offRoad() ?? NO_VEHICLES;
+      for (const list of [world.vehiclesInIdOrder(), offRoad]) for (const vehicle of list) {
         if (drawn >= MAX_VEHICLES) break;
         const pose = vehiclePose(world, vehicle, alpha);
         if (!pose) continue;
-        const lane = world.lanelet(vehicle.lanelet);
+        const free = vehicle.free !== null;
+        const lane = free ? undefined : world.lanelet(vehicle.lanelet);
         const plan = planOf(vehicle.archetype);
         const twoWheeled = plan.shape === 'motorcycle' || plan.shape === 'bicycle';
-        const deck = elevationAt(world, pose.p.x, pose.p.y, lane?.segment);
+        const deck = free ? offRoadDeck(world, vehicle, pose.p.x, pose.p.y) : elevationAt(world, pose.p.x, pose.p.y, lane?.segment);
         // Off screen, and too far from it for its shadow to fall on it:
         // nothing of this vehicle is written this frame.
         if (options.vehicleVisible && !options.vehicleVisible(pose.p.x, pose.p.y, deck, plan.length * 0.5 + plan.height * 2)) continue;
@@ -1284,7 +1311,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         const rear = plan.axleAlong[plan.axleAlong.length - 1] ?? -plan.length * 0.35;
         const seg = lane?.segment ?? (lane ? world.connector(lane.id)?.inSegment : undefined);
         currentSegment = seg;
-        const want = roadFrame(elevationOnCurrent, pose.p.x, pose.p.y, pose.angle, front, rear,
+        // A car off the road stands level on its lot (lots are laid near flat).
+        const want = free ? { deck, pitch: 0, roll: 0 } : roadFrame(elevationOnCurrent, pose.p.x, pose.p.y, pose.angle, front, rear,
           twoWheeled ? 0 : plan.axleSide, deck);
         const wantDeck = want.deck;
         const wantPitch = want.pitch;
@@ -1323,16 +1351,19 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // previous step's kinematics, so the difference is this step's
         // acceleration without storing anything new on the vehicle.
         const decel = (vehicle.prev.v - vehicle.v) / DT;
-        lamp.tail = decel >= BRAKE_DECEL ? BRAKELAMP : TAILLAMP;
+        // A car standing in its bay with nobody in it has its lamps off.
+        const parked = free && vehicle.seats === 0 && vehicle.v === 0;
+        lamp.head = parked ? HEADLAMP_OFF : HEADLAMP;
+        lamp.tail = parked ? TAILLAMP_OFF : decel >= BRAKE_DECEL ? BRAKELAMP : TAILLAMP;
         // `lateral` is the unfinished part of a lane change, signed towards
         // the lane being left - so the vehicle is heading the other way.
         // Indicators for a turn ahead, a lane change wanted or under way, and
         // flashing (`vehicleSignals.ts`); the front wheels steer along the
         // path and every wheel rolls with the distance driven.
-        const side = indicatorSide(world, vehicle);
+        const side = free ? 0 : indicatorSide(world, vehicle);
         lamp.indicate = side !== 0 && blinkOn(vehicle.age, vehicle.id) ? side : 0;
         const axles = plan.axleAlong;
-        lamp.steer = steerAngle(world, vehicle, (axles[0] ?? 0) - (axles[axles.length - 1] ?? 0));
+        lamp.steer = free ? 0 : steerAngle(world, vehicle, (axles[0] ?? 0) - (axles[axles.length - 1] ?? 0));
         const driven = odometer.advance(vehicle);
         lamp.spin = -driven / Math.max(plan.wheelRadius, 1e-3);
         // A bicycle's cranks turn a little over half a turn per turn of the

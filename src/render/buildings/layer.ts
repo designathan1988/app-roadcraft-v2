@@ -59,6 +59,11 @@ export interface BuildingLayer {
   setDimmed(except: BuildingId | null | undefined): void;
   /** Whether a world point is under a building (for the scenery's plant cull). */
   covers(x: number, y: number): boolean;
+  /**
+   * Height of a building's lot or parking bay as drawn at a world point, NaN
+   * off them: what a resident's parked car stands on (`render/agents.ts`).
+   */
+  lotHeightAt(building: BuildingId, x: number, y: number): number;
   dispose(): void;
 }
 
@@ -287,6 +292,9 @@ export function createBuildingLayer(): BuildingLayer {
       const p = { x, y };
       for (const rect of list) if (pointInPolygon(p, rect)) return true;
       return false;
+    },
+    lotHeightAt(building, x, y) {
+      return chunks.get(building)?.chunk.lotGround?.heightAt(x, y) ?? NaN;
     },
     dispose() {
       flagLayer.dispose();

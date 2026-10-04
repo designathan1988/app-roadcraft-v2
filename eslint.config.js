@@ -110,6 +110,7 @@ export default tseslint.config(
       'scripts/perf-probe.mjs',
       'scripts/cook-people.mjs',
       'scripts/verify-visual.mjs',
+      'scripts/agents-shots.mjs',
     ],
     languageOptions: {
       globals: {

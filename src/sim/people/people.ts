@@ -9,7 +9,7 @@ import { emptyCrossingState } from '../crossings/state';
 import { pathWorkLeft } from '@world/nav/path';
 import { indexReservations, mayEnterCrossing } from '../crossings/permission';
 import type { SimWorld } from '../world';
-import type { Boarder, PedestrianEngine } from './engine';
+import { AGENT_PERSON_BASE, type Boarder, type PedestrianEngine } from './engine';
 import { buildWorldNav, type WorldNav } from './nav';
 import { PARTY_ARCHETYPES, SIT_DOWN_SECONDS, STAND_UP_SECONDS, type GestureView, type PartyView, type PedView, type PersonAgeClass, type PersonGender } from './view';
 import { planParty } from './party';
@@ -431,10 +431,15 @@ export function createPeopleEngine(): PedestrianEngine {
       const s = stateOf(w);
       const mesh = s.nav?.mesh;
       if (!mesh) return null;
-      const from = mesh.nearest(trip.fromX, trip.fromY, m(6));
-      const to = mesh.nearest(trip.toX, trip.toY, m(6));
+      const reach = trip.reach ?? m(6);
+      const from = mesh.nearest(trip.fromX, trip.fromY, reach);
+      const to = mesh.nearest(trip.toX, trip.toY, reach);
       if (!from || !to) return null;
-      const p = create(w, s, s.nextId, from.x, from.y, from.t, Math.atan2(to.y - from.y, to.x - from.x),
+      // A resident agent walks as themselves; somebody already on the footway
+      // with that id (a walk not yet ended) is not made twice.
+      const id = trip.person ?? s.nextId;
+      if (s.byId.has(id)) return null;
+      const p = create(w, s, id, from.x, from.y, from.t, Math.atan2(to.y - from.y, to.x - from.x),
         { ageClass: trip.ageClass, gender: trip.seed % 2 ? 'f' : 'm' });
       p.goalX = to.x; p.goalY = to.y; p.goalTri = to.t;
       p.leaving = true;
@@ -449,6 +454,10 @@ export function createPeopleEngine(): PedestrianEngine {
       const out = s.arrivals;
       s.arrivals = [];
       return out;
+    },
+    walkableNear(w, x, y, reach) {
+      const at = stateOf(w).nav?.mesh.nearest(x, y, reach);
+      return at ? { x: at.x, y: at.y } : null;
     },
     bridge: {
       // Somebody a car could stop for: alone, not a child, walking on the
@@ -535,7 +544,9 @@ function create(w: SimWorld, s: State, id: number, x: number, y: number, tri: nu
   s.people.push(p);
   s.people.sort((a, b) => a.id - b.id);
   s.byId.set(id, p);
-  s.nextId = Math.max(s.nextId, id + 1);
+  // A resident agent's own id lies far above the footway's numbering: counting
+  // on from it would hand the next stranger another resident's id.
+  if (id < AGENT_PERSON_BASE) s.nextId = Math.max(s.nextId, id + 1);
   return p;
 }
 

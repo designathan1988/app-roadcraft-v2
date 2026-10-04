@@ -359,7 +359,10 @@ export function createSceneRenderer(
   };
 
   const agents: AgentMeshes = createAgentMeshes(deckHeight, onAssetsReady,
-    (x, y) => terrain.renderedHeightAt(x, y));
+    (x, y) => terrain.renderedHeightAt(x, y),
+    // A resident's parked car stands on its lot as the lot is drawn.
+    (building, x, y) => buildings.lotHeightAt(building as BuildingId, x, y));
+
   const crowdFrustum = new Frustum();
   const crowdProjection = new Matrix4();
   const crowdBounds = new Sphere(new Vector3(), 8);
