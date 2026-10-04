@@ -16,6 +16,12 @@ export function queueUpload(...textures: (Texture | null | undefined)[]): void {
   for (const t of textures) if (t && !sent.has(t)) queue.push(t);
 }
 
+/** A model released before its scheduled upload must never reach the GPU later. */
+export function cancelUploads(textures: Iterable<Texture>): void {
+  const canceled = new Set(textures);
+  for (let i = queue.length - 1; i >= 0; i--) if (canceled.has(queue[i]!)) queue.splice(i, 1);
+}
+
 /** Sends queued textures to the GPU, at most `count` this frame. */
 export function drainUploads(renderer: WebGLRenderer, count = 1): void {
   for (let i = 0; i < count && queue.length; i++) {

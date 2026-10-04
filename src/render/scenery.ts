@@ -743,6 +743,8 @@ export function buildScenery(
   for (const mesh of meshes) triangles += trianglesOf(mesh.geometry) * mesh.count;
   /** The view the instances were last culled for; null draws them all until the first. */
   let culledFor: Matrix4 | null = null;
+  let nearMode: boolean | null = null;
+  let mapMode: boolean | null = null;
   /** Plants standing under a building, per plant mesh; see `exclude`. */
   const excluded = new Map<InstancedMesh, Uint8Array>();
 
@@ -751,10 +753,14 @@ export function buildScenery(
     grass: grass.group,
     triangles,
     setNear(near) {
+      if (nearMode === near) return;
+      nearMode = near;
       for (const [mesh, close, far] of plants) mesh.geometry = near ? close : far;
     },
     setMap(map) {
-      if (map) for (const mesh of leafMeshes) mesh.visible = false;
+      if (mapMode === map) return;
+      mapMode = map;
+      for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
       // Grass only when it is shown; it keeps its own record of the view.
@@ -919,16 +925,22 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
   let triangles = 0;
   for (const mesh of meshes) triangles += trianglesOf(mesh.geometry) * mesh.count;
   let culledFor: Matrix4 | null = null;
+  let nearMode: boolean | null = null;
+  let mapMode: boolean | null = null;
   const grass = new Group();
   return {
     meshes,
     grass,
     triangles,
     setNear(near) {
+      if (nearMode === near) return;
+      nearMode = near;
       for (const [mesh, close, far] of plants) mesh.geometry = near ? close : far;
     },
     setMap(map) {
-      if (map) for (const mesh of leafMeshes) mesh.visible = false;
+      if (mapMode === map) return;
+      mapMode = map;
+      for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
       if (culledFor && culledFor.equals(view)) return;
