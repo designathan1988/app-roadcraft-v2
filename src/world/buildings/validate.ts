@@ -66,6 +66,8 @@ export const BUILDING_MAP_MARGIN = 8;
  * verge, which read as a gap between the pavement and the wall.
  */
 export const ROAD_CLEARANCE = 0.02;
+/** Only floating-point noise at an exactly touching road edge, never a visible overlap. */
+const ROAD_CONTACT_EPS = 1e-9;
 /**
  * Area a footprint may share with a junction's carriageway and kerb and still
  * only touch it, square units (0.16 m2): rounding where an edge meets it. The
@@ -175,7 +177,7 @@ export function touchesRoad(net: Network, rect: readonly Vec2[]): boolean {
     const reach = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
     const bb = ribbon.full.bbox;
     if (bb.minX - reach > box.maxX || bb.maxX + reach < box.minX || bb.minY - reach > box.maxY || bb.maxY + reach < box.minY) continue;
-    if (polylineDistance(ribbon.full.toPoints(), rect) < reach) return true;
+    if (polylineDistance(ribbon.full.toPoints(), rect) < reach - ROAD_CONTACT_EPS) return true;
   }
   for (const levels of net.junctions.values()) {
     // The carriageway and kerb of the junction, not its footway plate. The
