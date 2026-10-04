@@ -246,8 +246,8 @@ function terrainBakes(anisotropy: number): {
  *    rock, which is what actually gives a hill a silhouette: the colour change
  *    follows the geometry, so a slope is legible even when the sun is behind it.
  *  - **Two scales of the same texture.** Each map is sampled at its own size and
- *    again eight times larger, and the two are mixed. The large sample breaks
- *    the repeat that the eye otherwise locks on to from far away.
+ *    again about seven times larger, and the two are mixed. Their scales do
+ *    not align on every eighth tile across the terrain plate.
  *  - **Macro variation.** A slow noise tints wide regions warm or cool, so the
  *    ground has weather in it rather than one flat green.
  */
@@ -331,11 +331,11 @@ function terrainMaterial(
          // magnified macro maps.
          float terrainDetailW = 0.0;
 
-         // Detail plus a sample eight times wider, so the tile never repeats
-         // visibly at the distances this camera works at.
+         // An incommensurate wide sample avoids the eight-tile composite repeat
+         // that appeared when this ratio was exactly 1/8.
          vec4 dualScale(sampler2D tex, vec2 uv) {
            vec4 near = texture2D(tex, uv, terrainDetailW * 2.2);
-           vec4 far = texture2D(tex, uv * 0.125);
+           vec4 far = texture2D(tex, uv * 0.137);
            return mix(near, far, 0.42);
          }
 
