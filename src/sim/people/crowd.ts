@@ -602,6 +602,23 @@ function pickGoal(w: SimWorld, s: State, p: Walker): boolean {
     const route = nav.query.computePath({ x: p.x, y: p.h, z: p.y }, { x: goal.x, y: goal.h, z: goal.y });
     const last = route.path[route.path.length - 1];
     if (!route.success || !last || hypot2(last.x - goal.x, last.z - goal.y) > ARRIVED) continue;
+    // A new party has not been drawn yet. Give its leader and the companions
+    // created after it the route's initial facing, rather than the random
+    // birth angle, so their first visible steps do not start backwards.
+    if (!p.published) {
+      for (let i = 1; i < route.path.length; i++) {
+        const dx = route.path[i]!.x - route.path[0]!.x;
+        const dy = route.path[i]!.z - route.path[0]!.z;
+        const length = hypot2(dx, dy);
+        if (length < 1e-6) continue;
+        p.routeDirection = { x: dx / length, y: dy / length };
+        p.heading = Math.atan2(dy, dx);
+        p.prevHeading = p.heading;
+        p.view.heading = p.heading;
+        p.view.prev.heading = p.heading;
+        break;
+      }
+    }
     p.goal = goal;
     p.leaving = leave;
     p.zebra = null; p.waitAt = null; p.mode = 'walk';
@@ -1341,7 +1358,9 @@ function makeWay(s: State): void {
       if (p.blocked < MAKE_WAY_AFTER && d > 2 * AGENT_RADIUS + m(0.05)) continue;
       // The walker's way: from where it is, on past the one standing.
       const way = [{ x: p.x, y: p.y }, { x: p.x + ux * m(3), y: p.y + uy * m(3) }];
-      const spot = standingPlace(s, q, p, way, bodies);
+      // Contact while the passer is still progressing calls for a forward or
+      // sideways step, never a retreat. A stalled passer may need the fallback.
+      const spot = standingPlace(s, q, p, way, bodies, p.blocked >= MAKE_WAY_AFTER);
       if (!spot) continue;
       q.aside = { at: spot, until: s.clock + MAKE_WAY_HOLD };
       q.holding = null;
@@ -1422,7 +1441,7 @@ function flowBehind(s: State, bodies: CrowdPointIndex<Walker>, p: Walker, dir: V
 const order = (p: Walker): number => Math.imul(p.id ^ 0x5bd1e995, 0x27d4eb2d) >>> 0;
 
 /** A nearby place that leaves a navigable route around the standing body. */
-function standingPlace(s: State, q: Walker, passer: Walker, way: readonly Vec2[], bodies: CrowdPointIndex<Walker>): Vec2 | null {
+function standingPlace(s: State, q: Walker, passer: Walker, way: readonly Vec2[], bodies: CrowdPointIndex<Walker>, allowRetreat: boolean): Vec2 | null {
   const query = s.nav!.query;
   const filter = s.crowd!.getFilter(q.onZebras ? 0 : 1);
   const passFilter = s.crowd!.getFilter(passer.onZebras ? 0 : 1);
@@ -1498,7 +1517,7 @@ function standingPlace(s: State, q: Walker, passer: Walker, way: readonly Vec2[]
     if (best) return best;
     retreat ??= back;
   }
-  return retreat;
+  return allowRetreat ? retreat : null;
 }
 
 /** Existing recovery for two moving agents; distinct from parking a standing body. */
