@@ -573,7 +573,7 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     }
     const known = new Set<string>([...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...ELEMENT_KINDS, ...FACADE_PATTERNS, ...FINISHES, ...BLUEPRINTS.map((bp) => bp.key),
       ...state.userBlueprints.map((bp) => bp.key), 'window', 'sashWindow', 'wideWindow', 'ribbon', 'bayWindow', 'frenchWindow',
-      'door', 'doubleDoor', 'garageDoor', 'loadingDoor', 'solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire',
+      'door', 'doubleDoor', 'garageDoor', 'loadingDoor', 'solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire', 'lantern',
       'roofFlat', 'roofShed', 'roofGable', 'roofHip', 'roofSawtooth', 'roofTerrace', 'wallRun', 'fenceRun', 'pavementRun', 'stairRun',
       'balcony', 'shopfront']);
     const wanted = ids.filter((id) => known.has(id) && !thumbnails.has(id));

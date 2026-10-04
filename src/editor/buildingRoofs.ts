@@ -2,10 +2,11 @@ import type { Vec2 } from '@core/vec2';
 import { m } from '@world/units';
 import { roofPartFits } from '@world/buildings/footprints';
 import { type Building, type RoofDetail, type RoofDetailKind } from '@world/buildings/types';
+import { DEFAULT_FLAG } from '@world/buildings/flags';
 
 const SIZE: Readonly<Record<RoofDetailKind, readonly [number, number]>> = {
   solar: [m(3), m(2)], skylight: [m(2), m(1.5)], vent: [m(1), m(1)],
-  chimney: [m(1), m(1)], waterTank: [m(2.2), m(2.2)], spire: [m(1.5), m(1.5)],
+  chimney: [m(1), m(1)], waterTank: [m(2.2), m(2.2)], spire: [m(1.5), m(1.5)], lantern: [m(4), m(4)],
 };
 
 /** A roof part belongs to one mass and follows every building edit. */
@@ -18,11 +19,13 @@ export function addRoofDetail(b: Building, volumeId: number, kind: RoofDetailKin
   const id = used + 1;
   const next: RoofDetail = { id, kind, x: at.x, y: at.y, rotation: 0, w, d };
   if (kind === 'spire') next.h = m(11.7);
+  // The lighthouse lantern on a tower top (Altino Arantes): drum, dome and mast.
+  if (kind === 'lantern') { next.h = m(19.4); next.flag = 'plain'; next.flagDesign = DEFAULT_FLAG; }
   v.roofDetails = [...(v.roofDetails ?? []), next];
   return id;
 }
 
-export function updateRoofDetail(b: Building, volumeId: number, id: number, patch: Partial<Pick<RoofDetail, 'x' | 'y' | 'rotation' | 'w' | 'd' | 'h' | 'flag'>>): boolean {
+export function updateRoofDetail(b: Building, volumeId: number, id: number, patch: Partial<Pick<RoofDetail, 'x' | 'y' | 'rotation' | 'w' | 'd' | 'h' | 'flag' | 'flagDesign'>>): boolean {
   const v = b.volumes.find((volume) => volume.id === volumeId);
   const current = v?.roofDetails?.find((detail) => detail.id === id);
   if (!v || !current) return false;

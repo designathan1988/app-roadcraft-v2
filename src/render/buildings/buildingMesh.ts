@@ -73,10 +73,19 @@ import {
   type Side,
   SIDES,
   type Volume,
+  type RoofDetail,
   volumeTop,
   type LotSurface,
 } from '@world/buildings/types';
 import { type BuildingKit, PART_KINDS, type PartKind } from './kit';
+import type { FlagInstance } from './flagLayer';
+import { type FlagDesign, legacyFlag } from '@world/buildings/flags';
+
+/** Where the flags of the building being emitted go (`emitChunk` sets it). */
+let flagSink: FlagInstance[] | null = null;
+/** A roof part's flag, or null: its own design, else the fixed one it names. */
+const flagOf = (detail: RoofDetail): FlagDesign | null =>
+  !detail.flag || detail.flag === 'none' ? null : detail.flagDesign ?? legacyFlag(detail.flag);
 
 /**
  * Buildings, as meshes. See docs/buildings.md section 5.
@@ -1886,34 +1895,10 @@ function emitRoofDetails(e: Emitter, b: Building, v: Volume, floor: number): voi
             e.N(Math.cos((a + c) / 2), Math.sin((a + c) / 2)), band === 0 ? baseStone : metal);
         }
       }
-      if (detail.flag && detail.flag !== 'none') {
-        const flagTop = z + height * .98, flagBottom = flagTop - m(1.25);
-        const x0 = detail.x + m(.08), x1 = x0 + m(2.2);
-        const white = paint({ finish: 'plaster', colour: 0xf3eee3 });
-        const red = paint({ finish: 'plaster', colour: 0xb43138 });
-        const blue = paint({ finish: 'plaster', colour: 0x3f688d });
-        const black = paint({ finish: 'plaster', colour: 0x20252a });
-        for (const face of [-1, 1] as const) {
-          const y = detail.y + face * m(.035);
-          const p = (x: number, h: number): V3 => e.L(x, y + (x - x0) * .065, h);
-          const quad = (a: number, c: number, lo: number, hi: number, colour: Paint): void =>
-            e.shell.face([p(a, lo), p(c, lo), p(c, hi), p(a, hi)], e.N(0, face), colour);
-          quad(x0, x1, flagBottom, flagTop, detail.flag === 'plain' ? blue : white);
-          const raised = face * m(.014);
-          const mark = (a: number, c: number, lo: number, hi: number, colour: Paint): void =>
-            e.shell.face([e.L(a, y + (a - x0) * .065 + raised, lo), e.L(c, y + (c - x0) * .065 + raised, lo),
-              e.L(c, y + (c - x0) * .065 + raised, hi), e.L(a, y + (a - x0) * .065 + raised, hi)], e.N(0, face), colour);
-          if (detail.flag === 'saoPaulo') {
-            mark(x0 + m(.67), x0 + m(.93), flagBottom, flagTop, red);
-            mark(x0, x1, flagBottom + m(.47), flagBottom + m(.74), red);
-          } else if (detail.flag === 'saoPauloState') {
-            const stripe = (flagTop - flagBottom) / 13;
-            for (let i = 0; i < 13; i += 2) mark(x0, x1, flagBottom + i * stripe, flagBottom + (i + 1) * stripe, black);
-            mark(x0, x0 + m(.7), flagTop - m(.7), flagTop, red);
-            mark(x0 + m(.28), x0 + m(.42), flagTop - m(.42), flagTop - m(.28), white);
-          }
-        }
-      }
+      const design = flagOf(detail);
+      if (design) emitFlag(e, detail.x, detail.y, z + height * .98, design, m(2.2), m(1.25));
+    } else if (detail.kind === 'lantern') {
+      emitLantern(e, detail, z);
     } else if (detail.kind === 'chimney') {
       e.box(detail.x - detail.w / 2, detail.y - detail.d / 2,
         detail.x + detail.w / 2, detail.y + detail.d / 2, z - 0.2, z + m(2.1), masonry);
@@ -1924,6 +1909,90 @@ function emitRoofDetails(e: Emitter, b: Building, v: Volume, floor: number): voi
         detail.x + detail.w / 2, detail.y + detail.d / 2, z - .1, z + m(1.6), metal);
     }
   }
+}
+
+
+/**
+ * A flag flown from a mast whose top is at (x, y, flagTop): recorded for the
+ * cloth layer, which draws every flag in one waving instanced draw.
+ */
+function emitFlag(e: Emitter, x: number, y: number, flagTop: number, design: FlagDesign, width: number, height: number): void {
+  if (!flagSink) return;
+  const [wx, wy, wz] = e.L(x, y, flagTop);
+  flagSink.push({ x: wx, y: wz, z: -wy, width, height, design });
+}
+
+/**
+ * The lighthouse on a tower top, measured on the Altino Arantes model
+ * (public/incoming/altino_glb): an octagonal base 1.0 m high, a glazed
+ * cylinder 3.7 m across and 7.5 m tall with its window grid, a hemispherical
+ * dome 1.1 m high, and a mast 0.3 m thick to the top with the aviation light
+ * and the flag. `h` is the whole height above the roof (19.4 m on the model);
+ * every part keeps the model's proportion of it.
+ */
+function emitLantern(e: Emitter, detail: RoofDetail, z: number): void {
+  const h = detail.h ?? m(19.4);
+  const k = h / m(19.4);
+  const span = Math.min(detail.w, detail.d);
+  const stone = paint({ finish: 'stone', colour: 0xc9c6bd });
+  const render = paint({ finish: 'plaster', colour: 0xe4e1d8 });
+  const glass = paint({ finish: 'glass', colour: 0x7fa8b8 });
+  const frame = paint({ finish: 'plaster', colour: 0xf0eee8 });
+  const dome = paint({ finish: 'metal', colour: 0xcbb99a });
+  const mast = paint({ finish: 'metal', colour: 0x8e9396 });
+  const red = paint({ finish: 'plaster', colour: 0xe0301e });
+  const N = 24;
+  const at = (ang: number, rr: number, zz: number): V3 => e.L(detail.x + Math.cos(ang) * rr, detail.y + Math.sin(ang) * rr, zz);
+  /** A ring of `n` faces between radii and heights (n = 8: octagon, 24: a cylinder). */
+  const ring = (n: number, z0: number, z1: number, r0: number, r1: number, c: Paint, turn = 0): void => {
+    for (let i = 0; i < n; i++) {
+      const p0 = turn + (i * 2 * Math.PI) / n, p1 = turn + ((i + 1) * 2 * Math.PI) / n;
+      e.shell.face([at(p0, r0, z0), at(p1, r0, z0), at(p1, r1, z1), at(p0, r1, z1)], e.N(Math.cos((p0 + p1) / 2), Math.sin((p0 + p1) / 2)), c);
+    }
+  };
+  const disc = (n: number, zz: number, rr: number, c: Paint, turn = 0): void => {
+    const pts: V3[] = [];
+    for (let i = 0; i < n; i++) pts.push(at(turn + (i * 2 * Math.PI) / n, rr, zz));
+    e.shell.face(pts, [0, 0, 1], c);
+  };
+  // The octagonal base, 1.0 m.
+  const rBase = span / 2;
+  const z1 = z + m(1.03) * k;
+  ring(8, z - m(0.05), z1, rBase, rBase, stone, Math.PI / 8);
+  disc(8, z1, rBase, stone, Math.PI / 8);
+  // The glazed cylinder, 3.7 m across, 7.5 m tall: glass, then the grid in front
+  // of it - eight mullions round, a band at every floor - and a cornice at its head.
+  const rCyl = rBase * (3.69 / 4.02);
+  const z2 = z1 + m(7.47) * k;
+  ring(N, z1, z2, rCyl, rCyl, glass);
+  // The model's grid: a band at every 1.5 m, a mullion every 15 degrees.
+  const floors = 5;
+  for (let f = 0; f <= floors; f++) {
+    const zz = z1 + ((z2 - z1) * f) / floors;
+    ring(N, Math.max(z1, zz - m(0.07)), Math.min(z2, zz + m(0.07)), rCyl + m(0.04), rCyl + m(0.04), frame);
+  }
+  for (let i = 0; i < 24; i++) {
+    const ang = (i * 2 * Math.PI) / 24;
+    const cx = detail.x + Math.cos(ang) * (rCyl + m(0.02)), cy = detail.y + Math.sin(ang) * (rCyl + m(0.02)), s = m(0.035);
+    e.box(cx - s, cy - s, cx + s, cy + s, z1, z2, frame);
+  }
+  ring(N, z2 - m(0.05), z2 + m(0.25), rCyl + m(0.12), rCyl + m(0.12), render);
+  disc(N, z2 + m(0.25), rCyl + m(0.12), render);
+  // The hemispherical dome, 1.1 m.
+  const zDome = z2 + m(0.25);
+  const hDome = m(1.1) * k;
+  const steps = 6;
+  for (let s = 0; s < steps; s++) {
+    const a0 = (s / steps) * Math.PI / 2, a1 = ((s + 1) / steps) * Math.PI / 2;
+    ring(N, zDome + Math.sin(a0) * hDome, zDome + Math.sin(a1) * hDome, rCyl * Math.cos(a0), Math.max(m(0.16), rCyl * Math.cos(a1)), dome);
+  }
+  // The mast, 0.3 m, to the top; the aviation light under its tip.
+  const top = z + h;
+  ring(8, zDome + hDome - m(0.05), top, m(0.15), m(0.1), mast);
+  e.box(detail.x - m(0.2), detail.y - m(0.2), detail.x + m(0.2), detail.y + m(0.2), top - m(0.45), top - m(0.1), red);
+  // The flag: 6.6 x 4.3 m on the model's 19.4 m lighthouse.
+  const design = flagOf(detail);
+  if (design) emitFlag(e, detail.x, detail.y, top - m(0.5), design, h * 0.34, h * 0.34 * 0.65);
 }
 
 /** Cut a pitched roof into planar regions, then clip each region to any outline. */
@@ -2204,6 +2273,8 @@ export interface BuildingChunk {
   readonly parts: Readonly<Record<PartKind, PartBatch>>;
   /** Furniture of a cut-open interior, by kind; absent when none is drawn. */
   readonly furniture?: Readonly<Partial<Record<FurnitureKind, PartBatch>>>;
+  /** Flags flown from its masts, drawn by the cloth layer (`flagLayer.ts`). */
+  readonly flags?: readonly FlagInstance[];
 }
 
 /** Column-major T * Ry * S, written straight into `out` at `offset`. */
@@ -2233,9 +2304,12 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
   // The terrain is graded from this natural-ground floor. Reading the graded
   // ground back into the floor would move the building away from its own pad.
   const designedFloor = closed.length > 0 ? floorHeight(resolved, naturalAt, pavedAt) : undefined;
+  const flags: FlagInstance[] = [];
+  flagSink = flags;
   const floor = closed.length > 0
     ? emitBuilding({ ...resolved, volumes: closed }, groundAt, shell, parts, pavedAt, furnished, inLot, designedFloor)
     : undefined;
+  flagSink = null;
   emitLots(resolved, lots, closed.length === 0, groundAt, shell, parts, floor, pavedAt, inLot);
   const batches = {} as Record<PartKind, PartBatch>;
   for (const kind of PART_KINDS) {
@@ -2275,7 +2349,8 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
     list.forEach((p, i) => writeMatrix(matrices, i * 16, p));
     (furniture ??= {})[kind] = { matrices, colours: null, count: list.length };
   }
-  return furniture ? { shells, parts: batches, furniture } : { shells, parts: batches };
+  const out = furniture ? { shells, parts: batches, furniture } : { shells, parts: batches };
+  return flags.length ? { ...out, flags } : out;
 }
 
 /**

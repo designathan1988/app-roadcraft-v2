@@ -61,6 +61,8 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
     id: 'mass',
     needsSelection: true,
     sections: [
+      // A real building's model, translucent over the selection, to build it over.
+      { title: 'reference', tools: [action('refLoad'), action('refAlign'), action('refTurn'), action('refFlip'), action('refFainter'), action('refStronger'), action('refToggle'), action('refRemove')] },
       { title: 'floors', tools: [action('storey'), action('storeyDown'), action('split'), action('setback')] },
       { title: 'volumes', tools: [mode('wing'), mode('stack'), mode('cut'), mode('moveMass')] },
       { title: 'modelling', tools: [action('extrudeOut'), action('extrudeIn'), action('extrudeBlock'), action('insetFace'), action('offsetOut'), action('offsetIn'), action('bevelAll'), action('pointMode'), action('bevelCorner')] },
@@ -90,7 +92,7 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
       { title: 'runs', tools: [mode('wallRun'), mode('fenceRun'), mode('pavementRun'), mode('railing'), mode('stairRun')] },
       { title: 'greenery', tools: [mode('tree'), mode('shrub'), mode('hedge'), mode('flowers'), mode('rocks')] },
       { title: 'furniture', tools: [mode('bench'), mode('planter'), mode('parking'), mode('ac'), mode('awning'), mode('clock')] },
-      { title: 'roofGear', tools: [mode('solar'), mode('skylight'), mode('vent'), mode('chimney'), mode('waterTank'), mode('spire')] },
+      { title: 'roofGear', tools: [mode('solar'), mode('skylight'), mode('vent'), mode('chimney'), mode('waterTank'), mode('spire'), mode('lantern')] },
     ],
   },
   {
@@ -142,7 +144,7 @@ export const BUILDER_GALLERIES: Readonly<Record<string, readonly string[]>> = {
   runs: ['wallRun', 'fenceRun', 'pavementRun', 'railing', 'stairRun'],
   greenery: ['tree', 'shrub', 'hedge', 'flowers', 'rocks'],
   furniture: ['bench', 'planter', 'parking', 'ac', 'awning'],
-  roofGear: ['solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire'],
+  roofGear: ['solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire', 'lantern'],
   roofs: ['roofFlat', 'roofTerrace', 'roofGable', 'roofHip', 'roofShed', 'roofSawtooth'],
 };
 

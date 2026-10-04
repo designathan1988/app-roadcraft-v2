@@ -3977,6 +3977,8 @@ qualitySelect.onchange = () => {
   audit: () => [...sim.issues],
   /** The live three.js scene handle, for browser-driven checks. */
   scene: () => scene,
+  /** The orbit camera (`setOrbit(azimuth, elevation)`), for photographing from a chosen angle. */
+  view: () => view,
   /** The building tool, for browser-driven checks. */
   buildings: buildings.tool,
   /**

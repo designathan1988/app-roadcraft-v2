@@ -1,3 +1,4 @@
+import { DEFAULT_FLAG, FLAG_COLOURS, FLAG_PATTERNS } from '@world/buildings/flags';
 import type { Vec2 } from '@core/vec2';
 import { signedArea } from '@core/polygon';
 import { RoadDoc } from '@world/doc';
@@ -19,6 +20,8 @@ import type { SceneHandle } from '@render/renderer';
 import { drawBuildingOverlay } from '@ui/overlay/buildingOverlay';
 import { drawBuilderGizmos, type GizmoInput } from '@ui/overlay/builderGizmos';
 import { type ThumbnailStudio, createThumbnailStudio } from '@render/buildings/parts';
+import { createReferenceModel, type ReferenceTarget } from '@render/buildings/referenceModel';
+import { buildingBounds } from '@world/buildings/geometry';
 import { initBuilderWorkspace, type BuilderActions, type BuilderState } from '@ui/builder/workspace';
 import { plural, t } from '@ui/i18n';
 
@@ -213,8 +216,51 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
   const planActionOfTool = (id: string): 'ground' | 'top' | 'cut' | null =>
     id === 'wing' ? 'ground' : id === 'stack' ? 'top' : id === 'cut' ? 'cut' : null;
 
+  // ------------------------------------------------------------ 3D reference
+  const reference = createReferenceModel(scene.scene, () => deps.requestDraw());
+  /** Where the reference stands: on the selected building, centred on its plan. */
+  const referenceTarget = (): ReferenceTarget | null => {
+    const b = tool.selected();
+    if (!b) return null;
+    const box = buildingBounds(b);
+    const x = (box.minX + box.maxX) / 2, y = (box.minY + box.maxY) / 2;
+    return { x, y, floor: scene.terrainHeightAt(x, y), rotation: b.rotation };
+  };
+  const loadReference = (): void => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.glb,.gltf,model/gltf-binary,model/gltf+json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      reference.load(file).then((info) => {
+        const where = referenceTarget();
+        if (where) reference.placeOn(where);
+        deps.flash('hint.reference.loaded', {
+          name: info.name, w: info.size[0].toFixed(1), d: info.size[1].toFixed(1), h: info.size[2].toFixed(1),
+        });
+      }).catch(() => deps.flash('hint.reference.failed'));
+    };
+    input.click();
+  };
+  /** The reference's own actions; true when `id` was one. */
+  const referenceAction = (id: string): boolean => {
+    if (id === 'refLoad') { loadReference(); return true; }
+    if (!id.startsWith('ref')) return false;
+    if (!reference.loaded) { deps.flash('hint.reference.none'); return true; }
+    if (id === 'refAlign') { const where = referenceTarget(); if (where) reference.placeOn(where); }
+    else if (id === 'refTurn') reference.turn();
+    else if (id === 'refFlip') reference.flip();
+    else if (id === 'refFainter') reference.fade(-0.1);
+    else if (id === 'refStronger') reference.fade(0.1);
+    else if (id === 'refToggle') reference.toggle();
+    else if (id === 'refRemove') reference.remove();
+    return true;
+  };
+
   /** Runs an action tool, arms a mode tool, or opens a gallery (the workspace's job). */
   function runTool(id: string): void {
+    if (referenceAction(id)) return;
     switch (id) {
       case 'storey': tool.addStoreys(1); return;
       case 'storeyDown': tool.addStoreys(-1); return;
@@ -359,7 +405,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       toolId = id;
       return;
     }
-    if (id === 'solar' || id === 'skylight' || id === 'vent' || id === 'chimney' || id === 'waterTank' || id === 'spire') {
+    if (id === 'solar' || id === 'skylight' || id === 'vent' || id === 'chimney' || id === 'waterTank' || id === 'spire' || id === 'lantern') {
       clearArming('detail');
       tool.armRoofDetail(id);
       toolId = id;
@@ -704,6 +750,16 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       case 'pierEvery': tool.setFacadeGeometry({ pierEvery: Math.max(1, Math.round(value)) }); return;
       case 'detailHeight': tool.setRoofDetailHeight(value); return;
       case 'detailFlag': tool.setRoofDetailFlag((['none', 'plain', 'saoPaulo', 'saoPauloState'] as const)[value] ?? 'none'); return;
+      case 'flagPattern': tool.setRoofDetailFlagDesign((d) => ({ ...d, pattern: FLAG_PATTERNS[value] ?? d.pattern })); return;
+      case 'flagC0': case 'flagC1': case 'flagC2': {
+        const k = Number(id.slice(-1));
+        tool.setRoofDetailFlagDesign((d) => {
+          const colours = [...d.colours] as [number, number, number];
+          colours[k] = FLAG_COLOURS[value] ?? colours[k]!;
+          return { ...d, colours };
+        });
+        return;
+      }
       case 'volW': tool.setVolumeSize(value / metres, null); return;
       case 'volX': tool.setBlockOffset(value / metres, null); return;
       case 'volY': tool.setBlockOffset(null, value / metres); return;
@@ -799,13 +855,27 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       );
     }
     const detail = volume?.roofDetails?.find((part) => part.id === tool.selectedRoofDetail);
-    if (detail?.kind === 'spire') {
+    if (detail?.kind === 'spire' || detail?.kind === 'lantern') {
       fields.push({ id: 'detailHeight', labelKey: 'builder.field.height', value: (detail.h ?? 0) * metres, unit: 'm', min: 0, max: 40, step: 0.1 });
       const flags = ['none', 'plain', 'saoPaulo', 'saoPauloState'] as const;
       fields.push({
         id: 'detailFlag', labelKey: 'builder.field.flag', value: Math.max(0, flags.indexOf(detail.flag ?? 'none')),
         options: flags.map((flag, value) => ({ value, labelKey: `builder.flag.${flag}` })),
       });
+      // The flag's own design: a pattern and three colours, any combination.
+      if (detail.flag && detail.flag !== 'none') {
+        const design = detail.flagDesign ?? DEFAULT_FLAG;
+        fields.push({
+          id: 'flagPattern', labelKey: 'builder.field.flagPattern', value: Math.max(0, FLAG_PATTERNS.indexOf(design.pattern)),
+          options: FLAG_PATTERNS.map((pattern, value) => ({ value, labelKey: `builder.flagPattern.${pattern}` })),
+        });
+        for (const k of [0, 1, 2] as const) {
+          fields.push({
+            id: `flagC${k}`, labelKey: `builder.field.flagColour${k}`, value: Math.max(0, FLAG_COLOURS.indexOf(design.colours[k])),
+            options: FLAG_COLOURS.map((_, value) => ({ value, labelKey: `builder.flagColour.${value}` })),
+          });
+        }
+      }
     }
     return fields;
   }

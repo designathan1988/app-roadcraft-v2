@@ -52,7 +52,9 @@ export const isFacadePattern = (value: unknown): value is FacadePattern =>
 export const ROOF_KINDS = ['flat', 'terrace', 'gable', 'hip', 'shed', 'sawtooth'] as const;
 export type RoofKind = (typeof ROOF_KINDS)[number];
 
-export const ROOF_DETAIL_KINDS = ['solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire'] as const;
+import type { FlagDesign } from './flags';
+
+export const ROOF_DETAIL_KINDS = ['solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire', 'lantern'] as const;
 export type RoofDetailKind = (typeof ROOF_DETAIL_KINDS)[number];
 export const isRoofDetailKind = (value: unknown): value is RoofDetailKind =>
   (ROOF_DETAIL_KINDS as readonly unknown[]).includes(value);
@@ -67,8 +69,10 @@ export interface RoofDetail {
   d: number;
   /** Height above the roof, in world units; used by adjustable details. */
   h?: number;
-  /** Optional flag on a spire; plain leaves a coloured banner for generic buildings. */
+  /** Optional flag on a spire or a lantern's mast; plain leaves a coloured banner for generic buildings. */
   flag?: 'none' | 'plain' | 'saoPaulo' | 'saoPauloState';
+  /** The flag's own design (pattern and colours); absent, `flag` names a fixed one. */
+  flagDesign?: FlagDesign;
 }
 
 /**

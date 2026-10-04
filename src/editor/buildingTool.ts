@@ -1,3 +1,4 @@
+import { DEFAULT_FLAG, type FlagDesign } from '@world/buildings/flags';
 import type { Vec2 } from '@core/vec2';
 import { signedArea } from '@core/polygon';
 import {
@@ -1320,6 +1321,18 @@ export class BuildingTool {
     if (result.ok && newId !== null) this.selection = { building: newId, volume: (volumeById(this.selected() ?? b, v.id) ?? v).id, bay: null };
     this.report(result);
     this.host.changed();
+  }
+
+  /** The selected spire's or lantern's flag design: its pattern and colours. */
+  setRoofDetailFlagDesign(change: (design: FlagDesign) => FlagDesign): void {
+    const s = this.selection, id = this.selectedRoofDetail;
+    if (!s || id === null) return;
+    this.onSelected((draft) => {
+      const detail = draft.volumes.find((v) => v.id === s.volume)?.roofDetails?.find((d) => d.id === id);
+      if (!detail) return false;
+      const flag = detail.flag && detail.flag !== 'none' ? detail.flag : 'plain';
+      return updateRoofDetail(draft, s.volume, id, { flag, flagDesign: change(detail.flagDesign ?? DEFAULT_FLAG) });
+    });
   }
 
   setRoofDetailFlag(flag: 'none' | 'plain' | 'saoPaulo' | 'saoPauloState'): void {

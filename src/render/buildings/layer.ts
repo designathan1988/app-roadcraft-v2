@@ -9,6 +9,7 @@ import type { Building, BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
 import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, buildBuildingMeshes, emitChunk } from './buildingMesh';
+import { createFlagLayer } from './flagLayer';
 import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
 /**
@@ -80,6 +81,9 @@ export function createBuildingLayer(): BuildingLayer {
   const kit: BuildingKit = createBuildingKit();
   const group = new Group();
   group.name = 'buildings-layer';
+  // Every flag in the city, waving: one instanced draw (`flagLayer.ts`).
+  const flagLayer = createFlagLayer();
+  group.add(flagLayer.group);
   group.matrixAutoUpdate = false;
   group.updateMatrix();
   let stored: BuildingMeshes | null = null;
@@ -233,6 +237,7 @@ export function createBuildingLayer(): BuildingLayer {
           group.add(faded.group);
         }
         index(doc.buildings.all());
+        flagLayer.set(shown.flatMap((b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt).flags ?? []));
         applyFacadeDetail();
         version++;
         rebuilt = true;
@@ -284,6 +289,7 @@ export function createBuildingLayer(): BuildingLayer {
       return false;
     },
     dispose() {
+      flagLayer.dispose();
       stored?.dispose();
       details?.dispose();
       faded?.dispose();

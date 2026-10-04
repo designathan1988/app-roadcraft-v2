@@ -1,3 +1,4 @@
+import { migrateFlagDesign } from './flags';
 import { validOutline, roofPartFits } from './footprints';
 import type { Vec2 } from '@core/vec2';
 import { clamp } from '@core/scalar';
@@ -177,8 +178,9 @@ function migrateVolume(raw: unknown, scale: Scale): Volume | null {
         !finite(item.rotation) || !finite(item.w) || !finite(item.d)) return [];
       const detail = { id: Math.max(1, int(item.id, 1)), kind: item.kind,
         x: item.x, y: item.y, rotation: item.rotation, w: item.w, d: item.d,
-        ...(item.kind === 'spire' ? { h: finite(item.h) ? clamp(item.h, m(1), m(40)) : m(11.7),
-          flag: (item.flag === 'plain' || item.flag === 'saoPaulo' || item.flag === 'saoPauloState' ? item.flag : 'none') as 'none' | 'plain' | 'saoPaulo' | 'saoPauloState' } : {}) };
+        ...(item.kind === 'spire' || item.kind === 'lantern' ? { h: finite(item.h) ? clamp(item.h, m(1), m(40)) : item.kind === 'lantern' ? m(19.4) : m(11.7),
+          flag: (item.flag === 'plain' || item.flag === 'saoPaulo' || item.flag === 'saoPauloState' ? item.flag : 'none') as 'none' | 'plain' | 'saoPaulo' | 'saoPauloState',
+          ...(migrateFlagDesign(item.flagDesign) ? { flagDesign: migrateFlagDesign(item.flagDesign)! } : {}) } : {}) };
       return roofPartFits(volume, detail) ? [detail] : [];
     });
     if (details.length > 0) {
