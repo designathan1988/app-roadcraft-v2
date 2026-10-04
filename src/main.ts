@@ -166,18 +166,8 @@ if (saved) {
 }
 
 const sim = new SimWorld(doc, net, 0x2024);
-sim.rebuildTopology();
 type CrowdModule = typeof import('@sim/people/crowd');
 let crowdModule: CrowdModule | null = null;
-// Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
-// old sidewalk-graph model instead, for comparison while it is retired.
-// `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
-if (new URLSearchParams(location.search).get('people') === 'crowd') {
-  crowdModule = await import('@sim/people/crowd');
-  await crowdModule.initCrowd();
-  sim.usePedestrianEngine(crowdModule.createCrowdEngine());
-}
-else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
 // Vehicles are driven by Drive v2 where it has replaced a layer of the
 // legacy model; `?drive=v1` runs the legacy model throughout, for comparison.
 if (new URLSearchParams(location.search).get('drive') !== 'v1') sim.driveModel = 'v2';
@@ -456,6 +446,17 @@ function savedQualityLevel(): QualityLevel {
 // never lowers them on its own.
 primeSurfaceBake(await surfaceBake);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
+// The renderer starts its asynchronous shader preparation while topology and
+// pedestrian navigation still build. Both finish before the first game frame.
+sim.rebuildTopology();
+// Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
+// old sidewalk-graph model instead, for comparison while it is retired.
+// `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
+if (new URLSearchParams(location.search).get('people') === 'crowd') {
+  crowdModule = await import('@sim/people/crowd');
+  await crowdModule.initCrowd();
+  sim.usePedestrianEngine(crowdModule.createCrowdEngine());
+} else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
