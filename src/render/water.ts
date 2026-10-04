@@ -100,9 +100,9 @@ export const WATER_DRIFTS: readonly (readonly [number, number])[] = [DRIFT_A, DR
 export const WATER_DEPTH_ATTRIBUTE = 'aDepth';
 
 /** Depth, in world units, at which the tint has reached its deep-water value. */
-const DEEP_AT = 5.5;
+const DEEP_AT = 3.6;
 /** Depth over which the shore foam band fades out. */
-const FOAM_AT = 1.35;
+const FOAM_AT = 0.95;
 /**
  * Depth over which the sheet fades in from nothing.
  *
@@ -255,9 +255,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   const time = { value: 0 };
   const uniforms = {
     uWaterTime: time,
-    uShallow: { value: new Color(0x59a891) },
+    uShallow: { value: new Color(0x4b8269) },
     uDeep: { value: new Color(0x123b52) },
-    uFoamTint: { value: new Color(0xdcefee) },
+    uFoamTint: { value: new Color(0xb7c7b2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
     uScaleB: { value: 1 / LAYER_B_TILE },
     uDriftA: { value: new Vector2(DRIFT_A[0], DRIFT_A[1]) },
@@ -320,7 +320,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          float waterShore = smoothstep(0.0, ${FOAM_AT.toFixed(2)}, vWaterDepth);
          float waterBand = (1.0 - waterShore) * smoothstep(0.0, 0.3, vWaterDepth);
          float waterFroth = smoothstep(0.34, 0.8, waterA.a * 0.55 + waterB.a * 0.65);
-         float waterFoam = clamp(waterBand * (0.3 + 0.8 * waterFroth), 0.0, 1.0);
+         float waterFoam = clamp(waterBand * waterFroth * 0.58, 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
          float waterAlpha = mix(0.34, 0.94, smoothstep(0.0, ${(DEEP_AT * 0.7).toFixed(2)}, vWaterDepth));
