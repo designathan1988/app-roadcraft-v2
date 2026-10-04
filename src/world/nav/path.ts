@@ -1,5 +1,5 @@
 import { hypot2 } from '@core/scalar';
-import { closestOnSegment, type NavMesh, type NavPortal } from './navmesh';
+import { type NavMesh, type NavPortal } from './navmesh';
 
 /**
  * A route across the mesh: the triangles it passes through, the portal it
@@ -19,6 +19,7 @@ export interface NavPath {
  * the planner is told that a zebra means a wait. Return 0 for none.
  */
 export type NavCost = (from: number, to: number, length: number) => number;
+const NO_COST: NavCost = () => 0;
 
 /** A mesh's search memory, reused by every search on it (`findPath`). */
 interface SearchPool {
@@ -68,7 +69,7 @@ export function pathWorkLeft(): boolean { return workLeft > 0; }
 
 /** Shortest route between two points of the mesh, or null when none joins them. */
 export function findPath(mesh: NavMesh, sx: number, sy: number, st: number, gx: number, gy: number, gt: number,
-  cost: NavCost = () => 0, maxNodes = 20000): NavPath | null {
+  cost: NavCost = NO_COST, maxNodes = 20000): NavPath | null {
   if (st < 0 || gt < 0) return null;
   if (st === gt) return { tris: [st], portals: [], corners: [{ x: gx, y: gy, tri: 0 }] };
   // Ground with no way between: known at once (`NavMesh.piece`).
@@ -109,8 +110,13 @@ export function findPath(mesh: NavMesh, sx: number, sy: number, st: number, gx: 
       if (closed[u] === stamp) continue;
       let mx = gx, my = gy;
       if (u !== gt) {
-        const near = closestOnSegment(portal.lx, portal.ly, portal.rx, portal.ry, tx, ty);
-        mx = near.x; my = near.y;
+        // `closestOnSegment`'s arithmetic in place: A* visits many portals,
+        // and only these two coordinates survive the iteration.
+        const dx = portal.rx - portal.lx, dy = portal.ry - portal.ly;
+        const len = dx * dx + dy * dy;
+        const t = len > 0 ? Math.max(0, Math.min(1, ((tx - portal.lx) * dx + (ty - portal.ly) * dy) / len)) : 0;
+        mx = portal.lx + dx * t;
+        my = portal.ly + dy * t;
       }
       const step = hypot2(mx - tx, my - ty);
       const ng = tg + step + cost(t, u, step);
