@@ -109,10 +109,20 @@ export function createBuildingLayer(): BuildingLayer {
   };
   /** The buildings drawn cut open, by id and floor: only those near the camera, kept while they stay. */
   const cutChunks = new Map<string, { key: string; chunk: BuildingChunk }>();
-  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk => {
+  /** An edit to one building must not resample the ground under every other building. */
+  const groundDigests = new Map<BuildingId, { record: string; groundKey: string; digest: string }>();
+  const digestFor = (b: Building, record: string, groundKey: string, groundAt: GroundAt, pavedAt?: PavedAt): string => {
+    const known = groundDigests.get(b.id);
+    if (known && known.record === record && known.groundKey === groundKey) return known.digest;
+    const digest = groundDigest(b, groundAt, pavedAt);
+    groundDigests.set(b.id, { record, groundKey, digest });
+    return digest;
+  };
+  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
     const dir = cutaway ? Math.round(Math.atan2(cutaway.view.y, cutaway.view.x) / (Math.PI / 4)) : 0;
     const id = `${b.id}|${level}|${dir}`;
-    const key = `${JSON.stringify(b)}|${groundDigest(b, groundAt, pavedAt)}`;
+    const record = JSON.stringify(b);
+    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
     const known = cutChunks.get(id);
     if (known && known.key === key) return known.chunk;
     // The view snapped to eighths of a turn: the walls that come down change
@@ -130,16 +140,17 @@ export function createBuildingLayer(): BuildingLayer {
     const dy = Math.max(box.minY - cutaway.y, 0, cutaway.y - box.maxY);
     return Math.hypot(dx, dy) <= cutaway.radius;
   };
-  const drawn = (b: Building, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk =>
-    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, pavedAt) : chunkFor(b, groundAt, pavedAt);
+  const drawn = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk =>
+    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, groundKey, pavedAt) : chunkFor(b, groundAt, groundKey, pavedAt);
   /**
    * Each building's emitted meshes, keyed by its record and by the ground
    * around it: an edit re-emits one building, a terrain dab only the ones
    * whose ground it moved; everything else is concatenated from here.
    */
   const chunks = new Map<BuildingId, { key: string; chunk: BuildingChunk }>();
-  const chunkFor = (b: Building, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk => {
-    const key = `${JSON.stringify(b)}|${groundDigest(b, groundAt, pavedAt)}`;
+  const chunkFor = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
+    const record = JSON.stringify(b);
+    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
     const known = chunks.get(b.id);
     if (known && known.key === key) return known.chunk;
     const chunk = emitChunk(b, groundAt, pavedAt);
@@ -197,14 +208,17 @@ export function createBuildingLayer(): BuildingLayer {
           batch.dispose();
         }
         const shown = [...doc.buildings.all()].filter((b) => b.id !== hides);
-        for (const id of chunks.keys()) if (!doc.buildings.has(id)) chunks.delete(id);
+        for (const id of chunks.keys()) if (!doc.buildings.has(id)) {
+          chunks.delete(id);
+          groundDigests.delete(id);
+        }
         const solid = dimmed === undefined ? shown : shown.filter((b) => b.id === dimmed);
         const others = dimmed === undefined ? [] : shown.filter((b) => b.id !== dimmed);
         if (cutChunks.size > 64) cutChunks.clear();
-        stored = assembleByCell(solid, (b) => drawn(b, groundAt, pavedAt), kit, cells);
+        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, cells);
         group.add(stored.group);
         faded = others.length > 0
-          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, pavedAt)), kit, false, true)
+          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt)), kit, false, true)
           : null;
         if (faded) {
           faded.group.renderOrder = 1;
@@ -260,6 +274,7 @@ export function createBuildingLayer(): BuildingLayer {
       stored?.dispose();
       for (const cell of cells.values()) cell.part.dispose();
       cells.clear();
+      groundDigests.clear();
       ghost?.dispose();
       kit.dispose();
       group.clear();
