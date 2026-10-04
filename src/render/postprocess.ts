@@ -150,8 +150,10 @@ export function createPostChain(
     void renderer.compileAsync(warm, camera).catch(() => {}).finally(() => quad.dispose());
     renderer.setRenderTarget(previous);
   }
-  if (quality.smaa) composer.addPass(new SMAAPass());
-  composer.addPass(new OutputPass());
+  const smaa = quality.smaa ? new SMAAPass() : null;
+  if (smaa) composer.addPass(smaa);
+  const output = new OutputPass();
+  composer.addPass(output);
   // The grade, on the finished image: a film's contrast and colour.
   const grade = new ShaderPass(GRADE);
   composer.addPass(grade);
@@ -177,6 +179,9 @@ export function createPostChain(
       target.dispose();
       gtao?.dispose();
       bloom.dispose();
+      smaa?.dispose();
+      output.dispose();
+      grade.dispose();
     },
   };
 }
