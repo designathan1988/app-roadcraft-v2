@@ -261,10 +261,12 @@ const LEAF_YOUNG = rgb(0x789a4b);
 const NEEDLE = rgb(0x3c6747);
 
 function scatterBlobs(rng: Rng, count: number, cx: number, cy: number, spreadX: number, spreadY: number, r0: number, r1: number): Blob[] {
-  const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 }];
+  // A small inner crown leaves negative space between the outward branches.
+  // One large central ball hid the limbs and made every species a lollipop.
+  const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 * 0.7 }];
   for (let i = 1; i < count; i++) {
-    const a = (i / (count - 1)) * Math.PI * 2 + rng.float() * 0.9;
-    const d = 0.55 + rng.float() * 0.45;
+    const a = ((i - 1 + rng.float() * 0.65) / (count - 1)) * Math.PI * 2;
+    const d = 0.7 + rng.float() * 0.35;
     blobs.push({
       x: cx + Math.cos(a) * spreadX * d,
       y: cy + (rng.float() - 0.4) * spreadY,
@@ -290,16 +292,19 @@ export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGe
       return merge([...trunk(0.58, 0.032, 0.016, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.68, 0), green, 1.3, 0.26, detail)]);
     }
     case 'broadleafTall': {
-      // A narrower, taller crown on a longer clear stem: a street plane tree.
+      // Three uneven branch tiers on a longer clear stem: the crown stays tall
+      // without reading as a stack of balls around the trunk.
       const blobs: Blob[] = [];
+      const spread = [0.14, 0.17, 0.1] as const;
       for (let i = 0; i < 9; i++) {
-        const a = rng.float() * Math.PI * 2;
-        const out = 0.06 + rng.float() * 0.07;
+        const tier = Math.floor(i / 3);
+        const a = ((i % 3) / 3) * Math.PI * 2 + tier * 0.7 + (rng.float() - 0.5) * 0.5;
+        const out = spread[tier]! * (0.75 + rng.float() * 0.35);
         blobs.push({
           x: Math.cos(a) * out,
-          y: 0.5 + i * 0.05 + rng.float() * 0.03,
+          y: 0.58 + tier * 0.14 + (rng.float() - 0.5) * 0.06,
           z: Math.sin(a) * out,
-          r: 0.095 + rng.float() * 0.045 - i * 0.004,
+          r: 0.095 + rng.float() * 0.035 - tier * 0.005,
         });
       }
       const green = (f: number, h: number): Rgb => (f < 0.22 ? LEAF_DEEP : h > 0.7 && f > 0.75 ? LEAF_YOUNG : LEAF);

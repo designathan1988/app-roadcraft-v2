@@ -54,4 +54,6 @@ In 240 simulated seconds on the default town (90 vehicles), the longest sampled 
 
 The prop generator double-converted hexadecimal colors after three.js had already converted them to linear working values. In a representative broadleaf palette, this reduced the green vertex-color component from 0.2623 to 0.0559. The redundant conversion was removed in props, ground flowers and relative road-class tints. The leaf palettes were retuned against fixed-camera before/after screenshots; the resulting broadleaf green component is 0.1912. Instancing, geometry and LOD are unchanged. Images are in this task's local `docs/audit/2026-10-03-props-{before,final}.png` files. The focused prop and road tile specifications passed (8 tests).
 
+The next vegetation pass changed crown shape rather than color: a smaller central mass and irregular branch clusters replace the round ring on broadleaf trees; the tall species' nine clusters now occupy three offset tiers instead of a straight stack. Blob count and near/far LOD are unchanged. Fixed-camera captures at zoom 8 and 18 are in the local `props-shape-*.png` files. The focused prop geometry specification passed; conifer and hedge close-up quality is still open.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

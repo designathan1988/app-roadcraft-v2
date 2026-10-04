@@ -1,0 +1,5 @@
+# Tree silhouette and branch clusters
+
+[GPU Gems 3's SpeedTree rendering chapter](https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-4-next-generation-speedtree-rendering) identifies silhouette detail and leaf clusters as major contributors to a tree's read at game distance. Roadcraft's existing procedural broadleaf generator placed one large central sphere and a nearly regular ring of blobs; the tall species stacked nine blobs along a narrow column. Fixed-camera game screenshots showed the resulting ball and column shapes even after color management was corrected.
+
+The broadleaf generator now uses a smaller inner crown and irregular outward clusters. The tall species distributes its existing nine clusters over three offset branch tiers. Blob count, instanced draw calls, species list and near/far LOD remain unchanged. The close view still shows limitations in conifers and hedges; those are separate asset-quality work rather than evidence that this slice completes vegetation.
