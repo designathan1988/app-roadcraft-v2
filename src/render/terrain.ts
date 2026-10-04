@@ -979,6 +979,26 @@ interface WaterVertex {
   weight: number;
 }
 
+type WaterKey = number | string;
+const WATER_KEY_STRIDE = 65_536;
+const WATER_KEY_OFFSET = 32_768;
+
+/** Exact numeric cell IDs on the playable map; a string preserves arbitrary out-of-map coordinates. */
+function waterKey(ix: number, iy: number): WaterKey {
+  return ix >= -WATER_KEY_OFFSET && ix < WATER_KEY_OFFSET && iy >= -WATER_KEY_OFFSET && iy < WATER_KEY_OFFSET
+    ? (ix + WATER_KEY_OFFSET) * WATER_KEY_STRIDE + iy + WATER_KEY_OFFSET
+    : `${ix}:${iy}`;
+}
+
+function waterCell(key: WaterKey): readonly [number, number] {
+  if (typeof key === 'number') {
+    const x = Math.floor(key / WATER_KEY_STRIDE);
+    return [x - WATER_KEY_OFFSET, key - x * WATER_KEY_STRIDE - WATER_KEY_OFFSET];
+  }
+  const [x, y] = key.split(':');
+  return [Number(x), Number(y)];
+}
+
 /** Most cells one body of water may spread over into a basin: about 400 m square. */
 const MAX_FLOOD_CELLS = 40_000;
 
@@ -997,15 +1017,15 @@ const MAX_FLOOD_CELLS = 40_000;
  * the extent the brush gave it.
  */
 function floodBasins(
-  vertices: Map<string, WaterVertex>,
+  vertices: Map<WaterKey, WaterVertex>,
   groundAt: (x: number, y: number) => number,
   flooded?: Map<string, number>,
 ): void {
-  const seen = new Set<string>();
+  const seen = new Set<WaterKey>();
   const seeds = [...vertices.values()];
   const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
   for (const seed of seeds) {
-    const seedKey = `${seed.ix}:${seed.iy}`;
+    const seedKey = waterKey(seed.ix, seed.iy);
     if (seen.has(seedKey)) continue;
     // The body of water this stamp vertex belongs to.
     const body: WaterVertex[] = [];
@@ -1015,14 +1035,14 @@ function floodBasins(
       const v = stack.pop() as WaterVertex;
       body.push(v);
       for (const [dx, dy] of NEIGHBOURS) {
-        const key = `${v.ix + dx}:${v.iy + dy}`;
+        const key = waterKey(v.ix + dx, v.iy + dy);
         const next = vertices.get(key);
         if (next && !seen.has(key)) { seen.add(key); stack.push(next); }
       }
     }
     // Its flood, breadth first from its whole edge, each new cell at the level
     // of the water that reached it.
-    const added: string[] = [];
+    const added: WaterKey[] = [];
     const queue = body.slice();
     let overflow = false;
     for (let head = 0; head < queue.length && !overflow; head++) {
@@ -1031,7 +1051,7 @@ function floodBasins(
       for (const [dx, dy] of NEIGHBOURS) {
         const ix = v.ix + dx;
         const iy = v.iy + dy;
-        const key = `${ix}:${iy}`;
+        const key = waterKey(ix, iy);
         if (vertices.has(key)) continue;
         if (groundAt(ix * WATER_CELL, iy * WATER_CELL) >= level - TERRAIN_WATER_HEIGHT) continue;
         const wet: WaterVertex = { ix, iy, weightedLevel: level, weight: 1 };
@@ -1043,7 +1063,10 @@ function floodBasins(
       }
     }
     if (overflow) for (const key of added) vertices.delete(key);
-    else if (flooded) for (const key of added) { const v = vertices.get(key) as WaterVertex; flooded.set(key, v.weightedLevel / v.weight); }
+    else if (flooded) for (const key of added) {
+      const v = vertices.get(key) as WaterVertex;
+      flooded.set(`${v.ix}:${v.iy}`, v.weightedLevel / v.weight);
+    }
   }
 }
 
@@ -1071,7 +1094,7 @@ export function unifiedWaterGeometry(
   const geometry = new BufferGeometry();
   if (stamps.length === 0) return geometry;
 
-  const vertices = new Map<string, WaterVertex>();
+  const vertices = new Map<WaterKey, WaterVertex>();
   for (const stamp of stamps) {
     const reach = stamp.radius * WATER_SPREAD;
     const minX = Math.floor((stamp.x - reach) / WATER_CELL);
@@ -1088,7 +1111,7 @@ export function unifiedWaterGeometry(
           distance < stamp.radius
             ? Math.max(0.001, terrainInfluence(1 - distance / stamp.radius))
             : 0.001;
-        const key = `${ix}:${iy}`;
+        const key = waterKey(ix, iy);
         const vertex = vertices.get(key);
         if (vertex) {
           vertex.weightedLevel += stamp.level * weight;
@@ -1103,27 +1126,25 @@ export function unifiedWaterGeometry(
   floodBasins(vertices, terrainHeightAt, flooded);
 
   const levelAt = (ix: number, iy: number): number | null => {
-    const vertex = vertices.get(`${ix}:${iy}`);
+    const vertex = vertices.get(waterKey(ix, iy));
     return vertex ? vertex.weightedLevel / vertex.weight : null;
   };
   const positions: number[] = [];
   const depths: number[] = [];
-  const cells = new Set<string>();
+  const cells = new Set<WaterKey>();
   // The contour builders consume these immediately; reuse them across cells
   // instead of allocating five points and three arrays for every quad.
   const points: WaterPoint[] = Array.from({ length: 4 }, () => ({ x: 0, y: 0, level: 0, depth: 0 }));
   const centre: WaterPoint = { x: 0, y: 0, level: 0, depth: 0 };
   for (const vertex of vertices.values()) {
-    cells.add(`${vertex.ix}:${vertex.iy}`);
-    cells.add(`${vertex.ix - 1}:${vertex.iy}`);
-    cells.add(`${vertex.ix}:${vertex.iy - 1}`);
-    cells.add(`${vertex.ix - 1}:${vertex.iy - 1}`);
+    cells.add(waterKey(vertex.ix, vertex.iy));
+    cells.add(waterKey(vertex.ix - 1, vertex.iy));
+    cells.add(waterKey(vertex.ix, vertex.iy - 1));
+    cells.add(waterKey(vertex.ix - 1, vertex.iy - 1));
   }
 
   for (const cell of cells) {
-    const [sx, sy] = cell.split(':');
-    const ix = Number(sx);
-    const iy = Number(sy);
+    const [ix, iy] = waterCell(cell);
     const l0 = levelAt(ix, iy), l1 = levelAt(ix + 1, iy);
     const l2 = levelAt(ix + 1, iy + 1), l3 = levelAt(ix, iy + 1);
     if (l0 === null || l1 === null || l2 === null || l3 === null) continue;
