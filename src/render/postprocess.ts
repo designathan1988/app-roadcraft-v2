@@ -1,4 +1,4 @@
-import { DepthTexture, HalfFloatType, Mesh, PlaneGeometry, Scene, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer } from 'three';
+import { BufferGeometry, DepthTexture, Float32BufferAttribute, HalfFloatType, Mesh, PlaneGeometry, Scene, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -125,6 +125,21 @@ export function createPostChain(
     const resize = pass.setSize.bind(pass);
     pass.setSize = (width: number, height: number) => resize(Math.max(1, Math.ceil(width / 2)), Math.max(1, Math.ceil(height / 2)));
     composer.addPass(gtao);
+    // GTAO's denoise shader is the slowest program to link on a cold start.
+    // Submit both fullscreen programs now, while the rest of the game boots,
+    // using the same depth input and target format as the first real pass.
+    gtao.setGBuffer(target.depthTexture!);
+    const quad = new BufferGeometry();
+    quad.setAttribute('position', new Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
+    quad.setAttribute('uv', new Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
+    const warm = new Scene();
+    warm.add(new Mesh(quad, gtao.gtaoMaterial), new Mesh(quad, gtao.pdMaterial));
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(gtao.gtaoRenderTarget);
+    void renderer.compileAsync(warm, camera).catch((error: unknown) => {
+      console.error('Ambient occlusion shader precompile failed', error);
+    }).finally(() => quad.dispose());
+    renderer.setRenderTarget(previous);
   }
 
   // Light that is brighter than white spills a little round itself: the sun
