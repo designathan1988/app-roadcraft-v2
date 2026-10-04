@@ -272,18 +272,40 @@ function paddedGarment(name: string, item: ProxyItem): Promise<Texture> {
       // Grow the islands a ring at a time: each new pixel the mean of its
       // neighbours already inside.
       let ring: number[] = [];
-      for (let p = 0; p < W * H; p++) if (inside[p]) ring.push(p);
+      for (let p = 0; p < W * H; p++) {
+        if (!inside[p]) continue;
+        const x = p % W, y = (p - x) / W;
+        if ((x > 0 && !inside[p - 1]) || (x < W - 1 && !inside[p + 1])
+          || (y > 0 && !inside[p - W]) || (y < H - 1 && !inside[p + W])) ring.push(p);
+      }
       for (let step = 0; step < GARMENT_PAD && ring.length; step++) {
         const next: number[] = [];
         for (const p of ring) {
           const x = p % W, y = (p - x) / W;
-          for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, y > 0 ? p - W : -1, y < H - 1 ? p + W : -1]) {
+          for (let side = 0; side < 4; side++) {
+            const q = side === 0 ? (x > 0 ? p - 1 : -1)
+              : side === 1 ? (x < W - 1 ? p + 1 : -1)
+                : side === 2 ? (y > 0 ? p - W : -1)
+                  : (y < H - 1 ? p + W : -1);
             if (q < 0 || inside[q]) continue;
             let r = 0, g = 0, bl = 0, n = 0;
-            const qx = q % W, qy = (q - qx) / W;
-            for (const o of [qx > 0 ? q - 1 : -1, qx < W - 1 ? q + 1 : -1, qy > 0 ? q - W : -1, qy < H - 1 ? q + W : -1]) {
-              if (o < 0 || !inside[o]) continue;
-              r += px[o * 4]!; g += px[o * 4 + 1]!; bl += px[o * 4 + 2]!; n++;
+            const qx = side === 0 ? x - 1 : side === 1 ? x + 1 : x;
+            const qy = side === 2 ? y - 1 : side === 3 ? y + 1 : y;
+            if (qx > 0 && inside[q - 1]) {
+              const o = (q - 1) * 4;
+              r += px[o]!; g += px[o + 1]!; bl += px[o + 2]!; n++;
+            }
+            if (qx < W - 1 && inside[q + 1]) {
+              const o = (q + 1) * 4;
+              r += px[o]!; g += px[o + 1]!; bl += px[o + 2]!; n++;
+            }
+            if (qy > 0 && inside[q - W]) {
+              const o = (q - W) * 4;
+              r += px[o]!; g += px[o + 1]!; bl += px[o + 2]!; n++;
+            }
+            if (qy < H - 1 && inside[q + W]) {
+              const o = (q + W) * 4;
+              r += px[o]!; g += px[o + 1]!; bl += px[o + 2]!; n++;
             }
             if (!n) continue;
             px[q * 4] = r / n; px[q * 4 + 1] = g / n; px[q * 4 + 2] = bl / n;
