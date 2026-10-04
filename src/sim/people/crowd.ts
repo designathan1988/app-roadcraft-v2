@@ -809,6 +809,12 @@ function follow(s: State, p: Walker, lead: Walker): void {
     if (!p.waitAt || hypot2(p.waitAt.x - place.x, p.waitAt.y - place.y) > RETARGET) waitThere(s, p, place);
     return;
   }
+  // A moving formation must not call its companion backwards to recover its
+  // exact slot. Let the leader catch up; Detour brakes the companion itself.
+  if (!lined && (p.x - place.x) * hx + (p.y - place.y) * hy > AGENT_RADIUS) {
+    if (p.asked) { p.agent.resetMoveTarget(); p.asked = null; }
+    return;
+  }
   if (p.mode === 'wait' && p.zebra) p.granted.set(p.zebra.id, false);
   stopWaiting(s, p);
   if (!p.asked || hypot2(p.asked.x - place.x, p.asked.y - place.y) > RETARGET) ask(s, p, place);
