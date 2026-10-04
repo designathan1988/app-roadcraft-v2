@@ -24,7 +24,7 @@ import { expressionShapes } from '@people/body/expressions';
 import { applySkinAppearance, loadSkinAppearance, releaseSkinAppearance, type SkinAppearance } from './people/skinAppearance';
 import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { wornItems } from '@people/spec';
-import { captureBind, captureBindRotations, loadRocketboxLibrary } from './citizenWalk';
+import { captureBind, captureBindRotations, loadRocketboxClips } from './citizenWalk';
 import { type Gradient, shearMatrix } from './groundShear';
 import { createGait, gaitHeading, gaitPlays, stepGait, type Gait, type GaitClips, type GaitPlay } from './citizenGait';
 import {
@@ -317,13 +317,14 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     };
     try {
     const model = CROWD[index];
+    const sex = model ? (model.gender === 'f' ? 'female' : 'male') : models[index]!.includes('female') ? 'female' : 'male';
     const [asset, library] = await Promise.all([
       model?.person ? personAsset(model, false, owned) : (async () => {
         const url = CITIZEN_ASSET_URLS[model?.sourceId ?? models[index]!];
         if (!url) throw new Error(`Missing citizen asset: ${models[index]}`);
         return new GLTFLoader().loadAsync(url);
       })(),
-      loadRocketboxLibrary(),
+      loadRocketboxClips(sex),
     ]);
       asset.scene.traverse(o => {
         if (!(o instanceof SkinnedMesh)) return;
@@ -336,7 +337,6 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         }
       });
     if (disposed) { releasePending(); return; }
-      const sex = model ? (model.gender === 'f' ? 'female' : 'male') : models[index]!.includes('female') ? 'female' : 'male';
       const bakeAt = performance.now();
       // The core clips on another core (`bakePool.ts`); here only if no worker can.
       const given = await bakeInWorker(asset.scene, sex);

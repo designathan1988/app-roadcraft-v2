@@ -3,7 +3,7 @@ import { type Group, Matrix4, type MeshStandardMaterial, SkinnedMesh, Vector3 } 
 import { type CitizenModel } from '@render/citizenCasting';
 import { bake, type ClipFrames, type Deferred } from '@render/citizenBake';
 import { bakeInWorker } from '@render/bakePool';
-import { loadRocketboxLibrary, type WalkSex } from '@render/citizenWalk';
+import { loadRocketboxClips, type WalkSex } from '@render/citizenWalk';
 import { loadCookedPerson } from '@render/people/cookedPerson';
 import { applySkinAppearance, loadSkinAppearance } from '@render/people/skinAppearance';
 
@@ -59,7 +59,7 @@ export async function loadBody(model: CitizenModel): Promise<Body> {
   mesh.receiveShadow = false;
   mesh.frustumCulled = false;
 
-  const library = await loadRocketboxLibrary();
+  const library = await loadRocketboxClips(sex);
   // The core clips on the other cores (as the game does), the rest on demand.
   const given = await bakeInWorker(scene, sex);
   const baked = await bake(scene, sex, library, given ?? undefined);

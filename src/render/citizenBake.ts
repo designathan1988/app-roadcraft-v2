@@ -10,7 +10,7 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { RIDER_CLIPS, helmetShape, type RiderClip, type RiderClipKey } from './riderPoses';
 import {
   WALK_ADVANCE, clipTransferFor, neutralWalkFor, strideShare, walkDuration, walkSource,
-  type LibraryClip, type LibraryClipName, type RocketboxLibrary, type WalkAmplitude, type WalkSex,
+  type LibraryClip, type LibraryClipName, type RocketboxClips, type WalkAmplitude, type WalkSex,
 } from './citizenWalk';
 import { ELDER_AMPLITUDE, SHUFFLE_AMPLITUDE, REST_AMPLITUDE, bakeFps, gaitClipOf, type GaitClipName, type GaitClips } from './citizenGait';
 import { directionalWalkFor } from './citizenStride';
@@ -423,7 +423,7 @@ export const RIDER_BASE: Readonly<Partial<Record<RiderClipKey, RiderClipKey>>> =
 
 export type Deferred = Map<number, { readonly make: () => Promise<ClipFrames>; readonly standIn: number }>;
 
-export async function bake(scene: Object3D, sex: WalkSex, library: RocketboxLibrary,
+export async function bake(scene: Object3D, sex: WalkSex, library: RocketboxClips,
   given?: readonly (ClipFrames | undefined)[]): Promise<{ clips: ClipFrames[]; helmet: Matrix4 | null; deferred: Deferred }> {
   const body = restRig(scene);
   // A helmet is fitted to this head, at rest, once.
@@ -433,22 +433,22 @@ export async function bake(scene: Object3D, sex: WalkSex, library: RocketboxLibr
   // in proportion to how far the feet then reach fore and aft (`strideShare`).
   clips[WALK] = given?.[WALK] ?? await bakeWalk(body, sex);
   clips[WALK_ELDER] = given?.[WALK_ELDER] ?? await bakeWalk(body, sex, ELDER_AMPLITUDE);
-  clips[WALK_SHUFFLE] = given?.[WALK_SHUFFLE] ?? await bakeLibraryClip(body, library[sex].walkSlow, SHUFFLE_AMPLITUDE);
+  clips[WALK_SHUFFLE] = given?.[WALK_SHUFFLE] ?? await bakeLibraryClip(body, library.walkSlow, SHUFFLE_AMPLITUDE);
   const deferred: Deferred = new Map();
   for (const name of LIBRARY) {
-    if (CORE_LIBRARY.has(name)) clips[LIBRARY_AT[name]] = given?.[LIBRARY_AT[name]] ?? await bakeLibraryClip(body, library[sex][name], undefined, name);
+    if (CORE_LIBRARY.has(name)) clips[LIBRARY_AT[name]] = given?.[LIBRARY_AT[name]] ?? await bakeLibraryClip(body, library[name], undefined, name);
     else deferred.set(LIBRARY_AT[name], {
-      make: () => bakeLibraryClip(body, library[sex][name], undefined, name),
+      make: () => bakeLibraryClip(body, library[name], undefined, name),
       standIn: name === 'walkDrunk' ? WALK : LIBRARY_AT.idle,
     });
   }
   body.reset();
-  const rest = clipTransferFor(body.rig, body.mesh, library[sex].walkSlow, REST_AMPLITUDE);
+  const rest = clipTransferFor(body.rig, body.mesh, library.walkSlow, REST_AMPLITUDE);
   clips[DIRECTIONAL_AT.walkRest] = given?.[DIRECTIONAL_AT.walkRest] ??
     { ...await bakeFrames(body, () => rest.pose(0), 1, true, 1), frames: 1, duration: 1, loop: true, stride: 0 };
   const directional = async (angle: number, carry: boolean): Promise<ClipFrames> => {
     body.reset();
-    const warped = directionalWalkFor(body.rig, body.mesh, library[sex].walkSlow, SHUFFLE_AMPLITUDE, angle);
+    const warped = directionalWalkFor(body.rig, body.mesh, library.walkSlow, SHUFFLE_AMPLITUDE, angle);
     const facts = clips[WALK_SHUFFLE]!;
     const frames = await bakeFrames(body, time => { warped.pose(time); if (carry) carryBox(body.rig); }, facts.duration, true, FPS, carry);
     return { ...frames, duration: facts.duration, loop: true, stride: facts.stride * warped.strideScale };
@@ -467,9 +467,9 @@ export async function bake(scene: Object3D, sex: WalkSex, library: RocketboxLibr
     deferred.set(CARRY_AT[name]!, { make, standIn: GAIT_AT[name] });
   };
   carried('walk', () => bakeWalk(body, sex, undefined, undefined, true));
-  carried('walkShuffle', () => bakeLibraryClip(body, library[sex].walkSlow, SHUFFLE_AMPLITUDE, undefined, true));
+  carried('walkShuffle', () => bakeLibraryClip(body, library.walkSlow, SHUFFLE_AMPLITUDE, undefined, true));
   for (const name of ['idle', 'turnLeft', 'turnRight'] as const) {
-    carried(name, () => bakeLibraryClip(body, library[sex][name], undefined, name, true));
+    carried(name, () => bakeLibraryClip(body, library[name], undefined, name, true));
   }
   // Stepping aside or back with the box, too: it never leaves the hands.
   for (const [name, angle] of SIDEWAYS) carried(name, () => directional(angle, true));

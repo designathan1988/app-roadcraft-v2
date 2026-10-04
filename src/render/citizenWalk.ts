@@ -367,6 +367,7 @@ export interface LibraryClip {
   readonly source: Source;
 }
 export type RocketboxLibrary = Readonly<Record<WalkSex, Readonly<Record<LibraryClipName, LibraryClip>>>>;
+export type RocketboxClips = RocketboxLibrary[WalkSex];
 
 interface LibraryFile {
   readonly bones: readonly string[];
@@ -416,21 +417,28 @@ function decode(file: LibraryFile, walk: WalkFile): Record<LibraryClipName, Libr
   return out;
 }
 
+const libraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
 let library: Promise<RocketboxLibrary> | null = null;
 
 /**
  * The Microsoft Rocketbox clips the citizens play besides the walk: starting
  * and stopping, running, turning on the spot, standing, looking round, a
  * phone, talking and listening, sitting down, sitting and standing up, for
- * each sex, from `scripts/extract-rocketbox-clips.mjs`. About two megabytes a
- * sex, so they are fetched once, when the first citizen is prepared, rather
- * than carried in the bundle.
+ * each sex, from `scripts/extract-rocketbox-clips.mjs`. Each library is fetched
+ * once, when a citizen of that sex is prepared, rather than carried in the
+ * bundle or loaded for a body that cannot use it.
  */
-export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
-  library ??= Promise.all([maleLibraryUrl, femaleLibraryUrl].map(async (url) => {
+export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
+  return libraries[sex] ??= (async () => {
+    const url = sex === 'male' ? maleLibraryUrl : femaleLibraryUrl;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Rocketbox motion library ${url}: ${response.status}`);
-    return response.json() as Promise<LibraryFile>;
-  })).then(([male, female]) => decodeRocketboxLibrary(male, female));
+    return decode(await response.json() as LibraryFile, WALKS[sex]);
+  })();
+}
+
+export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
+  library ??= Promise.all([loadRocketboxClips('male'), loadRocketboxClips('female')])
+    .then(([male, female]) => ({ male, female }));
   return library;
 }

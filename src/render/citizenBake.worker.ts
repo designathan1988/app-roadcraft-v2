@@ -5,7 +5,7 @@
  * transferred, matrices as their elements.
  */
 import { type ClipFrames, type RigNode, bake, rigFromData, setSliceMs } from './citizenBake';
-import { loadRocketboxLibrary, type WalkSex } from './citizenWalk';
+import { loadRocketboxClips, type WalkSex } from './citizenWalk';
 
 /** Nothing to yield to here: a bake runs to its end. */
 setSliceMs(Infinity);
@@ -22,7 +22,7 @@ const scope = globalThis as unknown as {
 scope.onmessage = async (e) => {
   const { id, nodes, sex } = e.data;
   try {
-    const library = await loadRocketboxLibrary();
+    const library = await loadRocketboxClips(sex);
     const { clips, deferred } = await bake(rigFromData(nodes), sex, library);
     const transfer = new Set<ArrayBuffer>();
     const out = clips.map((clip, at): BakedClip | null => {
