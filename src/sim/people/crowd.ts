@@ -798,9 +798,47 @@ function laneTarget(s: State, p: Walker, path: readonly { x: number; y: number; 
     const aside = { x: at.x + uy * RIGHT, y: at.y - ux * RIGHT, h: at.h };
     const on = onMesh(s, aside, RIGHT);
     // Kept on the ground; where the right is wall, the way itself.
-    return on ?? at;
+    const lane = on ?? at;
+    return pastStanding(s, p, lane) ?? lane;
   }
   return p.goal;
+}
+
+/** A reachable waypoint around a standing body whose footprint covers this lane. */
+function pastStanding(s: State, p: Walker, lane: Vec2): GroundPoint | null {
+  const dx = lane.x - p.x, dy = lane.y - p.y;
+  const length = hypot2(dx, dy);
+  if (length < 2 * AGENT_RADIUS) return null;
+  const ux = dx / length, uy = dy / length;
+  const rx = uy, ry = -ux;
+  let nearest: Walker | null = null;
+  let nearestAlong = Infinity;
+  for (const q of s.walkers) {
+    if (q === p || !q.holding || q.mode === 'wait' || q.party.id === p.party.id || Math.abs(q.h - p.h) >= AGENT_HEIGHT) continue;
+    const vx = q.x - p.x, vy = q.y - p.y;
+    const along = vx * ux + vy * uy;
+    if (along <= 0 || along >= Math.min(length, m(3)) || along >= nearestAlong) continue;
+    if (Math.abs(vx * rx + vy * ry) >= 2 * AGENT_RADIUS + m(0.05)) continue;
+    nearest = q;
+    nearestAlong = along;
+  }
+  if (!nearest) return null;
+  const filter = s.crowd!.getFilter(p.onZebras ? 0 : 1);
+  const extents = { x: m(0.1), y: m(1), z: m(0.1) };
+  const nav = s.nav!.query;
+  const from = nav.findClosestPoint({ x: p.x, y: p.h, z: p.y }, { filter, halfExtents: extents });
+  if (!from.success || !from.polyRef) return null;
+  const side = (lane.x - nearest.x) * rx + (lane.y - nearest.y) * ry >= 0 ? 1 : -1;
+  for (const sign of [side, -side]) {
+    const x = nearest.x + ux * AGENT_RADIUS + rx * sign * (2 * AGENT_RADIUS + m(0.1));
+    const y = nearest.y + uy * AGENT_RADIUS + ry * sign * (2 * AGENT_RADIUS + m(0.1));
+    const h = s.nav!.elevation.at(x, y);
+    const hit = nav.findClosestPoint({ x, y: h, z: y }, { filter, halfExtents: extents });
+    if (!hit.success || !hit.polyRef || hypot2(hit.point.x - x, hit.point.z - y) > m(0.05)) continue;
+    const route = nav.raycast(from.polyRef, from.point, hit.point, { filter });
+    if (route.success && route.t >= 1) return { x: hit.point.x, y: hit.point.z, h: hit.point.y };
+  }
+  return null;
 }
 
 /** Points along a route every `step` u up to `reach` u, with the distance walked to each and the direction there. */
