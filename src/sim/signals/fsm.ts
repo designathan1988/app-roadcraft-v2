@@ -204,21 +204,24 @@ export function stepController(c: SignalController, deps: SignalDeps): void {
       // guaranteed minimum, and keep the needed green alive to its target. The
       // soft future claim itself owns no connector and blocks no admission.
       //
-      // Otherwise the green stays alive only while somebody can USE it: a head
-      // at the line or arriving within the passage time, with room to leave.
-      // That is the gap-out that ends a green the moment its queue has gone,
-      // instead of running every stage to its target whatever the traffic.
+      // With a conflicting call, the green stays alive while somebody can
+      // USE it: a head at the line or arriving within the passage time, with
+      // room to leave. An empty junction rests in its current green.
       const currentDemand = reservedHere || (deps.demand
         ? deps.demand(c.node, st.greenGroups, st.demandMovements).active > 0
         : deps.demandOn(c.node, st.greenGroups));
-      const gapOut = mayEnd && !currentDemand;
+      // An actuated junction rests in green when nobody else asks for the
+      // right of way. A gap or maximum is relevant only after a conflicting
+      // call; otherwise cycling through empty stages stops an arriving car.
+      const gapOut = mayEnd && !currentDemand && competingDemand;
       const yieldAtTarget = mayEnd && competingDemand && c.elapsed >= st.targetGreen;
       if (gapOut || (mayEnd && reservedElsewhere) || yieldAtTarget) {
         for (const g of st.greenGroups) c.lastServed.set(g, deps.tick());
         c.stageServed.set(c.stageIndex, deps.tick());
         c.sub = 'AMBER';
         c.elapsed = 0;
-      } else if (c.elapsed >= st.maxGreen && !pedestriansInside) {
+      } else if (c.elapsed >= st.maxGreen && !pedestriansInside &&
+        (competingDemand || (c.elapsed >= st.maxGreen + PED_HOLD_LIMIT && deps.pedestriansCrossing(c.node, st.pedWalk)))) {
         c.stageServed.set(c.stageIndex, deps.tick());
         // Never cut a green over people still on its crossings. The next stage
         // gives protected green to movements that drive over those crossings,
@@ -281,10 +284,9 @@ export function pickNextStage(c: SignalController, deps: SignalDeps): number {
       : stageAge(c, stage.greenGroups, now);
     const age = waited * (1 + stageScore(c, stage, deps) / DEMAND_PRIORITY);
 
-    // A stage with no live demand may be bypassed, but never indefinitely.
-    // This preserves signal-plan coverage and gives a newly busy approach a
-    // bounded wait even if the detector missed its first frame.
-    if (stage.greenGroups.length && waited >= deadline && (!stage.demandMovements || hasDemand) &&
+    // An overdue stage wins among live calls; spending an entire green on an
+    // empty stage would delay the approach that actually requested service.
+    if (stage.greenGroups.length && waited >= deadline && hasDemand &&
       betterCandidate(index, age, overdue, overdueAge, sequential, stages.length)) {
       overdue = index;
       overdueAge = age;

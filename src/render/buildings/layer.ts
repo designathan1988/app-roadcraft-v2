@@ -9,7 +9,7 @@ import type { Building, BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
 import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, buildBuildingMeshes, emitChunk } from './buildingMesh';
-import { type BuildingKit, type PartKind, createBuildingKit } from './kit';
+import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
 /**
  * The buildings layer: the stored buildings and the editor's preview, each
@@ -47,11 +47,10 @@ export interface BuildingLayer {
   setCutaway(spec: CutawaySpec | null): void;
   /** Windows lit from inside at night (see `BuildingKit.setNight`). */
   setNight(dark: number): void;
-  /**
-   * From afar (true) the frames and railings are drawn by their street faces
-   * only and cast no shadow: their depth and their shadow are under a pixel.
-   */
+  /** From afar (true) the frames and railings are drawn by their street faces only. */
   setFar(far: boolean): void;
+  /** Thin facade parts stop casting shadows when their shadow width is subpixel. */
+  setShadowFar(far: boolean): void;
   /**
    * "Ocultar outros": undefined draws every building solid, null fades them
    * all, and an id fades every building but that one.
@@ -81,9 +80,13 @@ export function createBuildingLayer(): BuildingLayer {
   const kit: BuildingKit = createBuildingKit();
   const group = new Group();
   group.name = 'buildings-layer';
+  group.matrixAutoUpdate = false;
+  group.updateMatrix();
   let stored: BuildingMeshes | null = null;
   /** Each cell's batch as last assembled, and from which buildings' meshes (`assembleByCell`). */
   const cells: CellCache = new Map();
+  const detailCells: CellCache = new Map();
+  let details: BuildingMeshes | null = null;
   let faded: BuildingMeshes | null = null;
   let dimmed: BuildingId | null | undefined = undefined;
   let ghost: BuildingMeshes | null = null;
@@ -93,9 +96,10 @@ export function createBuildingLayer(): BuildingLayer {
   let cutaway: CutawaySpec | null = null;
   let version = 0;
   let far = false;
-  /** Puts the near or far parts on every stored batch (`setFar`). */
-  const applyFar = (): void => {
-    for (const batch of [stored, faded]) {
+  let shadowFar = false;
+  /** Applies geometry and shadow detail to every stored facade batch. */
+  const applyFacadeDetail = (): void => {
+    for (const batch of [stored, details, faded]) {
       batch?.group.traverse((o) => {
         const mesh = o as InstancedMesh;
         if (!mesh.isInstancedMesh) return;
@@ -103,16 +107,26 @@ export function createBuildingLayer(): BuildingLayer {
         const lighter = kind ? kit.far[kind] : undefined;
         if (!kind || !lighter) return;
         mesh.geometry = far ? lighter : kit.geometry[kind];
-        mesh.castShadow = !far && kit.castsShadow.has(kind);
+        mesh.castShadow = !shadowFar && kit.castsShadow.has(kind);
       });
     }
   };
   /** The buildings drawn cut open, by id and floor: only those near the camera, kept while they stay. */
   const cutChunks = new Map<string, { key: string; chunk: BuildingChunk }>();
-  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk => {
+  /** An edit to one building must not resample the ground under every other building. */
+  const groundDigests = new Map<BuildingId, { record: string; groundKey: string; digest: string }>();
+  const digestFor = (b: Building, record: string, groundKey: string, groundAt: GroundAt, pavedAt?: PavedAt): string => {
+    const known = groundDigests.get(b.id);
+    if (known && known.record === record && known.groundKey === groundKey) return known.digest;
+    const digest = groundDigest(b, groundAt, pavedAt);
+    groundDigests.set(b.id, { record, groundKey, digest });
+    return digest;
+  };
+  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
     const dir = cutaway ? Math.round(Math.atan2(cutaway.view.y, cutaway.view.x) / (Math.PI / 4)) : 0;
     const id = `${b.id}|${level}|${dir}`;
-    const key = `${JSON.stringify(b)}|${groundDigest(b, groundAt, pavedAt)}`;
+    const record = JSON.stringify(b);
+    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
     const known = cutChunks.get(id);
     if (known && known.key === key) return known.chunk;
     // The view snapped to eighths of a turn: the walls that come down change
@@ -130,16 +144,17 @@ export function createBuildingLayer(): BuildingLayer {
     const dy = Math.max(box.minY - cutaway.y, 0, cutaway.y - box.maxY);
     return Math.hypot(dx, dy) <= cutaway.radius;
   };
-  const drawn = (b: Building, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk =>
-    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, pavedAt) : chunkFor(b, groundAt, pavedAt);
+  const drawn = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk =>
+    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, groundKey, pavedAt) : chunkFor(b, groundAt, groundKey, pavedAt);
   /**
    * Each building's emitted meshes, keyed by its record and by the ground
    * around it: an edit re-emits one building, a terrain dab only the ones
    * whose ground it moved; everything else is concatenated from here.
    */
   const chunks = new Map<BuildingId, { key: string; chunk: BuildingChunk }>();
-  const chunkFor = (b: Building, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk => {
-    const key = `${JSON.stringify(b)}|${groundDigest(b, groundAt, pavedAt)}`;
+  const chunkFor = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
+    const record = JSON.stringify(b);
+    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
     const known = chunks.get(b.id);
     if (known && known.key === key) return known.chunk;
     const chunk = emitChunk(b, groundAt, pavedAt);
@@ -176,7 +191,7 @@ export function createBuildingLayer(): BuildingLayer {
   return {
     group,
     get triangles() {
-      return (stored?.triangles ?? 0) + (ghost?.triangles ?? 0);
+      return (stored?.triangles ?? 0) + (details?.triangles ?? 0) + (ghost?.triangles ?? 0);
     },
     get version() {
       return version;
@@ -191,27 +206,31 @@ export function createBuildingLayer(): BuildingLayer {
       let rebuilt = false;
       if (key !== storedKey) {
         storedKey = key;
-        for (const batch of [stored, faded]) {
+        for (const batch of [stored, details, faded]) {
           if (!batch) continue;
           group.remove(batch.group);
           batch.dispose();
         }
         const shown = [...doc.buildings.all()].filter((b) => b.id !== hides);
-        for (const id of chunks.keys()) if (!doc.buildings.has(id)) chunks.delete(id);
+        for (const id of chunks.keys()) if (!doc.buildings.has(id)) {
+          chunks.delete(id);
+          groundDigests.delete(id);
+        }
         const solid = dimmed === undefined ? shown : shown.filter((b) => b.id === dimmed);
         const others = dimmed === undefined ? [] : shown.filter((b) => b.id !== dimmed);
         if (cutChunks.size > 64) cutChunks.clear();
-        stored = assembleByCell(solid, (b) => drawn(b, groundAt, pavedAt), kit, cells);
-        group.add(stored.group);
+        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, cells, BATCH_CELL, COARSE_PARTS);
+        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS);
+        group.add(stored.group, details.group);
         faded = others.length > 0
-          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, pavedAt)), kit, false, true)
+          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt)), kit, false, true)
           : null;
         if (faded) {
           faded.group.renderOrder = 1;
           group.add(faded.group);
         }
         index(doc.buildings.all());
-        applyFar();
+        applyFacadeDetail();
         version++;
         rebuilt = true;
       }
@@ -244,7 +263,12 @@ export function createBuildingLayer(): BuildingLayer {
     setFar(next) {
       if (next === far) return;
       far = next;
-      applyFar();
+      applyFacadeDetail();
+    },
+    setShadowFar(next) {
+      if (next === shadowFar) return;
+      shadowFar = next;
+      applyFacadeDetail();
     },
     setCutaway(next) {
       cutaway = next;
@@ -258,8 +282,13 @@ export function createBuildingLayer(): BuildingLayer {
     },
     dispose() {
       stored?.dispose();
+      details?.dispose();
+      faded?.dispose();
       for (const cell of cells.values()) cell.part.dispose();
       cells.clear();
+      for (const cell of detailCells.values()) cell.part.dispose();
+      detailCells.clear();
+      groundDigests.clear();
       ghost?.dispose();
       kit.dispose();
       group.clear();
@@ -286,6 +315,9 @@ function groundDigest(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): strin
 }
 /** Side of the cells the buildings are batched in, world units. */
 const BATCH_CELL = m(240);
+const DETAIL_CELL = m(120);
+const DETAIL_PARTS: ReadonlySet<PartKind> = new Set(['frame', 'railing', 'roofRailing']);
+const COARSE_PARTS: ReadonlySet<PartKind> = new Set(PART_KINDS.filter((kind) => !DETAIL_PARTS.has(kind)));
 
 /**
  * The buildings batched cell by cell, each cell its own meshes: a cell out of
@@ -304,16 +336,19 @@ type CellCache = Map<string, { chunks: readonly BuildingChunk[]; part: BuildingM
  * storey added to one building - as voxel and tile engines rebuild only the
  * chunks an edit made dirty.
  */
-function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk, kit: BuildingKit, cache: CellCache): BuildingMeshes {
+function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk,
+  kit: BuildingKit, cache: CellCache, cellSize: number, partKinds: ReadonlySet<PartKind>): BuildingMeshes {
   const byCell = new Map<string, BuildingChunk[]>();
   for (const b of buildings) {
-    const key = `${Math.floor(b.x / BATCH_CELL)},${Math.floor(b.y / BATCH_CELL)}`;
+    const key = `${Math.floor(b.x / cellSize)},${Math.floor(b.y / cellSize)}`;
     const list = byCell.get(key);
     if (list) list.push(chunkOf(b));
     else byCell.set(key, [chunkOf(b)]);
   }
   const group = new Group();
   group.name = 'buildings';
+  group.matrixAutoUpdate = false;
+  group.updateMatrix();
   const parts: BuildingMeshes[] = [];
   for (const [key, chunks] of byCell) {
     const known = cache.get(key);
@@ -322,7 +357,8 @@ function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) =
       part = known.part;
     } else {
       known?.part.dispose();
-      part = assembleBuildingMeshes(chunks, kit);
+      part = assembleBuildingMeshes(chunks, kit, false, false,
+        { parts: partKinds, shells: partKinds === COARSE_PARTS, furniture: partKinds === COARSE_PARTS });
       cache.set(key, { chunks, part });
     }
     parts.push(part);

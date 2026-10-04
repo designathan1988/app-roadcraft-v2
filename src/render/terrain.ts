@@ -246,8 +246,8 @@ function terrainBakes(anisotropy: number): {
  *    rock, which is what actually gives a hill a silhouette: the colour change
  *    follows the geometry, so a slope is legible even when the sun is behind it.
  *  - **Two scales of the same texture.** Each map is sampled at its own size and
- *    again eight times larger, and the two are mixed. The large sample breaks
- *    the repeat that the eye otherwise locks on to from far away.
+ *    again about seven times larger, and the two are mixed. Their scales do
+ *    not align on every eighth tile across the terrain plate.
  *  - **Macro variation.** A slow noise tints wide regions warm or cool, so the
  *    ground has weather in it rather than one flat green.
  */
@@ -331,11 +331,23 @@ function terrainMaterial(
          // magnified macro maps.
          float terrainDetailW = 0.0;
 
-         // Detail plus a sample eight times wider, so the tile never repeats
-         // visibly at the distances this camera works at.
+         // Rotate the wide octave, as well as using an incommensurate scale:
+         // otherwise the most visible clumps line up with their own repeats.
+         vec2 terrainWideUv(vec2 uv) {
+           return vec2(uv.x * 0.9396926 - uv.y * 0.3420201,
+                       uv.x * 0.3420201 + uv.y * 0.9396926) * 0.137;
+         }
          vec4 dualScale(sampler2D tex, vec2 uv) {
            vec4 near = texture2D(tex, uv, terrainDetailW * 2.2);
-           vec4 far = texture2D(tex, uv * 0.125);
+           vec4 far = texture2D(tex, terrainWideUv(uv));
+           return mix(near, far, 0.42);
+         }
+         vec3 dualScaleNormal(sampler2D tex, vec2 uv) {
+           vec3 near = texture2D(tex, uv, terrainDetailW * 2.2).xyz * 2.0 - 1.0;
+           vec3 far = texture2D(tex, terrainWideUv(uv)).xyz * 2.0 - 1.0;
+           // Bring the wide octave's tangent slope back into the ground frame.
+           far.xy = vec2(far.x * 0.9396926 + far.y * 0.3420201,
+                        -far.x * 0.3420201 + far.y * 0.9396926);
            return mix(near, far, 0.42);
          }
 
@@ -420,8 +432,8 @@ function terrainMaterial(
       )
       .replace(
         '#include <normal_fragment_maps>',
-        `vec3 grassN = dualScale(normalMap, vTerrainWorld.xz * uGrassScale).xyz * 2.0 - 1.0;
-         vec3 rockN = dualScale(uRockNormal, tRock).xyz * 2.0 - 1.0;
+        `vec3 grassN = dualScaleNormal(normalMap, vTerrainWorld.xz * uGrassScale);
+         vec3 rockN = dualScaleNormal(uRockNormal, tRock);
          // The rock's bumps belong to the WALL's frame, not the ground's: read
          // through the same projection its colour came from, then brought back
          // into the geometry's tangent frame so the two can be mixed.
@@ -441,7 +453,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v2';
+  material.customProgramCacheKey = () => 'terrain-splat-v3';
   return material;
 }
 
@@ -967,6 +979,26 @@ interface WaterVertex {
   weight: number;
 }
 
+type WaterKey = number | string;
+const WATER_KEY_STRIDE = 65_536;
+const WATER_KEY_OFFSET = 32_768;
+
+/** Exact numeric cell IDs on the playable map; a string preserves arbitrary out-of-map coordinates. */
+function waterKey(ix: number, iy: number): WaterKey {
+  return ix >= -WATER_KEY_OFFSET && ix < WATER_KEY_OFFSET && iy >= -WATER_KEY_OFFSET && iy < WATER_KEY_OFFSET
+    ? (ix + WATER_KEY_OFFSET) * WATER_KEY_STRIDE + iy + WATER_KEY_OFFSET
+    : `${ix}:${iy}`;
+}
+
+function waterCell(key: WaterKey): readonly [number, number] {
+  if (typeof key === 'number') {
+    const x = Math.floor(key / WATER_KEY_STRIDE);
+    return [x - WATER_KEY_OFFSET, key - x * WATER_KEY_STRIDE - WATER_KEY_OFFSET];
+  }
+  const [x, y] = key.split(':');
+  return [Number(x), Number(y)];
+}
+
 /** Most cells one body of water may spread over into a basin: about 400 m square. */
 const MAX_FLOOD_CELLS = 40_000;
 
@@ -985,15 +1017,15 @@ const MAX_FLOOD_CELLS = 40_000;
  * the extent the brush gave it.
  */
 function floodBasins(
-  vertices: Map<string, WaterVertex>,
+  vertices: Map<WaterKey, WaterVertex>,
   groundAt: (x: number, y: number) => number,
   flooded?: Map<string, number>,
 ): void {
-  const seen = new Set<string>();
+  const seen = new Set<WaterKey>();
   const seeds = [...vertices.values()];
   const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
   for (const seed of seeds) {
-    const seedKey = `${seed.ix}:${seed.iy}`;
+    const seedKey = waterKey(seed.ix, seed.iy);
     if (seen.has(seedKey)) continue;
     // The body of water this stamp vertex belongs to.
     const body: WaterVertex[] = [];
@@ -1003,14 +1035,14 @@ function floodBasins(
       const v = stack.pop() as WaterVertex;
       body.push(v);
       for (const [dx, dy] of NEIGHBOURS) {
-        const key = `${v.ix + dx}:${v.iy + dy}`;
+        const key = waterKey(v.ix + dx, v.iy + dy);
         const next = vertices.get(key);
         if (next && !seen.has(key)) { seen.add(key); stack.push(next); }
       }
     }
     // Its flood, breadth first from its whole edge, each new cell at the level
     // of the water that reached it.
-    const added: string[] = [];
+    const added: WaterKey[] = [];
     const queue = body.slice();
     let overflow = false;
     for (let head = 0; head < queue.length && !overflow; head++) {
@@ -1019,7 +1051,7 @@ function floodBasins(
       for (const [dx, dy] of NEIGHBOURS) {
         const ix = v.ix + dx;
         const iy = v.iy + dy;
-        const key = `${ix}:${iy}`;
+        const key = waterKey(ix, iy);
         if (vertices.has(key)) continue;
         if (groundAt(ix * WATER_CELL, iy * WATER_CELL) >= level - TERRAIN_WATER_HEIGHT) continue;
         const wet: WaterVertex = { ix, iy, weightedLevel: level, weight: 1 };
@@ -1031,7 +1063,10 @@ function floodBasins(
       }
     }
     if (overflow) for (const key of added) vertices.delete(key);
-    else if (flooded) for (const key of added) { const v = vertices.get(key) as WaterVertex; flooded.set(key, v.weightedLevel / v.weight); }
+    else if (flooded) for (const key of added) {
+      const v = vertices.get(key) as WaterVertex;
+      flooded.set(`${v.ix}:${v.iy}`, v.weightedLevel / v.weight);
+    }
   }
 }
 
@@ -1059,7 +1094,7 @@ export function unifiedWaterGeometry(
   const geometry = new BufferGeometry();
   if (stamps.length === 0) return geometry;
 
-  const vertices = new Map<string, WaterVertex>();
+  const vertices = new Map<WaterKey, WaterVertex>();
   for (const stamp of stamps) {
     const reach = stamp.radius * WATER_SPREAD;
     const minX = Math.floor((stamp.x - reach) / WATER_CELL);
@@ -1076,7 +1111,7 @@ export function unifiedWaterGeometry(
           distance < stamp.radius
             ? Math.max(0.001, terrainInfluence(1 - distance / stamp.radius))
             : 0.001;
-        const key = `${ix}:${iy}`;
+        const key = waterKey(ix, iy);
         const vertex = vertices.get(key);
         if (vertex) {
           vertex.weightedLevel += stamp.level * weight;
@@ -1091,57 +1126,56 @@ export function unifiedWaterGeometry(
   floodBasins(vertices, terrainHeightAt, flooded);
 
   const levelAt = (ix: number, iy: number): number | null => {
-    const vertex = vertices.get(`${ix}:${iy}`);
+    const vertex = vertices.get(waterKey(ix, iy));
     return vertex ? vertex.weightedLevel / vertex.weight : null;
   };
   const positions: number[] = [];
   const depths: number[] = [];
-  const cells = new Set<string>();
+  const cells = new Set<WaterKey>();
+  // The contour builders consume these immediately; reuse them across cells
+  // instead of allocating five points and three arrays for every quad.
+  const points: WaterPoint[] = Array.from({ length: 4 }, () => ({ x: 0, y: 0, level: 0, depth: 0 }));
+  const centre: WaterPoint = { x: 0, y: 0, level: 0, depth: 0 };
   for (const vertex of vertices.values()) {
-    cells.add(`${vertex.ix}:${vertex.iy}`);
-    cells.add(`${vertex.ix - 1}:${vertex.iy}`);
-    cells.add(`${vertex.ix}:${vertex.iy - 1}`);
-    cells.add(`${vertex.ix - 1}:${vertex.iy - 1}`);
+    cells.add(waterKey(vertex.ix, vertex.iy));
+    cells.add(waterKey(vertex.ix - 1, vertex.iy));
+    cells.add(waterKey(vertex.ix, vertex.iy - 1));
+    cells.add(waterKey(vertex.ix - 1, vertex.iy - 1));
   }
 
   for (const cell of cells) {
-    const [sx, sy] = cell.split(':');
-    const ix = Number(sx);
-    const iy = Number(sy);
-    const corners = [
-      [ix, iy],
-      [ix + 1, iy],
-      [ix + 1, iy + 1],
-      [ix, iy + 1],
-    ] as const;
-    const levels = corners.map(([x, y]) => levelAt(x, y));
-    if (levels.some((level) => level === null)) continue;
-    const points = corners.map(([x, y], i) => {
-      const wx = x * WATER_CELL;
-      const wy = y * WATER_CELL;
-      const level = levels[i] as number;
-      return { x: wx, y: wy, level, depth: level - terrainHeightAt(wx, wy) };
-    });
-    // Drop boundary cells whose surface is not held inside the carved ground.
-    // Their absence is hidden by the bank instead of showing a rim in open air.
-    // Stated as a depth now, but it is the same test: a cell survives only where
-    // the water stands clear of the land at all four corners and at its centre,
-    // which is what guarantees no part of the sheet is left hanging in open air.
-    const centreLevel = points.reduce((sum, point) => sum + point.level, 0) / points.length;
-    const centreX = (ix + 0.5) * WATER_CELL;
-    const centreY = (iy + 0.5) * WATER_CELL;
-    if (
-      points.some((point) => point.depth <= TERRAIN_WATER_HEIGHT) ||
-      centreLevel - terrainHeightAt(centreX, centreY) <= TERRAIN_WATER_HEIGHT
-    ) {
-      continue;
-    }
+    const [ix, iy] = waterCell(cell);
+    const l0 = levelAt(ix, iy), l1 = levelAt(ix + 1, iy);
+    const l2 = levelAt(ix + 1, iy + 1), l3 = levelAt(ix, iy + 1);
+    if (l0 === null || l1 === null || l2 === null || l3 === null) continue;
+    const wx = ix * WATER_CELL, wy = iy * WATER_CELL;
+    const p0 = points[0]!, p1 = points[1]!, p2 = points[2]!, p3 = points[3]!;
+    p0.x = wx; p0.y = wy; p0.level = l0; p0.depth = l0 - terrainHeightAt(wx, wy);
+    p1.x = wx + WATER_CELL; p1.y = wy; p1.level = l1; p1.depth = l1 - terrainHeightAt(p1.x, p1.y);
+    p2.x = wx + WATER_CELL; p2.y = wy + WATER_CELL; p2.level = l2; p2.depth = l2 - terrainHeightAt(p2.x, p2.y);
+    p3.x = wx; p3.y = wy + WATER_CELL; p3.level = l3; p3.depth = l3 - terrainHeightAt(p3.x, p3.y);
+    centre.x = wx + WATER_CELL / 2;
+    centre.y = wy + WATER_CELL / 2;
+    centre.level = (l0 + l1 + l2 + l3) / 4;
+    centre.depth = centre.level - terrainHeightAt(centre.x, centre.y);
+    const wetCorners = Number(p0.depth > TERRAIN_WATER_HEIGHT) + Number(p1.depth > TERRAIN_WATER_HEIGHT) +
+      Number(p2.depth > TERRAIN_WATER_HEIGHT) + Number(p3.depth > TERRAIN_WATER_HEIGHT);
+    if (wetCorners === 0 && centre.depth <= TERRAIN_WATER_HEIGHT) continue;
     // Wound anticlockwise seen from above, so the surface is a FRONT face. The
     // old winding pointed every face at the ground and needed `DoubleSide` and a
     // back-face normal flip to be lit at all — which also meant the water was
     // rasterised twice.
-    pushTriangle(positions, depths, points[0]!, points[1]!, points[2]!);
-    pushTriangle(positions, depths, points[0]!, points[2]!, points[3]!);
+    if (wetCorners === 4 && centre.depth > TERRAIN_WATER_HEIGHT) {
+      pushTriangle(positions, depths, points[0]!, points[1]!, points[2]!);
+      pushTriangle(positions, depths, points[0]!, points[2]!, points[3]!);
+    } else {
+      // Only the shore cells need a contour. Their wet triangles are clipped
+      // against the actual ground, so the edge follows the bank between grid
+      // corners instead of jumping one whole square at a time.
+      for (let i = 0; i < 4; i++) {
+        pushWetTriangle(positions, depths, points[i]!, points[(i + 1) % 4]!, centre, terrainHeightAt);
+      }
+    }
   }
 
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
@@ -1165,10 +1199,10 @@ export function unifiedWaterGeometry(
 }
 
 interface WaterPoint {
-  readonly x: number;
-  readonly y: number;
-  readonly level: number;
-  readonly depth: number;
+  x: number;
+  y: number;
+  level: number;
+  depth: number;
 }
 
 function pushTriangle(
@@ -1180,4 +1214,39 @@ function pushTriangle(
 ): void {
   out.push(a.x, a.level, -a.y, b.x, b.level, -b.y, c.x, c.level, -c.y);
   depths.push(a.depth, b.depth, c.depth);
+}
+
+function pushWetTriangle(
+  positions: number[], depths: number[], a: WaterPoint, b: WaterPoint, c: WaterPoint,
+  groundAt: (x: number, y: number) => number,
+): void {
+  const corners = [a, b, c];
+  const polygon: WaterPoint[] = [];
+  for (let i = 0; i < 3; i++) {
+    const from = corners[i]!;
+    const to = corners[(i + 1) % 3]!;
+    const fromWet = from.depth > TERRAIN_WATER_HEIGHT;
+    const toWet = to.depth > TERRAIN_WATER_HEIGHT;
+    if (fromWet) polygon.push(from);
+    if (fromWet === toWet) continue;
+    let wet = fromWet ? from : to;
+    let dry = fromWet ? to : from;
+    // Resolve against the ground sampler itself. A linear depth estimate can
+    // place the vertex in air where the terrain bends or has a step.
+    for (let step = 0; step < 8; step++) {
+      const x = (wet.x + dry.x) / 2;
+      const y = (wet.y + dry.y) / 2;
+      const level = (wet.level + dry.level) / 2;
+      const middle = { x, y, level, depth: level - groundAt(x, y) };
+      if (middle.depth > TERRAIN_WATER_HEIGHT) wet = middle;
+      else dry = middle;
+    }
+    polygon.push(wet);
+  }
+  for (let i = 1; i + 1 < polygon.length; i++) {
+    const a = polygon[0]!, b = polygon[i]!, c = polygon[i + 1]!;
+    if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 1e-9) {
+      pushTriangle(positions, depths, a, b, c);
+    }
+  }
 }

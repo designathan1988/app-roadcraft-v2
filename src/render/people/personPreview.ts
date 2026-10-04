@@ -22,7 +22,7 @@ import { captureBind, captureBindRotations, neutralWalkFor, walkDuration, type N
 import { createPersonRig, type PersonRig } from './personRig';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { wornItems } from '@people/spec';
-import { applySkinAppearance, loadSkinAppearance, type SkinAppearance } from './skinAppearance';
+import { applySkinAppearance, loadSkinAppearance, releaseSkinAppearance, type SkinAppearance } from './skinAppearance';
 
 /**
  * The Person Creator's 3D preview: the person as the street will see them -
@@ -66,6 +66,7 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
   let walk: NeutralWalk | null = null;
   let walkSex: WalkSex = 'female';
   let height = 0;
+  let waitForSkinOnOpen = false;
 
   const scene = new Scene();
   scene.background = new Color(0x1d2a2c);
@@ -131,10 +132,18 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
   const loader = new TextureLoader();
   /** Textures whose image has arrived (or failed): ready to be shown. */
   const arrived = new Set<string>();
+  let textureEpoch = 0;
   const textureOf = (file: string): Texture => {
     let t = textures.get(file);
     if (!t) {
-      const done = (): void => { arrived.add(file); rebuild(); };
+      const epoch = textureEpoch;
+      const done = (): void => {
+        queueMicrotask(() => {
+          if (epoch !== textureEpoch || textures.get(file) !== t) return;
+          arrived.add(file);
+          rebuild();
+        });
+      };
       t = loader.load(proxyUrl(file), done, undefined, done);
       t.colorSpace = SRGBColorSpace;
       // The packs' v runs down from the image's top row: drawn as it is.
@@ -179,11 +188,11 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
     const request = ++skinRequest;
     void loadSkinAppearance(p).then((loaded) => {
       if (request !== skinRequest || !active || !person || skinKey(person) !== key) {
-        loaded.texture.dispose(); loaded.hairTexture?.dispose(); loaded.garments.forEach(map => map?.dispose());
+        releaseSkinAppearance(loaded);
         if (request === skinRequest) pendingSkin = '';
         return;
       }
-      skin?.value.texture.dispose(); skin?.value.hairTexture?.dispose(); skin?.value.garments.forEach(map => map?.dispose());
+      if (skin) releaseSkinAppearance(skin.value);
       skin = { key, value: loaded, colour: new Color(p.look.skin) };
       pendingSkin = '';
       rebuild();
@@ -195,8 +204,19 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
     });
   };
   let failedSkin = '';
+  const disposeRig = (): void => {
+    if (!rig) return;
+    scene.remove(rig.scene);
+    rig.mesh.geometry.dispose();
+    rig.mesh.skeleton.dispose();
+    const old = rig.mesh.material;
+    for (const material of new Set(Array.isArray(old) ? old : [old])) material.dispose();
+    rig = null;
+    walk = null;
+    height = 0;
+  };
   const rebuild = (): void => {
-    if (!morpher || !assets || !person) return;
+    if (!active || !morpher || !assets || !person) return;
     ensureSkin(person);
     // The look's garments first: the person is rebuilt once they are to hand.
     const missing = wornItems(person.look).filter((n) => !proxies.has(n) && !failedItems.has(n));
@@ -226,6 +246,9 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
         waiting = true;
       }
       if (waiting) return;
+    } else if (waitForSkinOnOpen) {
+      const key = skinKey(person);
+      if (skin?.key !== key && failedSkin !== key) return;
     }
     const positions = morpher.shape(person.body, person.features);
     walkSex = person.body.gender >= 0.5 ? 'male' : 'female';
@@ -233,14 +256,9 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
       data: assets.mesh, skeleton: assets.skeleton, bodyRange: assets.bodyRange,
       positions, look: person.look, texturedSkin: true, capture: captureBind(walkSex), captureAxes: captureBindRotations(walkSex), proxies,
     });
-    if (rig) {
-      scene.remove(rig.scene);
-      rig.mesh.geometry.dispose();
-      rig.mesh.skeleton.dispose();
-      const old = rig.mesh.material;
-      for (const m of new Set(Array.isArray(old) ? old : [old])) m.dispose();
-    }
+    disposeRig();
     rig = next;
+    waitForSkinOnOpen = false;
     texture(rig, person.look);
     if (skin?.key === skinKey(person)) {
       const desired = new Color(person.look.skin);
@@ -257,6 +275,13 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
     scene.add(rig.scene);
     height = rig.height;
     walk = neutralWalkFor(rig.scene, rig.mesh, walkSex);
+    const usedFiles = new Set(wornItems(person.look).map((name) => proxies.get(name)?.textureFile).filter((file): file is string => !!file));
+    for (const [file, map] of textures) {
+      if (usedFiles.has(file)) continue;
+      map.dispose();
+      textures.delete(file);
+      arrived.delete(file);
+    }
     requestDraw();
   };
 
@@ -267,8 +292,14 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
       if (!on) {
         ++skinRequest;
         pendingSkin = '';
-        skin?.value.texture.dispose(); skin?.value.hairTexture?.dispose(); skin?.value.garments.forEach(map => map?.dispose());
+        if (skin) releaseSkinAppearance(skin.value);
         skin = null;
+        waitForSkinOnOpen = rig !== null;
+        disposeRig();
+        textureEpoch++;
+        for (const map of textures.values()) map.dispose();
+        textures.clear();
+        arrived.clear();
         return;
       }
       rebuild();

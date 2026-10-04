@@ -31,7 +31,6 @@ import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoVi
 
 import { SimWorld } from '@sim/world';
 import { createPeopleEngine } from '@sim/people/people';
-import { addScriptedWalker, createCrowdEngine, initCrowd, inspectCrowd } from '@sim/people/crowd';
 import { rebindAgents, rebindPeds, rebindVehicles, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
@@ -166,12 +165,15 @@ if (saved) {
 
 const sim = new SimWorld(doc, net, 0x2024);
 sim.rebuildTopology();
+type CrowdModule = typeof import('@sim/people/crowd');
+let crowdModule: CrowdModule | null = null;
 // Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
 // old sidewalk-graph model instead, for comparison while it is retired.
 // `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
 if (new URLSearchParams(location.search).get('people') === 'crowd') {
-  await initCrowd();
-  sim.usePedestrianEngine(createCrowdEngine());
+  crowdModule = await import('@sim/people/crowd');
+  await crowdModule.initCrowd();
+  sim.usePedestrianEngine(crowdModule.createCrowdEngine());
 }
 else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
 // Vehicles are driven by Drive v2 where it has replaced a layer of the
@@ -3748,9 +3750,18 @@ qualitySelect.onchange = () => {
   /**
    * The crowd engine's scenario hooks (`tests/fixtures/crowdScenarios.ts`),
    * from the instance the game runs: a module imported again by a harness can
-   * be a second instance after a hot update.
+   * be a second instance after a hot update. Only active with ?people=crowd.
    */
-  crowd: { add: addScriptedWalker, inspect: inspectCrowd },
+  crowd: {
+    add: (...args: Parameters<CrowdModule['addScriptedWalker']>) => {
+      if (!crowdModule) throw new Error('Crowd engine is not active');
+      return crowdModule.addScriptedWalker(...args);
+    },
+    inspect: (...args: Parameters<CrowdModule['inspectCrowd']>) => {
+      if (!crowdModule) throw new Error('Crowd engine is not active');
+      return crowdModule.inspectCrowd(...args);
+    },
+  },
   /** One fixed simulation step, as the game takes it, without traffic or new pedestrians if asked. */
   step: (traffic = true, pedestrians = true) => step(sim, { traffic, pedestrians }),
 };

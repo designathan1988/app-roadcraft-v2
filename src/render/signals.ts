@@ -18,7 +18,7 @@ import {
 
 import { signalPostPlace } from '@world/signalPosts';
 import type { SimWorld } from '@sim/world';
-import type { SegmentId } from '@world/ids';
+import type { NodeId, SegmentId } from '@world/ids';
 import { signalStateFor, type SignalState } from '@sim/signals/query';
 
 /**
@@ -109,7 +109,7 @@ export interface SignalHeads {
  */
 interface Batch {
   mesh: InstancedMesh;
-  /** Write cursor, reset at the top of every sync. */
+  /** Write cursor, reset only when this batch changes. */
   n: number;
 }
 
@@ -242,6 +242,25 @@ export function createSignalHeads(
   /** What each head shows, by `node:segment`, for the verification harness. */
   const shown = new Map<string, SignalState>();
   group.userData.heads = shown;
+  type Placed = { x: number; height: number; y: number; yaw: number; node: NodeId; groupId: number; key: string; state: SignalState | null };
+  const placed: Placed[] = [];
+  let placedNetwork: SimWorld['net'] | null = null;
+  let placedRevision = -1;
+  let placedTrafficRevision = -1;
+  let placedTerrainRevision = -1;
+  const flush = (batch: Batch): void => {
+    const mesh = batch.mesh;
+    mesh.count = batch.n;
+    if (!batch.n) return;
+    mesh.instanceMatrix.clearUpdateRanges();
+    mesh.instanceMatrix.addUpdateRange(0, batch.n * 16);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.clearUpdateRanges();
+      mesh.instanceColor.addUpdateRange(0, batch.n * 3);
+      mesh.instanceColor.needsUpdate = true;
+    }
+  };
 
   return {
     group,
@@ -251,54 +270,77 @@ export function createSignalHeads(
         return;
       }
       group.visible = true;
-      shown.clear();
-      type Placed = { x: number; height: number; y: number; yaw: number; state: SignalState; key: string };
-      const placed: Placed[] = [];
-      for (const node of world.junctionNodesInOrder()) {
-        const junction = world.graph.junctions.get(node);
-        const controller = world.controller(node);
-        if (!junction?.signalised || !controller) continue;
-        const nodeRecord = world.doc.node(node);
-        if (!nodeRecord) continue;
+      const geometryChanged = placedNetwork !== world.net || placedRevision !== world.net.revision
+        || placedTrafficRevision !== world.net.trafficRevision || placedTerrainRevision !== world.doc.terrainRevision;
+      if (geometryChanged) {
+        placedNetwork = world.net;
+        placedRevision = world.net.revision;
+        placedTrafficRevision = world.net.trafficRevision;
+        placedTerrainRevision = world.doc.terrainRevision;
+        shown.clear();
+        placed.length = 0;
+        for (const node of world.junctionNodesInOrder()) {
+          const junction = world.graph.junctions.get(node);
+          if (!junction?.signalised || !world.controller(node)) continue;
+          const nodeRecord = world.doc.node(node);
+          if (!nodeRecord) continue;
 
-        for (const segmentId of nodeRecord.incident) {
-          const segment = world.doc.segment(segmentId);
-          if (!segment) continue;
-          const signalGroup = junction.groups.find((candidate) =>
-            candidate.segments.includes(segmentId),
-          );
-          if (!signalGroup) continue;
+          for (const segmentId of nodeRecord.incident) {
+            const segment = world.doc.segment(segmentId);
+            if (!segment) continue;
+            const signalGroup = junction.groups.find((candidate) =>
+              candidate.segments.includes(segmentId),
+            );
+            if (!signalGroup) continue;
 
-          // Where the post stands is the world's (`world/signalPosts.ts`): the
-          // pedestrians walk round the same post.
-          const post = signalPostPlace(world.net, node, segmentId);
-          if (!post) continue;
-          const position = { x: post.x, y: post.y };
-          const key = `${node}:${segmentId}`;
-          const state = signalStateFor(controller, signalGroup.id);
-          placed.push({
-            x: position.x,
-            height: elevationAt(world, position.x, position.y, segmentId),
-            y: position.y,
-            // Local +X carries the arm inward over the road. Under the shared
-            // world-to-Three mapping, the world heading is also the Three yaw.
-            yaw: post.yaw,
-            state,
-            key,
-          });
-          shown.set(key, state);
+            // Where the post stands is the world's (`world/signalPosts.ts`): the
+            // pedestrians walk round the same post.
+            const post = signalPostPlace(world.net, node, segmentId);
+            if (!post) continue;
+            const position = { x: post.x, y: post.y };
+            const key = `${node}:${segmentId}`;
+            placed.push({
+              x: position.x,
+              height: elevationAt(world, position.x, position.y, segmentId),
+              y: position.y,
+              // Local +X carries the arm inward over the road. Under the shared
+              // world-to-Three mapping, the world heading is also the Three yaw.
+              yaw: post.yaw,
+              node,
+              groupId: signalGroup.id,
+              key,
+              state: null,
+            });
+          }
+        }
+
+        if (placed.length > capacity) grow(placed.length);
+        for (const batch of [batches.posts, batches.arms, batches.boxes, batches.visors]) batch.n = 0;
+        for (const head of placed) {
+          root.compose(foot.set(head.x, head.height, -head.y), turn.setFromAxisAngle(up, head.yaw), one);
+          put(batches.posts, POST);
+          put(batches.arms, ARM);
+          put(batches.boxes, BOX);
+          for (const visor of visors) put(batches.visors, visor);
+        }
+        for (const batch of [batches.posts, batches.arms, batches.boxes, batches.visors]) flush(batch);
+        group.userData.lamps = placed.length * LAMPS.length * FACES.length;
+      }
+      let lampsChanged = geometryChanged;
+      for (const head of placed) {
+        const controller = world.controller(head.node);
+        const state = controller ? signalStateFor(controller, head.groupId) : 'red';
+        if (head.state !== state) {
+          head.state = state;
+          shown.set(head.key, state);
+          lampsChanged = true;
         }
       }
-
-      if (placed.length > capacity) grow(placed.length);
-      for (const batch of all()) batch.n = 0;
+      if (!lampsChanged) return;
+      for (const batch of [batches.lit, batches.halos, batches.red, batches.amber, batches.green]) batch.n = 0;
       let litLenses = 0;
       for (const head of placed) {
         root.compose(foot.set(head.x, head.height, -head.y), turn.setFromAxisAngle(up, head.yaw), one);
-        put(batches.posts, POST);
-        put(batches.arms, ARM);
-        put(batches.boxes, BOX);
-        for (const visor of visors) put(batches.visors, visor);
         for (const name of LAMPS) {
           const on = head.state === name;
           for (let face = 0; face < FACES.length; face++) {
@@ -312,21 +354,7 @@ export function createSignalHeads(
           }
         }
       }
-      // Only the written prefix of each buffer goes to the GPU.
-      for (const batch of all()) {
-        const mesh = batch.mesh;
-        mesh.count = batch.n;
-        mesh.instanceMatrix.clearUpdateRanges();
-        if (batch.n > 0) mesh.instanceMatrix.addUpdateRange(0, batch.n * 16);
-        mesh.instanceMatrix.needsUpdate = true;
-        const colour = mesh.instanceColor;
-        if (colour) {
-          colour.clearUpdateRanges();
-          if (batch.n > 0) colour.addUpdateRange(0, batch.n * 3);
-          colour.needsUpdate = true;
-        }
-      }
-      group.userData.lamps = placed.length * LAMPS.length * FACES.length;
+      for (const batch of [batches.lit, batches.halos, batches.red, batches.amber, batches.green]) flush(batch);
       group.userData.litLamps = litLenses;
     },
     dispose() {

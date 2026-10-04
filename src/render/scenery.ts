@@ -33,6 +33,7 @@ import { MEDIAN_PLANTING } from './roadSurfaces';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { applyFoliageShading } from './foliageShading';
+import { fbm, makeNoise } from './mesh/textureBaker';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -619,7 +620,13 @@ export function buildScenery(
     const minY = Math.max(-limit, bounds.cy - spread);
     const maxY = Math.min(limit, bounds.cy + spread);
     // A network pushed entirely off the plate leaves no window to plant in.
-    const attempts = maxX > minX && maxY > minY ? settings.vegetation * 3 : 0;
+    const attempts = maxX > minX && maxY > minY ? settings.vegetation * 6 : 0;
+    const groveNoise = makeNoise(0x6a11);
+    const groveDensity = (x: number, y: number): number => {
+      const noise = fbm(groveNoise, x / 260 + 5.3, y / 260 - 3.1, 23, 3);
+      const t = Math.max(0, Math.min(1, (noise - 0.33) / 0.34));
+      return 0.14 + 0.86 * t * t * (3 - 2 * t);
+    };
     const clear = (x: number, y: number, margin: number): boolean => {
       // Nothing grows on the carriageway or its verge.
       if (Math.abs(elevation.at(x, y, GROUND_ONLY) - terrainAt(x, y)) < 40) {
@@ -691,6 +698,9 @@ export function buildScenery(
     for (let i = 0; i < attempts && planted < settings.vegetation; i++) {
       const x = minX + rng.float() * (maxX - minX);
       const y = minY + rng.float() * (maxY - minY);
+      // Meadows and groves share the same plant budget. Test the cheap density
+      // field before road and terrain queries; road-edge planting stays separate.
+      if (rng.float() > groveDensity(x, y)) continue;
       if (!clear(x, y, 24)) continue;
       const ground = terrainAt(x, y);
       // Steep rock and rivers stay bare, which makes the slope readable.
@@ -743,6 +753,8 @@ export function buildScenery(
   for (const mesh of meshes) triangles += trianglesOf(mesh.geometry) * mesh.count;
   /** The view the instances were last culled for; null draws them all until the first. */
   let culledFor: Matrix4 | null = null;
+  let nearMode: boolean | null = null;
+  let mapMode: boolean | null = null;
   /** Plants standing under a building, per plant mesh; see `exclude`. */
   const excluded = new Map<InstancedMesh, Uint8Array>();
 
@@ -751,17 +763,22 @@ export function buildScenery(
     grass: grass.group,
     triangles,
     setNear(near) {
+      if (nearMode === near) return;
+      nearMode = near;
       for (const [mesh, close, far] of plants) mesh.geometry = near ? close : far;
     },
     setMap(map) {
-      if (map) for (const mesh of leafMeshes) mesh.visible = false;
+      if (mapMode === map) return;
+      mapMode = map;
+      culledFor = null;
+      for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
       // Grass only when it is shown; it keeps its own record of the view.
       if (grass.group.visible) grass.cull(frustum, view);
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
-      cullInstances(meshes, excluded, frustum);
+      cullInstances(meshes, excluded, frustum, mapMode === true);
     },
     exclude(covered) {
       excluded.clear();
@@ -919,21 +936,28 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
   let triangles = 0;
   for (const mesh of meshes) triangles += trianglesOf(mesh.geometry) * mesh.count;
   let culledFor: Matrix4 | null = null;
+  let nearMode: boolean | null = null;
+  let mapMode: boolean | null = null;
   const grass = new Group();
   return {
     meshes,
     grass,
     triangles,
     setNear(near) {
+      if (nearMode === near) return;
+      nearMode = near;
       for (const [mesh, close, far] of plants) mesh.geometry = near ? close : far;
     },
     setMap(map) {
-      if (map) for (const mesh of leafMeshes) mesh.visible = false;
+      if (mapMode === map) return;
+      mapMode = map;
+      culledFor = null;
+      for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
-      cullInstances(meshes, null, frustum);
+      cullInstances(meshes, null, frustum, mapMode === true);
     },
     exclude() { /* a garden's plants are the building's own */ },
     dispose() {
@@ -943,8 +967,9 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
 }
 
 /** Copies the instances of each mesh the frustum can see (or see the shadow of) to the front, skipping `excluded`. */
-function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<InstancedMesh, Uint8Array> | null, frustum: Frustum): void {
+function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<InstancedMesh, Uint8Array> | null, frustum: Frustum, mapMode: boolean): void {
   for (const mesh of meshes) {
+    if (mapMode && mesh.name.endsWith('-leaves')) continue;
     const all = instances.get(mesh);
     if (!all) continue;
     const matrices = mesh.instanceMatrix.array as Float32Array;
@@ -978,8 +1003,16 @@ function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<Instanced
       probe.center.set(s[i * 4] as number, s[i * 4 + 1] as number, s[i * 4 + 2] as number);
       probe.radius = (s[i * 4 + 3] as number) + SHADOW_REACH;
       if (!frustum.intersectsSphere(probe)) continue;
-      matrices.set(all.matrices.subarray(i * 16, i * 16 + 16), n * 16);
-      if (colours && all.colours) colours.set(all.colours.subarray(i * 3, i * 3 + 3), n * 3);
+      const source = i * 16;
+      const target = n * 16;
+      for (let j = 0; j < 16; j++) matrices[target + j] = all.matrices[source + j]!;
+      if (colours && all.colours) {
+        const sourceColour = i * 3;
+        const targetColour = n * 3;
+        colours[targetColour] = all.colours[sourceColour]!;
+        colours[targetColour + 1] = all.colours[sourceColour + 1]!;
+        colours[targetColour + 2] = all.colours[sourceColour + 2]!;
+      }
       n++;
     }
     mesh.count = n;

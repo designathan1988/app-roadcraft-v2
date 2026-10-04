@@ -84,9 +84,7 @@ interface Tuft {
   tint: Color;
 }
 
-const FLOWER_COLOURS = [0xf6f3e8, 0xf2d24b, 0xb58be0, 0xe8618c, 0xf5a13a].map((hex) =>
-  new Color(hex).convertSRGBToLinear(),
-);
+const FLOWER_COLOURS = [0xf6f3e8, 0xf2d24b, 0xb58be0, 0xe8618c, 0xf5a13a].map((hex) => new Color(hex));
 
 export function buildGrass(
   net: Network,

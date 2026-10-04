@@ -338,12 +338,16 @@ interface Sweep {
   readonly count: number;
   /** Per sample: centre x, y and unit tangent x, y. */
   readonly frame: Float64Array;
+  /** A conservative bound around every sampled heavy-vehicle body. */
+  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   /**
    * Broad phase of the HEAVY rectangles: cell key -> sample indices. Built
    * the first time a pair needs it (`gridOf`): a movement whose every pair is
    * answered from the cache never needs one.
    */
   grid: Map<number, number[]> | null;
+  /** Body classes that may stand at each sampled centre, computed once. */
+  range: Uint8Array | null;
 }
 
 function sweepOf(graph: LaneletGraph, c: Connector,
@@ -379,7 +383,22 @@ function sweepOf(graph: LaneletGraph, c: Connector,
     }
   }
   next.set(key, frame);
-  return { crossing, path, c0, count, frame, grid: null };
+  return { crossing, path, c0, count, frame, bounds: null, grid: null, range: null };
+}
+
+function boundsOf(s: Sweep): { minX: number; minY: number; maxX: number; maxY: number } {
+  if (s.bounds) return s.bounds;
+  const [hl, hw] = halfExtent(HEAVY);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < s.count; i++) {
+    const x = s.frame[i * 4] as number, y = s.frame[i * 4 + 1] as number;
+    const tx = s.frame[i * 4 + 2] as number, ty = s.frame[i * 4 + 3] as number;
+    const ex = Math.abs(tx) * hl + Math.abs(ty) * hw;
+    const ey = Math.abs(ty) * hl + Math.abs(tx) * hw;
+    minX = Math.min(minX, x - ex); maxX = Math.max(maxX, x + ex);
+    minY = Math.min(minY, y - ey); maxY = Math.max(maxY, y + ey);
+  }
+  return (s.bounds = { minX, minY, maxX, maxY });
 }
 
 function gridOf(s: Sweep): Map<number, number[]> {
@@ -509,6 +528,17 @@ function inRange(s: Sweep, i: number, cls: BodyClass): boolean {
   return c >= s.c0 - 1e-9 && c <= s.crossing.length + half + 1e-9;
 }
 
+function rangeOf(s: Sweep): Uint8Array {
+  if (s.range) return s.range;
+  const range = new Uint8Array(s.count);
+  for (let i = 0; i < s.count; i++) {
+    let mask = 0;
+    for (const cls of BODY_CLASSES) if (inRange(s, i, cls)) mask |= 1 << cls;
+    range[i] = mask;
+  }
+  return (s.range = range);
+}
+
 /**
  * The approach, the movement and the exit as one arc-length parameter.
  * Beyond either end the path continues straight along its end tangent, so a
@@ -577,6 +607,8 @@ interface PairZones {
  * bodies never touch.
  */
 function pairZones(a: Sweep, b: Sweep): PairZones | null {
+  const aa = boundsOf(a), bb = boundsOf(b);
+  if (aa.maxX < bb.minX || bb.maxX < aa.minX || aa.maxY < bb.minY || bb.maxY < aa.minY) return null;
   // Heavy against heavy, through the grid.
   const hits: number[] = [];
   // Which of b's samples this sample of a has already tested: a stamp per
@@ -604,20 +636,50 @@ function pairZones(a: Sweep, b: Sweep): PairZones | null {
   }
   if (!hits.length) return null;
 
+  const rangeA = rangeOf(a), rangeB = rangeOf(b);
+
   // 3 x 3 class pairs x [enterA, exitA, enterB, exitB]; NaN = no overlap.
   const table = new Float64Array(36).fill(Number.NaN);
-  for (const ca of BODY_CLASSES) {
-    for (const cb of BODY_CLASSES) {
-      const at = (ca * 3 + cb) * 4;
-      for (let k = 0; k < hits.length; k += 2) {
-        const i = hits[k] as number;
-        const j = hits[k + 1] as number;
-        if (!inRange(a, i, ca) || !inRange(b, j, cb)) continue;
+  // The four SAT axes and their body projections are identical for all nine
+  // class pairs at a sampled pose pair. Compute them once, then vary extents.
+  const projection = new Float64Array(20);
+  for (let k = 0; k < hits.length; k += 2) {
+    const i = hits[k] as number, j = hits[k + 1] as number;
+    const ax = a.frame[i * 4] as number, ay = a.frame[i * 4 + 1] as number;
+    const aux = a.frame[i * 4 + 2] as number, auy = a.frame[i * 4 + 3] as number;
+    const bx = b.frame[j * 4] as number, by = b.frame[j * 4 + 1] as number;
+    const bux = b.frame[j * 4 + 2] as number, buy = b.frame[j * 4 + 3] as number;
+    const dx = bx - ax, dy = by - ay;
+    for (let axis = 0; axis < 4; axis++) {
+      const nx = axis === 0 ? aux : axis === 1 ? -auy : axis === 2 ? bux : -buy;
+      const ny = axis === 0 ? auy : axis === 1 ? aux : axis === 2 ? buy : bux;
+      const at = axis * 5;
+      projection[at] = Math.abs(dx * nx + dy * ny);
+      projection[at + 1] = Math.abs(aux * nx + auy * ny);
+      projection[at + 2] = Math.abs(-auy * nx + aux * ny);
+      projection[at + 3] = Math.abs(bux * nx + buy * ny);
+      projection[at + 4] = Math.abs(-buy * nx + bux * ny);
+    }
+    const cA = a.c0 + i * SWEEP_STEP;
+    const cB = b.c0 + j * SWEEP_STEP;
+    const eligibleA = rangeA[i] as number, eligibleB = rangeB[j] as number;
+    for (const ca of BODY_CLASSES) {
+      if (!(eligibleA & (1 << ca))) continue;
+      const [ahl, ahw] = halfExtent(ca);
+      for (const cb of BODY_CLASSES) {
+        if (!(eligibleB & (1 << cb))) continue;
         if (ca !== HEAVY || cb !== HEAVY) {
-          if (!overlap(a, i, ca, b, j, cb)) continue;
+          const [bhl, bhw] = halfExtent(cb);
+          let separate = false;
+          for (let axis = 0; axis < 4; axis++) {
+            const at = axis * 5;
+            const ra = ahl * (projection[at + 1] as number) + ahw * (projection[at + 2] as number);
+            const rb = bhl * (projection[at + 3] as number) + bhw * (projection[at + 4] as number);
+            if ((projection[at] as number) >= ra + rb) { separate = true; break; }
+          }
+          if (separate) continue;
         }
-        const cA = a.c0 + i * SWEEP_STEP;
-        const cB = b.c0 + j * SWEEP_STEP;
+        const at = (ca * 3 + cb) * 4;
         widen(table, at, cA);
         widen(table, at + 2, cB);
       }

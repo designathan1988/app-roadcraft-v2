@@ -5,7 +5,7 @@
  * transferred, matrices as their elements.
  */
 import { type ClipFrames, type RigNode, bake, rigFromData, setSliceMs } from './citizenBake';
-import { loadRocketboxLibrary, type WalkSex } from './citizenWalk';
+import { loadRocketboxClips, type RocketboxClips, type WalkSex } from './citizenWalk';
 
 /** Nothing to yield to here: a bake runs to its end. */
 setSliceMs(Infinity);
@@ -13,6 +13,10 @@ setSliceMs(Infinity);
 interface Job { readonly id: number; readonly nodes: RigNode[]; readonly sex: WalkSex }
 
 export type BakedClip = Omit<ClipFrames, 'head'> & { head?: number[] };
+
+// Reuse decoded clips across this worker's jobs. The pool releases them when
+// the last visible citizen is evicted and its idle workers are terminated.
+const libraries: Partial<Record<WalkSex, RocketboxClips>> = {};
 
 const scope = globalThis as unknown as {
   onmessage: ((e: MessageEvent<Job>) => void) | null;
@@ -22,7 +26,7 @@ const scope = globalThis as unknown as {
 scope.onmessage = async (e) => {
   const { id, nodes, sex } = e.data;
   try {
-    const library = await loadRocketboxLibrary();
+    const library = libraries[sex] ??= await loadRocketboxClips(sex);
     const { clips, deferred } = await bake(rigFromData(nodes), sex, library);
     const transfer = new Set<ArrayBuffer>();
     const out = clips.map((clip, at): BakedClip | null => {

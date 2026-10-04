@@ -20,10 +20,11 @@ import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'thr
 
 const cache = new Map<string, Texture>();
 
-/** Deterministic 2D value noise with a period, so the result tiles. */
+/** Deterministic 2D value noise with a positive integer period, so the result tiles. */
 export function makeNoise(seed: number): (x: number, y: number, period: number) => number {
+  const seedHash = Math.imul(seed, 2_246_822_519);
   const hash = (x: number, y: number): number => {
-    let h = Math.imul(x | 0, 374_761_393) ^ Math.imul(y | 0, 668_265_263) ^ Math.imul(seed, 2_246_822_519);
+    let h = Math.imul(x | 0, 374_761_393) ^ Math.imul(y | 0, 668_265_263) ^ seedHash;
     h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
     return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
   };
@@ -33,11 +34,16 @@ export function makeNoise(seed: number): (x: number, y: number, period: number) 
     const y0 = Math.floor(y);
     const fx = smooth(x - x0);
     const fy = smooth(y - y0);
-    const wrap = (v: number): number => ((v % period) + period) % period;
-    const a = hash(wrap(x0), wrap(y0));
-    const b = hash(wrap(x0 + 1), wrap(y0));
-    const c = hash(wrap(x0), wrap(y0 + 1));
-    const d = hash(wrap(x0 + 1), wrap(y0 + 1));
+    const rx = x0 % period;
+    const ry = y0 % period;
+    const ax = rx < 0 ? rx + period : rx;
+    const ay = ry < 0 ? ry + period : ry;
+    const bx = ax + 1 === period ? 0 : ax + 1;
+    const by = ay + 1 === period ? 0 : ay + 1;
+    const a = hash(ax, ay);
+    const b = hash(bx, ay);
+    const c = hash(ax, by);
+    const d = hash(bx, by);
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
   };
 }
@@ -99,13 +105,19 @@ export function normalMapFrom(height: Float32Array, size: number, strength: numb
   const { canvas, ctx } = canvasOf(size);
   if (!ctx) return canvas;
   const image = ctx.createImageData(size, size);
-  const at = (x: number, y: number): number =>
-    height[((y + size) % size) * size + ((x + size) % size)] as number;
   for (let y = 0; y < size; y++) {
+    const row = y * size;
+    const above = (y === 0 ? size - 1 : y - 1) * size;
+    const below = (y + 1 === size ? 0 : y + 1) * size;
+    let left = size - 1;
     for (let x = 0; x < size; x++) {
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
-      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
-      const length = Math.hypot(dx, dy, 1);
+      const right = x + 1 === size ? 0 : x + 1;
+      const dx = ((height[row + right] as number) - (height[row + left] as number)) * strength;
+      const dy = ((height[below + x] as number) - (height[above + x] as number)) * strength;
+      left = x;
+      // Recipe heights are bounded near 0..1, so direct length cannot overflow;
+      // the general-purpose hypot scaling was repeated for every texel.
+      const length = Math.sqrt(dx * dx + dy * dy + 1);
       const index = (y * size + x) * 4;
       image.data[index] = Math.round(((-dx / length) * 0.5 + 0.5) * 255);
       image.data[index + 1] = Math.round(((-dy / length) * 0.5 + 0.5) * 255);

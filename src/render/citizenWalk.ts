@@ -32,7 +32,7 @@ interface WalkFile {
   readonly bind: readonly { readonly q: readonly number[]; readonly p: readonly number[] }[];
   readonly bindLowest: number;
   readonly frames: readonly {
-    readonly q: readonly (readonly number[])[];
+    readonly q: readonly (readonly number[])[] | Int16Array;
     readonly pelvis: readonly number[];
     readonly lowest: number;
   }[];
@@ -41,6 +41,13 @@ interface WalkFile {
 const quaternion = (v: readonly number[]): Quaternion =>
   new Quaternion(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0, v[3] ?? 1);
 const vector = (v: readonly number[]): Vector3 => new Vector3(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+const frameRotation = (frame: WalkFile['frames'][number], bone: number, out: Quaternion): Quaternion => {
+  const rotations = frame.q;
+  if (!(rotations instanceof Int16Array)) return out.fromArray(rotations[bone]!);
+  const at = bone * 4;
+  return out.set(rotations[at]! / 32767, rotations[at + 1]! / 32767,
+    rotations[at + 2]! / 32767, rotations[at + 3]! / 32767);
+};
 
 interface Source {
   readonly file: WalkFile;
@@ -59,14 +66,18 @@ interface Source {
  */
 function sourceOf(file: WalkFile, bindFrom: WalkFile = file): Source {
   const pelvis = file.bones.indexOf('Bip01_Pelvis');
+  const sample = new Quaternion();
   const mean = file.bones.map((_, bone) => {
-    const first = quaternion(file.frames[0]!.q[bone]!);
+    const first = frameRotation(file.frames[0]!, bone, new Quaternion());
     const sum = [0, 0, 0, 0];
     for (const frame of file.frames) {
-      const q = frame.q[bone]!;
+      frameRotation(frame, bone, sample);
       // q and -q are the same rotation; average them on one hemisphere.
-      const sign = first.x * q[0]! + first.y * q[1]! + first.z * q[2]! + first.w * q[3]! < 0 ? -1 : 1;
-      for (let k = 0; k < 4; k++) sum[k]! += sign * q[k]!;
+      const sign = first.x * sample.x + first.y * sample.y + first.z * sample.z + first.w * sample.w < 0 ? -1 : 1;
+      sum[0]! += sign * sample.x;
+      sum[1]! += sign * sample.y;
+      sum[2]! += sign * sample.z;
+      sum[3]! += sign * sample.w;
     }
     return quaternion(sum).normalize();
   });
@@ -186,7 +197,7 @@ export function strideShare(source: Source, amplitude: WalkAmplitude): number {
         const foot = new Vector3();
         for (let k = 0; k < chain.length - 1; k++) {
           const bone = chain[k]!;
-          q.copy(quaternion(frame.q[bone]!));
+          frameRotation(frame, bone, q);
           if (share !== 1) q.copy(mean[bone]!.clone().slerp(q, share));
           q.multiply(bindInverse[bone]!);
           offset.copy(vector(file.bind[chain[k + 1]!]!.p)).sub(vector(file.bind[bone]!.p)).applyQuaternion(q);
@@ -309,7 +320,7 @@ function transferOnto(rig: Object3D, mesh: SkinnedMesh, from: Source, amplitude:
       frame++;
       for (const link of links) {
         // World rotation now = (source now × source bind⁻¹) × this body's bind.
-        q0.fromArray(a.q[link.source]!).slerp(q1.fromArray(b.q[link.source]!), f);
+        frameRotation(a, link.source, q0).slerp(frameRotation(b, link.source, q1), f);
         if (link.swing !== 1) q0.copy(q1.copy(SOURCE_MEAN[link.source]!).slerp(q0, link.swing));
         want.copy(q0).multiply(SOURCE_BIND_INVERSE[link.source]!).multiply(link.bind);
         const parent = link.bone.parent;
@@ -367,6 +378,7 @@ export interface LibraryClip {
   readonly source: Source;
 }
 export type RocketboxLibrary = Readonly<Record<WalkSex, Readonly<Record<LibraryClipName, LibraryClip>>>>;
+export type RocketboxClips = RocketboxLibrary[WalkSex];
 
 interface LibraryFile {
   readonly bones: readonly string[];
@@ -398,12 +410,8 @@ function decode(file: LibraryFile, walk: WalkFile): Record<LibraryClipName, Libr
     const lowest = new Float32Array(bytes(clip.lowest));
     const frames = [];
     for (let k = 0; k < clip.frames; k++) {
-      const rotations: number[][] = [];
-      for (let b = 0; b < bones; b++) {
-        const o = (k * bones + b) * 4;
-        rotations.push([q[o]! / 32767, q[o + 1]! / 32767, q[o + 2]! / 32767, q[o + 3]! / 32767]);
-      }
-      frames.push({ q: rotations, pelvis: [pelvis[k * 3]!, pelvis[k * 3 + 1]!, pelvis[k * 3 + 2]!], lowest: lowest[k]! });
+      frames.push({ q: q.subarray(k * bones * 4, (k + 1) * bones * 4),
+        pelvis: [pelvis[k * 3]!, pelvis[k * 3 + 1]!, pelvis[k * 3 + 2]!], lowest: lowest[k]! });
     }
     const capture: WalkFile = { duration: clip.duration, loop: clip.loop, bones: file.bones, bind: walk.bind,
       bindLowest: walk.bindLowest, frames };
@@ -416,21 +424,37 @@ function decode(file: LibraryFile, walk: WalkFile): Record<LibraryClipName, Libr
   return out;
 }
 
-let library: Promise<RocketboxLibrary> | null = null;
+const libraries: Partial<Record<WalkSex, WeakRef<RocketboxClips>>> = {};
+const loadingLibraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
 
 /**
  * The Microsoft Rocketbox clips the citizens play besides the walk: starting
  * and stopping, running, turning on the spot, standing, looking round, a
  * phone, talking and listening, sitting down, sitting and standing up, for
- * each sex, from `scripts/extract-rocketbox-clips.mjs`. About two megabytes a
- * sex, so they are fetched once, when the first citizen is prepared, rather
- * than carried in the bundle.
+ * each sex, from `scripts/extract-rocketbox-clips.mjs`. Each library is fetched
+ * when a citizen of that sex is prepared. Active bodies keep their clips;
+ * otherwise the weak cache lets the decoded library leave memory.
  */
-export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
-  library ??= Promise.all([maleLibraryUrl, femaleLibraryUrl].map(async (url) => {
+export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
+  const cached = libraries[sex]?.deref();
+  if (cached) return Promise.resolve(cached);
+  const pending = loadingLibraries[sex];
+  if (pending) return pending;
+  const work = (async () => {
+    const url = sex === 'male' ? maleLibraryUrl : femaleLibraryUrl;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Rocketbox motion library ${url}: ${response.status}`);
-    return response.json() as Promise<LibraryFile>;
-  })).then(([male, female]) => decodeRocketboxLibrary(male, female));
-  return library;
+    const clips = decode(await response.json() as LibraryFile, WALKS[sex]);
+    libraries[sex] = new WeakRef(clips);
+    return clips;
+  })();
+  loadingLibraries[sex] = work;
+  const clear = (): void => { if (loadingLibraries[sex] === work) delete loadingLibraries[sex]; };
+  void work.then(clear, clear);
+  return work;
+}
+
+export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
+  return Promise.all([loadRocketboxClips('male'), loadRocketboxClips('female')])
+    .then(([male, female]) => ({ male, female }));
 }

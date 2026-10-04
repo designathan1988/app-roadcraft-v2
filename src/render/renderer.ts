@@ -81,6 +81,8 @@ function updateLitRooms(sim: SimWorld): void {
 
 /** Room lights kept in the scene for the floors cut open (`indoors.ts`). */
 const ROOM_LIGHTS = 6;
+/** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
+const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
 import type { BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
@@ -112,7 +114,9 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 export type SkyMode = 'day' | 'night' | 'cycle';
 
 export interface RenderStats {
+  /** Built scene geometry budget; `gl.info.render.triangles` counts drawn passes. */
   readonly triangles: number;
+  /** Actual draw calls across every pass of the last game frame. */
   readonly drawCalls: number;
   readonly quality: QualityLevel;
   readonly fps: number;
@@ -212,6 +216,9 @@ export function createSceneRenderer(
     powerPreference: 'high-performance',
     stencil: false,
   });
+  // One game frame has the scene, shadows and several postprocess renders.
+  // The default reset on each `render()` left stats showing only the last quad.
+  renderer.info.autoReset = false;
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -269,6 +276,10 @@ export function createSceneRenderer(
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
   const scene = new Scene();
+  // The root never moves. Keep its identity matrix from forcing every static
+  // world child to recompute a world matrix on every render pass.
+  scene.matrixAutoUpdate = false;
+  scene.updateMatrix();
   const initialHeight = Math.max(1, canvas.clientHeight || window.innerHeight);
   const rig = createIsoRig(initialCentre, initialHeight / Math.max(0.001, initialZoom * 2));
 
@@ -665,6 +676,7 @@ export function createSceneRenderer(
     },
     resize,
     draw(net, sim, alpha, delta, options) {
+      renderer.info.reset();
       if (canvas.clientWidth !== lastWidth || canvas.clientHeight !== lastHeight) {
         lastWidth = canvas.clientWidth;
         lastHeight = canvas.clientHeight;
@@ -758,18 +770,25 @@ export function createSceneRenderer(
       }
 
       const detailed = rig.viewport.zoom >= quality.detailCutoffZoom;
-      // A window frame's bar is about 0.14 u: under half a pixel below this zoom.
+      const plantMap = rig.viewport.zoom < PLANT_MAP_ZOOM;
+      // Keep the full facade at street zoom: the planar far mesh loses frames
+      // on side-facing windows. Only its thin shadows can disappear earlier.
       buildings.setFar(rig.viewport.zoom < 3);
+      buildings.setShadowFar(rig.viewport.zoom < FACADE_SHADOW_ZOOM);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;
-      for (const mesh of scenery?.meshes ?? []) mesh.visible = quality.detailProps && detailed;
-      for (const mesh of gardens?.meshes ?? []) mesh.visible = detailed;
+      gardens?.setMap(plantMap);
+      scenery?.setMap(plantMap);
+      for (const mesh of scenery?.meshes ?? []) {
+        mesh.visible = quality.detailProps && detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
+      }
+      for (const mesh of gardens?.meshes ?? []) {
+        mesh.visible = detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
+      }
       gardens?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
-      gardens?.setMap(rig.viewport.zoom < PLANT_MAP_ZOOM);
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
         scenery.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
-        scenery.setMap(rig.viewport.zoom < PLANT_MAP_ZOOM);
       }
       // The wind blows in real time: a paused simulation is still a windy day.
       windClock += Math.min(0.1, Math.max(0, delta));

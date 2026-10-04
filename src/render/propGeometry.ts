@@ -43,7 +43,7 @@ import { TREE_PIT } from '@world/streetFurniture';
 type Rgb = readonly [number, number, number];
 
 const rgb = (hex: number): Rgb => {
-  const c = new Color(hex).convertSRGBToLinear();
+  const c = new Color(hex);
   return [c.r, c.g, c.b];
 };
 
@@ -255,16 +255,18 @@ export const TREE_SPECIES: readonly TreeSpecies[] = ['broadleaf', 'broadleafTall
 
 const BARK = rgb(0x5b4633);
 const BARK_PALE = rgb(0x7a6a58);
-const LEAF = rgb(0x5c8c33);
-const LEAF_DEEP = rgb(0x416c29);
-const LEAF_YOUNG = rgb(0x93b545);
-const NEEDLE = rgb(0x4f7f45);
+const LEAF = rgb(0x4d7939);
+const LEAF_DEEP = rgb(0x33572c);
+const LEAF_YOUNG = rgb(0x789a4b);
+const NEEDLE = rgb(0x3c6747);
 
 function scatterBlobs(rng: Rng, count: number, cx: number, cy: number, spreadX: number, spreadY: number, r0: number, r1: number): Blob[] {
-  const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 }];
+  // A small inner crown leaves negative space between the outward branches.
+  // One large central ball hid the limbs and made every species a lollipop.
+  const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 * 0.7 }];
   for (let i = 1; i < count; i++) {
-    const a = (i / (count - 1)) * Math.PI * 2 + rng.float() * 0.9;
-    const d = 0.55 + rng.float() * 0.45;
+    const a = ((i - 1 + rng.float() * 0.65) / (count - 1)) * Math.PI * 2;
+    const d = 0.7 + rng.float() * 0.35;
     blobs.push({
       x: cx + Math.cos(a) * spreadX * d,
       y: cy + (rng.float() - 0.4) * spreadY,
@@ -290,28 +292,72 @@ export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGe
       return merge([...trunk(0.58, 0.032, 0.016, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.68, 0), green, 1.3, 0.26, detail)]);
     }
     case 'broadleafTall': {
-      // A narrower, taller crown on a longer clear stem: a street plane tree.
+      // Three uneven branch tiers on a longer clear stem: the crown stays tall
+      // without reading as a stack of balls around the trunk.
       const blobs: Blob[] = [];
+      const spread = [0.14, 0.17, 0.1] as const;
       for (let i = 0; i < 9; i++) {
-        const a = rng.float() * Math.PI * 2;
-        const out = 0.06 + rng.float() * 0.07;
+        const tier = Math.floor(i / 3);
+        const a = ((i % 3) / 3) * Math.PI * 2 + tier * 0.7 + (rng.float() - 0.5) * 0.5;
+        const out = spread[tier]! * (0.75 + rng.float() * 0.35);
         blobs.push({
           x: Math.cos(a) * out,
-          y: 0.5 + i * 0.05 + rng.float() * 0.03,
+          y: 0.58 + tier * 0.14 + (rng.float() - 0.5) * 0.06,
           z: Math.sin(a) * out,
-          r: 0.095 + rng.float() * 0.045 - i * 0.004,
+          r: 0.095 + rng.float() * 0.035 - tier * 0.005,
         });
       }
       const green = (f: number, h: number): Rgb => (f < 0.22 ? LEAF_DEEP : h > 0.7 && f > 0.75 ? LEAF_YOUNG : LEAF);
       return merge([...trunk(0.62, 0.026, 0.012, BARK_PALE, limbs(5), rng), ...crown(blobs, new Vector3(0, 0.72, 0), green, 4.2, 0.26, detail)]);
     }
     case 'conifer': {
-      const parts = trunk(0.28, 0.022, 0.012, BARK, 0, rng);
+      const parts = trunk(detail === 1 ? 0.88 : 0.28, 0.022, 0.012, BARK, 0, rng);
+      if (detail === 1) {
+        // Raised, drooping needle sprays break the outline into individual
+        // boughs without adding draw calls or a texture to every tree.
+        const vertices: number[] = [];
+        for (let tier = 0; tier < 6; tier++) {
+          const count = tier < 3 ? 7 : 6;
+          const rootY = 0.22 + tier * 0.125;
+          for (let arm = 0; arm < count; arm++) {
+            const angle = ((arm + tier * 0.38) / count) * Math.PI * 2 + (rng.float() - 0.5) * 0.18;
+            const radialX = Math.cos(angle);
+            const radialZ = Math.sin(angle);
+            const sideX = -radialZ;
+            const sideZ = radialX;
+            const length = (0.245 - tier * 0.029) * (0.83 + rng.float() * 0.34);
+            const width = (0.064 - tier * 0.006) * (0.85 + rng.float() * 0.3);
+            const middle = length * 0.54;
+            const root = [radialX * 0.018, rootY, radialZ * 0.018];
+            const left = [radialX * middle + sideX * width, rootY - 0.018, radialZ * middle + sideZ * width];
+            const tip = [radialX * length, rootY - 0.074, radialZ * length];
+            const right = [radialX * middle - sideX * width, rootY - 0.018, radialZ * middle - sideZ * width];
+            const ridge = [radialX * middle, rootY + 0.042, radialZ * middle];
+            vertices.push(...root, ...left, ...ridge, ...left, ...tip, ...ridge,
+              ...tip, ...right, ...ridge, ...right, ...root, ...ridge);
+          }
+        }
+        const boughs = new BufferGeometry();
+        boughs.setAttribute('position', new Float32BufferAttribute(vertices, 3));
+        boughs.computeVertexNormals();
+        parts.push(part(boughs, (q, n) => {
+          const height = Math.max(0, Math.min(1, (q.y - 0.16) / 0.8));
+          const ao = (0.72 + height * 0.28) * (0.82 + Math.max(0, n.y) * 0.18);
+          const tone = 0.92 + wobble(q.x * 13, q.y * 13, q.z * 13, 5.5) * 0.08;
+          return [NEEDLE[0] * ao * tone, NEEDLE[1] * ao * tone, NEEDLE[2] * ao * tone];
+        }));
+        // The core fills small gaps between sprays and carries the pointed top.
+        parts.push(part(new ConeGeometry(0.088, 0.78, 10, 3, true), (q) => {
+          const tone = 0.68 + Math.max(0, q.y) * 0.22;
+          return [NEEDLE[0] * tone, NEEDLE[1] * tone, NEEDLE[2] * tone];
+        }, { at: [0, 0.59, 0] }));
+        return merge(parts);
+      }
       for (let i = 0; i < 5; i++) {
         const y0 = 0.16 + i * 0.16;
         const height = 0.3 - i * 0.02;
         const radius = 0.21 * (1 - i * 0.17);
-        const cone = new ConeGeometry(radius, height, detail === 1 ? 16 : 9, detail === 1 ? 3 : 1, true);
+        const cone = new ConeGeometry(radius, height, 9, 1, true);
         const position = cone.getAttribute('position');
         for (let v = 0; v < position.count; v++) {
           const x = position.getX(v);
@@ -337,8 +383,8 @@ export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGe
     case 'ipePink': {
       // Brazil's flowering ipê: a wide, open, flat-topped crown that in the
       // dry season is all flower and hardly any leaf.
-      const bloom = species === 'ipeYellow' ? rgb(0xf0c52c) : rgb(0xde6fa8);
-      const bloomDeep = species === 'ipeYellow' ? rgb(0xc99a1a) : rgb(0xb24c86);
+      const bloom = species === 'ipeYellow' ? rgb(0xe5ba36) : rgb(0xc66f9d);
+      const bloomDeep = species === 'ipeYellow' ? rgb(0xb88d27) : rgb(0x9d4d7b);
       const blobs = scatterBlobs(rng, 9, 0, 0.74, 0.27, 0.12, 0.085, 0.15);
       const palette = (f: number, h: number): Rgb => (f < 0.14 ? LEAF_DEEP : h < 0.35 && f < 0.4 ? bloomDeep : bloom);
       return merge([...trunk(0.64, 0.028, 0.014, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.74, 0), palette, 8.1, 0.3, detail)]);
