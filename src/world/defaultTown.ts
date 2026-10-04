@@ -9,8 +9,8 @@ import { type BlueprintBody } from './buildings/blueprints';
 import { Model, mat } from './buildings/cityBuildings';
 import type { Building, BuildingFunction, LotSurface } from './buildings/types';
 import { buildingBounds } from './buildings/geometry';
-import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
-import { courtyard, houses, park, perimeter, varied, type Placer } from './town';
+import { type Box, type Edge, facingBody, inside } from './sampleTown';
+import { backfill, houses, infill, park, perimeter, varied, type Placer } from './town';
 import { m } from './units';
 
 /**
@@ -679,29 +679,22 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       // not one car park after another.
       const shed = kind === 'works' && Wm >= 52 && Dm >= 46;
       const park = kind === 'shops' && short >= 14 && (short < 22 || k % 2 === 0);
+      // Among homes and shops a gap is built on (a back house, a store): a
+      // block has no common ground in its middle. Only a sliver too thin to
+      // stand a building on is a garden.
+      void park;
       const body = shed ? yard(rng, Wm, Dm, 'warehouse')
         : kind === 'works' ? garden(rng, Wm, Dm)
-          : park ? parkingBody(Wm, Dm, 'paving')
-            : short >= 22 ? courtyard(rng, Wm, Dm)
-              : garden(rng, Wm, Dm);
-      if (!putOpen(body, shed ? 'warehouse' : 'square', box)) refused.push(gap);
-    }
-  };
-  /** The biggest room left in a block's middle, for a court or a garden. */
-  const middle = (lot: Box, fn: (w: number, d: number) => BlueprintBody, fnName: BuildingFunction): void => {
-    for (let inset = m(12); inset < Math.min(lot.x1 - lot.x0, lot.y1 - lot.y0) / 2 - m(8); inset += m(2)) {
-      const box: Box = { x0: lot.x0 + inset, y0: lot.y0 + inset, x1: lot.x1 - inset, y1: lot.y1 - inset };
-      if (placed.some((o) => overlaps(box, o, m(1)))) continue;
-      putOpen(fn((box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1)), fnName, box);
-      return;
+          : short >= 6 ? infill(rng, Wm, Dm, kind === 'homes')
+            : garden(rng, Wm, Dm);
+      if (!putOpen(body, shed ? 'warehouse' : kind !== 'works' && short >= 6 ? (kind === 'homes' ? 'townhouse' : 'warehouse') : 'square', box)) refused.push(gap);
     }
   };
 
   // ---- the avenue's north side: the shops, with the flats above them
   for (let i = 0; i < 5; i++) {
     const lot = lotOf(i, 2);
-    perimeter(rng, lot, [...(NORTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into);
-    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
+    backfill(rng, lot, perimeter(rng, lot, [...(NORTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into), into);
     fillGaps(lot, 'shops');
   }
   // The north-east block is the supermarket and its car park: a big shed is
@@ -723,8 +716,7 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   // ---- the avenue's south side, with the market square in the middle
   for (const i of [0, 1, 2, 4]) {
     const lot = lotOf(i, 1);
-    perimeter(rng, lot, [...(SOUTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into);
-    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
+    backfill(rng, lot, perimeter(rng, lot, [...(SOUTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into), into);
     fillGaps(lot, 'shops');
   }
   {
@@ -767,16 +759,14 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   }
   {
     const lot = lotOf(5, 1);
-    perimeter(rng, lot, ['gym', 'shop', 'townhouse', 'apartments', 'police'], FILL_SHOP, into);
-    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
+    backfill(rng, lot, perimeter(rng, lot, ['gym', 'shop', 'townhouse', 'apartments', 'police'], FILL_SHOP, into), into);
     fillGaps(lot, 'shops');
   }
 
   // ---- the northern band: terraces, the school, the park, the library
   for (const i of [0, 1, 3, 5]) {
     const lot = lotOf(i, 3);
-    perimeter(rng, lot, [...(TERRACE_FRONT[(i + 1) % TERRACE_FRONT.length] as readonly BuildingFunction[])], FILL_TERRACE, into);
-    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
+    backfill(rng, lot, perimeter(rng, lot, [...(TERRACE_FRONT[(i + 1) % TERRACE_FRONT.length] as readonly BuildingFunction[])], FILL_TERRACE, into), into);
     fillGaps(lot, 'homes');
   }
   {
@@ -788,11 +778,11 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     // The rest of the block is the street's terraces round the school's
     // playing field: a campus in a town is a building with a street round it,
     // not a building in a field.
-    perimeter(rng, lot, ['townhouse', 'apartments', 'townhouse', 'bakery', 'townhouse'], FILL_TERRACE, into);
+    backfill(rng, lot, perimeter(rng, lot, ['townhouse', 'apartments', 'townhouse', 'bakery', 'townhouse'], FILL_TERRACE, into), into);
     const field = emptiest(lot, placed, m(30));
     if (field) {
       const box: Box = { x0: field.x0 + m(1), y0: field.y0 + m(1), x1: field.x1 - m(1), y1: field.y1 - m(1) };
-      putOpen(courtyard(rng, (box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1)), 'square', box);
+      putOpen(infill(rng, (box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1), false), 'school', box);
     }
     fillGaps(lot, 'homes');
   }
@@ -807,8 +797,6 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   for (let i = 0; i < 6; i++) {
     const lot = lotOf(i, 0);
     houses(rng, lot, into);
-    // The middle of the block: a garden, a court, a playground.
-    if (i % 2 === 0) middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'homes');
   }
 
@@ -824,8 +812,7 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   ];
   BAND.forEach((band, j) => {
     const lot = bandLot(j);
-    perimeter(rng, lot, [...band.front], band.fill, into);
-    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
+    backfill(rng, lot, perimeter(rng, lot, [...band.front], band.fill, into), into);
     fillGaps(lot, band.kind);
   });
 
