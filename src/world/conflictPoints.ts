@@ -338,6 +338,8 @@ interface Sweep {
   readonly count: number;
   /** Per sample: centre x, y and unit tangent x, y. */
   readonly frame: Float64Array;
+  /** Squared tangent length per sample, shared by every pair using this sweep. */
+  readonly frameLengthSq: Float64Array;
   /** A conservative bound around every sampled heavy-vehicle body. */
   bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   /**
@@ -383,8 +385,19 @@ function sweepOf(graph: LaneletGraph, c: Connector,
     }
   }
   next.set(key, frame);
-  return { crossing, path, c0, count, frame, bounds: null, grid: null, range: null };
+  let frameLengthSq = FRAME_LENGTHS.get(frame);
+  if (!frameLengthSq) {
+    frameLengthSq = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+      const x = frame[i * 4 + 2]!, y = frame[i * 4 + 3]!;
+      frameLengthSq[i] = x * x + y * y;
+    }
+    FRAME_LENGTHS.set(frame, frameLengthSq);
+  }
+  return { crossing, path, c0, count, frame, frameLengthSq, bounds: null, grid: null, range: null };
 }
+
+const FRAME_LENGTHS = new WeakMap<Float64Array, Float64Array>();
 
 function boundsOf(s: Sweep): { minX: number; minY: number; maxX: number; maxY: number } {
   if (s.bounds) return s.bounds;
@@ -581,8 +594,8 @@ function overlap(
   const dot = aux * bux + auy * buy;
   const cross = aux * buy - auy * bux;
   const along = Math.abs(dot), across = Math.abs(cross);
-  const aLength = aux * aux + auy * auy;
-  const bLength = bux * bux + buy * buy;
+  const aLength = a.frameLengthSq[i]!;
+  const bLength = b.frameLengthSq[j]!;
   return Math.abs(dx * aux + dy * auy) < ahl * aLength + (bhl * along + bhw * across)
     && Math.abs(-dx * auy + dy * aux) < ahw * aLength + (bhl * across + bhw * along)
     && Math.abs(dx * bux + dy * buy) < (ahl * along + ahw * across) + bhl * bLength
