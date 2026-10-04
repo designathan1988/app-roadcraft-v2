@@ -17,6 +17,18 @@ run afterwards. Read this before touching anything.
 folder names, comments, commit messages and documentation. The *interface* is
 translated at runtime (`src/ui/i18n/`); nothing else is.
 
+## Mandatory root-cause workflow
+
+Trial-and-error development is prohibited. Before changing behavior or
+performance, reproduce the defect and trace the relevant data and control flow
+until the cause is identified. Research the official documentation and proven
+approaches used by shipped games, cite the sources, then state a coherent plan
+that addresses the cause while preserving existing correct behavior and visual
+quality. Implement that plan in the actual system and verify it with focused
+tests and the rendered game where applicable. If verification contradicts the
+diagnosis, investigate the false assumption and revise the plan; do not stack
+speculative patches, tune parameters to make a test pass, or hide the symptom.
+
 ---
 
 ## 1. One paragraph on what this is
