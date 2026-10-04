@@ -323,7 +323,10 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          float waterFoam = clamp(waterBand * waterFroth * 0.58, 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
-         float waterAlpha = mix(0.34, 0.94, smoothstep(0.0, ${(DEEP_AT * 0.7).toFixed(2)}, vWaterDepth));
+         // The first shallow stretch reveals the actual bed. Starting at
+         // 0.34 opacity mixed green water with brown ground into a bright
+         // cyan outline before the river became deep blue a few pixels in.
+         float waterAlpha = mix(0.08, 0.94, smoothstep(0.25, ${(DEEP_AT * 0.7).toFixed(2)}, vWaterDepth));
          waterAlpha = max(waterAlpha, waterFoam * 0.9);
          float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, vWaterDepth);
 
@@ -373,7 +376,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v1';
+  material.customProgramCacheKey = () => 'water-two-layer-v2';
 
   const started = performance.now();
   return {
