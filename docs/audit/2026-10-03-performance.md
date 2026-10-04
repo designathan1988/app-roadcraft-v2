@@ -30,4 +30,10 @@ The frame median is display limited near 16.7 ms. The added overview geometry is
 - `node scripts/verify-visual.mjs` completed its geometry and scene scenarios but failed the fixed-time vehicle-occupant sample. Diagnostic sampling found one active citizen mesh 300 ms after framing the moving car, none five seconds later, and two after another 15 seconds. The car moves out of the tight 30× camera view; the current verifier's single delayed sample cannot distinguish timing from missing representation. The verifier remains red and this needs an evidence-based repair within the test policy.
 - The initial JavaScript entry chunk is 3.87 MB minified (1.64 MB gzip). The next asset-specific investigation should measure whether code splitting reduces startup cost. KTX2 conversion needs a texture-specific memory/bandwidth profile and a cooked transcoder path; it was not applied without evidence.
 
+## Startup CPU follow-up
+
+The production startup profile transferred about 1.8 MB before the game exposed its scene; the main JavaScript transfer took about 110 ms. Two long main-thread tasks took roughly 6.4 s and 4.5–6.2 s. Source-mapped CPU samples in the first task concentrated in procedural texture baking, pedestrian path search, the region index and vehicle conflict geometry. The second concentrated in shader setup, terrain and building geometry. Splitting the JavaScript bundle alone cannot remove this synchronous work.
+
+`normalMapFrom` spent 15.9 ms for a 512² image and 67.6 ms for 1024² in the browser. Replacing four per-pixel modulo-based neighbour lookups with identical row/edge indices reduced these medians to 11.9 and 44.9 ms. SHA-256 of the resulting pixels remained identical at sizes 1, 2, 7, 512 and 1024. Whole startup after the change measured 9.8 and 12.0 s versus 11.5–13.5 s before; this variation does not establish a precise end-to-end gain.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

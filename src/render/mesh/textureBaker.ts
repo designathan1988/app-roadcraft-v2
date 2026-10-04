@@ -99,12 +99,16 @@ export function normalMapFrom(height: Float32Array, size: number, strength: numb
   const { canvas, ctx } = canvasOf(size);
   if (!ctx) return canvas;
   const image = ctx.createImageData(size, size);
-  const at = (x: number, y: number): number =>
-    height[((y + size) % size) * size + ((x + size) % size)] as number;
   for (let y = 0; y < size; y++) {
+    const row = y * size;
+    const above = (y === 0 ? size - 1 : y - 1) * size;
+    const below = (y + 1 === size ? 0 : y + 1) * size;
+    let left = size - 1;
     for (let x = 0; x < size; x++) {
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
-      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+      const right = x + 1 === size ? 0 : x + 1;
+      const dx = ((height[row + right] as number) - (height[row + left] as number)) * strength;
+      const dy = ((height[below + x] as number) - (height[above + x] as number)) * strength;
+      left = x;
       const length = Math.hypot(dx, dy, 1);
       const index = (y * size + x) * 4;
       image.data[index] = Math.round(((-dx / length) * 0.5 + 0.5) * 255);

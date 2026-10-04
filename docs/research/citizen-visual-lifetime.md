@@ -8,6 +8,8 @@
 - [three.js: KTX2Loader](https://threejs.org/docs/pages/KTX2Loader.html) supports GPU-compressed textures, but requires a transcoder and a cooked asset path. The measured dominant waste was unused character models and animation arrays, so texture conversion is deferred pending a texture-specific profile.
 - [Unreal Mass Gameplay](https://dev.epicgames.com/documentation/en-us/unreal-engine/overview-of-mass-gameplay-in-unreal-engine) separates simulation LOD from visual representation and supports a visual `Off` state. This matches Roadcraft's existing simulation/render boundary.
 - [NVIDIA GPU Gems 3: Animated Crowd Rendering](https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-2-animated-crowd-rendering) combines instancing with LOD for animated crowds; Roadcraft already follows this approach for drawn citizens.
+- [Chrome DevTools performance reference](https://developer.chrome.com/docs/devtools/performance/reference) separates network requests from main-thread work in startup traces. Source-mapped CPU samples identified synchronous texture, topology and scene-build costs after the JavaScript download.
+- [MDN: JavaScript remainder](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Remainder) explains the double-remainder expression used to wrap negative coordinates in the texture baker. Normal-map neighbours can be wrapped once at each row or edge without changing any sampled pixel.
 
 ## Findings and decision
 
