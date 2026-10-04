@@ -381,13 +381,15 @@ export function createSceneRenderer(
   /** The buildings' garden plants, and the buildings and ground they were planted for. */
   let gardens: Scenery | null = null;
   let gardensFor = '';
-  // Materials whose shaders were compiled ahead (`compileAsync`), and when the scene was last checked.
-  const compiledMaterials = new WeakSet<Material>();
+  // One representative per material and mesh program variant is enough for
+  // compileAsync. Passing the whole scene compiled every repeated instance,
+  // including objects hidden outside the view, during the first town frame.
+  const compiledVariants = new WeakMap<Material, Set<string>>();
   let compileCheckedAt = 0;
   let compiling = false;
-  /** The look for new materials in progress: objects still to see, and whether one was found. */
+  /** The look for new materials in progress and their representative objects. */
   const scanStack: Object3D[] = [];
-  let scanFresh = false;
+  const compileSamples: Object3D[] = [];
   const SCAN_PER_FRAME = 1500;
   /** The buildings cut open, for the people drawn inside them (`indoors.ts`). */
   let cutSpec: CutawaySpec | null = null;
@@ -736,17 +738,11 @@ export function createSceneRenderer(
         gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
-      // Every shader the scene needs, compiled ahead and in parallel (the
-      // browser's KHR_parallel_shader_compile): looked for every two seconds
-      // among materials not seen yet - hidden ones too, and what was added
-      // since (a vehicle model, a body). Left to the first frame a material is
-      // drawn in, that frame stalled for a quarter to half a second.
-      //
-      // The look is spread over frames, SCAN_PER_FRAME objects a frame: the
-      // whole scene walked in one frame every two seconds was a beat of its
-      // own in a big town. Hidden objects are not shown for it: three's
-      // `compile` prepares the materials of every object, shown or not
-      // (WebGLRenderer.compile walks the scene with \`traverse\`).
+      // Discover new shader variants across frames, including hidden objects
+      // that may become visible as the player moves. Three's compileAsync
+      // traverses everything passed to it regardless of visibility, so only
+      // the representative meshes are submitted, with the real scene supplying
+      // lights and environment through its targetScene parameter.
       if (!compiling) {
         if (scanStack.length === 0 && performance.now() - compileCheckedAt > 2000) {
           compileCheckedAt = performance.now();
@@ -755,16 +751,29 @@ export function createSceneRenderer(
         for (let n = 0; n < SCAN_PER_FRAME && scanStack.length; n++) {
           const o = scanStack.pop()!;
           const material = (o as Mesh).material as Material | Material[] | undefined;
-          if (material) for (const m of Array.isArray(material) ? material : [material]) if (!compiledMaterials.has(m)) { compiledMaterials.add(m); scanFresh = true; }
+          if (material) for (const m of Array.isArray(material) ? material : [material]) {
+            const mesh = o as Mesh & { isInstancedMesh?: boolean; instanceColor?: unknown; isSkinnedMesh?: boolean };
+            const variant = mesh.isSkinnedMesh ? 'skinned'
+              : mesh.isInstancedMesh ? mesh.instanceColor ? 'instanced-color' : 'instanced'
+                : o.type;
+            let known = compiledVariants.get(m);
+            if (!known) { known = new Set(); compiledVariants.set(m, known); }
+            if (!known.has(variant)) { known.add(variant); compileSamples.push(o); }
+          }
           for (const child of o.children) scanStack.push(child);
         }
-        if (scanStack.length === 0 && scanFresh) {
-          scanFresh = false;
+        if (scanStack.length === 0 && compileSamples.length > 0) {
+          const warm = new Group();
+          for (const sample of compileSamples) warm.add(sample.clone(false));
+          compileSamples.length = 0;
           compiling = true;
           // For the target the scene is drawn into (`drainCompiles`).
           const previous = renderer.getRenderTarget();
           renderer.setRenderTarget(post.target);
-          void renderer.compileAsync(scene, rig.camera).catch(() => {}).finally(() => { compiling = false; });
+          void renderer.compileAsync(warm, rig.camera, scene).catch(() => {}).finally(() => {
+            warm.clear();
+            compiling = false;
+          });
           renderer.setRenderTarget(previous);
         }
       }
