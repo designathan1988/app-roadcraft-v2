@@ -242,12 +242,18 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   const applyLevel = (batch: CitizenBatch, i: number): void => {
     const variants = batch.lods[i]!;
     const mesh = batch.meshes[i]!;
-    mesh.geometry = variants[Math.min(lod, variants.length - 1)]!;
+    const wanted = variants[Math.min(lod, variants.length - 1)]!;
+    if (mesh.geometry !== wanted) mesh.geometry = wanted;
     if (mesh.geometry.morphAttributes.position) {
       if (!mesh.morphTexture && batch.parkedMorph[i]) { mesh.morphTexture = batch.parkedMorph[i]!; batch.parkedMorph[i] = null; }
     } else if (mesh.morphTexture) {
       batch.parkedMorph[i] = mesh.morphTexture;
       mesh.morphTexture = null;
+    }
+    const material = mesh.material;
+    for (const m of Array.isArray(material) ? material : [material]) {
+      const appearance = m.userData['appearanceDetail'] as { value: number } | undefined;
+      if (appearance) appearance.value = lod <= 1 ? 1 : 0;
     }
   };
   group.userData.availableModels = models.length;
@@ -664,18 +670,13 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       detail = level;
       registry.beginFrame();
       // 3: a body a few pixels tall (the overview), drawn by its coarsest level.
-      lod = zoom >= 8 ? 0 : zoom >= 2 ? 1 : zoom >= 1.2 ? 2 : 3;
+      const nextLod = zoom >= 8 ? 0 : zoom >= 2 ? 1 : zoom >= 1.2 ? 2 : 3;
+      const levelChanged = nextLod !== lod;
+      lod = nextLod;
       group.userData.lod = lod;
       for (const batch of batches.values()) {
         batch.count = 0;
-        for (let i = 0; i < batch.meshes.length; i++) {
-          applyLevel(batch, i);
-          const material = batch.meshes[i]!.material;
-          for (const m of Array.isArray(material) ? material : [material]) {
-            const detail = m.userData['appearanceDetail'] as { value: number } | undefined;
-            if (detail) detail.value = lod <= 1 ? 1 : 0;
-          }
-        }
+        if (levelChanged) for (let i = 0; i < batch.meshes.length; i++) applyLevel(batch, i);
       }
     },
     /**
@@ -894,10 +895,12 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
           // pass: with the whole roster loaded, most bodies are empty most frames.
           mesh.visible = batch.count > 0;
           mesh.castShadow = detail > 0 && lod < 2;
-          mesh.instanceMatrix.clearUpdateRanges();
-          if (batch.count > 0) mesh.instanceMatrix.addUpdateRange(0, batch.count * 16);
-          mesh.instanceMatrix.needsUpdate = true;
-          if (mesh.morphTexture && lod === 0) mesh.morphTexture.needsUpdate = true;
+          if (batch.count > 0) {
+            mesh.instanceMatrix.clearUpdateRanges();
+            mesh.instanceMatrix.addUpdateRange(0, batch.count * 16);
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.morphTexture && lod === 0) mesh.morphTexture.needsUpdate = true;
+          }
         }
       }
     },
