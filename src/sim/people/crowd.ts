@@ -1681,19 +1681,22 @@ function step(w: SimWorld, s: State): void {
   for (const p of s.walkers) {
     const pos = p.agent.position();
     const vel = p.agent.velocity();
+    const movedX = (pos.x - p.prevX) / DT;
+    const movedY = (pos.z - p.prevY) / DT;
+    const movedSpeed = hypot2(movedX, movedY);
     p.x = pos.x; p.y = pos.z; p.h = pos.y;
     p.speed = hypot2(vel.x, vel.z);
     // A new body has no previously drawn facing to turn from. Initialize its
     // first visible pose from Detour, retaining every physical state/RNG draw.
-    const firstPose = !p.published && p.speed > 0;
+    const firstPose = !p.published && movedSpeed > 0;
     if (firstPose) {
-      p.heading = Math.atan2(vel.z, vel.x);
+      p.heading = Math.atan2(movedY, movedX);
       p.prevHeading = p.heading;
     }
     // VISUAL ORIENTATION, which moves nothing: a moving body faces its actual
     // displacement, even while giving way slowly. At rest it can face intent.
     const want = p.agent.desiredVelocity();
-    const face = p.speed > STILL ? Math.atan2(vel.z, vel.x)
+    const face = movedSpeed > MEANS ? Math.atan2(movedY, movedX)
       : hypot2(want.x, want.z) > MEANS ? Math.atan2(want.z, want.x)
         : p.holding ? waitFacing(p) : null;
     if (face !== null && !firstPose) {
