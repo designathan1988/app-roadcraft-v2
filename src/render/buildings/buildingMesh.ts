@@ -2283,6 +2283,7 @@ export function assembleBuildingMeshes(
   kit: BuildingKit,
   ghost = false,
   dim = false,
+  selection?: { readonly parts: ReadonlySet<PartKind>; readonly shells: boolean; readonly furniture: boolean },
 ): BuildingMeshes {
   const group = new Group();
   group.name = ghost ? 'building-preview' : 'buildings';
@@ -2291,7 +2292,7 @@ export function assembleBuildingMeshes(
   const meshes: (Mesh | InstancedMesh)[] = [];
   let triangles = 0;
 
-  for (const finish of FINISHES) {
+  for (const finish of selection?.shells === false ? [] : FINISHES) {
     let vertices = 0;
     let indices = 0;
     for (const chunk of chunks) {
@@ -2334,7 +2335,7 @@ export function assembleBuildingMeshes(
     triangles += indices / 3;
   }
 
-  for (const kind of PART_KINDS) {
+  for (const kind of selection?.parts ?? PART_KINDS) {
     let count = 0;
     for (const chunk of chunks) count += chunk.parts[kind].count;
     if (count === 0) continue;
@@ -2378,7 +2379,7 @@ export function assembleBuildingMeshes(
     triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;
   }
   // Furniture, only where an interior is drawn: one batch per kind.
-  if (!ghost && chunks.some((c) => c.furniture)) {
+  if (!ghost && selection?.furniture !== false && chunks.some((c) => c.furniture)) {
     const furniture = kit.furniture();
     for (const kind of FURNITURE_KINDS) {
       let count = 0;

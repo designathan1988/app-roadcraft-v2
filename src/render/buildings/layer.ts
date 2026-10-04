@@ -9,7 +9,7 @@ import type { Building, BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
 import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, buildBuildingMeshes, emitChunk } from './buildingMesh';
-import { type BuildingKit, type PartKind, createBuildingKit } from './kit';
+import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
 /**
  * The buildings layer: the stored buildings and the editor's preview, each
@@ -86,6 +86,8 @@ export function createBuildingLayer(): BuildingLayer {
   let stored: BuildingMeshes | null = null;
   /** Each cell's batch as last assembled, and from which buildings' meshes (`assembleByCell`). */
   const cells: CellCache = new Map();
+  const detailCells: CellCache = new Map();
+  let details: BuildingMeshes | null = null;
   let faded: BuildingMeshes | null = null;
   let dimmed: BuildingId | null | undefined = undefined;
   let ghost: BuildingMeshes | null = null;
@@ -97,7 +99,7 @@ export function createBuildingLayer(): BuildingLayer {
   let far = false;
   /** Puts the near or far parts on every stored batch (`setFar`). */
   const applyFar = (): void => {
-    for (const batch of [stored, faded]) {
+    for (const batch of [stored, details, faded]) {
       batch?.group.traverse((o) => {
         const mesh = o as InstancedMesh;
         if (!mesh.isInstancedMesh) return;
@@ -189,7 +191,7 @@ export function createBuildingLayer(): BuildingLayer {
   return {
     group,
     get triangles() {
-      return (stored?.triangles ?? 0) + (ghost?.triangles ?? 0);
+      return (stored?.triangles ?? 0) + (details?.triangles ?? 0) + (ghost?.triangles ?? 0);
     },
     get version() {
       return version;
@@ -204,7 +206,7 @@ export function createBuildingLayer(): BuildingLayer {
       let rebuilt = false;
       if (key !== storedKey) {
         storedKey = key;
-        for (const batch of [stored, faded]) {
+        for (const batch of [stored, details, faded]) {
           if (!batch) continue;
           group.remove(batch.group);
           batch.dispose();
@@ -217,8 +219,9 @@ export function createBuildingLayer(): BuildingLayer {
         const solid = dimmed === undefined ? shown : shown.filter((b) => b.id === dimmed);
         const others = dimmed === undefined ? [] : shown.filter((b) => b.id !== dimmed);
         if (cutChunks.size > 64) cutChunks.clear();
-        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, cells);
-        group.add(stored.group);
+        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, cells, BATCH_CELL, COARSE_PARTS);
+        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS);
+        group.add(stored.group, details.group);
         faded = others.length > 0
           ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt)), kit, false, true)
           : null;
@@ -274,8 +277,12 @@ export function createBuildingLayer(): BuildingLayer {
     },
     dispose() {
       stored?.dispose();
+      details?.dispose();
+      faded?.dispose();
       for (const cell of cells.values()) cell.part.dispose();
       cells.clear();
+      for (const cell of detailCells.values()) cell.part.dispose();
+      detailCells.clear();
       groundDigests.clear();
       ghost?.dispose();
       kit.dispose();
@@ -303,6 +310,9 @@ function groundDigest(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): strin
 }
 /** Side of the cells the buildings are batched in, world units. */
 const BATCH_CELL = m(240);
+const DETAIL_CELL = m(120);
+const DETAIL_PARTS: ReadonlySet<PartKind> = new Set(['frame', 'railing', 'roofRailing']);
+const COARSE_PARTS: ReadonlySet<PartKind> = new Set(PART_KINDS.filter((kind) => !DETAIL_PARTS.has(kind)));
 
 /**
  * The buildings batched cell by cell, each cell its own meshes: a cell out of
@@ -321,10 +331,11 @@ type CellCache = Map<string, { chunks: readonly BuildingChunk[]; part: BuildingM
  * storey added to one building - as voxel and tile engines rebuild only the
  * chunks an edit made dirty.
  */
-function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk, kit: BuildingKit, cache: CellCache): BuildingMeshes {
+function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk,
+  kit: BuildingKit, cache: CellCache, cellSize: number, partKinds: ReadonlySet<PartKind>): BuildingMeshes {
   const byCell = new Map<string, BuildingChunk[]>();
   for (const b of buildings) {
-    const key = `${Math.floor(b.x / BATCH_CELL)},${Math.floor(b.y / BATCH_CELL)}`;
+    const key = `${Math.floor(b.x / cellSize)},${Math.floor(b.y / cellSize)}`;
     const list = byCell.get(key);
     if (list) list.push(chunkOf(b));
     else byCell.set(key, [chunkOf(b)]);
@@ -341,7 +352,8 @@ function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) =
       part = known.part;
     } else {
       known?.part.dispose();
-      part = assembleBuildingMeshes(chunks, kit);
+      part = assembleBuildingMeshes(chunks, kit, false, false,
+        { parts: partKinds, shells: partKinds === COARSE_PARTS, furniture: partKinds === COARSE_PARTS });
       cache.set(key, { chunks, part });
     }
     parts.push(part);
