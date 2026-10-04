@@ -14,3 +14,10 @@ __pycache__/
 # People cooked ahead (npm run cook:people); regenerated, never committed
 cooked/
 exports/
+
+# Scratch: probes, traces, one-off scripts and their output. Scratch belongs in
+# the session's scratch directory (AGENTS.md section 2); these keep leftovers out.
+zz-*
+zz[A-Z]*
+/.claude/_*
+/.claude/wt-*/
