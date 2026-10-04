@@ -2,13 +2,14 @@ import { Rng } from '@core/rng';
 import type { Vec2 } from '@core/vec2';
 import { madeToMeasure } from '@world/buildings/procedural';
 import { METERS_PER_UNIT } from '@world/units';
-import { dressLot } from './lotDressing';
+import { furnishLot, lotKind, planLot } from './lotPlan';
+import type { Building } from '@world/buildings/types';
 import type { SiteContext } from '@world/buildings/validate';
 import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
-import { placeBuilding } from './buildings';
+import { addBuildingRecord, type placeBuilding } from './buildings';
 import { buildingBounds, footprintRects } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
 import { Level, halfWidth } from '@world/roadTypes';
@@ -266,19 +267,28 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       const reach = { left: fullReach.left * k, right: fullReach.right * k };
       if (k < 1 && fullReach.left + fullReach.right < m(0.5)) break;
       const lotW = gridW + reach.left + reach.right;
-      // A building made for the lot, leaving room for its setback and yard.
-      const roomW = (lotW - (zone.use === 'residential' && zone.density === 'low' ? m(1.5) : m(0.6))) * METERS_PER_UNIT;
-      const roomD = Math.max(5, (lotD - m(zone.use === 'commercial' ? 4 : 8)) * METERS_PER_UNIT);
-      if (roomW < 4) continue;
-      const made = madeToMeasure(zone.use, zone.density, roomW, roomD, rng);
+      const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
+      if (W < 6) continue;
+      // The lot is planned first - front, sides, back, each for a purpose -
+      // and the building is made for the envelope the plan leaves it.
+      const plan = planLot(lotKind(zone.use, zone.density), W, D, rng);
+      const env = plan.building;
+      const made = madeToMeasure(zone.use, zone.density, {
+        W: env.x1 - env.x0, D: env.y1 - env.y0,
+        backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
+        character: (Number(start.segment) * 31 + (start.side === 1 ? 7 : 3)) >>> 0,
+      }, rng);
       const body = made.body;
-      body.function = made.fn;
-      if (!dressLot(body, zone.use, zone.density, lotW, lotD, rng)) continue;
-      // The widened lot's front middle: shifted along the street by half of
-      // what one side gained over the other.
+      const dx = m(env.x0 - W / 2), dy = m(env.y0);
+      for (const v of body.volumes) { v.x += dx; v.y += dy; }
+      for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
+      for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+      if (!furnishLot(body, plan, made, rng)) continue;
+      // The widened lot's front middle - the body's local origin - shifted
+      // along the street by half of what one side gained over the other.
       const shift = (reach.right - reach.left) / 2;
       const anchor = { x: gridAnchor.x + Math.cos(rotation) * shift, y: gridAnchor.y + Math.sin(rotation) * shift };
-      result = placeBuilding(ctx, body, anchor, rotation);
+      result = addBuildingRecord(ctx, { ...body, x: anchor.x, y: anchor.y, rotation } as Omit<Building, 'id'>);
       if (result.ok) break;
     }
     if (!result.ok || result.id === undefined) { refused.add(start.id); continue; }

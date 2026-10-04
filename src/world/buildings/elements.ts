@@ -60,6 +60,11 @@ export const ELEMENT_DEFAULTS: Readonly<Record<ElementKind, readonly [number, nu
   clock: [m(3), m(0.25), m(3)],
   hedge: [m(3), m(0.7), m(1.2)],
   shrub: [m(1.4), m(1.4), m(1.2)],
+  gate: [m(3), m(0.12), m(1.8)],
+  bin: [m(1.4), m(0.7), m(1.1)],
+  lamp: [m(0.3), m(0.3), m(4.5)],
+  bollard: [m(0.2), m(0.2), m(0.9)],
+  drain: [m(0.5), m(0.5), m(0.1)],
 };
 
 /** Whether an element's foot stands on the ground (rather than on a floor, or hung on a wall). */
@@ -77,10 +82,52 @@ export const GROUND_DRESSING: ReadonlySet<ElementKind> = new Set<ElementKind>([
   'fence',
   'tree',
   'bench',
+  'shrub',
+  'flowers',
+  'hedge',
   'planter',
+  'gate',
+  'bin',
+  'lamp',
+  'bollard',
+  'drain',
 ]);
 
 export const onGround = (e: BuildingElement): boolean => e.z <= EPS && !ON_FACADE.has(e.kind);
+
+/**
+ * Parts that stand on the land itself and follow it: on a slope each is laid
+ * on the ground under it, never at the building's floor. A wall, a fence, a
+ * hedge or a path long enough to cross a slope goes in steps (`followPieces`),
+ * the way a real fence is stepped down a hillside.
+ */
+export const FOLLOWS_GROUND: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  'wall', 'fence', 'railing', 'pavement', 'hedge', 'bin', 'lamp', 'bollard', 'drain', 'planter', 'bench', 'rocks',
+  'flowers', 'shrub', 'tree', 'gate',
+]);
+
+/** The longest step of a run that follows the ground. */
+export const FOLLOW_STEP = m(2);
+
+/** A long run that follows the ground in steps of at most `FOLLOW_STEP`; anything else whole. */
+export function followPieces(el: BuildingElement): BuildingElement[] {
+  if (!FOLLOWS_GROUND.has(el.kind) || el.kind === 'gate') return [el];
+  const alongW = el.w >= el.d;
+  const length = alongW ? el.w : el.d;
+  const n = Math.ceil(length / FOLLOW_STEP - 1e-9);
+  if (n <= 1) return [el];
+  // The way `w` runs: across the facing, turned by the element's own angle.
+  const a = el.angle ?? 0;
+  const wx = el.facing === 0 || el.facing === 2 ? 1 : 0, wy = 1 - wx;
+  const ux = wx * Math.cos(a) - wy * Math.sin(a), uy = wx * Math.sin(a) + wy * Math.cos(a);
+  const [dx, dy] = alongW ? [ux, uy] : [-uy, ux];
+  const out: BuildingElement[] = [];
+  for (let k = 0; k < n; k++) {
+    const off = (k + 0.5) * (length / n) - length / 2;
+    out.push({ ...el, x: el.x + dx * off, y: el.y + dy * off, ...(alongW ? { w: length / n } : { d: length / n }) });
+  }
+  return out;
+}
 
 export { elementRect };
 
@@ -277,6 +324,11 @@ function elementsAgainstBayAxis(b: Building, v: Volume, bay: BayRef, kind: Eleme
       const c = at(along, m(1.4));
       return [{ kind, x: c.x, y: c.y, facing, w: dw, d: dd, z: 0, h: dh }];
     }
+    case 'bin':
+    case 'lamp':
+    case 'bollard':
+    case 'drain':
+    case 'gate':
     case 'planter': {
       const c = at(along, m(1.1));
       return [{ kind, x: c.x, y: c.y, facing, w: dw, d: dd, z: 0, h: dh }];

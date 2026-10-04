@@ -37,6 +37,7 @@ import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { localToWorld, solidFootprints } from '@world/buildings/geometry';
+import { followPieces } from '@world/buildings/elements';
 import { floorHeight } from '@world/buildings/foundation';
 import { lotSurfaces } from '@world/buildings/lots';
 import type { RoadDoc } from '@world/doc';
@@ -193,10 +194,15 @@ function gardenPlants(all: Iterable<Building>, groundAt: (x: number, y: number) 
   for (const b of all) {
     for (const el of b.elements ?? []) {
       if (el.kind !== 'tree' && el.kind !== 'shrub' && el.kind !== 'hedge' && el.kind !== 'flowers') continue;
-      const at = localToWorld(b, el.x, el.y);
       // `w` runs across the way the element faces.
       const yaw = (b.rotation ?? 0) + (el.facing === 1 || el.facing === 3 ? Math.PI / 2 : 0) + (el.angle ?? 0);
-      out.push({ kind: el.kind, x: at.x, y: at.y, z: groundAt(at.x, at.y), w: el.w, d: el.d, h: el.h, yaw, seed: ((b.id * 7919 + el.id * 104729) % 100003) / 100003 });
+      // A long hedge in steps, each on the ground under it, not one box at its middle's height.
+      const kind = el.kind;
+      followPieces(el).forEach((piece, k) => {
+        const at = localToWorld(b, piece.x, piece.y);
+        out.push({ kind, x: at.x, y: at.y, z: groundAt(at.x, at.y), w: piece.w, d: piece.d, h: piece.h, yaw,
+          seed: ((b.id * 7919 + el.id * 104729 + k * 31) % 100003) / 100003 });
+      });
     }
   }
   return out;

@@ -30,7 +30,7 @@ describe('build from reference', () => {
 
   it('builds a valid building: podium, tower on it, lantern for the mast, windows where the model is dark', () => {
     // Dark on the podium's front ground floor (a portal), dark bands on the tower, light elsewhere.
-    const body = buildFromReference(model, (x, y, z, nx, ny) => {
+    const body = buildFromReference(model, (x, _y, z, nx, ny) => {
       if (nx === 0 && ny === 0) return [0.6, 0.3, 0.25];
       if (z < 4.5 && ny < 0 && Math.abs(x) < 3) return [0.05, 0.05, 0.05];
       if (z > 9.1 && (z % 3.3) > 1.2 && (z % 3.3) < 2.6) return [0.1, 0.12, 0.15];

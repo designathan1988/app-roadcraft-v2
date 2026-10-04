@@ -62,7 +62,7 @@ import {
   trimMaterial,
   wallMaterial,
 } from '@world/buildings/materials';
-import { elementRect, onGround, stairSteps } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementRect, followPieces, onGround, stairSteps } from '@world/buildings/elements';
 import {
   type BayComponent,
   type Building,
@@ -663,7 +663,16 @@ function emitBuilding(
     // Cut open, what hangs above the cut floor (a clock, a canopy) goes with the floors above.
     if (b.cutaway !== undefined && el.z >= levelElevation(b, b.cutaway + 1) - 1e-6) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
-    emitElement(e, el, floor, f.bottom, look);
+    if (!FOLLOWS_GROUND.has(el.kind)) {
+      emitElement(e, el, floor, f.bottom, look);
+      continue;
+    }
+    // On the land: each step of it on the ground under it, its foot below that.
+    for (const piece of followPieces(el)) {
+      const w = e.L(piece.x, piece.y, 0);
+      const ground = groundAt(w[0], w[1]);
+      emitElement(e, piece, ground, ground - m(0.3), look);
+    }
   }
 
   // ---- cores: a lift overrun on the highest flat roof over the core
@@ -1137,6 +1146,10 @@ const LOT_PAINT: Readonly<Record<LotSurface, Paint>> = {
   gravel: paint({ finish: 'concrete', colour: 0xa9a294 }),
   sand: paint({ finish: 'plaster', colour: 0xe2cf9c }),
   water: paint({ finish: 'glass', colour: 0x4f8fb3 }),
+  asphalt: paint({ finish: 'concrete', colour: 0x515457 }),
+  concrete: paint({ finish: 'concrete', colour: 0xb9b6ae }),
+  pavers: paint({ finish: 'brick', colour: 0x9a958c }),
+  tiles: paint({ finish: 'ceramic', colour: 0xb4785a }),
 };
 const LOT_KERB = paint({ finish: 'stone', colour: 0xb3ada0 });
 const POOL_TILE = paint({ finish: 'ceramic', colour: 0x9fd0dc });
@@ -1232,10 +1245,14 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
   for (const el of b.elements ?? []) {
     if (!withParts && !onLot?.(el)) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
-    const host = lots.find((v) => el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);
-    const height = host ? heightOf.get(host) : undefined;
-    const z = height ? height(el.x, el.y) : level;
-    emitElement(e, el, z, low - m(0.3), look, height);
+    // A run on the land in steps, each on the lot's surface under it, or on
+    // the ground where no lot is laid: nothing floats over a slope.
+    for (const piece of followPieces(el)) {
+      const host = lots.find((v) => piece.x >= v.x && piece.x <= v.x + v.w && piece.y >= v.y && piece.y <= v.y + v.d);
+      const height = host ? heightOf.get(host) : undefined;
+      const z = height ? height(piece.x, piece.y) : FOLLOWS_GROUND.has(piece.kind) ? at(piece.x, piece.y) : level;
+      emitElement(e, piece, z, Math.min(low, z) - m(0.3), look, height);
+    }
   }
 }
 
@@ -1384,6 +1401,10 @@ function emitElement(e: Emitter, el: BuildingElement, floor: number, bottom: num
   }
   if (el.kind === 'parking') {
     emitParking(e, el, z0, surface);
+    return;
+  }
+  if (el.kind === 'gate' || el.kind === 'bin' || el.kind === 'lamp' || el.kind === 'bollard' || el.kind === 'drain') {
+    emitLotPart(e, el, x0, y0, x1, y1, z0, zb, c);
     return;
   }
   if (el.kind === 'awning') {
@@ -1803,6 +1824,72 @@ function emitParking(e: Emitter, el: BuildingElement, z0: number, surface?: (lx:
   }
 }
 const PARKING_ASPHALT: Paint = paint({ finish: 'concrete', colour: 0x4a4d4f });
+const GATE_PAINT: Paint = paint({ finish: 'metal', colour: 0x2f3437 });
+const BIN_BODY: Paint = paint({ finish: 'metal', colour: 0x3d5a43 });
+const BIN_LID: Paint = paint({ finish: 'metal', colour: 0x2b3a2e });
+const LAMP_POST: Paint = paint({ finish: 'metal', colour: 0x40464a });
+const LAMP_GLASS: Paint = paint({ finish: 'glass', colour: 0xf3e7c4 });
+const BOLLARD_BAND: Paint = paint({ finish: 'plaster', colour: 0xe8e2cf });
+const DRAIN_GRATE: Paint = paint({ finish: 'metal', colour: 0x26292b });
+
+/**
+ * The furniture of a lot. A gate is a frame of posts and rails filled with
+ * close bars (a car's gate or a person's, by its width); bins are a pair of
+ * wheelie bins with their lids; a lamp a post with its head over the path; a
+ * bollard a post with a pale band; a drain a dark grate flush with the paving.
+ */
+function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1: number, y1: number,
+  z0: number, zb: number, c: Paint): void {
+  const z1 = z0 + el.h;
+  const alongX = el.facing === 0 || el.facing === 2;
+  // A box spanning `u0..u1` along the part and `v0..v1` across it (fractions), at heights h0..h1.
+  const part = (u0: number, u1: number, v0: number, v1: number, h0: number, h1: number, look: Paint): void => {
+    if (alongX) e.box(x0 + (x1 - x0) * u0, y0 + (y1 - y0) * v0, x0 + (x1 - x0) * u1, y0 + (y1 - y0) * v1, h0, h1, look);
+    else e.box(x0 + (x1 - x0) * v0, y0 + (y1 - y0) * u0, x0 + (x1 - x0) * v1, y0 + (y1 - y0) * u1, h0, h1, look);
+  };
+  const length = alongX ? x1 - x0 : y1 - y0;
+  switch (el.kind) {
+    case 'gate': {
+      const look = el.material ? c : GATE_PAINT;
+      const post = Math.min(0.2, m(0.14) / length);
+      part(0, post, -0.4, 1.4, zb, z1 + m(0.1), look);
+      part(1 - post, 1, -0.4, 1.4, zb, z1 + m(0.1), look);
+      part(post, 1 - post, 0, 1, z0 + m(0.08), z0 + m(0.16), look);
+      part(post, 1 - post, 0, 1, z1 - m(0.1), z1, look);
+      const bars = Math.max(2, Math.round(length / m(0.14)));
+      const bar = m(0.035) / length;
+      for (let k = 1; k < bars; k++) {
+        const u = post + ((1 - 2 * post) * k) / bars;
+        part(u - bar / 2, u + bar / 2, 0.2, 0.8, z0 + m(0.16), z1 - m(0.1), look);
+      }
+      return;
+    }
+    case 'bin': {
+      for (const [u0, u1] of [[0.02, 0.48], [0.52, 0.98]] as const) {
+        part(u0, u1, 0.05, 0.95, zb, z1 - m(0.06), BIN_BODY);
+        part(u0 - 0.01, u1 + 0.01, 0, 1, z1 - m(0.06), z1, BIN_LID);
+      }
+      return;
+    }
+    case 'lamp': {
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, r = m(0.06);
+      e.box(cx - r, cy - r, cx + r, cy + r, zb, z1, LAMP_POST);
+      e.box(cx - m(0.22), cy - m(0.22), cx + m(0.22), cy + m(0.22), z1, z1 + m(0.12), LAMP_POST);
+      e.box(cx - m(0.18), cy - m(0.18), cx + m(0.18), cy + m(0.18), z1 - m(0.08), z1, LAMP_GLASS);
+      return;
+    }
+    case 'bollard': {
+      e.box(x0, y0, x1, y1, zb, z1, c === ELEMENT_CONCRETE ? LAMP_POST : c);
+      e.box(x0 - m(0.01), y0 - m(0.01), x1 + m(0.01), y1 + m(0.01), z1 - m(0.25), z1 - m(0.15), BOLLARD_BAND);
+      return;
+    }
+    default: {
+      // The drain: a frame and its slots, a hair over the paving.
+      e.box(x0, y0, x1, y1, z0, z0 + m(0.02), DRAIN_GRATE);
+      for (let k = 1; k < 5; k++) part(k / 5 - 0.03, k / 5 + 0.03, 0.1, 0.9, z0 + m(0.02), z0 + m(0.025), LAMP_POST);
+    }
+  }
+}
 const PARKING_LINE: Paint = paint({ finish: 'plaster', colour: 0xe9e6dc });
 
 /** The canvas colour of an awning, from the building's own palette. */

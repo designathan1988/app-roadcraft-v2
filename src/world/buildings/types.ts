@@ -208,7 +208,13 @@ export interface Volume {
   open?: LotSurface;
 }
 
-export const LOT_SURFACES = ['grass', 'paving', 'gravel', 'sand', 'water'] as const;
+/**
+ * What an open block is laid with. Each area of a lot has its own: a lawn, a
+ * stone forecourt, a concrete drive or service yard, an asphalt car park and
+ * its aisle, interlocking pavers on a path or a patio, terracotta tiles on a
+ * terrace, gravel, sand, a pool.
+ */
+export const LOT_SURFACES = ['grass', 'paving', 'gravel', 'sand', 'water', 'asphalt', 'concrete', 'pavers', 'tiles'] as const;
 export type LotSurface = (typeof LOT_SURFACES)[number];
 
 /**
@@ -266,6 +272,13 @@ export const ELEMENT_KINDS = [
   'clock',
   'hedge',
   'shrub',
+  // Lot furniture: a gate in a boundary (a car's or a person's, by its width),
+  // wheelie bins, a lamp post, a bollard, a drain grate.
+  'gate',
+  'bin',
+  'lamp',
+  'bollard',
+  'drain',
 ] as const;
 export type ElementKind = (typeof ELEMENT_KINDS)[number];
 
@@ -387,7 +400,8 @@ export const isRoofKind = (v: unknown): v is RoofKind =>
   (ROOF_KINDS as readonly unknown[]).includes(v);
 export const isSide = (v: unknown): v is Side => v === 0 || v === 1 || v === 2 || v === 3;
 export const isElementKind = (v: unknown): v is ElementKind => (ELEMENT_KINDS as readonly unknown[]).includes(v);
-export const MAX_ELEMENTS = 64;
+/** A whole property - walls, gates, paths, car park, garden, cornices - fits. */
+export const MAX_ELEMENTS = 128;
 
 export const bayKey = (side: FaceId, index: number): string => `${side}:${index}`;
 
