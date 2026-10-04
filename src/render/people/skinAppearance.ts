@@ -239,8 +239,14 @@ if (faceCard) {
               : slot < 3.5 ? vec2(textureSize(personLash, 0)) : vec2(textureSize(personBeard, 0));
             float cardMip = max(0.0, 0.5 * log2(max(dot(cardDx * cardSize, cardDx * cardSize), dot(cardDy * cardSize, cardDy * cardSize))));
             cardTexel.a *= 1.0 + cardMip * 0.25;
+            if (slot > 1.5 && slot < 2.5 && cardTextures[1] > 0.5) cardTexel.a = min(1.0, cardTexel.a * 1.55);
+            if (slot > 2.5 && slot < 3.5 && cardTextures[2] > 0.5) cardTexel.a *= 0.65;
             float strand = dot(cardTexel.rgb, vec3(0.3, 0.59, 0.11));
-            vec3 hairCol = slot > 2.5 && slot < 3.5 ? vec3(0.03) : beardColour * (0.55 + 0.95 * strand);
+            // The source's grey strand highlights are sRGB, now sampled in
+            // linear light. Multiplying them by dark hair dye erased them.
+            // Keep a restrained light-coloured reflection on hair cards only.
+            vec3 hairCol = slot > 2.5 && slot < 3.5 ? vec3(0.03)
+              : beardColour * (0.55 + 0.95 * strand) + (slot < 1.5 ? vec3(0.12 * sqrt(strand)) : vec3(0.0));
             diffuseColor.rgb = mix(beardColour * 0.55, hairCol, smoothstep(0.25, 0.75, cardTexel.a));
             diffuseColor.a = cardTexel.a;
           }
