@@ -42,7 +42,13 @@ export function signalPostPlace(net: Network, node: NodeId, segmentId: SegmentId
   // Sample outward from the node to find the kerb position, then reverse
   // that tangent: traffic on this approach travels TOWARD the node.
   const outward = segment.a === node ? polyline : polyline.reversed();
-  const distance = Math.min(crosswalkDistance(mouth) + m(2), outward.length * 0.45);
+  // A mid-block crossing has no junction mouth: its post stands at the stop
+  // line, where the driver who stopped for it can see it.
+  const record = net.doc.node(node);
+  const midBlock = record?.crossing !== undefined && record.incident.length === 2;
+  const distance = midBlock
+    ? Math.min(net.stopLineDistance(segmentId, node), outward.length * 0.45)
+    : Math.min(crosswalkDistance(mouth) + m(2), outward.length * 0.45);
   const frame = outward.sampleAt(distance);
   const travel = { x: -frame.t.x, y: -frame.t.y };
   const left = perp(travel);

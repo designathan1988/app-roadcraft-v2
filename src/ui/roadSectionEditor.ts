@@ -109,6 +109,11 @@ export function mountRoadSectionEditor(
   const reset = document.createElement('button');
   reset.type = 'button'; reset.textContent = t('road.section.reset');
   reset.onclick = () => change(undefined);
-  panel.append(reset);
+  // In the inspector's own button row, so it is drawn like its neighbours: a
+  // bare <button> kept the browser's light grey under the panel's light text.
+  const actions = document.createElement('div');
+  actions.className = 'inspect-actions';
+  actions.append(reset);
+  panel.append(actions);
   host.append(panel);
 }

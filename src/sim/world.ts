@@ -432,7 +432,10 @@ export class SimWorld {
   /** Crossing ids at a node, one per incident segment. */
   crossingsAt(node: NodeId): CrossingId[] {
     const n = this.doc.node(node);
-    if (!n || n.incident.length < 3) return [];
+    // A junction, or a mid-block crossing (a two-road node the player put one
+    // on): without it a signal crossing's plan held no crossing at all, and its
+    // single stage never stopped the cars for anybody.
+    if (!n || (n.incident.length < 3 && !(n.crossing && n.incident.length === 2))) return [];
     return n.incident
       .slice()
       .sort((a, b) => a - b)

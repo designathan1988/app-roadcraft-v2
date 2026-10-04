@@ -7,7 +7,9 @@ import {
   travelLanes,
   lanesPerDirection,
   markingColor,
+  roadProfile,
 } from '@world/roadTypes';
+import { frameFromNode, segmentStartsAt } from '@world/geometry';
 import { laneTurnAllowed } from './roadSection';
 import type { Network, SegmentRibbon } from '@world/network';
 import { offsetPolyline } from '@core/offset';
@@ -218,7 +220,11 @@ export function crosswalkBars(
 ): Bar[] {
   const mid = crosswalkDistance(trim);
   if (mid - CROSSWALK_DEPTH / 2 <= 0) return [];
+  return zebraBars((along) => ({ p: { x: origin.x + dir.x * along, y: origin.y + dir.y * along }, nrm }), rt, mid);
+}
 
+/** The stripes of one crosswalk centred `mid` along a frame given per distance. */
+function zebraBars(frameAt: (along: number) => { p: Vec2; nrm: Vec2 }, rt: RoadType, mid: number): Bar[] {
   const pitch = BAR_WIDTH + BAR_GAP;
   const count = Math.max(1, Math.floor((CROSSWALK_DEPTH + BAR_GAP) / pitch));
   const used = count * BAR_WIDTH + (count - 1) * BAR_GAP;
@@ -228,9 +234,9 @@ export function crosswalkBars(
 
   const bars: Bar[] = [];
   for (let i = 0; i < count; i++) {
-    const along = start + i * pitch;
-    const cx = origin.x + dir.x * along;
-    const cy = origin.y + dir.y * along;
+    const { p, nrm } = frameAt(start + i * pitch);
+    const cx = p.x;
+    const cy = p.y;
     const addSpan = (from: number, to: number): void => {
       bars.push({
         a: { x: cx + nrm.x * from, y: cy + nrm.y * from },
@@ -331,7 +337,52 @@ export function junctionDetail(net: Network, view?: Aabb): { stops: Bar[]; zebra
     });
   }
 
+  midBlockDetail(net, view, stops, zebras);
   return { stops, zebras };
+}
+
+/**
+ * Paint for the mid-block crossings (`RoadNode.crossing`).
+ *
+ * A two-road node in a straight line has no junction surface, so the pass over
+ * `net.junctions` never sees it. The zebra lies on the piece the crossing
+ * names, centred where the network says (`crosswalkDistanceAt`); every
+ * approach gets its stop bar where its lanes end (`stopLineDistance`), on
+ * the half its traffic arrives in. Frames are taken at each distance, so a
+ * crossing on a curve follows the curve.
+ */
+function midBlockDetail(net: Network, view: Aabb | undefined, stops: Bar[], zebras: Bar[]): void {
+  const doc = net.doc;
+  for (const node of doc.nodes.values()) {
+    if (!node.crossing || node.incident.length !== 2) continue;
+    if (view) {
+      const reach = 40;
+      if (!intersects({ minX: node.x - reach, minY: node.y - reach, maxX: node.x + reach, maxY: node.y + reach }, view)) continue;
+    }
+    for (const segId of node.incident) {
+      const seg = doc.segment(segId);
+      if (!seg) continue;
+      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+      const pl = net.polylines.get(doc, segId);
+      const startsHere = segmentStartsAt(seg, node.id);
+      const frameAt = (along: number) => frameFromNode(pl, startsHere, Math.max(0, Math.min(pl.length, along)));
+      const crossing = net.crosswalkDistanceAt(segId, node.id);
+      if (crossing > 0) zebras.push(...zebraBars(frameAt, rt, crossing));
+      const approaching = seg.direction === 'both' ||
+        (startsHere ? seg.direction === 'bToA' : seg.direction === 'aToB');
+      const s = net.stopLineDistance(segId, node.id);
+      if (!approaching || s <= 0) continue;
+      const f = frameAt(s);
+      // Right-hand traffic: the approaching side is the `+nrm` half.
+      const inner = rt.median / 2;
+      const outer = rt.width / 2;
+      stops.push({
+        a: { x: f.p.x + f.nrm.x * inner, y: f.p.y + f.nrm.y * inner },
+        b: { x: f.p.x + f.nrm.x * outer, y: f.p.y + f.nrm.y * outer },
+        width: STOP_BAR_WIDTH,
+      });
+    }
+  }
 }
 
 /**

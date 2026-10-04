@@ -53,6 +53,28 @@ export function sameRoadSection(a: RoadSection | undefined, b: RoadSection | und
     });
 }
 
+/**
+ * The section of one piece of a split road. Lane arrows are a rule of the END
+ * a lane arrives at: forward arrows (a -> b) belong to the piece that reaches
+ * b, backward arrows to the piece that reaches a. Copied onto every piece they
+ * turned each new node into a place with only a forbidden way on - a lane with
+ * no exit at all (seen at a mid-block crossing: "left only", nothing on the left).
+ */
+export function sectionForPiece(section: RoadSection | undefined, reachesA: boolean, reachesB: boolean): RoadSection | undefined {
+  if (!section) return undefined;
+  const { turnsForward, turnsBackward, ...rest } = section;
+  return {
+    ...rest,
+    ...(reachesB && turnsForward ? { turnsForward: [...turnsForward] } : {}),
+    ...(reachesA && turnsBackward ? { turnsBackward: [...turnsBackward] } : {}),
+  };
+}
+
+/** Whether two sections are the same road once their lane arrows are set aside. */
+export function sameRoadSectionIgnoringArrows(a: RoadSection | undefined, b: RoadSection | undefined): boolean {
+  return sameRoadSection(sectionForPiece(a, false, false), sectionForPiece(b, false, false));
+}
+
 /** A snapshot must never share editable turn arrays with its document. */
 export function cloneRoadSection(section: RoadSection): RoadSection {
   return { ...section,

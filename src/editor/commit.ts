@@ -15,7 +15,7 @@ import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
-import { sameRoadSection } from '@world/roadSection';
+import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
@@ -609,7 +609,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   const first = doc.segment(firstId);
   const second = doc.segment(secondId);
   if (!first || !second || first.curve || second.curve || first.type !== second.type || first.lanes !== second.lanes ||
-    !sameRoadSection(first.section, second.section) || first.direction !== 'both' || second.direction !== 'both') return false;
+    !sameRoadSectionIgnoringArrows(first.section, second.section) || first.direction !== 'both' || second.direction !== 'both') return false;
   const a = first.a === nodeId ? first.b : first.a;
   const b = second.a === nodeId ? second.b : second.a;
   if (a === b || first.structure !== second.structure || alreadyJoined(doc, a, b, null, first.structure)) return false;
@@ -621,7 +621,17 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   doc.removeSegment(first.id);
   doc.removeSegment(second.id);
   doc.removeNode(nodeId);
-  const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, first.section);
+  // The joined road keeps the arrows of its two ends: what arrives at `b`
+  // came along `second`, what arrives at `a` along `first`.
+  const towardB = second.b === b ? second.section?.turnsForward : second.section?.turnsBackward;
+  const towardA = first.a === a ? first.section?.turnsBackward : first.section?.turnsForward;
+  const base = sectionForPiece(first.section, false, false);
+  const section = base && {
+    ...base,
+    ...(towardB ? { turnsForward: [...towardB] } : {}),
+    ...(towardA ? { turnsBackward: [...towardA] } : {}),
+  };
+  const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, section);
   if (!joined) return false;
   doc.carryMovements(a, bansAtA, first.id, joined.id);
   doc.carryMovements(b, bansAtB, second.id, joined.id);
@@ -778,7 +788,7 @@ function splitSegmentAtCuts<Tag>(
       seg.direction,
       seg.lanes,
       seg.structure,
-      seg.section,
+      sectionForPiece(seg.section, i === 0, i + 2 === nodeIds.length),
     );
     if (piece) pieces.push(piece.id);
   }

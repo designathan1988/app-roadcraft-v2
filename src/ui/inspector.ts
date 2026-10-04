@@ -390,7 +390,7 @@ function renderNode(
   // with a 444-unit straight chord: a corner cut, under a label promising
   // alignment.
   const alignedLegs =
-    !node.smooth && node.incident.length === 2 && surfaceMode(doc, net.polylines, id) === 'none';
+    !node.smooth && !node.crossing && node.incident.length === 2 && surfaceMode(doc, net.polylines, id) === 'none';
   const joinOffer = alignedLegs
     ? `<div class="inspect-actions"><button type="button" id="inspectJoin">${t('inspector.joinAligned')}</button></div>`
     : '';

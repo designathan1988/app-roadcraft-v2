@@ -7,6 +7,8 @@ import { CROSSWALK_DEPTH, STOP_BAR_SETBACK } from '@world/approach';
 import { History, restoreSnapshot } from '@editor/history';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { joinSegments, splitSegment } from '@editor/commit';
+import { junctionDetail } from '@world/markings';
+import { signalPostPlace } from '@world/signalPosts';
 import { crossingsCompatibleWith } from '@sim/signals/plan';
 
 function street(curved = false) {
@@ -118,6 +120,66 @@ describe('authored pedestrian crossing', () => {
     graph.build(doc, net);
     for (const lane of graph.lanelets.values()) {
       if (lane.kind === 'link' && lane.to === result.node) expect(lane.controlled).toBe(false);
+    }
+  });
+
+  it('keeps lane arrows on the piece that reaches the junction, so the crossing lane has a way on', () => {
+    const { doc, net, segment } = street();
+    doc.setSegmentSection(segment.id, { ...segment.section!, turnsForward: ['left'], turnsBackward: ['right'] });
+    net.rebuild();
+    const result = commitPedestrianCrossing(doc, net, segment.id, 'zebra');
+    expect(result.committed).toBe(true);
+    if (!result.committed) return;
+    const [first, second] = result.segments.map((id) => doc.requireSegment(id)).sort((p, q) => (p.a === segment.a ? -1 : q.a === segment.a ? 1 : 0));
+    expect(first!.section?.turnsForward).toBeUndefined();
+    expect(first!.section?.turnsBackward).toEqual(['right']);
+    expect(second!.section?.turnsForward).toEqual(['left']);
+    expect(second!.section?.turnsBackward).toBeUndefined();
+    const graph = new LaneletGraph();
+    graph.build(doc, net);
+    for (const lane of graph.lanelets.values()) {
+      if (lane.kind === 'link' && lane.to === result.node) expect(graph.exitsOf(lane.id).length).toBeGreaterThan(0);
+    }
+    // Joining back gives the road its two ends' arrows again.
+    doc.clearNodeCrossing(result.node);
+    expect(joinSegments(doc, result.node)).toBe(true);
+    const joined = [...doc.segments.values()][0]!;
+    expect(joined.section?.turnsForward).toEqual(['left']);
+    expect(joined.section?.turnsBackward).toEqual(['right']);
+  });
+
+  it('paints the zebra and both stop bars of a mid-block crossing', () => {
+    const { doc, net, segment } = street();
+    const before = junctionDetail(net);
+    const result = commitPedestrianCrossing(doc, net, segment.id, 'zebra');
+    expect(result.committed).toBe(true);
+    if (!result.committed) return;
+    net.rebuild();
+    const after = junctionDetail(net);
+    const node = doc.requireNode(result.node);
+    const near = (bars: { a: { x: number; y: number }; b: { x: number; y: number } }[]) =>
+      bars.filter((bar) => Math.hypot((bar.a.x + bar.b.x) / 2 - node.x, (bar.a.y + bar.b.y) / 2 - node.y) < 20);
+    expect(near(after.zebras).length).toBeGreaterThan(0);
+    expect(near(before.zebras)).toHaveLength(0);
+    for (const bar of near(after.zebras)) {
+      const mx = (bar.a.x + bar.b.x) / 2;
+      expect(mx).toBeGreaterThan(node.x - CROSSWALK_DEPTH - 0.01);
+      expect(mx).toBeLessThan(node.x + 0.01);
+    }
+    expect(near(after.stops)).toHaveLength(2);
+  });
+
+  it('stands the signal posts of a signal crossing at its stop lines', () => {
+    const { doc, net, segment } = street();
+    const result = commitPedestrianCrossing(doc, net, segment.id, 'signal');
+    expect(result.committed).toBe(true);
+    if (!result.committed) return;
+    net.rebuild();
+    const node = doc.requireNode(result.node);
+    for (const id of result.segments) {
+      const post = signalPostPlace(net, result.node, id)!;
+      const along = Math.abs(post.x - node.x);
+      expect(along).toBeCloseTo(net.stopLineDistance(id, result.node), 5);
     }
   });
 
