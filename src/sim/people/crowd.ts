@@ -1259,13 +1259,19 @@ function trackPassages(s: State): void {
  */
 function makeWay(s: State): void {
   const bodies = new CrowdPointIndex(s.walkers, p => ({ minX: p.x, maxX: p.x, minY: p.y, maxY: p.y }));
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of s.walkers) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }
+  const spread = s.walkers.length > 64 && (maxX - minX) * (maxY - minY) > s.walkers.length * m(2) ** 2;
   for (const p of s.walkers) {
     if (p.holding) continue;
     const dv = p.agent.desiredVelocity();
     const dl = hypot2(dv.x, dv.z);
     if (dl < m(0.05)) continue;
     const ux = dv.x / dl, uy = dv.z / dl;
-    for (const q of s.walkers) {
+    for (const q of nearbyBodies(s, bodies, p, MAKE_WAY_REACH, spread)) {
       if (q === p || !q.holding || q.aside || q.party.id === p.party.id) continue;
       const rx = q.x - p.x, ry = q.y - p.y;
       const d = hypot2(rx, ry);
@@ -1285,7 +1291,12 @@ function makeWay(s: State): void {
       break;
     }
   }
-  unlock(s);
+  unlock(s, bodies, spread);
+}
+
+/** A packed cell is cheaper to scan directly than to merge and sort nearby buckets. */
+function nearbyBodies(s: State, bodies: CrowdPointIndex<Walker>, p: Walker, radius: number, spread: boolean): readonly Walker[] {
+  return !spread || bodies.at(p.x, p.y).length * 4 > s.walkers.length ? s.walkers : bodies.around(p.x, p.y, radius);
 }
 
 /**
@@ -1298,18 +1309,18 @@ function makeWay(s: State): void {
  * the maneuver has run its course goes back to its corridor. Its
  * destination stays what it was.
  */
-function unlock(s: State): void {
+function unlock(s: State, bodies: CrowdPointIndex<Walker>, spread: boolean): void {
   for (const p of s.walkers) {
     if (p.aside || p.holding || p.blocked < DEADLOCK_AFTER) continue;
     const pd = wantOf(p);
     if (!pd) continue;
-    for (const q of s.walkers) {
+    for (const q of nearbyBodies(s, bodies, p, MAKE_WAY_REACH, spread)) {
       if (q === p || q.aside || q.holding || q.blocked < DEADLOCK_AFTER) continue;
       const rx = q.x - p.x, ry = q.y - p.y;
       if (hypot2(rx, ry) > MAKE_WAY_REACH || rx * pd.x + ry * pd.y <= 0) continue;
       const qd = wantOf(q);
       if (!qd || qd.x * pd.x + qd.y * pd.y > -0.3) continue;
-      const fp = flowBehind(s, p, pd), fq = flowBehind(s, q, qd);
+      const fp = flowBehind(s, bodies, p, pd, spread), fq = flowBehind(s, bodies, q, qd, spread);
       const gives = fp < fq ? p : fq < fp ? q : order(p) < order(q) ? p : q;
       const other = gives === p ? q : p;
       const od = gives === p ? qd : pd;
@@ -1334,9 +1345,9 @@ function wantOf(p: Walker): Vec2 | null {
 }
 
 /** People close behind a walker going its way. */
-function flowBehind(s: State, p: Walker, dir: Vec2): number {
+function flowBehind(s: State, bodies: CrowdPointIndex<Walker>, p: Walker, dir: Vec2, spread: boolean): number {
   let n = 0;
-  for (const q of s.walkers) {
+  for (const q of nearbyBodies(s, bodies, p, Math.hypot(m(4), m(1.2)), spread)) {
     if (q === p) continue;
     const rx = q.x - p.x, ry = q.y - p.y;
     const back = -(rx * dir.x + ry * dir.y);
