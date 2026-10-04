@@ -543,15 +543,22 @@ export function pullOutRoom(w: SimWorld, v: Vehicle): number {
 function shadowClearDistance(v: Vehicle, start: number, length: number): number {
   const line = Math.abs(start) / 2;
   const steps = 24;
-  for (let i = 1; i <= steps; i++) {
-    const x = (length * i) / steps;
+  // On the first half of the quintic change, the centre is still at least
+  // half a lane away, so its body cannot be clear. On the second half, both
+  // remaining offset and body reach decrease for the fleet's length > width
+  // profiles. Search the same discrete samples without evaluating all 24.
+  let lo = steps / 2, hi = steps;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    const x = (length * mid) / steps;
     const offset = Math.abs(laneChangeOffset(start, x, length));
     const slope = Math.abs(laneChangeSlope(start, x, length));
     const angle = Math.atan(slope);
     const reach = (v.archetype.width / 2) * Math.cos(angle) + (v.archetype.length / 2) * Math.sin(angle);
-    if (offset + reach <= line) return x;
+    if (offset + reach <= line) hi = mid;
+    else lo = mid;
   }
-  return length;
+  return (length * hi) / steps;
 }
 
 /**
