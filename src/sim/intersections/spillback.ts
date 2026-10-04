@@ -41,10 +41,22 @@ export function hasDownstreamStorage(w: SimWorld, v: Vehicle, conn: Connector): 
   // even though it will consume the outbound lane a few ticks later. Counting
   // only vehicles whose noses have crossed the lane boundary lets a following
   // convoy member see phantom free space and stop with its rear in the box.
-  const committed = [...w.vehicles.values()].filter((other) =>
-    other.id !== v.id &&
-    (other.lanelet === conn.id || other.admittedConnector === conn.id),
-  );
+  const committed: Vehicle[] = [];
+  // A granted vehicle is still on this connector's inbound link or has
+  // entered the connector. Both occupancy lists are maintained by integration;
+  // scanning the entire fleet for every signal demand and admission request
+  // made this check scale with the product of vehicles and junction heads.
+  for (const id of w.runtime.get(conn.fromLane)?.order ?? []) {
+    const other = w.veh(id);
+    if (other && other.id !== v.id && other.admittedConnector === conn.id) committed.push(other);
+  }
+  for (const id of w.runtime.get(conn.id)?.order ?? []) {
+    const other = w.veh(id);
+    if (other && other.id !== v.id && other.lanelet === conn.id) committed.push(other);
+  }
+  // Vehicle ids increase with insertion into `w.vehicles`; preserve that
+  // iteration order for the sequential free-space subtraction below.
+  committed.sort((a, b) => a.id - b.id);
 
   const out = w.lanelet(conn.toLane);
 
