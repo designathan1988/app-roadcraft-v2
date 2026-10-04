@@ -807,6 +807,8 @@ export const EN: Dictionary = {
   'creator.dock.scope.storey': 'Whole floor',
   'creator.dock.scope.side': 'Whole face',
   'creator.dock.scope.volume': 'Whole block',
+  'creator.dock.scope.zone': 'Zone (drag)',
+  'hint.builder.zone': 'Zone: floors {s0}–{s1}, bays {b0}–{b1} — release to apply',
   'creator.guide.start.title': 'Build on the terrain',
   'creator.guide.start.body': 'Choose a starter or draw a footprint. Click its corners on the ground, finish, then pull the roof or walls to shape it.',
   'creator.guide.sketch.title': 'Add a mass',

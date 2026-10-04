@@ -794,6 +794,8 @@ export const PT_BR: Dictionary = {
   'creator.dock.scope.storey': 'Andar inteiro',
   'creator.dock.scope.side': 'Face inteira',
   'creator.dock.scope.volume': 'Bloco inteiro',
+  'creator.dock.scope.zone': 'Zona (arrastar)',
+  'hint.builder.zone': 'Zona: andares {s0}–{s1}, vãos {b0}–{b1} — solte para aplicar',
   'creator.guide.start.title': 'Construa no terreno',
   'creator.guide.start.body': 'Escolha uma forma pronta ou desenhe a planta. Clique nos cantos no chão, conclua e puxe o teto ou as paredes para moldar.',
   'creator.guide.sketch.title': 'Adicione uma massa',

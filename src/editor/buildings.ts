@@ -394,7 +394,43 @@ export function opSetLevelHeight(b: Building, level: number, height: number | nu
  * its column (that bay on every floor of that face); the whole floor (every
  * face); the whole face; the whole block.
  */
-export type FacadeScope = 'bay' | 'row' | 'column' | 'storey' | 'side' | 'volume';
+export type FacadeScope = 'bay' | 'row' | 'column' | 'storey' | 'side' | 'volume' | 'zone';
+
+/**
+ * A facade zone: every bay from `index0` to `index1` on every storey from
+ * `storey0` to `storey1` of one side takes `component` - the band of windows
+ * between two piers, the plain stone of a pavilion, a gallery of columns -
+ * dragged as one rectangle across the face (CityEngine's facade split, as a
+ * brush). Returns whether anything changed.
+ */
+export function opSetComponentZone(
+  b: Building,
+  volumeId: number,
+  side: FaceId,
+  storey0: number,
+  storey1: number,
+  index0: number,
+  index1: number,
+  component: BayComponent,
+): boolean {
+  const v = volumeById(b, volumeId);
+  if (!v) return false;
+  const before = JSON.stringify(v.storeys);
+  const [s0, s1] = storey0 <= storey1 ? [storey0, storey1] : [storey1, storey0];
+  const [i0, i1] = index0 <= index1 ? [index0, index1] : [index1, index0];
+  for (let s = Math.max(0, s0); s <= Math.min(v.storeys.length - 1, s1); s++) {
+    const target = v.storeys[s]!;
+    const bays = { ...(target.facade.bays ?? {}) };
+    for (let i = i0; i <= i1; i++) {
+      const key = bayKey(side, i);
+      delete bays[key];
+      if (componentAt({ ...target.facade, bays }, side, i) !== component) bays[key] = component;
+    }
+    if (Object.keys(bays).length > 0) target.facade.bays = bays;
+    else delete target.facade.bays;
+  }
+  return JSON.stringify(v.storeys) !== before;
+}
 
 /**
  * Puts a component into the facade. `scope` widens the click: the one bay,

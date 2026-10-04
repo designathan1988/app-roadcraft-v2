@@ -59,6 +59,7 @@ import {
   opRotate,
   opScalePlan,
   opSetComponent,
+  opSetComponentZone,
   opAddElement,
   opMirror,
   opRemoveElement,
@@ -208,6 +209,8 @@ export class BuildingTool {
   /** The component the picker has armed: a click on a bay puts it there. */
   component: BayComponent | null = null;
   scope: FacadeScope = 'bay';
+  /** A facade zone being dragged: one side of one block, from a bay to a bay. */
+  zone: { building: BuildingId; volume: number; side: FaceId; s0: number; i0: number; s1: number; i1: number } | null = null;
   materialScope: MaterialScope = 'building';
   paintBrush: Partial<MaterialSpec> = { finish: 'brick', colour: FINISH_COLOUR.brick };
   /** Alt held: drags follow the pointer freely, without snapping to the grid. */
@@ -2069,7 +2072,15 @@ export class BuildingTool {
         return true;
       }
     }
-    this.drag = { kind: 'click', hit: this.pick(screen), start: screen, moved: false, shift, at: now() };
+    const hit = this.pick(screen);
+    if (this.component && this.scope === 'zone' && hit && hit.face !== 'top') {
+      this.selection = { building: hit.building, volume: hit.volume, bay: { storey: hit.storey, side: hit.face, index: hit.index } };
+      this.zone = { building: hit.building, volume: hit.volume, side: hit.face, s0: hit.storey, i0: hit.index, s1: hit.storey, i1: hit.index };
+      this.drag = { kind: 'click', hit: null, start: screen, moved: true, shift, at: now() };
+      this.host.changed();
+      return true;
+    }
+    this.drag = { kind: 'click', hit, start: screen, moved: false, shift, at: now() };
     return true;
   }
 
@@ -2155,6 +2166,19 @@ export class BuildingTool {
   pointerMove(screen: Vec2, world: Vec2, shift: boolean): void {
     this.lastScreen = screen;
     this.lastWorld = world;
+    if (this.zone && this.drag) {
+      const hit = this.pick(screen);
+      const z = this.zone;
+      if (hit && hit.building === z.building && hit.volume === z.volume && hit.face === z.side) {
+        if (hit.storey !== z.s1 || hit.index !== z.i1) {
+          this.zone = { ...z, s1: hit.storey, i1: hit.index };
+          // The overlay draws the rectangle from the selected bay to this one.
+          if (this.selection) this.selection = { ...this.selection, bayEnd: { storey: hit.storey, side: hit.face, index: hit.index } };
+          this.host.changed();
+        }
+      }
+      return;
+    }
     if (this.planPoints) {
       this.hoverHandle = null;
       this.planCursor = this.pointOnPlan(screen, world, shift || this.free);
@@ -2323,6 +2347,14 @@ export class BuildingTool {
     const drag = this.drag;
     this.drag = null;
     this.measure = null;
+    const zone = this.zone;
+    this.zone = null;
+    if (zone && !cancelled && this.component) {
+      const component = this.component;
+      this.onSelected((draft) => opSetComponentZone(draft, zone.volume, zone.side, zone.s0, zone.s1, zone.i0, zone.i1, component));
+      this.host.changed();
+      return;
+    }
     if (!drag) return;
     if (cancelled) {
       this.setPreview(this.mode === 'place' ? this.preview : null);

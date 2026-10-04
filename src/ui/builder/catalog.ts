@@ -201,7 +201,7 @@ export const DRAW_ACTIONS = ['new', 'ground', 'top', 'cut'] as const;
 export type DrawActionId = (typeof DRAW_ACTIONS)[number];
 
 /** Where an opening or a pattern is applied. */
-export const FACADE_SCOPES = ['bay', 'row', 'column', 'storey', 'side', 'volume'] as const;
+export const FACADE_SCOPES = ['bay', 'zone', 'row', 'column', 'storey', 'side', 'volume'] as const;
 export type FacadeScopeId = (typeof FACADE_SCOPES)[number];
 
 export const PATTERNS: readonly FacadePattern[] = FACADE_PATTERNS;
