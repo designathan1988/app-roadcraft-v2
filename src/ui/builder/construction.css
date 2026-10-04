@@ -13,7 +13,15 @@
   white-space: nowrap;
 }
 .bw-rail .toolbar .tool-icon svg { width: 22px; height: 22px; }
-.bw-dock { left: 68px; width: 372px; }
+/* The rail is as wide as its icons, and the panel stands clear of it with the
+   same 10 px the rail keeps from the screen edge. The rail used to keep the
+   76 px of its captioned days, so the panel at 68 px lay over its last 18 px
+   and cut the key letters in half. */
+@media (min-width: 781px) {
+  .bw-rail { width: 54px; }
+  .bw-rail .bw-tier1 { padding: 5px; }
+  .bw-dock { left: 74px; width: 372px; }
+}
 
 /* --- the top bar carries the global tools and the camera ---------------------
    Demolish and Inspect act on whatever is under the pointer in any mode, and

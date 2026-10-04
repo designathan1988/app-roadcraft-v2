@@ -141,6 +141,11 @@ export interface BuilderWorkspace {
   relabel(): void;
   setHistory(canUndo: boolean, canRedo: boolean): void;
   setPresetThumbnails(images: ReadonlyMap<string, string>): void;
+  /**
+   * What the panel's close button does: `main.ts` puts the tool down, and the
+   * panel goes with it. Without a handler the button only folds the panel.
+   */
+  setPanelClose(handler: () => void): void;
   readonly root: HTMLElement;
 }
 
@@ -325,12 +330,19 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   contextRow.append(floorChip, snapChip, gridToggle, viewChip, hideToggle);
 
   const foot = el('div', 'bw-foot');
+  // Closing the panel puts the tool down and the panel goes: a folded panel
+  // left its head over the map with nothing in hand (the player: "it stays on
+  // screen even when I close it").
+  let closePanel: (() => void) | null = null;
   const fold = el('button', 'bw-fold');
   fold.type = 'button';
-  fold.dataset['i18nTitle'] = 'builder.dock.fold';
-  fold.setAttribute('aria-expanded', 'true');
-  fold.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
+  fold.dataset['i18nTitle'] = 'builder.dock.close';
+  fold.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   fold.onclick = () => {
+    if (closePanel) {
+      closePanel();
+      return;
+    }
     dock.classList.toggle('folded');
     syncDock();
   };
@@ -922,6 +934,9 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   };
 
   return {
+    setPanelClose(handler) {
+      closePanel = handler;
+    },
     refresh,
     showInside,
     setMode(next) {

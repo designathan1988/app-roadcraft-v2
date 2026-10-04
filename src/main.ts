@@ -1678,7 +1678,7 @@ window.addEventListener('keydown', (e) => {
     k: 'person',
   };
   const next = shortcuts[e.key.toLowerCase()];
-  if (next) setTool(next);
+  if (next) pickTool(next);
 });
 
 // -------------------------------------------------------------------- ui
@@ -2038,7 +2038,8 @@ function setTool(next: Tool): void {
   const roadFamily = next === 'road' || next === 'upgrade' || next === 'split'
     || next === 'control' || next === 'move' || next === 'roundabout';
   for (const b of document.querySelectorAll<HTMLButtonElement>('.tool')) {
-    const on = b.dataset['tool'] === (roadFamily ? 'road' : next);
+    // Inspect is the hand with nothing in it: no button is lit for it.
+    const on = next !== 'inspect' && b.dataset['tool'] === (roadFamily ? 'road' : next);
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', String(on));
   }
@@ -2244,6 +2245,7 @@ function mountUnifiedChrome(): void {
   // The panel starts in the mode of the tool in hand: at boot nothing had set
   // it, and the Builder's chips stood at the foot of the road panel.
   setTool(tool);
+  buildings.workspace.setPanelClose(freeSelection);
 }
 // Mounted after this module has finished evaluating: moving the toolbar and
 // the panels is a layout change, and a pointer already over the canvas can fire
@@ -2251,8 +2253,33 @@ function mountUnifiedChrome(): void {
 setTimeout(mountUnifiedChrome, 0);
 
 document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) => {
-  b.addEventListener('click', () => setTool((b.dataset['tool'] as Tool) ?? 'road'));
+  b.addEventListener('click', () => pickTool((b.dataset['tool'] as Tool) ?? 'road'));
 });
+
+/** The button a tool lights: the road's own options light the road. */
+function heldTool(): Tool {
+  const roadFamily = tool === 'road' || tool === 'upgrade' || tool === 'split'
+    || tool === 'control' || tool === 'move' || tool === 'roundabout';
+  return roadFamily ? 'road' : tool;
+}
+
+/**
+ * Puts everything down: no tool in hand, nothing picked, no panel. The game
+ * always held some tool (Roads, Terrain...) and its panel stayed on screen;
+ * this is the free hand, where a click on the map inspects what it hits.
+ */
+function freeSelection(): void {
+  if (selectedSegment !== null || selectedNode !== null) {
+    (document.getElementById('closeInspector') as HTMLButtonElement | null)?.click();
+  }
+  if (tool !== 'inspect') setTool('inspect');
+}
+
+/** A tool button or key: picks the tool, or puts it down when it is already in hand. */
+function pickTool(next: Tool): void {
+  if (next === 'inspect' || next === heldTool()) freeSelection();
+  else setTool(next);
+}
 /** "Road (R)": each tool's name and key, as its tooltip - the only label a compact rail shows. */
 function labelTools(): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('.tool')) {
@@ -2692,6 +2719,10 @@ const arrowPan = (e: KeyboardEvent): void => {
     } else if (selectedSegment !== null || selectedNode !== null) {
       // With nothing being drawn, Escape puts down what Inspect picked up.
       (document.getElementById('closeInspector') as HTMLButtonElement).click();
+      e.preventDefault();
+    } else if (tool !== 'inspect') {
+      // ...and then the tool itself: the free hand.
+      freeSelection();
       e.preventDefault();
     }
     return;

@@ -1534,4 +1534,5 @@ export const EN: Dictionary = {
   'builder.menu.simulation': 'Simulation',
   'builder.menu.app': 'Menu',
   'builder.dock.fold': 'Fold the container',
+  'builder.dock.close': 'Close (Esc): put the tool down',
 };

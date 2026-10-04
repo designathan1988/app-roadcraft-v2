@@ -1520,4 +1520,5 @@ export const PT_BR: Dictionary = {
   'builder.menu.simulation': 'Simulação',
   'builder.menu.app': 'Menu',
   'builder.dock.fold': 'Recolher o container',
+  'builder.dock.close': 'Fechar (Esc): soltar a ferramenta',
 };
