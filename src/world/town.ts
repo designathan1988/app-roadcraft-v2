@@ -475,7 +475,10 @@ export function courtyard(rng: Rng, Wm: number, Dm: number): BlueprintBody {
     if (court && Math.abs(x - (inner.x + inner.w / 2)) < 11 && Math.abs(y - (inner.y + inner.d / 2)) < 8) continue;
     model.el('shrub', x, y, 0, { w: s, d: s, h: s * 0.8, material: HEDGE(rng) });
   }
-  for (const [x, y, f] of [[Wm / 2, inner.y - walk - 0.6, 2], [Wm / 2, inner.y + inner.d + walk + 0.6, 0]] as const) {
+  // Keep the furniture inside the gravel ring. The narrow outer lawn strip is
+  // omitted by `lotIn`, so anything beyond the ring would cross the footprint
+  // that `instantiate` aligns with the back of the footway.
+  for (const [x, y, f] of [[Wm / 2, inner.y - walk + 0.8, 2], [Wm / 2, inner.y + inner.d + walk - 0.8, 0]] as const) {
     model.el('bench', x - 4, y, f as Side, { w: 1.8 });
     model.el('bench', x + 4, y, f as Side, { w: 1.8 });
     model.el('flowers', x, y, 0, { w: 3, d: 1, h: 0.4 });

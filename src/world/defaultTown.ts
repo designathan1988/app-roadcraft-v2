@@ -331,10 +331,14 @@ function layStreets(doc: RoadDoc): Nodes {
 
 // ---------------------------------------------------------------- occupancy
 
-/** Half a street's width at its widest band: how far a lot starts from the line. */
+/** The outer road band still locates poles and the town's outer hedges. */
 const casingOf = (type: number): number => halfWidth(ROAD_TYPES[type] as RoadType, Level.Casing);
 const LOCAL_OFF = casingOf(LOCAL);
 const AVENUE_OFF = casingOf(AVENUE_CLASS);
+/** A lot begins at the back of the actual footway, where a frontage can stand. */
+const sidewalkOf = (type: number): number => halfWidth(ROAD_TYPES[type] as RoadType, Level.Sidewalk);
+const LOCAL_LOT_OFF = sidewalkOf(LOCAL);
+const AVENUE_LOT_OFF = sidewalkOf(AVENUE_CLASS);
 
 /** The lot of the block between two street lines: the rectangle the paving leaves. */
 function lotOf(i: number, j: number): Box {
@@ -342,9 +346,9 @@ function lotOf(i: number, j: number): Box {
   // twice as wide as a street: insetting the avenue's own side by a street's
   // half-width put the shops' fronts into its footway, which the building
   // validator reports as standing on a road.
-  const side = (line: number): number => (line === AVENUE ? AVENUE_OFF : LOCAL_OFF);
-  const x0 = (XS[i] as number) + LOCAL_OFF;
-  const x1 = (XS[i + 1] as number) - LOCAL_OFF;
+  const side = (line: number): number => (line === AVENUE ? AVENUE_LOT_OFF : LOCAL_LOT_OFF);
+  const x0 = (XS[i] as number) + LOCAL_LOT_OFF;
+  const x1 = (XS[i + 1] as number) - LOCAL_LOT_OFF;
   const y0 = (YS[j] as number) + side(YS[j] as number);
   const y1 = (YS[j + 1] as number) - side(YS[j + 1] as number);
   return { x0, y0, x1, y1 };
@@ -358,12 +362,12 @@ function lotOf(i: number, j: number): Box {
 const BAND_YS = [YS[0], YS[1], AVENUE, YS[3], YS[4]] as const;
 function bandLot(j: number): Box {
   return {
-    x0: (XS[XS.length - 1] as number) + LOCAL_OFF,
-    x1: WORKS.west - LOCAL_OFF,
+    x0: (XS[XS.length - 1] as number) + LOCAL_LOT_OFF,
+    x1: WORKS.west - LOCAL_LOT_OFF,
     // The avenue's side as wide as the avenue: its junction with the grid's
     // last street is the avenue's plate, and reaches that far into the block.
-    y0: (BAND_YS[j] as number) + (BAND_YS[j] === AVENUE ? AVENUE_OFF : LOCAL_OFF),
-    y1: (BAND_YS[j + 1] as number) - (BAND_YS[j + 1] === AVENUE ? AVENUE_OFF : LOCAL_OFF),
+    y0: (BAND_YS[j] as number) + (BAND_YS[j] === AVENUE ? AVENUE_LOT_OFF : LOCAL_LOT_OFF),
+    y1: (BAND_YS[j + 1] as number) - (BAND_YS[j + 1] === AVENUE ? AVENUE_LOT_OFF : LOCAL_LOT_OFF),
   };
 }
 
@@ -833,10 +837,10 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   // column. Every lot is placed from the same two lines, so none of them has
   // to be nudged to clear its neighbour.
   {
-    const west = WORKS.west + LOCAL_OFF;
-    const east = WORKS.east - LOCAL_OFF;
-    const north = WORKS.north - LOCAL_OFF;
-    const south = WORKS.south + LOCAL_OFF;
+    const west = WORKS.west + LOCAL_LOT_OFF;
+    const east = WORKS.east - LOCAL_LOT_OFF;
+    const north = WORKS.north - LOCAL_LOT_OFF;
+    const south = WORKS.south + LOCAL_LOT_OFF;
     const westEast = west + m(88);
     const eastWest = east - m(88);
     // The western column, from the northern lane down.
@@ -934,7 +938,7 @@ export function townBlocks(): { name: string; box: Box }[] {
     for (let i = 0; i + 1 < XS.length; i++) out.push({ name: `block ${i},${j}`, box: lotOf(i, j) });
   }
   for (let j = 0; j + 1 < BAND_YS.length; j++) out.push({ name: `band ${j}`, box: bandLot(j) });
-  out.push({ name: 'works', box: { x0: WORKS.west + LOCAL_OFF, y0: WORKS.south + LOCAL_OFF, x1: WORKS.east - LOCAL_OFF, y1: WORKS.north - LOCAL_OFF } });
+  out.push({ name: 'works', box: { x0: WORKS.west + LOCAL_LOT_OFF, y0: WORKS.south + LOCAL_LOT_OFF, x1: WORKS.east - LOCAL_LOT_OFF, y1: WORKS.north - LOCAL_LOT_OFF } });
   return out;
 }
 
