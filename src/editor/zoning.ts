@@ -1,13 +1,13 @@
 import { Rng } from '@core/rng';
 import type { Vec2 } from '@core/vec2';
-import type { BlueprintBody } from '@world/buildings/blueprints';
-import { cityBuilding } from '@world/buildings/cityBuildings';
-import type { BuildingFunction, LotSurface } from '@world/buildings/types';
+import { madeToMeasure } from '@world/buildings/procedural';
+import { METERS_PER_UNIT } from '@world/units';
+import { dressLot } from './lotDressing';
 import type { SiteContext } from '@world/buildings/validate';
 import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
-import { ZONE_DENSITIES, type ZoneDensity, type ZoneMark, type ZoneUse } from '@world/zones';
+import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
 import { placeBuilding } from './buildings';
 
 /**
@@ -18,83 +18,12 @@ import { placeBuilding } from './buildings';
  * that drops a row of houses where the pointer let go.
  */
 
-/**
- * What grows in each zone: the catalog's own models (`cityBuildings.ts`, the
- * Builder's gallery), not a bare box. Several per zone, so a street is not one
- * house repeated; each with its wall colours and, where it has upper floors, its
- * height varied. Models deeper than the zone (a supermarket, a mall) are left
- * to the Builder.
- */
-const GROWS: Record<ZoneUse, Record<ZoneDensity, readonly BuildingFunction[]>> = {
-  residential: {
-    low: ['house', 'house', 'townhouse'],
-    medium: ['apartments', 'townhouse', 'apartments'],
-    high: ['residentialTower', 'apartments'],
-  },
-  commercial: {
-    low: ['shop', 'pharmacy', 'bakery', 'snackBar', 'bar', 'shop'],
-    medium: ['bank', 'restaurant', 'hotel', 'gym', 'shop'],
-    high: ['office', 'hotel', 'office'],
-  },
-  industrial: {
-    low: ['warehouse'],
-    medium: ['warehouse', 'factory'],
-    high: ['factory', 'warehouse'],
-  },
+/** Lot widths in cells, narrowest and widest, by zone. */
+const LOT_COLUMNS: Record<ZoneUse, Record<ZoneDensity, readonly [number, number]>> = {
+  residential: { low: [1, 2], medium: [2, 3], high: [3, 4] },
+  commercial: { low: [1, 2], medium: [2, 3], high: [2, 4] },
+  industrial: { low: [2, 4], medium: [3, 5], high: [4, 6] },
 };
-
-/** What the land behind a building is laid as: a garden, a car park, a yard. */
-const YARD: Record<ZoneUse, LotSurface> = { residential: 'grass', commercial: 'paving', industrial: 'gravel' };
-
-/** Wall colours a zone's buildings are painted in, by finish. */
-const WALLS: Record<ZoneUse, readonly number[]> = {
-  residential: [0xeae3d6, 0xe8dcc2, 0xf1e4c9, 0xd9c6a8, 0xe6d2c4, 0xcfd8d2, 0xf3f1ec, 0xe9d8b4, 0xd8c9b9],
-  commercial: [0xf3f1ec, 0xe8dcc2, 0xdfe3e6, 0xeae3d6, 0xd6d0c4],
-  industrial: [0x8f9ba5, 0xa3a9a6, 0x9aa49a, 0xb7b2a6],
-};
-const ROOFS = [0xb5603f, 0x8f4a35, 0x55595e, 0x6b5a4c, 0x7a3f32];
-
-/** A catalog model's ground footprint, local units. */
-function footprintOf(body: BlueprintBody): { x0: number; y0: number; x1: number; y1: number } {
-  const v = body.volumes;
-  return {
-    x0: Math.min(...v.map((q) => q.x)), y0: Math.min(...v.map((q) => q.y)),
-    x1: Math.max(...v.map((q) => q.x + q.w)), y1: Math.max(...v.map((q) => q.y + q.d)),
-  };
-}
-
-/** The model a lot grows, with its colours and height varied. */
-function grownBody(fn: BuildingFunction, use: ZoneUse, density: ZoneDensity, rng: Rng): BlueprintBody | null {
-  const model = cityBuilding(fn);
-  if (!model) return null;
-  const body = JSON.parse(JSON.stringify(model.body)) as BlueprintBody;
-  const wall = body.materials?.['wall'];
-  if (wall) body.materials!['wall'] = { ...wall, colour: rng.pick(WALLS[use]) };
-  const roof = body.materials?.['roof'];
-  if (roof && use === 'residential') body.materials!['roof'] = { ...roof, colour: rng.pick(ROOFS) };
-  body.palette = rng.int(0, 7);
-  // A model a little deeper than the zone (the warehouse) is built smaller,
-  // down to seven tenths of its size; anything deeper stays the Builder's.
-  const box = footprintOf(body);
-  const room = ZONE_DEPTH * ZONE_CELL - m(1);
-  if (box.y1 - box.y0 > room) {
-    const k = room / (box.y1 - box.y0);
-    if (k < 0.7) return null;
-    for (const v of body.volumes) { v.x *= k; v.y *= k; v.w *= k; v.d *= k; }
-    for (const c of (body.cores ?? []) as { x: number; y: number }[]) { c.x *= k; c.y *= k; }
-  }
-  // Towers and blocks of flats: a few floors more or less, never under three.
-  if (fn === 'apartments' || fn === 'residentialTower' || fn === 'office' || fn === 'hotel') {
-    const extra = density === 'high' ? rng.int(-1, 6) : rng.int(-2, 1);
-    for (const volume of body.volumes) {
-      const storeys = volume.storeys as unknown[] | undefined;
-      if (!storeys || storeys.length < 3) continue;
-      if (extra > 0) for (let i = 0; i < extra; i++) storeys.push(JSON.parse(JSON.stringify(storeys[storeys.length - 1])));
-      else storeys.splice(Math.max(3, storeys.length + extra));
-    }
-  }
-  return body;
-}
 
 /** How close a stored mark has to be to a cell's centre to be that cell's. */
 const MATCH = ZONE_CELL / 2;
@@ -195,6 +124,17 @@ export function blockOf(grid: ZoneGrid, cell: ZoneCell): ZoneCell[] {
  * clears it when the land changes.
  */
 export function growOne(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: number): number | null {
+  // A refused start makes the column after it a start of its own: look again
+  // (a few times) rather than report the land full while it is not.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const before = refused.size;
+    const id = growOnce(ctx, grid, refused, seed);
+    if (id !== null || refused.size === before) return id;
+  }
+  return null;
+}
+
+function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: number): number | null {
   const { doc } = ctx;
   if (!doc.zoneMarks.length) return null;
   const marks = marksByCell(doc, grid);
@@ -223,55 +163,14 @@ export function growOne(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, 
     // A model of this zone, picked at random; the lot is as many columns as it
     // is wide, and always the zone's whole depth: what the building does not
     // cover becomes its garden, car park or yard - no zoned cell is left bare.
-    // Every model of the zone in a random order, then those of the lower
-    // densities of the same use: the end of a block too narrow for a block of
-    // flats still takes a townhouse, so no zoned cell is left bare.
-    const order = (list: readonly BuildingFunction[]): BuildingFunction[] => {
-      const copy = [...new Set(list)];
-      for (let i = copy.length - 1; i > 0; i--) { const j = rng.int(0, i); [copy[i], copy[j]] = [copy[j]!, copy[i]!]; }
-      return copy;
-    };
-    const lower = ZONE_DENSITIES.slice(0, ZONE_DENSITIES.indexOf(zone.density)).reverse();
-    const candidates = [...new Set([...order(GROWS[zone.use][zone.density]),
-      ...lower.flatMap((density) => order(GROWS[zone.use][density]))])];
-    const margin = m(1);
-    let lot: ZoneCell[] | null = null;
-    let columns = 0, rows = 0;
-    let body: BlueprintBody | null = null;
-    let box = { x0: 0, y0: 0, x1: 0, y1: 0 };
-    for (const fn of candidates) {
-      const candidate = grownBody(fn, zone.use, zone.density, rng);
-      if (!candidate) continue;
-      const b = footprintOf(candidate);
-      const wanted = Math.ceil((b.x1 - b.x0 + margin) / ZONE_CELL);
-      for (let depth = ZONE_DEPTH; depth >= 1 && !lot; depth--) {
-        if (b.y1 - b.y0 > depth * ZONE_CELL - margin) break;
-        const cells: ZoneCell[] = [];
-        let fits = true;
-        for (let c = 0; c < wanted && fits; c++) {
-          for (let r = 0; r < depth && fits; r++) {
-            const cell = grid.at(start.segment, start.side, start.column + c, r);
-            const found = cell && marks.get(cell.id);
-            if (!cell || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) fits = false;
-            else cells.push(cell);
-          }
-        }
-        if (fits) { lot = cells; columns = wanted; rows = depth; body = candidate; box = b; }
-      }
-      if (lot) break;
-    }
-    if (!lot || !body) { refused.add(start.id); continue; }
-    // Free columns right after the lot that no model could take on their own
-    // (an odd column at the end of a block) join this lot as yard.
-    const narrowest = Math.min(...candidates.map((fn) => {
-      const model = cityBuilding(fn);
-      if (!model) return Infinity;
-      const b = footprintOf(model.body);
-      return Math.ceil((b.x1 - b.x0 + margin) / ZONE_CELL);
-    }));
-    const freeColumn = (column: number): ZoneCell[] | null => {
+    // The lot: a width drawn for the zone, as deep as the zoned land goes.
+    // Narrower widths are tried when the run is short, down to one column, so
+    // no zoned cell is left bare; a building is then made for exactly that lot.
+    const [narrow, wide] = LOT_COLUMNS[zone.use][zone.density];
+    const want = rng.int(narrow, wide);
+    const freeColumn = (column: number, depth: number): ZoneCell[] | null => {
       const cells: ZoneCell[] = [];
-      for (let r = 0; r < rows; r++) {
+      for (let r = 0; r < depth; r++) {
         const cell = grid.at(start.segment, start.side, column, r);
         const found = cell && marks.get(cell.id);
         if (!cell || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) return null;
@@ -279,30 +178,29 @@ export function growOne(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, 
       }
       return cells;
     };
-    const tail: ZoneCell[][] = [];
-    for (let c = start.column + columns; tail.length < narrowest; c++) {
-      const cells = freeColumn(c);
-      if (!cells) break;
-      tail.push(cells);
-    }
-    if (tail.length > 0 && tail.length < narrowest) {
-      for (const cells of tail) lot.push(...cells);
-      columns += tail.length;
-    }
-    // The yard: an open block behind the building, as wide as the lot and to
-    // its back edge, so the lot reads as one property.
+    let rows = 0;
+    for (let depth = ZONE_DEPTH; depth >= 1 && !rows; depth--) if (freeColumn(start.column, depth)) rows = depth;
+    if (!rows) { refused.add(start.id); continue; }
+    // The free run from here, at that depth.
+    let run = 0;
+    while (run < wide + narrow && freeColumn(start.column + run, rows)) run++;
+    // Take `want` columns, fewer if the run is short; and if what would be
+    // left is narrower than any lot of this zone, take it too.
+    let columns = Math.min(want, run);
+    if (run - columns > 0 && run - columns < narrow) columns = run;
+    const lot: ZoneCell[] = [];
+    for (let c = 0; c < columns; c++) lot.push(...freeColumn(start.column + c, rows)!);
+    const margin = m(0.3);
     const lotW = columns * ZONE_CELL - margin;
     const lotD = rows * ZONE_CELL - margin;
-    const midX = (box.x0 + box.x1) / 2;
-    const yardDepth = box.y0 + lotD - box.y1;
-    if (yardDepth > m(2)) {
-      const nextId = Math.max(0, ...body.volumes.map((v) => v.id ?? 0)) + 1;
-      body.volumes.push({
-        id: nextId, x: midX - lotW / 2, y: box.y1, w: lotW, d: yardDepth, base: 0,
-        roof: 'flat', storeys: [{ facade: { fill: 'wall' } }], open: YARD[zone.use],
-      } as BlueprintBody['volumes'][number]);
-      (body as { nextVolumeId?: number }).nextVolumeId = nextId + 1;
-    }
+    // A building made for the lot, leaving room for its setback and yard.
+    const roomW = (lotW - (zone.use === 'residential' && zone.density === 'low' ? m(1.5) : m(0.6))) * METERS_PER_UNIT;
+    const roomD = Math.max(5, (lotD - m(zone.use === 'commercial' ? 4 : 8)) * METERS_PER_UNIT);
+    if (roomW < 4) { refused.add(start.id); continue; }
+    const made = madeToMeasure(zone.use, zone.density, roomW, roomD, rng);
+    const body = made.body;
+    body.function = made.fn;
+    if (!dressLot(body, zone.use, zone.density, lotW, lotD, rng)) { refused.add(start.id); continue; }
     // Front middle of the lot, and the street's direction there.
     const fronts = lot.filter((cell) => cell.row === 0);
     const anchor = {
