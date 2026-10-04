@@ -130,8 +130,8 @@ where you edit and the traps that have already caught someone.
 | right of way, gap acceptance, deadlock | `src/sim/intersections/admission.ts`, `src/sim/crossings/` | [docs/architecture.md](docs/architecture.md) |
 | conflicting movements, turn paths | `src/world/conflictPoints.ts`, `src/world/turnPaths.ts` | `tests/sim/collisions.spec.ts` |
 | signal plans and phases | `src/sim/signals/` | [docs/architecture.md](docs/architecture.md) |
-| pedestrians, default engine (People, ORCA) | `src/sim/people/people.ts`, `orca.ts`, `nav.ts` | `src/sim/AGENTS.md` |
-| pedestrians, Detour crowd (`?people=crowd`) | `src/sim/people/crowd.ts`, `crowdNav.ts` | [docs/handoff/people-crowd.md](docs/handoff/people-crowd.md) |
+| resident agents (`?agents=1`): own cars, bays, lots, task chain | `src/sim/agents/` | `src/sim/AGENTS.md` |
+| pedestrians today (being replaced by the agents) | `src/sim/people/people.ts` (default), `crowd.ts` (`?people=crowd`), `src/sim/peds/` | `src/sim/AGENTS.md` |
 | residents, trips, day clock | `src/sim/city/` | [docs/STATUS.md](docs/STATUS.md) |
 | how a person's body moves and looks | `src/render/riggedCitizens.ts`, `src/render/citizenWalk.ts` | [docs/pedestrians.md](docs/pedestrians.md) |
 | people models, wardrobe, cooking | `public/models/people/`, `scripts/import-makehuman*.mjs`, `npm run cook:people` | `src/render/AGENTS.md` |

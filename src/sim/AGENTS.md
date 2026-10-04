@@ -13,8 +13,24 @@ breaks far from where you edit in `sim/`.
 - `?peds=legacy`: the old sidewalk-graph model, `sim/peds/`, kept for comparison
   and still installed by `simOf` in the traffic suites.
 
-Which of the first two is the future engine is an open decision for the player
-(docs/STATUS.md). Do not switch the default or delete an engine without asking.
+None of the three is the future: the player decided (2026-10-04) that the agents
+engine (`sim/agents/`, `?agents=1`) replaces all of them. Spend no more work on
+them; they are deleted once agents run by default and the player has seen it.
+
+## The agents engine (`sim/agents/`)
+
+- `cars.ts`: a resident's own car and the GTA-style task chain of a car trip
+  (board, leave, drive, park, alight). The only writer of `Vehicle.free` and of
+  an off-road car's doors and kerb stop.
+- `parking.ts`: the bays (stalls of `parking` elements), the way out of each
+  lot onto a street, the lane each bay is reached from.
+- `lotNav.ts`: the grid inside a lot and the distance field to its exits.
+- `manoeuvre.ts`: the curves a car drives off the road (reverse out, aisles,
+  into the bay nose first).
+- `CityLife` (`city/life.ts`) still runs the diaries; with `cars` set it starts
+  car trips through `OwnCars` and never makes a car at the kerb.
+- Measure with `tests/sim/agents/ownCars.spec.ts`; photograph with
+  `scripts/agents-shots.mjs` and `scripts/agent-card-shots.mjs`.
 
 ## Couplings
 

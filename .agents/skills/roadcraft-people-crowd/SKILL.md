@@ -22,8 +22,8 @@ cause, research, plan, then implement and measure. Keep what the measurement and
 confirm; when a result contradicts the diagnosis, find the false assumption before trying
 anything else. Nobody gives you a task list.
 
-Which engine is the future (this one or People, the default) is an open decision for the player:
-see `docs/STATUS.md`.
+The player decided on 2026-10-04 that neither this engine nor People is the future: the agents
+engine (`src/sim/agents/`) replaces both (see `docs/STATUS.md`). Do not start new work here.
 
 **Only two things are fixed:** the GOAL and the INTEGRITY RULES below.
 
