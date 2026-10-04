@@ -8,7 +8,7 @@ import {
 } from 'three';
 
 import { Rng } from '@core/rng';
-import { makeNoise, fbm, normalMapFrom } from './textureBaker';
+import { bakedTextureFromPixels, canvasPixels, makeNoise, fbm, normalMapFrom, type BakedPixels } from './textureBaker';
 
 /**
  * The close-up detail layer: what a surface looks like at the camera's nearest
@@ -52,6 +52,28 @@ export interface DetailTextures {
 
 const SIZE = 512;
 const cache = new Map<DetailKind, DetailTextures>();
+
+export interface DetailBakePixels {
+  readonly kind: DetailKind;
+  readonly map: BakedPixels;
+  readonly normal: BakedPixels;
+  readonly worldSize: number;
+}
+
+export function takeDetailPixels(): DetailBakePixels[] {
+  return [...cache].map(([kind, value]) => ({
+    kind, map: canvasPixels(`${kind}:detail`, value.map),
+    normal: canvasPixels(`${kind}:detail-normal`, value.normalMap), worldSize: value.worldSize,
+  }));
+}
+
+export function primeDetailPixels(items: readonly DetailBakePixels[]): void {
+  for (const item of items) cache.set(item.kind, {
+    map: bakedTextureFromPixels(item.map, false),
+    normalMap: bakedTextureFromPixels(item.normal, false),
+    worldSize: item.worldSize,
+  });
+}
 
 /** Adds a soft round mark into a wrapped float field. */
 function stamp(
@@ -307,7 +329,13 @@ function dataTexture(canvas: HTMLCanvasElement, anisotropy: number): Texture {
  */
 export function detailTextures(kind: DetailKind, anisotropy: number): DetailTextures {
   const cached = cache.get(kind);
-  if (cached) return cached;
+  if (cached) {
+    for (const texture of [cached.map, cached.normalMap]) if (texture.anisotropy < anisotropy) {
+      texture.anisotropy = anisotropy;
+      texture.needsUpdate = true;
+    }
+    return cached;
+  }
 
   const baked = bake(kind);
   const n = SIZE * SIZE;

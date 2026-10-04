@@ -151,7 +151,7 @@ export interface TerrainShaper {
   shapeBounds(): readonly Aabb[];
 }
 
-function terrainBakes(anisotropy: number): {
+export function terrainBakes(anisotropy: number): {
   grass: SurfaceBake;
   rock: SurfaceBake;
   dirt: SurfaceBake;

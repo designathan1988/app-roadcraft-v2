@@ -25,6 +25,7 @@ import { type Viewport, flatViewport } from '@view/viewport';
 import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type SceneHandle, type SkyMode } from '@render/renderer';
+import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { createPersonPreview } from '@render/people/personPreview';
 import { createPersonCreator } from '@ui/creator/personCreator';
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
@@ -135,6 +136,7 @@ const persistence = new Persistence();
 surface.observe();
 
 // ------------------------------------------------------------------ boot
+const surfaceBake = startSurfaceBake();
 const savedSession = persistence.loadSession();
 // The game opens on THE TOWN - the map that ships with it (`world/defaultTown`)
 // - unless the player has a map of their own: an autosave that is still an
@@ -452,6 +454,7 @@ function savedQualityLevel(): QualityLevel {
 
 // The graphics are what the player chose (High until they choose): the game
 // never lowers them on its own.
+primeSurfaceBake(await surfaceBake);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);

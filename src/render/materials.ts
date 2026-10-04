@@ -1,6 +1,6 @@
 import { CanvasTexture, Color, DoubleSide, FrontSide, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
 
-import { bakeSurface, disposeBakedTextures, fbm, makeNoise, type SurfaceBake } from './mesh/textureBaker';
+import { bakedTexture, bakeSurface, disposeBakedTextures, fbm, makeNoise, rememberBakedTexture, type SurfaceBake } from './mesh/textureBaker';
 import { applyDetail, detailSwitch, disposeDetailTextures } from './mesh/detailLayer';
 
 /**
@@ -141,7 +141,7 @@ function asphaltBakes(anisotropy: number): { road: SurfaceBake; raised: SurfaceB
   const size = ASPHALT_SIZE;
   const pixels = new Uint8ClampedArray(size * size * 4);
   const road = asphaltBake('asphalt', ASPHALT_BASE, anisotropy, pixels);
-  let raisedMap = raisedAsphaltMaps.get(road.map);
+  let raisedMap = raisedAsphaltMaps.get(road.map) ?? bakedTexture('asphalt-raised:map');
   if (!raisedMap) {
     if (pixels[3] !== 255) {
       // A second scene can find the base bake already cached without having
@@ -164,7 +164,9 @@ function asphaltBakes(anisotropy: number): { road: SurfaceBake; raised: SurfaceB
       raisedMap.anisotropy = anisotropy;
     }
     raisedAsphaltMaps.set(road.map, raisedMap);
+    rememberBakedTexture('asphalt-raised:map', raisedMap);
   }
+  if (raisedMap.anisotropy < anisotropy) { raisedMap.anisotropy = anisotropy; raisedMap.needsUpdate = true; }
   return { road, raised: { map: raisedMap, normalMap: road.normalMap, roughnessMap: road.roughnessMap }, raisedMap };
 }
 
@@ -368,7 +370,7 @@ function deckBake(anisotropy: number): SurfaceBake {
 }
 
 export function createMaterials(anisotropy: number): SceneMaterials {
-  const { road, raised, raisedMap } = asphaltBakes(anisotropy);
+  const { road, raised } = asphaltBakes(anisotropy);
   const footway = footwayBake(anisotropy);
   const kerb = kerbBake(anisotropy);
   const verge = vergeBake(anisotropy);
@@ -479,7 +481,6 @@ export function createMaterials(anisotropy: number): SceneMaterials {
     },
     dispose() {
       for (const material of materials) material.dispose();
-      raisedMap.dispose();
       // The baked textures are shared and cached by key, so they are the
       // material set's to release — disposing a material alone leaves every
       // canvas and every GPU texture behind.

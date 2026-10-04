@@ -1,4 +1,7 @@
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
+import {
+  CanvasTexture, DataTexture, LinearFilter, LinearMipmapLinearFilter, NoColorSpace,
+  RepeatWrapping, RGBAFormat, SRGBColorSpace, UnsignedByteType, type Texture,
+} from 'three';
 
 /**
  * Procedural texture baking.
@@ -19,6 +22,53 @@ import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'thr
  */
 
 const cache = new Map<string, Texture>();
+
+/** Transferable pixels produced by the same canvas recipes in a worker. */
+export interface BakedPixels {
+  readonly key: string;
+  readonly width: number;
+  readonly height: number;
+  readonly rgba: ArrayBuffer;
+}
+
+export function canvasPixels(key: string, texture: Texture): BakedPixels {
+  const canvas = texture.image as HTMLCanvasElement | OffscreenCanvas;
+  const context = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  const image = context?.getImageData(0, 0, canvas.width, canvas.height);
+  if (!image) throw new Error(`Cannot read baked texture ${key}`);
+  return { key, width: canvas.width, height: canvas.height, rgba: image.data.buffer };
+}
+
+/** The worker sends raw texels, preserving the original canvas pixels exactly. */
+export function bakedTextureFromPixels(pixels: BakedPixels, srgb: boolean): Texture {
+  const value = new DataTexture(new Uint8Array(pixels.rgba), pixels.width, pixels.height, RGBAFormat, UnsignedByteType);
+  value.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
+  value.wrapS = RepeatWrapping;
+  value.wrapT = RepeatWrapping;
+  value.magFilter = LinearFilter;
+  value.minFilter = LinearMipmapLinearFilter;
+  value.flipY = true;
+  value.generateMipmaps = true;
+  value.needsUpdate = true;
+  return value;
+}
+
+export function takeBakedSurfacePixels(): BakedPixels[] {
+  return [...cache].map(([key, value]) => canvasPixels(key, value));
+}
+
+export function primeBakedSurfacePixels(pixels: readonly BakedPixels[]): void {
+  for (const item of pixels) cache.set(item.key, bakedTextureFromPixels(item, item.key.endsWith(':map')));
+}
+
+export function bakedTexture(key: string): Texture | undefined { return cache.get(key); }
+export function rememberBakedTexture(key: string, value: Texture): void { cache.set(key, value); }
+
+function setAnisotropy(value: Texture, anisotropy: number): void {
+  if (value.anisotropy >= anisotropy) return;
+  value.anisotropy = anisotropy;
+  value.needsUpdate = true;
+}
 
 /** Deterministic 2D value noise with a positive integer period, so the result tiles. */
 export function makeNoise(seed: number): (x: number, y: number, period: number) => number {
@@ -170,10 +220,15 @@ export interface SurfaceRecipe {
 export function bakeSurface(key: string, recipe: SurfaceRecipe, anisotropy: number): SurfaceBake {
   const cached = cache.get(`${key}:map`);
   if (cached) {
+    const normalMap = cache.get(`${key}:normal`) as Texture;
+    const roughnessMap = cache.get(`${key}:rough`) as Texture;
+    setAnisotropy(cached, anisotropy);
+    setAnisotropy(normalMap, anisotropy);
+    setAnisotropy(roughnessMap, anisotropy);
     return {
       map: cached,
-      normalMap: cache.get(`${key}:normal`) as Texture,
-      roughnessMap: cache.get(`${key}:rough`) as Texture,
+      normalMap,
+      roughnessMap,
     };
   }
 
