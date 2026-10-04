@@ -9,6 +9,9 @@ import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
 import { placeBuilding } from './buildings';
+import { buildingBounds, footprintRects } from '@world/buildings/geometry';
+import { pointInPolygon } from '@core/polygon';
+import { Level, halfWidth } from '@world/roadTypes';
 
 /**
  * Zoning, the way city builders do it (Cities: Skylines 1 and 2): the player
@@ -24,6 +27,57 @@ const LOT_COLUMNS: Record<ZoneUse, Record<ZoneDensity, readonly [number, number]
   commercial: { low: [1, 2], medium: [2, 3], high: [2, 4] },
   industrial: { low: [2, 4], medium: [3, 5], high: [4, 6] },
 };
+
+/**
+ * How far a lot may grow on each side, along the street (world units). It
+ * walks out from each side edge, at the front, the middle and the back of the
+ * lot, until it meets something: a road's footway (the lot reaches it), a
+ * building or another zoned lot (the lot reaches it when it is near), or
+ * nothing within a cell and a quarter (free land, left for a lot of its own).
+ */
+function sideReach(
+  ctx: SiteContext,
+  grid: ZoneGrid,
+  marks: Map<string, { mark: ZoneMark; index: number }>,
+  anchor: Vec2,
+  rotation: number,
+  width: number,
+  depth: number,
+  own: readonly ZoneCell[],
+): { left: number; right: number } {
+  const { doc, net } = ctx;
+  if (!net) return { left: 0, right: 0 };
+  const ex = { x: Math.cos(rotation), y: Math.sin(rotation) };
+  const ey = { x: -ex.y, y: ex.x };
+  const ownIds = new Set(own.map((cell) => cell.id));
+  const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground');
+  const near = [...doc.buildings.all()].filter((b) => {
+    const bb = buildingBounds(b);
+    return Math.hypot((bb.minX + bb.maxX) / 2 - anchor.x, (bb.minY + bb.maxY) / 2 - anchor.y) < width + depth + m(60);
+  }).map((b) => footprintRects(b));
+  const LIMIT = ZONE_CELL * 1.25, STEP = m(0.25), NEAR = m(3);
+  const blocked = (q: Vec2): 'road' | 'thing' | null => {
+    for (const r of ribbons) if (r.full.distanceTo(q) < halfWidth(r.road, Level.Sidewalk) - m(0.02)) return 'road';
+    for (const rects of near) for (const rect of rects) if (pointInPolygon(q, rect)) return 'thing';
+    const cell = grid.cellAt(q);
+    if (cell && !ownIds.has(cell.id) && marks.has(cell.id)) return 'thing';
+    return null;
+  };
+  const out = { left: 0, right: 0 };
+  for (const [key, sign] of [['left', -1], ['right', 1]] as const) {
+    let found: { d: number; what: 'road' | 'thing' } | null = null;
+    for (let d = STEP; d <= LIMIT && !found; d += STEP) {
+      for (const y of [m(0.3), depth / 2, depth - m(0.3)]) {
+        const along = sign * (width / 2 + d);
+        const q = { x: anchor.x + ex.x * along + ey.x * y, y: anchor.y + ex.y * along + ey.y * y };
+        const what = blocked(q);
+        if (what) { found = { d: d - STEP, what }; break; }
+      }
+    }
+    if (found && (found.what === 'road' || found.d <= NEAR)) out[key] = Math.max(0, found.d - m(0.1));
+  }
+  return out;
+}
 
 /** How close a stored mark has to be to a cell's centre to be that cell's. */
 const MATCH = ZONE_CELL / 2;
@@ -191,24 +245,42 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
     const lot: ZoneCell[] = [];
     for (let c = 0; c < columns; c++) lot.push(...freeColumn(start.column + c, rows)!);
     const margin = m(0.3);
-    const lotW = columns * ZONE_CELL - margin;
-    const lotD = rows * ZONE_CELL - margin;
-    // A building made for the lot, leaving room for its setback and yard.
-    const roomW = (lotW - (zone.use === 'residential' && zone.density === 'low' ? m(1.5) : m(0.6))) * METERS_PER_UNIT;
-    const roomD = Math.max(5, (lotD - m(zone.use === 'commercial' ? 4 : 8)) * METERS_PER_UNIT);
-    if (roomW < 4) { refused.add(start.id); continue; }
-    const made = madeToMeasure(zone.use, zone.density, roomW, roomD, rng);
-    const body = made.body;
-    body.function = made.fn;
-    if (!dressLot(body, zone.use, zone.density, lotW, lotD, rng)) { refused.add(start.id); continue; }
-    // Front middle of the lot, and the street's direction there.
+    // Front middle of the grid lot, and the street's direction there.
     const fronts = lot.filter((cell) => cell.row === 0);
-    const anchor = {
+    const gridAnchor = {
       x: fronts.reduce((s, cell) => s + cell.front.x, 0) / fronts.length,
       y: fronts.reduce((s, cell) => s + cell.front.y, 0) / fronts.length,
     } as Vec2;
     const rotation = (fronts[Math.floor(fronts.length / 2)] as ZoneCell).rotation;
-    const result = placeBuilding(ctx, body, anchor, rotation);
+    const gridW = columns * ZONE_CELL - margin;
+    // The land beside the lot that nobody else can use - the strip left at a
+    // corner between the grid and the cross street's footway, a gap short of
+    // the next building - joins the lot, so no bare strip is left along a
+    // footway or between two properties.
+    const fullReach = sideReach(ctx, grid, marks, gridAnchor, rotation, gridW, rows * ZONE_CELL - margin, lot);
+    const lotD = rows * ZONE_CELL - margin;
+    // Built on the widened lot; where that meets a corner's curved footway
+    // and is refused, on half the gain, then on the grid lot alone.
+    let result: ReturnType<typeof placeBuilding> = { ok: false, problem: 'overlap' } as ReturnType<typeof placeBuilding>;
+    for (const k of [1, 0.5, 0]) {
+      const reach = { left: fullReach.left * k, right: fullReach.right * k };
+      if (k < 1 && fullReach.left + fullReach.right < m(0.5)) break;
+      const lotW = gridW + reach.left + reach.right;
+      // A building made for the lot, leaving room for its setback and yard.
+      const roomW = (lotW - (zone.use === 'residential' && zone.density === 'low' ? m(1.5) : m(0.6))) * METERS_PER_UNIT;
+      const roomD = Math.max(5, (lotD - m(zone.use === 'commercial' ? 4 : 8)) * METERS_PER_UNIT);
+      if (roomW < 4) continue;
+      const made = madeToMeasure(zone.use, zone.density, roomW, roomD, rng);
+      const body = made.body;
+      body.function = made.fn;
+      if (!dressLot(body, zone.use, zone.density, lotW, lotD, rng)) continue;
+      // The widened lot's front middle: shifted along the street by half of
+      // what one side gained over the other.
+      const shift = (reach.right - reach.left) / 2;
+      const anchor = { x: gridAnchor.x + Math.cos(rotation) * shift, y: gridAnchor.y + Math.sin(rotation) * shift };
+      result = placeBuilding(ctx, body, anchor, rotation);
+      if (result.ok) break;
+    }
     if (!result.ok || result.id === undefined) { refused.add(start.id); continue; }
     const id = result.id as number;
     for (const cell of lot) {
