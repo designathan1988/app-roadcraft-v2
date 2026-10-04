@@ -331,11 +331,23 @@ function terrainMaterial(
          // magnified macro maps.
          float terrainDetailW = 0.0;
 
-         // An incommensurate wide sample avoids the eight-tile composite repeat
-         // that appeared when this ratio was exactly 1/8.
+         // Rotate the wide octave, as well as using an incommensurate scale:
+         // otherwise the most visible clumps line up with their own repeats.
+         vec2 terrainWideUv(vec2 uv) {
+           return vec2(uv.x * 0.9396926 - uv.y * 0.3420201,
+                       uv.x * 0.3420201 + uv.y * 0.9396926) * 0.137;
+         }
          vec4 dualScale(sampler2D tex, vec2 uv) {
            vec4 near = texture2D(tex, uv, terrainDetailW * 2.2);
-           vec4 far = texture2D(tex, uv * 0.137);
+           vec4 far = texture2D(tex, terrainWideUv(uv));
+           return mix(near, far, 0.42);
+         }
+         vec3 dualScaleNormal(sampler2D tex, vec2 uv) {
+           vec3 near = texture2D(tex, uv, terrainDetailW * 2.2).xyz * 2.0 - 1.0;
+           vec3 far = texture2D(tex, terrainWideUv(uv)).xyz * 2.0 - 1.0;
+           // Bring the wide octave's tangent slope back into the ground frame.
+           far.xy = vec2(far.x * 0.9396926 + far.y * 0.3420201,
+                        -far.x * 0.3420201 + far.y * 0.9396926);
            return mix(near, far, 0.42);
          }
 
@@ -420,8 +432,8 @@ function terrainMaterial(
       )
       .replace(
         '#include <normal_fragment_maps>',
-        `vec3 grassN = dualScale(normalMap, vTerrainWorld.xz * uGrassScale).xyz * 2.0 - 1.0;
-         vec3 rockN = dualScale(uRockNormal, tRock).xyz * 2.0 - 1.0;
+        `vec3 grassN = dualScaleNormal(normalMap, vTerrainWorld.xz * uGrassScale);
+         vec3 rockN = dualScaleNormal(uRockNormal, tRock);
          // The rock's bumps belong to the WALL's frame, not the ground's: read
          // through the same projection its colour came from, then brought back
          // into the geometry's tangent frame so the two can be mixed.
@@ -441,7 +453,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v2';
+  material.customProgramCacheKey = () => 'terrain-splat-v3';
   return material;
 }
 
