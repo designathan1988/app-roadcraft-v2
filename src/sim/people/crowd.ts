@@ -139,6 +139,8 @@ interface State {
   crowd: Crowd | null;
   revision: number;
   walkers: Walker[];
+  /** Positions before the current Detour update, built only when a crowded scene needs a standing-body lookup. */
+  standingIndex: CrowdPointIndex<Walker> | null;
   byId: Map<number, Walker>;
   nextId: number;
   spawnClock: number;
@@ -159,7 +161,7 @@ const STATES = new WeakMap<SimWorld, State>();
 function stateOf(w: SimWorld): State {
   let s = STATES.get(w);
   if (!s) {
-    s = { nav: null, crowd: null, revision: -1, walkers: [], byId: new Map(), nextId: 1, spawnClock: 0, clock: 0, slots: new Map(), waitingPlaces: new Map(), waitingCapacity: new Map(), fullWaitingRegions: new Map(), passages: new Map() };
+    s = { nav: null, crowd: null, revision: -1, walkers: [], standingIndex: null, byId: new Map(), nextId: 1, spawnClock: 0, clock: 0, slots: new Map(), waitingPlaces: new Map(), waitingCapacity: new Map(), fullWaitingRegions: new Map(), passages: new Map() };
     STATES.set(w, s);
   }
   return s;
@@ -813,7 +815,11 @@ function pastStanding(s: State, p: Walker, lane: Vec2): GroundPoint | null {
   const rx = uy, ry = -ux;
   let nearest: Walker | null = null;
   let nearestAlong = Infinity;
-  for (const q of s.walkers) {
+  if (s.walkers.length >= 64 && !s.standingIndex) {
+    s.standingIndex = new CrowdPointIndex(s.walkers, q => ({ minX: q.x, maxX: q.x, minY: q.y, maxY: q.y }));
+  }
+  const candidates = s.standingIndex?.around(p.x, p.y, m(3) + 2 * AGENT_RADIUS + m(0.05)) ?? s.walkers;
+  for (const q of candidates) {
     if (q === p || !q.holding || q.mode === 'wait' || q.party.id === p.party.id || Math.abs(q.h - p.h) >= AGENT_HEIGHT) continue;
     const vx = q.x - p.x, vy = q.y - p.y;
     const along = vx * ux + vy * uy;
@@ -1600,6 +1606,7 @@ function waitFacing(p: Walker): number | null {
 function step(w: SimWorld, s: State): void {
   ensureNav(w, s);
   if (!s.nav || !s.crowd) return;
+  s.standingIndex = null;
   s.clock += DT;
   indexReservations(w);
   const arrived: Walker[] = [];
