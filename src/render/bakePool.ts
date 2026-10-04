@@ -17,15 +17,26 @@ const SIZE = Math.max(1, Math.min(6, (typeof navigator !== 'undefined' ? navigat
 
 let started = false;
 let usable = false;
+let releaseRequested = false;
 const idle: Worker[] = [];
 const queue: (() => void)[] = [];
 /** The job each worker has in hand, to answer it should the worker fail. */
 const busy = new Map<Worker, (result: Result) => void>();
 
+function releaseIfIdle(): void {
+  if (!releaseRequested || busy.size > 0 || queue.length > 0) return;
+  for (const worker of idle) worker.terminate();
+  idle.length = 0;
+  started = false;
+  usable = false;
+  releaseRequested = false;
+}
+
 function free(worker: Worker): void {
   busy.delete(worker);
   idle.push(worker);
   queue.shift()?.();
+  releaseIfIdle();
 }
 
 function start(): boolean {
@@ -63,6 +74,7 @@ function start(): boolean {
  * undefined.
  */
 export function bakeInWorker(scene: Object3D, sex: WalkSex): Promise<Result> {
+  releaseRequested = false;
   if (!start()) return Promise.resolve(null);
   const { nodes, transfer } = rigData(scene);
   return new Promise((resolve) => {
@@ -74,4 +86,10 @@ export function bakeInWorker(scene: Object3D, sex: WalkSex): Promise<Result> {
     if (idle.length) send();
     else queue.push(send);
   });
+}
+
+/** Releases decoded motion libraries held by idle workers after all visual bodies leave. */
+export function releaseIdleBakeWorkers(): void {
+  releaseRequested = true;
+  releaseIfIdle();
 }

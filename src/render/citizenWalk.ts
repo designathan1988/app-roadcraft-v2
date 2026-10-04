@@ -417,28 +417,37 @@ function decode(file: LibraryFile, walk: WalkFile): Record<LibraryClipName, Libr
   return out;
 }
 
-const libraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
-let library: Promise<RocketboxLibrary> | null = null;
+const libraries: Partial<Record<WalkSex, WeakRef<RocketboxClips>>> = {};
+const loadingLibraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
 
 /**
  * The Microsoft Rocketbox clips the citizens play besides the walk: starting
  * and stopping, running, turning on the spot, standing, looking round, a
  * phone, talking and listening, sitting down, sitting and standing up, for
  * each sex, from `scripts/extract-rocketbox-clips.mjs`. Each library is fetched
- * once, when a citizen of that sex is prepared, rather than carried in the
- * bundle or loaded for a body that cannot use it.
+ * when a citizen of that sex is prepared. Active bodies keep their clips;
+ * otherwise the weak cache lets the decoded library leave memory.
  */
 export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
-  return libraries[sex] ??= (async () => {
+  const cached = libraries[sex]?.deref();
+  if (cached) return Promise.resolve(cached);
+  const pending = loadingLibraries[sex];
+  if (pending) return pending;
+  const work = (async () => {
     const url = sex === 'male' ? maleLibraryUrl : femaleLibraryUrl;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Rocketbox motion library ${url}: ${response.status}`);
-    return decode(await response.json() as LibraryFile, WALKS[sex]);
+    const clips = decode(await response.json() as LibraryFile, WALKS[sex]);
+    libraries[sex] = new WeakRef(clips);
+    return clips;
   })();
+  loadingLibraries[sex] = work;
+  const clear = (): void => { if (loadingLibraries[sex] === work) delete loadingLibraries[sex]; };
+  void work.then(clear, clear);
+  return work;
 }
 
 export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
-  library ??= Promise.all([loadRocketboxClips('male'), loadRocketboxClips('female')])
+  return Promise.all([loadRocketboxClips('male'), loadRocketboxClips('female')])
     .then(([male, female]) => ({ male, female }));
-  return library;
 }

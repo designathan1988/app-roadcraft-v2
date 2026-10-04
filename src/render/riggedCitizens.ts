@@ -15,7 +15,7 @@ import { loadPeopleAssets } from '@people/body/assets';
 import { Morpher } from '@people/body/morph';
 import { createPersonRig, personSimplifier } from './people/personRig';
 import { cancelUploads, compileAhead, warmAhead } from './uploads';
-import { bakeInWorker } from './bakePool';
+import { bakeInWorker, releaseIdleBakeWorkers } from './bakePool';
 import { cookPerson, loadCookedPerson, peopleCookHash } from './people/cookedPerson';
 import { HELD, createHeldProps } from './people/heldProps';
 import { attachFacialMorphs } from './people/facialMorphs';
@@ -225,6 +225,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       loading.delete(index);
     }
     group.userData.loadedModels = batches.size;
+    if (batches.size === 0 && loading.size === 0) releaseIdleBakeWorkers();
   };
   const evictionTimer = typeof window === 'undefined' ? 0 : window.setInterval(evictInactive, 15_000);
   /**
@@ -900,6 +901,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       disposeOwned(resources);
       resources.clear(); batches.clear(); loading.clear(); group.clear();
+      releaseIdleBakeWorkers();
     },
   };
 }
