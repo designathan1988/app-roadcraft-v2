@@ -8,18 +8,18 @@ history). Rules of work are in `AGENTS.md`, not here.
 Last full rewrite: 2026-10-04 19:10, from the agents' memories and the sessions
 then running. Live build: `main` at a3b9757, served on http://127.0.0.1:4180.
 
-## Owners
+## Who works here
 
-Claim an area before editing it, and release it when you stop. A session with
-uncommitted work in the shared checkout says so here.
+One Claude session works on this repository at a time (the player, 2026-10-04),
+on `master` in `C:/Codex-Shared/Road`. The Codex handoff of 2026-10-01 ended on
+2026-10-02 (`docs/handoff/` is history); old branches on the remote
+(`codex/performance-audit`, `codex/stages-b`, `perf-audit-followup`) are unmerged:
+ask the player before merging any of them.
 
-| Area | Owner | Worktree | Since |
-|---|---|---|---|
-| Interface v2 (`src/ui/**`, `index.html`, the UI part of `main.ts`, `buildingsWiring.ts`, `render/buildings/parts.ts`); zoning next | Claude session "Prédios em quarteirões incompletos" (state written by session 7f88b5cd) | builds 4180 from its scratch worktree `wt-b43`; all its work is committed (a3b9757), nothing pending in the shared checkout | 2026-10-04 |
-| Agent instruction files (`AGENTS.md`, `CLAUDE.md`, `src/*/AGENTS.md`, `.claude/settings.json`, `.claude/hooks/`) | Claude session "Verificar qualidade do projeto" (5bca37) | shared checkout, explicit paths | 2026-10-04 |
-| Pedestrians, vehicles, buildings, roads, city life, performance | free | | |
-| Codex | The Codex handoff of 2026-10-01 ended on 2026-10-02; `docs/handoff/` is history. The Codex worktree `~/.codex/worktrees/performance-audit/Road` (branch `codex/performance-audit`) had 101 uncommitted changes dated 2026-10-04, so a Codex task may be running there. Branches `codex/performance-audit` and `codex/stages-b` are on the remote, unmerged: ask the player before merging them. | `~/.codex/worktrees/` | |
-| Performance follow-up | unknown session, branch `perf-audit-followup` (2 commits ahead of main on 2026-10-04) | `.claude/wt-lat` | 2026-10-04 |
+**Work under way:** the agents engine (GTA + The Sims): every resident a
+persistent agent with their own car, replacing the three pedestrian engines and
+the cars that appear from nowhere. Slice 1, a person who uses their own car, is
+being built behind `?agents=1`.
 
 ## Live in the game (main, 4180)
 

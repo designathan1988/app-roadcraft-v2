@@ -2,7 +2,7 @@
 
 Read by every coding agent (Codex directly, Claude through `CLAUDE.md`): the rules
 of work and the map of the code. One area's detail lives in its folder's
-`AGENTS.md` (section 4); what is live and who owns what, in
+`AGENTS.md` (section 4); what is live and what is open, in
 [docs/STATUS.md](docs/STATUS.md). Keep this file under 200 lines.
 
 ## 1. What this is
@@ -62,10 +62,9 @@ motion, the published `PedView` per tick), then look at it.
 - The player plays on this machine while agents work. One heavy job at a time
   (suite, build, browser harness, benchmark), always in the foreground. Stop every
   server and browser you start. Only the player's game server (port 4180) stays up.
-- Several sessions (Claude and Codex) work here at once. Each one works in its own
-  worktree and branch (`git worktree add -b <branch> ../Road-<topic> master`) and
-  brings to master only its own files, staged by explicit path. Never stage,
-  commit or revert another session's uncommitted changes.
+- One agent works on this repository at a time (the player, 2026-10-04): work on
+  `master` in `C:/Codex-Shared/Road`, stage by explicit path, commit after every
+  verified step. No worktrees, claims or messages to other sessions.
 - Publish with `git push origin master:main`. `origin` is
   github.com/designathan1988/app-roadcraft; `main` is the live branch and the
   remote `master` is stale. Never force-push.

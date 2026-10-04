@@ -7,10 +7,8 @@ apply to Claude exactly as written there. This part only adds what is specific t
 Claude Code.
 
 ## Start of every task, and after every compaction
-- Read `docs/STATUS.md`: what is live, who owns each area, what is open, the
-  player's standing decisions. It replaces the old "current work" memories.
-- Run `git status` and `git log -5` before editing: other sessions work in this
-  repository at the same time.
+- Read `docs/STATUS.md`: what is live, what is open, the player's standing
+  decisions. It replaces the old "current work" memories.
 - If two instructions disagree (this file, `AGENTS.md`, `docs/STATUS.md`, a memory,
   a skill, a handoff doc), stop and tell the player which two, in one line. Do not
   pick one silently.
@@ -30,9 +28,8 @@ Claude Code.
   verify*`) only when the player asks; a hook asks them first.
 
 ## Sessions
-- Several Claude and Codex sessions run here at once. Before touching a file
-  another session owns (`docs/STATUS.md` → Owners), message it with `ListAgents` and
-  `SendMessage`, and record your own claim in `docs/STATUS.md`.
+- Only one session works on this repository: no worktrees, ownership claims or
+  messages to other sessions; just do the work on `master`.
 - No subagents unless the player asks for them.
 - After the player corrects the same point twice, stop: write what was learned in
   `docs/STATUS.md` and suggest a fresh session with a precise prompt.
