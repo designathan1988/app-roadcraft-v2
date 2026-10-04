@@ -21,7 +21,7 @@ import { HELD, createHeldProps } from './people/heldProps';
 import { attachFacialMorphs } from './people/facialMorphs';
 import { applyFace, channelShapes, faceAt, type FaceWeights } from './people/faceExpression';
 import { expressionShapes } from '@people/body/expressions';
-import { applySkinAppearance, loadSkinAppearance, type SkinAppearance } from './people/skinAppearance';
+import { applySkinAppearance, loadSkinAppearance, releaseSkinAppearance, type SkinAppearance } from './people/skinAppearance';
 import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { wornItems } from '@people/spec';
 import { captureBind, captureBindRotations, loadRocketboxLibrary } from './citizenWalk';
@@ -262,8 +262,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       cooked.traverse((o) => { if (o instanceof SkinnedMesh && !mesh) mesh = o; });
       if (mesh) {
         const skin = await loadSkinAppearance(person);
-        for (const map of [skin.texture, skin.hairTexture, skin.browTexture, skin.lashTexture,
-          skin.beardTexture, ...skin.garments]) if (map) owned.add(map);
+        owned.add({ dispose: () => releaseSkinAppearance(skin) });
         mesh.geometry.userData['skinAppearance'] = skin;
         return { scene: cooked, parser: null } as unknown as GLTF;
       }
@@ -299,8 +298,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     }
     {
       const skin = await loadSkinAppearance(person);
-      for (const map of [skin.texture, skin.hairTexture, skin.browTexture, skin.lashTexture,
-        skin.beardTexture, ...skin.garments]) if (map) owned.add(map);
+      owned.add({ dispose: () => releaseSkinAppearance(skin) });
       rig.mesh.geometry.userData['skinAppearance'] = skin;
     }
     return { scene: rig.scene, parser: null } as unknown as GLTF;

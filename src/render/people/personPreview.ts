@@ -22,7 +22,7 @@ import { captureBind, captureBindRotations, neutralWalkFor, walkDuration, type N
 import { createPersonRig, type PersonRig } from './personRig';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { wornItems } from '@people/spec';
-import { applySkinAppearance, loadSkinAppearance, type SkinAppearance } from './skinAppearance';
+import { applySkinAppearance, loadSkinAppearance, releaseSkinAppearance, type SkinAppearance } from './skinAppearance';
 
 /**
  * The Person Creator's 3D preview: the person as the street will see them -
@@ -179,11 +179,11 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
     const request = ++skinRequest;
     void loadSkinAppearance(p).then((loaded) => {
       if (request !== skinRequest || !active || !person || skinKey(person) !== key) {
-        loaded.texture.dispose(); loaded.hairTexture?.dispose(); loaded.garments.forEach(map => map?.dispose());
+        releaseSkinAppearance(loaded);
         if (request === skinRequest) pendingSkin = '';
         return;
       }
-      skin?.value.texture.dispose(); skin?.value.hairTexture?.dispose(); skin?.value.garments.forEach(map => map?.dispose());
+      if (skin) releaseSkinAppearance(skin.value);
       skin = { key, value: loaded, colour: new Color(p.look.skin) };
       pendingSkin = '';
       rebuild();
@@ -267,7 +267,7 @@ export function createPersonPreview(canvas: HTMLCanvasElement): PersonPreview {
       if (!on) {
         ++skinRequest;
         pendingSkin = '';
-        skin?.value.texture.dispose(); skin?.value.hairTexture?.dispose(); skin?.value.garments.forEach(map => map?.dispose());
+        if (skin) releaseSkinAppearance(skin.value);
         skin = null;
         return;
       }
