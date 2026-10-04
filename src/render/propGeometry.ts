@@ -43,7 +43,7 @@ import { TREE_PIT } from '@world/streetFurniture';
 type Rgb = readonly [number, number, number];
 
 const rgb = (hex: number): Rgb => {
-  const c = new Color(hex).convertSRGBToLinear();
+  const c = new Color(hex);
   return [c.r, c.g, c.b];
 };
 
@@ -255,10 +255,10 @@ export const TREE_SPECIES: readonly TreeSpecies[] = ['broadleaf', 'broadleafTall
 
 const BARK = rgb(0x5b4633);
 const BARK_PALE = rgb(0x7a6a58);
-const LEAF = rgb(0x5c8c33);
-const LEAF_DEEP = rgb(0x416c29);
-const LEAF_YOUNG = rgb(0x93b545);
-const NEEDLE = rgb(0x4f7f45);
+const LEAF = rgb(0x4d7939);
+const LEAF_DEEP = rgb(0x33572c);
+const LEAF_YOUNG = rgb(0x789a4b);
+const NEEDLE = rgb(0x3c6747);
 
 function scatterBlobs(rng: Rng, count: number, cx: number, cy: number, spreadX: number, spreadY: number, r0: number, r1: number): Blob[] {
   const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 }];
@@ -337,8 +337,8 @@ export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGe
     case 'ipePink': {
       // Brazil's flowering ipê: a wide, open, flat-topped crown that in the
       // dry season is all flower and hardly any leaf.
-      const bloom = species === 'ipeYellow' ? rgb(0xf0c52c) : rgb(0xde6fa8);
-      const bloomDeep = species === 'ipeYellow' ? rgb(0xc99a1a) : rgb(0xb24c86);
+      const bloom = species === 'ipeYellow' ? rgb(0xe5ba36) : rgb(0xc66f9d);
+      const bloomDeep = species === 'ipeYellow' ? rgb(0xb88d27) : rgb(0x9d4d7b);
       const blobs = scatterBlobs(rng, 9, 0, 0.74, 0.27, 0.12, 0.085, 0.15);
       const palette = (f: number, h: number): Rgb => (f < 0.14 ? LEAF_DEEP : h < 0.35 && f < 0.4 ? bloomDeep : bloom);
       return merge([...trunk(0.64, 0.028, 0.014, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.74, 0), palette, 8.1, 0.3, detail)]);

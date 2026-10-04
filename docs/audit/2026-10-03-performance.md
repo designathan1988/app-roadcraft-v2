@@ -48,4 +48,10 @@ Road validation already held footprints 0.02 world units beyond the outer footwa
 
 The corner reach was then replaced with a pointer/footprint check. At the same cursor position, the lateral gap fell from 13 to 0.02 units. The resulting rectangle had zero overlap with the junction's curb. Its distance to one road was `3.6e-15` below the exact threshold solely from floating-point arithmetic; a `1e-9` contact tolerance made the valid placement pass without changing the physical clearance. The new two-case corner specification, 72 existing building/town tests, typecheck and build passed. Before/after images are in this task's local `docs/audit/2026-10-03-corner-gap-*.png` files.
 
+## Traffic and vegetation follow-up
+
+In 240 simulated seconds on the default town (90 vehicles), the longest sampled green wait was 8.28 s; in a saturated 4×4 avenue grid (426 vehicles), it was 9.33 s. The longest-waiting cars were physically following queued vehicles that were discharging; no `greenBlocked`, `greenHeld`, stale-claim or spillback issue was reported in these probes. This does not disprove the player's report on other maps or with different pedestrian demand, so admission logic was not changed without a reproduced fault.
+
+The prop generator double-converted hexadecimal colors after three.js had already converted them to linear working values. In a representative broadleaf palette, this reduced the green vertex-color component from 0.2623 to 0.0559. The redundant conversion was removed in props, ground flowers and relative road-class tints. The leaf palettes were retuned against fixed-camera before/after screenshots; the resulting broadleaf green component is 0.1912. Instancing, geometry and LOD are unchanged. Images are in this task's local `docs/audit/2026-10-03-props-{before,final}.png` files. The focused prop and road tile specifications passed (8 tests).
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

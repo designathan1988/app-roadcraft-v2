@@ -188,10 +188,10 @@ const offset = (base: HeightFn, amount: number): HeightFn => (x, y) => base(x, y
 
 /** Linear-space tints per road class, so the asphalt mesh can vary by class. */
 const CLASS_TINT: readonly Color[] = ROAD_TYPES.map((type) =>
-  new Color(type.color).convertSRGBToLinear(),
+  new Color(type.color),
 );
 /** The tint the asphalt material is authored against, so 1.0 means "as baked". */
-const TINT_REFERENCE = new Color(0x3a3d3f).convertSRGBToLinear();
+const TINT_REFERENCE = new Color(0x3a3d3f);
 
 /** What each surface of a tile is made from. */
 type Source =
