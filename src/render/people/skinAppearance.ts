@@ -1,4 +1,4 @@
-import { CanvasTexture, Color, DataTexture, ShaderChunk, SRGBColorSpace, TextureLoader, type BufferGeometry, type MeshStandardMaterial, type Texture } from 'three';
+import { CanvasTexture, Color, ShaderChunk, SRGBColorSpace, TextureLoader, type BufferGeometry, type MeshStandardMaterial, type Texture } from 'three';
 import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
@@ -164,6 +164,10 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
   const texturedHair = geometry.hasAttribute('hairMask');
   const texturedGarments = geometry.hasAttribute('garmentSlot');
   const texturedEyes = geometry.hasAttribute('eyeMask');
+  const cards = [skin.hairTexture, skin.browTexture, skin.lashTexture, skin.beardTexture];
+  const cardNames = ['personHair', 'personBrow', 'personLash', 'personBeard'];
+  const cardMask = cards.reduce((mask, texture, i) => mask | (texture ? 1 << i : 0), 0);
+  const garmentMask = skin.garments.reduce((mask, texture, i) => mask | (texture ? 1 << i : 0), 0);
   if (texturedHair) { material.alphaToCoverage = true; material.alphaTest = 0.35; }
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
@@ -179,14 +183,11 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
     if (texturedGarments) {
       shader.uniforms.outfitDye = { value: skin.outfitTint ?? new Color(0xffffff) };
       shader.uniforms.outfitDyed = { value: skin.outfitTint ? 1 : 0 };
-      for (let i = 0; i < GARMENT_SLOTS; i++) shader.uniforms[`garment${i}`] = { value: skin.garments[i] ?? blank() };
+      for (let i = 0; i < GARMENT_SLOTS; i++) if (skin.garments[i]) shader.uniforms[`garment${i}`] = { value: skin.garments[i] };
     }
     if (texturedHair) {
-      shader.uniforms.personHair = { value: skin.hairTexture ?? blank() };
-      shader.uniforms.personBrow = { value: skin.browTexture ?? blank() };
-      shader.uniforms.personLash = { value: skin.lashTexture ?? blank() };
-      shader.uniforms.personBeard = { value: skin.beardTexture ?? blank() };
-      shader.uniforms.cardTextures = { value: [skin.hairTexture, skin.browTexture, skin.lashTexture, skin.beardTexture].map((t) => (t ? 1 : 0)) };
+      for (let i = 0; i < cards.length; i++) if (cards[i]) shader.uniforms[cardNames[i]!] = { value: cards[i] };
+      shader.uniforms.cardTextures = { value: cards.map((texture) => (texture ? 1 : 0)) };
     }
     shader.vertexShader = `attribute float skinMask; uniform vec3 faceOrigin; uniform float faceScale; varying float vSkinMask; varying vec2 vSkinUv; varying vec3 vFace;\n${shader.vertexShader}`
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkinMask = skinMask; vSkinUv = uv; vFace = (position - faceOrigin) / faceScale;');
@@ -218,6 +219,10 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vEyeMask > 0.5) roughnessFactor = 0.08;');
     }
     if (texturedHair) {
+      const declarations = cardNames.map((name, i) => cards[i] ? `uniform sampler2D ${name};` : '').join(' ');
+      const sample = (i: number): string => cards[i] ? `texture2D(${cardNames[i]}, vSkinUv)`
+        : i === 2 ? 'vec4(0.2, 0.2, 0.2, 1.0)' : 'vec4(0.5, 0.5, 0.5, 1.0)';
+      const size = (i: number): string => cards[i] ? `vec2(textureSize(${cardNames[i]}, 0))` : 'vec2(1.0)';
       // Brows and lashes are cards laid on the skin. Laid exactly on it, the
       // skin won the depth test over most of them - the brows sank into the
       // face in dashes - and the crowd's camera, with its long depth range,
@@ -240,7 +245,7 @@ if (faceCard) {
   mvPosition.z += 0.004 * bodyScale;
   gl_Position = projectionMatrix * mvPosition;
 }`);
-      shader.fragmentShader = `uniform sampler2D personHair; uniform sampler2D personBrow; uniform sampler2D personLash; uniform sampler2D personBeard; uniform float cardTextures[4]; varying float vHairMask;\n${shader.fragmentShader}`
+      shader.fragmentShader = `${declarations} uniform float cardTextures[4]; varying float vHairMask;\n${shader.fragmentShader}`
         .replace('#include <alphatest_fragment>', `
           // A card: hair (1), brows (2), lashes (3) or a beard (4), each from its
           // own texture. The strands take the person's hair colour, shaded by
@@ -260,17 +265,17 @@ if (faceCard) {
           if (vHairMask > 0.5 && appearanceDetail > 0.5) {
             vec4 cardTexel = vec4(0.0);
             float slot = floor(vHairMask + 0.5);
-            if (slot < 1.5) { cardTexel = cardTextures[0] > 0.5 ? texture2D(personHair, vSkinUv) : vec4(0.5, 0.5, 0.5, 1.0); }
-            else if (slot < 2.5) { cardTexel = cardTextures[1] > 0.5 ? texture2D(personBrow, vSkinUv) : vec4(0.5, 0.5, 0.5, 1.0); }
-            else if (slot < 3.5) { cardTexel = cardTextures[2] > 0.5 ? texture2D(personLash, vSkinUv) : vec4(0.2, 0.2, 0.2, 1.0); }
-            else { cardTexel = cardTextures[3] > 0.5 ? texture2D(personBeard, vSkinUv) : vec4(0.5, 0.5, 0.5, 1.0); }
+            if (slot < 1.5) { cardTexel = ${sample(0)}; }
+            else if (slot < 2.5) { cardTexel = ${sample(1)}; }
+            else if (slot < 3.5) { cardTexel = ${sample(2)}; }
+            else { cardTexel = ${sample(3)}; }
             // Fine strands thin out and vanish in a texture's smaller mips: a
             // brow seen from a little way off was a few dashes. Its alpha is
             // scaled up by the mip level the pixel reads, keeping the strands'
             // coverage (Ben Golus, "Anti-aliased Alpha Test"; I. Castano,
             // "Computing Alpha Mipmaps"; as OpenMW's alpha.glsl does it).
-            vec2 cardSize = slot < 1.5 ? vec2(textureSize(personHair, 0)) : slot < 2.5 ? vec2(textureSize(personBrow, 0))
-              : slot < 3.5 ? vec2(textureSize(personLash, 0)) : vec2(textureSize(personBeard, 0));
+            vec2 cardSize = slot < 1.5 ? ${size(0)} : slot < 2.5 ? ${size(1)}
+              : slot < 3.5 ? ${size(2)} : ${size(3)};
             float cardMip = max(0.0, 0.5 * log2(max(dot(cardDx * cardSize, cardDx * cardSize), dot(cardDy * cardSize, cardDy * cardSize))));
             cardTexel.a *= 1.0 + cardMip * 0.25;
             if (slot > 1.5 && slot < 2.5 && cardTextures[1] > 0.5) cardTexel.a = min(1.0, cardTexel.a * 1.55);
@@ -290,18 +295,18 @@ if (faceCard) {
     if (texturedGarments) {
       shader.vertexShader = `attribute float garmentSlot; varying float vGarmentSlot;\n${shader.vertexShader}`
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGarmentSlot = garmentSlot;');
-      const uniforms = Array.from({ length: GARMENT_SLOTS }, (_, i) => `uniform sampler2D garment${i};`).join('\n');
+      const uniforms = Array.from({ length: GARMENT_SLOTS }, (_, i) => skin.garments[i] ? `uniform sampler2D garment${i};` : '').join('\n');
       shader.fragmentShader = `uniform vec3 outfitDye; uniform float outfitDyed; varying float vGarmentSlot; ${uniforms}\n${shader.fragmentShader}`;
       const sample = Array.from({ length: GARMENT_SLOTS }, (_, i) => `
         if (appearanceDetail > 0.5 && abs(vGarmentSlot - ${i + 1}.0) < 0.1) {
-          vec3 cloth = texture2D(garment${i}, vSkinUv).rgb;
+          vec3 cloth = ${skin.garments[i] ? `texture2D(garment${i}, vSkinUv).rgb` : 'vec3(128.0 / 255.0)'};
           ${i === 0 ? 'float shade = 0.3 + 1.15 * dot(cloth, vec3(0.3, 0.59, 0.11)); cloth = mix(cloth, min(vec3(1.0), outfitDye * shade), outfitDyed * 0.8);' : ''}
           diffuseColor.rgb = cloth;
         }`).join('\n');
       shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `${sample}\n#include <alphatest_fragment>`);
     }
   };
-  material.customProgramCacheKey = () => `${key}-textured-skin-v3-hair${texturedHair}-garments${texturedGarments}-eyes${texturedEyes}`;
+  material.customProgramCacheKey = () => `${key}-textured-skin-v4-hair${texturedHair}-${cardMask}-garments${texturedGarments}-${garmentMask}-eyes${texturedEyes}`;
 }
 
 /** How far each island of a garment's texture is grown into its background, pixels. */
@@ -386,14 +391,5 @@ function paddedGarment(name: string, item: ProxyItem): TextureLease {
     });
 }
 
-/** Garment textures a person's shader always has room for (`garmentSlots.ts`): with the skin, the hair cards and the bone palette, within a GPU's sixteen texture units. */
+/** Maximum garment slots authored by `garmentSlots.ts`; empty slots use a constant in the shader. */
 const GARMENT_SLOTS = MAX_TEXTURED;
-let blankTexture: DataTexture | null = null;
-/** A 1x1 grey texture for an empty slot, shared. */
-function blank(): DataTexture {
-  if (!blankTexture) {
-    blankTexture = new DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
-    blankTexture.needsUpdate = true;
-  }
-  return blankTexture;
-}
