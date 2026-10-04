@@ -42,4 +42,8 @@ An 80-seed, 40-operation fuzz hunt completed before changing `world/conflictPoin
 
 The water builder dropped entire 4-unit cells at the shoreline. In the same authored river and camera, clipping only mixed cells against the actual bank changed the water surface from 7,960 to 9,404 triangles and removed the square teeth; all 21 focused water tests passed. The before/after images are in this task's local `docs/audit/2026-10-03-shore-*.png` files. The visual result is stronger evidence than the triangle count; terrain and vegetation quality remain open parts of the wider audit.
 
+## Building frontage follow-up
+
+Road validation already held footprints 0.02 world units beyond the outer footway. Road snapping added 0.1 more units and the generated town used a separate 0.12-unit frontage gap. Both now use the validation clearance. In a browser corner probe the placed building was valid with a measured front gap of 0.02 units; 69 focused building tests and three generated-town tests passed. The corner snap still has a fixed six-unit reach: a farther cursor position left a measured 13-unit gap to the second street. That larger corner-placement case remains open and is not counted as fixed by the clearance change.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

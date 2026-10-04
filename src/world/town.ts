@@ -4,6 +4,7 @@ import type { MaterialSpec } from './buildings/materials';
 import type { BayComponent, Building, BuildingFunction, RoofKind, Side } from './buildings/types';
 import type { RoadDoc } from './doc';
 import { Level, ROAD_TYPES, halfWidth } from './roadTypes';
+import { ROAD_CLEARANCE } from './buildings/validate';
 import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
 import { m } from './units';
 
@@ -43,7 +44,7 @@ const XS = [-560, -240, 240, 560];
 const YS = [-880, -680, -480, -160, 160, 480, 680, 880];
 const LOCAL = ROAD_TYPES.findIndex((t) => t.id === 'local');
 const URBAN = ROAD_TYPES.findIndex((t) => t.id === 'urban');
-const FRONT_GAP = 0.12;
+const FRONT_GAP = ROAD_CLEARANCE;
 
 /** What each band of blocks is, from the south. */
 type Band = 'houses' | 'terraces' | 'centre';

@@ -82,7 +82,7 @@ function snapToRoad(net: Network, size: FootprintSize, cursor: Vec2): PlacementS
     const segment = net.doc.segment(ribbon.id);
     if (!segment || segment.structure === 'tunnel') continue;
     // The front on the back of the footway itself (see `ROAD_CLEARANCE`).
-    const half = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE + 0.1;
+    const half = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
     const hit = ribbon.full.closestPoint(cursor);
     if (hit.distance > half + size.depth + ROAD_REACH) continue;
     if (best && hit.distance >= best.distance) continue;
@@ -126,7 +126,7 @@ function cornerFlush(net: Network, anchor: Vec2, rotation: number, size: Footpri
     if (ribbon.id === snapped) continue;
     const segment = net.doc.segment(ribbon.id);
     if (!segment || segment.structure === 'tunnel') continue;
-    const back = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE + 0.1;
+    const back = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
     for (const side of [-1, 1]) {
       const px = anchor.x + ux * side * size.width / 2 + vx * size.depth / 2;
       const py = anchor.y + uy * side * size.width / 2 + vy * size.depth / 2;
