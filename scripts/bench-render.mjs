@@ -32,22 +32,22 @@ const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } 
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
 await page.addInitScript(() => {
-  try { localStorage.setItem('roadcraft.sky', 'day'); } catch { /* storage blocked */ }
-  window.confirm = () => true;
+  try { globalThis.localStorage.setItem('roadcraft.sky', 'day'); } catch { /* storage blocked */ }
+  globalThis.window.confirm = () => true;
 });
 await page.goto(BASE, { waitUntil: 'networkidle' });
-await page.waitForFunction('Boolean(window.__roadcraft)', null, { timeout: 60_000 });
-await page.evaluate(() => document.getElementById('sampleCity').click());
+await page.waitForFunction('Boolean(globalThis.window.__roadcraft)', null, { timeout: 60_000 });
+await page.evaluate(() => globalThis.document.getElementById('sampleCity').click());
 await page.waitForTimeout(WAIT * 1000);
 // The morning rush: the town's streets full of the residents' trips (at
 // 06:30, when the town is built, nobody is out yet and the simulation costs
 // nothing worth measuring).
-await page.evaluate(() => { window.__roadcraft.sim.clock.speed = 1; window.__roadcraft.sim.city.skip(95); });
+await page.evaluate(() => { globalThis.window.__roadcraft.sim.clock.speed = 1; globalThis.window.__roadcraft.sim.city.skip(95); });
 await page.waitForTimeout(8000);
 
 /** GPU ms per pass over `n` frames, plus CPU draw ms, calls and triangles. */
 const measure = (n) => page.evaluate(async (n) => {
-  const sc = window.__roadcraft.scene();
+  const sc = globalThis.window.__roadcraft.scene();
   const r = sc.gl;
   const g = r.getContext();
   const ext = g.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -56,32 +56,35 @@ const measure = (n) => page.evaluate(async (n) => {
   let depth = 0;
   const origDraw = sc.draw;
   const origRender = r.render;
-  r.render = function (scene, cam) {
+  r.render = function (scene) {
     const t = r.getRenderTarget();
     const label = `${t ? `${t.width}x${t.height}` : 'screen'}|${scene.isScene ? 'scene' : scene.type}`;
+    const beforeCalls = r.info.render.calls;
+    const beforeTris = r.info.render.triangles;
     let q = null;
     if (depth === 0 && cur && ext) { q = g.createQuery(); g.beginQuery(ext.TIME_ELAPSED_EXT, q); }
     depth++;
     try { return origRender.apply(this, arguments); } finally {
       depth--;
-      if (q) { g.endQuery(ext.TIME_ELAPSED_EXT); cur.passes.push({ label, q, calls: r.info.render.calls, tris: r.info.render.triangles }); }
+      if (q) { g.endQuery(ext.TIME_ELAPSED_EXT); cur.passes.push({ label, q,
+        calls: r.info.render.calls - beforeCalls, tris: r.info.render.triangles - beforeTris }); }
     }
   };
   sc.draw = function (...a) {
     cur = { passes: [], cpu: 0 };
-    const s = performance.now();
-    try { return origDraw.apply(this, a); } finally { cur.cpu = performance.now() - s; frames.push(cur); cur = null; }
+    const s = globalThis.performance.now();
+    try { return origDraw.apply(this, a); } finally { cur.cpu = globalThis.performance.now() - s; frames.push(cur); cur = null; }
   };
   const gaps = [];
-  let last = performance.now();
+  let last = globalThis.performance.now();
   await new Promise((done) => {
     let k = 0;
-    const f = () => { const t = performance.now(); gaps.push(t - last); last = t; if (++k < n + 6) requestAnimationFrame(f); else done(); };
-    requestAnimationFrame(f);
+    const f = () => { const t = globalThis.performance.now(); gaps.push(t - last); last = t; if (++k < n + 6) globalThis.requestAnimationFrame(f); else done(); };
+    globalThis.requestAnimationFrame(f);
   });
   r.render = origRender;
   sc.draw = origDraw;
-  await new Promise((done) => setTimeout(done, 400));
+  await new Promise((done) => globalThis.setTimeout(done, 400));
   const rows = new Map();
   let gpu = 0;
   let cpu = 0;
@@ -129,8 +132,8 @@ const best = async (n) => {
 
 const spots = {
   overview: async () => { await page.keyboard.press('Home'); },
-  street: async () => page.evaluate(() => window.__roadcraft.lookAt(-300, -300, 8)),
-  close: async () => page.evaluate(() => window.__roadcraft.lookAt(-480, -840, 22)),
+  street: async () => page.evaluate(() => globalThis.window.__roadcraft.lookAt(-300, -300, 8)),
+  close: async () => page.evaluate(() => globalThis.window.__roadcraft.lookAt(-480, -840, 22)),
 };
 const report = { base: BASE, width: WIDTH, height: HEIGHT, spots: {} };
 for (const [name, go] of Object.entries(spots)) {
@@ -144,20 +147,20 @@ for (const [name, go] of Object.entries(spots)) {
 await page.keyboard.press('Home');
 await page.waitForTimeout(1500);
 await page.evaluate(() => {
-  const sm = window.__roadcraft.scene().gl.shadowMap;
+  const sm = globalThis.window.__roadcraft.scene().gl.shadowMap;
   sm.__render = sm.render;
   sm.render = () => {};
 });
 report.overviewShadowFrozen = await best(60);
 await page.evaluate(() => {
-  const sm = window.__roadcraft.scene().gl.shadowMap;
+  const sm = globalThis.window.__roadcraft.scene().gl.shadowMap;
   sm.render = sm.__render;
 });
 /** Where the main thread spends a few seconds (JS Self-Profiling): inclusive and self shares. */
 const profile = (seconds) => page.evaluate(async (seconds) => {
-  if (typeof Profiler !== 'function') return null;
-  const profiler = new Profiler({ sampleInterval: 1, maxBufferSize: 400000 });
-  await new Promise((done) => setTimeout(done, seconds * 1000));
+  if (typeof globalThis.Profiler !== 'function') return null;
+  const profiler = new globalThis.Profiler({ sampleInterval: 1, maxBufferSize: 400000 });
+  await new Promise((done) => globalThis.setTimeout(done, seconds * 1000));
   const tr = await profiler.stop();
   const name = (fi) => {
     const f = tr.frames[fi];
@@ -188,7 +191,7 @@ const profile = (seconds) => page.evaluate(async (seconds) => {
 }, seconds);
 /** One frame's draw calls by object kind, picture and shadow apart. */
 const inventory = () => page.evaluate(async () => {
-  const sc = window.__roadcraft.scene();
+  const sc = globalThis.window.__roadcraft.scene();
   const r = sc.gl;
   const shadowTarget = () => {
     let t = null;
@@ -198,7 +201,7 @@ const inventory = () => page.evaluate(async () => {
   const counts = new Map();
   let on = false;
   const orig = r.renderBufferDirect;
-  r.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+  r.renderBufferDirect = function (camera, scene, geometry, material, object) {
     if (on) {
       const pass = r.getRenderTarget() === shadowTarget() ? 'shadow' : 'main';
       const kind = `${pass} ${(object.name || object.parent?.name || '?').replace(/[0-9]+/g, '#')}`;
@@ -206,18 +209,18 @@ const inventory = () => page.evaluate(async () => {
     }
     return orig.apply(this, arguments);
   };
-  await new Promise((done) => requestAnimationFrame(() => { on = true; requestAnimationFrame(() => { on = false; done(); }); }));
+  await new Promise((done) => globalThis.requestAnimationFrame(() => { on = true; globalThis.requestAnimationFrame(() => { on = false; done(); }); }));
   r.renderBufferDirect = orig;
   return [...counts].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${v} ${k}`);
 });
 report.inventoryOverview = await inventory();
 report.profileOverview1x = await profile(3);
 // Fast forward: the simulation's share of a frame at 4x.
-await page.evaluate(() => { window.__roadcraft.sim.clock.speed = 4; });
+await page.evaluate(() => { globalThis.window.__roadcraft.sim.clock.speed = 4; });
 await page.waitForTimeout(3000);
 report.fast = await best(60);
 report.profileOverview4x = await profile(3);
-report.status = await page.evaluate(() => document.querySelector('footer, [class*=status]')?.innerText.replace(/\n/g, ' ').slice(0, 120));
+report.status = await page.evaluate(() => globalThis.document.querySelector('footer, [class*=status]')?.innerText.replace(/\n/g, ' ').slice(0, 120));
 report.errors = errors.slice(0, 5);
 writeFileSync(`${OUT}/report.json`, JSON.stringify(report, null, 2));
 const line = (s) => `gpu ${s.gpuMs} ms · cpu draw ${s.cpuDrawMs} ms · frame ${s.frameMedianMs} ms · ${s.calls} calls · ${s.mtris} Mtris`;

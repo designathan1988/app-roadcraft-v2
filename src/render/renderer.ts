@@ -112,7 +112,9 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 export type SkyMode = 'day' | 'night' | 'cycle';
 
 export interface RenderStats {
+  /** Built scene geometry budget; `gl.info.render.triangles` counts drawn passes. */
   readonly triangles: number;
+  /** Actual draw calls across every pass of the last game frame. */
   readonly drawCalls: number;
   readonly quality: QualityLevel;
   readonly fps: number;
@@ -212,6 +214,9 @@ export function createSceneRenderer(
     powerPreference: 'high-performance',
     stencil: false,
   });
+  // One game frame has the scene, shadows and several postprocess renders.
+  // The default reset on each `render()` left stats showing only the last quad.
+  renderer.info.autoReset = false;
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -665,6 +670,7 @@ export function createSceneRenderer(
     },
     resize,
     draw(net, sim, alpha, delta, options) {
+      renderer.info.reset();
       if (canvas.clientWidth !== lastWidth || canvas.clientHeight !== lastHeight) {
         lastWidth = canvas.clientWidth;
         lastHeight = canvas.clientHeight;

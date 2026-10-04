@@ -22,6 +22,8 @@ Chrome on the local GPU, 1600 × 900, the sample town, fixed cameras in `scripts
 
 The frame median is display limited near 16.7 ms. The added overview geometry is restored foliage. GPU/CPU measurements vary with asset readiness and activity on the shared computer; they are evidence of no clear frame regression in these views, not proof of the exact percentage speed-up.
 
+`RenderStats.drawCalls` used to read `renderer.info` after the final postprocess quad, so a complex town reported one call. Three.js now keeps `renderer.info` across all render passes and resets it once at the start of each game frame, as its [multi-pass guidance](https://threejs.org/docs/pages/WebGLRenderer.html) recommends. A browser town frame reported 437 calls through both `RenderStats` and `renderer.info`; the fixed-camera benchmark reported 466 at overview zoom, split into 457 scene calls plus nine postprocess calls. The benchmark now records per-pass counter deltas so it remains accurate with one reset per frame. It completed with no page errors; typecheck, touched-file lint and production build passed. `RenderStats.triangles` remains the built geometry budget, while `renderer.info.render.triangles` reports drawn primitives (4.57 million in the browser frame versus 7.86 million built).
+
 ## Verification and remaining work
 
 - `node scripts/cook-people.mjs --base=http://127.0.0.1:4190`: 84 cooked people, 233.9 MB, 63 seconds. `npm run build:raw` then passed.
