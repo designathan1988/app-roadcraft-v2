@@ -1,0 +1,5 @@
+# Traffic conflict broad phase
+
+[Box2D's broad phase](https://box2d.org/doc_version_2_4/classb2_broad_phase.html) and [GPU Gems 3](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-32-broad-phase-collision-detection-cuda) reject pairs whose conservative bounds cannot overlap before doing precise contact work. Roadcraft already used a spatial grid for sampled vehicles within a connector pair, but still entered that work for connector pairs whose whole swept heavy-vehicle bounds were disjoint. A bound around every heavy-body sample now rejects those pairs. Smaller body classes fit inside the heavy bound, so the rejection cannot remove their contacts.
+
+On the default town's 390 connectors, six alternating cold builds measured 826–836 ms without this bound and 819–822 ms with it. Both modes produced 1,288 conflict points and 374 connector reference lists. The focused conflict tests passed. This is a small cold-build gain, not a solution to the larger traffic and pedestrian bottlenecks.

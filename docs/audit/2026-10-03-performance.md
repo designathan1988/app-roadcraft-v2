@@ -36,4 +36,10 @@ The production startup profile transferred about 1.8 MB before the game exposed 
 
 `normalMapFrom` spent 15.9 ms for a 512² image and 67.6 ms for 1024² in the browser. Replacing four per-pixel modulo-based neighbour lookups with identical row/edge indices reduced these medians to 11.9 and 44.9 ms. SHA-256 of the resulting pixels remained identical at sizes 1, 2, 7, 512 and 1024. Whole startup after the change measured 9.8 and 12.0 s versus 11.5–13.5 s before; this variation does not establish a precise end-to-end gain.
 
+## Traffic and shoreline follow-up
+
+An 80-seed, 40-operation fuzz hunt completed before changing `world/conflictPoints.ts` (one file passed). A conservative whole-sweep broad phase reduced cold conflict-index builds from 826–836 ms to 819–822 ms on the default town; the focused conflict-zone and cache specifications passed (8 tests). The larger collision specification was interrupted after several minutes under the player's instruction to favour focused tests. A post-change full fuzz hunt remains outstanding.
+
+The water builder dropped entire 4-unit cells at the shoreline. In the same authored river and camera, clipping only mixed cells against the actual bank changed the water surface from 7,960 to 9,404 triangles and removed the square teeth; all 21 focused water tests passed. The before/after images are in this task's local `docs/audit/2026-10-03-shore-*.png` files. The visual result is stronger evidence than the triangle count; terrain and vegetation quality remain open parts of the wider audit.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

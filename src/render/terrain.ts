@@ -1122,26 +1122,28 @@ export function unifiedWaterGeometry(
       const level = levels[i] as number;
       return { x: wx, y: wy, level, depth: level - terrainHeightAt(wx, wy) };
     });
-    // Drop boundary cells whose surface is not held inside the carved ground.
-    // Their absence is hidden by the bank instead of showing a rim in open air.
-    // Stated as a depth now, but it is the same test: a cell survives only where
-    // the water stands clear of the land at all four corners and at its centre,
-    // which is what guarantees no part of the sheet is left hanging in open air.
     const centreLevel = points.reduce((sum, point) => sum + point.level, 0) / points.length;
     const centreX = (ix + 0.5) * WATER_CELL;
     const centreY = (iy + 0.5) * WATER_CELL;
-    if (
-      points.some((point) => point.depth <= TERRAIN_WATER_HEIGHT) ||
-      centreLevel - terrainHeightAt(centreX, centreY) <= TERRAIN_WATER_HEIGHT
-    ) {
-      continue;
-    }
+    const centre = { x: centreX, y: centreY, level: centreLevel,
+      depth: centreLevel - terrainHeightAt(centreX, centreY) };
+    const wetCorners = points.filter((point) => point.depth > TERRAIN_WATER_HEIGHT).length;
+    if (wetCorners === 0 && centre.depth <= TERRAIN_WATER_HEIGHT) continue;
     // Wound anticlockwise seen from above, so the surface is a FRONT face. The
     // old winding pointed every face at the ground and needed `DoubleSide` and a
     // back-face normal flip to be lit at all — which also meant the water was
     // rasterised twice.
-    pushTriangle(positions, depths, points[0]!, points[1]!, points[2]!);
-    pushTriangle(positions, depths, points[0]!, points[2]!, points[3]!);
+    if (wetCorners === 4 && centre.depth > TERRAIN_WATER_HEIGHT) {
+      pushTriangle(positions, depths, points[0]!, points[1]!, points[2]!);
+      pushTriangle(positions, depths, points[0]!, points[2]!, points[3]!);
+    } else {
+      // Only the shore cells need a contour. Their wet triangles are clipped
+      // against the actual ground, so the edge follows the bank between grid
+      // corners instead of jumping one whole square at a time.
+      for (let i = 0; i < 4; i++) {
+        pushWetTriangle(positions, depths, points[i]!, points[(i + 1) % 4]!, centre, terrainHeightAt);
+      }
+    }
   }
 
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
@@ -1180,4 +1182,39 @@ function pushTriangle(
 ): void {
   out.push(a.x, a.level, -a.y, b.x, b.level, -b.y, c.x, c.level, -c.y);
   depths.push(a.depth, b.depth, c.depth);
+}
+
+function pushWetTriangle(
+  positions: number[], depths: number[], a: WaterPoint, b: WaterPoint, c: WaterPoint,
+  groundAt: (x: number, y: number) => number,
+): void {
+  const corners = [a, b, c];
+  const polygon: WaterPoint[] = [];
+  for (let i = 0; i < 3; i++) {
+    const from = corners[i]!;
+    const to = corners[(i + 1) % 3]!;
+    const fromWet = from.depth > TERRAIN_WATER_HEIGHT;
+    const toWet = to.depth > TERRAIN_WATER_HEIGHT;
+    if (fromWet) polygon.push(from);
+    if (fromWet === toWet) continue;
+    let wet = fromWet ? from : to;
+    let dry = fromWet ? to : from;
+    // Resolve against the ground sampler itself. A linear depth estimate can
+    // place the vertex in air where the terrain bends or has a step.
+    for (let step = 0; step < 8; step++) {
+      const x = (wet.x + dry.x) / 2;
+      const y = (wet.y + dry.y) / 2;
+      const level = (wet.level + dry.level) / 2;
+      const middle = { x, y, level, depth: level - groundAt(x, y) };
+      if (middle.depth > TERRAIN_WATER_HEIGHT) wet = middle;
+      else dry = middle;
+    }
+    polygon.push(wet);
+  }
+  for (let i = 1; i + 1 < polygon.length; i++) {
+    const a = polygon[0]!, b = polygon[i]!, c = polygon[i + 1]!;
+    if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 1e-9) {
+      pushTriangle(positions, depths, a, b, c);
+    }
+  }
 }

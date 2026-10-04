@@ -338,6 +338,8 @@ interface Sweep {
   readonly count: number;
   /** Per sample: centre x, y and unit tangent x, y. */
   readonly frame: Float64Array;
+  /** A conservative bound around every sampled heavy-vehicle body. */
+  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
   /**
    * Broad phase of the HEAVY rectangles: cell key -> sample indices. Built
    * the first time a pair needs it (`gridOf`): a movement whose every pair is
@@ -379,7 +381,22 @@ function sweepOf(graph: LaneletGraph, c: Connector,
     }
   }
   next.set(key, frame);
-  return { crossing, path, c0, count, frame, grid: null };
+  return { crossing, path, c0, count, frame, bounds: null, grid: null };
+}
+
+function boundsOf(s: Sweep): { minX: number; minY: number; maxX: number; maxY: number } {
+  if (s.bounds) return s.bounds;
+  const [hl, hw] = halfExtent(HEAVY);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < s.count; i++) {
+    const x = s.frame[i * 4] as number, y = s.frame[i * 4 + 1] as number;
+    const tx = s.frame[i * 4 + 2] as number, ty = s.frame[i * 4 + 3] as number;
+    const ex = Math.abs(tx) * hl + Math.abs(ty) * hw;
+    const ey = Math.abs(ty) * hl + Math.abs(tx) * hw;
+    minX = Math.min(minX, x - ex); maxX = Math.max(maxX, x + ex);
+    minY = Math.min(minY, y - ey); maxY = Math.max(maxY, y + ey);
+  }
+  return (s.bounds = { minX, minY, maxX, maxY });
 }
 
 function gridOf(s: Sweep): Map<number, number[]> {
@@ -577,6 +594,8 @@ interface PairZones {
  * bodies never touch.
  */
 function pairZones(a: Sweep, b: Sweep): PairZones | null {
+  const aa = boundsOf(a), bb = boundsOf(b);
+  if (aa.maxX < bb.minX || bb.maxX < aa.minX || aa.maxY < bb.minY || bb.maxY < aa.minY) return null;
   // Heavy against heavy, through the grid.
   const hits: number[] = [];
   // Which of b's samples this sample of a has already tested: a stamp per

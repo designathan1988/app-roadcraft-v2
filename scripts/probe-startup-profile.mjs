@@ -24,6 +24,8 @@ await cdp.send('Profiler.start');
 const started = Date.now();
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(globalThis.window.__roadcraft), null, { timeout: 120_000 });
+const exposedMs = Date.now() - started;
+await page.waitForFunction(() => (globalThis.window.__roadcraft?.scene().stats.rebuilds ?? 0) > 0, null, { timeout: 120_000 });
 const readyMs = Date.now() - started;
 const { profile } = await cdp.send('Profiler.stop');
 const timing = await page.evaluate(() => {
@@ -32,13 +34,17 @@ const timing = await page.evaluate(() => {
     .map((entry) => ({ name: entry.name.split('/').pop(), ms: Math.round(entry.duration),
       transferKB: Math.round(entry.transferSize / 1024), decodedKB: Math.round(entry.decodedBodySize / 1024) }));
   const longTasks = globalThis.__roadcraftLongTasks;
+  const parallelShaderCompile = !!globalThis.window.__roadcraft.scene().gl.getContext().getExtension('KHR_parallel_shader_compile');
   return { domContentLoadedMs: Math.round(nav.domContentLoadedEventEnd), loadMs: Math.round(nav.loadEventEnd),
+    parallelShaderCompile,
     resourceCount: resources.length, transferredMB: +(resources.reduce((sum, entry) => sum + entry.transferKB, 0) / 1024).toFixed(1),
     resources: resources.sort((a, b) => b.transferKB - a.transferKB).slice(0, 12),
     longTasks: { count: longTasks.length, totalMs: Math.round(longTasks.reduce((sum, entry) => sum + entry.ms, 0)),
       largest: longTasks.sort((a, b) => b.ms - a.ms).slice(0, 10).map((task) => ({ at: Math.round(task.at), ms: Math.round(task.ms) })) } };
 });
 const nodes = new Map(profile.nodes.map((node) => [node.id, node]));
+const parents = new Map();
+for (const node of profile.nodes) for (const child of node.children ?? []) parents.set(child, node.id);
 const hits = new Map();
 for (const id of profile.samples ?? []) hits.set(id, (hits.get(id) ?? 0) + 1);
 const maps = new Map();
@@ -67,6 +73,20 @@ for (const [id, count] of hits) {
 }
 const hotSources = [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 30)
   .map(([source, samples]) => ({ source, samples }));
+const inclusive = new Map();
+for (const id of profile.samples ?? []) {
+  const visited = new Set();
+  for (let at = id; at !== undefined; at = parents.get(at)) {
+    const source = original(nodes.get(at)?.callFrame);
+    if (!source) continue;
+    const key = `${source.file}:${source.line}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    inclusive.set(key, (inclusive.get(key) ?? 0) + 1);
+  }
+}
+const hotInclusive = [...inclusive].sort((a, b) => b[1] - a[1]).slice(0, 35)
+  .map(([source, samples]) => ({ source, samples }));
 const phaseSources = [new Map(), new Map()];
 let elapsedMs = 0;
 for (let i = 0; i < (profile.samples?.length ?? 0); i++) {
@@ -79,5 +99,5 @@ for (let i = 0; i < (profile.samples?.length ?? 0); i++) {
 }
 const hotPhases = phaseSources.map((phase) => [...phase].sort((a, b) => b[1] - a[1]).slice(0, 20)
   .map(([source, samples]) => ({ source, samples })));
-console.log(JSON.stringify({ readyMs, ...timing, hotPhases, hotSources, hot, errors }, null, 2));
+console.log(JSON.stringify({ exposedMs, readyMs, ...timing, hotPhases, hotSources, hotInclusive, hot, errors }, null, 2));
 await browser.close();
