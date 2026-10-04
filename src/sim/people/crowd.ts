@@ -478,7 +478,7 @@ function remove(s: State, p: Walker): void {
   for (const q of s.walkers) if (q.leader === p) q.leader = null;
 }
 
-function randomSpot(w: SimWorld, s: State): Vec2 | null {
+function randomSpot(w: SimWorld, s: State): GroundPoint | null {
   const nav = s.nav!;
   if (!nav.footways.length) return null;
   const total = nav.footLength[nav.footLength.length - 1]!;
@@ -486,7 +486,9 @@ function randomSpot(w: SimWorld, s: State): Vec2 | null {
   let lo = 0, hi = nav.footLength.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (nav.footLength[mid]! < pick) lo = mid + 1; else hi = mid; }
   const way = nav.graph.ways[nav.footways[lo]!]!;
-  return way.path.sampleAt(m(1) + w.rng.people.float() * Math.max(0, way.path.length - m(2))).p;
+  const at = way.path.sampleAt(m(1) + w.rng.people.float() * Math.max(0, way.path.length - m(2))).p;
+  const road = nav.roadOf[way.id];
+  return { ...at, h: road === undefined ? nav.elevation.at(at.x, at.y) : nav.elevation.onSegment(road, at.x, at.y) };
 }
 
 function clearOfPeople(s: State, at: Vec2, gap: number): boolean {
@@ -498,16 +500,16 @@ function clearOfPeople(s: State, at: Vec2, gap: number): boolean {
  * party's offsets independently can collapse two members onto the same edge.
  * Search only this party's immediate surroundings, never the whole city.
  */
-function companionBirth(s: State, lead: Walker, preferred: Vec2): Vec2 | null {
-  const projected = onMesh(s, preferred);
-  if (projected && !s.walkers.some(p => Math.abs(p.h - projected.h) < AGENT_HEIGHT && hypot2(p.x - projected.x, p.y - projected.y) < 2 * AGENT_RADIUS)) return preferred;
+function companionBirth(s: State, lead: Walker, preferred: Vec2): GroundPoint | null {
+  const projected = onMesh(s, { ...preferred, h: lead.h });
+  if (projected && !s.walkers.some(p => Math.abs(p.h - projected.h) < AGENT_HEIGHT && hypot2(p.x - projected.x, p.y - projected.y) < 2 * AGENT_RADIUS)) return projected;
   const query = s.nav!.query, filter = s.crowd!.getFilter(1);
   const start = query.findClosestPoint({ x: lead.x, y: lead.h, z: lead.y }, { filter });
   if (!start.success || !start.polyRef) return null;
   const diameter = 2 * AGENT_RADIUS;
   const reach = BEHIND + 4 * diameter;
   const nearby = s.walkers.filter(p => Math.abs(p.h - lead.h) < AGENT_HEIGHT && hypot2(p.x - lead.x, p.y - lead.y) < reach + diameter);
-  const candidate = (at: Vec2): Vec2 | null => {
+  const candidate = (at: Vec2): GroundPoint | null => {
     const on = query.findClosestPoint({ x: at.x, y: lead.h, z: at.y }, {
       filter, halfExtents: { x: AGENT_RADIUS, y: AGENT_HEIGHT, z: AGENT_RADIUS },
     });
@@ -516,7 +518,7 @@ function companionBirth(s: State, lead: Walker, preferred: Vec2): Vec2 | null {
     if (hypot2(p.x - lead.x, p.y - lead.y) > reach) return null;
     if (nearby.some(q => hypot2(q.x - p.x, q.y - p.y) < BEHIND)) return null;
     const hit = query.raycast(start.polyRef, start.point, on.point, { filter });
-    return hit.success && hit.t >= 1 ? p : null;
+    return hit.success && hit.t >= 1 ? { ...p, h: on.point.y } : null;
   };
   const original = candidate(preferred);
   if (original) return original;

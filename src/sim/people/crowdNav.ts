@@ -69,7 +69,7 @@ export interface CrowdNav {
   /** The road each walkway's height is taken from. */
   readonly roadOf: readonly (SegmentId | undefined)[];
   /** Places people come from and go to: footway ends that run off the map, and doors. */
-  readonly sources: readonly Vec2[];
+  readonly sources: readonly (Vec2 & { readonly h: number })[];
   /** Footway walkways by cumulative length, for random destinations. */
   readonly footways: readonly number[];
   readonly footLength: readonly number[];
@@ -253,7 +253,7 @@ export function buildCrowdNav(w: SimWorld): CrowdNav | null {
   flagZebras(navMesh);
   const query = new NavMeshQuery(navMesh);
   // Sources: footway ends at roads that run off the map, and doors.
-  const sources: Vec2[] = [];
+  const sources: (Vec2 & { h: number })[] = [];
   for (const way of graph.ways) {
     if (way.kind !== 'footway' || way.segment === undefined) continue;
     const seg = w.doc.segment(way.segment);
@@ -263,10 +263,13 @@ export function buildCrowdNav(w: SimWorld): CrowdNav | null {
       const node = graph.nodes[end]!;
       const offMap = [seg.a, seg.b].some((n) => w.doc.degree(n) === 1 &&
         Math.hypot(w.doc.requireNode(n).x - node.x, w.doc.requireNode(n).y - node.y) < m(20));
-      if (offMap) sources.push({ x: node.x, y: node.y });
+      if (offMap) sources.push({ x: node.x, y: node.y, h: heightAt(roadOf[way.id], node.x, node.y) });
     }
   }
-  for (const edge of w.sidewalks.edges.values()) if (edge.kind === 'access') sources.push(edge.path.point(edge.path.n - 1));
+  for (const edge of w.sidewalks.edges.values()) if (edge.kind === 'access') {
+    const at = edge.path.point(edge.path.n - 1);
+    sources.push({ ...at, h: elevation.at(at.x, at.y) });
+  }
   const footways: number[] = [], footLength: number[] = [];
   let total = 0;
   for (const way of graph.ways) {
