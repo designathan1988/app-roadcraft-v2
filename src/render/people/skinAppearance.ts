@@ -28,7 +28,12 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
   const skin = candidates[Math.abs(person.id * 2654435761 >>> 0) % candidates.length] ?? index.skins[0]!;
   const url = urls[`../../../public/models/people/skins/${skin.name}.webp`];
   if (!url) throw new Error(`Missing skin texture: ${skin.name}`);
-  const skinRequest = new TextureLoader().loadAsync(url);
+  const skinLease = acquireTexture(SKINS, skin.name, async () => {
+    const map = await new TextureLoader().loadAsync(url);
+    map.colorSpace = SRGBColorSpace;
+    return map;
+  });
+  const skinRequest = skinLease.texture;
   const average = new Color().setRGB(skin.average[0]! / 255, skin.average[1]! / 255, skin.average[2]! / 255, SRGBColorSpace);
   const desired = new Color(person.look.skin);
   // Match the texture's brightness to the person's skin and only a little of
@@ -42,7 +47,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     bright + (desired.g / Math.max(0.01, average.g) - bright) * hue,
     bright + (desired.b / Math.max(0.01, average.b) - bright) * hue);
   const garmentNames = texturedGarments(person.look);
-  const leases: PaddedLease[] = [];
+  const leases: TextureLease[] = [skinLease];
   let texture: Texture | undefined;
   // Every card item - hair, brows, lashes, a beard - with its own texture,
   // so its strands are drawn per pixel.
@@ -50,19 +55,20 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     if (!name || name === 'none') return undefined;
     const item = await loadProxyItem(name);
     if (!item.textureFile) return undefined;
-    const map = await new TextureLoader().loadAsync(proxyUrl(item.textureFile));
-    map.colorSpace = SRGBColorSpace;
-    map.flipY = false;
-    return map;
+    const lease = acquireTexture(CARDS, item.textureFile, async () => {
+      const map = await new TextureLoader().loadAsync(proxyUrl(item.textureFile!));
+      map.colorSpace = SRGBColorSpace;
+      map.flipY = false;
+      return map;
+    });
+    leases.push(lease);
+    return lease.texture;
   };
   let hairTexture: Texture | undefined;
   let browTexture: Texture | undefined;
   let lashTexture: Texture | undefined;
   let beardTexture: Texture | undefined;
   const release = (): void => {
-    const unique = [texture, hairTexture, browTexture, lashTexture, beardTexture].filter((map): map is Texture => !!map);
-    cancelUploads(unique);
-    for (const map of unique) map.dispose();
     for (const lease of leases) lease.release();
   };
   try {
@@ -91,7 +97,6 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     const failed = settled.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
     if (!texture) throw new Error(`Missing loaded skin texture: ${skin.name}`);
-    texture.colorSpace = SRGBColorSpace;
     const garments = loaded.slice(1, cardStart).map((map) => map ?? null);
     // Sent to the GPU ahead of the first frame this person is drawn in.
     queueUpload(texture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
@@ -260,9 +265,49 @@ if (faceCard) {
 
 /** How far each island of a garment's texture is grown into its background, pixels. */
 const GARMENT_PAD = 12;
-interface PaddedEntry { promise: Promise<Texture>; texture?: Texture; refs: number }
-interface PaddedLease { texture: Promise<Texture>; release(): void }
-const PADDED = new Map<string, PaddedEntry>();
+interface TextureEntry { promise: Promise<Texture>; texture?: Texture; refs: number }
+interface TextureLease { texture: Promise<Texture>; release(): void }
+const PADDED = new Map<string, TextureEntry>();
+const SKINS = new Map<string, TextureEntry>();
+const CARDS = new Map<string, TextureEntry>();
+
+function acquireTexture(cache: Map<string, TextureEntry>, key: string, build: () => Promise<Texture>): TextureLease {
+  let entry = cache.get(key);
+  if (!entry) {
+    const work = build();
+    const current: TextureEntry = { promise: work, refs: 0 };
+    current.promise = work.then((texture) => {
+      current.texture = texture;
+      return texture;
+    }, (error: unknown) => {
+      if (cache.get(key) === current) cache.delete(key);
+      throw error;
+    });
+    cache.set(key, current);
+    entry = current;
+  }
+  const held = entry;
+  held.refs++;
+  let released = false;
+  return {
+    texture: held.promise,
+    release() {
+      if (released) return;
+      released = true;
+      if (--held.refs !== 0) return;
+      if (cache.get(key) === held) cache.delete(key);
+      if (held.texture) {
+        cancelUploads([held.texture]);
+        held.texture.dispose();
+      } else {
+        void held.promise.then((texture) => {
+          cancelUploads([texture]);
+          texture.dispose();
+        }, () => {});
+      }
+    },
+  };
+}
 
 /**
  * A garment's texture with every UV island grown outward into the background
@@ -271,10 +316,8 @@ const PADDED = new Map<string, PaddedEntry>();
  * on the sheet, and every seam - the shoulder of every shirt - was drawn as a
  * brown line. The islands are the garment's own UV triangles, rasterised.
  */
-function paddedGarment(name: string, item: ProxyItem): PaddedLease {
-  let entry = PADDED.get(name);
-  if (!entry) {
-    const work = (async () => {
+function paddedGarment(name: string, item: ProxyItem): TextureLease {
+  return acquireTexture(PADDED, name, async () => {
       const url = proxyUrl(item.textureFile!);
       const plain = async (): Promise<Texture> => {
         const map = await new TextureLoader().loadAsync(url);
@@ -368,39 +411,7 @@ function paddedGarment(name: string, item: ProxyItem): PaddedLease {
       map.colorSpace = SRGBColorSpace;
       map.flipY = false;
       return map;
-    })();
-    const current: PaddedEntry = { promise: work, refs: 0 };
-    current.promise = work.then((texture) => {
-      current.texture = texture;
-      return texture;
-    }, (error: unknown) => {
-      if (PADDED.get(name) === current) PADDED.delete(name);
-      throw error;
     });
-    PADDED.set(name, current);
-    entry = current;
-  }
-  const held = entry;
-  held.refs++;
-  let released = false;
-  return {
-    texture: held.promise,
-    release() {
-      if (released) return;
-      released = true;
-      if (--held.refs !== 0) return;
-      if (PADDED.get(name) === held) PADDED.delete(name);
-      if (held.texture) {
-        cancelUploads([held.texture]);
-        held.texture.dispose();
-      } else {
-        void held.promise.then((texture) => {
-          cancelUploads([texture]);
-          texture.dispose();
-        }, () => {});
-      }
-    },
-  };
 }
 
 /** Garment textures a person's shader always has room for (`garmentSlots.ts`): with the skin, the hair cards and the bone palette, within a GPU's sixteen texture units. */

@@ -84,4 +84,6 @@ Skin, garments and hair/card textures were then requested together instead of wa
 
 The 84 cooked bodies were regenerated under fingerprint `1befc2ffbcc87b4e` in 34 seconds after this loader change. Typecheck, file lint and the production build passed.
 
+Skin and hair-card images repeated across people still created separate GPU `Texture` objects. The same reference-counted lease now shares identical skin, hair, brow, lash and beard textures as well as garments. Two isolated appearances shared each available texture, the first release disposed none, the second disposed each once, and a later load received new resources. With 84 cooked bodies under fingerprint `9d3bf779b2892fce`, the matched 30-second town / 75-second empty / 15-second return probe measured renderer textures 391 → 246 in town, 84 → 84 empty, and 427 → 258 on return. The model and active-instance counts matched at each respective sample (50/85 town, 0/0 empty, 57/115 return). These are texture counts, not measured GPU bytes. Typecheck, file lint and production build passed.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).
