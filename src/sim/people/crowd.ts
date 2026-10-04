@@ -819,7 +819,7 @@ function laneTarget(s: State, p: Walker, path: readonly { x: number; y: number; 
     const lane = on ?? at;
     return pastStanding(s, p, lane) ?? lane;
   }
-  return p.goal;
+  return pastStanding(s, p, p.goal) ?? p.goal;
 }
 
 /** A reachable waypoint around a standing body whose footprint covers this lane. */
