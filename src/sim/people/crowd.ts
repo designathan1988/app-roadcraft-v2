@@ -811,7 +811,7 @@ function follow(s: State, p: Walker, lead: Walker): void {
   }
   // A moving formation must not call its companion backwards to recover its
   // exact slot. Let the leader catch up; Detour brakes the companion itself.
-  if (!lined && (p.x - place.x) * hx + (p.y - place.y) * hy > AGENT_RADIUS) {
+  if (!lined && (p.x - place.x) * hx + (p.y - place.y) * hy > 1e-6) {
     if (p.asked) { p.agent.resetMoveTarget(); p.asked = null; }
     return;
   }
