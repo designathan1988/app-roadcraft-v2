@@ -1,0 +1,378 @@
+/* =========================================================== INTERFACE v2 ===
+   The redesign of 2026-10-04 (docs/audit/2026-10-04-ui), behind ?ui=v2.
+   Loaded after workspace.css and construction.css; every rule is scoped to
+   :root[data-ui="v2"] so v1 is untouched until v2 becomes the default.
+
+   What it fixes, measured on the photos:
+   - text 9.5-13 px -> 13 px minimum, 15 px for reading (Xbox XAG 101 asks
+     18 px of body height at 1080p on PC: a 15 px Inter line is about that);
+   - names cut with "..." everywhere -> labels wrap, nothing is clipped;
+   - an icon-only rail and top bar -> every control says its name;
+   - developer numbers in the player's status bar -> behind ?debug / F3. */
+
+:root[data-ui="v2"] {
+  --v2-text-xs: 12px;
+  --v2-text-s: 13px;
+  --v2-text-m: 14px;
+  --v2-text-l: 16px;
+  --v2-text-xl: 18px;
+  --v2-gap: 8px;
+  --v2-rail: 86px;
+  --v2-dock: 384px;
+  --v2-top: 52px;
+}
+
+/* ---------------------------------------------------------------- base type */
+:root[data-ui="v2"] #builder { font-size: var(--v2-text-m); }
+:root[data-ui="v2"] .bw-chip,
+:root[data-ui="v2"] .bw-icon-button,
+:root[data-ui="v2"] .bw-menu-item { font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-menu-item { padding: 7px 11px; }
+
+/* ---------------------------------------------------------------- top bar */
+:root[data-ui="v2"] .bw-top { height: var(--v2-top); padding: 0 10px; gap: 8px; }
+:root[data-ui="v2"] .bw-chip,
+:root[data-ui="v2"] .bw-icon-button { height: 34px; }
+:root[data-ui="v2"] .bw-icon-button { width: 34px; }
+/* The city's speed, centred on the bar. */
+:root[data-ui="v2"] .bw-speed {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--bw-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bw-bg) 50%, transparent);
+}
+:root[data-ui="v2"] .bw-speed-button {
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--bw-muted);
+  font-size: var(--v2-text-s);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-ui="v2"] .bw-speed-button:hover { color: var(--bw-text); }
+:root[data-ui="v2"] .bw-speed-button.active { color: #08221d; background: var(--bw-active); }
+/* Demolish and Inspect: icon and name. */
+:root[data-ui="v2"] .bw-controls { gap: 4px; }
+:root[data-ui="v2"] .bw-controls .tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: 34px;
+  padding: 0 11px 0 9px;
+  border: 1px solid var(--bw-border);
+  border-radius: var(--bw-radius);
+  font-size: var(--v2-text-s);
+}
+:root[data-ui="v2"] .bw-controls .tool > span:last-child {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+}
+:root[data-ui="v2"] .bw-controls .tool .tool-icon svg { width: 17px; height: 17px; }
+:root[data-ui="v2"] .bw-controls .tool.active { color: var(--bw-active); border-color: var(--bw-active); background: color-mix(in srgb, var(--bw-active) 12%, transparent); }
+:root[data-ui="v2"] .bw-controls .tool.danger.active { color: var(--bw-danger); border-color: var(--bw-danger); background: color-mix(in srgb, var(--bw-danger) 12%, transparent); }
+
+/* The camera menu: one row per command, its name beside its icon. */
+:root[data-ui="v2"] .bw-camera-slot .camera-controls {
+  position: static;
+  display: grid;
+  gap: 4px;
+  min-width: 260px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none;
+}
+:root[data-ui="v2"] .bw-camera-slot .camera-controls .icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--bw-border);
+  border-radius: var(--bw-radius);
+  background: transparent;
+  color: var(--bw-text);
+  font-size: var(--v2-text-s);
+  text-align: left;
+}
+:root[data-ui="v2"] .bw-camera-slot .camera-controls .icon-button:hover { border-color: var(--bw-active); }
+:root[data-ui="v2"] .bw-camera-slot .camera-controls .icon-button svg { flex: none; width: 18px; height: 18px; }
+:root[data-ui="v2"] .bw-camera-slot .camera-controls .icon-button.active,
+:root[data-ui="v2"] .bw-camera-slot .camera-controls .icon-button[aria-pressed="true"] { color: var(--bw-active); border-color: var(--bw-active); }
+:root:not([data-ui="v2"]) .bw-camera-chip,
+:root:not([data-ui="v2"]) .bw-speed,
+:root:not([data-ui="v2"]) .bw-camera-name { display: none; }
+
+/* ---------------------------------------------------------------- the rail */
+:root[data-ui="v2"] .bw-rail { top: calc(var(--v2-top) + 20px); width: var(--v2-rail); }
+:root[data-ui="v2"] .bw-rail .bw-tier1 { padding: 6px; }
+:root[data-ui="v2"] .bw-rail .toolbar { gap: 4px; }
+:root[data-ui="v2"] .bw-rail .toolbar .tool {
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  height: 64px;
+  padding: 8px 2px 6px;
+  font-size: var(--v2-text-xs);
+  line-height: 1.15;
+}
+:root[data-ui="v2"] .bw-rail .toolbar .tool > span:last-child {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  text-align: center;
+}
+:root[data-ui="v2"] .bw-rail .toolbar .tool.active { color: var(--bw-active); border-color: var(--bw-active); background: color-mix(in srgb, var(--bw-active) 12%, transparent); }
+:root[data-ui="v2"] .bw-rail .toolbar .tool[data-key]::after { top: 4px; right: 4px; font-size: 10px; }
+
+/* ---------------------------------------------------------------- the panel */
+@media (min-width: 781px) {
+  :root[data-ui="v2"] .bw-dock {
+    left: calc(10px + var(--v2-rail) + 10px);
+    top: calc(var(--v2-top) + 20px);
+    width: var(--v2-dock);
+    max-height: calc(100dvh - var(--v2-top) - 20px - 60px);
+  }
+  :root[data-ui="v2"] .bw-inspector {
+    top: calc(var(--v2-top) + 20px);
+    width: 304px;
+    max-height: calc(100dvh - var(--v2-top) - 20px - 60px);
+  }
+}
+:root[data-ui="v2"] .bw-panel-head { padding: 12px 12px 11px 16px; }
+:root[data-ui="v2"] .bw-panel-title { font-size: var(--v2-text-l); }
+:root[data-ui="v2"] .bw-tier { padding: 12px 16px; }
+/* The hint is read whole: it wraps, it is never cut. */
+:root[data-ui="v2"] .bw-foot,
+:root[data-ui="v2"] .bw-foot .hint,
+:root[data-ui="v2"] .bw-foot .bw-hint,
+:root[data-ui="v2"] #builder[data-mode="builder"] .bw-foot .bw-hint {
+  font-size: var(--v2-text-s);
+  line-height: 1.4;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Tabs: their names whole, two lines if they must. */
+:root[data-ui="v2"] .bw-tabs { gap: 3px; padding: 4px; }
+:root[data-ui="v2"] .bw-tab,
+:root[data-ui="v2"] .bw-tabs .bw-tab { height: auto; min-height: 38px; padding: 4px 4px; font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-tab span { overflow: visible; text-overflow: clip; white-space: normal; text-align: center; }
+
+/* Sections: a readable heading in sentence case. */
+:root[data-ui="v2"] .bw-shelf { gap: 18px; }
+:root[data-ui="v2"] .bw-section-box { gap: 8px; }
+:root[data-ui="v2"] .bw-shelf-title,
+:root[data-ui="v2"] .bw-tier2 .palette-label,
+:root[data-ui="v2"] .tool-help-section,
+:root[data-ui="v2"] .bw-params-label {
+  font-size: var(--v2-text-s);
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bw-text);
+}
+
+/* Tiles: three to a row, a big picture, the whole name under it. */
+:root[data-ui="v2"] .bw-tiles.small { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+:root[data-ui="v2"] .bw-tile.small { padding: 6px 6px 8px; gap: 6px; font-size: var(--v2-text-s); line-height: 1.25; }
+:root[data-ui="v2"] .bw-tile.small .bw-tile-art,
+:root[data-ui="v2"] .bw-tile.small img.bw-tile-art { width: 100%; height: 78px; }
+:root[data-ui="v2"] .bw-tile.small img.bw-tile-art { object-fit: contain; background: color-mix(in srgb, var(--bw-bg-2) 70%, #3a5a52); }
+:root[data-ui="v2"] .bw-tile.small .bw-tile-name { overflow: visible; text-overflow: clip; white-space: normal; }
+:root[data-ui="v2"] .bw-tile.small .bw-tile-art svg { width: 30px; height: 30px; }
+:root[data-ui="v2"] .bw-swatch { width: 32px; height: 32px; }
+:root[data-ui="v2"] .bw-empty { font-size: var(--v2-text-m); }
+
+/* The road panel. */
+:root[data-ui="v2"] .bw-tier2 .road-palette .road-type,
+:root[data-ui="v2"] .bw-tier2 .road-palette .road-lane,
+:root[data-ui="v2"] .bw-tier2 .road-palette .alignment-mode,
+:root[data-ui="v2"] .bw-tier2 .terrain-palette .terrain-mode,
+:root[data-ui="v2"] .bw-tier2 .road-palette .road-height-context,
+:root[data-ui="v2"] .bw-tier2 .terrain-palette .terrain-control,
+:root[data-ui="v2"] .bw-tier2 .terrain-palette .terrain-clear,
+:root[data-ui="v2"] .tool-help-kinds .pc-chip { font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-tier2 .road-palette .road-type-art { height: 54px; }
+:root[data-ui="v2"] .tool-help-what { font-size: var(--v2-text-m); }
+:root[data-ui="v2"] .tool-help-keys dd,
+:root[data-ui="v2"] .tool-help-keys kbd { font-size: var(--v2-text-s); }
+
+/* The inspector. */
+:root[data-ui="v2"] .bw-inspector-title { font-size: var(--v2-text-s); letter-spacing: 0; text-transform: none; color: var(--bw-text); font-weight: 650; }
+:root[data-ui="v2"] .bw-inspector-name { font-size: var(--v2-text-l); }
+:root[data-ui="v2"] .bw-field { grid-template-columns: 1fr 92px 18px; font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-field-input { height: 30px; font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-field-unit,
+:root[data-ui="v2"] .bw-field-text { font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-help-row strong { font-size: var(--v2-text-m); }
+:root[data-ui="v2"] .bw-help-row span { font-size: var(--v2-text-s); }
+
+/* The simulation menu's own controls. */
+:root[data-ui="v2"] .bw-slot .speed-controls button,
+:root[data-ui="v2"] .bw-slot .density-control,
+:root[data-ui="v2"] .bw-slot .density-control output,
+:root[data-ui="v2"] .bw-slot .toggle-row,
+:root[data-ui="v2"] .bw-slot .sim-metrics { font-size: var(--v2-text-s); }
+:root[data-ui="v2"] .bw-slot .speed-controls { display: none; }
+:root[data-ui="v2"] .bw-slot .top-menu .icon-button,
+:root[data-ui="v2"] .bw-slot .top-menu .select-chip { height: 38px; font-size: var(--v2-text-s); }
+
+/* ---------------------------------------------------------------- status bar
+   The player's numbers only: time, residents, cars and people. The roads,
+   nodes, audit, zoom and build go to the debug overlay (?debug or F3). */
+:root[data-ui="v2"] .statusbar { height: 36px; font-size: var(--v2-text-s); }
+:root[data-ui="v2"]:not([data-debug]) .statusbar #roadCount,
+:root[data-ui="v2"]:not([data-debug]) .statusbar #nodeCount,
+:root[data-ui="v2"]:not([data-debug]) .statusbar #zoomReadout,
+:root[data-ui="v2"]:not([data-debug]) .statusbar #buildStamp,
+:root[data-ui="v2"]:not([data-debug]) .statusbar #auditReadout:not(.bad),
+:root[data-ui="v2"]:not([data-debug]) .coord-readout,
+:root[data-ui="v2"] .statusbar i { display: none; }
+:root[data-ui="v2"] .statusbar { gap: 16px; }
+:root[data-ui="v2"] .minimap-panel .panel-title { font-size: var(--v2-text-s); }
+
+/* ---------------------------------------------------------------- fixes 1b */
+/* The rail's longest names ("Zoneamento", "Construção") fit whole. */
+:root[data-ui="v2"] { --v2-rail: 104px; }
+:root[data-ui="v2"] .bw-rail .toolbar .tool > span:last-child { max-width: 100%; white-space: nowrap; }
+/* ---------------------------------------------------------------- catalogue
+   A search, a row of categories, one grid (Cities: Skylines II's asset
+   browser, the Sims 4 catalogue). */
+:root[data-ui="v2"] .bw-catalog { gap: 10px; }
+:root[data-ui="v2"] .bw-search {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--bw-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bw-bg) 75%, transparent);
+  color: var(--bw-text);
+  font: inherit;
+  font-size: var(--v2-text-m);
+  user-select: text;
+  -webkit-user-select: text;
+}
+:root[data-ui="v2"] .bw-search:focus { outline: none; border-color: var(--bw-active); }
+:root[data-ui="v2"] .bw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+:root[data-ui="v2"] .bw-chip-choice {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--bw-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bw-muted);
+  font-size: var(--v2-text-s);
+}
+:root[data-ui="v2"] .bw-chip-choice:hover { color: var(--bw-text); border-color: var(--bw-active); }
+:root[data-ui="v2"] #builder .bw-chip-choice.active { color: #08221d; border-color: var(--bw-active); background: var(--bw-active); font-weight: 650; }
+:root[data-ui="v2"] .bw-tiles .bw-empty { grid-column: 1 / -1; }
+/* "See all (N)": a full-width row at the end of a capped grid. */
+:root[data-ui="v2"] .bw-more {
+  grid-column: 1 / -1;
+  height: 36px;
+  border: 1px dashed var(--bw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bw-active);
+  font-size: var(--v2-text-s);
+  font-weight: 650;
+}
+:root[data-ui="v2"] .bw-more:hover { border-style: solid; border-color: var(--bw-active); }
+/* The expert's switch, at the foot of a tab. */
+:root[data-ui="v2"] .bw-advanced {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--bw-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bw-bg) 45%, transparent);
+  color: var(--bw-text);
+  font-size: var(--v2-text-s);
+  text-align: left;
+}
+:root[data-ui="v2"] .bw-advanced .switch { flex: none; position: relative; width: 32px; height: 18px; border-radius: 999px; background: rgba(255, 255, 255, 0.16); }
+:root[data-ui="v2"] .bw-advanced .switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--bw-muted); transition: transform 0.15s; }
+:root[data-ui="v2"] .bw-advanced.active .switch { background: color-mix(in srgb, var(--bw-active) 45%, transparent); }
+:root[data-ui="v2"] .bw-advanced.active .switch::after { transform: translateX(14px); background: var(--bw-active); }
+
+/* ---------------------------------------------------------------- road modes */
+:root:not([data-ui="v2"]) .road-modes,
+:root:not([data-ui="v2"]) .road-mode-note { display: none; }
+:root[data-ui="v2"] .road-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid var(--bw-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bw-bg) 40%, transparent);
+}
+:root[data-ui="v2"] .road-mode {
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--bw-muted);
+  font-size: var(--v2-text-s);
+}
+:root[data-ui="v2"] .road-mode:hover { color: var(--bw-text); }
+:root[data-ui="v2"] #builder .road-mode.active { color: var(--bw-active); border-color: var(--bw-active); background: color-mix(in srgb, var(--bw-active) 13%, transparent); }
+:root[data-ui="v2"] .road-mode-note { margin: 0; color: var(--bw-text); font-size: var(--v2-text-m); line-height: 1.45; }
+/* The operations leave the class grid; each mode keeps only its options. */
+:root[data-ui="v2"] .road-palette .road-type.road-op { display: none !important; }
+:root[data-ui="v2"] .road-palette[data-road-mode="upgrade"] .palette-section.plan,
+:root[data-ui="v2"] .road-palette[data-road-mode="upgrade"] .palette-section.lanes,
+:root[data-ui="v2"] .road-palette[data-road-mode="move"] .palette-section,
+:root[data-ui="v2"] .road-palette[data-road-mode="split"] .palette-section,
+:root[data-ui="v2"] .road-palette[data-road-mode="control"] .palette-section { display: none !important; }
+
+/* Option rows (scope, draw action, roof side) wrap as a grid of two. */
+:root[data-ui="v2"] .bw-params { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+:root[data-ui="v2"] .bw-params > .bw-menu-item { width: 100%; white-space: normal; text-align: center; }
+:root[data-ui="v2"] .bw-params > .bw-params-group { grid-column: 1 / -1; }
+/* #builder button { color: inherit } would win over a class alone. */
+:root[data-ui="v2"] #builder .bw-speed-button.active { color: #08221d; }
+
+/* Verbs (extrude, split, mirror...) are a list of named rows, two to a line;
+   pictures are kept for things. */
+:root[data-ui="v2"] .bw-tiles.small.bw-verbs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+:root[data-ui="v2"] .bw-tile.small.bw-verb {
+  display: flex;
+  align-items: center;
+  justify-items: start;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 10px;
+  text-align: left;
+  color: var(--bw-text);
+}
+:root[data-ui="v2"] .bw-tile.small.bw-verb .bw-tile-art { flex: none; width: 20px; height: 20px; }
+:root[data-ui="v2"] .bw-tile.small.bw-verb .bw-tile-art svg { width: 18px; height: 18px; }
+:root[data-ui="v2"] .bw-tile.small.bw-verb.active { color: var(--bw-active); }
+

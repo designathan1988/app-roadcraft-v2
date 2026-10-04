@@ -69,3 +69,27 @@ describe('drawing a road onto another road', () => {
     expect(Math.hypot(snap.at.x - target.p.x, snap.at.y - target.p.y)).toBeLessThan(20);
   });
 });
+
+/**
+ * The road tool's "length in zone cells" (as Cities: Skylines II's zone cell
+ * length snap): a road drawn into open ground is a whole number of 8 m zone
+ * cells long, so the zoning grid along it comes out in whole cells; a click
+ * (under half a cell) is still a click, not a road.
+ */
+describe('zone cell length', () => {
+  it('draws whole zone cells, and leaves a click alone', async () => {
+    const { ZONE_CELL } = await import('@world/zoneGrid');
+    const doc = new RoadDoc();
+    const net = new Network(doc);
+    net.rebuild();
+    const start = findAnchor(doc, net, { x: 0, y: 0 }, 1);
+    for (const raw of [{ x: 173, y: 11 }, { x: 40, y: 260 }, { x: -301, y: -298 }]) {
+      const snap = snapEndpoint(doc, net, start, raw, 1, { angles: true, lengthStep: ZONE_CELL });
+      const cells = snap.length / ZONE_CELL;
+      expect(Math.abs(cells - Math.round(cells))).toBeLessThan(1e-9);
+      expect(cells).toBeGreaterThanOrEqual(1);
+    }
+    const click = snapEndpoint(doc, net, start, { x: 3, y: 1 }, 1, { angles: true, lengthStep: ZONE_CELL });
+    expect(click.length).toBeLessThan(ZONE_CELL / 2);
+  });
+});

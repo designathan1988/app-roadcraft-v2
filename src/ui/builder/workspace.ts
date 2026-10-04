@@ -19,8 +19,10 @@ import { applyTranslations, onLanguageChange, plural, t } from '../i18n';
 import { builderIconSvg } from './icons';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
+import { UI_V2 } from '../shell/flag';
 import './workspace.css';
 import './construction.css';
+import '../shell/v2.css';
 
 export type { BuilderField, BuilderSelectionInfo };
 
@@ -128,6 +130,8 @@ export interface BuilderWorkspace {
     readonly level2: HTMLElement;
     readonly simMenu: HTMLElement;
     readonly appMenu: HTMLElement;
+    /** v2: the camera's buttons, in a menu of the bar. */
+    readonly cameraMenu: HTMLElement;
     /** Global tools and the camera, mounted by main.ts on the top bar. */
     readonly controls: HTMLElement;
     /** The panel's head line, where the game's hint bar lives. */
@@ -147,6 +151,10 @@ export interface BuilderWorkspace {
    */
   setPanelClose(handler: () => void): void;
   readonly root: HTMLElement;
+  /** Interface v2 drives the Builder with the same commands, from its own panels. */
+  readonly actions: BuilderActions;
+  subscribe(listen: (state: BuilderState) => void): void;
+  thumbnail(id: string): string | undefined;
 }
 
 export const SNAP_MODES = ['auto', 'grid', 'edge', 'face', 'centre', 'building', 'road', 'off'] as const;
@@ -156,6 +164,13 @@ const SWATCHES: readonly number[] = [
   0xf2efe8, 0xe6d8bd, 0xd8c297, 0xc98f5a, 0xa4563f, 0x72412f, 0x9c6b43,
   0xbdbcb4, 0x8f9ba5, 0x55585c, 0x2f3134, 0x7d8c6a, 0x5d7a8f, 0x9fb8c4,
 ];
+
+/** The parts that are things and get a photograph; every other tool is a verb. */
+const PICTURED: ReadonlySet<string> = new Set<string>([...ELEMENT_KINDS, ...FACADE_PATTERNS, ...FINISHES,
+  'window', 'sashWindow', 'wideWindow', 'ribbon', 'bayWindow', 'frenchWindow',
+  'door', 'doubleDoor', 'garageDoor', 'loadingDoor', 'solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire', 'lantern',
+  'roofFlat', 'roofShed', 'roofGable', 'roofHip', 'roofSawtooth', 'roofTerrace', 'wallRun', 'fenceRun', 'pavementRun', 'stairRun',
+  'balcony', 'shopfront']);
 
 const hexOf = (colour: number): string => `#${colour.toString(16).padStart(6, '0')}`;
 
@@ -246,7 +261,39 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   insideUp.onclick = () => showInside(actions.seeInside('up'));
   showInside({ on: false, level: 0 });
   insideGroup.append(insideToggle, insideDown, insideLevel, insideUp);
-  top.append(appMenu, simMenu, help, spacer, insideGroup, controlsSlot, historyGroup);
+
+  // v2: the city's speed is on the bar, as in every city builder, not two
+  // clicks deep in a menu; the camera's six buttons are one menu with names.
+  const speedGroup = el('div', 'bw-group bw-speed');
+  speedGroup.setAttribute('role', 'group');
+  for (const speed of ['0', '1', '2', '4'] as const) {
+    const b = el('button', 'bw-speed-button');
+    b.type = 'button';
+    b.dataset['speedProxy'] = speed;
+    b.innerHTML = speed === '0'
+      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>'
+      : `<span>${speed}×</span>`;
+    b.onclick = () => document.querySelector<HTMLButtonElement>(`.simulation-controls [data-speed="${speed}"]`)?.click();
+    speedGroup.appendChild(b);
+  }
+  const syncSpeed = (): void => {
+    const active = document.querySelector<HTMLElement>('.simulation-controls [data-speed].active')?.dataset['speed'] ?? '1';
+    for (const b of speedGroup.querySelectorAll<HTMLElement>('[data-speed-proxy]')) {
+      b.classList.toggle('active', b.dataset['speedProxy'] === active);
+      b.setAttribute('aria-pressed', String(b.dataset['speedProxy'] === active));
+      b.title = b.dataset['speedProxy'] === '0' ? t('sim.pause') : `${t('sim.speed')} ${b.dataset['speedProxy']}×`;
+    }
+  };
+  new MutationObserver(syncSpeed).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  syncSpeed();
+  const cameraMenu = el('button', 'bw-chip bw-camera-chip');
+  cameraMenu.type = 'button';
+  cameraMenu.innerHTML = `${builderIconSvg('view', 15)}<span></span><i class="bw-caret"></i>`;
+  (cameraMenu.querySelector('span') as HTMLElement).textContent = t('camera.label');
+  cameraMenu.onclick = () => showMenu('camera', cameraMenu);
+  const centreSpacer = el('span', 'bw-spacer');
+  if (UI_V2) top.append(appMenu, simMenu, help, spacer, speedGroup, centreSpacer, insideGroup, controlsSlot, cameraMenu, historyGroup);
+  else top.append(appMenu, simMenu, help, spacer, insideGroup, controlsSlot, historyGroup);
 
   /** One drop-down below the bar; the mounted panels are shown, never moved. */
   const drop = el('div', 'bw-drop');
@@ -254,7 +301,8 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   const dropBar = el('div', 'bw-drop-body');
   const simSlot = el('div', 'bw-slot');
   const appSlot = el('div', 'bw-slot');
-  drop.append(dropBar, simSlot, appSlot);
+  const cameraSlot = el('div', 'bw-slot bw-camera-slot');
+  drop.append(dropBar, simSlot, appSlot, cameraSlot);
   let openMenu: { id: string; anchor: HTMLElement } | null = null;
 
   const showMenu = (id: string, anchor: HTMLElement): void => {
@@ -263,9 +311,10 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
       return;
     }
     openMenu = { id, anchor };
-    dropBar.hidden = id === 'sim' || id === 'app';
+    dropBar.hidden = id === 'sim' || id === 'app' || id === 'camera';
     simSlot.hidden = id !== 'sim';
     appSlot.hidden = id !== 'app';
+    cameraSlot.hidden = id !== 'camera';
     dropBar.innerHTML = '';
     if (!dropBar.hidden) dropBar.appendChild(dropBodyFor(id));
     const r = anchor.getBoundingClientRect();
@@ -278,6 +327,7 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     dropBar.innerHTML = '';
     simSlot.hidden = true;
     appSlot.hidden = true;
+    cameraSlot.hidden = true;
     openMenu = null;
   };
   document.addEventListener('pointerdown', (e) => {
@@ -402,6 +452,8 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   const thumbnails = new Map<string, string>();
   let hintBase = '';
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  let advanced = false;
+  try { advanced = window.localStorage.getItem('roadcraft.builder.advanced') === '1'; } catch { /* off */ }
 
   const syncDock = (): void => {
     const folded = dock.classList.contains('folded');
@@ -551,6 +603,7 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     ].join('|');
     if (shelf.dataset['signature'] === signature) return;
     shelf.dataset['signature'] = signature;
+    const searchFocused = document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('bw-search');
     shelf.innerHTML = '';
     const spec = tabSpec(state.category);
     if (spec.needsSelection && !hasSelection(state)) {
@@ -560,7 +613,45 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
       return;
     }
     requestPictures(state.category, state);
-    for (const section of spec.sections) shelf.appendChild(sectionOf(section, state));
+    if (searchFocused) queueMicrotask(() => {
+      const s = shelf.querySelector<HTMLInputElement>('.bw-search');
+      s?.focus();
+      s?.setSelectionRange(s.value.length, s.value.length);
+    });
+    const sections = UI_V2 && !advanced ? spec.sections.filter((s) => !s.advanced) : spec.sections;
+    for (const section of sections) shelf.appendChild(sectionOf(section, state));
+    // v2: the expert's tools behind one switch at the end of the tab.
+    if (UI_V2 && spec.sections.some((s) => s.advanced)) {
+      const toggle = el('button', 'bw-advanced' + (advanced ? ' active' : ''));
+      toggle.type = 'button';
+      toggle.setAttribute('aria-pressed', String(advanced));
+      toggle.innerHTML = '<i class="switch" aria-hidden="true"></i><span></span>';
+      const hidden = spec.sections.filter((s) => s.advanced).reduce((n, s) => n + (s.tools?.length ?? 0), 0);
+      (toggle.querySelector('span') as HTMLElement).textContent = advanced
+        ? t('builder.advanced.on')
+        : `${t('builder.advanced.off')} (${hidden})`;
+      toggle.onclick = () => {
+        advanced = !advanced;
+        try { window.localStorage.setItem('roadcraft.builder.advanced', advanced ? '1' : '0'); } catch { /* not remembered */ }
+        renderShelfNow();
+      };
+      shelf.appendChild(toggle);
+    }
+  }
+
+  /** v2: a gallery shows a dozen; the rest behind "See all (N)". */
+  const SHOWN = 12;
+  const expanded = new Set<string>();
+  function capped<T>(key: string, items: readonly T[]): { shown: readonly T[]; more: HTMLElement | null } {
+    if (!UI_V2 || items.length <= SHOWN || expanded.has(key)) return { shown: items, more: null };
+    const more = el('button', 'bw-more');
+    more.type = 'button';
+    more.textContent = `${t('builder.seeAll')} (${items.length})`;
+    more.onclick = () => {
+      expanded.add(key);
+      renderShelfNow();
+    };
+    return { shown: items.slice(0, SHOWN - 1), more };
   }
 
   function requestPictures(tab: BuilderCategoryId, state: BuilderState): void {
@@ -571,11 +662,8 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
       if (section.shelf === 'patterns') ids.push(...FACADE_PATTERNS);
       if (section.shelf === 'finishes') ids.push(...FINISHES);
     }
-    const known = new Set<string>([...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...ELEMENT_KINDS, ...FACADE_PATTERNS, ...FINISHES, ...BLUEPRINTS.map((bp) => bp.key),
-      ...state.userBlueprints.map((bp) => bp.key), 'window', 'sashWindow', 'wideWindow', 'ribbon', 'bayWindow', 'frenchWindow',
-      'door', 'doubleDoor', 'garageDoor', 'loadingDoor', 'solar', 'skylight', 'vent', 'chimney', 'waterTank', 'spire', 'lantern',
-      'roofFlat', 'roofShed', 'roofGable', 'roofHip', 'roofSawtooth', 'roofTerrace', 'wallRun', 'fenceRun', 'pavementRun', 'stairRun',
-      'balcony', 'shopfront']);
+    const known = new Set<string>([...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((bp) => bp.key),
+      ...state.userBlueprints.map((bp) => bp.key), ...PICTURED]);
     const wanted = ids.filter((id) => known.has(id) && !thumbnails.has(id));
     if (wanted.length) actions.requestThumbnails(wanted);
   }
@@ -599,7 +687,11 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
 
   function toolGrid(tools: readonly BuilderToolSpec[], state: BuilderState): HTMLElement {
     const grid = el('div', 'bw-tiles small');
-    for (const tool of tools) {
+    // A section of verbs only gets the row layout as a whole.
+    if (tools.every((tool) => !PICTURED.has(tool.id) && !DRAW_SHAPES[tool.id] && !TIER_SHAPES[tool.id])) grid.classList.add('bw-verbs');
+    const { shown, more } = capped(`tools:${tools.map((x) => x.id).join(',')}`, tools);
+    if (more) grid.dataset['more'] = '1';
+    for (const tool of shown) {
       const on = tool.kind === 'mode' && (state.tool === tool.id || state.armed === tool.id);
       const shape = DRAW_SHAPES[tool.id] ?? TIER_SHAPES[tool.id];
       const thumb = thumbnails.get(tool.id) ?? (shape ? planSwatch(shape) : undefined);
@@ -607,14 +699,100 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
         actions.chooseTool(tool.id);
         renderShelfNow();
       }, thumb, true);
+      // An action is an icon and its name, not a picture: v2 lays those as
+      // compact rows so the pictures of things stand apart from the verbs.
+      if (!thumb && !PICTURED.has(tool.id)) b.classList.add('bw-verb');
       b.disabled = !state.ready.has(tool.id);
       b.dataset['builderTool'] = tool.id;
       grid.appendChild(b);
     }
+    if (more) grid.appendChild(more);
     return grid;
   }
 
+  /** v2's catalogue: a search, a row of categories, one grid; no model twice. */
+  let modelQuery = '';
+  let modelCategory: string = 'all';
+  function modelsCatalog(state: BuilderState): HTMLElement {
+    const wrap = el('div', 'bw-gallery bw-catalog');
+    const search = el('input', 'bw-search');
+    search.type = 'search';
+    search.placeholder = t('builder.search');
+    search.value = modelQuery;
+    search.setAttribute('aria-label', t('builder.search'));
+    search.onkeydown = (e) => e.stopPropagation();
+    const grid = el('div', 'bw-tiles small');
+    type Entry = { key: string; label: string; category: string; run: () => void; user?: string };
+    const entries: Entry[] = [];
+    const names = new Set<string>();
+    for (const model of CITY_BUILDINGS) {
+      const key = `city:${model.fn}`;
+      const label = t(`building.fn.${model.fn}`);
+      names.add(label.toLocaleLowerCase());
+      entries.push({ key, label, category: model.category, run: () => actions.choosePreset(key) });
+    }
+    for (const bp of BLUEPRINTS) {
+      const label = bp.nameKey ? t(bp.nameKey) : bp.key;
+      if (names.has(label.toLocaleLowerCase())) continue;
+      entries.push({ key: bp.key, label, category: 'generic', run: () => actions.choosePreset(bp.key) });
+    }
+    for (const bp of state.userBlueprints) {
+      entries.push({ key: bp.key, label: bp.name ?? bp.key, category: 'mine', run: () => actions.chooseUserBlueprint(bp.key), user: bp.key });
+    }
+    const chips = el('div', 'bw-chips');
+    const categories = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', ...(state.userBlueprints.length ? ['mine'] : [])];
+    const fill = (): void => {
+      grid.innerHTML = '';
+      const q = modelQuery.trim().toLocaleLowerCase();
+      const shown = entries.filter((e) => (modelCategory === 'all' || e.category === modelCategory) && (!q || e.label.toLocaleLowerCase().includes(q)));
+      for (const e of shown) {
+        const b = tile(e.key, e.label, false, e.run, thumbnails.get(e.key), true);
+        if (e.user) {
+          b.dataset['userPreset'] = e.user;
+          const remove = el('span', 'bw-tile-remove');
+          remove.textContent = '×';
+          remove.title = t('builder.models.remove');
+          remove.setAttribute('role', 'button');
+          const userKey = e.user;
+          remove.onclick = (ev) => {
+            ev.stopPropagation();
+            actions.removeUserBlueprint(userKey);
+          };
+          b.appendChild(remove);
+        } else {
+          b.dataset['preset'] = e.key;
+        }
+        grid.appendChild(b);
+      }
+      if (!shown.length) {
+        const p = el('p', 'bw-empty');
+        p.textContent = t('builder.search.none');
+        grid.appendChild(p);
+      }
+      for (const c of chips.querySelectorAll<HTMLElement>('button')) c.classList.toggle('active', c.dataset['category'] === modelCategory);
+    };
+    for (const category of categories) {
+      const c = el('button', 'bw-chip-choice');
+      c.type = 'button';
+      c.dataset['category'] = category;
+      c.textContent = category === 'all' ? t('builder.city.all') : category === 'mine' ? t('builder.city.mine') : t(`builder.city.${category}`);
+      c.onclick = () => {
+        modelCategory = category;
+        fill();
+      };
+      chips.appendChild(c);
+    }
+    search.oninput = () => {
+      modelQuery = search.value;
+      fill();
+    };
+    fill();
+    wrap.append(search, chips, grid);
+    return wrap;
+  }
+
   function modelsShelf(state: BuilderState): HTMLElement {
+    if (UI_V2) return modelsCatalog(state);
     const wrap = el('div', 'bw-gallery');
     // The city's buildings, by what they are for: homes, public services,
     // shops and places to eat and go out, work, leisure. Each is blocks, and
@@ -662,6 +840,7 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
 
   function patternsShelf(state: BuilderState): HTMLElement {
     const grid = el('div', 'bw-tiles small');
+    void capped;
     for (const pattern of FACADE_PATTERNS) {
       grid.appendChild(tile(pattern, t(`creator.pattern.${pattern}`), state.pattern === pattern,
         () => actions.choosePattern(pattern), thumbnails.get(pattern), true));
@@ -895,8 +1074,10 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     }
   };
 
+  const listeners: ((state: BuilderState) => void)[] = [];
   const refresh = (state: BuilderState): void => {
     lastState = state;
+    for (const listen of listeners) listen(state);
     root.dataset['category'] = state.category;
     root.dataset['selection'] = state.selection === null ? 'none' : 'some';
     // A tab that needs a building gives way when the selection goes.
@@ -950,7 +1131,7 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
       renderDock(lastState);
       syncDock();
     },
-    hosts: { level1: tier1Road, level2: tier2Road, simMenu: simSlot, appMenu: appSlot, controls: controlsSlot, hint: foot, title: panelTitle },
+    hosts: { level1: tier1Road, level2: tier2Road, simMenu: simSlot, appMenu: appSlot, cameraMenu: cameraSlot, controls: controlsSlot, hint: foot, title: panelTitle },
     flash,
     relabel,
     showGallery(category) {
@@ -965,6 +1146,13 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     setPresetThumbnails(images) {
       for (const [key, url] of images) thumbnails.set(key, url);
       renderDock(lastState);
+      if (lastState) for (const listen of listeners) listen(lastState);
     },
+    actions,
+    subscribe(listen) {
+      listeners.push(listen);
+      if (lastState) listen(lastState);
+    },
+    thumbnail: (id) => thumbnails.get(id),
   };
 }

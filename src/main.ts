@@ -48,10 +48,11 @@ import { History, restoreInto, restoreSnapshot, serialize } from '@editor/histor
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
-import { buildDefaultTown } from '@world/defaultTown';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
+import { UI_V2 } from '@ui/shell/flag';
+import { mountShell } from '@ui/v2/shell';
 import { mountAbout } from '@ui/about';
 import { LANGUAGES, hasKey, initLanguage, language, onLanguageChange, setLanguage, t } from '@ui/i18n';
 import {
@@ -142,17 +143,37 @@ surface.observe();
 
 // ------------------------------------------------------------------ boot
 const surfaceBake = startSurfaceBake();
+clearOldMapsOnce();
 const savedSession = persistence.loadSession();
-// The game opens on THE TOWN - the map that ships with it (`world/defaultTown`)
-// - unless the player has a map of their own: an autosave that is still an
-// earlier build's untouched starter scenario is dropped too, and anything the
-// player built stays.
+// The game opens on an empty map - zoning starts from nothing - unless the
+// player has a map of their own. An autosave that is still an earlier build's
+// untouched starter scenario is dropped too.
 const saved = savedSession?.document && !isUntouchedStarter(savedSession.document)
   ? savedSession.document
   : null;
+
+/**
+ * The cities saved before 2026-10-04 (the shipped town, the player's own maps,
+ * the copies set aside) are removed, once: the player asked for a clean start.
+ */
+function clearOldMapsOnce(): void {
+  const MARK = 'roadcraft.mapsCleared';
+  try {
+    if (window.localStorage.getItem(MARK) === '2026-10-04') return;
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key && (key.startsWith('roadcraft.world') || key === 'roadcraft.oldTownBackup' || key === 'roadcraft.townVersion')) doomed.push(key);
+    }
+    for (const key of doomed) window.localStorage.removeItem(key);
+    window.localStorage.setItem(MARK, '2026-10-04');
+  } catch {
+    // Storage blocked: nothing was kept to clear.
+  }
+}
 // A saved map that validates and still fails to load must not take the game
 // down with it - on every reload. It is set aside (never deleted) and the game
-// opens on the town instead, saying so.
+// opens on an empty map instead, saying so.
 let bootFailed = false;
 if (saved) {
   try {
@@ -161,13 +182,9 @@ if (saved) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
     doc.replaceWith(new RoadDoc());
-    buildDefaultTown(doc);
     net.rebuild();
     bootFailed = true;
   }
-} else {
-  buildDefaultTown(doc);
-  net.rebuild();
 }
 
 const sim = new SimWorld(doc, net, 0x2024);
@@ -1756,6 +1773,46 @@ for (const [op, icon] of [
   roadTypesEl.appendChild(b);
 }
 
+/**
+ * Interface v2: what the road tool does is a row of modes at the top of its
+ * panel - draw, improve, move, split, junctions, roundabout - as Cities:
+ * Skylines II puts its tool modes apart from its road catalogue. The
+ * operations no longer sit among the road classes as if they were roads.
+ */
+const roadModes = document.createElement('div');
+roadModes.className = 'road-modes';
+roadModes.setAttribute('role', 'group');
+const roadModeNote = document.createElement('p');
+roadModeNote.className = 'road-mode-note';
+if (UI_V2) {
+  for (const op of ['road', 'upgrade', 'move', 'split', 'control', 'roundabout'] as const) {
+    if (op === 'roundabout' && !freeRoadsEnabled()) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'road-mode';
+    b.dataset['roadMode'] = op;
+    b.textContent = op === 'road' ? t('tool.draw') : t(`tool.${op}`);
+    b.onclick = () => pickTool(op);
+    roadModes.appendChild(b);
+  }
+  document.getElementById('paletteBody')?.prepend(roadModes, roadModeNote);
+}
+function syncRoadModes(current: Tool): void {
+  if (!UI_V2) return;
+  for (const b of roadModes.querySelectorAll<HTMLButtonElement>('[data-road-mode]')) {
+    const on = b.dataset['roadMode'] === current;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  // Each mode shows only its own options: drawing has them all, improving
+  // keeps the class to improve to, and the rest work by a click on the map.
+  const palette = document.querySelector<HTMLElement>('.road-palette');
+  if (palette) palette.dataset['roadMode'] = current;
+  // The head's hint already says what a click does in this mode.
+  roadModeNote.textContent = '';
+  roadModeNote.hidden = roadModeNote.textContent === '';
+}
+
 const roundaboutSettings = document.createElement('label');
 roundaboutSettings.className = 'inspect-range';
 roundaboutSettings.hidden = true;
@@ -2104,6 +2161,7 @@ function setTool(next: Tool): void {
   roadPalette?.setAttribute('aria-hidden', String(!roadFamily));
   if (roadFamily) updateCarousel();
   roundaboutSettings.hidden = next !== 'roundabout';
+  if (roadFamily) syncRoadModes(next);
   for (const group of roadPalette?.querySelectorAll<HTMLElement>('.palette-section.plan, .palette-section.lanes') ?? []) {
     group.style.display = next === 'roundabout' ? 'none' : '';
   }
@@ -2273,8 +2331,21 @@ function mountUnifiedChrome(): void {
   // join them - a bar of their own floated over the map's corner.
   move(document.querySelector('.toolbar .tool[data-tool="bulldoze"]'), hosts.controls);
   move(document.querySelector('.toolbar .tool[data-tool="inspect"]'), hosts.controls);
-  move(document.getElementById('cameraControls'), hosts.controls);
-  move(document.getElementById('resetView'), hosts.controls);
+  if (UI_V2) {
+    // The camera is one menu of the bar, each button with its name beside it.
+    const cameraControls = document.getElementById('cameraControls');
+    move(cameraControls, hosts.cameraMenu);
+    move(document.getElementById('resetView'), cameraControls ?? hosts.cameraMenu);
+    for (const button of cameraControls?.querySelectorAll<HTMLButtonElement>('button') ?? []) {
+      const name = document.createElement('span');
+      name.className = 'bw-camera-name';
+      name.textContent = button.getAttribute('aria-label') ?? button.title;
+      button.appendChild(name);
+    }
+  } else {
+    move(document.getElementById('cameraControls'), hosts.controls);
+    move(document.getElementById('resetView'), hosts.controls);
+  }
   // The rail shows icons only; its names live in the tooltips.
   for (const button of document.querySelectorAll<HTMLButtonElement>('.toolbar .tool, .bw-controls .tool')) {
     const label = button.querySelector<HTMLElement>('[data-i18n]')?.dataset['i18n'];
@@ -2290,6 +2361,8 @@ function mountUnifiedChrome(): void {
   // it, and the Builder's chips stood at the foot of the road panel.
   setTool(tool);
   buildings.workspace.setPanelClose(freeSelection);
+  // The redesigned interface: its own HUD, dock, drawer and selection panel.
+  if (UI_V2) mountShell({ workspace: buildings.workspace, creator: personCreator.root });
 }
 // Mounted after this module has finished evaluating: moving the toolbar and
 // the panels is a layout change, and a pointer already over the canvas can fire
@@ -2419,21 +2492,6 @@ mountAbout();
   updateRoadHeightValue();
   fitView();
   flashHint('hint.newMap');
-};
-(document.getElementById('sampleTown') as HTMLButtonElement).onclick = () => {
-  if (!window.confirm(t('confirm.sampleTown'))) return;
-  history.record(doc);
-  // The town the game ships with, on a fresh map: streets, blocks of
-  // buildings, its people.
-  const town = new RoadDoc();
-  buildDefaultTown(town);
-  applySnapshot(town.toJSON(), 'import');
-  roadHeightOffset = 0;
-  roadHeightEdited = false;
-  updateRoadHeightValue();
-  fitView();
-  sim.clock.paused = false;
-  flashHint('hint.sampleTown');
 };
 // The sky: always day (the default), always night, or the residents' clock.
 {

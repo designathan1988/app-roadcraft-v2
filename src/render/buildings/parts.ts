@@ -1,4 +1,4 @@
-import { AmbientLight, DirectionalLight, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
+import { AmbientLight, Box3, DirectionalLight, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three';
 
 import { applyFacadePattern } from '@world/buildings/facadePatterns';
 import {
@@ -188,13 +188,44 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
       const alone = sample.volumes.length === 0;
       const span = Math.max(box.maxX - box.minX, box.maxY - box.minY, height * 0.9) + (alone ? 2 : 4);
       const focus = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 };
-      const look = alone ? Math.max(0.5, height * 0.35) : height * 0.45;
-      const distance = span * (alone ? 1.5 : 1.7);
-      camera.position.set(focus.x + distance * 0.55, look + distance * 0.6, focus.y + distance * 0.55);
-      camera.lookAt(focus.x, look, focus.y);
+      // One preset per kind of thing, as engines give each asset type its own
+      // thumbnail renderer: a roof is seen from above, so it is the roof that
+      // differs between pictures; a window or door from in front, close, so
+      // the opening fills the frame; a model and an element in 3/4.
+      // Every picture is fitted the same way: the thing's bounding sphere fills
+      // ~85% of the frame, so a kiosk and a tower read at the same size.
+      // The drawn meshes' own box, not the record's plan: models stand rotated
+      // and on plinths, and the plan's centre left them in a corner.
+      const view = ROOF_PARTS[id] ? 'roof' : WALL_PARTS[id] ? 'wall' : 'model';
+      const bounds = new Box3().setFromObject(meshes.group);
+      const centre = bounds.getCenter(new Vector3());
+      const size = bounds.getSize(new Vector3());
+      // A wall part is framed on two bays of the ground storey, not the block.
+      const radius = view === 'wall'
+        ? 0.5 * Math.hypot(Math.min(size.x, 7.5), Math.min(size.y, 5))
+        : 0.5 * Math.hypot(size.x, size.y, size.z);
+      if (view === 'wall') centre.y = bounds.min.y + Math.min(size.y, 5) * 0.62;
+      const dir = view === 'roof' ? new Vector3(0.5, 1.05, 0.62) : view === 'wall' ? new Vector3(0.28, 0.12, 1) : new Vector3(0.62, 0.6, 0.62);
+      dir.normalize();
+      const distance = (Math.max(radius, 0.8) / Math.sin((camera.fov * Math.PI) / 360)) * 1.08;
+      if (view === 'wall') {
+        // The front wall: the face nearest the camera's side of the box.
+        centre.z = bounds.max.z;
+      }
+      camera.position.copy(centre).addScaledVector(dir, distance);
+      void span;
+      void focus;
+      void alone;
+      camera.lookAt(centre);
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
-      batch.set(id, renderer.domElement.toDataURL('image/png'));
+      // A part that drew nothing keeps its glyph: an empty tile is a defect.
+      const gl = renderer.getContext();
+      const pixels = new Uint8Array(SIZE * SIZE * 4);
+      gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      let solid = 0;
+      for (let i = 3; i < pixels.length; i += 16) if ((pixels[i] ?? 0) > 16) solid++;
+      if (solid / (pixels.length / 16) > 0.02) batch.set(id, renderer.domElement.toDataURL('image/png'));
       scene.remove(meshes.group);
       meshes.dispose();
     } catch {

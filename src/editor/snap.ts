@@ -7,6 +7,7 @@ import { orientedPolyline } from '@world/geometry';
 import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
+import { ZONE_CELL } from '@world/zoneGrid';
 
 export type AnchorKind = 'node' | 'segment' | 'free';
 
@@ -32,6 +33,50 @@ const CONE = (7.5 * Math.PI) / 180;
 /** Length quantum, in world units. */
 const LENGTH_STEP = 10;
 const LENGTH_TOLERANCE = 4.2;
+
+/**
+ * The road tool's snapping, as Cities: Skylines II lays it out: one switch
+ * for all of it, and each kind on its own. Connecting to a road or a junction
+ * is not part of it - a road drawn onto another always joins it.
+ *
+ * - `angles`: square to the world and to the roads it starts from or lands
+ *   on, 45 degrees, and every 15 degrees;
+ * - `zoneLength`: the length in whole zone cells (8 m), so the zoning grid
+ *   along the road comes out in whole cells, as CS2's "zone cell length".
+ */
+export interface RoadSnap {
+  readonly on: boolean;
+  readonly angles: boolean;
+  readonly zoneLength: boolean;
+}
+const ROAD_SNAP_KEY = 'roadcraft.roadSnap';
+let roadSnapState: RoadSnap = { on: true, angles: true, zoneLength: true };
+try {
+  const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(ROAD_SNAP_KEY);
+  if (raw) {
+    const v = JSON.parse(raw) as Partial<RoadSnap>;
+    roadSnapState = { on: v.on !== false, angles: v.angles !== false, zoneLength: v.zoneLength !== false };
+  }
+} catch {
+  // Not kept: the defaults stand.
+}
+const roadSnapListeners = new Set<() => void>();
+export function roadSnap(): RoadSnap {
+  return roadSnapState;
+}
+export function setRoadSnap(patch: Partial<RoadSnap>): void {
+  roadSnapState = { ...roadSnapState, ...patch };
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(ROAD_SNAP_KEY, JSON.stringify(roadSnapState));
+  } catch {
+    // Not kept between sessions; it still applies now.
+  }
+  for (const f of roadSnapListeners) f();
+}
+export function onRoadSnapChange(f: () => void): () => void {
+  roadSnapListeners.add(f);
+  return () => roadSnapListeners.delete(f);
+}
 
 /**
  * Finds what the pointer is over: an existing node, a point on an existing
@@ -120,6 +165,14 @@ export function findAnchor(
 export function snapRoadEndpoint(
   doc: RoadDoc, net: Network, start: Anchor, raw: Vec2, zoom: number, heightOffset: number,
 ): SnapResult {
+  const snap = roadSnapState;
+  if (snap.on && (snap.angles || snap.zoneLength)) {
+    return snapEndpoint(doc, net, start, raw, zoom, {
+      heightOffset,
+      angles: snap.angles,
+      lengthStep: snap.zoneLength ? ZONE_CELL : 0,
+    });
+  }
   const anchor = findAnchor(doc, net, raw, zoom, undefined, heightOffset);
   const at = anchor.at;
   const v = sub(at, start.at);
@@ -238,14 +291,28 @@ function rayHitsPolyline(
   return best;
 }
 
+export interface SnapOptions {
+  /** Only roads at this height are joined (the road tool's level). */
+  readonly heightOffset?: number;
+  /** Pull the heading to the candidate angles. Default on. */
+  readonly angles?: boolean;
+  /**
+   * Lengths in whole steps of this many world units, always (a zone cell).
+   * Absent: the old soft quantum - 10 units when within 4.2 of it. 0: none.
+   */
+  readonly lengthStep?: number;
+}
+
 export function snapEndpoint(
   doc: RoadDoc,
   net: Network,
   start: Anchor,
   raw: Vec2,
   zoom: number,
+  options: SnapOptions = {},
 ): SnapResult {
-  const network = findAnchor(doc, net, raw, zoom, undefined);
+  const useAngles = options.angles ?? true;
+  const network = findAnchor(doc, net, raw, zoom, undefined, options.heightOffset);
 
   // LANDING ON A NODE takes the node, exactly, and no angle can be negotiated:
   // the whole point is that the two roads share that one point.
@@ -268,7 +335,7 @@ export function snapEndpoint(
   // the road being landed on. The result still lands on the road — the join is
   // as solid as before — and it arrives at an angle the editor is willing to
   // build.
-  if (network.kind === 'segment' && network.segment !== undefined) {
+  if (network.kind === 'segment' && network.segment !== undefined && useAngles) {
     const target = net.polylines.get(doc, network.segment);
     const points = target.toPoints();
     const reach = dist(start.at, raw) * 2 + 1;
@@ -326,13 +393,25 @@ export function snapEndpoint(
     };
   }
 
+  if (network.kind === 'segment') {
+    const v = sub(network.at, start.at);
+    return { at: network.at, guide: 'network', angleDeg: (angleOf(v) * 180) / Math.PI, length: dist(start.at, network.at) };
+  }
+
   let length = dist(start.at, raw);
-  const snapped = snapHeading(doc, start, angleOf(sub(raw, start.at)));
+  const heading = angleOf(sub(raw, start.at));
+  const snapped = useAngles ? snapHeading(doc, start, heading) : { angle: heading, guide: null };
   const angle = snapped.angle;
   const guide = snapped.guide;
 
-  const quantized = Math.round(length / LENGTH_STEP) * LENGTH_STEP;
-  if (Math.abs(quantized - length) < LENGTH_TOLERANCE) length = quantized;
+  if (options.lengthStep === undefined) {
+    const quantized = Math.round(length / LENGTH_STEP) * LENGTH_STEP;
+    if (Math.abs(quantized - length) < LENGTH_TOLERANCE) length = quantized;
+  } else if (options.lengthStep > 0) {
+    // Whole steps. Under half a step it is still a click, not a road: left as it is.
+    const steps = Math.round(length / options.lengthStep);
+    if (steps > 0) length = steps * options.lengthStep;
+  }
 
   return {
     at: addScaled(start.at, fromAngle(angle), length),

@@ -32,6 +32,11 @@ export type BuilderShelf = 'models' | 'patterns' | 'scope' | 'roofParams' | 'fin
 export interface BuilderSection {
   /** `builder.section.<title>`; none for a tab with one section. */
   readonly title?: string;
+  /**
+   * Interface v2: a section for the expert, shown only with "Advanced
+   * modelling" on. The everyday tabs keep five sections of a dozen choices.
+   */
+  readonly advanced?: boolean;
   readonly tools?: readonly BuilderToolSpec[];
   readonly shelf?: BuilderShelf;
 }
@@ -51,7 +56,7 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
   {
     id: 'draw',
     needsSelection: false,
-    sections: [{ title: 'primitives', tools: [mode('primBox'), mode('primCylinder'), mode('primOctagonal'), mode('primPrism'), mode('primWedge'), mode('primPyramid'), mode('primCone'), mode('primCross')] },
+    sections: [{ title: 'primitives', advanced: true, tools: [mode('primBox'), mode('primCylinder'), mode('primOctagonal'), mode('primPrism'), mode('primWedge'), mode('primPyramid'), mode('primCone'), mode('primCross')] },
       { title: 'drawWhere', shelf: 'drawAction' }, {
       title: 'drawShape',
       tools: [mode('rect'), mode('shapeL'), mode('shapeU'), mode('circle'), mode('hexagon'), mode('octagon'), mode('chamfered'), mode('shapeCross'), mode('shapeStepped'), mode('sketch')],
@@ -62,14 +67,14 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
     needsSelection: true,
     sections: [
       // A real building's model, translucent over the selection, to build it over.
-      { title: 'reference', tools: [action('refLoad'), action('refBuild'), action('refAlign'), action('refTurn'), action('refFlip'), action('refFainter'), action('refStronger'), action('refToggle'), action('refRemove')] },
+      { title: 'reference', advanced: true, tools: [action('refLoad'), action('refBuild'), action('refAlign'), action('refTurn'), action('refFlip'), action('refFainter'), action('refStronger'), action('refToggle'), action('refRemove')] },
       { title: 'floors', tools: [action('storey'), action('storeyDown'), action('split'), action('setback')] },
       { title: 'volumes', tools: [mode('wing'), mode('stack'), mode('cut'), mode('moveMass')] },
-      { title: 'modelling', tools: [action('extrudeOut'), action('extrudeIn'), action('extrudeBlock'), action('insetFace'), action('offsetOut'), action('offsetIn'), action('bevelAll'), action('pointMode'), action('bevelCorner')] },
-      { title: 'boolean', tools: [action('blockSolid'), action('blockVoid'), action('blockIntersect'), action('blockXor')] },
-      { title: 'block', tools: [action('copyBlock'), action('detachBlock'), action('centerBlock'), action('turnBlockLeft'), action('turnBlockRight')] },
-      { title: 'blockShape', tools: [action('tierRect'), action('tierChamfered'), action('tierOctagon'), action('tierHexagon'), action('tierCircle'), action('tierL'), action('tierU'), action('tierCross'), action('tierStepped')] },
-      { title: 'plan', tools: [action('vertexAdd'), action('vertexRemove')] },
+      { title: 'modelling', advanced: true, tools: [action('extrudeOut'), action('extrudeIn'), action('extrudeBlock'), action('insetFace'), action('offsetOut'), action('offsetIn'), action('bevelAll'), action('pointMode'), action('bevelCorner')] },
+      { title: 'boolean', advanced: true, tools: [action('blockSolid'), action('blockVoid'), action('blockIntersect'), action('blockXor')] },
+      { title: 'block', advanced: true, tools: [action('copyBlock'), action('detachBlock'), action('centerBlock'), action('turnBlockLeft'), action('turnBlockRight')] },
+      { title: 'blockShape', advanced: true, tools: [action('tierRect'), action('tierChamfered'), action('tierOctagon'), action('tierHexagon'), action('tierCircle'), action('tierL'), action('tierU'), action('tierCross'), action('tierStepped')] },
+      { title: 'plan', advanced: true, tools: [action('vertexAdd'), action('vertexRemove')] },
     ],
   },
   {
@@ -81,7 +86,7 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
       { title: 'windows', tools: [mode('window'), mode('sashWindow'), mode('wideWindow'), mode('ribbon'), mode('bayWindow'), mode('frenchWindow')] },
       { title: 'doors', tools: [mode('door'), mode('doubleDoor'), mode('garageDoor'), mode('loadingDoor')] },
       { title: 'bays', tools: [mode('balcony'), mode('shopfront'), mode('pillarBay'), mode('wallBay')] },
-      { title: 'relief', tools: [action('inset'), action('outset'), action('flush')] },
+      { title: 'relief', advanced: true, tools: [action('inset'), action('outset'), action('flush')] },
     ],
   },
   {
