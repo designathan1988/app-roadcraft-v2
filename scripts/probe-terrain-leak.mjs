@@ -13,9 +13,7 @@ await page.waitForTimeout(Number((process.argv.find((a) => a.startsWith('--settl
 const cdp = await page.context().newCDPSession(page);
 const heap = async () => { await cdp.send('HeapProfiler.collectGarbage'); return page.evaluate(() => {
   const scene = window.__roadcraft.scene();
-  const s3 = scene.three ?? scene.scene ?? null;
   let bytes = 0, geos = new Set();
-  const root = typeof scene.root === 'function' ? scene.root() : null;
   const walkObj = (o) => { if (o.geometry && !geos.has(o.geometry)) { geos.add(o.geometry); for (const a of Object.values(o.geometry.attributes)) bytes += a.array.byteLength; if (o.geometry.index) bytes += o.geometry.index.array.byteLength; } for (const c of o.children ?? []) walkObj(c); };
   const sc = scene.scene ?? null;
   if (sc) walkObj(sc);

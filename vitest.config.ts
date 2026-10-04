@@ -27,8 +27,10 @@ export default defineConfig({
     // matches a folder at the TOP of `tests/` - a probe dropped beside the
     // tests it was probing, `tests/world/_diag.spec.ts`, ran and could break
     // `npm run check`, which is exactly what the invariant promised it could
-    // not. Any path segment starting with an underscore is scratch now.
-    exclude: ['tests/e2e/**', 'tests/**/_*/**', 'tests/**/_*'],
+    // not. Any path segment starting with an underscore is scratch now, and so
+    // is the `zz` prefix this working tree already uses for the same kind of
+    // one-off harness (`tests/render/zzCrowdGaitCompare.spec.ts` and friends).
+    exclude: ['tests/e2e/**', 'tests/**/_*/**', 'tests/**/_*', 'tests/**/zz*/**', 'tests/**/zz*'],
     // Tests always run with invariant assertions armed.
     env: { SIM_STRICT: '1' },
     // Not a speed limit - the budgets that matter are asserted by the tests

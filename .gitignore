@@ -13,3 +13,4 @@ __pycache__/
 
 # People cooked ahead (npm run cook:people); regenerated, never committed
 cooked/
+exports/

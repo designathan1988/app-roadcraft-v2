@@ -61,6 +61,11 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'docs/screenshots/**',
+      // Dropped-in assets and generated output. Both are git-ignored, and a
+      // vendor's own verification script is not this repository's code.
+      'incoming/**',
+      'exports/**',
+      'cooked/**',
       // Agent worktrees are full checkouts of the repository; they are linted
       // in their own checkout, never from this one.
       '.claude/**',
@@ -71,6 +76,12 @@ export default tseslint.config(
       'tests/**/_*',
       'scripts/**/_*/**',
       'scripts/**/_*',
+      // `zz` is this working tree's older scratch prefix for the same kind of
+      // file (a probe or one-off harness dropped beside what it measures). The
+      // runner's exclude carries the same rule; without it here a `zz` probe
+      // breaks `npm run check` exactly as an `_` probe once did.
+      '**/zz*.mjs',
+      '**/zz*.ts',
     ],
   },
   eslint.configs.recommended,
@@ -90,15 +101,31 @@ export default tseslint.config(
     },
   },
   {
-    // Browser globals inside `page.evaluate` callbacks, which ESLint sees as
-    // Node code even though they are serialised and run in Chromium.
-    files: ['scripts/verify-visual.mjs'],
+    // Browser globals inside `page.evaluate` / `addInitScript` callbacks, which
+    // ESLint sees as Node code even though they are serialised and run in
+    // Chromium. Every one of these scripts drives a real page through
+    // Playwright; the callback bodies are browser code by construction.
+    files: [
+      'scripts/probe-*.mjs',
+      'scripts/perf-probe.mjs',
+      'scripts/cook-people.mjs',
+      'scripts/verify-visual.mjs',
+    ],
     languageOptions: {
       globals: {
         window: 'readonly',
         document: 'readonly',
+        localStorage: 'readonly',
+        innerWidth: 'readonly',
+        innerHeight: 'readonly',
         requestAnimationFrame: 'readonly',
         performance: 'readonly',
+        PerformanceObserver: 'readonly',
+        Profiler: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        fetch: 'readonly',
+        Event: 'readonly',
         Image: 'readonly',
       },
     },

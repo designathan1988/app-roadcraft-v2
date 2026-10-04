@@ -40,7 +40,7 @@ for (let i = 0; i < sections.length; i++) {
   // The section's whole height, in slices.
   const h = await box.evaluate((b) => b.getBoundingClientRect().height);
   for (let y = 900, k = 1; y < h && k < 8; y += 900, k++) {
-    await box.evaluate((b, y) => { let p = b.parentElement; while (p && p.scrollHeight <= p.clientHeight) p = p.parentElement; if (p) p.scrollTop += 900; }, y);
+    await box.evaluate((b) => { let p = b.parentElement; while (p && p.scrollHeight <= p.clientHeight) p = p.parentElement; if (p) p.scrollTop += 900; });
     await page.waitForTimeout(800);
     await page.screenshot({ path: `${out}/${String(i).padStart(2, '0')}-${(name ?? '').replace(/\W+/g, '_')}-${k}.png` });
   }

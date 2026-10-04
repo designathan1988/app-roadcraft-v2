@@ -1,4 +1,3 @@
-/* global window, document, requestAnimationFrame, Image */
 /**
  * THE AGENTS PROBE: what the player sees the walkers do, measured in the
  * running game, tick by tick, on the drawn bodies (`PedView`), and the worst
