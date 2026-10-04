@@ -38,6 +38,14 @@ describe('the default town', () => {
     }
   });
 
+  it('gives every house a built volume, not just an open lot', () => {
+    const houses = all.filter((b) => b.function === 'house');
+    expect(houses.length).toBeGreaterThan(0);
+    for (const b of houses) {
+      expect(b.volumes.some((v) => !v.open && v.mode !== 'void' && v.mode !== 'intersect'), `house ${b.id}`).toBe(true);
+    }
+  });
+
   it('leaves no block empty: every block the streets enclose is built on or laid out', () => {
     // A 4-unit grid over each block; what a footprint (built or open) does not
     // cover is the walks between buildings - never a whole empty plot. The
