@@ -28,8 +28,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
   const skin = candidates[Math.abs(person.id * 2654435761 >>> 0) % candidates.length] ?? index.skins[0]!;
   const url = urls[`../../../public/models/people/skins/${skin.name}.webp`];
   if (!url) throw new Error(`Missing skin texture: ${skin.name}`);
-  const texture = await new TextureLoader().loadAsync(url);
-  texture.colorSpace = SRGBColorSpace;
+  const skinRequest = new TextureLoader().loadAsync(url);
   const average = new Color().setRGB(skin.average[0]! / 255, skin.average[1]! / 255, skin.average[2]! / 255, SRGBColorSpace);
   const desired = new Color(person.look.skin);
   // Match the texture's brightness to the person's skin and only a little of
@@ -44,6 +43,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     bright + (desired.b / Math.max(0.01, average.b) - bright) * hue);
   const garmentNames = texturedGarments(person.look);
   const leases: PaddedLease[] = [];
+  let texture: Texture | undefined;
   // Every card item - hair, brows, lashes, a beard - with its own texture,
   // so its strands are drawn per pixel.
   const cardTexture = async (name: string | undefined): Promise<Texture | undefined> => {
@@ -66,7 +66,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     for (const lease of leases) lease.release();
   };
   try {
-    const requests = garmentNames.map(async name => {
+    const garmentRequests = garmentNames.map(async name => {
       if (!name || name === 'none') return null;
       const item = await loadProxyItem(name);
       if (!item.textureFile) return null;
@@ -74,16 +74,25 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
       leases.push(lease);
       return lease.texture;
     });
-    // Wait for every request even when one fails, so every acquired lease can be released.
-    const garments = (await Promise.allSettled(requests)).map((result) => {
-      if (result.status === 'rejected') throw result.reason;
-      return result.value;
-    });
-    hairTexture = await cardTexture(person.look.hairCut);
-    browTexture = await cardTexture(person.look.brows);
-    lashTexture = await cardTexture(person.look.lashes);
     const beardName = (person.look.extras ?? []).find((e) => /beard|moustache|goatee|stubble|sideburn/i.test(e));
-    beardTexture = await cardTexture(beardName);
+    // Every request begins now; all settle before cleanup so an error cannot
+    // leave a late texture or garment lease behind.
+    const requests: Promise<Texture | null | undefined>[] = [skinRequest, ...garmentRequests,
+      cardTexture(person.look.hairCut), cardTexture(person.look.brows),
+      cardTexture(person.look.lashes), cardTexture(beardName)];
+    const settled = await Promise.allSettled(requests);
+    const loaded = settled.map((result) => result.status === 'fulfilled' ? result.value : null);
+    texture = loaded[0] ?? undefined;
+    const cardStart = garmentNames.length + 1;
+    hairTexture = loaded[cardStart] ?? undefined;
+    browTexture = loaded[cardStart + 1] ?? undefined;
+    lashTexture = loaded[cardStart + 2] ?? undefined;
+    beardTexture = loaded[cardStart + 3] ?? undefined;
+    const failed = settled.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    if (!texture) throw new Error(`Missing loaded skin texture: ${skin.name}`);
+    texture.colorSpace = SRGBColorSpace;
+    const garments = loaded.slice(1, cardStart).map((map) => map ?? null);
     // Sent to the GPU ahead of the first frame this person is drawn in.
     queueUpload(texture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
     const appearance: SkinAppearance = { texture, tint, hair: new Color(person.look.hair), garments,

@@ -80,4 +80,8 @@ In a 30-second town / 75-second empty / 15-second return run against that produc
 
 The shared garment lease is now acquired while its texture request is in flight, before hair and face textures finish. This closes a race where one owner could release the texture before another appearance registered its use. The browser check also forced a missing hair asset: the failed appearance released its lease without disposing a garment still owned elsewhere. The final owner released it once, and a new load got a fresh texture. Typecheck, touched-file lint and production build passed; the final 84-body cook fingerprint is `862e90772862376c` (35 seconds).
 
+Skin, garments and hair/card textures were then requested together instead of waiting in sequence. An isolated browser loaded the same six-texture person in 69–81 ms before and 48–52 ms after in warmed local-server runs. Its garment pixel SHA-256 stayed `26f2702d01cc58ff0f47522623f1948617e367b19b18f3a1a82f0e1a308969b6`. The first post-recompile run took 319 ms and is excluded from the warm comparison; it does not establish a cold-load improvement. A missing hair item still rejected cleanly and did not release another appearance's shared garment.
+
+The 84 cooked bodies were regenerated under fingerprint `1befc2ffbcc87b4e` in 34 seconds after this loader change. Typecheck, file lint and the production build passed.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).
