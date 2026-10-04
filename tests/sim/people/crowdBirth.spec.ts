@@ -1,8 +1,14 @@
 import { expect, it, vi } from 'vitest';
 import { NavMeshQuery } from '@recast-navigation/core';
-import { initCrowd, inspectCrowd } from '@sim/people/crowd';
+import { Network } from '@world/network';
+import { SimWorld } from '@sim/world';
+import { step } from '@sim/pipeline';
+import { DT } from '@sim/params';
+import { m } from '@world/units';
+import { addScriptedWalker, createCrowdEngine, initCrowd, inspectCrowd } from '@sim/people/crowd';
 import * as party from '@sim/people/party';
 import { AGENT_HEIGHT, AGENT_RADIUS } from '@sim/people/crowdNav';
+import { SCENARIOS } from '../../fixtures/crowdScenarios';
 import { CITIES } from '../support/agentDefects';
 
 it.each(['none', 'route'])('keeps city demand and whole groups when birth failure=%s', async (failure) => {
@@ -36,3 +42,30 @@ it.each(['none', 'route'])('keeps city demand and whole groups when birth failur
     }
   } finally { raycast?.mockRestore(); plans.mockRestore(); sim.pedEngine.reset(sim); }
 }, 30000);
+
+it('starts side-by-side walkers without a collision-correction slide', async () => {
+  await initCrowd();
+  const sc = SCENARIOS.find(s => s.name === 'side-by-side')!;
+  const net = new Network(sc.doc); net.rebuild();
+  const sim = new SimWorld(sc.doc, net, 0x5ce7); sim.rebuildTopology();
+  sim.pedestrianIntensity = 0; sim.trafficIntensity = 0;
+  sim.usePedestrianEngine(createCrowdEngine());
+  try {
+    step(sim, { traffic: false, pedestrians: true });
+    const ids: number[] = [];
+    for (const wk of sc.walkers(net)) ids.push(addScriptedWalker(sim, {
+      ...wk, ...(wk.leader !== undefined ? { leader: ids[wk.leader]! } : {}),
+    })!);
+    const initial = inspectCrowd(sim);
+    expect(ids).toHaveLength(3);
+    expect(ids.every(id => id > 0)).toBe(true);
+    expect(Math.hypot(initial[0]!.x - initial[1]!.x, initial[0]!.y - initial[1]!.y))
+      .toBeGreaterThanOrEqual(2 * AGENT_RADIUS);
+    step(sim, { traffic: false, pedestrians: true });
+    const byId = new Map(inspectCrowd(sim).map(p => [p.id, p]));
+    for (const view of sim.pedViews) {
+      const speed = Math.hypot(view.x - view.prev.x, view.y - view.prev.y) / DT;
+      expect(speed > m(0.1) && byId.get(view.id)!.speed < m(0.03)).toBe(false);
+    }
+  } finally { sim.pedEngine.reset(sim); }
+});

@@ -402,10 +402,28 @@ function onMesh(s: State, at: Vec2 & { readonly h?: number }, reach = m(3)): Gro
   return { x: r.point.x, h: r.point.y, y: r.point.z };
 }
 
-function addAgent(s: State, at: Vec2, pace: number): CrowdAgent | null {
-  const p = onMesh(s, at);
-  if (!p) return null;
-  return s.crowd!.addAgent({ x: p.x, y: p.h, z: p.y }, {
+function addAgent(s: State, at: Vec2 & { readonly h?: number }, pace: number): CrowdAgent | null {
+  const projected = onMesh(s, at);
+  if (!projected) return null;
+  const clear = (p: GroundPoint): boolean => s.walkers.every(q =>
+    Math.abs(q.h - p.h) >= AGENT_HEIGHT || hypot2(q.x - p.x, q.y - p.y) >= 2 * AGENT_RADIUS);
+  let birth = projected;
+  if (!clear(birth)) {
+    let found: GroundPoint | null = null;
+    for (const radius of [m(0.32), m(0.48), m(0.64)]) {
+      for (let k = 0; k < 16; k++) {
+        const angle = k * Math.PI / 8;
+        const candidate = onMesh(s, { x: at.x + Math.cos(angle) * radius, y: at.y + Math.sin(angle) * radius, h: projected.h }, m(0.5));
+        if (!candidate || hypot2(candidate.x - at.x, candidate.y - at.y) > m(0.8) || !clear(candidate)) continue;
+        found = candidate;
+        break;
+      }
+      if (found) break;
+    }
+    if (!found) return null;
+    birth = found;
+  }
+  return s.crowd!.addAgent({ x: birth.x, y: birth.h, z: birth.y }, {
     radius: AGENT_RADIUS,
     height: AGENT_HEIGHT,
     maxSpeed: pace,
