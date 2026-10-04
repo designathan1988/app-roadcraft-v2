@@ -556,17 +556,41 @@ if (afterEdit.belowTerrain > 0) {
     R.redraw();
     return { archetype: car.archetype.id, vehicles: S.vehicles.size };
   });
-  // Seated citizens are loaded on first sight, like the walking ones.
-  await page.waitForTimeout(4000);
-  await page.evaluate(() => window.__roadcraft.redraw());
-  await page.waitForTimeout(1200);
-  const seated = await page.evaluate(() => {
-    const group = window.__roadcraft.scene().scene.getObjectByName('rigged-citizens');
-    let drawn = 0;
-    group.traverse((o) => { if (o.isInstancedMesh) drawn = Math.max(drawn, o.count); });
-    let batches = 0;
-    group.traverse((o) => { if (o.isInstancedMesh && o.count > 0) batches++; });
-    return { drawn, batches, peds: window.__roadcraft.sim.peds.size };
+  // Seated citizens are loaded on first sight, like the walking ones, and the
+  // load is asynchronous — so this is a wait for an asset, and the wait used to
+  // be the defect. The harness framed the car once and sampled after a fixed
+  // 5.2 s of a RUNNING simulation: at road speed the car is 70-odd world units
+  // further on by then, and the 30-unit view holds empty tarmac. The count came
+  // back zero whatever the truth was, and a run that happened to catch a
+  // different car crossing the same frame read one or two — the same number,
+  // for opposite reasons (`docs/audit/2026-10-03-performance.md`).
+  //
+  // The simulation is paused on the car that was framed, so the only thing
+  // left to wait for is the body itself, and the sample is retaken until it is
+  // drawn or the budget runs out. A failure now means the citizen was never
+  // drawn, which is the claim the scenario is for.
+  const seated = await page.evaluate(async () => {
+    const R = window.__roadcraft;
+    R.sim.clock.paused = true;
+    const group = R.scene().scene.getObjectByName('rigged-citizens');
+    const count = () => {
+      let drawn = 0;
+      let batches = 0;
+      group.traverse((o) => {
+        if (!o.isInstancedMesh) return;
+        drawn = Math.max(drawn, o.count);
+        if (o.count > 0) batches++;
+      });
+      return { drawn, batches };
+    };
+    const deadline = performance.now() + 30_000;
+    let last = count();
+    while (last.drawn === 0 && performance.now() < deadline) {
+      R.redraw();
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 250)));
+      last = count();
+    }
+    return { ...last, parked: true, peds: R.sim.peds.size };
   });
   if (WRITE_SHOTS) {
     await page.screenshot({ path: path.join('docs', 'audit', 'vehicles-occupants-production.jpg'), quality: 88 });
