@@ -15,7 +15,7 @@ uncommitted work in the shared checkout says so here.
 
 | Area | Owner | Worktree | Since |
 |---|---|---|---|
-| Interface v2 (`src/ui/**`, `index.html`, the UI part of `main.ts`, `buildingsWiring.ts`, `render/buildings/parts.ts`); zoning next | Claude session "Prédios em quarteirões incompletos" (state written by session 7f88b5cd) | builds 4180 from its scratch worktree `wt-b43`; has uncommitted `src/ui/creator/*`, `src/ui/v2/*` in the shared checkout | 2026-10-04 |
+| Interface v2 (`src/ui/**`, `index.html`, the UI part of `main.ts`, `buildingsWiring.ts`, `render/buildings/parts.ts`); zoning next | Claude session "Prédios em quarteirões incompletos" (state written by session 7f88b5cd) | builds 4180 from its scratch worktree `wt-b43`; all its work is committed (a3b9757), nothing pending in the shared checkout | 2026-10-04 |
 | Agent instruction files (`AGENTS.md`, `CLAUDE.md`, `src/*/AGENTS.md`, `.claude/settings.json`, `.claude/hooks/`) | Claude session "Verificar qualidade do projeto" (5bca37) | shared checkout, explicit paths | 2026-10-04 |
 | Pedestrians, vehicles, buildings, roads, city life, performance | free | | |
 | Codex | The Codex handoff of 2026-10-01 ended on 2026-10-02; `docs/handoff/` is history. The Codex worktree `~/.codex/worktrees/performance-audit/Road` (branch `codex/performance-audit`) had 101 uncommitted changes dated 2026-10-04, so a Codex task may be running there. Branches `codex/performance-audit` and `codex/stages-b` are on the remote, unmerged: ask the player before merging them. | `~/.codex/worktrees/` | |
