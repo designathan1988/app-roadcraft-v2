@@ -255,132 +255,10 @@ export function varied(rng: Rng, fn: BuildingFunction): BlueprintBody | null {
 export interface Placer {
   readonly placed: Box[];
   put(body: Omit<Building, 'id'>, box: Box): void;
-  /**
-   * Carries a front building's own plot back over `rect` (its yard to the
-   * rear boundary). True when it was laid.
-   */
-  yard?(front: Front, rect: Box): boolean;
 }
 
-/** A building on a block's frontage, and the street edge it faces. */
-export interface Front {
-  readonly box: Box;
-  readonly edge: Edge;
-  readonly fn: BuildingFunction;
-  readonly body: Omit<Building, 'id'>;
-}
-
-/**
- * Builds the depth of a block behind its frontage, so a block has no common
- * ground in its middle.
- *
- * Real blocks are cut into plots that each run from the street to the
- * block's spine (the straight skeleton: every point of the block belongs to
- * the street it is nearest), and what stands behind a front is that plot's
- * own back building - the shop's store, the flats' rear wing, the terrace's
- * back extension. Vanegas et al., "Procedural Generation of Parcels in Urban
- * Modeling" (Eurographics 2012), subdivide blocks the same way.
- *
- * Long frontages go first: they take the band along the spine, and the short
- * sides' wings are cut back against them, as the skeleton's triangles are.
- */
-export function backfill(rng: Rng, lot: Box, fronts: readonly Front[], into: Placer): void {
-  const half = Math.min(lot.x1 - lot.x0, lot.y1 - lot.y0) / 2;
-  const spineGap = m(0.3);
-  const ordered = [...fronts].sort((a, b) => b.edge.length - a.edge.length);
-  for (const f of ordered) {
-    const { inward } = f.edge;
-    // The plot behind the front, up to the spine.
-    let r: Box;
-    if (inward.y > 0) r = { x0: f.box.x0, x1: f.box.x1, y0: f.box.y1, y1: lot.y0 + half - spineGap };
-    else if (inward.y < 0) r = { x0: f.box.x0, x1: f.box.x1, y0: lot.y1 - half + spineGap, y1: f.box.y0 };
-    else if (inward.x > 0) r = { y0: f.box.y0, y1: f.box.y1, x0: f.box.x1, x1: lot.x0 + half - spineGap };
-    else r = { y0: f.box.y0, y1: f.box.y1, x0: lot.x1 - half + spineGap, x1: f.box.x0 };
-    // Snug to the front building, cut back against everything already there.
-    const trimmed = trimAgainst(r, inward, into.placed);
-    if (!trimmed) continue;
-    r = trimmed;
-    const W = (inward.y !== 0 ? r.x1 - r.x0 : r.y1 - r.y0) / m(1);
-    const D = (inward.y !== 0 ? r.y1 - r.y0 : r.x1 - r.x0) / m(1);
-    if (W < 4 || D < 3) continue;
-    // The ground behind a front is that building's own plot, to the rear
-    // boundary: its yard - never a second building in the block's middle.
-    if (into.yard) {
-      into.yard(f, r);
-      continue;
-    }
-    const body = rearWing(rng, f, W, D);
-    // The wing's own front (local y = 0) against the back of the front building.
-    const start: Vec = {
-      x: f.edge.along.x + inward.x > 0 ? r.x0 : r.x1,
-      y: f.edge.along.y + inward.y > 0 ? r.y0 : r.y1,
-    };
-    const placed = facingBody(body, f.fn, { start, along: f.edge.along, inward, length: W * m(1) }, 0, 0);
-    if (!inside(placed.box, lot) || into.placed.some((o) => overlaps(placed.box, o, -0.05))) continue;
-    into.put({ ...placed.body, function: f.fn }, placed.box);
-  }
-}
-
-type Vec = { x: number; y: number };
-
-/**
- * `r` less every box it runs into, keeping the side against the front (the
- * one opposite `inward`'s direction); the largest piece left wins.
- */
-export function trimAgainst(r: Box, inward: Vec, placed: readonly Box[]): Box | null {
-  let box: Box = { ...r };
-  for (let guard = 0; guard < 40; guard++) {
-    if (box.x1 - box.x0 < m(3) || box.y1 - box.y0 < m(3)) return null;
-    const hit = placed.find((o) => overlaps(box, o, -0.05));
-    if (!hit) return box;
-    const cuts: Box[] = [
-      { ...box, x1: Math.min(box.x1, hit.x0 - m(0.1)) },
-      { ...box, x0: Math.max(box.x0, hit.x1 + m(0.1)) },
-      { ...box, y1: Math.min(box.y1, hit.y0 - m(0.1)) },
-      { ...box, y0: Math.max(box.y0, hit.y1 + m(0.1)) },
-    ].filter((c, i) => {
-      // Never move the side that touches the front building.
-      if (inward.y > 0 && i === 3) return false;
-      if (inward.y < 0 && i === 2) return false;
-      if (inward.x > 0 && i === 1) return false;
-      if (inward.x < 0 && i === 0) return false;
-      return c.x1 > c.x0 && c.y1 > c.y0;
-    });
-    if (!cuts.length) return null;
-    box = cuts.reduce((a, b) => ((a.x1 - a.x0) * (a.y1 - a.y0) >= (b.x1 - b.x0) * (b.y1 - b.y0) ? a : b));
-  }
-  return null;
-}
-
-/**
- * A building for a leftover piece inside a block - a workshop, a store, a
- * back house - never an open court: a block has no common ground.
- */
-export function infill(rng: Rng, Wm: number, Dm: number, homes: boolean): BlueprintBody {
-  const model = new Model(homes ? 'townhouse' : 'warehouse', homes ? 'residential' : 'commercial', Math.floor(rng() * 8))
-    .look(pick(rng, WALLS), pick(rng, FLAT_ROOFS));
-  model.block({ x: 0, y: 0, w: Wm, d: Dm, storeys: homes ? pick(rng, [1, 2, 2]) : pick(rng, [1, 1, 2]), roof: 'flat', fill: homes ? 'window' : pick<BayComponent>(rng, ['wall', 'window', 'ribbon']), door: 'middle' });
-  return model.build();
-}
-
-/** The back building of a plot: a store behind a shop, a wing behind flats. */
-function rearWing(rng: Rng, f: Front, W: number, D: number): BlueprintBody {
-  const front = f.body.volumes.filter((v) => !v.open);
-  const storeys = front.length ? Math.max(...front.map((v) => v.base + v.storeys.length)) : 2;
-  const homes = f.fn === 'townhouse' || f.fn === 'apartments' || f.fn === 'house';
-  const levels = homes ? Math.max(1, storeys - 1) : f.fn === 'shop' || f.fn === 'bakery' || f.fn === 'bar' || f.fn === 'snackBar' ? Math.max(1, Math.min(2, storeys - 1)) : Math.max(1, storeys - 1);
-  const wall = f.body.materials?.wall ?? pick(rng, WALLS);
-  const roofMat = pick(rng, FLAT_ROOFS);
-  const model = new Model(f.fn, homes ? 'residential' : 'commercial', Math.floor(rng() * 8))
-    .heights((f.body.groundHeight ?? m(3.4)) / m(1), (f.body.storeyHeight ?? m(3)) / m(1))
-    .look(wall, roofMat);
-  model.block({ x: 0, y: 0, w: W, d: D, storeys: levels, roof: rng() < 0.7 ? 'flat' : 'terrace', fill: homes ? 'window' : pick<BayComponent>(rng, ['window', 'wall', 'ribbon']) });
-  return model.build();
-}
-
-/** Fronts all round `lot`, from `wanted` in order, then the gaps closed with `fillers`. Returns them. */
-export function perimeter(rng: Rng, lot: Box, wanted: BuildingFunction[], fillers: readonly BuildingFunction[], into: Placer): Front[] {
-  const fronts: Front[] = [];
+/** Fronts all round `lot`, from `wanted` in order, then the gaps closed with `fillers`. */
+export function perimeter(rng: Rng, lot: Box, wanted: BuildingFunction[], fillers: readonly BuildingFunction[], into: Placer): void {
   const w = lot.x1 - lot.x0, d = lot.y1 - lot.y0;
   const edges: Edge[] = [
     { start: { x: lot.x0, y: lot.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: w },
@@ -401,7 +279,6 @@ export function perimeter(rng: Rng, lot: Box, wanted: BuildingFunction[], filler
           if (t + f.width > edge.length + 0.5) continue;
           if (!inside(f.box, lot) || into.placed.some((o) => overlaps(f.box, o, -0.05))) continue;
           into.put(f.body, f.box);
-          fronts.push({ box: f.box, edge, fn, body: f.body });
           if (pass) pass.shift();
           t += f.width;
           done = true;
@@ -412,13 +289,11 @@ export function perimeter(rng: Rng, lot: Box, wanted: BuildingFunction[], filler
       }
     }
   }
-  return fronts;
 }
 
 /** A block of houses: two rows back to back, each house on its own plot. */
 export function houses(rng: Rng, lot: Box, into: Placer): void {
   const depth = (lot.y1 - lot.y0) / 2;
-  const fronts: Front[] = [];
   const rows: Edge[] = [
     { start: { x: lot.x0, y: lot.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 },
     { start: { x: lot.x1, y: lot.y1 }, along: { x: -1, y: 0 }, inward: { x: 0, y: -1 }, length: lot.x1 - lot.x0 },
@@ -432,18 +307,13 @@ export function houses(rng: Rng, lot: Box, into: Placer): void {
       let W = between(rng, 14, 20);
       if (left - W < 12) W = left;
       if (W > 24) W = left / 2;
-      // The house and its front garden; the back of the plot is built (backfill).
-      const body = house(rng, W, Math.min(20, depth / m(1) - FRONT_GAP / m(1) - 0.1));
+      const body = house(rng, W, depth / m(1) - FRONT_GAP / m(1) - 0.1);
       const f = facingBody(body, 'house', edge, t, FRONT_GAP);
       // Plots are full width (their lawns reach both sides), so the box is the plot.
-      if (inside(f.box, lot) && !into.placed.some((o) => overlaps(f.box, o, -0.05))) {
-        into.put({ ...f.body, function: 'house' }, f.box);
-        fronts.push({ box: f.box, edge, fn: 'house', body: f.body });
-      }
+      if (inside(f.box, lot) && !into.placed.some((o) => overlaps(f.box, o, -0.05))) into.put({ ...f.body, function: 'house' }, f.box);
       t += m(W);
     }
   }
-  backfill(rng, lot, fronts, into);
 }
 
 /**

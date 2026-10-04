@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
 import { buildDefaultTown, townBlocks } from '@world/defaultTown';
 import { footprintRects } from '@world/buildings/geometry';
-import { overlapArea } from '@world/buildings/footprints';
 import { structuralProblem, validateBuilding } from '@world/buildings/validate';
 import { Network } from '@world/network';
 
@@ -73,15 +72,10 @@ describe('the default town', () => {
         if (c === a) continue;
         // Footprints may TOUCH (terraces stand shoulder to shoulder) but not
         // share any real area.
-        // A plot runs back to its rear boundary and may be L-shaped round a
-        // corner, so its bounding box says nothing: the plans themselves must
-        // not overlap.
         const overlapX = Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0);
         const overlapY = Math.min(a.y1, c.y1) - Math.max(a.y0, c.y0);
-        if (overlapX <= 0.6 || overlapY <= 0.6) continue;
-        let shared = 0;
-        for (const p of footprintRects(a.b)) for (const q of footprintRects(c.b)) shared += overlapArea(p, q);
-        expect(shared, `${a.b.function} on ${c.b.function}`).toBeLessThan(1);
+        const shared = overlapX > 0.6 && overlapY > 0.6 ? overlapX * overlapY : 0;
+        expect(shared, `${a.b.function} on ${c.b.function}`).toBe(0);
       }
     }
     const net = new Network(doc);

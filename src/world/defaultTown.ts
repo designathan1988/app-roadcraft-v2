@@ -9,11 +9,8 @@ import { type BlueprintBody } from './buildings/blueprints';
 import { Model, mat } from './buildings/cityBuildings';
 import type { Building, BuildingFunction, LotSurface } from './buildings/types';
 import { buildingBounds } from './buildings/geometry';
-import { plannedLot } from './buildings/lotPlan';
-import { extendPlot } from './buildings/plotExtension';
-import type { ZoneDensity, ZoneUse } from './zones';
 import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
-import { backfill, houses, infill, park, perimeter, varied, type Placer } from './town';
+import { courtyard, houses, park, perimeter, varied, type Placer } from './town';
 import { m } from './units';
 
 /**
@@ -637,30 +634,10 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   const rng = (): number => stream.float();
   const placed: Box[] = [];
   let count = 0;
-  /** Which stored building each placed body became, and where it stands. */
-  const stored = new Map<object, number>();
-  const frontsOn: { id: number; box: Box }[] = [];
-  /** Lays a building's plot over `rect` and claims that ground. */
-  const extend = (id: number, rect: Box): boolean => {
-    const b = doc.buildings.get(id as Parameters<typeof doc.buildings.get>[0]);
-    if (!b) return false;
-    // A hand clear of the neighbours' plots on every side.
-    const grown = extendPlot(b, { x0: rect.x0 + m(0.1), y0: rect.y0 + m(0.1), x1: rect.x1 - m(0.1), y1: rect.y1 - m(0.1) });
-    if (!grown) return false;
-    doc.buildings.put(grown);
-    placed.push(rect);
-    return true;
-  };
   const into: Placer = {
     placed,
-    yard(front, rect) {
-      const id = stored.get(front.body);
-      return id !== undefined && extend(id, rect);
-    },
     put(body, box) {
-      const added = doc.buildings.add(body);
-      stored.set(body, added.id as number);
-      frontsOn.push({ id: added.id as number, box });
+      doc.buildings.add(body);
       // The whole of what it puts on the ground - its volumes AND its parts
       // (the trees of a front garden, an awning, a fence): a lot laid in a gap
       // against the volumes alone came down on a neighbour's trees.
@@ -680,29 +657,6 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     return true;
   };
   /**
-   * A whole property on `lot`, its street on the side `street` names: the
-   * lot planned (front, side drive, yard or car park behind) and its building
-   * made for what the plan leaves - not a shed on a sea of paving.
-   */
-  const putPlanned = (lot: Box, street: 'south' | 'north' | 'east' | 'west', use: ZoneUse, density: ZoneDensity, fn: BuildingFunction): boolean => {
-    const w = lot.x1 - lot.x0, d = lot.y1 - lot.y0;
-    const edge: Edge = street === 'south' ? { start: { x: lot.x0, y: lot.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: w }
-      : street === 'north' ? { start: { x: lot.x1, y: lot.y1 }, along: { x: -1, y: 0 }, inward: { x: 0, y: -1 }, length: w }
-      : street === 'east' ? { start: { x: lot.x1, y: lot.y0 }, along: { x: 0, y: 1 }, inward: { x: -1, y: 0 }, length: d }
-      : { start: { x: lot.x0, y: lot.y1 }, along: { x: 0, y: -1 }, inward: { x: 1, y: 0 }, length: d };
-    const across = street === 'south' || street === 'north' ? d : w;
-    const body = plannedLot(use, density, edge.length / m(1) - 0.2, across / m(1) - 0.2, stream);
-    if (!body) return false;
-    const f = facingBody(body, fn, edge, m(0.1), m(0.1));
-    if (!inside(f.box, lot) || placed.some((o) => overlaps(f.box, o, -0.05))) return false;
-    into.put({ ...f.body, function: body.function ?? fn }, f.box);
-    return true;
-  };
-  /** The yards of the works: a planned lot, or the old yard where one does not fit. */
-  const works = (lot: Box, street: 'east' | 'west', density: ZoneDensity, fallback: () => void): void => {
-    if (!putPlanned(lot, street, 'industrial', density, density === 'low' ? 'warehouse' : 'factory')) fallback();
-  };
-  /**
    * What is left of a block once its frontage is built: every empty
    * rectangle of 10 m or more, biggest first, becomes ground of the
    * district's own kind - a court or a garden among homes, a car park behind
@@ -715,8 +669,7 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       const gap = emptiest(lot, [...placed, ...refused], m(10));
       if (!gap) return;
       // Half a metre clear of the neighbours, so no two lots share an edge.
-      // No longer than a block may be: the rest is the next gap.
-      const box: Box = { x0: gap.x0 + m(0.5), y0: gap.y0 + m(0.5), x1: Math.min(gap.x1 - m(0.5), gap.x0 + m(150)), y1: Math.min(gap.y1 - m(0.5), gap.y0 + m(150)) };
+      const box: Box = { x0: gap.x0 + m(0.5), y0: gap.y0 + m(0.5), x1: gap.x1 - m(0.5), y1: gap.y1 - m(0.5) };
       const Wm = (box.x1 - box.x0) / m(1);
       const Dm = (box.y1 - box.y0) / m(1);
       const short = Math.min(Wm, Dm);
@@ -726,36 +679,29 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       // not one car park after another.
       const shed = kind === 'works' && Wm >= 52 && Dm >= 46;
       const park = kind === 'shops' && short >= 14 && (short < 22 || k % 2 === 0);
-      // Among homes and shops a gap is built on (a back house, a store): a
-      // block has no common ground in its middle. Only a sliver too thin to
-      // stand a building on is a garden.
-      void park;
-      if (kind === 'works' && short >= 16 && putPlanned(box, Wm >= Dm ? 'south' : 'west', 'industrial', 'low', 'warehouse')) continue;
-      // Among homes and shops a gap is the back of the plot beside it: that
-      // building's yard runs over it. No building of its own in the middle.
-      if (kind !== 'works') {
-        const touching = frontsOn
-          .map((f) => {
-            const gx = Math.max(0, box.x0 - f.box.x1, f.box.x0 - box.x1), gy = Math.max(0, box.y0 - f.box.y1, f.box.y0 - box.y1);
-            const shared = gx <= m(1.5) && gy <= m(1.5)
-              ? Math.max(Math.min(box.x1, f.box.x1) - Math.max(box.x0, f.box.x0), Math.min(box.y1, f.box.y1) - Math.max(box.y0, f.box.y0)) : -1;
-            return { f, shared };
-          })
-          .filter((t) => t.shared > m(3))
-          .sort((p, q) => q.shared - p.shared);
-        if (touching.some((t) => extend(t.f.id, box))) continue;
-      }
       const body = shed ? yard(rng, Wm, Dm, 'warehouse')
-        : short >= 6 ? infill(rng, Wm, Dm, kind === 'homes')
-          : garden(rng, Wm, Dm);
-      if (!putOpen(body, shed ? 'warehouse' : short >= 6 ? (kind === 'homes' ? 'townhouse' : 'warehouse') : 'square', box)) refused.push(gap);
+        : kind === 'works' ? garden(rng, Wm, Dm)
+          : park ? parkingBody(Wm, Dm, 'paving')
+            : short >= 22 ? courtyard(rng, Wm, Dm)
+              : garden(rng, Wm, Dm);
+      if (!putOpen(body, shed ? 'warehouse' : 'square', box)) refused.push(gap);
+    }
+  };
+  /** The biggest room left in a block's middle, for a court or a garden. */
+  const middle = (lot: Box, fn: (w: number, d: number) => BlueprintBody, fnName: BuildingFunction): void => {
+    for (let inset = m(12); inset < Math.min(lot.x1 - lot.x0, lot.y1 - lot.y0) / 2 - m(8); inset += m(2)) {
+      const box: Box = { x0: lot.x0 + inset, y0: lot.y0 + inset, x1: lot.x1 - inset, y1: lot.y1 - inset };
+      if (placed.some((o) => overlaps(box, o, m(1)))) continue;
+      putOpen(fn((box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1)), fnName, box);
+      return;
     }
   };
 
   // ---- the avenue's north side: the shops, with the flats above them
   for (let i = 0; i < 5; i++) {
     const lot = lotOf(i, 2);
-    backfill(rng, lot, perimeter(rng, lot, [...(NORTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into), into);
+    perimeter(rng, lot, [...(NORTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into);
+    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'shops');
   }
   // The north-east block is the supermarket and its car park: a big shed is
@@ -777,7 +723,8 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   // ---- the avenue's south side, with the market square in the middle
   for (const i of [0, 1, 2, 4]) {
     const lot = lotOf(i, 1);
-    backfill(rng, lot, perimeter(rng, lot, [...(SOUTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into), into);
+    perimeter(rng, lot, [...(SOUTH_FRONT[i] as readonly BuildingFunction[])], FILL_SHOP, into);
+    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'shops');
   }
   {
@@ -820,14 +767,16 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   }
   {
     const lot = lotOf(5, 1);
-    backfill(rng, lot, perimeter(rng, lot, ['gym', 'shop', 'townhouse', 'apartments', 'police'], FILL_SHOP, into), into);
+    perimeter(rng, lot, ['gym', 'shop', 'townhouse', 'apartments', 'police'], FILL_SHOP, into);
+    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'shops');
   }
 
   // ---- the northern band: terraces, the school, the park, the library
   for (const i of [0, 1, 3, 5]) {
     const lot = lotOf(i, 3);
-    backfill(rng, lot, perimeter(rng, lot, [...(TERRACE_FRONT[(i + 1) % TERRACE_FRONT.length] as readonly BuildingFunction[])], FILL_TERRACE, into), into);
+    perimeter(rng, lot, [...(TERRACE_FRONT[(i + 1) % TERRACE_FRONT.length] as readonly BuildingFunction[])], FILL_TERRACE, into);
+    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'homes');
   }
   {
@@ -839,11 +788,11 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     // The rest of the block is the street's terraces round the school's
     // playing field: a campus in a town is a building with a street round it,
     // not a building in a field.
-    backfill(rng, lot, perimeter(rng, lot, ['townhouse', 'apartments', 'townhouse', 'bakery', 'townhouse'], FILL_TERRACE, into), into);
+    perimeter(rng, lot, ['townhouse', 'apartments', 'townhouse', 'bakery', 'townhouse'], FILL_TERRACE, into);
     const field = emptiest(lot, placed, m(30));
     if (field) {
       const box: Box = { x0: field.x0 + m(1), y0: field.y0 + m(1), x1: field.x1 - m(1), y1: field.y1 - m(1) };
-      putOpen(infill(rng, (box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1), false), 'school', box);
+      putOpen(courtyard(rng, (box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1)), 'square', box);
     }
     fillGaps(lot, 'homes');
   }
@@ -858,6 +807,8 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   for (let i = 0; i < 6; i++) {
     const lot = lotOf(i, 0);
     houses(rng, lot, into);
+    // The middle of the block: a garden, a court, a playground.
+    if (i % 2 === 0) middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, 'homes');
   }
 
@@ -873,7 +824,8 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   ];
   BAND.forEach((band, j) => {
     const lot = bandLot(j);
-    backfill(rng, lot, perimeter(rng, lot, [...band.front], band.fill, into), into);
+    perimeter(rng, lot, [...band.front], band.fill, into);
+    middle(lot, (w, d) => courtyard(rng, w, d), 'square');
     fillGaps(lot, band.kind);
   });
 
@@ -892,29 +844,15 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     const westEast = west + m(88);
     const eastWest = east - m(88);
     // The western column, from the northern lane down.
-    // Every yard is a whole property facing the lane between the columns:
-    // the hall made to its lot, the loading yard at its docks, the truck lane
-    // down its side, its fence and gates - no shed on a sea of paving.
-    const yardAt = (box: Box, street: 'east' | 'west', density: ZoneDensity, Wm: number, Dm: number, kind: 'factory' | 'warehouse' | 'store'): void =>
-      works(box, street, density, () => { putOpen(yard(rng, Wm, Dm, kind), kind === 'store' ? 'warehouse' : kind, box); });
-    yardAt({ x0: west, y0: north - m(72), x1: westEast, y1: north }, 'east', 'high', 88, 70, 'factory');
-    yardAt({ x0: west, y0: north - m(134), x1: west + m(68), y1: north - m(74) }, 'east', 'medium', 66, 60, 'warehouse');
-    yardAt({ x0: west, y0: north - m(190), x1: west + m(76), y1: north - m(136) }, 'east', 'low', 74, 54, 'store');
+    putOpen(yard(rng, 88, 70, 'factory'), 'factory', { x0: west, y0: north - m(72), x1: westEast, y1: north });
+    putOpen(yard(rng, 66, 60, 'warehouse'), 'warehouse', { x0: west, y0: north - m(134), x1: west + m(68), y1: north - m(74) });
+    putOpen(yard(rng, 74, 54, 'store'), 'warehouse', { x0: west, y0: north - m(190), x1: west + m(76), y1: north - m(136) });
     // The eastern column.
-    yardAt({ x0: eastWest, y0: north - m(76), x1: east, y1: north }, 'west', 'medium', 88, 74, 'warehouse');
-    yardAt({ x0: eastWest, y0: north - m(148), x1: east, y1: north - m(78) }, 'west', 'low', 88, 70, 'store');
-    // Along the way in from the avenue: trade counters and showrooms, each on
-    // its own plot with its customers' car park - not one forecourt of paving.
-    {
-      const x0 = west + m(74), x1 = east;
-      const plots = Math.max(1, Math.round((x1 - x0) / m(30)));
-      for (let k = 0; k < plots; k++) {
-        const box: Box = { x0: x0 + ((x1 - x0) * k) / plots + m(0.3), y0: south + m(2), x1: x0 + ((x1 - x0) * (k + 1)) / plots - m(0.3), y1: south + m(46) };
-        if (!putPlanned(box, 'south', 'commercial', k % 3 === 1 ? 'high' : 'medium', 'shop')) {
-          putOpen(parkingBody((box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1), 'paving'), 'square', box);
-        }
-      }
-    }
+    putOpen(yard(rng, 88, 74, 'warehouse'), 'warehouse', { x0: eastWest, y0: north - m(76), x1: east, y1: north });
+    putOpen(yard(rng, 88, 70, 'store'), 'warehouse', { x0: eastWest, y0: north - m(148), x1: east, y1: north - m(78) });
+    // The garage, its forecourt, and the way in from the avenue.
+    const forecourt: Box = { x0: west + m(74), y0: south + m(2), x1: east, y1: south + m(46) };
+    putOpen(parkingBody((forecourt.x1 - forecourt.x0) / m(1), (forecourt.y1 - forecourt.y0) / m(1), 'paving'), 'square', forecourt);
     const station = varied(rng, 'gasStation');
     if (station) {
       const near: Box = { x0: west + m(76), y0: south + m(48), x1: west + m(128), y1: south + m(82) };
