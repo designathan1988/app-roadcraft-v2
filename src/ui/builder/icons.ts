@@ -113,6 +113,7 @@ const P = {
   floors: '<path d="M4 20V6l8-3 8 3v14"/><path d="M4 11h16M4 15.5h16"/><path d="M10 20v-2.5h4V20"/>',
   storeyDown: '<path d="M4 19h16V8l-8-5-8 5Z"/><path d="M4 12h16"/><path d="M12 14v4m-2-1.6 2 2 2-2"/>',
   refLoad: '<path d="M7 20V9h10v11" stroke-dasharray="2 2"/><path d="M12 3v9m-3.2-3 3.2 3.2L15.2 9"/><path d="M5 20h14"/>',
+  refBuild: '<path d="M7 20V9h10v11" stroke-dasharray="2 2"/><path d="M9 20v-5h3v-4h3v9"/><path d="m15 3 1 2 2 .3-1.5 1.4.4 2-1.9-1-1.9 1 .4-2L12 5.3l2-.3Z"/>',
   refAlign: '<path d="M7 20V9h10v11" stroke-dasharray="2 2"/><path d="M9 20v-7h6v7"/><path d="M12 4v3M10.5 5.5h3"/>',
   refTurn: '<path d="M7 20V9h10v11" stroke-dasharray="2 2"/><path d="M19 6a7 7 0 0 0-12-2"/><path d="M19 2.5V6h-3.5"/>',
   refFlip: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7 4 12l5 5Z"/><path d="M15 7l5 5-5 5Z"/>',

@@ -62,7 +62,7 @@ export const BUILDER_TAB_SPECS: readonly BuilderTabSpec[] = [
     needsSelection: true,
     sections: [
       // A real building's model, translucent over the selection, to build it over.
-      { title: 'reference', tools: [action('refLoad'), action('refAlign'), action('refTurn'), action('refFlip'), action('refFainter'), action('refStronger'), action('refToggle'), action('refRemove')] },
+      { title: 'reference', tools: [action('refLoad'), action('refBuild'), action('refAlign'), action('refTurn'), action('refFlip'), action('refFainter'), action('refStronger'), action('refToggle'), action('refRemove')] },
       { title: 'floors', tools: [action('storey'), action('storeyDown'), action('split'), action('setback')] },
       { title: 'volumes', tools: [mode('wing'), mode('stack'), mode('cut'), mode('moveMass')] },
       { title: 'modelling', tools: [action('extrudeOut'), action('extrudeIn'), action('extrudeBlock'), action('insetFace'), action('offsetOut'), action('offsetIn'), action('bevelAll'), action('pointMode'), action('bevelCorner')] },

@@ -9,7 +9,7 @@ import { BUILDING_FUNCTIONS, type Building, type BuildingId, volumeById } from '
 import { localFootprint } from '@world/buildings/footprints';
 import { FINISH_COLOUR } from '@world/buildings/materials';
 import { METERS_PER_UNIT, m } from '@world/units';
-import { type EditResult, clearBuildingsOnRoads, deleteBuilding } from '@editor/buildings';
+import { type EditResult, addBuildingRecord, clearBuildingsOnRoads, deleteBuilding } from '@editor/buildings';
 import { BuildingTool, type ToolHost, type ToolView } from '@editor/buildingTool';
 import type { PlanShape, Primitive } from '@editor/buildingPlans';
 import { BlueprintLibrary } from '@editor/blueprintLibrary';
@@ -21,6 +21,7 @@ import { drawBuildingOverlay } from '@ui/overlay/buildingOverlay';
 import { drawBuilderGizmos, type GizmoInput } from '@ui/overlay/builderGizmos';
 import { type ThumbnailStudio, createThumbnailStudio } from '@render/buildings/parts';
 import { createReferenceModel, type ReferenceTarget } from '@render/buildings/referenceModel';
+import { buildFromReference } from '@editor/fromReference';
 import { buildingBounds } from '@world/buildings/geometry';
 import { initBuilderWorkspace, type BuilderActions, type BuilderState } from '@ui/builder/workspace';
 import { plural, t } from '@ui/i18n';
@@ -243,11 +244,28 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
     };
     input.click();
   };
+  /** Builds the reference where it stands, in place of the building it was placed on. */
+  const buildReference = (): void => {
+    const capture = reference.capture();
+    const body = capture && buildFromReference(capture.triangles, capture.sample);
+    if (!body) { deps.flash('hint.reference.empty'); return; }
+    const frame = reference.frame;
+    const replaced = tool.selected();
+    const result = host.commit(() => {
+      const made = addBuildingRecord(host.context(), { ...body, x: frame.x, y: frame.y, rotation: frame.rotation }, replaced?.id);
+      if (made.ok && replaced) deleteBuilding(host.context(), replaced.id);
+      return made;
+    });
+    if (!result.ok) { deps.flash(`building.problem.${result.problem}`); return; }
+    deps.flash('hint.reference.built', { volumes: String(body.volumes.length) });
+    host.changed();
+  };
   /** The reference's own actions; true when `id` was one. */
   const referenceAction = (id: string): boolean => {
     if (id === 'refLoad') { loadReference(); return true; }
     if (!id.startsWith('ref')) return false;
     if (!reference.loaded) { deps.flash('hint.reference.none'); return true; }
+    if (id === 'refBuild') { buildReference(); return true; }
     if (id === 'refAlign') { const where = referenceTarget(); if (where) reference.placeOn(where); }
     else if (id === 'refTurn') reference.turn();
     else if (id === 'refFlip') reference.flip();
