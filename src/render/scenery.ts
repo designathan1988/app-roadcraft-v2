@@ -33,6 +33,7 @@ import { MEDIAN_PLANTING } from './roadSurfaces';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { applyFoliageShading } from './foliageShading';
+import { fbm, makeNoise } from './mesh/textureBaker';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -619,7 +620,13 @@ export function buildScenery(
     const minY = Math.max(-limit, bounds.cy - spread);
     const maxY = Math.min(limit, bounds.cy + spread);
     // A network pushed entirely off the plate leaves no window to plant in.
-    const attempts = maxX > minX && maxY > minY ? settings.vegetation * 3 : 0;
+    const attempts = maxX > minX && maxY > minY ? settings.vegetation * 6 : 0;
+    const groveNoise = makeNoise(0x6a11);
+    const groveDensity = (x: number, y: number): number => {
+      const noise = fbm(groveNoise, x / 260 + 5.3, y / 260 - 3.1, 23, 3);
+      const t = Math.max(0, Math.min(1, (noise - 0.33) / 0.34));
+      return 0.14 + 0.86 * t * t * (3 - 2 * t);
+    };
     const clear = (x: number, y: number, margin: number): boolean => {
       // Nothing grows on the carriageway or its verge.
       if (Math.abs(elevation.at(x, y, GROUND_ONLY) - terrainAt(x, y)) < 40) {
@@ -691,6 +698,9 @@ export function buildScenery(
     for (let i = 0; i < attempts && planted < settings.vegetation; i++) {
       const x = minX + rng.float() * (maxX - minX);
       const y = minY + rng.float() * (maxY - minY);
+      // Meadows and groves share the same plant budget. Test the cheap density
+      // field before road and terrain queries; road-edge planting stays separate.
+      if (rng.float() > groveDensity(x, y)) continue;
       if (!clear(x, y, 24)) continue;
       const ground = terrainAt(x, y);
       // Steep rock and rivers stay bare, which makes the slope readable.
