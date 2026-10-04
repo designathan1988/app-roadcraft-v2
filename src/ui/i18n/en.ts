@@ -5,6 +5,23 @@ import type { Dictionary } from './index';
  * checked against: a key missing from another dictionary falls back to here.
  */
 export const EN: Dictionary = {
+  'tool.zone': 'Zoning',
+  'zone.title': 'ZONING',
+  'zone.use': 'Land use',
+  'zone.density': 'Density',
+  'zone.residential': 'Residential',
+  'zone.commercial': 'Commercial',
+  'zone.industrial': 'Industrial',
+  'zone.low': 'Low',
+  'zone.medium': 'Medium',
+  'zone.high': 'High',
+  'zone.remove': 'Remove zone',
+  'hint.zone': 'Drag over roadside land to zone it · Shift+drag removes a zone',
+  'hint.mobile.zone': 'Drag over roadside land to zone it · Select Remove zone to erase',
+  'hint.zone.built': 'Zone created and roadside buildings generated',
+  'hint.zone.noLots': 'Zone created; no buildable roadside lots are free',
+  'hint.zone.removed': 'Zone removed',
+  'hint.zone.empty': 'Drag across an area beside a road',
   'tool.roundabout': 'Roundabout',
   'hint.roundabout': 'Click vacant ground to place a roundabout · Connect its four arms with the road tool',
   'hint.mobile.roundabout': 'Tap vacant ground to place a roundabout · Connect its four arms with the road tool',

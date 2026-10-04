@@ -22,6 +22,7 @@ import { clampToMap } from './bounds';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
+import { isZoneDensity, isZoneUse, type Zone } from './zones';
 import { normalizePerson, type PersonSpec } from '@people/spec';
 
 /** `shape` flattened until no band of a road of this profile folds over (see `RoadDoc.fitCurve`). */
@@ -139,6 +140,10 @@ export class RoadDoc {
    * would rebuild the road network and the simulation for nothing.
    */
   readonly buildings = new BuildingStore();
+
+  /** Authored land-use strokes, separate from the buildings they generated. */
+  readonly zones: Zone[] = [];
+  nextZoneId = 1;
 
   /**
    * The people made in the Person Creator, saved with the city. Their own
@@ -682,6 +687,7 @@ export class RoadDoc {
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
     copy.buildings.copyAllocator(this.buildings);
     copy.buildings.revision = this.buildings.revision;
+    copy.nextZoneId = this.nextZoneId;
     return copy;
   }
 
@@ -736,6 +742,9 @@ export class RoadDoc {
     }
     // Moves `buildings.revision` only if the buildings differ.
     this.buildings.replaceWith(source.buildings);
+    this.zones.length = 0;
+    this.zones.push(...source.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })));
+    this.nextZoneId = source.nextZoneId;
     if (JSON.stringify(this.people) !== JSON.stringify(source.people)) {
       this.people.length = 0;
       this.people.push(...source.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec));
@@ -799,6 +808,7 @@ export class RoadDoc {
       // Only when there are any, so a map without buildings serialises
       // exactly as it did before buildings existed.
       ...(this.buildings.size > 0 ? { buildings: this.buildings.toJSON() } : {}),
+      ...(this.zones.length > 0 ? { zones: this.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })) } : {}),
       // Likewise the people: only a city that has some carries the key.
       ...(this.people.length > 0 ? { people: this.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec) } : {}),
     };
@@ -909,6 +919,14 @@ export class RoadDoc {
     }
     // Buildings, if the map has any; each one through `migrateBuilding`.
     if (data.buildings) doc.buildings.load(data.buildings);
+    for (const zone of data.zones ?? []) {
+      if (!Number.isInteger(zone.id) || zone.id < 1 || !isZoneUse(zone.use) || !isZoneDensity(zone.density)) continue;
+      if (![zone.x0, zone.y0, zone.x1, zone.y1, zone.seed].every(Number.isFinite)) continue;
+      if (zone.x0 >= zone.x1 || zone.y0 >= zone.y1 || !Array.isArray(zone.buildingIds) ||
+          doc.zones.some((old) => old.id === zone.id)) continue;
+      doc.zones.push({ ...zone, buildingIds: zone.buildingIds.filter((id) => Number.isInteger(id) && doc.buildings.has(id as Parameters<typeof doc.buildings.has>[0])) });
+      doc.nextZoneId = Math.max(doc.nextZoneId, zone.id + 1);
+    }
     // People, each brought into range; anything that is not one is dropped.
     const seen = new Set<number>();
     for (const raw of data.people ?? []) {
@@ -967,6 +985,8 @@ export interface SerializedDoc {
    * the poles: every map saved before buildings existed has no such key.
    */
   readonly buildings?: readonly SerializedBuilding[];
+  /** Roadside land-use strokes; absent in maps saved before zoning. */
+  readonly zones?: readonly Zone[];
   /** People from the Person Creator; OPTIONAL like the buildings. Normalised on load. */
   readonly people?: readonly unknown[];
 }

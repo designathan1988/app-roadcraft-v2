@@ -65,9 +65,12 @@ import { isQualityLevel, type QualityLevel } from '@render/quality';
 import { createBuildingWiring } from './buildingsWiring';
 import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
+import { type ZoneUse, type ZoneDensity, zoneBounds } from '@world/zones';
+import { applyZone } from '@editor/zoning';
 
 type Tool =
   | 'building'
+  | 'zone'
   | 'road'
   | 'roundabout'
   | 'terrain'
@@ -317,6 +320,10 @@ let poleChain: Vec2 | null = null;
 let barrierKind: BarrierKind = 'fence';
 let barrierPoints: Vec2[] | null = null;
 let barrierCursor: Vec2 | null = null;
+let zoneUse: ZoneUse = 'residential';
+let zoneDensity: ZoneDensity = 'low';
+let zoneEraser = false;
+let zoneDraft: { pointer: number; start: Vec2; end: Vec2; remove: boolean } | null = null;
 let hoverAnchor: Anchor | null = null;
 let selectedSegment: SegmentId | null = null;
 let selectedSegmentS: number | null = null;
@@ -741,6 +748,7 @@ function cancelGestures(): void {
   poleDraft = null;
   poleChain = null;
   barrierPoints = null;
+  zoneDraft = null;
   endTerrainStroke();
   cancelMove();
   panning = null;
@@ -752,7 +760,7 @@ function cancelGestures(): void {
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null;
+    poleChain !== null || terrainStroke !== null || moving !== null || zoneDraft !== null;
 }
 
 /**
@@ -1038,6 +1046,10 @@ canvas.addEventListener('pointerdown', (e) => {
       buildings.pointerDown({ x: e.clientX - r.left, y: e.clientY - r.top }, world, e.shiftKey);
       break;
 
+    case 'zone':
+      zoneDraft = { pointer: e.pointerId, start: world, end: world, remove: e.shiftKey || zoneEraser };
+      break;
+
     case 'barrier': {
       // Shift-click removes a run; a click puts a point down, a double click
       // (or Enter) ends the run there.
@@ -1231,6 +1243,12 @@ canvas.addEventListener('pointermove', (e) => {
 
   const world = pointerWorld(e);
 
+  if (zoneDraft?.pointer === e.pointerId) {
+    zoneDraft.end = world;
+    requestDraw();
+    return;
+  }
+
   if (tool === 'road' && curvePending) {
     curvePending.control = world;
     requestDraw();
@@ -1374,6 +1392,20 @@ function endPointer(e: PointerEvent): void {
   }
   if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
   if (tool === 'building') buildings.pointerUp(cancelled || wasPinching);
+  if (zoneDraft?.pointer === e.pointerId) {
+    const stroke = zoneDraft;
+    zoneDraft = null;
+    if (!cancelled && !wasPinching) {
+      const end = pointerWorld(e);
+      const result = { zones: 0, buildings: 0 };
+      mutate(() => {
+        Object.assign(result, applyZone({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) },
+          stroke.start, end, zoneUse, zoneDensity, stroke.remove));
+        return result.zones > 0;
+      });
+      flashHint(result.zones ? (stroke.remove ? 'hint.zone.removed' : result.buildings ? 'hint.zone.built' : 'hint.zone.noLots') : 'hint.zone.empty');
+    }
+  }
 
   if (draft) {
     const d = draft;
@@ -1640,6 +1672,7 @@ window.addEventListener('keydown', (e) => {
     i: 'inspect',
     p: 'pole',
     f: 'barrier',
+    z: 'zone',
     h: 'building',
     k: 'person',
   };
@@ -1910,10 +1943,40 @@ updateRoadHeightValue();
 
 const roadPalette = document.querySelector<HTMLElement>('.road-palette');
 const terrainPalette = document.getElementById('terrainPalette') as HTMLElement;
+const zonePalette = document.getElementById('zonePalette') as HTMLElement;
+const zoneRemoveButton = document.getElementById('zoneRemove') as HTMLButtonElement;
+zoneRemoveButton.addEventListener('click', () => {
+  zoneEraser = !zoneEraser;
+  zoneRemoveButton.classList.toggle('active', zoneEraser);
+  zoneRemoveButton.setAttribute('aria-pressed', String(zoneEraser));
+  requestDraw();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((button) => {
+  button.addEventListener('click', () => {
+    zoneUse = button.dataset['zoneUse'] as ZoneUse;
+    document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    requestDraw();
+  });
+});
+document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((button) => {
+  button.addEventListener('click', () => {
+    zoneDensity = button.dataset['zoneDensity'] as ZoneDensity;
+    document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    requestDraw();
+  });
+});
 
 function setTerrainMode(next: TerrainMode): void {
   terrainMode = next;
-  document.querySelectorAll<HTMLButtonElement>('.terrain-mode').forEach((button) => {
+  document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
     const active = button.dataset['terrainMode'] === next;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
@@ -1921,7 +1984,7 @@ function setTerrainMode(next: TerrainMode): void {
   updateHint();
 }
 
-document.querySelectorAll<HTMLButtonElement>('.terrain-mode').forEach((button) => {
+document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
   button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as TerrainMode) ?? 'raise');
 });
 
@@ -2000,9 +2063,11 @@ function setTool(next: Tool): void {
   }
   terrainPalette.classList.toggle('hidden', !terrainActive);
   terrainPalette.setAttribute('aria-hidden', String(!terrainActive));
+  zonePalette.classList.toggle('hidden', next !== 'zone');
+  zonePalette.setAttribute('aria-hidden', String(next !== 'zone'));
   // A tool with nothing to configure still fills its panel: with what it does
   // and every key it answers to. An empty shelf is a defect, not minimalism.
-  renderToolHelp(roadFamily || terrainActive || next === 'building' || next === 'person' ? null : next);
+  renderToolHelp(roadFamily || terrainActive || next === 'zone' || next === 'building' || next === 'person' ? null : next);
   // The Person Creator fills the panel while it is the tool in hand.
   personCreator.root.hidden = next !== 'person';
   personCreator.stage.hidden = next !== 'person';
@@ -2145,6 +2210,7 @@ function mountUnifiedChrome(): void {
   move(document.querySelector('.toolbar'), hosts.level1);
   move(document.querySelector('.road-palette'), hosts.level2);
   move(document.getElementById('terrainPalette'), hosts.level2);
+  move(document.getElementById('zonePalette'), hosts.level2);
   // What Inspect picked is shown in the panel, where the tool's card is: the
   // right-hand column belongs to the camera and the minimap.
   move(document.getElementById('inspector'), hosts.level2);
@@ -2980,6 +3046,38 @@ function drawOverlayScreen(): void {
   // about to tie into. If it looks right here it is right when built.
   drawPolePlan(currentPolePlan(), ctx, at, w, h);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
+  if (tool === 'zone') {
+    ctx.save();
+    const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
+    for (const zone of doc.zones) {
+      const corners = [
+        { x: zone.x0, y: zone.y0 }, { x: zone.x1, y: zone.y0 },
+        { x: zone.x1, y: zone.y1 }, { x: zone.x0, y: zone.y1 },
+      ];
+      ctx.beginPath();
+      corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.closePath();
+      ctx.strokeStyle = colours[zone.use];
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    if (zoneDraft) {
+      const bounds = zoneBounds(zoneDraft.start, zoneDraft.end);
+      const corners = [
+        { x: bounds.x0, y: bounds.y0 }, { x: bounds.x1, y: bounds.y0 },
+        { x: bounds.x1, y: bounds.y1 }, { x: bounds.x0, y: bounds.y1 },
+      ];
+      ctx.beginPath();
+      corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.closePath();
+      ctx.fillStyle = zoneDraft.remove ? '#e36c6050' : `${colours[zoneUse]}50`;
+      ctx.strokeStyle = zoneDraft.remove ? '#e36c60' : colours[zoneUse];
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   if (tool === 'building') buildings.drawOverlay(ctx);
 

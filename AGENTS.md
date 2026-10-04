@@ -29,6 +29,11 @@ tests and the rendered game where applicable. If verification contradicts the
 diagnosis, investigate the false assumption and revise the plan; do not stack
 speculative patches, tune parameters to make a test pass, or hide the symptom.
 
+Do not interrupt implementation for repeated authorization requests. A direct
+request to build a feature authorizes its necessary, compatible document and
+code changes. Ask only when essential information is missing or an action is
+irreversible beyond the requested work.
+
 ---
 
 ## 1. One paragraph on what this is

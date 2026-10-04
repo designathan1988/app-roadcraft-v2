@@ -2,6 +2,23 @@ import type { Dictionary } from './index';
 
 /** Brazilian Portuguese interface strings. */
 export const PT_BR: Dictionary = {
+  'tool.zone': 'Zoneamento',
+  'zone.title': 'ZONEAMENTO',
+  'zone.use': 'Uso do solo',
+  'zone.density': 'Densidade',
+  'zone.residential': 'Residencial',
+  'zone.commercial': 'Comercial',
+  'zone.industrial': 'Industrial',
+  'zone.low': 'Baixa',
+  'zone.medium': 'Média',
+  'zone.high': 'Alta',
+  'zone.remove': 'Remover zona',
+  'hint.zone': 'Arraste sobre terrenos junto às vias para zonear · Shift+arraste remove a zona',
+  'hint.mobile.zone': 'Arraste sobre terrenos junto às vias para zonear · Selecione Remover zona para apagar',
+  'hint.zone.built': 'Zona criada e construções geradas junto às vias',
+  'hint.zone.noLots': 'Zona criada; não há lotes livres e adequados junto à via',
+  'hint.zone.removed': 'Zona removida',
+  'hint.zone.empty': 'Arraste sobre uma área junto a uma via',
   'tool.roundabout': 'Rotatória',
   'hint.roundabout': 'Clique em terreno livre para criar uma rotatória · Ligue os quatro acessos com a ferramenta de via',
   'hint.mobile.roundabout': 'Toque em terreno livre para criar uma rotatória · Ligue os quatro acessos com a ferramenta de via',
