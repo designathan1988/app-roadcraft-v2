@@ -346,6 +346,8 @@ interface Sweep {
    * answered from the cache never needs one.
    */
   grid: Map<number, number[]> | null;
+  /** Body classes that may stand at each sampled centre, computed once. */
+  range: Uint8Array | null;
 }
 
 function sweepOf(graph: LaneletGraph, c: Connector,
@@ -381,7 +383,7 @@ function sweepOf(graph: LaneletGraph, c: Connector,
     }
   }
   next.set(key, frame);
-  return { crossing, path, c0, count, frame, bounds: null, grid: null };
+  return { crossing, path, c0, count, frame, bounds: null, grid: null, range: null };
 }
 
 function boundsOf(s: Sweep): { minX: number; minY: number; maxX: number; maxY: number } {
@@ -526,6 +528,17 @@ function inRange(s: Sweep, i: number, cls: BodyClass): boolean {
   return c >= s.c0 - 1e-9 && c <= s.crossing.length + half + 1e-9;
 }
 
+function rangeOf(s: Sweep): Uint8Array {
+  if (s.range) return s.range;
+  const range = new Uint8Array(s.count);
+  for (let i = 0; i < s.count; i++) {
+    let mask = 0;
+    for (const cls of BODY_CLASSES) if (inRange(s, i, cls)) mask |= 1 << cls;
+    range[i] = mask;
+  }
+  return (s.range = range);
+}
+
 /**
  * The approach, the movement and the exit as one arc-length parameter.
  * Beyond either end the path continues straight along its end tangent, so a
@@ -623,6 +636,8 @@ function pairZones(a: Sweep, b: Sweep): PairZones | null {
   }
   if (!hits.length) return null;
 
+  const rangeA = rangeOf(a), rangeB = rangeOf(b);
+
   // 3 x 3 class pairs x [enterA, exitA, enterB, exitB]; NaN = no overlap.
   const table = new Float64Array(36).fill(Number.NaN);
   // The four SAT axes and their body projections are identical for all nine
@@ -647,11 +662,12 @@ function pairZones(a: Sweep, b: Sweep): PairZones | null {
     }
     const cA = a.c0 + i * SWEEP_STEP;
     const cB = b.c0 + j * SWEEP_STEP;
+    const eligibleA = rangeA[i] as number, eligibleB = rangeB[j] as number;
     for (const ca of BODY_CLASSES) {
-      if (!inRange(a, i, ca)) continue;
+      if (!(eligibleA & (1 << ca))) continue;
       const [ahl, ahw] = halfExtent(ca);
       for (const cb of BODY_CLASSES) {
-        if (!inRange(b, j, cb)) continue;
+        if (!(eligibleB & (1 << cb))) continue;
         if (ca !== HEAVY || cb !== HEAVY) {
           const [bhl, bhw] = halfExtent(cb);
           let separate = false;
