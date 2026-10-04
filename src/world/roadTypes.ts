@@ -1,6 +1,6 @@
 import { kmh } from './units';
 import type { SegmentDirection } from './doc';
-import type { RoadSection } from './roadSection';
+import type { RoadSection, LaneTurnRule } from './roadSection';
 
 /**
  * Surface levels, in painting order.
@@ -63,6 +63,8 @@ export interface RoadType {
   readonly speedLimit: number;
   /** Higher wins right of way at unsignalised junctions. */
   readonly priorityRank: number;
+  readonly turnsForward?: readonly LaneTurnRule[];
+  readonly turnsBackward?: readonly LaneTurnRule[];
   readonly markings: MarkingStyle;
   readonly color: string;
   readonly edge: string;
@@ -254,6 +256,8 @@ export function roadProfile(
       median,
       speedLimit: kmh(section.speedKmh),
       priorityRank: section.priority,
+      ...(section.turnsForward ? { turnsForward: section.turnsForward } : {}),
+      ...(section.turnsBackward ? { turnsBackward: section.turnsBackward } : {}),
     };
   }
   if ((configuredLanes === undefined || configuredLanes === null) &&
@@ -313,7 +317,9 @@ export const laneWidth = (rt: RoadType): number =>
 /** Materializes the current profile for the first authored edit without changing old maps. */
 export function sectionFromProfile(rt: RoadType): RoadSection {
   return { laneWidth: laneWidth(rt), sidewalk: rt.sidewalk, median: rt.median,
-    speedKmh: rt.speedLimit / kmh(1), priority: rt.priorityRank };
+    speedKmh: rt.speedLimit / kmh(1), priority: rt.priorityRank,
+    ...(rt.turnsForward ? { turnsForward: [...rt.turnsForward] } : {}),
+    ...(rt.turnsBackward ? { turnsBackward: [...rt.turnsBackward] } : {}) };
 }
 
 /**

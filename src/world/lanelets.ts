@@ -7,6 +7,7 @@ import type { NodeId, SegmentId } from './ids';
 import { movementKey, type JunctionControl, type RoadDoc } from './doc';
 import type { Network } from './network';
 import { laneOffset, laneWidth, roadProfile, travelLanes } from './roadTypes';
+import { laneTurnAllowed } from './roadSection';
 import { orientedPolyline } from './geometry';
 import { type ApproachGroup, computeApproachGroups } from './approachGroups';
 import { TUNNELS_DRAWN } from './structures';
@@ -259,19 +260,24 @@ export class LaneletGraph {
         //   `lanes` and `direction` and the whole `section`
         //   (`laneWidth`, `sidewalk`, `median`, `speedKmh`, `priority`, through
         //   `roadProfile`: `laneIsPlausible`'s lane counts, the signal rule),
-        //   `structure`, the two stop-line trims and the degree of the node it
-        //   runs into.
+        //   `structure`, the two stop-line trims, the authored lane arrows
+        //   (`section.turnsForward` / `turnsBackward`: `laneTurnAllowed` and
+        //   the authored-turn lane choice in `buildJunctions`), and the degree
+        //   and pedestrian crossing of the node it runs into (`controlled`).
         //
         // The junction key is built out of these lanelet keys, so this list is
         // what makes that one complete: `TUNNELS_DRAWN` is true and every
         // direction is allowed somewhere, so every segment of a node has at
         // least one lanelet here to speak for it.
         const section = seg.section;
+        const crossing = doc.node(to)?.crossing;
         const key = `${segId}|${forward ? 1 : 0}|${seg.type}|${seg.lanes ?? '-'}|${seg.direction}`
           + `|${seg.structure ?? '-'}`
           + `|${section ? `${section.laneWidth},${section.sidewalk},${section.median},${section.speedKmh},${section.priority}` : '-'}`
+          + `|${section?.turnsForward?.join(',') ?? '-'}|${section?.turnsBackward?.join(',') ?? '-'}`
           + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}`
-          + `|${doc.degree(to)}|${s0}|${s1}|${new Digest().addAll(full.xy).value()}`;
+          + `|${doc.degree(to)}|${crossing ? `${crossing.kind},${crossing.segment}` : '-'}`
+          + `|${s0}|${s1}|${new Digest().addAll(full.xy).value()}`;
         let lanes = previous.get(key);
         if (!lanes) {
           const pts = centreTrimmed.toPoints();
@@ -291,7 +297,7 @@ export class LaneletGraph {
               from,
               to,
               laneIndex: lane,
-              controlled: doc.degree(to) >= 3,
+              controlled: doc.degree(to) >= 3 || crossing !== undefined,
             });
           }
         }
@@ -327,6 +333,7 @@ export class LaneletGraph {
       // moving any one of them moves the key:
       //
       //   `node.control` -> `shouldSignalise`
+      //   `node.crossing` -> a mid-block crossing's own junction
       //   `node.incident` -> the leg list, `computeApproachGroups`
       //   `node.blockedMovements` -> which movements are dropped
       //   the lanelet keys -> `surface.centre`, the turn geometry, lane counts,
@@ -338,6 +345,7 @@ export class LaneletGraph {
       // connectors it had, objects and all.
       const surfaceKey = surfaceOf()?.key ?? '';
       const key = `${nodeId}|${new Digest().addText(String(surfaceKey)).addText(node.control)
+        .addText(node.crossing ? `${node.crossing.kind},${node.crossing.segment}` : '-')
         .addText(node.incident.join(',')).addText(node.blockedMovements.join(','))
         .addText(inbound.map((id) => this.laneletKeys.get(id) ?? id).join('|'))
         .addText(outbound.map((id) => this.laneletKeys.get(id) ?? id).join('|')).value()}`;
@@ -432,6 +440,10 @@ export class LaneletGraph {
         const inLane = this.lanelets.get(inId);
         if (!inLane || inLane.segment === undefined) continue;
         const inDir = endDirection(inLane.centre);
+        const incomingSegment = doc.requireSegment(inLane.segment);
+        const rules = inLane.from === incomingSegment.a ? incomingSegment.section?.turnsForward : incomingSegment.section?.turnsBackward;
+        const rule = rules?.[inLane.laneIndex ?? 0];
+        const authored = rule !== undefined && rule !== 'all';
         const legal: { outId: LaneletId; outLane: Lanelet; turn: TurnKind; carried: boolean }[] = [];
         // U-turns the lane-count rule above set aside. They come back only for
         // a lane that has nothing else: where two roads both run back to the
@@ -450,6 +462,7 @@ export class LaneletGraph {
           const isReverse = outLane.segment === inLane.segment;
           const outDir = tangentAtStart(outLane.centre);
           const turn = isReverse ? 'uturn' : classifyTurn(inDir, outDir);
+          if (!laneTurnAllowed(rule, turn)) continue;
           // The road the node is ON carries its lanes across, however it bends.
           const carried = !isReverse && road !== null &&
             road.includes(inLane.segment) && road.includes(outLane.segment);
@@ -469,7 +482,10 @@ export class LaneletGraph {
             continue;
           }
           legal.push({ outId, outLane, turn, carried });
-          if (laneIsPlausible(inLane, outLane, carried ? 'through' : turn, inLanes, outLanes)) {
+          const receivesAuthoredTurn = turn === 'left' ? (outLane.laneIndex ?? 0) === 0 :
+            turn === 'right' ? (outLane.laneIndex ?? 0) === outLanes - 1 :
+              (outLane.laneIndex ?? 0) === (inLane.laneIndex ?? 0);
+          if (authored ? receivesAuthoredTurn : laneIsPlausible(inLane, outLane, carried ? 'through' : turn, inLanes, outLanes)) {
             addConnector(inId, inLane, outId, outLane, turn, carried);
           }
         }

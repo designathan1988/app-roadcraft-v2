@@ -3,9 +3,12 @@ import {
   Level,
   type RoadType,
   laneWidth,
+  laneOffset,
+  travelLanes,
   lanesPerDirection,
   markingColor,
 } from '@world/roadTypes';
+import { laneTurnAllowed } from './roadSection';
 import type { Network, SegmentRibbon } from '@world/network';
 import { offsetPolyline } from '@core/offset';
 import type { Vec2 } from '@core/vec2';
@@ -113,6 +116,51 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSp
     }
   }
 
+  out.push(...laneArrowMarkings(ribbon));
+  return out;
+}
+
+/** Painted turn arrows follow the same authored rule as the connector graph. */
+export function laneArrowMarkings(ribbon: SegmentRibbon): StrokeSpec[] {
+  const centre = ribbon.centre[Level.Asphalt];
+  // Keep arrows behind the crossing/stop bar and suppress them on a short approach.
+  if (!centre || centre.length < 48) return [];
+  const road = ribbon.road;
+  const out: StrokeSpec[] = [];
+  const width = laneWidth(road);
+  const lateral = Math.min(2.5, width * 0.32);
+  for (const forward of [true, false]) {
+    if (ribbon.direction === (forward ? 'bToA' : 'aToB')) continue;
+    const rules = forward ? road.turnsForward : road.turnsBackward;
+    if (!rules) continue;
+    const sign = forward ? 1 : -1;
+    const station = forward ? centre.length - 22 : 22;
+    for (let lane = 0; lane < travelLanes(road, ribbon.direction); lane++) {
+      const rule = rules[lane];
+      if (!rule || rule === 'all') continue;
+      const offset = laneOffset(road, lane, ribbon.direction);
+      // Each vertex follows the actual curved road, rather than a tangent chord.
+      const point = (along: number, across: number): Vec2 => {
+        const frame = centre.sampleAt(station + along * sign);
+        const d = (offset + across) * sign;
+        return { x: frame.p.x + frame.n.x * d, y: frame.p.y + frame.n.y * d };
+      };
+      const line = (...vertices: [number, number][]): void => {
+        out.push({ points: vertices.map(([along, across]) => point(along, across)),
+          width: 0.65, color: LANE_LINE, dash: null, dashOffset: 0 });
+      };
+      line([-5, 0], [0, 0]);
+      if (laneTurnAllowed(rule, 'through')) {
+        line([0, 0], [5, 0]);
+        line([3, -lateral * 0.6], [5, 0], [3, lateral * 0.6]);
+      }
+      for (const side of [1, -1]) {
+        if (!laneTurnAllowed(rule, side === 1 ? 'left' : 'right')) continue;
+        line([0, 0], [1.5, 0], [1.5, lateral * side]);
+        line([0, lateral * side * 0.5], [1.5, lateral * side], [3, lateral * side * 0.5]);
+      }
+    }
+  }
   return out;
 }
 

@@ -40,6 +40,7 @@ import {
   type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, snapRoadEndpoint, type SnapResult,
 } from '@editor/snap';
 import { type DraftResult, commitRoadPath, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
+import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from '@editor/roadPath';
 import { commitRoundabout } from '@editor/roundabout';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
@@ -3539,6 +3540,34 @@ function showInspector(): void {
         const polyline = net.polylines.get(doc, id);
         const at = polyline.sampleAt(polyline.length / 2).p;
         mutate(() => splitSegment(doc, net, id, polyline.length / 2, at) !== null);
+      },
+      onAddCrossing: (id, kind) => {
+        if (!doc.segment(id)) return;
+        // Where the player clicked on the road, or its middle.
+        const chosen = selectedSegment === id && selectedSegmentS !== null ? selectedSegmentS : undefined;
+        let placed: NodeId | null = null;
+        mutate(() => {
+          const result = commitPedestrianCrossing(doc, net, id, kind, chosen);
+          if (!result.committed) {
+            flashHint(`hint.crossing.${result.reason}`);
+            return false;
+          }
+          placed = result.node;
+          return true;
+        });
+        if (placed !== null) {
+          selectedSegment = null;
+          selectedSegmentS = null;
+          selectedNode = placed;
+          showInspector();
+        }
+      },
+      onRemoveCrossing: (node) => {
+        mutate(() => {
+          if (!doc.node(node)?.crossing) return false;
+          doc.clearNodeCrossing(node);
+          return true;
+        });
       },
       onAddHeightPoint: (id) => {
         if (!doc.segment(id)) return;

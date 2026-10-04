@@ -1,4 +1,4 @@
-import { normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
+import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
 import type { Vec2 } from '@core/vec2';
 import { type CurveShape, fitShapeToRadius } from '@core/bezier';
 import {
@@ -68,6 +68,19 @@ export interface RoadNode {
   readonly incident: SegmentId[];
   control: JunctionControl;
   blockedMovements: string[];
+  /**
+   * A pedestrian crossing placed mid-block, on a node that joins exactly two
+   * roads. `segment` is the piece the paint lies on (its downstream edge is
+   * this node). Dropped as soon as the node stops being a two-road node or the
+   * segment leaves it: a real junction draws its own crossings.
+   */
+  crossing?: NodeCrossing;
+}
+
+export type NodeCrossingKind = 'zebra' | 'signal';
+export interface NodeCrossing {
+  readonly kind: NodeCrossingKind;
+  readonly segment: SegmentId;
 }
 
 export interface RoadSegment {
@@ -356,6 +369,8 @@ export class RoadDoc {
     this.segments.set(id, s);
     this.requireNode(a).incident.push(id);
     this.requireNode(b).incident.push(id);
+    // A third road turns a mid-block crossing into a junction.
+    for (const end of [a, b]) dropStaleCrossing(this.requireNode(end));
     this.fitCurve(s);
     this.markSegment(id);
     return s;
@@ -375,6 +390,7 @@ export class RoadDoc {
       for (let i = n.blockedMovements.length - 1; i >= 0; i--) {
         if (movementMentions(n.blockedMovements[i] as string, id)) n.blockedMovements.splice(i, 1);
       }
+      dropStaleCrossing(n);
     }
     this.segments.delete(id);
   }
@@ -396,6 +412,19 @@ export class RoadDoc {
     }
     this.dirtyNodes.add(node);
     this.trafficRevision++;
+  }
+
+  /**
+   * Re-applies a crossing `saved` at `node` that lay on segment `from` to the
+   * segment `to` that replaced it there (a split or a join), exactly as
+   * `carryMovements` does for turn bans.
+   */
+  carryCrossing(node: NodeId, saved: NodeCrossing | undefined, from: SegmentId, to: SegmentId): void {
+    const n = this.nodes.get(node);
+    if (!n || !saved || saved.segment !== from) return;
+    n.crossing = { kind: saved.kind, segment: to };
+    dropStaleCrossing(n);
+    this.markNode(node);
   }
 
   removeNode(id: NodeId): void {
@@ -444,6 +473,7 @@ export class RoadDoc {
     }
     this.nodes.delete(source);
     this.dirtyNodes.add(source);
+    dropStaleCrossing(keep);
     this.markNode(target);
     return true;
   }
@@ -570,6 +600,29 @@ export class RoadDoc {
     const n = this.nodes.get(id);
     if (!n || n.control === control) return;
     n.control = control;
+    this.markNode(id);
+  }
+
+  /**
+   * Puts a mid-block pedestrian crossing on a two-road node, painted on
+   * `segment`. A signal crossing is a signalised node; a zebra gives the
+   * pedestrian priority. Returns false when the node cannot carry one.
+   */
+  setNodeCrossing(id: NodeId, kind: NodeCrossingKind, segment: SegmentId): boolean {
+    const n = this.nodes.get(id);
+    if (!n || n.incident.length !== 2 || !n.incident.includes(segment)) return false;
+    n.crossing = { kind, segment };
+    n.control = kind === 'signal' ? 'signal' : 'priority';
+    this.markNode(id);
+    return true;
+  }
+
+  /** Removes a node's mid-block crossing; the node goes back to `auto`. */
+  clearNodeCrossing(id: NodeId): void {
+    const n = this.nodes.get(id);
+    if (!n?.crossing) return;
+    delete n.crossing;
+    n.control = 'auto';
     this.markNode(id);
   }
 
@@ -721,13 +774,14 @@ export class RoadDoc {
         id, x: node.x, y: node.y, heightOffset: node.heightOffset, smooth: node.smooth,
         incident: [...node.incident], control: node.control,
         blockedMovements: [...node.blockedMovements],
+        ...(node.crossing ? { crossing: { ...node.crossing } } : {}),
       });
     }
     for (const [id, segment] of source.segments) {
       this.segments.set(id, {
         ...segment,
         curve: segment.curve ? { ...segment.curve } : null,
-        ...(segment.section ? { section: { ...segment.section } } : {}),
+        ...(segment.section ? { section: cloneRoadSection(segment.section) } : {}),
       });
     }
     this.poles.clear();
@@ -785,6 +839,7 @@ export class RoadDoc {
         // the document as it was; an alias cannot.
         id: n.id, x: n.x, y: n.y, heightOffset: n.heightOffset, smooth: n.smooth,
         control: n.control, blockedMovements: [...n.blockedMovements],
+        ...(n.crossing ? { crossing: { kind: n.crossing.kind, segment: n.crossing.segment } } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -796,7 +851,7 @@ export class RoadDoc {
         direction: s.direction,
         lanes: s.lanes,
         structure: s.structure,
-        ...(s.section ? { section: { ...s.section } } : {}),
+        ...(s.section ? { section: cloneRoadSection(s.section) } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
@@ -885,6 +940,16 @@ export class RoadDoc {
       doc.requireNode(b).incident.push(id);
       doc.segIds.reserve(s.id);
     }
+    // Crossings last: they name a segment, and only a two-road node that still
+    // holds that segment may carry one. A merged (repaired) record has none.
+    for (const n of data.nodes) {
+      const node = doc.nodes.get(asNodeId(n.id));
+      const crossing = n.crossing;
+      if (!node || canonicalNode.get(n.id) !== node.id || !crossing) continue;
+      if (crossing.kind !== 'zebra' && crossing.kind !== 'signal') continue;
+      node.crossing = { kind: crossing.kind, segment: asSegmentId(crossing.segment) };
+      dropStaleCrossing(node);
+    }
     for (const stamp of data.terrain ?? []) {
       doc.terrainStamps.push({ ...stamp });
       doc.nextTerrainId = Math.max(doc.nextTerrainId, stamp.id + 1);
@@ -956,6 +1021,7 @@ export interface SerializedDoc {
   readonly nodes: readonly {
     id: number; x: number; y: number; heightOffset?: number; smooth?: boolean;
     control?: JunctionControl; blockedMovements?: readonly string[];
+    crossing?: { kind: NodeCrossingKind; segment: number };
   }[];
   readonly segments: readonly {
     id: number;
@@ -1011,7 +1077,8 @@ function sameRoads(a: RoadDoc, b: RoadDoc): boolean {
   for (const [id, p] of a.nodes) {
     const q = b.nodes.get(id);
     if (!q || p.x !== q.x || p.y !== q.y || p.heightOffset !== q.heightOffset || p.smooth !== q.smooth ||
-      p.control !== q.control || !sameList(p.incident, q.incident) || !sameList(p.blockedMovements, q.blockedMovements)) return false;
+      p.control !== q.control || !sameList(p.incident, q.incident) || !sameList(p.blockedMovements, q.blockedMovements) ||
+      p.crossing?.kind !== q.crossing?.kind || p.crossing?.segment !== q.crossing?.segment) return false;
   }
   for (const [id, p] of a.segments) {
     const q = b.segments.get(id);
@@ -1064,4 +1131,15 @@ function sameStamps(a: readonly TerrainStamp[], b: readonly TerrainStamp[]): boo
     for (const key of keys) if (p[key] !== q[key]) return false;
   }
   return true;
+}
+
+/** A crossing stays only on a two-road node that still holds its segment. */
+function dropStaleCrossing(node: RoadNode | undefined): void {
+  if (!node?.crossing) return;
+  if (node.incident.length === 2 && node.incident.includes(node.crossing.segment)) return;
+  const placed = node.crossing.kind === 'signal' ? 'signal' : 'priority';
+  delete node.crossing;
+  // The control the crossing put there goes with it, so the new junction picks
+  // its own; a control the player changed since is theirs and stays.
+  if (node.control === placed) node.control = 'auto';
 }

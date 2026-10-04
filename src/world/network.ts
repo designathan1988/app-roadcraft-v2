@@ -4,7 +4,7 @@ import { offsetPolyline } from '@core/offset';
 import { Polyline } from '@core/polyline';
 import { type Vec2, dot } from '@core/vec2';
 import type { RoadDoc } from './doc';
-import type { SegmentDirection } from './doc';
+import type { NodeCrossing, SegmentDirection } from './doc';
 import type { NodeId, SegmentId } from './ids';
 import { PolylineCache, segmentStartsAt } from './geometry';
 import {
@@ -488,6 +488,12 @@ export class Network {
    * crossing and a stop line at the node itself, a crossing's depth past the
    * bar painted for it.
    */
+  /** The node's authored crossing, while the node still joins exactly two roads. */
+  private midBlockCrossing(node: NodeId): NodeCrossing | undefined {
+    const n = this.doc.node(node);
+    return n?.crossing && n.incident.length === 2 ? n.crossing : undefined;
+  }
+
   private isJunction(node: NodeId): boolean {
     return (this.doc.node(node)?.incident.length ?? 0) >= 3;
   }
@@ -514,6 +520,11 @@ export class Network {
    * (defect 2 / 1b of RELATORIO.md).
    */
   stopLineDistance(seg: SegmentId, node: NodeId): number {
+    // A mid-block crossing (`RoadNode.crossing`): the paint lies on one piece,
+    // its far edge at the node. Both approaches stop a whole crosswalk plus the
+    // setback short of the node, so neither bar can reach the paint (MUTCD
+    // 3B.16 wants 1.2 m at least in front of the near crosswalk line).
+    if (this.midBlockCrossing(node)) return CROSSWALK_DEPTH + STOP_BAR_SETBACK;
     const mouth = this.mouthDistance(seg, node);
     if (mouth <= 0 && !this.isJunction(node)) return 0;
     // Nothing stops where a road merely carries on: the link runs to the mouth
@@ -554,6 +565,10 @@ export class Network {
     const cacheKey = `${seg}:${node}`;
     const cached = this.crossingDistances.get(cacheKey);
     if (cached !== undefined) return cached;
+    // An authored mid-block crossing is exactly where the player put it: its
+    // centre half a crosswalk back from the node, on the piece it names.
+    const placed = this.midBlockCrossing(node);
+    if (placed) return placed.segment === seg ? CROSSWALK_DEPTH / 2 : 0;
     if (this.doc.node(node)?.incident.some((id) => {
       const kind = this.doc.segment(id)?.type;
       return kind !== undefined &&

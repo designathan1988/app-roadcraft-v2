@@ -601,7 +601,9 @@ export function reconcileMovedNode(doc: RoadDoc, net: Network, id: NodeId, depth
 /** Joins two compatible straight segments meeting at an otherwise unused node. */
 export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   const node = doc.node(nodeId);
-  if (!node || node.incident.length !== 2) return false;
+  // A node carrying a pedestrian crossing is the crossing; joining it away
+  // would erase what the player placed.
+  if (!node || node.incident.length !== 2 || node.crossing) return false;
   const [firstId, secondId] = node.incident;
   if (firstId === undefined || secondId === undefined) return false;
   const first = doc.segment(firstId);
@@ -614,6 +616,8 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   const dashOrigin = Math.min(first.dashOrigin, second.dashOrigin);
   const bansAtA = [...(doc.node(a)?.blockedMovements ?? [])];
   const bansAtB = [...(doc.node(b)?.blockedMovements ?? [])];
+  const crossingAtA = doc.node(a)?.crossing;
+  const crossingAtB = doc.node(b)?.crossing;
   doc.removeSegment(first.id);
   doc.removeSegment(second.id);
   doc.removeNode(nodeId);
@@ -621,6 +625,8 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   if (!joined) return false;
   doc.carryMovements(a, bansAtA, first.id, joined.id);
   doc.carryMovements(b, bansAtB, second.id, joined.id);
+  doc.carryCrossing(a, crossingAtA, first.id, joined.id);
+  doc.carryCrossing(b, crossingAtB, second.id, joined.id);
   return true;
 }
 
@@ -747,6 +753,9 @@ function splitSegmentAtCuts<Tag>(
   // The bans at the two ends name this segment; they move to the end pieces.
   const bansAtA = [...(doc.node(seg.a)?.blockedMovements ?? [])];
   const bansAtB = [...(doc.node(seg.b)?.blockedMovements ?? [])];
+  // So does a crossing painted on this segment at either end.
+  const crossingAtA = doc.node(seg.a)?.crossing;
+  const crossingAtB = doc.node(seg.b)?.crossing;
   const pieces: SegmentId[] = [];
 
   doc.removeSegment(id);
@@ -777,6 +786,8 @@ function splitSegmentAtCuts<Tag>(
   const last = pieces[pieces.length - 1];
   if (first !== undefined) doc.carryMovements(seg.a, bansAtA, id, first);
   if (last !== undefined) doc.carryMovements(seg.b, bansAtB, id, last);
+  if (first !== undefined) doc.carryCrossing(seg.a, crossingAtA, id, first);
+  if (last !== undefined) doc.carryCrossing(seg.b, crossingAtB, id, last);
 
   return result;
 }

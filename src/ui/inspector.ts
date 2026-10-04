@@ -1,5 +1,5 @@
 import type { NodeId, SegmentId } from '@world/ids';
-import { movementKey, type JunctionControl, type RoadDoc, type SegmentDirection } from '@world/doc';
+import { movementKey, type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
 import type { Network } from '@world/network';
 import type { JunctionTopology } from '@world/lanelets';
 import type { CurveShape } from '@core/bezier';
@@ -28,6 +28,9 @@ export interface InspectorActions {
   readonly onSetNodeHeight?: (id: NodeId, metres: number) => void;
   readonly onReverseDirection?: (id: SegmentId) => void;
   readonly onSplit?: (id: SegmentId) => void;
+  /** Places a mid-block pedestrian crossing on the road (`commitPedestrianCrossing`). */
+  readonly onAddCrossing?: (id: SegmentId, kind: NodeCrossingKind) => void;
+  readonly onRemoveCrossing?: (node: NodeId) => void;
   readonly onAddHeightPoint?: (id: SegmentId) => void;
   readonly onDuplicate?: (id: SegmentId) => void;
   readonly onSetControl?: (id: NodeId, control: JunctionControl) => void;
@@ -224,12 +227,14 @@ function renderSegment(
     (oneWay ? `<button type="button" id="inspectReverse">${t('inspector.reverse')}</button>` : '') +
     `<button type="button" id="inspectDuplicate" title="${t('inspector.duplicateHint')}">${t('inspector.duplicate')}</button>` +
     `<button type="button" id="inspectSplit">${t('inspector.splitMiddle')}</button>` +
+    `<button type="button" id="inspectZebra">${t('inspector.addZebra')}</button>` +
+    `<button type="button" id="inspectSignalCrossing">${t('inspector.addSignalCrossing')}</button>` +
     `<button type="button" id="inspectAddHeightPoint">${t('inspector.addHeightPoint')}</button>` +
     `<button type="button" id="inspectDelete" class="danger">${t('inspector.demolish')}</button>` +
     `</div>`;
 
   if (freeRoadsEnabled() && actions.onSetSection) {
-    mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, oneWay,
+    mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, seg.direction, seg.section,
       (section) => actions.onSetSection?.(id, section));
   }
   const upgrade = document.getElementById('inspectUpgrade') as HTMLButtonElement | null;
@@ -256,6 +261,10 @@ function renderSegment(
   if (reverse) reverse.onclick = () => actions.onReverseDirection?.(id);
   if (duplicate) duplicate.onclick = () => actions.onDuplicate?.(id);
   if (split) split.onclick = () => actions.onSplit?.(id);
+  const zebra = document.getElementById('inspectZebra') as HTMLButtonElement | null;
+  const signalCrossing = document.getElementById('inspectSignalCrossing') as HTMLButtonElement | null;
+  if (zebra) zebra.onclick = () => actions.onAddCrossing?.(id, 'zebra');
+  if (signalCrossing) signalCrossing.onclick = () => actions.onAddCrossing?.(id, 'signal');
   if (heightPoint) heightPoint.onclick = () => actions.onAddHeightPoint?.(id);
   if (curve) {
     curve.oninput = () => {
@@ -386,7 +395,12 @@ function renderNode(
     ? `<div class="inspect-actions"><button type="button" id="inspectJoin">${t('inspector.joinAligned')}</button></div>`
     : '';
 
-  body.innerHTML = `<div id="inspectStats">${stats}</div>` +
+  // A mid-block crossing says what it is and offers the way back.
+  const crossingOffer = node.crossing
+    ? `<p class="inspect-note">${t(node.crossing.kind === 'signal' ? 'inspector.crossingSignal' : 'inspector.crossingZebra')}</p>` +
+      `<div class="inspect-actions"><button type="button" id="inspectRemoveCrossing" class="danger">${t('inspector.removeCrossing')}</button></div>`
+    : '';
+  body.innerHTML = `<div id="inspectStats">${stats}</div>` + crossingOffer +
     `<label class="inspect-select">${t('inspector.heightNode')} <input id="inspectHeightNode" type="number" step="0.1" value="${(node.heightOffset / UNITS_PER_METER).toFixed(1)}" /></label>` +
     (node.smooth ? `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`
       : `<label class="inspect-select">${t('inspector.controlSelect')} <select id="inspectControl">${controlOptions(node.control)}</select></label>`) +
@@ -400,6 +414,8 @@ function renderNode(
   if (policy) policy.onchange = () => actionsForNode().onSetControl?.(id, policy.value as JunctionControl);
   const join = document.getElementById('inspectJoin') as HTMLButtonElement | null;
   if (join) join.onclick = () => actionsForNode().onJoin?.(id);
+  const removeCrossing = document.getElementById('inspectRemoveCrossing') as HTMLButtonElement | null;
+  if (removeCrossing) removeCrossing.onclick = () => actionsForNode().onRemoveCrossing?.(id);
   document.querySelectorAll<HTMLInputElement>('[data-movement-from]').forEach((input) => {
     input.onchange = () => actionsForNode().onSetMovementBlocked?.(
       id,
