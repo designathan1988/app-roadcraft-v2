@@ -198,17 +198,21 @@
     <section id="zonePalette" class="terrain-palette glass hidden" data-panel="zone" data-i18n-label="zone.title" aria-label="Zoning" aria-hidden="true">
       <div class="panel-title"><button type="button" class="panel-toggle" aria-expanded="true" aria-controls="zoneBody"><span data-i18n="zone.title">ZONING</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>
       <div class="panel-body" id="zoneBody">
-        <div class="terrain-modes" role="group" data-i18n-label="zone.use" aria-label="Zone use">
+        <div class="terrain-modes zone-row" role="group" data-i18n-label="zone.tool" aria-label="Zoning tool">
+          <button type="button" class="terrain-mode active" data-zone-mode="brush" aria-pressed="true" data-i18n="zone.brush">Brush</button>
+          <button type="button" class="terrain-mode" data-zone-mode="fill" aria-pressed="false" data-i18n="zone.fill">Fill block</button>
+          <button type="button" class="terrain-mode" id="zoneRemove" aria-pressed="false" data-i18n="zone.remove">Remove zone</button>
+        </div>
+        <div class="terrain-modes zone-row" role="group" data-i18n-label="zone.use" aria-label="Zone use">
           <button type="button" class="terrain-mode active" data-zone-use="residential" aria-pressed="true" data-i18n="zone.residential">Residential</button>
           <button type="button" class="terrain-mode" data-zone-use="commercial" aria-pressed="false" data-i18n="zone.commercial">Commercial</button>
           <button type="button" class="terrain-mode" data-zone-use="industrial" aria-pressed="false" data-i18n="zone.industrial">Industrial</button>
         </div>
-        <div class="terrain-modes" role="group" data-i18n-label="zone.density" aria-label="Density">
+        <div class="terrain-modes zone-row" role="group" data-i18n-label="zone.density" aria-label="Density">
           <button type="button" class="terrain-mode active" data-zone-density="low" aria-pressed="true" data-i18n="zone.low">Low</button>
           <button type="button" class="terrain-mode" data-zone-density="medium" aria-pressed="false" data-i18n="zone.medium">Medium</button>
           <button type="button" class="terrain-mode" data-zone-density="high" aria-pressed="false" data-i18n="zone.high">High</button>
         </div>
-        <button type="button" class="terrain-mode" id="zoneRemove" aria-pressed="false" data-i18n="zone.remove">Remove zone</button>
       </div>
     </section>
 

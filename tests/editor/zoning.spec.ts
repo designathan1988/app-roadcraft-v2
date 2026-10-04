@@ -1,28 +1,82 @@
 import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
-import { applyZone } from '@editor/zoning';
+import { blockOf, growOne, marksByCell, paintCells } from '@editor/zoning';
 import { validateBuilding } from '@world/buildings/validate';
+import { ZONE_CELL, ZONE_DEPTH, buildZoneGrid } from '@world/zoneGrid';
 import { ZONE_DENSITIES, ZONE_USES } from '@world/zones';
+import { Level, halfWidth } from '@world/roadTypes';
 
-function street() {
+function street(angle = 0) {
   const doc = new RoadDoc();
-  const west = doc.addNode({ x: -600, y: 0 });
-  const east = doc.addNode({ x: 600, y: 0 });
-  doc.addSegment(west.id, east.id, 1);
+  const c = Math.cos(angle) * 600, s = Math.sin(angle) * 600;
+  const west = doc.addNode({ x: -c, y: -s });
+  const east = doc.addNode({ x: c, y: s });
+  const segment = doc.addSegment(west.id, east.id, 1)!;
   const net = new Network(doc);
   net.rebuild();
-  return { doc, net, groundAt: () => 0 };
+  return { doc, net, segment, groundAt: () => 0 };
 }
 
-describe('roadside zoning', () => {
-  it('constructs valid buildings for every use and density', () => {
+function growAll(ctx: ReturnType<typeof street>) {
+  const grid = buildZoneGrid(ctx.doc, ctx.net);
+  const refused = new Set<string>();
+  const ids: number[] = [];
+  for (let i = 0; i < 200; i++) {
+    const id = growOne(ctx, grid, refused, 7);
+    if (id === null) break;
+    ids.push(id);
+  }
+  return ids;
+}
+
+describe('street zoning grid', () => {
+  it('lays cells along both sides of a street, behind its footway, aligned with it at any angle', () => {
+    for (const angle of [0, Math.PI / 4, 1]) {
+      const { doc, net, segment } = street(angle);
+      const grid = buildZoneGrid(doc, net);
+      expect(grid.cells.length).toBeGreaterThan(0);
+      const ribbon = net.ribbons.get(segment.id)!;
+      const face = halfWidth(ribbon.road, Level.Sidewalk);
+      for (const cell of grid.cells) {
+        expect(cell.row).toBeLessThan(ZONE_DEPTH);
+        // A cell's centre sits its row's distance behind the footway.
+        const d = ribbon.full.distanceTo(cell.centre);
+        expect(d).toBeCloseTo(face + (cell.row + 0.5) * ZONE_CELL, 3);
+        // Its front edge runs along the street: both front corners at the same distance.
+        expect(ribbon.full.distanceTo(cell.corners[0])).toBeCloseTo(ribbon.full.distanceTo(cell.corners[1]), 3);
+      }
+      expect(new Set(grid.cells.map((cell) => cell.side))).toEqual(new Set([1, -1]));
+    }
+  });
+
+  it('keeps cells off a crossing street and its junction', () => {
+    const { doc, net } = street();
+    const north = doc.addNode({ x: 0, y: 400 }), south = doc.addNode({ x: 0, y: -400 });
+    doc.addSegment(north.id, south.id, 1);
+    net.rebuild();
+    // No cell may sit on either carriageway or footway.
+    const grid = buildZoneGrid(doc, net);
+    for (const cell of grid.cells) {
+      for (const ribbon of net.ribbons.values()) {
+        expect(ribbon.full.distanceTo(cell.centre)).toBeGreaterThan(halfWidth(ribbon.road, Level.Sidewalk) - 0.1);
+      }
+    }
+  });
+});
+
+describe('zoning and growth', () => {
+  it('paints a block, then grows valid, non-overlapping buildings of every use and density, facing the street', () => {
     for (const use of ZONE_USES) for (const density of ZONE_DENSITIES) {
       const ctx = street();
-      const result = applyZone(ctx, { x: -220, y: 0 }, { x: 220, y: 160 }, use, density);
-      expect(result.zones, `${use} ${density}`).toBe(1);
-      expect(result.buildings, `${use} ${density}`).toBeGreaterThan(0);
-      expect(ctx.doc.zones[0]?.buildingIds).toHaveLength(result.buildings);
+      const grid = buildZoneGrid(ctx.doc, ctx.net);
+      const front = grid.cells.find((cell) => cell.row === 0 && cell.side === 1)!;
+      const changed = paintCells(ctx.doc, grid, blockOf(grid, front), { use, density });
+      expect(changed, `${use} ${density}`).toBe(blockOf(grid, front).length);
+      // Nothing is built by the stroke itself: buildings grow afterwards.
+      expect(ctx.doc.buildings.size).toBe(0);
+      const ids = growAll(ctx);
+      expect(ids.length, `${use} ${density}`).toBeGreaterThan(1);
       for (const building of ctx.doc.buildings.all()) {
         expect(building.use, `${use} ${density}`).toBe(use);
         expect(validateBuilding(ctx, building), `${use} ${density}`).toBeNull();
@@ -30,20 +84,36 @@ describe('roadside zoning', () => {
     }
   });
 
-  it('round-trips zones and removes only their generated buildings', () => {
+  it('dezoning a cell under a grown building demolishes it and frees its other cells', () => {
     const ctx = street();
-    // Painting just behind the first lot must still find its road frontage.
-    const start = { x: -200, y: 52 }, end = { x: 200, y: 85 };
-    const first = applyZone(ctx, start, end, 'residential', 'low');
-    expect(first.buildings).toBeGreaterThan(0);
+    const grid = buildZoneGrid(ctx.doc, ctx.net);
+    const front = grid.cells.find((cell) => cell.row === 0 && cell.side === -1)!;
+    paintCells(ctx.doc, grid, blockOf(grid, front), { use: 'residential', density: 'low' });
+    const ids = growAll(ctx);
+    const target = ids[0]!;
+    const marks = marksByCell(ctx.doc, grid);
+    const under = grid.cells.filter((cell) => marks.get(cell.id)?.mark.building === target);
+    expect(under.length).toBeGreaterThan(0);
+    paintCells(ctx.doc, grid, [under[0]!], null);
+    expect(ctx.doc.buildings.has(target as never)).toBe(false);
+    expect(ctx.doc.zoneMarks.some((mark) => mark.building === target)).toBe(false);
+    // Its other cell stays zoned but is no lot alone; zoned again, the lot grows again.
+    expect(growAll(ctx)).toEqual([]);
+    paintCells(ctx.doc, grid, [under[0]!], { use: 'residential', density: 'low' });
+    expect(growAll(ctx).length).toBe(1);
+  });
+
+  it('round-trips zoned cells and their buildings, and finds every mark on its cell again', () => {
+    const ctx = street();
+    const grid = buildZoneGrid(ctx.doc, ctx.net);
+    const front = grid.cells.find((cell) => cell.row === 0 && cell.side === 1)!;
+    paintCells(ctx.doc, grid, blockOf(grid, front), { use: 'commercial', density: 'medium' });
+    growAll(ctx);
     const restored = RoadDoc.fromJSON(ctx.doc.toJSON(), { repair: false });
-    expect(restored.zones).toHaveLength(1);
-    expect(restored.zones[0]?.buildingIds).toHaveLength(first.buildings);
+    expect(restored.zoneMarks).toEqual(ctx.doc.zoneMarks);
     const net = new Network(restored);
     net.rebuild();
-    const removed = applyZone({ doc: restored, net, groundAt: () => 0 }, start, end, 'residential', 'low', true);
-    expect(removed.zones).toBe(1);
-    expect(restored.zones).toHaveLength(0);
-    expect(restored.buildings.size).toBe(0);
+    const again = marksByCell(restored, buildZoneGrid(restored, net));
+    expect(again.size).toBe(ctx.doc.zoneMarks.length);
   });
 });

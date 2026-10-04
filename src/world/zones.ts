@@ -26,3 +26,23 @@ export function zoneBounds(a: { x: number; y: number }, b: { x: number; y: numbe
 export function zonesOverlap(a: Pick<Zone, 'x0' | 'y0' | 'x1' | 'y1'>, b: Pick<Zone, 'x0' | 'y0' | 'x1' | 'y1'>): boolean {
   return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
 }
+
+/**
+ * One zoned cell of the street grid (`world/zoneGrid.ts`), stored by where it
+ * stands so it survives the road being split or its ids changing: the cell
+ * that stands within half a cell of it is the cell it marks.
+ */
+export interface ZoneMark {
+  readonly x: number;
+  readonly y: number;
+  readonly use: ZoneUse;
+  readonly density: ZoneDensity;
+  /** The building that grew on it, while that building stands. */
+  readonly building?: number;
+}
+
+export const isZoneMark = (raw: unknown): raw is ZoneMark => {
+  const v = raw as Partial<ZoneMark> | null;
+  return !!v && Number.isFinite(v.x) && Number.isFinite(v.y) && isZoneUse(v.use) && isZoneDensity(v.density) &&
+    (v.building === undefined || Number.isInteger(v.building));
+};

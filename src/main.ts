@@ -66,8 +66,9 @@ import { isQualityLevel, type QualityLevel } from '@render/quality';
 import { createBuildingWiring } from './buildingsWiring';
 import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
-import { type ZoneUse, type ZoneDensity, zoneBounds } from '@world/zones';
-import { applyZone } from '@editor/zoning';
+import { type ZoneUse, type ZoneDensity } from '@world/zones';
+import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid } from '@world/zoneGrid';
+import { blockOf, growOne, marksByCell, paintCells } from '@editor/zoning';
 
 type Tool =
   | 'building'
@@ -324,7 +325,32 @@ let barrierCursor: Vec2 | null = null;
 let zoneUse: ZoneUse = 'residential';
 let zoneDensity: ZoneDensity = 'low';
 let zoneEraser = false;
-let zoneDraft: { pointer: number; start: Vec2; end: Vec2; remove: boolean } | null = null;
+/** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
+let zoneMode: 'brush' | 'fill' = 'brush';
+/** The cells a stroke has passed over, painted on release as one undo step. */
+let zoneDraft: { pointer: number; remove: boolean; cells: Map<string, ZoneCell> } | null = null;
+let zoneHover: Vec2 | null = null;
+let zoneGridCache: { revision: number; grid: ZoneGrid } | null = null;
+/** The street grid, rebuilt only when the roads change. */
+function zoneGrid(): ZoneGrid {
+  if (!zoneGridCache || zoneGridCache.revision !== net.revision) {
+    zoneGridCache = { revision: net.revision, grid: buildZoneGrid(doc, net) };
+  }
+  return zoneGridCache.grid;
+}
+/** The cells a press or a drag at `world` takes in. */
+function zoneCellsAt(world: Vec2): ZoneCell[] {
+  const grid = zoneGrid();
+  if (zoneMode === 'fill') {
+    // On the street itself, the side the pointer is nearer to.
+    const cell = grid.cellAt(world) ?? grid.cellsNear(world, ZONE_CELL * 2.5)
+      .sort((p, q) => Math.hypot(p.centre.x - world.x, p.centre.y - world.y) - Math.hypot(q.centre.x - world.x, q.centre.y - world.y))[0];
+    return cell ? blockOf(grid, cell) : [];
+  }
+  const under = grid.cellAt(world);
+  const near = grid.cellsNear(world, ZONE_CELL * 0.9);
+  return under && !near.includes(under) ? [under, ...near] : near;
+}
 let hoverAnchor: Anchor | null = null;
 let selectedSegment: SegmentId | null = null;
 let selectedSegmentS: number | null = null;
@@ -1048,7 +1074,9 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
 
     case 'zone':
-      zoneDraft = { pointer: e.pointerId, start: world, end: world, remove: e.shiftKey || zoneEraser };
+      zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map() };
+      for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
+      requestDraw();
       break;
 
     case 'barrier': {
@@ -1245,9 +1273,13 @@ canvas.addEventListener('pointermove', (e) => {
   const world = pointerWorld(e);
 
   if (zoneDraft?.pointer === e.pointerId) {
-    zoneDraft.end = world;
+    if (zoneMode === 'brush') for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
     requestDraw();
     return;
+  }
+  if (tool === 'zone') {
+    zoneHover = world;
+    requestDraw();
   }
 
   if (tool === 'road' && curvePending) {
@@ -1397,15 +1429,16 @@ function endPointer(e: PointerEvent): void {
     const stroke = zoneDraft;
     zoneDraft = null;
     if (!cancelled && !wasPinching) {
-      const end = pointerWorld(e);
-      const result = { zones: 0, buildings: 0 };
+      const cells = [...stroke.cells.values()];
+      let changed = 0;
       mutate(() => {
-        Object.assign(result, applyZone({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) },
-          stroke.start, end, zoneUse, zoneDensity, stroke.remove));
-        return result.zones > 0;
+        changed = paintCells(doc, zoneGrid(), cells, stroke.remove ? null : { use: zoneUse, density: zoneDensity });
+        return changed > 0;
       });
-      flashHint(result.zones ? (stroke.remove ? 'hint.zone.removed' : result.buildings ? 'hint.zone.built' : 'hint.zone.noLots') : 'hint.zone.empty');
+      zoneRefused.clear();
+      flashHint(!cells.length ? 'hint.zone.empty' : stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
     }
+    requestDraw();
   }
 
   if (draft) {
@@ -1951,6 +1984,17 @@ zoneRemoveButton.addEventListener('click', () => {
   zoneRemoveButton.classList.toggle('active', zoneEraser);
   zoneRemoveButton.setAttribute('aria-pressed', String(zoneEraser));
   requestDraw();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button) => {
+  button.addEventListener('click', () => {
+    zoneMode = button.dataset['zoneMode'] === 'fill' ? 'fill' : 'brush';
+    document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    requestDraw();
+  });
 });
 document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -2800,6 +2844,25 @@ function requestDraw(): void {
   requestAnimationFrame(frame);
 }
 
+/**
+ * Buildings grow on zoned land on their own, one at a time, twice a second:
+ * the city fills in as the player watches, as in every city builder. Lots that
+ * did not take a building are skipped until the land or the roads change.
+ */
+const zoneRefused = new Set<string>();
+let zoneRefusedKey = '';
+setInterval(() => {
+  if (!doc.zoneMarks.length || moving) return;
+  const key = `${net.revision}:${doc.buildings.revision}`;
+  if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
+  const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
+  if (grown === null) return;
+  zoneRefusedKey = `${net.revision}:${doc.buildings.revision}`;
+  persistence.saveSessionSoon(doc, sessionSettings);
+  updateStatus();
+  requestDraw();
+}, 500);
+
 function frame(now: number): void {
   pending = false;
   const wall = (now - last) / 1000;
@@ -3078,35 +3141,42 @@ function drawOverlayScreen(): void {
   // about to tie into. If it looks right here it is right when built.
   drawPolePlan(currentPolePlan(), ctx, at, w, h);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
-  if (tool === 'zone') {
+  if (tool === 'zone' || doc.zoneMarks.length) {
+    // The street grid: in the Zoning tool every cell, outlined, the zoned ones
+    // filled with their use's colour; with any other tool only the zoned land
+    // still waiting for a building, faintly, so the plan stays readable.
     ctx.save();
     const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
-    for (const zone of doc.zones) {
-      const corners = [
-        { x: zone.x0, y: zone.y0 }, { x: zone.x1, y: zone.y0 },
-        { x: zone.x1, y: zone.y1 }, { x: zone.x0, y: zone.y1 },
-      ];
+    const grid = zoneGrid();
+    const marks = marksByCell(doc, grid);
+    const zoning = tool === 'zone';
+    const quad = (cell: ZoneCell): void => {
       ctx.beginPath();
-      corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      cell.corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
       ctx.closePath();
-      ctx.strokeStyle = colours[zone.use];
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-    if (zoneDraft) {
-      const bounds = zoneBounds(zoneDraft.start, zoneDraft.end);
-      const corners = [
-        { x: bounds.x0, y: bounds.y0 }, { x: bounds.x1, y: bounds.y0 },
-        { x: bounds.x1, y: bounds.y1 }, { x: bounds.x0, y: bounds.y1 },
-      ];
-      ctx.beginPath();
-      corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-      ctx.closePath();
-      ctx.fillStyle = zoneDraft.remove ? '#e36c6050' : `${colours[zoneUse]}50`;
-      ctx.strokeStyle = zoneDraft.remove ? '#e36c60' : colours[zoneUse];
-      ctx.lineWidth = 2;
-      ctx.fill();
-      ctx.stroke();
+    };
+    const brush = zoning && !zoneDraft && zoneHover ? new Set(zoneCellsAt(zoneHover).map((cell) => cell.id)) : null;
+    for (const cell of grid.cells) {
+      const found = marks.get(cell.id);
+      const built = found?.mark.building !== undefined && doc.buildings.has(found.mark.building as never);
+      if (!zoning && (!found || built)) continue;
+      const drafted = zoneDraft?.cells.has(cell.id) ?? false;
+      quad(cell);
+      if (drafted) {
+        ctx.fillStyle = zoneDraft!.remove ? '#e36c6099' : `${colours[zoneUse]}99`;
+        ctx.fill();
+      } else if (found) {
+        ctx.fillStyle = `${colours[found.mark.use]}${zoning ? (built ? '40' : '80') : '38'}`;
+        ctx.fill();
+      } else if (brush?.has(cell.id)) {
+        ctx.fillStyle = zoneEraser ? '#e36c6050' : `${colours[zoneUse]}50`;
+        ctx.fill();
+      }
+      if (zoning) {
+        ctx.strokeStyle = brush?.has(cell.id) ? '#ffffffcc' : '#ffffff40';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }

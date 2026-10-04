@@ -22,7 +22,7 @@ import { clampToMap } from './bounds';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
-import { isZoneDensity, isZoneUse, type Zone } from './zones';
+import { isZoneDensity, isZoneMark, isZoneUse, type Zone, type ZoneMark } from './zones';
 import { normalizePerson, type PersonSpec } from '@people/spec';
 
 /** `shape` flattened until no band of a road of this profile folds over (see `RoadDoc.fitCurve`). */
@@ -157,6 +157,14 @@ export class RoadDoc {
   /** Authored land-use strokes, separate from the buildings they generated. */
   readonly zones: Zone[] = [];
   nextZoneId = 1;
+  /**
+   * The zoned cells of the street grid (`world/zoneGrid.ts`), stored by
+   * place. `zones` above are the rectangles of the first zoning tool, kept
+   * only so old maps load; nothing makes them any more.
+   */
+  readonly zoneMarks: ZoneMark[] = [];
+  /** Moves on every zoning change, so the overlay and the growth notice it. */
+  zoneRevision = 0;
 
   /**
    * The people made in the Person Creator, saved with the city. Their own
@@ -799,6 +807,9 @@ export class RoadDoc {
     this.zones.length = 0;
     this.zones.push(...source.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })));
     this.nextZoneId = source.nextZoneId;
+    this.zoneMarks.length = 0;
+    this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
+    this.zoneRevision++;
     if (JSON.stringify(this.people) !== JSON.stringify(source.people)) {
       this.people.length = 0;
       this.people.push(...source.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec));
@@ -864,6 +875,7 @@ export class RoadDoc {
       // exactly as it did before buildings existed.
       ...(this.buildings.size > 0 ? { buildings: this.buildings.toJSON() } : {}),
       ...(this.zones.length > 0 ? { zones: this.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })) } : {}),
+      ...(this.zoneMarks.length > 0 ? { zoneMarks: this.zoneMarks.map((mark) => ({ ...mark })) } : {}),
       // Likewise the people: only a city that has some carries the key.
       ...(this.people.length > 0 ? { people: this.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec) } : {}),
     };
@@ -992,6 +1004,12 @@ export class RoadDoc {
       doc.zones.push({ ...zone, buildingIds: zone.buildingIds.filter((id) => Number.isInteger(id) && doc.buildings.has(id as Parameters<typeof doc.buildings.has>[0])) });
       doc.nextZoneId = Math.max(doc.nextZoneId, zone.id + 1);
     }
+    for (const mark of data.zoneMarks ?? []) {
+      if (!isZoneMark(mark)) continue;
+      const standing = mark.building !== undefined && doc.buildings.has(mark.building as Parameters<typeof doc.buildings.has>[0]);
+      const { building: _gone, ...free } = mark;
+      doc.zoneMarks.push(standing ? { ...mark } : free);
+    }
     // People, each brought into range; anything that is not one is dropped.
     const seen = new Set<number>();
     for (const raw of data.people ?? []) {
@@ -1053,6 +1071,7 @@ export interface SerializedDoc {
   readonly buildings?: readonly SerializedBuilding[];
   /** Roadside land-use strokes; absent in maps saved before zoning. */
   readonly zones?: readonly Zone[];
+  readonly zoneMarks?: readonly ZoneMark[];
   /** People from the Person Creator; OPTIONAL like the buildings. Normalised on load. */
   readonly people?: readonly unknown[];
 }

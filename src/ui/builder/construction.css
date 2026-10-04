@@ -183,3 +183,13 @@
 .bw-inside-level { min-width: 44px; text-align: center; color: var(--bw-text); font-size: 11px; font-variant-numeric: tabular-nums; }
 .bw-inside .bw-icon-button.active { color: var(--bw-active); border-color: var(--bw-active); }
 .bw-inside [hidden] { display: none; }
+
+/* --- zoning: tool, use and density, three to a row ----------------------------
+   Flex wrap left Industrial and High alone on a line of their own. */
+#zonePalette .zone-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+#zonePalette .zone-row .terrain-mode { width: 100%; min-width: 0; }
