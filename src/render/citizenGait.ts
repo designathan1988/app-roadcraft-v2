@@ -510,6 +510,7 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
 
   // How the drawn body is moving.
   const raw = drawnVelocity(ped);
+  const distanceSpeed = Math.hypot(raw.x, raw.y);
   const kv = approach(dt, VELOCITY_TIME);
   g.vx += (raw.x - g.vx) * kv;
   g.vy += (raw.y - g.vy) * kv;
@@ -566,12 +567,12 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
     // audit found on motionless legs.
     // Somebody carrying a box walks on steadily, as an elder does: no
     // breaking into a run, no start and stop with the arms swinging.
-    moving(g, ped, clips, dt, speed, size, hash, elder || ped.carry !== undefined);
+    moving(g, ped, clips, dt, speed, distanceSpeed, size, hash, elder || ped.carry !== undefined);
   } else {
     standing(g, ped, clips, dt, turned, spin, isTurn, hash, turnSign);
     // A walk fading out under a turn or a stop keeps stepping with whatever
     // motion is left, rather than freezing mid-stride while the body turns.
-    g.cycle = (g.cycle + Math.hypot(speed, TURN_FOOT * ped.turnV) * dt / Math.max(1e-3, g.stride)) % 1;
+    g.cycle = (g.cycle + Math.hypot(distanceSpeed, TURN_FOOT * ped.turnV) * dt / Math.max(1e-3, g.stride)) % 1;
   }
 
   // Whatever is fading out finishes its own steps meanwhile.
@@ -630,7 +631,7 @@ function standing(g: Gait, ped: PedView, clips: GaitClips, dt: number, turned: n
 }
 
 /** The moving branch of `stepGait`: set off, walk or run, or stop. */
-function moving(g: Gait, ped: PedView, clips: GaitClips, dt: number, speed: number, size: number,
+function moving(g: Gait, ped: PedView, clips: GaitClips, dt: number, speed: number, distanceSpeed: number, size: number,
   hash: number, elder: boolean): void {
   g.settling = 0;
   const cur = g.cur;
@@ -703,7 +704,7 @@ function moving(g: Gait, ped: PedView, clips: GaitClips, dt: number, speed: numb
   g.stride = Math.hypot(g.forwardWeight * forwardStride - g.backWeight * backStride,
     g.leftWeight * leftStride - g.rightWeight * rightStride);
   // A turn made while barely moving is footwork too.
-  const stepping = Math.hypot(speed, TURN_FOOT * ped.turnV);
+  const stepping = Math.hypot(distanceSpeed, TURN_FOOT * ped.turnV);
   g.cycle = (g.cycle + stepping * dt / Math.max(1e-3, g.stride)) % 1;
 }
 
