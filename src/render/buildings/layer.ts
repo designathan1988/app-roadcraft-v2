@@ -47,11 +47,10 @@ export interface BuildingLayer {
   setCutaway(spec: CutawaySpec | null): void;
   /** Windows lit from inside at night (see `BuildingKit.setNight`). */
   setNight(dark: number): void;
-  /**
-   * From afar (true) the frames and railings are drawn by their street faces
-   * only and cast no shadow: their depth and their shadow are under a pixel.
-   */
+  /** From afar (true) the frames and railings are drawn by their street faces only. */
   setFar(far: boolean): void;
+  /** Thin facade parts stop casting shadows when their shadow width is subpixel. */
+  setShadowFar(far: boolean): void;
   /**
    * "Ocultar outros": undefined draws every building solid, null fades them
    * all, and an id fades every building but that one.
@@ -97,8 +96,9 @@ export function createBuildingLayer(): BuildingLayer {
   let cutaway: CutawaySpec | null = null;
   let version = 0;
   let far = false;
-  /** Puts the near or far parts on every stored batch (`setFar`). */
-  const applyFar = (): void => {
+  let shadowFar = false;
+  /** Applies geometry and shadow detail to every stored facade batch. */
+  const applyFacadeDetail = (): void => {
     for (const batch of [stored, details, faded]) {
       batch?.group.traverse((o) => {
         const mesh = o as InstancedMesh;
@@ -107,7 +107,7 @@ export function createBuildingLayer(): BuildingLayer {
         const lighter = kind ? kit.far[kind] : undefined;
         if (!kind || !lighter) return;
         mesh.geometry = far ? lighter : kit.geometry[kind];
-        mesh.castShadow = !far && kit.castsShadow.has(kind);
+        mesh.castShadow = !shadowFar && kit.castsShadow.has(kind);
       });
     }
   };
@@ -230,7 +230,7 @@ export function createBuildingLayer(): BuildingLayer {
           group.add(faded.group);
         }
         index(doc.buildings.all());
-        applyFar();
+        applyFacadeDetail();
         version++;
         rebuilt = true;
       }
@@ -263,7 +263,12 @@ export function createBuildingLayer(): BuildingLayer {
     setFar(next) {
       if (next === far) return;
       far = next;
-      applyFar();
+      applyFacadeDetail();
+    },
+    setShadowFar(next) {
+      if (next === shadowFar) return;
+      shadowFar = next;
+      applyFacadeDetail();
     },
     setCutaway(next) {
       cutaway = next;

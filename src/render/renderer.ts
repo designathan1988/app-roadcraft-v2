@@ -81,6 +81,8 @@ function updateLitRooms(sim: SimWorld): void {
 
 /** Room lights kept in the scene for the floors cut open (`indoors.ts`). */
 const ROOM_LIGHTS = 6;
+/** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
+const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
 import type { BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
@@ -769,8 +771,10 @@ export function createSceneRenderer(
 
       const detailed = rig.viewport.zoom >= quality.detailCutoffZoom;
       const plantMap = rig.viewport.zoom < PLANT_MAP_ZOOM;
-      // A window frame's bar is about 0.14 u: under half a pixel below this zoom.
+      // Keep the full facade at street zoom: the planar far mesh loses frames
+      // on side-facing windows. Only its thin shadows can disappear earlier.
       buildings.setFar(rig.viewport.zoom < 3);
+      buildings.setShadowFar(rig.viewport.zoom < FACADE_SHADOW_ZOOM);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;
       gardens?.setMap(plantMap);
