@@ -9,6 +9,7 @@ import { hairFor, itemLabel, itemsOf, shoesFor } from '@people/wardrobe';
 import { FACE_PARTS, applyFacePreset } from '@people/facePresets';
 import { skinColour } from '@people/phenotype';
 import { proxyUrl } from '@people/body/proxy';
+import { creatorIcon } from './creatorIcons';
 import './personCreator.css';
 
 /**
@@ -101,7 +102,8 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
     walking = !walking;
     walkButton.setAttribute('aria-pressed', String(walking));
     walkButton.classList.toggle('active', walking);
-    walkButton.textContent = t(walking ? 'person.stand' : 'person.walk');
+    walkButton.innerHTML = creatorIcon(walking ? 'stand' : 'walk', 18);
+    walkButton.title = t(walking ? 'person.stand' : 'person.walk');
     preview.setWalking(walking);
   });
   stage.append(canvas, status, heightTag, walkButton);
@@ -183,6 +185,10 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
   };
 
   // ------------------------------------------------------------ controls
+  // Laid out as a life-simulation game's create-a-person lays it out: a rail
+  // of categories (who, face, body, skin, hair, clothes, saved), the
+  // category's pages as icons, and one page at a time - a grid of pictures,
+  // a row of choices, or the fine sliders. Every name is a tooltip.
   const actions = el('div', 'pc-actions');
   const nameInput = el('input', 'pc-name');
   nameInput.type = 'text';
@@ -190,23 +196,26 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
   nameInput.addEventListener('input', () => {
     person = { ...person, name: nameInput.value };
   });
-  const randomButton = el('button', 'pc-button');
-  randomButton.type = 'button';
+  const iconButton = (className: string, icon: string): HTMLButtonElement => {
+    const b = el('button', className);
+    b.type = 'button';
+    b.innerHTML = creatorIcon(icon, 18);
+    return b;
+  };
+  const randomButton = iconButton('pc-icon', 'dice');
   randomButton.addEventListener('click', () => {
     person = { ...randomPerson(person.id, (Math.random() * 2 ** 31) >>> 0), name: person.name };
     preview.setLook(person.look);
     queueShape();
     renderControls();
   });
-  const saveButton = el('button', 'pc-button primary');
-  saveButton.type = 'button';
+  const saveButton = iconButton('pc-icon primary', 'save');
   saveButton.addEventListener('click', () => {
     host.save({ ...person, name: nameInput.value.trim() });
     renderSaved();
     flashSaved();
   });
-  const newButton = el('button', 'pc-button');
-  newButton.type = 'button';
+  const newButton = iconButton('pc-icon', 'plus');
   newButton.addEventListener('click', () => {
     person = defaultPerson(host.nextId());
     nameInput.value = '';
@@ -215,23 +224,30 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
     renderControls();
     renderSaved();
   });
-  actions.append(nameInput, randomButton, saveButton, newButton);
+  actions.append(nameInput, randomButton, newButton, saveButton);
 
+  const rail = el('nav', 'pc-rail');
+  const pages = el('div', 'pc-pages');
   const controls = el('div', 'pc-controls');
   const saved = el('div', 'pc-saved');
+  const main = el('div', 'pc-main');
+  main.append(pages, controls);
+  const body = el('div', 'pc-body');
+  body.append(rail, main);
 
-  const section = (key: string, open = true): HTMLElement => {
-    const box = el('details', 'pc-section');
-    box.open = open;
-    const summary = el('summary', 'pc-section-title', t(key));
-    box.appendChild(summary);
-    controls.appendChild(box);
-    return box;
-  };
+  interface Page { readonly key: string; readonly label: string; readonly icon: string; build(into: HTMLElement): void }
+  interface Category { readonly key: string; readonly label: string; readonly icon: string; readonly pages: readonly Page[] }
+  let category = 'who';
+  const pageOf = new Map<string, string>();
+
   const slider = (into: HTMLElement, label: string, value: number, min: number, max: number, step: number,
-    onInput: (v: number) => void, format: (v: number) => string): void => {
-    const row = el('label', 'pc-slider');
+    onInput: (v: number) => void, format: (v: number) => string, icon?: string): void => {
+    const row = el('label', 'pc-slider' + (icon ? ' iconic' : ''));
     const name = el('span', 'pc-slider-name', label);
+    if (icon) {
+      name.innerHTML = creatorIcon(icon, 18);
+      row.title = label;
+    }
     const input = el('input');
     input.type = 'range';
     input.min = String(min);
@@ -248,14 +264,37 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
     row.append(name, input, out);
     into.appendChild(row);
   };
-  const swatches = (into: HTMLElement, label: string, colours: readonly number[], current: number, onPick: (c: number) => void): void => {
-    const row = el('div', 'pc-swatch-row');
-    row.appendChild(el('span', 'pc-slider-name', label));
-    const list = el('div', 'pc-swatches');
+  /** A row: its icon (the name in the tooltip), then what it holds. */
+  const row = (into: HTMLElement, label: string, icon: string): HTMLElement => {
+    const r = el('div', 'pc-row');
+    const head = el('span', 'pc-row-icon');
+    head.innerHTML = creatorIcon(icon, 18);
+    head.title = label;
+    const list = el('div', 'pc-row-items');
+    r.append(head, list);
+    into.appendChild(r);
+    return list;
+  };
+  /** One choice: an icon, or a short mark (a number); its name in the tooltip. */
+  const choice = (into: HTMLElement, label: string, on: boolean, pick: () => void, icon?: string, mark?: string): void => {
+    const b = el('button', 'pc-opt' + (on ? ' active' : ''));
+    b.type = 'button';
+    if (icon) b.innerHTML = creatorIcon(icon, 18);
+    else b.textContent = mark ?? '';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.setAttribute('aria-pressed', String(on));
+    b.addEventListener('click', pick);
+    into.appendChild(b);
+  };
+  const swatches = (into: HTMLElement, label: string, icon: string, colours: readonly number[], current: number, onPick: (c: number) => void): void => {
+    const list = row(into, label, icon);
+    list.classList.add('pc-swatches');
     for (const c of colours) {
       const b = el('button', 'pc-swatch' + (c === current ? ' active' : ''));
       b.type = 'button';
       b.style.background = hex(c);
+      b.title = hex(c);
       b.setAttribute('aria-label', `${label} ${hex(c)}`);
       b.setAttribute('aria-pressed', String(c === current));
       b.addEventListener('click', () => onPick(c));
@@ -263,35 +302,18 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
     }
     const custom = el('input', 'pc-swatch custom');
     custom.type = 'color';
-    custom.value = hex(current);
+    custom.value = hex(current < 0 ? 0x888888 : current);
+    custom.title = t('person.custom');
     custom.setAttribute('aria-label', `${label} ${t('person.custom')}`);
     custom.addEventListener('input', () => onPick(parseInt(custom.value.slice(1), 16)));
     list.appendChild(custom);
-    row.appendChild(list);
-    into.appendChild(row);
-  };
-  const chips = <T extends string>(into: HTMLElement, label: string, options: readonly T[], current: T, onPick: (v: T) => void): void => {
-    const row = el('div', 'pc-swatch-row');
-    row.appendChild(el('span', 'pc-slider-name', label));
-    const list = el('div', 'pc-chips');
-    for (const o of options) {
-      const b = el('button', 'pc-chip' + (o === current ? ' active' : ''), t(`person.option.${o}`));
-      b.type = 'button';
-      b.setAttribute('aria-pressed', String(o === current));
-      b.addEventListener('click', () => onPick(o));
-      list.appendChild(b);
-    }
-    row.appendChild(list);
-    into.appendChild(row);
   };
   /**
-   * A gallery of MakeHuman items: a tile each, its own texture for a face, its
-   * name under it; 'none' as a plain tile when the item can be left off.
+   * A gallery of MakeHuman items: a picture each (the pack's thumbnail), the
+   * name in the tooltip; 'none' as a crossed tile when the item can be left off.
    */
-  const gallery = (into: HTMLElement, label: string, names: readonly string[], current: string | undefined,
+  const gallery = (into: HTMLElement, names: readonly string[], current: string | undefined,
     onPick: (name: string) => void, withNone = false): void => {
-    const row = el('div', 'pc-swatch-row');
-    row.appendChild(el('span', 'pc-slider-name', label));
     const list = el('div', 'pc-gallery');
     for (const name of withNone ? ['none', ...names] : names) {
       const on = name === (current ?? (withNone ? 'none' : ''));
@@ -299,21 +321,21 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
       b.type = 'button';
       b.setAttribute('aria-pressed', String(on));
       const tile = el('span', 'pc-item-tile');
-      if (name !== 'none') {
-        // The item rendered (its pack's thumbnail); its flat texture only when it has none.
+      if (name === 'none') {
+        tile.innerHTML = creatorIcon('none', 22);
+      } else {
         let url: string | null;
         try { url = proxyUrl(`${name}-thumb.webp`); } catch { try { url = proxyUrl(`${name}.webp`); } catch { url = null; } }
         if (url) tile.style.backgroundImage = `url("${url}")`;
       }
       b.appendChild(tile);
       const label = name === 'none' ? t('person.option.none') : hasKey(`person.item.${name}`) ? t(`person.item.${name}`) : itemLabel(name);
-      b.appendChild(el('span', 'pc-item-name', label));
       b.title = label;
+      b.setAttribute('aria-label', label);
       b.addEventListener('click', () => onPick(name));
       list.appendChild(b);
     }
-    row.appendChild(list);
-    into.appendChild(row);
+    into.appendChild(list);
   };
   /** Wearing MakeHuman garments: picking any of them dresses a person saved before in all of them. */
   const wear = (patch: Partial<PersonLook>): void => {
@@ -343,201 +365,210 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
   };
   const pct = (v: number): string => `${Math.round(v * 100)}%`;
   const signed = (v: number): string => (v === 0 ? '0' : `${v > 0 ? '+' : ''}${Math.round(v * 100)}`);
-  const openSections = new Set(['person.section.quick', 'person.section.hair', 'person.section.clothes']);
 
-  const renderControls = (): void => {
-    const opened = new Set<string>();
-    for (const d of controls.querySelectorAll<HTMLDetailsElement>('details')) if (d.open) opened.add(d.dataset['key'] ?? '');
-    if (controls.childElementCount) {
-      openSections.clear();
-      for (const k of opened) openSections.add(k);
-    }
-    controls.replaceChildren();
-    const sec = (key: string): HTMLElement => {
-      const s = section(key, openSections.has(key));
-      s.dataset['key'] = key;
-      return s;
-    };
+  /** Everything the creator offers, as categories of pages, for the person as they are now. */
+  const categories = (): Category[] => {
     const b = person.body;
     const female = b.gender < 0.5;
     const sex = female ? 'female' as const : 'male' as const;
+    const years = yearsFromAge(b.age);
+    const adult = years >= 16;
+    const dressed = !!person.look.outfit;
+    const seed = (): number => (Math.random() * 2 ** 31) >>> 0;
+    const page = (key: string, label: string, icon: string, build: (into: HTMLElement) => void): Page => ({ key, label, icon, build });
 
-    // Quick choices first: who, how old, what build, which face - each a
-    // whole, coherent result, before any of the fine sliders below.
-    const quick = sec('person.section.quick');
-    {
-      const row = (label: string, options: readonly { key: string; on: boolean; pick: () => void }[]): void => {
-        const r = el('div', 'pc-swatch-row');
-        r.appendChild(el('span', 'pc-slider-name', label));
-        const list = el('div', 'pc-chips');
-        for (const o of options) {
-          const button = el('button', 'pc-chip' + (o.on ? ' active' : ''), t(o.key));
-          button.type = 'button';
-          button.setAttribute('aria-pressed', String(o.on));
-          button.addEventListener('click', o.pick);
-          list.appendChild(button);
-        }
-        r.appendChild(list);
-        quick.appendChild(r);
-      };
-      const seed = (): number => (Math.random() * 2 ** 31) >>> 0;
-      row(t('person.sex'), [
-        { key: 'person.quick.woman', on: female, pick: () => become(randomPerson(person.id, seed(), { body: { gender: 0.04, age: b.age } })) },
-        { key: 'person.quick.man', on: !female, pick: () => become(randomPerson(person.id, seed(), { body: { gender: 0.96, age: b.age } })) },
-      ]);
-      const years = yearsFromAge(b.age);
-      const ages = [['person.quick.child', 8, years < 16], ['person.quick.young', 22, years >= 16 && years < 30],
-        ['person.quick.adult', 40, years >= 30 && years < 60], ['person.quick.old', 72, years >= 60]] as const;
-      row(t('person.age'), ages.map(([key, y, on]) => ({ key, on, pick: () => become(randomPerson(person.id, seed(), { body: { gender: b.gender, age: ageFromYears(y) } })) })));
-      const builds = [['person.quick.slim', 0.3, 0.18], ['person.quick.average', 0.45, 0.45], ['person.quick.athletic', 0.85, 0.38], ['person.quick.heavy', 0.4, 0.88]] as const;
-      row(t('person.quick.build'), builds.map(([key, muscle, weight]) => ({
-        key, on: Math.abs(b.muscle - muscle) < 0.08 && Math.abs(b.weight - weight) < 0.08,
-        pick: () => { setBody({ muscle, weight }); renderControls(); },
-      })));
+    const who: Page[] = [page('quick', t('person.section.quick'), 'quick', (into) => {
+      const s = row(into, t('person.sex'), 'sex');
+      choice(s, t('person.quick.woman'), female, () => become(randomPerson(person.id, seed(), { body: { gender: 0.04, age: b.age } })), 'female');
+      choice(s, t('person.quick.man'), !female, () => become(randomPerson(person.id, seed(), { body: { gender: 0.96, age: b.age } })), 'male');
+      const a = row(into, t('person.age'), 'age');
+      for (const [key, y, on, icon] of [['person.quick.child', 8, years < 16, 'child'], ['person.quick.young', 22, years >= 16 && years < 30, 'young'],
+        ['person.quick.adult', 40, years >= 30 && years < 60, 'adult'], ['person.quick.old', 72, years >= 60, 'old']] as const) {
+        choice(a, t(key), on, () => become(randomPerson(person.id, seed(), { body: { gender: b.gender, age: ageFromYears(y) } })), icon);
+      }
+      const bl = row(into, t('person.quick.build'), 'build');
+      for (const [key, muscle, weight, icon] of [['person.quick.slim', 0.3, 0.18, 'slim'], ['person.quick.average', 0.45, 0.45, 'average'],
+        ['person.quick.athletic', 0.85, 0.38, 'athletic'], ['person.quick.heavy', 0.4, 0.88, 'heavy']] as const) {
+        const on = Math.abs(b.muscle - muscle) < 0.08 && Math.abs(b.weight - weight) < 0.08;
+        choice(bl, t(key), on, () => { setBody({ muscle, weight }); renderControls(); }, icon);
+      }
       // Ready-made faces: the generator's faces for this very body, kept
       // with the person's own expression.
-      const faces = el('div', 'pc-swatch-row');
-      faces.appendChild(el('span', 'pc-slider-name', t('person.quick.faces')));
-      const list = el('div', 'pc-chips');
+      const f = row(into, t('person.quick.faces'), 'faces');
       for (let k = 1; k <= 8; k++) {
-        const button = el('button', 'pc-chip', String(k));
-        button.type = 'button';
-        button.setAttribute('aria-label', `${t('person.quick.faces')} ${k}`);
-        button.addEventListener('click', () => {
+        choice(f, `${t('person.quick.faces')} ${k}`, false, () => {
           const face = randomPerson(person.id, 7919 * k + Math.round(b.gender * 3) + Math.round(years), { body: b, look: person.look }).features;
           const expression = Object.fromEntries(EXPRESSION_SLIDERS.filter((n) => person.features[n] !== undefined).map((n) => [n, person.features[n]!]));
           person = { ...person, features: { ...face, ...expression } };
           queueShape();
-        });
-        list.appendChild(button);
+        }, undefined, String(k));
       }
-      faces.appendChild(list);
-      quick.appendChild(faces);
-      // Each part of the face by name, as a life-simulation game offers it.
-      for (const part of FACE_PARTS) {
-        const r = el('div', 'pc-swatch-row');
-        r.appendChild(el('span', 'pc-slider-name', t(`person.part.${part.key}`)));
-        const options = el('div', 'pc-chips');
-        for (const preset of part.presets) {
-          const on = part.sliders.every((k) => (person.features[k] ?? 0) === (preset.values[k] ?? 0));
-          const button = el('button', 'pc-chip' + (on ? ' active' : ''), t(`person.preset.${part.key}.${preset.key}`));
-          button.type = 'button';
-          button.setAttribute('aria-pressed', String(on));
-          button.addEventListener('click', () => {
-            person = { ...person, features: applyFacePreset(person.features, part, preset) };
-            queueShape();
-            renderControls();
+      swatches(into, t('person.skin'), 'tone', SKIN_TONES, person.look.skin, (c) => setLook({ skin: c }));
+    })];
+
+    const face: Page[] = [
+      page('presets', t('person.section.quick'), 'presets', (into) => {
+        // Each part of the face by its presets, numbered, as character creators offer them.
+        for (const part of FACE_PARTS) {
+          const r = row(into, t(`person.part.${part.key}`), `part_${part.key}`);
+          part.presets.forEach((preset, i) => {
+            const on = part.sliders.every((k) => (person.features[k] ?? 0) === (preset.values[k] ?? 0));
+            choice(r, t(`person.preset.${part.key}.${preset.key}`), on, () => {
+              person = { ...person, features: applyFacePreset(person.features, part, preset) };
+              queueShape();
+              renderControls();
+            }, undefined, String(i + 1));
           });
-          options.appendChild(button);
         }
-        r.appendChild(options);
-        quick.appendChild(r);
-      }
-      swatches(quick, t('person.skin'), SKIN_TONES, person.look.skin, (c) => setLook({ skin: c }));
-    }
+      }),
+      page('detail', t('person.section.face'), 'detail', (into) => {
+        for (const name of FACE_SLIDERS) slider(into, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
+      }),
+      page('expression', t('person.section.expression'), 'expression', (into) => {
+        for (const name of EXPRESSION_SLIDERS) slider(into, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
+      }),
+    ];
 
-    const bodyBox = sec('person.section.body');
-    slider(bodyBox, t('person.sex'), b.gender, 0, 1, 0.01, (v) => setBody({ gender: v }),
-      (v) => (v < 0.35 ? t('person.female') : v > 0.65 ? t('person.male') : t('person.between')));
-    slider(bodyBox, t('person.age'), Math.round(yearsFromAge(b.age)), 1, 90, 1, (v) => setBody({ age: ageFromYears(v) }), (v) => `${v}`);
-    slider(bodyBox, t('person.muscle'), b.muscle, 0, 1, 0.01, (v) => setBody({ muscle: v }), pct);
-    slider(bodyBox, t('person.weight'), b.weight, 0, 1, 0.01, (v) => setBody({ weight: v }), pct);
-    slider(bodyBox, t('person.height'), b.height, 0, 1, 0.01, (v) => setBody({ height: v }), pct);
-    slider(bodyBox, t('person.proportions'), b.proportions, 0, 1, 0.01, (v) => setBody({ proportions: v }), pct);
-    if (b.gender < 0.65) {
-      slider(bodyBox, t('person.bust'), b.cupsize, 0, 1, 0.01, (v) => setBody({ cupsize: v }), pct);
-    }
+    const bodyPages: Page[] = [
+      page('macro', t('person.section.body'), 'macro', (into) => {
+        slider(into, t('person.sex'), b.gender, 0, 1, 0.01, (v) => setBody({ gender: v }), (v) => (v < 0.35 ? '♀' : v > 0.65 ? '♂' : '⚥'), 'sex');
+        slider(into, t('person.age'), Math.round(years), 1, 90, 1, (v) => setBody({ age: ageFromYears(v) }), (v) => `${v}`, 'age');
+        slider(into, t('person.muscle'), b.muscle, 0, 1, 0.01, (v) => setBody({ muscle: v }), pct, 'athletic');
+        slider(into, t('person.weight'), b.weight, 0, 1, 0.01, (v) => setBody({ weight: v }), pct, 'heavy');
+        slider(into, t('person.height'), b.height, 0, 1, 0.01, (v) => setBody({ height: v }), pct, 'macro');
+        slider(into, t('person.proportions'), b.proportions, 0, 1, 0.01, (v) => setBody({ proportions: v }), pct, 'shape');
+        if (b.gender < 0.65) slider(into, t('person.bust'), b.cupsize, 0, 1, 0.01, (v) => setBody({ cupsize: v }), pct, 'female');
+      }),
+      page('shape', t('person.section.shape'), 'shape', (into) => {
+        for (const name of BODY_SLIDERS) slider(into, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
+      }),
+      page('origin', t('person.section.origin'), 'origin', (into) => {
+        for (const key of ['african', 'asian', 'caucasian'] as const) slider(into, t(`person.${key}`), b[key], 0, 1, 0.01, (v) => setBody({ [key]: v }), pct);
+      }),
+    ];
 
-    const origin = sec('person.section.origin');
-    for (const key of ['african', 'asian', 'caucasian'] as const) {
-      slider(origin, t(`person.${key}`), b[key], 0, 1, 0.01, (v) => setBody({ [key]: v }), pct);
-    }
+    const skinPages: Page[] = [
+      page('tone', t('person.section.skin'), 'tone', (into) => {
+        swatches(into, t('person.skin'), 'tone', SKIN_TONES, person.look.skin, (c) => setLook({ skin: c }));
+        slider(into, t('person.melanin'), person.look.melanin ?? 0.5, 0, 1, 0.01, (v) => setPigment({ melanin: v }), pct, 'tone');
+        slider(into, t('person.undertone'), person.look.undertone ?? 0.5, 0, 1, 0.01, (v) => setPigment({ undertone: v }), pct, 'skin');
+      }),
+      page('eyes', t('person.eyes'), 'eyeColour', (into) => {
+        swatches(into, t('person.eyes'), 'eyeColour', EYE_COLOURS, person.look.eyes, (c) => setLook({ eyes: c }));
+      }),
+    ];
 
-    const skin = sec('person.section.skin');
-    {
-      slider(skin, t('person.melanin'), person.look.melanin ?? 0.5, 0, 1, 0.01,
-        (v) => setPigment({ melanin: v }), pct);
-      slider(skin, t('person.undertone'), person.look.undertone ?? 0.5, 0, 1, 0.01,
-        (v) => setPigment({ undertone: v }), pct);
-    }
-    swatches(skin, t('person.skin'), SKIN_TONES, person.look.skin, (c) => setLook({ skin: c }));
-    swatches(skin, t('person.eyes'), EYE_COLOURS, person.look.eyes, (c) => setLook({ eyes: c }));
-
-    const dressed = !!person.look.outfit;
-    const hair = sec('person.section.hair');
-    if (dressed) {
-      gallery(hair, t('person.hairstyle'), hairFor(sex), person.look.hairCut, (n) => wear({ hairCut: n }), true);
-    } else {
-      chips<HairStyle>(hair, t('person.style'), ['none', 'short', 'long'], person.look.hairStyle, (v) => setLook({ hairStyle: v }));
-    }
-    swatches(hair, t('person.colour'), HAIR_COLOURS, person.look.hair, (c) => setLook({ hair: c }));
-    {
-      slider(hair, t('person.makeup'), person.look.makeup ?? 0, 0, 1, 0.01, (makeup) => {
-        person = { ...person, look: { ...person.look, makeup } };
-        preview.setLook(person.look);
-      }, pct);
-    }
+    const hairPages: Page[] = [
+      page('hairstyle', t('person.hairstyle'), 'hairstyle', (into) => {
+        if (dressed) gallery(into, hairFor(sex), person.look.hairCut, (n) => wear({ hairCut: n }), true);
+        else {
+          const r = row(into, t('person.style'), 'hairstyle');
+          (['none', 'short', 'long'] as HairStyle[]).forEach((v, i) => choice(r, t(`person.option.${v}`), person.look.hairStyle === v, () => setLook({ hairStyle: v }), v === 'none' ? 'none' : undefined, String(i)));
+        }
+      }),
+      page('colour', t('person.colour'), 'colour', (into) => {
+        swatches(into, t('person.colour'), 'colour', HAIR_COLOURS, person.look.hair, (c) => setLook({ hair: c }));
+        slider(into, t('person.makeup'), person.look.makeup ?? 0, 0, 1, 0.01, (makeup) => {
+          person = { ...person, look: { ...person.look, makeup } };
+          preview.setLook(person.look);
+        }, pct, 'makeup');
+      }),
+    ];
     if (dressed) {
       const beards = itemsOf('beard');
-      if (!female) gallery(hair, t('person.beard'), beards, (person.look.extras ?? []).find((n) => beards.includes(n)), (n) => wearExtra(beards, n), true);
-      gallery(hair, t('person.brows'), ALL_BROWS, person.look.brows, (n) => wear({ brows: n }));
-      gallery(hair, t('person.lashes'), ALL_LASHES, person.look.lashes, (n) => wear({ lashes: n }));
+      if (!female) hairPages.push(page('beard', t('person.beard'), 'beard', (into) => gallery(into, beards, (person.look.extras ?? []).find((n) => beards.includes(n)), (n) => wearExtra(beards, n), true)));
+      hairPages.push(page('brows', t('person.brows'), 'brows', (into) => gallery(into, ALL_BROWS, person.look.brows, (n) => wear({ brows: n }))));
+      hairPages.push(page('lashes', t('person.lashes'), 'lashes', (into) => gallery(into, ALL_LASHES, person.look.lashes, (n) => wear({ lashes: n }))));
     }
 
-    const clothes = sec('person.section.clothes');
-    const adult = yearsFromAge(b.age) >= 16;
-    gallery(clothes, t('person.outfit'), outfitsForAge(yearsFromAge(b.age), female ? WARDROBE.outfits.female : WARDROBE.outfits.male), person.look.outfit, (n) => wear({ outfit: n }));
+    const clothes: Page[] = [];
     const bottoms = [...itemsOf('bottom'), ...itemsOf('skirt')];
+    clothes.push(page('outfit', t('person.outfit'), 'outfit', (into) => gallery(into, outfitsForAge(years, female ? WARDROBE.outfits.female : WARDROBE.outfits.male), person.look.outfit, (n) => wear({ outfit: n }))));
     if (adult) {
-      gallery(clothes, t('person.top'), itemsOf('top', { sex }), person.look.outfit, (n) => wear({ outfit: n }));
-      gallery(clothes, t('person.bottom'), [...itemsOf('bottom', { sex }), ...(female ? itemsOf('skirt') : [])], (person.look.extras ?? []).find((n) => bottoms.includes(n)), (n) => wearExtra(bottoms, n), true);
-      if (female) gallery(clothes, t('person.dress'), itemsOf('dress'), person.look.outfit, (n) => wear({ outfit: n, extras: (person.look.extras ?? []).filter((x) => !bottoms.includes(x)) }));
-      gallery(clothes, t('person.suit'), itemsOf('suit', { sex }), person.look.outfit, (n) => wear({ outfit: n, extras: (person.look.extras ?? []).filter((x) => !bottoms.includes(x)) }));
+      clothes.push(page('top', t('person.top'), 'top', (into) => gallery(into, itemsOf('top', { sex }), person.look.outfit, (n) => wear({ outfit: n }))));
+      clothes.push(page('bottom', t('person.bottom'), 'bottom', (into) => gallery(into, [...itemsOf('bottom', { sex }), ...(female ? itemsOf('skirt') : [])], (person.look.extras ?? []).find((n) => bottoms.includes(n)), (n) => wearExtra(bottoms, n), true)));
+      if (female) clothes.push(page('dress', t('person.dress'), 'dress', (into) => gallery(into, itemsOf('dress'), person.look.outfit, (n) => wear({ outfit: n, extras: (person.look.extras ?? []).filter((x) => !bottoms.includes(x)) }))));
+      clothes.push(page('suit', t('person.suit'), 'suit', (into) => gallery(into, itemsOf('suit', { sex }), person.look.outfit, (n) => wear({ outfit: n, extras: (person.look.extras ?? []).filter((x) => !bottoms.includes(x)) }))));
     }
     if (dressed) {
-      const tintRow = el('div', 'pc-swatch-row');
-      const own = el('button', 'pc-chip' + (person.look.outfitTint === null || person.look.outfitTint === undefined ? ' active' : ''), t('person.ownColours'));
-      own.type = 'button';
-      own.addEventListener('click', () => wear({ outfitTint: null }));
-      tintRow.appendChild(el('span', 'pc-slider-name', t('person.outfitColour')));
-      tintRow.appendChild(own);
-      clothes.appendChild(tintRow);
-      swatches(clothes, t('person.dye'), CLOTH_COLOURS, person.look.outfitTint ?? -1, (c) => wear({ outfitTint: c }));
-      gallery(clothes, t('person.footwear'), shoesFor(sex, WARDROBE.footwear), person.look.footwear, (n) => wear({ footwear: n }));
-      gallery(clothes, t('person.hat'), [...WARDROBE.hats.filter(() => !female), ...itemsOf('hat', { sex }), ...itemsOf('helmet')], person.look.hat, (n) => wear({ hat: n }), true);
+      clothes.push(page('dye', t('person.outfitColour'), 'dye', (into) => {
+        const r = row(into, t('person.outfitColour'), 'dye');
+        choice(r, t('person.ownColours'), person.look.outfitTint === null || person.look.outfitTint === undefined, () => wear({ outfitTint: null }), 'own');
+        swatches(into, t('person.dye'), 'colour', CLOTH_COLOURS, person.look.outfitTint ?? -1, (c) => wear({ outfitTint: c }));
+      }));
+      clothes.push(page('footwear', t('person.footwear'), 'footwear', (into) => gallery(into, shoesFor(sex, WARDROBE.footwear), person.look.footwear, (n) => wear({ footwear: n }))));
+      clothes.push(page('hat', t('person.hat'), 'hat', (into) => gallery(into, [...WARDROBE.hats.filter(() => !female), ...itemsOf('hat', { sex }), ...itemsOf('helmet')], person.look.hat, (n) => wear({ hat: n }), true)));
       for (const [kind, key] of [['glasses', 'person.glasses'], ['jewelry', 'person.jewelry'], ['gloves', 'person.gloves'], ['socks', 'person.socks'],
         ['underwear', 'person.underwear'], ['mask', 'person.mask'], ['horns', 'person.horns'], ['equipment', 'person.equipment']] as const) {
         const family = itemsOf(kind, { sex });
-        if (family.length) gallery(clothes, t(key), family, (person.look.extras ?? []).find((n) => family.includes(n)), (n) => wearExtra(family, n), true);
+        if (family.length) clothes.push(page(kind, t(key), kind, (into) => gallery(into, family, (person.look.extras ?? []).find((n) => family.includes(n)), (n) => wearExtra(family, n), true)));
       }
     } else {
-      chips<TopStyle>(clothes, t('person.top'), ['none', 'tank', 'tshirt', 'longsleeve'], person.look.top, (v) => setLook({ top: v }));
-      swatches(clothes, t('person.topColour'), CLOTH_COLOURS, person.look.topColour, (c) => setLook({ topColour: c }));
-      chips<BottomStyle>(clothes, t('person.bottom'), ['trousers', 'shorts', 'skirt'], person.look.bottom, (v) => setLook({ bottom: v }));
-      swatches(clothes, t('person.bottomColour'), CLOTH_COLOURS, person.look.bottomColour, (c) => setLook({ bottomColour: c }));
-      swatches(clothes, t('person.shoes'), CLOTH_COLOURS, person.look.shoes, (c) => setLook({ shoes: c }));
+      clothes.push(page('simple', t('person.section.clothes'), 'top', (into) => {
+        const tops = row(into, t('person.top'), 'top');
+        (['none', 'tank', 'tshirt', 'longsleeve'] as TopStyle[]).forEach((v, i) => choice(tops, t(`person.option.${v}`), person.look.top === v, () => setLook({ top: v }), v === 'none' ? 'none' : undefined, String(i)));
+        swatches(into, t('person.topColour'), 'colour', CLOTH_COLOURS, person.look.topColour, (c) => setLook({ topColour: c }));
+        const bots = row(into, t('person.bottom'), 'bottom');
+        (['trousers', 'shorts', 'skirt'] as BottomStyle[]).forEach((v, i) => choice(bots, t(`person.option.${v}`), person.look.bottom === v, () => setLook({ bottom: v }), undefined, String(i + 1)));
+        swatches(into, t('person.bottomColour'), 'colour', CLOTH_COLOURS, person.look.bottomColour, (c) => setLook({ bottomColour: c }));
+        swatches(into, t('person.shoes'), 'footwear', CLOTH_COLOURS, person.look.shoes, (c) => setLook({ shoes: c }));
+      }));
     }
 
-    const face = sec('person.section.face');
-    for (const name of FACE_SLIDERS) {
-      slider(face, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
+    return [
+      { key: 'who', label: t('person.section.quick'), icon: 'who', pages: who },
+      { key: 'face', label: t('person.section.face'), icon: 'face', pages: face },
+      { key: 'body', label: t('person.section.body'), icon: 'body', pages: bodyPages },
+      { key: 'skin', label: t('person.section.skin'), icon: 'skin', pages: skinPages },
+      { key: 'hair', label: t('person.section.hair'), icon: 'hair', pages: hairPages },
+      { key: 'clothes', label: t('person.section.clothes'), icon: 'clothes', pages: clothes },
+      { key: 'saved', label: t('person.saved'), icon: 'saved', pages: [page('saved', t('person.saved'), 'saved', (into) => { into.appendChild(saved); renderSaved(); })] },
+    ];
+  };
+
+  const renderControls = (): void => {
+    const cats = categories();
+    const cat = cats.find((c) => c.key === category) ?? cats[0]!;
+    category = cat.key;
+    rail.replaceChildren();
+    for (const c of cats) {
+      const b = el('button', 'pc-rail-b' + (c.key === cat.key ? ' active' : ''));
+      b.type = 'button';
+      b.innerHTML = creatorIcon(c.icon, 20);
+      b.title = c.label;
+      b.setAttribute('aria-label', c.label);
+      b.setAttribute('aria-pressed', String(c.key === cat.key));
+      b.addEventListener('click', () => { category = c.key; renderControls(); });
+      rail.appendChild(b);
     }
-    const expression = sec('person.section.expression');
-    for (const name of EXPRESSION_SLIDERS) {
-      slider(expression, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
+    const current = cat.pages.find((p) => p.key === pageOf.get(cat.key)) ?? cat.pages[0]!;
+    pages.replaceChildren();
+    pages.hidden = cat.pages.length < 2;
+    for (const p of cat.pages) {
+      const b = el('button', 'pc-page' + (p.key === current.key ? ' active' : ''));
+      b.type = 'button';
+      b.innerHTML = creatorIcon(p.icon, 18);
+      b.title = p.label;
+      b.setAttribute('aria-label', p.label);
+      b.setAttribute('aria-pressed', String(p.key === current.key));
+      b.addEventListener('click', () => { pageOf.set(cat.key, p.key); renderControls(); });
+      pages.appendChild(b);
     }
-    const shape = sec('person.section.shape');
-    for (const name of BODY_SLIDERS) {
-      slider(shape, t(`person.f.${name}`), person.features[name] ?? 0, -1, 1, 0.02, (v) => setFeature(name, v), signed);
-    }
+    const scroll = controls.scrollTop;
+    controls.replaceChildren();
+    current.build(controls);
+    controls.scrollTop = scroll;
   };
 
   const renderSaved = (): void => {
     saved.replaceChildren();
     const people = host.people();
-    saved.appendChild(el('div', 'pc-section-title', `${t('person.saved')} (${people.length})`));
     if (people.length === 0) {
-      saved.appendChild(el('p', 'pc-note', t('person.savedNone')));
+      // Nobody yet: an empty slot, the explanation in its tooltip.
+      const empty = el('div', 'pc-empty');
+      empty.innerHTML = creatorIcon('saved', 28);
+      empty.title = t('person.savedNone');
+      saved.appendChild(empty);
       return;
     }
     const list = el('div', 'pc-saved-list');
@@ -569,26 +600,30 @@ export function createPersonCreator(host: PersonCreatorHost): PersonCreator {
     saved.appendChild(list);
   };
   const flashSaved = (): void => {
-    saveButton.textContent = t('person.savedFlash');
+    saveButton.classList.add('flash');
+    saveButton.innerHTML = creatorIcon('check', 18);
     setTimeout(() => {
-      saveButton.textContent = t('person.save');
+      saveButton.classList.remove('flash');
+      saveButton.innerHTML = creatorIcon('save', 18);
     }, 1300);
   };
 
   const relabel = (): void => {
     nameInput.placeholder = t('person.namePlaceholder');
     nameInput.setAttribute('aria-label', t('person.name'));
-    randomButton.textContent = t('person.random');
-    walkButton.textContent = t(walking ? 'person.stand' : 'person.walk');
-    saveButton.textContent = t('person.save');
-    newButton.textContent = t('person.new');
+    randomButton.title = t('person.random');
+    saveButton.title = t('person.save');
+    newButton.title = t('person.new');
+    for (const b of [randomButton, saveButton, newButton]) b.setAttribute('aria-label', b.title);
+    walkButton.innerHTML = creatorIcon(walking ? 'stand' : 'walk', 18);
+    walkButton.title = t(walking ? 'person.stand' : 'person.walk');
     if (!loaded) status.textContent = t('person.loading');
     renderControls();
     renderSaved();
     if (loaded) reshape();
   };
 
-  root.append(actions, controls, saved);
+  root.append(actions, body);
   relabel();
 
   return {

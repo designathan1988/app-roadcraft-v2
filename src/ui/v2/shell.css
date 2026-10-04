@@ -322,3 +322,105 @@
 /* The HUD buttons are icons too; their names are tooltips. */
 .v2-pill { position: relative; width: 32px; padding: 0; }
 .v2-pill > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------------------------------------------------------------- people: create a person
+   As a life-simulation game's create-a-person: a rail of categories, the
+   category's pages as icons, one page at a time; names in tooltips. */
+.v2-studio {
+  left: 12px; top: calc(12px + var(--v-hud-h) + 10px); bottom: calc(12px + var(--v-dock-h) + 10px);
+  width: 360px; padding: 0; overflow: hidden; border-radius: 12px; display: flex;
+}
+.v2-studio, .v2-studio * { font-size: 12px; }
+.v2-studio > .person-creator { display: flex; flex-direction: column; gap: 0; width: 100% !important; height: 100%; }
+.v2-studio .pc-actions { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--v-line); }
+.v2-studio .pc-name { flex: 1; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid var(--v-line); border-radius: 8px; background: var(--v-bg-solid); color: var(--v-text); }
+.v2-studio .pc-icon {
+  display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--v-line); border-radius: 8px; background: var(--v-raise); color: var(--v-text);
+}
+.v2-studio .pc-icon:hover { border-color: rgba(79, 224, 191, 0.5); }
+.v2-studio .pc-icon.primary { background: var(--v-accent); border-color: var(--v-accent); color: var(--v-accent-ink); }
+.v2-studio .pc-icon.flash { background: #7ee08a; border-color: #7ee08a; }
+.v2-studio .pc-body { flex: 1; min-height: 0; display: flex; }
+.v2-studio .pc-rail { flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--v-line); }
+.v2-studio .pc-rail-b, .v2-studio .pc-page {
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid transparent; border-radius: 8px; background: none; color: var(--v-muted);
+}
+.v2-studio .pc-page { width: 30px; height: 30px; }
+.v2-studio .pc-rail-b:hover, .v2-studio .pc-page:hover { color: var(--v-text); background: var(--v-raise-2); }
+.v2-studio .pc-rail-b.active, .v2-studio .pc-page.active { color: var(--v-accent-ink); background: var(--v-accent); }
+.v2-studio .pc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.v2-studio .pc-pages { display: flex; flex-wrap: wrap; gap: 2px; padding: 6px; border-bottom: 1px solid var(--v-line); }
+.v2-studio .pc-pages[hidden] { display: none; }
+.v2-studio .pc-controls { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; padding: 8px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.v2-studio .pc-row { display: flex; align-items: center; gap: 8px; }
+.v2-studio .pc-row-icon { flex: none; display: grid; place-items: center; width: 24px; height: 30px; color: var(--v-muted); }
+.v2-studio .pc-row-items { display: flex; flex-wrap: wrap; gap: 3px; min-width: 0; }
+.v2-studio .pc-opt {
+  display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 4px;
+  border: 1px solid var(--v-line); border-radius: 7px; background: var(--v-raise); color: var(--v-muted); font-weight: 700;
+}
+.v2-studio .pc-opt:hover { color: var(--v-text); border-color: rgba(79, 224, 191, 0.5); }
+.v2-studio .pc-opt.active { color: var(--v-accent-ink); background: var(--v-accent); border-color: var(--v-accent); }
+.v2-studio .pc-swatches { gap: 3px; }
+.v2-studio .pc-swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--v-line); }
+.v2-studio .pc-swatch.active { outline: 2px solid var(--v-accent); outline-offset: 1px; }
+.v2-studio .pc-slider { display: grid; grid-template-columns: 112px 1fr 40px; gap: 6px; padding: 0; }
+.v2-studio .pc-slider-name { color: var(--v-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-studio .pc-slider-value { color: var(--v-text); font-size: 11px; }
+.v2-studio .pc-slider input { accent-color: var(--v-accent); }
+.v2-studio .pc-gallery { grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 4px; }
+.v2-studio .pc-item { padding: 0; min-height: 0; border: 1px solid var(--v-line); border-radius: 8px; overflow: hidden; background: var(--v-raise); }
+.v2-studio .pc-item:hover { border-color: rgba(79, 224, 191, 0.6); }
+.v2-studio .pc-item.active { border-color: var(--v-accent); box-shadow: 0 0 0 2px var(--v-accent) inset; background: var(--v-raise); }
+.v2-studio .pc-item-tile { display: grid; place-items: center; height: auto; aspect-ratio: 1; border-radius: 0; color: var(--v-muted); background-size: 170%; background-color: rgba(255, 255, 255, 0.04); }
+.v2-studio .pc-saved { border: 0; padding: 0; gap: 4px; }
+.v2-studio .pc-card-open { border-color: var(--v-line); border-radius: 8px; }
+.v2-studio .pc-card-remove { border-color: var(--v-line); border-radius: 8px; }
+/* The preview beside the panel. */
+.v2-shell .pc-stage {
+  left: calc(12px + 360px + 10px) !important; top: calc(12px + var(--v-hud-h) + 10px) !important;
+  bottom: calc(12px + var(--v-dock-h) + 10px) !important; height: auto !important; width: min(380px, calc(100vw - 404px)) !important;
+  max-height: none !important; border: 1px solid var(--v-line); border-radius: 12px;
+}
+.v2-shell .pc-walk { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border-radius: 8px; }
+
+/* What the tool options hold fits inside them. */
+.v2-toolopts { width: max-content; max-width: 280px; }
+.v2-toolopts .v2-group { flex-wrap: wrap; }
+.v2-toolopts .v2-search { width: 132px; height: 30px; }
+.v2-toolopts select.v2-mini { width: auto; max-width: 132px; }
+.v2-toolopts .v2-slider input { width: 72px; }
+.v2-toolopts { max-width: 380px; }
+.v2-toolopts .v2-group { flex-wrap: nowrap; }
+.v2-toolopts .v2-choices { flex-wrap: nowrap; max-width: none; }
+/* The panel is as tall as its page; long galleries scroll inside it. */
+.v2-studio { bottom: auto; max-height: calc(100dvh - var(--v-hud-h) - var(--v-dock-h) - 44px); }
+.v2-studio .pc-swatch { width: 20px; height: 20px; }
+.v2-studio .pc-swatches { flex-wrap: nowrap; }
+.v2-studio .pc-controls { overflow-x: hidden; }
+.v2-studio .pc-slider.iconic { grid-template-columns: 24px 1fr 40px; }
+.v2-studio .pc-slider.iconic .pc-slider-name { display: grid; place-items: center; color: var(--v-muted); }
+.v2-studio .pc-slider-value { text-align: right; overflow: hidden; }
+.v2-studio .pc-empty { display: grid; place-items: center; height: 72px; border: 1px dashed var(--v-line); border-radius: 8px; color: var(--v-muted); opacity: 0.6; }
+
+/* The asset panel as CS2 lays it: the modes in a row across the top, the
+   things below them across the whole width; close at the top right. */
+.v2-drawer { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head close" "body body"; align-items: center; }
+.v2-drawer-head { grid-area: head; border-right: 0; border-bottom: 1px solid var(--v-line); padding: 4px 6px; }
+.v2-drawer > .v2-icon { grid-area: close; margin: 0 6px; width: 26px; height: 26px; }
+.v2-drawer > .v2-drawer-body { grid-area: body; }
+.v2-drawer:has(> .v2-drawer-head > .v2-tabs[hidden]) { grid-template-areas: "body close"; }
+.v2-drawer:not(:has(> .v2-drawer-head > .v2-tabs[hidden])) > .v2-icon { align-self: stretch; height: auto; border: 0; border-bottom: 1px solid var(--v-line); border-radius: 0; margin: 0; width: 34px; background: none; }
+.v2-pop:has(> .v2-pop-body.icons) { min-width: 0; padding: 4px; }
+.v2-pop-body.icons { display: flex; gap: 2px; }
+.v2-pop-body.icons .v2-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.v2-pop .v2-slider.iconic { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.v2-pop .v2-slider.iconic .v2-slider-name { display: grid; place-items: center; width: 20px; color: var(--v-muted); }
+.v2-pop .v2-slider.iconic input { flex: 1; }
+.v2-pop-line { display: flex; align-items: center; gap: 6px; padding: 4px 10px; }
+.v2-select.iconic { display: flex; align-items: center; gap: 8px; padding: 0; flex: 1; }
+.v2-select.iconic > span { display: grid; place-items: center; width: 20px; color: var(--v-muted); }
+.v2-select.iconic select { flex: 1; }
+.v2-pop { min-width: 260px; }

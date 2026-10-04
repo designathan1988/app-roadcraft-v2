@@ -74,6 +74,10 @@ const ICON: Record<string, string> = {
   grid: '<path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/>',
   hide: '<path d="M3 3l18 18"/><path d="M10.6 6.2A9 9 0 0 1 21 12a14 14 0 0 1-2.4 3.2M6.3 6.6A14 14 0 0 0 3 12s3 6 9 6a8.8 8.8 0 0 0 4.3-1.1"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  car: '<path d="M4 16V12l2-5h12l2 5v4Z"/><path d="M4 12h16"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/>',
+  crowd: '<circle cx="9" cy="7" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2"/><circle cx="17" cy="8" r="2.5"/><path d="M16 13a5 5 0 0 1 6 4.5V21"/>',
+  demand: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  heat: '<path d="M3 17c4-1 5-6 9-6s5 5 9 6"/><path d="M3 12c4-1 5-6 9-6s5 5 9 6" stroke-dasharray="2 2"/><circle cx="12" cy="11" r="1.5" fill="currentColor"/>',
   // Road modes
   draw: '<path d="M4 20 15 9l3 3L7 23H4Z" transform="translate(0 -3)"/><path d="m15 6 3-3 3 3-3 3"/>',
   upgrade: '<path d="M12 20V6"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>',
@@ -248,10 +252,14 @@ export function mountShell(deps: ShellDeps): void {
     wrap.append(name, input, out);
     return wrap;
   };
-  const selectProxy = (label: string, selector: string): HTMLElement => {
+  const selectProxy = (label: string, selector: string, icon?: string): HTMLElement => {
     const source = q<HTMLSelectElement>(selector);
-    const wrap = el('label', 'v2-select');
+    const wrap = el('label', 'v2-select' + (icon ? ' iconic' : ''));
     const name = el('span', '', label);
+    if (icon) {
+      name.innerHTML = icon;
+      wrap.title = label;
+    }
     const select = el('select');
     for (const o of source?.options ?? []) {
       const option = el('option', '', o.textContent ?? o.value);
@@ -278,16 +286,18 @@ export function mountShell(deps: ShellDeps): void {
       );
     } else if (id === 'sim') {
       body.append(
-        slider(t('sim.traffic'), '#trafficIntensity', '#trafficIntensityValue'),
-        slider(t('sim.people'), '#pedIntensity', '#pedIntensityValue'),
-        selectProxy(t('sim.demand'), '#demandLevel'),
+        slider(t('sim.traffic'), '#trafficIntensity', '#trafficIntensityValue', svg('car', 18)),
+        slider(t('sim.people'), '#pedIntensity', '#pedIntensityValue', svg('crowd', 18)),
       );
+      // Demand and the congestion map side by side, as icons.
+      const line = el('div', 'v2-pop-line');
       const congestion = q<HTMLButtonElement>('#congestionToggle');
-      const c = button('v2-row v2-switch' + (congestion?.getAttribute('aria-pressed') === 'true' ? ' on' : ''), t('sim.congestionLabel'), () => {
+      const c = button('v2-icon' + (congestion?.getAttribute('aria-pressed') === 'true' ? ' on' : ''), t('sim.congestionLabel'), () => {
         congestion?.click();
         c.classList.toggle('on', congestion?.getAttribute('aria-pressed') === 'true');
-      });
-      body.appendChild(c);
+      }, svg('heat', 18));
+      line.append(selectProxy(t('sim.demand'), '#demandLevel', svg('demand', 18)), c);
+      body.appendChild(line);
       const metrics = q('.sim-metrics');
       if (metrics) {
         const copy = el('dl', 'v2-metrics');
@@ -298,7 +308,9 @@ export function mountShell(deps: ShellDeps): void {
       for (const b of document.querySelectorAll<HTMLButtonElement>('#cameraControls [data-camera], #resetView')) {
         const label = (b.getAttribute('aria-label') ?? b.title).replace(/\s*\(.*$/, '');
         const icon = b.querySelector('svg')?.outerHTML ?? '';
-        body.appendChild(button('v2-row', label, () => b.click(), icon));
+        // A row of icons, as a camera bar: the name in the tooltip.
+        body.classList.add('icons');
+        body.appendChild(button('v2-icon', label, () => b.click(), icon));
       }
     } else if (id === 'help') {
       for (const [title, text] of [
@@ -427,6 +439,14 @@ export function mountShell(deps: ShellDeps): void {
     tip.hidden = true;
   });
   root.addEventListener('pointerdown', () => { tip.hidden = true; });
+  // A control rebuilt or removed under the pointer takes its tooltip with it.
+  const tipCheck = (): void => {
+    if (tipFor && (!tipFor.isConnected || tipFor.getBoundingClientRect().width === 0)) {
+      tipFor = null;
+      tip.hidden = true;
+    }
+  };
+  setInterval(tipCheck, 200);
 
   // ================================================================ state
   let open = false;
@@ -624,9 +644,8 @@ export function mountShell(deps: ShellDeps): void {
       }
       const brush = group(t('v2.options'));
       brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)));
-      const clear = group(t('terrain.clear'));
-      clear.appendChild(button('v2-icon danger', t('terrain.clear'), () => press('#clearTerrain'), svg('flatten', 16)));
-      options.append(brush, clear);
+      brush.appendChild(button('v2-icon danger', t('terrain.clear'), () => press('#clearTerrain'), svg('flatten', 16)));
+      options.append(brush);
     } else if (landTab === 'barrier') {
       const { items } = section(t('v2.land.walls'));
       for (const b of document.querySelectorAll<HTMLButtonElement>('.tool-help-kinds [data-barrier]')) {
@@ -920,7 +939,29 @@ plan.appendChild(choices([
       s?.setSelectionRange(s.value.length, s.value.length);
     }
     updateHint();
+    fitDrawer();
   }
+  /**
+   * The asset panel stands centred over the dock but never over the tool
+   * options (left) or the selection (right): its width is what is left between
+   * them, whatever the screen.
+   */
+  function fitDrawer(): void {
+    if (drawer.hidden) return;
+    const vw = window.innerWidth;
+    let left = 12;
+    let right = vw - 12;
+    if (!toolOptions.hidden) left = Math.max(left, toolOptions.getBoundingClientRect().right + 12);
+    const sel = [side, q('#builder .bw-inspector')].filter((e): e is HTMLElement => !!e && !e.hidden && e.getBoundingClientRect().width > 0);
+    for (const e of sel) {
+      const r = e.getBoundingClientRect();
+      // Only what reaches down to the panel's height matters.
+      if (r.bottom > drawer.getBoundingClientRect().top - 4) right = Math.min(right, r.left - 12);
+    }
+    const half = Math.max(160, Math.min(vw / 2 - left, right - vw / 2));
+    drawer.style.maxWidth = `${Math.floor(Math.min(1100, half * 2))}px`;
+  }
+  window.addEventListener('resize', () => fitDrawer());
   let wantInfo = true;
   void wantInfo;
 
