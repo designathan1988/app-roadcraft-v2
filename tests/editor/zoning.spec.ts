@@ -77,6 +77,9 @@ describe('zoning and growth', () => {
       expect(ctx.doc.buildings.size).toBe(0);
       const ids = growAll(ctx);
       expect(ids.length, `${use} ${density}`).toBeGreaterThan(1);
+      // The whole block is used: no zoned cell is left without a building or its yard.
+      const bare = ctx.doc.zoneMarks.filter((mark) => mark.building === undefined);
+      expect(bare.length, `${use} ${density} bare cells`).toBe(0);
       for (const building of ctx.doc.buildings.all()) {
         expect(building.use, `${use} ${density}`).toBe(use);
         expect(validateBuilding(ctx, building), `${use} ${density}`).toBeNull();
@@ -92,15 +95,17 @@ describe('zoning and growth', () => {
     const ids = growAll(ctx);
     const target = ids[0]!;
     const marks = marksByCell(ctx.doc, grid);
-    const under = grid.cells.filter((cell) => marks.get(cell.id)?.mark.building === target);
+    // The deepest cell: the rest of the lot keeps its street frontage.
+    const under = grid.cells.filter((cell) => marks.get(cell.id)?.mark.building === target).sort((p, q) => q.row - p.row);
     expect(under.length).toBeGreaterThan(0);
     paintCells(ctx.doc, grid, [under[0]!], null);
     expect(ctx.doc.buildings.has(target as never)).toBe(false);
     expect(ctx.doc.zoneMarks.some((mark) => mark.building === target)).toBe(false);
-    // Its other cell stays zoned but is no lot alone; zoned again, the lot grows again.
-    expect(growAll(ctx)).toEqual([]);
-    paintCells(ctx.doc, grid, [under[0]!], { use: 'residential', density: 'low' });
-    expect(growAll(ctx).length).toBe(1);
+    // The rest of its land is still zoned, and a building grows on it again:
+    // no zoned cell is left bare.
+    expect(growAll(ctx).length).toBeGreaterThan(0);
+    const free = marksByCell(ctx.doc, grid);
+    expect([...free.values()].filter((found) => found.mark.building === undefined)).toEqual([]);
   });
 
   it('round-trips zoned cells and their buildings, and finds every mark on its cell again', () => {
