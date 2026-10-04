@@ -760,6 +760,7 @@ export function buildScenery(
     setMap(map) {
       if (mapMode === map) return;
       mapMode = map;
+      culledFor = null;
       for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
@@ -767,7 +768,7 @@ export function buildScenery(
       if (grass.group.visible) grass.cull(frustum, view);
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
-      cullInstances(meshes, excluded, frustum);
+      cullInstances(meshes, excluded, frustum, mapMode === true);
     },
     exclude(covered) {
       excluded.clear();
@@ -940,12 +941,13 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
     setMap(map) {
       if (mapMode === map) return;
       mapMode = map;
+      culledFor = null;
       for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
-      cullInstances(meshes, null, frustum);
+      cullInstances(meshes, null, frustum, mapMode === true);
     },
     exclude() { /* a garden's plants are the building's own */ },
     dispose() {
@@ -955,8 +957,9 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
 }
 
 /** Copies the instances of each mesh the frustum can see (or see the shadow of) to the front, skipping `excluded`. */
-function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<InstancedMesh, Uint8Array> | null, frustum: Frustum): void {
+function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<InstancedMesh, Uint8Array> | null, frustum: Frustum, mapMode: boolean): void {
   for (const mesh of meshes) {
+    if (mapMode && mesh.name.endsWith('-leaves')) continue;
     const all = instances.get(mesh);
     if (!all) continue;
     const matrices = mesh.instanceMatrix.array as Float32Array;

@@ -758,18 +758,23 @@ export function createSceneRenderer(
       }
 
       const detailed = rig.viewport.zoom >= quality.detailCutoffZoom;
+      const plantMap = rig.viewport.zoom < PLANT_MAP_ZOOM;
       // A window frame's bar is about 0.14 u: under half a pixel below this zoom.
       buildings.setFar(rig.viewport.zoom < 3);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;
-      for (const mesh of scenery?.meshes ?? []) mesh.visible = quality.detailProps && detailed;
-      for (const mesh of gardens?.meshes ?? []) mesh.visible = detailed;
+      gardens?.setMap(plantMap);
+      scenery?.setMap(plantMap);
+      for (const mesh of scenery?.meshes ?? []) {
+        mesh.visible = quality.detailProps && detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
+      }
+      for (const mesh of gardens?.meshes ?? []) {
+        mesh.visible = detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
+      }
       gardens?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
-      gardens?.setMap(rig.viewport.zoom < PLANT_MAP_ZOOM);
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
         scenery.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
-        scenery.setMap(rig.viewport.zoom < PLANT_MAP_ZOOM);
       }
       // The wind blows in real time: a paused simulation is still a windy day.
       windClock += Math.min(0.1, Math.max(0, delta));
