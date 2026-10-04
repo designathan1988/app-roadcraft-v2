@@ -255,6 +255,11 @@ export function varied(rng: Rng, fn: BuildingFunction): BlueprintBody | null {
 export interface Placer {
   readonly placed: Box[];
   put(body: Omit<Building, 'id'>, box: Box): void;
+  /**
+   * Carries a front building's own plot back over `rect` (its yard to the
+   * rear boundary). True when it was laid.
+   */
+  yard?(front: Front, rect: Box): boolean;
 }
 
 /** A building on a block's frontage, and the street edge it faces. */
@@ -298,6 +303,12 @@ export function backfill(rng: Rng, lot: Box, fronts: readonly Front[], into: Pla
     const W = (inward.y !== 0 ? r.x1 - r.x0 : r.y1 - r.y0) / m(1);
     const D = (inward.y !== 0 ? r.y1 - r.y0 : r.x1 - r.x0) / m(1);
     if (W < 4 || D < 3) continue;
+    // The ground behind a front is that building's own plot, to the rear
+    // boundary: its yard - never a second building in the block's middle.
+    if (into.yard) {
+      into.yard(f, r);
+      continue;
+    }
     const body = rearWing(rng, f, W, D);
     // The wing's own front (local y = 0) against the back of the front building.
     const start: Vec = {
@@ -316,7 +327,7 @@ type Vec = { x: number; y: number };
  * `r` less every box it runs into, keeping the side against the front (the
  * one opposite `inward`'s direction); the largest piece left wins.
  */
-function trimAgainst(r: Box, inward: Vec, placed: readonly Box[]): Box | null {
+export function trimAgainst(r: Box, inward: Vec, placed: readonly Box[]): Box | null {
   let box: Box = { ...r };
   for (let guard = 0; guard < 40; guard++) {
     if (box.x1 - box.x0 < m(3) || box.y1 - box.y0 < m(3)) return null;

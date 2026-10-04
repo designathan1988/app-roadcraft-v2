@@ -1,59 +1,63 @@
-import { Rng } from '@core/rng';
 import type { RoadDoc } from './doc';
 import { buildingBounds } from './buildings/geometry';
-import { infill } from './town';
+import { extendPlot } from './buildings/plotExtension';
 import type { Building } from './buildings/types';
+import type { Box } from './sampleTown';
+import { trimAgainst } from './town';
 import { m } from './units';
 
 /**
- * Saved cities from before the town's blocks were built through to their
- * spine still have a court in the middle of every block: a lawn round a
- * gravel walk (`town.ts` courtyard, function 'square', all of it open lots,
- * the walk four gravel strips). A block of a town has no common ground in its
- * middle: on load, each such court is replaced by what the town builds there
- * now - the back buildings of the plots on either side, two rows back to
- * back, each a back house or a workshop of its own width.
+ * Saved cities from before the town's blocks were built through still have a
+ * court in the middle of every block: a lawn round a gravel walk (function
+ * 'square', all of it open lots, the walk four gravel strips). In a real town
+ * that ground belongs to the buildings round it: each one's plot runs back to
+ * the block's spine. On load the court goes, and every building that backs
+ * onto it has its own yard carried back over its share - walled from its
+ * neighbours and from the plot behind. No building is added.
  *
- * Returns how many courts were replaced.
+ * Returns how many courts were given back to their plots.
  */
 export function replaceBlockCourts(doc: RoadDoc): number {
-  const courts = [...doc.buildings.all()].filter((b) =>
+  const isCourt = (b: Building): boolean =>
     b.function === 'square' && b.volumes.length >= 5 && b.volumes.every((v) => v.open) &&
-    b.volumes.filter((v) => v.open === 'gravel').length >= 4);
-  let replaced = 0;
+    b.volumes.filter((v) => v.open === 'gravel').length >= 4;
+  const courts = [...doc.buildings.all()].filter(isCourt);
   for (const court of courts) {
-    const box = buildingBounds(court);
+    const cb = buildingBounds(court);
+    const box: Box = { x0: cb.minX, y0: cb.minY, x1: cb.maxX, y1: cb.maxY };
     doc.buildings.remove(court.id);
-    replaced++;
-    const rng = new Rng((court.id * 0x9e3779b1) >>> 0);
-    const pick = (): number => rng.float();
-    const W = box.maxX - box.minX, D = box.maxY - box.minY;
-    const alongX = W >= D;
-    const length = alongX ? W : D, depth = alongX ? D : W;
-    // Two rows, back to back on the block's spine, a plot every 9-14 m.
-    const rowDepth = depth / 2 - m(0.4);
-    if (rowDepth < m(4)) continue;
-    let t = m(0.5);
-    while (t < length - m(4.5)) {
-      const width = Math.min(length - m(0.5) - t, m(9 + pick() * 5));
-      if (width < m(4)) break;
-      for (const row of [0, 1] as const) {
-        const Wm = width / m(1) - 0.6, Dm = (rowDepth - m(0.3) - pick() * m(3)) / m(1);
-        if (Wm < 4 || Dm < 4) continue;
-        const body = infill(pick, Wm, Dm, true);
-        // The back building stands against the row's outer edge - the back of
-        // the plot's front building - and its yard runs to the spine.
-        const along0 = t + m(0.3);
-        const x = alongX ? box.minX + along0 : row === 0 ? box.minX : box.maxX - m(Dm);
-        const y = alongX ? (row === 0 ? box.minY : box.maxY - m(Dm)) : box.minY + along0;
-        const rotation = 0;
-        // An unrotated block: its local frame is the world's, offset to the corner.
-        if (!alongX) for (const v of body.volumes) { [v.w, v.d] = [v.d, v.w]; [v.x, v.y] = [v.y, v.x]; }
-        const local = { x0: Math.min(...body.volumes.map((v) => v.x)), y0: Math.min(...body.volumes.map((v) => v.y)) };
-        doc.buildings.add({ ...body, function: 'townhouse', x: x - local.x0, y: y - local.y0, rotation } as Omit<Building, 'id'> as Building);
+    const W = box.x1 - box.x0, D = box.y1 - box.y0;
+    const midX = (box.x0 + box.x1) / 2, midY = (box.y0 + box.y1) / 2;
+    const reach = m(4);
+    // The buildings backing onto the court, and the way their plots run into it.
+    const around: { b: Building; rect: Box; inward: { x: number; y: number }; long: boolean }[] = [];
+    for (const b of doc.buildings.all()) {
+      if (b.volumes.every((v) => v.open)) continue;
+      const bb = buildingBounds(b);
+      const overlapX = Math.min(bb.maxX, box.x1) - Math.max(bb.minX, box.x0);
+      const overlapY = Math.min(bb.maxY, box.y1) - Math.max(bb.minY, box.y0);
+      const ax0 = Math.max(bb.minX, box.x0), ax1 = Math.min(bb.maxX, box.x1);
+      const ay0 = Math.max(bb.minY, box.y0), ay1 = Math.min(bb.maxY, box.y1);
+      if (overlapX > m(3) && Math.abs(bb.maxY - box.y0) <= reach) {
+        around.push({ b, inward: { x: 0, y: 1 }, long: W >= D, rect: { x0: ax0, x1: ax1, y0: box.y0, y1: W >= D ? midY : box.y1 } });
+      } else if (overlapX > m(3) && Math.abs(bb.minY - box.y1) <= reach) {
+        around.push({ b, inward: { x: 0, y: -1 }, long: W >= D, rect: { x0: ax0, x1: ax1, y0: W >= D ? midY : box.y0, y1: box.y1 } });
+      } else if (overlapY > m(3) && Math.abs(bb.maxX - box.x0) <= reach) {
+        around.push({ b, inward: { x: 1, y: 0 }, long: D > W, rect: { y0: ay0, y1: ay1, x0: box.x0, x1: D > W ? midX : box.x1 } });
+      } else if (overlapY > m(3) && Math.abs(bb.minX - box.x1) <= reach) {
+        around.push({ b, inward: { x: -1, y: 0 }, long: D > W, rect: { y0: ay0, y1: ay1, x0: D > W ? midX : box.x0, x1: box.x1 } });
       }
-      t += width;
+    }
+    // The long sides first, to the spine; the ends take what is left.
+    const taken: Box[] = [];
+    for (const f of around.sort((p, q) => Number(q.long) - Number(p.long))) {
+      const rect = trimAgainst(f.rect, f.inward, taken);
+      if (!rect) continue;
+      const grown = extendPlot(f.b, { x0: rect.x0 + m(0.1), y0: rect.y0 + m(0.1), x1: rect.x1 - m(0.1), y1: rect.y1 - m(0.1) });
+      if (!grown) continue;
+      doc.buildings.put(grown);
+      taken.push(rect);
     }
   }
-  return replaced;
+  return courts.length;
 }

@@ -10,6 +10,7 @@ import { Model, mat } from './buildings/cityBuildings';
 import type { Building, BuildingFunction, LotSurface } from './buildings/types';
 import { buildingBounds } from './buildings/geometry';
 import { plannedLot } from './buildings/lotPlan';
+import { extendPlot } from './buildings/plotExtension';
 import type { ZoneDensity, ZoneUse } from './zones';
 import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
 import { backfill, houses, infill, park, perimeter, varied, type Placer } from './town';
@@ -636,10 +637,30 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   const rng = (): number => stream.float();
   const placed: Box[] = [];
   let count = 0;
+  /** Which stored building each placed body became, and where it stands. */
+  const stored = new Map<object, number>();
+  const frontsOn: { id: number; box: Box }[] = [];
+  /** Lays a building's plot over `rect` and claims that ground. */
+  const extend = (id: number, rect: Box): boolean => {
+    const b = doc.buildings.get(id as Parameters<typeof doc.buildings.get>[0]);
+    if (!b) return false;
+    // A hand clear of the neighbours' plots on every side.
+    const grown = extendPlot(b, { x0: rect.x0 + m(0.1), y0: rect.y0 + m(0.1), x1: rect.x1 - m(0.1), y1: rect.y1 - m(0.1) });
+    if (!grown) return false;
+    doc.buildings.put(grown);
+    placed.push(rect);
+    return true;
+  };
   const into: Placer = {
     placed,
+    yard(front, rect) {
+      const id = stored.get(front.body);
+      return id !== undefined && extend(id, rect);
+    },
     put(body, box) {
-      doc.buildings.add(body);
+      const added = doc.buildings.add(body);
+      stored.set(body, added.id as number);
+      frontsOn.push({ id: added.id as number, box });
       // The whole of what it puts on the ground - its volumes AND its parts
       // (the trees of a front garden, an awning, a fence): a lot laid in a gap
       // against the volumes alone came down on a neighbour's trees.
@@ -710,6 +731,20 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       // stand a building on is a garden.
       void park;
       if (kind === 'works' && short >= 16 && putPlanned(box, Wm >= Dm ? 'south' : 'west', 'industrial', 'low', 'warehouse')) continue;
+      // Among homes and shops a gap is the back of the plot beside it: that
+      // building's yard runs over it. No building of its own in the middle.
+      if (kind !== 'works') {
+        const touching = frontsOn
+          .map((f) => {
+            const gx = Math.max(0, box.x0 - f.box.x1, f.box.x0 - box.x1), gy = Math.max(0, box.y0 - f.box.y1, f.box.y0 - box.y1);
+            const shared = gx <= m(1.5) && gy <= m(1.5)
+              ? Math.max(Math.min(box.x1, f.box.x1) - Math.max(box.x0, f.box.x0), Math.min(box.y1, f.box.y1) - Math.max(box.y0, f.box.y0)) : -1;
+            return { f, shared };
+          })
+          .filter((t) => t.shared > m(3))
+          .sort((p, q) => q.shared - p.shared);
+        if (touching.some((t) => extend(t.f.id, box))) continue;
+      }
       const body = shed ? yard(rng, Wm, Dm, 'warehouse')
         : short >= 6 ? infill(rng, Wm, Dm, kind === 'homes')
           : garden(rng, Wm, Dm);
