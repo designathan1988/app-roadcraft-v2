@@ -446,6 +446,26 @@ export function buildWalkways(net: Network): WalkGraph {
         eased[q] = { x: (prev[q - 1]!.x + 2 * prev[q]!.x + prev[q + 1]!.x) / 4, y: (prev[q - 1]!.y + 2 * prev[q]!.y + prev[q + 1]!.y) / 4 };
       }
     }
+    // The first and last chord define the tangent seen by walkers. Blending
+    // positions toward a tangent line does not constrain that chord: the
+    // contour can still pull its first sample sideways by several degrees.
+    if (count >= 3) {
+      const first = Math.min(EASE / 3, Math.hypot(eased[1]!.x - from.p.x, eased[1]!.y - from.p.y));
+      const last = Math.min(EASE / 3, Math.hypot(eased[count - 1]!.x - to.p.x, eased[count - 1]!.y - to.p.y));
+      eased[1] = { x: from.p.x + from.into.x * first, y: from.p.y + from.into.y * first };
+      eased[count - 1] = { x: to.p.x - out.x * last, y: to.p.y - out.y * last };
+    } else {
+      // At a sub-metre junction the sampled contour has only one interior
+      // point. It cannot define both endpoint derivatives; use short tangent
+      // chords before joining the two footway ends.
+      const chord = Math.min(JOIN, Math.hypot(to.p.x - from.p.x, to.p.y - from.p.y) / 4);
+      return Polyline.fromPoints([
+        from.p,
+        { x: from.p.x + from.into.x * chord, y: from.p.y + from.into.y * chord },
+        { x: to.p.x - out.x * chord, y: to.p.y - out.y * chord },
+        to.p,
+      ]);
+    }
     const clean = eased.filter((p, q) => q === 0 || Math.hypot(p.x - eased[q - 1]!.x, p.y - eased[q - 1]!.y) > 1e-6);
     return clean.length >= 2 ? Polyline.fromPoints(clean) : null;
   };
