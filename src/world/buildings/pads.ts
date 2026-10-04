@@ -29,6 +29,8 @@ export const PAD_BATTER = 3.5;
 export const LOT_PLATE = m(0.03);
 /** How far water stands below its lot's edge: a pool's or a pond's rim. */
 export const POOL_SINK = m(0.04);
+/** Clearance for water over the triangulated terrain between grid corners. */
+export const POOL_TERRAIN_CLEARANCE = m(0.06);
 /** Furthest a bank may reach from its platform. */
 const PAD_REACH = m(40);
 
@@ -36,6 +38,8 @@ interface Pad {
   readonly rings: readonly (readonly Vec2[])[];
   /** The platform's height under each ring, at a point (a car park falls with its street). */
   readonly levels: readonly ((x: number, y: number) => number)[];
+  readonly water: readonly boolean[];
+  readonly solidCount: number;
   readonly box: Aabb;
 }
 
@@ -82,6 +86,7 @@ export function buildingPads(
     // lots, the lot's own surface (`lots.ts`), which falls with the street.
     const lots = lotSurfaces(b, floor, pavedAt);
     const rings: (readonly Vec2[])[] = [...built, ...lots.map((l) => l.ring)];
+    const water = [...built.map(() => false), ...lots.map((l) => l.volume.open === 'water')];
     if (rings.length === 0) continue;
     const flat = floor - PLINTH_MIN;
     // A lawn IS the ground, graded to the lot's surface (it is drawn as the
@@ -89,7 +94,8 @@ export function buildingPads(
     // gravel, sand and water are laid as a thin plate just over it.
     const levels = [...built.map(() => () => flat), ...lots.map((l) => {
       const open = l.volume.open ?? 'grass';
-      const under = open === 'grass' ? 0 : open === 'water' ? POOL_SINK + LOT_PLATE : LOT_PLATE;
+      const under = open === 'grass' ? 0 : open === 'water'
+        ? POOL_SINK + LOT_PLATE + POOL_TERRAIN_CLEARANCE : LOT_PLATE;
       return (x: number, y: number) => l.heightAt(x, y) - under;
     })];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -100,7 +106,8 @@ export function buildingPads(
       }
     }
     const grow = apron + PAD_REACH;
-    pads.push({ rings, levels, box: { minX: minX - grow, minY: minY - grow, maxX: maxX + grow, maxY: maxY + grow } });
+    pads.push({ rings, levels, water, solidCount: built.length,
+      box: { minX: minX - grow, minY: minY - grow, maxX: maxX + grow, maxY: maxY + grow } });
   }
   // The platforms filed under every grid cell their box reaches: a corner of
   // the ground asks only the ones over it. Every corner asked every platform
@@ -125,14 +132,30 @@ export function buildingPads(
       // strip between them as each one's own apron, split down the middle.
       let nearest = Infinity;
       let level = 0;
+      let owner: Pad | null = null;
+      let solid = false;
+      let waterDistance = Infinity;
+      let waterLevel = 0;
+      let waterOwner: Pad | null = null;
       for (const pad of cells.get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL))) ?? []) {
         if (x < pad.box.minX || x > pad.box.maxX || y < pad.box.minY || y > pad.box.maxY) continue;
         pad.rings.forEach((ring, i) => {
           const d = ringDistance(ring, x, y);
-          if (d < nearest) { nearest = d; level = pad.levels[i]!(x, y); }
+          if (d < nearest) { nearest = d; level = pad.levels[i]!(x, y); owner = pad; solid = i < pad.solidCount; }
+          if (pad.water[i] && d < waterDistance) { waterDistance = d; waterLevel = pad.levels[i]!(x, y); waterOwner = pad; }
         });
       }
       if (nearest === Infinity) return { height: ground, weight: 0 };
+      // A water basin is cut into the ground under its surrounding deck too.
+      // Otherwise a terrain triangle whose outer corner reads the higher deck
+      // crosses the lower water plane and leaves only a triangular fragment.
+      if ((waterOwner === owner || !solid) && apron > 0 && waterDistance < 2 * apron) {
+        // A neighbouring open garden can own a terrain grid corner beside the
+        // pool; its high corner would interpolate through the water. A solid
+        // building's own platform remains protected from this excavation.
+        const t = Math.min(1, (2 * apron - waterDistance) / apron);
+        level += (waterLevel - level) * t * t * (3 - 2 * t);
+      }
       const out = Math.max(0, nearest - apron) / PAD_BATTER;
       // Fill below the platform, cut above it, and the land itself once the
       // bank has met it.

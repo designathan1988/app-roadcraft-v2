@@ -38,7 +38,7 @@ export interface BuildingLayer {
    * Rebuilds what is stale. Returns true if the stored buildings were rebuilt.
    * `pavedAt` is the paving (footways, carriageways) entrances open onto.
    */
-  update(doc: RoadDoc, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): boolean;
+  update(doc: RoadDoc, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt, naturalAt?: GroundAt): boolean;
   setPreview(preview: BuildingPreviewInput | null): void;
   /**
    * "See inside": every building within `radius` of (x, y) is drawn cut open
@@ -122,7 +122,8 @@ export function createBuildingLayer(): BuildingLayer {
     groundDigests.set(b.id, { record, groundKey, digest });
     return digest;
   };
-  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
+  const cutChunkFor = (b: Building, level: number, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt,
+    naturalAt: GroundAt = groundAt): BuildingChunk => {
     const dir = cutaway ? Math.round(Math.atan2(cutaway.view.y, cutaway.view.x) / (Math.PI / 4)) : 0;
     const id = `${b.id}|${level}|${dir}`;
     const record = JSON.stringify(b);
@@ -132,7 +133,7 @@ export function createBuildingLayer(): BuildingLayer {
     // The view snapped to eighths of a turn: the walls that come down change
     // only when the camera has really turned.
     const a = dir * (Math.PI / 4);
-    const chunk = emitChunk(cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) }), groundAt, pavedAt);
+    const chunk = emitChunk(cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) }), groundAt, pavedAt, naturalAt);
     cutChunks.set(id, { key, chunk });
     return chunk;
   };
@@ -144,20 +145,22 @@ export function createBuildingLayer(): BuildingLayer {
     const dy = Math.max(box.minY - cutaway.y, 0, cutaway.y - box.maxY);
     return Math.hypot(dx, dy) <= cutaway.radius;
   };
-  const drawn = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk =>
-    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, groundKey, pavedAt) : chunkFor(b, groundAt, groundKey, pavedAt);
+  const drawn = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt, naturalAt: GroundAt = groundAt): BuildingChunk =>
+    cutaway && near(b) ? cutChunkFor(b, cutaway.level, groundAt, groundKey, pavedAt, naturalAt)
+      : chunkFor(b, groundAt, groundKey, pavedAt, naturalAt);
   /**
    * Each building's emitted meshes, keyed by its record and by the ground
    * around it: an edit re-emits one building, a terrain dab only the ones
    * whose ground it moved; everything else is concatenated from here.
    */
   const chunks = new Map<BuildingId, { key: string; chunk: BuildingChunk }>();
-  const chunkFor = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt): BuildingChunk => {
+  const chunkFor = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt,
+    naturalAt: GroundAt = groundAt): BuildingChunk => {
     const record = JSON.stringify(b);
     const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
     const known = chunks.get(b.id);
     if (known && known.key === key) return known.chunk;
-    const chunk = emitChunk(b, groundAt, pavedAt);
+    const chunk = emitChunk(b, groundAt, pavedAt, naturalAt);
     chunks.set(b.id, { key, chunk });
     return chunk;
   };
@@ -196,7 +199,7 @@ export function createBuildingLayer(): BuildingLayer {
     get version() {
       return version;
     },
-    update(doc, groundAt, groundKey, pavedAt) {
+    update(doc, groundAt, groundKey, pavedAt, naturalAt = groundAt) {
       const hides = preview?.hides ?? null;
       const dimKey = dimmed === undefined ? 'off' : String(dimmed ?? 'all');
       const cutKey = cutaway
@@ -219,11 +222,11 @@ export function createBuildingLayer(): BuildingLayer {
         const solid = dimmed === undefined ? shown : shown.filter((b) => b.id === dimmed);
         const others = dimmed === undefined ? [] : shown.filter((b) => b.id !== dimmed);
         if (cutChunks.size > 64) cutChunks.clear();
-        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, cells, BATCH_CELL, COARSE_PARTS);
-        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS);
+        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, cells, BATCH_CELL, COARSE_PARTS);
+        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS);
         group.add(stored.group, details.group);
         faded = others.length > 0
-          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt)), kit, false, true)
+          ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt)), kit, false, true)
           : null;
         if (faded) {
           faded.group.renderOrder = 1;
@@ -244,7 +247,7 @@ export function createBuildingLayer(): BuildingLayer {
         }
         if (preview) {
           if (!preview.solid) kit.setGhostValid(preview.valid);
-          ghost = buildBuildingMeshes([preview.building], groundAt, kit, !preview.solid, pavedAt);
+          ghost = buildBuildingMeshes([preview.building], groundAt, kit, !preview.solid, pavedAt, naturalAt);
           ghost.group.renderOrder = 2;
           group.add(ghost.group);
         }

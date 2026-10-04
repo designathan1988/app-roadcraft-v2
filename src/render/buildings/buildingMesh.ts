@@ -29,6 +29,7 @@ import {
   STEP_RUN,
   flightRun,
   foundationOf,
+  floorHeight,
 } from '@world/buildings/foundation';
 import {
   type FacadeBay,
@@ -471,10 +472,11 @@ function emitBuilding(
   pavedAt?: PavedAt,
   furniture: Partial<Record<FurnitureKind, Placement[]>> = {},
   onLot?: (el: BuildingElement) => boolean,
+  designedFloor?: number,
 ): number {
   const e = new Emitter(b, shell, parts, furniture);
   const bays = facadeBays(b);
-  const f: Foundation = foundationOf(b, groundAt, bays, pavedAt);
+  const f: Foundation = foundationOf(b, groundAt, bays, pavedAt, designedFloor);
   const floor = f.floor;
   shell.ground = floor;
   const entranceKey = (volume: number, side: FaceId, index: number): string => `${volume}:${side}:${index}`;
@@ -2215,7 +2217,7 @@ function writeMatrix(out: Float32Array, offset: number, p: Placement): void {
   out[offset + 12] = p.x; out[offset + 13] = p.z; out[offset + 14] = -p.y; out[offset + 15] = 1;
 }
 
-export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): BuildingChunk {
+export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, naturalAt: GroundAt = groundAt): BuildingChunk {
   const shell = new Shell();
   const parts = Object.fromEntries(PART_KINDS.map((k) => [k, [] as Placement[]])) as Record<PartKind, Placement[]>;
   // The blocks as drawn: unions, cuts and intersections resolved, the stored
@@ -2228,8 +2230,11 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): B
   const furnished: Partial<Record<FurnitureKind, Placement[]>> = {};
   const inLot = (el: BuildingElement): boolean =>
     lots.some((v) => el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);
+  // The terrain is graded from this natural-ground floor. Reading the graded
+  // ground back into the floor would move the building away from its own pad.
+  const designedFloor = closed.length > 0 ? floorHeight(resolved, naturalAt, pavedAt) : undefined;
   const floor = closed.length > 0
-    ? emitBuilding({ ...resolved, volumes: closed }, groundAt, shell, parts, pavedAt, furnished, inLot)
+    ? emitBuilding({ ...resolved, volumes: closed }, groundAt, shell, parts, pavedAt, furnished, inLot, designedFloor)
     : undefined;
   emitLots(resolved, lots, closed.length === 0, groundAt, shell, parts, floor, pavedAt, inLot);
   const batches = {} as Record<PartKind, PartBatch>;
@@ -2435,6 +2440,7 @@ export function buildBuildingMeshes(
   kit: BuildingKit,
   ghost = false,
   pavedAt?: PavedAt,
+  naturalAt: GroundAt = groundAt,
 ): BuildingMeshes {
-  return assembleBuildingMeshes([...buildings].map((b) => emitChunk(b, groundAt, pavedAt)), kit, ghost);
+  return assembleBuildingMeshes([...buildings].map((b) => emitChunk(b, groundAt, pavedAt, naturalAt)), kit, ghost);
 }

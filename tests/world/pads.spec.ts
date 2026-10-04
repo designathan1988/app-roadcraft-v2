@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { cityBuilding } from '@world/buildings/cityBuildings';
+import { Model } from '@world/buildings/cityBuildings';
 import { instantiate } from '@world/buildings/blueprints';
 import { floorHeight } from '@world/buildings/foundation';
-import { footprintRects } from '@world/buildings/geometry';
-import { PAD_BATTER, buildingPads } from '@world/buildings/pads';
+import { footprintRects, localToWorld } from '@world/buildings/geometry';
+import { lotSurfaces } from '@world/buildings/lots';
+import { LOT_PLATE, PAD_BATTER, POOL_SINK, POOL_TERRAIN_CLEARANCE, buildingPads } from '@world/buildings/pads';
 import { type Building, asBuildingId } from '@world/buildings/types';
+import { m } from '@world/units';
 
 /** A building on a slope stands on graded ground, and the grading is stable. */
 describe('building pads', () => {
@@ -41,5 +44,21 @@ describe('building pads', () => {
       prev = h;
     }
     expect(graded(maxX + 2000, 0)).toBeCloseTo(slope(maxX + 2000, 0), 6);
+  });
+
+  it('cuts the ground under a pool and its surrounding deck below the water', () => {
+    const body = new Model('house', 'residential', 0)
+      .block({ x: 1, y: 1, w: 8, d: 8, storeys: 1 })
+      .lot(0, 12, 12, 3, 'paving')
+      .lot(0, 15, 3, 4, 'paving')
+      .lot(7, 15, 5, 4, 'paving')
+      .lot(0, 19, 12, 3, 'paving')
+      .lot(3, 15, 4, 4, 'water').build();
+    const house = { ...instantiate(body, { x: 0, y: 0 }, 0, 'house'), id: asBuildingId(2) } as Building;
+    const flat = () => 0;
+    const water = lotSurfaces(house, floorHeight(house, flat)).find((lot) => lot.volume.open === 'water')!;
+    const point = localToWorld(house, m(2), m(17));
+    const ground = buildingPads([house], flat, undefined, m(4)).shapeAt(point.x, point.y, 0).height;
+    expect(ground).toBeCloseTo(water.heightAt(point.x, point.y) - POOL_SINK - LOT_PLATE - POOL_TERRAIN_CLEARANCE, 6);
   });
 });

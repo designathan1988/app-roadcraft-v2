@@ -201,11 +201,12 @@ export function foundationOf(
   groundAt: GroundAt,
   bays?: readonly FacadeBay[],
   anyPaving: PavedAt = NO_PAVING,
+  designedFloor?: number,
 ): Foundation {
   const all = bays ?? facadeBays(b);
   const { lowest, highest } = sampleFootprint(b, groundAt);
   const pavedAt = atLevel(anyPaving, highest, lowest);
-  const floor = floorOver(highest, all, pavedAt, lotFront(b, pavedAt));
+  const floor = designedFloor ?? floorOver(highest, all, pavedAt, lotFront(b, pavedAt));
   const volumes = new Map(b.volumes.map((v) => [v.id, v]));
   const entrances: Entrance[] = [];
   for (const bay of all) {

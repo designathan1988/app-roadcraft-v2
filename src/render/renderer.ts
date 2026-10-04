@@ -707,7 +707,7 @@ export function createSceneRenderer(
       // The buildings follow the ground once a stroke is over, not on every
       // dab of it: re-grading 600 buildings per dab took seconds a dab.
       if (!stroking) buildingGround = `${net.doc.terrainRevision}:${rebuilds}`;
-      buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt);
+      buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt);
       // The plants under a building's footprints: only a changed site moves them.
       if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== siteKey)) {
         scenery.exclude(net.doc.buildings.size > 0 ? buildings.covers : null);
@@ -804,13 +804,13 @@ export function createSceneRenderer(
         pedestrianVisible,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
-        indoor: indoors.figures(sim, cutSpec, terrain.renderedHeightAt, pavedHeightAt),
+        indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
       });
       // The rooms cut open are lit from inside: brighter as the day goes.
       const key = cutSpec ? `${cutSpec.level}@${cutSpec.x},${cutSpec.y}:${sim.doc.buildings.revision}` : '';
       if (key !== lampsKey) {
         lampsKey = key;
-        const lamps = indoors.lamps(sim, cutSpec, terrain.renderedHeightAt, pavedHeightAt, ROOM_LIGHTS);
+        const lamps = indoors.lamps(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt, ROOM_LIGHTS);
         roomLights.forEach((light, i) => {
           const at = lamps[i];
           light.userData['used'] = !!at;
