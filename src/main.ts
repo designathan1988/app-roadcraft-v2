@@ -49,6 +49,7 @@ import { type ImportResult, Persistence, exportToFile, importFromFile, type Save
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { buildDefaultTown } from '@world/defaultTown';
+import { replaceBlockCourts } from '@world/courtMigration';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -157,6 +158,8 @@ let bootFailed = false;
 if (saved) {
   try {
     restoreInto(doc, saved, net);
+    // A city saved before the town was built through keeps its block courts: replaced.
+    if (replaceBlockCourts(doc) > 0) net.rebuild();
   } catch (error) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();

@@ -1,12 +1,12 @@
 import type { Rng } from '@core/rng';
-import type { BlueprintBody } from '@world/buildings/blueprints';
-import { mat } from '@world/buildings/cityBuildings';
-import { elementClash } from '@world/buildings/elements';
-import type { MaterialSpec } from '@world/buildings/materials';
-import type { MadeBuilding, Rect } from '@world/buildings/procedural';
-import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, type Side, type Volume } from '@world/buildings/types';
-import { m } from '@world/units';
-import type { ZoneDensity, ZoneUse } from '@world/zones';
+import type { BlueprintBody } from './blueprints';
+import { mat } from './cityBuildings';
+import { elementClash } from './elements';
+import type { MaterialSpec } from './materials';
+import { type MadeBuilding, type Rect, madeToMeasure } from './procedural';
+import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, type Side, type Volume } from './types';
+import { m } from '../units';
+import type { ZoneDensity, ZoneUse } from '../zones';
 
 /**
  * A grown lot, composed the way a plot in a real street is: street, footway,
@@ -235,7 +235,14 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     path(r, material = PAVERS) {
       if (r.x1 - r.x0 < 0.3 || r.y1 - r.y0 < 0.3) return;
       taken.push(r);
-      lot.put('pavement', (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 0, r.x1 - r.x0, r.y1 - r.y0, 0.1, 0, material);
+      // In pieces no longer than a part may be.
+      const n = Math.ceil(Math.max(r.x1 - r.x0, r.y1 - r.y0) / 30);
+      const alongX = r.x1 - r.x0 >= r.y1 - r.y0;
+      for (let k = 0; k < n; k++) {
+        const q = alongX ? { ...r, x0: r.x0 + ((r.x1 - r.x0) * k) / n, x1: r.x0 + ((r.x1 - r.x0) * (k + 1)) / n }
+          : { ...r, y0: r.y0 + ((r.y1 - r.y0) * k) / n, y1: r.y0 + ((r.y1 - r.y0) * (k + 1)) / n };
+        lot.put('pavement', (q.x0 + q.x1) / 2, (q.y0 + q.y1) / 2, 0, q.x1 - q.x0, q.y1 - q.y0, 0.1, 0, material);
+      }
     },
     busy(x, y, r = 0.8) {
       return taken.some((t) => x + r > t.x0 && x - r < t.x1 && y + r > t.y0 && y - r < t.y1);
@@ -541,4 +548,25 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   (body as { nextVolumeId?: number }).nextVolumeId = nextVolume;
   (body as { nextElementId?: number }).nextElementId = nextElement;
   return true;
+}
+
+/**
+ * A whole property for a lot `W` x `D` metres: planned, its building made
+ * for the envelope, laid out to its boundaries. Local frame: the street along
+ * -y, the front boundary at y = 0, centred on x. Null if it cannot be laid.
+ */
+export function plannedLot(use: ZoneUse, density: ZoneDensity, W: number, D: number, rng: Rng, character?: number): BlueprintBody | null {
+  const plan = planLot(lotKind(use, density), W, D, rng);
+  const env = plan.building;
+  const made = madeToMeasure(use, density, {
+    W: env.x1 - env.x0, D: env.y1 - env.y0,
+    backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
+    ...(character !== undefined ? { character } : {}),
+  }, rng);
+  const body = made.body;
+  const dx = m(env.x0 - W / 2), dy = m(env.y0);
+  for (const v of body.volumes) { v.x += dx; v.y += dy; }
+  for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
+  for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+  return furnishLot(body, plan, made, rng) ? body : null;
 }

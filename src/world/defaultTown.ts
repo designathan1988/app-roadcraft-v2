@@ -9,7 +9,9 @@ import { type BlueprintBody } from './buildings/blueprints';
 import { Model, mat } from './buildings/cityBuildings';
 import type { Building, BuildingFunction, LotSurface } from './buildings/types';
 import { buildingBounds } from './buildings/geometry';
-import { type Box, type Edge, facingBody, inside } from './sampleTown';
+import { plannedLot } from './buildings/lotPlan';
+import type { ZoneDensity, ZoneUse } from './zones';
+import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
 import { backfill, houses, infill, park, perimeter, varied, type Placer } from './town';
 import { m } from './units';
 
@@ -657,6 +659,29 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     return true;
   };
   /**
+   * A whole property on `lot`, its street on the side `street` names: the
+   * lot planned (front, side drive, yard or car park behind) and its building
+   * made for what the plan leaves - not a shed on a sea of paving.
+   */
+  const putPlanned = (lot: Box, street: 'south' | 'north' | 'east' | 'west', use: ZoneUse, density: ZoneDensity, fn: BuildingFunction): boolean => {
+    const w = lot.x1 - lot.x0, d = lot.y1 - lot.y0;
+    const edge: Edge = street === 'south' ? { start: { x: lot.x0, y: lot.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: w }
+      : street === 'north' ? { start: { x: lot.x1, y: lot.y1 }, along: { x: -1, y: 0 }, inward: { x: 0, y: -1 }, length: w }
+      : street === 'east' ? { start: { x: lot.x1, y: lot.y0 }, along: { x: 0, y: 1 }, inward: { x: -1, y: 0 }, length: d }
+      : { start: { x: lot.x0, y: lot.y1 }, along: { x: 0, y: -1 }, inward: { x: 1, y: 0 }, length: d };
+    const across = street === 'south' || street === 'north' ? d : w;
+    const body = plannedLot(use, density, edge.length / m(1) - 0.2, across / m(1) - 0.2, stream);
+    if (!body) return false;
+    const f = facingBody(body, fn, edge, m(0.1), m(0.1));
+    if (!inside(f.box, lot) || placed.some((o) => overlaps(f.box, o, -0.05))) return false;
+    into.put({ ...f.body, function: body.function ?? fn }, f.box);
+    return true;
+  };
+  /** The yards of the works: a planned lot, or the old yard where one does not fit. */
+  const works = (lot: Box, street: 'east' | 'west', density: ZoneDensity, fallback: () => void): void => {
+    if (!putPlanned(lot, street, 'industrial', density, density === 'low' ? 'warehouse' : 'factory')) fallback();
+  };
+  /**
    * What is left of a block once its frontage is built: every empty
    * rectangle of 10 m or more, biggest first, becomes ground of the
    * district's own kind - a court or a garden among homes, a car park behind
@@ -669,7 +694,8 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       const gap = emptiest(lot, [...placed, ...refused], m(10));
       if (!gap) return;
       // Half a metre clear of the neighbours, so no two lots share an edge.
-      const box: Box = { x0: gap.x0 + m(0.5), y0: gap.y0 + m(0.5), x1: gap.x1 - m(0.5), y1: gap.y1 - m(0.5) };
+      // No longer than a block may be: the rest is the next gap.
+      const box: Box = { x0: gap.x0 + m(0.5), y0: gap.y0 + m(0.5), x1: Math.min(gap.x1 - m(0.5), gap.x0 + m(150)), y1: Math.min(gap.y1 - m(0.5), gap.y0 + m(150)) };
       const Wm = (box.x1 - box.x0) / m(1);
       const Dm = (box.y1 - box.y0) / m(1);
       const short = Math.min(Wm, Dm);
@@ -683,11 +709,11 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
       // block has no common ground in its middle. Only a sliver too thin to
       // stand a building on is a garden.
       void park;
+      if (kind === 'works' && short >= 16 && putPlanned(box, Wm >= Dm ? 'south' : 'west', 'industrial', 'low', 'warehouse')) continue;
       const body = shed ? yard(rng, Wm, Dm, 'warehouse')
-        : kind === 'works' ? garden(rng, Wm, Dm)
-          : short >= 6 ? infill(rng, Wm, Dm, kind === 'homes')
-            : garden(rng, Wm, Dm);
-      if (!putOpen(body, shed ? 'warehouse' : kind !== 'works' && short >= 6 ? (kind === 'homes' ? 'townhouse' : 'warehouse') : 'square', box)) refused.push(gap);
+        : short >= 6 ? infill(rng, Wm, Dm, kind === 'homes')
+          : garden(rng, Wm, Dm);
+      if (!putOpen(body, shed ? 'warehouse' : short >= 6 ? (kind === 'homes' ? 'townhouse' : 'warehouse') : 'square', box)) refused.push(gap);
     }
   };
 
@@ -831,15 +857,29 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
     const westEast = west + m(88);
     const eastWest = east - m(88);
     // The western column, from the northern lane down.
-    putOpen(yard(rng, 88, 70, 'factory'), 'factory', { x0: west, y0: north - m(72), x1: westEast, y1: north });
-    putOpen(yard(rng, 66, 60, 'warehouse'), 'warehouse', { x0: west, y0: north - m(134), x1: west + m(68), y1: north - m(74) });
-    putOpen(yard(rng, 74, 54, 'store'), 'warehouse', { x0: west, y0: north - m(190), x1: west + m(76), y1: north - m(136) });
+    // Every yard is a whole property facing the lane between the columns:
+    // the hall made to its lot, the loading yard at its docks, the truck lane
+    // down its side, its fence and gates - no shed on a sea of paving.
+    const yardAt = (box: Box, street: 'east' | 'west', density: ZoneDensity, Wm: number, Dm: number, kind: 'factory' | 'warehouse' | 'store'): void =>
+      works(box, street, density, () => { putOpen(yard(rng, Wm, Dm, kind), kind === 'store' ? 'warehouse' : kind, box); });
+    yardAt({ x0: west, y0: north - m(72), x1: westEast, y1: north }, 'east', 'high', 88, 70, 'factory');
+    yardAt({ x0: west, y0: north - m(134), x1: west + m(68), y1: north - m(74) }, 'east', 'medium', 66, 60, 'warehouse');
+    yardAt({ x0: west, y0: north - m(190), x1: west + m(76), y1: north - m(136) }, 'east', 'low', 74, 54, 'store');
     // The eastern column.
-    putOpen(yard(rng, 88, 74, 'warehouse'), 'warehouse', { x0: eastWest, y0: north - m(76), x1: east, y1: north });
-    putOpen(yard(rng, 88, 70, 'store'), 'warehouse', { x0: eastWest, y0: north - m(148), x1: east, y1: north - m(78) });
-    // The garage, its forecourt, and the way in from the avenue.
-    const forecourt: Box = { x0: west + m(74), y0: south + m(2), x1: east, y1: south + m(46) };
-    putOpen(parkingBody((forecourt.x1 - forecourt.x0) / m(1), (forecourt.y1 - forecourt.y0) / m(1), 'paving'), 'square', forecourt);
+    yardAt({ x0: eastWest, y0: north - m(76), x1: east, y1: north }, 'west', 'medium', 88, 74, 'warehouse');
+    yardAt({ x0: eastWest, y0: north - m(148), x1: east, y1: north - m(78) }, 'west', 'low', 88, 70, 'store');
+    // Along the way in from the avenue: trade counters and showrooms, each on
+    // its own plot with its customers' car park - not one forecourt of paving.
+    {
+      const x0 = west + m(74), x1 = east;
+      const plots = Math.max(1, Math.round((x1 - x0) / m(30)));
+      for (let k = 0; k < plots; k++) {
+        const box: Box = { x0: x0 + ((x1 - x0) * k) / plots + m(0.3), y0: south + m(2), x1: x0 + ((x1 - x0) * (k + 1)) / plots - m(0.3), y1: south + m(46) };
+        if (!putPlanned(box, 'south', 'commercial', k % 3 === 1 ? 'high' : 'medium', 'shop')) {
+          putOpen(parkingBody((box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1), 'paving'), 'square', box);
+        }
+      }
+    }
     const station = varied(rng, 'gasStation');
     if (station) {
       const near: Box = { x0: west + m(76), y0: south + m(48), x1: west + m(128), y1: south + m(82) };
