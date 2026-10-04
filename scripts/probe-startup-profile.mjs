@@ -1,11 +1,12 @@
 // CPU and network profile from navigation until the game exposes its running scene.
-// Run against a production preview: node scripts/probe-startup-profile.mjs --base=http://127.0.0.1:4181
+// Run against a production preview: node scripts/probe-startup-profile.mjs --base=http://127.0.0.1:4181 --dist=dist
 import { chromium } from '@playwright/test';
 import { SourceMap } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const base = (process.argv.find((arg) => arg.startsWith('--base=')) ?? '--base=http://127.0.0.1:4181').slice(7);
+const distDir = (process.argv.find((arg) => arg.startsWith('--dist=')) ?? '--dist=dist').slice(7);
 const browser = await chromium.launch({ channel: 'chrome', headless: true,
   args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
@@ -52,7 +53,7 @@ const original = (call) => {
   if (!call?.url) return null;
   const file = call.url.split('/').pop();
   if (!file?.endsWith('.js')) return null;
-  const path = join('dist', 'assets', `${file}.map`);
+  const path = join(distDir, 'assets', `${file}.map`);
   if (!existsSync(path)) return null;
   let map = maps.get(path);
   if (!map) { map = new SourceMap(JSON.parse(readFileSync(path, 'utf8'))); maps.set(path, map); }

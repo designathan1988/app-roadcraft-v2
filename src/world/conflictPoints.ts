@@ -574,25 +574,19 @@ function overlap(
   const bx = b.frame[j * 4] as number, by = b.frame[j * 4 + 1] as number;
   const bux = b.frame[j * 4 + 2] as number, buy = b.frame[j * 4 + 3] as number;
   const dx = bx - ax, dy = by - ay;
-  // The four edge normals of the two rectangles, unrolled: this runs millions
-  // of times per rebuild, and an array of axes per call was a large share of
-  // the garbage the rebuild made.
-  return !separatedOn(aux, auy, dx, dy, aux, auy, ahl, ahw, bux, buy, bhl, bhw)
-    && !separatedOn(-auy, aux, dx, dy, aux, auy, ahl, ahw, bux, buy, bhl, bhw)
-    && !separatedOn(bux, buy, dx, dy, aux, auy, ahl, ahw, bux, buy, bhl, bhw)
-    && !separatedOn(-buy, bux, dx, dy, aux, auy, ahl, ahw, bux, buy, bhl, bhw);
-}
-
-/** Whether axis (nx, ny) separates two rectangles `d = (dx, dy)` apart. */
-function separatedOn(
-  nx: number, ny: number, dx: number, dy: number,
-  aux: number, auy: number, ahl: number, ahw: number,
-  bux: number, buy: number, bhl: number, bhw: number,
-): boolean {
-  const d = Math.abs(dx * nx + dy * ny);
-  const ra = ahl * Math.abs(aux * nx + auy * ny) + ahw * Math.abs(-auy * nx + aux * ny);
-  const rb = bhl * Math.abs(bux * nx + buy * ny) + bhw * Math.abs(-buy * nx + bux * ny);
-  return d >= ra + rb;
+  // The four SAT axes are the two bodies' own frames. Their self-projections
+  // are just the squared frame lengths, while the cross-projections share one
+  // dot and one determinant. Reuse these instead of twenty dot products and
+  // four helper calls for every candidate sample pair.
+  const dot = aux * bux + auy * buy;
+  const cross = aux * buy - auy * bux;
+  const along = Math.abs(dot), across = Math.abs(cross);
+  const aLength = aux * aux + auy * auy;
+  const bLength = bux * bux + buy * buy;
+  return Math.abs(dx * aux + dy * auy) < ahl * aLength + (bhl * along + bhw * across)
+    && Math.abs(-dx * auy + dy * aux) < ahw * aLength + (bhl * across + bhw * along)
+    && Math.abs(dx * bux + dy * buy) < (ahl * along + ahw * across) + bhl * bLength
+    && Math.abs(-dx * buy + dy * bux) < (ahl * across + ahw * along) + bhw * bLength;
 }
 
 // ------------------------------------------------------------------- zones

@@ -147,26 +147,38 @@ export class RegionIndex {
   /** The winding number at every cell centre, one scanline per row. */
   private scanReference(): void {
     const s = this.segs;
+    // A scanline needs each crossing edge once. Walking every grid cell in a
+    // row to rediscover those edges repeated the same bucket lookup hundreds
+    // of times during the cold city build; the cell buckets remain for queries.
+    const rowStart = new Int32Array(this.ny + 1);
+    const eachCrossingRow = (visit: (row: number, segment: number) => void): void => {
+      for (let k = 0; k < this.count; k++) {
+        const ay = s[k * 4 + 1]!, by = s[k * 4 + 3]!;
+        const first = Math.max(0, Math.floor((Math.min(ay, by) - this.y0) / this.cell));
+        const last = Math.min(this.ny - 1, Math.floor((Math.max(ay, by) - this.y0) / this.cell));
+        for (let j = first; j <= last; j++) {
+          const y = this.y0 + (j + 0.5) * this.cell;
+          if ((ay > y) !== (by > y)) visit(j, k);
+        }
+      }
+    };
+    eachCrossingRow((j) => { rowStart[j + 1]!++; });
+    for (let j = 0; j < this.ny; j++) rowStart[j + 1]! += rowStart[j]!;
+    const rowSegments = new Int32Array(rowStart[this.ny]!);
+    const fill = rowStart.slice(0, this.ny);
+    eachCrossingRow((j, k) => { rowSegments[fill[j]!++] = k; });
     const xs: number[] = [];
     const ds: number[] = [];
     const order: number[] = [];
     for (let j = 0; j < this.ny; j++) {
       const y = this.y0 + (j + 0.5) * this.cell;
       xs.length = 0; ds.length = 0; order.length = 0;
-      this.stamp++;
-      for (let i = 0; i < this.nx; i++) {
-        const c = j * this.nx + i;
-        for (let q = this.start[c]!; q < this.start[c + 1]!; q++) {
-          const k = this.list[q]!;
-          if (this.stamps[k] === this.stamp) continue;
-          this.stamps[k] = this.stamp;
-          const ay = s[k * 4 + 1]!, by = s[k * 4 + 3]!;
-          if ((ay > y) === (by > y)) continue;
-          const ax = s[k * 4]!, bx = s[k * 4 + 2]!;
-          xs.push(ax + (bx - ax) * (y - ay) / (by - ay));
-          ds.push(by > ay ? 1 : -1);
-          order.push(order.length);
-        }
+      for (let q = rowStart[j]!; q < rowStart[j + 1]!; q++) {
+        const k = rowSegments[q]!;
+        const ax = s[k * 4]!, ay = s[k * 4 + 1]!, bx = s[k * 4 + 2]!, by = s[k * 4 + 3]!;
+        xs.push(ax + (bx - ax) * (y - ay) / (by - ay));
+        ds.push(by > ay ? 1 : -1);
+        order.push(order.length);
       }
       order.sort((a, b) => xs[a]! - xs[b]!);
       // w(x) = sum of directions of crossings strictly to the right of x.
