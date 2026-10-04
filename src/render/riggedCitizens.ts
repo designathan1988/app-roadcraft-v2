@@ -185,6 +185,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   const batches = new Map<number, CitizenBatch>();
   const loading = new Map<number, Promise<void>>();
   const queuedLoads = new Map<number, { priority: boolean; wantedAt: number; resolve: () => void; reject: (error: unknown) => void }>();
+  // An active load remains useful only while a body requests it in drawn
+  // frames. Wall time would cancel a visible person in a paused game.
+  const wantedFrame = new Map<number, number>();
+  let visualFrame = 0;
   let activeLoads = 0;
   const resources = new Set<{ dispose(): void }>();
   const disposeOwned = (owned: Set<{ dispose(): void }>): void => {
@@ -223,6 +227,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       group.userData.animationBytes -= batch.animationBytes;
       batches.delete(index);
       loading.delete(index);
+      wantedFrame.delete(index);
     }
     group.userData.loadedModels = batches.size;
     if (batches.size === 0 && loading.size === 0) releaseIdleBakeWorkers();
@@ -316,6 +321,14 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       if (paletteAdded > 0) group.userData.paletteBytes -= paletteAdded;
       paletteAdded = 0;
     };
+    const abandonIfUnwanted = (): boolean => {
+      // One missed frame can be a camera edge; two mean the visual demand left.
+      if (!disposed && visualFrame - (wantedFrame.get(index) ?? -Infinity) < 2) return false;
+      releasePending();
+      loading.delete(index);
+      wantedFrame.delete(index);
+      return true;
+    };
     try {
     const model = CROWD[index];
     const sex = model ? (model.gender === 'f' ? 'female' : 'male') : models[index]!.includes('female') ? 'female' : 'male';
@@ -337,13 +350,14 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
           for (const value of Object.values(material)) if (value instanceof Texture) owned.add(value);
         }
       });
-    if (disposed) { releasePending(); return; }
+    if (abandonIfUnwanted()) return;
       const bakeAt = performance.now();
       // The core clips on another core (`bakePool.ts`); here only if no worker can.
       const given = await bakeInWorker(asset.scene, sex);
+      if (abandonIfUnwanted()) return;
       const { clips, helmet, deferred } = await bake(asset.scene, sex, library, given ?? undefined);
       performance.measure('person-bake', { start: bakeAt, end: performance.now() });
-      if (disposed) { releasePending(); return; }
+      if (abandonIfUnwanted()) return;
       let reference: SkinnedMesh | undefined;
       asset.scene.updateMatrixWorld(true);
       asset.scene.traverse(o => { if (o instanceof SkinnedMesh && !reference) reference = o; });
@@ -399,7 +413,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
           variants.push(geometry);
           owned.add(geometry);
         }
-        if (disposed) { releasePending(); return; }
+        if (abandonIfUnwanted()) return;
         const original = Array.isArray(o.material) ? o.material : [o.material];
         const materials = original.map((source, materialIndex) => {
           const material = (source as MeshStandardMaterial).clone();
@@ -447,23 +461,18 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       // Its shaders built before it is drawn (`uploads.ts`).
       await Promise.all(batch.meshes.map((mesh) => compileAhead(mesh)));
-      if (disposed) {
-        releasePending();
-        return;
-      }
+      if (abandonIfUnwanted()) return;
       // And its geometry on the GPU, every level of it (`uploads.ts`).
       // The coarser levels only: the nearest one's face is built when it is
       // first seen close (a body's morph texture is megabytes).
       await Promise.all(batch.meshes.map((mesh, i) => warmAhead(mesh, batch.lods[i]!.slice(1))));
-      if (disposed) {
-        releasePending();
-        return;
-      }
+      if (abandonIfUnwanted()) return;
       // On the level in use NOW: a body arriving between two frames was drawn
       // once on its nearest level, face and all, whatever the zoom - and
       // that one draw built its morph texture, megabytes a body, for good.
       for (let i = 0; i < batch.meshes.length; i++) applyLevel(batch, i);
       batches.set(index, batch);
+      wantedFrame.delete(index);
       committed = batch;
       paletteAdded = 0;
       batch.animationBytes = [...new Set(clips)].reduce((sum, clip) => sum + clip.data.byteLength, 0);
@@ -493,6 +502,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       queuedLoads.delete(index);
       if (performance.now() - entry.wantedAt > 1000) {
         loading.delete(index);
+        wantedFrame.delete(index);
         entry.resolve();
         continue;
       }
@@ -508,6 +518,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     // A body outside the reviewed whitelist must never be asked for; the
     // browser checks (`verify:visual`) fail on this error.
     if (!CROWD_IDS.includes(models[index] ?? '')) console.error(`Citizen outside the whitelist requested: ${models[index]}`);
+    wantedFrame.set(index, visualFrame);
     const existing = loading.get(index);
     if (existing) {
       const queued = queuedLoads.get(index);
@@ -648,6 +659,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     group,
     begin(level = 2, zoom = Infinity) {
       frameNow = performance.now();
+      visualFrame++;
       held.begin();
       detail = level;
       registry.beginFrame();
@@ -900,7 +912,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         disposeOwned(batch.resources);
       }
       disposeOwned(resources);
-      resources.clear(); batches.clear(); loading.clear(); group.clear();
+      resources.clear(); batches.clear(); loading.clear(); wantedFrame.clear(); group.clear();
       releaseIdleBakeWorkers();
     },
   };
