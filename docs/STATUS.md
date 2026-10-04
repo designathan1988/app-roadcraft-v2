@@ -6,7 +6,7 @@ rewrites its own area's lines when they change (no appended logs; git keeps the
 history). Rules of work are in `AGENTS.md`, not here.
 
 Last full rewrite: 2026-10-04 19:10, from the agents' memories and the sessions
-then running. Live build: `main` at a3b9757, served on http://127.0.0.1:4180.
+then running. Live build: `main` at 0090c88, served on http://127.0.0.1:4180 (rebuilt 20:47).
 
 ## Who works here
 
@@ -16,10 +16,34 @@ on `master` in `C:/Codex-Shared/Road`. The Codex handoff of 2026-10-01 ended on
 (`codex/performance-audit`, `codex/stages-b`, `perf-audit-followup`) are unmerged:
 ask the player before merging any of them.
 
-**Work under way:** the agents engine (GTA + The Sims): every resident a
-persistent agent with their own car, replacing the three pedestrian engines and
-the cars that appear from nowhere. Slice 1, a person who uses their own car, is
-being built behind `?agents=1`.
+**Work under way:** the agents engine (GTA + The Sims; not LLM agents, the
+player's decision of 2026-10-04): every resident a persistent agent with their
+own car, replacing the three pedestrian engines and the cars that appear from
+nowhere. The player approved deleting the old engines once the new one is live
+and they have seen it.
+
+- **Slice 1, LIVE behind `?agents=1`** (b3ef7ab, 0090c88; on 4180 since
+  2026-10-04 20:47): a car owner's car stands in a real bay of the lot behind
+  their building (`sim/agents/parking.ts`); they leave by the back door, get
+  in, back out, follow the lot's aisles out (`lotNav.ts`), drive in the
+  traffic, park nose first in a bay near where they go, get out, and go in by
+  the back door or along the footway. No car is made or deleted at the kerb.
+  Clicking a resident or their car shows their card (doing, why, going to,
+  home, work, car) with a follow-camera button. Measured:
+  `tests/sim/agents/ownCars.spec.ts` (6/6 chains, 0 jumps, 0 car bodies in
+  walls, 0 cars not owned by a resident). Photos: `scripts/agents-shots.mjs`,
+  `scripts/agent-card-shots.mjs`.
+- **Not yet:** only residents with a free bay reachable from their back door
+  own a car in agent mode (46 of 2151 in the default town); walks that are not
+  from a back door still use the old People engine and can stall; a car
+  crossing the footway does not yet wait for every walker; parked cars are not
+  obstacles for the walkers.
+- **Next slices:** 2, needs and smart objects (The Sims: hunger, energy, fun,
+  social; places and objects advertise what they offer; the agent picks by
+  need instead of only the diary). 3, one new walking engine for agents (lanes
+  on the footways, the lab's Detour crowd for open areas) replacing People,
+  the Detour crowd flag and `sim/peds`. 4, agents by default, then the old
+  engines deleted after the player has seen it.
 
 ## Live in the game (main, 4180)
 
@@ -106,10 +130,9 @@ being built behind `?agents=1`.
   measured: `tests/sim/agents/defects.spec.ts` was not run afterwards. The
   agents' laboratory (`sandbox.html`, `src/sandbox/`) never reached the street
   pedestrians.
-- **Open decision for the player:** which pedestrian engine is the future. The
-  Detour crowd engine (`?people=crowd`) was ordered as the replacement and its
-  skill says never to patch People; since 2026-10-02 fixes went into People, the
-  default.
+- **Decided by the player (2026-10-04):** none of the three pedestrian engines
+  is the future; the agents engine replaces all of them (see "Work under way").
+  Do not spend more work on People, the Detour crowd flag or `sim/peds`.
 - **City life:** interior editor (place, move, rotate, remove furniture and lights);
   floor plans for all base buildings; more actions (lie down, carry, fall, read,
   hold hands, drive for real, open windows).
