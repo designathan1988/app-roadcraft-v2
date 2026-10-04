@@ -1332,7 +1332,7 @@ function makeWay(s: State): void {
     if (dl < m(0.05)) continue;
     const ux = dv.x / dl, uy = dv.z / dl;
     for (const q of nearbyBodies(s, bodies, p, MAKE_WAY_REACH, spread)) {
-      if (q === p || !q.holding || q.aside || q.party.id === p.party.id) continue;
+      if (q === p || !q.holding || q.aside || q.party.id === p.party.id || Math.abs(q.h - p.h) >= AGENT_HEIGHT) continue;
       const rx = q.x - p.x, ry = q.y - p.y;
       const d = hypot2(rx, ry);
       if (d > MAKE_WAY_REACH || rx * ux + ry * uy <= 0) continue;
@@ -1375,7 +1375,7 @@ function unlock(s: State, bodies: CrowdPointIndex<Walker>, spread: boolean): voi
     const pd = wantOf(p);
     if (!pd) continue;
     for (const q of nearbyBodies(s, bodies, p, MAKE_WAY_REACH, spread)) {
-      if (q === p || q.aside || q.holding || q.blocked < DEADLOCK_AFTER) continue;
+      if (q === p || q.aside || q.holding || q.blocked < DEADLOCK_AFTER || Math.abs(q.h - p.h) >= AGENT_HEIGHT) continue;
       const rx = q.x - p.x, ry = q.y - p.y;
       if (hypot2(rx, ry) > MAKE_WAY_REACH || rx * pd.x + ry * pd.y <= 0) continue;
       const qd = wantOf(q);
@@ -1408,7 +1408,7 @@ function wantOf(p: Walker): Vec2 | null {
 function flowBehind(s: State, bodies: CrowdPointIndex<Walker>, p: Walker, dir: Vec2, spread: boolean): number {
   let n = 0;
   for (const q of nearbyBodies(s, bodies, p, Math.hypot(m(4), m(1.2)), spread)) {
-    if (q === p) continue;
+    if (q === p || Math.abs(q.h - p.h) >= AGENT_HEIGHT) continue;
     const rx = q.x - p.x, ry = q.y - p.y;
     const back = -(rx * dir.x + ry * dir.y);
     if (back <= 0 || back > m(4) || Math.abs(rx * dir.y - ry * dir.x) > m(1.2)) continue;
