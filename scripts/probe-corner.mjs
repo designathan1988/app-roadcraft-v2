@@ -15,7 +15,7 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.addInitScript(() => { window.confirm = () => true; try { localStorage.setItem('roadcraft.sky', 'day'); } catch { /* blocked */ } });
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(window.__roadcraft), null, { timeout: 120_000 });
-await page.evaluate(() => document.getElementById('sampleCity')?.click());
+await page.evaluate(() => document.getElementById('sampleTown')?.click());
 await page.waitForTimeout(6000);
 // The junctions of the town, nearest the middle first.
 const nodes = await page.evaluate(() => {

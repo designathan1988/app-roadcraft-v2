@@ -17,7 +17,7 @@ await page.addInitScript(() => { window.confirm = () => true; });
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(window.__roadcraft), null, { timeout: 120_000 });
 await page.waitForSelector('.loading-screen', { state: 'detached', timeout: 300_000 }).catch(() => {});
-await page.evaluate(() => document.getElementById('sampleCity')?.click());
+await page.evaluate(() => document.getElementById('sampleTown')?.click());
 await page.waitForTimeout(4000);
 await page.keyboard.press('k');
 await page.waitForTimeout(4000);

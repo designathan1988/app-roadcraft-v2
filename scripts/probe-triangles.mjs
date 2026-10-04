@@ -11,7 +11,7 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.addInitScript(() => { window.confirm = () => true; try { localStorage.setItem('roadcraft.sky', 'day'); } catch { /* blocked */ } });
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.loading-screen', { state: 'detached', timeout: 300_000 });
-await page.evaluate(() => document.getElementById('sampleCity').click());
+await page.evaluate(() => document.getElementById('sampleTown').click());
 await page.waitForTimeout(8000);
 await page.evaluate(() => window.__roadcraft.sim.city.skip(95));
 await page.waitForTimeout(6000);

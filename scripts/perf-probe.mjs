@@ -18,7 +18,7 @@ const HEIGHT = Number(opt('height', '1080'));
 const PROFILE = process.argv.includes('--profile');
 const ZOOM = Number(opt('zoom', '4'));
 
-const browser = await chromium.launch({ channel: 'chrome', headless: false,
+const browser = await chromium.launch({ channel: 'chrome', headless: true,
   args: ['--use-gl=angle', `--use-angle=${process.platform === 'win32' ? 'd3d11' : 'vulkan'}`, '--enable-gpu', '--ignore-gpu-blocklist',
     `--window-size=${WIDTH},${HEIGHT + 120}`] });
 const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
@@ -26,7 +26,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
 await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.waitForFunction('Boolean(window.__roadcraft)', null, { timeout: 60_000 });
-await page.evaluate(() => { window.confirm = () => true; document.getElementById('sampleCity').click(); });
+await page.evaluate(() => { window.confirm = () => true; document.getElementById('sampleTown').click(); });
 await page.waitForTimeout(WAIT * 1000);
 
 const result = await page.evaluate(async ({ profile, zoom }) => {

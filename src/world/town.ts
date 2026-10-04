@@ -2,52 +2,23 @@ import type { BlueprintBody } from './buildings/blueprints';
 import { Model, cityBuilding, mat } from './buildings/cityBuildings';
 import type { MaterialSpec } from './buildings/materials';
 import type { BayComponent, Building, BuildingFunction, RoofKind, Side } from './buildings/types';
-import type { RoadDoc } from './doc';
-import { Level, ROAD_TYPES, halfWidth } from './roadTypes';
 import { type Box, type Edge, facingBody, inside, overlaps } from './sampleTown';
 import { m } from './units';
 
 /**
- * A town to explore, built on an empty map: a centre round a square - the
- * city hall and the church facing each other across it, a fountain, trees
- * and benches - high streets of shops, cafés and flats either side, a ring of
- * terraces, schools and churches, and beyond them streets of houses, every
- * one its own: its plan, its storeys, its roof, its walls, its windows, a
- * front garden with a path to the door, shrubs and a hedge or a fence, and
- * behind it a lawn with trees and, often, a pool. A park with a pond closes
- * one of the neighbourhoods.
- *
- * Every building is an ordinary building (`cityBuildings` models, varied, and
- * houses drawn up here), so each can be edited, entered and lived in.
+ * The town's building kit: houses drawn up here, every one its own (its plan,
+ * its storeys, its roof, its walls, its front garden), the parks, squares and
+ * courts, and the frontage builders (`perimeter`, `houses`) that line a block
+ * with them. The town the game opens on (`defaultTown.ts`) is laid out with
+ * these. Every building is an ordinary building, so each can be edited,
+ * entered and lived in.
  */
 
-/** A small, repeatable random source: the same town every time. */
-function random(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 type Rng = () => number;
 const pick = <T>(rng: Rng, list: readonly T[]): T => list[Math.floor(rng() * list.length) % list.length]!;
 const between = (rng: Rng, a: number, b: number): number => a + (b - a) * rng();
 
-// ---------------------------------------------------------------- the plan
-
-/** Node lines, world units. The centre is the band between the two avenues. */
-const XS = [-560, -240, 240, 560];
-const YS = [-880, -680, -480, -160, 160, 480, 680, 880];
-const LOCAL = ROAD_TYPES.findIndex((t) => t.id === 'local');
-const URBAN = ROAD_TYPES.findIndex((t) => t.id === 'urban');
 const FRONT_GAP = 0.12;
-
-/** What each band of blocks is, from the south. */
-type Band = 'houses' | 'terraces' | 'centre';
-const BANDS: readonly Band[] = ['houses', 'houses', 'terraces', 'centre', 'terraces', 'houses', 'houses'];
 
 // ---------------------------------------------------------------- palettes
 
@@ -279,21 +250,6 @@ export function varied(rng: Rng, fn: BuildingFunction): BlueprintBody | null {
 
 // ---------------------------------------------------------------- the build
 
-/** What the terrace and centre blocks hold, in order round them. */
-const TERRACE_BLOCKS: readonly (readonly BuildingFunction[])[] = [
-  ['school', 'townhouse', 'townhouse', 'bakery', 'townhouse', 'townhouse', 'apartments', 'townhouse', 'townhouse'],
-  ['church', 'townhouse', 'townhouse', 'apartments', 'townhouse', 'pharmacy', 'townhouse', 'townhouse', 'library'],
-  ['clinic', 'townhouse', 'apartments', 'townhouse', 'snackBar', 'townhouse', 'townhouse', 'apartments', 'townhouse'],
-  ['gym', 'townhouse', 'townhouse', 'apartments', 'townhouse', 'shop', 'townhouse', 'townhouse', 'postOffice'],
-  ['townhouse', 'apartments', 'townhouse', 'bakery', 'townhouse', 'townhouse', 'apartments', 'townhouse', 'townhouse'],
-  ['police', 'townhouse', 'townhouse', 'shop', 'apartments', 'townhouse', 'townhouse', 'townhouse', 'apartments'],
-];
-const HIGH_STREET: readonly (readonly BuildingFunction[])[] = [
-  ['bank', 'shop', 'restaurant', 'bakery', 'pharmacy', 'shop', 'bar', 'apartments', 'hotel', 'shop', 'snackBar', 'apartments', 'office'],
-  ['cinema', 'restaurant', 'shop', 'bar', 'apartments', 'shop', 'supermarket', 'snackBar', 'apartments', 'shop', 'office'],
-];
-const FILL_TERRACE: readonly BuildingFunction[] = ['townhouse', 'shop'];
-const FILL_CENTRE: readonly BuildingFunction[] = ['shop', 'townhouse'];
 
 export interface Placer {
   readonly placed: Box[];
@@ -480,106 +436,4 @@ export function courtyard(rng: Rng, Wm: number, Dm: number): BlueprintBody {
     model.el('flowers', x, y, 0, { w: 3, d: 1, h: 0.4 });
   }
   return model.build();
-}
-
-/** The biggest garden that fits in the middle of `lot`, clear of what stands round it. */
-function fillMiddle(rng: Rng, lot: Box, into: Placer): void {
-  for (let inset = m(14); inset < Math.min(lot.x1 - lot.x0, lot.y1 - lot.y0) / 2 - m(10); inset += m(2)) {
-    const box: Box = { x0: lot.x0 + inset, y0: lot.y0 + inset, x1: lot.x1 - inset, y1: lot.y1 - inset };
-    if (into.placed.some((o) => overlaps(box, o, m(1)))) continue;
-    const body = courtyard(rng, (box.x1 - box.x0) / m(1), (box.y1 - box.y0) / m(1));
-    const edge: Edge = { start: { x: box.x0, y: box.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: box.x1 - box.x0 };
-    const f = facingBody(body, 'square', edge, 0, 0);
-    into.put({ ...f.body, function: 'square' }, f.box);
-    return;
-  }
-}
-
-/** Builds the town on `doc`, which should be empty. Returns how many buildings it put up. */
-export function buildTown(doc: RoadDoc): number {
-  const rng = random(0x70a1);
-  const ids = new Map<string, number>();
-  for (const y of YS) for (const x of XS) ids.set(`${x},${y}`, doc.addNode({ x, y }).id);
-  const node = (x: number, y: number) => ids.get(`${x},${y}`)! as Parameters<RoadDoc['addSegment']>[0];
-  const centreAvenue = (y: number): boolean => y === YS[3] || y === YS[4];
-  const typeAt = (y: number): number => (centreAvenue(y) ? URBAN : LOCAL);
-  for (const y of YS) for (let i = 0; i + 1 < XS.length; i++) doc.addSegment(node(XS[i]!, y), node(XS[i + 1]!, y), typeAt(y));
-  for (const x of XS) for (let j = 0; j + 1 < YS.length; j++) {
-    const centre = BANDS[j] === 'centre' && (x === XS[1] || x === XS[2]);
-    doc.addSegment(node(x, YS[j]!), node(x, YS[j + 1]!), centre ? URBAN : LOCAL);
-  }
-
-  const half = (type: number): number => halfWidth(ROAD_TYPES[type]!, Level.Sidewalk);
-  const into: Placer = {
-    placed: [],
-    put(body, box) {
-      doc.buildings.add(body);
-      this.placed.push(box);
-      count++;
-    },
-  };
-  let count = 0;
-  let terrace = 0;
-  let high = 0;
-  for (let j = 0; j + 1 < YS.length; j++) {
-    for (let i = 0; i + 1 < XS.length; i++) {
-      const band = BANDS[j]!;
-      const xType = (x: number): number => (band === 'centre' && (x === XS[1] || x === XS[2]) ? URBAN : LOCAL);
-      const lot: Box = {
-        x0: XS[i]! + half(xType(XS[i]!)), x1: XS[i + 1]! - half(xType(XS[i + 1]!)),
-        y0: YS[j]! + half(typeAt(YS[j]!)), y1: YS[j + 1]! - half(typeAt(YS[j + 1]!)),
-      };
-      const Wm = (lot.x1 - lot.x0) / m(1), Dm = (lot.y1 - lot.y0) / m(1);
-      if (band === 'centre' && i === 1) {
-        // The square: the city hall on its south side and the church on its
-        // north, each with its front on the square, facing the other.
-        let y0 = lot.y0, y1 = lot.y1;
-        for (const fn of ['cityHall', 'church'] as const) {
-          const body = varied(rng, fn);
-          if (!body) continue;
-          const south = fn === 'cityHall';
-          const probeEdge: Edge = { start: { x: 0, y: 0 }, along: { x: south ? -1 : 1, y: 0 }, inward: { x: 0, y: south ? -1 : 1 }, length: 1 };
-          const probe = facingBody(body, fn, probeEdge, 0, FRONT_GAP);
-          const depth = probe.box.y1 - probe.box.y0;
-          const line = south ? lot.y0 + depth + FRONT_GAP * 2 : lot.y1 - depth - FRONT_GAP * 2;
-          const edge: Edge = south
-            ? { start: { x: lot.x1, y: line }, along: { x: -1, y: 0 }, inward: { x: 0, y: -1 }, length: lot.x1 - lot.x0 }
-            : { start: { x: lot.x0, y: line }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 };
-          const f = facingBody(body, fn, edge, (edge.length - probe.width) / 2, FRONT_GAP);
-          if (!inside(f.box, lot)) continue;
-          into.put(f.body, f.box);
-          if (south) y0 = Math.max(y0, f.box.y1); else y1 = Math.min(y1, f.box.y0);
-        }
-        // The square fills between them.
-        const sx0 = lot.x0, sx1 = lot.x1, sy0 = y0 + m(0.5), sy1 = y1 - m(0.5);
-        if (sy1 - sy0 > m(16)) {
-          const body = square(rng, (sx1 - sx0) / m(1), (sy1 - sy0) / m(1));
-          const edge: Edge = { start: { x: sx0, y: sy0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: sx1 - sx0 };
-          const f = facingBody(body, 'square', edge, 0, 0);
-          into.put({ ...f.body, function: 'square' }, f.box);
-        }
-        continue;
-      }
-      if (band === 'centre') {
-        perimeter(rng, lot, [...HIGH_STREET[high++ % HIGH_STREET.length]!], FILL_CENTRE, into);
-        fillMiddle(rng, lot, into);
-        continue;
-      }
-      if (band === 'terraces') {
-        perimeter(rng, lot, [...TERRACE_BLOCKS[terrace++ % TERRACE_BLOCKS.length]!], FILL_TERRACE, into);
-        fillMiddle(rng, lot, into);
-        continue;
-      }
-      // Houses; one block of them is the park.
-      if (j === 1 && i === 2) {
-        const body = park(rng, Wm, Dm);
-        const edge: Edge = { start: { x: lot.x0, y: lot.y0 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 };
-        const f = facingBody(body, 'park', edge, 0, 0);
-        into.put({ ...f.body, function: 'park' }, f.box);
-        continue;
-      }
-      houses(rng, lot, into);
-    }
-  }
-  return count;
 }

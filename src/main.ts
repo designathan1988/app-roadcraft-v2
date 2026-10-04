@@ -48,7 +48,6 @@ import { type ImportResult, Persistence, exportToFile, importFromFile, type Save
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { buildDefaultTown } from '@world/defaultTown';
-import { buildTown } from '@world/town';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -2316,20 +2315,6 @@ mountAbout();
   onLanguageChange(show);
   show();
 }
-(document.getElementById('sampleCity') as HTMLButtonElement).onclick = () => {
-  if (!window.confirm(t('confirm.sampleCity'))) return;
-  history.record(doc);
-  // The town to explore: a centre, high streets, terraces, houses and a park.
-  const town = new RoadDoc();
-  buildTown(town);
-  applySnapshot(town.toJSON(), 'import');
-  roadHeightOffset = 0;
-  roadHeightEdited = false;
-  updateRoadHeightValue();
-  fitView();
-  sim.clock.paused = false;
-  flashHint('hint.sampleCity');
-};
 (document.getElementById('saveMap') as HTMLButtonElement).onclick = () => {
   exportToFile(doc, sessionSettings());
   flashHint('hint.saved');

@@ -30,9 +30,6 @@ export const EN: Dictionary = {
   'app.canvas': 'Interactive city map',
 
   'action.sampleTown': 'The town',
-  'action.sampleCity': 'Town to explore',
-  'confirm.sampleCity': 'Build the town to explore on a new map? The current map is already saved.',
-  'hint.sampleCity': 'Town built · the previous map comes back with Ctrl+Z',
   'confirm.sampleTown': "Build the game's town on a new map? The current map is already saved.",
   'hint.sampleTown': 'The town built · the previous map comes back with Ctrl+Z',
   'action.newMap': 'New map',

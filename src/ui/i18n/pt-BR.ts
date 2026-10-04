@@ -26,9 +26,6 @@ export const PT_BR: Dictionary = {
   'app.canvas': 'Mapa interativo da cidade',
 
   'action.sampleTown': 'A vila',
-  'action.sampleCity': 'Cidade para explorar',
-  'confirm.sampleCity': 'Construir a cidade para explorar num mapa novo? O mapa atual já foi salvo automaticamente.',
-  'hint.sampleCity': 'Cidade construída · o mapa anterior volta com Ctrl+Z',
   'confirm.sampleTown': 'Construir a vila do jogo num mapa novo? O mapa atual já foi salvo automaticamente.',
   'hint.sampleTown': 'Vila construída · o mapa anterior volta com Ctrl+Z',
   'action.newMap': 'Novo mapa',

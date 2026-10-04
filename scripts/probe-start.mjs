@@ -18,7 +18,7 @@ const t0 = Date.now();
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(window.__roadcraft), null, { timeout: 120_000 });
 const ready = Date.now() - t0;
-await page.evaluate(() => document.getElementById('sampleCity')?.click());
+await page.evaluate(() => document.getElementById('sampleTown')?.click());
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/01-town-at-once.png` });
 await page.evaluate(() => window.__roadcraft.lookAt(-300, -300, 3.5));

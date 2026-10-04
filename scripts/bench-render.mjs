@@ -37,7 +37,7 @@ await page.addInitScript(() => {
 });
 await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.waitForFunction('Boolean(window.__roadcraft)', null, { timeout: 60_000 });
-await page.evaluate(() => document.getElementById('sampleCity').click());
+await page.evaluate(() => document.getElementById('sampleTown').click());
 await page.waitForTimeout(WAIT * 1000);
 // The morning rush: the town's streets full of the residents' trips (at
 // 06:30, when the town is built, nobody is out yet and the simulation costs
