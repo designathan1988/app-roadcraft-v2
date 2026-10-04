@@ -2286,6 +2286,8 @@ export function assembleBuildingMeshes(
 ): BuildingMeshes {
   const group = new Group();
   group.name = ghost ? 'building-preview' : 'buildings';
+  group.matrixAutoUpdate = false;
+  group.updateMatrix();
   const meshes: (Mesh | InstancedMesh)[] = [];
   let triangles = 0;
 
@@ -2401,7 +2403,13 @@ export function assembleBuildingMeshes(
       triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;
     }
   }
-  for (const mesh of meshes) group.add(mesh);
+  // Shell vertices and part instance matrices are already in world space.
+  // Only a rebuild changes them; their Object3D transforms stay at identity.
+  for (const mesh of meshes) {
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    group.add(mesh);
+  }
 
   return {
     group,

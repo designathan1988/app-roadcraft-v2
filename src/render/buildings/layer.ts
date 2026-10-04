@@ -81,6 +81,8 @@ export function createBuildingLayer(): BuildingLayer {
   const kit: BuildingKit = createBuildingKit();
   const group = new Group();
   group.name = 'buildings-layer';
+  group.matrixAutoUpdate = false;
+  group.updateMatrix();
   let stored: BuildingMeshes | null = null;
   /** Each cell's batch as last assembled, and from which buildings' meshes (`assembleByCell`). */
   const cells: CellCache = new Map();
@@ -329,6 +331,8 @@ function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) =
   }
   const group = new Group();
   group.name = 'buildings';
+  group.matrixAutoUpdate = false;
+  group.updateMatrix();
   const parts: BuildingMeshes[] = [];
   for (const [key, chunks] of byCell) {
     const known = cache.get(key);

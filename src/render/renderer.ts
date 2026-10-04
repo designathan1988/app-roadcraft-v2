@@ -274,6 +274,10 @@ export function createSceneRenderer(
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
   const scene = new Scene();
+  // The root never moves. Keep its identity matrix from forcing every static
+  // world child to recompute a world matrix on every render pass.
+  scene.matrixAutoUpdate = false;
+  scene.updateMatrix();
   const initialHeight = Math.max(1, canvas.clientHeight || window.innerHeight);
   const rig = createIsoRig(initialCentre, initialHeight / Math.max(0.001, initialZoom * 2));
 
