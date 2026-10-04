@@ -36,6 +36,8 @@ The production startup profile transferred about 1.8 MB before the game exposed 
 
 `normalMapFrom` spent 15.9 ms for a 512² image and 67.6 ms for 1024² in the browser. Replacing four per-pixel modulo-based neighbour lookups with identical row/edge indices reduced these medians to 11.9 and 44.9 ms. SHA-256 of the resulting pixels remained identical at sizes 1, 2, 7, 512 and 1024. Whole startup after the change measured 9.8 and 12.0 s versus 11.5–13.5 s before; this variation does not establish a precise end-to-end gain.
 
+A later production CPU profile still sampled periodic noise generation heavily. Its four corner hashes each recomputed two modular wraps and the invariant seed product. Reusing the wrapped cell coordinates and seed hash produced bit-for-bit equal results in 56,028 positive and negative coordinate checks. Alternating the old and new implementations in one process on a 512² four-octave workload gave roughly 20.0 vs 15.2 ms after warm-up. A single production startup pair measured 7.59 vs 7.48 s; that small end-to-end difference remains within run variation.
+
 ## Traffic and shoreline follow-up
 
 An 80-seed, 40-operation fuzz hunt completed before changing `world/conflictPoints.ts` (one file passed). A conservative whole-sweep broad phase reduced cold conflict-index builds from 826–836 ms to 819–822 ms on the default town; the focused conflict-zone and cache specifications passed (8 tests). The larger collision specification was interrupted after several minutes under the player's instruction to favour focused tests. A post-change full fuzz hunt remains outstanding.

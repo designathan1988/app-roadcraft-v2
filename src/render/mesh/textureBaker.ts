@@ -20,10 +20,11 @@ import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'thr
 
 const cache = new Map<string, Texture>();
 
-/** Deterministic 2D value noise with a period, so the result tiles. */
+/** Deterministic 2D value noise with a positive integer period, so the result tiles. */
 export function makeNoise(seed: number): (x: number, y: number, period: number) => number {
+  const seedHash = Math.imul(seed, 2_246_822_519);
   const hash = (x: number, y: number): number => {
-    let h = Math.imul(x | 0, 374_761_393) ^ Math.imul(y | 0, 668_265_263) ^ Math.imul(seed, 2_246_822_519);
+    let h = Math.imul(x | 0, 374_761_393) ^ Math.imul(y | 0, 668_265_263) ^ seedHash;
     h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
     return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
   };
@@ -33,11 +34,16 @@ export function makeNoise(seed: number): (x: number, y: number, period: number) 
     const y0 = Math.floor(y);
     const fx = smooth(x - x0);
     const fy = smooth(y - y0);
-    const wrap = (v: number): number => ((v % period) + period) % period;
-    const a = hash(wrap(x0), wrap(y0));
-    const b = hash(wrap(x0 + 1), wrap(y0));
-    const c = hash(wrap(x0), wrap(y0 + 1));
-    const d = hash(wrap(x0 + 1), wrap(y0 + 1));
+    const rx = x0 % period;
+    const ry = y0 % period;
+    const ax = rx < 0 ? rx + period : rx;
+    const ay = ry < 0 ? ry + period : ry;
+    const bx = ax + 1 === period ? 0 : ax + 1;
+    const by = ay + 1 === period ? 0 : ay + 1;
+    const a = hash(ax, ay);
+    const b = hash(bx, ay);
+    const c = hash(ax, by);
+    const d = hash(bx, by);
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
   };
 }
