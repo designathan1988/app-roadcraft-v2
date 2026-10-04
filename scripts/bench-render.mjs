@@ -133,7 +133,22 @@ const best = async (n) => {
 const spots = {
   overview: async () => { await page.keyboard.press('Home'); },
   street: async () => page.evaluate(() => globalThis.window.__roadcraft.lookAt(-300, -300, 8)),
-  close: async () => page.evaluate(() => globalThis.window.__roadcraft.lookAt(-480, -840, 22)),
+  close: async () => page.evaluate(() => {
+    const R = globalThis.window.__roadcraft;
+    let nearest = null, distance = Infinity;
+    for (const building of R.doc.buildings.all()) {
+      if (building.use !== 'residential') continue;
+      const volume = building.volumes.find((v) => v.storeys.length > 0);
+      if (!volume) continue;
+      const x = volume.x + volume.w / 2, y = volume.y + volume.d / 2;
+      const c = Math.cos(building.rotation), s = Math.sin(building.rotation);
+      const centre = { x: building.x + x * c - y * s, y: building.y + x * s + y * c };
+      const d = Math.hypot(centre.x + 300, centre.y + 300);
+      if (d < distance) { distance = d; nearest = centre; }
+    }
+    if (!nearest) throw new Error('The close benchmark needs a built residential volume');
+    R.lookAt(nearest.x, nearest.y, 22);
+  }),
 };
 const report = { base: BASE, width: WIDTH, height: HEIGHT, spots: {} };
 for (const [name, go] of Object.entries(spots)) {
