@@ -1,0 +1,350 @@
+{
+  "base": "http://127.0.0.1:4196",
+  "width": 1600,
+  "height": 900,
+  "spots": {
+    "overview": {
+      "gpuMs": 9.47,
+      "cpuDrawMs": 7.21,
+      "frameMedianMs": 16.7,
+      "calls": 535,
+      "mtris": 5.15,
+      "passes": [
+        {
+          "label": "1600x900|scene",
+          "ms": 8.01,
+          "perFrame": 1,
+          "calls": 526,
+          "ktris": 5150
+        },
+        {
+          "label": "800x450|Mesh",
+          "ms": 0.7,
+          "perFrame": 2,
+          "calls": 2,
+          "ktris": 0
+        },
+        {
+          "label": "1600x900|Mesh",
+          "ms": 0.69,
+          "perFrame": 6,
+          "calls": 6,
+          "ktris": 0
+        },
+        {
+          "label": "screen|Mesh",
+          "ms": 0.07,
+          "perFrame": 1,
+          "calls": 1,
+          "ktris": 0
+        }
+      ]
+    },
+    "street": {
+      "gpuMs": 6.05,
+      "cpuDrawMs": 2.48,
+      "frameMedianMs": 16.6,
+      "calls": 183,
+      "mtris": 2.34,
+      "passes": [
+        {
+          "label": "1600x900|scene",
+          "ms": 4.24,
+          "perFrame": 1,
+          "calls": 174,
+          "ktris": 2343
+        },
+        {
+          "label": "800x450|Mesh",
+          "ms": 1.11,
+          "perFrame": 2,
+          "calls": 2,
+          "ktris": 0
+        },
+        {
+          "label": "1600x900|Mesh",
+          "ms": 0.62,
+          "perFrame": 6,
+          "calls": 6,
+          "ktris": 0
+        },
+        {
+          "label": "screen|Mesh",
+          "ms": 0.09,
+          "perFrame": 1,
+          "calls": 1,
+          "ktris": 0
+        }
+      ]
+    },
+    "close": {
+      "gpuMs": 4.55,
+      "cpuDrawMs": 1.71,
+      "frameMedianMs": 16.6,
+      "calls": 51,
+      "mtris": 0.63,
+      "passes": [
+        {
+          "label": "1600x900|scene",
+          "ms": 2.14,
+          "perFrame": 1,
+          "calls": 42,
+          "ktris": 634
+        },
+        {
+          "label": "800x450|Mesh",
+          "ms": 1.55,
+          "perFrame": 2,
+          "calls": 2,
+          "ktris": 0
+        },
+        {
+          "label": "1600x900|Mesh",
+          "ms": 0.77,
+          "perFrame": 6,
+          "calls": 6,
+          "ktris": 0
+        },
+        {
+          "label": "screen|Mesh",
+          "ms": 0.09,
+          "perFrame": 1,
+          "calls": 1,
+          "ktris": 0
+        }
+      ]
+    }
+  },
+  "overviewShadowFrozen": {
+    "gpuMs": 8.98,
+    "cpuDrawMs": 6.34,
+    "frameMedianMs": 16.6,
+    "calls": 335,
+    "mtris": 3.29,
+    "passes": [
+      {
+        "label": "1600x900|scene",
+        "ms": 7.6,
+        "perFrame": 1,
+        "calls": 326,
+        "ktris": 3291
+      },
+      {
+        "label": "800x450|Mesh",
+        "ms": 0.81,
+        "perFrame": 2,
+        "calls": 2,
+        "ktris": 0
+      },
+      {
+        "label": "1600x900|Mesh",
+        "ms": 0.47,
+        "perFrame": 6,
+        "calls": 6,
+        "ktris": 0
+      },
+      {
+        "label": "screen|Mesh",
+        "ms": 0.1,
+        "perFrame": 1,
+        "calls": 1,
+        "ktris": 0
+      }
+    ]
+  },
+  "inventoryOverview": [
+    "61 main citizen-mh_#-person",
+    "30 main building-frame",
+    "10 shadow building-shell-plaster",
+    "10 shadow building-shell-stone",
+    "10 shadow building-shell-concrete",
+    "10 shadow building-shell-metal",
+    "10 shadow building-shutter",
+    "10 main building-shutter",
+    "10 main building-shell-plaster",
+    "10 main building-shell-stone",
+    "10 main building-shell-concrete",
+    "10 main building-shell-metal",
+    "9 shadow building-glass",
+    "9 shadow building-concrete",
+    "9 shadow building-door",
+    "9 shadow building-glassDark",
+    "9 main building-concrete",
+    "9 main building-railing",
+    "9 main building-glass",
+    "9 main building-door",
+    "9 main building-glassDark",
+    "9 main building-curtain",
+    "9 main ?",
+    "8 shadow building-shell-stucco",
+    "8 shadow building-shell-brick",
+    "8 shadow building-shell-wood",
+    "8 shadow building-shell-tile",
+    "8 shadow building-shell-slate",
+    "8 shadow building-shell-roofing",
+    "8 shadow building-awning"
+  ],
+  "profileOverview1x": {
+    "idle": "54.5",
+    "inclusive": [
+      "41.3% frame @main.ts:2654",
+      "28.1% draw @renderer.ts:530",
+      "21.5% (anon) @three.module-quXgw4aM.js:51996",
+      "21.5% render @three_examples_jsm_postprocessing_RenderPass__js.js:105",
+      "21.5% render @three_examples_jsm_postprocessing_EffectComposer__js.js:307",
+      "21.5% render @postprocess.ts:146",
+      "16.5% (anon) @three.module-quXgw4aM.js:51786",
+      "13.2% renderObject @three.module-quXgw4aM.js:52210",
+      "13.2% renderObjects @three.module-quXgw4aM.js:52200",
+      "13.2% renderScene @three.module-quXgw4aM.js:52125",
+      "13.2% step @pipeline.ts:38",
+      "13.2% (anon) @main.ts:2676",
+      "13.2% advance @clock.ts:40",
+      "9.9% setProgram @three.module-quXgw4aM.js:52328",
+      "7.4% step @people.ts:817",
+      "7.4% step @people.ts:324",
+      "5.8% sync @agents.ts:1115",
+      "4.1% renderObject @three.module-quXgw4aM.js:47372",
+      "4.1% (anon) @three.module-quXgw4aM.js:47158",
+      "4.1% updateMatrixWorld @three.module-quXgw4aM.js:10046",
+      "4.1% upload @three.module-quXgw4aM.js:45414",
+      "4.1% draw @riggedCitizens.ts:699",
+      "4.1% (anon) @citizenBake.ts:253",
+      "4.1% bakeFrames @citizenBake.ts:177",
+      "3.3% setup @three.module-quXgw4aM.js:42887",
+      "3.3% multiplyMatrices @three.module-quXgw4aM.js:8252",
+      "2.5% setValue @three.module-quXgw4aM.js:45406",
+      "2.5% nextGate @people.ts:1851",
+      "2.5% texSubImage2D @three.module-quXgw4aM.js:47930",
+      "2.5% updateTexture @three.module-quXgw4aM.js:48506"
+    ],
+    "self": [
+      "3.3% multiplyMatrices @three.module-quXgw4aM.js:8252",
+      "2.5% texSubImage2D @three.module-quXgw4aM.js:47930",
+      "2.5% step @pipeline.ts:38",
+      "1.7% setValueV1i @three.module-quXgw4aM.js:45017",
+      "1.7% step @people.ts:817",
+      "1.7% getBindingState @three.module-quXgw4aM.js:42912",
+      "1.7% sync @agents.ts:1115",
+      "1.7% closestOnEdge @navmesh.ts:488",
+      "1.7% copyPackedFrame @citizenPalette.ts:23",
+      "0.8% setup @three.module-quXgw4aM.js:42887",
+      "0.8% bindVertexArrayObject @three.module-quXgw4aM.js:42906",
+      "0.8% (anon) @three.module-quXgw4aM.js:51786",
+      "0.8% updateMatrix @three.module-quXgw4aM.js:10023",
+      "0.8% setValueV1fArray @three.module-quXgw4aM.js:45199",
+      "0.8% standing @citizenGait.ts:620",
+      "0.8% closestOnTriangle @navmesh.ts:445",
+      "0.8% setValueV3f @three.module-quXgw4aM.js:44937",
+      "0.8% nextGate @people.ts:1851",
+      "0.8% hasEventListener @three.module-quXgw4aM.js:1875",
+      "0.8% updateBuffer @three.module-quXgw4aM.js:42062",
+      "0.8% shadowLeaderObstacle @leaderIndex.ts:198",
+      "0.8% arraysEqual @three.module-quXgw4aM.js:44900",
+      "0.8% evaluate @admission.ts:237",
+      "0.8% neighbours @people.ts:792",
+      "0.8% get x @three.module-quXgw4aM.js:8839"
+    ]
+  },
+  "fast": {
+    "gpuMs": 9.35,
+    "cpuDrawMs": 7.44,
+    "frameMedianMs": 16.1,
+    "calls": 535,
+    "mtris": 5.15,
+    "passes": [
+      {
+        "label": "1600x900|scene",
+        "ms": 8.13,
+        "perFrame": 1,
+        "calls": 526,
+        "ktris": 5150
+      },
+      {
+        "label": "800x450|Mesh",
+        "ms": 0.71,
+        "perFrame": 2,
+        "calls": 2,
+        "ktris": 0
+      },
+      {
+        "label": "1600x900|Mesh",
+        "ms": 0.45,
+        "perFrame": 6,
+        "calls": 6,
+        "ktris": 0
+      },
+      {
+        "label": "screen|Mesh",
+        "ms": 0.07,
+        "perFrame": 1,
+        "calls": 1,
+        "ktris": 0
+      }
+    ]
+  },
+  "profileOverview4x": {
+    "idle": "28.7",
+    "inclusive": [
+      "64.6% frame @main.ts:2654",
+      "36.0% step @pipeline.ts:38",
+      "36.0% (anon) @main.ts:2676",
+      "36.0% advance @clock.ts:40",
+      "28.7% draw @renderer.ts:530",
+      "26.8% (anon) @three.module-quXgw4aM.js:51996",
+      "26.8% render @three_examples_jsm_postprocessing_EffectComposer__js.js:307",
+      "26.8% render @postprocess.ts:146",
+      "26.8% step @people.ts:817",
+      "26.8% step @people.ts:324",
+      "26.2% render @three_examples_jsm_postprocessing_RenderPass__js.js:105",
+      "18.9% renderScene @three.module-quXgw4aM.js:52125",
+      "18.3% (anon) @three.module-quXgw4aM.js:51786",
+      "18.3% renderObject @three.module-quXgw4aM.js:52210",
+      "18.3% renderObjects @three.module-quXgw4aM.js:52200",
+      "12.8% setProgram @three.module-quXgw4aM.js:52328",
+      "7.3% upload @three.module-quXgw4aM.js:45414",
+      "6.7% (anon) @citizenBake.ts:253",
+      "6.7% bakeFrames @citizenBake.ts:177",
+      "6.1% updateMatrixWorld @three.module-quXgw4aM.js:10046",
+      "5.5% setValueT1 @three.module-quXgw4aM.js:45119",
+      "4.9% setTexture2D @three.module-quXgw4aM.js:48387",
+      "4.3% projectObject @three.module-quXgw4aM.js:52080",
+      "4.3% pose @citizenWalk.ts:272",
+      "4.3% neighbours @people.ts:792",
+      "3.7% findPath @path.ts:47",
+      "3.7% plan @people.ts:653",
+      "3.7% longitudinalConstraints @obstacles.ts:118",
+      "3.7% uploadTexture @three.module-quXgw4aM.js:48548",
+      "3.7% nextGate @people.ts:1851"
+    ],
+    "self": [
+      "4.3% step @people.ts:817",
+      "4.3% neighbours @people.ts:792",
+      "3.7% updateMatrixWorld @three.module-quXgw4aM.js:10046",
+      "3.0% multiplyMatrices @three.module-quXgw4aM.js:8252",
+      "2.4% texSubImage2D @three.module-quXgw4aM.js:47930",
+      "2.4% closestOnTriangleSq @navmesh.ts:462",
+      "1.8% bindTexture @three.module-quXgw4aM.js:47885",
+      "1.8% copy @three.module-quXgw4aM.js:4176",
+      "1.8% funnel @path.ts:179",
+      "1.8% mouthSegmentsNear @navmesh.ts:377",
+      "1.2% less @path.ts:338",
+      "1.2% setMaterial @three.module-quXgw4aM.js:47819",
+      "1.2% setProgram @three.module-quXgw4aM.js:52328",
+      "1.2% longitudinalConstraints @obstacles.ts:118",
+      "1.2% wrap @people.ts:809",
+      "1.2% bindVertexArrayObject @three.module-quXgw4aM.js:42906",
+      "1.2% traverse @three.module-quXgw4aM.js:9986",
+      "1.2% vehicleBodyIntersectsCrossing @permission.ts:196",
+      "1.2% (anon) @three.module-quXgw4aM.js:51786",
+      "1.2% swap @path.ts:342",
+      "0.6% setValueV3f @three.module-quXgw4aM.js:44937",
+      "0.6% push @path.ts:307",
+      "0.6% update @three.module-quXgw4aM.js:42100",
+      "0.6% turn @people.ts:1697",
+      "0.6% setValueV1fArray @three.module-quXgw4aM.js:45199"
+    ]
+  },
+  "status": "☀ Dia 08:39 2151 moradores · 250 a caminho · 12 trabalhando 80 vias 52 nós 90 veículos 160 pessoas sem alertas 47% maste",
+  "errors": []
+}

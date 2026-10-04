@@ -26,6 +26,7 @@ import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { wornItems } from '@people/spec';
 import { captureBind, captureBindRotations, loadRocketboxClips } from './citizenWalk';
 import { type Gradient, shearMatrix } from './groundShear';
+import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS, blendPackedFrames, copyPackedFrame } from './citizenPalette';
 import { createGait, gaitHeading, gaitPlays, stepGait, type Gait, type GaitClips, type GaitPlay } from './citizenGait';
 import {
   CARRY_AT, GAIT_AT, LIBRARY_AT, RIDER_AT, WALK, WALK_ELDER, afterFrame, bake, gaitClips,
@@ -596,6 +597,8 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     weights: readonly number[], x: number, height: number, y: number, heading: number, scale: number,
     lean = 0, ground: Gradient | null = null, expression?: FaceWeights): void {
     const offset = batch.count * batch.width;
+    const bones = batch.width / SKIN_BONE_FLOATS;
+    const packedWidth = bones * PACKED_BONE_FLOATS;
     // Far off (`lod` 2, a body a few pixels tall), the pose is the frame of
     // the clip that weighs most, copied as it is: blending clips and frames
     // bone by bone for every body was a quarter of a frame in a town, for a
@@ -605,8 +608,8 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       for (let c = 0; c < clips.length; c++) if (best < 0 || weights[c]! > weights[best]!) best = c;
       if (best >= 0) {
         const clip = clips[best]!;
-        const start = Math.round(Math.min(clip.frames, Math.max(0, phases[best]!))) * batch.width;
-        batch.pixels.set(clip.data.subarray(start, start + batch.width), offset);
+        const start = Math.round(Math.min(clip.frames, Math.max(0, phases[best]!))) * packedWidth;
+        copyPackedFrame(batch.pixels, offset, clip.data, start, bones);
       } else batch.pixels.fill(0, offset, offset + batch.width);
     } else {
       const pixels = batch.pixels;
@@ -621,12 +624,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         const data = clip.data;
         const f = Math.min(clip.frames, Math.max(0, phases[c]!));
         const fraction = f % 1;
-        const start = Math.floor(f) * width;
+        const start = Math.floor(f) * packedWidth;
         const a = weight * (1 - fraction);
         const b = weight * fraction;
-        for (let k = 0; k < width; k++) {
-          pixels[offset + k] = pixels[offset + k]! + a * data[start + k]! + b * data[start + width + k]!;
-        }
+        blendPackedFrames(pixels, offset, data, start, packedWidth, bones, a, b);
       }
     }
     transform.position.set(x, height, -y);

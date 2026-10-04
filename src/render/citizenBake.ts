@@ -14,6 +14,7 @@ import {
 } from './citizenWalk';
 import { ELDER_AMPLITUDE, SHUFFLE_AMPLITUDE, REST_AMPLITUDE, bakeFps, gaitClipOf, type GaitClipName, type GaitClips } from './citizenGait';
 import { directionalWalkFor } from './citizenStride';
+import { PACKED_BONE_FLOATS, packBoneMatrices } from './citizenPalette';
 
 /*
  * The citizen GLBs carry no clips. The Quaternius capture once converted onto
@@ -71,6 +72,7 @@ export type CitizenClipKey = RiderClipKey | 'walk' | Played;
 
 export const FPS = 30;
 export interface ClipFrames {
+  /** Twelve affine values per bone and frame; the fixed fourth row is restored for the GPU. */
   data: Float32Array;
   /** Intervals between baked frames; `data` holds `frames + 2` rows (the last repeated). */
   frames: number; duration: number;
@@ -162,7 +164,7 @@ export async function bakeFrames(body: BakeRig, pose: (time: number) => void, du
   const { rig, mesh } = body;
   const skeleton = mesh.skeleton;
   const frames = Math.max(1, Math.round(duration * fps));
-  const width = skeleton.bones.length * 16;
+  const width = skeleton.bones.length * PACKED_BONE_FLOATS;
   const data = new Float32Array((frames + 2) * width);
   const pelvis = rig.getObjectByName('Bip01_Pelvis');
   const handR = withHands ? rig.getObjectByName('Bip01_R_Hand') : undefined;
@@ -176,7 +178,7 @@ export async function bakeFrames(body: BakeRig, pose: (time: number) => void, du
     await breathe();
     pose(loop ? (i % frames) * duration / frames : i * duration / frames);
     skeleton.update();
-    data.set(skeleton.boneMatrices!, i * width);
+    packBoneMatrices(skeleton.boneMatrices!, data, i * width);
     if (hands) {
       handR!.updateWorldMatrix(true, false);
       handL!.updateWorldMatrix(true, false);
