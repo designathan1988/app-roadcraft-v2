@@ -993,8 +993,16 @@ function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<Instanced
       probe.center.set(s[i * 4] as number, s[i * 4 + 1] as number, s[i * 4 + 2] as number);
       probe.radius = (s[i * 4 + 3] as number) + SHADOW_REACH;
       if (!frustum.intersectsSphere(probe)) continue;
-      matrices.set(all.matrices.subarray(i * 16, i * 16 + 16), n * 16);
-      if (colours && all.colours) colours.set(all.colours.subarray(i * 3, i * 3 + 3), n * 3);
+      const source = i * 16;
+      const target = n * 16;
+      for (let j = 0; j < 16; j++) matrices[target + j] = all.matrices[source + j]!;
+      if (colours && all.colours) {
+        const sourceColour = i * 3;
+        const targetColour = n * 3;
+        colours[targetColour] = all.colours[sourceColour]!;
+        colours[targetColour + 1] = all.colours[sourceColour + 1]!;
+        colours[targetColour + 2] = all.colours[sourceColour + 2]!;
+      }
       n++;
     }
     mesh.count = n;

@@ -62,4 +62,6 @@ The conifer's near geometry now uses six offset tiers of raised, drooping boughs
 
 At map zoom, the renderer reset every plant mesh to visible on every frame, while `setMap` hid leaf-card meshes only when zoom crossed the mode threshold. A live browser view at zoom 0.8 therefore still drew 13 leaf batches with 2,706 active instances. The renderer now applies map visibility after mode changes, and scenery skips hidden leaf batches during culling. The same browser sequence showed zero visible leaf batches at zoom 0.8, ten batches at zoom 18, then zero again when returning to 0.8, with no page errors. File lint and the production build passed.
 
+Camera culling copied each visible plant's matrix through a fresh typed-array `subarray`, allocating one view per instance. Direct element copies preserve the same buffer values. In an alternating 4,000-instance microbenchmark (200 passes), the old copy took roughly 12 ms and the new copy 3.7 ms after warm-up. This is the copying component of camera movement, not a measured whole-frame speed-up. Browser pans across two city locations and back through map zoom produced finite matrices, restored close foliage and no page errors; typecheck and file lint passed.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).
