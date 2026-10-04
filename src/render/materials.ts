@@ -1,4 +1,4 @@
-import { Color, DoubleSide, FrontSide, MeshStandardMaterial } from 'three';
+import { CanvasTexture, Color, DoubleSide, FrontSide, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
 
 import { bakeSurface, disposeBakedTextures, fbm, makeNoise, type SurfaceBake } from './mesh/textureBaker';
 import { applyDetail, detailSwitch, disposeDetailTextures } from './mesh/detailLayer';
@@ -61,6 +61,10 @@ export interface SceneMaterials {
 }
 
 const ASPHALT_TILE = 26;
+const ASPHALT_SIZE = 512;
+const ASPHALT_BASE = 0.215;
+const RAISED_ASPHALT_BASE = 0.245;
+const raisedAsphaltMaps = new WeakMap<Texture, Texture>();
 const FOOTWAY_TILE = 18;
 const KERB_TILE = 8;
 const VERGE_TILE = 22;
@@ -74,12 +78,12 @@ function cellHash(x: number, y: number, seed: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
 }
 
-function asphaltBake(key: string, base: number, anisotropy: number): SurfaceBake {
+function asphaltBake(key: string, base: number, anisotropy: number, raisedPixels?: Uint8ClampedArray): SurfaceBake {
   const grain = makeNoise(0x51ed);
   const macro = makeNoise(0x9a17);
   const patch = makeNoise(0x2b64);
   const oil = makeNoise(0x6d05);
-  const size = 512;
+  const size = ASPHALT_SIZE;
   return bakeSurface(
     key,
     {
@@ -105,6 +109,19 @@ function asphaltBake(key: string, base: number, anisotropy: number): SurfaceBake
           (wear - 0.5) * 0.032 +
           (repair > 0.74 ? 0.018 : 0) -
           drip;
+        if (raisedPixels) {
+          const raisedTone =
+            RAISED_ASPHALT_BASE +
+            (chips - 0.5) * 0.03 +
+            (wear - 0.5) * 0.032 +
+            (repair > 0.74 ? 0.018 : 0) -
+            drip;
+          const at = (y * size + x) * 4;
+          raisedPixels[at] = Math.round(Math.min(1, Math.max(0, raisedTone)) * 255);
+          raisedPixels[at + 1] = Math.round(Math.min(1, Math.max(0, raisedTone * 1.01)) * 255);
+          raisedPixels[at + 2] = Math.round(Math.min(1, Math.max(0, raisedTone * 1.05)) * 255);
+          raisedPixels[at + 3] = 255;
+        }
         out.r = tone * 1.0;
         out.g = tone * 1.01;
         out.b = tone * 1.05;
@@ -117,6 +134,38 @@ function asphaltBake(key: string, base: number, anisotropy: number): SurfaceBake
     },
     anisotropy,
   );
+}
+
+/** The two asphalt colours share one noise, normal and roughness bake. */
+function asphaltBakes(anisotropy: number): { road: SurfaceBake; raised: SurfaceBake; raisedMap: Texture } {
+  const size = ASPHALT_SIZE;
+  const pixels = new Uint8ClampedArray(size * size * 4);
+  const road = asphaltBake('asphalt', ASPHALT_BASE, anisotropy, pixels);
+  let raisedMap = raisedAsphaltMaps.get(road.map);
+  if (!raisedMap) {
+    if (pixels[3] !== 255) {
+      // A second scene can find the base bake already cached without having
+      // run its shade callback. Its existing recipe remains the exact fallback.
+      raisedMap = asphaltBake('asphalt-raised', RAISED_ASPHALT_BASE, anisotropy).map;
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const image = ctx.createImageData(size, size);
+        image.data.set(pixels);
+        ctx.putImageData(image, 0, 0);
+      }
+      raisedMap = new CanvasTexture(canvas);
+      raisedMap.colorSpace = SRGBColorSpace;
+      raisedMap.wrapS = RepeatWrapping;
+      raisedMap.wrapT = RepeatWrapping;
+      raisedMap.anisotropy = anisotropy;
+    }
+    raisedAsphaltMaps.set(road.map, raisedMap);
+  }
+  return { road, raised: { map: raisedMap, normalMap: road.normalMap, roughnessMap: road.roughnessMap }, raisedMap };
 }
 
 /**
@@ -319,8 +368,7 @@ function deckBake(anisotropy: number): SurfaceBake {
 }
 
 export function createMaterials(anisotropy: number): SceneMaterials {
-  const road = asphaltBake('asphalt', 0.215, anisotropy);
-  const raised = asphaltBake('asphalt-raised', 0.245, anisotropy);
+  const { road, raised, raisedMap } = asphaltBakes(anisotropy);
   const footway = footwayBake(anisotropy);
   const kerb = kerbBake(anisotropy);
   const verge = vergeBake(anisotropy);
@@ -431,6 +479,7 @@ export function createMaterials(anisotropy: number): SceneMaterials {
     },
     dispose() {
       for (const material of materials) material.dispose();
+      raisedMap.dispose();
       // The baked textures are shared and cached by key, so they are the
       // material set's to release — disposing a material alone leaves every
       // canvas and every GPU texture behind.
