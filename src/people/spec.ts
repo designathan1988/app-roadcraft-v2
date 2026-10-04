@@ -109,6 +109,7 @@ const EXTRA_NAMES = new Set(COMMUNITY.filter((i) => ['bottom', 'skirt', 'beard',
 export function wornItems(look: PersonLook): string[] {
   const out: string[] = look.outfit ? [look.outfit] : [];
   if (look.outfit && look.footwear) out.push(look.footwear);
+  out.push('eyes');
   if (look.hairCut && look.hairCut !== 'none') out.push(look.hairCut);
   if (look.brows) out.push(look.brows);
   if (look.lashes) out.push(look.lashes);

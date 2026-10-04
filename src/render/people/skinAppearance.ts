@@ -1,5 +1,5 @@
 import { CanvasTexture, Color, DataTexture, ShaderChunk, SRGBColorSpace, TextureLoader, type BufferGeometry, type MeshStandardMaterial, type Texture } from 'three';
-import type { PersonSpec } from '@people/spec';
+import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
 import { padGarmentInWorker } from './garmentPaddingPool';
@@ -7,9 +7,23 @@ import { cancelUploads, queueUpload } from '../uploads';
 import index from '../../../public/models/people/skins/index.json';
 const urls = import.meta.glob('../../../public/models/people/skins/*.webp', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 
-export interface SkinAppearance { texture: Texture; tint: Color; hair: Color; hairTexture?: Texture; browTexture?: Texture; lashTexture?: Texture; beardTexture?: Texture; garments: (Texture | null)[]; outfitTint: Color | null; beard: number; makeup: number }
+export interface SkinAppearance { texture: Texture; eyeTexture: Texture; tint: Color; hair: Color; hairTexture?: Texture; browTexture?: Texture; lashTexture?: Texture; beardTexture?: Texture; garments: (Texture | null)[]; outfitTint: Color | null; beard: number; makeup: number }
 
-/** Existing CC0 skin pack, selected by the authored body; no new asset downloads. */
+const EYE_TEXTURES = ['eye-brown.webp', 'eye-brownlight.webp', 'eye-brownlight.webp', 'eye-green.webp', 'eye-blue.webp', 'eye-grey.webp'] as const;
+const EYE_PALETTE = EYE_COLOURS.map((colour) => new Color(colour));
+
+function eyeTextureFor(colour: number): string {
+  const target = new Color(colour);
+  let best = 0, distance = Infinity;
+  for (let i = 0; i < EYE_PALETTE.length; i++) {
+    const candidate = EYE_PALETTE[i]!;
+    const d = (target.r - candidate.r) ** 2 + (target.g - candidate.g) ** 2 + (target.b - candidate.b) ** 2;
+    if (d < distance) { best = i; distance = d; }
+  }
+  return EYE_TEXTURES[best]!;
+}
+
+/** Existing CC0 skin and eye packs, selected by the authored body and look. */
 export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppearance> {
   const b = person.body;
   const origin = b.african > b.asian && b.african > b.caucasian ? 'african'
@@ -35,6 +49,13 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     return map;
   });
   const skinRequest = skinLease.texture;
+  const eyeFile = eyeTextureFor(person.look.eyes);
+  const eyeLease = acquireTexture(CARDS, eyeFile, async () => {
+    const map = await new TextureLoader().loadAsync(proxyUrl(eyeFile));
+    map.colorSpace = SRGBColorSpace;
+    map.flipY = false;
+    return map;
+  });
   const average = new Color().setRGB(skin.average[0]! / 255, skin.average[1]! / 255, skin.average[2]! / 255, SRGBColorSpace);
   const desired = new Color(person.look.skin);
   // Match the texture's brightness to the person's skin and only a little of
@@ -48,7 +69,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     bright + (desired.g / Math.max(0.01, average.g) - bright) * hue,
     bright + (desired.b / Math.max(0.01, average.b) - bright) * hue);
   const garmentNames = texturedGarments(person.look);
-  const leases: TextureLease[] = [skinLease];
+  const leases: TextureLease[] = [skinLease, eyeLease];
   let texture: Texture | undefined;
   // Every card item - hair, brows, lashes, a beard - with its own texture,
   // so its strands are drawn per pixel.
@@ -69,6 +90,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
   let browTexture: Texture | undefined;
   let lashTexture: Texture | undefined;
   let beardTexture: Texture | undefined;
+  let eyeTexture: Texture | undefined;
   const release = (): void => {
     for (const lease of leases) lease.release();
   };
@@ -86,7 +108,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     // leave a late texture or garment lease behind.
     const requests: Promise<Texture | null | undefined>[] = [skinRequest, ...garmentRequests,
       cardTexture(person.look.hairCut), cardTexture(person.look.brows),
-      cardTexture(person.look.lashes), cardTexture(beardName)];
+      cardTexture(person.look.lashes), cardTexture(beardName), eyeLease.texture];
     const settled = await Promise.allSettled(requests);
     const loaded = settled.map((result) => result.status === 'fulfilled' ? result.value : null);
     texture = loaded[0] ?? undefined;
@@ -95,13 +117,14 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     browTexture = loaded[cardStart + 1] ?? undefined;
     lashTexture = loaded[cardStart + 2] ?? undefined;
     beardTexture = loaded[cardStart + 3] ?? undefined;
+    eyeTexture = loaded[cardStart + 4] ?? undefined;
     const failed = settled.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
-    if (!texture) throw new Error(`Missing loaded skin texture: ${skin.name}`);
+    if (!texture || !eyeTexture) throw new Error(`Missing loaded skin or eye texture: ${skin.name}, ${eyeFile}`);
     const garments = loaded.slice(1, cardStart).map((map) => map ?? null);
     // Sent to the GPU ahead of the first frame this person is drawn in.
-    queueUpload(texture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
-    const appearance: SkinAppearance = { texture, tint, hair: new Color(person.look.hair), garments,
+    queueUpload(texture, eyeTexture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
+    const appearance: SkinAppearance = { texture, eyeTexture, tint, hair: new Color(person.look.hair), garments,
       outfitTint: person.look.outfitTint == null ? null : new Color(person.look.outfitTint),
       ...(hairTexture ? { hairTexture } : {}),
       ...(browTexture ? { browTexture } : {}),
@@ -140,6 +163,7 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
   // wearer came into view: a 50-200 ms hitch each time.
   const texturedHair = geometry.hasAttribute('hairMask');
   const texturedGarments = geometry.hasAttribute('garmentSlot');
+  const texturedEyes = geometry.hasAttribute('eyeMask');
   if (texturedHair) { material.alphaToCoverage = true; material.alphaTest = 0.35; }
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
@@ -151,6 +175,7 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
     shader.uniforms.beardColour = { value: skin.hair };
     shader.uniforms.beardStyle = { value: skin.beard };
     shader.uniforms.makeupAmount = { value: skin.makeup };
+    if (texturedEyes) shader.uniforms.personEyes = { value: skin.eyeTexture };
     if (texturedGarments) {
       shader.uniforms.outfitDye = { value: skin.outfitTint ?? new Color(0xffffff) };
       shader.uniforms.outfitDyed = { value: skin.outfitTint ? 1 : 0 };
@@ -183,6 +208,15 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
       ShaderChunk.lights_physical_pars_fragment.replace(
         'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
         'reflectedLight.directDiffuse += mix(irradiance, saturate((dot(geometryNormal, directLight.direction) + 0.15) / 1.15) * directLight.color, vSkinMask * appearanceDetail) * BRDF_Lambert(material.diffuseColor);'));
+    if (texturedEyes) {
+      shader.vertexShader = `attribute float eyeMask; varying float vEyeMask;\n${shader.vertexShader}`
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyeMask = eyeMask;');
+      // The cornea's atlas pixels are transparent black; their alpha must
+      // reach the existing alpha test or they cover the iris as black discs.
+      shader.fragmentShader = `uniform sampler2D personEyes; varying float vEyeMask;\n${shader.fragmentShader}`
+        .replace('#include <color_fragment>', '#include <color_fragment>\nif (vEyeMask > 0.5) { vec4 eyeTexel = texture2D(personEyes, vSkinUv); diffuseColor.rgb = eyeTexel.rgb; diffuseColor.a = eyeTexel.a; }')
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vEyeMask > 0.5) roughnessFactor = 0.08;');
+    }
     if (texturedHair) {
       // Brows and lashes are cards laid on the skin. Laid exactly on it, the
       // skin won the depth test over most of them - the brows sank into the
@@ -267,7 +301,7 @@ if (faceCard) {
       shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `${sample}\n#include <alphatest_fragment>`);
     }
   };
-  material.customProgramCacheKey = () => `${key}-textured-skin-v3-hair${texturedHair}-garments${texturedGarments}`;
+  material.customProgramCacheKey = () => `${key}-textured-skin-v3-hair${texturedHair}-garments${texturedGarments}-eyes${texturedEyes}`;
 }
 
 /** How far each island of a garment's texture is grown into its background, pixels. */

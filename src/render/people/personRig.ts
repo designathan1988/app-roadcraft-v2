@@ -522,6 +522,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
   const uvs: number[] = shell?.hasAttribute('uv') ? values('uv') : new Array(out.positions.length / 3 * 2).fill(0);
   const skinMask: number[] = shell?.hasAttribute('skinMask') ? values('skinMask') : new Array(out.positions.length / 3).fill(0);
   const hairMask: number[] = new Array(out.positions.length / 3).fill(0);
+  const eyeMask: number[] = new Array(out.positions.length / 3).fill(0);
   const garmentSlot: number[] = new Array(out.positions.length / 3).fill(0);
   // Where each vertex comes from, for expressions: -2 the shell, -1 the body, k the k-th garment.
   const sourceKind: number[] = new Array(out.positions.length / 3).fill(-2);
@@ -559,6 +560,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
   const eyeOf = eyeColourer(data, posed, iris);
   const body = data.faceGroups.indexOf('body');
   const eyes = new Set([data.faceGroups.indexOf('helper-l-eye'), data.faceGroups.indexOf('helper-r-eye')]);
+  const fittedEyes = worn.some((item) => item.item.pack.kind === 'eyes');
   const emitted = new Map<string, number>();
   const eyeVertices: number[] = [];
   const emit = (v: number, colour: [number, number, number], uv: number, skin: number): number => {
@@ -570,6 +572,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
     out.colours.push(...colour);
     uvs.push(data.uvs?.[uv * 2] ?? 0, data.uvs?.[uv * 2 + 1] ?? 0);
     skinMask.push(skin);
+    eyeMask.push(0);
     sourceKind.push(-1);
     sourceIndex.push(v);
     pushSkin(data.joints, data.weights, v * 4, 65535, false);
@@ -585,6 +588,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
     const g = data.faceGroup[f]!;
     const isEye = eyes.has(g);
     if (g !== body && !isEye) continue;
+    if (isEye && fittedEyes) continue;
     const quad = [data.faces[f * 4]!, data.faces[f * 4 + 1]!, data.faces[f * 4 + 2]!, data.faces[f * 4 + 3]!];
     if (!isEye && quad.some((v) => hidden.has(v))) continue;
     const o = quad.map((v, corner) => emit(v, isEye ? eyeOf(v) : bodyColour(v), data.faceUvs?.[f * 4 + corner] ?? 0,
@@ -595,6 +599,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
   }
 
   while (hairMask.length < out.positions.length / 3) hairMask.push(0);
+  while (eyeMask.length < out.positions.length / 3) eyeMask.push(0);
   for (const v of eyeVertices) hairMask[v] = EYE_SLOT;
   while (garmentSlot.length < out.positions.length / 3) garmentSlot.push(0);
   groups.push({ start: 0, count: out.index.length, name: 'body' });
@@ -614,6 +619,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
       uvs.push(pack.uvs?.[v * 2] ?? 0, pack.uvs?.[v * 2 + 1] ?? 0);
       // Which card texture this vertex reads (`skinAppearance.ts`): hair, brows, lashes, beard.
       hairMask.push(CARD_SLOT[kind] ?? 0);
+      eyeMask.push(kind === 'eyes' ? 1 : 0);
       garmentSlot.push(garmentSlotOf(look, w.name, kind));
       // Texture pixels are sRGB; vertex colours are drawn as linear (as
       // `Color` converts the look's colours). Taken raw, every garment came
@@ -659,6 +665,7 @@ export function dressedGeometry(data: PersonMeshData, posed: Float32Array, look:
     while (skinMask.length < out.positions.length / 3) skinMask.push(0);
     geometry.setAttribute('skinMask', new BufferAttribute(new Float32Array(skinMask), 1));
     geometry.setAttribute('hairMask', new BufferAttribute(new Float32Array(hairMask), 1));
+    geometry.setAttribute('eyeMask', new BufferAttribute(new Float32Array(eyeMask), 1));
     geometry.setAttribute('garmentSlot', new BufferAttribute(new Float32Array(garmentSlot), 1));
   }
   groups.forEach((g, i) => geometry.addGroup(g.start, g.count, i));
