@@ -12,7 +12,7 @@ import { createVehicle, snapshot, type Vehicle } from '../vehicles/state';
 import { assignOccupancy } from '../vehicles/kerbStops';
 import { planFrom } from '../routing/router';
 import { type Population, type Resident, derivePopulation } from './population';
-import { OwnCars, personGender, type TripReason } from '../agents/cars';
+import { type CarPhase, OwnCars, personGender, type TripReason } from '../agents/cars';
 
 /**
  * The residents' days: The Sims inside SimCity.
@@ -56,6 +56,8 @@ export interface Trip {
   readonly resident: number;
   readonly to: BuildingId;
   mode: 'walk' | 'drive';
+  /** Why it is made (`agent.why.<reason>`). */
+  readonly why?: TripReason;
   /** The walker or the car carrying it. */
   agent: number;
   started: number;
@@ -157,6 +159,37 @@ export class CityLife {
   /** Moves the clock on: everybody's diary catches up, a queue at a time. */
   skip(minutes: number): void {
     this.skipped += Math.max(0, minutes);
+  }
+
+  /**
+   * What a resident is doing and why, for the player who clicks on them (an
+   * agent's card): where they are, the trip under way (on foot, or the step of
+   * their car trip), where their car is. Null for an unknown resident.
+   */
+  describe(resident: number): AgentView | null {
+    const r = this.byResident.get(resident);
+    const d = this.diaries.get(resident);
+    if (!r || !d) return null;
+    let trip: AgentView['trip'] = null;
+    for (const t of this.trips.values()) {
+      if (t.resident !== resident) continue;
+      const step = this.cars?.trips.get(t.id)?.phase ?? 'walk';
+      trip = { step, why: t.why ?? 'outing', to: t.to };
+      break;
+    }
+    const own = this.cars?.cars.get(resident);
+    const car: AgentView['car'] = own ? {
+      archetype: own.archetype.id, colour: own.colour,
+      state: own.body === null ? 'driving' : own.body.v > 0 || (trip && trip.step !== 'walk' && trip.step !== 'toCar' && trip.step !== 'fromCar') ? 'inUse' : 'parked',
+      at: own.bay?.building ?? null,
+    } : null;
+    return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car };
+  }
+
+  /** The resident whose own car this is, or null. */
+  ownerOfCar(vehicle: number): number | null {
+    for (const c of this.cars?.cars.values() ?? []) if (c.id === vehicle) return c.owner;
+    return null;
   }
 
   /** The point on the footway a building is entered from, or null. */
@@ -352,7 +385,7 @@ export class CityLife {
       // An agent takes their own car, if it is near and a bay is free at the
       // other end; otherwise they walk. No car is ever made at the kerb.
       if (!canDrive) return 'wait';
-      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time };
+      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
       if (cars.start(w, r, trip.id, e.from, from, e.to, to, reasonOf(r, e))) {
         trip.agent = OwnCars.personOf(r.id);
         this.trips.set(trip.id, trip);
@@ -365,7 +398,7 @@ export class CityLife {
     const kerbB = kerbA ? this.kerbOf(w, e.to) : null;
     if (kerbA && kerbB && kerbA.lanelet !== kerbB.lanelet) {
       if (!canDrive) return 'wait';
-      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time };
+      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
       const car = spawnCommuter(w, kerbA, kerbB, trip.id, this.rng);
       if (car) {
         trip.agent = car.id;
@@ -380,7 +413,7 @@ export class CityLife {
     if (!canWalk) return 'wait';
     const walk = w.pedEngine.walkTrip;
     if (!walk) { this.stranded++; return 'skip'; }
-    const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time };
+    const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
     // An agent walks as themselves: the same body on every walk and in their car.
     const person = cars ? OwnCars.personOf(r.id) : undefined;
     const id = walk.call(w.pedEngine, w, person === undefined
@@ -454,6 +487,21 @@ export class CityLife {
       this.arrive(t);
     }
   }
+}
+
+/** A resident as the player sees them when they click on them (`CityLife.describe`). */
+export interface AgentView {
+  readonly resident: number;
+  readonly person: number;
+  readonly ageClass: Resident['ageClass'];
+  readonly home: BuildingId;
+  readonly work: BuildingId | null;
+  /** The building they are in; null on the way somewhere. */
+  readonly at: BuildingId | null;
+  /** The trip under way: on foot (`walk`), or the step of their car trip. */
+  readonly trip: { readonly step: 'walk' | CarPhase; readonly why: TripReason; readonly to: BuildingId } | null;
+  /** Their own car: parked (and in whose lot), in use, or on the road. */
+  readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
 }
 
 /** Why a resident is making a trip, as the player is told when they look at them. */

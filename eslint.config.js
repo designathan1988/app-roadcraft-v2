@@ -111,6 +111,7 @@ export default tseslint.config(
       'scripts/cook-people.mjs',
       'scripts/verify-visual.mjs',
       'scripts/agents-shots.mjs',
+      'scripts/agent-card-shots.mjs',
     ],
     languageOptions: {
       globals: {

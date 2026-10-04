@@ -48,6 +48,10 @@ import { History, restoreInto, restoreSnapshot, serialize } from '@editor/histor
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
+import { type AgentCard, createAgentCard } from '@ui/agentCard';
+import { AGENT_PERSON_BASE } from '@sim/people/engine';
+import { vehiclePose } from '@sim/pose';
+import type { BuildingId } from '@world/buildings/types';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -1217,9 +1221,17 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
 
     case 'inspect': {
+      const box = canvas.getBoundingClientRect();
+      // A person, or their car: their card - what they are doing, and why.
+      const who = pickAgent(e.clientX - box.left, e.clientY - box.top);
+      if (who !== null) {
+        theAgentCard().open(who);
+        agentCardClock = 0;
+        refreshAgentCard(performance.now());
+        break;
+      }
       // A click on a building is for seeing inside it (the click handlers
       // above), not for the street that happens to run past it.
-      const box = canvas.getBoundingClientRect();
       if (buildings.tool.buildingAt({ x: e.clientX - box.left, y: e.clientY - box.top }) !== null) break;
     }
       selectedSegment = anchor.kind === 'segment' ? (anchor.segment ?? null) : null;
@@ -2924,6 +2936,79 @@ setInterval(() => {
   requestDraw();
 }, 500);
 
+// ------------------------------------------------------------ resident agents
+
+/** How near a click must be to a person or a car, in screen pixels, to pick them. */
+const AGENT_PICK_PX = 22;
+let agentCard: AgentCard | null = null;
+let agentCardClock = 0;
+const theAgentCard = (): AgentCard =>
+  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw);
+
+/** Where a resident agent is now: on foot, in or at their car, or at the door of where they are. */
+function agentPosition(resident: number): Vec2 | null {
+  const city = sim.city;
+  const person = sim.pedViewById.get(AGENT_PERSON_BASE + resident);
+  if (person) return { x: person.x, y: person.y };
+  const car = city.cars?.cars.get(resident);
+  const trip = city.cars?.tripOfCar(car?.id ?? -1);
+  if (car && trip) {
+    const v = car.body ?? sim.vehicles.get(car.id);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) return pose.p;
+  }
+  const at = city.whereIs(resident);
+  return at !== null ? city.doorOf(at) : null;
+}
+
+/** The resident agent under a screen point (on foot, or by their car), or null. */
+function pickAgent(px: number, py: number): number | null {
+  const cars = sim.city.cars;
+  if (!cars) return null;
+  let best: number | null = null;
+  let bestD = AGENT_PICK_PX;
+  const consider = (x: number, y: number, resident: number): void => {
+    const h = scene.surfaceHeightAt(x, y);
+    const s = view.toScreen({ x, y }, surface.cssW, surface.cssH, Number.isFinite(h) ? h : 0);
+    const d = Math.hypot(s.x - px, s.y - py);
+    if (d < bestD) { bestD = d; best = resident; }
+  };
+  for (const p of sim.pedViews) if (p.id >= AGENT_PERSON_BASE) consider(p.x, p.y, p.id - AGENT_PERSON_BASE);
+  for (const car of cars.cars.values()) {
+    const v = car.body ?? sim.vehicles.get(car.id);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) consider(pose.p.x, pose.p.y, car.owner);
+  }
+  return best;
+}
+
+/** A building as the player knows it: its name, or what it is. */
+function placeName(id: number): string {
+  const b = doc.buildings.get(id as BuildingId);
+  if (!b) return '—';
+  if (b.name) return b.name;
+  const key = `building.fn.${b.function ?? 'house'}`;
+  return hasKey(key) ? t(key) : t('building.fn.house');
+}
+
+/** The open agent card, kept up to date a few times a second. */
+function refreshAgentCard(now: number): void {
+  if (!agentCard || agentCard.resident === null || now - agentCardClock < 250) return;
+  agentCardClock = now;
+  agentCard.update(sim.city.describe(agentCard.resident), placeName);
+}
+
+/** The camera kept on the agent the card follows. */
+function followAgent(): void {
+  if (!agentCard?.following || agentCard.resident === null) return;
+  const p = agentPosition(agentCard.resident);
+  if (!p) return;
+  // Eased onto them, through the view's own seam: the zoom and the bearing stay
+  // the player's.
+  const c = view.centre;
+  view.moveTo({ x: c.x + (p.x - c.x) * 0.2, y: c.y + (p.y - c.y) * 0.2 });
+}
+
 function frame(now: number): void {
   pending = false;
   const wall = (now - last) / 1000;
@@ -2962,7 +3047,9 @@ function frame(now: number): void {
     }
   }
   buildings.beforeDraw(tool === 'building');
+  followAgent();
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
+  refreshAgentCard(now);
   drawOverlayScreen();
   updateCameraNeedle();
   // Undo, redo or a loaded map can change the saved people under the Creator.
