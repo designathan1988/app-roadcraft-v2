@@ -1127,6 +1127,7 @@ export const EN: Dictionary = {
   'builder.tool.furnMove': 'Move',
   'hint.builder.furnMove': 'Click a piece to pick it up, then where it goes (R turns it)',
   'builder.tool.furnTurn': 'Turn',
+  'hint.builder.furnTurn': 'Turns the selected piece of furniture',
   'builder.tool.furnRemove': 'Take away',
   'hint.builder.furnRemove': 'Click a piece or a light to take it away',
   'builder.section.furnishing': 'Arrange',

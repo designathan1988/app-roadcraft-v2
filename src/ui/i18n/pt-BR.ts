@@ -1113,6 +1113,7 @@ export const PT_BR: Dictionary = {
   'builder.tool.furnMove': 'Mover',
   'hint.builder.furnMove': 'Clique num móvel para pegá-lo, e de novo onde ele vai (R gira)',
   'builder.tool.furnTurn': 'Girar',
+  'hint.builder.furnTurn': 'Gira o móvel selecionado',
   'builder.tool.furnRemove': 'Tirar',
   'hint.builder.furnRemove': 'Clique num móvel ou luminária para tirá-lo',
   'builder.section.furnishing': 'Arrumar',
