@@ -579,7 +579,24 @@ export class PedestrianClearance {
       const i = bucket.indexOf(footprint);
       if (i >= 0) bucket.splice(i, 1);
     }
-    footprint.x = at.x; footprint.y = at.y;
+    // WHERE THE BODY IS DRAWN, not where the walker logically stands.
+    //
+    // The two are normally the same, but not always: `settlePose`'s firewall
+    // refuses any step that would carry a body against its own chest and holds
+    // it where it stood, and the catch-up offset that is supposed to reconcile
+    // the two is discarded on those ticks. A walker being shifted across the
+    // footway while it faces its crossing is held every tick, so its logical
+    // place runs away from its drawn body — measured on this fixture, 1.9 u
+    // after twenty seconds of waiting, still growing.
+    //
+    // Publishing the logical place meant the clearance system vouched for a
+    // person standing somewhere nobody could see them, and a walker coming
+    // along was cleared straight through the frozen body: measured, two drawn
+    // bodies 7 cm apart, one walking through the other while every clearance
+    // test passed. The footprint is what other walkers see and step around, so
+    // it has to be where the body is DRAWN; the player judges a street by the
+    // figures on it, and the figures were passing through each other.
+    footprint.x = p.x; footprint.y = p.y;
     this.insert(footprint);
   }
 
