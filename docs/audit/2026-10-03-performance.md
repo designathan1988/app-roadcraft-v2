@@ -56,4 +56,6 @@ The prop generator double-converted hexadecimal colors after three.js had alread
 
 The next vegetation pass changed crown shape rather than color: a smaller central mass and irregular branch clusters replace the round ring on broadleaf trees; the tall species' nine clusters now occupy three offset tiers instead of a straight stack. Blob count and near/far LOD are unchanged. Fixed-camera captures at zoom 8 and 18 are in the local `props-shape-*.png` files. The focused prop geometry specification passed; conifer and hedge close-up quality is still open.
 
+The conifer's near geometry now uses six offset tiers of raised, drooping boughs over a narrow core instead of five smooth cone shells. Its existing distant LOD remains unchanged. The browser reported 273 triangles for the near mesh, down from 467 calculated from the previous five cone shells and trunk. A fixed-camera zoom-18 capture (`props-conifer-after.png`) shows the distinct branch outline against `props-shape-close.png`; the render had no page errors and stayed at high quality. The focused geometry specification (3 tests), typecheck, file lint and production build passed. Hedge close-up quality remains open.
+
 Sources and architectural rationale: [citizen visual lifetime research](../research/citizen-visual-lifetime.md).

@@ -311,12 +311,53 @@ export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGe
       return merge([...trunk(0.62, 0.026, 0.012, BARK_PALE, limbs(5), rng), ...crown(blobs, new Vector3(0, 0.72, 0), green, 4.2, 0.26, detail)]);
     }
     case 'conifer': {
-      const parts = trunk(0.28, 0.022, 0.012, BARK, 0, rng);
+      const parts = trunk(detail === 1 ? 0.88 : 0.28, 0.022, 0.012, BARK, 0, rng);
+      if (detail === 1) {
+        // Raised, drooping needle sprays break the outline into individual
+        // boughs without adding draw calls or a texture to every tree.
+        const vertices: number[] = [];
+        for (let tier = 0; tier < 6; tier++) {
+          const count = tier < 3 ? 7 : 6;
+          const rootY = 0.22 + tier * 0.125;
+          for (let arm = 0; arm < count; arm++) {
+            const angle = ((arm + tier * 0.38) / count) * Math.PI * 2 + (rng.float() - 0.5) * 0.18;
+            const radialX = Math.cos(angle);
+            const radialZ = Math.sin(angle);
+            const sideX = -radialZ;
+            const sideZ = radialX;
+            const length = (0.245 - tier * 0.029) * (0.83 + rng.float() * 0.34);
+            const width = (0.064 - tier * 0.006) * (0.85 + rng.float() * 0.3);
+            const middle = length * 0.54;
+            const root = [radialX * 0.018, rootY, radialZ * 0.018];
+            const left = [radialX * middle + sideX * width, rootY - 0.018, radialZ * middle + sideZ * width];
+            const tip = [radialX * length, rootY - 0.074, radialZ * length];
+            const right = [radialX * middle - sideX * width, rootY - 0.018, radialZ * middle - sideZ * width];
+            const ridge = [radialX * middle, rootY + 0.042, radialZ * middle];
+            vertices.push(...root, ...left, ...ridge, ...left, ...tip, ...ridge,
+              ...tip, ...right, ...ridge, ...right, ...root, ...ridge);
+          }
+        }
+        const boughs = new BufferGeometry();
+        boughs.setAttribute('position', new Float32BufferAttribute(vertices, 3));
+        boughs.computeVertexNormals();
+        parts.push(part(boughs, (q, n) => {
+          const height = Math.max(0, Math.min(1, (q.y - 0.16) / 0.8));
+          const ao = (0.72 + height * 0.28) * (0.82 + Math.max(0, n.y) * 0.18);
+          const tone = 0.92 + wobble(q.x * 13, q.y * 13, q.z * 13, 5.5) * 0.08;
+          return [NEEDLE[0] * ao * tone, NEEDLE[1] * ao * tone, NEEDLE[2] * ao * tone];
+        }));
+        // The core fills small gaps between sprays and carries the pointed top.
+        parts.push(part(new ConeGeometry(0.088, 0.78, 10, 3, true), (q) => {
+          const tone = 0.68 + Math.max(0, q.y) * 0.22;
+          return [NEEDLE[0] * tone, NEEDLE[1] * tone, NEEDLE[2] * tone];
+        }, { at: [0, 0.59, 0] }));
+        return merge(parts);
+      }
       for (let i = 0; i < 5; i++) {
         const y0 = 0.16 + i * 0.16;
         const height = 0.3 - i * 0.02;
         const radius = 0.21 * (1 - i * 0.17);
-        const cone = new ConeGeometry(radius, height, detail === 1 ? 16 : 9, detail === 1 ? 3 : 1, true);
+        const cone = new ConeGeometry(radius, height, 9, 1, true);
         const position = cone.getAttribute('position');
         for (let v = 0; v < position.count; v++) {
           const x = position.getX(v);
