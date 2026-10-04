@@ -1109,6 +1109,10 @@ export function unifiedWaterGeometry(
   const positions: number[] = [];
   const depths: number[] = [];
   const cells = new Set<string>();
+  // The contour builders consume these immediately; reuse them across cells
+  // instead of allocating five points and three arrays for every quad.
+  const points: WaterPoint[] = Array.from({ length: 4 }, () => ({ x: 0, y: 0, level: 0, depth: 0 }));
+  const centre: WaterPoint = { x: 0, y: 0, level: 0, depth: 0 };
   for (const vertex of vertices.values()) {
     cells.add(`${vertex.ix}:${vertex.iy}`);
     cells.add(`${vertex.ix - 1}:${vertex.iy}`);
@@ -1120,26 +1124,21 @@ export function unifiedWaterGeometry(
     const [sx, sy] = cell.split(':');
     const ix = Number(sx);
     const iy = Number(sy);
-    const corners = [
-      [ix, iy],
-      [ix + 1, iy],
-      [ix + 1, iy + 1],
-      [ix, iy + 1],
-    ] as const;
-    const levels = corners.map(([x, y]) => levelAt(x, y));
-    if (levels.some((level) => level === null)) continue;
-    const points = corners.map(([x, y], i) => {
-      const wx = x * WATER_CELL;
-      const wy = y * WATER_CELL;
-      const level = levels[i] as number;
-      return { x: wx, y: wy, level, depth: level - terrainHeightAt(wx, wy) };
-    });
-    const centreLevel = points.reduce((sum, point) => sum + point.level, 0) / points.length;
-    const centreX = (ix + 0.5) * WATER_CELL;
-    const centreY = (iy + 0.5) * WATER_CELL;
-    const centre = { x: centreX, y: centreY, level: centreLevel,
-      depth: centreLevel - terrainHeightAt(centreX, centreY) };
-    const wetCorners = points.filter((point) => point.depth > TERRAIN_WATER_HEIGHT).length;
+    const l0 = levelAt(ix, iy), l1 = levelAt(ix + 1, iy);
+    const l2 = levelAt(ix + 1, iy + 1), l3 = levelAt(ix, iy + 1);
+    if (l0 === null || l1 === null || l2 === null || l3 === null) continue;
+    const wx = ix * WATER_CELL, wy = iy * WATER_CELL;
+    const p0 = points[0]!, p1 = points[1]!, p2 = points[2]!, p3 = points[3]!;
+    p0.x = wx; p0.y = wy; p0.level = l0; p0.depth = l0 - terrainHeightAt(wx, wy);
+    p1.x = wx + WATER_CELL; p1.y = wy; p1.level = l1; p1.depth = l1 - terrainHeightAt(p1.x, p1.y);
+    p2.x = wx + WATER_CELL; p2.y = wy + WATER_CELL; p2.level = l2; p2.depth = l2 - terrainHeightAt(p2.x, p2.y);
+    p3.x = wx; p3.y = wy + WATER_CELL; p3.level = l3; p3.depth = l3 - terrainHeightAt(p3.x, p3.y);
+    centre.x = wx + WATER_CELL / 2;
+    centre.y = wy + WATER_CELL / 2;
+    centre.level = (l0 + l1 + l2 + l3) / 4;
+    centre.depth = centre.level - terrainHeightAt(centre.x, centre.y);
+    const wetCorners = Number(p0.depth > TERRAIN_WATER_HEIGHT) + Number(p1.depth > TERRAIN_WATER_HEIGHT) +
+      Number(p2.depth > TERRAIN_WATER_HEIGHT) + Number(p3.depth > TERRAIN_WATER_HEIGHT);
     if (wetCorners === 0 && centre.depth <= TERRAIN_WATER_HEIGHT) continue;
     // Wound anticlockwise seen from above, so the surface is a FRONT face. The
     // old winding pointed every face at the ground and needed `DoubleSide` and a
@@ -1179,10 +1178,10 @@ export function unifiedWaterGeometry(
 }
 
 interface WaterPoint {
-  readonly x: number;
-  readonly y: number;
-  readonly level: number;
-  readonly depth: number;
+  x: number;
+  y: number;
+  level: number;
+  depth: number;
 }
 
 function pushTriangle(
