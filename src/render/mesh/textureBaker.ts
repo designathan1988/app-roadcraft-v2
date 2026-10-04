@@ -115,7 +115,9 @@ export function normalMapFrom(height: Float32Array, size: number, strength: numb
       const dx = ((height[row + right] as number) - (height[row + left] as number)) * strength;
       const dy = ((height[below + x] as number) - (height[above + x] as number)) * strength;
       left = x;
-      const length = Math.hypot(dx, dy, 1);
+      // Recipe heights are bounded near 0..1, so direct length cannot overflow;
+      // the general-purpose hypot scaling was repeated for every texel.
+      const length = Math.sqrt(dx * dx + dy * dy + 1);
       const index = (y * size + x) * 4;
       image.data[index] = Math.round(((-dx / length) * 0.5 + 0.5) * 255);
       image.data[index + 1] = Math.round(((-dy / length) * 0.5 + 0.5) * 255);
