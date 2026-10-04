@@ -193,11 +193,7 @@ const EASE_AFTER = 0.6;
 const SHUFFLE = m(0.3);
 const EASE_HOLD = 1.5;
 const EASE_GOING = 0.4;
-/**
- * Walking: above this the body faces the way it moves, u/s. Slower, a
- * person shuffles - a step aside, a step to let somebody by - facing where
- * it means to go.
- */
+/** Pace at which turning reaches its walking rate; slower motion turns more like a pivot. */
 const WALKING = m(0.4);
 /** Desired speed below which a person means to go nowhere, u/s. */
 const MEANS = m(0.05);
@@ -1649,10 +1645,10 @@ function step(w: SimWorld, s: State): void {
       p.heading = Math.atan2(vel.z, vel.x);
       p.prevHeading = p.heading;
     }
-    // VISUAL ORIENTATION, which moves nothing: walking, the way it walks;
-    // shuffling, the way it means to go; standing, the way it waits to go.
+    // VISUAL ORIENTATION, which moves nothing: a moving body faces its actual
+    // displacement, even while giving way slowly. At rest it can face intent.
     const want = p.agent.desiredVelocity();
-    const face = p.speed >= WALKING ? Math.atan2(vel.z, vel.x)
+    const face = p.speed > STILL ? Math.atan2(vel.z, vel.x)
       : hypot2(want.x, want.z) > MEANS ? Math.atan2(want.z, want.x)
         : p.holding ? waitFacing(p) : null;
     if (face !== null && !firstPose) {
