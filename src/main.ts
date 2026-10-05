@@ -3458,12 +3458,13 @@ function drawOverlayScreen(): void {
   // The road's centre line, picked or under the pointer, only with the
   // Information tool in hand (the player's order of 2026-10-05): with any
   // other tool a white line down the middle of the street is noise.
-  if (tool === 'inspect' && selectedSegment !== null) {
+  const infoTool = tool === 'inspect' && document.body.dataset['infoTool'] === 'on';
+  if (infoTool && selectedSegment !== null) {
     const ribbon = net.ribbons.get(selectedSegment);
     if (ribbon) strokeScreen(ribbon.full.toPoints(), SELECTION, 3);
   }
 
-  if (tool === 'inspect' && hoverAnchor?.kind === 'segment' && hoverAnchor.segment !== undefined) {
+  if (infoTool && hoverAnchor?.kind === 'segment' && hoverAnchor.segment !== undefined) {
     const ribbon = net.ribbons.get(hoverAnchor.segment);
     if (ribbon) strokeScreen(ribbon.full.toPoints(), HOVER, 2);
   }

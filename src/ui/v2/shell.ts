@@ -960,7 +960,7 @@ plan.appendChild(choices([
     const current = tool();
     const cat = categoryOf(current);
     for (const [id, b] of catButtons) {
-      b.classList.toggle('on', id === cat && open && current !== 'inspect');
+      b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info'));
       const c = CATS.find((x) => x.id === id);
       (b.querySelector('.v2-cat-name') as HTMLElement).textContent = c?.label() ?? '';
       // Only the icon shows: the name and the key are in the tooltip.
@@ -973,6 +973,9 @@ plan.appendChild(choices([
     studio.hidden = cat !== 'people' || !open;
     side.hidden = q('#inspector')?.classList.contains('hidden') ?? true;
     root.dataset['tool'] = current;
+    // Whether the player has the Information tool open (not merely no tool in
+    // hand, which is also 'inspect'): the game draws road gizmos only then.
+    document.body.dataset['infoTool'] = open && cat === 'info' ? 'on' : 'off';
     syncSide();
     if (!showDrawer) return;
     // Keep the search box focused across a rebuild.
