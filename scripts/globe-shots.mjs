@@ -19,9 +19,11 @@ await page.waitForFunction(() => Boolean(window.__roadcraft), null, { timeout: 1
 if (mapFile) await page.evaluate((d) => window.__roadcraft.loadDoc(d), JSON.parse(readFileSync(mapFile, 'utf8')));
 await page.waitForTimeout(5000);
 // Visible half heights, world units: street, district, town, the whole globe.
-for (const half of [150, 600, 1200, 2200]) {
-  await page.evaluate((half) => window.__roadcraft.lookAt(0, 0, innerHeight / (2 * half)), half);
+// Looked at from the middle of the map and from near its edge, where a bend
+// round the wrong point shows the edge.
+for (const [cx, cy] of [[0, 0], [1500, 900], [-2000, -1800]]) for (const half of [150, 600, 1200, 2200]) {
+  await page.evaluate(([cx, cy, half]) => window.__roadcraft.lookAt(cx, cy, innerHeight / (2 * half)), [cx, cy, half]);
   await page.waitForTimeout(2500);
-  await page.screenshot({ path: `${out}/half-${half}.png` });
+  await page.screenshot({ path: `${out}/at-${cx}_${cy}-half-${half}.png` });
 }
 await browser.close();

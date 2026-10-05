@@ -90,6 +90,8 @@ export interface SceneEnvironment {
    * light; the moon at night. Returns how dark it is, 0 by day to 1 at night.
    */
   setTimeOfDay(minutes: number): number;
+  /** How far the map is bent into a globe, 0 to 1 (`globe.ts`): the sky round a globe has no ground below. */
+  setGlobe(amount: number): void;
   dispose(): void;
 }
 
@@ -108,13 +110,15 @@ const SKY_FRAGMENT = `
   uniform vec3 uZenith;
   uniform vec3 uHorizon;
   uniform vec3 uGround;
+  // 0 on a flat map; 1 when it is a globe, which has sky all round it, no ground below.
+  uniform float uGlobe;
   uniform vec3 uSunDirection;
   uniform vec3 uSunColor;
 
   void main() {
     float h = vSkyDirection.y;
     vec3 sky = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.62));
-    sky = mix(uGround, sky, smoothstep(-0.12, 0.02, h));
+    sky = mix(mix(uGround, uHorizon, uGlobe), sky, smoothstep(-0.12, 0.02, h));
     // A broad, soft glow around the sun, and a tighter core inside it. Enough
     // to tell the eye where the light comes from without drawing a disc.
     float sun = max(dot(normalize(vSkyDirection), uSunDirection), 0.0);
@@ -153,6 +157,7 @@ export function createEnvironment(
       uZenith: { value: zenith },
       uHorizon: { value: horizon },
       uGround: { value: groundTint },
+      uGlobe: { value: 0 },
       uSunDirection: { value: sunDirection },
       uSunColor: { value: sunColor },
     },
@@ -246,6 +251,9 @@ export function createEnvironment(
   return {
     sun,
     skyColor: horizon,
+    setGlobe(amount) {
+      skyMaterial.uniforms['uGlobe']!.value = amount;
+    },
     follow(target, halfWidth, halfHeight, view, rise = 0) {
       sky.position.copy(target);
       sky.scale.setScalar(9_000);

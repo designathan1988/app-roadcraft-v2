@@ -8,6 +8,7 @@ import {
   type Material,
   type Mesh,
   MeshDepthMaterial,
+  Fog,
   type Object3D,
   RGBADepthPacking,
   Sphere,
@@ -19,7 +20,10 @@ import {
 } from 'three';
 
 import { Digest } from '@core/digest';
-import { createGlobeCulling, installGlobe } from './globe';
+import { createGlobeCulling, globeAmount, installGlobe } from './globe';
+
+/** How far the fog is pushed back once the map is a whole globe, world units. */
+const GLOBE_FOG_PUSH = 30_000;
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
@@ -373,6 +377,8 @@ export function createSceneRenderer(
   // flat frustum says nothing about what is in the picture.
   const globeCulling = createGlobeCulling();
   let globeBent = false;
+  let fogBase: { near: number; far: number } | null = null;
+  let skyDome: Object3D | null = null;
   const pedestrianVisible = (x: number, y: number, height: number): boolean => {
     if (globeBent) return true;
     crowdBounds.center.set(x, height + 3, -y);
@@ -882,6 +888,10 @@ export function createSceneRenderer(
       }
       rig.camera.getWorldDirection(viewDirection);
       environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
+      // The sky dome round the camera too: a perspective camera far back (the
+      // map as a globe) would otherwise stand outside it and see it as a ball.
+      skyDome ??= scene.getObjectByName('sky') ?? null;
+      if (skyDome) skyDome.scale.setScalar(Math.max(skyDome.scale.x, rig.camera.position.distanceTo(target) * 1.6));
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
       sim.focus = {
@@ -896,6 +906,17 @@ export function createSceneRenderer(
       // asset load adds, and instance colours created on first use.
       if (renderer.shadowMap.enabled) assignShadowDepth(scene);
       globeBent = globeCulling.update(scene, rig.camera);
+      const bend = globeAmount(rig.camera);
+      // Shadows are cast on the flat map: faded out while the picture bends.
+      environment.sun.shadow.intensity = 1 - bend;
+      environment.setGlobe(bend);
+      // The fog is measured from the camera, which stands far back from a
+      // globe: pushed out with the bend, or the planet is lost in it.
+      if (scene.fog instanceof Fog) {
+        fogBase ??= { near: scene.fog.near, far: scene.fog.far };
+        scene.fog.near = fogBase.near + GLOBE_FOG_PUSH * bend;
+        scene.fog.far = fogBase.far + GLOBE_FOG_PUSH * bend;
+      }
       post.render(delta);
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);
