@@ -142,7 +142,9 @@ const BAND_H = m(0.22);
 const CORNICE_OUT = m(0.16);
 const PARAPET_H = m(0.85);
 const PARAPET_T = m(0.25);
-const EAVES = m(0.35);
+const EAVES = m(0.45);
+/** Depth of a pitched roof's edge: rafter, battens and tiles, read at the fascia (18 cm). */
+const ROOF_THICK = m(0.18);
 const ARCADE = m(1.8);
 const PLINTH_GROW = m(0.12);
 
@@ -2299,10 +2301,45 @@ function emitRoof(
     sh.face([Lp(a1 + o, c1 + o, eave), Lp(a0 - o, c1 + o, eave), Lp(r0, cm, ridge), Lp(r1, cm, ridge)], nFar, roofColour);
     const endLow = alongX ? e.N(-slope, 0, 1) : e.N(0, -slope, 1);
     const endHigh = alongX ? e.N(slope, 0, 1) : e.N(0, slope, 1);
+    // The roof has a body, not a sheet of paper (the player's order of
+    // 2026-10-05): a fascia board along every eave, the soffit closing the
+    // overhang underneath, a ridge cap over the ridge and barge boards up the
+    // rakes of a gable.
+    const T = ROOF_THICK;
+    const fascia = shaded(trim, 0.92);
+    const soffit = shaded(trim, 0.7);
+    const outC0 = alongX ? e.N(0, -1) : e.N(-1, 0);
+    const outC1 = alongX ? e.N(0, 1) : e.N(1, 0);
+    const outA0 = alongX ? e.N(-1, 0) : e.N(0, -1);
+    const outA1 = alongX ? e.N(1, 0) : e.N(0, 1);
+    const down: V3 = [0, 0, -1];
+    sh.face([Lp(a0 - o, c0 - o, eave - T), Lp(a1 + o, c0 - o, eave - T), Lp(a1 + o, c0 - o, eave), Lp(a0 - o, c0 - o, eave)], outC0, fascia);
+    sh.face([Lp(a1 + o, c1 + o, eave - T), Lp(a0 - o, c1 + o, eave - T), Lp(a0 - o, c1 + o, eave), Lp(a1 + o, c1 + o, eave)], outC1, fascia);
+    sh.face([Lp(a0 - o, c0 - o, eave - T), Lp(a1 + o, c0 - o, eave - T), Lp(a1, c0, z - T), Lp(a0, c0, z - T)], down, soffit);
+    sh.face([Lp(a1 + o, c1 + o, eave - T), Lp(a0 - o, c1 + o, eave - T), Lp(a0, c1, z - T), Lp(a1, c1, z - T)], down, soffit);
+    // The ridge cap: a rounded row of tiles, two narrow slopes over the ridge.
+    if (r1 > r0) {
+      const w = m(0.14), lift = m(0.07);
+      sh.face([Lp(r0, cm - w, ridge - w * slope + m(0.01)), Lp(r1, cm - w, ridge - w * slope + m(0.01)), Lp(r1, cm, ridge + lift), Lp(r0, cm, ridge + lift)], nNear, shaded(roofColour, 0.85));
+      sh.face([Lp(r1, cm + w, ridge - w * slope + m(0.01)), Lp(r0, cm + w, ridge - w * slope + m(0.01)), Lp(r0, cm, ridge + lift), Lp(r1, cm, ridge + lift)], nFar, shaded(roofColour, 0.85));
+    }
     if (v.roof === 'hip') {
       sh.face([Lp(a0 - o, c1 + o, eave), Lp(a0 - o, c0 - o, eave), Lp(r0, cm, ridge)], endLow, roofColour);
       sh.face([Lp(a1 + o, c0 - o, eave), Lp(a1 + o, c1 + o, eave), Lp(r1, cm, ridge)], endHigh, roofColour);
+      sh.face([Lp(a0 - o, c1 + o, eave - T), Lp(a0 - o, c0 - o, eave - T), Lp(a0 - o, c0 - o, eave), Lp(a0 - o, c1 + o, eave)], outA0, fascia);
+      sh.face([Lp(a1 + o, c0 - o, eave - T), Lp(a1 + o, c1 + o, eave - T), Lp(a1 + o, c1 + o, eave), Lp(a1 + o, c0 - o, eave)], outA1, fascia);
+      sh.face([Lp(a0 - o, c1 + o, eave - T), Lp(a0 - o, c0 - o, eave - T), Lp(a0, c0, z - T), Lp(a0, c1, z - T)], down, soffit);
+      sh.face([Lp(a1 + o, c0 - o, eave - T), Lp(a1 + o, c1 + o, eave - T), Lp(a1, c1, z - T), Lp(a1, c0, z - T)], down, soffit);
     } else {
+      // Barge boards: the slab's edge up each rake, and its underside over the gable.
+      for (const [a, out] of [[a0 - o, outA0], [a1 + o, outA1]] as const) {
+        sh.face([Lp(a, c0 - o, eave - T), Lp(a, cm, ridge - T), Lp(a, cm, ridge), Lp(a, c0 - o, eave)], out, fascia);
+        sh.face([Lp(a, cm, ridge - T), Lp(a, c1 + o, eave - T), Lp(a, c1 + o, eave), Lp(a, cm, ridge)], out, fascia);
+      }
+      for (const [aOut, aIn] of [[a0 - o, a0], [a1 + o, a1]] as const) {
+        sh.face([Lp(aOut, c0 - o, eave - T), Lp(aIn, c0 - o, eave - T), Lp(aIn, cm, ridge - T), Lp(aOut, cm, ridge - T)], down, soffit);
+        sh.face([Lp(aOut, cm, ridge - T), Lp(aIn, cm, ridge - T), Lp(aIn, c1 + o, eave - T), Lp(aOut, c1 + o, eave - T)], down, soffit);
+      }
       // Gable ends: wall-coloured triangles.
       const w0 = alongX ? e.N(-1, 0) : e.N(0, -1);
       const w1 = alongX ? e.N(1, 0) : e.N(0, 1);
