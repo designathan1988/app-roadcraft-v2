@@ -31,7 +31,7 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadWidth, setRoadWidth, signChoice } from '../toolChoices';
+import { blockGridChoice, roadWidth, setRoadWidth, signChoice, strikeChoice } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -814,6 +814,25 @@ export function mountShell(deps: ShellDeps): void {
   // ------------------------------------------------------------ simple tools
   function renderSimple(current: string): void {
     title.textContent = t(`tool.${current}`);
+    if (current === 'bulldoze') {
+      // Knock down at once, or strike with a force: things break piece by piece.
+      const mode = group(t('strike.mode'));
+      mode.appendChild(choices((['demolish', 'strike'] as const).map((k) => ({
+        label: t(`strike.mode.${k}`), on: strikeChoice.mode === k, run: () => { strikeChoice.mode = k; render(); },
+      })), 2));
+      options.appendChild(mode);
+      if (strikeChoice.mode === 'strike') {
+        const force = group(t('strike.force'));
+        const row = el('div', 'v2-stepper');
+        row.append(
+          button('v2-icon', t('strike.force.less'), () => { strikeChoice.strength = Math.max(1, strikeChoice.strength - 1); render(); }, svg('minus', 14)),
+          el('output', 'v2-stepper-value', `${t('strike.force')}: ${strikeChoice.strength}`),
+          button('v2-icon', t('strike.force.more'), () => { strikeChoice.strength = Math.min(10, strikeChoice.strength + 1); render(); }, svg('plus', 14)),
+        );
+        force.appendChild(row);
+        options.appendChild(force);
+      }
+    }
     note(t(`help.tool.${current}`));
   }
 

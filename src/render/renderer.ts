@@ -42,12 +42,12 @@ import { floorHeight } from '@world/buildings/foundation';
 import { lotSurfaces } from '@world/buildings/lots';
 import type { RoadDoc } from '@world/doc';
 import { drainCompiles, drainUploads, drainWarm } from './uploads';
-import type { Building } from '@world/buildings/types';
 import { GRASS_MIN_ZOOM } from './grass';
 import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
+import { createDestruction } from './destruction';
 import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
 import { MAP_SIZE } from '@world/bounds';
@@ -90,7 +90,7 @@ const ROOM_LIGHTS = 6;
 /** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
 const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
-import type { BuildingId } from '@world/buildings/types';
+import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 
 /**
@@ -157,6 +157,15 @@ export interface SceneHandle {
   setBuildingPreview(preview: BuildingPreviewInput | null): void;
   /** The pole run the pole tool would build, drawn as built; null removes it. */
   setPolePreview(net: Network, preview: PolePreviewInput | null): void;
+  /**
+   * A blow on a building at world (x, y, z), `strength` 1..10: it breaks
+   * (`destruction.ts`). Returns true when nothing of it is left standing.
+   */
+  strikeBuilding(b: Building, x: number, y: number, z: number, strength: number): boolean;
+  /** A blow on the street at (x, y): a crater in the asphalt, dust. */
+  strikeGround(x: number, y: number, strength: number): void;
+  /** Forgets a building's ruin (it was removed). */
+  forgetRuin(id: number): void;
   /**
    * The Builder's "Ocultar outros": undefined draws every building solid,
    * null fades them all, an id fades every building but that one.
@@ -330,6 +339,9 @@ export function createSceneRenderer(
   /** Vehicle exhaust and dust (`exhaust.ts`): one particle cloud for the map. */
   const exhaust = createExhaust();
   scene.add(exhaust.points);
+  /** Buildings knocked down block by block (`destruction.ts`). */
+  const destruction = createDestruction(exhaust);
+  scene.add(destruction.group);
   let polePreview: Utilities | null = null;
   /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
   let signs: SignLayer | null = null;
@@ -710,6 +722,24 @@ export function createSceneRenderer(
     setBuildingPreview(preview) {
       buildings.setPreview(preview);
     },
+    strikeBuilding(b, x, y, z, strength) {
+      const floor = terrain.renderedHeightAt(b.x, b.y);
+      const down = destruction.hit(b, floor, x, y, z, strength);
+      buildings.setRuined(destruction.ruined);
+      return down;
+    },
+    strikeGround(x, y, strength) {
+      for (let k = 0; k < 6 + strength * 2; k++) {
+        const a = Math.random() * Math.PI * 2, r = Math.random() * m(0.6 + strength * 0.25);
+        wear.wheels(x + Math.cos(a) * r, y + Math.sin(a) * r, a, 0.01, 30);
+        exhaust.emit(x + Math.cos(a) * r, y + Math.sin(a) * r, terrain.renderedHeightAt(x, y), 0, 0, m(10), true);
+      }
+      wear.tick(10);
+    },
+    forgetRuin(id) {
+      destruction.drop(id);
+      buildings.setRuined(destruction.ruined);
+    },
     setPolePreview(net, preview) {
       const key = preview && elevation
         ? `${net.revision}:${preview.poles.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${+p.lamp},${+p.standing}`).join(';')}`
@@ -908,6 +938,7 @@ export function createSceneRenderer(
         },
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
+      destruction.update(wallDt);
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.

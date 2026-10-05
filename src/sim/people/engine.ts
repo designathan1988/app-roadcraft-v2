@@ -43,6 +43,12 @@ export interface PedestrianEngine {
    * stepping off the footway towards a parked car leaves it (`sim/agents`).
    */
   walkableNear?(w: SimWorld, x: number, y: number, reach: number): { x: number; y: number } | null;
+  /**
+   * A blow at (x, y) - a building struck, a wall coming down (`editor/impact`):
+   * everybody within `kill` dies on the spot, everybody within `scare` runs
+   * away from it for a while. Returns how many died.
+   */
+  impact?(w: SimWorld, x: number, y: number, kill: number, scare: number): number;
 }
 
 /**

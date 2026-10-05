@@ -19,7 +19,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, signChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, signChoice, strikeChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -57,7 +57,9 @@ import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
-import { type BuildingId, decayOf } from '@world/buildings/types';
+import { type Building, type BuildingId, decayOf } from '@world/buildings/types';
+import { worldToLocal } from '@world/buildings/geometry';
+import { resolveBlocks } from '@world/buildings/blocks';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -1259,6 +1261,10 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
 
     case 'bulldoze':
+      if (strikeChoice.mode === 'strike') {
+        strikeAt(e.clientX - r.left, e.clientY - r.top, world);
+        break;
+      }
       // A building stands over whatever is under it, so it is tried first.
       if (buildings.bulldozeAt({ x: e.clientX - r.left, y: e.clientY - r.top })) break;
       // A pole is a thing standing in the world, so the tool whose job is
@@ -4373,3 +4379,56 @@ setInterval(() => {
   }
   if (changed) requestDraw();
 }, 3000);
+
+/**
+ * The demolish tool's Strike mode (the player's order of 2026-10-05): a blow
+ * of the chosen force where the pointer is. A building breaks a piece at a
+ * time and comes down when little is left; a street gets a crater. Anybody
+ * close enough dies, anybody near runs away.
+ */
+function strikeAt(sx: number, sy: number, world: Vec2): void {
+  // `world` is moved onto the building below.
+  const strength = strikeChoice.strength;
+  const id = buildings.tool.buildingAt({ x: sx, y: sy });
+  const b = id !== null ? doc.buildings.get(id as BuildingId) : undefined;
+  // Where the blow lands: the first point of the building along the pointer's
+  // ray (its roof or the face under the pointer); else the ground.
+  let target = world, z = sceneHeightAt(world);
+  if (b) {
+    const hit = rayOnBuilding(b, sx, sy, z);
+    if (hit) { target = hit; z = hit.z; }
+  }
+  world = target;
+  const kill = m(1.2 + strength * 0.5), scare = m(25 + strength * 6);
+  const dead = sim.pedEngine.impact?.(sim, world.x, world.y, kill, scare) ?? 0;
+  if (b) {
+    const down = scene.strikeBuilding(b, world.x, world.y, z, strength);
+    if (down) {
+      mutate(() => doc.buildings.remove(b.id));
+      scene.forgetRuin(b.id);
+      flashHint('hint.strike.down');
+    } else {
+      flashHint(dead > 0 ? 'hint.strike.deaths' : 'hint.strike.hit');
+    }
+  } else {
+    scene.strikeGround(world.x, world.y, strength);
+    flashHint(dead > 0 ? 'hint.strike.deaths' : 'hint.strike.ground');
+  }
+  requestDraw();
+}
+
+/** The first point of building `b` along the screen ray through (sx, sy): marched down from its top. */
+function rayOnBuilding(b: Building, sx: number, sy: number, ground: number): (Vec2 & { z: number }) | null {
+  const volumes = resolveBlocks(b).volumes.filter((v) => !v.open);
+  let top = 0;
+  for (const v of volumes) top = Math.max(top, levelElevation(b, v.base + v.storeys.length));
+  for (let h = top + m(1); h >= 0; h -= m(0.5)) {
+    const p = view.toWorldAt(sx, sy, ground + h, surface.cssW, surface.cssH);
+    const l = worldToLocal(b, p);
+    for (const v of volumes) {
+      if (l.x < v.x || l.x > v.x + v.w || l.y < v.y || l.y > v.y + v.d) continue;
+      if (h <= levelElevation(b, v.base + v.storeys.length) && h >= levelElevation(b, v.base)) return { x: p.x, y: p.y, z: ground + h };
+    }
+  }
+  return null;
+}

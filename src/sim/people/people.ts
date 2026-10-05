@@ -69,6 +69,8 @@ interface Person {
   blocked: number;
   /** Seconds left of everybody giving way to it, and of walking through people. */
   urgent: number;
+  /** Running from a blow (`impact`): where from, and seconds left of it. */
+  flee?: { x: number; y: number; t: number };
   ghost: number;
   /** A fresh route has been tried since it got stuck. */
   replanned: boolean;
@@ -138,6 +140,8 @@ interface Sit {
 
 /** Everything the engine keeps for one world. */
 interface State {
+  /** People killed by blows (`impact`) since the map was opened. */
+  deaths?: number;
   nav: WorldNav | null;
   people: Person[];
   byId: Map<number, Person>;
@@ -427,6 +431,17 @@ export function createPeopleEngine(): PedestrianEngine {
     // The world forces a topology rebuild after a reset, which rebinds (and
     // so rebuilds the mesh); here everybody simply leaves.
     reset(w) { STATES.delete(w); },
+    impact(w, x, y, kill, scare) {
+      const s = stateOf(w);
+      let dead = 0;
+      for (const p of [...s.people]) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < kill) { remove(s, p); dead++; }
+        else if (d < scare) p.flee = { x, y, t: 4 + (1 - d / scare) * 4 };
+      }
+      s.deaths = (s.deaths ?? 0) + dead;
+      return dead;
+    },
     walkTrip(w, trip) {
       const s = stateOf(w);
       const mesh = s.nav?.mesh;
@@ -1084,6 +1099,16 @@ function step(w: SimWorld, s: State): void {
       const pm = hypot2(prefX, prefY), cap = p.pace * 1.25;
       if (pm > cap) { prefX *= cap / pm; prefY *= cap / pm; }
     }
+    // Frightened by a blow (`impact`): it runs straight away from it, as fast
+    // as it can, before going back to what it was doing.
+    if (p.flee && p.flee.t > 0) {
+      p.flee.t -= DT;
+      const fx = p.x - p.flee.x, fy = p.y - p.flee.y, fd = hypot2(fx, fy) || 1;
+      const run = p.pace * 2.2;
+      prefX = (fx / fd) * run;
+      prefY = (fy / fd) * run;
+      p.urgent = Math.max(p.urgent, 0.5);
+    } else if (p.flee) delete p.flee;
     // Standing on purpose (at a kerb, in a queue, by its party), it steps
     // aside for anybody who wants to come through where it stands. Avoidance
     // reads velocities: somebody stopped short by a body standing in the way

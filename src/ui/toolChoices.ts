@@ -99,3 +99,6 @@ export const blockGridChoice = { cols: 3, rows: 2, blockMetres: 100, angle: 0, a
 
 /** What the sign tool puts down next: its kind and its words; and the next street name. */
 export const signChoice: { type: SignType; text: string; streetName: string } = { type: 'stop', text: '', streetName: '' };
+
+/** The demolish tool: knock a building down at once, or strike it (and streets) with a chosen force. */
+export const strikeChoice: { mode: 'demolish' | 'strike'; strength: number } = { mode: 'demolish', strength: 5 };

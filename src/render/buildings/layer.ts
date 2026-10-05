@@ -57,6 +57,8 @@ export interface BuildingLayer {
    * all, and an id fades every building but that one.
    */
   setDimmed(except: BuildingId | null | undefined): void;
+  /** Buildings drawn by someone else (a ruin being knocked down, `destruction.ts`): left out here. */
+  setRuined(ids: ReadonlySet<number>): void;
   /** Whether a world point is under a building (for the scenery's plant cull). */
   covers(x: number, y: number): boolean;
   /**
@@ -92,6 +94,7 @@ export function createBuildingLayer(): BuildingLayer {
   group.matrixAutoUpdate = false;
   group.updateMatrix();
   let stored: BuildingMeshes | null = null;
+  let ruined: ReadonlySet<number> = new Set();
   /** Each cell's batch as last assembled, and from which buildings' meshes (`assembleByCell`). */
   const cells: CellCache = new Map();
   const detailCells: CellCache = new Map();
@@ -214,7 +217,7 @@ export function createBuildingLayer(): BuildingLayer {
       const cutKey = cutaway
         ? `${cutaway.only ?? ''}:${cutaway.level}@${Math.round(cutaway.x)},${Math.round(cutaway.y)}/${Math.round(Math.atan2(cutaway.view.y, cutaway.view.x) / (Math.PI / 4))}`
         : 'whole';
-      const key = `${doc.buildings.revision}|${groundKey}|${hides}|${dimKey}|${cutKey}`;
+      const key = `${doc.buildings.revision}|${groundKey}|${hides}|${dimKey}|${cutKey}|${[...ruined].join(',')}`;
       let rebuilt = false;
       if (key !== storedKey) {
         storedKey = key;
@@ -223,7 +226,7 @@ export function createBuildingLayer(): BuildingLayer {
           group.remove(batch.group);
           batch.dispose();
         }
-        const shown = [...doc.buildings.all()].filter((b) => b.id !== hides);
+        const shown = [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id));
         for (const id of chunks.keys()) if (!doc.buildings.has(id)) {
           chunks.delete(id);
           groundDigests.delete(id);
@@ -263,6 +266,9 @@ export function createBuildingLayer(): BuildingLayer {
         }
       }
       return rebuilt;
+    },
+    setRuined(ids) {
+      ruined = new Set(ids);
     },
     setDimmed(except) {
       dimmed = except;
