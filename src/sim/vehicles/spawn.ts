@@ -1,3 +1,4 @@
+import { m } from '@world/units';
 import {
   DT,
   DRIVER_NOISE,
@@ -168,6 +169,12 @@ function spawnAt(w: SimWorld, id: string): boolean {
   // at birth; the entry node has no lanelet behind it to carry the body.
   if (lane.length <= arch.length + entryClearance) return false;
   if (tailRear < arch.length + entryClearance + JAM_GAP) return false;
+  // Nor onto people: the end of a road that leads off the map is where they
+  // cross from one footway to the other (`world/walkways.ts`, unmarked).
+  for (const s of [0, (arch.length + entryClearance) / 2, arch.length + entryClearance]) {
+    const f = lane.centre.sampleAt(Math.min(lane.length, s));
+    if (w.pedEngine.bridge.anyoneWithin(w, f.p.x, f.p.y, arch.width / 2 + m(1), null)) return false;
+  }
 
   // The driver is drawn BEFORE the free-flow speed and from the same stream,
   // so the two are part of one personality rather than two independent rolls.

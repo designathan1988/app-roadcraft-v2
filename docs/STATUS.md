@@ -68,11 +68,18 @@ and they have seen it.
   manoeuvring cars are solid to walkers. Measured: `walk.spec.ts` second test
   (18 cars across footways, 54 walkers sent through them: 0 body-ticks inside a
   car, everybody arrived).
+- **Road ends, LIVE behind `?agents=1`** (2026-10-05): across the end of a
+  street that leads nowhere an unmarked crossing joins its two footways
+  (`Walkway.unmarked`); a walker takes a gap in the traffic there (the time
+  across plus 2 s, no margin after 30 s waiting) and no car is put on the map
+  onto people crossing there. The player's city went from 24 walking pieces to
+  16 (each lone street now one). Measured: `walk.spec.ts` third test (a
+  street with traffic at the default: 18 crossings, 0 inside a vehicle, all
+  across).
 - **Not yet:** car owners without a bay near home walk; in agent mode nobody but
   the residents walks (no passers-by) and nobody boards a bus (the walk
-  engine's bridge has no stops yet); a street whose ends lead nowhere is an
-  island to the walkers (the walkway graph does not join the two footways at
-  a road end: the player's city has 24 separate pieces).
+  engine's bridge has no stops yet); roads that do not touch any other road
+  are still separate places for walkers (nobody walks over open ground).
 - **Next slices:** 5, agents by default; then People, the Detour crowd flag and
   `sim/peds` deleted after the player has seen it.
 

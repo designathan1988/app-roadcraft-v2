@@ -3,6 +3,7 @@ import { buildWalkways, type WalkGraph, type Walkway } from '@world/walkways';
 import { m } from '@world/units';
 import type { SegmentId } from '@world/ids';
 import { DT, PED } from '../params';
+import { vehiclePose } from '../pose';
 import type { SimWorld } from '../world';
 import type { AuditIssue } from '../audit';
 import { emptyCrossingState } from '../crossings/state';
@@ -359,14 +360,45 @@ const kerbInset = (way: Walkway | null | undefined): number =>
 
 // ------------------------------------------------------------------ crossings
 
-interface Zebra { readonly id: CrossingId; readonly edge: SidewalkEdge }
+/**
+ * A crossing on a walker's way: a zebra as the vehicles and the signals know
+ * it (`edge`), or a crossing with no zebra (`edge` null: the end of a road that
+ * leads nowhere, `Walkway.unmarked`), where the walker takes a gap.
+ */
+interface Zebra { readonly id: CrossingId; readonly edge: SidewalkEdge | null; readonly way: Walkway }
 
-/** The zebra a walkway crossing is, as the vehicles and the signals know it. */
 function crossingOf(w: SimWorld, way: Walkway | null | undefined): Zebra | null {
   if (!way || way.kind !== 'crossing' || way.node === undefined || way.segment === undefined) return null;
   const id = makeCrossingId(way.node, way.segment);
-  const edge = w.sidewalks.crossingEdge(id);
-  return edge ? { id, edge } : null;
+  const edge = way.unmarked ? null : w.sidewalks.crossingEdge(id) ?? null;
+  return edge || way.unmarked ? { id, edge, way } : null;
+}
+
+/** Margin of clear road a walker wants beyond their own time across, s; after `IMPATIENT` waiting, none. */
+const GAP_MARGIN = 2;
+const IMPATIENT = 30;
+/** A vehicle this near the crossing keeps a walker on the kerb whatever it is doing, u. */
+const GAP_NEAR = m(6);
+
+/**
+ * Whether a walker may step onto a crossing with no zebra: no vehicle near
+ * it, and none coming that would reach it before they are across and a
+ * margin more (gap acceptance, as SUMO's pedestrians take a crossing without
+ * priority). Nothing stops for them there.
+ */
+function gapOpen(w: SimWorld, z: Zebra, pace: number, waited: number): boolean {
+  const path = z.way.path;
+  const time = path.length / Math.max(pace, m(0.5)) + (waited < IMPATIENT ? GAP_MARGIN : 0);
+  for (const v of w.vehicles.values()) {
+    const pose = vehiclePose(w, v, 1);
+    if (!pose) continue;
+    const hit = path.closestPoint(pose.p);
+    if (hit.distance < GAP_NEAR) return false;
+    if (v.v < m(0.5) || hit.distance > v.v * time) continue;
+    // Coming towards it, not going away.
+    if ((hit.point.x - pose.p.x) * Math.cos(pose.angle) + (hit.point.y - pose.p.y) * Math.sin(pose.angle) > 0) return false;
+  }
+  return true;
 }
 
 /**
@@ -674,7 +706,8 @@ function stepWalkers(w: SimWorld): void {
       p.asked -= DT;
       if (p.asked <= 0) {
         p.asked = ASK_EVERY;
-        if (mayEnterCrossing(w, zebra.zebra.edge, p.waited)) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
+        const open = zebra.zebra.edge ? mayEnterCrossing(w, zebra.zebra.edge, p.waited) : gapOpen(w, zebra.zebra, p.pace, p.waited);
+        if (open) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
       }
     }
     const stop = p.waiting ? Math.max(0, zebra!.stop) : Infinity;
@@ -755,8 +788,8 @@ function publish(w: SimWorld): void {
     const on = onZebra(w, p);
     // The vehicles' view of the zebras: who is on each, and who waits at it.
     const report = on ?? p.waiting;
-    if (report) {
-      const edge = report.edge;
+    const edge = report?.edge;
+    if (report && edge) {
       let state = w.crossingStates.get(report.id);
       if (!state) { state = emptyCrossingState(edge.length); w.crossingStates.set(report.id, state); }
       const hit = edge.path.closestPoint({ x: p.x, y: p.y });
