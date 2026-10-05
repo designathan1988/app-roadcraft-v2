@@ -3400,7 +3400,9 @@ function drawOverlayScreen(): void {
   drawPolePlan(framePolePlan, ctx, at);
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
-  if (tool === 'zone' || doc.zoneMarks.length) {
+  // The zoning grid is shown while a road is being drawn too, so a street can
+  // be laid out to the blocks it will make.
+  if (tool === 'zone' || doc.zoneMarks.length || (tool === 'road' && roadPreviewActive())) {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
     // filled with their use's colour; with any other tool only the zoned land
     // still waiting for a building, faintly, so the plan stays readable.
@@ -3408,7 +3410,7 @@ function drawOverlayScreen(): void {
     const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
     const grid = zoneGrid();
     const marks = marksByCell(doc, grid);
-    const zoning = tool === 'zone';
+    const zoning = tool === 'zone' || (tool === 'road' && roadPreviewActive());
     const quad = (cell: ZoneCell): void => {
       ctx.beginPath();
       cell.corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
@@ -3617,7 +3619,10 @@ function drawOverlayScreen(): void {
     let previewHeight = roadPreview.startHeightOffset;
     let limited = false;
     for (const [pieceIndex, piece] of pieces.entries()) {
-      const flattened = flattenSegment(piece.start.at, piece.end.at, piece.curve);
+      // Sampled every couple of metres, so the preview lies on the ground as
+      // the road will: a straight piece was two points and drew a straight
+      // line through any hill between them (the player's order of 2026-10-05).
+      const flattened = densify(flattenSegment(piece.start.at, piece.end.at, piece.curve), m(2));
       const pieceLength = flattened.reduce((sum, p, i) =>
         i === 0 ? 0 : sum + dist(p, flattened[i - 1] as Vec2), 0);
       const reach = pieceLength * MAX_AUTHORED_GRADE;
@@ -4271,3 +4276,20 @@ qualitySelect.onchange = () => {
   /** One fixed simulation step, as the game takes it, without traffic or new pedestrians if asked. */
   step: (traffic = true, pedestrians = true) => step(sim, { traffic, pedestrians }),
 };
+
+/** A polyline with points added so no step is longer than `step`. */
+function densify(points: readonly Vec2[], step: number): Vec2[] {
+  const out: Vec2[] = [];
+  points.forEach((p, i) => {
+    if (i === 0) { out.push(p); return; }
+    const q = points[i - 1]!;
+    const n = Math.max(1, Math.ceil(dist(p, q) / step));
+    for (let k = 1; k <= n; k++) out.push({ x: q.x + (p.x - q.x) * (k / n), y: q.y + (p.y - q.y) * (k / n) });
+  });
+  return out;
+}
+
+/** Whether the road tool is drawing a road right now (a drag, a chained stretch or a curve). */
+function roadPreviewActive(): boolean {
+  return draft !== null || chainPreview !== null || curvePending !== null;
+}
