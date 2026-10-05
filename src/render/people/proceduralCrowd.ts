@@ -10,6 +10,8 @@ import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
 import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHair, generateHairStrands, generateHeadband } from '@people/hair/procedural';
 import { hairStrandTexture } from './hairTexture';
+import { CHANNELS, channelShapes, faceAt } from './faceExpression';
+import { expressionShapes } from '@people/body/expressions';
 import { createPersonRig, type PersonRig } from './personRig';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
 import { captureBind, captureBindRotations, loadRocketboxClips, type WalkSex } from '../citizenWalk';
@@ -49,6 +51,9 @@ const SHAPE_WIDTH = 4096;
 /** Rows of a person's own face (`procFace`) are this wide; the vertex-to-face index (`procFaceIndex`) this wide. */
 const FACE_WIDTH = 2048;
 const FACE_INDEX_WIDTH = 4096;
+/** The face's expression channels (`faceExpression.ts`: blink, joy, sadness, anger, surprise, brows, visemes), padded to 12. */
+const EXPR = Object.keys(CHANNELS).slice(0, 12);
+const EXPR_SLOTS = 12;
 const COVER_WIDTH = 4096;
 /** How far skin under a garment sinks, metres. */
 const SINK = 0.025;
@@ -108,10 +113,14 @@ interface BodyClass {
     procFace: { value: DataTexture };
     procFaceIndex: { value: DataTexture };
     procFaceRows: { value: number };
+    procExpr: { value: DataTexture };
+    procExprW: { value: DataTexture };
   };
   palette: Float32Array;
   /** Each person's own face (their regional sliders: nose, jaw, eyes, mouth...) as moves of the head's vertices, `faceRows` rows each. */
   face: Float32Array;
+  /** Each person's expression weights now, `EXPR_SLOTS` a row. */
+  exprW: Float32Array;
   readonly faceVerts: Int32Array;
   coef: Float32Array;
   rows: number;
@@ -143,6 +152,8 @@ export interface ProceduralPerson {
   readonly matrix: Matrix4;
   clip: 'walk' | 'idle';
   phase: number;
+  /** What they are doing, as the face shows it (`faceAt`): 'talk', 'panic'... */
+  activity?: string | undefined;
 }
 
 export interface ProceduralStats {
@@ -191,10 +202,11 @@ export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
   };
   // Half the people in a grown style, half in a stock one that passed the
   // audit (`randomPerson`'s curated lists).
-  if (!hair || ((h >>> 20) & 1) === 0) return dressed;
+  const mouth = (l: PersonLook): PersonLook => ({ ...l, extras: [...(l.extras ?? []), 'acc:teeth', 'acc:tongue'] });
+  if (!hair || ((h >>> 20) & 1) === 0) return mouth(dressed);
   // Children keep the stock styles (the player: the grown ones on a child
   // "nem usa isso").
-  if (yearsFromAge(spec.body.age) < 14) return dressed;
+  if (yearsFromAge(spec.body.age) < 14) return mouth(dressed);
   // Hair grown procedurally (`people/hair/procedural.ts`): older women
   // shorter or up, girls never in a bun, older men short.
   const years = yearsFromAge(spec.body.age);
@@ -203,11 +215,11 @@ export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
       : years < 14 ? ['longStraight', 'ponytail', 'ponytailFringe', 'bobFringe', 'braid', 'twinBraids', 'pigtails', 'longHeadband'] : FEMALE_HAIR
     : years > 55 ? ['shortCrop', 'shortSide', 'slickedBack'] : MALE_HAIR;
   const style = styles[(h >>> 12) % styles.length]!;
-  return {
+  return mouth({
     ...dressed,
     hairCut: `hair:${style}`,
     ...(HAIR_STYLES[style]?.headband ? { extras: [...(dressed.extras ?? []), 'acc:headband'] } : {}),
-  };
+  });
 }
 
 function skinningChunk(): string {
@@ -218,6 +230,8 @@ uniform sampler2D procShape;
 uniform sampler2D procFace;
 uniform sampler2D procFaceIndex;
 uniform float procFaceRows;
+uniform sampler2D procExpr;
+uniform sampler2D procExprW;
 uniform mat4 bindMatrix;
 uniform mat4 bindMatrixInverse;
 attribute float aRow;
@@ -233,7 +247,17 @@ vec3 procFaceDelta(int v) {
   float idx = texelFetch(procFaceIndex, ivec2(v % ${FACE_INDEX_WIDTH}, v / ${FACE_INDEX_WIDTH}), 0).r;
   if (idx < 0.0) return vec3(0.0);
   int t = int(idx) + int(aRow) * int(procFaceRows) * ${FACE_WIDTH};
-  return texelFetch(procFace, ivec2(t % ${FACE_WIDTH}, t / ${FACE_WIDTH}), 0).xyz;
+  vec3 d = texelFetch(procFace, ivec2(t % ${FACE_WIDTH}, t / ${FACE_WIDTH}), 0).xyz;
+  // The expression of the moment: each channel's shape at its weight.
+  for (int c = 0; c < ${EXPR_SLOTS}; c += 4) {
+    vec4 w = texelFetch(procExprW, ivec2(c / 4, int(aRow)), 0);
+    for (int j = 0; j < 4; j++) {
+      if (w[j] == 0.0) continue;
+      int e = (c + j) * int(procFaceRows) * ${FACE_WIDTH} + int(idx);
+      d += w[j] * texelFetch(procExpr, ivec2(e % ${FACE_WIDTH}, e / ${FACE_WIDTH}), 0).xyz;
+    }
+  }
+  return d;
 }
 vec3 procDelta(int v) {
   vec3 d = procFaceDelta(v);
@@ -497,6 +521,32 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
       const hairBase = (a: PeopleAssets, mo: Morpher) => ({ positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
         joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces });
+      if (name === 'acc:teeth' || name === 'acc:tongue') {
+        // The base mesh's own teeth and tongue (its helper groups), each
+        // vertex pinned to itself: so the jaw and the mouth's expressions,
+        // which move those vertices too, carry them.
+        loaded = Promise.all([setup(), item('eyes')]).then(([{ assets: a }, eyes]) => {
+          const groups = (name === 'acc:teeth' ? ['helper-upper-teeth', 'helper-lower-teeth'] : ['helper-tongue'])
+            .map((g) => a.mesh.faceGroups.indexOf(g)).filter((g) => g >= 0);
+          const used = new Map<number, number>();
+          const index: number[] = [];
+          const at = (v: number): number => { let k = used.get(v); if (k === undefined) { k = used.size; used.set(v, k); } return k; };
+          for (let f = 0; f < a.mesh.faceGroup.length; f++) {
+            if (!groups.includes(a.mesh.faceGroup[f]!)) continue;
+            const q = [a.mesh.faces[f * 4]!, a.mesh.faces[f * 4 + 1]!, a.mesh.faces[f * 4 + 2]!, a.mesh.faces[f * 4 + 3]!];
+            index.push(at(q[0]!), at(q[1]!), at(q[2]!));
+            if (q[3] !== q[2]) index.push(at(q[0]!), at(q[2]!), at(q[3]!));
+          }
+          const n = used.size;
+          const refs = new Uint32Array(n * 3), weights = new Float32Array(n * 3);
+          for (const [v, k] of used) { refs.fill(v, k * 3, k * 3 + 3); weights[k * 3] = 1; }
+          const pack = { ...eyes.pack, name, kind: 'clothes' as const, refs, weights, offsets: new Float32Array(n * 3),
+            index: Uint32Array.from(index), deleteVerts: new Uint32Array(0), uvs: new Float32Array(n * 2) };
+          return { pack, texture: null, transparent: false, textureFile: null };
+        });
+        items.set(name, loaded);
+        return loaded;
+      }
       if (name === 'acc:headband') {
         loaded = setup().then(({ assets: a, morpher: mo }) => ({ pack: generateHeadband(hairBase(a, mo)), texture: null, transparent: false, textureFile: null }));
         items.set(name, loaded);
@@ -527,7 +577,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     if (!t) {
       const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
       t = style ? Promise.resolve(hairStrandTexture(style.strands))
-        : name.startsWith('acc:') ? Promise.resolve(plainTexture()) : itemTexture(name, it) ?? Promise.resolve(null);
+        : name.startsWith('acc:') ? Promise.resolve(plainTexture() as Texture) : itemTexture(name, it) ?? Promise.resolve(null);
       textures.set(name, t);
     }
     return t;
@@ -628,6 +678,26 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     faceIndex.minFilter = faceIndex.magFilter = NearestFilter;
     faceIndex.needsUpdate = true;
     const face = new Float32Array(FACE_WIDTH * 4 * faceRows * ROW_START);
+    // Each expression channel on this body, as moves of the head's vertices
+    // in the bind posture: the channel's ARKit shapes on the class body,
+    // posed (`PersonRig.deltas`).
+    const channels = channelShapes(await expressionShapes());
+    const exprPixels = new Float32Array(FACE_WIDTH * 4 * faceRows * EXPR_SLOTS);
+    const posedBase = rig.deltas!(shape);
+    const withChannel = new Float32Array(shape.length);
+    EXPR.forEach((name, c) => {
+      const unit = channels[name];
+      if (!unit) return;
+      for (let j = 0; j < shape.length; j++) withChannel[j] = shape[j]! + unit[j]!;
+      const moved = rig.deltas!(withChannel);
+      faceList.forEach((v, i) => {
+        const o = (c * faceRows * FACE_WIDTH + i) * 4;
+        exprPixels[o] = moved[v * 3]! - posedBase[v * 3]!;
+        exprPixels[o + 1] = moved[v * 3 + 1]! - posedBase[v * 3 + 1]!;
+        exprPixels[o + 2] = moved[v * 3 + 2]! - posedBase[v * 3 + 2]!;
+      });
+    });
+    const exprW = new Float32Array(EXPR_SLOTS * ROW_START);
     const width = bones * SKIN_BONE_FLOATS;
     const palette = new Float32Array(width * ROW_START);
     const coef = new Float32Array(SHAPES * ROW_START);
@@ -647,8 +717,10 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         procFace: { value: rowTexture(face, FACE_WIDTH * 4, faceRows * ROW_START) },
         procFaceIndex: { value: faceIndex },
         procFaceRows: { value: faceRows },
+        procExpr: { value: rowTexture(exprPixels, FACE_WIDTH * 4, faceRows * EXPR_SLOTS) },
+        procExprW: { value: rowTexture(exprW, EXPR_SLOTS, ROW_START) },
       },
-      face, faceVerts: Int32Array.from(faceList),
+      face, exprW, faceVerts: Int32Array.from(faceList),
       palette, coef, rows: 0, capacity: ROW_START, cover: new Map(), body,
       skins: new Map(), pieces: new Map(), people: [],
     };
@@ -702,6 +774,11 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     cls.face = face;
     cls.uniforms.procFace.value.dispose();
     cls.uniforms.procFace.value = rowTexture(face, FACE_WIDTH * 4, faceRows * capacity);
+    const exprW = new Float32Array(EXPR_SLOTS * capacity);
+    exprW.set(cls.exprW);
+    cls.exprW = exprW;
+    cls.uniforms.procExprW.value.dispose();
+    cls.uniforms.procExprW.value = rowTexture(exprW, EXPR_SLOTS, capacity);
   };
 
   const makePiece = (cls: BodyClass, name: string, kind: Kind, geometry: BufferGeometry, map: Texture | null, eyes: Texture | null, grown = false): Piece => {
@@ -925,7 +1002,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         for (let k = 0; k < SHAPES; k++) d += cls.coef[row * SHAPES + k]! * cls.jointBasis[(i * SHAPES + k) * 3 + c]!;
         person.joints[i * 3 + c] = d;
       }
-      const covers = worn.filter(([, it]) => COVERING.has(it.pack.kind) && !it.transparent)
+      const covers = worn.filter(([nm, it]) => COVERING.has(it.pack.kind) && !it.transparent && !nm.startsWith('acc:'))
         .map(([nm, it]) => coverRow(cls, nm, it)).slice(0, 4);
       place(skin, person, bareSkin(spec).tint, covers);
       const hair = new Color(spec.look.hair);
@@ -935,7 +1012,10 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       pieces.forEach((piece, i) => {
         const kind = piece.kind;
         // A generated accessory takes a colour of the street's, never the outfit's own.
-        const accessory = worn[i]![0].startsWith('acc:') ? new Color(ACCESSORY_COLOURS[(spec.id * 7 + i) % ACCESSORY_COLOURS.length]!) : null;
+        const itemName = worn[i]![0];
+        const accessory = itemName === 'acc:teeth' ? new Color(0.86, 0.83, 0.74)
+          : itemName === 'acc:tongue' ? new Color(0.62, 0.3, 0.3)
+          : itemName.startsWith('acc:') ? new Color(ACCESSORY_COLOURS[(spec.id * 7 + i) % ACCESSORY_COLOURS.length]!) : null;
         const dye = kind === 'hair' || kind === 'face' ? hair : accessory ?? (worn[i]![0] === look.outfit ? tint : null);
         place(piece, person, dye);
       });
@@ -958,6 +1038,14 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
           refit(cls, person, at);
         }
         cls.uniforms.procBones.value.needsUpdate = true;
+        // The face of the moment: blinking, mood, talk, fright (`faceAt`).
+        const time = performance.now() / 1000;
+        for (const person of cls.people) {
+          const w = faceAt(person.spec.id, time, person.activity, person.spec.mood ?? 0);
+          const at = person.row * EXPR_SLOTS;
+          EXPR.forEach((name, c) => { cls.exprW[at + c] = Math.min(1, w[name] ?? 0); });
+        }
+        cls.uniforms.procExprW.value.needsUpdate = true;
         for (const piece of [...cls.skins.values(), ...cls.pieces.values(), ...allStrands().filter((sp) => sp.mesh.userData['cls'] === cls.key)]) {
           piece.people.forEach((person, slot) => {
             scaled.makeScale(person.scale, person.scale, person.scale);

@@ -750,7 +750,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const PROC_CAP = 240;
   let procFrame = 0;
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
-  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number): void => {
+  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string): void => {
     let entry = procPeople.get(id);
     if (!entry) {
       if (procPeople.size >= PROC_CAP) return;
@@ -767,6 +767,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
       .multiply(procSize.makeScale(m(1), m(1), m(1)));
     person.matrix.copy(procMatrix);
+    person.activity = activity;
     const metres = speed / m(1);
     if (walking && metres > 0.15) {
       if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
@@ -1462,7 +1463,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // gradient is the road's own under the walker.
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
-          if (procedural) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, suspensionDt);
+          if (procedural) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, suspensionDt, ped.panic ? 'panic' : ped.gesture?.kind);
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
         }
