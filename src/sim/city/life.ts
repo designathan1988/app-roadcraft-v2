@@ -13,6 +13,7 @@ import { assignOccupancy } from '../vehicles/kerbStops';
 import { planFrom } from '../routing/router';
 import { type Population, type Resident, derivePopulation } from './population';
 import { type CarPhase, OwnCars, personGender, type TripReason } from '../agents/cars';
+import { DECIDE_EVERY, type Mind, type Needs, type PlaceIndex, committedTo, decide, live, newMind, placeIndex } from '../agents/mind';
 
 /**
  * The residents' days: The Sims inside SimCity.
@@ -127,11 +128,24 @@ export class CityLife {
    * for one trip and deleted at the end of it. Null: the old trips.
    */
   cars: OwnCars | null = null;
+  /**
+   * The agents' minds (`sim/agents/mind.ts`): their needs, and the places they
+   * weigh. With agents on, where a resident goes is decided by what they need
+   * and what is open near them, inside their commitments, not by a fixed diary.
+   */
+  private readonly minds = new Map<number, Mind>();
+  private places: PlaceIndex | null = null;
 
   /** Switches the residents' own cars on or off; the city is read again either way. */
   useAgents(on: boolean): void {
     this.cars = on ? new OwnCars() : null;
     this.accessFor = '';
+    this.minds.clear();
+  }
+
+  /** A resident's needs now (agents only), or null. */
+  needsOf(resident: number): Readonly<Needs> | null {
+    return this.minds.get(resident)?.needs ?? null;
   }
 
   /**
@@ -183,7 +197,9 @@ export class CityLife {
       state: own.body === null ? 'driving' : own.body.v > 0 || (trip && trip.step !== 'walk' && trip.step !== 'toCar' && trip.step !== 'fromCar') ? 'inUse' : 'parked',
       at: own.bay?.building ?? null,
     } : null;
-    return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car };
+    const needs = this.minds.get(resident)?.needs;
+    return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car,
+      ...(needs ? { needs: { ...needs } } : {}) };
   }
 
   /** The resident whose own car this is, or null. */
@@ -259,6 +275,10 @@ export class CityLife {
     let walks = 0, drives = 0;
     for (const t of this.trips.values()) if (t.mode === 'walk') walks++; else drives++;
 
+    if (this.cars && this.places) {
+      this.minded(w, now, clock, walks, drives);
+      return;
+    }
     for (const r of this.population.residents) {
       // This tick's route searching spent: the rest start from the next tick
       // on, looked at again straight away (`PATH_WORK_PER_TICK`).
@@ -280,6 +300,34 @@ export class CityLife {
         else if (started === 'drive') drives++;
         break;
       }
+    }
+  }
+
+  /**
+   * The agents' turn: every resident's needs brought up to now, and those who
+   * are somewhere and due weigh where to be (`mind.ts`): where their
+   * commitments send them, or what their needs want of the places open near.
+   */
+  private minded(w: SimWorld, now: number, clock: number, walks: number, drives: number): void {
+    const places = this.places!;
+    for (const r of this.population.residents) {
+      const d = this.diaries.get(r.id)!;
+      let mind = this.minds.get(r.id);
+      if (!mind) { mind = newMind(r, now); this.minds.set(r.id, mind); }
+      live(mind, r, d.at, now, places.kindOf);
+      if (d.at === null) continue;
+      const due = committedTo(r, clock);
+      const owed = due !== null && d.at !== due;
+      if (!owed && now - mind.decided < DECIDE_EVERY) continue;
+      if (!pathWorkLeft()) { this.lookClock = LOOK_EVERY; break; }
+      mind.decided = now;
+      const choice = decide(mind, r, d.at, clock, places, this.rng);
+      if (!choice || choice.to === d.at) continue;
+      const started = this.start(w, r, d, { at: clock, from: d.at, to: choice.to }, walks < MAX_WALKS, drives < MAX_DRIVES, choice.why);
+      if (started === 'walk') walks++;
+      else if (started === 'drive') drives++;
+      // Could not set off just now (a queue of trips): asked again soon.
+      else if (started === 'wait') mind.decided = now - DECIDE_EVERY + 2;
     }
   }
 
@@ -343,6 +391,7 @@ export class CityLife {
       }
       if (best) this.doors.set(b.id, { x: best.x, y: best.y });
     }
+    this.places = placeIndex(w.doc.buildings.all(), (id) => this.doors.get(id) ?? null);
     // The bays read again, and every car owner's car parked near where they are.
     this.cars?.rebuild(w, this.population.residents, (id) => {
       const r = this.byResident.get(id);
@@ -375,7 +424,8 @@ export class CityLife {
 
   // ------------------------------------------------------------- trips
 
-  private start(w: SimWorld, r: Resident, d: Diary, e: Entry, canWalk: boolean, canDrive: boolean): 'walk' | 'drive' | 'skip' | 'wait' {
+  private start(w: SimWorld, r: Resident, d: Diary, e: Entry, canWalk: boolean, canDrive: boolean,
+    reason: TripReason = reasonOf(r, e)): 'walk' | 'drive' | 'skip' | 'wait' {
     const from = this.doors.get(e.from);
     const to = this.doors.get(e.to);
     if (!from || !to) { this.stranded++; return 'skip'; }
@@ -385,8 +435,8 @@ export class CityLife {
       // An agent takes their own car, if it is near and a bay is free at the
       // other end; otherwise they walk. No car is ever made at the kerb.
       if (!canDrive) return 'wait';
-      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
-      if (cars.start(w, r, trip.id, e.from, from, e.to, to, reasonOf(r, e))) {
+      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reason };
+      if (cars.start(w, r, trip.id, e.from, from, e.to, to, reason)) {
         trip.agent = OwnCars.personOf(r.id);
         this.trips.set(trip.id, trip);
         d.at = null;
@@ -398,7 +448,7 @@ export class CityLife {
     const kerbB = kerbA ? this.kerbOf(w, e.to) : null;
     if (kerbA && kerbB && kerbA.lanelet !== kerbB.lanelet) {
       if (!canDrive) return 'wait';
-      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
+      const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'drive', agent: -1, started: w.clock.time, why: reason };
       const car = spawnCommuter(w, kerbA, kerbB, trip.id, this.rng);
       if (car) {
         trip.agent = car.id;
@@ -413,7 +463,7 @@ export class CityLife {
     if (!canWalk) return 'wait';
     const walk = w.pedEngine.walkTrip;
     if (!walk) { this.stranded++; return 'skip'; }
-    const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time, why: reasonOf(r, e) };
+    const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time, why: reason };
     // An agent walks as themselves: the same body on every walk and in their car.
     const person = cars ? OwnCars.personOf(r.id) : undefined;
     const id = walk.call(w.pedEngine, w, person === undefined
@@ -502,6 +552,8 @@ export interface AgentView {
   readonly trip: { readonly step: 'walk' | CarPhase; readonly why: TripReason; readonly to: BuildingId } | null;
   /** Their own car: parked (and in whose lot), in use, or on the road. */
   readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
+  /** Their needs, 0 desperate to 100 met (agents only). */
+  readonly needs?: Readonly<Needs>;
 }
 
 /** Why a resident is making a trip, as the player is told when they look at them. */
