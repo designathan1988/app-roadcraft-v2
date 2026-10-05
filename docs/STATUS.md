@@ -132,6 +132,27 @@ and they have seen it.
   trains stand at stations, residents carried, nobody and no vehicle inside a
   train). Photos: `scripts/transit-shots.mjs` (`docs/audit/2026-10-05/transit/`).
   Not yet: transfers between lines, fares, trains with windows.
+  Rails near a junction: traffic waits for the junction before the track,
+  never on it (`TransitSim.crossingNearEnd`, used by `vehicles/obstacles.ts`
+  and `intersections/admission.ts`); walkers keep off a train's run of the
+  next 7 s, and off a train about to leave a station.
+- **Cycle lanes (ciclofaixa), LIVE** (2026-10-05): a band by the kerb can be
+  `cycle` (`world/parking.ts`): painted red with a solid white line
+  (`world/parkingLayout.ts`). The road tool offers "Ciclofaixa dos dois
+  lados" and "Ciclofaixa a direita, vagas a esquerda"; the road panel sets
+  each side. The new town's east-west local streets have one on the right
+  (`world/defaultTown.ts`, `maps/cidade-com-estacionamento.json`). Bicycles
+  on the lane beside it ride inside the band, easing back to the lane near
+  the corners (`sim/vehicles/cycleLane.ts`, `sim/pose.ts`); cars of that
+  lane pass them instead of following (`vehicles/leaderIndex.ts`). One in
+  three residents without a car cycles to places 80 to 640 m away (farther:
+  transit), gets off at the kerb and walks in (`CityLife.start`, trip mode
+  `bike`); clicking the bicycle opens their card ("De bicicleta ate ...").
+  Measured: `tests/sim/agents/cycleLane.spec.ts` (bicycles in the band, cars
+  pass them, no overlap, residents ride and get off). Photos:
+  `scripts/cycle-shots.mjs` and the app (`docs/audit/2026-10-05/cycle/`).
+  Not yet: two-way cycle tracks, bicycle parking, bicycles at give-way
+  priority over turning cars.
 - **By design, not missing:** every person on the streets is a resident (no
   passers-by made up); car owners without a bay near home walk; with
   residents there is no generated traffic, so no buses run (the game has no

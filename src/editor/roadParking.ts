@@ -6,7 +6,7 @@ import type { SegmentParking } from '@world/parking';
  * both sides or on one. Left and right are of the drawing direction. Kept for
  * the session, like the snapping.
  */
-export const ROAD_PARKING_PRESETS = ['none', 'parallel', 'parallelRight', 'parallelLeft'] as const;
+export const ROAD_PARKING_PRESETS = ['none', 'parallel', 'parallelRight', 'parallelLeft', 'cycle', 'cycleParking'] as const;
 export type RoadParkingPreset = (typeof ROAD_PARKING_PRESETS)[number];
 
 const KEY = 'roadcraft.roadParking';
@@ -37,6 +37,9 @@ export function roadParking(): SegmentParking | undefined {
     case 'parallel': return { left: 'parallel', right: 'parallel' };
     case 'parallelRight': return { left: 'none', right: 'parallel' };
     case 'parallelLeft': return { left: 'parallel', right: 'none' };
+    // Cycle lanes both sides; or one side cycling, the other parking.
+    case 'cycle': return { left: 'cycle', right: 'cycle' };
+    case 'cycleParking': return { left: 'parallel', right: 'cycle' };
     default: return undefined;
   }
 }

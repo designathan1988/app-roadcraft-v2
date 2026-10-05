@@ -7,6 +7,7 @@ import type { NodeId, SegmentId } from './ids';
 import { movementKey, type JunctionControl, type RoadDoc } from './doc';
 import type { Network } from './network';
 import { laneOffset, laneWidth, roadProfile, travelLanes } from './roadTypes';
+import { PARKING_DEPTH } from './parking';
 import { laneTurnAllowed } from './roadSection';
 import { orientedPolyline } from './geometry';
 import { type ApproachGroup, computeApproachGroups } from './approachGroups';
@@ -54,6 +55,13 @@ export interface Lanelet {
   readonly from?: NodeId;
   readonly to?: NodeId;
   readonly laneIndex?: number;
+  /**
+   * The kerb-side lane of a street with a cycle lane (`cycle` band) on its
+   * right: how far sideways, in `perp` units (negative is right of travel),
+   * the middle of the cycle lane lies from this lane's centre. Bicycles ride
+   * there (`sim/vehicles/cycleLane.ts`).
+   */
+  readonly cycleShift?: number;
   /** True when the far end of this link is a junction with a stop line. */
   readonly controlled: boolean;
 
@@ -290,7 +298,7 @@ export class LaneletGraph {
           + `|${seg.structure ?? '-'}`
           + `|${section ? `${section.laneWidth},${section.sidewalk},${section.median},${section.speedKmh},${section.priority}` : '-'}`
           + `|${section?.turnsForward?.join(',') ?? '-'}|${section?.turnsBackward?.join(',') ?? '-'}`
-          + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}|${rt.parkingLeft},${rt.parkingRight}`
+          + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}|${rt.parkingLeft},${rt.parkingRight},${rt.parkingLeftKind},${rt.parkingRightKind}`
           + `|${doc.degree(to)}|${crossing ? `${crossing.kind},${crossing.segment}` : '-'}`
           + `|${s0}|${s1}|${new Digest().addAll(full.xy).value()}`;
         let lanes = previous.get(key);
@@ -312,6 +320,8 @@ export class LaneletGraph {
               from,
               to,
               laneIndex: lane,
+              ...((forward ? rt.parkingRightKind : rt.parkingLeftKind) === 'cycle' && lane === lpd - 1
+                ? { cycleShift: -(laneWidth(rt) / 2 + PARKING_DEPTH.cycle / 2) } : {}),
               controlled: doc.degree(to) >= 3 || crossing !== undefined,
             });
           }

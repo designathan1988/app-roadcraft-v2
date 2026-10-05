@@ -110,6 +110,8 @@ const ICON: Record<string, string> = {
   'park-parallel': '<path d="M3 3v18M21 3v18"/><path d="M7 3v18M17 3v18"/><path d="M3 9h4M3 15h4M17 9h4M17 15h4"/>',
   'park-parallelRight': '<path d="M4 3v18M21 3v18"/><path d="M17 3v18"/><path d="M17 9h4M17 15h4"/><path d="M10.5 4v3m0 3v4m0 3v3"/>',
   'park-parallelLeft': '<path d="M3 3v18M20 3v18"/><path d="M7 3v18"/><path d="M3 9h4M3 15h4"/><path d="M13.5 4v3m0 3v4m0 3v3"/>',
+  'park-cycle': '<path d="M3 3v18M21 3v18M7 3v18M17 3v18"/><circle cx="5" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+  'park-cycleParking': '<path d="M3 3v18M21 3v18M7 3v18M17 3v18"/><path d="M3 9h4M3 15h4"/><circle cx="19" cy="12" r="1.2"/>',
   // Lanes: the carriageway seen from above
   lanes2: '<path d="M7 3v18M17 3v18"/><path d="M12 4v3m0 3v4m0 3v3" />',
   lanes4: '<path d="M4 3v18M20 3v18"/><path d="M12 3v18"/><path d="M8 5v2m0 4v2m0 4v2M16 5v2m0 4v2m0 4v2"/>',

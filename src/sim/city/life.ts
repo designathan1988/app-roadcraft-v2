@@ -19,6 +19,7 @@ import { addPlayerWalker, removeWalker, takeWalker, walkerAct, walkerOf } from '
 import { type Rider, TransitSim } from '../transit/transit';
 import { Player } from '../agents/player';
 import type { VehicleId } from '../vehicles/state';
+import { vehiclePose } from '../pose';
 import { localToWorld } from '@world/buildings/geometry';
 import type { Building } from '@world/buildings/types';
 
@@ -51,6 +52,16 @@ const NOBODY: readonly Resident[] = [];
 const MAX_WALKS = 160;
 /** Farther than this a resident without a car looks for a line to take (`sim/transit`). */
 const TRANSIT_FROM = m(500);
+/**
+ * Residents without a car who cycle (one in three, by their seed) take their
+ * bicycle for trips between these distances; farther, the bus or the train.
+ * They ride on the road, in the cycle lane where the street has one
+ * (`sim/vehicles/cycleLane.ts`), and walk the last metres from the kerb.
+ */
+const BIKE_FROM = m(200);
+const BIKE_TO = m(1600);
+const BICYCLE = ARCHETYPES.find((a) => a.id === 'bicycle')!;
+const cycles = (r: Resident): boolean => !r.hasCar && r.ageClass !== 'child' && r.seed % 3 === 0;
 const MAX_DRIVES = 90;
 /** Closer than this, nobody takes the car. */
 const DRIVE_FROM = m(150);
@@ -65,7 +76,7 @@ export interface Trip {
   readonly id: number;
   readonly resident: number;
   readonly to: BuildingId;
-  mode: 'walk' | 'drive' | 'transit';
+  mode: 'walk' | 'drive' | 'transit' | 'bike';
   /** Why it is made (`agent.why.<reason>`). */
   readonly why?: TripReason;
   /** The walker or the car carrying it. */
@@ -209,7 +220,7 @@ export class CityLife {
     let trip: AgentView['trip'] = null;
     for (const t of this.trips.values()) {
       if (t.resident !== resident) continue;
-      const step = this.transit.riders.get(t.id)?.phase ?? this.cars?.trips.get(t.id)?.phase ?? 'walk';
+      const step = t.mode === 'bike' ? 'bike' : this.transit.riders.get(t.id)?.phase ?? this.cars?.trips.get(t.id)?.phase ?? 'walk';
       trip = { step, why: t.why ?? 'outing', to: t.to };
       break;
     }
@@ -418,7 +429,16 @@ export class CityLife {
     for (const t of [...this.trips.values()]) {
       if (t.resident !== resident) continue;
       const ct = this.cars?.trips.get(t.id);
-      if (ct && ct.phase === 'drive') {
+      const bike = t.mode === 'bike' ? w.vehicles.get(t.agent as VehicleId) : undefined;
+      if (bike) {
+        // Off the bicycle, on foot where it was.
+        const pose = vehiclePose(w, bike, 1);
+        w.removeVehicle(bike);
+        if (pose) {
+          addPlayerWalker(w, person, pose.p.x, pose.p.y, pose.angle, r.ageClass, personGender(person));
+          out = { mode: 'foot', x: pose.p.x, y: pose.p.y, heading: pose.angle, car: null };
+        }
+      } else if (ct && ct.phase === 'drive') {
         out = { mode: 'car', x: 0, y: 0, heading: 0, car: ct.car.id };
       } else if (ct && ct.car.body?.free && (ct.phase === 'leave' || ct.phase === 'park')) {
         // Off the road in their car (out of a bay, into one): at the wheel there.
@@ -744,6 +764,26 @@ export class CityLife {
       // No room at the kerb just now: try again in a moment.
       return 'wait';
     }
+    // Without a car, a cyclist rides to places not too far.
+    const span = Math.hypot(to.x - from.x, to.y - from.y);
+    if (cycles(r) && span > BIKE_FROM && span < BIKE_TO) {
+      const kA = this.kerbOf(w, e.from);
+      const kB = kA ? this.kerbOf(w, e.to) : null;
+      // Never getting on or off on a level crossing.
+      const clear = (k: Kerb): boolean => !this.transit.crossingNear(k.lanelet, k.at, m(14));
+      if (kA && kB && kA.lanelet !== kB.lanelet && clear(kA) && clear(kB)) {
+        if (!canDrive) return 'wait';
+        const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'bike', agent: -1, started: w.clock.time, why: reason };
+        const bike = spawnCommuter(w, kA, kB, trip.id, this.rng, BICYCLE);
+        if (bike) {
+          trip.agent = bike.id;
+          this.trips.set(trip.id, trip);
+          d.at = null;
+          this.moved();
+          return 'drive';
+        }
+      }
+    }
     if (!canWalk) return 'wait';
     // Far, and without a car to take: a bus, a train or the metro, if a line
     // runs from near here to near there (`sim/transit`).
@@ -807,12 +847,12 @@ export class CityLife {
       // A walk to or from an agent's own car: the car trip goes on.
       else if (t && this.cars) this.cars.walkEnded(id);
     }
-    // The agents' cars are never deleted at the kerb: `OwnCars` parks them.
-    if (this.cars) return;
     // Straight over the map: a trip ended here is deleted as it is passed,
     // which a Map's iteration allows; a copy of every trip each tick was garbage.
     for (const t of this.trips.values()) {
-      if (t.mode !== 'drive') continue;
+      // The agents' cars are never deleted at the kerb: `OwnCars` parks them.
+      // A bicycle is: its rider gets off and walks to the door.
+      if (t.mode !== 'bike' && (t.mode !== 'drive' || this.cars)) continue;
       const v = w.vehicles.get(t.agent as Vehicle['id']);
       if (!v) { this.arrive(t); continue; }
       const c = v.commute;
@@ -826,10 +866,12 @@ export class CityLife {
       const walk = w.pedEngine.walkTrip;
       // Out on the side the door is on.
       const side = door && (door.x - f.p.x) * f.n.x + (door.y - f.p.y) * f.n.y < 0 ? -1 : 1;
+      const person = this.cars && r ? OwnCars.personOf(r.id) : undefined;
       const walker = door && r && walk
         ? walk.call(w.pedEngine, w, {
           trip: t.id, fromX: f.p.x + side * f.n.x * m(3.2), fromY: f.p.y + side * f.n.y * m(3.2), toX: door.x, toY: door.y,
-          seed: r.seed, ageClass: r.ageClass,
+          seed: person === undefined ? r.seed : personGender(person) === 'f' ? 1 : 0, ageClass: r.ageClass,
+          ...(person === undefined ? {} : { person }),
         })
         : null;
       if (walker === null) { this.arrive(t); continue; }
@@ -851,7 +893,7 @@ export class CityLife {
     for (const t of [...this.trips.values()]) {
       if (w.clock.time - t.started < TRIP_LIMIT) continue;
       if (this.cars && t.mode === 'drive') this.cars.abandon(w, t.id);
-      else if (t.mode === 'drive') {
+      else if (t.mode === 'drive' || t.mode === 'bike') {
         const v = w.vehicles.get(t.agent as Vehicle['id']);
         if (v) w.removeVehicle(v);
       }
@@ -870,7 +912,7 @@ export interface AgentView {
   /** The building they are in; null on the way somewhere. */
   readonly at: BuildingId | null;
   /** The trip under way: on foot (`walk`), or the step of their car trip. */
-  readonly trip: { readonly step: 'walk' | CarPhase | Rider['phase']; readonly why: TripReason; readonly to: BuildingId } | null;
+  readonly trip: { readonly step: 'walk' | 'bike' | CarPhase | Rider['phase']; readonly why: TripReason; readonly to: BuildingId } | null;
   /** Their own car: parked (and in whose lot), in use, or on the road. */
   readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
   /** Their needs, 0 desperate to 100 met (agents only). */
@@ -930,11 +972,11 @@ function makeDiary(r: Resident): Entry[] {
 }
 
 /** A car for a resident, pulled out from the kerb in front of their door; null when there is no room. */
-function spawnCommuter(w: SimWorld, from: Kerb, to: Kerb, trip: number, rng: Rng): Vehicle | null {
+function spawnCommuter(w: SimWorld, from: Kerb, to: Kerb, trip: number, rng: Rng, kind?: Archetype): Vehicle | null {
   const lane = w.lanelet(from.lanelet);
   if (!lane) return null;
   const cars = ARCHETYPES.filter((a) => a.id === 'hatch' || a.id === 'sedan' || a.id === 'suv');
-  const arch = cars[Math.floor(rng.float() * cars.length)] as Archetype;
+  const arch = kind ?? cars[Math.floor(rng.float() * cars.length)] as Archetype;
   const front = from.at;
   const rear = front - arch.length;
   // Room on the lane round the place it pulls out from.

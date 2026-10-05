@@ -8,9 +8,7 @@ import { signalHolds } from '../signals/permission';
 import { mergeRemaining, nextConnector } from '../intersections/admission';
 import { kerbStopObstacle } from './kerbStops';
 import { m } from '@world/units';
-
-/** How far short of a closed level crossing a vehicle stops, u. */
-const CROSSING_STOP = m(5);
+import { CROSSING_STOP } from '../transit/transit';
 
 /** Stop short of a zebra span somebody is on; null when the path is clear. */
 function pedestrianAhead(w: SimWorld, v: Vehicle): Obstacle | null {
@@ -179,6 +177,15 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
   // Distance to the end of the current lanelet. Always non-negative, because
   // the integrator keeps `s <= length`.
   const dStop = Math.max(0, lane.length - v.s);
+
+  if (lane.kind === 'link' && lane.controlled && !v.admittedConnector) {
+    // Rails just short of the stop line: it waits for the junction before
+    // them, never on the track (`TransitSim.crossingNearEnd`).
+    const track = w.city.transit.crossingNearEnd(lane.id, lane.length);
+    if (track !== null && v.s < track) {
+      constraints.obstacles.push({ gap: Math.max(0, track - CROSSING_STOP - v.s), speed: 0, kind: 'signal' });
+    }
+  }
 
   if (lane.kind === 'link' && lane.controlled) {
     // A vehicle with an admission token is never held at the stop line.  Some

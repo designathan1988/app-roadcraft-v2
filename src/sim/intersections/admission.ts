@@ -10,6 +10,8 @@ import { PED_COURTESY, vehicleBodyIntersectsCrossing } from '../crossings/permis
 import { hasDownstreamStorage } from './spillback';
 import { cycleFull } from './cycles';
 import { COARSE_EPS } from '@core/scalar';
+import { m } from '@world/units';
+import { CROSSING_STOP } from '../transit/transit';
 import { bodyClassOfArchetype } from '../vehicles/archetypes';
 import { slowestBend } from '../vehicles/curvature';
 import { type Claim, type HolderState, zoneShareable } from './claims';
@@ -105,7 +107,10 @@ function admit(w: SimWorld): void {
       const lane = w.lanelet(laneId);
       if (!lane) continue;
       const d = lane.length - head.s;
-      if (d > Math.max(REQUEST_MIN_DISTANCE, head.v * REQUEST_TIME)) continue;
+      // Waiting before rails just short of the line, it asks from there.
+      const track = w.city.transit.crossingNearEnd(laneId, lane.length);
+      const before = track === null ? 0 : lane.length - track + CROSSING_STOP + head.driver.s0 + m(2);
+      if (d > Math.max(REQUEST_MIN_DISTANCE, head.v * REQUEST_TIME, before)) continue;
 
       const reservedCurrent = head.reservedConnectors[0] === conn.id;
       // A declared maximum claim pins the route. A different next connector

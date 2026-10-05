@@ -94,7 +94,8 @@ describe('agents: residents use their own cars', () => {
       if ([...sent.keys()].every((id) => { const t = cars.trips.get(id); return !t || t.phase === 'fromCar'; })) return;
       step(sim);
       time += DT;
-      for (const v of sim.vehicles.values()) if (!owned.has(v.id)) pocket++;
+      // Residents without a car may cycle (`CityLife`): their bicycles are theirs too.
+      for (const v of sim.vehicles.values()) if (!owned.has(v.id) && v.archetype.shape !== 'bicycle') pocket++;
       for (const id of sent.keys()) {
         const t = cars.trips.get(id);
         if (!t) continue;

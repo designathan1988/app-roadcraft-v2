@@ -51,7 +51,13 @@ const AT_STOP = m(2.5), STOPPED = m(0.3);
 /** How far from its track a station's platform is (its middle), u: as drawn. */
 const PLATFORM = m(3.6);
 /** The track ahead of a moving train kept clear by walkers. */
-const TRAIN_AHEAD = m(50);
+const TRAIN_AHEAD = m(30);
+/** Seconds of a train's run ahead of it kept clear of walkers: time to walk across the track and more. */
+const AHEAD_TIME = 7;
+/** How far short of a level crossing a vehicle waits, u. */
+export const CROSSING_STOP = m(5);
+/** A crossing closer than this to a stop line has the traffic wait before it (a bus and room to spare). */
+const KEEP_CLEAR = m(20);
 /** A level crossing closes when a train is this far from it. */
 const CROSSING_WARN = m(160);
 const NONE: number[] = [];
@@ -358,6 +364,31 @@ export class TransitSim {
   }
 
   /**
+   * A level crossing this close to the stop line at the end of `lanelet`
+   * leaves no room to wait between the two: where it is, how far along the
+   * lane; null when there is none. Traffic waits for the junction BEFORE the
+   * track, as at a real crossing next to a junction (the stop line set back
+   * ahead of the rails, MUTCD 8B.28; FHWA Highway-Rail Crossing Handbook,
+   * "clear storage distance"), and is let into the junction from there
+   * (`vehicles/obstacles.ts`, `intersections/admission.ts`).
+   */
+  crossingNearEnd(lanelet: string, length: number): number | null {
+    let out: number | null = null;
+    for (const rail of this.rails) {
+      for (const c of rail.crossings) {
+        if (c.lanelet === lanelet && length - c.at < KEEP_CLEAR && (out === null || c.at < out)) out = c.at;
+      }
+    }
+    return out;
+  }
+
+  /** True when a level crossing lies within `reach` of `at` along a lane (open or closed). */
+  crossingNear(lanelet: string, at: number, reach: number): boolean {
+    for (const rail of this.rails) for (const c of rail.crossings) if (c.lanelet === lanelet && Math.abs(c.at - at) < reach) return true;
+    return false;
+  }
+
+  /**
    * The level crossings of a lane closed now - a train coming up to it, or
    * on it: how far along the lane each is. The traffic stops short of them
    * (`vehicles/obstacles.ts`).
@@ -396,8 +427,11 @@ export class TransitSim {
     for (const rail of ahead ? this.rails : []) {
       if (rail.line.mode === 'metro') continue;
       for (const train of rail.trains) {
-        if (train.v < m(1)) continue;
-        for (let d = m(4); d < TRAIN_AHEAD; d += m(3)) {
+        // Standing at a station, it is ground to keep off only once it is about to leave.
+        if (train.v < m(1) && train.dwell > AHEAD_TIME) continue;
+        // Ahead by time, not distance: as long as it takes to walk across the track.
+        const reach = Math.max(TRAIN_AHEAD, train.v * AHEAD_TIME);
+        for (let d = m(4); d < reach; d += m(3)) {
           const p = this.pointAt(rail, train.s + d);
           zone(train.key).push({ x: p.x, y: p.y, r: m(1.9) });
         }

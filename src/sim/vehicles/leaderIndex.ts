@@ -4,6 +4,7 @@ import type { Vehicle } from './state';
 import { canStopComfortably, type Obstacle } from './idm';
 import { bodyClassOfArchetype } from './archetypes';
 import { pullOutRoom } from './laneChange';
+import { outOfTheWay } from './cycleLane';
 
 /** How many lanelets ahead the leader search will walk. */
 const LOOKAHEAD_HOPS = 3;
@@ -38,7 +39,13 @@ export function findLeader(w: SimWorld, v: Vehicle): Obstacle | null {
   // Ahead in the same lane: the list is ascending by arc position.
   if (idx >= 0 && idx + 1 < rt.order.length) {
     const aheadId = rt.order[idx + 1];
-    const lead = aheadId === undefined ? undefined : w.veh(aheadId);
+    let ahead = idx + 1;
+    let lead = aheadId === undefined ? undefined : w.veh(aheadId);
+    // Bicycles riding in the cycle lane are passed, not followed.
+    while (lead && outOfTheWay(v, lead, w.lanelet(v.lanelet))) {
+      const next = rt.order[++ahead];
+      lead = next === undefined ? undefined : w.veh(next);
+    }
     if (lead) {
       // Stopped at the kerb: hold back far enough to pull out round it - when
       // there is still room to stop there in comfort. A car already closer
@@ -75,8 +82,13 @@ export function findLeader(w: SimWorld, v: Vehicle): Obstacle | null {
   for (const nextId of upcoming) {
     if (dist > horizon) return null;
     const nrt = w.rt(nextId);
-    const tailId = nrt.order[0];
-    const tail = tailId === undefined ? undefined : w.veh(tailId);
+    const nextLane = w.lanelet(nextId);
+    let tailAt = 0;
+    let tail = nrt.order[0] === undefined ? undefined : w.veh(nrt.order[0]);
+    while (tail && outOfTheWay(v, tail, nextLane)) {
+      const next = nrt.order[++tailAt];
+      tail = next === undefined ? undefined : w.veh(next);
+    }
     if (tail) {
       consider({
         gap: dist + tail.s - tail.archetype.length,

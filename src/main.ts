@@ -57,6 +57,7 @@ import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
 import { TransitTool, setTransitTool } from '@editor/transitTools';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
+import type { VehicleId } from '@sim/vehicles/state';
 import type { BuildingId } from '@world/buildings/types';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
@@ -3122,6 +3123,12 @@ function agentPosition(resident: number): Vec2 | null {
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) return pose.p;
   }
+  for (const trip of city.trips.values()) {
+    if (trip.resident !== resident || trip.mode !== 'bike') continue;
+    const v = sim.vehicles.get(trip.agent as VehicleId);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) return pose.p;
+  }
   const at = city.whereIs(resident);
   return at !== null ? city.doorOf(at) : null;
 }
@@ -3143,6 +3150,13 @@ function pickAgent(px: number, py: number): number | null {
     const v = car.body ?? sim.vehicles.get(car.id);
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) consider(pose.p.x, pose.p.y, car.owner);
+  }
+  // A resident riding their bicycle.
+  for (const trip of sim.city.trips.values()) {
+    if (trip.mode !== 'bike') continue;
+    const v = sim.vehicles.get(trip.agent as VehicleId);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) consider(pose.p.x, pose.p.y, trip.resident);
   }
   return best;
 }
