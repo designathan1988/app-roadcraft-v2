@@ -26,6 +26,8 @@ export type FurnitureKind =
   | 'bench'
   | 'hydrant'
   | 'postbox'
+  | 'phone'
+  | 'drain'
   | 'streetTree'
   | 'shrub';
 
@@ -64,6 +66,8 @@ const FURNITURE_OF: Readonly<Record<LandscapeKind, FurnitureKind>> = {
   lamp: 'lamp',
   hydrant: 'hydrant',
   postbox: 'postbox',
+  phone: 'phone',
+  drain: 'drain',
 };
 
 /** How far off its footway's band a stored item may have drifted and still stand on it. */

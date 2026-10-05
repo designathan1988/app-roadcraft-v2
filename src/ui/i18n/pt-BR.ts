@@ -376,6 +376,8 @@ export const PT_BR: Dictionary = {
   'streetscape.lamp': 'Iluminação',
   'streetscape.hydrant': 'Hidrante',
   'streetscape.postbox': 'Caixa de correio',
+  'streetscape.phone': 'Orelhão (telefone público)',
+  'streetscape.drain': 'Boca de lobo',
   'hint.pole.offFootway': 'Postes só nas calçadas',
   'hint.pole.noPath': 'Não há calçada ligando esses pontos',
   'pole.lamps': 'Iluminação nos postes',

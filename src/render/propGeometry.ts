@@ -10,6 +10,7 @@ import {
   LatheGeometry,
   Matrix4,
   PlaneGeometry,
+  SphereGeometry,
   Vector2,
   Quaternion,
   Vector3,
@@ -19,6 +20,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Rng } from '@core/rng';
 import { m } from '@world/units';
 import { TREE_PIT } from '@world/streetFurniture';
+import { CURB_BAND, FOOTWAY_RISE } from '@world/roadTypes';
 
 /**
  * Procedural geometry for everything that stands on the ground.
@@ -666,6 +668,56 @@ export function postboxGeometry(): BufferGeometry {
     part(new BoxGeometry(m(0.22), m(0.035), m(0.02)), rgb(0x0a0c0e), { at: [0, m(0.84), m(0.175)] }),
     part(new BoxGeometry(m(0.26), m(0.12), m(0.01)), rgb(0xe8e4d8), { at: [0, m(0.62), m(0.175)] }),
   ]);
+}
+
+/**
+ * A Brazilian public phone, the "orelhão" (Chu Ming Silveira, 1971): a
+ * fibreglass shell shaped like an ear on a steel post, open to the footway,
+ * the handset inside. Faces +Z.
+ */
+export function phoneGeometry(): BufferGeometry {
+  const shell = rgb(0xe8772e);
+  const inner = rgb(0xd9d4c8);
+  const post = rgb(0x5d6366);
+  const dark = rgb(0x1d2124);
+  return merge([
+    part(new CylinderGeometry(m(0.05), m(0.06), m(1.55), 8), post, { at: [0, m(0.775), -m(0.18)] }),
+    // The shell: a stretched half-sphere, open toward +Z.
+    part(new SphereGeometry(m(0.5), 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.62), shell, {
+      at: [0, m(1.62), 0], scale: [0.9, 1.25, 0.82], rotate: [-Math.PI / 2 + 0.25, 0, 0],
+    }),
+    part(new SphereGeometry(m(0.47), 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.6), inner, {
+      at: [0, m(1.62), -m(0.01)], scale: [0.88, 1.22, 0.8], rotate: [-Math.PI / 2 + 0.25, 0, 0],
+    }),
+    part(new BoxGeometry(m(0.2), m(0.32), m(0.1)), rgb(0x2f5fa0), { at: [0, m(1.45), -m(0.2)] }),
+    part(new BoxGeometry(m(0.06), m(0.2), m(0.06)), dark, { at: [m(0.06), m(1.5), -m(0.13)] }),
+  ]);
+}
+
+/**
+ * A kerb inlet ("boca de lobo"): an iron grate in the gutter, in front of a
+ * dark mouth cut into the kerb. The origin is on the kerb's back edge at the
+ * footway's level; the road is toward -Z and a footway rise below.
+ */
+export function drainGeometry(): BufferGeometry {
+  const iron = rgb(0x2b2e2f);
+  const concrete = rgb(0x9a9890);
+  const slot = rgb(0x0b0c0d);
+  const rise = FOOTWAY_RISE - m(0.03);
+  const kerb = CURB_BAND;
+  const parts = [
+    // The mouth in the kerb face.
+    part(new BoxGeometry(m(0.9), rise * 0.55, m(0.04)), slot, { at: [0, -rise * 0.62, -kerb - m(0.03)] }),
+    // The lintel over it, a little proud of the kerb.
+    part(new BoxGeometry(m(1.0), m(0.04), kerb + m(0.06)), concrete, { at: [0, m(0.01), -kerb / 2 - m(0.03)] }),
+    // The concrete frame and the grate in the gutter.
+    part(new BoxGeometry(m(1.0), m(0.02), m(0.5)), concrete, { at: [0, -rise + m(0.006), -kerb - m(0.3)] }),
+  ];
+  for (let i = 0; i < 7; i++) {
+    parts.push(part(new BoxGeometry(m(0.035), m(0.022), m(0.4)), iron, { at: [-m(0.39) + i * m(0.13), -rise + m(0.012), -kerb - m(0.3)] }));
+  }
+  parts.push(part(new BoxGeometry(m(0.84), m(0.016), m(0.4)), slot, { at: [0, -rise + m(0.004), -kerb - m(0.3)] }));
+  return merge(parts);
 }
 
 /**

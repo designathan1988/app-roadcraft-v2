@@ -27,7 +27,7 @@ import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectio
  * items already there.
  */
 
-export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox'] as const;
+export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox', 'phone', 'drain'] as const;
 export type LandscapeKind = (typeof LANDSCAPE_KINDS)[number];
 
 export interface LandscapeItem {
@@ -50,6 +50,8 @@ export const LANDSCAPE_RADIUS: Readonly<Record<LandscapeKind, number>> = {
   lamp: m(0.13),
   hydrant: m(0.16),
   postbox: m(0.33),
+  phone: m(0.45),
+  drain: m(0.5),
 };
 
 /** The least clear distance kept between two placed items, besides their radii. */
@@ -112,7 +114,12 @@ function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB
   switch (kind) {
     case 'lamp':
     case 'hydrant':
+    case 'phone':
       return zone.inner + Math.min(LAMP_ZONE, depth) / 2;
+    // A kerb inlet ("boca de lobo"): its mouth is IN the kerb, its grate in
+    // the gutter in front; the item stands on the kerb's back edge.
+    case 'drain':
+      return zone.inner + m(0.05);
     case 'tree': {
       // A pit beside the kerb, so long as the walkers keep their through
       // width behind it: a 2 m footway takes one (0.95 m pit and setback,

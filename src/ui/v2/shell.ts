@@ -149,6 +149,8 @@ const ICON: Record<string, string> = {
   ls_lamp: '<path d="M7 21V5h7"/><path d="M12 5h5l1 2h-6Z"/><path d="M15 9l-1 3M17 9l1 3" stroke-dasharray="1.5 1.5"/><path d="M4 21h6"/>',
   ls_hydrant: '<path d="M8 21V10h8v11Z"/><path d="M8 10a4 4 0 0 1 8 0"/><path d="M5 14h3M16 14h3M12 4v2"/><path d="M6 21h12"/>',
   ls_postbox: '<rect x="6" y="5" width="12" height="11" rx="5"/><path d="M9 9h6"/><path d="M12 16v5M8 21h8"/>',
+  ls_phone: '<path d="M7 11a5 6 0 0 1 10 0v2H7Z"/><path d="M12 13v8M9 21h6"/><path d="M11 9h2v3h-2Z"/>',
+  ls_drain: '<path d="M3 9h18"/><path d="M3 9v3h18V9"/><path d="M5 15h14v4H5Z"/><path d="M8 15v4M11 15v4M14 15v4M17 15v4"/>',
   // The pole tool's two verbs: string a line, take a pole down
   pole_build: '<path d="M6 21V4M18 21V4"/><path d="M3 7h6M15 7h6"/><path d="M6 8c4 3 8 3 12 0"/><path d="M12 14v6M9 17h6"/>',
   pole_remove: '<path d="M10 21V4"/><path d="M6 7h8"/><path d="M15 13l5 5M20 13l-5 5"/>',

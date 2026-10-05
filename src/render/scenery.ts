@@ -42,6 +42,8 @@ import {
   lampLensGeometry,
   LAMP_OUTREACH,
   postboxGeometry,
+  phoneGeometry,
+  drainGeometry,
   treeGeometry,
   treePitGeometry,
   trianglesOf,
@@ -135,6 +137,8 @@ export function createSceneryKit(): SceneryKit {
     bench: benchGeometry(),
     hydrant: hydrantGeometry(),
     postbox: postboxGeometry(),
+    phone: phoneGeometry(),
+    drain: drainGeometry(),
   };
   const lampLens = lampLensGeometry();
   const treePit = treePitGeometry();
@@ -571,7 +575,11 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
       }
       case 'postbox':
       case 'hydrant':
-        put(item.kind, { ...at, yaw: facing });
+      case 'phone':
+      case 'drain':
+        // Built facing -Z; turned so the phone's shell opens to the footway
+        // and the drain's grate lies in the gutter on the road side.
+        put(item.kind, { ...at, yaw: facing + Math.PI });
         break;
       case 'streetTree': {
         put('treePit', { ...at, yaw: angleOf(item.along) });
@@ -615,6 +623,8 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
     build('benches', kit.furniture.bench, kit.props, furniture.get('bench') ?? []),
     build('hydrants', kit.furniture.hydrant, kit.props, furniture.get('hydrant') ?? []),
     build('post-boxes', kit.furniture.postbox, kit.props, furniture.get('postbox') ?? []),
+    build('phones', kit.furniture.phone, kit.props, furniture.get('phone') ?? []),
+    build('drains', kit.furniture.drain, kit.props, furniture.get('drain') ?? []),
     build('tree-pits', kit.treePit, kit.props, furniture.get('treePit') ?? []),
   ].filter((mesh): mesh is InstancedMesh => mesh !== null);
 
