@@ -139,6 +139,8 @@ export interface AgentRenderOptions {
   readonly occupantZoom?: number;
   /** Residents inside the buildings cut open (`indoors.ts`), drawn where they are on the floor shown. */
   readonly indoor?: readonly IndoorFigure[];
+  /** Each motor vehicle drawn: where its tail smoke leaves from (`exhaust.ts`). */
+  readonly exhaust?: (x: number, y: number, z: number, angle: number, length: number, speed: number) => void;
 }
 
 export interface AgentMeshes {
@@ -1300,6 +1302,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // Off screen, and too far from it for its shadow to fall on it:
         // nothing of this vehicle is written this frame.
         if (options.vehicleVisible && !options.vehicleVisible(pose.p.x, pose.p.y, deck, plan.length * 0.5 + plan.height * 2)) continue;
+        // A parked car's engine is off; a bicycle has none.
+        if (options.exhaust && plan.shape !== 'bicycle' && !(free && vehicle.v === 0 && vehicle.seats === 0)) {
+          options.exhaust(pose.p.x, pose.p.y, deck, pose.angle, plan.length, vehicle.v);
+        }
         // A two-wheeler leans into its bend and, stopped, tilts onto the
         // rider's foot on the road (`TwoWheelerFit.stopTilt`).
         const fit = twoWheeled ? twoWheelerParts.get(vehicle.archetype.id)?.model.fit : undefined;

@@ -47,6 +47,7 @@ import { GRASS_MIN_ZOOM } from './grass';
 import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
+import { createExhaust } from './exhaust';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
@@ -315,6 +316,9 @@ export function createSceneRenderer(
   let furniture: Scenery | null = null;
   let utilities: Utilities | null = null;
   /** The pole tool's planned run, and the plan it was built for (rebuilt only when that changes). */
+  /** Vehicle exhaust and dust (`exhaust.ts`): one particle cloud for the map. */
+  const exhaust = createExhaust();
+  scene.add(exhaust.points);
   let polePreview: Utilities | null = null;
   let polePreviewKey = '';
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
@@ -869,7 +873,9 @@ export function createSceneRenderer(
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
         indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+        exhaust: (x, y, z, angle, length, speed) => exhaust.emit(x, y, z, angle, length, speed, false),
       });
+      exhaust.tick(windClock, renderer.domElement.height / 2);
       // The rooms cut open are lit from inside: brighter as the day goes.
       const key = cutSpec ? `${cutSpec.level}@${cutSpec.x},${cutSpec.y}:${sim.doc.buildings.revision}` : '';
       if (key !== lampsKey) {
