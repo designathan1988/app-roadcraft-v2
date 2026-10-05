@@ -66,6 +66,8 @@ export const BUILDING_MAP_MARGIN = 8;
  * verge, which read as a gap between the pavement and the wall.
  */
 export const ROAD_CLEARANCE = 0.02;
+/** How far two buildings' volumes may run into each other at a shared party wall, world units (20 cm). */
+const PARTY_WALL = 0.5;
 /** Only floating-point noise at an exactly touching road edge, never a visible overlap. */
 const ROAD_CONTACT_EPS = 1e-9;
 /**
@@ -151,6 +153,7 @@ export function validateBuilding(
   if (box.minX < -limit || box.minY < -limit || box.maxX > limit || box.maxY > limit) return 'bounds';
 
   const rects = [...footprintRects(b, -TOUCH), ...groundProjections(b, -TOUCH), ...groundElements(b, -TOUCH)];
+  const party = [...footprintRects(b, -PARTY_WALL), ...groundProjections(b, -TOUCH), ...groundElements(b, -TOUCH)];
   if (ctx.net && rects.some((rect) => touchesRoad(ctx.net as Network, rect))) return 'road';
 
   for (const other of ctx.doc.buildings.all()) {
@@ -158,7 +161,11 @@ export function validateBuilding(
     const ob = buildingBounds(other);
     if (ob.minX > box.maxX || ob.maxX < box.minX || ob.minY > box.maxY || ob.maxY < box.minY) continue;
     const others = [...footprintRects(other), ...groundProjections(other), ...groundElements(other)];
-    for (const a of rects) for (const c of others) if (overlapArea(a, c) > 1e-5) return 'building';
+    // Two buildings may share a party wall: their volumes meet, and may run a
+    // few centimetres into each other, as terraced houses and a row of shops
+    // do. Measured with each volume shrunk by `PARTY_WALL`, so a joint is
+    // never a gap (the player's order of 2026-10-05).
+    for (const a of party) for (const c of others) if (overlapArea(a, c) > 1e-5) return 'building';
   }
 
   if (ctx.groundAt) {

@@ -75,12 +75,15 @@ function sideReach(
         if (what) { found = { d: d - STEP, what }; break; }
       }
     }
-    if (found && (found.what === 'road' || found.d <= NEAR)) out[key] = Math.max(0, found.d - m(0.1));
+    // Up to a neighbour exactly (party wall to party wall); a hair short of a road's footway.
+    if (found && (found.what === 'road' || found.d <= NEAR)) out[key] = Math.max(0, found.d - (found.what === 'road' ? m(0.1) : JOINT));
   }
   return out;
 }
 
 /** How close a stored mark has to be to a cell's centre to be that cell's. */
+/** The joint left between two neighbouring lots: a hair, so their party walls meet without overlapping. */
+const JOINT = 0;
 const MATCH = ZONE_CELL / 2;
 
 /** The mark standing on a cell, with its index in `doc.zoneMarks`. */
@@ -243,6 +246,9 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
     // left is narrower than any lot of this zone, take it too.
     let columns = Math.min(want, run);
     if (run - columns > 0 && run - columns < narrow) columns = run;
+    // A cell trimmed on the subgrid at a block's end is too narrow for a lot
+    // of its own: it goes with the next column, so the end is built on too.
+    if (start.width < ZONE_CELL - 1e-6 && columns === 1 && run > 1) columns = 2;
     const lot: ZoneCell[] = [];
     for (let c = 0; c < columns; c++) lot.push(...freeColumn(start.column + c, rows)!);
     const margin = m(0.3);
@@ -258,7 +264,10 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       y: (firstFront.corners[0].y + lastFront.corners[1].y) / 2,
     } as Vec2;
     const rotation = (fronts[Math.floor(fronts.length / 2)] as ZoneCell).rotation;
-    const gridW = fronts.reduce((sum, cell) => sum + cell.width, 0) - margin;
+    // The full width of the cells: two lots side by side share their boundary
+    // (the player's order of 2026-10-05: "qualquer construção não pode ter
+    // vãos"). A margin taken off each side left a strip between neighbours.
+    const gridW = fronts.reduce((sum, cell) => sum + cell.width, 0) - JOINT;
     // The land beside the lot that nobody else can use - the strip left at a
     // corner between the grid and the cross street's footway, a gap short of
     // the next building - joins the lot, so no bare strip is left along a
@@ -288,6 +297,14 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       for (const v of body.volumes) { v.x += dx; v.y += dy; }
       for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
       for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+      // Nothing of the building past its lot's sides: a porch or an annex the
+      // maker set a little wide stood into the neighbour's lot, and the
+      // neighbour was then refused - the gap the player kept finding.
+      for (const v of body.volumes) {
+        if (v.outline) continue;
+        const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
+        if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
+      }
       if (!furnishLot(body, plan, made, rng)) continue;
       // The widened lot's front middle - the body's local origin - shifted
       // along the street by half of what one side gained over the other.
