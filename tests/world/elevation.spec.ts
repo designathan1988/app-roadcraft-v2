@@ -201,9 +201,10 @@ describe('road elevation over a hill', () => {
   });
 
   it('is decided by the road, not the ground, everywhere a surface is drawn', () => {
-    // The widest casing is 31.5 units; nothing the mesh builds reaches further.
+    // The widest casing is 32.5 units (a 24 m boulevard and its verge);
+    // nothing the mesh builds reaches further.
     for (let s = -280; s <= 280; s += 7) {
-      for (const across of [-31, -16, 0, 16, 31]) {
+      for (const across of [-32, -16, 0, 16, 32]) {
         const onRoad = field.at(s, across);
         const centre = field.at(s, 0);
         expect(Math.abs(onRoad - centre)).toBeLessThan(0.02);

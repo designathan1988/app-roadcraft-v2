@@ -13,7 +13,8 @@ owner in docs/STATUS.md before changing them.
    `doc.revision`; utilities move `utilityRevision`. The wrong one rebuilds
    everything or nothing.
 3. **Road snapping** (`snap.ts` `roadSnap`/`setRoadSnap`, stored in localStorage
-   `roadcraft.roadSnap`) works in whole 8 m zone cells (`ZONE_CELL`).
+   `roadcraft.roadSnap`) works on the universal grid (`world/grid.ts`): points on
+   the 1 m subdivision, lengths in whole 10 m cells (`ZONE_CELL`).
 
 ## Traps that have already caught someone
 

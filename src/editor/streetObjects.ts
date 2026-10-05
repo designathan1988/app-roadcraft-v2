@@ -28,7 +28,7 @@ export function commitPedestrianCrossing(
   if (!segment || (kind !== 'zebra' && kind !== 'signal') || segment.structure === 'tunnel') {
     return { committed: false, reason: 'unsupported' };
   }
-  const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section);
+  const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking);
   if (!sectionOf(profile, segment.direction).walkable || profile.sidewalk <= 0) {
     return { committed: false, reason: 'unsupported' };
   }

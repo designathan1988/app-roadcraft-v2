@@ -16,6 +16,7 @@ import {
   roadType,
 } from './roadTypes';
 import { type Junction, buildJunction, surfaceMode } from './junction/build';
+import { deriveJunctionLevel } from './junction/derive';
 import { clampSegmentTrims } from './junction/trim';
 import { TRANSITION_BEND } from './junction/transition';
 import { impossibleNodes } from './legAngles';
@@ -82,6 +83,14 @@ export class Network {
   readonly impossible = new Map<NodeId, number>();
   readonly trims = new Map<SegmentId, SegmentTrims>();
   /**
+   * How far along each leg a junction's flat plate reaches, keyed
+   * `node:segment`: the trim the junction's outermost surface would be cut at
+   * were it solved on its own. The surfaces are all cut at the carriageway's
+   * trim now (`junction/derive.ts`); the elevation solver keeps its plate at
+   * the reach it was designed and measured for.
+   */
+  readonly plateReach = new Map<string, number>();
+  /**
    * Nodes where one road carries on at another width, built as a taper rather
    * than as a junction (`junction/transition.ts`).
    */
@@ -121,6 +130,7 @@ export class Network {
     this.junctions.clear();
     this.ribbons.clear();
     this.trims.clear();
+    this.plateReach.clear();
     this.transitions.clear();
 
     const active = [...this.doc.nodes.keys()].filter(
@@ -183,6 +193,16 @@ export class Network {
     // defect 1.5 arriving through the solver instead of through a second
     // formula. The road fuzzer (`tests/fuzz`, category `trimOrder`) sweeps for it.
     this.adoptSolvedTrims(solved);
+    // The plate reaches are reconciled against each segment's length the way
+    // the trims are, so two plates never claim more of a short link than it has.
+    for (const [id, segment] of this.doc.segments) {
+      const keyA = `${segment.a}:${id}`, keyB = `${segment.b}:${id}`;
+      const a = this.plateReach.get(keyA), b = this.plateReach.get(keyB);
+      if (a === undefined && b === undefined) continue;
+      const clamped = clampSegmentTrims({ a: a ?? 0, b: b ?? 0, length: this.polylines.get(this.doc, id).length });
+      if (a !== undefined) this.plateReach.set(keyA, clamped.a);
+      if (b !== undefined) this.plateReach.set(keyB, clamped.b);
+    }
 
     this.buildRibbons();
     this.impossible.clear();
@@ -225,6 +245,8 @@ export class Network {
     for (const [seg, ribbon] of other.ribbons) this.ribbons.set(seg, ribbon);
     this.trims.clear();
     for (const [seg, t] of other.trims) this.trims.set(seg, t);
+    this.plateReach.clear();
+    for (const [key, reach] of other.plateReach) this.plateReach.set(key, reach);
     this.transitions.clear();
     for (const node of other.transitions) this.transitions.add(node);
     this.impossible.clear();
@@ -250,14 +272,25 @@ export class Network {
     const out = new Map<NodeId, Map<SurfaceLevel, Junction>>();
     for (const node of nodes) {
       const byLevel = new Map<SurfaceLevel, Junction>();
-      for (const level of SURFACE_LEVELS) {
+      const build = (level: SurfaceLevel): Junction | null => {
         const maxTrimBySegment = useReconciledTrimCaps
           ? this.trimCapsAt(node, level)
           : undefined;
-        const j = buildJunction(this.doc, this.polylines, node, level, {
+        return buildJunction(this.doc, this.polylines, node, level, {
           radiusScaleBySegment,
           ...(maxTrimBySegment ? { maxTrimBySegment } : {}),
         });
+      };
+      // Solved once, on the carriageway; every outer surface is that outline
+      // carried out to its own edge (`junction/derive.ts`). Only a junction
+      // the carriageway cannot draw as one (a taper, a merge) is built per surface.
+      const carriageway = build(Level.Asphalt);
+      const footprint = build(Level.Casing);
+      footprint?.legs.forEach((leg, i) => this.plateReach.set(`${node}:${leg.seg}`, footprint.trims[i] as number));
+      for (const level of SURFACE_LEVELS) {
+        const j = level === Level.Asphalt
+          ? carriageway
+          : (carriageway ? deriveJunctionLevel(this.doc, this.polylines, carriageway, level) : null) ?? build(level);
         if (j) byLevel.set(level, j);
       }
       if (byLevel.size) out.set(node, byLevel);
@@ -390,7 +423,7 @@ export class Network {
   private buildRibbons(): void {
     for (const [id, seg] of this.doc.segments) {
       const full = this.polylines.get(this.doc, id);
-      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
       const t = this.trims.get(id) ?? { a: {}, b: {} };
       const length = full.length;
 
@@ -600,7 +633,7 @@ export class Network {
 
     const proposed = Math.min(Math.max(crosswalkAt(mouth), clear), length * CROSSWALK_CAP, orderingCap);
     const limit = Math.min(length * CROSSWALK_CAP, orderingCap);
-    const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section);
+    const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking);
     const lateral = profile.width / 2 + profile.sidewalk / 2;
     const line = this.polylines.get(this.doc, seg);
     const walkable = this.crossingWalkable ??= new WalkableSurface(this);

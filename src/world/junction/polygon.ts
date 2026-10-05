@@ -51,7 +51,7 @@ export interface JunctionRing {
 const RING_REACH_FACTOR = 3;
 
 /** The node itself. `leg.origin` is back-projected so every leg agrees on it. */
-function nodeCentre(legs: readonly Leg[]): Vec2 {
+export function nodeCentre(legs: readonly Leg[]): Vec2 {
   let x = 0;
   let y = 0;
   for (const leg of legs) {
@@ -112,7 +112,7 @@ function arcReach(c: Vec2, r: number, ta: Vec2, tb: Vec2, centre: Vec2): number 
 }
 
 /** Rectangle covering a leg's carriageway from the node out to its mouth. */
-function legTongue(leg: Leg, trim: number): Ring | null {
+export function legTongue(leg: Leg, trim: number): Ring | null {
   if (trim <= COARSE_EPS) return null;
   const base = leg.origin;
   const tip = { x: base.x + leg.dir.x * trim, y: base.y + leg.dir.y * trim };
@@ -155,7 +155,7 @@ const CAP_STEPS = 24;
  * Only for a reflex gap. A T has a straight 180-degree back and needs no cap,
  * and a crossroads has no gap over 180 at all.
  */
-function nodeCap(legs: readonly Leg[], centre: Vec2): Ring | null {
+export function nodeCap(legs: readonly Leg[], centre: Vec2): Ring | null {
   const n = legs.length;
   if (n < 2) return null;
 

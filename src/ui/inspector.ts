@@ -1,9 +1,10 @@
+import { PARKING_KINDS, parkingAllowed, type ParkingKind, type SegmentParking } from '@world/parking';
 import type { NodeId, SegmentId } from '@world/ids';
 import { movementKey, type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
 import type { Network } from '@world/network';
 import type { JunctionTopology } from '@world/lanelets';
 import type { CurveShape } from '@core/bezier';
-import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, travelLanes } from '@world/roadTypes';
+import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, travelLanes, type RoadType } from '@world/roadTypes';
 import { METERS_PER_UNIT, UNITS_PER_METER } from '@world/units';
 import type { SimWorld } from '@sim/world';
 import { signalStateFor } from '@sim/signals/query';
@@ -23,6 +24,7 @@ export interface InspectorActions {
   readonly onSetType: (id: SegmentId, type: number) => void;
   readonly onSetLanes?: (id: SegmentId, lanes: number | null) => void;
   readonly onSetSection?: (id: SegmentId, section: RoadSection | undefined) => void;
+  readonly onSetParking?: (id: SegmentId, parking: SegmentParking) => void;
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
   readonly onSetNodeHeight?: (id: NodeId, metres: number) => void;
@@ -145,11 +147,21 @@ export function closeInspector(): void {
   document.getElementById('app')?.classList.remove('inspector-open');
 }
 
+/**
+ * A choice of on-street parking for one side: the kinds this class can carry
+ * (`parkingAllowed`), so a highway offers none and an avenue only parallel bays.
+ */
+function parkingSelect(id: string, label: string, value: ParkingKind, rt: RoadType): string {
+  const options = PARKING_KINDS.filter((kind) => kind === value || parkingAllowed(kind, rt))
+    .map((kind) => `<option value="${kind}"${kind === value ? ' selected' : ''}>${t(`parking.${kind}`)}</option>`).join('');
+  return `<label class="inspect-select">${t(label)} <select id="${id}">${options}</select></label>`;
+}
+
 /** The live numbers for a road, or null when the road no longer exists. */
 function segmentStats(doc: RoadDoc, net: Network, sim: SimWorld, id: SegmentId): string | null {
   const seg = doc.segment(id);
   if (!seg) return null;
-  const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+  const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
   const length = net.polylines.get(doc, id).length;
 
   let occupancy = 0;
@@ -200,7 +212,7 @@ function renderSegment(
     closeInspector();
     return;
   }
-  const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+  const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
   const length = net.polylines.get(doc, id).length;
   setTitle(`${t('inspector.road')} · ${roadTypeName(rt)}`);
 
@@ -219,6 +231,8 @@ function renderSegment(
     `<label class="inspect-select">${t('inspector.heightStart')} <input id="inspectHeightStart" type="number" step="0.1" value="${((doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
     `<label class="inspect-select">${t('inspector.heightEnd')} <input id="inspectHeightEnd" type="number" step="0.1" value="${((doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
     `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
+    parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
+    parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt) +
     `<div id="inspectSection"></div>` +
     `<label class="inspect-range"><span>${t('inspector.curvature')}</span><output id="inspectCurveValue">${curveText(curveValue)}</output><input id="inspectCurve" type="range" min="${-maxCurve}" max="${maxCurve}" step="1" value="${Math.max(-maxCurve, Math.min(maxCurve, curveValue))}" /></label>` +
     `<label class="inspect-range"${seg.curve ? '' : ' data-disabled'}><span>${t('inspector.curvePosition')}</span><output id="inspectCurvePositionValue">${percent(curvePosition)}</output><input id="inspectCurvePosition" type="range" min="0.15" max="0.85" step="0.01" value="${curvePosition}"${seg.curve ? '' : ' disabled'} /></label>` +
@@ -258,6 +272,14 @@ function renderSegment(
   if (heightStart) heightStart.onchange = () => actions.onSetNodeHeight?.(seg.a, Number(heightStart.value));
   if (heightEnd) heightEnd.onchange = () => actions.onSetNodeHeight?.(seg.b, Number(heightEnd.value));
   if (lanes) lanes.onchange = () => actions.onSetLanes?.(id, lanes.value === 'default' ? null : Number(lanes.value));
+  const parkingLeft = document.getElementById('inspectParkingLeft') as HTMLSelectElement | null;
+  const parkingRight = document.getElementById('inspectParkingRight') as HTMLSelectElement | null;
+  const setParking = (): void => {
+    if (!parkingLeft || !parkingRight) return;
+    actions.onSetParking?.(id, { left: parkingLeft.value as ParkingKind, right: parkingRight.value as ParkingKind });
+  };
+  if (parkingLeft) parkingLeft.onchange = setParking;
+  if (parkingRight) parkingRight.onchange = setParking;
   if (reverse) reverse.onclick = () => actions.onReverseDirection?.(id);
   if (duplicate) duplicate.onclick = () => actions.onDuplicate?.(id);
   if (split) split.onclick = () => actions.onSplit?.(id);

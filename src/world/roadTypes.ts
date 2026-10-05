@@ -1,4 +1,5 @@
-import { kmh } from './units';
+import { kmh, m } from './units';
+import { PARKING_DEPTH, parkingAllowed, type ParkingKind, type SegmentParking } from './parking';
 import type { SegmentDirection } from './doc';
 import type { RoadSection, LaneTurnRule } from './roadSection';
 
@@ -51,7 +52,10 @@ export interface RoadType {
   readonly subLanes: number | null;
   /** Whether an overridden description is for a one-way road. */
   readonly subOneWay: boolean;
-  /** Carriageway width, kerb to kerb, in world units. */
+  /**
+   * Carriageway width, kerb face to kerb face, in world units: the travel
+   * lanes, the median and any parking lanes.
+   */
   readonly width: number;
   /** Total lane count, both directions. */
   readonly lanes: number;
@@ -59,6 +63,15 @@ export interface RoadType {
   readonly sidewalk: number;
   /** Central reservation width, in world units. Zero when absent. */
   readonly median: number;
+  /**
+   * Parking lanes inside the kerbs, left and right of the a -> b direction:
+   * their depth from the kerb face (world units, 0 when none) and their kind.
+   * Stock classes have none; a segment adds them (`RoadSegment.parking`).
+   */
+  readonly parkingLeft: number;
+  readonly parkingRight: number;
+  readonly parkingLeftKind: ParkingKind;
+  readonly parkingRightKind: ParkingKind;
   /** Free-flow speed, in world units per second. */
   readonly speedLimit: number;
   /** Higher wins right of way at unsignalised junctions. */
@@ -95,8 +108,8 @@ export const markingColor = (rt: RoadType): string => rt.line;
 export const LANE_LINE = '#eee8d7';
 
 
-/** Extra half-width of the kerb band beyond the asphalt edge. */
-export const CURB_BAND = 0.9;
+/** The kerb stone's width on top, beyond the carriageway edge: 15 cm, as a precast kerb. */
+export const CURB_BAND = m(0.15);
 
 /**
  * Height of the footway above the carriageway, world units.
@@ -107,9 +120,12 @@ export const CURB_BAND = 0.9;
  * same value, `FOOTWAY_RISE` in render/roadSurfaces.ts and `FOOTWAY_DEPTH` in
  * world/elevation.ts, free to drift apart.
  */
-export const FOOTWAY_RISE = 0.36;
-/** Extra half-width of the casing beyond the footway edge. */
-const CASING_BAND = 1.5;
+export const FOOTWAY_RISE = m(0.15);
+/**
+ * Extra half-width of the casing beyond the footway edge: the grass verge that
+ * carries the footway's edge down (or up) to the ground beside it, 1 m.
+ */
+export const CASING_BAND = m(1);
 
 export const ROAD_TYPES: readonly RoadType[] = [
   {
@@ -118,10 +134,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.local',
     subLanes: null,
     subOneWay: false,
-    width: 15,
+    width: m(6),
     lanes: 2,
-    sidewalk: 4.5,
+    sidewalk: m(2),
     median: 0,
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(30),
     priorityRank: 0,
     markings: 'none',
@@ -136,10 +156,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.urban',
     subLanes: null,
     subOneWay: false,
-    width: 22,
+    width: m(8),
     lanes: 2,
-    sidewalk: 5,
+    sidewalk: m(2),
     median: 0,
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(50),
     priorityRank: 1,
     markings: 'center',
@@ -154,10 +178,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.avenue',
     subLanes: null,
     subOneWay: false,
-    width: 34,
+    width: m(14),
     lanes: 4,
-    sidewalk: 6,
+    sidewalk: m(2),
     median: 0,
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(60),
     priorityRank: 2,
     markings: 'lanes',
@@ -172,10 +200,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.boulevard',
     subLanes: null,
     subOneWay: false,
-    width: 46,
+    width: m(18),
     lanes: 4,
-    sidewalk: 7,
-    median: 6,
+    sidewalk: m(3),
+    median: m(2),
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(60),
     priorityRank: 3,
     markings: 'lanes',
@@ -190,10 +222,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.highway',
     subLanes: null,
     subOneWay: false,
-    width: 40,
+    width: m(18),
     lanes: 4,
-    sidewalk: 1.2,
-    median: 4,
+    sidewalk: m(1),
+    median: m(2),
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(100),
     priorityRank: 4,
     markings: 'lanes',
@@ -208,10 +244,14 @@ export const ROAD_TYPES: readonly RoadType[] = [
     subKey: 'road.sub.ramp',
     subLanes: null,
     subOneWay: true,
-    width: 11,
+    width: m(4),
     lanes: 1,
-    sidewalk: 1.2,
+    sidewalk: m(1),
     median: 0,
+    parkingLeft: 0,
+    parkingRight: 0,
+    parkingLeftKind: 'none',
+    parkingRightKind: 'none',
     speedLimit: kmh(60),
     priorityRank: 3,
     markings: 'none',
@@ -238,8 +278,37 @@ export const MAX_TRAVEL_LANES = 8;
  * A configured count is the total number of drivable lanes.  Two-way roads
  * therefore split it across directions, while one-way roads use all of it.
  * Older documents omit the count and retain their exact class profile.
+ *
+ * Parking lanes (`parking`, left and right of a -> b) widen the carriageway
+ * kerb to kerb; the travel lanes keep their width and sit between them. A
+ * kind the class cannot carry (`parkingAllowed`) is dropped.
  */
 export function roadProfile(
+  typeIndex: number,
+  configuredLanes?: number | null,
+  direction: SegmentDirection = 'both',
+  section?: RoadSection,
+  parking?: SegmentParking,
+): RoadType {
+  const travel = travelProfile(typeIndex, configuredLanes, direction, section);
+  if (!parking) return travel;
+  // A kind the class cannot carry is dropped.
+  const fit = (kind: ParkingKind): ParkingKind => parkingAllowed(kind, travel) ? kind : 'none';
+  const left = fit(parking.left);
+  const right = fit(parking.right);
+  if (left === 'none' && right === 'none') return travel;
+  const parkingLeft = PARKING_DEPTH[left], parkingRight = PARKING_DEPTH[right];
+  return {
+    ...travel,
+    width: travel.width + parkingLeft + parkingRight,
+    parkingLeft,
+    parkingRight,
+    parkingLeftKind: left,
+    parkingRightKind: right,
+  };
+}
+
+function travelProfile(
   typeIndex: number,
   configuredLanes?: number | null,
   direction: SegmentDirection = 'both',
@@ -247,7 +316,7 @@ export function roadProfile(
 ): RoadType {
   const base = roadType(typeIndex);
   if (section) {
-    const standard = roadProfile(typeIndex, configuredLanes, direction);
+    const standard = travelProfile(typeIndex, configuredLanes, direction);
     const median = direction === 'both' && standard.lanes >= 2 ? section.median : 0;
     return {
       ...standard,
@@ -311,8 +380,21 @@ export const lanesPerDirection = (rt: RoadType): number =>
 export const travelLanes = (rt: RoadType, direction: SegmentDirection): number =>
   direction === 'both' ? lanesPerDirection(rt) : rt.lanes;
 
+/** Width of one travel lane: the carriageway less its median and parking lanes. */
 export const laneWidth = (rt: RoadType): number =>
-  (rt.width - rt.median) / rt.lanes;
+  (rt.width - rt.median - rt.parkingLeft - rt.parkingRight) / rt.lanes;
+
+/** Width of the travel lanes and median together, between the parking lanes. */
+export const travelWidth = (rt: RoadType): number =>
+  rt.width - rt.parkingLeft - rt.parkingRight;
+
+/**
+ * Lateral offset of the travel way's centre from the road centreline, in the
+ * a -> b frame (positive: left). Zero unless the two sides park differently:
+ * the kerbs stay symmetric about the centreline and the lanes move over.
+ */
+export const travelShift = (rt: RoadType): number =>
+  (rt.parkingRight - rt.parkingLeft) / 2;
 
 /** Materializes the current profile for the first authored edit without changing old maps. */
 export function sectionFromProfile(rt: RoadType): RoadSection {
@@ -326,13 +408,18 @@ export function sectionFromProfile(rt: RoadType): RoadSection {
  * Signed lateral offset of a lane's centreline from the road centreline.
  * For two-way roads lane 0 is the innermost (nearest the centre); higher
  * indices move outward. One-way lanes are centred as a complete carriageway.
+ *
+ * `forward` says which frame the offset is wanted in: true for a -> b (the
+ * segment's own direction), false for a lane read along b -> a. It matters
+ * only when the two sides park differently and the travel way is off centre.
  */
-export function laneOffset(rt: RoadType, lane: number, direction: SegmentDirection = 'both'): number {
+export function laneOffset(rt: RoadType, lane: number, direction: SegmentDirection = 'both', forward = true): number {
   const count = travelLanes(rt, direction);
   const idx = Math.max(0, Math.min(count - 1, lane));
+  const shift = travelShift(rt) * (forward ? 1 : -1);
   // A one-way carriageway is centred on its road centreline instead of being
   // pushed onto the right-hand half reserved by two-way traffic. `perp` is the
   // LEFT normal in this coordinate system, so right-hand traffic is negative.
-  if (direction !== 'both') return -laneWidth(rt) * (idx - (count - 1) / 2);
-  return -(rt.median / 2 + laneWidth(rt) * (idx + 0.5));
+  if (direction !== 'both') return shift - laneWidth(rt) * (idx - (count - 1) / 2);
+  return shift - (rt.median / 2 + laneWidth(rt) * (idx + 0.5));
 }

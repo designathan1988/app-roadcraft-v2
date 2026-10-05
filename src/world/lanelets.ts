@@ -213,7 +213,7 @@ export class LaneletGraph {
       // pass silently through a bore that is not drawn. The segment itself
       // stays in the document, authored and saved normally.
       if (seg.structure === 'tunnel' && !TUNNELS_DRAWN) continue;
-      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
 
       for (const forward of [true, false]) {
         if (!allowsDirection(seg.direction, forward)) continue;
@@ -275,7 +275,7 @@ export class LaneletGraph {
           + `|${seg.structure ?? '-'}`
           + `|${section ? `${section.laneWidth},${section.sidewalk},${section.median},${section.speedKmh},${section.priority}` : '-'}`
           + `|${section?.turnsForward?.join(',') ?? '-'}|${section?.turnsBackward?.join(',') ?? '-'}`
-          + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}`
+          + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}|${rt.parkingLeft},${rt.parkingRight}`
           + `|${doc.degree(to)}|${crossing ? `${crossing.kind},${crossing.segment}` : '-'}`
           + `|${s0}|${s1}|${new Digest().addAll(full.xy).value()}`;
         let lanes = previous.get(key);
@@ -285,7 +285,7 @@ export class LaneletGraph {
           for (let lane = 0; lane < lpd; lane++) {
             // Lane 0 is innermost; negative `perp` offset is the right of travel.
             const laneCentre = Polyline.fromPoints(
-              offsetPolyline(pts, laneOffset(rt, lane, seg.direction)),
+              offsetPolyline(pts, laneOffset(rt, lane, seg.direction, forward)),
             );
             lanes.push({
               id: laneletId(segId, from, to, lane),
@@ -468,12 +468,12 @@ export class LaneletGraph {
             road.includes(inLane.segment) && road.includes(outLane.segment);
           const inSegment = doc.requireSegment(inLane.segment);
           const inLanes = travelLanes(
-            roadProfile(inSegment.type, inSegment.lanes, inSegment.direction, inSegment.section),
+            roadProfile(inSegment.type, inSegment.lanes, inSegment.direction, inSegment.section, inSegment.parking),
             inSegment.direction,
           );
           const outSegment = doc.requireSegment(outLane.segment);
           const outLanes = travelLanes(
-            roadProfile(outSegment.type, outSegment.lanes, outSegment.direction, outSegment.section),
+            roadProfile(outSegment.type, outSegment.lanes, outSegment.direction, outSegment.section, outSegment.parking),
             outSegment.direction,
           );
           if (node.blockedMovements.includes(movementKey(inLane.segment, outLane.segment))) continue;
@@ -583,7 +583,7 @@ function shouldSignalise(
   return incident.length >= 3 &&
     (incident.length >= 4 || incident.some((s) => {
       const segment = doc.requireSegment(s);
-      return roadProfile(segment.type, segment.lanes, segment.direction, segment.section).lanes >= 4;
+      return roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking).lanes >= 4;
     }));
 }
 

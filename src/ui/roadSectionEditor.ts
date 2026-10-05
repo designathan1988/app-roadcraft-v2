@@ -49,9 +49,10 @@ export function mountRoadSectionEditor(
   draw();
   panel.append(diagram);
   const controls: readonly [keyof typeof ROAD_SECTION_LIMITS, number, number, string][] = [
-    ['laneWidth', 0.1, UNITS_PER_METER, 'm'],
-    ['sidewalk', 0.02, UNITS_PER_METER, 'm'],
-    ['median', 0.1, UNITS_PER_METER, 'm'],
+    // Whole metres: the universal grid's subdivision.
+    ['laneWidth', 1, UNITS_PER_METER, 'm'],
+    ['sidewalk', 1, UNITS_PER_METER, 'm'],
+    ['median', 1, UNITS_PER_METER, 'm'],
     ['speedKmh', 5, 1, 'km/h'],
     ['priority', 1, 1, ''],
   ];

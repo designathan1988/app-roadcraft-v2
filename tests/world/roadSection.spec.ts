@@ -7,7 +7,8 @@ import { History, restoreSnapshot } from '../../src/editor/history';
 import { duplicateSegment, splitSegment } from '../../src/editor/commit';
 import { normalizeRoadSection } from '../../src/world/roadSection';
 
-const section = { laneWidth: 9, sidewalk: 10, median: 5, speedKmh: 40, priority: 3 };
+// Whole metres of the universal grid: 4 m lanes, 4 m footways, a 2 m median.
+const section = { laneWidth: 10, sidewalk: 10, median: 5, speedKmh: 40, priority: 3 };
 function street() {
   const doc = new RoadDoc();
   const a = doc.addNode({ x: -150, y: 0 });
@@ -21,8 +22,10 @@ function street() {
 describe('authored road cross-section', () => {
   it('rejects malformed sections and bounds finite dimensions', () => {
     expect(normalizeRoadSection({ ...section, laneWidth: NaN })).toBeUndefined();
-    expect(normalizeRoadSection({ laneWidth: 9 })).toBeUndefined();
-    expect(normalizeRoadSection({ ...section, sidewalk: -5, median: 100 })).toEqual({ ...section, sidewalk: 1.2, median: 20 });
+    expect(normalizeRoadSection({ laneWidth: 10 })).toBeUndefined();
+    expect(normalizeRoadSection({ ...section, sidewalk: -5, median: 100 })).toEqual({ ...section, sidewalk: 2.5, median: 20 });
+    // Off-grid widths come back as whole metres.
+    expect(normalizeRoadSection({ ...section, laneWidth: 8.6 })?.laneWidth).toBe(7.5);
   });
 
   it('centres one-way lanes and restores the authored median when changed back', () => {
@@ -30,7 +33,7 @@ describe('authored road cross-section', () => {
     doc.setSegmentSection(segment.id, section);
     doc.setSegmentDirection(segment.id, 'aToB');
     let profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section);
-    expect(profile.width).toBe(18);
+    expect(profile.width).toBe(20);
     expect(profile.median).toBe(0);
     doc.setSegmentDirection(segment.id, 'both');
     profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section);
@@ -55,12 +58,12 @@ describe('authored road cross-section', () => {
     const graph = new LaneletGraph();
     graph.build(doc, net);
     const profile = net.ribbons.get(segment.id)!.road;
-    expect(profile.width).toBe(23);
+    expect(profile.width).toBe(25);
     expect(profile.sidewalk).toBe(10);
     expect(profile.priorityRank).toBe(3);
     expect(graph.lanelets.size).toBe(2);
     for (const lane of graph.lanelets.values()) {
-      expect(Math.abs(lane.centre.sampleAt(lane.length / 2).p.y)).toBeCloseTo(7);
+      expect(Math.abs(lane.centre.sampleAt(lane.length / 2).p.y)).toBeCloseTo(7.5);
       expect(Math.abs(lane.centre.sampleAt(lane.length / 2).p.y) + section.laneWidth / 2).toBeLessThanOrEqual(profile.width / 2);
       expect(lane.speedLimit).toBeCloseTo(40 / 3.6 / 0.4);
     }
@@ -76,13 +79,13 @@ describe('authored road cross-section', () => {
     expect(doc.revision).toBeGreaterThan(oldRevision);
     expect(doc.trafficRevision).toBeGreaterThan(oldTraffic);
     const saved = doc.toJSON();
-    doc.setSegmentSection(segment.id, { ...section, sidewalk: 12 });
+    doc.setSegmentSection(segment.id, { ...section, sidewalk: 12.5 });
     expect(saved.segments[0]!.section).toEqual(section);
     expect(RoadDoc.fromJSON(saved).requireSegment(segment.id).section).toEqual(section);
     restoreSnapshot(doc, history.undo(doc)!, net);
     expect(doc.requireSegment(segment.id).section).toBeUndefined();
     restoreSnapshot(doc, history.redo(doc)!, net);
-    expect(doc.requireSegment(segment.id).section?.sidewalk).toBe(12);
+    expect(doc.requireSegment(segment.id).section?.sidewalk).toBe(12.5);
   });
 
   it('preserves authored widths when splitting and duplicating', () => {

@@ -8,6 +8,7 @@ import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
 import { ZONE_CELL } from '@world/zoneGrid';
+import { GRID_STEP, snapToGrid } from '@world/grid';
 
 export type AnchorKind = 'node' | 'segment' | 'free';
 
@@ -41,21 +42,24 @@ const LENGTH_TOLERANCE = 4.2;
  *
  * - `angles`: square to the world and to the roads it starts from or lands
  *   on, 45 degrees, and every 15 degrees;
- * - `zoneLength`: the length in whole zone cells (8 m), so the zoning grid
+ * - `grid`: points on the 1 m subdivision of the universal grid (`grid.ts`),
+ *   the start of a road as well as its end;
+ * - `zoneLength`: the length in whole grid cells (10 m), so the zoning grid
  *   along the road comes out in whole cells, as CS2's "zone cell length".
  */
 export interface RoadSnap {
   readonly on: boolean;
   readonly angles: boolean;
+  readonly grid: boolean;
   readonly zoneLength: boolean;
 }
 const ROAD_SNAP_KEY = 'roadcraft.roadSnap';
-let roadSnapState: RoadSnap = { on: true, angles: true, zoneLength: true };
+let roadSnapState: RoadSnap = { on: true, angles: true, grid: true, zoneLength: true };
 try {
   const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(ROAD_SNAP_KEY);
   if (raw) {
     const v = JSON.parse(raw) as Partial<RoadSnap>;
-    roadSnapState = { on: v.on !== false, angles: v.angles !== false, zoneLength: v.zoneLength !== false };
+    roadSnapState = { on: v.on !== false, angles: v.angles !== false, grid: v.grid !== false, zoneLength: v.zoneLength !== false };
   }
 } catch {
   // Not kept: the defaults stand.
@@ -124,7 +128,7 @@ export function findAnchor(
     // remaining topologically disconnected.
     const segRadius = Math.max(
       26 / zoom,
-      casingHalf(roadProfile(seg.type, seg.lanes, seg.direction, seg.section)),
+      casingHalf(roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking)),
     );
     const pl = net.polylines.get(doc, id);
     // Reject by bounding box first. `closestPoint` walks every flattened point
@@ -161,16 +165,27 @@ export function findAnchor(
   return best;
 }
 
+/**
+ * Where a road starts: a junction or a road it is drawn from keeps its exact
+ * point; open ground is moved onto the 1 m grid when the grid snap is on.
+ */
+export function snapRoadStart(anchor: Anchor): Anchor {
+  const snap = roadSnapState;
+  if (anchor.kind !== 'free' || !snap.on || !snap.grid) return anchor;
+  return { kind: 'free', at: snapToGrid(anchor.at) };
+}
+
 /** Free road drawing follows the pointer exactly, snapping only to compatible networks. */
 export function snapRoadEndpoint(
   doc: RoadDoc, net: Network, start: Anchor, raw: Vec2, zoom: number, heightOffset: number,
 ): SnapResult {
   const snap = roadSnapState;
-  if (snap.on && (snap.angles || snap.zoneLength)) {
+  if (snap.on && (snap.angles || snap.zoneLength || snap.grid)) {
     return snapEndpoint(doc, net, start, raw, zoom, {
       heightOffset,
       angles: snap.angles,
       lengthStep: snap.zoneLength ? ZONE_CELL : 0,
+      grid: snap.grid,
     });
   }
   const anchor = findAnchor(doc, net, raw, zoom, undefined, heightOffset);
@@ -301,6 +316,8 @@ export interface SnapOptions {
    * Absent: the old soft quantum - 10 units when within 4.2 of it. 0: none.
    */
   readonly lengthStep?: number;
+  /** The end on the 1 m grid (`grid.ts`). Default off. */
+  readonly grid?: boolean;
 }
 
 export function snapEndpoint(
@@ -413,12 +430,39 @@ export function snapEndpoint(
     if (steps > 0) length = steps * options.lengthStep;
   }
 
+  let at = addScaled(start.at, fromAngle(angle), length);
+  if (options.grid) at = onGridAlong(start.at, at, angle, length, options.lengthStep ?? 0);
   return {
-    at: addScaled(start.at, fromAngle(angle), length),
+    at,
     guide,
-    angleDeg: (angle * 180) / Math.PI,
-    length,
+    angleDeg: (angleOf(sub(at, start.at)) * 180) / Math.PI,
+    length: dist(start.at, at),
   };
+}
+
+/**
+ * The end of a road moved onto the 1 m grid.
+ *
+ * Along a world axis or a diagonal from a start on the grid, the grid points
+ * lie ON the snapped heading, so the end slides along it to the nearest one
+ * (a whole number of metres; of whole cells when the length snap asks for it)
+ * and the angle stays exact. At any other heading the nearest grid point is
+ * taken, and the heading moves the little it must.
+ */
+function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengthStep: number): Vec2 {
+  const startOnGrid = Math.abs(start.x / GRID_STEP - Math.round(start.x / GRID_STEP)) < 1e-6 &&
+    Math.abs(start.y / GRID_STEP - Math.round(start.y / GRID_STEP)) < 1e-6;
+  const eighth = Math.round(angle / (Math.PI / 4));
+  if (startOnGrid && Math.abs(angle - eighth * (Math.PI / 4)) < 1e-9) {
+    const diagonal = eighth % 2 !== 0;
+    const unit = diagonal ? GRID_STEP * Math.SQRT2 : GRID_STEP;
+    // A length snap in whole cells on an axis is already on the grid.
+    const step = !diagonal && lengthStep > 0 ? lengthStep : unit;
+    const steps = Math.max(1, Math.round(length / step));
+    const d = fromAngle(eighth * (Math.PI / 4));
+    return snapToGrid(addScaled(start, d, steps * step));
+  }
+  return snapToGrid(at);
 }
 
 /**

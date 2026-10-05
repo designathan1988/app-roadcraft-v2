@@ -52,6 +52,30 @@ function bodyFrame(front: number, length: number, inbound: Lanelet, crossing: La
   return outbound.centre.sampleAt(centre - crossing.length);
 }
 
+/**
+ * How far a body may overhang the kerb face: 0.9 units (36 cm). The check
+ * always accepted the asphalt and the kerb stone, and the kerb stone was 36 cm
+ * wide; it is now a real 15 cm precast kerb, so the same overhang - a bus's
+ * front corner sweeping the edge of the footway on a turn - is stated here as
+ * a distance instead of borrowed from the stone's width.
+ */
+const OVERHANG = 0.9;
+
+/** Distance from a point to the nearest edge of a set of polygons. */
+function edgeDistance(polys: readonly (readonly (readonly number[])[])[][], p: Vec2): number {
+  let best = Infinity;
+  for (const poly of polys) for (const ring of poly) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const ax = ring[j]![0]!, ay = ring[j]![1]!, bx = ring[i]![0]!, by = ring[i]![1]!;
+      const dx = bx - ax, dy = by - ay;
+      const len = dx * dx + dy * dy;
+      const t = len > 0 ? Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / len)) : 0;
+      best = Math.min(best, Math.hypot(p.x - (ax + dx * t), p.y - (ay + dy * t)));
+    }
+  }
+  return best;
+}
+
 describe('physical junction movements', () => {
   it('records complete body clearance across mixed junction shapes', () => {
     const findings: { configuration: string; origin: string; fromLane: number; turn: string;
@@ -79,7 +103,8 @@ describe('physical junction movements', () => {
               y: frame.p.y + frame.t.y * along * archetype.length
                 + frame.t.x * across * archetype.width };
               checked++;
-              if (!contains(asphalt, point) && !contains(kerb, point) && !firstOutside) firstOutside = point;
+              if (!contains(asphalt, point) && !contains(kerb, point) && edgeDistance(asphalt, point) > OVERHANG &&
+                !firstOutside) firstOutside = point;
             }
           }
           findings.push({ configuration: config.name, origin: String(inbound.segment),

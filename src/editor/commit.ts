@@ -1,3 +1,4 @@
+import { flipParking, sameParking, type SegmentParking } from '@world/parking';
 import {
   controlPoint,
   flattenSegment,
@@ -60,6 +61,8 @@ export function commitRoadPath(
   pieces: readonly RoadPathPiece[],
   /** Lanes for every segment laid, or null for the class's own profile. */
   lanes: number | null = null,
+  /** Parking left and right of the drawing direction, for every segment laid. */
+  parking?: SegmentParking,
 ): DraftResult {
   if (!pieces.length || !Number.isInteger(type) || type < 0 || type >= ROAD_TYPES.length) {
     return { committed: false, reason: 'degenerate' };
@@ -94,6 +97,7 @@ export function commitRoadPath(
       { start: currentHeight, end: nextHeight,
         smoothEnd: i < pieces.length - 1 },
       lanes,
+      parking,
     );
     if (!result.committed && result.reason !== 'duplicate') return result;
     committed ||= result.committed;
@@ -251,6 +255,7 @@ function commitDraftInPlace(
   structure: RoadStructure,
   heights?: { readonly start: number; readonly end: number; readonly smoothEnd?: boolean },
   lanes: number | null = null,
+  parking?: SegmentParking,
 ): DraftResult {
   const endpoints = materializeEndpoints(doc, net, start, end, heights);
   if (!endpoints || endpoints[0] === endpoints[1]) {
@@ -380,7 +385,7 @@ function commitDraftInPlace(
     const pieceCurve = curveShapeForRange(a, b, curve, fromPoint, toPoint, from.q, to.q);
     if (alreadyJoined(doc, from.node, to.node, pieceCurve, structure)) continue;
     const direction = ROAD_TYPES[type]?.lanes === 1 ? 'aToB' : 'both';
-    if (doc.addSegment(from.node, to.node, type, pieceCurve, from.s, direction, lanes, structure)) made++;
+    if (doc.addSegment(from.node, to.node, type, pieceCurve, from.s, direction, lanes, structure, undefined, parking)) made++;
   }
 
   if (!made) return { committed: false, reason: 'duplicate' };
@@ -612,6 +617,11 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
     !sameRoadSectionIgnoringArrows(first.section, second.section) || first.direction !== 'both' || second.direction !== 'both') return false;
   const a = first.a === nodeId ? first.b : first.a;
   const b = second.a === nodeId ? second.b : second.a;
+  // Parking read along a -> b on both pieces: a piece stored the other way
+  // round has its sides swapped.
+  const parkingFirst = first.a === a ? first.parking : flipParking(first.parking);
+  const parkingSecond = second.b === b ? second.parking : flipParking(second.parking);
+  if (!sameParking(parkingFirst, parkingSecond)) return false;
   if (a === b || first.structure !== second.structure || alreadyJoined(doc, a, b, null, first.structure)) return false;
   const dashOrigin = Math.min(first.dashOrigin, second.dashOrigin);
   const bansAtA = [...(doc.node(a)?.blockedMovements ?? [])];
@@ -631,7 +641,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
     ...(towardB ? { turnsForward: [...towardB] } : {}),
     ...(towardA ? { turnsBackward: [...towardA] } : {}),
   };
-  const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, section);
+  const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, section, parkingFirst);
   if (!joined) return false;
   doc.carryMovements(a, bansAtA, first.id, joined.id);
   doc.carryMovements(b, bansAtB, second.id, joined.id);
@@ -676,6 +686,7 @@ export function duplicateSegment(doc: RoadDoc, net: Network, id: SegmentId): Seg
     segment.lanes,
     segment.structure,
     segment.section,
+    segment.parking,
   );
   if (copy) return copy.id;
 
@@ -789,6 +800,7 @@ function splitSegmentAtCuts<Tag>(
       seg.lanes,
       seg.structure,
       sectionForPiece(seg.section, i === 0, i + 2 === nodeIds.length),
+      seg.parking,
     );
     if (piece) pieces.push(piece.id);
   }

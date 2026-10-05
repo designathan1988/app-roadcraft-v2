@@ -3,7 +3,8 @@ import { type Aabb, expand as expandBox } from '@core/aabb';
 import type { Polyline } from '@core/polyline';
 import type { NodeId, SegmentId } from './ids';
 import type { Network } from './network';
-import { FOOTWAY_RISE, Level, casingHalf } from './roadTypes';
+import { CASING_BAND, FOOTWAY_RISE, Level, casingHalf } from './roadTypes';
+import { m } from './units';
 import {
   ROAD_GROUND_CLEARANCE,
   TUNNEL_BORE,
@@ -407,6 +408,11 @@ const CUT_SHOULDER = 16;
  * player sees at the rim is a shoulder rather than a hairline of sky.
  */
 const SHAPE_DROP = 1.5;
+/**
+ * How far under the carriageway the ground beside a road is laid: 10 cm, so
+ * no ground interpolated across a terrain cell can stand above the asphalt.
+ */
+const BESIDE_DROP = m(0.1);
 
 /**
  * Solves the height of every road surface in the network.
@@ -472,7 +478,21 @@ export function buildRoadElevation(
     // profiles simply meet at the node, as two spans of one road do.
     const reachOf = (node: NodeId, trim: number | undefined): number => {
       if (net.doc.node(node)?.smooth && !net.junctions.has(node)) return 0;
-      return (net.transitions.has(node) ? 0 : (trim ?? 0)) + PLATE_MARGIN;
+      if (net.transitions.has(node)) return PLATE_MARGIN;
+      // The plate is flat over the junction's whole footprint, its footways
+      // and verges included (`Network.plateReach`).
+      let reach = trim ?? 0;
+      const outer = net.junctions.get(node)?.get(Level.Casing);
+      const inner = net.junctions.get(node)?.get(Level.Asphalt);
+      if (outer && inner) {
+        let extra = 0;
+        for (const leg of outer.legs) {
+          const carriage = inner.legs.find((l) => l.seg === leg.seg);
+          if (carriage) extra = Math.max(extra, leg.hw - carriage.hw);
+        }
+        reach += extra;
+      }
+      return reach + PLATE_MARGIN;
     };
     const plateA = Math.min(length * 0.45, reachOf(segment.a, trims?.a[Level.Casing]));
     const plateB = Math.min(length * 0.45, reachOf(segment.b, trims?.b[Level.Casing]));
@@ -916,7 +936,16 @@ export function buildRoadElevation(
         const sunken = isSunken(profile.structure) ||
           (profile.manualVertical && naturalGround - heightAtArc(profile, hit.s) > 0);
         const surface = heightAtArc(profile, hit.s);
-        const height = surface - SHAPE_DROP;
+        // Under the road (carriageway and footway) the ground is pulled well
+        // below the deck, where nothing can show through it. Beyond the
+        // footway's back edge it is brought up to just under the carriageway's
+        // level: the verge then carries a gentle 25 cm fall from the footway,
+        // not a 60 cm wall, and the road no longer reads as a slab on the
+        // grass. Not to the footway's level: the terrain is a 6.4 m grid, and
+        // a corner vertex at footway height lifts the interpolated ground
+        // through the asphalt of the kerb return beside it.
+        const beside = !sunken && distance > profile.half - CASING_BAND;
+        const height = beside ? surface - BESIDE_DROP : surface - SHAPE_DROP;
         // The batter is sized from the earthwork it has to carry away, so a
         // shallow fill blends out quickly and a deep cut opens out properly.
         const shoulder = sunken
@@ -1074,6 +1103,42 @@ function solveGround(profile: Profile, nodeHeight: Map<NodeId, number>): void {
       - PLATE_TANGENT_SHARE * slopeA * fromA * Math.exp(-fromA / PLATE_TANGENT_REACH)
       + PLATE_TANGENT_SHARE * slopeB * fromB * Math.exp(-fromB / PLATE_TANGENT_REACH);
   }
+  roundPlateJoins(profile);
+}
+
+/**
+ * The join of a level plate and the grade beyond it, rounded into a vertical
+ * curve. `roundGradeBreaks` narrows its window to nothing at a plate edge so
+ * as not to move the plate, which leaves the join itself a corner - level,
+ * then the full grade from one station to the next (0.062 of grade change
+ * inside 3 m on the inspection map). Here the window reaches into the plate,
+ * which is level, over one curve's reach beyond its edge only; the plate is
+ * never written.
+ */
+function roundPlateJoins(profile: Profile): void {
+  const { h, step, length } = profile;
+  const radius = Math.max(1, Math.round(VERTICAL_CURVE_REACH / Math.max(1e-3, step)));
+  const source = h.slice();
+  const last = source.length - 1;
+  const edgeA = profile.plateA / step;
+  const edgeB = (length - profile.plateB) / step;
+  // Only where the slope limiter took hold right at the edge: there the grade
+  // turns from level to near its limit in one station.
+  const steep = (from: number, dir: 1 | -1): boolean => {
+    const i0 = Math.round(from), i1 = i0 + dir * radius;
+    if (i1 < 0 || i1 > last) return false;
+    return Math.abs((source[i1] as number) - (source[i0] as number)) / (radius * step) >= 0.75 * GROUND_GRADE;
+  };
+  const nearA = steep(Math.ceil(edgeA), 1), nearB = steep(Math.floor(edgeB), -1);
+  for (let i = 0; i <= last; i++) {
+    if (i <= edgeA || i >= edgeB) continue;
+    if (!((nearA && i - edgeA <= radius) || (nearB && edgeB - i <= radius))) continue;
+    const r = Math.min(radius, i, last - i);
+    if (r < 1) continue;
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += source[i + k] as number;
+    h[i] = sum / (r * 2 + 1);
+  }
 }
 
 /**
@@ -1090,7 +1155,7 @@ function solveGround(profile: Profile, nodeHeight: Map<NodeId, number>): void {
  * `raise` keeps only what the rounding lifts: a deck must not sink towards
  * what it clears, so its sags are rounded and its crests left to `smoothMin`.
  */
-function roundGradeBreaks(profile: Profile, mode: 'both' | 'raise'): void {
+function roundGradeBreaks(profile: Profile, mode: 'both' | 'raise', intoPlates = false): void {
   const { h, step, length } = profile;
   const radius = Math.max(1, Math.round(VERTICAL_CURVE_REACH / Math.max(1e-3, step)));
   const source = h.slice();
@@ -1099,7 +1164,13 @@ function roundGradeBreaks(profile: Profile, mode: 'both' | 'raise'): void {
   const edgeB = (length - profile.plateB) / step;
   for (let i = 0; i <= last; i++) {
     if (i <= edgeA || i >= edgeB) continue;
-    const r = Math.min(radius, Math.floor(i - edgeA), Math.floor(edgeB - i));
+    // On a road at grade the window reaches INTO a plate: the plate is level,
+    // so averaging over it rounds the join of plate and grade into a vertical
+    // curve instead of leaving a corner there (level, then 11 %, between two
+    // stations), and the plate itself, which is never written, stays pinned.
+    const r = intoPlates
+      ? Math.min(radius, i, last - i)
+      : Math.min(radius, Math.floor(i - edgeA), Math.floor(edgeB - i));
     if (r < 1) continue;
     let sum = 0;
     for (let k = -r; k <= r; k++) sum += source[i + k] as number;

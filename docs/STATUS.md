@@ -62,9 +62,31 @@ and they have seen it.
   (`roadcraft.mapsCleared=2026-10-04`).
 
 ### Roads and terrain
-- Freeform roads; road snapping on by default (`editor/snap.ts`: on/off, angles,
-  length in whole 8 m zone cells). Zone cell 8 m, depth 4 cells. Road widths kerb
-  to kerb with footways: local 9.6 m, urban 12.8, avenue 18.4, boulevard 24.
+- **Universal grid (2026-10-05):** cells of 10 x 10 m cut into 1 m subdivisions
+  (`world/grid.ts`). Road profiles in whole metres, footway to footway: local
+  6 + 2 x 2 = 10 m, urban 8 + 2 x 2 = 12, avenue 14 (4 x 3.5) + 2 x 2 = 18,
+  boulevard 18 (4 x 4 + 2 m median) + 2 x 3 = 24, highway 18 + 2 x 1, ramp 4 + 2 x 1.
+  Authored sections round to whole metres. Zone cell 10 m, depth 4 cells (40 m).
+  Road snapping on by default (`editor/snap.ts`: on/off, angles, points on the
+  1 m grid - start and end -, length in whole 10 m cells), all four in the road
+  tool's options.
+- **Junctions are solved once, on the kerb line** (`world/junction/derive.ts`):
+  kerb, footway and verge are offsets of the carriageway's outline, cut at the
+  same trims; the kerb follows the return concentrically; the back of the
+  footway and the verge turn a square corner (rounded where a square would
+  pinch the footway, at acute bends). Kerb returns flattened at 8 mm.
+- **Heights:** 15 cm precast kerb (15 cm wide), footway level with it, the
+  verge a grass batter from the footway down to the drawn ground (no wall);
+  ground beside a road laid 10 cm under the carriageway, pulled 60 cm under it
+  only beneath the road. Lane lines stop at the stop line.
+- **On-street parking (2026-10-05), parallel to the kerb only** (the player's
+  decision): per segment and side (`RoadSegment.parking`, `world/parking.ts`),
+  a 2 m lane inside the kerbs, 6 m bays (`world/parkingLayout.ts`) following
+  the road round curves, clear 5 m of junction kerb lines and of crossings and
+  in front of lots that hold parking, yellow no-parking line elsewhere along a
+  parking kerb. Chosen in the road tool (none / both sides / right / left) and
+  per segment in the inspector. Old maps' 45/90 degree values load as parallel.
+  NOT yet: cars of the agents engine do not use street bays.
 - A raised road drawn in one stroke comes out continuous; a crossing joins, passes
   over with clearance, or is refused.
 - Terrain brush is opacity per stroke (strength 1-160); a cut deeper than 18 m is
@@ -110,6 +132,12 @@ and they have seen it.
   removed. There is no loading screen.
 
 ## Open, by area
+
+- **Crowd engine (`?people=crowd`) on the 15 cm kerb:** two crowd scenarios
+  (`bidirectional-10`, `group`) regress with the real kerb width: `crowdNav.ts`
+  widens each footway strip by `CURB_BAND`, which shrank from 36 to 15 cm. The
+  engine is to be replaced (agents slice 3); the default People engine is not
+  affected.
 
 - **Planet (the world as a real sphere): put aside on branch `planeta`
   (2026-10-05, the player's decision).** The game is the flat city again;

@@ -2,7 +2,7 @@ import { type Vec2, addScaled, angleOf } from '@core/vec2';
 import { LEG_TRIM_CAP } from '../approach';
 import type { RoadDoc, SegmentDirection } from '../doc';
 import type { NodeId, SegmentId } from '../ids';
-import { type RoadType, type SurfaceLevel, halfWidth, roadProfile, sidewalkHalf } from '../roadTypes';
+import { type RoadType, type SurfaceLevel, halfWidth, roadProfile, sidewalkHalf, travelShift } from '../roadTypes';
 import { type PolylineCache, frameFromNode, farNode, segmentStartsAt } from '../geometry';
 
 /**
@@ -42,6 +42,11 @@ export interface Leg {
    */
   readonly approaching: boolean;
   readonly road: RoadType;
+  /**
+   * The travel way's offset from the centreline in this leg's frame (+nrm
+   * positive): non-zero only when the two sides park differently.
+   */
+  readonly shift: number;
 }
 
 export interface LegBuildOptions {
@@ -87,7 +92,7 @@ export function buildLegs(
 
   const legs: Leg[] = incident.map((segId) => {
     const seg = doc.requireSegment(segId);
-    const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+    const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
     const pl = cache.get(doc, segId);
     const startsHere = segmentStartsAt(seg, nodeId);
     const hw = halfWidth(rt, level);
@@ -123,6 +128,7 @@ export function buildLegs(
         seg.direction === 'both' ||
         (startsHere ? seg.direction === 'bToA' : seg.direction === 'aToB'),
       road: rt,
+      shift: travelShift(rt) * (startsHere ? 1 : -1),
     };
   });
 

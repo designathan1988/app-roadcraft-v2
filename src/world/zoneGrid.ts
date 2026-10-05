@@ -5,12 +5,14 @@ import type { Network } from './network';
 import { carriesPedestrians } from './pedestrianAccess';
 import { Level, halfWidth } from './roadTypes';
 import { m } from './units';
+import { GRID_CELL } from './grid';
 
 /**
  * The zoning grid: the land along every street, cut into cells the player
  * zones and buildings grow on.
  *
- * As in Cities: Skylines, a street makes its own grid: cells of 8 x 8 m, in
+ * As in Cities: Skylines, a street makes its own grid: cells of 10 x 10 m
+ * (one cell of the universal grid, `grid.ts`), in
  * columns along each side of the road from the back of the footway, up to
  * `ZONE_DEPTH` cells deep, following the road round its curves. Nothing about
  * the grid is stored: it is derived from the roads, so it moves with them. What
@@ -22,7 +24,7 @@ import { m } from './units';
  * buildings it made all at once overlapped each other.
  */
 
-export const ZONE_CELL = m(8);
+export const ZONE_CELL = GRID_CELL;
 export const ZONE_DEPTH = 4;
 
 export interface ZoneCell {

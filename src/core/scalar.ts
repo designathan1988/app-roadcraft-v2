@@ -49,11 +49,18 @@ export const MITER_LIMIT = 4;
 /** Junction corner miter limit, as a multiple of the larger half-width. */
 export const CORNER_MITER = 2.5;
 
-/** Max chordal deviation when flattening a curve, in world units. */
-export const FLATTEN_TOL = 0.15;
+/**
+ * Max chordal deviation when flattening a curve, in world units (2 cm): a
+ * curved road's kerb reads as a curve, not a row of facets, at street level.
+ */
+export const FLATTEN_TOL = 0.05;
 
-/** Max chordal deviation when flattening an arc for validation, in world units. */
-export const ARC_TOL = 0.15;
+/**
+ * Max chordal deviation when flattening an arc, in world units (8 mm). The
+ * flattened ring is what the surface meshes are built from, so this is how
+ * round a kerb return is drawn: at 6 cm a 3 m return came out in four facets.
+ */
+export const ARC_TOL = 0.02;
 
 /** Taper slope used where two collinear legs have different half-widths. */
 export const TAPER_ANGLE = (12 * Math.PI) / 180;

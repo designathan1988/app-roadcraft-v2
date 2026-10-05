@@ -1,7 +1,9 @@
+import { onGridLength } from './grid';
+import { m } from './units';
 export const LANE_TURN_RULES = ['all', 'left', 'through', 'right', 'leftThrough', 'throughRight'] as const;
 export type LaneTurnRule = (typeof LANE_TURN_RULES)[number];
 
-/** Authored symmetric road section. Widths use world units; sidewalk includes the kerb. */
+/** Authored symmetric road section. Widths use world units, whole metres; sidewalk includes the kerb. */
 export interface RoadSection {
   readonly laneWidth: number;
   readonly sidewalk: number;
@@ -16,8 +18,8 @@ export interface RoadSection {
 
 /** Physical edit bounds, shared by persistence and the section editor. */
 export const ROAD_SECTION_LIMITS = {
-  laneWidth: [5, 15],
-  sidewalk: [1.2, 30],
+  laneWidth: [m(2), m(6)],
+  sidewalk: [m(1), m(12)],
   median: [0, 20],
   speedKmh: [10, 130],
   priority: [0, 5],
@@ -32,7 +34,11 @@ export function normalizeRoadSection(raw: unknown): RoadSection | undefined {
     const number = value[key];
     if (typeof number !== 'number' || !Number.isFinite(number)) return undefined;
     const [min, max] = ROAD_SECTION_LIMITS[key];
-    result[key] = Math.max(min, Math.min(max, key === 'priority' ? Math.round(number) : number));
+    const clamped = Math.max(min, Math.min(max, key === 'priority' ? Math.round(number) : number));
+    // Widths are whole metres of the universal grid (`grid.ts`).
+    result[key] = key === 'laneWidth' || key === 'sidewalk' || key === 'median'
+      ? Math.max(min, Math.min(max, onGridLength(clamped)))
+      : clamped;
   }
   for (const key of ['turnsForward', 'turnsBackward'] as const) {
     const rules = value[key];

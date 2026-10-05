@@ -5,7 +5,7 @@ import { Digest } from '@core/digest';
 import { offsetPolyline } from '@core/offset';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
-import { FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
+import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
 import { levelRings } from '@world/surfaces';
 import {
   ROAD_STRUCTURES,
@@ -14,6 +14,7 @@ import {
   type RoadStructure,
 } from '@world/structures';
 import type { RoadElevation } from '@world/elevation';
+import { m } from '@world/units';
 import { PAINT_RISE, markingQuads, paintMaterial } from './markings';
 import type { SceneMaterials } from './materials';
 import { TERRAIN_CELL } from './terrain';
@@ -41,10 +42,19 @@ import {
  * ribbons into a built cross-section:
  *
  * ```
- *          footway  +0.36 ─────┐
- *   kerb face  ─────┐          │  (skirt down to the verge)
- *   asphalt  0.00 ──┘  +0.02   └── verge  -0.10
+ *                 kerb +0.16 m   footway +0.15 m
+ *   asphalt 0.00 ──┐┌──────────────────────────┐
+ *   (gutter at the │┘ kerb face                 ╲  verge: a grass batter from
+ *    kerb, painted)                               ╲ the footway down (or up) to
+ *                                                  ╲ the ground as it is drawn
  * ```
+ *
+ * Small, real steps: a 15 cm precast kerb, the footway level with its top, the
+ * gutter at the carriageway's own level. The verge used to be a flat band
+ * 4 cm under the asphalt with a vertical skirt down to ground pulled 60 cm
+ * below the road - a grass wall that made every road read as a thick slab laid
+ * on the terrain. It now slopes from the footway's edge to the drawn terrain,
+ * so nothing stands proud and no side of the mesh shows.
  *
  * Because every offset is measured from the same `RoadElevation`, two bands can
  * never disagree about where the road is — the defect that left steps and gaps
@@ -66,7 +76,7 @@ import {
  * the kerb was. Standing 0.04 proud, its inner arris catches the light and
  * throws a line of shade, and the granite kerb reads as a separate edge.
  */
-const KERB_RISE = 0.4;
+const KERB_RISE = FOOTWAY_RISE + m(0.01);
 /** Depth of the verge below the carriageway, where the grass starts. */
 const VERGE_DROP = 0.1;
 /**
@@ -78,6 +88,8 @@ const VERGE_DROP = 0.1;
  * the seal that stops a hairline of sky showing under the rim.
  */
 const VERGE_SKIRT = 0.5;
+/** The verge meets the drawn terrain this hair above it, so the ground never shows through. */
+const VERGE_LIFT = m(0.02);
 
 /**
  * Longest triangle edge on a road at grade.
@@ -352,13 +364,29 @@ export function buildRoadSurfaces(
 
     const suffix = pass.id === 'ground' ? '' : `-${pass.id}`;
 
+    /**
+     * The verge on the ground: from the footway's edge, at the footway's
+     * height, down (or up) to the terrain as it is drawn at the verge's outer
+     * edge - a batter, not a wall. Read off the nearest road's own section.
+     */
+    const vergeTop: HeightFn = (x, y) => {
+      const sample = pass.segment === undefined
+        ? elevation.roadAt(x, y, only, false)
+        : elevation.roadAt(x, y, undefined, true);
+      const footway = deck(x, y) + FOOTWAY_RISE;
+      if (sample.type < 0) return footway;
+      const t = Math.min(1, Math.max(0, (Math.abs(sample.across) - (sample.half - CASING_BAND)) / CASING_BAND));
+      const ease = t * t * (3 - 2 * t);
+      return footway + (terrainAt(x, y) + VERGE_LIFT - footway) * ease;
+    };
+
     // Outermost first, so a nearer band's skirt lands on the one outside it.
     const specs: SurfaceSpec[] = [
       {
         source: { kind: 'band', band: 'verge' },
         options: {
           name: `verge${suffix}`,
-          top: offset(deck, -VERGE_DROP),
+          top: raised ? offset(deck, -VERGE_DROP) : vergeTop,
           bottom: soffit,
           material: raised ? materials.deck : materials.verge,
           maxEdge,
@@ -373,7 +401,7 @@ export function buildRoadSurfaces(
         options: {
           name: `footway${suffix}`,
           top: offset(deck, FOOTWAY_RISE),
-          bottom: offset(deck, -VERGE_DROP),
+          bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
           material: materials.footway,
           maxEdge,
           ...uvFor(materials.scale.footway),

@@ -41,7 +41,7 @@ export function commitRoundabout(
   // geometric crossings. Connecting existing junctions is a separate operation.
   const width = casingHalf(roadProfile(type, 2, 'both'));
   for (const segment of doc.segments.values()) {
-    const otherWidth = casingHalf(roadProfile(segment.type, segment.lanes, segment.direction, segment.section));
+    const otherWidth = casingHalf(roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking));
     if (net.polylines.get(doc, segment.id).distanceTo(centre) < reach + width + otherWidth) {
       return { committed: false, reason: 'occupied' };
     }

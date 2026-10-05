@@ -4,7 +4,7 @@ import type { Vec2 } from '@core/vec2';
 import { GEO_EPS } from '@core/scalar';
 import { Level } from '@world/roadTypes';
 import type { Network } from '@world/network';
-import type { SegmentId } from '@world/ids';
+import type { NodeId, SegmentId } from '@world/ids';
 import {
   type Bar,
   type StrokeSpec,
@@ -12,6 +12,8 @@ import {
   segmentMarkings,
   transitionMarkings,
 } from '@world/markings';
+import { STOP_BAR_WIDTH } from '@world/approach';
+import { parkingLayout } from '@world/parkingLayout';
 
 /**
  * Painted road markings, as real geometry lifted just off the carriageway.
@@ -149,8 +151,24 @@ export function markingQuads(
 
   for (const ribbon of net.ribbons.values()) {
     if (!include(ribbon.id)) continue;
-    const start = net.trims.get(ribbon.id)?.a[Level.Asphalt] ?? 0;
-    for (const spec of segmentMarkings(ribbon, start)) stroke(at(spec.color), spec);
+    const trims = net.trims.get(ribbon.id);
+    const start = trims?.a[Level.Asphalt] ?? 0;
+    const segment = net.doc.segment(ribbon.id);
+    // From the mouth to the stop line (or the crossing) is not painted along.
+    const cut = (node: NodeId | undefined, trim: number): number => {
+      if (node === undefined) return 0;
+      const crossing = net.doc.node(node)?.crossing;
+      if (net.doc.degree(node) < 3 && !crossing) return 0;
+      return Math.max(0, net.stopLineDistance(ribbon.id, node) + STOP_BAR_WIDTH / 2 - trim);
+    };
+    const cutA = cut(segment?.a, start);
+    const cutB = cut(segment?.b, trims?.b[Level.Asphalt] ?? 0);
+    for (const spec of segmentMarkings(ribbon, start, cutA, cutB)) stroke(at(spec.color), spec);
+  }
+  // Parking bays and the no-parking lines beside them (`world/parkingLayout.ts`).
+  for (const line of parkingLayout(net).lines) {
+    if (!include(line.segment)) continue;
+    stroke(at(line.color), { points: line.points, width: line.width, color: line.color, dash: line.dash, dashOffset: 0 });
   }
   for (const node of net.transitions) {
     const leg = net.junctions.get(node)?.get(Level.Asphalt)?.legs[0];

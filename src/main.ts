@@ -37,13 +37,14 @@ import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
 import {
-  type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, snapRoadEndpoint, type SnapResult,
+  type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, snapRoadEndpoint, snapRoadStart, type SnapResult,
 } from '@editor/snap';
 import { type DraftResult, commitRoadPath, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from '@editor/roadPath';
 import { commitRoundabout } from '@editor/roundabout';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
+import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
@@ -1066,7 +1067,7 @@ canvas.addEventListener('pointerdown', (e) => {
     case 'road':
       {
       const chained = roadChain !== null;
-      const start = roadChain ?? anchor;
+      const start = roadChain ?? snapRoadStart(anchor);
       const startHeightOffset = chained
         ? roadChainHeight
         : start.kind === 'free' ? roadHeightOffset : anchorHeightOffset(start);
@@ -1413,7 +1414,7 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   const pieces = piecesForDraft(d, endHeightOffset);
   let result: ReturnType<typeof commitRoadPath> = { committed: false };
   mutate(() => {
-    result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset);
+    result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking());
     return result.committed;
   });
   if (!result.committed) {
@@ -3493,7 +3494,9 @@ function drawOverlayScreen(): void {
     }
     : draft ?? chainPreview;
   if (roadPreview) {
-    const rt = roadType(roadTypeIndex);
+    // The profile the road will be laid with: its lanes and its parking.
+    const rt = roadProfile(roadTypeIndex, roadLanePreset,
+      roadType(roadTypeIndex).lanes === 1 ? 'aToB' : 'both', undefined, roadParking());
     const pieces = piecesForDraft(roadPreview);
     const points: Vec2[] = [];
     const projected: Vec2[] = [];
@@ -3756,6 +3759,13 @@ function showInspector(): void {
         if (!doc.segment(id)) return;
         mutate(() => {
           doc.setSegmentLanes(id, lanes);
+          return true;
+        });
+      },
+      onSetParking: (id, parking) => {
+        if (!doc.segment(id)) return;
+        mutate(() => {
+          doc.setSegmentParking(id, parking);
           return true;
         });
       },

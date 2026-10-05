@@ -30,6 +30,7 @@ import {
   type BuilderToolSpec,
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
+import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
 import { t, onLanguageChange } from '../i18n';
@@ -93,6 +94,11 @@ const ICON: Record<string, string> = {
   magnet: '<path d="M6 3v8a6 6 0 0 0 12 0V3"/><path d="M6 7h4M14 7h4"/><path d="M10 3v8a2 2 0 0 0 4 0V3"/>',
   angle: '<path d="M4 20h16"/><path d="M4 20 16 6"/><path d="M10 20a6 6 0 0 0-1.8-4.3"/>',
   cells: '<path d="M3 15h18v5H3z"/><path d="M8 15v5M13 15v5M18 15v5"/><path d="M3 5h18M3 9h18" stroke-dasharray="2 2"/>',
+  // Parking: the carriageway from above, bays along its kerbs
+  'park-none': '<path d="M5 3v18M19 3v18"/><path d="M12 4v3m0 3v4m0 3v3"/>',
+  'park-parallel': '<path d="M3 3v18M21 3v18"/><path d="M7 3v18M17 3v18"/><path d="M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  'park-parallelRight': '<path d="M4 3v18M21 3v18"/><path d="M17 3v18"/><path d="M17 9h4M17 15h4"/><path d="M10.5 4v3m0 3v4m0 3v3"/>',
+  'park-parallelLeft': '<path d="M3 3v18M20 3v18"/><path d="M7 3v18"/><path d="M3 9h4M3 15h4"/><path d="M13.5 4v3m0 3v4m0 3v3"/>',
   // Lanes: the carriageway seen from above
   lanes2: '<path d="M7 3v18M17 3v18"/><path d="M12 4v3m0 3v4m0 3v3" />',
   lanes4: '<path d="M4 3v18M20 3v18"/><path d="M12 3v18"/><path d="M8 5v2m0 4v2m0 4v2M16 5v2m0 4v2m0 4v2"/>',
@@ -554,8 +560,18 @@ export function mountShell(deps: ShellDeps): void {
       snapping.appendChild(choices([
         { label: t('v2.snap.on'), on: snap.on, run: () => { setRoadSnap({ on: !snap.on }); render(); }, icon: svg('magnet', 18) },
         { label: t('v2.snap.angles'), on: snap.on && snap.angles, run: () => { setRoadSnap({ angles: !snap.angles }); render(); }, disabled: !snap.on, icon: svg('angle', 18) },
+        { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('grid', 18) },
         { label: t('v2.snap.zoneLength'), on: snap.on && snap.zoneLength, run: () => { setRoadSnap({ zoneLength: !snap.zoneLength }); render(); }, disabled: !snap.on, icon: svg('cells', 18) },
       ]));
+      // Parking the new road is drawn with (`editor/roadParking.ts`).
+      const parking = group(t('palette.parking'));
+      const parkingNow = roadParkingPreset();
+      parking.appendChild(choices(ROAD_PARKING_PRESETS.map((preset) => ({
+        label: t(`parking.preset.${preset}`),
+        on: parkingNow === preset,
+        run: () => { setRoadParkingPreset(preset); render(); },
+        icon: svg(`park-${preset}`, 18),
+      }))));
       const height = group(`${t('palette.height')} - ${q('#roadHeightContext')?.textContent ?? ''}`);
       const stepper = el('div', 'v2-stepper');
       stepper.append(
@@ -575,7 +591,7 @@ export function mountShell(deps: ShellDeps): void {
           icon: svg(id === 'median' ? 'median' : `lanes${id}`, 18),
         };
       })));
-      options.append(trace, snapping, height, lanes);
+      options.append(trace, snapping, parking, height, lanes);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));

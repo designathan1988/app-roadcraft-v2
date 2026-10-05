@@ -8,6 +8,8 @@ import {
   lanesPerDirection,
   markingColor,
   roadProfile,
+  travelShift,
+  travelWidth,
 } from '@world/roadTypes';
 import { frameFromNode, segmentStartsAt } from '@world/geometry';
 import { laneTurnAllowed } from './roadSection';
@@ -48,14 +50,23 @@ const DASH_PERIOD = 16;
  * the pattern at each render chain, so building a crossing — which splits the
  * road automatically — visibly reflowed every dash on it (defect 1.10).
  */
-export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSpec[] {
+export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0, cutB = 0): StrokeSpec[] {
   const rt = ribbon.road;
-  const centre = ribbon.centre[Level.Asphalt];
-  if (!centre || centre.n < 2) return [];
+  const full = ribbon.centre[Level.Asphalt];
+  if (!full || full.n < 2) return [];
+  // Lines along the road stop at the stop line: nothing is painted along the
+  // carriageway across a crossing or into the junction it serves.
+  const keep = full.length - cutA - cutB;
+  if (keep < 1) return laneArrowMarkings(ribbon);
+  const centre = cutA > 0 || cutB > 0 ? full.sub(cutA, full.length - cutB) : full;
+  startS += cutA;
 
   const pts = centre.toPoints();
   const out: StrokeSpec[] = [];
   const phase = -((ribbon.dashOrigin + startS) % DASH_PERIOD);
+  // The travel way's own centre: off the road centreline when only one side parks.
+  const shift = travelShift(rt);
+  const middle = Math.abs(shift) > 1e-6 ? offsetPolyline(pts, shift) : pts;
 
   // No painted edge lines. Two flat 0.5-unit strips ran just inside the
   // kerbs - one near-black, one grey - and read as a smooth untextured band
@@ -65,7 +76,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSp
 
   if (ribbon.direction === 'both' && rt.markings === 'center') {
     out.push({
-      points: pts,
+      points: middle,
       width: 0.9,
       color: markingColor(rt),
       dash: DASH,
@@ -77,7 +88,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSp
     const lw = laneWidth(rt);
     for (let i = 1; i < rt.lanes; i++) {
       out.push({
-        points: offsetPolyline(pts, -rt.width / 2 + lw * i),
+        points: offsetPolyline(pts, -rt.width / 2 + rt.parkingRight + lw * i),
         width: 0.7,
         color: LANE_LINE,
         dash: DASH,
@@ -90,7 +101,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSp
     // avenue had no centre line at all.
     if (rt.median === 0) {
       out.push({
-        points: pts,
+        points: middle,
         width: 0.9,
         color: markingColor(rt),
         dash: null,
@@ -102,14 +113,14 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number): StrokeSp
     for (let i = 1; i < lpd; i++) {
       const off = rt.median / 2 + lw * i;
       out.push({
-        points: offsetPolyline(pts, off),
+        points: offsetPolyline(pts, shift + off),
         width: 0.7,
         color: LANE_LINE,
         dash: DASH,
         dashOffset: phase,
       });
       out.push({
-        points: offsetPolyline(pts, -off),
+        points: offsetPolyline(pts, shift - off),
         width: 0.7,
         color: LANE_LINE,
         dash: DASH,
@@ -140,7 +151,7 @@ export function laneArrowMarkings(ribbon: SegmentRibbon): StrokeSpec[] {
     for (let lane = 0; lane < travelLanes(road, ribbon.direction); lane++) {
       const rule = rules[lane];
       if (!rule || rule === 'all') continue;
-      const offset = laneOffset(road, lane, ribbon.direction);
+      const offset = laneOffset(road, lane, ribbon.direction, forward);
       // Each vertex follows the actual curved road, rather than a tangent chord.
       const point = (along: number, across: number): Vec2 => {
         const frame = centre.sampleAt(station + along * sign);
@@ -187,6 +198,8 @@ export function stopBar(
   nrm: Vec2,
   rt: RoadType,
   trim: number,
+  /** The travel way's offset from the centreline in this frame (`travelShift`, sign by end). */
+  shift = 0,
 ): Bar | null {
   // Beyond the junction mouth, past the crossing: the order an approaching
   // driver meets is stop line, then zebra, then junction.
@@ -194,9 +207,10 @@ export function stopBar(
   if (s <= 0) return null;
   const cx = origin.x + dir.x * s;
   const cy = origin.y + dir.y * s;
-  // Right-hand traffic: the approaching side is the `+nrm` half.
-  const inner = rt.median / 2;
-  const outer = rt.width / 2;
+  // Right-hand traffic: the approaching side is the `+nrm` half. The bar
+  // crosses the travel lanes; a parking lane ends short of it.
+  const inner = shift + rt.median / 2;
+  const outer = shift + travelWidth(rt) / 2;
   return {
     a: { x: cx + nrm.x * inner, y: cy + nrm.y * inner },
     b: { x: cx + nrm.x * outer, y: cy + nrm.y * outer },
@@ -328,7 +342,7 @@ export function junctionDetail(net: Network, view?: Aabb): { stops: Bar[]; zebra
       // cheerfully paint a zebra the model says is not there.
       const crossing = net.crosswalkDistanceAt(leg.seg, node);
       if (movementsConflict && leg.approaching) {
-        const bar = stopBar(leg.origin, leg.dir, leg.nrm, rt, trim);
+        const bar = stopBar(leg.origin, leg.dir, leg.nrm, rt, trim, leg.shift);
         if (bar) stops.push(bar);
       }
       if (crossing > 0) {
@@ -362,7 +376,7 @@ function midBlockDetail(net: Network, view: Aabb | undefined, stops: Bar[], zebr
     for (const segId of node.incident) {
       const seg = doc.segment(segId);
       if (!seg) continue;
-      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section);
+      const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
       const pl = net.polylines.get(doc, segId);
       const startsHere = segmentStartsAt(seg, node.id);
       const frameAt = (along: number) => frameFromNode(pl, startsHere, Math.max(0, Math.min(pl.length, along)));
@@ -373,9 +387,11 @@ function midBlockDetail(net: Network, view: Aabb | undefined, stops: Bar[], zebr
       const s = net.stopLineDistance(segId, node.id);
       if (!approaching || s <= 0) continue;
       const f = frameAt(s);
-      // Right-hand traffic: the approaching side is the `+nrm` half.
-      const inner = rt.median / 2;
-      const outer = rt.width / 2;
+      // Right-hand traffic: the approaching side is the `+nrm` half, across
+      // the travel lanes only.
+      const shift = travelShift(rt) * (startsHere ? 1 : -1);
+      const inner = shift + rt.median / 2;
+      const outer = shift + travelWidth(rt) / 2;
       stops.push({
         a: { x: f.p.x + f.nrm.x * inner, y: f.p.y + f.nrm.y * inner },
         b: { x: f.p.x + f.nrm.x * outer, y: f.p.y + f.nrm.y * outer },

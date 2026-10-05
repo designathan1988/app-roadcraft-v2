@@ -19,6 +19,7 @@ import { type Barrier, type BarrierKind, isBarrierKind } from './barriers';
 import { TUNNEL_HEADROOM, type RoadStructure, migrateStructure } from './structures';
 import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
+import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
@@ -29,8 +30,9 @@ import { normalizePerson, type PersonSpec } from '@people/spec';
 export function fitRoadCurve(
   a: Vec2, b: Vec2, shape: CurveShape | null, type: number,
   lanes: number | null = null, direction: SegmentDirection = 'both', section?: RoadSection,
+  parking?: SegmentParking,
 ): CurveShape | null {
-  return fitShapeToRadius(a, b, shape, casingHalf(roadProfile(type, lanes, direction, section)));
+  return fitShapeToRadius(a, b, shape, casingHalf(roadProfile(type, lanes, direction, section, parking)));
 }
 
 /** Legal driving directions, relative to the stored `a -> b` orientation. */
@@ -103,6 +105,8 @@ export interface RoadSegment {
   lanes: number | null;
   /** Authored cross-section; absent preserves the exact class profile. */
   section?: RoadSection;
+  /** On-street parking left and right of a -> b (`parking.ts`); absent means none. */
+  parking?: SegmentParking;
   /** Vertical construction mode. Ground is the legacy/default value. */
   structure: RoadStructure;
 }
@@ -363,16 +367,19 @@ export class RoadDoc {
     lanes: number | null = null,
     structure: RoadStructure = 'ground',
     section?: RoadSection,
+    parking?: SegmentParking,
   ): RoadSegment | null {
     if (a === b) return null;
     if (!this.nodes.has(a) || !this.nodes.has(b)) return null;
     const authoredSection = normalizeRoadSection(section);
+    const authoredParking = normalizeParking(parking);
     const id = asSegmentId(this.segIds.take());
     const s: RoadSegment = {
       id, a, b, curve, type, dashOrigin, direction,
       lanes: normaliseLaneCount(lanes, direction),
       structure,
       ...(authoredSection ? { section: authoredSection } : {}),
+      ...(authoredParking ? { parking: authoredParking } : {}),
     };
     this.segments.set(id, s);
     this.requireNode(a).incident.push(id);
@@ -522,7 +529,7 @@ export class RoadDoc {
     const a = this.nodes.get(s.a);
     const b = this.nodes.get(s.b);
     if (!a || !b) return;
-    const fitted = fitRoadCurve(a, b, s.curve, s.type, s.lanes, s.direction, s.section);
+    const fitted = fitRoadCurve(a, b, s.curve, s.type, s.lanes, s.direction, s.section, s.parking);
     if (fitted !== s.curve) {
       s.curve = fitted;
       this.markSegment(s.id);
@@ -570,6 +577,17 @@ export class RoadDoc {
     if (!segment || (section !== undefined && !next) || sameRoadSection(segment.section, next)) return;
     if (next) segment.section = next;
     else delete segment.section;
+    this.fitCurve(segment);
+    this.markSegment(id);
+  }
+
+  /** Parking on the two sides of a segment; none on either side removes it. */
+  setSegmentParking(id: SegmentId, parking?: SegmentParking): void {
+    const segment = this.segments.get(id);
+    const next = normalizeParking(parking);
+    if (!segment || sameParking(segment.parking, next)) return;
+    if (next) segment.parking = next;
+    else delete segment.parking;
     this.fitCurve(segment);
     this.markSegment(id);
   }
@@ -863,6 +881,7 @@ export class RoadDoc {
         lanes: s.lanes,
         structure: s.structure,
         ...(s.section ? { section: cloneRoadSection(s.section) } : {}),
+        ...(s.parking ? { parking: { ...s.parking } } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
@@ -934,6 +953,7 @@ export class RoadDoc {
       const b = canonicalNode.get(s.b) ?? asNodeId(s.b);
       if (!doc.nodes.has(a) || !doc.nodes.has(b) || a === b) continue;
       const section = normalizeRoadSection(s.section);
+      const parking = normalizeParking(s.parking);
       doc.segments.set(id, {
         id,
         a,
@@ -944,6 +964,7 @@ export class RoadDoc {
         direction: s.direction ?? 'both',
         lanes: normaliseLaneCount(s.lanes ?? null, s.direction ?? 'both'),
         ...(section ? { section } : {}),
+        ...(parking ? { parking } : {}),
         // Through the migration, so a level that has since been merged into
         // another (`viaduct`) loads as the one it became.
         structure: migrateStructure(s.structure) ?? 'ground',
@@ -1051,6 +1072,7 @@ export interface SerializedDoc {
     direction?: SegmentDirection;
     lanes?: number | null;
     section?: RoadSection;
+    parking?: SegmentParking;
     /** A current structure id, or a legacy one `migrateStructure` maps. */
     structure?: RoadStructure | 'viaduct';
   }[];
@@ -1103,7 +1125,7 @@ function sameRoads(a: RoadDoc, b: RoadDoc): boolean {
     const q = b.segments.get(id);
     if (!q || p.a !== q.a || p.b !== q.b || p.type !== q.type || p.dashOrigin !== q.dashOrigin ||
       p.direction !== q.direction || p.lanes !== q.lanes || p.structure !== q.structure ||
-      !sameRoadSection(p.section, q.section) ||
+      !sameRoadSection(p.section, q.section) || !sameParking(p.parking, q.parking) ||
       (p.curve?.t ?? null) !== (q.curve?.t ?? null) || (p.curve?.h ?? null) !== (q.curve?.h ?? null)) return false;
   }
   return true;
