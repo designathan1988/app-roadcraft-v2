@@ -1109,14 +1109,42 @@ export function createSceneRenderer(
       for (const item of hit.items) {
         const g = ground(item.x, item.y);
         const push = away(item.x, item.y, m(6));
-        if (item.kind === 'tree' || item.kind === 'shrub') {
-          const tall = item.kind === 'tree' ? m(4) : m(1.2);
+        if (item.kind === 'tree') {
+          // Split: a broken stump left standing, charred; the top - trunk
+          // and crown - torn off at the break and thrown over, burning.
+          const tall = m(6 + Math.random() * 3), cut = tall * (0.25 + Math.random() * 0.25);
+          const axis = new Vector3(push.z, 0, -push.x).normalize();
+          blast.debris({ shape: 'cylinder', kind: 'char', color: 0x2b211a, at: new Vector3(item.x, g + cut / 2, -item.y), size: new Vector3(m(0.22), cut, m(0.22)),
+            velocity: new Vector3(), spin: new Vector3() });
+          blast.debris({ shape: 'cylinder', kind: 'wood', at: new Vector3(item.x, g + cut + (tall - cut) / 2, -item.y), size: new Vector3(m(0.18), tall - cut, m(0.18)),
+            velocity: push.clone().multiplyScalar(0.6), spin: axis.clone().multiplyScalar(1.4 + Math.random()), burn: 12 + Math.random() * 10 });
+          // The splinters at the break.
+          for (let k = 0; k < 6; k++) {
+            blast.debris({ shape: 'box', kind: 'wood', at: new Vector3(item.x, g + cut, -item.y), size: new Vector3(m(0.05), m(0.3 + Math.random() * 0.5), m(0.05)),
+              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(5), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(5))) });
+          }
+          // The crown, in clumps of leaves and branches.
+          for (let k = 0; k < 24; k++) {
+            blast.debris({ shape: 'box', kind: 'leaf', at: new Vector3(item.x, g + tall * 0.85, -item.y), size: new Vector3(m(0.4 + Math.random() * 0.6), m(0.1), m(0.4 + Math.random() * 0.6)),
+              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(7), m(1 + Math.random() * 5), (Math.random() - 0.5) * m(7))) });
+          }
+          exhaust.burst(item.x, item.y, g + tall * 0.7, 10, 5, m(1.5), m(1.2), 1);
+        } else if (item.kind === 'shrub') {
+          const tall = m(1.2);
           blast.debris({ shape: 'cylinder', kind: 'wood', at: new Vector3(item.x, g + tall / 2, -item.y), size: new Vector3(m(0.14), tall, m(0.14)),
             velocity: push.clone().multiplyScalar(0.4), spin: new Vector3(push.z, 0, -push.x).normalize().multiplyScalar(1.2) });
           for (let k = 0; k < 14; k++) {
             blast.debris({ shape: 'box', kind: 'leaf', at: new Vector3(item.x, g + tall * 0.8, -item.y), size: new Vector3(m(0.3), m(0.05), m(0.3)),
               velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(6), m(2 + Math.random() * 5), (Math.random() - 0.5) * m(6))) });
           }
+        } else if (item.kind === 'lamp') {
+          // A street light: its column bent over and thrown, the head and its glass flung off, sparks.
+          const axis = new Vector3(push.z, 0, -push.x).normalize();
+          blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x3a3e43, at: new Vector3(item.x, g + m(3), -item.y), size: new Vector3(m(0.1), m(6), m(0.1)),
+            velocity: push.clone().multiplyScalar(0.5), spin: axis.multiplyScalar(1.6) });
+          blast.debris({ shape: 'box', kind: 'metal', color: 0x2a2d31, at: new Vector3(item.x, g + m(6), -item.y), size: new Vector3(m(0.6), m(0.15), m(0.3)),
+            velocity: push.clone().add(new Vector3(0, m(4), 0)) });
+          exhaust.burst(item.x, item.y, g + m(6), 30, 6, m(0.3), m(0.12), 0.8);
         } else {
           for (let k = 0; k < 4; k++) {
             blast.debris({ shape: 'box', kind: item.kind === 'bench' ? 'wood' : 'metal', at: new Vector3(item.x, g + m(0.5), -item.y),

@@ -416,8 +416,8 @@ export function createBlast(exhaust: Exhaust): Blast {
       // Then it burns on in the crater a while, under a column of black smoke.
       fires.push({ at: at.clone().setY(z + m(0.2)), until: time + 9 + radius * 0.3, rate: 22, carry: 0, size: radius * 0.18, smoke: 0.9 });
       // Smoke: dark, rising and spreading, then the dust of what was torn up.
-      exhaust.burst(x, y, z + m(1.5), 80, 2, radius * 0.45, m(3.5), 12);
-      exhaust.burst(x, y, z + m(5), 40, 2, radius * 0.35, m(4.5), 16);
+      exhaust.burst(x, y, z + m(1.5), 80, 2, radius * 0.45, m(3.5), 7);
+      exhaust.burst(x, y, z + m(5), 40, 2, radius * 0.35, m(4.5), 9);
       exhaust.burst(x, y, z + m(0.3), 40, ground === 'earth' ? 1 : 3, radius * 0.6, m(2.2), 6);
       // Sparks and grit flung out under gravity.
       exhaust.burst(x, y, z + m(0.5), 120, 6, m(0.5), m(0.1), 1.1);
@@ -486,7 +486,7 @@ export function createBlast(exhaust: Exhaust): Blast {
       if (geysers.length > 40) geysers.shift();
     },
     burn(x, y, z, size, seconds) {
-      fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: 10 + size / m(1) * 2, carry: 0, size, smoke: 0.85 });
+      fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: Math.min(18, 6 + size / m(1)), carry: 0, size: Math.min(size, m(6)), smoke: 0.6 });
     },
     active: () => geysers.length > 0 || flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
     update(dt, world) {
@@ -511,8 +511,11 @@ export function createBlast(exhaust: Exhaust): Blast {
           const big = f.piece ? Math.max(f.piece.size.x, f.piece.size.z) * 0.5 : f.size ?? m(1);
           const dying = Math.min(1, left / 3 + 0.3);
           exhaust.burst(at.x, -at.z, at.y + m(0.3), 1, 5, big, (m(1.1) + big * 0.4) * dying, 0.8);
-          // Black smoke over the flames, rising in a column.
-          if (Math.random() < (f.smoke ?? 0.4)) exhaust.burst(at.x, -at.z, at.y + m(1.5), 1, 2, big * 0.6, m(2.4) + big * 0.3, 10);
+          // Black smoke over the flames, rising in a short column that thins
+          // out near them - not a cloud over the town.
+          if (Math.random() < (f.smoke ?? 0.4) * 0.5) exhaust.burst(at.x, -at.z, at.y + m(1.5), 1, 2, big * 0.4, Math.min(m(3), m(1.6) + big * 0.15), 4);
+          // And the grey smoke a car's exhaust gives, only thicker, curling off the flames.
+          if (Math.random() < 0.7) exhaust.burst(at.x, -at.z, at.y + m(0.8), 2, 0, big * 0.5, m(1.4) + big * 0.1, 3.2);
         }
       }
       // Hydrants: a jet of water each, for good, and its puddle of spray.

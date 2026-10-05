@@ -335,10 +335,8 @@ export function createEnvironment(
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
       sunColor.copy(DAY_SUN).lerp(DUSK_SUN, warm).multiplyScalar(light);
       (scene.fog as Fog).color.copy(horizon).lerp(zenith, 0.18);
-      // A city on fire dims and yellows the light under its smoke; the fog is
-      // left alone (closed in, it hid the whole town zoomed out).
-      sun.intensity *= 1 - smog * 0.35;
-      sun.color.lerp(SMOG, smog * 0.35);
+      // No town-wide haze (the player: the smoke stays where the fire is).
+      void smog; void SMOG;
       scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);
       return dark;
     },

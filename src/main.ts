@@ -5112,14 +5112,15 @@ setInterval(() => {
       for (let k = 0; k < 3; k++) {
         const p = pts[Math.floor(Math.random() * pts.length)]!;
         const x = cx + (p.x - cx) * Math.random(), y = cy + (p.y - cy) * Math.random();
-        scene.burn(x, y, ground + m(2 + Math.random() * 10), size * 0.5, 7);
+        scene.burn(x, y, ground + m(2 + Math.random() * 10), Math.min(size * 0.5, m(6)), 7);
       }
       f.nextFlame = now + 6;
     }
     if (now >= f.nextSpread) {
       f.nextSpread = now + 14 + Math.random() * 16;
+      // Spreads to a neighbour now and then, never to the whole town.
       const near = [...doc.buildings.all()].filter((o) => o.id !== id && !burning.has(o.id) && Math.hypot(o.x - b.x, o.y - b.y) < size * 2 + m(18));
-      if (near.length) ignite(near[Math.floor(Math.random() * near.length)]!.id);
+      if (near.length && burning.size < 8 && Math.random() < 0.5) ignite(near[Math.floor(Math.random() * near.length)]!.id);
     }
     if (now >= f.nextBlast) {
       f.nextBlast = now + 25 + Math.random() * 45;

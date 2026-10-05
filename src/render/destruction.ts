@@ -186,6 +186,7 @@ export function createDestruction(
         if (d < reach) release(ruin, piece, impact, power * Math.max(0.3, 1 - d / reach));
       }
       exhaust.burst(impact.x, -impact.z, impact.y, 10 + strength * 2, 3, reach * 0.6, m(2.5 + strength * 0.2), 4);
+      exhaust.burst(impact.x, -impact.z, impact.y, 20 + strength * 4, 9, reach * 0.4, m(0.3), 18);
       // What hangs on nothing now comes down: it falls, it is not thrown.
       for (const piece of unsupported(ruin)) release(ruin, piece, piece.mesh.position.clone().add(new Vector3(0, m(1), 0)), m(0.5));
       // Counted over what stands above the ground: the lot's paving and the
@@ -200,6 +201,8 @@ export function createDestruction(
           } else release(ruin, piece, impact, m(0.6));
         }
         exhaust.burst(x, y, floor, 60, 3, m(10), m(5), 6);
+        // Papers from the offices and homes, fluttering over the street for a while.
+        exhaust.burst(x, y, z, 120, 9, m(8), m(0.35), 22);
         return true;
       }
       return false;
