@@ -42,7 +42,8 @@ let materials: Record<Mat, Material> | null = null;
 /** Facade materials, by style and storey rhythm, made once each. */
 const facades = new Map<string, Material>();
 
-type FacadeKind = 'curtainBlue' | 'curtainDark' | 'curtainGreen' | 'punchedBeige' | 'punchedCream' | 'gridDark' | 'brick' | 'stoneGrid';
+type FacadeKind = 'curtainBlue' | 'curtainDark' | 'curtainGreen' | 'punchedBeige' | 'punchedCream' | 'gridDark' | 'brick' | 'stoneGrid'
+  | 'archTerracotta' | 'ribbonWhite' | 'squareConcrete' | 'navyGrid' | 'copperFins' | 'ribbonBlack' | 'punchedPink' | 'curtainTeal';
 
 /**
  * A facade drawn as a picture of its bays - panes and mullions, spandrels,
@@ -58,9 +59,43 @@ function facade(kind: FacadeKind, bay: number, storey: number, base: number): Ma
       grad.addColorStop(0, top); grad.addColorStop(1, bottom);
       g.fillStyle = grad; g.fillRect(x, y, w, h);
     };
-    if (kind === 'curtainBlue' || kind === 'curtainDark' || kind === 'curtainGreen') {
+    if (kind === 'archTerracotta') {
+      // Terracotta wall, a tall window with a round head, a white sill.
+      g.fillStyle = '#b8653f'; g.fillRect(0, 0, s, s);
+      const x = s * 0.28, w = s * 0.44, y = s * 0.3, h = s * 0.5;
+      g.fillStyle = '#f1e6d6'; g.beginPath(); g.arc(s / 2, y, w / 2 + 6, Math.PI, 0); g.lineTo(x + w + 6, y + h + 4); g.lineTo(x - 6, y + h + 4); g.fill();
+      g.fillStyle = '#34424d'; g.beginPath(); g.arc(s / 2, y, w / 2, Math.PI, 0); g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.fill();
+      g.fillStyle = '#f1e6d6'; g.fillRect(s / 2 - 2, y - w / 2, 4, h + w / 2); g.fillRect(x - 10, y + h + 4, w + 20, 8);
+    } else if (kind === 'ribbonWhite' || kind === 'ribbonBlack') {
+      // A band of glass the width of the bay, solid parapet below and above.
+      const white = kind === 'ribbonWhite';
+      g.fillStyle = white ? '#f3f2ee' : '#1d1f22'; g.fillRect(0, 0, s, s);
+      glass(white ? '#7fa2b8' : '#a9c2cf', white ? '#3f5a6b' : '#6d8796', 0, s * 0.18, s, s * 0.52);
+      g.fillStyle = white ? '#d9dadc' : '#444'; g.fillRect(0, s * 0.18, s, 3); g.fillRect(0, s * 0.7 - 3, s, 3);
+      for (let k = 0; k < 4; k++) g.fillRect(k * s / 4, s * 0.18, 3, s * 0.52);
+    } else if (kind === 'squareConcrete') {
+      g.fillStyle = '#b9b6ae'; g.fillRect(0, 0, s, s);
+      for (let i = 0; i < 300; i++) { g.fillStyle = 'rgba(120,118,112,.25)'; g.fillRect(Math.random() * s, Math.random() * s, 2, 2); }
+      g.fillStyle = '#e07b2c'; g.fillRect(s * 0.18, s * 0.18, s * 0.64, s * 0.6);
+      glass('#5e7d8f', '#2c3b45', s * 0.22, s * 0.22, s * 0.56, s * 0.52);
+    } else if (kind === 'navyGrid') {
+      g.fillStyle = '#1f2f4a'; g.fillRect(0, 0, s, s);
+      glass('#6f8fb3', '#2d405c', s * 0.08, s * 0.1, s * 0.84, s * 0.68);
+      g.fillStyle = '#c9a54a'; g.fillRect(0, s * 0.85, s, 4);
+    } else if (kind === 'copperFins') {
+      glass('#7e9aa6', '#3e525b', 0, 0, s, s);
+      for (let k = 0; k < 4; k++) { g.fillStyle = '#b06d3c'; g.fillRect(k * s / 4, 0, s / 12, s); g.fillStyle = '#d18b55'; g.fillRect(k * s / 4, 0, 4, s); }
+      g.fillStyle = '#5b3a24'; g.fillRect(0, s * 0.85, s, s * 0.15);
+    } else if (kind === 'punchedPink') {
+      g.fillStyle = '#e3a9a8'; g.fillRect(0, 0, s, s);
+      const x = s * 0.25, y = s * 0.22, w = s * 0.5, h = s * 0.55;
+      g.fillStyle = '#ffffff'; g.fillRect(x - 6, y - 6, w + 12, h + 12);
+      glass('#7f9fae', '#384a55', x, y, w, h);
+      g.fillStyle = '#ffffff'; g.fillRect(x + w / 2 - 2, y, 4, h); g.fillRect(x, y + h * 0.35, w, 3);
+    } else if (kind === 'curtainBlue' || kind === 'curtainDark' || kind === 'curtainGreen' || kind === 'curtainTeal') {
       const [a, b, mull, spand] = kind === 'curtainBlue' ? ['#9fc0d6', '#5f8099', '#d5dadd', '#6c7f8c']
-        : kind === 'curtainDark' ? ['#4b5a66', '#222b33', '#5a6168', '#1b2127'] : ['#8fb3ae', '#557a76', '#cfd6d3', '#5d736f'];
+        : kind === 'curtainDark' ? ['#4b5a66', '#222b33', '#5a6168', '#1b2127']
+        : kind === 'curtainTeal' ? ['#7fc2c4', '#2f6f73', '#e8efee', '#2b5557'] : ['#8fb3ae', '#557a76', '#cfd6d3', '#5d736f'];
       glass(a, b, 0, 0, s, s);
       g.fillStyle = spand; g.fillRect(0, s * 0.82, s, s * 0.18);
       g.fillStyle = mull; g.fillRect(0, s * 0.8, s, 6); g.fillRect(0, s - 4, s, 4); g.fillRect(0, 0, 5, s); g.fillRect(s / 2 - 2, 0, 4, s * 0.8);
@@ -82,7 +117,7 @@ function facade(kind: FacadeKind, bay: number, storey: number, base: number): Ma
     }
   }, 1 / bay, 1 / storey);
   t.offset.y = -base / storey;
-  const glassy = kind.startsWith('curtain');
+  const glassy = kind.startsWith('curtain') || kind === 'copperFins';
   facades.set(key, new MeshStandardMaterial({ map: t, roughness: glassy ? 0.15 : 0.85, metalness: glassy ? 0.45 : 0 }));
   return key;
 }
@@ -160,6 +195,10 @@ function makeMaterials(): Record<Mat, Material> {
     metal: std({ color: 0x3b3e42, roughness: 0.45, metalness: 0.6 }),
     plant: std({ color: 0xa9a59e, roughness: 0.7 }),
     sconce: std({ color: 0xfff1d8, emissive: 0xffd49a, emissiveIntensity: 1.2 }),
+    orange: std({ color: 0xe07b2c, roughness: 0.6 }),
+    gold: std({ color: 0xc9a54a, roughness: 0.35, metalness: 0.8 }),
+    copper: std({ color: 0xb06d3c, roughness: 0.35, metalness: 0.75 }),
+    roofTerracotta: std({ color: 0xa4513a, roughness: 0.8, flatShading: true }),
     glassRail: std({ color: 0xcfe3ec, transparent: true, opacity: 0.38, roughness: 0.05, metalness: 0.2, depthWrite: false }),
     white: std({ color: 0xf2f1ec, roughness: 0.8 }),
     stoneLight: std({ color: 0xd6d1c7, roughness: 0.75 }),
@@ -177,6 +216,9 @@ class Parts {
   /** Draws mirrored front to back about y = mirror / 2 (the back face), or null. */
   mirror: number | null = null;
   Y(y: number): number { return this.mirror === null ? y : this.mirror - y; }
+
+  /** Adds a ready geometry (a cone, a spire) in metres of three's frame. */
+  pushRaw(mat: Mat, g: BufferGeometry): void { this.push(mat, g); }
 
   private push(mat: Mat, g: BufferGeometry): void {
     const geo = g.index ? g.toNonIndexed() : g;
@@ -254,6 +296,22 @@ class Parts {
       const a = Math.atan2(-(pos.getZ(i) + this.Y(cy)), pos.getX(i) - cx);
       uv.setXY(i, (a + Math.PI) * r, pos.getY(i));
     }
+    this.push(mat, g);
+  }
+
+  /** A regular prism of `seg` sides (3 a triangle, 4 a square, 6, 8...), turned `rot` radians, UVs in metres. */
+  prism(mat: Mat, cx: number, cy: number, r: number, z0: number, z1: number, seg: number, rot = 0): void {
+    const g = new CylinderGeometry(r, r, z1 - z0, seg, 1, false, rot, Math.PI * 2).toNonIndexed();
+    g.translate(cx, (z0 + z1) / 2, -this.Y(cy));
+    const pos = g.attributes['position']!, uv = g.attributes['uv']!;
+    // Flat faces: u runs along each face in metres, so a facade tiles on it as on a wall.
+    const side = 2 * r * Math.sin(Math.PI / seg);
+    for (let i = 0; i < pos.count; i++) {
+      const a = Math.atan2(pos.getX(i) - cx, pos.getZ(i) + this.Y(cy)) - rot;
+      const f = (((a / (Math.PI * 2)) * seg) % seg + seg) % seg;
+      uv.setXY(i, f * side, pos.getY(i));
+    }
+    g.computeVertexNormals();
     this.push(mat, g);
   }
 
@@ -575,9 +633,244 @@ function towerOf(look: TowerLook) {
   };
 }
 
-const DESIGNS: Partial<Record<string, typeof balconyMid>> = {
+// ------------------------------------------------------------ the second set
+
+type Design = (p: Parts, W: number, D: number, g: number, s: number, upper: number) => void;
+
+/** A two-storey podium in `mat`, glazed all round, its canopy, planters and trees; returns its top. */
+function podium2(p: Parts, W: number, D: number, g: number, s: number, mat: Mat, canopy: Mat = 'metal'): number {
+  const zP = g + s;
+  p.box(mat, 0, W, 0, D, 0, zP);
+  const cols = Math.max(2, Math.round(W / 4.5));
+  for (const mirror of [null, D]) {
+    p.mirror = mirror;
+    for (let k = 0; k < cols; k++) p.box('podiumGlass', (k * W) / cols + 0.4, ((k + 1) * W) / cols - 0.4, -0.04, 0.02, 0.2, zP - 0.8);
+  }
+  p.mirror = null;
+  p.box('trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.5, zP + 0.06);
+  p.box(canopy, W / 2 - 3.5, W / 2 + 3.5, -2.2, 0.1, g - 0.45, g - 0.25);
+  p.windowFront(W / 2 - 1.6, W / 2 + 1.6, -0.08, 0, 3, 1);
+  for (const x of [1.5, W - 1.5]) p.cone(x, -1.2, 0);
+  for (let k = 0; k < 6; k++) p.bush(3 + (k * (W - 6)) / 5, -1.1, 0, 0.45, k % 2 === 1);
+  return zP + 0.06;
+}
+
+/** Plant on a flat roof: a plant room, units, a tank. */
+function roofPlant(p: Parts, cx: number, cy: number, r: number, top: number): void {
+  p.box('lightGrid', cx - r * 0.35, cx + r * 0.35, cy - r * 0.25, cy + r * 0.25, top, top + 3);
+  p.box('metal', cx - r * 0.38, cx + r * 0.38, cy - r * 0.28, cy + r * 0.28, top + 3, top + 3.2);
+  p.box('metal', cx + r * 0.45, cx + r * 0.6, cy - 0.6, cy + 0.6, top, top + 1.2);
+  p.cylinder('metal', cx - r * 0.5, cy, top, top + 2.2, 0.8);
+}
+
+/** 1. A square tower turning a little at every floor, teal glass, white slab edges. */
+const twistGreen: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'stoneLight');
+  const cx = W / 2, cy = D / 2, r = (Math.min(W, D) * 0.66) / Math.SQRT2;
+  const face = facade('curtainTeal', 1.5, s, 0);
+  for (let k = 2; k <= upper; k++) {
+    const z = g + (k - 1) * s, rot = Math.PI / 4 + (k - 2) * 0.045;
+    p.prism(face, cx, cy, r, Math.max(z, zP), z + s, 4, rot);
+    p.prism('white', cx, cy, r + 0.55, z + s - 0.1, z + s + 0.18, 4, rot);
+  }
+  const top = g + upper * s + 0.18;
+  roofPlant(p, cx, cy, r, top);
+};
+
+/** 2. A hexagon in terracotta with arched windows, white string courses, a lantern on top. */
+const hexTerracotta: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'stone', 'white');
+  const cx = W / 2, cy = D / 2, r = Math.min(W, D) * 0.47;
+  const face = facade('archTerracotta', 2.2, s, 0);
+  const top = g + upper * s;
+  p.prism(face, cx, cy, r, zP, top, 6, Math.PI / 6);
+  for (let k = 2; k <= upper; k += 3) { const z = g + (k - 1) * s; p.prism('white', cx, cy, r + 0.3, z - 0.15, z + 0.3, 6, Math.PI / 6); }
+  p.prism('white', cx, cy, r + 0.5, top, top + 0.6, 6, Math.PI / 6);
+  p.prism('podiumGlass', cx, cy, r * 0.45, top + 0.6, top + 4.5, 6, Math.PI / 6);
+  p.prism('white', cx, cy, r * 0.5, top + 4.5, top + 4.9, 6, Math.PI / 6);
+  const roof = new ConeGeometry(r * 0.5, 3.5, 6, 1, false, Math.PI / 6);
+  roof.translate(cx, top + 4.9 + 1.75, -cy);
+  p.pushRaw('roofTerracotta', roof);
+};
+
+/** 3. A ziggurat of terraces every four floors, white ribbon windows, gardens and glass rails on each step. */
+const stepGarden: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'stoneLight');
+  const face = facade('ribbonWhite', 3, s, 0);
+  let x0 = 1.5, x1 = W - 1.5, y0 = 1.5, y1 = D - 1.5;
+  const per = 4;
+  for (let k = 2; k <= upper; k += per) {
+    const z0 = Math.max(zP, g + (k - 1) * s), z1 = g + Math.min(upper, k - 1 + per) * s;
+    p.box(face, x0, x1, y0, y1, z0, z1);
+    // The terrace on top of this tier: planters round its edge, a glass rail.
+    p.box('plant', x0, x1, y0, y1, z1, z1 + 0.15);
+    const n = x1 - x0 > 8 ? 2.2 : 0;
+    const nx0 = x0 + n, nx1 = x1 - n, ny0 = y0 + n, ny1 = y1 - n;
+    if (k + per <= upper) {
+      p.box('glassRail', x0, x1, y0, y0 + 0.05, z1 + 0.15, z1 + 1.2);
+      p.box('glassRail', x0, x1, y1 - 0.05, y1, z1 + 0.15, z1 + 1.2);
+      for (let t = 0; t < 4; t++) {
+        const x = x0 + 0.8 + (t * (x1 - x0 - 1.6)) / 3;
+        p.box('pot', x - 0.6, x + 0.6, y0 + 0.3, y0 + 1.3, z1 + 0.15, z1 + 0.7);
+        p.bush(x, y0 + 0.8, z1 + 0.7, 0.55, t % 2 === 0);
+      }
+    }
+    x0 = nx0; x1 = nx1; y0 = ny0; y1 = ny1;
+    if (x1 - x0 < 6 || y1 - y0 < 6) break;
+  }
+  roofPlant(p, W / 2, D / 2, Math.min(x1 - x0, y1 - y0) / 2, g + upper * s + 0.15);
+};
+
+/** 4. White slab balconies that wave in and out, floor after floor, glass rails, blue glass behind. */
+const waveWhite: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'white');
+  const sx0 = 2.5, sx1 = W - 2.5, sy0 = 2.5, sy1 = D - 2.5;
+  const top = g + upper * s;
+  p.box(facade('curtainBlue', 1.5, s, 0), sx0, sx1, sy0, sy1, zP, top);
+  for (let k = 2; k <= upper; k++) {
+    const z = g + (k - 1) * s;
+    const seg = 1.2;
+    for (const mirror of [null, D]) {
+      p.mirror = mirror;
+      for (let x = sx0 - 1; x < sx1 + 1; x += seg) {
+        const deep = 1.1 + 0.9 * Math.sin(x * 0.42 + k * 0.75);
+        p.box('white', x, x + seg + 0.01, sy0 - deep, sy0, z, z + 0.24);
+        p.box('glassRail', x, x + seg, sy0 - deep, sy0 - deep + 0.04, z + 0.24, z + 1.2);
+      }
+    }
+    p.mirror = null;
+    for (const [x, out] of [[sx0, -1], [sx1, 1]] as const) {
+      for (let y = sy0; y < sy1; y += 1.2) {
+        const deep = 0.8 + 0.6 * Math.sin(y * 0.5 + k * 0.75);
+        p.box('white', out < 0 ? x - deep : x, out < 0 ? x : x + deep, y, y + 1.21, z, z + 0.24);
+      }
+    }
+  }
+  p.box('white', sx0 - 0.3, sx1 + 0.3, sy0 - 0.3, sy1 + 0.3, top, top + 0.7);
+  roofPlant(p, W / 2, D / 2, (sx1 - sx0) / 2, top + 0.7);
+};
+
+/** 5. Concrete with orange-framed windows, glass box balconies standing out in a chequer. */
+const cubeBalcony: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'darkPanel', 'orange');
+  const sx0 = 1.5, sx1 = W - 1.5, sy0 = 2, sy1 = D - 2;
+  const top = g + upper * s;
+  p.box(facade('squareConcrete', 2.4, s, 0), sx0, sx1, sy0, sy1, zP, top);
+  const cols = Math.max(3, Math.round((sx1 - sx0) / 3.6));
+  for (let k = 2; k <= upper; k++) {
+    const z = g + (k - 1) * s;
+    for (const mirror of [null, D]) {
+      p.mirror = mirror;
+      for (let c = (k % 2); c < cols; c += 2) {
+        const x0 = sx0 + (c * (sx1 - sx0)) / cols + 0.25, x1 = sx0 + ((c + 1) * (sx1 - sx0)) / cols - 0.25;
+        p.box('orange', x0, x1, sy0 - 1.5, sy0, z + 0.05, z + 0.25);
+        p.box('orange', x0, x1, sy0 - 1.5, sy0, z + s - 0.25, z + s - 0.05);
+        p.box('orange', x0, x0 + 0.15, sy0 - 1.5, sy0, z + 0.25, z + s - 0.25);
+        p.box('orange', x1 - 0.15, x1, sy0 - 1.5, sy0, z + 0.25, z + s - 0.25);
+        p.box('glassRail', x0 + 0.15, x1 - 0.15, sy0 - 1.5, sy0 - 1.45, z + 0.25, z + s - 0.25);
+      }
+    }
+    p.mirror = null;
+  }
+  p.box('trim', sx0 - 0.2, sx1 + 0.2, sy0 - 0.2, sy1 + 0.2, top, top + 0.6);
+  roofPlant(p, W / 2, D / 2, (sx1 - sx0) / 2, top + 0.6);
+};
+
+/** 6. Twin navy towers with gold bands, joined by a glass sky bridge. */
+const twinNavy: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'darkPanel', 'gold');
+  const face = facade('navyGrid', 1.8, s, 0);
+  const tw = W * 0.36, y0 = D * 0.15, y1 = D * 0.85;
+  const towers: [number, number, number][] = [[1.2, 1.2 + tw, g + upper * s], [W - 1.2 - tw, W - 1.2, g + Math.round(upper * 0.82) * s]];
+  for (const [x0, x1, top] of towers) {
+    p.box(face, x0, x1, y0, y1, zP, top);
+    for (let z = zP + 5 * s; z < top - s; z += 5 * s) p.box('gold', x0 - 0.15, x1 + 0.15, y0 - 0.15, y1 + 0.15, z - 0.2, z + 0.2);
+    p.box('gold', x0 - 0.3, x1 + 0.3, y0 - 0.3, y1 + 0.3, top, top + 0.8);
+    p.box('darkPanel', x0 + 1, x1 - 1, y0 + 1, y1 - 1, top + 0.8, top + 3);
+    p.cylinder('gold', (x0 + x1) / 2, (y0 + y1) / 2, top + 3, top + 9, 0.15);
+  }
+  const zb = g + Math.round(upper * 0.55) * s;
+  p.box('glassRail', 1.2 + tw, W - 1.2 - tw, D * 0.4, D * 0.6, zb, zb + 2 * s);
+  p.box('gold', 1.2 + tw, W - 1.2 - tw, D * 0.4 - 0.1, D * 0.6 + 0.1, zb - 0.3, zb);
+  p.box('gold', 1.2 + tw, W - 1.2 - tw, D * 0.4 - 0.1, D * 0.6 + 0.1, zb + 2 * s, zb + 2 * s + 0.3);
+};
+
+/** 7. An octagon of glass behind copper fins, narrowing at the top under a copper spire. */
+const octCopper: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'stone', 'copper');
+  const cx = W / 2, cy = D / 2, r = Math.min(W, D) * 0.46, rot = Math.PI / 8;
+  const face = facade('copperFins', 1.2, s, 0);
+  const top = g + upper * s, mid = g + Math.round(upper * 0.8) * s;
+  p.prism(face, cx, cy, r, zP, mid, 8, rot);
+  p.prism('copper', cx, cy, r + 0.2, mid, mid + 0.5, 8, rot);
+  p.prism(face, cx, cy, r * 0.78, mid + 0.5, top, 8, rot);
+  p.prism('copper', cx, cy, r * 0.82, top, top + 0.6, 8, rot);
+  const spire = new ConeGeometry(r * 0.45, 14, 8, 1, false, rot);
+  spire.translate(cx, top + 0.6 + 7, -cy);
+  p.pushRaw('copper', spire);
+};
+
+/** 8. Blocks of four floors stacked out of line, black and white in turn. */
+const stackedBlocks: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'darkPanel');
+  const white = facade('ribbonWhite', 2.4, s, 0), black = facade('ribbonBlack', 2.4, s, 0);
+  const bw = W * 0.72, bd = D * 0.7;
+  let i = 0;
+  for (let k = 2; k <= upper; k += 4, i++) {
+    const z0 = Math.max(zP, g + (k - 1) * s), z1 = g + Math.min(upper, k + 3) * s;
+    const dx = i % 2 === 0 ? -2.5 : 2.5, dy = i % 3 === 0 ? -1.5 : i % 3 === 1 ? 1.5 : 0;
+    const x0 = W / 2 - bw / 2 + dx, y0 = D / 2 - bd / 2 + dy;
+    p.box(i % 2 === 0 ? white : black, x0, x0 + bw, y0, y0 + bd, z0, z1);
+    p.box(i % 2 === 0 ? 'darkPanel' : 'white', x0 - 0.2, x0 + bw + 0.2, y0 - 0.2, y0 + bd + 0.2, z1 - 0.01, z1 + 0.35);
+    // A roof garden where a block overhangs the next.
+    p.bush(x0 + 1, y0 + 1, z1 + 0.35, 0.6);
+    p.bush(x0 + bw - 1, y0 + bd - 1, z1 + 0.35, 0.6, true);
+  }
+};
+
+/** 9. Pink flats on an L with a round corner, white-framed windows, corner balconies with black rails. */
+const pinkCorner: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'white');
+  const face = facade('punchedPink', 2.2, s, 0);
+  const top = g + upper * s;
+  const r = D * 0.24;
+  // The street wing with a rounded end, the side wing going back.
+  p.box(face, r, W - 1, 1, 1 + 2 * r, zP, top);
+  p.ellipse(face, r, 1 + r, r, r, zP, top, 20);
+  p.box(face, W - 1 - 2 * r, W - 1, 1 + 2 * r, D - 1, zP, top);
+  for (let k = 2; k <= upper; k++) {
+    const z = g + (k - 1) * s;
+    // Balconies in the corner of the L: along the street wing's back and the side wing's flank.
+    p.box('white', r, W - 1 - 2 * r, 1 + 2 * r, 2.6 + 2 * r, z, z + 0.22);
+    p.rail(r, W - 1 - 2 * r, 2.56 + 2 * r, 2.6 + 2 * r, z + 0.22);
+    p.box('white', W - 2.6 - 2 * r, W - 1 - 2 * r, 2.6 + 2 * r, D - 1, z, z + 0.22);
+    p.rail(W - 2.64 - 2 * r, W - 2.6 - 2 * r, 2.6 + 2 * r, D - 1, z + 0.22);
+    p.ellipse('white', r, 1 + r, r + 0.15, r + 0.15, z - 0.1, z + 0.12, 20);
+    if (k % 2 === 0) p.plant(r + 1.5, 2.2 + 2 * r, z + 0.22, 0.8);
+  }
+  p.box('white', r - 0.2, W - 0.8, 0.8, 1.2 + 2 * r, top, top + 0.5);
+  p.ellipse('white', r, 1 + r, r + 0.2, r + 0.2, top, top + 0.5, 20);
+  p.box('white', W - 1.2 - 2 * r, W - 0.8, 1.2 + 2 * r, D - 0.8, top, top + 0.5);
+};
+
+/** 10. A triangle of dark glass, white frame bands, a narrower crown and a mast. */
+const triangleDark: Design = (p, W, D, g, s, upper) => {
+  const zP = podium2(p, W, D, g, s, 'darkPanel');
+  const cx = W / 2, cy = D * 0.52, r = Math.min(W, D) * 0.6, rot = Math.PI;
+  const face = facade('curtainDark', 1.5, s, 0);
+  const top = g + upper * s, crown = top - 4 * s;
+  p.prism(face, cx, cy, r, zP, crown, 3, rot);
+  for (let z = zP + 4 * s; z < crown; z += 4 * s) p.prism('white', cx, cy, r + 0.35, z - 0.2, z + 0.2, 3, rot);
+  p.prism('white', cx, cy, r + 0.4, crown - 0.3, crown + 0.2, 3, rot);
+  p.prism(face, cx, cy, r * 0.62, crown + 0.2, top, 3, rot);
+  p.prism('white', cx, cy, r * 0.66, top, top + 0.5, 3, rot);
+  p.cylinder('lightGrid', cx, cy, top + 0.5, top + 16, 0.25);
+};
+
+const DESIGNS: Partial<Record<string, Design>> = {
   balconyMid,
   ...Object.fromEntries(Object.entries(LOOKS).map(([kind, look]) => [kind, towerOf(look)])),
+  twistGreen, hexTerracotta, stepGarden, waveWhite, cubeBalcony, twinNavy, octCopper, stackedBlocks, pinkCorner, triangleDark,
 };
 
 /** Whether this module draws the building's body. */

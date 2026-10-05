@@ -93,6 +93,16 @@ const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> =
   roundGlass: { kind: 'tower', W: 30, D: 40 },
   darkGrid: { kind: 'tower', W: 30, D: 40 },
   artDeco: { kind: 'office', W: 30, D: 40 },
+  twistGreen: { kind: 'tower', W: 34, D: 42 },
+  hexTerracotta: { kind: 'tower', W: 34, D: 42 },
+  stepGarden: { kind: 'tower', W: 34, D: 42 },
+  waveWhite: { kind: 'tower', W: 34, D: 40 },
+  cubeBalcony: { kind: 'tower', W: 34, D: 40 },
+  twinNavy: { kind: 'office', W: 36, D: 40 },
+  octCopper: { kind: 'office', W: 34, D: 42 },
+  stackedBlocks: { kind: 'tower', W: 34, D: 40 },
+  pinkCorner: { kind: 'flats', W: 34, D: 42 },
+  triangleDark: { kind: 'office', W: 34, D: 42 },
 };
 
 /**
@@ -104,6 +114,8 @@ const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> =
  */
 /** How far behind the lab street the catalogue's row stands, metres (clear of the street). */
 export const CATALOG_BACK = 160;
+/** The catalogue's lots stand this far apart along the row, metres: the widest lot and a gap. */
+const CATALOG_PITCH = 40;
 
 /** `toward`: the unit direction (world) from the ground towards the camera; given, the lots stand in one row facing it. */
 export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, toward?: { x: number; y: number }): number {
@@ -142,7 +154,7 @@ export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, towa
     if (toward) {
       const t = toward;
       const u = { x: -t.y, y: t.x };
-      const off = (i - (TOWER_KINDS.length - 1) / 2) * m(lot.W + 4);
+      const off = (i - (TOWER_KINDS.length - 1) / 2) * m(CATALOG_PITCH);
       const back = m(CATALOG_BACK);
       const result = addBuildingRecord(ctx, {
         ...body, x: -t.x * back + u.x * off, y: -t.y * back + u.y * off,

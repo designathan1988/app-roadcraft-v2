@@ -25,7 +25,12 @@ import type { BayComponent, BuildingElement, FacadePattern, RoofDetail, Side, Vo
 export const TOWER_KINDS = [
   'balconyMid', 'glassOffice', 'glassBalcony', 'beigeClassic', 'darkGlass',
   'whiteBalcony', 'brickFrame', 'roundGlass', 'darkGrid', 'artDeco',
+  // The second set: each a different form, balcony, window and colour.
+  'twistGreen', 'hexTerracotta', 'stepGarden', 'waveWhite', 'cubeBalcony',
+  'twinNavy', 'octCopper', 'stackedBlocks', 'pinkCorner', 'triangleDark',
 ] as const;
+/** The second set, drawn by `render/buildings/signature.ts` per floor. */
+export const SECOND_SET: readonly TowerKind[] = TOWER_KINDS.slice(10);
 export type TowerKind = (typeof TOWER_KINDS)[number];
 
 export interface TowerSpec {
@@ -134,7 +139,25 @@ const STYLES: Record<TowerKind, Style> = {
     podium: [2, 3], inset: 1.5, crown: 3, window: { w: 0.4, h: 0.7, sill: 0.8 },
     piers: { w: 0.6, d: 0.35, every: 2 }, storey: 3.5, ground: 5,
   },
+  twistGreen: second('residentialTower', 'residential', [24, 30], 24, 24),
+  hexTerracotta: second('residentialTower', 'residential', [16, 20], 24, 24),
+  stepGarden: second('residentialTower', 'residential', [16, 20], 26, 24),
+  waveWhite: second('residentialTower', 'residential', [20, 26], 24, 20),
+  cubeBalcony: second('residentialTower', 'residential', [14, 18], 24, 20),
+  twinNavy: second('office', 'commercial', [22, 28], 28, 20),
+  octCopper: second('office', 'commercial', [22, 28], 24, 24),
+  stackedBlocks: second('residentialTower', 'residential', [18, 22], 24, 20),
+  pinkCorner: second('apartments', 'residential', [10, 14], 26, 24),
+  triangleDark: second('office', 'commercial', [22, 28], 26, 24),
 };
+
+/** A second-set kind: only its blocks' sizes matter, its look is its own (`signature.ts`). */
+function second(fn: Style['fn'], use: Style['use'], floors: readonly [number, number], w: number, d: number): Style {
+  return {
+    fn, use, floors, width: [w, w], depth: [d, d], wall: PLASTER_LIGHT, base: BASE_LIGHT, fill: 'window', ends: 'window',
+    podium: [2, 2], inset: 0, crown: 0, window: { w: 0.6, h: 0.6, sill: 0.8 }, storey: 3.2, ground: 4.5,
+  };
+}
 
 const pick = <T>(rng: Rng, list: readonly T[]): T => list[rng.int(0, list.length - 1)] as T;
 const half = (x: number): number => Math.round(x * 2) / 2;

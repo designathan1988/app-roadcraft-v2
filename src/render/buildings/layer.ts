@@ -155,7 +155,9 @@ export function createBuildingLayer(): BuildingLayer {
     // The view snapped to eighths of a turn: the walls that come down change
     // only when the camera has really turned.
     const a = dir * (Math.PI / 4);
-    const chunk = emitChunk(cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) }), groundAt, pavedAt, naturalAt);
+    // Opened, a signature building is drawn by the shared kit with its rooms and furniture.
+    const { blueprint: _sig, ...plain } = cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) });
+    const chunk = emitChunk(plain as Building, groundAt, pavedAt, naturalAt);
     cutChunks.set(id, { key, chunk });
     return chunk;
   };
@@ -295,7 +297,9 @@ export function createBuildingLayer(): BuildingLayer {
         }
         if (preview) {
           if (!preview.solid) kit.setGhostValid(preview.valid);
-          ghost = buildBuildingMeshes([preview.building], groundAt, kit, !preview.solid, pavedAt, naturalAt);
+          // A signature building being edited shows its floors and rooms in the shared kit (the floor ghost).
+          const { blueprint: _sig, ...edited } = preview.building;
+          ghost = buildBuildingMeshes([edited as Building], groundAt, kit, !preview.solid, pavedAt, naturalAt);
           ghost.group.renderOrder = 2;
           group.add(ghost.group);
         }
