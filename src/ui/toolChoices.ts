@@ -1,5 +1,6 @@
 import { LANDSCAPE_KINDS, type LandscapeKind } from '@world/landscape';
 import { POLE_LAMP_MODES, type PoleLampMode } from '@world/utilities';
+import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /**
  * What the player has chosen in the tools' panels and the game reads when
@@ -62,4 +63,17 @@ export function poleToolMode(): PoleToolMode {
 /** Not kept between sessions: the tool always opens building. */
 export function setPoleToolMode(next: PoleToolMode): void {
   poleMode = next;
+}
+
+const PAINT_KEY = 'roadcraft.paintKind';
+let paint: PaintKind = stored(PAINT_KEY, PAINT_KINDS, 'sand');
+
+/** The ground the terrain brush paints in its Paint mode. */
+export function paintKind(): PaintKind {
+  return paint;
+}
+
+export function setPaintKind(next: PaintKind): void {
+  paint = next;
+  keep(PAINT_KEY, next);
 }

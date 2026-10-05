@@ -8,12 +8,18 @@ import {
   Mesh,
   MeshStandardMaterial,
   PlaneGeometry,
+  DataTexture,
+  RGBAFormat,
+  UnsignedByteType,
+  LinearFilter,
+  ClampToEdgeWrapping,
   Vector3,
   type Material,
   type Texture,
 } from 'three';
 
 import type { RoadDoc } from '@world/doc';
+import { PAINT_KINDS, type PaintDab } from '@world/terrainPaint';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
@@ -128,6 +134,8 @@ export interface TerrainSurface {
    * be asked to come and meet it.
    */
   update(doc: RoadDoc, stroking?: boolean): boolean;
+  /** Brings the painted ground up to `doc.paintRevision`. */
+  updatePaint(doc: RoadDoc): void;
   /**
    * The grid cells (x0, x1, y0, y1) the last `update` rewrote, or null when it
    * rewrote the whole plate: where a stroke's dab changed the ground.
@@ -260,6 +268,51 @@ export function terrainBakes(anisotropy: number): {
  *  - **Macro variation.** A slow noise tints wide regions warm or cool, so the
  *    ground has weather in it rather than one flat green.
  */
+/** Texels across the map in each painted-ground weight texture. */
+const PAINT_RES = 1024;
+
+function paintTexture(): DataTexture {
+  const texture = new DataTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4), PAINT_RES, PAINT_RES, RGBAFormat, UnsignedByteType);
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * Lays one dab into the weight textures: within its radius every layer moves
+ * toward the dab's (grass: toward none) by the dab's strength times a smooth
+ * falloff, so the weights keep summing to at most one.
+ */
+function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
+  const a = textures[0]!.image.data as Uint8Array;
+  const b = textures[1]!.image.data as Uint8Array;
+  const layer = PAINT_KINDS.indexOf(dab.kind);
+  const cell = TERRAIN_SIZE / PAINT_RES;
+  const cx = (dab.x + TERRAIN_HALF) / cell;
+  const cy = (dab.y + TERRAIN_HALF) / cell;
+  const r = dab.radius / cell;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(PAINT_RES - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(PAINT_RES - 1, Math.ceil(cy + r));
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / Math.max(1e-6, r);
+      if (d >= 1) continue;
+      const fall = 1 - d * d * (3 - 2 * d);
+      const w = Math.min(1, dab.strength * fall);
+      const i = (y * PAINT_RES + x) * 4;
+      for (let k = 0; k < 8; k++) {
+        const data = k < 4 ? a : b;
+        const j = i + (k & 3);
+        const target = k === layer ? 255 : 0;
+        data[j] = Math.round(data[j]! + (target - data[j]!) * w);
+      }
+    }
+  }
+}
+
 function terrainMaterial(
   bakes: {
     grass: SurfaceBake;
@@ -281,7 +334,14 @@ function terrainMaterial(
 
   const grassDetail = detailTextures('grass', anisotropy);
   const soilDetail = detailTextures('soil', anisotropy);
+  const paintA = paintTexture();
+  const paintB = paintTexture();
+  material.userData['paint'] = [paintA, paintB];
   const uniforms = {
+    uPaintA: { value: paintA as Texture },
+    uPaintB: { value: paintB as Texture },
+    uPaintHalf: { value: TERRAIN_HALF },
+    uPaintSize: { value: TERRAIN_SIZE },
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
@@ -322,6 +382,10 @@ function terrainMaterial(
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainNormal;
          uniform sampler2D uRockMap;
+         uniform sampler2D uPaintA;
+         uniform sampler2D uPaintB;
+         uniform float uPaintHalf;
+         uniform float uPaintSize;
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
          uniform float uGrassScale;
@@ -437,6 +501,28 @@ function terrainMaterial(
          // dip from a rise when the sun is behind the slope.
          float damp = smoothstep(2.0, -40.0, vTerrainWorld.y);
          blended.rgb *= mix(1.0, 0.78, damp * 0.7);
+         // Painted ground (world/terrainPaint.ts): a weight per layer, the
+         // grass showing through what the weights leave.
+         vec2 paintUv = vec2((vTerrainWorld.x + uPaintHalf) / uPaintSize, (uPaintHalf - vTerrainWorld.z) / uPaintSize);
+         vec4 pa = texture2D(uPaintA, paintUv);
+         vec4 pb = texture2D(uPaintB, paintUv);
+         float painted = pa.r + pa.g + pa.b + pa.a + pb.r + pb.g + pb.b;
+         if (painted > 0.002) {
+           float grain = texture2D(uDirtMap, vTerrainWorld.xz * 0.11).r;
+           float speck = texture2D(uDirtMap, vTerrainWorld.xz * 0.53).r;
+           vec3 soilTex = dirtColor.rgb;
+           vec3 sand = vec3(0.80, 0.70, 0.50) * mix(0.86, 1.1, grain) * mix(0.94, 1.04, speck);
+           vec3 soil = soilTex * vec3(0.92, 0.78, 0.62) * mix(0.8, 1.08, grain);
+           vec3 meadow = grassColor.rgb * vec3(0.95, 1.08, 0.62) * mix(0.75, 1.15, speck);
+           vec3 snow = vec3(0.92, 0.94, 0.97) * mix(0.93, 1.0, grain);
+           vec3 gravel = vec3(0.55, 0.54, 0.51) * mix(0.6, 1.25, speck) * mix(0.9, 1.05, grain);
+           vec3 asphalt = vec3(0.17, 0.17, 0.19) * mix(0.85, 1.15, speck);
+           vec3 concrete = vec3(0.66, 0.65, 0.62) * mix(0.9, 1.06, grain) * mix(0.96, 1.03, speck);
+           float keep = clamp(1.0 - painted, 0.0, 1.0);
+           vec3 layered = sand * pa.r + soil * pa.g + meadow * pa.b + snow * pa.a +
+             gravel * pb.r + asphalt * pb.g + concrete * pb.b;
+           blended.rgb = blended.rgb * keep + layered / max(1.0, painted);
+         }
          diffuseColor *= blended;`,
       )
       .replace(
@@ -872,10 +958,32 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
   vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v3-verge';
 
+  const paint = material.userData['paint'] as DataTexture[];
+  let paintRevision = 0;
+  let paintCount = 0;
+  let paintFirst: PaintDab | undefined;
+  const updatePaint = (doc: RoadDoc): void => {
+    if (doc.paintRevision === paintRevision) return;
+    paintRevision = doc.paintRevision;
+    const dabs = doc.terrainPaint;
+    // Dabs only added since the last time: lay just those. Anything else (an
+    // undo, a load, the oldest dabs dropped): lay them all again.
+    if (dabs.length >= paintCount && dabs[0] === paintFirst && paintCount > 0) {
+      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) rasterPaint(paint, t);
+    } else {
+      for (const t of paint) (t.image.data as Uint8Array).fill(0);
+      for (const dab of dabs) rasterPaint(paint, dab);
+    }
+    paintCount = dabs.length;
+    paintFirst = dabs[0];
+    for (const t of paint) t.needsUpdate = true;
+  };
+
   return {
     meshes: [backdrop, ground, water],
     ground,
     vergeMaterial,
+    updatePaint,
     heightAt,
     naturalRenderedHeightAt,
     renderedHeightAt,

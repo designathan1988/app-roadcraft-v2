@@ -735,6 +735,7 @@ export function createSceneRenderer(
       const terrainStarted = performance.now();
       const stroking = !!options?.holdRoads && !!elevation && networkRevision === net.revision;
       const groundMoved = terrain.update(net.doc, stroking);
+      terrain.updatePaint(net.doc);
       // A brush stroke in progress: every dab used to re-solve the whole road
       // network and re-mesh every road, tree and tuft of grass near it - 450 ms
       // a dab on the player map, so painting was a slideshow. While the stroke

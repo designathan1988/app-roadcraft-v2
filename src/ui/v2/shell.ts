@@ -31,7 +31,13 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { POLE_TOOL_MODES, poleLampMode, poleToolMode, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
+
+/** The colour of each paintable ground, for its button. */
+const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
+  sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36',
+};
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
@@ -71,6 +77,7 @@ const ICON: Record<string, string> = {
   lower: '<path d="M3 6h18"/><path d="m5 6 7 12 7-12"/>',
   flatten: '<path d="M3 15h18"/><path d="M6 11h12"/>',
   river: '<path d="M3 8c3-3 6 3 9 0s6 3 9 0"/><path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>',
+  paint: '<path d="M4 20c2 0 4-1 4-4 0-2 2-3 4-3"/><path d="M12 13l7-7a2 2 0 0 0-3-3l-7 7"/><path d="M9 10l3 3"/>',
   brush: '<path d="M14 4 20 10 10 20H4v-6Z"/>',
   fill: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>',
   eraser: '<path d="m8 20-5-5L14 4l7 7-9 9Z"/><path d="M8 20h12"/>',
@@ -673,9 +680,21 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
+      }
+      // Painting: which ground the brush lays (`world/terrainPaint.ts`).
+      if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
+        const grounds = group(t('paint.kind'));
+        const now = paintKind();
+        grounds.appendChild(choices(PAINT_KINDS.map((kind) => ({
+          label: t(`paint.kind.${kind}`),
+          on: now === kind,
+          run: () => { setPaintKind(kind); render(); },
+          icon: `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[kind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`,
+        })), 4));
+        options.appendChild(grounds);
       }
       const brush = group(t('v2.options'));
       brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)));

@@ -21,6 +21,7 @@ import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, isLandscapeKind } from './landscape';
+import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
@@ -161,6 +162,10 @@ export class RoadDoc {
   private nextTerrainId = 1;
 
   readonly terrainStamps: TerrainStamp[] = [];
+  /** Ground painted over the terrain (`terrainPaint.ts`), oldest first. */
+  readonly terrainPaint: PaintDab[] = [];
+  /** Moves with every change to `terrainPaint`, and only then. */
+  paintRevision = 0;
 
   /**
    * Modular buildings (docs/buildings.md). They keep their OWN revision,
@@ -634,6 +639,18 @@ export class RoadDoc {
     this.markNode(id, junctionModeChanged);
   }
 
+  addPaintDab(dab: PaintDab): void {
+    this.terrainPaint.push({ ...dab });
+    if (this.terrainPaint.length > MAX_PAINT_DABS) this.terrainPaint.shift();
+    this.paintRevision++;
+  }
+
+  clearPaint(): void {
+    if (this.terrainPaint.length === 0) return;
+    this.terrainPaint.length = 0;
+    this.paintRevision++;
+  }
+
   addTerrainStamp(value: Omit<TerrainStamp, 'id'>): TerrainStamp {
     const stamp: TerrainStamp = { ...value, id: this.nextTerrainId++ };
     this.terrainStamps.push(stamp);
@@ -785,6 +802,7 @@ export class RoadDoc {
     copy.revision = this.revision;
     copy.trafficRevision = this.trafficRevision;
     copy.terrainRevision = this.terrainRevision;
+    copy.paintRevision = this.paintRevision;
     copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
     for (const id of this.dirtyNodes) copy.dirtyNodes.add(id);
@@ -863,6 +881,12 @@ export class RoadDoc {
       this.peopleRevision++;
     }
 
+    if (!samePaint(this.terrainPaint, source.terrainPaint)) {
+      this.terrainPaint.length = 0;
+      this.terrainPaint.push(...source.terrainPaint.map((dab) => ({ ...dab })));
+      this.paintRevision++;
+    }
+
     if (landMoved) {
       this.terrainStamps.length = 0;
       this.terrainStamps.push(...source.terrainStamps.map((stamp) => ({ ...stamp })));
@@ -914,6 +938,7 @@ export class RoadDoc {
         ...(s.parking ? { parking: { ...s.parking } } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
+      ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
@@ -1016,6 +1041,11 @@ export class RoadDoc {
       node.crossing = { kind: crossing.kind, segment: asSegmentId(crossing.segment) };
       dropStaleCrossing(node);
     }
+    for (const dab of data.paint ?? []) {
+      if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
+      doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
+    }
+    if (doc.terrainPaint.length) doc.paintRevision = 1;
     for (const stamp of data.terrain ?? []) {
       doc.terrainStamps.push({ ...stamp });
       doc.nextTerrainId = Math.max(doc.nextTerrainId, stamp.id + 1);
@@ -1124,6 +1154,8 @@ export interface SerializedDoc {
    */
   readonly poles?: readonly { id: number; x: number; y: number; lamp?: boolean }[];
   readonly poleSpans?: readonly { id: number; a: number; b: number }[];
+  /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
+  readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number }[];
   /** Walls, fences and hedges (`barriers.ts`); OPTIONAL like the poles. */
@@ -1230,4 +1262,13 @@ function dropStaleCrossing(node: RoadNode | undefined): void {
   // The control the crossing put there goes with it, so the new junction picks
   // its own; a control the player changed since is theirs and stays.
   if (node.control === placed) node.control = 'auto';
+}
+
+function samePaint(a: readonly PaintDab[], b: readonly PaintDab[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i]!, q = b[i]!;
+    if (p.kind !== q.kind || p.x !== q.x || p.y !== q.y || p.radius !== q.radius || p.strength !== q.strength) return false;
+  }
+  return true;
 }

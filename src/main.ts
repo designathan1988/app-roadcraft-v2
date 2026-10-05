@@ -19,7 +19,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { poleLampMode, poleToolMode, streetscapeKind } from '@ui/toolChoices';
+import { paintKind, poleLampMode, poleToolMode, streetscapeKind } from '@ui/toolChoices';
 import { m } from '@world/units';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
@@ -301,7 +301,9 @@ let roadHeightOffset = 0;
  */
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
-let terrainMode: TerrainMode = 'raise';
+/** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
+type BrushMode = TerrainMode | 'paint';
+let terrainMode: BrushMode = 'raise';
 let terrainRadius = 80;
 let terrainStrength = 24;
 let traffic = !savedSession?.settings.paused;
@@ -894,6 +896,14 @@ function terrainPaintInterval(): number {
 
 /** One dab, with no spacing or rate checks of its own. */
 function stampTerrain(at: Vec2, level: number): void {
+  if (terrainMode === 'paint') {
+    // Painting moves no height: a dab of the chosen ground, nothing re-solved.
+    doc.addPaintDab({
+      kind: paintKind(), x: at.x, y: at.y, radius: terrainRadius,
+      strength: Math.max(0.05, Math.min(1, terrainStrength / 80)),
+    });
+    return;
+  }
   doc.addTerrainStamp({
     x: at.x,
     y: at.y,
@@ -1785,7 +1795,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly TerrainMode[] = ['raise', 'lower', 'flatten', 'river'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -2176,7 +2186,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((but
   });
 });
 
-function setTerrainMode(next: TerrainMode): void {
+function setTerrainMode(next: BrushMode): void {
   terrainMode = next;
   document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
     const active = button.dataset['terrainMode'] === next;
@@ -2187,7 +2197,7 @@ function setTerrainMode(next: TerrainMode): void {
 }
 
 document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
-  button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as TerrainMode) ?? 'raise');
+  button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as BrushMode) ?? 'raise');
 });
 
 const terrainRadiusInput = document.getElementById('terrainRadius') as HTMLInputElement;
@@ -3732,14 +3742,16 @@ function drawOverlayScreen(): void {
 }
 
 /** The brush's colour, by what it does to the ground. */
-const TERRAIN_BRUSH_COLOUR: Readonly<Record<TerrainMode, string>> = {
+const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
+  paint: '#f2d27a',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
   river: '#73cfe7',
 };
 
-const TERRAIN_BRUSH_FILL: Readonly<Record<TerrainMode, string>> = {
+const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
+  paint: 'rgba(242,210,122,0.10)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',
