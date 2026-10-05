@@ -381,6 +381,20 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     if (s.walk) {
       lot.path(s.walk, isHouse ? CONCRETE_PATH : PAVERS);
       if (!isHouse && s.walk.y1 - s.walk.y0 > 12) lot.put('lamp', s.walk.x0 + 0.3, (s.walk.y0 + s.walk.y1) / 2, 0, 0.3, 0.3, 3.5);
+      if (!isHouse) {
+        // A passage between buildings is an alley, used as one (the player's
+        // order of 2026-10-05): old cobbles, a drain down the middle, bins
+        // and crates against the wall, a lamp on a bracket.
+        const wx = (s.walk.x0 + s.walk.x1) / 2, len = s.walk.y1 - s.walk.y0;
+        lot.put('pavement', wx, (s.walk.y0 + s.walk.y1) / 2, 0, s.walk.x1 - s.walk.x0, len, 0.11, 0, mat('stone', 0x8a857c));
+        for (let py = s.walk.y0 + 2; py < s.walk.y1 - 1; py += 5) lot.put('drain', wx, py, 0, 0.35, 0.35, 0.1);
+        const side = s.walk.x1 - wx > 0.6 ? s.walk.x1 - 0.35 : wx;
+        if (len > 6) {
+          lot.put('bin', side, s.walk.y1 - 2, 3, 1.1, 0.6, 1.1);
+          lot.put('slab', side, s.walk.y1 - 3.4, 0, 0.6, 0.8, 0.5, 0, mat('wood', 0x7a5b3a));
+          lot.put('slab', side, s.walk.y1 - 3.4, 0, 0.5, 0.6, 0.4, 0.5, mat('wood', 0x8b6a45));
+        }
+      }
     }
     if (s.garden) {
       const g = s.garden;
@@ -491,6 +505,11 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       lot.surface({ x0: 0, y0: by0, x1: W, y1: by1 }, 'concrete');
       const bd = backDoor ?? (env.x0 + env.x1) / 2;
       lot.put('bin', Math.min(W - 1.2, bd + 2.2), by0 + 0.6, 0, 1.4, 0.7, 1.1);
+      // The back of a shop as it is: a skip, refuse sacks, stacked crates and pallets.
+      lot.put('bin', Math.min(W - 1.4, bd + 4), by0 + 0.9, 0, 2.2, 1.4, 1.3, undefined, mat('metal', 0x2f5a3c));
+      for (let k = 0; k < 3; k++) lot.put('rocks', Math.min(W - 0.6, bd + 2.6 + k * 0.5), by0 + 1.6, 0, 0.5, 0.45, 0.4, undefined, mat('plaster', 0x1c1d1f));
+      lot.put('slab', Math.max(0.8, bd - 3), by0 + 1, 0, 1.2, 1.0, 0.14, 0, mat('wood', 0x9c7a50));
+      lot.put('slab', Math.max(0.8, bd - 3), by0 + 1, 0, 0.6, 0.6, 0.45, 0.14, mat('wood', 0x7f6040));
       lot.put('drain', bd, by0 + (by1 - by0) / 2, 0, 0.5, 0.5, 0.1);
       lot.put('lamp', Math.max(0.6, bd - 1.6), by0 + 0.4, 0, 0.3, 0.3, 3.2);
       for (let px = env.x0 + 1; px < env.x1 - 1 && px < bd - 2.5; px += 2.4) lot.put('ac', px, by0 + 0.2, 2, 0.8, 0.35, 0.6, 2.6);
