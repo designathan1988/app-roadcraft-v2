@@ -40,6 +40,24 @@ and `git diff master...claude/sandbox`; the commits are self-contained and in or
   collapse, removal; street craters; people in reach die, nearby flee
   (`PedestrianEngine.impact`).
 
+- **Explosion** (`render/blast.ts`, `main.ts` `strikeAt`): the Strike is an
+  explosion of radius `m(2.5 + force*1.1)`: flash, fireball, flames, black
+  smoke column, sparks, shockwave, camera shake, rigid debris (impulse
+  contacts), crater (road decal + heaved slabs; terrain `lower` stamp on
+  earth); every building in reach struck by distance; poles break whole,
+  snapped or to splinters, pull neighbours, wires fall as Verlet ropes and
+  arc; signal posts in reach thrown and the junction set to `none`; vehicles
+  in reach removed and thrown as burning car-shaped shells; landscape items
+  removed and thrown.
+- **Ragdolls** (`render/ragdoll.ts`): Jakobsen Verlet stick figure driving the
+  citizen's own skeleton palette (`riggedCitizens` `capturedPose`/
+  `drawPalette`/`clipPose`). Dead never get up; near the centre torn apart;
+  knocked people fall, lie, blend into `crouchUp` and get up where they lie
+  (`PeopleEngine.getUp`); street trips too. The old stiff `fallLean` is gone.
+- **Panic** (`people.ts` `panic`): the scared drop what they do and run by
+  route to walkable ground away from the blow at up to 3.4x pace, ignoring
+  crossings; `PedView.panic` drives a FACS fear/scream face.
+
 ## Not done / caveats
 
 - A built road on a hill is cut/filled, so it ends flatter than its preview.
