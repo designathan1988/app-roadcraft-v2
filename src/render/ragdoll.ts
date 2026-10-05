@@ -200,8 +200,12 @@ const smooth = (t: number): number => { const k = Math.min(1, Math.max(0, t)); r
 export interface Ragdolls {
   /** Takes in the casualties of blows (each once): bodies thrown from the pose they were last drawn in. */
   absorb(list: readonly Casualty[], citizens: RagdollCitizens, world: RagdollWorld): void;
-  /** Somebody tripping and falling forward (a `fall` pause), from the pose they were last drawn in. */
-  trip(id: number, heading: number, citizens: RagdollCitizens, world: RagdollWorld): void;
+  /**
+   * Somebody falling (a `fall` pause), from the pose they were last drawn in:
+   * tripping forwards, or knocked towards `away` (world angle) by a punch or
+   * a shove - over their heels when it is behind them.
+   */
+  trip(id: number, heading: number, citizens: RagdollCitizens, world: RagdollWorld, away?: number | null): void;
   /** Whether somebody's own body is on the ground here, so the crowd does not draw them standing too. */
   hides(id: number): boolean;
   /** Lets go of those who are up again once the simulation has them up too (`down` false). */
@@ -454,22 +458,36 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       }
       if (seen.size > 4000) seen.clear();
     },
-    trip(id, heading, citizens, world) {
+    trip(id, heading, citizens, world, away = null) {
       if (bodies.some((b) => b.survivor?.id === id)) return;
       const pose = citizens.capturedPose(id);
       if (!pose) return;
       const x = pose.transform.elements[12]!, y = -pose.transform.elements[14]!;
       const body = build(id, heading, citizens, world, x, y, 'trip');
       if (!body) return;
-      // The feet caught, the body pitching forward over them, the hands going out to break the fall.
-      const fwd = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
       const low = Math.min(...body.p.map((v) => v.y)), high = Math.max(...body.p.map((v) => v.y));
-      launch(body, (k, v) => {
-        const h = (body.p[k]!.y - low) / Math.max(1e-3, high - low);
-        v.copy(fwd).multiplyScalar(m(0.4) + m(2.2) * h);
-        if (k === LW || k === RW || k === LE || k === RE) v.addScaledVector(fwd, m(1.2)).y -= m(0.6);
-        return v;
-      });
+      if (away === null) {
+        // The feet caught, the body pitching forward over them, the hands going out to break the fall.
+        const fwd = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
+        launch(body, (k, v) => {
+          const h = (body.p[k]!.y - low) / Math.max(1e-3, high - low);
+          v.copy(fwd).multiplyScalar(m(0.4) + m(2.2) * h);
+          if (k === LW || k === RW || k === LE || k === RE) v.addScaledVector(fwd, m(1.2)).y -= m(0.6);
+          return v;
+        });
+      } else {
+        // Struck: the chest and head driven away from the blow, the feet left
+        // where they stood - backwards over the heels, or sideways, as it came -
+        // the arms flung up and out.
+        const push = new Vector3(Math.cos(away), 0, -Math.sin(away));
+        launch(body, (k, v) => {
+          const h = (body.p[k]!.y - low) / Math.max(1e-3, high - low);
+          v.copy(push).multiplyScalar(m(0.2) + m(3.2) * h * h);
+          if (k === LW || k === RW || k === LE || k === RE) v.addScaledVector(push, m(0.8)).y += m(1.2);
+          if (k === HEA || k === TOP) v.addScaledVector(push, m(0.8));
+          return v;
+        });
+      }
       add(body);
     },
     update(dt, world) {

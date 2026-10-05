@@ -12,6 +12,7 @@ import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
 import { type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
+import { recordCasualty } from '../people/casualties';
 import { ASK_WAY, carSweep, crossesFootway } from './cars';
 
 /**
@@ -152,6 +153,8 @@ interface Walker {
   act: { readonly kind: GestureKind; readonly from: number; readonly until: number; readonly faceX: number; readonly faceY: number } | null;
   /** Running away from something: pace times `by` until `age` reaches `until`; then on to `goal`. */
   rush: { readonly by: number; readonly until: number; readonly goal: Vec2 } | null;
+  /** Terrified (a blow, a robbery) until `age` reaches this: the face screams, zebras are not waited at. */
+  fright?: number;
 }
 
 interface State {
@@ -491,6 +494,53 @@ export function createAgentWalkEngine(): PedestrianEngine {
       s.arrivals.length = 0;
       return out;
     },
+    impact(w, x, y, kill, scare) {
+      // A blow (`editor` strike): killed within `kill` - off the street for
+      // good, a body for the renderer to throw (`render/ragdoll.ts`), torn
+      // apart right under it; knocked down within twice that, up again where
+      // the body comes to rest (`getUp`); everybody within `scare` runs.
+      const s = stateOf(w);
+      let dead = 0;
+      for (const p of [...s.walkers]) {
+        if (p.inside || p.done) continue;
+        const d = hypot(p.x - x, p.y - y);
+        if (d >= kill * 2) continue;
+        const v = p.view;
+        const who = { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
+          party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild }, blastX: x, blastY: y };
+        if (d < kill && !p.player) {
+          recordCasualty(w, { ...who, kind: d < kill * 0.4 ? 'torn' : 'dead', power: 1 - d / kill });
+          finish(s, p, false);
+          dead++;
+          continue;
+        }
+        p.act = { kind: 'fall', from: p.age, until: p.age + 9, faceX: x, faceY: y };
+        p.v = 0;
+        recordCasualty(w, { ...who, kind: 'knocked', power: Math.max(0, 1 - (d - kill) / kill) });
+      }
+      prune(s);
+      startle(w, x, y, scare, 14, null);
+      return dead;
+    },
+    getUp(w, id, x, y, heading, seconds) {
+      // Up where the body came to rest (the walkway nearest it), facing the
+      // way it rises, the fall held until the getting-up is over.
+      const s = stateOf(w);
+      const p = s.byId.get(id);
+      if (!p || p.done) return;
+      if (!p.player) {
+        const hit = nearestWay(s, { x, y }, m(6));
+        if (hit) {
+          const at = hit.way.path.sampleAt(hit.s).p;
+          const goal = p.rush?.goal ?? lastOf(p);
+          p.x = p.prevX = at.x; p.y = p.prevY = at.y;
+          replan(w, s, p, goal);
+        }
+        p.heading = p.prevHeading = heading;
+      }
+      if (p.act?.kind === 'fall') p.act = { ...p.act, until: Math.max(p.act.until, p.age + seconds) };
+      if (p.rush) p.rush = { ...p.rush, until: Math.max(p.rush.until, p.age + seconds + 6) };
+    },
     walkableNear(w, x, y, reach) {
       const s = stateOf(w);
       ensureGraph(w, s);
@@ -748,7 +798,7 @@ function stepWalkers(w: SimWorld): void {
       if (p.asked <= 0) {
         p.asked = ASK_EVERY;
         const open = zebra.zebra.edge ? mayEnterCrossing(w, zebra.zebra.edge, p.waited) : gapOpen(w, zebra.zebra, p.pace, p.waited);
-        if (open) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
+        if (open || (p.fright ?? 0) > p.age) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
       }
     }
     const stop = p.waiting ? Math.max(0, zebra!.stop) : Infinity;
@@ -855,7 +905,9 @@ function publish(w: SimWorld): void {
     v.segment = (st.way?.segment ?? undefined) as SegmentId | undefined;
     v.stretch = st.way ? `${st.way.id}:${st.dir}` : '';
     v.walking = p.v > m(0.1);
-    v.gesture = p.act ? { kind: p.act.kind, phase: 'hold', t: p.age - p.act.from, hold: p.act.until - p.act.from } : null;
+    v.gesture = p.act ? { kind: p.act.kind, phase: 'hold', t: p.age - p.act.from, hold: p.act.until - p.act.from,
+      ...(p.act.kind === 'fall' ? { fromX: p.act.faceX, fromY: p.act.faceY } : {}) } : null;
+    v.panic = (p.fright ?? 0) > p.age;
     v.kerbWait = p.waiting ? p.waited : 0;
     v.waitingFor = p.waiting ? p.waiting.id : null;
     views.push(v);
@@ -984,6 +1036,7 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
     const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
     p.rush = { by: RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
+    p.fright = p.rush.until;
   }
   return saw;
 }

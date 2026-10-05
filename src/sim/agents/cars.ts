@@ -335,6 +335,44 @@ export class OwnCars {
     }
   }
 
+  /**
+   * Every car a blow wrecks within `radius` of `at` (`editor` strike): parked,
+   * manoeuvring, driving or loose, it is gone - out of its bay, out of the
+   * traffic, its trip over - and returned as it stood, for the renderer to
+   * throw as a burning shell. Its owner has no car any more.
+   */
+  wreck(w: SimWorld, at: { x: number; y: number }, radius: number): { x: number; y: number; angle: number; length: number; width: number; height: number; colour: string }[] {
+    const out: { x: number; y: number; angle: number; length: number; width: number; height: number; colour: string }[] = [];
+    const poseOf = (body: Vehicle | null, id: VehicleId): { x: number; y: number; angle: number } | null => {
+      if (body?.free) return { x: body.free.x, y: body.free.y, angle: body.free.angle };
+      const v = w.vehicles.get(id);
+      const pose = v ? vehiclePose(w, v, 1) : null;
+      return pose ? { x: pose.p.x, y: pose.p.y, angle: pose.angle } : null;
+    };
+    for (const [owner, car] of [...this.cars]) {
+      const pose = poseOf(car.body, car.id);
+      if (!pose || Math.hypot(pose.x - at.x, pose.y - at.y) > radius) continue;
+      const t = this.tripOfCar(car.id);
+      if (t) {
+        if (t.target.car === car.id) t.target.car = null;
+        this.end(t);
+      }
+      const v = w.vehicles.get(car.id);
+      if (v) w.removeVehicle(v);
+      if (car.bay && car.bay.car === car.id) car.bay.car = null;
+      this.cars.delete(owner);
+      out.push({ ...pose, length: car.archetype.length, width: car.archetype.width, height: car.archetype.height, colour: car.colour });
+    }
+    for (let i = this.loose.length - 1; i >= 0; i--) {
+      const body = this.loose[i]!;
+      const f = body.free;
+      if (!f || Math.hypot(f.x - at.x, f.y - at.y) > radius) continue;
+      this.loose.splice(i, 1);
+      out.push({ x: f.x, y: f.y, angle: f.angle, length: body.archetype.length, width: body.archetype.width, height: body.archetype.height, colour: body.color });
+    }
+    return out;
+  }
+
   /** A trip given up by the city (too long): the car is put in its bay, the person where they went. */
   abandon(w: SimWorld, trip: number): void {
     const t = this.trips.get(trip);

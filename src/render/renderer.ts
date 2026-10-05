@@ -1166,7 +1166,12 @@ export function createSceneRenderer(
             const g = ped.gesture;
             if (g?.kind !== 'fall') continue;
             ragdollDown.add(ped.id);
-            if (g.t < 0.5 && !ragdolls.hides(ped.id)) ragdolls.trip(ped.id, ped.heading, citizens, ragdollWorld);
+            if (g.t < 0.5 && !ragdolls.hides(ped.id)) {
+              // Knocked from a point (a punch, a shove): down away from it; else a trip, forwards.
+              const away = g.fromX !== undefined && g.fromY !== undefined && Math.hypot(ped.x - g.fromX, ped.y - g.fromY) > 1e-3
+                ? Math.atan2(ped.y - g.fromY, ped.x - g.fromX) : null;
+              ragdolls.trip(ped.id, ped.heading, citizens, ragdollWorld, away);
+            }
           }
           ragdolls.release((id) => ragdollDown.has(id));
           ragdolls.update(wallDt, ragdollWorld);

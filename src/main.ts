@@ -4650,7 +4650,12 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
     }
     return changed;
   });
-  // Cars: thrown, burning shells.
+  // Cars: thrown, burning shells - the residents' own (parked in their bays,
+  // or driving) and the traffic from the edge of the map.
+  const colourOf = (css: string): number => parseInt(String(css).replace('#', '').slice(0, 6), 16) || 0x777777;
+  for (const c of sim.city.cars?.wreck(sim, world, radius * 1.1) ?? []) {
+    hit.vehicles.push({ x: c.x, y: c.y, angle: c.angle, length: c.length, width: c.width, height: c.height, color: colourOf(c.colour) });
+  }
   for (const v of [...sim.vehicles.values()]) {
     const pose = vehiclePose(sim, v, 1);
     if (!pose || !near(pose.p.x, pose.p.y, radius * 1.1)) continue;

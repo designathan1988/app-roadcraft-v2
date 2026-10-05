@@ -42,6 +42,9 @@ export interface GestureView {
   t: number;
   /** How long the whole gesture lasts, seconds, where it has an end (a pause). */
   hold?: number;
+  /** A fall: the point it was knocked from (a punch, a shove, a blast) - the body goes down away from it. */
+  fromX?: number;
+  fromY?: number;
 }
 
 /** Seconds a sit-down and a stand-up take, per sex: the engine holds the phase, the renderer plays the clip, to this clock. */

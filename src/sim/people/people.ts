@@ -1,4 +1,5 @@
 import { m } from '@world/units';
+import { recordCasualty } from './casualties';
 import { hypot2 } from '@core/scalar';
 import { FOOTWAY, KERB, NAV_RADIUS, OPEN, closestOnSegment, isZebra } from '@world/nav/navmesh';
 import { findPath, funnel, type NavPath } from '@world/nav/path';
@@ -142,8 +143,6 @@ interface Sit {
 interface State {
   /** People killed by blows (`impact`) since the map was opened. */
   deaths?: number;
-  /** Bodies and remains of blows, for the renderer (blood, `impactCasualties`). */
-  casualties: Casualty[];
   nav: WorldNav | null;
   people: Person[];
   byId: Map<number, Person>;
@@ -250,7 +249,7 @@ function waitSlot(s: State, mesh: WorldNav['mesh'], p: Person,
 function stateOf(w: SimWorld): State {
   let s = STATES.get(w);
   if (!s) {
-    s = { nav: null, people: [], byId: new Map(), nextId: 1, spawnClock: 0, footTris: [], footArea: [], taken: new Map(), arrivals: [], waiting: new Map(), casualties: [] };
+    s = { nav: null, people: [], byId: new Map(), nextId: 1, spawnClock: 0, footTris: [], footArea: [], taken: new Map(), arrivals: [], waiting: new Map() };
     STATES.set(w, s);
   }
   return s;
@@ -442,7 +441,7 @@ export function createPeopleEngine(): PedestrianEngine {
           // Killed. The body leaves the simulation for good - nobody gets up -
           // and is handed to the renderer as a ragdoll thrown by the blast
           // (`render/ragdoll.ts`); right under the blow it is torn apart.
-          s.casualties.push({
+          recordCasualty(w, {
             x: p.x, y: p.y, heading: p.heading, kind: d < kill * 0.4 ? 'torn' : 'dead', t: 0, id: p.id,
             gender: p.gender, ageClass: p.ageClass, party: { id: p.party.id, size: p.party.size, archetype: p.party.archetype, hasChild: p.party.hasChild },
             blastX: x, blastY: y, power: 1 - d / kill,
@@ -455,7 +454,7 @@ export function createPeopleEngine(): PedestrianEngine {
           // where and for how long), then running.
           p.pause = { kind: 'fall', phase: 'hold', t: 0, hold: 9 };
           panic(s, p, x, y, 20);
-          s.casualties.push({
+          recordCasualty(w, {
             x: p.x, y: p.y, heading: p.heading, kind: 'knocked', t: 0, id: p.id,
             gender: p.gender, ageClass: p.ageClass, party: { id: p.party.id, size: p.party.size, archetype: p.party.archetype, hasChild: p.party.hasChild },
             blastX: x, blastY: y, power: 1 - (d - kill) / kill,
@@ -1953,32 +1952,5 @@ export function peopleNav(w: SimWorld): WorldNav | null {
   return stateOf(w).nav;
 }
 
-/** Somebody a blow killed: who they were (for their body) and the blast that threw them. */
-export interface Casualty {
-  readonly x: number;
-  readonly y: number;
-  readonly heading: number;
-  /** Killed, killed and torn apart, or knocked down (gets up again). */
-  readonly kind: 'dead' | 'torn' | 'knocked';
-  /** Seconds since. */
-  t: number;
-  readonly id: number;
-  readonly gender: PersonGender;
-  readonly ageClass: PersonAgeClass;
-  readonly party: PartyView;
-  readonly blastX: number;
-  readonly blastY: number;
-  /** 0 at the edge of the killing reach, 1 at the blow's centre. */
-  readonly power: number;
-}
-
-/** The casualties of blows on the map, for the renderer; their clocks advanced by `dt`. */
-export function impactCasualties(w: SimWorld, dt = 0): readonly Casualty[] {
-  const s = STATES.get(w);
-  if (!s) return [];
-  for (const c of s.casualties) c.t += dt;
-  // The renderer takes each body in on its first frame; after a minute the record is history.
-  if (s.casualties.length && s.casualties[0]!.t > 60) s.casualties = s.casualties.filter((c) => c.t <= 60);
-  return s.casualties;
-}
+export { impactCasualties, type Casualty } from './casualties';
 
