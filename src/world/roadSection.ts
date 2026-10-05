@@ -95,3 +95,24 @@ export function laneTurnAllowed(rule: LaneTurnRule | undefined, turn: 'left' | '
   return rule === turn || (rule === 'leftThrough' && (turn === 'left' || turn === 'through')) ||
     (rule === 'throughRight' && (turn === 'through' || turn === 'right'));
 }
+
+/**
+ * The section that gives a road of class profile `rt` a chosen TOTAL width
+ * (carriageway, median and both footways), on the 1 m subgrid of the zoning
+ * grid: the footways keep their width and the lanes take up the difference,
+ * within the lane limits; whatever the lanes cannot take goes to the footways.
+ */
+export function sectionForWidth(rt: { readonly lanes: number; readonly median: number; readonly sidewalk: number; readonly speedLimit: number; readonly priorityRank: number },
+  totalMetres: number, speedKmh: number): RoadSection {
+  const total = m(Math.round(totalMetres));
+  const lanes = Math.max(1, rt.lanes);
+  const [minLane, maxLane] = ROAD_SECTION_LIMITS.laneWidth;
+  const [minWalk, maxWalk] = ROAD_SECTION_LIMITS.sidewalk;
+  let sidewalk = rt.sidewalk;
+  let laneWidth = (total - rt.median - 2 * sidewalk) / lanes;
+  if (laneWidth < minLane || laneWidth > maxLane) {
+    laneWidth = Math.max(minLane, Math.min(maxLane, laneWidth));
+    sidewalk = Math.max(minWalk, Math.min(maxWalk, (total - rt.median - lanes * laneWidth) / 2));
+  }
+  return { laneWidth, sidewalk, median: rt.median, speedKmh, priority: rt.priorityRank };
+}

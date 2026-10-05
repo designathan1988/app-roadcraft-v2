@@ -19,8 +19,9 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { paintKind, poleLampMode, poleToolMode, streetscapeKind } from '@ui/toolChoices';
+import { paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { m } from '@world/units';
+import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
 import { Camera } from '@view/camera';
@@ -1505,7 +1506,15 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   const pieces = piecesForDraft(d, endHeightOffset);
   let result: ReturnType<typeof commitRoadPath> = { committed: false };
   mutate(() => {
+    const before = new Set(doc.segments.keys());
     result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking());
+    // A chosen total width (Vias > Largura): the segments just laid take it.
+    const roadWidthMetres = roadWidth();
+    if (result.committed && roadWidthMetres !== null) {
+      const rt = roadProfile(roadTypeIndex, roadLanePreset);
+      const section = sectionForWidth(rt, roadWidthMetres, Math.round(rt.speedLimit * 3.6 * METERS_PER_UNIT));
+      for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentSection(id, section);
+    }
     return result.committed;
   });
   if (!result.committed) {
@@ -1850,6 +1859,8 @@ ROAD_TYPES.forEach((rt, i) => {
   b.type = 'button';
   b.className = 'road-type' + (i === roadTypeIndex ? ' active' : '');
   b.dataset['typeIndex'] = String(i);
+  // Its total width in metres, which the width stepper starts from.
+  b.dataset['widthM'] = String(Math.round((rt.width + rt.sidewalk * 2) * METERS_PER_UNIT));
   b.setAttribute('aria-pressed', String(i === roadTypeIndex));
   b.setAttribute('aria-label', `${roadTypeName(rt)}: ${roadTypeDescription(rt)}`);
   b.innerHTML = `<img class="road-type-art" src="${roadSwatch(rt)}" alt="" /><span class="road-type-name"></span>`;
@@ -3609,8 +3620,12 @@ function drawOverlayScreen(): void {
     : draft ?? chainPreview;
   if (roadPreview) {
     // The profile the road will be laid with: its lanes and its parking.
+    const chosenWidth = roadWidth();
+    const plainRt = roadProfile(roadTypeIndex, roadLanePreset);
     const rt = roadProfile(roadTypeIndex, roadLanePreset,
-      roadType(roadTypeIndex).lanes === 1 ? 'aToB' : 'both', undefined, roadParking());
+      roadType(roadTypeIndex).lanes === 1 ? 'aToB' : 'both',
+      chosenWidth === null ? undefined : sectionForWidth(plainRt, chosenWidth, Math.round(plainRt.speedLimit * 3.6 * METERS_PER_UNIT)),
+      roadParking());
     const pieces = piecesForDraft(roadPreview);
     const points: Vec2[] = [];
     const projected: Vec2[] = [];

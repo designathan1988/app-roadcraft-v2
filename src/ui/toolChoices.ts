@@ -77,3 +77,15 @@ export function setPaintKind(next: PaintKind): void {
   paint = next;
   keep(PAINT_KEY, next);
 }
+
+/** Total width of the roads the road tool lays, whole metres (the 1 m subgrid), or null for the class's own. */
+let width: number | null = null;
+export const ROAD_WIDTH_RANGE = [6, 60] as const;
+
+export function roadWidth(): number | null {
+  return width;
+}
+
+export function setRoadWidth(next: number | null): void {
+  width = next === null ? null : Math.max(ROAD_WIDTH_RANGE[0], Math.min(ROAD_WIDTH_RANGE[1], Math.round(next)));
+}

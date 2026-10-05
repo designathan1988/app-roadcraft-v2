@@ -31,6 +31,7 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
+import { roadWidth, setRoadWidth } from '../toolChoices';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
@@ -622,7 +623,19 @@ export function mountShell(deps: ShellDeps): void {
           icon: svg(id === 'median' ? 'median' : `lanes${id}`, 18),
         };
       })));
-      options.append(trace, snapping, parking, height, lanes);
+      // Total width, on the 1 m subgrid of the 10 m zoning grid.
+      const widthGroup = group(t('palette.width'));
+      const w = roadWidth();
+      const widthStepper = el('div', 'v2-stepper');
+      const stepWidth = (d: number): void => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); render(); };
+      widthStepper.append(
+        button('v2-icon', t('palette.width.narrower'), () => stepWidth(-1), svg('minus', 14)),
+        el('output', 'v2-stepper-value', w === null ? t('palette.width.auto') : `${w} m`),
+        button('v2-icon', t('palette.width.wider'), () => stepWidth(1), svg('plus', 14)),
+      );
+      widthGroup.append(widthStepper);
+      if (w !== null) widthGroup.appendChild(button('v2-choice', t('palette.width.auto'), () => { setRoadWidth(null); render(); }));
+      options.append(trace, snapping, parking, height, lanes, widthGroup);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));
@@ -1127,4 +1140,10 @@ plan.appendChild(choices([
     later();
   });
   render();
+}
+
+/** The width the road tool starts from when stepped: the selected class's own, in whole metres. */
+function defaultRoadWidth(): number {
+  const raw = document.querySelector<HTMLElement>('.road-type.active')?.dataset['widthM'];
+  return raw ? Math.round(Number(raw)) : 10;
 }
