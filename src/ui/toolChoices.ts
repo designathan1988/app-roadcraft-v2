@@ -1,4 +1,4 @@
-import { LANDSCAPE_KINDS, type LandscapeKind } from '@world/landscape';
+import { LANDSCAPE_KINDS, type LandscapeKind, type SignType } from '@world/landscape';
 import { POLE_LAMP_MODES, type PoleLampMode } from '@world/utilities';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
@@ -96,3 +96,6 @@ export function setRoadWidth(next: number | null): void {
  * click places it.
  */
 export const blockGridChoice = { cols: 3, rows: 2, blockMetres: 100, angle: 0, armed: false };
+
+/** What the sign tool puts down next: its kind and its words; and the next street name. */
+export const signChoice: { type: SignType; text: string; streetName: string } = { type: 'stop', text: '', streetName: '' };

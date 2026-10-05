@@ -20,7 +20,7 @@ import { TUNNEL_HEADROOM, type RoadStructure, migrateStructure } from './structu
 import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
-import { type LandscapeItem, type LandscapeKind, isLandscapeKind } from './landscape';
+import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
@@ -314,9 +314,11 @@ export class RoadDoc {
   }
 
   /** Places one landscaping item where `snapLandscape` put it. */
-  addLandscape(kind: LandscapeKind, at: { x: number; y: number }): LandscapeItem {
+  addLandscape(kind: LandscapeKind, at: { x: number; y: number }, extra: { signType?: SignType; text?: string } = {}): LandscapeItem {
     const on = clampToMap(at);
-    const item: LandscapeItem = { id: this.landscapeIds.take(), kind, x: on.x, y: on.y };
+    const text = extra.text?.slice(0, SIGN_TEXT_MAX);
+    const item: LandscapeItem = { id: this.landscapeIds.take(), kind, x: on.x, y: on.y,
+      ...(extra.signType ? { signType: extra.signType } : {}), ...(text ? { text } : {}) };
     this.landscape.set(item.id, item);
     this.utilityRevision++;
     return item;
@@ -942,7 +944,8 @@ export class RoadDoc {
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
-        landscape: [...this.landscape.values()].map((item) => ({ id: item.id, kind: item.kind, x: item.x, y: item.y })),
+        landscape: [...this.landscape.values()].map((item) => ({ id: item.id, kind: item.kind, x: item.x, y: item.y,
+          ...(item.signType ? { signType: item.signType } : {}), ...(item.text ? { text: item.text } : {}) })),
       } : {}),
       // Only when there are any, so a map without them serialises as before.
       ...(this.barriers.size > 0 ? {
@@ -1073,7 +1076,9 @@ export class RoadDoc {
     for (const raw of data.landscape ?? []) {
       if (!isLandscapeKind(raw?.kind) || !Number.isFinite(raw.x) || !Number.isFinite(raw.y) || !Number.isInteger(raw.id)) continue;
       const at = repair ? clampToMap(raw) : { x: raw.x, y: raw.y };
-      doc.landscape.set(raw.id, { id: raw.id, kind: raw.kind, x: at.x, y: at.y });
+      doc.landscape.set(raw.id, { id: raw.id, kind: raw.kind, x: at.x, y: at.y,
+        ...(isSignType(raw.signType) ? { signType: raw.signType } : {}),
+        ...(typeof raw.text === 'string' && raw.text ? { text: raw.text.slice(0, SIGN_TEXT_MAX) } : {}) });
       doc.landscapeIds.reserve(raw.id);
     }
     // Walls, fences and hedges, if the map has any; anything malformed is dropped.
@@ -1157,7 +1162,7 @@ export interface SerializedDoc {
   /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
   readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
-  readonly landscape?: readonly { id: number; kind: string; x: number; y: number }[];
+  readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string }[];
   /** Walls, fences and hedges (`barriers.ts`); OPTIONAL like the poles. */
   readonly barriers?: readonly { id: number; kind: string; points: readonly { x: number; y: number }[] }[];
   /**
@@ -1211,7 +1216,7 @@ function samePoles(a: RoadDoc, b: RoadDoc): boolean {
   if (a.landscape.size !== b.landscape.size) return false;
   for (const [id, p] of a.landscape) {
     const q = b.landscape.get(id);
-    if (!q || p.kind !== q.kind || p.x !== q.x || p.y !== q.y) return false;
+    if (!q || p.kind !== q.kind || p.x !== q.x || p.y !== q.y || p.signType !== q.signType || p.text !== q.text) return false;
   }
   for (const [id, p] of a.poles) {
     const q = b.poles.get(id);

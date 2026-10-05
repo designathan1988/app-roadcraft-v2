@@ -19,7 +19,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, signChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -1183,7 +1183,7 @@ canvas.addEventListener('pointerdown', (e) => {
       const placed = snapLandscape(net, doc.landscape.values(), kind, world, streetscapeReach());
       if (placed.ok) {
         mutate(() => {
-          doc.addLandscape(kind, placed.at);
+          doc.addLandscape(kind, placed.at, kind === 'sign' ? { signType: signChoice.type, text: signChoice.text } : kind === 'streetname' ? { text: signChoice.streetName } : {});
           return true;
         });
       } else {

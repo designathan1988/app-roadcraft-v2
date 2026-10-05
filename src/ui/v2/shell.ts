@@ -31,7 +31,8 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadWidth, setRoadWidth } from '../toolChoices';
+import { blockGridChoice, roadWidth, setRoadWidth, signChoice } from '../toolChoices';
+import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
@@ -152,6 +153,8 @@ const ICON: Record<string, string> = {
   ls_postbox: '<rect x="6" y="5" width="12" height="11" rx="5"/><path d="M9 9h6"/><path d="M12 16v5M8 21h8"/>',
   ls_phone: '<path d="M7 11a5 6 0 0 1 10 0v2H7Z"/><path d="M12 13v8M9 21h6"/><path d="M11 9h2v3h-2Z"/>',
   ls_meadow: '<path d="M4 20c1-4 2-7 1-10M8 20c0-5 1-8 3-11M12 20c0-4-1-8-3-12M16 20c0-5 2-8 4-10M20 20c-1-3-1-6 0-8"/>',
+  ls_sign: '<path d="M12 22V11"/><path d="M8 3h8l3 4-3 4H8L5 7Z"/>',
+  ls_streetname: '<path d="M12 22V8"/><rect x="3" y="3" width="18" height="5" rx="1"/><path d="M6 5.5h12" stroke-dasharray="2 1.5"/>',
   ls_drain: '<path d="M3 9h18"/><path d="M3 9v3h18V9"/><path d="M5 15h14v4H5Z"/><path d="M8 15v4M11 15v4M14 15v4M17 15v4"/>',
   guardrail: '<path d="M5 18v-8M12 18v-8M19 18v-8"/><path d="M3 9h18v4H3Z"/><path d="M3 11h18"/>',
   railing: '<path d="M4 20V6M20 20V6"/><path d="M4 7h16M4 18h16"/><path d="M8 7v11M12 7v11M16 7v11"/>',
@@ -752,6 +755,35 @@ export function mountShell(deps: ShellDeps): void {
       const now = streetscapeKind();
       for (const kind of LANDSCAPE_KINDS) {
         items.appendChild(card(t(`streetscape.${kind}`), now === kind, () => { setStreetscapeKind(kind); render(); }, undefined, svg(`ls_${kind}`, 34)));
+      }
+      // The sign tool: which sign, and the words on those that carry them.
+      if (now === 'sign') {
+        const kinds = group(t('sign.type'));
+        kinds.classList.add('stack');
+        kinds.appendChild(choices(SIGN_TYPES.map((type) => ({
+          label: t(`sign.type.${type}`), on: signChoice.type === type, run: () => { signChoice.type = type; render(); },
+        })), 2));
+        if (SIGN_HAS_TEXT.has(signChoice.type)) {
+          const input = el('input', 'v2-search');
+          input.type = 'text';
+          input.maxLength = SIGN_TEXT_MAX;
+          input.placeholder = t(signChoice.type === 'speed' ? 'sign.text.speed' : 'sign.text');
+          input.value = signChoice.text;
+          input.oninput = () => { signChoice.text = input.value; };
+          kinds.appendChild(input);
+        }
+        options.appendChild(kinds);
+      } else if (now === 'streetname') {
+        const named = group(t('streetscape.streetname'));
+        named.classList.add('stack');
+        const input = el('input', 'v2-search');
+        input.type = 'text';
+        input.maxLength = SIGN_TEXT_MAX;
+        input.placeholder = t('sign.street.placeholder');
+        input.value = signChoice.streetName;
+        input.oninput = () => { signChoice.streetName = input.value; };
+        named.appendChild(input);
+        options.appendChild(named);
       }
       note(t('help.tool.streetscape'));
     } else {

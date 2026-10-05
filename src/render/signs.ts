@@ -1,0 +1,250 @@
+import {
+  CanvasTexture,
+  CylinderGeometry,
+  DoubleSide,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  PlaneGeometry,
+  SRGBColorSpace,
+} from 'three';
+
+import type { Vec2 } from '@core/vec2';
+import type { NodeId, SegmentId } from '@world/ids';
+import { footwayAt, type LandscapeItem, type SignType } from '@world/landscape';
+import type { Network } from '@world/network';
+import { type RoadElevation } from '@world/elevation';
+import { FOOTWAY_RISE } from '@world/roadTypes';
+import { sectionOf, LAMP_ZONE } from '@world/section';
+import { m } from '@world/units';
+
+/**
+ * Signs on the streets: the ones placed with the sign tool (a kind and, for
+ * some, the player's words) and the name plates of every named street, at its
+ * corners. Each plate is painted once on a canvas - as a real sign is a
+ * printed sheet on a post - and stood on the footway it was placed on.
+ */
+
+export interface SignLayer {
+  readonly group: Group;
+  dispose(): void;
+}
+
+/** Plate size by type, metres, and its centre's height above the footway. */
+const PLATE: Readonly<Record<SignType, { w: number; h: number; z: number }>> = {
+  stop: { w: 0.75, h: 0.75, z: 2.2 },
+  yield: { w: 0.8, h: 0.7, z: 2.2 },
+  speed: { w: 0.6, h: 0.6, z: 2.2 },
+  noParking: { w: 0.6, h: 0.6, z: 2.2 },
+  noEntry: { w: 0.6, h: 0.6, z: 2.2 },
+  pedestrian: { w: 0.7, h: 0.7, z: 2.2 },
+  school: { w: 0.7, h: 0.7, z: 2.2 },
+  direction: { w: 1.6, h: 0.5, z: 2.4 },
+  street: { w: 1.0, h: 0.28, z: 2.6 },
+  info: { w: 1.0, h: 0.6, z: 2.2 },
+};
+
+function plateCanvas(type: SignType, text: string): HTMLCanvasElement {
+  const plate = PLATE[type];
+  const W = 256, H = Math.max(64, Math.round((256 * plate.h) / plate.w));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  const cx = W / 2, cy = H / 2, r = Math.min(W, H) / 2 - 4;
+  const fit = (s: string, max: number, size: number): void => {
+    let px = size;
+    g.font = `700 ${px}px system-ui, sans-serif`;
+    while (g.measureText(s).width > max && px > 10) { px -= 2; g.font = `700 ${px}px system-ui, sans-serif`; }
+  };
+  const circle = (fill: string, ring: string | null): void => {
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = ring ?? fill; g.fill();
+    if (ring) { g.beginPath(); g.arc(cx, cy, r * 0.8, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); }
+  };
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  switch (type) {
+    case 'stop': {
+      g.beginPath();
+      for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+      g.closePath(); g.fillStyle = '#ffffff'; g.fill();
+      g.beginPath();
+      for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + (i * Math.PI) / 4; g.lineTo(cx + Math.cos(a) * r * 0.9, cy + Math.sin(a) * r * 0.9); }
+      g.closePath(); g.fillStyle = '#c8102e'; g.fill();
+      g.fillStyle = '#fff'; fit('PARE', r * 1.5, 72); g.fillText('PARE', cx, cy + 4);
+      break;
+    }
+    case 'yield': {
+      const tri = (k: number, fill: string): void => {
+        g.beginPath(); g.moveTo(cx - r * k, cy - r * 0.8 * k); g.lineTo(cx + r * k, cy - r * 0.8 * k); g.lineTo(cx, cy + r * 0.95 * k); g.closePath(); g.fillStyle = fill; g.fill();
+      };
+      tri(1, '#c8102e'); tri(0.72, '#ffffff');
+      break;
+    }
+    case 'speed': {
+      circle('#ffffff', '#c8102e');
+      g.fillStyle = '#111'; fit(text || '40', r * 1.2, 96); g.fillText(text || '40', cx, cy + 4);
+      break;
+    }
+    case 'noParking': {
+      circle('#1f4fa0', '#c8102e');
+      g.fillStyle = '#fff'; g.font = `700 ${Math.round(r * 1.1)}px system-ui, sans-serif`; g.fillText('E', cx, cy + 4);
+      g.strokeStyle = '#c8102e'; g.lineWidth = r * 0.16; g.beginPath(); g.moveTo(cx - r * 0.6, cy - r * 0.6); g.lineTo(cx + r * 0.6, cy + r * 0.6); g.stroke();
+      break;
+    }
+    case 'noEntry': {
+      circle('#c8102e', null);
+      g.fillStyle = '#fff'; g.fillRect(cx - r * 0.65, cy - r * 0.16, r * 1.3, r * 0.32);
+      break;
+    }
+    case 'pedestrian':
+    case 'school': {
+      g.save(); g.translate(cx, cy); g.rotate(Math.PI / 4);
+      g.fillStyle = '#111'; g.fillRect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
+      g.fillStyle = '#f2c500'; g.fillRect(-r * 0.66, -r * 0.66, r * 1.32, r * 1.32);
+      g.restore();
+      g.fillStyle = '#111';
+      if (type === 'school') { fit('ESCOLA', r * 1.1, 40); g.fillText('ESCOLA', cx, cy + 2); }
+      else {
+        // A walking figure.
+        g.beginPath(); g.arc(cx, cy - r * 0.35, r * 0.11, 0, Math.PI * 2); g.fill();
+        g.lineWidth = r * 0.09; g.strokeStyle = '#111'; g.lineCap = 'round';
+        g.beginPath(); g.moveTo(cx, cy - r * 0.2); g.lineTo(cx - r * 0.05, cy + r * 0.12);
+        g.lineTo(cx - r * 0.22, cy + r * 0.4); g.moveTo(cx - r * 0.05, cy + r * 0.12); g.lineTo(cx + r * 0.15, cy + r * 0.4);
+        g.moveTo(cx - r * 0.2, cy - r * 0.02); g.lineTo(cx, cy - r * 0.15); g.lineTo(cx + r * 0.2, cy); g.stroke();
+      }
+      break;
+    }
+    case 'direction':
+    case 'street':
+    case 'info': {
+      const bg = type === 'direction' ? '#1b6e3a' : '#1f4fa0';
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+      g.fillStyle = bg; g.fillRect(4, 4, W - 8, H - 8);
+      g.fillStyle = '#fff';
+      const words = text || (type === 'street' ? 'Rua' : type === 'direction' ? 'Centro' : 'Informação');
+      if (type === 'direction') {
+        fit(words, W - 70, Math.round(H * 0.5)); g.fillText(words, (W - 40) / 2, cy + 2);
+        g.beginPath(); g.moveTo(W - 14, cy); g.lineTo(W - 44, cy - H * 0.3); g.lineTo(W - 44, cy + H * 0.3); g.closePath(); g.fill();
+      } else {
+        fit(words, W - 20, Math.round(H * 0.55)); g.fillText(words, cx, cy + 2);
+      }
+      break;
+    }
+  }
+  return c;
+}
+
+/** The segments a street's name runs along: the one under the point, carried straight on through its nodes. */
+function streetChain(net: Network, at: Vec2): SegmentId[] {
+  let seed: SegmentId | null = null, best = Infinity;
+  for (const ribbon of net.ribbons.values()) {
+    const d = ribbon.full.distanceTo(at);
+    if (d < best) { best = d; seed = ribbon.id; }
+  }
+  if (seed === null || best > m(30)) return [];
+  const doc = net.doc;
+  const chain = new Set<SegmentId>([seed]);
+  const dirAt = (seg: SegmentId, node: NodeId): Vec2 | null => {
+    const s = doc.segment(seg), r = net.ribbons.get(seg);
+    if (!s || !r) return null;
+    // Direction leaving `node` along `seg`.
+    const f = s.a === node ? r.full.sampleAt(Math.min(r.full.length, m(3))) : r.full.sampleAt(Math.max(0, r.full.length - m(3)));
+    const n = doc.node(node)!;
+    const dx = f.p.x - n.x, dy = f.p.y - n.y, l = Math.hypot(dx, dy) || 1;
+    return { x: dx / l, y: dy / l };
+  };
+  const walk = (seg: SegmentId, node: NodeId): void => {
+    for (let guard = 0; guard < 200; guard++) {
+      const inbound = dirAt(seg, node);
+      const n = doc.node(node);
+      if (!inbound || !n) return;
+      let next: SegmentId | null = null;
+      for (const other of n.incident) {
+        if (other === seg || chain.has(other)) continue;
+        const out = dirAt(other, node);
+        // Straight on: leaving opposite to the way we came in, within 25 degrees.
+        if (out && out.x * -inbound.x + out.y * -inbound.y > Math.cos((25 * Math.PI) / 180)) next = other;
+      }
+      if (next === null) return;
+      chain.add(next);
+      const s = doc.segment(next)!;
+      node = s.a === node ? s.b : s.a;
+      seg = next;
+    }
+  };
+  const s0 = doc.segment(seed)!;
+  walk(seed, s0.a);
+  walk(seed, s0.b);
+  return [...chain];
+}
+
+export function buildSigns(net: Network, elevation: RoadElevation, items: Iterable<LandscapeItem>): SignLayer {
+  const group = new Group();
+  group.name = 'signs';
+  if (typeof document === 'undefined') return { group, dispose() {} };
+  const post = new CylinderGeometry(m(0.04), m(0.045), 1, 8);
+  const postMaterial = new MeshStandardMaterial({ color: 0x8e979b, roughness: 0.45, metalness: 0.6 });
+  const plate = new PlaneGeometry(1, 1);
+  const owned: { dispose(): void }[] = [post, postMaterial, plate];
+  // `yaw` turns the plate (a plane facing three's +Z) so its face looks along world (sin yaw, -cos yaw).
+  const stand = (x: number, y: number, ground: number, type: SignType, text: string, yaw: number): void => {
+    const size = PLATE[type];
+    const top = m(size.z + size.h / 2);
+    const pole = new Mesh(post, postMaterial);
+    pole.position.set(x, ground + top / 2, -y);
+    pole.scale.set(1, top, 1);
+    pole.castShadow = true;
+    group.add(pole);
+    const texture = new CanvasTexture(plateCanvas(type, text));
+    texture.colorSpace = SRGBColorSpace;
+    texture.anisotropy = 4;
+    const material = new MeshStandardMaterial({ map: texture, transparent: true, alphaTest: 0.5, side: DoubleSide, roughness: 0.5, metalness: 0.1 });
+    owned.push(texture, material);
+    const face = new Mesh(plate, material);
+    face.position.set(x, ground + m(size.z), -y);
+    face.rotation.set(0, yaw, 0);
+    face.scale.set(m(size.w), m(size.h), 1);
+    face.castShadow = true;
+    group.add(face);
+  };
+  for (const item of items) {
+    if (item.kind === 'sign') {
+      const hit = footwayAt(net, item, m(0.6));
+      if (!hit) continue;
+      const ground = elevation.onSegment(hit.segment, item.x, item.y) + FOOTWAY_RISE;
+      // A traffic sign faces the traffic coming towards it on its side of the street.
+      const facing = { x: -hit.frame.t.x * hit.side, y: -hit.frame.t.y * hit.side };
+      const type = item.signType ?? 'stop';
+      const yaw = type === 'street' || type === 'direction' || type === 'info'
+        ? Math.atan2(-hit.frame.n.x * hit.side, hit.frame.n.y * hit.side) // read from the street
+        : Math.atan2(facing.x, -facing.y);
+      stand(item.x, item.y, ground, type, item.text ?? '', yaw);
+    } else if (item.kind === 'streetname' && item.text) {
+      // The name plates: at both ends of every segment of the named street,
+      // on its right-hand footway, beside the corner.
+      for (const id of streetChain(net, item)) {
+        const seg = net.doc.segment(id), ribbon = net.ribbons.get(id);
+        if (!seg || !ribbon) continue;
+        const zone = sectionOf(ribbon.road, seg.direction).side.furnishing;
+        const out = zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, m(0.2))) / 2;
+        for (const [node, sign] of [[seg.a, 1], [seg.b, -1]] as const) {
+          if ((net.doc.node(node)?.incident.length ?? 0) < 2) continue;
+          const s = sign > 0 ? net.mouthDistance(id, node) + m(1.5) : ribbon.full.length - net.mouthDistance(id, node) - m(1.5);
+          if (s <= 0 || s >= ribbon.full.length) continue;
+          const f = ribbon.full.sampleAt(s);
+          const side = sign > 0 ? -1 : 1;
+          const x = f.p.x + f.n.x * out * side, y = f.p.y + f.n.y * out * side;
+          const ground = elevation.onSegment(id, x, y) + FOOTWAY_RISE;
+          // Parallel to the street, readable from both sides.
+          stand(x, y, ground, 'street', item.text, Math.atan2(f.n.x, -f.n.y));
+        }
+      }
+    }
+  }
+  return {
+    group,
+    dispose() {
+      for (const o of owned) o.dispose();
+      group.clear();
+    },
+  };
+}

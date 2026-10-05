@@ -48,6 +48,7 @@ import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
+import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
@@ -320,6 +321,8 @@ export function createSceneRenderer(
   const exhaust = createExhaust();
   scene.add(exhaust.points);
   let polePreview: Utilities | null = null;
+  /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
+  let signs: SignLayer | null = null;
   let polePreviewKey = '';
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
@@ -537,6 +540,9 @@ export function createSceneRenderer(
       furniture.dispose();
     }
     furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt);
+    if (signs) { world.remove(signs.group); signs.dispose(); }
+    signs = buildSigns(net, elevation, net.doc.landscape.values());
+    world.add(signs.group);
     for (const mesh of furniture.meshes) world.add(mesh);
     world.add(furniture.grass);
     builtTriangles += furniture.triangles;

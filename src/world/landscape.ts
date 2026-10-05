@@ -27,7 +27,7 @@ import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectio
  * items already there.
  */
 
-export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox', 'phone', 'drain', 'meadow'] as const;
+export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox', 'phone', 'drain', 'meadow', 'sign', 'streetname'] as const;
 export type LandscapeKind = (typeof LANDSCAPE_KINDS)[number];
 
 export interface LandscapeItem {
@@ -35,7 +35,25 @@ export interface LandscapeItem {
   readonly kind: LandscapeKind;
   readonly x: number;
   readonly y: number;
+  /** A sign's type (`SIGN_TYPES`). */
+  readonly signType?: SignType;
+  /** What a sign says, or a street's name. */
+  readonly text?: string;
 }
+
+/**
+ * The signs the one sign tool makes (the player's order of 2026-10-05): the
+ * kind is chosen, and those that carry words carry the player's own.
+ */
+export const SIGN_TYPES = ['stop', 'yield', 'speed', 'noParking', 'noEntry', 'pedestrian', 'school', 'direction', 'street', 'info'] as const;
+export type SignType = (typeof SIGN_TYPES)[number];
+export function isSignType(value: unknown): value is SignType {
+  return typeof value === 'string' && (SIGN_TYPES as readonly string[]).includes(value);
+}
+/** Signs whose plate shows the player's text. */
+export const SIGN_HAS_TEXT: ReadonlySet<SignType> = new Set<SignType>(['speed', 'direction', 'street', 'info']);
+/** The longest text a sign or a street name keeps. */
+export const SIGN_TEXT_MAX = 40;
 
 export function isLandscapeKind(value: unknown): value is LandscapeKind {
   return typeof value === 'string' && (LANDSCAPE_KINDS as readonly string[]).includes(value);
@@ -53,6 +71,8 @@ export const LANDSCAPE_RADIUS: Readonly<Record<LandscapeKind, number>> = {
   phone: m(0.45),
   drain: m(0.5),
   meadow: m(2),
+  sign: m(0.15),
+  streetname: m(1),
 };
 
 /** The least clear distance kept between two placed items, besides their radii. */
@@ -116,13 +136,16 @@ function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB
     case 'lamp':
     case 'hydrant':
     case 'phone':
+    case 'sign':
       return zone.inner + Math.min(LAMP_ZONE, depth) / 2;
     // A kerb inlet ("boca de lobo"): its mouth is IN the kerb, its grate in
     // the gutter in front; the item stands on the kerb's back edge.
     case 'drain':
       return zone.inner + m(0.05);
-    // Long grass is placed on open ground (`snapLandscape`), never by depth.
+    // Long grass is placed on open ground and a street's name on the street
+    // itself (`snapLandscape`), never by depth.
     case 'meadow':
+    case 'streetname':
       return null;
     case 'tree': {
       // A pit beside the kerb, so long as the walkers keep their through
@@ -208,6 +231,11 @@ export function snapLandscape(
   at: Vec2,
   reach: number,
 ): LandscapeSnap {
+  if (kind === 'streetname') {
+    // A street's name is put on the street: its signs stand at the corners.
+    if (!onAnyRoad(net, at)) return { ok: false, at, reason: 'offFootway' };
+    return { ok: true, at, hit: null };
+  }
   if (kind === 'meadow') {
     // A clump of long grass goes on open ground, never on a street.
     if (footwayAt(net, at, m(1)) || onAnyRoad(net, at)) return { ok: false, at, reason: 'offFootway' };
