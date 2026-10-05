@@ -37,6 +37,17 @@ import {
   sampleWire,
 } from '@world/utilities';
 import { angleOf } from '@core/vec2';
+
+/** Pin insulator on the cross-arm. */
+const INSULATOR_RADIUS = m(0.07);
+const INSULATOR_TALL = m(0.2);
+/** Arm braces: how far below the arm they meet the mast, and their section. */
+const BRACE_DROP = m(0.55);
+const BRACE_THICK = m(0.05);
+/** Pole-top transformer can. */
+const CAN_RADIUS = m(0.28);
+/** Rise of the lamp bracket from the pole to the head. */
+const LAMP_TILT = (8 * Math.PI) / 180;
 import type { PoleId, SpanId } from '@world/ids';
 import type { UtilityPole, UtilitySpan } from '@world/utilities';
 
@@ -67,6 +78,8 @@ interface Placement {
   /** Height above the ground, in world units. */
   z: number;
   yaw: number;
+  /** Tilt of the part's local X axis up from level, radians (a brace, a lamp bracket). */
+  roll?: number;
   sx: number;
   sy: number;
   sz: number;
@@ -87,7 +100,7 @@ function instanced(
   placements.forEach((placement, index) => {
     // World y is mirrored into three's z, as everywhere else in this layer.
     object.position.set(placement.x, placement.z, -placement.y);
-    object.rotation.set(0, placement.yaw, 0);
+    object.rotation.set(0, placement.yaw, placement.roll ?? 0);
     object.scale.set(placement.sx, placement.sy, placement.sz);
     object.updateMatrix();
     mesh.setMatrixAt(index, object.matrix);
@@ -124,6 +137,10 @@ export function buildUtilities(
   const masts: Placement[] = [];
   const arms: Placement[] = [];
   const lampArms: Placement[] = [];
+  const insulators: Placement[] = [];
+  const braces: Placement[] = [];
+  const caps: Placement[] = [];
+  const cans: Placement[] = [];
   const lampHeads: Placement[] = [];
   const lenses: Placement[] = [];
   const pools: Placement[] = [];
@@ -146,6 +163,8 @@ export function buildUtilities(
       sy: 1,
       sz: 1,
     });
+    // A pole cap: the weathering cap on the crown of a timber pole.
+    caps.push({ x: pole.x, y: pole.y, z: base + POLE_HEIGHT + m(0.03), yaw: 0, sx: 1, sy: 1, sz: 1 });
   }
 
   /**
@@ -170,14 +189,49 @@ export function buildUtilities(
     // in. Putting the length on sz instead - which is what this did - turns
     // every arm ninety degrees, and a row of poles comes out looking twisted.
     for (const arm of frame?.arms ?? []) {
+      const armZ = top - POLE_ARM_DROP;
       arms.push({
         x: pole.x,
         y: pole.y,
-        z: top - POLE_ARM_DROP,
+        z: armZ,
         yaw: angleOf(arm),
         sx: POLE_ARM_HALF * 2,
         sy: POLE_ARM_THICK,
         sz: POLE_ARM_THICK,
+      });
+      // Pin insulators on the arm, one under each wire of the top course.
+      for (const offset of WIRE_OFFSETS) {
+        insulators.push({
+          x: pole.x + arm.x * POLE_ARM_HALF * offset,
+          y: pole.y + arm.y * POLE_ARM_HALF * offset,
+          z: armZ + POLE_ARM_THICK / 2 + INSULATOR_TALL / 2,
+          yaw: 0, sx: 1, sy: 1, sz: 1,
+        });
+      }
+      // Two flat braces from the mast up to the arm, one each side.
+      for (const side of [1, -1]) {
+        const reach = POLE_ARM_HALF * 0.6;
+        const drop = BRACE_DROP;
+        braces.push({
+          x: pole.x + arm.x * side * reach / 2,
+          y: pole.y + arm.y * side * reach / 2,
+          z: armZ - drop / 2,
+          yaw: angleOf({ x: arm.x * side, y: arm.y * side }),
+          roll: Math.atan2(drop, reach),
+          sx: Math.hypot(reach, drop),
+          sy: BRACE_THICK,
+          sz: BRACE_THICK * 0.5,
+        });
+      }
+    }
+    // A pole-top transformer on some poles, hung on the side away from the street.
+    if (pole.id % 5 === 3) {
+      const away = roadward(pole.x, pole.y) ?? frame?.arms[0] ?? { x: 0, y: 1 };
+      cans.push({
+        x: pole.x - away.x * (POLE_BASE_RADIUS + CAN_RADIUS),
+        y: pole.y - away.y * (POLE_BASE_RADIUS + CAN_RADIUS),
+        z: top - POLE_ARM_DROP - m(1.6),
+        yaw: 0, sx: 1, sy: 1, sz: 1,
       });
     }
 
@@ -192,9 +246,11 @@ export function buildUtilities(
     lampArms.push({
       x: pole.x + reach.x * (POLE_LAMP_REACH / 2),
       y: pole.y + reach.y * (POLE_LAMP_REACH / 2),
-      z: headZ,
+      z: headZ - Math.tan(LAMP_TILT) * POLE_LAMP_REACH / 2,
       yaw: reachYaw,
-      sx: POLE_LAMP_REACH,
+      // The bracket rises gently from the pole to the head, as a davit does.
+      roll: LAMP_TILT,
+      sx: POLE_LAMP_REACH / Math.cos(LAMP_TILT),
       sy: POLE_ARM_THICK * 0.8,
       sz: POLE_ARM_THICK * 0.8,
     });
@@ -254,8 +310,8 @@ export function buildUtilities(
     metalness: 0.35,
   });
   const timber = new MeshStandardMaterial({
-    color: 0x6b5941,
-    roughness: 0.9,
+    color: 0x5b4b3a,
+    roughness: 0.92,
     metalness: 0,
   });
   // The luminaire as seen from above: its housing. The head used to be a box
@@ -271,8 +327,14 @@ export function buildUtilities(
     POLE_TOP_RADIUS,
     POLE_BASE_RADIUS,
     POLE_HEIGHT,
-    8,
+    12,
   );
+  const capGeometry = new CylinderGeometry(POLE_TOP_RADIUS * 0.4, POLE_TOP_RADIUS * 1.15, m(0.08), 10);
+  // A pin insulator: a glazed porcelain bell on a short pin.
+  const insulatorGeometry = new CylinderGeometry(INSULATOR_RADIUS * 0.55, INSULATOR_RADIUS, INSULATOR_TALL, 10);
+  const canGeometry = new CylinderGeometry(CAN_RADIUS, CAN_RADIUS, m(0.95), 14);
+  const porcelain = new MeshStandardMaterial({ color: 0xd8dcd6, roughness: 0.25, metalness: 0 });
+  const steel = new MeshStandardMaterial({ color: 0x8c9590, roughness: 0.45, metalness: 0.55 });
   const boxGeometry = new BoxGeometry(1, 1, 1);
   // One face, looking down: a lens only shines down (see `lampLensGeometry`).
   const lensGeometry = new PlaneGeometry(1, 1).rotateX(Math.PI / 2);
@@ -280,6 +342,10 @@ export function buildUtilities(
   const meshes = [
     instanced('utility-poles', mastGeometry, timber, masts),
     instanced('utility-arms', boxGeometry, timber, arms),
+    instanced('utility-caps', capGeometry, steel, caps),
+    instanced('utility-braces', boxGeometry, steel, braces),
+    instanced('utility-insulators', insulatorGeometry, porcelain, insulators),
+    instanced('utility-transformers', canGeometry, steel, cans),
     instanced('utility-lamp-arms', boxGeometry, metal, lampArms),
     instanced('utility-lamp-heads', boxGeometry, housing, lampHeads),
     instanced('utility-lamp-lenses', lensGeometry, kit.glow, lenses),
@@ -316,6 +382,11 @@ export function buildUtilities(
       for (const mesh of meshes) mesh.dispose();
       if (wires) wires.geometry.dispose();
       mastGeometry.dispose();
+      capGeometry.dispose();
+      insulatorGeometry.dispose();
+      canGeometry.dispose();
+      porcelain.dispose();
+      steel.dispose();
       boxGeometry.dispose();
       lensGeometry.dispose();
       metal.dispose();
