@@ -206,6 +206,8 @@ export interface SceneHandle {
   onBuildingDown(listener: (id: number) => void): void;
   /** A broken hydrant spouting water (`blast.geyser`). */
   geyser(x: number, y: number, z: number, seconds?: number): void;
+  /** A burst pipe: a small spout of water from a wall for a moment. */
+  leak(x: number, y: number, z: number, seconds: number): void;
   /** Sparks of a short circuit at world (x, y), height z, for a while (`blast.arc`). */
   sparkAt(x: number, y: number, z: number, seconds: number): void;
   /** Soot laid on the ground (`blast.soot`). */
@@ -1160,6 +1162,7 @@ export function createSceneRenderer(
     soot: (x, y, z, r) => blast.soot(x, y, z, r),
     geyser: (x, y, z, seconds) => blast.geyser(x, y, z, seconds),
     sparkAt: (x, y, z, seconds) => blast.arc(new Vector3(x, z, -y), seconds),
+    leak: (x, y, z, seconds) => blast.leak(x, y, z, seconds),
     onBuildingDown: (listener) => { destruction.onDown = listener; },
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),

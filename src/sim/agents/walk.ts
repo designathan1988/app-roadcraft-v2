@@ -1050,8 +1050,19 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
     const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
     p.rush = { by: seconds >= 14 ? PANIC_RUN : RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
     p.fright = p.rush.until;
-    // In a stampede some trip over and go down, a second or a few in.
-    if (seconds >= 14 && (personHash(p.id ^ 0x7a11) & 255) < 70) p.tripAt = p.age + after + 0.8 + ((personHash(p.id ^ 0x51) & 255) / 255) * 4;
+    // In a stampede some trip over and go down, a second or a few in; some
+    // break down where they are, crouched and sobbing; a few faint.
+    if (seconds >= 14) {
+      const roll = personHash(p.id ^ 0x7a11) & 255;
+      if (roll < 60) p.tripAt = p.age + after + 0.8 + ((personHash(p.id ^ 0x51) & 255) / 255) * 4;
+      else if (roll < 100 && after === 0) {
+        p.act = { kind: 'crouch', from: p.age, until: p.age + 8 + (roll % 9), faceX: x, faceY: y };
+        p.v = 0;
+      } else if (roll < 118 && after === 0) {
+        p.act = { kind: 'fall', from: p.age + 1.5, until: p.age + 14 + (roll % 7), faceX: p.x + Math.cos(p.heading), faceY: p.y + Math.sin(p.heading) };
+        p.v = 0;
+      }
+    }
   }
   return saw;
 }

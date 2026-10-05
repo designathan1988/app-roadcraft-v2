@@ -4957,12 +4957,14 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
         // side the blast struck: sparks and spouts of water for a while.
         const base = sceneHeightAt({ x: c.x, y: c.y });
         const floors = Math.max(1, Math.max(...c.volumes.map((v) => v.base + v.storeys.length)));
-        const spots = Math.min(6, 1 + Math.round(force / 2));
+        // Only the first time it is struck, and only for a moment.
+        const spots = shorted.has(c.id) ? 0 : Math.min(2, 1 + Math.round(force / 8));
+        shorted.add(c.id);
         for (let k = 0; k < spots; k++) {
           const h = base + levelElevation(c, Math.floor(Math.random() * floors)) + m(1 + Math.random() * 1.5);
           const jx = px + (Math.random() - 0.5) * m(6), jy = py + (Math.random() - 0.5) * m(6);
-          if (Math.random() < 0.6) scene.sparkAt(jx, jy, h, 3 + Math.random() * 8);
-          else scene.geyser(jx, jy, h, 6 + Math.random() * 14);
+          if (Math.random() < 0.75) scene.sparkAt(jx, jy, h, 0.6 + Math.random() * 0.8);
+          else scene.leak(jx, jy, h, 1 + Math.random() * 1.5);
         }
       }
       // Those inside, thrown out through its walls and windows from the floor
@@ -5082,6 +5084,8 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
  * thickens with smoke while anything burns.
  */
 /** Buildings a blow reached, broken one a frame (`explodeAt`). */
+/** Buildings that already shorted and burst their pipes (once each). */
+const shorted = new Set<number>();
 const deferredHits: { id: number; x: number; y: number; z: number; force: number }[] = [];
 // A building struck comes down when its pieces are ready (made off the main thread).
 scene.onBuildingDown((id) => {

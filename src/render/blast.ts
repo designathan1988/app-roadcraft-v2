@@ -104,6 +104,8 @@ export interface Blast {
   soot(x: number, y: number, z: number, radius: number): void;
   /** A broken hydrant at world (x, y): a jet of water that keeps going. */
   geyser(x: number, y: number, z: number, seconds?: number): void;
+  /** A burst pipe: a thin spurt of water for a moment, not a hydrant's jet. */
+  leak(x: number, y: number, z: number, seconds: number): void;
   /** Whether anything is still moving, burning or flashing. */
   active(): boolean;
   update(dt: number, world: BlastWorld): void;
@@ -304,7 +306,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   const ropes: Rope[] = [];
   const craters: Crater[] = [];
   const soots: Crater[] = [];
-  const geysers: { x: number; y: number; z: number; carry: number; until: number }[] = [];
+  const geysers: { x: number; y: number; z: number; carry: number; until: number; weak?: boolean }[] = [];
   let sootDirty = false;
   const fires: { at: Vector3; until: number; rate: number; carry: number; piece?: Piece; size?: number; smoke?: number }[] = [];
   const arcs: { at: Vector3; until: number; next: number }[] = [];
@@ -527,6 +529,9 @@ export function createBlast(exhaust: Exhaust): Blast {
       if (soots.length > MAX_SOOT) soots.shift();
       sootDirty = true;
     },
+    leak(x, y, z, seconds) {
+      geysers.push({ x, y, z, carry: 0, until: time + seconds, weak: true });
+    },
     geyser(x, y, z, seconds = Infinity) {
       geysers.push({ x, y, z, carry: 0, until: time + seconds });
       if (geysers.length > 40) geysers.shift();
@@ -568,8 +573,8 @@ export function createBlast(exhaust: Exhaust): Blast {
       for (let i = geysers.length - 1; i >= 0; i--) {
         const g = geysers[i]!;
         if (time > g.until) { geysers.splice(i, 1); continue; }
-        g.carry += 110 * wall;
-        while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.12), m(0.8), 4.2); }
+        g.carry += (g.weak ? 14 : 110) * wall;
+        while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.1), g.weak ? m(0.25) : m(0.8), g.weak ? 1.2 : 4.2); }
       }
       for (let i = arcs.length - 1; i >= 0; i--) {
         const a = arcs[i]!;

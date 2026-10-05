@@ -106,6 +106,16 @@ export function faceAt(seed: number, time: number, activity?: string, mood = 0):
     add('mouthOpen', open);
     add('mouthSpread', 0.7);
   }
+  if (activity === 'cry') {
+    // Sobbing (FACS sadness AU1+4+15 with the jaw catching): brows up and
+    // knitted, mouth corners down, eyes squeezed, the mouth opening in sobs.
+    for (const k of Object.keys(out)) if (k !== 'lookLeft' && k !== 'lookRight') delete out[k];
+    add('faceSadness', 1);
+    add('faceBrowRaise', 0.35);
+    const sob = Math.max(0, Math.sin(time * 5.5 + (hash & 63)));
+    add('mouthOpen', 0.15 + 0.45 * sob * sob);
+    add('faceBlink', 0.55 + 0.3 * sob);
+  }
   return out;
 }
 
