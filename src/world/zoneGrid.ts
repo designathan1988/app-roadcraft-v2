@@ -81,6 +81,32 @@ function insideQuad(p: Vec2, q: readonly Vec2[]): boolean {
   return inside;
 }
 
+/** How far two cells may run into each other and still count as apart: rounding, and cells that only share an edge. */
+const OVERLAP_SLACK = m(0.25);
+
+/**
+ * Whether two quads overlap by more than `slack`, by the separating-axis
+ * test: they are apart when, along the normal of some edge of either, their
+ * projections overlap by `slack` or less. Exact for convex quads, which a
+ * cell is (a cell on the inside of a bend tighter than its depth would not
+ * be, and it is then judged by its edges' normals all the same).
+ */
+function quadsOverlap(a: readonly Vec2[], b: readonly Vec2[], slack: number): boolean {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i]!, q = poly[(i + 1) % poly.length]!;
+      const len = Math.hypot(q.x - p.x, q.y - p.y);
+      if (len < 1e-9) continue;
+      const nx = -(q.y - p.y) / len, ny = (q.x - p.x) / len;
+      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+      for (const v of a) { const d = v.x * nx + v.y * ny; aMin = Math.min(aMin, d); aMax = Math.max(aMax, d); }
+      for (const v of b) { const d = v.x * nx + v.y * ny; bMin = Math.min(bMin, d); bMax = Math.max(bMax, d); }
+      if (Math.min(aMax, bMax) - Math.max(aMin, bMin) <= slack) return false;
+    }
+  }
+  return true;
+}
+
 /** Builds the grid of every ground street that carries pedestrians. */
 export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
   const steps = zoneGridSteps(doc, net);
@@ -134,29 +160,31 @@ export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, Zone
   const cells: ZoneCell[] = [];
   const byId = new Map<string, ZoneCell>();
   const buckets = new Map<string, ZoneCell[]>();
-  /** Corners pulled a little toward the centre: cells that only share an edge do not overlap. */
-  const shrunk = (corners: readonly Vec2[], centre: Vec2): Vec2[] =>
-    corners.map((q) => ({ x: q.x + (centre.x - q.x) * 0.15, y: q.y + (centre.y - q.y) * 0.15 }));
   /**
-   * Whether a cell would overlap one already laid - by any amount, not only
-   * when the centres nearly meet. Two streets' grids meeting at a block's
-   * corner used to keep cells overlapping by a third or a half, and the
-   * corner of every block read as two grids drawn over each other.
+   * Whether a cell would overlap one already laid by more than a sliver.
+   * The test is a separating-axis one on the two quads: the corner-inside
+   * test it replaces missed two cells that cross without either holding a
+   * corner of the other (a curved street's grid over a straight one's), and
+   * the grids of neighbouring streets were drawn over each other.
    */
   const taken = (centre: Vec2, corners: readonly Vec2[]): boolean => {
-    const mine = shrunk(corners, centre);
     const bx = Math.floor(centre.x / BUCKET), by = Math.floor(centre.y / BUCKET);
     for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
       for (const other of buckets.get(`${bx + dx},${by + dy}`) ?? []) {
-        if (Math.hypot(other.centre.x - centre.x, other.centre.y - centre.y) > ZONE_CELL * 1.5) continue;
-        if (insideQuad(centre, other.corners) || insideQuad(other.centre, corners)) return true;
-        if (mine.some((q) => insideQuad(q, other.corners))) return true;
-        if (shrunk(other.corners, other.centre).some((q) => insideQuad(q, corners))) return true;
+        if (Math.hypot(other.centre.x - centre.x, other.centre.y - centre.y) > ZONE_CELL * 2) continue;
+        if (quadsOverlap(corners, other.corners, OVERLAP_SLACK)) return true;
       }
     }
     return false;
   };
 
+  // Each street's columns and the cell maker for them, first; the cells are
+  // then laid a row at a time across every street (below).
+  interface Street {
+    readonly spans: readonly { column: number; sa: number; sb: number }[];
+    readonly cellOver: (side: 1 | -1, column: number, row: number, sa: number, sb: number) => ZoneCell | null;
+  }
+  const streets: { id: SegmentId; street: Street }[] = [];
   const ids = [...doc.segments.keys()].sort((a, b) => a - b);
   for (const segId of ids) {
     const seg = doc.requireSegment(segId);
@@ -205,23 +233,38 @@ export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, Zone
         width: sb - sa,
       };
     };
-    const lay = (cell: ZoneCell): void => {
-      cells.push(cell);
-      byId.set(cell.id, cell);
-      const k = bucketKey(cell.centre.x, cell.centre.y);
-      let bucket = buckets.get(k);
-      if (!bucket) buckets.set(k, bucket = []);
-      bucket.push(cell);
-    };
     // The regular 10 m columns, then a partial column at each end of the
     // street for what is left before the junction.
     const spans: { column: number; sa: number; sb: number }[] = [];
     for (let c = 0; c < columns; c++) spans.push({ column: c, sa: s0 + c * ZONE_CELL, sb: s0 + (c + 1) * ZONE_CELL });
     if (s0 >= SUB_CELL) spans.unshift({ column: -1, sa: 0, sb: s0 });
     if (length - (s0 + columns * ZONE_CELL) >= SUB_CELL) spans.push({ column: columns, sa: s0 + columns * ZONE_CELL, sb: length });
-    for (const side of [1, -1] as const) {
-      for (const { column, sa, sb } of spans) {
-        for (let row = 0; row < ZONE_DEPTH; row++) {
+    streets.push({ id: segId, street: { spans, cellOver } });
+  }
+
+  const lay = (cell: ZoneCell): void => {
+    cells.push(cell);
+    byId.set(cell.id, cell);
+    const k = bucketKey(cell.centre.x, cell.centre.y);
+    let bucket = buckets.get(k);
+    if (!bucket) buckets.set(k, bucket = []);
+    bucket.push(cell);
+  };
+  // Where two streets' grids would cover the same land, the cell nearer its
+  // own street keeps it, and between cells as near, the older street's (the
+  // lower id) - the rule of Cities: Skylines' zone blocks. So the grid is laid
+  // a row at a time across the whole town: every street's front row, then
+  // every street's second row, and so on. Laid a street at a time, the first
+  // street took its whole depth and the land between two parallel streets
+  // went to whichever was drawn first, its back rows over the other's front.
+  for (let row = 0; row < ZONE_DEPTH; row++) {
+    for (const { id: segId, street } of streets) {
+      const { spans, cellOver } = street;
+      for (const side of [1, -1] as const) {
+        for (const { column, sa, sb } of spans) {
+          // A column stops at its first refused cell: a deeper row with the
+          // front one missing would float away from the street.
+          if (row > 0 && !byId.has(key(segId, side, column, row - 1))) continue;
           // A cell that does not fit whole is trimmed on the 1 m subgrid, from
           // whichever end is in the way, down to a single metre: the grid then
           // reaches the footway and the corner of the block with no gap.
@@ -229,14 +272,11 @@ export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, Zone
           for (let k = 1; !cell && sb - sa - k * SUB_CELL >= SUB_CELL - 1e-6; k++) {
             cell = cellOver(side, column, row, sa + k * SUB_CELL, sb) ?? cellOver(side, column, row, sa, sb - k * SUB_CELL);
           }
-          // A column stops at its first refused cell: a deeper row with the
-          // front one missing would float away from the street.
-          if (!cell) break;
-          lay(cell);
+          if (cell) lay(cell);
         }
       }
+      yield;
     }
-    yield;
   }
 
   return {

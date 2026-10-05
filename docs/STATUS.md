@@ -347,8 +347,13 @@ and they have seen it.
   the altitude label is the range, the sky is a flat colour, and the planet's
   scale (13.5 km radius, relief 11% of it) is undecided.
 
-- **Zoning:** the zoning grids of neighbouring roads overlap (one road's cells cover
-  the other's). The player's next order: implement zoning on a new city.
+- **Zoning:** the grid is laid a row at a time across every street, and of two
+  overlapping cells the one nearer its street keeps the land (ties to the older
+  street), as Cities: Skylines' zone blocks do; overlap is a separating-axis test
+  (`world/zoneGrid.ts`, `tests/world/zoneGridOverlap.spec.ts`). Every street side
+  now has its front row; leftover strips under a cell deep stay unzoned. Open: cells
+  are not removed under player-placed buildings; growth sometimes puts a building
+  across a junction corner. The player's next order: implement zoning on a new city.
 - **Interface:** the selection panel (Builder inspector) is still text fields; face,
   expression and shape detail sliders still carry short text labels; facade
   pattern thumbnails arrive late.
