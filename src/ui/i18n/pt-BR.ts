@@ -618,6 +618,7 @@ export const PT_BR: Dictionary = {
   'hint.pole':
     'Arraste ou clique para traçar uma linha de postes · Clique de novo para continuar · Esc encerra · Shift+clique remove',
   'hint.pole.removed': 'Poste removido',
+  'hint.building.renovated': 'Prédio reformado',
   'hint.barrier': 'Clique para pôr pontos · Duplo clique ou Enter constrói · Backspace desfaz o ponto · Esc descarta · Shift+clique remove',
   'hint.barrier.built': 'Construído',
   'hint.barrier.removed': 'Removido',

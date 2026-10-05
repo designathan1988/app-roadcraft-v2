@@ -628,6 +628,7 @@ export const EN: Dictionary = {
   'hint.pole':
     'Drag or click to run a pole line · Click on to keep going · Esc ends it · Shift+click removes',
   'hint.pole.removed': 'Pole removed',
+  'hint.building.renovated': 'Building renovated',
   'hint.barrier': 'Click to put points down · Double click or Enter builds · Backspace takes a point back · Esc drops it · Shift+click removes',
   'hint.barrier.built': 'Built',
   'hint.barrier.removed': 'Removed',

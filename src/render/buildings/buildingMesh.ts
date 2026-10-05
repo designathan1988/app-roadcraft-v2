@@ -253,6 +253,8 @@ class ShellPart {
   readonly colour: number[] = [];
   readonly uv: number[] = [];
   readonly index: number[] = [];
+  /** The building's decay at each vertex (`Building.decay`), for the weathering shader. */
+  readonly decay: number[] = [];
 }
 
 /**
@@ -292,6 +294,8 @@ class Shell {
    * on the ground. NaN turns it off.
    */
   ground = Number.NaN;
+  /** How run-down the building being emitted is (`Building.decay`): stains, peeling paint, grime. */
+  decay = 0;
 
   /**
    * A planar polygon (3 or 4 world points, x/y map, z up) facing world normal
@@ -333,6 +337,7 @@ class Shell {
         tone *= 0.8 + 0.2 * t * t * (3 - 2 * t);
       }
       part.colour.push(c.rgb[0] * tone, c.rgb[1] * tone, c.rgb[2] * tone);
+      part.decay.push(this.decay);
       part.uv.push(x * tx + y * ty, x * bx + y * by + z * bz);
     });
     const a = three[0] as readonly [number, number, number];
@@ -2448,6 +2453,7 @@ export interface PartBatch {
  * the rest.
  */
 export interface ShellChunk {
+  readonly decay: Float32Array;
   readonly position: Float32Array;
   readonly normal: Float32Array;
   readonly colour: Float32Array;
@@ -2480,6 +2486,7 @@ function writeMatrix(out: Float32Array, offset: number, p: Placement): void {
 
 export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, naturalAt: GroundAt = groundAt): BuildingChunk {
   const shell = new Shell();
+  shell.decay = b.decay ?? 0;
   const parts = Object.fromEntries(PART_KINDS.map((k) => [k, [] as Placement[]])) as Record<PartKind, Placement[]>;
   // The blocks as drawn: unions, cuts and intersections resolved, the stored
   // blocks untouched (`world/buildings/blocks.ts`).
@@ -2529,6 +2536,7 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
       colour: new Float32Array(part.colour),
       uv: new Float32Array(part.uv),
       index: new Uint32Array(part.index),
+      decay: new Float32Array(part.decay),
     };
   }
   let furniture: Partial<Record<FurnitureKind, PartBatch>> | undefined;
@@ -2577,6 +2585,7 @@ export function assembleBuildingMeshes(
     const normal = new Float32Array(vertices * 3);
     const colour = new Float32Array(vertices * 3);
     const uv = new Float32Array(vertices * 2);
+    const decay = new Float32Array(vertices);
     const index = new Uint32Array(indices);
     let v = 0;
     let n = 0;
@@ -2587,6 +2596,7 @@ export function assembleBuildingMeshes(
       normal.set(part.normal, v * 3);
       colour.set(part.colour, v * 3);
       uv.set(part.uv, v * 2);
+      decay.set(part.decay, v);
       for (let i = 0; i < part.index.length; i++) index[n + i] = (part.index[i] as number) + v;
       v += part.position.length / 3;
       n += part.index.length;
@@ -2596,6 +2606,7 @@ export function assembleBuildingMeshes(
     g.setAttribute('normal', new Float32BufferAttribute(normal, 3));
     g.setAttribute('color', new Float32BufferAttribute(colour, 3));
     g.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+    g.setAttribute('aDecay', new Float32BufferAttribute(decay, 1));
     g.setIndex(new Uint32BufferAttribute(index, 1));
     g.computeBoundingSphere();
     const mesh = new Mesh(g, ghost ? kit.ghostShell : dim ? kit.dimShell[finish] : kit.shell[finish]);

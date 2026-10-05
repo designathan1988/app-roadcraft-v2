@@ -57,7 +57,7 @@ import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
-import type { BuildingId } from '@world/buildings/types';
+import { type BuildingId, decayOf } from '@world/buildings/types';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -1326,7 +1326,18 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       // A click on a building is for seeing inside it (the click handlers
       // above), not for the street that happens to run past it.
-      if (buildings.tool.buildingAt({ x: e.clientX - box.left, y: e.clientY - box.top }) !== null) break;
+      const hitBuilding = buildings.tool.buildingAt({ x: e.clientX - box.left, y: e.clientY - box.top });
+      if (hitBuilding !== null) {
+        // Shift+click: maintenance - the building is renovated, as new.
+        if (e.shiftKey) {
+          const b = doc.buildings.get(hitBuilding as BuildingId);
+          if (b) {
+            mutate(() => { doc.buildings.put({ ...b, builtAt: sim.city.minutes(sim), decay: 0 }); return true; });
+            flashHint('hint.building.renovated');
+          }
+        }
+        break;
+      }
     }
       selectedSegment = anchor.kind === 'segment' ? (anchor.segment ?? null) : null;
       selectedSegmentS = anchor.kind === 'segment' ? (anchor.s ?? null) : null;
@@ -3053,6 +3064,9 @@ setInterval(() => {
   if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
   const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
   if (grown === null) return;
+  // A grown building starts its life now: it ages from here unless renovated.
+  const fresh = doc.buildings.get(grown as BuildingId);
+  if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0 });
   zoneRefusedKey = `${net.revision}:${doc.buildings.revision}`;
   persistence.saveSessionSoon(doc, sessionSettings);
   updateStatus();
@@ -4346,3 +4360,16 @@ function refreshShell(): void {
   const game = document.getElementById('game');
   if (game) { const t = game.dataset['tool'] ?? ''; game.dataset['tool'] = ''; game.dataset['tool'] = t; }
 }
+
+// Buildings run down without maintenance (\`decayOf\`): checked every few
+// seconds, a record changes only when its decay moves a tenth.
+setInterval(() => {
+  const now = sim.city.minutes(sim);
+  let changed = false;
+  for (const b of [...doc.buildings.all()]) {
+    if (b.builtAt === undefined) continue;
+    const decay = decayOf(b.builtAt, now);
+    if (decay !== (b.decay ?? 0)) { doc.buildings.put({ ...b, decay }); changed = true; }
+  }
+  if (changed) requestDraw();
+}, 3000);

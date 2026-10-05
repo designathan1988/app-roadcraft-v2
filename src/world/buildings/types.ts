@@ -352,6 +352,10 @@ export interface Building {
   cores: Core[];
   /** What the building is for (absent: a plain building of its `use`). */
   function?: BuildingFunction;
+  /** When it was built or last renovated, city minutes; absent: it does not age. */
+  builtAt?: number;
+  /** How run-down it is, 0 (new) to 1 (falling apart), from its age (`decayOf`). */
+  decay?: number;
   /**
    * The furniture and lights of each floor as the player arranged them, by
    * level. A floor with none here is furnished for the building's function
@@ -420,4 +424,15 @@ export const volumeTop = (v: Volume): number => v.base + v.storeys.length;
 
 export function volumeById(b: Building, id: number): Volume | undefined {
   return b.volumes.find((v) => v.id === id);
+}
+
+/** City minutes a building stays as new before it starts to age: five days. */
+export const DECAY_GRACE = 5 * 1440;
+/** City minutes from the first stains to falling apart, without maintenance: thirty days. */
+export const DECAY_SPAN = 30 * 1440;
+
+/** How run-down a building built at `builtAt` is at `now`, in tenths. */
+export function decayOf(builtAt: number | undefined, now: number): number {
+  if (builtAt === undefined || !Number.isFinite(now)) return 0;
+  return Math.round(Math.max(0, Math.min(1, (now - builtAt - DECAY_GRACE) / DECAY_SPAN)) * 10) / 10;
 }

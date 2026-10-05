@@ -424,7 +424,57 @@ export function createFinishMaterials(anisotropy = 8): Record<Finish, MeshStanda
       material.roughness = 0.9;
     }
     material.name = `building-${finish}`;
+    applyWeathering(material, finish);
     out[finish] = material;
   }
   return out;
+}
+
+/**
+ * Buildings that are not maintained run down (the player's order of
+ * 2026-10-05): rain streaks down the walls, grime rises from the foot, paint
+ * peels off in patches to the render under it, roofs go dark with moss.
+ * `aDecay` (0 new, 1 falling apart) comes per vertex from the building's
+ * record; the marks are laid by world position so no two walls match.
+ */
+function applyWeathering(material: MeshStandardMaterial, finish: Finish): void {
+  const roof = finish === 'roofing' || finish === 'tile' || finish === 'slate';
+  const glassy = finish === 'glass' || finish === 'metal';
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aDecay;\nvarying float vDecay;\nvarying vec3 vDecayWorld;\nvarying vec3 vDecayNormal;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvDecay = aDecay;\nvDecayWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvDecayNormal = normalize(mat3(modelMatrix) * objectNormal);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vDecay;
+        varying vec3 vDecayWorld;
+        varying vec3 vDecayNormal;
+        float dHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+        float dNoise(vec3 p) {
+          vec3 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(mix(dHash(i), dHash(i + vec3(1, 0, 0)), f.x), mix(dHash(i + vec3(0, 1, 0)), dHash(i + vec3(1, 1, 0)), f.x), f.y),
+                     mix(mix(dHash(i + vec3(0, 0, 1)), dHash(i + vec3(1, 0, 1)), f.x), mix(dHash(i + vec3(0, 1, 1)), dHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+        }`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        if (vDecay > 0.001) {
+          // After the texture: the stains darken the finish as painted.
+          float d = vDecay;
+          vec3 w = vDecayWorld;
+          bool wall = abs(vDecayNormal.y) < 0.5;
+          // Rain streaks: thin, long, running down from sills and copings.
+          float streak = smoothstep(0.55, 0.85, dNoise(vec3(w.x * 2.2, w.y * 0.08, w.z * 2.2)));
+          // Grime: darker towards the foot of the wall and in soft patches.
+          float grime = 0.5 + 0.5 * dNoise(w * 0.22);
+          float darken = d * (0.18 + 0.12 * grime + (wall ? 0.28 * streak : 0.1));
+          diffuseColor.rgb *= 1.0 - darken;
+          ${glassy ? '' : roof ? `
+          // Dark moss in the low corners of the roof.
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.55, 0.62, 0.45), d * 0.6 * smoothstep(0.6, 0.85, dNoise(w * 0.3)));` : `
+          // Paint gone in a few small patches, the darker render showing.
+          float peel = smoothstep(0.8 - d * 0.12, 0.83 - d * 0.12, dNoise(w * 1.3 + 7.0));
+          if (wall) diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.68, 0.62), peel * d);`}
+        }`);
+  };
+  material.customProgramCacheKey = () => `building-weathering-${finish}`;
 }
