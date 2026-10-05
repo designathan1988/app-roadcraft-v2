@@ -6,7 +6,7 @@ rewrites its own area's lines when they change (no appended logs; git keeps the
 history). Rules of work are in `AGENTS.md`, not here.
 
 Last full rewrite: 2026-10-04 19:10, from the agents' memories and the sessions
-then running. Live build: `main` at 0090c88, served on http://127.0.0.1:4180 (rebuilt 20:47).
+then running. Live build: `master` at ef567e3, served on http://127.0.0.1:4180 (rebuilt 2026-10-05 02:10).
 
 ## Who works here
 
@@ -84,9 +84,28 @@ and they have seen it.
   a 2 m lane inside the kerbs, 6 m bays (`world/parkingLayout.ts`) following
   the road round curves, clear 5 m of junction kerb lines and of crossings and
   in front of lots that hold parking, yellow no-parking line elsewhere along a
-  parking kerb. Chosen in the road tool (none / both sides / right / left) and
-  per segment in the inspector. Old maps' 45/90 degree values load as parallel.
+  parking kerb. Paint (ef567e3): the lane's inner edge DASHED (MER, MBST vol. IV
+  7.3), closed at both ends of a run, a division line between every two bays.
+  Chosen in the road tool (none / both sides / right / left) and per segment
+  in the inspector. Old maps' 45/90 degree values load as parallel.
   NOT yet: cars of the agents engine do not use street bays.
+- **Nothing is generated on streets or terrain (ef567e3, the player's order of
+  2026-10-05):** no automatic lamps, street trees, benches, bins, hydrants, post
+  boxes, median shrubs, no trees or bushes scattered over the land or along the
+  roads, no pole lines in the default town. Grass remains; building gardens remain.
+- **Landscaping tool** (Paisagem > Paisagismo, key G, `world/landscape.ts`,
+  `RoadDoc.landscape`): tree, shrub, bench, bin, street light, hydrant, post box,
+  placed only on footways, in the furnishing zone by the kerb; refused on grass,
+  asphalt, narrow footways, occupied spots and crossing landings. Saved with the
+  map, undoable; Shift+click or bulldoze removes. `streetFurniture()` now lists
+  only these (it is what pedestrians walk round).
+- **Wire poles on footways only** (`editor/poles.ts`): both ends on a footway or a
+  pole; the run follows the footway line and turns corners along the footways
+  (shortest path); cross-arms framed by line standards (`world/utilities.ts`
+  `poleArms`: square on tangents, bisector on small angles, one arm per line at
+  corners of 60 degrees and over). Pole lights: none / every other / all, in the
+  tool's options; the lamp reaches over the street and lights at night.
+  Not yet: two poles stand a few metres apart at an inside corner (one per street).
 - A raised road drawn in one stroke comes out continuous; a crossing joins, passes
   over with clearance, or is refused.
 - Terrain brush is opacity per stroke (strength 1-160); a cut deeper than 18 m is
