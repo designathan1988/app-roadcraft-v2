@@ -382,6 +382,9 @@ export const PT_BR: Dictionary = {
   'pole.lamps.none': 'Sem luz',
   'pole.lamps.alternate': 'Luz em postes alternados',
   'pole.lamps.all': 'Luz em todos os postes',
+  'pole.mode.build': 'Construir rede',
+  'pole.mode.remove': 'Remover postes',
+  'help.tool.poleRemove': 'Clique num poste para removê-lo, com os fios. Shift+clique faz o mesmo enquanto constrói.',
   'tool.pole': 'Postes',
   'tool.barrier': 'Muros',
 

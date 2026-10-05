@@ -387,6 +387,9 @@ export const EN: Dictionary = {
   'pole.lamps.none': 'No lights',
   'pole.lamps.alternate': 'A light on every other pole',
   'pole.lamps.all': 'A light on every pole',
+  'pole.mode.build': 'Build line',
+  'pole.mode.remove': 'Remove poles',
+  'help.tool.poleRemove': 'Click a pole to remove it, with its wires. Shift+click does the same while building.',
   'tool.pole': 'Poles',
   'tool.barrier': 'Walls',
 

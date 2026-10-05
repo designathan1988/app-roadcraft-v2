@@ -10,16 +10,16 @@ import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/ro
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, type TerrainMode } from '@world/terrain';
 import type { NodeId, SegmentId } from '@world/ids';
-import { POLE_HEIGHT, spanSag } from '@world/utilities';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
 import {
   POLE_PICK_PIXELS,
   commitPoleRun,
   planPoleRun,
+  snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { poleLampMode, streetscapeKind } from '@ui/toolChoices';
+import { poleLampMode, poleToolMode, streetscapeKind } from '@ui/toolChoices';
 import { m } from '@world/units';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
@@ -341,6 +341,10 @@ let poleDraft: PoleDraft | null = null;
  * run a few units away. Escape, a different tool or an undo drops it.
  */
 let poleChain: Vec2 | null = null;
+/** The pole run planned for this frame (`currentPolePlan`), shared by the 3D preview and the overlay. */
+let framePolePlan: PoleRunPlan | null = null;
+/** The pointer over the map while the pole tool is in hand, unsnapped. */
+let poleHover: Vec2 | null = null;
 /** Where the landscaping tool would put its item, under the pointer. */
 let streetscapeHover: LandscapeSnap | null = null;
 /** Pick radius for a placed item and the reach of the footway snap, world units. */
@@ -1164,7 +1168,17 @@ canvas.addEventListener('pointerdown', (e) => {
       // anything the preview highlights can be hit.
       {
         const hit = doc.poleNear(world, poleReach());
-        if (hit && e.shiftKey) {
+        if (poleToolMode() === 'remove') {
+          // The Remove choice of the tool: a click takes the pole under it, and its wires.
+          if (hit) {
+            mutate(() => {
+              doc.removePole(hit.id);
+              return true;
+            });
+            flashHint('hint.pole.removed');
+          }
+          poleChain = null;
+        } else if (hit && e.shiftKey) {
           mutate(() => {
             doc.removePole(hit.id);
             return true;
@@ -1386,9 +1400,11 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (tool === 'pole' && poleChain) {
-    // A chained run has no button held, so the preview has to follow the bare
-    // pointer or the next stretch is aimed blind.
+  if (tool === 'pole') {
+    // The bare pointer, not a road anchor: the pole tool snaps to its own
+    // line (`snapPole`), and a chained run has no button held, so the preview
+    // has to follow the pointer or the next stretch is aimed blind.
+    poleHover = world;
     requestDraw();
   }
 
@@ -1445,10 +1461,17 @@ function poleReach(): number {
 }
 
 /** What the current gesture would build, snapped. Drawn and committed alike. */
+let lastPoleMode = poleToolMode();
 function currentPolePlan(): PoleRunPlan | null {
+  // A change of the tool's verb ends the line being traced.
+  if (poleToolMode() !== lastPoleMode) {
+    lastPoleMode = poleToolMode();
+    poleChain = null;
+    poleDraft = null;
+  }
   if (poleDraft) return planPoleRun(doc, net, poleDraft.from, poleDraft.to, poleReach(), undefined, poleLampMode());
-  if (tool === 'pole' && poleChain && hoverAnchor) {
-    return planPoleRun(doc, net, poleChain, hoverAnchor.at, poleReach(), undefined, poleLampMode());
+  if (tool === 'pole' && poleToolMode() === 'build' && poleChain && poleHover) {
+    return planPoleRun(doc, net, poleChain, poleHover, poleReach(), undefined, poleLampMode());
   }
   return null;
 }
@@ -3100,6 +3123,12 @@ function frame(now: number): void {
   }
   buildings.beforeDraw(tool === 'building');
   followAgent();
+  // The pole run under the pointer, planned once per frame: the 3D preview
+  // shows it as it will stand, the overlay marks only what cannot be built.
+  framePolePlan = currentPolePlan();
+  scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
+    ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
+    : null);
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
   refreshAgentCard(now);
   drawOverlayScreen();
@@ -3247,13 +3276,8 @@ function drawPolePlan(
   plan: PoleRunPlan | null,
   ctx: CanvasRenderingContext2D,
   at: (p: Vec2) => Vec2,
-  w: number,
-  h: number,
 ): void {
-  if (plan?.refused) {
-    // An end off the footways: a red cross where it would have gone.
-    const bad = plan.from.kind === 'free' ? plan.from.at : plan.to.at;
-    const p = at(bad);
+  const cross = (p: Vec2): void => {
     ctx.save();
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#e5534b';
@@ -3264,70 +3288,40 @@ function drawPolePlan(
     ctx.lineTo(p.x - 8, p.y + 8);
     ctx.stroke();
     ctx.restore();
+  };
+  const ring = (p: Vec2, colour: string, radius = 7): void => {
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = colour;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+  if (tool !== 'pole' && !plan) return;
+  // Removing: the pole under the pointer, in red.
+  if (tool === 'pole' && poleToolMode() === 'remove') {
+    const hit = poleHover ? doc.poleNear(poleHover, poleReach()) : null;
+    if (hit) ring(at(hit), '#e5534b', 10);
     return;
   }
-  if (!plan || plan.poles.length === 0) return;
-
-  ctx.save();
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-
-  // Crown of each mast, in screen space, so the wires can be strung between
-  // the tops rather than along the ground.
-  const feet = plan.poles.map((pole) => at(pole.at));
-  const crowns = plan.poles.map((pole) =>
-    view.toScreen(pole.at, w, h, sceneHeightAt(pole.at) + POLE_HEIGHT),
-  );
-
-  // The wire, sagging, between consecutive crowns. Drawn first so the masts
-  // read in front of it.
-  ctx.strokeStyle = SELECTION;
-  ctx.globalAlpha = 0.65;
-  ctx.beginPath();
-  for (let i = 1; i < crowns.length; i++) {
-    const a = crowns[i - 1] as Vec2;
-    const b = crowns[i] as Vec2;
-    const span = dist(plan.poles[i - 1]!.at, plan.poles[i]!.at);
-    // The same sag the built wire will have, projected: the screen is a
-    // linear map of the world here, so a drop in world units below the chord
-    // is that drop times the vertical scale of one world unit.
-    const drop = spanSag(span) * Math.abs(crowns[i]!.y - feet[i]!.y) / Math.max(1, POLE_HEIGHT);
-    ctx.moveTo(a.x, a.y);
-    ctx.quadraticCurveTo((a.x + b.x) / 2, (a.y + b.y) / 2 + drop * 2, b.x, b.y);
+  if (plan?.refused) {
+    // An end off the footways: a red cross where it would have gone.
+    cross(at(plan.from.kind === 'free' ? plan.from.at : plan.to.at));
+    return;
   }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // The masts: a vertical stroke from the ground to the crown, and a short
-  // cross-arm at the top, which is what makes a preview of a pole look like a
-  // pole rather than like a tick on a line.
-  plan.poles.forEach((pole, index) => {
-    const foot = feet[index] as Vec2;
-    const crown = crowns[index] as Vec2;
-    // An existing pole is shown in the hover colour and a new one in the
-    // build colour, so "this run will join that line" is visible before the
-    // button is released - the single thing missing when a run silently
-    // failed to attach.
-    ctx.strokeStyle = pole.existing !== null ? HOVER : SELECTION;
-    ctx.beginPath();
-    ctx.moveTo(foot.x, foot.y);
-    ctx.lineTo(crown.x, crown.y);
-    ctx.stroke();
-
-    const arm = Math.max(4, Math.abs(crown.y - foot.y) * 0.16);
-    ctx.beginPath();
-    ctx.moveTo(crown.x - arm, crown.y + arm * 0.2);
-    ctx.lineTo(crown.x + arm, crown.y - arm * 0.2);
-    ctx.stroke();
-
-    if (pole.existing !== null) {
-      ctx.beginPath();
-      ctx.arc(foot.x, foot.y, 7, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  });
-
-  ctx.restore();
+  if (plan && plan.poles.length) {
+    // The run itself is drawn in 3D as it will stand (`setPolePreview`); here
+    // only a ring round each standing pole the run will tie into.
+    for (const pole of plan.poles) if (pole.existing !== null) ring(at(pole.at), HOVER, 9);
+    return;
+  }
+  // Nothing drawn yet: where the first pole would go, or a cross where it cannot.
+  if (tool === 'pole' && poleHover && !poleDraft) {
+    const snap = snapPole(doc, net, poleHover, poleReach());
+    if (snap.kind === 'free') cross(at(snap.at));
+    else ring(at(snap.at), snap.kind === 'pole' ? HOVER : SELECTION);
+  }
 }
 
 function drawOverlayScreen(): void {
@@ -3382,7 +3376,7 @@ function drawOverlayScreen(): void {
   // This draws the plan: every mast at its real height, the wire that will
   // hang between them with its real sag, and a ring round any pole the run is
   // about to tie into. If it looks right here it is right when built.
-  drawPolePlan(currentPolePlan(), ctx, at, w, h);
+  drawPolePlan(framePolePlan, ctx, at);
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
   if (tool === 'zone' || doc.zoneMarks.length) {

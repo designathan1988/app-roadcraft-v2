@@ -49,3 +49,17 @@ export function setPoleLampMode(next: PoleLampMode): void {
   lamps = next;
   keep(LAMP_KEY, next);
 }
+
+/** What a click of the pole tool does: build a run, or remove the pole under it. */
+export const POLE_TOOL_MODES = ['build', 'remove'] as const;
+export type PoleToolMode = (typeof POLE_TOOL_MODES)[number];
+let poleMode: PoleToolMode = 'build';
+
+export function poleToolMode(): PoleToolMode {
+  return poleMode;
+}
+
+/** Not kept between sessions: the tool always opens building. */
+export function setPoleToolMode(next: PoleToolMode): void {
+  poleMode = next;
+}

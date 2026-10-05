@@ -47,7 +47,7 @@ import { GRASS_MIN_ZOOM } from './grass';
 import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
-import { buildUtilities, poleGroundAt, type Utilities } from './utilities';
+import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { buildingPads } from '@world/buildings/pads';
@@ -150,6 +150,8 @@ export interface SceneHandle {
   elevationAt(x: number, y: number, structure?: RoadStructure): number;
   /** The editor's building ghost (docs/buildings.md); null removes it. */
   setBuildingPreview(preview: BuildingPreviewInput | null): void;
+  /** The pole run the pole tool would build, drawn as built; null removes it. */
+  setPolePreview(net: Network, preview: PolePreviewInput | null): void;
   /**
    * The Builder's "Ocultar outros": undefined draws every building solid,
    * null fades them all, an id fades every building but that one.
@@ -312,6 +314,9 @@ export function createSceneRenderer(
   /** What the player placed on the footways; on `doc.utilityRevision` like the poles. */
   let furniture: Scenery | null = null;
   let utilities: Utilities | null = null;
+  /** The pole tool's planned run, and the plan it was built for (rebuilt only when that changes). */
+  let polePreview: Utilities | null = null;
+  let polePreviewKey = '';
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
   let barriersFor = '';
@@ -678,6 +683,21 @@ export function createSceneRenderer(
     pavedHeightAt,
     setBuildingPreview(preview) {
       buildings.setPreview(preview);
+    },
+    setPolePreview(net, preview) {
+      const key = preview && elevation
+        ? `${net.revision}:${preview.poles.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${+p.lamp},${+p.standing}`).join(';')}`
+        : '';
+      if (key === polePreviewKey) return;
+      polePreviewKey = key;
+      if (polePreview) {
+        world.remove(polePreview.group);
+        polePreview.dispose();
+        polePreview = null;
+      }
+      if (!preview || !elevation || preview.poles.length === 0) return;
+      polePreview = buildPolePreview(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit, preview);
+      world.add(polePreview.group);
     },
     setPerspective(on) {
       if (on === rig.perspective) return;

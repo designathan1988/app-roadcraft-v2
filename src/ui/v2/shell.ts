@@ -31,7 +31,7 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { poleLampMode, setPoleLampMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { POLE_TOOL_MODES, poleLampMode, poleToolMode, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
@@ -142,6 +142,9 @@ const ICON: Record<string, string> = {
   ls_lamp: '<path d="M7 21V5h7"/><path d="M12 5h5l1 2h-6Z"/><path d="M15 9l-1 3M17 9l1 3" stroke-dasharray="1.5 1.5"/><path d="M4 21h6"/>',
   ls_hydrant: '<path d="M8 21V10h8v11Z"/><path d="M8 10a4 4 0 0 1 8 0"/><path d="M5 14h3M16 14h3M12 4v2"/><path d="M6 21h12"/>',
   ls_postbox: '<rect x="6" y="5" width="12" height="11" rx="5"/><path d="M9 9h6"/><path d="M12 16v5M8 21h8"/>',
+  // The pole tool's two verbs: string a line, take a pole down
+  pole_build: '<path d="M6 21V4M18 21V4"/><path d="M3 7h6M15 7h6"/><path d="M6 8c4 3 8 3 12 0"/><path d="M12 14v6M9 17h6"/>',
+  pole_remove: '<path d="M10 21V4"/><path d="M6 7h8"/><path d="M15 13l5 5M20 13l-5 5"/>',
   // Street lights on the wire poles: none, every other, all
   pl_none: '<path d="M8 21V4"/><path d="M4 7h8"/><path d="M15 9l5 5M20 9l-5 5"/>',
   pl_alternate: '<path d="M6 21V5h4M18 21V5"/><path d="M9 5l1 2H8Z"/><path d="M9 9l-.5 2" stroke-dasharray="1.5 1.5"/>',
@@ -693,6 +696,16 @@ export function mountShell(deps: ShellDeps): void {
       }
       note(t('help.tool.streetscape'));
     } else {
+      // What a click does: string a line, or take a pole down (with its wires).
+      const { items } = section(t('tool.pole'));
+      const mode = poleToolMode();
+      for (const next of POLE_TOOL_MODES) {
+        items.appendChild(card(t(`pole.mode.${next}`), mode === next, () => { setPoleToolMode(next); render(); }, undefined, svg(`pole_${next}`, 34)));
+      }
+      if (mode === 'remove') {
+        note(t('help.tool.poleRemove'));
+        return;
+      }
       // Street lights on the poles of the next run.
       const lamps = group(t('pole.lamps'));
       const now = poleLampMode();

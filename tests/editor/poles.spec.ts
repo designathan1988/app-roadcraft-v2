@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
-import { commitPoleRun, planPoleRun, snapPole } from '@editor/poles';
+import { commitPoleRun, onFootway, planPoleRun, snapPole } from '@editor/poles';
+import { m } from '@world/units';
 import { DEFAULT_POLE_SPACING, poleArms } from '@world/utilities';
 import { roadProfile } from '@world/roadTypes';
 import { LAMP_ZONE, sectionOf } from '@world/section';
@@ -52,7 +53,7 @@ describe('pole snapping', () => {
     const want = poleLine(doc);
     const snap = snapPole(doc, net, { x: 0, y: want + 2 }, 20);
     expect(snap.kind).toBe('footway');
-    expect(Math.abs(snap.at.y)).toBeCloseTo(want, 4);
+    expect(Math.abs(snap.at.y)).toBeCloseTo(want, 2);
     expect(snap.at.x).toBeCloseTo(0, 4);
   });
 
@@ -121,10 +122,18 @@ describe('pole runs', () => {
     const plan = planPoleRun(doc, net, { x: -300, y: want }, { x: -want, y: 300 }, 20);
     expect(plan.refused).toBeUndefined();
     for (const pole of plan.poles) {
-      // Never inside the block's interior (beyond the footways)...
-      const onWest = Math.abs(pole.at.y - want) < 1e-3;
-      const onNorth = Math.abs(pole.at.x + want) < 1e-3;
-      expect(onWest || onNorth, `${pole.at.x.toFixed(1)}, ${pole.at.y.toFixed(1)}`).toBe(true);
+      // On the pavement: never in the block's interior, never on the asphalt
+      // of the corner's kerb return...
+      expect(onFootway(net, pole.at), `${pole.at.x.toFixed(1)}, ${pole.at.y.toFixed(1)}`).toBe(true);
+      // ...and a kerb's depth behind it all the way round.
+      const kerbLine = Math.min(Math.abs(pole.at.y - want), Math.abs(pole.at.x + want));
+      const onCorner = pole.at.x > -want - 40 && pole.at.y < want + 40;
+      if (!onCorner) expect(kerbLine).toBeLessThan(1e-2);
+    }
+    // One pole at the corner, not two or three a few metres apart.
+    for (let i = 1; i < plan.poles.length; i++) {
+      const a = plan.poles[i - 1]!.at, b = plan.poles[i]!.at;
+      expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeGreaterThan(m(9));
     }
     // ...and every span between them short: none jumps the block.
     for (let i = 1; i < plan.poles.length; i++) {

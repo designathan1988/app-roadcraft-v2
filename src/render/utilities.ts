@@ -14,7 +14,7 @@ import {
 } from 'three';
 
 import type { Network } from '@world/network';
-import { footwayAt } from '@world/landscape';
+import { kerbward } from '@world/poleLines';
 import { m } from '@world/units';
 import type { SceneryKit } from './scenery';
 import { GROUND_ONLY, type RoadElevation } from '@world/elevation';
@@ -37,6 +37,8 @@ import {
   sampleWire,
 } from '@world/utilities';
 import { angleOf } from '@core/vec2';
+import type { PoleId, SpanId } from '@world/ids';
+import type { UtilityPole, UtilitySpan } from '@world/utilities';
 
 /**
  * The overhead utility network on screen: poles, cross-arms, wires and lamps.
@@ -95,14 +97,29 @@ function instanced(
   return mesh;
 }
 
+/**
+ * What a pole layer is built from: the document's poles and spans, or a
+ * planned run (`buildPolePreview`). `draws` says which poles get a mast, arms
+ * and lamp of their own here; a pole a preview only ties into is already
+ * standing in the built layer.
+ */
+export interface PoleSource {
+  readonly poles: ReadonlyMap<PoleId, UtilityPole>;
+  readonly spans: ReadonlyMap<SpanId, UtilitySpan>;
+  readonly draws?: (pole: UtilityPole) => boolean;
+}
+
 export function buildUtilities(
   net: Network,
   groundAt: (x: number, y: number) => number,
   kit: SceneryKit,
+  source: PoleSource = { poles: net.doc.poles, spans: net.doc.poleSpans },
+  name = 'utilities',
 ): Utilities {
-  const doc = net.doc;
+  const { poles, spans } = source;
+  const draws = source.draws ?? (() => true);
   const group = new Group();
-  group.name = 'utilities';
+  group.name = name;
 
   const masts: Placement[] = [];
   const arms: Placement[] = [];
@@ -115,9 +132,10 @@ export function buildUtilities(
   /** Crown height of each pole, so the wires and the arms agree on it. */
   const crown = new Map<number, number>();
 
-  for (const pole of doc.poles.values()) {
+  for (const pole of poles.values()) {
     const base = groundAt(pole.x, pole.y);
     crown.set(pole.id, base + POLE_HEIGHT);
+    if (!draws(pole)) continue;
 
     masts.push({
       x: pole.x,
@@ -130,19 +148,21 @@ export function buildUtilities(
     });
   }
 
-  /** Towards the carriageway from a pole on a footway, or null off the streets. */
-  const roadward = (x: number, y: number): { x: number; y: number } | null => {
-    const hit = footwayAt(net, { x, y }, m(1));
-    return hit ? { x: -hit.frame.n.x * hit.side, y: -hit.frame.n.y * hit.side } : null;
-  };
+  /**
+   * Towards the carriageway from a pole: the nearest kerb, or null off the
+   * streets. Read from the kerb itself rather than from the street the
+   * footway belongs to: a corner's footway belongs to no one street, and a
+   * corner pole used to fall back to its cross-arm and light the block.
+   */
+  const roadward = (x: number, y: number): { x: number; y: number } | null => kerbward(net, { x, y }, m(6));
   // The arms, framed as a line crew frames them (`poleArms`): square to a
   // straight line, on the bisector of a bend, one per line at a corner. A
   // pole with no wire yet stands square to its street.
-  const framing = poleArms(doc.poles, doc.poleSpans, (pole) => roadward(pole.x, pole.y) ?? { x: 0, y: 1 });
+  const framing = poleArms(poles, spans, (pole) => roadward(pole.x, pole.y) ?? { x: 0, y: 1 });
 
-  for (const pole of doc.poles.values()) {
+  for (const pole of poles.values()) {
     const top = crown.get(pole.id);
-    if (top === undefined) continue;
+    if (top === undefined || !draws(pole)) continue;
     const frame = framing.get(pole.id);
 
     // An instanced box is scaled on its LOCAL X and then rotated about Y, so
@@ -194,9 +214,9 @@ export function buildUtilities(
   }
 
   // ------------------------------------------------------------------ wires
-  for (const span of doc.poleSpans.values()) {
-    const a = doc.poles.get(span.a as never);
-    const b = doc.poles.get(span.b as never);
+  for (const span of spans.values()) {
+    const a = poles.get(span.a);
+    const b = poles.get(span.b);
     if (!a || !b) continue;
     const topA = crown.get(a.id);
     const topB = crown.get(b.id);
@@ -332,4 +352,33 @@ export function poleGroundAt(
     if (!onFootway) return terrainAt(x, y);
     return elevation.at(x, y, GROUND_ONLY) + FOOTWAY_RISE;
   };
+}
+
+/** A planned pole run, as the editor would build it: in order, each pole new or already standing. */
+export interface PolePreviewInput {
+  readonly poles: readonly { readonly x: number; readonly y: number; readonly lamp: boolean; readonly standing: boolean }[];
+}
+
+/**
+ * The run under the pointer, drawn as it will stand: masts, cross-arms framed
+ * as built, lamps and the sagging wires, from the same builder as the built
+ * layer. A pole the run only ties into is standing already and is not drawn
+ * twice; the wires to it are.
+ */
+export function buildPolePreview(
+  net: Network,
+  groundAt: (x: number, y: number) => number,
+  kit: SceneryKit,
+  input: PolePreviewInput,
+): Utilities {
+  const poles = new Map<PoleId, UtilityPole>();
+  const spans = new Map<SpanId, UtilitySpan>();
+  const standing = new Set<PoleId>();
+  input.poles.forEach((pole, index) => {
+    const id = (index + 1) as PoleId;
+    poles.set(id, { id, x: pole.x, y: pole.y, lamp: pole.lamp });
+    if (pole.standing) standing.add(id);
+    if (index > 0) spans.set(index as SpanId, { id: index as SpanId, a: index as PoleId, b: id });
+  });
+  return buildUtilities(net, groundAt, kit, { poles, spans, draws: (pole) => !standing.has(pole.id) }, 'utility-preview');
 }
