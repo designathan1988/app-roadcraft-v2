@@ -3063,9 +3063,11 @@ function requestDraw(): void {
  * did not take a building are skipped until the land or the roads change.
  */
 const zoneRefused = new Set<string>();
+/** Wall-clock time before which nothing grows (rubble of a collapse lying, `strikeAt`). */
+let zoneGrowthHold = 0;
 let zoneRefusedKey = '';
 setInterval(() => {
-  if (!doc.zoneMarks.length || moving) return;
+  if (!doc.zoneMarks.length || moving || performance.now() < zoneGrowthHold) return;
   const key = `${net.revision}:${doc.buildings.revision}`;
   if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
   const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
@@ -4406,6 +4408,8 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
     if (down) {
       mutate(() => doc.buildings.remove(b.id));
       scene.forgetRuin(b.id);
+      // The rubble lies a while before anything is built there again.
+      zoneGrowthHold = performance.now() + 90_000;
       flashHint('hint.strike.down');
     } else {
       flashHint(dead > 0 ? 'hint.strike.deaths' : 'hint.strike.hit');

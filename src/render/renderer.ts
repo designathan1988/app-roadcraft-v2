@@ -38,7 +38,6 @@ import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadS
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { localToWorld, solidFootprints } from '@world/buildings/geometry';
 import { followPieces } from '@world/buildings/elements';
-import { floorHeight } from '@world/buildings/foundation';
 import { lotSurfaces } from '@world/buildings/lots';
 import type { RoadDoc } from '@world/doc';
 import { drainCompiles, drainUploads, drainWarm } from './uploads';
@@ -48,6 +47,7 @@ import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
 import { createDestruction } from './destruction';
+import { floorHeight } from '@world/buildings/foundation';
 import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
 import { MAP_SIZE } from '@world/bounds';
@@ -723,22 +723,20 @@ export function createSceneRenderer(
       buildings.setPreview(preview);
     },
     strikeBuilding(b, x, y, z, strength) {
-      const floor = terrain.renderedHeightAt(b.x, b.y);
-      const down = destruction.hit(b, floor, x, y, z, strength);
-      buildings.setRuined(destruction.ruined);
-      return down;
+      // The building's own floor, as it is drawn on its pad.
+      const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
+      return destruction.hit(b, floor, x, y, z, strength);
     },
     strikeGround(x, y, strength) {
       for (let k = 0; k < 6 + strength * 2; k++) {
         const a = Math.random() * Math.PI * 2, r = Math.random() * m(0.6 + strength * 0.25);
         wear.wheels(x + Math.cos(a) * r, y + Math.sin(a) * r, a, 0.01, 30);
-        exhaust.emit(x + Math.cos(a) * r, y + Math.sin(a) * r, terrain.renderedHeightAt(x, y), 0, 0, m(10), true);
       }
       wear.tick(10);
+      exhaust.burst(x, y, terrain.renderedHeightAt(x, y), 20 + strength * 6, 1, m(1 + strength * 0.4), m(3), 5);
     },
     forgetRuin(id) {
       destruction.drop(id);
-      buildings.setRuined(destruction.ruined);
     },
     setPolePreview(net, preview) {
       const key = preview && elevation
