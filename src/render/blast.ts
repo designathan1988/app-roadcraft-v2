@@ -63,7 +63,8 @@ const COLORS: Readonly<Record<DebrisKind, number>> = {
 
 export interface DebrisSpec {
   /** `car`: a car's shell (bonnet, windscreen, roof, boot), length x height x width. */
-  readonly shape: 'box' | 'cylinder' | 'car';
+  /** `slab`: a broken plate of the ground, jagged at its edges (unit size, thin along y). */
+  readonly shape: 'box' | 'cylinder' | 'car' | 'slab';
   readonly kind: DebrisKind;
   /** World position of the centre (three's frame: y up). */
   readonly at: Vector3;
@@ -118,7 +119,7 @@ const WIRE_POINTS = 12;
 const GRAVITY = m(9.8);
 
 interface Piece {
-  readonly mesh: 'box' | 'cylinder' | 'car';
+  readonly mesh: 'box' | 'cylinder' | 'car' | 'slab';
   readonly p: Vector3;
   readonly v: Vector3;
   readonly q: Quaternion;
@@ -226,7 +227,21 @@ export function createBlast(exhaust: Exhaust): Blast {
   side.closePath();
   const shellGeometry = new ExtrudeGeometry(side, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
   const shells = new InstancedMesh(shellGeometry, debrisMaterial, 80);
-  for (const mesh of [boxes, cylinders, shells]) {
+  // A broken slab of road or footway: an irregular outline with notches and
+  // a torn edge, extruded thin (y), fitting a unit box - not a clean tile.
+  const jag = new Shape();
+  const corners = 11;
+  for (let k = 0; k < corners; k++) {
+    const a = (k / corners) * Math.PI * 2;
+    const r = 0.36 + 0.14 * Math.sin(k * 2.7 + 1.3) + (k % 3 === 0 ? -0.1 : 0.04);
+    const x = Math.cos(a) * r, y = Math.sin(a) * r;
+    if (k) jag.lineTo(x, y); else jag.moveTo(x, y);
+  }
+  jag.closePath();
+  const slabGeometry = new ExtrudeGeometry(jag, { depth: 1, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.04, bevelSegments: 1 })
+    .translate(0, 0, -0.5).rotateX(-Math.PI / 2);
+  const slabs = new InstancedMesh(slabGeometry, debrisMaterial, MAX_PIECES);
+  for (const mesh of [boxes, cylinders, shells, slabs]) {
     mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     mesh.count = 0;
     mesh.frustumCulled = false;
@@ -467,7 +482,9 @@ export function createBlast(exhaust: Exhaust): Blast {
       // The ground heaved up in plates round it - slabs of road and footway
       // metres across, broken off and tipped on edge, half buried, like
       // plates after a quake - out to well past the hole. They stay.
-      const plates = Math.round(10 + radius / m(1.6));
+      // Not on top of the plates already heaved here: the ground is broken once.
+      const already = pieces.filter((b) => b.still && Math.hypot(b.p.x - x, b.p.z + y) < radius * 1.4).length;
+      const plates = already > 25 ? 0 : Math.round(10 + radius / m(1.6));
       for (let i = 0; i < Math.min(plates, 60); i++) {
         const a = Math.random() * Math.PI * 2;
         const r = radius * (0.4 + Math.sqrt(Math.random()) * 1.1);
@@ -477,11 +494,17 @@ export function createBlast(exhaust: Exhaust): Blast {
         // Tipped about an axis across the way out, the inner edge sunk.
         const tilt = new Quaternion().setFromAxisAngle(new Vector3(-Math.sin(a), 0, -Math.cos(a)), 0.35 + Math.random() * 0.75)
           .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.random() * Math.PI));
+        // Dirty: dust and earth over the asphalt or the concrete, each its own shade.
+        const base = new Color(road ? (Math.random() < 0.35 ? COLORS.concrete : COLORS.asphalt) : COLORS.earth);
+        const dirt = base.lerp(new Color(0x6e6357), 0.25 + Math.random() * 0.35).multiplyScalar(0.7 + Math.random() * 0.35);
         piece({
-          shape: 'box', kind: road ? (Math.random() < 0.35 ? 'concrete' : 'asphalt') : 'earth',
+          shape: 'slab', kind: road ? 'asphalt' : 'earth', color: dirt.getHex(),
           at: new Vector3(x + Math.cos(a) * r, z + w * 0.18, -(y + Math.sin(a) * r)),
           size: new Vector3(w, thick, d), turn: tilt, velocity: new Vector3(0, 0, 0), spin: new Vector3(), still: true,
         });
+        // Earth and grit thrown up round it.
+        if (i % 3 === 0) piece({ shape: 'box', kind: 'earth', at: new Vector3(x + Math.cos(a) * r, z + m(0.2), -(y + Math.sin(a) * r)),
+          size: new Vector3(m(0.3 + Math.random() * 0.4), m(0.2), m(0.3 + Math.random() * 0.4)), velocity: new Vector3(), spin: new Vector3(), still: true });
       }
     },
     debris: piece,
@@ -580,7 +603,7 @@ export function createBlast(exhaust: Exhaust): Blast {
       const moving = pieces.some((b) => !b.asleep);
       const redraw = moving || pieces.length !== drawnPieces;
       drawnPieces = pieces.length;
-      let nb = 0, nc = 0, ns = 0;
+      let nb = 0, nc = 0, ns = 0, nl = 0;
       if (redraw) for (const b of pieces) {
         o.position.copy(b.p);
         o.quaternion.copy(b.q);
@@ -589,11 +612,12 @@ export function createBlast(exhaust: Exhaust): Blast {
         // Burnt black as it burns.
         if (b.mesh === 'box') { boxes.setMatrixAt(nb, o.matrix); boxes.setColorAt(nb++, b.color); }
         else if (b.mesh === 'car') { if (ns < 80) { shells.setMatrixAt(ns, o.matrix); shells.setColorAt(ns++, b.color); } }
+        else if (b.mesh === 'slab') { slabs.setMatrixAt(nl, o.matrix); slabs.setColorAt(nl++, b.color); }
         else { cylinders.setMatrixAt(nc, o.matrix); cylinders.setColorAt(nc++, b.color); }
       }
       if (redraw) {
-        boxes.count = nb; cylinders.count = nc; shells.count = ns;
-        for (const mesh of [boxes, cylinders, shells]) {
+        boxes.count = nb; cylinders.count = nc; shells.count = ns; slabs.count = nl;
+        for (const mesh of [boxes, cylinders, shells, slabs]) {
           mesh.instanceMatrix.needsUpdate = true;
           if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }

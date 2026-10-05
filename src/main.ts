@@ -4945,7 +4945,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
       // Breaking a building into its pieces is the costly part (a Voronoi
       // fracture of its meshes): the one struck now, the others a frame each
       // after, so a big blow does not freeze the game for seconds.
-      if (c !== b) { deferredHits.push({ id: c.id, ...at, force }); continue; }
+      if (c !== b) { if (best < radius * 0.75 || force >= 4) deferredHits.push({ id: c.id, ...at, force }); continue; }
       if (scene.strikeBuilding(c, at.x, at.y, at.z, force)) {
         doc.buildings.remove(c.id);
         scene.forgetRuin(c.id);
@@ -5090,15 +5090,17 @@ scene.onBuildingDown((id) => {
   requestDraw();
 });
 function breakDeferred(): void {
-  const next = deferredHits.shift();
-  if (next) {
+  for (let k = 0; k < 4 && deferredHits.length; k++) breakOne(deferredHits.shift()!);
+  requestAnimationFrame(breakDeferred);
+}
+function breakOne(next: { id: number; x: number; y: number; z: number; force: number }): void {
+  {
     const c = doc.buildings.get(next.id as BuildingId);
     if (c && scene.strikeBuilding(c, next.x, next.y, next.z, next.force)) {
       mutate(() => { doc.buildings.remove(c.id); scene.forgetRuin(c.id); burning.delete(c.id); return true; });
     }
     requestDraw();
   }
-  requestAnimationFrame(breakDeferred);
 }
 requestAnimationFrame(breakDeferred);
 const burning = new Map<number, { since: number; nextFlame: number; until: number }>();

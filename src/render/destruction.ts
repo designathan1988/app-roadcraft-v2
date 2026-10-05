@@ -74,14 +74,19 @@ export function createDestruction(
   // The fracture runs in a worker (`buildings/fracture.worker.ts`): a building
   // is struck at once and broken when its pieces are ready, a frame or a few
   // later, the blows meanwhile kept - a big one froze the game for a second.
-  let worker: Worker | null = null;
+  // A few workers, so the buildings a big blow reaches break together, not
+  // one after another for seconds.
+  const workers: Worker[] = [];
+  let nextWorker = 0;
   let nextJob = 1;
   const jobs = new Map<number, { b: Building; floor: number; materials: Material[]; hits: [number, number, number, number, Vector3 | undefined][] }>();
   const pending = new Map<number, number>();
   const api: { onDown: ((id: number) => void) | null; onRuined: (() => void) | null } = { onDown: null, onRuined: null };
   const workerOf = (): Worker => {
-    if (!worker) {
-      worker = new Worker(new URL('./buildings/fracture.worker.ts', import.meta.url), { type: 'module' });
+    const size = Math.max(1, Math.min(4, (navigator.hardwareConcurrency ?? 4) - 1));
+    if (workers.length < size) {
+      const worker = new Worker(new URL('./buildings/fracture.worker.ts', import.meta.url), { type: 'module' });
+      workers.push(worker);
       worker.onmessage = (e: MessageEvent<{ id: number; data: FragmentData[] }>) => {
         const job = jobs.get(e.data.id);
         jobs.delete(e.data.id);
@@ -95,8 +100,9 @@ export function createDestruction(
         for (const [x, y, z, strength, eye] of job.hits) down = strike(ruin, job.floor, x, y, z, strength, eye) || down;
         if (down) api.onDown?.(job.b.id);
       };
+      return worker;
     }
-    return worker;
+    return workers[nextWorker++ % workers.length]!;
   };
   const place = (fragments: Fragment[], floor: number): Ruin => {
     const pieces: Piece[] = fragments.map((fragment) => {
