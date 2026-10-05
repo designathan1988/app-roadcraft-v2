@@ -2,7 +2,7 @@ import {
   ClampToEdgeWrapping,
   DataTexture,
   LinearFilter,
-  RGFormat,
+  RGBAFormat,
   UnsignedByteType,
   type Material,
   type Texture,
@@ -40,8 +40,14 @@ export function createWearField(mapSize: number): WearField {
   const cell = mapSize / RES;
   const wheels = new Float32Array(RES * RES);
   const feet = new Float32Array(RES * RES);
-  const bytes = new Uint8Array(RES * RES * 2);
-  const texture = new DataTexture(bytes, RES, RES, RGFormat, UnsignedByteType);
+  // RGBA though only red (wheels) and green (feet) are read: three uploads
+  // part of a texture (`updateRanges`) only for RGBA, and re-sending the whole
+  // 2048-square field every two seconds was a hitch of its own.
+  const bytes = new Uint8Array(RES * RES * 4);
+  const texture = new DataTexture(bytes, RES, RES, RGBAFormat, UnsignedByteType);
+  /** Per row, the first and last cell changed since the last upload. */
+  const rowFrom = new Int32Array(RES).fill(RES);
+  const rowTo = new Int32Array(RES).fill(-1);
   texture.magFilter = LinearFilter;
   texture.minFilter = LinearFilter;
   texture.wrapS = ClampToEdgeWrapping;
@@ -54,6 +60,8 @@ export function createWearField(mapSize: number): WearField {
     if (gx < 0 || gy < 0 || gx >= RES || gy >= RES) return;
     const i = gy * RES + gx;
     field[i] = Math.min(1, field[i]! + amount);
+    if (gx < rowFrom[gy]!) rowFrom[gy] = gx;
+    if (gx > rowTo[gy]!) rowTo[gy] = gx;
     dirty = true;
   };
   return {
@@ -74,9 +82,18 @@ export function createWearField(mapSize: number): WearField {
       if (!dirty || since < UPLOAD_EVERY) return;
       since = 0;
       dirty = false;
-      for (let i = 0; i < RES * RES; i++) {
-        bytes[i * 2] = Math.round(wheels[i]! * 255);
-        bytes[i * 2 + 1] = Math.round(feet[i]! * 255);
+      // Only the stretches of rows that changed: converted and sent alone.
+      for (let gy = 0; gy < RES; gy++) {
+        const from = rowFrom[gy]!, to = rowTo[gy]!;
+        if (to < 0) continue;
+        for (let gx = from; gx <= to; gx++) {
+          const i = gy * RES + gx;
+          bytes[i * 4] = Math.round(wheels[i]! * 255);
+          bytes[i * 4 + 1] = Math.round(feet[i]! * 255);
+        }
+        texture.addUpdateRange((gy * RES + from) * 4, (to - from + 1) * 4);
+        rowFrom[gy] = RES;
+        rowTo[gy] = -1;
       }
       texture.needsUpdate = true;
     },

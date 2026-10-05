@@ -451,11 +451,16 @@ export function helmetShape(rig: Object3D): Matrix4 | null {
 export function headPoints(rig: Object3D, head: Object3D): Vector3[] {
   const out: Vector3[] = [];
   const v = new Vector3();
+  // Mesh to head in one matrix, inverted once per mesh: inverting the head's
+  // world matrix for every vertex (`worldToLocal`) was most of a body's bake.
+  const fromWorld = head.matrixWorld.clone().invert();
+  const toHead = new Matrix4();
   rig.traverse((o) => {
     if (!(o instanceof SkinnedMesh)) return;
     const bone = o.skeleton.bones.indexOf(head as Bone);
     if (bone < 0) return;
     o.skeleton.update();
+    toHead.multiplyMatrices(fromWorld, o.matrixWorld);
     const index = o.geometry.getAttribute('skinIndex');
     const weight = o.geometry.getAttribute('skinWeight');
     const count = o.geometry.getAttribute('position').count;
@@ -464,9 +469,8 @@ export function headPoints(rig: Object3D, head: Object3D): Vector3[] {
       for (let c = 0; c < 4; c++) if (index.getComponent(i, c) === bone) w += weight.getComponent(i, c);
       if (w < 0.5) continue;
       o.getVertexPosition(i, v);
-      o.localToWorld(v);
-      const local = head.worldToLocal(v.clone());
-      if (local.x > 0) out.push(local);
+      v.applyMatrix4(toHead);
+      if (v.x > 0) out.push(v.clone());
     }
   });
   return out;

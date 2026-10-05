@@ -3399,6 +3399,20 @@ function drawPolePlan(
   }
 }
 
+/**
+ * `marksByCell` for the overlay, kept until the grid, the marks or the
+ * buildings change: matched afresh every frame it was the costliest thing on
+ * the main thread in a zoned town (the profile of 2026-10-05).
+ */
+let marksCache: { grid: ZoneGrid; revision: number; marks: number; buildings: number; found: ReturnType<typeof marksByCell> } | null = null;
+function cachedMarksByCell(grid: ZoneGrid): ReturnType<typeof marksByCell> {
+  const c = marksCache;
+  if (c && c.grid === grid && c.revision === doc.zoneRevision && c.marks === doc.zoneMarks.length && c.buildings === doc.buildings.size) return c.found;
+  const found = marksByCell(doc, grid);
+  marksCache = { grid, revision: doc.zoneRevision, marks: doc.zoneMarks.length, buildings: doc.buildings.size, found };
+  return found;
+}
+
 function drawOverlayScreen(): void {
   const w = overlayCanvas.clientWidth;
   const h = overlayCanvas.clientHeight;
@@ -3479,7 +3493,7 @@ function drawOverlayScreen(): void {
     ctx.save();
     const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
     const grid = zoneGrid();
-    const marks = marksByCell(doc, grid);
+    const marks = cachedMarksByCell(grid);
     const zoning = tool === 'zone' || (tool === 'road' && roadPreviewActive());
     const quad = (cell: ZoneCell): void => {
       ctx.beginPath();
