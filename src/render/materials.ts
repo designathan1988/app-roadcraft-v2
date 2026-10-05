@@ -171,7 +171,9 @@ function asphaltBakes(anisotropy: number): { road: SurfaceBake; raised: SurfaceB
 }
 
 /**
- * The footway: precast concrete slabs, laid in stretcher bond.
+ * The footway: interlocking concrete pavers in basketweave (it was large
+ * precast slabs; the player found them ugly). What follows was written for
+ * the slabs and still holds for the blocks:
  *
  * The previous bake was one flat tone crossed by a hard 1.5-texel line every
  * slab, which read as a grid printed on paper - and, magnified at close zoom,
@@ -185,16 +187,15 @@ function footwayBake(anisotropy: number): SurfaceBake {
   const grain = makeNoise(0x77c1);
   const stain = makeNoise(0x1d3f);
   const blot = makeNoise(0x5e2d);
-  const crackNoise = makeNoise(0x3c19);
   const size = 1024;
   /**
    * Twelve courses per tile: 18 / 12 = 1.5 units = 0.6 m slabs. They were
    * 1.2 m, twice a real paving slab, and read as a floor of tiles.
    */
-  const courses = 12;
-  const slab = size / courses;
+  /** A paver's short side in texels: 16, about 11 cm, dividing the tile exactly so it repeats seamlessly. */
+  const PAVER = 16;
   /** Chamfer width in texels. */
-  const bevel = 3.5;
+  const bevel = 2;
   return bakeSurface(
     'footway',
     {
@@ -205,59 +206,46 @@ function footwayBake(anisotropy: number): SurfaceBake {
       // and every joint looked like a step between slabs out of level.
       relief: 1.4,
       shade: (x, y, out) => {
+        // Interlocking concrete pavers in basketweave (the "paver" of new
+        // Brazilian pavements, the player found the big pale slabs ugly):
+        // 20 x 10 cm blocks, two side by side in squares turned alternately,
+        // each block its own tone, sand in the joints.
         const u = x / size;
         const v = y / size;
-        // Stretcher bond: every other course is shifted by half a slab.
-        const row = Math.floor(y / slab);
-        const shift = row % 2 === 0 ? 0 : slab / 2;
-        const sx = (x + shift) % size;
-        const col = Math.floor(sx / slab);
-        const jx = Math.min(sx % slab, slab - (sx % slab));
-        const jy = Math.min(y % slab, slab - (y % slab));
-        const edge = Math.min(jx, jy);
-        // 0 in the joint, rising over the chamfer to 1 on the slab face.
-        const face = Math.min(1, Math.max(0, (edge - 1.2) / bevel));
+        const w = PAVER;
+        const bi = Math.floor(x / (2 * w)), bj = Math.floor(y / (2 * w));
+        const lx = x - bi * 2 * w, ly = y - bj * 2 * w;
+        const across = (bi + bj) % 2 === 0;
+        const brick = across ? (ly < w ? 0 : 1) : (lx < w ? 0 : 1);
+        // Distance to the nearest joint of this block.
+        const ex = across ? Math.min(lx, 2 * w - lx) : Math.min(lx % w, w - (lx % w));
+        const ey = across ? Math.min(ly % w, w - (ly % w)) : Math.min(ly, 2 * w - ly);
+        const edge = Math.min(ex, ey);
+        const face = Math.min(1, Math.max(0, (edge - 0.8) / bevel));
         const chamfer = face * face * (3 - 2 * face);
-
-        const slabId = cellHash(col % courses, row, 0x5a1b);
-        const replaced = slabId > 0.93;
-        const slabTone = (slabId - 0.5) * 0.09 + (replaced ? 0.07 : 0);
-
-        const speck = fbm(grain, u * 160, v * 160, 160, 3);
-        const dirt = fbm(stain, u * 5, v * 5, 5, 3);
-        const spot = fbm(blot, u * 24, v * 24, 24, 2);
-        // Gum and drip marks: small, dark, rare.
-        const mark = spot > 0.72 ? (spot - 0.72) * 1.4 : 0;
-
-        // A crack across one slab in twelve, following a wandering line.
+        const id = cellHash(bi * 2 + brick, bj, 0x5a1b);
+        // Mostly a warm grey, some darker, now and then a reddish one.
+        const tint = id > 0.97 ? [1.05, 0.96, 0.9] : id < 0.1 ? [0.92, 0.91, 0.89] : [1, 0.985, 0.955];
+        const blockTone = (cellHash(bi * 2 + brick, bj, 0x77aa) - 0.5) * 0.06;
+        const speck = fbm(grain, u * 220, v * 220, 220, 3);
+        const dirt = fbm(stain, u * 4, v * 4, 4, 3);
+        const spot = fbm(blot, u * 30, v * 30, 30, 2);
+        const mark = spot > 0.74 ? (spot - 0.74) * 1.6 : 0;
         let crack = 0;
-        if (slabId < 0.085) {
-          const along = (sx % slab) / slab;
-          const line = 0.5 + (fbm(crackNoise, along * 6 + col, row * 3.1, 64, 3) - 0.5) * 0.9;
-          const d = Math.abs((y % slab) / slab - line) * slab;
-          crack = d < 1.1 ? 1 - d / 1.1 : 0;
+        if (id > 0.5 && id < 0.53) {
+          const d = Math.abs(((lx + ly) % w) - w / 2);
+          crack = d < 0.9 ? 1 - d / 0.9 : 0;
         }
-
-        // Dirt settles in the joints and down the chamfer.
-        const grime = (1 - chamfer) * 0.2;
-        // Wear down the middle of the pedestrian flow: slabs a little paler
-        // and smoother, across the tile's middle band.
-        const worn = Math.max(0, 1 - Math.abs(u - 0.5) * 3) * 0.035;
-        const tone =
-          0.7 +
-          slabTone +
-          (speck - 0.5) * 0.05 -
-          (dirt - 0.5) * 0.08 -
-          mark * 0.25 -
-          grime -
-          crack * 0.2 +
-          worn;
-        // Slightly warm, the colour of a limestone aggregate.
-        out.r = tone * 1.015;
-        out.g = tone * 0.995;
-        out.b = tone * 0.955;
-        out.h = 0.2 + chamfer * (0.62 + speck * 0.12) - crack * 0.3;
-        out.rough = 0.88 - speck * 0.06 + (1 - chamfer) * 0.08;
+        const sand = (1 - chamfer);
+        const worn = Math.max(0, 1 - Math.abs(u - 0.5) * 3) * 0.03;
+        const tone = 0.6 + blockTone + (speck - 0.5) * 0.09 - (dirt - 0.5) * 0.1 - mark * 0.25 - crack * 0.15 + worn;
+        // The joints hold sand: a grey-beige, darker than the blocks.
+        const jr = 0.4, jg = 0.38, jb = 0.34;
+        out.r = tone * tint[0]! * chamfer + jr * sand;
+        out.g = tone * tint[1]! * chamfer + jg * sand;
+        out.b = tone * tint[2]! * chamfer + jb * sand;
+        out.h = 0.15 + chamfer * (0.7 + speck * 0.15) - crack * 0.3;
+        out.rough = 0.9 - speck * 0.05 + sand * 0.06;
       },
     },
     anisotropy,

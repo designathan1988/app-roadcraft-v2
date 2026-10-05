@@ -304,6 +304,16 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
         if (v.outline) continue;
         const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
         if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
+        // A side standing on the lot's boundary is a party wall: blank, so
+        // no shopfront, awning or door faces into the neighbour it joins.
+        for (const [face, onEdge] of [[3, v.x <= -lotW / 2 + m(0.6)], [1, v.x + v.w >= lotW / 2 - m(0.6)]] as const) {
+          if (!onEdge) continue;
+          for (const storey of v.storeys) {
+            storey.facade.sides = { ...(storey.facade.sides ?? {}), [face]: 'wall' };
+            if (storey.facade.patterns) delete storey.facade.patterns[face];
+            if (storey.facade.bays) for (const key of Object.keys(storey.facade.bays)) if (key.startsWith(`${face}:`)) delete storey.facade.bays[key];
+          }
+        }
       }
       if (!furnishLot(body, plan, made, rng)) continue;
       // The widened lot's front middle - the body's local origin - shifted

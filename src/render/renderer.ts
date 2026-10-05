@@ -395,7 +395,14 @@ export function createSceneRenderer(
   };
 
   const agents: AgentMeshes = createAgentMeshes(deckHeight, onAssetsReady,
-    (x, y) => terrain.renderedHeightAt(x, y),
+    // A walker off the streets stands on what is drawn there: a building's
+    // terrace or yard paving where there is one, the terrain elsewhere (they
+    // sank to the knees in a raised terrace).
+    (x, y) => {
+      const lot = buildings.anyLotHeightAt(x, y);
+      const ground = terrain.renderedHeightAt(x, y);
+      return Number.isFinite(lot) ? Math.max(lot, ground) : ground;
+    },
     // A resident's parked car stands on its lot as the lot is drawn.
     (building, x, y) => buildings.lotHeightAt(building as BuildingId, x, y));
 

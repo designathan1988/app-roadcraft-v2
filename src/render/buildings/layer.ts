@@ -68,6 +68,8 @@ export interface BuildingLayer {
    * off them: what a resident's parked car stands on (`render/agents.ts`).
    */
   lotHeightAt(building: BuildingId, x: number, y: number): number;
+  /** The drawn height of whichever building's lot is at a point, NaN off every lot. */
+  anyLotHeightAt(x: number, y: number): number;
   dispose(): void;
 }
 
@@ -310,6 +312,13 @@ export function createBuildingLayer(): BuildingLayer {
     },
     lotHeightAt(building, x, y) {
       return chunks.get(building)?.chunk.lotGround?.heightAt(x, y) ?? NaN;
+    },
+    anyLotHeightAt(x, y) {
+      for (const { chunk } of chunks.values()) {
+        const h = chunk.lotGround?.heightAt(x, y);
+        if (h !== undefined && Number.isFinite(h)) return h;
+      }
+      return NaN;
     },
     dispose() {
       flagLayer.dispose();

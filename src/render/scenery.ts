@@ -749,7 +749,9 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
         // Kept in the bush's own proportions: a narrow, tall slot used to
         // stretch it into a column of smeared leaves and flowers. The plant
         // fills the slot's width and stands no taller than a bush that wide.
-        const across = Math.max(p.w, p.d) / 1.5;
+        // A little under the slot: the leaf cards reach past the crown, and a
+        // bush by a wall must not show through it.
+        const across = (Math.min(p.w, p.d) / 1.5) * 0.8;
         const tall = Math.min(p.h, across * 1.3);
         const wide = Math.max(across, tall / 1.3);
         (bushes.get(rng.float() < 0.25 ? 'bushFlowering' : 'bush') as Placement[]).push({

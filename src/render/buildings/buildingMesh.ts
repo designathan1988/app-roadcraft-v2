@@ -1134,6 +1134,43 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
       e.box(ux - m(0.28), y - m(0.28), ux + m(0.28), y + m(0.28), z + m(0.85), z + m(0.87), DRAIN);
     }
   }
+  // More of what a flat roof carries (the player's order of 2026-10-05):
+  // a blue fibreglass water tank on legs (the caixa d'água of every Brazilian
+  // roof), solar panels in rows tilted to the sun, an antenna mast, a
+  // satellite dish and skylights.
+  const rnd = (k: number): number => (((b.id * 2654435761 + v.id * 40503 + k * 97) >>> 0) % 1000) / 1000;
+  if (v.w >= m(5) && v.d >= m(5)) {
+    const tx = pick % 2 === 0 ? v.x + v.w - m(2.2) : v.x + m(2.2), ty = pick < 2 ? v.y + v.d - m(2.2) : v.y + m(2.2);
+    for (const [lx, ly] of [[-0.45, -0.45], [0.45, -0.45], [0.45, 0.45], [-0.45, 0.45]] as const) {
+      e.box(tx + m(lx) - m(0.05), ty + m(ly) - m(0.05), tx + m(lx) + m(0.05), ty + m(ly) + m(0.05), z, z + m(0.8), DRAIN);
+    }
+    e.box(tx - m(0.7), ty - m(0.7), tx + m(0.7), ty + m(0.7), z + m(0.8), z + m(1.9), WATER_TANK);
+    e.box(tx - m(0.55), ty - m(0.55), tx + m(0.55), ty + m(0.55), z + m(1.9), z + m(2.05), shaded(WATER_TANK, 0.85));
+  }
+  if (v.w >= m(8) && v.d >= m(8)) {
+    // Solar panels: rows of tilted sheets on frames.
+    const rows = Math.min(4, Math.floor((v.d - m(4)) / m(2.2)));
+    const px0 = v.x + m(1.5), px1 = v.x + Math.min(v.w - m(1.5), m(1.5) + m(8));
+    for (let r = 0; r < rows; r++) {
+      const py = v.y + m(1.6) + r * m(2.2);
+      for (let px = px0; px + m(1.1) <= px1; px += m(1.15)) {
+        e.box(px, py, px + m(1.05), py + m(1.6), z + m(0.25), z + m(0.32), SOLAR, SOLAR);
+        e.box(px + m(0.45), py + m(1.3), px + m(0.6), py + m(1.45), z, z + m(0.25), DRAIN);
+      }
+    }
+    // An antenna mast and a dish.
+    const ax = v.x + v.w * (0.25 + 0.5 * rnd(1)), ay = v.y + v.d - m(1);
+    e.box(ax - m(0.04), ay - m(0.04), ax + m(0.04), ay + m(0.04), z, z + m(3.5), DRAIN);
+    e.box(ax - m(0.6), ay - m(0.02), ax + m(0.6), ay + m(0.02), z + m(3.1), z + m(3.14), DRAIN);
+    const dx = v.x + m(1.2), dy = v.y + v.d * (0.3 + 0.4 * rnd(2));
+    e.box(dx - m(0.05), dy - m(0.05), dx + m(0.05), dy + m(0.05), z, z + m(0.7), DRAIN);
+    e.box(dx - m(0.4), dy - m(0.05), dx + m(0.4), dy + m(0.05), z + m(0.5), z + m(1.2), CONDENSER);
+    // Skylights over the stair and the halls.
+    for (let k = 0; k < 2; k++) {
+      const sx = v.x + v.w * (0.35 + 0.3 * k), sy = v.y + v.d * 0.55;
+      e.box(sx - m(0.6), sy - m(0.6), sx + m(0.6), sy + m(0.6), z, z + m(0.25), ROOF_PLANT, SKYLIGHT);
+    }
+  }
   // A lift's machine room, with its door, on a building tall enough for one.
   if (v.storeys.length + v.base >= 4 && b.cores.length === 0) {
     const mx = v.x + v.w / 2;
@@ -1144,6 +1181,52 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
 }
 
 const DRAIN: Paint = paint({ finish: 'metal', colour: 0x2d3033 });
+const WATER_TANK: Paint = paint({ finish: 'plaster', colour: 0x3d6fa8 });
+const SOLAR: Paint = paint({ finish: 'glass', colour: 0x1d2b45 });
+const SKYLIGHT: Paint = paint({ finish: 'glass', colour: 0x8fb4c6 });
+const DECK: Paint = paint({ finish: 'wood', colour: 0x9a7650 });
+const PLANTER: Paint = paint({ finish: 'concrete', colour: 0x8c867b });
+const GREEN: Paint = paint({ finish: 'plaster', colour: 0x4f7a3a });
+const PARASOL: Paint = paint({ finish: 'plaster', colour: 0xe7dcc4 });
+
+/**
+ * A roof terrace that is used (the player's order of 2026-10-05): a timber
+ * deck, planters of green round the edge, tables under parasols, loungers, a
+ * pergola, and the water tank every roof carries.
+ */
+function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint): void {
+  if (v.outline || v.w < m(4) || v.d < m(4)) return;
+  const rnd = (k: number): number => (((b.id * 2654435761 + v.id * 40503 + k * 131) >>> 0) % 1000) / 1000;
+  // The deck, a part of the terrace.
+  const dx0 = v.x + m(0.8), dx1 = v.x + v.w * (0.55 + 0.2 * rnd(1)), dy0 = v.y + m(0.8), dy1 = v.y + v.d - m(0.8);
+  e.box(dx0, dy0, dx1, dy1, z, z + m(0.06), DECK);
+  // Planters along the edges, with greenery in them.
+  for (let x = v.x + m(0.5); x + m(1.2) < v.x + v.w - m(0.4); x += m(2.6)) {
+    for (const y of [v.y + m(0.45), v.y + v.d - m(0.95)]) {
+      e.box(x, y, x + m(1.2), y + m(0.5), z, z + m(0.55), PLANTER);
+      e.box(x + m(0.08), y + m(0.06), x + m(1.12), y + m(0.44), z + m(0.55), z + m(0.95), GREEN);
+    }
+  }
+  // Tables under parasols.
+  const tables = Math.max(1, Math.floor((dx1 - dx0) / m(3.5)));
+  for (let k = 0; k < tables; k++) {
+    const tx = dx0 + (k + 0.5) * ((dx1 - dx0) / tables), ty = (dy0 + dy1) / 2;
+    e.box(tx - m(0.4), ty - m(0.4), tx + m(0.4), ty + m(0.4), z + m(0.7), z + m(0.75), trim);
+    e.box(tx - m(0.04), ty - m(0.04), tx + m(0.04), ty + m(0.04), z, z + m(2.3), DRAIN);
+    e.box(tx - m(1.1), ty - m(1.1), tx + m(1.1), ty + m(1.1), z + m(2.3), z + m(2.4), PARASOL);
+    for (const s of [-1, 1]) e.box(tx + s * m(0.7) - m(0.2), ty - m(0.2), tx + s * m(0.7) + m(0.2), ty + m(0.2), z, z + m(0.45), trim);
+  }
+  // Loungers on the far side, a pergola of beams over them.
+  const lx = Math.min(v.x + v.w - m(1.5), dx1 + m(1.2));
+  for (let y = dy0 + m(0.4); y + m(0.7) < dy1; y += m(1.2)) e.box(lx - m(0.9), y, lx + m(0.9), y + m(0.65), z, z + m(0.35), PARASOL);
+  for (const [px, py] of [[lx - m(1.2), dy0], [lx + m(1.2), dy0], [lx - m(1.2), dy1 - m(0.15)], [lx + m(1.2), dy1 - m(0.15)]] as const) {
+    e.box(px, py, px + m(0.15), py + m(0.15), z, z + m(2.4), DECK);
+  }
+  for (let y = dy0; y < dy1; y += m(0.6)) e.box(lx - m(1.3), y, lx + m(1.4), y + m(0.1), z + m(2.4), z + m(2.52), DECK);
+  // The water tank.
+  const tx = v.x + v.w - m(1.4), ty = v.y + m(1.4);
+  e.box(tx - m(0.7), ty - m(0.7), tx + m(0.7), ty + m(0.7), z, z + m(1.2), WATER_TANK);
+}
 const CONDENSER: Paint = paint({ finish: 'metal', colour: 0xc9ccc9 });
 const DOOR_PAINT: Paint = paint({ finish: 'metal', colour: 0x5c6468 });
 
@@ -2278,6 +2361,7 @@ function emitRoof(
     const terrace = v.roof === 'terrace';
     sh.face([e.L(x0, y0, z), e.L(x1, y0, z), e.L(x1, y1, z), e.L(x0, y1, z)], up, terrace ? TERRACE : roofColour);
     if (!terrace) emitRoofPlant(e, b, v, z, trim);
+    else emitTerrace(e, b, v, z, trim);
     // Its top stays just under the roof: a face shared with the roof cap
     // z-fights into stripes.
     emitCornice(e, v, z, trim);

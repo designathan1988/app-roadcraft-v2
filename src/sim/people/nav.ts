@@ -1,3 +1,4 @@
+import { elementRing } from '@world/buildings/elements';
 import type { MultiPoly } from '@core/clipper';
 import { CROSSWALK_DEPTH } from '@world/approach';
 import { solidFootprints } from '@world/buildings/geometry';
@@ -159,6 +160,24 @@ export function buildWorldNav(w: SimWorld): WorldNav {
     }
   }
 
+  // A lot's boundary walls, fences and hedges are walls to a walker too: they
+  // walked through them on their way to a door. A piece crossed by a path to
+  // a door is left open (that is where its gate is).
+  const crosses = (ring: readonly { x: number; y: number }[]): boolean => paths.some((p) => {
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
+      if (segmentsCross(p.ax, p.ay, p.bx, p.by, a.x, a.y, b.x, b.y)) return true;
+    }
+    return false;
+  });
+  for (const b of w.doc.buildings.all()) {
+    for (const e of b.elements ?? []) {
+      if ((e.kind !== 'wall' && e.kind !== 'fence' && e.kind !== 'hedge') || e.z > 0.01) continue;
+      const ring = elementRing(b, e);
+      if (!crosses(ring)) solids.push(ring);
+    }
+  }
+
   const input: NavInput = {
     layers,
     crossingLayers,
@@ -228,4 +247,9 @@ export function buildWorldNav(w: SimWorld): WorldNav {
     buildingsRevision: w.doc.buildings.revision,
     utilityRevision: w.doc.utilityRevision,
   };
+}
+
+function segmentsCross(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number): number => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  return o(ax, ay, bx, by, cx, cy) !== o(ax, ay, bx, by, dx, dy) && o(cx, cy, dx, dy, ax, ay) !== o(cx, cy, dx, dy, bx, by);
 }

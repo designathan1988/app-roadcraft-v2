@@ -330,7 +330,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         lot.path(pad, CONCRETE_PATH);
       }
       // Planting: shrubs inside the boundary, flowers under the windows, a tree if there is room.
-      for (let px = 1.2; px < W - 1; px += 2.6) if (!lot.busy(px, 0.9) && !drives.some((r) => px > r.x0 - 1 && px < r.x1 + 1)) lot.put(rng.float() < 0.5 ? 'shrub' : 'flowers', px, 0.9, 0, 1.2, 1.2, 0.8);
+      for (let px = 1.2; px < W - 1; px += 2.6) if (!lot.busy(px, 1.5) && !drives.some((r) => px > r.x0 - 1 && px < r.x1 + 1)) lot.put(rng.float() < 0.5 ? 'shrub' : 'flowers', px, 1.5, 0, 1.2, 1.2, 0.8);
       if (F >= 4) for (let px = env.x0 + 1.5; px < env.x1 - 1; px += 3.5) if (!lot.busy(px, F - 2.4, 1.2)) { lot.put('tree', px, F - 2.4, 0, 2.6, 2.6, 4.5); break; }
       for (let px = env.x0 + 1; px < env.x1 - 0.8; px += 2) if (!lot.busy(px, F - 0.6, 0.7)) lot.put('flowers', px, F - 0.6, 0, 1.6, 0.8, 0.35);
     } else if (front.use === 'forecourt') {
@@ -437,7 +437,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         for (let px = 1.5; px < W - 1.5; px += 2.2) if (!lot.busy(px, by1 - 1.2)) lot.put('flowers', px, by1 - 1.2, 0, 1.6, 1.2, 0.4);
       }
       if (depth >= 5) {
-        for (const px of [1.8, W - 1.8]) if (!lot.busy(px, by1 - 2.2, 1.5)) lot.put('tree', px, by1 - 2.2, 0, 3, 3, 5);
+        for (const px of [2.6, W - 2.6]) if (!lot.busy(px, by1 - 2.8, 1.5)) lot.put('tree', px, by1 - 2.8, 0, 3, 3, 5);
       }
       // A yard that is lived in (the player's order of 2026-10-05: "quintais
       // muito pobres"): a garden shed in a back corner, a table on the
@@ -459,9 +459,41 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         const vx = W * (0.35 + rng.float() * 0.3);
         for (let k = 0; k < 3; k++) if (!lot.busy(vx + k * 1.3, lawnY0 + 3, 0.7)) lot.put('planter', vx + k * 1.3, lawnY0 + 3, 0, 0.9, 2.6, 0.35, undefined, mat('wood', 0x6b4f35));
       }
-      for (const px of [0.9, W - 0.9]) {
+      // A churrasqueira on the terrace's side: a brick counter with its grill
+      // and chimney, as every Brazilian back yard has.
+      {
+        const gx = terrace.x1 + 1.2 < W - 1 ? terrace.x1 + 0.9 : Math.max(1.2, terrace.x0 - 0.9);
+        const gy = terrace.y0 + 1;
+        if (!lot.busy(gx, gy, 0.8)) {
+          lot.put('wall', gx, gy, 0, 1.8, 0.7, 0.95, undefined, mat('brick', 0x9b4f37));
+          lot.put('slab', gx, gy, 0, 1.9, 0.8, 0.06, 0.95, mat('stone', 0x6f6a63));
+          lot.put('wall', gx, gy + 0.15, 0, 0.6, 0.4, 2.6, 0.95, mat('brick', 0x8e4632));
+        }
+      }
+      // A clothes line across the lawn: two posts and the line between.
+      if (depth >= 6 && W >= 8) {
+        const cy = lawnY0 + depth * 0.55, cx0 = W * 0.25, cx1 = W * 0.7;
+        if (!lot.busy(cx0, cy, 0.4) && !lot.busy(cx1, cy, 0.4)) {
+          for (const cx of [cx0, cx1]) lot.put('pillar', cx, cy, 0, 0.08, 0.08, 1.9, undefined, mat('metal', 0x9aa0a2));
+          lot.put('slab', (cx0 + cx1) / 2, cy, 0, cx1 - cx0, 0.03, 0.02, 1.8, mat('metal', 0xd8d8d0));
+          lot.put('slab', (cx0 + cx1) / 2 - 0.6, cy, 0, 0.7, 0.03, 0.6, 1.2, mat('plaster', 0xc85a5a));
+          lot.put('slab', (cx0 + cx1) / 2 + 0.5, cy, 0, 0.6, 0.03, 0.5, 1.3, mat('plaster', 0xe8e4d4));
+        }
+      }
+      // The laundry sink by the back door and a water tank on its stand.
+      if (W >= 7) {
+        const tx = W - 1.3, ty = by0 + 1.2;
+        if (!lot.busy(tx, ty, 0.7)) {
+          lot.put('wall', tx, ty, 0, 0.7, 0.55, 0.85, undefined, mat('concrete', 0xbdb8ae));
+          lot.put('pillar', tx, ty + 1.3, 0, 0.9, 0.9, 1.4, undefined, mat('concrete', 0x9a958c));
+          lot.put('wall', tx, ty + 1.3, 0, 1.1, 1.1, 1.1, 1.4, mat('plaster', 0x3d6fa8));
+        }
+      }
+      for (const px of [1.5, W - 1.5]) {
         for (let py = lawnY0 + 1.5; py < by1 - 3; py += 3.2) if (!lot.busy(px, py, 0.9)) lot.put('shrub', px, py, 0, 1.3, 1.3, 1.4);
       }
+      // Potted plants along the terrace edge.
+      for (let px = terrace.x0 + 0.6; px < terrace.x1 - 0.5; px += 1.6) if (!lot.busy(px, terrace.y1 - 0.4, 0.3)) lot.put('planter', px, terrace.y1 - 0.4, 0, 0.5, 0.5, 0.55);
       break;
     }
     case 'parking': {
@@ -512,6 +544,16 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       lot.put('slab', Math.max(0.8, bd - 3), by0 + 1, 0, 0.6, 0.6, 0.45, 0.14, mat('wood', 0x7f6040));
       lot.put('drain', bd, by0 + (by1 - by0) / 2, 0, 0.5, 0.5, 0.1);
       lot.put('lamp', Math.max(0.6, bd - 1.6), by0 + 0.4, 0, 0.3, 0.3, 3.2);
+      // A caged store of gas cylinders, a water tank on a stand, crates and
+      // a stack of empty drink crates, a mop bucket by the back door.
+      if (W >= 8 && by1 - by0 >= 4) {
+        const gx = 1.2, gy = by1 - 1;
+        lot.put('fence', gx, gy, 0, 1.6, 0.9, 1.4, undefined, mat('metal', 0x7a8084));
+        for (let k = 0; k < 3; k++) lot.put('pillar', gx - 0.5 + k * 0.5, gy, 0, 0.32, 0.32, 0.9, undefined, mat('metal', 0x3a6fb0));
+        lot.put('pillar', W - 1.4, by1 - 1.2, 0, 1, 1, 1.6, undefined, mat('metal', 0x8a9094));
+        lot.put('wall', W - 1.4, by1 - 1.2, 0, 1.2, 1.2, 1.2, 1.6, mat('plaster', 0x3d6fa8));
+        for (let k = 0; k < 4; k++) lot.put('slab', Math.min(W - 2.6, bd + 1.2) + (k % 2) * 0.45, by1 - 2.2, 0, 0.42, 0.32, 0.28, Math.floor(k / 2) * 0.28, mat('plaster', k % 2 ? 0xc9a227 : 0xb23b2e));
+      }
       for (let px = env.x0 + 1; px < env.x1 - 1 && px < bd - 2.5; px += 2.4) lot.put('ac', px, by0 + 0.2, 2, 0.8, 0.35, 0.6, 2.6);
       if (by1 - by0 >= 5 && W >= 8) lot.put('planter', 1, by1 - 1, 0, 1, 1, 0.6);
       break;
@@ -527,7 +569,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       lot.put('bench', cx - 1.5, by0 + 4, 0, 1.6, 0.5, 0.45);
       lot.put('bench', cx + 1.5, by0 + 4, 0, 1.6, 0.5, 0.45);
       for (const w of walks) lot.path({ x0: w.x0, y0: by0, x1: w.x1, y1: by0 + 2 }, PAVERS);
-      for (const px of [1.8, W - 1.8]) if (!lot.busy(px, by1 - 2, 1.4)) lot.put('tree', px, by1 - 2, 0, 3, 3, 5);
+      for (const px of [2.6, W - 2.6]) if (!lot.busy(px, by1 - 2.8, 1.4)) lot.put('tree', px, by1 - 2.8, 0, 3, 3, 5);
       lot.put('bin', 1.2, by0 + 0.6, 0, 1.4, 0.7, 1.1);
       break;
     }
@@ -546,7 +588,14 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   }
 
   // ---- boundaries and gates
-  const inset = 0.15;
+  // The boundary walls stand right on the lot's edge: the neighbour's wall
+  // meets this one, with no strip between two properties.
+  const inset = 0.1;
+  // Along the street the boundary stands as close to the footway as a part
+  // may (`touchesRoad`: 2 cm), whatever its thickness: a hedge set at the
+  // walls' line reached onto the footway and was refused, leaving the front
+  // open - the holes in the facades.
+  const frontAt = (kind: ElementKind | 'gate'): number => (kind === 'hedge' ? 0.7 : kind === 'fence' || kind === 'gate' ? 0.12 : 0.2) / 2 + 0.04;
   const boundary = ((): { front: ElementKind | null; frontH: number; frontBase: number; sides: ElementKind; sidesH: number } => {
     switch (plan.kind) {
       case 'house': {
@@ -572,18 +621,18 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   // a gate refused (it met a carport post, a drain) left an empty hole in the
   // front wall - the holes the player found in the facades.
   for (const g of gates) {
-    if (lot.put('gate', g.x, inset, 0, g.w, 0.12, plan.kind === 'industry' ? 2.2 : g.w > 2 ? 1.8 : 1.4)) frontGaps.push([g.x, g.w + 0.1]);
+    if (lot.put('gate', g.x, frontAt('gate'), 0, g.w, 0.12, plan.kind === 'industry' ? 2.2 : g.w > 2 ? 1.8 : 1.4)) frontGaps.push([g.x, g.w + 0.1]);
   }
   const builtFront = F === 0 ? [env.x0 - 0.05, env.x1 + 0.05] as const : null;
   const frontRun = (x0: number, x1: number): void => {
     if (boundary.front && F > 0) {
-      if (boundary.frontBase > 0) lot.runX('wall', inset, x0, x1, boundary.frontBase, frontGaps);
-      lot.runX(boundary.front, inset, x0, x1, boundary.frontH, frontGaps, boundary.frontBase);
+      if (boundary.frontBase > 0) lot.runX('wall', frontAt('wall'), x0, x1, boundary.frontBase, frontGaps);
+      lot.runX(boundary.front, boundary.frontBase > 0 ? frontAt('wall') : frontAt(boundary.front), x0, x1, boundary.frontH, frontGaps, boundary.frontBase);
     } else if (F === 0 || boundary.front === null) {
       // The street front of a shop or a plaza is open; its side strips are closed by their gates.
       for (const s of [L, R]) for (const r of [s.drive, s.walk, s.garden]) {
         if (!r || r.x1 < x0 || r.x0 > x1) continue;
-        if (F === 0 && s.garden) lot.runX('wall', inset, r.x0, r.x1, 1.6);
+        if (F === 0 && s.garden) lot.runX('wall', frontAt('wall'), r.x0, r.x1, 1.6);
       }
     }
   };

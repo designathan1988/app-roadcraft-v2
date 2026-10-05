@@ -5,8 +5,9 @@ import {
   Float32BufferAttribute,
   Group,
   InstancedMesh,
-  LineSegments,
-  LineBasicMaterial,
+  Mesh,
+  Vector3,
+  DoubleSide,
   Material,
   MeshStandardMaterial,
   Object3D,
@@ -51,6 +52,8 @@ const CAN_RADIUS = m(0.28);
 const LAMP_TILT = (8 * Math.PI) / 180;
 /** How far a wire swings at mid-span in a full gust. */
 const WIRE_SWING = m(0.35);
+/** Half-width of a drawn cable: thicker than life so it reads at play zoom. */
+const WIRE_RADIUS = m(0.035);
 import type { PoleId, SpanId } from '@world/ids';
 import type { UtilityPole, UtilitySpan } from '@world/utilities';
 
@@ -332,7 +335,7 @@ export function buildUtilities(
   // A wire is thinner than a pixel at any play zoom. Drawn solid near-black
   // it broke up into a dotted trace across the footway under it, which read
   // as a debug path left on screen; a faint line reads as a wire.
-  const wireMaterial = new LineBasicMaterial({ color: 0x3a3f42, transparent: true, opacity: 0.55, depthWrite: false });
+  const wireMaterial = new MeshStandardMaterial({ color: 0x1e2224, roughness: 0.55, metalness: 0.3, side: DoubleSide });
   applyWireWind(wireMaterial, WIRE_SWING);
 
   const mastGeometry = new CylinderGeometry(
@@ -377,14 +380,41 @@ export function buildUtilities(
     triangles += perInstance * mesh.count;
   }
 
-  let wires: LineSegments | null = null;
+  let wires: Mesh | null = null;
   if (wirePoints.length) {
+    // Each wire segment as a thin square tube, so a cable has a real width
+    // on screen (a line is one pixel whatever the zoom; the player found the
+    // wires too thin to read).
+    const pos: number[] = [], nor: number[] = [], swing: number[] = [], phase: number[] = [];
+    const a = new Vector3(), b2 = new Vector3(), d = new Vector3(), u = new Vector3(), w = new Vector3(), up = new Vector3(0, 1, 0);
+    for (let i = 0; i < wirePoints.length; i += 6) {
+      a.set(wirePoints[i]!, wirePoints[i + 1]!, wirePoints[i + 2]!);
+      b2.set(wirePoints[i + 3]!, wirePoints[i + 4]!, wirePoints[i + 5]!);
+      d.copy(b2).sub(a).normalize();
+      u.crossVectors(d, up).normalize().multiplyScalar(WIRE_RADIUS);
+      w.crossVectors(u, d).normalize().multiplyScalar(WIRE_RADIUS);
+      const sa = wireSwing[i / 3]!, sb = wireSwing[i / 3 + 1]!, ph = wirePhase[i / 3]!;
+      const corners = [u.clone(), w.clone(), u.clone().negate(), w.clone().negate()];
+      for (let k = 0; k < 4; k++) {
+        const c0 = corners[k]!, c1 = corners[(k + 1) % 4]!;
+        const n = c0.clone().add(c1).normalize();
+        const quad = [[a, c0, sa], [b2, c0, sb], [b2, c1, sb], [a, c0, sa], [b2, c1, sb], [a, c1, sa]] as const;
+        for (const [p0, c, sw] of quad) {
+          pos.push(p0.x + c.x, p0.y + c.y, p0.z + c.z);
+          nor.push(n.x, n.y, n.z);
+          swing.push(sw);
+          phase.push(ph);
+        }
+      }
+    }
     const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new Float32BufferAttribute(wirePoints, 3));
-    geometry.setAttribute('aSwing', new Float32BufferAttribute(wireSwing, 1));
-    geometry.setAttribute('aPhase', new Float32BufferAttribute(wirePhase, 1));
+    geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    geometry.setAttribute('normal', new Float32BufferAttribute(nor, 3));
+    geometry.setAttribute('aSwing', new Float32BufferAttribute(swing, 1));
+    geometry.setAttribute('aPhase', new Float32BufferAttribute(phase, 1));
     geometry.computeBoundingSphere();
-    wires = new LineSegments(geometry, wireMaterial);
+    wires = new Mesh(geometry, wireMaterial);
+    wires.castShadow = true;
     wires.name = 'utility-wires';
     group.add(wires);
   }
