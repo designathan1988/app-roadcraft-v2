@@ -145,3 +145,42 @@ export function applyWireWind(material: Material, amplitude: number): void {
   };
   material.customProgramCacheKey = () => 'wire-wind';
 }
+
+/**
+ * A stiff structure in the wind - a signal post, its arm and heads: it barely
+ * moves, a few centimetres at the top in a gust, bending from the foot
+ * (displacement with the square of height, as a cantilever). For instanced
+ * parts whose instance origin stands `originHeight` above the ground; `tall`
+ * is the structure's height and `amplitude` the sway at that height.
+ */
+export function applyStructureSway(material: Material, originHeight: number, tall: number, amplitude: number, key: string): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    Object.assign(shader.uniforms, windUniforms, {
+      uSwayOrigin: { value: originHeight }, uSwayTall: { value: tall }, uSwayAmp: { value: amplitude },
+    });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uWindTime;
+        uniform vec2 uWindDir;
+        uniform float uSwayOrigin;
+        uniform float uSwayTall;
+        uniform float uSwayAmp;`)
+      .replace('#include <project_vertex>', ShaderChunk.project_vertex.replace(
+        'mvPosition = modelViewMatrix * mvPosition;',
+        `#ifdef USE_INSTANCING
+           float swayGround = instanceMatrix[3].y - uSwayOrigin;
+           float swayH = clamp((mvPosition.y - swayGround) / uSwayTall, 0.0, 1.4);
+           vec2 swayRoot = instanceMatrix[3].xz;
+           float swayFront = dot(swayRoot, uWindDir) * 0.012 - uWindTime * 0.42;
+           float swayGust = 0.45 + 0.55 * smoothstep(-0.6, 1.0, sin(swayFront));
+           float swayPhase = dot(floor(swayRoot / 4.0), vec2(1.7, 2.3));
+           float swayK = uSwayAmp * swayH * swayH * swayGust * (0.55 + 0.45 * sin(uWindTime * 2.3 + swayPhase));
+           mvPosition.xz += uWindDir * swayK;
+         #endif
+         mvPosition = modelViewMatrix * mvPosition;`,
+      ));
+  };
+  material.customProgramCacheKey = () => `sway-${key}`;
+}

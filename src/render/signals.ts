@@ -1,3 +1,4 @@
+import { applyStructureSway } from './wind';
 import {
   BoxGeometry,
   Color,
@@ -136,6 +137,13 @@ export function createSignalHeads(
 
   const steel = new MeshStandardMaterial({ color: 0x2b302d, roughness: 0.7, metalness: 0.45 });
   const housing = new MeshStandardMaterial({ color: 0x15191a, roughness: 0.78, metalness: 0.1 });
+  // A signal post sways a few centimetres at the top in a gust, its arm and
+  // heads with it (`applyStructureSway`).
+  const armSteel = steel.clone();
+  const SWAY = m(0.05);
+  applyStructureSway(steel, POST_HEIGHT / 2, POST_HEIGHT, SWAY, 'signal-post');
+  applyStructureSway(armSteel, POST_HEIGHT - u(0.3), POST_HEIGHT, SWAY, 'signal-arm');
+  applyStructureSway(housing, HEAD_CENTRE, POST_HEIGHT, SWAY, 'signal-housing');
   // Lit lenses keep their hue at full brightness: basic and untone-mapped,
   // white here and coloured per instance.
   const lit = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
@@ -152,6 +160,9 @@ export function createSignalHeads(
     green: lensMaterial(0x1d6b33, 0x07230f),
   };
   const halo = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false, transparent: true, opacity: 0.28 });
+  for (const [k, mat] of [['lit', lit], ['halo', halo], ['red', dark.red], ['amber', dark.amber], ['green', dark.green]] as const) {
+    applyStructureSway(mat, HEAD_CENTRE, POST_HEIGHT, SWAY, `signal-${k}`);
+  }
   const HALO: Record<Lamp, Color> = {
     red: new Color(0xff5145),
     amber: new Color(0xffc850),
@@ -181,7 +192,7 @@ export function createSignalHeads(
   const glow = { cast: false, receive: false };
   const specs = () => ({
     posts: make('signal-posts', postGeometry, steel, 1, solid, false),
-    arms: make('signal-arms', armGeometry, steel, 1, solid, false),
+    arms: make('signal-arms', armGeometry, armSteel, 1, solid, false),
     boxes: make('signal-boxes', housingGeometry, housing, 1, solid, false),
     visors: make('signal-visors', visorGeometry, housing, LAMPS.length * FACES.length, shading, false),
     lit: make('signal-lamps-lit', lensGeometry, lit, FACES.length, glow, true),
@@ -369,7 +380,7 @@ export function createSignalHeads(
       ]) {
         geometry.dispose();
       }
-      const materials: Material[] = [steel, housing, lit, halo, ...Object.values(dark)];
+      const materials: Material[] = [steel, armSteel, housing, lit, halo, ...Object.values(dark)];
       for (const material of materials) material.dispose();
     },
   };
