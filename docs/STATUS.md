@@ -33,17 +33,33 @@ and they have seen it.
   `tests/sim/agents/ownCars.spec.ts` (6/6 chains, 0 jumps, 0 car bodies in
   walls, 0 cars not owned by a resident). Photos: `scripts/agents-shots.mjs`,
   `scripts/agent-card-shots.mjs`.
+- **Slice 2, LIVE behind `?agents=1`** (6957f58): needs (hunger, energy, fun,
+  social, hygiene) run down by the hour; places advertise what they give and
+  when they are open (`sim/agents/mind.ts`); a resident free of work or school
+  goes where need, distance and the hour weigh most. The agent card shows the
+  need bars. Measured: `tests/sim/agents/mind.spec.ts`.
+- **Slice 3, LIVE behind `?agents=1`** (2026-10-05): the agents walk with
+  their own engine, `sim/agents/walk.ts`, instead of the People engine: lanes on
+  the footways of `world/walkways.ts` (SUMO's striping: the stripe with the
+  most room, keep right, speed from the gap ahead, a sidestep when held up),
+  the body following a point ahead (never a jump, a backward or a sideways
+  step), zebras waited for at the kerb by the same rule and signals the cars
+  keep, a crowd leaving one building coming out one after another. Measured:
+  `tests/sim/agents/walk.spec.ts` (default town, 17:00, 150 s: 211 walks, 0
+  jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
+  signal cycle). Photos: `scripts/walk-shots.mjs`
+  (`docs/audit/2026-10-05/walk/`).
 - **Not yet:** only residents with a free bay reachable from their back door
-  own a car in agent mode (46 of 2151 in the default town); walks that are not
-  from a back door still use the old People engine and can stall; a car
-  crossing the footway does not yet wait for every walker; parked cars are not
-  obstacles for the walkers.
-- **Next slices:** 2, needs and smart objects (The Sims: hunger, energy, fun,
-  social; places and objects advertise what they offer; the agent picks by
-  need instead of only the diary). 3, one new walking engine for agents (lanes
-  on the footways, the lab's Detour crowd for open areas) replacing People,
-  the Detour crowd flag and `sim/peds`. 4, agents by default, then the old
-  engines deleted after the player has seen it.
+  own a car in agent mode (49 in the default town); in agent mode nobody but
+  the residents walks (no passers-by) and nobody boards a bus (the walk
+  engine's bridge has no stops yet); a street whose ends lead nowhere is an
+  island to the walkers (the walkway graph does not join the two footways at
+  a road end: the player's city has 24 separate pieces); a car crossing the
+  footway does not yet wait for every walker; parked cars are not obstacles
+  for the walkers.
+- **Next slices:** 4, every car owner an agent with their own car (kerb and
+  lot bays). 5, agents by default; then People, the Detour crowd flag and
+  `sim/peds` deleted after the player has seen it.
 
 ## Live in the game (main, 4180)
 

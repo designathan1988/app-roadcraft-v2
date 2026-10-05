@@ -516,7 +516,10 @@ sim.rebuildTopology();
 // Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
 // old sidewalk-graph model instead, for comparison while it is retired.
 // `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
-if (new URLSearchParams(location.search).get('people') === 'crowd') {
+// `?agents=1`: residents walk on lanes of the footways (`sim/agents/walk.ts`).
+if (new URLSearchParams(location.search).get('agents') === '1') {
+  sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine());
+} else if (new URLSearchParams(location.search).get('people') === 'crowd') {
   crowdModule = await import('@sim/people/crowd');
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());

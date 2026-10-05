@@ -7,7 +7,7 @@ import { RoadDoc } from '@world/doc';
 import { buildDefaultTown } from '@world/defaultTown';
 import { Network } from '@world/network';
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine } from '@sim/people/people';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import type { Resident } from '@sim/city/population';
@@ -106,7 +106,7 @@ describe('agents live by their needs in the default town', () => {
     net.rebuild();
     const sim = new SimWorld(doc, net, 0x2024);
     sim.rebuildTopology();
-    sim.usePedestrianEngine(createPeopleEngine());
+    sim.usePedestrianEngine(createAgentWalkEngine());
     sim.driveModel = 'v2';
     sim.populationShare = 0.3;
     sim.city.useAgents(true);

@@ -27,10 +27,20 @@ them; they are deleted once agents run by default and the player has seen it.
 - `lotNav.ts`: the grid inside a lot and the distance field to its exits.
 - `manoeuvre.ts`: the curves a car drives off the road (reverse out, aisles,
   into the bay nose first).
+- `mind.ts`: needs, the places that advertise what they give, and the choice of
+  where to go next.
+- `walk.ts`: the agents' walking engine (installed by `?agents=1` instead of
+  People). Lanes on `world/walkways.ts`, SUMO striping, the body following a
+  point ahead, zebras by `crossings/permission.ts`, published to
+  `crossingStates` for the cars. The engine object carries `inspect` for
+  probes in the page.
 - `CityLife` (`city/life.ts`) still runs the diaries; with `cars` set it starts
   car trips through `OwnCars` and never makes a car at the kerb.
-- Measure with `tests/sim/agents/ownCars.spec.ts`; photograph with
-  `scripts/agents-shots.mjs` and `scripts/agent-card-shots.mjs`.
+- Measure with `tests/sim/agents/ownCars.spec.ts`, `mind.spec.ts` and
+  `walk.spec.ts`; photograph with `scripts/agents-shots.mjs`,
+  `scripts/agent-card-shots.mjs` and `scripts/walk-shots.mjs`.
+  `AGENT_ENGINE=agents` runs `defects.spec.ts` with this engine (its cities
+  have few residents, so most of it says little).
 
 ## Couplings
 

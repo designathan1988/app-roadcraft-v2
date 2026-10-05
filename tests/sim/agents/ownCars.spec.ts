@@ -7,7 +7,7 @@ import { Network } from '@world/network';
 import { m } from '@world/units';
 import type { BuildingId } from '@world/buildings/types';
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine } from '@sim/people/people';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { vehiclePose } from '@sim/pose';
@@ -39,7 +39,7 @@ describe('agents: residents use their own cars', () => {
     net.rebuild();
     const sim = new SimWorld(doc, net, 0x2024);
     sim.rebuildTopology();
-    sim.usePedestrianEngine(createPeopleEngine());
+    sim.usePedestrianEngine(createAgentWalkEngine());
     sim.driveModel = 'v2';
     sim.populationShare = 0.3;
     sim.city.useAgents(true);
