@@ -207,8 +207,6 @@ const setInput = (selector: string, value: string): void => {
 
 export interface ShellDeps {
   readonly workspace: BuilderWorkspace;
-  /** The Person Creator's own panel and its 3D stage. */
-  readonly creator: HTMLElement;
 }
 
 export function mountShell(deps: ShellDeps): void {
@@ -387,7 +385,6 @@ export function mountShell(deps: ShellDeps): void {
     { id: 'build', tool: 'building', key: 'H', label: () => t('tool.building') },
     { id: 'landscape', tool: 'terrain', key: 'T', label: () => t('v2.cat.landscape') },
     { id: 'transit', tool: 'transit', key: 'O', label: () => t('tool.transit') },
-    { id: 'people', tool: 'person', key: 'K', label: () => t('tool.person') },
     { id: 'demolish', tool: 'bulldoze', key: 'B', label: () => t('tool.bulldoze') },
     { id: 'info', tool: 'inspect', key: 'I', label: () => t('v2.cat.info') },
   ];
@@ -445,16 +442,13 @@ export function mountShell(deps: ShellDeps): void {
     }
   }, { passive: false });
 
-  // The Person Creator: a studio of its own on the left.
-  const studio = el('section', 'v2-studio');
-  studio.appendChild(deps.creator);
 
   // The selection on the right: the road inspector lives here.
   const side = el('aside', 'v2-side');
   const roadInspector = q('#inspector');
   if (roadInspector) side.appendChild(roadInspector);
 
-  root.append(hud, pop, drawer, toolOptions, studio, side, dock);
+  root.append(hud, pop, drawer, toolOptions, side, dock);
 
   // The interface's own tooltip: every control is an icon and its name shows
   // here on hover - the browser's tooltip is slow and out of style. A control's
@@ -518,7 +512,6 @@ export function mountShell(deps: ShellDeps): void {
     if (current === 'building') return 'build';
     if (['terrain', 'barrier', 'pole', 'streetscape'].includes(current)) return 'landscape';
     if (current === 'transit') return 'transit';
-    if (current === 'person') return 'people';
     if (current === 'bulldoze') return 'demolish';
     if (current === 'inspect') return 'info';
     return null;
@@ -1133,10 +1126,9 @@ plan.appendChild(choices([
       b.dataset['tip'] = c ? `${c.label()}  ${c.key}` : '';
       b.setAttribute('aria-label', c?.label() ?? '');
     }
-    const showDrawer = open && cat !== null && cat !== 'people';
+    const showDrawer = open && cat !== null;
     drawer.hidden = !showDrawer;
     toolOptions.hidden = !showDrawer;
-    studio.hidden = cat !== 'people' || !open;
     side.hidden = q('#inspector')?.classList.contains('hidden') ?? true;
     root.dataset['tool'] = current;
     // Whether the player has the Information tool open (not merely no tool in
