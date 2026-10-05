@@ -48,6 +48,8 @@ import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
+import { applyWear, createWearField } from './wear';
+import { MAP_SIZE } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
@@ -299,6 +301,13 @@ export function createSceneRenderer(
   });
 
   const materials: SceneMaterials = createMaterials(anisotropy);
+  // Streets and footways wear with use (`wear.ts`).
+  const wear = createWearField(MAP_SIZE);
+  let lastWall = -1;
+  applyWear(materials.asphalt, wear, MAP_SIZE, 0, 'asphalt');
+  applyWear(materials.footway, wear, MAP_SIZE, 1, 'footway');
+  // For browser-driven checks: the field, to age a street on demand.
+  if (typeof window !== 'undefined') (window as unknown as { __wear?: unknown }).__wear = wear;
   materials.setDetail(quality.surfaceDetail);
   // Every prop model and material, built once. A rebuild writes only the
   // instance matrices.
@@ -737,8 +746,12 @@ export function createSceneRenderer(
       return elevation.at(x, y, structure ? new Set([structure]) : undefined);
     },
     resize,
+    // Wall-clock time between drawn frames, for things that age as they are watched.
     draw(net, sim, alpha, delta, options) {
       renderer.info.reset();
+      const wallNow = performance.now();
+      const wallDt = lastWall < 0 ? 0 : Math.min(0.1, (wallNow - lastWall) / 1000);
+      lastWall = wallNow;
       if (canvas.clientWidth !== lastWidth || canvas.clientHeight !== lastHeight) {
         lastWidth = canvas.clientWidth;
         lastHeight = canvas.clientHeight;
@@ -881,9 +894,14 @@ export function createSceneRenderer(
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
         indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
-        exhaust: (x, y, z, angle, length, speed, dusty) => exhaust.emit(x, y, z, angle, length, speed, dusty),
+        exhaust: (x, y, z, angle, length, speed, dusty) => {
+          exhaust.emit(x, y, z, angle, length, speed, dusty);
+          if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);
+        },
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
+      for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
+      wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.
       const key = cutSpec ? `${cutSpec.level}@${cutSpec.x},${cutSpec.y}:${sim.doc.buildings.revision}` : '';
       if (key !== lampsKey) {
