@@ -17,7 +17,8 @@ import type { Facing, Viewport } from '@view/viewport';
  * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
  */
 export const MIN_HALF_HEIGHT = 2;
-export const MAX_HALF_HEIGHT = 950;
+// Far enough out for the whole map as a globe (`globe.ts`).
+export const MAX_HALF_HEIGHT = 2200;
 
 /**
  * The zoom range the iso rig can represent at a given viewport height.

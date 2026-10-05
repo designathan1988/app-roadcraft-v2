@@ -74,7 +74,9 @@ const WIND_GLSL = /* glsl */ `
   }
 `;
 
-const PROJECT_WITH_WIND = ShaderChunk.project_vertex.replace(
+// Read when a program is compiled, not when this module loads: the chunk may
+// have been extended since (the globe's bend, `globe.ts`).
+const projectWithWind = (): string => ShaderChunk.project_vertex.replace(
   'mvPosition = modelViewMatrix * mvPosition;',
   `#ifdef USE_INSTANCING
      mvPosition.xyz += windOffset(transformed, instanceMatrix);
@@ -89,7 +91,7 @@ function install(shader: WebGLProgramParametersWithUniforms, response: WindRespo
   });
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', `#include <common>\n${WIND_GLSL}`)
-    .replace('#include <project_vertex>', PROJECT_WITH_WIND);
+    .replace('#include <project_vertex>', projectWithWind());
 }
 
 /** Makes a material's instances bend in the wind. */

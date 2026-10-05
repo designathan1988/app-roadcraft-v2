@@ -19,6 +19,7 @@ import {
 } from 'three';
 
 import { Digest } from '@core/digest';
+import { createGlobeCulling, installGlobe } from './globe';
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
@@ -215,6 +216,8 @@ export function createSceneRenderer(
   initialQuality: QualityLevel | 'auto' = 'auto',
   onAssetsReady: () => void = () => {},
 ): SceneHandle {
+  // Before any program is compiled: every material bends with the globe.
+  installGlobe();
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -366,7 +369,12 @@ export function createSceneRenderer(
   const crowdFrustum = new Frustum();
   const crowdProjection = new Matrix4();
   const crowdBounds = new Sphere(new Vector3(), 8);
+  // The map bent into a globe when zoomed out (`globe.ts`): while it is, the
+  // flat frustum says nothing about what is in the picture.
+  const globeCulling = createGlobeCulling();
+  let globeBent = false;
   const pedestrianVisible = (x: number, y: number, height: number): boolean => {
+    if (globeBent) return true;
     crowdBounds.center.set(x, height + 3, -y);
     return crowdFrustum.intersectsSphere(crowdBounds);
   };
@@ -374,6 +382,7 @@ export function createSceneRenderer(
   // sun's side: an off-screen truck near the edge still casts a shadow onto it.
   const vehicleBounds = new Sphere(new Vector3(), 1);
   const vehicleVisible = (x: number, y: number, height: number, radius: number): boolean => {
+    if (globeBent) return true;
     vehicleBounds.center.set(x, height + radius * 0.3, -y);
     vehicleBounds.radius = radius;
     return crowdFrustum.intersectsSphere(vehicleBounds);
@@ -886,6 +895,7 @@ export function createSceneRenderer(
       // Cheap (a few hundred objects), and it follows meshes a rebuild or an
       // asset load adds, and instance colours created on first use.
       if (renderer.shadowMap.enabled) assignShadowDepth(scene);
+      globeBent = globeCulling.update(scene, rig.camera);
       post.render(delta);
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);
