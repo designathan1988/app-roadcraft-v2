@@ -1,4 +1,4 @@
-import { CanvasTexture, Color, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, type BufferGeometry, type MeshStandardMaterial } from 'three';
+import { CanvasTexture, Color, ShaderChunk, SRGBColorSpace, TextureLoader, type BufferGeometry, type MeshStandardMaterial, type Texture } from 'three';
 import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
@@ -166,6 +166,8 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
   const texturedEyes = geometry.hasAttribute('eyeMask');
   const cards = [skin.hairTexture, skin.browTexture, skin.lashTexture, skin.beardTexture];
   const cardNames = ['personHair', 'personBrow', 'personLash', 'personBeard'];
+  const cardMask = cards.reduce((mask, texture, i) => mask | (texture ? 1 << i : 0), 0);
+  const garmentMask = skin.garments.reduce((mask, texture, i) => mask | (texture ? 1 << i : 0), 0);
   if (texturedHair) { material.alphaToCoverage = true; material.alphaTest = 0.35; }
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
@@ -181,11 +183,10 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
     if (texturedGarments) {
       shader.uniforms.outfitDye = { value: skin.outfitTint ?? new Color(0xffffff) };
       shader.uniforms.outfitDyed = { value: skin.outfitTint ? 1 : 0 };
-      for (let i = 0; i < GARMENT_SLOTS; i++) shader.uniforms[`garment${i}`] = { value: skin.garments[i] ?? blankTexture() };
-      shader.uniforms.garmentTextures = { value: Array.from({ length: GARMENT_SLOTS }, (_, i) => (skin.garments[i] ? 1 : 0)) };
+      for (let i = 0; i < GARMENT_SLOTS; i++) if (skin.garments[i]) shader.uniforms[`garment${i}`] = { value: skin.garments[i] };
     }
     if (texturedHair) {
-      for (let i = 0; i < cards.length; i++) shader.uniforms[cardNames[i]!] = { value: cards[i] ?? blankTexture() };
+      for (let i = 0; i < cards.length; i++) if (cards[i]) shader.uniforms[cardNames[i]!] = { value: cards[i] };
       shader.uniforms.cardTextures = { value: cards.map((texture) => (texture ? 1 : 0)) };
     }
     shader.vertexShader = `attribute float skinMask; uniform vec3 faceOrigin; uniform float faceScale; varying float vSkinMask; varying vec2 vSkinUv; varying vec3 vFace;\n${shader.vertexShader}`
@@ -232,13 +233,10 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vEyeMask > 0.5) roughnessFactor = 0.08;');
     }
     if (texturedHair) {
-      // Every slot declared and sampled, whoever wears what: which slots hold
-      // a texture is a uniform, not code, so every dressed person is ONE
-      // program (code that changed with what each wore compiled a new program
-      // for every new mix that came into view - a hitch of half a second).
-      const declarations = cardNames.map((name) => `uniform sampler2D ${name};`).join(' ');
-      const sample = (i: number): string => `(cardTextures[${i}] > 0.5 ? texture2D(${cardNames[i]}, vSkinUv) : ${i === 2 ? 'vec4(0.2, 0.2, 0.2, 1.0)' : 'vec4(0.5, 0.5, 0.5, 1.0)'})`;
-      const size = (i: number): string => `vec2(textureSize(${cardNames[i]}, 0))`;
+      const declarations = cardNames.map((name, i) => cards[i] ? `uniform sampler2D ${name};` : '').join(' ');
+      const sample = (i: number): string => cards[i] ? `texture2D(${cardNames[i]}, vSkinUv)`
+        : i === 2 ? 'vec4(0.2, 0.2, 0.2, 1.0)' : 'vec4(0.5, 0.5, 0.5, 1.0)';
+      const size = (i: number): string => cards[i] ? `vec2(textureSize(${cardNames[i]}, 0))` : 'vec2(1.0)';
       // Brows and lashes are cards laid on the skin. Laid exactly on it, the
       // skin won the depth test over most of them - the brows sank into the
       // face in dashes - and the crowd's camera, with its long depth range,
@@ -311,11 +309,11 @@ if (faceCard) {
     if (texturedGarments) {
       shader.vertexShader = `attribute float garmentSlot; varying float vGarmentSlot;\n${shader.vertexShader}`
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGarmentSlot = garmentSlot;');
-      const uniforms = Array.from({ length: GARMENT_SLOTS }, (_, i) => `uniform sampler2D garment${i};`).join('\n');
-      shader.fragmentShader = `uniform vec3 outfitDye; uniform float outfitDyed; uniform float garmentTextures[${GARMENT_SLOTS}]; varying float vGarmentSlot; ${uniforms}\n${shader.fragmentShader}`;
+      const uniforms = Array.from({ length: GARMENT_SLOTS }, (_, i) => skin.garments[i] ? `uniform sampler2D garment${i};` : '').join('\n');
+      shader.fragmentShader = `uniform vec3 outfitDye; uniform float outfitDyed; varying float vGarmentSlot; ${uniforms}\n${shader.fragmentShader}`;
       const sample = Array.from({ length: GARMENT_SLOTS }, (_, i) => `
         if (appearanceDetail > 0.5 && abs(vGarmentSlot - ${i + 1}.0) < 0.1) {
-          vec3 cloth = garmentTextures[${i}] > 0.5 ? texture2D(garment${i}, vSkinUv).rgb : vec3(128.0 / 255.0);
+          vec3 cloth = ${skin.garments[i] ? `texture2D(garment${i}, vSkinUv).rgb` : 'vec3(128.0 / 255.0)'};
           ${i === 0 ? 'float shade = 0.3 + 1.15 * dot(cloth, vec3(0.3, 0.59, 0.11)); cloth = mix(cloth, min(vec3(1.0), outfitDye * shade), outfitDyed * 0.8);' : ''}
           diffuseColor.rgb = cloth;
         }`).join('\n');
@@ -324,7 +322,7 @@ if (faceCard) {
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vGarmentSlot > 0.5 && appearanceDetail > 0.5) roughnessFactor = max(roughnessFactor, 0.9);');
     }
   };
-  material.customProgramCacheKey = () => `${key}-textured-skin-v6-hair${texturedHair}-garments${texturedGarments}-eyes${texturedEyes}`;
+  material.customProgramCacheKey = () => `${key}-textured-skin-v5-hair${texturedHair}-${cardMask}-garments${texturedGarments}-${garmentMask}-eyes${texturedEyes}`;
 }
 
 /**
@@ -393,16 +391,6 @@ float personIndirect() {
       if (hairW > 0.0) lit = mix(lit, mix(0.25, 1.0, saturate(rawNL)) * directLight.color, hairW);
       reflectedLight.directDiffuse += lit * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );
     }`);
-}
-
-/** One white pixel, bound where a person's slot has no texture of its own. */
-let blank: Texture | null = null;
-function blankTexture(): Texture {
-  if (blank) return blank;
-  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-  if (canvas) { canvas.width = canvas.height = 1; const g = canvas.getContext('2d')!; g.fillStyle = '#808080'; g.fillRect(0, 0, 1, 1); }
-  blank = canvas ? new CanvasTexture(canvas) : new Texture();
-  return blank;
 }
 
 /** How far each island of a garment's texture is grown into its background, pixels. */

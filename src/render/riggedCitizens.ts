@@ -463,8 +463,38 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         group.add(mesh);
         added.push(mesh);
       }
-      // Its shaders built before it is drawn (`uploads.ts`).
-      await Promise.all(batch.meshes.map((mesh) => compileAhead(mesh)));
+      // Its shaders built before it is drawn (`uploads.ts`) - the programs it
+      // is really drawn with: a body far off has no face (its levels carry no
+      // morph targets) and close up has its face's weights per instance
+      // (`setFacialExpression`), and each casts a shadow through its depth
+      // material. Compiling the mesh as it stood at load built a program no
+      // frame ever used (morph targets, no instance weights), and the two real
+      // ones, and their shadows, were compiled on first sight: the camera froze
+      // for seconds as new bodies came into view (the profile of 2026-10-05).
+      const warm = new Group();
+      const temporary: InstancedMesh[] = [];
+      batch.meshes.forEach((mesh, i) => {
+        const variants = batch.lods[i]!;
+        const source = batch.sources[i]!;
+        const forms = [variants[Math.min(1, variants.length - 1)]!, variants[0]!];
+        for (const geometry of new Set(forms)) {
+          const face = !!geometry.morphAttributes.position;
+          for (const material of [mesh.material, mesh.customDepthMaterial]) {
+            if (!material) continue;
+            const stand = new InstancedMesh(geometry, material as MeshStandardMaterial, 1);
+            stand.frustumCulled = false;
+            if (face && source.morphTargetInfluences) {
+              stand.morphTargetInfluences = [...source.morphTargetInfluences];
+              stand.setMorphAt(0, source);
+            }
+            temporary.push(stand);
+            warm.add(stand);
+          }
+        }
+      });
+      await compileAhead(warm);
+      for (const stand of temporary) stand.morphTexture?.dispose();
+      warm.clear();
       if (abandonIfUnwanted()) return;
       // And its geometry on the GPU, every level of it (`uploads.ts`).
       // The coarser levels only: the nearest one's face is built when it is
