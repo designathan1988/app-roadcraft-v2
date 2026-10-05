@@ -111,7 +111,7 @@ export function createExhaust(): Exhaust {
             + vec2(sin(t * 1.7 + aSeed * 13.0), cos(t * 1.3 + aSeed * 5.0)) * 0.8;
         } else if (aKind > 7.5) {
           // A broken hydrant's jet: straight up, fanning a little, falling back.
-          p.y += (16.0 + 4.0 * fract(aSeed * 13.0)) * t - 9.8 * t * t;
+          p.y += (30.0 + 6.0 * fract(aSeed * 13.0)) * t - 9.8 * t * t;
           p.xz += out2 * (0.6 + 1.6 * fract(aSeed * 7.0)) * t + uWindDir * 0.8 * t;
         } else if (flung) {
           // Blood, sparks, grit: flung up and out, falling back under gravity.

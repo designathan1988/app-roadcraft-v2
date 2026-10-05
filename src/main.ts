@@ -4953,7 +4953,6 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
         downs++;
         changed = true;
       } else {
-        if (best < radius * 0.3 && Math.random() < 0.3) ignite(c.id);
         // Its wiring shorting and its pipes bursting at a few points on the
         // side the blast struck: sparks and spouts of water for a while.
         const base = sceneHeightAt({ x: c.x, y: c.y });
@@ -5102,13 +5101,12 @@ function breakDeferred(): void {
   requestAnimationFrame(breakDeferred);
 }
 requestAnimationFrame(breakDeferred);
-const burning = new Map<number, { since: number; nextFlame: number; nextSpread: number; nextBlast: number; until: number }>();
+const burning = new Map<number, { since: number; nextFlame: number; until: number }>();
 function ignite(id: number): void {
-  if (burning.has(id)) return;
+  if (burning.has(id) || burning.size >= 3) return;
   const now = performance.now() / 1000;
-  burning.set(id, { since: now, nextFlame: now, nextSpread: now + 8 + Math.random() * 10, nextBlast: now + 12 + Math.random() * 25, until: now + 50 + Math.random() * 40 });
+  burning.set(id, { since: now, nextFlame: now, until: now + 50 + Math.random() * 40 });
 }
-let smog = 0;
 setInterval(() => {
   const now = performance.now() / 1000;
   for (const [id, f] of [...burning]) {
@@ -5129,23 +5127,7 @@ setInterval(() => {
       }
       f.nextFlame = now + 6;
     }
-    if (now >= f.nextSpread) {
-      f.nextSpread = now + 14 + Math.random() * 16;
-      // Spreads to a neighbour now and then, never to the whole town.
-      const near = [...doc.buildings.all()].filter((o) => o.id !== id && !burning.has(o.id) && Math.hypot(o.x - b.x, o.y - b.y) < size * 2 + m(18));
-      // Spreads only to a building right beside it, rarely (the player: only where it is).
-      const touching = near.filter((o) => Math.hypot(o.x - b.x, o.y - b.y) < size + m(8));
-      if (touching.length && burning.size < 4 && Math.random() < 0.2) ignite(touching[Math.floor(Math.random() * touching.length)]!.id);
-    }
-    if (now >= f.nextBlast) {
-      f.nextBlast = now + 25 + Math.random() * 45;
-      if (Math.random() < 0.6) explodeAt({ x: cx, y: cy }, ground + m(3), b, 3 + Math.floor(Math.random() * 4), true);
-    }
   }
-  // The air: thick with smoke while the city burns, clearing slowly after.
-  const want = Math.min(1, burning.size / 6);
-  smog += (want - smog) * (want > smog ? 0.06 : 0.01);
-  scene.setSmog(smog);
   if (burning.size) requestDraw();
 }, 500);
 

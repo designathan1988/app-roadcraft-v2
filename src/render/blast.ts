@@ -545,8 +545,8 @@ export function createBlast(exhaust: Exhaust): Blast {
       for (let i = geysers.length - 1; i >= 0; i--) {
         const g = geysers[i]!;
         if (time > g.until) { geysers.splice(i, 1); continue; }
-        g.carry += 40 * wall;
-        while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.15), m(0.5), 2.6); }
+        g.carry += 110 * wall;
+        while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.12), m(0.8), 4.2); }
       }
       for (let i = arcs.length - 1; i >= 0; i--) {
         const a = arcs[i]!;
