@@ -31,7 +31,7 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { roadWidth, setRoadWidth } from '../toolChoices';
+import { blockGridChoice, roadWidth, setRoadWidth } from '../toolChoices';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
@@ -630,12 +630,34 @@ export function mountShell(deps: ShellDeps): void {
       const stepWidth = (d: number): void => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); render(); };
       widthStepper.append(
         button('v2-icon', t('palette.width.narrower'), () => stepWidth(-1), svg('minus', 14)),
-        el('output', 'v2-stepper-value', w === null ? t('palette.width.auto') : `${w} m`),
+        el('output', 'v2-stepper-value', `${t('palette.width.short')}: ${w === null ? t('palette.width.auto') : `${w} m`}`),
         button('v2-icon', t('palette.width.wider'), () => stepWidth(1), svg('plus', 14)),
       );
       widthGroup.append(widthStepper);
       if (w !== null) widthGroup.appendChild(button('v2-choice', t('palette.width.auto'), () => { setRoadWidth(null); render(); }));
-      options.append(trace, snapping, parking, height, lanes, widthGroup);
+      // Several blocks at once (`editor/blocks.ts`): columns, rows, spacing.
+      const blocks = group(t('palette.blocks'));
+      blocks.classList.add('stack');
+      const g = blockGridChoice;
+      const stepRow = (label: string, value: string, run: (d: number) => void): HTMLElement => {
+        const row = el('div', 'v2-stepper');
+        row.title = label;
+        row.append(
+          button('v2-icon', `${label} -`, () => { run(-1); render(); }, svg('minus', 14)),
+          el('output', 'v2-stepper-value', value),
+          button('v2-icon', `${label} +`, () => { run(1); render(); }, svg('plus', 14)),
+        );
+        return row;
+      };
+      blocks.append(
+        el('span', 'v2-group-title', t('palette.blocks')),
+        stepRow(t('palette.blocks.cols'), `${g.cols} ${t('palette.blocks.colsShort')}`, (d) => { g.cols = Math.max(1, Math.min(12, g.cols + d)); }),
+        stepRow(t('palette.blocks.rows'), `${g.rows} ${t('palette.blocks.rowsShort')}`, (d) => { g.rows = Math.max(1, Math.min(12, g.rows + d)); }),
+        stepRow(t('palette.blocks.size'), `${t('palette.blocks.size')}: ${g.blockMetres} m`, (d) => { g.blockMetres = Math.max(30, Math.min(300, g.blockMetres + d * 10)); }),
+        stepRow(t('palette.blocks.angle'), `${t('palette.blocks.angle')}: ${Math.round((g.angle * 180) / Math.PI)}°`, (d) => { g.angle += (d * 15 * Math.PI) / 180; }),
+        button('v2-choice' + (g.armed ? ' on' : ''), g.armed ? t('palette.blocks.armed') : t('palette.blocks.place'), () => { g.armed = !g.armed; render(); }),
+      );
+      options.append(trace, snapping, parking, height, lanes, widthGroup, blocks);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));

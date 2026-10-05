@@ -89,3 +89,10 @@ export function roadWidth(): number | null {
 export function setRoadWidth(next: number | null): void {
   width = next === null ? null : Math.max(ROAD_WIDTH_RANGE[0], Math.min(ROAD_WIDTH_RANGE[1], Math.round(next)));
 }
+
+/**
+ * The block grid the road tool lays in one click (`editor/blocks.ts`):
+ * columns, rows, centreline spacing in whole metres, and whether the next
+ * click places it.
+ */
+export const blockGridChoice = { cols: 3, rows: 2, blockMetres: 100, angle: 0, armed: false };

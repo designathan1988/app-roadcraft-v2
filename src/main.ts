@@ -19,7 +19,8 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
@@ -1090,6 +1091,19 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       break;
     case 'road':
+      if (blockGridChoice.armed) {
+        // Vias > Quarteirões: the whole grid, centred where the click lands.
+        blockGridChoice.armed = false;
+        let laid = 0;
+        mutate(() => {
+          laid = commitBlockGrid(doc, world, blockGridChoice, roadTypeIndex, roadLanePreset, roadParking());
+          return laid > 0;
+        });
+        flashHint(laid > 0 ? 'hint.blocks.built' : 'hint.road.invalid');
+        refreshShell();
+        requestDraw();
+        break;
+      }
       {
       const chained = roadChain !== null;
       const start = roadChain ?? snapRoadStart(anchor);
@@ -3409,6 +3423,22 @@ function drawOverlayScreen(): void {
   // hang between them with its real sag, and a ring round any pole the run is
   // about to tie into. If it looks right here it is right when built.
   drawPolePlan(framePolePlan, ctx, at);
+  if (tool === 'road' && blockGridChoice.armed && hoverAnchor) {
+    // The grid the next click lays, on the ground.
+    for (const [a, b] of blockGridLines(hoverAnchor.at, blockGridChoice)) {
+      const steps = Math.max(2, Math.ceil(dist(a, b) / m(4)));
+      ctx.save();
+      ctx.strokeStyle = SELECTION;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let k = 0; k <= steps; k++) {
+        const p = at({ x: a.x + (b.x - a.x) * (k / steps), y: a.y + (b.y - a.y) * (k / steps) });
+        if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
   // The zoning grid is shown while a road is being drawn too, so a street can
@@ -4307,4 +4337,10 @@ function densify(points: readonly Vec2[], step: number): Vec2[] {
 /** Whether the road tool is drawing a road right now (a drag, a chained stretch or a curve). */
 function roadPreviewActive(): boolean {
   return draft !== null || chainPreview !== null || curvePending !== null;
+}
+
+/** Asks the interface to redraw its panels (a state it shows changed in the game). */
+function refreshShell(): void {
+  const game = document.getElementById('game');
+  if (game) { const t = game.dataset['tool'] ?? ''; game.dataset['tool'] = ''; game.dataset['tool'] = t; }
 }

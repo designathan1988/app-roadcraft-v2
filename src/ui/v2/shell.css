@@ -285,7 +285,11 @@
 
 .v2-toolopts {
   position: absolute; left: 12px; bottom: 12px; display: grid; gap: 4px; padding: 6px; border-radius: 12px;
+  /* Never taller than the room under the top bar: the rest scrolls. */
+  max-height: calc(100vh - 96px); overflow-y: auto; overscroll-behavior: contain;
 }
+.v2-toolopts .v2-group.stack { flex-direction: column; align-items: stretch; }
+.v2-toolopts .v2-group.stack .v2-stepper { justify-content: space-between; }
 .v2-toolopts .v2-options { display: grid; gap: 4px; padding: 0; border: 0; }
 .v2-toolopts .v2-group { display: flex; align-items: center; gap: 2px; padding: 0; }
 .v2-toolopts .v2-group + .v2-group { border-left: 0; border-top: 1px solid var(--v-line); padding-top: 4px; }
@@ -424,3 +428,5 @@
 .v2-select.iconic > span { display: grid; place-items: center; width: 20px; color: var(--v-muted); }
 .v2-select.iconic select { flex: 1; }
 .v2-pop { min-width: 260px; }
+
+.v2-toolopts .v2-group-title { font-size: 11px; font-weight: 650; opacity: 0.75; padding: 2px 4px; }
