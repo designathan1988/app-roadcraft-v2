@@ -400,15 +400,15 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const dir = blast(body, c, speed);
     const chest = body.p[CHE]!;
     if (c.kind === 'torn') {
-      // Torn apart: limbs go their own way, faster, and blood everywhere.
-      const gone = LIMBS.filter(() => Math.random() < 0.5);
-      for (const limb of [...LIMBS].sort(() => Math.random() - 0.5)) if (gone.length < 2 && !gone.includes(limb)) gone.push(limb);
-      for (const limb of gone) {
-        for (const s of body.sticks) if (limb.includes(s.a) !== limb.includes(s.b)) s.broken = true;
-        const kick = new Vector3(Math.random() - 0.5, 0.3 + Math.random() * 0.6, Math.random() - 0.5).multiplyScalar(speed * 0.7).addScaledVector(dir, speed * 0.4);
+      // Torn: thrown harder, limbs flung, blood everywhere - but whole. A
+      // limb torn off by shrinking its bones to the joint (one palette per
+      // piece) dragged every vertex the joint's two sides share half-way to
+      // it: blades of skin. Tearing needs the mesh cut and capped at the
+      // joint, as games author it; until then the body stays in one piece.
+      for (const limb of LIMBS.filter(() => Math.random() < 0.5)) {
+        const kick = new Vector3(Math.random() - 0.5, 0.3 + Math.random() * 0.6, Math.random() - 0.5).multiplyScalar(speed * 0.5).addScaledVector(dir, speed * 0.3);
         for (const k of limb) body.o[k]!.addScaledVector(kick, -STEP);
       }
-      components(body);
       exhaust.burst(chest.x, -chest.z, chest.y, 90, 4, m(0.6), m(0.18), 1.4);
       for (let k = 0; k < 9; k++) {
         const a = Math.random() * Math.PI * 2, r = m(1 + Math.random() * 4);
