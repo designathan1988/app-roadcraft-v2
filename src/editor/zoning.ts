@@ -228,9 +228,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       for (let r = 0; r < depth; r++) {
         const cell = grid.at(start.segment, start.side, column, r);
         const found = cell && marks.get(cell.id);
-        // A cell trimmed on the subgrid fills the edge of a block; lots are
-        // made of whole cells.
-        if (!cell || cell.width < ZONE_CELL - 1e-6 || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) return null;
+        if (!cell || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) return null;
         cells.push(cell);
       }
       return cells;
@@ -250,12 +248,17 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
     const margin = m(0.3);
     // Front middle of the grid lot, and the street's direction there.
     const fronts = lot.filter((cell) => cell.row === 0);
+    // Cells trimmed on the 1 m subgrid at a block's edge (`ZoneCell.width`)
+    // are part of the lot like any other: its width and its front middle are
+    // read off the cells themselves, so no zoned strip is left unbuilt.
+    fronts.sort((p, q) => p.column - q.column);
+    const firstFront = fronts[0] as ZoneCell, lastFront = fronts[fronts.length - 1] as ZoneCell;
     const gridAnchor = {
-      x: fronts.reduce((s, cell) => s + cell.front.x, 0) / fronts.length,
-      y: fronts.reduce((s, cell) => s + cell.front.y, 0) / fronts.length,
+      x: (firstFront.corners[0].x + lastFront.corners[1].x) / 2,
+      y: (firstFront.corners[0].y + lastFront.corners[1].y) / 2,
     } as Vec2;
     const rotation = (fronts[Math.floor(fronts.length / 2)] as ZoneCell).rotation;
-    const gridW = columns * ZONE_CELL - margin;
+    const gridW = fronts.reduce((sum, cell) => sum + cell.width, 0) - margin;
     // The land beside the lot that nobody else can use - the strip left at a
     // corner between the grid and the cross street's footway, a gap short of
     // the next building - joins the lot, so no bare strip is left along a
