@@ -103,6 +103,19 @@ const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> =
   stackedBlocks: { kind: 'tower', W: 34, D: 40 },
   pinkCorner: { kind: 'flats', W: 34, D: 42 },
   triangleDark: { kind: 'office', W: 34, D: 42 },
+  cityHallBrick: { kind: 'office', W: 40, D: 38 },
+  decoSpire: { kind: 'office', W: 36, D: 40 },
+  hospitalA: { kind: 'office', W: 44, D: 48 },
+  loftBrick: { kind: 'office', W: 30, D: 32 },
+  cityHallWhite: { kind: 'office', W: 46, D: 42 },
+  forum: { kind: 'office', W: 36, D: 40 },
+  church: { kind: 'office', W: 40, D: 50 },
+  bank: { kind: 'office', W: 32, D: 36 },
+  school: { kind: 'office', W: 48, D: 42 },
+  fireStation: { kind: 'office', W: 40, D: 40 },
+  police: { kind: 'office', W: 38, D: 36 },
+  hospitalB: { kind: 'office', W: 42, D: 44 },
+  cemetery: { kind: 'office', W: 48, D: 52 },
 };
 
 /**
@@ -113,7 +126,7 @@ const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> =
  * street before is taken down. Returns how many stood.
  */
 /** How far behind the lab street the catalogue's row stands, metres (clear of the street). */
-export const CATALOG_BACK = 160;
+export const CATALOG_BACK = 270;
 /** The catalogue's lots stand this far apart along the row, metres: the widest lot and a gap. */
 const CATALOG_PITCH = 40;
 
@@ -154,8 +167,10 @@ export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, towa
     if (toward) {
       const t = toward;
       const u = { x: -t.y, y: t.x };
-      const off = (i - (TOWER_KINDS.length - 1) / 2) * m(CATALOG_PITCH);
-      const back = m(CATALOG_BACK);
+      // The towers in the back row; the city's buildings, lower, in a row in front of them.
+      const civic = i >= 20, j = civic ? i - 20 : i;
+      const off = civic ? (j - 6) * m(54) : (j - 9.5) * m(CATALOG_PITCH);
+      const back = m(civic ? CATALOG_BACK - 75 : CATALOG_BACK);
       const result = addBuildingRecord(ctx, {
         ...body, x: -t.x * back + u.x * off, y: -t.y * back + u.y * off,
         rotation: Math.atan2(t.x, -t.y), decay: 0, lotPlan: LOT_PLAN_VERSION,

@@ -3,7 +3,7 @@ import { m } from '../units';
 import type { BlueprintBody } from './blueprints';
 import { Model, mat } from './cityBuildings';
 import type { MaterialSpec } from './materials';
-import type { BayComponent, BuildingElement, FacadePattern, RoofDetail, Side, Volume } from './types';
+import type { BayComponent, BuildingElement, BuildingFunction, FacadePattern, RoofDetail, Side, Volume } from './types';
 
 /**
  * The tower kit: mid-rise and high-rise buildings in the manner of the
@@ -28,9 +28,14 @@ export const TOWER_KINDS = [
   // The second set: each a different form, balcony, window and colour.
   'twistGreen', 'hexTerracotta', 'stepGarden', 'waveWhite', 'cubeBalcony',
   'twinNavy', 'octCopper', 'stackedBlocks', 'pinkCorner', 'triangleDark',
+  // The city's buildings: town halls, hospitals, a church, a school, services, a cemetery.
+  'cityHallBrick', 'decoSpire', 'hospitalA', 'loftBrick', 'cityHallWhite', 'forum', 'church', 'bank', 'school',
+  'fireStation', 'police', 'hospitalB', 'cemetery',
 ] as const;
 /** The second set, drawn by `render/buildings/signature.ts` per floor. */
-export const SECOND_SET: readonly TowerKind[] = TOWER_KINDS.slice(10);
+export const SECOND_SET: readonly TowerKind[] = TOWER_KINDS.slice(10, 20);
+/** The city's buildings: low, stood in a row of their own in front of the towers. */
+export const CIVIC_SET: readonly TowerKind[] = TOWER_KINDS.slice(20);
 export type TowerKind = (typeof TOWER_KINDS)[number];
 
 export interface TowerSpec {
@@ -43,8 +48,8 @@ export interface TowerSpec {
 }
 
 interface Style {
-  readonly fn: 'apartments' | 'residentialTower' | 'office';
-  readonly use: 'residential' | 'commercial';
+  readonly fn: BuildingFunction;
+  readonly use: 'residential' | 'commercial' | 'mixed';
   readonly floors: readonly [number, number];
   readonly width: readonly [number, number];
   readonly depth: readonly [number, number];
@@ -149,6 +154,19 @@ const STYLES: Record<TowerKind, Style> = {
   stackedBlocks: second('residentialTower', 'residential', [18, 22], 24, 20),
   pinkCorner: second('apartments', 'residential', [10, 14], 26, 24),
   triangleDark: second('office', 'commercial', [22, 28], 26, 24),
+  cityHallBrick: second('cityHall', 'commercial', [3, 3], 30, 22),
+  decoSpire: second('office', 'commercial', [30, 34], 26, 26),
+  hospitalA: second('hospital', 'commercial', [12, 14], 34, 34),
+  loftBrick: second('apartments', 'mixed', [9, 10], 22, 20),
+  cityHallWhite: second('cityHall', 'commercial', [4, 4], 36, 26),
+  forum: second('courthouse', 'commercial', [5, 5], 26, 24),
+  church: second('church', 'commercial', [3, 3], 30, 36),
+  bank: second('bank', 'commercial', [5, 5], 22, 22),
+  school: second('school', 'commercial', [3, 3], 40, 28),
+  fireStation: second('fireStation', 'commercial', [3, 3], 30, 26),
+  police: second('police', 'commercial', [3, 3], 28, 22),
+  hospitalB: second('hospital', 'commercial', [8, 9], 32, 30),
+  cemetery: second('cemetery', 'commercial', [3, 3], 40, 40),
 };
 
 /** A second-set kind: only its blocks' sizes matter, its look is its own (`signature.ts`). */
