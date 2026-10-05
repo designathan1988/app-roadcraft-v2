@@ -1,62 +1,71 @@
-import { CanvasTexture, LinearMipmapLinearFilter, SRGBColorSpace } from 'three';
+import { DataTexture, LinearFilter, LinearMipmapLinearFilter, NoColorSpace, RGBAFormat, UnsignedByteType } from 'three';
 
 /**
- * The strands a procedural hair card carries (`people/hair/procedural.ts`):
- * four strips side by side, each many thin tapered strands from the root
- * (top, v = 0) to ragged tips, grey so the person's hair colour dyes them,
- * darker towards the roots where the hair is deepest - the texture islands
- * of a hair card atlas, painted instead of rendered from a groom.
+ * The strand atlas a procedural hair card samples (`people/hair/procedural.ts`),
+ * as DATA, not colour - the compact layout of the open-source Three.js hair
+ * shader (github.com/creategamecharacters/threejs-hair-shader): R strand
+ * coverage, G position from root (0) to tip (1), B a per-strand seed. The
+ * shader turns them into the person's hair colour, darker at the roots,
+ * each strand a little lighter or darker than its neighbours, and coverage
+ * into alpha with no hard cut (alpha to coverage).
+ *
+ * Four strips side by side, root at the top (v = 0); a solid band along the
+ * top for the painted scalp (the cap). Strands are rasterised directly:
+ * each a tapered, slightly swaying line, ending at its own length.
  */
-const CACHE = new Map<string, CanvasTexture>();
+const CACHE = new Map<string, DataTexture>();
 
-export function hairStrandTexture(kind: 'straight' | 'wavy'): CanvasTexture {
+export function hairStrandTexture(kind: 'straight' | 'wavy'): DataTexture {
   const known = CACHE.get(kind);
   if (known) return known;
   const W = 512, H = 1024, strips = 4, sw = W / strips;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const g = canvas.getContext('2d')!;
+  const cover = new Float32Array(W * H), along = new Float32Array(W * H), seeds = new Float32Array(W * H).fill(0.5);
   let s = kind === 'wavy' ? 7 : 3;
   const rnd = (): number => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-  g.lineCap = 'round';
+  const band = Math.round(H * 0.03);
   for (let strip = 0; strip < strips; strip++) {
     const x0 = strip * sw;
-    // The top band is solid: the painted scalp (the cap) is mapped there.
-    g.fillStyle = 'rgb(118,118,118)';
-    g.fillRect(x0, 0, sw, H * 0.03);
-    // Under-layer first (dense, darker), then the lighter strands on top.
-    for (let pass = 0; pass < 2; pass++) {
-      const count = pass === 0 ? 90 : 170;
-      for (let k = 0; k < count; k++) {
-        const x = x0 + 6 + rnd() * (sw - 12);
-        const tip = H * (pass === 0 ? 0.85 + rnd() * 0.15 : 0.7 + rnd() * 0.3);
-        const sway = (rnd() - 0.5) * 10, freq = 2 + rnd() * 2, phase = rnd() * 6.28;
-        // Close greys: strands, not stripes.
-        const grey = pass === 0 ? 120 + rnd() * 35 : 150 + rnd() * 60;
-        const width = pass === 0 ? 3 + rnd() * 2 : 1.4 + rnd() * 1.6;
-        const steps = 24;
-        for (let i = 0; i < steps; i++) {
-          const t0 = i / steps, t1 = (i + 1) / steps;
-          const y0 = t0 * tip, y1 = t1 * tip;
-          const off = (t: number): number => (kind === 'wavy' ? Math.sin(t * freq * 6.28 + phase) * 7 : 0) + sway * t * t;
-          // Deeper at the root, thinning to the tip.
-          const shade = grey * (0.62 + 0.38 * Math.min(1, t0 * 2.5));
-          const alpha = (pass === 0 ? 0.95 : 0.9) * (1 - Math.max(0, (t0 - 0.75) / 0.25) * 0.7);
-          g.strokeStyle = `rgba(${shade | 0},${shade | 0},${shade | 0},${alpha.toFixed(3)})`;
-          g.lineWidth = Math.max(0.6, width * (1 - 0.6 * t0));
-          g.beginPath();
-          g.moveTo(Math.min(x0 + sw - 2, Math.max(x0 + 2, x + off(t0))), y0);
-          g.lineTo(Math.min(x0 + sw - 2, Math.max(x0 + 2, x + off(t1))), y1);
-          g.stroke();
+    for (let y = 0; y < band; y++) for (let x = x0; x < x0 + sw; x++) cover[y * W + x] = 1;
+    for (let k = 0; k < 420; k++) {
+      const base = x0 + 3 + rnd() * (sw - 6);
+      const tip = H * (0.72 + rnd() * 0.28);
+      const sway = (rnd() - 0.5) * 9, freq = 1.5 + rnd() * 2, phase = rnd() * 6.28;
+      const width = 0.8 + rnd() * 1.6, strength = 0.45 + rnd() * 0.45, seed = rnd();
+      for (let y = 0; y < tip; y++) {
+        const t = y / tip;
+        const x = base + (kind === 'wavy' ? Math.sin(t * freq * 6.28 + phase) * 6 : 0) + sway * t * t;
+        const w = width * (1 - 0.65 * t);
+        // Thinning out over the last fifth: ragged tips, not a cut line.
+        const c = strength * (t > 0.8 ? 1 - (t - 0.8) / 0.2 : 1);
+        for (let px = Math.floor(x - w - 1); px <= Math.ceil(x + w + 1); px++) {
+          if (px < x0 || px >= x0 + sw) continue;
+          const d = Math.abs(px + 0.5 - x);
+          const a = c * Math.max(0, Math.min(1, w + 0.5 - d));
+          if (a <= 0) continue;
+          const i = y * W + px;
+          // Strands over strands: coverage adds up; the seed of the top one shows.
+          cover[i] = Math.min(1, cover[i]! + a * (1 - cover[i]! * 0.5));
+          if (a > 0.3) seeds[i] = seed;
         }
       }
     }
+    for (let y = 0; y < H; y++) for (let x = x0; x < x0 + sw; x++) along[y * W + x] = y < band ? 0 : y / H;
   }
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
+  const data = new Uint8Array(W * H * 4);
+  for (let i = 0; i < W * H; i++) {
+    data[i * 4] = Math.round(cover[i]! * 255);
+    data[i * 4 + 1] = Math.round(along[i]! * 255);
+    data[i * 4 + 2] = Math.round(seeds[i]! * 255);
+    data[i * 4 + 3] = 255;
+  }
+  const texture = new DataTexture(data, W, H, RGBAFormat, UnsignedByteType);
+  texture.colorSpace = NoColorSpace;
   texture.flipY = false;
+  texture.generateMipmaps = true;
   texture.minFilter = LinearMipmapLinearFilter;
+  texture.magFilter = LinearFilter;
   texture.anisotropy = 4;
+  texture.needsUpdate = true;
   CACHE.set(kind, texture);
   return texture;
 }

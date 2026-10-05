@@ -33,6 +33,8 @@ export interface ProxyPack {
   /** Layer order: what is drawn over what. */
   readonly zDepth: number;
   readonly uvs?: Float32Array;
+  /** Per vertex, how much of it is drawn, 0..1 (a generated hairline's feathering); all of it when absent. */
+  readonly fade?: Float32Array;
 }
 
 /**

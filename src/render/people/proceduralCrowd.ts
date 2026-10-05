@@ -8,7 +8,7 @@ import { Morpher, bodyHeight } from '@people/body/morph';
 import { DEFAULT_MACRO, yearsFromAge, ageFromYears, type MacroParams } from '@people/body/macro';
 import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
-import { FEMALE_HAIR, HAIR_STYLES, generateHair } from '@people/hair/procedural';
+import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHair, generateHeadband } from '@people/hair/procedural';
 import { hairStrandTexture } from './hairTexture';
 import { createPersonRig, type PersonRig } from './personRig';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
@@ -146,6 +146,19 @@ export interface ProceduralStats {
 
 const ROW_START = 64;
 
+/** Colours a generated accessory (a headband) is dyed. */
+const ACCESSORY_COLOURS = [0xc0392b, 0x1f3a93, 0xf2f0ea, 0x111111, 0xd35400, 0x8e44ad, 0x16a085] as const;
+
+let plain: DataTexture | null = null;
+/** A white texel, for a piece with no texture of its own. */
+function plainTexture(): DataTexture {
+  if (!plain) {
+    plain = new DataTexture(new Uint8Array([160, 160, 160, 255]), 1, 1, RGBAFormat, UnsignedByteType);
+    plain.needsUpdate = true;
+  }
+  return plain;
+}
+
 /**
  * What a person wears here: their own look, or - for a child, whom the
  * generator dresses in the old tailored shells - a casual outfit for their
@@ -164,15 +177,22 @@ export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
     footwear: ['shoes01', 'shoes02', 'shoes05'][(h >>> 8) % 3]!,
     outfitTint: look.topColour,
   };
-  // Half the women in a grown style, half in a stock one that passed the
+  // Half the people in a grown style, half in a stock one that passed the
   // audit (`randomPerson`'s curated lists).
-  if (!hair || !female || ((h >>> 20) & 1) === 0) return dressed;
-  // Women's hair grown procedurally (`people/hair/procedural.ts`): older
-  // women shorter or up, girls never in a bun.
+  if (!hair || ((h >>> 20) & 1) === 0) return dressed;
+  // Hair grown procedurally (`people/hair/procedural.ts`): older women
+  // shorter or up, girls never in a bun, older men short.
   const years = yearsFromAge(spec.body.age);
-  const styles: readonly string[] = years > 60 ? ['bob', 'midLayered', 'bun', 'bobFringe']
-    : years < 14 ? ['longStraight', 'longWavy', 'ponytail', 'bobFringe', 'midLayered'] : FEMALE_HAIR;
-  return { ...dressed, hairCut: `hair:${styles[(h >>> 12) % styles.length]!}` };
+  const styles: readonly string[] = female
+    ? years > 60 ? ['bob', 'midLayered', 'bun', 'bobFringe', 'shoulderBob']
+      : years < 14 ? ['longStraight', 'ponytail', 'ponytailFringe', 'bobFringe', 'braid', 'twinBraids', 'pigtails', 'longHeadband'] : FEMALE_HAIR
+    : years > 55 ? ['shortCrop', 'shortSide', 'slickedBack'] : MALE_HAIR;
+  const style = styles[(h >>> 12) % styles.length]!;
+  return {
+    ...dressed,
+    hairCut: `hair:${style}`,
+    ...(HAIR_STYLES[style]?.headband ? { extras: [...(dressed.extras ?? []), 'acc:headband'] } : {}),
+  };
 }
 
 function skinningChunk(): string {
@@ -238,10 +258,19 @@ function uniformsInto(shader: { uniforms: Record<string, unknown> }, cls: BodyCl
   });
 }
 
-function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Texture | null): Material {
-  const material = new MeshStandardMaterial({ roughness: kind === 'skin' ? 0.5 : 0.85, metalness: 0, side: DoubleSide });
+/**
+ * `grown`: a procedural hair item, its texture a strand atlas (`hairTexture.ts`:
+ * R coverage, G root to tip, B strand seed) shaded as the open-source Three.js
+ * hair shader does - roots darker, each strand its own brightness, cards
+ * seen edge-on darker (deep in the hair), coverage as alpha resolved by
+ * multisampling (alpha to coverage) rather than cut at a threshold, and each
+ * vertex's own fade (`aFade`) feathering the hairline.
+ */
+function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Texture | null, grown = false): Material {
+  const material = new MeshStandardMaterial({ roughness: kind === 'skin' ? 0.5 : grown ? 0.6 : 0.85, metalness: 0, side: DoubleSide });
   material.defines = { USE_SKINNING: '' };
-  if (kind === 'hair' || kind === 'face') { material.alphaTest = 0.35; material.alphaToCoverage = true; }
+  if (grown) { material.alphaTest = 0.02; material.alphaToCoverage = true; }
+  else if (kind === 'hair' || kind === 'face') { material.alphaTest = 0.35; material.alphaToCoverage = true; }
   if (kind === 'skin') material.alphaTest = 0.5;
   const mesh = cls.rig.mesh;
   material.onBeforeCompile = (shader) => {
@@ -249,9 +278,9 @@ function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Te
     shader.uniforms['procMap'] = { value: map };
     shader.uniforms['procEyes'] = { value: eyes };
     patchVertex(shader, kind);
-    shader.vertexShader = `attribute vec4 aDye; attribute float eyeMask; varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask;\n${shader.vertexShader}`
+    shader.vertexShader = `attribute vec4 aDye; attribute float eyeMask; attribute float aFade; varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask; varying float vFade;\n${shader.vertexShader}`
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-vProcDye = aDye; vProcUv = uv; vSkinMask = ${kind === 'skin' ? '1.0 - eyeMask' : '0.0'};`);
+vProcDye = aDye; vProcUv = uv; vFade = aFade; vSkinMask = ${kind === 'skin' ? '1.0 - eyeMask' : '0.0'};`);
     if (kind === 'face') {
       // Brows and lashes lie on the skin: lifted off it and biased towards
       // the eye, as decals are, or the skin wins the depth test over them.
@@ -265,13 +294,19 @@ gl_Position = projectionMatrix * mvPosition;`);
 #define vHairMask ${hair}
 #define vGarmentSlot ${cloth}
 uniform sampler2D procMap; uniform sampler2D procEyes;
-varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask;
+varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask; varying float vFade;
 vec3 personStrand = vec3(0.0, 1.0, 0.0); float personSparkle = 0.5;
 ${shader.fragmentShader}`
       .replace('#include <color_fragment>', `#include <color_fragment>
 {
   vec4 texel = texture2D(procMap, vProcUv);
-  ${kind === 'skin' ? `
+  ${grown ? `
+  float coverage = clamp(texel.r * 2.5 * vFade, 0.0, 1.0);
+  vec3 tone = vProcDye.rgb * mix(0.38, 1.0, smoothstep(0.0, 0.3, texel.g));
+  tone *= 1.0 + (texel.b - 0.5) * 0.72;
+  float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
+  tone *= mix(0.3, 1.0, smoothstep(0.05, 0.55, facing));
+  texel = vec4(tone, coverage);` : kind === 'skin' ? `
   if (vSkinMask < 0.5) texel = texture2D(procEyes, vProcUv);
   else texel = vec4(texel.rgb * vProcDye.rgb, 1.0);` : `
   if (vProcDye.a > 0.5) {
@@ -281,7 +316,8 @@ ${shader.fragmentShader}`
   diffuseColor *= texel;
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-${kind === 'skin' ? 'if (vSkinMask < 0.5) roughnessFactor = 0.08;' : ''}`)
+${kind === 'skin' ? 'if (vSkinMask < 0.5) roughnessFactor = 0.08;' : ''}
+${grown ? 'roughnessFactor = max(0.55, roughnessFactor + (texture2D(procMap, vProcUv).b - 0.5) * 0.16 + (1.0 - texture2D(procMap, vProcUv).g) * 0.06);' : ''}`)
       .replace('#include <lights_physical_pars_fragment>', personLighting(kind === 'hair', kind === 'cloth'))
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
 {
@@ -295,7 +331,7 @@ ${kind === 'skin' ? 'if (vSkinMask < 0.5) roughnessFactor = 0.08;' : ''}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
 reflectedLight.indirectSpecular *= personIndirect();`);
   };
-  material.customProgramCacheKey = () => `procedural-person-${kind}`;
+  material.customProgramCacheKey = () => `procedural-person-${kind}${grown ? '-grown' : ''}`;
   return material;
 }
 
@@ -402,6 +438,13 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     let loaded = items.get(name);
     if (!loaded) {
       const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
+      const hairBase = (a: PeopleAssets, mo: Morpher) => ({ positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
+        joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces });
+      if (name === 'acc:headband') {
+        loaded = setup().then(({ assets: a, morpher: mo }) => ({ pack: generateHeadband(hairBase(a, mo)), texture: null, transparent: false, textureFile: null }));
+        items.set(name, loaded);
+        return loaded;
+      }
       loaded = style ? setup().then(({ assets: a, morpher: mo }) => ({
         pack: generateHair(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
           joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces }),
@@ -415,7 +458,8 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     let t = textures.get(name);
     if (!t) {
       const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
-      t = style ? Promise.resolve(hairStrandTexture(style.strands)) : itemTexture(name, it) ?? Promise.resolve(null);
+      t = style ? Promise.resolve(hairStrandTexture(style.strands))
+        : name.startsWith('acc:') ? Promise.resolve(plainTexture()) : itemTexture(name, it) ?? Promise.resolve(null);
       textures.set(name, t);
     }
     return t;
@@ -567,7 +611,7 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     cls.uniforms.procCoef.value = rowTexture(coef, SHAPES, capacity);
   };
 
-  const makePiece = (cls: BodyClass, name: string, kind: Kind, geometry: BufferGeometry, map: Texture | null, eyes: Texture | null): Piece => {
+  const makePiece = (cls: BodyClass, name: string, kind: Kind, geometry: BufferGeometry, map: Texture | null, eyes: Texture | null, grown = false): Piece => {
     const capacity = 256;
     const rows = new InstancedBufferAttribute(new Float32Array(capacity), 1);
     const dyes = new InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
@@ -578,7 +622,8 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
       worn = new InstancedBufferAttribute(new Float32Array(capacity * 4).fill(-1), 4);
       geometry.setAttribute('aWorn', worn);
     }
-    const mesh = new InstancedMesh(geometry, pieceMaterial(cls, kind, map, eyes), capacity);
+    if (!geometry.getAttribute('aFade')) geometry.setAttribute('aFade', new Float32BufferAttribute(new Float32Array(geometry.getAttribute('position').count).fill(1), 1));
+    const mesh = new InstancedMesh(geometry, pieceMaterial(cls, kind, map, eyes, grown), capacity);
     mesh.count = 0;
     mesh.frustumCulled = false;
     mesh.castShadow = kind !== 'face';
@@ -624,9 +669,10 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     geometry.setAttribute('aRefs', new Float32BufferAttribute(Float32Array.from(it.pack.refs), 3));
     geometry.setAttribute('aRefW', new Float32BufferAttribute(it.pack.weights, 3));
     geometry.setAttribute('eyeMask', new Float32BufferAttribute(new Float32Array(n), 1));
+    if (it.pack.fade) geometry.setAttribute('aFade', new Float32BufferAttribute(it.pack.fade, 1));
     geometry.setIndex(Array.from(it.pack.index));
     geometry.computeVertexNormals();
-    const piece = makePiece(cls, name, kindOf(it), geometry, map, null);
+    const piece = makePiece(cls, name, kindOf(it), geometry, map, null, name.startsWith('hair:'));
     cls.pieces.set(name, piece);
     return piece;
   };
@@ -690,7 +736,9 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
       const tint = look.outfitTint == null ? null : new Color(look.outfitTint);
       pieces.forEach((piece, i) => {
         const kind = piece.kind;
-        const dye = kind === 'hair' || kind === 'face' ? hair : worn[i]![0] === look.outfit ? tint : null;
+        // A generated accessory takes a colour of the street's, never the outfit's own.
+        const accessory = worn[i]![0].startsWith('acc:') ? new Color(ACCESSORY_COLOURS[(spec.id * 7 + i) % ACCESSORY_COLOURS.length]!) : null;
+        const dye = kind === 'hair' || kind === 'face' ? hair : accessory ?? (worn[i]![0] === look.outfit ? tint : null);
         place(piece, person, dye);
       });
       cls.people.push(person);

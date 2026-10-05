@@ -7,6 +7,7 @@ import { randomPerson } from '@people/spec';
 import { yearsFromAge } from '@people/body/macro';
 import { classBase, createProceduralCrowd, type AgeBand, type ProceduralPerson } from './proceduralCrowd';
 import { mountHairEditor } from './hairEditor';
+import { HAIR_STYLES, MALE_HAIR } from '@people/hair/procedural';
 
 /**
  * The procedural people's test bench (`people-lab.html`): a line-up to look at
@@ -100,8 +101,10 @@ async function populate(): Promise<void> {
   for (let i = 0; i < wanted; i++) {
     if (mine !== generation) return;
     if (AUDIT.length) {
-      const male = /^(short0|elvs_maxwell|culturalibre)/.test(AUDIT[i]!);
-      const spec = randomPerson(1, male ? 11 : 12, { body: { gender: male ? 1 : 0, age: 0.5 }, look: { hairCut: AUDIT[i]!, hair: 0x4a3222, extras: [] } });
+      const grown = AUDIT[i]!.startsWith('hair:') ? HAIR_STYLES[AUDIT[i]!.slice(5)] : undefined;
+      const male = /^(short0|elvs_maxwell|culturalibre)/.test(AUDIT[i]!) || (MALE_HAIR as readonly string[]).includes(grown?.name ?? '');
+      const spec = randomPerson(1, male ? 11 : 12, { body: { gender: male ? 1 : 0, age: 0.5 },
+        look: { hairCut: AUDIT[i]!, hair: 0x4a3222, extras: grown?.headband ? ['acc:headband'] : [] } });
       const person = await crowd.add(spec).catch(() => null);
       if (mine !== generation || !person) return;
       person.matrix.makeRotationY(0).setPosition((i - (wanted - 1) / 2) * 0.9, 0, 1.2);
