@@ -3101,7 +3101,9 @@ function steerPlayer(): void {
   if (now - playerHudClock > 100) {
     playerHudClock = now;
     const v = player.view();
-    playerHud?.update(v, v ? residentName(v.resident) : '', sim.clock.time);
+    // Inside a building: its name, and what they are doing there.
+    const inside = v && v.place !== null ? { ...v, placeName: placeName(v.place), activity: sim.city.doingOf(v.resident)?.kind ?? null } : v;
+    playerHud?.update(inside, v ? residentName(v.resident) : '', sim.clock.time);
   }
   requestDraw();
 }

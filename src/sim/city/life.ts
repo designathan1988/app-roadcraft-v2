@@ -363,7 +363,8 @@ export class CityLife {
       if (!mind) { mind = newMind(r, now); this.minds.set(r.id, mind); }
       const doing = this.doingNow(w, r, d.at, mind, now, clock);
       live(mind, r, d.at, now, places.kindOf, doing?.offer ?? null);
-      if (d.at === null || this.isHeld(r.id, now)) continue;
+      // The player's person decides nothing: the player does.
+      if (d.at === null || this.isHeld(r.id, now) || this.controlled === r.id) continue;
       const due = committedTo(r, clock);
       const owed = due !== null && d.at !== due;
       if (!owed && now - mind.decided < DECIDE_EVERY) continue;
@@ -480,6 +481,42 @@ export class CityLife {
     this.controlled = resident;
     this.moved();
     return out;
+  }
+
+  /** The building whose door is nearest a point, within `reach`; null when none. */
+  doorNear(x: number, y: number, reach: number): BuildingId | null {
+    let best: BuildingId | null = null, bestD = reach;
+    for (const [id, door] of this.doors) {
+      const d = Math.hypot(door.x - x, door.y - y);
+      if (d < bestD) { best = id; bestD = d; }
+    }
+    return best;
+  }
+
+  /**
+   * The resident in the player's hands goes in: they are in the building as
+   * anybody there is (the place's furniture, what it is for: the shelves of a
+   * shop, a table of a restaurant, the counter of a bank, the sofa of a home),
+   * and what they do there meets their needs. `leaveAs` brings them out.
+   */
+  enterAs(resident: number, building: BuildingId): void {
+    const d = this.diaries.get(resident);
+    if (!d) return;
+    d.at = building;
+    this.moved();
+  }
+
+  /** The resident in the player's hands comes out of the building they are in: at its door. */
+  leaveAs(resident: number): { x: number; y: number } | null {
+    const d = this.diaries.get(resident);
+    if (!d || d.at === null) return null;
+    const door = this.doors.get(d.at) ?? null;
+    const doing = this.doings.get(resident);
+    if (doing && doing.piece >= 0) this.uses.get(doing.building)?.taken.delete(`${doing.level}:${doing.piece}`);
+    this.doings.delete(resident);
+    d.at = null;
+    this.moved();
+    return door;
   }
 
   /** The player lets go of a resident: they walk home from where they are. */

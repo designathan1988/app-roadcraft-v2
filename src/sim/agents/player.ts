@@ -56,7 +56,10 @@ export const newInput = (): PlayerInput => ({ moveX: 0, moveY: 0, throttle: 0, s
 /** What the HUD shows. */
 export interface PlayerView {
   readonly resident: number;
-  readonly mode: 'foot' | 'car';
+  readonly mode: 'foot' | 'car' | 'inside';
+  /** Inside: the building, and what they are doing there (`agent.act.<kind>`). */
+  readonly place: BuildingId | null;
+  readonly activity: string | null;
   readonly x: number;
   readonly y: number;
   readonly health: number;
@@ -88,7 +91,9 @@ export class Player {
   readonly input = newInput();
   resident: number | null = null;
   person = 0;
-  mode: 'foot' | 'car' = 'foot';
+  mode: 'foot' | 'car' | 'inside' = 'foot';
+  /** The building they went into. */
+  private inside: BuildingId | null = null;
   x = 0; y = 0; heading = 0; v = 0;
   health = 100;
   wanted = 0;
@@ -132,6 +137,7 @@ export class Player {
   letGo(w: SimWorld): void {
     if (this.resident === null) return;
     if (this.mode === 'car') this.getOut(w);
+    if (this.mode === 'inside') this.goOut(w);
     removeWalker(w, this.person);
     w.city.releaseControl(w, this.x, this.y);
     this.resident = null;
@@ -141,7 +147,7 @@ export class Player {
 
   view(): PlayerView | null {
     if (this.resident === null) return null;
-    return { resident: this.resident, mode: this.mode, x: this.x, y: this.y, health: this.health, wanted: this.wanted,
+    return { resident: this.resident, mode: this.mode, place: this.inside, activity: null, x: this.x, y: this.y, health: this.health, wanted: this.wanted,
       speed: Math.abs(this.v), message: this.message, officers: this.officers.size };
   }
 
@@ -152,7 +158,9 @@ export class Player {
     if (this.resident === null) return;
     const input = this.input;
     if (input.release) { input.release = false; this.letGo(w); return; }
-    if (this.mode === 'foot') this.onFoot(w); else this.driving(w);
+    if (this.mode === 'foot') this.onFoot(w);
+    else if (this.mode === 'car') this.driving(w);
+    else if (input.enter) { this.goOut(w); this.say(w, 'leftPlace'); }
     input.enter = input.talk = input.punch = false;
     this.police(w);
   }
@@ -277,6 +285,10 @@ export class Player {
       const pose = vehiclePose(w, veh, 1);
       if (pose) consider(veh.id, pose.p.x, pose.p.y);
     }
+    // A door nearer than any car: in through it (a shop, a bank, a restaurant, a home).
+    const door = w.city.doorNear(this.x, this.y, DOOR_REACH);
+    const at = door !== null ? w.city.doorOf(door) : null;
+    if (door !== null && at && (!best || Math.hypot(at.x - this.x, at.y - this.y) < (best as { d: number }).d)) { this.goIn(w, door); return; }
     if (!best) { this.say(w, 'noCar'); return; }
     if (!this.getIn(w, (best as { id: VehicleId }).id)) this.say(w, 'noCar');
   }
@@ -304,6 +316,25 @@ export class Player {
     got.body.people = [this.person];
     got.body.peopleAge = [w.city.resident(this.resident!)?.ageClass ?? 'adult'];
     return true;
+  }
+
+  /** Into a building by its door: off the street, doing what the place is for, until E again. */
+  private goIn(w: SimWorld, building: BuildingId): void {
+    removeWalker(w, this.person);
+    w.city.enterAs(this.resident!, building);
+    this.inside = building;
+    this.mode = 'inside';
+    this.v = 0;
+    this.say(w, 'wentIn');
+  }
+
+  /** Out of the building, at its door. */
+  private goOut(w: SimWorld): void {
+    const door = w.city.leaveAs(this.resident!);
+    if (door) { this.x = door.x; this.y = door.y; }
+    this.inside = null;
+    this.mode = 'foot';
+    addPlayerWalker(w, this.person, this.x, this.y, this.heading, w.city.resident(this.resident!)?.ageClass ?? 'adult', personGender(this.person));
   }
 
   private getOut(w: SimWorld): void {

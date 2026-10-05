@@ -109,8 +109,13 @@ and they have seen it.
   put stars on (GTA's wanted level); out of sight they go one by one; the
   residents on duty at the police stations run after the player and arrest
   them on foot. Children do not drive. Measured: `tests/sim/agents/player.spec.ts`;
-  photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). Not
-  yet: police cars (officers run), weapons, NPC criminals.
+  photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). E by
+  a door (nearer than any car) takes them in: they are in the building as
+  anybody there, doing what it is for (shopping at a supermarket, dining at a
+  restaurant, at the bank's counter, paying at a bakery, a sofa at a home),
+  and that meets their needs; the HUD shows "Dentro: <lugar> . <atividade>";
+  E brings them out at the door (`CityLife.enterAs`/`leaveAs`). Not yet:
+  police cars (officers run), weapons.
 - **Public transport, LIVE** (2026-10-05): a Transport category in the dock
   (`editor/transitTools.ts`, `ui/v2/shell.ts`) lays out bus stops on the
   footways (a click by a street), bus terminals, train tracks (clicks, a

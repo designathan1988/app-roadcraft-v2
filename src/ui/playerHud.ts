@@ -7,7 +7,7 @@ import { t } from './i18n';
  * happened, and the keys. As GTA's: in a corner, out of the way of the view.
  */
 export interface PlayerHud {
-  update(view: PlayerView | null, name: string, now: number): void;
+  update(view: (PlayerView & { placeName?: string }) | null, name: string, now: number): void;
 }
 
 const CSS = `
@@ -59,13 +59,15 @@ export function createPlayerHud(host: HTMLElement): PlayerHud {
       fill.style.width = `${Math.round(view.health)}%`;
       bar.classList.toggle('low', view.health < 35);
       bar.title = t('player.health');
-      mode.textContent = view.mode === 'car'
+      mode.textContent = view.mode === 'inside'
+        ? t('player.inside', { place: view.placeName ?? '' }) + (view.activity ? ` · ${t(`agent.act.${view.activity}`)}` : '')
+        : view.mode === 'car'
         ? t('player.driving', { speed: Math.round(view.speed * 0.4 * 3.6) })
         : t('player.onFoot') + (view.officers > 0 ? ` · ${t('player.officers', { n: view.officers })}` : '');
       msg.textContent = view.message && now - view.message.at < 5 ? t(`player.msg.${view.message.key}`) : '';
       if (keysFor !== view.mode) {
         keysFor = view.mode;
-        keys.innerHTML = t(view.mode === 'car' ? 'player.keys.car' : 'player.keys.foot');
+        keys.innerHTML = t(`player.keys.${view.mode}`);
       }
     },
   };

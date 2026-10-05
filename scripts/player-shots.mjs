@@ -147,6 +147,26 @@ if (car) {
   await hold(['w', 'd'], 1200);
   await photo('driving');
 }
+// Into a restaurant: out of the car, to its door, E; then out again.
+if (await page.evaluate(() => window.__roadcraft.sim.city.player.mode === 'car')) { await page.keyboard.press('e'); await page.waitForTimeout(500); }
+const eatery = await page.evaluate(() => {
+  const r = window.__roadcraft;
+  const b = [...r.doc.buildings.all()].find((x) => (x.function === 'restaurant' || x.function === 'bakery') && r.sim.city.doorOf(x.id));
+  const d = b ? r.sim.city.doorOf(b.id) : null;
+  if (!d) return null;
+  const p = r.sim.city.player; p.x = d.x; p.y = d.y;
+  r.lookAt(d.x, d.y, 30);
+  return d;
+});
+if (eatery) {
+  await page.waitForTimeout(400);
+  await page.keyboard.press('e');
+  await page.waitForTimeout(4000);
+  await photo('inside-restaurant');
+  await page.keyboard.press('e');
+  await page.waitForTimeout(800);
+  await photo('out-of-restaurant');
+}
 writeFileSync(`${out}/log.json`, JSON.stringify(log, null, 1));
 console.log(JSON.stringify(log.map((l) => [l.name, l.view?.mode, l.view?.wanted, l.view?.message?.key, l.view?.officers])));
 await browser.close();

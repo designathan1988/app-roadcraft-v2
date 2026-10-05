@@ -148,4 +148,46 @@ describe('the player: a person of the city in the player hands', () => {
     run(0.2);
     expect(player.resident).toBeNull();
   }, 300_000);
+
+  it('goes into a shop, a restaurant, a bank: does what the place is for, comes out', () => {
+    const doc = new RoadDoc();
+    buildDefaultTown(doc);
+    const net = new Network(doc);
+    net.rebuild();
+    const sim = new SimWorld(doc, net, 0x2024);
+    sim.rebuildTopology();
+    sim.usePedestrianEngine(createAgentWalkEngine());
+    sim.driveModel = 'v2';
+    sim.populationShare = 0.3;
+    sim.city.useAgents(true);
+    sim.city.skip(5 * 60);
+    const run = (seconds: number): void => sim.clock.run(Math.round(seconds / DT), () => step(sim));
+    run(5);
+    const city = sim.city;
+    const player = city.player;
+    const input = player.input;
+    const adult = city.population.residents.find((r) => r.ageClass === 'adult' && city.whereIs(r.id) === r.home)!;
+    expect(player.take(sim, adult.id)).toBe(true);
+    const done: string[] = [];
+    for (const fn of ['supermarket', 'restaurant', 'bank', 'bakery', 'shop']) {
+      const place = [...doc.buildings.all()].find((b) => b.function === fn && city.doorOf(b.id));
+      if (!place) continue;
+      const door = city.doorOf(place.id)!;
+      // At its door (the walk there is the player's), E.
+      player.x = door.x; player.y = door.y;
+      input.enter = true;
+      run(0.2);
+      expect(player.mode).toBe('inside');
+      run(20);
+      const doing = city.doingOf(adult.id);
+      done.push(`${fn}: ${doing?.kind ?? 'nothing'}`);
+      expect(doing?.building).toBe(place.id);
+      input.enter = true;
+      run(0.2);
+      expect(player.mode).toBe('foot');
+      expect(Math.hypot(player.x - door.x, player.y - door.y)).toBeLessThan(m(1));
+    }
+    console.log(`inside: ${done.join(', ')}`);
+    expect(done.length).toBeGreaterThan(2);
+  }, 300_000);
 });
