@@ -31,6 +31,7 @@ const ICON: Record<string, string> = {
   work: '<rect x="4" y="8" width="16" height="12" rx="1"/><path d="M9 8V5h6v3"/>',
   car: '<path d="M4 16v-4l2-5h12l2 5v4z"/><circle cx="8" cy="17" r="1.6"/><circle cx="16" cy="17" r="1.6"/>',
   follow: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  control: '<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7.5 10.5v4M5.5 12.5h4M15.5 11.5h.01M18 13.5h.01"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   hunger: '<path d="M7 3v8a2 2 0 0 0 4 0V3M9 11v10M15 21V3c2.5 1.5 3 4 3 7h-3"/>',
   energy: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
@@ -71,7 +72,8 @@ const CSS = `
 .agent-card-bar.critical > i { background: #e5534b; }
 `;
 
-export function createAgentCard(host: HTMLElement, onChange: () => void = () => {}): AgentCard {
+export function createAgentCard(host: HTMLElement, onChange: () => void = () => {},
+  onControl: ((resident: number) => void) | null = null): AgentCard {
   if (!document.getElementById('agent-card-css')) {
     const style = document.createElement('style');
     style.id = 'agent-card-css';
@@ -94,7 +96,12 @@ export function createAgentCard(host: HTMLElement, onChange: () => void = () => 
   close.innerHTML = icon('close');
   const who = document.createElement('span');
   who.innerHTML = icon('person');
-  head.append(who, name, follow, close);
+  // Into the player's hands, as in GTA (`sim/agents/player.ts`).
+  const control = document.createElement('button');
+  control.type = 'button';
+  control.innerHTML = icon('control');
+  control.hidden = onControl === null;
+  head.append(who, name, control, follow, close);
   root.appendChild(head);
 
   const rows: Record<string, { row: HTMLElement; text: HTMLElement }> = {};
@@ -130,6 +137,7 @@ export function createAgentCard(host: HTMLElement, onChange: () => void = () => 
   let following = false;
   const tips = (): void => {
     follow.title = t('agent.follow');
+    control.title = t('agent.control');
     close.title = t('agent.close');
     rows['doing']!.row.title = t('agent.doingLabel');
     rows['why']!.row.title = t('agent.whyLabel');
@@ -204,5 +212,11 @@ export function createAgentCard(host: HTMLElement, onChange: () => void = () => 
     },
   };
   close.addEventListener('click', () => card.close());
+  control.addEventListener('click', () => {
+    if (resident === null || !onControl) return;
+    const who = resident;
+    card.close();
+    onControl(who);
+  });
   return card;
 }

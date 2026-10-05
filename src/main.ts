@@ -53,6 +53,7 @@ import { type ImportResult, Persistence, exportToFile, importFromFile, type Save
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
+import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
 import type { BuildingId } from '@world/buildings/types';
@@ -2881,6 +2882,8 @@ minimapCanvas.addEventListener('pointermove', (e) => {
  * nothing at all.
  */
 const arrowPan = (e: KeyboardEvent): void => {
+  // Somebody in the player's hands has the keys (`playerKey`).
+  if (controlling()) return;
   const target = e.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
   // Escape ends whatever is being drawn. A pole line is traced in stretches,
@@ -3000,7 +3003,87 @@ const AGENT_PICK_PX = 22;
 let agentCard: AgentCard | null = null;
 let agentCardClock = 0;
 const theAgentCard = (): AgentCard =>
-  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw);
+  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw, takeControlOf);
+
+// ------------------------------------------------------------ a person in the player's hands (GTA)
+
+let playerHud: PlayerHud | null = null;
+let playerHudClock = 0;
+/** Keys held down while somebody is controlled. */
+const held = new Set<string>();
+
+/** Takes a resident into the player's hands (the card's "Control"). */
+function takeControlOf(resident: number): void {
+  if (!sim.city.player.take(sim, resident)) return;
+  playerHud ??= createPlayerHud(document.querySelector<HTMLElement>('.v2') ?? document.body);
+  // The game goes on in real time with somebody to move.
+  if (sim.clock.paused) sim.clock.paused = false;
+  requestDraw();
+}
+
+const controlling = (): boolean => sim.city.player.resident !== null;
+
+/** The keys of the player's hands; nothing else sees them while somebody is controlled. */
+function playerKey(e: KeyboardEvent, down: boolean): boolean {
+  if (!controlling()) return false;
+  const target = e.target as HTMLElement | null;
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return false;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const input = sim.city.player.input;
+  if (down && !e.repeat) {
+    if (key === 'e') input.enter = true;
+    else if (key === 'f') input.talk = true;
+    else if (key === ' ') input.punch = true;
+    else if (key === 'Escape' || key === 'q') input.release = true;
+  }
+  if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', ' ', 'e', 'f', 'q', 'Escape'].includes(key)) {
+    if (down) held.add(key); else held.delete(key);
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  return false;
+}
+window.addEventListener('keydown', (e) => { playerKey(e, true); }, true);
+window.addEventListener('keyup', (e) => { playerKey(e, false); }, true);
+window.addEventListener('blur', () => held.clear());
+
+/** The keys held, as the player's move this frame: on foot along the screen, in a car throttle and wheel. */
+function steerPlayer(): void {
+  const player = sim.city.player;
+  if (player.resident === null) { held.clear(); playerHud?.update(null, '', 0); return; }
+  const up = held.has('w') || held.has('ArrowUp'), down = held.has('s') || held.has('ArrowDown');
+  const left = held.has('a') || held.has('ArrowLeft'), right = held.has('d') || held.has('ArrowRight');
+  const input = player.input;
+  input.run = held.has('Shift');
+  input.throttle = (up ? 1 : 0) - (down ? 1 : 0);
+  input.steer = (right ? 1 : 0) - (left ? 1 : 0);
+  // Along the screen: "up" is wherever the camera looks.
+  const sx = (right ? 1 : 0) - (left ? 1 : 0), sy = (down ? 1 : 0) - (up ? 1 : 0);
+  if (sx === 0 && sy === 0) { input.moveX = 0; input.moveY = 0; }
+  else {
+    const { cssW: w, cssH: h } = surface;
+    const c = view.toWorld(w / 2, h / 2, w, h), to = view.toWorld(w / 2 + sx * 100, h / 2 + sy * 100, w, h);
+    const dx = to.x - c.x, dy = to.y - c.y, len = Math.hypot(dx, dy) || 1;
+    input.moveX = dx / len; input.moveY = dy / len;
+  }
+  // In a car the wheel turns with the car: "right" is the driver's right.
+  // The camera stays on them.
+  const cam = view.centre;
+  view.moveTo({ x: cam.x + (player.x - cam.x) * 0.25, y: cam.y + (player.y - cam.y) * 0.25 });
+  const now = performance.now();
+  if (now - playerHudClock > 100) {
+    playerHudClock = now;
+    const v = player.view();
+    playerHud?.update(v, v ? residentName(v.resident) : '', sim.clock.time);
+  }
+  requestDraw();
+}
+
+/** A resident as the player knows them: their name. */
+function residentName(resident: number): string {
+  return t('agent.title', { n: resident });
+}
 
 /** Where a resident agent is now: on foot, in or at their car, or at the door of where they are. */
 function agentPosition(resident: number): Vec2 | null {
@@ -3105,6 +3188,7 @@ function frame(now: number): void {
   }
   buildings.beforeDraw(tool === 'building');
   followAgent();
+  steerPlayer();
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
   refreshAgentCard(now);
   drawOverlayScreen();

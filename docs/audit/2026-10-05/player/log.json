@@ -1,0 +1,142 @@
+[
+ {
+  "name": "00-card",
+  "view": null
+ },
+ {
+  "name": "01-taken",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 303.51053527054586,
+   "y": -182.18778110560555,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 60.166666666666664
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "02-walked",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 300.5042524281595,
+   "y": -179.2012082015149,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 60.166666666666664
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "03-ran",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 312.99061791168396,
+   "y": -166.56546332542607,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 60.166666666666664
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "04-talk",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 312.99061791168396,
+   "y": -166.56546332542607,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "talked",
+    "at": 66.73333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "05-hit",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 311.8819030103601,
+   "y": -152.67101981051601,
+   "health": 85,
+   "wanted": 1,
+   "speed": 0,
+   "message": {
+    "key": "hitBack",
+    "at": 79.16666666666667
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "06-after",
+  "view": {
+   "resident": 217,
+   "mode": "foot",
+   "x": 311.8819030103601,
+   "y": -152.67101981051601,
+   "health": 85,
+   "wanted": 1,
+   "speed": 0,
+   "message": {
+    "key": "hitBack",
+    "at": 79.16666666666667
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "07-in-car",
+  "view": {
+   "resident": 217,
+   "mode": "car",
+   "x": 303.75,
+   "y": -93.64031138358287,
+   "health": 85,
+   "wanted": 2,
+   "speed": 14.241811302017725,
+   "message": {
+    "key": "carjacked",
+    "at": 89.23333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "08-driving",
+  "view": {
+   "resident": 217,
+   "mode": "car",
+   "x": 286.7683937495334,
+   "y": -26.24210217852612,
+   "health": 74.97904333468082,
+   "wanted": 4,
+   "speed": 1.4909003578503273,
+   "message": {
+    "key": "crash",
+    "at": 94.05
+   },
+   "officers": 0
+  }
+ }
+]

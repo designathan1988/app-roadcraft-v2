@@ -10,7 +10,7 @@ import { emptyCrossingState } from '../crossings/state';
 import { indexReservations, mayEnterCrossing } from '../crossings/permission';
 import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
-import { personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
+import { type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
 import { ASK_WAY, carSweep, crossesFootway } from './cars';
 
@@ -146,6 +146,12 @@ interface Walker {
   zebra: Zebra | null;
   waiting: Zebra | null;
   done: boolean;
+  /** Moved by the player's hand, not by its route (`movePlayerWalker`). */
+  player: boolean;
+  /** Stopped to do something a while (talk, fall down), facing a point: until `age` reaches `until`. */
+  act: { readonly kind: GestureKind; readonly from: number; readonly until: number; readonly faceX: number; readonly faceY: number } | null;
+  /** Running away from something: pace times `by` until `age` reaches `until`; then on to `goal`. */
+  rush: { readonly by: number; readonly until: number; readonly goal: Vec2 } | null;
 }
 
 interface State {
@@ -540,6 +546,7 @@ function startWalk(w: SimWorld, trip: ResidentWalk): number | null {
     id, trip: trip.trip, view, pace, steps, leg: 0, s: 0, d: 0, aim: 0, v: 0,
     x: trip.fromX, y: trip.fromY, heading, prevX: trip.fromX, prevY: trip.fromY, prevHeading: heading,
     turnV: 0, age: 0, held: 0, waited: 0, asked: 0, granted: null, done: false, waiting: null, zebra: null, inside: true,
+    player: false, act: null, rush: null,
   };
   const pr = project(steps[0]!, p.x, p.y);
   p.s = pr.s; p.d = pr.d; p.aim = clamp(pr.d, room(steps[0]!));
@@ -641,6 +648,27 @@ function stepWalkers(w: SimWorld): void {
       if (clear) { p.inside = false; p.prevX = p.x; p.prevY = p.y; p.prevHeading = p.heading; enter(p); }
       continue;
     }
+    // The player's body goes where the player moves it (`movePlayerWalker`).
+    if (p.player) continue;
+    // Stopped for something (a word, a fall): standing there, facing it.
+    if (p.act) {
+      if (p.age < p.act.until) {
+        p.v = 0;
+        const want = Math.atan2(p.act.faceY - p.y, p.act.faceX - p.x);
+        if (hypot(p.act.faceX - p.x, p.act.faceY - p.y) > m(0.1) && p.act.kind !== 'fall') {
+          const err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
+          p.heading += Math.max(-TURN_STANDING * DT, Math.min(TURN_STANDING * DT, err));
+        }
+        continue;
+      }
+      p.act = null;
+    }
+    // A run from danger over: on again to where they were going.
+    if (p.rush && p.age >= p.rush.until) {
+      const goal = p.rush.goal;
+      p.rush = null;
+      replan(w, s, p, goal);
+    }
     let st = p.steps[p.leg]!;
     const f = frame(st, p.s);
     const span = room(st);
@@ -735,7 +763,7 @@ function stepWalkers(w: SimWorld): void {
     // --- the speed: the room ahead in its own stripe, the wait, and the turn still to make.
     const crossing = crossingOf(w, st.way) !== null;
     const jammed = p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER);
-    let want = p.pace * (crossing ? 1.15 : 1);
+    let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1);
     if (jammed) want *= JAM_SHARE;
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
@@ -820,6 +848,7 @@ function publish(w: SimWorld): void {
     v.segment = (st.way?.segment ?? undefined) as SegmentId | undefined;
     v.stretch = st.way ? `${st.way.id}:${st.dir}` : '';
     v.walking = p.v > m(0.1);
+    v.gesture = p.act ? { kind: p.act.kind, phase: 'hold', t: p.age - p.act.from, hold: p.act.until - p.act.from } : null;
     v.kerbWait = p.waiting ? p.waited : 0;
     v.waitingFor = p.waiting ? p.waiting.id : null;
     views.push(v);
@@ -836,4 +865,153 @@ export function inspectAgentWalkers(w: SimWorld): readonly {
     id: p.id, x: p.x, y: p.y, v: p.v, s: p.s, d: p.d, len: stepLength(p.steps[p.leg]!),
     leg: p.leg, legs: p.steps.length, held: p.held, waited: p.waited, kind: p.steps[p.leg]!.way?.kind ?? 'off',
   }));
+}
+
+// ------------------------------------------------------------------ the player's hand
+
+/** Somebody walking now, as the player and the police see them. */
+export interface WalkerSeen {
+  readonly id: number;
+  readonly trip: number;
+  readonly x: number;
+  readonly y: number;
+  readonly heading: number;
+  readonly v: number;
+  readonly player: boolean;
+  /** Knocked down, or stopped for something, and for how long yet (seconds). */
+  readonly busy: number;
+}
+
+const seen = (p: Walker): WalkerSeen => ({ id: p.id, trip: p.trip, x: p.x, y: p.y, heading: p.heading, v: p.v, player: p.player,
+  busy: p.act ? Math.max(0, p.act.until - p.age) : 0 });
+
+/** The walkers within `radius` of a point, out on the street. */
+export function walkersNear(w: SimWorld, x: number, y: number, radius: number): WalkerSeen[] {
+  return stateOf(w).walkers.filter((p) => !p.inside && !p.done && hypot(p.x - x, p.y - y) < radius).map(seen);
+}
+
+/** One walker, by id, or null when nobody of that id is out. */
+export function walkerOf(w: SimWorld, id: number): WalkerSeen | null {
+  const p = stateOf(w).byId.get(id);
+  return p && !p.inside && !p.done ? seen(p) : null;
+}
+
+/** Puts somebody walking under the player's hand: they stop following their route. */
+export function takeWalker(w: SimWorld, id: number): boolean {
+  const p = stateOf(w).byId.get(id);
+  if (!p || p.done) return false;
+  p.inside = false;
+  p.player = true;
+  p.act = null;
+  p.rush = null;
+  return true;
+}
+
+/** A body for the player to move, out at a point (stepping out of a door or a car). */
+export function addPlayerWalker(w: SimWorld, id: number, x: number, y: number, heading: number,
+  ageClass: PersonAgeClass, gender: PersonGender): void {
+  const s = stateOf(w);
+  const old = s.byId.get(id);
+  if (old) finish(s, old, false);
+  prune(s);
+  const view: PedView = {
+    id, x, y, heading, prev: { x, y, heading }, v: 0, turnV: 0, age: 0, ageClass, gender,
+    party: { id, size: 1, archetype: 'solo', hasChild: false }, rank: 0,
+    ground: 'footway', segment: undefined, stretch: '', walking: false, kerbWait: 0, waitingFor: null, gesture: null,
+  };
+  const p: Walker = {
+    id, trip: -1, view, pace: PED.meanSpeed, steps: [{ way: null, dir: 1, from: 0, to: 0, a: { x, y }, b: { x, y } }], leg: 0,
+    s: 0, d: 0, aim: 0, v: 0, x, y, heading, prevX: x, prevY: y, prevHeading: heading, turnV: 0, age: 0, held: 0,
+    waited: 0, asked: 0, granted: null, done: false, waiting: null, zebra: null, inside: false, player: true, act: null, rush: null,
+  };
+  s.walkers.push(p);
+  s.byId.set(id, p);
+}
+
+/** The player's body moved: where it is now, the way it faces, how fast it goes. */
+export function movePlayerWalker(w: SimWorld, id: number, x: number, y: number, heading: number, v: number): void {
+  const p = stateOf(w).byId.get(id);
+  if (!p || !p.player) return;
+  const turn = Math.atan2(Math.sin(heading - p.heading), Math.cos(heading - p.heading));
+  p.turnV = turn / DT;
+  p.x = x; p.y = y; p.heading = heading; p.v = v;
+}
+
+/** Takes somebody off the street altogether (into a car, into a building): no arrival is told. */
+export function removeWalker(w: SimWorld, id: number): void {
+  const s = stateOf(w);
+  const p = s.byId.get(id);
+  if (p) { finish(s, p, false); prune(s); }
+}
+
+/** Somebody stops a while to do something (talk, fall down), facing a point. */
+export function walkerAct(w: SimWorld, id: number, kind: GestureKind, seconds: number, faceX: number, faceY: number): void {
+  const p = stateOf(w).byId.get(id);
+  if (!p || p.done) return;
+  p.act = { kind, from: p.age, until: p.age + seconds, faceX, faceY };
+  p.v = 0;
+}
+
+/** How much faster than their walk somebody runs away. */
+const RUN = 2.4;
+
+/**
+ * Everybody within `radius` of a fright (a blow, a crash, a car on the
+ * footway) runs off away from it for a while, then goes on where they were
+ * going. Those knocked down get up first. Returns who saw it.
+ */
+export function startle(w: SimWorld, x: number, y: number, radius: number, seconds: number, except: number | null): number[] {
+  const s = stateOf(w);
+  const saw: number[] = [];
+  for (const p of s.walkers) {
+    if (p.inside || p.done || p.player || p.id === except) continue;
+    const d = hypot(p.x - x, p.y - y);
+    if (d > radius) continue;
+    saw.push(p.id);
+    const goal = p.rush?.goal ?? lastOf(p);
+    // Away from it: to the walkway point some way off on the far side.
+    const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
+    replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
+    const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
+    p.rush = { by: RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
+  }
+  return saw;
+}
+
+/** Somebody sent running towards a point (a police officer after the player), their own route on the walkways. */
+export function sendRunning(w: SimWorld, id: number, to: Vec2, by = RUN): void {
+  const s = stateOf(w);
+  const p = s.byId.get(id);
+  if (!p || p.done || p.player) return;
+  replan(w, s, p, to);
+  p.rush = { by, until: p.age + 30, goal: to };
+}
+
+/** The end of a walker's route: where they are going. */
+function lastOf(p: Walker): Vec2 {
+  const last = p.steps[p.steps.length - 1]!;
+  const end = frame(last, stepLength(last));
+  return { x: end.x, y: end.y };
+}
+
+/** A walker's route made again from where they are to `to`. */
+function replan(w: SimWorld, s: State, p: Walker, to: Vec2): void {
+  const steps = plan(w, s, { x: p.x, y: p.y }, to, REACH);
+  if (!steps) return;
+  p.steps.length = 0;
+  p.steps.push(...steps);
+  p.leg = 0;
+  p.granted = null;
+  const pr = project(steps[0]!, p.x, p.y);
+  p.s = pr.s; p.d = pr.d; p.aim = clamp(pr.d, room(steps[0]!));
+}
+
+/** Gives a body back from the player's hand, walking on to `to` (their home, say); null: off the street. */
+export function releaseWalker(w: SimWorld, id: number, to: Vec2 | null): void {
+  const s = stateOf(w);
+  const p = s.byId.get(id);
+  if (!p) return;
+  p.player = false;
+  if (!to) { finish(s, p, false); prune(s); return; }
+  replan(w, s, p, to);
 }

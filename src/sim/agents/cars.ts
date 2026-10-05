@@ -347,7 +347,50 @@ export class OwnCars {
     const out = this.drawn;
     out.length = 0;
     for (const car of this.cars.values()) if (car.body) out.push(car.body);
+    for (const body of this.loose) out.push(body);
     return out;
+  }
+
+  /** Cars out of the traffic that belong to no resident's trip: taken by the player, left wherever. */
+  readonly loose: Vehicle[] = [];
+
+  /**
+   * A car taken by the player, as a free body off the road. A resident's own
+   * car parked is taken out of its bay; one driving is taken out of the
+   * traffic, its trip ended there, and who was driving is returned to be put
+   * on foot where they got out. A car of the edge traffic is made a loose body.
+   * Null when the car is in the middle of a manoeuvre with somebody at the door.
+   */
+  seize(w: SimWorld, id: VehicleId): { body: Vehicle; driver: number | null; trip: number | null } | null {
+    for (const car of this.cars.values()) {
+      if (car.id !== id) continue;
+      const t = this.tripOfCar(id);
+      if (t && t.phase !== 'drive') return null;
+      if (!t) {
+        if (!car.body) return null;
+        if (car.bay && car.bay.car === car.id) car.bay.car = null;
+        car.bay = null;
+        return { body: car.body, driver: null, trip: null };
+      }
+      const v = w.vehicles.get(id);
+      const pose = v ? vehiclePose(w, v, 1) : null;
+      if (!v || !pose) return null;
+      w.removeVehicle(v);
+      if (t.target.car === car.id) t.target.car = null;
+      car.bay = null;
+      car.body = this.offRoadBody(w, car, v.lanelet, pose.p.x, pose.p.y, pose.angle, null);
+      car.body.v = v.v;
+      this.trips.delete(t.trip);
+      return { body: car.body, driver: t.resident, trip: t.trip };
+    }
+    const v = w.vehicles.get(id);
+    const pose = v ? vehiclePose(w, v, 1) : null;
+    if (!v || !pose) return null;
+    w.removeVehicle(v);
+    v.free = { x: pose.p.x, y: pose.p.y, angle: pose.angle, px: pose.p.x, py: pose.p.y, pangle: pose.angle, lot: null };
+    v.seats = 0;
+    this.loose.push(v);
+    return { body: v, driver: null, trip: null };
   }
   private readonly drawn: Vehicle[] = [];
 
@@ -620,7 +663,7 @@ export class OwnCars {
 
   /** The car as a drawn body off the road, standing at `(x, y)` facing `angle`. */
   private offRoadBody(w: SimWorld, car: OwnCar, lanelet: Vehicle['lanelet'], x: number, y: number, angle: number,
-    lot: number): Vehicle {
+    lot: number | null): Vehicle {
     const body = createVehicle(car.id, car.archetype, car.driver, car.colour, lanelet, 0, w.clock.tick);
     body.seats = 0;
     body.free = { x, y, angle, px: x, py: y, pangle: angle, lot };

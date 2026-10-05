@@ -97,6 +97,20 @@ and they have seen it.
   no piece held by two). Photos: `scripts/life-shots.mjs`
   (`docs/audit/2026-10-05/life/`). Not yet: a walk across town takes game
   hours (20x time, 1.34 m/s), so fewer reach work than are due.
+- **A person in the player's hands (GTA), LIVE** (2026-10-05): the agent
+  card's Control button takes any resident (walking, driving, or inside a
+  building: out of the door) into the player's hands (`sim/agents/player.ts`,
+  `ui/playerHud.ts`): WASD/arrows along the screen, Shift to run, F talks with
+  the person in front (both stop, face each other; their social need is met),
+  Space hits (they fall and everybody round runs off; some hit back), E gets
+  into the nearest car - parked, or in the traffic (its driver pulled out,
+  walking off) - driven as a kinematic bicycle, crashing on walls and
+  vehicles, knocking down people; Esc lets go (they walk home). Crimes seen
+  put stars on (GTA's wanted level); out of sight they go one by one; the
+  residents on duty at the police stations run after the player and arrest
+  them on foot. Children do not drive. Measured: `tests/sim/agents/player.spec.ts`;
+  photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). Not
+  yet: police cars (officers run), weapons, NPC criminals.
 - **By design, not missing:** every person on the streets is a resident (no
   passers-by made up); car owners without a bay near home walk; with
   residents there is no generated traffic, so no buses run (the game has no

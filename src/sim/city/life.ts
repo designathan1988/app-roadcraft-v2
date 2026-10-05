@@ -15,6 +15,9 @@ import { type Population, type Resident, derivePopulation } from './population';
 import { type CarPhase, OwnCars, personGender, type TripReason } from '../agents/cars';
 import { DECIDE_EVERY, type Mind, type Needs, type PlaceIndex, committedTo, decide, live, newMind, placeIndex } from '../agents/mind';
 import { type ActivityKind, BuildingUse, type Doing, type YardPlaces, chooseActivity } from '../agents/activities';
+import { addPlayerWalker, takeWalker, walkerOf } from '../agents/walk';
+import { Player } from '../agents/player';
+import type { VehicleId } from '../vehicles/state';
 import { localToWorld } from '@world/buildings/geometry';
 import type { Building } from '@world/buildings/types';
 
@@ -281,6 +284,7 @@ export class CityLife {
 
     this.arrivals(w);
     this.cars?.step(w, (id) => { const t = this.trips.get(id); if (t) this.arrive(t); });
+    this.player.step(w);
     this.lookClock += DT;
     if (this.lookClock < LOOK_EVERY) return;
     this.lookClock = 0;
@@ -385,6 +389,135 @@ export class CityLife {
     this.doings.set(r.id, doing);
     return doing;
   }
+
+  // ------------------------------------------------------------- the player's hand
+
+  /** The resident under the player's hand, or null (`agents/player.ts`). */
+  controlled: number | null = null;
+
+  /** A resident's record, by id. */
+  resident(id: number): Resident | null { return this.byResident.get(id) ?? null; }
+
+  /**
+   * Takes a resident out of their own life for the player: whatever trip they
+   * were on ends where they are, nothing they were doing goes on. Returns
+   * where they are and how: on foot (walking, or stepping out of the building
+   * they were in), or at the wheel of their car on the road; null when they
+   * cannot be found.
+   */
+  takeControl(w: SimWorld, resident: number): { mode: 'foot' | 'car'; x: number; y: number; heading: number; car: VehicleId | null } | null {
+    const r = this.byResident.get(resident);
+    const d = this.diaries.get(resident);
+    if (!r || !d) return null;
+    const person = OwnCars.personOf(resident);
+    let out: { mode: 'foot' | 'car'; x: number; y: number; heading: number; car: VehicleId | null } | null = null;
+    for (const t of [...this.trips.values()]) {
+      if (t.resident !== resident) continue;
+      const ct = this.cars?.trips.get(t.id);
+      if (ct && ct.phase === 'drive') {
+        out = { mode: 'car', x: 0, y: 0, heading: 0, car: ct.car.id };
+      } else if (ct && ct.car.body?.free && (ct.phase === 'leave' || ct.phase === 'park')) {
+        // Off the road in their car (out of a bay, into one): at the wheel there.
+        const f = ct.car.body.free;
+        this.cars!.trips.delete(t.id);
+        out = { mode: 'car', x: f.x, y: f.y, heading: f.angle, car: ct.car.id };
+      } else {
+        if (ct) this.cars!.trips.delete(t.id);
+        const p = walkerOf(w, person);
+        if (p) { takeWalker(w, person); out = { mode: 'foot', x: p.x, y: p.y, heading: p.heading, car: null }; }
+      }
+      if (!ct || ct.phase !== 'drive') this.trips.delete(t.id);
+    }
+    if (!out) {
+      const at = d.at ?? r.home;
+      const door = this.doors.get(at);
+      if (!door) return null;
+      const b = w.doc.buildings.get(at);
+      const c = b ? footprintCentre(b) : door;
+      const heading = Math.atan2(door.y - c.y, door.x - c.x);
+      addPlayerWalker(w, person, door.x, door.y, heading, r.ageClass, personGender(person));
+      out = { mode: 'foot', x: door.x, y: door.y, heading, car: null };
+    }
+    const doing = this.doings.get(resident);
+    if (doing?.piece !== undefined && doing.piece >= 0) this.uses.get(doing.building)?.taken.delete(`${doing.level}:${doing.piece}`);
+    this.doings.delete(resident);
+    d.at = null;
+    this.controlled = resident;
+    this.moved();
+    return out;
+  }
+
+  /** The player lets go of a resident: they walk home from where they are. */
+  releaseControl(w: SimWorld, x: number, y: number): void {
+    const resident = this.controlled;
+    this.controlled = null;
+    if (resident !== null) this.putOnFoot(w, resident, x, y);
+  }
+
+  /**
+   * A resident on foot at a point, off any trip (out of a car taken from
+   * them, let go by the player): they walk home from there.
+   */
+  putOnFoot(w: SimWorld, resident: number, x: number, y: number): void {
+    const r = this.byResident.get(resident);
+    const d = this.diaries.get(resident);
+    const home = r ? this.doors.get(r.home) : undefined;
+    const walk = w.pedEngine.walkTrip;
+    if (!r || !d || !home || !walk) return;
+    for (const t of [...this.trips.values()]) if (t.resident === resident) this.trips.delete(t.id);
+    const trip: Trip = { id: this.nextTrip++, resident, to: r.home, mode: 'walk', agent: -1, started: w.clock.time, why: 'home' };
+    const person = OwnCars.personOf(resident);
+    const id = walk.call(w.pedEngine, w, { trip: trip.id, fromX: x, fromY: y, toX: home.x, toY: home.y,
+      seed: personGender(person) === 'f' ? 1 : 0, ageClass: r.ageClass, person, reach: m(40) });
+    if (id === null) { d.at = r.home; this.moved(); return; }
+    trip.agent = id;
+    this.trips.set(trip.id, trip);
+    d.at = null;
+    this.moved();
+  }
+
+  /** A trip ended where it is, without arriving (a car taken by the player from its driver). */
+  dropTrip(id: number): void { this.trips.delete(id); }
+
+  /** The person in the player's hands, and the police after them (`agents/player.ts`). */
+  readonly player = new Player();
+
+  /** A resident called out of where they are (a police officer sent after the player): off their life until given back. */
+  borrow(resident: number): boolean {
+    const d = this.diaries.get(resident);
+    if (!d || d.at === null) return false;
+    const doing = this.doings.get(resident);
+    if (doing && doing.piece >= 0) this.uses.get(doing.building)?.taken.delete(`${doing.level}:${doing.piece}`);
+    this.doings.delete(resident);
+    d.at = null;
+    this.moved();
+    return true;
+  }
+
+  /** A resident borrowed, given back to a building (back at the station). */
+  giveBack(resident: number, building: BuildingId): void {
+    const d = this.diaries.get(resident);
+    if (d) { d.at = building; this.moved(); }
+  }
+
+  /** A need of a resident met a little (a word with somebody, say). */
+  boostNeed(resident: number, need: keyof Needs, by: number): void {
+    const n = this.minds.get(resident)?.needs;
+    if (n) n[need] = Math.max(0, Math.min(100, n[need] + by));
+  }
+
+  /** The residents working at buildings of a trade, who are there now. */
+  atWork(fn: string): Resident[] {
+    const out: Resident[] = [];
+    for (const r of this.population.residents) {
+      if (r.work === null) continue;
+      const d = this.diaries.get(r.id);
+      if (d?.at === r.work && this.kindAt(r.work) === fn) out.push(r);
+    }
+    return out;
+  }
+
+  private kindAt(id: BuildingId): string | undefined { return this.places?.kindOf(id); }
 
   /** What a resident is doing in the building they are in, for the renderer and their card. */
   doingOf(resident: number): Doing | null {
