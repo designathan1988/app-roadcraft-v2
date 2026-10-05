@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { randomPerson } from '@people/spec';
 import { yearsFromAge } from '@people/body/macro';
 import { classBase, createProceduralCrowd, type AgeBand, type ProceduralPerson } from './proceduralCrowd';
+import { mountHairEditor } from './hairEditor';
 
 /**
  * The procedural people's test bench (`people-lab.html`): a line-up to look at
@@ -222,4 +223,20 @@ document.getElementById('far')!.addEventListener('click', () => {
 };
 
 requestAnimationFrame(frame);
-void populate();
+// ?editor: the hairstyle editor instead of the crowd.
+if (new URLSearchParams(location.search).has('editor')) {
+  const editor = mountHairEditor(document.querySelector('.panel') as HTMLElement, crowd, statusEl);
+  camera.position.set(0, 1.5, 4.4);
+  controls.target.set(0, 1.25, 1.2);
+  // A slow turn, so every side is seen.
+  let turn = 0;
+  const spin = (): void => {
+    turn += 0.004;
+    for (const person of editor.people()) {
+      const x = person.matrix.elements[12]!, z = person.matrix.elements[14]!;
+      person.matrix.makeRotationY(turn).setPosition(x, 0, z);
+    }
+    requestAnimationFrame(spin);
+  };
+  spin();
+} else void populate();

@@ -338,6 +338,8 @@ export interface ProceduralCrowd {
   /** Diagnosis: the shape the GPU sums for a person at base vertices, against the rig's exact one, metres. */
   probe(person: ProceduralPerson, vertices: readonly number[]): { v: number; linear: number[]; exact: number[] }[];
   readonly people: readonly ProceduralPerson[];
+  /** Drops an item and its pieces, so it is built again on next use (a hairstyle being edited). */
+  forget(name: string): void;
 }
 
 export function createProceduralCrowd(options: { hair?: boolean } = {}): ProceduralCrowd {
@@ -738,6 +740,19 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     stride(person) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
       return (cls?.clips.walk.stride ?? 1.4) * person.scale;
+    },
+    forget(name) {
+      items.delete(name);
+      textures.delete(name);
+      for (const cls of ready) {
+        const piece = cls.pieces.get(name);
+        if (!piece) continue;
+        group.remove(piece.mesh);
+        piece.mesh.geometry.dispose();
+        (piece.mesh.material as Material).dispose();
+        piece.mesh.customDepthMaterial?.dispose();
+        cls.pieces.delete(name);
+      }
     },
     probe(person, vertices) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band)!;

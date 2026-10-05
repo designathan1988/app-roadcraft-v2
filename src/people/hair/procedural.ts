@@ -31,8 +31,15 @@ export interface HairStyle {
   readonly gravity: number;
   readonly wave?: { readonly amplitude: number; readonly wavelength: number };
   readonly fringe?: { readonly length: number; readonly width: number };
-  /** Gathered at a point at the back of the head, then a tail or a bun. */
-  readonly gather?: { readonly at: readonly [number, number, number]; readonly tail: number; readonly bun?: number };
+  /**
+   * Gathered at a point of the head, then a tail (plaited when `braid`) or a
+   * bun; at two points (`also`, mirrored across the head) for pigtails.
+   */
+  readonly gather?: { readonly at: readonly [number, number, number]; readonly tail: number; readonly bun?: number; readonly braid?: boolean; readonly twin?: boolean };
+  /** Each strand wound in a helix: corkscrew curls. */
+  readonly curl?: { readonly radius: number; readonly pitch: number };
+  /** All the hair brushed towards one side, -1 (right) .. 1 (left). */
+  readonly sweep?: number;
   /** Guides (clumps), and the width of each clump's card, decimetres. */
   readonly clumps: number;
   readonly cardWidth: number;
@@ -42,7 +49,8 @@ export interface HairStyle {
   readonly strands: 'straight' | 'wavy';
 }
 
-export const HAIR_STYLES: Readonly<Record<string, HairStyle>> = {
+/** The styles by name; the hair editor (`people-lab.html?editor`) adds its own. */
+export const HAIR_STYLES: Record<string, HairStyle> = {
   longStraight: { name: 'longStraight', length: 4.6, part: 0.25, volume: 0.1, gravity: 0.55, clumps: 230, cardWidth: 0.42, layers: 2, strands: 'straight' },
   longWavy: { name: 'longWavy', length: 4.4, part: -0.3, volume: 0.16, gravity: 0.5, wave: { amplitude: 0.07, wavelength: 1.3 }, clumps: 230, cardWidth: 0.44, layers: 2, strands: 'wavy' },
   midLayered: { name: 'midLayered', length: 3.0, part: 0.35, volume: 0.14, gravity: 0.5, wave: { amplitude: 0.06, wavelength: 1.4 }, clumps: 220, cardWidth: 0.42, layers: 2, strands: 'straight' },
@@ -51,10 +59,18 @@ export const HAIR_STYLES: Readonly<Record<string, HairStyle>> = {
   ponytail: { name: 'ponytail', length: 3.4, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0, 7.75, -0.55], tail: 3.2 }, clumps: 200, cardWidth: 0.36, layers: 2, strands: 'straight' },
   bun: { name: 'bun', length: 2.0, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0, 8.05, -0.45], tail: 0, bun: 0.42 }, clumps: 200, cardWidth: 0.36, layers: 2, strands: 'straight' },
   shortCrop: { name: 'shortCrop', length: 0.55, part: 0.4, volume: 0.05, gravity: 0.1, clumps: 160, cardWidth: 0.34, layers: 1, strands: 'straight' },
+  pigtails: { name: 'pigtails', length: 2.6, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0.62, 7.55, -0.2], tail: 2.4, twin: true }, clumps: 200, cardWidth: 0.34, layers: 2, strands: 'straight' },
+  braid: { name: 'braid', length: 3.4, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0, 7.45, -0.6], tail: 3.6, braid: true }, clumps: 200, cardWidth: 0.32, layers: 2, strands: 'straight' },
+  twinBraids: { name: 'twinBraids', length: 3, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0.6, 7.3, -0.25], tail: 3.2, braid: true, twin: true }, clumps: 200, cardWidth: 0.32, layers: 2, strands: 'straight' },
+  curly: { name: 'curly', length: 2.3, part: 0, volume: 0.45, gravity: 0.3, curl: { radius: 0.16, pitch: 0.45 }, clumps: 260, cardWidth: 0.3, layers: 2, strands: 'wavy' },
+  sideSwept: { name: 'sideSwept', length: 3.6, part: 0.85, volume: 0.12, gravity: 0.5, sweep: 0.7, wave: { amplitude: 0.05, wavelength: 1.5 }, clumps: 230, cardWidth: 0.42, layers: 2, strands: 'straight' },
+  pixie: { name: 'pixie', length: 0.75, part: 0.6, volume: 0.1, gravity: 0.15, fringe: { length: 0.9, width: 0.6 }, sweep: 0.5, clumps: 220, cardWidth: 0.32, layers: 1, strands: 'straight' },
+  topKnot: { name: 'topKnot', length: 2.2, part: 0, volume: 0.05, gravity: 0.4, gather: { at: [0, 8.55, 0.15], tail: 0, bun: 0.38 }, clumps: 200, cardWidth: 0.34, layers: 2, strands: 'straight' },
   shortSide: { name: 'shortSide', length: 0.95, part: 0.5, volume: 0.08, gravity: 0.15, clumps: 160, cardWidth: 0.34, layers: 1, strands: 'straight' },
 };
 
-export const FEMALE_HAIR = ['longStraight', 'longWavy', 'midLayered', 'bob', 'bobFringe', 'ponytail', 'bun'] as const;
+export const FEMALE_HAIR = ['longStraight', 'longWavy', 'midLayered', 'bob', 'bobFringe', 'ponytail', 'bun',
+  'pigtails', 'braid', 'twinBraids', 'curly', 'sideSwept', 'pixie', 'topKnot'] as const;
 export const MALE_HAIR = ['shortCrop', 'shortSide'] as const;
 
 export interface HairBase {
@@ -94,7 +110,7 @@ interface Skull { readonly c: V3; readonly r: V3 }
 /** Where the hair grows: above a hairline that runs low at the nape, high on the brow. */
 function hairlineY(theta: number): number {
   const a = Math.abs(theta);
-  const knots: [number, number][] = [[0, 0.48], [0.7, 0.42], [1.2, 0.22], [1.55, 0.18], [1.9, 0.02], [2.4, -0.3], [Math.PI, -0.5]];
+  const knots: [number, number][] = [[0, 0.36], [0.7, 0.32], [1.2, 0.2], [1.55, 0.18], [1.9, 0.02], [2.4, -0.3], [Math.PI, -0.5]];
   for (let i = 1; i < knots.length; i++) {
     const [x0, y0] = knots[i - 1]!, [x1, y1] = knots[i]!;
     if (a <= x1) return y0 + (y1 - y0) * (a - x0) / (x1 - x0);
@@ -155,6 +171,15 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
     const s = len(q), inflate = 1 + lift / skull.r[1];
     let out = p;
     if (s < inflate) out = [skull.c[0] + q[0] / s * inflate * skull.r[0], skull.c[1] + q[1] / s * inflate * skull.r[1], skull.c[2] + q[2] / s * inflate * skull.r[2]];
+    // The face: hair from the front of the head goes round it, to the
+    // sides, never down over the eyes (a fringe stops short of them).
+    const f = local(out);
+    if (f[2] > 0.15 && f[1] < 0.45 && f[1] > -1.7) {
+      // Eased in below the hairline, so the hair parts round the brow
+      // instead of being cut square across it.
+      const clear = 0.8 * Math.min(1, (0.45 - f[1]) / 0.35);
+      if (Math.abs(f[0]) < clear) out = [Math.sign(f[0] || 1) * clear * skull.r[0] + skull.c[0], out[1], out[2]];
+    }
     if (out[1] < neckY + 0.2) {
       const b = body(out[1]);
       const ex = out[0] / (b.rx + lift), ez = (out[2] - b.cz) / (b.rz + lift);
@@ -166,33 +191,42 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
 
   const partX = style.part * skull.r[0] * 0.55;
   const guides: V3[][] = [];
-  const segments = style.length > 2.5 ? 16 : style.length > 1 ? 10 : 5;
+  /** Which guides are the fringe's: drawn with narrower cards. */
+  const fringes: boolean[] = [];
+  // A curl needs about eight points a turn, or it is drawn square.
+  const segments = style.curl ? Math.ceil(style.length / (style.curl.pitch / 8))
+    : style.length > 2.5 ? 16 : style.length > 1 ? 10 : 5;
   for (const root of roots) {
     const q = local(root);
     const n = outward(root);
     const lift = style.volume * (0.6 + 0.8 * rnd());
     const fringe = style.fringe && q[2] > 0.25 && Math.abs(q[0]) < style.fringe.width && q[1] > 0.2;
-    const length = (fringe ? style.fringe!.length : style.length) * (0.9 + 0.2 * rnd());
+    const length = (fringe ? style.fringe!.length : style.length) * (0.8 + 0.35 * rnd());
     // Combed away from the parting and back; a fringe brushed forwards.
     // Sideways from the parting only on the crown and the front; from the
     // back of the head the hair falls straight, or it parts down the nape.
     const sideways = Math.max(0, Math.min(1, (q[2] + 0.35) / 0.6)) * (0.4 + 0.8 * Math.max(0, q[1]));
     let comb: V3 = fringe ? [0, -0.15, 1]
-      : [Math.sign(root[0] - partX || 1) * sideways, -0.7, -0.55 * Math.max(0, q[1]) - 0.25];
+      : [Math.sign(root[0] - partX || 1) * sideways + (style.sweep ?? 0) * Math.max(0.3, sideways), -0.7, -0.55 * Math.max(0, q[1]) - 0.25 - 0.5 * Math.max(0, q[2])];
     comb = norm(sub(comb, [n[0] * dot(comb, n), n[1] * dot(comb, n), n[2] * dot(comb, n)]));
-    let p = add(root, n, 0.02);
+    // Rooted on the skin; the lift (volume) builds over the first steps, or
+    // the root ends of the cards stood off the brow as a step.
+    let p = add(root, n, 0.004);
     let dir = comb;
     const pts: V3[] = [p];
     const step = length / segments;
     let gathered = false;
+    const gatherAt: V3 | null = style.gather
+      ? (style.gather.twin && root[0] < 0 ? [-style.gather.at[0], style.gather.at[1], style.gather.at[2]] : [...style.gather.at] as V3)
+      : null;
     for (let i = 0; i < segments; i++) {
       if (style.gather && !fringe) {
-        const g = style.gather.at as V3;
+        const g = gatherAt!;
         const toward = sub(g, p);
         if (!gathered && len(toward) > step * 1.1) dir = norm(add(norm(toward), outward(p), 0.15));
         else {
           gathered = true;
-          if (style.gather.bun) break;
+          if (style.gather.bun || style.gather.braid) break;
           dir = norm(add(dir, [0, -1, -0.15], 0.5));
         }
       } else {
@@ -200,12 +234,12 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
         // Below the skull, hair behind the ears closes in like a curtain.
         if (p[1] < skull.c[1] && p[2] < skull.c[2]) dir = norm(add(dir, [-p[0] / skull.r[0], 0, 0], 0.18));
       }
-      p = collide(add(p, dir, step), lift);
+      p = collide(add(p, dir, step), lift * Math.min(1, (i + 1) / 3));
       pts.push(p);
     }
     if (style.gather?.bun) {
       // Wound round the gathering point: a coil facing back.
-      const g = style.gather.at as V3, r = style.gather.bun;
+      const g = gatherAt!, r = style.gather.bun;
       const a0 = rnd() * Math.PI * 2;
       for (let i = 1; i <= 8; i++) {
         const a = a0 + i * 0.7, rr = r * (0.55 + 0.45 * Math.sin(i * 0.4));
@@ -213,14 +247,33 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
       }
     }
     if (style.gather?.tail && gathered) {
-      // The tail: a bundle round its own axis.
-      const g = style.gather.at as V3;
-      const off: V3 = [(rnd() - 0.5) * 0.35, 0, (rnd() - 0.5) * 0.25];
-      const tail = style.gather.tail * (0.85 + 0.3 * rnd());
-      let tp = add(g, off);
-      for (let i = 1; i <= 10; i++) {
-        tp = collide(add(tp, norm([off[0] * 0.3, -1, -0.12 - off[2] * 0.3]), tail / 10), 0.05);
-        pts.push(tp);
+      const g = gatherAt!;
+      const tail = style.gather.tail * (style.gather.braid ? 1 : 0.85 + 0.3 * rnd());
+      if (style.gather.braid) {
+        // The strands stop at the tie; the plait itself is built below.
+        void tail;
+      } else {
+        // The tail: a bundle round its own axis.
+        const off: V3 = [(rnd() - 0.5) * 0.35, 0, (rnd() - 0.5) * 0.25];
+        let tp = add(g, off);
+        for (let i = 1; i <= 10; i++) {
+          tp = collide(add(tp, norm([off[0] * 0.3, -1, -0.12 - off[2] * 0.3]), tail / 10), 0.05);
+          pts.push(tp);
+        }
+      }
+    }
+    if (style.curl) {
+      // Corkscrews: the strand wound round its own line, growing in from the root.
+      const phase = rnd() * Math.PI * 2;
+      const radius = style.curl.radius * (0.7 + 0.6 * rnd());
+      let s = 0;
+      for (let i = 1; i < pts.length; i++) {
+        s += len(sub(pts[i]!, pts[i - 1]!));
+        const t = norm(sub(pts[i]!, pts[i - 1]!));
+        const out = outward(pts[i]!);
+        const side = norm(cross(t, out)), up = norm(cross(side, t));
+        const a = 2 * Math.PI * s / style.curl.pitch + phase, k = Math.min(1, s / 0.4) * radius;
+        pts[i] = add(add(pts[i]!, side, Math.cos(a) * k), up, Math.sin(a) * k);
       }
     }
     if (style.wave) {
@@ -235,17 +288,19 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
       }
     }
     guides.push(pts);
+    fringes.push(!!fringe);
   }
 
   // Cards: a strip along each guide facing out of the head; a second,
   // turned and lifted, for body. UVs: one of four strand strips across, root
   // (v = 0) to tip.
   const positions: number[] = [], uvs: number[] = [], index: number[] = [];
-  for (const pts of guides) {
+  for (const [g, pts] of guides.entries()) {
     for (let layer = 0; layer < style.layers; layer++) {
       const strip = Math.floor(rnd() * 4);
       const u0 = strip / 4 + 0.01, u1 = (strip + 1) / 4 - 0.01;
       const first = positions.length / 3;
+      const fine = fringes[g] ? 0.55 : 1;
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i]!;
         const t = i / (pts.length - 1);
@@ -254,10 +309,13 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
         let side = norm(cross(along, out));
         let centre = add(p, out, 0.015);
         if (layer === 1) {
-          side = norm(add(side, out, 0.55));
-          centre = add(p, out, 0.05);
+          // Flat on the head at the root, turning out along the length:
+          // turned from the root, the cards stood up on the crown like fins.
+          const open = Math.min(1, t * 2.5);
+          side = norm(add(side, out, 0.5 * open));
+          centre = add(p, out, 0.015 + 0.035 * open);
         }
-        const w = style.cardWidth * (layer === 1 ? 0.8 : 1) * (1 - 0.45 * t * t) / 2;
+        const w = fine * style.cardWidth * (layer === 1 ? 0.8 : 1) * (1 - 0.65 * t * t) / 2;
         const a = add(centre, side, -w), b = add(centre, side, w);
         positions.push(...a, ...b);
         uvs.push(u0, t * 0.98 + 0.01, u1, t * 0.98 + 0.01);
@@ -283,7 +341,11 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
       const p = at(v);
       positions.push(...add(p, outward(p), 0.012));
       const q = local(p);
-      uvs.push(0.02 + 0.2 * (Math.atan2(q[0], q[2]) / Math.PI * 0.5 + 0.5), 0.012);
+      // Inside the hairline the solid band; on the ring past it the sparse
+      // tips of the strands, so the hairline frays instead of ending in a
+      // hard edge (a headband across the brow).
+      const u = 0.02 + 0.2 * (Math.atan2(q[0], q[2]) / Math.PI * 0.5 + 0.5);
+      uvs.push(u, scalpSet.has(v) ? 0.012 : 0.93);
     }
     return k;
   };
@@ -291,11 +353,52 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
     const a = base.faces[f]!, b = base.faces[f + 1]!, c = base.faces[f + 2]!, d = base.faces[f + 3]!;
     // The cap reaches a ring past the hairline so its edge hides under the cards.
     const near = [a, b, c, d].filter((v) => scalpSet.has(v)).length;
-    if (near < 2 || ![a, b, c, d].every((v) => headSet.has(v))) continue;
+    if (near < 1 || ![a, b, c, d].every((v) => headSet.has(v))) continue;
     index.push(capVertex(a), capVertex(b), capVertex(c));
     if (d !== c) index.push(capVertex(a), capVertex(c), capVertex(d));
   }
   void capStart;
+
+  // A plait: a chain of lobes from the tie down, each a short tube tilted
+  // alternately left and right - the chevrons of a three-strand braid seen
+  // from behind - narrowing to the end, strands running along each lobe.
+  if (style.gather?.braid) {
+    const ties: V3[] = [[...style.gather.at] as V3];
+    if (style.gather.twin) ties.push([-style.gather.at[0], style.gather.at[1], style.gather.at[2]]);
+    for (const tie of ties) {
+      const lobes = Math.max(4, Math.round(style.gather.tail / 0.22));
+      let axis: V3 = [...tie];
+      const down: V3 = norm([tie[0] * 0.08, -1, -0.12]);
+      for (let k = 0; k < lobes; k++) {
+        const t = k / lobes;
+        const r = 0.2 * (1 - 0.55 * t);
+        axis = collide(add(axis, down, 0.22 * (1 - 0.3 * t)), r * 0.8);
+        const back = norm([axis[0] * 0.3, 0, -1]);
+        const side = norm(cross(down, back));
+        const lean = k % 2 ? 1 : -1;
+        const d = norm(add(down, side, 0.75 * lean));
+        const e1 = norm(cross(d, back)), e2 = norm(cross(e1, d));
+        const centre = add(axis, side, -0.35 * r * lean);
+        const strip = Math.floor(rnd() * 4);
+        const first = positions.length / 3;
+        const A = 6, L = 5, length = r * 2.6;
+        for (let i = 0; i <= L; i++) {
+          const v = i / L;
+          const rr = r * Math.pow(Math.sin(Math.PI * v), 0.6) + 0.01;
+          for (let j = 0; j <= A; j++) {
+            const th = (j / A) * Math.PI * 2;
+            const p = add(add(add(centre, d, (v - 0.5) * length), e1, Math.cos(th) * rr), e2, Math.sin(th) * rr * 0.65);
+            positions.push(...p);
+            uvs.push(strip / 4 + 0.01 + (j / A) * 0.23, 0.05 + v * 0.6);
+          }
+        }
+        for (let i = 0; i < L; i++) for (let j = 0; j < A; j++) {
+          const k0 = first + i * (A + 1) + j, k1 = k0 + A + 1;
+          index.push(k0, k1, k0 + 1, k0 + 1, k1, k1 + 1);
+        }
+      }
+    }
+  }
 
   // Pinned to the three nearest scalp (and head) vertices.
   const n = positions.length / 3;
