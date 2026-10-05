@@ -46,6 +46,9 @@ import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS, blendPackedFrames } from '../citi
 /** Principal components carried per body: 16 keep a body within about 1.5 cm of the full model. */
 export const SHAPES = 16;
 const SHAPE_WIDTH = 4096;
+/** Rows of a person's own face (`procFace`) are this wide; the vertex-to-face index (`procFaceIndex`) this wide. */
+const FACE_WIDTH = 2048;
+const FACE_INDEX_WIDTH = 4096;
 const COVER_WIDTH = 4096;
 /** How far skin under a garment sinks, metres. */
 const SINK = 0.025;
@@ -102,8 +105,14 @@ interface BodyClass {
     procShape: { value: DataTexture };
     procCover: { value: DataTexture };
     procCoverRows: { value: number };
+    procFace: { value: DataTexture };
+    procFaceIndex: { value: DataTexture };
+    procFaceRows: { value: number };
   };
   palette: Float32Array;
+  /** Each person's own face (their regional sliders: nose, jaw, eyes, mouth...) as moves of the head's vertices, `faceRows` rows each. */
+  face: Float32Array;
+  readonly faceVerts: Int32Array;
   coef: Float32Array;
   rows: number;
   capacity: number;
@@ -183,6 +192,9 @@ export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
   // Half the people in a grown style, half in a stock one that passed the
   // audit (`randomPerson`'s curated lists).
   if (!hair || ((h >>> 20) & 1) === 0) return dressed;
+  // Children keep the stock styles (the player: the grown ones on a child
+  // "nem usa isso").
+  if (yearsFromAge(spec.body.age) < 14) return dressed;
   // Hair grown procedurally (`people/hair/procedural.ts`): older women
   // shorter or up, girls never in a bun, older men short.
   const years = yearsFromAge(spec.body.age);
@@ -203,6 +215,9 @@ function skinningChunk(): string {
 uniform sampler2D procBones;
 uniform sampler2D procCoef;
 uniform sampler2D procShape;
+uniform sampler2D procFace;
+uniform sampler2D procFaceIndex;
+uniform float procFaceRows;
 uniform mat4 bindMatrix;
 uniform mat4 bindMatrixInverse;
 attribute float aRow;
@@ -214,8 +229,14 @@ mat4 getBoneMatrix(const in float i) {
   return mat4(texelFetch(procBones, ivec2(x, y), 0), texelFetch(procBones, ivec2(x + 1, y), 0),
     texelFetch(procBones, ivec2(x + 2, y), 0), texelFetch(procBones, ivec2(x + 3, y), 0));
 }
+vec3 procFaceDelta(int v) {
+  float idx = texelFetch(procFaceIndex, ivec2(v % ${FACE_INDEX_WIDTH}, v / ${FACE_INDEX_WIDTH}), 0).r;
+  if (idx < 0.0) return vec3(0.0);
+  int t = int(idx) + int(aRow) * int(procFaceRows) * ${FACE_WIDTH};
+  return texelFetch(procFace, ivec2(t % ${FACE_WIDTH}, t / ${FACE_WIDTH}), 0).xyz;
+}
 vec3 procDelta(int v) {
-  vec3 d = vec3(0.0);
+  vec3 d = procFaceDelta(v);
   int row = int(aRow);
   for (int k = 0; k < ${SHAPES}; k += 4) {
     vec4 c = texelFetch(procCoef, ivec2(k / 4, row), 0);
@@ -251,7 +272,7 @@ function patchVertex(shader: { vertexShader: string }, kind: Kind): void {
     .replace('#include <begin_vertex>', `#include <begin_vertex>
 transformed += procShapeDelta();
 ${kind === 'skin' ? 'transformed -= normalize(normal) * ' + SINK.toFixed(4) + ' * max(max(procCovered(aWorn.x), procCovered(aWorn.y)), max(procCovered(aWorn.z), procCovered(aWorn.w)));' : ''}
-${kind === 'face' ? 'transformed += normalize(normal) * 0.002;' : ''}`);
+`);
 }
 
 function uniformsInto(shader: { uniforms: Record<string, unknown> }, cls: BodyClass, mesh: { bindMatrix: Matrix4; bindMatrixInverse: Matrix4 }): void {
@@ -269,11 +290,21 @@ function uniformsInto(shader: { uniforms: Record<string, unknown> }, cls: BodyCl
  * multisampling (alpha to coverage) rather than cut at a threshold, and each
  * vertex's own fade (`aFade`) feathering the hairline.
  */
-function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Texture | null, grown = false): Material {
+function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Texture | null, grown = false, lash = false): Material {
   const material = new MeshStandardMaterial({ roughness: kind === 'skin' ? 0.5 : grown ? 0.6 : 0.85, metalness: 0, side: DoubleSide });
   material.defines = { USE_SKINNING: '' };
   if (grown) { material.alphaTest = 0.02; material.alphaToCoverage = true; }
-  else if (kind === 'hair' || kind === 'face') { material.alphaTest = 0.35; material.alphaToCoverage = true; }
+  // Brows and lashes: a soft edge (alpha to coverage over a low cut) - at
+  // 0.35 their hairs merged into one hard black band.
+  // Brows and lashes stay where the item puts them, on the skin: winning
+  // the depth test by a depth bias only (polygon offset, a decal's), never
+  // by moving them - pushed 4 mm towards the camera, from the side the brow
+  // stood off the face.
+  else if (kind === 'face') {
+    material.alphaTest = 0.08; material.alphaToCoverage = true;
+    material.polygonOffset = true; material.polygonOffsetFactor = -2; material.polygonOffsetUnits = -8;
+  }
+  else if (kind === 'hair') { material.alphaTest = 0.35; material.alphaToCoverage = true; }
   if (kind === 'skin') material.alphaTest = 0.5;
   const mesh = cls.rig.mesh;
   material.onBeforeCompile = (shader) => {
@@ -284,13 +315,6 @@ function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Te
     shader.vertexShader = `attribute vec4 aDye; attribute float eyeMask; attribute float aFade; varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask; varying float vFade;\n${shader.vertexShader}`
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vProcDye = aDye; vProcUv = uv; vFade = aFade; vSkinMask = ${kind === 'skin' ? '1.0 - eyeMask' : '0.0'};`);
-    if (kind === 'face') {
-      // Brows and lashes lie on the skin: lifted off it and biased towards
-      // the eye, as decals are, or the skin wins the depth test over them.
-      shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
-mvPosition.z += 0.004 * length(instanceMatrix[0].xyz);
-gl_Position = projectionMatrix * mvPosition;`);
-    }
     const hair = kind === 'hair' ? '1.0' : '0.0';
     const cloth = kind === 'cloth' ? '1.0' : '0.0';
     shader.fragmentShader = `#define appearanceDetail 1.0
@@ -314,16 +338,31 @@ ${shader.fragmentShader}`
   float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
   tone *= mix(0.6, 1.0, smoothstep(0.05, 0.55, facing));
   texel = vec4(tone, coverage);` : kind === 'skin' ? `
-  if (vSkinMask < 0.5) texel = texture2D(procEyes, vProcUv);
+  if (vSkinMask < 0.5) {
+    texel = texture2D(procEyes, vProcUv);
+    // Iris less garish (the packs' are oversaturated: cat's eyes), sclera
+    // off-white, never paper white.
+    float l = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
+    texel.rgb = mix(vec3(l), texel.rgb, 0.62) * vec3(0.93, 0.9, 0.88);
+  }
   else texel = vec4(texel.rgb * vProcDye.rgb, 1.0);` : `
   if (vProcDye.a > 0.5) {
     float l = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
     texel.rgb = vProcDye.rgb * (0.45 + 1.1 * l);
-  }`}
+  }
+  ${kind === 'face' ? `
+  // Brows and lashes a shade lighter than the hair, and thinned: at the
+  // hair's own darkness, fully opaque, they read as painted black bars.
+  ${lash ? `
+  texel.rgb = vec3(0.05, 0.038, 0.03) + texel.rgb * 0.25;
+  texel.a = smoothstep(0.15, 0.95, texel.a) * 0.78;` : `
+  texel.rgb = texel.rgb * 1.35 + vec3(0.035, 0.028, 0.022);
+  texel.a = smoothstep(0.22, 0.95, texel.a) * 0.8;`}` : ''}`}
   diffuseColor *= texel;
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 ${kind === 'skin' ? 'if (vSkinMask < 0.5) roughnessFactor = 0.08;' : ''}
+${lash ? 'roughnessFactor = 1.0;' : ''}
 ${grown ? 'roughnessFactor = max(0.55, roughnessFactor + (texture2D(procMap, vProcUv).b - 0.5) * 0.16 + (1.0 - texture2D(procMap, vProcUv).g) * 0.06);' : ''}`)
       .replace('#include <lights_physical_pars_fragment>', personLighting(kind === 'hair', kind === 'cloth'))
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -336,9 +375,19 @@ ${grown ? 'roughnessFactor = max(0.55, roughnessFactor + (texture2D(procMap, vPr
   personSparkle = fract(sin(dot(floor(vProcUv * vec2(160.0, 12.0)), vec2(12.9898, 78.233))) * 43758.5453);
 }`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
-reflectedLight.indirectSpecular *= personIndirect();`);
+reflectedLight.indirectSpecular *= personIndirect();
+${kind === 'skin' ? `
+// The eye's wet cornea: a sharp catchlight of the key light and a soft one
+// of the sky above - without an environment to mirror the eye had none, and
+// read as dead.
+if (vSkinMask < 0.5) {
+  vec3 R = reflect(-normalize(vViewPosition), normal);
+  vec3 key = normalize((viewMatrix * vec4(-0.45, 0.8, 0.5, 0.0)).xyz);
+  float glint = pow(max(dot(R, key), 0.0), 380.0) * 2.4 + pow(max(dot(R, (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz), 0.0), 6.0) * 0.06;
+  reflectedLight.directSpecular += vec3(glint);
+}` : ''}`);
   };
-  material.customProgramCacheKey = () => `procedural-person-${kind}${grown ? '-grown' : ''}`;
+  material.customProgramCacheKey = () => `procedural-person-${kind}${grown ? '-grown' : ''}${lash ? '-lash' : ''}`;
   return material;
 }
 
@@ -453,6 +502,17 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         items.set(name, loaded);
         return loaded;
       }
+      if (!style && /^eyebrow|^eyelash/.test(name)) {
+        // Brows and lashes nearer the skin than their files place them: the
+        // brow stood off the face as a slab, the lashes stuck out like legs.
+        // Each vertex's offset from the skin it is pinned to, shortened.
+        loaded = loadProxyItem(name).then((it) => {
+          const k = name.startsWith('eyebrow') ? 0.2 : 0.62;
+          return { ...it, pack: { ...it.pack, offsets: it.pack.offsets.map((o) => o * k) } };
+        });
+        items.set(name, loaded);
+        return loaded;
+      }
       loaded = style ? setup().then(({ assets: a, morpher: mo }) => ({
         pack: generateHair(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
           joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces }),
@@ -553,6 +613,21 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         jointBasis[(i * SHAPES + k) * 3 + c] = sum / verts.length;
       }
     });
+    // The head's vertices (helpers too: the eyes, brows and lashes are pinned
+    // to them), each a slot in a person's face row.
+    const headBone = a.mesh.boneNames.indexOf('head');
+    const faceList: number[] = [];
+    const faceIndexPixels = new Float32Array(FACE_INDEX_WIDTH * Math.ceil(vertexCount / FACE_INDEX_WIDTH)).fill(-1);
+    for (let v = 0; v < vertexCount; v++) {
+      let w = 0;
+      for (let k = 0; k < 4; k++) if (a.mesh.joints[v * 4 + k] === headBone) w += a.mesh.weights[v * 4 + k]! / 65535;
+      if (w > 0.25) { faceIndexPixels[v] = faceList.length; faceList.push(v); }
+    }
+    const faceRows = Math.ceil(faceList.length / FACE_WIDTH);
+    const faceIndex = new DataTexture(faceIndexPixels, FACE_INDEX_WIDTH, faceIndexPixels.length / FACE_INDEX_WIDTH, RedFormat, FloatType);
+    faceIndex.minFilter = faceIndex.magFilter = NearestFilter;
+    faceIndex.needsUpdate = true;
+    const face = new Float32Array(FACE_WIDTH * 4 * faceRows * ROW_START);
     const width = bones * SKIN_BONE_FLOATS;
     const palette = new Float32Array(width * ROW_START);
     const coef = new Float32Array(SHAPES * ROW_START);
@@ -569,7 +644,11 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         procShape: { value: shapeTexture },
         procCover: { value: cover },
         procCoverRows: { value: Math.ceil(vertexCount / COVER_WIDTH) },
+        procFace: { value: rowTexture(face, FACE_WIDTH * 4, faceRows * ROW_START) },
+        procFaceIndex: { value: faceIndex },
+        procFaceRows: { value: faceRows },
       },
+      face, faceVerts: Int32Array.from(faceList),
       palette, coef, rows: 0, capacity: ROW_START, cover: new Map(), body,
       skins: new Map(), pieces: new Map(), people: [],
     };
@@ -617,6 +696,12 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     cls.uniforms.procCoef.value.dispose();
     cls.uniforms.procBones.value = rowTexture(palette, width, capacity);
     cls.uniforms.procCoef.value = rowTexture(coef, SHAPES, capacity);
+    const faceRows = cls.uniforms.procFaceRows.value;
+    const face = new Float32Array(FACE_WIDTH * 4 * faceRows * capacity);
+    face.set(cls.face);
+    cls.face = face;
+    cls.uniforms.procFace.value.dispose();
+    cls.uniforms.procFace.value = rowTexture(face, FACE_WIDTH * 4, faceRows * capacity);
   };
 
   const makePiece = (cls: BodyClass, name: string, kind: Kind, geometry: BufferGeometry, map: Texture | null, eyes: Texture | null, grown = false): Piece => {
@@ -631,7 +716,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       geometry.setAttribute('aWorn', worn);
     }
     if (!geometry.getAttribute('aFade')) geometry.setAttribute('aFade', new Float32BufferAttribute(new Float32Array(geometry.getAttribute('position').count).fill(1), 1));
-    const mesh = new InstancedMesh(geometry, pieceMaterial(cls, kind, map, eyes, grown), capacity);
+    const mesh = new InstancedMesh(geometry, pieceMaterial(cls, kind, map, eyes, grown, /lash/.test(name)), capacity);
     mesh.count = 0;
     mesh.frustumCulled = false;
     mesh.castShadow = kind !== 'face';
@@ -643,8 +728,13 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     return { name, kind, mesh, rows, dyes, worn, tints: null, people: [], vertices: geometry.getAttribute('position').count };
   };
 
+  /**
+   * The skin for a person: never one of the made-up skins - their painted
+   * eye shadow and dark lipstick gave every woman red, sore-looking eyes.
+   */
+  const bareSkin = (person: PersonSpec): ReturnType<typeof skinChoice> => skinChoice({ ...person, look: { ...person.look, makeup: 0 } });
   const skinPiece = async (cls: BodyClass, person: PersonSpec): Promise<Piece> => {
-    const choice = skinChoice(person);
+    const choice = bareSkin(person);
     let piece = cls.skins.get(choice.name);
     if (!piece) {
       const [skin, eyes] = await skinTextures(choice.name, choice.url, choice.eyeFile);
@@ -810,6 +900,18 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       const c = mo.coefficients(level);
       for (let k = 0; k < SHAPES; k++) cls.coef[row * SHAPES + k] = (c[k] ?? 0) - (cls.coefficients[k] ?? 0);
       cls.uniforms.procCoef.value.needsUpdate = true;
+      // Their own face: the regional sliders on the class body, posed as it
+      // is - the shape basis carries the macro build, this the features.
+      if (Object.keys(spec.features).length) {
+        const moved = cls.rig.deltas!(mo.shape(cls.base, spec.features));
+        const at = row * cls.uniforms.procFaceRows.value * FACE_WIDTH * 4;
+        cls.faceVerts.forEach((v, i) => {
+          cls.face[at + i * 4] = moved[v * 3]!;
+          cls.face[at + i * 4 + 1] = moved[v * 3 + 1]!;
+          cls.face[at + i * 4 + 2] = moved[v * 3 + 2]!;
+        });
+        cls.uniforms.procFace.value.needsUpdate = true;
+      }
       const tall = bodyHeight(mo.shape(spec.body), a.bodyRange);
       const level0 = bodyHeight(mo.shape(level), a.bodyRange);
       const scale = tall / Math.max(1e-3, level0);
@@ -825,7 +927,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       }
       const covers = worn.filter(([, it]) => COVERING.has(it.pack.kind) && !it.transparent)
         .map(([nm, it]) => coverRow(cls, nm, it)).slice(0, 4);
-      place(skin, person, skinChoice(spec).tint, covers);
+      place(skin, person, bareSkin(spec).tint, covers);
       const hair = new Color(spec.look.hair);
       // The outfit itself is dyed, never its shoes or glasses; hair, brows
       // and lashes take the hair colour.
