@@ -219,6 +219,10 @@ export interface Ragdolls {
   absorb(list: readonly Casualty[], citizens: RagdollCitizens, world: RagdollWorld): void;
   /** People inside a struck building, thrown out of it - through its walls and windows - from the floor they were on. */
   fling(list: readonly Occupant[], citizens: RagdollCitizens, world: RagdollWorld): void;
+  /** A drop of blood on the ground at world (x, y) (a trail behind somebody bleeding). */
+  drip(x: number, y: number, z: number, size: number): void;
+  /** Called where a body is torn apart (world x, y, height z; the way it flew; how fast): the renderer throws its pieces. */
+  onGore: ((x: number, y: number, z: number, dirX: number, dirY: number, speed: number, kind: 'torn' | 'dead') => void) | null;
   /**
    * Somebody falling (a `fall` pause), from the pose they were last drawn in:
    * tripping forwards, or knocked towards `away` (world angle) by a punch or
@@ -245,6 +249,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   const seen = new Set<string>();
   let clock = 0;
 
+  const api: { onGore: Ragdolls['onGore'] } = { onGore: null };
   const bleed = (x: number, y: number, z: number, size: number, spread: number): void => {
     if (decals.length >= 400) decals.shift();
     decals.push({ x, y, z, angle: Math.random() * Math.PI * 2, size, spread, age: 0 });
@@ -430,15 +435,22 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         const kick = new Vector3(Math.random() - 0.5, 0.3 + Math.random() * 0.6, Math.random() - 0.5).multiplyScalar(speed * 0.5).addScaledVector(dir, speed * 0.3);
         for (const k of limb) body.o[k]!.addScaledVector(kick, -STEP);
       }
-      exhaust.burst(chest.x, -chest.z, chest.y, 90, 4, m(0.6), m(0.18), 1.4);
-      for (let k = 0; k < 9; k++) {
-        const a = Math.random() * Math.PI * 2, r = m(1 + Math.random() * 4);
-        bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.4 + Math.random() * 0.8), 0);
+      exhaust.burst(chest.x, -chest.z, chest.y, 160, 4, m(0.8), m(0.2), 1.6);
+      for (let k = 0; k < 18; k++) {
+        const a = Math.random() * Math.PI * 2, r = m(1 + Math.random() * 6);
+        bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.5 + Math.random() * 1.1), 0);
       }
-      bleed(c.x, c.y, groundHere, m(2.6), 1.5);
+      bleed(c.x, c.y, groundHere, m(3.4), 1.8);
+      // Pieces of them: an arm, a leg, and what was inside, flung over the street.
+      api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed, 'torn');
     } else if (c.kind === 'dead') {
-      exhaust.burst(chest.x, -chest.z, chest.y, 26, 4, m(0.3), m(0.14), 1.1);
-      bleed(c.x, c.y, groundHere, m(0.7), 0);
+      exhaust.burst(chest.x, -chest.z, chest.y, 50, 4, m(0.4), m(0.16), 1.2);
+      bleed(c.x, c.y, groundHere, m(1.2), 0.6);
+      for (let k = 0; k < 4; k++) {
+        const a = Math.random() * Math.PI * 2, r = m(0.8 + Math.random() * 2.5);
+        bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.3 + Math.random() * 0.5), 0);
+      }
+      if (Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
     }
     add(body);
   };
@@ -470,6 +482,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         if (alive?.phase === 'rise' && alive.t >= RISE_BLEND + alive.clip && !down(alive.id)) bodies.splice(i, 1);
       }
     },
+    drip(x, y, z, size) { bleed(x, y, z, size, 0); },
+    get onGore() { return api.onGore; },
+    set onGore(f) { api.onGore = f; },
     fling(list, citizens, world) {
       const loaded = citizens.loadedIndices();
       if (!loaded.length) return;

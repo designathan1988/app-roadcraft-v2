@@ -194,6 +194,49 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
    * starts from when that person is struck (`ragdoll.ts`). Kept a few seconds
    * after they were last drawn.
    */
+  /**
+   * A limb lost: its lower half's bones (forearm and hand, or calf and foot)
+   * drawn shrunk to the elbow or the knee, which now ends in a stump - the
+   * cut where the blades of skin are least (a joint, not mid-bone).
+   */
+  const maimBones = new WeakMap<CitizenBatch, Record<string, { bones: number[]; parent: number; joint: Vector3 } | null>>();
+  const maimTmp = new Matrix4(), maimP = new Vector3();
+  const maim = (batch: CitizenBatch, offset: number, limb: 'armL' | 'armR' | 'legL' | 'legR'): void => {
+    let info = maimBones.get(batch);
+    if (!info) {
+      const source = batch.sources[0];
+      info = {};
+      if (source) {
+        const bones = source.skeleton.bones;
+        const parents = bones.map((b) => bones.indexOf(b.parent as never));
+        for (const [key, name] of [['armL', 'Bip01_L_Forearm'], ['armR', 'Bip01_R_Forearm'], ['legL', 'Bip01_L_Calf'], ['legR', 'Bip01_R_Calf']] as const) {
+          const root = bones.findIndex((b) => b.name === name);
+          if (root < 0) { info[key] = null; continue; }
+          const set = [root];
+          for (let i = 0; i < bones.length; i++) {
+            let j = parents[i]!;
+            while (j >= 0 && j !== root) j = parents[j]!;
+            if (j === root) set.push(i);
+          }
+          const joint = new Vector3().setFromMatrixPosition(maimTmp.copy(source.skeleton.boneInverses[root]!).invert());
+          info[key] = { bones: set, parent: parents[root]!, joint };
+        }
+      }
+      maimBones.set(batch, info);
+    }
+    const which = info[limb];
+    if (!which || which.parent < 0) return;
+    const px = batch.pixels;
+    maimTmp.fromArray(px, offset + which.parent * SKIN_BONE_FLOATS);
+    maimP.copy(which.joint).applyMatrix4(maimTmp);
+    for (const i of which.bones) {
+      const o = offset + i * SKIN_BONE_FLOATS;
+      px.fill(0, o, o + 16);
+      px[o + 12] = maimP.x; px[o + 13] = maimP.y; px[o + 14] = maimP.z; px[o + 15] = 1;
+    }
+  };
+  /** Somebody drawn bleeding (a limb lost): the caller drips blood where they walk. */
+  let onBleed: ((id: number, x: number, y: number, z: number) => void) | null = null;
   const lastPose = new Map<number, { index: number; palette: Float32Array; transform: Matrix4; frame: number }>();
   const plays: GaitPlay[] = [];
   const transform = new Object3D();
@@ -760,6 +803,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       emit(batch, mixClips, mixPhases, mixWeights, x, deck, y, gaitHeading(gait), m(scale), lean, ground,
         lod === 0 ? faceAt(ped.id, time, ped.panic ? (ped.gesture?.kind === 'crouch' ? 'cry' : 'panic') : ped.gesture?.kind, CROWD[index]?.person?.mood) : undefined);
+      if (ped.maimed) {
+        maim(batch, (batch.count - 1) * batch.width, ped.maimed);
+        onBleed?.(ped.id, x, y, deck);
+      }
       {
         let kept = lastPose.get(ped.id);
         if (!kept || kept.palette.length !== batch.width) {
@@ -971,6 +1018,8 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
      * of skin matrices, and the clip's length in seconds; null until the clip
      * is baked (asking starts it).
      */
+    /** Called for every bleeding walker drawn (`maimed`), with where they are. */
+    set onBleed(f: ((id: number, x: number, y: number, z: number) => void) | null) { onBleed = f; },
     /** Bodies loaded and ready to draw, by index. */
     loadedIndices(): number[] {
       return [...batches.entries()].filter(([, b]) => b.clips.length > 0).map(([i]) => i);

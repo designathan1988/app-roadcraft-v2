@@ -58,6 +58,8 @@ export interface PedView {
   readonly id: number;
   /** Terrified, running from a blow (`impact`): the face screams. */
   panic?: boolean;
+  /** A limb lost to a blow, the rest of the walk on without it (and bleeding). */
+  maimed?: 'armL' | 'armR' | 'legL' | 'legR';
   /** Position and heading at the end of this tick, and at the end of the last. */
   x: number;
   y: number;

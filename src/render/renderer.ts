@@ -518,6 +518,36 @@ export function createSceneRenderer(
     // sank to the knees in a raised terrace).
     (x, y) => {
       const lot = buildings.anyLotHeightAt(x, y);
+  // A body torn apart: a limb or two and what was inside thrown over the
+  // street, where they stay; blood spraying off them as they fly.
+  ragdolls.onGore = (x, y, z, dx, dy, speed, kind) => {
+    const skin = [0xc89878, 0x9c6b4e, 0x6e4632, 0xe0b49a][Math.floor(Math.random() * 4)]!;
+    const limbs = kind === 'torn' ? 1 + Math.floor(Math.random() * 3) : 1;
+    for (let k = 0; k < limbs; k++) {
+      const v = new Vector3(dx * speed * (0.4 + Math.random() * 0.6) + (Math.random() - 0.5) * m(5), m(3 + Math.random() * 5),
+        -dy * speed * (0.4 + Math.random() * 0.6) + (Math.random() - 0.5) * m(5));
+      const leg = Math.random() < 0.5;
+      blast.debris({ shape: 'cylinder', kind: 'flesh', color: skin, at: new Vector3(x, z, -y),
+        size: new Vector3(m(leg ? 0.075 : 0.05), m(leg ? 0.85 : 0.6), m(leg ? 0.075 : 0.05)), velocity: v,
+        spin: new Vector3((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 12) });
+    }
+    const organs = kind === 'torn' ? 6 + Math.floor(Math.random() * 6) : 2;
+    for (let k = 0; k < organs; k++) {
+      const s0 = m(0.08 + Math.random() * 0.14);
+      blast.debris({ shape: Math.random() < 0.5 ? 'cylinder' : 'box', kind: 'flesh', color: [0x6e0d10, 0x8c2a32, 0xa04a55, 0x5a1414][k % 4]!,
+        at: new Vector3(x, z, -y), size: new Vector3(s0, s0 * (0.6 + Math.random()), s0 * (0.7 + Math.random() * 0.6)),
+        velocity: new Vector3(dx * speed * 0.5 + (Math.random() - 0.5) * m(6), m(2 + Math.random() * 4), -dy * speed * 0.5 + (Math.random() - 0.5) * m(6)) });
+    }
+  };
+  // A trail of blood behind those who lost a limb: a drop every metre or so.
+  const lastDrip = new Map<number, { x: number; y: number }>();
+  agents.setBleed((id, x, y, z) => {
+    const last = lastDrip.get(id);
+    if (last && Math.hypot(last.x - x, last.y - y) < m(0.9)) return;
+    lastDrip.set(id, { x, y });
+    if (lastDrip.size > 500) lastDrip.clear();
+    ragdolls.drip(x + (Math.random() - 0.5) * m(0.3), y + (Math.random() - 0.5) * m(0.3), z + m(0.02), m(0.25 + Math.random() * 0.35));
+  });
       const ground = terrain.renderedHeightAt(x, y);
       return Number.isFinite(lot) ? Math.max(lot, ground) : ground;
     },

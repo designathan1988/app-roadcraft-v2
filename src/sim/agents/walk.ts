@@ -157,6 +157,8 @@ interface Walker {
   fright?: number;
   /** When somebody running in panic trips and falls (age, seconds), once. */
   tripAt?: number | undefined;
+  /** A limb lost to a blow (`PedView.maimed`). */
+  maimed?: 'armL' | 'armR' | 'legL' | 'legR';
 }
 
 interface State {
@@ -518,6 +520,10 @@ export function createAgentWalkEngine(): PedestrianEngine {
         }
         p.act = { kind: 'fall', from: p.age, until: p.age + 9, faceX: x, faceY: y };
         p.v = 0;
+        // Near the blow, some lose an arm or a leg and go on without it.
+        if (d < kill * 1.5 && !p.maimed && (personHash(p.id ^ 0x3c1) & 3) !== 0) {
+          p.maimed = (['armL', 'armR', 'legL', 'legR'] as const)[personHash(p.id ^ 0x77) & 3]!;
+        }
         recordCasualty(w, { ...who, kind: 'knocked', power: Math.max(0, 1 - (d - kill) / kill) });
       }
       prune(s);
@@ -831,7 +837,7 @@ function stepWalkers(w: SimWorld): void {
     // --- the speed: the room ahead in its own stripe, the wait, and the turn still to make.
     const crossing = crossingOf(w, st.way) !== null;
     const jammed = p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER);
-    let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1);
+    let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1) * (p.maimed === 'legL' || p.maimed === 'legR' ? 0.22 : 1);
     if (jammed) want *= JAM_SHARE;
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
@@ -919,6 +925,7 @@ function publish(w: SimWorld): void {
     v.gesture = p.act ? { kind: p.act.kind, phase: 'hold', t: p.age - p.act.from, hold: p.act.until - p.act.from,
       ...(p.act.kind === 'fall' ? { fromX: p.act.faceX, fromY: p.act.faceY } : {}) } : null;
     v.panic = (p.fright ?? 0) > p.age;
+    if (p.maimed) v.maimed = p.maimed;
     v.kerbWait = p.waiting ? p.waited : 0;
     v.waitingFor = p.waiting ? p.waiting.id : null;
     views.push(v);

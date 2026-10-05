@@ -162,6 +162,8 @@ export interface AgentMeshes {
   sync(world: SimWorld, alpha: number, detailed: boolean, zoom?: number, options?: AgentRenderOptions): void;
   /** Every figure drawn last frame and the body it was cast as (`citizenCasting.ts`). */
   census(): ReturnType<ReturnType<typeof createRiggedCitizens>['census']>;
+  /** Called for each walker drawn bleeding (a limb lost), to drip blood where they go. */
+  setBleed(fn: (id: number, x: number, y: number, z: number) => void): void;
   /** Lamps burn brighter than white after dark, so headlights and tail lights glow. */
   setNight(dark: number): void;
   dispose(): void;
@@ -1313,6 +1315,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   return {
     meshes,
     census: () => pedestrians.census(),
+    setBleed: (fn) => { pedestrians.onBleed = fn; },
     setNight: (dark) => {
       lampMaterial.color.setScalar(1 + 2.4 * dark);
     },
