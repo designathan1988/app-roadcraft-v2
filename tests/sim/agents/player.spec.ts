@@ -54,7 +54,7 @@ describe('the player: a person of the city in the player hands', () => {
     expect(walked).toBeGreaterThan(0.5);
 
     // A word with the nearest person: they stop, facing the player, talking.
-    const nearest = (): { id: number; x: number; y: number } | null => walkersNear(sim, player.x, player.y, m(40))
+    const nearest = (): { id: number; x: number; y: number } | null => walkersNear(sim, player.x, player.y, m(120))
       .filter((p) => p.id !== player.person && p.busy === 0).sort((a, b) =>
         Math.hypot(a.x - player.x, a.y - player.y) - Math.hypot(b.x - player.x, b.y - player.y))[0] ?? null;
     const goUpTo = (id: number): void => {
