@@ -1095,11 +1095,16 @@ plan.appendChild(choices([
       render();
     });
   };
-  const watch = new MutationObserver(later);
+  // Only a real change: the game rewrites some states every frame with the
+  // value they already had (the speed buttons' aria-pressed), and every such
+  // write rebuilt the whole panel - the buttons flickered under the pointer.
+  const watch = new MutationObserver((records) => {
+    if (records.some((r) => r.target instanceof Element && r.attributeName && r.target.getAttribute(r.attributeName) !== r.oldValue)) later();
+  });
   const game = q('#game');
-  if (game) watch.observe(game, { attributes: true, attributeFilter: ['data-tool'] });
+  if (game) watch.observe(game, { attributes: true, attributeOldValue: true, attributeFilter: ['data-tool'] });
   const builderRoot = document.getElementById('builder');
-  if (builderRoot) watch.observe(builderRoot, { attributes: true, subtree: true, attributeFilter: ['class', 'aria-pressed'] });
+  if (builderRoot) watch.observe(builderRoot, { attributes: true, attributeOldValue: true, subtree: true, attributeFilter: ['class', 'aria-pressed'] });
   workspace.subscribe((state) => {
     builder = state;
     if (tool() === 'building') later();
