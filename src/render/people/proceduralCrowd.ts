@@ -1,6 +1,6 @@
 import {
   BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
-  InstancedMesh, LineBasicMaterial, LineSegments, Matrix4, MeshDepthMaterial, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
+  InstancedMesh, Matrix4, MeshDepthMaterial, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
   Uint16BufferAttribute, UnsignedByteType, type Material, type Texture,
 } from 'three';
 import { loadPeopleAssets, type PeopleAssets } from '@people/body/assets';
@@ -309,10 +309,10 @@ ${shader.fragmentShader}`
   float across = fract(vProcUv.x * 4.0);
   float sides = smoothstep(0.0, 0.22, min(across, 1.0 - across));
   float coverage = clamp(texel.r * 2.5 * vFade * mix(0.35, 1.0, sides), 0.0, 1.0);
-  vec3 tone = vProcDye.rgb * mix(0.38, 1.0, smoothstep(0.0, 0.3, texel.g));
+  vec3 tone = vProcDye.rgb * mix(0.72, 1.0, smoothstep(0.0, 0.3, texel.g));
   tone *= 1.0 + (texel.b - 0.5) * 0.72;
   float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
-  tone *= mix(0.3, 1.0, smoothstep(0.05, 0.55, facing));
+  tone *= mix(0.6, 1.0, smoothstep(0.05, 0.55, facing));
   texel = vec4(tone, coverage);` : kind === 'skin' ? `
   if (vSkinMask < 0.5) texel = texture2D(procEyes, vProcUv);
   else texel = vec4(texel.rgb * vProcDye.rgb, 1.0);` : `
@@ -638,6 +638,7 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     mesh.receiveShadow = true;
     if (mesh.castShadow) mesh.customDepthMaterial = depthMaterial(cls, kind);
     mesh.name = `${cls.key}/${name}`;
+    mesh.userData['cls'] = cls.key;
     group.add(mesh);
     return { name, kind, mesh, rows, dyes, worn, tints: null, people: [], vertices: geometry.getAttribute('position').count };
   };
@@ -692,11 +693,26 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
    * the cards. The rest of the crowd has the cards alone.
    */
   const NEAR = 8, NEAR_RANGE = 14;
-  const strandGeometry = new Map<string, Promise<BufferGeometry>>();
-  const strandLines: LineSegments[] = [];
-  const strandGeometryFor = (cls: BodyClass, grownName: string): Promise<BufferGeometry> => {
+  let strandTexture: DataTexture | null = null;
+  /** A strand ribbon's texture: solid across (its edges fade in the shader), root to tip in G. */
+  const strandMap = (): DataTexture => {
+    if (!strandTexture) {
+      const data = new Uint8Array(4 * 64 * 4);
+      for (let y = 0; y < 64; y++) for (let x = 0; x < 4; x++) {
+        const i = (y * 4 + x) * 4;
+        data[i] = 110; data[i + 1] = Math.round(y / 63 * 255); data[i + 2] = 128; data[i + 3] = 255;
+      }
+      strandTexture = new DataTexture(data, 4, 64, RGBAFormat, UnsignedByteType);
+      strandTexture.magFilter = strandTexture.minFilter = NearestFilter;
+      strandTexture.needsUpdate = true;
+    }
+    return strandTexture;
+  };
+  const strandPieces = new Map<string, Promise<Piece>>();
+  /** A grown style's strands on a class body: a piece like the cards, filled each frame with the nearest people. */
+  const strandPiece = (cls: BodyClass, grownName: string): Promise<Piece> => {
     const key = `${cls.key}/${grownName}`;
-    let made = strandGeometry.get(key);
+    let made = strandPieces.get(key);
     if (!made) {
       made = setup().then(({ assets: a, morpher: mo }) => {
         const style = HAIR_STYLES[grownName.slice(5)]!;
@@ -705,78 +721,56 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
         const it: ProxyItem = { pack, texture: null, transparent: true, textureFile: null };
         const fitted = cls.rig.wear!(it, cls.shape);
         const geometry = new BufferGeometry();
+        const n = fitted.positions.length / 3;
         geometry.setAttribute('position', new Float32BufferAttribute(fitted.positions, 3));
+        geometry.setAttribute('uv', new Float32BufferAttribute(pack.uvs!, 2));
         geometry.setAttribute('skinIndex', new Uint16BufferAttribute(fitted.joints, 4));
         geometry.setAttribute('skinWeight', new Float32BufferAttribute(fitted.weights, 4));
         geometry.setAttribute('aRefs', new Float32BufferAttribute(Float32Array.from(pack.refs), 3));
         geometry.setAttribute('aRefW', new Float32BufferAttribute(pack.weights, 3));
+        geometry.setAttribute('eyeMask', new Float32BufferAttribute(new Float32Array(n), 1));
         geometry.setAttribute('aFade', new Float32BufferAttribute(pack.fade!, 1));
         geometry.setIndex(Array.from(pack.index));
-        return geometry;
+        geometry.computeVertexNormals();
+        const piece = makePiece(cls, `strands-${grownName}`, 'hair', geometry, strandMap(), null, true);
+        piece.mesh.castShadow = false;
+        piece.mesh.customDepthMaterial = undefined;
+        readyStrand.set(key, piece);
+        return piece;
       });
-      strandGeometry.set(key, made);
+      strandPieces.set(key, made);
     }
     return made;
   };
-  const strandMaterial = (cls: BodyClass): LineBasicMaterial => {
-    const material = new LineBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false });
-    material.defines = { USE_SKINNING: '' };
-    const uniforms = { procRow: { value: 0 }, procDye: { value: new Color() } };
-    material.userData['strands'] = uniforms;
-    material.onBeforeCompile = (shader) => {
-      uniformsInto(shader, cls, cls.rig.mesh);
-      Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = `uniform float procRow;
-#define aRow procRow
-attribute float aFade; varying float vShade;
-${shader.vertexShader}`;
-      patchVertex(shader, 'hair');
-      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-vShade = aFade;`);
-      shader.fragmentShader = `uniform vec3 procDye; varying float vShade;
-${shader.fragmentShader}`
-        .replace('#include <color_fragment>', `#include <color_fragment>
-diffuseColor.rgb = procDye * vShade * 1.7;`);
-    };
-    material.customProgramCacheKey = () => `procedural-strands-${cls.key}`;
-    return material;
-  };
-  const lineFor = (slot: number, cls: BodyClass): LineSegments => {
-    let line = strandLines[slot];
-    if (!line || line.userData['cls'] !== cls) {
-      if (line) { group.remove(line); (line.material as Material).dispose(); }
-      line = new LineSegments(new BufferGeometry(), strandMaterial(cls));
-      line.userData['cls'] = cls;
-      line.matrixAutoUpdate = false;
-      line.frustumCulled = false;
-      // Hidden until its strands are built: an empty geometry has no position to draw.
-      line.visible = false;
-      strandLines[slot] = line;
-      group.add(line);
-    }
-    return line;
-  };
+  const shown = new Set<Piece>();
   const strandsUpdate = (eye: Vector3): void => {
     const near = people.filter((p) => p.grown)
       .map((p) => ({ p, d: eye.distanceTo(new Vector3().setFromMatrixPosition(p.matrix)) }))
       .filter((x) => x.d < NEAR_RANGE).sort((a, b) => a.d - b.d).slice(0, NEAR);
-    near.forEach(({ p }, slot) => {
+    const wanted = new Map<Piece, ProceduralPerson[]>();
+    for (const { p } of near) {
       const cls = ready.find((c) => c.sex === p.sex && c.band === p.band)!;
-      const line = lineFor(slot, cls);
-      const key = `${cls.key}/${p.grown}`;
-      if (line.userData['key'] !== key) {
-        line.userData['key'] = key;
-        line.visible = false;
-        void strandGeometryFor(cls, p.grown!).then((g) => { if (line.userData['key'] === key) { line.geometry = g; line.visible = true; } });
-      }
-      const u = (line.material as LineBasicMaterial).userData['strands'] as { procRow: { value: number }; procDye: { value: Color } };
-      u.procRow.value = p.row;
-      u.procDye.value.copy(p.hairColour);
-      scaled.makeScale(p.scale, p.scale, p.scale);
-      line.matrix.multiplyMatrices(p.matrix, scaled);
-    });
-    for (let slot = near.length; slot < strandLines.length; slot++) strandLines[slot]!.visible = false;
+      const piece = readyStrand.get(`${cls.key}/${p.grown}`);
+      if (!piece) { void strandPiece(cls, p.grown!); continue; }
+      const list = wanted.get(piece) ?? [];
+      list.push(p);
+      wanted.set(piece, list);
+    }
+    for (const piece of shown) if (!wanted.has(piece)) { piece.people = []; piece.mesh.count = 0; }
+    shown.clear();
+    for (const [piece, list] of wanted) {
+      piece.people = list;
+      list.forEach((person, slot) => {
+        piece.rows.setX(slot, person.row);
+        piece.dyes.setXYZW(slot, person.hairColour.r, person.hairColour.g, person.hairColour.b, 1);
+      });
+      piece.rows.needsUpdate = piece.dyes.needsUpdate = true;
+      piece.mesh.count = list.length;
+      shown.add(piece);
+    }
   };
+  const readyStrand = new Map<string, Piece>();
+  const allStrands = (): Piece[] => [...shown];
 
   const place = (piece: Piece, person: ProceduralPerson, dye: Color | null, worn?: readonly number[]): void => {
     const slot = piece.people.length;
@@ -862,7 +856,7 @@ diffuseColor.rgb = procDye * vShade * 1.7;`);
           refit(cls, person, at);
         }
         cls.uniforms.procBones.value.needsUpdate = true;
-        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values(), ...allStrands().filter((sp) => sp.mesh.userData['cls'] === cls.key)]) {
           piece.people.forEach((person, slot) => {
             scaled.makeScale(person.scale, person.scale, person.scale);
             matrix.multiplyMatrices(person.matrix, scaled);
@@ -874,6 +868,8 @@ diffuseColor.rgb = procDye * vShade * 1.7;`);
     },
     clear() {
       epoch++;
+      for (const piece of shown) { piece.people = []; piece.mesh.count = 0; }
+      shown.clear();
       for (const cls of ready) {
         for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
           piece.people = [];
@@ -893,6 +889,10 @@ diffuseColor.rgb = procDye * vShade * 1.7;`);
       return (cls?.clips.walk.stride ?? 1.4) * person.scale;
     },
     forget(name) {
+      for (const [key, piece] of readyStrand) if (key.endsWith(`/${name}`)) {
+        group.remove(piece.mesh); piece.mesh.geometry.dispose(); shown.delete(piece);
+        readyStrand.delete(key); strandPieces.delete(key);
+      }
       items.delete(name);
       textures.delete(name);
       for (const cls of ready) {

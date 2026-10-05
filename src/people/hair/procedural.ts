@@ -142,7 +142,9 @@ function hairlineY(theta: number): number {
   // Low at the temples and over the ears (down to the top of the ear), as a
   // real hairline: set higher, the sides read as shaved (the player: "mulher
   // não usa cabeça com lateral raspada").
-  const knots: [number, number][] = [[0, 0.36], [0.6, 0.3], [1.0, 0.05], [1.3, -0.12], [1.6, -0.15], [1.95, -0.2], [2.4, -0.4], [Math.PI, -0.55]];
+  // Sideburn down to mid-ear (1.3), over the ear just above it (1.55),
+  // behind it down to the lobe, the nape at the lobe's height.
+  const knots: [number, number][] = [[0, 0.36], [0.6, 0.3], [1.0, 0.0], [1.3, -0.35], [1.55, -0.1], [1.85, -0.35], [2.2, -0.62], [2.6, -0.78], [Math.PI, -0.82]];
   // Never a perfect curve: a little irregular, as a real hairline is.
   const wobble = 0.035 * Math.sin(theta * 9 + 0.7) + 0.02 * Math.sin(theta * 23 + 2.1);
   for (let i = 1; i < knots.length; i++) {
@@ -163,7 +165,9 @@ function headOf(base: HairBase) {
     if (!inBody(v)) continue;
     let w = 0;
     for (let k = 0; k < 4; k++) if (base.joints[v * 4 + k] === head) w += base.weights[v * 4 + k]! / 65535;
-    if (w >= 0.9) headVerts.push(v);
+    // Half the head's is enough: the nape's skin is shared with the neck
+    // bone, and left out the hair stopped above it.
+    if (w >= 0.5) headVerts.push(v);
   }
   // The cranium: the head's box less the face's jut (nose, chin).
   let lo: V3 = [Infinity, Infinity, Infinity], hi: V3 = [-Infinity, -Infinity, -Infinity];
@@ -245,7 +249,9 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
   // Not the ears: they stand out of the skull's ellipsoid.
   const scalp = headVerts.filter((v) => {
     const q = local(at(v));
-    const ear = Math.abs(q[0]) > 0.97 && q[1] < 0.25 && q[1] > -0.75;
+    // The ear only: what stands out past the side of the head (the
+    // outermost centimetre), from its top to its lobe - not the skin above it.
+    const ear = Math.abs(at(v)[0]) > skull.r[0] * 1.0 && q[1] < 0.12 && q[1] > -0.85;
     return !ear && len(q) > 0.75 && len(q) < 1.25 && q[1] > hairlineY(Math.atan2(q[0], q[2]));
   });
   const rnd = random(seed * 7919 + style.name.length * 104729);
@@ -319,6 +325,8 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
   const fringes: boolean[] = [];
   /** How far inside the hairline each guide's root is (local units): near it, the card feathers in. */
   const inside: number[] = [];
+  /** Guides at the front hairline: strands only, no cards. */
+  const edgeFront: boolean[] = [];
   // A curl needs about eight points a turn, or it is drawn square.
   const segments = style.curl ? Math.ceil(style.length / (style.curl.pitch / 8))
     : style.length > 2.5 ? 16 : style.length > 1 ? 10 : 5;
@@ -437,23 +445,27 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
     guides.push(pts);
     fringes.push(!!fringe);
     inside.push(q[1] - hairlineY(Math.atan2(q[0], q[2])));
+    edgeFront.push(!fringe && q[1] - hairlineY(Math.atan2(q[0], q[2])) < 0.2 && Math.abs(Math.atan2(q[0], q[2])) < 1.2);
   }
 
   if (strands) {
+    // Ribbons a millimetre and a bit wide, lying on the hair's surface, a
+    // couple of dozen round each guide: each spread over the card's width
+    // at the root and drawn in to the guide towards the tip (a clump), its
+    // own length, thinning out at the tip.
     const positions: number[] = [], uvs: number[] = [], index: number[] = [], shades: number[] = [];
     const points: V3[] = [];
     const of: number[] = [];
     for (const [g, pts] of guides.entries()) {
       const first = points.length;
       points.push(...pts);
-      const count = fringes[g] ? 8 : inside[g]! < 0.25 ? 6 : 14;
-      const width = style.cardWidth * (fringes[g] ? 0.55 : inside[g]! < 0.25 ? 0.5 : 1);
+      if (pts.length < 2) continue;
+      const count = fringes[g] ? 14 : inside[g]! < 0.25 ? 12 : 26;
+      const width = style.cardWidth * (fringes[g] ? 0.55 : inside[g]! < 0.25 ? 0.5 : 1.1);
       for (let c = 0; c < count; c++) {
-        const across = (rnd() - 0.5) * width, rise = rnd() * 0.03, tone = 0.7 + rnd() * 0.6;
-        // A guide cut short (a plait's strands stop at the tie) may have
-        // only a point or two: the strand never runs past its guide's end.
-        const end = Math.min(pts.length - 1, Math.max(1, Math.round((pts.length - 1) * (0.82 + 0.18 * rnd()))));
-        if (end < 1) continue;
+        const across = (rnd() - 0.5) * width, lift = 0.005 + rnd() * 0.03;
+        const end = Math.min(pts.length - 1, Math.max(1, Math.round((pts.length - 1) * (0.8 + 0.2 * rnd()))));
+        const half = 0.0055 + rnd() * 0.003;
         const start = positions.length / 3;
         for (let i = 0; i <= end; i++) {
           const t = i / (pts.length - 1);
@@ -461,13 +473,18 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
           const along = norm(sub(pts[Math.min(pts.length - 1, i + 1)]!, pts[Math.max(0, i - 1)]!));
           const out = facing(p);
           const side = norm(cross(along, out));
-          const clump = 1 - 0.7 * Math.pow(t, 1.6);
-          positions.push(...add(add(p, side, across * clump), out, 0.02 + rise * (1 - t)));
-          uvs.push(0, t);
-          shades.push(tone * (0.45 + 0.55 * Math.min(1, t / 0.35)));
-          of.push(first + i);
+          const centre = add(add(p, side, across * (1 - 0.75 * Math.pow(t, 1.4))), out, lift * (1 - 0.6 * t));
+          const w = half * (1 - 0.5 * i / end);
+          positions.push(...add(centre, side, -w), ...add(centre, side, w));
+          uvs.push(0.0, t * 0.98 + 0.01, 0.25, t * 0.98 + 0.01);
+          const f = i / end > 0.85 ? 1 - (i / end - 0.85) / 0.15 * 0.8 : 1;
+          shades.push(f, f);
+          of.push(first + i, first + i);
         }
-        for (let i = 0; i < end; i++) index.push(start + i, start + i + 1);
+        for (let i = 0; i < end; i++) {
+          const k = start + i * 2;
+          index.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+        }
       }
     }
     return pinned(head, `strands:${style.name}`, 'hair', positions, uvs, index, shades, { of: Int32Array.from(of), points });
@@ -478,6 +495,9 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
   // (v = 0) to tip.
   const positions: number[] = [], uvs: number[] = [], index: number[] = [], fades: number[] = [];
   for (const [g, pts] of guides.entries()) {
+    // The hairline's own clumps are drawn as strands and the painted cap
+    // only: as cards their root ends stood on the brow as dark teeth.
+    if (edgeFront[g]) continue;
     for (let layer = 0; layer < style.layers; layer++) {
       const strip = Math.floor(rnd() * 4);
       const u0 = strip / 4 + 0.01, u1 = (strip + 1) / 4 - 0.01;
@@ -527,7 +547,7 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
   // changes, so its edge follows the hairline's curve, not the mesh's steps.
   const capFade = (p: V3): number => {
     const q = local(p);
-    if (Math.abs(q[0]) > 0.97 && q[1] < 0.25 && q[1] > -0.75) return 0;
+    if (Math.abs(p[0]) > skull.r[0] * 1.0 && q[1] < 0.12 && q[1] > -0.85) return 0;
     // A soft, wide edge only on the brow; over the ears and at the nape hair
     // is full right to its edge (a wide fade there read as shaved sides).
     const theta = Math.atan2(q[0], q[2]);
