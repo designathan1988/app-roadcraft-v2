@@ -1,0 +1,90 @@
+import { describe, expect, it } from 'vitest';
+import { RoadDoc } from '@world/doc';
+import { Network } from '@world/network';
+import { m } from '@world/units';
+import { addLot, applyLots, deleteLot, insideLot, joinLots, lotCentre, lotFrame, moveLotCorner, planLots, splitLot, zoneLots } from '@world/lots';
+import { quadsOverlap } from '@world/zoneGrid';
+
+/** A block 90 x 70 m between four streets, and one street running off it into open land. */
+function town(): { doc: RoadDoc; net: Network } {
+  const doc = new RoadDoc();
+  const n = (x: number, y: number) => doc.addNode({ x: m(x), y: m(y) }).id;
+  const a = n(-45, -35), b = n(45, -35), c = n(45, 35), d = n(-45, 35), e = n(160, -35);
+  doc.addSegment(a, b, 1); doc.addSegment(b, c, 1); doc.addSegment(c, d, 1); doc.addSegment(d, a, 1);
+  doc.addSegment(b, e, 1);
+  const net = new Network(doc);
+  net.rebuild();
+  return { doc, net };
+}
+
+const area = (l: { corners: readonly { x: number; y: number }[] }): number => {
+  let s = 0;
+  for (let i = 0; i < 4; i++) { const p = l.corners[i]!, q = l.corners[(i + 1) % 4]!; s += p.x * q.y - q.x * p.y; }
+  return Math.abs(s / 2);
+};
+
+describe('lots', () => {
+  it('cuts a closed block into equal lots and open land along a street into a strip of lots', () => {
+    const { doc, net } = town();
+    applyLots(doc, planLots(doc, net));
+    const inBlock = doc.lots.filter((l) => Math.abs(lotCentre(l).x) < m(45) && Math.abs(lotCentre(l).y) < m(35));
+    expect(inBlock.length).toBeGreaterThanOrEqual(2);
+    const areas = inBlock.map(area);
+    for (const x of areas) expect(Math.abs(x - areas[0]!) / areas[0]!).toBeLessThan(0.02);
+    expect(doc.lots.some((l) => lotCentre(l).x > m(60))).toBe(true);
+    // No two lots overlap.
+    for (const p of doc.lots) for (const q of doc.lots) if (p !== q) expect(quadsOverlap(p.corners, q.corners, m(0.5))).toBe(false);
+  });
+
+  it('faces every lot to its street: the back on the left of the front', () => {
+    const { doc, net } = town();
+    applyLots(doc, planLots(doc, net));
+    for (const l of doc.lots) {
+      const [a, b, , d] = l.corners;
+      expect((b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x)).toBeGreaterThan(0);
+      expect(lotFrame(l).width).toBeGreaterThan(m(7));
+    }
+  });
+
+  it('does not cut the same land again, so a lot deleted on purpose stays deleted', () => {
+    const { doc, net } = town();
+    applyLots(doc, planLots(doc, net));
+    const count = doc.lots.length;
+    expect(deleteLot(doc, doc.lots[0]!.id)).toBe(true);
+    applyLots(doc, planLots(doc, net));
+    expect(doc.lots.length).toBe(count - 1);
+  });
+
+  it('splits, joins, adds, moves corners and zones lots', () => {
+    const { doc, net } = town();
+    applyLots(doc, planLots(doc, net));
+    const first = doc.lots[0]!;
+    const before = doc.lots.length;
+    expect(splitLot(doc, first.id)).toBe(true);
+    expect(doc.lots.length).toBe(before + 1);
+    const halves = doc.lots.slice(0, 2);
+    expect(joinLots(doc, halves[0]!.id, halves[1]!.id)).toBe(true);
+    expect(doc.lots.length).toBe(before);
+    expect(Math.abs(area(doc.lots[0]!) - area(first))).toBeLessThan(1);
+    const gone = doc.lots[0]!;
+    deleteLot(doc, gone.id);
+    const made = addLot(doc, gone.corners[0], gone.corners[2], lotFrame(gone).rotation);
+    expect(made).not.toBeNull();
+    const corner = doc.lots[0]!.corners[1];
+    expect(moveLotCorner(doc, corner, { x: corner.x + m(2), y: corner.y })).toBe(true);
+    const id = doc.lots[0]!.id;
+    expect(zoneLots(doc, [id], { use: 'commercial', density: 'medium' })).toBe(true);
+    expect(doc.lots.find((l) => l.id === id)!.use).toBe('commercial');
+    expect(insideLot(lotCentre(doc.lots[0]!), doc.lots[0]!)).toBe(true);
+  });
+
+  it('survives saving and loading', () => {
+    const { doc, net } = town();
+    applyLots(doc, planLots(doc, net));
+    zoneLots(doc, [doc.lots[0]!.id], { use: 'residential', density: 'low' });
+    const copy = RoadDoc.fromJSON(JSON.parse(JSON.stringify(doc.toJSON())));
+    expect(copy.lots.length).toBe(doc.lots.length);
+    expect(copy.lots[0]!.use).toBe('residential');
+    expect(copy.lotKeys.length).toBe(doc.lotKeys.length);
+  });
+});

@@ -103,6 +103,9 @@ const ICON: Record<string, string> = {
   draw: '<path d="M4 20 15 9l3 3L7 23H4Z" transform="translate(0 -3)"/><path d="m15 6 3-3 3 3-3 3"/>',
   upgrade: '<path d="M12 20V6"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>',
   move: '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  join: '<rect x="3" y="6" width="8" height="12" rx="1"/><rect x="13" y="6" width="8" height="12" rx="1"/><path d="M9 12h6"/>',
+  lotEdit: '<path d="M4 4h16v16H4Z"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="20" r="2"/>',
+  lotDelete: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="m8 8 8 8M16 8l-8 8"/>',
   split: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 17M8 15.5 20 7"/>',
   control: '<rect x="8" y="2" width="8" height="17" rx="2"/><circle cx="12" cy="6" r="1.4"/><circle cx="12" cy="10.5" r="1.4"/><circle cx="12" cy="15" r="1.4"/><path d="M12 19v3"/>',
   roundabout: '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/><path d="M12 1v2.5M12 20.5V23M1 12h2.5M20.5 12H23"/>',
@@ -700,11 +703,18 @@ export function mountShell(deps: ShellDeps): void {
   function renderZones(): void {
     title.textContent = t('tool.zone');
     const tool2 = section(t('v2.zone.tool'), 'verbs');
-    const modes: [string, string, string][] = [['[data-zone-mode="brush"]', t('zone.brush'), 'brush'], ['[data-zone-mode="fill"]', t('zone.fill'), 'fill'], ['#zoneRemove', t('zone.remove'), 'eraser']];
+    const modes: [string, string, string][] = [['[data-zone-mode="brush"]', t('zone.brush'), 'brush'], ['#zoneRemove', t('zone.remove'), 'eraser']];
     for (const [selector, label, icon] of modes) {
       const b = q<HTMLButtonElement>(selector);
       tool2.items.appendChild(verb(label, b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), icon === 'eraser'));
     }
+    // The lots themselves: their drawing edited as a cadastre is (`world/lots.ts`).
+    const lots = section(t('zone.lots'), 'verbs');
+    for (const [mode, icon] of [['edit', 'lotEdit'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['delete', 'lotDelete']] as const) {
+      const b = q<HTMLButtonElement>(`[data-zone-mode="${mode}"]`);
+      lots.items.appendChild(verb(t(`zone.lot.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), mode === 'delete'));
+    }
+    note(t('zone.lots.help'));
     const use = section(t('v2.zone.use'));
     for (const [key, colour] of [['residential', '#58c26f'], ['commercial', '#4aa3e8'], ['industrial', '#e6b84a']] as const) {
       const b = q<HTMLButtonElement>(`[data-zone-use="${key}"]`);

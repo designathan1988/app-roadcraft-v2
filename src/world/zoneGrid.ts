@@ -91,7 +91,7 @@ const OVERLAP_SLACK = m(0.25);
  * cell is (a cell on the inside of a bend tighter than its depth would not
  * be, and it is then judged by its edges' normals all the same).
  */
-function quadsOverlap(a: readonly Vec2[], b: readonly Vec2[], slack: number): boolean {
+export function quadsOverlap(a: readonly Vec2[], b: readonly Vec2[], slack: number): boolean {
   for (const poly of [a, b]) {
     for (let i = 0; i < poly.length; i++) {
       const p = poly[i]!, q = poly[(i + 1) % poly.length]!;
@@ -108,20 +108,13 @@ function quadsOverlap(a: readonly Vec2[], b: readonly Vec2[], slack: number): bo
 }
 
 /** Builds the grid of every ground street that carries pedestrians. */
-export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
-  const steps = zoneGridSteps(doc, net);
-  let step = steps.next();
-  while (!step.done) step = steps.next();
-  return step.value;
-}
-
 /**
- * `buildZoneGrid` a street at a time: it yields after each street, so the
- * grid can be laid over several frames (the overlay keeps the last one until
- * this is done) instead of in one stall after every road edit. The answer is
- * the same grid; the document and the network must not change meanwhile.
+ * What land may not be built on: any ground road's carriageway and footway
+ * (`onRoad`, by the street's reach), and the paving as drawn - kerbs,
+ * footways and every junction's corners (`onPlate`). Shared by the zone grid
+ * and the lots (`lots.ts`).
  */
-export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, ZoneGrid> {
+export function pavedTester(doc: RoadDoc, net: Network): { onRoad: (p: Vec2) => boolean; onPlate: (p: Vec2) => boolean } {
   // What a cell may not sit on: any road's carriageway and footway, at ground.
   const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground');
   const reachOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
@@ -157,6 +150,24 @@ export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, Zone
   // every block corner: the zones stopped short of the corners, broken.
   const lines = poleLines(net);
   const onPlate = (p: Vec2): boolean => onFootway(net, p) || insidePaving(lines, p);
+  return { onRoad, onPlate };
+}
+
+export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
+  const steps = zoneGridSteps(doc, net);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * `buildZoneGrid` a street at a time: it yields after each street, so the
+ * grid can be laid over several frames (the overlay keeps the last one until
+ * this is done) instead of in one stall after every road edit. The answer is
+ * the same grid; the document and the network must not change meanwhile.
+ */
+export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, ZoneGrid> {
+  const { onRoad, onPlate } = pavedTester(doc, net);
   const cells: ZoneCell[] = [];
   const byId = new Map<string, ZoneCell>();
   const buckets = new Map<string, ZoneCell[]>();

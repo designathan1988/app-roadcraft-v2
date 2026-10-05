@@ -1,4 +1,5 @@
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
+import { isLot, type Lot } from './lots';
 import type { Vec2 } from '@core/vec2';
 import { type CurveShape, fitShapeToRadius } from '@core/bezier';
 import {
@@ -201,6 +202,12 @@ export class RoadDoc {
   readonly zoneMarks: ZoneMark[] = [];
   /** Moves on every zoning change, so the overlay and the growth notice it. */
   zoneRevision = 0;
+  /** The land's lots (`world/lots.ts`): the cadastre the player zones and edits. */
+  readonly lots: Lot[] = [];
+  /** The blocks and strips already cut into lots, so a lot deleted on purpose is not made again. */
+  readonly lotKeys: string[] = [];
+  nextLotId = 1;
+  lotRevision = 0;
 
   /**
    * The people made in the Person Creator, saved with the city. Their own
@@ -894,6 +901,12 @@ export class RoadDoc {
     this.zoneMarks.length = 0;
     this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
     this.zoneRevision++;
+    this.lots.length = 0;
+    this.lots.push(...source.lots.map((lot) => ({ ...lot, corners: lot.corners.map((q) => ({ ...q })) as unknown as Lot['corners'] })));
+    this.lotKeys.length = 0;
+    this.lotKeys.push(...source.lotKeys);
+    this.nextLotId = source.nextLotId;
+    this.lotRevision++;
     if (JSON.stringify(this.transit) !== JSON.stringify(source.transit)) {
       this.transit = JSON.parse(JSON.stringify(source.transit)) as TransitData;
       this.transitRevision++;
@@ -978,6 +991,10 @@ export class RoadDoc {
       ...(this.buildings.size > 0 ? { buildings: this.buildings.toJSON() } : {}),
       ...(this.zones.length > 0 ? { zones: this.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })) } : {}),
       ...(this.zoneMarks.length > 0 ? { zoneMarks: this.zoneMarks.map((mark) => ({ ...mark })) } : {}),
+      ...(this.lots.length > 0 || this.lotKeys.length > 0 ? {
+        lots: this.lots.map((lot) => ({ ...lot, corners: lot.corners.map((q) => ({ x: q.x, y: q.y })) as unknown as Lot['corners'] })),
+        lotKeys: [...this.lotKeys],
+      } : {}),
       // Likewise the people: only a city that has some carries the key.
       ...(this.people.length > 0 ? { people: this.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec) } : {}),
       // And the public transport.
@@ -1133,6 +1150,14 @@ export class RoadDoc {
       const { building: _gone, ...free } = mark;
       doc.zoneMarks.push(standing ? { ...mark } : free);
     }
+    for (const lot of data.lots ?? []) {
+      if (!isLot(lot) || doc.lots.some((l) => l.id === lot.id)) continue;
+      const standing = lot.building !== undefined && doc.buildings.has(lot.building as Parameters<typeof doc.buildings.has>[0]);
+      const { building: _gone, ...free } = lot;
+      doc.lots.push(standing ? { ...lot } : free);
+      doc.nextLotId = Math.max(doc.nextLotId, lot.id + 1);
+    }
+    for (const key of data.lotKeys ?? []) if (typeof key === 'string') doc.lotKeys.push(key);
     // People, each brought into range; anything that is not one is dropped.
     const seen = new Set<number>();
     for (const raw of data.people ?? []) {
@@ -1202,6 +1227,9 @@ export interface SerializedDoc {
   /** Roadside land-use strokes; absent in maps saved before zoning. */
   readonly zones?: readonly Zone[];
   readonly zoneMarks?: readonly ZoneMark[];
+  /** The lots (`lots.ts`); absent in maps saved before them. */
+  readonly lots?: readonly Lot[];
+  readonly lotKeys?: readonly string[];
   /** People from the Person Creator; OPTIONAL like the buildings. Normalised on load. */
   readonly people?: readonly unknown[];
 }

@@ -9,6 +9,7 @@ import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
+import { lotFrame } from '@world/lots';
 import { addBuildingRecord, type placeBuilding } from './buildings';
 import { buildingBounds, footprintRects } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
@@ -370,4 +371,49 @@ export function regrowStale(doc: RoadDoc, limit = 6): number {
   });
   if (gone) doc.zoneRevision++;
   return gone;
+}
+
+/**
+ * Grows one building on a zoned lot without one (`world/lots.ts`): the lot is
+ * planned first - front, sides, back - and the building made for the envelope
+ * the plan leaves, as on a grid lot (`growOnce`), but on the lot the player
+ * drew: its front middle, its facing, its width and depth.
+ */
+export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number): number | null {
+  const { doc } = ctx;
+  const standing = (b: number | undefined): boolean => b !== undefined && doc.buildings.has(b as Parameters<typeof doc.buildings.has>[0]);
+  const open = doc.lots.filter((l) => l.use && !standing(l.building) && !refused.has(l.id));
+  if (!open.length) return null;
+  const rng = new Rng((seed ^ Math.imul(doc.buildings.nextId, 0x9e3779b1)) >>> 0);
+  const lot = open[rng.int(0, open.length - 1)]!;
+  const use = lot.use!, density = lot.density ?? 'low';
+  const frame = lotFrame(lot);
+  const margin = m(0.3);
+  const lotW = frame.width - JOINT, lotD = frame.depth - margin;
+  const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
+  if (W < 4 || D < 4) { refused.add(lot.id); return null; }
+  const plan = planLot(lotKind(use, density), W, D, rng);
+  const env = plan.building;
+  const made = madeToMeasure(use, density, {
+    W: env.x1 - env.x0, D: env.y1 - env.y0,
+    backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
+    character: (lot.id * 31) >>> 0,
+  }, rng);
+  const body = made.body;
+  const dx = m(env.x0 - W / 2), dy = m(env.y0);
+  for (const v of body.volumes) { v.x += dx; v.y += dy; }
+  for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
+  for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+  for (const v of body.volumes) {
+    if (v.outline) continue;
+    const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
+    if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
+  }
+  if (!furnishLot(body, plan, made, rng)) { refused.add(lot.id); return null; }
+  const result = addBuildingRecord(ctx, { ...body, x: frame.anchor.x, y: frame.anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
+  if (!result.ok || result.id === undefined) { refused.add(lot.id); return null; }
+  const at = doc.lots.findIndex((l) => l.id === lot.id);
+  doc.lots[at] = { ...lot, building: result.id as number };
+  doc.lotRevision++;
+  return result.id as number;
 }

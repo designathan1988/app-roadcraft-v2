@@ -1,4 +1,5 @@
 import { METERS_PER_UNIT } from '@world/units';
+import { addLot, applyLots, deleteLot, insideLot, joinLots, moveLotCorner, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -85,7 +86,7 @@ import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
-import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
+import { LOT_PLAN_VERSION, blockOf, growOnLot, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
 
 type Tool =
   | 'building'
@@ -373,7 +374,37 @@ let zoneUse: ZoneUse = 'residential';
 let zoneDensity: ZoneDensity = 'low';
 let zoneEraser = false;
 /** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
-let zoneMode: 'brush' | 'fill' = 'brush';
+let zoneMode: 'brush' | 'fill' | 'edit' | 'split' | 'join' | 'add' | 'delete' = 'brush';
+/**
+ * The lots (`world/lots.ts`): the land cut into equal plots, kept in step
+ * with the roads (`keepLots`); a press of the Zoning tool paints them or
+ * edits their drawing, by `zoneMode`.
+ */
+let lotsNetRevision = -1;
+function keepLots(): void {
+  if (lotsNetRevision === net.revision) return;
+  lotsNetRevision = net.revision;
+  if (!doc.segments.size && !doc.lots.length) return;
+  if (applyLots(doc, planLots(doc, net))) requestDraw();
+}
+const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
+/** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
+let lotStroke: { pointer: number; remove: boolean; ids: Set<number> } | null = null;
+let lotCorner: { pointer: number; from: Vec2; to: Vec2 } | null = null;
+let lotNew: { pointer: number; a: Vec2; b: Vec2; angle: number } | null = null;
+let lotJoinFirst: number | null = null;
+const lotRefused = new Set<number>();
+/** The direction of the street nearest a point, for a lot drawn there. */
+function streetAngleNear(p: Vec2): number {
+  let best = Infinity, angle = 0;
+  for (const r of net.ribbons.values()) {
+    const d = r.full.distanceTo(p);
+    if (d >= best) continue;
+    const f = r.full.sampleAt(r.full.closestPoint(p).s);
+    best = d; angle = Math.atan2(f.t.y, f.t.x);
+  }
+  return angle;
+}
 /** The cells a stroke has passed over, painted on release as one undo step. */
 let zoneDraft: { pointer: number; remove: boolean; cells: Map<string, ZoneCell> } | null = null;
 let zoneHover: Vec2 | null = null;
@@ -696,7 +727,7 @@ setTransitTool(transitEditor);
 let docText: { key: string; text: string } | null = null;
 function serializedDoc(): string {
   const key = [doc.revision, doc.trafficRevision, doc.terrainRevision, doc.paintRevision, doc.utilityRevision,
-    doc.barrierRevision, doc.transitRevision, doc.zoneRevision, doc.peopleRevision, doc.buildings.revision,
+    doc.barrierRevision, doc.transitRevision, doc.zoneRevision, doc.lotRevision, doc.peopleRevision, doc.buildings.revision,
     doc.buildings.size, doc.zoneMarks.length, doc.landscape.size, doc.poles.size, doc.nodes.size, doc.segments.size].join(':');
   if (docText?.key === key) return docText.text;
   const text = serialize(doc);
@@ -1203,11 +1234,39 @@ canvas.addEventListener('pointerdown', (e) => {
       buildings.pointerDown({ x: e.clientX - r.left, y: e.clientY - r.top }, world, e.shiftKey);
       break;
 
-    case 'zone':
-      zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map() };
-      for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
+    case 'zone': {
+      keepLots();
+      const lot = lotAt(world);
+      if (zoneMode === 'edit') {
+        // The nearest corner within reach of the pointer.
+        const reach = 14 / Math.max(0.05, view.zoom);
+        let best: Vec2 | null = null, bestD = reach;
+        for (const l of doc.lots) for (const q of l.corners) {
+          const d = Math.hypot(q.x - world.x, q.y - world.y);
+          if (d < bestD) { bestD = d; best = q; }
+        }
+        if (best) lotCorner = { pointer: e.pointerId, from: { ...best }, to: { ...world } };
+      } else if (zoneMode === 'split') {
+        if (lot) { mutate(() => splitLot(doc, lot.id, 2, e.shiftKey)); flashHint('hint.lot.split'); }
+      } else if (zoneMode === 'join') {
+        if (lot && lotJoinFirst === null) { lotJoinFirst = lot.id; flashHint('hint.lot.joinPick'); }
+        else if (lot && lotJoinFirst !== null && lot.id !== lotJoinFirst) {
+          const first = lotJoinFirst;
+          let ok = false;
+          mutate(() => (ok = joinLots(doc, first, lot.id)));
+          flashHint(ok ? 'hint.lot.join' : 'hint.lot.joinFail');
+          lotJoinFirst = null;
+        } else lotJoinFirst = null;
+      } else if (zoneMode === 'add') {
+        lotNew = { pointer: e.pointerId, a: { ...world }, b: { ...world }, angle: streetAngleNear(world) };
+      } else if (zoneMode === 'delete') {
+        if (lot) { mutate(() => deleteLot(doc, lot.id)); flashHint('hint.lot.deleted'); }
+      } else {
+        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set(lot ? [lot.id] : []) };
+      }
       requestDraw();
       break;
+    }
 
     case 'transit':
       // Stops, tracks, stations, lines (`editor/transitTools.ts`).
@@ -1489,6 +1548,9 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
     return;
   }
+  if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
+  if (lotCorner?.pointer === e.pointerId) { lotCorner.to = { ...world }; requestDraw(); return; }
+  if (lotNew?.pointer === e.pointerId) { lotNew.b = { ...world }; requestDraw(); return; }
   if (tool === 'zone') {
     zoneHover = world;
     requestDraw();
@@ -1664,6 +1726,35 @@ function endPointer(e: PointerEvent): void {
   }
   if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
   if (tool === 'building') buildings.pointerUp(cancelled || wasPinching);
+  if (lotStroke?.pointer === e.pointerId) {
+    const stroke = lotStroke;
+    lotStroke = null;
+    if (!cancelled && !wasPinching && stroke.ids.size) {
+      mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: zoneUse, density: zoneDensity }));
+      lotRefused.clear();
+      flashHint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
+    }
+    requestDraw();
+  }
+  if (lotCorner?.pointer === e.pointerId) {
+    const drag = lotCorner;
+    lotCorner = null;
+    if (!cancelled && !wasPinching && Math.hypot(drag.to.x - drag.from.x, drag.to.y - drag.from.y) > m(0.3)) {
+      mutate(() => moveLotCorner(doc, drag.from, drag.to));
+      lotRefused.clear();
+    }
+    requestDraw();
+  }
+  if (lotNew?.pointer === e.pointerId) {
+    const drawn = lotNew;
+    lotNew = null;
+    if (!cancelled && !wasPinching) {
+      let made = false;
+      mutate(() => (made = addLot(doc, drawn.a, drawn.b, drawn.angle) !== null));
+      flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
+    }
+    requestDraw();
+  }
   if (zoneDraft?.pointer === e.pointerId) {
     const stroke = zoneDraft;
     zoneDraft = null;
@@ -2272,7 +2363,9 @@ zoneRemoveButton.addEventListener('click', () => {
 });
 document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button) => {
   button.addEventListener('click', () => {
-    zoneMode = button.dataset['zoneMode'] === 'fill' ? 'fill' : 'brush';
+    const wanted = button.dataset['zoneMode'];
+    zoneMode = wanted === 'fill' || wanted === 'edit' || wanted === 'split' || wanted === 'join' || wanted === 'add' || wanted === 'delete' ? wanted : 'brush';
+    lotJoinFirst = null;
     document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((item) => {
       const active = item === button;
       item.classList.toggle('active', active);
@@ -3120,6 +3213,17 @@ const zoneRefused = new Set<string>();
 let zoneGrowthHold = 0;
 let zoneRefusedKey = '';
 setInterval(() => {
+  // Buildings on zoned lots (`world/lots.ts`).
+  if (!moving && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
+    const grown = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
+    if (grown !== null) {
+      const fresh = doc.buildings.get(grown as BuildingId);
+      if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
+      persistence.saveSessionSoon(doc, sessionSettings);
+      updateStatus();
+      requestDraw();
+    }
+  }
   if (!doc.zoneMarks.length || moving || performance.now() < zoneGrowthHold) return;
   const key = `${net.revision}:${doc.buildings.revision}`;
   if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
@@ -3655,7 +3759,55 @@ function drawOverlayScreen(): void {
   if (tool === 'transit') transitEditor.draw(ctx, at, true);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
-  if (tool === 'zone' || (doc.zoneMarks.length && zoneColoursShown()) || (tool === 'road' && roadPreviewActive())) {
+  // The lots: outlined in the Zoning tool, zoned ones filled with their use's
+  // colour (faintly with other tools, while no building stands on them).
+  if (tool === 'zone' || (tool === 'road' && roadPreviewActive()) || (doc.lots.some((l) => l.use) && zoneColoursShown())) {
+    if (tool === 'zone') keepLots();
+    const lotColours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
+    const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.terrainHeightAt(p.x, p.y));
+    const path = (corners: readonly Vec2[]): void => {
+      ctx.beginPath();
+      corners.forEach((q, i) => { const s = ground(q); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
+      ctx.closePath();
+    };
+    const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
+    const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;
+    ctx.save();
+    for (const l of doc.lots) {
+      const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
+      if (tool !== 'zone' && (!l.use || built)) continue;
+      path(l.corners.map(dragged));
+      const painting = lotStroke?.ids.has(l.id);
+      if (painting) { ctx.fillStyle = lotStroke!.remove ? '#e36c6099' : `${lotColours[zoneUse]}99`; ctx.fill(); }
+      else if (l.use) { ctx.fillStyle = `${lotColours[l.use]}${tool === 'zone' ? (built ? '40' : '80') : '38'}`; ctx.fill(); }
+      else if (l === hoverLot && (zoneMode === 'brush' || zoneMode === 'fill')) { ctx.fillStyle = zoneEraser ? '#e36c6050' : `${lotColours[zoneUse]}50`; ctx.fill(); }
+      if (tool === 'zone') {
+        const picked = l.id === lotJoinFirst || (l === hoverLot && zoneMode !== 'brush' && zoneMode !== 'fill' && zoneMode !== 'edit');
+        ctx.strokeStyle = picked ? (zoneMode === 'delete' ? '#ff6b5e' : '#ffffff') : '#ffffffb0';
+        ctx.lineWidth = picked ? 3 : 1.5;
+        ctx.stroke();
+      }
+    }
+    if (tool === 'zone' && zoneMode === 'edit') {
+      ctx.fillStyle = '#ffffff';
+      for (const l of doc.lots) for (const q of l.corners) {
+        const s0 = ground(dragged(q));
+        ctx.beginPath(); ctx.arc(s0.x, s0.y, 4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (lotNew) {
+      const u = { x: Math.cos(lotNew.angle), y: Math.sin(lotNew.angle) }, v = { x: -u.y, y: u.x };
+      const ds = (lotNew.b.x - lotNew.a.x) * u.x + (lotNew.b.y - lotNew.a.y) * u.y;
+      const dt = (lotNew.b.x - lotNew.a.x) * v.x + (lotNew.b.y - lotNew.a.y) * v.y;
+      const a = lotNew.a;
+      path([a, { x: a.x + u.x * ds, y: a.y + u.y * ds }, { x: a.x + u.x * ds + v.x * dt, y: a.y + u.y * ds + v.y * dt }, { x: a.x + v.x * dt, y: a.y + v.y * dt }]);
+      ctx.fillStyle = '#ffffff30'; ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // The old street grid: only for land zoned before the lots (`ZoneMark`), never in the Zoning tool now.
+  if (doc.zoneMarks.length && zoneColoursShown() && tool !== 'zone') {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
     // filled with their use's colour; with any other tool only the zoned land
     // still waiting for a building, faintly, so the plan stays readable.
@@ -3664,8 +3816,8 @@ function drawOverlayScreen(): void {
     // The Zoning tool paints the cells it shows: its grid is the exact one,
     // at once; the other tools' tint and the road preview take the last grid
     // while the new one is laid over a few frames.
-    const zoning = tool === 'zone' || (tool === 'road' && roadPreviewActive());
-    const grid = tool === 'zone' ? zoneGrid() : zoneGridForOverlay();
+    const zoning = false;
+    const grid = zoneGridForOverlay();
     const marks = cachedMarksByCell(grid);
     // Each corner's height looked up once per grid and ground, not every
     // frame (a lookup per corner of every cell in the town, each frame the
