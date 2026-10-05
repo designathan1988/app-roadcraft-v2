@@ -21,6 +21,7 @@ import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, isLandscapeKind } from './landscape';
+import { type TransitData, emptyTransit, hasTransit, normalizeTransit } from './transit';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
@@ -153,6 +154,21 @@ export class RoadDoc {
    */
   readonly landscape = new Map<number, LandscapeItem>();
   private landscapeIds = new IdAllocator(1);
+
+  /**
+   * Public transport the player laid out: bus stops and terminals, train and
+   * metro tracks and stations, lines (`transit.ts`). Plain data, replaced
+   * whole by each edit (`setTransit`), with its own revision: a bus stop
+   * placed never rebuilds the roads.
+   */
+  transit: TransitData = emptyTransit();
+  transitRevision = 0;
+
+  /** The public transport replaced by an edit of it. */
+  setTransit(next: TransitData): void {
+    this.transit = next;
+    this.transitRevision++;
+  }
 
   private nodeIds = new IdAllocator(1);
   private segIds = new IdAllocator(1);
@@ -857,6 +873,10 @@ export class RoadDoc {
     this.zoneMarks.length = 0;
     this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
     this.zoneRevision++;
+    if (JSON.stringify(this.transit) !== JSON.stringify(source.transit)) {
+      this.transit = JSON.parse(JSON.stringify(source.transit)) as TransitData;
+      this.transitRevision++;
+    }
     if (JSON.stringify(this.people) !== JSON.stringify(source.people)) {
       this.people.length = 0;
       this.people.push(...source.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec));
@@ -930,6 +950,8 @@ export class RoadDoc {
       ...(this.zoneMarks.length > 0 ? { zoneMarks: this.zoneMarks.map((mark) => ({ ...mark })) } : {}),
       // Likewise the people: only a city that has some carries the key.
       ...(this.people.length > 0 ? { people: this.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec) } : {}),
+      // And the public transport.
+      ...(hasTransit(this.transit) ? { transit: JSON.parse(JSON.stringify(this.transit)) as TransitData } : {}),
     };
   }
 
@@ -1039,6 +1061,8 @@ export class RoadDoc {
       doc.poleSpans.set(id, { id, a, b });
       doc.spanIds.reserve(s.id);
     }
+    // Public transport, if the map has any; anything malformed is dropped.
+    if (data.transit) doc.transit = normalizeTransit(data.transit);
     // The player's landscaping, if the map has any; anything malformed is dropped.
     for (const raw of data.landscape ?? []) {
       if (!isLandscapeKind(raw?.kind) || !Number.isFinite(raw.x) || !Number.isFinite(raw.y) || !Number.isInteger(raw.id)) continue;
@@ -1126,6 +1150,8 @@ export interface SerializedDoc {
   readonly poleSpans?: readonly { id: number; a: number; b: number }[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number }[];
+  /** Public transport (`transit.ts`); OPTIONAL like the poles. */
+  readonly transit?: unknown;
   /** Walls, fences and hedges (`barriers.ts`); OPTIONAL like the poles. */
   readonly barriers?: readonly { id: number; kind: string; points: readonly { x: number; y: number }[] }[];
   /**

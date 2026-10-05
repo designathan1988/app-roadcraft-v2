@@ -424,3 +424,11 @@
 .v2-select.iconic > span { display: grid; place-items: center; width: 20px; color: var(--v-muted); }
 .v2-select.iconic select { flex: 1; }
 .v2-pop { min-width: 260px; }
+
+/* Public transport: one row per line - its colour, name, vehicles, away. */
+.v2-transit-line { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px;
+  background: rgba(255, 255, 255, .06); min-width: 260px; }
+.v2-transit-line > i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.v2-transit-line > b { font-weight: 700; }
+.v2-transit-line > span:not(.v2-transit-count) { opacity: .75; flex: 1; font-size: 12px; }
+.v2-transit-count { min-width: 18px; text-align: center; font-weight: 700; }

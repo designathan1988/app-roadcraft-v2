@@ -6,6 +6,9 @@ import { JAM_GAP, laneChangeLength, laneChangeOffset, laneChangeSlope } from '..
 import { desiredSpeed } from './driver';
 import { idmAccel, type Obstacle } from './idm';
 
+
+/** How near the place it stops at a vehicle no longer changes lane, u. */
+const COMMUTE_HOLD = m(60);
 /**
  * Lane choice: the route's, and the driver's.
  *
@@ -131,6 +134,12 @@ export function stepLaneChange(w: SimWorld): void {
     // Pulling in to the kerb, or standing there with a door open: the car
     // stays where the errand put it (`kerbStops.ts`).
     if (v.kerbStop) {
+      v.laneIntent = null;
+      continue;
+    }
+    // Pulling in to the place it stops at on this lane (a bus at its stop, a
+    // resident's car at the bay it parks in): it stays in the lane by it.
+    if (v.commute && v.commute.lanelet === lane.id && v.commute.at - v.s < COMMUTE_HOLD) {
       v.laneIntent = null;
       continue;
     }

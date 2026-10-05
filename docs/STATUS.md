@@ -111,6 +111,27 @@ and they have seen it.
   them on foot. Children do not drive. Measured: `tests/sim/agents/player.spec.ts`;
   photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). Not
   yet: police cars (officers run), weapons, NPC criminals.
+- **Public transport, LIVE** (2026-10-05): a Transport category in the dock
+  (`editor/transitTools.ts`, `ui/v2/shell.ts`) lays out bus stops on the
+  footways (a click by a street), bus terminals, train tracks (clicks, a
+  double click or Enter ends; a track may cross streets but not run down one),
+  metro tracks (under the ground), train and metro stations on their tracks,
+  and lines (stops clicked in order); the lines are listed with their
+  vehicles (+/-) and can be deleted; all saved with the map
+  (`world/transit.ts`, `RoadDoc.transit`) and undoable. Buses run in the
+  traffic from stop to stop (`sim/transit/transit.ts`), standing at each
+  (longer at a terminal), out and back; trains and the metro run along their
+  tracks, stopping at stations, keeping their distance. Residents without a
+  car going far walk to a stop, wait there (standing at it), board, get off
+  at their stop, walk on. Level crossings close for a train (the traffic
+  stops short, `vehicles/obstacles.ts`; walkers keep off the track ahead).
+  Drawn (`render/transit.ts`): tracks on ballast and sleepers (rails alone
+  across a street), platforms with canopies, metro entrances, bus shelters
+  at the kerb with the line's colour, trains in their line's colour.
+  Measured: `tests/sim/transit/transit.spec.ts` (buses serve stop after stop,
+  trains stand at stations, residents carried, nobody and no vehicle inside a
+  train). Photos: `scripts/transit-shots.mjs` (`docs/audit/2026-10-05/transit/`).
+  Not yet: transfers between lines, fares, trains with windows.
 - **By design, not missing:** every person on the streets is a resident (no
   passers-by made up); car owners without a bay near home walk; with
   residents there is no generated traffic, so no buses run (the game has no

@@ -49,6 +49,7 @@ import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { buildUtilities, poleGroundAt, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
+import { buildTransit, type TransitMeshes } from './transit';
 import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { buildingPads } from '@world/buildings/pads';
 import { Indoors } from './indoors';
@@ -315,6 +316,9 @@ export function createSceneRenderer(
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
   let barriersFor = '';
+  /** Public transport (`transit.ts`), and the state it was built for. */
+  let transit: TransitMeshes | null = null;
+  let transitFor = '';
   let elevation: RoadElevation | null = null;
 
   // What each rebuild keeps for the next: the tiles of every surface an edit
@@ -756,6 +760,19 @@ export function createSceneRenderer(
         world.add(barriers.group);
         builtTriangles += barriers.triangles;
       }
+      // Public transport: tracks, stations, stops (`transit.ts`), on its own revision.
+      const transitKey = `${net.doc.transitRevision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
+      if (transitKey !== transitFor) {
+        transitFor = transitKey;
+        if (transit) {
+          builtTriangles -= transit.triangles;
+          world.remove(transit.group);
+          transit.dispose();
+        }
+        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt);
+        world.add(transit.group);
+        builtTriangles += transit.triangles;
+      }
       const gardenKey = `${plantSignature(net.doc)}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
       if (gardenKey !== gardensFor) {
         gardensFor = gardenKey;
@@ -842,6 +859,7 @@ export function createSceneRenderer(
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
       gardens?.cull(crowdFrustum, crowdProjection);
+      transit?.update(sim.city.transit.trains(), terrain.renderedHeightAt);
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,

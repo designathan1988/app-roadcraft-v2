@@ -632,6 +632,13 @@ function stepWalkers(w: SimWorld): void {
     carZones.push({ x0, y0, x1, y1, discs, on, crossingOnly: t !== null && !crossesFootway(t) });
   }
   for (const id of [...s.onCarWay.keys()]) if (!holding.has(id)) s.onCarWay.delete(id);
+  // The trains at grade: solid as cars are (nobody walks across a level crossing under one).
+  for (const discs of w.city.transit.trainZones()) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
+    // `on` empty: whoever is on a train's ground walks off it (`inside` below).
+    carZones.push({ x0, y0, x1, y1, discs, on: TRAIN_GROUND, crossingOnly: false });
+  }
 
 
   for (const p of s.walkers) {
@@ -695,7 +702,7 @@ function stepWalkers(w: SimWorld): void {
       // On it when the car took it, or inside the car's body (the car came to
       // them): they walk on out of its way.
       const inside = z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r);
-      if (inside && (z.on?.has(p.id) || z.discs.slice(0, 3).some((c) => hypot(c.x - p.x, c.y - p.y) < c.r))) continue;
+      if (inside && (z.on === TRAIN_GROUND || z.on?.has(p.id) || z.discs.slice(0, 3).some((c) => hypot(c.x - p.x, c.y - p.y) < c.r))) continue;
       if (!inside) z.on?.delete(p.id);
       const crossingNow = st.way?.kind === 'crossing';
       for (const [i, c] of z.discs.entries()) {
@@ -951,6 +958,9 @@ export function walkerAct(w: SimWorld, id: number, kind: GestureKind, seconds: n
   p.act = { kind, from: p.age, until: p.age + seconds, faceX, faceY };
   p.v = 0;
 }
+
+/** The ground of a train (its cars, the track just ahead): whoever is on it walks off it. */
+const TRAIN_GROUND: Set<number> = new Set();
 
 /** How much faster than their walk somebody runs away. */
 const RUN = 2.4;

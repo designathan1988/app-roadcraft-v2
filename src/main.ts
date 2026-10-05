@@ -54,6 +54,7 @@ import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
 import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
+import { TransitTool, setTransitTool } from '@editor/transitTools';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
 import type { BuildingId } from '@world/buildings/types';
@@ -95,6 +96,7 @@ type Tool =
   | 'pole'
   | 'streetscape'
   | 'barrier'
+  | 'transit'
   | 'person';
 type Alignment = 'straight' | 'curve' | 'free';
 let roundaboutRadius = 100;
@@ -636,6 +638,16 @@ function mutate(fn: () => boolean): void {
   mutateBuilt(fn);
 }
 
+/** The public transport tool (`editor/transitTools.ts`): each edit one undo step. */
+const transitEditor = new TransitTool({
+  doc: () => doc,
+  net: () => net,
+  edit: (next) => mutate(() => { doc.setTransit(next); return true; }),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
+setTransitTool(transitEditor);
+
 /** `mutate`, reporting whether the edit actually changed anything. */
 function mutateBuilt(fn: () => boolean): boolean {
   const before = serialize(doc);
@@ -988,6 +1000,8 @@ function endTerrainStroke(): void {
 // it (two on open ground close it); while one is open, a click on another
 // opens that one instead.
 canvas.addEventListener('dblclick', (e) => {
+  // A double click ends a track or a line being laid (`pointerdown` carries no click count).
+  if (tool === 'transit') { transitEditor.key('Enter'); return; }
   if (tool !== 'inspect') return;
   const r = canvas.getBoundingClientRect();
   buildings.insideClick({ x: e.clientX - r.left, y: e.clientY - r.top }, true);
@@ -1116,6 +1130,11 @@ canvas.addEventListener('pointerdown', (e) => {
       zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map() };
       for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
       requestDraw();
+      break;
+
+    case 'transit':
+      // Stops, tracks, stations, lines (`editor/transitTools.ts`).
+      transitEditor.click(world, e.shiftKey, e.detail >= 2);
       break;
 
     case 'barrier': {
@@ -1383,6 +1402,10 @@ canvas.addEventListener('pointermove', (e) => {
 
   if (tool === 'barrier') {
     barrierCursor = world;
+    requestDraw();
+  }
+  if (tool === 'transit') {
+    transitEditor.move(world);
     requestDraw();
   }
 
@@ -1663,6 +1686,7 @@ window.addEventListener('keydown', (e) => {
 
   // A run being traced: Enter ends it, Backspace takes the last point back,
   // Esc drops it.
+  if (!meta && tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
   if (!meta && tool === 'barrier' && barrierPoints) {
     if (e.key === 'Enter') { e.preventDefault(); finishBarrier(); return; }
     if (e.key === 'Backspace') {
@@ -1798,6 +1822,7 @@ window.addEventListener('keydown', (e) => {
     z: 'zone',
     h: 'building',
     k: 'person',
+    o: 'transit',
   };
   const next = shortcuts[e.key.toLowerCase()];
   if (next) pickTool(next);
@@ -3474,6 +3499,7 @@ function drawOverlayScreen(): void {
   drawPolePlan(currentPolePlan(), ctx, at, w, h);
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
+  if (tool === 'transit') transitEditor.draw(ctx, at, true);
   if (tool === 'zone' || doc.zoneMarks.length) {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
     // filled with their use's colour; with any other tool only the zoned land
@@ -4255,6 +4281,8 @@ qualitySelect.onchange = () => {
   DT,
   exportMap: () => exportToFile(doc, sessionSettings()),
   importMap: async () => openImported(await importFromFile()),
+  /** The public transport tool, for the probes (`scripts/transit-shots.mjs`). */
+  transit: transitEditor,
   setTraffic: (enabled: boolean) => {
     if (traffic !== enabled) trafficButton.click();
   },

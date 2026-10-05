@@ -280,6 +280,11 @@ function exitsOf(w: SimWorld, b: Building, v: { x: number; y: number; w: number;
   return out;
 }
 
+/** The lane beside a point of a street (a bus stop): the nearest on the kerb side of that road, its point there. */
+export function laneBeside(w: SimWorld, x: number, y: number, segment?: SegmentId): BayLane | null {
+  return laneFor(w, x, y, undefined, segment);
+}
+
 /** The nearest drivable lane with room to join, its point beside `(x, y)`, on the kerb side. */
 function laneFor(w: SimWorld, x: number, y: number, among?: Iterable<Lanelet>, segment?: SegmentId): BayLane | null {
   let best: BayLane | null = null;

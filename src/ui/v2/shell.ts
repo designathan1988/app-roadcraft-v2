@@ -30,6 +30,7 @@ import {
   type BuilderToolSpec,
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
+import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { poleLampMode, setPoleLampMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { LANDSCAPE_KINDS } from '@world/landscape';
@@ -41,7 +42,7 @@ import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
 
-type Category = 'roads' | 'zones' | 'build' | 'landscape' | 'people' | 'demolish' | 'info';
+type Category = 'roads' | 'zones' | 'build' | 'landscape' | 'transit' | 'people' | 'demolish' | 'info';
 
 const SWATCHES: readonly number[] = [
   0xf2efe8, 0xe6d8bd, 0xd8c297, 0xc98f5a, 0xa4563f, 0x72412f, 0x9c6b43,
@@ -54,6 +55,13 @@ const ICON: Record<string, string> = {
   zones: '<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>',
   build: '<path d="M4 21V9l6-4v16"/><path d="M10 21V3h10v18"/><path d="M2 21h20"/><path d="M13 7h1m3 0h1m-5 4h1m3 0h1m-5 4h1m3 0h1"/>',
   landscape: '<path d="m2 19 7-11 4 6 3-4 6 9Z"/><circle cx="17" cy="5" r="2"/>',
+  transit: '<rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 11h14M8 18v2M16 18v2"/><circle cx="8.5" cy="14.5" r="1"/><circle cx="15.5" cy="14.5" r="1"/>',
+  tr_stop: '<path d="M7 21V4"/><rect x="7" y="4" width="10" height="7" rx="1"/><path d="M10 7.5h4"/><path d="M4 21h8"/>',
+  tr_terminal: '<rect x="3" y="9" width="18" height="10" rx="1"/><path d="M3 9l9-5 9 5M8 19v-5h8v5"/>',
+  tr_track: '<path d="M8 3 6 21M16 3l2 18M6.5 7h11M6 12h12M5.5 17h13"/>',
+  tr_metro: '<path d="M4 20h16"/><rect x="6" y="5" width="12" height="11" rx="4"/><path d="M6 11h12M9 16l-2 3m8-3 2 3"/><circle cx="12" cy="8" r="1"/>',
+  tr_station: '<path d="M3 20h18M5 20V9h14v11M3 9l9-5 9 5"/><path d="M9 13h6"/>',
+  tr_line: '<circle cx="5" cy="17" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="19" cy="17" r="2"/><path d="M6.4 15.6 10.6 8.4M13.4 8.4l4.2 7.2"/>',
   people: '<circle cx="12" cy="6" r="3"/><path d="M6 21v-5a6 6 0 0 1 12 0v5"/>',
   demolish: '<path d="m5 9 8-5 5 8-8 5Z"/><path d="m7 15 5 5m4-8 3 5"/>',
   info: '<circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/>',
@@ -357,6 +365,7 @@ export function mountShell(deps: ShellDeps): void {
     { id: 'zones', tool: 'zone', key: 'Z', label: () => t('tool.zone') },
     { id: 'build', tool: 'building', key: 'H', label: () => t('tool.building') },
     { id: 'landscape', tool: 'terrain', key: 'T', label: () => t('v2.cat.landscape') },
+    { id: 'transit', tool: 'transit', key: 'O', label: () => t('tool.transit') },
     { id: 'people', tool: 'person', key: 'K', label: () => t('tool.person') },
     { id: 'demolish', tool: 'bulldoze', key: 'B', label: () => t('tool.bulldoze') },
     { id: 'info', tool: 'inspect', key: 'I', label: () => t('v2.cat.info') },
@@ -487,6 +496,7 @@ export function mountShell(deps: ShellDeps): void {
     if (current === 'zone') return 'zones';
     if (current === 'building') return 'build';
     if (['terrain', 'barrier', 'pole', 'streetscape'].includes(current)) return 'landscape';
+    if (current === 'transit') return 'transit';
     if (current === 'person') return 'people';
     if (current === 'bulldoze') return 'demolish';
     if (current === 'inspect') return 'info';
@@ -705,6 +715,43 @@ export function mountShell(deps: ShellDeps): void {
       options.appendChild(lamps);
       note(t('help.tool.pole'));
     }
+  }
+
+  // ------------------------------------------------------------ public transport
+  function renderTransit(): void {
+    title.textContent = t('tool.transit');
+    const tool2 = transitTool();
+    if (!tool2) return;
+    const kinds: [TransitToolKind, 'train' | 'metro' | undefined, string, string][] = [
+      ['stop', undefined, t('transit.tool.stop'), 'tr_stop'],
+      ['terminal', undefined, t('transit.tool.terminal'), 'tr_terminal'],
+      ['track', 'train', t('transit.tool.trainTrack'), 'tr_track'],
+      ['station', 'train', t('transit.tool.trainStation'), 'tr_station'],
+      ['track', 'metro', t('transit.tool.metroTrack'), 'tr_metro'],
+      ['station', 'metro', t('transit.tool.metroStation'), 'tr_station'],
+      ['line', undefined, t('transit.tool.line'), 'tr_line'],
+    ];
+    for (const [kind, rail, label, icon] of kinds) {
+      const on = tool2.kind === kind && (rail === undefined || tool2.rail === rail);
+      tabs.appendChild(tab(label, on, () => { tool2.setKind(kind, rail); render(); }, false, svg(icon, 18)));
+    }
+    // The lines: their colour and name, how many vehicles, and away.
+    const lines = tool2.lines();
+    const { items } = section(t('transit.lines'));
+    if (lines.length === 0) note(t('transit.noLines'));
+    for (const line of lines) {
+      const row = el('div', 'v2-transit-line');
+      row.innerHTML = `<i style="background:${line.colour}"></i><b>${line.name}</b><span>${t(`transit.mode.${line.mode}`)} · ${t('transit.stops', { n: line.stops.length })}</span>`;
+      const less = button('v2-icon', t('transit.fewer'), () => { tool2.setVehicles(line.id, line.vehicles - 1); render(); }, '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 12h12"/></svg>');
+      const count = el('span', 'v2-transit-count');
+      count.textContent = String(line.vehicles);
+      count.title = t('transit.vehicles');
+      const more = button('v2-icon', t('transit.more'), () => { tool2.setVehicles(line.id, line.vehicles + 1); render(); }, '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 12h12M12 6v12"/></svg>');
+      const drop = button('v2-icon danger', t('transit.remove'), () => { tool2.removeLine(line.id); render(); }, svg('demolish', 14));
+      row.append(less, count, more, drop);
+      items.appendChild(row);
+    }
+    note(t(`help.transit.${tool2.kind}`));
   }
 
   // ------------------------------------------------------------ simple tools
@@ -973,6 +1020,7 @@ plan.appendChild(choices([
     if (cat === 'roads') renderRoads(current);
     else if (cat === 'zones') renderZones();
     else if (cat === 'landscape') renderLandscape(current);
+    else if (cat === 'transit') renderTransit();
     else if (cat === 'build') renderBuild();
     else renderSimple(current);
     options.hidden = options.childElementCount === 0;

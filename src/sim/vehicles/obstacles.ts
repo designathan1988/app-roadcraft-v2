@@ -7,6 +7,10 @@ import { signalStateFor } from '../signals/query';
 import { signalHolds } from '../signals/permission';
 import { mergeRemaining, nextConnector } from '../intersections/admission';
 import { kerbStopObstacle } from './kerbStops';
+import { m } from '@world/units';
+
+/** How far short of a closed level crossing a vehicle stops, u. */
+const CROSSING_STOP = m(5);
 
 /** Stop short of a zebra span somebody is on; null when the path is clear. */
 function pedestrianAhead(w: SimWorld, v: Vehicle): Obstacle | null {
@@ -148,6 +152,22 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
   // Pulling in to the kerb to let somebody out or in (`kerbStops.ts`).
   const kerb = kerbStopObstacle(v);
   if (kerb) constraints.obstacles.push(kerb);
+  // A level crossing with a train coming (`sim/transit`): stopped short of it.
+  // Seen along the route ahead, a few lanes on, as a driver sees the barrier
+  // down before the turn onto its street: the nearest one closed.
+  {
+    let offset = -v.s;
+    for (let k = 0; k < Math.min(3, v.route.length); k++) {
+      const id = v.route[k]!;
+      for (const at of w.city.transit.closedOn(id)) {
+        // Already over the line (its front past the track): it goes on across.
+        if (offset + at <= 0) continue;
+        constraints.obstacles.push({ gap: Math.max(0, offset + at - CROSSING_STOP), speed: 0, kind: 'signal' });
+      }
+      offset += w.lanelet(id)?.length ?? 0;
+      if (offset > m(120)) break;
+    }
+  }
   // A resident's car pulling in at the door it is going to (`sim/city`).
   if (v.commute && v.lanelet === v.commute.lanelet) {
     constraints.obstacles.push({ gap: Math.max(0, v.commute.at - v.s + v.driver.s0), speed: 0, kind: 'kerbStop' });

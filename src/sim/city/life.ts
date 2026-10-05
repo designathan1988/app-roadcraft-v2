@@ -15,7 +15,8 @@ import { type Population, type Resident, derivePopulation } from './population';
 import { type CarPhase, OwnCars, personGender, type TripReason } from '../agents/cars';
 import { DECIDE_EVERY, type Mind, type Needs, type PlaceIndex, committedTo, decide, live, newMind, placeIndex } from '../agents/mind';
 import { type ActivityKind, BuildingUse, type Doing, type YardPlaces, chooseActivity } from '../agents/activities';
-import { addPlayerWalker, takeWalker, walkerOf } from '../agents/walk';
+import { addPlayerWalker, removeWalker, takeWalker, walkerAct, walkerOf } from '../agents/walk';
+import { type Rider, TransitSim } from '../transit/transit';
 import { Player } from '../agents/player';
 import type { VehicleId } from '../vehicles/state';
 import { localToWorld } from '@world/buildings/geometry';
@@ -48,6 +49,8 @@ const LOOK_EVERY = 0.5;
 const NOBODY: readonly Resident[] = [];
 /** Most residents walking, and driving, at once: a queue forms beyond. */
 const MAX_WALKS = 160;
+/** Farther than this a resident without a car looks for a line to take (`sim/transit`). */
+const TRANSIT_FROM = m(500);
 const MAX_DRIVES = 90;
 /** Closer than this, nobody takes the car. */
 const DRIVE_FROM = m(150);
@@ -62,7 +65,7 @@ export interface Trip {
   readonly id: number;
   readonly resident: number;
   readonly to: BuildingId;
-  mode: 'walk' | 'drive';
+  mode: 'walk' | 'drive' | 'transit';
   /** Why it is made (`agent.why.<reason>`). */
   readonly why?: TripReason;
   /** The walker or the car carrying it. */
@@ -206,7 +209,7 @@ export class CityLife {
     let trip: AgentView['trip'] = null;
     for (const t of this.trips.values()) {
       if (t.resident !== resident) continue;
-      const step = this.cars?.trips.get(t.id)?.phase ?? 'walk';
+      const step = this.transit.riders.get(t.id)?.phase ?? this.cars?.trips.get(t.id)?.phase ?? 'walk';
       trip = { step, why: t.why ?? 'outing', to: t.to };
       break;
     }
@@ -285,6 +288,7 @@ export class CityLife {
     this.arrivals(w);
     this.cars?.step(w, (id) => { const t = this.trips.get(id); if (t) this.arrive(t); });
     this.player.step(w);
+    this.ride(w);
     this.lookClock += DT;
     if (this.lookClock < LOOK_EVERY) return;
     this.lookClock = 0;
@@ -474,6 +478,29 @@ export class CityLife {
     this.trips.set(trip.id, trip);
     d.at = null;
     this.moved();
+  }
+
+  /** The public transport running, and its riders on and off (`sim/transit`). */
+  readonly transit = new TransitSim();
+
+  /** One tick of the lines; those who got on gone from the stop, those who got off walking on. */
+  private ride(w: SimWorld): void {
+    this.transit.step(w);
+    for (const [trip, rider] of this.transit.riders) {
+      if (rider.phase === 'riding' && walkerOf(w, rider.person)) removeWalker(w, rider.person);
+      void trip;
+    }
+    const walk = w.pedEngine.walkTrip;
+    for (const { trip, at } of this.transit.takeAlighted()) {
+      const t = this.trips.get(trip);
+      const rider = this.transit.riders.get(trip);
+      const r = t ? this.byResident.get(t.resident) : undefined;
+      const door = rider ? this.doors.get(rider.building) : undefined;
+      if (!t || !rider || !r || !door || !walk) { if (t) this.arrive(t); this.transit.riders.delete(trip); continue; }
+      const id = walk.call(w.pedEngine, w, { trip, fromX: at.x, fromY: at.y, toX: door.x, toY: door.y,
+        seed: personGender(rider.person) === 'f' ? 1 : 0, ageClass: r.ageClass, person: rider.person, reach: m(60) });
+      if (id === null) { this.arrive(t); this.transit.riders.delete(trip); }
+    }
   }
 
   /** A trip ended where it is, without arriving (a car taken by the player from its driver). */
@@ -718,6 +745,28 @@ export class CityLife {
       return 'wait';
     }
     if (!canWalk) return 'wait';
+    // Far, and without a car to take: a bus, a train or the metro, if a line
+    // runs from near here to near there (`sim/transit`).
+    if (Math.hypot(to.x - from.x, to.y - from.y) > TRANSIT_FROM) {
+      const ride = this.transit.plan(w, from, to);
+      const stop = ride ? this.transit.stopAt(ride.board) : null;
+      const walkTo = w.pedEngine.walkTrip;
+      if (ride && stop && walkTo) {
+        const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'transit', agent: -1, started: w.clock.time, why: reason };
+        const person = OwnCars.personOf(r.id);
+        const id = walkTo.call(w.pedEngine, w, { trip: trip.id, fromX: from.x, fromY: from.y, toX: stop.x, toY: stop.y,
+          seed: personGender(person) === 'f' ? 1 : 0, ageClass: r.ageClass, person, reach: m(40) });
+        if (id !== null) {
+          trip.agent = id;
+          this.trips.set(trip.id, trip);
+          this.transit.addRider({ trip: trip.id, resident: r.id, person, line: ride.line, from: ride.board, to: ride.alight,
+            building: e.to, phase: 'toStop', on: null });
+          d.at = null;
+          this.moved();
+          return 'walk';
+        }
+      }
+    }
     const walk = w.pedEngine.walkTrip;
     if (!walk) { this.stranded++; return 'skip'; }
     const trip: Trip = { id: this.nextTrip++, resident: r.id, to: e.to, mode: 'walk', agent: -1, started: w.clock.time, why: reason };
@@ -739,6 +788,21 @@ export class CityLife {
   private arrivals(w: SimWorld): void {
     for (const id of w.pedEngine.takeArrivals?.(w) ?? []) {
       const t = this.trips.get(id);
+      if (t && t.mode === 'transit') {
+        // At the stop: they stand there waiting. From it: there.
+        const r = this.byResident.get(t.resident);
+        const stopped = this.transit.walkEnded(id);
+        if (stopped === 'arrived') this.arrive(t);
+        else if (stopped === 'waiting' && r) {
+          const rider = this.transit.riders.get(id)!;
+          const at = this.transit.stopAt(rider.from)!;
+          const person = OwnCars.personOf(r.id);
+          addPlayerWalker(w, person, at.x + ((id * 37) % 7 - 3) * m(0.5), at.y + ((id * 53) % 5 - 2) * m(0.5),
+            (id % 8) * Math.PI / 4, r.ageClass, personGender(person));
+          walkerAct(w, person, (id & 1) ? 'phone' : 'look', 1e6, at.x, at.y);
+        }
+        continue;
+      }
       if (t && t.mode === 'walk') this.arrive(t);
       // A walk to or from an agent's own car: the car trip goes on.
       else if (t && this.cars) this.cars.walkEnded(id);
@@ -806,7 +870,7 @@ export interface AgentView {
   /** The building they are in; null on the way somewhere. */
   readonly at: BuildingId | null;
   /** The trip under way: on foot (`walk`), or the step of their car trip. */
-  readonly trip: { readonly step: 'walk' | CarPhase; readonly why: TripReason; readonly to: BuildingId } | null;
+  readonly trip: { readonly step: 'walk' | CarPhase | Rider['phase']; readonly why: TripReason; readonly to: BuildingId } | null;
   /** Their own car: parked (and in whose lot), in use, or on the road. */
   readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
   /** Their needs, 0 desperate to 100 met (agents only). */
