@@ -108,12 +108,24 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
   const cells: ZoneCell[] = [];
   const byId = new Map<string, ZoneCell>();
   const buckets = new Map<string, ZoneCell[]>();
-  const taken = (centre: Vec2): boolean => {
+  /** Corners pulled a little toward the centre: cells that only share an edge do not overlap. */
+  const shrunk = (corners: readonly Vec2[], centre: Vec2): Vec2[] =>
+    corners.map((q) => ({ x: q.x + (centre.x - q.x) * 0.15, y: q.y + (centre.y - q.y) * 0.15 }));
+  /**
+   * Whether a cell would overlap one already laid - by any amount, not only
+   * when the centres nearly meet. Two streets' grids meeting at a block's
+   * corner used to keep cells overlapping by a third or a half, and the
+   * corner of every block read as two grids drawn over each other.
+   */
+  const taken = (centre: Vec2, corners: readonly Vec2[]): boolean => {
+    const mine = shrunk(corners, centre);
     const bx = Math.floor(centre.x / BUCKET), by = Math.floor(centre.y / BUCKET);
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
       for (const other of buckets.get(`${bx + dx},${by + dy}`) ?? []) {
-        if (Math.hypot(other.centre.x - centre.x, other.centre.y - centre.y) < ZONE_CELL * 0.7) return true;
-        if (insideQuad(centre, other.corners)) return true;
+        if (Math.hypot(other.centre.x - centre.x, other.centre.y - centre.y) > ZONE_CELL * 1.5) continue;
+        if (insideQuad(centre, other.corners) || insideQuad(other.centre, corners)) return true;
+        if (mine.some((q) => insideQuad(q, other.corners))) return true;
+        if (shrunk(other.corners, other.centre).some((q) => insideQuad(q, corners))) return true;
       }
     }
     return false;
@@ -143,7 +155,7 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
         const na = { x: -a.t.y * side, y: a.t.x * side };
         const nb = { x: -b.t.y * side, y: b.t.x * side };
         const nm = { x: -mid.t.y * side, y: mid.t.x * side };
-        rows: for (let row = 0; row < ZONE_DEPTH; row++) {
+        for (let row = 0; row < ZONE_DEPTH; row++) {
           const d0 = face + row * ZONE_CELL, d1 = d0 + ZONE_CELL;
           const corners: [Vec2, Vec2, Vec2, Vec2] = [
             { x: a.p.x + na.x * d0, y: a.p.y + na.y * d0 },
@@ -161,12 +173,13 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
           });
           // Off the paving, by a hair: a cell's front edge lies ON the
           // footway's back edge.
-          const inset = (q: Vec2): Vec2 => ({ x: q.x + (centre.x - q.x) * 0.02, y: q.y + (centre.y - q.y) * 0.02 });
-          if (onRoad(centre) || corners.some(onRoad) || onPlate(centre) ||
-            [...corners, ...edgeMids].some((q) => onPlate(inset(q))) || taken(centre)) {
-            if (row === 0) continue rows;
-            break;
-          }
+          // Tested a tenth of the way in, so a cell whose edge lies along the
+          // paving's edge (as the front row's does) is not refused for it.
+          const inset = (q: Vec2): Vec2 => ({ x: q.x + (centre.x - q.x) * 0.1, y: q.y + (centre.y - q.y) * 0.1 });
+          // A column stops at its first refused cell: a deeper row with the
+          // front one missing would float away from the street.
+          if (onRoad(centre) || corners.map(inset).some(onRoad) || onPlate(centre) ||
+            [...corners, ...edgeMids].some((q) => onPlate(inset(q))) || taken(centre, corners)) break;
           const front = { x: mid.p.x + nm.x * d0, y: mid.p.y + nm.y * d0 };
           const cell: ZoneCell = {
             id: key(segId, side, c, row), segment: segId, side, column: c, row,
