@@ -112,5 +112,36 @@ export function windDepthMaterial(response: WindResponse, key: string): MeshDept
 
 /** Advances the wind clock. Called once a frame; costs one uniform write. */
 export function advanceWind(seconds: number): void {
-  windUniforms.uWindTime.value = seconds;
+  // A livelier wind than the first one (the player's order of 2026-10-05:
+  // "vento de verdade", the wires and the trees moving faster).
+  windUniforms.uWindTime.value = seconds * WIND_PACE;
+}
+
+/** How much faster than real time the wind's clock runs. */
+const WIND_PACE = 1.6;
+
+/**
+ * Wires in the wind: a span swings sideways downwind and bobs a little,
+ * most at mid-span and not at all at the insulators, each span at its own
+ * phase, under the same travelling gust as the trees. `aSwing` is the weight
+ * along the span (4 t (1 - t)), `aPhase` the span's phase.
+ */
+export function applyWireWind(material: Material, amplitude: number): void {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, windUniforms, { uWireAmp: { value: amplitude } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uWindTime;
+        uniform vec2 uWindDir;
+        uniform float uWireAmp;
+        attribute float aSwing;
+        attribute float aPhase;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        float front = dot(transformed.xz, uWindDir) * 0.012 - uWindTime * 0.42;
+        float gust = 0.45 + 0.55 * smoothstep(-0.6, 1.0, sin(front) + 0.35 * sin(front * 2.3 + 1.7));
+        float swing = sin(uWindTime * 1.9 + aPhase) + 0.35 * sin(uWindTime * 3.7 + aPhase * 2.3);
+        transformed.xz += uWindDir * (0.55 + 0.45 * swing) * gust * aSwing * uWireAmp;
+        transformed.y += 0.25 * cos(uWindTime * 1.9 + aPhase) * gust * aSwing * uWireAmp;`);
+  };
+  material.customProgramCacheKey = () => 'wire-wind';
 }

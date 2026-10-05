@@ -37,6 +37,7 @@ import {
   sampleWire,
 } from '@world/utilities';
 import { angleOf } from '@core/vec2';
+import { applyWireWind } from './wind';
 
 /** Pin insulator on the cross-arm. */
 const INSULATOR_RADIUS = m(0.07);
@@ -48,6 +49,8 @@ const BRACE_THICK = m(0.05);
 const CAN_RADIUS = m(0.28);
 /** Rise of the lamp bracket from the pole to the head. */
 const LAMP_TILT = (8 * Math.PI) / 180;
+/** How far a wire swings at mid-span in a full gust. */
+const WIRE_SWING = m(0.35);
 import type { PoleId, SpanId } from '@world/ids';
 import type { UtilityPole, UtilitySpan } from '@world/utilities';
 
@@ -145,6 +148,9 @@ export function buildUtilities(
   const lenses: Placement[] = [];
   const pools: Placement[] = [];
   const wirePoints: number[] = [];
+  /** Per wire vertex: weight along its span (0 at the poles), and the span's phase. */
+  const wireSwing: number[] = [];
+  const wirePhase: number[] = [];
 
   /** Crown height of each pole, so the wires and the arms agree on it. */
   const crown = new Map<number, number>();
@@ -294,11 +300,16 @@ export function buildUtilities(
         const bz = topB - POLE_ARM_DROP + course;
 
         const points = sampleWire(ax, ay, az, bx, by, bz);
+        const phase = (span.id * 2.399) % (Math.PI * 2);
+        const last = points.length - 1;
         for (let i = 0; i + 1 < points.length; i++) {
           const p = points[i];
           const q = points[i + 1];
           if (!p || !q) continue;
           wirePoints.push(p.x, p.z, -p.y, q.x, q.z, -q.y);
+          const t0 = i / last, t1 = (i + 1) / last;
+          wireSwing.push(4 * t0 * (1 - t0), 4 * t1 * (1 - t1));
+          wirePhase.push(phase, phase);
         }
       }
     }
@@ -322,6 +333,7 @@ export function buildUtilities(
   // it broke up into a dotted trace across the footway under it, which read
   // as a debug path left on screen; a faint line reads as a wire.
   const wireMaterial = new LineBasicMaterial({ color: 0x3a3f42, transparent: true, opacity: 0.55, depthWrite: false });
+  applyWireWind(wireMaterial, WIRE_SWING);
 
   const mastGeometry = new CylinderGeometry(
     POLE_TOP_RADIUS,
@@ -369,6 +381,8 @@ export function buildUtilities(
   if (wirePoints.length) {
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new Float32BufferAttribute(wirePoints, 3));
+    geometry.setAttribute('aSwing', new Float32BufferAttribute(wireSwing, 1));
+    geometry.setAttribute('aPhase', new Float32BufferAttribute(wirePhase, 1));
     geometry.computeBoundingSphere();
     wires = new LineSegments(geometry, wireMaterial);
     wires.name = 'utility-wires';

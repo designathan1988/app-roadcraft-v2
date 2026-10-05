@@ -85,7 +85,7 @@ const STREET_TREE_MIN = m(6.5);
 const STREET_TREE_RANGE = m(3);
 
 /** How each kind of plant answers the wind; see `wind.ts`. */
-const TREE_WIND: WindResponse = { sway: 0.03, flutter: 0.006 };
+const TREE_WIND: WindResponse = { sway: 0.045, flutter: 0.009 };
 const BUSH_WIND: WindResponse = { sway: 0.05, flutter: 0.014 };
 const GRASS_WIND: WindResponse = { sway: 0.22, flutter: 0.04 };
 
