@@ -7,6 +7,10 @@ import { m } from '@world/units';
 import type { ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneUse } from '@world/zones';
 import { LOT_PLAN_VERSION, growOne, paintCells } from './zoning';
+import { Rng } from '@core/rng';
+import { instantiate } from '@world/buildings/blueprints';
+import { type TowerKind, makeTower } from '@world/buildings/towerKit';
+import { addBuildingRecord } from './buildings';
 
 /**
  * The lot lab (`?lab=lots`): a street on empty land where the zoning's lot
@@ -56,6 +60,23 @@ export function growLab(ctx: SiteContext, grid: ZoneGrid, seed: number, widths: 
     grown++;
   }
   return grown;
+}
+
+/**
+ * Puts a tower of the kit (`world/buildings/towerKit.ts`) in the first free
+ * place of two rows behind the lab street's north lots, its front to the
+ * street. Returns its id, or null when no place took it.
+ */
+export function placeTower(ctx: SiteContext, kind: TowerKind, floors: number | undefined, seed: number): number | null {
+  const body = makeTower({ kind, ...(floors ? { floors } : {}) }, new Rng(seed >>> 0));
+  for (const rowY of [-m(60), -m(105)]) {
+    for (let k = 0; k < 7; k++) {
+      const anchor = { x: -m(105) + k * m(35), y: rowY };
+      const result = addBuildingRecord(ctx, instantiate(body, anchor, Math.PI));
+      if (result.ok && result.id !== undefined) return result.id as number;
+    }
+  }
+  return null;
 }
 
 /** The zone a grown building stands on, if any. */

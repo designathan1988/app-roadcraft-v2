@@ -1,6 +1,7 @@
 import { t } from '@ui/i18n';
 import type { LotTemplate } from '@world/buildings/lotTemplate';
 import { ZONE_DENSITIES, ZONE_USES, type ZoneDensity, type ZoneUse } from '@world/zones';
+import { TOWER_KINDS, type TowerKind } from '@world/buildings/towerKit';
 
 /**
  * The lot lab's panel (`?lab=lots`, `editor/lotLab.ts`): the zone and lot width
@@ -11,6 +12,8 @@ export interface LotLabActions {
   generate(zone: { use: ZoneUse; density: ZoneDensity }, widths: readonly [number, number], seed: number): number;
   /** Dezones the street and takes its lots down. */
   clear(): void;
+  /** Puts towers of the kit behind the street; returns how many were placed. */
+  towers(kinds: readonly TowerKind[], floors: number | undefined, seed: number): number;
   /** The selected building as a template, or null with nothing selected. */
   selectedTemplate(name: string, zone: { use: ZoneUse; density: ZoneDensity }): LotTemplate | null;
   /** Puts a kept lot in place of the selected building; false with nothing selected. */
@@ -56,6 +59,10 @@ export function mountLotLab(actions: LotLabActions): void {
     <div class="row"><button data-a="generate">${t('lab.generate')}</button><button class="ghost" data-a="random">${t('lab.random')}</button></div>
     <div class="row"><button class="ghost" data-a="clear">${t('lab.clear')}</button></div>
     <div class="row"><button class="ghost" data-a="save">${t('lab.save')}</button></div>
+    <h3>${t('lab.towers')}</h3>
+    <label>${t('lab.towerKind')}<select data-k="tower">${TOWER_KINDS.map((k) => option(k, t(`lab.tower.${k}`))).join('')}</select></label>
+    <label>${t('lab.floors')}<input data-k="floors" type="number" min="0" max="56" value="0"></label>
+    <div class="row"><button data-a="tower">${t('lab.makeTower')}</button><button class="ghost" data-a="towersAll">${t('lab.makeAll')}</button></div>
     <h3>${t('lab.library')}</h3>
     <ul data-k="list"></ul>`;
   document.body.appendChild(panel);
@@ -115,6 +122,13 @@ export function mountLotLab(actions: LotLabActions): void {
     const action = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset['a'];
     if (action === 'generate') generate();
     else if (action === 'clear') { actions.clear(); actions.flash(t('lab.cleared')); }
+    else if (action === 'tower' || action === 'towersAll') {
+      const floors = Math.round(Number(field<HTMLInputElement>('floors').value) || 0) || undefined;
+      const seed = Math.round(Number(field<HTMLInputElement>('seed').value) || 0);
+      const kinds = action === 'tower' ? [field<HTMLSelectElement>('tower').value as TowerKind] : TOWER_KINDS;
+      const n = actions.towers(kinds, floors, seed);
+      actions.flash(n ? t('lab.towersMade', { n }) : t('lab.noRoom'));
+    }
     else if (action === 'random') {
       field<HTMLInputElement>('seed').value = String(Math.floor(Math.random() * 100000));
       generate();
