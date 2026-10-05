@@ -918,9 +918,9 @@ export function mountShell(deps: ShellDeps): void {
         const force = group(t('strike.force'));
         const row = el('div', 'v2-stepper');
         row.append(
-          button('v2-icon', t('strike.force.less'), () => { strikeChoice.strength = Math.max(1, strikeChoice.strength - 1); render(); }, svg('minus', 14)),
+          button('v2-icon', t('strike.force.less'), () => { strikeChoice.strength = Math.max(1, strikeChoice.strength - (strikeChoice.strength > 10 ? 5 : 1)); render(); }, svg('minus', 14)),
           el('output', 'v2-stepper-value', `${t('strike.force')}: ${strikeChoice.strength}`),
-          button('v2-icon', t('strike.force.more'), () => { strikeChoice.strength = Math.min(10, strikeChoice.strength + 1); render(); }, svg('plus', 14)),
+          button('v2-icon', t('strike.force.more'), () => { strikeChoice.strength = Math.min(50, strikeChoice.strength + (strikeChoice.strength >= 10 ? 5 : 1)); render(); }, svg('plus', 14)),
         );
         force.appendChild(row);
         options.appendChild(force);

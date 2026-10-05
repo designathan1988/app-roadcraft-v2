@@ -63,7 +63,7 @@ interface Tri {
   readonly group: number;
 }
 
-const STRIDE = 11;
+const STRIDE = 12;
 
 function lerp(a: number[], ai: number, b: number[], bi: number, out: number[]): void {
   for (let k = 0; k < STRIDE; k++) out.push((a[ai + k]! + b[bi + k]!) / 2);
@@ -96,6 +96,8 @@ export function fractureBuilding(
   kit: BuildingKit,
   slabs: readonly { readonly corners: readonly Vector3[]; readonly y: number }[],
   seed: number,
+  /** What stands inside (`interiorFurniture`): each piece whole, thrown out with the fragment it is in. */
+  furniture?: Partial<Record<string, { matrices: Float32Array; count: number }>>,
 ): Fragment[] {
   const materials: Material[] = [];
   const index = new Map<Material, number>();
@@ -105,12 +107,18 @@ export function fractureBuilding(
     return i;
   };
   const tris: Tri[] = [];
+  // The building's wear, for the pieces with none of their own (parts, slabs).
+  let wear = 0, wearN = 0;
+  for (const part of Object.values(chunk.shells)) if (part) for (const d of part.decay) { wear += d; wearN++; }
+  const bDecay = wearN ? wear / wearN : 0;
 
   // ---- the shell, subdivided
   for (const [finish, part] of Object.entries(chunk.shells) as [Finish, NonNullable<BuildingChunk['shells'][Finish]>][]) {
     const mat = materialIndex(kit.shell[finish]);
-    const { position: p, normal: n, colour: c, uv, index: idx } = part;
-    const vert = (i: number): number[] => [p[i * 3]!, p[i * 3 + 1]!, p[i * 3 + 2]!, n[i * 3]!, n[i * 3 + 1]!, n[i * 3 + 2]!, c[i * 3]!, c[i * 3 + 1]!, c[i * 3 + 2]!, uv[i * 2]!, uv[i * 2 + 1]!];
+    const { position: p, normal: n, colour: c, uv, index: idx, decay: dk } = part;
+    // The building's wear (`aDecay`) goes with each vertex: dropped, an old
+    // building broke into clean new-coloured pieces (the player: "ela muda de cor").
+    const vert = (i: number): number[] => [p[i * 3]!, p[i * 3 + 1]!, p[i * 3 + 2]!, n[i * 3]!, n[i * 3 + 1]!, n[i * 3 + 2]!, c[i * 3]!, c[i * 3 + 1]!, c[i * 3 + 2]!, uv[i * 2]!, uv[i * 2 + 1]!, dk[i] ?? 0];
     for (let t = 0; t < idx.length; t += 3) {
       const out: number[][] = [];
       subdivide([...vert(idx[t]!), ...vert(idx[t + 1]!), ...vert(idx[t + 2]!)], MAX_EDGE, out);
@@ -134,7 +142,7 @@ export function fractureBuilding(
         for (let q = 0; q < 3; q++) {
           a.fromBufferAttribute(gp, t + q).applyMatrix4(m4);
           nv.fromBufferAttribute(gn, t + q).applyMatrix3(nm3).normalize();
-          v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, col[0]!, col[1]!, col[2]!, guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0);
+          v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, col[0]!, col[1]!, col[2]!, guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0, bDecay);
         }
         tris.push({ v, material: mat, solid: false, group });
       }
@@ -142,12 +150,40 @@ export function fractureBuilding(
     }
     if (geo !== kit.geometry[kind]) geo.dispose();
   }
+  // ---- the furniture inside, each piece whole (sofas, beds, desks, shelves...)
+  if (furniture) {
+    const fk = kit.furniture();
+    const mat = materialIndex(fk.material);
+    for (const [kind, batch] of Object.entries(furniture)) {
+      const source = (fk.geometry as Record<string, import('three').BufferGeometry>)[kind];
+      if (!batch || !batch.count || !source) continue;
+      const geo = source.index ? source.toNonIndexed() : source;
+      const gp = geo.getAttribute('position'), gn = geo.getAttribute('normal'), guv = geo.getAttribute('uv');
+      const gc = geo.getAttribute('color');
+      for (let k = 0; k < batch.count; k++) {
+        m4.fromArray(batch.matrices, k * 16);
+        nm3.getNormalMatrix(m4);
+        for (let t = 0; t < gp.count; t += 3) {
+          const v: number[] = [];
+          for (let q = 0; q < 3; q++) {
+            a.fromBufferAttribute(gp, t + q).applyMatrix4(m4);
+            nv.fromBufferAttribute(gn, t + q).applyMatrix3(nm3).normalize();
+            v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, gc ? gc.getX(t + q) : 1, gc ? gc.getY(t + q) : 1, gc ? gc.getZ(t + q) : 1,
+              guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0, 0);
+          }
+          tris.push({ v, material: mat, solid: false, group });
+        }
+        group++;
+      }
+      if (geo !== source) geo.dispose();
+    }
+  }
   // ---- the floor slabs inside, in the concrete finish
   const slabMat = materialIndex(kit.shell.concrete);
   for (const slab of slabs) {
     const [c0, c1, c2, c3] = slab.corners as [Vector3, Vector3, Vector3, Vector3];
     for (const [top, ny] of [[slab.y, 1], [slab.y - m(0.25), -1]] as const) {
-      const vtx = (c: Vector3): number[] => [c.x, top, c.z, 0, ny, 0, 0.62, 0.6, 0.57, c.x * 0.3, c.z * 0.3];
+      const vtx = (c: Vector3): number[] => [c.x, top, c.z, 0, ny, 0, 0.62, 0.6, 0.57, c.x * 0.3, c.z * 0.3, bDecay];
       const quad = ny > 0 ? [[c0, c1, c2], [c0, c2, c3]] : [[c0, c2, c1], [c0, c3, c2]];
       for (const [p0, p1, p2] of quad) {
         const out: number[][] = [];
@@ -214,8 +250,8 @@ export function fractureBuilding(
     for (const t of list) for (let q = 0; q < 3; q++) { cx += t.v[q * STRIDE]!; cy += t.v[q * STRIDE + 1]!; cz += t.v[q * STRIDE + 2]!; nverts++; }
     cx /= nverts; cy /= nverts; cz /= nverts;
     let radius = 0, low = Infinity;
-    const push = (x: number, y: number, z: number, n: readonly number[], c: readonly number[], u: number, w: number): void => {
-      pos.push(x - cx, y - cy, z - cz); nor.push(n[0]!, n[1]!, n[2]!); col.push(c[0]!, c[1]!, c[2]!); uvs.push(u, w); dec.push(0);
+    const push = (x: number, y: number, z: number, n: readonly number[], c: readonly number[], u: number, w: number, d = bDecay): void => {
+      pos.push(x - cx, y - cy, z - cz); nor.push(n[0]!, n[1]!, n[2]!); col.push(c[0]!, c[1]!, c[2]!); uvs.push(u, w); dec.push(d);
       radius = Math.max(radius, Math.hypot(x - cx, y - cy, z - cz)); low = Math.min(low, y);
     };
     // Grouped by material, for the mesh's draw groups.
@@ -234,7 +270,7 @@ export function fractureBuilding(
         const v = t.v;
         for (let q = 0; q < 3; q++) {
           const o = q * STRIDE;
-          push(v[o]!, v[o + 1]!, v[o + 2]!, [v[o + 3]!, v[o + 4]!, v[o + 5]!], [v[o + 6]!, v[o + 7]!, v[o + 8]!], v[o + 9]!, v[o + 10]!);
+          push(v[o]!, v[o + 1]!, v[o + 2]!, [v[o + 3]!, v[o + 4]!, v[o + 5]!], [v[o + 6]!, v[o + 7]!, v[o + 8]!], v[o + 9]!, v[o + 10]!, v[o + 11]!);
           const key = vkey(v[o]!, v[o + 1]!, v[o + 2]!);
           let set = vertexCells.get(key);
           if (!set) vertexCells.set(key, set = new Set());

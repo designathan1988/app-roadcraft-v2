@@ -197,6 +197,12 @@ export interface SceneHandle {
   strikeGround(x: number, y: number, strength: number): void;
   /** An explosion at world (x, y), height z, reaching `radius` (`blast.ts`), and the things it broke. */
   explode(x: number, y: number, z: number, radius: number, hit: BlastHit): void;
+  /** Soot laid on the ground (`blast.soot`). */
+  soot(x: number, y: number, z: number, radius: number): void;
+  /** Smoke in the air, 0 clear to 1 thick: the fog closes in, browner, the light dims. */
+  setSmog(k: number): void;
+  /** A lasting fire at world (x, y), height z (a building burning). */
+  burn(x: number, y: number, z: number, size: number, seconds: number): void;
   /** Whether anything is still moving on its own (an explosion, bodies, debris): keep drawing. */
   busy(): boolean;
   /** Forgets a building's ruin (it was removed). */
@@ -1080,6 +1086,9 @@ export function createSceneRenderer(
         }
       }
     },
+    burn: (x, y, z, size, seconds) => blast.burn(x, y, z, size, seconds),
+    soot: (x, y, z, r) => blast.soot(x, y, z, r),
+    setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0,
     forgetRuin(id) {
       void id;

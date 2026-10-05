@@ -2854,3 +2854,29 @@ export function buildBuildingMeshes(
 ): BuildingMeshes {
   return assembleBuildingMeshes([...buildings].map((b) => emitChunk(b, groundAt, pavedAt, naturalAt)), kit, ghost);
 }
+
+/**
+ * The furniture of every floor of a building, as it stands inside: what a
+ * blow throws out of it when it breaks (`destruction.ts`). The same pieces a
+ * floor cut open shows (`emitInterior`), on all floors at once.
+ */
+export function interiorFurniture(b: Building, floor: number): Partial<Record<FurnitureKind, PartBatch>> {
+  const placed: Partial<Record<FurnitureKind, Placement[]>> = {};
+  const e = new Emitter(b, new Shell(), {} as Record<PartKind, Placement[]>, placed);
+  let top = 0;
+  for (const v of b.volumes) if (!v.open && v.mode !== 'void') top = Math.max(top, volumeTop(v));
+  for (let level = 0; level < top; level++) {
+    const z = floor + levelElevation(b, level);
+    const ceiling = z + levelHeight(b, level) - m(0.06);
+    for (const f of interiorAt(b, level).furniture) placeFurniture(e, f, f.kind === 'ceilingLamp' ? ceiling - f.h : z);
+  }
+  const out: Partial<Record<FurnitureKind, PartBatch>> = {};
+  for (const kind of FURNITURE_KINDS) {
+    const list = placed[kind];
+    if (!list?.length) continue;
+    const matrices = new Float32Array(list.length * 16);
+    list.forEach((p, i) => writeMatrix(matrices, i * 16, p));
+    out[kind] = { matrices, colours: null, count: list.length };
+  }
+  return out;
+}

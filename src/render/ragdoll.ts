@@ -109,7 +109,8 @@ const ITERATIONS = 10;
 /** Speed kept per step in the air. */
 const AIR = 0.9995;
 /** Seconds a body lies before it starts to sink away, and how long that takes. */
-const LIE = 240;
+// The dead stay where they fell (the player wants the aftermath kept, GTA-like).
+const LIE = Infinity;
 const SINK = 12;
 /** Seconds of simulation after which a body is put to rest whatever it is doing. */
 const SETTLE = 14;

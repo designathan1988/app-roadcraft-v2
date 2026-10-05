@@ -4904,7 +4904,14 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
     const hit = rayOnBuilding(b, sx, sy, z);
     if (hit) { target = hit; z = hit.z; }
   }
-  world = target;
+  explodeAt(target, z, b ?? null, strength);
+}
+
+/**
+ * An explosion at `world`, height `z` (on building `b` when it landed on one):
+ * the strike tool's blow, and the blasts of a city on fire (`fireTick`).
+ */
+function explodeAt(world: Vec2, z: number, b: Building | null, strength: number, quiet = false): void {
   // An explosion (the player's order of 2026-10-05): it wrecks everything
   // within its reach, not only what it lands on - buildings, people, cars,
   // poles and their wires, traffic lights, street things, the road itself.
@@ -4937,9 +4944,18 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
       if (scene.strikeBuilding(c, at.x, at.y, at.z, force)) {
         doc.buildings.remove(c.id);
         scene.forgetRuin(c.id);
+        burning.delete(c.id);
         downs++;
         changed = true;
-      }
+      } else if (best < radius * 0.8 && Math.random() < 0.35 + strength * 0.03) ignite(c.id);
+    }
+    // Everything round it left filthy: the buildings within twice the reach
+    // blackened with soot and dust (their weathering, `decay`).
+    for (const c of [...doc.buildings.all()]) {
+      const d = Math.hypot(c.x - world.x, c.y - world.y);
+      if (d > radius * 2.2) continue;
+      const add = 0.35 * (1 - d / (radius * 2.2)) * Math.min(1, strength / 8);
+      if (add > 0.02) { doc.buildings.put({ ...c, decay: Math.min(1, (c.decay ?? 0) + add) }); changed = true; }
     }
     // Poles: broken whole, snapped or to splinters; the wires torn off them
     // pull the next poles over, or hang from them.
@@ -5003,11 +5019,71 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
   }
   (globalThis as Record<string, unknown>)['__lastBlast'] = { ...hit, radius, at: world };
   scene.explode(world.x, world.y, z, radius, hit);
+  // Soot and ash over the ground round it, kept: streets and lots left dirty.
+  const blots = Math.min(40, Math.round(6 + radius / m(3)));
+  for (let k = 0; k < blots; k++) {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * radius * 1.6;
+    const x = world.x + Math.cos(a) * r, y = world.y + Math.sin(a) * r;
+    scene.soot(x, y, sceneHeightAt({ x, y }), m(2 + Math.random() * 4) + radius * 0.08);
+  }
   if (ground === 'road') scene.strikeGround(world.x, world.y, strength);
   if (downs > 0 || hit.poles.length || hit.vehicles.length) zoneGrowthHold = performance.now() + 90_000;
-  flashHint(downs > 0 ? 'hint.strike.down' : dead > 0 ? 'hint.strike.deaths' : b ? 'hint.strike.hit' : 'hint.strike.ground');
+  if (!quiet) flashHint(downs > 0 ? 'hint.strike.down' : dead > 0 ? 'hint.strike.deaths' : b ? 'hint.strike.hit' : 'hint.strike.ground');
+  if (b && doc.buildings.has(b.id)) ignite(b.id);
   requestDraw();
 }
+
+/**
+ * Buildings on fire (the player's order of 2026-10-05: "o fogo ir tomando
+ * conta dos prédios vizinhos, acontecendo explosões, e ir ficando um clima
+ * ruim"): each burns with flames and a black column for a couple of minutes,
+ * spreads now and then to a neighbour close by, and now and then blows up
+ * (a gas main, a tank) - an explosion of its own that breaks more. The air
+ * thickens with smoke while anything burns.
+ */
+const burning = new Map<number, { since: number; nextFlame: number; nextSpread: number; nextBlast: number; until: number }>();
+function ignite(id: number): void {
+  if (burning.has(id)) return;
+  const now = performance.now() / 1000;
+  burning.set(id, { since: now, nextFlame: now, nextSpread: now + 8 + Math.random() * 10, nextBlast: now + 12 + Math.random() * 25, until: now + 120 + Math.random() * 90 });
+}
+let smog = 0;
+setInterval(() => {
+  const now = performance.now() / 1000;
+  for (const [id, f] of [...burning]) {
+    const b = doc.buildings.get(id as BuildingId);
+    if (!b || now > f.until) { burning.delete(id); continue; }
+    const rings = solidFootprints(b);
+    const pts = rings.flat();
+    if (!pts.length) { burning.delete(id); continue; }
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length, cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    const size = Math.min(m(30), Math.max(m(6), Math.hypot(pts[0]!.x - cx, pts[0]!.y - cy)));
+    const ground = sceneHeightAt({ x: cx, y: cy });
+    if (now >= f.nextFlame) {
+      // Fires at a few points of the building, from the ground up its height.
+      for (let k = 0; k < 3; k++) {
+        const p = pts[Math.floor(Math.random() * pts.length)]!;
+        const x = cx + (p.x - cx) * Math.random(), y = cy + (p.y - cy) * Math.random();
+        scene.burn(x, y, ground + m(2 + Math.random() * 10), size * 0.5, 7);
+      }
+      f.nextFlame = now + 6;
+    }
+    if (now >= f.nextSpread) {
+      f.nextSpread = now + 14 + Math.random() * 16;
+      const near = [...doc.buildings.all()].filter((o) => o.id !== id && !burning.has(o.id) && Math.hypot(o.x - b.x, o.y - b.y) < size * 2 + m(18));
+      if (near.length) ignite(near[Math.floor(Math.random() * near.length)]!.id);
+    }
+    if (now >= f.nextBlast) {
+      f.nextBlast = now + 25 + Math.random() * 45;
+      if (Math.random() < 0.6) explodeAt({ x: cx, y: cy }, ground + m(3), b, 3 + Math.floor(Math.random() * 4), true);
+    }
+  }
+  // The air: thick with smoke while the city burns, clearing slowly after.
+  const want = Math.min(1, burning.size / 6);
+  smog += (want - smog) * (want > smog ? 0.06 : 0.01);
+  scene.setSmog(smog);
+  if (burning.size) requestDraw();
+}, 500);
 
 /** The first point of building `b` along the screen ray through (sx, sy): marched down from its top. */
 function rayOnBuilding(b: Building, sx: number, sy: number, ground: number): (Vec2 & { z: number }) | null {

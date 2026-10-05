@@ -8,6 +8,7 @@ import type { Exhaust } from './exhaust';
 import type { BuildingChunk } from './buildings/buildingMesh';
 import type { BuildingKit } from './buildings/kit';
 import { fractureBuilding, type Fragment } from './buildings/fracture';
+import { interiorFurniture } from './buildings/buildingMesh';
 
 /**
  * Buildings that break for real (the player's order of 2026-10-05): the
@@ -22,8 +23,6 @@ import { fractureBuilding, type Fragment } from './buildings/fracture';
  */
 
 const GRAVITY = m(9.8);
-/** Seconds a settled piece lies before it sinks away. */
-const RUBBLE_LIFE = 60;
 /** Share of the fragments left standing below which the rest comes down. */
 const COLLAPSE_BELOW = 0.35;
 
@@ -81,7 +80,7 @@ export function createDestruction(
       });
       for (let level = v.base + 1; level < v.base + v.storeys.length; level++) slabs.push({ corners, y: floor + levelElevation(b, level) });
     }
-    const fragments = fractureBuilding(source.chunk, source.kit, slabs, b.id * 2654435761);
+    const fragments = fractureBuilding(source.chunk, source.kit, slabs, b.id * 2654435761, interiorFurniture(b, floor));
     const pieces: Piece[] = fragments.map((fragment) => {
       const mesh = new Mesh(fragment.geometry, fragment.materials);
       mesh.position.copy(fragment.centre);
@@ -210,17 +209,14 @@ export function createDestruction(
               p.v.multiplyScalar(0.3); p.v.y = Math.abs(p.v.y) * 0.5; p.w.multiplyScalar(0.4);
               if (p.fragment.radius > m(1.2) && Math.random() < 0.3) exhaust.burst(mesh.position.x, -mesh.position.z, p.floor, 3, 3, m(1.5), m(3), 4);
             } else {
+              // Settled: it stays where it fell, a heap of the building, for
+              // good (the player: "não faça os escombros sumirem"); no longer
+              // stepped.
               p.settled = true;
               p.v.set(0, 0, 0);
               p.age = 0;
+              loose.splice(i, 1);
             }
-          }
-        } else if (p.age > RUBBLE_LIFE) {
-          mesh.position.y -= dt * m(0.15);
-          if (p.age > RUBBLE_LIFE + 15) {
-            group.remove(mesh);
-            p.gone = true;
-            loose.splice(i, 1);
           }
         }
       }

@@ -95,6 +95,10 @@ export interface Blast {
   arc(at: Vector3, seconds: number): void;
   /** How hard the camera shakes now (world units). */
   shake(): number;
+  /** A fire that keeps burning at world (x, y), height z, `size` across, for `seconds`: flames and a black column. */
+  burn(x: number, y: number, z: number, size: number, seconds: number): void;
+  /** Soot and ash laid on the ground at world (x, y): the street left dirty by the blast, for good. */
+  soot(x: number, y: number, z: number, radius: number): void;
   /** Whether anything is still moving, burning or flashing. */
   active(): boolean;
   update(dt: number, world: BlastWorld): void;
@@ -103,6 +107,8 @@ export interface Blast {
 
 const MAX_PIECES = 1400;
 const MAX_CRATERS = 60;
+/** Soot blots kept on the ground at once (oldest go first). */
+const MAX_SOOT = 600;
 const MAX_WIRES = 40;
 const WIRE_POINTS = 12;
 const GRAVITY = m(9.8);
@@ -228,7 +234,26 @@ export function createBlast(exhaust: Exhaust): Blast {
   const craterMaterials = [craterTexture(true), craterTexture(false)].map((map) => new MeshStandardMaterial({
     map, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   }));
-  const craterMeshes = craterMaterials.map((material) => {
+  // Soot: a soft dark blot, many of them, kept (the street stays dirty).
+  const sootMap = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d')!;
+    for (let k = 0; k < 26; k++) {
+      const x = 64 + (Math.random() - 0.5) * 70, y = 64 + (Math.random() - 0.5) * 70, r = 10 + Math.random() * 34;
+      const grad = g.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(20,17,14,${0.25 + Math.random() * 0.25})`); grad.addColorStop(1, 'rgba(20,17,14,0)');
+      g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+    }
+    const t = new CanvasTexture(c); t.colorSpace = SRGBColorSpace; return t;
+  })();
+  craterMaterials.push(new MeshStandardMaterial({ map: sootMap, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+  const craterMeshes = craterMaterials.map((material, i) => {
+    if (i === 2) {
+      const mesh = new InstancedMesh(craterGeometry, material, MAX_SOOT);
+      mesh.count = 0; mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
+    }
     const mesh = new InstancedMesh(craterGeometry, material, MAX_CRATERS);
     mesh.count = 0;
     mesh.frustumCulled = false;
@@ -257,6 +282,8 @@ export function createBlast(exhaust: Exhaust): Blast {
   const pieces: Piece[] = [];
   const ropes: Rope[] = [];
   const craters: Crater[] = [];
+  const soots: Crater[] = [];
+  let sootDirty = false;
   const fires: { at: Vector3; until: number; rate: number; carry: number; piece?: Piece; size?: number; smoke?: number }[] = [];
   const arcs: { at: Vector3; until: number; next: number }[] = [];
   let time = 0;
@@ -446,6 +473,14 @@ export function createBlast(exhaust: Exhaust): Blast {
       arcs.push({ at: at.clone(), until: time + seconds, next: time });
     },
     shake: () => shakeAmp,
+    soot(x, y, z, radius) {
+      soots.push({ x, y, z, r: radius, road: false, age: 1, angle: Math.random() * Math.PI * 2 });
+      if (soots.length > MAX_SOOT) soots.shift();
+      sootDirty = true;
+    },
+    burn(x, y, z, size, seconds) {
+      fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: 10 + size / m(1) * 2, carry: 0, size, smoke: 0.85 });
+    },
     active: () => flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
     update(dt, world) {
       const wall = Math.min(0.1, Math.max(0, dt));
@@ -534,7 +569,21 @@ export function createBlast(exhaust: Exhaust): Blast {
         o.updateMatrix();
         craterMeshes[k]!.setMatrixAt(counts[k]!++, o.matrix);
       }
-      craterMeshes.forEach((mesh, k) => { mesh.count = counts[k]!; mesh.instanceMatrix.needsUpdate = true; });
+      craterMeshes.forEach((mesh, k) => { if (k < 2) { mesh.count = counts[k]!; mesh.instanceMatrix.needsUpdate = true; } });
+      // Soot is still: written again only when some was added.
+      if (sootDirty) {
+        sootDirty = false;
+        const mesh = craterMeshes[2]!;
+        soots.forEach((c, i) => {
+          o.position.set(c.x, c.z + m(0.025), -c.y);
+          o.quaternion.setFromAxisAngle(tmp1.set(0, 1, 0), c.angle);
+          o.scale.set(c.r * 2, 1, c.r * 2);
+          o.updateMatrix();
+          mesh.setMatrixAt(i, o.matrix);
+        });
+        mesh.count = soots.length;
+        mesh.instanceMatrix.needsUpdate = true;
+      }
       let w = 0;
       for (const r of ropes) {
         for (let k = 1; k < r.p.length; k++) {
