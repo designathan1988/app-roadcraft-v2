@@ -219,8 +219,22 @@ export function randomPerson(id: number, seed: number, keep: { body?: Partial<Pe
   // System hair that suits the sex (a braid or a ponytail is a woman's here).
   const systemHair = (coloured.hairStyle === 'long' ? WARDROBE.hair.long : WARDROBE.hair.short)
     .filter((h) => female || !['bob01', 'bob02', 'braid01', 'ponytail01'].includes(h));
-  const hairCut = coloured.hairStyle === 'none' ? 'none'
-    : pick(r, streetHair.length && r() < 0.6 ? streetHair : systemHair);
+  // Curated by eye (the player, 2026-10-05: "pessoas bonitas", no women all
+  // with short hair, no straggly strands): women mostly long and smooth or
+  // braided, a share with a chanel bob, a few with an updo; men with neat,
+  // combed cuts. Only reviewed items, and only ones the crowd can carry.
+  const available = new Set([...streetHair, ...systemHair, ...COMMUNITY.filter((i) => i.kind === 'hair' && i.street).map((i) => i.name)]);
+  const only = (names: readonly string[]): string[] => names.filter((n) => available.has(n) || (WARDROBE.hair.long as readonly string[]).includes(n) || (WARDROBE.hair.short as readonly string[]).includes(n));
+  const FEMALE_LONG = only(['o4saken_long01', 'elvs_adrienne_hair', 'elvs_daisy_hair', 'elvs_hazel_hair', 'elvs_lady_hippy_hair', 'punkduck_alpha7_long', 'elvs_french_braid_variation', 'ponytail01']);
+  const FEMALE_CHANEL = only(['toigo_blunt_bob', 'toigo_inverted_bob', 'littleright_bobcut_hair', 'elvs_wavy_bob', 'toigo_blunt_bob_with_bangs']);
+  const FEMALE_UPDO = only(['elvs_50s_updo', 'rehmanpolanski_hair_bun_brown']);
+  const MALE_NEAT = only(['elvs_maxwell_hair', 'culturalibre_hair_02', 'culturalibre_hair_05', 'short02', 'short04', 'short03']);
+  const roll = r();
+  const curated = female
+    ? (roll < 0.7 ? FEMALE_LONG : roll < 0.9 ? FEMALE_CHANEL : FEMALE_UPDO)
+    : MALE_NEAT;
+  const hairCut = !female && roll > 0.96 ? 'none'
+    : pick(r, curated.length ? curated : streetHair.length ? streetHair : systemHair);
   // What to wear: a top with trousers or a skirt (most people), one of the
   // system outfits, or a dress or a suit; then now and then glasses,
   // jewellery, and a beard on a man.
@@ -234,9 +248,12 @@ export function randomPerson(id: number, seed: number, keep: { body?: Partial<Pe
   // were modelled apart and cut through each other when worn together (a
   // waistband through the shirt). Separates stay in the Person Creator.
   void tops; void trousers; void skirts;
-  if (wear < 0.3 && female && dresses.length) outfit = pick(r, dresses);
+  if (wear < 0.35 && female && dresses.length) outfit = pick(r, dresses);
   else if (wear < 0.4 && suits.length) outfit = pick(r, suits);
-  else outfit = pick(r, (female ? WARDROBE.outfits.female : WARDROBE.outfits.male).filter((o) => o !== 'female_sportsuit01'));
+  // Not the work overalls nor the tank top and shorts, which read as a
+  // costume on a city street (the player); the elegant suits come up more.
+  else outfit = pick(r, female ? ['female_casualsuit02', 'female_elegantsuit01', 'female_elegantsuit01']
+    : ['male_casualsuit01', 'male_casualsuit02', 'male_casualsuit03', 'male_casualsuit04', 'male_casualsuit05', 'male_casualsuit06', 'male_elegantsuit01', 'male_elegantsuit01']);
   const glasses = itemsOf('glasses', { street: true, sex });
   if (glasses.length && r() < (years > 45 ? 0.35 : 0.15)) extras.push(pick(r, glasses));
   const jewels = itemsOf('jewelry', { street: true, sex });

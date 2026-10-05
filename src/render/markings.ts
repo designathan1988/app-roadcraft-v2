@@ -150,8 +150,11 @@ export function paintMaterial(color: string): Material {
           float worn = pNoise(w * 0.7) * 0.6 + pNoise(w * 2.3) * 0.4;
           float flake = pNoise(w * 5.0);
           // Pinholes of asphalt through the paint, wider where it is worn.
-          float cover = smoothstep(0.18, 0.42, grain + (1.0 - worn) * 0.35 - 0.1);
-          if (flake < 0.12) cover *= 0.2;
+          // Mostly whole: fine pinholes, a soft thinning where wheels run, and
+          // only rare small flakes - not blotches.
+          float cover = 1.0 - 0.35 * smoothstep(0.55, 0.85, worn) * smoothstep(0.4, 0.7, grain);
+          cover *= 1.0 - 0.25 * step(0.86, pNoise(w * 22.0));
+          if (flake < 0.05) cover *= 0.45;
           diffuseColor.rgb *= 0.86 + 0.14 * pNoise(w * 1.3);
           diffuseColor.a *= cover * 0.92;
         }`);
