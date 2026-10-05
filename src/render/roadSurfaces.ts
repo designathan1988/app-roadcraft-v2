@@ -6,7 +6,8 @@ import { offsetPolyline } from '@core/offset';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
-import { levelRings } from '@world/surfaces';
+import { levelRings, surfaces } from '@world/surfaces';
+import { Polyline } from '@core/polyline';
 import {
   ROAD_STRUCTURES,
   isRaised,
@@ -88,8 +89,12 @@ const VERGE_DROP = 0.1;
  * the seal that stops a hairline of sky showing under the rim.
  */
 const VERGE_SKIRT = 0.5;
-/** The verge meets the drawn terrain this hair above it, so the ground never shows through. */
-const VERGE_LIFT = m(0.02);
+/**
+ * The verge meets the drawn terrain this far BELOW it: the lawn closes over
+ * the batter's outer edge, so no rim of the batter (and no dark line of its
+ * skirt) shows where the two meet. Both wear the terrain's material.
+ */
+const VERGE_LIFT = -m(0.08);
 /** World size of one UV unit on the ground verge when it wears the terrain's material. */
 const TERRAIN_UV = 64;
 
@@ -372,13 +377,34 @@ export function buildRoadSurfaces(
      * height, down (or up) to the terrain as it is drawn at the verge's outer
      * edge - a batter, not a wall. Read off the nearest road's own section.
      */
+    // The batter's fall is measured from the footway's OUTER EDGE as drawn
+    // (the union of every footway of this pass), not across the nearest
+    // road's centreline: round a junction's corner the nearest leg's
+    // centreline is far off, and the batter started at the bottom - a grey
+    // wall of footway skirt under the corner's paving.
+    let footwayEdges: Polyline[] | null = null;
+    const edges = (): Polyline[] => {
+      if (!footwayEdges) {
+        footwayEdges = [];
+        for (const poly of surfaces(net, include).sidewalk) for (const ring of poly) {
+          if (ring.length >= 3) footwayEdges.push(Polyline.fromPoints([...ring.map(([px, py]) => ({ x: px!, y: py! })), { x: ring[0]![0]!, y: ring[0]![1]! }]));
+        }
+      }
+      return footwayEdges;
+    };
+    const fromFootway = (x: number, y: number): number => {
+      let best = Infinity;
+      const pad = CASING_BAND * 2;
+      for (const line of edges()) {
+        const box = line.bbox;
+        if (x < box.minX - pad || x > box.maxX + pad || y < box.minY - pad || y > box.maxY + pad) continue;
+        best = Math.min(best, line.distanceTo({ x, y }));
+      }
+      return best;
+    };
     const vergeTop: HeightFn = (x, y) => {
-      const sample = pass.segment === undefined
-        ? elevation.roadAt(x, y, only, false)
-        : elevation.roadAt(x, y, undefined, true);
       const footway = deck(x, y) + FOOTWAY_RISE;
-      if (sample.type < 0) return footway;
-      const t = Math.min(1, Math.max(0, (Math.abs(sample.across) - (sample.half - CASING_BAND)) / CASING_BAND));
+      const t = Math.min(1, Math.max(0, fromFootway(x, y) / CASING_BAND));
       const ease = t * t * (3 - 2 * t);
       return footway + (terrainAt(x, y) + VERGE_LIFT - footway) * ease;
     };
