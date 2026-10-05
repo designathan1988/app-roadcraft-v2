@@ -2,6 +2,21 @@
 
 # For Claude
 
+> **Rule zero — research on the internet first, always.** Before
+> implementing anything that is not trivial, search the official
+> documentation (three.js and other relevant primary sources).
+> Do this before editing code. If internet access is unavailable,
+> report the blocker; do not treat memory or an unverified assumption
+> as a substitute.
+
+> **No trial and error.** Before changing code for a defect, establish the observed
+> failure, trace it to its root cause across the affected boundaries, research the
+> relevant official sources, and record a causal implementation plan. Implement
+> the shared cause rather than a site-specific symptom or a speculative tweak.
+> When verification fails, inspect the new evidence and revise the hypothesis
+> before editing again; do not cycle through ungrounded variations or tune tests,
+> references, or metrics to make the result appear successful.
+
 The rules of work and the map of the code are in `AGENTS.md`, imported above; they
 apply to Claude exactly as written there. This part only adds what is specific to
 Claude Code.
@@ -48,3 +63,13 @@ pushes, pushes to anything but `origin main`, and tests in the background; it as
 the player before the whole suite, a fuzz hunt, a visible browser, or the browser
 pane. If it blocks something that should be allowed, fix the hook in the open and
 say so; never work around it.
+
+`.claude/hooks/research.mjs` is the research gate the player ordered on
+2026-10-04: when an attempt did not solve the problem, the next step is research,
+never another guess. A player message saying the result is still bad (ruim,
+defeito, continua, não resolveu, pesquisa…) arms it; from then on every edit to
+the code (Edit/Write on the repository except `docs/`, `.claude/` and the root
+Markdown files, and shell commands that write into `src/`, `tests/`, `scripts/`,
+`public/`) is denied until at least one WebSearch and two pages read with
+WebFetch. Then tell the player what was found, with the links, the cause and the
+approach, before editing. Never work around it (no edits through other tools).
