@@ -355,6 +355,8 @@ const streetscapeReach = (): number => Math.max(m(1.5), 26 / view.zoom);
  */
 let barrierKind: BarrierKind = 'fence';
 let barrierPoints: Vec2[] | null = null;
+/** The last click of the walls tool, to tell a double click (which ends the run). */
+let lastBarrierClick: { t: number; x: number; y: number } | null = null;
 let barrierCursor: Vec2 | null = null;
 let zoneUse: ZoneUse = 'residential';
 let zoneDensity: ZoneDensity = 'low';
@@ -1127,7 +1129,16 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       const point = snapBarrierPoint(net, barrierKind, world);
       barrierPoints = [...(barrierPoints ?? []), point];
-      if (e.detail >= 2) finishBarrier();
+      // A double click ends the run. Detected here by time and distance:
+      // `detail` on a pointerdown is 0 in Chrome, so the run never ended and
+      // the wall, fence or hedge was never built - only its path was drawn.
+      const now = performance.now();
+      const last = lastBarrierClick;
+      lastBarrierClick = { t: now, x: e.clientX, y: e.clientY };
+      if (e.detail >= 2 || (last && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 10)) {
+        lastBarrierClick = null;
+        finishBarrier();
+      }
       requestDraw();
       break;
     }
