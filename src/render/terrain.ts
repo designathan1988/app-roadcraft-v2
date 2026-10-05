@@ -9,6 +9,7 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   Vector3,
+  type Material,
   type Texture,
 } from 'three';
 
@@ -76,6 +77,14 @@ export const TERRAIN_HALF = TERRAIN_SIZE / 2;
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
   readonly ground: Mesh;
+  /**
+   * The terrain's own surface for the batter from a footway down to the
+   * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
+   * its slope. The batter is steep over a short run, and the slope bands of
+   * the terrain shader painted it as soil and rock - brown streaks along
+   * every pavement.
+   */
+  readonly vergeMaterial: Material;
   /** The analytic height field: the smooth surface the stamps describe. */
   heightAt(x: number, y: number): number;
   /**
@@ -853,9 +862,20 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     previous.dispose();
   };
 
+  const vergeMaterial = material.clone();
+  vergeMaterial.onBeforeCompile = (shader, renderer) => {
+    material.onBeforeCompile(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'float slopeDeg = degrees(acos(clamp(vTerrainNormal.y, 0.0, 1.0)));',
+      'float slopeDeg = 0.0;',
+    );
+  };
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v3-verge';
+
   return {
     meshes: [backdrop, ground, water],
     ground,
+    vergeMaterial,
     heightAt,
     naturalRenderedHeightAt,
     renderedHeightAt,

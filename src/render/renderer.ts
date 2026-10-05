@@ -569,7 +569,7 @@ export function createSceneRenderer(
     // from the same rule, where a road is buried deeply enough — tunnels.
     shapeGround(net);
 
-    roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.meshes.find((mesh) => mesh.name === 'terrain-ground')?.material as Material | undefined);
+    roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
     world.add(roads.group);
 
     details = buildStructureDetails(net, elevation, terrain.renderedHeightAt, materials);
