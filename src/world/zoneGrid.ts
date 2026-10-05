@@ -39,6 +39,8 @@ function insidePaving(lines: PoleLines, p: Vec2): boolean {
 
 export const ZONE_CELL = GRID_CELL;
 export const ZONE_DEPTH = 4;
+/** The subgrid a cell is trimmed on where a whole cell does not fit (1 m). */
+export const SUB_CELL = m(1);
 
 export interface ZoneCell {
   /** Stable while the road does not change: segment, side, column, row. */
@@ -55,6 +57,8 @@ export interface ZoneCell {
   readonly front: Vec2;
   /** Rotation a building on this cell is placed with (`placeBuilding`): it faces the road. */
   readonly rotation: number;
+  /** Width along the street: `ZONE_CELL`, or less for a cell trimmed on the 1 m subgrid. */
+  readonly width: number;
 }
 
 export interface ZoneGrid {
@@ -149,48 +153,64 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
       const f = line.sampleAt(Math.max(0, Math.min(length, s)));
       return { p: f.p, t: f.t };
     };
+    /** The cell over [sa, sb] along the street at `row`, or null where it cannot be land. */
+    const cellOver = (side: 1 | -1, column: number, row: number, sa: number, sb: number): ZoneCell | null => {
+      const a = frame(sa), b = frame(sb), mid = frame((sa + sb) / 2);
+      const na = { x: -a.t.y * side, y: a.t.x * side };
+      const nb = { x: -b.t.y * side, y: b.t.x * side };
+      const nm = { x: -mid.t.y * side, y: mid.t.x * side };
+      const d0 = face + row * ZONE_CELL, d1 = d0 + ZONE_CELL;
+      const corners: [Vec2, Vec2, Vec2, Vec2] = [
+        { x: a.p.x + na.x * d0, y: a.p.y + na.y * d0 },
+        { x: b.p.x + nb.x * d0, y: b.p.y + nb.y * d0 },
+        { x: b.p.x + nb.x * d1, y: b.p.y + nb.y * d1 },
+        { x: a.p.x + na.x * d1, y: a.p.y + na.y * d1 },
+      ];
+      const centre = { x: mid.p.x + nm.x * (d0 + d1) / 2, y: mid.p.y + nm.y * (d0 + d1) / 2 };
+      const edgeMids = corners.map((corner, i) => {
+        const next = corners[(i + 1) % 4]!;
+        return { x: (corner.x + next.x) / 2, y: (corner.y + next.y) / 2 };
+      });
+      // Tested a tenth of the way in, so a cell whose edge lies along the
+      // paving's edge (as the front row's does) is not refused for it.
+      const inset = (q: Vec2): Vec2 => ({ x: q.x + (centre.x - q.x) * 0.1, y: q.y + (centre.y - q.y) * 0.1 });
+      if (onRoad(centre) || corners.map(inset).some(onRoad) || onPlate(centre) ||
+        [...corners, ...edgeMids].some((q) => onPlate(inset(q))) || taken(centre, corners)) return null;
+      const front = { x: mid.p.x + nm.x * d0, y: mid.p.y + nm.y * d0 };
+      return {
+        id: key(segId, side, column, row), segment: segId, side, column, row,
+        corners, centre, front, rotation: Math.atan2(mid.t.y, mid.t.x) + (side === 1 ? 0 : Math.PI),
+        width: sb - sa,
+      };
+    };
+    const lay = (cell: ZoneCell): void => {
+      cells.push(cell);
+      byId.set(cell.id, cell);
+      const k = bucketKey(cell.centre.x, cell.centre.y);
+      let bucket = buckets.get(k);
+      if (!bucket) buckets.set(k, bucket = []);
+      bucket.push(cell);
+    };
+    // The regular 10 m columns, then a partial column at each end of the
+    // street for what is left before the junction.
+    const spans: { column: number; sa: number; sb: number }[] = [];
+    for (let c = 0; c < columns; c++) spans.push({ column: c, sa: s0 + c * ZONE_CELL, sb: s0 + (c + 1) * ZONE_CELL });
+    if (s0 >= SUB_CELL) spans.unshift({ column: -1, sa: 0, sb: s0 });
+    if (length - (s0 + columns * ZONE_CELL) >= SUB_CELL) spans.push({ column: columns, sa: s0 + columns * ZONE_CELL, sb: length });
     for (const side of [1, -1] as const) {
-      for (let c = 0; c < columns; c++) {
-        const a = frame(s0 + c * ZONE_CELL), b = frame(s0 + (c + 1) * ZONE_CELL), mid = frame(s0 + (c + 0.5) * ZONE_CELL);
-        const na = { x: -a.t.y * side, y: a.t.x * side };
-        const nb = { x: -b.t.y * side, y: b.t.x * side };
-        const nm = { x: -mid.t.y * side, y: mid.t.x * side };
+      for (const { column, sa, sb } of spans) {
         for (let row = 0; row < ZONE_DEPTH; row++) {
-          const d0 = face + row * ZONE_CELL, d1 = d0 + ZONE_CELL;
-          const corners: [Vec2, Vec2, Vec2, Vec2] = [
-            { x: a.p.x + na.x * d0, y: a.p.y + na.y * d0 },
-            { x: b.p.x + nb.x * d0, y: b.p.y + nb.y * d0 },
-            { x: b.p.x + nb.x * d1, y: b.p.y + nb.y * d1 },
-            { x: a.p.x + na.x * d1, y: a.p.y + na.y * d1 },
-          ];
-          const centre = { x: mid.p.x + nm.x * (d0 + d1) / 2, y: mid.p.y + nm.y * (d0 + d1) / 2 };
-          // A column stops at the first cell that cannot be land: a road, a
-          // junction plate or another street's cell. Its deeper rows would be
-          // cut off from the road.
-          const edgeMids = corners.map((corner, i) => {
-            const next = corners[(i + 1) % 4]!;
-            return { x: (corner.x + next.x) / 2, y: (corner.y + next.y) / 2 };
-          });
-          // Off the paving, by a hair: a cell's front edge lies ON the
-          // footway's back edge.
-          // Tested a tenth of the way in, so a cell whose edge lies along the
-          // paving's edge (as the front row's does) is not refused for it.
-          const inset = (q: Vec2): Vec2 => ({ x: q.x + (centre.x - q.x) * 0.1, y: q.y + (centre.y - q.y) * 0.1 });
+          // A cell that does not fit whole is trimmed on the 1 m subgrid, from
+          // whichever end is in the way, down to a single metre: the grid then
+          // reaches the footway and the corner of the block with no gap.
+          let cell = cellOver(side, column, row, sa, sb);
+          for (let k = 1; !cell && sb - sa - k * SUB_CELL >= SUB_CELL - 1e-6; k++) {
+            cell = cellOver(side, column, row, sa + k * SUB_CELL, sb) ?? cellOver(side, column, row, sa, sb - k * SUB_CELL);
+          }
           // A column stops at its first refused cell: a deeper row with the
           // front one missing would float away from the street.
-          if (onRoad(centre) || corners.map(inset).some(onRoad) || onPlate(centre) ||
-            [...corners, ...edgeMids].some((q) => onPlate(inset(q))) || taken(centre, corners)) break;
-          const front = { x: mid.p.x + nm.x * d0, y: mid.p.y + nm.y * d0 };
-          const cell: ZoneCell = {
-            id: key(segId, side, c, row), segment: segId, side, column: c, row,
-            corners, centre, front, rotation: Math.atan2(mid.t.y, mid.t.x) + (side === 1 ? 0 : Math.PI),
-          };
-          cells.push(cell);
-          byId.set(cell.id, cell);
-          const k = bucketKey(centre.x, centre.y);
-          let bucket = buckets.get(k);
-          if (!bucket) buckets.set(k, bucket = []);
-          bucket.push(cell);
+          if (!cell) break;
+          lay(cell);
         }
       }
     }

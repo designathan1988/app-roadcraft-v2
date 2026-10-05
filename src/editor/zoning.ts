@@ -228,7 +228,9 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       for (let r = 0; r < depth; r++) {
         const cell = grid.at(start.segment, start.side, column, r);
         const found = cell && marks.get(cell.id);
-        if (!cell || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) return null;
+        // A cell trimmed on the subgrid fills the edge of a block; lots are
+        // made of whole cells.
+        if (!cell || cell.width < ZONE_CELL - 1e-6 || !found || found.mark.use !== zone.use || found.mark.density !== zone.density || standing(found.mark)) return null;
         cells.push(cell);
       }
       return cells;
