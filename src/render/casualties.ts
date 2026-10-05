@@ -9,8 +9,19 @@ import {
   SRGBColorSpace,
 } from 'three';
 
-import type { Casualty } from '@sim/people/people';
-import { m } from '@world/units';
+/** A patch of blood on the ground: where, how big at full spread, and how long it takes to spread. */
+export interface BloodDecal {
+  readonly x: number;
+  readonly y: number;
+  /** World height of the surface it lies on. */
+  readonly z: number;
+  readonly angle: number;
+  readonly size: number;
+  /** Seconds to reach full size (0: at once). */
+  readonly spread: number;
+  /** Seconds since it was made. */
+  age: number;
+}
 
 /**
  * What a blow leaves on the ground (the player's order of 2026-10-05): a pool
@@ -52,7 +63,7 @@ function bloodTexture(): CanvasTexture | null {
 
 export interface CasualtyLayer {
   readonly group: Group;
-  sync(list: readonly Casualty[], groundAt: (x: number, y: number) => number): void;
+  sync(list: readonly BloodDecal[]): void;
   dispose(): void;
 }
 
@@ -73,17 +84,15 @@ export function createCasualties(): CasualtyLayer {
   const o = new Object3D();
   return {
     group,
-    sync(list, groundAt) {
+    sync(list) {
       let n = 0;
       for (const c of list) {
         if (n >= MAX) break;
-        // The pool spreads over twenty seconds; a torn body's splatter is there at once.
-        // A splash where a thrown body struck a wall or the ground: small, at once.
-        const grow = c.kind === 'dead' ? Math.min(1, 0.25 + c.t / 20) : 1;
-        const size = (c.kind === 'torn' ? m(3.2) : c.kind === 'splat' ? m(0.9) : m(1.9)) * grow;
-        o.position.set(c.x, groundAt(c.x, c.y) + 0.02, -c.y);
-        o.rotation.set(0, c.heading + c.id, 0);
-        o.scale.set(size, 1, size * 0.8);
+        const grow = c.spread > 0 ? Math.min(1, 0.2 + c.age / c.spread) : 1;
+        const size = c.size * grow;
+        o.position.set(c.x, c.z + 0.02, -c.y);
+        o.rotation.set(0, c.angle, 0);
+        o.scale.set(size, 1, size * 0.85);
         o.updateMatrix();
         pools.setMatrixAt(n++, o.matrix);
       }

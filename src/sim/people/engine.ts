@@ -49,6 +49,11 @@ export interface PedestrianEngine {
    * away from it for a while. Returns how many died.
    */
   impact?(w: SimWorld, x: number, y: number, kill: number, scare: number): number;
+  /**
+   * Somebody knocked down (`impact`) or fallen gets up at (x, y) facing
+   * `heading`, in `seconds`: where their body came to rest (`render/ragdoll.ts`).
+   */
+  getUp?(w: SimWorld, id: number, x: number, y: number, heading: number, seconds: number): void;
 }
 
 /**

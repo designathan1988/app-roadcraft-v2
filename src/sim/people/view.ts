@@ -42,9 +42,6 @@ export interface GestureView {
   t: number;
   /** How long the whole gesture lasts, seconds, where it has an end (a pause). */
   hold?: number;
-  /** A body thrown by a blow: height above the ground, and how far it has tumbled (radians). */
-  air?: number;
-  tumble?: number;
 }
 
 /** Seconds a sit-down and a stand-up take, per sex: the engine holds the phase, the renderer plays the clip, to this clock. */

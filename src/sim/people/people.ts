@@ -1,6 +1,4 @@
 import { m } from '@world/units';
-import { solidFootprints } from '@world/buildings/geometry';
-import { elementRing } from '@world/buildings/elements';
 import { hypot2 } from '@core/scalar';
 import { FOOTWAY, KERB, NAV_RADIUS, OPEN, closestOnSegment, isZebra } from '@world/nav/navmesh';
 import { findPath, funnel, type NavPath } from '@world/nav/path';
@@ -73,10 +71,6 @@ interface Person {
   urgent: number;
   /** Running from a blow (`impact`): where from, and seconds left of it. */
   flee?: { x: number; y: number; t: number };
-  /** Killed by a blow: lies where it fell. */
-  dead?: boolean;
-  /** Thrown by a blow: flying, then sliding, stopped by walls (`flyStep`). */
-  thrown?: { vx: number; vy: number; vz: number; z: number; spin: number; walls: readonly (readonly { x: number; y: number }[])[] };
   ghost: number;
   /** A fresh route has been tried since it got stuck. */
   replanned: boolean;
@@ -444,26 +438,43 @@ export function createPeopleEngine(): PedestrianEngine {
       let dead = 0;
       for (const p of [...s.people]) {
         const d = Math.hypot(p.x - x, p.y - y);
-        if (d < kill * 0.15) {
-          // Right under the blow: nothing is left standing (`impactCasualties`).
-          s.casualties.push({ x: p.x, y: p.y, heading: p.heading, kind: 'torn', t: 0, id: p.id });
-          remove(s, p); dead++;
-        } else if (d < kill * 2.2) {
-          // Thrown by the blast (a ragdoll's impulse, as games kill with a
-          // blow): away from it, up into the air, tumbling; the closer, the
-          // harder, and killed inside the blow's reach. Walls stop the flight.
-          const ax = (p.x - x) / (d || 1), ay = (p.y - y) / (d || 1);
-          const power = (1 - d / (kill * 2.2)) * m(16) + m(3);
-          p.heading = Math.atan2(ay, ax) + Math.PI;
-          p.thrown = { vx: ax * power, vy: ay * power, vz: power * (0.5 + Math.random() * 0.3), z: 0.5, spin: 0, walls: wallsNear(w, p.x, p.y) };
-          const killed = d < kill;
-          p.pause = { kind: 'fall', phase: 'hold', t: 0, hold: killed ? Infinity : 7 + 2 * Math.random() };
-          if (killed) { p.dead = true; dead++; }
-          else p.flee = { x, y, t: 18 };
-        } else if (d < scare) p.flee = { x, y, t: 6 + (1 - d / scare) * 8 };
+        if (d < kill) {
+          // Killed. The body leaves the simulation for good - nobody gets up -
+          // and is handed to the renderer as a ragdoll thrown by the blast
+          // (`render/ragdoll.ts`); right under the blow it is torn apart.
+          s.casualties.push({
+            x: p.x, y: p.y, heading: p.heading, kind: d < kill * 0.4 ? 'torn' : 'dead', t: 0, id: p.id,
+            gender: p.gender, ageClass: p.ageClass, party: { id: p.party.id, size: p.party.size, archetype: p.party.archetype, hasChild: p.party.hasChild },
+            blastX: x, blastY: y, power: 1 - d / kill,
+          });
+          remove(s, p);
+          dead++;
+        } else if (d < kill * 2) {
+          // Knocked down by the blast: thrown over as a ragdoll by the
+          // renderer, a few seconds on the ground, up again (`getUp` says
+          // where and for how long), then running.
+          p.pause = { kind: 'fall', phase: 'hold', t: 0, hold: 9 };
+          p.flee = { x, y, t: 20 };
+          s.casualties.push({
+            x: p.x, y: p.y, heading: p.heading, kind: 'knocked', t: 0, id: p.id,
+            gender: p.gender, ageClass: p.ageClass, party: { id: p.party.id, size: p.party.size, archetype: p.party.archetype, hasChild: p.party.hasChild },
+            blastX: x, blastY: y, power: 1 - (d - kill) / kill,
+          });
+        } else if (d < scare) p.flee = { x, y, t: 8 + (1 - d / scare) * 12 };
       }
       s.deaths = (s.deaths ?? 0) + dead;
       return dead;
+    },
+    getUp(w, id, x, y, heading, seconds) {
+      const s = stateOf(w);
+      const p = s.byId.get(id);
+      const mesh = s.nav?.mesh;
+      if (!p || !mesh) return;
+      // Up where the body came to rest, or the walkable ground nearest it.
+      const at = mesh.nearest(x, y, m(6));
+      if (at) { p.x = p.prevX = at.x; p.y = p.prevY = at.y; p.tri = at.t; }
+      p.heading = p.prevHeading = heading;
+      if (p.pause?.kind === 'fall') p.pause.hold = p.pause.t + seconds;
     },
     walkTrip(w, trip) {
       const s = stateOf(w);
@@ -886,12 +897,11 @@ function step(w: SimWorld, s: State): void {
       continue;
     }
     // Stopped a moment to do something: standing where they are until done.
-    if (p.thrown) flyStep(s, p);
     if (p.pause) {
       // Standing still: the speed the body is drawn at too, or it was drawn walking on the spot.
       p.vx = 0; p.vy = 0; p.v = 0;
       p.pause.t += DT;
-      if (p.dead || p.pause.t < (p.pause.hold ?? 0)) continue;
+      if (p.pause.t < (p.pause.hold ?? 0)) continue;
       p.pause = null;
     }
     // Walking alone, now and then somebody stops to do something.
@@ -1845,7 +1855,6 @@ function publishViews(w: SimWorld, s: State): void {
       }
     } else { p.stoodTogether = 0; p.talk = null; }
     v.gesture = p.sit && p.sit.phase !== 'approach' ? p.sit.gesture : p.pause ?? p.talk;
-    if (p.thrown && v.gesture) v.gesture = { ...v.gesture, air: p.thrown.z, tumble: p.thrown.spin };
     // A couple walking side by side, close: hand in hand (the hand on the
     // partner's side), worked out from the follower for both.
     v.hand = undefined;
@@ -1908,15 +1917,23 @@ export function peopleNav(w: SimWorld): WorldNav | null {
   return stateOf(w).nav;
 }
 
-/** What a blow left on the ground: a body, or what remains of one. */
+/** Somebody a blow killed: who they were (for their body) and the blast that threw them. */
 export interface Casualty {
   readonly x: number;
   readonly y: number;
   readonly heading: number;
-  readonly kind: 'dead' | 'torn' | 'splat';
-  /** Seconds since: the blood spreads over the first ones. */
+  /** Killed, killed and torn apart, or knocked down (gets up again). */
+  readonly kind: 'dead' | 'torn' | 'knocked';
+  /** Seconds since. */
   t: number;
   readonly id: number;
+  readonly gender: PersonGender;
+  readonly ageClass: PersonAgeClass;
+  readonly party: PartyView;
+  readonly blastX: number;
+  readonly blastY: number;
+  /** 0 at the edge of the killing reach, 1 at the blow's centre. */
+  readonly power: number;
 }
 
 /** The casualties of blows on the map, for the renderer; their clocks advanced by `dt`. */
@@ -1924,67 +1941,8 @@ export function impactCasualties(w: SimWorld, dt = 0): readonly Casualty[] {
   const s = STATES.get(w);
   if (!s) return [];
   for (const c of s.casualties) c.t += dt;
+  // The renderer takes each body in on its first frame; after a minute the record is history.
+  if (s.casualties.length && s.casualties[0]!.t > 60) s.casualties = s.casualties.filter((c) => c.t <= 60);
   return s.casualties;
 }
 
-/** Building footprints and lot walls near a point: what a thrown body hits. */
-function wallsNear(w: SimWorld, x: number, y: number): { x: number; y: number }[][] {
-  const out: { x: number; y: number }[][] = [];
-  for (const b of w.doc.buildings.all()) {
-    if (Math.hypot(b.x - x, b.y - y) > m(60)) continue;
-    out.push(...solidFootprints(b));
-    for (const e of b.elements ?? []) {
-      if ((e.kind === 'wall' || e.kind === 'fence' || e.kind === 'hedge') && e.z <= 0.01) out.push(elementRing(b, e));
-    }
-  }
-  return out;
-}
-
-/**
- * One tick of a thrown body: ballistic flight under gravity, a tumble, a
- * bounce off whatever wall it meets (a splash of blood there), a bounce or two
- * on the ground and a slide to rest. Then it lies (`dead`) or gets up and runs.
- */
-function flyStep(s: State, p: Person): void {
-  const t = p.thrown!;
-  const g = m(9.8);
-  t.vz -= g * DT;
-  t.z += t.vz * DT;
-  const nx = p.x + t.vx * DT, ny = p.y + t.vy * DT;
-  // A wall it is already inside (it stood against one) does not hold it.
-  const hit = t.walls.find((ring) => insideRing(ring, nx, ny) && !insideRing(ring, p.x, p.y));
-  if (hit) {
-    // Against the wall: back off it, losing most of the speed.
-    t.vx *= -0.3; t.vy *= -0.3;
-    s.casualties.push({ x: p.x, y: p.y, heading: Math.atan2(t.vy, t.vx), kind: 'splat', t: 0, id: p.id * 7 + s.casualties.length });
-  } else { p.x = nx; p.y = ny; }
-  const speed = Math.hypot(t.vx, t.vy);
-  if (t.z > 0) t.spin += DT * (3 + speed / m(4));
-  if (t.z <= 0) {
-    t.z = 0;
-    if (t.vz < -m(3)) {
-      t.vz = -t.vz * 0.25;
-      t.vx *= 0.55; t.vy *= 0.55;
-      s.casualties.push({ x: p.x, y: p.y, heading: Math.atan2(t.vy, t.vx), kind: 'splat', t: 0, id: p.id * 13 + s.casualties.length });
-    } else {
-      t.vz = 0;
-      // Sliding to a stop on the ground.
-      const k = Math.max(0, 1 - DT * 4);
-      t.vx *= k; t.vy *= k;
-      if (speed < m(0.3)) {
-        delete p.thrown;
-        if (p.dead) s.casualties.push({ x: p.x, y: p.y, heading: p.heading, kind: 'dead', t: 0, id: p.id });
-        if (p.pause) p.pause.t = Math.max(p.pause.t, 0.7);
-      }
-    }
-  }
-}
-
-function insideRing(ring: readonly { x: number; y: number }[], x: number, y: number): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i]!, b = ring[j]!;
-    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
-}

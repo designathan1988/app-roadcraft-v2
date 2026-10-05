@@ -170,15 +170,6 @@ function skinMaterial(material: MeshStandardMaterial | MeshDepthMaterial, unifor
   material.customProgramCacheKey = () => `citizen-skinning-v2-look${look}`;
 }
 
-/** How far over somebody who tripped is, radians, `t` seconds into a fall that lasts `hold`. */
-function fallLean(t: number, hold: number): number {
-  const down = 0.7, up = 1.4;
-  const ease = (u: number): number => u * u * (3 - 2 * u);
-  if (t < down) return (Math.PI / 2) * Math.min(1, ease(t / down) * 1.04);
-  if (t > hold - up) return (Math.PI / 2) * ease(Math.max(0, hold - t) / up);
-  return Math.PI / 2;
-}
-
 export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   onAssetsReady: () => void = () => {}) {
   const group = new Group();
@@ -198,6 +189,12 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     owned.clear();
   };
   const motion = new WeakMap<PedView, Gait>();
+  /**
+   * The pose each walker was last drawn in, by person id: what a ragdoll
+   * starts from when that person is struck (`ragdoll.ts`). Kept a few seconds
+   * after they were last drawn.
+   */
+  const lastPose = new Map<number, { index: number; palette: Float32Array; transform: Matrix4; frame: number }>();
   const plays: GaitPlay[] = [];
   const transform = new Object3D();
   // What people hold while they stop to do something (`heldProps.ts`).
@@ -577,13 +574,19 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   const mixPhases: number[] = [];
   const mixWeights: number[] = [];
 
+  /** The clips asked for and still baking, per body (their stand-ins drawn meanwhile). */
+  const baking = new WeakMap<CitizenBatch, Set<number>>();
   /** A deferred clip asked for: baked in turn, the stand-in drawn meanwhile. */
   function want(batch: CitizenBatch, at: number): void {
     const job = batch.deferred.get(at);
     if (!job) return;
     batch.deferred.delete(at);
+    let waiting = baking.get(batch);
+    if (!waiting) baking.set(batch, waiting = new Set());
+    waiting.add(at);
     batch.baking = batch.baking.then(async () => {
       const clip = await job.make();
+      waiting.delete(at);
       if (disposed || batch.disposed) return;
       batch.clips[at] = clip;
       batch.gait = gaitClips(batch.clips);
@@ -689,17 +692,6 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     /** `ground`: the footway's gradient under the walker, so both feet stand on it (`groundShear.ts`). */
     draw(ped: PedView, x: number, y: number, heading: number, deck: number, alpha: number,
       ground: Gradient | null = null, lean = 0, priority = false) {
-      // A fall: over onto the ground in under a second, a few seconds there,
-      // and back up (the body tipped about its feet, as a bed lays it down).
-      if (ped.gesture?.kind === 'fall') lean = fallLean(ped.gesture.t, ped.gesture.hold ?? 6);
-      // Thrown by a blow: in the air, the body tumbles head over heels and
-      // spins as it flies (`flyStep`), drawn at the height it is at.
-      if (ped.gesture?.air !== undefined) {
-        const tumble = ped.gesture.tumble ?? 0;
-        deck += ped.gesture.air;
-        lean = Math.PI / 2 + Math.sin(tumble * 1.3) * 1.1;
-        heading += tumble;
-      }
       const hash = personHash(ped.id);
       const body = bodyFor({ seed: ped.id, gender: ped.gender, ageClass: ped.ageClass, company: companyOf(ped.party),
         companyId: ped.party.id, hasChild: ped.party.hasChild, x, y });
@@ -738,6 +730,17 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       emit(batch, mixClips, mixPhases, mixWeights, x, deck, y, gaitHeading(gait), m(scale), lean, ground,
         lod === 0 ? faceAt(ped.id, time, ped.gesture?.kind, CROWD[index]?.person?.mood) : undefined);
+      {
+        let kept = lastPose.get(ped.id);
+        if (!kept || kept.palette.length !== batch.width) {
+          kept = { index, palette: new Float32Array(batch.width), transform: new Matrix4(), frame: 0 };
+          lastPose.set(ped.id, kept);
+        }
+        kept.index = index;
+        kept.palette.set(batch.pixels.subarray((batch.count - 1) * batch.width, batch.count * batch.width));
+        kept.transform.copy(transform.matrix);
+        kept.frame = visualFrame;
+      }
       // In the hand, what the gesture is done with, where the hand is in the
       // clip carrying the most weight this frame.
       if (carrying && lod < 2) {
@@ -882,6 +885,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       return registry.census();
     },
     finish() {
+      if (visualFrame % 300 === 0) for (const [id, kept] of lastPose) if (visualFrame - kept.frame > 600) lastPose.delete(id);
       for (const batch of batches.values()) {
         if (batch.count > 0) {
           batch.texture.clearUpdateRanges();
@@ -912,6 +916,59 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
           }
         }
       }
+    },
+    /** The pose a person was last drawn in, if within the last few seconds (`ragdoll.ts`). */
+    capturedPose(id: number): { index: number; palette: Float32Array; transform: Matrix4 } | null {
+      const kept = lastPose.get(id);
+      return kept && visualFrame - kept.frame < 240 ? kept : null;
+    },
+    /** A loaded body's skeleton: bone names, parents, inverse binds, and part 0's local and bind matrices. */
+    skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null {
+      const batch = batches.get(index);
+      const source = batch?.sources[0];
+      if (!batch || !source) return null;
+      const bones = source.skeleton.bones;
+      return {
+        names: bones.map((b) => b.name),
+        parents: bones.map((b) => bones.indexOf(b.parent as never)),
+        inverses: source.skeleton.boneInverses,
+        local: batch.local[0]!,
+        bind: source.bindMatrix,
+      };
+    },
+    /**
+     * A library clip's pose on a loaded body at `phase` (0 to 1), as a palette
+     * of skin matrices, and the clip's length in seconds; null until the clip
+     * is baked (asking starts it).
+     */
+    clipPose(index: number, key: Played, phase: number): { palette: Float32Array; duration: number } | null {
+      const batch = batches.get(index);
+      if (!batch) return null;
+      const at = LIBRARY_AT[key];
+      if (batch.deferred.size) want(batch, at);
+      const clip = batch.clips[at];
+      // A stand-in until baked: not the clip asked for.
+      if (!clip || batch.deferred.has(at) || baking.get(batch)?.has(at)) return null;
+      const out = new Float32Array(batch.width);
+      const bones = batch.width / SKIN_BONE_FLOATS;
+      const packedWidth = bones * PACKED_BONE_FLOATS;
+      const f = Math.min(1, Math.max(0, phase)) * clip.frames;
+      const whole = Math.min(clip.frames, Math.floor(f));
+      blendPackedFrames(out, 0, clip.data, whole * packedWidth, packedWidth, bones, 1 - (f - whole), f - whole);
+      return { palette: out, duration: clip.duration };
+    },
+    /** Draws a body of `index` with a palette of skin matrices (`ragdoll.ts`) and an instance matrix. */
+    drawPalette(index: number, palette: Float32Array, instance: Matrix4): void {
+      const batch = batches.get(index);
+      if (!batch || batch.count >= CAPACITY || palette.length !== batch.width) return;
+      if (batch.count >= batch.rows) grow(batch);
+      batch.pixels.set(palette, batch.count * batch.width);
+      for (let i = 0; i < batch.meshes.length; i++) {
+        matrix.multiplyMatrices(instance, batch.local[i]!);
+        batch.meshes[i]!.setMatrixAt(batch.count, matrix);
+      }
+      batch.count++;
+      batch.lastUsed = frameNow;
     },
     dispose() {
       disposed = true;

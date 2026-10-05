@@ -24,8 +24,8 @@ const POOL = 4000;
 /** Seconds an exhaust puff lives. */
 const EXHAUST_LIFE = 2.6;
 
-/** 0 exhaust, 1 dust (brown-grey, low and wide), 2 dark smoke (rises), 3 concrete dust (pale, billowing). */
-export type PuffKind = 0 | 1 | 2 | 3;
+/** 0 exhaust, 1 dust (brown-grey, low and wide), 2 dark smoke (rises), 3 concrete dust (pale, billowing), 4 blood spray (thrown up, falls). */
+export type PuffKind = 0 | 1 | 2 | 3 | 4;
 
 export interface Exhaust {
   readonly points: Points;
@@ -94,17 +94,23 @@ export function createExhaust(): Exhaust {
         vec3 p = position;
         // Rise: smoke climbs, dust hangs low, a collapse cloud billows up and out.
         float rise = aKind < 0.5 ? 2.4 : aKind < 1.5 ? 1.0 : aKind < 2.5 ? 3.5 : 1.8;
-        p.y += rise * t * (1.0 - 0.3 * age) + 0.15 * sin(t * 3.0 + aSeed * 6.28);
         vec2 out2 = vec2(sin(aSeed * 40.0), cos(aSeed * 40.0));
-        float spreadOut = aKind > 2.5 ? 2.2 : aKind > 0.5 ? 1.2 : 0.5;
-        p.xz += uWindDir * (3.0 * t + 0.6 * t * t) + out2 * spreadOut * t;
+        if (aKind > 3.5) {
+          // Blood: droplets flung up and out, falling back under gravity.
+          p.y += (5.0 + 10.0 * fract(aSeed * 17.0)) * t - 12.25 * t * t;
+          p.xz += out2 * (3.0 + 8.0 * fract(aSeed * 7.0)) * t;
+        } else {
+          p.y += rise * t * (1.0 - 0.3 * age) + 0.15 * sin(t * 3.0 + aSeed * 6.28);
+          float spreadOut = aKind > 2.5 ? 2.2 : aKind > 0.5 ? 1.2 : 0.5;
+          p.xz += uWindDir * (3.0 * t + 0.6 * t * t) + out2 * spreadOut * t;
+        }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float grow = aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
+        float grow = aKind > 3.5 ? 0.6 : aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
         float s = aSize * (0.5 + grow * age);
         bool ortho = projectionMatrix[3][3] == 1.0;
         gl_PointSize = s * projectionMatrix[1][1] * uHalfH / (ortho ? 1.0 : max(1.0, -mv.z));
-        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : 0.42;
+        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : aKind < 3.5 ? 0.42 : 0.95;
         vAlpha = peak * smoothstep(0.0, 0.06, age) * (1.0 - age) * (1.0 - age * 0.3);
       }`,
     fragmentShader: /* glsl */ `
@@ -122,7 +128,9 @@ export function createExhaust(): Exhaust {
         vec3 dust = vec3(0.6, 0.53, 0.43);
         vec3 dark = vec3(0.16, 0.15, 0.15);
         vec3 concrete = vec3(0.74, 0.71, 0.66);
-        vec3 c = vKind < 0.5 ? smoke : vKind < 1.5 ? dust : vKind < 2.5 ? dark : concrete;
+        vec3 blood = vec3(0.32, 0.02, 0.03);
+        vec3 c = vKind < 0.5 ? smoke : vKind < 1.5 ? dust : vKind < 2.5 ? dark : vKind < 3.5 ? concrete : blood;
+        if (vKind > 3.5) soft = smoothstep(1.0, 0.55, r);
         // Shaded a little darker underneath, lighter on top.
         c *= 0.85 + 0.3 * (0.5 - d.y);
         gl_FragColor = vec4(c, vAlpha * soft);

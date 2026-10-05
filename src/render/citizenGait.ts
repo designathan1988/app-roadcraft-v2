@@ -468,6 +468,9 @@ function standingKey(ped: PedView, g: Gait, hash: number, clips: GaitClips): Sin
     return mood === 3 ? 'argue' : mood % 4 === 1 && beat === 2 ? 'laugh' : 'talk';
   }
   if (act?.kind === 'phone') return 'phone';
+  // Fallen and not drawn as a ragdoll (`ragdoll.ts`): down on the haunches,
+  // never a stiff body tipped over about its feet.
+  if (act?.kind === 'fall') return 'crouchIdle';
   if (act?.kind === 'crouch') {
     // Down, a while there (tying a lace, a word to a child), and up again.
     const hold = act.hold ?? 8;
@@ -554,22 +557,6 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
   const turnSign = Math.abs(ped.turnV) > TURN_STEPS_STANDING ? Math.sign(ped.turnV) : Math.sign(wrap(heading - g.base));
   const seat = act?.kind === 'bench' ? act.phase : null;
 
-  // Thrown by a blow: arms and legs thrashing through the flight (the run
-  // cycle played fast and loose), then, down, lying crumpled with the knees
-  // drawn up rather than straight as a plank (`riggedCitizens` lays the body).
-  if (act?.kind === 'fall') {
-    if (act.air !== undefined && act.air > 0.05) {
-      if (g.cur.key !== 'loco') play(g, 'loco', 0, 0.1);
-      g.run = 1;
-      g.cycle = (g.cycle + dt * 2.6) % 1;
-    } else {
-      if (g.cur.key !== 'crouchIdle') play(g, 'crouchIdle', 0.3, 0.25);
-      g.cur.phase = Math.min(0.5, g.cur.phase + dt * 0.05);
-    }
-    if (g.fade < 1) g.fade = Math.min(1, g.fade + dt / g.fadeTime);
-    if (g.fade >= 1) g.prev = null;
-    return;
-  }
   if (seat === 'sitDown' || seat === 'seated' || seat === 'standUp') {
     const key = seat === 'seated' ? 'sitIdle' : seat;
     play(g, key, 0, FADE);

@@ -34,6 +34,7 @@ import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
+import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';
 import { FOOTWAY_RISE } from '@world/roadTypes';
@@ -141,6 +142,10 @@ export interface AgentRenderOptions {
   readonly indoor?: readonly IndoorFigure[];
   /** Each motor vehicle drawn: where its tail smoke leaves from (`exhaust.ts`). */
   readonly exhaust?: (x: number, y: number, z: number, angle: number, length: number, speed: number, dusty: boolean) => void;
+  /** The bodies of people killed by a blow (`ragdoll.ts`), drawn with the crowd's own meshes. */
+  readonly ragdolls?: (citizens: RagdollCitizens) => void;
+  /** Somebody whose own body lies on the ground (`ragdoll.ts`): not drawn standing as well. */
+  readonly hiddenPed?: (id: number) => boolean;
 }
 
 export interface AgentMeshes {
@@ -1397,6 +1402,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         let pedCount = 0;
         for (const ped of world.pedViews) {
           if (pedCount >= MAX_PEDS) break;
+          if (options.hiddenPed?.(ped.id)) continue;
           const pose = pedPose(ped, alpha);
           const open = ped.ground === 'open';
           const segment = ped.segment;
@@ -1423,6 +1429,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         }
       }
 
+      options.ragdolls?.(pedestrians);
       pedestrians.finish();
 
       // Upload only what was written this frame.

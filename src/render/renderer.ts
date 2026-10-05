@@ -36,8 +36,8 @@ import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
-import { localToWorld, solidFootprints } from '@world/buildings/geometry';
-import { followPieces } from '@world/buildings/elements';
+import { levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
+import { elementRing, followPieces } from '@world/buildings/elements';
 import { lotSurfaces } from '@world/buildings/lots';
 import type { RoadDoc } from '@world/doc';
 import { drainCompiles, drainUploads, drainWarm } from './uploads';
@@ -47,6 +47,7 @@ import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
 import { createCasualties } from './casualties';
+import { createRagdolls, type RagdollWall, type RagdollWorld } from './ragdoll';
 import { impactCasualties } from '@sim/people/people';
 import { createDestruction } from './destruction';
 import { floorHeight } from '@world/buildings/foundation';
@@ -347,6 +348,59 @@ export function createSceneRenderer(
   /** Blood where blows killed people (`casualties.ts`). */
   const casualties = createCasualties();
   scene.add(casualties.group);
+  /** The bodies of the people blows killed (`ragdoll.ts`). */
+  const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds) => {
+    // Up again where the body came to rest (`PeopleEngine.getUp`).
+    if (ragdollSim) ragdollSim.pedEngine.getUp?.(ragdollSim, id, x, y, heading, seconds);
+  });
+  (globalThis as Record<string, unknown>)['__ragdolls'] = ragdolls;
+  /** Who is down (a `fall` pause) this frame. */
+  const ragdollDown = new Set<number>();
+  /** The world drawn this frame, for the walls a body strikes. */
+  let ragdollSim: SimWorld | null = null;
+  /** The lots near the bodies (their raised yards are ground too), and the ground found, by small cells. */
+  const ragdollLots = new Set<BuildingId>();
+  const ragdollGround = new Map<number, number>();
+  const ragdollWorld: RagdollWorld = {
+    groundAt(x, y) {
+      const key = Math.round(x * 5) * 100003 + Math.round(y * 5);
+      const known = ragdollGround.get(key);
+      if (known !== undefined) return known;
+      // A lot's yard as drawn, else the paving (a footway stands over the
+      // terrain), else the terrain.
+      let h = NaN;
+      for (const id of ragdollLots) {
+        h = buildings.lotHeightAt(id, x, y);
+        if (Number.isFinite(h)) break;
+      }
+      if (!Number.isFinite(h)) h = pavedHeightAt(x, y);
+      if (!Number.isFinite(h)) h = terrain.renderedHeightAt(x, y);
+      if (ragdollGround.size > 60000) ragdollGround.clear();
+      ragdollGround.set(key, h);
+      return h;
+    },
+    wallsNear(x, y, reach) {
+      // The buildings standing (not a ruin) and the walls, fences and hedges of their lots.
+      const out: RagdollWall[] = [];
+      if (ragdollLots.size > 400) ragdollLots.clear();
+      ragdollGround.clear();
+      for (const b of ragdollSim?.doc.buildings.all() ?? []) {
+        if (destruction.ruined.has(b.id) || Math.hypot(b.x - x, b.y - y) > reach + m(40)) continue;
+        ragdollLots.add(b.id);
+        const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
+        for (const v of b.volumes) {
+          if (v.base !== 0 || v.mode === 'void' || v.mode === 'intersect' || v.open) continue;
+          // The walls up to the eaves, the roof over them: a body lands on it and slides down a pitch.
+          const eaves = floor + levelElevation(b, v.base + v.storeys.length);
+          out.push({ ring: volumeCorners(b, v), top: eaves + roofRise(b, v), roof: (wx, wy) => eaves + Math.max(0, roofHeightAt(b, v, worldToLocal(b, { x: wx, y: wy }))) });
+        }
+        for (const e of b.elements ?? []) {
+          if ((e.kind === 'wall' || e.kind === 'fence' || e.kind === 'hedge') && e.z <= 0.01) out.push({ ring: elementRing(b, e), top: floor + e.h });
+        }
+      }
+      return out.filter((w) => w.ring.length >= 3);
+    },
+  };
   let polePreview: Utilities | null = null;
   /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
   let signs: SignLayer | null = null;
@@ -949,14 +1003,26 @@ export function createSceneRenderer(
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);
         },
+        ragdolls: (citizens) => {
+          ragdollSim = sim;
+          ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
+          // Somebody tripping on the pavement falls as a ragdoll too.
+          ragdollDown.clear();
+          for (const ped of sim.pedViews) {
+            const g = ped.gesture;
+            if (g?.kind !== 'fall') continue;
+            ragdollDown.add(ped.id);
+            if (g.t < 0.5 && !ragdolls.hides(ped.id)) ragdolls.trip(ped.id, ped.heading, citizens, ragdollWorld);
+          }
+          ragdolls.release((id) => ragdollDown.has(id));
+          ragdolls.update(wallDt, ragdollWorld);
+          ragdolls.draw(citizens, ragdollWorld);
+        },
+        hiddenPed: (id) => ragdolls.hides(id),
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
       destruction.update(wallDt);
-      casualties.sync(impactCasualties(sim, wallDt), (x, y) => {
-        // On the paving where there is any (a footway stands over the terrain).
-        const paved = pavedHeightAt(x, y);
-        return Number.isFinite(paved) ? paved : terrain.renderedHeightAt(x, y);
-      });
+      casualties.sync(ragdolls.decals);
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.
