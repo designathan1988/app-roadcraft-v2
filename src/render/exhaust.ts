@@ -24,8 +24,12 @@ const POOL = 4000;
 /** Seconds an exhaust puff lives. */
 const EXHAUST_LIFE = 2.6;
 
-/** 0 exhaust, 1 dust (brown-grey, low and wide), 2 dark smoke (rises), 3 concrete dust (pale, billowing), 4 blood spray (thrown up, falls). */
-export type PuffKind = 0 | 1 | 2 | 3 | 4;
+/**
+ * 0 exhaust, 1 dust (brown-grey, low and wide), 2 dark smoke (rises), 3 concrete dust (pale, billowing),
+ * 4 blood spray (thrown up, falls), 5 flame (bright, rising fast, short), 6 sparks (flung, falling, glowing),
+ * 7 grit and earth (flung, falling).
+ */
+export type PuffKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface Exhaust {
   readonly points: Points;
@@ -80,11 +84,13 @@ export function createExhaust(): Exhaust {
       varying float vAlpha;
       varying float vKind;
       varying float vSeed;
+      varying float vAge;
       void main() {
         float t = uTime - aBorn;
         float age = t / aLife;
         vKind = aKind;
         vSeed = aSeed;
+        vAge = age;
         if (age < 0.0 || age > 1.0) {
           gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
           gl_PointSize = 0.0;
@@ -95,10 +101,16 @@ export function createExhaust(): Exhaust {
         // Rise: smoke climbs, dust hangs low, a collapse cloud billows up and out.
         float rise = aKind < 0.5 ? 2.4 : aKind < 1.5 ? 1.0 : aKind < 2.5 ? 3.5 : 1.8;
         vec2 out2 = vec2(sin(aSeed * 40.0), cos(aSeed * 40.0));
-        if (aKind > 3.5) {
-          // Blood: droplets flung up and out, falling back under gravity.
-          p.y += (5.0 + 10.0 * fract(aSeed * 17.0)) * t - 12.25 * t * t;
-          p.xz += out2 * (3.0 + 8.0 * fract(aSeed * 7.0)) * t;
+        bool flung = (aKind > 3.5 && aKind < 4.5) || aKind > 5.5;
+        if (flung) {
+          // Blood, sparks, grit: flung up and out, falling back under gravity.
+          float fling = aKind > 5.5 && aKind < 6.5 ? 3.0 : 1.0;
+          p.y += (5.0 + 10.0 * fract(aSeed * 17.0)) * fling * t - 12.25 * t * t;
+          p.xz += out2 * (3.0 + 8.0 * fract(aSeed * 7.0)) * fling * t;
+        } else if (aKind > 4.5) {
+          // Flame: bursting out, licking upwards fast, gone in a moment.
+          p.y += 6.0 * t + 0.3 * sin(t * 9.0 + aSeed * 6.28);
+          p.xz += out2 * 4.0 * t * (1.0 - age * 0.6) + uWindDir * 1.5 * t;
         } else {
           p.y += rise * t * (1.0 - 0.3 * age) + 0.15 * sin(t * 3.0 + aSeed * 6.28);
           float spreadOut = aKind > 2.5 ? 2.2 : aKind > 0.5 ? 1.2 : 0.5;
@@ -106,17 +118,18 @@ export function createExhaust(): Exhaust {
         }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float grow = aKind > 3.5 ? 0.6 : aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
+        float grow = aKind > 5.5 ? 0.2 : aKind > 4.5 ? 1.6 : aKind > 3.5 ? 0.6 : aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
         float s = aSize * (0.5 + grow * age);
         bool ortho = projectionMatrix[3][3] == 1.0;
         gl_PointSize = s * projectionMatrix[1][1] * uHalfH / (ortho ? 1.0 : max(1.0, -mv.z));
-        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : aKind < 3.5 ? 0.42 : 0.95;
+        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : aKind < 3.5 ? 0.42 : aKind < 4.5 ? 0.95 : aKind < 5.5 ? 0.8 : 1.0;
         vAlpha = peak * smoothstep(0.0, 0.06, age) * (1.0 - age) * (1.0 - age * 0.3);
       }`,
     fragmentShader: /* glsl */ `
       varying float vAlpha;
       varying float vKind;
       varying float vSeed;
+      varying float vAge;
       void main() {
         vec2 d = gl_PointCoord - 0.5;
         float r = length(d) * 2.0;
@@ -131,6 +144,23 @@ export function createExhaust(): Exhaust {
         vec3 blood = vec3(0.32, 0.02, 0.03);
         vec3 c = vKind < 0.5 ? smoke : vKind < 1.5 ? dust : vKind < 2.5 ? dark : vKind < 3.5 ? concrete : blood;
         if (vKind > 3.5) soft = smoothstep(1.0, 0.55, r);
+        if (vKind > 4.5 && vKind < 5.5) {
+          // Flame: white-yellow at the heart, orange, then red at the edge, brighter than white.
+          // A tongue of flame: narrow, pointed upwards, flickering at its edge,
+          // yellow-white at the root, orange, red, then going to soot.
+          vec2 q = vec2(d.x * (1.6 + 0.8 * (0.5 - d.y)), d.y * 1.1 + 0.08);
+          float flick = 0.75 + 0.25 * sin(d.y * 14.0 + vSeed * 40.0 + vAge * 25.0) * sin(d.x * 11.0 - vSeed * 17.0);
+          float rf = length(q) * 2.0 / flick;
+          vec3 hot = mix(vec3(3.4, 2.6, 1.4), vec3(2.4, 0.9, 0.18), smoothstep(0.0, 0.7, rf * 0.6 + vAge * 0.9));
+          c = mix(hot, vec3(0.12, 0.1, 0.09), smoothstep(0.6, 1.0, vAge));
+          soft = exp(-rf * rf * 2.2) * smoothstep(1.2, 0.6, rf);
+        } else if (vKind > 5.5 && vKind < 6.5) {
+          c = vec3(4.0, 2.6, 1.0);
+          soft = smoothstep(1.0, 0.2, r);
+        } else if (vKind > 6.5) {
+          c = vec3(0.3, 0.24, 0.18);
+          soft = smoothstep(1.0, 0.5, r);
+        }
         // Shaded a little darker underneath, lighter on top.
         c *= 0.85 + 0.3 * (0.5 - d.y);
         gl_FragColor = vec4(c, vAlpha * soft);

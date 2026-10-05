@@ -256,6 +256,7 @@ export function createSignalHeads(
   let placedRevision = -1;
   let placedTrafficRevision = -1;
   let placedTerrainRevision = -1;
+  let placedTopology = -1;
   const flush = (batch: Batch): void => {
     const mesh = batch.mesh;
     mesh.count = batch.n;
@@ -279,12 +280,16 @@ export function createSignalHeads(
       }
       group.visible = true;
       const geometryChanged = placedNetwork !== world.net || placedRevision !== world.net.revision
-        || placedTrafficRevision !== world.net.trafficRevision || placedTerrainRevision !== world.doc.terrainRevision;
+        || placedTrafficRevision !== world.net.trafficRevision || placedTerrainRevision !== world.doc.terrainRevision
+        // The junctions are the simulation's: rebuilt a frame after the network
+        // (a control changed), and the posts must follow them, not the old graph.
+        || placedTopology !== world.topologyRevision;
       if (geometryChanged) {
         placedNetwork = world.net;
         placedRevision = world.net.revision;
         placedTrafficRevision = world.net.trafficRevision;
         placedTerrainRevision = world.doc.terrainRevision;
+        placedTopology = world.topologyRevision;
         shown.clear();
         placed.length = 0;
         for (const node of world.junctionNodesInOrder()) {

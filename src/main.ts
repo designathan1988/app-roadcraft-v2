@@ -9,7 +9,7 @@ import { Network } from '@world/network';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, type TerrainMode } from '@world/terrain';
-import type { NodeId, SegmentId } from '@world/ids';
+import type { NodeId, PoleId, SegmentId } from '@world/ids';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
 import {
@@ -29,7 +29,7 @@ import { Camera } from '@view/camera';
 import { type Viewport, flatViewport } from '@view/viewport';
 import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
-import { createSceneRenderer, type SceneHandle, type SkyMode } from '@render/renderer';
+import { createSceneRenderer, type BlastHit, type SceneHandle, type SkyMode } from '@render/renderer';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { createPersonPreview } from '@render/people/personPreview';
 import { createPersonCreator } from '@ui/creator/personCreator';
@@ -58,7 +58,10 @@ import { type AgentCard, createAgentCard } from '@ui/agentCard';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
 import { type Building, type BuildingId, decayOf } from '@world/buildings/types';
-import { worldToLocal } from '@world/buildings/geometry';
+import { solidFootprints, worldToLocal } from '@world/buildings/geometry';
+import { closestOnSegment } from '@core/intersect';
+import { pointInPolygon } from '@core/polygon';
+import { signalPosts } from '@world/signalPosts';
 import { resolveBlocks } from '@world/buildings/blocks';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
@@ -3244,7 +3247,7 @@ function frame(now: number): void {
   }
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (traffic || draft || moving || panning || orbiting || pinch)) requestDraw();
+  if (!document.hidden && (traffic || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
 }
 
 /**
@@ -4406,23 +4409,102 @@ function strikeAt(sx: number, sy: number, world: Vec2): void {
     if (hit) { target = hit; z = hit.z; }
   }
   world = target;
-  const kill = m(1.2 + strength * 0.5), scare = m(25 + strength * 6);
+  // An explosion (the player's order of 2026-10-05): it wrecks everything
+  // within its reach, not only what it lands on - buildings, people, cars,
+  // poles and their wires, traffic lights, street things, the road itself.
+  const radius = m(2.5 + strength * 1.1);
+  const kill = radius * 0.5, scare = m(30 + strength * 6);
   const dead = sim.pedEngine.impact?.(sim, world.x, world.y, kill, scare) ?? 0;
-  if (b) {
-    const down = scene.strikeBuilding(b, world.x, world.y, z, strength);
-    if (down) {
-      mutate(() => doc.buildings.remove(b.id));
-      scene.forgetRuin(b.id);
-      // The rubble lies a while before anything is built there again.
-      zoneGrowthHold = performance.now() + 90_000;
-      flashHint('hint.strike.down');
-    } else {
-      flashHint(dead > 0 ? 'hint.strike.deaths' : 'hint.strike.hit');
+  const near = (x: number, y: number, reach: number): boolean => Math.hypot(x - world.x, y - world.y) < reach;
+  const paved = Number.isFinite(scene.pavedHeightAt(world.x, world.y));
+  const ground: BlastHit['ground'] = b && z > sceneHeightAt(world) + m(0.5) ? 'building' : paved ? 'road' : 'earth';
+  const hit: { ground: BlastHit['ground']; crater: boolean; poles: BlastHit['poles'][number][]; wires: BlastHit['wires'][number][];
+    posts: BlastHit['posts'][number][]; vehicles: BlastHit['vehicles'][number][]; items: BlastHit['items'][number][] } =
+    { ground, crater: ground !== 'building', poles: [], wires: [], posts: [], vehicles: [], items: [] };
+  let downs = 0;
+  mutate(() => {
+    let changed = false;
+    // Buildings: each struck at its nearest point, harder the nearer.
+    for (const c of [...doc.buildings.all()]) {
+      let best = Infinity, px = world.x, py = world.y;
+      for (const ring of solidFootprints(c)) {
+        if (pointInPolygon(world, ring)) { best = 0; break; }
+        for (let i = 0; i < ring.length; i++) {
+          const q = closestOnSegment(world, ring[i]!, ring[(i + 1) % ring.length]!).point;
+          const d = Math.hypot(q.x - world.x, q.y - world.y);
+          if (d < best) { best = d; px = q.x; py = q.y; }
+        }
+      }
+      if (best > radius) continue;
+      const at = c === b ? { x: world.x, y: world.y, z } : { x: px, y: py, z: Math.max(z, sceneHeightAt({ x: px, y: py }) + m(1.5)) };
+      const force = c === b ? strength : Math.max(1, strength * (1 - best / radius) * 1.2);
+      if (scene.strikeBuilding(c, at.x, at.y, at.z, force)) {
+        doc.buildings.remove(c.id);
+        scene.forgetRuin(c.id);
+        downs++;
+        changed = true;
+      }
     }
-  } else {
-    scene.strikeGround(world.x, world.y, strength);
-    flashHint(dead > 0 ? 'hint.strike.deaths' : 'hint.strike.ground');
+    // Poles: broken whole, snapped or to splinters; the wires torn off them
+    // pull the next poles over, or hang from them.
+    const broken = new Set<PoleId>();
+    for (const pole of doc.poles.values()) if (near(pole.x, pole.y, radius)) broken.add(pole.id);
+    for (const span of doc.poleSpans.values()) {
+      for (const [from, to] of [[span.a, span.b], [span.b, span.a]] as const) {
+        if (!broken.has(to) || broken.has(from)) continue;
+        const p = doc.poles.get(from);
+        if (p && near(p.x, p.y, radius * 2.2) && Math.random() < 0.5) broken.add(from);
+      }
+    }
+    for (const span of doc.poleSpans.values()) {
+      const pa = doc.poles.get(span.a), pb = doc.poles.get(span.b);
+      if (!pa || !pb) continue;
+      if (broken.has(span.a) && !broken.has(span.b)) hit.wires.push({ fromX: pb.x, fromY: pb.y, toX: pa.x, toY: pa.y });
+      if (broken.has(span.b) && !broken.has(span.a)) hit.wires.push({ fromX: pa.x, fromY: pa.y, toX: pb.x, toY: pb.y });
+    }
+    for (const id of broken) {
+      const pole = doc.poles.get(id)!;
+      const d = Math.hypot(pole.x - world.x, pole.y - world.y) || 1;
+      const close = d < radius * 0.4;
+      const mode = d > radius ? 'whole' : close && Math.random() < 0.6 ? 'splinter' : Math.random() < 0.5 ? 'snap' : 'whole';
+      hit.poles.push({ x: pole.x, y: pole.y, lamp: pole.lamp, mode, dirX: (pole.x - world.x) / d, dirY: (pole.y - world.y) / d });
+      doc.removePole(id);
+      changed = true;
+    }
+    // Traffic lights: a junction whose posts the blast reaches loses them.
+    for (const post of signalPosts(net, sim.graph)) {
+      if (!near(post.x, post.y, radius)) continue;
+      hit.posts.push({ x: post.x, y: post.y, yaw: post.yaw });
+      if (doc.node(post.node)?.control !== 'none') { doc.setNodeControl(post.node, 'none'); changed = true; }
+    }
+    // Trees, benches, bins, lamps, signs: thrown and gone.
+    for (const item of [...doc.landscape.values()]) {
+      if (!near(item.x, item.y, radius)) continue;
+      hit.items.push({ kind: item.kind, x: item.x, y: item.y });
+      doc.removeLandscape(item.id);
+      changed = true;
+    }
+    // Bare earth: a crater dug into the terrain.
+    if (ground === 'earth') {
+      doc.addTerrainStamp({ x: world.x, y: world.y, radius: radius * 0.5, strength: m(0.6 + strength * 0.12), mode: 'lower' });
+      changed = true;
+    }
+    return changed;
+  });
+  // Cars: thrown, burning shells.
+  for (const v of [...sim.vehicles.values()]) {
+    const pose = vehiclePose(sim, v, 1);
+    if (!pose || !near(pose.p.x, pose.p.y, radius * 1.1)) continue;
+    const css = String(v.color ?? '#777777');
+    hit.vehicles.push({ x: pose.p.x, y: pose.p.y, angle: pose.angle, length: v.archetype.length, width: v.archetype.width,
+      height: v.archetype.height, color: parseInt(css.replace('#', '').slice(0, 6), 16) || 0x777777 });
+    sim.removeVehicle(v);
   }
+  (globalThis as Record<string, unknown>)['__lastBlast'] = { ...hit, radius, at: world };
+  scene.explode(world.x, world.y, z, radius, hit);
+  if (ground === 'road') scene.strikeGround(world.x, world.y, strength);
+  if (downs > 0 || hit.poles.length || hit.vehicles.length) zoneGrowthHold = performance.now() + 90_000;
+  flashHint(downs > 0 ? 'hint.strike.down' : dead > 0 ? 'hint.strike.deaths' : b ? 'hint.strike.hit' : 'hint.strike.ground');
   requestDraw();
 }
 

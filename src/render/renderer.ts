@@ -1,4 +1,6 @@
 import {
+  Color,
+  Quaternion,
   ACESFilmicToneMapping,
   Box3,
   PointLight,
@@ -48,6 +50,8 @@ import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
 import { createCasualties } from './casualties';
 import { createRagdolls, type RagdollWall, type RagdollWorld } from './ragdoll';
+import { createBlast } from './blast';
+import { POLE_ARM_DROP, POLE_ARM_HALF, POLE_HEIGHT, POLE_LAMP_REACH } from '@world/utilities';
 import { impactCasualties } from '@sim/people/people';
 import { createDestruction } from './destruction';
 import { floorHeight } from '@world/buildings/foundation';
@@ -122,6 +126,19 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 /** How the sky is kept: `cycle` follows the residents' clock. */
 export type SkyMode = 'day' | 'night' | 'cycle';
 
+
+/** What an explosion broke, for the renderer to throw (`blast.ts`): world coordinates. */
+export interface BlastHit {
+  readonly ground: 'road' | 'earth' | 'building';
+  readonly crater: boolean;
+  readonly poles: readonly { x: number; y: number; lamp: boolean; mode: 'whole' | 'snap' | 'splinter'; dirX: number; dirY: number }[];
+  /** Wires torn off a broken pole: from the pole still standing towards the one that went. */
+  readonly wires: readonly { fromX: number; fromY: number; toX: number; toY: number }[];
+  readonly posts: readonly { x: number; y: number; yaw: number }[];
+  readonly vehicles: readonly { x: number; y: number; angle: number; length: number; width: number; height: number; color: number }[];
+  readonly items: readonly { kind: string; x: number; y: number }[];
+}
+
 export interface RenderStats {
   /** Built scene geometry budget; `gl.info.render.triangles` counts drawn passes. */
   readonly triangles: number;
@@ -167,6 +184,10 @@ export interface SceneHandle {
   strikeBuilding(b: Building, x: number, y: number, z: number, strength: number): boolean;
   /** A blow on the street at (x, y): a crater in the asphalt, dust. */
   strikeGround(x: number, y: number, strength: number): void;
+  /** An explosion at world (x, y), height z, reaching `radius` (`blast.ts`), and the things it broke. */
+  explode(x: number, y: number, z: number, radius: number, hit: BlastHit): void;
+  /** Whether anything is still moving on its own (an explosion, bodies, debris): keep drawing. */
+  busy(): boolean;
   /** Forgets a building's ruin (it was removed). */
   forgetRuin(id: number): void;
   /**
@@ -348,6 +369,10 @@ export function createSceneRenderer(
   /** Blood where blows killed people (`casualties.ts`). */
   const casualties = createCasualties();
   scene.add(casualties.group);
+  /** Explosions and what they throw (`blast.ts`). */
+  const blast = createBlast(exhaust);
+  const shakeOffset = new Vector3();
+  scene.add(blast.group);
   /** The bodies of the people blows killed (`ragdoll.ts`). */
   const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds) => {
     // Up again where the body came to rest (`PeopleEngine.getUp`).
@@ -803,6 +828,111 @@ export function createSceneRenderer(
       wear.tick(10);
       exhaust.burst(x, y, terrain.renderedHeightAt(x, y), 20 + strength * 6, 1, m(1 + strength * 0.4), m(3), 5);
     },
+    explode(x, y, z, radius, hit) {
+      const ground = (px: number, py: number): number => ragdollWorld.groundAt(px, py);
+      blast.explode(x, y, z, radius, hit.ground);
+      if (hit.crater && hit.ground !== 'building') blast.crater(x, y, ground(x, y), radius * 0.55, hit.ground);
+      const away = (px: number, py: number, k: number): Vector3 => {
+        const dx = px - x, dy = py - y, d = Math.hypot(dx, dy) || 1;
+        const f = k * Math.max(0.25, 1 - d / (radius * 1.6));
+        return new Vector3((dx / d) * f, f * 0.6, -(dy / d) * f);
+      };
+      const wood = 0x5e4630;
+      for (const pole of hit.poles) {
+        const g = ground(pole.x, pole.y);
+        const r = m(0.15);
+        const top = new Vector3(pole.x, g + POLE_HEIGHT - POLE_ARM_DROP, -pole.y);
+        // Falls the way it is thrown: a turn about the horizontal axis across that way.
+        const axis = new Vector3(-pole.dirY, 0, -pole.dirX).normalize();
+        const push = away(pole.x, pole.y, m(5));
+        if (pole.mode === 'whole') {
+          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + POLE_HEIGHT / 2 + m(0.05), -pole.y),
+            size: new Vector3(r, POLE_HEIGHT, r), velocity: push.clone().multiplyScalar(0.4), spin: axis.clone().multiplyScalar(0.9 + Math.random() * 0.6) });
+        } else if (pole.mode === 'snap') {
+          // Snapped: the stump left standing, the top thrown over.
+          const cut = POLE_HEIGHT * (0.25 + Math.random() * 0.3);
+          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + cut / 2, -pole.y),
+            size: new Vector3(r * 1.1, cut, r * 1.1), velocity: new Vector3(), spin: new Vector3() });
+          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + cut + (POLE_HEIGHT - cut) / 2 + m(0.1), -pole.y),
+            size: new Vector3(r, POLE_HEIGHT - cut, r), velocity: push.clone().multiplyScalar(0.7), spin: axis.clone().multiplyScalar(1.5 + Math.random()) });
+        } else {
+          // To splinters: pieces of it flung out.
+          let h = 0;
+          while (h < POLE_HEIGHT - m(0.5)) {
+            const l = Math.min(POLE_HEIGHT - h, m(1 + Math.random() * 2.5));
+            blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + h + l / 2, -pole.y),
+              size: new Vector3(r * (0.6 + Math.random() * 0.4), l, r * (0.6 + Math.random() * 0.4)),
+              velocity: push.clone().multiplyScalar(0.8 + Math.random()).add(new Vector3((Math.random() - 0.5) * m(4), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(4))) });
+            h += l;
+          }
+        }
+        // The cross-arm and the lamp, knocked off.
+        blast.debris({ shape: 'box', kind: 'wood', color: wood, at: top.clone(), size: new Vector3(POLE_ARM_HALF * 2, m(0.1), m(0.1)),
+          velocity: push.clone().add(new Vector3(0, m(2), 0)) });
+        if (pole.lamp) blast.debris({ shape: 'box', kind: 'metal', at: top.clone().add(new Vector3(POLE_LAMP_REACH * 0.5, 0, 0)), size: new Vector3(m(0.5), m(0.14), m(0.26)), velocity: push.clone().multiplyScalar(1.2) });
+        // A flash and sparks off the line as it goes.
+        blast.arc(top, 1.5 + Math.random() * 2);
+      }
+      for (const w of hit.wires) {
+        const g = ground(w.fromX, w.fromY);
+        const gt = ground(w.toX, w.toY);
+        const dx = w.toX - w.fromX, dy = w.toY - w.fromY, d = Math.hypot(dx, dy) || 1;
+        for (const offset of [-0.8, 0, 0.8]) {
+          const side = new Vector3(-dy / d, 0, -dx / d).multiplyScalar(offset * POLE_ARM_HALF);
+          const from = new Vector3(w.fromX, g + POLE_HEIGHT - POLE_ARM_DROP, -w.fromY).add(side);
+          const to = new Vector3(w.toX, gt + POLE_HEIGHT * 0.6, -w.toY).add(side);
+          blast.wire(from, to, away(w.toX, w.toY, m(3)));
+        }
+      }
+      for (const post of hit.posts) {
+        const g = ground(post.x, post.y);
+        const push = away(post.x, post.y, m(5));
+        const axis = new Vector3(push.z, 0, -push.x).normalize();
+        blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x2a2d31, at: new Vector3(post.x, g + m(3.1) + m(0.05), -post.y),
+          size: new Vector3(m(0.165), m(6.2), m(0.165)), velocity: push.clone().multiplyScalar(0.3), spin: axis.multiplyScalar(1.2) });
+        const head = new Vector3(post.x + Math.cos(post.yaw) * m(3), g + m(5.5), -(post.y + Math.sin(post.yaw) * m(3)));
+        blast.debris({ shape: 'box', kind: 'metal', color: 0x1b1d20, at: head, size: new Vector3(m(0.35), m(1.0), m(0.35)), velocity: push.clone().add(new Vector3(0, m(3), 0)) });
+        blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x2a2d31, at: head.clone().lerp(new Vector3(post.x, g + m(5.9), -post.y), 0.5),
+          size: new Vector3(m(0.06), m(3.5), m(0.06)), turn: new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2), velocity: push.clone() });
+        blast.arc(head, 1 + Math.random() * 2);
+      }
+      for (const v of hit.vehicles) {
+        const g = ground(v.x, v.y);
+        const push = away(v.x, v.y, m(9)).add(new Vector3(0, m(3), 0));
+        const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.angle);
+        const spin = new Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3);
+        // The burnt shell, black but for a scorched trace of its paint, burning; two wheels flying off.
+        const charred = new Color(v.color).lerp(new Color(0x1f1b18), 0.95).getHex();
+        blast.debris({ shape: 'car', kind: 'char', color: charred, at: new Vector3(v.x, g + v.height * 0.45, -v.y),
+          size: new Vector3(v.length, v.height * 0.85, v.width), turn, velocity: push, spin, burn: 30 + Math.random() * 20 });
+        for (let k = 0; k < 2; k++) {
+          blast.debris({ shape: 'cylinder', kind: 'char', color: 0x141414, at: new Vector3(v.x, g + m(0.35), -v.y),
+            size: new Vector3(m(0.32), m(0.22), m(0.32)), turn: new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2),
+            velocity: push.clone().multiplyScalar(0.6 + Math.random()).add(new Vector3((Math.random() - 0.5) * m(8), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(8))) });
+        }
+        exhaust.burst(v.x, v.y, g + m(1), 40, 5, m(1.2), m(1.4), 1.0);
+      }
+      for (const item of hit.items) {
+        const g = ground(item.x, item.y);
+        const push = away(item.x, item.y, m(6));
+        if (item.kind === 'tree' || item.kind === 'shrub') {
+          const tall = item.kind === 'tree' ? m(4) : m(1.2);
+          blast.debris({ shape: 'cylinder', kind: 'wood', at: new Vector3(item.x, g + tall / 2, -item.y), size: new Vector3(m(0.14), tall, m(0.14)),
+            velocity: push.clone().multiplyScalar(0.4), spin: new Vector3(push.z, 0, -push.x).normalize().multiplyScalar(1.2) });
+          for (let k = 0; k < 14; k++) {
+            blast.debris({ shape: 'box', kind: 'leaf', at: new Vector3(item.x, g + tall * 0.8, -item.y), size: new Vector3(m(0.3), m(0.05), m(0.3)),
+              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(6), m(2 + Math.random() * 5), (Math.random() - 0.5) * m(6))) });
+          }
+        } else {
+          for (let k = 0; k < 4; k++) {
+            blast.debris({ shape: 'box', kind: item.kind === 'bench' ? 'wood' : 'metal', at: new Vector3(item.x, g + m(0.5), -item.y),
+              size: new Vector3(m(0.2 + Math.random() * 0.5), m(0.06 + Math.random() * 0.2), m(0.1 + Math.random() * 0.3)),
+              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(4), m(2 + Math.random() * 5), (Math.random() - 0.5) * m(4))) });
+          }
+        }
+      }
+    },
+    busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0,
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
@@ -1023,6 +1153,7 @@ export function createSceneRenderer(
       exhaust.tick(windClock, renderer.domElement.height / 2);
       destruction.update(wallDt);
       casualties.sync(ragdolls.decals);
+      blast.update(wallDt, ragdollWorld);
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.
@@ -1087,7 +1218,15 @@ export function createSceneRenderer(
       // Cheap (a few hundred objects), and it follows meshes a rebuild or an
       // asset load adds, and instance colours created on first use.
       if (renderer.shadowMap.enabled) assignShadowDepth(scene);
+      // An explosion shakes the camera for a moment.
+      const shake = blast.shake();
+      if (shake > 0) {
+        shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+        rig.camera.position.add(shakeOffset);
+        rig.camera.updateMatrixWorld();
+      }
       post.render(delta);
+      if (shake > 0) { rig.camera.position.sub(shakeOffset); rig.camera.updateMatrixWorld(); }
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);
       drainCompiles(renderer, rig.camera, scene, post.target);
