@@ -90,15 +90,16 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
     worldSize: m(3),
     // A coarse trowel render: a heavy grain the light catches, and the sweep
     // of the trowel running across it.
-    relief: 2.2,
+    // Fine and flat: a heavy relief read as the wall of a cave (the player).
+    relief: 0.8,
     metalness: 0,
     envMapIntensity: 0.5,
-    normalScale: 0.5,
+    normalScale: 0.22,
     shade: (size) => {
       const grain = makeNoise(0x5c31);
       const sweep = makeNoise(0x77a9);
       return (x, y, out) => {
-        const g = fbm(grain, (x / size) * 24, (y / size) * 24, 24, 3);
+        const g = fbm(grain, (x / size) * 64, (y / size) * 64, 64, 2);
         const s = fbm(sweep, (x / size) * 3 + y / size * 0.6, (y / size) * 3, 3, 2);
         grey(out, 0.9 + (g - 0.5) * 0.12 + (s - 0.5) * 0.07);
         out.h = g * 0.75 + s * 0.25;
@@ -232,10 +233,10 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
   stone: {
     size: 512,
     worldSize: m(3.2),
-    relief: 4.5,
+    relief: 1.4,
     metalness: 0,
     envMapIntensity: 0.5,
-    normalScale: 0.5,
+    normalScale: 0.3,
     shade: (size) => {
       const grain = makeNoise(0x5d07);
       const mottle = makeNoise(0x0e93);
@@ -244,15 +245,15 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
         const { col, row, edge } = bond(x, y, size, 5, 8);
         const g = fbm(grain, (x / size) * 48, (y / size) * 48, 48, 3);
         const mo = fbm(mottle, (x / size) * 8, (y / size) * 8, 8, 3);
-        if (edge < 2.5) {
-          grey(out, 0.5 + g * 0.08);
+        if (edge < 1.5) {
+          grey(out, 0.58 + g * 0.06);
           out.h = 0;
           out.rough = 0.95;
           return;
         }
         grey(out, 0.7 + cellHash(col, row, 0x51) * 0.2 + (mo - 0.5) * 0.12 + (g - 0.5) * 0.05);
-        // A little pillowed: the face bulges away from its joints.
-        out.h = Math.min(1, edge / 10) * 0.6 + g * 0.4;
+        // Dressed flat: sawn stone, a fine grain on a level face.
+        out.h = 0.7 + g * 0.15;
         out.rough = 0.9;
       };
     },
@@ -268,17 +269,14 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
       const n1 = makeNoise(0x44c1);
       const n2 = makeNoise(0x1b7e);
       return (x, y, out) => {
-        // Four 2.4 m formwork panels a tile, with their tie holes.
-        const half = size / 2;
-        const fu = x % half;
-        const fv = y % half;
-        const joint = Math.min(fu, half - fu, fv, half - fv) < 1.2;
-        const tie = Math.hypot(((fu + half / 8) % (half / 4)) - half / 8, ((fv + half / 8) % (half / 4)) - half / 8) < 1.6;
-        const n = fbm(n1, (x / size) * 10, (y / size) * 10, 10, 4);
-        const f = n2((x / size) * 80, (y / size) * 80, 80);
-        const panel = cellHash(Math.floor(x / half), Math.floor(y / half), 0x9d) * 0.05;
-        grey(out, joint || tie ? 0.68 : 0.82 + panel + (n - 0.5) * 0.06 + (f - 0.5) * 0.025);
-        out.h = joint || tie ? 0 : 0.6 + f * 0.2;
+        // Smooth cast concrete: a slow cloudy tone, fine pores, faint
+        // trowel marks; no formwork joints or tie holes (they read as a
+        // perforated sheet on every slab and canopy).
+        const n = fbm(n1, (x / size) * 6, (y / size) * 6, 6, 4);
+        const f = n2((x / size) * 120, (y / size) * 120, 120);
+        const pore = f > 0.82 ? -0.05 : 0;
+        grey(out, 0.8 + (n - 0.5) * 0.07 + (f - 0.5) * 0.02 + pore);
+        out.h = 0.6 + f * 0.1;
         out.rough = 0.9;
       };
     },

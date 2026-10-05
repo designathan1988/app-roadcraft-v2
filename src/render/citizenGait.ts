@@ -560,7 +560,7 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
     g.cur.phase = seat === 'sitDown' ? Math.min(1, act!.t / SIT_DOWN_SECONDS[ped.gender])
       : seat === 'standUp' ? Math.min(1, act!.t / STAND_UP_SECONDS[ped.gender])
         : (act!.t / clips.sitIdle.duration) % 1;
-  } else if (Math.hypot(raw.x, raw.y) > 0 && (!spin || speed >= TURN_IN_PLACE)) {
+  } else if (Math.hypot(raw.x, raw.y) > STILL_BELOW && speed > STILL_BELOW && (!spin || speed >= TURN_IN_PLACE)) {
     // A fast turn while barely creeping is a turn on the spot, even out of a
     // walk: it used to stay in the walk stop, feet planted, while the body
     // swung round to face the road at every kerb - most of the rotation the
@@ -587,6 +587,13 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
   if (g.fade < 1) g.fade = Math.min(1, g.fade + dt / g.fadeTime);
   if (g.fade >= 1) g.prev = null;
 }
+
+/**
+ * Below this drawn speed a body is standing (u/s, about 5 cm/s): the
+ * avoidance's nudges of a few centimetres a second used to keep the walk
+ * cycle playing, legs stepping on a body that was not going anywhere.
+ */
+const STILL_BELOW = 0.12;
 
 /** The branch of `stepGait` for a body not going anywhere: turning, settling, or standing. */
 function standing(g: Gait, ped: PedView, clips: GaitClips, dt: number, turned: number, spin: boolean,

@@ -102,3 +102,9 @@ export const signChoice: { type: SignType; text: string; streetName: string } = 
 
 /** The demolish tool: knock a building down at once, or strike it (and streets) with a chosen force. */
 export const strikeChoice: { mode: 'demolish' | 'strike'; strength: number } = { mode: 'demolish', strength: 5 };
+
+const ZONE_COLOUR_KEY = 'roadcraft.zoneColours';
+let zoneColours = stored(ZONE_COLOUR_KEY, ['on', 'off'] as const, 'on') === 'on';
+/** Whether zoned land is tinted with its use's colour outside the Zoning tool. */
+export function zoneColoursShown(): boolean { return zoneColours; }
+export function setZoneColoursShown(on: boolean): void { zoneColours = on; keep(ZONE_COLOUR_KEY, on ? 'on' : 'off'); }

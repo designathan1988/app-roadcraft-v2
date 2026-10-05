@@ -12,6 +12,9 @@ import {
   MeshStandardMaterial,
   Object3D,
   PlaneGeometry,
+  CanvasTexture,
+  SRGBColorSpace,
+  RepeatWrapping,
 } from 'three';
 
 import type { Network } from '@world/network';
@@ -323,8 +326,11 @@ export function buildUtilities(
     roughness: 0.68,
     metalness: 0.35,
   });
+  // Creosoted timber: a grain of long streaks up the pole, a few knots and
+  // checks, painted once on a canvas and wrapped round the mast.
   const timber = new MeshStandardMaterial({
-    color: 0x5b4b3a,
+    color: 0xffffff,
+    map: woodTexture(),
     roughness: 0.92,
     metalness: 0,
   });
@@ -496,4 +502,51 @@ export function buildPolePreview(
     if (index > 0) spans.set(index as SpanId, { id: index as SpanId, a: index as PoleId, b: id });
   });
   return buildUtilities(net, groundAt, kit, { poles, spans, draws: (pole) => !standing.has(pole.id) }, 'utility-preview');
+}
+
+let woodCache: CanvasTexture | null = null;
+/** The wood of a pole: dark brown, long grain, knots and drying cracks. Shared. */
+function woodTexture(): CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  if (woodCache) return woodCache;
+  const W = 128, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#4e3b2a';
+  g.fillRect(0, 0, W, H);
+  let seed = 7;
+  const rnd = (): number => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  // Grain: thin streaks of lighter and darker wood running up the pole.
+  for (let i = 0; i < 260; i++) {
+    const x = rnd() * W, light = rnd() < 0.5;
+    g.strokeStyle = light ? `rgba(120, 92, 64, ${0.15 + rnd() * 0.25})` : `rgba(30, 20, 12, ${0.15 + rnd() * 0.3})`;
+    g.lineWidth = 0.5 + rnd() * 1.5;
+    g.beginPath();
+    let px = x;
+    g.moveTo(px, 0);
+    for (let y = 0; y <= H; y += 16) { px += (rnd() - 0.5) * 1.5; g.lineTo(px, y); }
+    g.stroke();
+  }
+  // Knots and checks.
+  for (let i = 0; i < 6; i++) {
+    const x = rnd() * W, y = rnd() * H, r = 3 + rnd() * 5;
+    const grad = g.createRadialGradient(x, y, 0, x, y, r * 2);
+    grad.addColorStop(0, 'rgba(25, 15, 8, 0.85)');
+    grad.addColorStop(1, 'rgba(25, 15, 8, 0)');
+    g.fillStyle = grad;
+    g.beginPath(); g.ellipse(x, y, r, r * 2.2, 0, 0, Math.PI * 2); g.fill();
+  }
+  for (let i = 0; i < 10; i++) {
+    const x = rnd() * W, y = rnd() * H, len = 30 + rnd() * 90;
+    g.strokeStyle = 'rgba(15, 10, 6, 0.7)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (rnd() - 0.5) * 3, y + len); g.stroke();
+  }
+  const t = new CanvasTexture(c);
+  t.colorSpace = SRGBColorSpace;
+  t.wrapS = t.wrapT = RepeatWrapping;
+  t.repeat.set(1, 2);
+  woodCache = t;
+  return t;
 }

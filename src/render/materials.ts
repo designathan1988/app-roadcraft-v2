@@ -103,11 +103,19 @@ function asphaltBake(key: string, base: number, anisotropy: number, raisedPixels
         // Drip stains down the middle of a lane, where engines stand.
         const stain = fbm(oil, u * 14, v * 3, 14, 3);
         const drip = stain > 0.66 ? (stain - 0.66) * 0.12 : 0;
+        // Exposed stones: light flecks of aggregate in the dark binder.
+        const stone = fbm(grain, u * 420 + 3, v * 420 + 9, 420, 1);
+        const flecks = stone > 0.74 ? (stone - 0.74) * 0.5 : stone < 0.2 ? -0.02 : 0;
+        // Patches: rectangles of newer, darker asphalt where a trench was filled.
+        const pu = Math.floor(u * 5), pv = Math.floor(v * 3);
+        const patchy = cellHash(pu, pv, 0x91c) > 0.82 && (u * 5 - pu) > 0.15 && (u * 5 - pu) < 0.75 && (v * 3 - pv) > 0.2 && (v * 3 - pv) < 0.6;
         const tone =
           base +
-          (chips - 0.5) * 0.03 +
-          (wear - 0.5) * 0.032 +
-          (repair > 0.74 ? 0.018 : 0) -
+          (chips - 0.5) * 0.055 +
+          flecks +
+          (wear - 0.5) * 0.04 +
+          (repair > 0.74 ? 0.022 : 0) -
+          (patchy ? 0.03 : 0) -
           drip;
         if (raisedPixels) {
           const raisedTone =
@@ -206,46 +214,38 @@ function footwayBake(anisotropy: number): SurfaceBake {
       // and every joint looked like a step between slabs out of level.
       relief: 1.4,
       shade: (x, y, out) => {
-        // Interlocking concrete pavers in basketweave (the "paver" of new
-        // Brazilian pavements, the player found the big pale slabs ugly):
-        // 20 x 10 cm blocks, two side by side in squares turned alternately,
-        // each block its own tone, sand in the joints.
+        // Grey interlocking concrete pavers in running bond, as most new
+        // Brazilian pavements are laid: 20 x 10 cm blocks, each its own
+        // slightly different grey, worn paler down the middle, stained, the
+        // joints filled with dark sand and a little moss.
         const u = x / size;
         const v = y / size;
         const w = PAVER;
-        const bi = Math.floor(x / (2 * w)), bj = Math.floor(y / (2 * w));
-        const lx = x - bi * 2 * w, ly = y - bj * 2 * w;
-        const across = (bi + bj) % 2 === 0;
-        const brick = across ? (ly < w ? 0 : 1) : (lx < w ? 0 : 1);
-        // Distance to the nearest joint of this block.
-        const ex = across ? Math.min(lx, 2 * w - lx) : Math.min(lx % w, w - (lx % w));
-        const ey = across ? Math.min(ly % w, w - (ly % w)) : Math.min(ly, 2 * w - ly);
+        const row = Math.floor(y / w);
+        const shift = row % 2 === 0 ? 0 : w;
+        const sx = (x + shift) % size;
+        const col = Math.floor(sx / (2 * w));
+        const ex = Math.min(sx % (2 * w), 2 * w - (sx % (2 * w)));
+        const ey = Math.min(y % w, w - (y % w));
         const edge = Math.min(ex, ey);
-        const face = Math.min(1, Math.max(0, (edge - 0.8) / bevel));
+        const face = Math.min(1, Math.max(0, (edge - 0.6) / bevel));
         const chamfer = face * face * (3 - 2 * face);
-        const id = cellHash(bi * 2 + brick, bj, 0x5a1b);
-        // Mostly a warm grey, some darker, now and then a reddish one.
-        const tint = id > 0.97 ? [1.05, 0.96, 0.9] : id < 0.1 ? [0.92, 0.91, 0.89] : [1, 0.985, 0.955];
-        const blockTone = (cellHash(bi * 2 + brick, bj, 0x77aa) - 0.5) * 0.06;
-        const speck = fbm(grain, u * 220, v * 220, 220, 3);
-        const dirt = fbm(stain, u * 4, v * 4, 4, 3);
+        const id = cellHash(col, row, 0x5a1b);
+        const blockTone = (id - 0.5) * 0.07;
+        const speck = fbm(grain, u * 260, v * 260, 260, 3);
+        const dirt = fbm(stain, u * 3, v * 3, 3, 4);
         const spot = fbm(blot, u * 30, v * 30, 30, 2);
-        const mark = spot > 0.74 ? (spot - 0.74) * 1.6 : 0;
-        let crack = 0;
-        if (id > 0.5 && id < 0.53) {
-          const d = Math.abs(((lx + ly) % w) - w / 2);
-          crack = d < 0.9 ? 1 - d / 0.9 : 0;
-        }
-        const sand = (1 - chamfer);
-        const worn = Math.max(0, 1 - Math.abs(u - 0.5) * 3) * 0.03;
-        const tone = 0.6 + blockTone + (speck - 0.5) * 0.09 - (dirt - 0.5) * 0.1 - mark * 0.25 - crack * 0.15 + worn;
-        // The joints hold sand: a grey-beige, darker than the blocks.
-        const jr = 0.4, jg = 0.38, jb = 0.34;
-        out.r = tone * tint[0]! * chamfer + jr * sand;
-        out.g = tone * tint[1]! * chamfer + jg * sand;
-        out.b = tone * tint[2]! * chamfer + jb * sand;
-        out.h = 0.15 + chamfer * (0.7 + speck * 0.15) - crack * 0.3;
-        out.rough = 0.9 - speck * 0.05 + sand * 0.06;
+        const mark = spot > 0.7 ? (spot - 0.7) * 1.2 : 0;
+        const worn = Math.max(0, 1 - Math.abs(v - 0.5) * 2.6) * 0.04;
+        const tone = 0.54 + blockTone + (speck - 0.5) * 0.08 - (dirt - 0.5) * 0.14 - mark * 0.22 + worn;
+        const moss = Math.max(0, dirt - 0.55) * 0.5;
+        const jr = 0.28 - moss * 0.05, jg = 0.28 + moss * 0.04, jb = 0.25 - moss * 0.05;
+        const sand = 1 - chamfer;
+        out.r = tone * 1.0 * chamfer + jr * sand;
+        out.g = tone * 0.995 * chamfer + jg * sand;
+        out.b = tone * 0.975 * chamfer + jb * sand;
+        out.h = 0.15 + chamfer * (0.7 + speck * 0.12);
+        out.rough = 0.92 - speck * 0.05 + sand * 0.05;
       },
     },
     anisotropy,
@@ -280,10 +280,16 @@ function kerbBake(anisotropy: number): SurfaceBake {
         const j = Math.min(x % unit, unit - (x % unit));
         const joint = j < 1.6 ? 1 - j / 1.6 : 0;
         const unitTone = cellHash(Math.floor(x / unit), 0, 0x77aa);
-        const tone = 0.6 + (unitTone - 0.5) * 0.04 + (fine - 0.5) * 0.025 + (mottle - 0.5) * 0.05 - joint * 0.14;
-        out.r = tone * 0.99;
+        // Precast concrete kerb (a guia): paler than the pavers, smooth,
+        // with a dark band of road grime where it meets the gutter (the face,
+        // low in the band) and tyre scuffs along it.
+        const across = y / size;
+        const grime = Math.max(0, 1 - across * 2.2) * 0.22 * (0.7 + mottle * 0.6);
+        const scuff = fbm(cloud, u * 2, v * 40, 2, 2) > 0.7 ? 0.06 : 0;
+        const tone = 0.68 + (unitTone - 0.5) * 0.06 + (fine - 0.5) * 0.05 + (mottle - 0.5) * 0.08 - grime - scuff - joint * 0.25;
+        out.r = tone * 1.0;
         out.g = tone * 0.99;
-        out.b = tone * 0.985;
+        out.b = tone * 0.97;
         out.h = 0.6 + fine * 0.1 - joint * 0.3;
         out.rough = 0.86 - fine * 0.04;
       },

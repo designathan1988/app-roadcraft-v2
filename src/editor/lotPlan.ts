@@ -485,12 +485,62 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         const tx = W - 1.3, ty = by0 + 1.2;
         if (!lot.busy(tx, ty, 0.7)) {
           lot.put('wall', tx, ty, 0, 0.7, 0.55, 0.85, undefined, mat('concrete', 0xbdb8ae));
-          lot.put('pillar', tx, ty + 1.3, 0, 0.9, 0.9, 1.4, undefined, mat('concrete', 0x9a958c));
-          lot.put('wall', tx, ty + 1.3, 0, 1.1, 1.1, 1.1, 1.4, mat('plaster', 0x3d6fa8));
         }
       }
       for (const px of [1.5, W - 1.5]) {
         for (let py = lawnY0 + 1.5; py < by1 - 3; py += 3.2) if (!lot.busy(px, py, 0.9)) lot.put('shrub', px, py, 0, 1.3, 1.3, 1.4);
+      }
+      // The rest of a long back yard, filled the way back yards are (the
+      // player asked four times): an edicula (a small outbuilding) in the
+      // far corner reached by stepping stones, fruit trees along the back
+      // wall, a vegetable garden in raised beds, a dog house, a swing, a
+      // garden table with chairs, a pile of firewood.
+      if (depth >= 10 && W >= 8) {
+        const far = by1 - 0.4;
+        const edX = W / 2 > 6 ? W - 3.2 : W / 2;
+        // Edicula: walls, a door, a pitched-looking slab roof with an overhang.
+        if (!lot.busy(edX, far - 2.2, 2.2)) {
+          lot.put('wall', edX, far - 2.2, 2, 4.4, 3.6, 2.6, undefined, mat('plaster', 0xe9dcc4));
+          lot.put('slab', edX, far - 2.2, 2, 5.0, 4.2, 0.22, 2.6, mat('tile', 0xa4533a));
+          lot.put('slab', edX - 0.6, far - 4.05, 0, 0.9, 0.06, 2.0, 0, mat('wood', 0x6b4a30));
+          // Stepping stones from the terrace.
+          for (let k = 1; k < 8; k++) {
+            const t = k / 8;
+            const sx = (terrace.x0 + terrace.x1) / 2 + (edX - (terrace.x0 + terrace.x1) / 2) * t;
+            const sy = lawnY0 + (far - 4.6 - lawnY0) * t;
+            if (!lot.busy(sx, sy, 0.3)) lot.put('pavement', sx, sy, 0, 0.7, 0.55, 0.06, 0, mat('stone', 0xb8b2a6));
+          }
+        }
+        // Fruit trees along the back wall.
+        for (let px = 2.2; px < Math.min(W - 6, W - 2); px += 4.2) if (!lot.busy(px, far - 1.6, 1.4)) lot.put('tree', px, far - 1.6, 0, 3.2, 3.2, 4.2);
+        // Vegetable garden: raised beds in a block.
+        const vx0 = 1.6, vy0 = lawnY0 + depth * 0.45;
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) {
+          const bx = vx0 + i * 1.6, by = vy0 + j * 1.3;
+          if (bx < W - 1 && !lot.busy(bx, by, 0.5)) lot.put('planter', bx, by, 0, 1.2, 0.9, 0.35, undefined, mat('wood', 0x7a5636));
+        }
+        // A dog house by the side wall.
+        const dx = W - 1.4, dy = lawnY0 + depth * 0.35;
+        if (!lot.busy(dx, dy, 0.8)) {
+          lot.put('wall', dx, dy, 3, 1.0, 0.9, 0.8, undefined, mat('wood', 0x9a6a3f));
+          lot.put('slab', dx, dy, 3, 1.2, 1.1, 0.12, 0.8, mat('tile', 0x8a3e2c));
+        }
+        // A swing: two posts, a bar, a seat.
+        const swX = W * 0.55, swY = lawnY0 + depth * 0.62;
+        if (!lot.busy(swX, swY, 1.3)) {
+          for (const k of [-1, 1]) lot.put('pillar', swX + k * 1.1, swY, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e));
+          lot.put('slab', swX, swY, 0, 2.3, 0.08, 0.08, 2.2, mat('metal', 0x2f6e9e));
+          lot.put('slab', swX, swY, 0, 0.5, 0.25, 0.05, 0.45, mat('wood', 0x8a6040));
+        }
+        // A garden table with four chairs.
+        const gx = W * 0.4, gy = lawnY0 + depth * 0.25;
+        if (!lot.busy(gx, gy, 1.2)) {
+          lot.put('slab', gx, gy, 0, 1.0, 1.0, 0.05, 0.72, mat('wood', 0x8d6a46));
+          lot.put('pillar', gx, gy, 0, 0.1, 0.1, 0.72, undefined, mat('metal', 0x3a3d40));
+          for (const [ox, oy, f] of [[0, 0.95, 2], [0, -0.95, 0]] as const) lot.put('bench', gx + ox, gy + oy, f, 1.1, 0.42, 0.45, undefined, mat('wood', 0x7a5a3c));
+        }
+        // Firewood stacked against the back wall.
+        if (!lot.busy(1.2, far - 0.5, 0.6)) lot.put('slab', 1.2, far - 0.5, 2, 1.6, 0.5, 0.9, 0, mat('wood', 0x6e4c2c));
       }
       // Potted plants along the terrace edge.
       for (let px = terrace.x0 + 0.6; px < terrace.x1 - 0.5; px += 1.6) if (!lot.busy(px, terrace.y1 - 0.4, 0.3)) lot.put('planter', px, terrace.y1 - 0.4, 0, 0.5, 0.5, 0.55);
@@ -550,8 +600,6 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         const gx = 1.2, gy = by1 - 1;
         lot.put('fence', gx, gy, 0, 1.6, 0.9, 1.4, undefined, mat('metal', 0x7a8084));
         for (let k = 0; k < 3; k++) lot.put('pillar', gx - 0.5 + k * 0.5, gy, 0, 0.32, 0.32, 0.9, undefined, mat('metal', 0x3a6fb0));
-        lot.put('pillar', W - 1.4, by1 - 1.2, 0, 1, 1, 1.6, undefined, mat('metal', 0x8a9094));
-        lot.put('wall', W - 1.4, by1 - 1.2, 0, 1.2, 1.2, 1.2, 1.6, mat('plaster', 0x3d6fa8));
         for (let k = 0; k < 4; k++) lot.put('slab', Math.min(W - 2.6, bd + 1.2) + (k % 2) * 0.45, by1 - 2.2, 0, 0.42, 0.32, 0.28, Math.floor(k / 2) * 0.28, mat('plaster', k % 2 ? 0xc9a227 : 0xb23b2e));
       }
       for (let px = env.x0 + 1; px < env.x1 - 1 && px < bd - 2.5; px += 2.4) lot.put('ac', px, by0 + 0.2, 2, 0.8, 0.35, 0.6, 2.6);
@@ -638,7 +686,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   };
   if (builtFront) { frontRun(0, builtFront[0]); frontRun(builtFront[1], W); } else frontRun(0, W);
   // Sides: full depth, except where the building stands on the boundary.
-  for (const [s, x] of [[left, inset], [right, W - inset]] as const) {
+  // The side walls' outer face on the boundary itself: the neighbour's wall
+  // stands against it, face to face, with nothing between.
+  const sideHalf = (boundary.sides === 'hedge' ? 0.7 : boundary.sides === 'fence' ? 0.12 : 0.2) / 2;
+  for (const [s, x] of [[left, sideHalf], [right, W - sideHalf]] as const) {
     const lowFront = plan.kind === 'house' || plan.kind === 'flats' ? Math.min(boundary.sidesH, 1.3) : boundary.sidesH;
     if (s.use === 'attached') {
       if (F > 0) lot.runY(boundary.sides, x, inset, F, lowFront);
@@ -649,7 +700,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     }
   }
   // Back.
-  if (D - Bk > 0) lot.runX(boundary.sides, D - inset, inset, W - inset, boundary.sidesH);
+  if (D - Bk > 0) lot.runX(boundary.sides, D - sideHalf, sideHalf, W - sideHalf, boundary.sidesH);
   (body as { nextVolumeId?: number }).nextVolumeId = nextVolume;
   (body as { nextElementId?: number }).nextElementId = nextElement;
   return true;

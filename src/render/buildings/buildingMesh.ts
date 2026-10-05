@@ -432,6 +432,18 @@ class Emitter {
   }
 
   /** An axis-aligned box in the local plan: sides and top (the bottom is never seen). */
+  /** A round tank or drum: an upright prism of `sides` faces, capped on top. */
+  cylinder(cx: number, cy: number, r: number, z0: number, z1: number, c: Paint, top: Paint = c, sides = 14): void {
+    const sh = this.shell;
+    const at = (k: number): [number, number] => [cx + Math.cos((k / sides) * Math.PI * 2) * r, cy + Math.sin((k / sides) * Math.PI * 2) * r];
+    for (let k = 0; k < sides; k++) {
+      const [ax, ay] = at(k), [bx, by] = at(k + 1);
+      const mid = ((k + 0.5) / sides) * Math.PI * 2;
+      sh.face([this.L(ax, ay, z0), this.L(bx, by, z0), this.L(bx, by, z1), this.L(ax, ay, z1)], this.N(Math.cos(mid), Math.sin(mid)), c);
+      sh.face([this.L(cx, cy, z1), this.L(ax, ay, z1), this.L(bx, by, z1)], [0, 0, 1], top);
+    }
+  }
+
   box(x0: number, y0: number, x1: number, y1: number, z0: number, z1: number, c: Paint, top: Paint = c): void {
     if (z1 - z0 < 1e-4) return;
     const sh = this.shell;
@@ -1115,10 +1127,12 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
   const cx = pick % 2 === 0 ? v.x + inset + tank / 2 : v.x + v.w - inset - tank / 2;
   const cy = pick < 2 ? v.y + v.d - inset - tank / 2 : v.y + inset + tank / 2;
   // The water tank on its plinth, with a lid proud of it and a hatch in the lid.
+  // The caixa d'agua: a round fibreglass tank, tapering in at the top, with
+  // its lid, on a concrete plinth - recognisable as what it is.
   e.box(cx - tank / 2 - m(0.15), cy - tank / 2 - m(0.15), cx + tank / 2 + m(0.15), cy + tank / 2 + m(0.15), z, z + m(0.3), ROOF_PLANT);
-  e.box(cx - tank / 2, cy - tank / 2, cx + tank / 2, cy + tank / 2, z + m(0.3), z + m(1.8), trim);
-  e.box(cx - tank / 2 - m(0.06), cy - tank / 2 - m(0.06), cx + tank / 2 + m(0.06), cy + tank / 2 + m(0.06), z + m(1.8), z + m(1.9), ROOF_PLANT);
-  e.box(cx - m(0.3), cy - m(0.3), cx + m(0.3), cy + m(0.3), z + m(1.9), z + m(1.98), shaded(ROOF_PLANT, 0.8));
+  e.cylinder(cx, cy, tank * 0.42, z + m(0.3), z + m(1.2), WATER_TANK);
+  e.cylinder(cx, cy, tank * 0.47, z + m(1.2), z + m(1.45), WATER_TANK, shaded(WATER_TANK, 0.82));
+  e.cylinder(cx, cy, tank * 0.2, z + m(1.45), z + m(1.55), shaded(WATER_TANK, 0.75));
   // The roof hatch, diagonally across from the tank.
   const hx = pick % 2 === 0 ? v.x + v.w - m(2.4) : v.x + m(1.6);
   const hy = pick < 2 ? v.y + m(1.6) : v.y + v.d - m(2.4);
@@ -1139,14 +1153,6 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
   // roof), solar panels in rows tilted to the sun, an antenna mast, a
   // satellite dish and skylights.
   const rnd = (k: number): number => (((b.id * 2654435761 + v.id * 40503 + k * 97) >>> 0) % 1000) / 1000;
-  if (v.w >= m(5) && v.d >= m(5)) {
-    const tx = pick % 2 === 0 ? v.x + v.w - m(2.2) : v.x + m(2.2), ty = pick < 2 ? v.y + v.d - m(2.2) : v.y + m(2.2);
-    for (const [lx, ly] of [[-0.45, -0.45], [0.45, -0.45], [0.45, 0.45], [-0.45, 0.45]] as const) {
-      e.box(tx + m(lx) - m(0.05), ty + m(ly) - m(0.05), tx + m(lx) + m(0.05), ty + m(ly) + m(0.05), z, z + m(0.8), DRAIN);
-    }
-    e.box(tx - m(0.7), ty - m(0.7), tx + m(0.7), ty + m(0.7), z + m(0.8), z + m(1.9), WATER_TANK);
-    e.box(tx - m(0.55), ty - m(0.55), tx + m(0.55), ty + m(0.55), z + m(1.9), z + m(2.05), shaded(WATER_TANK, 0.85));
-  }
   if (v.w >= m(8) && v.d >= m(8)) {
     // Solar panels: rows of tilted sheets on frames.
     const rows = Math.min(4, Math.floor((v.d - m(4)) / m(2.2)));
@@ -1181,12 +1187,12 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
 }
 
 const DRAIN: Paint = paint({ finish: 'metal', colour: 0x2d3033 });
-const WATER_TANK: Paint = paint({ finish: 'plaster', colour: 0x3d6fa8 });
+const WATER_TANK: Paint = paint({ finish: 'plaster', colour: 0x4a7fb8 });
 const SOLAR: Paint = paint({ finish: 'glass', colour: 0x1d2b45 });
 const SKYLIGHT: Paint = paint({ finish: 'glass', colour: 0x8fb4c6 });
 const DECK: Paint = paint({ finish: 'wood', colour: 0x9a7650 });
-const PLANTER: Paint = paint({ finish: 'concrete', colour: 0x8c867b });
-const GREEN: Paint = paint({ finish: 'plaster', colour: 0x4f7a3a });
+const POT: Paint = paint({ finish: 'ceramic', colour: 0xa8573a });
+const POT_SOIL: Paint = paint({ finish: 'plaster', colour: 0x3a2a1d });
 const PARASOL: Paint = paint({ finish: 'plaster', colour: 0xe7dcc4 });
 
 /**
@@ -1200,11 +1206,10 @@ function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint)
   // The deck, a part of the terrace.
   const dx0 = v.x + m(0.8), dx1 = v.x + v.w * (0.55 + 0.2 * rnd(1)), dy0 = v.y + m(0.8), dy1 = v.y + v.d - m(0.8);
   e.box(dx0, dy0, dx1, dy1, z, z + m(0.06), DECK);
-  // Planters along the edges, with greenery in them.
-  for (let x = v.x + m(0.5); x + m(1.2) < v.x + v.w - m(0.4); x += m(2.6)) {
-    for (const y of [v.y + m(0.45), v.y + v.d - m(0.95)]) {
-      e.box(x, y, x + m(1.2), y + m(0.5), z, z + m(0.55), PLANTER);
-      e.box(x + m(0.08), y + m(0.06), x + m(1.12), y + m(0.44), z + m(0.55), z + m(0.95), GREEN);
+  // Terracotta pots along the edges, dark soil in them.
+  for (let x = v.x + m(0.7); x < v.x + v.w - m(0.6); x += m(2.4)) {
+    for (const y of [v.y + m(0.7), v.y + v.d - m(0.7)]) {
+      e.cylinder(x, y, m(0.28), z, z + m(0.5), POT, POT_SOIL, 10);
     }
   }
   // Tables under parasols.
@@ -1219,13 +1224,22 @@ function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint)
   // Loungers on the far side, a pergola of beams over them.
   const lx = Math.min(v.x + v.w - m(1.5), dx1 + m(1.2));
   for (let y = dy0 + m(0.4); y + m(0.7) < dy1; y += m(1.2)) e.box(lx - m(0.9), y, lx + m(0.9), y + m(0.65), z, z + m(0.35), PARASOL);
-  for (const [px, py] of [[lx - m(1.2), dy0], [lx + m(1.2), dy0], [lx - m(1.2), dy1 - m(0.15)], [lx + m(1.2), dy1 - m(0.15)]] as const) {
-    e.box(px, py, px + m(0.15), py + m(0.15), z, z + m(2.4), DECK);
+  // The pergola: posts every 2.4 m on two lines, a beam along each line on
+  // the posts, and the rafters resting across the two beams - nothing floats.
+  const span = dy1 - dy0;
+  const bays = Math.max(1, Math.round(span / m(2.4)));
+  for (const px of [lx - m(1.2), lx + m(1.2)]) {
+    for (let k = 0; k <= bays; k++) {
+      const py = dy0 + (span * k) / bays;
+      e.box(px - m(0.07), py - m(0.07), px + m(0.07), py + m(0.07), z, z + m(2.4), DECK);
+    }
+    e.box(px - m(0.06), dy0 - m(0.1), px + m(0.06), dy1 + m(0.1), z + m(2.25), z + m(2.4), DECK);
   }
-  for (let y = dy0; y < dy1; y += m(0.6)) e.box(lx - m(1.3), y, lx + m(1.4), y + m(0.1), z + m(2.4), z + m(2.52), DECK);
-  // The water tank.
+  for (let y = dy0; y <= dy1; y += m(0.6)) e.box(lx - m(1.45), y - m(0.04), lx + m(1.45), y + m(0.04), z + m(2.4), z + m(2.5), DECK);
+  // The caixa d'agua.
   const tx = v.x + v.w - m(1.4), ty = v.y + m(1.4);
-  e.box(tx - m(0.7), ty - m(0.7), tx + m(0.7), ty + m(0.7), z, z + m(1.2), WATER_TANK);
+  e.cylinder(tx, ty, m(0.7), z, z + m(0.95), WATER_TANK);
+  e.cylinder(tx, ty, m(0.78), z + m(0.95), z + m(1.15), WATER_TANK, shaded(WATER_TANK, 0.82));
 }
 const CONDENSER: Paint = paint({ finish: 'metal', colour: 0xc9ccc9 });
 const DOOR_PAINT: Paint = paint({ finish: 'metal', colour: 0x5c6468 });
@@ -1368,7 +1382,10 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
     // the ground where no lot is laid: nothing floats over a slope.
     for (const piece of followPieces(el)) {
       const host = lots.find((v) => piece.x >= v.x && piece.x <= v.x + v.w && piece.y >= v.y && piece.y <= v.y + v.d);
-      const height = host ? heightOf.get(host) : undefined;
+      // On a lawn the ground is the terrain as drawn (`pads.ts`), not the
+      // lot's plane: a path laid at the plane's height stood over the grass
+      // like a bridge from the gate to the door.
+      const height = host && (host.open ?? 'grass') !== 'grass' ? heightOf.get(host) : undefined;
       const z = height ? height(piece.x, piece.y) : FOLLOWS_GROUND.has(piece.kind) ? at(piece.x, piece.y) : level;
       emitElement(e, piece, z, Math.min(low, z) - m(0.3), look, height);
     }
@@ -1624,9 +1641,22 @@ function emitElement(e: Emitter, el: BuildingElement, floor: number, bottom: num
     }
     return;
   }
+  if (el.kind === 'wall' && onGround(el) && el.h <= m(3.2)) {
+    // A boundary wall: its body, a darker plinth at the foot where the rain
+    // splashes, and a coping of precast stone along the top, proud of both
+    // faces, so the top reads apart from the paint.
+    const along = el.facing === 0 || el.facing === 2 ? x1 - x0 >= y1 - y0 : x1 - x0 >= y1 - y0;
+    const lip = m(0.04);
+    const cap = m(0.07);
+    e.box(x0, y0, x1, y1, zb, z1 - cap, c);
+    e.box(x0 + (along ? 0 : -lip), y0 + (along ? -lip : 0), x1 + (along ? 0 : lip), y1 + (along ? lip : 0), z0, z0 + m(0.22), shaded(c, 0.78));
+    e.box(x0 - (along ? 0 : lip), y0 - (along ? lip : 0), x1 + (along ? 0 : lip), y1 + (along ? lip : 0), z1 - cap, z1, COPING, COPING);
+    return;
+  }
   e.box(x0, y0, x1, y1, zb, z1, c);
 }
 
+const COPING: Paint = paint({ finish: 'stone', colour: 0xc9c3b6 });
 const APRON = m(0.9);
 const PATH_WIDTH = m(1.4);
 const PATH_REACH = m(14);
@@ -2492,6 +2522,25 @@ function emitRoof(
       e.N(nf.x * slope, nf.y * slope, 1),
       roofColour,
     );
+    // The slab's body: a fascia on all four edges and the soffit under the
+    // overhang, so the roof has a thickness (it read as a sheet of paper).
+    {
+      const T = ROOF_THICK;
+      const lo = z - EAVES * slope, hi = high + EAVES * slope;
+      const fasc = shaded(trim, 0.92), soff = shaded(trim, 0.7);
+      const pts = [Q(-oa, -ot, lo), Q(1 + oa, -ot, lo), Q(1 + oa, 1 + ot, hi), Q(-oa, 1 + ot, hi)];
+      for (let k = 0; k < 4; k++) {
+        const p0 = pts[k]!, p1 = pts[(k + 1) % 4]!;
+        const ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+        const len = Math.hypot(ex, ey) || 1;
+        // Outward for the corner order (counter-clockwise in plan or not, the face winding is measured).
+        const cx = (pts[0]![0] + pts[2]![0]) / 2, cy = (pts[0]![1] + pts[2]![1]) / 2;
+        let nx = ey / len, ny = -ex / len;
+        if ((p0[0] - cx) * nx + (p0[1] - cy) * ny < 0) { nx = -nx; ny = -ny; }
+        sh.face([[p0[0], p0[1], p0[2] - T], [p1[0], p1[1], p1[2] - T], p1, p0], [nx, ny, 0], fasc);
+      }
+      sh.face([Q(-oa, -ot, lo - T), Q(1 + oa, -ot, lo - T), Q(1 + oa, 1 + ot, hi - T), Q(-oa, 1 + ot, hi - T)], [0, 0, -1], soff);
+    }
     // The two end walls, rising with the slope, and the tall wall at the back.
     const back = ((fall + 2) % 4) as Side;
     const ends = SIDES.filter((x) => x !== fall && x !== back);

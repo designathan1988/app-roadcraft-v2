@@ -19,7 +19,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, signChoice, strikeChoice, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -3467,7 +3467,7 @@ function drawOverlayScreen(): void {
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
-  if (tool === 'zone' || doc.zoneMarks.length || (tool === 'road' && roadPreviewActive())) {
+  if (tool === 'zone' || (doc.zoneMarks.length && zoneColoursShown()) || (tool === 'road' && roadPreviewActive())) {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
     // filled with their use's colour; with any other tool only the zoned land
     // still waiting for a building, faintly, so the plan stays readable.

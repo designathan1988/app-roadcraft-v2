@@ -114,9 +114,10 @@ export function createExhaust(): Exhaust {
       void main() {
         vec2 d = gl_PointCoord - 0.5;
         float r = length(d) * 2.0;
-        // A lumpy edge, so a cloud is not a pile of perfect discs.
-        float lump = 0.85 + 0.15 * sin(atan(d.y, d.x) * 5.0 + vSeed * 30.0);
-        float soft = smoothstep(lump, 0.0, r);
+        // A soft, round puff: gaussian falloff, a faint unevenness inside it
+        // (an angular wobble on the edge drew five-pointed stars).
+        float inner = 0.9 + 0.1 * sin(d.x * 9.0 + vSeed * 20.0) * sin(d.y * 7.0 - vSeed * 13.0);
+        float soft = exp(-r * r * 3.2) * inner * smoothstep(1.0, 0.7, r);
         vec3 smoke = vec3(0.55, 0.56, 0.58);
         vec3 dust = vec3(0.6, 0.53, 0.43);
         vec3 dark = vec3(0.16, 0.15, 0.15);

@@ -31,7 +31,7 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadWidth, setRoadWidth, signChoice, strikeChoice } from '../toolChoices';
+import { blockGridChoice, roadWidth, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -712,6 +712,13 @@ export function mountShell(deps: ShellDeps): void {
       return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
     })));
     options.appendChild(density);
+    // The colours of zoned land outside this tool: shown or hidden.
+    const colours = group(t('zone.colours'));
+    colours.appendChild(choices([
+      { label: t('zone.colours.show'), on: zoneColoursShown(), run: () => { setZoneColoursShown(true); render(); } },
+      { label: t('zone.colours.hide'), on: !zoneColoursShown(), run: () => { setZoneColoursShown(false); render(); } },
+    ], 2));
+    options.appendChild(colours);
   }
 
   // ------------------------------------------------------------ landscape
