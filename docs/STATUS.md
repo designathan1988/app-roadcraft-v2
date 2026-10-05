@@ -111,6 +111,18 @@ and they have seen it.
 
 ## Open, by area
 
+- **Planet (the world as a real sphere), slice 1 LIVE as its own page,
+  `planet.html` (2026-10-05):** a cube sphere of 13.5 km radius (the area of a
+  48 km map), each face a quadtree of patches built by distance with skirts
+  (`src/planet/surface.ts`), relief read on the sphere (continents, sea,
+  ranges; `relief.ts`), a sea sphere, and a Google-Earth camera from orbit to
+  the ground (`camera.ts`). NOT yet: roads, buildings, traffic or people on it;
+  the game's tools still work on the flat map in `index.html`. Next slices: the
+  road tool and the document in sphere coordinates, then buildings, then agents.
+  The fake globes (every material bent in the vertex stage, then a flat map
+  wrapped round a sphere) were removed: the player rejected them as a morph
+  and as a fake. A flat square map cannot close a sphere (Red Blob Games).
+
 - **Zoning:** the zoning grids of neighbouring roads overlap (one road's cells cover
   the other's). The player's next order: implement zoning on a new city.
 - **Interface:** the selection panel (Builder inspector) is still text fields; face,

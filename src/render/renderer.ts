@@ -8,7 +8,6 @@ import {
   type Material,
   type Mesh,
   MeshDepthMaterial,
-  Fog,
   type Object3D,
   RGBADepthPacking,
   Sphere,
@@ -20,10 +19,6 @@ import {
 } from 'three';
 
 import { Digest } from '@core/digest';
-import { createGlobeCulling, globeAmount, installGlobe } from './globe';
-
-/** How far the fog is pushed back once the map is a whole globe, world units. */
-const GLOBE_FOG_PUSH = 30_000;
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
@@ -220,8 +215,6 @@ export function createSceneRenderer(
   initialQuality: QualityLevel | 'auto' = 'auto',
   onAssetsReady: () => void = () => {},
 ): SceneHandle {
-  // Before any program is compiled: every material bends with the globe.
-  installGlobe();
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -373,14 +366,7 @@ export function createSceneRenderer(
   const crowdFrustum = new Frustum();
   const crowdProjection = new Matrix4();
   const crowdBounds = new Sphere(new Vector3(), 8);
-  // The map bent into a globe when zoomed out (`globe.ts`): while it is, the
-  // flat frustum says nothing about what is in the picture.
-  const globeCulling = createGlobeCulling();
-  let globeBent = false;
-  let fogBase: { near: number; far: number } | null = null;
-  let skyDome: Object3D | null = null;
   const pedestrianVisible = (x: number, y: number, height: number): boolean => {
-    if (globeBent) return true;
     crowdBounds.center.set(x, height + 3, -y);
     return crowdFrustum.intersectsSphere(crowdBounds);
   };
@@ -388,7 +374,6 @@ export function createSceneRenderer(
   // sun's side: an off-screen truck near the edge still casts a shadow onto it.
   const vehicleBounds = new Sphere(new Vector3(), 1);
   const vehicleVisible = (x: number, y: number, height: number, radius: number): boolean => {
-    if (globeBent) return true;
     vehicleBounds.center.set(x, height + radius * 0.3, -y);
     vehicleBounds.radius = radius;
     return crowdFrustum.intersectsSphere(vehicleBounds);
@@ -888,10 +873,6 @@ export function createSceneRenderer(
       }
       rig.camera.getWorldDirection(viewDirection);
       environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
-      // The sky dome round the camera too: a perspective camera far back (the
-      // map as a globe) would otherwise stand outside it and see it as a ball.
-      skyDome ??= scene.getObjectByName('sky') ?? null;
-      if (skyDome) skyDome.scale.setScalar(Math.max(skyDome.scale.x, rig.camera.position.distanceTo(target) * 1.6));
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
       sim.focus = {
@@ -905,18 +886,6 @@ export function createSceneRenderer(
       // Cheap (a few hundred objects), and it follows meshes a rebuild or an
       // asset load adds, and instance colours created on first use.
       if (renderer.shadowMap.enabled) assignShadowDepth(scene);
-      globeBent = globeCulling.update(scene, rig.camera);
-      const bend = globeAmount(rig.camera);
-      // Shadows are cast on the flat map: faded out while the picture bends.
-      environment.sun.shadow.intensity = 1 - bend;
-      environment.setGlobe(bend);
-      // The fog is measured from the camera, which stands far back from a
-      // globe: pushed out with the bend, or the planet is lost in it.
-      if (scene.fog instanceof Fog) {
-        fogBase ??= { near: scene.fog.near, far: scene.fog.far };
-        scene.fog.near = fogBase.near + GLOBE_FOG_PUSH * bend;
-        scene.fog.far = fogBase.far + GLOBE_FOG_PUSH * bend;
-      }
       post.render(delta);
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);

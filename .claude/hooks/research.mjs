@@ -100,18 +100,23 @@ function output(json) {
 export function handle(input, root) {
   const session = input.session_id;
   const event = input.hook_event_name;
+  const state = readState(session);
   if (event === 'UserPromptSubmit') {
     if (!saysItFailed(input.prompt)) return null;
-    writeState(session, { armedAt: Date.now(), searches: 0, reads: 0 });
+    // The rule is "an attempt that did not solve it": after research, only a
+    // code edit made since is an attempt. A complaint with no new attempt in
+    // between neither re-arms the gate nor throws away research under way.
+    if (state && state.open && !state.editedSince) return null;
+    if (!state || state.open) writeState(session, { armedAt: Date.now(), searches: 0, reads: 0 });
     return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: GATE_TEXT } };
   }
-  const state = readState(session);
   if (!state) return null;
   if (event === 'PostToolUse') {
+    if (state.open) return null;
     if (input.tool_name === 'WebSearch') state.searches += 1;
     else if (input.tool_name === 'WebFetch') state.reads += 1;
     else return null;
-    if (state.searches >= RESEARCH_SEARCHES && state.reads >= RESEARCH_READS) clearState(session);
+    if (state.searches >= RESEARCH_SEARCHES && state.reads >= RESEARCH_READS) writeState(session, { open: true, editedSince: false });
     else writeState(session, state);
     return null;
   }
@@ -122,6 +127,11 @@ export function handle(input, root) {
       ? isCode(params.file_path ?? params.notebook_path, root)
       : /^(Bash|PowerShell)$/.test(tool) && writesCode(params.command, root);
     if (!blocked) return null;
+    if (state.open) {
+      // An attempt after research: the next complaint re-arms the gate.
+      if (!state.editedSince) writeState(session, { open: true, editedSince: true });
+      return null;
+    }
     const left = `faltam ${Math.max(0, RESEARCH_SEARCHES - state.searches)} busca(s) e ${Math.max(0, RESEARCH_READS - state.reads)} pagina(s) lida(s)`;
     return {
       hookSpecificOutput: {

@@ -61,11 +61,12 @@ describe('determinism', () => {
     // page (`sandbox.html`) with its own scene, camera and controls, no part of
     // the game's simulation. It is as much a render layer as `src/render/` is,
     // and the rule is about three never reaching `world/` or `sim/`.
+    // `src/planet/` is the third: the world as a real sphere (`planet.html`).
     const offenders: string[] = [];
 
     for (const file of tsFilesUnder(SRC)) {
       const rel = relative(SRC, file).split(sep).join('/');
-      if (rel.startsWith('render/') || rel.startsWith('sandbox/')) continue;
+      if (rel.startsWith('render/') || rel.startsWith('sandbox/') || rel.startsWith('planet/')) continue;
       const body = code(readFileSync(file, 'utf8'));
       if (/from '(three|three\/[^']*)'/.test(body)) offenders.push(rel);
     }

@@ -1,7 +1,9 @@
 // The research gate (.claude/hooks/research.mjs) is run here exactly as Claude
 // Code runs it: a JSON hook input on stdin, a decision (or nothing) on stdout.
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const ROOT = resolve(__dirname, '../..');
 const HOOK = resolve(ROOT, '.claude/hooks/research.mjs');
@@ -23,6 +25,9 @@ const tool = (name: string, toolInput: Record<string, unknown>): 'allow' | 'deny
 const researched = (name: 'WebSearch' | 'WebFetch'): string => run({ hook_event_name: 'PostToolUse', tool_name: name, tool_input: {} });
 
 describe('research gate hook', () => {
+  // Every case starts with no gate: as a fresh session does.
+  beforeEach(() => rmSync(join(tmpdir(), `roadcraft-research-${SESSION}.json`), { force: true }));
+
   afterEach(() => {
     // Opens the gate for the next case: one search and two pages read.
     researched('WebSearch');
@@ -53,8 +58,25 @@ describe('research gate hook', () => {
     expect(tool('Edit', { file_path: 'src/render/planet.ts' })).toBe('allow');
   });
 
-  it('hears the complaint without accents and in other words', () => {
-    expect(prompt('nao resolveu, continua do mesmo jeito')).toContain('PESQUISA');
+  it('re-arms only after a new attempt: a code edit made since the research', () => {
+    // Armed, researched, and no attempt since.
+    prompt('continua ruim');
+    researched('WebSearch');
+    researched('WebFetch');
+    researched('WebFetch');
+    expect(prompt('nao resolveu, continua do mesmo jeito')).toBe('');
+    expect(tool('Edit', { file_path: 'src/render/planet.ts' })).toBe('allow');
+    // That edit was an attempt: the next complaint arms the gate again.
     expect(prompt('pesquisa na internet como faz')).toContain('PESQUISA');
+    expect(tool('Edit', { file_path: 'src/render/planet.ts' })).toBe('deny');
+  });
+
+  it('keeps research under way when the player complains again', () => {
+    prompt('continua ruim');
+    researched('WebSearch');
+    expect(prompt('anda logo, porra')).toContain('PESQUISA');
+    researched('WebFetch');
+    researched('WebFetch');
+    expect(tool('Edit', { file_path: 'src/render/planet.ts' })).toBe('allow');
   });
 });
