@@ -149,6 +149,8 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
 
 // ---------------------------------------------------------------- furnishing
 
+/** Elements kept free for a lot's boundary, which is laid after everything else. */
+const BOUNDARY_RESERVE = 30;
 const PAVERS = mat('brick', 0x9a958c);
 const PAVERS_WARM = mat('brick', 0xb08a6e);
 const CONCRETE_PATH = mat('concrete', 0xc8c4bb);
@@ -204,7 +206,11 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       }
     },
     put(kind, x, y, facing, w, d, h, z = 0, material) {
-      if (elements.length >= MAX_ELEMENTS - 2 || w < 0.1 || d < 0.1 || h < 0.1) return false;
+      // The boundary - walls, fences, hedges, gates - is laid last, so the
+      // budget keeps room for it: dressing that used it up left holes in the
+      // front wall (the player's order of 2026-10-05).
+      const boundary = kind === 'wall' || kind === 'fence' || kind === 'hedge' || kind === 'gate' || kind === 'railing';
+      if (elements.length >= MAX_ELEMENTS - (boundary ? 2 : BOUNDARY_RESERVE) || w < 0.1 || d < 0.1 || h < 0.1) return false;
       const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h),
         ...(material ? { material } : {}) };
       if (elementClash(probe(), el)) return false;
@@ -218,19 +224,29 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       for (const [g0, g1] of [...cuts, [x1, x1] as const]) {
         const to = Math.min(g0, x1);
         const n = Math.ceil((to - from) / 20);
+        const thick = kind === 'fence' ? 0.12 : kind === 'hedge' ? 0.7 : 0.2;
+        // A piece that meets something (a porch, a step) is split, and only
+        // the part that really meets it is left out - not the whole length.
+        const piece = (a: number, b: number): void => {
+          if (lot.put(kind, (a + b) / 2, y, 0, b - a, thick, h, z) || b - a < 1) return;
+          piece(a, (a + b) / 2);
+          piece((a + b) / 2, b);
+        };
         for (let k = 0; k < n && to - from > 0.3; k++) {
-          const a = from + ((to - from) * k) / n, b = from + ((to - from) * (k + 1)) / n;
-          lot.put(kind, (a + b) / 2, y, 0, b - a, kind === 'fence' ? 0.12 : kind === 'hedge' ? 0.7 : 0.2, h, z);
+          piece(from + ((to - from) * k) / n, from + ((to - from) * (k + 1)) / n);
         }
         from = Math.max(from, g1);
       }
     },
     runY(kind, x, y0, y1, h, z = 0) {
       const n = Math.ceil((y1 - y0) / 20);
-      for (let k = 0; k < n && y1 - y0 > 0.3; k++) {
-        const a = y0 + ((y1 - y0) * k) / n, b = y0 + ((y1 - y0) * (k + 1)) / n;
-        lot.put(kind, x, (a + b) / 2, 1, b - a, kind === 'fence' ? 0.12 : kind === 'hedge' ? 0.7 : 0.2, h, z);
-      }
+      const thick = kind === 'fence' ? 0.12 : kind === 'hedge' ? 0.7 : 0.2;
+      const piece = (a: number, b: number): void => {
+        if (lot.put(kind, x, (a + b) / 2, 1, b - a, thick, h, z) || b - a < 1) return;
+        piece(a, (a + b) / 2);
+        piece((a + b) / 2, b);
+      };
+      for (let k = 0; k < n && y1 - y0 > 0.3; k++) piece(y0 + ((y1 - y0) * k) / n, y0 + ((y1 - y0) * (k + 1)) / n);
     },
     path(r, material = PAVERS) {
       if (r.x1 - r.x0 < 0.3 || r.y1 - r.y0 < 0.3) return;
@@ -533,7 +549,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   for (const r of drives) gates.push({ x: (r.x0 + r.x1) / 2, w: r.x1 - r.x0 - 0.4 });
   if (front.use === 'carpad') gates.push({ x: door > W / 2 ? 1.8 : W - 1.8, w: 2.8 });
   for (const w of walks) if (F === 0) gates.push({ x: (w.x0 + w.x1) / 2, w: w.x1 - w.x0 - 0.2 });
-  for (const g of gates) frontGaps.push([g.x, g.w + 0.1]);
+  // The gates first, and a gap in the wall only where a gate really went in:
+  // a gate refused (it met a carport post, a drain) left an empty hole in the
+  // front wall - the holes the player found in the facades.
+  for (const g of gates) {
+    if (lot.put('gate', g.x, inset, 0, g.w, 0.12, plan.kind === 'industry' ? 2.2 : g.w > 2 ? 1.8 : 1.4)) frontGaps.push([g.x, g.w + 0.1]);
+  }
   const builtFront = F === 0 ? [env.x0 - 0.05, env.x1 + 0.05] as const : null;
   const frontRun = (x0: number, x1: number): void => {
     if (boundary.front && F > 0) {
@@ -548,7 +569,6 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     }
   };
   if (builtFront) { frontRun(0, builtFront[0]); frontRun(builtFront[1], W); } else frontRun(0, W);
-  for (const g of gates) lot.put('gate', g.x, inset, 0, g.w, 0.12, plan.kind === 'industry' ? 2.2 : g.w > 2 ? 1.8 : 1.4);
   // Sides: full depth, except where the building stands on the boundary.
   for (const [s, x] of [[left, inset], [right, W - inset]] as const) {
     const lowFront = plan.kind === 'house' || plan.kind === 'flats' ? Math.min(boundary.sidesH, 1.3) : boundary.sidesH;
