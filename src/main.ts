@@ -86,6 +86,8 @@ import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
 import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
+import { applyTemplate, growLab, layLabStreet, rezoneLab, templateOf, zoneOfBuilding } from '@editor/lotLab';
+import { mountLotLab } from '@ui/lotLab';
 
 type Tool =
   | 'building'
@@ -204,6 +206,13 @@ if (saved) {
     bootFailed = true;
   }
 }
+// The lot lab (`?lab=lots`, `editor/lotLab.ts`): a street of its own on empty
+// land, traffic paused, the lots grown there with the seed and widths chosen
+// in its panel.
+const lotLabOn = new URLSearchParams(location.search).get('lab') === 'lots';
+let lotLabGrow: { seed: number; widths: readonly [number, number] } | null = null;
+const lotLabFresh = lotLabOn && doc.segments.size === 0;
+if (lotLabFresh) layLabStreet(doc, net);
 
 const sim = new SimWorld(doc, net, 0x2024);
 type CrowdModule = typeof import('@sim/people/crowd');
@@ -315,7 +324,7 @@ type BrushMode = TerrainMode | 'paint';
 let terrainMode: BrushMode = 'raise';
 let terrainRadius = 80;
 let terrainStrength = 24;
-let traffic = !savedSession?.settings.paused;
+let traffic = !savedSession?.settings.paused && !lotLabOn;
 let congestionOverlay = savedSession?.settings.congestionOverlay ?? false;
 sim.clock.paused = !traffic;
 sim.clock.speed = savedSession?.settings.speed ?? 1;
@@ -635,6 +644,37 @@ const buildings = createBuildingWiring({
   flash: (key, params) => flashHint(key, params),
   hintChanged: () => updateHint(),
 });
+
+if (lotLabOn) {
+  mountLotLab({
+    generate(zone, widths, seed) {
+      history.record(doc);
+      lotLabGrow = { seed, widths };
+      rezoneLab(doc, zoneGrid(), zone);
+      const n = growLab({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), seed, widths);
+      persistence.saveSessionSoon(doc, sessionSettings);
+      updateHistoryButtons();
+      requestDraw();
+      return n;
+    },
+    selectedTemplate(name, zone) {
+      const b = buildings.tool.selected();
+      return b ? templateOf(b, name, zoneOfBuilding(doc, b.id) ?? zone) : null;
+    },
+    apply(template) {
+      const b = buildings.tool.selected();
+      if (!b) return false;
+      history.record(doc);
+      applyTemplate(doc, b, template);
+      persistence.saveSessionSoon(doc, sessionSettings);
+      updateHistoryButtons();
+      requestDraw();
+      return true;
+    },
+    flash: (text) => flashHint(text),
+  });
+  if (lotLabFresh) view.moveTo({ x: 0, y: 0 });
+}
 
 /** The ground the camera sees: the screen's four corners, on the ground. */
 function viewFootprint(): Vec2[] {
@@ -3128,7 +3168,8 @@ setInterval(() => {
   // The roads just changed: growth waits for the new grid, laid a slice a
   // frame (`zoneGridForOverlay`), instead of laying it all at once here.
   if (zoneGridCache && zoneGridCache.revision !== net.revision) { requestDraw(); return; }
-  const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
+  const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused,
+    lotLabGrow?.seed ?? 0x5eed, lotLabGrow?.widths);
   if (grown === null) return;
   // A grown building starts its life now: it ages from here unless renovated.
   const fresh = doc.buildings.get(grown as BuildingId);

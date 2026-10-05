@@ -181,18 +181,31 @@ export function blockOf(grid: ZoneGrid, cell: ZoneCell): ZoneCell[] {
  * player put there), so a frame is not spent trying them again; the caller
  * clears it when the land changes.
  */
-export function growOne(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: number): number | null {
+export function growOne(
+  ctx: SiteContext,
+  grid: ZoneGrid,
+  refused: Set<string>,
+  seed: number,
+  widths?: readonly [number, number],
+): number | null {
   // A refused start makes the column after it a start of its own: look again
   // (a few times) rather than report the land full while it is not.
   for (let attempt = 0; attempt < 6; attempt++) {
     const before = refused.size;
-    const id = growOnce(ctx, grid, refused, seed);
+    const id = growOnce(ctx, grid, refused, seed, widths);
     if (id !== null || refused.size === before) return id;
   }
   return null;
 }
 
-function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: number): number | null {
+/** `widths` overrides the zone's lot widths in columns (the lot lab, `?lab=lots`). */
+function growOnce(
+  ctx: SiteContext,
+  grid: ZoneGrid,
+  refused: Set<string>,
+  seed: number,
+  widths?: readonly [number, number],
+): number | null {
   const { doc } = ctx;
   if (!doc.zoneMarks.length) return null;
   const marks = marksByCell(doc, grid);
@@ -224,7 +237,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
     // The lot: a width drawn for the zone, as deep as the zoned land goes.
     // Narrower widths are tried when the run is short, down to one column, so
     // no zoned cell is left bare; a building is then made for exactly that lot.
-    const [narrow, wide] = LOT_COLUMNS[zone.use][zone.density];
+    const [narrow, wide] = widths ?? LOT_COLUMNS[zone.use][zone.density];
     const want = rng.int(narrow, wide);
     const freeColumn = (column: number, depth: number): ZoneCell[] | null => {
       const cells: ZoneCell[] = [];

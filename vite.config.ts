@@ -2,12 +2,13 @@ import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 import { buildStampPlugin } from './build-stamp';
 import { cookPlugin } from './cook-plugin';
+import { lotLibraryPlugin } from './lot-library-plugin';
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
   root: '.',
-  plugins: [buildStampPlugin(), cookPlugin()],
+  plugins: [buildStampPlugin(), cookPlugin(), lotLibraryPlugin()],
   publicDir: false,
   resolve: {
     alias: {
@@ -42,6 +43,9 @@ export default defineConfig({
         // Parallel agent worktrees live inside the project folder; an edit
         // there must not reload the game being inspected here.
         '**/.claude/**',
+        // The lot lab's library (`lot-library-plugin.ts`): saving a lot must
+        // not reload the lab.
+        '**/lots/**',
       ],
     },
   },
