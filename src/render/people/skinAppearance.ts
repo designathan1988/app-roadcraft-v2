@@ -205,10 +205,24 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
         diffuseColor.rgb = mix(diffuseColor.rgb, skinColour, vSkinMask);
         }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.5, vSkinMask * appearanceDetail);');
-    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_pars_fragment>',
-      ShaderChunk.lights_physical_pars_fragment.replace(
-        'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );',
-        'reflectedLight.directDiffuse += mix(irradiance, saturate((dot(geometryNormal, directLight.direction) + 0.15) / 1.15) * directLight.color, vSkinMask * appearanceDetail) * BRDF_Lambert(material.diffuseColor);'));
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_pars_fragment>', personLighting(texturedHair, texturedGarments))
+      // The strands' direction, for the hair's highlights: from the card's
+      // texture coordinates as they run over the surface (the strands lie
+      // along the texture's v), derived per pixel from screen derivatives.
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          vec3 dp1 = dFdx(-vViewPosition), dp2 = dFdy(-vViewPosition);
+          vec2 du1 = dFdx(vSkinUv), du2 = dFdy(vSkinUv);
+          vec3 along = dp2 * du1.x - dp1 * du2.x;
+          personStrand = along - normal * dot(along, normal);
+          personStrand = dot(personStrand, personStrand) > 1e-12 ? normalize(personStrand) : vec3(0.0, 1.0, 0.0);
+          personSparkle = fract(sin(dot(floor(vSkinUv * vec2(160.0, 12.0)), vec2(12.9898, 78.233))) * 43758.5453);
+        }`)
+      // Skin, cloth and hair hardly mirror the sky: the environment's
+      // reflection on them was the plastic sheen over every person.
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        reflectedLight.indirectSpecular *= personIndirect();`);
+    shader.fragmentShader = `vec3 personStrand = vec3(0.0, 1.0, 0.0); float personSparkle = 0.5;\n${shader.fragmentShader}`;
     if (texturedEyes) {
       shader.vertexShader = `attribute float eyeMask; varying float vEyeMask;\n${shader.vertexShader}`
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyeMask = eyeMask;');
@@ -285,7 +299,7 @@ if (faceCard) {
             // linear light. Multiplying them by dark hair dye erased them.
             // Keep a restrained light-coloured reflection on hair cards only.
             vec3 hairCol = slot > 2.5 && slot < 3.5 ? vec3(0.03)
-              : beardColour * (0.55 + 0.95 * strand) + (slot < 1.5 ? vec3(0.12 * sqrt(strand)) : vec3(0.0));
+              : beardColour * (0.55 + 0.95 * strand) + (slot < 1.5 ? vec3(0.03 * sqrt(strand)) : vec3(0.0));
             diffuseColor.rgb = mix(beardColour * 0.55, hairCol, smoothstep(0.25, 0.75, cardTexel.a));
             diffuseColor.a = cardTexel.a;
           }
@@ -303,10 +317,80 @@ if (faceCard) {
           ${i === 0 ? 'float shade = 0.3 + 1.15 * dot(cloth, vec3(0.3, 0.59, 0.11)); cloth = mix(cloth, min(vec3(1.0), outfitDye * shade), outfitDyed * 0.8);' : ''}
           diffuseColor.rgb = cloth;
         }`).join('\n');
-      shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `${sample}\n#include <alphatest_fragment>`);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `${sample}\n#include <alphatest_fragment>`)
+        // Woven cloth is rough: no glossy highlight on a T-shirt.
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vGarmentSlot > 0.5 && appearanceDetail > 0.5) roughnessFactor = max(roughnessFactor, 0.9);');
     }
   };
-  material.customProgramCacheKey = () => `${key}-textured-skin-v4-hair${texturedHair}-${cardMask}-garments${texturedGarments}-${garmentMask}-eyes${texturedEyes}`;
+  material.customProgramCacheKey = () => `${key}-textured-skin-v5-hair${texturedHair}-${cardMask}-garments${texturedGarments}-${garmentMask}-eyes${texturedEyes}`;
+}
+
+/**
+ * three's physical lighting, with a person's own terms (three r186's
+ * `RE_Direct_Physical`; the strings are checked, so a three upgrade that
+ * moves them fails loudly instead of silently dropping the look):
+ *
+ * - Skin: wrap lighting with a reddish scatter band at the terminator, the
+ *   real-time stand-in for light travelling under the skin (Green, "Real-Time
+ *   Approximations to Subsurface Scattering", GPU Gems 1 ch. 16), and a
+ *   softer, weaker specular - skin is not glossy plastic.
+ * - Hair (card slots 1 and 4, hair and beard): Kajiya-Kay strand lighting
+ *   with Scheuermann's two shifted highlights (ATI, "Hair Rendering and
+ *   Shading", GDC 2004): a white primary highlight nudged towards the tips, a
+ *   wider secondary one tinted by the hair and broken up into sparkles, and
+ *   the diffuse term's shadow edge softened (lerp(0.25, 1, N.L)).
+ */
+function personLighting(hair: boolean, garments: boolean): string {
+  const chunk = ShaderChunk.lights_physical_pars_fragment;
+  const specular = 'reflectedLight.directSpecular += irradiance * specularBRDF * material.multiScatteringCompensation;';
+  const diffuse = 'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );';
+  if (!chunk.includes(specular) || !chunk.includes(diffuse)) throw new Error('three lighting chunk changed: person lighting must be updated');
+  const hairWeight = hair ? '(abs(vHairMask - 1.0) < 0.5 ? appearanceDetail : 0.0)' : '0.0';
+  const clothWeight = garments ? '(vGarmentSlot > 0.5 ? appearanceDetail : 0.0)' : '0.0';
+  const helpers = `
+float personStrandSpecular(vec3 T, vec3 H, float exponent) {
+  float dotTH = dot(T, H);
+  float sinTH = sqrt(max(0.0, 1.0 - dotTH * dotTH));
+  return smoothstep(-1.0, 0.0, dotTH) * pow(sinTH, exponent);
+}
+float personHairWeight() { return ${hairWeight}; }
+float personClothWeight() { return ${clothWeight}; }
+float personIndirect() {
+  float skin = vSkinMask * appearanceDetail;
+  return mix(1.0, 0.25, max(max(skin, personHairWeight()), personClothWeight()));
+}
+`;
+  return helpers + chunk
+    .replace(specular, `{
+      float skinW = vSkinMask * appearanceDetail;
+      float hairW = personHairWeight();
+      vec3 spec = irradiance * specularBRDF * material.multiScatteringCompensation;
+      spec *= mix(1.0, 0.35, skinW) * mix(1.0, 0.3, personClothWeight());
+      if (hairW > 0.0) {
+        vec3 H = normalize(directLight.direction + geometryViewDir);
+        float shift = personSparkle - 0.5;
+        vec3 t1 = normalize(personStrand + (-0.12 + 0.2 * shift) * geometryNormal);
+        vec3 t2 = normalize(personStrand + (0.22 + 0.2 * shift) * geometryNormal);
+        float lit = saturate(dot(geometryNormal, directLight.direction) * 0.5 + 0.5);
+        vec3 strands = (vec3(0.035) + material.diffuseColor * 0.25) * personStrandSpecular(t1, H, 140.0)
+          + material.diffuseColor * 0.55 * step(0.4, personSparkle) * personStrandSpecular(t2, H, 26.0);
+        spec = mix(spec, strands * lit * directLight.color, hairW);
+      }
+      reflectedLight.directSpecular += spec;
+    }`)
+    .replace(diffuse, `{
+      float skinW = vSkinMask * appearanceDetail;
+      float hairW = personHairWeight();
+      float rawNL = dot(geometryNormal, directLight.direction);
+      vec3 lit = irradiance;
+      if (skinW > 0.0) {
+        float wrapped = saturate((rawNL + 0.4) / 1.4);
+        float scatter = smoothstep(0.0, 0.3, wrapped) * smoothstep(0.62, 0.3, wrapped);
+        lit = mix(lit, (vec3(wrapped) + scatter * vec3(0.32, 0.07, 0.04)) * directLight.color, skinW);
+      }
+      if (hairW > 0.0) lit = mix(lit, mix(0.25, 1.0, saturate(rawNL)) * directLight.color, hairW);
+      reflectedLight.directDiffuse += lit * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );
+    }`);
 }
 
 /** How far each island of a garment's texture is grown into its background, pixels. */
