@@ -9,6 +9,7 @@ import { VehicleMotionMetrics } from '@sim/drive/motionMetrics';
 import { SimWorld } from '@sim/world';
 import { createPeopleEngine, inspectPeople } from '@sim/people/people';
 import { createCrowdEngine } from '@sim/people/crowd';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { blueprintByKey, instantiate } from '@world/buildings/blueprints';
 import { fixtureDoc, LAYOUTS, layoutDoc } from './bodies';
 
@@ -83,9 +84,13 @@ function people(sim: SimWorld, peds: number, traffic: number): SimWorld {
   sim.trafficIntensity = traffic;
   sim.demandMultiplier = traffic || 1;
   sim.clock.paused = false;
-  // `AGENT_ENGINE=crowd` measures the Detour crowd engine (call `initCrowd` first).
-  sim.usePedestrianEngine(process.env.AGENT_ENGINE === 'crowd' ? createCrowdEngine() : createPeopleEngine());
+  // `AGENT_ENGINE=crowd` measures the Detour crowd engine (call `initCrowd` first);
+  // `AGENT_ENGINE=agents`, the residents as agents walking on lanes (`?agents=1`).
+  const engine = process.env.AGENT_ENGINE;
+  sim.usePedestrianEngine(engine === 'crowd' ? createCrowdEngine() : engine === 'agents' ? createAgentWalkEngine() : createPeopleEngine());
   sim.driveModel = 'v2';
+  // Residents go out on their own; late afternoon is when most of them do.
+  if (engine === 'agents') { sim.city.useAgents(true); sim.city.skip(10 * 60); }
   return sim;
 }
 

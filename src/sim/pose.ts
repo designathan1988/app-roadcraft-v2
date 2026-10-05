@@ -5,6 +5,7 @@ import type { SimWorld } from '@sim/world';
 import type { Kinematics, Vehicle } from '@sim/vehicles/state';
 import type { PedView } from '@sim/people/view';
 import { HEADING_CHORD, chordHeading } from '@world/heading';
+import { cycleShift } from '@sim/vehicles/cycleLane';
 
 export interface Pose {
   readonly p: Vec2;
@@ -100,13 +101,14 @@ export function vehiclePose(w: SimWorld, v: Vehicle, alpha: number): Pose | null
   // `lateral` is the unfinished part of a lane change: the simulation has
   // already moved the vehicle onto the new centreline, and this is how far it
   // still has to slide across to get there visually.
-  const at = addScaled(frame.p, perp(frame.t), bodyOffset(v, v.archetype.length));
+  // A bicycle by a cycle lane rides in it (`vehicles/cycleLane.ts`).
+  const at = addScaled(frame.p, perp(frame.t), bodyOffset(v, v.archetype.length) + cycleShift(v, w.lanelet(v.lanelet), v.s));
   const heading = angleOf(frame.t);
   const here: Pose = { p: at, angle: heading };
 
   const before = axleFrame(w, v, v.prev, v.archetype.length);
   if (!before) return here;
-  const beforeAt = addScaled(before.p, perp(before.t), bodyOffset(v.prev, v.archetype.length));
+  const beforeAt = addScaled(before.p, perp(before.t), bodyOffset(v.prev, v.archetype.length) + cycleShift(v, w.lanelet(v.prev.lanelet), v.prev.s));
   if (dist(beforeAt, at) > POSE_JUMP_LIMIT) return here;
 
   // Point into the change, blended across the tick like everything else.

@@ -55,6 +55,8 @@ import { type ImportResult, Persistence, exportToFile, importFromFile, type Save
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
+import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
+import { TransitTool, setTransitTool } from '@editor/transitTools';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
 import { type Building, type BuildingId, decayOf } from '@world/buildings/types';
@@ -63,6 +65,7 @@ import { closestOnSegment } from '@core/intersect';
 import { pointInPolygon } from '@core/polygon';
 import { signalPosts } from '@world/signalPosts';
 import { resolveBlocks } from '@world/buildings/blocks';
+import type { VehicleId } from '@sim/vehicles/state';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -101,6 +104,7 @@ type Tool =
   | 'pole'
   | 'streetscape'
   | 'barrier'
+  | 'transit'
   | 'person';
 type Alignment = 'straight' | 'curve' | 'free';
 let roundaboutRadius = 100;
@@ -528,17 +532,22 @@ const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camer
 // The renderer starts its asynchronous shader preparation while topology and
 // pedestrian navigation still build. Both finish before the first game frame.
 sim.rebuildTopology();
-// Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
-// old sidewalk-graph model instead, for comparison while it is retired.
-// `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
-if (new URLSearchParams(location.search).get('people') === 'crowd') {
+// The agents (`sim/agents`) by default: every resident is one person all day,
+// walking on lanes of the footways (`sim/agents/walk.ts`) and driving their own
+// car from a real bay; no car or person is made up at the kerb. The old
+// engines stay behind flags until they are retired: `?agents=0` the People
+// engine (navmesh), `?people=crowd` the Detour crowd, `?peds=legacy` the old
+// sidewalk graph.
+const engineFlags = new URLSearchParams(location.search);
+const agentsOn = engineFlags.get('agents') !== '0' && engineFlags.get('people') !== 'crowd' && engineFlags.get('peds') !== 'legacy';
+if (agentsOn) {
+  sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine());
+} else if (engineFlags.get('people') === 'crowd') {
   crowdModule = await import('@sim/people/crowd');
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
-} else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
-// `?agents=1`: every resident is one person all day with their own car, parked
-// in a real bay and driven by them (`sim/agents`); no car is made at the kerb.
-if (new URLSearchParams(location.search).get('agents') === '1') sim.city.useAgents(true);
+} else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
+if (agentsOn) sim.city.useAgents(true);
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
@@ -644,6 +653,16 @@ function syncFlatCameraFromView(): void {
 function mutate(fn: () => boolean): void {
   mutateBuilt(fn);
 }
+
+/** The public transport tool (`editor/transitTools.ts`): each edit one undo step. */
+const transitEditor = new TransitTool({
+  doc: () => doc,
+  net: () => net,
+  edit: (next) => mutate(() => { doc.setTransit(next); return true; }),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
+setTransitTool(transitEditor);
 
 /** `mutate`, reporting whether the edit actually changed anything. */
 function mutateBuilt(fn: () => boolean): boolean {
@@ -1005,6 +1024,8 @@ function endTerrainStroke(): void {
 // it (two on open ground close it); while one is open, a click on another
 // opens that one instead.
 canvas.addEventListener('dblclick', (e) => {
+  // A double click ends a track or a line being laid (`pointerdown` carries no click count).
+  if (tool === 'transit') { transitEditor.key('Enter'); return; }
   if (tool !== 'inspect') return;
   const r = canvas.getBoundingClientRect();
   buildings.insideClick({ x: e.clientX - r.left, y: e.clientY - r.top }, true);
@@ -1146,6 +1167,11 @@ canvas.addEventListener('pointerdown', (e) => {
       zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map() };
       for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
       requestDraw();
+      break;
+
+    case 'transit':
+      // Stops, tracks, stations, lines (`editor/transitTools.ts`).
+      transitEditor.click(world, e.shiftKey, e.detail >= 2);
       break;
 
     case 'barrier': {
@@ -1451,6 +1477,10 @@ canvas.addEventListener('pointermove', (e) => {
     barrierCursor = world;
     requestDraw();
   }
+  if (tool === 'transit') {
+    transitEditor.move(world);
+    requestDraw();
+  }
 
   if (poleDraft) {
     poleDraft.to = world;
@@ -1746,6 +1776,7 @@ window.addEventListener('keydown', (e) => {
 
   // A run being traced: Enter ends it, Backspace takes the last point back,
   // Esc drops it.
+  if (!meta && tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
   if (!meta && tool === 'barrier' && barrierPoints) {
     if (e.key === 'Enter') { e.preventDefault(); finishBarrier(); return; }
     if (e.key === 'Backspace') {
@@ -1881,6 +1912,7 @@ window.addEventListener('keydown', (e) => {
     z: 'zone',
     h: 'building',
     k: 'person',
+    o: 'transit',
   };
   const next = shortcuts[e.key.toLowerCase()];
   if (next) pickTool(next);
@@ -2967,6 +2999,8 @@ minimapCanvas.addEventListener('pointermove', (e) => {
  * nothing at all.
  */
 const arrowPan = (e: KeyboardEvent): void => {
+  // Somebody in the player's hands has the keys (`playerKey`).
+  if (controlling()) return;
   const target = e.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
   // Escape ends whatever is being drawn. A pole line is traced in stretches,
@@ -3093,7 +3127,89 @@ const AGENT_PICK_PX = 22;
 let agentCard: AgentCard | null = null;
 let agentCardClock = 0;
 const theAgentCard = (): AgentCard =>
-  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw);
+  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw, takeControlOf);
+
+// ------------------------------------------------------------ a person in the player's hands (GTA)
+
+let playerHud: PlayerHud | null = null;
+let playerHudClock = 0;
+/** Keys held down while somebody is controlled. */
+const held = new Set<string>();
+
+/** Takes a resident into the player's hands (the card's "Control"). */
+function takeControlOf(resident: number): void {
+  if (!sim.city.player.take(sim, resident)) return;
+  playerHud ??= createPlayerHud(document.querySelector<HTMLElement>('.v2') ?? document.body);
+  // The game goes on in real time with somebody to move.
+  if (sim.clock.paused) sim.clock.paused = false;
+  requestDraw();
+}
+
+const controlling = (): boolean => sim.city.player.resident !== null;
+
+/** The keys of the player's hands; nothing else sees them while somebody is controlled. */
+function playerKey(e: KeyboardEvent, down: boolean): boolean {
+  if (!controlling()) return false;
+  const target = e.target as HTMLElement | null;
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return false;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const input = sim.city.player.input;
+  if (down && !e.repeat) {
+    if (key === 'e') input.enter = true;
+    else if (key === 'f') input.talk = true;
+    else if (key === ' ') input.punch = true;
+    else if (key === 'Escape' || key === 'q') input.release = true;
+  }
+  if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', ' ', 'e', 'f', 'q', 'Escape'].includes(key)) {
+    if (down) held.add(key); else held.delete(key);
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+  return false;
+}
+window.addEventListener('keydown', (e) => { playerKey(e, true); }, true);
+window.addEventListener('keyup', (e) => { playerKey(e, false); }, true);
+window.addEventListener('blur', () => held.clear());
+
+/** The keys held, as the player's move this frame: on foot along the screen, in a car throttle and wheel. */
+function steerPlayer(): void {
+  const player = sim.city.player;
+  if (player.resident === null) { held.clear(); playerHud?.update(null, '', 0); return; }
+  const up = held.has('w') || held.has('ArrowUp'), down = held.has('s') || held.has('ArrowDown');
+  const left = held.has('a') || held.has('ArrowLeft'), right = held.has('d') || held.has('ArrowRight');
+  const input = player.input;
+  input.run = held.has('Shift');
+  input.throttle = (up ? 1 : 0) - (down ? 1 : 0);
+  input.steer = (right ? 1 : 0) - (left ? 1 : 0);
+  // Along the screen: "up" is wherever the camera looks.
+  const sx = (right ? 1 : 0) - (left ? 1 : 0), sy = (down ? 1 : 0) - (up ? 1 : 0);
+  if (sx === 0 && sy === 0) { input.moveX = 0; input.moveY = 0; }
+  else {
+    const { cssW: w, cssH: h } = surface;
+    const c = view.toWorld(w / 2, h / 2, w, h), to = view.toWorld(w / 2 + sx * 100, h / 2 + sy * 100, w, h);
+    const dx = to.x - c.x, dy = to.y - c.y, len = Math.hypot(dx, dy) || 1;
+    input.moveX = dx / len; input.moveY = dy / len;
+  }
+  // In a car the wheel turns with the car: "right" is the driver's right.
+  // The camera stays on them.
+  const cam = view.centre;
+  view.moveTo({ x: cam.x + (player.x - cam.x) * 0.25, y: cam.y + (player.y - cam.y) * 0.25 });
+  const now = performance.now();
+  if (now - playerHudClock > 100) {
+    playerHudClock = now;
+    const v = player.view();
+    // Inside a building: its name, and what they are doing there.
+    const inside = v && v.place !== null ? { ...v, placeName: placeName(v.place), activity: sim.city.doingOf(v.resident)?.kind ?? null } : v;
+    playerHud?.update(inside, v ? residentName(v.resident) : '', sim.clock.time);
+  }
+  requestDraw();
+}
+
+/** A resident as the player knows them: their name. */
+function residentName(resident: number): string {
+  return t('agent.title', { n: resident });
+}
 
 /** Where a resident agent is now: on foot, in or at their car, or at the door of where they are. */
 function agentPosition(resident: number): Vec2 | null {
@@ -3104,6 +3220,18 @@ function agentPosition(resident: number): Vec2 | null {
   const trip = city.cars?.tripOfCar(car?.id ?? -1);
   if (car && trip) {
     const v = car.body ?? sim.vehicles.get(car.id);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) return pose.p;
+  }
+  for (const d of city.transit.drivers()) {
+    if (d.resident !== resident) continue;
+    const v = sim.vehicles.get(d.bus);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) return pose.p;
+  }
+  for (const trip of city.trips.values()) {
+    if (trip.resident !== resident || trip.mode !== 'bike') continue;
+    const v = sim.vehicles.get(trip.agent as VehicleId);
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) return pose.p;
   }
@@ -3128,6 +3256,19 @@ function pickAgent(px: number, py: number): number | null {
     const v = car.body ?? sim.vehicles.get(car.id);
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) consider(pose.p.x, pose.p.y, car.owner);
+  }
+  // A resident at the wheel of a bus.
+  for (const d of sim.city.transit.drivers()) {
+    const v = d.resident === null ? undefined : sim.vehicles.get(d.bus);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) consider(pose.p.x, pose.p.y, d.resident!);
+  }
+  // A resident riding their bicycle.
+  for (const trip of sim.city.trips.values()) {
+    if (trip.mode !== 'bike') continue;
+    const v = sim.vehicles.get(trip.agent as VehicleId);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) consider(pose.p.x, pose.p.y, trip.resident);
   }
   return best;
 }
@@ -3204,6 +3345,7 @@ function frame(now: number): void {
   scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
+  steerPlayer();
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
   refreshAgentCard(now);
   drawOverlayScreen();
@@ -3484,6 +3626,7 @@ function drawOverlayScreen(): void {
   }
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
+  if (tool === 'transit') transitEditor.draw(ctx, at, true);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
   if (tool === 'zone' || (doc.zoneMarks.length && zoneColoursShown()) || (tool === 'road' && roadPreviewActive())) {
@@ -4278,6 +4421,8 @@ qualitySelect.onchange = () => {
   DT,
   exportMap: () => exportToFile(doc, sessionSettings()),
   importMap: async () => openImported(await importFromFile()),
+  /** The public transport tool, for the probes (`scripts/transit-shots.mjs`). */
+  transit: transitEditor,
   setTraffic: (enabled: boolean) => {
     if (traffic !== enabled) trafficButton.click();
   },

@@ -42,7 +42,7 @@ import { Manoeuvre, arrival, departure } from './manoeuvre';
  */
 
 /** Why a trip is made: the player reads it translated (`agent.why.<reason>`). */
-export type TripReason = 'work' | 'school' | 'home' | 'lunch' | 'errand' | 'outing';
+export type TripReason = 'work' | 'school' | 'home' | 'lunch' | 'errand' | 'outing' | 'sleep' | 'eat' | 'fun' | 'social' | 'wash' | 'visit';
 
 export type CarPhase = 'toCar' | 'board' | 'leave' | 'drive' | 'park' | 'alight' | 'fromCar';
 
@@ -77,6 +77,12 @@ export interface CarTrip {
   path: Manoeuvre | null;
   /** Seconds spent waiting to join the lane. */
   held: number;
+  /** What a car off the road is waiting for now: a gap in the traffic, people in its way, or nothing. */
+  waitingFor: 'traffic' | 'people' | null;
+  /** Seconds it has been waiting for people, without a break. */
+  waitedPeople: number;
+  /** A car off the road holding the ground of the rest of its manoeuvre (`OwnCars.holdWay`). */
+  reserved: boolean;
   /** Why the agent is doing what it does: shown when the player looks at them. */
   readonly why: TripReason;
   /** They go into the building at the other end by its back door, from the lot. */
@@ -104,6 +110,12 @@ const LANE_EDGE = m(4.5);
 /** Room the traffic must leave for a car joining the lane. */
 const GAP_BEHIND = m(32);
 const GAP_AHEAD = m(10);
+/** Seconds a car off the road waits for the people on its way before those coming give way to it. */
+export const ASK_WAY = 3;
+/** How far ahead a car about to cross the footway sees where the people walking will be, s. */
+const COMING = 1;
+/** Spacing of the poses a car's way over the rest of its manoeuvre is laid out at, u. */
+const SWEEP_STEP = m(1);
 /** Speed a car joins the lane at. */
 const JOIN_SPEED = m(2.4);
 /** Cars a household may have: the classes residents drive. */
@@ -112,6 +124,36 @@ const CLASSES = ['hatch', 'sedan', 'suv'];
 /** A person's gender as every part of the game reads it from their id (`seatPerson`). */
 export function personGender(person: number): PersonGender {
   return (personHash(person) >>> 3) & 1 ? 'f' : 'm';
+}
+
+/**
+ * Whether a car's manoeuvre takes it across a footway: out of or into a lot.
+ * Into or out of a bay along the kerb it stays on the carriageway.
+ */
+export function crossesFootway(t: CarTrip): boolean {
+  const bay = t.phase === 'park' ? t.target : t.car.bay;
+  return !bay?.kerb;
+}
+
+/**
+ * The ground a car off the road will cover over the rest of its manoeuvre:
+ * its body (three discs along its length, `margin` wider) at every metre of
+ * the way from where it is to the end. Empty with no manoeuvre under way.
+ */
+export function carSweep(t: CarTrip, margin: number): { x: number; y: number; r: number }[] {
+  const path = t.path;
+  if (!path) return [];
+  const a = t.car.archetype;
+  const reach = Math.max(0, a.length / 2 - a.width / 2);
+  const r = a.width / 2 + margin;
+  const out: { x: number; y: number; r: number }[] = [];
+  for (let s = path.s; ; s = Math.min(path.length, s + SWEEP_STEP)) {
+    const q = path.poseAt(s);
+    const cx = Math.cos(q.angle) * reach, cy = Math.sin(q.angle) * reach;
+    for (const j of [-1, 0, 1]) out.push({ x: q.x + cx * j, y: q.y + cy * j, r });
+    if (s >= path.length) break;
+  }
+  return out;
 }
 
 export class OwnCars {
@@ -142,8 +184,12 @@ export class OwnCars {
       const at = where(r.id);
       if (!at) continue;
       // Parked in the lot behind the building they are in, reached from its back
-      // door; with no such bay free they have no car to use here, and walk.
-      const bay = this.bayBehind(w, at.building);
+      // door; failing that, in the free bay nearest their door that is a short
+      // walk away (a lot down the street, a bay at the kerb). With no bay free
+      // near home they keep no car here and walk, as a household without
+      // parking does in Cities: Skylines II: the bays a town has are the cars
+      // its residents can own.
+      const bay = this.bayBehind(w, at.building) ?? freeBayNear(this.bays, at.door.x, at.door.y, CAR_REACH);
       if (!bay || !bay.lane) continue;
       const rng = new Rng(r.seed ^ 0x5eed_ca75);
       const classes = ARCHETYPES.filter((a) => CLASSES.includes(a.id));
@@ -193,7 +239,7 @@ export class OwnCars {
     target.car = car.id;
     this.trips.set(trip, {
       trip, resident: r.id, person, gender, ageClass: r.ageClass, car, to, door, target,
-      phase: back ? 'board' : 'toCar', t: 0, foot, path: null, held: 0, why, inBack: false,
+      phase: back ? 'board' : 'toCar', t: 0, foot, path: null, held: 0, waitingFor: null, waitedPeople: 0, reserved: false, why, inBack: false,
     });
     this.made++;
     return true;
@@ -301,7 +347,50 @@ export class OwnCars {
     const out = this.drawn;
     out.length = 0;
     for (const car of this.cars.values()) if (car.body) out.push(car.body);
+    for (const body of this.loose) out.push(body);
     return out;
+  }
+
+  /** Cars out of the traffic that belong to no resident's trip: taken by the player, left wherever. */
+  readonly loose: Vehicle[] = [];
+
+  /**
+   * A car taken by the player, as a free body off the road. A resident's own
+   * car parked is taken out of its bay; one driving is taken out of the
+   * traffic, its trip ended there, and who was driving is returned to be put
+   * on foot where they got out. A car of the edge traffic is made a loose body.
+   * Null when the car is in the middle of a manoeuvre with somebody at the door.
+   */
+  seize(w: SimWorld, id: VehicleId): { body: Vehicle; driver: number | null; trip: number | null } | null {
+    for (const car of this.cars.values()) {
+      if (car.id !== id) continue;
+      const t = this.tripOfCar(id);
+      if (t && t.phase !== 'drive') return null;
+      if (!t) {
+        if (!car.body) return null;
+        if (car.bay && car.bay.car === car.id) car.bay.car = null;
+        car.bay = null;
+        return { body: car.body, driver: null, trip: null };
+      }
+      const v = w.vehicles.get(id);
+      const pose = v ? vehiclePose(w, v, 1) : null;
+      if (!v || !pose) return null;
+      w.removeVehicle(v);
+      if (t.target.car === car.id) t.target.car = null;
+      car.bay = null;
+      car.body = this.offRoadBody(w, car, v.lanelet, pose.p.x, pose.p.y, pose.angle, null);
+      car.body.v = v.v;
+      this.trips.delete(t.trip);
+      return { body: car.body, driver: t.resident, trip: t.trip };
+    }
+    const v = w.vehicles.get(id);
+    const pose = v ? vehiclePose(w, v, 1) : null;
+    if (!v || !pose) return null;
+    w.removeVehicle(v);
+    v.free = { x: pose.p.x, y: pose.p.y, angle: pose.angle, px: pose.p.x, py: pose.p.y, pangle: pose.angle, lot: null };
+    v.seats = 0;
+    this.loose.push(v);
+    return { body: v, driver: null, trip: null };
   }
   private readonly drawn: Vehicle[] = [];
 
@@ -365,7 +454,9 @@ export class OwnCars {
     const lane = t.car.bay!.lane!;
     // At the footway's edge: wait for a gap in the traffic and for the people
     // on the footway, as a driver does coming out of a drive.
-    if (path.length - path.s <= LANE_EDGE && !this.mayJoin(w, t, lane)) {
+    t.waitingFor = !this.holdWay(w, t) ? 'people'
+      : path.length - path.s <= LANE_EDGE ? this.mayJoin(w, t, lane) : null;
+    if (t.waitingFor) {
       t.held += DT;
       body.v = 0;
       setFree(body, path.poseAt());
@@ -406,12 +497,22 @@ export class OwnCars {
     body.peopleAge = [t.ageClass];
     t.car.body = body;
     t.path = arrival({ x: pose.p.x, y: pose.p.y, angle: pose.angle }, t.target);
+    t.reserved = false;
+    t.waitedPeople = 0;
     this.enter(t, 'park');
   }
 
   private park(w: SimWorld, t: CarTrip): void {
     const body = t.car.body!;
     const path = t.path!;
+    // Somebody on the footway or in the lot where the car is going: it waits.
+    t.waitingFor = this.holdWay(w, t) ? null : 'people';
+    if (t.waitingFor) {
+      t.held += DT;
+      body.v = 0;
+      setFree(body, path.poseAt());
+      return;
+    }
     const v = path.speed();
     path.advance(v * DT);
     body.s = path.s;
@@ -479,18 +580,58 @@ export class OwnCars {
 
   // ------------------------------------------------------------- the car
 
-  /** Whether the lane has room behind and ahead of the joining point, and the footway is clear. */
-  private mayJoin(w: SimWorld, t: CarTrip, lane: NonNullable<Bay['lane']>): boolean {
+  /**
+   * Whether nobody stands where the car's body will go over the rest of its
+   * manoeuvre (`carSweep`): then it takes that ground for itself (`reserved`).
+   */
+  private sweepEmpty(w: SimWorld, t: CarTrip): boolean {
+    // A car into or out of a bay along the kerb stays on the carriageway: it
+    // minds the people crossing it (a zebra by the bay), not the footway.
+    const crossingOnly = !crossesFootway(t);
+    // Margin enough for the corners: three discs along a body leave them out
+    // by a fifth of its width.
+    const discs = carSweep(t, m(0.4));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
+    // Where each person is, and where they will be in a second: somebody
+    // about to step onto the way could not stop short of it.
+    for (const v of w.pedViews) {
+      if (v.id === t.person || (crossingOnly && v.ground !== 'crossing')) continue;
+      const fx = v.x + Math.cos(v.heading) * v.v * COMING, fy = v.y + Math.sin(v.heading) * v.v * COMING;
+      if (Math.max(v.x, fx) < x0 || Math.min(v.x, fx) > x1 || Math.max(v.y, fy) < y0 || Math.min(v.y, fy) > y1) continue;
+      for (const d of discs) {
+        if (Math.hypot(v.x - d.x, v.y - d.y) < d.r || Math.hypot(fx - d.x, fy - d.y) < d.r) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * The ground a car off the road crosses, taken in turn with the people on
+   * it, as a zebra is (`crossings/`): it waits until nobody is on its way
+   * (those on it walk on off it, `walk.ts`), then holds the way and drives it
+   * without stopping for anybody, the people outside it keeping off it until
+   * it has passed. A car kept waiting `ASK_WAY` has the people outside give
+   * way to it as well. Nobody ever waits for somebody who waits for them.
+   */
+  private holdWay(w: SimWorld, t: CarTrip): boolean {
+    if (t.reserved) return true;
+    if (this.sweepEmpty(w, t)) { t.reserved = true; t.waitedPeople = 0; return true; }
+    t.waitedPeople += DT;
+    return false;
+  }
+
+  /** What keeps a car from joining the lane: no gap in the traffic; null when nothing does. */
+  private mayJoin(w: SimWorld, t: CarTrip, lane: NonNullable<Bay['lane']>): 'traffic' | null {
     const front = lane.at + t.car.archetype.length / 2;
     for (const body of w.bodiesIn(lane.lanelet)) {
       const bFront = body.s;
       const bRear = body.s - body.vehicle.archetype.length;
-      if (bFront > front - t.car.archetype.length - GAP_BEHIND - JAM_GAP && bRear < front + GAP_AHEAD) return false;
+      if (bFront > front - t.car.archetype.length - GAP_BEHIND - JAM_GAP && bRear < front + GAP_AHEAD) return 'traffic';
     }
-    const nose = t.car.body!.free!;
-    const nx = nose.x + Math.cos(nose.angle) * t.car.archetype.length * 0.6;
-    const ny = nose.y + Math.sin(nose.angle) * t.car.archetype.length * 0.6;
-    return !w.pedEngine.bridge.anyoneWithin(w, nx, ny, m(1.3), null);
+    // The people on the footway are `pathClear`'s: those in the car's way, not
+    // those who stopped beside it for it.
+    return null;
   }
 
   /** The car put on the lane as a vehicle of the traffic, bound for the bay at the other end. */
@@ -522,7 +663,7 @@ export class OwnCars {
 
   /** The car as a drawn body off the road, standing at `(x, y)` facing `angle`. */
   private offRoadBody(w: SimWorld, car: OwnCar, lanelet: Vehicle['lanelet'], x: number, y: number, angle: number,
-    lot: number): Vehicle {
+    lot: number | null): Vehicle {
     const body = createVehicle(car.id, car.archetype, car.driver, car.colour, lanelet, 0, w.clock.tick);
     body.seats = 0;
     body.free = { x, y, angle, px: x, py: y, pangle: angle, lot };

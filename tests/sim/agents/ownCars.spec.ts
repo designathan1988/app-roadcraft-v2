@@ -7,7 +7,7 @@ import { Network } from '@world/network';
 import { m } from '@world/units';
 import type { BuildingId } from '@world/buildings/types';
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine } from '@sim/people/people';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { vehiclePose } from '@sim/pose';
@@ -39,7 +39,7 @@ describe('agents: residents use their own cars', () => {
     net.rebuild();
     const sim = new SimWorld(doc, net, 0x2024);
     sim.rebuildTopology();
-    sim.usePedestrianEngine(createPeopleEngine());
+    sim.usePedestrianEngine(createAgentWalkEngine());
     sim.driveModel = 'v2';
     sim.populationShare = 0.3;
     sim.city.useAgents(true);
@@ -88,12 +88,14 @@ describe('agents: residents use their own cars', () => {
     let pocket = 0;
     let time = 0;
     const lanes = new Map<number, string[]>();
+    const parkedWhen = new Map<number, boolean>();
     sim.clock.run(Math.round(300 / DT), () => {
       // Done when every one has parked and is walking in (or is in).
       if ([...sent.keys()].every((id) => { const t = cars.trips.get(id); return !t || t.phase === 'fromCar'; })) return;
       step(sim);
       time += DT;
-      for (const v of sim.vehicles.values()) if (!owned.has(v.id)) pocket++;
+      // Residents without a car may cycle (`CityLife`): their bicycles are theirs too.
+      for (const v of sim.vehicles.values()) if (!owned.has(v.id) && v.archetype.shape !== 'bicycle') pocket++;
       for (const id of sent.keys()) {
         const t = cars.trips.get(id);
         if (!t) continue;
@@ -107,6 +109,8 @@ describe('agents: residents use their own cars', () => {
         let at = phaseAt.get(id);
         if (!at) { at = new Map(); phaseAt.set(id, at); }
         if (!at.has(t.phase)) at.set(t.phase, time);
+        // Parked as the driver gets out (later, its owner may set off again).
+        if (t.phase === 'alight' && !parkedWhen.has(id)) parkedWhen.set(id, t.car.bay !== null && t.car.body !== null);
       }
       for (const car of cars.cars.values()) {
         const v = car.body ?? sim.vehicles.get(car.id);
@@ -142,7 +146,7 @@ describe('agents: residents use their own cars', () => {
       const at = phaseAt.get(id) ?? new Map<CarPhase, number>();
       const inside = city.whereIs(s.resident) === s.to;
       const car = [...cars.cars.values()].find((c) => c.id === s.car)!;
-      const parkedNear = car.bay !== null && car.body !== null;
+      const parkedNear = parkedWhen.get(id) ?? (car.bay !== null && car.body !== null);
       if (at.has('alight') && parkedNear) parked++;
       if (inside) arrived++;
       const times = phases.map((p) => `${p}@${at.has(p) ? at.get(p)!.toFixed(0) : '-'}`).join(' ');

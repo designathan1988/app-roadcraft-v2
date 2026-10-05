@@ -66,6 +66,8 @@ const WHITE = '#efece0';
 /** The MER's dashes along the parking lane: 1 m of paint, 1 m clear. */
 const MER_DASH: readonly number[] = [m(1), m(1)];
 const YELLOW = '#e1c45a';
+/** The red of a ciclofaixa's paving. */
+const CYCLE_RED = '#a8473e';
 /** Kept clear either side of a lot's frontage for its entrance. */
 const ENTRANCE_MARGIN = m(1);
 /** Step of the paint along a run, so a line follows a curve. */
@@ -109,6 +111,24 @@ export function parkingLayout(net: Network, entrances: readonly [Vec2, Vec2][] =
       const kind = side === 1 ? rt.parkingLeftKind : rt.parkingRightKind;
       const depth = side === 1 ? rt.parkingLeft : rt.parkingRight;
       if (kind === 'none' || depth <= 0) continue;
+      if (kind === 'cycle') {
+        // A cycle lane: red from mouth to mouth, a solid white line on the
+        // side of the traffic. No bays.
+        const run = [Math.max(0, mouthA), Math.min(length, mouthB)] as const;
+        if (run[1] - run[0] < m(4)) continue;
+        const along = (offset: number): Vec2[] => {
+          const pts: Vec2[] = [];
+          const n = Math.max(2, Math.ceil((run[1] - run[0]) / m(2)) + 1);
+          for (let i = 0; i < n; i++) {
+            const f = line.sampleAt(run[0] + ((run[1] - run[0]) * i) / (n - 1));
+            pts.push({ x: f.p.x + f.n.x * offset * side, y: f.p.y + f.n.y * offset * side });
+          }
+          return pts;
+        };
+        lines.push({ segment: ribbon.id, points: along(half - depth / 2), width: depth - m(0.1), color: CYCLE_RED, dash: null });
+        lines.push({ segment: ribbon.id, points: along(half - depth + m(0.06)), width: m(0.12), color: WHITE, dash: null });
+        continue;
+      }
       // Which way a car moving on this side travels, along a -> b.
       const travel = segment.direction === 'aToB' ? 1 : segment.direction === 'bToA' ? -1 : side === 1 ? -1 : 1;
       const blocked = frontagesOn(line, half, side, entrances);

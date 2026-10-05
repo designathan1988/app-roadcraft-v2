@@ -1,3 +1,5 @@
+import { pointInPolygon } from '@core/polygon';
+import { onCarriageway } from '@world/carriageway';
 import {
   Color,
   Quaternion,
@@ -61,6 +63,7 @@ import { MAP_SIZE } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
+import { buildTransit, type TransitMeshes } from './transit';
 import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { buildingPads } from '@world/buildings/pads';
 import { Indoors } from './indoors';
@@ -433,6 +436,9 @@ export function createSceneRenderer(
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
   let barriersFor = '';
+  /** Public transport (`transit.ts`), and the state it was built for. */
+  let transit: TransitMeshes | null = null;
+  let transitFor = '';
   let elevation: RoadElevation | null = null;
 
   // What each rebuild keeps for the next: the tiles of every surface an edit
@@ -1037,6 +1043,22 @@ export function createSceneRenderer(
         world.add(barriers.group);
         builtTriangles += barriers.triangles;
       }
+      // Public transport: tracks, stations, stops (`transit.ts`), on its own revision.
+      const transitKey = `${net.doc.transitRevision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
+      if (transitKey !== transitFor) {
+        transitFor = transitKey;
+        if (transit) {
+          builtTriangles -= transit.triangles;
+          world.remove(transit.group);
+          transit.dispose();
+        }
+        // A metro entrance stands off the streets and out of the buildings.
+        const solids = [...net.doc.buildings.all()].flatMap((b) => solidFootprints(b));
+        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt,
+          (p) => onCarriageway(net, p) || solids.some((ring) => pointInPolygon(p, ring)));
+        world.add(transit.group);
+        builtTriangles += transit.triangles;
+      }
       const gardenKey = `${plantSignature(net.doc)}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
       if (gardenKey !== gardensFor) {
         gardensFor = gardenKey;
@@ -1123,12 +1145,14 @@ export function createSceneRenderer(
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
       gardens?.cull(crowdFrustum, crowdProjection);
+      transit?.update(sim.city.transit.trains(), terrain.renderedHeightAt);
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
-        indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+        indoor: [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+          ...indoors.yard(sim, terrain.naturalRenderedHeightAt)],
         exhaust: (x, y, z, angle, length, speed, dusty) => {
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);

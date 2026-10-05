@@ -7,10 +7,11 @@ import { roadType } from '@world/roadTypes';
 import { m } from '@world/units';
 import type { BuildingId } from '@world/buildings/types';
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine } from '@sim/people/people';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { vehiclePose } from '@sim/pose';
+import type { OwnCar as OwnCarOf } from '@sim/agents/cars';
 import { solidFootprints } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
 
@@ -33,7 +34,7 @@ describe('agents: parking along the kerb', () => {
     net.rebuild();
     const sim = new SimWorld(doc, net, 0x2024);
     sim.rebuildTopology();
-    sim.usePedestrianEngine(createPeopleEngine());
+    sim.usePedestrianEngine(createAgentWalkEngine());
     sim.driveModel = 'v2';
     sim.populationShare = 0.3;
     sim.city.useAgents(true);
@@ -71,9 +72,18 @@ describe('agents: parking along the kerb', () => {
     const last = new Map<number, { x: number; y: number }>();
     let jumps = 0;
     let throughWalls = 0;
+    // Each car as it stood when its driver began to get out: the parked pose.
+    // (Later, its owner may set off again for reasons of their own.)
+    const parked = new Map<number, { bay: NonNullable<OwnCarOf['bay']>; f: NonNullable<NonNullable<OwnCarOf['body']>['free']> }>();
     sim.clock.run(Math.round(300 / DT), () => {
       if ([...sent.keys()].every((id) => { const t = cars.trips.get(id); return !t || t.phase === 'fromCar'; })) return;
       step(sim);
+      for (const [trip, s] of sent) {
+        const t = cars.trips.get(trip);
+        if (parked.has(trip) || !t || t.phase !== 'alight') continue;
+        const car = [...cars.cars.values()].find((c) => c.id === s.car)!;
+        if (car.bay && car.body?.free) parked.set(trip, { bay: car.bay, f: { ...car.body.free } });
+      }
       for (const car of cars.cars.values()) {
         const v = car.body ?? sim.vehicles.get(car.id);
         if (!v) continue;
@@ -88,18 +98,21 @@ describe('agents: parking along the kerb', () => {
 
     let inKerbBay = 0;
     let alongKerb = 0;
-    for (const s of sent.values()) {
-      const car = [...cars.cars.values()].find((c) => c.id === s.car)!;
-      const bay = car.bay;
-      if (!bay?.kerb || !car.body?.free) continue;
+    for (const trip of sent.keys()) {
+      const at = parked.get(trip);
+      if (!at?.bay.kerb) continue;
       inKerbBay++;
-      const f = car.body.free;
+      const { bay, f } = at;
       // Nose along the kerb, the way the traffic beside it goes (`-o`).
-      if (Math.cos(f.angle) * -bay.ox + Math.sin(f.angle) * -bay.oy > 0.98 &&
-        Math.hypot(f.x - bay.x, f.y - bay.y) < m(0.3)) alongKerb++;
+      const aligned = Math.cos(f.angle) * -bay.ox + Math.sin(f.angle) * -bay.oy;
+      const off = Math.hypot(f.x - bay.x, f.y - bay.y);
+      if (aligned > 0.98 && off < m(0.3)) alongKerb++;
+      else console.log(`off the kerb: trip ${trip} angle ${(Math.acos(Math.max(-1, Math.min(1, aligned))) * 180 / Math.PI).toFixed(1)} deg, ${(off / m(1)).toFixed(2)} m from the bay; neighbours ${cars.bays.filter((b) => b !== bay && b.car !== null && Math.hypot(b.x - bay.x, b.y - bay.y) < m(8)).length}`);
     }
     const report = { kerbBays: kerbBays.length, sent: sent.size, inKerbBay, alongKerb, jumps, throughWalls,
-      inside: [...sent.values()].filter((s) => city.whereIs(s.resident) === s.to).length };
+      inside: [...sent.values()].filter((s) => city.whereIs(s.resident) === s.to).length,
+      // Where each one got to: the step of a trip still under way, the kind of bay of one over.
+      ends: [...sent.keys()].map((trip) => cars.trips.get(trip)?.phase ?? (parked.get(trip)?.bay.kerb ? 'kerb' : 'lot')) };
     console.log(`kerb parking: ${JSON.stringify(report)}`);
     expect(report.inKerbBay).toBe(report.sent);
     expect(report.alongKerb).toBe(report.sent);

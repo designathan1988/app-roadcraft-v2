@@ -3,7 +3,8 @@ import { Rng as RngStream } from '@core/rng';
 import type { RoadDoc } from './doc';
 import type { NodeId } from './ids';
 import type { RoadStructure } from './structures';
-import { Level, ROAD_TYPES, halfWidth, type RoadType } from './roadTypes';
+import { Level, ROAD_TYPES, halfWidth, roadProfile } from './roadTypes';
+import type { SegmentParking } from './parking';
 import type { TerrainMode, TerrainStamp } from './terrain';
 import { type BlueprintBody } from './buildings/blueprints';
 import { Model, mat } from './buildings/cityBuildings';
@@ -70,6 +71,21 @@ type Rng = () => number;
 
 const LOCAL = ROAD_TYPES.findIndex((t) => t.id === 'local');
 const AVENUE_CLASS = ROAD_TYPES.findIndex((t) => t.id === 'avenue');
+/**
+ * The residential streets are laid with parallel parking along both kerbs, as
+ * real ones are: the residents' cars stand there (`sim/agents/parking.ts`
+ * kerb bays). The lots are set back from the street with its parking lanes.
+ */
+const STREET_PARKING: SegmentParking = { left: 'parallel', right: 'parallel' };
+const parkingOf = (type: number): SegmentParking | undefined => (type === LOCAL ? STREET_PARKING : undefined);
+/**
+ * The local streets running east-west trade the parking on one side for a
+ * cycle lane (ciclofaixa, `parking.ts` kind `cycle`): the same 2 m band, so
+ * the lots stand where they do on the other streets.
+ */
+const CYCLE_STREET: SegmentParking = { left: 'parallel', right: 'cycle' };
+const parkingAlong = (type: number, from: Vec2, to: Vec2): SegmentParking | undefined =>
+  type === LOCAL && Math.abs(to.x - from.x) > Math.abs(to.y - from.y) ? CYCLE_STREET : parkingOf(type);
 
 /** The ground the town stands on, before the hills: world units above datum. */
 const TOWN_LEVEL = 14;
@@ -238,7 +254,8 @@ class Nodes {
     for (let i = 0; i + 1 < points.length; i++) {
       const from = points[i] as Vec2;
       const to = points[i + 1] as Vec2;
-      this.doc.addSegment(this.at(from.x, from.y), this.at(to.x, to.y), type, null, 0, 'both', null, structure);
+      this.doc.addSegment(this.at(from.x, from.y), this.at(to.x, to.y), type, null, 0, 'both', null, structure,
+        undefined, parkingAlong(type, from, to));
     }
   }
 }
@@ -332,7 +349,7 @@ function layStreets(doc: RoadDoc): Nodes {
 // ---------------------------------------------------------------- occupancy
 
 /** A lot begins at the back of the actual footway, where a frontage can stand. */
-const sidewalkOf = (type: number): number => halfWidth(ROAD_TYPES[type] as RoadType, Level.Sidewalk);
+const sidewalkOf = (type: number): number => halfWidth(roadProfile(type, null, 'both', undefined, parkingOf(type)), Level.Sidewalk);
 const LOCAL_LOT_OFF = sidewalkOf(LOCAL);
 const AVENUE_LOT_OFF = sidewalkOf(AVENUE_CLASS);
 

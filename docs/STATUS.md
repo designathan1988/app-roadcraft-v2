@@ -22,7 +22,7 @@ own car, replacing the three pedestrian engines and the cars that appear from
 nowhere. The player approved deleting the old engines once the new one is live
 and they have seen it.
 
-- **Slice 1, LIVE behind `?agents=1`** (b3ef7ab, 0090c88; on 4180 since
+- **Slice 1, LIVE (default since slice 5)** (b3ef7ab, 0090c88; on 4180 since
   2026-10-04 20:47): a car owner's car stands in a real bay of the lot behind
   their building (`sim/agents/parking.ts`); they leave by the back door, get
   in, back out, follow the lot's aisles out (`lotNav.ts`), drive in the
@@ -33,17 +33,170 @@ and they have seen it.
   `tests/sim/agents/ownCars.spec.ts` (6/6 chains, 0 jumps, 0 car bodies in
   walls, 0 cars not owned by a resident). Photos: `scripts/agents-shots.mjs`,
   `scripts/agent-card-shots.mjs`.
-- **Not yet:** only residents with a free bay reachable from their back door
-  own a car in agent mode (46 of 2151 in the default town); walks that are not
-  from a back door still use the old People engine and can stall; a car
-  crossing the footway does not yet wait for every walker; parked cars are not
-  obstacles for the walkers.
-- **Next slices:** 2, needs and smart objects (The Sims: hunger, energy, fun,
-  social; places and objects advertise what they offer; the agent picks by
-  need instead of only the diary). 3, one new walking engine for agents (lanes
-  on the footways, the lab's Detour crowd for open areas) replacing People,
-  the Detour crowd flag and `sim/peds`. 4, agents by default, then the old
-  engines deleted after the player has seen it.
+- **Slice 2, LIVE (default since slice 5)** (6957f58): needs (hunger, energy, fun,
+  social, hygiene) run down by the hour; places advertise what they give and
+  when they are open (`sim/agents/mind.ts`); a resident free of work or school
+  goes where need, distance and the hour weigh most. The agent card shows the
+  need bars. Measured: `tests/sim/agents/mind.spec.ts`.
+- **Slice 3, LIVE (default since slice 5)** (2026-10-05): the agents walk with
+  their own engine, `sim/agents/walk.ts`, instead of the People engine: lanes on
+  the footways of `world/walkways.ts` (SUMO's striping: the stripe with the
+  most room, keep right, speed from the gap ahead, a sidestep when held up),
+  the body following a point ahead (never a jump, a backward or a sideways
+  step), zebras waited for at the kerb by the same rule and signals the cars
+  keep, a crowd leaving one building coming out one after another. Measured:
+  `tests/sim/agents/walk.spec.ts` (default town, 17:00, 150 s: 211 walks, 0
+  jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
+  signal cycle). Photos: `scripts/walk-shots.mjs`
+  (`docs/audit/2026-10-05/walk/`).
+- **Slice 4, LIVE** (2026-10-05): a car owner keeps their car in the lot
+  behind their building or, failing that, in the free bay nearest their door
+  within a minute's walk (a lot down the street or a kerb bay); with no bay
+  near home they keep no car and walk (Cities: Skylines II's rule: the bays
+  are the cars a town can hold). The default town is now laid with parallel
+  parking along both kerbs of its local streets, its lots set back from the
+  street with its parking lanes: 761 buildings, 2004 residents, 580 cars
+  (was 80 with no street parking). A kerb bay whose joining point falls behind
+  it (near a street's end) is not used: the car would turn on the spot.
+  Photos: `docs/audit/2026-10-05/new-town/`.
+- **Cars and walkers on the footway, LIVE (default since slice 5)** (2026-10-05):
+  a car leaving or entering a lot crosses the footway square in front of the
+  lot's edge (it used to run metres along it to a joining point kept clear of
+  the junction, `docs/audit/2026-10-05/stuck-plan.png`); it takes the ground of
+  the rest of its manoeuvre in turn with the people, as a zebra is taken
+  (`OwnCars.holdWay`): it waits until nobody is on it or about to step on, then
+  drives it without stopping, the walkers keeping off it, those already on it
+  walking off; a car kept waiting 3 s has the walkers give way. Parked and
+  manoeuvring cars are solid to walkers. Measured: `walk.spec.ts` second test
+  (18 cars across footways, 54 walkers sent through them: 0 body-ticks inside a
+  car, everybody arrived).
+- **Road ends, LIVE (default since slice 5)** (2026-10-05): across the end of a
+  street that leads nowhere an unmarked crossing joins its two footways
+  (`Walkway.unmarked`); a walker takes a gap in the traffic there (the time
+  across plus 2 s, no margin after 30 s waiting) and no car is put on the map
+  onto people crossing there. The player's city went from 24 walking pieces to
+  16 (each lone street now one). Measured: `walk.spec.ts` third test (a
+  street with traffic at the default: 18 crossings, 0 inside a vehicle, all
+  across).
+- **Life inside, LIVE** (2026-10-05): residents do things in the buildings
+  they are in (`sim/agents/activities.ts`), the furniture advertising what it
+  gives (The Sims' smart objects): at home sleep in their own bed, nap, watch
+  TV, read, game, cook, eat, snack, wash the dishes, bathe, clean, mend, talk
+  with the family, look after the children, exercise; in their lot garden,
+  swim, sit out in front, wash the car; at work their post by trade (desk and
+  computer, machine, checkout, shelves, stove, bar, reception, blackboard,
+  ward, altar, guard, cleaning), pupils at their desks; out, what the place is
+  for (dine, drink, dance, shop and pay, bank, cinema, pray, gym, library,
+  wait), or a friend's sofa. Two needs were added: `environment` (the home
+  kept) and `errands` (bank, post, council, shopping). The renderer draws each
+  of them at their piece, in their pose (`render/indoors.ts`); people in their
+  lots are drawn always. A building opened (two clicks) now has a floor bar in
+  the game's own interface (`ui/insideBar.ts`). `CityLife.skip` no longer runs
+  needs down for the hours skipped. Measured: `tests/sim/agents/activities.spec.ts`
+  (03:00: 1110 asleep; 09:30: workers at posts; evening: 20+ different doings;
+  no piece held by two). Photos: `scripts/life-shots.mjs`
+  (`docs/audit/2026-10-05/life/`). Not yet: a walk across town takes game
+  hours (20x time, 1.34 m/s), so fewer reach work than are due.
+- **A person in the player's hands (GTA), LIVE** (2026-10-05): the agent
+  card's Control button takes any resident (walking, driving, or inside a
+  building: out of the door) into the player's hands (`sim/agents/player.ts`,
+  `ui/playerHud.ts`): WASD/arrows along the screen, Shift to run, F talks with
+  the person in front (both stop, face each other; their social need is met),
+  Space hits (they fall and everybody round runs off; some hit back), E gets
+  into the nearest car - parked, or in the traffic (its driver pulled out,
+  walking off) - driven as a kinematic bicycle, crashing on walls and
+  vehicles, knocking down people; Esc lets go (they walk home). Crimes seen
+  put stars on (GTA's wanted level); out of sight they go one by one; the
+  residents on duty at the police stations run after the player and arrest
+  them on foot. Children do not drive. Measured: `tests/sim/agents/player.spec.ts`;
+  photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). E by
+  a door (nearer than any car) takes them in: they are in the building as
+  anybody there, doing what it is for (shopping at a supermarket, dining at a
+  restaurant, at the bank's counter, paying at a bakery, a sofa at a home),
+  and that meets their needs; the HUD shows "Dentro: <lugar> . <atividade>";
+  E brings them out at the door (`CityLife.enterAs`/`leaveAs`). Not yet:
+  police cars (officers run), weapons.
+- **Public transport, LIVE** (2026-10-05): a Transport category in the dock
+  (`editor/transitTools.ts`, `ui/v2/shell.ts`) lays out bus stops on the
+  footways (a click by a street), bus terminals, train tracks (clicks, a
+  double click or Enter ends; a track may cross streets but not run down one),
+  metro tracks (under the ground), train and metro stations on their tracks,
+  and lines (stops clicked in order); the lines are listed with their
+  vehicles (+/-) and can be deleted; all saved with the map
+  (`world/transit.ts`, `RoadDoc.transit`) and undoable. Buses run in the
+  traffic from stop to stop (`sim/transit/transit.ts`), standing at each
+  (longer at a terminal), out and back; trains and the metro run along their
+  tracks, stopping at stations, keeping their distance. Residents without a
+  car going far walk to a stop, wait there (standing at it), board, get off
+  at their stop, walk on. Level crossings close for a train (the traffic
+  stops short, `vehicles/obstacles.ts`; walkers keep off the track ahead).
+  Drawn (`render/transit.ts`): tracks on ballast and sleepers (rails alone
+  across a street), platforms with canopies, metro entrances, bus shelters
+  at the kerb with the line's colour, trains in their line's colour.
+  Measured: `tests/sim/transit/transit.spec.ts` (buses serve stop after stop,
+  trains stand at stations, residents carried, nobody and no vehicle inside a
+  train). Photos: `scripts/transit-shots.mjs` (`docs/audit/2026-10-05/transit/`).
+  Not yet: transfers between lines, fares, trains with windows.
+  Rails near a junction: traffic waits for the junction before the track,
+  never on it (`TransitSim.crossingNearEnd`, used by `vehicles/obstacles.ts`
+  and `intersections/admission.ts`); walkers keep off a train's run of the
+  next 7 s, and off a train about to leave a station.
+- **Nannies and bus drivers, LIVE** (2026-10-05): a family whose adults all
+  work, with a child, has a nanny (one family in two): an adult without a job
+  from a home within 500 m (`population.ts` `hireNannies`). In their hours,
+  at the family's home, they look after the children, clean and cook, turn
+  about through the day (`activities.ts`, the posts of a home). Every bus of
+  a line is driven by a resident (`CityLife.hireDriver`): an adult without a
+  job, at home, living nearest the line's first stop, taken off their day
+  while the bus runs, home again when it comes off; they are the person drawn
+  at the wheel, and a click on the bus opens their card ("motorista de
+  onibus", "Dirigindo o onibus da linha N"). Measured:
+  `tests/sim/agents/jobs.spec.ts` (nannies at the family home doing childcare,
+  cleaning, cooking) and `tests/sim/transit/transit.spec.ts` (buses driven by
+  residents). Photo: `docs/audit/2026-10-05/transit/05-bus-driver-card.png`.
+  Not yet: train and metro drivers, taxi drivers, a photo of a nanny indoors.
+- **Crime in the streets and the police, LIVE** (2026-10-05): one adult in
+  25 is a thief (`sim/agents/crime.ts`). From 13:00 to 23:00 a thief leaves
+  where they are, follows somebody walking near, robs them (the victim
+  falls), and runs for home. Round the robbery, the behaviour zones of
+  Hitman's crowds: close by people run off, farther they stop and look. The
+  victim calls the police: the nearest officer on foot patrol (half of those
+  on duty walk beats of up to 1.2 km round their station) or one from the
+  station runs after the thief; one who catches up arrests them, both walk to
+  the station and the thief is held 8 game hours (`CityLife.hold`). A thief
+  home first got away. The agent card shows "ladrão", the phase (robbing,
+  running, arrested, held) and officers on patrol or in a chase. Measured:
+  `tests/sim/agents/crime.spec.ts` (robberies, witnesses, officers out,
+  arrests held at a police station). Not yet: police cars, weapons, uniforms
+  (officers look like anybody), burglary of houses, car theft by NPCs.
+- **Cycle lanes (ciclofaixa), LIVE** (2026-10-05): a band by the kerb can be
+  `cycle` (`world/parking.ts`): painted red with a solid white line
+  (`world/parkingLayout.ts`). The road tool offers "Ciclofaixa dos dois
+  lados" and "Ciclofaixa a direita, vagas a esquerda"; the road panel sets
+  each side. The new town's east-west local streets have one on the right
+  (`world/defaultTown.ts`, `maps/cidade-com-estacionamento.json`). Bicycles
+  on the lane beside it ride inside the band, easing back to the lane near
+  the corners (`sim/vehicles/cycleLane.ts`, `sim/pose.ts`); cars of that
+  lane pass them instead of following (`vehicles/leaderIndex.ts`). One in
+  three residents without a car cycles to places 200 m to 1.6 km away (farther:
+  transit), gets off at the kerb and walks in (`CityLife.start`, trip mode
+  `bike`); clicking the bicycle opens their card ("De bicicleta ate ...").
+  Measured: `tests/sim/agents/cycleLane.spec.ts` (bicycles in the band, cars
+  pass them, no overlap, residents ride and get off). Photos:
+  `scripts/cycle-shots.mjs` and the app (`docs/audit/2026-10-05/cycle/`).
+  Not yet: two-way cycle tracks, bicycle parking, bicycles at give-way
+  priority over turning cars.
+- **By design, not missing:** every person on the streets is a resident (no
+  passers-by made up); car owners without a bay near home walk; with
+  residents there is no generated traffic, so no buses run (the game has no
+  bus lines: public transport for the agents would be a new system: lines,
+  stops, the choice to ride); roads that touch no other road stay separate
+  places for walkers (nobody walks over open ground).
+- **Slice 5, LIVE by default** (2026-10-05): the game runs the agents with no
+  flag; `?agents=0` (or `?people=crowd`, `?peds=legacy`) brings back the old
+  engines. Photographed with no flag: `docs/audit/2026-10-05/default/`.
+- **Next:** People, the Detour crowd flag and `sim/peds` deleted once the
+  player has seen the agents and says so.
 
 ## Live in the game (main, 4180)
 
@@ -88,7 +241,7 @@ and they have seen it.
   7.3), closed at both ends of a run, a division line between every two bays.
   Chosen in the road tool (none / both sides / right / left) and per segment
   in the inspector. Old maps' 45/90 degree values load as parallel.
-  Agents (`?agents=1`) park in street bays too (`sim/agents/parking.ts`
+  Agents park in street bays too (`sim/agents/parking.ts`
   `kerbBays`): the car stops beside and ahead of the bay, backs in, and drives
   forward out (`manoeuvre.ts`); `tests/sim/agents/kerbParking.spec.ts`.
 - **Nothing is generated on streets or terrain (ef567e3, the player's order of

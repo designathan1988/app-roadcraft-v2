@@ -1,6 +1,6 @@
 import { Rng } from '@core/rng';
 import { localFootprint } from '@world/buildings/footprints';
-import { topLevel } from '@world/buildings/geometry';
+import { footprintCentre, topLevel } from '@world/buildings/geometry';
 import { deriveSpaces } from '@world/buildings/spaces';
 import type { Building, BuildingFunction, BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
@@ -279,7 +279,45 @@ export function derivePopulation(buildings: Iterable<Building>): Population {
     }
     homes.set(b.id, list);
   }
+  hireNannies(residents, homes, all);
   const jobs = new Map<BuildingId, { offered: number; taken: number }>();
   for (const b of workplaces) jobs.set(b.id, { offered: offered.get(b.id)!, taken: taken.get(b.id) ?? 0 });
   return { residents, jobs, homes };
+}
+
+/** How far a nanny lives from the family they work for, at most. */
+const NANNY_REACH = m(500);
+
+/**
+ * Nannies: a family whose adults all go out to work and who have a child at
+ * home is given one (one family in two), an adult of another home near who
+ * has no job. Their job is that family's home: there, in their hours, they
+ * look after the children, clean and cook (`activities.ts`, `POSTS` of a home).
+ */
+function hireNannies(residents: Resident[], homes: ReadonlyMap<BuildingId, readonly number[]>, all: readonly Building[]): void {
+  const byId = new Map(residents.map((r, i) => [r.id, i]));
+  const anchor = new Map(all.map((b) => [b.id, footprintCentre(b)]));
+  const taken = new Set<number>();
+  for (const [home, list] of homes) {
+    if (home % 2 !== 0) continue;
+    const family = list.map((id) => residents[byId.get(id)!]!);
+    const kids = family.some((r) => r.ageClass === 'child');
+    const adults = family.filter((r) => r.ageClass === 'adult');
+    if (!kids || adults.length === 0 || adults.some((r) => r.work === null)) continue;
+    const at = anchor.get(home);
+    if (!at) continue;
+    let best: number | null = null, bestD = NANNY_REACH;
+    for (const r of residents) {
+      if (r.ageClass !== 'adult' || r.work !== null || r.home === home || taken.has(r.id)) continue;
+      const a = anchor.get(r.home);
+      if (!a) continue;
+      const d = Math.hypot(a.x - at.x, a.y - at.y);
+      if (d < bestD) { best = r.id; bestD = d; }
+    }
+    if (best === null) continue;
+    taken.add(best);
+    const i = byId.get(best)!;
+    const r = residents[i]!;
+    residents[i] = { ...r, work: home, workLevel: 0, leaveAt: 7 * 60 + 15, stay: 9 * 60, errand: null, lunch: null };
+  }
 }

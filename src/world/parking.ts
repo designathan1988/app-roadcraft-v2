@@ -20,7 +20,13 @@ import { m } from './units';
  * entrances; that is laid out in `parkingLayout.ts`.
  */
 
-export const PARKING_KINDS = ['none', 'parallel'] as const;
+/**
+ * A band by the kerb is parking (`parallel`) or a CYCLE LANE (`cycle`): the
+ * ciclofaixa of the Brazilian code (CTB, MBST vol. IV), a lane of the
+ * carriageway painted red, kept from the traffic by a solid white line, where
+ * the bicycles ride (`sim/pose.ts`, `vehicles/leaderIndex.ts`).
+ */
+export const PARKING_KINDS = ['none', 'parallel', 'cycle'] as const;
 export type ParkingKind = (typeof PARKING_KINDS)[number];
 
 /** Parking on the two sides of a segment, left and right of its a -> b direction. */
@@ -35,12 +41,15 @@ export const NO_PARKING: SegmentParking = { left: 'none', right: 'none' };
 export const PARKING_DEPTH: Readonly<Record<ParkingKind, number>> = {
   none: 0,
   parallel: m(2),
+  // 1.5 m to 2 m in the manuals; whole metres of the grid.
+  cycle: m(2),
 };
 
 /** Distance along the kerb between bay lines, world units. */
 export const PARKING_PITCH: Readonly<Record<ParkingKind, number>> = {
   none: 0,
   parallel: m(6),
+  cycle: 0,
 };
 
 

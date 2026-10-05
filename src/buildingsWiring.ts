@@ -25,6 +25,7 @@ import { buildFromReference } from '@editor/fromReference';
 import { buildingBounds } from '@world/buildings/geometry';
 import { initBuilderWorkspace, type BuilderActions, type BuilderState } from '@ui/builder/workspace';
 import { plural, t } from '@ui/i18n';
+import { createInsideBar } from '@ui/insideBar';
 
 /**
  * The building tool's share of the composition root.
@@ -132,6 +133,16 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
   /** See inside, for the whole city: on or off, and the floor seen. */
   // See inside: one building, the one clicked, cut open at a floor.
   const seeInside: { on: boolean; level: number; target: BuildingId | null } = { on: false, level: 0, target: null };
+  // The floors of the building open, from the game's own interface (`ui/insideBar.ts`).
+  const insideBar = createInsideBar({
+    down: () => { seeInside.level = Math.max(0, seeInside.level - 1); insideBar.show(seeInside); deps.requestDraw(); },
+    up: () => {
+      const b = seeInside.target !== null ? doc.buildings.get(seeInside.target) : undefined;
+      seeInside.level = Math.min(b ? Math.max(0, topLevel(b) - 1) : 60, seeInside.level + 1);
+      insideBar.show(seeInside); deps.requestDraw();
+    },
+    close: () => { seeInside.on = false; seeInside.target = null; insideBar.show(seeInside); deps.requestDraw(); },
+  });
   /** What a drawn shape does: new building, joined block, block on the roof, cut. */
   let drawAction: 'new' | 'ground' | 'top' | 'cut' = 'new';
 
@@ -703,6 +714,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       }
       else if (command === 'up') seeInside.level = Math.min(60, seeInside.level + 1);
       else seeInside.level = Math.max(0, seeInside.level - 1);
+      insideBar.show(seeInside);
       deps.requestDraw();
       return { ...seeInside };
     },
@@ -1005,6 +1017,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
         seeInside.target = hit;
       } else return false;
       workspace.showInside({ on: seeInside.on, level: seeInside.level });
+      insideBar.show(seeInside);
       deps.requestDraw();
       return true;
     },

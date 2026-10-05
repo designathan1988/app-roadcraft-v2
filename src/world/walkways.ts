@@ -82,6 +82,11 @@ export interface Walkway {
   readonly node?: NodeId;
   /** Which deck it is on. */
   readonly structure: RoadStructure;
+  /**
+   * A crossing with no zebra painted: across the end of a road that leads
+   * nowhere. Walkers take a gap in the traffic there; nothing stops for them.
+   */
+  readonly unmarked?: true;
 }
 
 /** A road at grade lifted more than this by its own heights is a viaduct for whoever walks it, u. */
@@ -546,6 +551,17 @@ export function buildWalkways(net: Network): WalkGraph {
       g.add({ kind: 'crossing', path: Polyline.fromPoints([pa, pb]), width: CROSSWALK_DEPTH, lo: -CROSSWALK_DEPTH / 2, hi: CROSSWALK_DEPTH / 2, kerb: 0,
         segment: segId, node: nodeId, structure: deckOf(doc, segId), a, b });
     }
+  }
+  // --- road ends: across the end of a road that leads nowhere, an unmarked
+  // crossing joins its two footways, or each side of a street that ends would
+  // be an island to whoever walks it (a cul-de-sac, a road off the map).
+  for (const [nodeId, here] of ends) {
+    if (doc.requireNode(nodeId).incident.length !== 1) continue;
+    const left = here.find((e) => e.side > 0), right = here.find((e) => e.side < 0);
+    if (!left || !right || left.way.structure !== right.way.structure || left.way.segment === undefined) continue;
+    if (Math.hypot(left.p.x - right.p.x, left.p.y - right.p.y) < JOIN) continue;
+    g.add({ kind: 'crossing', path: Polyline.fromPoints([left.p, right.p]), width: m(2), lo: -m(1), hi: m(1), kerb: 0,
+      segment: left.way.segment, node: nodeId, structure: left.way.structure, a: left.node, b: right.node, unmarked: true });
   }
   return g;
 }

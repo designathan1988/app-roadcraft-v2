@@ -1,0 +1,196 @@
+[
+ {
+  "name": "00-card",
+  "view": null
+ },
+ {
+  "name": "01-taken",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 286.42107672160836,
+   "y": -189.27253615523279,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 62.38333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "02-walked",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 281.57410985420694,
+   "y": -184.31695263383938,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 62.38333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "03-ran",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 299.50519755286825,
+   "y": -166.2364855426137,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "taken",
+    "at": 62.38333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "04-talk",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 289.71157797063194,
+   "y": -164.53011755550136,
+   "health": 100,
+   "wanted": 0,
+   "speed": 0,
+   "message": {
+    "key": "nobody",
+    "at": 72.8
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "05-hit",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 284.8113974868543,
+   "y": -118.19370579341825,
+   "health": 85,
+   "wanted": 1,
+   "speed": 0,
+   "message": {
+    "key": "hitBack",
+    "at": 94.46666666666667
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "06-after",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": 284.8113974868543,
+   "y": -118.19370579341825,
+   "health": 85,
+   "wanted": 1,
+   "speed": 0,
+   "message": {
+    "key": "hitBack",
+    "at": 94.46666666666667
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "07-in-car",
+  "view": {
+   "resident": 151,
+   "mode": "car",
+   "place": null,
+   "activity": null,
+   "x": 310,
+   "y": -115,
+   "health": 85,
+   "wanted": 1,
+   "speed": 0,
+   "message": {
+    "key": "inCar",
+    "at": 103.7
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "08-driving",
+  "view": {
+   "resident": 151,
+   "mode": "car",
+   "place": null,
+   "activity": null,
+   "x": 308.878436143164,
+   "y": -81.01473737377427,
+   "health": 85,
+   "wanted": 2,
+   "speed": 0,
+   "message": {
+    "key": "crash",
+    "at": 107.95
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "09-inside-restaurant",
+  "view": {
+   "resident": 151,
+   "mode": "inside",
+   "place": 4,
+   "activity": null,
+   "x": -1088.75,
+   "y": 20.645,
+   "health": 85,
+   "wanted": 2,
+   "speed": 0,
+   "message": {
+    "key": "wentIn",
+    "at": 110.83333333333333
+   },
+   "officers": 0
+  }
+ },
+ {
+  "name": "10-out-of-restaurant",
+  "view": {
+   "resident": 151,
+   "mode": "foot",
+   "place": null,
+   "activity": null,
+   "x": -1088.75,
+   "y": 20.645,
+   "health": 85,
+   "wanted": 2,
+   "speed": 0,
+   "message": {
+    "key": "leftPlace",
+    "at": 115.8
+   },
+   "officers": 0
+  }
+ }
+]

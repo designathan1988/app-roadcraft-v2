@@ -154,6 +154,8 @@ export function collectBays(w: SimWorld): Bay[] {
 
 /** Ahead of a kerb bay, the place on the lane a car stops at to back in, and leaves for. */
 const KERB_AHEAD = m(7);
+/** The least a kerb bay's joining point may lie ahead of it, u. */
+const KERB_MIN_AHEAD = m(4);
 /** No lot: the bay stands on the street. */
 const NO_LOT = -1 as BuildingId;
 
@@ -164,8 +166,12 @@ function kerbBays(w: SimWorld, first: number): Bay[] {
     const f = bay.facing;
     const ahead = { x: bay.centre.x + f.x * KERB_AHEAD, y: bay.centre.y + f.y * KERB_AHEAD };
     const lane = laneFor(w, ahead.x, ahead.y, undefined, bay.segment);
-    // The lane has to run the way the car faces: the traffic beside the bay.
-    const aligned = lane !== null && lane.tx * f.x + lane.ty * f.y > 0.7;
+    // The lane has to run the way the car faces: the traffic beside the bay;
+    // and its joining point (kept `LANE_END` clear of the junctions) must lie
+    // ahead of the bay. Near the end of a street it falls behind it, and the
+    // car would turn round on the spot, its tail sweeping the footway.
+    const aligned = lane !== null && lane.tx * f.x + lane.ty * f.y > 0.7
+      && (lane.x - bay.centre.x) * f.x + (lane.y - bay.centre.y) * f.y >= KERB_MIN_AHEAD;
     out.push({
       id: first + out.length, building: NO_LOT, x: bay.centre.x, y: bay.centre.y,
       // The car stands nose along the kerb: `o` points out of its tail.
@@ -272,6 +278,11 @@ function exitsOf(w: SimWorld, b: Building, v: { x: number; y: number; w: number;
     }
   }
   return out;
+}
+
+/** The lane beside a point of a street (a bus stop): the nearest on the kerb side of that road, its point there. */
+export function laneBeside(w: SimWorld, x: number, y: number, segment?: SegmentId): BayLane | null {
+  return laneFor(w, x, y, undefined, segment);
 }
 
 /** The nearest drivable lane with room to join, its point beside `(x, y)`, on the kerb side. */
