@@ -1617,7 +1617,7 @@ export const PT_BR: Dictionary = {
   'builder.dock.fold': 'Recolher o container',
   'builder.dock.close': 'Fechar (Esc): soltar a ferramenta',
   'planet.title': 'Planeta',
-  'planet.hint': 'Arraste para girar o planeta · botão direito para virar e inclinar · roda para descer ao chão ou subir à órbita',
+  'planet.hint': 'Arraste para andar sobre o planeta · roda ou botão direito para aproximar e afastar · Shift + arrastar para inclinar e virar · N norte para cima · U olhar de cima',
   'planet.altitude': 'Altitude {km} km',
   'agent.title': 'Morador {n}',
   'agent.age.child': 'criança',

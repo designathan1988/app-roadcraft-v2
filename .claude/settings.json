@@ -34,7 +34,7 @@
         ]
       },
       {
-        "matcher": "^mcp__(Claude_Browser__(preview_start|navigate|tabs_create)|claude-in-chrome__(navigate|tabs_create_mcp))$",
+        "matcher": "^mcp__claude-in-chrome__(navigate|tabs_create_mcp)$",
         "hooks": [
           {
             "type": "command",

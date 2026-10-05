@@ -53,7 +53,7 @@ const sea = new Mesh(
 sea.name = 'planet-sea';
 scene.add(sea);
 
-const view = createPlanetCamera();
+const view = createPlanetCamera(surface.group);
 view.attach(canvas);
 
 const hint = document.getElementById('hint') as HTMLElement;

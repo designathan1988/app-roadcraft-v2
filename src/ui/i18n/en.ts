@@ -1631,7 +1631,7 @@ export const EN: Dictionary = {
   'builder.dock.fold': 'Fold the container',
   'builder.dock.close': 'Close (Esc): put the tool down',
   'planet.title': 'Planet',
-  'planet.hint': 'Drag to turn the planet · right drag to turn and tilt · wheel to go down to the ground or out to orbit',
+  'planet.hint': 'Drag to move over the planet · wheel or right drag to go in and out · Shift + drag to tilt and turn · N north up · U look straight down',
   'planet.altitude': 'Altitude {km} km',
   'agent.title': 'Resident {n}',
   'agent.age.child': 'child',
