@@ -11,7 +11,7 @@ import {
   SphereGeometry,
   WebGLRenderer,
 } from 'three';
-import { t } from '@ui/i18n';
+import { initLanguage, t } from '@ui/i18n';
 import { createPlanetCamera } from './camera';
 import { PLANET_RADIUS } from './relief';
 import { createPlanetSurface } from './surface';
@@ -24,6 +24,7 @@ import { createPlanetSurface } from './surface';
  * the camera goes round it and down to the ground (`camera.ts`).
  */
 
+initLanguage();
 const canvas = document.getElementById('planet') as HTMLCanvasElement;
 const renderer = new WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
