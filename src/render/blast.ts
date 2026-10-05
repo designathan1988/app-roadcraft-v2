@@ -264,6 +264,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   let ringAge = Infinity, ringReach = 0, ringAt = new Vector3();
   let shakeAmp = 0;
   let clock = 0;
+  let drawnPieces = -1;
   const o = new Object3D();
   const mtx = new Matrix4();
 
@@ -496,9 +497,13 @@ export function createBlast(exhaust: Exhaust): Blast {
         ring.scale.set(r, 1, r);
         ringMaterial.opacity = 0.55 * (1 - k);
       } else ring.visible = false;
-      // Draw the pieces.
+      // Draw the pieces - rewritten only while one moves or the set changes:
+      // a street of rubble at rest costs nothing a frame.
+      const moving = pieces.some((b) => !b.asleep);
+      const redraw = moving || pieces.length !== drawnPieces;
+      drawnPieces = pieces.length;
       let nb = 0, nc = 0, ns = 0;
-      for (const b of pieces) {
+      if (redraw) for (const b of pieces) {
         o.position.copy(b.p);
         o.quaternion.copy(b.q);
         o.scale.copy(b.size);
@@ -508,10 +513,12 @@ export function createBlast(exhaust: Exhaust): Blast {
         else if (b.mesh === 'car') { if (ns < 80) { shells.setMatrixAt(ns, o.matrix); shells.setColorAt(ns++, b.color); } }
         else { cylinders.setMatrixAt(nc, o.matrix); cylinders.setColorAt(nc++, b.color); }
       }
-      boxes.count = nb; cylinders.count = nc; shells.count = ns;
-      for (const mesh of [boxes, cylinders, shells]) {
-        mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (redraw) {
+        boxes.count = nb; cylinders.count = nc; shells.count = ns;
+        for (const mesh of [boxes, cylinders, shells]) {
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        }
       }
       const counts = [0, 0];
       for (const c of craters) {
