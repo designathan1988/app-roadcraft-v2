@@ -27,6 +27,7 @@ import {
   crosswalkDistance,
   stopLineDistance,
 } from '@world/approach';
+import { m } from './units';
 
 export interface StrokeSpec {
   readonly points: readonly Vec2[];
@@ -183,8 +184,10 @@ export interface Bar {
   readonly width: number;
 }
 
-const BAR_WIDTH = 1.0;
-const BAR_GAP = 1.0;
+/** Zebra bar width and gap (0.5 m each), and the clear margin kept at each kerb. */
+const ZEBRA_BAR = m(0.5);
+const ZEBRA_GAP = m(0.5);
+const ZEBRA_EDGE = m(0.3);
 
 /**
  * Stop bar for one approach, spanning only the lanes entering the junction.
@@ -237,33 +240,45 @@ export function crosswalkBars(
   return zebraBars((along) => ({ p: { x: origin.x + dir.x * along, y: origin.y + dir.y * along }, nrm }), rt, mid);
 }
 
-/** The stripes of one crosswalk centred `mid` along a frame given per distance. */
+/**
+ * The stripes of one crosswalk centred `mid` along a frame given per distance.
+ *
+ * A zebra as it is painted on a real street (CTB / MUTCD "continental"
+ * markings): bars about half a metre wide, each as long as the crossing is
+ * deep and laid ALONG the direction of travel, repeated across the
+ * carriageway with gaps the same width - so a driver sees the bars end-on and
+ * a walker crosses over them. They used to be laid across the road, kerb to
+ * kerb, like a ladder seen from the side.
+ */
 function zebraBars(frameAt: (along: number) => { p: Vec2; nrm: Vec2 }, rt: RoadType, mid: number): Bar[] {
-  const pitch = BAR_WIDTH + BAR_GAP;
-  const count = Math.max(1, Math.floor((CROSSWALK_DEPTH + BAR_GAP) / pitch));
-  const used = count * BAR_WIDTH + (count - 1) * BAR_GAP;
-  const start = mid - used / 2 + BAR_WIDTH / 2;
-  const outer = rt.width / 2;
-  const inner = rt.median / 2;
-
+  const outer = rt.width / 2 - ZEBRA_EDGE;
+  const inner = rt.median > 0 ? rt.median / 2 + ZEBRA_EDGE : 0;
+  const { nrm } = frameAt(mid);
+  const a = frameAt(mid - CROSSWALK_DEPTH / 2).p;
+  const b = frameAt(mid + CROSSWALK_DEPTH / 2).p;
   const bars: Bar[] = [];
-  for (let i = 0; i < count; i++) {
-    const { p, nrm } = frameAt(start + i * pitch);
-    const cx = p.x;
-    const cy = p.y;
-    const addSpan = (from: number, to: number): void => {
+  /** Bars across one stretch of the carriageway, from `from` to `to` (offsets from the centre). */
+  const across = (from: number, to: number): void => {
+    const span = to - from;
+    if (span < ZEBRA_BAR) return;
+    const pitch = ZEBRA_BAR + ZEBRA_GAP;
+    const count = Math.max(1, Math.floor((span + ZEBRA_GAP) / pitch));
+    const used = count * ZEBRA_BAR + (count - 1) * ZEBRA_GAP;
+    const first = from + (span - used) / 2 + ZEBRA_BAR / 2;
+    for (let i = 0; i < count; i++) {
+      const o = first + i * pitch;
       bars.push({
-        a: { x: cx + nrm.x * from, y: cy + nrm.y * from },
-        b: { x: cx + nrm.x * to, y: cy + nrm.y * to },
-        width: BAR_WIDTH,
+        a: { x: a.x + nrm.x * o, y: a.y + nrm.y * o },
+        b: { x: b.x + nrm.x * o, y: b.y + nrm.y * o },
+        width: ZEBRA_BAR,
       });
-    };
-    if (inner > 0) {
-      addSpan(-outer, -inner);
-      addSpan(inner, outer);
-    } else {
-      addSpan(-outer, outer);
     }
+  };
+  if (inner > 0) {
+    across(-outer, -inner);
+    across(inner, outer);
+  } else {
+    across(-outer, outer);
   }
   return bars;
 }
