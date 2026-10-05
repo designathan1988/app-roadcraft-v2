@@ -301,7 +301,9 @@ function balconyMid(p: Parts, W: number, D: number, g: number, s: number, upper:
   // The roof: the top slab over the balconies, a parapet, the terrace.
   for (const [a, b] of wings) { p.box('slab', a, b, 0, FB, top, top + 0.3); p.box('slab', a, b, D - FB, D, top, top + 0.3); }
   p.box('plant', 0, W, FB, D - FB, top, top + 0.3);
-  p.box('wood', sx0, sx1, 0.2, D, top, top + 0.3);
+  // The column's top only where the deck does not cover it (two coplanar tops flicker).
+  p.box('wood', sx0, sx1, 0.2, FB, top, top + 0.3);
+  p.box('wood', sx0, sx1, D - FB, D - 0.2, top, top + 0.3);
   // The parapet's coping: a rim round the roof, not a lid over it.
   p.box('trim', -0.1, W + 0.1, -0.1, 0.25, top + 0.3, top + 0.45);
   p.box('trim', -0.1, W + 0.1, D - 0.25, D + 0.1, top + 0.3, top + 0.45);
