@@ -873,7 +873,7 @@ export function createSceneRenderer(
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
         indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
-        exhaust: (x, y, z, angle, length, speed) => exhaust.emit(x, y, z, angle, length, speed, false),
+        exhaust: (x, y, z, angle, length, speed, dusty) => exhaust.emit(x, y, z, angle, length, speed, dusty),
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
       // The rooms cut open are lit from inside: brighter as the day goes.
