@@ -81,7 +81,7 @@ import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid } from '@world/zoneGrid';
-import { blockOf, growOne, marksByCell, paintCells } from '@editor/zoning';
+import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
 
 type Tool =
   | 'building'
@@ -3070,11 +3070,13 @@ setInterval(() => {
   if (!doc.zoneMarks.length || moving || performance.now() < zoneGrowthHold) return;
   const key = `${net.revision}:${doc.buildings.revision}`;
   if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
+  // Buildings grown by an older lot generator are regrown with this one.
+  if (regrowStale(doc) > 0) { zoneRefused.clear(); requestDraw(); }
   const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
   if (grown === null) return;
   // A grown building starts its life now: it ages from here unless renovated.
   const fresh = doc.buildings.get(grown as BuildingId);
-  if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0 });
+  if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
   zoneRefusedKey = `${net.revision}:${doc.buildings.revision}`;
   persistence.saveSessionSoon(doc, sessionSettings);
   updateStatus();

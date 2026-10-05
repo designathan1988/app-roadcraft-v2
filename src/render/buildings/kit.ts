@@ -237,7 +237,7 @@ export function createBuildingKit(): BuildingKit {
     // would let it straight through.
     // Light and glossy enough to carry the sky: a dark flat pane reads as a
     // hole painted on the wall, not as glass.
-    glass: new MeshStandardMaterial({ color: 0x55707f, roughness: 0.04, metalness: 0.8, envMapIntensity: 2.1, shadowSide: DoubleSide }),
+    glass: new MeshStandardMaterial({ color: 0x7c8e98, roughness: 0.06, metalness: 0.35, envMapIntensity: 1.6, shadowSide: DoubleSide }),
     frame: new MeshStandardMaterial({ color: 0xe8e6df, roughness: 0.55, metalness: 0.05 }),
     concrete,
     door: new MeshStandardMaterial({ color: 0x6b4a33, roughness: 0.55, metalness: 0 }),
@@ -249,7 +249,7 @@ export function createBuildingKit(): BuildingKit {
     column: concrete,
     // Window variety: a pane that reflects less (a darker room behind it) and
     // a curtain drawn behind the frame - no two rows of windows alike.
-    glassDark: new MeshStandardMaterial({ color: 0x33434c, roughness: 0.06, metalness: 0.7, envMapIntensity: 1.6, shadowSide: DoubleSide }),
+    glassDark: new MeshStandardMaterial({ color: 0x5d6c74, roughness: 0.08, metalness: 0.35, envMapIntensity: 1.3, shadowSide: DoubleSide }),
     curtain: new MeshStandardMaterial({ color: 0xe9e1d2, roughness: 0.95, metalness: 0 }),
     // Pool water: clear, glossy and a little turquoise, the tiled floor showing
     // through it - not a blue tile texture laid at the rim.
@@ -267,8 +267,9 @@ export function createBuildingKit(): BuildingKit {
     glassy.onBeforeCompile = (shader) => {
       shader.uniforms.litTable = { value: litTexture };
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nattribute float litSlot;\nuniform sampler2D litTable;')
+        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;\nattribute float litSlot;\nuniform sampler2D litTable;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
+  vPane = position.xy;
 #ifdef USE_INSTANCING
   vec3 roomAt = instanceMatrix[3].xyz;
 #else
@@ -282,14 +283,32 @@ export function createBuildingKit(): BuildingKit {
     vLit = texture2D(litTable, vec2((mod(litSlot, ${SLOT_WIDTH}.0) + 0.5) / ${SLOT_WIDTH}.0, (floor(litSlot / ${SLOT_WIDTH}.0) + 0.5) / 64.0)).r;
   }`);
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;')
+        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+  // The room behind the pane, faked (the windows read as black holes): a
+  // back wall in the room's colour, a darker floor, a lighter ceiling, in
+  // some rooms a curtain at a side or furniture against the wall.
+  {
+    float lot = vRoomLot;
+    vec3 wallC = mix(vec3(0.78, 0.72, 0.62), vec3(0.62, 0.68, 0.72), step(0.5, fract(lot * 5.3)));
+    wallC = mix(wallC, vec3(0.85, 0.8, 0.7), step(0.8, fract(lot * 2.9)));
+    float yy = vPane.y + 0.5, xx = vPane.x + 0.5;
+    vec3 room = wallC * (0.55 + 0.25 * yy);
+    room = mix(room, vec3(0.32, 0.24, 0.18), smoothstep(0.22, 0.12, yy));
+    room = mix(room, wallC * 1.05, smoothstep(0.86, 0.95, yy) * 0.6);
+    float side = step(0.45, fract(lot * 11.0)) > 0.5 ? xx : 1.0 - xx;
+    room = mix(room, vec3(0.86, 0.82, 0.74), step(0.62, fract(lot * 13.0)) * step(side, 0.22));
+    float furniture = step(0.5, fract(lot * 17.0)) * step(abs(xx - 0.55), 0.22) * step(yy, 0.42);
+    room = mix(room, vec3(0.28, 0.22, 0.18), furniture * 0.85);
+    diffuseColor.rgb = mix(diffuseColor.rgb, room, 0.55);
+  }`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
   float roomLit = vLit >= 0.0 ? vLit * (0.55 + 0.7 * fract(vRoomLot * 7.13))
     : step(0.34, vRoomLot) * (0.45 + 0.9 * fract(vRoomLot * 7.13));
   vec3 roomTint = mix(vec3(1.0), vec3(0.62, 0.78, 1.15), step(0.9, fract(vRoomLot * 3.71)));
   totalEmissiveRadiance *= roomLit * roomTint;`);
     };
-    glassy.customProgramCacheKey = () => `room-lights-slots-${kind}`;
+    glassy.customProgramCacheKey = () => `room-lights-slots-interior-${kind}`;
   }
   const shell = createFinishMaterials();
   const ghostShell = new MeshStandardMaterial({

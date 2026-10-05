@@ -114,17 +114,50 @@ function addBar(batch: Batch, value: Bar): void {
 
 /** Paint of one colour: lit like the asphalt under it, drawn over it. */
 export function paintMaterial(color: string): Material {
-  return new MeshStandardMaterial({
-    color: new Color(color),
+  const material = new MeshStandardMaterial({
+    color: new Color(color).multiplyScalar(0.88),
     roughness: 0.72,
     metalness: 0,
     // Paint is applied over the asphalt, so it takes the same light but never
     // reflects the sky the way wet tarmac does.
     envMapIntensity: 0.25,
+    transparent: true,
+    depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
+  // Worn paint (the player found the markings flat stickers on the road): the
+  // asphalt's grain shows through, the paint thins in patches where wheels
+  // run, flakes off at the edges, and is a little dirty.
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vPaintWorld;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvPaintWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vPaintWorld;
+        float pHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float pNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(pHash(i), pHash(i + vec2(1.0, 0.0)), f.x), mix(pHash(i + vec2(0.0, 1.0)), pHash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec2 w = vPaintWorld.xz;
+          float grain = pNoise(w * 9.0);
+          float worn = pNoise(w * 0.7) * 0.6 + pNoise(w * 2.3) * 0.4;
+          float flake = pNoise(w * 5.0);
+          // Pinholes of asphalt through the paint, wider where it is worn.
+          float cover = smoothstep(0.18, 0.42, grain + (1.0 - worn) * 0.35 - 0.1);
+          if (flake < 0.12) cover *= 0.2;
+          diffuseColor.rgb *= 0.86 + 0.14 * pNoise(w * 1.3);
+          diffuseColor.a *= cover * 0.92;
+        }`);
+  };
+  material.customProgramCacheKey = () => `paint-worn-${color}`;
+  return material;
 }
 
 

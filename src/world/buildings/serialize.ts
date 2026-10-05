@@ -371,6 +371,7 @@ export function migrateBuilding(raw: unknown): Building | null {
   if ((BUILDING_FUNCTIONS as readonly unknown[]).includes(raw.function)) building.function = raw.function as BuildingFunction;
   else delete building.function;
   if (finite(raw.builtAt)) building.builtAt = raw.builtAt; else delete building.builtAt;
+  if (finite(raw.lotPlan)) building.lotPlan = raw.lotPlan; else delete building.lotPlan;
   if (finite(raw.decay)) building.decay = Math.max(0, Math.min(1, raw.decay)); else delete building.decay;
   // The player's furniture, floor by floor: known kinds at finite places.
   const furnishing: Record<string, PlacedFurniture[]> = {};

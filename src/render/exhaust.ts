@@ -104,7 +104,7 @@ export function createExhaust(): Exhaust {
         float s = aSize * (0.5 + grow * age);
         bool ortho = projectionMatrix[3][3] == 1.0;
         gl_PointSize = s * projectionMatrix[1][1] * uHalfH / (ortho ? 1.0 : max(1.0, -mv.z));
-        float peak = aKind < 0.5 ? 0.36 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : 0.42;
+        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : 0.42;
         vAlpha = peak * smoothstep(0.0, 0.06, age) * (1.0 - age) * (1.0 - age * 0.3);
       }`,
     fragmentShader: /* glsl */ `
@@ -162,7 +162,8 @@ export function createExhaust(): Exhaust {
       const dt = frameDt;
       const moving = Math.abs(speed) > 0.5;
       // A running engine puffs a little standing still, more pulling away.
-      owed += dt * (moving ? 2.2 + Math.min(4, Math.abs(speed) * 0.08) : 0.9);
+      // A faint puff now and then: a modern car's exhaust is barely visible.
+      owed += dt * (moving ? 0.5 + Math.min(1, Math.abs(speed) * 0.02) : 0.15);
       const cos = Math.cos(angle), sin = Math.sin(angle);
       const tailX = x - cos * length * 0.5, tailY = y - sin * length * 0.5;
       while (owed >= 1) {

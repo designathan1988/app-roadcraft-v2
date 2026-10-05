@@ -354,6 +354,8 @@ export interface Building {
   function?: BuildingFunction;
   /** When it was built or last renovated, city minutes; absent: it does not age. */
   builtAt?: number;
+  /** The version of the lot generator a zoned building was grown with (`LOT_PLAN_VERSION`). */
+  lotPlan?: number;
   /** How run-down it is, 0 (new) to 1 (falling apart), from its age (`decayOf`). */
   decay?: number;
   /**

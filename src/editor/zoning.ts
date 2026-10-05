@@ -334,3 +334,40 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
   }
   return null;
 }
+
+/**
+ * The version of the lot generator (`lotPlan.ts`, the yards, walls and
+ * facades of grown buildings). Bumped when it changes; a zoned building grown
+ * with an older one is regrown (`regrowStale`), so what the player sees is
+ * always the current generator, not the records of an older one.
+ */
+export const LOT_PLAN_VERSION = 7;
+
+/**
+ * Takes down the zoned buildings grown by an older generator and frees their
+ * cells, so growth builds them again. At most `limit` at a time, so a city
+ * renews over a few seconds instead of all at once. Returns how many went.
+ */
+export function regrowStale(doc: RoadDoc, limit = 6): number {
+  let gone = 0;
+  const stale = new Set<number>();
+  for (const mark of doc.zoneMarks) {
+    if (mark.building === undefined || stale.has(mark.building)) continue;
+    const b = doc.buildings.get(mark.building as Parameters<typeof doc.buildings.get>[0]);
+    if (b && b.lotPlan !== LOT_PLAN_VERSION) {
+      stale.add(mark.building);
+      if (stale.size >= limit) break;
+    }
+  }
+  for (const id of stale) {
+    if (doc.buildings.remove(id as Parameters<typeof doc.buildings.remove>[0])) gone++;
+  }
+  doc.zoneMarks.forEach((mark, i) => {
+    if (mark.building !== undefined && stale.has(mark.building)) {
+      const { building: _b, ...rest } = mark;
+      doc.zoneMarks[i] = rest as typeof mark;
+    }
+  });
+  if (gone) doc.zoneRevision++;
+  return gone;
+}
