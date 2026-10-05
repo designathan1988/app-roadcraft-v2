@@ -162,6 +162,10 @@ export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, towa
     for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
     const made: MadeBuilding = { fn: body.function ?? 'apartments', body, entrance: (env.x1 - env.x0) / 2, free: [] };
     furnishLot(body, plan, made, rng);
+    // The lot planner's forecourt planters and flowers stood in front of every
+    // building alike and hid their fronts: a signature building brings its own.
+    const FRONT_CLUTTER: readonly string[] = ['planter', 'flowers', 'shrub', 'tree', 'bench'];
+    if (body.elements) body.elements = body.elements.filter((e) => !(FRONT_CLUTTER.includes(e.kind) && e.y < m(env.y0)));
     // Facing the camera: one row, side by side, every front to the viewer
     // (two rows face to face hid each other's fronts).
     if (toward) {
@@ -171,11 +175,15 @@ export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, towa
       const civic = i >= 20, j = civic ? i - 20 : i;
       const off = civic ? (j - 6) * m(54) : (j - 9.5) * m(CATALOG_PITCH);
       const back = m(civic ? CATALOG_BACK - 75 : CATALOG_BACK);
-      const result = addBuildingRecord(ctx, {
-        ...body, x: -t.x * back + u.x * off, y: -t.y * back + u.y * off,
-        rotation: Math.atan2(t.x, -t.y), decay: 0, lotPlan: LOT_PLAN_VERSION,
-      } as Omit<Building, 'id'>);
-      if (result.ok) placed++;
+      // Refused (it met the lab street, say): the same spot a little farther back, a few times.
+      for (let tries = 0; tries < 4; tries++) {
+        const b = back + tries * m(25);
+        const result = addBuildingRecord(ctx, {
+          ...body, x: -t.x * b + u.x * off, y: -t.y * b + u.y * off,
+          rotation: Math.atan2(t.x, -t.y), decay: 0, lotPlan: LOT_PLAN_VERSION,
+        } as Omit<Building, 'id'>);
+        if (result.ok) { placed++; break; }
+      }
       return;
     }
     // The next free stretch on either side of the street.

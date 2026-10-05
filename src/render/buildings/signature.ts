@@ -238,6 +238,22 @@ function makeMaterials(): Record<Mat, Material> {
     for (let c = 0; c < 9; c++) g.fillRect(c * s / 9, 0, 3, s);
   }, 1, 1 / 1.05);
   const std = (p: ConstructorParameters<typeof MeshStandardMaterial>[0]): MeshStandardMaterial => new MeshStandardMaterial(p);
+  // Surfaces that read as stone, concrete, roofing, tiles: never flat colour (flat light planes blow out to white).
+  const ashlar = (base: string, joint: string): CanvasTexture => canvasTexture(256, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(${90 + Math.random() * 80},${85 + Math.random() * 75},${75 + Math.random() * 70},.12)`; g.fillRect(Math.random() * s, Math.random() * s, 3, 3); }
+    g.strokeStyle = joint; g.lineWidth = 2;
+    for (let r = 0; r < 8; r++) { g.beginPath(); g.moveTo(0, (r * s) / 8); g.lineTo(s, (r * s) / 8); g.stroke(); for (let c = 0; c < 4; c++) { const x = (c + (r % 2) * 0.5) * (s / 4); g.beginPath(); g.moveTo(x, (r * s) / 8); g.lineTo(x, ((r + 1) * s) / 8); g.stroke(); } }
+  }, 1 / 2.4, 1 / 2.4);
+  const speckle = (base: string, dot: number, lines = 0): CanvasTexture => canvasTexture(256, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 2500; i++) { const v = Math.random() > 0.5 ? 255 : 0; g.fillStyle = `rgba(${v},${v},${v},${dot})`; g.fillRect(Math.random() * s, Math.random() * s, 2, 2); }
+    g.fillStyle = 'rgba(0,0,0,.18)'; for (let k = 1; k <= lines; k++) { g.fillRect(0, (k * s) / (lines + 1), s, 2); g.fillRect((k * s) / (lines + 1), 0, 2, s); }
+  }, 1 / 4, 1 / 4);
+  const courses = (base: string, line: string, rows: number): CanvasTexture => canvasTexture(128, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    for (let r = 0; r < rows; r++) { g.fillStyle = line; g.fillRect(0, (r * s) / rows, s, 2); for (let c = 0; c < 6; c++) g.fillRect((c + (r % 2) * 0.5) * (s / 6), (r * s) / rows, 1, s / rows); g.fillStyle = `rgba(0,0,0,${Math.random() * 0.08})`; g.fillRect(0, (r * s) / rows + 2, s, s / rows - 2); }
+  }, 1 / 1.5, 1 / 1.5);
   return {
     stone: std({ map: stone, roughness: 0.85 }),
     render: std({ map: render, roughness: 0.92 }),
@@ -258,24 +274,25 @@ function makeMaterials(): Record<Mat, Material> {
     orange: std({ color: 0xe07b2c, roughness: 0.6 }),
     woodDark: std({ color: 0x5a3b24, roughness: 0.8 }),
     door: std({ map: wood, color: 0x8a5a36, roughness: 0.6 }),
-    slate: std({ color: 0x4e5560, roughness: 0.7 }),
+    slate: std({ map: courses('#454c56', '#2c3138', 8), roughness: 0.7 }),
+    roofing: std({ map: speckle('#6b6d70', 0.1, 3), roughness: 0.95 }),
     patina: std({ color: 0x6f9a8a, roughness: 0.5, metalness: 0.4 }),
     redPaint: std({ color: 0xb3262a, roughness: 0.55 }),
     brickRed: std({ color: 0xa04a34, roughness: 0.9 }),
-    ivory: std({ color: 0xe6e0d2, roughness: 0.8 }),
+    ivory: std({ map: ashlar('#d3cbbb', 'rgba(120,108,90,.45)'), roughness: 0.8 }),
     asphalt: std({ color: 0x3c3f43, roughness: 0.95 }),
-    concreteLight: std({ color: 0xc8c5be, roughness: 0.9 }),
-    gravel: std({ color: 0xc9bca5, roughness: 1 }),
-    lawn: std({ color: 0x5d8a3c, roughness: 1 }),
+    concreteLight: std({ map: speckle('#a9a6a0', 0.08, 1), roughness: 0.9 }),
+    gravel: std({ map: speckle('#a3967f', 0.16), roughness: 1 }),
+    lawn: std({ map: speckle('#4f7c33', 0.12), roughness: 1 }),
     blackSteel: std({ color: 0x1f2124, roughness: 0.5, metalness: 0.5 }),
     blueSteel: std({ color: 0x2f5fa8, roughness: 0.5, metalness: 0.3 }),
     yellowPaint: std({ color: 0xe8c22a, roughness: 0.6 }),
     gold: std({ color: 0xc9a54a, roughness: 0.35, metalness: 0.8 }),
     copper: std({ color: 0xb06d3c, roughness: 0.35, metalness: 0.75 }),
-    roofTerracotta: std({ color: 0xa4513a, roughness: 0.8, flatShading: true }),
+    roofTerracotta: std({ map: courses('#a6503a', '#6e2f22', 10), roughness: 0.8 }),
     glassRail: std({ color: 0xcfe3ec, transparent: true, opacity: 0.38, roughness: 0.05, metalness: 0.2, depthWrite: false }),
-    white: std({ color: 0xf2f1ec, roughness: 0.8 }),
-    stoneLight: std({ color: 0xd6d1c7, roughness: 0.75 }),
+    white: std({ map: speckle('#dddcd6', 0.05, 1), roughness: 0.8 }),
+    stoneLight: std({ map: ashlar('#c4bdaf', 'rgba(110,100,85,.5)'), roughness: 0.8 }),
     beige: std({ color: 0xd9c49c, roughness: 0.85 }),
     brickPier: std({ color: 0x8f4433, roughness: 0.9 }),
     darkPanel: std({ color: 0x2f3439, roughness: 0.6, metalness: 0.3 }),
@@ -305,6 +322,10 @@ class Parts {
   box(mat: Mat, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): void {
     const w = Math.abs(x1 - x0), d = Math.abs(y1 - y0), h = Math.abs(z1 - z0);
     if (w < 1e-3 || d < 1e-3 || h < 1e-3) return;
+    // A facade block's top is a roof, not more facade: a membrane cap over it.
+    if (mat.includes('|') && !mat.startsWith('decal|')) {
+      this.box('roofing', Math.min(x0, x1), Math.max(x0, x1), Math.min(y0, y1), Math.max(y0, y1), Math.max(z0, z1), Math.max(z0, z1) + 0.05);
+    }
     const g = new BoxGeometry(w, h, d);
     g.translate((x0 + x1) / 2, (z0 + z1) / 2, -this.Y((y0 + y1) / 2));
     const pos = g.attributes['position']!, nor = g.attributes['normal']!, uv = g.attributes['uv']!;
@@ -816,6 +837,33 @@ function towerOf(look: TowerLook) {
 
 type Design = (p: Parts, W: number, D: number, g: number, s: number, upper: number) => void;
 
+/**
+ * A flat roof's parapet in `mat` from z0 to z1 round the rectangle, and the
+ * membrane deck inside it at `deck` (default just above z0): a rim, never a
+ * lid of facade stone over the whole roof.
+ */
+function roofRing(p: Parts, mat: Mat, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, deck = z0): void {
+  const r = Math.min(0.45, (x1 - x0) / 6, (y1 - y0) / 6);
+  p.box(mat, x0, x1, y0, y0 + r, z0, z1);
+  p.box(mat, x0, x1, y1 - r, y1, z0, z1);
+  p.box(mat, x0, x0 + r, y0 + r, y1 - r, z0, z1);
+  p.box(mat, x1 - r, x1, y0 + r, y1 - r, z0, z1);
+  p.box('roofing', x0 + r, x1 - r, y0 + r, y1 - r, deck, Math.min(deck + 0.05, z1 - 0.02));
+}
+
+/** An open arch in a stone face: a belfry's or a loggia's, dark inside. */
+const archOpening = (g: CanvasRenderingContext2D, w: number, h: number): void => {
+  g.clearRect(0, 0, w, h);
+  const n = w > h ? 2 : 1;
+  for (let k = 0; k < n; k++) {
+    const aw = w / n - 14, x = 7 + (k * w) / n;
+    g.fillStyle = '#c4bdaf'; g.beginPath(); g.arc(x + aw / 2, aw / 2 + 4, aw / 2 + 4, Math.PI, 0); g.lineTo(x + aw + 4, h); g.lineTo(x - 4, h); g.fill();
+    g.fillStyle = '#1b1d20'; g.beginPath(); g.arc(x + aw / 2, aw / 2 + 6, aw / 2, Math.PI, 0); g.lineTo(x + aw, h - 4); g.lineTo(x, h - 4); g.fill();
+    g.fillStyle = '#6d6a64'; g.fillRect(x, h - 18, aw, 6);
+    for (let b = x + 6; b < x + aw; b += 10) g.fillRect(b, h - 34, 3, 16);
+  }
+};
+
 /** A two-storey podium in `mat`, glazed all round, its canopy, planters and trees; returns its top. */
 function podium2(p: Parts, W: number, D: number, g: number, s: number, mat: Mat, canopy: Mat = 'metal'): number {
   const zP = g + s;
@@ -826,7 +874,7 @@ function podium2(p: Parts, W: number, D: number, g: number, s: number, mat: Mat,
     for (let k = 0; k < cols; k++) p.box('podiumGlass', (k * W) / cols + 0.4, ((k + 1) * W) / cols - 0.4, -0.04, 0.02, 0.2, zP - 0.8);
   }
   p.mirror = null;
-  p.box('trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.5, zP + 0.06);
+  roofRing(p, 'trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.5, zP + 0.06, zP);
   p.box(canopy, W / 2 - 3.5, W / 2 + 3.5, -2.2, 0.1, g - 0.45, g - 0.25);
   p.windowFront(W / 2 - 1.6, W / 2 + 1.6, -0.08, 0, 3, 1);
   for (const x of [1.5, W - 1.5]) p.cone(x, -1.2, 0);
@@ -1151,8 +1199,8 @@ function balustrade(p: Parts, x0: number, x1: number, y: number, z: number, mat:
 }
 
 /** 1. A town hall in red brick and stone: arched windows, a pedimented centre, a slate roof with dormers, a clock tower under a copper dome. */
-const cityHallBrick: Design = (p, W, D, g) => {
-  const H = g + 4.2 * 2; // two tall storeys above a raised basement
+const cityHallBrick: Design = (p, W, D, _g) => {
+  const H = 1.6 + 4.2 * 2; // two tall storeys above a raised basement
   const face = facade('archBrick', 3.2, 4.2, 1.6);
   p.box('stoneLight', 0, W, 0, D, 0, 1.6);
   p.box(face, 0.3, W - 0.3, 0.3, D - 0.3, 1.6, H);
@@ -1170,7 +1218,7 @@ const cityHallBrick: Design = (p, W, D, g) => {
   balustrade(p, 0.5, c0 - 0.4, 0.2, H + 0.7);
   balustrade(p, c1 + 0.4, W - 0.5, 0.2, H + 0.7);
   // Slate roof with copper dormers, brick chimneys.
-  p.hip('slate', 0.6, W - 0.6, 0.6, D - 0.6, H + 0.7, 5.5, 0.45);
+  p.hip('slate', 0.6, W - 0.6, 0.6, D - 0.6, H + 0.7, 6.5, 0.22);
   for (const x of [W * 0.2, W * 0.8]) {
     p.box('ivory', x - 1, x + 1, 1.8, 3.2, H + 1.2, H + 3.4);
     p.windowFront(x - 0.6, x + 0.6, 1.78, H + 1.5, H + 3, 0);
@@ -1185,10 +1233,14 @@ const cityHallBrick: Design = (p, W, D, g) => {
   p.decal('clock', clockFace, tx + t + 0.02, ty, 3, 3, z0 - 0.2, 'right');
   p.box('stoneLight', tx - t - 0.3, tx + t + 0.3, ty - t - 0.3, ty + t + 0.3, z0 + 3, z0 + 3.4);
   for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) p.box('stoneLight', tx + dx * t - 0.5, tx + dx * t + 0.5, ty + dy * t - 0.5, ty + dy * t + 0.5, z0 + 3.4, z0 + 6.4);
-  p.box('blackSteel', tx - t + 0.5, tx + t - 0.5, ty - t + 0.5, ty + t - 0.5, z0 + 3.4, z0 + 6.2);
+  p.box('stoneLight', tx - t + 0.9, tx + t - 0.9, ty - t + 0.9, ty + t - 0.9, z0 + 3.4, z0 + 6.4);
+  for (const f of ['front', 'left', 'right'] as const) {
+    const [cx, cy] = f === 'front' ? [tx, ty - t - 0.02] : f === 'left' ? [tx - t - 0.02, ty] : [tx + t + 0.02, ty];
+    p.decal('belfry', archOpening, cx, cy, 2 * t - 1, 3, z0 + 3.4, f);
+  }
   p.box('stoneLight', tx - t - 0.3, tx + t + 0.3, ty - t - 0.3, ty + t + 0.3, z0 + 6.4, z0 + 7);
-  p.dome('patina', tx, ty, t + 0.1, z0 + 7, 1.15);
-  p.cylinder('patina', tx, ty, z0 + 7 + (t + 0.1) * 1.15, z0 + 12, 0.12);
+  p.dome('patina', tx, ty, t * 0.85, z0 + 7, 1.35);
+  p.cylinder('patina', tx, ty, z0 + 7 + t * 0.85 * 1.35, z0 + 11.5, 0.12);
   // The steps and lamps.
   p.steps('stoneLight', W / 2 - 4, W / 2 + 4, -5.2, 9, 0.42, 0.18);
   p.lamp(W / 2 - 4.6, -4.5, 0, 3.4); p.lamp(W / 2 + 4.6, -4.5, 0, 3.4);
@@ -1258,9 +1310,9 @@ function hospital(p: Parts, W: number, D: number, g: number, s: number, upper: n
   p.box('podiumGlass', W * 0.36, W * 0.64, front - 0.1, front + 0.05, 0.1, 3.8);
   // Roofs: helipad on the centre, plant on the wings.
   p.decal('helipad', helipad, W / 2, D * 0.55, Math.min(W * 0.36, 10), Math.min(W * 0.36, 10), top + 0.42);
-  p.box('concreteLight', W * 0.3, W * 0.7, front + 1, D * 0.92, top, top + 0.4);
+  roofRing(p, 'white', W * 0.3, W * 0.7, front + 1, D * 0.92, top, top + 0.4);
   for (const [x0, x1, z] of [[0, W * 0.3, wz], [W * 0.7, W, variant === 0 ? wz - 3 * s : wz]] as const) {
-    p.box('concreteLight', x0, x1, front, D, z, z + 0.3);
+    roofRing(p, 'white', x0, x1, front, D, z, z + 0.3);
     for (let k = 0; k < 3; k++) p.box('metal', x0 + 1 + k * 2.2, x0 + 2.6 + k * 2.2, front + 2, front + 3.4, z + 0.3, z + 1.5);
   }
   for (let k = 0; k < 3; k++) p.cylinder('lightGrid', W * 0.34 + k * 0.6, D * 0.85, top + 0.4, top + 4 + k, 0.06);
@@ -1288,7 +1340,7 @@ const loftBrick: Design = (p, W, D, g, s, upper) => {
   // The brick body, stepping back for terraces three floors from the top.
   p.box(face, 0, W, 0, D, g, step);
   p.box(face, 2.5, W - 2.5, 2.5, D - 1, step, top);
-  p.box('blackSteel', -0.1, W + 0.1, -0.1, D + 0.1, step - 0.2, step + 0.1);
+  roofRing(p, 'blackSteel', -0.1, W + 0.1, -0.1, D + 0.1, step - 0.2, step + 0.1, step);
   p.rail(0.1, W - 0.1, 0.1, 0.15, step + 0.1);
   for (let k = 0; k < 5; k++) p.plant(1 + k * (W - 2) / 4, 1.2, step + 0.1, 1);
   // A recessed column of balconies in the middle, black railings, plants.
@@ -1301,7 +1353,7 @@ const loftBrick: Design = (p, W, D, g, s, upper) => {
   // A painted sign on the side wall.
   p.decal('ghostSign', lettering('ARMAZÉM', 'rgba(235,225,200,.75)', null, 'RIVERTON & CIA'), -0.03, D / 2, D * 0.6, 4, g + s * 2, 'left');
   // The roof: a parapet, a pergola, and the water tower on steel legs.
-  p.box('blackSteel', 2.3, W - 2.3, 2.3, D - 0.8, top, top + 0.8);
+  roofRing(p, 'blackSteel', 2.3, W - 2.3, 2.3, D - 0.8, top, top + 0.8);
   for (let k = 0; k < 4; k++) p.box('blackSteel', W * 0.55 + k * 1.2, W * 0.55 + k * 1.2 + 0.12, 3, 7, top + 0.8, top + 3.2);
   p.box('blackSteel', W * 0.55, W * 0.55 + 4.2, 3, 7, top + 3.2, top + 3.4);
   const wx = 5, wy = D - 5;
@@ -1319,7 +1371,7 @@ const cityHallWhite: Design = (p, W, D, _g) => {
   const face = facade('archStone', 3, 4.5, 1.8);
   p.box('stoneLight', 0, W, 0, D, 0, 1.8);
   p.box(face, 0.3, W - 0.3, 0.3, D - 0.3, 1.8, H);
-  p.box('ivory', -0.2, W + 0.2, -0.2, D + 0.2, H, H + 0.9);
+  roofRing(p, 'ivory', -0.2, W + 0.2, -0.2, D + 0.2, H, H + 0.9);
   balustrade(p, 0.4, W - 0.4, 0.3, H + 0.9);
   // Corner pavilions with mansard roofs and oculi.
   for (const [x0, x1] of [[0, W * 0.22], [W * 0.78, W]] as const) {
@@ -1366,8 +1418,9 @@ const cityHallWhite: Design = (p, W, D, _g) => {
 const forum: Design = (p, W, D, g, s, upper) => {
   const H = g + (upper - 1) * s;
   p.box(facade('tallStone', 3, H, 0), 0, W, 0, D, 0, H);
-  p.box('ivory', -0.2, W + 0.2, -0.2, D + 0.2, H, H + 0.8);
-  p.box('ivory', W * 0.3, W * 0.7, D * 0.3, D * 0.7, H + 0.8, H + 3.5);
+  roofRing(p, 'ivory', -0.2, W + 0.2, -0.2, D + 0.2, H, H + 0.8);
+  roofRing(p, 'concreteLight', W * 0.3, W * 0.7, D * 0.3, D * 0.7, H, H + 3.5);
+  p.box('roofing', W * 0.3, W * 0.7, D * 0.3, D * 0.7, H + 3.4, H + 3.45);
   p.hip('glassRail', W * 0.42, W * 0.58, D * 0.42, D * 0.58, H + 3.5, 1, 0.3);
   const c0 = W * 0.3, c1 = W * 0.7;
   p.box('ivory', c0 - 1.4, c1 + 1.4, -2.6, 0.2, 0, 0.9);
@@ -1392,7 +1445,8 @@ const forum: Design = (p, W, D, g, s, upper) => {
 const church: Design = (p, W, D) => {
   const face = facade('gothicStone', 3.2, 9, 0);
   const nx0 = W * 0.3, nx1 = W * 0.85, H = 9;
-  p.box('stoneLight', 0, W, -4, D, 0, 0.6);
+  p.box('stoneLight', nx0 - 6, nx1 + 3.5, -0.4, D * 0.85, 0, 0.6);
+  p.box('gravel', nx0 - 2, nx1 + 2, -4.5, -0.4, 0, 0.04);
   p.box(face, nx0, nx1, 0, D * 0.8, 0.6, H);
   p.gable('roofTerracotta', nx0 - 0.4, nx1 + 0.4, 0, D * 0.8, H, 5.5, 'y');
   // The front: the gable end in stone, a rose window, the portal with its stepped arch.
@@ -1414,7 +1468,10 @@ const church: Design = (p, W, D) => {
   const tx = nx0 - 3, ty = 2.5, t = 2.6;
   p.box(face, tx - t, tx + t, ty - t, ty + t, 0.6, 17);
   p.box('stoneLight', tx - t - 0.25, tx + t + 0.25, ty - t - 0.25, ty + t + 0.25, 12, 12.4);
-  p.box('blackSteel', tx - t + 0.6, tx + t - 0.6, ty - t - 0.02, ty - t + 0.02, 13, 16);
+  for (const f of ['front', 'left', 'right'] as const) {
+    const [cx, cy] = f === 'front' ? [tx, ty - t - 0.02] : f === 'left' ? [tx - t - 0.02, ty] : [tx + t + 0.02, ty];
+    p.decal('belfryChurch', archOpening, cx, cy, 2 * t - 0.8, 3.4, 12.7, f);
+  }
   p.cylinder('gold', tx, ty - t + 0.6, 13.6, 15, 0.55);
   p.box('stoneLight', tx - t - 0.3, tx + t + 0.3, ty - t - 0.3, ty + t + 0.3, 17, 17.6);
   p.prism('stoneLight', tx, ty, t * 1.1, 17.6, 18.8, 8, Math.PI / 8);
@@ -1432,8 +1489,9 @@ const church: Design = (p, W, D) => {
 const bank: Design = (p, W, D, g, s, upper) => {
   const H = g + (upper - 1) * s;
   p.box(facade('tallStone', 2.6, H, 0), 0, W, 0, D, 0, H);
-  p.box('ivory', -0.3, W + 0.3, -0.3, D + 0.3, H, H + 0.9);
-  p.box('ivory', W * 0.2, W * 0.8, D * 0.2, D * 0.8, H + 0.9, H + 3.6);
+  roofRing(p, 'ivory', -0.3, W + 0.3, -0.3, D + 0.3, H, H + 0.9);
+  p.box('concreteLight', W * 0.3, W * 0.7, D * 0.35, D * 0.75, H, H + 2.6);
+  for (const x of [W * 0.35, W * 0.5, W * 0.62]) p.box('metal', x - 0.6, x + 0.6, D * 0.25, D * 0.3, H, H + 1.1);
   const c0 = W * 0.2, c1 = W * 0.8;
   colonnade(p, c0, c1, -2, 0.8, H - 0.8 - 1.8, 4, 0.7);
   p.box('ivory', c0 - 1.2, c1 + 1.2, -3, 0.3, H - 1.8, H + 0.9);
@@ -1457,7 +1515,7 @@ const school: Design = (p, W, D, g, s) => {
   p.box(face, W * 0.58, W, 0, D * 0.55, 0, H);
   p.box(face, W * 0.2, W * 0.8, D * 0.55, D * 0.85, 0, H);
   p.box(face, W * 0.42, W * 0.58, 0.5, D * 0.6, 0, H + 1.2);
-  for (const [x0, x1] of [[0, W * 0.42], [W * 0.58, W]] as const) p.box('ivory', x0 - 0.1, x1 + 0.1, -0.1, D * 0.55 + 0.1, H, H + 0.4);
+  for (const [x0, x1] of [[0, W * 0.42], [W * 0.58, W]] as const) roofRing(p, 'ivory', x0 - 0.1, x1 + 0.1, -0.1, D * 0.55 + 0.1, H, H + 0.4);
   p.box('ivory', W * 0.42, W * 0.58, -0.5, 0.6, 0, H + 2.4);
   p.decal('clock', clockFace, W / 2, -0.52, 1.6, 1.6, H + 0.4);
   p.decal('school', lettering('ESCOLA', '#3d342b', null, 'PÚBLICA RIVERSIDE'), W / 2, -0.52, W * 0.14, 1.6, H - 1.6);
@@ -1500,7 +1558,7 @@ const fireStation: Design = (p, W, D, g, s) => {
   p.box('redPaint', bay + 0.5, W - 4, apron, apron + 2, g - 0.6, g - 0.2);
   p.decal('comando', lettering('COMANDO', '#ffffff', '#b3262a'), bay + 0.5 + (W - 4.5 - bay) / 2, apron - 0.02, W - 4.5 - bay, 0.4, g - 0.6);
   p.windowFront(bay + 1, bay + 3.2, apron + 1.98, 0, 2.6, 1);
-  p.box('concreteLight', -0.1, W + 0.1, apron - 0.1, D + 0.1, H, H + 0.5);
+  roofRing(p, 'concreteLight', -0.1, W + 0.1, apron - 0.1, D + 0.1, H, H + 0.5);
   for (let k = 0; k < 4; k++) p.box('darkPanel', 2 + k * 3.4, 5 + k * 3.4, apron + 4, apron + 7, H + 0.5, H + 0.7);
   // The training tower: concrete with a red stripe, landings and stairs on its side.
   const tx = W - 2.5, ty = apron + 1.5, t = 2;
@@ -1523,6 +1581,7 @@ const police: Design = (p, W, D, g, s) => {
   const H = g + s;
   p.box('concreteLight', 0, W * 0.72, 3, D, 0, H);
   p.box('concreteLight', W * 0.72, W, 9, D, 0, H - 0.8);
+  roofRing(p, 'concreteLight', W * 0.72, W, 9, D, H - 0.8, H - 0.4);
   p.box('blackSteel', W * 0.24, W * 0.5, 2.2, D * 0.6, 0, H + 1.2);
   p.decal('badge', badge, W * 0.37, 2.18, 2.2, 2.6, H - 2.4);
   p.decal('policia', lettering('POLÍCIA CIVIL', '#eeeeee', null), W * 0.37, 2.18, W * 0.24, 0.9, H - 3.4);
@@ -1549,7 +1608,7 @@ const police: Design = (p, W, D, g, s) => {
   p.box('concreteLight', W - 0.8, W, 0, 0.8, 0, 2.4);
   p.decal('190', lettering('190', '#222222', '#d0cdc6'), W - 0.4, -0.02, 0.6, 0.4, 1.4);
   // Roof plant and the radio mast; flags and planters in front.
-  p.box('concreteLight', -0.1, W * 0.72 + 0.1, 2.9, D + 0.1, H, H + 0.5);
+  roofRing(p, 'concreteLight', -0.1, W * 0.72 + 0.1, 2.9, D + 0.1, H, H + 0.5);
   p.box('darkPanel', W * 0.3, W * 0.42, D * 0.6, D * 0.8, H + 0.5, H + 2);
   for (const x of [W * 0.55, W * 0.6]) p.box('metal', x, x + 1, D * 0.5, D * 0.5 + 0.8, H + 0.5, H + 1.4);
   p.cylinder('lightGrid', W * 0.62, D * 0.75, H + 0.5, H + 14, 0.1);
