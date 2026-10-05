@@ -27,9 +27,9 @@ const EXHAUST_LIFE = 2.6;
 /**
  * 0 exhaust, 1 dust (brown-grey, low and wide), 2 dark smoke (rises), 3 concrete dust (pale, billowing),
  * 4 blood spray (thrown up, falls), 5 flame (bright, rising fast, short), 6 sparks (flung, falling, glowing),
- * 7 grit and earth (flung, falling).
+ * 7 grit and earth (flung, falling), 8 water (a jet straight up, falling back as spray).
  */
-export type PuffKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type PuffKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface Exhaust {
   readonly points: Points;
@@ -101,8 +101,12 @@ export function createExhaust(): Exhaust {
         // Rise: smoke climbs, dust hangs low, a collapse cloud billows up and out.
         float rise = aKind < 0.5 ? 2.4 : aKind < 1.5 ? 1.0 : aKind < 2.5 ? 3.5 : 1.8;
         vec2 out2 = vec2(sin(aSeed * 40.0), cos(aSeed * 40.0));
-        bool flung = (aKind > 3.5 && aKind < 4.5) || aKind > 5.5;
-        if (flung) {
+        bool flung = (aKind > 3.5 && aKind < 4.5) || (aKind > 5.5 && aKind < 7.5);
+        if (aKind > 7.5) {
+          // A broken hydrant's jet: straight up, fanning a little, falling back.
+          p.y += (16.0 + 4.0 * fract(aSeed * 13.0)) * t - 9.8 * t * t;
+          p.xz += out2 * (0.6 + 1.6 * fract(aSeed * 7.0)) * t + uWindDir * 0.8 * t;
+        } else if (flung) {
           // Blood, sparks, grit: flung up and out, falling back under gravity.
           float fling = aKind > 5.5 && aKind < 6.5 ? 3.0 : 1.0;
           p.y += (5.0 + 10.0 * fract(aSeed * 17.0)) * fling * t - 12.25 * t * t;
@@ -118,11 +122,11 @@ export function createExhaust(): Exhaust {
         }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float grow = aKind > 5.5 ? 0.2 : aKind > 4.5 ? 1.6 : aKind > 3.5 ? 0.6 : aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
+        float grow = aKind > 7.5 ? 1.2 : aKind > 5.5 ? 0.2 : aKind > 4.5 ? 1.6 : aKind > 3.5 ? 0.6 : aKind > 2.5 ? 3.2 : aKind > 1.5 ? 2.6 : 2.0;
         float s = aSize * (0.5 + grow * age);
         bool ortho = projectionMatrix[3][3] == 1.0;
         gl_PointSize = s * projectionMatrix[1][1] * uHalfH / (ortho ? 1.0 : max(1.0, -mv.z));
-        float peak = aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : aKind < 3.5 ? 0.42 : aKind < 4.5 ? 0.95 : aKind < 5.5 ? 0.8 : 1.0;
+        float peak = aKind > 7.5 ? 0.55 : aKind < 0.5 ? 0.16 : aKind < 1.5 ? 0.45 : aKind < 2.5 ? 0.5 : aKind < 3.5 ? 0.42 : aKind < 4.5 ? 0.95 : aKind < 5.5 ? 0.8 : 1.0;
         vAlpha = peak * smoothstep(0.0, 0.06, age) * (1.0 - age) * (1.0 - age * 0.3);
       }`,
     fragmentShader: /* glsl */ `
@@ -157,6 +161,9 @@ export function createExhaust(): Exhaust {
         } else if (vKind > 5.5 && vKind < 6.5) {
           c = vec3(4.0, 2.6, 1.0);
           soft = smoothstep(1.0, 0.2, r);
+        } else if (vKind > 7.5) {
+          c = vec3(0.82, 0.9, 0.97);
+          soft = exp(-r * r * 2.5);
         } else if (vKind > 6.5) {
           c = vec3(0.3, 0.24, 0.18);
           soft = smoothstep(1.0, 0.5, r);

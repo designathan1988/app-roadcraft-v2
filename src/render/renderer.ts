@@ -1,7 +1,10 @@
 import { pointInPolygon } from '@core/polygon';
+import type { Occupant } from './ragdoll';
 import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
 import { onCarriageway } from '@world/carriageway';
 import {
+  BufferGeometry,
+  Float32BufferAttribute,
   Color,
   Quaternion,
   ACESFilmicToneMapping,
@@ -11,7 +14,7 @@ import {
   Frustum,
   Matrix4,
   type Material,
-  type Mesh,
+  Mesh,
   MeshDepthMaterial,
   type Object3D,
   RGBADepthPacking,
@@ -197,6 +200,12 @@ export interface SceneHandle {
   strikeGround(x: number, y: number, strength: number): void;
   /** An explosion at world (x, y), height z, reaching `radius` (`blast.ts`), and the things it broke. */
   explode(x: number, y: number, z: number, radius: number, hit: BlastHit): void;
+  /** People inside a struck building, thrown out of it (`ragdoll.fling`). */
+  flingOccupants(list: readonly Occupant[]): void;
+  /** Called when a struck building comes down after its blow (its pieces were made off the main thread). */
+  onBuildingDown(listener: (id: number) => void): void;
+  /** A broken hydrant spouting water (`blast.geyser`). */
+  geyser(x: number, y: number, z: number): void;
   /** Soot laid on the ground (`blast.soot`). */
   soot(x: number, y: number, z: number, radius: number): void;
   /** Smoke in the air, 0 clear to 1 thick: the fog closes in, browner, the light dims. */
@@ -383,6 +392,7 @@ export function createSceneRenderer(
   /** Buildings knocked down block by block (`destruction.ts`). */
   const destruction = createDestruction(exhaust, (b) => buildings.chunkOf(b));
   scene.add(destruction.group);
+  destruction.onRuined = () => { buildings.setRuined(destruction.ruined); };
   /** Blood where blows killed people (`casualties.ts`). */
   const casualties = createCasualties();
   scene.add(casualties.group);
@@ -885,6 +895,35 @@ export function createSceneRenderer(
     }
   };
 
+  /**
+   * The shaders a blow first needs - a broken building's pieces (its kit's
+   * materials on plain meshes), the explosion's debris, soot, fire and spray -
+   * compiled ahead, in the background: compiled when the first blow landed,
+   * they stalled that frame for most of a second.
+   */
+  let blastShadersWarm = false;
+  const warmBlastShaders = (): void => {
+    if (blastShadersWarm) return;
+    blastShadersWarm = true;
+    const kit = buildings.kit;
+    const tiny = new BufferGeometry();
+    tiny.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+    tiny.setAttribute('normal', new Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
+    tiny.setAttribute('color', new Float32BufferAttribute([1, 1, 1, 1, 1, 1, 1, 1, 1], 3));
+    tiny.setAttribute('uv', new Float32BufferAttribute([0, 0, 1, 0, 0, 1], 2));
+    tiny.setAttribute('aDecay', new Float32BufferAttribute([0, 0, 0], 1));
+    const group = new Group();
+    const mats = [...Object.values(kit.shell), ...Object.values(kit.material), kit.furniture().material];
+    for (const mat of mats) {
+      const mesh = new Mesh(tiny, mat);
+      mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+      group.add(mesh);
+    }
+    scene.add(group);
+    void compileAhead(group).then(() => { scene.remove(group); tiny.dispose(); });
+    void compileAhead(blast.group);
+  };
+
   const applyQuality = (level: QualityLevel): void => {
     quality = QUALITY[level];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
@@ -923,6 +962,7 @@ export function createSceneRenderer(
   // drops the inspector with it.
   const inspect = import.meta.env.DEV ? createInspector(renderer, scene) : null;
   let lotOverlay: ReturnType<typeof createLotOverlay> | null = null;
+  const occupantQueue: Occupant[] = [];
   let transitXray = false;
   let transitPreview: ReturnType<typeof buildTrackPreview> | null = null;
   let transitPreviewKey = '';
@@ -1088,6 +1128,9 @@ export function createSceneRenderer(
     },
     burn: (x, y, z, size, seconds) => blast.burn(x, y, z, size, seconds),
     soot: (x, y, z, r) => blast.soot(x, y, z, r),
+    geyser: (x, y, z) => blast.geyser(x, y, z),
+    onBuildingDown: (listener) => { destruction.onDown = listener; },
+    flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0,
     forgetRuin(id) {
@@ -1335,6 +1378,7 @@ export function createSceneRenderer(
         ragdolls: (citizens) => {
           ragdollSim = sim;
           ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
+          if (occupantQueue.length) { ragdolls.fling(occupantQueue, citizens, ragdollWorld); occupantQueue.length = 0; }
           // Somebody tripping on the pavement falls as a ragdoll too.
           ragdollDown.clear();
           for (const ped of sim.pedViews) {
@@ -1436,6 +1480,7 @@ export function createSceneRenderer(
       drainCompiles(renderer, rig.camera, scene, post.target);
       // From the second frame on, the compiler answers: warm the road shaders.
       warmRoadShaders();
+      warmBlastShaders();
       // One waiting body's geometry a frame to the GPU, before anybody draws it.
       drainWarm(renderer, rig.camera, scene, post.target);
 

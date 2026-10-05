@@ -61,6 +61,8 @@ export interface BuildingLayer {
   setRuined(ids: ReadonlySet<number>): void;
   /** A building's meshes as drawn (world space), with the kit they are drawn with: what a ruin is cut from. */
   chunkOf(b: Building): { chunk: BuildingChunk; kit: BuildingKit } | null;
+  /** The kit its buildings are drawn with (for warming the shaders broken buildings use). */
+  readonly kit: BuildingKit;
   /** Whether a world point is under a building (for the scenery's plant cull). */
   covers(x: number, y: number): boolean;
   /**
@@ -216,6 +218,7 @@ export function createBuildingLayer(): BuildingLayer {
     get version() {
       return version;
     },
+    kit,
     chunkOf(b) {
       if (!lastGround) return null;
       const { groundAt, groundKey, pavedAt, naturalAt } = lastGround;

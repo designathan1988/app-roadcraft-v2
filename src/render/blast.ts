@@ -99,6 +99,8 @@ export interface Blast {
   burn(x: number, y: number, z: number, size: number, seconds: number): void;
   /** Soot and ash laid on the ground at world (x, y): the street left dirty by the blast, for good. */
   soot(x: number, y: number, z: number, radius: number): void;
+  /** A broken hydrant at world (x, y): a jet of water that keeps going. */
+  geyser(x: number, y: number, z: number): void;
   /** Whether anything is still moving, burning or flashing. */
   active(): boolean;
   update(dt: number, world: BlastWorld): void;
@@ -283,6 +285,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   const ropes: Rope[] = [];
   const craters: Crater[] = [];
   const soots: Crater[] = [];
+  const geysers: { x: number; y: number; z: number; carry: number }[] = [];
   let sootDirty = false;
   const fires: { at: Vector3; until: number; rate: number; carry: number; piece?: Piece; size?: number; smoke?: number }[] = [];
   const arcs: { at: Vector3; until: number; next: number }[] = [];
@@ -478,10 +481,14 @@ export function createBlast(exhaust: Exhaust): Blast {
       if (soots.length > MAX_SOOT) soots.shift();
       sootDirty = true;
     },
+    geyser(x, y, z) {
+      geysers.push({ x, y, z, carry: 0 });
+      if (geysers.length > 40) geysers.shift();
+    },
     burn(x, y, z, size, seconds) {
       fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: 10 + size / m(1) * 2, carry: 0, size, smoke: 0.85 });
     },
-    active: () => flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
+    active: () => geysers.length > 0 || flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
     update(dt, world) {
       const wall = Math.min(0.1, Math.max(0, dt));
       time += wall;
@@ -507,6 +514,11 @@ export function createBlast(exhaust: Exhaust): Blast {
           // Black smoke over the flames, rising in a column.
           if (Math.random() < (f.smoke ?? 0.4)) exhaust.burst(at.x, -at.z, at.y + m(1.5), 1, 2, big * 0.6, m(2.4) + big * 0.3, 10);
         }
+      }
+      // Hydrants: a jet of water each, for good, and its puddle of spray.
+      for (const g of geysers) {
+        g.carry += 40 * wall;
+        while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.15), m(0.5), 2.6); }
       }
       for (let i = arcs.length - 1; i >= 0; i--) {
         const a = arcs[i]!;

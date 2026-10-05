@@ -91,14 +91,49 @@ function subdivide(v: number[], max: number, out: number[][]): void {
  * floor's height; `storeys` the heights (three's y, absolute) of its floor slabs
  * with the footprints they span, for the interior.
  */
-export function fractureBuilding(
+/** What a fracture needs, as plain arrays (so it can run in a worker, `fracture.worker.ts`). */
+export interface FractureInput {
+  readonly shells: readonly { mat: number; position: Float32Array; normal: Float32Array; colour: Float32Array; uv: Float32Array; index: Uint32Array; decay: Float32Array }[];
+  /** Instanced parts (windows, doors, furniture): their model, non-indexed, and each instance's matrix. */
+  readonly parts: readonly { mat: number; position: Float32Array; normal: Float32Array; uv: Float32Array | null; colour: Float32Array | null;
+    instColours: Float32Array | null; matrices: Float32Array; count: number }[];
+  readonly slabMat: number;
+  readonly slabs: readonly { corners: readonly (readonly [number, number, number])[]; y: number }[];
+  readonly seed: number;
+}
+
+/** A fragment as arrays, before it is a mesh (`buildFragments`). */
+export interface FragmentData {
+  readonly centre: readonly [number, number, number];
+  readonly position: Float32Array; readonly normal: Float32Array; readonly colour: Float32Array; readonly uv: Float32Array; readonly decay: Float32Array;
+  readonly groups: readonly { material: number; start: number; count: number }[];
+  readonly radius: number;
+  readonly low: number;
+  readonly neighbours: number[];
+}
+
+/** A kit model's vertices as plain arrays, made once per model. */
+const MODEL_ARRAYS = new WeakMap<BufferGeometry, { position: Float32Array; normal: Float32Array; uv: Float32Array | null; colour: Float32Array | null }>();
+function modelArrays(source: BufferGeometry): { position: Float32Array; normal: Float32Array; uv: Float32Array | null; colour: Float32Array | null } {
+  let known = MODEL_ARRAYS.get(source);
+  if (!known) {
+    const geo = source.index ? source.toNonIndexed() : source;
+    const arr = (name: string): Float32Array | null => { const at = geo.getAttribute(name); return at ? Float32Array.from(at.array as ArrayLike<number>) : null; };
+    known = { position: arr('position')!, normal: arr('normal')!, uv: arr('uv'), colour: arr('color') };
+    if (geo !== source) geo.dispose();
+    MODEL_ARRAYS.set(source, known);
+  }
+  return known;
+}
+
+/** The arrays of a building's chunk and kit a fracture reads, and the materials its fragments are drawn with. */
+export function prepareFracture(
   chunk: BuildingChunk,
   kit: BuildingKit,
   slabs: readonly { readonly corners: readonly Vector3[]; readonly y: number }[],
   seed: number,
-  /** What stands inside (`interiorFurniture`): each piece whole, thrown out with the fragment it is in. */
   furniture?: Partial<Record<string, { matrices: Float32Array; count: number }>>,
-): Fragment[] {
+): { input: FractureInput; materials: Material[] } {
   const materials: Material[] = [];
   const index = new Map<Material, number>();
   const materialIndex = (mat: Material): number => {
@@ -106,18 +141,58 @@ export function fractureBuilding(
     if (i === undefined) { i = materials.length; materials.push(mat); index.set(mat, i); }
     return i;
   };
-  const tris: Tri[] = [];
-  // The building's wear, for the pieces with none of their own (parts, slabs).
-  let wear = 0, wearN = 0;
-  for (const part of Object.values(chunk.shells)) if (part) for (const d of part.decay) { wear += d; wearN++; }
-  const bDecay = wearN ? wear / wearN : 0;
-
-  // ---- the shell, subdivided
+  const shells: FractureInput['shells'][number][] = [];
   for (const [finish, part] of Object.entries(chunk.shells) as [Finish, NonNullable<BuildingChunk['shells'][Finish]>][]) {
-    const mat = materialIndex(kit.shell[finish]);
+    shells.push({ mat: materialIndex(kit.shell[finish]), position: part.position, normal: part.normal, colour: part.colour, uv: part.uv, index: part.index, decay: part.decay });
+  }
+  const parts: FractureInput['parts'][number][] = [];
+  const model = (source: BufferGeometry, mat: number, batch: { matrices: Float32Array; count: number; colours?: Float32Array | null }): void => {
+    const arrays = modelArrays(source);
+    parts.push({ mat, ...arrays, instColours: batch.colours ?? null, matrices: batch.matrices, count: batch.count });
+  };
+  for (const [kind, batch] of Object.entries(chunk.parts) as [PartKind, BuildingChunk['parts'][PartKind]][]) {
+    if (!batch.count || kind === 'water') continue;
+    model(kit.geometry[kind], materialIndex(kit.material[kind]), batch);
+  }
+  if (furniture) {
+    const fk = kit.furniture();
+    const mat = materialIndex(fk.material);
+    for (const [kind, batch] of Object.entries(furniture)) {
+      const source = (fk.geometry as Record<string, BufferGeometry>)[kind];
+      if (batch && batch.count && source) model(source, mat, batch);
+    }
+  }
+  return {
+    input: { shells, parts, slabMat: materialIndex(kit.shell.concrete), seed,
+      slabs: slabs.map((sl) => ({ corners: sl.corners.map((c) => [c.x, c.y, c.z] as const), y: sl.y })) },
+    materials,
+  };
+}
+
+/** The fragments as meshes' geometry, drawn with `materials`. */
+export function buildFragments(data: readonly FragmentData[], materials: Material[]): Fragment[] {
+  return data.map((d) => {
+    const g = new BufferGeometry();
+    g.setAttribute('position', new Float32BufferAttribute(d.position, 3));
+    g.setAttribute('normal', new Float32BufferAttribute(d.normal, 3));
+    g.setAttribute('color', new Float32BufferAttribute(d.colour, 3));
+    g.setAttribute('uv', new Float32BufferAttribute(d.uv, 2));
+    g.setAttribute('aDecay', new Float32BufferAttribute(d.decay, 1));
+    for (const gr of d.groups) g.addGroup(gr.start, gr.count, gr.material);
+    g.computeBoundingSphere();
+    return { centre: new Vector3(...d.centre), geometry: g, materials, radius: d.radius, low: d.low, neighbours: d.neighbours };
+  });
+}
+
+/** The fracture itself, pure arrays in and out: run in a worker. */
+export function fractureData(input: FractureInput): FragmentData[] {
+  const tris: Tri[] = [];
+  let wear = 0, wearN = 0;
+  for (const part of input.shells) for (const d of part.decay) { wear += d; wearN++; }
+  const bDecay = wearN ? wear / wearN : 0;
+  for (const part of input.shells) {
+    const mat = part.mat;
     const { position: p, normal: n, colour: c, uv, index: idx, decay: dk } = part;
-    // The building's wear (`aDecay`) goes with each vertex: dropped, an old
-    // building broke into clean new-coloured pieces (the player: "ela muda de cor").
     const vert = (i: number): number[] => [p[i * 3]!, p[i * 3 + 1]!, p[i * 3 + 2]!, n[i * 3]!, n[i * 3 + 1]!, n[i * 3 + 2]!, c[i * 3]!, c[i * 3 + 1]!, c[i * 3 + 2]!, uv[i * 2]!, uv[i * 2 + 1]!, dk[i] ?? 0];
     for (let t = 0; t < idx.length; t += 3) {
       const out: number[][] = [];
@@ -125,65 +200,35 @@ export function fractureBuilding(
       for (const v of out) tris.push({ v, material: mat, solid: true, group: -1 });
     }
   }
-  // ---- the parts (windows, doors, railings, ...), each instance whole
   let group = 0;
   const m4 = new Matrix4(), a = new Vector3(), nv = new Vector3(), nm3 = new Matrix3();
-  for (const [kind, batch] of Object.entries(chunk.parts) as [PartKind, BuildingChunk['parts'][PartKind]][]) {
-    if (!batch.count || kind === 'water') continue;
-    const geo = kit.geometry[kind].index ? kit.geometry[kind].toNonIndexed() : kit.geometry[kind];
-    const gp = geo.getAttribute('position'), gn = geo.getAttribute('normal'), guv = geo.getAttribute('uv');
-    const mat = materialIndex(kit.material[kind]);
-    for (let k = 0; k < batch.count; k++) {
-      m4.fromArray(batch.matrices, k * 16);
+  for (const part of input.parts) {
+    const { position: gp, normal: gn, uv: guv, colour: gc, instColours, matrices, count, mat } = part;
+    const verts = gp.length / 3;
+    for (let k = 0; k < count; k++) {
+      m4.fromArray(matrices, k * 16);
       nm3.getNormalMatrix(m4);
-      const col = batch.colours ? [batch.colours[k * 3]!, batch.colours[k * 3 + 1]!, batch.colours[k * 3 + 2]!] : [1, 1, 1];
-      for (let t = 0; t < gp.count; t += 3) {
+      const ic = instColours ? [instColours[k * 3]!, instColours[k * 3 + 1]!, instColours[k * 3 + 2]!] : null;
+      for (let t = 0; t < verts; t += 3) {
         const v: number[] = [];
         for (let q = 0; q < 3; q++) {
-          a.fromBufferAttribute(gp, t + q).applyMatrix4(m4);
-          nv.fromBufferAttribute(gn, t + q).applyMatrix3(nm3).normalize();
-          v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, col[0]!, col[1]!, col[2]!, guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0, bDecay);
+          const i = t + q;
+          a.set(gp[i * 3]!, gp[i * 3 + 1]!, gp[i * 3 + 2]!).applyMatrix4(m4);
+          nv.set(gn[i * 3]!, gn[i * 3 + 1]!, gn[i * 3 + 2]!).applyMatrix3(nm3).normalize();
+          const col = ic ?? (gc ? [gc[i * 3]!, gc[i * 3 + 1]!, gc[i * 3 + 2]!] : [1, 1, 1]);
+          v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, col[0]!, col[1]!, col[2]!, guv ? guv[i * 2]! : 0, guv ? guv[i * 2 + 1]! : 0, bDecay);
         }
         tris.push({ v, material: mat, solid: false, group });
       }
       group++;
     }
-    if (geo !== kit.geometry[kind]) geo.dispose();
-  }
-  // ---- the furniture inside, each piece whole (sofas, beds, desks, shelves...)
-  if (furniture) {
-    const fk = kit.furniture();
-    const mat = materialIndex(fk.material);
-    for (const [kind, batch] of Object.entries(furniture)) {
-      const source = (fk.geometry as Record<string, import('three').BufferGeometry>)[kind];
-      if (!batch || !batch.count || !source) continue;
-      const geo = source.index ? source.toNonIndexed() : source;
-      const gp = geo.getAttribute('position'), gn = geo.getAttribute('normal'), guv = geo.getAttribute('uv');
-      const gc = geo.getAttribute('color');
-      for (let k = 0; k < batch.count; k++) {
-        m4.fromArray(batch.matrices, k * 16);
-        nm3.getNormalMatrix(m4);
-        for (let t = 0; t < gp.count; t += 3) {
-          const v: number[] = [];
-          for (let q = 0; q < 3; q++) {
-            a.fromBufferAttribute(gp, t + q).applyMatrix4(m4);
-            nv.fromBufferAttribute(gn, t + q).applyMatrix3(nm3).normalize();
-            v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, gc ? gc.getX(t + q) : 1, gc ? gc.getY(t + q) : 1, gc ? gc.getZ(t + q) : 1,
-              guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0, 0);
-          }
-          tris.push({ v, material: mat, solid: false, group });
-        }
-        group++;
-      }
-      if (geo !== source) geo.dispose();
-    }
   }
   // ---- the floor slabs inside, in the concrete finish
-  const slabMat = materialIndex(kit.shell.concrete);
-  for (const slab of slabs) {
-    const [c0, c1, c2, c3] = slab.corners as [Vector3, Vector3, Vector3, Vector3];
+  const slabMat = input.slabMat;
+  for (const slab of input.slabs) {
+    const [c0, c1, c2, c3] = slab.corners as [readonly [number, number, number], readonly [number, number, number], readonly [number, number, number], readonly [number, number, number]];
     for (const [top, ny] of [[slab.y, 1], [slab.y - m(0.25), -1]] as const) {
-      const vtx = (c: Vector3): number[] => [c.x, top, c.z, 0, ny, 0, 0.62, 0.6, 0.57, c.x * 0.3, c.z * 0.3, bDecay];
+      const vtx = (c: readonly [number, number, number]): number[] => [c[0], top, c[2], 0, ny, 0, 0.62, 0.6, 0.57, c[0] * 0.3, c[2] * 0.3, bDecay];
       const quad = ny > 0 ? [[c0, c1, c2], [c0, c2, c3]] : [[c0, c2, c1], [c0, c3, c2]];
       for (const [p0, p1, p2] of quad) {
         const out: number[][] = [];
@@ -199,7 +244,7 @@ export function fractureBuilding(
   for (const t of tris) for (let q = 0; q < 3; q++) {
     minX = Math.min(minX, t.v[q * STRIDE]!); minY = Math.min(minY, t.v[q * STRIDE + 1]!); minZ = Math.min(minZ, t.v[q * STRIDE + 2]!);
   }
-  let s = seed >>> 0 || 1;
+  let s = input.seed >>> 0 || 1;
   const rand = (): number => { s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0; return s / 4_294_967_296; };
   const jitter = new Map<string, Vector3>();
   const seedOf = (i: number, j: number, k: number): Vector3 => {
@@ -241,7 +286,7 @@ export function fractureBuilding(
   const keys = [...cells.keys()];
   const vkey = (x: number, y: number, z: number): string => `${Math.round(x * 200)},${Math.round(y * 200)},${Math.round(z * 200)}`;
   const vertexCells = new Map<string, Set<number>>();
-  const fragments: Fragment[] = [];
+  const fragments: FragmentData[] = [];
   keys.forEach((cell, fi) => {
     const list = cells.get(cell)!;
     const pos: number[] = [], nor: number[] = [], col: number[] = [], uvs: number[] = [], dec: number[] = [];
@@ -295,15 +340,8 @@ export function fractureBuilding(
       }
       groups.push({ material: mat, start, count: pos.length / 3 - start });
     }
-    const g = new BufferGeometry();
-    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
-    g.setAttribute('normal', new Float32BufferAttribute(nor, 3));
-    g.setAttribute('color', new Float32BufferAttribute(col, 3));
-    g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
-    g.setAttribute('aDecay', new Float32BufferAttribute(dec, 1));
-    for (const gr of groups) g.addGroup(gr.start, gr.count, gr.material);
-    g.computeBoundingSphere();
-    fragments.push({ centre: new Vector3(cx, cy, cz), geometry: g, materials, radius, low, neighbours: [] });
+    fragments.push({ centre: [cx, cy, cz], position: Float32Array.from(pos), normal: Float32Array.from(nor), colour: Float32Array.from(col),
+      uv: Float32Array.from(uvs), decay: Float32Array.from(dec), groups, radius, low, neighbours: [] });
   });
   // Joined where they share a vertex of the original surface.
   const links = fragments.map(() => new Set<number>());

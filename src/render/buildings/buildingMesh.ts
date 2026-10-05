@@ -2869,6 +2869,8 @@ export function interiorFurniture(b: Building, floor: number): Partial<Record<Fu
     const z = floor + levelElevation(b, level);
     const ceiling = z + levelHeight(b, level) - m(0.06);
     for (const f of interiorAt(b, level).furniture) placeFurniture(e, f, f.kind === 'ceilingLamp' ? ceiling - f.h : z);
+    // Enough to fill the air when it breaks; a tower's every chair cost a second.
+    if (Object.values(placed).reduce((n, l) => n + (l?.length ?? 0), 0) > 140) break;
   }
   const out: Partial<Record<FurnitureKind, PartBatch>> = {};
   for (const kind of FURNITURE_KINDS) {

@@ -42,7 +42,23 @@ export interface RagdollCitizens {
   capturedPose(id: number): { index: number; palette: Float32Array; transform: Matrix4 } | null;
   skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
   drawPalette(index: number, palette: Float32Array, instance: Matrix4): void;
-  clipPose(index: number, key: 'crouchUp', phase: number): { palette: Float32Array; duration: number } | null;
+  clipPose(index: number, key: 'crouchUp' | 'idle', phase: number): { palette: Float32Array; duration: number } | null;
+  /** Bodies loaded now, for people with no pose of their own (indoors). */
+  loadedIndices(): number[];
+}
+
+/** Somebody inside a building a blow struck: thrown out of it from where they were. */
+export interface Occupant {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  /** Height they stood at (the floor they were on). */
+  readonly z: number;
+  readonly heading: number;
+  readonly blastX: number;
+  readonly blastY: number;
+  readonly power: number;
+  readonly kind: 'dead' | 'torn' | 'knocked';
 }
 
 /** A wall a body can strike: a ring on the ground (world x, y), up to a height. */
@@ -201,6 +217,8 @@ const smooth = (t: number): number => { const k = Math.min(1, Math.max(0, t)); r
 export interface Ragdolls {
   /** Takes in the casualties of blows (each once): bodies thrown from the pose they were last drawn in. */
   absorb(list: readonly Casualty[], citizens: RagdollCitizens, world: RagdollWorld): void;
+  /** People inside a struck building, thrown out of it - through its walls and windows - from the floor they were on. */
+  fling(list: readonly Occupant[], citizens: RagdollCitizens, world: RagdollWorld): void;
   /**
    * Somebody falling (a `fall` pause), from the pose they were last drawn in:
    * tripping forwards, or knocked towards `away` (world angle) by a punch or
@@ -233,8 +251,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   };
 
   /** A body standing as it was last drawn, at rest; null when that pose is not known. */
-  const build = (id: number, heading: number, citizens: RagdollCitizens, world: RagdollWorld, x: number, y: number, fate: Fate): Body | null => {
-    const pose = citizens.capturedPose(id);
+  const build = (id: number, heading: number, citizens: RagdollCitizens, world: RagdollWorld, x: number, y: number, fate: Fate,
+    given?: { index: number; palette: Float32Array; transform: Matrix4 }): Body | null => {
+    const pose = given ?? citizens.capturedPose(id);
     const sk = pose ? citizens.skeletonOf(pose.index) : null;
     if (!pose || !sk) return null;
     const bones = sk.names.length;
@@ -384,7 +403,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   };
 
   /** The body of a casualty of a blow. */
-  const spawn = (c: Casualty, citizens: RagdollCitizens, world: RagdollWorld): void => {
+  const spawn = (c: Casualty, citizens: RagdollCitizens, world: RagdollWorld,
+    given?: { index: number; palette: Float32Array; transform: Matrix4 }): void => {
     const groundHere = world.groundAt(c.x, c.y);
     const known = bodies.find((b) => b.survivor?.id === c.id);
     if (known) {
@@ -395,7 +415,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       return;
     }
-    const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind);
+    const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
     if (!body) { if (c.kind !== 'knocked') bleed(c.x, c.y, groundHere, m(1.8), 15); return; }
     const speed = c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = blast(body, c, speed);
@@ -448,6 +468,20 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       for (let i = bodies.length - 1; i >= 0; i--) {
         const alive = bodies[i]!.survivor;
         if (alive?.phase === 'rise' && alive.t >= RISE_BLEND + alive.clip && !down(alive.id)) bodies.splice(i, 1);
+      }
+    },
+    fling(list, citizens, world) {
+      const loaded = citizens.loadedIndices();
+      if (!loaded.length) return;
+      const turn = new Quaternion(), place = new Vector3(), size = new Vector3();
+      for (const o of list) {
+        const index = loaded[Math.abs(o.id) % loaded.length]!;
+        const clip = citizens.clipPose(index, 'idle', (o.id % 97) / 97);
+        if (!clip) continue;
+        const transform = new Matrix4().compose(place.set(o.x, o.z, -o.y), turn.setFromAxisAngle(UP, o.heading + Math.PI / 2), size.setScalar(m(1)));
+        const c = { x: o.x, y: o.y, heading: o.heading, kind: o.kind, t: 0, id: o.id, gender: 'm', ageClass: 'adult', party: null,
+          blastX: o.blastX, blastY: o.blastY, power: o.power } as unknown as Casualty;
+        spawn(c, citizens, world, { index, palette: clip.palette, transform });
       }
     },
     absorb(list, citizens, world) {

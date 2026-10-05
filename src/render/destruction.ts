@@ -1,4 +1,4 @@
-import { Group, Mesh, Vector3 } from 'three';
+import { Group, Mesh, Vector3, type Material } from 'three';
 
 import type { Building } from '@world/buildings/types';
 import { levelElevation, localToWorld } from '@world/buildings/geometry';
@@ -7,7 +7,7 @@ import { m } from '@world/units';
 import type { Exhaust } from './exhaust';
 import type { BuildingChunk } from './buildings/buildingMesh';
 import type { BuildingKit } from './buildings/kit';
-import { fractureBuilding, type Fragment } from './buildings/fracture';
+import { buildFragments, prepareFracture, type Fragment, type FragmentData } from './buildings/fracture';
 import { interiorFurniture } from './buildings/buildingMesh';
 
 /**
@@ -53,6 +53,10 @@ export interface Destruction {
    * 1..10. Returns true when the building has come down.
    */
   hit(b: Building, floor: number, x: number, y: number, z: number, strength: number, eye?: Vector3): boolean;
+  /** Called when a building comes down later than its blow (its pieces were still being made in the worker). */
+  onDown: ((id: number) => void) | null;
+  /** Called when a building's pieces are ready and stand in for it (the layer stops drawing it). */
+  onRuined: (() => void) | null;
   update(dt: number): void;
   dispose(): void;
 }
@@ -67,7 +71,46 @@ export function createDestruction(
   const ruined = new Set<number>();
   const loose: Piece[] = [];
 
-  const make = (b: Building, floor: number): Ruin | null => {
+  // The fracture runs in a worker (`buildings/fracture.worker.ts`): a building
+  // is struck at once and broken when its pieces are ready, a frame or a few
+  // later, the blows meanwhile kept - a big one froze the game for a second.
+  let worker: Worker | null = null;
+  let nextJob = 1;
+  const jobs = new Map<number, { b: Building; floor: number; materials: Material[]; hits: [number, number, number, number, Vector3 | undefined][] }>();
+  const pending = new Map<number, number>();
+  const api: { onDown: ((id: number) => void) | null; onRuined: (() => void) | null } = { onDown: null, onRuined: null };
+  const workerOf = (): Worker => {
+    if (!worker) {
+      worker = new Worker(new URL('./buildings/fracture.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (e: MessageEvent<{ id: number; data: FragmentData[] }>) => {
+        const job = jobs.get(e.data.id);
+        jobs.delete(e.data.id);
+        if (!job) return;
+        pending.delete(job.b.id);
+        const ruin = place(buildFragments(e.data.data, job.materials), job.floor);
+        ruins.set(job.b.id, ruin);
+        ruined.add(job.b.id);
+        api.onRuined?.();
+        let down = false;
+        for (const [x, y, z, strength, eye] of job.hits) down = strike(ruin, job.floor, x, y, z, strength, eye) || down;
+        if (down) api.onDown?.(job.b.id);
+      };
+    }
+    return worker;
+  };
+  const place = (fragments: Fragment[], floor: number): Ruin => {
+    const pieces: Piece[] = fragments.map((fragment) => {
+      const mesh = new Mesh(fragment.geometry, fragment.materials);
+      mesh.position.copy(fragment.centre);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      return { fragment, mesh, floor, falling: false, settled: false, gone: false, v: new Vector3(), w: new Vector3(), age: 0 };
+    });
+    return { pieces, floor, standing: pieces.length };
+  };
+
+  const make = (b: Building, floor: number): number | null => {
     const source = chunkOf(b);
     if (!source) return null;
     // Floor slabs inside every volume, storey by storey.
@@ -80,16 +123,11 @@ export function createDestruction(
       });
       for (let level = v.base + 1; level < v.base + v.storeys.length; level++) slabs.push({ corners, y: floor + levelElevation(b, level) });
     }
-    const fragments = fractureBuilding(source.chunk, source.kit, slabs, b.id * 2654435761, interiorFurniture(b, floor));
-    const pieces: Piece[] = fragments.map((fragment) => {
-      const mesh = new Mesh(fragment.geometry, fragment.materials);
-      mesh.position.copy(fragment.centre);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      return { fragment, mesh, floor, falling: false, settled: false, gone: false, v: new Vector3(), w: new Vector3(), age: 0 };
-    });
-    return { pieces, floor, standing: pieces.length };
+    const { input, materials } = prepareFracture(source.chunk, source.kit, slabs, b.id * 2654435761, interiorFurniture(b, floor));
+    const id = nextJob++;
+    jobs.set(id, { b, floor, materials, hits: [] });
+    workerOf().postMessage({ id, input });
+    return id;
   };
 
   const release = (ruin: Ruin, piece: Piece, from: Vector3, power: number): void => {
@@ -110,34 +148,7 @@ export function createDestruction(
     }
   };
 
-  /** Every standing piece not joined to the ground through standing pieces. */
-  const unsupported = (ruin: Ruin): Piece[] => {
-    const held = new Uint8Array(ruin.pieces.length);
-    const stack: number[] = [];
-    ruin.pieces.forEach((p, i) => {
-      if (!p.falling && p.fragment.low <= ruin.floor + m(0.6)) { held[i] = 1; stack.push(i); }
-    });
-    while (stack.length) {
-      const i = stack.pop()!;
-      for (const j of ruin.pieces[i]!.fragment.neighbours) {
-        if (!held[j] && !ruin.pieces[j]!.falling) { held[j] = 1; stack.push(j); }
-      }
-    }
-    return ruin.pieces.filter((p, i) => !p.falling && !held[i]);
-  };
-
-  return {
-    group,
-    ruined,
-    hit(b, floor, x, y, z, strength, eye) {
-      let ruin = ruins.get(b.id);
-      if (!ruin) {
-        const made = make(b, floor);
-        if (!made) return false;
-        ruin = made;
-        ruins.set(b.id, ruin);
-        ruined.add(b.id);
-      }
+  const strike = (ruin: Ruin, floor: number, x: number, y: number, z: number, strength: number, eye?: Vector3): boolean => {
       let impact = new Vector3(x, z, -y);
       // Once broken, the blow lands on the first standing piece along the line
       // of sight through the point: what is left of the building, not the air
@@ -192,6 +203,47 @@ export function createDestruction(
         return true;
       }
       return false;
+  };
+
+  /** Every standing piece not joined to the ground through standing pieces. */
+  const unsupported = (ruin: Ruin): Piece[] => {
+    const held = new Uint8Array(ruin.pieces.length);
+    const stack: number[] = [];
+    ruin.pieces.forEach((p, i) => {
+      if (!p.falling && p.fragment.low <= ruin.floor + m(0.6)) { held[i] = 1; stack.push(i); }
+    });
+    while (stack.length) {
+      const i = stack.pop()!;
+      for (const j of ruin.pieces[i]!.fragment.neighbours) {
+        if (!held[j] && !ruin.pieces[j]!.falling) { held[j] = 1; stack.push(j); }
+      }
+    }
+    return ruin.pieces.filter((p, i) => !p.falling && !held[i]);
+  };
+
+  return {
+    group,
+    ruined,
+    get onDown() { return api.onDown; },
+    set onDown(f) { api.onDown = f; },
+    get onRuined() { return api.onRuined; },
+    set onRuined(f) { api.onRuined = f; },
+    hit(b, floor, x, y, z, strength, eye) {
+      const ruin = ruins.get(b.id);
+      if (!ruin) {
+        let job = pending.get(b.id);
+        if (job === undefined) {
+          const made = make(b, floor);
+          if (made === null) return false;
+          job = made;
+          pending.set(b.id, job);
+        }
+        jobs.get(job)?.hits.push([x, y, z, strength, eye?.clone()]);
+        // Dust where it was struck, at once, while its pieces are being made.
+        exhaust.burst(x, y, z, 12 + strength * 2, 3, m(2 + strength * 0.4), m(2.5 + strength * 0.2), 4);
+        return false;
+      }
+      return strike(ruin, floor, x, y, z, strength, eye);
     },
     update(dt) {
       for (let i = loose.length - 1; i >= 0; i--) {

@@ -1,4 +1,5 @@
 import { METERS_PER_UNIT } from '@world/units';
+import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
 import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
@@ -4941,6 +4942,10 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
       if (best > radius) continue;
       const at = c === b ? { x: world.x, y: world.y, z } : { x: px, y: py, z: Math.max(z, sceneHeightAt({ x: px, y: py }) + m(1.5)) };
       const force = c === b ? strength : Math.max(1, strength * (1 - best / radius) * 1.2);
+      // Breaking a building into its pieces is the costly part (a Voronoi
+      // fracture of its meshes): the one struck now, the others a frame each
+      // after, so a big blow does not freeze the game for seconds.
+      if (c !== b) { deferredHits.push({ id: c.id, ...at, force }); continue; }
       if (scene.strikeBuilding(c, at.x, at.y, at.z, force)) {
         doc.buildings.remove(c.id);
         scene.forgetRuin(c.id);
@@ -4948,6 +4953,28 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
         downs++;
         changed = true;
       } else if (best < radius * 0.8 && Math.random() < 0.35 + strength * 0.03) ignite(c.id);
+      // Those inside, thrown out through its walls and windows from the floor
+      // they were on: killed near the blow, knocked flying further off.
+      const inside = sim.city.inside(c.id as BuildingId);
+      const rings = solidFootprints(c);
+      const ring = rings[0];
+      if (inside.length && ring) {
+        const base = sceneHeightAt({ x: c.x, y: c.y });
+        const floors = Math.max(1, Math.max(...c.volumes.map((v) => v.base + v.storeys.length)));
+        const thrown: Occupant[] = [];
+        for (const r of inside.slice(0, 16)) {
+          const a = ring[Math.floor(Math.random() * ring.length)]!, q = ring[Math.floor(Math.random() * ring.length)]!;
+          const t = Math.random();
+          const px = a.x + (q.x - a.x) * t, py = a.y + (q.y - a.y) * t;
+          const level = Math.floor(Math.random() * floors);
+          const d = Math.hypot(px - world.x, py - world.y);
+          const near = d < radius * 0.6;
+          thrown.push({ id: 7_000_000 + r.id, x: px, y: py, z: base + levelElevation(c, level), heading: Math.random() * Math.PI * 2,
+            blastX: world.x, blastY: world.y, power: Math.min(1, force / 10),
+            kind: near ? (Math.random() < 0.45 ? 'torn' : 'dead') : Math.random() < 0.5 ? 'dead' : 'knocked' });
+        }
+        scene.flingOccupants(thrown);
+      }
     }
     // Everything round it left filthy: the buildings within twice the reach
     // blackened with soot and dust (their weathering, `decay`).
@@ -4993,6 +5020,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
     for (const item of [...doc.landscape.values()]) {
       if (!near(item.x, item.y, radius)) continue;
       hit.items.push({ kind: item.kind, x: item.x, y: item.y });
+      if (item.kind === 'hydrant') scene.geyser(item.x, item.y, sceneHeightAt(item));
       doc.removeLandscape(item.id);
       changed = true;
     }
@@ -5041,6 +5069,26 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
  * (a gas main, a tank) - an explosion of its own that breaks more. The air
  * thickens with smoke while anything burns.
  */
+/** Buildings a blow reached, broken one a frame (`explodeAt`). */
+const deferredHits: { id: number; x: number; y: number; z: number; force: number }[] = [];
+// A building struck comes down when its pieces are ready (made off the main thread).
+scene.onBuildingDown((id) => {
+  if (!doc.buildings.has(id as BuildingId)) return;
+  mutate(() => { doc.buildings.remove(id as BuildingId); scene.forgetRuin(id); burning.delete(id); return true; });
+  requestDraw();
+});
+function breakDeferred(): void {
+  const next = deferredHits.shift();
+  if (next) {
+    const c = doc.buildings.get(next.id as BuildingId);
+    if (c && scene.strikeBuilding(c, next.x, next.y, next.z, next.force)) {
+      mutate(() => { doc.buildings.remove(c.id); scene.forgetRuin(c.id); burning.delete(c.id); return true; });
+    } else if (c && Math.random() < 0.4) ignite(c.id);
+    requestDraw();
+  }
+  requestAnimationFrame(breakDeferred);
+}
+requestAnimationFrame(breakDeferred);
 const burning = new Map<number, { since: number; nextFlame: number; nextSpread: number; nextBlast: number; until: number }>();
 function ignite(id: number): void {
   if (burning.has(id)) return;

@@ -971,6 +971,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
      * of skin matrices, and the clip's length in seconds; null until the clip
      * is baked (asking starts it).
      */
+    /** Bodies loaded and ready to draw, by index. */
+    loadedIndices(): number[] {
+      return [...batches.entries()].filter(([, b]) => b.clips.length > 0).map(([i]) => i);
+    },
     clipPose(index: number, key: Played, phase: number): { palette: Float32Array; duration: number } | null {
       const batch = batches.get(index);
       if (!batch) return null;
