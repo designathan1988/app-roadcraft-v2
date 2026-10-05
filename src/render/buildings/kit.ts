@@ -1,4 +1,3 @@
-import { applyHoles } from './damage';
 import {
   BoxGeometry,
   type BufferGeometry,
@@ -293,15 +292,6 @@ export function createBuildingKit(): BuildingKit {
     glassy.customProgramCacheKey = () => `room-lights-slots-${kind}`;
   }
   const shell = createFinishMaterials();
-  // Blows open holes in buildings (`damage.ts`): the shell and every part.
-  for (const [finish, mat] of Object.entries(shell)) applyHoles(mat, `shell-${finish}`);
-  // Some parts share a material (concrete and columns, the railings): each is cut once.
-  const holed = new Set<Material>();
-  for (const [kind, mat] of Object.entries(material)) {
-    if (kind === 'water' || holed.has(mat)) continue;
-    holed.add(mat);
-    applyHoles(mat, `part-${kind}`);
-  }
   const ghostShell = new MeshStandardMaterial({
     color: 0x65e5c3,
     emissive: new Color(0x1d5a4a),

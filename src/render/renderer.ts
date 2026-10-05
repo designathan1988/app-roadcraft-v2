@@ -340,7 +340,7 @@ export function createSceneRenderer(
   const exhaust = createExhaust();
   scene.add(exhaust.points);
   /** Buildings knocked down block by block (`destruction.ts`). */
-  const destruction = createDestruction(exhaust);
+  const destruction = createDestruction(exhaust, (b) => buildings.chunkOf(b));
   scene.add(destruction.group);
   let polePreview: Utilities | null = null;
   /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
@@ -725,7 +725,9 @@ export function createSceneRenderer(
     strikeBuilding(b, x, y, z, strength) {
       // The building's own floor, as it is drawn on its pad.
       const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
-      return destruction.hit(b, floor, x, y, z, strength);
+      const down = destruction.hit(b, floor, x, y, z, strength, rig.camera.getWorldDirection(new Vector3()));
+      buildings.setRuined(destruction.ruined);
+      return down;
     },
     strikeGround(x, y, strength) {
       for (let k = 0; k < 6 + strength * 2; k++) {
@@ -736,7 +738,8 @@ export function createSceneRenderer(
       exhaust.burst(x, y, terrain.renderedHeightAt(x, y), 20 + strength * 6, 1, m(1 + strength * 0.4), m(3), 5);
     },
     forgetRuin(id) {
-      destruction.drop(id);
+      void id;
+      buildings.setRuined(destruction.ruined);
     },
     setPolePreview(net, preview) {
       const key = preview && elevation

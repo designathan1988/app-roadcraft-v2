@@ -1,263 +1,240 @@
-import {
-  BoxGeometry,
-  Color,
-  DynamicDrawUsage,
-  Group,
-  InstancedMesh,
-  MeshStandardMaterial,
-  Object3D,
-} from 'three';
+import { Group, Mesh, Vector3 } from 'three';
 
 import type { Building } from '@world/buildings/types';
 import { levelElevation, localToWorld } from '@world/buildings/geometry';
 import { resolveBlocks } from '@world/buildings/blocks';
-import { FINISH_COLOUR } from '@world/buildings/materials';
 import { m } from '@world/units';
 import type { Exhaust } from './exhaust';
-import { setHoles } from './buildings/damage';
+import type { BuildingChunk } from './buildings/buildingMesh';
+import type { BuildingKit } from './buildings/kit';
+import { fractureBuilding, type Fragment } from './buildings/fracture';
 
 /**
- * Buildings that break when struck (the player's order of 2026-10-05), done
- * as games do it (GMTK, "How Games Do Destruction"; Red Faction's collapse):
- *
- * - A blow opens a hole in the building where it lands: the building keeps its
- *   own look, cut by a sphere (`buildings/damage.ts`), the rooms behind
- *   showing; chunks of its walls fly out of the hole and a cloud of dust and a
- *   column of dark smoke rise from it.
- * - Once a good share of it is gone (`COLLAPSE_AT` of its volume), it comes
- *   down: the intact model is swapped for hundreds of pieces of its own
- *   colours, filling its shell, that fall from the bottom up - an implosion -
- *   under a billowing cloud that hides the swap, and leave a heap of rubble
- *   that lies a while and settles away.
+ * Buildings that break for real (the player's order of 2026-10-05): the
+ * building's own meshes, pre-fractured into Voronoi fragments
+ * (`buildings/fracture.ts`), stand in for it from the first blow - looking
+ * exactly like it. A blow knocks the fragments within its reach out of the
+ * building, thrown away from the impact; then every fragment no longer joined
+ * to the ground through the others falls (the chunk graph's support check), so
+ * a building cut low comes down on itself. Pieces tumble, land, settle as a
+ * heap of the building's own walls, roof and floors, and sink away after a
+ * while. Dust rises where pieces break off and where they land.
  */
 
-/** Share of a building's volume that, knocked out, brings it down. */
-const COLLAPSE_AT = 0.22;
-/** Debris pieces in flight or lying at once, map-wide. */
-const MAX_DEBRIS = 6_000;
-/** Seconds rubble lies before it sinks away. */
-const RUBBLE_LIFE = 40;
 const GRAVITY = m(9.8);
-/** Edge of a collapse piece. */
-const PIECE = m(1.4);
-
-interface Hole { x: number; y: number; z: number; r: number; building: number }
+/** Seconds a settled piece lies before it sinks away. */
+const RUBBLE_LIFE = 60;
+/** Share of the fragments left standing below which the rest comes down. */
+const COLLAPSE_BELOW = 0.35;
 
 interface Piece {
-  x: number; y: number; z: number;
-  vx: number; vy: number; vz: number;
-  rx: number; ry: number; rz: number;
-  wx: number; wy: number; wz: number;
-  sx: number; sy: number; sz: number;
-  r: number; g: number; b: number;
-  /** Seconds before it starts to fall (a collapse goes from the bottom up). */
-  delay: number;
-  age: number;
-  life: number;
+  readonly fragment: Fragment;
+  readonly mesh: Mesh;
+  readonly floor: number;
+  falling: boolean;
   settled: boolean;
-  ground: number;
+  gone: boolean;
+  v: Vector3;
+  w: Vector3;
+  age: number;
+}
+
+interface Ruin {
+  readonly pieces: Piece[];
+  readonly floor: number;
+  standing: number;
 }
 
 export interface Destruction {
   readonly group: Group;
+  /** Buildings now drawn as fragments here (and not by the building layer). */
+  readonly ruined: ReadonlySet<number>;
   /**
-   * A blow on building `b` (its floor at `floor`) at world (x, y, z) with
-   * `strength` 1..10. Returns true when the building came down: the caller
-   * removes it from the map (its pieces are already falling).
+   * A blow on building `b` (its floor at `floor`) at world (x, y, z), force
+   * 1..10. Returns true when the building has come down.
    */
-  hit(b: Building, floor: number, x: number, y: number, z: number, strength: number): boolean;
+  hit(b: Building, floor: number, x: number, y: number, z: number, strength: number, eye?: Vector3): boolean;
   update(dt: number): void;
-  /** Forgets a building's holes (it was removed or rebuilt). */
-  drop(id: number): void;
   dispose(): void;
 }
 
-function colours(b: Building): { wall: Color; roof: Color; trim: Color } {
-  const spec = (slot: 'wall' | 'roof' | 'trim', fallback: number): Color => {
-    const s = b.materials?.[slot] ?? b.volumes.find((v) => v.materials?.[slot === 'trim' ? 'wall' : slot])?.materials?.[slot === 'trim' ? 'wall' : slot];
-    return new Color(s ? s.colour : fallback).convertSRGBToLinear();
-  };
-  return { wall: spec('wall', FINISH_COLOUR.plaster), roof: spec('roof', 0x7d4c3b), trim: spec('trim', 0xe8e4da) };
-}
-
-export function createDestruction(exhaust: Exhaust): Destruction {
+export function createDestruction(
+  exhaust: Exhaust,
+  chunkOf: (b: Building) => { chunk: BuildingChunk; kit: BuildingKit } | null,
+): Destruction {
   const group = new Group();
   group.name = 'destruction';
-  const unit = new BoxGeometry(1, 1, 1);
-  const material = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
-  const pieces: Piece[] = [];
-  /** Things that happen a moment after a collapse starts: the dust clouds. */
-  const later: { t: number; run: () => void }[] = [];
-  const holes: Hole[] = [];
-  /** Volume knocked out of each building so far, and its whole volume. */
-  const damage = new Map<number, { gone: number; total: number }>();
-  const debris = new InstancedMesh(unit, material, MAX_DEBRIS);
-  debris.instanceMatrix.setUsage(DynamicDrawUsage);
-  debris.count = 0;
-  debris.castShadow = true;
-  debris.receiveShadow = true;
-  debris.frustumCulled = false;
-  debris.name = 'destruction-debris';
-  group.add(debris);
-  const o = new Object3D();
-  const tint = new Color();
+  const ruins = new Map<number, Ruin>();
+  const ruined = new Set<number>();
+  const loose: Piece[] = [];
 
-  const add = (p: Omit<Piece, 'age' | 'settled' | 'rx' | 'ry' | 'rz'>): void => {
-    if (pieces.length >= MAX_DEBRIS) pieces.splice(0, pieces.length - MAX_DEBRIS + 1);
-    pieces.push({ ...p, age: 0, settled: false, rx: Math.random() * 6, ry: Math.random() * 6, rz: Math.random() * 6 });
+  const make = (b: Building, floor: number): Ruin | null => {
+    const source = chunkOf(b);
+    if (!source) return null;
+    // Floor slabs inside every volume, storey by storey.
+    const slabs: { corners: Vector3[]; y: number }[] = [];
+    for (const v of resolveBlocks(b).volumes) {
+      if (v.open) continue;
+      const corners = [[v.x, v.y], [v.x + v.w, v.y], [v.x + v.w, v.y + v.d], [v.x, v.y + v.d]].map(([lx, ly]) => {
+        const p = localToWorld(b, lx!, ly!);
+        return new Vector3(p.x, 0, -p.y);
+      });
+      for (let level = v.base + 1; level < v.base + v.storeys.length; level++) slabs.push({ corners, y: floor + levelElevation(b, level) });
+    }
+    const fragments = fractureBuilding(source.chunk, source.kit, slabs, b.id * 2654435761);
+    const pieces: Piece[] = fragments.map((fragment) => {
+      const mesh = new Mesh(fragment.geometry, fragment.materials);
+      mesh.position.copy(fragment.centre);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      return { fragment, mesh, floor, falling: false, settled: false, gone: false, v: new Vector3(), w: new Vector3(), age: 0 };
+    });
+    return { pieces, floor, standing: pieces.length };
   };
 
-  /** The building's closed volumes in world terms: footprint corners, floor, top. */
-  const shellOf = (b: Building) => resolveBlocks(b).volumes.filter((v) => !v.open).map((v) => ({
-    v, z0: levelElevation(b, v.base), z1: levelElevation(b, v.base + v.storeys.length),
-  }));
+  const release = (ruin: Ruin, piece: Piece, from: Vector3, power: number): void => {
+    if (piece.falling) return;
+    piece.falling = true;
+    ruin.standing--;
+    const away = piece.mesh.position.clone().sub(from);
+    const d = away.length() || 1;
+    away.divideScalar(d);
+    piece.v.copy(away).multiplyScalar(power * (0.5 + Math.random() * 0.6));
+    piece.v.y += power * 0.25 * Math.random();
+    piece.w.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3).multiplyScalar(0.4 + power / m(10));
+    loose.push(piece);
+    // Dust where it breaks off.
+    if (Math.random() < 0.5) {
+      const p = piece.mesh.position;
+      exhaust.burst(p.x, -p.z, p.y, 3, 3, piece.fragment.radius * 0.6, m(2.5), 3.5);
+    }
+  };
 
-  const collapse = (b: Building, floor: number): void => {
-    const { wall, roof, trim } = colours(b);
-    const shells = shellOf(b);
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, top = 0;
-    for (const { v, z0, z1 } of shells) {
-      top = Math.max(top, z1);
-      // Pieces over the walls and the roof of each volume; a few inside (floors, rooms).
-      const nx = Math.max(1, Math.round(v.w / PIECE)), ny = Math.max(1, Math.round(v.d / PIECE)), nz = Math.max(1, Math.round((z1 - z0) / PIECE));
-      for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const edge = i === 0 || j === 0 || i === nx - 1 || j === ny - 1;
-        const isRoof = k === nz - 1;
-        const isFloor = k % 3 === 0;
-        if (!edge && !isRoof && !(isFloor && Math.random() < 0.35)) continue;
-        const lx = v.x + (i + 0.5) * (v.w / nx), ly = v.y + (j + 0.5) * (v.d / ny);
-        const p = localToWorld(b, lx, ly);
-        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-        const z = floor + z0 + (k + 0.5) * ((z1 - z0) / nz);
-        const c = isRoof ? roof : edge ? (Math.random() < 0.05 ? trim : wall) : new Color(0.55, 0.53, 0.5);
-        const shade = 0.75 + Math.random() * 0.35;
-        const s = PIECE * (0.6 + Math.random() * 0.7);
-        // Implosion: the bottom goes first, the rest drops onto it.
-        const delay = ((z - floor) / Math.max(1, top)) * 0.9 + Math.random() * 0.35;
-        const cx = (minX + maxX) / 2 || p.x, cy = (minY + maxY) / 2 || p.y;
-        add({
-          x: p.x, y: p.y, z,
-          vx: (cx - p.x) * 0.15 + (Math.random() - 0.5) * m(1.5), vy: (cy - p.y) * 0.15 + (Math.random() - 0.5) * m(1.5), vz: -Math.random() * m(1),
-          wx: (Math.random() - 0.5) * 4, wy: (Math.random() - 0.5) * 4, wz: (Math.random() - 0.5) * 4,
-          sx: s, sy: s * (0.4 + Math.random() * 0.6), sz: s * (0.5 + Math.random() * 0.7),
-          r: c.r * shade, g: c.g * shade, b: c.b * shade,
-          delay, life: RUBBLE_LIFE + Math.random() * 10, ground: floor,
-        });
+  /** Every standing piece not joined to the ground through standing pieces. */
+  const unsupported = (ruin: Ruin): Piece[] => {
+    const held = new Uint8Array(ruin.pieces.length);
+    const stack: number[] = [];
+    ruin.pieces.forEach((p, i) => {
+      if (!p.falling && p.fragment.low <= ruin.floor + m(0.6)) { held[i] = 1; stack.push(i); }
+    });
+    while (stack.length) {
+      const i = stack.pop()!;
+      for (const j of ruin.pieces[i]!.fragment.neighbours) {
+        if (!held[j] && !ruin.pieces[j]!.falling) { held[j] = 1; stack.push(j); }
       }
     }
-    // The cloud: concrete dust billowing out at the foot, rising with the fall.
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, span = Math.max(maxX - minX, maxY - minY) / 2 + m(4);
-    // Released as the floors come down, not all at once, so the fall is seen.
-    later.push({ t: 0.35, run: () => exhaust.burst(cx, cy, floor + m(1), 90, 3, span * 0.9, m(5), 6) });
-    later.push({ t: 0.9, run: () => exhaust.burst(cx, cy, floor + m(2), 90, 3, span * 1.1, m(6), 6) });
-    later.push({ t: 1.6, run: () => exhaust.burst(cx, cy, floor + top * 0.3, 50, 3, span * 0.8, m(7), 5) });
-    later.push({ t: 1.0, run: () => exhaust.burst(cx, cy, floor + top * 0.3, 18, 2, span * 0.4, m(5), 7) });
+    return ruin.pieces.filter((p, i) => !p.falling && !held[i]);
   };
-
-  const sync = (): void => setHoles(holes);
 
   return {
     group,
-    hit(b, floor, x, y, z, strength) {
-      const shells = shellOf(b);
-      let d = damage.get(b.id);
-      if (!d) {
-        let total = 0;
-        for (const { v, z0, z1 } of shells) total += v.w * v.d * (z1 - z0);
-        d = { gone: 0, total: Math.max(1, total) };
-        damage.set(b.id, d);
+    ruined,
+    hit(b, floor, x, y, z, strength, eye) {
+      let ruin = ruins.get(b.id);
+      if (!ruin) {
+        const made = make(b, floor);
+        if (!made) return false;
+        ruin = made;
+        ruins.set(b.id, ruin);
+        ruined.add(b.id);
       }
-      const r = m(1.0 + strength * 0.32);
-      holes.push({ x, y, z, r, building: b.id });
-      if (holes.length > 96) holes.shift();
-      sync();
-      // Roughly what the blow took out: the sphere, as much as is in the building.
-      d.gone += (4 / 3) * Math.PI * r * r * r * 0.5;
-      // Chunks of the wall it hit, thrown out of the hole; dust and smoke from it.
-      const { wall, trim } = colours(b);
-      const count = 18 + strength * 8;
-      for (let n = 0; n < count; n++) {
-        const a = Math.random() * Math.PI * 2, el = (Math.random() - 0.5) * 1.0;
-        const speed = m(1.5 + strength * 0.55) * (0.4 + Math.random());
-        const c = Math.random() < 0.06 ? trim : wall;
-        const shade = 0.7 + Math.random() * 0.4;
-        const s = m(0.25 + Math.random() * (0.4 + strength * 0.08));
-        add({
-          x: x + Math.cos(a) * r * 0.5, y: y + Math.sin(a) * r * 0.5, z: z + (Math.random() - 0.5) * r,
-          vx: Math.cos(a) * Math.cos(el) * speed, vy: Math.sin(a) * Math.cos(el) * speed, vz: Math.sin(el) * speed + m(1),
-          wx: (Math.random() - 0.5) * 12, wy: (Math.random() - 0.5) * 12, wz: (Math.random() - 0.5) * 12,
-          sx: s, sy: s * (0.5 + Math.random() * 0.6), sz: s * (0.6 + Math.random() * 0.6),
-          r: c.r * shade, g: c.g * shade, b: c.b * shade,
-          delay: 0, life: RUBBLE_LIFE * 0.5, ground: floor,
-        });
+      let impact = new Vector3(x, z, -y);
+      // Once broken, the blow lands on the first standing piece along the line
+      // of sight through the point: what is left of the building, not the air
+      // where the rest of it was.
+      if (eye) {
+        // `eye` is the camera's looking direction (an orthographic camera's rays are parallel).
+        const dir = eye.clone().normalize();
+        eye = impact.clone().addScaledVector(dir, -m(2000));
+        let best: Vector3 | null = null, bestT = Infinity;
+        const to = new Vector3();
+        for (const p of ruin.pieces) {
+          if (p.falling) continue;
+          to.copy(p.mesh.position).sub(eye);
+          const t = to.dot(dir);
+          if (t <= 0) continue;
+          const off = to.clone().addScaledVector(dir, -t).length();
+          if (off < p.fragment.radius * 0.8 + m(1.5) && t < bestT) { bestT = t; best = p.mesh.position.clone(); }
+        }
+        // Nothing on the line: the standing piece nearest the point aimed at.
+        if (!best) {
+          let bd = Infinity;
+          for (const p of ruin.pieces) {
+            if (p.falling || p.fragment.centre.y < floor + m(0.6)) continue;
+            const d = p.mesh.position.distanceTo(impact);
+            if (d < bd) { bd = d; best = p.mesh.position.clone(); }
+          }
+        }
+        if (best) impact = best;
       }
-      exhaust.burst(x, y, z, 14 + strength * 3, 3, r, m(2 + strength * 0.25), 3.5);
-      exhaust.burst(x, y, z, 4 + strength, 2, r * 0.4, m(2.2), 5);
-      if (d.gone / d.total >= COLLAPSE_AT) {
-        collapse(b, floor);
-        for (let i = holes.length - 1; i >= 0; i--) if (holes[i]!.building === b.id) holes.splice(i, 1);
-        sync();
-        damage.delete(b.id);
+      const reach = m(1.4 + strength * 0.55);
+      const power = m(2 + strength * 1.1);
+      for (const piece of ruin.pieces) {
+        if (piece.falling) continue;
+        const d = piece.mesh.position.distanceTo(impact) - piece.fragment.radius * 0.5;
+        if (d < reach) release(ruin, piece, impact, power * Math.max(0.3, 1 - d / reach));
+      }
+      exhaust.burst(impact.x, -impact.z, impact.y, 10 + strength * 2, 3, reach * 0.6, m(2.5 + strength * 0.2), 4);
+      // What hangs on nothing now comes down: it falls, it is not thrown.
+      for (const piece of unsupported(ruin)) release(ruin, piece, piece.mesh.position.clone().add(new Vector3(0, m(1), 0)), m(0.5));
+      // Counted over what stands above the ground: the lot's paving and the
+      // plinth are never knocked down by blows above them.
+      const upper = ruin.pieces.filter((p) => p.fragment.centre.y > floor + m(0.6));
+      if (upper.filter((p) => !p.falling).length < upper.length * COLLAPSE_BELOW) {
+        for (const piece of ruin.pieces) {
+          // What lies on the ground (the lot's paving, the plinth) stays as it
+          // is, and goes with the rubble later.
+          if (piece.fragment.centre.y < floor + m(0.6)) {
+            if (!piece.falling) { piece.falling = true; piece.settled = true; ruin.standing--; loose.push(piece); }
+          } else release(ruin, piece, impact, m(0.6));
+        }
+        exhaust.burst(x, y, floor, 60, 3, m(10), m(5), 6);
         return true;
       }
       return false;
     },
     update(dt) {
-      for (let i = later.length - 1; i >= 0; i--) {
-        const job = later[i]!;
-        job.t -= dt;
-        if (job.t <= 0) { later.splice(i, 1); job.run(); }
-      }
-      for (let i = pieces.length - 1; i >= 0; i--) {
-        const p = pieces[i]!;
-        if (p.delay > 0) { p.delay -= dt; continue; }
+      for (let i = loose.length - 1; i >= 0; i--) {
+        const p = loose[i]!;
+        const mesh = p.mesh;
         p.age += dt;
         if (!p.settled) {
-          p.vz -= GRAVITY * dt;
-          p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-          p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
-          const lie = p.ground + p.sy / 2;
-          if (p.z <= lie) {
-            p.z = lie;
-            if (p.vz < -m(3)) {
-              // A bounce, losing most of it, and a puff where it lands hard.
-              p.vz *= -0.2; p.vx *= 0.45; p.vy *= 0.45; p.wx *= 0.4; p.wy *= 0.4; p.wz *= 0.4;
-              if (p.sx > m(1) && Math.random() < 0.08) exhaust.burst(p.x, p.y, p.ground, 2, 3, m(1), m(4), 4);
+          p.v.y -= GRAVITY * dt;
+          mesh.position.addScaledVector(p.v, dt);
+          mesh.rotation.x += p.w.x * dt; mesh.rotation.y += p.w.y * dt; mesh.rotation.z += p.w.z * dt;
+          const rest = p.floor + p.fragment.radius * 0.3;
+          if (mesh.position.y <= rest) {
+            mesh.position.y = rest;
+            if (p.v.y < -m(3)) {
+              p.v.multiplyScalar(0.3); p.v.y = Math.abs(p.v.y) * 0.5; p.w.multiplyScalar(0.4);
+              if (p.fragment.radius > m(1.2) && Math.random() < 0.3) exhaust.burst(mesh.position.x, -mesh.position.z, p.floor, 3, 3, m(1.5), m(3), 4);
             } else {
               p.settled = true;
-              p.vx = p.vy = p.vz = 0;
-              // It comes to rest flat-ish, on one of its faces.
-              p.rx = Math.round(p.rx / (Math.PI / 2)) * (Math.PI / 2) + (Math.random() - 0.5) * 0.3;
-              p.rz = Math.round(p.rz / (Math.PI / 2)) * (Math.PI / 2) + (Math.random() - 0.5) * 0.3;
+              p.v.set(0, 0, 0);
+              p.age = 0;
             }
           }
+        } else if (p.age > RUBBLE_LIFE) {
+          mesh.position.y -= dt * m(0.15);
+          if (p.age > RUBBLE_LIFE + 15) {
+            group.remove(mesh);
+            p.gone = true;
+            loose.splice(i, 1);
+          }
         }
-        if (p.age > p.life) p.z -= dt * m(0.12);
-        if (p.age > p.life + 12) pieces.splice(i, 1);
       }
-      let n = 0;
-      for (const p of pieces) {
-        o.position.set(p.x, p.z, -p.y);
-        o.rotation.set(p.rx, p.ry, p.rz);
-        o.scale.set(p.sx, p.sy, p.sz);
-        o.updateMatrix();
-        debris.setMatrixAt(n, o.matrix);
-        debris.setColorAt(n, tint.setRGB(p.r, p.g, p.b));
-        n++;
+      // A ruin whose pieces are all gone is forgotten; its geometry is released.
+      for (const [id, ruin] of ruins) {
+        if (!ruin.pieces.every((p) => p.gone)) continue;
+        for (const p of ruin.pieces) p.fragment.geometry.dispose();
+        ruins.delete(id);
+        ruined.delete(id);
       }
-      debris.count = n;
-      debris.instanceMatrix.needsUpdate = true;
-      if (debris.instanceColor) debris.instanceColor.needsUpdate = true;
-    },
-    drop(id) {
-      for (let i = holes.length - 1; i >= 0; i--) if (holes[i]!.building === id) holes.splice(i, 1);
-      damage.delete(id);
-      sync();
     },
     dispose() {
-      debris.dispose();
-      unit.dispose();
-      material.dispose();
+      for (const ruin of ruins.values()) for (const p of ruin.pieces) p.fragment.geometry.dispose();
+      group.clear();
     },
   };
 }

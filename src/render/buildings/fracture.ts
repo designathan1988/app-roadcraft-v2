@@ -1,0 +1,281 @@
+import {
+  BufferGeometry,
+  Float32BufferAttribute,
+  Matrix3,
+  Matrix4,
+  Vector3,
+  type Material,
+} from 'three';
+
+import type { Finish } from '@world/buildings/materials';
+import { m } from '@world/units';
+import type { BuildingChunk } from './buildingMesh';
+import type { BuildingKit, PartKind } from './kit';
+
+/**
+ * Pre-fracturing a building's own meshes (Voronoi fracture, as destructible
+ * objects are prepared in games: Grönberg, "Real-time Mesh Destruction System
+ * for a Video Game"; the chunk-and-graph approach of fracturing tools).
+ *
+ * The building's shell - every wall, roof, cornice, as drawn, with its own
+ * colours and textures - is subdivided until no triangle is larger than a
+ * fragment, and every triangle goes to the Voronoi cell (a jittered grid of
+ * seeds) its centre is in. The windows, doors and other parts go whole to the
+ * cell their centre is in. Each cell is one fragment: a mesh of exactly the
+ * pieces of the building it covers, with the building's own materials, given
+ * a wall's thickness (a back face and sides along every cut, in the grey of
+ * broken masonry) so a piece that comes loose is solid. Floor slabs are added
+ * inside, storey by storey, so a broken building shows its floors.
+ *
+ * Put back together the fragments ARE the building, so nothing changes on
+ * screen until a blow takes some of them away.
+ */
+
+/** Edge of a Voronoi cell: the size of a fragment. */
+export const FRAGMENT = m(2.8);
+/** Longest triangle edge after subdivision. */
+const MAX_EDGE = m(1.4);
+/** Thickness given to a wall fragment. */
+const WALL = m(0.28);
+/** The grey of broken masonry, on the cut faces. */
+const BROKEN = [0.46, 0.44, 0.41] as const;
+
+export interface Fragment {
+  /** Centre in three's space (y up); vertices are relative to it. */
+  readonly centre: Vector3;
+  readonly geometry: BufferGeometry;
+  readonly materials: Material[];
+  /** Radius of the fragment round its centre. */
+  readonly radius: number;
+  /** Lowest point, three's y. */
+  readonly low: number;
+  /** Fragments it is joined to. */
+  readonly neighbours: number[];
+}
+
+interface Tri {
+  /** 3 vertices x (pos 3, normal 3, colour 3, uv 2) = 33 numbers. */
+  readonly v: number[];
+  readonly material: number;
+  /** Whether it is part of the shell (gets thickness) or a whole part. */
+  readonly solid: boolean;
+  /** For a part: the id of its instance, so it stays whole. */
+  readonly group: number;
+}
+
+const STRIDE = 11;
+
+function lerp(a: number[], ai: number, b: number[], bi: number, out: number[]): void {
+  for (let k = 0; k < STRIDE; k++) out.push((a[ai + k]! + b[bi + k]!) / 2);
+}
+
+/** Splits a triangle along its longest edge until every edge is under `max`. */
+function subdivide(v: number[], max: number, out: number[][]): void {
+  const stack = [v];
+  while (stack.length) {
+    const t = stack.pop()!;
+    const d = (i: number, j: number): number => Math.hypot(t[i * STRIDE]! - t[j * STRIDE]!, t[i * STRIDE + 1]! - t[j * STRIDE + 1]!, t[i * STRIDE + 2]! - t[j * STRIDE + 2]!);
+    const e = [d(0, 1), d(1, 2), d(2, 0)];
+    const longest = e.indexOf(Math.max(...e));
+    if (e[longest]! <= max || out.length > 200_000) { out.push(t); continue; }
+    const i = longest, j = (longest + 1) % 3, k = (longest + 2) % 3;
+    const mid: number[] = [];
+    lerp(t, i * STRIDE, t, j * STRIDE, mid);
+    const vi = t.slice(i * STRIDE, i * STRIDE + STRIDE), vj = t.slice(j * STRIDE, j * STRIDE + STRIDE), vk = t.slice(k * STRIDE, k * STRIDE + STRIDE);
+    stack.push([...vi, ...mid, ...vk], [...mid, ...vj, ...vk]);
+  }
+}
+
+/**
+ * The fragments of one building, from its drawn chunk. `floor` is its ground
+ * floor's height; `storeys` the heights (three's y, absolute) of its floor slabs
+ * with the footprints they span, for the interior.
+ */
+export function fractureBuilding(
+  chunk: BuildingChunk,
+  kit: BuildingKit,
+  slabs: readonly { readonly corners: readonly Vector3[]; readonly y: number }[],
+  seed: number,
+): Fragment[] {
+  const materials: Material[] = [];
+  const index = new Map<Material, number>();
+  const materialIndex = (mat: Material): number => {
+    let i = index.get(mat);
+    if (i === undefined) { i = materials.length; materials.push(mat); index.set(mat, i); }
+    return i;
+  };
+  const tris: Tri[] = [];
+
+  // ---- the shell, subdivided
+  for (const [finish, part] of Object.entries(chunk.shells) as [Finish, NonNullable<BuildingChunk['shells'][Finish]>][]) {
+    const mat = materialIndex(kit.shell[finish]);
+    const { position: p, normal: n, colour: c, uv, index: idx } = part;
+    const vert = (i: number): number[] => [p[i * 3]!, p[i * 3 + 1]!, p[i * 3 + 2]!, n[i * 3]!, n[i * 3 + 1]!, n[i * 3 + 2]!, c[i * 3]!, c[i * 3 + 1]!, c[i * 3 + 2]!, uv[i * 2]!, uv[i * 2 + 1]!];
+    for (let t = 0; t < idx.length; t += 3) {
+      const out: number[][] = [];
+      subdivide([...vert(idx[t]!), ...vert(idx[t + 1]!), ...vert(idx[t + 2]!)], MAX_EDGE, out);
+      for (const v of out) tris.push({ v, material: mat, solid: true, group: -1 });
+    }
+  }
+  // ---- the parts (windows, doors, railings, ...), each instance whole
+  let group = 0;
+  const m4 = new Matrix4(), a = new Vector3(), nv = new Vector3(), nm3 = new Matrix3();
+  for (const [kind, batch] of Object.entries(chunk.parts) as [PartKind, BuildingChunk['parts'][PartKind]][]) {
+    if (!batch.count || kind === 'water') continue;
+    const geo = kit.geometry[kind].index ? kit.geometry[kind].toNonIndexed() : kit.geometry[kind];
+    const gp = geo.getAttribute('position'), gn = geo.getAttribute('normal'), guv = geo.getAttribute('uv');
+    const mat = materialIndex(kit.material[kind]);
+    for (let k = 0; k < batch.count; k++) {
+      m4.fromArray(batch.matrices, k * 16);
+      nm3.getNormalMatrix(m4);
+      const col = batch.colours ? [batch.colours[k * 3]!, batch.colours[k * 3 + 1]!, batch.colours[k * 3 + 2]!] : [1, 1, 1];
+      for (let t = 0; t < gp.count; t += 3) {
+        const v: number[] = [];
+        for (let q = 0; q < 3; q++) {
+          a.fromBufferAttribute(gp, t + q).applyMatrix4(m4);
+          nv.fromBufferAttribute(gn, t + q).applyMatrix3(nm3).normalize();
+          v.push(a.x, a.y, a.z, nv.x, nv.y, nv.z, col[0]!, col[1]!, col[2]!, guv ? guv.getX(t + q) : 0, guv ? guv.getY(t + q) : 0);
+        }
+        tris.push({ v, material: mat, solid: false, group });
+      }
+      group++;
+    }
+    if (geo !== kit.geometry[kind]) geo.dispose();
+  }
+  // ---- the floor slabs inside, in the concrete finish
+  const slabMat = materialIndex(kit.shell.concrete);
+  for (const slab of slabs) {
+    const [c0, c1, c2, c3] = slab.corners as [Vector3, Vector3, Vector3, Vector3];
+    for (const [top, ny] of [[slab.y, 1], [slab.y - m(0.25), -1]] as const) {
+      const vtx = (c: Vector3): number[] => [c.x, top, c.z, 0, ny, 0, 0.62, 0.6, 0.57, c.x * 0.3, c.z * 0.3];
+      const quad = ny > 0 ? [[c0, c1, c2], [c0, c2, c3]] : [[c0, c2, c1], [c0, c3, c2]];
+      for (const [p0, p1, p2] of quad) {
+        const out: number[][] = [];
+        subdivide([...vtx(p0!), ...vtx(p1!), ...vtx(p2!)], MAX_EDGE, out);
+        for (const v of out) tris.push({ v, material: slabMat, solid: false, group: -1 });
+      }
+    }
+  }
+  if (!tris.length) return [];
+
+  // ---- Voronoi cells: a jittered grid of seeds
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  for (const t of tris) for (let q = 0; q < 3; q++) {
+    minX = Math.min(minX, t.v[q * STRIDE]!); minY = Math.min(minY, t.v[q * STRIDE + 1]!); minZ = Math.min(minZ, t.v[q * STRIDE + 2]!);
+  }
+  let s = seed >>> 0 || 1;
+  const rand = (): number => { s = (Math.imul(s ^ (s >>> 15), 0x2c1b3c6d) + 0x9e3779b9) >>> 0; return s / 4_294_967_296; };
+  const jitter = new Map<string, Vector3>();
+  const seedOf = (i: number, j: number, k: number): Vector3 => {
+    const key = `${i},${j},${k}`;
+    let p = jitter.get(key);
+    if (!p) {
+      p = new Vector3(minX + (i + 0.15 + rand() * 0.7) * FRAGMENT, minY + (j + 0.15 + rand() * 0.7) * FRAGMENT, minZ + (k + 0.15 + rand() * 0.7) * FRAGMENT);
+      jitter.set(key, p);
+    }
+    return p;
+  };
+  const cellOf = (x: number, y: number, z: number): string => {
+    const i0 = Math.floor((x - minX) / FRAGMENT), j0 = Math.floor((y - minY) / FRAGMENT), k0 = Math.floor((z - minZ) / FRAGMENT);
+    let best = '', bd = Infinity;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (let dk = -1; dk <= 1; dk++) {
+      const p = seedOf(i0 + di, j0 + dj, k0 + dk);
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
+      if (d < bd) { bd = d; best = `${i0 + di},${j0 + dj},${k0 + dk}`; }
+    }
+    return best;
+  };
+  const centroid = (t: Tri): [number, number, number] => [
+    (t.v[0]! + t.v[STRIDE]! + t.v[2 * STRIDE]!) / 3, (t.v[1]! + t.v[STRIDE + 1]! + t.v[2 * STRIDE + 1]!) / 3, (t.v[2]! + t.v[STRIDE + 2]! + t.v[2 * STRIDE + 2]!) / 3,
+  ];
+  // A part goes whole to the cell of its first triangle's centre.
+  const groupCell = new Map<number, string>();
+  const cells = new Map<string, Tri[]>();
+  for (const t of tris) {
+    let cell: string;
+    if (t.group >= 0) {
+      cell = groupCell.get(t.group) ?? cellOf(...centroid(t));
+      groupCell.set(t.group, cell);
+    } else cell = cellOf(...centroid(t));
+    const list = cells.get(cell);
+    if (list) list.push(t); else cells.set(cell, [t]);
+  }
+
+  // ---- each cell to a solid fragment
+  const keys = [...cells.keys()];
+  const vkey = (x: number, y: number, z: number): string => `${Math.round(x * 200)},${Math.round(y * 200)},${Math.round(z * 200)}`;
+  const vertexCells = new Map<string, Set<number>>();
+  const fragments: Fragment[] = [];
+  keys.forEach((cell, fi) => {
+    const list = cells.get(cell)!;
+    const pos: number[] = [], nor: number[] = [], col: number[] = [], uvs: number[] = [], dec: number[] = [];
+    const groups: { material: number; start: number; count: number }[] = [];
+    let cx = 0, cy = 0, cz = 0, nverts = 0;
+    for (const t of list) for (let q = 0; q < 3; q++) { cx += t.v[q * STRIDE]!; cy += t.v[q * STRIDE + 1]!; cz += t.v[q * STRIDE + 2]!; nverts++; }
+    cx /= nverts; cy /= nverts; cz /= nverts;
+    let radius = 0, low = Infinity;
+    const push = (x: number, y: number, z: number, n: readonly number[], c: readonly number[], u: number, w: number): void => {
+      pos.push(x - cx, y - cy, z - cz); nor.push(n[0]!, n[1]!, n[2]!); col.push(c[0]!, c[1]!, c[2]!); uvs.push(u, w); dec.push(0);
+      radius = Math.max(radius, Math.hypot(x - cx, y - cy, z - cz)); low = Math.min(low, y);
+    };
+    // Grouped by material, for the mesh's draw groups.
+    const byMat = new Map<number, Tri[]>();
+    for (const t of list) { const l = byMat.get(t.material); if (l) l.push(t); else byMat.set(t.material, [t]); }
+    for (const [mat, mtris] of byMat) {
+      const start = pos.length / 3;
+      // Edges used once inside the fragment: the cut, which gets a side.
+      const edges = new Map<string, number>();
+      const ek = (t: Tri, i: number, j: number): string => {
+        const a1 = vkey(t.v[i * STRIDE]!, t.v[i * STRIDE + 1]!, t.v[i * STRIDE + 2]!), b1 = vkey(t.v[j * STRIDE]!, t.v[j * STRIDE + 1]!, t.v[j * STRIDE + 2]!);
+        return a1 < b1 ? `${a1}|${b1}` : `${b1}|${a1}`;
+      };
+      for (const t of mtris) if (t.solid) for (const [i, j] of [[0, 1], [1, 2], [2, 0]] as const) { const k = ek(t, i, j); edges.set(k, (edges.get(k) ?? 0) + 1); }
+      for (const t of mtris) {
+        const v = t.v;
+        for (let q = 0; q < 3; q++) {
+          const o = q * STRIDE;
+          push(v[o]!, v[o + 1]!, v[o + 2]!, [v[o + 3]!, v[o + 4]!, v[o + 5]!], [v[o + 6]!, v[o + 7]!, v[o + 8]!], v[o + 9]!, v[o + 10]!);
+          const key = vkey(v[o]!, v[o + 1]!, v[o + 2]!);
+          let set = vertexCells.get(key);
+          if (!set) vertexCells.set(key, set = new Set());
+          set.add(fi);
+        }
+        if (!t.solid) continue;
+        // The wall's thickness: its back face, in broken masonry.
+        const back = (q: number): [number, number, number] => [v[q * STRIDE]! - v[q * STRIDE + 3]! * WALL, v[q * STRIDE + 1]! - v[q * STRIDE + 4]! * WALL, v[q * STRIDE + 2]! - v[q * STRIDE + 5]! * WALL];
+        const nb = [-v[3]!, -v[4]!, -v[5]!];
+        for (const q of [0, 2, 1]) { const b = back(q); push(b[0], b[1], b[2], nb, BROKEN, v[q * STRIDE + 9]!, v[q * STRIDE + 10]!); }
+        // A side along every cut edge.
+        for (const [i, j] of [[0, 1], [1, 2], [2, 0]] as const) {
+          if (edges.get(ek(t, i, j)) !== 1) continue;
+          const pi = [v[i * STRIDE]!, v[i * STRIDE + 1]!, v[i * STRIDE + 2]!], pj = [v[j * STRIDE]!, v[j * STRIDE + 1]!, v[j * STRIDE + 2]!];
+          const bi = back(i), bj = back(j);
+          const ex = pj[0]! - pi[0]!, ey = pj[1]! - pi[1]!, ez = pj[2]! - pi[2]!;
+          const sn = new Vector3(ey * v[5]! - ez * v[4]!, ez * v[3]! - ex * v[5]!, ex * v[4]! - ey * v[3]!).normalize();
+          const sideN = [sn.x, sn.y, sn.z];
+          push(pi[0]!, pi[1]!, pi[2]!, sideN, BROKEN, 0, 0); push(bi[0], bi[1], bi[2], sideN, BROKEN, 0, 1); push(pj[0]!, pj[1]!, pj[2]!, sideN, BROKEN, 1, 0);
+          push(pj[0]!, pj[1]!, pj[2]!, sideN, BROKEN, 1, 0); push(bi[0], bi[1], bi[2], sideN, BROKEN, 0, 1); push(bj[0], bj[1], bj[2], sideN, BROKEN, 1, 1);
+        }
+      }
+      groups.push({ material: mat, start, count: pos.length / 3 - start });
+    }
+    const g = new BufferGeometry();
+    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new Float32BufferAttribute(nor, 3));
+    g.setAttribute('color', new Float32BufferAttribute(col, 3));
+    g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+    g.setAttribute('aDecay', new Float32BufferAttribute(dec, 1));
+    for (const gr of groups) g.addGroup(gr.start, gr.count, gr.material);
+    g.computeBoundingSphere();
+    fragments.push({ centre: new Vector3(cx, cy, cz), geometry: g, materials, radius, low, neighbours: [] });
+  });
+  // Joined where they share a vertex of the original surface.
+  const links = fragments.map(() => new Set<number>());
+  for (const set of vertexCells.values()) {
+    if (set.size < 2) continue;
+    const ids = [...set];
+    for (const x of ids) for (const y of ids) if (x !== y) links[x]!.add(y);
+  }
+  links.forEach((set, i) => fragments[i]!.neighbours.push(...set));
+  return fragments;
+}

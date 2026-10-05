@@ -59,6 +59,8 @@ export interface BuildingLayer {
   setDimmed(except: BuildingId | null | undefined): void;
   /** Buildings drawn by someone else (a ruin being knocked down, `destruction.ts`): left out here. */
   setRuined(ids: ReadonlySet<number>): void;
+  /** A building's meshes as drawn (world space), with the kit they are drawn with: what a ruin is cut from. */
+  chunkOf(b: Building): { chunk: BuildingChunk; kit: BuildingKit } | null;
   /** Whether a world point is under a building (for the scenery's plant cull). */
   covers(x: number, y: number): boolean;
   /**
@@ -95,6 +97,7 @@ export function createBuildingLayer(): BuildingLayer {
   group.updateMatrix();
   let stored: BuildingMeshes | null = null;
   let ruined: ReadonlySet<number> = new Set();
+  let lastGround: { groundAt: GroundAt; groundKey: string; pavedAt: PavedAt | undefined; naturalAt: GroundAt } | null = null;
   /** Each cell's batch as last assembled, and from which buildings' meshes (`assembleByCell`). */
   const cells: CellCache = new Map();
   const detailCells: CellCache = new Map();
@@ -211,7 +214,13 @@ export function createBuildingLayer(): BuildingLayer {
     get version() {
       return version;
     },
+    chunkOf(b) {
+      if (!lastGround) return null;
+      const { groundAt, groundKey, pavedAt, naturalAt } = lastGround;
+      return { chunk: chunkFor(b, groundAt, groundKey, pavedAt, naturalAt), kit };
+    },
     update(doc, groundAt, groundKey, pavedAt, naturalAt = groundAt) {
+      lastGround = { groundAt, groundKey, pavedAt, naturalAt };
       const hides = preview?.hides ?? null;
       const dimKey = dimmed === undefined ? 'off' : String(dimmed ?? 'all');
       const cutKey = cutaway

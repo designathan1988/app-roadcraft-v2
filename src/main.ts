@@ -4391,8 +4391,11 @@ setInterval(() => {
 function strikeAt(sx: number, sy: number, world: Vec2): void {
   // `world` is moved onto the building below.
   const strength = strikeChoice.strength;
+  // A building already broken is no longer drawn as itself, so the pick by
+  // its meshes misses it: found by its footprint under the pointer instead.
   const id = buildings.tool.buildingAt({ x: sx, y: sy });
-  const b = id !== null ? doc.buildings.get(id as BuildingId) : undefined;
+  const b = id !== null ? doc.buildings.get(id as BuildingId)
+    : [...doc.buildings.all()].find((c) => rayOnBuilding(c, sx, sy, sceneHeightAt({ x: c.x, y: c.y })) !== null);
   // Where the blow lands: the first point of the building along the pointer's
   // ray (its roof or the face under the pointer); else the ground.
   let target = world, z = sceneHeightAt(world);
