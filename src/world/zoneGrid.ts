@@ -6,6 +6,19 @@ import { carriesPedestrians } from './pedestrianAccess';
 import { Level, halfWidth } from './roadTypes';
 import { m } from './units';
 import { GRID_CELL } from './grid';
+import { onFootway, poleLines, type PoleLines } from './poleLines';
+import { pointInPolygon } from '@core/polygon';
+
+/** Whether a point is on the kerbed carriageway (inside a kerb). */
+function insidePaving(lines: PoleLines, p: Vec2): boolean {
+  for (const poly of lines.kerbed) {
+    const [outer, ...holes] = poly;
+    if (!outer || !pointInPolygon(p, outer.map(([x, y]) => ({ x: x!, y: y! })))) continue;
+    if (holes.some((h) => pointInPolygon(p, h.map(([x, y]) => ({ x: x!, y: y! }))))) continue;
+    return true;
+  }
+  return false;
+}
 
 /**
  * The zoning grid: the land along every street, cut into cells the player
@@ -85,19 +98,13 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
     }
     return false;
   };
-  // Junction plates: a disc round every junction as wide as its widest mouth.
-  const plates: { p: Vec2; r: number }[] = [];
-  for (const node of doc.nodes.values()) {
-    if (node.incident.length < 3) continue;
-    let r = 0;
-    for (const s of node.incident) {
-      const ribbon = net.ribbons.get(s);
-      r = Math.max(r, net.mouthDistance(s, node.id) + (ribbon ? halfWidth(ribbon.road, Level.Sidewalk) : 0));
-    }
-    plates.push({ p: { x: node.x, y: node.y }, r });
-  }
-  const onPlate = (p: Vec2): boolean => plates.some((plate) => Math.hypot(p.x - plate.p.x, p.y - plate.p.y) < plate.r);
-
+  // The paving as drawn - carriageways, kerbs, footways and every junction's
+  // corners - so a cell comes right up to the footway's back edge and round
+  // the corner of the block. A disc round each junction (as wide as its
+  // widest mouth) used to stand in for the junction, and took a bite out of
+  // every block corner: the zones stopped short of the corners, broken.
+  const lines = poleLines(net);
+  const onPlate = (p: Vec2): boolean => onFootway(net, p) || insidePaving(lines, p);
   const cells: ZoneCell[] = [];
   const byId = new Map<string, ZoneCell>();
   const buckets = new Map<string, ZoneCell[]>();
@@ -119,13 +126,12 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
     if (!ribbon || seg.structure !== 'ground' || !carriesPedestrians(ribbon.road)) continue;
     const line = ribbon.full;
     const length = line.length;
-    // The grid starts clear of each end's junction mouth.
-    const start = net.mouthDistance(segId, seg.a);
-    const end = length - net.mouthDistance(segId, seg.b);
-    const columns = Math.floor((end - start) / ZONE_CELL);
+    // Columns along the whole street, centred on it; those that reach into a
+    // junction are refused cell by cell against the paving, so the grid runs
+    // up to the corner of each block instead of stopping at the mouth.
+    const columns = Math.floor(length / ZONE_CELL);
     if (columns < 1) continue;
-    // Centre the columns between the two mouths.
-    const s0 = start + ((end - start) - columns * ZONE_CELL) / 2;
+    const s0 = (length - columns * ZONE_CELL) / 2;
     const face = halfWidth(ribbon.road, Level.Sidewalk);
     const frame = (s: number) => {
       const f = line.sampleAt(Math.max(0, Math.min(length, s)));
@@ -137,7 +143,7 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
         const na = { x: -a.t.y * side, y: a.t.x * side };
         const nb = { x: -b.t.y * side, y: b.t.x * side };
         const nm = { x: -mid.t.y * side, y: mid.t.x * side };
-        for (let row = 0; row < ZONE_DEPTH; row++) {
+        rows: for (let row = 0; row < ZONE_DEPTH; row++) {
           const d0 = face + row * ZONE_CELL, d1 = d0 + ZONE_CELL;
           const corners: [Vec2, Vec2, Vec2, Vec2] = [
             { x: a.p.x + na.x * d0, y: a.p.y + na.y * d0 },
@@ -149,7 +155,18 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
           // A column stops at the first cell that cannot be land: a road, a
           // junction plate or another street's cell. Its deeper rows would be
           // cut off from the road.
-          if (onRoad(centre) || corners.some(onRoad) || onPlate(centre) || taken(centre)) break;
+          const edgeMids = corners.map((corner, i) => {
+            const next = corners[(i + 1) % 4]!;
+            return { x: (corner.x + next.x) / 2, y: (corner.y + next.y) / 2 };
+          });
+          // Off the paving, by a hair: a cell's front edge lies ON the
+          // footway's back edge.
+          const inset = (q: Vec2): Vec2 => ({ x: q.x + (centre.x - q.x) * 0.02, y: q.y + (centre.y - q.y) * 0.02 });
+          if (onRoad(centre) || corners.some(onRoad) || onPlate(centre) ||
+            [...corners, ...edgeMids].some((q) => onPlate(inset(q))) || taken(centre)) {
+            if (row === 0) continue rows;
+            break;
+          }
           const front = { x: mid.p.x + nm.x * d0, y: mid.p.y + nm.y * d0 };
           const cell: ZoneCell = {
             id: key(segId, side, c, row), segment: segId, side, column: c, row,
