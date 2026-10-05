@@ -39,6 +39,20 @@ export interface LandscapeItem {
   readonly signType?: SignType;
   /** What a sign says, or a street's name. */
   readonly text?: string;
+  /** When a plant was planted, in city minutes (`CityLife.minutes`); absent: fully grown. */
+  readonly planted?: number;
+}
+
+/** City minutes a planted tree or shrub takes to reach its full size: three days. */
+export const GROW_MINUTES = 3 * 1440;
+/** The size a plant is planted at, as a share of its full size. */
+export const PLANTED_SIZE = 0.3;
+
+/** A plant's size now, as a share of its full size: planted small, grown over `GROW_MINUTES`. */
+export function plantGrowth(planted: number | undefined, now: number): number {
+  if (planted === undefined || !Number.isFinite(now)) return 1;
+  const t = Math.max(0, Math.min(1, (now - planted) / GROW_MINUTES));
+  return PLANTED_SIZE + (1 - PLANTED_SIZE) * (t * t * (3 - 2 * t));
 }
 
 /**

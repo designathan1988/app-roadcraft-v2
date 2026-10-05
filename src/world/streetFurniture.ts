@@ -55,6 +55,8 @@ export interface FurnitureItem {
   readonly faces?: Vec2;
   /** A per-item number in [0, 1), stable across rebuilds, for variety. */
   readonly seed: number;
+  /** When it was planted, city minutes (plants only); absent: fully grown. */
+  readonly planted?: number;
 }
 
 /** Each placed kind as the furniture the renderer and the walkers know. */
@@ -106,6 +108,7 @@ export function streetFurniture(net: Network): FurnitureItem[] {
       on: 'footway' as const,
       radius: LANDSCAPE_RADIUS[placed.kind],
       seed: hash01(placed.id, 0x5eed),
+      ...(placed.planted !== undefined ? { planted: placed.planted } : {}),
     };
     if (kind === 'bench') {
       // A bench by the kerb turns its back on the traffic and faces the footway.

@@ -314,11 +314,12 @@ export class RoadDoc {
   }
 
   /** Places one landscaping item where `snapLandscape` put it. */
-  addLandscape(kind: LandscapeKind, at: { x: number; y: number }, extra: { signType?: SignType; text?: string } = {}): LandscapeItem {
+  addLandscape(kind: LandscapeKind, at: { x: number; y: number }, extra: { signType?: SignType; text?: string; planted?: number } = {}): LandscapeItem {
     const on = clampToMap(at);
     const text = extra.text?.slice(0, SIGN_TEXT_MAX);
     const item: LandscapeItem = { id: this.landscapeIds.take(), kind, x: on.x, y: on.y,
-      ...(extra.signType ? { signType: extra.signType } : {}), ...(text ? { text } : {}) };
+      ...(extra.signType ? { signType: extra.signType } : {}), ...(text ? { text } : {}),
+      ...(extra.planted !== undefined && Number.isFinite(extra.planted) ? { planted: extra.planted } : {}) };
     this.landscape.set(item.id, item);
     this.utilityRevision++;
     return item;
@@ -945,7 +946,8 @@ export class RoadDoc {
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
         landscape: [...this.landscape.values()].map((item) => ({ id: item.id, kind: item.kind, x: item.x, y: item.y,
-          ...(item.signType ? { signType: item.signType } : {}), ...(item.text ? { text: item.text } : {}) })),
+          ...(item.signType ? { signType: item.signType } : {}), ...(item.text ? { text: item.text } : {}),
+          ...(item.planted !== undefined ? { planted: item.planted } : {}) })),
       } : {}),
       // Only when there are any, so a map without them serialises as before.
       ...(this.barriers.size > 0 ? {
@@ -1078,7 +1080,8 @@ export class RoadDoc {
       const at = repair ? clampToMap(raw) : { x: raw.x, y: raw.y };
       doc.landscape.set(raw.id, { id: raw.id, kind: raw.kind, x: at.x, y: at.y,
         ...(isSignType(raw.signType) ? { signType: raw.signType } : {}),
-        ...(typeof raw.text === 'string' && raw.text ? { text: raw.text.slice(0, SIGN_TEXT_MAX) } : {}) });
+        ...(typeof raw.text === 'string' && raw.text ? { text: raw.text.slice(0, SIGN_TEXT_MAX) } : {}),
+        ...(Number.isFinite(raw.planted) ? { planted: raw.planted } : {}) });
       doc.landscapeIds.reserve(raw.id);
     }
     // Walls, fences and hedges, if the map has any; anything malformed is dropped.
@@ -1162,7 +1165,7 @@ export interface SerializedDoc {
   /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
   readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
-  readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string }[];
+  readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string; planted?: number }[];
   /** Walls, fences and hedges (`barriers.ts`); OPTIONAL like the poles. */
   readonly barriers?: readonly { id: number; kind: string; points: readonly { x: number; y: number }[] }[];
   /**

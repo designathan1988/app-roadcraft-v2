@@ -48,6 +48,7 @@ import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
+import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
 import { MAP_SIZE } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
@@ -540,7 +541,11 @@ export function createSceneRenderer(
   };
 
   /** The landscaping layer, rebuilt with the poles: it moves the same revision. */
+  /** The city hour the plants were last sized at (`plantGrowth`). */
+  let growthHour = Number.NaN;
+  let cityMinutes = Number.NaN;
   const rebuildFurniture = (net: Network): void => {
+    growthHour = Math.floor(cityMinutes / 60);
     if (!elevation) return;
     if (furniture) {
       builtTriangles -= furniture.triangles;
@@ -548,7 +553,7 @@ export function createSceneRenderer(
       world.remove(furniture.grass);
       furniture.dispose();
     }
-    furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt);
+    furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt, cityMinutes);
     if (signs) { world.remove(signs.group); signs.dispose(); }
     signs = buildSigns(net, elevation, net.doc.landscape.values());
     world.add(signs.group);
@@ -749,6 +754,9 @@ export function createSceneRenderer(
     // Wall-clock time between drawn frames, for things that age as they are watched.
     draw(net, sim, alpha, delta, options) {
       renderer.info.reset();
+      // Planted trees and shrubs grow with the city's clock: resized once a city hour.
+      cityMinutes = sim.city.minutes(sim);
+      if (Math.floor(cityMinutes / 60) !== growthHour && [...net.doc.landscape.values()].some((i) => i.planted !== undefined && cityMinutes - i.planted < GROW_MINUTES + 60)) rebuildFurniture(net);
       const wallNow = performance.now();
       const wallDt = lastWall < 0 ? 0 : Math.min(0.1, (wallNow - lastWall) / 1000);
       lastWall = wallNow;

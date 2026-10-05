@@ -1183,7 +1183,9 @@ canvas.addEventListener('pointerdown', (e) => {
       const placed = snapLandscape(net, doc.landscape.values(), kind, world, streetscapeReach());
       if (placed.ok) {
         mutate(() => {
-          doc.addLandscape(kind, placed.at, kind === 'sign' ? { signType: signChoice.type, text: signChoice.text } : kind === 'streetname' ? { text: signChoice.streetName } : {});
+          doc.addLandscape(kind, placed.at, kind === 'sign' ? { signType: signChoice.type, text: signChoice.text }
+          : kind === 'streetname' ? { text: signChoice.streetName }
+          : kind === 'tree' || kind === 'shrub' ? { planted: sim.city.minutes(sim) } : {});
           return true;
         });
       } else {

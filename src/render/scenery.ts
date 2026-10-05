@@ -1,3 +1,4 @@
+import { plantGrowth } from '@world/landscape';
 import {
   AdditiveBlending,
   CanvasTexture,
@@ -538,7 +539,7 @@ export function buildScenery(
  * and nothing else.
  */
 export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit: SceneryKit,
-  terrainAt: (x: number, y: number) => number = () => 0): Scenery {
+  terrainAt: (x: number, y: number) => number = () => 0, now = Number.NaN): Scenery {
   const furniture = new Map<string, Placement[]>();
   const put = (key: string, placement: Placement): void => {
     const list = furniture.get(key);
@@ -587,7 +588,8 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
         break;
       case 'streetTree': {
         put('treePit', { ...at, yaw: angleOf(item.along) });
-        const height = STREET_TREE_MIN + item.seed * STREET_TREE_RANGE;
+        // Planted young, it grows to its full height over a few days.
+        const height = (STREET_TREE_MIN + item.seed * STREET_TREE_RANGE) * plantGrowth(item.planted, now);
         const rng = new Rng(Math.floor(item.seed * 0xffffff));
         (trees.get(streetSpecies(rng.float())) as Placement[]).push({
           x: item.x,
@@ -603,7 +605,7 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
       }
       case 'shrub': {
         const rng = new Rng(Math.floor(item.seed * 0xffffff));
-        const height = m(0.8) + rng.float() * m(0.4);
+        const height = (m(0.8) + rng.float() * m(0.4)) * plantGrowth(item.planted, now);
         (bushes.get(rng.float() < 0.4 ? 'bushFlowering' : 'bush') as Placement[]).push({
           x: item.x,
           y: item.y,
