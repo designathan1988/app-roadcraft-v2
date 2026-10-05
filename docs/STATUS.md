@@ -49,16 +49,22 @@ and they have seen it.
   jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
   signal cycle). Photos: `scripts/walk-shots.mjs`
   (`docs/audit/2026-10-05/walk/`).
-- **Not yet:** only residents with a free bay reachable from their back door
-  own a car in agent mode (49 in the default town); in agent mode nobody but
+- **Slice 4, LIVE behind `?agents=1`** (2026-10-05): a car owner keeps their
+  car in the lot behind their building or, failing that, in the free bay
+  nearest their door within a minute's walk (a lot down the street or a kerb
+  bay); with no bay near home they keep no car and walk (Cities: Skylines II's
+  rule: the bays are the cars a town can hold). Default town: 80 cars for 736
+  owners (293 bays reachable, most homes over 200 m from one); with parallel
+  parking on its local and urban streets it would be 712 (1989 bays), but
+  that widens those streets by 2 m a side: the player's decision.
+- **Not yet:** car owners without a bay near home walk; in agent mode nobody but
   the residents walks (no passers-by) and nobody boards a bus (the walk
   engine's bridge has no stops yet); a street whose ends lead nowhere is an
   island to the walkers (the walkway graph does not join the two footways at
   a road end: the player's city has 24 separate pieces); a car crossing the
   footway does not yet wait for every walker; parked cars are not obstacles
   for the walkers.
-- **Next slices:** 4, every car owner an agent with their own car (kerb and
-  lot bays). 5, agents by default; then People, the Detour crowd flag and
+- **Next slices:** 5, agents by default; then People, the Detour crowd flag and
   `sim/peds` deleted after the player has seen it.
 
 ## Live in the game (main, 4180)

@@ -142,8 +142,12 @@ export class OwnCars {
       const at = where(r.id);
       if (!at) continue;
       // Parked in the lot behind the building they are in, reached from its back
-      // door; with no such bay free they have no car to use here, and walk.
-      const bay = this.bayBehind(w, at.building);
+      // door; failing that, in the free bay nearest their door that is a short
+      // walk away (a lot down the street, a bay at the kerb). With no bay free
+      // near home they keep no car here and walk, as a household without
+      // parking does in Cities: Skylines II: the bays a town has are the cars
+      // its residents can own.
+      const bay = this.bayBehind(w, at.building) ?? freeBayNear(this.bays, at.door.x, at.door.y, CAR_REACH);
       if (!bay || !bay.lane) continue;
       const rng = new Rng(r.seed ^ 0x5eed_ca75);
       const classes = ARCHETYPES.filter((a) => CLASSES.includes(a.id));
