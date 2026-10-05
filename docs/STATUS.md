@@ -145,7 +145,7 @@ and they have seen it.
   on the lane beside it ride inside the band, easing back to the lane near
   the corners (`sim/vehicles/cycleLane.ts`, `sim/pose.ts`); cars of that
   lane pass them instead of following (`vehicles/leaderIndex.ts`). One in
-  three residents without a car cycles to places 80 to 640 m away (farther:
+  three residents without a car cycles to places 200 m to 1.6 km away (farther:
   transit), gets off at the kerb and walks in (`CityLife.start`, trip mode
   `bike`); clicking the bicycle opens their card ("De bicicleta ate ...").
   Measured: `tests/sim/agents/cycleLane.spec.ts` (bicycles in the band, cars
