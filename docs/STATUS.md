@@ -111,17 +111,16 @@ and they have seen it.
 
 ## Open, by area
 
-- **Planet (the world as a real sphere), slice 1 LIVE as its own page,
-  `planet.html` (2026-10-05):** a cube sphere of 13.5 km radius (the area of a
-  48 km map), each face a quadtree of patches built by distance with skirts
-  (`src/planet/surface.ts`), relief read on the sphere (continents, sea,
-  ranges; `relief.ts`), a sea sphere, and a Google-Earth camera from orbit to
-  the ground (`camera.ts`). NOT yet: roads, buildings, traffic or people on it;
-  the game's tools still work on the flat map in `index.html`. Next slices: the
-  road tool and the document in sphere coordinates, then buildings, then agents.
-  The fake globes (every material bent in the vertex stage, then a flat map
-  wrapped round a sphere) were removed: the player rejected them as a morph
-  and as a fake. A flat square map cannot close a sphere (Red Blob Games).
+- **Planet (the world as a real sphere): put aside on branch `planeta`
+  (2026-10-05, the player's decision).** The game is the flat city again;
+  `master` has no planet page. The branch holds `planet.html` and
+  `src/planet/` (cube sphere of quadtree patches with skirts, relief on the
+  sphere, sea sphere, Google-Earth camera). Open there: the camera rides the
+  height of the ground it looks at and re-picks the ground on every move (the
+  globe jumps and slips; Cesium keeps the camera's own height and picks once
+  per drag), the middle button tilts about a point that may be 45 km away,
+  the altitude label is the range, the sky is a flat colour, and the planet's
+  scale (13.5 km radius, relief 11% of it) is undecided.
 
 - **Zoning:** the zoning grids of neighbouring roads overlap (one road's cells cover
   the other's). The player's next order: implement zoning on a new city.

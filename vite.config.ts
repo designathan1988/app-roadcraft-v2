@@ -57,11 +57,6 @@ export default defineConfig({
     // before the first paint.
     chunkSizeWarningLimit: 700,
     rollupOptions: {
-      // The game, and the planet: the world as a real sphere (`planet.html`).
-      input: {
-        main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        planet: fileURLToPath(new URL('./planet.html', import.meta.url)),
-      },
       output: {
         manualChunks: (id: string) =>
           id.includes('node_modules/three') ? 'three' : undefined,

@@ -112,7 +112,6 @@ export default tseslint.config(
       'scripts/verify-visual.mjs',
       'scripts/agents-shots.mjs',
       'scripts/agent-card-shots.mjs',
-      'scripts/globe-shots.mjs',
     ],
     languageOptions: {
       globals: {
