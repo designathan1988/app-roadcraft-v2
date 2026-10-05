@@ -58,6 +58,17 @@ and `git diff master...claude/sandbox`; the commits are self-contained and in or
   route to walkable ground away from the blow at up to 3.4x pace, ignoring
   crossings; `PedView.panic` drives a FACS fear/scream face.
 
+- **People shading** (`people/skinAppearance.ts`): skin wrap lighting with a
+  scatter band, Kajiya-Kay/Scheuermann hair highlights, rough cloth, little
+  sky reflection; the three r186 lighting strings are asserted. ONE program
+  for every dressed person (texture slots are uniforms, blank 1x1 where
+  empty) - each new outfit mix used to compile a program (0.5 s hitch).
+- **Performance**: zone overlay caches `marksByCell`; wear field uploads only
+  changed row stretches (RGBA for three's `updateRanges`); `headPoints`
+  inverts once per mesh; resting rubble is not rewritten. Run
+  `node scripts/cook-people.mjs` after merging: uncooked bodies are built on
+  the main thread (100+ ms hitches).
+
 ## Not done / caveats
 
 - A built road on a hill is cut/filled, so it ends flatter than its preview.
