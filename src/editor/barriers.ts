@@ -1,8 +1,8 @@
 import type { Vec2 } from '@core/vec2';
-import { BARRIER_SIZE, type BarrierKind } from '@world/barriers';
+import { BARRIER_SIZE, KERB_BARRIERS, type BarrierKind } from '@world/barriers';
 import { ROAD_CLEARANCE, touchesRoad } from '@world/buildings/validate';
 import type { Network } from '@world/network';
-import { Level, halfWidth } from '@world/roadTypes';
+import { CURB_BAND, Level, halfWidth } from '@world/roadTypes';
 import { m } from '@world/units';
 
 /**
@@ -25,7 +25,11 @@ export function snapBarrierPoint(net: Network | null, kind: BarrierKind, at: Vec
   let best: { d: number; p: Vec2 } | null = null;
   for (const ribbon of net.ribbons.values()) {
     if (net.doc.segment(ribbon.id)?.structure === 'tunnel') continue;
-    const back = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE + half + m(0.02);
+    // A kerb barrier stands just behind the kerb stone, on the footway's
+    // road edge; the others along the footway's back.
+    const back = KERB_BARRIERS.has(kind)
+      ? ribbon.road.width / 2 + CURB_BAND + half + m(0.15)
+      : halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE + half + m(0.02);
     const hit = ribbon.full.closestPoint(at);
     const off = Math.abs(hit.distance - back);
     if (off > FOOTWAY_REACH || (best && off >= best.d)) continue;
@@ -55,7 +59,16 @@ export function barrierProblem(net: Network | null, kind: BarrierKind, points: r
       { x: a.x + nx, y: a.y + ny }, { x: b.x + nx, y: b.y + ny },
       { x: b.x - nx, y: b.y - ny }, { x: a.x - nx, y: a.y - ny },
     ];
-    if (touchesRoad(net, rect)) return 'road';
+    if (KERB_BARRIERS.has(kind) ? onCarriageway(net, rect) : touchesRoad(net, rect)) return 'road';
   }
   return null;
+}
+
+/** Whether any corner of a footprint is on a carriageway or its kerb (a kerb barrier may stand on the footway). */
+function onCarriageway(net: Network, rect: readonly Vec2[]): boolean {
+  for (const ribbon of net.ribbons.values()) {
+    const reach = ribbon.road.width / 2 + CURB_BAND - m(0.02);
+    for (const p of rect) if (ribbon.full.closestPoint(p).distance < reach) return true;
+  }
+  return false;
 }

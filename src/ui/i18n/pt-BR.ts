@@ -325,6 +325,8 @@ export const PT_BR: Dictionary = {
   'barrier.kind.fence': 'Cerca',
   'barrier.kind.wall': 'Muro',
   'barrier.kind.hedge': 'Sebe',
+  'barrier.kind.guardrail': 'Defensa (guard-rail)',
+  'barrier.kind.railing': 'Gradil urbano',
   'help.do.pick': 'Escolher uma via ou um cruzamento',
   'help.do.nodeHeight': 'Subir ou descer um nó suave',
   'help.do.close': 'Fechar o que estiver aberto',

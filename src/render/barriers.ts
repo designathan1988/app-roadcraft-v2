@@ -32,7 +32,10 @@ export function buildBarriers(doc: RoadDoc, groundAt: (x: number, y: number) => 
   const group = new Group();
   group.name = 'barriers';
   const walls: Box[] = [], copings: Box[] = [], posts: Box[] = [], rails: Box[] = [], hedges: Box[] = [];
-  for (const barrier of doc.barriers.values()) placeBarrier(barrier, groundAt, { walls, copings, posts, rails, hedges });
+  const steelPosts: Box[] = [], beams: Box[] = [], railPosts: Box[] = [], railBars: Box[] = [];
+  for (const barrier of doc.barriers.values()) {
+    placeBarrier(barrier, groundAt, { walls, copings, posts, rails, hedges, steelPosts, beams, railPosts, railBars });
+  }
 
   const unit = new BoxGeometry(1, 1, 1);
   const materials: Material[] = [];
@@ -67,6 +70,11 @@ export function buildBarriers(doc: RoadDoc, groundAt: (x: number, y: number) => 
   add('barrier-post', posts, material(0x4b5153, 0.55, 0.5));
   add('barrier-rail', rails, material(0x4b5153, 0.55, 0.5));
   add('barrier-hedge', hedges, material(0x3d6532, 1));
+  // Galvanised steel for the road guardrail; painted steel for the railing.
+  add('barrier-guardrail-post', steelPosts, material(0x9aa3a6, 0.4, 0.75));
+  add('barrier-guardrail-beam', beams, material(0xb4bcbf, 0.32, 0.8));
+  add('barrier-railing-post', railPosts, material(0x2e3a34, 0.5, 0.45));
+  add('barrier-railing-bar', railBars, material(0x2e3a34, 0.5, 0.45));
   return {
     group,
     triangles,
@@ -79,7 +87,11 @@ export function buildBarriers(doc: RoadDoc, groundAt: (x: number, y: number) => 
 }
 
 function placeBarrier(barrier: Barrier, groundAt: (x: number, y: number) => number,
-  out: { walls: Box[]; copings: Box[]; posts: Box[]; rails: Box[]; hedges: Box[] }): void {
+  out: { walls: Box[]; copings: Box[]; posts: Box[]; rails: Box[]; hedges: Box[]; steelPosts: Box[]; beams: Box[]; railPosts: Box[]; railBars: Box[] }): void {
+  if (barrier.kind === 'guardrail' || barrier.kind === 'railing') {
+    placeKerbBarrier(barrier, groundAt, out);
+    return;
+  }
   const size = BARRIER_SIZE[barrier.kind];
   const height = m(size.height);
   const thickness = m(size.thickness);
@@ -123,6 +135,55 @@ function placeBarrier(barrier: Barrier, groundAt: (x: number, y: number) => numb
       const last = barrier.points[barrier.points.length - 1]!;
       if (i === barrier.points.length - 1 && length % POST_STEP > POST_STEP * 0.25) {
         out.posts.push({ x: last.x, y: last.y, yaw, z: groundAt(last.x, last.y) - SINK, length: m(0.08), width: m(0.08), height: height + SINK });
+      }
+    }
+  }
+}
+
+/**
+ * A road guardrail (a steel W-beam about 0.3 m deep, its top at 0.75 m, on
+ * posts every 2 m, as highway standards set it) or an urban pedestrian railing
+ * (posts every 1.5 m, a top rail, a bottom rail and close vertical bars).
+ */
+function placeKerbBarrier(barrier: Barrier, groundAt: (x: number, y: number) => number,
+  out: { steelPosts: Box[]; beams: Box[]; railPosts: Box[]; railBars: Box[] }): void {
+  const guard = barrier.kind === 'guardrail';
+  const step = m(guard ? 2 : 1.5);
+  for (let i = 1; i < barrier.points.length; i++) {
+    const a = barrier.points[i - 1]!, b = barrier.points[i]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length < 1e-6) continue;
+    const yaw = Math.atan2(b.y - a.y, b.x - a.x);
+    const pieces = Math.max(1, Math.ceil(length / PIECE));
+    for (let k = 0; k < pieces; k++) {
+      const t0 = k / pieces, t1 = (k + 1) / pieces;
+      const x0 = a.x + (b.x - a.x) * t0, y0 = a.y + (b.y - a.y) * t0;
+      const x1 = a.x + (b.x - a.x) * t1, y1 = a.y + (b.y - a.y) * t1;
+      const g = Math.max(groundAt(x0, y0), groundAt(x1, y1));
+      const piece = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, yaw, length: length / pieces + m(0.02) };
+      if (guard) {
+        out.beams.push({ ...piece, z: g + m(0.45), width: m(0.08), height: m(0.3) });
+      } else {
+        out.railBars.push({ ...piece, z: g + m(0.95), width: m(0.05), height: m(0.05) });
+        out.railBars.push({ ...piece, z: g + m(0.12), width: m(0.04), height: m(0.04) });
+      }
+    }
+    const posts = Math.max(1, Math.round(length / step));
+    for (let k = 0; k <= posts; k++) {
+      if (k === 0 && i > 1) continue;
+      const t = k / posts;
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      const g = groundAt(x, y);
+      if (guard) out.steelPosts.push({ x, y, yaw, z: g - SINK, length: m(0.15), width: m(0.1), height: m(0.7) + SINK });
+      else out.railPosts.push({ x, y, yaw, z: g - SINK, length: m(0.06), width: m(0.06), height: m(1.0) + SINK });
+    }
+    if (!guard) {
+      // Vertical bars between the rails.
+      const bars = Math.max(1, Math.round(length / m(0.14)));
+      for (let k = 1; k < bars; k++) {
+        const t = k / bars;
+        const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        out.railBars.push({ x, y, yaw, z: groundAt(x, y) + m(0.12), length: m(0.02), width: m(0.02), height: m(0.85) });
       }
     }
   }

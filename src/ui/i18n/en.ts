@@ -329,6 +329,8 @@ export const EN: Dictionary = {
   'barrier.kind.fence': 'Fence',
   'barrier.kind.wall': 'Wall',
   'barrier.kind.hedge': 'Hedge',
+  'barrier.kind.guardrail': 'Guardrail',
+  'barrier.kind.railing': 'Railing',
   'help.do.pick': 'Pick a road or a junction',
   'help.do.nodeHeight': 'Raise or lower a smooth node',
   'help.do.close': 'Close what is open',
