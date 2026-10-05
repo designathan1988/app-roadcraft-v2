@@ -86,7 +86,7 @@ import { createBuildingWiring } from './buildingsWiring';
 import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
-import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid } from '@world/zoneGrid';
+import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
 import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
 
 type Tool =
@@ -384,7 +384,31 @@ let zoneGridCache: { revision: number; grid: ZoneGrid } | null = null;
 function zoneGrid(): ZoneGrid {
   if (!zoneGridCache || zoneGridCache.revision !== net.revision) {
     zoneGridCache = { revision: net.revision, grid: buildZoneGrid(doc, net) };
+    zoneGridJob = null;
   }
+  return zoneGridCache.grid;
+}
+/** The grid being laid a street at a time for the overlay (`zoneGridSteps`). */
+let zoneGridJob: { revision: number; steps: Generator<void, ZoneGrid> } | null = null;
+/** Milliseconds a frame spends laying the overlay's grid. */
+const ZONE_GRID_SLICE = 6;
+/**
+ * The grid for the overlay: the current one, or - while the roads have just
+ * changed - the last one, the new one laid a few milliseconds a frame until
+ * it is done. A grid laid in one go after every road edit was a fifth of a
+ * second of frozen game on a zoned town (the profile of 2026-10-05).
+ */
+function zoneGridForOverlay(): ZoneGrid {
+  if (zoneGridCache && zoneGridCache.revision === net.revision) return zoneGridCache.grid;
+  if (!zoneGridCache) return zoneGrid();
+  if (!zoneGridJob || zoneGridJob.revision !== net.revision) zoneGridJob = { revision: net.revision, steps: zoneGridSteps(doc, net) };
+  const until = performance.now() + ZONE_GRID_SLICE;
+  let step = zoneGridJob.steps.next();
+  while (!step.done && performance.now() < until) step = zoneGridJob.steps.next();
+  if (step.done) {
+    zoneGridCache = { revision: zoneGridJob.revision, grid: step.value };
+    zoneGridJob = null;
+  } else requestDraw();
   return zoneGridCache.grid;
 }
 /** The cells a press or a drag at `world` takes in. */
@@ -665,13 +689,31 @@ const transitEditor = new TransitTool({
 setTransitTool(transitEditor);
 
 /** `mutate`, reporting whether the edit actually changed anything. */
+/**
+ * The document as text, kept while nothing in it has moved: every edit took
+ * a snapshot of the whole document before and after (for undo), and the
+ * "after" of one edit is the "before" of the next unless something changed
+ * in between - which moves one of the document's revision counters.
+ */
+let docText: { key: string; text: string } | null = null;
+function serializedDoc(): string {
+  const key = [doc.revision, doc.trafficRevision, doc.terrainRevision, doc.paintRevision, doc.utilityRevision,
+    doc.barrierRevision, doc.transitRevision, doc.zoneRevision, doc.peopleRevision, doc.buildings.revision,
+    doc.buildings.size, doc.zoneMarks.length, doc.landscape.size, doc.poles.size, doc.nodes.size, doc.segments.size].join(':');
+  if (docText?.key === key) return docText.text;
+  const text = serialize(doc);
+  docText = { key, text };
+  return text;
+}
+
 function mutateBuilt(fn: () => boolean): boolean {
-  const before = serialize(doc);
+  const before = serializedDoc();
   if (!fn()) return false;
   // An edit that reports success without changing anything - the same lane
   // count, a split on an existing endpoint, a pole line traced over itself -
   // used to push an undo step and throw away the redo stack.
-  if (before === serialize(doc)) return false;
+  docText = null;
+  if (before === serializedDoc()) return false;
   history.recordText(before);
   // A pole or a wire moves `doc.utilityRevision`, not `doc.revision`: the
   // network is unchanged, and rebuilding it (and, behind it, the simulation
@@ -3109,6 +3151,9 @@ setInterval(() => {
   if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
   // Buildings grown by an older lot generator are regrown with this one.
   if (regrowStale(doc) > 0) { zoneRefused.clear(); requestDraw(); }
+  // The roads just changed: growth waits for the new grid, laid a slice a
+  // frame (`zoneGridForOverlay`), instead of laying it all at once here.
+  if (zoneGridCache && zoneGridCache.revision !== net.revision) { requestDraw(); return; }
   const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
   if (grown === null) return;
   // A grown building starts its life now: it ages from here unless renovated.
@@ -3337,6 +3382,8 @@ function frame(now: number): void {
       else if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
     }
   }
+  // A grid for the zones still being laid after a road edit: a slice a frame.
+  if (doc.zoneMarks.length && zoneGridCache && zoneGridCache.revision !== net.revision) zoneGridForOverlay();
   buildings.beforeDraw(tool === 'building');
   followAgent();
   // The pole run under the pointer, planned once per frame: the 3D preview
@@ -3541,6 +3588,16 @@ function drawPolePlan(
   }
 }
 
+/** The ground height under each zone cell's corners, per grid and terrain (`drawOverlayScreen`). */
+let cornerHeights: { grid: ZoneGrid; terrain: number; z: Map<ZoneCell, number[]> } | null = null;
+function zoneCornerHeights(grid: ZoneGrid): Map<ZoneCell, number[]> {
+  if (cornerHeights && cornerHeights.grid === grid && cornerHeights.terrain === doc.terrainRevision) return cornerHeights.z;
+  const z = new Map<ZoneCell, number[]>();
+  for (const cell of grid.cells) z.set(cell, cell.corners.map((corner) => sceneHeightAt(corner)));
+  cornerHeights = { grid, terrain: doc.terrainRevision, z };
+  return z;
+}
+
 /**
  * `marksByCell` for the overlay, kept until the grid, the marks or the
  * buildings change: matched afresh every frame it was the costliest thing on
@@ -3635,13 +3692,32 @@ function drawOverlayScreen(): void {
     // still waiting for a building, faintly, so the plan stays readable.
     ctx.save();
     const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
-    const grid = zoneGrid();
-    const marks = cachedMarksByCell(grid);
+    // The Zoning tool paints the cells it shows: its grid is the exact one,
+    // at once; the other tools' tint and the road preview take the last grid
+    // while the new one is laid over a few frames.
     const zoning = tool === 'zone' || (tool === 'road' && roadPreviewActive());
-    const quad = (cell: ZoneCell): void => {
+    const grid = tool === 'zone' ? zoneGrid() : zoneGridForOverlay();
+    const marks = cachedMarksByCell(grid);
+    // Each corner's height looked up once per grid and ground, not every
+    // frame (a lookup per corner of every cell in the town, each frame the
+    // road tool drew, was a fifth of a second a frame); a cell off screen is
+    // skipped.
+    const heights = zoneCornerHeights(grid);
+    const projected: Vec2[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+    const quad = (cell: ZoneCell): boolean => {
+      const z = heights.get(cell)!;
+      let left = 0, right = 0, above = 0, below = 0;
+      for (let i = 0; i < 4; i++) {
+        const q = view.toScreen(cell.corners[i]!, w, h, z[i]!);
+        projected[i] = q;
+        if (q.x < -40) left++; else if (q.x > w + 40) right++;
+        if (q.y < -40) above++; else if (q.y > h + 40) below++;
+      }
+      if (left === 4 || right === 4 || above === 4 || below === 4) return false;
       ctx.beginPath();
-      cell.corners.forEach((corner, index) => { const p = at(corner); if (index === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      projected.forEach((q, index) => { if (index === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y); });
       ctx.closePath();
+      return true;
     };
     const brush = zoning && !zoneDraft && zoneHover ? new Set(zoneCellsAt(zoneHover).map((cell) => cell.id)) : null;
     for (const cell of grid.cells) {
@@ -3649,7 +3725,7 @@ function drawOverlayScreen(): void {
       const built = found?.mark.building !== undefined && doc.buildings.has(found.mark.building as never);
       if (!zoning && (!found || built)) continue;
       const drafted = zoneDraft?.cells.has(cell.id) ?? false;
-      quad(cell);
+      if (!quad(cell)) continue;
       if (drafted) {
         ctx.fillStyle = zoneDraft!.remove ? '#e36c6099' : `${colours[zoneUse]}99`;
         ctx.fill();

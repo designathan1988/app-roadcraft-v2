@@ -150,6 +150,8 @@ export interface RenderStats {
   readonly fps: number;
   /** Wall time of the last world rebuild, in milliseconds. */
   readonly rebuildMs: number;
+  /** The road surface tiles the last rebuild made afresh, and those it kept. */
+  readonly roadTiles?: { readonly built: number; readonly reused: number };
   /** Increments once per completed world rebuild. */
   readonly rebuilds: number;
   /** Wall time of the last terrain-only update (a brush dab while roads are held), ms. */
@@ -617,6 +619,25 @@ export function createSceneRenderer(
     for (const [id, was] of graded) if (!seen.has(id)) { take(was.box); graded.delete(id); }
     return box;
   };
+  /**
+   * Where two solves of the roads differ: the blocks of the map whose roads
+   * (their lines, heights, widths) are not the same, from the solve's own
+   * per-area digest. A street drawn changes a few blocks; a road whose reach
+   * spans the whole map changes every block, and the whole ground is cut and
+   * filled again, as before.
+   */
+  const SHAPE_BLOCK = 160;
+  const changedBlocks = (before: RoadElevation, after: RoadElevation): [number, number, number, number][] => {
+    const out: [number, number, number, number][] = [];
+    const half = MAP_SIZE / 2;
+    for (let x = -half; x < half; x += SHAPE_BLOCK) {
+      for (let y = -half; y < half; y += SHAPE_BLOCK) {
+        const x1 = x + SHAPE_BLOCK, y1 = y + SHAPE_BLOCK;
+        if (before.digest(x, y, x1, y1) !== after.digest(x, y, x1, y1)) out.push([x, y, x1, y1]);
+      }
+    }
+    return out;
+  };
   /** A world box as the terrain grid corners it covers. */
   const terrainRegion = (box: readonly [number, number, number, number]): TerrainRegion => {
     const last = MAP_SIZE / TERRAIN_CELL;
@@ -631,9 +652,28 @@ export function createSceneRenderer(
    * is cut and filled again, against the platforms as they stood when the
    * stroke began; the rest waits for the stroke to end (`settle`).
    */
-  const shapeGround = (net: Network, region: TerrainRegion | null = null, sites = false): void => {
+  /**
+   * The ground cut and filled again only in `blocks` (the roads changed
+   * there, the land did not): the platforms of the buildings whose banks
+   * reach them are worked out again - their floors read the footway - and
+   * every block is re-shaped on its own.
+   */
+  const shapeBlocks = (net: Network, blocks: readonly [number, number, number, number][]): void => {
+    const touches = (q: readonly [number, number, number, number]): boolean =>
+      blocks.some((b) => q[0] <= b[2] && q[2] >= b[0] && q[1] <= b[3] && q[3] >= b[1]);
+    for (const b of net.doc.buildings.all()) if (touches(bankBox(b))) padsKnown.delete(b);
+    groundVersion++;
+    gradedFor = net.doc.buildings.revision;
+    changedSites(net.doc);
+    padsCache = net.doc.buildings.size > 0
+      ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
+      : null;
+    for (const block of blocks) shapeGround(net, terrainRegion(block), false, true);
+  };
+
+  const shapeGround = (net: Network, region: TerrainRegion | null = null, sites = false, padsReady = false): void => {
     const roads = net.doc.segments.size > 0 ? elevation : null;
-    if (!region || !padsCache || sites) {
+    if (!padsReady && (!region || !padsCache || sites)) {
       gradedFor = net.doc.buildings.revision;
       if (!sites) {
         // The roads or the land moved: every platform is worked out afresh.
@@ -711,6 +751,10 @@ export function createSceneRenderer(
       return;
     }
     const started = performance.now();
+    // Only the roads changed (the land did not): the ground is cut and filled
+    // again only where the solve of the roads differs.
+    const landStill = terrainRevision === net.doc.terrainRevision && elevation !== null;
+    const previousElevation = elevation;
     networkRevision = net.revision;
     terrainRevision = net.doc.terrainRevision;
 
@@ -736,7 +780,12 @@ export function createSceneRenderer(
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
     // from the same rule, where a road is buried deeply enough — tunnels.
-    shapeGround(net);
+    // A street drawn re-shaped the whole map (a seventh of a second on a
+    // small town); now only the blocks its solve changed.
+    const blocks = landStill && previousElevation && padsCache ? changedBlocks(previousElevation, elevation) : null;
+    if (blocks && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25) {
+      if (blocks.length) shapeBlocks(net, blocks);
+    } else shapeGround(net);
 
     roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
     world.add(roads.group);
@@ -875,6 +924,7 @@ export function createSceneRenderer(
         quality: governor.current,
         fps: Math.round(fps),
         rebuildMs: Math.round(rebuildMs),
+        roadTiles: roads ? { built: roads.built, reused: roads.reused } : { built: 0, reused: 0 },
         rebuilds,
         terrainMs: Math.round(terrainMs),
       };

@@ -83,6 +83,19 @@ function insideQuad(p: Vec2, q: readonly Vec2[]): boolean {
 
 /** Builds the grid of every ground street that carries pedestrians. */
 export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
+  const steps = zoneGridSteps(doc, net);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * `buildZoneGrid` a street at a time: it yields after each street, so the
+ * grid can be laid over several frames (the overlay keeps the last one until
+ * this is done) instead of in one stall after every road edit. The answer is
+ * the same grid; the document and the network must not change meanwhile.
+ */
+export function* zoneGridSteps(doc: RoadDoc, net: Network): Generator<void, ZoneGrid> {
   // What a cell may not sit on: any road's carriageway and footway, at ground.
   const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground');
   const reachOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
@@ -223,6 +236,7 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
         }
       }
     }
+    yield;
   }
 
   return {
