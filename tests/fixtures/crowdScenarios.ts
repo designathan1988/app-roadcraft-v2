@@ -1,4 +1,5 @@
 import { RoadDoc } from '@world/doc';
+import { furnishStreets } from './furnish';
 import type { Network } from '@world/network';
 import { roadProfile } from '@world/roadTypes';
 import { bandMid, sectionOf } from '@world/section';
@@ -186,6 +187,7 @@ export const SCENARIOS: readonly Scenario[] = [
     name: 'post', doc: straight(URBAN), seconds: 45, focus: { x: 0, y: 0 },
     walkers: (net) => {
       // A lamp column: walking the line it stands on, both ways.
+      furnishStreets(net);
       const lamp = streetFurniture(net).find((i) => i.kind === 'lamp')!;
       const t = { x: lamp.along.x, y: lamp.along.y };
       return [
@@ -197,6 +199,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     name: 'bench', doc: straight(URBAN), seconds: 45, focus: { x: 0, y: 0 },
     walkers: (net) => {
+      furnishStreets(net);
       const bench = streetFurniture(net).find((i) => i.kind === 'bench')!;
       const t = { x: bench.along.x, y: bench.along.y };
       return [

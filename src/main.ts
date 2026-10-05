@@ -19,6 +19,9 @@ import {
   planPoleRun,
   type PoleRunPlan,
 } from '@editor/poles';
+import { poleLampMode, streetscapeKind } from '@ui/toolChoices';
+import { m } from '@world/units';
+import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
 import { Camera } from '@view/camera';
 import { type Viewport, flatViewport } from '@view/viewport';
@@ -89,6 +92,7 @@ type Tool =
   | 'control'
   | 'inspect'
   | 'pole'
+  | 'streetscape'
   | 'barrier'
   | 'person';
 type Alignment = 'straight' | 'curve' | 'free';
@@ -337,6 +341,10 @@ let poleDraft: PoleDraft | null = null;
  * run a few units away. Escape, a different tool or an undo drops it.
  */
 let poleChain: Vec2 | null = null;
+/** Where the landscaping tool would put its item, under the pointer. */
+let streetscapeHover: LandscapeSnap | null = null;
+/** Pick radius for a placed item and the reach of the footway snap, world units. */
+const streetscapeReach = (): number => Math.max(m(1.5), 26 / view.zoom);
 /**
  * The wall, fence or hedge being traced (`world/barriers.ts`): the kind in
  * hand, the points put down so far, and where the pointer is.
@@ -1120,6 +1128,32 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
     }
 
+    case 'streetscape': {
+      // Shift-click removes an item; a click places the chosen one on the
+      // footway under the pointer, where `snapLandscape` puts it.
+      if (e.shiftKey) {
+        const hit = landscapeNear(doc.landscape.values(), world, streetscapeReach());
+        if (hit) {
+          mutate(() => doc.removeLandscape(hit.id));
+          flashHint('hint.streetscape.removed');
+        }
+        break;
+      }
+      const kind = streetscapeKind();
+      const placed = snapLandscape(net, doc.landscape.values(), kind, world, streetscapeReach());
+      if (placed.ok) {
+        mutate(() => {
+          doc.addLandscape(kind, placed.at);
+          return true;
+        });
+      } else {
+        flashHint(`hint.streetscape.${placed.reason}`);
+      }
+      streetscapeHover = null;
+      requestDraw();
+      break;
+    }
+
     case 'pole':
       // Shift-click removes, the way the bulldoze tool does on a road.
       //
@@ -1187,6 +1221,13 @@ canvas.addEventListener('pointerdown', (e) => {
             return true;
           });
           flashHint('hint.pole.removed');
+          break;
+        }
+        // Likewise a bench, a tree or a street light on the footway.
+        const item = landscapeNear(doc.landscape.values(), world, streetscapeReach());
+        if (item) {
+          mutate(() => doc.removeLandscape(item.id));
+          flashHint('hint.streetscape.removed');
           break;
         }
       }
@@ -1351,6 +1392,12 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
   }
 
+  if (tool === 'streetscape') {
+    streetscapeHover = snapLandscape(net, doc.landscape.values(), streetscapeKind(), world, streetscapeReach());
+    requestDraw();
+    return;
+  }
+
   if (moving) {
     doc.moveNode(moving.node, world);
     requestDraw();
@@ -1399,9 +1446,9 @@ function poleReach(): number {
 
 /** What the current gesture would build, snapped. Drawn and committed alike. */
 function currentPolePlan(): PoleRunPlan | null {
-  if (poleDraft) return planPoleRun(doc, net, poleDraft.from, poleDraft.to, poleReach());
+  if (poleDraft) return planPoleRun(doc, net, poleDraft.from, poleDraft.to, poleReach(), undefined, poleLampMode());
   if (tool === 'pole' && poleChain && hoverAnchor) {
-    return planPoleRun(doc, net, poleChain, hoverAnchor.at, poleReach());
+    return planPoleRun(doc, net, poleChain, hoverAnchor.at, poleReach(), undefined, poleLampMode());
   }
   return null;
 }
@@ -1508,10 +1555,12 @@ function endPointer(e: PointerEvent): void {
 
   if (poleDraft) {
     const run = poleDraft;
-    const plan = planPoleRun(doc, net, run.from, run.to, poleReach());
+    const plan = planPoleRun(doc, net, run.from, run.to, poleReach(), undefined, poleLampMode());
     poleDraft = null;
     if (!cancelled && !wasPinching) {
       const last = plan.poles[plan.poles.length - 1];
+      // A run with an end off the footways builds nothing, and says why.
+      if (plan.refused) flashHint(`hint.pole.${plan.refused}`);
       const built = mutateBuilt(() => commitPoleRun(doc, plan));
       // The line goes on from where it ended. A press that built nothing -
       // a click in place - starts the chain instead, so tracing a line is
@@ -1738,6 +1787,7 @@ window.addEventListener('keydown', (e) => {
     t: 'terrain',
     i: 'inspect',
     p: 'pole',
+    g: 'streetscape',
     f: 'barrier',
     z: 'zone',
     h: 'building',
@@ -2257,6 +2307,7 @@ const CAMERA_KEYS = [
 const TOOL_KEYS: Partial<Record<Tool, readonly (readonly [string, string])[]>> = {
   bulldoze: [['help.key.click', 'help.do.remove'], ['help.key.undo', 'help.do.undo']],
   pole: [['help.key.click', 'help.do.pole'], ['help.key.shiftClick', 'help.do.removePole'], ['help.key.esc', 'help.do.endLine']],
+  streetscape: [['help.key.click', 'help.do.streetscape'], ['help.key.shiftClick', 'help.do.streetscapeRemove']],
   barrier: [['help.key.click', 'help.do.barrierPoint'], ['help.key.doubleClickEnter', 'help.do.barrierEnd'],
     ['help.key.backspace', 'help.do.barrierBack'], ['help.key.shiftClick', 'help.do.barrierRemove'], ['help.key.esc', 'help.do.barrierCancel']],
   inspect: [['help.key.click', 'help.do.pick'], ['help.key.pageUpDown', 'help.do.nodeHeight'], ['help.key.esc', 'help.do.close']],
@@ -3165,6 +3216,33 @@ function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): 
   ctx.restore();
 }
 
+/** Where the landscaping tool would put its item: a ring on the footway, red where it cannot go. */
+function drawStreetscapeHover(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
+  const hover = streetscapeHover;
+  if (!hover) return;
+  const centre = at(hover.at);
+  const edge = at({ x: hover.at.x + LANDSCAPE_RADIUS[streetscapeKind()] + m(0.3), y: hover.at.y });
+  const radius = Math.max(6, Math.hypot(edge.x - centre.x, edge.y - centre.y));
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = hover.ok ? SELECTION : '#e5534b';
+  ctx.fillStyle = hover.ok ? 'rgba(120, 200, 255, 0.18)' : 'rgba(229, 83, 75, 0.18)';
+  ctx.beginPath();
+  ctx.arc(centre.x, centre.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (!hover.ok) {
+    const k = radius * 0.6;
+    ctx.beginPath();
+    ctx.moveTo(centre.x - k, centre.y - k);
+    ctx.lineTo(centre.x + k, centre.y + k);
+    ctx.moveTo(centre.x + k, centre.y - k);
+    ctx.lineTo(centre.x - k, centre.y + k);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawPolePlan(
   plan: PoleRunPlan | null,
   ctx: CanvasRenderingContext2D,
@@ -3172,6 +3250,22 @@ function drawPolePlan(
   w: number,
   h: number,
 ): void {
+  if (plan?.refused) {
+    // An end off the footways: a red cross where it would have gone.
+    const bad = plan.from.kind === 'free' ? plan.from.at : plan.to.at;
+    const p = at(bad);
+    ctx.save();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#e5534b';
+    ctx.beginPath();
+    ctx.moveTo(p.x - 8, p.y - 8);
+    ctx.lineTo(p.x + 8, p.y + 8);
+    ctx.moveTo(p.x + 8, p.y - 8);
+    ctx.lineTo(p.x - 8, p.y + 8);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (!plan || plan.poles.length === 0) return;
 
   ctx.save();
@@ -3289,6 +3383,7 @@ function drawOverlayScreen(): void {
   // hang between them with its real sag, and a ring round any pole the run is
   // about to tie into. If it looks right here it is right when built.
   drawPolePlan(currentPolePlan(), ctx, at, w, h);
+  if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
   if (tool === 'zone' || doc.zoneMarks.length) {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones

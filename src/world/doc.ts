@@ -20,6 +20,7 @@ import { TUNNEL_HEADROOM, type RoadStructure, migrateStructure } from './structu
 import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
+import { type LandscapeItem, type LandscapeKind, isLandscapeKind } from './landscape';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
@@ -142,6 +143,16 @@ export class RoadDoc {
   readonly barriers = new Map<number, Barrier>();
   barrierRevision = 0;
   private barrierIds = new IdAllocator(1);
+
+  /**
+   * Street landscaping the player placed on the footways: trees, shrubs,
+   * benches, bins, street lights, hydrants, post boxes (`landscape.ts`).
+   * Nothing on a street is generated; this is all there is. It moves
+   * `utilityRevision`, the gate of everything standing on a footway (the
+   * renderer's furniture and the pedestrians' obstacles), never `revision`.
+   */
+  readonly landscape = new Map<number, LandscapeItem>();
+  private landscapeIds = new IdAllocator(1);
 
   private nodeIds = new IdAllocator(1);
   private segIds = new IdAllocator(1);
@@ -295,6 +306,21 @@ export class RoadDoc {
       }
     }
     return best;
+  }
+
+  /** Places one landscaping item where `snapLandscape` put it. */
+  addLandscape(kind: LandscapeKind, at: { x: number; y: number }): LandscapeItem {
+    const on = clampToMap(at);
+    const item: LandscapeItem = { id: this.landscapeIds.take(), kind, x: on.x, y: on.y };
+    this.landscape.set(item.id, item);
+    this.utilityRevision++;
+    return item;
+  }
+
+  removeLandscape(id: number): boolean {
+    if (!this.landscape.delete(id)) return false;
+    this.utilityRevision++;
+    return true;
   }
 
   /** Removes a pole and every wire that reached it. */
@@ -753,6 +779,7 @@ export class RoadDoc {
     copy.poleIds = new IdAllocator(this.poleIds.peek);
     copy.spanIds = new IdAllocator(this.spanIds.peek);
     copy.barrierIds = new IdAllocator(this.barrierIds.peek);
+    copy.landscapeIds = new IdAllocator(this.landscapeIds.peek);
     copy.barrierRevision = this.barrierRevision;
     copy.nextTerrainId = this.nextTerrainId;
     copy.revision = this.revision;
@@ -815,6 +842,8 @@ export class RoadDoc {
     for (const [id, pole] of source.poles) this.poles.set(id, { ...pole });
     if (utilitiesChanged) this.utilityRevision++;
     for (const [id, span] of source.poleSpans) this.poleSpans.set(id, { ...span });
+    this.landscape.clear();
+    for (const [id, item] of source.landscape) this.landscape.set(id, { ...item });
     if (!sameBarriers(this, source)) {
       this.barriers.clear();
       for (const [id, barrier] of source.barriers) this.barriers.set(id, { ...barrier, points: barrier.points.map((p) => ({ ...p })) });
@@ -844,6 +873,7 @@ export class RoadDoc {
     this.poleIds = new IdAllocator(source.poleIds.peek);
     this.spanIds = new IdAllocator(source.spanIds.peek);
     this.barrierIds = new IdAllocator(source.barrierIds.peek);
+    this.landscapeIds = new IdAllocator(source.landscapeIds.peek);
     this.nextTerrainId = source.nextTerrainId;
     this.terrainRevision = nextTerrainRevision;
     if (!roadsChanged) return;
@@ -886,6 +916,9 @@ export class RoadDoc {
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
+      ...(this.landscape.size > 0 ? {
+        landscape: [...this.landscape.values()].map((item) => ({ id: item.id, kind: item.kind, x: item.x, y: item.y })),
+      } : {}),
       // Only when there are any, so a map without them serialises as before.
       ...(this.barriers.size > 0 ? {
         barriers: [...this.barriers.values()].map((b) => ({ id: b.id, kind: b.kind, points: b.points.map((p) => ({ x: p.x, y: p.y })) })),
@@ -1006,6 +1039,13 @@ export class RoadDoc {
       doc.poleSpans.set(id, { id, a, b });
       doc.spanIds.reserve(s.id);
     }
+    // The player's landscaping, if the map has any; anything malformed is dropped.
+    for (const raw of data.landscape ?? []) {
+      if (!isLandscapeKind(raw?.kind) || !Number.isFinite(raw.x) || !Number.isFinite(raw.y) || !Number.isInteger(raw.id)) continue;
+      const at = repair ? clampToMap(raw) : { x: raw.x, y: raw.y };
+      doc.landscape.set(raw.id, { id: raw.id, kind: raw.kind, x: at.x, y: at.y });
+      doc.landscapeIds.reserve(raw.id);
+    }
     // Walls, fences and hedges, if the map has any; anything malformed is dropped.
     for (const raw of data.barriers ?? []) {
       if (!isBarrierKind(raw.kind) || !Array.isArray(raw.points)) continue;
@@ -1084,6 +1124,8 @@ export interface SerializedDoc {
    */
   readonly poles?: readonly { id: number; x: number; y: number; lamp?: boolean }[];
   readonly poleSpans?: readonly { id: number; a: number; b: number }[];
+  /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
+  readonly landscape?: readonly { id: number; kind: string; x: number; y: number }[];
   /** Walls, fences and hedges (`barriers.ts`); OPTIONAL like the poles. */
   readonly barriers?: readonly { id: number; kind: string; points: readonly { x: number; y: number }[] }[];
   /**
@@ -1134,6 +1176,11 @@ function sameRoads(a: RoadDoc, b: RoadDoc): boolean {
 /** Whether two documents hold the same poles and spans. */
 function samePoles(a: RoadDoc, b: RoadDoc): boolean {
   if (a.poles.size !== b.poles.size || a.poleSpans.size !== b.poleSpans.size) return false;
+  if (a.landscape.size !== b.landscape.size) return false;
+  for (const [id, p] of a.landscape) {
+    const q = b.landscape.get(id);
+    if (!q || p.kind !== q.kind || p.x !== q.x || p.y !== q.y) return false;
+  }
   for (const [id, p] of a.poles) {
     const q = b.poles.get(id);
     if (!q || p.x !== q.x || p.y !== q.y || p.lamp !== q.lamp) return false;

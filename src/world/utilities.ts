@@ -172,3 +172,109 @@ export function polePositions(
  * than by an RNG so that redrawing the same line gives the same answer.
  */
 export const poleCarriesLamp = (index: number): boolean => index % 2 === 0;
+
+/** What the poles of a new run carry: a street light on none, every other one, or all of them. */
+export const POLE_LAMP_MODES = ['none', 'alternate', 'all'] as const;
+export type PoleLampMode = (typeof POLE_LAMP_MODES)[number];
+
+/**
+ * Deflection at and above which a pole is a CORNER: each line leaving it gets
+ * its own cross-arm, square to that line (the double dead-end, "buck arm"
+ * corner of distribution standards), instead of one arm on the bisector.
+ */
+export const CORNER_DEFLECTION = (60 * Math.PI) / 180;
+
+/** The cross-arms of one pole: every distinct arm, and the one each span hangs from. */
+export interface PoleArms {
+  /** Unit directions of the arms on this pole, one per physical arm. */
+  readonly arms: readonly Vec2[];
+  /** Per span reaching this pole: the arm it hangs from, oriented to the LEFT of the span's a -> b. */
+  readonly bySpan: ReadonlyMap<SpanId, Vec2>;
+}
+
+const perp = (v: Vec2): Vec2 => ({ x: -v.y, y: v.x });
+const unit = (v: Vec2): Vec2 => {
+  const l = Math.hypot(v.x, v.y);
+  return l > 1e-9 ? { x: v.x / l, y: v.y / l } : { x: 0, y: 1 };
+};
+
+/**
+ * Which way every pole's cross-arm lies, as line construction standards frame
+ * a pole (USDA RUS distribution drawings; We Energies three-phase framing):
+ *
+ * - on a straight line (tangent) the arm is square to the line;
+ * - on a small angle the arm lies on the BISECTOR of the angle, so the wires
+ *   pull evenly on both halves of it;
+ * - at a corner (`CORNER_DEFLECTION` and over), at a junction of three or more
+ *   lines, each line has its own arm, square to it;
+ * - a pole with nothing strung on it yet takes `idle(pole)`, square to its street.
+ *
+ * The old renderer summed the two span directions LEAVING a pole, which on a
+ * straight line cancel out: every pole in the middle of a run fell back to an
+ * arbitrary north-south arm, which is the "arms across the wrong way" the
+ * player saw.
+ */
+export function poleArms(
+  poles: ReadonlyMap<PoleId, UtilityPole>,
+  spans: ReadonlyMap<SpanId, UtilitySpan>,
+  idle: (pole: UtilityPole) => Vec2 = () => ({ x: 0, y: 1 }),
+): Map<PoleId, PoleArms> {
+  const leaving = new Map<PoleId, { span: UtilitySpan; d: Vec2 }[]>();
+  for (const span of spans.values()) {
+    const a = poles.get(span.a);
+    const b = poles.get(span.b);
+    if (!a || !b) continue;
+    const d = unit({ x: b.x - a.x, y: b.y - a.y });
+    const at = (id: PoleId, dir: Vec2): void => {
+      const list = leaving.get(id);
+      if (list) list.push({ span, d: dir });
+      else leaving.set(id, [{ span, d: dir }]);
+    };
+    at(span.a, d);
+    at(span.b, { x: -d.x, y: -d.y });
+  }
+  const out = new Map<PoleId, PoleArms>();
+  for (const pole of poles.values()) {
+    const lines = leaving.get(pole.id) ?? [];
+    const bySpan = new Map<SpanId, Vec2>();
+    /** The arm for a span, turned to lie left of the span's own a -> b. */
+    const oriented = (arm: Vec2, span: UtilitySpan): Vec2 => {
+      const a = poles.get(span.a)!;
+      const b = poles.get(span.b)!;
+      const along = { x: b.x - a.x, y: b.y - a.y };
+      return along.x * arm.y - along.y * arm.x >= 0 ? arm : { x: -arm.x, y: -arm.y };
+    };
+    if (lines.length === 0) {
+      out.set(pole.id, { arms: [unit(idle(pole))], bySpan });
+      continue;
+    }
+    if (lines.length === 1) {
+      const arm = perp(lines[0]!.d);
+      bySpan.set(lines[0]!.span.id, oriented(arm, lines[0]!.span));
+      out.set(pole.id, { arms: [arm], bySpan });
+      continue;
+    }
+    if (lines.length === 2) {
+      const [p, q] = lines as [{ span: UtilitySpan; d: Vec2 }, { span: UtilitySpan; d: Vec2 }];
+      // Deflection: how far the line turns here (0 on a straight run).
+      const cos = Math.max(-1, Math.min(1, -(p.d.x * q.d.x + p.d.y * q.d.y)));
+      if (Math.acos(cos) < CORNER_DEFLECTION) {
+        // The line's direction through the pole; the arm square to it lies on the bisector.
+        const arm = perp(unit({ x: p.d.x - q.d.x, y: p.d.y - q.d.y }));
+        bySpan.set(p.span.id, oriented(arm, p.span));
+        bySpan.set(q.span.id, oriented(arm, q.span));
+        out.set(pole.id, { arms: [arm], bySpan });
+        continue;
+      }
+    }
+    const arms: Vec2[] = [];
+    for (const line of lines) {
+      const arm = perp(line.d);
+      bySpan.set(line.span.id, oriented(arm, line.span));
+      // Two lines leaving straight through each other share one arm.
+      if (!arms.some((other) => Math.abs(other.x * arm.y - other.y * arm.x) < 0.09)) arms.push(arm);
+    }
+    out.set(pole.id, { arms, bySpan });
+  }
+  return out;
+}

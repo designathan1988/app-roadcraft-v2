@@ -3,26 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { commitPoleRun, planPoleRun, snapPole } from '@editor/poles';
-import { DEFAULT_POLE_SPACING } from '@world/utilities';
+import { DEFAULT_POLE_SPACING, poleArms } from '@world/utilities';
 import { roadProfile } from '@world/roadTypes';
+import { LAMP_ZONE, sectionOf } from '@world/section';
+import { footwayAt } from '@world/landscape';
+import type { PoleId, SpanId } from '@world/ids';
+import type { UtilityPole, UtilitySpan } from '@world/utilities';
 
 /**
- * The pole tool, judged by what it BUILDS rather than by what it intends.
- *
- * Every one of these is a defect that was reported by hand:
- *
- *   - poles did not snap to a footway, so a line beside a street was beside it
- *     only as accurately as the drag;
- *   - a run aimed at an existing pole built a second mast next to it instead
- *     of joining the line;
- *   - there was no discipline on the angle, while the road tool has had 15
- *     degrees all along;
- *   - a run could not be continued, so a line across a map meant restarting
- *     the tool at every corner.
- *
- * They are asserted against the plan, which is the same object the preview
- * draws and the commit applies — so a test passing here is a preview that
- * tells the truth.
+ * The wire tool, judged by what it BUILDS (the player's order of 2026-10-05):
+ * poles only on footways, following the street round its curves and its
+ * corners, and cross-arms framed the way a line crew frames them.
  */
 
 function street(): { doc: RoadDoc; net: Network } {
@@ -35,21 +26,31 @@ function street(): { doc: RoadDoc; net: Network } {
   return { doc, net };
 }
 
-/** Distance from the road centreline the furniture line sits at. */
-function furnitureOffset(doc: RoadDoc): number {
+/** Two streets meeting at a corner: west to the corner, then north. */
+function corner(): { doc: RoadDoc; net: Network } {
+  const doc = new RoadDoc();
+  const w = doc.addNode({ x: -400, y: 0 });
+  const c = doc.addNode({ x: 0, y: 0 });
+  const n = doc.addNode({ x: 0, y: 400 });
+  doc.addSegment(w.id, c.id, 1);
+  doc.addSegment(c.id, n.id, 1);
+  const net = new Network(doc);
+  net.rebuild();
+  return { doc, net };
+}
+
+/** Distance from the road centreline of the line the poles stand on. */
+function poleLine(doc: RoadDoc): number {
   const seg = [...doc.segments.values()][0]!;
-  const rt = roadProfile(seg.type, seg.lanes, seg.direction);
-  return rt.width / 2 + rt.sidewalk * 0.55;
+  const zone = sectionOf(roadProfile(seg.type, seg.lanes, seg.direction), seg.direction).side.furnishing;
+  return zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, 0.5)) / 2;
 }
 
 describe('pole snapping', () => {
-  it('pulls a pole onto the footway of the road it was aimed beside', () => {
+  it('pulls a pole onto the footway of the road it was aimed at', () => {
     const { doc, net } = street();
-    const want = furnitureOffset(doc);
-
-    // Aimed a little outside the furniture line, on the north side.
-    const snap = snapPole(doc, net, { x: 0, y: want + 3 }, 20);
-
+    const want = poleLine(doc);
+    const snap = snapPole(doc, net, { x: 0, y: want + 2 }, 20);
     expect(snap.kind).toBe('footway');
     expect(Math.abs(snap.at.y)).toBeCloseTo(want, 4);
     expect(snap.at.x).toBeCloseTo(0, 4);
@@ -57,89 +58,54 @@ describe('pole snapping', () => {
 
   it('keeps the side the player aimed at', () => {
     const { doc, net } = street();
-    const want = furnitureOffset(doc);
-
+    const want = poleLine(doc);
     expect(snapPole(doc, net, { x: 100, y: want + 2 }, 20).at.y).toBeGreaterThan(0);
     expect(snapPole(doc, net, { x: 100, y: -want - 2 }, 20).at.y).toBeLessThan(0);
   });
 
-  it('leaves open ground alone', () => {
+  it('does not take open ground', () => {
     const { doc, net } = street();
-    const far = { x: 0, y: 600 };
-    const snap = snapPole(doc, net, far, 20);
-    expect(snap.kind).toBe('free');
-    expect(snap.at).toEqual(far);
+    expect(snapPole(doc, net, { x: 0, y: 600 }, 20).kind).toBe('free');
   });
 
   it('takes an existing pole over the footway under it', () => {
     const { doc, net } = street();
-    const want = furnitureOffset(doc);
+    const want = poleLine(doc);
     const standing = doc.addPole({ x: 120, y: want });
-
     const snap = snapPole(doc, net, { x: 126, y: want + 2 }, 30);
     expect(snap.kind).toBe('pole');
     expect(snap.pole).toBe(standing.id);
-    expect(snap.at).toEqual({ x: 120, y: want });
   });
 });
 
 describe('pole runs', () => {
-  it('holds the drawn angle to 15 degrees on open ground', () => {
+  it('refuses a run with an end off the footways, and builds nothing', () => {
     const { doc, net } = street();
-    const from = { x: 0, y: 600 };
-    // Four degrees off horizontal: inside the cone, so it must come out at 0.
-    const to = { x: 600, y: 600 + 600 * Math.tan(0.07) };
-
-    const plan = planPoleRun(doc, net, from, to, 20);
-    const angle = Math.atan2(plan.to.at.y - plan.from.at.y, plan.to.at.x - plan.from.at.x);
-    const degrees = (angle * 180) / Math.PI;
-    expect(Math.abs(degrees % 15)).toBeLessThan(1e-6);
+    const want = poleLine(doc);
+    const plan = planPoleRun(doc, net, { x: -200, y: want }, { x: 200, y: 600 }, 20);
+    expect(plan.refused).toBe('offFootway');
+    expect(commitPoleRun(doc, plan)).toBe(false);
+    expect(doc.poles.size).toBe(0);
   });
 
-  it('reuses the pole a run is aimed at instead of doubling it', () => {
+  it('keeps every pole of a run on the footway line, however the drag wanders', () => {
     const { doc, net } = street();
-    const standing = doc.addPole({ x: 0, y: 600 });
-
-    const plan = planPoleRun(doc, net, { x: 4, y: 602 }, { x: 300, y: 600 }, 30);
-    expect(plan.poles[0]!.existing).toBe(standing.id);
-
-    const before = doc.poles.size;
-    expect(commitPoleRun(doc, plan)).toBe(true);
-    // Every pole of the run is new EXCEPT the one it joined.
-    expect(doc.poles.size).toBe(before + plan.poles.length - 1);
-  });
-
-  it('continues an existing line rather than building beside it', () => {
-    const { doc, net } = street();
-
-    const first = planPoleRun(doc, net, { x: -300, y: 600 }, { x: 0, y: 600 }, 30);
-    commitPoleRun(doc, first);
-    const afterFirst = doc.poles.size;
-    const end = first.poles[first.poles.length - 1]!.at;
-
-    // Carry on from the end, as the chain does.
-    const second = planPoleRun(doc, net, end, { x: 300, y: 600 }, 30);
-    commitPoleRun(doc, second);
-
-    // One shared pole at the join: the total is the two runs minus the pole
-    // they have in common.
-    expect(doc.poles.size).toBe(afterFirst + second.poles.length - 1);
-
-    // And the wire is continuous through it: the join carries two spans.
-    const joinId = second.poles[0]!.existing;
-    expect(joinId).not.toBeNull();
-    const atJoin = [...doc.poleSpans.values()].filter((s) => s.a === joinId || s.b === joinId);
-    expect(atJoin).toHaveLength(2);
+    const want = poleLine(doc);
+    const plan = planPoleRun(doc, net, { x: -300, y: want + 1 }, { x: 300, y: want + 6 }, 20);
+    expect(plan.refused).toBeUndefined();
+    expect(plan.poles.length).toBeGreaterThan(2);
+    for (const pole of plan.poles) {
+      expect(Math.abs(pole.at.y - want)).toBeLessThan(1e-3);
+      expect(footwayAt(net, pole.at)).not.toBeNull();
+    }
   });
 
   it('spaces poles the way a line is spaced, both ends included', () => {
     const { doc, net } = street();
-    const plan = planPoleRun(doc, net, { x: 0, y: 600 }, { x: 300, y: 600 }, 20);
-
-    expect(plan.poles.length).toBeGreaterThan(2);
-    expect(plan.poles[0]!.at.x).toBeCloseTo(0, 6);
-    expect(plan.poles[plan.poles.length - 1]!.at.x).toBeCloseTo(300, 6);
-
+    const want = poleLine(doc);
+    const plan = planPoleRun(doc, net, { x: 0, y: want }, { x: 300, y: want }, 20);
+    expect(plan.poles[0]!.at.x).toBeCloseTo(0, 3);
+    expect(plan.poles[plan.poles.length - 1]!.at.x).toBeCloseTo(300, 3);
     for (let i = 1; i < plan.poles.length; i++) {
       const step = plan.poles[i]!.at.x - plan.poles[i - 1]!.at.x;
       expect(step).toBeGreaterThan(DEFAULT_POLE_SPACING * 0.5);
@@ -147,25 +113,96 @@ describe('pole runs', () => {
     }
   });
 
-  it('runs along a street when it starts on its footway', () => {
-    const { doc, net } = street();
-    const want = furnitureOffset(doc);
-
-    // Started on the footway and dragged roughly along it, a few degrees off.
-    const plan = planPoleRun(doc, net, { x: -200, y: want + 1 }, { x: 200, y: want + 26 }, 20);
-
-    expect(plan.from.kind).toBe('footway');
-    // Every pole of the run stands on the footway line, not out in the road
-    // and not out in the grass.
+  it('turns the corner along the footways instead of cutting across the block', () => {
+    const { doc, net } = corner();
+    const want = poleLine(doc);
+    // The inside of the corner: south of the west street... no, NORTH of it,
+    // and WEST of the north street: the same corner footway.
+    const plan = planPoleRun(doc, net, { x: -300, y: want }, { x: -want, y: 300 }, 20);
+    expect(plan.refused).toBeUndefined();
     for (const pole of plan.poles) {
-      expect(Math.abs(Math.abs(pole.at.y) - want)).toBeLessThan(1.5);
+      // Never inside the block's interior (beyond the footways)...
+      const onWest = Math.abs(pole.at.y - want) < 1e-3;
+      const onNorth = Math.abs(pole.at.x + want) < 1e-3;
+      expect(onWest || onNorth, `${pole.at.x.toFixed(1)}, ${pole.at.y.toFixed(1)}`).toBe(true);
+    }
+    // ...and every span between them short: none jumps the block.
+    for (let i = 1; i < plan.poles.length; i++) {
+      const a = plan.poles[i - 1]!.at, b = plan.poles[i]!.at;
+      expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeLessThan(DEFAULT_POLE_SPACING * 1.5);
     }
   });
 
-  it('builds nothing from a run with a single pole in it', () => {
+  it('continues an existing line through the pole it ends on', () => {
     const { doc, net } = street();
-    const plan = planPoleRun(doc, net, { x: 0, y: 600 }, { x: 0, y: 600 }, 20);
-    expect(commitPoleRun(doc, plan)).toBe(false);
-    expect(doc.poles.size).toBe(0);
+    const want = poleLine(doc);
+    const first = planPoleRun(doc, net, { x: -300, y: want }, { x: 0, y: want }, 20);
+    commitPoleRun(doc, first);
+    const afterFirst = doc.poles.size;
+    const end = first.poles[first.poles.length - 1]!.at;
+    const second = planPoleRun(doc, net, end, { x: 300, y: want }, 20);
+    expect(second.poles[0]!.existing).not.toBeNull();
+    commitPoleRun(doc, second);
+    expect(doc.poles.size).toBe(afterFirst + second.poles.length - 1);
+    const joinId = second.poles[0]!.existing;
+    expect([...doc.poleSpans.values()].filter((s) => s.a === joinId || s.b === joinId)).toHaveLength(2);
+  });
+
+  it('lights the poles as the tool is set: none, every other, all', () => {
+    const { doc, net } = street();
+    const want = poleLine(doc);
+    const lit = (mode: 'none' | 'alternate' | 'all'): boolean[] =>
+      planPoleRun(doc, net, { x: -300, y: want }, { x: 300, y: want }, 20, DEFAULT_POLE_SPACING, mode).poles.map((p) => p.lamp);
+    expect(lit('none').every((l) => !l)).toBe(true);
+    expect(lit('all').every((l) => l)).toBe(true);
+    expect(lit('alternate')).toEqual(lit('alternate').map((_, i) => i % 2 === 0));
+  });
+});
+
+describe('cross-arms', () => {
+  const line = (points: [number, number][]): { poles: Map<PoleId, UtilityPole>; spans: Map<SpanId, UtilitySpan> } => {
+    const poles = new Map<PoleId, UtilityPole>();
+    const spans = new Map<SpanId, UtilitySpan>();
+    points.forEach(([x, y], i) => poles.set((i + 1) as PoleId, { id: (i + 1) as PoleId, x, y, lamp: false }));
+    for (let i = 1; i < points.length; i++) spans.set(i as SpanId, { id: i as SpanId, a: i as PoleId, b: (i + 1) as PoleId });
+    return { poles, spans };
+  };
+  const angle = (v: { x: number; y: number }): number => (Math.atan2(v.y, v.x) * 180) / Math.PI;
+
+  it('lies square to a straight line on every pole of it, not just the ends', () => {
+    const { poles, spans } = line([[0, 0], [40, 0], [80, 0], [120, 0]]);
+    for (const arms of poleArms(poles, spans).values()) {
+      expect(arms.arms).toHaveLength(1);
+      expect(Math.abs(arms.arms[0]!.x)).toBeLessThan(1e-9);
+    }
+  });
+
+  it('lies on the bisector of a small bend', () => {
+    // A 30 degree bend at the middle pole.
+    const turn = (30 * Math.PI) / 180;
+    const { poles, spans } = line([[-40, 0], [0, 0], [40 * Math.cos(turn), 40 * Math.sin(turn)]]);
+    const middle = poleArms(poles, spans).get(2 as PoleId)!;
+    expect(middle.arms).toHaveLength(1);
+    // The bisector of the angle at the pole points at 105 (or -75) degrees.
+    const a = ((angle(middle.arms[0]!) % 180) + 180) % 180;
+    expect(a).toBeCloseTo(105, 6);
+  });
+
+  it('gives each line its own arm at a right-angle corner', () => {
+    const { poles, spans } = line([[-40, 0], [0, 0], [0, 40]]);
+    const middle = poleArms(poles, spans).get(2 as PoleId)!;
+    expect(middle.arms).toHaveLength(2);
+    expect(Math.abs(middle.bySpan.get(1 as SpanId)!.x)).toBeLessThan(1e-9);
+    expect(Math.abs(middle.bySpan.get(2 as SpanId)!.y)).toBeLessThan(1e-9);
+  });
+
+  it('turns both ends of a span to the same side, so its wires never cross', () => {
+    const { poles, spans } = line([[0, 0], [40, 0], [80, 10], [120, 10]]);
+    const framing = poleArms(poles, spans);
+    for (const span of spans.values()) {
+      const a = framing.get(span.a)!.bySpan.get(span.id)!;
+      const b = framing.get(span.b)!.bySpan.get(span.id)!;
+      expect(a.x * b.x + a.y * b.y).toBeGreaterThan(0);
+    }
   });
 });

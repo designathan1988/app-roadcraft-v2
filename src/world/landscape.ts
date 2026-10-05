@@ -1,0 +1,232 @@
+import type { Vec2 } from '@core/vec2';
+import type { Network } from './network';
+import type { SegmentId } from './ids';
+import type { RoadType } from './roadTypes';
+import { m } from './units';
+import { roadProfile } from './roadTypes';
+import { orientedPolyline } from './geometry';
+import { CROSSWALK_DEPTH } from './approach';
+import { carriesPedestrians } from './pedestrianAccess';
+import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectionOf } from './section';
+
+/**
+ * Street landscaping the PLAYER places: trees, shrubs, benches, bins, street
+ * lights, hydrants and post boxes, on the footways.
+ *
+ * Nothing on a street is generated any more (the player's order of
+ * 2026-10-05: "tudo isso será permitido colocar"). The document keeps where
+ * each item was put and what it is; which footway it stands on, which way it
+ * faces and how high it stands are derived from the roads every rebuild
+ * (`streetFurniture.ts`), so an item follows its street when the street is
+ * edited and is simply not drawn while no footway is under it.
+ *
+ * Where an item may go is decided once, here, and both the tool's preview and
+ * its commit ask the same function: on a footway of a street that carries
+ * pedestrians, in the furnishing zone beside the kerb (the NACTO zone the
+ * lamp columns of every real street stand in, `section.ts`), clear of the
+ * items already there.
+ */
+
+export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox'] as const;
+export type LandscapeKind = (typeof LANDSCAPE_KINDS)[number];
+
+export interface LandscapeItem {
+  readonly id: number;
+  readonly kind: LandscapeKind;
+  readonly x: number;
+  readonly y: number;
+}
+
+export function isLandscapeKind(value: unknown): value is LandscapeKind {
+  return typeof value === 'string' && (LANDSCAPE_KINDS as readonly string[]).includes(value);
+}
+
+/** Plan radius of each kind, for spacing and for anyone walking round it. */
+export const LANDSCAPE_RADIUS: Readonly<Record<LandscapeKind, number>> = {
+  tree: TREE_PIT / 2,
+  shrub: m(0.35),
+  bench: Math.hypot(m(0.9), m(0.26)),
+  bin: m(0.33),
+  lamp: m(0.13),
+  hydrant: m(0.16),
+  postbox: m(0.33),
+};
+
+/** The least clear distance kept between two placed items, besides their radii. */
+const ITEM_GAP = m(0.4);
+
+/** Where a point lies on the footways: the road, the station along it and the side. */
+export interface FootwayHit {
+  readonly segment: SegmentId;
+  readonly road: RoadType;
+  /** Station along the ribbon's full centreline. */
+  readonly s: number;
+  /** +1 left of the segment's a -> b direction, -1 right. */
+  readonly side: 1 | -1;
+  /** Distance of the point from the centreline. */
+  readonly across: number;
+  readonly frame: { readonly p: Vec2; readonly t: Vec2; readonly n: Vec2 };
+}
+
+/**
+ * The footway a point stands on, or, with `reach`, the nearest one within
+ * that distance of the footway's own band. Null on a carriageway, a highway,
+ * a junction plate or open ground.
+ */
+export function footwayAt(net: Network, at: Vec2, reach = 0): FootwayHit | null {
+  let best: FootwayHit | null = null;
+  let bestMiss = Infinity;
+  const hit = { s: 0, distance: 0 };
+  for (const ribbon of net.ribbons.values()) {
+    const road = ribbon.road;
+    if (!carriesPedestrians(road) || road.sidewalk <= 0) continue;
+    const segment = net.doc.segment(ribbon.id);
+    if (!segment) continue;
+    const zones = sectionOf(road, segment.direction).side;
+    const inner = zones.curb.outer;
+    const outer = road.width / 2 + road.sidewalk;
+    const box = ribbon.full.bbox;
+    const pad = outer + reach;
+    if (at.x < box.minX - pad || at.x > box.maxX + pad || at.y < box.minY - pad || at.y > box.maxY + pad) continue;
+    ribbon.full.closestInto(at.x, at.y, hit);
+    const length = ribbon.full.length;
+    // Not past the mouths: the corner of a junction belongs to no one leg.
+    const lo = net.mouthDistance(ribbon.id, segment.a);
+    const hi = length - net.mouthDistance(ribbon.id, segment.b);
+    if (hit.s < lo - 1e-6 || hit.s > hi + 1e-6) continue;
+    const miss = hit.distance < inner ? inner - hit.distance : hit.distance > outer ? hit.distance - outer : 0;
+    if (miss > reach || miss >= bestMiss) continue;
+    const frame = ribbon.full.sampleAt(hit.s);
+    const side = (at.x - frame.p.x) * frame.n.x + (at.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
+    bestMiss = miss;
+    best = { segment: ribbon.id, road, s: hit.s, side, across: hit.distance, frame };
+  }
+  return best;
+}
+
+/** How far out from the centreline each kind stands, inside the furnishing zone. */
+function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB' | 'bToA'): number | null {
+  const zone = sectionOf(road, direction).side.furnishing;
+  const depth = zone.outer - zone.inner;
+  if (depth <= 0) return null;
+  switch (kind) {
+    case 'lamp':
+    case 'hydrant':
+      return zone.inner + Math.min(LAMP_ZONE, depth) / 2;
+    case 'tree': {
+      // A pit beside the kerb, so long as the walkers keep their through
+      // width behind it: a 2 m footway takes one (0.95 m pit and setback,
+      // 0.9 m clear), as Brazilian streets plant them.
+      const footway = road.width / 2 + road.sidewalk - zone.inner;
+      if (footway - TREE_KERB_SETBACK - TREE_PIT < MIN_THROUGH - 1e-6) return null;
+      return zone.inner + TREE_KERB_SETBACK + TREE_PIT / 2;
+    }
+    case 'shrub':
+      return zone.inner + depth / 2;
+    case 'bench':
+    case 'bin':
+    case 'postbox':
+      if (depth < BENCH_ZONE - 1e-9) return null;
+      return zone.inner + BENCH_ZONE / 2;
+  }
+}
+
+export type LandscapeRefusal = 'offFootway' | 'narrow' | 'occupied' | 'crossing';
+
+/** The landing of a crossing on the footways: kept clear of everything. */
+export interface CrossingAccess {
+  readonly x: number;
+  readonly y: number;
+  readonly tx: number;
+  readonly ty: number;
+  readonly across: number;
+  readonly structure: string;
+}
+
+/**
+ * Every crossing's approach, including its landing on each footway. Furniture
+ * in a zebra's exit leaves a walker neither able to pass it nor to stay in the
+ * road.
+ */
+export function crossingAccesses(net: Network): CrossingAccess[] {
+  const out: CrossingAccess[] = [];
+  for (const [nodeId, node] of net.doc.nodes) {
+    if (node.incident.length < 2) continue;
+    for (const segmentId of node.incident) {
+      const crossing = net.crosswalkDistanceAt(segmentId, nodeId);
+      if (crossing <= 0) continue;
+      const segment = net.doc.requireSegment(segmentId);
+      const road = roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking);
+      const frame = orientedPolyline(net.doc, segment, nodeId).sampleAt(crossing);
+      out.push({ x: frame.p.x, y: frame.p.y, tx: frame.t.x, ty: frame.t.y,
+        across: road.width / 2 + road.sidewalk + m(0.3), structure: segment.structure });
+    }
+  }
+  return out;
+}
+
+/** Whether something of `radius` at a point of `segment`'s footway stands in a crossing's landing. */
+export function onCrossingAccess(
+  net: Network, accesses: readonly CrossingAccess[], segment: SegmentId, x: number, y: number, radius: number,
+): boolean {
+  const structure = net.doc.segment(segment)?.structure ?? 'ground';
+  return accesses.some((access) => {
+    if (structure !== access.structure) return false;
+    const dx = x - access.x, dy = y - access.y;
+    return Math.abs(dx * access.tx + dy * access.ty) < CROSSWALK_DEPTH / 2 + m(0.3) + radius &&
+      Math.abs(-dx * access.ty + dy * access.tx) < access.across + radius;
+  });
+}
+
+export type LandscapeSnap =
+  | { readonly ok: true; readonly at: Vec2; readonly hit: FootwayHit }
+  | { readonly ok: false; readonly at: Vec2; readonly reason: LandscapeRefusal };
+
+/**
+ * Where an item of `kind` put at `at` would stand, or why it cannot.
+ *
+ * The item is pulled across onto its line in the furnishing zone of the
+ * footway under the pointer (within `reach` of it), keeping its station along
+ * the street: a bench goes where it was put along the road, and at the depth
+ * a bench belongs at.
+ */
+export function snapLandscape(
+  net: Network,
+  items: Iterable<LandscapeItem>,
+  kind: LandscapeKind,
+  at: Vec2,
+  reach: number,
+): LandscapeSnap {
+  const hit = footwayAt(net, at, reach);
+  if (!hit) return { ok: false, at, reason: 'offFootway' };
+  const segment = net.doc.requireSegment(hit.segment);
+  const depth = depthFor(kind, hit.road, segment.direction);
+  if (depth === null) return { ok: false, at, reason: 'narrow' };
+  const placed = {
+    x: hit.frame.p.x + hit.frame.n.x * depth * hit.side,
+    y: hit.frame.p.y + hit.frame.n.y * depth * hit.side,
+  };
+  const radius = LANDSCAPE_RADIUS[kind];
+  if (onCrossingAccess(net, crossingAccesses(net), hit.segment, placed.x, placed.y, radius)) {
+    return { ok: false, at: placed, reason: 'crossing' };
+  }
+  for (const other of items) {
+    const clear = radius + LANDSCAPE_RADIUS[other.kind] + ITEM_GAP;
+    if (Math.hypot(other.x - placed.x, other.y - placed.y) < clear) return { ok: false, at: placed, reason: 'occupied' };
+  }
+  return { ok: true, at: placed, hit };
+}
+
+/** The placed item nearest a point, within `radius`. */
+export function landscapeNear(items: Iterable<LandscapeItem>, at: Vec2, radius: number): LandscapeItem | null {
+  let best: LandscapeItem | null = null;
+  let bestD = radius;
+  for (const item of items) {
+    const d = Math.hypot(item.x - at.x, item.y - at.y) - LANDSCAPE_RADIUS[item.kind];
+    if (d < bestD) {
+      bestD = d;
+      best = item;
+    }
+  }
+  return best;
+}

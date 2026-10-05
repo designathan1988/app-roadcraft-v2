@@ -35,7 +35,7 @@ import { createIsoRig } from './isoViewport';
 import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
-import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
+import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { localToWorld, solidFootprints } from '@world/buildings/geometry';
 import { followPieces } from '@world/buildings/elements';
 import { floorHeight } from '@world/buildings/foundation';
@@ -309,6 +309,8 @@ export function createSceneRenderer(
   let roads: RoadSurfaces | null = null;
   let details: StructureDetails | null = null;
   let scenery: Scenery | null = null;
+  /** What the player placed on the footways; on `doc.utilityRevision` like the poles. */
+  let furniture: Scenery | null = null;
   let utilities: Utilities | null = null;
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
@@ -510,9 +512,23 @@ export function createSceneRenderer(
       world.remove(utilities.group);
       utilities.dispose();
     }
-    utilities = buildUtilities(net.doc, poleGroundAt(elevation, terrain.renderedHeightAt));
+    utilities = buildUtilities(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit);
     world.add(utilities.group);
     builtTriangles += utilities.triangles;
+    rebuildFurniture(net);
+  };
+
+  /** The landscaping layer, rebuilt with the poles: it moves the same revision. */
+  const rebuildFurniture = (net: Network): void => {
+    if (!elevation) return;
+    if (furniture) {
+      builtTriangles -= furniture.triangles;
+      for (const mesh of furniture.meshes) world.remove(mesh);
+      furniture.dispose();
+    }
+    furniture = buildStreetFurniture(net, elevation, sceneryKit);
+    for (const mesh of furniture.meshes) world.add(mesh);
+    builtTriangles += furniture.triangles;
   };
 
   const rebuildWorld = (net: Network): void => {
@@ -527,6 +543,8 @@ export function createSceneRenderer(
     roads?.dispose();
     details?.dispose();
     scenery?.dispose();
+    furniture?.dispose();
+    furniture = null;
     utilities?.dispose();
     for (const mesh of scenery?.meshes ?? []) world.remove(mesh);
     if (scenery) world.remove(scenery.grass);
@@ -557,7 +575,7 @@ export function createSceneRenderer(
       elevation,
       terrain.renderedHeightAt,
       terrain.wetAt,
-      { vegetation: quality.vegetation, grass: quality.grass },
+      { grass: quality.grass },
       sceneryKit,
     );
     for (const mesh of scenery.meshes) world.add(mesh);
@@ -573,12 +591,13 @@ export function createSceneRenderer(
     // meant to stand on is exactly the "poles do not sit on the footway"
     // complaint. The lamp columns in `scenery.ts` already do this; the poles
     // were the one piece of street furniture reading the bare ground.
-    utilities = buildUtilities(net.doc, poleGroundAt(elevation, terrain.renderedHeightAt));
+    utilities = buildUtilities(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit);
     world.add(utilities.group);
     utilityRevision = net.doc.utilityRevision;
 
     builtTriangles =
       roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
+    rebuildFurniture(net);
     rebuildMs = performance.now() - started;
     rebuilds++;
   };
@@ -797,6 +816,11 @@ export function createSceneRenderer(
       if (details) details.group.visible = true;
       gardens?.setMap(plantMap);
       scenery?.setMap(plantMap);
+      furniture?.setMap(plantMap);
+      for (const mesh of furniture?.meshes ?? []) {
+        mesh.visible = quality.detailProps && detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
+      }
+      furniture?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
       for (const mesh of scenery?.meshes ?? []) {
         mesh.visible = quality.detailProps && detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
       }
@@ -816,6 +840,7 @@ export function createSceneRenderer(
       crowdFrustum.setFromProjectionMatrix(crowdProjection);
       // Plants and street furniture outside the view are not drawn at all.
       scenery?.cull(crowdFrustum, crowdProjection);
+      furniture?.cull(crowdFrustum, crowdProjection);
       gardens?.cull(crowdFrustum, crowdProjection);
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
@@ -912,6 +937,7 @@ export function createSceneRenderer(
       for (const paint of surfaceReuse.paint.values()) paint.dispose();
       details?.dispose();
       scenery?.dispose();
+      furniture?.dispose();
       gardens?.dispose();
       sceneryKit.dispose();
       terrain.dispose();

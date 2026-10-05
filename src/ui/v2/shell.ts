@@ -31,6 +31,9 @@ import {
 } from '../builder/catalog';
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
+import { poleLampMode, setPoleLampMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { LANDSCAPE_KINDS } from '@world/landscape';
+import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
 import { t, onLanguageChange } from '../i18n';
@@ -130,6 +133,19 @@ const ICON: Record<string, string> = {
   fall_left: '<path d=\"M20 12H5\"/><path d=\"m11 6-6 6 6 6\"/>',
   advanced: '<path d=\"M4 7h10M18 7h2M4 17h4M12 17h8\"/><circle cx=\"16\" cy=\"7\" r=\"2\"/><circle cx=\"10\" cy=\"17\" r=\"2\"/>',
   poles: '<path d="M12 22V3"/><path d="M6 6h12"/><path d="M7 6v2M17 6v2"/><path d="M6 6c3 3 9 3 12 0" stroke-dasharray="2 2"/>',
+  // Landscaping: what goes on a footway
+  streetscape: '<path d="M12 21v-6"/><circle cx="12" cy="9" r="5"/><path d="M4 21h16"/>',
+  ls_tree: '<path d="M12 21v-7"/><circle cx="12" cy="9" r="6"/><path d="M8 21h8"/>',
+  ls_shrub: '<path d="M4 19c0-4 3-7 8-7s8 3 8 7Z"/><path d="M8 13c0-3 2-5 4-5s4 2 4 5"/><path d="M3 21h18"/>',
+  ls_bench: '<path d="M4 11h16"/><path d="M4 15h16"/><path d="M6 15v5M18 15v5M6 11V7h12v4"/>',
+  ls_bin: '<path d="M6 7h12l-1 14H7Z"/><path d="M5 7h14M10 4h4"/><path d="M10 11v6M14 11v6"/>',
+  ls_lamp: '<path d="M7 21V5h7"/><path d="M12 5h5l1 2h-6Z"/><path d="M15 9l-1 3M17 9l1 3" stroke-dasharray="1.5 1.5"/><path d="M4 21h6"/>',
+  ls_hydrant: '<path d="M8 21V10h8v11Z"/><path d="M8 10a4 4 0 0 1 8 0"/><path d="M5 14h3M16 14h3M12 4v2"/><path d="M6 21h12"/>',
+  ls_postbox: '<rect x="6" y="5" width="12" height="11" rx="5"/><path d="M9 9h6"/><path d="M12 16v5M8 21h8"/>',
+  // Street lights on the wire poles: none, every other, all
+  pl_none: '<path d="M8 21V4"/><path d="M4 7h8"/><path d="M15 9l5 5M20 9l-5 5"/>',
+  pl_alternate: '<path d="M6 21V5h4M18 21V5"/><path d="M9 5l1 2H8Z"/><path d="M9 9l-.5 2" stroke-dasharray="1.5 1.5"/>',
+  pl_all: '<path d="M6 21V5h4M18 21V5h-4"/><path d="M9 5l1 2H8ZM15 5l-1 2h2Z"/><path d="M9 9l-.5 2M15 9l.5 2" stroke-dasharray="1.5 1.5"/>',
 };
 const svg = (name: string, size = 22): string =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
@@ -456,7 +472,7 @@ export function mountShell(deps: ShellDeps): void {
 
   // ================================================================ state
   let open = false;
-  let landTab: 'terrain' | 'barrier' | 'pole' = 'terrain';
+  let landTab: 'terrain' | 'barrier' | 'pole' | 'streetscape' = 'terrain';
   let builder: BuilderState | null = null;
 
   let modelQuery = '';
@@ -470,7 +486,7 @@ export function mountShell(deps: ShellDeps): void {
     if (['road', 'upgrade', 'move', 'split', 'control', 'roundabout'].includes(current)) return 'roads';
     if (current === 'zone') return 'zones';
     if (current === 'building') return 'build';
-    if (['terrain', 'barrier', 'pole'].includes(current)) return 'landscape';
+    if (['terrain', 'barrier', 'pole', 'streetscape'].includes(current)) return 'landscape';
     if (current === 'person') return 'people';
     if (current === 'bulldoze') return 'demolish';
     if (current === 'inspect') return 'info';
@@ -648,8 +664,8 @@ export function mountShell(deps: ShellDeps): void {
   // ------------------------------------------------------------ landscape
   function renderLandscape(current: string): void {
     title.textContent = t('v2.cat.landscape');
-    landTab = current === 'barrier' ? 'barrier' : current === 'pole' ? 'pole' : 'terrain';
-    for (const [id, label, icon] of [['terrain', t('tool.terrain'), 'terrain'], ['barrier', t('v2.land.walls'), 'walls'], ['pole', t('tool.pole'), 'poles']] as const) {
+    landTab = current === 'barrier' ? 'barrier' : current === 'pole' ? 'pole' : current === 'streetscape' ? 'streetscape' : 'terrain';
+    for (const [id, label, icon] of [['terrain', t('tool.terrain'), 'terrain'], ['streetscape', t('tool.streetscape'), 'streetscape'], ['barrier', t('v2.land.walls'), 'walls'], ['pole', t('tool.pole'), 'poles']] as const) {
       tabs.appendChild(tab(label, landTab === id, () => { press(`.tool[data-tool="${id}"]`); render(); }, false, svg(icon, 18)));
     }
     if (landTab === 'terrain') {
@@ -668,7 +684,25 @@ export function mountShell(deps: ShellDeps): void {
         items.appendChild(card(b.textContent ?? '', b.classList.contains('active'), () => { b.click(); render(); }, undefined, builderIconSvg(b.dataset['barrier'] === 'hedge' ? 'hedge' : b.dataset['barrier'] === 'wall' ? 'wallRun' : 'fenceRun', 34)));
       }
       note(t('help.tool.barrier'));
+    } else if (landTab === 'streetscape') {
+      // What the next click puts on the footway (`world/landscape.ts`).
+      const { items } = section(t('tool.streetscape'));
+      const now = streetscapeKind();
+      for (const kind of LANDSCAPE_KINDS) {
+        items.appendChild(card(t(`streetscape.${kind}`), now === kind, () => { setStreetscapeKind(kind); render(); }, undefined, svg(`ls_${kind}`, 34)));
+      }
+      note(t('help.tool.streetscape'));
     } else {
+      // Street lights on the poles of the next run.
+      const lamps = group(t('pole.lamps'));
+      const now = poleLampMode();
+      lamps.appendChild(choices(POLE_LAMP_MODES.map((mode) => ({
+        label: t(`pole.lamps.${mode}`),
+        on: now === mode,
+        run: () => { setPoleLampMode(mode); render(); },
+        icon: svg(`pl_${mode}`, 18),
+      }))));
+      options.appendChild(lamps);
       note(t('help.tool.pole'));
     }
   }

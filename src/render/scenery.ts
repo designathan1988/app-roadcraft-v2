@@ -24,16 +24,12 @@ import { Rng } from '@core/rng';
 import { angleOf } from '@core/vec2';
 import type { Network } from '@world/network';
 import type { RoadElevation } from '@world/elevation';
-import { GROUND_ONLY } from '@world/elevation';
 import { streetFurniture, type FurnitureItem, type FurnitureKind } from '@world/streetFurniture';
-import { FOOTWAY_RISE, casingHalf } from '@world/roadTypes';
+import { FOOTWAY_RISE } from '@world/roadTypes';
 import { m } from '@world/units';
-import { TERRAIN_HALF } from './terrain';
-import { MEDIAN_PLANTING } from './roadSurfaces';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { applyFoliageShading } from './foliageShading';
-import { fbm, makeNoise } from './mesh/textureBaker';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -88,21 +84,6 @@ export const TREE_HEIGHT_RANGE = m(8);
 const STREET_TREE_MIN = m(6.5);
 const STREET_TREE_RANGE = m(3);
 
-/** Nothing is planted closer than this to the edge of a road's casing. */
-const PLANT_CLEARANCE = 16;
-/** Keeps a canopy from overhanging the edge of the terrain plate. */
-const PLANT_EDGE_MARGIN = 24;
-/**
- * Roadside planting: how often a spot along a road is tried, and how far past
- * the casing it may go. The open-ground scatter keeps well clear of every road
- * - right for a forest, and the reason a street used to run through a bare
- * lawn - so the band just beyond the verge is planted on its own.
- */
-const ROADSIDE_STEP = 30;
-const ROADSIDE_BAND = 26;
-/** Plants tried per unit of road, as a share of the vegetation budget. */
-const ROADSIDE_SHARE = 0.55;
-
 /** How each kind of plant answers the wind; see `wind.ts`. */
 const TREE_WIND: WindResponse = { sway: 0.03, flutter: 0.006 };
 const BUSH_WIND: WindResponse = { sway: 0.05, flutter: 0.014 };
@@ -114,7 +95,7 @@ export interface SceneryKit {
   /** The same plants at map-zoom detail; see `Detail` in `propGeometry.ts`. */
   readonly treesFar: Record<TreeSpecies, BufferGeometry>;
   readonly bushesFar: Record<BushKind, BufferGeometry>;
-  readonly furniture: Record<Exclude<FurnitureKind, 'streetTree' | 'medianShrub'>, BufferGeometry>;
+  readonly furniture: Record<Exclude<FurnitureKind, 'streetTree' | 'shrub'>, BufferGeometry>;
   readonly lampLens: BufferGeometry;
   readonly treePit: BufferGeometry;
   readonly tuft: BufferGeometry;
@@ -499,14 +480,6 @@ function foliageTint(rng: Rng): Color {
   return new Color(0.9 + warm * 0.18, 0.93 + rng.float() * 0.12, 0.86 + (1 - warm) * 0.14);
 }
 
-/** Picks a species for a tree in open ground. */
-function wildSpecies(roll: number): TreeSpecies {
-  if (roll < 0.3) return 'conifer';
-  if (roll < 0.62) return 'broadleaf';
-  if (roll < 0.88) return 'broadleafTall';
-  return roll < 0.94 ? 'ipeYellow' : 'ipePink';
-}
-
 /** Picks a species for a street tree: mostly planes, some flowering ipês. */
 function streetSpecies(roll: number): TreeSpecies {
   if (roll < 0.55) return 'broadleafTall';
@@ -515,12 +488,17 @@ function streetSpecies(roll: number): TreeSpecies {
 }
 
 export interface ScenerySettings {
-  /** Plants scattered over open ground. */
-  readonly vegetation: number;
   /** Grass clumps. */
   readonly grass: number;
 }
 
+/**
+ * The ground cover of the open land: grass and wildflowers at close zoom.
+ *
+ * No trees or bushes are scattered over the terrain or along the roads any
+ * more (the player's order of 2026-10-05): every tree on the map is one the
+ * player planted with the landscaping tool, or one of a building's gardens.
+ */
 export function buildScenery(
   net: Network,
   elevation: RoadElevation,
@@ -529,6 +507,30 @@ export function buildScenery(
   settings: ScenerySettings,
   kit: SceneryKit,
 ): Scenery {
+  const grass: GrassField = buildGrass(net, elevation, terrainAt, wetAt, settings.grass, kit);
+  return {
+    meshes: [],
+    grass: grass.group,
+    triangles: grass.triangles,
+    setNear() {},
+    setMap() {},
+    cull(frustum, view) {
+      if (grass.group.visible) grass.cull(frustum, view);
+    },
+    exclude() {},
+    dispose() {
+      grass.dispose();
+    },
+  };
+}
+
+/**
+ * What the player placed on the footways (`world/streetFurniture.ts`): street
+ * lights, benches, bins, hydrants, post boxes, street trees in their pits and
+ * shrubs. Rebuilt on `doc.utilityRevision`, so placing a bench rebuilds this
+ * and nothing else.
+ */
+export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit: SceneryKit): Scenery {
   const furniture = new Map<string, Placement[]>();
   const put = (key: string, placement: Placement): void => {
     const list = furniture.get(key);
@@ -538,12 +540,10 @@ export function buildScenery(
   const trees = new Map<TreeSpecies, Placement[]>(TREE_SPECIES.map((s) => [s, []]));
   const bushes = new Map<BushKind, Placement[]>(BUSH_KINDS.map((k) => [k, []]));
 
-  // ------------------------------------------------------ street furniture
   // On the item's OWN road. The unfiltered field answers for whichever road is
   // nearest, and a lamp on a street passing under a viaduct was lifted onto the
   // deck above it.
-  const deckAt = (item: FurnitureItem): number =>
-    elevation.onSegment(item.segment, item.x, item.y) + (item.on === 'median' ? MEDIAN_PLANTING : FOOTWAY_RISE);
+  const deckAt = (item: FurnitureItem): number => elevation.onSegment(item.segment, item.x, item.y) + FOOTWAY_RISE;
   for (const item of streetFurniture(net)) {
     const base = deckAt(item);
     // Local +X of a lamp reaches over the road; local -Z of a bench, a post
@@ -589,139 +589,20 @@ export function buildScenery(
         });
         break;
       }
-      case 'medianShrub': {
+      case 'shrub': {
         const rng = new Rng(Math.floor(item.seed * 0xffffff));
-        const height = m(0.8) + rng.float() * m(0.5);
-        (bushes.get('hedge') as Placement[]).push({
+        const height = m(0.8) + rng.float() * m(0.4);
+        (bushes.get(rng.float() < 0.4 ? 'bushFlowering' : 'bush') as Placement[]).push({
           x: item.x,
           y: item.y,
           z: base - m(0.05),
-          yaw: angleOf(item.along),
-          sx: height * 1.1,
+          yaw: rng.float() * Math.PI * 2,
+          sx: height * 1.05,
           sy: height,
-          sz: height * 0.9,
+          sz: height * 1.05,
           tint: foliageTint(rng),
         });
         break;
-      }
-    }
-  }
-
-  // ------------------------------------------------------------- vegetation
-  if (settings.vegetation > 0) {
-    const rng = new Rng(0x517a);
-    const bounds = networkBounds(net);
-    const spread = Math.max(900, Math.max(bounds.w, bounds.h) * 0.85);
-    // The scatter window, clipped to the terrain plate. A margin keeps a
-    // canopy from overhanging the edge even when its trunk is just inside.
-    const limit = TERRAIN_HALF - PLANT_EDGE_MARGIN;
-    const minX = Math.max(-limit, bounds.cx - spread);
-    const maxX = Math.min(limit, bounds.cx + spread);
-    const minY = Math.max(-limit, bounds.cy - spread);
-    const maxY = Math.min(limit, bounds.cy + spread);
-    // A network pushed entirely off the plate leaves no window to plant in.
-    const attempts = maxX > minX && maxY > minY ? settings.vegetation * 6 : 0;
-    const groveNoise = makeNoise(0x6a11);
-    const groveDensity = (x: number, y: number): number => {
-      const noise = fbm(groveNoise, x / 260 + 5.3, y / 260 - 3.1, 23, 3);
-      const t = Math.max(0, Math.min(1, (noise - 0.33) / 0.34));
-      return 0.14 + 0.86 * t * t * (3 - 2 * t);
-    };
-    const clear = (x: number, y: number, margin: number): boolean => {
-      // Nothing grows on the carriageway or its verge.
-      if (Math.abs(elevation.at(x, y, GROUND_ONLY) - terrainAt(x, y)) < 40) {
-        const road = elevation.roadAt(x, y);
-        if (Math.abs(road.across) < PLANT_CLEARANCE + margin) return false;
-      }
-      return true;
-    };
-    const bushAt = (x: number, y: number, scale: number): void => {
-      const ground = terrainAt(x, y);
-      const kind: BushKind = rng.float() < 0.26 ? 'bushFlowering' : 'bush';
-      const height = (1.8 + rng.float() * 2.2) * scale;
-      (bushes.get(kind) as Placement[]).push({
-        x,
-        y,
-        z: ground - 0.15,
-        yaw: rng.float() * Math.PI * 2,
-        sx: height * (0.9 + rng.float() * 0.4),
-        sy: height,
-        sz: height * (0.9 + rng.float() * 0.4),
-        tint: foliageTint(rng),
-      });
-    };
-    const treeAt = (x: number, y: number, ground: number, species: TreeSpecies, scale = 1): void => {
-      const height = (TREE_MIN_HEIGHT + rng.float() * TREE_HEIGHT_RANGE) * scale;
-      (trees.get(species) as Placement[]).push({
-        x,
-        y,
-        z: ground - 0.1,
-        yaw: rng.float() * Math.PI * 2,
-        sx: height * (0.82 + rng.float() * 0.36),
-        sy: height,
-        sz: height * (0.82 + rng.float() * 0.36),
-        tint: foliageTint(rng),
-      });
-    };
-
-    // The band just past each road's verge.
-    for (const ribbon of net.ribbons.values()) {
-      const length = ribbon.full.length;
-      for (let s = 10 + rng.float() * ROADSIDE_STEP; s < length - 10; s += ROADSIDE_STEP * (0.7 + rng.float() * 0.6)) {
-        for (const side of [-1, 1]) {
-          if (rng.float() > ROADSIDE_SHARE) continue;
-          const frame = ribbon.full.sampleAt(s);
-          const out = casingHalf(ribbon.road) + 5 + rng.float() ** 1.4 * ROADSIDE_BAND;
-          const x = frame.p.x + frame.n.x * out * side;
-          const y = frame.p.y + frame.n.y * out * side;
-          if (Math.abs(x) > limit || Math.abs(y) > limit) continue;
-          // The nearest road may not be this one near a junction.
-          const road = elevation.roadAt(x, y);
-          if (road.type >= 0 && Math.abs(road.across) < road.half + 4) continue;
-          if (wetAt(x, y)) continue;
-          const ground = terrainAt(x, y);
-          if (rng.float() < 0.5) {
-            treeAt(x, y, ground, wildSpecies(rng.float() * 0.94 + 0.03), 0.85);
-            if (rng.float() < 0.4) bushAt(x + frame.t.x * 4, y + frame.t.y * 4, 0.8);
-          } else {
-            // A loose group of shrubs, as a hedge line grows along a road.
-            const count = 1 + Math.floor(rng.float() * 3);
-            for (let k = 0; k < count; k++) {
-              bushAt(x + frame.t.x * (k * 3.2 - 3), y + frame.t.y * (k * 3.2 - 3), 0.75 + rng.float() * 0.4);
-            }
-          }
-        }
-      }
-    }
-
-    let planted = 0;
-    for (let i = 0; i < attempts && planted < settings.vegetation; i++) {
-      const x = minX + rng.float() * (maxX - minX);
-      const y = minY + rng.float() * (maxY - minY);
-      // Meadows and groves share the same plant budget. Test the cheap density
-      // field before road and terrain queries; road-edge planting stays separate.
-      if (rng.float() > groveDensity(x, y)) continue;
-      if (!clear(x, y, 24)) continue;
-      const ground = terrainAt(x, y);
-      // Steep rock and rivers stay bare, which makes the slope readable.
-      const slope =
-        Math.abs(terrainAt(x + 6, y) - terrainAt(x - 6, y)) +
-        Math.abs(terrainAt(x, y + 6) - terrainAt(x, y - 6));
-      if (slope > 7 || wetAt(x, y)) continue;
-      planted++;
-      const scale = 0.75 + rng.float() * 0.6;
-      if (rng.float() < 0.38) {
-        bushAt(x, y, scale);
-        continue;
-      }
-      treeAt(x, y, ground, wildSpecies(rng.float()));
-      // Undergrowth: a tree in open ground rarely stands alone on bare turf.
-      if (rng.float() < 0.35) {
-        const a = rng.float() * Math.PI * 2;
-        const d = 3 + rng.float() * 4;
-        const bx = x + Math.cos(a) * d;
-        const by = y + Math.sin(a) * d;
-        if (clear(bx, by, 20)) bushAt(bx, by, 0.7);
       }
     }
   }
@@ -739,7 +620,7 @@ export function buildScenery(
 
   /** Each plant mesh with its two models, near first. */
   const plants: [InstancedMesh, BufferGeometry, BufferGeometry][] = [];
-  plantMeshes('', trees, bushes, kit, meshes, plants);
+  plantMeshes('street-', trees, bushes, kit, meshes, plants);
   const leafMeshes = meshes.filter((mesh) => mesh.name.endsWith('-leaves'));
   // The lens is lit from inside; it neither casts nor takes a shadow.
   for (const mesh of meshes) {
@@ -747,20 +628,15 @@ export function buildScenery(
     if (mesh.name === 'street-light-pools') { mesh.receiveShadow = false; mesh.renderOrder = 3; }
   }
 
-  const grass: GrassField = buildGrass(net, elevation, terrainAt, wetAt, settings.grass, kit);
-
-  let triangles = grass.triangles;
+  let triangles = 0;
   for (const mesh of meshes) triangles += trianglesOf(mesh.geometry) * mesh.count;
-  /** The view the instances were last culled for; null draws them all until the first. */
   let culledFor: Matrix4 | null = null;
   let nearMode: boolean | null = null;
   let mapMode: boolean | null = null;
-  /** Plants standing under a building, per plant mesh; see `exclude`. */
-  const excluded = new Map<InstancedMesh, Uint8Array>();
 
   return {
     meshes,
-    grass: grass.group,
+    grass: new Group(),
     triangles,
     setNear(near) {
       if (nearMode === near) return;
@@ -774,59 +650,14 @@ export function buildScenery(
       for (const mesh of leafMeshes) mesh.visible = !map;
     },
     cull(frustum, view) {
-      // Grass only when it is shown; it keeps its own record of the view.
-      if (grass.group.visible) grass.cull(frustum, view);
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
-      cullInstances(meshes, excluded, frustum, mapMode === true);
+      cullInstances(meshes, null, frustum, mapMode === true);
     },
-    exclude(covered) {
-      excluded.clear();
-      culledFor = null;
-      if (!covered) return;
-      for (const [mesh] of plants) {
-        const all = instances.get(mesh);
-        if (!all) continue;
-        const flags = new Uint8Array(all.count);
-        let any = false;
-        for (let i = 0; i < all.count; i++) {
-          // Sphere centres are in three's axes: world y is -z.
-          if (covered(all.spheres[i * 4] as number, -(all.spheres[i * 4 + 2] as number))) {
-            flags[i] = 1;
-            any = true;
-          }
-        }
-        if (any) excluded.set(mesh, flags);
-      }
-    },
+    exclude() {},
     dispose() {
-      // The InstancedMesh itself owns GPU buffers for its matrices and its
-      // colours, and they are not freed by disposing the geometry. Every
-      // rebuild - and a rebuild happens on every edit - leaked one set per
-      // mesh. Geometry and materials are the kit's, and outlive the rebuild.
       for (const mesh of meshes) mesh.dispose();
-      grass.dispose();
     },
-  };
-}
-
-function networkBounds(net: Network): { cx: number; cy: number; w: number; h: number } {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const node of net.doc.nodes.values()) {
-    if (node.x < minX) minX = node.x;
-    if (node.y < minY) minY = node.y;
-    if (node.x > maxX) maxX = node.x;
-    if (node.y > maxY) maxY = node.y;
-  }
-  if (!Number.isFinite(minX)) return { cx: 0, cy: 0, w: 800, h: 800 };
-  return {
-    cx: (minX + maxX) / 2,
-    cy: (minY + maxY) / 2,
-    w: maxX - minX,
-    h: maxY - minY,
   };
 }
 

@@ -25,8 +25,10 @@ import { m } from './units';
  * run is a whole number of 6 m bays, centred in the room it has. The paint is
  * the MER of the Brazilian manual (MBST vol. IV, 7.3, "estacionamento simples
  * paralelo ao meio-fio com demarcação ao longo do trecho"): a DASHED white line
- * along the lane's inner edge, closed across the lane at each end of the run;
- * the bays themselves are not ticked (the player's order of 2026-10-05). Where
+ * along the lane's inner edge (the player's order of 2026-10-05), closed
+ * across the lane at each end of the run, and a continuous division line
+ * across the lane between every two bays ("com delimitação de cada vaga"),
+ * which the player also asked for. Where
  * parking is forbidden beside a parking lane, a continuous yellow line (LPP) is
  * painted along the kerb.
  */
@@ -131,6 +133,8 @@ export function parkingLayout(net: Network, entrances: readonly [Vec2, Vec2][] =
           const centre = { x: mid.p.x + mid.n.x * (kerb + inner) / 2 * side, y: mid.p.y + mid.n.y * (kerb + inner) / 2 * side };
           // A parked car faces the way the traffic beside it goes.
           bays.push({ segment: ribbon.id, side, kind, corners, centre, facing: { x: mid.t.x * travel, y: mid.t.y * travel } });
+          // The division between this bay and the next, from the kerb across the lane.
+          if (k > 0) lines.push({ segment: ribbon.id, points: [at(a, kerb), at(a, inner)], width: BAY_LINE, color: WHITE, dash: null });
         }
         const last = first + count * pitch;
         // The run closed across the parking lane at both ends.

@@ -10,9 +10,13 @@ import {
   Material,
   MeshStandardMaterial,
   Object3D,
+  PlaneGeometry,
 } from 'three';
 
-import type { RoadDoc } from '@world/doc';
+import type { Network } from '@world/network';
+import { footwayAt } from '@world/landscape';
+import { m } from '@world/units';
+import type { SceneryKit } from './scenery';
 import { GROUND_ONLY, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE } from '@world/roadTypes';
 import {
@@ -29,6 +33,7 @@ import {
   POLE_TOP_RADIUS,
   WIRE_COURSES,
   WIRE_OFFSETS,
+  poleArms,
   sampleWire,
 } from '@world/utilities';
 import { angleOf } from '@core/vec2';
@@ -91,9 +96,11 @@ function instanced(
 }
 
 export function buildUtilities(
-  doc: RoadDoc,
+  net: Network,
   groundAt: (x: number, y: number) => number,
+  kit: SceneryKit,
 ): Utilities {
+  const doc = net.doc;
   const group = new Group();
   group.name = 'utilities';
 
@@ -101,6 +108,8 @@ export function buildUtilities(
   const arms: Placement[] = [];
   const lampArms: Placement[] = [];
   const lampHeads: Placement[] = [];
+  const lenses: Placement[] = [];
+  const pools: Placement[] = [];
   const wirePoints: number[] = [];
 
   /** Crown height of each pole, so the wires and the arms agree on it. */
@@ -121,72 +130,67 @@ export function buildUtilities(
     });
   }
 
-  // A pole's cross-arm is square to the LINE it carries, so it has to know
-  // which way the wires leave. A pole on a bend splits the difference, which
-  // is what a real one does.
-  const bearing = new Map<number, { x: number; y: number }>();
-  for (const span of doc.poleSpans.values()) {
-    const a = doc.poles.get(span.a as never);
-    const b = doc.poles.get(span.b as never);
-    if (!a || !b) continue;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const length = Math.hypot(dx, dy) || 1;
-    for (const [pole, sign] of [
-      [a, 1],
-      [b, -1],
-    ] as const) {
-      const acc = bearing.get(pole.id) ?? { x: 0, y: 0 };
-      acc.x += (dx / length) * sign;
-      acc.y += (dy / length) * sign;
-      bearing.set(pole.id, acc);
-    }
-  }
+  /** Towards the carriageway from a pole on a footway, or null off the streets. */
+  const roadward = (x: number, y: number): { x: number; y: number } | null => {
+    const hit = footwayAt(net, { x, y }, m(1));
+    return hit ? { x: -hit.frame.n.x * hit.side, y: -hit.frame.n.y * hit.side } : null;
+  };
+  // The arms, framed as a line crew frames them (`poleArms`): square to a
+  // straight line, on the bisector of a bend, one per line at a corner. A
+  // pole with no wire yet stands square to its street.
+  const framing = poleArms(doc.poles, doc.poleSpans, (pole) => roadward(pole.x, pole.y) ?? { x: 0, y: 1 });
 
   for (const pole of doc.poles.values()) {
     const top = crown.get(pole.id);
     if (top === undefined) continue;
-
-    // The cross-arm lies SQUARE to the line, so its own direction is the
-    // line's normal. A pole with no wires on it yet has no line to be square
-    // to, and gets an arbitrary but stable bearing rather than a random one.
-    const arm = armDirection(bearing.get(pole.id));
-    const armYaw = angleOf(arm);
+    const frame = framing.get(pole.id);
 
     // An instanced box is scaled on its LOCAL X and then rotated about Y, so
     // the length goes on sx and the yaw is the direction that length points
     // in. Putting the length on sz instead - which is what this did - turns
     // every arm ninety degrees, and a row of poles comes out looking twisted.
-    arms.push({
-      x: pole.x,
-      y: pole.y,
-      z: top - POLE_ARM_DROP,
-      yaw: armYaw,
-      sx: POLE_ARM_HALF * 2,
-      sy: POLE_ARM_THICK,
-      sz: POLE_ARM_THICK,
-    });
+    for (const arm of frame?.arms ?? []) {
+      arms.push({
+        x: pole.x,
+        y: pole.y,
+        z: top - POLE_ARM_DROP,
+        yaw: angleOf(arm),
+        sx: POLE_ARM_HALF * 2,
+        sy: POLE_ARM_THICK,
+        sz: POLE_ARM_THICK,
+      });
+    }
 
     if (!pole.lamp) continue;
-    // The lamp reaches out along the arm, over the road side.
+    // The light reaches out over the street, square to the kerb, whichever
+    // way the wires run; off the streets, along the first arm.
+    const reach = roadward(pole.x, pole.y) ?? frame?.arms[0] ?? { x: 0, y: 1 };
+    const reachYaw = angleOf(reach);
+    const headX = pole.x + reach.x * POLE_LAMP_REACH;
+    const headY = pole.y + reach.y * POLE_LAMP_REACH;
+    const headZ = top - POLE_LAMP_DROP;
     lampArms.push({
-      x: pole.x + arm.x * (POLE_LAMP_REACH / 2),
-      y: pole.y + arm.y * (POLE_LAMP_REACH / 2),
-      z: top - POLE_LAMP_DROP,
-      yaw: armYaw,
+      x: pole.x + reach.x * (POLE_LAMP_REACH / 2),
+      y: pole.y + reach.y * (POLE_LAMP_REACH / 2),
+      z: headZ,
+      yaw: reachYaw,
       sx: POLE_LAMP_REACH,
       sy: POLE_ARM_THICK * 0.8,
       sz: POLE_ARM_THICK * 0.8,
     });
     lampHeads.push({
-      x: pole.x + arm.x * POLE_LAMP_REACH,
-      y: pole.y + arm.y * POLE_LAMP_REACH,
-      z: top - POLE_LAMP_DROP - POLE_LAMP_TALL / 2,
-      yaw: armYaw,
+      x: headX,
+      y: headY,
+      z: headZ - POLE_LAMP_TALL / 2,
+      yaw: reachYaw,
       sx: POLE_LAMP_LONG,
       sy: POLE_LAMP_TALL,
       sz: POLE_LAMP_WIDE,
     });
+    // The lens under the head and the pool of light on the street, lit with
+    // the street lights' own materials, so they come on at dusk with them.
+    lenses.push({ x: headX, y: headY, z: headZ - POLE_LAMP_TALL - 0.01, yaw: reachYaw, sx: POLE_LAMP_LONG * 0.8, sy: 1, sz: POLE_LAMP_WIDE * 0.8 });
+    pools.push({ x: headX, y: headY, z: groundAt(headX, headY) + 0.03, yaw: 0, sx: m(4.6), sy: 1, sz: m(4.6) });
   }
 
   // ------------------------------------------------------------------ wires
@@ -198,10 +202,11 @@ export function buildUtilities(
     const topB = crown.get(b.id);
     if (topA === undefined || topB === undefined) continue;
 
-    // Each wire leaves its own insulator, so the two ends of a span have to
-    // use the SAME course and offset but each pole's own arm direction.
-    const armA = armDirection(bearing.get(a.id));
-    const armB = armDirection(bearing.get(b.id));
+    // Each wire leaves its own insulator on the arm the span hangs from. Both
+    // ends' arms are turned to the left of the span, so the wire at offset k
+    // on one pole meets the wire at offset k on the next and none cross over.
+    const armA = framing.get(a.id)?.bySpan.get(span.id) ?? { x: 0, y: 1 };
+    const armB = framing.get(b.id)?.bySpan.get(span.id) ?? { x: 0, y: 1 };
 
     for (const course of WIRE_COURSES) {
       for (const offset of WIRE_OFFSETS) {
@@ -249,14 +254,22 @@ export function buildUtilities(
     8,
   );
   const boxGeometry = new BoxGeometry(1, 1, 1);
+  // One face, looking down: a lens only shines down (see `lampLensGeometry`).
+  const lensGeometry = new PlaneGeometry(1, 1).rotateX(Math.PI / 2);
 
   const meshes = [
     instanced('utility-poles', mastGeometry, timber, masts),
     instanced('utility-arms', boxGeometry, timber, arms),
     instanced('utility-lamp-arms', boxGeometry, metal, lampArms),
     instanced('utility-lamp-heads', boxGeometry, housing, lampHeads),
+    instanced('utility-lamp-lenses', lensGeometry, kit.glow, lenses),
+    instanced('utility-lamp-pools', kit.pool, kit.poolGlow, pools),
   ].filter((mesh): mesh is InstancedMesh => mesh !== null);
 
+  for (const mesh of meshes) {
+    if (mesh.name === 'utility-lamp-lenses' || mesh.name === 'utility-lamp-pools') mesh.castShadow = false;
+    if (mesh.name === 'utility-lamp-pools') { mesh.receiveShadow = false; mesh.renderOrder = 3; }
+  }
   let triangles = 0;
   for (const mesh of meshes) {
     group.add(mesh);
@@ -284,6 +297,7 @@ export function buildUtilities(
       if (wires) wires.geometry.dispose();
       mastGeometry.dispose();
       boxGeometry.dispose();
+      lensGeometry.dispose();
       metal.dispose();
       timber.dispose();
       housing.dispose();
@@ -291,23 +305,6 @@ export function buildUtilities(
       group.clear();
     },
   };
-}
-
-/**
- * Unit direction of a pole's cross-arm: square to the line it carries.
- *
- * A pole on a bend splits the difference between the two spans reaching it,
- * which is what a real one does. A pole carrying nothing yet still needs an
- * arm pointing somewhere, and the answer has to be STABLE - deriving it from
- * anything that changes as the network is edited makes standing poles spin
- * when a neighbour is added.
- */
-function armDirection(along: { x: number; y: number } | undefined): { x: number; y: number } {
-  if (!along) return { x: 0, y: 1 };
-  const length = Math.hypot(along.x, along.y);
-  if (!(length > 1e-9)) return { x: 0, y: 1 };
-  // Normal of the run direction.
-  return { x: -along.y / length, y: along.x / length };
 }
 
 /**

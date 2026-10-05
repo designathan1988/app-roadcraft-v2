@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { furnishStreets } from '../fixtures/furnish';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { m } from '@world/units';
@@ -37,6 +38,7 @@ interface Run {
 
 function measure(seconds: number): Run {
   const sim = simOf(fixtureDoc(), 0x51de, 1);
+  furnishStreets(sim.net);
   const run: Run = { sim, walkSeconds: 0, pedSeconds: 0, turnFlips: 0, standingTurn: 0, fastestSidestep: 0,
     kinds: new Map(), phases: new Map(), sharedSeat: false, seatedAway: 0, nearestLamp: Infinity, stopsInFlow: 0, holds: 0 };
   const seats = streetFurniture(sim.net).filter((i) => i.kind === 'bench');

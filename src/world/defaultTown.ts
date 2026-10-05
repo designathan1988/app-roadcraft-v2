@@ -331,10 +331,6 @@ function layStreets(doc: RoadDoc): Nodes {
 
 // ---------------------------------------------------------------- occupancy
 
-/** The outer road band still locates poles and the town's outer hedges. */
-const casingOf = (type: number): number => halfWidth(ROAD_TYPES[type] as RoadType, Level.Casing);
-const LOCAL_OFF = casingOf(LOCAL);
-const AVENUE_OFF = casingOf(AVENUE_CLASS);
 /** A lot begins at the back of the actual footway, where a frontage can stand. */
 const sidewalkOf = (type: number): number => halfWidth(ROAD_TYPES[type] as RoadType, Level.Sidewalk);
 const LOCAL_LOT_OFF = sidewalkOf(LOCAL);
@@ -869,31 +865,13 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
 // ---------------------------------------------------------------- the dressing
 
 /**
- * The town's own fittings: the wires along the avenue and out to the works,
- * and the hedges that hold the built town off the fields it was cut out of.
- *
- * Lamps, street trees, bins and benches are NOT here: they are laid along
- * every street by `world/streetFurniture.ts`, from the roads themselves, so
- * the pedestrians walk round the same list the renderer draws.
+ * The town's own fittings: the hedges that hold the built town off the
+ * fields it was cut out of. Poles, lamps, street trees, bins and benches are
+ * not generated: the player places them (`world/landscape.ts`).
  */
 function dress(doc: RoadDoc): void {
-  // A pole run down the avenue's northern footway, and another along the
-  // works' lane: the overhead pair a town like this is supplied by. Poles
-  // stand where the ground is, and the wires sag between them.
-  const runOfPoles = (points: readonly Vec2[]): void => {
-    let previous: ReturnType<RoadDoc['addPole']> | null = null;
-    for (const point of points) {
-      const pole = doc.addPole(point, true);
-      if (previous) doc.addPoleSpan(previous.id, pole.id);
-      previous = pole;
-    }
-  };
-  const avenueLine: Vec2[] = [];
-  for (let x = -1_180; x <= 620; x += 74) avenueLine.push({ x, y: AVENUE_OFF - 2.6 });
-  runOfPoles(avenueLine);
-  const worksLine: Vec2[] = [];
-  for (let y = AVENUE - 60; y >= WORKS.south + 20; y -= 78) worksLine.push({ x: WORKS.west - LOCAL_OFF + 2.6, y });
-  runOfPoles(worksLine);
+  // No poles: wires, street lights and every other fitting of a street are
+  // the player's to place (2026-10-05).
 
   // The hedgerows along the two edges of the built town, on the far side of
   // the outer streets: what stops a grid of houses from just stopping.

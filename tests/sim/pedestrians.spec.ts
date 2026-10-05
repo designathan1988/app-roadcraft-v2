@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { furnishStreets } from '../fixtures/furnish';
 
 import { pointInPolygon } from '@core/polygon';
 import { RoadDoc } from '@world/doc';
@@ -57,6 +58,7 @@ function crossroads(control: 'auto' | 'none' | 'signal' = 'auto', reach = 400): 
   doc.setNodeControl(centre.id, control);
   const net = new Network(doc);
   net.rebuild();
+  furnishStreets(net);
   const sim = new SimWorld(doc, net, 0x5eed);
   sim.rebuildTopology();
   sim.trafficIntensity = 1.4;
