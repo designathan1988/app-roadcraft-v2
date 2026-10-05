@@ -184,7 +184,7 @@ function frame(): void {
     const p = loopPoint(w.s, w.lane);
     w.person.matrix.makeRotationY(p.heading).setPosition(p.x, 0, p.z);
   }
-  crowd.update();
+  crowd.update(camera.position);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

@@ -181,19 +181,27 @@ function headOf(base: HairBase) {
 
 /** An item from generated geometry: each vertex pinned to the three nearest head vertices. */
 function pinned(head: ReturnType<typeof headOf>, name: string, kind: ProxyPack['kind'],
-  positions: readonly number[], uvs: readonly number[], index: readonly number[], fade?: readonly number[]): ProxyPack {
+  positions: readonly number[], uvs: readonly number[], index: readonly number[], fade?: readonly number[],
+  via?: { readonly of: Int32Array; readonly points: readonly V3[] }): ProxyPack {
   const { P, at, headVerts } = head;
-  // Pinned to the three nearest scalp (and head) vertices.
+  // Pinned to the three nearest scalp (and head) vertices - of the vertex
+  // itself, or of the point `via` names for it (a strand's guide point:
+  // thousands of strand vertices share a few hundred searches).
   const n = positions.length / 3;
   const refs = new Uint32Array(n * 3), weights = new Float32Array(n * 3), offsets = new Float32Array(n * 3);
   const anchors = headVerts;
-  for (let i = 0; i < n; i++) {
-    const p: V3 = [positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!];
+  const nearest = (p: V3): [number, number][] => {
     const best: [number, number][] = [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
     for (const v of anchors) {
       const d = (P[v * 3]! - p[0]) ** 2 + (P[v * 3 + 1]! - p[1]) ** 2 + (P[v * 3 + 2]! - p[2]) ** 2;
       if (d < best[2]![0]) { best[2] = [d, v]; best.sort((x, y) => x[0] - y[0]); }
     }
+    return best;
+  };
+  const shared = via ? via.points.map(nearest) : null;
+  for (let i = 0; i < n; i++) {
+    const p: V3 = [positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!];
+    const best = shared ? shared[via!.of[i]!]! : nearest(p);
     let total = 0;
     const w = best.map(([d]) => 1 / (Math.sqrt(d) + 0.05));
     for (const x of w) total += x;
@@ -217,7 +225,18 @@ function pinned(head: ReturnType<typeof headOf>, name: string, kind: ProxyPack['
   };
 }
 
-export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyPack {
+/**
+ * The same style as strands to draw as lines over its cards, close up: about
+ * a dozen fine strands round each guide, spread over its card's width and
+ * drawn in to it towards the tip (the clumping of Blender's Clump Hair
+ * Curves and Mirage Mane's groom), each its own shade, darker at the root.
+ * `fade` carries each vertex's shade. Its index is line segments.
+ */
+export function generateHairStrands(style: HairStyle, base: HairBase, seed = 1): ProxyPack {
+  return generateHair(style, base, seed, true);
+}
+
+export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands = false): ProxyPack {
   const head = headOf(base);
   const { at, headVerts, skull, local, outward } = head;
 
@@ -274,6 +293,16 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
   };
 
   const partX = style.part * skull.r[0] * 0.55;
+  // Which way a card faces: out of the skull over the head; below it, out of
+  // the body's vertical axis, a curtain round it - facing out of the skull
+  // there, the cards lay flat on the shoulders as planks.
+  const facing = (p: V3): V3 => {
+    const below = (skull.c[1] - p[1]) / skull.r[1];
+    if (below <= 0.2) return outward(p);
+    const radial = norm([p[0], 0, p[2] - skull.c[2]]);
+    const k = Math.min(1, (below - 0.2) / 0.5);
+    return norm(add(outward(p), sub(radial, outward(p)), k));
+  };
   const regional = (q: V3): number => {
     const r = style.regions;
     if (!r) return 1;
@@ -348,6 +377,10 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
         if (k < 1) p = [skull.c[0] + lq[0] * k * skull.r[0], skull.c[1] + lq[1] * k * skull.r[1], skull.c[2] + lq[2] * k * skull.r[2]];
         const o = outward(p);
         dir = norm(sub(dir, [o[0] * dot(dir, o), o[1] * dot(dir, o), o[2] * dot(dir, o)]));
+        // On the front of the skull hair goes back or to the side, never
+        // forwards and down over the brow (only a fringe does): gravity along
+        // the forehead pulled the hairline's strands down into dark teeth.
+        if (!fringe && lq[2] > 0 && dir[2] > 0) dir = norm([dir[0], Math.max(dir[1], -0.2), -0.05]);
       }
       pts.push(p);
     }
@@ -406,6 +439,40 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
     inside.push(q[1] - hairlineY(Math.atan2(q[0], q[2])));
   }
 
+  if (strands) {
+    const positions: number[] = [], uvs: number[] = [], index: number[] = [], shades: number[] = [];
+    const points: V3[] = [];
+    const of: number[] = [];
+    for (const [g, pts] of guides.entries()) {
+      const first = points.length;
+      points.push(...pts);
+      const count = fringes[g] ? 8 : inside[g]! < 0.25 ? 6 : 14;
+      const width = style.cardWidth * (fringes[g] ? 0.55 : inside[g]! < 0.25 ? 0.5 : 1);
+      for (let c = 0; c < count; c++) {
+        const across = (rnd() - 0.5) * width, rise = rnd() * 0.03, tone = 0.7 + rnd() * 0.6;
+        // A guide cut short (a plait's strands stop at the tie) may have
+        // only a point or two: the strand never runs past its guide's end.
+        const end = Math.min(pts.length - 1, Math.max(1, Math.round((pts.length - 1) * (0.82 + 0.18 * rnd()))));
+        if (end < 1) continue;
+        const start = positions.length / 3;
+        for (let i = 0; i <= end; i++) {
+          const t = i / (pts.length - 1);
+          const p = pts[i]!;
+          const along = norm(sub(pts[Math.min(pts.length - 1, i + 1)]!, pts[Math.max(0, i - 1)]!));
+          const out = facing(p);
+          const side = norm(cross(along, out));
+          const clump = 1 - 0.7 * Math.pow(t, 1.6);
+          positions.push(...add(add(p, side, across * clump), out, 0.02 + rise * (1 - t)));
+          uvs.push(0, t);
+          shades.push(tone * (0.45 + 0.55 * Math.min(1, t / 0.35)));
+          of.push(first + i);
+        }
+        for (let i = 0; i < end; i++) index.push(start + i, start + i + 1);
+      }
+    }
+    return pinned(head, `strands:${style.name}`, 'hair', positions, uvs, index, shades, { of: Int32Array.from(of), points });
+  }
+
   // Cards: a strip along each guide facing out of the head; a second,
   // turned and lifted, for body. UVs: one of four strand strips across, root
   // (v = 0) to tip.
@@ -420,7 +487,7 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
         const p = pts[i]!;
         const t = i / (pts.length - 1);
         const along = norm(sub(pts[Math.min(pts.length - 1, i + 1)]!, pts[Math.max(0, i - 1)]!));
-        const out = outward(p);
+        const out = facing(p);
         let side = norm(cross(along, out));
         let centre = add(p, out, 0.015);
         if (layer === 1) {
@@ -436,8 +503,10 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
         uvs.push(u0, t * 0.98 + 0.01, u1, t * 0.98 + 0.01);
         // At the hairline the strands thin in from the root: a feathered
         // edge, not the straight root ends of the cards (a visor).
-        const rootFade = Math.max(0.3, Math.min(1, inside[g]! / 0.22));
-        const f = Math.min(1, rootFade + t * 5);
+        // Every card's root feathered (the cap shows through), more so at
+        // the hairline: hard root ends read as shingles on the crown.
+        const rootFade = Math.min(0.4, Math.max(0.3, Math.min(1, inside[g]! / 0.22)));
+        const f = Math.min(1, rootFade + t * 6);
         fades.push(f, f);
       }
       for (let i = 0; i < pts.length - 1; i++) {
@@ -450,38 +519,57 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyP
   // The cap: the scalp itself under the cards, lifted a little and painted
   // with the solid band at the top of the strand texture - as hair cards
   // sit on a painted scalp in games, or the skin shows through the parting.
-  const capOf = new Map<number, number>();
+  const capOf = new Map<string, number>();
   const scalpSet = new Set(scalp);
   const capStart = positions.length / 3;
-  const capVertex = (v: number): number => {
-    let k = capOf.get(v);
+  // Each cap point's own fade from where it is (not interpolated across the
+  // mesh's squares), and the cap's triangles split twice where the fade
+  // changes, so its edge follows the hairline's curve, not the mesh's steps.
+  const capFade = (p: V3): number => {
+    const q = local(p);
+    if (Math.abs(q[0]) > 0.97 && q[1] < 0.25 && q[1] > -0.75) return 0;
+    // A soft, wide edge only on the brow; over the ears and at the nape hair
+    // is full right to its edge (a wide fade there read as shaved sides).
+    const theta = Math.atan2(q[0], q[2]);
+    const width = 0.12 + 0.25 * Math.max(0, 1 - Math.abs(theta) / 0.9);
+    const t = Math.max(0, Math.min(1, (q[1] - hairlineY(theta)) / width));
+    return t * t * (3 - 2 * t) * 0.95;
+  };
+  const capKey = (p: V3): string => `${Math.round(p[0] * 2000)},${Math.round(p[1] * 2000)},${Math.round(p[2] * 2000)}`;
+  const capPoint = (p: V3): number => {
+    const key = capKey(p);
+    let k = capOf.get(key);
     if (k === undefined) {
       k = positions.length / 3;
-      capOf.set(v, k);
-      const p = at(v);
+      capOf.set(key, k);
       positions.push(...add(p, outward(p), 0.012));
       const q = local(p);
-      // Inside the hairline the solid band; on the ring past it the sparse
-      // tips of the strands, so the hairline frays instead of ending in a
-      // hard edge (a headband across the brow).
-      // Strands of the atlas running down from the crown to the hairline,
-      // so the cap's edge is strands thinning out, not the mesh's squares.
+      // Strands of the atlas running down from the crown to the hairline.
       const around = Math.atan2(q[0], q[2]) / Math.PI * 0.5 + 0.5;
-      const u = 0.02 + 0.21 * ((around * 6) % 1);
-      uvs.push(u, 0.05 + 0.4 * Math.max(0, Math.min(1, 0.95 - q[1])));
-      const inside = q[1] - hairlineY(Math.atan2(q[0], q[2]));
-      const t = Math.max(0, Math.min(1, inside / 0.4));
-      fades.push(scalpSet.has(v) ? t * t * (3 - 2 * t) * 0.9 : 0);
+      uvs.push(0.02 + 0.21 * ((around * 6) % 1), 0.05 + 0.4 * Math.max(0, Math.min(1, 0.95 - q[1])));
+      fades.push(capFade(p));
     }
     return k;
+  };
+  const mid = (x: V3, y: V3): V3 => [(x[0] + y[0]) / 2, (x[1] + y[1]) / 2, (x[2] + y[2]) / 2];
+  const capTriangle = (x: V3, y: V3, z: V3, level: number): void => {
+    const fx = capFade(x), fy = capFade(y), fz = capFade(z);
+    if (level < 2 && Math.max(fx, fy, fz) - Math.min(fx, fy, fz) > 0.05) {
+      const xy = mid(x, y), yz = mid(y, z), zx = mid(z, x);
+      capTriangle(x, xy, zx, level + 1); capTriangle(xy, y, yz, level + 1);
+      capTriangle(zx, yz, z, level + 1); capTriangle(xy, yz, zx, level + 1);
+      return;
+    }
+    if (fx + fy + fz === 0) return;
+    index.push(capPoint(x), capPoint(y), capPoint(z));
   };
   for (let f = 0; f < base.faces.length; f += 4) {
     const a = base.faces[f]!, b = base.faces[f + 1]!, c = base.faces[f + 2]!, d = base.faces[f + 3]!;
     // The cap reaches a ring past the hairline so its edge hides under the cards.
     const near = [a, b, c, d].filter((v) => scalpSet.has(v)).length;
     if (near < 1 || ![a, b, c, d].every((v) => headSet.has(v))) continue;
-    index.push(capVertex(a), capVertex(b), capVertex(c));
-    if (d !== c) index.push(capVertex(a), capVertex(c), capVertex(d));
+    capTriangle(at(a), at(b), at(c), 0);
+    if (d !== c) capTriangle(at(a), at(c), at(d), 0);
   }
   void capStart;
 

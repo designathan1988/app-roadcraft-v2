@@ -1,6 +1,6 @@
 import {
   BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
-  InstancedMesh, Matrix4, MeshDepthMaterial, MeshStandardMaterial, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
+  InstancedMesh, LineBasicMaterial, LineSegments, Matrix4, MeshDepthMaterial, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
   Uint16BufferAttribute, UnsignedByteType, type Material, type Texture,
 } from 'three';
 import { loadPeopleAssets, type PeopleAssets } from '@people/body/assets';
@@ -8,7 +8,7 @@ import { Morpher, bodyHeight } from '@people/body/morph';
 import { DEFAULT_MACRO, yearsFromAge, ageFromYears, type MacroParams } from '@people/body/macro';
 import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
-import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHair, generateHeadband } from '@people/hair/procedural';
+import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHair, generateHairStrands, generateHeadband } from '@people/hair/procedural';
 import { hairStrandTexture } from './hairTexture';
 import { createPersonRig, type PersonRig } from './personRig';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
@@ -125,6 +125,9 @@ export interface ProceduralPerson {
   /** Metres. */
   readonly height: number;
   readonly items: readonly string[];
+  /** Their grown hairstyle's item (`hair:...`) and colour, for its strands close up. */
+  readonly grown: string | null;
+  readonly hairColour: Color;
   /** How far each of their joints is from the class body's, metres (`jointBasis`). */
   readonly joints: Float32Array;
   /** Where they stand and face; what they play. Set by the caller each frame. */
@@ -301,7 +304,11 @@ ${shader.fragmentShader}`
 {
   vec4 texel = texture2D(procMap, vProcUv);
   ${grown ? `
-  float coverage = clamp(texel.r * 2.5 * vFade, 0.0, 1.0);
+  // Thinning towards a card's long edges (each a quarter of the atlas
+  // across), so overlapping cards blend instead of showing as shingles.
+  float across = fract(vProcUv.x * 4.0);
+  float sides = smoothstep(0.0, 0.22, min(across, 1.0 - across));
+  float coverage = clamp(texel.r * 2.5 * vFade * mix(0.35, 1.0, sides), 0.0, 1.0);
   vec3 tone = vProcDye.rgb * mix(0.38, 1.0, smoothstep(0.0, 0.3, texel.g));
   tone *= 1.0 + (texel.b - 0.5) * 0.72;
   float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
@@ -365,7 +372,8 @@ export interface ProceduralCrowd {
   readonly group: Group;
   add(spec: PersonSpec): Promise<ProceduralPerson>;
   /** Every person's pose and place into the GPU: once a frame, after setting `matrix`, `clip`, `phase`. */
-  update(): void;
+  /** `eye`: where the camera is, so the people nearest it get their hair's strands. */
+  update(eye?: Vector3): void;
   clear(): void;
   clipDuration(person: ProceduralPerson): number;
   /** Ground one walk cycle covers at the person's scale, metres. */
@@ -677,6 +685,99 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
     return piece;
   };
 
+  /**
+   * Strands close up: a grown hairstyle's strands (`generateHairStrands`)
+   * drawn as lines over its cards on the few people nearest the camera,
+   * fitted to the class body and moved by the same skeleton and shape as
+   * the cards. The rest of the crowd has the cards alone.
+   */
+  const NEAR = 8, NEAR_RANGE = 14;
+  const strandGeometry = new Map<string, Promise<BufferGeometry>>();
+  const strandLines: LineSegments[] = [];
+  const strandGeometryFor = (cls: BodyClass, grownName: string): Promise<BufferGeometry> => {
+    const key = `${cls.key}/${grownName}`;
+    let made = strandGeometry.get(key);
+    if (!made) {
+      made = setup().then(({ assets: a, morpher: mo }) => {
+        const style = HAIR_STYLES[grownName.slice(5)]!;
+        const pack = generateHairStrands(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
+          joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces });
+        const it: ProxyItem = { pack, texture: null, transparent: true, textureFile: null };
+        const fitted = cls.rig.wear!(it, cls.shape);
+        const geometry = new BufferGeometry();
+        geometry.setAttribute('position', new Float32BufferAttribute(fitted.positions, 3));
+        geometry.setAttribute('skinIndex', new Uint16BufferAttribute(fitted.joints, 4));
+        geometry.setAttribute('skinWeight', new Float32BufferAttribute(fitted.weights, 4));
+        geometry.setAttribute('aRefs', new Float32BufferAttribute(Float32Array.from(pack.refs), 3));
+        geometry.setAttribute('aRefW', new Float32BufferAttribute(pack.weights, 3));
+        geometry.setAttribute('aFade', new Float32BufferAttribute(pack.fade!, 1));
+        geometry.setIndex(Array.from(pack.index));
+        return geometry;
+      });
+      strandGeometry.set(key, made);
+    }
+    return made;
+  };
+  const strandMaterial = (cls: BodyClass): LineBasicMaterial => {
+    const material = new LineBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false });
+    material.defines = { USE_SKINNING: '' };
+    const uniforms = { procRow: { value: 0 }, procDye: { value: new Color() } };
+    material.userData['strands'] = uniforms;
+    material.onBeforeCompile = (shader) => {
+      uniformsInto(shader, cls, cls.rig.mesh);
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = `uniform float procRow;
+#define aRow procRow
+attribute float aFade; varying float vShade;
+${shader.vertexShader}`;
+      patchVertex(shader, 'hair');
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+vShade = aFade;`);
+      shader.fragmentShader = `uniform vec3 procDye; varying float vShade;
+${shader.fragmentShader}`
+        .replace('#include <color_fragment>', `#include <color_fragment>
+diffuseColor.rgb = procDye * vShade * 1.7;`);
+    };
+    material.customProgramCacheKey = () => `procedural-strands-${cls.key}`;
+    return material;
+  };
+  const lineFor = (slot: number, cls: BodyClass): LineSegments => {
+    let line = strandLines[slot];
+    if (!line || line.userData['cls'] !== cls) {
+      if (line) { group.remove(line); (line.material as Material).dispose(); }
+      line = new LineSegments(new BufferGeometry(), strandMaterial(cls));
+      line.userData['cls'] = cls;
+      line.matrixAutoUpdate = false;
+      line.frustumCulled = false;
+      // Hidden until its strands are built: an empty geometry has no position to draw.
+      line.visible = false;
+      strandLines[slot] = line;
+      group.add(line);
+    }
+    return line;
+  };
+  const strandsUpdate = (eye: Vector3): void => {
+    const near = people.filter((p) => p.grown)
+      .map((p) => ({ p, d: eye.distanceTo(new Vector3().setFromMatrixPosition(p.matrix)) }))
+      .filter((x) => x.d < NEAR_RANGE).sort((a, b) => a.d - b.d).slice(0, NEAR);
+    near.forEach(({ p }, slot) => {
+      const cls = ready.find((c) => c.sex === p.sex && c.band === p.band)!;
+      const line = lineFor(slot, cls);
+      const key = `${cls.key}/${p.grown}`;
+      if (line.userData['key'] !== key) {
+        line.userData['key'] = key;
+        line.visible = false;
+        void strandGeometryFor(cls, p.grown!).then((g) => { if (line.userData['key'] === key) { line.geometry = g; line.visible = true; } });
+      }
+      const u = (line.material as LineBasicMaterial).userData['strands'] as { procRow: { value: number }; procDye: { value: Color } };
+      u.procRow.value = p.row;
+      u.procDye.value.copy(p.hairColour);
+      scaled.makeScale(p.scale, p.scale, p.scale);
+      line.matrix.multiplyMatrices(p.matrix, scaled);
+    });
+    for (let slot = near.length; slot < strandLines.length; slot++) strandLines[slot]!.visible = false;
+  };
+
   const place = (piece: Piece, person: ProceduralPerson, dye: Color | null, worn?: readonly number[]): void => {
     const slot = piece.people.length;
     if (slot >= piece.rows.count) return;
@@ -720,6 +821,7 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
       const scale = tall / Math.max(1e-3, level0);
       const person: ProceduralPerson = {
         spec, band, sex, row, scale, height: tall / 10, items: worn.map(([nm]) => nm),
+        grown: worn.find(([nm]) => nm.startsWith('hair:'))?.[0] ?? null, hairColour: new Color(spec.look.hair),
         matrix: new Matrix4(), clip: 'walk', phase: 0, joints: new Float32Array(cls.bones * 3),
       };
       for (let i = 0; i < cls.bones; i++) for (let c = 0; c < 3; c++) {
@@ -745,7 +847,8 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
       people.push(person);
       return person;
     },
-    update() {
+    update(eye) {
+      if (eye) strandsUpdate(eye);
       for (const cls of ready) {
         const width = cls.bones * SKIN_BONE_FLOATS;
         const packed = cls.bones * PACKED_BONE_FLOATS;
