@@ -282,7 +282,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       if (k < 1 && fullReach.left + fullReach.right < m(0.5)) break;
       const lotW = gridW + reach.left + reach.right;
       const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
-      if (W < 6) continue;
+      if (W < 4) continue;
       // The lot is planned first - front, sides, back, each for a purpose -
       // and the building is made for the envelope the plan leaves it.
       const plan = planLot(lotKind(zone.use, zone.density), W, D, rng);
