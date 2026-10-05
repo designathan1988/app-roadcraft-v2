@@ -341,7 +341,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
  * with an older one is regrown (`regrowStale`), so what the player sees is
  * always the current generator, not the records of an older one.
  */
-export const LOT_PLAN_VERSION = 7;
+export const LOT_PLAN_VERSION = 10;
 
 /**
  * Takes down the zoned buildings grown by an older generator and frees their

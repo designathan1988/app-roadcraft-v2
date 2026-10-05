@@ -89,8 +89,12 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
       front = D >= 22 ? (narrow ? { use: 'carpad', depth: 5.5 } : { use: 'garden', depth: half(between(rng, 3.5, 5.5)) })
         : { use: 'garden', depth: D >= 14 ? 3 : 0 };
       if (front.depth === 0) front = { use: 'street', depth: 0 };
-      if (narrow) sides({ use: 'path', width: FOOTPATH }, attached);
-      else sides({ use: 'drive', width: HOUSE_DRIVE }, W >= 16 ? { use: 'garden', width: half(between(rng, 3, 4)) } : W >= 13 ? { use: 'path', width: FOOTPATH } : attached);
+      // A house stands free of its neighbours: a passage on both sides, the
+      // boundary walls meeting on the line between (two different houses
+      // glued side by side read as one broken building).
+      const passage = { use: 'path' as const, width: 1.1 };
+      if (narrow) sides({ use: 'path', width: FOOTPATH }, passage);
+      else sides({ use: 'drive', width: HOUSE_DRIVE }, W >= 16 ? { use: 'garden', width: half(between(rng, 3, 4)) } : W >= 13 ? { use: 'path', width: FOOTPATH } : passage);
       const houseD = Math.min(Math.max(8, D - front.depth - between(rng, 8, 12)), 15);
       const yard = D - front.depth - houseD;
       back = yard >= 4 ? { use: 'yard', depth: half(yard), rows: 0 } : back;
@@ -141,8 +145,15 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
       break;
     }
   }
+  // A car park is reached from the street: without a drive down a side to
+  // it, the back is a paved service yard instead (bays nobody could drive
+  // into were laid out on closed-in lots).
+  if (back.use === 'parking' && left.use !== 'drive' && left.use !== 'drivePath' && right.use !== 'drive' && right.use !== 'drivePath') {
+    back = { use: 'service', depth: Math.min(6, back.depth), rows: 0 };
+  }
   // The building keeps a usable width: what it cannot keep, the sides give up.
-  if (W - left.width - right.width < 6) { left = attached; right = attached; if (back.use === 'parking') back = { use: 'service', depth: Math.min(6, back.depth), rows: 0 }; }
+  if (W - left.width - right.width < 6 && kind === 'house' && W >= 8.5) { left = { use: 'path', width: 1 }; right = { use: 'path', width: 1 }; }
+  else if (W - left.width - right.width < 6) { left = attached; right = attached; if (back.use === 'parking') back = { use: 'service', depth: Math.min(6, back.depth), rows: 0 }; }
   const building = { x0: left.width, y0: front.depth, x1: W - right.width, y1: D - back.depth };
   return { kind, W, D, front, left, right, back, building };
 }
@@ -464,15 +475,15 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       {
         const gx = terrace.x1 + 1.2 < W - 1 ? terrace.x1 + 0.9 : Math.max(1.2, terrace.x0 - 0.9);
         const gy = terrace.y0 + 1;
-        if (!lot.busy(gx, gy, 0.8)) {
+        if (rng.float() < 0.7 && !lot.busy(gx, gy, 0.8)) {
           lot.put('wall', gx, gy, 0, 1.8, 0.7, 0.95, undefined, mat('brick', 0x9b4f37));
           lot.put('slab', gx, gy, 0, 1.9, 0.8, 0.06, 0.95, mat('stone', 0x6f6a63));
           lot.put('wall', gx, gy + 0.15, 0, 0.6, 0.4, 2.6, 0.95, mat('brick', 0x8e4632));
         }
       }
       // A clothes line across the lawn: two posts and the line between.
-      if (depth >= 6 && W >= 8) {
-        const cy = lawnY0 + depth * 0.55, cx0 = W * 0.25, cx1 = W * 0.7;
+      if (depth >= 6 && W >= 8 && rng.float() < 0.55) {
+        const cy = lawnY0 + depth * (0.4 + rng.float() * 0.3), cx0 = W * (0.15 + rng.float() * 0.2), cx1 = cx0 + W * 0.4;
         if (!lot.busy(cx0, cy, 0.4) && !lot.busy(cx1, cy, 0.4)) {
           for (const cx of [cx0, cx1]) lot.put('pillar', cx, cy, 0, 0.08, 0.08, 1.9, undefined, mat('metal', 0x9aa0a2));
           lot.put('slab', (cx0 + cx1) / 2, cy, 0, cx1 - cx0, 0.03, 0.02, 1.8, mat('metal', 0xd8d8d0));
@@ -481,8 +492,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         }
       }
       // The laundry sink by the back door and a water tank on its stand.
-      if (W >= 7) {
-        const tx = W - 1.3, ty = by0 + 1.2;
+      if (W >= 7 && rng.float() < 0.6) {
+        const tx = rng.float() < 0.5 ? W - 1.3 : 1.3, ty = by0 + 1.2;
         if (!lot.busy(tx, ty, 0.7)) {
           lot.put('wall', tx, ty, 0, 0.7, 0.55, 0.85, undefined, mat('concrete', 0xbdb8ae));
         }
@@ -496,51 +507,64 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       // wall, a vegetable garden in raised beds, a dog house, a swing, a
       // garden table with chairs, a pile of firewood.
       if (depth >= 10 && W >= 8) {
+        // Each yard its own: a character drawn for the lot and its pieces
+        // laid out from it, mirrored at random, so no two neighbours match.
         const far = by1 - 0.4;
-        const edX = W / 2 > 6 ? W - 3.2 : W / 2;
-        // Edicula: walls, a door, a pitched-looking slab roof with an overhang.
-        if (!lot.busy(edX, far - 2.2, 2.2)) {
-          lot.put('wall', edX, far - 2.2, 2, 4.4, 3.6, 2.6, undefined, mat('plaster', 0xe9dcc4));
-          lot.put('slab', edX, far - 2.2, 2, 5.0, 4.2, 0.22, 2.6, mat('tile', 0xa4533a));
-          lot.put('slab', edX - 0.6, far - 4.05, 0, 0.9, 0.06, 2.0, 0, mat('wood', 0x6b4a30));
-          // Stepping stones from the terrace.
-          for (let k = 1; k < 8; k++) {
-            const t = k / 8;
-            const sx = (terrace.x0 + terrace.x1) / 2 + (edX - (terrace.x0 + terrace.x1) / 2) * t;
-            const sy = lawnY0 + (far - 4.6 - lawnY0) * t;
+        const flip = rng.float() < 0.5;
+        const fx = (x: number): number => (flip ? W - x : x);
+        const pick = rng.int(0, 4);
+        const jit = (a: number): number => a + (rng.float() - 0.5) * 1.2;
+        const put = (kind: ElementKind, x: number, y: number, f: Side, w: number, d: number, h: number, z?: number, mt?: MaterialSpec): boolean =>
+          !lot.busy(fx(x), y, Math.max(w, d) / 2) && lot.put(kind, fx(x), y, f, w, d, h, z, mt);
+        const edicula = (x: number, y: number, wide: number, deep: number): void => {
+          if (!put('wall', x, y, 2, wide, deep, 2.6, undefined, mat('plaster', [0xe9dcc4, 0xd8c7a8, 0xc9d4c4, 0xe4cfc0][rng.int(0, 3)]!))) return;
+          lot.put('slab', fx(x), y, 2, wide + 0.6, deep + 0.6, 0.22, 2.6, mat('tile', [0xa4533a, 0x8a4a35, 0x6e6a64][rng.int(0, 2)]!));
+          for (let k = 1; k < 7; k++) {
+            const t = k / 7, sx = (terrace.x0 + terrace.x1) / 2 + (fx(x) - (terrace.x0 + terrace.x1) / 2) * t;
+            const sy = lawnY0 + (y - deep / 2 - 0.6 - lawnY0) * t;
             if (!lot.busy(sx, sy, 0.3)) lot.put('pavement', sx, sy, 0, 0.7, 0.55, 0.06, 0, mat('stone', 0xb8b2a6));
           }
+        };
+        const trees = (n: number, y: number): void => { for (let k = 0; k < n; k++) put('tree', jit(1.8 + k * ((W - 3.6) / Math.max(1, n - 1))), jit(y), 0, 3, 3, 3.6 + rng.float() * 1.8); };
+        const beds = (x0: number, y0: number, cols: number, rows: number): void => {
+          for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) put('planter', x0 + i * 1.5, y0 + j * 1.25, 0, 1.15, 0.85, 0.35, undefined, mat('wood', 0x7a5636));
+        };
+        const swing = (x: number, y: number): void => {
+          if (!put('pillar', x - 1.1, y, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e))) return;
+          lot.put('pillar', fx(x + 1.1), y, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e));
+          lot.put('slab', fx(x), y, 0, 2.3, 0.08, 0.08, 2.2, mat('metal', 0x2f6e9e));
+          lot.put('slab', fx(x), y, 0, 0.5, 0.25, 0.05, 0.45, mat('wood', 0x8a6040));
+        };
+        const table = (x: number, y: number): void => {
+          if (!put('slab', x, y, 0, 1.0, 1.0, 0.05, 0.72, mat('wood', 0x8d6a46))) return;
+          lot.put('pillar', fx(x), y, 0, 0.1, 0.1, 0.72, undefined, mat('metal', 0x3a3d40));
+          for (const [oy, f] of [[0.95, 2], [-0.95, 0]] as const) lot.put('bench', fx(x), y + oy, f, 1.1, 0.42, 0.45, undefined, mat('wood', 0x7a5a3c));
+        };
+        const dogHouse = (x: number, y: number): void => {
+          if (put('wall', x, y, 3, 1.0, 0.9, 0.8, undefined, mat('wood', 0x9a6a3f))) lot.put('slab', fx(x), y, 3, 1.2, 1.1, 0.12, 0.8, mat('tile', 0x8a3e2c));
+        };
+        const coop = (x: number, y: number): void => {
+          if (put('fence', x, y, 0, 2.4, 1.6, 1.2, undefined, mat('metal', 0x8a9094))) lot.put('wall', fx(x + 0.7), y, 0, 0.9, 1.2, 1.0, undefined, mat('wood', 0x8c6a48));
+        };
+        const firewood = (x: number, y: number): void => { put('slab', x, y, 2, 1.6, 0.5, 0.9, 0, mat('wood', 0x6e4c2c)); };
+        const bigTrampoline = (x: number, y: number): void => { put('slab', x, y, 0, 2.6, 2.6, 0.08, 0.6, mat('panel', 0x24303a)); };
+        switch (pick) {
+          case 0: // An orchard: rows of fruit trees, a bench under them.
+            trees(3, far - 1.8); trees(2, lawnY0 + depth * 0.55); put('bench', jit(W / 2), lawnY0 + depth * 0.35, 2, 1.4, 0.45, 0.45);
+            break;
+          case 1: // A family yard: a swing, a trampoline, a dog house, a table.
+            swing(jit(W * 0.6), lawnY0 + depth * 0.6); bigTrampoline(jit(W * 0.3), lawnY0 + depth * 0.7); dogHouse(W - 1.4, jit(lawnY0 + depth * 0.4)); table(jit(W * 0.4), lawnY0 + depth * 0.3);
+            break;
+          case 2: // A kitchen garden: beds in rows, a coop, compost, a fruit tree.
+            beds(1.6, lawnY0 + depth * 0.35, Math.min(4, Math.floor((W - 3) / 1.5)), 3); coop(W - 2, far - 1.6); trees(1, far - 1.8); firewood(1.2, far - 0.5);
+            break;
+          case 3: // A worker's yard: an edicula, firewood, a dog house, a table by the door.
+            edicula(W - 3.2, far - 2.2, 4.4 + rng.float(), 3.4 + rng.float()); firewood(1.2, far - 0.5); dogHouse(1.4, jit(lawnY0 + depth * 0.5)); table(jit(W * 0.35), lawnY0 + depth * 0.25);
+            break;
+          default: // A garden for leisure: an edicula with a deck, a table, fruit trees, beds.
+            edicula(W / 2, far - 2.2, 5 + rng.float(), 3.6); put('pavement', W / 2, far - 4.6, 0, 5, 1.6, 0.08, 0, mat('wood', 0x9a7650));
+            table(jit(W * 0.3), lawnY0 + depth * 0.45); trees(2, lawnY0 + depth * 0.65); beds(1.6, lawnY0 + depth * 0.2, 2, 1);
         }
-        // Fruit trees along the back wall.
-        for (let px = 2.2; px < Math.min(W - 6, W - 2); px += 4.2) if (!lot.busy(px, far - 1.6, 1.4)) lot.put('tree', px, far - 1.6, 0, 3.2, 3.2, 4.2);
-        // Vegetable garden: raised beds in a block.
-        const vx0 = 1.6, vy0 = lawnY0 + depth * 0.45;
-        for (let i = 0; i < 2; i++) for (let j = 0; j < 3; j++) {
-          const bx = vx0 + i * 1.6, by = vy0 + j * 1.3;
-          if (bx < W - 1 && !lot.busy(bx, by, 0.5)) lot.put('planter', bx, by, 0, 1.2, 0.9, 0.35, undefined, mat('wood', 0x7a5636));
-        }
-        // A dog house by the side wall.
-        const dx = W - 1.4, dy = lawnY0 + depth * 0.35;
-        if (!lot.busy(dx, dy, 0.8)) {
-          lot.put('wall', dx, dy, 3, 1.0, 0.9, 0.8, undefined, mat('wood', 0x9a6a3f));
-          lot.put('slab', dx, dy, 3, 1.2, 1.1, 0.12, 0.8, mat('tile', 0x8a3e2c));
-        }
-        // A swing: two posts, a bar, a seat.
-        const swX = W * 0.55, swY = lawnY0 + depth * 0.62;
-        if (!lot.busy(swX, swY, 1.3)) {
-          for (const k of [-1, 1]) lot.put('pillar', swX + k * 1.1, swY, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e));
-          lot.put('slab', swX, swY, 0, 2.3, 0.08, 0.08, 2.2, mat('metal', 0x2f6e9e));
-          lot.put('slab', swX, swY, 0, 0.5, 0.25, 0.05, 0.45, mat('wood', 0x8a6040));
-        }
-        // A garden table with four chairs.
-        const gx = W * 0.4, gy = lawnY0 + depth * 0.25;
-        if (!lot.busy(gx, gy, 1.2)) {
-          lot.put('slab', gx, gy, 0, 1.0, 1.0, 0.05, 0.72, mat('wood', 0x8d6a46));
-          lot.put('pillar', gx, gy, 0, 0.1, 0.1, 0.72, undefined, mat('metal', 0x3a3d40));
-          for (const [ox, oy, f] of [[0, 0.95, 2], [0, -0.95, 0]] as const) lot.put('bench', gx + ox, gy + oy, f, 1.1, 0.42, 0.45, undefined, mat('wood', 0x7a5a3c));
-        }
-        // Firewood stacked against the back wall.
-        if (!lot.busy(1.2, far - 0.5, 0.6)) lot.put('slab', 1.2, far - 0.5, 2, 1.6, 0.5, 0.9, 0, mat('wood', 0x6e4c2c));
       }
       // Potted plants along the terrace edge.
       for (let px = terrace.x0 + 0.6; px < terrace.x1 - 0.5; px += 1.6) if (!lot.busy(px, terrace.y1 - 0.4, 0.3)) lot.put('planter', px, terrace.y1 - 0.4, 0, 0.5, 0.5, 0.55);
@@ -581,6 +605,20 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       lot.put('drain', W / 2, aisleY, 0, 0.5, 0.5, 0.1);
       for (const px of [0.6, W - 0.6]) lot.put('lamp', px, aisleY, 0, 0.3, 0.3, 5);
       if (mouth) lot.put('bin', mouth.x0 < W / 2 ? mouth.x1 + 1.2 : mouth.x0 - 1.2, by0 + 0.6, 0, 1.4, 0.7, 1.1);
+      // What the back of a car park holds, a little of it on each lot: a
+      // skip, a bicycle rack, a cart bay, a covered smoking corner, an
+      // electrical cabinet, a stack of pallets - chosen per lot.
+      {
+        const spots: [number, number][] = [[1.2, by0 + 0.8], [W - 1.4, by0 + 0.8], [W / 2, by0 + 0.6]];
+        const props: ((x: number, y: number) => void)[] = [
+          (x, y) => { lot.put('bin', x, y, 0, 2.2, 1.4, 1.3, undefined, mat('metal', 0x2f5a3c)); },
+          (x, y) => { for (let k = -1; k <= 1; k++) lot.put('railing', x + k * 0.6, y, 0, 0.05, 0.8, 0.8, undefined, mat('metal', 0x9aa0a4)); },
+          (x, y) => { lot.put('wall', x, y, 0, 0.8, 0.4, 1.6, undefined, mat('metal', 0x8a9094)); },
+          (x, y) => { lot.put('slab', x, y, 0, 1.2, 1.0, 0.14, 0, mat('wood', 0x9c7a50)); lot.put('slab', x, y, 0, 1.2, 1.0, 0.14, 0.14, mat('wood', 0x8b6c45)); },
+          (x, y) => { for (const k of [-1, 1]) lot.put('pillar', x + k * 0.9, y, 0, 0.08, 0.08, 2.3, undefined, mat('metal', 0x4a4e52)); lot.put('slab', x, y, 0, 2.2, 1.4, 0.06, 2.3, mat('metal', 0x6a7074)); lot.put('bench', x, y, 0, 1.4, 0.45, 0.45); },
+        ];
+        for (const [x, y] of spots) if (rng.float() < 0.7 && !lot.busy(x, y, 1)) props[rng.int(0, props.length - 1)]!(x, y);
+      }
       break;
     }
     case 'service': {

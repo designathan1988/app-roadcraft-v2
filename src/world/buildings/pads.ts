@@ -39,6 +39,8 @@ interface Pad {
   /** The platform's height under each ring, at a point (a car park falls with its street). */
   readonly levels: readonly ((x: number, y: number) => number)[];
   readonly water: readonly boolean[];
+  /** Whether each ring is a paved lot (anything but grass and water). */
+  readonly paved: readonly boolean[];
   readonly solidCount: number;
   readonly box: Aabb;
 }
@@ -94,7 +96,10 @@ export function buildingPads(
     // gravel, sand and water are laid as a thin plate just over it.
     const levels = [...built.map(() => () => flat), ...lots.map((l) => {
       const open = l.volume.open ?? 'grass';
-      const under = open === 'grass' ? 0 : open === 'water'
+      // A lawn is graded a little under the paving beside it, so a terrain
+      // triangle reaching from the lawn into a car park never pokes up
+      // through the asphalt (grass showing through the bays).
+      const under = open === 'grass' ? LOT_PLATE * 3 : open === 'water'
         ? POOL_SINK + LOT_PLATE + POOL_TERRAIN_CLEARANCE : LOT_PLATE;
       return (x: number, y: number) => l.heightAt(x, y) - under;
     })];
@@ -106,7 +111,8 @@ export function buildingPads(
       }
     }
     const grow = apron + PAD_REACH;
-    pads.push({ rings, levels, water, solidCount: built.length,
+    const paved = [...built.map(() => false), ...lots.map((l) => (l.volume.open ?? 'grass') !== 'grass' && l.volume.open !== 'water')];
+    pads.push({ rings, levels, water, paved, solidCount: built.length,
       box: { minX: minX - grow, minY: minY - grow, maxX: maxX + grow, maxY: maxY + grow } });
   }
   // The platforms filed under every grid cell their box reaches: a corner of
@@ -141,7 +147,10 @@ export function buildingPads(
         if (x < pad.box.minX || x > pad.box.maxX || y < pad.box.minY || y > pad.box.maxY) continue;
         pad.rings.forEach((ring, i) => {
           const d = ringDistance(ring, x, y);
-          if (d < nearest) { nearest = d; level = pad.levels[i]!(x, y); owner = pad; solid = i < pad.solidCount; }
+          // Inside a paved lot (a car park, a yard), its plate decides, not a
+          // lawn whose edge it shares.
+          const paved = i >= pad.solidCount && !pad.water[i] && pad.paved[i];
+          if (d < nearest || (d === 0 && paved && nearest === 0)) { nearest = d; level = pad.levels[i]!(x, y); owner = pad; solid = i < pad.solidCount; }
           if (pad.water[i] && d < waterDistance) { waterDistance = d; waterLevel = pad.levels[i]!(x, y); waterOwner = pad; }
         });
       }
