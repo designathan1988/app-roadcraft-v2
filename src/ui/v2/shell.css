@@ -438,3 +438,11 @@
 .v2-transit-line > b { font-weight: 700; }
 .v2-transit-line > span:not(.v2-transit-count) { opacity: .75; flex: 1; font-size: 12px; }
 .v2-transit-count { min-width: 18px; text-align: center; font-weight: 700; }
+
+/* Every row of the tool options named, its controls wrapping under the name:
+   a row of unnamed icon toggles was unreadable (the player, 2026-10-05). */
+.v2-toolopts { width: 300px; max-width: calc(100vw - 24px); overflow-x: hidden; }
+.v2-toolopts .v2-group.titled { flex-direction: column; align-items: stretch; gap: 3px; }
+.v2-toolopts .v2-group.titled .v2-choices { flex-wrap: wrap; max-width: none; }
+.v2-toolopts .v2-group.titled .v2-choice:not(.icon) { flex: 1 1 auto; white-space: nowrap; }
+.v2-toolopts .v2-group.titled .v2-stepper { justify-content: space-between; }

@@ -29,8 +29,11 @@ describe('lots', () => {
     applyLots(doc, planLots(doc, net));
     const inBlock = doc.lots.filter((l) => Math.abs(lotCentre(l).x) < m(45) && Math.abs(lotCentre(l).y) < m(35));
     expect(inBlock.length).toBeGreaterThanOrEqual(2);
-    const areas = inBlock.map(area);
-    for (const x of areas) expect(Math.abs(x - areas[0]!) / areas[0]!).toBeLessThan(0.02);
+    // Equal but for the snap onto the footways: the corner lots reach the
+    // block's corner, and each row reaches its own street's footway edge.
+    const areas = inBlock.map(area).sort((a, b) => a - b);
+    const median = areas[Math.floor(areas.length / 2)]!;
+    for (const x of areas) expect(Math.abs(x - median) / median).toBeLessThan(0.15);
     expect(doc.lots.some((l) => lotCentre(l).x > m(60))).toBe(true);
     // No two lots overlap.
     for (const p of doc.lots) for (const q of doc.lots) if (p !== q) expect(quadsOverlap(p.corners, q.corners, m(0.5))).toBe(false);

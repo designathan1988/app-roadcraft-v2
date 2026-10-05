@@ -1,4 +1,5 @@
 import { pointInPolygon } from '@core/polygon';
+import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
 import { onCarriageway } from '@world/carriageway';
 import {
   Color,
@@ -181,6 +182,8 @@ export interface SceneHandle {
   setBuildingPreview(preview: BuildingPreviewInput | null): void;
   /** The pole run the pole tool would build, drawn as built; null removes it. */
   setPolePreview(net: Network, preview: PolePreviewInput | null): void;
+  /** The lots of the Zoning tool laid on the ground (`lotOverlay.ts`); null removes them. */
+  setLotOverlay(input: LotOverlayInput | null): void;
   /**
    * A blow on a building at world (x, y, z), `strength` 1..10: it breaks
    * (`destruction.ts`). Returns true when nothing of it is left standing.
@@ -909,8 +912,9 @@ export function createSceneRenderer(
   // Development only: the production build replaces the flag with false and
   // drops the inspector with it.
   const inspect = import.meta.env.DEV ? createInspector(renderer, scene) : null;
+  let lotOverlay: ReturnType<typeof createLotOverlay> | null = null;
 
-  return {
+  const handle: SceneHandle = {
     inspect,
     census: () => agents.census(),
     backend: 'three-webgl',
@@ -1073,6 +1077,10 @@ export function createSceneRenderer(
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
+    },
+    setLotOverlay(input) {
+      lotOverlay ??= createLotOverlay(scene, (x, y) => handle.surfaceHeightAt(x, y));
+      lotOverlay.set(input);
     },
     setPolePreview(net, preview) {
       const key = preview && elevation
@@ -1426,7 +1434,9 @@ export function createSceneRenderer(
       materials.dispose();
       environment.dispose();
       post.dispose();
+      lotOverlay?.dispose();
       renderer.dispose();
     },
   };
+  return handle;
 }

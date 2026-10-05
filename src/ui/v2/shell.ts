@@ -32,7 +32,7 @@ import {
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadWidth, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
+import { blockGridChoice, lotsShownWithRoads, roadWidth, setLotsShownWithRoads, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -539,6 +539,12 @@ export function mountShell(deps: ShellDeps): void {
     g.setAttribute('aria-label', label);
     return g;
   };
+  /** A group laid as a column with its name on top: a panel of rows, each named. */
+  const titled = (g: HTMLElement, label: string): HTMLElement => {
+    g.classList.add('stack', 'titled');
+    g.prepend(el('span', 'v2-group-title', label));
+    return g;
+  };
   const choices = (items: readonly { label: string; on: boolean; run: () => void; disabled?: boolean; icon?: string }[], cols = 3): HTMLElement => {
     const wrap = el('div', 'v2-choices');
     wrap.style.setProperty('--cols', String(cols));
@@ -670,7 +676,16 @@ export function mountShell(deps: ShellDeps): void {
         stepRow(t('palette.blocks.angle'), `${t('palette.blocks.angle')}: ${Math.round((g.angle * 180) / Math.PI)}°`, (d) => { g.angle += (d * 15 * Math.PI) / 180; }),
         button('v2-choice' + (g.armed ? ' on' : ''), g.armed ? t('palette.blocks.armed') : t('palette.blocks.place'), () => { g.armed = !g.armed; render(); }),
       );
-      options.append(trace, snapping, parking, height, lanes, widthGroup, blocks);
+      // The lots drawn while the road is laid (`world/lots.ts`), or not.
+      const lotsGroup = group(t('palette.lots'));
+      lotsGroup.appendChild(choices([
+        { label: t('palette.lots.show'), on: lotsShownWithRoads(), run: () => { setLotsShownWithRoads(true); render(); } },
+        { label: t('palette.lots.hide'), on: !lotsShownWithRoads(), run: () => { setLotsShownWithRoads(false); render(); } },
+      ], 2));
+      titled(trace, t('palette.trace')); titled(snapping, t('v2.snap.title')); titled(parking, t('palette.parking'));
+      titled(height, t('palette.height')); titled(lanes, t('palette.lanes')); titled(widthGroup, t('palette.width'));
+      titled(lotsGroup, t('palette.lots'));
+      options.append(trace, snapping, lanes, widthGroup, height, parking, lotsGroup, blocks);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));
@@ -718,18 +733,20 @@ export function mountShell(deps: ShellDeps): void {
     }
     // How the split tool cuts, and into how many - shown while it is chosen.
     if (q<HTMLButtonElement>('[data-zone-mode="split"]')?.classList.contains('active')) {
-      const how = group(t('zone.split.how'));
+      const how = titled(group(t('zone.split.how')), t('zone.split.how'));
       how.appendChild(choices((['vertical', 'horizontal', 'line'] as const).map((kind) => {
         const b = q<HTMLButtonElement>(`[data-lot-split="${kind}"]`);
         return { label: t(`zone.split.${kind}`), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
       }), 3));
-      if (!q<HTMLButtonElement>('[data-lot-split="line"]')?.classList.contains('active')) {
-        how.appendChild(choices([2, 3, 4, 5, 6].map((n) => {
-          const b = q<HTMLButtonElement>(`[data-lot-parts="${n}"]`);
-          return { label: t('zone.split.parts', { n }), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
-        }), 5));
-      }
       options.appendChild(how);
+      if (!q<HTMLButtonElement>('[data-lot-split="line"]')?.classList.contains('active')) {
+        const parts = titled(group(t('zone.split.into')), t('zone.split.into'));
+        parts.appendChild(choices([2, 3, 4, 5, 6].map((n) => {
+          const b = q<HTMLButtonElement>(`[data-lot-parts="${n}"]`);
+          return { label: String(n), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
+        }), 5));
+        options.appendChild(parts);
+      }
     }
     note(t('zone.lots.help'));
     const use = section(t('v2.zone.use'));
@@ -738,14 +755,14 @@ export function mountShell(deps: ShellDeps): void {
       const c = card(t(`zone.${key}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, `<i class="v2-zone-swatch" style="--zone:${colour}"></i>`);
       use.items.appendChild(c);
     }
-    const density = group(t('v2.zone.density'));
+    const density = titled(group(t('v2.zone.density')), t('v2.zone.density'));
     density.appendChild(choices((['low', 'medium', 'high'] as const).map((key) => {
       const b = q<HTMLButtonElement>(`[data-zone-density="${key}"]`);
       return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
     })));
     options.appendChild(density);
     // The colours of zoned land outside this tool: shown or hidden.
-    const colours = group(t('zone.colours'));
+    const colours = titled(group(t('zone.colours')), t('zone.colours'));
     colours.appendChild(choices([
       { label: t('zone.colours.show'), on: zoneColoursShown(), run: () => { setZoneColoursShown(true); render(); } },
       { label: t('zone.colours.hide'), on: !zoneColoursShown(), run: () => { setZoneColoursShown(false); render(); } },

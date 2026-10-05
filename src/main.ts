@@ -1,4 +1,5 @@
 import { METERS_PER_UNIT } from '@world/units';
+import type { LotOverlayInput } from '@render/lotOverlay';
 import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
@@ -20,7 +21,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, lotsShownWithRoads, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -3863,51 +3864,79 @@ function drawOverlayScreen(): void {
   if (tool === 'transit') transitEditor.draw(ctx, at, true);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
-  // The lots: outlined in the Zoning tool, zoned ones filled with their use's
-  // colour (faintly with other tools, while no building stands on them).
-  if (tool === 'zone' || (tool === 'road' && roadPreviewActive()) || (doc.lots.some((l) => l.use) && zoneColoursShown())) {
-    if (tool === 'zone') keepLots();
-    const lotColours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
-    const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.terrainHeightAt(p.x, p.y));
-    const path = (corners: readonly Vec2[]): void => {
-      ctx.beginPath();
-      corners.forEach((q, i) => { const s = ground(q); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
-      ctx.closePath();
-    };
+  // The lots, laid on the ground in the scene (`render/lotOverlay.ts`): in
+  // the Zoning tool, and while roads are being built (unless the player
+  // turned that off); zoned ones faintly with the other tools.
+  const showLots = tool === 'zone' || (tool === 'road' && lotsShownWithRoads()) || (doc.lots.some((l) => l.use) && zoneColoursShown());
+  if (showLots) {
+    if (tool === 'zone' || tool === 'road') keepLots();
+    const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
     const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
     const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;
-    ctx.save();
+    const polygons: LotOverlayInput['polygons'][number][] = [];
+    const lines: LotOverlayInput['lines'][number][] = [];
+    const points: LotOverlayInput['points'][number][] = [];
+    const editing = tool === 'zone';
     for (const l of doc.lots) {
       const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
-      if (tool !== 'zone' && (!l.use || built)) continue;
-      path(l.corners.map(dragged));
+      if (!editing && tool !== 'road' && (!l.use || built)) continue;
       const painting = lotStroke?.ids.has(l.id);
-      if (painting) { ctx.fillStyle = lotStroke!.remove ? '#e36c6099' : `${lotColours[zoneUse]}99`; ctx.fill(); }
-      else if (l.use) { ctx.fillStyle = `${lotColours[l.use]}${tool === 'zone' ? (built ? '40' : '80') : '38'}`; ctx.fill(); }
-      else if (l === hoverLot && (zoneMode === 'brush' || zoneMode === 'fill')) { ctx.fillStyle = zoneEraser ? '#e36c6050' : `${lotColours[zoneUse]}50`; ctx.fill(); }
-      if (tool === 'zone') {
-        const picked = l.id === lotJoinFirst || (l === hoverLot && zoneMode !== 'brush' && zoneMode !== 'fill' && zoneMode !== 'edit');
-        ctx.strokeStyle = picked ? (zoneMode === 'delete' ? '#ff6b5e' : '#ffffff') : '#ffffffb0';
-        ctx.lineWidth = picked ? 3 : 1.5;
-        ctx.stroke();
+      const brushHover = l === hoverLot && (zoneMode === 'brush' || zoneMode === 'fill');
+      const picked = editing && (l.id === lotJoinFirst || (l === hoverLot && !brushHover && zoneMode !== 'edit'));
+      const fill = painting ? (lotStroke!.remove ? 0xe36c60 : colours[zoneUse]) : l.use ? colours[l.use] : brushHover ? (zoneEraser ? 0xe36c60 : colours[zoneUse]) : null;
+      const fillAlpha = painting ? 0.6 : l.use ? (editing ? (built ? 0.22 : 0.45) : 0.25) : brushHover ? 0.35 : 0;
+      polygons.push({ corners: l.corners.map(dragged), fill, fillAlpha,
+        line: picked ? (zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing || tool === 'road' ? (picked ? 1 : 0.85) : 0,
+        width: picked ? 0.7 : 0.35 });
+    }
+    if (editing && zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
+    if (editing && zoneMode === 'split' && lotSplitKind !== 'line' && hoverLot) {
+      for (const [a, b] of cutLines(hoverLot, { kind: lotSplitKind, parts: lotSplitParts })) lines.push({ a, b, colour: 0xffd25e, dashed: true, width: 0.5 });
+    }
+    if (lotCutLine) lines.push({ a: lotCutLine.a, b: lotCutLine.b, colour: 0xffd25e, dashed: true, width: 0.5 });
+    if (lotCurve) {
+      const { a, b, through } = lotCurve;
+      const c = { x: 2 * through.x - (a.x + b.x) / 2, y: 2 * through.y - (a.y + b.y) / 2 };
+      let prev = a;
+      for (let k = 1; k <= 16; k++) {
+        const t = k / 16, s1 = 1 - t;
+        const q = { x: s1 * s1 * a.x + 2 * s1 * t * c.x + t * t * b.x, y: s1 * s1 * a.y + 2 * s1 * t * c.y + t * t * b.y };
+        lines.push({ a: prev, b: q, colour: 0xffd25e, dashed: false, width: 0.6 });
+        prev = q;
       }
     }
-    if (tool === 'zone' && zoneMode === 'edit') {
-      ctx.fillStyle = '#ffffff';
-      for (const l of doc.lots) for (const q of l.corners) {
-        const s0 = ground(dragged(q));
-        ctx.beginPath(); ctx.arc(s0.x, s0.y, 4, 0, Math.PI * 2); ctx.fill();
-      }
+    if (editing && zoneMode === 'curve' && !lotCurve && zoneHover) {
+      const side = lotSideNear(zoneHover);
+      if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 0.7 });
     }
-    // The lot under the pointer: its size in metres, at its middle.
-    if (tool === 'zone' && hoverLot && !lotPolygon.length) {
+    if (lotPolygon.length) {
+      const pts = [...lotPolygon, ...(zoneHover ? [lotSnap(zoneHover)] : [])];
+      for (let i = 1; i < pts.length; i++) lines.push({ a: pts[i - 1]!, b: pts[i]!, colour: 0xffffff, dashed: false, width: 0.5 });
+      for (const q of lotPolygon) points.push({ p: q, colour: 0xffffff, radius: 0.6 });
+    }
+    if (editing && (zoneMode === 'polygon' || zoneMode === 'add' || lotCorner) && zoneHover) {
+      points.push({ p: lotCorner ? lotCorner.to : lotSnap(zoneHover), colour: 0x5ee0ff, radius: 0.9 });
+    }
+    if (lotNew) {
+      const u = { x: Math.cos(lotNew.angle), y: Math.sin(lotNew.angle) }, v = { x: -u.y, y: u.x };
+      const ds = (lotNew.b.x - lotNew.a.x) * u.x + (lotNew.b.y - lotNew.a.y) * u.y;
+      const dt = (lotNew.b.x - lotNew.a.x) * v.x + (lotNew.b.y - lotNew.a.y) * v.y;
+      const a = lotNew.a;
+      polygons.push({ corners: [a, { x: a.x + u.x * ds, y: a.y + u.y * ds }, { x: a.x + u.x * ds + v.x * dt, y: a.y + u.y * ds + v.y * dt }, { x: a.x + v.x * dt, y: a.y + v.y * dt }],
+        fill: 0xffffff, fillAlpha: 0.2, line: 0xffffff, lineAlpha: 1, width: 0.5 });
+    }
+    const key = JSON.stringify([polygons, lines, points]);
+    scene.setLotOverlay({ key, polygons, lines, points });
+    // Labels stay on the 2D layer, projected at the ground's real height.
+    const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.surfaceHeightAt(p.x, p.y));
+    ctx.save();
+    if (editing && hoverLot && !lotPolygon.length) {
       const f = lotFrame(hoverLot), c = ground(lotCentre(hoverLot));
       const label = t('zone.lot.size', { w: Math.round(f.width * METERS_PER_UNIT), d: Math.round(f.depth * METERS_PER_UNIT) });
       ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 3; ctx.strokeStyle = '#0b1416cc'; ctx.strokeText(label, c.x, c.y);
       ctx.fillStyle = '#ffffff'; ctx.fillText(label, c.x, c.y);
     }
-    // While drawing a lot point by point: the length of the side being drawn.
     if (lotPolygon.length && zoneHover) {
       const a = lotPolygon[lotPolygon.length - 1]!, b = lotSnap(zoneHover);
       const sm = ground({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
@@ -3915,59 +3944,8 @@ function drawOverlayScreen(): void {
       ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = '#0b1416cc';
       ctx.strokeText(label, sm.x, sm.y - 10); ctx.fillStyle = '#ffffff'; ctx.fillText(label, sm.x, sm.y - 10);
     }
-    // The split's cut lines on the lot under the pointer, before the click.
-    if (tool === 'zone' && zoneMode === 'split' && lotSplitKind !== 'line' && hoverLot) {
-      ctx.strokeStyle = '#ffd25e'; ctx.lineWidth = 2.5; ctx.setLineDash([8, 5]);
-      for (const [a, b] of cutLines(hoverLot, { kind: lotSplitKind, parts: lotSplitParts })) {
-        const sa = ground(a), sb = ground(b);
-        ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
-    if (lotCutLine) {
-      const sa = ground(lotCutLine.a), sb = ground(lotCutLine.b);
-      ctx.strokeStyle = '#ffd25e'; ctx.lineWidth = 2.5; ctx.setLineDash([8, 5]);
-      ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke(); ctx.setLineDash([]);
-    }
-    if (lotCurve) {
-      const { a, b, through } = lotCurve;
-      const c = { x: 2 * through.x - (a.x + b.x) / 2, y: 2 * through.y - (a.y + b.y) / 2 };
-      ctx.strokeStyle = '#ffd25e'; ctx.lineWidth = 3; ctx.beginPath();
-      for (let k = 0; k <= 16; k++) {
-        const t = k / 16, s1 = 1 - t;
-        const q = ground({ x: s1 * s1 * a.x + 2 * s1 * t * c.x + t * t * b.x, y: s1 * s1 * a.y + 2 * s1 * t * c.y + t * t * b.y });
-        if (k === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
-      }
-      ctx.stroke();
-    }
-    if (tool === 'zone' && zoneMode === 'curve' && !lotCurve && zoneHover) {
-      const side = lotSideNear(zoneHover);
-      if (side) { const sa = ground(side.a), sb = ground(side.b); ctx.strokeStyle = '#ffd25e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke(); }
-    }
-    if (lotPolygon.length) {
-      const pts = [...lotPolygon, ...(zoneHover ? [lotSnap(zoneHover)] : [])];
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath();
-      pts.forEach((q, i) => { const sq = ground(q); if (i === 0) ctx.moveTo(sq.x, sq.y); else ctx.lineTo(sq.x, sq.y); });
-      ctx.stroke();
-      ctx.fillStyle = '#ffffff';
-      for (const q of lotPolygon) { const sq = ground(q); ctx.beginPath(); ctx.arc(sq.x, sq.y, 4, 0, Math.PI * 2); ctx.fill(); }
-    }
-    // Where the pointer would snap while drawing or dragging a lot point.
-    if (tool === 'zone' && (zoneMode === 'polygon' || zoneMode === 'add' || lotCorner) && zoneHover) {
-      const sq = ground(lotCorner ? lotCorner.to : lotSnap(zoneHover));
-      ctx.strokeStyle = '#5ee0ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sq.x, sq.y, 7, 0, Math.PI * 2); ctx.stroke();
-    }
-    if (lotNew) {
-      const u = { x: Math.cos(lotNew.angle), y: Math.sin(lotNew.angle) }, v = { x: -u.y, y: u.x };
-      const ds = (lotNew.b.x - lotNew.a.x) * u.x + (lotNew.b.y - lotNew.a.y) * u.y;
-      const dt = (lotNew.b.x - lotNew.a.x) * v.x + (lotNew.b.y - lotNew.a.y) * v.y;
-      const a = lotNew.a;
-      path([a, { x: a.x + u.x * ds, y: a.y + u.y * ds }, { x: a.x + u.x * ds + v.x * dt, y: a.y + u.y * ds + v.y * dt }, { x: a.x + v.x * dt, y: a.y + v.y * dt }]);
-      ctx.fillStyle = '#ffffff30'; ctx.fill();
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
-    }
     ctx.restore();
-  }
+  } else scene.setLotOverlay(null);
   // The old street grid: only for land zoned before the lots (`ZoneMark`), never in the Zoning tool now.
   if (doc.zoneMarks.length && zoneColoursShown() && tool !== 'zone') {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
@@ -4881,10 +4859,6 @@ function densify(points: readonly Vec2[], step: number): Vec2[] {
 }
 
 /** Whether the road tool is drawing a road right now (a drag, a chained stretch or a curve). */
-function roadPreviewActive(): boolean {
-  return draft !== null || chainPreview !== null || curvePending !== null;
-}
-
 /** Asks the interface to redraw its panels (a state it shows changed in the game). */
 function refreshShell(): void {
   const game = document.getElementById('game');

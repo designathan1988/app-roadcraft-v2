@@ -3,7 +3,7 @@ import type { Vec2 } from '@core/vec2';
 import { madeToMeasure } from '@world/buildings/procedural';
 import { METERS_PER_UNIT } from '@world/units';
 import { furnishLot, lotKind, planLot } from './lotPlan';
-import type { Building } from '@world/buildings/types';
+import { MAX_ELEMENTS, type Building, type BuildingElement, type Volume } from '@world/buildings/types';
 import type { SiteContext } from '@world/buildings/validate';
 import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
@@ -425,7 +425,9 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     if (!furnishLot(body, plan, made, rng)) continue;
     // The lot's front middle, set back by the try's front margin.
     const anchor = { x: frame.anchor.x + n.x * t.front, y: frame.anchor.y + n.y * t.front };
-    void u;
+    // The lot in the building's frame: x along the front, y back into it.
+    const ring = lot.corners.map((c) => ({ x: (c.x - anchor.x) * u.x + (c.y - anchor.y) * u.y, y: (c.x - anchor.x) * n.x + (c.y - anchor.y) * n.y }));
+    fitToLot(body, ring);
     const result = addBuildingRecord(ctx, { ...body, x: anchor.x, y: anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
     if (!result.ok || result.id === undefined) continue;
     const at = doc.lots.findIndex((l) => l.id === lot.id);
@@ -435,4 +437,98 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
   }
   refused.add(lot.id);
   return null;
+}
+
+
+const BOUNDARY_KINDS = new Set(['wall', 'fence', 'hedge', 'railing', 'gate']);
+
+/**
+ * A grown building made to its lot's own shape (the player, 2026-10-05: "as
+ * construções devem seguir o formato dos lotes"). The plan was laid on the
+ * lot's front rectangle; on a lot of another shape - a polygon, a curved
+ * side, a lot narrowing or widening at the back:
+ * - the ground of the whole lot is laid as a lawn (an open block with the
+ *   lot's own outline), the plan's surfaces clipped to the lot over it;
+ * - the boundary (walls, fences, hedges) is taken off the rectangle and run
+ *   along the lot's own sides, all but the front;
+ * - whatever of the plan falls outside the lot (a tree, a shed, a bench, a
+ *   surface) is left out.
+ * A rectangular lot is left as planned.
+ */
+function fitToLot(body: { volumes: Volume[]; elements?: BuildingElement[] }, ring: readonly Vec2[]): void {
+  const xs = ring.map((p) => p.x), ys = ring.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  let area = 0;
+  for (let i = 0; i < ring.length; i++) { const p = ring[i]!, q = ring[(i + 1) % ring.length]!; area += p.x * q.y - q.x * p.y; }
+  if (ring.length === 4 && Math.abs(area / 2) > (x1 - x0) * (y1 - y0) * 0.97) return;
+  const inside = (p: Vec2): boolean => pointInPolygon(p, ring as Vec2[]);
+  const elements = (body.elements ??= []);
+  // The boundary's kind and height, from the plan's own.
+  const old = elements.filter((e) => BOUNDARY_KINDS.has(e.kind) && e.kind !== 'gate');
+  const front = elements.filter((e) => BOUNDARY_KINDS.has(e.kind) && Math.abs(e.y) < m(1.2));
+  const kind = (old.find((e) => Math.abs(e.y) >= m(1.2))?.kind ?? old[0]?.kind ?? 'fence') as BuildingElement['kind'];
+  const height = old.find((e) => e.kind === kind)?.h ?? m(1.4);
+  const thick = kind === 'fence' ? m(0.12) : kind === 'hedge' ? m(0.7) : m(0.2);
+  // Everything off the lot, and the side and back boundary, out.
+  const kept = elements.filter((e) => (front.includes(e)) || (!BOUNDARY_KINDS.has(e.kind) && inside({ x: e.x, y: e.y })));
+  let nextId = Math.max(0, ...elements.map((e) => e.id)) + 1;
+  // The new boundary along every side but the front (side 0), in pieces of 20 m at most.
+  for (let i = 1; i < ring.length; i++) {
+    const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < m(0.5)) continue;
+    const pieces = Math.ceil(len / m(20));
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    // Set in by half its thickness, so it stands on the lot's side of the line.
+    const nx = -(b.y - a.y) / len * thick / 2, ny = (b.x - a.x) / len * thick / 2;
+    for (let k = 0; k < pieces; k++) {
+      const t = (k + 0.5) / pieces;
+      kept.push({ id: nextId++, kind, x: a.x + (b.x - a.x) * t + nx, y: a.y + (b.y - a.y) * t + ny, facing: 0, w: len / pieces, d: thick, z: 0, h: height, angle });
+    }
+  }
+  elements.splice(0, elements.length, ...kept.slice(0, MAX_ELEMENTS));
+  // Surfaces clipped to the lot; volumes of the building itself kept where
+  // they stand on it.
+  const clip = (poly: Vec2[]): Vec2[] => {
+    let out = poly;
+    // Each side of the lot (counter-clockwise) keeps what is on its left.
+    for (let i = 0; i < ring.length && out.length; i++) {
+      const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
+      const side = (p: Vec2): number => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+      const input = out;
+      out = [];
+      for (let j = 0; j < input.length; j++) {
+        const p = input[j]!, q = input[(j + 1) % input.length]!;
+        const sp = side(p), sq = side(q);
+        if (sp >= 0) out.push(p);
+        if ((sp >= 0) !== (sq >= 0)) { const k = sp / (sp - sq); out.push({ x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }); }
+      }
+    }
+    return out;
+  };
+  const asOutline = (v: Volume, poly: readonly Vec2[]): void => {
+    const px = poly.map((p) => p.x), py = poly.map((p) => p.y);
+    v.x = Math.min(...px); v.y = Math.min(...py); v.w = Math.max(...px) - v.x; v.d = Math.max(...py) - v.y;
+    v.outline = poly.map((p) => ({ x: (p.x - v.x) / (v.w || 1), y: (p.y - v.y) / (v.d || 1) }));
+  };
+  const volumes: Volume[] = [];
+  const nextVolume = Math.max(0, ...body.volumes.map((v) => v.id)) + 1;
+  // The lawn under everything, the lot's own shape - laid first, drawn under the rest.
+  const lawnTemplate = body.volumes.find((v) => v.open);
+  if (lawnTemplate) {
+    const lawn: Volume = { ...JSON.parse(JSON.stringify(lawnTemplate)) as Volume, id: nextVolume, open: 'grass' };
+    asOutline(lawn, [...ring]);
+    volumes.push(lawn);
+  }
+  for (const v of body.volumes) {
+    const ringOf = v.outline ? v.outline.map((p) => ({ x: v.x + p.x * v.w, y: v.y + p.y * v.d }))
+      : [{ x: v.x, y: v.y }, { x: v.x + v.w, y: v.y }, { x: v.x + v.w, y: v.y + v.d }, { x: v.x, y: v.y + v.d }];
+    if (v.open) {
+      const cut = clip(ringOf);
+      if (cut.length < 3) continue;
+      if (cut.length !== 4 || !ringOf.every((p) => inside({ x: p.x * 0.999 + (v.x + v.w / 2) * 0.001, y: p.y * 0.999 + (v.y + v.d / 2) * 0.001 }))) asOutline(v, cut);
+      volumes.push(v);
+    } else if (ringOf.some((p) => inside(p)) || inside({ x: v.x + v.w / 2, y: v.y + v.d / 2 })) volumes.push(v);
+  }
+  body.volumes.splice(0, body.volumes.length, ...volumes);
 }

@@ -108,3 +108,9 @@ let zoneColours = stored(ZONE_COLOUR_KEY, ['on', 'off'] as const, 'on') === 'on'
 /** Whether zoned land is tinted with its use's colour outside the Zoning tool. */
 export function zoneColoursShown(): boolean { return zoneColours; }
 export function setZoneColoursShown(on: boolean): void { zoneColours = on; keep(ZONE_COLOUR_KEY, on ? 'on' : 'off'); }
+
+const LOTS_ROADS_KEY = 'roadcraft.lotsWithRoads';
+let lotsWithRoads = stored(LOTS_ROADS_KEY, ['on', 'off'] as const, 'on') === 'on';
+/** Whether the lots are drawn while roads are built (the road panel's toggle). */
+export function lotsShownWithRoads(): boolean { return lotsWithRoads; }
+export function setLotsShownWithRoads(on: boolean): void { lotsWithRoads = on; keep(LOTS_ROADS_KEY, on ? 'on' : 'off'); }

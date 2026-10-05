@@ -43,8 +43,14 @@ export interface Lot {
   readonly building?: number;
 }
 
-/** Depth of a lot along an open street, and the lot side aimed at in a block. */
-export const LOT_DEPTH = m(30);
+/** Depth of a lot along an open street. */
+export const LOT_DEPTH = m(25);
+/**
+ * The frontage a lot aims at: a block's rows and a street's strip are cut
+ * into equal lots of about this width (the player, 2026-10-05: square lots of
+ * 26-30 m were too big).
+ */
+export const LOT_FRONTAGE = m(15);
 /** A block deeper than this is cut in two rows, back to back. */
 const TWO_ROWS = m(36);
 const MIN_LOT = m(8);
@@ -199,7 +205,7 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
     const L = box.L + RASTER, D = box.D + RASTER;
     const rows = D >= TWO_ROWS ? 2 : 1;
     const depth = D / rows;
-    const columns = Math.max(1, Math.round(L / Math.max(MIN_LOT, depth)));
+    const columns = Math.max(1, Math.round(L / Math.max(MIN_LOT, Math.min(depth, LOT_FRONTAGE))));
     const width = L / columns;
     const at = (s: number, t: number): Vec2 => ({ x: box.c.x + box.u.x * s + box.v.x * t, y: box.c.y + box.u.y * s + box.v.y * t });
     for (let r = 0; r < rows; r++) for (let k = 0; k < columns; k++) {
@@ -252,7 +258,7 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
         const key = `s:${Math.round(mid.x / m(4))},${Math.round(mid.y / m(4))},${Math.round(len / m(4))}`;
         keys.push(key);
         if (known.has(key)) continue;
-        const n = Math.max(1, Math.round(len / LOT_DEPTH));
+        const n = Math.max(1, Math.round(len / LOT_FRONTAGE));
         const w = len / n;
         for (let k = 0; k < n; k++) {
           const a = s0 + k * w, b = a + w;
