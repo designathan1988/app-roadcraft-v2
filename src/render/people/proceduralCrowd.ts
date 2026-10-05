@@ -1,0 +1,666 @@
+import {
+  BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
+  InstancedMesh, Matrix4, MeshDepthMaterial, MeshStandardMaterial, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
+  Uint16BufferAttribute, UnsignedByteType, type Material, type Texture,
+} from 'three';
+import { loadPeopleAssets, type PeopleAssets } from '@people/body/assets';
+import { Morpher, bodyHeight } from '@people/body/morph';
+import { DEFAULT_MACRO, yearsFromAge, ageFromYears, type MacroParams } from '@people/body/macro';
+import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
+import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
+import { createPersonRig, type PersonRig } from './personRig';
+import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
+import { captureBind, captureBindRotations, loadRocketboxClips, type WalkSex } from '../citizenWalk';
+import { bakeLibraryClip, bakeWalk, restRig, type ClipFrames } from '../citizenBake';
+import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS, blendPackedFrames } from '../citizenPalette';
+
+/**
+ * Procedural people (`people-lab.html`, then the game): one MakeHuman body
+ * per class - sex and age band - rigged and animated once; every person is
+ * numbers on it.
+ *
+ * - Body shape: the macro model's first `SHAPES` principal components
+ *   (`Morpher.component`), each baked once per class as moves of every base
+ *   vertex in the bind posture (`PersonRig.deltas`) into one float texture.
+ *   A person is `SHAPES` coefficients - their sliders less the class's - in a
+ *   row of another; the vertex shader sums them. Height is the instance's
+ *   scale, so the skeleton stays the class's.
+ * - Clothes, shoes, hair, brows, lashes, hats: separate instanced pieces, one
+ *   mesh per class and item, fitted once to the class body (`PersonRig.wear`).
+ *   A piece vertex is pinned to three body vertices (the MakeHuman proxy
+ *   `refs`), so it reads the same shape texture through them and follows the
+ *   body it is on - no shape data of its own.
+ * - Skin under a garment: the item's `deleteVerts` as a row of a cover
+ *   texture; a body vertex any worn garment covers sinks under it.
+ * - Skeleton: a row of a bone palette texture per person (`aRow`), blended
+ *   from the class's baked clips each frame, as the crowd's is.
+ *
+ * Shapes as principal components blended on the GPU follow "Crowd Rendering"
+ * in Assassin's Creed Unity (GDC 2015); pieces bound to one skeleton follow
+ * Unreal's modular characters (Leader Pose); hiding the skin under clothes by
+ * the clothes' own list is MakeHuman's `delete_verts`.
+ */
+
+/** Principal components carried per body: 16 keep a body within about 1.5 cm of the full model. */
+export const SHAPES = 16;
+const SHAPE_WIDTH = 4096;
+const COVER_WIDTH = 4096;
+/** How far skin under a garment sinks, metres. */
+const SINK = 0.025;
+
+export type AgeBand = 'child' | 'young' | 'adult' | 'senior';
+const BAND_YEARS: Readonly<Record<AgeBand, number>> = { child: 9, young: 22, adult: 42, senior: 72 };
+
+export function bandOf(years: number): AgeBand {
+  return years < 14 ? 'child' : years < 32 ? 'young' : years < 58 ? 'adult' : 'senior';
+}
+
+/** A garment that hides the skin under it (as `dressedGeometry` decides). */
+const COVERING = new Set(['clothes', 'shoes', 'top', 'bottom', 'skirt', 'dress', 'suit', 'gloves']);
+
+type Kind = 'skin' | 'cloth' | 'hair' | 'face';
+
+interface Piece {
+  readonly name: string;
+  readonly kind: Kind;
+  readonly mesh: InstancedMesh;
+  readonly rows: InstancedBufferAttribute;
+  readonly dyes: InstancedBufferAttribute;
+  readonly worn: InstancedBufferAttribute | null;
+  readonly tints: InstancedBufferAttribute | null;
+  people: ProceduralPerson[];
+  readonly vertices: number;
+}
+
+interface BodyClass {
+  readonly key: string;
+  readonly sex: WalkSex;
+  readonly band: AgeBand;
+  readonly base: MacroParams;
+  readonly shape: Float32Array;
+  readonly coefficients: Float64Array;
+  readonly rig: PersonRig;
+  readonly height: number;
+  readonly clips: { walk: ClipFrames; idle: ClipFrames };
+  readonly bones: number;
+  readonly uniforms: {
+    procBones: { value: DataTexture };
+    procCoef: { value: DataTexture };
+    procShape: { value: DataTexture };
+    procCover: { value: DataTexture };
+    procCoverRows: { value: number };
+  };
+  palette: Float32Array;
+  coef: Float32Array;
+  rows: number;
+  capacity: number;
+  readonly cover: Map<string, number>;
+  readonly body: BufferGeometry;
+  readonly skins: Map<string, Piece>;
+  readonly pieces: Map<string, Piece>;
+  readonly people: ProceduralPerson[];
+}
+
+export interface ProceduralPerson {
+  readonly spec: PersonSpec;
+  readonly band: AgeBand;
+  readonly sex: WalkSex;
+  /** Their row in the class's palette and shape textures. */
+  readonly row: number;
+  /** Standing height over the class body's, the instance's scale. */
+  readonly scale: number;
+  /** Metres. */
+  readonly height: number;
+  readonly items: readonly string[];
+  /** Where they stand and face; what they play. Set by the caller each frame. */
+  readonly matrix: Matrix4;
+  clip: 'walk' | 'idle';
+  phase: number;
+}
+
+export interface ProceduralStats {
+  readonly classes: number;
+  readonly people: number;
+  readonly pieces: number;
+  readonly draws: number;
+  readonly items: number;
+  readonly vertices: number;
+  readonly textureBytes: number;
+  readonly bakeMs: number;
+}
+
+const ROW_START = 64;
+
+/**
+ * What a person wears here: their own look, or - for a child, whom the
+ * generator dresses in the old tailored shells - a casual outfit for their
+ * sex and shoes, dyed their shirt colour. MakeHuman garments fit any body by
+ * their reference vertices and scale axes, so an outfit sits on a child body
+ * as on an adult one.
+ */
+export function proceduralLook(spec: PersonSpec): PersonLook {
+  const look = spec.look;
+  if (look.outfit) return look;
+  const female = spec.body.gender < 0.5;
+  const outfits = female ? ['female_casualsuit01', 'female_casualsuit02']
+    : ['male_casualsuit01', 'male_casualsuit02', 'male_casualsuit03', 'male_casualsuit04', 'male_casualsuit05', 'male_casualsuit06'];
+  const h = Math.abs(spec.id * 2654435761) >>> 0;
+  return {
+    ...look,
+    outfit: outfits[h % outfits.length]!,
+    footwear: ['shoes01', 'shoes02', 'shoes05'][(h >>> 8) % 3]!,
+    outfitTint: look.topColour,
+  };
+}
+
+function skinningChunk(): string {
+  return `
+uniform sampler2D procBones;
+uniform sampler2D procCoef;
+uniform sampler2D procShape;
+uniform mat4 bindMatrix;
+uniform mat4 bindMatrixInverse;
+attribute float aRow;
+attribute vec3 aRefs;
+attribute vec3 aRefW;
+mat4 getBoneMatrix(const in float i) {
+  int x = int(i) * 4;
+  int y = int(aRow);
+  return mat4(texelFetch(procBones, ivec2(x, y), 0), texelFetch(procBones, ivec2(x + 1, y), 0),
+    texelFetch(procBones, ivec2(x + 2, y), 0), texelFetch(procBones, ivec2(x + 3, y), 0));
+}
+vec3 procDelta(int v) {
+  vec3 d = vec3(0.0);
+  int row = int(aRow);
+  for (int k = 0; k < ${SHAPES}; k += 4) {
+    vec4 c = texelFetch(procCoef, ivec2(k / 4, row), 0);
+    for (int j = 0; j < 4; j++) {
+      int t = v * ${SHAPES} + k + j;
+      d += c[j] * texelFetch(procShape, ivec2(t % ${SHAPE_WIDTH}, t / ${SHAPE_WIDTH}), 0).xyz;
+    }
+  }
+  return d;
+}
+vec3 procShapeDelta() {
+  vec3 d = aRefW.x * procDelta(int(aRefs.x));
+  if (aRefW.y != 0.0) d += aRefW.y * procDelta(int(aRefs.y));
+  if (aRefW.z != 0.0) d += aRefW.z * procDelta(int(aRefs.z));
+  return d;
+}`;
+}
+
+const COVER_CHUNK = `
+uniform sampler2D procCover;
+uniform float procCoverRows;
+attribute vec4 aWorn;
+float procCovered(float item) {
+  if (item < -0.5) return 0.0;
+  int v = int(aRefs.x);
+  return texelFetch(procCover, ivec2(v % ${COVER_WIDTH}, int(item) * int(procCoverRows) + v / ${COVER_WIDTH}), 0).r;
+}`;
+
+/** The vertex half every piece shares: its row's skeleton and shape, the skin's cover. */
+function patchVertex(shader: { vertexShader: string }, kind: Kind): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <skinning_pars_vertex>', skinningChunk() + (kind === 'skin' ? COVER_CHUNK : ''))
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+transformed += procShapeDelta();
+${kind === 'skin' ? 'transformed -= normalize(normal) * ' + SINK.toFixed(4) + ' * max(max(procCovered(aWorn.x), procCovered(aWorn.y)), max(procCovered(aWorn.z), procCovered(aWorn.w)));' : ''}
+${kind === 'face' ? 'transformed += normalize(normal) * 0.002;' : ''}`);
+}
+
+function uniformsInto(shader: { uniforms: Record<string, unknown> }, cls: BodyClass, mesh: { bindMatrix: Matrix4; bindMatrixInverse: Matrix4 }): void {
+  Object.assign(shader.uniforms, cls.uniforms, {
+    bindMatrix: { value: mesh.bindMatrix },
+    bindMatrixInverse: { value: mesh.bindMatrixInverse },
+  });
+}
+
+function pieceMaterial(cls: BodyClass, kind: Kind, map: Texture | null, eyes: Texture | null): Material {
+  const material = new MeshStandardMaterial({ roughness: kind === 'skin' ? 0.5 : 0.85, metalness: 0, side: DoubleSide });
+  material.defines = { USE_SKINNING: '' };
+  if (kind === 'hair' || kind === 'face') { material.alphaTest = 0.35; material.alphaToCoverage = true; }
+  if (kind === 'skin') material.alphaTest = 0.5;
+  const mesh = cls.rig.mesh;
+  material.onBeforeCompile = (shader) => {
+    uniformsInto(shader, cls, mesh);
+    shader.uniforms['procMap'] = { value: map };
+    shader.uniforms['procEyes'] = { value: eyes };
+    patchVertex(shader, kind);
+    shader.vertexShader = `attribute vec4 aDye; attribute float eyeMask; varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask;\n${shader.vertexShader}`
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+vProcDye = aDye; vProcUv = uv; vSkinMask = ${kind === 'skin' ? '1.0 - eyeMask' : '0.0'};`);
+    if (kind === 'face') {
+      // Brows and lashes lie on the skin: lifted off it and biased towards
+      // the eye, as decals are, or the skin wins the depth test over them.
+      shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+mvPosition.z += 0.004 * length(instanceMatrix[0].xyz);
+gl_Position = projectionMatrix * mvPosition;`);
+    }
+    const hair = kind === 'hair' ? '1.0' : '0.0';
+    const cloth = kind === 'cloth' ? '1.0' : '0.0';
+    shader.fragmentShader = `#define appearanceDetail 1.0
+#define vHairMask ${hair}
+#define vGarmentSlot ${cloth}
+uniform sampler2D procMap; uniform sampler2D procEyes;
+varying vec4 vProcDye; varying vec2 vProcUv; varying float vSkinMask;
+vec3 personStrand = vec3(0.0, 1.0, 0.0); float personSparkle = 0.5;
+${shader.fragmentShader}`
+      .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec4 texel = texture2D(procMap, vProcUv);
+  ${kind === 'skin' ? `
+  if (vSkinMask < 0.5) texel = texture2D(procEyes, vProcUv);
+  else texel = vec4(texel.rgb * vProcDye.rgb, 1.0);` : `
+  if (vProcDye.a > 0.5) {
+    float l = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
+    texel.rgb = vProcDye.rgb * (0.45 + 1.1 * l);
+  }`}
+  diffuseColor *= texel;
+}`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+${kind === 'skin' ? 'if (vSkinMask < 0.5) roughnessFactor = 0.08;' : ''}`)
+      .replace('#include <lights_physical_pars_fragment>', personLighting(kind === 'hair', kind === 'cloth'))
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  vec3 dp1 = dFdx(-vViewPosition), dp2 = dFdy(-vViewPosition);
+  vec2 du1 = dFdx(vProcUv), du2 = dFdy(vProcUv);
+  vec3 along = dp2 * du1.x - dp1 * du2.x;
+  personStrand = along - normal * dot(along, normal);
+  personStrand = dot(personStrand, personStrand) > 1e-12 ? normalize(personStrand) : vec3(0.0, 1.0, 0.0);
+  personSparkle = fract(sin(dot(floor(vProcUv * vec2(160.0, 12.0)), vec2(12.9898, 78.233))) * 43758.5453);
+}`)
+      .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+reflectedLight.indirectSpecular *= personIndirect();`);
+  };
+  material.customProgramCacheKey = () => `procedural-person-${kind}`;
+  return material;
+}
+
+function depthMaterial(cls: BodyClass, kind: Kind): MeshDepthMaterial {
+  const material = new MeshDepthMaterial({ depthPacking: RGBADepthPacking });
+  material.defines = { USE_SKINNING: '' };
+  const mesh = cls.rig.mesh;
+  material.onBeforeCompile = (shader) => {
+    uniformsInto(shader, cls, mesh);
+    patchVertex(shader, kind);
+  };
+  material.customProgramCacheKey = () => `procedural-person-depth-${kind}`;
+  return material;
+}
+
+function kindOf(item: ProxyItem): Kind {
+  const k = item.pack.kind;
+  if (k === 'eyebrows' || k === 'eyelashes') return 'face';
+  if (k === 'hair' || k === 'beard' || item.transparent) return 'hair';
+  return 'cloth';
+}
+
+function rowTexture(pixels: Float32Array, width: number, rows: number): DataTexture {
+  const texture = new DataTexture(pixels, width / 4, rows, RGBAFormat, FloatType);
+  texture.minFilter = texture.magFilter = NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export interface ProceduralCrowd {
+  readonly group: Group;
+  add(spec: PersonSpec): Promise<ProceduralPerson>;
+  /** Every person's pose and place into the GPU: once a frame, after setting `matrix`, `clip`, `phase`. */
+  update(): void;
+  clear(): void;
+  clipDuration(person: ProceduralPerson): number;
+  /** Ground one walk cycle covers at the person's scale, metres. */
+  stride(person: ProceduralPerson): number;
+  stats(): ProceduralStats;
+  readonly people: readonly ProceduralPerson[];
+}
+
+export function createProceduralCrowd(): ProceduralCrowd {
+  const group = new Group();
+  group.name = 'procedural-people';
+  const classes = new Map<string, Promise<BodyClass>>();
+  const ready: BodyClass[] = [];
+  const people: ProceduralPerson[] = [];
+  const components: Float32Array[] = [];
+  let assets: PeopleAssets | null = null;
+  let morpher: Morpher | null = null;
+  let bakeMs = 0;
+  /** Bumped by `clear`: an `add` begun before it is dropped. */
+  let epoch = 0;
+  const items = new Map<string, Promise<ProxyItem>>();
+  const textures = new Map<string, Promise<Texture | null>>();
+  const matrix = new Matrix4();
+  const scaled = new Matrix4();
+
+  const setup = async (): Promise<{ assets: PeopleAssets; morpher: Morpher }> => {
+    assets ??= await loadPeopleAssets();
+    morpher ??= new Morpher(assets.packs);
+    if (!components.length) for (let k = 0; k < SHAPES; k++) components.push(morpher.component(k));
+    return { assets, morpher };
+  };
+
+  const item = (name: string): Promise<ProxyItem> => {
+    let loaded = items.get(name);
+    if (!loaded) { loaded = loadProxyItem(name); items.set(name, loaded); }
+    return loaded;
+  };
+  const textureOf = (name: string, it: ProxyItem): Promise<Texture | null> => {
+    let t = textures.get(name);
+    if (!t) { t = itemTexture(name, it) ?? Promise.resolve(null); textures.set(name, t); }
+    return t;
+  };
+
+  const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
+    const { assets: a, morpher: mo } = await setup();
+    const started = performance.now();
+    const base: MacroParams = { ...DEFAULT_MACRO, gender: sex === 'female' ? 0 : 1, age: ageFromYears(BAND_YEARS[band]),
+      muscle: 0.5, weight: 0.5, height: 0.5, proportions: 0.5, african: 1 / 3, asian: 1 / 3, caucasian: 1 / 3 };
+    const shape = mo.shape(base);
+    const eyes = await item('eyes');
+    // Only the eyes on it: no outfit, hair, brows, lashes or hat.
+    const { outfit: _o, footwear: _f, brows: _b, lashes: _l, ...bare } = DEFAULT_LOOK;
+    const look: PersonLook = { ...bare, hairCut: 'none', hat: 'none', extras: [] };
+    const rig = createPersonRig({
+      nude: true, texturedSkin: true, data: a.mesh, skeleton: a.skeleton, bodyRange: a.bodyRange, positions: shape, look,
+      capture: captureBind(sex), captureAxes: captureBindRotations(sex), proxies: new Map([['eyes', eyes]]),
+    });
+    // The shape basis on this body: each component as moves of every base
+    // vertex in the bind posture, per unit of its coefficient (a small step,
+    // so the feet-to-ground shift stays linear).
+    const vertexCount = a.mesh.vertexCount;
+    const shapeRows = Math.ceil(vertexCount * SHAPES / SHAPE_WIDTH);
+    const shapePixels = new Float32Array(SHAPE_WIDTH * shapeRows * 4);
+    const stepped = new Float32Array(shape.length);
+    for (let k = 0; k < SHAPES; k++) {
+      const comp = components[k]!;
+      let biggest = 0;
+      for (let j = 0; j < comp.length; j++) biggest = Math.max(biggest, Math.abs(comp[j]!));
+      const eps = biggest > 0 ? 0.3 / biggest : 1;
+      for (let j = 0; j < shape.length; j++) stepped[j] = shape[j]! + eps * comp[j]!;
+      const moved = rig.deltas!(stepped);
+      for (let v = 0; v < vertexCount; v++) {
+        const t = (v * SHAPES + k) * 4;
+        shapePixels[t] = moved[v * 3]! / eps;
+        shapePixels[t + 1] = moved[v * 3 + 1]! / eps;
+        shapePixels[t + 2] = moved[v * 3 + 2]! / eps;
+      }
+    }
+    const shapeTexture = rowTexture(shapePixels, SHAPE_WIDTH * 4, shapeRows);
+
+    // The body itself: base-vertex references for its shape and cover.
+    const body = rig.mesh.geometry;
+    const source = body.userData['morphSource'] as { kind: Int16Array; index: Int32Array };
+    const n = body.getAttribute('position').count;
+    const refs = new Float32Array(n * 3), refW = new Float32Array(n * 3);
+    for (let o = 0; o < n; o++) {
+      const kind = source.kind[o]!, i = source.index[o]!;
+      if (kind === -1) { refs.fill(i, o * 3, o * 3 + 3); refW[o * 3] = 1; }
+      else if (kind === 0) {
+        for (let k = 0; k < 3; k++) { refs[o * 3 + k] = eyes.pack.refs[i * 3 + k]!; refW[o * 3 + k] = eyes.pack.weights[i * 3 + k]!; }
+      }
+    }
+    body.setAttribute('aRefs', new Float32BufferAttribute(refs, 3));
+    body.setAttribute('aRefW', new Float32BufferAttribute(refW, 3));
+    if (!body.getAttribute('eyeMask')) body.setAttribute('eyeMask', new Float32BufferAttribute(new Float32Array(n), 1));
+    if (!body.getAttribute('normal')) body.computeVertexNormals();
+
+    const library = await loadRocketboxClips(sex);
+    const bakeRig = restRig(rig.scene);
+    const walk = await bakeWalk(bakeRig, sex);
+    const idle = await bakeLibraryClip(bakeRig, library.idle, undefined, 'idle');
+    const bones = rig.mesh.skeleton.bones.length;
+    const width = bones * SKIN_BONE_FLOATS;
+    const palette = new Float32Array(width * ROW_START);
+    const coef = new Float32Array(SHAPES * ROW_START);
+    const coverPixels = new Uint8Array(COVER_WIDTH);
+    const cover = new DataTexture(coverPixels, COVER_WIDTH, 1, RedFormat, UnsignedByteType);
+    cover.needsUpdate = true;
+    bakeMs += performance.now() - started;
+    const cls: BodyClass = {
+      key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle }, bones,
+      uniforms: {
+        procBones: { value: rowTexture(palette, width, ROW_START) },
+        procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
+        procShape: { value: shapeTexture },
+        procCover: { value: cover },
+        procCoverRows: { value: Math.ceil(vertexCount / COVER_WIDTH) },
+      },
+      palette, coef, rows: 0, capacity: ROW_START, cover: new Map(), body,
+      skins: new Map(), pieces: new Map(), people: [],
+    };
+    ready.push(cls);
+    return cls;
+  };
+
+  const classFor = (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
+    const key = `${sex}-${band}`;
+    let cls = classes.get(key);
+    if (!cls) { cls = buildClass(sex, band); classes.set(key, cls); }
+    return cls;
+  };
+
+  /** A garment's cover row in its class, made on first use. */
+  const coverRow = (cls: BodyClass, name: string, it: ProxyItem): number => {
+    const known = cls.cover.get(name);
+    if (known !== undefined) return known;
+    const row = cls.cover.size;
+    cls.cover.set(name, row);
+    const per = cls.uniforms.procCoverRows.value;
+    const old = cls.uniforms.procCover.value;
+    const rows = (row + 1) * per;
+    const pixels = new Uint8Array(COVER_WIDTH * rows);
+    pixels.set((old.image.data as Uint8Array).subarray(0, Math.min(old.image.data!.length, pixels.length)));
+    for (const v of it.pack.deleteVerts) pixels[row * per * COVER_WIDTH + v] = 255;
+    const texture = new DataTexture(pixels, COVER_WIDTH, rows, RedFormat, UnsignedByteType);
+    texture.needsUpdate = true;
+    cls.uniforms.procCover.value = texture;
+    old.dispose();
+    return row;
+  };
+
+  const growRows = (cls: BodyClass): void => {
+    const capacity = cls.capacity * 2;
+    const width = cls.bones * SKIN_BONE_FLOATS;
+    const palette = new Float32Array(width * capacity);
+    palette.set(cls.palette);
+    const coef = new Float32Array(SHAPES * capacity);
+    coef.set(cls.coef);
+    cls.palette = palette;
+    cls.coef = coef;
+    cls.capacity = capacity;
+    cls.uniforms.procBones.value.dispose();
+    cls.uniforms.procCoef.value.dispose();
+    cls.uniforms.procBones.value = rowTexture(palette, width, capacity);
+    cls.uniforms.procCoef.value = rowTexture(coef, SHAPES, capacity);
+  };
+
+  const makePiece = (cls: BodyClass, name: string, kind: Kind, geometry: BufferGeometry, map: Texture | null, eyes: Texture | null): Piece => {
+    const capacity = 256;
+    const rows = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const dyes = new InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
+    geometry.setAttribute('aRow', rows);
+    geometry.setAttribute('aDye', dyes);
+    let worn: InstancedBufferAttribute | null = null;
+    if (kind === 'skin') {
+      worn = new InstancedBufferAttribute(new Float32Array(capacity * 4).fill(-1), 4);
+      geometry.setAttribute('aWorn', worn);
+    }
+    const mesh = new InstancedMesh(geometry, pieceMaterial(cls, kind, map, eyes), capacity);
+    mesh.count = 0;
+    mesh.frustumCulled = false;
+    mesh.castShadow = kind !== 'face';
+    mesh.receiveShadow = true;
+    if (mesh.castShadow) mesh.customDepthMaterial = depthMaterial(cls, kind);
+    mesh.name = `${cls.key}/${name}`;
+    group.add(mesh);
+    return { name, kind, mesh, rows, dyes, worn, tints: null, people: [], vertices: geometry.getAttribute('position').count };
+  };
+
+  const skinPiece = async (cls: BodyClass, person: PersonSpec): Promise<Piece> => {
+    const choice = skinChoice(person);
+    let piece = cls.skins.get(choice.name);
+    if (!piece) {
+      const [skin, eyes] = await skinTextures(choice.name, choice.url, choice.eyeFile);
+      piece = cls.skins.get(choice.name);
+      if (piece) return piece;
+      const geometry = new BufferGeometry();
+      for (const [name, attribute] of Object.entries(cls.body.attributes)) {
+        if (name !== 'aRow' && name !== 'aDye' && name !== 'aWorn') geometry.setAttribute(name, attribute);
+      }
+      geometry.setIndex(cls.body.index);
+      piece = makePiece(cls, `skin-${choice.name}`, 'skin', geometry, skin, eyes);
+      cls.skins.set(choice.name, piece);
+    }
+    return piece;
+  };
+
+  const wornPiece = async (cls: BodyClass, name: string): Promise<Piece> => {
+    const known = cls.pieces.get(name);
+    if (known) return known;
+    const it = await item(name);
+    const map = await textureOf(name, it);
+    const again = cls.pieces.get(name);
+    if (again) return again;
+    const fitted = cls.rig.wear!(it, cls.shape);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new Float32BufferAttribute(fitted.positions, 3));
+    const n = fitted.positions.length / 3;
+    geometry.setAttribute('uv', new Float32BufferAttribute(it.pack.uvs ?? new Float32Array(n * 2), 2));
+    geometry.setAttribute('skinIndex', new Uint16BufferAttribute(fitted.joints, 4));
+    geometry.setAttribute('skinWeight', new Float32BufferAttribute(fitted.weights, 4));
+    geometry.setAttribute('aRefs', new Float32BufferAttribute(Float32Array.from(it.pack.refs), 3));
+    geometry.setAttribute('aRefW', new Float32BufferAttribute(it.pack.weights, 3));
+    geometry.setAttribute('eyeMask', new Float32BufferAttribute(new Float32Array(n), 1));
+    geometry.setIndex(Array.from(it.pack.index));
+    geometry.computeVertexNormals();
+    const piece = makePiece(cls, name, kindOf(it), geometry, map, null);
+    cls.pieces.set(name, piece);
+    return piece;
+  };
+
+  const place = (piece: Piece, person: ProceduralPerson, dye: Color | null, worn?: readonly number[]): void => {
+    const slot = piece.people.length;
+    if (slot >= piece.rows.count) return;
+    piece.people.push(person);
+    piece.rows.setX(slot, person.row);
+    piece.dyes.setXYZW(slot, dye?.r ?? 1, dye?.g ?? 1, dye?.b ?? 1, dye ? 1 : 0);
+    if (piece.worn && worn) piece.worn.setXYZW(slot, worn[0] ?? -1, worn[1] ?? -1, worn[2] ?? -1, worn[3] ?? -1);
+    piece.rows.needsUpdate = piece.dyes.needsUpdate = true;
+    if (piece.worn) piece.worn.needsUpdate = true;
+    piece.mesh.count = piece.people.length;
+  };
+
+  return {
+    group,
+    people,
+    async add(spec) {
+      const started = epoch;
+      const { morpher: mo, assets: a } = await setup();
+      const years = yearsFromAge(spec.body.age);
+      const band = bandOf(years);
+      const sex: WalkSex = spec.body.gender < 0.5 ? 'female' : 'male';
+      const cls = await classFor(sex, band);
+      const look = proceduralLook(spec);
+      const names = wornItems(look).filter((nm) => nm !== 'eyes');
+      const loaded = await Promise.all(names.map((nm) => item(nm).then((it) => [nm, it] as const, () => null)));
+      const worn = loaded.filter((x): x is readonly [string, ProxyItem] => !!x);
+      const skin = await skinPiece(cls, spec);
+      const pieces = await Promise.all(worn.map(([nm]) => wornPiece(cls, nm)));
+
+      if (epoch !== started) throw new Error('crowd cleared');
+      if (cls.rows >= cls.capacity) growRows(cls);
+      const row = cls.rows++;
+      // Their shape on the class body: their sliders at the class's height
+      // (height is the instance's scale), less the class's own.
+      const level = { ...spec.body, height: cls.base.height };
+      const c = mo.coefficients(level);
+      for (let k = 0; k < SHAPES; k++) cls.coef[row * SHAPES + k] = (c[k] ?? 0) - (cls.coefficients[k] ?? 0);
+      cls.uniforms.procCoef.value.needsUpdate = true;
+      const tall = bodyHeight(mo.shape(spec.body), a.bodyRange);
+      const level0 = bodyHeight(mo.shape(level), a.bodyRange);
+      const scale = tall / Math.max(1e-3, level0);
+      const person: ProceduralPerson = {
+        spec, band, sex, row, scale, height: tall / 10, items: worn.map(([nm]) => nm),
+        matrix: new Matrix4(), clip: 'walk', phase: 0,
+      };
+      const covers = worn.filter(([, it]) => COVERING.has(it.pack.kind) && !it.transparent)
+        .map(([nm, it]) => coverRow(cls, nm, it)).slice(0, 4);
+      place(skin, person, skinChoice(spec).tint, covers);
+      const hair = new Color(spec.look.hair);
+      // The outfit itself is dyed, never its shoes or glasses; hair, brows
+      // and lashes take the hair colour.
+      const tint = look.outfitTint == null ? null : new Color(look.outfitTint);
+      pieces.forEach((piece, i) => {
+        const kind = piece.kind;
+        const dye = kind === 'hair' || kind === 'face' ? hair : worn[i]![0] === look.outfit ? tint : null;
+        place(piece, person, dye);
+      });
+      cls.people.push(person);
+      people.push(person);
+      return person;
+    },
+    update() {
+      for (const cls of ready) {
+        const width = cls.bones * SKIN_BONE_FLOATS;
+        const packed = cls.bones * PACKED_BONE_FLOATS;
+        for (const person of cls.people) {
+          const clip = cls.clips[person.clip];
+          const f = (person.phase - Math.floor(person.phase)) * clip.frames;
+          const whole = Math.min(clip.frames, Math.floor(f));
+          const at = person.row * width;
+          cls.palette.fill(0, at, at + width);
+          blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
+        }
+        cls.uniforms.procBones.value.needsUpdate = true;
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+          piece.people.forEach((person, slot) => {
+            scaled.makeScale(person.scale, person.scale, person.scale);
+            matrix.multiplyMatrices(person.matrix, scaled);
+            piece.mesh.setMatrixAt(slot, matrix);
+          });
+          piece.mesh.instanceMatrix.needsUpdate = true;
+        }
+      }
+    },
+    clear() {
+      epoch++;
+      for (const cls of ready) {
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+          piece.people = [];
+          piece.mesh.count = 0;
+        }
+        cls.people.length = 0;
+        cls.rows = 0;
+      }
+      people.length = 0;
+    },
+    clipDuration(person) {
+      const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
+      return cls?.clips[person.clip].duration ?? 1;
+    },
+    stride(person) {
+      const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
+      return (cls?.clips.walk.stride ?? 1.4) * person.scale;
+    },
+    stats() {
+      let pieces = 0, draws = 0, vertices = 0, textureBytes = 0;
+      const names = new Set<string>();
+      for (const cls of ready) {
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+          pieces++;
+          if (piece.mesh.count) draws++;
+          vertices += piece.vertices;
+          names.add(piece.name);
+        }
+        for (const t of [cls.uniforms.procBones.value, cls.uniforms.procCoef.value, cls.uniforms.procShape.value]) {
+          textureBytes += (t.image.data as Float32Array).byteLength;
+        }
+        textureBytes += (cls.uniforms.procCover.value.image.data as Uint8Array).byteLength;
+      }
+      return { classes: ready.length, people: people.length, pieces, draws, items: names.size, vertices, textureBytes, bakeMs };
+    },
+  };
+}
+

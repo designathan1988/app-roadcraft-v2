@@ -108,6 +108,37 @@ export class Morpher {
     }
   }
 
+  /** How many basis shapes the macro sliders fold into (`shape`). */
+  get components(): number {
+    return this.packs.macro.components;
+  }
+
+  /**
+   * The macro sliders folded into one coefficient per basis shape, as `shape`
+   * folds them: the body's macro part is the base plus the sum over k of
+   * `coefficients[k]` times `component(k)` (less each target's residual).
+   */
+  coefficients(params: MacroParams): Float64Array {
+    const K = this.packs.macro.components;
+    const c = new Float64Array(K);
+    for (const [name, w] of macroTargetWeights(this.packs.modifiers.macro, this.macroNames, params)) {
+      const t = this.macroRow.get(name);
+      if (!t) continue;
+      for (let k = 0; k < K; k++) c[k] = (c[k] ?? 0) + w * (this.coeff[t.row * K + k] ?? 0);
+    }
+    return c;
+  }
+
+  /** Basis shape `k` as moves of the base mesh per unit of its coefficient, decimetres. */
+  component(k: number, out?: Float32Array): Float32Array {
+    const D = this.vertexCount * 3;
+    const result = out && out.length === D ? out : new Float32Array(D);
+    const scale = this.packs.macro.layout.basis.scales[k] ?? 0;
+    const offset = k * D;
+    for (let j = 0; j < D; j++) result[j] = scale * (this.basis[offset + j] ?? 0);
+    return result;
+  }
+
   /** The breast macro targets live in the regional pack; the rest in the PCA one. */
   private breastNames(): string[] {
     return this.packs.local.targets.filter((t) => t.group === 'breast').map((t) => t.name);

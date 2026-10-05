@@ -121,6 +121,21 @@ export interface PersonRigInput {
   readonly captureAxes?: ReadonlyMap<string, Quaternion>;
   /** The MakeHuman items the look wears, loaded (`loadProxyItem`), by name. */
   readonly proxies?: ReadonlyMap<string, ProxyItem>;
+  /**
+   * A base body for the procedural crowd (`people/proceduralCrowd.ts`): only
+   * the look's eyes on it, no garment and no tailored shell - its clothes,
+   * hair and shoes are drawn as separate pieces (`PersonRig.wear`).
+   */
+  readonly nude?: boolean;
+}
+
+/** A MakeHuman item fitted to a rigged body, as a separate skinned piece. */
+export interface WornPiece {
+  /** Vertices in the body's bind posture, metres. */
+  readonly positions: Float32Array;
+  /** Bones in the skeleton's order, four a vertex, and their weights. */
+  readonly joints: Uint16Array;
+  readonly weights: Float32Array;
 }
 
 export interface PersonRig {
@@ -131,6 +146,18 @@ export interface PersonRig {
   readonly height: number;
   /** A changed body shape (decimetres, as \`positions\`) as relative moves of the mesh's vertices, when known. */
   readonly morph?: (positions: Float32Array) => Float32Array;
+  /**
+   * An item fitted to this body as a piece of its own: on the body as built,
+   * or on a changed shape of it (decimetres, as \`positions\`) - through the
+   * same fitting and posture as the garments the body wears itself.
+   */
+  readonly wear?: (item: ProxyItem, shape?: Float32Array) => WornPiece;
+  /**
+   * A changed body shape (decimetres, as `positions`) as moves of every base
+   * mesh vertex in the bind posture, metres - helpers included, so an item
+   * pinned to them follows too.
+   */
+  readonly deltas?: (shape: Float32Array) => Float32Array;
 }
 
 export function createPersonRig(input: PersonRigInput): PersonRig {
@@ -277,7 +304,7 @@ export function createPersonRig(input: PersonRigInput): PersonRig {
   }) : [];
   // Child clothing remains tailored to child anatomy. Accessories do not turn
   // a clothed child into the bare body used underneath an adult outfit.
-  const shell = !look.outfit && fitted.length
+  const shell = !input.nude && !look.outfit && fitted.length
     ? clothedGeometry(data, posed, fitted.some(w => w.item.pack.kind === 'hair')
       ? { ...look, hairStyle: 'none' } : look, input.texturedSkin) : undefined;
   const geometry = dressed
@@ -330,7 +357,33 @@ export function createPersonRig(input: PersonRigInput): PersonRig {
   scene.add(...roots, mesh);
   scene.updateMatrixWorld(true);
   mesh.bind(skeleton);
-  return { scene, mesh, height: highest - lowest, ...(morph ? { morph } : {}) };
+  const headBone = data.boneNames.indexOf('head');
+  const wear = (item: ProxyItem, shape: Float32Array = positions): WornPiece => {
+    const skin = proxySkin(item.pack, data.joints, data.weights);
+    // The skull is rigid for what is worn on it (hair, a hat, brows), as
+    // \`dressedGeometry\` binds them: a vertex the head owns over half moves
+    // with the head alone.
+    const joints = new Uint16Array(skin.joints), weights = new Float32Array(skin.weights);
+    for (let v = 0; v < joints.length / 4; v++) {
+      let head = 0;
+      for (let k = 0; k < 4; k++) if (joints[v * 4 + k] === headBone) head += weights[v * 4 + k]!;
+      if (head < 0.5) continue;
+      for (let k = 0; k < 4; k++) { joints[v * 4 + k] = k === 0 ? headBone : 0; weights[v * 4 + k] = k === 0 ? 1 : 0; }
+    }
+    return { positions: pose(fitProxy(item.pack, shape), skin), joints, weights };
+  };
+  const deltas = (shape: Float32Array): Float32Array => {
+    const inMetres = new Float32Array(shape.length);
+    toMetres(shape, inMetres, bodyRange);
+    const body = poseBody(inMetres);
+    for (let v = 0; v < data.vertexCount; v++) {
+      body[v * 3] = body[v * 3]! - posed[v * 3]!;
+      body[v * 3 + 1] = body[v * 3 + 1]! - lowest - posed[v * 3 + 1]!;
+      body[v * 3 + 2] = body[v * 3 + 2]! - posed[v * 3 + 2]!;
+    }
+    return body;
+  };
+  return { scene, mesh, height: highest - lowest, wear, deltas, ...(morph ? { morph } : {}) };
 }
 
 // ---------------------------------------------------------------- geometry

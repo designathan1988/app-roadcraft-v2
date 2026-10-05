@@ -23,8 +23,11 @@ function eyeTextureFor(colour: number): string {
   return EYE_TEXTURES[best]!;
 }
 
-/** Existing CC0 skin and eye packs, selected by the authored body and look. */
-export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppearance> {
+/**
+ * Which skin texture and eye texture a person gets, and the tint matching the
+ * texture to their skin colour: chosen by origin, sex and age.
+ */
+export function skinChoice(person: PersonSpec): { name: string; url: string; eyeFile: string; tint: Color } {
   const b = person.body;
   const origin = b.african > b.asian && b.african > b.caucasian ? 'african'
     : b.asian > b.caucasian ? 'asian' : 'caucasian';
@@ -43,19 +46,6 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
   const skin = candidates[Math.abs(person.id * 2654435761 >>> 0) % candidates.length] ?? index.skins[0]!;
   const url = urls[`../../../public/models/people/skins/${skin.name}.webp`];
   if (!url) throw new Error(`Missing skin texture: ${skin.name}`);
-  const skinLease = acquireTexture(SKINS, skin.name, async () => {
-    const map = await new TextureLoader().loadAsync(url);
-    map.colorSpace = SRGBColorSpace;
-    return map;
-  });
-  const skinRequest = skinLease.texture;
-  const eyeFile = eyeTextureFor(person.look.eyes);
-  const eyeLease = acquireTexture(CARDS, eyeFile, async () => {
-    const map = await new TextureLoader().loadAsync(proxyUrl(eyeFile));
-    map.colorSpace = SRGBColorSpace;
-    map.flipY = false;
-    return map;
-  });
   const average = new Color().setRGB(skin.average[0]! / 255, skin.average[1]! / 255, skin.average[2]! / 255, SRGBColorSpace);
   const desired = new Color(person.look.skin);
   // Match the texture's brightness to the person's skin and only a little of
@@ -68,6 +58,52 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     bright + (desired.r / Math.max(0.01, average.r) - bright) * hue,
     bright + (desired.g / Math.max(0.01, average.g) - bright) * hue,
     bright + (desired.b / Math.max(0.01, average.b) - bright) * hue);
+  return { name: skin.name, url, eyeFile: eyeTextureFor(person.look.eyes), tint };
+}
+
+/** A skin texture by `skinChoice` name, shared while anyone holds it. */
+function skinLeaseOf(name: string, url: string): TextureLease {
+  return acquireTexture(SKINS, name, async () => {
+    const map = await new TextureLoader().loadAsync(url);
+    map.colorSpace = SRGBColorSpace;
+    return map;
+  });
+}
+
+/** An eye or card texture from the proxies folder, shared while anyone holds it. */
+function cardLeaseOf(file: string): TextureLease {
+  return acquireTexture(CARDS, file, async () => {
+    const map = await new TextureLoader().loadAsync(proxyUrl(file));
+    map.colorSpace = SRGBColorSpace;
+    map.flipY = false;
+    return map;
+  });
+}
+
+/**
+ * Textures for a body drawn on its own (`proceduralCrowd.ts`): the skin and
+ * the eyes, held for the life of the page.
+ */
+export function skinTextures(name: string, url: string, eyeFile: string): Promise<[Texture, Texture]> {
+  return Promise.all([skinLeaseOf(name, url).texture, cardLeaseOf(eyeFile).texture]);
+}
+
+/**
+ * An item's own texture for a piece drawn on its own (`proceduralCrowd.ts`):
+ * padded for a garment, plain for a card with holes; null when it has none.
+ * Held for the life of the page.
+ */
+export function itemTexture(name: string, item: ProxyItem): Promise<Texture> | null {
+  if (!item.textureFile) return null;
+  return item.transparent ? cardLeaseOf(item.textureFile).texture : paddedGarment(name, item).texture;
+}
+
+/** Existing CC0 skin and eye packs, selected by the authored body and look. */
+export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppearance> {
+  const { name: skinName, url, eyeFile, tint } = skinChoice(person);
+  const skinLease = skinLeaseOf(skinName, url);
+  const skinRequest = skinLease.texture;
+  const eyeLease = cardLeaseOf(eyeFile);
   const garmentNames = texturedGarments(person.look);
   const leases: TextureLease[] = [skinLease, eyeLease];
   let texture: Texture | undefined;
@@ -120,7 +156,7 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     eyeTexture = loaded[cardStart + 4] ?? undefined;
     const failed = settled.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
-    if (!texture || !eyeTexture) throw new Error(`Missing loaded skin or eye texture: ${skin.name}, ${eyeFile}`);
+    if (!texture || !eyeTexture) throw new Error(`Missing loaded skin or eye texture: ${skinName}, ${eyeFile}`);
     const garments = loaded.slice(1, cardStart).map((map) => map ?? null);
     // Sent to the GPU ahead of the first frame this person is drawn in.
     queueUpload(texture, eyeTexture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
@@ -340,7 +376,7 @@ if (faceCard) {
  *   wider secondary one tinted by the hair and broken up into sparkles, and
  *   the diffuse term's shadow edge softened (lerp(0.25, 1, N.L)).
  */
-function personLighting(hair: boolean, garments: boolean): string {
+export function personLighting(hair: boolean, garments: boolean): string {
   const chunk = ShaderChunk.lights_physical_pars_fragment;
   const specular = 'reflectedLight.directSpecular += irradiance * specularBRDF * material.multiScatteringCompensation;';
   const diffuse = 'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );';
