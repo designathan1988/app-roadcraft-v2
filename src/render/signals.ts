@@ -61,27 +61,24 @@ import { signalStateFor, type SignalState } from '@sim/signals/query';
 const m = (metres: number): number => metres / 0.4;
 
 /**
- * Signal heads are drawn at 1.5 times life size.
- *
- * Deliberately, and it is the only object in the scene that is. A real signal
- * head is 0.6 m across, which against a 46-unit boulevard is four pixels at the
- * zoom the game is played at — correct, and useless: the lamp is the single
- * piece of information the player most needs to read from a junction. Everything
- * else stays to scale, so the head reads as slightly generous rather than as a
- * different world.
+ * Signal heads at life size, like everything else in the scene (the player's
+ * order of 2026-10-05: they were drawn at 1.5 times life, with a head 2.3 m
+ * tall, and read as out of proportion beside the cars and the people). A
+ * three-lens 300 mm head is about 1.05 m tall and 0.42 m wide; the lit lens
+ * and its halo carry the information at play zoom.
  */
-const SIGNAL_SCALE = 1.5;
+const SIGNAL_SCALE = 1;
 const u = (metres: number): number => m(metres) * SIGNAL_SCALE;
 
 const POST_HEIGHT = u(6.2);
-const POST_RADIUS = u(0.11);
+const POST_RADIUS = u(0.09);
 const ARM_LENGTH = u(3.5);
-const ARM_RADIUS = u(0.08);
-const HEAD_HEIGHT = u(1.55);
-const HEAD_WIDTH = u(0.62);
-const HEAD_DEPTH = u(0.42);
-const LAMP_RADIUS = u(0.21);
-const VISOR_DEPTH = u(0.2);
+const ARM_RADIUS = u(0.06);
+const HEAD_HEIGHT = u(1.05);
+const HEAD_WIDTH = u(0.42);
+const HEAD_DEPTH = u(0.3);
+const LAMP_RADIUS = u(0.15);
+const VISOR_DEPTH = u(0.18);
 const HEAD_CENTRE = u(5.5);
 /** Vertical spacing between lens centres. */
 const LAMP_PITCH = HEAD_HEIGHT * 0.3;
