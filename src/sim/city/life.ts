@@ -301,7 +301,14 @@ export class CityLife {
     if (w.doc.buildings.revision !== this.builtFor) this.rebuild(w);
     const live = this.enabled && this.population.residents.length > 0;
     w.edgeTraffic = !live;
-    if (!live) return;
+    if (!live) {
+      // Nobody left (the last building taken down, or the residents switched
+      // off): their cars go too. The bays were read again only while the city
+      // lived, so a demolished building's car park stood full of cars on the
+      // bare ground.
+      if (this.cars && (this.cars.cars.size || this.cars.trips.size)) this.cars.rebuild(w, [], () => null);
+      return;
+    }
     const accessKey = `${w.buildingAccessRevision}:${w.topologyRevision}`;
     if (accessKey !== this.accessFor) this.readAccess(w, accessKey);
 
