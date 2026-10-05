@@ -164,7 +164,9 @@ export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
     footwear: ['shoes01', 'shoes02', 'shoes05'][(h >>> 8) % 3]!,
     outfitTint: look.topColour,
   };
-  if (!hair || !female) return dressed;
+  // Half the women in a grown style, half in a stock one that passed the
+  // audit (`randomPerson`'s curated lists).
+  if (!hair || !female || ((h >>> 20) & 1) === 0) return dressed;
   // Women's hair grown procedurally (`people/hair/procedural.ts`): older
   // women shorter or up, girls never in a bun.
   const years = yearsFromAge(spec.body.age);

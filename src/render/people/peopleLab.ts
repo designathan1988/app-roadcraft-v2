@@ -55,8 +55,10 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+// ?audit=a,b,c: one person a hairstyle, the same body each, in a row.
+const AUDIT = (new URLSearchParams(location.search).get('audit') ?? '').split(',').filter(Boolean);
 // ?hair=mh: the stock MakeHuman hair instead of the grown one, to compare.
-const crowd = createProceduralCrowd({ hair: new URLSearchParams(location.search).get('hair') !== 'mh' });
+const crowd = createProceduralCrowd({ hair: new URLSearchParams(location.search).get('hair') !== 'mh' && !AUDIT.length });
 scene.add(crowd.group);
 
 const LINEUP = 10;
@@ -93,8 +95,18 @@ async function populate(): Promise<void> {
   crowd.clear();
   walkers.length = 0;
   const started = performance.now();
+  if (AUDIT.length) wanted = AUDIT.length;
   for (let i = 0; i < wanted; i++) {
     if (mine !== generation) return;
+    if (AUDIT.length) {
+      const male = /^(short0|elvs_maxwell|culturalibre)/.test(AUDIT[i]!);
+      const spec = randomPerson(1, male ? 11 : 12, { body: { gender: male ? 1 : 0, age: 0.5 }, look: { hairCut: AUDIT[i]!, hair: 0x4a3222, extras: [] } });
+      const person = await crowd.add(spec).catch(() => null);
+      if (mine !== generation || !person) return;
+      person.matrix.makeRotationY(0).setPosition((i - (wanted - 1) / 2) * 0.9, 0, 1.2);
+      person.clip = 'idle';
+      continue;
+    }
     let spec = randomPerson(i + 1, seed * 7919 + i * 104729);
     // ?bases: the line-up is the eight class bodies themselves, unshaped.
     if (BASES && i < 8) {
