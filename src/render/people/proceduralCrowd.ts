@@ -386,7 +386,7 @@ export interface ProceduralCrowd {
   forget(name: string): void;
 }
 
-export function createProceduralCrowd(options: { hair?: boolean } = {}): ProceduralCrowd {
+export function createProceduralCrowd(options: { hair?: boolean; /** World units per metre (the game's are 2.5). */ unit?: number } = {}): ProceduralCrowd {
   const group = new Group();
   group.name = 'procedural-people';
   const classes = new Map<string, Promise<BodyClass>>();
@@ -746,7 +746,7 @@ export function createProceduralCrowd(options: { hair?: boolean } = {}): Procedu
   const strandsUpdate = (eye: Vector3): void => {
     const near = people.filter((p) => p.grown)
       .map((p) => ({ p, d: eye.distanceTo(new Vector3().setFromMatrixPosition(p.matrix)) }))
-      .filter((x) => x.d < NEAR_RANGE).sort((a, b) => a.d - b.d).slice(0, NEAR);
+      .filter((x) => x.d < NEAR_RANGE * (options.unit ?? 1)).sort((a, b) => a.d - b.d).slice(0, NEAR);
     const wanted = new Map<Piece, ProceduralPerson[]>();
     for (const { p } of near) {
       const cls = ready.find((c) => c.sex === p.sex && c.band === p.band)!;

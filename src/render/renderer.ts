@@ -1284,6 +1284,7 @@ export function createSceneRenderer(
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,
+        eye: rig.camera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
         indoor: [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
