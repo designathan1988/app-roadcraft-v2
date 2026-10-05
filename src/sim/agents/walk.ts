@@ -48,8 +48,9 @@ import { ASK_WAY, carSweep } from './cars';
  * - somebody held still a long while (`JAM_AFTER`) is let through others
  *   slowly, as SUMO's jammed state does, so nobody is ever stuck for good.
  *
- * Only residents walk here (`?agents=1`): from a door to a door, or to and
- * from their car. Nobody is made up to fill the streets.
+ * Only residents walk here (the default; `?agents=0` brings back the People
+ * engine): from a door to a door, or to and from their car. Nobody is made up
+ * to fill the streets.
  */
 
 /** Width of one stripe, world units: SUMO's default, a person's room abreast. */

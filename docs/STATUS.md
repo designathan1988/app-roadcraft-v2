@@ -22,7 +22,7 @@ own car, replacing the three pedestrian engines and the cars that appear from
 nowhere. The player approved deleting the old engines once the new one is live
 and they have seen it.
 
-- **Slice 1, LIVE behind `?agents=1`** (b3ef7ab, 0090c88; on 4180 since
+- **Slice 1, LIVE (default since slice 5)** (b3ef7ab, 0090c88; on 4180 since
   2026-10-04 20:47): a car owner's car stands in a real bay of the lot behind
   their building (`sim/agents/parking.ts`); they leave by the back door, get
   in, back out, follow the lot's aisles out (`lotNav.ts`), drive in the
@@ -33,12 +33,12 @@ and they have seen it.
   `tests/sim/agents/ownCars.spec.ts` (6/6 chains, 0 jumps, 0 car bodies in
   walls, 0 cars not owned by a resident). Photos: `scripts/agents-shots.mjs`,
   `scripts/agent-card-shots.mjs`.
-- **Slice 2, LIVE behind `?agents=1`** (6957f58): needs (hunger, energy, fun,
+- **Slice 2, LIVE (default since slice 5)** (6957f58): needs (hunger, energy, fun,
   social, hygiene) run down by the hour; places advertise what they give and
   when they are open (`sim/agents/mind.ts`); a resident free of work or school
   goes where need, distance and the hour weigh most. The agent card shows the
   need bars. Measured: `tests/sim/agents/mind.spec.ts`.
-- **Slice 3, LIVE behind `?agents=1`** (2026-10-05): the agents walk with
+- **Slice 3, LIVE (default since slice 5)** (2026-10-05): the agents walk with
   their own engine, `sim/agents/walk.ts`, instead of the People engine: lanes on
   the footways of `world/walkways.ts` (SUMO's striping: the stripe with the
   most room, keep right, speed from the gap ahead, a sidestep when held up),
@@ -49,7 +49,7 @@ and they have seen it.
   jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
   signal cycle). Photos: `scripts/walk-shots.mjs`
   (`docs/audit/2026-10-05/walk/`).
-- **Slice 4, LIVE behind `?agents=1`** (2026-10-05): a car owner keeps their
+- **Slice 4, LIVE (default since slice 5)** (2026-10-05): a car owner keeps their
   car in the lot behind their building or, failing that, in the free bay
   nearest their door within a minute's walk (a lot down the street or a kerb
   bay); with no bay near home they keep no car and walk (Cities: Skylines II's
@@ -57,7 +57,7 @@ and they have seen it.
   owners (293 bays reachable, most homes over 200 m from one); with parallel
   parking on its local and urban streets it would be 712 (1989 bays), but
   that widens those streets by 2 m a side: the player's decision.
-- **Cars and walkers on the footway, LIVE behind `?agents=1`** (2026-10-05):
+- **Cars and walkers on the footway, LIVE (default since slice 5)** (2026-10-05):
   a car leaving or entering a lot crosses the footway square in front of the
   lot's edge (it used to run metres along it to a joining point kept clear of
   the junction, `docs/audit/2026-10-05/stuck-plan.png`); it takes the ground of
@@ -68,7 +68,7 @@ and they have seen it.
   manoeuvring cars are solid to walkers. Measured: `walk.spec.ts` second test
   (18 cars across footways, 54 walkers sent through them: 0 body-ticks inside a
   car, everybody arrived).
-- **Road ends, LIVE behind `?agents=1`** (2026-10-05): across the end of a
+- **Road ends, LIVE (default since slice 5)** (2026-10-05): across the end of a
   street that leads nowhere an unmarked crossing joins its two footways
   (`Walkway.unmarked`); a walker takes a gap in the traffic there (the time
   across plus 2 s, no margin after 30 s waiting) and no car is put on the map
@@ -80,8 +80,11 @@ and they have seen it.
   the residents walks (no passers-by) and nobody boards a bus (the walk
   engine's bridge has no stops yet); roads that do not touch any other road
   are still separate places for walkers (nobody walks over open ground).
-- **Next slices:** 5, agents by default; then People, the Detour crowd flag and
-  `sim/peds` deleted after the player has seen it.
+- **Slice 5, LIVE by default** (2026-10-05): the game runs the agents with no
+  flag; `?agents=0` (or `?people=crowd`, `?peds=legacy`) brings back the old
+  engines. Photographed with no flag: `docs/audit/2026-10-05/default/`.
+- **Next:** People, the Detour crowd flag and `sim/peds` deleted once the
+  player has seen the agents and says so.
 
 ## Live in the game (main, 4180)
 

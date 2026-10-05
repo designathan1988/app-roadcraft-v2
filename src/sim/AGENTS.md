@@ -5,17 +5,19 @@ breaks far from where you edit in `sim/`.
 
 ## Which pedestrian engine runs
 
-- Default: the People engine, `sim/people/people.ts` (ORCA locomotion, `orca.ts`,
-  navmesh `nav.ts`).
-- `?people=crowd`: the Detour crowd engine, `sim/people/crowd.ts` and `crowdNav.ts`
-  (Recast/Detour). Its state and rules are in `docs/handoff/people-crowd.md` and
-  the skill `.agents/skills/roadcraft-people-crowd/`.
+- Default (since 2026-10-05): the agents engine, `sim/agents/` - residents
+  walking with `sim/agents/walk.ts` and driving their own cars
+  (`CityLife.useAgents`).
+- `?agents=0`: the People engine, `sim/people/people.ts` (ORCA locomotion,
+  `orca.ts`, navmesh `nav.ts`), with the old diaries and kerb cars.
+- `?people=crowd`: the Detour crowd engine, `sim/people/crowd.ts` and
+  `crowdNav.ts` (Recast/Detour). Its state and rules are in
+  `docs/handoff/people-crowd.md` and the skill `.agents/skills/roadcraft-people-crowd/`.
 - `?peds=legacy`: the old sidewalk-graph model, `sim/peds/`, kept for comparison
   and still installed by `simOf` in the traffic suites.
 
-None of the three is the future: the player decided (2026-10-04) that the agents
-engine (`sim/agents/`, `?agents=1`) replaces all of them. Spend no more work on
-them; they are deleted once agents run by default and the player has seen it.
+The three old engines are to be deleted once the player has seen the agents
+run (their decision of 2026-10-04); spend no more work on them.
 
 ## The agents engine (`sim/agents/`)
 
@@ -29,8 +31,8 @@ them; they are deleted once agents run by default and the player has seen it.
   into the bay nose first).
 - `mind.ts`: needs, the places that advertise what they give, and the choice of
   where to go next.
-- `walk.ts`: the agents' walking engine (installed by `?agents=1` instead of
-  People). Lanes on `world/walkways.ts`, SUMO striping, the body following a
+- `walk.ts`: the agents' walking engine (the game's default; `?agents=0`
+  brings back People). Lanes on `world/walkways.ts`, SUMO striping, the body following a
   point ahead, zebras by `crossings/permission.ts`, published to
   `crossingStates` for the cars. The engine object carries `inspect` for
   probes in the page.

@@ -123,7 +123,7 @@ export class CityLife {
   stranded = 0;
   completed = 0;
   /**
-   * Residents as agents (`?agents=1`, `sim/agents`): each car is the resident's
+   * Residents as agents (the default, `sim/agents`): each car is the resident's
    * own, parked in a bay and driven by them, instead of a car made at the kerb
    * for one trip and deleted at the end of it. Null: the old trips.
    */

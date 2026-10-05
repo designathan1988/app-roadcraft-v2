@@ -1,4 +1,4 @@
-// Photographs residents walking as agents (`?agents=1`, `sim/agents/walk.ts`) in the
+// Photographs residents walking as agents (the default, `sim/agents/walk.ts`) in the
 // default town on an evening: the busiest footway, somebody waiting at a zebra's
 // kerb, somebody crossing, a corner, and one walker followed for a while. Headless.
 //
@@ -20,7 +20,7 @@ mkdirSync(out, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1400, height: 860 } });
 await page.addInitScript(() => { window.confirm = () => true; try { localStorage.clear(); localStorage.setItem('roadcraft.sky', 'day'); } catch { /* blocked */ } });
-await page.goto(`${base}/?agents=1`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(window.__roadcraft), null, { timeout: 180_000 });
 await page.evaluate((data) => window.__roadcraft.loadDoc(data), town);
 await page.waitForTimeout(6000);

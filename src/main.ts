@@ -513,20 +513,22 @@ const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camer
 // The renderer starts its asynchronous shader preparation while topology and
 // pedestrian navigation still build. Both finish before the first game frame.
 sim.rebuildTopology();
-// Pedestrians are navmesh agents (the People engine); `?peds=legacy` runs the
-// old sidewalk-graph model instead, for comparison while it is retired.
-// `?people=crowd` runs pedestrians as Detour crowd agents (`sim/people/crowd.ts`).
-// `?agents=1`: residents walk on lanes of the footways (`sim/agents/walk.ts`).
-if (new URLSearchParams(location.search).get('agents') === '1') {
+// The agents (`sim/agents`) by default: every resident is one person all day,
+// walking on lanes of the footways (`sim/agents/walk.ts`) and driving their own
+// car from a real bay; no car or person is made up at the kerb. The old
+// engines stay behind flags until they are retired: `?agents=0` the People
+// engine (navmesh), `?people=crowd` the Detour crowd, `?peds=legacy` the old
+// sidewalk graph.
+const engineFlags = new URLSearchParams(location.search);
+const agentsOn = engineFlags.get('agents') !== '0' && engineFlags.get('people') !== 'crowd' && engineFlags.get('peds') !== 'legacy';
+if (agentsOn) {
   sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine());
-} else if (new URLSearchParams(location.search).get('people') === 'crowd') {
+} else if (engineFlags.get('people') === 'crowd') {
   crowdModule = await import('@sim/people/crowd');
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
-} else if (new URLSearchParams(location.search).get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
-// `?agents=1`: every resident is one person all day with their own car, parked
-// in a real bay and driven by them (`sim/agents`); no car is made at the kerb.
-if (new URLSearchParams(location.search).get('agents') === '1') sim.city.useAgents(true);
+} else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
+if (agentsOn) sim.city.useAgents(true);
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
