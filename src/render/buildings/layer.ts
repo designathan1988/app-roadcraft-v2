@@ -10,6 +10,7 @@ import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
 import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, buildBuildingMeshes, emitChunk } from './buildingMesh';
 import { createFlagLayer } from './flagLayer';
+import { buildSignature, disposeSignature } from './signature';
 import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
 /**
@@ -95,6 +96,10 @@ export function createBuildingLayer(): BuildingLayer {
   // Every flag in the city, waving: one instanced draw (`flagLayer.ts`).
   const flagLayer = createFlagLayer();
   group.add(flagLayer.group);
+  const signatureRoot = new Group();
+  signatureRoot.name = 'signature-buildings';
+  group.add(signatureRoot);
+  const signatures = new Map<BuildingId, { key: string; group: Group }>();
   group.matrixAutoUpdate = false;
   group.updateMatrix();
   let stored: BuildingMeshes | null = null;
@@ -254,6 +259,25 @@ export function createBuildingLayer(): BuildingLayer {
         if (faded) {
           faded.group.renderOrder = 1;
           group.add(faded.group);
+        }
+        // Signature buildings: their bodies, drawn with parts of their own (`signature.ts`).
+        const keep = new Set<BuildingId>();
+        for (const b of solid) {
+          const floor = drawn(b, groundAt, groundKey, pavedAt, naturalAt).signatureFloor;
+          if (floor === undefined) continue;
+          keep.add(b.id);
+          const sigKey = `${JSON.stringify(b)}|${floor}`;
+          const known = signatures.get(b.id);
+          if (known?.key === sigKey) continue;
+          if (known) { signatureRoot.remove(known.group); disposeSignature(known.group); }
+          const built = buildSignature(b, floor);
+          if (built) { signatureRoot.add(built); signatures.set(b.id, { key: sigKey, group: built }); } else signatures.delete(b.id);
+        }
+        for (const [id, known] of signatures) {
+          if (keep.has(id)) continue;
+          signatureRoot.remove(known.group);
+          disposeSignature(known.group);
+          signatures.delete(id);
         }
         index(doc.buildings.all());
         flagLayer.set(shown.flatMap((b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt).flags ?? []));

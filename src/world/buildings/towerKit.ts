@@ -275,5 +275,23 @@ export function makeTower(spec: TowerSpec, rng: Rng): BlueprintBody {
     void tx; void ty;
     body.nextElementId = id;
   }
+  if (SIGNATURES.has(spec.kind)) {
+    // Drawn with parts of its own (`render/buildings/signature.ts`): the blocks
+    // stay for picking, collisions and the lot; the shared dress goes.
+    body.blueprint = `signature:${spec.kind}`;
+    delete body.elements;
+    body.nextElementId = 1;
+    for (const v of body.volumes) delete v.roofDetails;
+    body.cores = [];
+  }
   return body;
+}
+
+/** The kinds drawn by their own parts. */
+const SIGNATURES: ReadonlySet<TowerKind> = new Set(['balconyMid']);
+
+/** The signature a building is drawn with, or null for the shared facade kit. */
+export function signatureKind(b: { readonly blueprint?: string }): TowerKind | null {
+  const kind = b.blueprint?.startsWith('signature:') ? b.blueprint.slice(10) : null;
+  return kind && (TOWER_KINDS as readonly string[]).includes(kind) ? kind as TowerKind : null;
 }
