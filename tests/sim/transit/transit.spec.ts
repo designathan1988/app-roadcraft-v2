@@ -80,6 +80,13 @@ describe('public transport', () => {
     const stations: number[] = [];
     for (const f of [0.15, 0.5, 0.85]) { const r = addStop(t, { mode: 'train', x: x0 + (x1 - x0) * f, y: ym, track: track.id }); t = r.data; stations.push(r.id); }
     t = addLine(t, 'train', stations).data;
+    // A metro line under the town, north to south: its own track, three stations.
+    const xm = (x0 + x1) / 2 + (x1 - x0) * 0.13, y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const metroTrack = addTrack(t, 'metro', [{ x: xm, y: y0 }, { x: xm, y: y1 }]);
+    t = metroTrack.data;
+    const metroStations: number[] = [];
+    for (const f of [0.15, 0.5, 0.85]) { const r = addStop(t, { mode: 'metro', x: xm, y: y0 + (y1 - y0) * f, track: metroTrack.id }); t = r.data; metroStations.push(r.id); }
+    t = addLine(t, 'metro', metroStations).data;
     doc.setTransit(t);
 
     const transit = sim.city.transit;
@@ -87,6 +94,8 @@ describe('public transport', () => {
     // Each bus's stops: the stop it stood at, in turn.
     const busStops = new Map<number, number[]>();
     const trainStops = new Set<string>();
+    const metroStops = new Set<string>();
+    let metroMoved = 0;
     let maxBuses = 0, trainMoved = 0, underTrain = 0, vehUnder = 0, drivers = 0;
     const last = new Map<string, { x: number; y: number }>();
     sim.clock.run(Math.round(600 / DT), () => {
@@ -119,20 +128,25 @@ describe('public transport', () => {
         const before = last.get(train.key);
         if (before) trainMoved = Math.max(trainMoved, Math.hypot(c.x - before.x, c.y - before.y));
         last.set(train.key, { x: c.x, y: c.y });
+        if (train.metro) metroMoved = Math.max(metroMoved, before ? Math.hypot(c.x - before.x, c.y - before.y) : 0);
         if (train.v === 0) {
-          const st = t.stops.find((s) => s.mode === 'train' && Math.hypot(s.x - c.x, s.y - c.y) < m(30));
+          const st = t.stops.find((s) => (s.mode === 'train' || s.mode === 'metro') && Math.hypot(s.x - c.x, s.y - c.y) < m(30));
+          if (st && train.metro) metroStops.add(`${train.key}:${st.id}`);
           if (st) trainStops.add(`${train.key}:${st.id}`);
         }
       }
     });
     const served = [...busStops.values()].map((s) => s.length);
-    console.log(`buses on the road ${maxBuses}, stops served per bus ${JSON.stringify(served)}, train stops ${trainStops.size}, `
+    console.log(`buses on the road ${maxBuses}, stops served per bus ${JSON.stringify(served)}, train stops ${trainStops.size}, metro stops ${metroStops.size}, `
       + `inside a train ${underTrain} (vehicles ${vehUnder}), crossings ${JSON.stringify((transit as unknown as { rails: { crossings: unknown[] }[] }).rails.map((r) => r.crossings.length))}, riders ${transit.riders.size}, boarded ${transit.boarded}, carried ${transit.carried}, on board ${transit.onBoard()}`);
     expect(maxBuses).toBeGreaterThan(0);
     expect(drivers).toBeGreaterThan(0);
     expect(Math.max(0, ...served)).toBeGreaterThanOrEqual(3);
     expect(trainMoved).toBeGreaterThan(0);
     expect(trainStops.size).toBeGreaterThan(0);
+    // The metro runs and stands at its stations.
+    expect(metroMoved).toBeGreaterThan(0);
+    expect(metroStops.size).toBeGreaterThan(0);
     expect(underTrain).toBe(0);
     // Residents got on, and got off where they were going.
     expect(transit.boarded).toBeGreaterThan(0);

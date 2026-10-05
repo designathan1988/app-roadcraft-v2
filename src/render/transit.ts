@@ -35,7 +35,8 @@ const MAX_CARS = 256;
 const CAR = { length: m(17.5), width: m(2.9), height: m(3.6) };
 
 export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => number,
-  pavedAt: (x: number, y: number) => number = () => NaN): TransitMeshes {
+  pavedAt: (x: number, y: number) => number = () => NaN,
+  onRoad: (p: { x: number; y: number }) => boolean = () => false): TransitMeshes {
   const group = new Group();
   group.name = 'transit';
   const t = doc.transit;
@@ -103,11 +104,17 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
       continue;
     }
     if (s.mode === 'metro') {
-      // The way down: a glazed entrance with the sign of the line.
-      glass.push({ x: s.x, y: s.y, z, yaw: 0, length: m(4), width: m(2.6), height: m(2.6) });
-      roofs.push({ x: s.x, y: s.y, z: z + m(2.6), yaw: 0, length: m(4.4), width: m(3), height: m(0.2) });
-      posts.push({ x: s.x + m(2.6), y: s.y, z, yaw: 0, length: m(0.12), width: m(0.12), height: m(3.4) });
-      signs.push({ x: s.x + m(2.6), y: s.y, z: z + m(3.4), yaw: 0, length: m(0.9), width: m(0.9), height: m(0.9), colour });
+      // The way down: a glazed entrance with the sign of the line - off the
+      // carriageway (a station clicked on a street opens onto the nearest
+      // ground beside it, clear of the kerb).
+      const at = s.entrance ? { x: s.entrance.x, y: s.entrance.y, yaw: Math.atan2(s.entrance.y - s.y, s.entrance.x - s.x) + Math.PI / 2 } : entranceSpot(s.x, s.y, onRoad);
+      const ez = groundAt(at.x, at.y);
+      const ex = at.x, ey = at.y, yaw = at.yaw;
+      const ux = Math.cos(yaw), uy = Math.sin(yaw);
+      glass.push({ x: ex, y: ey, z: ez, yaw, length: m(4), width: m(2.6), height: m(2.6) });
+      roofs.push({ x: ex, y: ey, z: ez + m(2.6), yaw, length: m(4.4), width: m(3), height: m(0.2) });
+      posts.push({ x: ex + ux * m(2.6), y: ey + uy * m(2.6), z: ez, yaw, length: m(0.12), width: m(0.12), height: m(3.4) });
+      signs.push({ x: ex + ux * m(2.6), y: ey + uy * m(2.6), z: ez + m(3.4), yaw, length: m(0.9), width: m(0.9), height: m(0.9), colour });
       continue;
     }
     // A bus stop: a shelter on two posts along the street, its glass at the
@@ -214,4 +221,25 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
       for (const mat of materials) mat.dispose();
     },
   };
+}
+
+/**
+ * Where a metro entrance stands for a station at (x, y): the point itself when
+ * it is off the roads, else the nearest point off the carriageway (searched
+ * in rings), a metre and a half further on so it clears the kerb; turned
+ * along the kerb.
+ */
+function entranceSpot(x: number, y: number, onRoad: (p: { x: number; y: number }) => boolean): { x: number; y: number; yaw: number } {
+  if (!onRoad({ x, y })) return { x, y, yaw: 0 };
+  for (let r = m(1); r <= m(30); r += m(1)) {
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      const p = { x: x + Math.cos(a) * r, y: y + Math.sin(a) * r };
+      if (onRoad(p)) continue;
+      const q = { x: x + Math.cos(a) * (r + m(2.5)), y: y + Math.sin(a) * (r + m(2.5)) };
+      if (onRoad(q)) continue;
+      return { x: x + Math.cos(a) * (r + m(2.5)), y: y + Math.sin(a) * (r + m(2.5)), yaw: a + Math.PI / 2 };
+    }
+  }
+  return { x, y, yaw: 0 };
 }

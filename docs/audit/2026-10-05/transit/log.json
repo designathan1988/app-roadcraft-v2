@@ -7,9 +7,20 @@
   "stops": 4
  },
  {
-  "name": "02-lines-map",
-  "stops": 7,
-  "tracks": 1,
+  "name": "02-metro-entrance",
+  "station": {
+   "x": 647.5997786219682,
+   "y": -4.9999397577337845
+  },
+  "entrance": {
+   "x": 647.5997786219682,
+   "y": -16.325
+  }
+ },
+ {
+  "name": "03-lines-map",
+  "stops": 10,
+  "tracks": 2,
   "lines": [
    [
     "bus",
@@ -18,26 +29,30 @@
    [
     "train",
     3
+   ],
+   [
+    "metro",
+    3
    ]
   ]
  },
  {
-  "name": "03-stop-close"
+  "name": "04-stop-close"
  },
  {
-  "name": "04-bus-at-stop",
-  "x": -1050.4322916422084,
-  "y": 13.125,
+  "name": "05-bus-at-stop",
+  "x": -896.25,
+  "y": -56.2644315302457,
   "driver": 471
  },
  {
-  "name": "05-bus-driver-card",
+  "name": "06-bus-driver-card",
   "card": "Morador 471 · adulto · motorista de ônibus\nDirigindo o ônibus da linha 5\nSobrado\nSem carro"
  },
  {
-  "name": "06-train",
-  "x": 1363.3953024703699,
-  "y": -174.99986804401146,
+  "name": "07-train",
+  "x": 1301.0103024703678,
+  "y": -174.99986936147218,
   "heading": -3.141592632471564
  }
 ]

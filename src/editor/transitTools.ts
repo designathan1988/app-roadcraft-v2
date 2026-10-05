@@ -7,19 +7,11 @@ import {
   setLineVehicles, setTerminal,
 } from '@world/transit';
 import { m } from '@world/units';
-import { Level, halfWidth } from '@world/roadTypes';
+import { volumeCorners } from '@world/buildings/geometry';
+import { pointInPolygon } from '@core/polygon';
 
-/** Whether a point is on the carriageway of a road of the network (kerb to kerb). */
-export function onCarriageway(net: Network, p: Vec2): boolean {
-  for (const ribbon of net.ribbons.values()) {
-    const centre = ribbon.centre[Level.Asphalt];
-    if (!centre) continue;
-    const bb = centre.bbox, half = halfWidth(ribbon.road, Level.Asphalt);
-    if (p.x < bb.minX - half || p.x > bb.maxX + half || p.y < bb.minY - half || p.y > bb.maxY + half) continue;
-    if (centre.closestPoint(p).distance < half) return true;
-  }
-  return false;
-}
+export { onCarriageway } from '@world/carriageway';
+import { onCarriageway } from '@world/carriageway';
 
 /**
  * The public transport tool (`world/transit.ts`), as Cities: Skylines II lays
@@ -75,15 +67,23 @@ export class TransitTool {
 
   private get data(): TransitData { return this.deps.doc().transit; }
 
+  /** Whether a point is inside a building (a block built out over its footway). */
+  private built(p: Vec2): boolean {
+    // Every volume, upper floors too: a block may overhang its footway, and the way down would be under it.
+    for (const b of this.deps.doc().buildings.all()) for (const v of b.volumes) if (!v.open && pointInPolygon(p, volumeCorners(b, v, m(1)))) return true;
+    return false;
+  }
+
   /** The footway point by a street nearest `p`, and its road. */
-  private footwayAt(p: Vec2): { x: number; y: number; segment: number } | null {
+  private footwayAt(p: Vec2, reach = STOP_REACH, clear = false): { x: number; y: number; segment: number } | null {
     const net = this.deps.net();
     if (!this.walkways || this.walkwaysFor !== net.revision) { this.walkways = buildWalkways(net); this.walkwaysFor = net.revision; }
     let best: { x: number; y: number; segment: number; d: number } | null = null;
     for (const way of this.walkways.ways) {
       if (way.kind !== 'footway' || way.segment === undefined) continue;
       const hit = way.path.closestPoint(p);
-      if (hit.distance < STOP_REACH && (!best || hit.distance < best.d)) best = { x: hit.point.x, y: hit.point.y, segment: way.segment, d: hit.distance };
+      if (clear && this.built(hit.point)) continue;
+      if (hit.distance < reach && (!best || hit.distance < best.d)) best = { x: hit.point.x, y: hit.point.y, segment: way.segment, d: hit.distance };
     }
     return best;
   }
@@ -140,7 +140,10 @@ export class TransitTool {
         const on = nearestTrack(data, p, PICK * 1.5, this.rail);
         if (!on) { this.deps.hint('hint.transit.noTrack'); return; }
         if (this.stopAt(on, this.rail) !== null) { this.deps.hint('hint.transit.taken'); return; }
-        this.deps.edit(addStop(data, { mode: this.rail, x: on.x, y: on.y, track: on.track }).data);
+        // The metro's way down opens on the footway nearest the station.
+        const way = this.rail === 'metro' ? this.footwayAt(on, m(120), true) : null;
+        this.deps.edit(addStop(data, { mode: this.rail, x: on.x, y: on.y, track: on.track,
+          ...(way ? { entrance: { x: way.x, y: way.y } } : {}) }).data);
         return;
       }
       case 'track': {

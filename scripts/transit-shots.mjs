@@ -82,7 +82,10 @@ const plan = await page.evaluate(async () => {
     if (longestOnRoad([{ x: x0 + (x1 - x0) * 0.1, y }, { x: x0 + (x1 - x0) * 0.9, y }], (q) => onCarriageway(r.net, q)) <= ALONG_ROAD) { yy = y; break; }
   }
   const at = (f) => ({ x: x0 + (x1 - x0) * f, y: yy });
-  return { stops: picked, track: [at(0.1), at(0.9)], stations: [0.2, 0.5, 0.8].map(at) };
+  // The metro, north to south under the town, wherever (streets and all).
+  const xm = x0 + (x1 - x0) * 0.63, y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const mt = (f) => ({ x: xm, y: y0 + (y1 - y0) * f });
+  return { stops: picked, track: [at(0.1), at(0.9)], stations: [0.2, 0.5, 0.8].map(at), metroTrack: [mt(0.1), mt(0.9)], metroStations: [0.2, 0.5, 0.8].map(mt) };
 });
 
 // The Transport tool, from the dock.
@@ -109,6 +112,24 @@ for (const p of plan.stations) await clickAt(p, 6);
 await tab('Criar linha');
 for (const p of plan.stations) await clickAt(p, 3);
 await page.keyboard.press('Enter');
+// The metro: its track, stations, line.
+await tab('Trilho de metrô');
+await clickAt(plan.metroTrack[0], 3);
+await clickAt(plan.metroTrack[1], 3, 2);
+await tab('Estação de metrô');
+for (const p of plan.metroStations) await clickAt(p, 6);
+await tab('Criar linha');
+for (const p of plan.metroStations) await clickAt(p, 3);
+await page.keyboard.press('Enter');
+// The way down of the middle station, on its footway.
+const way = await page.evaluate((p) => {
+  const s = window.__roadcraft.doc.transit.stops.filter((x) => x.mode === 'metro')
+    .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+  return s ? { station: { x: s.x, y: s.y }, entrance: s.entrance ?? null } : null;
+}, plan.metroStations[1]);
+const at = way?.entrance ?? plan.metroStations[1];
+await aim(at.x, at.y, 22);
+await photo('metro-entrance', way ?? {});
 const made = await page.evaluate(() => { const t = window.__roadcraft.doc.transit; return { stops: t.stops.length, tracks: t.tracks.length, lines: t.lines.map((l) => [l.mode, l.stops.length]) }; });
 await aim((plan.stops[0].x + plan.stops[3].x) / 2, (plan.stops[0].y + plan.stops[3].y) / 2, 3);
 await photo('lines-map', made);

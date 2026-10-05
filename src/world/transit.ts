@@ -34,6 +34,8 @@ export interface TransitStop {
   readonly track?: number;
   /** A bus terminal: lines turn here and their buses wait their time. */
   readonly terminal?: boolean;
+  /** A metro station: its way down, on the footway nearest it (the station may lie under a street). */
+  readonly entrance?: { readonly x: number; readonly y: number };
   readonly name?: string;
 }
 
@@ -81,6 +83,8 @@ export function normalizeTransit(raw: unknown): TransitData {
       ...(finite(o['segment']) ? { segment: o['segment'] as SegmentId } : {}),
       ...(finite(o['track']) ? { track: o['track'] } : {}),
       ...(o['terminal'] === true ? { terminal: true } : {}),
+      ...(o['entrance'] && typeof o['entrance'] === 'object' && finite((o['entrance'] as Record<string, unknown>)['x']) && finite((o['entrance'] as Record<string, unknown>)['y'])
+        ? { entrance: { x: (o['entrance'] as { x: number }).x, y: (o['entrance'] as { y: number }).y } } : {}),
       ...(typeof o['name'] === 'string' ? { name: o['name'] } : {}) });
   }
   const tracks: RailTrack[] = [];

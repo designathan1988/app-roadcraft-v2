@@ -523,7 +523,9 @@ export class TransitSim {
   stopAt(id: number): Vec2 | null {
     const s = this.stops.get(id);
     if (!s) return null;
-    return s.mode === 'train' ? this.platforms.get(id) ?? { x: s.x, y: s.y } : { x: s.x, y: s.y };
+    if (s.mode === 'train') return this.platforms.get(id) ?? { x: s.x, y: s.y };
+    // The metro: down its entrance on the footway.
+    return s.entrance ? { x: s.entrance.x, y: s.entrance.y } : { x: s.x, y: s.y };
   }
   private platforms = new Map<number, Vec2>();
 

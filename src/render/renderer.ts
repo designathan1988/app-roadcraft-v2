@@ -1,3 +1,5 @@
+import { pointInPolygon } from '@core/polygon';
+import { onCarriageway } from '@world/carriageway';
 import {
   ACESFilmicToneMapping,
   Box3,
@@ -769,7 +771,10 @@ export function createSceneRenderer(
           world.remove(transit.group);
           transit.dispose();
         }
-        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt);
+        // A metro entrance stands off the streets and out of the buildings.
+        const solids = [...net.doc.buildings.all()].flatMap((b) => solidFootprints(b));
+        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt,
+          (p) => onCarriageway(net, p) || solids.some((ring) => pointInPolygon(p, ring)));
         world.add(transit.group);
         builtTriangles += transit.triangles;
       }
