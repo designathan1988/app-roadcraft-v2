@@ -46,6 +46,8 @@ import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
+import { createCasualties } from './casualties';
+import { impactCasualties } from '@sim/people/people';
 import { createDestruction } from './destruction';
 import { floorHeight } from '@world/buildings/foundation';
 import { GROW_MINUTES } from '@world/landscape';
@@ -342,6 +344,9 @@ export function createSceneRenderer(
   /** Buildings knocked down block by block (`destruction.ts`). */
   const destruction = createDestruction(exhaust, (b) => buildings.chunkOf(b));
   scene.add(destruction.group);
+  /** Blood where blows killed people (`casualties.ts`). */
+  const casualties = createCasualties();
+  scene.add(casualties.group);
   let polePreview: Utilities | null = null;
   /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
   let signs: SignLayer | null = null;
@@ -947,6 +952,11 @@ export function createSceneRenderer(
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
       destruction.update(wallDt);
+      casualties.sync(impactCasualties(sim, wallDt), (x, y) => {
+        // On the paving where there is any (a footway stands over the terrain).
+        const paved = pavedHeightAt(x, y);
+        return Number.isFinite(paved) ? paved : terrain.renderedHeightAt(x, y);
+      });
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.

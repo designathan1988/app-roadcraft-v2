@@ -692,6 +692,14 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       // A fall: over onto the ground in under a second, a few seconds there,
       // and back up (the body tipped about its feet, as a bed lays it down).
       if (ped.gesture?.kind === 'fall') lean = fallLean(ped.gesture.t, ped.gesture.hold ?? 6);
+      // Thrown by a blow: in the air, the body tumbles head over heels and
+      // spins as it flies (`flyStep`), drawn at the height it is at.
+      if (ped.gesture?.air !== undefined) {
+        const tumble = ped.gesture.tumble ?? 0;
+        deck += ped.gesture.air;
+        lean = Math.PI / 2 + Math.sin(tumble * 1.3) * 1.1;
+        heading += tumble;
+      }
       const hash = personHash(ped.id);
       const body = bodyFor({ seed: ped.id, gender: ped.gender, ageClass: ped.ageClass, company: companyOf(ped.party),
         companyId: ped.party.id, hasChild: ped.party.hasChild, x, y });
