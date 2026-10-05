@@ -53,6 +53,8 @@ export type PedGround = 'footway' | 'crossing' | 'open';
 
 export interface PedView {
   readonly id: number;
+  /** Terrified, running from a blow (`impact`): the face screams. */
+  panic?: boolean;
   /** Position and heading at the end of this tick, and at the end of the last. */
   x: number;
   y: number;

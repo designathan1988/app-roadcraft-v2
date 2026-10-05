@@ -729,7 +729,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         mixWeights.push(play.weight);
       }
       emit(batch, mixClips, mixPhases, mixWeights, x, deck, y, gaitHeading(gait), m(scale), lean, ground,
-        lod === 0 ? faceAt(ped.id, time, ped.gesture?.kind, CROWD[index]?.person?.mood) : undefined);
+        lod === 0 ? faceAt(ped.id, time, ped.panic ? 'panic' : ped.gesture?.kind, CROWD[index]?.person?.mood) : undefined);
       {
         let kept = lastPose.get(ped.id);
         if (!kept || kept.palette.length !== batch.width) {

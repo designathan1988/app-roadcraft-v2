@@ -454,13 +454,13 @@ export function createPeopleEngine(): PedestrianEngine {
           // renderer, a few seconds on the ground, up again (`getUp` says
           // where and for how long), then running.
           p.pause = { kind: 'fall', phase: 'hold', t: 0, hold: 9 };
-          p.flee = { x, y, t: 20 };
+          panic(s, p, x, y, 20);
           s.casualties.push({
             x: p.x, y: p.y, heading: p.heading, kind: 'knocked', t: 0, id: p.id,
             gender: p.gender, ageClass: p.ageClass, party: { id: p.party.id, size: p.party.size, archetype: p.party.archetype, hasChild: p.party.hasChild },
             blastX: x, blastY: y, power: 1 - (d - kill) / kill,
           });
-        } else if (d < scare) p.flee = { x, y, t: 8 + (1 - d / scare) * 12 };
+        } else if (d < scare) panic(s, p, x, y, 8 + (1 - d / scare) * 12);
       }
       s.deaths = (s.deaths ?? 0) + dead;
       return dead;
@@ -1003,7 +1003,7 @@ function step(w: SimWorld, s: State): void {
         // junctions close together) used to be asked for one at a time, and
         // whoever was let onto the first stood on the line to the second, in
         // the road, for good.
-        if (mayCross(w, nav, gate.chain, p.mode === 'wait' ? p.waited : 0)) {
+        if ((p.flee && p.flee.t > 0) || mayCross(w, nav, gate.chain, p.mode === 'wait' ? p.waited : 0)) {
           p.mode = 'cross';
           p.crossing = gate.crossing;
           p.granted = gate.chain;
@@ -1138,10 +1138,12 @@ function step(w: SimWorld, s: State): void {
     if (p.flee && p.flee.t > 0) {
       p.flee.t -= DT;
       const fx = p.x - p.flee.x, fy = p.y - p.flee.y, fd = hypot2(fx, fy) || 1;
-      // Running in panic: as fast as a body runs, a little zigzag.
+      // Running in panic, as fast as a body runs, along its route away (or
+      // straight away when it has none), weaving a little.
       const run = p.pace * 3.2 * (0.9 + 0.2 * Math.sin(p.age * 3 + p.id));
-      prefX = (fx / fd) * run;
-      prefY = (fy / fd) * run;
+      const pm = hypot2(prefX, prefY);
+      if (pm > 1e-6) { prefX = (prefX / pm) * run; prefY = (prefY / pm) * run; }
+      else { prefX = (fx / fd) * run; prefY = (fy / fd) * run; }
       p.urgent = Math.max(p.urgent, 0.5);
     } else if (p.flee) delete p.flee;
     // Standing on purpose (at a kerb, in a queue, by its party), it steps
@@ -1260,7 +1262,7 @@ function step(w: SimWorld, s: State): void {
       }
     }
     const [px, py] = keepRight(d.prefX, d.prefY, lines.length > hard);
-    const out = solveOrca(lines, px, py, p.pace * 1.15, VELOCITY, hard);
+    const out = solveOrca(lines, px, py, topSpeed(p), VELOCITY, hard);
     p.nvx = out.x; p.nvy = out.y;
     // What it wanted is what the people around read to make room for it.
     if (p.intent) { p.intent.prefX = d.prefX; p.intent.prefY = d.prefY; }
@@ -1285,7 +1287,7 @@ function step(w: SimWorld, s: State): void {
     turn(p, face);
     // What a body can do: walk forward, shuffle aside, step back - slowly.
     const hx = Math.cos(p.heading), hy = Math.sin(p.heading);
-    const fwd = Math.max(-BACK_MAX, Math.min(p.pace * 1.15, p.nvx * hx + p.nvy * hy));
+    const fwd = Math.max(-BACK_MAX, Math.min(topSpeed(p), p.nvx * hx + p.nvy * hy));
     // A shuffle aside is for standing and strolling; at a walk a body turns.
     const side = sideAt(fwd);
     const lat = Math.max(-side, Math.min(side, -p.nvx * hy + p.nvy * hx));
@@ -1303,7 +1305,7 @@ function step(w: SimWorld, s: State): void {
     // Whatever it carries from before, the body still only walks forward,
     // shuffles aside and steps back as a body can.
     {
-      const f = Math.max(-BACK_MAX, Math.min(p.pace * 1.15, p.vx * hx + p.vy * hy));
+      const f = Math.max(-BACK_MAX, Math.min(topSpeed(p), p.vx * hx + p.vy * hy));
       const sf = sideAt(f);
       const l = Math.max(-sf, Math.min(sf, -p.vx * hy + p.vy * hx));
       p.vx = f * hx - l * hy; p.vy = f * hy + l * hx;
@@ -1524,6 +1526,39 @@ function benchNearby(s: State, p: Person): boolean {
   }
   return false;
 }
+
+/**
+ * Terrified by a blow at (x, y): whatever it was doing - sitting on a bench,
+ * waiting at a kerb, walking with its party, stopped to do something - it
+ * drops it and runs, alone, for walkable ground well away from the blow, by
+ * its route (round walls, across streets without waiting), as fast as it can.
+ */
+function panic(s: State, p: Person, x: number, y: number, seconds: number): void {
+  p.flee = { x, y, t: Math.max(p.flee?.t ?? 0, seconds) };
+  if (p.pause && p.pause.kind !== 'fall') p.pause = null;
+  p.talk = null;
+  standUp(s, p);
+  releaseSlot(p);
+  p.atKerb = false;
+  if (p.mode === 'wait') { p.mode = 'walk'; p.crossing = -1; p.waited = 0; }
+  p.leader = null;
+  const mesh = s.nav?.mesh;
+  if (!mesh) return;
+  const dx = p.x - x, dy = p.y - y, d = hypot2(dx, dy) || 1;
+  // Away, and a little to one side (people scatter, not file out in a line).
+  const turn = (((p.id * 2654435761) >>> 0) % 1000 / 1000 - 0.5) * 0.9;
+  const ux = (dx / d) * Math.cos(turn) - (dy / d) * Math.sin(turn), uy = (dx / d) * Math.sin(turn) + (dy / d) * Math.cos(turn);
+  for (const reach of [m(70), m(45), m(25)]) {
+    const at = mesh.nearest(p.x + ux * reach, p.y + uy * reach, m(30));
+    if (!at || hypot2(at.x - x, at.y - y) < d + m(8)) continue;
+    p.goalX = at.x; p.goalY = at.y; p.goalTri = at.t;
+    p.path = null;
+    break;
+  }
+}
+
+/** The fastest a person goes: a little over their pace, or a flat-out run in panic. */
+const topSpeed = (p: Person): number => (p.flee && p.flee.t > 0 ? p.pace * 3.4 : p.pace * 1.15);
 
 /** Leaves the bench seat it holds, if any. */
 function standUp(s: State, p: Person): void {
@@ -1855,6 +1890,7 @@ function publishViews(w: SimWorld, s: State): void {
       }
     } else { p.stoodTogether = 0; p.talk = null; }
     v.gesture = p.sit && p.sit.phase !== 'approach' ? p.sit.gesture : p.pause ?? p.talk;
+    v.panic = p.flee !== undefined && p.flee.t > 0;
     // A couple walking side by side, close: hand in hand (the hand on the
     // partner's side), worked out from the follower for both.
     v.hand = undefined;

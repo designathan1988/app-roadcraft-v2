@@ -94,6 +94,18 @@ export function faceAt(seed: number, time: number, activity?: string, mood = 0):
     if (personHash(hash ^ (syllable * 7)) % 5 === 0) add('faceBrowRaise', 0.4 * open);
   }
   if (act?.laugh) add('mouthOpen', 0.7 * (0.5 + 0.5 * Math.sin(time * 9 + (hash & 63))));
+  if (activity === 'panic') {
+    // Terror (FACS fear, AU1+2+4+5+20+26): brows up and drawn together, eyes
+    // wide, lips stretched back, the jaw dropped - screaming, a breath between
+    // screams.
+    for (const k of Object.keys(out)) if (k !== 'lookLeft' && k !== 'lookRight') delete out[k];
+    add('faceSurprise', 1);
+    add('faceSadness', 0.45);
+    const scream = (time * 0.7 + (hash & 255) / 255) % 1;
+    const open = scream < 0.75 ? 0.75 + 0.25 * Math.sin(time * 23 + hash) : 0.25;
+    add('mouthOpen', open);
+    add('mouthSpread', 0.7);
+  }
   return out;
 }
 
