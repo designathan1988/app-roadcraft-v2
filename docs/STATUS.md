@@ -307,6 +307,26 @@ and they have seen it.
 
 ## Open, by area
 
+- **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
+  game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
+  coefficients summed on the GPU, joints follow the shape, clothes/hair as
+  separate instanced pieces (`src/render/people/proceduralCrowd.ts`). Bodies,
+  limbs and clothes are fine. **Hair grown from scratch
+  (`src/people/hair/procedural.ts`) is NOT good enough close up** after many
+  rounds (2026-10-05): cards from guide curves with a painted strand atlas
+  read as shingles/planks, the hairline as a hard visor, the volume flat. What
+  was learned: tuning the guide growth does not fix it; game-quality card
+  hair is a groom of thousands of strands RENDERED into the card textures
+  (Unreal Hair Card Generator, Houdini Hair Card Texture), and cards laid by
+  clumps of that groom - not one texture painted for all. Next attempt
+  should: (1) grow a dense strand groom per style (as Mirage Mane does:
+  Fibonacci roots, regional lengths, clump to guides), (2) bake it into
+  per-style card atlases (coverage, depth, root-tip, ID) offline in a script,
+  (3) only then cards. The player rejected curly/afro hair and women with
+  shaved-looking sides; stock items audited (see `spec.ts` comment).
+  After hair: the player's full list for faces (eyes, lids, lashes, brows,
+  skin, mouth, teeth, expressions, variety) is open.
+
 - **Crowd engine (`?people=crowd`) after the grid:** the furnishing zone now
   starts 36 cm from the kerb FACE whatever the stone's width (`section.ts`
   `EDGE_ZONE`, NACTO's edge zone), and the scenarios' fixed places follow the
