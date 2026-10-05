@@ -51,6 +51,12 @@ const SINK = 0.025;
 export type AgeBand = 'child' | 'young' | 'adult' | 'senior';
 const BAND_YEARS: Readonly<Record<AgeBand, number>> = { child: 9, young: 22, adult: 42, senior: 72 };
 
+/** A class's own body: the middle of every slider at the band's age. */
+export function classBase(sex: WalkSex, band: AgeBand): MacroParams {
+  return { ...DEFAULT_MACRO, gender: sex === 'female' ? 0 : 1, age: ageFromYears(BAND_YEARS[band]),
+    muscle: 0.5, weight: 0.5, height: 0.5, proportions: 0.5, african: 1 / 3, asian: 1 / 3, caucasian: 1 / 3 };
+}
+
 export function bandOf(years: number): AgeBand {
   return years < 14 ? 'child' : years < 32 ? 'young' : years < 58 ? 'adult' : 'senior';
 }
@@ -83,6 +89,11 @@ interface BodyClass {
   readonly height: number;
   readonly clips: { walk: ClipFrames; idle: ClipFrames };
   readonly bones: number;
+  /** Bones parents first, and each one's parent (-1 for the root). */
+  readonly order: readonly number[];
+  readonly parent: Int16Array;
+  /** Each bone's head per unit of each shape coefficient, metres: [bone][k][xyz]. */
+  readonly jointBasis: Float32Array;
   readonly uniforms: {
     procBones: { value: DataTexture };
     procCoef: { value: DataTexture };
@@ -112,6 +123,8 @@ export interface ProceduralPerson {
   /** Metres. */
   readonly height: number;
   readonly items: readonly string[];
+  /** How far each of their joints is from the class body's, metres (`jointBasis`). */
+  readonly joints: Float32Array;
   /** Where they stand and face; what they play. Set by the caller each frame. */
   readonly matrix: Matrix4;
   clip: 'walk' | 'idle';
@@ -313,6 +326,8 @@ export interface ProceduralCrowd {
   /** Ground one walk cycle covers at the person's scale, metres. */
   stride(person: ProceduralPerson): number;
   stats(): ProceduralStats;
+  /** Diagnosis: the shape the GPU sums for a person at base vertices, against the rig's exact one, metres. */
+  probe(person: ProceduralPerson, vertices: readonly number[]): { v: number; linear: number[]; exact: number[] }[];
   readonly people: readonly ProceduralPerson[];
 }
 
@@ -332,6 +347,38 @@ export function createProceduralCrowd(): ProceduralCrowd {
   const textures = new Map<string, Promise<Texture | null>>();
   const matrix = new Matrix4();
   const scaled = new Matrix4();
+
+  /**
+   * The class's pose on this person's own joints. A skin matrix M = W B^-1
+   * (W the bone's world, B its bind). Their bind is the class's moved by d,
+   * B' = T(d) B, with the same turns; holding each bone's turn from the
+   * clip and its length from their body, W' = T(delta) W with
+   * delta = delta(parent) + R(M parent) (d - d parent) - so
+   * M' = T(delta) M T(-d): a translation per bone, parents first.
+   */
+  const shift = new Float32Array(512 * 3);
+  const refit = (cls: BodyClass, person: ProceduralPerson, at: number): void => {
+    const m = cls.palette, d = person.joints;
+    for (const i of cls.order) {
+      const p = cls.parent[i]!;
+      let x = d[i * 3]!, y = d[i * 3 + 1]!, z = d[i * 3 + 2]!;
+      if (p >= 0) {
+        const q = at + p * SKIN_BONE_FLOATS;
+        const ex = x - d[p * 3]!, ey = y - d[p * 3 + 1]!, ez = z - d[p * 3 + 2]!;
+        x = shift[p * 3]! + m[q]! * ex + m[q + 4]! * ey + m[q + 8]! * ez;
+        y = shift[p * 3 + 1]! + m[q + 1]! * ex + m[q + 5]! * ey + m[q + 9]! * ez;
+        z = shift[p * 3 + 2]! + m[q + 2]! * ex + m[q + 6]! * ey + m[q + 10]! * ez;
+      }
+      shift[i * 3] = x; shift[i * 3 + 1] = y; shift[i * 3 + 2] = z;
+    }
+    for (let i = 0; i < cls.bones; i++) {
+      const o = at + i * SKIN_BONE_FLOATS;
+      const dx = d[i * 3]!, dy = d[i * 3 + 1]!, dz = d[i * 3 + 2]!;
+      m[o + 12] = m[o + 12]! + shift[i * 3]! - (m[o]! * dx + m[o + 4]! * dy + m[o + 8]! * dz);
+      m[o + 13] = m[o + 13]! + shift[i * 3 + 1]! - (m[o + 1]! * dx + m[o + 5]! * dy + m[o + 9]! * dz);
+      m[o + 14] = m[o + 14]! + shift[i * 3 + 2]! - (m[o + 2]! * dx + m[o + 6]! * dy + m[o + 10]! * dz);
+    }
+  };
 
   const setup = async (): Promise<{ assets: PeopleAssets; morpher: Morpher }> => {
     assets ??= await loadPeopleAssets();
@@ -354,8 +401,7 @@ export function createProceduralCrowd(): ProceduralCrowd {
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
     const { assets: a, morpher: mo } = await setup();
     const started = performance.now();
-    const base: MacroParams = { ...DEFAULT_MACRO, gender: sex === 'female' ? 0 : 1, age: ageFromYears(BAND_YEARS[band]),
-      muscle: 0.5, weight: 0.5, height: 0.5, proportions: 0.5, african: 1 / 3, asian: 1 / 3, caucasian: 1 / 3 };
+    const base = classBase(sex, band);
     const shape = mo.shape(base);
     const eyes = await item('eyes');
     // Only the eyes on it: no outfit, hair, brows, lashes or hat.
@@ -410,6 +456,28 @@ export function createProceduralCrowd(): ProceduralCrowd {
     const walk = await bakeWalk(bakeRig, sex);
     const idle = await bakeLibraryClip(bakeRig, library.idle, undefined, 'idle');
     const bones = rig.mesh.skeleton.bones.length;
+    // Joints follow the shape: a MakeHuman bone's head is the mean of a
+    // group of base vertices (its joint cube, `personRig.headOf`), so its
+    // move per coefficient is the mean of theirs in the shape basis.
+    const skeletonBones = rig.mesh.skeleton.bones;
+    const parent = new Int16Array(bones).fill(-1);
+    skeletonBones.forEach((bone, i) => { parent[i] = skeletonBones.indexOf(bone.parent as typeof bone); });
+    const order: number[] = [];
+    const visit = (i: number): void => { order.push(i); for (let j = 0; j < bones; j++) if (parent[j] === i) visit(j); };
+    for (let i = 0; i < bones; i++) if (parent[i] === -1) visit(i);
+    const jointBasis = new Float32Array(bones * SHAPES * 3);
+    a.skeleton.bones.forEach((bone, i) => {
+      const verts: number[] = [];
+      if (bone.head.strategy === 'CUBE' && bone.head.cubeName) {
+        for (const [x0, x1] of a.mesh.vertexGroups[bone.head.cubeName] ?? []) for (let v = x0; v <= x1; v++) verts.push(v);
+      } else verts.push(...(bone.head.vertexIndices ?? []));
+      if (!verts.length || i >= bones) return;
+      for (let k = 0; k < SHAPES; k++) for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (const v of verts) sum += shapePixels[(v * SHAPES + k) * 4 + c]!;
+        jointBasis[(i * SHAPES + k) * 3 + c] = sum / verts.length;
+      }
+    });
     const width = bones * SKIN_BONE_FLOATS;
     const palette = new Float32Array(width * ROW_START);
     const coef = new Float32Array(SHAPES * ROW_START);
@@ -419,7 +487,7 @@ export function createProceduralCrowd(): ProceduralCrowd {
     bakeMs += performance.now() - started;
     const cls: BodyClass = {
       key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
-      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle }, bones,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle }, bones, order, parent, jointBasis,
       uniforms: {
         procBones: { value: rowTexture(palette, width, ROW_START) },
         procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
@@ -583,8 +651,13 @@ export function createProceduralCrowd(): ProceduralCrowd {
       const scale = tall / Math.max(1e-3, level0);
       const person: ProceduralPerson = {
         spec, band, sex, row, scale, height: tall / 10, items: worn.map(([nm]) => nm),
-        matrix: new Matrix4(), clip: 'walk', phase: 0,
+        matrix: new Matrix4(), clip: 'walk', phase: 0, joints: new Float32Array(cls.bones * 3),
       };
+      for (let i = 0; i < cls.bones; i++) for (let c = 0; c < 3; c++) {
+        let d = 0;
+        for (let k = 0; k < SHAPES; k++) d += cls.coef[row * SHAPES + k]! * cls.jointBasis[(i * SHAPES + k) * 3 + c]!;
+        person.joints[i * 3 + c] = d;
+      }
       const covers = worn.filter(([, it]) => COVERING.has(it.pack.kind) && !it.transparent)
         .map(([nm, it]) => coverRow(cls, nm, it)).slice(0, 4);
       place(skin, person, skinChoice(spec).tint, covers);
@@ -612,6 +685,7 @@ export function createProceduralCrowd(): ProceduralCrowd {
           const at = person.row * width;
           cls.palette.fill(0, at, at + width);
           blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
+          refit(cls, person, at);
         }
         cls.uniforms.procBones.value.needsUpdate = true;
         for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
@@ -643,6 +717,19 @@ export function createProceduralCrowd(): ProceduralCrowd {
     stride(person) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
       return (cls?.clips.walk.stride ?? 1.4) * person.scale;
+    },
+    probe(person, vertices) {
+      const cls = ready.find((c) => c.sex === person.sex && c.band === person.band)!;
+      const exact = cls.rig.deltas!(morpher!.shape({ ...person.spec.body, height: cls.base.height }));
+      const px = cls.uniforms.procShape.value.image.data as Float32Array;
+      return vertices.map((v) => {
+        const linear = [0, 0, 0];
+        for (let k = 0; k < SHAPES; k++) {
+          const c = cls.coef[person.row * SHAPES + k]!;
+          for (let a = 0; a < 3; a++) linear[a]! += c * px[(v * SHAPES + k) * 4 + a]!;
+        }
+        return { v, linear, exact: [exact[v * 3]!, exact[v * 3 + 1]!, exact[v * 3 + 2]!] };
+      });
     },
     stats() {
       let pieces = 0, draws = 0, vertices = 0, textureBytes = 0;

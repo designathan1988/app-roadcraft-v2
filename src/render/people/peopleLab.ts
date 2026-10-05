@@ -5,7 +5,7 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { randomPerson } from '@people/spec';
 import { yearsFromAge } from '@people/body/macro';
-import { createProceduralCrowd, type ProceduralPerson } from './proceduralCrowd';
+import { classBase, createProceduralCrowd, type AgeBand, type ProceduralPerson } from './proceduralCrowd';
 
 /**
  * The procedural people's test bench (`people-lab.html`): a line-up to look at
@@ -59,6 +59,7 @@ const crowd = createProceduralCrowd();
 scene.add(crowd.group);
 
 const LINEUP = 10;
+const BASES = new URLSearchParams(location.search).has('bases');
 interface Walker { person: ProceduralPerson; s: number; lane: number; speed: number }
 const walkers: Walker[] = [];
 let walking = true;
@@ -70,10 +71,15 @@ const statusEl = document.getElementById('status')!;
 const statsEl = document.getElementById('stats')!;
 const infoEl = document.getElementById('info')!;
 
-function loopPoint(s: number, lane: number): { x: number; z: number; heading: number } {
-  // A rounded rectangle round the line-up, `lane` metres out.
+function loopLength(lane: number): number {
   const rx = 7 + lane, rz = 5 + lane;
-  const t = s / (2 * Math.PI * Math.sqrt((rx * rx + rz * rz) / 2));
+  return 2 * Math.PI * Math.sqrt((rx * rx + rz * rz) / 2);
+}
+
+function loopPoint(s: number, lane: number): { x: number; z: number; heading: number } {
+  // An ellipse round the line-up, `lane` metres out.
+  const rx = 7 + lane, rz = 5 + lane;
+  const t = s / loopLength(lane);
   const a = t * Math.PI * 2;
   const x = Math.cos(a) * rx, z = Math.sin(a) * rz - 1;
   // Facing along the path: the derivative of the ellipse.
@@ -88,7 +94,13 @@ async function populate(): Promise<void> {
   const started = performance.now();
   for (let i = 0; i < wanted; i++) {
     if (mine !== generation) return;
-    const spec = randomPerson(i + 1, seed * 7919 + i * 104729);
+    let spec = randomPerson(i + 1, seed * 7919 + i * 104729);
+    // ?bases: the line-up is the eight class bodies themselves, unshaped.
+    if (BASES && i < 8) {
+      const sex = i % 2 ? 'male' : 'female';
+      const band = (['child', 'young', 'adult', 'senior'] as AgeBand[])[i >> 1]!;
+      spec = { ...spec, body: { ...spec.body, ...classBase(sex, band) } };
+    }
     statusEl.textContent = `Gerando ${i + 1} de ${wanted}...`;
     const person = await crowd.add(spec).catch(() => null);
     if (mine !== generation || !person) return;
@@ -128,17 +140,28 @@ function frame(): void {
   for (const person of crowd.people) {
     if (person.clip === 'idle') person.phase += dt / crowd.clipDuration(person);
   }
+  // Walking in file: on each lane, whoever is close behind someone stops
+  // and waits (each walks at their own stride, so a grown-up caught up
+  // with a child and walked through them).
+  const ahead = new Map<Walker, number>();
+  for (let lane = 0; lane < 4; lane++) {
+    const file = walkers.filter((w) => w.lane === lane * 1.1).sort((a, b) => a.s - b.s);
+    file.forEach((w, i) => {
+      const next = file[(i + 1) % file.length];
+      if (!next || next === w) return;
+      const loop = loopLength(w.lane);
+      ahead.set(w, ((next.s - w.s) % loop + loop) % loop);
+    });
+  }
   for (const w of walkers) {
     const duration = crowd.clipDuration(w.person);
-    if (walking) {
+    const blocked = (ahead.get(w) ?? Infinity) < 1.1;
+    if (walking && !blocked) {
       w.speed = crowd.stride(w.person) / duration;
       w.s += w.speed * dt;
-      w.person.clip = 'walk';
-      w.person.phase += dt / duration;
-    } else {
-      w.person.clip = 'idle';
-      w.person.phase += dt / duration;
-    }
+      if (w.person.clip !== 'walk') { w.person.clip = 'walk'; w.person.phase = 0; }
+    } else if (w.person.clip !== 'idle') { w.person.clip = 'idle'; w.person.phase = 0; }
+    w.person.phase += dt / crowd.clipDuration(w.person);
     const p = loopPoint(w.s, w.lane);
     w.person.matrix.makeRotationY(p.heading).setPosition(p.x, 0, p.z);
   }
