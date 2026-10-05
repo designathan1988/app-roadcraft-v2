@@ -76,10 +76,12 @@ and they have seen it.
   16 (each lone street now one). Measured: `walk.spec.ts` third test (a
   street with traffic at the default: 18 crossings, 0 inside a vehicle, all
   across).
-- **Not yet:** car owners without a bay near home walk; in agent mode nobody but
-  the residents walks (no passers-by) and nobody boards a bus (the walk
-  engine's bridge has no stops yet); roads that do not touch any other road
-  are still separate places for walkers (nobody walks over open ground).
+- **By design, not missing:** every person on the streets is a resident (no
+  passers-by made up); car owners without a bay near home walk; with
+  residents there is no generated traffic, so no buses run (the game has no
+  bus lines: public transport for the agents would be a new system: lines,
+  stops, the choice to ride); roads that touch no other road stay separate
+  places for walkers (nobody walks over open ground).
 - **Slice 5, LIVE by default** (2026-10-05): the game runs the agents with no
   flag; `?agents=0` (or `?people=crowd`, `?peds=legacy`) brings back the old
   engines. Photographed with no flag: `docs/audit/2026-10-05/default/`.
@@ -129,7 +131,7 @@ and they have seen it.
   7.3), closed at both ends of a run, a division line between every two bays.
   Chosen in the road tool (none / both sides / right / left) and per segment
   in the inspector. Old maps' 45/90 degree values load as parallel.
-  Agents (`?agents=1`) park in street bays too (`sim/agents/parking.ts`
+  Agents park in street bays too (`sim/agents/parking.ts`
   `kerbBays`): the car stops beside and ahead of the bay, backs in, and drives
   forward out (`manoeuvre.ts`); `tests/sim/agents/kerbParking.spec.ts`.
 - **Nothing is generated on streets or terrain (ef567e3, the player's order of
