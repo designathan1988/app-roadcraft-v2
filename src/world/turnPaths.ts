@@ -6,6 +6,7 @@ import type { NodeId } from './ids';
 import type { Network } from './network';
 import { Level } from './roadTypes';
 import { BODY_ENVELOPE, HEAVY, type BodyClass } from './conflictPoints';
+import { m } from './units';
 import { HEADING_CHORD, chordHeading } from './heading';
 
 /**
@@ -38,6 +39,8 @@ const SQUARER = [0.72, 0.8] as const;
 const STEPS = 48;
 /** Body-centre spacing of the containment sweep, world units. */
 const SWEEP_STEP = 1.5;
+/** The least gap between two bodies following one another on a turn. */
+const FOLLOW_GAP = m(1);
 
 type Poly = readonly Vec2[];
 interface Box { minX: number; minY: number; maxX: number; maxY: number }
@@ -183,6 +186,10 @@ function sweep(surface: JunctionSurface, inCentre: Polyline, path: Polyline, out
       : c <= path.length ? path.sampleAt(c)
         : outCentre.sampleAt(Math.min(outCentre.length, c - path.length));
   let depth = 0;
+  // Bodies already swept along the turn, to find a path that folds back on
+  // itself: two of this size following one another on it, a car length and
+  // a gap apart along it, would stand inside each other (an acute hairpin).
+  const behind: { c: number; body: Rect }[] = [];
   for (let c = -half; c <= path.length + half; c += SWEEP_STEP) {
     const at = frameAt(c);
     const f = { p: at.p, t: chordHeading(frameAt(c - HEADING_CHORD).p, frameAt(c + HEADING_CHORD).p, at.t) };
@@ -199,6 +206,10 @@ function sweep(surface: JunctionSurface, inCentre: Polyline, path: Polyline, out
     // own lane, and a car beside it in the next lane is lane discipline.
     if (c < 0) continue;
     const body = rect(f.p, f.t, length, width);
+    for (const earlier of behind) {
+      if (c - earlier.c >= length + FOLLOW_GAP && overlap(body, earlier.body)) return null;
+    }
+    behind.push({ c, body });
     for (const lane of waiting) {
       for (let i = lane.length - 1; i >= 0; i--) {
         if (!overlap(body, lane[i]!)) continue;

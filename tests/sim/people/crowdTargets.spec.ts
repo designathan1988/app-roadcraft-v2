@@ -23,9 +23,12 @@ it('does not repeatedly request the same projected waiting target', () => {
     ...p, ...(p.leader !== undefined ? { leader: ids[p.leader]! } : {}),
   })!);
   for (let tick = 0; tick <= Math.round(26.1 / DT); tick++) step(sim, { traffic: false, pedestrians: true });
-  const before = inspectCrowd(sim).find(p => p.id === ids[28])!;
-  expect(before.mode).toBe('wait');
-  expect(before.aside).toBeNull();
+  // A person waiting at its place, not stepping aside: the first such one.
+  // (It was person 28 by index, which pinned the test to one trajectory of a
+  // chaotic crowd; any change of street geometry moves who stands where.)
+  const waiting = inspectCrowd(sim).filter(p => ids.includes(p.id) && p.mode === 'wait' && p.aside === null);
+  expect(waiting.length).toBeGreaterThan(0);
+  const before = waiting[0]!;
   for (let tick = 0; tick < 24; tick++) step(sim, { traffic: false, pedestrians: true });
   const after = inspectCrowd(sim).find(p => p.id === before.id)!;
   expect(after.target).toEqual(before.target);

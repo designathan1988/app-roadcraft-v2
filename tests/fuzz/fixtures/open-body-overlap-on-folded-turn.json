@@ -70,6 +70,5 @@
    },
    "structure": "ground"
   }
- ],
- "open": "A connector may fold back across its own earlier arc. Two vehicles with a legal arc gap then meet side-on; the movement's body-size clearance check only tests the swept body against the road surface. The route geometry and admission policy need a shared physical occupancy rule before this category can be closed."
+ ]
 }

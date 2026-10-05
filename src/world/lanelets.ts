@@ -244,9 +244,24 @@ export class LaneletGraph {
         // same way, and never lets one end reach past the other.
         const wanted = startTrim + endTrim;
         const room = Math.max(0, total - MIN_RIBBON);
-        const k = wanted > room && wanted > 0 ? room / wanted : 1;
-        const s0 = startTrim * k;
-        const s1 = Math.max(s0 + MIN_RIBBON, total - endTrim * k);
+        // What gives way is the approach zones, never the mouths: a lane that
+        // ended inside a junction's mouth would start its connector on the
+        // plate (the fuzzer's `trimOrder`). Only where the mouths alone do not
+        // fit are both ends scaled whole, as before.
+        const mouthStart = Math.min(startTrim, net.mouthDistance(segId, from));
+        const mouthEnd = Math.min(endTrim, net.mouthDistance(segId, to));
+        const approach = wanted - mouthStart - mouthEnd;
+        const spare = room - mouthStart - mouthEnd;
+        let s0: number, s1: number;
+        if (wanted > room && spare >= 0 && approach > 0) {
+          const k = spare / approach;
+          s0 = mouthStart + (startTrim - mouthStart) * k;
+          s1 = Math.max(s0 + MIN_RIBBON, total - mouthEnd - (endTrim - mouthEnd) * k);
+        } else {
+          const k = wanted > room && wanted > 0 ? room / wanted : 1;
+          s0 = startTrim * k;
+          s1 = Math.max(s0 + MIN_RIBBON, total - endTrim * k);
+        }
         const centreTrimmed = full.sub(s0, Math.min(s1, total));
 
         // EVERYTHING of the document this lanelet — and any junction it runs

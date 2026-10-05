@@ -1,3 +1,4 @@
+import { m } from './units';
 /**
  * The approach zone: what sits between a road and a junction mouth.
  *
@@ -20,8 +21,14 @@
 
 /** Clear space between the junction mouth and the near edge of the zebra. */
 export const CROSSWALK_SETBACK = 3.0;
-/** Depth of the zebra along the direction of travel. */
-export const CROSSWALK_DEPTH = 4.4;
+/**
+ * Depth of the zebra along the direction of travel: 3 m, the Brazilian
+ * minimum for an urban crossing (CONTRAN Res. 236/2007, MBST vol. IV, FTP-1:
+ * at least 3.00 m, 4.00 m recommended) and a whole metre of the grid. It was
+ * 1.76 m, under any standard: two groups released onto it from both kerbs met
+ * head on half a metre apart.
+ */
+export const CROSSWALK_DEPTH = m(3);
 /** Clear space between the far edge of the zebra and the stop line. */
 export const STOP_BAR_SETBACK = 1.6;
 /** Painted width of the stop bar itself. */

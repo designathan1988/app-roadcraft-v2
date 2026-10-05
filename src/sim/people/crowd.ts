@@ -835,9 +835,13 @@ function laneTarget(s: State, p: Walker, path: readonly { x: number; y: number; 
     if (len < left) { left -= len; continue; }
     const ux = (b.x - a.x) / len, uy = (b.z - a.z) / len;
     const at = { x: a.x + ux * left, y: a.z + uy * left, h: a.y + (b.y - a.y) * left / len };
-    // The right of the way walked is (uy, -ux).
-    const aside = { x: at.x + uy * RIGHT, y: at.y - ux * RIGHT, h: at.h };
-    const on = onMesh(s, aside, RIGHT);
+    // The right of the way walked is (uy, -ux). On a zebra, crossed both ways
+    // at once when the light changes, each direction keeps a whole body to the
+    // right of the line, so the two lanes pass shoulder clear of shoulder
+    // (lane formation); on a footway the lanes form looser.
+    const right = p.onZebra || p.mode === 'cross' ? Math.max(RIGHT, 2 * AGENT_RADIUS) : RIGHT;
+    const aside = { x: at.x + uy * right, y: at.y - ux * right, h: at.h };
+    const on = onMesh(s, aside, right);
     // Kept on the ground; where the right is wall, the way itself.
     const lane = on ?? at;
     return pastStanding(s, p, lane) ?? lane;

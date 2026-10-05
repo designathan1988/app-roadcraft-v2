@@ -347,19 +347,51 @@ export class Network {
       }
     }
 
+    // The part of a mouth no length budget may take: as far out as the
+    // carriageway's edges of two neighbouring legs still cross (`Corner.x`).
+    // Nearer the node than that the two legs are one another's carriageway,
+    // and a link cut there has the traffic of the next leg driving through it.
+    const hard = new Map<SegmentId, { a: number; b: number }>();
+    for (const [node, byLevel] of solved) {
+      const junction = byLevel.get(Level.Asphalt);
+      if (!junction || junction.transition) continue;
+      for (const corner of junction.corners) {
+        const x = corner.x;
+        if (!x || corner.psi >= Math.PI / 2) continue;
+        for (const index of [corner.i, corner.j]) {
+          const leg = junction.legs[index];
+          const seg = leg ? this.doc.segment(leg.seg) : undefined;
+          if (!leg || !seg) continue;
+          const along = (x.x - leg.origin.x) * leg.dir.x + (x.y - leg.origin.y) * leg.dir.y;
+          if (!(along > 0)) continue;
+          const h = hard.get(leg.seg) ?? { a: 0, b: 0 };
+          if (seg.a === node) h.a = Math.max(h.a, along); else h.b = Math.max(h.b, along);
+          hard.set(leg.seg, h);
+        }
+      }
+    }
+
     const scale = new Map<number, number>();
 
     for (const id of this.doc.segments.keys()) {
       const t = demand.get(id) ?? { a: {}, b: {} };
       const length = this.polylines.get(this.doc, id).length;
+      const floor = hard.get(id);
       let worst = 1;
 
       for (const level of SURFACE_LEVELS) {
         const a = t.a[level] ?? 0;
         const b = t.b[level] ?? 0;
         const clamped = clampSegmentTrims({ a, b, length });
-        t.a[level] = clamped.a;
-        t.b[level] = clamped.b;
+        let ca = clamped.a, cb = clamped.b;
+        if (floor && clamped.scale < 1) {
+          // The budget may squeeze the kerb returns, never the overlap itself,
+          // as long as the segment can hold both ends' overlaps at all.
+          const fa = Math.min(a, floor.a), fb = Math.min(b, floor.b);
+          if (fa + fb <= length - MIN_RIBBON) { ca = Math.max(ca, fa); cb = Math.max(cb, fb); }
+        }
+        t.a[level] = ca;
+        t.b[level] = cb;
         if (clamped.scale < worst) worst = clamped.scale;
       }
 
@@ -527,6 +559,19 @@ export class Network {
     return n?.crossing && n.incident.length === 2 ? n.crossing : undefined;
   }
 
+  /** Whether `seg` is one of two one-way pieces carrying one flow through a priority node. */
+  private circulating(seg: SegmentId, node: NodeId): boolean {
+    const n = this.doc.node(node);
+    if (!n || n.control !== 'priority') return false;
+    const arrives = (s: { a: NodeId; b: NodeId; direction: string }): boolean =>
+      (s.direction === 'aToB' && s.b === node) || (s.direction === 'bToA' && s.a === node);
+    const leaves = (s: { a: NodeId; b: NodeId; direction: string }): boolean =>
+      (s.direction === 'aToB' && s.a === node) || (s.direction === 'bToA' && s.b === node);
+    const oneWay = n.incident.map((id) => this.doc.segment(id)).filter((s) => !!s && s.direction !== 'both');
+    if (!oneWay.some((s) => s!.id === seg)) return false;
+    return oneWay.filter((s) => arrives(s!)).length === 1 && oneWay.filter((s) => leaves(s!)).length === 1;
+  }
+
   private isJunction(node: NodeId): boolean {
     return (this.doc.node(node)?.incident.length ?? 0) >= 3;
   }
@@ -563,6 +608,9 @@ export class Network {
     // Nothing stops where a road merely carries on: the link runs to the mouth
     // and the lanes continue across the node.
     if (this.continues(node)) return mouth;
+    // Nor where it circulates through a priority node (a roundabout's ring):
+    // it has the way, and no crossing lies across it.
+    if (this.circulating(seg, node)) return mouth;
     const length = this.polylines.get(this.doc, seg).length;
     // Never let the approach zone eat the whole segment.
     const capped = Math.min(stopLine(mouth), length * STOP_LINE_CAP);
@@ -602,6 +650,10 @@ export class Network {
     // centre half a crosswalk back from the node, on the piece it names.
     const placed = this.midBlockCrossing(node);
     if (placed) return placed.segment === seg ? CROSSWALK_DEPTH / 2 : 0;
+    // No zebra across a circulating stream: at a priority node where two
+    // one-way pieces carry one flow on (one arrives, the other leaves - the
+    // ring of a roundabout), people cross the arms, never the ring.
+    if (this.circulating(seg, node)) return 0;
     if (this.doc.node(node)?.incident.some((id) => {
       const kind = this.doc.segment(id)?.type;
       return kind !== undefined &&
