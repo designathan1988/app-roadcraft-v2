@@ -127,6 +127,15 @@ export function personGender(person: number): PersonGender {
 }
 
 /**
+ * Whether a car's manoeuvre takes it across a footway: out of or into a lot.
+ * Into or out of a bay along the kerb it stays on the carriageway.
+ */
+export function crossesFootway(t: CarTrip): boolean {
+  const bay = t.phase === 'park' ? t.target : t.car.bay;
+  return !bay?.kerb;
+}
+
+/**
  * The ground a car off the road will cover over the rest of its manoeuvre:
  * its body (three discs along its length, `margin` wider) at every metre of
  * the way from where it is to the end. Empty with no manoeuvre under way.
@@ -533,6 +542,9 @@ export class OwnCars {
    * manoeuvre (`carSweep`): then it takes that ground for itself (`reserved`).
    */
   private sweepEmpty(w: SimWorld, t: CarTrip): boolean {
+    // A car into or out of a bay along the kerb stays on the carriageway: it
+    // minds the people crossing it (a zebra by the bay), not the footway.
+    const crossingOnly = !crossesFootway(t);
     // Margin enough for the corners: three discs along a body leave them out
     // by a fifth of its width.
     const discs = carSweep(t, m(0.4));
@@ -541,7 +553,7 @@ export class OwnCars {
     // Where each person is, and where they will be in a second: somebody
     // about to step onto the way could not stop short of it.
     for (const v of w.pedViews) {
-      if (v.id === t.person) continue;
+      if (v.id === t.person || (crossingOnly && v.ground !== 'crossing')) continue;
       const fx = v.x + Math.cos(v.heading) * v.v * COMING, fy = v.y + Math.sin(v.heading) * v.v * COMING;
       if (Math.max(v.x, fx) < x0 || Math.min(v.x, fx) > x1 || Math.max(v.y, fy) < y0 || Math.min(v.y, fy) > y1) continue;
       for (const d of discs) {

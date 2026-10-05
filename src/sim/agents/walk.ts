@@ -12,7 +12,7 @@ import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
 import { personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
-import { ASK_WAY, carSweep } from './cars';
+import { ASK_WAY, carSweep, crossesFootway } from './cars';
 
 /**
  * The agents' walking: people on lanes of the footways, as SUMO's striping
@@ -597,7 +597,9 @@ function stepWalkers(w: SimWorld): void {
   // kerb-side stripe); and, for a car holding its way across the footway or
   // asking for it (`OwnCars.holdWay`), the ground it is about to cover, kept
   // off with a little room. Somebody already inside one walks on out of it.
-  const carZones: { x0: number; y0: number; x1: number; y1: number; discs: { x: number; y: number; r: number }[]; on: Set<number> | null }[] = [];
+  const carZones: { x0: number; y0: number; x1: number; y1: number; discs: { x: number; y: number; r: number }[]; on: Set<number> | null;
+    /** Its way kept off only by people crossing the carriageway (a car at the kerb, `crossesFootway`). */
+    crossingOnly: boolean }[] = [];
   const holding = new Set<number>();
   for (const car of w.city.cars?.offRoad() ?? []) {
     const f = car.free;
@@ -620,7 +622,7 @@ function stepWalkers(w: SimWorld): void {
     }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
-    carZones.push({ x0, y0, x1, y1, discs, on });
+    carZones.push({ x0, y0, x1, y1, discs, on, crossingOnly: t !== null && !crossesFootway(t) });
   }
   for (const id of [...s.onCarWay.keys()]) if (!holding.has(id)) s.onCarWay.delete(id);
 
@@ -667,7 +669,10 @@ function stepWalkers(w: SimWorld): void {
       const inside = z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r);
       if (inside && (z.on?.has(p.id) || z.discs.slice(0, 3).some((c) => hypot(c.x - p.x, c.y - p.y) < c.r))) continue;
       if (!inside) z.on?.delete(p.id);
-      for (const c of z.discs) {
+      const crossingNow = st.way?.kind === 'crossing';
+      for (const [i, c] of z.discs.entries()) {
+        // Past the body (`i >= 3`), a kerb car's way is only for those crossing.
+        if (i >= 3 && z.crossingOnly && !crossingNow) break;
         const rx = c.x - p.x, ry = c.y - p.y;
         const along = rx * f.tx + ry * f.ty - c.r + BODY;
         if (along + 2 * c.r <= 0 || along > LOOK) continue;

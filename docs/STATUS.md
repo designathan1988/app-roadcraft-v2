@@ -49,14 +49,16 @@ and they have seen it.
   jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
   signal cycle). Photos: `scripts/walk-shots.mjs`
   (`docs/audit/2026-10-05/walk/`).
-- **Slice 4, LIVE (default since slice 5)** (2026-10-05): a car owner keeps their
-  car in the lot behind their building or, failing that, in the free bay
-  nearest their door within a minute's walk (a lot down the street or a kerb
-  bay); with no bay near home they keep no car and walk (Cities: Skylines II's
-  rule: the bays are the cars a town can hold). Default town: 80 cars for 736
-  owners (293 bays reachable, most homes over 200 m from one); with parallel
-  parking on its local and urban streets it would be 712 (1989 bays), but
-  that widens those streets by 2 m a side: the player's decision.
+- **Slice 4, LIVE** (2026-10-05): a car owner keeps their car in the lot
+  behind their building or, failing that, in the free bay nearest their door
+  within a minute's walk (a lot down the street or a kerb bay); with no bay
+  near home they keep no car and walk (Cities: Skylines II's rule: the bays
+  are the cars a town can hold). The default town is now laid with parallel
+  parking along both kerbs of its local streets, its lots set back from the
+  street with its parking lanes: 761 buildings, 2004 residents, 580 cars
+  (was 80 with no street parking). A kerb bay whose joining point falls behind
+  it (near a street's end) is not used: the car would turn on the spot.
+  Photos: `docs/audit/2026-10-05/new-town/`.
 - **Cars and walkers on the footway, LIVE (default since slice 5)** (2026-10-05):
   a car leaving or entering a lot crosses the footway square in front of the
   lot's edge (it used to run metres along it to a joining point kept clear of
