@@ -7,8 +7,10 @@ import {
   Euler,
   Float32BufferAttribute,
   IcosahedronGeometry,
+  LatheGeometry,
   Matrix4,
   PlaneGeometry,
+  Vector2,
   Quaternion,
   Vector3,
 } from 'three';
@@ -214,36 +216,69 @@ function trunk(
   branches: number,
   rng: Rng,
 ): BufferGeometry[] {
+  // One turned profile from the roots to the crown: the root flare swells
+  // smoothly out of the stem (a separate cone left a step and a seam), and
+  // the stem tapers the way wood does, fast low down and slowly above.
+  const profile: Vector2[] = [];
+  const rings = 5;
+  for (let i = 0; i <= rings; i++) {
+    const t = i / rings;
+    const taper = baseRadius + (topRadius * 0.8 - baseRadius) * Math.pow(t, 0.7);
+    const flare = 1 + 1.05 * Math.exp(-t * 9);
+    profile.push(new Vector2(taper * flare, t * top));
+  }
+  const stem = new LatheGeometry(profile, 8);
+  // A lean and a slight bow, so no two species stand like turned dowels, and
+  // a knobbly section where the bark ridges run.
+  const leanX = (rng.float() - 0.5) * top * 0.08;
+  const leanZ = (rng.float() - 0.5) * top * 0.08;
+  const position = stem.getAttribute('position');
+  const v = new Vector3();
+  for (let i = 0; i < position.count; i++) {
+    v.fromBufferAttribute(position, i);
+    const t = v.y / top;
+    const angle = Math.atan2(v.z, v.x);
+    const ridge = 1 + 0.07 * Math.sin(angle * 9 + t * 3) + 0.04 * Math.sin(angle * 4 - t * 7);
+    v.x = v.x * ridge + leanX * t * t;
+    v.z = v.z * ridge + leanZ * t * t;
+    position.setXYZ(i, v.x, v.y, v.z);
+  }
+  stem.computeVertexNormals();
   const parts = [
-    part(new CylinderGeometry(topRadius * 0.8, baseRadius * 1.12, top, 10, 3, true), (p) => {
-      const t = p.y / top;
-      const s = 0.62 + t * 0.38;
-      return [bark[0] * s, bark[1] * s, bark[2] * s];
-    }, { at: [0, top / 2, 0] }),
-    // Root flare: a short cone that splays the trunk into the ground.
-    part(new ConeGeometry(baseRadius * 1.9, top * 0.14, 7, 1, true), [bark[0] * 0.55, bark[1] * 0.55, bark[2] * 0.55], {
-      at: [0, top * 0.07, 0],
+    part(stem, (q) => {
+      const t = q.y / top;
+      // Bark: darker in the furrows between the ridges, darker at the foot
+      // where it is damp, a touch of moss low on one side.
+      const angle = Math.atan2(q.z, q.x);
+      const furrow = 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(angle * 9 + t * 3));
+      const s = (0.58 + t * 0.42) * furrow;
+      const moss = Math.max(0, Math.cos(angle - 1.2)) * Math.max(0, 0.25 - t) * 1.6;
+      return [bark[0] * s * (1 - moss * 0.4), bark[1] * s * (1 + moss * 0.25), bark[2] * s * (1 - moss * 0.3)];
     }),
   ];
+  const limb = (from: Vector3, dir: Vector3, length: number, r0: number, r1: number): void => {
+    const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir);
+    const e = new Euler().setFromQuaternion(q);
+    const mid = from.clone().addScaledVector(dir, length / 2);
+    parts.push(part(new CylinderGeometry(r1, r0, length, 5, 1, true), (pt) => {
+      const k = 0.7 + 0.3 * (pt.y - from.y) / Math.max(1e-6, length);
+      return [bark[0] * k, bark[1] * k, bark[2] * k];
+    }, { at: [mid.x, mid.y, mid.z], rotate: [e.x, e.y, e.z] }));
+  };
   for (let i = 0; i < branches; i++) {
     const yaw = (i / branches) * Math.PI * 2 + rng.float() * 0.8;
     const length = top * (0.38 + rng.float() * 0.2);
     const tilt = 0.6 + rng.float() * 0.35;
-    const from = top * (0.72 + rng.float() * 0.2);
-    const dx = Math.sin(tilt) * Math.cos(yaw) * (length / 2);
-    const dz = Math.sin(tilt) * Math.sin(yaw) * (length / 2);
-    const dy = Math.cos(tilt) * (length / 2);
-    const q = new Quaternion().setFromUnitVectors(
-      new Vector3(0, 1, 0),
-      new Vector3(dx, dy, dz).normalize(),
-    );
-    const e = new Euler().setFromQuaternion(q);
-    parts.push(
-      part(new CylinderGeometry(topRadius * 0.32, topRadius * 0.75, length, 6, 1, true), bark, {
-        at: [dx, from + dy, dz],
-        rotate: [e.x, e.y, e.z],
-      }),
-    );
+    const fromT = 0.72 + rng.float() * 0.2;
+    const from = new Vector3(leanX * fromT * fromT, top * fromT, leanZ * fromT * fromT);
+    const dir = new Vector3(Math.sin(tilt) * Math.cos(yaw), Math.cos(tilt), Math.sin(tilt) * Math.sin(yaw)).normalize();
+    limb(from, dir, length, topRadius * 0.75, topRadius * 0.32);
+    // A fork two thirds out: the limb splits instead of ending in a stub.
+    const fork = from.clone().addScaledVector(dir, length * 0.62);
+    for (const turn of i % 2 === 0 ? [0.5] : []) {
+      const d2 = new Vector3(Math.sin(tilt * 0.8) * Math.cos(yaw + turn), Math.cos(tilt * 0.8), Math.sin(tilt * 0.8) * Math.sin(yaw + turn)).normalize();
+      limb(fork, d2, length * 0.45, topRadius * 0.38, topRadius * 0.16);
+    }
   }
   return parts;
 }
