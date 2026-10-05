@@ -4917,7 +4917,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
   // within its reach, not only what it lands on - buildings, people, cars,
   // poles and their wires, traffic lights, street things, the road itself.
   const radius = m(2.5 + strength * 1.1);
-  const kill = radius * 0.5, scare = m(30 + strength * 6);
+  const kill = radius * 0.5, scare = m(70 + strength * 10);
   const dead = sim.pedEngine.impact?.(sim, world.x, world.y, kill, scare) ?? 0;
   const near = (x: number, y: number, reach: number): boolean => Math.hypot(x - world.x, y - world.y) < reach;
   const paved = Number.isFinite(scene.pavedHeightAt(world.x, world.y));
@@ -4952,7 +4952,20 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
         burning.delete(c.id);
         downs++;
         changed = true;
-      } else if (best < radius * 0.8 && Math.random() < 0.35 + strength * 0.03) ignite(c.id);
+      } else {
+        if (best < radius * 0.3 && Math.random() < 0.3) ignite(c.id);
+        // Its wiring shorting and its pipes bursting at a few points on the
+        // side the blast struck: sparks and spouts of water for a while.
+        const base = sceneHeightAt({ x: c.x, y: c.y });
+        const floors = Math.max(1, Math.max(...c.volumes.map((v) => v.base + v.storeys.length)));
+        const spots = Math.min(6, 1 + Math.round(force / 2));
+        for (let k = 0; k < spots; k++) {
+          const h = base + levelElevation(c, Math.floor(Math.random() * floors)) + m(1 + Math.random() * 1.5);
+          const jx = px + (Math.random() - 0.5) * m(6), jy = py + (Math.random() - 0.5) * m(6);
+          if (Math.random() < 0.6) scene.sparkAt(jx, jy, h, 3 + Math.random() * 8);
+          else scene.geyser(jx, jy, h, 6 + Math.random() * 14);
+        }
+      }
       // Those inside, thrown out through its walls and windows from the floor
       // they were on: killed near the blow, knocked flying further off.
       const inside = sim.city.inside(c.id as BuildingId);
@@ -5083,7 +5096,7 @@ function breakDeferred(): void {
     const c = doc.buildings.get(next.id as BuildingId);
     if (c && scene.strikeBuilding(c, next.x, next.y, next.z, next.force)) {
       mutate(() => { doc.buildings.remove(c.id); scene.forgetRuin(c.id); burning.delete(c.id); return true; });
-    } else if (c && Math.random() < 0.4) ignite(c.id);
+    }
     requestDraw();
   }
   requestAnimationFrame(breakDeferred);
@@ -5093,7 +5106,7 @@ const burning = new Map<number, { since: number; nextFlame: number; nextSpread: 
 function ignite(id: number): void {
   if (burning.has(id)) return;
   const now = performance.now() / 1000;
-  burning.set(id, { since: now, nextFlame: now, nextSpread: now + 8 + Math.random() * 10, nextBlast: now + 12 + Math.random() * 25, until: now + 120 + Math.random() * 90 });
+  burning.set(id, { since: now, nextFlame: now, nextSpread: now + 8 + Math.random() * 10, nextBlast: now + 12 + Math.random() * 25, until: now + 50 + Math.random() * 40 });
 }
 let smog = 0;
 setInterval(() => {
@@ -5109,10 +5122,10 @@ setInterval(() => {
     const ground = sceneHeightAt({ x: cx, y: cy });
     if (now >= f.nextFlame) {
       // Fires at a few points of the building, from the ground up its height.
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < 2; k++) {
         const p = pts[Math.floor(Math.random() * pts.length)]!;
         const x = cx + (p.x - cx) * Math.random(), y = cy + (p.y - cy) * Math.random();
-        scene.burn(x, y, ground + m(2 + Math.random() * 10), Math.min(size * 0.5, m(6)), 7);
+        scene.burn(x, y, ground + m(2 + Math.random() * 10), Math.min(size * 0.3, m(3)), 7);
       }
       f.nextFlame = now + 6;
     }
@@ -5120,7 +5133,9 @@ setInterval(() => {
       f.nextSpread = now + 14 + Math.random() * 16;
       // Spreads to a neighbour now and then, never to the whole town.
       const near = [...doc.buildings.all()].filter((o) => o.id !== id && !burning.has(o.id) && Math.hypot(o.x - b.x, o.y - b.y) < size * 2 + m(18));
-      if (near.length && burning.size < 8 && Math.random() < 0.5) ignite(near[Math.floor(Math.random() * near.length)]!.id);
+      // Spreads only to a building right beside it, rarely (the player: only where it is).
+      const touching = near.filter((o) => Math.hypot(o.x - b.x, o.y - b.y) < size + m(8));
+      if (touching.length && burning.size < 4 && Math.random() < 0.2) ignite(touching[Math.floor(Math.random() * touching.length)]!.id);
     }
     if (now >= f.nextBlast) {
       f.nextBlast = now + 25 + Math.random() * 45;

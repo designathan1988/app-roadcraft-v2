@@ -205,7 +205,9 @@ export interface SceneHandle {
   /** Called when a struck building comes down after its blow (its pieces were made off the main thread). */
   onBuildingDown(listener: (id: number) => void): void;
   /** A broken hydrant spouting water (`blast.geyser`). */
-  geyser(x: number, y: number, z: number): void;
+  geyser(x: number, y: number, z: number, seconds?: number): void;
+  /** Sparks of a short circuit at world (x, y), height z, for a while (`blast.arc`). */
+  sparkAt(x: number, y: number, z: number, seconds: number): void;
   /** Soot laid on the ground (`blast.soot`). */
   soot(x: number, y: number, z: number, radius: number): void;
   /** Smoke in the air, 0 clear to 1 thick: the fog closes in, browner, the light dims. */
@@ -1025,7 +1027,7 @@ export function createSceneRenderer(
     explode(x, y, z, radius, hit) {
       const ground = (px: number, py: number): number => ragdollWorld.groundAt(px, py);
       blast.explode(x, y, z, radius, hit.ground);
-      if (hit.crater && hit.ground !== 'building') blast.crater(x, y, ground(x, y), radius * 0.55, hit.ground);
+      if (hit.crater && hit.ground !== 'building') blast.crater(x, y, ground(x, y), radius * 0.75, hit.ground);
       const away = (px: number, py: number, k: number): Vector3 => {
         const dx = px - x, dy = py - y, d = Math.hypot(dx, dy) || 1;
         const f = k * Math.max(0.25, 1 - d / (radius * 1.6));
@@ -1156,7 +1158,8 @@ export function createSceneRenderer(
     },
     burn: (x, y, z, size, seconds) => blast.burn(x, y, z, size, seconds),
     soot: (x, y, z, r) => blast.soot(x, y, z, r),
-    geyser: (x, y, z) => blast.geyser(x, y, z),
+    geyser: (x, y, z, seconds) => blast.geyser(x, y, z, seconds),
+    sparkAt: (x, y, z, seconds) => blast.arc(new Vector3(x, z, -y), seconds),
     onBuildingDown: (listener) => { destruction.onDown = listener; },
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),

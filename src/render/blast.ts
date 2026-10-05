@@ -74,6 +74,8 @@ export interface DebrisSpec {
   readonly spin?: Vector3;
   /** Seconds of fire on it (a burning wreck), 0 for none. */
   readonly burn?: number;
+  /** Laid where it is and left there (a heaved slab of the ground), never moved. */
+  readonly still?: boolean;
   /** Colour over the kind's. */
   readonly color?: number;
 }
@@ -100,7 +102,7 @@ export interface Blast {
   /** Soot and ash laid on the ground at world (x, y): the street left dirty by the blast, for good. */
   soot(x: number, y: number, z: number, radius: number): void;
   /** A broken hydrant at world (x, y): a jet of water that keeps going. */
-  geyser(x: number, y: number, z: number): void;
+  geyser(x: number, y: number, z: number, seconds?: number): void;
   /** Whether anything is still moving, burning or flashing. */
   active(): boolean;
   update(dt: number, world: BlastWorld): void;
@@ -129,6 +131,8 @@ interface Piece {
   burn: number;
   rest: number;
   asleep: boolean;
+  /** Never moved, never culled for room (a heaved slab of the ground). */
+  still?: boolean;
 }
 
 interface Rope { p: Vector3[]; o: Vector3[]; pin: Vector3; seg: number; sparks: number; age: number }
@@ -285,7 +289,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   const ropes: Rope[] = [];
   const craters: Crater[] = [];
   const soots: Crater[] = [];
-  const geysers: { x: number; y: number; z: number; carry: number }[] = [];
+  const geysers: { x: number; y: number; z: number; carry: number; until: number }[] = [];
   let sootDirty = false;
   const fires: { at: Vector3; until: number; rate: number; carry: number; piece?: Piece; size?: number; smoke?: number }[] = [];
   const arcs: { at: Vector3; until: number; next: number }[] = [];
@@ -308,11 +312,11 @@ export function createBlast(exhaust: Exhaust): Blast {
       mesh: spec.shape, p: spec.at.clone(), v: spec.velocity.clone(), q: spec.turn?.clone() ?? new Quaternion(),
       w: spec.spin?.clone() ?? new Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8),
       size: s.clone(), corners, color: new Color(spec.color ?? COLORS[spec.kind]).multiplyScalar(0.85 + Math.random() * 0.3),
-      invI: 12 / Math.max(1e-4, extent), burn: spec.burn ?? 0, rest: 0, asleep: false,
+      invI: 12 / Math.max(1e-4, extent), burn: spec.burn ?? 0, rest: 0, asleep: spec.still === true, ...(spec.still ? { still: true } : {}),
     };
     pieces.push(body);
     if (body.burn > 0) fires.push({ at: body.p, until: time + body.burn, rate: 28, carry: 0, piece: body });
-    if (pieces.length > MAX_PIECES) pieces.splice(Math.max(0, pieces.findIndex((p) => p.asleep && p.burn <= 0)), 1);
+    if (pieces.length > MAX_PIECES) pieces.splice(Math.max(0, pieces.findIndex((p) => p.asleep && p.burn <= 0 && !p.still)), 1);
   };
 
   /** One step of a rigid piece: gravity, then each corner below the ground struck with an impulse. */
@@ -414,7 +418,7 @@ export function createBlast(exhaust: Exhaust): Blast {
       exhaust.burst(x, y, z + m(2.5), 60, 5, radius * 0.25, m(3.2) + radius * 0.15, 1.6);
       fires.push({ at: at.clone().setY(z + m(0.5)), until: time + 1.5, rate: 90, carry: 0, size: radius * 0.35, smoke: 0.3 });
       // Then it burns on in the crater a while, under a column of black smoke.
-      fires.push({ at: at.clone().setY(z + m(0.2)), until: time + 9 + radius * 0.3, rate: 22, carry: 0, size: radius * 0.18, smoke: 0.9 });
+      fires.push({ at: at.clone().setY(z + m(0.2)), until: time + 6 + Math.min(10, radius * 0.05), rate: 10, carry: 0, size: Math.min(m(3), radius * 0.08), smoke: 0.6 });
       // Smoke: dark, rising and spreading, then the dust of what was torn up.
       exhaust.burst(x, y, z + m(1.5), 80, 2, radius * 0.45, m(3.5), 7);
       exhaust.burst(x, y, z + m(5), 40, 2, radius * 0.35, m(4.5), 9);
@@ -460,6 +464,25 @@ export function createBlast(exhaust: Exhaust): Blast {
           turn: tilt, velocity: new Vector3(Math.cos(a) * m(0.6), m(0.8), -Math.sin(a) * m(0.6)), spin: new Vector3(),
         });
       }
+      // The ground heaved up in plates round it - slabs of road and footway
+      // metres across, broken off and tipped on edge, half buried, like
+      // plates after a quake - out to well past the hole. They stay.
+      const plates = Math.round(10 + radius / m(1.6));
+      for (let i = 0; i < Math.min(plates, 60); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = radius * (0.4 + Math.sqrt(Math.random()) * 1.1);
+        const w = m(1.2 + Math.random() * 2.6) * Math.min(2, 0.6 + radius / m(20));
+        const d = w * (0.5 + Math.random() * 0.6);
+        const thick = m(road ? 0.3 : 0.45);
+        // Tipped about an axis across the way out, the inner edge sunk.
+        const tilt = new Quaternion().setFromAxisAngle(new Vector3(-Math.sin(a), 0, -Math.cos(a)), 0.35 + Math.random() * 0.75)
+          .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.random() * Math.PI));
+        piece({
+          shape: 'box', kind: road ? (Math.random() < 0.35 ? 'concrete' : 'asphalt') : 'earth',
+          at: new Vector3(x + Math.cos(a) * r, z + w * 0.18, -(y + Math.sin(a) * r)),
+          size: new Vector3(w, thick, d), turn: tilt, velocity: new Vector3(0, 0, 0), spin: new Vector3(), still: true,
+        });
+      }
     },
     debris: piece,
     wire(from, to, kick) {
@@ -481,12 +504,12 @@ export function createBlast(exhaust: Exhaust): Blast {
       if (soots.length > MAX_SOOT) soots.shift();
       sootDirty = true;
     },
-    geyser(x, y, z) {
-      geysers.push({ x, y, z, carry: 0 });
+    geyser(x, y, z, seconds = Infinity) {
+      geysers.push({ x, y, z, carry: 0, until: time + seconds });
       if (geysers.length > 40) geysers.shift();
     },
     burn(x, y, z, size, seconds) {
-      fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: Math.min(18, 6 + size / m(1)), carry: 0, size: Math.min(size, m(6)), smoke: 0.6 });
+      fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: Math.min(9, 4 + size / m(2)), carry: 0, size: Math.min(size, m(3)), smoke: 0.5 });
     },
     active: () => geysers.length > 0 || flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
     update(dt, world) {
@@ -511,15 +534,17 @@ export function createBlast(exhaust: Exhaust): Blast {
           const big = f.piece ? Math.max(f.piece.size.x, f.piece.size.z) * 0.5 : f.size ?? m(1);
           const dying = Math.min(1, left / 3 + 0.3);
           exhaust.burst(at.x, -at.z, at.y + m(0.3), 1, 5, big, (m(1.1) + big * 0.4) * dying, 0.8);
-          // Black smoke over the flames, rising in a short column that thins
-          // out near them - not a cloud over the town.
-          if (Math.random() < (f.smoke ?? 0.4) * 0.5) exhaust.burst(at.x, -at.z, at.y + m(1.5), 1, 2, big * 0.4, Math.min(m(3), m(1.6) + big * 0.15), 4);
-          // And the grey smoke a car's exhaust gives, only thicker, curling off the flames.
-          if (Math.random() < 0.7) exhaust.burst(at.x, -at.z, at.y + m(0.8), 2, 0, big * 0.5, m(1.4) + big * 0.1, 3.2);
+          // A chimney of smoke off each fire: a narrow dark column leaving
+          // the flames, climbing high and opening out as it rises, the grey
+          // of a car's exhaust curling round its foot.
+          if (Math.random() < 0.55) exhaust.burst(at.x, -at.z, at.y + m(1), 1, 2, m(0.4), m(1.3), 12);
+          if (Math.random() < 0.6) exhaust.burst(at.x, -at.z, at.y + m(0.6), 1, 0, big * 0.4, m(1.5), 3.5);
         }
       }
       // Hydrants: a jet of water each, for good, and its puddle of spray.
-      for (const g of geysers) {
+      for (let i = geysers.length - 1; i >= 0; i--) {
+        const g = geysers[i]!;
+        if (time > g.until) { geysers.splice(i, 1); continue; }
         g.carry += 40 * wall;
         while (g.carry >= 1) { g.carry -= 1; exhaust.burst(g.x, g.y, g.z + m(0.4), 1, 8, m(0.15), m(0.5), 2.6); }
       }

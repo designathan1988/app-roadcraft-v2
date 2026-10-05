@@ -155,6 +155,8 @@ interface Walker {
   rush: { readonly by: number; readonly until: number; readonly goal: Vec2 } | null;
   /** Terrified (a blow, a robbery) until `age` reaches this: the face screams, zebras are not waited at. */
   fright?: number;
+  /** When somebody running in panic trips and falls (age, seconds), once. */
+  tripAt?: number | undefined;
 }
 
 interface State {
@@ -519,7 +521,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
         recordCasualty(w, { ...who, kind: 'knocked', power: Math.max(0, 1 - (d - kill) / kill) });
       }
       prune(s);
-      startle(w, x, y, scare, 14, null);
+      startle(w, x, y, scare, 26, null);
       return dead;
     },
     getUp(w, id, x, y, heading, seconds) {
@@ -647,6 +649,15 @@ function stepWalkers(w: SimWorld): void {
     if (list) list.push(p); else cells.set(k, [p]);
   };
   for (const p of s.walkers) if (!p.inside) enter(p);
+  // Those running in panic who trip: down on the ground (the renderer throws
+  // the body, `ragdoll.trip`), up again and running after.
+  for (const p of s.walkers) {
+    if (p.tripAt === undefined || p.age < p.tripAt || p.inside || p.done) continue;
+    p.tripAt = undefined;
+    if (p.act?.kind === 'fall') continue;
+    p.act = { kind: 'fall', from: p.age, until: p.age + 3 + ((personHash(p.id) >> 3) & 3), faceX: p.x - Math.cos(p.heading), faceY: p.y - Math.sin(p.heading) };
+    p.v = 0;
+  }
   const others: { along: number; lat: number; oncoming: boolean; r: number }[] = [];
   // The agents' own cars off the road: solid to a walker as a person is (the
   // body three discs along its length, half its width round: a walker's own
@@ -1016,6 +1027,8 @@ const TRAIN_GROUND: Set<number> = new Set();
 
 /** How much faster than their walk somebody runs away. */
 const RUN = 2.4;
+/** Running for their lives from a blow: a sprint. */
+const PANIC_RUN = 3.4;
 
 /**
  * Everybody within `radius` of a fright (a blow, a crash, a car on the
@@ -1035,8 +1048,10 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
     const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
     const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
-    p.rush = { by: RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
+    p.rush = { by: seconds >= 14 ? PANIC_RUN : RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
     p.fright = p.rush.until;
+    // In a stampede some trip over and go down, a second or a few in.
+    if (seconds >= 14 && (personHash(p.id ^ 0x7a11) & 255) < 70) p.tripAt = p.age + after + 0.8 + ((personHash(p.id ^ 0x51) & 255) / 255) * 4;
   }
   return saw;
 }
