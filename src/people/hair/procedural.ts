@@ -1,0 +1,331 @@
+import type { ProxyPack } from '../body/proxy';
+
+/**
+ * Procedural hairstyles, as MakeHuman hair items (`ProxyPack`), so the crowd
+ * draws, fits and dyes them as it does any other hair.
+ *
+ * The pipeline games use for hair cards (Houdini's Hair Card Generate,
+ * Unreal's Hair Card Generator): guide strands grown from the scalp, each
+ * the centre of a clump, and each clump drawn as a strip or two of polygons
+ * - cards - carrying a texture of many strands (`render/people/hairTexture`).
+ * Here the guides are grown by the style's parameters instead of groomed:
+ * combed away from a parting, pulled down by gravity, sliding over the skull
+ * and the shoulders (an ellipsoid and a tapered body), waved, cut to length,
+ * a fringe brushed forwards, or gathered into a ponytail or a bun.
+ *
+ * Built once per style on the MakeHuman base mesh (decimetres, +Y up, +Z
+ * forwards, +X the body's left); every card vertex is pinned to the scalp
+ * vertices nearest it, so on each body it follows that body's head
+ * (`fitProxy`), as the stock hair does.
+ */
+
+export interface HairStyle {
+  readonly name: string;
+  /** Strand length from the root, decimetres. */
+  readonly length: number;
+  /** The parting across the head, -1 (right) .. 1 (left); 0 a centre parting. */
+  readonly part: number;
+  /** How far the hair stands off the skull, decimetres. */
+  readonly volume: number;
+  /** How hard each step bends down, 0..1. */
+  readonly gravity: number;
+  readonly wave?: { readonly amplitude: number; readonly wavelength: number };
+  readonly fringe?: { readonly length: number; readonly width: number };
+  /** Gathered at a point at the back of the head, then a tail or a bun. */
+  readonly gather?: { readonly at: readonly [number, number, number]; readonly tail: number; readonly bun?: number };
+  /** Guides (clumps), and the width of each clump's card, decimetres. */
+  readonly clumps: number;
+  readonly cardWidth: number;
+  /** Two cards a clump for body; short crops lie flat with one. */
+  readonly layers: 1 | 2;
+  /** The texture's strands: 'straight' or 'wavy'. */
+  readonly strands: 'straight' | 'wavy';
+}
+
+export const HAIR_STYLES: Readonly<Record<string, HairStyle>> = {
+  longStraight: { name: 'longStraight', length: 4.6, part: 0.25, volume: 0.1, gravity: 0.55, clumps: 230, cardWidth: 0.42, layers: 2, strands: 'straight' },
+  longWavy: { name: 'longWavy', length: 4.4, part: -0.3, volume: 0.16, gravity: 0.5, wave: { amplitude: 0.07, wavelength: 1.3 }, clumps: 230, cardWidth: 0.44, layers: 2, strands: 'wavy' },
+  midLayered: { name: 'midLayered', length: 3.0, part: 0.35, volume: 0.14, gravity: 0.5, wave: { amplitude: 0.06, wavelength: 1.4 }, clumps: 220, cardWidth: 0.42, layers: 2, strands: 'straight' },
+  bob: { name: 'bob', length: 1.9, part: 0.3, volume: 0.12, gravity: 0.6, clumps: 220, cardWidth: 0.4, layers: 2, strands: 'straight' },
+  bobFringe: { name: 'bobFringe', length: 1.8, part: 0, volume: 0.12, gravity: 0.6, fringe: { length: 1.25, width: 0.55 }, clumps: 220, cardWidth: 0.4, layers: 2, strands: 'straight' },
+  ponytail: { name: 'ponytail', length: 3.4, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0, 7.75, -0.55], tail: 3.2 }, clumps: 200, cardWidth: 0.36, layers: 2, strands: 'straight' },
+  bun: { name: 'bun', length: 2.0, part: 0, volume: 0.05, gravity: 0.5, gather: { at: [0, 8.05, -0.45], tail: 0, bun: 0.42 }, clumps: 200, cardWidth: 0.36, layers: 2, strands: 'straight' },
+  shortCrop: { name: 'shortCrop', length: 0.55, part: 0.4, volume: 0.05, gravity: 0.1, clumps: 160, cardWidth: 0.34, layers: 1, strands: 'straight' },
+  shortSide: { name: 'shortSide', length: 0.95, part: 0.5, volume: 0.08, gravity: 0.15, clumps: 160, cardWidth: 0.34, layers: 1, strands: 'straight' },
+};
+
+export const FEMALE_HAIR = ['longStraight', 'longWavy', 'midLayered', 'bob', 'bobFringe', 'ponytail', 'bun'] as const;
+export const MALE_HAIR = ['shortCrop', 'shortSide'] as const;
+
+export interface HairBase {
+  /** The base mesh, decimetres. */
+  readonly positions: Float32Array;
+  readonly vertexCount: number;
+  readonly bodyRange: readonly (readonly [number, number])[];
+  readonly joints: Uint8Array;
+  readonly weights: Uint16Array;
+  readonly boneNames: readonly string[];
+  /** Quads (a, b, c, d), d === c for a triangle. */
+  readonly faces: Uint16Array;
+}
+
+type V3 = [number, number, number];
+const add = (a: V3, b: V3, s = 1): V3 => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
+const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a: V3, b: V3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const len = (a: V3): number => Math.hypot(a[0], a[1], a[2]);
+const norm = (a: V3): V3 => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+function random(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The skull as an ellipsoid, from the head-bone vertices of the base mesh. */
+interface Skull { readonly c: V3; readonly r: V3 }
+
+/** Where the hair grows: above a hairline that runs low at the nape, high on the brow. */
+function hairlineY(theta: number): number {
+  const a = Math.abs(theta);
+  const knots: [number, number][] = [[0, 0.48], [0.7, 0.42], [1.2, 0.22], [1.55, 0.18], [1.9, 0.02], [2.4, -0.3], [Math.PI, -0.5]];
+  for (let i = 1; i < knots.length; i++) {
+    const [x0, y0] = knots[i - 1]!, [x1, y1] = knots[i]!;
+    if (a <= x1) return y0 + (y1 - y0) * (a - x0) / (x1 - x0);
+  }
+  return -0.5;
+}
+
+export function generateHair(style: HairStyle, base: HairBase, seed = 1): ProxyPack {
+  const P = base.positions;
+  const at = (v: number): V3 => [P[v * 3]!, P[v * 3 + 1]!, P[v * 3 + 2]!];
+  const head = base.boneNames.indexOf('head');
+  const inBody = (v: number): boolean => base.bodyRange.some(([a, b]) => v >= a && v <= b);
+  const headVerts: number[] = [];
+  for (let v = 0; v < base.vertexCount; v++) {
+    if (!inBody(v)) continue;
+    let w = 0;
+    for (let k = 0; k < 4; k++) if (base.joints[v * 4 + k] === head) w += base.weights[v * 4 + k]! / 65535;
+    if (w >= 0.9) headVerts.push(v);
+  }
+  // The cranium: the head's box less the face's jut (nose, chin).
+  let lo: V3 = [Infinity, Infinity, Infinity], hi: V3 = [-Infinity, -Infinity, -Infinity];
+  for (const v of headVerts) {
+    const p = at(v);
+    lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1]), Math.min(lo[2], p[2])];
+    hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1]), Math.max(hi[2], p[2])];
+  }
+  const ry = (hi[1] - lo[1]) * 0.39;
+  const skull: Skull = { c: [0, hi[1] - ry, lo[2] + (hi[1] - lo[1]) * 0.36], r: [(hi[0] - lo[0]) * 0.47, ry, (hi[1] - lo[1]) * 0.375] };
+  const local = (p: V3): V3 => [(p[0] - skull.c[0]) / skull.r[0], (p[1] - skull.c[1]) / skull.r[1], (p[2] - skull.c[2]) / skull.r[2]];
+  const outward = (p: V3): V3 => { const q = local(p); return norm([q[0] / skull.r[0], q[1] / skull.r[1], q[2] / skull.r[2]]); };
+
+  // Scalp: head vertices above the hairline.
+  const headSet = new Set(headVerts);
+  const scalp = headVerts.filter((v) => {
+    const q = local(at(v));
+    return len(q) > 0.75 && q[1] > hairlineY(Math.atan2(q[0], q[2]));
+  });
+  const rnd = random(seed * 7919 + style.name.length * 104729);
+  // Roots: the scalp thinned to an even spread (dart throwing).
+  const area = 2 * Math.PI * skull.r[0] * skull.r[2] * 1.15;
+  const spacing = Math.sqrt(area / style.clumps) * 0.85;
+  const order = scalp.map((v) => [v, rnd()] as const).sort((a, b) => a[1] - b[1]).map(([v]) => v);
+  const roots: V3[] = [];
+  for (const v of order) {
+    const p = at(v);
+    if (roots.every((r) => len(sub(r, p)) > spacing)) roots.push(p);
+  }
+
+  const neckY = skull.c[1] - skull.r[1] * 1.55;
+  // The shoulders and back the hair falls over: an ellipse in plan that
+  // widens from the neck to the shoulders.
+  const body = (y: number): { rx: number; rz: number; cz: number } => {
+    const t = Math.max(0, Math.min(1, (neckY - y) / (skull.r[1] * 0.9)));
+    return { rx: 0.45 + 1.35 * t, rz: 0.45 + 0.35 * t, cz: skull.c[2] - 0.15 - 0.1 * t };
+  };
+  const collide = (p: V3, lift: number): V3 => {
+    const q = local(p);
+    const s = len(q), inflate = 1 + lift / skull.r[1];
+    let out = p;
+    if (s < inflate) out = [skull.c[0] + q[0] / s * inflate * skull.r[0], skull.c[1] + q[1] / s * inflate * skull.r[1], skull.c[2] + q[2] / s * inflate * skull.r[2]];
+    if (out[1] < neckY + 0.2) {
+      const b = body(out[1]);
+      const ex = out[0] / (b.rx + lift), ez = (out[2] - b.cz) / (b.rz + lift);
+      const e = Math.hypot(ex, ez);
+      if (e < 1) out = [out[0] / e, out[1], b.cz + (out[2] - b.cz) / e];
+    }
+    return out;
+  };
+
+  const partX = style.part * skull.r[0] * 0.55;
+  const guides: V3[][] = [];
+  const segments = style.length > 2.5 ? 16 : style.length > 1 ? 10 : 5;
+  for (const root of roots) {
+    const q = local(root);
+    const n = outward(root);
+    const lift = style.volume * (0.6 + 0.8 * rnd());
+    const fringe = style.fringe && q[2] > 0.25 && Math.abs(q[0]) < style.fringe.width && q[1] > 0.2;
+    const length = (fringe ? style.fringe!.length : style.length) * (0.9 + 0.2 * rnd());
+    // Combed away from the parting and back; a fringe brushed forwards.
+    // Sideways from the parting only on the crown and the front; from the
+    // back of the head the hair falls straight, or it parts down the nape.
+    const sideways = Math.max(0, Math.min(1, (q[2] + 0.35) / 0.6)) * (0.4 + 0.8 * Math.max(0, q[1]));
+    let comb: V3 = fringe ? [0, -0.15, 1]
+      : [Math.sign(root[0] - partX || 1) * sideways, -0.7, -0.55 * Math.max(0, q[1]) - 0.25];
+    comb = norm(sub(comb, [n[0] * dot(comb, n), n[1] * dot(comb, n), n[2] * dot(comb, n)]));
+    let p = add(root, n, 0.02);
+    let dir = comb;
+    const pts: V3[] = [p];
+    const step = length / segments;
+    let gathered = false;
+    for (let i = 0; i < segments; i++) {
+      if (style.gather && !fringe) {
+        const g = style.gather.at as V3;
+        const toward = sub(g, p);
+        if (!gathered && len(toward) > step * 1.1) dir = norm(add(norm(toward), outward(p), 0.15));
+        else {
+          gathered = true;
+          if (style.gather.bun) break;
+          dir = norm(add(dir, [0, -1, -0.15], 0.5));
+        }
+      } else {
+        dir = norm(add(dir, [0, -1, 0], style.gravity * (fringe ? 0.25 : 1)));
+        // Below the skull, hair behind the ears closes in like a curtain.
+        if (p[1] < skull.c[1] && p[2] < skull.c[2]) dir = norm(add(dir, [-p[0] / skull.r[0], 0, 0], 0.18));
+      }
+      p = collide(add(p, dir, step), lift);
+      pts.push(p);
+    }
+    if (style.gather?.bun) {
+      // Wound round the gathering point: a coil facing back.
+      const g = style.gather.at as V3, r = style.gather.bun;
+      const a0 = rnd() * Math.PI * 2;
+      for (let i = 1; i <= 8; i++) {
+        const a = a0 + i * 0.7, rr = r * (0.55 + 0.45 * Math.sin(i * 0.4));
+        pts.push([g[0] + Math.cos(a) * rr, g[1] + Math.sin(a) * rr * 0.8, g[2] - 0.15 - 0.05 * i]);
+      }
+    }
+    if (style.gather?.tail && gathered) {
+      // The tail: a bundle round its own axis.
+      const g = style.gather.at as V3;
+      const off: V3 = [(rnd() - 0.5) * 0.35, 0, (rnd() - 0.5) * 0.25];
+      const tail = style.gather.tail * (0.85 + 0.3 * rnd());
+      let tp = add(g, off);
+      for (let i = 1; i <= 10; i++) {
+        tp = collide(add(tp, norm([off[0] * 0.3, -1, -0.12 - off[2] * 0.3]), tail / 10), 0.05);
+        pts.push(tp);
+      }
+    }
+    if (style.wave) {
+      const phase = rnd() * Math.PI * 2;
+      let s = 0;
+      for (let i = 1; i < pts.length; i++) {
+        s += len(sub(pts[i]!, pts[i - 1]!));
+        const t = norm(sub(pts[i]!, pts[i - 1]!));
+        const side = norm(cross(t, outward(pts[i]!)));
+        const amp = style.wave.amplitude * Math.min(1, s / 0.6) * Math.sin(2 * Math.PI * s / style.wave.wavelength + phase);
+        pts[i] = add(pts[i]!, side, amp);
+      }
+    }
+    guides.push(pts);
+  }
+
+  // Cards: a strip along each guide facing out of the head; a second,
+  // turned and lifted, for body. UVs: one of four strand strips across, root
+  // (v = 0) to tip.
+  const positions: number[] = [], uvs: number[] = [], index: number[] = [];
+  for (const pts of guides) {
+    for (let layer = 0; layer < style.layers; layer++) {
+      const strip = Math.floor(rnd() * 4);
+      const u0 = strip / 4 + 0.01, u1 = (strip + 1) / 4 - 0.01;
+      const first = positions.length / 3;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i]!;
+        const t = i / (pts.length - 1);
+        const along = norm(sub(pts[Math.min(pts.length - 1, i + 1)]!, pts[Math.max(0, i - 1)]!));
+        const out = outward(p);
+        let side = norm(cross(along, out));
+        let centre = add(p, out, 0.015);
+        if (layer === 1) {
+          side = norm(add(side, out, 0.55));
+          centre = add(p, out, 0.05);
+        }
+        const w = style.cardWidth * (layer === 1 ? 0.8 : 1) * (1 - 0.45 * t * t) / 2;
+        const a = add(centre, side, -w), b = add(centre, side, w);
+        positions.push(...a, ...b);
+        uvs.push(u0, t * 0.98 + 0.01, u1, t * 0.98 + 0.01);
+      }
+      for (let i = 0; i < pts.length - 1; i++) {
+        const k = first + i * 2;
+        index.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+      }
+    }
+  }
+
+  // The cap: the scalp itself under the cards, lifted a little and painted
+  // with the solid band at the top of the strand texture - as hair cards
+  // sit on a painted scalp in games, or the skin shows through the parting.
+  const capOf = new Map<number, number>();
+  const scalpSet = new Set(scalp);
+  const capStart = positions.length / 3;
+  const capVertex = (v: number): number => {
+    let k = capOf.get(v);
+    if (k === undefined) {
+      k = positions.length / 3;
+      capOf.set(v, k);
+      const p = at(v);
+      positions.push(...add(p, outward(p), 0.012));
+      const q = local(p);
+      uvs.push(0.02 + 0.2 * (Math.atan2(q[0], q[2]) / Math.PI * 0.5 + 0.5), 0.012);
+    }
+    return k;
+  };
+  for (let f = 0; f < base.faces.length; f += 4) {
+    const a = base.faces[f]!, b = base.faces[f + 1]!, c = base.faces[f + 2]!, d = base.faces[f + 3]!;
+    // The cap reaches a ring past the hairline so its edge hides under the cards.
+    const near = [a, b, c, d].filter((v) => scalpSet.has(v)).length;
+    if (near < 2 || ![a, b, c, d].every((v) => headSet.has(v))) continue;
+    index.push(capVertex(a), capVertex(b), capVertex(c));
+    if (d !== c) index.push(capVertex(a), capVertex(c), capVertex(d));
+  }
+  void capStart;
+
+  // Pinned to the three nearest scalp (and head) vertices.
+  const n = positions.length / 3;
+  const refs = new Uint32Array(n * 3), weights = new Float32Array(n * 3), offsets = new Float32Array(n * 3);
+  const anchors = headVerts;
+  for (let i = 0; i < n; i++) {
+    const p: V3 = [positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!];
+    const best: [number, number][] = [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
+    for (const v of anchors) {
+      const d = (P[v * 3]! - p[0]) ** 2 + (P[v * 3 + 1]! - p[1]) ** 2 + (P[v * 3 + 2]! - p[2]) ** 2;
+      if (d < best[2]![0]) { best[2] = [d, v]; best.sort((x, y) => x[0] - y[0]); }
+    }
+    let total = 0;
+    const w = best.map(([d]) => 1 / (Math.sqrt(d) + 0.05));
+    for (const x of w) total += x;
+    const fit: V3 = [0, 0, 0];
+    for (let k = 0; k < 3; k++) {
+      refs[i * 3 + k] = best[k]![1];
+      weights[i * 3 + k] = w[k]! / total;
+      const r = at(best[k]![1]);
+      fit[0] += r[0] * w[k]! / total; fit[1] += r[1] * w[k]! / total; fit[2] += r[2] * w[k]! / total;
+    }
+    offsets[i * 3] = p[0] - fit[0]; offsets[i * 3 + 1] = p[1] - fit[1]; offsets[i * 3 + 2] = p[2] - fit[2];
+  }
+  // The scale axes of the stock long hair: measured across the head.
+  const scaleRefs = [5399, 11998, 791, 881, 962, 5320];
+  const axis = (i: number): number => Math.abs(P[scaleRefs[i * 2]! * 3 + i]! - P[scaleRefs[i * 2 + 1]! * 3 + i]!);
+  return {
+    name: `hair:${style.name}`, kind: 'hair', scaleRefs, scaleBase: [axis(0), axis(1), axis(2)],
+    refs, weights, offsets, index: Uint32Array.from(index), deleteVerts: new Uint32Array(0),
+    colour: 0xffffff, zDepth: 50, uvs: Float32Array.from(uvs),
+  };
+}

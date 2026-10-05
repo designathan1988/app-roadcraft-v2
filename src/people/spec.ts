@@ -225,7 +225,7 @@ export function randomPerson(id: number, seed: number, keep: { body?: Partial<Pe
   // combed cuts. Only reviewed items, and only ones the crowd can carry.
   const available = new Set([...streetHair, ...systemHair, ...COMMUNITY.filter((i) => i.kind === 'hair' && i.street).map((i) => i.name)]);
   const only = (names: readonly string[]): string[] => names.filter((n) => available.has(n) || (WARDROBE.hair.long as readonly string[]).includes(n) || (WARDROBE.hair.short as readonly string[]).includes(n));
-  const FEMALE_LONG = only(['o4saken_long01', 'elvs_adrienne_hair', 'elvs_daisy_hair', 'elvs_hazel_hair', 'elvs_lady_hippy_hair', 'punkduck_alpha7_long', 'elvs_french_braid_variation', 'ponytail01']);
+  const FEMALE_LONG = only(['o4saken_long01', 'elvs_adrienne_hair', 'elvs_daisy_hair', 'elvs_hazel_hair', 'elvs_lady_hippy_hair', 'elvs_french_braid_variation', 'ponytail01']);
   const FEMALE_CHANEL = only(['toigo_blunt_bob', 'toigo_inverted_bob', 'littleright_bobcut_hair', 'elvs_wavy_bob', 'toigo_blunt_bob_with_bangs']);
   const FEMALE_UPDO = only(['elvs_50s_updo', 'rehmanpolanski_hair_bun_brown']);
   const MALE_NEAT = only(['elvs_maxwell_hair', 'culturalibre_hair_02', 'culturalibre_hair_05', 'short02', 'short04', 'short03']);

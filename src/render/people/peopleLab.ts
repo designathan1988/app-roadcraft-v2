@@ -55,7 +55,8 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const crowd = createProceduralCrowd();
+// ?hair=mh: the stock MakeHuman hair instead of the grown one, to compare.
+const crowd = createProceduralCrowd({ hair: new URLSearchParams(location.search).get('hair') !== 'mh' });
 scene.add(crowd.group);
 
 const LINEUP = 10;
@@ -155,7 +156,9 @@ function frame(): void {
   }
   for (const w of walkers) {
     const duration = crowd.clipDuration(w.person);
-    const blocked = (ahead.get(w) ?? Infinity) < 1.1;
+    // With slack, or someone at the threshold stopped and started every frame.
+    const gap = ahead.get(w) ?? Infinity;
+    const blocked = w.person.clip === 'idle' && walking ? gap < 1.6 : gap < 1.0;
     if (walking && !blocked) {
       w.speed = crowd.stride(w.person) / duration;
       w.s += w.speed * dt;

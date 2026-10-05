@@ -8,6 +8,8 @@ import { Morpher, bodyHeight } from '@people/body/morph';
 import { DEFAULT_MACRO, yearsFromAge, ageFromYears, type MacroParams } from '@people/body/macro';
 import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
+import { FEMALE_HAIR, HAIR_STYLES, generateHair } from '@people/hair/procedural';
+import { hairStrandTexture } from './hairTexture';
 import { createPersonRig, type PersonRig } from './personRig';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
 import { captureBind, captureBindRotations, loadRocketboxClips, type WalkSex } from '../citizenWalk';
@@ -151,19 +153,24 @@ const ROW_START = 64;
  * their reference vertices and scale axes, so an outfit sits on a child body
  * as on an adult one.
  */
-export function proceduralLook(spec: PersonSpec): PersonLook {
+export function proceduralLook(spec: PersonSpec, hair = true): PersonLook {
   const look = spec.look;
-  if (look.outfit) return look;
   const female = spec.body.gender < 0.5;
-  const outfits = female ? ['female_casualsuit01', 'female_casualsuit02']
-    : ['male_casualsuit01', 'male_casualsuit02', 'male_casualsuit03', 'male_casualsuit04', 'male_casualsuit05', 'male_casualsuit06'];
   const h = Math.abs(spec.id * 2654435761) >>> 0;
-  return {
+  const dressed: PersonLook = look.outfit ? look : {
     ...look,
-    outfit: outfits[h % outfits.length]!,
+    outfit: (female ? ['female_casualsuit01', 'female_casualsuit02']
+      : ['male_casualsuit01', 'male_casualsuit02', 'male_casualsuit03', 'male_casualsuit04', 'male_casualsuit05', 'male_casualsuit06'])[h % (female ? 2 : 6)]!,
     footwear: ['shoes01', 'shoes02', 'shoes05'][(h >>> 8) % 3]!,
     outfitTint: look.topColour,
   };
+  if (!hair || !female) return dressed;
+  // Women's hair grown procedurally (`people/hair/procedural.ts`): older
+  // women shorter or up, girls never in a bun.
+  const years = yearsFromAge(spec.body.age);
+  const styles: readonly string[] = years > 60 ? ['bob', 'midLayered', 'bun', 'bobFringe']
+    : years < 14 ? ['longStraight', 'longWavy', 'ponytail', 'bobFringe', 'midLayered'] : FEMALE_HAIR;
+  return { ...dressed, hairCut: `hair:${styles[(h >>> 12) % styles.length]!}` };
 }
 
 function skinningChunk(): string {
@@ -331,7 +338,7 @@ export interface ProceduralCrowd {
   readonly people: readonly ProceduralPerson[];
 }
 
-export function createProceduralCrowd(): ProceduralCrowd {
+export function createProceduralCrowd(options: { hair?: boolean } = {}): ProceduralCrowd {
   const group = new Group();
   group.name = 'procedural-people';
   const classes = new Map<string, Promise<BodyClass>>();
@@ -389,12 +396,24 @@ export function createProceduralCrowd(): ProceduralCrowd {
 
   const item = (name: string): Promise<ProxyItem> => {
     let loaded = items.get(name);
-    if (!loaded) { loaded = loadProxyItem(name); items.set(name, loaded); }
+    if (!loaded) {
+      const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
+      loaded = style ? setup().then(({ assets: a, morpher: mo }) => ({
+        pack: generateHair(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
+          joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces }),
+        texture: null, transparent: true, textureFile: null,
+      })) : loadProxyItem(name);
+      items.set(name, loaded);
+    }
     return loaded;
   };
   const textureOf = (name: string, it: ProxyItem): Promise<Texture | null> => {
     let t = textures.get(name);
-    if (!t) { t = itemTexture(name, it) ?? Promise.resolve(null); textures.set(name, t); }
+    if (!t) {
+      const style = name.startsWith('hair:') ? HAIR_STYLES[name.slice(5)] : undefined;
+      t = style ? Promise.resolve(hairStrandTexture(style.strands)) : itemTexture(name, it) ?? Promise.resolve(null);
+      textures.set(name, t);
+    }
     return t;
   };
 
@@ -630,7 +649,7 @@ export function createProceduralCrowd(): ProceduralCrowd {
       const band = bandOf(years);
       const sex: WalkSex = spec.body.gender < 0.5 ? 'female' : 'male';
       const cls = await classFor(sex, band);
-      const look = proceduralLook(spec);
+      const look = proceduralLook(spec, options.hair !== false);
       const names = wornItems(look).filter((nm) => nm !== 'eyes');
       const loaded = await Promise.all(names.map((nm) => item(nm).then((it) => [nm, it] as const, () => null)));
       const worn = loaded.filter((x): x is readonly [string, ProxyItem] => !!x);
