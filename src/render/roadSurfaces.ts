@@ -381,7 +381,14 @@ export function buildRoadSurfaces(
     };
 
     // Outermost first, so a nearer band's skirt lands on the one outside it.
-    const specs: SurfaceSpec[] = [
+    //
+    // No grass verge on the ground (the player's order of 2026-10-05: "nunca
+    // colocar essa manta verde"). The batter between the footway's edge and
+    // the terrain read as a separate green strip along every pavement; the
+    // footway now ends at its own edge and its skirt goes into the ground,
+    // and the terrain itself is what meets it. A raised deck keeps its verge
+    // band: there it is the deck's concrete margin, not grass.
+    const allSpecs: SurfaceSpec[] = [
       {
         source: { kind: 'band', band: 'verge' },
         options: {
@@ -401,7 +408,9 @@ export function buildRoadSurfaces(
         options: {
           name: `footway${suffix}`,
           top: offset(deck, FOOTWAY_RISE),
-          bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
+          // On the ground the footway's own edge goes down into the terrain:
+          // there is no verge band outside it (see `specs` below).
+          bottom: raised ? offset(deck, -VERGE_DROP) : soffit,
           material: materials.footway,
           maxEdge,
           ...uvFor(materials.scale.footway),
@@ -465,6 +474,7 @@ export function buildRoadSurfaces(
         },
       },
     ];
+    const specs = raised ? allSpecs : allSpecs.filter((spec) => !(spec.source.kind === 'band' && spec.source.band === 'verge'));
 
     // ---------------------------------------------------------------- inputs
     const levels: Record<'casing' | 'sidewalk' | 'curb' | 'asphalt', Input[]> = {
