@@ -1909,4 +1909,6 @@ export const PT_BR: Dictionary = {
   'lab.saveFailed': 'Não foi possível salvar o lote',
   'lab.applied': 'Lote "{name}" colocado',
   'lab.grown': '{n} lotes gerados',
+  'lab.clear': 'Limpar',
+  'lab.cleared': 'Rua limpa (Ctrl+Z desfaz)',
 };

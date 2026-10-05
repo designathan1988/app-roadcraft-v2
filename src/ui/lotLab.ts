@@ -9,6 +9,8 @@ import { ZONE_DENSITIES, ZONE_USES, type ZoneDensity, type ZoneUse } from '@worl
  */
 export interface LotLabActions {
   generate(zone: { use: ZoneUse; density: ZoneDensity }, widths: readonly [number, number], seed: number): number;
+  /** Dezones the street and takes its lots down. */
+  clear(): void;
   /** The selected building as a template, or null with nothing selected. */
   selectedTemplate(name: string, zone: { use: ZoneUse; density: ZoneDensity }): LotTemplate | null;
   /** Puts a kept lot in place of the selected building; false with nothing selected. */
@@ -52,6 +54,7 @@ export function mountLotLab(actions: LotLabActions): void {
     <label>${t('lab.widthMax')}<input data-k="wmax" type="number" min="1" max="8" value="3"></label>
     <label>${t('lab.seed')}<input data-k="seed" type="number" value="1"></label>
     <div class="row"><button data-a="generate">${t('lab.generate')}</button><button class="ghost" data-a="random">${t('lab.random')}</button></div>
+    <div class="row"><button class="ghost" data-a="clear">${t('lab.clear')}</button></div>
     <div class="row"><button class="ghost" data-a="save">${t('lab.save')}</button></div>
     <h3>${t('lab.library')}</h3>
     <ul data-k="list"></ul>`;
@@ -111,6 +114,7 @@ export function mountLotLab(actions: LotLabActions): void {
   panel.addEventListener('click', (e) => {
     const action = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset['a'];
     if (action === 'generate') generate();
+    else if (action === 'clear') { actions.clear(); actions.flash(t('lab.cleared')); }
     else if (action === 'random') {
       field<HTMLInputElement>('seed').value = String(Math.floor(Math.random() * 100000));
       generate();
@@ -127,6 +131,8 @@ export function mountLotLab(actions: LotLabActions): void {
     }
   });
   // Keys typed in the panel are not the game's shortcuts.
-  panel.addEventListener('keydown', (e) => e.stopPropagation());
+  panel.addEventListener('keydown', (e) => {
+    if ((e.target as HTMLElement).matches('input, select')) e.stopPropagation();
+  });
   void refresh();
 }

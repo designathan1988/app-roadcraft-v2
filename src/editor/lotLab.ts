@@ -34,6 +34,16 @@ export function rezoneLab(doc: RoadDoc, grid: ZoneGrid, zone: { use: ZoneUse; de
   paintCells(doc, grid, grid.cells, zone);
 }
 
+/**
+ * Dezones the whole street, its grown lots demolished at once (Cities:
+ * Skylines II's dezoning, without the wait); the street stays. Undoable.
+ */
+export function clearLab(doc: RoadDoc, grid: ZoneGrid): void {
+  paintCells(doc, grid, grid.cells, null);
+  doc.zoneMarks.length = 0;
+  doc.zoneRevision++;
+}
+
 /** Grows every lot the zoned street holds, at once. Returns how many grew. */
 export function growLab(ctx: SiteContext, grid: ZoneGrid, seed: number, widths: readonly [number, number]): number {
   const refused = new Set<string>();

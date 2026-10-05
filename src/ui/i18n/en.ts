@@ -1923,4 +1923,6 @@ export const EN: Dictionary = {
   'lab.saveFailed': 'The lot could not be saved',
   'lab.applied': 'Lot "{name}" placed',
   'lab.grown': '{n} lots generated',
+  'lab.clear': 'Clear',
+  'lab.cleared': 'Street cleared (Ctrl+Z undoes)',
 };

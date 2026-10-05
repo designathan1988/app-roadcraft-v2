@@ -86,7 +86,7 @@ import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
 import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
-import { applyTemplate, growLab, layLabStreet, rezoneLab, templateOf, zoneOfBuilding } from '@editor/lotLab';
+import { applyTemplate, clearLab, growLab, layLabStreet, rezoneLab, templateOf, zoneOfBuilding } from '@editor/lotLab';
 import { mountLotLab } from '@ui/lotLab';
 
 type Tool =
@@ -656,6 +656,14 @@ if (lotLabOn) {
       updateHistoryButtons();
       requestDraw();
       return n;
+    },
+    clear() {
+      history.record(doc);
+      lotLabGrow = null;
+      clearLab(doc, zoneGrid());
+      persistence.saveSessionSoon(doc, sessionSettings);
+      updateHistoryButtons();
+      requestDraw();
     },
     selectedTemplate(name, zone) {
       const b = buildings.tool.selected();
