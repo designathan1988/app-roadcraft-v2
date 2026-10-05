@@ -34,7 +34,7 @@ export const POOL_TERRAIN_CLEARANCE = m(0.06);
 /** Furthest a bank may reach from its platform. */
 const PAD_REACH = m(40);
 
-interface Pad {
+export interface Pad {
   readonly rings: readonly (readonly Vec2[])[];
   /** The platform's height under each ring, at a point (a car park falls with its street). */
   readonly levels: readonly ((x: number, y: number) => number)[];
@@ -79,9 +79,21 @@ export function buildingPads(
   naturalGround: GroundAt,
   pavedAt: PavedAt | undefined,
   apron: number,
+  /**
+   * Each building's platform as last worked out, by its record (a record is
+   * replaced when the building changes): only a new or changed building is
+   * worked out again. The caller drops it when the ground or the roads move.
+   */
+  known?: WeakMap<Building, Pad | null>,
 ): BuildingPads {
   const pads: Pad[] = [];
   for (const b of buildings) {
+    if (known?.has(b)) { const pad = known.get(b); if (pad) pads.push(pad); continue; }
+    const before = pads.length;
+    padOf(b);
+    known?.set(b, pads.length > before ? pads[pads.length - 1]! : null);
+  }
+  function padOf(b: Building): void {
     const built = solidFootprints(b);
     const floor = floorHeight(b, naturalGround, pavedAt);
     // Under the building, level at the floor less the plinth; under its open
@@ -89,7 +101,7 @@ export function buildingPads(
     const lots = lotSurfaces(b, floor, pavedAt);
     const rings: (readonly Vec2[])[] = [...built, ...lots.map((l) => l.ring)];
     const water = [...built.map(() => false), ...lots.map((l) => l.volume.open === 'water')];
-    if (rings.length === 0) continue;
+    if (rings.length === 0) return;
     const flat = floor - PLINTH_MIN;
     // A lawn IS the ground, graded to the lot's surface (it is drawn as the
     // terrain's own grass, and people walk on it at that height); paving,

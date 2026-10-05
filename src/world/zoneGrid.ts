@@ -6,18 +6,11 @@ import { carriesPedestrians } from './pedestrianAccess';
 import { Level, halfWidth } from './roadTypes';
 import { m } from './units';
 import { GRID_CELL } from './grid';
-import { onFootway, poleLines, type PoleLines } from './poleLines';
-import { pointInPolygon } from '@core/polygon';
+import { insideMulti, onFootway, poleLines, type PoleLines } from './poleLines';
 
 /** Whether a point is on the kerbed carriageway (inside a kerb). */
 function insidePaving(lines: PoleLines, p: Vec2): boolean {
-  for (const poly of lines.kerbed) {
-    const [outer, ...holes] = poly;
-    if (!outer || !pointInPolygon(p, outer.map(([x, y]) => ({ x: x!, y: y! })))) continue;
-    if (holes.some((h) => pointInPolygon(p, h.map(([x, y]) => ({ x: x!, y: y! }))))) continue;
-    return true;
-  }
-  return false;
+  return insideMulti(p, lines.kerbed);
 }
 
 /**
@@ -93,8 +86,24 @@ export function buildZoneGrid(doc: RoadDoc, net: Network): ZoneGrid {
   // What a cell may not sit on: any road's carriageway and footway, at ground.
   const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground');
   const reachOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
+  // The ribbons bucketed by their reach, so a point is measured against the
+  // few streets near it, not every street in the town.
+  const ROAD_CELL = m(25);
+  const roadBuckets = new Map<string, typeof ribbons>();
+  for (const r of ribbons) {
+    const reach = reachOf.get(r.id) as number;
+    const bb = r.full.bbox;
+    for (let bx = Math.floor((bb.minX - reach) / ROAD_CELL); bx <= Math.floor((bb.maxX + reach) / ROAD_CELL); bx++) {
+      for (let by = Math.floor((bb.minY - reach) / ROAD_CELL); by <= Math.floor((bb.maxY + reach) / ROAD_CELL); by++) {
+        const k = `${bx},${by}`;
+        let list = roadBuckets.get(k);
+        if (!list) roadBuckets.set(k, list = []);
+        list.push(r);
+      }
+    }
+  }
   const onRoad = (p: Vec2): boolean => {
-    for (const r of ribbons) {
+    for (const r of roadBuckets.get(`${Math.floor(p.x / ROAD_CELL)},${Math.floor(p.y / ROAD_CELL)}`) ?? []) {
       const reach = reachOf.get(r.id) as number;
       const bb = r.full.bbox;
       if (p.x < bb.minX - reach || p.x > bb.maxX + reach || p.y < bb.minY - reach || p.y > bb.maxY + reach) continue;

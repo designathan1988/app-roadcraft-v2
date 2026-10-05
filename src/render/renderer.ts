@@ -25,7 +25,7 @@ import {
 import { Digest } from '@core/digest';
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
-import type { Network } from '@world/network';
+import { Network } from '@world/network';
 import { GROUND_ONLY, buildRoadElevation, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE, ROAD_TYPES, casingHalf, sidewalkHalf } from '@world/roadTypes';
 import type { RoadStructure } from '@world/structures';
@@ -40,11 +40,10 @@ import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
-import { levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
+import { buildingBounds, levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
 import { elementRing, followPieces } from '@world/buildings/elements';
-import { lotSurfaces } from '@world/buildings/lots';
-import type { RoadDoc } from '@world/doc';
-import { drainCompiles, drainUploads, drainWarm } from './uploads';
+import { RoadDoc } from '@world/doc';
+import { compileAhead, drainCompiles, drainUploads, drainWarm } from './uploads';
 import { GRASS_MIN_ZOOM } from './grass';
 import { advanceWind } from './wind';
 import { createSignalHeads, type SignalHeads } from './signals';
@@ -64,8 +63,8 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTransit, type TransitMeshes } from './transit';
-import { TERRAIN_CELL, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
-import { buildingPads } from '@world/buildings/pads';
+import { TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { buildingPads, type Pad } from '@world/buildings/pads';
 import { Indoors } from './indoors';
 import { setLit, slotOf, slotsOnFloor } from './buildings/lightSlots';
 import { m } from '@world/units';
@@ -563,20 +562,10 @@ export function createSceneRenderer(
    * the ground of the whole town and re-planted every garden; now the ground
    * is graded again only when a site changed.
    */
-  let siteKey = '';
   /** The ground the buildings were last graded on (frozen while a stroke is held). */
   let buildingGround = '';
   /** Bumped each time the ground is graded: what stands on it is set again. */
   let groundVersion = 0;
-  const siteSignature = (doc: RoadDoc): string => {
-    const parts: unknown[] = [];
-    for (const b of doc.buildings.all()) {
-      const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
-      parts.push([b.id, solidFootprints(b), floor,
-        lotSurfaces(b, floor, pavedHeightAt).map((l) => [l.ring, l.volume.open ?? 'grass'])]);
-    }
-    return JSON.stringify(parts);
-  };
   /** The plants of the buildings' gardens, as `gardenPlants` reads them, by building revision. */
   let plantsFor = -1;
   let plantsKey = '';
@@ -597,19 +586,64 @@ export function createSceneRenderer(
    */
   /** The buildings' platforms as last worked out, reused while a stroke is held. */
   let padsCache: ReturnType<typeof buildingPads> | null = null;
+  /** Each building's platform by record, while the roads and the land stand (`buildingPads`). */
+  let padsKnown = new WeakMap<Building, Pad | null>();
+  /** The buildings the ground was last graded for, by id: their record then, and the box their bank reaches. */
+  const graded = new Map<number, { ref: Building; box: readonly [number, number, number, number] }>();
+  const bankBox = (b: Building): readonly [number, number, number, number] => {
+    const r = buildingBounds(b, TERRAIN_CELL * 1.5 + m(40) + TERRAIN_CELL);
+    return [r.minX, r.minY, r.maxX, r.maxY];
+  };
+  /**
+   * What changed among the buildings since the ground was graded: the box
+   * of every site added, removed or changed (a record is replaced on any
+   * change), or null when none did.
+   */
+  const changedSites = (doc: RoadDoc): [number, number, number, number] | null => {
+    let box: [number, number, number, number] | null = null;
+    const take = (q: readonly [number, number, number, number]): void => {
+      box = box ? [Math.min(box[0], q[0]), Math.min(box[1], q[1]), Math.max(box[2], q[2]), Math.max(box[3], q[3])] : [...q];
+    };
+    const seen = new Set<number>();
+    for (const b of doc.buildings.all()) {
+      seen.add(b.id);
+      const was = graded.get(b.id);
+      if (was?.ref === b) continue;
+      if (was) take(was.box);
+      const now = bankBox(b);
+      take(now);
+      graded.set(b.id, { ref: b, box: now });
+    }
+    for (const [id, was] of graded) if (!seen.has(id)) { take(was.box); graded.delete(id); }
+    return box;
+  };
+  /** A world box as the terrain grid corners it covers. */
+  const terrainRegion = (box: readonly [number, number, number, number]): TerrainRegion => {
+    const last = MAP_SIZE / TERRAIN_CELL;
+    const clamp = (v: number): number => Math.max(0, Math.min(last, v));
+    return [
+      clamp(Math.floor((box[0] + TERRAIN_HALF) / TERRAIN_CELL)), clamp(Math.ceil((box[2] + TERRAIN_HALF) / TERRAIN_CELL)),
+      clamp(Math.floor((TERRAIN_HALF - box[3]) / TERRAIN_CELL)), clamp(Math.ceil((TERRAIN_HALF - box[1]) / TERRAIN_CELL)),
+    ];
+  };
   /**
    * `region`: a brush dab while the stroke is held - only the ground under it
    * is cut and filled again, against the platforms as they stood when the
    * stroke began; the rest waits for the stroke to end (`settle`).
    */
-  const shapeGround = (net: Network, region: TerrainRegion | null = null): void => {
+  const shapeGround = (net: Network, region: TerrainRegion | null = null, sites = false): void => {
     const roads = net.doc.segments.size > 0 ? elevation : null;
-    if (!region || !padsCache) {
+    if (!region || !padsCache || sites) {
       gradedFor = net.doc.buildings.revision;
-      siteKey = siteSignature(net.doc);
+      if (!sites) {
+        // The roads or the land moved: every platform is worked out afresh.
+        padsKnown = new WeakMap();
+        graded.clear();
+        changedSites(net.doc);
+      }
       groundVersion++;
       padsCache = net.doc.buildings.size > 0
-        ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5)
+        ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
         : null;
     }
     const pads = net.doc.buildings.size > 0 ? padsCache : null;
@@ -740,6 +774,53 @@ export function createSceneRenderer(
     rebuildFurniture(net);
     rebuildMs = performance.now() - started;
     rebuilds++;
+  };
+
+  /**
+   * The road shaders compiled before the first road is drawn. Each material
+   * compiles its program the first time something uses it, and that is a
+   * stall of the frame it happens in - the first road on an empty map froze
+   * the game for most of a second (the profile of 2026-10-05: 0.8 s in
+   * `getProgramInfoLog`). Engines warm their shaders ahead for this (three's
+   * `compileAsync`, with KHR_parallel_shader_compile; Unreal's PSO cache):
+   * a small junction is built off-screen with the very builders and shared
+   * materials of `rebuildWorld`, compiled in the background, and thrown away.
+   */
+  let roadShadersWarm: 'no' | 'started' = 'no';
+  const warmRoadShaders = (): void => {
+    if (roadShadersWarm !== 'no') return;
+    roadShadersWarm = 'started';
+    try {
+      const doc = new RoadDoc();
+      const centre = doc.addNode({ x: 0, y: 0 });
+      // Each class of road, a junction and a pedestrian crossing on one leg.
+      [[m(70), 0, 0], [-m(70), 0, 1], [0, m(70), 2], [0, -m(70), 3]].forEach(([x, y, type]) => {
+        doc.addSegment(doc.addNode({ x: x!, y: y! }).id, centre.id, type!);
+      });
+      const pole1 = doc.addPole({ x: m(20), y: m(12) }, true);
+      const pole2 = doc.addPole({ x: m(50), y: m(12) }, false);
+      doc.addPoleSpan(pole1.id, pole2.id);
+      const warmNet = new Network(doc);
+      warmNet.rebuild();
+      const flat = (): number => 0;
+      const warmElevation = buildRoadElevation(warmNet, flat);
+      const group = new Group();
+      const parts = [
+        buildRoadSurfaces(warmNet, warmElevation, materials, flat, undefined, terrain.vergeMaterial),
+        buildStructureDetails(warmNet, warmElevation, flat, materials),
+        buildUtilities(warmNet, poleGroundAt(warmElevation, flat), sceneryKit),
+      ];
+      for (const part of parts) group.add(part.group);
+      const plants = buildScenery(warmNet, warmElevation, flat, () => false, { grass: quality.grass }, sceneryKit);
+      for (const mesh of plants.meshes) group.add(mesh);
+      group.add(plants.grass);
+      void compileAhead(group).then(() => {
+        for (const part of parts) part.dispose();
+        plants.dispose();
+      });
+    } catch (error) {
+      console.warn('road shader warm-up skipped', error);
+    }
   };
 
   const applyQuality = (level: QualityLevel): void => {
@@ -1017,18 +1098,22 @@ export function createSceneRenderer(
         terrain.settle();
       }
       // A building placed, moved or reshaped grades its own site.
+      // Only the ground round the sites that changed is graded again (growing
+      // a building re-graded the whole map and every platform: a hitch for
+      // every building the zones grew, the profile of 2026-10-05).
       if (gradedFor !== net.doc.buildings.revision) {
         gradedFor = net.doc.buildings.revision;
-        if (siteSignature(net.doc) !== siteKey) shapeGround(net);
+        const changed = changedSites(net.doc);
+        if (changed) shapeGround(net, terrainRegion(changed), true);
       }
       // The buildings follow the ground once a stroke is over, not on every
       // dab of it: re-grading 600 buildings per dab took seconds a dab.
       if (!stroking) buildingGround = `${net.doc.terrainRevision}:${rebuilds}`;
       buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt);
       // The plants under a building's footprints: only a changed site moves them.
-      if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== siteKey)) {
+      if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== String(groundVersion))) {
         scenery.exclude(net.doc.buildings.size > 0 ? buildings.covers : null);
-        excludedFor = { scenery, site: siteKey };
+        excludedFor = { scenery, site: String(groundVersion) };
       }
       // Walls, fences and hedges: on their own revision, and on the ground they stand on.
       const barrierKey = `${net.doc.barrierRevision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
@@ -1259,6 +1344,8 @@ export function createSceneRenderer(
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);
       drainCompiles(renderer, rig.camera, scene, post.target);
+      // From the second frame on, the compiler answers: warm the road shaders.
+      warmRoadShaders();
       // One waiting body's geometry a frame to the GPU, before anybody draws it.
       drainWarm(renderer, rig.camera, scene, post.target);
 

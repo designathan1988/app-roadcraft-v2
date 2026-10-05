@@ -485,7 +485,10 @@ export function createBlast(exhaust: Exhaust): Blast {
       // Light, ring, shake decay.
       flash = Math.max(0, flash - (flash / Math.max(0.03, flashLife)) * wall * 2.5);
       light.intensity = flash;
-      light.visible = flash > 1;
+      // Always in the scene, dark when off: a light shown and hidden changes the
+      // count of lights, which is part of every lit material's program - each
+      // flash recompiled every shader in the town (three `WebGLPrograms`).
+      light.visible = true;
       shakeAmp *= Math.exp(-wall * 4);
       if (shakeAmp < 1e-3) shakeAmp = 0;
       if (ringAge < 0.7) {
