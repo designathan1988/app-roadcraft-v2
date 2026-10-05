@@ -90,6 +90,8 @@ const VERGE_DROP = 0.1;
 const VERGE_SKIRT = 0.5;
 /** The verge meets the drawn terrain this hair above it, so the ground never shows through. */
 const VERGE_LIFT = m(0.02);
+/** World size of one UV unit on the ground verge when it wears the terrain's material. */
+const TERRAIN_UV = 64;
 
 /**
  * Longest triangle edge on a road at grade.
@@ -224,6 +226,7 @@ export function buildRoadSurfaces(
   materials: SceneMaterials,
   terrainAt: (x: number, y: number) => number,
   reuse?: SurfaceReuse,
+  groundMaterial?: Material,
 ): RoadSurfaces {
   const group = new Group();
   group.name = 'road-network';
@@ -382,12 +385,14 @@ export function buildRoadSurfaces(
 
     // Outermost first, so a nearer band's skirt lands on the one outside it.
     //
-    // No grass verge on the ground (the player's order of 2026-10-05: "nunca
-    // colocar essa manta verde"). The batter between the footway's edge and
-    // the terrain read as a separate green strip along every pavement; the
-    // footway now ends at its own edge and its skirt goes into the ground,
-    // and the terrain itself is what meets it. A raised deck keeps its verge
-    // band: there it is the deck's concrete margin, not grass.
+    // The ground verge - the batter from the footway's edge down to the
+    // terrain - is drawn with the TERRAIN's own material when the renderer
+    // passes it (`groundMaterial`). The terrain shader textures by world
+    // position, so the batter is the lawn itself rising to the pavement: no
+    // strip of a second green along every footway (the player's order of
+    // 2026-10-05, "nunca colocar essa manta verde"), and no wall either -
+    // the terrain alone cannot reach the footway's height, being a 6.4 m grid
+    // that would lift through the asphalt of a kerb return.
     const allSpecs: SurfaceSpec[] = [
       {
         source: { kind: 'band', band: 'verge' },
@@ -395,9 +400,16 @@ export function buildRoadSurfaces(
           name: `verge${suffix}`,
           top: raised ? offset(deck, -VERGE_DROP) : vergeTop,
           bottom: soffit,
-          material: raised ? materials.deck : materials.verge,
+          material: raised ? materials.deck : groundMaterial ?? materials.verge,
           maxEdge,
-          ...uvFor(raised ? materials.scale.deck : materials.scale.verge),
+          // On the terrain's material the batter takes the terrain plane's UV
+          // frame (world x, y): its normal map is read off UV derivatives, and
+          // a road-framed UV turned the lawn's relief and lit it as a second green.
+          ...(raised || !groundMaterial ? uvFor(raised ? materials.scale.deck : materials.scale.verge) : {
+            uv: (x: number, y: number, out: number[] | Float32Array) => { out[0] = x / TERRAIN_UV; out[1] = y / TERRAIN_UV; },
+            uvFrame: (x: number, y: number, _px: number, _py: number, out: number[] | Float32Array) => { out[0] = x / TERRAIN_UV; out[1] = y / TERRAIN_UV; },
+            uvWorld: TERRAIN_UV,
+          }),
           castShadow: raised,
           receiveShadow: true,
           skirtUvScale: raised ? materials.scale.deck : materials.scale.verge,
@@ -410,7 +422,7 @@ export function buildRoadSurfaces(
           top: offset(deck, FOOTWAY_RISE),
           // On the ground the footway's own edge goes down into the terrain:
           // there is no verge band outside it (see `specs` below).
-          bottom: raised ? offset(deck, -VERGE_DROP) : soffit,
+          bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
           material: materials.footway,
           maxEdge,
           ...uvFor(materials.scale.footway),
@@ -474,7 +486,7 @@ export function buildRoadSurfaces(
         },
       },
     ];
-    const specs = raised ? allSpecs : allSpecs.filter((spec) => !(spec.source.kind === 'band' && spec.source.band === 'verge'));
+    const specs = allSpecs;
 
     // ---------------------------------------------------------------- inputs
     const levels: Record<'casing' | 'sidewalk' | 'curb' | 'asphalt', Input[]> = {
