@@ -12,6 +12,8 @@ export interface LotLabActions {
   generate(zone: { use: ZoneUse; density: ZoneDensity }, widths: readonly [number, number], seed: number): number;
   /** Dezones the street and takes its lots down. */
   clear(): void;
+  /** Lays every tower of the kit on its whole lot along the street; returns how many stood. */
+  catalog(seed: number): number;
   /** Puts towers of the kit behind the street; returns how many were placed. */
   towers(kinds: readonly TowerKind[], floors: number | undefined, seed: number): number;
   /** The selected building as a template, or null with nothing selected. */
@@ -51,6 +53,7 @@ export function mountLotLab(actions: LotLabActions): void {
   const option = (value: string, label: string): string => `<option value="${value}">${label}</option>`;
   panel.innerHTML = `
     <h3>${t('lab.title')}</h3>
+    <div class="row"><button data-a="catalog">${t('lab.catalog')}</button></div>
     <label>${t('zone.use')}<select data-k="use">${ZONE_USES.map((u) => option(u, t(`zone.${u}`))).join('')}</select></label>
     <label>${t('zone.density')}<select data-k="density">${ZONE_DENSITIES.map((d) => option(d, t(`zone.${d}`))).join('')}</select></label>
     <label>${t('lab.widthMin')}<input data-k="wmin" type="number" min="1" max="8" value="1"></label>
@@ -122,6 +125,10 @@ export function mountLotLab(actions: LotLabActions): void {
     const action = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset['a'];
     if (action === 'generate') generate();
     else if (action === 'clear') { actions.clear(); actions.flash(t('lab.cleared')); }
+    else if (action === 'catalog') {
+      const n = actions.catalog(Math.round(Number(field<HTMLInputElement>('seed').value) || 0));
+      actions.flash(t('lab.catalogShown', { n }));
+    }
     else if (action === 'tower' || action === 'towersAll') {
       const floors = Math.round(Number(field<HTMLInputElement>('floors').value) || 0) || undefined;
       const seed = Math.round(Number(field<HTMLInputElement>('seed').value) || 0);

@@ -1925,6 +1925,8 @@ export const EN: Dictionary = {
   'lab.grown': '{n} lots generated',
   'lab.clear': 'Clear',
   'lab.towers': 'BUILDINGS',
+  'lab.catalog': 'Show catalogue (buildings on whole lots)',
+  'lab.catalogShown': '{n} buildings in the catalogue, each on its lot',
   'lab.towerKind': 'Model',
   'lab.floors': 'Floors (0 = auto)',
   'lab.makeTower': 'Make building',

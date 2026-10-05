@@ -1911,6 +1911,8 @@ export const PT_BR: Dictionary = {
   'lab.grown': '{n} lotes gerados',
   'lab.clear': 'Limpar',
   'lab.towers': 'PRÉDIOS',
+  'lab.catalog': 'Mostrar catálogo (prédios com lote completo)',
+  'lab.catalogShown': '{n} prédios no catálogo, cada um com seu lote',
   'lab.towerKind': 'Modelo',
   'lab.floors': 'Andares (0 = auto)',
   'lab.makeTower': 'Criar prédio',

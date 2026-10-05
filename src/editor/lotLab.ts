@@ -9,7 +9,9 @@ import type { ZoneDensity, ZoneUse } from '@world/zones';
 import { LOT_PLAN_VERSION, growOne, paintCells } from './zoning';
 import { Rng } from '@core/rng';
 import { instantiate } from '@world/buildings/blueprints';
-import { type TowerKind, makeTower } from '@world/buildings/towerKit';
+import { TOWER_KINDS, type TowerKind, makeTower } from '@world/buildings/towerKit';
+import type { MadeBuilding } from '@world/buildings/procedural';
+import { type LotKind, furnishLot, planLot } from './lotPlan';
 import { addBuildingRecord } from './buildings';
 
 /**
@@ -77,6 +79,75 @@ export function placeTower(ctx: SiteContext, kind: TowerKind, floors: number | u
     }
   }
   return null;
+}
+
+/** The lot each tower of the kit stands on: the lot planner's kind and the plot, metres. */
+const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> = {
+  balconyMid: { kind: 'flats', W: 32, D: 40 },
+  glassOffice: { kind: 'office', W: 36, D: 40 },
+  glassBalcony: { kind: 'tower', W: 34, D: 40 },
+  beigeClassic: { kind: 'tower', W: 34, D: 40 },
+  darkGlass: { kind: 'office', W: 34, D: 40 },
+  whiteBalcony: { kind: 'tower', W: 34, D: 40 },
+  brickFrame: { kind: 'tower', W: 34, D: 40 },
+  roundGlass: { kind: 'tower', W: 34, D: 40 },
+  darkGrid: { kind: 'tower', W: 34, D: 40 },
+  artDeco: { kind: 'office', W: 34, D: 40 },
+};
+
+/**
+ * The catalogue: every tower of the kit on a whole lot - its forecourt or
+ * garden, walls or railings, gates, the residents' car park behind, trees and
+ * lamps - laid by the zoning's own lot planner (`lotPlan.ts`), along both
+ * sides of the lab street, fronts on the footway. Everything on the lab
+ * street before is taken down. Returns how many stood.
+ */
+export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number): number {
+  const { doc } = ctx;
+  for (const b of [...doc.buildings.all()]) doc.buildings.remove(b.id);
+  doc.zoneMarks.length = 0;
+  doc.zoneRevision++;
+  // The front line of each side of the street, from the zone grid's first row.
+  const sides = ([1, -1] as const).map((side) => {
+    const fronts = grid.cells.filter((c) => c.row === 0 && c.side === side);
+    if (!fronts.length) return null;
+    const y = fronts.reduce((s, c) => s + (c.corners[0].y + c.corners[1].y) / 2, 0) / fronts.length;
+    const xs = fronts.flatMap((c) => [c.corners[0].x, c.corners[1].x]);
+    return { y, x0: Math.min(...xs), x1: Math.max(...xs), rotation: fronts[0]!.rotation };
+  }).filter((s): s is NonNullable<typeof s> => s !== null);
+  const cursor = sides.map((s) => s.x0);
+  let placed = 0;
+  TOWER_KINDS.forEach((kind, i) => {
+    const lot = CATALOG_LOTS[kind];
+    const rng = new Rng((seed * 977 + i * 131) >>> 0);
+    const plan = planLot(lot.kind, lot.W, lot.D, rng);
+    const env = plan.building;
+    const body = makeTower({ kind, width: env.x1 - env.x0, depth: env.y1 - env.y0 }, rng);
+    // Into the lot's frame: x across from its middle, y back from the front boundary.
+    const dx = m(env.x0 - lot.W / 2), dy = m(env.y0);
+    for (const v of body.volumes) {
+      v.x += dx; v.y += dy;
+      for (const r of v.roofDetails ?? []) { r.x += dx; r.y += dy; }
+    }
+    for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
+    for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+    const made: MadeBuilding = { fn: body.function ?? 'apartments', body, entrance: (env.x1 - env.x0) / 2, free: [] };
+    furnishLot(body, plan, made, rng);
+    // The next free stretch on either side of the street.
+    for (let k = 0; k < sides.length; k++) {
+      const s = (placed + k) % sides.length;
+      const side = sides[s]!;
+      const width = m(lot.W);
+      if (cursor[s]! + width > side.x1 + 1e-6) continue;
+      const along = cursor[s]! + width / 2;
+      const result = addBuildingRecord(ctx, {
+        ...body, x: along, y: side.y, rotation: side.rotation, decay: 0, lotPlan: LOT_PLAN_VERSION,
+      } as Omit<Building, 'id'>);
+      cursor[s] = cursor[s]! + width;
+      if (result.ok) { placed++; return; }
+    }
+  });
+  return placed;
 }
 
 /** The zone a grown building stands on, if any. */
