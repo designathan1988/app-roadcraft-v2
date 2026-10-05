@@ -37,9 +37,11 @@ const ICON: Record<string, string> = {
   fun: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>',
   social: '<circle cx="8.5" cy="8" r="3"/><circle cx="16.5" cy="9" r="2.5"/><path d="M3 20a5.5 5.5 0 0 1 11 0M14 20a4.5 4.5 0 0 1 7-3.7"/>',
   hygiene: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+  environment: '<path d="M4 11l8-7 8 7v9H4z"/><path d="M9 20v-5h6v5"/>',
+  errands: '<path d="M6 8h12l-1 12H7z"/><path d="M9 8a3 3 0 0 1 6 0"/>',
 };
 
-const NEED_KEYS = ['hunger', 'energy', 'fun', 'social', 'hygiene'] as const;
+const NEED_KEYS = ['hunger', 'energy', 'fun', 'social', 'hygiene', 'environment', 'errands'] as const;
 
 function icon(name: string): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
@@ -175,8 +177,9 @@ export function createAgentCard(host: HTMLElement, onChange: () => void = () => 
         set('to', place(trip.to));
       } else {
         const at = view.at;
-        set('doing', at === view.home ? t('agent.at.home') : at !== null && at === view.work ? t('agent.at.work')
-          : at !== null ? t('agent.at.place', { place: place(at) }) : t('agent.at.nowhere'));
+        const where = at === view.home ? t('agent.at.home') : at !== null && at === view.work ? t('agent.at.work')
+          : at !== null ? t('agent.at.place', { place: place(at) }) : t('agent.at.nowhere');
+        set('doing', view.activity ? `${t(`agent.act.${view.activity}`)} · ${where}` : where);
         set('why', null);
         set('to', null);
       }

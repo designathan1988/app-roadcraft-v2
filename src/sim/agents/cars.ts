@@ -42,7 +42,7 @@ import { Manoeuvre, arrival, departure } from './manoeuvre';
  */
 
 /** Why a trip is made: the player reads it translated (`agent.why.<reason>`). */
-export type TripReason = 'work' | 'school' | 'home' | 'lunch' | 'errand' | 'outing' | 'sleep' | 'eat' | 'fun' | 'social' | 'wash';
+export type TripReason = 'work' | 'school' | 'home' | 'lunch' | 'errand' | 'outing' | 'sleep' | 'eat' | 'fun' | 'social' | 'wash' | 'visit';
 
 export type CarPhase = 'toCar' | 'board' | 'leave' | 'drive' | 'park' | 'alight' | 'fromCar';
 

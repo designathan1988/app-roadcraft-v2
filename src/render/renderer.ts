@@ -847,7 +847,8 @@ export function createSceneRenderer(
         pedestrianVisible,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
-        indoor: indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+        indoor: [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+          ...indoors.yard(sim, terrain.naturalRenderedHeightAt)],
       });
       // The rooms cut open are lit from inside: brighter as the day goes.
       const key = cutSpec ? `${cutSpec.level}@${cutSpec.x},${cutSpec.y}:${sim.doc.buildings.revision}` : '';

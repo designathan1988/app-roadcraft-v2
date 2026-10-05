@@ -28,12 +28,15 @@ import type { Resident } from '../city/population';
  * eat near work when hungry. Outside them, needs decide.
  */
 
-export const NEEDS = ['hunger', 'energy', 'fun', 'social', 'hygiene'] as const;
+export const NEEDS = ['hunger', 'energy', 'fun', 'social', 'hygiene', 'environment', 'errands'] as const;
 export type Need = (typeof NEEDS)[number];
 export type Needs = Record<Need, number>;
 
 /** How fast each need runs down, points per game hour, while it is not being met. */
-const DECAY: Readonly<Needs> = { hunger: 6, energy: 4.5, fun: 5, social: 4, hygiene: 3 };
+// `environment` is the home kept (The Sims' Environment): chores at home put
+// it back. `errands` is the business of a household out of doors - the bank,
+// the post, the shopping, the papers at the council.
+const DECAY: Readonly<Needs> = { hunger: 6, energy: 4.5, fun: 5, social: 4, hygiene: 3, environment: 2, errands: 1.5 };
 
 /** What a kind of place gives back, points per game hour spent there. */
 type Offer = Partial<Needs>;
@@ -55,9 +58,15 @@ const KINDS: Partial<Record<BuildingFunction, Kind>> = {
   restaurant: { offer: { hunger: 70, social: 12 }, hours: { from: 11 * 60, to: 23 * 60 } },
   snackBar: { offer: { hunger: 60, social: 6 }, hours: MEALS },
   bakery: { offer: { hunger: 55 }, hours: { from: 6 * 60, to: 20 * 60 } },
-  supermarket: { offer: { hunger: 25 }, hours: DAY },
-  mall: { offer: { fun: 22, hunger: 25, social: 8 }, hours: { from: 10 * 60, to: 22 * 60 } },
-  shop: { offer: { fun: 12 }, hours: DAY },
+  supermarket: { offer: { hunger: 25, errands: 60 }, hours: DAY },
+  bank: { offer: { errands: 80 }, hours: { from: 9 * 60, to: 16 * 60 } },
+  postOffice: { offer: { errands: 70 }, hours: { from: 9 * 60, to: 17 * 60 } },
+  council: { offer: { errands: 60 }, hours: { from: 9 * 60, to: 17 * 60 } },
+  cityHall: { offer: { errands: 60 }, hours: { from: 9 * 60, to: 17 * 60 } },
+  pharmacy: { offer: { errands: 50 }, hours: { from: 8 * 60, to: 22 * 60 } },
+  gasStation: { offer: { errands: 20, hunger: 15 }, hours: ALWAYS },
+  mall: { offer: { fun: 22, hunger: 25, social: 8, errands: 30 }, hours: { from: 10 * 60, to: 22 * 60 } },
+  shop: { offer: { fun: 12, errands: 25 }, hours: DAY },
   bar: { offer: { social: 35, fun: 15, hunger: 15 }, hours: { from: 16 * 60, to: 26 * 60 } },
   nightclub: { offer: { fun: 40, social: 35 }, hours: { from: 22 * 60, to: 29 * 60 } },
   cinema: { offer: { fun: 45, social: 8 }, hours: { from: 14 * 60, to: 24 * 60 } },
@@ -122,9 +131,9 @@ const inside = (h: Hours, clock: number): boolean => isOpen(h, clock);
 const isNight = (clock: number): boolean => clock >= NIGHT_FROM || clock < NIGHT_TO;
 
 /** The pull of a need as it runs low: steep for the body's needs, even for the rest. */
-function urge(need: Need, level: number): number {
+export function urge(need: Need, level: number): number {
   const lack = Math.max(0, Math.min(1, (100 - level) / 100));
-  return need === 'fun' || need === 'social' ? lack : lack * lack * 1.6;
+  return need === 'hunger' || need === 'energy' || need === 'hygiene' ? lack * lack * 1.6 : lack;
 }
 
 /** A starting mind for a resident: needs spread so the city does not all get hungry at once. */
@@ -154,13 +163,15 @@ function offerAt(r: Resident, at: BuildingId, kindOf: (id: BuildingId) => Buildi
  * (`at` null) they only run down.
  */
 export function live(mind: Mind, r: Resident, at: BuildingId | null, clock: number,
-  kindOf: (id: BuildingId) => BuildingFunction | undefined): void {
+  kindOf: (id: BuildingId) => BuildingFunction | undefined, doing?: Partial<Needs> | null): void {
   const hours = Math.max(0, clock - mind.updated) / 60;
   mind.updated = clock;
   if (hours <= 0) return;
-  const offer = at === null ? {} : offerAt(r, at, kindOf, clock);
+  // What they are doing gives back what it gives (`activities.ts`); somebody
+  // in a place with nothing for them to do there gets the place's own offer.
+  const offer = at === null ? {} : doing ?? offerAt(r, at, kindOf, clock);
   for (const n of NEEDS) {
-    const asleep = n === 'energy' && at === r.home && isNight(clock);
+    const asleep = n === 'energy' && at === r.home && isNight(clock) && !doing;
     const down = asleep ? 0 : DECAY[n];
     const up = offer[n] ?? 0;
     mind.needs[n] = Math.max(0, Math.min(100, mind.needs[n] + (up - down) * hours));
@@ -179,7 +190,12 @@ export interface PlaceIndex {
   near(from: BuildingId): readonly Place[];
   kindOf(id: BuildingId): BuildingFunction | undefined;
   position(id: BuildingId): { readonly x: number; readonly y: number } | null;
+  /** The homes of a resident's friends who are in now, to call on. */
+  friends?(r: Resident): readonly { readonly building: BuildingId; readonly x: number; readonly y: number }[];
 }
+
+/** Calling on a friend at home: company and some fun, by day and into the evening. */
+const VISIT: Kind = { offer: { social: 50, fun: 15 }, hours: { from: 9 * 60, to: 22 * 60 } };
 
 /** Indexes the city's places by kind, and their nearest few from every building. */
 export function placeIndex(buildings: Iterable<Building>, doorOf: (id: BuildingId) => { x: number; y: number } | null): PlaceIndex {
@@ -222,7 +238,7 @@ export function placeIndex(buildings: Iterable<Building>, doorOf: (id: BuildingI
 }
 
 /** Why a resident decided to go where they go (`agent.why.<reason>` on their card). */
-export type MindReason = 'work' | 'school' | 'home' | 'sleep' | 'lunch' | 'eat' | 'fun' | 'social' | 'wash';
+export type MindReason = 'work' | 'school' | 'home' | 'sleep' | 'lunch' | 'eat' | 'fun' | 'social' | 'wash' | 'errand' | 'visit';
 
 export interface Choice {
   readonly to: BuildingId;
@@ -263,7 +279,8 @@ export function decide(mind: Mind, r: Resident, at: BuildingId, clock: number, i
     }
     score /= 1 + d / ATTENUATION;
     if (stay) score *= STAY_BONUS;
-    const why: MindReason = top === 'hunger' ? 'eat' : top === 'energy' ? 'sleep' : top === 'hygiene' ? 'wash' : top;
+    const why: MindReason = top === 'hunger' ? 'eat' : top === 'energy' ? 'sleep' : top === 'hygiene' ? 'wash'
+      : top === 'environment' ? 'home' : top === 'errands' ? 'errand' : top;
     return { score, why };
   };
   // Home.
@@ -291,6 +308,14 @@ export function decide(mind: Mind, r: Resident, at: BuildingId, clock: number, i
     if (r.ageClass === 'child' && (isNight(clock) || p.kind === 'bar' || p.kind === 'nightclub')) continue;
     const v = value(k.offer, false, Math.hypot(p.x - here.x, p.y - here.y));
     scored.push({ to: p.building, score: v.score, why: v.why });
+  }
+  // A friend's home, when they are in.
+  if (isOpen(VISIT.hours, clock) && !(r.ageClass === 'child' && isNight(clock))) {
+    for (const f of index.friends?.(r) ?? []) {
+      if (f.building === r.home) continue;
+      const v = value(VISIT.offer, f.building === at, Math.hypot(f.x - here.x, f.y - here.y));
+      scored.push({ to: f.building, score: v.score, why: f.building === at ? v.why : 'visit' });
+    }
   }
   scored.sort((a, b) => b.score - a.score);
   const best = scored.slice(0, TOP).filter((s) => s.score >= WORTH_A_TRIP || s.to === at);

@@ -78,6 +78,25 @@ and they have seen it.
   16 (each lone street now one). Measured: `walk.spec.ts` third test (a
   street with traffic at the default: 18 crossings, 0 inside a vehicle, all
   across).
+- **Life inside, LIVE** (2026-10-05): residents do things in the buildings
+  they are in (`sim/agents/activities.ts`), the furniture advertising what it
+  gives (The Sims' smart objects): at home sleep in their own bed, nap, watch
+  TV, read, game, cook, eat, snack, wash the dishes, bathe, clean, mend, talk
+  with the family, look after the children, exercise; in their lot garden,
+  swim, sit out in front, wash the car; at work their post by trade (desk and
+  computer, machine, checkout, shelves, stove, bar, reception, blackboard,
+  ward, altar, guard, cleaning), pupils at their desks; out, what the place is
+  for (dine, drink, dance, shop and pay, bank, cinema, pray, gym, library,
+  wait), or a friend's sofa. Two needs were added: `environment` (the home
+  kept) and `errands` (bank, post, council, shopping). The renderer draws each
+  of them at their piece, in their pose (`render/indoors.ts`); people in their
+  lots are drawn always. A building opened (two clicks) now has a floor bar in
+  the game's own interface (`ui/insideBar.ts`). `CityLife.skip` no longer runs
+  needs down for the hours skipped. Measured: `tests/sim/agents/activities.spec.ts`
+  (03:00: 1110 asleep; 09:30: workers at posts; evening: 20+ different doings;
+  no piece held by two). Photos: `scripts/life-shots.mjs`
+  (`docs/audit/2026-10-05/life/`). Not yet: a walk across town takes game
+  hours (20x time, 1.34 m/s), so fewer reach work than are due.
 - **By design, not missing:** every person on the streets is a resident (no
   passers-by made up); car owners without a bay near home walk; with
   residents there is no generated traffic, so no buses run (the game has no

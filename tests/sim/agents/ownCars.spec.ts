@@ -88,6 +88,7 @@ describe('agents: residents use their own cars', () => {
     let pocket = 0;
     let time = 0;
     const lanes = new Map<number, string[]>();
+    const parkedWhen = new Map<number, boolean>();
     sim.clock.run(Math.round(300 / DT), () => {
       // Done when every one has parked and is walking in (or is in).
       if ([...sent.keys()].every((id) => { const t = cars.trips.get(id); return !t || t.phase === 'fromCar'; })) return;
@@ -107,6 +108,8 @@ describe('agents: residents use their own cars', () => {
         let at = phaseAt.get(id);
         if (!at) { at = new Map(); phaseAt.set(id, at); }
         if (!at.has(t.phase)) at.set(t.phase, time);
+        // Parked as the driver gets out (later, its owner may set off again).
+        if (t.phase === 'alight' && !parkedWhen.has(id)) parkedWhen.set(id, t.car.bay !== null && t.car.body !== null);
       }
       for (const car of cars.cars.values()) {
         const v = car.body ?? sim.vehicles.get(car.id);
@@ -142,7 +145,7 @@ describe('agents: residents use their own cars', () => {
       const at = phaseAt.get(id) ?? new Map<CarPhase, number>();
       const inside = city.whereIs(s.resident) === s.to;
       const car = [...cars.cars.values()].find((c) => c.id === s.car)!;
-      const parkedNear = car.bay !== null && car.body !== null;
+      const parkedNear = parkedWhen.get(id) ?? (car.bay !== null && car.body !== null);
       if (at.has('alight') && parkedNear) parked++;
       if (inside) arrived++;
       const times = phases.map((p) => `${p}@${at.has(p) ? at.get(p)!.toFixed(0) : '-'}`).join(' ');

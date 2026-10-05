@@ -7,6 +7,7 @@ import { FURNITURE_SIZE, LAMP_KINDS, type Furniture, type FurnitureKind, interio
 import type { Building } from '@world/buildings/types';
 import { m } from '@world/units';
 import type { CutawaySpec } from './buildings/layer';
+import { type Doing, placeAt } from '@sim/agents/activities';
 
 /**
  * The residents inside the buildings that are cut open: The Sims inside
@@ -121,6 +122,14 @@ function wants(r: Resident, building: number, hour: number): readonly Use[] {
   return ['seat', 'pew', 'sofa', 'shelf', 'counter', 'table'];
 }
 
+/** The hands and face of a resident at an activity, as the walking crowd's gestures. */
+function gestureOf(d: Doing): GestureView | null {
+  if (d.pose === 'lie') return null;
+  if (d.pose === 'crouch') return { kind: 'crouch', phase: 'hold', t: 3, hold: 1e6 };
+  if (d.pose === 'sit') return d.gesture === 'eat' ? EAT : d.gesture === 'phone' ? PHONE : SEATED;
+  return d.gesture ? { kind: d.gesture, phase: 'hold', t: 0 } : null;
+}
+
 export class Indoors {
   private readonly spots = new Map<string, Spot[]>();
   private readonly floors = new Map<string, number>();
@@ -169,6 +178,7 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
       this.revision = world.doc.buildings.revision;
       this.spots.clear();
       this.floors.clear();
+      this.furniture.clear();
     }
     const hour = (world.city.minutes(world) % 1440) / 60;
     const out: IndoorFigure[] = [];
@@ -205,6 +215,20 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
       let shown = 0;
       for (const r of inside) {
         if (shown >= PER_BUILDING) break;
+        // A resident the simulation has doing something (`sim/agents/activities.ts`):
+        // drawn exactly there, as it says.
+        const doing = world.city.doingOf(r.id);
+        if (doing && !doing.out) {
+          if (doing.level !== spec.level) continue;
+          const f = this.pieces(b, doing.level)[doing.piece];
+          if (!f) continue;
+          const at = placeAt(b, f, doing.pose);
+          shown++;
+          out.push(this.figure(world, r, at.x, at.y, floor + at.rise, at.heading, at.lean, gestureOf(doing)));
+          continue;
+        }
+        // With the agents, nobody is placed by the hour alone: what they do is the sim's.
+        if (world.city.cars) continue;
         // Only the people on this floor: at home on their own floor, at work
         // on their job's, visitors on the ground floor.
         const home = r.home === b.id;
@@ -259,5 +283,48 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
       }
     }
     return out;
+  }
+
+  /**
+   * The residents out in their own lots - in the garden, in the pool, on the
+   * front step, washing the car (`CityLife.outdoors`): drawn whether or not
+   * anything is cut open, as the street is.
+   */
+  yard(world: SimWorld, groundAt: GroundAt, max = 120): IndoorFigure[] {
+    const out: IndoorFigure[] = [];
+    for (const { resident, doing } of world.city.outdoors()) {
+      if (out.length >= max) break;
+      const o = doing.out!;
+      const z = groundAt(o.x, o.y) + (doing.kind === 'swim' ? m(-0.6) : m(0.04));
+      out.push(this.figure(world, resident, o.x, o.y, z, o.heading, doing.pose === 'lie' ? Math.PI / 2 : 0, gestureOf(doing)));
+    }
+    return out;
+  }
+
+  private readonly furniture = new Map<string, readonly Furniture[]>();
+  /** A floor's furniture, as the sim numbers it (`BuildingUse.furniture`), kept until the buildings change. */
+  private pieces(b: Building, level: number): readonly Furniture[] {
+    const key = `${b.id}:${level}`;
+    let list = this.furniture.get(key);
+    if (!list) { list = interiorAt(b, level).furniture as Furniture[]; this.furniture.set(key, list); }
+    return list;
+  }
+
+  /** One resident's body at a place, the view kept frame to frame (its clip is kept by it). */
+  private figure(world: SimWorld, r: Resident, x: number, y: number, z: number, heading: number, lean: number,
+    gesture: GestureView | null): IndoorFigure {
+    let view = this.views.get(r.id);
+    if (!view || view.x !== x || view.y !== y) {
+      view = {
+        id: INDOOR_BASE + r.id, x, y, heading, prev: { x, y, heading }, v: 0, turnV: 0, age: 0,
+        ageClass: r.ageClass, gender: r.seed % 2 ? 'f' : 'm',
+        party: { id: INDOOR_BASE + r.id, size: 1, archetype: 'solo', hasChild: false },
+        rank: 0, ground: 'open', segment: undefined, stretch: '', walking: false, kerbWait: 0, waitingFor: null, gesture,
+      };
+      this.views.set(r.id, view);
+    }
+    view.gesture = gesture;
+    view.age = world.clock.time + (r.id % 17);
+    return { view, x, y, z, heading, lean };
   }
 }

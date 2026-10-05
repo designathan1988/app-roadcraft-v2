@@ -14,6 +14,9 @@ import { planFrom } from '../routing/router';
 import { type Population, type Resident, derivePopulation } from './population';
 import { type CarPhase, OwnCars, personGender, type TripReason } from '../agents/cars';
 import { DECIDE_EVERY, type Mind, type Needs, type PlaceIndex, committedTo, decide, live, newMind, placeIndex } from '../agents/mind';
+import { type ActivityKind, BuildingUse, type Doing, type YardPlaces, chooseActivity } from '../agents/activities';
+import { localToWorld } from '@world/buildings/geometry';
+import type { Building } from '@world/buildings/types';
 
 /**
  * The residents' days: The Sims inside SimCity.
@@ -135,6 +138,11 @@ export class CityLife {
    */
   private readonly minds = new Map<number, Mind>();
   private places: PlaceIndex | null = null;
+  /** What each resident in a building is doing there, with what (`activities.ts`). */
+  private readonly doings = new Map<number, Doing>();
+  /** Each building's furniture and who has which piece, rebuilt with the buildings. */
+  private readonly uses = new Map<BuildingId, BuildingUse>();
+  private usesFor = -1;
 
   /** Switches the residents' own cars on or off; the city is read again either way. */
   useAgents(on: boolean): void {
@@ -172,7 +180,15 @@ export class CityLife {
 
   /** Moves the clock on: everybody's diary catches up, a queue at a time. */
   skip(minutes: number): void {
-    this.skipped += Math.max(0, minutes);
+    const by = Math.max(0, minutes);
+    this.skipped += by;
+    // The hours skipped were lived as any others, off the screen: needs are
+    // not run down for them, and whatever anybody was doing is over.
+    for (const mind of this.minds.values()) mind.updated += by;
+    for (const [id, d] of this.doings) {
+      if (d.piece >= 0) this.uses.get(d.building)?.taken.delete(`${d.level}:${d.piece}`);
+      this.doings.delete(id);
+    }
   }
 
   /**
@@ -198,8 +214,9 @@ export class CityLife {
       at: own.bay?.building ?? null,
     } : null;
     const needs = this.minds.get(resident)?.needs;
+    const doing = this.doingOf(resident);
     return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car,
-      ...(needs ? { needs: { ...needs } } : {}) };
+      ...(needs ? { needs: { ...needs } } : {}), ...(doing && d.at !== null ? { activity: doing.kind } : {}) };
   }
 
   /** The resident whose own car this is, or null. */
@@ -314,7 +331,8 @@ export class CityLife {
       const d = this.diaries.get(r.id)!;
       let mind = this.minds.get(r.id);
       if (!mind) { mind = newMind(r, now); this.minds.set(r.id, mind); }
-      live(mind, r, d.at, now, places.kindOf);
+      const doing = this.doingNow(w, r, d.at, mind, now, clock);
+      live(mind, r, d.at, now, places.kindOf, doing?.offer ?? null);
       if (d.at === null) continue;
       const due = committedTo(r, clock);
       const owed = due !== null && d.at !== due;
@@ -329,6 +347,111 @@ export class CityLife {
       // Could not set off just now (a queue of trips): asked again soon.
       else if (started === 'wait') mind.decided = now - DECIDE_EVERY + 2;
     }
+  }
+
+  /**
+   * What a resident is doing where they are, chosen afresh when the last
+   * thing ends or they arrive somewhere: the furniture's ads against their
+   * needs at home, their post at work, what the place is for elsewhere. The
+   * piece they use is theirs until they are done (`BuildingUse.taken`).
+   */
+  private doingNow(w: SimWorld, r: Resident, at: BuildingId | null, mind: Mind, now: number, clock: number): Doing | null {
+    if (w.doc.buildings.revision !== this.usesFor) {
+      this.usesFor = w.doc.buildings.revision;
+      this.uses.clear();
+      this.doings.clear();
+    }
+    const was = this.doings.get(r.id);
+    if (was && (at === null || was.building !== at || now >= was.until)) {
+      if (was.piece >= 0) this.uses.get(was.building)?.taken.delete(`${was.level}:${was.piece}`);
+      this.doings.delete(r.id);
+    }
+    if (at === null) return null;
+    const kept = this.doings.get(r.id);
+    if (kept) return kept;
+    const b = w.doc.buildings.get(at);
+    if (!b) return null;
+    let use = this.uses.get(at);
+    if (!use) { use = new BuildingUse(b); this.uses.set(at, use); }
+    const inside = this.inside(at);
+    const family = inside.filter((o) => o.id !== r.id && (o.home === r.home || at !== r.home));
+    const company = { someone: family.length > 0, child: family.some((o) => o.ageClass === 'child') };
+    const atWork = r.work === at && committedTo(r, clock) === at;
+    // Nothing for them to do there with what it has: in, not drawn, given
+    // what the place itself offers; asked again in a while.
+    const doing: Doing = chooseActivity(r, mind.needs, b, use, clock, company, this.yard(w), atWork, this.rng)
+      ?? { building: at, kind: 'wait', pose: 'stand', gesture: null, level: 0, piece: -1, out: null, offer: null, until: now + 30, hidden: true };
+    if (doing.piece >= 0) use.taken.set(`${doing.level}:${doing.piece}`, r.id);
+    this.doings.set(r.id, doing);
+    return doing;
+  }
+
+  /** What a resident is doing in the building they are in, for the renderer and their card. */
+  doingOf(resident: number): Doing | null {
+    const d = this.doings.get(resident);
+    return d && !d.hidden ? d : null;
+  }
+
+  /** Every resident doing something out in their lot (the garden, the pool, the car, the front step). */
+  outdoors(): { resident: Resident; doing: Doing }[] {
+    const out: { resident: Resident; doing: Doing }[] = [];
+    for (const [id, d] of this.doings) {
+      if (!d.out) continue;
+      const r = this.byResident.get(id);
+      if (r) out.push({ resident: r, doing: d });
+    }
+    return out;
+  }
+
+  /** A few residents a resident calls on: their friends, by who they are; those who are home now. */
+  private friendsIn(r: Resident): { building: BuildingId; x: number; y: number }[] {
+    const all = this.population.residents;
+    const out: { building: BuildingId; x: number; y: number }[] = [];
+    if (all.length < 2) return out;
+    for (let k = 1; k <= 4; k++) {
+      const f = all[(r.seed * 31 + k * 7919) % all.length]!;
+      if (f.id === r.id || f.home === r.home || f.ageClass === 'child' !== (r.ageClass === 'child')) continue;
+      if (this.diaries.get(f.id)?.at !== f.home) continue;
+      const door = this.doors.get(f.home);
+      if (door) out.push({ building: f.home, x: door.x, y: door.y });
+    }
+    return out;
+  }
+
+  /** The places outside a building residents spend time in: its open ground, its front step, the car. */
+  private yard(w: SimWorld): YardPlaces {
+    const doors = this.doors;
+    const cars = this.cars;
+    const homes = this.byResident;
+    return {
+      on(b: Building, surface, rng) {
+        const kinds = surface === 'patio' ? ['paving', 'pavers', 'tiles'] : [surface];
+        const open = b.volumes.filter((v) => v.open && kinds.includes(v.open) && v.w > m(2) && v.d > m(2));
+        if (open.length === 0) return null;
+        const v = open[Math.floor(rng.float() * open.length)]!;
+        return localToWorld(b, v.x + v.w * (0.25 + rng.float() * 0.5), v.y + v.d * (0.25 + rng.float() * 0.5));
+      },
+      front(id) {
+        const door = doors.get(id);
+        const b = w.doc.buildings.get(id);
+        if (!door || !b) return null;
+        const c = footprintCentre(b);
+        const away = Math.atan2(door.y - c.y, door.x - c.x);
+        return { x: door.x + Math.cos(away) * m(0.6), y: door.y + Math.sin(away) * m(0.6), heading: away };
+      },
+      car(resident) {
+        const car = cars?.cars.get(resident);
+        const r = homes.get(resident);
+        const door = r ? doors.get(r.home) : undefined;
+        const f = car?.body?.free;
+        if (!car?.bay || !f || !door || car.body!.v !== 0 || cars!.tripOfCar(car.id)) return null;
+        if (Math.hypot(f.x - door.x, f.y - door.y) > m(60)) return null;
+        // Beside it, at the driver's door, facing it.
+        const side = f.angle + Math.PI / 2;
+        const half = car.archetype.width / 2 + m(0.5);
+        return { x: f.x + Math.cos(side) * half, y: f.y + Math.sin(side) * half, heading: side + Math.PI };
+      },
+    };
   }
 
   /** The population, again, from the buildings as they are; nobody already somewhere is moved. */
@@ -391,7 +514,8 @@ export class CityLife {
       }
       if (best) this.doors.set(b.id, { x: best.x, y: best.y });
     }
-    this.places = placeIndex(w.doc.buildings.all(), (id) => this.doors.get(id) ?? null);
+    const index = placeIndex(w.doc.buildings.all(), (id) => this.doors.get(id) ?? null);
+    this.places = { ...index, friends: (r) => this.friendsIn(r) };
     // The bays read again, and every car owner's car parked near where they are.
     this.cars?.rebuild(w, this.population.residents, (id) => {
       const r = this.byResident.get(id);
@@ -554,6 +678,8 @@ export interface AgentView {
   readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
   /** Their needs, 0 desperate to 100 met (agents only). */
   readonly needs?: Readonly<Needs>;
+  /** What they are doing where they are (agents only): `agent.act.<kind>`. */
+  readonly activity?: ActivityKind;
 }
 
 /** Why a resident is making a trip, as the player is told when they look at them. */

@@ -31,6 +31,9 @@ run (their decision of 2026-10-04); spend no more work on them.
   into the bay nose first).
 - `mind.ts`: needs, the places that advertise what they give, and the choice of
   where to go next.
+- `activities.ts`: what a resident does in the building they are in, the
+  furniture's ads against their needs at home, their post at work, what the
+  place is for elsewhere; kept by `CityLife.doingOf`, drawn by `render/indoors.ts`.
 - `walk.ts`: the agents' walking engine (the game's default; `?agents=0`
   brings back People). Lanes on `world/walkways.ts`, SUMO striping, the body following a
   point ahead, zebras by `crossings/permission.ts`, published to
