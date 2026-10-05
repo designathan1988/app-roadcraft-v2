@@ -26,13 +26,18 @@
  },
  {
   "name": "04-bus-at-stop",
-  "x": -896.25,
-  "y": -45.76645728543437
+  "x": -1050.4322916422084,
+  "y": 13.125,
+  "driver": 471
  },
  {
-  "name": "05-train",
-  "x": 1408.572979950692,
-  "y": -174.99986708993893,
-  "heading": 2.1118229052339603e-8
+  "name": "05-bus-driver-card",
+  "card": "Morador 471 · adulto · motorista de ônibus\nDirigindo o ônibus da linha 5\nSobrado\nSem carro"
+ },
+ {
+  "name": "06-train",
+  "x": 1363.3953024703699,
+  "y": -174.99986804401146,
+  "heading": -3.141592632471564
  }
 ]

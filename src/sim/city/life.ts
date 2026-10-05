@@ -61,6 +61,7 @@ const TRANSIT_FROM = m(500);
  */
 const BIKE_FROM = m(200);
 const BIKE_TO = m(1600);
+const isHome = (fn: string | undefined): boolean => fn === 'house' || fn === 'townhouse' || fn === 'apartments' || fn === 'residentialTower';
 const BICYCLE = ARCHETYPES.find((a) => a.id === 'bicycle')!;
 const cycles = (r: Resident): boolean => !r.hasCar && r.ageClass !== 'child' && r.seed % 3 === 0;
 const MAX_DRIVES = 90;
@@ -239,6 +240,8 @@ export class CityLife {
       ?? (this.crime.chasing(resident) ? 'chasing' : this.crime.patrolling(resident) ? 'patrolling' : this.lastMinutes !== null && this.isHeld(resident, this.lastMinutes) ? 'held' : null);
     return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car,
       thief: CrimeSim.isThief(r), crime,
+      job: this.drivers.has(resident) ? 'busDriver' : r.work !== null && isHome(this.places?.kindOf(r.work)) ? 'nanny' : null,
+      ...(this.drivers.has(resident) ? { line: this.drivers.get(resident)! } : {}),
       ...(needs ? { needs: { ...needs } } : {}), ...(doing && d.at !== null ? { activity: doing.kind } : {}) };
   }
 
@@ -550,6 +553,40 @@ export class CityLife {
     this.held.set(resident, (this.lastMinutes ?? 0) + minutes);
     this.moved();
   }
+
+  /** Residents driving a bus now, and the line. */
+  private readonly drivers = new Map<number, number>();
+
+  /**
+   * A resident to drive a bus of a line: an adult without a job, at home,
+   * living nearest the point (the line's first stop); taken off their day
+   * until given back. Null when nobody is free.
+   */
+  hireDriver(w: SimWorld, x: number, y: number, line: number): number | null {
+    let best: Resident | null = null, bestD = Infinity;
+    for (const r of this.population.residents) {
+      if (r.ageClass !== 'adult' || r.work !== null || this.drivers.has(r.id) || this.controlled === r.id) continue;
+      if (this.diaries.get(r.id)?.at !== r.home || CrimeSim.isThief(r)) continue;
+      const door = this.doors.get(r.home);
+      if (!door) continue;
+      const d = Math.hypot(door.x - x, door.y - y);
+      if (d < bestD) { best = r; bestD = d; }
+    }
+    if (!best || !this.borrow(best.id)) return null;
+    this.drivers.set(best.id, line);
+    void w;
+    return best.id;
+  }
+
+  /** A bus driver off duty: home. */
+  releaseDriver(resident: number): void {
+    if (!this.drivers.delete(resident)) return;
+    const r = this.byResident.get(resident);
+    if (r) this.giveBack(resident, r.home);
+  }
+
+  /** The line a resident drives a bus of, or null. */
+  drivesLine(resident: number): number | null { return this.drivers.get(resident) ?? null; }
 
   /** Whether a resident is held now. */
   isHeld(resident: number, now: number): boolean {
@@ -948,6 +985,9 @@ export interface AgentView {
   readonly car: { readonly archetype: string; readonly colour: string; readonly state: 'parked' | 'inUse' | 'driving'; readonly at: BuildingId | null } | null;
   /** Their needs, 0 desperate to 100 met (agents only). */
   readonly needs?: Readonly<Needs>;
+  /** A trade shown on the card: driving a bus (and its line), or nanny in another family's home. */
+  readonly job: 'busDriver' | 'nanny' | null;
+  readonly line?: number;
   /** A thief (one in 25 adults, `agents/crime.ts`). */
   readonly thief: boolean;
   /** Their part in a crime now: robbing, running off, arrested, held at the station, or an officer chasing. */

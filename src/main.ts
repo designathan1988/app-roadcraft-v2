@@ -3123,6 +3123,12 @@ function agentPosition(resident: number): Vec2 | null {
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) return pose.p;
   }
+  for (const d of city.transit.drivers()) {
+    if (d.resident !== resident) continue;
+    const v = sim.vehicles.get(d.bus);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) return pose.p;
+  }
   for (const trip of city.trips.values()) {
     if (trip.resident !== resident || trip.mode !== 'bike') continue;
     const v = sim.vehicles.get(trip.agent as VehicleId);
@@ -3150,6 +3156,12 @@ function pickAgent(px: number, py: number): number | null {
     const v = car.body ?? sim.vehicles.get(car.id);
     const pose = v ? vehiclePose(sim, v, 1) : null;
     if (pose) consider(pose.p.x, pose.p.y, car.owner);
+  }
+  // A resident at the wheel of a bus.
+  for (const d of sim.city.transit.drivers()) {
+    const v = d.resident === null ? undefined : sim.vehicles.get(d.bus);
+    const pose = v ? vehiclePose(sim, v, 1) : null;
+    if (pose) consider(pose.p.x, pose.p.y, d.resident!);
   }
   // A resident riding their bicycle.
   for (const trip of sim.city.trips.values()) {

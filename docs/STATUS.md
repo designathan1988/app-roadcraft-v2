@@ -136,6 +136,20 @@ and they have seen it.
   never on it (`TransitSim.crossingNearEnd`, used by `vehicles/obstacles.ts`
   and `intersections/admission.ts`); walkers keep off a train's run of the
   next 7 s, and off a train about to leave a station.
+- **Nannies and bus drivers, LIVE** (2026-10-05): a family whose adults all
+  work, with a child, has a nanny (one family in two): an adult without a job
+  from a home within 500 m (`population.ts` `hireNannies`). In their hours,
+  at the family's home, they look after the children, clean and cook, turn
+  about through the day (`activities.ts`, the posts of a home). Every bus of
+  a line is driven by a resident (`CityLife.hireDriver`): an adult without a
+  job, at home, living nearest the line's first stop, taken off their day
+  while the bus runs, home again when it comes off; they are the person drawn
+  at the wheel, and a click on the bus opens their card ("motorista de
+  onibus", "Dirigindo o onibus da linha N"). Measured:
+  `tests/sim/agents/jobs.spec.ts` (nannies at the family home doing childcare,
+  cleaning, cooking) and `tests/sim/transit/transit.spec.ts` (buses driven by
+  residents). Photo: `docs/audit/2026-10-05/transit/05-bus-driver-card.png`.
+  Not yet: train and metro drivers, taxi drivers, a photo of a nanny indoors.
 - **Crime in the streets and the police, LIVE** (2026-10-05): one adult in
   25 is a thief (`sim/agents/crime.ts`). From 13:00 to 23:00 a thief leaves
   where they are, follows somebody walking near, robs them (the victim

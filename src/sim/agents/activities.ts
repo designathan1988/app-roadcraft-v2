@@ -125,6 +125,13 @@ const MACHINE = P('machine', ['machine'], 'stand', 'work');
 const LOAD = P('stock', ['pallet', 'rack'], 'crouch', 'crouch');
 const MOP = P('mop', ['table', 'desk', 'counter', 'shelf', 'seat', 'pew'], 'crouch', 'crouch');
 const GUARD = P('guard', ['counter', 'bars', 'locker'], 'stand', 'look');
+/** A nanny's day in the family's home: the children, the house, their meal. */
+const NANNY: readonly Post[] = [
+  P('childcare', ['sofa', 'armchair', 'bed', 'singleBed'], 'crouch', 'crouch'),
+  P('childcare', ['sofa', 'armchair'], 'sit', 'talk'),
+  P('clean', ['table', 'sofa', 'bed', 'counter'], 'crouch', 'crouch'),
+  COOK,
+];
 /** The posts of each trade; a worker takes `posts[id % posts.length]`. */
 const POSTS: Partial<Record<BuildingFunction, readonly Post[]>> = {
   office: [DESK, DESK, DESK, RECEPTION, MOP],
@@ -160,6 +167,11 @@ const POSTS: Partial<Record<BuildingFunction, readonly Post[]>> = {
   gasStation: [CHECKOUT, STOCK],
   factory: [MACHINE, MACHINE, MACHINE, LOAD, DESK],
   warehouse: [LOAD, LOAD, STOCK, DESK],
+  // A home is a workplace only to a nanny (`population.ts`).
+  house: NANNY,
+  townhouse: NANNY,
+  apartments: NANNY,
+  residentialTower: NANNY,
 };
 /** Pupils at school sit at the desks and study. */
 const STUDY = P('study', ['chair', 'seat', 'officeChair'], 'sit', 'read');
@@ -346,8 +358,10 @@ export function chooseActivity(r: Resident, needs: Needs, b: Building, use: Buil
   if (atWork) {
     const posts = child ? [STUDY] : fn ? POSTS[fn] ?? [DESK] : [DESK];
     // Their post, by who they are; the next one along if theirs has no furniture.
+    // A nanny goes from one thing to the next through the day (the children, the house, the meal).
+    const turn = posts === NANNY ? Math.floor(clock / 45) : 0;
     for (let k = 0; k < posts.length; k++) {
-      const post = posts[(r.id + k) % posts.length]!;
+      const post = posts[(r.id + turn + k) % posts.length]!;
       const level = r.workLevel;
       const free = use.free(level, post.at, null, r.id);
       if (free.length === 0) continue;

@@ -173,13 +173,18 @@ export function createAgentCard(host: HTMLElement, onChange: () => void = () => 
     },
     update(view, place) {
       if (!view) { card.close(); return; }
-      name.textContent = `${t('agent.title', { n: view.resident })} · ${t(`agent.age.${view.ageClass}`)}${view.thief ? ` · ${t('agent.thief')}` : ''}`;
+      name.textContent = `${t('agent.title', { n: view.resident })} · ${t(`agent.age.${view.ageClass}`)}${view.thief ? ` · ${t('agent.thief')}` : ''}${view.job ? ` · ${t(`agent.job.${view.job}`)}` : ''}`;
       const trip = view.trip;
       const set = (key: string, value: string | null): void => {
         rows[key]!.row.hidden = value === null;
         if (value !== null) rows[key]!.text.textContent = value;
       };
-      if (view.crime) {
+      if (view.job === 'busDriver' && view.at === null) {
+        // At the wheel of a bus of their line.
+        set('doing', t('agent.job.driving', { line: String(view.line ?? '') }));
+        set('why', null);
+        set('to', null);
+      } else if (view.crime) {
         // In a crime (a thief out robbing, running, arrested, held; an officer after one).
         set('doing', t(`agent.crime.${view.crime}`));
         set('why', null);

@@ -10,6 +10,7 @@ import { makeDriver } from '../vehicles/driver';
 import { createVehicle, snapshot, type Vehicle, type VehicleId } from '../vehicles/state';
 import { planFrom } from '../routing/router';
 import { laneBeside } from '../agents/parking';
+import { AGENT_PERSON_BASE } from '../people/engine';
 import type { BayLane } from '../agents/parking';
 
 /**
@@ -88,6 +89,8 @@ interface Bus {
   /** Seconds before it is put on the road (spaced from the bus before). */
   wait: number;
   readonly riders: Set<number>;
+  /** The resident at the wheel (`CityLife.hireDriver`), or null: nobody of the city free. */
+  staff: number | null;
 }
 
 interface Train {
@@ -154,7 +157,10 @@ export class TransitSim {
       if (lane) this.stopLanes.set(s.id, lane);
     }
     // Buses of lines gone come off the road.
-    for (const b of this.buses) { if (b.id !== null) { const v = w.vehicles.get(b.id); if (v) w.removeVehicle(v); } }
+    for (const b of this.buses) {
+      if (b.id !== null) { const v = w.vehicles.get(b.id); if (v) w.removeVehicle(v); }
+      if (b.staff !== null) w.city.releaseDriver(b.staff);
+    }
     this.buses = [];
     for (const line of t.lines) {
       if (line.mode !== 'bus') continue;
@@ -163,7 +169,7 @@ export class TransitSim {
       // From a terminal, if the line has one.
       const start = Math.max(0, line.stops.findIndex((id) => this.stops.get(id)?.terminal));
       for (let k = 0; k < line.vehicles; k++) {
-        this.buses.push({ line: line.id, id: null, next: start, dir: 1, dwell: 0, wait: k * BUS_SPACING, riders: new Set() });
+        this.buses.push({ line: line.id, id: null, next: start, dir: 1, dwell: 0, wait: k * BUS_SPACING, riders: new Set(), staff: null });
       }
     }
     // Each train station's platform: beside its track, on the left of the track's way.
@@ -243,6 +249,11 @@ export class TransitSim {
 
   // ------------------------------------------------------------- buses
 
+  /** The buses on the road and the resident driving each (null: nobody of the city). */
+  drivers(): { bus: VehicleId; resident: number | null }[] {
+    return this.buses.filter((b) => b.id !== null).map((b) => ({ bus: b.id!, resident: b.staff }));
+  }
+
   private stepBus(w: SimWorld, bus: Bus): void {
     const line = this.lineOf(w, bus.line);
     if (!line) return;
@@ -251,9 +262,19 @@ export class TransitSim {
       // Not on the road (not yet, or taken off it): put on at the stop it was going to, in its time.
       for (const r of bus.riders) this.dropRider(r);
       bus.riders.clear();
+      // Its driver home.
+      if (bus.staff !== null) { w.city.releaseDriver(bus.staff); bus.staff = null; }
       bus.wait -= DT;
       if (bus.wait > 0) return;
       bus.id = this.spawnBus(w, line, bus);
+      // A resident of the city at the wheel: the nearest one free, living by the line's first stop.
+      const v2 = bus.id !== null ? w.vehicles.get(bus.id) : undefined;
+      const first = this.stops.get(line.stops[0]!);
+      if (v2 && first) {
+        bus.staff = w.city.hireDriver(w, first.x, first.y, line.id);
+        v2.seats |= 1;
+        if (bus.staff !== null) { v2.people = [AGENT_PERSON_BASE + bus.staff]; v2.peopleAge = ['adult']; }
+      }
       bus.wait = BUS_SPACING;
       return;
     }

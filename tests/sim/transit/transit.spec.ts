@@ -87,12 +87,14 @@ describe('public transport', () => {
     // Each bus's stops: the stop it stood at, in turn.
     const busStops = new Map<number, number[]>();
     const trainStops = new Set<string>();
-    let maxBuses = 0, trainMoved = 0, underTrain = 0, vehUnder = 0;
+    let maxBuses = 0, trainMoved = 0, underTrain = 0, vehUnder = 0, drivers = 0;
     const last = new Map<string, { x: number; y: number }>();
     sim.clock.run(Math.round(600 / DT), () => {
       step(sim);
       const ids = transit.busIds();
       maxBuses = Math.max(maxBuses, ids.length);
+      // At the wheel: residents of the city.
+      if (ids.length) drivers = Math.max(drivers, sim.city.population.residents.filter((r) => sim.city.drivesLine(r.id) !== null).length);
       for (const id of ids) {
         const v = sim.vehicles.get(id);
         if (!v || v.v > m(0.3)) continue;
@@ -127,6 +129,7 @@ describe('public transport', () => {
     console.log(`buses on the road ${maxBuses}, stops served per bus ${JSON.stringify(served)}, train stops ${trainStops.size}, `
       + `inside a train ${underTrain} (vehicles ${vehUnder}), crossings ${JSON.stringify((transit as unknown as { rails: { crossings: unknown[] }[] }).rails.map((r) => r.crossings.length))}, riders ${transit.riders.size}, boarded ${transit.boarded}, carried ${transit.carried}, on board ${transit.onBoard()}`);
     expect(maxBuses).toBeGreaterThan(0);
+    expect(drivers).toBeGreaterThan(0);
     expect(Math.max(0, ...served)).toBeGreaterThanOrEqual(3);
     expect(trainMoved).toBeGreaterThan(0);
     expect(trainStops.size).toBeGreaterThan(0);

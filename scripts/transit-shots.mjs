@@ -120,10 +120,20 @@ await page.locator('.v2-cat[data-cat="transit"]').click();
 await page.evaluate(() => { window.__roadcraft.runSim(150); });
 const bus = await page.evaluate(() => {
   const r = window.__roadcraft;
-  for (const id of r.sim.city.transit.busIds()) { const v = r.sim.vehicles.get(id); if (v && v.v < 0.5) { const l = r.sim.lanelet(v.lanelet); const p = l.centre.sampleAt(Math.min(l.length, v.s)).p; return { x: p.x, y: p.y }; } }
+  for (const id of r.sim.city.transit.busIds()) { const v = r.sim.vehicles.get(id); if (v && v.v < 0.5) { const l = r.sim.lanelet(v.lanelet); const p = l.centre.sampleAt(Math.max(0, Math.min(l.length, v.s - v.archetype.length / 2))).p; return { x: p.x, y: p.y, driver: r.sim.city.transit.drivers().find((d) => d.bus === id)?.resident ?? null }; } }
   return null;
 });
-if (bus) { await aim(bus.x, bus.y, 16); await photo('bus-at-stop', bus); }
+if (bus) {
+  await aim(bus.x, bus.y, 16);
+  await photo('bus-at-stop', bus);
+  // Its driver: a resident of the town (the Info tool, a click on the bus).
+  await page.keyboard.press('i');
+  const s = await screenOf(bus);
+  await page.mouse.click(s.x, s.y);
+  await page.waitForTimeout(600);
+  const card = await page.evaluate(() => document.querySelector('.agent-card')?.innerText ?? null);
+  await photo('bus-driver-card', { card });
+}
 const train = await page.evaluate(() => { const r = window.__roadcraft; for (let k = 0; k < 60; k++) { const t = r.sim.city.transit.trains().find((x) => !x.metro && x.v > 5); if (t) return t.cars[1]; r.runSim(1); } return null; });
 if (train) { await aim(train.x, train.y, 10); await photo('train', train); }
 writeFileSync(`${out}/log.json`, JSON.stringify(log, null, 1));
