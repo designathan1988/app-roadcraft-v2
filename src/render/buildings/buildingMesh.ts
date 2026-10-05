@@ -1155,6 +1155,12 @@ const LOT_PAINT: Readonly<Record<LotSurface, Paint>> = {
 };
 const LOT_KERB = paint({ finish: 'stone', colour: 0xb3ada0 });
 const POOL_TILE = paint({ finish: 'ceramic', colour: 0x9fd0dc });
+/** A pool's floor, under the water: pale blue plaster. */
+const POOL_FLOOR = paint({ finish: 'plaster', colour: 0x8fd3e6 });
+/** The coping round a pool's rim: white stone, a little proud of the deck. */
+const POOL_COPING = paint({ finish: 'stone', colour: 0xeeebe2 });
+/** Depth of the water under the coping. */
+const POOL_WATER_DROP = m(0.12);
 
 /**
  * The open blocks of a building, laid on the ground: a plate of grass,
@@ -1195,8 +1201,31 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
     // A lawn is the terrain itself, graded to the lot (`pads.ts`), and drawn
     // with the terrain's grass: no plate, no kerb.
     if ((v.open ?? 'grass') === 'grass') continue;
-    const look = LOT_PAINT[v.open ?? 'grass'] ?? LOT_KERB;
-    const sink = v.open === 'water' ? POOL_SINK : 0;
+    const water = v.open === 'water';
+    // A pool: its floor down at the bottom, the water itself a separate
+    // glossy surface just under the coping (`water` part).
+    const look = water ? POOL_FLOOR : LOT_PAINT[v.open ?? 'grass'] ?? LOT_KERB;
+    const sink = water ? POOL_SINK : 0;
+    if (water) {
+      const cx = v.x + v.w / 2, cy = v.y + v.d / 2;
+      const rim = height(cx, cy);
+      const centre = e.L(cx, cy, 0);
+      e.parts.water.push({
+        x: centre[0], y: centre[1], z: rim - POOL_WATER_DROP - m(0.01),
+        yaw: b.rotation, sx: v.w, sy: m(0.02), sz: v.d,
+      });
+      // The coping: a white stone band round the rim.
+      const band = m(0.3), lift = m(0.04);
+      const ring = [
+        [v.x - band, v.y - band, v.x + v.w + band, v.y],
+        [v.x - band, v.y + v.d, v.x + v.w + band, v.y + v.d + band],
+        [v.x - band, v.y, v.x, v.y + v.d],
+        [v.x + v.w, v.y, v.x + v.w + band, v.y + v.d],
+      ] as const;
+      for (const [qx0, qy0, qx1, qy1] of ring) {
+        shell.face([e.L(qx0, qy0, rim + lift), e.L(qx1, qy0, rim + lift), e.L(qx1, qy1, rim + lift), e.L(qx0, qy1, rim + lift)], [0, 0, 1], POOL_COPING);
+      }
+    }
     if (v.outline) {
       // A shaped lot is laid level, at the height of its middle.
       const z = height(v.x + v.w / 2, v.y + v.d / 2) - sink;

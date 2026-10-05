@@ -388,7 +388,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         lot.surface(pool, 'water');
         // Its deck: a paved edge on the terrace side, two loungers.
         lot.path({ x0: pool.x0, y0: lawnY0, x1: pool.x1, y1: pool.y0 }, mat('stone', 0xe0d8c8));
-        lot.put('bench', pool.x1 + 1, pool.y0 + 1.2, 3, 1.6, 0.6, 0.35);
+        // Two loungers on the deck beside it, clear of the coping.
+        for (const k of [0, 1]) lot.put('bench', pool.x1 + 1.4, pool.y0 + 0.6 + k * 1.6, 3, 1.8, 0.65, 0.35, undefined, mat('wood', 0xe8e4dc));
       }
       taken.push(terrace);
       lot.put('bench', (terrace.x0 + terrace.x1) / 2 + 1.5, terrace.y0 + 1.6, 2, 1.4, 0.45, 0.45);
@@ -407,6 +408,29 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       }
       if (depth >= 5) {
         for (const px of [1.8, W - 1.8]) if (!lot.busy(px, by1 - 2.2, 1.5)) lot.put('tree', px, by1 - 2.2, 0, 3, 3, 5);
+      }
+      // A yard that is lived in (the player's order of 2026-10-05: "quintais
+      // muito pobres"): a garden shed in a back corner, a table on the
+      // terrace, a vegetable patch, shrubs along the side walls.
+      if (depth >= 7 && W >= 9) {
+        const shedX = rng.float() < 0.5 ? 1.6 : W - 1.6;
+        if (!lot.busy(shedX, by1 - 1.4, 1.4)) {
+          lot.put('wall', shedX, by1 - 1.4, 2, 2.4, 1.9, 2.1, undefined, mat('wood', 0x8a6a48));
+          lot.put('slab', shedX, by1 - 1.4, 2, 2.8, 2.3, 0.12, 2.1, mat('metal', 0x5a5f61));
+          lot.path({ x0: shedX - 0.5, y0: lawnY0, x1: shedX + 0.5, y1: by1 - 2.5 }, mat('stone', 0xbdb6a8));
+        }
+      }
+      if (terrace.x1 - terrace.x0 >= 5 && terrace.y1 - terrace.y0 >= 2.5) {
+        const px0 = terrace.x0 + 0.3, px1 = Math.min(terrace.x1 - 0.3, terrace.x0 + 5.5), py = terrace.y1 - 0.3;
+        void py;
+        lot.put('planter', (px0 + px1) / 2, (terrace.y0 + terrace.y1) / 2, 0, 1.4, 0.8, 0.75, undefined, mat('wood', 0x9c7a55));
+      }
+      if (!pool && depth >= 8) {
+        const vx = W * (0.35 + rng.float() * 0.3);
+        for (let k = 0; k < 3; k++) if (!lot.busy(vx + k * 1.3, lawnY0 + 3, 0.7)) lot.put('planter', vx + k * 1.3, lawnY0 + 3, 0, 0.9, 2.6, 0.35, undefined, mat('wood', 0x6b4f35));
+      }
+      for (const px of [0.9, W - 0.9]) {
+        for (let py = lawnY0 + 1.5; py < by1 - 3; py += 3.2) if (!lot.busy(px, py, 0.9)) lot.put('shrub', px, py, 0, 1.3, 1.3, 1.4);
       }
       break;
     }

@@ -37,7 +37,8 @@ export type PartKind =
   | 'awning'
   | 'column'
   | 'glassDark'
-  | 'curtain';
+  | 'curtain'
+  | 'water';
 
 export const PART_KINDS: readonly PartKind[] = [
   'glass',
@@ -51,6 +52,7 @@ export const PART_KINDS: readonly PartKind[] = [
   'column',
   'glassDark',
   'curtain',
+  'water',
 ];
 
 export interface BuildingKit {
@@ -224,6 +226,7 @@ export function createBuildingKit(): BuildingKit {
     column: new CylinderGeometry(0.5, 0.5, 1, 12),
     glassDark: glassPlane,
     curtain: unitBox,
+    water: unitBox,
   };
 
   const concrete = new MeshStandardMaterial({ color: 0xcfc9bd, roughness: 0.82, metalness: 0 });
@@ -248,6 +251,12 @@ export function createBuildingKit(): BuildingKit {
     // a curtain drawn behind the frame - no two rows of windows alike.
     glassDark: new MeshStandardMaterial({ color: 0x33434c, roughness: 0.06, metalness: 0.7, envMapIntensity: 1.6, shadowSide: DoubleSide }),
     curtain: new MeshStandardMaterial({ color: 0xe9e1d2, roughness: 0.95, metalness: 0 }),
+    // Pool water: clear, glossy and a little turquoise, the tiled floor showing
+    // through it - not a blue tile texture laid at the rim.
+    water: new MeshStandardMaterial({
+      color: 0x58c4dd, roughness: 0.03, metalness: 0.15, envMapIntensity: 1.8,
+      transparent: true, opacity: 0.62, depthWrite: false,
+    }),
   };
   for (const [kind, m] of Object.entries(material)) m.name = `building-part-${kind}`;
   // At night not every window is lit, nor all alike: each pane draws its own
