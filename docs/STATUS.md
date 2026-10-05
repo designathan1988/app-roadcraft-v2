@@ -57,13 +57,22 @@ and they have seen it.
   owners (293 bays reachable, most homes over 200 m from one); with parallel
   parking on its local and urban streets it would be 712 (1989 bays), but
   that widens those streets by 2 m a side: the player's decision.
+- **Cars and walkers on the footway, LIVE behind `?agents=1`** (2026-10-05):
+  a car leaving or entering a lot crosses the footway square in front of the
+  lot's edge (it used to run metres along it to a joining point kept clear of
+  the junction, `docs/audit/2026-10-05/stuck-plan.png`); it takes the ground of
+  the rest of its manoeuvre in turn with the people, as a zebra is taken
+  (`OwnCars.holdWay`): it waits until nobody is on it or about to step on, then
+  drives it without stopping, the walkers keeping off it, those already on it
+  walking off; a car kept waiting 3 s has the walkers give way. Parked and
+  manoeuvring cars are solid to walkers. Measured: `walk.spec.ts` second test
+  (18 cars across footways, 54 walkers sent through them: 0 body-ticks inside a
+  car, everybody arrived).
 - **Not yet:** car owners without a bay near home walk; in agent mode nobody but
   the residents walks (no passers-by) and nobody boards a bus (the walk
   engine's bridge has no stops yet); a street whose ends lead nowhere is an
   island to the walkers (the walkway graph does not join the two footways at
-  a road end: the player's city has 24 separate pieces); a car crossing the
-  footway does not yet wait for every walker; parked cars are not obstacles
-  for the walkers.
+  a road end: the player's city has 24 separate pieces).
 - **Next slices:** 5, agents by default; then People, the Detour crowd flag and
   `sim/peds` deleted after the player has seen it.
 

@@ -150,6 +150,28 @@ function through(points: readonly Point[], t0: [number, number], t1: [number, nu
   return legs;
 }
 
+/** How far into the lane from its kerb side a car crossing the footway first aims, u. */
+const ACROSS_INTO_LANE = m(1.2);
+
+/**
+ * Where a car leaving a lot by its street edge `edge` is once across the
+ * footway: on the carriageway square in front of the edge, a little short of
+ * the lane's centre line. A driver crosses a footway straight and turns along
+ * the road on the road; the lane's joining point is kept clear of the
+ * junctions (`parking.ts`, `LANE_END`) and may lie metres along the kerb, and
+ * a curve straight to it ran along the footway. Null when the joining point is
+ * not ahead along the lane (the car would turn back on the road) or the edge
+ * is already at it.
+ */
+function acrossFootway(edge: Point, lane: { x: number; y: number; tx: number; ty: number }): Point | null {
+  const t = (edge.x - lane.x) * lane.tx + (edge.y - lane.y) * lane.ty;
+  if (t > -m(1.5)) return null;
+  const qx = lane.x + lane.tx * t, qy = lane.y + lane.ty * t;
+  const [nx, ny] = unit(edge.x - qx, edge.y - qy, [0, 0]);
+  if (nx === 0 && ny === 0) return null;
+  return { x: qx + nx * ACROSS_INTO_LANE, y: qy + ny * ACROSS_INTO_LANE };
+}
+
 /**
  * Out of a bay to the lane. Backing out of the stall into the aisle, swinging
  * the nose towards the way out, then forward down the aisle and out of the lot
@@ -173,11 +195,13 @@ export function departure(
   }
   if (bay.via.length > 0) {
     const aisle = bay.via[0]!;
-    const next = bay.via[1] ?? lane;
+    const across = acrossFootway(bay.via[bay.via.length - 1]!, lane);
+    const ahead = [...bay.via, ...(across ? [across] : []), lane];
+    const next = ahead[1]!;
     const [dx, dy] = unit(next.x - aisle.x, next.y - aisle.y, [lane.tx, lane.ty]);
     return new Manoeuvre([
       { x0: bay.x, y0: bay.y, tx0: bay.ox, ty0: bay.oy, x1: aisle.x, y1: aisle.y, tx1: -dx, ty1: -dy, reverse: true },
-      ...through([...bay.via, lane], [dx, dy], [lane.tx, lane.ty]),
+      ...through(ahead, [dx, dy], [lane.tx, lane.ty]),
     ]);
   }
   // Which way to swing the nose: along the traffic.
@@ -214,8 +238,11 @@ export function arrival(
     // In by the lot's street edge, up the aisle, and nose first into the stall.
     const inward = [...bay.via].reverse();
     const aisle = inward[inward.length - 1]!;
+    // Off the lane square across the footway to the lot's street edge, the way
+    // out run backwards (`acrossFootway`, with the travel direction reversed).
+    const across = acrossFootway(inward[0]!, { x: from.x, y: from.y, tx: -hx, ty: -hy });
     return new Manoeuvre([
-      ...through([from, ...inward], [hx, hy], [-bay.ox, -bay.oy]),
+      ...through([from, ...(across ? [across] : []), ...inward], [hx, hy], [-bay.ox, -bay.oy]),
       { x0: aisle.x, y0: aisle.y, tx0: -bay.ox, ty0: -bay.oy, x1: bay.x, y1: bay.y, tx1: -bay.ox, ty1: -bay.oy, reverse: false },
     ]);
   }

@@ -11,6 +11,7 @@ import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
 import { personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
+import { ASK_WAY, carSweep } from './cars';
 
 /**
  * The agents' walking: people on lanes of the footways, as SUMO's striping
@@ -39,6 +40,10 @@ import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/eng
  *   every pedestrian keeps (`crossings/permission.ts`: the signal, or a gap in
  *   the traffic), and while on it is published to the vehicles
  *   (`SimWorld.crossingStates`), which stop for it;
+ * - an agent's car off the road is solid; one crossing the footway takes the
+ *   ground it is about to cover in turn with the people (`OwnCars.holdWay`):
+ *   a walker keeps off it while the car holds it, and walks on out of it if
+ *   the car came to them;
  * - somebody held still a long while (`JAM_AFTER`) is let through others
  *   slowly, as SUMO's jammed state does, so nobody is ever stuck for good.
  *
@@ -149,13 +154,19 @@ interface State {
   byId: Map<number, Walker>;
   arrivals: number[];
   nextId: number;
+  /**
+   * For each car holding (or asking for) its way across the footway, the
+   * walkers who were on that ground when it took it: they walk on off it;
+   * everybody else keeps off it.
+   */
+  onCarWay: Map<number, Set<number>>;
 }
 
 const STATES = new WeakMap<SimWorld, State>();
 function stateOf(w: SimWorld): State {
   let s = STATES.get(w);
   if (!s) {
-    s = { graph: null, builtFor: '', wayIndex: new Map(), walkers: [], byId: new Map(), arrivals: [], nextId: 1 };
+    s = { graph: null, builtFor: '', wayIndex: new Map(), walkers: [], byId: new Map(), arrivals: [], nextId: 1, onCarWay: new Map() };
     STATES.set(w, s);
   }
   return s;
@@ -546,7 +557,40 @@ function stepWalkers(w: SimWorld): void {
     if (list) list.push(p); else cells.set(k, [p]);
   };
   for (const p of s.walkers) if (!p.inside) enter(p);
-  const others: { along: number; lat: number; oncoming: boolean }[] = [];
+  const others: { along: number; lat: number; oncoming: boolean; r: number }[] = [];
+  // The agents' own cars off the road: solid to a walker as a person is (the
+  // body three discs along its length, half its width round: a walker's own
+  // body is the margin, so a car in the road by the kerb does not close the
+  // kerb-side stripe); and, for a car holding its way across the footway or
+  // asking for it (`OwnCars.holdWay`), the ground it is about to cover, kept
+  // off with a little room. Somebody already inside one walks on out of it.
+  const carZones: { x0: number; y0: number; x1: number; y1: number; discs: { x: number; y: number; r: number }[]; on: Set<number> | null }[] = [];
+  const holding = new Set<number>();
+  for (const car of w.city.cars?.offRoad() ?? []) {
+    const f = car.free;
+    if (!f) continue;
+    const r = car.archetype.width / 2;
+    const reach = Math.max(0, car.archetype.length / 2 - r);
+    const discs = [-1, 0, 1].map((k) => ({ x: f.x + Math.cos(f.angle) * reach * k, y: f.y + Math.sin(f.angle) * reach * k, r }));
+    const t = w.city.cars!.tripOfCar(car.id);
+    let on: Set<number> | null = null;
+    if (t && (t.reserved || t.waitedPeople >= ASK_WAY)) {
+      const way = carSweep(t, m(0.5));
+      discs.push(...way);
+      holding.add(car.id);
+      on = s.onCarWay.get(car.id) ?? null;
+      if (!on) {
+        // The ground just taken: whoever is on it now walks on off it.
+        on = new Set(s.walkers.filter((p) => !p.inside && way.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r)).map((p) => p.id));
+        s.onCarWay.set(car.id, on);
+      }
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
+    carZones.push({ x0, y0, x1, y1, discs, on });
+  }
+  for (const id of [...s.onCarWay.keys()]) if (!holding.has(id)) s.onCarWay.delete(id);
+
 
   for (const p of s.walkers) {
     p.age += DT;
@@ -557,6 +601,8 @@ function stepWalkers(w: SimWorld): void {
       for (let gx = cx - 1; gx <= cx + 1 && clear; gx++) for (let gy = cy - 1; gy <= cy + 1 && clear; gy++) {
         for (const q of cells.get(`${gx},${gy}`) ?? []) if (hypot(q.x - p.x, q.y - p.y) < DOOR_CLEAR) { clear = false; break; }
       }
+      // Nor while a car holds the ground they would step onto: they wait for it to pass.
+      if (clear && carZones.some((z) => z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r + BODY))) clear = false;
       if (clear) { p.inside = false; p.prevX = p.x; p.prevY = p.y; p.prevHeading = p.heading; enter(p); }
       continue;
     }
@@ -578,14 +624,28 @@ function stepWalkers(w: SimWorld): void {
         if (along <= 0 || along > LOOK) continue;
         const lat = p.d - rx * f.ty + ry * f.tx;
         const oncoming = q.v > m(0.1) && Math.cos(q.heading) * f.tx + Math.sin(q.heading) * f.ty < -0.3;
-        others.push({ along, lat, oncoming });
+        others.push({ along, lat, oncoming, r: SHOULDERS - BODY });
+      }
+    }
+    for (const z of carZones) {
+      if (p.x < z.x0 - LOOK || p.x > z.x1 + LOOK || p.y < z.y0 - LOOK || p.y > z.y1 + LOOK) continue;
+      // On it when the car took it, or inside the car's body (the car came to
+      // them): they walk on out of its way.
+      const inside = z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r);
+      if (inside && (z.on?.has(p.id) || z.discs.slice(0, 3).some((c) => hypot(c.x - p.x, c.y - p.y) < c.r))) continue;
+      if (!inside) z.on?.delete(p.id);
+      for (const c of z.discs) {
+        const rx = c.x - p.x, ry = c.y - p.y;
+        const along = rx * f.tx + ry * f.ty - c.r + BODY;
+        if (along + 2 * c.r <= 0 || along > LOOK) continue;
+        others.push({ along: Math.max(0.01, along), lat: p.d - rx * f.ty + ry * f.tx, oncoming: false, r: c.r });
       }
     }
     /** Free distance ahead in a stripe centred `c` across the step. */
     const free = (c: number): number => {
       let gap = LOOK;
       for (const o of others) {
-        if (Math.abs(o.lat - c) >= SHOULDERS) continue;
+        if (Math.abs(o.lat - c) >= BODY + o.r) continue;
         const g = o.oncoming ? o.along / 2 : o.along;
         if (g < gap) gap = g;
       }
