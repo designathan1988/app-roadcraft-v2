@@ -83,16 +83,16 @@ export function placeTower(ctx: SiteContext, kind: TowerKind, floors: number | u
 
 /** The lot each tower of the kit stands on: the lot planner's kind and the plot, metres. */
 const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> = {
-  balconyMid: { kind: 'flats', W: 32, D: 40 },
-  glassOffice: { kind: 'office', W: 36, D: 40 },
-  glassBalcony: { kind: 'tower', W: 34, D: 40 },
-  beigeClassic: { kind: 'tower', W: 34, D: 40 },
-  darkGlass: { kind: 'office', W: 34, D: 40 },
-  whiteBalcony: { kind: 'tower', W: 34, D: 40 },
-  brickFrame: { kind: 'tower', W: 34, D: 40 },
-  roundGlass: { kind: 'tower', W: 34, D: 40 },
-  darkGrid: { kind: 'tower', W: 34, D: 40 },
-  artDeco: { kind: 'office', W: 34, D: 40 },
+  balconyMid: { kind: 'flats', W: 30, D: 40 },
+  glassOffice: { kind: 'office', W: 30, D: 40 },
+  glassBalcony: { kind: 'tower', W: 30, D: 40 },
+  beigeClassic: { kind: 'tower', W: 30, D: 40 },
+  darkGlass: { kind: 'office', W: 30, D: 40 },
+  whiteBalcony: { kind: 'tower', W: 30, D: 40 },
+  brickFrame: { kind: 'tower', W: 30, D: 40 },
+  roundGlass: { kind: 'tower', W: 30, D: 40 },
+  darkGrid: { kind: 'tower', W: 30, D: 40 },
+  artDeco: { kind: 'office', W: 30, D: 40 },
 };
 
 /**

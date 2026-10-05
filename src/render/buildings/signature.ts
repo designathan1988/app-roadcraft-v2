@@ -35,10 +35,57 @@ import { m } from '@world/units';
  * from the floor; three's frame is (x, z, -y), as everywhere in this layer.
  */
 
-type Mat = 'stone' | 'render' | 'trim' | 'wood' | 'slats' | 'slab' | 'frame' | 'glass' | 'railing' | 'pot' | 'leaf' | 'leafDark'
-  | 'metal' | 'plant' | 'sconce';
+/** A material's name: the shared ones of `makeMaterials`, or a facade made by `facade`. */
+type Mat = string;
 
 let materials: Record<Mat, Material> | null = null;
+/** Facade materials, by style and storey rhythm, made once each. */
+const facades = new Map<string, Material>();
+
+type FacadeKind = 'curtainBlue' | 'curtainDark' | 'curtainGreen' | 'punchedBeige' | 'punchedCream' | 'gridDark' | 'brick' | 'stoneGrid';
+
+/**
+ * A facade drawn as a picture of its bays - panes and mullions, spandrels,
+ * punched windows in a wall - tiling one bay across and one storey up, so
+ * floor lines meet the slabs: `base` is the height (m) the storeys start at.
+ */
+function facade(kind: FacadeKind, bay: number, storey: number, base: number): Mat {
+  const key = `${kind}|${bay}|${storey}|${base}`;
+  if (facades.has(key)) return key;
+  const t = canvasTexture(256, (g, s) => {
+    const glass = (top: string, bottom: string, x: number, y: number, w: number, h: number): void => {
+      const grad = g.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0, top); grad.addColorStop(1, bottom);
+      g.fillStyle = grad; g.fillRect(x, y, w, h);
+    };
+    if (kind === 'curtainBlue' || kind === 'curtainDark' || kind === 'curtainGreen') {
+      const [a, b, mull, spand] = kind === 'curtainBlue' ? ['#9fc0d6', '#5f8099', '#d5dadd', '#6c7f8c']
+        : kind === 'curtainDark' ? ['#4b5a66', '#222b33', '#5a6168', '#1b2127'] : ['#8fb3ae', '#557a76', '#cfd6d3', '#5d736f'];
+      glass(a, b, 0, 0, s, s);
+      g.fillStyle = spand; g.fillRect(0, s * 0.82, s, s * 0.18);
+      g.fillStyle = mull; g.fillRect(0, s * 0.8, s, 6); g.fillRect(0, s - 4, s, 4); g.fillRect(0, 0, 5, s); g.fillRect(s / 2 - 2, 0, 4, s * 0.8);
+      g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(s * 0.1, 0, s * 0.15, s * 0.8);
+    } else {
+      const wall = kind === 'punchedBeige' ? '#d9c39a' : kind === 'punchedCream' ? '#e9e2d4' : kind === 'gridDark' ? '#3a3f45'
+        : kind === 'brick' ? '#9a4a35' : '#d8d4cc';
+      g.fillStyle = wall; g.fillRect(0, 0, s, s);
+      if (kind === 'brick') {
+        g.strokeStyle = 'rgba(60,25,15,.45)'; g.lineWidth = 1;
+        for (let y = 0; y < s; y += 8) { g.beginPath(); g.moveTo(0, y); g.lineTo(s, y); g.stroke(); }
+      }
+      const wide = kind === 'gridDark' || kind === 'stoneGrid' ? 0.78 : kind === 'brick' ? 0.6 : 0.46;
+      const x = s * (1 - wide) / 2, y = s * 0.2, w = s * wide, h = s * 0.58;
+      g.fillStyle = kind === 'gridDark' ? '#c9ced2' : '#2b2e31'; g.fillRect(x - 5, y - 5, w + 10, h + 10);
+      glass(kind === 'gridDark' ? '#6d8496' : '#7d97a8', '#34434f', x, y, w, h);
+      g.fillStyle = kind === 'gridDark' ? '#c9ced2' : '#2b2e31'; g.fillRect(x + w / 2 - 2, y, 4, h);
+      if (kind === 'punchedBeige' || kind === 'punchedCream') { g.fillStyle = 'rgba(255,255,255,.5)'; g.fillRect(x - 8, y + h + 5, w + 16, 6); }
+    }
+  }, 1 / bay, 1 / storey);
+  t.offset.y = -base / storey;
+  const glassy = kind.startsWith('curtain');
+  facades.set(key, new MeshStandardMaterial({ map: t, roughness: glassy ? 0.15 : 0.85, metalness: glassy ? 0.45 : 0 }));
+  return key;
+}
 
 function canvasTexture(size: number, paint: (g: CanvasRenderingContext2D, s: number) => void, repeatX = 1, repeatY = 1): CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -113,6 +160,14 @@ function makeMaterials(): Record<Mat, Material> {
     metal: std({ color: 0x3b3e42, roughness: 0.45, metalness: 0.6 }),
     plant: std({ color: 0xa9a59e, roughness: 0.7 }),
     sconce: std({ color: 0xfff1d8, emissive: 0xffd49a, emissiveIntensity: 1.2 }),
+    glassRail: std({ color: 0xcfe3ec, transparent: true, opacity: 0.38, roughness: 0.05, metalness: 0.2, depthWrite: false }),
+    white: std({ color: 0xf2f1ec, roughness: 0.8 }),
+    stoneLight: std({ color: 0xd6d1c7, roughness: 0.75 }),
+    beige: std({ color: 0xd9c49c, roughness: 0.85 }),
+    brickPier: std({ color: 0x8f4433, roughness: 0.9 }),
+    darkPanel: std({ color: 0x2f3439, roughness: 0.6, metalness: 0.3 }),
+    lightGrid: std({ color: 0xc4c9cd, roughness: 0.6 }),
+    podiumGlass: std({ color: 0x40505c, emissive: 0x5a4630, emissiveIntensity: 0.3, roughness: 0.08, metalness: 0.7 }),
   };
 }
 
@@ -186,6 +241,20 @@ class Parts {
     g.scale(1.2, 0.85, 1.2);
     g.translate(x, z + r * 0.7, -this.Y(y));
     this.push(dark ? 'leafDark' : 'leaf', g);
+  }
+
+  /** An upright elliptic prism (a rounded tower, a slab edge round it), UVs in metres round and up. */
+  ellipse(mat: Mat, cx: number, cy: number, rx: number, ry: number, z0: number, z1: number, seg = 24): void {
+    const g = new CylinderGeometry(1, 1, z1 - z0, seg, 1, false);
+    g.scale(rx, 1, ry);
+    g.translate(cx, (z0 + z1) / 2, -this.Y(cy));
+    const pos = g.attributes['position']!, uv = g.attributes['uv']!;
+    const r = (rx + ry) / 2;
+    for (let i = 0; i < pos.count; i++) {
+      const a = Math.atan2(-(pos.getZ(i) + this.Y(cy)), pos.getX(i) - cx);
+      uv.setXY(i, (a + Math.PI) * r, pos.getY(i));
+    }
+    this.push(mat, g);
   }
 
   cylinder(mat: Mat, x: number, y: number, z0: number, z1: number, r: number): void {
@@ -327,7 +396,189 @@ function balconyMid(p: Parts, W: number, D: number, g: number, s: number, upper:
   }
 }
 
-const DESIGNS: Partial<Record<string, typeof balconyMid>> = { balconyMid };
+/** How one of the towers of the reference sheets is made. */
+interface TowerLook {
+  /** The shaft's face: a facade picture, its bay width. */
+  readonly face: FacadeKind;
+  readonly bay: number;
+  readonly podium: Mat;
+  readonly round?: boolean;
+  /** Projecting piers, every `every` metres, and their material. */
+  readonly piers?: { readonly mat: Mat; readonly every: number; readonly w: number };
+  /** A slab edge at every floor (`deep` > 0.5: a balcony band with its railing). */
+  readonly bands?: { readonly mat: Mat; readonly deep: number; readonly rail?: 'glassRail' | 'railing'; readonly sides?: boolean };
+  /** A strip up the middle of the front, standing forward, one storey higher. */
+  readonly strip?: { readonly mat: Mat; readonly frac: number };
+  /** Balconies in some columns only (classic towers). */
+  readonly loggias?: { readonly every: number };
+  /** Storeys of the set-back crown; tiers of an art deco top. */
+  readonly crown: number;
+  readonly tiers?: number;
+  /** A cornice band at the crown. */
+  readonly cornice?: Mat;
+}
+
+const LOOKS: Record<string, TowerLook> = {
+  glassOffice: { face: 'curtainBlue', bay: 1.5, podium: 'stoneLight', piers: { mat: 'stoneLight', every: 6, w: 0.9 },
+    strip: { mat: 'curtainStrip', frac: 0.24 }, crown: 2, cornice: 'stoneLight' },
+  glassBalcony: { face: 'curtainBlue', bay: 1.5, podium: 'stoneLight', bands: { mat: 'white', deep: 1.4, rail: 'glassRail', sides: true },
+    strip: { mat: 'stoneLight', frac: 0.14 }, crown: 2 },
+  beigeClassic: { face: 'punchedBeige', bay: 1.8, podium: 'stoneLight', loggias: { every: 3 }, crown: 3, tiers: 2, cornice: 'trim' },
+  darkGlass: { face: 'curtainDark', bay: 1.5, podium: 'darkPanel', crown: 4, tiers: 2 },
+  whiteBalcony: { face: 'curtainBlue', bay: 1.5, podium: 'stoneLight', bands: { mat: 'white', deep: 1.6, rail: 'glassRail', sides: true }, crown: 1 },
+  brickFrame: { face: 'curtainBlue', bay: 1.5, podium: 'stone', piers: { mat: 'brickPier', every: 3, w: 0.8 },
+    bands: { mat: 'brickPier', deep: 0.35 }, crown: 1, cornice: 'brickPier' },
+  roundGlass: { face: 'curtainBlue', bay: 1.5, podium: 'stoneLight', round: true, bands: { mat: 'white', deep: 0.6 }, crown: 1 },
+  darkGrid: { face: 'gridDark', bay: 2.4, podium: 'darkPanel', piers: { mat: 'lightGrid', every: 4.8, w: 0.35 }, crown: 2 },
+  artDeco: { face: 'punchedBeige', bay: 1.5, podium: 'stoneLight', piers: { mat: 'beige', every: 1.5, w: 0.35 }, crown: 3, tiers: 3, cornice: 'beige' },
+};
+
+/** A tower of the reference sheet: podium, shaft, crown and roof, in its own look. */
+function towerOf(look: TowerLook) {
+  return (p: Parts, W: number, D: number, g: number, s: number, upper: number): void => {
+    const zP = g + s; // a two-storey podium
+    const top = g + upper * s;
+    const crownZ = top - look.crown * s;
+    const I = 2;
+    const sx0 = I, sx1 = W - I, sy0 = I, sy1 = D - I;
+    const sw = sx1 - sx0, sd = sy1 - sy0;
+    const face = facade(look.face, look.bay, s, zP);
+
+    // The podium: its material, tall glazing between columns on every face, the entrance.
+    p.box(look.podium, 0, W, 0, D, 0, zP);
+    const cols = Math.max(2, Math.round(W / 4));
+    for (const mirror of [null, D]) {
+      p.mirror = mirror;
+      for (let k = 0; k < cols; k++) {
+        const x0 = (k * W) / cols + 0.35, x1 = ((k + 1) * W) / cols - 0.35;
+        p.box('podiumGlass', x0, x1, -0.04, 0.02, 0.15, zP - 0.7);
+        p.box('frame', x0, x1, -0.07, -0.02, g - 0.1, g + 0.05);
+      }
+      for (let k = 0; k <= cols; k++) { const x = (k * W) / cols; p.box(look.podium, x - 0.35, x + 0.35, -0.3, 0.2, 0, zP); }
+    }
+    p.mirror = null;
+    for (const [x, out] of [[0, -1], [W, 1]] as const) {
+      const n = Math.max(2, Math.round(D / 4));
+      for (let k = 0; k < n; k++) {
+        const y0 = (k * D) / n + 0.35, y1 = ((k + 1) * D) / n - 0.35;
+        p.box('podiumGlass', x + (out < 0 ? -0.02 : -0.02), x + 0.04 * out + (out < 0 ? 0 : 0.02), y0, y1, 0.15, zP - 0.7);
+      }
+    }
+    p.box('trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.45, zP);
+    p.box('metal', W / 2 - 3, W / 2 + 3, -2, 0.1, g - 0.4, g - 0.2);
+    p.windowFront(W / 2 - 1.5, W / 2 + 1.5, -0.08, 0, 3, 1);
+    for (const x of [2, W * 0.3, W * 0.7, W - 2]) p.cone(x, -1.2, 0);
+    p.box('plant', 0.5, W / 2 - 4, -1.9, -0.6, 0, 0.5);
+    p.box('plant', W / 2 + 4, W - 0.5, -1.9, -0.6, 0, 0.5);
+    for (let k = 0; k < 8; k++) p.bush(1 + (k * (W - 2)) / 7, -1.25, 0.5, 0.4, k % 2 === 0);
+
+    // The shaft, then the crown set back.
+    const tiers = look.tiers ?? 1;
+    const shaft = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): void => {
+      if (look.round) {
+        p.ellipse(face, (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2, z0, z1);
+        return;
+      }
+      p.box(face, x0, x1, y0, y1, z0, z1);
+      if (look.piers) {
+        const { mat, every, w } = look.piers;
+        const n = Math.max(1, Math.round((x1 - x0) / every));
+        for (let k = 0; k <= n; k++) {
+          const x = x0 + ((x1 - x0) * k) / n;
+          p.box(mat, x - w / 2, x + w / 2, y0 - 0.3, y0 + 0.2, z0, z1);
+          p.box(mat, x - w / 2, x + w / 2, y1 - 0.2, y1 + 0.3, z0, z1);
+        }
+        const m2 = Math.max(1, Math.round((y1 - y0) / every));
+        for (let k = 0; k <= m2; k++) {
+          const y = y0 + ((y1 - y0) * k) / m2;
+          p.box(mat, x0 - 0.3, x0 + 0.2, y - w / 2, y + w / 2, z0, z1);
+          p.box(mat, x1 - 0.2, x1 + 0.3, y - w / 2, y + w / 2, z0, z1);
+        }
+      }
+    };
+    shaft(sx0, sx1, sy0, sy1, zP, crownZ);
+    for (let t = 0; t < tiers; t++) {
+      const c = 1.5 + t * 1.8;
+      const z0 = crownZ + (t * (top - crownZ)) / tiers, z1 = crownZ + ((t + 1) * (top - crownZ)) / tiers;
+      if (sw - 2 * c > 4 && sd - 2 * c > 4) shaft(sx0 + c, sx1 - c, sy0 + c, sy1 - c, z0, z1);
+      if (look.cornice && !look.round) p.box(look.cornice, sx0 + c - 0.4 - 1.5, sx1 - c + 0.4 + 1.5, sy0 + c - 0.4 - 1.5, sy1 - c + 0.4 + 1.5, z0 - 0.4, z0);
+    }
+    const cTop = 1.5 + (tiers - 1) * 1.8;
+
+    // Slab edges and balcony bands at every floor of the shaft.
+    if (look.bands) {
+      const { mat, deep, rail, sides } = look.bands;
+      for (let k = 2; k < upper - look.crown + 1; k++) {
+        const z = g + (k - 1) * s;
+        if (look.round) {
+          p.ellipse(mat, W / 2, D / 2, sw / 2 + deep, sd / 2 + deep, z, z + 0.25);
+          continue;
+        }
+        p.box(mat, sx0 - (sides ? deep : 0), sx1 + (sides ? deep : 0), sy0 - deep, sy0, z, z + 0.25);
+        p.box(mat, sx0 - (sides ? deep : 0), sx1 + (sides ? deep : 0), sy1, sy1 + deep, z, z + 0.25);
+        if (sides) { p.box(mat, sx0 - deep, sx0, sy0, sy1, z, z + 0.25); p.box(mat, sx1, sx1 + deep, sy0, sy1, z, z + 0.25); }
+        if (rail && deep > 0.5) {
+          const railBox = (x0: number, x1: number, y0: number, y1: number): void => {
+            if (rail === 'glassRail') p.box('glassRail', x0, x1, y0, y1, z + 0.25, z + 1.3);
+            else p.rail(x0, x1, y0, y1, z + 0.25);
+          };
+          const ex = sides ? deep : 0;
+          railBox(sx0 - ex, sx1 + ex, sy0 - deep, sy0 - deep + 0.04);
+          railBox(sx0 - ex, sx1 + ex, sy1 + deep - 0.04, sy1 + deep);
+          if (sides) { railBox(sx0 - deep, sx0 - deep + 0.04, sy0 - deep, sy1 + deep); railBox(sx1 + deep - 0.04, sx1 + deep, sy0 - deep, sy1 + deep); }
+        }
+      }
+    }
+    // Loggias: balconies in every third column, black railings.
+    if (look.loggias) {
+      const n = Math.max(3, Math.round(sw / look.bay));
+      for (let k = 2; k < upper - look.crown + 1; k++) {
+        const z = g + (k - 1) * s;
+        for (let c = 1; c < n - 1; c += look.loggias.every) {
+          const x0 = sx0 + (c * sw) / n, x1 = sx0 + ((c + 1) * sw) / n;
+          for (const mirror of [null, D]) {
+            p.mirror = mirror;
+            p.box('trim', x0 - 0.1, x1 + 0.1, sy0 - 1.1, sy0, z, z + 0.2);
+            p.rail(x0 - 0.1, x1 + 0.1, sy0 - 1.1, sy0 - 1.06, z + 0.2);
+          }
+          p.mirror = null;
+        }
+      }
+    }
+    // The strip up the front: standing forward, one storey higher.
+    if (look.strip && !look.round) {
+      const w = sw * look.strip.frac;
+      const stripMat = look.strip.mat === 'curtainStrip' ? facade('curtainBlue', 1.2, s, zP) : look.strip.mat;
+      p.box(stripMat, W / 2 - w / 2, W / 2 + w / 2, sy0 - 0.8, sy0 + 0.5, zP, top + s);
+      p.box('trim', W / 2 - w / 2 - 0.2, W / 2 + w / 2 + 0.2, sy0 - 1, sy0 + 0.7, top + s, top + s + 0.3);
+    }
+    // The roof: parapet, railing, plant rooms, cooling towers, a water tank.
+    const r0 = look.round ? null : { x0: sx0 + cTop, x1: sx1 - cTop, y0: sy0 + cTop, y1: sy1 - cTop };
+    if (r0) {
+      p.box('plant', r0.x0, r0.x1, r0.y0, r0.y1, top, top + 0.2);
+      p.box('trim', r0.x0 - 0.1, r0.x1 + 0.1, r0.y0 - 0.1, r0.y0 + 0.2, top, top + 0.9);
+      p.box('trim', r0.x0 - 0.1, r0.x1 + 0.1, r0.y1 - 0.2, r0.y1 + 0.1, top, top + 0.9);
+      p.box('trim', r0.x0 - 0.1, r0.x0 + 0.2, r0.y0, r0.y1, top, top + 0.9);
+      p.box('trim', r0.x1 - 0.2, r0.x1 + 0.1, r0.y0, r0.y1, top, top + 0.9);
+      const cx = (r0.x0 + r0.x1) / 2, cy = (r0.y0 + r0.y1) / 2;
+      p.box('lightGrid', cx - 3, cx + 3, cy - 2, cy + 2, top, top + 3.2);
+      p.box('metal', cx - 3.2, cx + 3.2, cy - 2.2, cy + 2.2, top + 3.2, top + 3.4);
+      for (const [x, y] of [[r0.x0 + 1.5, r0.y0 + 1.5], [r0.x1 - 1.5, r0.y0 + 1.5], [r0.x1 - 1.5, r0.y1 - 1.5]] as const) {
+        p.box('metal', x - 0.8, x + 0.8, y - 0.6, y + 0.6, top + 0.2, top + 1.4);
+      }
+      p.cylinder('metal', r0.x0 + 2, r0.y1 - 2, top + 0.2, top + 2.6, 1);
+    } else {
+      p.ellipse('white', W / 2, D / 2, sw / 2 - cTop + 0.3, sd / 2 - cTop + 0.3, top, top + 0.6);
+      p.ellipse('lightGrid', W / 2, D / 2, sw / 4, sd / 4, top + 0.6, top + 3.5, 16);
+      p.ellipse('white', W / 2, D / 2, sw / 4 + 0.3, sd / 4 + 0.3, top + 3.5, top + 3.8, 16);
+    }
+  };
+}
+
+const DESIGNS: Partial<Record<string, typeof balconyMid>> = {
+  balconyMid,
+  ...Object.fromEntries(Object.entries(LOOKS).map(([kind, look]) => [kind, towerOf(look)])),
+};
 
 /** Whether this module draws the building's body. */
 export function drawsSignature(b: Building): boolean {
@@ -359,7 +610,7 @@ export function buildSignature(b: Building, floor: number): Group | null {
     if (!merged) continue;
     merged.scale(U, U, U);
     merged.computeBoundingSphere();
-    const mesh = new Mesh(merged, materials[mat]);
+    const mesh = new Mesh(merged, materials[mat] ?? facades.get(mat)!);
     mesh.castShadow = mat !== 'glass' && mat !== 'sconce';
     mesh.receiveShadow = true;
     mesh.name = `signature-${mat}`;

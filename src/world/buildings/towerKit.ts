@@ -288,7 +288,7 @@ export function makeTower(spec: TowerSpec, rng: Rng): BlueprintBody {
 }
 
 /** The kinds drawn by their own parts. */
-const SIGNATURES: ReadonlySet<TowerKind> = new Set(['balconyMid']);
+const SIGNATURES: ReadonlySet<TowerKind> = new Set(TOWER_KINDS);
 
 /** The signature a building is drawn with, or null for the shared facade kit. */
 export function signatureKind(b: { readonly blueprint?: string }): TowerKind | null {
