@@ -336,8 +336,19 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const inv = p.map((_, k) => (k === PEL || k === CHE || k === BEL || k === LH || k === RH || k === LS || k === RS ? 0.45 : k === HEA ? 0.7 : 1));
     const radius = p.map((_, k) => metre * (k === HEA ? 0.11 : k === TOP ? 0.05 : k === PEL || k === CHE || k === BEL ? 0.12 : k === LS || k === RS || k === LH || k === RH ? 0.08 : 0.05));
     const walls: Wall[] = world.wallsNear(x, y, m(35))
-      // A wall the person stood inside (a doorway, a lot they were in) does not hold the body.
-      .filter((wall) => !inside(wall.ring, x, y))
+      // A wall the body starts in or against does not hold it: the building it
+      // is blown out of (its pieces still being made), a doorway, a lot it
+      // stood in. Collisions are projections (Jakobsen, "Advanced Character
+      // Physics"), each particle moved the least way out: one started inside
+      // went up on to the roof, the next out of a face metres off, and the
+      // sticks drew the body back together over seconds - a giant shrinking.
+      .filter((wall) => !inside(wall.ring, x, y) && !p.some((v, k) => {
+        if (v.y > wall.top + radius[k]!) return false;
+        const wx = v.x, wy = -v.z;
+        if (inside(wall.ring, wx, wy)) return true;
+        const e = nearestEdge(wall.ring, wx, wy);
+        return Math.hypot(wx - e.x, wy - e.y) < radius[k]!;
+      }))
       .map((wall) => {
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const q of wall.ring) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }

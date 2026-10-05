@@ -100,6 +100,9 @@ function seatedChat(seed: number, time: number): boolean {
   return ((time + (hash >>> 8 & 255) / 10) % cycle) < cycle * 0.3;
 }
 
+/** No expression: what a body drawn from a ragdoll palette shows (`drawPalette`). */
+const NEUTRAL_FACE: FaceWeights = {};
+
 function setFacialExpression(batch: CitizenBatch, slot: number, face: FaceWeights): void {
   for (let i = 0; i < batch.meshes.length; i++) {
     const source = batch.sources[i]!;
@@ -1050,6 +1053,11 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         matrix.multiplyMatrices(instance, batch.local[i]!);
         batch.meshes[i]!.setMatrixAt(batch.count, matrix);
       }
+      // Its face's weights too, close up: the slot otherwise keeps whatever
+      // the morph texture held there - zero, never written - and three scales
+      // every vertex by that slot's base influence (`morphinstance_vertex`):
+      // at zero the body was flung into blades from its bones' joints.
+      if (lod === 0) setFacialExpression(batch, batch.count, NEUTRAL_FACE);
       batch.count++;
       batch.lastUsed = frameNow;
     },

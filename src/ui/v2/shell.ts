@@ -251,7 +251,23 @@ export function mountShell(deps: ShellDeps): void {
   const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('sim', 18));
   const camB = button('v2-pill', t('camera.label'), () => toggle('camera', camB), svg('camera', 18));
   const helpB = button('v2-icon', t('builder.help'), () => toggle('help', helpB), svg('help', 18));
-  actionsBar.append(simB, camB, undo, redo, helpB, menuB);
+  // See inside the buildings (the Builder's own toggle, `workspace.ts`): on,
+  // with the floor shown and a step down and up beside it.
+  const insideButtons = (): HTMLButtonElement[] => [...document.querySelectorAll<HTMLButtonElement>('.bw-inside .bw-icon-button')];
+  const insideLevel = (): string => document.querySelector('.bw-inside .bw-inside-level')?.textContent ?? '';
+  const insideB = button('v2-icon', t('inside.toggle'), () => { insideButtons()[0]?.click(); syncInside(); }, builderIconSvg('interiorView', 18));
+  const insideDownB = button('v2-icon', t('inside.down'), () => { insideButtons()[1]?.click(); syncInside(); }, builderIconSvg('floorDown', 16));
+  const insideUpB = button('v2-icon', t('inside.up'), () => { insideButtons()[2]?.click(); syncInside(); }, builderIconSvg('floorUp', 16));
+  const insideLevelEl = el('span', 'v2-inside-level');
+  const syncInside = (): void => {
+    const on = insideButtons()[0]?.classList.contains('active') ?? false;
+    insideB.classList.toggle('on', on);
+    insideB.setAttribute('aria-pressed', String(on));
+    insideDownB.hidden = insideUpB.hidden = insideLevelEl.hidden = !on;
+    insideLevelEl.textContent = insideLevel();
+  };
+  syncInside();
+  actionsBar.append(insideB, insideDownB, insideLevelEl, insideUpB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers

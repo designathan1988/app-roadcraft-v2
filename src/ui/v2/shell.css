@@ -446,3 +446,6 @@
 .v2-toolopts .v2-group.titled .v2-choices { flex-wrap: wrap; max-width: none; }
 .v2-toolopts .v2-group.titled .v2-choice:not(.icon) { flex: 1 1 auto; white-space: nowrap; }
 .v2-toolopts .v2-group.titled .v2-stepper { justify-content: space-between; }
+
+.v2-inside-level { font-size: 12px; font-weight: 700; padding: 0 4px; align-self: center; }
+.v2-actions .v2-icon.on { box-shadow: 0 0 0 2px var(--v-accent) inset; }
