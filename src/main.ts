@@ -86,7 +86,7 @@ import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
 import { LOT_PLAN_VERSION, blockOf, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
-import { applyTemplate, clearLab, growLab, placeTower, showCatalog, layLabStreet, rezoneLab, templateOf, zoneOfBuilding } from '@editor/lotLab';
+import { CATALOG_BACK, applyTemplate, clearLab, growLab, placeTower, showCatalog, layLabStreet, rezoneLab, templateOf, zoneOfBuilding } from '@editor/lotLab';
 import { mountLotLab } from '@ui/lotLab';
 
 type Tool =
@@ -668,7 +668,14 @@ if (lotLabOn) {
     catalog(seed) {
       history.record(doc);
       lotLabGrow = null;
-      const n = showCatalog({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), seed);
+      // Which way the camera looks: from the screen's middle to its bottom edge, on the ground.
+      const w = surface.cssW, h = surface.cssH;
+      const mid = view.toWorld(w / 2, h / 2, w, h), low = view.toWorld(w / 2, h, w, h);
+      const len = Math.hypot(low.x - mid.x, low.y - mid.y) || 1;
+      const toward = { x: (low.x - mid.x) / len, y: (low.y - mid.y) / len };
+      const n = showCatalog({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), seed, toward);
+      const back = m(CATALOG_BACK - 30);
+      view.moveTo({ x: -toward.x * back, y: -toward.y * back });
       persistence.saveSessionSoon(doc, sessionSettings);
       updateHistoryButtons();
       requestDraw();

@@ -454,7 +454,7 @@ function towerOf(look: TowerLook) {
         p.box('podiumGlass', x0, x1, -0.04, 0.02, 0.15, zP - 0.7);
         p.box('frame', x0, x1, -0.07, -0.02, g - 0.1, g + 0.05);
       }
-      for (let k = 0; k <= cols; k++) { const x = (k * W) / cols; p.box(look.podium, x - 0.35, x + 0.35, -0.3, 0.2, 0, zP); }
+      for (let k = 0; k <= cols; k++) { const x = (k * W) / cols; p.box(look.podium, x - 0.35, x + 0.35, -0.3, 0.2, 0, zP - 0.45); }
     }
     p.mirror = null;
     for (const [x, out] of [[0, -1], [W, 1]] as const) {
@@ -464,7 +464,7 @@ function towerOf(look: TowerLook) {
         p.box('podiumGlass', x + (out < 0 ? -0.02 : -0.02), x + 0.04 * out + (out < 0 ? 0 : 0.02), y0, y1, 0.15, zP - 0.7);
       }
     }
-    p.box('trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.45, zP);
+    p.box('trim', -0.2, W + 0.2, -0.2, D + 0.2, zP - 0.45, zP + 0.06); // stands above the podium's roof: no two tops at one height
     p.box('metal', W / 2 - 3, W / 2 + 3, -2, 0.1, g - 0.4, g - 0.2);
     p.windowFront(W / 2 - 1.5, W / 2 + 1.5, -0.08, 0, 3, 1);
     for (const x of [2, W * 0.3, W * 0.7, W - 2]) p.cone(x, -1.2, 0);
@@ -485,14 +485,14 @@ function towerOf(look: TowerLook) {
         const n = Math.max(1, Math.round((x1 - x0) / every));
         for (let k = 0; k <= n; k++) {
           const x = x0 + ((x1 - x0) * k) / n;
-          p.box(mat, x - w / 2, x + w / 2, y0 - 0.3, y0 + 0.2, z0, z1);
-          p.box(mat, x - w / 2, x + w / 2, y1 - 0.2, y1 + 0.3, z0, z1);
+          p.box(mat, x - w / 2, x + w / 2, y0 - 0.3, y0 + 0.2, z0, z1 + 0.25);
+          p.box(mat, x - w / 2, x + w / 2, y1 - 0.2, y1 + 0.3, z0, z1 + 0.25);
         }
         const m2 = Math.max(1, Math.round((y1 - y0) / every));
         for (let k = 0; k <= m2; k++) {
           const y = y0 + ((y1 - y0) * k) / m2;
-          p.box(mat, x0 - 0.3, x0 + 0.2, y - w / 2, y + w / 2, z0, z1);
-          p.box(mat, x1 - 0.2, x1 + 0.3, y - w / 2, y + w / 2, z0, z1);
+          p.box(mat, x0 - 0.3, x0 + 0.2, y - w / 2, y + w / 2, z0, z1 + 0.2);
+          p.box(mat, x1 - 0.2, x1 + 0.3, y - w / 2, y + w / 2, z0, z1 + 0.2);
         }
       }
     };
@@ -501,7 +501,7 @@ function towerOf(look: TowerLook) {
       const c = 1.5 + t * 1.8;
       const z0 = crownZ + (t * (top - crownZ)) / tiers, z1 = crownZ + ((t + 1) * (top - crownZ)) / tiers;
       if (sw - 2 * c > 4 && sd - 2 * c > 4) shaft(sx0 + c, sx1 - c, sy0 + c, sy1 - c, z0, z1);
-      if (look.cornice && !look.round) p.box(look.cornice, sx0 + c - 0.4 - 1.5, sx1 - c + 0.4 + 1.5, sy0 + c - 0.4 - 1.5, sy1 - c + 0.4 + 1.5, z0 - 0.4, z0);
+      if (look.cornice && !look.round) p.box(look.cornice, sx0 + c - 0.4 - 1.5, sx1 - c + 0.4 + 1.5, sy0 + c - 0.4 - 1.5, sy1 - c + 0.4 + 1.5, z0 - 0.4, z0 + 0.05);
     }
     const cTop = 1.5 + (tiers - 1) * 1.8;
 

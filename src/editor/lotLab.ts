@@ -102,7 +102,11 @@ const CATALOG_LOTS: Record<TowerKind, { kind: LotKind; W: number; D: number }> =
  * sides of the lab street, fronts on the footway. Everything on the lab
  * street before is taken down. Returns how many stood.
  */
-export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number): number {
+/** How far behind the lab street the catalogue's row stands, metres (clear of the street). */
+export const CATALOG_BACK = 160;
+
+/** `toward`: the unit direction (world) from the ground towards the camera; given, the lots stand in one row facing it. */
+export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number, toward?: { x: number; y: number }): number {
   const { doc } = ctx;
   for (const b of [...doc.buildings.all()]) doc.buildings.remove(b.id);
   doc.zoneMarks.length = 0;
@@ -133,6 +137,20 @@ export function showCatalog(ctx: SiteContext, grid: ZoneGrid, seed: number): num
     for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
     const made: MadeBuilding = { fn: body.function ?? 'apartments', body, entrance: (env.x1 - env.x0) / 2, free: [] };
     furnishLot(body, plan, made, rng);
+    // Facing the camera: one row, side by side, every front to the viewer
+    // (two rows face to face hid each other's fronts).
+    if (toward) {
+      const t = toward;
+      const u = { x: -t.y, y: t.x };
+      const off = (i - (TOWER_KINDS.length - 1) / 2) * m(lot.W + 4);
+      const back = m(CATALOG_BACK);
+      const result = addBuildingRecord(ctx, {
+        ...body, x: -t.x * back + u.x * off, y: -t.y * back + u.y * off,
+        rotation: Math.atan2(t.x, -t.y), decay: 0, lotPlan: LOT_PLAN_VERSION,
+      } as Omit<Building, 'id'>);
+      if (result.ok) placed++;
+      return;
+    }
     // The next free stretch on either side of the street.
     for (let k = 0; k < sides.length; k++) {
       const s = (placed + k) % sides.length;
