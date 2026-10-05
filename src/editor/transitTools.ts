@@ -199,6 +199,12 @@ export class TransitTool {
     this.deps.hint('hint.transit.lineMade');
   }
 
+  /** The run being laid, to the pointer, for the scene to build as track; null when none. */
+  preview(): { mode: 'train' | 'metro'; points: Vec2[] } | null {
+    if (!this.points.length) return null;
+    return { mode: this.rail, points: [...this.points, ...(this.cursor ? [this.snapTrack(this.cursor)] : [])] };
+  }
+
   /** The lines laid out, for the panel. */
   lines(): TransitData['lines'] { return this.data.lines; }
 
@@ -210,16 +216,9 @@ export class TransitTool {
     const data = this.data;
     ctx.save();
     ctx.lineJoin = ctx.lineCap = 'round';
-    // Tracks: the train's dark, the metro's dashed (it runs under the ground).
-    for (const t of data.tracks) {
-      ctx.strokeStyle = t.mode === 'metro' ? 'rgba(150, 110, 220, 0.9)' : 'rgba(60, 50, 40, 0.85)';
-      ctx.lineWidth = active ? 4 : 2.5;
-      ctx.setLineDash(t.mode === 'metro' ? [8, 6] : []);
-      ctx.beginPath();
-      t.points.forEach((p, i) => { const s = at(p); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
+    // Tracks are drawn in the scene as they are built - the train's on its
+    // ballast, the metro's in its bore seen through the ground
+    // (`render/transit.ts`) - not as lines over the map.
     // Lines: their colour, from stop to stop.
     if (active) {
       for (const line of data.lines) {
@@ -255,17 +254,12 @@ export class TransitTool {
       ctx.fillText(s.mode === 'bus' ? 'B' : s.mode === 'metro' ? 'M' : 'T', q.x, q.y + 0.5);
     }
     if (!active) { ctx.restore(); return; }
-    // The run being laid, to the pointer.
-    if (this.points.length) {
-      ctx.strokeStyle = this.rail === 'metro' ? '#a77cf0' : '#f2c24a';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      [...this.points, ...(this.cursor ? [this.snapTrack(this.cursor)] : [])].forEach((p, i) => {
-        const s = at(p); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
-      });
-      ctx.stroke();
-      ctx.setLineDash([]);
+    // The run being laid is built in the scene as the real track
+    // (`preview`); only its points are marked here.
+    for (const p of this.points) {
+      const s = at(p);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, Math.PI * 2); ctx.fill();
     }
     // The line being made: through its stops so far, on to the pointer.
     if (this.lineStops.length) {

@@ -3862,6 +3862,9 @@ function drawOverlayScreen(): void {
   if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
   if (tool === 'barrier') drawBarrierPlan(ctx, at);
   if (tool === 'transit') transitEditor.draw(ctx, at, true);
+  // The metro seen through the ground and the track being laid, in the scene.
+  scene.setTransitXray(tool === 'transit');
+  scene.setTransitPreview(tool === 'transit' ? transitEditor.preview() : null);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
   // The lots, laid on the ground in the scene (`render/lotOverlay.ts`): in
@@ -4778,6 +4781,8 @@ qualitySelect.onchange = () => {
    * is there (the crowd and the shadow frustum follow the play view). The
    * inspection camera then photographs that frame (`scene().inspect`).
    */
+  /** The transport tool, for the browser checks. */
+  transitTool: () => transitEditor,
   lookAt: (x: number, y: number, zoom = camera.zoom) => {
     camera.x = x;
     camera.y = y;

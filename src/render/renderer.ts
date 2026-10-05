@@ -63,7 +63,7 @@ import { MAP_SIZE } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
-import { buildTransit, type TransitMeshes } from './transit';
+import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { buildingPads, type Pad } from '@world/buildings/pads';
 import { Indoors } from './indoors';
@@ -182,6 +182,10 @@ export interface SceneHandle {
   setBuildingPreview(preview: BuildingPreviewInput | null): void;
   /** The pole run the pole tool would build, drawn as built; null removes it. */
   setPolePreview(net: Network, preview: PolePreviewInput | null): void;
+  /** The metro seen as a cut through the ground (the transit tool on). */
+  setTransitXray(on: boolean): void;
+  /** The track being laid, built as it will be (`buildTrackPreview`); null removes it. */
+  setTransitPreview(preview: { mode: 'train' | 'metro'; points: readonly { x: number; y: number }[] } | null): void;
   /** The lots of the Zoning tool laid on the ground (`lotOverlay.ts`); null removes them. */
   setLotOverlay(input: LotOverlayInput | null): void;
   /**
@@ -913,6 +917,9 @@ export function createSceneRenderer(
   // drops the inspector with it.
   const inspect = import.meta.env.DEV ? createInspector(renderer, scene) : null;
   let lotOverlay: ReturnType<typeof createLotOverlay> | null = null;
+  let transitXray = false;
+  let transitPreview: ReturnType<typeof buildTrackPreview> | null = null;
+  let transitPreviewKey = '';
 
   const handle: SceneHandle = {
     inspect,
@@ -1078,6 +1085,20 @@ export function createSceneRenderer(
       void id;
       buildings.setRuined(destruction.ruined);
     },
+    setTransitXray(on) {
+      transitXray = on;
+      transit?.setXray(on);
+    },
+    setTransitPreview(preview) {
+      const key = preview ? `${preview.mode}:${preview.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(';')}` : '';
+      if (key === transitPreviewKey) return;
+      transitPreviewKey = key;
+      if (transitPreview) { world.remove(transitPreview.group); transitPreview.dispose(); transitPreview = null; }
+      if (preview && preview.points.length >= 2) {
+        transitPreview = buildTrackPreview(preview.points, preview.mode, terrain.renderedHeightAt, pavedHeightAt);
+        world.add(transitPreview.group);
+      }
+    },
     setLotOverlay(input) {
       lotOverlay ??= createLotOverlay(scene, (x, y) => handle.surfaceHeightAt(x, y));
       lotOverlay.set(input);
@@ -1199,6 +1220,7 @@ export function createSceneRenderer(
         const solids = [...net.doc.buildings.all()].flatMap((b) => solidFootprints(b));
         transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt,
           (p) => onCarriageway(net, p) || solids.some((ring) => pointInPolygon(p, ring)));
+        transit.setXray(transitXray);
         world.add(transit.group);
         builtTriangles += transit.triangles;
       }
