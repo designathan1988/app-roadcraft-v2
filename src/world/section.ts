@@ -77,6 +77,8 @@ export const TREE_MIN_FOOTWAY = 6;
 export const LAMP_ZONE = m(0.35);
 /** Depth a bench (0.52 m seat) or a bin (0.66 m across) takes beside the kerb. */
 export const BENCH_ZONE = m(0.7);
+/** Depth of the edge zone from the kerb face, kerb stone included (36 cm). */
+export const EDGE_ZONE = m(0.36);
 /** Narrowest through zone a footway keeps, whatever else it holds. */
 export const MIN_THROUGH = m(0.9);
 /** Through zone a footway is given before any of it goes to a frontage zone (NACTO: 1.5-2.5 m). */
@@ -89,7 +91,11 @@ export function sectionOf(rt: RoadType, direction: SegmentDirection = 'both'): C
   const half = rt.width / 2;
   const edge = half + rt.sidewalk;
   const curb: Band = { inner: half, outer: half + CURB_BAND };
-  const footway = Math.max(0, edge - curb.outer);
+  // The edge zone: kerb stone and clearance together, measured from the kerb
+  // FACE whatever the stone's width, so nothing stands where an opening car
+  // door or a passing mirror reaches (NACTO "Sidewalks": the edge zone).
+  const edgeZone = Math.max(curb.outer, half + EDGE_ZONE);
+  const footway = Math.max(0, edge - edgeZone);
   // Highways and ramps have a verge, not a footway (`pedestrianAccess.ts`).
   const walkable = carriesPedestrians(rt);
   // Street furniture stands in ONE zone beside the kerb, as on a real street:
@@ -101,7 +107,8 @@ export function sectionOf(rt: RoadType, direction: SegmentDirection = 'both'): C
   const trees = rt.sidewalk >= TREE_MIN_FOOTWAY ? TREE_KERB_SETBACK + TREE_PIT : 0;
   const seats = footway - BENCH_ZONE >= MIN_THROUGH ? BENCH_ZONE : 0;
   const furnishingDepth = walkable ? Math.min(Math.max(LAMP_ZONE, trees, seats), Math.max(0, footway - MIN_THROUGH)) : 0;
-  const furnishing: Band = { inner: curb.outer, outer: curb.outer + furnishingDepth };
+  // The edge zone is part of the furnishing (curb) zone, as NACTO draws it.
+  const furnishing: Band = { inner: curb.outer, outer: edgeZone + furnishingDepth };
   // A frontage zone along the outer edge only where the through zone already
   // has its full width and enough is left over to use.
   const spare = footway - furnishingDepth - THROUGH_GOAL;

@@ -88,7 +88,9 @@ and they have seen it.
   7.3), closed at both ends of a run, a division line between every two bays.
   Chosen in the road tool (none / both sides / right / left) and per segment
   in the inspector. Old maps' 45/90 degree values load as parallel.
-  NOT yet: cars of the agents engine do not use street bays.
+  Agents (`?agents=1`) park in street bays too (`sim/agents/parking.ts`
+  `kerbBays`): the car stops beside and ahead of the bay, backs in, and drives
+  forward out (`manoeuvre.ts`); `tests/sim/agents/kerbParking.spec.ts`.
 - **Nothing is generated on streets or terrain (ef567e3, the player's order of
   2026-10-05):** no automatic lamps, street trees, benches, bins, hydrants, post
   boxes, median shrubs, no trees or bushes scattered over the land or along the
@@ -152,11 +154,14 @@ and they have seen it.
 
 ## Open, by area
 
-- **Crowd engine (`?people=crowd`) on the 15 cm kerb:** two crowd scenarios
-  (`bidirectional-10`, `group`) regress with the real kerb width: `crowdNav.ts`
-  widens each footway strip by `CURB_BAND`, which shrank from 36 to 15 cm. The
-  engine is to be replaced (agents slice 3); the default People engine is not
-  affected.
+- **Crowd engine (`?people=crowd`) after the grid:** the furnishing zone now
+  starts 36 cm from the kerb FACE whatever the stone's width (`section.ts`
+  `EDGE_ZONE`, NACTO's edge zone), and the scenarios' fixed places follow the
+  urban footway (`tests/fixtures/crowdScenarios.ts`). Still failing:
+  `release-both` (6 ticks of sliding over 90 s, after the urban street went
+  from 8.8 to 8 m), besides `crowd` and `bidirectional-dense` (failing before)
+  and `post` (fails since ef567e3). The engine is to be replaced (agents
+  slice 3); the default People engine is not affected.
 
 - **Planet (the world as a real sphere): put aside on branch `planeta`
   (2026-10-05, the player's decision).** The game is the flat city again;

@@ -162,9 +162,15 @@ function through(points: readonly Point[], t0: [number, number], t1: [number, nu
  * travel there.
  */
 export function departure(
-  bay: { x: number; y: number; ox: number; oy: number; depth: number; via: readonly Point[] },
+  bay: { x: number; y: number; ox: number; oy: number; depth: number; via: readonly Point[]; kerb?: true },
   lane: { x: number; y: number; tx: number; ty: number },
 ): Manoeuvre {
+  if (bay.kerb) {
+    // Out of a bay along the kerb: forward, easing out onto the lane ahead.
+    return new Manoeuvre([
+      { x0: bay.x, y0: bay.y, tx0: -bay.ox, ty0: -bay.oy, x1: lane.x, y1: lane.y, tx1: lane.tx, ty1: lane.ty, reverse: false },
+    ]);
+  }
   if (bay.via.length > 0) {
     const aisle = bay.via[0]!;
     const next = bay.via[1] ?? lane;
@@ -194,9 +200,16 @@ export function departure(
  */
 export function arrival(
   from: { x: number; y: number; angle: number },
-  bay: { x: number; y: number; ox: number; oy: number; depth: number; via: readonly Point[] },
+  bay: { x: number; y: number; ox: number; oy: number; depth: number; via: readonly Point[]; kerb?: true },
 ): Manoeuvre {
   const [hx, hy] = unit(Math.cos(from.angle), Math.sin(from.angle), [1, 0]);
+  if (bay.kerb) {
+    // Into a bay along the kerb as a driver parks on a street: stopped beside
+    // and ahead of it, backing in, ending nose along the kerb.
+    return new Manoeuvre([
+      { x0: from.x, y0: from.y, tx0: -hx, ty0: -hy, x1: bay.x, y1: bay.y, tx1: bay.ox, ty1: bay.oy, reverse: true },
+    ]);
+  }
   if (bay.via.length > 0) {
     // In by the lot's street edge, up the aisle, and nose first into the stall.
     const inward = [...bay.via].reverse();

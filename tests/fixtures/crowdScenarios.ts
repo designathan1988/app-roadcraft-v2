@@ -1,7 +1,7 @@
 import { RoadDoc } from '@world/doc';
 import { furnishStreets } from './furnish';
 import type { Network } from '@world/network';
-import { roadProfile } from '@world/roadTypes';
+import { roadProfile, roadType } from '@world/roadTypes';
 import { bandMid, sectionOf } from '@world/section';
 import { streetFurniture } from '@world/streetFurniture';
 import { m } from '@world/units';
@@ -89,11 +89,18 @@ const POLE_R = m(0.18);
 function gate(opening: number, centre: number, type = URBAN): RoadDoc {
   const doc = straight(type);
   const lo = centre - opening / 2 - POLE_R, hi = centre + opening / 2 + POLE_R;
-  // From the kerb (urban: 11 u from the centreline) to the footway's outer edge (16 u).
-  for (let y = lo; y > 10.5; y -= POLE_R * 2 + m(0.04)) doc.addPole({ x: 0, y });
-  for (let y = hi; y < 16.6; y += POLE_R * 2 + m(0.04)) doc.addPole({ x: 0, y });
+  // From the kerb to the footway's outer edge, read off the road's own profile.
+  const kerb = roadType(type).width / 2, edge = kerb + roadType(type).sidewalk;
+  for (let y = lo; y > kerb - 0.5; y -= POLE_R * 2 + m(0.04)) doc.addPole({ x: 0, y });
+  for (let y = hi; y < edge + 0.6; y += POLE_R * 2 + m(0.04)) doc.addPole({ x: 0, y });
   return doc;
 }
+
+/**
+ * How far the urban footway moved when the roads went onto the 10 m grid: the
+ * places below were measured on a kerb 11 u from the centreline.
+ */
+const URBAN_SHIFT = roadType(URBAN).width / 2 - 11;
 
 /** The one segment of a straight map, and the leg of a crossroads that runs off towards `(dx, dy)`. */
 const only = (net: Network): SegmentId => [...net.doc.segments.keys()][0]!;
@@ -267,7 +274,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const e = net.doc.requireSegment(east);
       const centreAtA = net.doc.requireNode(e.a).x === 0;
       const L = net.ribbons.get(east)!.full.length;
-      const at = (d: number) => (centreAtA ? d : L - d);
+      // Measured from the crossing, which stood 9.68 m from the centre when
+      // these places were chosen: people gathered behind it on both sides.
+      const cross = net.crosswalkDistanceAt(east, centreAtA ? e.a : e.b) - m(9.68);
+      const at = (d: number) => (centreAtA ? d + cross : L - d - cross);
       const out: ScenarioWalker[] = [];
       for (let k = 0; k < 6; k++) {
         out.push({ ...onFootway(net, east, at(m(16) + k * m(1.4)), 1), goal: onFootway(net, east, at(m(20) + k * m(2)), -1) });
@@ -331,12 +341,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     // An opening one person wide (0.8 m between poles), three from each side.
-    name: 'gap-one', doc: gate(m(0.8), 13.9), seconds: 90, focus: { x: 0, y: 14 },
+    name: 'gap-one', doc: gate(m(0.8), 13.9 + URBAN_SHIFT), seconds: 90, focus: { x: 0, y: 14 + URBAN_SHIFT },
     walkers: (net) => {
       const out: ScenarioWalker[] = [];
       for (let k = 0; k < 3; k++) {
-        out.push({ x: -m(5) - k * m(1.3), y: 14 + (k % 2 ? 1 : -1) * m(0.2), goal: { x: m(12) + k * m(1.5), y: 14 } });
-        out.push({ x: m(5) + k * m(1.3), y: 14 - (k % 2 ? 1 : -1) * m(0.2), goal: { x: -m(12) - k * m(1.5), y: 14 } });
+        out.push({ x: -m(5) - k * m(1.3), y: 14 + URBAN_SHIFT + (k % 2 ? 1 : -1) * m(0.2), goal: { x: m(12) + k * m(1.5), y: 14 + URBAN_SHIFT } });
+        out.push({ x: m(5) + k * m(1.3), y: 14 + URBAN_SHIFT - (k % 2 ? 1 : -1) * m(0.2), goal: { x: -m(12) - k * m(1.5), y: 14 + URBAN_SHIFT } });
       }
       void net;
       return out;
@@ -344,12 +354,12 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     // An opening two people wide (1.4 m between poles), five from each side.
-    name: 'gap-two', doc: gate(m(1.4), 13.9), seconds: 90, focus: { x: 0, y: 14 },
+    name: 'gap-two', doc: gate(m(1.4), 13.9 + URBAN_SHIFT), seconds: 90, focus: { x: 0, y: 14 + URBAN_SHIFT },
     walkers: (net) => {
       const out: ScenarioWalker[] = [];
       for (let k = 0; k < 5; k++) {
-        out.push({ x: -m(5) - k * m(1.2), y: 14 + (k % 2 ? 1 : -1) * m(0.25), goal: { x: m(12) + k * m(1.5), y: 14 + (k % 2 ? 1 : -1) * m(0.25) } });
-        out.push({ x: m(5) + k * m(1.2), y: 14 - (k % 2 ? 1 : -1) * m(0.25), goal: { x: -m(12) - k * m(1.5), y: 14 - (k % 2 ? 1 : -1) * m(0.25) } });
+        out.push({ x: -m(5) - k * m(1.2), y: 14 + URBAN_SHIFT + (k % 2 ? 1 : -1) * m(0.25), goal: { x: m(12) + k * m(1.5), y: 14 + URBAN_SHIFT + (k % 2 ? 1 : -1) * m(0.25) } });
+        out.push({ x: m(5) + k * m(1.2), y: 14 + URBAN_SHIFT - (k % 2 ? 1 : -1) * m(0.25), goal: { x: -m(12) - k * m(1.5), y: 14 + URBAN_SHIFT - (k % 2 ? 1 : -1) * m(0.25) } });
       }
       void net;
       return out;
@@ -357,7 +367,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     // Bench, lamp, bin and a pole together, with people both ways past them.
-    name: 'obstacles', doc: (() => { const d = straight(URBAN); d.addPole({ x: -36, y: -15.2 }); return d; })(), seconds: 80, focus: { x: -38, y: -13 },
+    name: 'obstacles', doc: (() => { const d = straight(URBAN); d.addPole({ x: -36, y: -15.2 - URBAN_SHIFT }); return d; })(), seconds: 80, focus: { x: -38, y: -13 - URBAN_SHIFT },
     walkers: (net) => {
       const s = only(net), L = net.ribbons.get(s)!.full.length;
       // The bench and lamp at x = -41/-36 on the south side (side -1 of a to b).

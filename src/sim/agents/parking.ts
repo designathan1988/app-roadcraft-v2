@@ -6,6 +6,9 @@ import type { Lanelet, LaneletId } from '@world/lanelets';
 import { m } from '@world/units';
 import type { SimWorld } from '../world';
 import type { VehicleId } from '../vehicles/state';
+import type { SegmentId } from '@world/ids';
+import { parkingLayout } from '@world/parkingLayout';
+import { PARKING_PITCH } from '@world/parking';
 
 /**
  * The parking bays of the city: where a resident's car stands when it is not
@@ -60,6 +63,12 @@ export interface Bay {
   readonly via: readonly { readonly x: number; readonly y: number }[];
   /** The car standing in it, or coming to it (reserved). */
   car: VehicleId | null;
+  /**
+   * A bay along a street's kerb (`world/parkingLayout.ts`), not in a lot: a
+   * car backs into it from the lane beside, as one parks on a real street,
+   * and drives forward out of it. Its lane point is a few metres ahead of it.
+   */
+  readonly kerb?: true;
 }
 
 /** Clear of the corners of a lot where a car leaves it for the street. */
@@ -138,6 +147,31 @@ export function collectBays(w: SimWorld): Bay[] {
         });
       }
     }
+  }
+  out.push(...kerbBays(w, out.length));
+  return out;
+}
+
+/** Ahead of a kerb bay, the place on the lane a car stops at to back in, and leaves for. */
+const KERB_AHEAD = m(7);
+/** No lot: the bay stands on the street. */
+const NO_LOT = -1 as BuildingId;
+
+/** Every bay along the kerbs of the streets that park (`RoadSegment.parking`). */
+function kerbBays(w: SimWorld, first: number): Bay[] {
+  const out: Bay[] = [];
+  for (const bay of parkingLayout(w.net).bays) {
+    const f = bay.facing;
+    const ahead = { x: bay.centre.x + f.x * KERB_AHEAD, y: bay.centre.y + f.y * KERB_AHEAD };
+    const lane = laneFor(w, ahead.x, ahead.y, undefined, bay.segment);
+    // The lane has to run the way the car faces: the traffic beside the bay.
+    const aligned = lane !== null && lane.tx * f.x + lane.ty * f.y > 0.7;
+    out.push({
+      id: first + out.length, building: NO_LOT, x: bay.centre.x, y: bay.centre.y,
+      // The car stands nose along the kerb: `o` points out of its tail.
+      ox: -f.x, oy: -f.y, depth: PARKING_PITCH.parallel,
+      lane: aligned ? lane : null, via: [], car: null, kerb: true,
+    });
   }
   return out;
 }
@@ -241,11 +275,12 @@ function exitsOf(w: SimWorld, b: Building, v: { x: number; y: number; w: number;
 }
 
 /** The nearest drivable lane with room to join, its point beside `(x, y)`, on the kerb side. */
-function laneFor(w: SimWorld, x: number, y: number, among?: Iterable<Lanelet>): BayLane | null {
+function laneFor(w: SimWorld, x: number, y: number, among?: Iterable<Lanelet>, segment?: SegmentId): BayLane | null {
   let best: BayLane | null = null;
   let bestD = LANE_REACH;
   for (const lane of among ?? w.graph.lanelets.values()) {
     if (lane.kind !== 'link' || lane.length < 2 * LANE_END + m(6)) continue;
+    if (segment !== undefined && lane.segment !== segment) continue;
     if (w.rt(lane.id).ghost) continue;
     const hit = lane.centre.closestPoint({ x, y });
     if (hit.distance >= bestD) continue;
