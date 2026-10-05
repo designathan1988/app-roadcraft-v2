@@ -27,7 +27,7 @@ import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectio
  * items already there.
  */
 
-export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox', 'phone', 'drain'] as const;
+export const LANDSCAPE_KINDS = ['tree', 'shrub', 'bench', 'bin', 'lamp', 'hydrant', 'postbox', 'phone', 'drain', 'meadow'] as const;
 export type LandscapeKind = (typeof LANDSCAPE_KINDS)[number];
 
 export interface LandscapeItem {
@@ -52,6 +52,7 @@ export const LANDSCAPE_RADIUS: Readonly<Record<LandscapeKind, number>> = {
   postbox: m(0.33),
   phone: m(0.45),
   drain: m(0.5),
+  meadow: m(2),
 };
 
 /** The least clear distance kept between two placed items, besides their radii. */
@@ -120,6 +121,9 @@ function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB
     // the gutter in front; the item stands on the kerb's back edge.
     case 'drain':
       return zone.inner + m(0.05);
+    // Long grass is placed on open ground (`snapLandscape`), never by depth.
+    case 'meadow':
+      return null;
     case 'tree': {
       // A pit beside the kerb, so long as the walkers keep their through
       // width behind it: a 2 m footway takes one (0.95 m pit and setback,
@@ -186,7 +190,7 @@ export function onCrossingAccess(
 }
 
 export type LandscapeSnap =
-  | { readonly ok: true; readonly at: Vec2; readonly hit: FootwayHit }
+  | { readonly ok: true; readonly at: Vec2; readonly hit: FootwayHit | null }
   | { readonly ok: false; readonly at: Vec2; readonly reason: LandscapeRefusal };
 
 /**
@@ -204,6 +208,14 @@ export function snapLandscape(
   at: Vec2,
   reach: number,
 ): LandscapeSnap {
+  if (kind === 'meadow') {
+    // A clump of long grass goes on open ground, never on a street.
+    if (footwayAt(net, at, m(1)) || onAnyRoad(net, at)) return { ok: false, at, reason: 'offFootway' };
+    for (const other of items) {
+      if (other.kind === 'meadow' && Math.hypot(other.x - at.x, other.y - at.y) < m(2.5)) return { ok: false, at, reason: 'occupied' };
+    }
+    return { ok: true, at, hit: null };
+  }
   const hit = footwayAt(net, at, reach);
   if (!hit) return { ok: false, at, reason: 'offFootway' };
   const segment = net.doc.requireSegment(hit.segment);
@@ -236,4 +248,12 @@ export function landscapeNear(items: Iterable<LandscapeItem>, at: Vec2, radius: 
     }
   }
   return best;
+}
+
+/** Whether a point is on any street's paving (carriageway, kerb or footway). */
+function onAnyRoad(net: Network, at: Vec2): boolean {
+  for (const ribbon of net.ribbons.values()) {
+    if (ribbon.full.distanceTo(at) < ribbon.road.width / 2 + ribbon.road.sidewalk + m(1)) return true;
+  }
+  return false;
 }

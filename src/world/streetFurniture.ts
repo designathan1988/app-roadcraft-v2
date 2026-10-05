@@ -58,7 +58,7 @@ export interface FurnitureItem {
 }
 
 /** Each placed kind as the furniture the renderer and the walkers know. */
-const FURNITURE_OF: Readonly<Record<LandscapeKind, FurnitureKind>> = {
+const FURNITURE_OF: Readonly<Partial<Record<LandscapeKind, FurnitureKind>>> = {
   tree: 'streetTree',
   shrub: 'shrub',
   bench: 'bench',
@@ -90,10 +90,12 @@ function hash01(a: number, b: number): number {
 export function streetFurniture(net: Network): FurnitureItem[] {
   const items: FurnitureItem[] = [];
   for (const placed of net.doc.landscape.values()) {
+    // Long grass on open ground is drawn by the grass field, not walked round.
+    const kind = FURNITURE_OF[placed.kind];
+    if (!kind) continue;
     const hit = footwayAt(net, placed, STAND_REACH);
     if (!hit) continue;
     const outward = { x: hit.frame.n.x * hit.side, y: hit.frame.n.y * hit.side };
-    const kind = FURNITURE_OF[placed.kind];
     const base = {
       kind,
       x: placed.x,

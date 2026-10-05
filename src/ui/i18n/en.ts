@@ -385,6 +385,7 @@ export const EN: Dictionary = {
   'streetscape.postbox': 'Post box',
   'streetscape.phone': 'Public phone',
   'streetscape.drain': 'Kerb drain',
+  'streetscape.meadow': 'Long grass (on the lawn)',
   'hint.pole.offFootway': 'Poles on footways only',
   'hint.pole.noPath': 'No footway joins these points',
   'pole.lamps': 'Lights on the poles',

@@ -93,6 +93,7 @@ export function buildGrass(
   wetAt: (x: number, y: number) => boolean,
   clumps: number,
   kit: { tuft: BufferGeometry; flower: BufferGeometry; grass: Material; flowers: Material },
+  placed: readonly { readonly x: number; readonly y: number; readonly id: number }[] = [],
 ): GrassField {
   const group = new Group();
   group.name = 'grass';
@@ -122,10 +123,11 @@ export function buildGrass(
     // Dense enough to read as a patch of long grass. At 16 to 42 blades over
     // a clump several metres wide they were scattered dark specks - dirt on
     // the screen, not grass.
-    const count = 44 + Math.floor(rng.float() * 50);
+    const count = 90 + Math.floor(rng.float() * 70);
     // Each clump has its own colour: lush, pale, or gone to seed.
     const dry = rng.float();
-    const clumpHue = dry > 0.8 ? new Color(1.25, 1.12, 0.72) : new Color(0.92 + dry * 0.12, 1, 0.9 + dry * 0.1);
+    // Close to the lawn's own green: the bright lime clumps stood out as stickers.
+    const clumpHue = (dry > 0.8 ? new Color(1.05, 0.98, 0.66) : new Color(0.62 + dry * 0.1, 0.8, 0.5)).multiplyScalar(0.62);
     for (let i = 0; i < count; i++) {
       // Denser in the middle of a clump, as grass grows out from a patch.
       const r = radius * Math.sqrt(rng.float()) * (0.4 + rng.float() * 0.6);
@@ -241,6 +243,9 @@ export function buildGrass(
     }
   }
 
+  // The clumps the player placed (Paisagismo > Mato): nothing grows by
+  // itself any more (the player's order of 2026-10-05).
+  for (const p of placed) clump(new Rng(Math.imul(p.id + 1, 0x9e3779b1) >>> 0), p.x, p.y);
   group.userData.clumps = { open: openClumps, roadside: roadsideClumps };
   let triangles = 0;
   const fields: Field[] = [];

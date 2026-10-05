@@ -511,7 +511,10 @@ export function buildScenery(
   settings: ScenerySettings,
   kit: SceneryKit,
 ): Scenery {
-  const grass: GrassField = buildGrass(net, elevation, terrainAt, wetAt, settings.grass, kit);
+  // No grass grows by itself (the player's order of 2026-10-05): long grass
+  // is placed with the landscaping tool and drawn with the street furniture.
+  void settings;
+  const grass: GrassField = buildGrass(net, elevation, terrainAt, wetAt, 0, kit);
   return {
     meshes: [],
     grass: grass.group,
@@ -534,7 +537,8 @@ export function buildScenery(
  * shrubs. Rebuilt on `doc.utilityRevision`, so placing a bench rebuilds this
  * and nothing else.
  */
-export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit: SceneryKit): Scenery {
+export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit: SceneryKit,
+  terrainAt: (x: number, y: number) => number = () => 0): Scenery {
   const furniture = new Map<string, Placement[]>();
   const put = (key: string, placement: Placement): void => {
     const list = furniture.get(key);
@@ -644,9 +648,14 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
   let nearMode: boolean | null = null;
   let mapMode: boolean | null = null;
 
+  // Long grass placed on open ground (Paisagismo > Mato).
+  const meadows = [...net.doc.landscape.values()].filter((item) => item.kind === 'meadow');
+  const meadow = buildGrass(net, elevation, terrainAt, () => false, 0, kit, meadows);
+  triangles += meadow.triangles;
+
   return {
     meshes,
-    grass: new Group(),
+    grass: meadow.group,
     triangles,
     setNear(near) {
       if (nearMode === near) return;
@@ -663,10 +672,12 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
       if (culledFor && culledFor.equals(view)) return;
       culledFor = (culledFor ?? new Matrix4()).copy(view);
       cullInstances(meshes, null, frustum, mapMode === true);
+      meadow.cull(frustum, view);
     },
     exclude() {},
     dispose() {
       for (const mesh of meshes) mesh.dispose();
+      meadow.dispose();
     },
   };
 }
@@ -733,9 +744,15 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
       }
       case 'shrub': {
         // The geometry is about 1.5 across for 1 tall.
+        // Kept in the bush's own proportions: a narrow, tall slot used to
+        // stretch it into a column of smeared leaves and flowers. The plant
+        // fills the slot's width and stands no taller than a bush that wide.
+        const across = Math.max(p.w, p.d) / 1.5;
+        const tall = Math.min(p.h, across * 1.3);
+        const wide = Math.max(across, tall / 1.3);
         (bushes.get(rng.float() < 0.25 ? 'bushFlowering' : 'bush') as Placement[]).push({
           x: p.x, y: p.y, z: p.z - m(0.05), yaw: rng.float() * Math.PI * 2,
-          sx: p.w / 1.5, sy: p.h, sz: p.d / 1.5, tint: foliageTint(rng),
+          sx: wide, sy: tall, sz: wide * (0.9 + rng.float() * 0.2), tint: foliageTint(rng),
         });
         break;
       }

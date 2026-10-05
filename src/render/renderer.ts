@@ -533,10 +533,12 @@ export function createSceneRenderer(
     if (furniture) {
       builtTriangles -= furniture.triangles;
       for (const mesh of furniture.meshes) world.remove(mesh);
+      world.remove(furniture.grass);
       furniture.dispose();
     }
-    furniture = buildStreetFurniture(net, elevation, sceneryKit);
+    furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt);
     for (const mesh of furniture.meshes) world.add(mesh);
+    world.add(furniture.grass);
     builtTriangles += furniture.triangles;
   };
 

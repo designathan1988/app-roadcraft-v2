@@ -380,6 +380,7 @@ export const PT_BR: Dictionary = {
   'streetscape.postbox': 'Caixa de correio',
   'streetscape.phone': 'Orelhão (telefone público)',
   'streetscape.drain': 'Boca de lobo',
+  'streetscape.meadow': 'Mato (no gramado)',
   'hint.pole.offFootway': 'Postes só nas calçadas',
   'hint.pole.noPath': 'Não há calçada ligando esses pontos',
   'pole.lamps': 'Iluminação nos postes',
