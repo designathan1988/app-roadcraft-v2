@@ -30,8 +30,13 @@ import type { ZoneDensity, ZoneUse } from './zones';
 
 export interface Lot {
   readonly id: number;
-  /** Front-start, front-end, back-end, back-start: the front faces the street. */
-  readonly corners: readonly [Vec2, Vec2, Vec2, Vec2];
+  /**
+   * The boundary, counter-clockwise (the inside on the left of each side):
+   * any polygon - four corners as generated, more where the player drew one,
+   * many along a curved side. The first side (corners 0 -> 1) is the front,
+   * on the street.
+   */
+  readonly corners: readonly Vec2[];
   readonly use?: ZoneUse;
   readonly density?: ZoneDensity;
   /** The building that grew on it, while it stands. */
@@ -45,15 +50,30 @@ const TWO_ROWS = m(36);
 const MIN_LOT = m(8);
 const RASTER = m(2);
 
-export const lotCentre = (l: Pick<Lot, 'corners'>): Vec2 => ({
-  x: (l.corners[0].x + l.corners[1].x + l.corners[2].x + l.corners[3].x) / 4,
-  y: (l.corners[0].y + l.corners[1].y + l.corners[2].y + l.corners[3].y) / 4,
-});
+/** The boundary's area centroid (the corners' mean for a degenerate one). */
+export function lotCentre(l: Pick<Lot, 'corners'>): Vec2 {
+  const q = l.corners;
+  let a = 0, x = 0, y = 0;
+  for (let i = 0; i < q.length; i++) {
+    const p = q[i]!, r = q[(i + 1) % q.length]!;
+    const c = p.x * r.y - r.x * p.y;
+    a += c; x += (p.x + r.x) * c; y += (p.y + r.y) * c;
+  }
+  if (Math.abs(a) < 1e-9) return { x: q.reduce((s, p) => s + p.x, 0) / q.length, y: q.reduce((s, p) => s + p.y, 0) / q.length };
+  return { x: x / (3 * a), y: y / (3 * a) };
+}
+
+export function lotArea(l: Pick<Lot, 'corners'>): number {
+  let a = 0;
+  const q = l.corners;
+  for (let i = 0; i < q.length; i++) { const p = q[i]!, r = q[(i + 1) % q.length]!; a += p.x * r.y - r.x * p.y; }
+  return a / 2;
+}
 
 export function insideLot(p: Vec2, l: Pick<Lot, 'corners'>): boolean {
   let inside = false;
   const q = l.corners;
-  for (let i = 0, j = 3; i < 4; j = i++) {
+  for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
     const a = q[i]!, b = q[j]!;
     if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
   }
@@ -62,13 +82,36 @@ export function insideLot(p: Vec2, l: Pick<Lot, 'corners'>): boolean {
 
 /** The lot's frame for a building: front middle, facing angle (along the front), width and depth. */
 export function lotFrame(l: Pick<Lot, 'corners'>): { anchor: Vec2; rotation: number; width: number; depth: number } {
-  const [a, b, c, d] = l.corners;
+  const a = l.corners[0]!, b = l.corners[1]!;
   const width = Math.hypot(b.x - a.x, b.y - a.y);
-  const depth = Math.min(Math.hypot(d.x - a.x, d.y - a.y), Math.hypot(c.x - b.x, c.y - b.y));
-  return { anchor: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, rotation: Math.atan2(b.y - a.y, b.x - a.x), width, depth };
+  const u = { x: (b.x - a.x) / (width || 1), y: (b.y - a.y) / (width || 1) }, n = { x: -u.y, y: u.x };
+  // Depth: how far the lot goes back from its front, at the quarter points
+  // of the front and its middle - the least of them, so a building made for
+  // it fits a lot narrowing at the back.
+  let depth = Infinity;
+  for (const t of [0.25, 0.5, 0.75]) {
+    const o = { x: a.x + (b.x - a.x) * t + n.x * 1e-3, y: a.y + (b.y - a.y) * t + n.y * 1e-3 };
+    depth = Math.min(depth, rayExit(l.corners, o, n));
+  }
+  return { anchor: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, rotation: Math.atan2(u.y, u.x), width, depth: Number.isFinite(depth) ? depth : 0 };
 }
 
-interface Candidate { key: string; corners: [Vec2, Vec2, Vec2, Vec2] }
+/** How far a ray from inside a polygon runs before it leaves it. */
+function rayExit(q: readonly Vec2[], o: Vec2, d: Vec2): number {
+  let best = Infinity;
+  for (let i = 0; i < q.length; i++) {
+    const p = q[i]!, r = q[(i + 1) % q.length]!;
+    const ex = r.x - p.x, ey = r.y - p.y;
+    const den = d.x * ey - d.y * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((p.x - o.x) * ey - (p.y - o.y) * ex) / den;
+    const s = ((p.x - o.x) * d.y - (p.y - o.y) * d.x) / den;
+    if (t > 1e-6 && s >= 0 && s <= 1) best = Math.min(best, t);
+  }
+  return best;
+}
+
+interface Candidate { key: string; corners: Vec2[] }
 
 /**
  * The corners in the order a building reads its lot: front-start to front-end
@@ -77,10 +120,11 @@ interface Candidate { key: string; corners: [Vec2, Vec2, Vec2, Vec2] }
  * street. Given the other way round, the building stood back to front, its
  * yard over the footway, and was refused.
  */
-export function facingCorners(c: readonly [Vec2, Vec2, Vec2, Vec2]): [Vec2, Vec2, Vec2, Vec2] {
-  const [a, b, cc, d] = c;
-  const cross = (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x);
-  return cross >= 0 ? [a, b, cc, d] : [b, a, d, cc];
+export function facingCorners<T extends readonly Vec2[]>(c: T): Vec2[] {
+  // Counter-clockwise keeps the inside on the left of every side; reversed,
+  // the front side keeps its two corners, swapped.
+  if (lotArea({ corners: c }) >= 0) return [...c];
+  return [c[1]!, c[0]!, ...[...c.slice(2)].reverse()];
 }
 
 /**
@@ -224,6 +268,9 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
       }
     }
   }
+  // Onto the footways' back edges and the blocks' corners: no gap between a
+  // lot and its street.
+  snapLotsToStreets(doc, net, add.map((c) => c.corners));
   return { add, keys, drop };
 }
 
@@ -242,39 +289,131 @@ export function applyLots(doc: RoadDoc, plan: ReturnType<typeof planLots>): bool
 // ------------------------------------------------------------------ editing
 
 const lerp = (a: Vec2, b: Vec2, t: number): Vec2 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+const near = (p: Vec2, q: Vec2, d = m(1.2)): boolean => Math.hypot(p.x - q.x, p.y - q.y) < d;
 
-/** Splits a lot in `parts` equal lots along its front (or, `deep`, front and back). */
-export function splitLot(doc: RoadDoc, id: number, parts = 2, deep = false): boolean {
-  const at = doc.lots.findIndex((l) => l.id === id);
-  if (at < 0 || parts < 2) return false;
-  const [a, b, c, d] = doc.lots[at]!.corners;
-  const made: Lot[] = [];
-  for (let k = 0; k < parts; k++) {
-    const t0 = k / parts, t1 = (k + 1) / parts;
-    made.push({ id: doc.nextLotId++, corners: deep
-      ? [lerp(a, d, t0), lerp(b, c, t0), lerp(b, c, t1), lerp(a, d, t1)]
-      : [lerp(a, b, t0), lerp(a, b, t1), lerp(d, c, t1), lerp(d, c, t0)] });
+/** The part of a polygon on the left of the line a -> b (Sutherland-Hodgman against one half-plane). */
+function clipLeft(q: readonly Vec2[], a: Vec2, b: Vec2): Vec2[] {
+  const side = (p: Vec2): number => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  const out: Vec2[] = [];
+  for (let i = 0; i < q.length; i++) {
+    const p = q[i]!, r = q[(i + 1) % q.length]!;
+    const sp = side(p), sr = side(r);
+    if (sp >= 0) out.push(p);
+    if ((sp >= 0) !== (sr >= 0)) { const t = sp / (sp - sr); out.push(lerp(p, r, t)); }
   }
+  // Points the cut put on top of each other merged.
+  return out.filter((p, i) => !near(p, out[(i + 1) % out.length]!, 1e-6));
+}
+
+/**
+ * A piece of a cut lot with its front set: the side lying along the old
+ * front, or else the side nearest it - a back piece of a lot cut parallel to
+ * its street then faces the same way.
+ */
+function withFront(piece: readonly Vec2[], front: readonly [Vec2, Vec2]): Vec2[] {
+  const [fa, fb] = front;
+  const len = Math.hypot(fb.x - fa.x, fb.y - fa.y) || 1;
+  const off = (p: Vec2): number => Math.abs((fb.x - fa.x) * (p.y - fa.y) - (fb.y - fa.y) * (p.x - fa.x)) / len;
+  let best = 0, bestScore = Infinity;
+  for (let i = 0; i < piece.length; i++) {
+    const p = piece[i]!, r = piece[(i + 1) % piece.length]!;
+    const l = Math.hypot(r.x - p.x, r.y - p.y);
+    if (l < m(1)) continue;
+    // Along the front direction (parallel) and near the front line.
+    const parallel = Math.abs(((r.x - p.x) * (fb.x - fa.x) + (r.y - p.y) * (fb.y - fa.y)) / (l * len));
+    const score = off(lerp(p, r, 0.5)) + (1 - parallel) * m(40);
+    if (score < bestScore) { bestScore = score; best = i; }
+  }
+  return [...piece.slice(best), ...piece.slice(0, best)];
+}
+
+export type LotCut =
+  /** Across the front, into `parts` lots side by side, each on the street. */
+  | { readonly kind: 'vertical'; readonly parts: number }
+  /** Parallel to the front, into `parts` lots one behind the other. */
+  | { readonly kind: 'horizontal'; readonly parts: number }
+  /** Along a line the player drew, from `a` to `b`, into two. */
+  | { readonly kind: 'line'; readonly a: Vec2; readonly b: Vec2 };
+
+/** The cut lines of a cut on a lot, each as two points: the preview the tool draws. */
+export function cutLines(l: Pick<Lot, 'corners'>, cut: LotCut): [Vec2, Vec2][] {
+  if (cut.kind === 'line') return [[cut.a, cut.b]];
+  const a = l.corners[0]!, b = l.corners[1]!;
+  const w = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const u = { x: (b.x - a.x) / w, y: (b.y - a.y) / w }, n = { x: -u.y, y: u.x };
+  let s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
+  for (const q of l.corners) {
+    const s = (q.x - a.x) * u.x + (q.y - a.y) * u.y, t = (q.x - a.x) * n.x + (q.y - a.y) * n.y;
+    s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+  }
+  const P = (s: number, t: number): Vec2 => ({ x: a.x + u.x * s + n.x * t, y: a.y + u.y * s + n.y * t });
+  const lines: [Vec2, Vec2][] = [];
+  for (let k = 1; k < cut.parts; k++) {
+    if (cut.kind === 'vertical') {
+      // Equal widths along the front itself (the front may be shorter than the lot).
+      const s = k / cut.parts * w;
+      lines.push([P(s, t1 + m(1)), P(s, t0 - m(1))]);
+    } else {
+      const t = t0 + (t1 - t0) * k / cut.parts;
+      lines.push([P(s0 - m(1), t), P(s1 + m(1), t)]);
+    }
+  }
+  return lines;
+}
+
+/** Cuts a lot by `cut`; false when nothing worth a lot is left on both sides. */
+export function splitLot(doc: RoadDoc, id: number, cut: LotCut): boolean {
+  const at = doc.lots.findIndex((l) => l.id === id);
+  if (at < 0) return false;
+  const lot = doc.lots[at]!;
+  const front: [Vec2, Vec2] = [lot.corners[0]!, lot.corners[1]!];
+  let pieces: Vec2[][] = [[...lot.corners]];
+  for (const [a, b] of cutLines(lot, cut)) {
+    const next: Vec2[][] = [];
+    for (const piece of pieces) {
+      const left = clipLeft(piece, a, b), right = clipLeft(piece, b, a);
+      for (const half of [left, right]) if (half.length >= 3 && Math.abs(lotArea({ corners: half })) > MIN_LOT * MIN_LOT / 4) next.push(half);
+    }
+    pieces = next;
+  }
+  if (pieces.length < 2) return false;
+  const made = pieces.map((piece) => ({ id: doc.nextLotId++, corners: facingCorners(withFront(piece, front)), ...(lot.use ? { use: lot.use, density: lot.density ?? 'low' as const } : {}) }));
   doc.lots.splice(at, 1, ...made);
   doc.lotRevision++;
   return true;
 }
 
-/** Joins two lots side by side (sharing a boundary) into one; false when they do not touch. */
+/**
+ * Joins two lots that share a side into one: the two boundaries walked
+ * round, the shared stretch left out. False when they share no side.
+ */
 export function joinLots(doc: RoadDoc, idA: number, idB: number): boolean {
   const ia = doc.lots.findIndex((l) => l.id === idA), ib = doc.lots.findIndex((l) => l.id === idB);
   if (ia < 0 || ib < 0 || ia === ib) return false;
-  const A = doc.lots[ia]!, B = doc.lots[ib]!;
-  const near = (p: Vec2, q: Vec2): boolean => Math.hypot(p.x - q.x, p.y - q.y) < m(1.5);
-  let corners: [Vec2, Vec2, Vec2, Vec2] | null = null;
-  // B to the right of A (A's front-end = B's front-start), or to its left.
-  if (near(A.corners[1], B.corners[0]) && near(A.corners[2], B.corners[3])) corners = [A.corners[0], B.corners[1], B.corners[2], A.corners[3]];
-  else if (near(B.corners[1], A.corners[0]) && near(B.corners[2], A.corners[3])) corners = [B.corners[0], A.corners[1], A.corners[2], B.corners[3]];
-  // B behind A.
-  else if (near(A.corners[3], B.corners[0]) && near(A.corners[2], B.corners[1])) corners = [A.corners[0], A.corners[1], B.corners[2], B.corners[3]];
-  else if (near(B.corners[3], A.corners[0]) && near(B.corners[2], A.corners[1])) corners = [B.corners[0], B.corners[1], A.corners[2], A.corners[3]];
-  if (!corners) return false;
-  const joined: Lot = { id: doc.nextLotId++, corners, ...(A.use ? { use: A.use, density: A.density ?? 'low' } : {}) };
+  const A = doc.lots[ia]!.corners, B = doc.lots[ib]!.corners;
+  const onB = A.map((p) => B.findIndex((q) => near(p, q)));
+  // A side of A whose two corners are both corners of B.
+  let start = -1;
+  for (let i = 0; i < A.length; i++) if (onB[i]! >= 0 && onB[(i + 1) % A.length]! >= 0) { start = i; break; }
+  if (start < 0) return false;
+  // Walk A from just after the shared run, round to its start; then B the same way.
+  let i0 = start;
+  while (onB[(i0 - 1 + A.length) % A.length]! >= 0 && (i0 - 1 + A.length) % A.length !== start) i0 = (i0 - 1 + A.length) % A.length;
+  let i1 = (start + 1) % A.length;
+  while (onB[(i1 + 1) % A.length]! >= 0 && (i1 + 1) % A.length !== i0) i1 = (i1 + 1) % A.length;
+  const ring: Vec2[] = [];
+  for (let k = i1; ; k = (k + 1) % A.length) { ring.push(A[k]!); if (k === i0) break; }
+  const j0 = onB[i0]!, j1 = onB[i1]!;
+  for (let k = (j0 + 1) % B.length; k !== j1; k = (k + 1) % B.length) ring.push(B[k]!);
+  if (ring.length < 3) return false;
+  const lotA = doc.lots[ia]!;
+  // The front stays the first lot's: the ring started at the end of the
+  // shared run; the front side is found again by its corners.
+  const fa = lotA.corners[0]!, fb = lotA.corners[1]!;
+  let f = ring.findIndex((p, k) => near(p, fa) && near(ring[(k + 1) % ring.length]!, fb));
+  if (f < 0) f = ring.findIndex((p) => near(p, fa));
+  const ordered = f > 0 ? [...ring.slice(f), ...ring.slice(0, f)] : ring;
+  const joined: Lot = { id: doc.nextLotId++, corners: facingCorners(ordered), ...(lotA.use ? { use: lotA.use, density: lotA.density ?? 'low' } : {}) };
   doc.lots.splice(Math.max(ia, ib), 1);
   doc.lots.splice(Math.min(ia, ib), 1, joined);
   doc.lotRevision++;
@@ -296,14 +435,31 @@ export function addLot(doc: RoadDoc, a: Vec2, b: Vec2, angle: number): Lot | nul
   if (Math.abs(ds) < MIN_LOT / 2 || Math.abs(dt) < MIN_LOT / 2) return null;
   const p = (s: number, t: number): Vec2 => ({ x: a.x + u.x * s + v.x * t, y: a.y + u.y * s + v.y * t });
   const s0 = Math.min(0, ds), s1 = Math.max(0, ds), t0 = Math.min(0, dt), t1 = Math.max(0, dt);
-  // The front is the side nearer the street the angle came from: t0 (the
-  // nearer edge to where the drag began) - and the back on its left.
-  const corners = facingCorners([p(s0, t0), p(s1, t0), p(s1, t1), p(s0, t1)]);
-  if (doc.lots.some((l) => quadsOverlap(corners, l.corners, m(0.5)))) return null;
+  return addPolygonLot(doc, [p(s0, t0), p(s1, t0), p(s1, t1), p(s0, t1)], 0);
+}
+
+/**
+ * A new lot of any shape: the corners the player clicked, in order. `front`
+ * is the side on the street (the caller picks the side nearest one).
+ */
+export function addPolygonLot(doc: RoadDoc, points: readonly Vec2[], front: number): Lot | null {
+  if (points.length < 3 || Math.abs(lotArea({ corners: points })) < MIN_LOT * MIN_LOT / 2) return null;
+  const ring = [...points.slice(front), ...points.slice(0, front)];
+  const corners = facingCorners(ring);
+  if (doc.lots.some((l) => quadsOverlap(corners, l.corners, m(0.5)) && overlapDeep(corners, l.corners))) return null;
   const lot: Lot = { id: doc.nextLotId++, corners };
   doc.lots.push(lot);
   doc.lotRevision++;
   return lot;
+}
+
+/** Whether a corner or the middle of one polygon is well inside the other (the separating-axis test is only for convex shapes). */
+function overlapDeep(p: readonly Vec2[], q: readonly Vec2[]): boolean {
+  const inner = (a: readonly Vec2[], b: readonly Vec2[]): boolean => {
+    const c = lotCentre({ corners: a });
+    return [c, ...a.map((x) => lerp(x, c, 0.2))].some((x) => insideLot(x, { corners: b }));
+  };
+  return inner(p, q) || inner(q, p);
 }
 
 /**
@@ -316,13 +472,48 @@ export function moveLotCorner(doc: RoadDoc, from: Vec2, to: Vec2): boolean {
     const l = doc.lots[i]!;
     let changed = false;
     const corners = l.corners.map((q) => {
-      if (Math.hypot(q.x - from.x, q.y - from.y) < m(0.8)) { changed = true; return { x: to.x, y: to.y }; }
+      if (near(q, from, m(0.8))) { changed = true; return { x: to.x, y: to.y }; }
       return q;
-    }) as unknown as Lot['corners'];
+    });
     if (changed) { doc.lots[i] = { ...l, corners }; moved = true; }
   }
   if (moved) doc.lotRevision++;
   return moved;
+}
+
+/**
+ * Bends the side of a lot from corner `a` to corner `b` through `through`:
+ * a curve (a quadratic arc in 12 straight pieces) replaces it - in this lot
+ * and in every neighbour sharing that side, so the boundary stays shared.
+ */
+export function curveLotSide(doc: RoadDoc, a: Vec2, b: Vec2, through: Vec2): boolean {
+  const control = { x: 2 * through.x - (a.x + b.x) / 2, y: 2 * through.y - (a.y + b.y) / 2 };
+  const curve = (from: Vec2, to: Vec2): Vec2[] => {
+    const out: Vec2[] = [];
+    for (let k = 1; k < 12; k++) {
+      const t = k / 12, s = 1 - t;
+      out.push({ x: s * s * from.x + 2 * s * t * control.x + t * t * to.x, y: s * s * from.y + 2 * s * t * control.y + t * t * to.y });
+    }
+    return out;
+  };
+  let changed = false;
+  for (let i = 0; i < doc.lots.length; i++) {
+    const l = doc.lots[i]!;
+    const q = l.corners;
+    for (let k = 0; k < q.length; k++) {
+      const p = q[k]!, r = q[(k + 1) % q.length]!;
+      let inner: Vec2[] | null = null;
+      if (near(p, a) && near(r, b)) inner = curve(a, b);
+      else if (near(p, b) && near(r, a)) inner = curve(a, b).reverse();
+      if (!inner) continue;
+      const corners = [...q.slice(0, k + 1), ...inner, ...q.slice(k + 1)];
+      doc.lots[i] = { ...l, corners };
+      changed = true;
+      break;
+    }
+  }
+  if (changed) doc.lotRevision++;
+  return changed;
 }
 
 /** Zones lots (or clears them, `zone` null). */
@@ -342,7 +533,7 @@ export function zoneLots(doc: RoadDoc, ids: readonly number[], zone: { use: Zone
 
 export function isLot(raw: unknown): raw is Lot {
   const v = raw as Partial<Lot> | null;
-  return !!v && Number.isInteger(v.id) && Array.isArray(v.corners) && v.corners.length === 4 &&
+  return !!v && Number.isInteger(v.id) && Array.isArray(v.corners) && v.corners.length >= 3 &&
     v.corners.every((q) => Number.isFinite(q?.x) && Number.isFinite(q?.y));
 }
 
@@ -390,4 +581,60 @@ function nearerStreet(at: (s: number, t: number) => Vec2, s0: number, s1: number
     if (minus !== plus) return minus;
   }
   return true;
+}
+
+/**
+ * The lot snap: a point near a street is put on the back edge of its footway
+ * (the line a lot fronts onto), and a point near two streets on the corner
+ * where their footway edges meet - so a lot reaches the footway and the
+ * block's corner with no gap, as a surveyed plot does. Also onto another
+ * lot's corner, so neighbours close up.
+ */
+export function lotSnapper(doc: RoadDoc, net: Network, lots: readonly Pick<Lot, 'id' | 'corners'>[] = doc.lots): (p: Vec2, reach: number, skip?: number) => { p: Vec2; kind: 'corner' | 'street' | 'lot' | null } {
+  const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground' && carriesPedestrians(r.road));
+  const faceOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
+  return (p, reach, skip) => {
+    // Another lot's corner first: a corner already on the street or shared.
+    let lotBest: Vec2 | null = null, lotD = reach * 0.7;
+    for (const l of lots) {
+      if (l.id === skip) continue;
+      for (const q of l.corners) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < lotD) { lotD = d; lotBest = q; } }
+    }
+    if (lotBest) return { p: { x: lotBest.x, y: lotBest.y }, kind: 'lot' };
+    // The footway's back edge of each street within reach: a line (point and direction).
+    const lines: { d: number; at: Vec2; t: Vec2; id: number }[] = [];
+    for (const r of ribbons) {
+      const bb = r.full.bbox, face = faceOf.get(r.id)!;
+      if (p.x < bb.minX - face - reach || p.x > bb.maxX + face + reach || p.y < bb.minY - face - reach || p.y > bb.maxY + face + reach) continue;
+      const c = r.full.closestPoint(p);
+      if (c.distance < 1e-6) continue;
+      const n = { x: (p.x - c.point.x) / c.distance, y: (p.y - c.point.y) / c.distance };
+      const off = Math.abs(c.distance - face);
+      if (off > reach) continue;
+      const f = r.full.sampleAt(c.s);
+      lines.push({ d: off, at: { x: c.point.x + n.x * face, y: c.point.y + n.y * face }, t: f.t, id: r.id });
+    }
+    lines.sort((a, b) => a.d - b.d);
+    const first = lines[0];
+    if (!first) return { p, kind: null };
+    const second = lines.find((l) => l.id !== first.id && Math.abs(l.t.x * first.t.y - l.t.y * first.t.x) > 0.3);
+    if (second) {
+      // Where the two edges cross.
+      const den = first.t.x * second.t.y - first.t.y * second.t.x;
+      const dx = second.at.x - first.at.x, dy = second.at.y - first.at.y;
+      const k = (dx * second.t.y - dy * second.t.x) / den;
+      const corner = { x: first.at.x + first.t.x * k, y: first.at.y + first.t.y * k };
+      if (Math.hypot(corner.x - p.x, corner.y - p.y) < reach * 1.5) return { p: corner, kind: 'corner' };
+    }
+    return { p: first.at, kind: 'street' };
+  };
+}
+
+/** Every corner of `lots` within `reach` of a street put on it (the same point snaps the same way, so shared corners stay shared). */
+export function snapLotsToStreets(doc: RoadDoc, net: Network, corners: Vec2[][], reach = m(4)): void {
+  const snapStreet = lotSnapper(doc, net, []);
+  for (const ring of corners) for (let i = 0; i < ring.length; i++) {
+    const s = snapStreet(ring[i]!, reach);
+    if (s.kind) ring[i] = s.p;
+  }
 }

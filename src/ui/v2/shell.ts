@@ -104,6 +104,8 @@ const ICON: Record<string, string> = {
   upgrade: '<path d="M12 20V6"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>',
   move: '<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
   join: '<rect x="3" y="6" width="8" height="12" rx="1"/><rect x="13" y="6" width="8" height="12" rx="1"/><path d="M9 12h6"/>',
+  lotPolygon: '<path d="M5 18 3 9l8-6 9 5-2 10Z"/><circle cx="5" cy="18" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="11" cy="3" r="1.6"/>',
+  lotCurve: '<path d="M4 20V8"/><path d="M4 8Q12 2 20 8"/><path d="M20 8v12H4"/>',
   lotEdit: '<path d="M4 4h16v16H4Z"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="20" r="2"/>',
   lotDelete: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="m8 8 8 8M16 8l-8 8"/>',
   split: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 17M8 15.5 20 7"/>',
@@ -710,9 +712,24 @@ export function mountShell(deps: ShellDeps): void {
     }
     // The lots themselves: their drawing edited as a cadastre is (`world/lots.ts`).
     const lots = section(t('zone.lots'), 'verbs');
-    for (const [mode, icon] of [['edit', 'lotEdit'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['delete', 'lotDelete']] as const) {
+    for (const [mode, icon] of [['edit', 'lotEdit'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['polygon', 'lotPolygon'], ['curve', 'lotCurve'], ['delete', 'lotDelete']] as const) {
       const b = q<HTMLButtonElement>(`[data-zone-mode="${mode}"]`);
       lots.items.appendChild(verb(t(`zone.lot.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), mode === 'delete'));
+    }
+    // How the split tool cuts, and into how many - shown while it is chosen.
+    if (q<HTMLButtonElement>('[data-zone-mode="split"]')?.classList.contains('active')) {
+      const how = group(t('zone.split.how'));
+      how.appendChild(choices((['vertical', 'horizontal', 'line'] as const).map((kind) => {
+        const b = q<HTMLButtonElement>(`[data-lot-split="${kind}"]`);
+        return { label: t(`zone.split.${kind}`), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
+      }), 3));
+      if (!q<HTMLButtonElement>('[data-lot-split="line"]')?.classList.contains('active')) {
+        how.appendChild(choices([2, 3, 4, 5, 6].map((n) => {
+          const b = q<HTMLButtonElement>(`[data-lot-parts="${n}"]`);
+          return { label: t('zone.split.parts', { n }), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
+        }), 5));
+      }
+      options.appendChild(how);
     }
     note(t('zone.lots.help'));
     const use = section(t('v2.zone.use'));

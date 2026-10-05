@@ -386,34 +386,53 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
   if (!open.length) return null;
   const rng = new Rng((seed ^ Math.imul(doc.buildings.nextId, 0x9e3779b1)) >>> 0);
   const lot = open[rng.int(0, open.length - 1)]!;
-  const use = lot.use!, density = lot.density ?? 'low';
+  const use = lot.use!;
   const frame = lotFrame(lot);
-  const margin = m(0.3);
-  const lotW = frame.width - JOINT, lotD = frame.depth - margin;
-  const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
-  if (W < 4 || D < 4) { refused.add(lot.id); return null; }
-  const plan = planLot(lotKind(use, density), W, D, rng);
-  const env = plan.building;
-  const made = madeToMeasure(use, density, {
-    W: env.x1 - env.x0, D: env.y1 - env.y0,
-    backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
-    character: (lot.id * 31) >>> 0,
-  }, rng);
-  const body = made.body;
-  const dx = m(env.x0 - W / 2), dy = m(env.y0);
-  for (const v of body.volumes) { v.x += dx; v.y += dy; }
-  for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
-  for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
-  for (const v of body.volumes) {
-    if (v.outline) continue;
-    const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
-    if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
+  // Every zoned lot gets a building, whatever its size or shape (the player,
+  // 2026-10-05: "tem que aparecer sempre"). The building first made for the
+  // whole lot; refused (its front over a corner's curved footway, a side over
+  // a neighbour, a slope), it is made again set back from the front and the
+  // sides, then narrower and shallower, then a density lower - until one fits.
+  const u = { x: Math.cos(frame.rotation), y: Math.sin(frame.rotation) }, n = { x: -u.y, y: u.x };
+  const densities: ZoneDensity[] = lot.density === 'high' ? ['high', 'medium', 'low'] : lot.density === 'medium' ? ['medium', 'low'] : ['low'];
+  // A handful of tries, each a building made: a few milliseconds apiece.
+  const tries = [
+    { front: 0, side: 0, shrink: 1 }, { front: m(1.5), side: 0, shrink: 1 }, { front: m(3), side: m(1), shrink: 0.9 },
+    { front: m(3), side: m(1), shrink: 0.75 }, { front: m(4), side: m(1.5), shrink: 0.6 }, { front: m(4), side: m(1.5), shrink: 0.45 },
+  ];
+  for (const density of densities) for (const t of tries) {
+    const lotW = (frame.width - JOINT - 2 * t.side) * t.shrink;
+    const lotD = (frame.depth - m(0.3) - t.front) * t.shrink;
+    const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
+    if (W < 4 || D < 4) continue;
+    const plan = planLot(lotKind(use, density), W, D, rng);
+    const env = plan.building;
+    const made = madeToMeasure(use, density, {
+      W: env.x1 - env.x0, D: env.y1 - env.y0,
+      backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
+      character: (lot.id * 31) >>> 0,
+    }, rng);
+    const body = made.body;
+    const dx = m(env.x0 - W / 2), dy = m(env.y0);
+    for (const v of body.volumes) { v.x += dx; v.y += dy; }
+    for (const e of body.elements ?? []) { e.x += dx; e.y += dy; }
+    for (const c of body.cores ?? []) { c.x += dx; c.y += dy; }
+    for (const v of body.volumes) {
+      if (v.outline) continue;
+      const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
+      if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
+    }
+    if (!furnishLot(body, plan, made, rng)) continue;
+    // The lot's front middle, set back by the try's front margin.
+    const anchor = { x: frame.anchor.x + n.x * t.front, y: frame.anchor.y + n.y * t.front };
+    void u;
+    const result = addBuildingRecord(ctx, { ...body, x: anchor.x, y: anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
+    if (!result.ok || result.id === undefined) continue;
+    const at = doc.lots.findIndex((l) => l.id === lot.id);
+    doc.lots[at] = { ...lot, building: result.id as number };
+    doc.lotRevision++;
+    return result.id as number;
   }
-  if (!furnishLot(body, plan, made, rng)) { refused.add(lot.id); return null; }
-  const result = addBuildingRecord(ctx, { ...body, x: frame.anchor.x, y: frame.anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
-  if (!result.ok || result.id === undefined) { refused.add(lot.id); return null; }
-  const at = doc.lots.findIndex((l) => l.id === lot.id);
-  doc.lots[at] = { ...lot, building: result.id as number };
-  doc.lotRevision++;
-  return result.id as number;
+  refused.add(lot.id);
+  return null;
 }
