@@ -331,8 +331,13 @@ and they have seen it.
   components with the sex direction removed (sex is the Vitruvian morph).
   Skin: body tiles' blotches evened by frequency separation; no self-shadow
   on people (grey on skin). Sources (CharMorph data, MHR assets) live in the
-  session scratch, not in the repo. Not yet: population calibration (WHO
-  height/BMI), sliders, hair, clothes, pose.
+  session scratch, not in the repo. LIVE: a row of 8 people drawn as a
+  population (adult heights NCD-RisC by sex, BMI ~25, children by the WHO
+  growth references, every age 2-88); click one to edit: sex, age, height,
+  BMI (reached through the body's own volume x 1010 kg/m3, along the MHR
+  components with height held, then the Vitruvian fat morph past BMI ~32),
+  skin tone, ancestry, 4 body and 4 face components (`people/gen/person.ts`).
+  Not yet: hair, clothes, pose, expressions, eye colour control.
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as

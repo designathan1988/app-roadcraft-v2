@@ -1,0 +1,253 @@
+import type { Rng } from '@core/rng';
+import { sexAxis } from './sampleBody';
+import type { HumanBase, MorphWeights } from './humanBase';
+
+/**
+ * A generated person as the player edits them: sex, age, height, BMI, skin,
+ * ancestry and free shape components, turned into the base's morph weights
+ * and a scale (`resolvePerson`).
+ *
+ * - Height is reached by scaling the body; the MHR components keep the
+ *   proportions a body of that height has in the scans.
+ * - Weight is reached through the body's own volume: the mass of the mesh
+ *   (closed skin, density 1010 kg/m3, ICRP's whole-body density) is moved to
+ *   height^2 x BMI along the MHR body components, with height held
+ *   (a Gauss-Newton step on a measured Jacobian).
+ * - Children use the Vitruvian's baby morph for a child's proportions (head
+ *   large to the body) and are scaled to the WHO median height for their age.
+ *
+ * Random people (`randomPerson`) are drawn as a population: adult heights by
+ * sex (NCD-RisC 2016 global means, 171 / 159 cm, sd 7 / 6.5), BMI around 25
+ * (sd 4.5), children's heights and BMIs from the WHO growth references.
+ */
+
+export interface PersonParams {
+  /** 0 female .. 1 male. */
+  readonly sex: number;
+  readonly years: number;
+  readonly heightCm: number;
+  readonly bmi: number;
+  /** 0 light .. 1 dark skin. */
+  readonly melanin: number;
+  /** The Vitruvian ancestry morph and its weight. */
+  readonly ancestry: string;
+  /** MHR body components (sex removed), head components, hands; unit normal draws. */
+  readonly body: readonly number[];
+  readonly head: readonly number[];
+  readonly hands: readonly number[];
+  /** Small Vitruvian regional variations (face and body detail). */
+  readonly detail: MorphWeights;
+}
+
+export interface ResolvedPerson {
+  readonly weights: MorphWeights;
+  /** Uniform scale applied to the shaped mesh. */
+  readonly scale: number;
+  /** What the result measures (for the interface). */
+  readonly heightCm: number;
+  readonly massKg: number;
+}
+
+export const ANCESTRIES = ['Race_White', 'Race_African', 'Race_EastAsian', 'Race_Hispanic', 'Race_MiddleEastern',
+  'Race_Punjabi', 'Race_Bengali', 'Race_Tamil', 'Race_Marathi', 'Race_Telegu', 'Race_Sinhalese', 'Race_Kannada'] as const;
+
+const ANCESTRY_MELANIN: Readonly<Record<string, number>> = {
+  Race_White: 0.08, Race_EastAsian: 0.22, Race_Hispanic: 0.38, Race_MiddleEastern: 0.33, Race_African: 0.88,
+  Race_Bengali: 0.58, Race_Tamil: 0.72, Race_Punjabi: 0.42, Race_Marathi: 0.56, Race_Telegu: 0.62,
+  Race_Sinhalese: 0.6, Race_Kannada: 0.62,
+};
+
+/** WHO growth reference medians, 1..18 years: height (cm) [girls, boys] and BMI. */
+const GROWTH: readonly (readonly [number, number, number, number])[] = [
+  // years, girls cm, boys cm, BMI
+  [1, 74, 76, 16.8], [2, 86, 88, 16.2], [3, 95, 96, 15.7], [4, 103, 103, 15.4], [5, 109, 110, 15.3],
+  [6, 115, 116, 15.3], [7, 121, 122, 15.5], [8, 127, 128, 15.8], [9, 133, 133, 16.2], [10, 138, 138, 16.6],
+  [11, 144, 143, 17.2], [12, 151, 149, 17.8], [13, 156, 156, 18.5], [14, 159, 163, 19.2], [15, 161, 169, 19.8],
+  [16, 162, 173, 20.4], [17, 163, 175, 20.9], [18, 163, 176, 21.3],
+];
+
+/** Adult means (NCD-RisC 2016, world): women 159, men 171 cm. */
+const ADULT_CM: readonly [number, number] = [159, 171];
+
+function growth(years: number): { cm: [number, number]; bmi: number } {
+  const y = Math.min(18, Math.max(1, years));
+  const i = Math.min(GROWTH.length - 2, Math.floor(y) - 1);
+  const a = GROWTH[i]!, b = GROWTH[i + 1]!, t = y - a[0];
+  return { cm: [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], bmi: a[3] + (b[3] - a[3]) * t };
+}
+
+/** The median height and BMI for a sex and age: the slider's centre. */
+export function typical(sex: number, years: number): { heightCm: number; bmi: number } {
+  if (years < 18) {
+    const g = growth(years);
+    return { heightCm: g.cm[0] + (g.cm[1] - g.cm[0]) * sex, bmi: g.bmi };
+  }
+  // Adults lose about 3 cm of height from 50 to 85.
+  const shrink = Math.max(0, Math.min(1, (years - 50) / 35)) * 3;
+  return { heightCm: ADULT_CM[0] + (ADULT_CM[1] - ADULT_CM[0]) * sex - shrink, bmi: years < 30 ? 23.5 : 25.5 };
+}
+
+/** The Vitruvian's baby morph by age: 1 at one year, 0 from eighteen. */
+export function babyWeight(years: number): number {
+  const knots: readonly (readonly [number, number])[] = [[1, 1], [3, 0.8], [6, 0.6], [10, 0.38], [14, 0.18], [18, 0]];
+  if (years <= 1) return 1;
+  for (let i = 1; i < knots.length; i++) {
+    const [y0, w0] = knots[i - 1]!, [y1, w1] = knots[i]!;
+    if (years <= y1) return w0 + ((years - y0) / (y1 - y0)) * (w1 - w0);
+  }
+  return 0;
+}
+
+const mhr = (group: string, i: number): string => `MHR_${group}_${String(i).padStart(2, '0')}`;
+const NOT_DETAIL = new Set(['Expression', 'Fantasy', 'Race', 'Gender', 'Age', 'BodyType', 'Generic', 'Body', 'Head', 'Hands']);
+
+export function randomPerson(base: HumanBase, rng: Rng, years?: number): PersonParams {
+  const sex = rng.bool() ? 1 : 0;
+  // An age mix with every age drawn: children, adults, elders.
+  const age = years ?? (rng.bool(0.15) ? rng.range(2, 17) : rng.bool(0.15) ? rng.range(65, 88) : rng.range(18, 64));
+  const t = typical(sex, age);
+  const sd = age < 18 ? t.heightCm * 0.045 : sex ? 7 : 6.5;
+  const heightCm = t.heightCm + rng.normal(0, sd);
+  const bmi = Math.min(42, Math.max(16, t.bmi * Math.exp(rng.normal(0, age < 18 ? 0.1 : 0.16))));
+  const ancestry = rng.pick(ANCESTRIES);
+  const melanin = Math.min(1, Math.max(0, ANCESTRY_MELANIN[ancestry]! + rng.normal(0, 0.08)));
+  const detail: Record<string, number> = {};
+  for (const m of base.morphs.values()) {
+    if (NOT_DETAIL.has(m.group) || m.name.startsWith('MHR_')) continue;
+    if (m.group === 'Chest' && sex) continue;
+    detail[m.name] = m.min < 0 ? rng.normal(0, 0.12) : rng.bool(0.4) ? Math.max(0, rng.normal(0, 0.15)) : 0;
+  }
+  detail['Generic_Assymetry'] = rng.normal(0, 0.2);
+  return {
+    sex, years: age, heightCm, bmi, melanin, ancestry,
+    body: Array.from({ length: 20 }, () => rng.normal(0, 0.8)),
+    head: Array.from({ length: 20 }, () => rng.normal(0, 0.7)),
+    hands: Array.from({ length: 5 }, () => rng.normal(0, 0.8)),
+    detail,
+  };
+}
+
+/** Closed-skin volume of a shape, m3 (signed tetrahedra from the origin). */
+function volume(base: HumanBase, shape: Float32Array, tris: Uint32Array): number {
+  let v = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t]! * 3, b = tris[t + 1]! * 3, c = tris[t + 2]! * 3;
+    v += shape[a]! * (shape[b + 1]! * shape[c + 2]! - shape[b + 2]! * shape[c + 1]!)
+      - shape[a + 1]! * (shape[b]! * shape[c + 2]! - shape[b + 2]! * shape[c]!)
+      + shape[a + 2]! * (shape[b]! * shape[c + 1]! - shape[b + 1]! * shape[c]!);
+  }
+  void base;
+  return Math.abs(v) / 6;
+}
+
+function heightOf(shape: Float32Array): number {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 1; i < shape.length; i += 3) { const y = shape[i]!; if (y < lo) lo = y; if (y > hi) hi = y; }
+  return hi - lo;
+}
+
+const DENSITY = 1010;
+
+interface Solver { tris: Uint32Array; gradV: Float64Array; gradH: Float64Array }
+const SOLVERS = new WeakMap<HumanBase, Solver>();
+
+/** Skin triangles over mesh vertices, and how volume and height move per body component. */
+function solver(base: HumanBase): Solver {
+  const cached = SOLVERS.get(base);
+  if (cached) return cached;
+  const skin: number[] = [];
+  for (const g of base.meta.groups) {
+    if (g.material !== 'Skin' && g.material !== 'Covered') continue;
+    for (let i = g.start; i < g.start + g.count; i++) skin.push(base.renderSource[base.index[i]!]!);
+  }
+  const tris = Uint32Array.from(skin);
+  const s0 = base.shape({});
+  const v0 = volume(base, s0, tris), h0 = heightOf(s0);
+  const gradV = new Float64Array(20), gradH = new Float64Array(20);
+  for (let i = 0; i < 20; i++) {
+    const s = base.shape({ [mhr('Body', i)]: 1 });
+    gradV[i] = volume(base, s, tris) - v0;
+    gradH[i] = heightOf(s) - h0;
+  }
+  const out = { tris, gradV, gradH };
+  SOLVERS.set(base, out);
+  return out;
+}
+
+function weightsFor(base: HumanBase, p: PersonParams, body: readonly number[], fat = 0): Record<string, number> {
+  const w: Record<string, number> = { ...p.detail };
+  if (fat > 0) w['BodyType_Fat'] = fat;
+  w['Gender_Female'] = 1 - p.sex;
+  w['Gender_Male'] = p.sex;
+  w[p.ancestry] = 0.85;
+  const baby = babyWeight(p.years);
+  if (baby > 0) w['Age_Baby'] = baby;
+  if (p.years > 40) w['Age_Old'] = Math.min(1, (p.years - 40) / 45);
+  // A child's body is the baby morph's; the adult scan components fade out.
+  const adult = 1 - baby;
+  const axis = base.morphs.has(mhr('Body', 0)) ? sexAxis(base) : [];
+  const along = body.reduce((s, c, i) => s + c * (axis[i] ?? 0), 0);
+  body.forEach((c, i) => { w[mhr('Body', i)] = (c - along * (axis[i] ?? 0)) * adult; });
+  p.head.forEach((c, i) => { w[mhr('Head', 20 + i)] = c * adult; });
+  p.hands.forEach((c, i) => { w[mhr('Hands', 40 + i)] = c * adult; });
+  return w;
+}
+
+/**
+ * Morph weights and scale for a person: the body components are moved
+ * (smallest change, height held) until the scaled body's mass gives the BMI.
+ */
+export function resolvePerson(base: HumanBase, p: PersonParams): ResolvedPerson {
+  const hasMhr = base.morphs.has(mhr('Body', 0));
+  const targetH = p.heightCm / 100;
+  const targetMass = p.bmi * targetH * targetH;
+  let body = [...p.body];
+  let fat = 0;
+  let shape = base.shape(weightsFor(base, p, body));
+  let scale = targetH / heightOf(shape);
+  if (hasMhr) {
+    const { tris, gradV, gradH } = solver(base);
+    // The component direction that changes volume but not height.
+    const hh = gradH.reduce((s, g) => s + g * g, 0) || 1;
+    const vh = gradV.reduce((s, g, i) => s + g * gradH[i]!, 0);
+    const raw = Array.from(gradV, (g, i) => g - (vh / hh) * gradH[i]!);
+    const len = Math.hypot(...raw) || 1;
+    // Unit length, so a step k is in component units (the draws' sigmas).
+    const dir = raw.map((g) => g / len);
+    const dd = dir.reduce((s, g, i) => s + g * gradV[i]!, 0) || 1;
+    // Mass as a function of a step k along `dir`, solved by the secant
+    // method from the linear model's first guess (the response bends at
+    // the extremes, where a fixed linear step overshot).
+    const base0 = [...p.body];
+    const massAt = (k: number): number => {
+      body = base0.map((c, i) => Math.max(-3.5, Math.min(3.5, c + k * dir[i]!)));
+      shape = base.shape(weightsFor(base, p, body));
+      scale = targetH / heightOf(shape);
+      return volume(base, shape, tris) * scale ** 3 * DENSITY;
+    };
+    let k0 = 0, m0 = massAt(0);
+    let k1 = Math.max(-6, Math.min(6, (targetMass - m0) / (DENSITY * scale ** 3) / dd)), m1 = massAt(k1);
+    for (let iter = 0; iter < 4 && Math.abs(m1 - targetMass) > 0.3 && m1 !== m0; iter++) {
+      const k2 = Math.max(-6, Math.min(6, k1 + (targetMass - m1) * (k1 - k0) / (m1 - m0)));
+      k0 = k1; m0 = m1; k1 = k2; m1 = massAt(k1);
+    }
+    // Heavier than the scans' space reaches (BMI past ~32): the
+    // Vitruvian's own fat morph adds the rest, solved the same way.
+    if (targetMass - m1 > 0.5) {
+      const atFat = (f: number): number => {
+        fat = f;
+        shape = base.shape(weightsFor(base, p, body, f));
+        scale = targetH / heightOf(shape);
+        return volume(base, shape, tris) * scale ** 3 * DENSITY;
+      };
+      let f0 = 0, n0 = m1, f1 = 0.5, n1 = atFat(f1);
+      for (let iter = 0; iter < 5 && Math.abs(n1 - targetMass) > 0.3 && n1 !== n0; iter++) {
+        const f2 = Math.max(0, Math.min(1.5, f1 + (targetMass - n1) * (f1 - f0) / (n1 - n0)));
+        f0 = f1; n0 = n1; f1 = f2; n1 = atFat(f1);
+      }
+    }
+  }
+  const { tris } = hasMhr ? solver(base) : { tris: new Uint32Array() };
+  const massKg = hasMhr ? volume(base, shape, tris) * scale ** 3 * DENSITY : 0;
+  return { weights: weightsFor(base, p, body, fat), scale, heightCm: heightOf(shape) * scale * 100, massKg };
+}

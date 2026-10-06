@@ -62,7 +62,10 @@ function skinLighting(): string {
   }`);
 }
 
-function skinMaterial(tex: TextureSet, tile: number, look: HumanLook): MeshPhysicalMaterial {
+/** Per person, shared by their skin materials so the skin tone can change live. */
+type MelaninUniform = { value: number };
+
+function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: MelaninUniform): MeshPhysicalMaterial {
   const light = tex.get(`Light_Skin_Color.${tile}`);
   const dark = tex.get(`Dark_Skin_Color.${tile}`);
   const m = new MeshPhysicalMaterial({
@@ -81,7 +84,7 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook): MeshPhysi
   });
   m.onBeforeCompile = (shader) => {
     shader.uniforms['darkMap'] = { value: dark ?? light ?? null };
-    shader.uniforms['melanin'] = { value: look.melanin };
+    shader.uniforms['melanin'] = melanin;
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', skinLighting())
       .replace('#include <map_pars_fragment>', '#include <map_pars_fragment>\nuniform sampler2D darkMap;\nuniform float melanin;');
@@ -96,13 +99,13 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook): MeshPhysi
   return m;
 }
 
-function material(name: string, tile: number, tex: TextureSet, look: HumanLook): Material {
+function material(name: string, tile: number, tex: TextureSet, look: HumanLook, melanin: MelaninUniform): Material {
   switch (name) {
     case 'Skin':
     case 'Covered':
       // `Covered` is the base's modesty patch (chest, groin): skin, with the
       // skin tiles' own texture there; clothes are what covers a person.
-      return skinMaterial(tex, tile, look);
+      return skinMaterial(tex, tile, look, melanin);
     case 'Iris':
       return new MeshStandardMaterial({
         map: tex.get(`Iris_Color.${tile}`) ?? null, color: look.iris,
@@ -139,11 +142,7 @@ function material(name: string, tile: number, tex: TextureSet, look: HumanLook):
  */
 export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32Array, look: HumanLook): Mesh {
   const geometry = new BufferGeometry();
-  const positions = base.renderPositions(shape);
-  let lo = Infinity;
-  for (let i = 1; i < positions.length; i += 3) lo = Math.min(lo, positions[i]!);
-  for (let i = 1; i < positions.length; i += 3) positions[i] = positions[i]! - lo;
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  geometry.setAttribute('position', new BufferAttribute(standing(base, shape), 3));
   geometry.setAttribute('normal', new BufferAttribute(base.renderNormals(shape), 3));
   geometry.setAttribute('uv', new BufferAttribute(base.renderUv, 2));
   const cornea = base.cornea;
@@ -158,9 +157,10 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
   }
   geometry.setIndex(new BufferAttribute(base.index, 1));
   const materials: Material[] = [];
+  const melanin: MelaninUniform = { value: look.melanin };
   for (const g of base.meta.groups) {
     geometry.addGroup(g.start, g.count, materials.length);
-    materials.push(material(g.material, g.tile, tex, look));
+    materials.push(material(g.material, g.tile, tex, look, melanin));
   }
   geometry.computeBoundingSphere();
   const mesh = new Mesh(geometry, materials);
@@ -169,7 +169,30 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
   // on the neck) is grey on skin without light scattered under it, and read
   // as a stain; the wrapped skin shading darkens those places softly.
   mesh.receiveShadow = false;
+  mesh.userData['melanin'] = melanin;
   return mesh;
+}
+
+/** Render positions with the lowest point on y = 0. */
+function standing(base: HumanBase, shape: Float32Array, out?: Float32Array): Float32Array {
+  const positions = base.renderPositions(shape, out);
+  let lo = Infinity;
+  for (let i = 1; i < positions.length; i += 3) lo = Math.min(lo, positions[i]!);
+  for (let i = 1; i < positions.length; i += 3) positions[i] = positions[i]! - lo;
+  return positions;
+}
+
+/** Reshapes a person's mesh in place (no new buffers or materials) and sets their skin tone. */
+export function updateHumanMesh(mesh: Mesh, base: HumanBase, shape: Float32Array, melanin: number): void {
+  const pos = mesh.geometry.getAttribute('position') as BufferAttribute;
+  const nor = mesh.geometry.getAttribute('normal') as BufferAttribute;
+  standing(base, shape, pos.array as Float32Array);
+  base.renderNormals(shape, nor.array as Float32Array);
+  pos.needsUpdate = true;
+  nor.needsUpdate = true;
+  mesh.geometry.computeBoundingSphere();
+  mesh.geometry.computeBoundingBox();
+  (mesh.userData['melanin'] as MelaninUniform).value = melanin;
 }
 
 export function disposeHumanMesh(mesh: Mesh): void {

@@ -1,13 +1,11 @@
 import {
-  ACESFilmicToneMapping, CircleGeometry, Color, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial,
+  ACESFilmicToneMapping, CircleGeometry, Color, MeshBasicMaterial, Raycaster, RingGeometry, Vector2, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial,
   PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene, SRGBColorSpace, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Rng } from '@core/rng';
 import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
-import { sampleBody } from '@people/gen/sampleBody';
-import { createHumanMesh, disposeHumanMesh, loadHumanTextures, type TextureSet } from './humanMesh';
+import { createHumanMesh, disposeHumanMesh, loadHumanTextures, updateHumanMesh, type TextureSet } from './humanMesh';
 
 /**
  * The human generator's 3D view: a studio (warm key light from the front
@@ -23,8 +21,15 @@ export interface LoadedBase {
   readonly tex: TextureSet;
 }
 
-const PER_BASE = 8;
 const SPACING = 0.8;
+
+/** One person to draw: their shaped body, its scale, skin and eyes. */
+export interface DrawnPerson {
+  readonly shape: Float32Array;
+  readonly scale: number;
+  readonly melanin: number;
+  readonly iris: number;
+}
 
 export async function loadBase(name: string, urlOf: (file: string) => string): Promise<LoadedBase> {
   const [meta, bin] = await Promise.all([
@@ -42,6 +47,8 @@ export class GeneratorStage {
   private readonly controls: OrbitControls;
   private readonly people = new Group();
   private view: GeneratorView = 'front';
+  private readonly marker: Mesh;
+  private selected = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -76,6 +83,11 @@ export class GeneratorStage {
     floor.receiveShadow = true;
     scene.add(floor);
     scene.add(this.people);
+    // The selected person's ring on the floor.
+    this.marker = new Mesh(new RingGeometry(0.3, 0.34, 48), new MeshBasicMaterial({ color: 0x7fd4ff }));
+    this.marker.rotation.x = -Math.PI / 2;
+    this.marker.position.y = 0.002;
+    scene.add(this.marker);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -107,38 +119,52 @@ export class GeneratorStage {
     this.redraw();
   }
 
-  /**
-   * New random people of every base. With `ages`, a base that has an
-   * `Age_Baby` morph lines up from adult to baby. Returns how many and the ms
-   * it took to shape and mesh them.
-   */
-  populate(bases: readonly LoadedBase[], seed: number, ages: boolean): { count: number; ms: number } {
+  /** Replaces the row with these people. */
+  setPeople(b: LoadedBase, people: readonly DrawnPerson[]): void {
     for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
-    const started = performance.now();
-    let slot = 0;
-    bases.forEach((b, side) => {
-      const rng = new Rng(seed * 7919 + side);
-      for (let i = 0; i < PER_BASE; i++) {
-        const body = sampleBody(b.base, rng.fork(`person${i}`), ages ? 'adult' : 'any');
-        const weights = ages && b.base.morphs.has('Age_Baby') ? { ...body.weights, Age_Baby: i / (PER_BASE - 1) } : body.weights;
-        const shape = b.base.shape(weights);
-        const flatSkin = new Color().setHSL(0.07, 0.45, 0.72 - 0.5 * body.melanin);
-        const iris = new Color().setHSL(rng.range(0.05, 0.6), 0.35, rng.range(0.25, 0.6));
-        const mesh = createHumanMesh(b.base, b.tex, shape, { melanin: body.melanin, flatSkin, iris });
-        mesh.userData['slot'] = { side, i, slot: slot++ };
-        this.people.add(mesh);
-      }
+    people.forEach((p, slot) => {
+      const mesh = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) });
+      mesh.scale.setScalar(p.scale);
+      mesh.userData['slot'] = { slot };
+      this.people.add(mesh);
     });
-    const ms = Math.round(performance.now() - started);
     this.setView(this.view);
-    return { count: this.people.children.length, ms };
+  }
+
+  /** Reshapes one person in place. */
+  updatePerson(b: LoadedBase, slot: number, p: DrawnPerson): void {
+    const mesh = this.people.children[slot] as Mesh | undefined;
+    if (!mesh) return;
+    updateHumanMesh(mesh, b.base, p.shape, p.melanin);
+    mesh.scale.setScalar(p.scale);
+    this.setView(this.view);
+  }
+
+  select(slot: number): void {
+    this.selected = slot;
+    this.setView(this.view);
+  }
+
+  /** The person under a screen point (CSS px in the canvas), or null. */
+  pick(x: number, y: number): number | null {
+    const ndc = new Vector2((x / this.canvas.clientWidth) * 2 - 1, -(y / this.canvas.clientHeight) * 2 + 1);
+    const ray = new Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = ray.intersectObjects(this.people.children.filter((p) => p.visible), false)[0];
+    return hit ? (hit.object.userData['slot'] as { slot: number }).slot : null;
+  }
+
+  private placeMarker(): void {
+    const p = this.people.children[this.selected];
+    this.marker.visible = !!p && this.view !== 'face';
+    if (p) this.marker.position.x = p.position.x;
   }
 
   /** One person with exactly these morph weights, alone in the middle (probes). */
   showWeights(b: LoadedBase, weights: Readonly<Record<string, number>>, melanin = 0.2): void {
     for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
     const mesh = createHumanMesh(b.base, b.tex, b.base.shape(weights), { melanin, flatSkin: new Color(0xd0a080), iris: new Color(0x506070) });
-    mesh.userData['slot'] = { side: 0, i: 0, slot: 0 };
+    mesh.userData['slot'] = { slot: 0 };
     this.people.add(mesh);
     this.setView(this.view);
   }
@@ -151,21 +177,24 @@ export class GeneratorStage {
     for (const p of this.people.children) {
       const { slot } = p.userData['slot'] as { slot: number };
       p.rotation.y = turn;
-      // Close up, the first two stand side by side.
-      p.visible = view !== 'face' || slot < 2;
-      p.position.x = view === 'face' ? (slot === 0 ? -0.14 : 0.14) : (slot - (count - 1) / 2) * SPACING;
+      // Close up, the selected person alone.
+      p.visible = view !== 'face' || slot === this.selected;
+      p.position.x = view === 'face' ? 0 : (slot - (count - 1) / 2) * SPACING;
       if (p.visible) {
         const g = (p as Mesh).geometry;
         g.computeBoundingBox();
-        top = Math.max(top, g.boundingBox!.max.y);
+        top = Math.max(top, g.boundingBox!.max.y * p.scale.y);
       }
     }
+    this.placeMarker();
     if (view === 'face') {
-      this.controls.target.set(0, top - 0.12, 0);
-      this.camera.position.set(0, top - 0.1, 1.15);
+      this.controls.target.set(-0.12, top - 0.13, 0);
+      this.camera.position.set(-0.12, top - 0.11, 0.85);
     } else {
-      this.controls.target.set(0, 0.95, 0);
-      this.camera.position.set(0, 1.25, 10.5);
+      // The row is framed right of the controls panel (a quarter of a
+      // 1280-wide screen): the camera looks a little left of its middle.
+      this.controls.target.set(-1.1, 0.95, 0);
+      this.camera.position.set(-1.1, 1.25, 10.5);
     }
     this.redraw();
   }
