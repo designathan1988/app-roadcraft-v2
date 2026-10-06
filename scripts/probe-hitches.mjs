@@ -11,7 +11,14 @@
 // A dev server must be running (it sends the Document-Policy header the
 // profiler needs). Headless Chrome here renders on the Intel iGPU: compare
 // its numbers only with each other. About two minutes, foreground.
+/* global Element, WebGL2RenderingContext -- used inside the page (addInitScript) */
 import { chromium } from '@playwright/test';
+import { constants, setPriority } from 'node:os';
+
+// Low priority, before Chrome is launched (its processes inherit it): this
+// machine is the one the game is played on, and a cook or probe at normal
+// priority took the CPU to 100% and froze it (2026-10-06).
+try { setPriority(0, constants.priority.PRIORITY_LOW); } catch { /* not allowed here: run as is */ }
 
 const opt = (n, f) => (process.argv.find((a) => a.startsWith(`--${n}=`)) ?? `--${n}=${f}`).slice(n.length + 3);
 const BASE = opt('base', 'http://localhost:5173');

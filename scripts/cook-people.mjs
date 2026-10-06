@@ -10,6 +10,12 @@
 //
 // A development server of this checkout must be running. Headless, on the GPU.
 import { chromium } from '@playwright/test';
+import { constants, setPriority } from 'node:os';
+
+// Low priority, before Chrome is launched (its processes inherit it): this
+// machine is the one the game is played on, and a cook or probe at normal
+// priority took the CPU to 100% and froze it (2026-10-06).
+try { setPriority(0, constants.priority.PRIORITY_LOW); } catch { /* not allowed here: run as is */ }
 
 const base = (process.argv.find((a) => a.startsWith('--base=')) ?? '--base=http://127.0.0.1:5173').slice(7);
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
