@@ -688,7 +688,15 @@ if (agentsOn) {
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
 } else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
-if (agentsOn) sim.city.useAgents(true);
+// The scenery's life, as GTA's (`sim/ambient`): nobody lives here; people and
+// traffic are made round the view, out of sight, and walk with the agents'
+// walking engine. The residents' days are off (`?residents=1` brings them back
+// to compare, until they are deleted).
+if (agentsOn && engineFlags.get('residents') === '1') sim.city.useAgents(true);
+else {
+  sim.city.enabled = false;
+  sim.ambient.enabled = true;
+}
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
@@ -863,6 +871,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
     restoreInto(doc, data, net);
     // A different map: nothing of the old simulation may carry over.
     sim.reset();
+    sim.ambient.reset(sim);
   } else {
     restoreSnapshot(doc, data, net);
   }

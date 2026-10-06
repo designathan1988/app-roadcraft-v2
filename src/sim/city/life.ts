@@ -315,6 +315,14 @@ export class CityLife {
   // ------------------------------------------------------------ the step
 
   step(w: SimWorld): void {
+    // No residents (the scenery, `sim/ambient`): only the lines run, and the
+    // clock. Nothing comes in at the map's edges either: the ambient traffic
+    // brings cars in out of sight.
+    if (!this.enabled) {
+      w.edgeTraffic = false;
+      this.transit.step(w);
+      return;
+    }
     if (w.doc.buildings.revision !== this.builtFor) this.rebuild(w);
     const live = this.enabled && this.population.residents.length > 0;
     w.edgeTraffic = !live;

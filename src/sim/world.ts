@@ -23,6 +23,7 @@ import type { PedView } from './people/view';
 import type { PedestrianEngine } from './people/engine';
 import { legacyPedestrians } from './peds/engine';
 import { CityLife } from './city/life';
+import { AmbientWorld } from './ambient/ambient';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** A queue is counted this far back from the stop line. */
@@ -159,6 +160,8 @@ export class SimWorld {
   edgeTraffic = true;
   /** The residents' days (`sim/city/life.ts`), stepped by the pipeline. */
   city: CityLife = new CityLife();
+  /** The life of the scenery: people and traffic made round the view (`sim/ambient`). */
+  readonly ambient = new AmbientWorld();
   /**
    * Share of the population ceilings this device carries (1, or
    * `NARROW_SCREEN_SHARE` on a narrow screen). SET BY THE COMPOSITION ROOT:

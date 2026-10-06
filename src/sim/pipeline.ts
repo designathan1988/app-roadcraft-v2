@@ -96,6 +96,8 @@ export function step(w: SimWorld, opts: StepOptions = {}): void {
   w.pedEngine.dispatch(w, pedestrians);
   // The residents' days: their trips start, their cars pull in (`sim/city`).
   w.city.step(w);
+  // The scenery's people and traffic, made and taken away out of sight (`sim/ambient`).
+  w.ambient.step(w);
   ensureVehicleRoutes(w);
   lap('2 dispatch+routes');
   // Lane choice sits between routing and constraints: it must see a settled

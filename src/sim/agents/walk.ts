@@ -716,7 +716,7 @@ function stepWalkers(w: SimWorld): void {
   // with hundreds of parked cars that search was a tenth of the step.
   const tripByCar = new Map<number, CarTrip>();
   for (const t of w.city.cars?.trips.values() ?? []) if (!tripByCar.has(t.car.id)) tripByCar.set(t.car.id, t);
-  for (const car of w.city.cars?.offRoad() ?? []) {
+  for (const car of [...(w.city.cars?.offRoad() ?? []), ...w.ambient.parked]) {
     const f = car.free;
     if (!f) continue;
     const t = tripByCar.get(car.id) ?? null;

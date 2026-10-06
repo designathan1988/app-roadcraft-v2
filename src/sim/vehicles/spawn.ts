@@ -208,6 +208,44 @@ function spawnAt(w: SimWorld, id: string): boolean {
 }
 
 /**
+ * Puts one vehicle of `arch` on lane `id` with its front at arc `s`, if
+ * nothing on the lane is within a standstill gap of its body and nobody is
+ * standing there: the ambient traffic's way in (`sim/ambient`), which brings
+ * cars in where the camera does not look, as GTA does, instead of at the
+ * edges of the map. Born at a cruise the car ahead allows. Returns its id.
+ */
+export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archetype): number | null {
+  const lane = w.lanelet(id);
+  if (!lane || lane.kind !== 'link') return null;
+  if (s < arch.length + 1 || s > lane.length - 1) return null;
+  const rear = s - arch.length;
+  let leaderGap = Infinity;
+  let leaderSpeed = Infinity;
+  for (const body of w.bodiesIn(id)) {
+    const front = body.s, back = body.s - body.vehicle.archetype.length;
+    if (back - JAM_GAP < s && front + JAM_GAP > rear) return null;
+    if (back >= s && back - s < leaderGap) { leaderGap = back - s; leaderSpeed = body.vehicle.v; }
+  }
+  for (const at of [rear, (rear + s) / 2, s]) {
+    const f = lane.centre.sampleAt(Math.min(lane.length, Math.max(0, at)));
+    if (w.pedEngine.bridge.anyoneWithin(w, f.p.x, f.p.y, arch.width / 2 + m(1), null)) return null;
+  }
+  const driver = makeDriver(arch, () => w.rng.driver.float());
+  const v0 = lane.speedLimit * arch.speedFactor * w.rng.driver.range(DRIVER_NOISE.lo, DRIVER_NOISE.hi) * (1 + driver.aggression * 0.07);
+  const color = arch.palette[Math.floor(w.rng.spawnVehicles.float() * arch.palette.length)] as string;
+  const vehicle = createVehicle(w.nextVehicleId++, arch, driver, color, id, v0, w.clock.tick);
+  vehicle.s = s;
+  vehicle.v = birthSpeed(driver, v0, v0 * 0.7, leaderGap, leaderSpeed);
+  vehicle.prev = snapshot(vehicle);
+  assignOccupancy(w, vehicle);
+  w.vehicles.set(vehicle.id, vehicle);
+  w.enterLanelet(vehicle, id);
+  vehicle.destination = chooseVehicleDestination(w, id, bodyClassOfArchetype(vehicle.archetype));
+  planFrom(w, vehicle);
+  return vehicle.id;
+}
+
+/**
  * How fast a vehicle arrives from off the map: its usual entry speed, unless
  * that would put it on the tail of the car ahead harder than its driver
  * brakes in comfort (audit P2-08). Measured on the test city, most of the

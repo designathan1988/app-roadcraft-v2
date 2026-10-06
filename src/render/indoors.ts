@@ -198,8 +198,10 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
     const near = this.near;
     for (const b of near) {
       if (out.length >= MAX_INDOOR) break;
-      const inside = world.city.inside(b.id);
-      if (inside.length === 0) continue;
+      // The scenery (`sim/ambient`): nobody lives here; the pieces are taken
+      // by people of the hour, the same piece by the same person each time.
+      const inside = world.city.enabled ? world.city.inside(b.id) : null;
+      if (inside && inside.length === 0) continue;
       const key = `${b.id}:${spec.level}`;
       let spots = this.spots.get(key);
       if (!spots) { spots = spotsOf(b, spec.level); this.spots.set(key, spots); }
@@ -208,6 +210,10 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
       if (floor === undefined) {
         floor = floorHeight(b, groundAt, pavedAt) + levelElevation(b, spec.level) + m(0.05);
         this.floors.set(key, floor);
+      }
+      if (!inside) {
+        this.sceneryPeople(world, b, spec.level, spots, floor, hour, out);
+        continue;
       }
       // Each resident takes the first free place of the uses they want, in a
       // stable order: the same people in the same places frame to frame.
@@ -283,6 +289,55 @@ lamps(world: SimWorld, spec: CutawaySpec | null, groundAt: GroundAt, pavedAt: Pa
       }
     }
     return out;
+  }
+
+  /**
+   * People of the scenery at the pieces of one floor: each piece taken by the
+   * hour's odds for what it is (a bed at night, a desk in office hours, a sofa
+   * in the evening), by the same person whenever it is.
+   */
+  private sceneryPeople(world: SimWorld, b: Building, level: number, spots: readonly Spot[], floor: number, hour: number,
+    out: IndoorFigure[]): void {
+    const night = hour >= 22 || hour < 7;
+    const office = hour >= 8 && hour < 18;
+    const evening = hour >= 18 && hour < 23;
+    const odds = (use: Use): number => {
+      switch (use) {
+        case 'bed': return night ? 0.7 : 0.04;
+        case 'desk': case 'counter': case 'kitchen': return office ? 0.55 : evening && use === 'kitchen' ? 0.3 : 0.04;
+        case 'shelf': return office ? 0.3 : 0.03;
+        case 'sofa': return evening ? 0.55 : night ? 0.05 : 0.2;
+        case 'seat': case 'table': return office || evening ? 0.35 : 0.05;
+        case 'pew': return hour >= 9 && hour < 12 ? 0.3 : 0.03;
+      }
+    };
+    let shown = 0;
+    for (let i = 0; i < spots.length && shown < PER_BUILDING && out.length < MAX_INDOOR; i++) {
+      const spot = spots[i]!;
+      const h = Math.imul(b.id * 7919 + i * 104729 + level * 31, 2654435761) >>> 0;
+      if ((h % 1000) / 1000 >= odds(spot.use)) continue;
+      shown++;
+      const id = INDOOR_BASE + (h & 0x3fffff);
+      const sitting = SITS.has(spot.use);
+      const gesture = spot.use === 'bed' ? null
+        : sitting ? (h % 5 === 0 ? PHONE : SEATED)
+          : spot.use === 'kitchen' || spot.use === 'counter' ? WORK
+            : h % 3 === 0 ? TALK : h % 3 === 1 ? (spot.use === 'shelf' ? LOOK : PHONE) : null;
+      let view = this.views.get(id);
+      if (!view || view.x !== spot.x || view.y !== spot.y) {
+        view = {
+          id, x: spot.x, y: spot.y, heading: spot.heading, prev: { x: spot.x, y: spot.y, heading: spot.heading },
+          v: 0, turnV: 0, age: 0,
+          ageClass: (h >> 10) % 9 === 0 ? 'child' : (h >> 10) % 9 === 1 ? 'elder' : 'adult', gender: (h >> 3) & 1 ? 'f' : 'm',
+          party: { id, size: 1, archetype: 'solo', hasChild: false },
+          rank: 0, ground: 'open', segment: undefined, stretch: '', walking: false, kerbWait: 0, waitingFor: null, gesture,
+        };
+        this.views.set(id, view);
+      }
+      view.gesture = gesture;
+      view.age = world.clock.time;
+      out.push({ view, x: spot.x, y: spot.y, z: floor + spot.rise, heading: spot.heading, lean: spot.lean });
+    }
   }
 
   /**

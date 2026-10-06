@@ -86,9 +86,33 @@ export function whitelist(entries: readonly ManifestEntry[], available: readonly
  * (`people/roster.ts`). The Rocketbox bodies it replaced are gone; their
  * motion captures stay, and play on these bodies (`render/people/personRig.ts`).
  */
-export const CROWD: readonly CitizenModel[] = makeRoster().map((entry) => ({
+export const CROWD: readonly CitizenModel[] = sceneryCast(makeRoster().map((entry) => ({
   id: entry.id, wardrobe: entry.wardrobe, ageBand: entry.ageBand, gender: entry.gender, person: entry.person, rides: entry.rides,
-}));
+})));
+
+/**
+ * The few bodies the scenery is played by (the player's order of 2026-10-05:
+ * not eighty-four loads, as few as still give variety): per sex, an adult in
+ * each everyday wardrobe (casual, sport, smart, business), a young person, an
+ * elder and two children - sixteen, those that can ride first, so every
+ * bicycle and motorbike has somebody on it. Each is fetched only when
+ * somebody drawn needs it.
+ */
+function sceneryCast(all: readonly CitizenModel[]): CitizenModel[] {
+  const wanted: readonly [AgeBand, Wardrobe][] = [
+    ['adult', 'casual'], ['adult', 'sport-casual'], ['adult', 'smart-casual'], ['adult', 'business'],
+    ['young', 'casual'], ['senior', 'casual'], ['child', 'casual'], ['child', 'sport-casual'],
+  ];
+  const out: CitizenModel[] = [];
+  for (const gender of ['f', 'm'] as const) {
+    for (const [ageBand, wardrobe] of wanted) {
+      const fits = all.filter((c) => c.gender === gender && c.ageBand === ageBand && c.wardrobe === wardrobe);
+      const pick = fits.find((c) => c.rides) ?? fits[0];
+      if (pick) out.push(pick);
+    }
+  }
+  return out;
+}
 /** Their ids, in the same order: the renderer's model indices. */
 export const CROWD_IDS: readonly string[] = CROWD.map((model) => model.id);
 

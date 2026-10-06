@@ -34,8 +34,6 @@ import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
-import { createProceduralCrowd, type ProceduralPerson } from './people/proceduralCrowd';
-import { randomPerson } from '@people/spec';
 import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';
@@ -738,53 +736,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     [t.body, t.trim, t.steering, ...(t.cranks ? [t.cranks] : [])]);
   const allParts: readonly Part[] = [...parts, ...carPartList, ...twoWheelerPartList];
 
-  // The whole roster of eighty: a crowd drawn from four test bodies, left in
-  // while the walk was being worked on, read as one family cloned down the
-  // street.
+  // The scenery's people: the few bodies of the scenery cast
+  // (`citizenCasting.ts` `sceneryCast`), each fetched when first needed.
   const pedestrians = createRiggedCitizens(CROWD_IDS, onAssetsReady);
-  // `?bodies=proc`: the walkers drawn as procedural people
-  // (`people/proceduralCrowd.ts`) - one MakeHuman body per class, each person
-  // numbers on it - instead of the 84 cooked bodies. Riders and the people in
-  // vehicles stay on the cooked ones for now.
-  const procedural = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bodies') === 'proc'
-    ? createProceduralCrowd({ unit: m(1) }) : null;
-  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number }>();
-  const PROC_CAP = 240;
-  let procFrame = 0;
-  const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
-  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string): void => {
-    let entry = procPeople.get(id);
-    if (!entry) {
-      if (procPeople.size >= PROC_CAP) return;
-      const made: { person: ProceduralPerson | null; seen: number } = { person: null, seen: procFrame };
-      entry = made;
-      procPeople.set(id, made);
-      void procedural!.add(randomPerson(id, (Math.imul(id, 2654435761) >>> 0) + 1)).then((person) => { made.person = person; },
-        () => procPeople.delete(id));
-    }
-    entry.seen = procFrame;
-    const person = entry.person;
-    if (!person) return;
-    procMatrix.makeTranslation(x, deck, -y)
-      .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
-      .multiply(procSize.makeScale(m(1), m(1), m(1)));
-    person.matrix.copy(procMatrix);
-    person.activity = activity;
-    const metres = speed / m(1);
-    if (walking && metres > 0.15) {
-      if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
-      person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
-    } else {
-      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
-      person.phase += dt / procedural!.clipDuration(person);
-    }
-  };
-  const procFinish = (eye: Vector3 | undefined): void => {
-    for (const entry of procPeople.values()) if (entry.person && entry.seen !== procFrame) entry.person.matrix.makeScale(0, 0, 0);
-    procedural!.update(eye);
-    procFrame++;
-  };
-  const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
+  const meshes = [...allParts.map((part) => part.mesh), pedestrians.group];
 
   const object = new Object3D();
   // Yaw outermost, so the third Euler component becomes a rotation about the
@@ -1344,7 +1299,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // The traffic, then the residents' own cars off the road: parked in their
       // bays or manoeuvring in and out (`sim/agents`), on the ground of the lot.
       const offRoad = world.city.cars?.offRoad() ?? NO_VEHICLES;
-      for (const list of [world.vehiclesInIdOrder(), offRoad]) for (const vehicle of list) {
+      for (const list of [world.vehiclesInIdOrder(), offRoad, world.ambient.parked]) for (const vehicle of list) {
         if (drawn >= MAX_VEHICLES) break;
         const pose = vehiclePose(world, vehicle, alpha);
         if (!pose) continue;
@@ -1466,8 +1421,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // gradient is the road's own under the walker.
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
-          if (procedural) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, suspensionDt, ped.panic ? 'panic' : ped.gesture?.kind);
-          else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
+          pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
         }
         // And the people indoors, on the floors that are cut open.
@@ -1481,7 +1435,6 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         }
       }
 
-      if (procedural) procFinish(options.eye);
       options.ragdolls?.(pedestrians);
       pedestrians.finish();
 
