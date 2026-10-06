@@ -1755,6 +1755,13 @@ function currentPolePlan(): PoleRunPlan | null {
   return null;
 }
 
+/**
+ * The road just committed, drawn as its preview was until the world with it
+ * is built (a few frames, `SceneHandle.worldBusy`): the world is built in
+ * slices and swapped whole, and the road used to appear only then, up to a
+ * second after the click.
+ */
+let settlingRoad: RoadDraft | null = null;
 function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   const endAnchor = chosenEnd ?? anchorForHeight(
     findAnchor(doc, net, d.snap.at, view.zoom, undefined, d.heightOffset), d.heightOffset);
@@ -1767,6 +1774,8 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
     result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking(),
       (x, y) => scene.naturalTerrainHeightAt(x, y));
     if (result.elevation) scene.offerElevation(result.elevation, net.revision);
+    // Drawn as it was previewed until the new world is in place (`settlingRoad`).
+    if (result.committed) settlingRoad = { ...d, snap: { ...d.snap, at: end.at } };
     // A chosen total width (Vias > Largura): the segments just laid take it.
     const roadWidthMetres = roadWidth();
     if (result.committed && roadWidthMetres !== null) {
@@ -4128,6 +4137,9 @@ function drawOverlayScreen(): void {
     }
   }
 
+  // The road just laid, as previewed, while the world with it is still being built.
+  if (settlingRoad && !scene.worldBusy && !topologyAfterDraw) settlingRoad = null;
+  const settling = !curvePending && !draft && !chainPreview && settlingRoad !== null;
   const roadPreview: RoadDraft | null = curvePending
     ? {
       start: curvePending.start,
@@ -4140,7 +4152,7 @@ function drawOverlayScreen(): void {
       heightOffset: curvePending.endHeightOffset,
       curveControl: curvePending.control,
     }
-    : draft ?? chainPreview;
+    : draft ?? chainPreview ?? settlingRoad;
   if (roadPreview) {
     // The profile the road will be laid with: its lanes and its parking.
     const chosenWidth = roadWidth();
@@ -4214,7 +4226,7 @@ function drawOverlayScreen(): void {
       ctx.fillStyle = previewHeight >= 0 ? 'rgba(101, 229, 195, 0.16)' : 'rgba(244, 184, 103, 0.20)';
       ctx.fill();
     }
-    strokeScreen(points, ok ? SELECTION : INVALID, casingWidth + 4, [], projected);
+    if (!settling) strokeScreen(points, ok ? SELECTION : INVALID, casingWidth + 4, [], projected);
     strokeScreen(points, '#536b47', casingWidth, [], projected);
     strokeScreen(points, '#a7a498', footwayWidth, [], projected);
     strokeScreen(points, '#87877f', kerbWidth, [], projected);
@@ -4224,7 +4236,7 @@ function drawOverlayScreen(): void {
       strokeScreen(points, rt.line, Math.max(1, 1.1 * pixelsPerUnit), dash, projected);
     }
     ctx.restore();
-    if (points.length) {
+    if (points.length && !settling) {
       ring(roadPreview.start.at, 7, ok ? SELECTION : INVALID, 2, projected[0]);
       ring(roadPreview.snap.at, 7, ok ? SELECTION : INVALID, 2, projected[projected.length - 1]);
       const end = projected[projected.length - 1]!;

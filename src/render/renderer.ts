@@ -188,6 +188,8 @@ export interface PlayCamera {
 }
 
 export interface SceneHandle {
+  /** The world of the last edit is still being built (`worldSteps`); the old one is drawn meanwhile. */
+  readonly worldBusy: boolean;
   readonly backend: 'three-webgl';
   readonly viewport: Viewport;
   readonly scene: Scene;
@@ -1410,6 +1412,9 @@ export function createSceneRenderer(
     },
     naturalTerrainHeightAt(x, y) {
       return terrain.naturalRenderedHeightAt(x, y);
+    },
+    get worldBusy() {
+      return worldJob !== null;
     },
     offerElevation(solved, revision) {
       offeredElevation = { elevation: solved, revision, terrain: terrainRevision };
