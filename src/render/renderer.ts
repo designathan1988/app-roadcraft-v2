@@ -404,7 +404,7 @@ export function createSceneRenderer(
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
   /** The grid on the ground (`setGrid`): one set of lines for the whole map. */
-  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, depthWrite: false }));
+  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.075, depthWrite: false }));
   grid.name = 'map-grid';
   grid.frustumCulled = false;
   grid.visible = false;
