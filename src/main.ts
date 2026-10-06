@@ -3091,7 +3091,10 @@ function openImported(result: ImportResult): boolean {
 };
 
 // Perspective or the isometric (orthographic) view, the player's choice, kept.
-const PERSPECTIVE_KEY = 'roadcraft.perspective';
+// Perspective unless the player turns the isometric view on (the player,
+// 2026-10-06: "a vista isométrica deve ficar desligada por padrão"); a new key,
+// so a choice kept under the old default does not hold the isometric view on.
+const PERSPECTIVE_KEY = 'roadcraft.perspective.v2';
 let perspective = false;
 function setPerspective(on: boolean): void {
   perspective = on;
@@ -3100,7 +3103,11 @@ function setPerspective(on: boolean): void {
   try { localStorage.setItem(PERSPECTIVE_KEY, on ? '1' : '0'); } catch { /* not kept */ }
   requestDraw();
 }
-try { if (localStorage.getItem(PERSPECTIVE_KEY) === '1') setPerspective(true); } catch { /* storage blocked: isometric */ }
+{
+  let kept: string | null = null;
+  try { kept = localStorage.getItem(PERSPECTIVE_KEY); } catch { /* storage blocked: the default */ }
+  setPerspective(kept !== '0');
+}
 
 // The camera's own buttons: a step per press, and the needle keeps north.
 const cameraNeedle = document.querySelector<SVGElement>('#cameraControls .camera-needle');
