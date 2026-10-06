@@ -1,11 +1,13 @@
 import { Rng } from '@core/rng';
 import type { CatalogPage } from '@people/gen/catalog';
-import { bodyFor, dressBody } from '@people/gen/clothes';
-import { HumanExtras, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
+import { bodyFor } from '@people/gen/clothes';
+import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
-import { makehumanBody, parseMakeHuman, type MakeHumanMeta } from '@people/gen/makehuman';
+import { coveredBy, makehumanBody, parseMakeHuman, pushOut, surfaceOf, tuckUnder, type MakeHumanMeta } from '@people/gen/makehuman';
 import { randomName } from '@people/gen/names';
 import { fitProxy, loadProxyItem } from '@people/body/proxy';
+import { isWhole } from '@people/wardrobe';
+import type { GarmentParams } from '@people/gen/clothes';
 import {
   ANCESTRIES, IRIS_COLOURS, completePerson, darker, randomHair, randomOutfit, randomPerson, resolvePerson, type PersonParams, type ResolvedPerson,
 } from '@people/gen/person';
@@ -115,6 +117,74 @@ const built: Record<string, { params: unknown; version: number }> = {};
 const times: Record<string, number> = {};
 /** The latest hair asked for: an older load that lands late is dropped. */
 let hairTicket = 0;
+let clothesTicket = 0;
+
+/** A triangle list without the triangles two or three of whose corners are hidden. */
+function hideFaces(index: Uint32Array, hidden: Uint8Array): Uint32Array {
+  const out: number[] = [];
+  for (let i = 0; i < index.length; i += 3) {
+    if (hidden[index[i]!]! + hidden[index[i + 1]!]! + hidden[index[i + 2]!]! >= 2) continue;
+    out.push(index[i]!, index[i + 1]!, index[i + 2]!);
+  }
+  return Uint32Array.from(out);
+}
+
+/** The base's skin neighbours, once. */
+let skinRing: number[][] | null = null;
+/** A vertex set kept only where every neighbour is in it, `passes` times. */
+function erode(set: Uint8Array, passes: number): Uint8Array {
+  if (!skinRing) {
+    skinRing = Array.from({ length: b.base.vertexCount }, () => []);
+    const t = bodyFor(b.base, ex, b.base.positions).skin;
+    for (let i = 0; i < t.length; i += 3) {
+      for (let k = 0; k < 3; k++) { const a = t[i + k]!, c = t[i + (k + 1) % 3]!; skinRing[a]!.push(c); skinRing[c]!.push(a); }
+    }
+  }
+  let cur = set;
+  for (let p = 0; p < passes; p++) {
+    const next = new Uint8Array(cur.length);
+    for (let v = 0; v < cur.length; v++) next[v] = cur[v] && skinRing[v]!.every((u) => cur[u]) ? 1 : 0;
+    cur = next;
+  }
+  return cur;
+}
+
+/** Per base vertex, the nearest hm08 vertex (both at rest on our body): how a garment's delete_verts reach our skin. */
+let nearestMh: Uint32Array | null = null;
+function coveredSkin(deleted: ReadonlySet<number>): Float32Array {
+  const out = new Float32Array(b.base.renderVertexCount);
+  if (!deleted.size) return out;
+  if (!nearestMh) {
+    const C = 0.02, cells = new Map<number, number[]>();
+    const key = (x: number, y: number, z: number): number => ((Math.floor(x / C) + 512) * 1024 + Math.floor(y / C) + 512) * 1024 + Math.floor(z / C) + 512;
+    const P = mh.positions, n = P.length / 3;
+    for (let v = 0; v < n; v++) {
+      const k = key(P[v * 3]!, P[v * 3 + 1]!, P[v * 3 + 2]!);
+      let l = cells.get(k);
+      if (!l) cells.set(k, l = []);
+      l.push(v);
+    }
+    const R = b.base.positions, m = R.length / 3;
+    nearestMh = new Uint32Array(m);
+    for (let v = 0; v < m; v++) {
+      const x = R[v * 3]!, y = R[v * 3 + 1]!, z = R[v * 3 + 2]!;
+      let best = -1, bd = Infinity;
+      for (let r = 1; best < 0 && r <= 4; r++) {
+        for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) {
+          const l = cells.get(key(x + dx * C, y + dy * C, z + dz * C));
+          if (!l) continue;
+          for (const u of l) {
+            const d = (P[u * 3]! - x) ** 2 + (P[u * 3 + 1]! - y) ** 2 + (P[u * 3 + 2]! - z) ** 2;
+            if (d < bd) { bd = d; best = u; }
+          }
+        }
+      }
+      nearestMh[v] = Math.max(0, best);
+    }
+  }
+  for (let r = 0; r < out.length; r++) out[r] = deleted.has(nearestMh[b.base.renderSource[r]!]!) ? 1 : 0;
+  return out;
+}
 
 function draw(p: PersonParams, live: boolean): void {
   const t0 = performance.now();
@@ -163,7 +233,86 @@ function draw(p: PersonParams, live: boolean): void {
   if (stale('brows', p.brows)) stage.strands('brows', browStrands(ex, b.base, shaped.shape, p.brows, p.seed + 1), { root: p.brows.colour, tip: p.brows.colour, shine: 0.25, fadeThin: true });
   if (stale('lashes', p.lashes)) stage.strands('lashes', lashStrands(ex, b.base, shaped.shape, p.lashes, p.seed + 2), { root: p.lashes.colour, tip: p.lashes.colour, shine: 0.15 });
   times['face'] = Math.round(performance.now() - t); t = performance.now();
-  if (stale('clothes', p.outfit) || stale('clothesSex', p.sex < 0.5)) stage.clothes(dressBody(body(), p.outfit, p.sex < 0.5));
+  if (stale('clothes', p.outfit) || stale('clothesSex', p.sex < 0.5)) {
+    // Clothes are MakeHuman garments fitted to this body, as hair is.
+    stage.clothes([]);
+    const o = p.outfit;
+    const worn = [o.top, o.top?.item && isWhole(o.top.item) ? null : o.bottom, o.shoes].filter((g): g is GarmentParams => !!g?.item);
+    const ticket = ++clothesTicket;
+    const mhBody = (current.mh ??= makehumanBody(mh, b.base, current.shape));
+    const shape = current.shape;
+    const bodyNow = body();
+    void Promise.all(worn.map((g) => loadProxyItem(g.item!))).then((items) => {
+      if (ticket !== clothesTicket) return;
+      const hidden = new Set<number>();
+      let lift = 0, floor = Infinity;
+      for (let i = 1; i < shape.length; i += 3) floor = Math.min(floor, shape[i]!);
+      // Layers from the skin out: shoes (and their socks) under the trouser
+      // legs - boots over them - then the bottom, then the top over the waistband (MakeHuman's own z_depth is the same 50 for
+      // most items, so it cannot order them). Each is pushed out of the body
+      // and of every layer under it.
+      const boots = /boot/i.test(o.shoes?.item ?? '');
+      const order = worn.map((g, k) => [g === o.shoes ? (boots ? 1.5 : 0) : g === o.bottom ? 1 : 2, k] as const).sort((x, y) => x[0] - y[0]).map(([, k]) => k);
+      const covered = new Uint8Array(b.base.vertexCount);
+      const under: { shape: Float32Array; normals: Float32Array; skin: Uint32Array }[] = [];
+      const fitted: Float32Array[] = [];
+      for (const k of order) {
+        const item = items[k]!;
+        const dm = fitProxy(item.pack, mhBody);
+        const m = new Float32Array(dm.length);
+        for (let i = 0; i < dm.length; i++) m[i] = dm[i]! * 0.1;
+        pushOut(m, item.pack.index, bodyNow, 0.003);
+        for (const inner of under) pushOut(m, item.pack.index, inner, 0.003);
+        coveredBy(m, item.pack.index, bodyNow, covered);
+        for (const v of item.pack.deleteVerts) hidden.add(v);
+        // Shoes stand the person on their soles.
+        if (worn[k] === o.shoes) {
+          let lo = Infinity;
+          for (let i = 1; i < m.length; i += 3) lo = Math.min(lo, m[i]!);
+          lift = Math.max(lift, floor - lo);
+        }
+        under.push(surfaceOf(m, item.pack.index, bodyNow));
+        fitted[k] = m;
+      }
+      // An inner garment's faces under an outer one are hidden too (Auto Hide
+      // Mesh works on the clothes as on the body), a ring kept round openings.
+      const keptIndex: Uint32Array[] = [];
+      for (let i = 0; i < order.length; i++) {
+        const k = order[i]!, item = items[k]!;
+        const n = fitted[k]!.length / 3;
+        const flags = new Uint8Array(n);
+        const self = under[i]!;
+        // Tucked under every layer over it, then kept off the skin.
+        for (let j = i + 1; j < order.length; j++) tuckUnder(self, fitted[order[j]!]!);
+        pushOut(fitted[k]!, item.pack.index, bodyNow, 0.0015);
+        // Clothes are coarser than skin: a wider reach. No ring of the inner
+        // garment is kept (its own edge, a waistband, is what must not show);
+        // the outer garment's open edge, which never hides, is the margin.
+        for (let j = i + 1; j < order.length; j++) coveredBy(fitted[order[j]!]!, items[order[j]!]!.pack.index, self, flags, 0.015, 0.012);
+        keptIndex[k] = hideFaces(item.pack.index, flags);
+      }
+      const layers = items.map((item, k) => ({ item, positions: fitted[k]!, tint: worn[k]!.dye ? worn[k]!.colour : null, index: keptIndex[k]! }));
+      stage.proxies('clothes', layers);
+      stage.setLift(lift);
+      // Skin under the clothes, shrunk by two rings of vertices: only skin
+      // well inside a garment is hidden, so none goes missing at a neckline,
+      // a strap or a cuff (the garment is kept off the skin by pushOut).
+      // As Character Creator's Auto Hide Mesh: a ring of skin kept round every
+      // opening, and the head, neck, hands and wrists never hidden.
+      const beneath = coveredSkin(hidden);
+      const mask = new Uint8Array(b.base.vertexCount);
+      for (let r = 0; r < beneath.length; r++) if (beneath[r]) mask[b.base.renderSource[r]!] = 1;
+      for (let v = 0; v < mask.length; v++) {
+        if (covered[v]) mask[v] = 1;
+        const r = ex.region[v]!;
+        if (r === REGION.head || r === REGION.neck || r === REGION.hand || (r === REGION.forearm && ex.along[v]! > 220)) mask[v] = 0;
+      }
+      const kept = erode(mask, 2);
+      const hide = new Float32Array(b.base.renderVertexCount);
+      for (let r = 0; r < hide.length; r++) hide[r] = kept[b.base.renderSource[r]!]!;
+      stage.hideSkin(hide);
+    }).catch(() => { if (ticket === clothesTicket) stage.proxies('clothes', []); });
+  }
   times['clothes'] = Math.round(performance.now() - t);
   if (stale('accessories', p.accessories)) stage.accessories(p.accessories.glasses, p.accessories.earrings, faceAnchors(ex, b.base, current.shape));
   stage.skin({

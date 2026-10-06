@@ -1,8 +1,8 @@
 import { CATALOG, EXPRESSIONS, type CatalogCategory, type CatalogPage, type Focus } from '@people/gen/catalog';
 import type { HumanBase } from '@people/gen/humanBase';
-import { FABRICS, GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
+import { garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
 import { HAIR_COLOURS } from '@people/gen/hair';
-import { hairFor, itemLabel } from '@people/wardrobe';
+import { garmentsFor, hairFor, isWhole, itemLabel } from '@people/wardrobe';
 import { proxyUrl } from '@people/body/proxy';
 import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, LENS_TINTS, METALS } from '@people/gen/accessories';
 import { ANCESTRIES, BROW_STYLES, CLOTH_COLOURS, IRIS_COLOURS, LIP_COLOURS, darker, typical, type PersonParams } from '@people/gen/person';
@@ -347,6 +347,28 @@ export class Creator {
     host.append(row);
   }
 
+  /** A grid of MakeHuman items by their pictures ('none' first, labelled by `noneKey`). */
+  private thumbs(host: HTMLElement, names: readonly string[], get: (p: PersonParams) => string, set: (p: PersonParams, name: string) => PersonParams, noneKey: string): void {
+    const grid = document.createElement('div');
+    grid.className = 'cr-thumbs';
+    for (const name of names) {
+      const b = document.createElement('button');
+      b.className = 'cr-thumb';
+      b.title = name === 'none' ? t(noneKey) : itemLabel(name);
+      if (name === 'none') b.textContent = t(noneKey);
+      else {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        try { img.src = proxyUrl(`${name}-thumb.webp`); b.append(img); } catch { b.textContent = itemLabel(name); }
+      }
+      b.addEventListener('click', () => this.commit(set(this.person, name)));
+      grid.append(b);
+      this.rows.push({ input: document.createElement('input'), out: document.createElement('output'), sync: (p) => b.classList.toggle('on', get(p) === name) });
+    }
+    host.append(grid);
+  }
+
   private heading(host: HTMLElement, key: string): void {
     const h = document.createElement('div');
     h.className = 'cr-group';
@@ -414,26 +436,7 @@ export class Creator {
 
   private hairStyle(host: HTMLElement): void {
     // The hair meshes that suit the person, each with its picture.
-    const names = hairFor(this.person.sex < 0.5 ? 'female' : 'male');
-    const grid = document.createElement('div');
-    grid.className = 'cr-thumbs';
-    for (const name of ['none', ...names]) {
-      const b = document.createElement('button');
-      b.className = 'cr-thumb';
-      b.title = name === 'none' ? t('hgen.hair.none') : itemLabel(name);
-      if (name === 'none') b.textContent = t('hgen.hair.none');
-      else {
-        const img = document.createElement('img');
-        img.alt = '';
-        img.loading = 'lazy';
-        try { img.src = proxyUrl(`${name}-thumb.webp`); } catch { b.textContent = itemLabel(name); }
-        b.append(img);
-      }
-      b.addEventListener('click', () => this.commit({ ...this.person, hair: { ...this.person.hair, style: name } }));
-      grid.append(b);
-      this.rows.push({ input: document.createElement('input'), out: document.createElement('output'), sync: (p) => b.classList.toggle('on', p.hair.style === name) });
-    }
-    host.append(grid);
+    this.thumbs(host, ['none', ...hairFor(this.person.sex < 0.5 ? 'female' : 'male')], (p) => p.hair.style, (p, name) => ({ ...p, hair: { ...p.hair, style: name } }), 'hgen.hair.none');
   }
 
   private hairColour(host: HTMLElement): void {
@@ -516,32 +519,29 @@ export class Creator {
   private garment(host: HTMLElement, slot: GarmentSlot): void {
     const get = (p: PersonParams): GarmentParams | null => p.outfit[slot];
     const put = (p: PersonParams, g: GarmentParams | null): PersonParams => ({ ...p, outfit: { ...p.outfit, [slot]: g } });
-    this.chips(host, [['', t('hgen.none')] as const, ...GARMENT_TYPES[slot].map((type) => [type, t(`hgen.g.${type}`)] as const)],
-      (p) => get(p)?.type ?? '', (p, type) => {
-        if (!type) return put(p, null);
-        const was = get(p);
-        return put(p, { ...garmentDefaults(type), colour: was?.colour ?? CLOTH_COLOURS[3]!, colour2: was?.colour2 ?? CLOTH_COLOURS[0]!, pattern: was?.pattern ?? 'solid', patternScale: was?.patternScale ?? 1 });
-      });
+    const sex = this.person.sex < 0.5 ? 'female' : 'male';
+    // A dress or a suit covers the legs: the bottom page says so.
+    const top = this.person.outfit.top?.item;
+    if (slot === 'bottom' && top && isWhole(top)) {
+      const note = document.createElement('p');
+      note.className = 'cr-note';
+      note.textContent = t('hgen.wholeOutfit');
+      host.append(note);
+    }
+    this.thumbs(host, ['none', ...garmentsFor(slot, sex)], (p) => get(p)?.item ?? 'none', (p, name) => {
+      if (name === 'none') return put(p, null);
+      const was = get(p);
+      const g: GarmentParams = { ...garmentDefaults('item'), colour: was?.colour ?? CLOTH_COLOURS[3]!, colour2: was?.colour2 ?? CLOTH_COLOURS[0]!, pattern: 'solid', patternScale: 1, item: name, dye: was?.dye ?? false };
+      const next = put(p, g);
+      // A whole outfit takes the bottom's place.
+      return slot === 'top' && isWhole(name) ? { ...next, outfit: { ...next.outfit, bottom: null } } : next;
+    }, 'hgen.none');
     const g = get(this.person);
     if (!g) return;
     const edit = (patch: Partial<GarmentParams>) => (p: PersonParams): PersonParams => (get(p) ? put(p, { ...get(p)!, ...patch }) : p);
     this.heading(host, 'hgen.colour');
-    this.colours(host, CLOTH_COLOURS.slice(0, 11), (p) => get(p)?.colour ?? 0, (p, c) => edit({ colour: c })(p));
-    this.heading(host, 'hgen.pattern');
-    this.chips(host, PATTERNS.map((x) => [x, t(`hgen.pat.${x}`)] as const), (p) => get(p)?.pattern ?? 'solid', (p, v) => edit({ pattern: v })(p));
-    if (g.pattern !== 'solid' && g.pattern !== 'knit') {
-      this.colours(host, CLOTH_COLOURS.slice(0, 11), (p) => get(p)?.colour2 ?? 0, (p, c) => edit({ colour2: c })(p));
-    }
-    this.chips(host, FABRICS.map((x) => [x, t(`hgen.fab.${x}`)] as const), (p) => get(p)?.fabric ?? 'cotton', (p, v) => edit({ fabric: v })(p));
-    this.heading(host, 'hgen.group.cut');
-    const s = (label: string, key: 'sleeve' | 'length' | 'neckline' | 'loose' | 'flare' | 'patternScale', lo = 0, hi = 1): void =>
-      this.slider(host, t(label), () => [lo, hi, 0.01], (p) => get(p)?.[key] ?? 0, (p, v) => edit({ [key]: v })(p), (v) => `${Math.round(v * 100)}`, null);
-    if (slot === 'top' && !['bra'].includes(g.type) && g.type !== 'shirt') { s('hgen.sleeve', 'sleeve'); s('hgen.hem', 'length'); s('hgen.neckline', 'neckline'); }
-    if (slot === 'bottom' && g.type !== 'pants') { s(g.type === 'skirt' ? 'hgen.skirtLength' : 'hgen.legLength', 'length'); s('hgen.rise', 'neckline'); }
-    if (slot === 'shoes' && g.type !== 'flats') s('hgen.shaft', 'length');
-    if (g.type === 'skirt' || g.type === 'dress') s('hgen.flare', 'flare');
-    if (g.type !== 'shirt' && g.type !== 'pants') s('hgen.loose', 'loose');
-    if (g.pattern !== 'solid') s('hgen.patternScale', 'patternScale', 0.4, 2.5);
+    this.chips(host, [[false, t('hgen.ownColours')] as const, [true, t('hgen.dyed')] as const], (p) => !!get(p)?.dye, (p, v) => edit({ dye: v })(p));
+    if (g.dye) this.colours(host, CLOTH_COLOURS, (p) => get(p)?.colour ?? 0, (p, c) => edit({ colour: c, dye: true })(p));
   }
 
   private expression(host: HTMLElement): void {

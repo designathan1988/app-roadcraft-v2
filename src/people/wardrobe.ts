@@ -151,3 +151,39 @@ export function hairFor(sex: 'female' | 'male'): readonly string[] {
 export function shoesFor(sex: 'female' | 'male', system: readonly string[]): readonly string[] {
   return [...system.filter((s) => sex === 'female' || s !== 'shoes03'), ...itemsOf('shoes', { sex })];
 }
+
+/** MakeHuman's own outfits (whole: top and bottom), by whom they are cut for. */
+const SYSTEM_OUTFITS = {
+  female: ['female_casualsuit01', 'female_casualsuit02', 'female_elegantsuit01', 'female_sportsuit01'],
+  male: ['male_casualsuit01', 'male_casualsuit02', 'male_casualsuit03', 'male_casualsuit04', 'male_casualsuit05', 'male_casualsuit06', 'male_elegantsuit01', 'male_worksuit01'],
+} as const;
+const SYSTEM_SHOES = ['shoes01', 'shoes02', 'shoes03', 'shoes04', 'shoes05', 'shoes06'] as const;
+
+/** A garment covers the legs as well as the body (a dress, a suit): no bottom is worn under it. */
+export function isWhole(name: string): boolean {
+  const item = BY_NAME.get(name);
+  return item ? item.kind === 'dress' || item.kind === 'suit' : /suit/.test(name);
+}
+
+/**
+ * The garments the person creator offers in a slot for a sex: everyday ones
+ * (a passer-by's) first, then the rest.
+ */
+export function garmentsFor(slot: 'top' | 'bottom' | 'shoes', sex: 'female' | 'male'): readonly string[] {
+  const of = (kinds: readonly WardrobeItem['kind'][]): string[] => {
+    const all = kinds.flatMap((k) => itemsOf(k, { sex }));
+    const street = all.filter((n) => BY_NAME.get(n)?.street);
+    return [...street, ...all.filter((n) => !street.includes(n))];
+  };
+  if (slot === 'top') return [...of(['top']), ...SYSTEM_OUTFITS[sex], ...of(['dress', 'suit'])];
+  if (slot === 'bottom') return of(['bottom', 'skirt']);
+  return shoesFor(sex, SYSTEM_SHOES);
+}
+
+/** Everyday garments for a slot (a passer-by's), for random people. */
+export function everydayFor(slot: 'top' | 'bottom' | 'shoes', sex: 'female' | 'male'): readonly string[] {
+  if (slot === 'shoes') return [...SYSTEM_SHOES.filter((s) => sex === 'female' || s !== 'shoes03'), ...itemsOf('shoes', { street: true, sex })];
+  const kinds: WardrobeItem['kind'][] = slot === 'top' ? ['top'] : ['bottom', ...(sex === 'female' ? ['skirt' as const] : [])];
+  const list = kinds.flatMap((k) => itemsOf(k, { street: true, sex }));
+  return slot === 'top' ? [...list, ...SYSTEM_OUTFITS[sex]] : list;
+}

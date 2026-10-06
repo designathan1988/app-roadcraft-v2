@@ -40,6 +40,10 @@ export interface GarmentParams {
   readonly loose: number;
   /** Skirts: 0 straight .. 1 full. */
   readonly flare: number;
+  /** A MakeHuman garment (`people/wardrobe.ts`) worn in this slot, fitted to the body; the cut above is unused then. */
+  readonly item?: string;
+  /** Recolour the item with `colour` (its texture's lightness kept); its own colours when false. */
+  readonly dye?: boolean;
 }
 
 export interface Outfit {

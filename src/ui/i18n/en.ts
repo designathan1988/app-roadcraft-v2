@@ -2306,4 +2306,7 @@ export const EN: Dictionary = {
   'hgen.er.none': 'None',
   'hgen.er.studs': 'Studs',
   'hgen.er.hoops': 'Hoops',
+  'hgen.ownColours': 'Its own colours',
+  'hgen.dyed': 'Dyed',
+  'hgen.wholeOutfit': 'The top worn is a dress or a whole outfit: it covers the legs.',
 };

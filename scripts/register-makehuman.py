@@ -280,6 +280,48 @@ def main():
         res = np.concatenate(res)
         print(f'stiffness {stiffness:3d}: mean {res.mean() * 1000:.2f} mm, 95% {np.percentile(res, 95) * 1000:.2f} mm, max {res.max() * 1000:.1f} mm', flush=True)
 
+    # The helper shells garments pin to (tights: a skin-tight copy of the
+    # body; skirt: on the body at the hips, stretched between the legs; hair)
+    # are carried as MakeHuman carries a garment: each vertex is a point on
+    # its nearest body triangle plus an offset along that triangle's normal,
+    # rebuilt on the registered body.
+    Xb = P + D
+    tri = body_tris
+    cent = P[tri].mean(1)
+    cand, _ = knn(cent, P[rest_idx], 24)
+    Q = P[rest_idx]
+    best = np.full(len(rest_idx), -1)
+    bd = np.full(len(rest_idx), np.inf)
+    bu = np.zeros(len(rest_idx)); bv = np.zeros(len(rest_idx)); boff = np.zeros(len(rest_idx))
+    for c in range(cand.shape[1]):
+        t = tri[cand[:, c]]
+        A, B, Cc = P[t[:, 0]], P[t[:, 1]], P[t[:, 2]]
+        e1, e2 = B - A, Cc - A
+        n = np.cross(e1, e2)
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+        off = ((Q - A) * n).sum(1)
+        q = Q - n * off[:, None] - A
+        d11, d12, d22 = (e1 * e1).sum(1), (e1 * e2).sum(1), (e2 * e2).sum(1)
+        q1, q2 = (q * e1).sum(1), (q * e2).sum(1)
+        den = np.maximum(d11 * d22 - d12 * d12, 1e-18)
+        u = (d22 * q1 - d12 * q2) / den
+        v = (d11 * q2 - d12 * q1) / den
+        # Clamp into the triangle; the distance then counts the in-plane overshoot.
+        u2, v2 = np.clip(u, 0, 1), np.clip(v, 0, 1)
+        over = u2 + v2 > 1
+        s_ = np.where(over, u2 + v2, 1)
+        u2, v2 = u2 / s_, v2 / s_
+        foot = A + e1 * u2[:, None] + e2 * v2[:, None]
+        dist = np.linalg.norm(Q - foot, axis=1)
+        better = dist < bd
+        best[better] = cand[better, c]; bd[better] = dist[better]
+        bu[better] = u2[better]; bv[better] = v2[better]; boff[better] = off[better]
+    t = tri[best]
+    A, B, Cc = Xb[t[:, 0]], Xb[t[:, 1]], Xb[t[:, 2]]
+    n = np.cross(B - A, Cc - A)
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    D[rest_idx] = A + (B - A) * bu[:, None] + (Cc - A) * bv[:, None] + n * boff[:, None] - P[rest_idx]
+    print(f'helpers: {len(rest_idx)} vertices on body triangles, offset median {np.median(np.abs(boff)) * 1000:.1f} mm', flush=True)
     X = P + D
     names = {v: k for k, v in REGION.items()}
     for (r, s), (m, t) in groups.items():

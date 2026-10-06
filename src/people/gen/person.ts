@@ -3,7 +3,7 @@ import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, METALS, NO_ACCESSORIES, 
 import { GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot, type Outfit } from './clothes';
 import { HAIR_COLOURS, type BrowParams, type HairParams, type LashParams } from './hair';
 import { sexAxis } from './sampleBody';
-import { hairFor } from '../wardrobe';
+import { everydayFor, hairFor, isWhole } from '../wardrobe';
 
 import type { HumanBase, MorphWeights } from './humanBase';
 
@@ -93,13 +93,16 @@ function randomGarment(rng: Rng, slot: GarmentSlot, type?: string): GarmentParam
   return { ...d, colour: t === 'trousers' ? rng.pick([0x2b3a5c, 0x3e5a80, 0x1c1c1e, 0x6b6e73]) : colour, colour2: rng.pick(CLOTH_COLOURS), pattern, patternScale: 1 };
 }
 
-/** A whole outfit, by sex: tops, then trousers, skirts, a dress. */
+/** A whole outfit, by sex, from the everyday MakeHuman garments (`people/wardrobe.ts`), each in its own colours. */
 export function randomOutfit(rng: Rng, female: boolean): Outfit {
-  const shoes = randomGarment(rng, 'shoes', rng.pick(['sneakers', 'sneakers', 'flats', 'boots']));
-  if (female && rng.bool(0.2)) return { top: randomGarment(rng, 'top', 'dress'), bottom: null, shoes };
-  const top = randomGarment(rng, 'top', rng.pick(female ? ['tshirt', 'tank', 'longsleeve', 'crop', 'turtleneck', 'shirt'] : ['tshirt', 'tshirt', 'longsleeve', 'shirt', 'tank', 'turtleneck']));
-  const bottom = randomGarment(rng, 'bottom', rng.pick(female ? ['trousers', 'skirt', 'shorts', 'leggings', 'pants', 'capri'] : ['trousers', 'trousers', 'shorts', 'pants']));
-  return { top, bottom, shoes };
+  const sex = female ? 'female' : 'male';
+  const item = (slot: GarmentSlot, name: string): GarmentParams => ({ ...randomGarment(rng, slot), item: name, dye: false });
+  const pick = (slot: GarmentSlot): GarmentParams | null => {
+    const list = everydayFor(slot, sex);
+    return list.length ? item(slot, rng.pick(list)) : null;
+  };
+  const top = pick('top');
+  return { top, bottom: top?.item && isWhole(top.item) ? null : pick('bottom'), shoes: pick('shoes') };
 }
 
 export function randomHair(rng: Rng, female: boolean, years: number, melanin: number): HairParams {
@@ -128,7 +131,8 @@ export function completePerson(p: PersonParams, rng: Rng): PersonParams {
       : p.hair.style === 'none' || isHairMesh(p.hair.style) ? p.hair : { ...p.hair, style: rng.pick(hairFor(female ? 'female' : 'male')) },
     brows: p.brows ?? { style: 'mind_eyebrows_11_Default', colour: 0x2a1d16, thickness: 1, density: 1, length: 1 },
     lashes: p.lashes ?? { length: female ? 1.15 : 0.9, curl: 0.6, density: 1, colour: 0x161010 },
-    outfit: p.outfit ?? randomOutfit(rng, female),
+    // Outfits saved as cut-from-the-skin pieces (before garment meshes) are replaced.
+    outfit: p.outfit && [p.outfit.top, p.outfit.bottom, p.outfit.shoes].some((g) => g?.item) ? p.outfit : randomOutfit(rng, female),
     makeup: p.makeup ?? { lipColour: LIP_COLOURS[0]!, lipAmount: 0, stubble: 0 },
     accessories: p.accessories ?? NO_ACCESSORIES,
     seed: p.seed ?? Math.floor(rng.float() * 1e9),

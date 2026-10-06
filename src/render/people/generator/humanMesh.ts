@@ -115,8 +115,8 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
     Object.assign(shader.uniforms, melanin, follicle);
     if (look.hairShadow) Object.assign(shader.uniforms, look.hairShadow);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 aMasks;\nvarying vec3 vMasks;\nvarying vec3 vHairWorld;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMasks = aMasks;')
+      .replace('#include <common>', '#include <common>\nattribute vec3 aMasks;\nattribute float aHide;\nvarying vec3 vMasks;\nvarying float vHide;\nvarying vec3 vHairWorld;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMasks = aMasks;\nvHide = aHide;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvHairWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     if (look.hairShadow) {
       const chunk = ShaderChunk.lights_fragment_begin;
@@ -137,12 +137,14 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
     }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', skinLighting())
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (vHide > 0.5) discard;')
       .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
         uniform sampler2D darkMap;
         uniform float melanin, undertone, lipAmount, stubble, follicleOn, hairCover;
         uniform vec3 lipColour, stubbleColour, follicleColour;
         uniform sampler2D follicleMap;
         varying vec3 vMasks;
+        varying float vHide;
         float skinHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }`);
     if (light) {
       shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
@@ -221,6 +223,8 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
     geometry.setAttribute('color', new BufferAttribute(colours, 4));
   }
   geometry.setAttribute('aMasks', new BufferAttribute(masks ?? new Float32Array(base.renderVertexCount * 3), 3));
+  // 1 where a garment covers the skin (its .mhclo delete_verts): not drawn, so the body never shows through the cloth.
+  geometry.setAttribute('aHide', new BufferAttribute(new Float32Array(base.renderVertexCount), 1));
   geometry.setIndex(new BufferAttribute(base.index, 1));
   const materials: Material[] = [];
   const melanin: MelaninUniform = skinUniforms(look.melanin);

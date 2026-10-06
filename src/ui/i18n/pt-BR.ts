@@ -2292,4 +2292,7 @@ export const PT_BR: Dictionary = {
   'hgen.er.none': 'Nenhum',
   'hgen.er.studs': 'Ponto de luz',
   'hgen.er.hoops': 'Argolas',
+  'hgen.ownColours': 'Cores originais',
+  'hgen.dyed': 'Tingida',
+  'hgen.wholeOutfit': 'A peça de cima é um vestido ou um conjunto inteiro: ela cobre as pernas.',
 };

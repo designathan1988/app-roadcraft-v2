@@ -323,14 +323,14 @@ export class CreatorStage {
    * detail (strand cards, folds, seams) in any colour. Cut-out textures
    * (hair cards) use alpha to coverage.
    */
-  proxies(layer: string, items: readonly { readonly item: ProxyItem; readonly positions: Float32Array; readonly tint: number | null }[]): void {
+  proxies(layer: string, items: readonly { readonly item: ProxyItem; readonly positions: Float32Array; readonly tint: number | null; readonly index?: Uint32Array }[]): void {
     const meshes: Mesh[] = [];
-    for (const { item, positions, tint } of items) {
+    for (const { item, positions, tint, index } of items) {
       const pack = item.pack;
       const g = new BufferGeometry();
       g.setAttribute('position', new BufferAttribute(positions, 3));
       if (pack.uvs && pack.uvs.length) g.setAttribute('uv', new BufferAttribute(pack.uvs, 2));
-      g.setIndex(new BufferAttribute(pack.index, 1));
+      g.setIndex(new BufferAttribute(index ?? pack.index, 1));
       g.computeVertexNormals();
       let map: Texture | null = null;
       if (item.textureFile) {
@@ -383,6 +383,22 @@ export class CreatorStage {
       for (const child of [...group.children]) meshes.push(child as Mesh);
     }
     this.setLayer('accessories', meshes);
+  }
+
+  /** Hides the skin under worn garments: 1 per render vertex where it is covered. */
+  hideSkin(hide: Float32Array): void {
+    if (!this.person) return;
+    const a = this.person.geometry.getAttribute('aHide') as BufferAttribute;
+    (a.array as Float32Array).set(hide);
+    a.needsUpdate = true;
+    this.redraw();
+  }
+
+  /** Lifts the person onto their soles (metres, body frame). */
+  setLift(lift: number): void {
+    this.lift = lift;
+    this.place();
+    this.redraw();
   }
 
   clothes(garments: readonly GarmentMesh[]): void {
