@@ -3,7 +3,6 @@ import {
   BackSide,
   Color,
   DirectionalLight,
-  Fog,
   HemisphereLight,
   Mesh,
   PMREMGenerator,
@@ -186,9 +185,8 @@ export function createEnvironment(
   (probe.material as ShaderMaterial).dispose();
   pmrem.dispose();
 
-  // Fog tinted to the horizon, so distance dissolves into the sky rather than
-  // into a grey wall. It starts well past the play area.
-  scene.fog = new Fog(horizon.clone().lerp(zenith, 0.18).getHex(), 2_600, 8_200);
+  // No fog: the map is seen clear to its edges (the player, 2026-10-06).
+  scene.fog = null;
   scene.background = null;
 
   // A near-neutral sky fill: the saturated blue it was tinted every shadow
@@ -334,7 +332,6 @@ export function createEnvironment(
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
       sunColor.copy(DAY_SUN).lerp(DUSK_SUN, warm).multiplyScalar(light);
-      (scene.fog as Fog).color.copy(horizon).lerp(zenith, 0.18);
       // No town-wide haze (the player: the smoke stays where the fire is).
       void smog; void SMOG;
       scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);

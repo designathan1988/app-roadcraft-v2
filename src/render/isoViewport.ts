@@ -18,7 +18,7 @@ import type { Facing, Viewport } from '@view/viewport';
  * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
  */
 export const MIN_HALF_HEIGHT = 2;
-export const MAX_HALF_HEIGHT = 950;
+export const MAX_HALF_HEIGHT = 1_600;
 
 /**
  * The zoom range the iso rig can represent at a given viewport height.
@@ -46,11 +46,12 @@ export const DEFAULT_ELEVATION = (48 * Math.PI) / 180;
  * screen's height in depth, which is paid for in shadows and detail with little
  * gained. Straight down (90) is a true plan view.
  */
-export const MIN_ELEVATION = (30 * Math.PI) / 180;
+export const MIN_ELEVATION = (20 * Math.PI) / 180;
 export const MAX_ELEVATION = Math.PI / 2;
 /** How far from the middle of the map the view's centre may go, units. */
 const VIEW_REACH = MAP_HALF + 200;
-const DISTANCE = 2400;
+/** The orthographic camera's distance from the view's centre: past the farthest ground a zoomed-out low view takes in. */
+const DISTANCE = 5000;
 /**
  * The perspective camera's vertical field of view, degrees: a long lens, so
  * a street keeps its proportions and the town still reads as a model.
@@ -103,7 +104,7 @@ export function createIsoRig(
   initialHalfHeight: number,
   orbit: { azimuth: number; elevation: number } = { azimuth: DEFAULT_AZIMUTH, elevation: DEFAULT_ELEVATION },
 ): IsoRig {
-  const ortho = new OrthographicCamera(-1, 1, 1, -1, 1, 7000);
+  const ortho = new OrthographicCamera(-1, 1, 1, -1, 1, 14000);
   const persp = new PerspectiveCamera(PERSPECTIVE_FOV, 1, 1, 20000);
   let perspective = false;
   let camera: OrthographicCamera | PerspectiveCamera = ortho;
