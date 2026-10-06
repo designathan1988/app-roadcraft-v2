@@ -726,7 +726,12 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     }
     const next = new BufferGeometry();
     next.setAttribute('position', new Float32BufferAttribute(positions, 3));
-    next.computeVertexNormals();
+    // Lit as level ground, every face alike: its faces are long thin slivers
+    // from the rim outwards, and each lit by its own slope they drew dark
+    // streaks fanning out from the map.
+    const up = new Float32Array(positions.length);
+    for (let k = 1; k < up.length; k += 3) up[k] = 1;
+    next.setAttribute('normal', new Float32BufferAttribute(up, 3));
     next.computeBoundingSphere();
     const previous = backdrop.geometry;
     backdrop.geometry = next;

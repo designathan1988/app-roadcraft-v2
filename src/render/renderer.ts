@@ -248,6 +248,12 @@ export interface SceneHandle {
   setChase(chase: PlayCamera | null): void;
   /** A person not drawn (the player's own body, seen from inside the head). */
   setHiddenPerson(id: number | null): void;
+  /**
+   * While a whole city is being built (`editor/cityGenerator.ts`), the
+   * buildings and the ground graded round them are not rebuilt every frame:
+   * once, when it is let go.
+   */
+  holdBuildings(on: boolean): void;
   /** A shot: a tracer from the muzzle to where it struck, and the muzzle's flash (world x, y, height). */
   shot(from: readonly [number, number, number], to: readonly [number, number, number]): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
@@ -396,6 +402,8 @@ export function createSceneRenderer(
   // instance matrices.
   const sceneryKit: SceneryKit = createSceneryKit();
   const terrain: TerrainSurface = createTerrainSurface(anisotropy);
+  // The orbit camera kept above the land it looks over (`isoViewport.ts`).
+  rig.setGround((x, z) => terrain.renderedHeightAt(x, -z));
   scene.add(...terrain.meshes);
 
   const world = new Group();
@@ -1027,6 +1035,7 @@ export function createSceneRenderer(
   let transitPreviewKey = '';
 
   // The play camera's state: the projection the orbit had before it.
+  let buildingsHeld = false;
   const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
   /** Playing: the ring round the player always counted as seen (the camera turns), u. */
   const PLAY_NEAR = m(45);
@@ -1067,6 +1076,9 @@ export function createSceneRenderer(
     },
     setHiddenPerson(id) {
       hiddenPerson = id;
+    },
+    holdBuildings(on) {
+      buildingsHeld = on;
     },
     shot(from, to) {
       const geometry = new BufferGeometry();
@@ -1373,7 +1385,7 @@ export function createSceneRenderer(
       // Only the ground round the sites that changed is graded again (growing
       // a building re-graded the whole map and every platform: a hitch for
       // every building the zones grew, the profile of 2026-10-05).
-      if (gradedFor !== net.doc.buildings.revision) {
+      if (!buildingsHeld && gradedFor !== net.doc.buildings.revision) {
         gradedFor = net.doc.buildings.revision;
         const changed = changedSites(net.doc);
         if (changed) shapeGround(net, terrainRegion(changed), true);
@@ -1381,7 +1393,7 @@ export function createSceneRenderer(
       // The buildings follow the ground once a stroke is over, not on every
       // dab of it: re-grading 600 buildings per dab took seconds a dab.
       if (!stroking) buildingGround = `${net.doc.terrainRevision}:${rebuilds}`;
-      buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt);
+      if (!buildingsHeld) buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt);
       // The plants under a building's footprints: only a changed site moves them.
       if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== String(groundVersion))) {
         scenery.exclude(net.doc.buildings.size > 0 ? buildings.covers : null);

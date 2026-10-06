@@ -34,7 +34,7 @@ import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type BlastHit, type SceneHandle, type SkyMode } from '@render/renderer';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
-import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
+import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, MIN_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
 import { SimWorld } from '@sim/world';
 import { createPeopleEngine } from '@sim/people/people';
@@ -1658,7 +1658,9 @@ canvas.addEventListener('pointermove', (e) => {
     const dy = screen.y - orbiting.last.y;
     orbiting.last = screen;
     // A turntable: the near side of the map follows the hand; dragging down
-    // lifts the camera towards a plan view.
+    // lifts the camera towards a plan view. Tilted past the flat view's
+    // lowest, the camera turns perspective and goes on down to the horizon.
+    if (dy < 0 && !perspective && view.elevation <= MIN_ELEVATION + 1e-3) setPerspective(true);
     view.orbit(dx * ORBIT_PER_PX, dy * ORBIT_PER_PX);
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
