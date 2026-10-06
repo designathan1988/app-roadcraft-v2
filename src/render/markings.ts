@@ -152,14 +152,21 @@ export function paintMaterial(color: string): Material {
           // Pinholes of asphalt through the paint, wider where it is worn.
           // Mostly whole: fine pinholes, a soft thinning where wheels run, and
           // only rare small flakes - not blotches.
-          float cover = 1.0 - 0.35 * smoothstep(0.55, 0.85, worn) * smoothstep(0.4, 0.7, grain);
-          cover *= 1.0 - 0.25 * step(0.86, pNoise(w * 22.0));
-          if (flake < 0.05) cover *= 0.45;
+          // The fine patterns fade to their average once a pixel covers them
+          // (world units a pixel, from the screen derivatives): seen from afar
+          // they broke the lines into flickering dots (the player, 2026-10-06).
+          float px = length(fwidth(w));
+          float fineSeen = 1.0 - smoothstep(0.015, 0.045, px);
+          float grainSeen = 1.0 - smoothstep(0.04, 0.12, px);
+          float flakeSeen = 1.0 - smoothstep(0.08, 0.2, px);
+          float cover = 1.0 - 0.35 * smoothstep(0.55, 0.85, worn) * mix(0.5, smoothstep(0.4, 0.7, grain), grainSeen);
+          cover *= 1.0 - 0.25 * mix(0.14, step(0.86, pNoise(w * 22.0)), fineSeen);
+          if (flake < 0.05) cover *= mix(1.0, 0.45, flakeSeen);
           diffuseColor.rgb *= 0.86 + 0.14 * pNoise(w * 1.3);
           diffuseColor.a *= cover * 0.92;
         }`);
   };
-  material.customProgramCacheKey = () => `paint-worn-${color}`;
+  material.customProgramCacheKey = () => `paint-worn-aa-${color}`;
   return material;
 }
 

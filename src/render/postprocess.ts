@@ -23,12 +23,13 @@ import type { QualityLevel, QualitySettings } from './quality';
  * change that makes the road read as built into the ground rather than printed
  * on it.
  *
- * ## Why SMAA rather than MSAA
+ * ## MSAA and SMAA
  *
- * The composer renders into a float target, where the driver's own multisample
- * resolve is not available in WebGL2 for every format. SMAA runs on the resolved
- * image, costs one pass, and — unlike FXAA — keeps the thin bright lines of lane
- * markings sharp instead of smearing them.
+ * The composer's half-float target is multisampled (4x where the GPU allows):
+ * thin geometry - lane lines, kerbs, a road's edge seen from afar - is sampled
+ * at every pixel it crosses. SMAA then runs on the resolved image, one pass,
+ * and - unlike FXAA - keeps the thin bright lines of lane markings sharp
+ * instead of smearing them.
  *
  * At the lowest quality tier the composer is skipped entirely and the scene is
  * drawn straight to the canvas with the driver's own MSAA, which is what keeps a
@@ -84,6 +85,11 @@ export function createPostChain(
   const target = new WebGLRenderTarget(Math.max(1, size.x * ratio), Math.max(1, size.y * ratio), {
     type: HalfFloatType,
     depthTexture: new DepthTexture(Math.max(1, size.x * ratio), Math.max(1, size.y * ratio)),
+    // Multisampled, its depth resolved into the texture the occlusion reads
+    // (three's `resolveDepthBuffer`). With SMAA alone, on the resolved image, a
+    // lane line or a road's edge narrower than a pixel at a distance broke into
+    // dots (the player, 2026-10-06): what was never sampled cannot be smoothed.
+    samples: Math.min(4, renderer.capabilities.maxSamples),
   });
   const composer = new EffectComposer(renderer, target);
   composer.setPixelRatio(renderer.getPixelRatio());
