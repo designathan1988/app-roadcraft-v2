@@ -3,6 +3,8 @@ import type { RoadDoc } from './doc';
 import type { Network } from './network';
 import { carriesPedestrians } from './pedestrianAccess';
 import { Level, halfWidth } from './roadTypes';
+import { levelPolygons } from './surfaces';
+import { type MultiPoly, difference } from '@core/clipper';
 import { m } from './units';
 import { pavedTester, quadsOverlap } from './zoneGrid';
 import type { ZoneDensity, ZoneUse } from './zones';
@@ -463,12 +465,53 @@ export function deleteLot(doc: RoadDoc, id: number): boolean {
 
 /** A new lot: a rectangle from `a` to `b` aligned with `angle` (the nearest street's direction). */
 export function addLot(doc: RoadDoc, a: Vec2, b: Vec2, angle: number): Lot | null {
+  const rect = lotRect(a, b, angle);
+  return rect ? addPolygonLot(doc, rect, 0) : null;
+}
+
+/** The rectangle from `a` to `b` square to `angle` (a street's direction), counter-clockwise; null when too small. */
+export function lotRect(a: Vec2, b: Vec2, angle: number): Vec2[] | null {
   const u = { x: Math.cos(angle), y: Math.sin(angle) }, v = { x: -u.y, y: u.x };
   const ds = (b.x - a.x) * u.x + (b.y - a.y) * u.y, dt = (b.x - a.x) * v.x + (b.y - a.y) * v.y;
   if (Math.abs(ds) < MIN_LOT / 2 || Math.abs(dt) < MIN_LOT / 2) return null;
   const p = (s: number, t: number): Vec2 => ({ x: a.x + u.x * s + v.x * t, y: a.y + u.y * s + v.y * t });
   const s0 = Math.min(0, ds), s1 = Math.max(0, ds), t0 = Math.min(0, dt), t1 = Math.max(0, dt);
-  return addPolygonLot(doc, [p(s0, t0), p(s1, t0), p(s1, t1), p(s0, t1)], 0);
+  return [p(s0, t0), p(s1, t0), p(s1, t1), p(s0, t1)];
+}
+
+/** The paving as drawn (footways and all within them), each piece with its box, by network (`onLand`). */
+const PAVING = new WeakMap<Network, { revision: number; pieces: { poly: MultiPoly[number]; box: [number, number, number, number] }[] }>();
+function pavingOf(net: Network): { poly: MultiPoly[number]; box: [number, number, number, number] }[] {
+  const known = PAVING.get(net);
+  if (known && known.revision === net.revision) return known.pieces;
+  const pieces = (net.doc.segments.size ? levelPolygons(net, Level.Sidewalk) : []).map((poly) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of poly[0] ?? []) { x0 = Math.min(x0, x!); y0 = Math.min(y0, y!); x1 = Math.max(x1, x!); y1 = Math.max(y1, y!); }
+    return { poly, box: [x0, y0, x1, y1] as [number, number, number, number] };
+  });
+  PAVING.set(net, { revision: net.revision, pieces });
+  return pieces;
+}
+
+/**
+ * A lot drawn over the street, cut back to the land: what falls on the paving
+ * is taken off, so the lot - and the building grown on it - meets the footway
+ * exactly, along a straight back and round a corner's curve alike (the
+ * player, 2026-10-06: "snap certinho nas calçadas, rente"). The largest piece
+ * is kept; null when nothing of it is on land.
+ */
+export function onLand(net: Network, points: readonly Vec2[]): Vec2[] | null {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of points) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  const near = pavingOf(net).filter(({ box }) => box[0] <= x1 && box[2] >= x0 && box[1] <= y1 && box[3] >= y0).map(({ poly }) => poly);
+  if (!near.length) return [...points];
+  let best: Vec2[] | null = null, bestArea = 0;
+  for (const poly of difference([[points.map((p) => [p.x, p.y])]], near)) {
+    const ring = (poly[0] ?? []).map(([x, y]) => ({ x: x!, y: y! }));
+    const area = Math.abs(lotArea({ corners: ring }));
+    if (ring.length >= 3 && area > bestArea) { bestArea = area; best = ring; }
+  }
+  return best && bestArea >= MIN_LOT * MIN_LOT / 2 ? best : null;
 }
 
 /**
@@ -616,50 +659,94 @@ function nearerStreet(at: (s: number, t: number) => Vec2, s0: number, s1: number
   return true;
 }
 
+/** The footways' outer edges as drawn, in a grid, by network (`footwayEdges`). */
+const EDGE_CELL = m(16);
+interface FootwayEdges {
+  readonly revision: number;
+  readonly cells: Map<number, number[]>;
+  /** Edges as x0, y0, x1, y1, four numbers each. */
+  readonly edges: number[];
+}
+const EDGES = new WeakMap<Network, FootwayEdges>();
+const edgeKey = (i: number, j: number): number => i * 65_536 + j;
+
 /**
- * The lot snap: a point near a street is put on the back edge of its footway
- * (the line a lot fronts onto), and a point near two streets on the corner
- * where their footway edges meet - so a lot reaches the footway and the
- * block's corner with no gap, as a surveyed plot does. Also onto another
- * lot's corner, so neighbours close up.
+ * The outline of the paving a building may stand against: the union of every
+ * footway as the game draws it (`levelPolygons`, the sidewalk level) - the
+ * straight backs of the footways, and their curves round each junction's
+ * corners. Built once per network.
+ */
+function footwayEdges(net: Network): FootwayEdges {
+  const known = EDGES.get(net);
+  if (known && known.revision === net.revision) return known;
+  const cells = new Map<number, number[]>();
+  const edges: number[] = [];
+  const paving = net.doc.segments.size ? levelPolygons(net, Level.Sidewalk) : [];
+  for (const poly of paving) for (const ring of poly) {
+    for (let k = 0; k < ring.length; k++) {
+      const p = ring[k]!, q = ring[(k + 1) % ring.length]!;
+      const at = edges.length / 4;
+      edges.push(p[0]!, p[1]!, q[0]!, q[1]!);
+      for (let i = Math.floor(Math.min(p[0]!, q[0]!) / EDGE_CELL); i <= Math.floor(Math.max(p[0]!, q[0]!) / EDGE_CELL); i++) {
+        for (let j = Math.floor(Math.min(p[1]!, q[1]!) / EDGE_CELL); j <= Math.floor(Math.max(p[1]!, q[1]!) / EDGE_CELL); j++) {
+          const list = cells.get(edgeKey(i, j));
+          if (list) list.push(at); else cells.set(edgeKey(i, j), [at]);
+        }
+      }
+    }
+  }
+  const built = { revision: net.revision, cells, edges };
+  EDGES.set(net, built);
+  return built;
+}
+
+/**
+ * The lot snap: a point near a street is put on the outer edge of its footway
+ * as drawn - the straight back of it, or its curve round a corner - so a lot,
+ * and the building that grows on it, stands flush against the paving with no
+ * gap and no overlap (the player, 2026-10-06). Near a corner of that outline
+ * (where a straight back meets the curve, or two backs meet), onto the corner
+ * itself. Another lot's corner first, so neighbours close up.
  */
 export function lotSnapper(doc: RoadDoc, net: Network, lots: readonly Pick<Lot, 'id' | 'corners'>[] = doc.lots): (p: Vec2, reach: number, skip?: number) => { p: Vec2; kind: 'corner' | 'street' | 'lot' | null } {
-  const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground' && carriesPedestrians(r.road));
-  const faceOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
+  const { cells, edges } = footwayEdges(net);
   return (p, reach, skip) => {
-    // Another lot's corner first: a corner already on the street or shared.
     let lotBest: Vec2 | null = null, lotD = reach * 0.7;
     for (const l of lots) {
       if (l.id === skip) continue;
       for (const q of l.corners) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < lotD) { lotD = d; lotBest = q; } }
     }
     if (lotBest) return { p: { x: lotBest.x, y: lotBest.y }, kind: 'lot' };
-    // The footway's back edge of each street within reach: a line (point and direction).
-    const lines: { d: number; at: Vec2; t: Vec2; id: number }[] = [];
-    for (const r of ribbons) {
-      const bb = r.full.bbox, face = faceOf.get(r.id)!;
-      if (p.x < bb.minX - face - reach || p.x > bb.maxX + face + reach || p.y < bb.minY - face - reach || p.y > bb.maxY + face + reach) continue;
-      const c = r.full.closestPoint(p);
-      if (c.distance < 1e-6) continue;
-      const n = { x: (p.x - c.point.x) / c.distance, y: (p.y - c.point.y) / c.distance };
-      const off = Math.abs(c.distance - face);
-      if (off > reach) continue;
-      const f = r.full.sampleAt(c.s);
-      lines.push({ d: off, at: { x: c.point.x + n.x * face, y: c.point.y + n.y * face }, t: f.t, id: r.id });
+    let best: Vec2 | null = null, bestD = reach;
+    let corner: Vec2 | null = null, cornerD = reach * 0.5;
+    const seen = new Set<number>();
+    for (let i = Math.floor((p.x - reach) / EDGE_CELL); i <= Math.floor((p.x + reach) / EDGE_CELL); i++) {
+      for (let j = Math.floor((p.y - reach) / EDGE_CELL); j <= Math.floor((p.y + reach) / EDGE_CELL); j++) {
+        for (const e of cells.get(edgeKey(i, j)) ?? []) {
+          if (seen.has(e)) continue;
+          seen.add(e);
+          const x0 = edges[e * 4]!, y0 = edges[e * 4 + 1]!, x1 = edges[e * 4 + 2]!, y1 = edges[e * 4 + 3]!;
+          const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+          const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - x0) * dx + (p.y - y0) * dy) / len2)) : 0;
+          const qx = x0 + dx * t, qy = y0 + dy * t, d = Math.hypot(qx - p.x, qy - p.y);
+          if (d < bestD) { bestD = d; best = { x: qx, y: qy }; }
+          // A corner of the outline: where its direction turns by more than a few degrees.
+          const dc = Math.hypot(x0 - p.x, y0 - p.y);
+          if (dc < cornerD) {
+            const prev = cells.get(edgeKey(Math.floor(x0 / EDGE_CELL), Math.floor(y0 / EDGE_CELL)))?.find((o) =>
+              o !== e && Math.abs(edges[o * 4 + 2]! - x0) < 1e-6 && Math.abs(edges[o * 4 + 3]! - y0) < 1e-6);
+            if (prev !== undefined) {
+              const ax = x0 - edges[prev * 4]!, ay = y0 - edges[prev * 4 + 1]!;
+              const turn = Math.abs(Math.atan2(ax * dy - ay * dx, ax * dx + ay * dy));
+              if (turn > 0.2) { cornerD = dc; corner = { x: x0, y: y0 }; }
+            }
+          }
+        }
+      }
     }
-    lines.sort((a, b) => a.d - b.d);
-    const first = lines[0];
-    if (!first) return { p, kind: null };
-    const second = lines.find((l) => l.id !== first.id && Math.abs(l.t.x * first.t.y - l.t.y * first.t.x) > 0.3);
-    if (second) {
-      // Where the two edges cross.
-      const den = first.t.x * second.t.y - first.t.y * second.t.x;
-      const dx = second.at.x - first.at.x, dy = second.at.y - first.at.y;
-      const k = (dx * second.t.y - dy * second.t.x) / den;
-      const corner = { x: first.at.x + first.t.x * k, y: first.at.y + first.t.y * k };
-      if (Math.hypot(corner.x - p.x, corner.y - p.y) < reach * 1.5) return { p: corner, kind: 'corner' };
-    }
-    return { p: first.at, kind: 'street' };
+    if (corner) return { p: corner, kind: 'corner' };
+    if (best) return { p: best, kind: 'street' };
+    return { p, kind: null };
   };
 }
 

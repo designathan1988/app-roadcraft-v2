@@ -2,7 +2,7 @@ import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, pruneOrphanLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -23,7 +23,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, lotsShownWithRoads, signChoice, strikeChoice, zoneColoursShown, zoneGridShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -89,8 +89,7 @@ import { createBuildingWiring } from './buildingsWiring';
 import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
-import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
-import { LOT_PLAN_VERSION, blockOf, growOnLot, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
+import { LOT_PLAN_VERSION, growOnLot } from '@editor/zoning';
 
 /** Playing in the scenery (`play.ts`); made once the scene and the buildings are. */
 let play: Play | null = null;
@@ -405,7 +404,8 @@ let lotPolygon: Vec2[] = [];
 let lotCutLine: { pointer: number; a: Vec2; b: Vec2 } | null = null;
 let lotCurve: { pointer: number; a: Vec2; b: Vec2; through: Vec2 } | null = null;
 /** The snap of lot points to the footways, the blocks' corners and the other lots' corners. */
-const lotSnap = (p: Vec2, skip?: number): Vec2 => lotSnapper(doc, net)(p, 16 / Math.max(0.05, view.zoom), skip).p;
+const lotSnapReach = (): number => Math.max(m(2.5), 16 / Math.max(0.05, view.zoom));
+const lotSnap = (p: Vec2, skip?: number): Vec2 => lotSnapper(doc, net)(p, lotSnapReach(), skip).p;
 /** The side of a lot nearest a point: its two corners. */
 function lotSideNear(p: Vec2): { a: Vec2; b: Vec2 } | null {
   let best: { a: Vec2; b: Vec2 } | null = null, bestD = 18 / Math.max(0.05, view.zoom);
@@ -421,37 +421,39 @@ function lotSideNear(p: Vec2): { a: Vec2; b: Vec2 } | null {
 /** A dragged corner's snap: onto the streets and other corners, never onto itself. */
 function lotSnapExcept(p: Vec2, from: Vec2): Vec2 {
   const snap = lotSnapper(doc, net, doc.lots.map((l) => ({ id: l.id, corners: l.corners.filter((q) => Math.hypot(q.x - from.x, q.y - from.y) > m(0.8)) })));
-  return snap(p, 16 / Math.max(0.05, view.zoom)).p;
+  return snap(p, lotSnapReach()).p;
 }
 /** Whether the segment a-b passes through the inside of a lot. */
 function segmentCrossesLot(a: Vec2, b: Vec2, q: readonly Vec2[]): boolean {
   for (let k = 0; k <= 20; k++) if (insideLot({ x: a.x + (b.x - a.x) * k / 20, y: a.y + (b.y - a.y) * k / 20 }, { corners: q })) return true;
   return false;
 }
-/** Which side of a polygon drawn by the player is its front: the one nearest a street. */
+/**
+ * Which side of a lot is its front: the longest of those against a street
+ * (a lot cut back to the footway has many short sides round a corner's curve,
+ * and its front is the long straight one).
+ */
 function frontSideOf(points: readonly Vec2[]): number {
-  let best = 0, bestD = Infinity;
-  points.forEach((p, i) => {
+  const sides = points.map((p, i) => {
     const q = points[(i + 1) % points.length]!;
     const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-    for (const r of net.ribbons.values()) { const d = r.full.distanceTo(mid); if (d < bestD) { bestD = d; best = i; } }
+    let d = Infinity;
+    for (const r of net.ribbons.values()) d = Math.min(d, r.full.distanceTo(mid));
+    return { i, d, length: Math.hypot(q.x - p.x, q.y - p.y) };
   });
-  return best;
+  const nearest = Math.min(...sides.map((side) => side.d));
+  return sides.filter((side) => side.d < nearest + m(1.5)).sort((a, b) => b.length - a.length)[0]?.i ?? 0;
+}
+/** A lot as drawn, cut back to the footways (`onLand`), with its front; null when nothing is left on land. */
+function landLot(points: readonly Vec2[]): { corners: Vec2[]; front: number } | null {
+  const corners = onLand(net, points);
+  return corners ? { corners, front: frontSideOf(corners) } : null;
 }
 /**
- * The lots (`world/lots.ts`): drawn by the player only - land is no longer cut
- * into lots on its own after every road edit (the player, 2026-10-06: that
- * replanning made the game crawl, and a deleted road left its lots behind).
- * Unlotted land is zoned on the street grid (10 m cells along the roads) and
- * a building of its own size grows there; on a lot, the building takes the
- * lot's size and shape. A road edit only drops the empty lots no road serves.
+ * The lots (`world/lots.ts`): drawn by the player in the Zoning tool, as
+ * areas, and zoned there; buildings grow on the zoned ones. The roads neither
+ * make, change nor show them (the player, 2026-10-06).
  */
-let lotsNetRevision = -1;
-function keepLots(): void {
-  if (lotsNetRevision === net.revision) return;
-  lotsNetRevision = net.revision;
-  if (pruneOrphanLots(doc, net)) requestDraw();
-}
 const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
 /** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
 let lotStroke: { pointer: number; remove: boolean; ids: Set<number> } | null = null;
@@ -471,11 +473,9 @@ function streetAngleNear(p: Vec2): number {
   }
   return angle;
 }
-/** The cells a stroke has passed over, painted on release as one undo step. */
-let zoneDraft: { pointer: number; remove: boolean; cells: Map<string, ZoneCell> } | null = null;
-/** A stroke of the delete mode: the lots, buildings and zoned cells it has passed over, removed on release as one undo step. */
-let zoneErase: { pointer: number; lots: Set<number>; buildings: Set<BuildingId>; cells: Map<string, ZoneCell> } | null = null;
-/** What the delete stroke takes at a point: the lot there, the building there, the cells round it. */
+/** A stroke of the delete mode: the lots and buildings it has passed over, removed on release as one undo step. */
+let zoneErase: { pointer: number; lots: Set<number>; buildings: Set<BuildingId> } | null = null;
+/** What the delete stroke takes at a point: the lot there, the building there. */
 function eraseUnder(world: Vec2): void {
   if (!zoneErase) return;
   const lot = lotAt(world);
@@ -487,60 +487,8 @@ function eraseUnder(world: Vec2): void {
     if (Math.hypot(b.x - world.x, b.y - world.y) > m(80)) continue;
     if (solidFootprints(b).some((ring) => insideLot(world, { corners: ring }))) zoneErase.buildings.add(b.id as BuildingId);
   }
-  const marks = cachedMarksByCell(zoneGrid());
-  for (const cell of zoneCellsAt(world)) {
-    const found = marks.get(cell.id);
-    if (!found) continue;
-    zoneErase.cells.set(cell.id, cell);
-    if (found.mark.building !== undefined) zoneErase.buildings.add(found.mark.building as BuildingId);
-  }
 }
 let zoneHover: Vec2 | null = null;
-let zoneGridCache: { revision: number; grid: ZoneGrid } | null = null;
-/** The street grid, rebuilt only when the roads change. */
-function zoneGrid(): ZoneGrid {
-  if (!zoneGridCache || zoneGridCache.revision !== net.revision) {
-    zoneGridCache = { revision: net.revision, grid: buildZoneGrid(doc, net) };
-    zoneGridJob = null;
-  }
-  return zoneGridCache.grid;
-}
-/** The grid being laid a street at a time for the overlay (`zoneGridSteps`). */
-let zoneGridJob: { revision: number; steps: Generator<void, ZoneGrid> } | null = null;
-/** Milliseconds a frame spends laying the overlay's grid. */
-const ZONE_GRID_SLICE = 6;
-/**
- * The grid for the overlay: the current one, or - while the roads have just
- * changed - the last one, the new one laid a few milliseconds a frame until
- * it is done. A grid laid in one go after every road edit was a fifth of a
- * second of frozen game on a zoned town (the profile of 2026-10-05).
- */
-function zoneGridForOverlay(): ZoneGrid {
-  if (zoneGridCache && zoneGridCache.revision === net.revision) return zoneGridCache.grid;
-  if (!zoneGridCache) return zoneGrid();
-  if (!zoneGridJob || zoneGridJob.revision !== net.revision) zoneGridJob = { revision: net.revision, steps: zoneGridSteps(doc, net) };
-  const until = performance.now() + ZONE_GRID_SLICE;
-  let step = zoneGridJob.steps.next();
-  while (!step.done && performance.now() < until) step = zoneGridJob.steps.next();
-  if (step.done) {
-    zoneGridCache = { revision: zoneGridJob.revision, grid: step.value };
-    zoneGridJob = null;
-  } else requestDraw();
-  return zoneGridCache.grid;
-}
-/** The cells a press or a drag at `world` takes in. */
-function zoneCellsAt(world: Vec2): ZoneCell[] {
-  const grid = zoneGrid();
-  if (zoneMode === 'fill') {
-    // On the street itself, the side the pointer is nearer to.
-    const cell = grid.cellAt(world) ?? grid.cellsNear(world, ZONE_CELL * 2.5)
-      .sort((p, q) => Math.hypot(p.centre.x - world.x, p.centre.y - world.y) - Math.hypot(q.centre.x - world.x, q.centre.y - world.y))[0];
-    return cell ? blockOf(grid, cell) : [];
-  }
-  const under = grid.cellAt(world);
-  const near = grid.cellsNear(world, ZONE_CELL * 0.9);
-  return under && !near.includes(under) ? [under, ...near] : near;
-}
 let hoverAnchor: Anchor | null = null;
 let selectedSegment: SegmentId | null = null;
 let selectedSegmentS: number | null = null;
@@ -1033,7 +981,6 @@ function cancelGestures(): void {
   poleDraft = null;
   poleChain = null;
   barrierPoints = null;
-  zoneDraft = null;
   zoneErase = null;
   endTerrainStroke();
   cancelMove();
@@ -1046,7 +993,7 @@ function cancelGestures(): void {
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null || zoneDraft !== null || zoneErase !== null;
+    poleChain !== null || terrainStroke !== null || moving !== null || zoneErase !== null;
 }
 
 /**
@@ -1356,7 +1303,6 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
 
     case 'zone': {
-      keepLots();
       const lot = lotAt(world);
       if (zoneMode === 'edit') {
         // The nearest corner within reach of the pointer.
@@ -1383,7 +1329,8 @@ canvas.addEventListener('pointerdown', (e) => {
           const points = [...lotPolygon];
           lotPolygon = [];
           let made = false;
-          mutate(() => (made = addPolygonLot(doc, points, frontSideOf(points)) !== null));
+          const lot = landLot(points);
+          mutate(() => (made = lot !== null && addPolygonLot(doc, lot.corners, lot.front) !== null));
           flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
         } else lotPolygon.push(p);
       } else if (zoneMode === 'curve') {
@@ -1402,13 +1349,11 @@ canvas.addEventListener('pointerdown', (e) => {
         lotNew = { pointer: e.pointerId, a: lotSnap(world), b: lotSnap(world), angle: streetAngleNear(world) };
       } else if (zoneMode === 'delete') {
         // Lots, the buildings on them or anywhere under the stroke, and the zoned cells: all at once.
-        zoneErase = { pointer: e.pointerId, lots: new Set(), buildings: new Set(), cells: new Map() };
+        zoneErase = { pointer: e.pointerId, lots: new Set(), buildings: new Set() };
         eraseUnder(world);
-      } else if (lot) {
-        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set([lot.id]) };
       } else {
-        // Land with no lot: the street grid's cells, a building of its own size grows there.
-        zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map(zoneCellsAt(world).map((cell) => [cell.id, cell])) };
+        // The brush zones the lots it passes over; land with no lot is not zoned.
+        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set(lot ? [lot.id] : []) };
       }
       requestDraw();
       break;
@@ -1689,11 +1634,6 @@ canvas.addEventListener('pointermove', (e) => {
 
   const world = pointerWorld(e);
 
-  if (zoneDraft?.pointer === e.pointerId) {
-    if (zoneMode === 'brush') for (const cell of zoneCellsAt(world)) zoneDraft.cells.set(cell.id, cell);
-    requestDraw();
-    return;
-  }
   if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
   if (zoneErase?.pointer === e.pointerId) { eraseUnder(world); requestDraw(); return; }
   if (lotCorner?.pointer === e.pointerId) { lotCorner.to = lotSnapExcept(world, lotCorner.from); requestDraw(); return; }
@@ -1880,7 +1820,8 @@ function endPointer(e: PointerEvent): void {
   if (lotStroke?.pointer === e.pointerId) {
     const stroke = lotStroke;
     lotStroke = null;
-    if (!cancelled && !wasPinching && stroke.ids.size) {
+    if (!cancelled && !wasPinching && !stroke.ids.size) flashHint('hint.zone.empty');
+    else if (!cancelled && !wasPinching) {
       mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: zoneUse, density: zoneDensity }));
       lotRefused.clear();
       flashHint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
@@ -1922,7 +1863,9 @@ function endPointer(e: PointerEvent): void {
     lotNew = null;
     if (!cancelled && !wasPinching) {
       let made = false;
-      mutate(() => (made = addLot(doc, drawn.a, drawn.b, drawn.angle) !== null));
+      const rect = lotRect(drawn.a, drawn.b, drawn.angle);
+      const lot = rect ? landLot(rect) : null;
+      mutate(() => (made = lot !== null && addPolygonLot(doc, lot.corners, lot.front) !== null));
       flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
     }
     requestDraw();
@@ -1930,34 +1873,16 @@ function endPointer(e: PointerEvent): void {
   if (zoneErase?.pointer === e.pointerId) {
     const stroke = zoneErase;
     zoneErase = null;
-    if (!cancelled && !wasPinching && (stroke.lots.size || stroke.buildings.size || stroke.cells.size)) {
+    if (!cancelled && !wasPinching && (stroke.lots.size || stroke.buildings.size)) {
       mutate(() => {
         for (const id of stroke.lots) deleteLot(doc, id);
         for (const id of stroke.buildings) doc.buildings.remove(id);
-        if (stroke.cells.size) paintCells(doc, zoneGrid(), [...stroke.cells.values()], null);
         return true;
       });
-      zoneRefused.clear();
       flashHint('hint.lot.deleted');
     }
     requestDraw();
   }
-  if (zoneDraft?.pointer === e.pointerId) {
-    const stroke = zoneDraft;
-    zoneDraft = null;
-    if (!cancelled && !wasPinching) {
-      const cells = [...stroke.cells.values()];
-      let changed = 0;
-      mutate(() => {
-        changed = paintCells(doc, zoneGrid(), cells, stroke.remove ? null : { use: zoneUse, density: zoneDensity });
-        return changed > 0;
-      });
-      zoneRefused.clear();
-      flashHint(!cells.length ? 'hint.zone.empty' : stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
-    }
-    requestDraw();
-  }
-
   if (draft) {
     const d = draft;
     draft = null;
@@ -3420,14 +3345,12 @@ function requestDraw(): void {
 }
 
 /**
- * Buildings grow on zoned land on their own, one at a time, twice a second:
+ * Buildings grow on zoned lots on their own, one at a time, twice a second:
  * the city fills in as the player watches, as in every city builder. Lots that
  * did not take a building are skipped until the land or the roads change.
  */
-const zoneRefused = new Set<string>();
 /** Wall-clock time before which nothing grows (rubble of a collapse lying, `strikeAt`). */
 let zoneGrowthHold = 0;
-let zoneRefusedKey = '';
 setInterval(() => {
   // Buildings on zoned lots (`world/lots.ts`).
   // A road edit can make room on a lot refused before: try them again.
@@ -3442,23 +3365,6 @@ setInterval(() => {
       requestDraw();
     }
   }
-  if (!doc.zoneMarks.length || moving || performance.now() < zoneGrowthHold) return;
-  const key = `${net.revision}:${doc.buildings.revision}`;
-  if (key !== zoneRefusedKey) { zoneRefused.clear(); zoneRefusedKey = key; }
-  // Buildings grown by an older lot generator are regrown with this one.
-  if (regrowStale(doc) > 0) { zoneRefused.clear(); requestDraw(); }
-  // The roads just changed: growth waits for the new grid, laid a slice a
-  // frame (`zoneGridForOverlay`), instead of laying it all at once here.
-  if (zoneGridCache && zoneGridCache.revision !== net.revision) { requestDraw(); return; }
-  const grown = growOne({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, zoneGrid(), zoneRefused, 0x5eed);
-  if (grown === null) return;
-  // A grown building starts its life now: it ages from here unless renovated.
-  const fresh = doc.buildings.get(grown as BuildingId);
-  if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
-  zoneRefusedKey = `${net.revision}:${doc.buildings.revision}`;
-  persistence.saveSessionSoon(doc, sessionSettings);
-  updateStatus();
-  requestDraw();
 }, 500);
 
 // ------------------------------------------------------------ resident agents
@@ -3712,8 +3618,6 @@ function frame(now: number): void {
       else if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
     }
   }
-  // A grid for the zones still being laid after a road edit: a slice a frame.
-  if (doc.zoneMarks.length && zoneGridCache && zoneGridCache.revision !== net.revision) zoneGridForOverlay();
   buildings.beforeDraw(tool === 'building');
   followAgent();
   // The pole run under the pointer, planned once per frame: the 3D preview
@@ -3915,30 +3819,6 @@ function drawPolePlan(
   }
 }
 
-/** The ground height under each zone cell's corners, per grid and terrain (`drawOverlayScreen`). */
-let cornerHeights: { grid: ZoneGrid; terrain: number; z: Map<ZoneCell, number[]> } | null = null;
-function zoneCornerHeights(grid: ZoneGrid): Map<ZoneCell, number[]> {
-  if (cornerHeights && cornerHeights.grid === grid && cornerHeights.terrain === doc.terrainRevision) return cornerHeights.z;
-  const z = new Map<ZoneCell, number[]>();
-  for (const cell of grid.cells) z.set(cell, cell.corners.map((corner) => sceneHeightAt(corner)));
-  cornerHeights = { grid, terrain: doc.terrainRevision, z };
-  return z;
-}
-
-/**
- * `marksByCell` for the overlay, kept until the grid, the marks or the
- * buildings change: matched afresh every frame it was the costliest thing on
- * the main thread in a zoned town (the profile of 2026-10-05).
- */
-let marksCache: { grid: ZoneGrid; revision: number; marks: number; buildings: number; found: ReturnType<typeof marksByCell> } | null = null;
-function cachedMarksByCell(grid: ZoneGrid): ReturnType<typeof marksByCell> {
-  const c = marksCache;
-  if (c && c.grid === grid && c.revision === doc.zoneRevision && c.marks === doc.zoneMarks.length && c.buildings === doc.buildings.size) return c.found;
-  const found = marksByCell(doc, grid);
-  marksCache = { grid, revision: doc.zoneRevision, marks: doc.zoneMarks.length, buildings: doc.buildings.size, found };
-  return found;
-}
-
 function drawOverlayScreen(): void {
   const w = overlayCanvas.clientWidth;
   const h = overlayCanvas.clientHeight;
@@ -4019,9 +3899,7 @@ function drawOverlayScreen(): void {
   // The lots, laid on the ground in the scene (`render/lotOverlay.ts`): in
   // the Zoning tool, and while roads are being built (unless the player
   // turned that off); zoned ones faintly with the other tools.
-  // Whatever tool deleted a road, its empty lots go with it (`pruneOrphanLots`, once a road edit).
-  keepLots();
-  const showLots = tool === 'zone' || (tool === 'road' && lotsShownWithRoads()) || (doc.lots.some((l) => l.use) && zoneColoursShown());
+  const showLots = tool === 'zone' || (doc.lots.some((l) => l.use) && zoneColoursShown());
   if (showLots) {
     const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
     const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
@@ -4032,14 +3910,14 @@ function drawOverlayScreen(): void {
     const editing = tool === 'zone';
     for (const l of doc.lots) {
       const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
-      if (!editing && tool !== 'road' && (!l.use || built)) continue;
+      if (!editing && (!l.use || built)) continue;
       const painting = lotStroke?.ids.has(l.id);
-      const brushHover = l === hoverLot && (zoneMode === 'brush' || zoneMode === 'fill');
+      const brushHover = l === hoverLot && zoneMode === 'brush';
       const picked = editing && (l.id === lotJoinFirst || (l === hoverLot && !brushHover && zoneMode !== 'edit'));
       const fill = painting ? (lotStroke!.remove ? 0xe36c60 : colours[zoneUse]) : l.use ? colours[l.use] : brushHover ? (zoneEraser ? 0xe36c60 : colours[zoneUse]) : null;
       const fillAlpha = painting ? 0.6 : l.use ? (editing ? (built ? 0.22 : 0.45) : 0.25) : brushHover ? 0.35 : 0;
       polygons.push({ corners: l.corners.map(dragged), fill, fillAlpha,
-        line: picked ? (zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing || tool === 'road' ? (picked ? 1 : 0.85) : 0,
+        line: picked ? (zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
         width: picked ? 0.7 : 0.35 });
     }
     if (editing && zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
@@ -4071,12 +3949,10 @@ function drawOverlayScreen(): void {
       points.push({ p: lotCorner ? lotCorner.to : lotSnap(zoneHover), colour: 0x5ee0ff, radius: 0.9 });
     }
     if (lotNew) {
-      const u = { x: Math.cos(lotNew.angle), y: Math.sin(lotNew.angle) }, v = { x: -u.y, y: u.x };
-      const ds = (lotNew.b.x - lotNew.a.x) * u.x + (lotNew.b.y - lotNew.a.y) * u.y;
-      const dt = (lotNew.b.x - lotNew.a.x) * v.x + (lotNew.b.y - lotNew.a.y) * v.y;
-      const a = lotNew.a;
-      polygons.push({ corners: [a, { x: a.x + u.x * ds, y: a.y + u.y * ds }, { x: a.x + u.x * ds + v.x * dt, y: a.y + u.y * ds + v.y * dt }, { x: a.x + v.x * dt, y: a.y + v.y * dt }],
-        fill: 0xffffff, fillAlpha: 0.2, line: 0xffffff, lineAlpha: 1, width: 0.5 });
+      // As it will be made: cut back to the footways.
+      const rect = lotRect(lotNew.a, lotNew.b, lotNew.angle);
+      const cut = rect ? onLand(net, rect) : null;
+      if (cut) polygons.push({ corners: cut, fill: 0xffffff, fillAlpha: 0.2, line: 0xffffff, lineAlpha: 1, width: 0.5 });
     }
     const key = JSON.stringify([polygons, lines, points]);
     scene.setLotOverlay({ key, polygons, lines, points });
@@ -4099,74 +3975,6 @@ function drawOverlayScreen(): void {
     }
     ctx.restore();
   } else scene.setLotOverlay(null);
-  // The street grid: in the Zoning tool (unless the player hid it), every
-  // cell outlined and the zoned ones filled; with the other tools only the
-  // zoned land still waiting for a building, faintly.
-  if ((tool === 'zone' && zoneGridShown()) || (doc.zoneMarks.length && zoneColoursShown() && tool !== 'zone')) {
-    // The street grid: in the Zoning tool every cell, outlined, the zoned ones
-    // filled with their use's colour; with any other tool only the zoned land
-    // still waiting for a building, faintly, so the plan stays readable.
-    ctx.save();
-    const colours: Record<ZoneUse, string> = { residential: '#56bb73', commercial: '#5da9e9', industrial: '#d9b254' };
-    // The Zoning tool paints the cells it shows: its grid is the exact one,
-    // at once; the other tools' tint and the road preview take the last grid
-    // while the new one is laid over a few frames.
-    const zoning = tool === 'zone';
-    const grid = zoning ? zoneGrid() : zoneGridForOverlay();
-    // Where the player drew lots, the lots are shown, not the cells under them.
-    const underLot = (cell: ZoneCell): boolean => doc.lots.length > 0 && lotAt(cell.centre) !== undefined;
-    const marks = cachedMarksByCell(grid);
-    // Each corner's height looked up once per grid and ground, not every
-    // frame (a lookup per corner of every cell in the town, each frame the
-    // road tool drew, was a fifth of a second a frame); a cell off screen is
-    // skipped.
-    const heights = zoneCornerHeights(grid);
-    const projected: Vec2[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
-    const quad = (cell: ZoneCell): boolean => {
-      const z = heights.get(cell)!;
-      let left = 0, right = 0, above = 0, below = 0;
-      for (let i = 0; i < 4; i++) {
-        const q = view.toScreen(cell.corners[i]!, w, h, z[i]!);
-        projected[i] = q;
-        if (q.x < -40) left++; else if (q.x > w + 40) right++;
-        if (q.y < -40) above++; else if (q.y > h + 40) below++;
-      }
-      if (left === 4 || right === 4 || above === 4 || below === 4) return false;
-      ctx.beginPath();
-      projected.forEach((q, index) => { if (index === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y); });
-      ctx.closePath();
-      return true;
-    };
-    const brush = zoning && !zoneDraft && zoneHover ? new Set(zoneCellsAt(zoneHover).map((cell) => cell.id)) : null;
-    for (const cell of grid.cells) {
-      const found = marks.get(cell.id);
-      const built = found?.mark.building !== undefined && doc.buildings.has(found.mark.building as never);
-      if (!zoning && (!found || built)) continue;
-      if (zoning && !found && underLot(cell)) continue;
-      const erased = zoneErase?.cells.has(cell.id) ?? false;
-      const drafted = zoneDraft?.cells.has(cell.id) ?? false;
-      if (!quad(cell)) continue;
-      if (erased) {
-        ctx.fillStyle = '#e36c6099';
-        ctx.fill();
-      } else if (drafted) {
-        ctx.fillStyle = zoneDraft!.remove ? '#e36c6099' : `${colours[zoneUse]}99`;
-        ctx.fill();
-      } else if (found) {
-        ctx.fillStyle = `${colours[found.mark.use]}${zoning ? (built ? '40' : '80') : '38'}`;
-        ctx.fill();
-      } else if (brush?.has(cell.id)) {
-        ctx.fillStyle = zoneEraser ? '#e36c6050' : `${colours[zoneUse]}50`;
-        ctx.fill();
-      }
-      if (zoning) {
-        ctx.strokeStyle = brush?.has(cell.id) ? '#ffffffcc' : '#ffffff40';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
 
   if (tool === 'building') buildings.drawOverlay(ctx);
 

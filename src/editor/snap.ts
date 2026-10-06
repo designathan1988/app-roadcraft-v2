@@ -7,7 +7,6 @@ import { orientedPolyline } from '@world/geometry';
 import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
-import { ZONE_CELL } from '@world/zoneGrid';
 import { GRID_STEP, snapToGrid } from '@world/grid';
 
 export type AnchorKind = 'node' | 'segment' | 'free';
@@ -43,23 +42,22 @@ const LENGTH_TOLERANCE = 4.2;
  * - `angles`: square to the world and to the roads it starts from or lands
  *   on, 45 degrees, and every 15 degrees;
  * - `grid`: points on the 1 m subdivision of the universal grid (`grid.ts`),
- *   the start of a road as well as its end;
- * - `zoneLength`: the length in whole grid cells (10 m), so the zoning grid
- *   along the road comes out in whole cells, as CS2's "zone cell length".
+ *   the start of a road as well as its end.
+ * Roads lay out no zoning grid any more (lots are drawn in the Zoning tool),
+ * so their length is not snapped to one.
  */
 export interface RoadSnap {
   readonly on: boolean;
   readonly angles: boolean;
   readonly grid: boolean;
-  readonly zoneLength: boolean;
 }
 const ROAD_SNAP_KEY = 'roadcraft.roadSnap';
-let roadSnapState: RoadSnap = { on: true, angles: true, grid: true, zoneLength: true };
+let roadSnapState: RoadSnap = { on: true, angles: true, grid: true };
 try {
   const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(ROAD_SNAP_KEY);
   if (raw) {
     const v = JSON.parse(raw) as Partial<RoadSnap>;
-    roadSnapState = { on: v.on !== false, angles: v.angles !== false, grid: v.grid !== false, zoneLength: v.zoneLength !== false };
+    roadSnapState = { on: v.on !== false, angles: v.angles !== false, grid: v.grid !== false };
   }
 } catch {
   // Not kept: the defaults stand.
@@ -180,11 +178,11 @@ export function snapRoadEndpoint(
   doc: RoadDoc, net: Network, start: Anchor, raw: Vec2, zoom: number, heightOffset: number,
 ): SnapResult {
   const snap = roadSnapState;
-  if (snap.on && (snap.angles || snap.zoneLength || snap.grid)) {
+  if (snap.on && (snap.angles || snap.grid)) {
     return snapEndpoint(doc, net, start, raw, zoom, {
       heightOffset,
       angles: snap.angles,
-      lengthStep: snap.zoneLength ? ZONE_CELL : 0,
+      lengthStep: 0,
       grid: snap.grid,
     });
   }

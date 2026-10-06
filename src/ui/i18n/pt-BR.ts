@@ -55,7 +55,7 @@ export const PT_BR: Dictionary = {
   'hint.zone.noLots': 'Zona criada; não há lotes livres e adequados junto à via',
   'hint.zone.removed': 'Zona removida',
   'hint.zone.painted': 'Zona pintada: os prédios vão crescendo nela',
-  'hint.zone.empty': 'Não há células aqui: zoneie a faixa de terreno junto a uma via',
+  'hint.zone.empty': 'Nenhum lote aqui: desenhe um lote para zonear',
   'tool.roundabout': 'Rotatória',
   'hint.roundabout': 'Clique em terreno livre para criar uma rotatória · Ligue os quatro acessos com a ferramenta de via',
   'hint.mobile.roundabout': 'Toque em terreno livre para criar uma rotatória · Ligue os quatro acessos com a ferramenta de via',

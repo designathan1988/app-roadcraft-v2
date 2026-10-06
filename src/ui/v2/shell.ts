@@ -32,7 +32,7 @@ import {
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, lotsShownWithRoads, roadWidth, setLotsShownWithRoads, setRoadWidth, setZoneColoursShown, setZoneGridShown, signChoice, strikeChoice, zoneColoursShown, zoneGridShown } from '../toolChoices';
+import { blockGridChoice, roadWidth, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -632,7 +632,6 @@ export function mountShell(deps: ShellDeps): void {
         { label: t('v2.snap.on'), on: snap.on, run: () => { setRoadSnap({ on: !snap.on }); render(); }, icon: svg('magnet', 18) },
         { label: t('v2.snap.angles'), on: snap.on && snap.angles, run: () => { setRoadSnap({ angles: !snap.angles }); render(); }, disabled: !snap.on, icon: svg('angle', 18) },
         { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('grid', 18) },
-        { label: t('v2.snap.zoneLength'), on: snap.on && snap.zoneLength, run: () => { setRoadSnap({ zoneLength: !snap.zoneLength }); render(); }, disabled: !snap.on, icon: svg('cells', 18) },
       ]));
       // Parking the new road is drawn with (`editor/roadParking.ts`).
       const parking = group(t('palette.parking'));
@@ -696,16 +695,9 @@ export function mountShell(deps: ShellDeps): void {
         stepRow(t('palette.blocks.angle'), `${t('palette.blocks.angle')}: ${Math.round((g.angle * 180) / Math.PI)}°`, (d) => { g.angle += (d * 15 * Math.PI) / 180; }),
         button('v2-choice' + (g.armed ? ' on' : ''), g.armed ? t('palette.blocks.armed') : t('palette.blocks.place'), () => { g.armed = !g.armed; render(); }),
       );
-      // The lots drawn while the road is laid (`world/lots.ts`), or not.
-      const lotsGroup = group(t('palette.lots'));
-      lotsGroup.appendChild(choices([
-        { label: t('palette.lots.show'), on: lotsShownWithRoads(), run: () => { setLotsShownWithRoads(true); render(); } },
-        { label: t('palette.lots.hide'), on: !lotsShownWithRoads(), run: () => { setLotsShownWithRoads(false); render(); } },
-      ], 2));
       titled(trace, t('palette.trace')); titled(snapping, t('v2.snap.title')); titled(parking, t('palette.parking'));
       titled(height, t('palette.height')); titled(lanes, t('palette.lanes')); titled(widthGroup, t('palette.width'));
-      titled(lotsGroup, t('palette.lots'));
-      options.append(trace, snapping, lanes, widthGroup, height, parking, lotsGroup, blocks);
+      options.append(trace, snapping, lanes, widthGroup, height, parking, blocks);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));
@@ -781,13 +773,6 @@ export function mountShell(deps: ShellDeps): void {
       return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
     })));
     options.appendChild(density);
-    // The street grid's 10 m cells: shown or hidden.
-    const gridRow = titled(group(t('zone.grid')), t('zone.grid'));
-    gridRow.appendChild(choices([
-      { label: t('zone.grid.show'), on: zoneGridShown(), run: () => { setZoneGridShown(true); render(); } },
-      { label: t('zone.grid.hide'), on: !zoneGridShown(), run: () => { setZoneGridShown(false); render(); } },
-    ], 2));
-    options.appendChild(gridRow);
     // The colours of zoned land outside this tool: shown or hidden.
     const colours = titled(group(t('zone.colours')), t('zone.colours'));
     colours.appendChild(choices([
