@@ -197,6 +197,18 @@ export interface TerrainShaper {
   shapeBounds(): readonly Aabb[];
 }
 
+/**
+ * Tiling noise stretched along v: the mean of samples stacked up the column,
+ * which smears each blob into a streak while both axes keep the one period
+ * `fbm` tiles on (a lower frequency along v alone would leave a seam).
+ */
+function streakNoise(noise: (x: number, y: number, period: number) => number, u: number, v: number, period: number): number {
+  let sum = 0;
+  for (let k = 0; k < 8; k++) sum += fbm(noise, u * period, v * period + k * 0.75, period, 2);
+  // Averaging flattens the contrast; stretched back about the middle.
+  return Math.min(1, Math.max(0, 0.5 + (sum / 8 - 0.5) * 2.2));
+}
+
 export function terrainBakes(anisotropy: number): {
   grass: SurfaceBake;
   rock: SurfaceBake;
@@ -207,28 +219,45 @@ export function terrainBakes(anisotropy: number): {
   const grass = bakeSurface(
     'terrain-grass',
     {
-      size: 512,
-      worldSize: 42,
-      // Kept quiet: the ground is the backdrop, so the fine grain is low in
-      // contrast and the green is muted, and the variation that reads is the
-      // slow one, the clumps and dry patches.
-      // Painted, not photographed: soft brush-sized patches of a warm and a
-      // cool green, and a grain kept quiet enough that it never reads as a
-      // speckle of glints.
-      relief: 0.6,
+      size: 1024,
+      worldSize: 96,
+      // Read at map zoom, where a pixel is a metre or two: the detail that
+      // shows is TUFTS a few metres across - dark clumps, sunlit olive, dry
+      // straw spots, soil showing through - as SimCity 4's ground has. A grain
+      // finer than a metre melts into the mip chain and leaves flat felt.
+      relief: 0.9,
       shade: (x, y, out) => {
-        const u = x / 512;
-        const v = y / 512;
-        const fine = fbm(grassFine, u * 170, v * 170, 170, 2);
-        const clump = fbm(grassClump, u * 11, v * 11, 11, 4);
-        // Posterised a little, so patches have edges as brush strokes do.
-        const patch = Math.round(clump * 5) / 5 * 0.55 + clump * 0.45;
-        const warm = Math.max(0, patch - 0.5) * 2;
-        const cool = Math.max(0, 0.5 - patch) * 2;
-        out.r = 0.2 + fine * 0.025 + warm * 0.09 - cool * 0.03;
-        out.g = 0.27 + fine * 0.03 + warm * 0.04 - cool * 0.015;
-        out.b = 0.13 + fine * 0.012 - warm * 0.02 + cool * 0.035;
-        out.h = fine * 0.5 + clump * 0.5;
+        const u = x / 1024;
+        const v = y / 1024;
+        // Domain-warped: value noise alone is laid on a square lattice and
+        // its blobs read as camouflage squares; bending the lookup by a
+        // second noise rounds them into tufts.
+        const wx = (fbm(grassClump, u * 24 + 11, v * 24, 24, 2) - 0.5) * 2.2;
+        const wy = (fbm(grassClump, u * 24, v * 24 + 29, 24, 2) - 0.5) * 2.2;
+        const speck = fbm(grassFine, u * 96 + wx * 2, v * 96 + wy * 2, 96, 2);
+        const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 3);
+        const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 3);
+        // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
+        const dark = [0.235, 0.295, 0.13];
+        const lit = [0.33, 0.38, 0.17];
+        const dry = [0.46, 0.44, 0.26];
+        const soil = [0.36, 0.3, 0.2];
+        const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
+        const k = t * t * (3 - 2 * t);
+        let r = dark[0]! + (lit[0]! - dark[0]!) * k;
+        let g = dark[1]! + (lit[1]! - dark[1]!) * k;
+        let b = dark[2]! + (lit[2]! - dark[2]!) * k;
+        // Dry patches over the higher, sunnier tufts of some clumps.
+        const dryW = Math.min(1, Math.max(0, (clump - 0.58) / 0.12)) * k * 0.7;
+        r += (dry[0]! - r) * dryW; g += (dry[1]! - g) * dryW; b += (dry[2]! - b) * dryW;
+        // Soil showing in the gaps between tufts.
+        const soilW = Math.min(1, Math.max(0, (speck - 0.66) / 0.08)) * (1 - k) * 0.8;
+        r += (soil[0]! - r) * soilW; g += (soil[1]! - g) * soilW; b += (soil[2]! - b) * soilW;
+        const grain = 0.94 + speck * 0.12;
+        out.r = r * grain;
+        out.g = g * grain;
+        out.b = b * grain;
+        out.h = k * 0.7 + speck * 0.3 - soilW * 0.3;
         out.rough = 0.99;
       },
     },
@@ -248,13 +277,15 @@ export function terrainBakes(anisotropy: number): {
       shade: (x, y, out) => {
         const u = x / 512;
         const v = y / 512;
-        const strata = fbm(rockCrack, u * 5, v * 12, 5, 3);
+        // Long vertical ribs and gullies, as eroded rock faces show.
+        const strata = streakNoise(rockCrack, u, v, 22);
         const grain = fbm(rockGrain, u * 110, v * 110, 110, 2);
         const facet = strata;
         const tone = 0.4 + (facet - 0.5) * 0.24 + (grain - 0.5) * 0.07;
-        out.r = tone * 1.06;
-        out.g = tone * 0.99;
-        out.b = tone * 0.9;
+        // Warm, reddish stone rather than concrete grey.
+        out.r = tone * 1.14;
+        out.g = tone * 0.98;
+        out.b = tone * 0.84;
         out.h = facet * 0.7 + grain * 0.3;
         out.rough = 0.92;
       },
@@ -274,7 +305,11 @@ export function terrainBakes(anisotropy: number): {
         const v = y / 256;
         const grain = fbm(dirtGrain, u * 90, v * 90, 90, 3);
         const patch = fbm(dirtGrain, u * 8 + 3, v * 8 + 9, 8, 3);
-        const tone = 0.33 + (grain - 0.5) * 0.1 + patch * 0.08;
+        // Gullies: narrow across, long up the face, so on a bank (read from
+        // the side) they run down the slope as rain cuts them.
+        const gully = streakNoise(dirtGrain, u, v, 48);
+        const cut = Math.max(0, 0.5 - gully) * 2;
+        const tone = 0.34 + (grain - 0.5) * 0.08 + patch * 0.07 - cut * 0.09 + Math.max(0, gully - 0.6) * 0.12;
         out.r = tone * 1.08;
         out.g = tone * 0.86;
         out.b = tone * 0.64;
@@ -406,7 +441,7 @@ function terrainMaterial(
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
-    uGrassScale: { value: 1 / 42 },
+    uGrassScale: { value: 1 / 96 },
     uRockScale: { value: 1 / 58 },
     uDirtScale: { value: 1 / 34 },
     // The close-zoom layer (see `mesh/detailLayer.ts`): blades over grass,
