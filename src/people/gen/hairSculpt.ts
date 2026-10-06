@@ -26,7 +26,7 @@ export interface HairSculptState {
   readonly cut: readonly number[];
 }
 
-export type HairBrush = 'comb' | 'hook' | 'grow' | 'shrink' | 'cut' | 'puff' | 'smooth';
+export type HairBrush = 'comb' | 'hook' | 'grow' | 'shrink' | 'cut' | 'puff' | 'smooth' | 'loosen' | 'tighten';
 
 interface Skin { readonly shape: Float32Array; readonly normals: Float32Array; readonly skin: Uint32Array }
 
@@ -48,7 +48,11 @@ export class HairSculpt {
   private readonly skinCells = new Map<number, number[]>();
   private readonly head: [number, number, number];
 
-  constructor(readonly item: string, fitted: Float32Array, index: Uint32Array, private readonly body: Skin, state?: HairSculptState | null) {
+  /**
+   * `rooted`: hair (roots on the scalp, kept within its length); a garment
+   * is not rooted - all of it moves, only kept out of the body.
+   */
+  constructor(readonly item: string, fitted: Float32Array, index: Uint32Array, private readonly body: Skin, state?: HairSculptState | null, rooted = true) {
     this.base = fitted.slice();
     this.positions = fitted.slice();
     this.fullIndex = index;
@@ -77,10 +81,11 @@ export class HairSculpt {
     this.along = new Float32Array(n).fill(Infinity);
     this.root = new Int32Array(n).fill(-1);
     const queue: number[] = [];
-    for (let v = 0; v < n; v++) {
+    for (let v = 0; v < n && rooted; v++) {
       const d = this.skinDistance(fitted[v * 3]!, fitted[v * 3 + 1]!, fitted[v * 3 + 2]!);
       if (d < 0.008 && fitted[v * 3 + 1]! > this.head[1] - 0.06) { this.along[v] = 0; this.root[v] = v; queue.push(v); }
     }
+    if (!rooted) { this.along.fill(1); for (let v = 0; v < n; v++) this.root[v] = v; }
     // Dijkstra over the mesh's edges, with a binary heap.
     const dist = this.along;
     const heap = new MinHeap();
@@ -99,7 +104,7 @@ export class HairSculpt {
       dist[v] = this.skinDistance(fitted[v * 3]!, fitted[v * 3 + 1]!, fitted[v * 3 + 2]!);
       this.root[v] = v;
     }
-    this.reach = Float32Array.from(dist, (d) => d * 1.05 + 0.002);
+    this.reach = Float32Array.from(dist, (d) => (rooted ? d * 1.05 + 0.002 : Infinity));
     if (state && state.item === item) {
       for (let i = 0; i + 3 < state.moved.length; i += 4) {
         const v = state.moved[i]!;
@@ -175,6 +180,10 @@ export class HairSculpt {
           const s = 1 + (brush === 'grow' ? 1 : -1) * 0.15 * strength * w;
           for (let c = 0; c < 3; c++) P[v * 3 + c] = P[r * 3 + c]! + (P[v * 3 + c]! - P[r * 3 + c]!) * s;
           this.reach[v] = this.reach[v]! * s;
+        } else if (brush === 'loosen' || brush === 'tighten') {
+          // A garment eased off the body or drawn in to it, along the skin's normal there.
+          const s = this.nearestSkin(P[v * 3]!, P[v * 3 + 1]!, P[v * 3 + 2]!);
+          if (s >= 0) for (let c = 0; c < 3; c++) P[v * 3 + c] = P[v * 3 + c]! + this.body.normals[s * 3 + c]! * 0.006 * strength * w * (brush === 'loosen' ? 1 : -1);
         } else if (brush === 'puff') {
           const o = [P[v * 3]! - this.head[0], P[v * 3 + 1]! - this.head[1], P[v * 3 + 2]! - this.head[2]];
           const l = Math.hypot(o[0]!, o[1]!, o[2]!) || 1;

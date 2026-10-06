@@ -440,6 +440,32 @@ export class CreatorStage {
     this.redraw();
   }
 
+  /** A mesh of a layer (by its order) under a canvas point: the hit in the body's frame, or null. */
+  layerHit(layer: string, mesh: number, x: number, y: number): [number, number, number] | null {
+    const m = this.layers.get(layer)?.[mesh];
+    if (!m) return null;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    const ray = new Raycaster();
+    ray.setFromCamera(new Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(m, false)[0];
+    if (!hit) return null;
+    const p = this.worn.worldToLocal(hit.point.clone());
+    return [p.x, p.y, p.z];
+  }
+
+  /** Redraws a layer's mesh from adjusted positions and triangles. */
+  setLayerMesh(layer: string, mesh: number, positions: Float32Array, index: Uint32Array): void {
+    const m = this.layers.get(layer)?.[mesh];
+    if (!m) return;
+    const g = m.geometry;
+    (g.getAttribute('position') as BufferAttribute).copyArray(positions);
+    g.getAttribute('position').needsUpdate = true;
+    g.setIndex(new BufferAttribute(index, 1));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    this.redraw();
+  }
+
   /** Lets the left button sculpt instead of turning the camera (the right still turns it). */
   sculptMode(on: boolean): void {
     // Sculpting: left sculpts, right turns, middle moves the view.

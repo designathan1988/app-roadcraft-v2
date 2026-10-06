@@ -4,6 +4,7 @@ import { bodyFor } from '@people/gen/clothes';
 import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
 import { HairSculpt, type HairBrush } from '@people/gen/hairSculpt';
+import type { SculptTarget } from '@ui/creator/creator';
 import { coveredBy, fitRigid, makehumanBody, parseMakeHuman, pushOut, surfaceOf, tuckUnder, type MakeHumanMeta } from '@people/gen/makehuman';
 import { randomName } from '@people/gen/names';
 import { fitProxy, loadProxyItem } from '@people/body/proxy';
@@ -124,7 +125,19 @@ let hairTicket = 0;
 let clothesTicket = 0;
 /** The hair being drawn, as a sculptable mesh. */
 let hairSculpt: HairSculpt | null = null;
-let stroke: { x: number; y: number; at: readonly number[]; brush: HairBrush; radius: number; strength: number; grab: { verts: number[]; weights: number[] } | null } | null = null;
+/** Each worn garment as an adjustable mesh, and which mesh of the clothes layer it is. */
+const garmentSculpts: Partial<Record<'top' | 'bottom' | 'shoes', { sculpt: HairSculpt; mesh: number; cut: Uint32Array }>> = {};
+let stroke: { x: number; y: number; at: readonly number[]; brush: HairBrush; radius: number; strength: number; grab: { verts: number[]; weights: number[] } | null; target: SculptTarget } | null = null;
+
+/** What a sculpting stroke works on: the hair or a worn garment, how to hit it and redraw it. */
+function sculptTarget(target: SculptTarget): { sculpt: HairSculpt; hit: (x: number, y: number) => [number, number, number] | null; draw: () => void } | null {
+  if (target === 'hair') {
+    const s = hairSculpt;
+    return s ? { sculpt: s, hit: (x, y) => stage.hairHit(x, y), draw: () => stage.setHairMesh(s.positions, s.index()) } : null;
+  }
+  const g = garmentSculpts[target];
+  return g ? { sculpt: g.sculpt, hit: (x, y) => stage.layerHit('clothes', g.mesh, x, y), draw: () => stage.setLayerMesh('clothes', g.mesh, g.sculpt.positions, g.sculpt.index()) } : null;
+}
 
 /** A triangle list without the triangles two or three of whose corners are hidden. */
 function hideFaces(index: Uint32Array, hidden: Uint8Array): Uint32Array {
@@ -247,6 +260,7 @@ function draw(p: PersonParams, live: boolean): void {
     // Clothes are MakeHuman garments fitted to this body, as hair is.
     stage.clothes([]);
     const o = p.outfit;
+    for (const k of ['top', 'bottom', 'shoes'] as const) delete garmentSculpts[k];
     const worn = [o.top, o.top?.item && isWhole(o.top.item) ? null : o.bottom, o.shoes].filter((g): g is GarmentParams => !!g?.item);
     const ticket = ++clothesTicket;
     const mhBody = (current.mh ??= makehumanBody(mh, b.base, current.shape));
@@ -313,6 +327,11 @@ function draw(p: PersonParams, live: boolean): void {
           for (let i = 1; i < m.length; i += 3) lo = Math.min(lo, m[i]!);
           lift = Math.max(lift, floor - lo);
         }
+        // What was adjusted by hand on this piece, rebuilt on this body.
+        const slot = worn[k] === o.top ? 'top' : worn[k] === o.bottom ? 'bottom' : 'shoes';
+        const adjust = new HairSculpt(item.pack.name, m, item.pack.index, bodyNow, worn[k]!.sculpt, false);
+        m.set(adjust.positions);
+        garmentSculpts[slot] = { sculpt: adjust, mesh: k, cut: adjust.index() };
         under.push(surfaceOf(m, item.pack.index, bodyNow));
         underShoe.push(shoe);
         fitted[k] = m;
@@ -335,7 +354,8 @@ function draw(p: PersonParams, live: boolean): void {
         // garment is kept (its own edge, a waistband, is what must not show);
         // the outer garment's open edge, which never hides, is the margin.
         for (let j = i + 1; j < order.length; j++) coveredBy(fitted[order[j]!]!, items[order[j]!]!.pack.index, self, flags, 0.015, 0.012);
-        keptIndex[k] = hideFaces(item.pack.index, flags);
+        const slotOf = worn[k] === o.top ? 'top' : worn[k] === o.bottom ? 'bottom' : 'shoes';
+        keptIndex[k] = hideFaces(garmentSculpts[slotOf]?.cut ?? item.pack.index, flags);
       }
       const layers = items.map((item, k) => ({ item, positions: fitted[k]!, tint: worn[k]!.dye ? worn[k]!.colour : null, index: keptIndex[k]! }));
       stage.proxies('clothes', layers);
@@ -391,39 +411,39 @@ const creator = new Creator({
   measure: (p) => resolved(p),
   focus: (f) => stage.frame(f),
   pick: (x, y) => stage.pick(x, y),
-  sculptStart: (x, y, brush, radius, strength) => {
-    if (!hairSculpt) return false;
-    const at = stage.hairHit(x, y);
+  sculptStart: (x, y, brush, radius, strength, target) => {
+    const t = sculptTarget(target);
+    if (!t) return false;
+    const at = t.hit(x, y);
     if (!at) return false;
-    stroke = { x, y, at, brush, radius, strength, grab: brush === 'comb' || brush === 'hook' ? hairSculpt.capture(at, radius) : null };
-    if (brush !== 'comb' && brush !== 'hook') {
-      hairSculpt.stroke(brush, at, radius, strength);
-      stage.setHairMesh(hairSculpt.positions, hairSculpt.index());
-    }
+    stroke = { x, y, at, brush, radius, strength, grab: brush === 'comb' || brush === 'hook' ? t.sculpt.capture(at, radius) : null, target };
+    if (brush !== 'comb' && brush !== 'hook') { t.sculpt.stroke(brush, at, radius, strength); t.draw(); }
     return true;
   },
   sculptMove: (x, y) => {
-    if (!stroke || !hairSculpt) return;
-    const s = stroke;
-    if (s.brush === 'comb' || s.brush === 'hook') {
-      // The hair under the brush follows the pointer, on the plane facing the camera.
+    if (!stroke) return;
+    const s = stroke, t = sculptTarget(s.target);
+    if (!t) return;
+    if (s.grab) {
+      // What is under the brush follows the pointer, on the plane facing the camera.
       const drag = stage.dragInBody(s.x, s.y, x, y, s.at);
-      hairSculpt.carry(s.grab!, drag, s.strength, s.brush === 'hook');
+      t.sculpt.carry(s.grab, drag, s.strength, s.brush === 'hook');
       s.at = [s.at[0]! + drag[0], s.at[1]! + drag[1], s.at[2]! + drag[2]];
     } else {
-      const at = stage.hairHit(x, y);
-      if (at) { hairSculpt.stroke(s.brush, at, s.radius, s.strength); s.at = at; }
+      const at = t.hit(x, y);
+      if (at) { t.sculpt.stroke(s.brush, at, s.radius, s.strength); s.at = at; }
     }
     s.x = x; s.y = y;
-    stage.setHairMesh(hairSculpt.positions, hairSculpt.index());
+    t.draw();
   },
   sculptEnd: () => {
+    const t = stroke ? sculptTarget(stroke.target) : null;
     stroke = null;
-    return hairSculpt ? hairSculpt.state() : null;
+    return t ? t.sculpt.state() : null;
   },
   sculptMode: (on) => stage.sculptMode(on),
-  brushPixels: (x, y, radius) => {
-    const at = stage.hairHit(x, y);
+  brushPixels: (x, y, radius, target) => {
+    const at = sculptTarget(target)?.hit(x, y);
     return at ? stage.pixelsFor(radius, at) : null;
   },
   portrait: () => stage.portrait(),

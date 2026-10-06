@@ -44,6 +44,8 @@ export interface GarmentParams {
   readonly item?: string;
   /** Recolour the item with `colour` (its texture's lightness kept); its own colours when false. */
   readonly dye?: boolean;
+  /** What was adjusted on the item by hand (`hairSculpt.ts`, the same brushes), kept with the person. */
+  readonly sculpt?: import('./hairSculpt').HairSculptState | null;
 }
 
 export interface Outfit {

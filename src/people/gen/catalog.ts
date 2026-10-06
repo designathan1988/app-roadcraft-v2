@@ -96,7 +96,7 @@ export const CATALOG: readonly CatalogCategory[] = [
   { id: 'skin', label: 'hgen.cat.skin', icon: 'palette', pages: [page('skin', 'head')] },
   { id: 'makeup', label: 'hgen.cat.makeup', icon: 'lips', pages: [page('makeup', 'mouth')] },
   { id: 'accessories', label: 'hgen.cat.accessories', icon: 'glasses', pages: [page('accessories', 'head')] },
-  { id: 'outfit', label: 'hgen.cat.outfit', icon: 'shirt', pages: [page('top', 'torso'), page('bottom', 'legs'), page('shoes', 'legs')] },
+  { id: 'outfit', label: 'hgen.cat.outfit', icon: 'shirt', pages: [page('top', 'torso'), page('bottom', 'legs'), page('shoes', 'legs'), page('clothesSculpt', 'body')] },
   { id: 'expression', label: 'hgen.cat.expression', icon: 'smile', pages: [page('expression', 'head')] },
 ];
 

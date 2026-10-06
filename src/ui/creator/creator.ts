@@ -24,6 +24,9 @@ import { deleteSaved, exportPerson, importPerson, loadSaved, savePerson } from '
  * The page knows nothing of three.js: the host draws (`CreatorHost`).
  */
 
+/** What the sculpting brushes work on. */
+export type SculptTarget = 'hair' | 'top' | 'bottom' | 'shoes';
+
 export interface CreatorHost {
   readonly base: HumanBase;
   /** A whole new random person. */
@@ -40,14 +43,14 @@ export interface CreatorHost {
   pick(x: number, y: number): Focus | null;
   portrait(): string;
   /** Hair sculpting: starts a stroke at a canvas point on the hair (false when the point is not on it). */
-  sculptStart(x: number, y: number, brush: HairBrush, radius: number, strength: number): boolean;
+  sculptStart(x: number, y: number, brush: HairBrush, radius: number, strength: number, target: SculptTarget): boolean;
   sculptMove(x: number, y: number): void;
   /** Ends the stroke: what the hair now holds, to save with the person. */
   sculptEnd(): HairSculptState | null;
   /** The left button sculpts (true) or turns the camera. */
   sculptMode(on: boolean): void;
   /** On-screen radius (px) of a brush of `radius` metres over the hair at a canvas point, or null off the hair. */
-  brushPixels(x: number, y: number, radius: number): number | null;
+  brushPixels(x: number, y: number, radius: number, target: SculptTarget): number | null;
 }
 
 const FOCUS_PAGE: Readonly<Record<Focus, [string, string]>> = {
@@ -117,13 +120,13 @@ export class Creator {
     ring.className = 'cr-brush';
     canvas.parentElement?.append(ring);
     const showRing = (x: number, y: number): void => {
-      const px = this.page.id === 'hairSculpt' ? host.brushPixels(x, y, this.brush.radius) : null;
+      const px = this.sculptPage() ? host.brushPixels(x, y, this.brush.radius, this.sculptTarget()) : null;
       ring.style.display = px ? 'block' : 'none';
       if (px) Object.assign(ring.style, { left: `${canvas.offsetLeft + x - px}px`, top: `${canvas.offsetTop + y - px}px`, width: `${px * 2}px`, height: `${px * 2}px` });
     };
     canvas.addEventListener('pointerdown', (e) => {
       down = [e.offsetX, e.offsetY];
-      if (this.page.id === 'hairSculpt' && e.button === 0 && host.sculptStart(e.offsetX, e.offsetY, this.brush.kind, this.brush.radius, this.brush.strength)) {
+      if (this.sculptPage() && e.button === 0 && host.sculptStart(e.offsetX, e.offsetY, this.brush.kind, this.brush.radius, this.brush.strength, this.sculptTarget())) {
         sculpting = true;
         canvas.setPointerCapture(e.pointerId);
       }
@@ -137,11 +140,13 @@ export class Creator {
       if (sculpting) {
         sculpting = false;
         const state = host.sculptEnd();
-        if (state) this.commit({ ...this.person, hair: { ...this.person.hair, sculpt: state } });
+        const target = this.sculptTarget();
+        if (state && target === 'hair') this.commit({ ...this.person, hair: { ...this.person.hair, sculpt: state } });
+        else if (state && this.person.outfit[target as GarmentSlot]) this.commit({ ...this.person, outfit: { ...this.person.outfit, [target]: { ...this.person.outfit[target as GarmentSlot]!, sculpt: state } } });
         return;
       }
       if (!down || Math.hypot(e.offsetX - down[0], e.offsetY - down[1]) > 4) return;
-      if (this.page.id === 'hairSculpt') return;
+      if (this.sculptPage()) return;
       const f = host.pick(e.offsetX, e.offsetY);
       if (f) { const [c, pg] = FOCUS_PAGE[f]; this.open(c, pg); }
     });
@@ -271,7 +276,7 @@ export class Creator {
       ? c.pages.map((p) => `<button class="cr-tab${p === this.page ? ' on' : ''}" data-page="${p.id}">${t(p.label)}</button>`).join('') : '';
     this.el['title']!.textContent = t(c.label);
     this.host.focus(this.page.focus);
-    this.host.sculptMode(this.page.id === 'hairSculpt');
+    this.host.sculptMode(this.sculptPage());
     this.renderPage();
   }
 
@@ -289,6 +294,7 @@ export class Creator {
       case 'hairStyle': this.hairStyle(body); break;
       case 'hairColour': this.hairColour(body); break;
       case 'hairSculpt': this.hairSculpt(body); break;
+      case 'clothesSculpt': this.clothesSculpt(body); break;
       case 'hairShape': this.hairShape(body); break;
       case 'browHair': this.browHair(body); break;
       case 'eyeColour': this.eyeColour(body); break;
@@ -482,21 +488,54 @@ export class Creator {
   /** The sculpting brush: which, how big (metres), how strong. */
   private brush: { kind: HairBrush; radius: number; strength: number } = { kind: 'comb', radius: 0.07, strength: 0.6 };
 
-  private hairSculpt(host: HTMLElement): void {
+  /** On a sculpting page the left button sculpts. */
+  private sculptPage(): boolean { return this.page.id === 'hairSculpt' || this.page.id === 'clothesSculpt'; }
+  /** The garment the clothes brushes work on. */
+  private garmentTarget: GarmentSlot = 'top';
+  private sculptTarget(): SculptTarget { return this.page.id === 'hairSculpt' ? 'hair' : this.garmentTarget; }
+
+  /** The same brushes for a worn garment: pull it, ease it off the body or draw it in, cut it, smooth it. */
+  private clothesSculpt(host: HTMLElement): void {
     const note = document.createElement('p');
     note.className = 'cr-note';
-    note.textContent = t(this.person.hair.style === 'none' ? 'hgen.sculpt.noHair' : 'hgen.sculpt.how');
+    note.textContent = t('hgen.adjust.how');
     host.append(note);
-    if (this.person.hair.style === 'none') return;
+    this.heading(host, 'hgen.adjust.piece');
+    const slots = (['top', 'bottom', 'shoes'] as const).filter((s) => this.person.outfit[s]?.item);
+    if (!slots.length) { const n = document.createElement('p'); n.className = 'cr-note'; n.textContent = t('hgen.adjust.none'); host.append(n); return; }
+    if (!slots.includes(this.garmentTarget as 'top')) this.garmentTarget = slots[0]!;
+    const pieces = document.createElement('div');
+    pieces.className = 'cr-chips';
+    for (const s of slots) {
+      const b = document.createElement('button');
+      b.className = `cr-chip${this.garmentTarget === s ? ' on' : ''}`;
+      b.textContent = t(`hgen.page.${s}`);
+      b.addEventListener('click', () => { this.garmentTarget = s; pieces.querySelectorAll('.cr-chip').forEach((c) => c.classList.toggle('on', c === b)); });
+      pieces.append(b);
+    }
+    host.append(pieces);
+    this.brushControls(host, ['comb', 'hook', 'loosen', 'tighten', 'cut', 'smooth'], 'hgen.adjust');
+    const reset = document.createElement('button');
+    reset.className = 'cr-chip';
+    reset.textContent = t('hgen.adjust.reset');
+    reset.addEventListener('click', () => {
+      const g = this.person.outfit[this.garmentTarget];
+      if (g) this.commit({ ...this.person, outfit: { ...this.person.outfit, [this.garmentTarget]: { ...g, sculpt: null } } });
+    });
+    host.append(reset);
+  }
+
+  /** Brush buttons, size and strength. */
+  private brushControls(host: HTMLElement, kinds: readonly HairBrush[], keys: string): void {
+    if (!kinds.includes(this.brush.kind)) this.brush = { ...this.brush, kind: kinds[0]! };
     this.heading(host, 'hgen.sculpt.brush');
     const row = document.createElement('div');
     row.className = 'cr-chips';
-    const kinds: HairBrush[] = ['comb', 'hook', 'grow', 'shrink', 'cut', 'puff', 'smooth'];
     for (const k of kinds) {
       const b = document.createElement('button');
       b.className = `cr-chip${this.brush.kind === k ? ' on' : ''}`;
-      b.textContent = t(`hgen.sculpt.${k}`);
-      b.title = t(`hgen.sculpt.${k}.tip`);
+      b.textContent = t(`${keys}.${k}`);
+      b.title = t(`${keys}.${k}.tip`);
       b.addEventListener('click', () => { this.brush = { ...this.brush, kind: k }; row.querySelectorAll('.cr-chip').forEach((c) => c.classList.toggle('on', c === b)); });
       row.append(b);
     }
@@ -514,8 +553,17 @@ export class Creator {
       r.append(name, input, out);
       host.append(r);
     };
-    slider(t('hgen.sculpt.size'), 0.01, 0.15, () => this.brush.radius, (v) => { this.brush = { ...this.brush, radius: v }; }, (v) => `${Math.round(v * 100)} cm`);
+    slider(t('hgen.sculpt.size'), 0.01, 0.2, () => this.brush.radius, (v) => { this.brush = { ...this.brush, radius: v }; }, (v) => `${Math.round(v * 100)} cm`);
     slider(t('hgen.sculpt.strength'), 0.05, 1, () => this.brush.strength, (v) => { this.brush = { ...this.brush, strength: v }; }, (v) => `${Math.round(v * 100)}%`);
+  }
+
+  private hairSculpt(host: HTMLElement): void {
+    const note = document.createElement('p');
+    note.className = 'cr-note';
+    note.textContent = t(this.person.hair.style === 'none' ? 'hgen.sculpt.noHair' : 'hgen.sculpt.how');
+    host.append(note);
+    if (this.person.hair.style === 'none') return;
+    this.brushControls(host, ['comb', 'hook', 'grow', 'shrink', 'cut', 'puff', 'smooth'], 'hgen.sculpt');
     const reset = document.createElement('button');
     reset.className = 'cr-chip';
     reset.textContent = t('hgen.sculpt.reset');
