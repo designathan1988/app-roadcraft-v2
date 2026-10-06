@@ -5396,12 +5396,12 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
   const colourOf = (css: string): number => parseInt(String(css).replace('#', '').slice(0, 6), 16) || 0x777777;
   // Who was in them or on them: thrown out dead, torn, burnt black near the blast.
   const aboard: Occupant[] = [];
-  const throwAboard = (id: number, x: number, y: number, angle: number, rider: boolean): void => {
+  const throwAboard = (id: number, x: number, y: number, angle: number, rider: boolean, index: number | null = null): void => {
     const d = Math.hypot(x - world.x, y - world.y);
     const close = d < radius * 0.6;
     aboard.push({ id: 8_000_000 + id, x, y, z: sceneHeightAt({ x, y }) + m(rider ? 1.0 : 0.6), heading: angle,
       blastX: world.x, blastY: world.y, power: Math.max(0.3, 1 - d / (radius * 1.1)),
-      kind: close && Math.random() < 0.5 ? 'torn' : 'dead', charred: !rider || close });
+      kind: close && Math.random() < 0.5 ? 'torn' : 'dead', charred: !rider || close, index });
   };
   for (const c of sim.city.cars?.wreck(sim, world, radius * 1.1) ?? []) {
     hit.vehicles.push({ x: c.x, y: c.y, angle: c.angle, length: c.length, width: c.width, height: c.height, color: colourOf(c.colour),
