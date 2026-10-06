@@ -28,7 +28,6 @@ import {
 import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
-import { MAP_HALF } from '@world/bounds';
 import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
@@ -4006,45 +4005,6 @@ function drawPolePlan(
   }
 }
 
-/** The grid lines in view, each a polyline on the ground (`roadGridShown`). */
-function drawRoadGrid(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  const corners = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => view.toWorldAt(x!, y!, 0, w, h));
-  // Only over the map: the lines stop at its edge.
-  const minX = Math.max(-MAP_HALF, Math.min(...corners.map((p) => p.x))), maxX = Math.min(MAP_HALF, Math.max(...corners.map((p) => p.x)));
-  const minY = Math.max(-MAP_HALF, Math.min(...corners.map((p) => p.y))), maxY = Math.min(MAP_HALF, Math.max(...corners.map((p) => p.y)));
-  if (minX >= maxX || minY >= maxY) return;
-  // Too far out for the cells to read: none drawn.
-  if ((maxX - minX) / GRID_CELL > 240 || (maxY - minY) / GRID_CELL > 240) return;
-  const origin = view.toScreen({ x: 0, y: 0 }, w, h, 0), unit = view.toScreen({ x: GRID_STEP, y: 0 }, w, h, 0);
-  const fine = Math.hypot(unit.x - origin.x, unit.y - origin.y) > 7;
-  const step = fine ? GRID_STEP : GRID_CELL;
-  const line = (ax: number, ay: number, bx: number, by: number): void => {
-    // Sampled every cell, at the ground's height, so the line lies on hills.
-    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / GRID_CELL));
-    for (let k = 0; k <= n; k++) {
-      const p = { x: ax + (bx - ax) * k / n, y: ay + (by - ay) * k / n };
-      const q = view.toScreen(p, w, h, sceneHeightAt(p));
-      if (k === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
-    }
-  };
-  ctx.save();
-  ctx.lineWidth = 1;
-  for (const major of fine ? [false, true] : [true]) {
-    ctx.beginPath();
-    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
-      const isMajor = Math.abs(x / GRID_CELL - Math.round(x / GRID_CELL)) < 1e-6;
-      if (isMajor === major) line(x, minY, x, maxY);
-    }
-    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
-      const isMajor = Math.abs(y / GRID_CELL - Math.round(y / GRID_CELL)) < 1e-6;
-      if (isMajor === major) line(minX, y, maxX, y);
-    }
-    ctx.strokeStyle = major ? 'rgba(255, 255, 255, 0.38)' : 'rgba(255, 255, 255, 0.12)';
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
 function drawOverlayScreen(): void {
   const w = overlayCanvas.clientWidth;
   const h = overlayCanvas.clientHeight;
@@ -4100,7 +4060,8 @@ function drawOverlayScreen(): void {
   drawPolePlan(framePolePlan, ctx, at);
   // The universal grid (`world/grid.ts`) on the ground while roads are built:
   // 10 m cells, and their 1 m subdivisions close up - what the grid snap lands on.
-  if (roadGridShown()) drawRoadGrid(ctx, w, h);
+  // The grid is drawn in the scene, on the ground, over the whole map (`SceneHandle.setGrid`).
+  scene.setGrid(roadGridShown());
   if (tool === 'road' && blockGridChoice.armed && hoverAnchor) {
     // The grid the next click lays, on the ground.
     for (const [a, b] of blockGridLines(hoverAnchor.at, blockGridChoice)) {

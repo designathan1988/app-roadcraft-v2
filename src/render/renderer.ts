@@ -1,3 +1,5 @@
+import { GRID_CELL } from '@world/grid';
+import { MAP_HALF } from '@world/bounds';
 import type { Severable } from '@sim/people/view';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
@@ -8,6 +10,7 @@ import {
   BufferGeometry,
   Line,
   LineBasicMaterial,
+  LineSegments,
   Float32BufferAttribute,
   Color,
   Quaternion,
@@ -272,6 +275,8 @@ export interface SceneHandle {
   wound(x: number, y: number, z: number, dirX: number, dirY: number, severed: Severable | null): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
+  /** The universal grid (`world/grid.ts`) drawn over the whole map, on the ground, or not. */
+  setGrid(on: boolean): void;
   /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
   naturalTerrainHeightAt(x: number, y: number): number;
   /**
@@ -398,7 +403,18 @@ export function createSceneRenderer(
   const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
+  /** The grid on the ground (`setGrid`): one set of lines for the whole map. */
+  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, depthWrite: false }));
+  grid.name = 'map-grid';
+  grid.frustumCulled = false;
+  grid.visible = false;
+  grid.renderOrder = 5;
+  let gridWanted = false;
+  let gridBuiltFor = '';
+  /** Behind the map while building it (`draw`): a plain dark blue. */
+  const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
+  scene.add(grid);
   // The root never moves. Keep its identity matrix from forcing every static
   // world child to recompute a world matrix on every render pass.
   scene.matrixAutoUpdate = false;
@@ -1392,6 +1408,30 @@ export function createSceneRenderer(
     holdBuildings(on) {
       buildingsHeld = on;
     },
+    setGrid(on) {
+      gridWanted = on;
+      if (on && gridBuiltFor !== `${terrainRevision}`) {
+        // The cells' lines over the whole map, sampled every cell on the
+        // ground as drawn: built again only when the land changes.
+        gridBuiltFor = `${terrainRevision}`;
+        const pos: number[] = [];
+        const lift = m(0.12);
+        const n = Math.round((2 * MAP_HALF) / GRID_CELL);
+        for (let i = 0; i <= n; i++) {
+          const c = -MAP_HALF + i * GRID_CELL;
+          for (let k = 0; k < n; k++) {
+            const a = -MAP_HALF + k * GRID_CELL, b = a + GRID_CELL;
+            pos.push(c, terrain.renderedHeightAt(c, a) + lift, -a, c, terrain.renderedHeightAt(c, b) + lift, -b);
+            pos.push(a, terrain.renderedHeightAt(a, c) + lift, -c, b, terrain.renderedHeightAt(b, c) + lift, -c);
+          }
+        }
+        grid.geometry.dispose();
+        grid.geometry = new BufferGeometry();
+        grid.geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
+      }
+      grid.visible = on;
+      onAssetsReady();
+    },
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
       exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 70 : 34, 4, m(severed ? 0.35 : 0.2), m(0.05), 0.9);
@@ -1708,6 +1748,7 @@ export function createSceneRenderer(
       const terrainStarted = performance.now();
       const stroking = !!options?.holdRoads && !!elevation && networkRevision === net.revision;
       const groundMoved = terrain.update(net.doc, stroking);
+      if (groundMoved && gridWanted) gridBuiltFor = '';
       terrain.updatePaint(net.doc);
       // A brush stroke in progress: every dab used to re-solve the whole road
       // network and re-mesh every road, tree and tuft of grass near it - 450 ms
@@ -1867,6 +1908,15 @@ export function createSceneRenderer(
       forest?.setMap(plantMap);
       for (const mesh of forest?.meshes ?? []) mesh.visible = !plantMap || !mesh.name.endsWith('-leaves');
       forest?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM || rig.chasing);
+      // Building the city, the map stands on a plain dark blue: no sky and no
+      // land past its edge; in play, the sky and the land round it (the player,
+      // 2026-10-06).
+      {
+        const sky = scene.getObjectByName('sky');
+        if (sky) sky.visible = rig.chasing;
+        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing;
+        scene.background = rig.chasing ? null : MAP_BACKGROUND;
+      }
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
         scenery.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
