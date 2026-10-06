@@ -316,6 +316,29 @@ and they have seen it.
   the edit) still stall a frame; a road joined to the network can move the
   grade of every street, which re-meshes the whole town once.
 
+### Actions: pistol and bomb (2026-10-06, LIVE)
+- Actions dock button: Pistola and Bomba, used from the map view (no play mode).
+- Shot people (`sim/agents/walk.ts` `shot`, `render/ragdoll.ts`): damage by
+  part; a limb or the head comes off as the person's own piece (a twin of their
+  procedural body, `proceduralCrowd.twin`), sometimes with the bone showing;
+  wounds soak blood through clothes and skin (`procWounds`); the fall is a
+  physical animation (staggers, knees give, hand to the wound, then limp), the
+  body held by the simulation until it is up (`getUp` gives the moment), up
+  where it lay with the get-up clip; a leg gone: crawling and bleeding out; pain
+  and dead faces. Bodies on the ground take more shots (`shootBody`): holes,
+  limbs off, guts out after several belly hits, a heap of meat at the end.
+- Bystanders: shocking events (blast, shot, bodies) frighten whoever comes near;
+  they sprint, crouch or film (`photo` clip); only a blast trips or faints people.
+- Bomb: torn bodies charred and dismembered, guts and organs spilled
+  (`render/gore.ts`); charred bodies curl; each car, motorcycle and bicycle
+  becomes the burnt shell of its own model (`AgentMeshes.carcass`), its riders
+  and drivers thrown as themselves.
+- Vehicles shot: riders killed and thrown, the machine falls over; a driver shot
+  through the glass, the car stops (`strandVehicle`); a dozen hits on a car
+  blow it up.
+- Bodies collide with buildings, lot walls, poles, trees, street furniture,
+  drawn barriers and cars (`ragdollWorld.wallsNear`).
+
 ## Open, by area
 
 - **Human generator (`human-generator.html`, the player's request of 2026-10-06):**
