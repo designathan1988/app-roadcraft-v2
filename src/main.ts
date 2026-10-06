@@ -3103,11 +3103,15 @@ function setPerspective(on: boolean): void {
   try { localStorage.setItem(PERSPECTIVE_KEY, on ? '1' : '0'); } catch { /* not kept */ }
   requestDraw();
 }
-{
+// At boot, once the whole file has run: switching the camera asks for a
+// frame, and the frame loop is set up further down.
+queueMicrotask(() => {
   let kept: string | null = null;
   try { kept = localStorage.getItem(PERSPECTIVE_KEY); } catch { /* storage blocked: the default */ }
-  setPerspective(kept !== '0');
-}
+  perspective = kept !== '0';
+  scene.setPerspective(perspective);
+  document.getElementById('perspectiveToggle')?.setAttribute('aria-pressed', String(perspective));
+});
 
 // The camera's own buttons: a step per press, and the needle keeps north.
 const cameraNeedle = document.querySelector<SVGElement>('#cameraControls .camera-needle');
