@@ -529,7 +529,12 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(1.6), 20);
         return;
       }
-      if (c.kind !== 'knocked') { known.survivor = undefined; known.torn = false; bleed(c.x, c.y, groundHere, m(0.8), 0); }
+      if (c.kind !== 'knocked') {
+        // Killed where the body lies, not where they first fell from.
+        known.survivor = undefined; known.torn = false;
+        const at = known.p[PEL]!;
+        bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(0.8), 4);
+      }
       else if (known.survivor) {
         const alive = known.survivor;
         alive.phase = 'fall'; alive.t = 0; delete alive.from;
