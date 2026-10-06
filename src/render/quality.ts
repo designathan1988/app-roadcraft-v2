@@ -28,6 +28,8 @@ export interface QualitySettings {
   readonly grass: number;
   /** Blades in the GPU grass field round the camera (`grass.ts`); 0 draws none. */
   readonly grassBlades: number;
+  /** Shafts of sunlight past hills, trees and roofs (`postprocess.ts`). */
+  readonly lightShafts: boolean;
   /** The close-zoom texture detail layer (`mesh/detailLayer.ts`). */
   readonly surfaceDetail: boolean;
   /** Zoom below which markings, props and agents stop being drawn. */
@@ -55,6 +57,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     vegetation: 0,
     grass: 0,
     grassBlades: 0,
+    lightShafts: false,
     surfaceDetail: false,
     detailCutoffZoom: 0.5,
     pedestrianDetail: 0,
@@ -72,6 +75,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     vegetation: 600,
     grass: 600,
     grassBlades: 30_000,
+    lightShafts: false,
     surfaceDetail: true,
     detailCutoffZoom: 0.34,
     pedestrianDetail: 1,
@@ -89,6 +93,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     vegetation: 1_400,
     grass: 1_400,
     grassBlades: 60_000,
+    lightShafts: true,
     surfaceDetail: true,
     detailCutoffZoom: 0.26,
     pedestrianDetail: 2,
@@ -106,6 +111,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     vegetation: 2_600,
     grass: 2_600,
     grassBlades: 90_000,
+    lightShafts: true,
     surfaceDetail: true,
     detailCutoffZoom: 0.2,
     pedestrianDetail: 2,
