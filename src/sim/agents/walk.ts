@@ -278,7 +278,7 @@ function woundOf(p: Walker): { part: BodyPart; grave: boolean } | null {
   return { part: p.lastHit.part, grave: (p.hp ?? 100) < 50 || (p.lost?.length ?? 0) > 0 };
 }
 /** A wounded walker's fastest pace, as a share of their own: a hurried, hurting walk, never a sprint. */
-const WOUNDED_PACE = { light: 0.95, grave: 0.6 } as const;
+const WOUNDED_PACE = { light: 0.75, grave: 0.5 } as const;
 /** Fleeing hurt, against their own pace: as fast as the wound lets them. */
 const WOUNDED_RUSH = { light: 1.15, grave: 0.75 } as const;
 

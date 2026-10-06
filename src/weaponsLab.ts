@@ -1,7 +1,7 @@
 import type { SceneHandle } from '@render/renderer';
 import type { RagdollProbe } from '@render/ragdoll';
 import { removeWalker, traceWalkers, walkerAct, walkerState, type WalkTrace } from '@sim/agents/walk';
-import type { BodyPart } from '@sim/people/view';
+import type { BodyPart, PersonAgeClass } from '@sim/people/view';
 import { archetypeById } from '@sim/vehicles/archetypes';
 import { makeDriver } from '@sim/vehicles/driver';
 import { createVehicle, type VehicleId } from '@sim/vehicles/state';
@@ -122,7 +122,8 @@ interface Frame {
 
 export interface WeaponsLab {
   /** A new person at a spot (`SPOTS` key), standing still, facing the spot's way; the last one taken off. */
-  spawn(spot?: string, person?: number): number;
+  /** `age`: child, adult or elder (the body and its proportions differ). */
+  spawn(spot?: string, person?: number, age?: PersonAgeClass): number;
   shoot(part: BodyPart, side?: Side): unknown;
   /** A shot at the body on the ground (the person's, or the last one), at a part. */
   shootBody(part: BodyPart, side?: Side): unknown;
@@ -179,12 +180,13 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
     sim.ambient.parked.push(car);
   };
 
-  const spawnWalker = (at: Spot, who: number, offset = 0): number | null => {
+  let age: PersonAgeClass = 'adult';
+  const spawnWalker = (at: Spot, who: number, offset = 0, ageClass: PersonAgeClass = 'adult'): number | null => {
     const ox = Math.cos(at.facing + Math.PI / 2) * offset, oy = Math.sin(at.facing + Math.PI / 2) * offset;
     const x = at.x + ox, y = at.y + oy;
     const walker = sim.pedEngine.walkTrip?.(sim, {
       trip: who, fromX: x, fromY: y, toX: x + Math.cos(at.facing) * M(0.4), toY: y + Math.sin(at.facing) * M(0.4),
-      seed: who, ageClass: 'adult', person: who, reach: M(40),
+      seed: who, ageClass, person: who, reach: M(40),
     }) ?? null;
     if (walker === null) return null;
     // Standing still, facing their way, until something happens to them.
@@ -194,7 +196,8 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
 
   const lab: WeaponsLab = {
     spots: SPOTS.map((s) => s.key),
-    spawn(key, who) {
+    spawn(key, who, ageClass) {
+      if (ageClass) age = ageClass;
       parkCar();
       if (key) spot = SPOTS.find((s) => s.key === key) ?? spot;
       if (id !== null) removeWalker(sim, id);
@@ -203,7 +206,7 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       const lying = host.scene().ragdollProbe().filter((b) => !b.piece).map((b) => b.points[0]!);
       let offset = 0;
       while (offset < M(8) && lying.some((q) => Math.hypot(q[0] - (spot.x + Math.cos(spot.facing + Math.PI / 2) * offset), q[1] - (spot.y + Math.sin(spot.facing + Math.PI / 2) * offset)) < M(1.6))) offset += M(1.2);
-      id = spawnWalker(spot, personId, offset);
+      id = spawnWalker(spot, personId, offset, age);
       goneSince = null;
       events.length = 0;
       lastClip = '';
@@ -439,6 +442,8 @@ function panel(lab: WeaponsLab, set: { follow: (on: boolean) => void; zoom: (z: 
   where.appendChild(select);
   button(t('lab.newPerson'), () => lab.spawn(undefined, 900_001 + Math.floor(Math.random() * 5000)), where);
   button(t('lab.clear'), () => lab.clear(), where);
+  const ages = section(t('lab.age'));
+  for (const a of ['child', 'adult', 'elder'] as const) button(t(`lab.age.${a}`), () => lab.spawn(undefined, 900_001 + Math.floor(Math.random() * 5000), a), ages);
 
   const from = section(t('lab.from'));
   const sides: Side[] = ['front', 'back', 'left', 'right', 'obstacle'];

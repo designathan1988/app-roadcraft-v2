@@ -902,14 +902,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     // of each speed kept, so a pace near one does not flick between clips.
     // Panicking stood still is standing (about to run), not a squat: a squat
     // there popped in for a frame or two whenever someone got up or stopped.
-    // Down (`fall`) and held by a ragdoll: the body is drawn from it, and the
-    // clip waits standing for when they are up; only a fall nobody saw (no
-    // body to throw) is drawn as a crouch.
-    // (The person is hidden while their body is down - `hiddenPed` - so this
-    // runs in the frame they fall, before the ragdoll has them: a crouch set
-    // here showed for a frame when they were let go.)
+    // Down (`fall`): the body is drawn by the ragdoll, and the clip waits
+    // standing, no posture over it, for when they are up. (The person is
+    // hidden while their body is down - `hiddenPed` - so this runs in the
+    // frame they fall: a crouch set here showed for a frame when they were
+    // let go.)
     if (activity === 'fall') {
       if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
+      procedural!.ragdoll.posture(person, null);
       return;
     }
     const was = person.clip;
