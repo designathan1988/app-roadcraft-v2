@@ -194,6 +194,15 @@ interface Survivor {
   clip: number;
   /** Whether the get-up clip is baked. */
   ready?: boolean;
+  /**
+   * Getting up from lying (`rise`): the body moved through key poses from
+   * where it lies - rolled onto its front if it lay face up, pushed up onto
+   * hands and knees, drawn back into the crouch the get-up clip starts from -
+   * before the clip (`pre` seconds of it, then `blend` into the clip).
+   */
+  keys?: { stages: { from: Vector3[]; to: Vector3[]; start: number; end: number; roll?: { axis: Vector3; at: Vector3; lift: number } }[] };
+  pre?: number;
+  blend?: number;
 }
 
 interface Body {
@@ -219,6 +228,8 @@ interface Body {
   readonly inverses: Matrix4[];
   /** Each bone's bind matrix (the inverse of its inverse). */
   readonly binds: Matrix4[];
+  /** Each particle's bone (-1: none of its own), for poses read off the skeleton (`particlesOf`). */
+  readonly jointBone: number[];
   /** local * bind^-1 and its inverse: between the drawn instance's space and a bone's matrix. */
   readonly rebind: Matrix4;
   readonly unbind: Matrix4;
@@ -473,6 +484,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const living = fate === 'knocked' || fate === 'trip';
     const body: Body = {
       index: pose.index, scale, p, o: p.map((v) => v.clone()), inv, radius, ground: p.map(() => -Infinity), sticks,
+      jointBone: JOINTS.map((n) => (n ? sk.names.indexOf(n) : -1)),
       bonePart, parents: sk.parents, pos0, rot0, scl0,
       origin0: {} as Record<PartName, Vector3>, frame0: {} as Record<PartName, Matrix4>,
       normals: { larm: side0.clone(), rarm: side0.clone(), lleg: side0.clone(), rleg: side0.clone() },
@@ -829,7 +841,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       // too (it may be paused, or running faster than the clock).
       for (let i = bodies.length - 1; i >= 0; i--) {
         const alive = bodies[i]!.survivor;
-        if (alive?.phase === 'rise' && alive.t >= RISE_BLEND + alive.clip && !down(alive.id)) remove(i);
+        if (alive?.phase === 'rise' && alive.t >= (alive.pre ?? 0) + (alive.blend ?? RISE_BLEND) + alive.clip && !down(alive.id)) remove(i);
       }
     },
     drip(x, y, z, size) { bleed(x, y, z, size, 0); },
@@ -961,7 +973,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
           alive.t += wall;
           if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = !alive.crawl; }
           else if (alive.phase === 'lie' && alive.crawl) crawlOn(body, alive.crawl, wall, world);
-          else if (alive.phase === 'rise' && alive.t > RISE_BLEND + alive.clip + 3) { remove(i); continue; }
+          else if (alive.phase === 'rise' && alive.t > (alive.pre ?? 0) + (alive.blend ?? RISE_BLEND) + alive.clip + 3) { remove(i); continue; }
           continue;
         }
         if (body.age > LIE + SINK) { remove(i); continue; }
@@ -988,7 +1000,15 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         // The get-up clip asked for while they fall, so it is baked by the time they get up.
         if (alive && alive.phase !== 'rise' && !alive.ready) alive.ready = citizens.clipPose(body.index, RISE_KEY, 0) !== null;
         if (alive && alive.phase === 'lie' && alive.t >= alive.lie && (alive.ready || alive.t > alive.lie + 3)) rise(body, alive, citizens, world);
-        if (alive?.phase === 'rise' && alive.from && alive.root) {
+        if (alive?.phase === 'rise' && alive.keys && alive.t < (alive.pre ?? 0)) {
+          keyPose(body, alive, world);
+          body.palettes = palettes(body, bonesWorld(body));
+        } else if (alive?.phase === 'rise' && alive.keys && !alive.from) {
+          // Into the crouch: the clip takes over from the pose reached.
+          keyPose(body, alive, world);
+          alive.from = bonesWorld(body);
+          body.palettes = [risePalette(body, alive, citizens)];
+        } else if (alive?.phase === 'rise' && alive.from && alive.root) {
           body.palettes = [risePalette(body, alive, citizens)];
         } else if (!body.asleep || !body.palettes.length || body.age > LIE) {
           body.palettes = palettes(body, bonesWorld(body));
@@ -1007,8 +1027,12 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const spine = new Vector3().subVectors(body.p[CHE]!, body.p[PEL]!).normalize();
     const side = torsoSide(body, new Vector3()).clone();
     const chestFront = new Vector3().crossVectors(side, spine).multiplyScalar(body.front);
-    const facing = (chestFront.y < 0 ? spine.clone() : spine.clone().negate()).setY(0);
-    if (facing.lengthSq() < 0.04) facing.copy(chestFront).setY(0);
+    const faceUp = chestFront.y > 0;
+    // Up the way a person gets up off the ground: onto the front first if
+    // they lie on their back, then up onto hands and knees, facing where the
+    // head is; then into a crouch and up (the clip).
+    const facing = spine.clone().setY(0);
+    if (facing.lengthSq() < 0.04) facing.copy(chestFront).setY(0).multiplyScalar(faceUp ? -1 : 1);
     if (facing.lengthSq() < 1e-6) facing.set(1, 0, 0);
     facing.normalize();
     const heading = Math.atan2(-facing.z, facing.x);
@@ -1021,16 +1045,128 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       new Quaternion().setFromAxisAngle(UP, heading + Math.PI / 2),
       new Vector3(body.scale, body.scale, body.scale),
     );
-    alive.from = bonesWorld(body);
     alive.phase = 'rise';
     alive.t = 0;
-    getUp(alive.id, x, y, heading, RISE_BLEND + alive.clip);
+    const crouch = clip ? particlesOf(body, clip.palette, alive.root) : null;
+    if (!crouch) {
+      alive.from = bonesWorld(body);
+      alive.pre = 0; alive.blend = RISE_BLEND;
+      getUp(alive.id, x, y, heading, RISE_BLEND + alive.clip);
+      return;
+    }
+    const M = body.scale;
+    const stages: NonNullable<Survivor['keys']>['stages'] = [];
+    let now = body.p.map((v) => v.clone());
+    let t = 0;
+    if (faceUp) {
+      // Rolled over about the body's long axis, lifted clear of the ground as it turns.
+      const at = new Vector3().addVectors(body.p[PEL]!, body.p[CHE]!).multiplyScalar(0.5);
+      const axis = spine.clone().setY(0).normalize();
+      const after = now.map((v) => v.clone().sub(at).applyAxisAngle(axis, Math.PI).add(at));
+      stages.push({ from: now, to: after, start: t, end: t + 0.8, roll: { axis, at, lift: 0.18 * M } });
+      now = after;
+      t += 0.8;
+    }
+    const fours = handsAndKnees(body, alive.root, crouch, M, world);
+    stages.push({ from: now, to: fours, start: t, end: t + 0.9 });
+    t += 0.9;
+    stages.push({ from: fours, to: crouch, start: t, end: t + 0.6 });
+    t += 0.6;
+    alive.keys = { stages };
+    alive.pre = t;
+    alive.blend = 0.2;
+    body.asleep = true;
+    getUp(alive.id, x, y, heading, t + alive.blend + alive.clip);
+  }
+
+  /** The particles of the body in a pose read off its skeleton (a clip's palette under `root`). */
+  function particlesOf(body: Body, palette: Float32Array, root: Matrix4): Vector3[] | null {
+    const g = new Matrix4(), w = new Matrix4();
+    const at = (i: number): Vector3 | null => {
+      if (i < 0) return null;
+      w.fromArray(palette, i * 16).multiply(body.binds[i]!);
+      g.multiplyMatrices(root, body.rebind).multiply(w);
+      return new Vector3().setFromMatrixPosition(g);
+    };
+    const p: Vector3[] = [];
+    for (let k = 0; k < BEL; k++) {
+      let v = at(body.jointBone[k] ?? -1);
+      if (k === TOP) v = p[HEA]!.clone().addScaledVector(tmpD.subVectors(p[HEA]!, p[NEC]!), 1.4);
+      if (!v && (k === LT || k === RT)) v = p[k - 1]!.clone();
+      if (!v) return null;
+      p.push(v);
+    }
+    const forward = new Vector3().subVectors(p[LT]!, p[LA]!).add(tmpD.subVectors(p[RT]!, p[RA]!)).setY(0).normalize();
+    p.push(p[PEL]!.clone().addScaledVector(forward, 0.14 * body.scale));
+    settle(body, p, null);
+    return p;
+  }
+
+  /**
+   * On hands and knees over where the crouch will be: knees and shins on
+   * the ground under the hips, hands flat under the shoulders, the back
+   * level, the head up a little. Built in the frame the get-up clip plays in.
+   */
+  function handsAndKnees(body: Body, root: Matrix4, crouch: readonly Vector3[], M: number, world: RagdollWorld): Vector3[] {
+    const origin = new Vector3().setFromMatrixPosition(root);
+    const turn = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(root));
+    const fwd = new Vector3(0, 0, 1).applyQuaternion(turn).setY(0).normalize();
+    // Which way is the body's left: from the crouch (its hips).
+    const left = new Vector3().subVectors(crouch[LH]!, crouch[RH]!).setY(0).normalize();
+    const g = world.groundAt(origin.x, -origin.z);
+    const L = (f: number, u: number, l: number): Vector3 => origin.clone().addScaledVector(fwd, f * M).addScaledVector(left, l * M).setY(g + u * M);
+    const p: Vector3[] = [];
+    p[PEL] = L(0, 0.62, 0); p[CHE] = L(0.42, 0.66, 0); p[NEC] = L(0.6, 0.66, 0); p[HEA] = L(0.74, 0.62, 0); p[TOP] = L(0.86, 0.6, 0);
+    p[LS] = L(0.5, 0.64, 0.18); p[LE] = L(0.52, 0.36, 0.2); p[LW] = L(0.54, 0.08, 0.2);
+    p[RS] = L(0.5, 0.64, -0.18); p[RE] = L(0.52, 0.36, -0.2); p[RW] = L(0.54, 0.08, -0.2);
+    p[LH] = L(0, 0.6, 0.1); p[LK] = L(0.02, 0.07, 0.12); p[LA] = L(-0.42, 0.08, 0.12); p[LT] = L(-0.56, 0.03, 0.12);
+    p[RH] = L(0, 0.6, -0.1); p[RK] = L(0.02, 0.07, -0.12); p[RA] = L(-0.42, 0.08, -0.12); p[RT] = L(-0.56, 0.03, -0.12);
+    p[BEL] = L(0.02, 0.5, 0);
+    settle(body, p, world);
+    return p;
+  }
+
+  /** The body's sticks (lengths, the ranges of the joints) satisfied by `p`, kept above the ground. */
+  function settle(body: Body, p: Vector3[], world: RagdollWorld | null): void {
+    for (let it = 0; it < 24; it++) {
+      for (const s of body.sticks) {
+        if (s.broken) continue;
+        const a = p[s.a]!, b = p[s.b]!;
+        const d = tmpA.subVectors(b, a);
+        const l = d.length() || 1e-6;
+        const target = l < s.min ? s.min : l > s.max ? s.max : l;
+        if (target === l) continue;
+        const wa = body.inv[s.a]!, wb = body.inv[s.b]!;
+        const diff = (l - target) / (l * (wa + wb));
+        a.addScaledVector(d, wa * diff);
+        b.addScaledVector(d, -wb * diff);
+      }
+      if (world) p.forEach((v, k) => { const floor = world.groundAt(v.x, -v.z) + body.radius[k]!; if (v.y < floor) v.y = floor; });
+    }
+  }
+
+  /** The body at time `t` of its getting up from lying (`Survivor.keys`): key poses eased into one another, the body kept a body. */
+  function keyPose(body: Body, alive: Survivor, world: RagdollWorld): void {
+    const keys = alive.keys!;
+    const stage = keys.stages.find((k) => alive.t < k.end) ?? keys.stages[keys.stages.length - 1]!;
+    const u = smooth((alive.t - stage.start) / (stage.end - stage.start));
+    body.p.forEach((v, k) => {
+      if (stage.roll) {
+        const r = stage.roll;
+        v.copy(stage.from[k]!).sub(r.at).applyAxisAngle(r.axis, Math.PI * u).add(r.at);
+        v.y += Math.sin(Math.PI * u) * r.lift;
+      } else v.lerpVectors(stage.from[k]!, stage.to[k]!, u);
+    });
+    settle(body, body.p, world);
+    body.o.forEach((o, k) => o.copy(body.p[k]!));
   }
 
   /** A getting-up body: the lying pose blended into the get-up clip's first frame, then the clip. */
   function risePalette(body: Body, alive: Survivor, citizens: RagdollCitizens): Float32Array {
-    const blend = smooth(alive.t / RISE_BLEND);
-    const phase = Math.max(0, alive.t - RISE_BLEND) / Math.max(0.1, alive.clip);
+    const into = alive.blend ?? RISE_BLEND;
+    const t = alive.t - (alive.pre ?? 0);
+    const blend = smooth(t / into);
+    const phase = Math.max(0, t - into) / Math.max(0.1, alive.clip);
     const clip = citizens.clipPose(body.index, RISE_KEY, phase);
     const bones = body.pos0.length;
     const from = alive.from!;

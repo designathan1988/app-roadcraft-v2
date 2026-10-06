@@ -6,7 +6,7 @@
 //
 //   node scripts/weapons-lab.mjs [--base=http://127.0.0.1:5173] [--out=<dir>] [--only=<name,...>] [--frames]
 //
-// The dev server must be running. Low priority, one browser.
+// The lab's server must be running (`vite --config vite.lab.config.ts`, port 5190: nothing reloads it mid-run). Low priority, one browser.
 import { constants, setPriority, tmpdir } from 'node:os';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,7 +14,7 @@ import { chromium } from '@playwright/test';
 
 try { setPriority(0, constants.priority.PRIORITY_LOW); } catch { /* not allowed here: run as is */ }
 const arg = (name, fallback) => (process.argv.find((a) => a.startsWith(`--${name}=`)) ?? `--${name}=${fallback}`).slice(name.length + 3);
-const base = arg('base', 'http://127.0.0.1:5173');
+const base = arg('base', 'http://127.0.0.1:5190');
 const out = arg('out', join(tmpdir(), 'weapons-lab'));
 const only = arg('only', '').split(',').filter(Boolean);
 const keepFrames = process.argv.includes('--frames');
@@ -28,6 +28,7 @@ const SCENARIOS = [
   { name: 'flinch-torso', spot: 'footway', steps: [['shoot', 'torso', 'front'], ['wait', 3500]] },
   { name: 'flinch-arm', spot: 'footway', steps: [['shoot', 'armL', 'left'], ['wait', 3500]] },
   { name: 'flinch-leg', spot: 'footway', steps: [['shoot', 'legR', 'front'], ['wait', 3500]] },
+  { name: 'light-twice', spot: 'footway', steps: [['shoot', 'armL', 'left'], ['wait', 2500], ['shoot', 'legR', 'front'], ['wait', 5000]] },
   { name: 'down-second', spot: 'footway', steps: [['shoot', 'torso', 'front'], ['wait', 600], ['shoot', 'torso', 'front'], ['wait', 5000]] },
   { name: 'head-front', spot: 'footway', steps: [['shoot', 'head', 'front'], ['wait', 4500]] },
   { name: 'head-back', spot: 'footway', steps: [['shoot', 'head', 'back'], ['wait', 4500]] },

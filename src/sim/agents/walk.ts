@@ -716,10 +716,14 @@ export function createAgentWalkEngine(): PedestrianEngine {
       const wasDown = p.act?.kind === 'fall';
       p.hits = (p.hits ?? 0) + 1;
       const legGone = p.lost.includes('legL') || p.lost.includes('legR');
-      if (!wasDown && !severed && p.hits === 1) {
+      // Incapacitated (`woundOf` grave: half their health gone or a limb lost),
+      // or shot again while already down: they go down and stay down. A
+      // lighter wound - however many - is taken on their feet.
+      const grave = woundOf(p)?.grave ?? false;
+      if (!wasDown && !grave) {
         const before = actName(p.act);
         p.act = { kind: 'flinch', from: p.age, until: p.age + FLINCH, faceX: fromX, faceY: fromY };
-        trace(p, 'act', before, actName(p.act), 'shot: first wound, not severed');
+        trace(p, 'act', before, actName(p.act), `shot: light wound (hp ${p.hp}), taken standing`);
         p.v = 0;
         p.fright = p.age + 30;
         startle(w, p.x, p.y, m(45), 18, null);
@@ -728,7 +732,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       }
       const beforeFall = actName(p.act);
       p.act = { kind: 'fall', from: p.age, until: p.age + 600, faceX: fromX, faceY: fromY };
-      trace(p, 'act', beforeFall, actName(p.act), 'shot: hurt again or severed');
+      trace(p, 'act', beforeFall, actName(p.act), wasDown ? 'shot while down' : `shot: incapacitated (hp ${p.hp}${severed ? `, ${severed} lost` : ''})`);
       p.bleeding = Math.max(p.bleeding ?? 0, legGone ? 3 : severed ? 1.6 : 0.9);
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
         party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },

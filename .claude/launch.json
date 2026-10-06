@@ -26,6 +26,16 @@
       ],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "roadcraft-lab",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "vite.lab.config.ts"
+      ],
+      "port": 5190
     }
   ]
 }

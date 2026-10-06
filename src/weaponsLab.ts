@@ -199,7 +199,11 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       if (key) spot = SPOTS.find((s) => s.key === key) ?? spot;
       if (id !== null) removeWalker(sim, id);
       if (who !== undefined) personId = who;
-      id = spawnWalker(spot, personId);
+      // Not on top of a body lying at the spot (it read as the dead getting up): a step or two aside.
+      const lying = host.scene().ragdollProbe().filter((b) => !b.piece).map((b) => b.points[0]!);
+      let offset = 0;
+      while (offset < M(8) && lying.some((q) => Math.hypot(q[0] - (spot.x + Math.cos(spot.facing + Math.PI / 2) * offset), q[1] - (spot.y + Math.sin(spot.facing + Math.PI / 2) * offset)) < M(1.6))) offset += M(1.2);
+      id = spawnWalker(spot, personId, offset);
       goneSince = null;
       events.length = 0;
       lastClip = '';

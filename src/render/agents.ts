@@ -878,6 +878,19 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       procedural!.ragdoll.posture(person, { hunch: (wound?.grave ? 0.55 : 0.42) * k, reach: Math.min(1, Math.max(0, (act.t - 0.2) / 0.35)), part: wound?.part ?? 'torso' });
       return;
     }
+    if (activity === 'crouch' && act && !wound) {
+      // Crouching in fear (a `crouch` act): down into it (the crouch-down
+      // clip), held, and up again before the act ends (the stand-up clip) -
+      // never popped into the squat or out of it.
+      const down = 0.5, up = 0.9;
+      const next: ProcClip = act.t < down ? 'duck' : act.t > act.hold - up ? 'getUp' : 'cower';
+      if (person.clip !== next) { person.clip = next; person.phase = 0; }
+      if (next === 'duck') person.phase = Math.min(0.999, act.t / down);
+      else if (next === 'getUp') person.phase = Math.min(0.999, (act.t - (act.hold - up)) / up);
+      else person.phase += dt / procedural!.clipDuration(person);
+      procedural!.ragdoll.posture(person, null);
+      return;
+    }
     // Hurt: bent over the wound, a hand on it, walking slowly (the slow walk
     // clip under the posture), however fast the flight (`walk.ts` caps the pace).
     procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.4 : 0.26, reach: 1, part: wound.part } : null);
@@ -887,12 +900,23 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     // or panicking stood still), they crouch with their arms over their head.
     // A sprint past a run (fleeing a blow flat out); a little either side
     // of each speed kept, so a pace near one does not flick between clips.
-    const cowering = activity === 'crouch' || activity === 'fall' || (activity === 'panic' && !(walking && metres > 0.15));
+    // Panicking stood still is standing (about to run), not a squat: a squat
+    // there popped in for a frame or two whenever someone got up or stopped.
+    // Down (`fall`) and held by a ragdoll: the body is drawn from it, and the
+    // clip waits standing for when they are up; only a fall nobody saw (no
+    // body to throw) is drawn as a crouch.
+    // (The person is hidden while their body is down - `hiddenPed` - so this
+    // runs in the frame they fall, before the ragdoll has them: a crouch set
+    // here showed for a frame when they were let go.)
+    if (activity === 'fall') {
+      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
+      return;
+    }
     const was = person.clip;
     const moving = walking && metres > 0.15;
     const sprint = metres > (was === 'sprint' ? 3.6 : 4.2);
     const run = metres > (was === 'run' || was === 'sprint' ? 2.1 : 2.6);
-    const clip: ProcClip = cowering && !wound ? 'cower' : activity === 'photo' && !moving ? 'photo'
+    const clip: ProcClip = activity === 'photo' && !moving ? 'photo'
       : moving ? (wound ? 'hurtWalk' : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
     if (person.clip !== clip) {
       // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
