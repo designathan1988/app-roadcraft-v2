@@ -1904,44 +1904,10 @@ function currentPolePlan(): PoleRunPlan | null {
 
 /** The segments there were before the road being committed (`commitRoadGesture`), for the grid's blink. */
 let laidNow: ReadonlySet<SegmentId> = new Set();
-/**
- * The grid's cells under the roads just laid blink, and those round them
- * follow (`SceneHandle.flashGrid`): every cell the road's paving crosses,
- * and only those.
- */
+/** The roads just laid blink (`SceneHandle.flashRoads`): the new road itself lights up and fades back. */
 function flashLaidCells(before: ReadonlySet<SegmentId>): void {
-  if (!roadGridShown()) return;
-  const hit = new Set<string>();
-  for (const id of doc.segments.keys()) {
-    if (before.has(id)) continue;
-    const seg = doc.segment(id);
-    if (!seg) continue;
-    const line = net.polylines.get(doc, id);
-    // The cells its middle line runs through, and no others (the player:
-    // local, not a patch round the road).
-    for (let s = 0; s <= line.length; s += m(1)) {
-      const f = line.sampleAt(Math.min(s, line.length));
-      hit.add(`${Math.floor(f.p.x / GRID_CELL)},${Math.floor(f.p.y / GRID_CELL)}`);
-    }
-  }
-  if (!hit.size) return;
-  const ring = new Map<string, number>([...hit].map((k) => [k, 0]));
-  let edge = [...hit];
-  for (let r = 1; r <= 0; r++) {
-    const next: string[] = [];
-    for (const k of edge) {
-      const [i, j] = k.split(',').map(Number) as [number, number];
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
-        const nk = `${i + di},${j + dj}`;
-        if (!ring.has(nk)) { ring.set(nk, r); next.push(nk); }
-      }
-    }
-    edge = next;
-  }
-  scene.flashGrid([...ring].map(([k, r]) => {
-    const [i, j] = k.split(',').map(Number) as [number, number];
-    return { x: i * GRID_CELL, y: j * GRID_CELL, ring: r };
-  }));
+  const laid = [...doc.segments.keys()].filter((id) => !before.has(id));
+  if (laid.length) scene.flashRoads(laid);
 }
 /**
  * The road just committed, drawn as its preview was until the world with it

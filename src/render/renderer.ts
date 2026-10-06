@@ -287,6 +287,8 @@ export interface SceneHandle {
    * corner, world units.
    */
   flashGrid(cells: readonly { x: number; y: number; ring: number }[]): void;
+  /** The roads just laid light up and fade back, a blink, over their whole width. */
+  flashRoads(ids: readonly SegmentId[]): void;
   /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
   naturalTerrainHeightAt(x: number, y: number): number;
   /**
@@ -424,6 +426,36 @@ export function createSceneRenderer(
   const gridFlashes: { mesh: Mesh; material: ShaderMaterial; start: number; end: number }[] = [];
   let gridBuiltFor = '';
   let gridBuiltAt = 0;
+  /** A blink on the ground: triangles (three's x, height, -y) lighting up and fading, each by its ring's delay. */
+  const addBlink = (pos: readonly number[], ring: readonly number[]): void => {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
+    const material = new ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `attribute float aRing; varying float vRing;
+        void main() { vRing = aRing; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform float uTime; varying float vRing;
+        void main() {
+          float t = uTime - vRing * 0.09;
+          float a = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.1, 0.75, t)) * (vRing < 0.5 ? 0.3 : 0.12);
+          if (a <= 0.001) discard;
+          gl_FragColor = vec4(0.62, 0.95, 1.0, a);
+        }`,
+      // Over the ground whatever it does meanwhile: laid at the height the
+      // ground had at the click, the cut and fill that follows the road rose
+      // through it and broke it into pieces (the player, 2026-10-06).
+      transparent: true, depthWrite: false, depthTest: false, side: DoubleSide, blending: AdditiveBlending,
+    });
+    const mesh = new Mesh(geometry, material);
+    mesh.name = 'grid-flash';
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 6;
+    scene.add(mesh);
+    gridFlashes.push({ mesh, material, start: performance.now(), end: 0.8 + Math.max(0, ...ring) * 0.09 });
+  };
+  /** Roads just laid, to blink once their heights are solved (`flashRoads`, `draw`). */
+  const pendingRoadFlash: SegmentId[] = [];
   /** Behind the map while building it (`draw`): a plain dark blue. */
   const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
@@ -1433,32 +1465,11 @@ export function createSceneRenderer(
           v(x0, y0); v(x1, y0); v(x1, y1); v(x0, y0); v(x1, y1); v(x0, y1);
         }
       }
-      const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
-      geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
-      const material = new ShaderMaterial({
-        uniforms: { uTime: { value: 0 } },
-        vertexShader: `attribute float aRing; varying float vRing;
-          void main() { vRing = aRing; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: `uniform float uTime; varying float vRing;
-          void main() {
-            float t = uTime - vRing * 0.09;
-            float a = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.1, 0.75, t)) * (vRing < 0.5 ? 0.3 : 0.12);
-            if (a <= 0.001) discard;
-            gl_FragColor = vec4(0.62, 0.95, 1.0, a);
-          }`,
-        // Over the ground whatever it does meanwhile: laid at the height the
-        // ground had at the click, the cut and fill that follows the road rose
-        // through it and broke it into pieces (the player, 2026-10-06).
-        transparent: true, depthWrite: false, depthTest: false, side: DoubleSide, blending: AdditiveBlending,
-      });
-      const mesh = new Mesh(geometry, material);
-      mesh.name = 'grid-flash';
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 6;
-      scene.add(mesh);
-      const rings = Math.max(...cells.map((c) => c.ring));
-      gridFlashes.push({ mesh, material, start: performance.now(), end: 0.8 + rings * 0.09 });
+      addBlink(pos, ring);
+    },
+    flashRoads(ids) {
+      // Built in the next frame, once the new roads' heights are solved (`draw`).
+      pendingRoadFlash.push(...ids);
       onAssetsReady();
     },
     setGrid(on) {
@@ -1972,6 +1983,28 @@ export function createSceneRenderer(
       forest?.setMap(plantMap);
       for (const mesh of forest?.meshes ?? []) mesh.visible = !plantMap || !mesh.name.endsWith('-leaves');
       forest?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM || rig.chasing);
+      // The roads just laid: a strip over their whole width, on their own deck.
+      if (pendingRoadFlash.length && elevation) {
+        const pos: number[] = [], ring: number[] = [];
+        for (const id of pendingRoadFlash.splice(0)) {
+          const ribbon = net.ribbons.get(id);
+          if (!ribbon) continue;
+          const line = ribbon.full, half = sidewalkHalf(ribbon.road);
+          const at = (s: number, side: number): [number, number, number] => {
+            const f = line.sampleAt(Math.min(s, line.length));
+            const x = f.p.x + f.n.x * half * side, y = f.p.y + f.n.y * half * side;
+            return [x, elevation!.onSegment(id, f.p.x, f.p.y) + m(0.3), -y];
+          };
+          const step = m(1.5);
+          for (let s = 0; s < line.length; s += step) {
+            const e = Math.min(line.length, s + step);
+            const l0 = at(s, 1), r0 = at(s, -1), l1 = at(e, 1), r1 = at(e, -1);
+            pos.push(...l0, ...r0, ...r1, ...l0, ...r1, ...l1);
+            for (let k = 0; k < 6; k++) ring.push(0);
+          }
+        }
+        if (pos.length) addBlink(pos, ring);
+      }
       for (let i = gridFlashes.length - 1; i >= 0; i--) {
         const f = gridFlashes[i]!;
         const t = (performance.now() - f.start) / 1000;
