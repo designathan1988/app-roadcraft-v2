@@ -42,13 +42,13 @@ Cuidados ao ler os números:
 | 2 | Mapa sem prédios remodelava o chão inteiro | toda edição de via em mapa sem prédios | invalidava tudo (via #1) | **CORRIGIDO** |
 | 3 | Chão remodelado bloco a bloco, cada bloco com laços globais | edição de via que move vários blocos | 35–100 ms de "ground" | **CORRIGIDO** (medir de novo) |
 | 4 | Materiais do transporte criados a cada reconstrução | toda edição de via | 1 shader relinkado por via | **CORRIGIDO** |
-| 5 | Cabelo: busca de vizinho por força bruta | cada penteado novo | 70–225 ms | **CORRIGIDO** (grade; 27–100 ms restantes são o resto da geração) |
+| 5 | Cabelo: busca de vizinho por força bruta; trança travava o jogo | cada penteado novo | 70–395 ms; trança: sem fim | **CORRIGIDO** (árvore k-d; 48–160 ms restantes) |
 | 6 | Classe de corpo procedural montada de uma vez | cada classe nova (8) | 40–240 ms | **PALIATIVO** (fatiada); causa: não é pré-cozida (#8) |
 | 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **CORRIGIDO** (impressão pelo fecho de imports; recozido) |
 | 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **ABERTO** |
 | 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **CORRIGIDO** (blocos 4×4 mantidos na placa) |
 | 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** |
-| 11 | Topologia de pedestres refeita no mapa inteiro | toda edição de via | quadro de 113 ms (`buildWalkways`) | **ABERTO** |
+| 11 | Topologia de pedestres refeita no mapa inteiro | toda edição de via | `buildWalkways` 60–130 ms na vila (medido em Node) | **ABERTO** |
 | 12 | Prédios: células remontadas depois de edição de via | edição de via perto de prédios | quadro de 285 ms (`assembleByCell`) | **ABERTO** (medir de novo depois de #1) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
 
@@ -139,8 +139,16 @@ longHeadband 225, bob 180).
 com o mesmo critério de desempate. **Proteção:** `tests/people/hairPinning.spec.ts`
 compara com a busca antiga em 4 mil pontos, incluindo empates exatos.
 
-**Restante.** A geração do penteado ainda custa 27–100 ms (outras partes de
-`generateHair`). A causa de fundo é a #8.
+**Trança travava o jogo (098d595).** A trança tinha fios que paravam no laço no
+primeiro passo: um cartão de um ponto só (`t = 0/0`, cantos NaN, o mesmo do erro
+"Computed radius is NaN" no console), e a busca em grade nunca terminava num ponto
+NaN. Corrigido nos dois lugares. **Proteção:** `tests/people/hairStyles.spec.ts`
+gera todo penteado do jogo e exige números finitos.
+
+**Árvore k-d (5ee5a05).** A grade varria quase todas as células para fios longe do
+couro cabeludo (afro). Trocada por árvore k-d podada pela caixa de cada subárvore,
+sem alocação por candidato: afro 395 → 159 ms, cacheado 298 → 131, longHeadband
+192 → 76. Restam 48–160 ms por penteado novo; a causa de fundo é a #8.
 
 ## 6. Classe de corpo procedural montada de uma vez — PALIATIVO
 
@@ -190,8 +198,17 @@ conteúdo que se cozinha antes (*cooked assets*, como as engines fazem).
 forma e expressão, base das juntas, clipes; 6,3 MB por classe, medido) e os
 pacotes de cabelo. Tentado em 2026-10-06: as 8 classes cozinham bem, mas algum
 penteado em `HAIR_STYLES` estoura a memória ao ser gerado (a aba do cozimento
-caiu; num teste em Node a geração não terminou em 300 s). Achar esse penteado
-antes de retomar, e nunca rodar o cozimento em segundo plano.
+caiu; num teste em Node a geração não terminou em 300 s). Era a trança (#5),
+já corrigida.
+
+**Pronto, não aplicado:** `docs/patches/procedural-cook.patch` (e os arquivos novos
+em `docs/patches/procedural-cook-files/`) põe as classes e os penteados no
+cozimento, com impressão própria (fecho de `proceduralCrowd.ts`) e pasta
+`cooked/procedural`. Não foi aplicado porque não rodou no jogo: o cozimento abre
+um Chrome invisível por cerca de um minuto e a CPU do jogador subiu. Para aplicar:
+`git apply docs/patches/procedural-cook.patch`, copiar os três arquivos para
+`src/render/people/` e `tests/render/`, rodar `npm run cook:people` **uma vez, com
+o jogador avisado**, e verificar no jogo.
 
 ## 9. Malha das vias fundida e reenviada inteira a cada edição — ABERTO
 
