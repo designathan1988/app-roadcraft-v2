@@ -1,0 +1,30 @@
+{
+ "format": "roadcraft-makehuman-on-vitruvian/1",
+ "units": "metres, the Vitruvian rest frame (+Y up, faces +Z)",
+ "method": "nonrigid ICP (Amberg et al. 2007), per body part, Laplacian stiffness",
+ "vertexCount": 19158,
+ "k": 4,
+ "sections": [
+  {
+   "name": "positions",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 19158,
+   "byteOffset": 0
+  },
+  {
+   "name": "bindIndex",
+   "type": "uint32",
+   "itemSize": 4,
+   "count": 19158,
+   "byteOffset": 229896
+  },
+  {
+   "name": "bindWeight",
+   "type": "float32",
+   "itemSize": 4,
+   "count": 19158,
+   "byteOffset": 536424
+  }
+ ]
+}

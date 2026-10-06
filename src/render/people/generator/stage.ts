@@ -1,5 +1,5 @@
 import {
-  ACESFilmicToneMapping, CanvasTexture, CircleGeometry, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
+  ACESFilmicToneMapping, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, DoubleSide, TextureLoader, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
   NoColorSpace, PCFSoftShadowMap, PerspectiveCamera, type Material, type Texture, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -14,6 +14,7 @@ import { garmentObject } from './fabric';
 import type { FaceAnchors } from '@people/gen/extras';
 import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type SkinUniforms, type TextureSet } from './humanMesh';
 import { HairShadow, strandMaterial, strandMesh, type StrandLook } from './strands';
+import { proxyUrl, type ProxyItem } from '@people/body/proxy';
 
 /** What a person wears and grows: hair, brows, lashes, clothes, and the skin's make-up. */
 export interface Dressing {
@@ -312,6 +313,65 @@ export class CreatorStage {
     this.redraw();
   }
 
+  private readonly proxyTextures = new Map<string, Texture>();
+
+  /**
+   * A layer of MakeHuman items (hair, clothes) fitted to this person:
+   * `positions` per item in the body's frame (metres). Each is drawn with
+   * its own texture; `tint`, when given, recolours it - the texture's
+   * lightness, scaled so its average lands on the tint, keeps the item's
+   * detail (strand cards, folds, seams) in any colour. Cut-out textures
+   * (hair cards) use alpha to coverage.
+   */
+  proxies(layer: string, items: readonly { readonly item: ProxyItem; readonly positions: Float32Array; readonly tint: number | null }[]): void {
+    const meshes: Mesh[] = [];
+    for (const { item, positions, tint } of items) {
+      const pack = item.pack;
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(positions, 3));
+      if (pack.uvs && pack.uvs.length) g.setAttribute('uv', new BufferAttribute(pack.uvs, 2));
+      g.setIndex(new BufferAttribute(pack.index, 1));
+      g.computeVertexNormals();
+      let map: Texture | null = null;
+      if (item.textureFile) {
+        map = this.proxyTextures.get(item.textureFile) ?? null;
+        if (!map) {
+          map = new TextureLoader().load(proxyUrl(item.textureFile), () => this.redraw());
+          // The packs' v runs down the image from its top row.
+          map.flipY = false;
+          map.colorSpace = SRGBColorSpace;
+          map.anisotropy = 8;
+          this.proxyTextures.set(item.textureFile, map);
+        }
+      }
+      const cut = item.transparent;
+      const m = new MeshStandardMaterial({ map, side: DoubleSide, roughness: pack.kind === 'hair' ? 0.5 : 0.8, alphaTest: cut ? 0.35 : 0, alphaToCoverage: cut });
+      const avg = averageLightness(item);
+      const u = { tint: { value: new Color(tint ?? 0xffffff) }, tinted: { value: tint === null ? 0 : 1 }, avgLum: { value: avg } };
+      m.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, u);
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
+            uniform vec3 tint;
+            uniform float tinted;
+            uniform float avgLum;`)
+          .replace('#include <map_fragment>', `#ifdef USE_MAP
+            vec4 texel = texture2D(map, vMapUv);
+            float lum = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
+            diffuseColor.rgb *= mix(texel.rgb, tint * clamp(lum / avgLum, 0.0, 3.0), tinted);
+            diffuseColor.a *= texel.a;
+          #else
+            diffuseColor.rgb *= mix(vec3(1.0), tint, tinted);
+          #endif`);
+      };
+      m.customProgramCacheKey = () => 'proxy-item';
+      const mesh = new Mesh(g, m);
+      mesh.castShadow = true;
+      meshes.push(mesh);
+    }
+    this.setLayer(layer, meshes);
+  }
+
   /** Glasses and earrings, placed on this face. */
   accessories(g: GlassesParams, e: EarringParams, a: FaceAnchors): void {
     const v = (p: readonly number[]): Vector3 => new Vector3(p[0], p[1], p[2]);
@@ -477,4 +537,18 @@ function packDensity(canvas: HTMLCanvasElement): void {
   const d = dots.data;
   for (let i = 0; i < d.length; i += 4) d[i + 1] = Math.min(255, Math.round((dense[i]! * 255) / top));
   canvas.getContext('2d')!.putImageData(dots, 0, 0);
+}
+
+/** An item's texture's average lightness (linear), over its opaque texels: what a tint is scaled to. */
+function averageLightness(item: ProxyItem): number {
+  const t = item.texture;
+  if (!t) return 0.5;
+  const lin = (c: number): number => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  let sum = 0, n = 0;
+  for (let i = 0; i < t.data.length; i += 4) {
+    if (t.data[i + 3]! < 128) continue;
+    sum += 0.2126 * lin(t.data[i]!) + 0.7152 * lin(t.data[i + 1]!) + 0.0722 * lin(t.data[i + 2]!);
+    n++;
+  }
+  return n ? Math.max(0.02, sum / n) : 0.5;
 }

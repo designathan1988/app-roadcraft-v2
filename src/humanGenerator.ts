@@ -3,7 +3,9 @@ import type { CatalogPage } from '@people/gen/catalog';
 import { bodyFor, dressBody } from '@people/gen/clothes';
 import { HumanExtras, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
+import { makehumanBody, parseMakeHuman, type MakeHumanMeta } from '@people/gen/makehuman';
 import { randomName } from '@people/gen/names';
+import { fitProxy, loadProxyItem } from '@people/body/proxy';
 import {
   ANCESTRIES, IRIS_COLOURS, completePerson, darker, randomHair, randomOutfit, randomPerson, resolvePerson, type PersonParams, type ResolvedPerson,
 } from '@people/gen/person';
@@ -31,12 +33,17 @@ applyTranslations();
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const stage = new CreatorStage(canvas);
-const [b, ex] = await Promise.all([
+const [b, ex, mh] = await Promise.all([
   loadBase('vitruvian', urlOf('vitruvian')),
   Promise.all([
     fetch(urlOf('vitruvian')('extras.json')).then((r) => r.json() as Promise<ExtrasMeta>),
     fetch(urlOf('vitruvian')('extras.bin')).then((r) => r.arrayBuffer()),
   ]).then(([meta, bin]) => new HumanExtras(meta, bin)),
+  // MakeHuman's base mesh on ours: its hair and clothes fit our people (`people/gen/makehuman.ts`).
+  Promise.all([
+    fetch(urlOf('vitruvian')('makehuman.json')).then((r) => r.json() as Promise<MakeHumanMeta>),
+    fetch(urlOf('vitruvian')('makehuman.bin')).then((r) => r.arrayBuffer()),
+  ]).then(([meta, bin]) => parseMakeHuman(meta, bin)),
 ]);
 document.getElementById('loading')?.remove();
 
@@ -103,9 +110,11 @@ const SHAPE_KEYS = ['sex', 'years', 'heightCm', 'bmi', 'muscle', 'ancestry', 'de
 const sameBody = (a: PersonParams, c: PersonParams): boolean => SHAPE_KEYS.every((k) => a[k] === c[k]);
 let shown: PersonParams | null = null;
 let bodyVersion = 0;
-let shaped: { shape: Float32Array; body: ReturnType<typeof bodyFor> | null } | null = null;
+let shaped: { shape: Float32Array; body: ReturnType<typeof bodyFor> | null; mh: Float32Array | null } | null = null;
 const built: Record<string, { params: unknown; version: number }> = {};
 const times: Record<string, number> = {};
+/** The latest hair asked for: an older load that lands late is dropped. */
+let hairTicket = 0;
 
 function draw(p: PersonParams, live: boolean): void {
   const t0 = performance.now();
@@ -114,7 +123,7 @@ function draw(p: PersonParams, live: boolean): void {
     const shape = b.base.shape(r.weights);
     const drawn = { shape, scale: r.scale, melanin: p.melanin, iris: p.iris };
     if (first) { stage.setPerson(b, drawn, masks); first = false; } else stage.updatePerson(b, drawn);
-    shaped = { shape, body: null };
+    shaped = { shape, body: null, mh: null };
     bodyVersion++;
   } else if (shown.melanin !== p.melanin || shown.iris !== p.iris) {
     stage.updatePerson(b, { shape: shaped.shape, scale: resolved(p).scale, melanin: p.melanin, iris: p.iris });
@@ -133,9 +142,22 @@ function draw(p: PersonParams, live: boolean): void {
   const h = p.hair;
   let t = performance.now();
   if (stale('hair', h)) {
-    const hair = hairStrands(ex, b.base, body(), h, p.seed);
-    stage.strands('hair', hair, { root: darker(h.colour, 0.8), tip: h.tipColour, grey: 0xc4c2be, shine: 1 });
-    stage.follicles(hair.follicles ?? null, h.style === 'buzz' ? 0.35 : 1, hair.widths);
+    // Hair is a MakeHuman hair mesh fitted to this body, as a game draws
+    // hair (the strand groom it replaced is for close-ups, not a city).
+    stage.strands('hair', hairStrands(ex, b.base, body(), { ...h, style: 'none' }, p.seed), { root: 0, tip: 0, shine: 0 });
+    stage.follicles(null);
+    const ticket = ++hairTicket;
+    if (h.style === 'none') stage.proxies('hair', []);
+    else {
+      const mhBody = (current.mh ??= makehumanBody(mh, b.base, current.shape));
+      void loadProxyItem(h.style).then((item) => {
+        if (ticket !== hairTicket) return;
+        const dm = fitProxy(item.pack, mhBody);
+        const m = new Float32Array(dm.length);
+        for (let i = 0; i < dm.length; i++) m[i] = dm[i]! * 0.1;
+        stage.proxies('hair', [{ item, positions: m, tint: h.colour }]);
+      }).catch(() => { if (ticket === hairTicket) stage.proxies('hair', []); });
+    }
   }
   times['hair'] = Math.round(performance.now() - t); t = performance.now();
   if (stale('brows', p.brows)) stage.strands('brows', browStrands(ex, b.base, shaped.shape, p.brows, p.seed + 1), { root: p.brows.colour, tip: p.brows.colour, shine: 0.25, fadeThin: true });

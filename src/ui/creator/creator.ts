@@ -1,7 +1,9 @@
 import { CATALOG, EXPRESSIONS, type CatalogCategory, type CatalogPage, type Focus } from '@people/gen/catalog';
 import type { HumanBase } from '@people/gen/humanBase';
 import { FABRICS, GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
-import { HAIR_COLOURS, HAIR_STYLES } from '@people/gen/hair';
+import { HAIR_COLOURS } from '@people/gen/hair';
+import { hairFor, itemLabel } from '@people/wardrobe';
+import { proxyUrl } from '@people/body/proxy';
 import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, LENS_TINTS, METALS } from '@people/gen/accessories';
 import { ANCESTRIES, BROW_STYLES, CLOTH_COLOURS, IRIS_COLOURS, LIP_COLOURS, darker, typical, type PersonParams } from '@people/gen/person';
 import { applyTranslations, t } from '../i18n';
@@ -411,7 +413,27 @@ export class Creator {
   }
 
   private hairStyle(host: HTMLElement): void {
-    this.chips(host, HAIR_STYLES.map((s) => [s, t(`hgen.hair.${s}`)] as const), (p) => p.hair.style, (p, v) => ({ ...p, hair: { ...p.hair, style: v } }));
+    // The hair meshes that suit the person, each with its picture.
+    const names = hairFor(this.person.sex < 0.5 ? 'female' : 'male');
+    const grid = document.createElement('div');
+    grid.className = 'cr-thumbs';
+    for (const name of ['none', ...names]) {
+      const b = document.createElement('button');
+      b.className = 'cr-thumb';
+      b.title = name === 'none' ? t('hgen.hair.none') : itemLabel(name);
+      if (name === 'none') b.textContent = t('hgen.hair.none');
+      else {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        try { img.src = proxyUrl(`${name}-thumb.webp`); } catch { b.textContent = itemLabel(name); }
+        b.append(img);
+      }
+      b.addEventListener('click', () => this.commit({ ...this.person, hair: { ...this.person.hair, style: name } }));
+      grid.append(b);
+      this.rows.push({ input: document.createElement('input'), out: document.createElement('output'), sync: (p) => b.classList.toggle('on', p.hair.style === name) });
+    }
+    host.append(grid);
   }
 
   private hairColour(host: HTMLElement): void {

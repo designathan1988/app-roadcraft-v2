@@ -52,6 +52,11 @@
     .cr-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
     .cr-chip:hover { border-color: rgba(108, 199, 255, 0.5); }
     .cr-chip.on { background: var(--accent-2); border-color: var(--accent); color: var(--accent); }
+    .cr-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 2px 0 3px; }
+    .cr-thumb { aspect-ratio: 1; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 0; overflow: hidden; cursor: pointer; font-size: 11px; color: inherit; }
+    .cr-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .cr-thumb:hover { border-color: rgba(108, 199, 255, 0.5); }
+    .cr-thumb.on { border: 2px solid var(--accent); }
     .cr-swatches { display: flex; gap: 8px; margin: 4px 0; }
     .cr-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); cursor: pointer; padding: 0; }
     .cr-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(108, 199, 255, 0.35); }

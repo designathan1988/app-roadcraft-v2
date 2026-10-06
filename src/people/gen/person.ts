@@ -3,7 +3,13 @@ import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, METALS, NO_ACCESSORIES, 
 import { GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot, type Outfit } from './clothes';
 import { HAIR_COLOURS, type BrowParams, type HairParams, type LashParams } from './hair';
 import { sexAxis } from './sampleBody';
+import { hairFor } from '../wardrobe';
+
 import type { HumanBase, MorphWeights } from './humanBase';
+
+/** Every hair mesh offered, for either sex. */
+export const HAIR_MESHES: readonly string[] = [...new Set([...hairFor('female'), ...hairFor('male')])];
+const isHairMesh = (style: string): boolean => HAIR_MESHES.includes(style);
 
 /**
  * A generated person as the player edits them: sex, age, height, BMI, skin,
@@ -98,11 +104,9 @@ export function randomOutfit(rng: Rng, female: boolean): Outfit {
 
 export function randomHair(rng: Rng, female: boolean, years: number, melanin: number): HairParams {
   const curlyOdds = melanin > 0.75 ? 0.75 : 0.2;
-  const styles = female
-    ? ['Bob', 'Eve', 'Back1', 'long', 'ponytail', 'bun', 'SceneHair_1_O4saken', 'afro']
-    : ['crew', 'buzz', 'SlickedBack', 'Combover_zoro_d', 'crew', 'afro', 'mohawk', 'Back1'];
-  let style = rng.pick(styles);
-  if (!female && years > 55 && rng.bool(0.3)) style = rng.bool() ? 'none' : 'buzz';
+  // A hairstyle from the hair meshes that suit the person (`people/wardrobe.ts`).
+  let style = rng.pick(hairFor(female ? 'female' : 'male'));
+  if (!female && years > 55 && rng.bool(0.15)) style = 'none';
   const colour = hairColourFor(rng, melanin);
   const curly = style === 'afro' || rng.bool(curlyOdds * 0.4);
   return {
@@ -119,7 +123,9 @@ export function completePerson(p: PersonParams, rng: Rng): PersonParams {
   return {
     ...p,
     undertone: p.undertone ?? 0,
-    hair: p.hair ?? randomHair(rng, female, p.years, p.melanin),
+    // Hair saved as a strand groom (before hair meshes) takes a mesh that suits the person.
+    hair: !p.hair ? randomHair(rng, female, p.years, p.melanin)
+      : p.hair.style === 'none' || isHairMesh(p.hair.style) ? p.hair : { ...p.hair, style: rng.pick(hairFor(female ? 'female' : 'male')) },
     brows: p.brows ?? { style: 'mind_eyebrows_11_Default', colour: 0x2a1d16, thickness: 1, density: 1, length: 1 },
     lashes: p.lashes ?? { length: female ? 1.15 : 0.9, curl: 0.6, density: 1, colour: 0x161010 },
     outfit: p.outfit ?? randomOutfit(rng, female),
