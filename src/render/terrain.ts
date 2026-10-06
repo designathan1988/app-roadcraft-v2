@@ -85,6 +85,14 @@ export const TERRAIN_HALF = TERRAIN_SIZE / 2;
  * far it reaches, and 1 when it is drawn. The ground shades itself under it.
  */
 export const GRASS_FIELD: { value: [number, number, number, number] } = { value: [0, 0, 0, 0] };
+/**
+ * The universal grid drawn by the ground itself (`SceneHandle.setGrid`): the
+ * cell (world units), the strength (0: off) and the map's half size. Part of
+ * the terrain's own colour, it lies on the ground as drawn whatever roads are
+ * laid, changed or removed - a set of lines over the ground went under it
+ * wherever the ground was cut or filled after them (the player, 2026-10-06).
+ */
+export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0, 2400] };
 
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
@@ -379,6 +387,7 @@ function terrainMaterial(
     uPaintHalf: { value: TERRAIN_HALF },
     uPaintSize: { value: TERRAIN_SIZE },
     uGrassField: GRASS_FIELD,
+    uGrid: TERRAIN_GRID,
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
@@ -424,6 +433,7 @@ function terrainMaterial(
          uniform float uPaintHalf;
          uniform float uPaintSize;
          uniform vec4 uGrassField; // world x, y, reach, on
+         uniform vec3 uGrid; // cell, strength, map half
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
          uniform float uGrassScale;
@@ -566,7 +576,15 @@ function terrainMaterial(
              gravel * pb.r + asphalt * pb.g + concrete * pb.b;
            blended.rgb = blended.rgb * keep + layered / max(1.0, painted);
          }
-         diffuseColor *= blended;`,
+         diffuseColor *= blended;
+         // The grid: a line a pixel wide at every cell, on the map only.
+         if (uGrid.y > 0.0) {
+           vec2 g = vec2(vTerrainWorld.x, -vTerrainWorld.z) / uGrid.x;
+           vec2 toLine = abs(fract(g - 0.5) - 0.5) / max(fwidth(g), vec2(1e-4));
+           float line = 1.0 - min(min(toLine.x, toLine.y), 1.0);
+           float onMap = step(abs(vTerrainWorld.x), uGrid.z) * step(abs(vTerrainWorld.z), uGrid.z);
+           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), line * uGrid.y * onMap);
+         }`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -591,7 +609,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v4';
+  material.customProgramCacheKey = () => 'terrain-splat-v5';
   return material;
 }
 

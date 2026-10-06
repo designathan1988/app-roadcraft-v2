@@ -10,7 +10,6 @@ import {
   BufferGeometry,
   Line,
   LineBasicMaterial,
-  LineSegments,
   ShaderMaterial,
   AdditiveBlending,
   DoubleSide,
@@ -78,7 +77,7 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { GRASS_FIELD, TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -415,17 +414,9 @@ export function createSceneRenderer(
   const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
-  /** The grid on the ground (`setGrid`): one set of lines for the whole map. */
-  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.075, depthWrite: false }));
-  grid.name = 'map-grid';
-  grid.frustumCulled = false;
-  grid.visible = false;
-  grid.renderOrder = 5;
   let gridWanted = false;
   /** The blinks of cells under a road just laid (`flashGrid`), until each has faded. */
   const gridFlashes: { mesh: Mesh; material: ShaderMaterial; start: number; end: number }[] = [];
-  let gridBuiltFor = '';
-  let gridBuiltAt = 0;
   /** A blink on the ground: triangles (three's x, height, -y) lighting up and fading, each by its ring's delay. */
   const addBlink = (pos: readonly number[], ring: readonly number[]): void => {
     const geometry = new BufferGeometry();
@@ -459,7 +450,6 @@ export function createSceneRenderer(
   /** Behind the map while building it (`draw`): a plain dark blue. */
   const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
-  scene.add(grid);
   // The root never moves. Keep its identity matrix from forcing every static
   // world child to recompute a world matrix on every render pass.
   scene.matrixAutoUpdate = false;
@@ -1473,39 +1463,9 @@ export function createSceneRenderer(
       onAssetsReady();
     },
     setGrid(on) {
-      gridWanted = on;
-      // The ground moves under every road laid or removed (cut and filled to
-      // it), not only under the brush: the lines are laid on it again then,
-      // at most a few times a second (left as they were, a road removed left
-      // the ground over them, the player saw no lines there).
-      const groundKey = `${terrainRevision}:${groundChanges.version}`;
-      if (on && gridBuiltFor !== groundKey && performance.now() - gridBuiltAt > 300) {
-        gridBuiltAt = performance.now();
-        // The cells' lines over the whole map, sampled every cell on the
-        // ground as drawn: built again only when the land changes.
-        gridBuiltFor = groundKey;
-        const pos: number[] = [];
-        const lift = m(0.25);
-        const n = Math.round((2 * MAP_HALF) / GRID_CELL);
-        // Sampled at the terrain's own cell along each line, so the line bends
-        // where the ground does: sampled a cell of the grid apart, it ran
-        // straight under every hump between (the player saw it broken).
-        const step = Math.min(GRID_CELL, TERRAIN_CELL);
-        const steps = Math.round((2 * MAP_HALF) / step);
-        for (let i = 0; i <= n; i++) {
-          const c = -MAP_HALF + i * GRID_CELL;
-          for (let k = 0; k < steps; k++) {
-            const a = -MAP_HALF + k * step, b = a + step;
-            pos.push(c, terrain.renderedHeightAt(c, a) + lift, -a, c, terrain.renderedHeightAt(c, b) + lift, -b);
-            pos.push(a, terrain.renderedHeightAt(a, c) + lift, -c, b, terrain.renderedHeightAt(b, c) + lift, -c);
-          }
-        }
-        grid.geometry.dispose();
-        grid.geometry = new BufferGeometry();
-        grid.geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
-      }
-      grid.visible = on;
-      onAssetsReady();
+      // Drawn by the ground's own material (`TERRAIN_GRID`): always on it.
+      TERRAIN_GRID.value = [GRID_CELL, on ? 0.22 : 0, MAP_HALF];
+      if (on !== gridWanted) { gridWanted = on; onAssetsReady(); }
     },
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
@@ -1823,7 +1783,6 @@ export function createSceneRenderer(
       const terrainStarted = performance.now();
       const stroking = !!options?.holdRoads && !!elevation && networkRevision === net.revision;
       const groundMoved = terrain.update(net.doc, stroking);
-      if (groundMoved && gridWanted) gridBuiltFor = '';
       terrain.updatePaint(net.doc);
       // A brush stroke in progress: every dab used to re-solve the whole road
       // network and re-mesh every road, tree and tuft of grass near it - 450 ms
@@ -1995,9 +1954,14 @@ export function createSceneRenderer(
             const x = f.p.x + f.n.x * half * side, y = f.p.y + f.n.y * half * side;
             return [x, elevation!.onSegment(id, f.p.x, f.p.y) + m(0.3), -y];
           };
+          // The road itself only: cut where its ends meet a junction (its
+          // trims), not running into the road it joins.
+          const trims = net.trims.get(id);
+          const from = trims ? Math.max(0, ...Object.values(trims.a)) : 0;
+          const to = line.length - (trims ? Math.max(0, ...Object.values(trims.b)) : 0);
           const step = m(1.5);
-          for (let s = 0; s < line.length; s += step) {
-            const e = Math.min(line.length, s + step);
+          for (let s = from; s < to; s += step) {
+            const e = Math.min(to, s + step);
             const l0 = at(s, 1), r0 = at(s, -1), l1 = at(e, 1), r1 = at(e, -1);
             pos.push(...l0, ...r0, ...r1, ...l0, ...r1, ...l1);
             for (let k = 0; k < 6; k++) ring.push(0);
