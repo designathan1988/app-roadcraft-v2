@@ -52,12 +52,15 @@ Cuidados ao ler os números:
 | 12 | Prédios: alterados e células montados no quadro da edição | via que remove prédios ou mexe no chão deles | quadros de 285–533 ms (`assembleByCell`, 49 MB) | **CORRIGIDO** (prédios e células montados em fatias antes da troca) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
 | 14 | Biblioteca de animações em cache fraco: descartada e decodificada de novo | pessoas novas depois de um tempo | 12,8 MB de base64 decodificados de novo, um caractere por vez | **CORRIGIDO** (cache permanente; decodificador nativo) |
-| 15 | Vagas: cada vaga e cada lote olhavam todas as faixas; calculadas duas vezes por edição | toda edição de via | 51 + 36 ms na vila | **CORRIGIDO** (grade de faixas, uma conta por revisão: 32 ms, vagas idênticas) |
+| 15 | Vagas: cada vaga e cada lote olhavam todas as faixas; calculadas duas vezes por edição; todos os lotes refeitos | toda edição de via | 51 + 36 ms na vila | **CORRIGIDO** (grade de faixas, uma conta por revisão, lote guardado pelo que lê: 15 ms, vagas idênticas) |
 | 16 | Clique em prédio: piso de cada prédio calculado antes do descarte barato | clique com a ferramenta de inspeção | 85 ms por clique na vila | **CORRIGIDO** |
 | 17 | Rede viária: todas as junções resolvidas 2–3 vezes por via, cópia de trabalho sem memória | toda via desenhada | 13 ms por rebuild × 3 na vila | **CORRIGIDO** (junções guardadas pelo que as constrói: 2–5 ms, idênticas) |
 | 18 | Fachadas de cada prédio recalculadas por plataformas, portas, assinatura e malhas | toda edição | um prédio grande: ~70 ms numa fatia | **CORRIGIDO** (uma vez por registro) |
 | 19 | Cópia de trabalho do documento por JSON, prédios inclusos, e comparação por JSON | toda via desenhada | cópia 13 ms + volta 20 ms na vila | **CORRIGIDO** (prédios compartilhados: 1 + 2 ms) |
 | 20 | `world.clear()` apagava muros, transporte, jardins e floresta a cada via | toda edição de via | sumiam da tela (defeito introduzido em 4c2f36a) | **CORRIGIDO** (a troca remove só o que substitui) |
+| 22 | Gravação automática serializava o mapa inteiro 700 ms depois de cada edição | toda edição | tarefa de 83 ms (trace) | **CORRIGIDO** (reaproveita o texto do desfazer) |
+| 23 | `surfaces()` unia os quatro níveis do mapa para devolver um (calçadas, postes, verge) | toda edição | 4× o trabalho de união | **CORRIGIDO** (`levelPolygons` do nível usado) |
+| 24 | Rig de cada classe de corpo montado quando o primeiro pedestre da classe chegava | primeiros pedestres | 58–105 ms × 8 | **CORRIGIDO** (os 8 preparados ao abrir o mapa, um por vez) |
 
 ---
 
@@ -295,7 +298,20 @@ novas, o que o renderer refaz em seguida) e o texto do desfazer (~9 ms).
 a baixava e decodificava de novo (12,8 MB de base64, um caractere por vez). Agora
 fica guardada (≈ 10 MB).
 
+## Estado medido (2026-10-06, fim da sessão)
+
+- Mapa novo, 8 vias longas com trânsito e pessoas chegando: pior quadro
+  553 → 59–111 ms (variação entre rodadas; o restante são compilações de shader
+  na primeira vez que um material aparece).
+- Vila padrão, vias curtas: tarefa mais longa da thread principal no trace do
+  Chrome (sem o profiler) 106 ms; as demais ≤ 82 ms. O que resta é trabalho
+  proporcional à mudança: o clique que grava a via (~50 ms: túneis 20, peças
+  10, texto do desfazer 9) e o quadro que refaz o grafo dos pedestres.
+- Jogo rodando sem editar: quadros de 16,7 ms, nenhum acima de 50 ms.
+
 ## Já descartado (não é causa)
+
+- Coletor de lixo: no trace da vila, uma coleta maior de 11 ms em quatro edições.
 
 - `forestPlants` aparecia no topo das amostras ao desenhar vias, mas o tempo
   medido é menor que 8 ms. A amostra estava mal atribuída.
