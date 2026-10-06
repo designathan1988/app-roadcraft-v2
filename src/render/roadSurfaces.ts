@@ -720,8 +720,12 @@ export function* roadSurfaceSteps(
       if (reuse) digest.add(reuse.dependsOn(rect[0] - 1, rect[1] - 1, rect[2] + 1, rect[3] + 1));
       const value = digest.value();
       let bundle = previous?.get(value);
-      if (bundle) reused++;
-      else {
+      if (bundle) {
+        reused++;
+        // A step too: the digests of every tile kept, back to back, were a
+        // slice of 20-30 ms after a road edit (docs/performance.md #34).
+        yield;
+      } else {
         const tileAt = performance.now();
         bundle = buildTile(into, rect, specs);
         tilesMs += performance.now() - tileAt;

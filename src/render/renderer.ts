@@ -1089,9 +1089,13 @@ export function createSceneRenderer(
     const freshRoads = roads === null
       ? buildRoadSurfaces(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial)
       : yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    const atdetails = performance.now();
     const freshDetails = buildStructureDetails(net, solve, terrain.renderedHeightAt, materials);
+    performance.measure('hitch:road-edit/details', { start: atdetails, end: performance.now() });
     yield;
+    const atscenery = performance.now();
     const freshScenery = buildScenery(net, solve, terrain.renderedHeightAt, terrain.wetAt, { grass: quality.grass }, sceneryKit);
+    performance.measure('hitch:road-edit/scenery', { start: atscenery, end: performance.now() });
     yield;
     // The overhead utility network. It is drawn from the document directly
     // rather than from the Network, because a pole line is not derived from
@@ -1103,7 +1107,9 @@ export function createSceneRenderer(
     // meant to stand on is exactly the "poles do not sit on the footway"
     // complaint. The lamp columns in `scenery.ts` already do this; the poles
     // were the one piece of street furniture reading the bare ground.
+    const atutilities = performance.now();
     const freshUtilities = buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt), sceneryKit);
+    performance.measure('hitch:road-edit/utilities', { start: atutilities, end: performance.now() });
     yield;
 
     // Everything in place at once: the world as it was goes - only what is
@@ -1133,7 +1139,9 @@ export function createSceneRenderer(
     utilityRevision = net.doc.utilityRevision;
     builtTriangles = triangles + roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
     // The street furniture and signs: `rebuildFurniture` takes the old ones out itself.
+    const atfurniture = performance.now();
     rebuildFurniture(net);
+    performance.measure('hitch:road-edit/furniture', { start: atfurniture, end: performance.now() });
     rebuildMs = performance.now() - started;
     performance.measure('hitch:road-edit/world rebuilt', { start: started, end: performance.now() });
     rebuilds++;
