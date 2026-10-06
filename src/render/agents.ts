@@ -35,7 +35,7 @@ import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
-import { createProceduralCrowd, type ProceduralPerson } from './people/proceduralCrowd';
+import { createProceduralCrowd, type ProcClip, type ProceduralPerson } from './people/proceduralCrowd';
 import { randomPerson } from '@people/spec';
 import { PLAYER_ID } from '@sim/ambient/play';
 import type { RagdollCitizens } from './ragdoll';
@@ -832,10 +832,22 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     const metres = speed / m(1);
     // Running from danger runs, past a brisk walk; struck with fear (cowering,
     // or panicking stood still), they crouch with their arms over their head.
+    // A sprint past a run (fleeing a blow flat out); a little either side
+    // of each speed kept, so a pace near one does not flick between clips.
     const cowering = activity === 'crouch' || activity === 'fall' || (activity === 'panic' && !(walking && metres > 0.15));
-    const clip = cowering ? 'cower' : walking && metres > 0.15 ? (metres > 2.4 ? 'run' : 'walk') : 'idle';
-    if (person.clip !== clip) { person.clip = clip; person.phase = 0; }
-    if (clip === 'walk' || clip === 'run') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    const was = person.clip;
+    const moving = walking && metres > 0.15;
+    const sprint = metres > (was === 'sprint' ? 3.6 : 4.2);
+    const run = metres > (was === 'run' || was === 'sprint' ? 2.1 : 2.6);
+    const clip: ProcClip = cowering ? 'cower' : activity === 'photo' && !moving ? 'photo'
+      : moving ? (sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
+    if (person.clip !== clip) {
+      // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
+      const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint';
+      if (!(gait(was) && gait(clip))) person.phase = 0;
+      person.clip = clip;
+    }
+    if (clip === 'walk' || clip === 'run' || clip === 'sprint') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
     else person.phase += dt / procedural!.clipDuration(person);
   };
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
@@ -868,7 +880,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
    * (the player, 2026-10-06).
    */
   const procHeld = new Set<number>(), procHeldNow = new Set<number>();
-  const procOf = (index: number): ProceduralPerson | null => (index < 0 ? procPeople.get(-1 - index)?.person ?? null : null);
+  /** Pieces torn off procedural people, drawn apart (`RagdollCitizens.twin`): indices from `TWIN_BASE` down. */
+  const procTwins = new Map<number, ProceduralPerson>();
+  const TWIN_BASE = -1_000_000_000;
+  let procTwinNext = 0;
+  const procOf = (index: number): ProceduralPerson | null => (index <= TWIN_BASE ? procTwins.get(index) ?? null
+    : index < 0 ? procPeople.get(-1 - index)?.person ?? null : null);
   const procScale = new Matrix4();
   const procRagdoll: RagdollCitizens = {
     capturedPose(id) {
@@ -885,7 +902,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     drawPalette(index, palette, instance) {
       const person = procOf(index);
       if (!person || !procedural) { pedestrians.drawPalette(index, palette, instance); return; }
-      // The first piece of the body is the person; pieces torn off are not drawn apart.
+      if (index <= TWIN_BASE) {
+        person.matrix.copy(instance).multiply(procScale.makeScale(1 / person.scale, 1 / person.scale, 1 / person.scale));
+        procedural.ragdoll.hold(person, palette);
+        return;
+      }
+      // The first piece of the body is the person; pieces torn off are their twins (`twin`).
       const id = -1 - index;
       if (procHeldNow.has(id)) return;
       procHeldNow.add(id);
@@ -899,6 +921,26 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       return palette ? { palette, duration: 1.2 } : null;
     },
     loadedIndices: () => pedestrians.loadedIndices(),
+    twin(index) {
+      const person = procOf(index);
+      // A cooked body draws as many palettes as it has pieces.
+      if (!person || !procedural) return index >= 0 ? index : null;
+      const twin = procedural.ragdoll.twin(person);
+      if (!twin) return null;
+      const key = TWIN_BASE - procTwinNext++;
+      procTwins.set(key, twin);
+      return key;
+    },
+    untwin(index) {
+      const twin = procTwins.get(index);
+      if (!twin || !procedural) return;
+      procedural.ragdoll.untwin(twin);
+      procTwins.delete(index);
+    },
+    char(index) {
+      const person = procOf(index);
+      if (person && procedural) procedural.ragdoll.char(person, true);
+    },
   };
   const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
 
@@ -1594,7 +1636,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
           if (procedural && ped.id !== PLAYER_ID) {
-            procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, ped.panic ? 'panic' : ped.gesture?.kind,
+            // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
+            const doing = ped.gesture?.kind;
+            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' ? doing : ped.panic ? 'panic' : doing;
+            procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined));
           }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);

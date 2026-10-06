@@ -46,6 +46,12 @@ export interface RagdollCitizens {
   clipPose(index: number, key: 'crouchUp' | 'idle', phase: number): { palette: Float32Array; duration: number } | null;
   /** Bodies loaded now, for people with no pose of their own (indoors). */
   loadedIndices(): number[];
+  /** The index to draw a piece torn off this person with (their twin, or the same body); null when none can be drawn. */
+  twin?(index: number): number | null;
+  /** A twin's index given back (its piece gone). */
+  untwin?(index: number): void;
+  /** Burns the person black (a bomb's direct hit). */
+  char?(index: number): void;
 }
 
 /** Somebody inside a building a blow struck: thrown out of it from where they were. */
@@ -198,6 +204,13 @@ interface Body {
   /** Parts lost before the fall (shot off, `Casualty.lost`): drawn closed at their joint. */
   lostParts: Set<PartName>;
   survivor: Survivor | undefined;
+  /**
+   * A limb torn off, a body of its own (`detach`): only `keep` simulated and
+   * drawn, every other particle held at `root`, where it was torn from.
+   */
+  pin?: { readonly root: number; readonly keep: ReadonlySet<number> };
+  /** Called when the body goes (a twin given back). */
+  drop?: (() => void) | undefined;
   /** Which piece each particle is on: the body itself, or a limb torn off. */
   comp: number[];
   palettes: Float32Array[];
@@ -447,9 +460,19 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         return;
       }
       if (c.kind !== 'knocked') { known.survivor = undefined; known.torn = false; bleed(c.x, c.y, groundHere, m(0.8), 0); }
-      else if (known.survivor) { known.survivor.phase = 'fall'; known.survivor.t = 0; delete known.survivor.from; }
+      else if (known.survivor) {
+        const alive = known.survivor;
+        alive.phase = 'fall'; alive.t = 0; delete alive.from;
+        if (c.lieFor !== undefined) alive.lie = Math.max(alive.lie, c.lieFor);
+        if (c.crawl && !alive.crawl) {
+          const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
+          alive.crawl = { dx: ax / l, dy: ay / l, since: 0 };
+        }
+      }
+      for (const limb of c.lost ?? []) if (!(c.severed ?? []).includes(limb)) for (const part of LOST_PARTS[limb]) known.lostParts.add(part);
       known.asleep = false; known.still = 0; known.flying = 0;
-      blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
+      const away = blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
+      sever(known, c, away, citizens);
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -491,6 +514,61 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       if (Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
     }
     add(body);
+    sever(body, c, dir, citizens);
+  };
+
+  /** What came off at this blow thrown off the body (`detach`), and the body burnt black right under a bomb. */
+  const sever = (body: Body, c: Casualty, dir: Vector3, citizens: RagdollCitizens): void => {
+    // Charred first: the pieces are twins of the body as it is.
+    if (c.charred) citizens.char?.(body.index);
+    for (const limb of c.severed ?? []) {
+      const speed = m(2.5 + 6 * Math.max(0.15, c.power)) * (0.7 + Math.random() * 0.6);
+      const kick = new Vector3(dir.x * speed + (Math.random() - 0.5) * m(3), m(1.5 + Math.random() * 3) * (0.6 + c.power),
+        dir.z * speed + (Math.random() - 0.5) * m(3));
+      detach(body, limb, citizens, kick);
+    }
+  };
+
+  const remove = (i: number): void => {
+    bodies[i]?.drop?.();
+    bodies.splice(i, 1);
+  };
+
+  /**
+   * A limb (or the head) torn off at a blow: a body of its own from here -
+   * the person's own arm, leg or head, their sleeve and skin on it, closed at
+   * the joint it came from (as GTA's and Soldier of Fortune's dismemberment
+   * swap in the severed part) - kicked off the way the blow went; the body
+   * left without it, closed at the stump.
+   */
+  const detach = (body: Body, limb: Severable, citizens: RagdollCitizens, kick: Vector3): void => {
+    const parts = LOST_PARTS[limb];
+    const index = citizens.twin ? citizens.twin(body.index) : body.index;
+    if (index === null) { for (const part of parts) body.lostParts.add(part); return; }
+    const keep = new Set<number>();
+    for (const part of parts) { keep.add(PARTS[part].origin); keep.add(PARTS[part].to); }
+    const root = PARTS[parts[0]!].origin;
+    const piece: Body = {
+      ...body,
+      index,
+      p: body.p.map((v) => v.clone()),
+      o: body.o.map((v) => v.clone()),
+      ground: body.ground.slice(),
+      sticks: body.sticks.map((s) => ({ ...s, broken: s.broken || !(keep.has(s.a) && keep.has(s.b)) })),
+      normals: { larm: body.normals.larm.clone(), rarm: body.normals.rarm.clone(), lleg: body.normals.lleg.clone(), rleg: body.normals.rleg.clone() },
+      lostParts: new Set(PART_NAMES.filter((part) => !parts.includes(part))),
+      survivor: undefined, pin: { root, keep }, drop: index !== body.index ? () => citizens.untwin?.(index) : undefined,
+      comp: [], palettes: [], anchor: new Matrix4(), still: 0, asleep: false, age: 0, flying: 0, pooled: false, splats: 0, spray: 0, torn: true,
+    };
+    components(piece);
+    const spin = new Vector3((Math.random() - 0.5) * 2, Math.random(), (Math.random() - 0.5) * 2).multiplyScalar(kick.length() * 0.6);
+    for (const k of keep) piece.o[k]!.copy(piece.p[k]!).addScaledVector(kick, -STEP).addScaledVector(spin, k === root ? 0 : -STEP);
+    for (const part of parts) body.lostParts.add(part);
+    body.asleep = false;
+    // The stump spurting.
+    const at = body.p[root]!;
+    exhaust.burst(at.x, -at.z, at.y, 60, 4, m(0.35), m(0.08), 1.1);
+    add(piece);
   };
 
   const add = (body: Body): void => {
@@ -498,7 +576,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     if (bodies.length > MAX_BODIES) {
       // The oldest of the dead goes first; the living get up on their own.
       const i = bodies.findIndex((b) => !b.survivor);
-      bodies.splice(i >= 0 ? i : 0, 1);
+      remove(i >= 0 ? i : 0);
     }
   };
 
@@ -509,7 +587,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       pieces: bodies.reduce((n, b) => n + new Set(b.comp).size, 0), living: bodies.filter((b) => b.survivor).length,
     }),
     debug: () => bodies.map((b) => ({
-      pelvis: b.p[PEL]!.toArray(), head: b.p[HEA]!.toArray(), asleep: b.asleep, phase: b.survivor?.phase ?? 'dead', torn: b.torn,
+      pelvis: b.p[PEL]!.toArray(), head: b.p[HEA]!.toArray(), asleep: b.asleep, phase: `${b.survivor?.phase ?? 'dead'}${b.survivor ? `#${b.survivor.id}/${b.survivor.lie.toFixed(1)}${b.survivor.crawl ? 'c' : ''}` : b.pin ? '/piece' : ''}`, torn: b.torn,
     })),
     hides: (id) => bodies.some((b) => b.survivor?.id === id),
     release(down) {
@@ -517,7 +595,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       // too (it may be paused, or running faster than the clock).
       for (let i = bodies.length - 1; i >= 0; i--) {
         const alive = bodies[i]!.survivor;
-        if (alive?.phase === 'rise' && alive.t >= RISE_BLEND + alive.clip && !down(alive.id)) bodies.splice(i, 1);
+        if (alive?.phase === 'rise' && alive.t >= RISE_BLEND + alive.clip && !down(alive.id)) remove(i);
       }
     },
     drip(x, y, z, size) { bleed(x, y, z, size, 0); },
@@ -593,20 +671,20 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
           alive.t += wall;
           if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = !alive.crawl; }
           else if (alive.phase === 'lie' && alive.crawl) crawlOn(body, alive.crawl, wall, world);
-          else if (alive.phase === 'rise' && alive.t > RISE_BLEND + alive.clip + 3) { bodies.splice(i, 1); continue; }
+          else if (alive.phase === 'rise' && alive.t > RISE_BLEND + alive.clip + 3) { remove(i); continue; }
           continue;
         }
-        if (body.age > LIE + SINK) { bodies.splice(i, 1); continue; }
+        if (body.age > LIE + SINK) { remove(i); continue; }
         if (body.age > LIE) for (const v of body.p) v.y -= wall * m(0.12);
         if (body.asleep && !body.pooled) {
           body.pooled = true;
           // A pool of blood spreading from under each piece.
-          for (const piece of new Set(body.comp)) {
+          for (const piece of body.pin ? [body.comp[body.pin.root]!] : new Set(body.comp)) {
             const at = new Vector3();
             let n = 0;
             body.p.forEach((v, k) => { if (body.comp[k] === piece) { at.add(v); n++; } });
             at.divideScalar(Math.max(1, n));
-            const main = body.comp[PEL] === piece;
+            const main = !body.pin && body.comp[PEL] === piece;
             bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(main ? (body.torn ? 2.6 : 2.0) : 0.9), main ? 30 : 12);
           }
         }
@@ -745,6 +823,10 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       hinges(body);
       collide(body, near, it === ITERATIONS - 1, world);
     }
+    if (body.pin) {
+      const { root, keep } = body.pin;
+      for (let k = 0; k < p.length; k++) if (!keep.has(k)) { p[k]!.copy(p[root]!); o[k]!.copy(o[root]!); }
+    }
     body.flying += STEP;
     // At rest for a moment, or long enough: asleep, drawn as it lies.
     body.still = moved < m(0.0025) ? body.still + STEP : 0;
@@ -787,6 +869,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const { p, o, radius } = body;
     const bloody = !body.survivor;
     for (let k = 0; k < p.length; k++) {
+      if (body.pin && !body.pin.keep.has(k)) continue;
       const v = p[k]!, old = o[k]!, r = radius[k]!;
       const floor = body.ground[k]! + r;
       if (v.y < floor) {
@@ -915,9 +998,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const back = body.unbind.clone().multiply(anchor.clone().invert());
     const bones = body.pos0.length;
     const m4 = new Matrix4();
-    return [...new Set(body.comp)].map((piece) => {
-      const out = new Float32Array(bones * 16);
+    const out: Float32Array[] = [];
+    for (const piece of new Set(body.comp)) {
       const on = body.bonePart.map((part) => body.comp[PARTS[part].origin] === piece && !body.lostParts.has(part));
+      if (!on.some(Boolean)) continue;
+      const palette = new Float32Array(bones * 16);
       // The piece's own root: its topmost bone (the shoulder of an arm, the hip of a leg).
       let root = on.findIndex((own, i) => own && !(body.parents[i]! >= 0 && on[body.parents[i]!]));
       if (root < 0) root = 0;
@@ -933,10 +1018,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
           const t = tmpB.setFromMatrixPosition(world[j >= 0 ? j : root]!).applyMatrix4(back);
           m4.set(0, 0, 0, t.x, 0, 0, 0, t.y, 0, 0, 0, t.z, 0, 0, 0, 1);
         }
-        m4.toArray(out, i * 16);
+        m4.toArray(palette, i * 16);
       }
-      return out;
-    });
+      out.push(palette);
+    }
+    return out;
   }
 }
 

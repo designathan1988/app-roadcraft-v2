@@ -739,20 +739,12 @@ export function createSceneRenderer(
   // A body torn apart: a limb or two and what was inside thrown over the
   // street, where they stay; blood spraying off them as they fly.
   ragdolls.onGore = (x, y, z, dx, dy, speed, kind) => {
-    const skin = [0xc89878, 0x9c6b4e, 0x6e4632, 0xe0b49a][Math.floor(Math.random() * 4)]!;
-    const limbs = kind === 'torn' ? 1 + Math.floor(Math.random() * 3) : 1;
-    for (let k = 0; k < limbs; k++) {
-      const v = new Vector3(dx * speed * (0.4 + Math.random() * 0.6) + (Math.random() - 0.5) * m(5), m(3 + Math.random() * 5),
-        -dy * speed * (0.4 + Math.random() * 0.6) + (Math.random() - 0.5) * m(5));
-      const leg = Math.random() < 0.5;
-      blast.debris({ shape: 'cylinder', kind: 'flesh', color: skin, at: new Vector3(x, z, -y),
-        size: new Vector3(m(leg ? 0.075 : 0.05), m(leg ? 0.85 : 0.6), m(leg ? 0.075 : 0.05)), velocity: v,
-        spin: new Vector3((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 12) });
-    }
-    const organs = kind === 'torn' ? 6 + Math.floor(Math.random() * 6) : 2;
+    // The limbs themselves are the person's own, thrown by the ragdolls (`detach`).
+    // Scraps of flesh: small, dark with blood, not bright cubes.
+    const organs = kind === 'torn' ? 4 + Math.floor(Math.random() * 4) : 1;
     for (let k = 0; k < organs; k++) {
-      const s0 = m(0.08 + Math.random() * 0.14);
-      blast.debris({ shape: Math.random() < 0.5 ? 'cylinder' : 'box', kind: 'flesh', color: [0x6e0d10, 0x8c2a32, 0xa04a55, 0x5a1414][k % 4]!,
+      const s0 = m(0.04 + Math.random() * 0.07);
+      blast.debris({ shape: Math.random() < 0.7 ? 'cylinder' : 'box', kind: 'flesh', color: [0x3a0507, 0x4a0b0e, 0x561418, 0x2e0405][k % 4]!,
         at: new Vector3(x, z, -y), size: new Vector3(s0, s0 * (0.6 + Math.random()), s0 * (0.7 + Math.random() * 0.6)),
         velocity: new Vector3(dx * speed * 0.5 + (Math.random() - 0.5) * m(6), m(2 + Math.random() * 4), -dy * speed * 0.5 + (Math.random() - 0.5) * m(6)) });
     }
@@ -1470,22 +1462,13 @@ export function createSceneRenderer(
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
       exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 70 : 34, 4, m(severed ? 0.35 : 0.2), m(0.05), 0.9);
-      const ground = terrain.renderedHeightAt(x, y);
+      // On what is there (the footway stands over the terrain).
       for (let k = 0; k < (severed ? 9 : 4); k++) {
         const d = m(0.3 + Math.random() * 1.6), side = (Math.random() - 0.5) * m(0.6);
-        ragdolls.drip(x + dirX * d - dirY * side, y + dirY * d + dirX * side, ground + m(0.02), m(0.12 + Math.random() * 0.3));
+        const dx = x + dirX * d - dirY * side, dy = y + dirY * d + dirX * side;
+        ragdolls.drip(dx, dy, ragdollWorld.groundAt(dx, dy) + m(0.02), m(0.12 + Math.random() * 0.3));
       }
-      if (severed) {
-        const skin = [0xc89878, 0x9c6b4e, 0x6e4632, 0xe0b49a][Math.floor(Math.random() * 4)]!;
-        const head = severed === 'head', leg = severed === 'legL' || severed === 'legR';
-        const speed = m(3 + Math.random() * 3);
-        blast.debris({
-          shape: head ? 'box' : 'cylinder', kind: 'flesh', color: skin, at: new Vector3(x, z, -y),
-          size: head ? new Vector3(m(0.2), m(0.24), m(0.2)) : new Vector3(m(leg ? 0.075 : 0.05), m(leg ? 0.8 : 0.55), m(leg ? 0.075 : 0.05)),
-          velocity: new Vector3(dirX * speed, m(1.5 + Math.random() * 2.5), -dirY * speed),
-          spin: new Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 10),
-        });
-      }
+      // The limb shot off is the person's own, thrown by the ragdolls (`detach`).
       onAssetsReady();
     },
     shot(from, to) {

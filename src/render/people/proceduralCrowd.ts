@@ -104,7 +104,7 @@ interface BodyClass {
   readonly coefficients: Float64Array;
   readonly rig: PersonRig;
   readonly height: number;
-  readonly clips: { walk: ClipFrames; idle: ClipFrames; run: ClipFrames; cower: ClipFrames };
+  readonly clips: Record<ProcClip, ClipFrames>;
   readonly bones: number;
   /** Bones parents first, and each one's parent (-1 for the root). */
   readonly order: readonly number[];
@@ -139,6 +139,9 @@ interface BodyClass {
   readonly people: ProceduralPerson[];
 }
 
+/** What a procedural person plays: walking, standing, running, sprinting for their life, cowering, photographing. */
+export type ProcClip = 'walk' | 'idle' | 'run' | 'sprint' | 'cower' | 'photo';
+
 export interface ProceduralPerson {
   readonly spec: PersonSpec;
   readonly band: AgeBand;
@@ -157,7 +160,7 @@ export interface ProceduralPerson {
   readonly joints: Float32Array;
   /** Where they stand and face; what they play. Set by the caller each frame. */
   readonly matrix: Matrix4;
-  clip: 'walk' | 'idle' | 'run' | 'cower';
+  clip: ProcClip;
   phase: number;
   /** What they are doing, as the face shows it (`faceAt`): 'talk', 'panic'... */
   activity?: string | undefined;
@@ -391,6 +394,12 @@ ${shader.fragmentShader}`
   texel.a = smoothstep(0.15, 0.95, texel.a) * 0.78;` : `
   texel.rgb = texel.rgb * 1.35 + vec3(0.035, 0.028, 0.022);
   texel.a = smoothstep(0.22, 0.95, texel.a) * 0.8;`}` : ''}`}
+  // Burnt black (a bomb's direct hit, see char): soot over everything, a few
+  // embers still glowing in the cracks.
+  if (vProcDye.a > 1.5) {
+    float soot = fract(sin(dot(floor(vProcUv * vec2(90.0, 90.0)), vec2(12.9898, 78.233))) * 43758.5453);
+    texel.rgb = mix(vec3(0.028, 0.022, 0.018), vec3(0.1, 0.07, 0.05), soot * soot) + vec3(0.35, 0.08, 0.0) * step(0.985, soot);
+  }
   diffuseColor *= texel;
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
@@ -486,6 +495,15 @@ export interface ProceduralCrowd {
     pose(person: ProceduralPerson): Float32Array | null;
     standing(person: ProceduralPerson, phase: number): Float32Array | null;
     hold(person: ProceduralPerson, palette: Float32Array | null): void;
+    /**
+     * Another of this person - their row's shape, face, clothes and colours -
+     * for a piece of them torn off (an arm, a leg, the head) drawn apart from
+     * the body (`ragdoll.ts` detach); `untwin` gives it back.
+     */
+    twin(person: ProceduralPerson): ProceduralPerson | null;
+    untwin(twin: ProceduralPerson): void;
+    /** Burnt black (a bomb's direct hit), skin, clothes and hair; given back by `hold(person, null)`. */
+    char(person: ProceduralPerson, on: boolean): void;
   };
   clear(): void;
   clipDuration(person: ProceduralPerson): number;
@@ -703,17 +721,20 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     /** Running (from danger), and cowering crouched (struck with fear): the reactions' clips. */
     readonly run: ClipFrames;
     readonly cower: ClipFrames;
+    /** Sprinting from a blow (GTA's peds flee at a flat-out run), and holding a phone up at it. */
+    readonly sprint: ClipFrames;
+    readonly photo: ClipFrames;
   }
   const classRecord = (d: ClassData): PackRecord => ({
     shapePixels: d.shapePixels, jointBasis: d.jointBasis, faceIndexPixels: d.faceIndexPixels, faceList: d.faceList,
     exprPixels: d.exprPixels, ...clipFields('walk', d.walk), ...clipFields('idle', d.idle),
-    ...clipFields('run', d.run), ...clipFields('cower', d.cower),
+    ...clipFields('run', d.run), ...clipFields('cower', d.cower), ...clipFields('sprint', d.sprint), ...clipFields('photo', d.photo),
   });
   const classFromRecord = (r: Record<string, PackValue>): ClassData => ({
     shapePixels: r['shapePixels'] as Float32Array, jointBasis: r['jointBasis'] as Float32Array,
     faceIndexPixels: r['faceIndexPixels'] as Float32Array, faceList: r['faceList'] as Int32Array,
     exprPixels: r['exprPixels'] as Float32Array, walk: clipOf('walk', r), idle: clipOf('idle', r),
-    run: clipOf('run', r), cower: clipOf('cower', r),
+    run: clipOf('run', r), cower: clipOf('cower', r), sprint: clipOf('sprint', r), photo: clipOf('photo', r),
   });
 
   /** A class's rig: its body at the band's age, with only the eyes on it (no outfit, hair, brows, lashes or hat). */
@@ -774,6 +795,10 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     await breathe();
     const cower = await bakeLibraryClip(bakeRig, library.crouchIdle, undefined, 'crouchIdle');
     await breathe();
+    const sprint = await bakeLibraryClip(bakeRig, library.runFast, undefined, 'runFast');
+    await breathe();
+    const photo = await bakeLibraryClip(bakeRig, library.photo, undefined, 'photo');
+    await breathe();
     // Joints follow the shape: a MakeHuman bone's head is the mean of a
     // group of base vertices (its joint cube, `personRig.headOf`), so its
     // move per coefficient is the mean of theirs in the shape basis.
@@ -826,7 +851,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       });
     }
     await breathe();
-    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower };
+    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower, sprint, photo };
   };
 
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
@@ -835,7 +860,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     const { base, shape, eyes, rig } = await classRig(sex, band);
     // Read from the cook (`proceduralCook.ts`); built here only when it is missing or stale.
     const cooked = await loadProcedural(`class-${sex}-${band}`);
-    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower } = cooked
+    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower, sprint, photo } = cooked
       ? classFromRecord(cooked) : await classData(sex, rig, shape);
     const vertexCount = a.mesh.vertexCount;
     const shapeRows = Math.ceil(vertexCount * SHAPES / SHAPE_WIDTH);
@@ -881,7 +906,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     bakeMs += performance.now() - started;
     const cls: BodyClass = {
       key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
-      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower }, bones, order, parent, jointBasis,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower, sprint, photo }, bones, order, parent, jointBasis,
       uniforms: {
         procBones: { value: rowTexture(palette, width, ROW_START) },
         procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
@@ -1124,7 +1149,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       piece.people = list;
       list.forEach((person, slot) => {
         piece.rows.setX(slot, person.row);
-        piece.dyes.setXYZW(slot, person.hairColour.r, person.hairColour.g, person.hairColour.b, 1);
+        piece.dyes.setXYZW(slot, person.hairColour.r, person.hairColour.g, person.hairColour.b, charred.has(person) ? 3 : 1);
       });
       piece.rows.needsUpdate = piece.dyes.needsUpdate = true;
       piece.mesh.count = list.length;
@@ -1133,6 +1158,40 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   };
   const readyStrand = new Map<string, Piece>();
   const allStrands = (): Piece[] => [...shown];
+
+  /** A person's slot in a piece given up: the last slot moved into it. */
+  const unplace = (piece: Piece, person: ProceduralPerson): void => {
+    const slot = piece.people.indexOf(person);
+    if (slot < 0) return;
+    const last = piece.people.length - 1;
+    if (slot !== last) {
+      piece.people[slot] = piece.people[last]!;
+      for (const attr of [piece.rows, piece.dyes, piece.worn, piece.tints]) {
+        if (!attr) continue;
+        const n = attr.itemSize, a = attr.array as Float32Array;
+        a.copyWithin(slot * n, last * n, last * n + n);
+        attr.needsUpdate = true;
+      }
+    }
+    piece.people.pop();
+    piece.mesh.count = piece.people.length;
+  };
+  /** Rows given back by twins (`untwin`), for the next. */
+  const spareRows = new Map<BodyClass, number[]>();
+  const charred = new Set<ProceduralPerson>();
+  const charSlots = (person: ProceduralPerson, on: boolean): void => {
+    const cls = classOf(person);
+    if (!cls) return;
+    for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+      const slot = piece.people.indexOf(person);
+      if (slot < 0) continue;
+      const w = piece.dyes.getW(slot);
+      // The dye's fourth channel past 1.5 is the char (the shader's `charred`).
+      piece.dyes.setW(slot, on ? (w > 1.5 ? w : w + 2) : (w > 1.5 ? w - 2 : w));
+      piece.dyes.needsUpdate = true;
+    }
+    if (on) charred.add(person); else charred.delete(person);
+  };
 
   const place = (piece: Piece, person: ProceduralPerson, dye: Color | null, worn?: readonly number[]): void => {
     const slot = piece.people.length;
@@ -1259,8 +1318,54 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         return out;
       },
       hold(person, palette) {
-        if (palette) holds.set(person, palette.slice()); else holds.delete(person);
+        if (palette) holds.set(person, palette.slice());
+        else { holds.delete(person); if (charred.has(person)) charSlots(person, false); }
       },
+      twin(person) {
+        const cls = classOf(person);
+        if (!cls) return null;
+        const spare = spareRows.get(cls);
+        let row: number;
+        if (spare?.length) row = spare.pop()!;
+        else { if (cls.rows >= cls.capacity) growRows(cls); row = cls.rows++; }
+        cls.coef.copyWithin(row * SHAPES, person.row * SHAPES, person.row * SHAPES + SHAPES);
+        cls.uniforms.procCoef.value.needsUpdate = true;
+        const faceRow = cls.uniforms.procFaceRows.value * FACE_WIDTH * 4;
+        cls.face.copyWithin(row * faceRow, person.row * faceRow, person.row * faceRow + faceRow);
+        cls.uniforms.procFace.value.needsUpdate = true;
+        const twin: ProceduralPerson = { ...person, row, matrix: new Matrix4().makeScale(0, 0, 0), clip: 'idle', phase: 0, activity: undefined, lost: undefined };
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) {
+          const from = piece.people.indexOf(person);
+          if (from < 0) continue;
+          place(piece, twin, null);
+          const to = piece.people.length - 1;
+          if (piece.people[to] !== twin) continue;
+          piece.rows.setX(to, row);
+          for (const attr of [piece.dyes, piece.worn, piece.tints]) {
+            if (!attr) continue;
+            const n = attr.itemSize, a = attr.array as Float32Array;
+            a.copyWithin(to * n, from * n, from * n + n);
+            attr.needsUpdate = true;
+          }
+        }
+        cls.people.push(twin);
+        people.push(twin);
+        return twin;
+      },
+      untwin(twin) {
+        const cls = classOf(twin);
+        if (!cls) return;
+        for (const piece of [...cls.skins.values(), ...cls.pieces.values()]) unplace(piece, twin);
+        cls.people.splice(cls.people.indexOf(twin), 1);
+        const i = people.indexOf(twin);
+        if (i >= 0) people.splice(i, 1);
+        holds.delete(twin);
+        charred.delete(twin);
+        const spare = spareRows.get(cls) ?? [];
+        spare.push(twin.row);
+        spareRows.set(cls, spare);
+      },
+      char(person, on) { charSlots(person, on); },
     },
     update(eye, simTime) {
       if (eye) strandsUpdate(eye);
@@ -1315,6 +1420,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         cls.people.length = 0;
         cls.rows = 0;
       }
+      spareRows.clear();
+      charred.clear();
       people.length = 0;
     },
     clipDuration(person) {
@@ -1323,7 +1430,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     },
     stride(person) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
-      const clip = person.clip === 'run' ? cls?.clips.run : cls?.clips.walk;
+      const clip = person.clip === 'run' ? cls?.clips.run : person.clip === 'sprint' ? cls?.clips.sprint : cls?.clips.walk;
       return (clip?.stride || 1.4) * person.scale;
     },
     async cook() {

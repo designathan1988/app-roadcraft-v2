@@ -33,6 +33,10 @@ export interface Casualty {
   readonly crawl?: boolean;
   /** Bled to death where they lay: the body already down goes still, not thrown again. */
   readonly faded?: boolean;
+  /** Limbs (or the head) that came off at this blow: thrown off the body, each a piece of its own. */
+  readonly severed?: readonly Severable[];
+  /** Burnt black (right under a bomb). */
+  readonly charred?: boolean;
 }
 
 const RECORDS = new WeakMap<SimWorld, Casualty[]>();

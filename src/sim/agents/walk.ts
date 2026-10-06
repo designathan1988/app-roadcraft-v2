@@ -217,13 +217,34 @@ interface State {
    * everybody else keeps off it.
    */
   onCarWay: Map<number, Set<number>>;
+  /**
+   * Shocking events (as GTA's peds have them): where a blow fell or somebody
+   * was shot, and the bodies lying there, for a while after - whoever comes
+   * near one later runs from it too, instead of strolling past.
+   */
+  shocks: { x: number; y: number; radius: number; until: number }[];
+  /** Seconds of walking stepped (the shocks' clock). */
+  clock: number;
+  /** When the walkers were last checked against the shocks. */
+  shockLook: number;
+}
+
+/** A shocking event's life (seconds), and the reach of a body lying in the street. */
+const SHOCK_LIFE = 90;
+const BODY_SHOCK = m(14);
+
+function shock(s: State, x: number, y: number, radius: number, seconds = SHOCK_LIFE): void {
+  s.shocks = s.shocks.filter((k) => k.until > s.clock);
+  if (s.shocks.length > 64) s.shocks.shift();
+  s.shocks.push({ x, y, radius, until: s.clock + seconds });
 }
 
 const STATES = new WeakMap<SimWorld, State>();
 function stateOf(w: SimWorld): State {
   let s = STATES.get(w);
   if (!s) {
-    s = { graph: null, builtFor: '', wayIndex: new Map(), walkers: [], byId: new Map(), arrivals: [], nextId: 1, onCarWay: new Map() };
+    s = { graph: null, builtFor: '', wayIndex: new Map(), walkers: [], byId: new Map(), arrivals: [], nextId: 1, onCarWay: new Map(),
+      shocks: [], clock: 0, shockLook: 0 };
     STATES.set(w, s);
   }
   return s;
@@ -538,6 +559,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       s.arrivals.length = 0;
       s.graph = null;
       s.builtFor = '';
+      s.shocks.length = 0;
     },
     walkTrip(w, trip) { return startWalk(w, trip); },
     takeArrivals(w) {
@@ -561,7 +583,14 @@ export function createAgentWalkEngine(): PedestrianEngine {
         const who = { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild }, blastX: x, blastY: y };
         if (d < kill && !p.player) {
-          recordCasualty(w, { ...who, kind: d < kill * 0.4 ? 'torn' : 'dead', power: 1 - d / kill });
+          // Right under it: burnt black and torn limb from limb; further off,
+          // killed, an arm, a leg or the head often blown off.
+          const roll = personHash(p.id ^ 0x5eed);
+          const torn = d < kill * 0.4;
+          const all: Severable[] = ['head', 'armL', 'armR', 'legL', 'legR'];
+          const severed = torn ? all.filter((_, i) => ((roll >> i) & 1) === 1 || i === (roll >>> 8) % 5)
+            : (roll & 3) !== 0 ? [all[1 + ((roll >>> 4) % 4)]!, ...((roll & 12) === 12 ? ['head' as const] : [])] : [];
+          recordCasualty(w, { ...who, kind: torn ? 'torn' : 'dead', power: 1 - d / kill, severed, lost: severed, charred: torn });
           finish(s, p, false);
           dead++;
           continue;
@@ -572,10 +601,17 @@ export function createAgentWalkEngine(): PedestrianEngine {
         if (d < kill * 1.5 && !p.maimed && (personHash(p.id ^ 0x3c1) & 3) !== 0) {
           p.maimed = (['armL', 'armR', 'legL', 'legR'] as const)[personHash(p.id ^ 0x77) & 3]!;
         }
-        recordCasualty(w, { ...who, kind: 'knocked', power: Math.max(0, 1 - (d - kill) / kill) });
+        const maimedNow = p.maimed !== undefined && !(p.lost ?? []).includes(p.maimed);
+        if (maimedNow) { (p.lost ??= []).push(p.maimed!); p.bleeding = 1.2; }
+        // A leg gone: down for good, dragging themself off and bleeding out, as from a shot.
+        const legGone = (p.lost ?? []).some((l) => l === 'legL' || l === 'legR');
+        if (legGone) { p.act = { ...p.act, until: p.age + 600 }; p.bleeding = 2.2; }
+        recordCasualty(w, { ...who, kind: 'knocked', power: Math.max(0, 1 - (d - kill) / kill), lost: [...(p.lost ?? [])],
+          ...(maimedNow ? { severed: [p.maimed!] } : {}), ...(legGone ? { lieFor: 600, crawl: true } : {}) });
       }
       prune(s);
       startle(w, x, y, scare, 26, null);
+      shock(s, x, y, Math.min(scare, m(45)));
       return dead;
     },
     shot(w, id, part, fromX, fromY) {
@@ -602,10 +638,11 @@ export function createAgentWalkEngine(): PedestrianEngine {
       if (p.hp <= 0 || severed === 'head') {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
-          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost] });
+          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], ...(severed ? { severed: [severed] } : {}) });
         finish(s, p, false);
         prune(s);
         startle(w, p.x, p.y, m(45), 26, null);
+        shock(s, p.x, p.y, BODY_SHOCK);
         return { killed: true, severed };
       }
       // Struck: knocked down (the body to the ragdolls, which hand it back
@@ -619,10 +656,11 @@ export function createAgentWalkEngine(): PedestrianEngine {
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
         party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
         blastX: fromX, blastY: fromY, kind: 'knocked', power: severed ? 0.35 : 0.15, lost: [...p.lost],
-        lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone });
+        lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone, ...(severed ? { severed: [severed] } : {}) });
       p.v = 0;
       p.fright = p.age + 30;
       startle(w, p.x, p.y, m(45), 26, null);
+      shock(s, p.x, p.y, BODY_SHOCK);
       return { killed: false, severed };
     },
     getUp(w, id, x, y, heading, seconds) {
@@ -755,6 +793,21 @@ function stepWalkers(w: SimWorld): void {
     const list = cells.get(k);
     if (list) list.push(p); else cells.set(k, [p]);
   };
+  // Those coming near a shocking event (a blow, a body) run from it.
+  s.clock += DT;
+  if (s.shocks.length && s.clock >= s.shockLook) {
+    s.shockLook = s.clock + 0.4;
+    s.shocks = s.shocks.filter((k) => k.until > s.clock);
+    for (const p of s.walkers) {
+      if (p.inside || p.done || p.player || (p.fright ?? 0) > p.age || p.act) continue;
+      for (const k of s.shocks) {
+        const d = hypot(p.x - k.x, p.y - k.y);
+        if (d > k.radius) continue;
+        frighten(w, s, p, k.x, k.y, d, 18);
+        break;
+      }
+    }
+  }
   // The wounded bleeding: their health running out, dead where they are.
   let bled = false;
   for (const p of s.walkers) {
@@ -765,6 +818,7 @@ function stepWalkers(w: SimWorld): void {
     recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
       party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
       blastX: p.x, blastY: p.y, kind: 'dead', power: 0, lost: [...(p.lost ?? [])], faded: true });
+    shock(s, p.x, p.y, BODY_SHOCK);
     finish(s, p, false);
     bled = true;
   }
@@ -1211,6 +1265,14 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
     const d = hypot(p.x - x, p.y - y);
     if (d > radius) continue;
     saw.push(p.id);
+    frighten(w, s, p, x, y, d, seconds);
+  }
+  return saw;
+}
+
+/** Somebody who saw a fright at (x, y), `d` off: running away from it, some tripping, crouching or fainting. */
+function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: number, seconds: number): void {
+  {
     const goal = p.rush?.goal ?? lastOf(p);
     // Away from it: to the walkway point some way off on the far side.
     const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
@@ -1229,10 +1291,17 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
       } else if (roll < 118 && after === 0) {
         p.act = { kind: 'fall', from: p.age + 1.5, until: p.age + 14 + (roll % 7), faceX: p.x + Math.cos(p.heading), faceY: p.y + Math.sin(p.heading) };
         p.v = 0;
+      } else if (roll < 150 && after === 0 && d > m(12)) {
+        // Far enough off to feel safe: they stop and hold a phone up at it a
+        // few seconds (as GTA's peds film a scene), then run all the same.
+        const hold = 3 + (roll % 5);
+        p.act = { kind: 'photo', from: p.age, until: p.age + hold, faceX: x, faceY: y };
+        p.v = 0;
+        if (p.rush) p.rush = { ...p.rush, until: p.rush.until + hold };
+        p.fright = p.rush?.until ?? p.fright;
       }
     }
   }
-  return saw;
 }
 
 /** Somebody sent running towards a point (a police officer after the player), their own route on the walkways. */
