@@ -62,6 +62,13 @@ try {
 } catch {
   // Not kept: the defaults stand.
 }
+/**
+ * The grid the road snap lands on: the 1 m subdivision, or - while the grid
+ * is drawn (the road panel's Grid) - the 10 m cells the player sees, so a road
+ * runs along their lines and ends on their corners.
+ */
+let gridSnapStep = GRID_STEP;
+export function setGridSnapStep(step: number): void { gridSnapStep = step; }
 const roadSnapListeners = new Set<() => void>();
 export function roadSnap(): RoadSnap {
   return roadSnapState;
@@ -170,7 +177,7 @@ export function findAnchor(
 export function snapRoadStart(anchor: Anchor): Anchor {
   const snap = roadSnapState;
   if (anchor.kind !== 'free' || !snap.on || !snap.grid) return anchor;
-  return { kind: 'free', at: snapToGrid(anchor.at) };
+  return { kind: 'free', at: snapToGrid(anchor.at, gridSnapStep) };
 }
 
 /** Free road drawing follows the pointer exactly, snapping only to compatible networks. */
@@ -448,19 +455,20 @@ export function snapEndpoint(
  * taken, and the heading moves the little it must.
  */
 function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengthStep: number): Vec2 {
-  const startOnGrid = Math.abs(start.x / GRID_STEP - Math.round(start.x / GRID_STEP)) < 1e-6 &&
-    Math.abs(start.y / GRID_STEP - Math.round(start.y / GRID_STEP)) < 1e-6;
+  const g = gridSnapStep;
+  const startOnGrid = Math.abs(start.x / g - Math.round(start.x / g)) < 1e-6 &&
+    Math.abs(start.y / g - Math.round(start.y / g)) < 1e-6;
   const eighth = Math.round(angle / (Math.PI / 4));
   if (startOnGrid && Math.abs(angle - eighth * (Math.PI / 4)) < 1e-9) {
     const diagonal = eighth % 2 !== 0;
-    const unit = diagonal ? GRID_STEP * Math.SQRT2 : GRID_STEP;
+    const unit = diagonal ? g * Math.SQRT2 : g;
     // A length snap in whole cells on an axis is already on the grid.
     const step = !diagonal && lengthStep > 0 ? lengthStep : unit;
     const steps = Math.max(1, Math.round(length / step));
     const d = fromAngle(eighth * (Math.PI / 4));
-    return snapToGrid(addScaled(start, d, steps * step));
+    return snapToGrid(addScaled(start, d, steps * step), g);
   }
-  return snapToGrid(at);
+  return snapToGrid(at, g);
 }
 
 /**

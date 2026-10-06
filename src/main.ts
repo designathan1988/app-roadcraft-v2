@@ -45,7 +45,7 @@ import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
 import {
-  type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, snapRoadEndpoint, snapRoadStart, type SnapResult,
+  type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, setGridSnapStep, snapRoadEndpoint, snapRoadStart, type SnapResult,
 } from '@editor/snap';
 import { type DraftResult, commitRoadPath, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
@@ -1295,6 +1295,7 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       {
       const chained = roadChain !== null;
+      setGridSnapStep(roadGridShown() ? GRID_CELL : GRID_STEP);
       const start = roadChain ?? snapRoadStart(anchor);
       const startHeightOffset = chained
         ? roadChainHeight
@@ -4337,6 +4338,23 @@ function drawOverlayScreen(): void {
       ring(roadPreview.snap.at, 7, ok ? SELECTION : INVALID, 2, projected[projected.length - 1]);
       const end = projected[projected.length - 1]!;
       const groundEnd = groundProjected[groundProjected.length - 1]!;
+      // The road's length beside the pointer, in steps of 10 m, as SimCity shows it.
+      {
+        const tens = Math.round((pathLength * METERS_PER_UNIT) / 10) * 10;
+        const text = `${tens} m`;
+        ctx.save();
+        ctx.font = '700 13px system-ui, sans-serif';
+        const tw = ctx.measureText(text).width;
+        const bx = clamp(end.x + 16, 8, Math.max(8, w - tw - 28)), by = clamp(end.y - 40, 60, h - 40);
+        ctx.fillStyle = 'rgba(9, 27, 28, 0.92)';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, tw + 18, 24, 6);
+        ctx.fill();
+        ctx.fillStyle = ok ? '#e7fff7' : '#ffb4ab';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, bx + 9, by + 12.5);
+        ctx.restore();
+      }
       if (Math.abs(previewHeight) > UNITS_PER_METER * 0.5) {
         ctx.save();
         ctx.strokeStyle = previewHeight >= 0 ? '#7df7d3' : '#ffc864';

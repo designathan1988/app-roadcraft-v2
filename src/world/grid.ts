@@ -26,8 +26,8 @@ export function onGridLength(length: number, min = 0): number {
 }
 
 /** The nearest grid point (a whole number of subdivisions on both axes). */
-export function snapToGrid(p: { readonly x: number; readonly y: number }): { x: number; y: number } {
-  return { x: Math.round(p.x / GRID_STEP) * GRID_STEP, y: Math.round(p.y / GRID_STEP) * GRID_STEP };
+export function snapToGrid(p: { readonly x: number; readonly y: number }, step = GRID_STEP): { x: number; y: number } {
+  return { x: Math.round(p.x / step) * step, y: Math.round(p.y / step) * step };
 }
 
 /** Whether a length is a whole number of subdivisions. */
