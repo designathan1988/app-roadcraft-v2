@@ -35,6 +35,8 @@ describe('hair pinning: nearest three head vertices', () => {
     for (let i = 0; i < 300; i++) points.push([Math.round(rnd() * 8) / 8, Math.round(rnd() * 8) / 8, Math.round(rnd() * 8) / 8]);
     // Far outside the head: a long hairstyle's tips at the shoulders.
     for (let i = 0; i < 200; i++) points.push([(rnd() - 0.5) * 12, -4 - rnd() * 6, (rnd() - 0.5) * 12]);
+    // Points that are not numbers (a braid's lobes have some): nearest to nothing, and the search ends.
+    points.push([NaN, 0, 0], [0, NaN, 1], [Infinity, 0, 0], [0, 0, -Infinity]);
     for (const p of points) expect(nearest(p)).toEqual(bruteForce(P, anchors, p));
   });
 });

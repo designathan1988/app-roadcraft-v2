@@ -211,6 +211,11 @@ export function nearestThree(P: ArrayLike<number>, anchors: readonly number[]): 
   });
   const reach = Math.max(dims[0], dims[1], dims[2]);
   return (p) => {
+    // A point that is not a number (a braid's lobe has some) is nearest to
+    // nothing, as the search over every anchor found: here every bound of the
+    // search below compares false with NaN and it never ended - the game froze
+    // on the first braid (docs/performance.md #5).
+    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
     // [distance, order in the anchor list], kept sorted by both.
     const best: [number, number][] = [[Infinity, Infinity], [Infinity, Infinity], [Infinity, Infinity]];
     const consider = (order: number): void => {
@@ -222,7 +227,9 @@ export function nearestThree(P: ArrayLike<number>, anchors: readonly number[]): 
       best.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
     };
     const cx = cellOf(p[0], 0), cy = cellOf(p[1], 1), cz = cellOf(p[2], 2);
-    for (let r = 0; ; r++) {
+    // However far the point, the cube covers the grid after this many rings.
+    const rings = reach + Math.max(Math.abs(cx), Math.abs(cy), Math.abs(cz)) + 1;
+    for (let r = 0; r <= rings; r++) {
       for (let z = Math.max(0, cz - r); z <= Math.min(dims[2] - 1, cz + r); z++) {
         for (let y = Math.max(0, cy - r); y <= Math.min(dims[1] - 1, cy + r); y++) {
           const shell = Math.abs(z - cz) === r || Math.abs(y - cy) === r;
@@ -552,6 +559,9 @@ export function generateHair(style: HairStyle, base: HairBase, seed = 1, strands
     // The hairline's own clumps are drawn as strands and the painted cap
     // only: as cards their root ends stood on the brow as dark teeth.
     if (edgeFront[g]) continue;
+    // A strand rooted at a braid's tie stops there at once: one point is no
+    // card (t = 0 / 0 made its corners NaN, and the whole mesh's bounds).
+    if (pts.length < 2) continue;
     for (let layer = 0; layer < style.layers; layer++) {
       const strip = Math.floor(rnd() * 4);
       const u0 = strip / 4 + 0.01, u1 = (strip + 1) / 4 - 0.01;
