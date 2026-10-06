@@ -121,6 +121,23 @@ export interface CityCounts {
 export class CityLife {
   /** The player may switch the residents off (and the edge traffic back on). */
   enabled = true;
+  /**
+   * Share of the residents each home's floor area would hold that live there
+   * (`derivePopulation`). 1 under test; the game lowers it (`main.ts`): every
+   * resident is a full agent, and the player asked for fewer of them.
+   */
+  density = 1;
+  /** Most residents walking at once; a queue forms beyond (the game lowers it, `main.ts`). */
+  maxWalks = MAX_WALKS;
+  /**
+   * Most residents setting off from one building's door in a game minute.
+   * Unlimited under test; in the game a big block's people trickle out
+   * instead of leaving all in the same instant and queueing at the corner
+   * as one crowd (the player's report of 2026-10-05).
+   */
+  doorsPerMinute = Infinity;
+  /** Departures from each building in the current game minute. */
+  private readonly departures = new Map<BuildingId, { minute: number; n: number }>();
   population: Population = { residents: [], jobs: new Map(), homes: new Map() };
   private builtFor = -1;
   private accessFor = '';
@@ -347,7 +364,7 @@ export class CityLife {
         // Not where this entry starts (an outing missed, a trip given up):
         // it is skipped, never made from somewhere else.
         if (d.at !== e.from) { d.done++; continue; }
-        const started = this.start(w, r, d, e, walks < MAX_WALKS, drives < MAX_DRIVES);
+        const started = this.start(w, r, d, e, walks < this.maxWalks, drives < MAX_DRIVES);
         if (started === 'wait') break;
         d.done++;
         if (started === 'walk') walks++;
@@ -379,7 +396,7 @@ export class CityLife {
       mind.decided = now;
       const choice = decide(mind, r, d.at, clock, places, this.rng);
       if (!choice || choice.to === d.at) continue;
-      const started = this.start(w, r, d, { at: clock, from: d.at, to: choice.to }, walks < MAX_WALKS, drives < MAX_DRIVES, choice.why);
+      const started = this.start(w, r, d, { at: clock, from: d.at, to: choice.to }, walks < this.maxWalks, drives < MAX_DRIVES, choice.why);
       if (started === 'walk') walks++;
       else if (started === 'drive') drives++;
       // Could not set off just now (a queue of trips): asked again soon.
@@ -754,7 +771,7 @@ export class CityLife {
       const d = this.diaries.get(r.id);
       if (d) before.set(r.seed, d);
     }
-    this.population = derivePopulation(w.doc.buildings.all());
+    this.population = derivePopulation(w.doc.buildings.all(), this.density);
     this.diaries.clear();
     this.moved();
     this.byResident.clear();
@@ -801,6 +818,9 @@ export class CityLife {
       let bestD = m(60);
       for (const edge of w.sidewalks.edges.values()) {
         if (edge.kind !== 'walk') continue;
+        // A footway whose box is farther than the best so far cannot be nearer.
+        const bb = edge.path.bbox;
+        if (c.x < bb.minX - bestD || c.x > bb.maxX + bestD || c.y < bb.minY - bestD || c.y > bb.maxY + bestD) continue;
         const hit = edge.path.closestPoint(c);
         if (hit.distance < bestD) { bestD = hit.distance; best = edge.path.sampleAt(hit.s).p; }
       }
@@ -842,6 +862,18 @@ export class CityLife {
 
   private start(w: SimWorld, r: Resident, d: Diary, e: Entry, canWalk: boolean, canDrive: boolean,
     reason: TripReason = reasonOf(r, e)): 'walk' | 'drive' | 'skip' | 'wait' {
+    if (this.doorsPerMinute === Infinity) return this.setOff(w, r, d, e, canWalk, canDrive, reason);
+    const minute = Math.floor(this.minutes(w));
+    let door = this.departures.get(e.from);
+    if (!door || door.minute !== minute) { door = { minute, n: 0 }; this.departures.set(e.from, door); }
+    if (door.n >= this.doorsPerMinute) return 'wait';
+    const started = this.setOff(w, r, d, e, canWalk, canDrive, reason);
+    if (started === 'walk' || started === 'drive') door.n++;
+    return started;
+  }
+
+  private setOff(w: SimWorld, r: Resident, d: Diary, e: Entry, canWalk: boolean, canDrive: boolean,
+    reason: TripReason): 'walk' | 'drive' | 'skip' | 'wait' {
     const from = this.doors.get(e.from);
     const to = this.doors.get(e.to);
     if (!from || !to) { this.stranded++; return 'skip'; }

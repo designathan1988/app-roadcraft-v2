@@ -123,6 +123,9 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
   let dirty = true;
   let painting = false;
   let studio: ThumbnailStudio | null = null;
+  /** Whether the building tool is in hand (`beforeDraw`), and the pictures asked for before it was. */
+  let builderOpen = false;
+  const deferredPictures = new Set<string>();
   let inspectorOpen = true;
   let category: BuilderCategoryId = 'models';
   let toolId = 'select';
@@ -507,6 +510,14 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
    * second of freeze the moment the Builder was opened.
    */
   function requestThumbnails(ids: readonly string[]): void {
+    // The shelves are laid out at boot, Builder open or not: the pictures
+    // waited for nobody and cost the first ten seconds of play a stutter
+    // (each one a building built and drawn in a second context). They are
+    // taken when the Builder is first opened.
+    if (!builderOpen) {
+      for (const id of ids) deferredPictures.add(id);
+      return;
+    }
     studio ??= createThumbnailStudio(scene.gl);
     studio.request(ids, (images) => workspace.setPresetThumbnails(images));
   }
@@ -1138,6 +1149,14 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       hideOthers = false;
     },
     beforeDraw(active) {
+      if (active !== builderOpen) {
+        builderOpen = active;
+        if (active && deferredPictures.size) {
+          const ids = [...deferredPictures];
+          deferredPictures.clear();
+          requestThumbnails(ids);
+        }
+      }
       // A gesture's ghost wins; otherwise, in the interior view, the building
       // cut open at its floor.
       // See inside, city-wide: the buildings around the middle of the view,

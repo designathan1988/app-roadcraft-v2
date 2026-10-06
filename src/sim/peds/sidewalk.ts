@@ -680,13 +680,33 @@ export class SidewalkGraph {
   }
 }
 
+/** The box of a footprint ring, kept with the ring (`accessLineClear`). */
+const RING_BOXES = new WeakMap<readonly Vec2[], { minX: number; minY: number; maxX: number; maxY: number }>();
+function ringBox(ring: readonly Vec2[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  let box = RING_BOXES.get(ring);
+  if (!box) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of ring) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+    box = { minX, minY, maxX, maxY };
+    RING_BOXES.set(ring, box);
+  }
+  return box;
+}
+
 /** A door link may cross open land, but never a carriageway or another mass. */
 function accessLineClear(a: Vec2, b: Vec2, walkable: WalkableSurface,
-  footprints: readonly (readonly Vec2[])[],
+  allFootprints: readonly (readonly Vec2[])[],
   obstacles: readonly { x: number; y: number; radius: number }[]): boolean {
   const length = dist(a, b);
   const steps = Math.max(1, Math.ceil(length / m(0.4)));
   const margin = m(0.4);
+  // Only the masses whose box the link's box meets: every point of every link
+  // was tested against every building in town, a fifth of each road edit.
+  const lx0 = Math.min(a.x, b.x), lx1 = Math.max(a.x, b.x), ly0 = Math.min(a.y, b.y), ly1 = Math.max(a.y, b.y);
+  const footprints = allFootprints.filter((ring) => {
+    const box = ringBox(ring);
+    return box.maxX >= lx0 && box.minX <= lx1 && box.maxY >= ly0 && box.minY <= ly1;
+  });
   const near = obstacles.filter((item) => item.x >= Math.min(a.x, b.x) - item.radius - margin &&
     item.x <= Math.max(a.x, b.x) + item.radius + margin &&
     item.y >= Math.min(a.y, b.y) - item.radius - margin &&

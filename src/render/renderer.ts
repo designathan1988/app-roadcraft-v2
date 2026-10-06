@@ -953,6 +953,12 @@ export function createSceneRenderer(
       mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
       group.add(mesh);
     }
+    // In the scene for its lights, but never drawn: drawn before the parallel
+    // compile was done, each of these meshes stalled its frame waiting for
+    // its program (3.4 s of stalls on an empty map, the profile of
+    // 2026-10-05) - the very stall the warm-up is for. `compile` reads hidden
+    // objects too.
+    group.visible = false;
     scene.add(group);
     void compileAhead(group).then(() => { scene.remove(group); tiny.dispose(); });
     void compileAhead(blast.group);
@@ -1433,8 +1439,10 @@ export function createSceneRenderer(
         eye: rig.camera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
-        indoor: [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
-          ...indoors.yard(sim, terrain.naturalRenderedHeightAt)],
+        // Zoomed out past the crowd's band nobody is drawn: the people in
+        // the rooms and the lots are not even listed (they were, every frame).
+        indoor: detailed ? [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
+          ...indoors.yard(sim, terrain.naturalRenderedHeightAt)] : [],
         exhaust: (x, y, z, angle, length, speed, dusty) => {
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);

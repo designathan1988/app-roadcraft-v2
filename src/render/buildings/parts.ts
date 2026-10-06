@@ -32,6 +32,8 @@ import { type BuildingKit, createBuildingKit } from './kit';
 const SIZE = 224;
 /** Pictures per frame: enough to fill a row, small enough to hold 60 fps. */
 const PER_FRAME = 3;
+/** Milliseconds of a frame the pictures may take, after the first of the frame. */
+const FRAME_SHARE_MS = 6;
 /** How long the second context is kept once the queue is empty. */
 const IDLE_MS = 4000;
 
@@ -240,7 +242,11 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
       return;
     }
     const batch = new Map<string, string>();
-    for (let i = 0; i < PER_FRAME && waiting.length > 0; i++) {
+    // At least one a frame, and no more once the frame's share is spent: a
+    // picture costs from a few to forty milliseconds, and three of the dear
+    // ones in a frame were a 130 ms stall.
+    const started = performance.now();
+    for (let i = 0; i < PER_FRAME && waiting.length > 0 && (i === 0 || performance.now() - started < FRAME_SHARE_MS); i++) {
       const next = waiting.shift();
       if (!next) break;
       shoot(next.id, batch);

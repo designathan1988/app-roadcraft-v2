@@ -100,7 +100,7 @@ export function collectBays(w: SimWorld): Bay[] {
       let nav = lot ? navCache.get(lot) : undefined;
       if (lot && !nav) {
         const exits = exitsOf(w, b, lot, walls);
-        const local = walls.filter((wl) => near(wl, b, lot)).map((wl) => wl.ring.map((q) => worldToLocal(b, q)));
+        const local = wallsNear(walls, b, lot).map((wl) => wl.ring.map((q) => worldToLocal(b, q)));
         nav = { exits, grid: buildLotGrid(b, lot, local, exits) };
         navCache.set(lot, nav);
       }
@@ -182,13 +182,14 @@ function kerbBays(w: SimWorld, first: number): Bay[] {
   return out;
 }
 
-/** Whether a wall's bounds come within a few metres of a lot. */
-function near(wl: Wall, b: Building, v: { x: number; y: number; w: number; d: number }): boolean {
+/** The walls whose bounds come within a few metres of a lot, in list order. */
+function wallsNear(walls: readonly Wall[], b: Building, v: { x: number; y: number; w: number; d: number }): Wall[] {
   const corners = [localToWorld(b, v.x, v.y), localToWorld(b, v.x + v.w, v.y), localToWorld(b, v.x + v.w, v.y + v.d), localToWorld(b, v.x, v.y + v.d)];
   const pad = m(3);
   const x0 = Math.min(...corners.map((c) => c.x)) - pad, x1 = Math.max(...corners.map((c) => c.x)) + pad;
   const y0 = Math.min(...corners.map((c) => c.y)) - pad, y1 = Math.max(...corners.map((c) => c.y)) + pad;
-  return wl.x1 >= x0 && wl.x0 <= x1 && wl.y1 >= y0 && wl.y0 <= y1;
+  const hits = new Set(wallsInBox(walls, x0, y0, x1, y1));
+  return walls.filter((wl) => hits.has(wl));
 }
 
 /** A way out of a lot: a point inside its street edge, and the lane it joins, clear of every building. */
@@ -226,14 +227,50 @@ export function wallsOf(w: SimWorld): Wall[] {
   return out;
 }
 
+/** Cell of the walls' grid, world units. */
+const WALL_CELL = m(30);
+const WALL_GRIDS = new WeakMap<readonly Wall[], Map<number, Wall[]>>();
+/**
+ * The walls whose bounds meet a box, read from a grid of them: every exit
+ * tried from every lot filtered every building in town.
+ */
+function wallsInBox(walls: readonly Wall[], x0: number, y0: number, x1: number, y1: number): Wall[] {
+  let cells = WALL_GRIDS.get(walls);
+  if (!cells) {
+    cells = new Map();
+    for (const wl of walls) {
+      for (let gx = Math.floor(wl.x0 / WALL_CELL); gx <= Math.floor(wl.x1 / WALL_CELL); gx++) {
+        for (let gy = Math.floor(wl.y0 / WALL_CELL); gy <= Math.floor(wl.y1 / WALL_CELL); gy++) {
+          const k = gx * 65536 + gy;
+          const list = cells.get(k);
+          if (list) list.push(wl); else cells.set(k, [wl]);
+        }
+      }
+    }
+    WALL_GRIDS.set(walls, cells);
+  }
+  const seen = new Set<Wall>();
+  const out: Wall[] = [];
+  for (let gx = Math.floor(x0 / WALL_CELL); gx <= Math.floor(x1 / WALL_CELL); gx++) {
+    for (let gy = Math.floor(y0 / WALL_CELL); gy <= Math.floor(y1 / WALL_CELL); gy++) {
+      for (const wl of cells.get(gx * 65536 + gy) ?? []) {
+        if (seen.has(wl)) continue;
+        seen.add(wl);
+        if (wl.x1 >= x0 && wl.x0 <= x1 && wl.y1 >= y0 && wl.y0 <= y1) out.push(wl);
+      }
+    }
+  }
+  return out;
+}
+
 /** Whether a car can be driven straight from `a` to `b` without its body touching a building. */
 export function clearOfWalls(walls: readonly Wall[], a: { x: number; y: number }, b: { x: number; y: number },
   sweep = SWEEP, except: BuildingId | null = null): boolean {
   const len = Math.hypot(b.x - a.x, b.y - a.y);
   if (len < 1e-6) return true;
   const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
-  const near = walls.filter((wl) => wl.building !== except && wl.x1 >= Math.min(a.x, b.x) - sweep && wl.x0 <= Math.max(a.x, b.x) + sweep
-    && wl.y1 >= Math.min(a.y, b.y) - sweep && wl.y0 <= Math.max(a.y, b.y) + sweep);
+  const near = wallsInBox(walls, Math.min(a.x, b.x) - sweep, Math.min(a.y, b.y) - sweep, Math.max(a.x, b.x) + sweep, Math.max(a.y, b.y) + sweep)
+    .filter((wl) => wl.building !== except);
   if (near.length === 0) return true;
   const steps = Math.ceil(len / m(0.8));
   for (let i = 0; i <= steps; i++) {
@@ -306,14 +343,54 @@ function laneFor(w: SimWorld, x: number, y: number, among?: Iterable<Lanelet>, s
   return best;
 }
 
-/** The free bay with a lane nearest `(x, y)` within `reach`, or null. */
-export function freeBayNear(bays: readonly Bay[], x: number, y: number, reach: number): Bay | null {
-  let best: Bay | null = null;
-  let bestD = reach;
-  for (const bay of bays) {
-    if (bay.car !== null || !bay.lane) continue;
-    const d = Math.hypot(bay.x - x, bay.y - y);
-    if (d < bestD) { bestD = d; best = bay; }
+/** Cell of the bays' grid (`freeBayNear`), world units. */
+const BAY_CELL = m(25);
+/** The bays of one list by cell, each with its place in the list (the tie-break). */
+const BAY_GRIDS = new WeakMap<readonly Bay[], { length: number; cells: Map<number, number[]> }>();
+function bayGrid(bays: readonly Bay[]): Map<number, number[]> {
+  const hit = BAY_GRIDS.get(bays);
+  if (hit && hit.length === bays.length) return hit.cells;
+  const cells = new Map<number, number[]>();
+  bays.forEach((bay, i) => {
+    const k = Math.floor(bay.x / BAY_CELL) * 65536 + Math.floor(bay.y / BAY_CELL);
+    const list = cells.get(k);
+    if (list) list.push(i); else cells.set(k, [i]);
+  });
+  BAY_GRIDS.set(bays, { length: bays.length, cells });
+  return cells;
+}
+
+/** Where in `bays` the bays inside a box may be, in list order (a superset: whole cells). */
+export function bayIndicesIn(bays: readonly Bay[], x0: number, y0: number, x1: number, y1: number): number[] {
+  const cells = bayGrid(bays);
+  const out: number[] = [];
+  for (let gx = Math.floor(x0 / BAY_CELL); gx <= Math.floor(x1 / BAY_CELL); gx++) {
+    for (let gy = Math.floor(y0 / BAY_CELL); gy <= Math.floor(y1 / BAY_CELL); gy++) {
+      for (const i of cells.get(gx * 65536 + gy) ?? []) out.push(i);
+    }
   }
-  return best;
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * The free bay with a lane nearest `(x, y)` within `reach`, or null; of two
+ * as near, the earlier in the list. Read from a grid of the bays: a scan of
+ * every bay in town for every car owner made each road edit's re-parking
+ * residents times bays.
+ */
+export function freeBayNear(bays: readonly Bay[], x: number, y: number, reach: number): Bay | null {
+  const cells = bayGrid(bays);
+  let best = -1;
+  let bestD = reach;
+  const gx0 = Math.floor((x - reach) / BAY_CELL), gx1 = Math.floor((x + reach) / BAY_CELL);
+  const gy0 = Math.floor((y - reach) / BAY_CELL), gy1 = Math.floor((y + reach) / BAY_CELL);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    for (const i of cells.get(gx * 65536 + gy) ?? []) {
+      const bay = bays[i]!;
+      if (bay.car !== null || !bay.lane) continue;
+      const d = Math.hypot(bay.x - x, bay.y - y);
+      if (d < bestD || (d === bestD && best >= 0 && i < best)) { bestD = d; best = i; }
+    }
+  }
+  return best >= 0 ? bays[best]! : null;
 }

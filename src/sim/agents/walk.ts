@@ -13,7 +13,8 @@ import type { SidewalkEdge } from '../peds/sidewalk';
 import { type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
 import { recordCasualty } from '../people/casualties';
-import { ASK_WAY, carSweep, crossesFootway } from './cars';
+import { ASK_WAY, type CarTrip, carSweep, crossesFootway } from './cars';
+import type { FreePose, Vehicle } from '../vehicles/state';
 
 /**
  * The agents' walking: people on lanes of the footways, as SUMO's striping
@@ -99,6 +100,38 @@ const THERE = m(0.25);
 /** Spatial cells for the walkers and for the walkways. */
 const CELL = m(6);
 const WAY_CELL = m(20);
+/** Cells for the cars' zones (`zonesNear`). */
+const ZONE_CELL = m(16);
+
+/** Ground a walker keeps off: a car's body (and the way it holds), or a train's. */
+interface CarZone {
+  x0: number; y0: number; x1: number; y1: number;
+  discs: { x: number; y: number; r: number }[];
+  on: Set<number> | null;
+  /** Its way kept off only by people crossing the carriageway (a car at the kerb, `crossesFootway`). */
+  crossingOnly: boolean;
+}
+const NO_ZONES: readonly CarZone[] = [];
+
+/**
+ * A car's body as a zone: three discs along its length, half its width round.
+ * Kept per car while it stands where it stood, so the town's parked cars are
+ * not rebuilt as fresh objects every tick. Shared and read-only: a car on a
+ * trip copies the discs before adding its way.
+ */
+const PARKED = new WeakMap<Vehicle, { x: number; y: number; angle: number; zone: CarZone }>();
+function parkedZone(car: Vehicle, f: FreePose): CarZone {
+  const hit = PARKED.get(car);
+  if (hit && hit.x === f.x && hit.y === f.y && hit.angle === f.angle) return hit.zone;
+  const r = car.archetype.width / 2;
+  const reach = Math.max(0, car.archetype.length / 2 - r);
+  const discs = [-1, 0, 1].map((k) => ({ x: f.x + Math.cos(f.angle) * reach * k, y: f.y + Math.sin(f.angle) * reach * k, r }));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
+  const zone: CarZone = { x0, y0, x1, y1, discs, on: null, crossingOnly: false };
+  PARKED.set(car, { x: f.x, y: f.y, angle: f.angle, zone });
+  return zone;
+}
 
 interface Step {
   /** The walkway, or null for a straight stretch off it (to a door or a car). */
@@ -164,7 +197,7 @@ interface Walker {
 interface State {
   graph: WalkGraph | null;
   builtFor: string;
-  wayIndex: Map<string, number[]>;
+  wayIndex: Map<number, number[]>;
   walkers: Walker[];
   byId: Map<number, Walker>;
   arrivals: number[];
@@ -188,7 +221,13 @@ function stateOf(w: SimWorld): State {
 }
 
 const hypot = Math.hypot;
-const cellKey = (x: number, y: number, size: number): string => `${Math.floor(x / size)},${Math.floor(y / size)}`;
+/**
+ * A grid cell as one number: a string key (`"x,y"`) cost a string built and
+ * hashed for every one of the 25 cells every walker reads every tick, the
+ * largest single cost of the step. Unique while |cy| < 2^15 cells (km away).
+ */
+const cell = (cx: number, cy: number): number => cx * 65536 + cy;
+const cellKey = (x: number, y: number, size: number): number => cell(Math.floor(x / size), Math.floor(y / size));
 
 // ------------------------------------------------------------------ ground
 
@@ -204,7 +243,7 @@ function ensureGraph(w: SimWorld, s: State): WalkGraph | null {
     const pad = Math.max(Math.abs(way.lo), Math.abs(way.hi));
     for (let x = Math.floor((bb.minX - pad) / WAY_CELL); x <= Math.floor((bb.maxX + pad) / WAY_CELL); x++) {
       for (let y = Math.floor((bb.minY - pad) / WAY_CELL); y <= Math.floor((bb.maxY + pad) / WAY_CELL); y++) {
-        const k = `${x},${y}`;
+        const k = cell(x, y);
         const list = s.wayIndex.get(k);
         if (list) list.push(way.id); else s.wayIndex.set(k, [way.id]);
       }
@@ -223,7 +262,7 @@ function nearestWay(s: State, p: Vec2, reach: number): { way: Walkway; s: number
   const seen = new Set<number>();
   for (let x = cx - span; x <= cx + span; x++) {
     for (let y = cy - span; y <= cy + span; y++) {
-      for (const id of s.wayIndex.get(`${x},${y}`) ?? []) {
+      for (const id of s.wayIndex.get(cell(x, y)) ?? []) {
         if (seen.has(id)) continue;
         seen.add(id);
         const way = g.ways[id]!;
@@ -648,7 +687,7 @@ function stepWalkers(w: SimWorld): void {
   ensureGraph(w, s);
   indexReservations(w);
   // Who is where, a cell of a few metres each.
-  const cells = new Map<string, Walker[]>();
+  const cells = new Map<number, Walker[]>();
   const enter = (p: Walker): void => {
     const k = cellKey(p.x, p.y, CELL);
     const list = cells.get(k);
@@ -671,19 +710,21 @@ function stepWalkers(w: SimWorld): void {
   // kerb-side stripe); and, for a car holding its way across the footway or
   // asking for it (`OwnCars.holdWay`), the ground it is about to cover, kept
   // off with a little room. Somebody already inside one walks on out of it.
-  const carZones: { x0: number; y0: number; x1: number; y1: number; discs: { x: number; y: number; r: number }[]; on: Set<number> | null;
-    /** Its way kept off only by people crossing the carriageway (a car at the kerb, `crossesFootway`). */
-    crossingOnly: boolean }[] = [];
+  const carZones: CarZone[] = [];
   const holding = new Set<number>();
+  // One pass over the trips instead of a search of them per car (`tripOfCar`):
+  // with hundreds of parked cars that search was a tenth of the step.
+  const tripByCar = new Map<number, CarTrip>();
+  for (const t of w.city.cars?.trips.values() ?? []) if (!tripByCar.has(t.car.id)) tripByCar.set(t.car.id, t);
   for (const car of w.city.cars?.offRoad() ?? []) {
     const f = car.free;
     if (!f) continue;
-    const r = car.archetype.width / 2;
-    const reach = Math.max(0, car.archetype.length / 2 - r);
-    const discs = [-1, 0, 1].map((k) => ({ x: f.x + Math.cos(f.angle) * reach * k, y: f.y + Math.sin(f.angle) * reach * k, r }));
-    const t = w.city.cars!.tripOfCar(car.id);
+    const t = tripByCar.get(car.id) ?? null;
+    const body = parkedZone(car, f);
+    if (!t) { carZones.push(body); continue; }
+    const discs = body.discs.slice();
     let on: Set<number> | null = null;
-    if (t && (t.reserved || t.waitedPeople >= ASK_WAY)) {
+    if (t.reserved || t.waitedPeople >= ASK_WAY) {
       const way = carSweep(t, m(0.5));
       discs.push(...way);
       holding.add(car.id);
@@ -696,7 +737,7 @@ function stepWalkers(w: SimWorld): void {
     }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
-    carZones.push({ x0, y0, x1, y1, discs, on, crossingOnly: t !== null && !crossesFootway(t) });
+    carZones.push({ x0, y0, x1, y1, discs, on, crossingOnly: !crossesFootway(t) });
   }
   for (const id of [...s.onCarWay.keys()]) if (!holding.has(id)) s.onCarWay.delete(id);
   // The trains at grade: solid as cars are (nobody walks across a level crossing under one).
@@ -706,6 +747,21 @@ function stepWalkers(w: SimWorld): void {
     // `on` empty: whoever is on a train's ground walks off it (`inside` below).
     carZones.push({ x0, y0, x1, y1, discs, on: TRAIN_GROUND, crossingOnly: false });
   }
+  // The zones by cell, each in every cell its box reaches with a walker's look
+  // ahead round it: a walker reads its own cell instead of every car in town
+  // (the town's parked cars made that the step's second largest cost). A zone
+  // a walker could see or touch is always in the walker's cell.
+  const zoneCells = new Map<number, CarZone[]>();
+  for (const z of carZones) {
+    const gx0 = Math.floor((z.x0 - LOOK) / ZONE_CELL), gx1 = Math.floor((z.x1 + LOOK) / ZONE_CELL);
+    const gy0 = Math.floor((z.y0 - LOOK) / ZONE_CELL), gy1 = Math.floor((z.y1 + LOOK) / ZONE_CELL);
+    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+      const k = cell(gx, gy);
+      const list = zoneCells.get(k);
+      if (list) list.push(z); else zoneCells.set(k, [z]);
+    }
+  }
+  const zonesNear = (p: Walker): readonly CarZone[] => zoneCells.get(cellKey(p.x, p.y, ZONE_CELL)) ?? NO_ZONES;
 
 
   for (const p of s.walkers) {
@@ -715,10 +771,10 @@ function stepWalkers(w: SimWorld): void {
       let clear = true;
       const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
       for (let gx = cx - 1; gx <= cx + 1 && clear; gx++) for (let gy = cy - 1; gy <= cy + 1 && clear; gy++) {
-        for (const q of cells.get(`${gx},${gy}`) ?? []) if (hypot(q.x - p.x, q.y - p.y) < DOOR_CLEAR) { clear = false; break; }
+        for (const q of cells.get(cell(gx, gy)) ?? []) if (hypot(q.x - p.x, q.y - p.y) < DOOR_CLEAR) { clear = false; break; }
       }
       // Nor while a car holds the ground they would step onto: they wait for it to pass.
-      if (clear && carZones.some((z) => z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r + BODY))) clear = false;
+      if (clear && zonesNear(p).some((z) => z.discs.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r + BODY))) clear = false;
       if (clear) { p.inside = false; p.prevX = p.x; p.prevY = p.y; p.prevHeading = p.heading; enter(p); }
       continue;
     }
@@ -754,7 +810,7 @@ function stepWalkers(w: SimWorld): void {
     others.length = 0;
     const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
     for (let gx = cx - 2; gx <= cx + 2; gx++) for (let gy = cy - 2; gy <= cy + 2; gy++) {
-      for (const q of cells.get(`${gx},${gy}`) ?? []) {
+      for (const q of cells.get(cell(gx, gy)) ?? []) {
         if (q === p) continue;
         const rx = q.x - p.x, ry = q.y - p.y;
         const along = rx * f.tx + ry * f.ty;
@@ -764,7 +820,7 @@ function stepWalkers(w: SimWorld): void {
         others.push({ along, lat, oncoming, r: SHOULDERS - BODY });
       }
     }
-    for (const z of carZones) {
+    for (const z of zonesNear(p)) {
       if (p.x < z.x0 - LOOK || p.x > z.x1 + LOOK || p.y < z.y0 - LOOK || p.y > z.y1 + LOOK) continue;
       // On it when the car took it, or inside the car's body (the car came to
       // them): they walk on out of its way.

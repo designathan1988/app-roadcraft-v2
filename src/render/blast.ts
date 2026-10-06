@@ -251,6 +251,7 @@ export function createBlast(exhaust: Exhaust): Blast {
     mesh.receiveShadow = true;
     // Instance colours from the first frame, so the program never changes variant.
     mesh.setColorAt(0, new Color(1, 1, 1));
+    mesh.visible = false;
     group.add(mesh);
   }
   const craterGeometry = new CircleGeometry(0.5, 28).rotateX(-Math.PI / 2);
@@ -273,7 +274,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   const craterMeshes = craterMaterials.map((material, i) => {
     if (i === 2) {
       const mesh = new InstancedMesh(craterGeometry, material, MAX_SOOT);
-      mesh.count = 0; mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.receiveShadow = true;
+      mesh.count = 0; mesh.frustumCulled = false; mesh.renderOrder = 2; mesh.receiveShadow = true; mesh.visible = false;
       group.add(mesh);
       return mesh;
     }
@@ -282,6 +283,7 @@ export function createBlast(exhaust: Exhaust): Blast {
     mesh.frustumCulled = false;
     mesh.renderOrder = 3;
     mesh.receiveShadow = true;
+    mesh.visible = false;
     group.add(mesh);
     return mesh;
   });
@@ -300,6 +302,7 @@ export function createBlast(exhaust: Exhaust): Blast {
   wireGeometry.setAttribute('position', new BufferAttribute(wirePositions, 3));
   const wires = new LineSegments(wireGeometry, new LineBasicMaterial({ color: 0x141414 }));
   wires.frustumCulled = false;
+  wires.visible = false;
   group.add(wires);
 
   const pieces: Piece[] = [];
@@ -638,7 +641,17 @@ export function createBlast(exhaust: Exhaust): Blast {
         o.updateMatrix();
         craterMeshes[k]!.setMatrixAt(counts[k]!++, o.matrix);
       }
-      craterMeshes.forEach((mesh, k) => { if (k < 2) { mesh.count = counts[k]!; mesh.instanceMatrix.needsUpdate = true; } });
+      // Only what was written goes up, and nothing when there are none: the
+      // whole crater buffers were sent every frame of the game.
+      craterMeshes.forEach((mesh, k) => {
+        if (k >= 2) return;
+        const n = counts[k]!;
+        if (n === 0 && mesh.count === 0) return;
+        mesh.count = n;
+        mesh.instanceMatrix.clearUpdateRanges();
+        if (n > 0) mesh.instanceMatrix.addUpdateRange(0, n * 16);
+        mesh.instanceMatrix.needsUpdate = true;
+      });
       // Soot is still: written again only when some was added.
       if (sootDirty) {
         sootDirty = false;
@@ -653,6 +666,9 @@ export function createBlast(exhaust: Exhaust): Blast {
         mesh.count = soots.length;
         mesh.instanceMatrix.needsUpdate = true;
       }
+      // An empty batch is still a program bind and its uniforms in every pass
+      // (the shadow pass too): seven of them stood in every frame of the game.
+      for (const mesh of [boxes, cylinders, shells, slabs, ...craterMeshes]) mesh.visible = mesh.count > 0;
       let w = 0;
       for (const r of ropes) {
         for (let k = 1; k < r.p.length; k++) {
@@ -662,7 +678,15 @@ export function createBlast(exhaust: Exhaust): Blast {
         }
       }
       wireGeometry.setDrawRange(0, w / 3);
-      (wireGeometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+      // No wires down, nothing drawn and nothing sent: the whole buffer went
+      // to the GPU every frame, and an empty line was a draw in every pass.
+      wires.visible = w > 0;
+      if (w > 0) {
+        const attribute = wireGeometry.getAttribute('position') as BufferAttribute;
+        attribute.clearUpdateRanges();
+        attribute.addUpdateRange(0, w);
+        attribute.needsUpdate = true;
+      }
       void mtx;
     },
     dispose() {

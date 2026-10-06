@@ -1473,6 +1473,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // And the people indoors, on the floors that are cut open.
         for (const figure of options.indoor ?? []) {
           if (pedCount >= MAX_PEDS) break;
+          // Out of the view, as the walkers are: not written at all.
+          if (options.pedestrianVisible && !options.pedestrianVisible(figure.x, figure.y, figure.z)) continue;
           frameAt(figure.x, figure.y, figure.heading, figure.z);
           pedestrians.draw(figure.view, figure.x, figure.y, figure.heading, figure.z, alpha, null, figure.lean, true);
           pedCount++;

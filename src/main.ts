@@ -224,6 +224,15 @@ function syncPopulationShare(): void {
   sim.populationShare = window.innerWidth < NARROW_SCREEN_WIDTH ? NARROW_SCREEN_SHARE : 1;
 }
 syncPopulationShare();
+// Half the residents a town's floor area would hold: each one is a whole
+// agent (a day, a walk, a car, a body), and the player ordered fewer people
+// so the town stays fast (2026-10-05).
+sim.city.density = 0.5;
+// No more than 90 on foot at once, and a building's people out of its door
+// two a game minute: a block of flats emptied in one instant at 07:30 and
+// stood at the corner as one crowd (the player's report, 2026-10-05).
+sim.city.maxWalks = 90;
+sim.city.doorsPerMinute = 2;
 
 /**
  * The zoom range the renderer we are about to boot can actually represent.
@@ -430,6 +439,28 @@ function keepLots(): void {
   lotsNetRevision = net.revision;
   if (!doc.segments.size && !doc.lots.length) return;
   if (applyLots(doc, planLots(doc, net))) requestDraw();
+}
+/**
+ * `keepLots` once the roads have settled: replanning every lot of a town took
+ * about 250 ms, and the overlay asked for it in the very frame that drew each
+ * new road (the stall felt on every click of the road tool). The old lots stay
+ * drawn meanwhile; a run of edits is replanned once, after the last.
+ */
+const LOTS_SETTLE_MS = 450;
+let lotsTimer: ReturnType<typeof setTimeout> | null = null;
+let lotsTimerFor = -1;
+function keepLotsSoon(): void {
+  if (lotsNetRevision === net.revision) return;
+  if (lotsTimer !== null) {
+    if (lotsTimerFor === net.revision) return;
+    clearTimeout(lotsTimer);
+  }
+  lotsTimerFor = net.revision;
+  lotsTimer = setTimeout(() => {
+    lotsTimer = null;
+    keepLots();
+    requestDraw();
+  }, LOTS_SETTLE_MS);
 }
 const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
 /** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
@@ -3873,7 +3904,8 @@ function drawOverlayScreen(): void {
   // turned that off); zoned ones faintly with the other tools.
   const showLots = tool === 'zone' || (tool === 'road' && lotsShownWithRoads()) || (doc.lots.some((l) => l.use) && zoneColoursShown());
   if (showLots) {
-    if (tool === 'zone' || tool === 'road') keepLots();
+    if (tool === 'zone') keepLots();
+    else if (tool === 'road') keepLotsSoon();
     const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
     const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
     const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;

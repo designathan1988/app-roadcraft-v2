@@ -153,7 +153,7 @@ export function jobsOf(b: Building): number {
  * The city's people, from its buildings. Pure and deterministic: the same
  * buildings give the same residents, homes, jobs and days.
  */
-export function derivePopulation(buildings: Iterable<Building>): Population {
+export function derivePopulation(buildings: Iterable<Building>, density = 1): Population {
   const all = [...buildings].sort((a, b) => a.id - b.id);
   const workplaces = all.filter((b) => jobsOf(b) > 0);
   const byIdAll = new Map(all.map((b) => [b.id, b]));
@@ -209,7 +209,10 @@ export function derivePopulation(buildings: Iterable<Building>): Population {
   };
 
   for (const b of all) {
-    const count = residentsOf(b);
+    const full = residentsOf(b);
+    // Fewer residents per home at a lower density (`CityLife.density`), at
+    // least one in every home: each resident is a whole agent.
+    const count = full && density < 1 ? Math.max(1, Math.round(full * density)) : full;
     if (!count) continue;
     const rng = new Rng(0xc17 ^ (b.id * 2654435761));
     const list: number[] = [];

@@ -11,7 +11,7 @@ import { createVehicle, snapshot, type Vehicle, type VehicleId } from '../vehicl
 import { planFrom } from '../routing/router';
 import { AGENT_PERSON_BASE, type Boarder } from '../people/engine';
 import { personHash, type PersonAgeClass, type PersonGender } from '../people/view';
-import { type Bay, type Wall, clearOfWalls, collectBays, freeBayNear, wallsOf } from './parking';
+import { type Bay, type Wall, bayIndicesIn, clearOfWalls, collectBays, freeBayNear, wallsOf } from './parking';
 import { solidFootprints } from '@world/buildings/geometry';
 import { Manoeuvre, arrival, departure } from './manoeuvre';
 
@@ -283,7 +283,13 @@ export class OwnCars {
     const rings = solidFootprints(b);
     if (rings.length === 0) return null;
     const candidates: { bay: Bay; d: number }[] = [];
-    for (const bay of this.bays) {
+    // Only the bays within reach of the walls' box, in list order (the sort
+    // below keeps ties in it): every bay in town was measured against every
+    // corner, for every car owner, on every road edit.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const ring of rings) for (const p of ring) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    for (const i of bayIndicesIn(this.bays, x0 - BACK_REACH, y0 - BACK_REACH, x1 + BACK_REACH, y1 + BACK_REACH)) {
+      const bay = this.bays[i]!;
       if (bay.car !== null || !bay.lane) continue;
       let d = Infinity;
       for (const ring of rings) for (const p of ring) d = Math.min(d, Math.hypot(p.x - bay.x, p.y - bay.y));

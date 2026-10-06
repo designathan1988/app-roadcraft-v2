@@ -258,12 +258,26 @@ class WalkingLines {
     return known;
   }
 
-  /** Whether a point is on the paving of a deck. */
+  /** The paving of a deck as point rings with their boxes, made once (`onPaving`). */
+  private readonly pavingRings = new Map<string, { outer: PavingRing | null; holes: PavingRing[] }[]>();
+
+  /**
+   * Whether a point is on the paving of a deck. The rings were copied into
+   * fresh point objects on every call - the whole town's footway outline for
+   * every point of every corner - which was a tenth of a road edit.
+   */
   onPaving(deck: RoadStructure, p: Vec2): boolean {
-    for (const poly of this.paving(deck)) {
-      const [outerRing, ...holes] = poly;
-      if (!outerRing || !pointInPolygon(p, outerRing.map(([x, y]) => ({ x: x!, y: y! })))) continue;
-      if (holes.some((h) => pointInPolygon(p, h.map(([x, y]) => ({ x: x!, y: y! }))))) continue;
+    let polys = this.pavingRings.get(deck);
+    if (!polys) {
+      polys = this.paving(deck).map(([outerRing, ...holes]) => ({
+        outer: outerRing ? pavingRing(outerRing) : null,
+        holes: holes.map(pavingRing),
+      }));
+      this.pavingRings.set(deck, polys);
+    }
+    for (const poly of polys) {
+      if (!poly.outer || !inRing(p, poly.outer)) continue;
+      if (poly.holes.some((h) => inRing(p, h))) continue;
       return true;
     }
     return false;
@@ -294,6 +308,18 @@ class WalkingLines {
     this.cache.set(key, lines);
     return lines;
   }
+}
+
+interface PavingRing { readonly points: Vec2[]; readonly minX: number; readonly minY: number; readonly maxX: number; readonly maxY: number }
+function pavingRing(ring: readonly (readonly number[])[]): PavingRing {
+  const points = ring.map(([x, y]) => ({ x: x!, y: y! }));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const q of points) { minX = Math.min(minX, q.x); minY = Math.min(minY, q.y); maxX = Math.max(maxX, q.x); maxY = Math.max(maxY, q.y); }
+  return { points, minX, minY, maxX, maxY };
+}
+/** `pointInPolygon`, skipped when the point is outside the ring's box. */
+function inRing(p: Vec2, r: PavingRing): boolean {
+  return p.x >= r.minX && p.x <= r.maxX && p.y >= r.minY && p.y <= r.maxY && pointInPolygon(p, r.points);
 }
 
 /** Points along a polyline at `count + 1` evenly spaced shares of its length. */

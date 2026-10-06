@@ -66,12 +66,16 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
       if (len < 1e-6) return;
       const nx = -(b.y - a.y) / len * width / 2, ny = (b.x - a.x) / len * width / 2;
       const steps = Math.max(1, Math.ceil(len / m(2)));
+      // Each cross-section's two ground points once: a step shares its end
+      // with the next step's start (the ground was asked twice for each).
+      let r0 = at(a.x - nx, a.y - ny, lift), l0 = at(a.x + nx, a.y + ny, lift);
       for (let k = 0; k < steps; k++) {
-        const t0 = k / steps, t1 = (k + 1) / steps;
-        const p0 = { x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 }, p1 = { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 };
-        const q = [at(p0.x - nx, p0.y - ny, lift), at(p0.x + nx, p0.y + ny, lift), at(p1.x + nx, p1.y + ny, lift), at(p1.x - nx, p1.y - ny, lift)];
-        for (const i of [0, 1, 2, 0, 2, 3]) linePos.push(...q[i]!);
+        const t1 = (k + 1) / steps;
+        const p1x = a.x + (b.x - a.x) * t1, p1y = a.y + (b.y - a.y) * t1;
+        const l1 = at(p1x + nx, p1y + ny, lift), r1 = at(p1x - nx, p1y - ny, lift);
+        linePos.push(...r0, ...l0, ...l1, ...r0, ...l1, ...r1);
         pushColour(lineCol, c, alpha, 6);
+        r0 = r1; l0 = l1;
       }
     };
     for (const poly of input.polygons) {

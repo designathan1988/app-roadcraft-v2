@@ -298,6 +298,23 @@ and they have seen it.
   (headless, Intel iGPU): overview 16.6 ms, street 16.7, close 16.7, 4x 17.6.
   Graphics are what the player chooses: the automatic quality governor was
   removed. There is no loading screen.
+- **Performance pass of 2026-10-05 (LIVE):** people re-cooked (the cook was
+  stale: every body was built during play); half the residents
+  (`CityLife.density = 0.5` in `main.ts`, 1071 in the parking town), at most 90
+  on foot, two out of a door per game minute (`doorsPerMinute`); walkers' grid
+  keyed by numbers and the parked cars' zones on a grid (`walk.ts`, pedestrians
+  2.2 -> 0.8 ms/tick); indoor and yard figures listed only when drawn; empty
+  blast batches hidden (were drawn and uploaded every frame); the shader
+  warm-up no longer draws its meshes (it caused 3.4 s of stalls at boot);
+  building gallery photos taken when the Builder opens, 6 ms a frame; road
+  edits: lots replanned 450 ms after the last edit, water rebuilt only near
+  water, Clipper2 first for polygon booleans (Martinez as fallback), grids for
+  bays/walls/footprints, paving rings cached. Headless iGPU, rush hour: CPU
+  draw 11.1 -> 5.0 ms overview, 6.8 -> 2.2 street; worst frame per road edit
+  ~1 s -> ~0.45 s. Photos: `docs/audit/2026-10-05/perf/`. Open: the conflict
+  zones of new junctions (~0.1 s each) and the lots raster (~0.25 s, after
+  the edit) still stall a frame; a road joined to the network can move the
+  grade of every street, which re-meshes the whole town once.
 
 ## Open, by area
 

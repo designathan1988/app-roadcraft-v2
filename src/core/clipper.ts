@@ -111,8 +111,22 @@ function legacyOutput(polygons: KernelMultiPoly): MultiPoly {
   }));
 }
 
-/** Retain the game's established fill semantics, with Clipper2 for kernel failures. */
+/**
+ * Clipper2's integer kernel first: on the same grid and with every ring
+ * oriented by its role (`input`), NonZero gives the regions the Martinez
+ * kernel (`polygon-clipping`) gave, several times faster - the union was most
+ * of a road edit's surface rebuild. Martinez stays as the fallback.
+ */
 function compatibleRun(kind: ClipType, a: MultiPoly, b: MultiPoly = []): MultiPoly {
+  try {
+    return run(kind, a, b);
+  } catch {
+    return martinezRun(kind, a, b);
+  }
+}
+
+/** The Martinez kernel (`polygon-clipping`), with Clipper2 for its failures. */
+function martinezRun(kind: ClipType, a: MultiPoly, b: MultiPoly = []): MultiPoly {
   const subjects = legacyInput(a);
   if (!subjects.length) return [];
   const clips = legacyInput(b);

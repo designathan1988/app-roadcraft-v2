@@ -769,6 +769,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const visited = new Int32Array(GRID * GRID);
   let pass = 0;
 
+  /** The corners the last shaping pass moved (`touchesWater`). */
+  let lastChanged: readonly number[] = [];
   const shapeToRoads = (shape: TerrainShaper | null, region: TerrainRegion | null = null): boolean => {
     // The corners whose height this pass changes, whichever way.
     const changed: number[] = [];
@@ -838,6 +840,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     refreshNormals(changed);
     geometry.computeBoundingSphere();
     for (const i of changed) if (onRim(i)) { rebuildFrame(); break; }
+    lastChanged = changed;
     return true;
   };
 
@@ -907,6 +910,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
 
   let wetDiscs: readonly WaterStamp[] = [];
+  /** Where the water's mesh lies, world units (`touchesWater`). */
+  let waterBox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
   /** The cells water flooded into past the brush (`floodBasins`), with their level. */
   let floodCells = new Map<string, number>();
   const wetAt = (x: number, y: number): boolean => {
@@ -946,6 +951,28 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     floodCells = new Map();
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
     previous.dispose();
+    water.geometry.computeBoundingBox();
+    const box = water.geometry.boundingBox;
+    // In world (x, y): the mesh is three's (x, height, -y).
+    waterBox = box && !box.isEmpty() ? { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z } : null;
+  };
+  /** How near the water a moved corner can be and still leave it as it was: two water cells and two terrain cells. */
+  const WATER_REACH = 2 * WATER_CELL + 2 * TERRAIN_CELL;
+  /**
+   * Whether the last shaping moved ground under or beside the water. A road
+   * edit re-cut the ground under that road only, but rebuilt the whole water
+   * mesh every time (about 90 ms on a town with a river); away from the water
+   * the mesh is the same, as the rivers' levels read the unshaped land.
+   */
+  const touchesWater = (): boolean => {
+    if (!waterBox) return wetDiscs.length > 0;
+    for (const i of lastChanged) {
+      const ix = i % GRID, iy = (i - ix) / GRID;
+      const x = ix * TERRAIN_CELL - TERRAIN_HALF, y = TERRAIN_HALF - iy * TERRAIN_CELL;
+      if (x >= waterBox.minX - WATER_REACH && x <= waterBox.maxX + WATER_REACH
+        && y >= waterBox.minY - WATER_REACH && y <= waterBox.maxY + WATER_REACH) return true;
+    }
+    return false;
   };
 
   const vergeMaterial = material.clone();
@@ -1014,7 +1041,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       const moved = shapeToRoads(shape, region);
       // A road that cut through a valley changes where the water's shore is:
       // at once, or once the stroke is over when one is held (`settle`).
-      if (moved) {
+      if (moved && touchesWater()) {
         if (region) waterStale = true;
         else { waterStale = false; rebuildWater(lastStamps); }
       }
