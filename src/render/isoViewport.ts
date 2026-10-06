@@ -17,7 +17,7 @@ import type { Facing, Viewport } from '@view/viewport';
  * is 4 m tall and a person fills about half of it; at 2 (the player asked to
  * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
  */
-export const MIN_HALF_HEIGHT = 2;
+export const MIN_HALF_HEIGHT = 0.5;
 export const MAX_HALF_HEIGHT = 950;
 
 /**
@@ -54,7 +54,9 @@ export const MIN_ELEVATION = (30 * Math.PI) / 180;
 export const MIN_ELEVATION_PERSPECTIVE = (4 * Math.PI) / 180;
 export const MAX_ELEVATION = Math.PI / 2;
 /** How far above the ground the orbit's camera is kept, units (4 m). */
-const GROUND_CLEARANCE = 10;
+const GROUND_CLEARANCE = 1.5;
+/** The point the perspective camera turns about stands this high over the ground: eye height, 1.7 m. */
+const EYE = 4.25;
 /** How far from the middle of the map the view's centre may go, units. */
 const VIEW_REACH = MAP_HALF + 200;
 const DISTANCE = 2400;
@@ -154,6 +156,10 @@ export function createIsoRig(
       return;
     }
     persp.fov = PERSPECTIVE_FOV;
+    // In perspective the camera turns about a point at eye height over the
+    // ground there, so zoomed right in it stands in the street, not under it.
+    if (camera === persp && groundAt) target.y = groundAt(target.x, target.z) + EYE;
+    else if (camera !== persp) target.y = 0;
     // The view's centre stays over the map. Tilted low, a drag near the horizon
     // grabs ground kilometres away, and the centre was carried off the map into
     // empty sky - a white screen.
