@@ -73,6 +73,9 @@ const WATER_CELL = 4;
  */
 export const TERRAIN_CELL = TERRAIN_SIZE / TERRAIN_SEGMENTS;
 
+/** A shore texel with no water near it (`shoreLevels`). */
+const NO_WATER = -100_000;
+
 /** Corners per side of the terrain grid — one more than its cells. */
 const GRID = TERRAIN_SEGMENTS + 1;
 /**
@@ -343,6 +346,46 @@ export function terrainBakes(anisotropy: number): {
 const PAINT_RES = 1024;
 
 /**
+ * The water's level at every terrain corner within a few cells of water, for
+ * the shore bands of the terrain shader; NO_WATER elsewhere. Read off the
+ * water surface itself (its vertices carry the level), so a lake and a river
+ * are the same thing here, then spread outwards so the beach above the line
+ * knows which water it belongs to.
+ */
+function shoreLevels(water: BufferGeometry, texture: DataTexture): void {
+  const levels = texture.image.data as Float32Array;
+  levels.fill(NO_WATER);
+  const position = water.getAttribute('position');
+  if (position) {
+    for (let i = 0; i < position.count; i++) {
+      const ix = Math.round((position.getX(i) + TERRAIN_HALF) / TERRAIN_CELL);
+      const iy = Math.round((position.getZ(i) + TERRAIN_HALF) / TERRAIN_CELL);
+      if (ix < 0 || iy < 0 || ix >= GRID || iy >= GRID) continue;
+      const k = iy * GRID + ix;
+      levels[k] = Math.max(levels[k] as number, position.getY(i));
+    }
+  }
+  // Out three corners (48 units, about 19 m), each pass taking the highest
+  // water next to it.
+  for (let pass = 0; pass < 3; pass++) {
+    const from = levels.slice();
+    for (let iy = 0; iy < GRID; iy++) {
+      for (let ix = 0; ix < GRID; ix++) {
+        const k = iy * GRID + ix;
+        if ((from[k] as number) > NO_WATER / 2) continue;
+        let best = NO_WATER;
+        if (ix > 0) best = Math.max(best, from[k - 1] as number);
+        if (ix + 1 < GRID) best = Math.max(best, from[k + 1] as number);
+        if (iy > 0) best = Math.max(best, from[k - GRID] as number);
+        if (iy + 1 < GRID) best = Math.max(best, from[k + GRID] as number);
+        levels[k] = best;
+      }
+    }
+  }
+  texture.needsUpdate = true;
+}
+
+/**
  * The land's colour map: a tint per region, a few hundred metres to a field,
  * stored as half its factor (0.5 = unchanged) so the shader multiplies the
  * grass by it. Domain-warped, so fields have the soft, irregular edges of
@@ -479,6 +522,15 @@ function terrainMaterial(
   const paintA = paintTexture();
   const paintB = paintTexture();
   material.userData['paint'] = [paintA, paintB];
+  // The water's level at each terrain corner near water (`shoreLevels`),
+  // NO_WATER elsewhere: where the ground stands just above it is beach,
+  // just at it is wet, under it is the bed.
+  const shore = new DataTexture(new Float32Array(GRID * GRID).fill(NO_WATER), GRID, GRID, RedFormat, FloatType);
+  shore.magFilter = NearestFilter;
+  shore.minFilter = NearestFilter;
+  shore.generateMipmaps = false;
+  shore.needsUpdate = true;
+  material.userData['shore'] = shore;
   const uniforms = {
     uPaintA: { value: paintA as Texture },
     uPaintB: { value: paintB as Texture },
@@ -486,6 +538,8 @@ function terrainMaterial(
     uPaintSize: { value: TERRAIN_SIZE },
     uGrassField: GRASS_FIELD,
     uGrid: TERRAIN_GRID,
+    uShore: { value: shore as Texture },
+    uShoreGrid: { value: new Vector3(TERRAIN_HALF, TERRAIN_CELL, GRID) },
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
@@ -533,6 +587,14 @@ function terrainMaterial(
          uniform float uPaintSize;
          uniform vec4 uGrassField; // world x, y, reach, on
          uniform vec3 uGrid; // cell, strength, map half
+         uniform sampler2D uShore;
+         uniform vec3 uShoreGrid; // half, cell, corners per side
+         // The water level at the nearest terrain corner (NO_WATER if none).
+         float terrainShoreLevel(vec3 world) {
+           vec2 g = (world.xz + uShoreGrid.x) / uShoreGrid.y;
+           ivec2 p = ivec2(clamp(floor(g + 0.5), vec2(0.0), vec2(uShoreGrid.z - 1.0)));
+           return texelFetch(uShore, p, 0).r;
+         }
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
          uniform sampler2D uMacroMap;
@@ -699,6 +761,29 @@ function terrainMaterial(
          // ground untouched, so the hills are legible without the scene turning
          // into a relief map.
          float relief = clamp(dot(normalize(vTerrainNormal), normalize(vec3(0.24, 0.62, -0.75))), -1.0, 1.0);
+         // The shore (Terragen's "wet shores": a band set by height over the
+         // water, darkened where it is wet). Under the water a muddy bed, at
+         // the waterline a dark wet strip, above it a beach of pale sand that
+         // only lies where the bank is gentle enough to hold it.
+         float shoreLevel = terrainShoreLevel(vTerrainWorld);
+         if (shoreLevel > ${NO_WATER / 2}.0) {
+           float above = vTerrainWorld.y - shoreLevel;
+           float sandLuma = dot(dirtPlan.rgb, vec3(0.3, 0.6, 0.1));
+           vec3 sand = vec3(0.42, 0.36, 0.23) * (0.82 + sandLuma * 1.4);
+           float gentle = 1.0 - smoothstep(24.0, 40.0, slopeDeg);
+           float beach = (1.0 - smoothstep(2.5 + wanderD * 3.0, 6.0 + wanderD * 3.0, above)) * gentle;
+           blended.rgb = mix(blended.rgb, sand, beach * (1.0 - rockMix * 0.6));
+           // A steep bank holds no beach: it is a cut of damp earth from the
+           // water up to the turf, frayed at its top.
+           float bank = (1.0 - smoothstep(5.0 + wanderD * 5.0, 10.0 + wanderD * 5.0, above)) * (1.0 - gentle);
+           blended.rgb = mix(blended.rgb, dirtColor.rgb * vec3(0.78, 0.72, 0.62), bank * (1.0 - rockMix));
+           // Below the water: the bed goes to a dark olive mud with depth.
+           float bed = smoothstep(0.0, -3.0, above);
+           blended.rgb = mix(blended.rgb, vec3(0.16, 0.15, 0.09) * (0.8 + sandLuma), bed * 0.8);
+           // Wet: darker from a little above the line down into the water.
+           float wet = 1.0 - smoothstep(-0.2, 1.4, above);
+           blended.rgb *= mix(1.0, 0.6, wet);
+         }
          // Kept gentle: at 0.46 the far side of every hill went navy.
          blended.rgb *= 1.0 + relief * 0.26 * smoothstep(1.5, 13.0, slopeDeg);
          // Higher ground dries out, low ground stays lush. Measured in the
@@ -772,7 +857,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v8';
+  material.customProgramCacheKey = () => 'terrain-splat-v9';
   return material;
 }
 
@@ -1399,6 +1484,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     floodCells = new Map();
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
     previous.dispose();
+    shoreLevels(water.geometry, material.userData['shore'] as DataTexture);
     water.geometry.computeBoundingBox();
     const box = water.geometry.boundingBox;
     // In world (x, y): the mesh is three's (x, height, -y).

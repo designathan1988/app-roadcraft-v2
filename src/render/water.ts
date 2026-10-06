@@ -262,7 +262,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
   // entirely once the camera pulls back and the river goes glassy again.
-  material.normalScale.set(0.8, 0.8);
+  material.normalScale.set(0.55, 0.55);
 
   const time = { value: 0 };
   const uniforms = {
@@ -270,9 +270,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     // Three stops after SimCity 4's water: a pale blue over the shelf, a soft
     // periwinkle, a dense blue in the channel - a painted ramp, not navy, and
     // not the icy cyan a single light blue gave.
-    uShallow: { value: new Color(0x9fc3d6) },
-    uMid: { value: new Color(0x6489c2) },
-    uDeep: { value: new Color(0x3a5c9a) },
+    uShallow: { value: new Color(0x86b4bd) },
+    uMid: { value: new Color(0x4a7ea6) },
+    uDeep: { value: new Color(0x2a5079) },
     uHorizon: { value: new Color(0xb9cbe6) },
     uFoamTint: { value: new Color(0xe6eef2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
@@ -433,9 +433,14 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // glancing parts of the surface, and the body of the water dims by as
          // much as the reflection gains.
          material.diffuseContribution *= 1.0 - waterFresnel * 0.6;
+         // Water absorbs most of the light that enters it: its body colour is
+         // the light scattered back, a fraction of what a matte surface of
+         // that colour would return under the same sun. Lit as paint, the
+         // river read as a pale sheet of plastic.
+         material.diffuseContribution *= mix(0.55, 1.0, waterFoam);
          // The horizon tint: what faces away from the eye takes the sky's pale
          // colour as a painted wash, instead of a sharp reflection.
-         material.diffuseContribution = mix(material.diffuseContribution, uHorizon, waterFresnel * 0.55 * (1.0 - waterFoam));
+         material.diffuseContribution = mix(material.diffuseContribution, uHorizon, waterFresnel * 0.35 * (1.0 - waterFoam));
          diffuseColor.a = clamp(diffuseColor.a + waterFresnel * 0.5, 0.0, 1.0) * waterRim;`,
       );
   };
