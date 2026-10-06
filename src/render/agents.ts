@@ -811,7 +811,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   let procFrame = 0;
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
-    lost?: readonly Severable[]): void => {
+    lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number }): void => {
     let entry = procPeople.get(id);
     if (!entry) {
       const spare = procSpare.pop();
@@ -839,6 +839,20 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     (entry.at ??= new Matrix4()).copy(procMatrix);
     person.activity = activity;
     person.lost = lost;
+    if (activity === 'flinch' && act) {
+      // A first wound (`walk.ts` FLINCH): doubled over - the crouch-down
+      // clip, quick - held a moment hunched over the wound, then up with
+      // the stand-up clip, each blended from the last by the clips
+      // themselves (one authored sequence), the face in pain.
+      person.activity = 'hurt';
+      const duck = 0.5, up = 0.95;
+      const next: ProcClip = act.t < duck ? 'duck' : act.t > act.hold - up ? 'getUp' : 'cower';
+      if (person.clip !== next) { person.clip = next; person.phase = 0; }
+      if (next === 'duck') person.phase = Math.min(0.999, act.t / duck);
+      else if (next === 'getUp') person.phase = Math.min(0.999, (act.t - (act.hold - up)) / up);
+      else person.phase += dt / procedural!.clipDuration(person);
+      return;
+    }
     const metres = speed / m(1);
     // Running from danger runs, past a brisk walk; struck with fear (cowering,
     // or panicking stood still), they crouch with their arms over their head.
@@ -1720,10 +1734,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
             // Shot and still going: the pain on their face over the fright.
-            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
+            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
-              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined));
+              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined);
           }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;

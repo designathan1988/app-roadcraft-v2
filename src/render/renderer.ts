@@ -4,6 +4,7 @@ import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
 import type { Vehicle } from '@sim/vehicles/state';
 import { createGore } from './gore';
+import { takeWounds } from '@sim/people/casualties';
 import { solidsOf } from '@world/solids';
 import { vehiclePose } from '@sim/pose';
 import { workUntil } from '@core/frameWork';
@@ -2102,6 +2103,8 @@ export function createSceneRenderer(
         },
         ragdolls: (citizens) => {
           ragdollSim = sim;
+          // Bullet holes on the people shot, alive or not (`recordWound`).
+          for (const wd of takeWounds(sim)) citizens.wound?.(-1 - wd.id, wd.part);
           ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
           if (occupantQueue.length) { ragdolls.fling(occupantQueue, citizens, ragdollWorld); occupantQueue.length = 0; }
           // Somebody tripping on the pavement falls as a ragdoll too.

@@ -231,11 +231,12 @@ interface Body {
   /** Opened at the belly, the guts out (`openBelly`). */
   opened?: boolean;
   /**
-   * Shot: the muscles still working as they go down (`toneStep`) - the
-   * shape they stood in held by springs that weaken over the fall, the legs
-   * giving way first, a hand going to the wound.
+   * Seconds left of joint friction (`joints`): a body just struck moves as
+   * a body, not a bundle of loose sticks - its limbs' speeds drawn towards
+   * their neighbours', no pose forced on it (pose springs fighting the
+   * sticks made a shot body writhe like elastic).
    */
-  tone?: { t: number; readonly struck: BodyPart; readonly rest: readonly Vector3[]; readonly clutch: number; readonly dead: boolean };
+  stiff?: number;
   /** Which piece each particle is on: the body itself, or a limb torn off. */
   comp: number[];
   palettes: Float32Array[];
@@ -505,17 +506,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     return dir;
   };
 
-  /** The muscles' hold on a body just shot (`toneStep`): the pose it stood in, and its torso's frame then. */
-  const startTone = (body: Body, c: Casualty): void => {
-    // The pose they stood in, in their upright frame.
-    const back = uprightFrame(body.p, body.front, new Matrix4()).invert();
-    const rest = body.p.map((v) => v.clone().applyMatrix4(back));
-    const clutch = c.struck === 'armL' ? RW : c.struck === 'armR' ? LW : Math.random() < 0.5 ? LW : RW;
-    // A shot through the head: nothing left to hold them.
-    if (c.struck === 'head' && c.kind !== 'knocked') return;
-    body.tone = { t: 0, struck: c.struck ?? 'torso', rest, clutch, dead: c.kind !== 'knocked' };
-  };
-
   /** The body of a casualty of a blow. */
   const spawn = (c: Casualty, citizens: RagdollCitizens, world: RagdollWorld,
     given?: { index: number; palette: Float32Array; transform: Matrix4 }): void => {
@@ -550,7 +540,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       known.asleep = false; known.still = 0; known.flying = 0;
       const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
-      if (c.struck) citizens.wound?.(known.index, c.struck);
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -562,10 +551,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       body.survivor.crawl = { dx: ax / l, dy: ay / l, since: 0 };
     }
     // A bullet does not throw a body: a small push where it went in, the
-    // rest is the body itself giving way (`toneStep`).
+    // rest is the body itself giving way under its own weight.
     const speed = c.struck ? m(0.6) : c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = c.struck ? shove(body, c) : blast(body, c, speed);
-    if (c.struck) startTone(body, c);
+    // Joint friction while it falls: dead weight, not a rag.
+    body.stiff = 1.6;
     const chest = body.p[CHE]!;
     if (c.kind === 'torn') {
       // Torn: thrown harder, limbs flung, blood everywhere - but whole. A
@@ -595,7 +585,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       if (Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
     }
     add(body);
-    if (c.struck) citizens.wound?.(body.index, c.struck);
     sever(body, c, dir, citizens);
     // A blast tears a body open (one torn apart, most often); a bullet never
     // does it at once - only a body already dead, shot again and again in
@@ -1046,102 +1035,22 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
   }
 
   /**
-   * The frame a shot body's pose is held in: at the pelvis, x straight up,
-   * z across the hips (level), y the way the body faces. Upright whatever the
-   * torso does, as an animated character's root is - a frame taken from the
-   * torso itself would turn with every lean it asked for.
+   * Joint friction: across every bone (a rigid stick), the two ends' speeds
+   * drawn a little towards their mean - the damping a joint's muscles and
+   * tissue give a real body (an articulated body's joint damping), so the
+   * limbs follow the trunk instead of whipping about it.
    */
-  function uprightFrame(p: readonly Vector3[], front: number, out: Matrix4): Matrix4 {
-    const side = tmpE.subVectors(p[RH]!, p[LH]!).setY(0);
-    if (side.lengthSq() < 1e-9) side.set(0, 0, 1);
-    frameOf(UP, side, out);
-    // y = z x x: make it the body's front.
-    if (front < 0) {
-      const e = out.elements;
-      e[4] = -e[4]!; e[5] = -e[5]!; e[6] = -e[6]!;
-      e[8] = -e[8]!; e[9] = -e[9]!; e[10] = -e[10]!;
-    }
-    return out.setPosition(p[PEL]!);
-  }
-
-  /**
-   * Physical animation (as Unreal's physical animation drives bodies towards
-   * an animated pose by springs of a strength, and NaturalMotion's Euphoria
-   * keeps GTA's shot peds working their muscles as they go down): each
-   * particle pulled towards a pose played out in the body's upright frame -
-   * the blow rocking the chest back, the knees giving way to a kneel, the
-   * body folding forward over them, one hand pressed to the wound - while the
-   * springs weaken and let it go to the ground: neither a stiff board
-   * toppling over nor a rag doll dropped.
-   */
-  function toneStep(body: Body, tone: NonNullable<Body['tone']>): void {
-    // The muscles only move the body within itself: whatever their pulls add
-    // up to across the ground is taken back, or the body crept metres off
-    // where it was shot (positions pulled against the sticks, every step).
-    let sx = 0, sz = 0;
-    for (const v of body.p) { sx += v.x; sz += v.z; }
-    toneMove(body, tone);
-    let ex = 0, ez = 0;
-    for (const v of body.p) { ex += v.x; ez += v.z; }
-    const n = body.p.length, dx = (ex - sx) / n, dz = (ez - sz) / n;
-    for (let k = 0; k < n; k++) { body.p[k]!.x -= dx; body.p[k]!.z -= dz; body.o[k]!.x -= dx; body.o[k]!.z -= dz; }
-  }
-
-  function toneMove(body: Body, tone: NonNullable<Body['tone']>): void {
-    tone.t += STEP;
-    const t = tone.t;
-    // The dead give way at once and go limp in under a second; the wounded
-    // stand a moment, sink to their knees, then go down.
-    const pace = tone.dead ? 2.2 : 1;
-    const T = t * pace;
-    if (T > 2.4) { delete body.tone; return; }
-    const M = body.scale;
-    const frame = uprightFrame(body.p, body.front, new Matrix4());
-    const buckle = smooth((T - 0.22) / 0.5);
-    // Rocked back by the blow, then folding forward over the knees.
-    const lean = -0.22 * Math.sin(Math.min(1, T / 0.3) * Math.PI) * (1 - buckle) + 0.75 * smooth((T - 0.7) / 0.6);
-    const hold = (from: number, to: number): number => 1 - smooth((T - from) / (to - from));
-    // Down on the ground the muscles let go: a pose held upright against the
-    // ground bent the neck back over and folded the legs through the clothes.
-    const chestUp = (body.p[CHE]!.y - body.ground[CHE]!) / M;
-    const standing = Math.min(1, Math.max(0, (chestUp - 0.3) / 0.35));
-    const upperK = 0.14 * hold(1.0, 1.8) * standing;
-    const legK = 0.12 * hold(1.1, 1.6) * standing;
-    const armK = 0.05 * hold(0.9, 1.6) * standing;
-    const goal = new Vector3();
-    const cos = Math.cos(lean), sin = Math.sin(lean);
-    for (let k = 0; k < body.p.length; k++) {
-      if (k === PEL) continue;
-      const q = tone.rest[k]!;
-      const leg = k === LK || k === LA || k === LT || k === RK || k === RA || k === RT;
-      const upper = k === CHE || k === BEL || k === NEC || k === HEA || k === TOP || k === LS || k === RS || k === LE || k === LW || k === RE || k === RW;
-      let x = q.x, y = q.y;
-      const z = q.z;
-      if (leg) {
-        // Kneeling: knees down and forward of the hips, shins back along the ground.
-        const knee = k === LK || k === RK, ankle = k === LA || k === RA;
-        const kx = knee ? -0.3 * M : ankle ? -0.36 * M : -0.37 * M;
-        const ky = knee ? 0.32 * M : ankle ? -0.1 * M : -0.26 * M;
-        x += (kx - x) * buckle;
-        y += (ky - y) * buckle;
-      } else if (upper) {
-        const rx = x * cos - y * sin, ry = x * sin + y * cos;
-        x = rx; y = ry;
-      }
-      const strength = leg ? legK : k === LH || k === RH ? 0.1 * hold(1.1, 1.6) * standing : (k === LE || k === LW || k === RE || k === RW) ? armK
-        : k === HEA || k === TOP ? upperK * 0.6 : upperK;
-      if (strength <= 0) continue;
-      goal.set(x, y, z).applyMatrix4(frame);
-      const v = body.p[k]!;
-      v.lerp(goal, strength);
-      // The muscles take up the swing: less flailing.
-      body.o[k]!.lerp(v, 0.03 * strength / 0.14);
-    }
-    // A hand to the wound (or to the chest), while there is strength in the arm.
-    if (T < 1.8) {
-      const at = STRUCK[tone.struck]![0]!;
-      const target = tone.clutch === at || at === LE || at === RE ? body.p[at === LE ? LE : at === RE ? RE : CHE]! : body.p[at === TOP ? HEA : at]!;
-      body.p[tone.clutch]!.lerp(target, 0.1 * hold(1.2, 1.8));
+  function joints(body: Body): void {
+    const { p, o } = body;
+    const k = 0.12;
+    for (const s of body.sticks) {
+      if (s.broken || s.min !== s.max) continue;
+      const a = p[s.a]!, b = p[s.b]!, oa = o[s.a]!, ob = o[s.b]!;
+      const vax = a.x - oa.x, vay = a.y - oa.y, vaz = a.z - oa.z;
+      const vbx = b.x - ob.x, vby = b.y - ob.y, vbz = b.z - ob.z;
+      const mx = (vax + vbx) / 2, my = (vay + vby) / 2, mz = (vaz + vbz) / 2;
+      oa.set(a.x - (vax + (mx - vax) * k), a.y - (vay + (my - vay) * k), a.z - (vaz + (mz - vaz) * k));
+      ob.set(b.x - (vbx + (mx - vbx) * k), b.y - (vby + (my - vby) * k), b.z - (vbz + (mz - vbz) * k));
     }
   }
 
@@ -1157,7 +1066,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       // The ground under each particle, looked up once a step.
       body.ground[k] = world.groundAt(v.x, -v.z);
     }
-    if (body.tone) toneStep(body, body.tone);
+    if (body.stiff && body.stiff > 0) { body.stiff -= STEP; joints(body); }
     if (body.charred && !body.pin && body.age < 6) curl(body);
     // Walls within reach of the body this step.
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

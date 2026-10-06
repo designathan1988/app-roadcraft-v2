@@ -13,7 +13,7 @@ import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
 import { type BodyPart, type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender, type Severable } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
-import { recordCasualty } from '../people/casualties';
+import { recordCasualty, recordWound } from '../people/casualties';
 import { ASK_WAY, type CarTrip, carSweep, crossesFootway } from './cars';
 import type { FreePose, Vehicle } from '../vehicles/state';
 
@@ -195,6 +195,8 @@ interface Walker {
   maimed?: 'armL' | 'armR' | 'legL' | 'legR';
   /** Health, 100 whole (`shot`); absent: never hurt. */
   hp?: number;
+  /** Shots taken. */
+  hits?: number;
   /** Damage taken by each part, for a limb shot off once it has taken enough. */
   hurt?: Partial<Record<BodyPart, number>>;
   /** Every limb lost (`PedView.lost`). */
@@ -228,6 +230,9 @@ interface State {
   /** When the walkers were last checked against the shocks. */
   shockLook: number;
 }
+
+/** A first wound's reaction (`flinch`): doubled over, a hand to it, up again (seconds; the renderer splits it, `FLINCH_PHASES`). */
+export const FLINCH = 2.6;
 
 /** A shocking event's life (seconds), and the reach of a body lying in the street. */
 const SHOCK_LIFE = 90;
@@ -635,6 +640,8 @@ export function createAgentWalkEngine(): PedestrianEngine {
         if (part !== 'head') p.hp -= 15;
       }
       const v = p.view;
+      // The hole and the blood on their clothes (`render/agents.ts`).
+      recordWound(w, p.id, part);
       if (p.hp <= 0 || severed === 'head') {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
@@ -645,22 +652,30 @@ export function createAgentWalkEngine(): PedestrianEngine {
         shock(s, p.x, p.y, BODY_SHOCK);
         return { killed: true, severed };
       }
-      // Struck: knocked down (the body to the ragdolls, which hand it back
-      // when it is up, `getUp`), then up and running. A leg gone: down for
-      // good, dragging themself away and bleeding to death; an arm gone:
-      // running off bleeding until they drop (as GTA's wounded do).
+      // Hurt, not killed. As GTA's shot peds do (NaturalMotion's
+      // reach-for-wound): a first pistol wound doubles them over where they
+      // stand, a hand to it, and they get away hurt - an animation, not a
+      // fall (a light hit played by physics looked like elastic, and getting
+      // up off the ground with no get-up-from-lying clip popped into a
+      // crouch). Hurt badly - a second wound, a limb gone, already down -
+      // they go down and stay down: dragging themself along, bleeding.
+      const wasDown = p.act?.kind === 'fall';
+      p.hits = (p.hits ?? 0) + 1;
       const legGone = p.lost.includes('legL') || p.lost.includes('legR');
-      // Held down until the body is up (`getUp` gives the moment): let go at
-      // a guess, they walked off unseen while their body still lay there,
-      // and appeared somewhere else once it stood (the player, 2026-10-06).
-      // The cap only for a body never drawn (nobody looking).
-      const down = legGone ? 600 : 14;
-      p.act = { kind: 'fall', from: p.age, until: p.age + down, faceX: fromX, faceY: fromY };
-      if (severed || legGone) p.bleeding = legGone ? 3 : 1.6;
+      if (!wasDown && !severed && p.hits === 1) {
+        p.act = { kind: 'flinch', from: p.age, until: p.age + FLINCH, faceX: fromX, faceY: fromY };
+        p.v = 0;
+        p.fright = p.age + 30;
+        startle(w, p.x, p.y, m(45), 18, null);
+        shock(s, p.x, p.y, BODY_SHOCK);
+        return { killed: false, severed };
+      }
+      p.act = { kind: 'fall', from: p.age, until: p.age + 600, faceX: fromX, faceY: fromY };
+      p.bleeding = Math.max(p.bleeding ?? 0, legGone ? 3 : severed ? 1.6 : 0.9);
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
         party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
         blastX: fromX, blastY: fromY, kind: 'knocked', power: severed ? 0.35 : 0.15, lost: [...p.lost],
-        lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone, struck: part, ...(severed ? { severed: [severed] } : {}) });
+        lieFor: 600, crawl: true, struck: part, ...(severed ? { severed: [severed] } : {}) });
       p.v = 0;
       p.fright = p.age + 30;
       startle(w, p.x, p.y, m(45), 18, null);
