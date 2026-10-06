@@ -40,6 +40,8 @@ export interface QualitySettings {
    * every seat is drawn, between the two only the front row.
    */
   readonly occupantZoom: number;
+  /** Soft shadows of drifting clouds over the land (`postprocess.ts`, needs post-processing). */
+  readonly cloudShadows: boolean;
 }
 
 export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
@@ -59,6 +61,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailCutoffZoom: 0.5,
     pedestrianDetail: 0,
     occupantZoom: 3,
+    cloudShadows: false,
   },
   medium: {
     pixelRatio: 1.25,
@@ -76,6 +79,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailCutoffZoom: 0.34,
     pedestrianDetail: 1,
     occupantZoom: 2.2,
+    cloudShadows: false,
   },
   high: {
     pixelRatio: 1.5,
@@ -93,6 +97,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailCutoffZoom: 0.26,
     pedestrianDetail: 2,
     occupantZoom: 1.6,
+    cloudShadows: true,
   },
   ultra: {
     pixelRatio: 2,
@@ -110,6 +115,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailCutoffZoom: 0.2,
     pedestrianDetail: 2,
     occupantZoom: 1.3,
+    cloudShadows: true,
   },
 };
 

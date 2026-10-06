@@ -1,4 +1,8 @@
-import { BufferGeometry, DepthTexture, Float32BufferAttribute, HalfFloatType, Mesh, PlaneGeometry, Scene, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer } from 'three';
+import {
+  BufferGeometry, DataTexture, DepthTexture, Float32BufferAttribute, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh,
+  PlaneGeometry, RGBAFormat, RepeatWrapping, Scene, UnsignedByteType, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer,
+} from 'three';
+import { fbm, makeNoise } from './mesh/textureBaker';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -94,7 +98,22 @@ export function createPostChain(
   const composer = new EffectComposer(renderer, target);
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(size.x, size.y);
-  composer.addPass(new RenderPass(scene, camera));
+  const scenePass = new RenderPass(scene, camera);
+  composer.addPass(scenePass);
+  /**
+   * The depth the scene was drawn with THIS frame. The composer ping-pongs
+   * two targets and an odd number of swaps leaves it starting on the other
+   * one next frame, so a pass bound to one target's depth read a stale or
+   * empty buffer every other frame - the cloud shadows flickered on and off.
+   */
+  let sceneDepth: DepthTexture | null = target.depthTexture;
+  {
+    const draw = scenePass.render.bind(scenePass);
+    scenePass.render = (...args: Parameters<RenderPass['render']>) => {
+      sceneDepth = args[2].depthTexture;
+      draw(...args);
+    };
+  }
 
   let gtao: GTAOPass | null = null;
   if (quality.ambientOcclusion) {
@@ -171,6 +190,22 @@ export function createPostChain(
     void renderer.compileAsync(warm, camera).catch(() => {}).finally(() => quad.dispose());
     renderer.setRenderTarget(previous);
   }
+  // Cloud shadows: soft patches drifting over the land, on the linear image
+  // before tone mapping. Each pixel's world position is rebuilt from the
+  // depth the scene was drawn with, so the patches lie on the ground, the
+  // roads and the roofs alike, and scroll with the wind.
+  const clouds = quality.cloudShadows ? new ShaderPass(CLOUD_SHADOWS) : null;
+  const cloudMap = clouds ? cloudTexture() : null;
+  if (clouds && cloudMap) {
+    clouds.uniforms['tClouds']!.value = cloudMap;
+    const pass = clouds;
+    const shade = pass.render.bind(pass);
+    pass.render = (...args: Parameters<ShaderPass['render']>) => {
+      pass.uniforms['tDepth']!.value = sceneDepth;
+      shade(...args);
+    };
+    composer.addPass(clouds);
+  }
   const smaa = quality.smaa ? new SMAAPass() : null;
   if (smaa) composer.addPass(smaa);
   const output = new OutputPass();
@@ -184,11 +219,19 @@ export function createPostChain(
     target,
     render(delta) {
       (grade.uniforms['uTime'] as { value: number }).value += delta;
+      if (clouds) {
+        camera.updateMatrixWorld();
+        (clouds.uniforms['uTime'] as { value: number }).value += delta;
+        (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
+        (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
+      }
       composer.render(delta);
     },
     setNight(dark) {
       bloom.enabled = dark > 0.05;
       bloom.strength = bloomStrength * Math.min(1, dark);
+      // No sun, no cloud shadow.
+      if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
     },
     setSize(width, height, pixelRatio) {
       composer.setPixelRatio(pixelRatio);
@@ -203,9 +246,90 @@ export function createPostChain(
       smaa?.dispose();
       output.dispose();
       grade.dispose();
+      clouds?.dispose();
+      cloudMap?.dispose();
     },
   };
 }
+
+/** How much a cloud's shadow takes from the light under it: a soft patch, not a dark blot. */
+const CLOUD_SHADOW_STRENGTH = 0.2;
+
+/**
+ * Tiling cloud cover: billowy fbm with gaps between, so the patches are
+ * separate clouds rather than an even grey film.
+ */
+function cloudTexture(): DataTexture {
+  const res = 256;
+  const noise = makeNoise(0x51c3);
+  const data = new Uint8Array(res * res * 4);
+  for (let y = 0; y < res; y++) {
+    for (let x = 0; x < res; x++) {
+      const v = fbm(noise, (x / res) * 6, (y / res) * 6, 6, 5);
+      const cover = Math.min(1, Math.max(0, (v - 0.47) / 0.16));
+      const i = (y * res + x) * 4;
+      const c = Math.round(cover * cover * (3 - 2 * cover) * 255);
+      data[i] = c;
+      data[i + 1] = c;
+      data[i + 2] = c;
+      data[i + 3] = 255;
+    }
+  }
+  const texture = new DataTexture(data, res, res, RGBAFormat, UnsignedByteType);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * Fake cloud shadows (Total War's and Unity's light-cookie trick, done on the
+ * image): a scrolling cloud cover laid on each pixel's world position, the
+ * colour dimmed under it. The sky and the empty background (depth 1) are left
+ * alone.
+ */
+const CLOUD_SHADOWS = {
+  uniforms: {
+    tDiffuse: { value: null },
+    tDepth: { value: null },
+    tClouds: { value: null },
+    uProjectionInverse: { value: new Matrix4() },
+    uCameraWorld: { value: new Matrix4() },
+    uTime: { value: 0 },
+    uStrength: { value: CLOUD_SHADOW_STRENGTH },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
+    uniform sampler2D tClouds;
+    uniform mat4 uProjectionInverse;
+    uniform mat4 uCameraWorld;
+    uniform float uTime;
+    uniform float uStrength;
+    varying vec2 vUv;
+    void main() {
+      vec4 src = texture2D(tDiffuse, vUv);
+      float depth = texture2D(tDepth, vUv).r;
+      if (depth >= 0.9999 || uStrength <= 0.0) { gl_FragColor = src; return; }
+      vec4 view = uProjectionInverse * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+      vec3 world = (uCameraWorld * vec4(view.xyz / view.w, 1.0)).xyz;
+      // Two layers at different sizes and drifts, so the shapes change as
+      // they pass instead of sliding by as one stencil.
+      vec2 p = world.xz;
+      float a = texture2D(tClouds, p / 2600.0 + uTime * vec2(0.0042, 0.0017)).r;
+      float b = texture2D(tClouds, p / 1500.0 + uTime * vec2(0.0058, 0.0009) + 0.37).r;
+      float cover = clamp(a * 0.75 + b * 0.45 - 0.15, 0.0, 1.0);
+      gl_FragColor = vec4(src.rgb * (1.0 - uStrength * cover), src.a);
+    }
+  `,
+};
 
 /**
  * A film grade on the display image: a gentle S-curve of contrast, colour
