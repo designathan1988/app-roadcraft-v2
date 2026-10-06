@@ -266,6 +266,12 @@ export interface SceneHandle {
   /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
   naturalTerrainHeightAt(x: number, y: number): number;
   /**
+   * The roads' heights an edit already solved for this network on the
+   * natural terrain (the tunnel test, `commitRoadPath`): the next rebuild
+   * takes them instead of solving the same network again.
+   */
+  offerElevation(elevation: RoadElevation, networkRevision: number): void;
+  /**
    * The top of what is drawn at a point: a deck where a road's casing covers
    * it, the terrain elsewhere. (`elevationAt` is the NEAREST road's height
    * wherever the point is, a field for previews, not a surface.)
@@ -600,6 +606,8 @@ export function createSceneRenderer(
 
   /** The world being rebuilt for the last edit (`rebuildWorld`), a slice a frame. */
   let worldJob: Generator<void, void, void> | null = null;
+  /** The roads' heights an edit solved ahead (`offerElevation`). */
+  let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
   let worldJobFresh = false;
   const WORLD_SLICE_MS = 10;
@@ -1046,7 +1054,12 @@ export function createSceneRenderer(
     // be cut and filled to meet these roads, and feeding the next solve its own
     // previous answer would let the two drift a little further apart on every
     // rebuild.
-    elevation = buildRoadElevation(net, terrain.naturalRenderedHeightAt);
+    // Solved already by the edit, on this network and this land (`offerElevation`).
+    const offered = offeredElevation;
+    offeredElevation = null;
+    elevation = offered && offered.revision === net.revision && offered.terrain === terrainRevision
+      ? offered.elevation
+      : buildRoadElevation(net, terrain.naturalRenderedHeightAt);
     performance.measure('hitch:road-edit/elevation', { start: started, end: performance.now() });
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
@@ -1397,6 +1410,9 @@ export function createSceneRenderer(
     },
     naturalTerrainHeightAt(x, y) {
       return terrain.naturalRenderedHeightAt(x, y);
+    },
+    offerElevation(solved, revision) {
+      offeredElevation = { elevation: solved, revision, terrain: terrainRevision };
     },
     surfaceHeightAt(x, y) {
       const ground = terrain.renderedHeightAt(x, y);

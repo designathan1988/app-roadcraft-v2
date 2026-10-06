@@ -13,7 +13,7 @@ import { type RoadDoc, fitRoadCurve, sameStamps } from '@world/doc';
 import { Network } from '@world/network';
 import type { NodeId, SegmentId } from '@world/ids';
 import { MIN_LINK_LENGTH } from '@world/approach';
-import { MAX_AUTHORED_GRADE, buildRoadElevation } from '@world/elevation';
+import { MAX_AUTHORED_GRADE, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
 import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
@@ -46,6 +46,12 @@ export interface DraftResult {
   readonly reason?: 'tooShort' | 'duplicate' | 'degenerate' | 'tooSharp' | 'clearance';
   readonly heightLimited?: boolean;
   readonly finalHeightOffset?: number;
+  /**
+   * The roads' heights solved for the tunnel test on the ground the renderer
+   * reads, when no tunnel was bored: the network the edit left, so the
+   * renderer takes it instead of solving it again (`SceneHandle.offerElevation`).
+   */
+  readonly elevation?: RoadElevation;
 }
 
 /**
@@ -80,8 +86,14 @@ export function commitRoadPath(
   const work = doc.clone();
   timed('clone');
   const workNet = new Network(work);
-  workNet.seedJunctions(net);
-  workNet.rebuild();
+  // The copy is the document as the live network was built from: its
+  // geometry is taken as it stands (`adopt`), not built again - a whole
+  // network rebuild in every road drawn (docs/performance.md #35).
+  if (net.revision === doc.revision) workNet.adopt(net);
+  else {
+    workNet.seedJunctions(net);
+    workNet.rebuild();
+  }
   timed('network');
   let committed = false;
   let heightLimited = false;
@@ -118,12 +130,14 @@ export function commitRoadPath(
   }
   timed('pieces');
   if (!committed) return { committed: false, reason: 'duplicate' };
-  if (boreDeepCuts(doc, work, workNet, ground)) workNet.rebuild();
+  const bore = boreDeepCuts(doc, work, workNet, ground);
+  if (bore.bored) workNet.rebuild();
   timed('tunnels');
   doc.replaceWith(work);
   net.adopt(workNet);
   timed('replace');
-  return { committed: true, heightLimited, finalHeightOffset: currentHeight };
+  return { committed: true, heightLimited, finalHeightOffset: currentHeight,
+    ...(!bore.bored && ground && bore.elevation ? { elevation: bore.elevation } : {}) };
 }
 
 /**
@@ -142,9 +156,9 @@ function terrainIndexOf(doc: RoadDoc): TerrainIndex {
   return terrainIndex;
 }
 
-function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number): boolean {
+function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number): { bored: boolean; elevation: RoadElevation | null } {
   const fresh = [...work.segments.values()].filter((seg) => !before.segments.has(seg.id) && seg.structure === 'ground');
-  if (!fresh.length || !work.terrainStamps.length) return false;
+  if (!fresh.length || !work.terrainStamps.length) return { bored: false, elevation: null };
   // A cut that deep needs relief under the new roads, and the land is flat
   // outside the stamps (the test just above): with no stamp reaching them,
   // the whole network's heights were solved for nothing, 20 ms of every road
@@ -159,7 +173,7 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
   const reached = work.terrainStamps.some((stamp) =>
     stamp.x + stamp.radius >= minX - margin && stamp.x - stamp.radius <= maxX + margin &&
     stamp.y + stamp.radius >= minY - margin && stamp.y - stamp.radius <= maxY + margin);
-  if (!reached) return false;
+  if (!reached) return { bored: false, elevation: null };
   const index = sampled ? null : terrainIndexOf(work);
   const ground = sampled ?? ((x: number, y: number): number => sampleTerrainHeight(index!, x, y));
   const elevation = buildRoadElevation(workNet, ground);
@@ -178,7 +192,7 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
       }
     }
   }
-  return changed;
+  return { bored: changed, elevation };
 }
 
 /**
