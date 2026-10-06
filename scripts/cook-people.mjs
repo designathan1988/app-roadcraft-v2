@@ -1,4 +1,5 @@
-// Cooks the people ahead (src/render/people/cookedPerson.ts): every roster
+// Cooks the people ahead (src/render/people/cookedPerson.ts, and the procedural
+// crowd's classes and hairstyles: proceduralCook.ts): every roster
 // person built once in a real browser, packed, and written by the development
 // server to cooked/people/<id>.bin, with a manifest stamped with the build's
 // fingerprint of how people are built (cook-plugin.ts). The game then reads
@@ -33,5 +34,14 @@ const manifest = JSON.stringify({ hash: result.hash, ids: result.ids, cooked: ne
 const status = await page.evaluate(async (body) => (await fetch('/__cook/people/manifest.json', { method: 'PUT', body })).status, manifest);
 if (status >= 300) throw new Error(`Manifest: ${status}`);
 console.log(`cooked ${result.ids.length} people, ${(result.bytes / 1e6).toFixed(1)} MB, fingerprint ${result.hash}, ${((Date.now() - started) / 1000).toFixed(0)} s`);
+// The procedural crowd's classes and hairstyles (`src/render/people/proceduralCook.ts`).
+const procedural = await page.evaluate(() => (typeof window.__cookProcedural === 'function' ? window.__cookProcedural() : null));
+if (procedural) {
+  if (!procedural.hash) throw new Error('The page has no procedural fingerprint');
+  const body = JSON.stringify({ hash: procedural.hash, names: procedural.names, cooked: new Date().toISOString() });
+  const put = await page.evaluate(async (b) => (await fetch('/__cook/procedural/manifest.json', { method: 'PUT', body: b })).status, body);
+  if (put >= 300) throw new Error(`Procedural manifest: ${put}`);
+  console.log(`cooked ${procedural.names.length} procedural classes and hairstyles, ${(procedural.bytes / 1e6).toFixed(1)} MB, fingerprint ${procedural.hash}, ${((Date.now() - started) / 1000).toFixed(0)} s`);
+}
 if (errors.length) console.log('page errors:', errors.slice(0, 3));
 await browser.close();

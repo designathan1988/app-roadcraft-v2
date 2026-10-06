@@ -25,6 +25,16 @@ import type { Plugin } from 'vite';
  */
 /** Where a cooked body is built (`personAsset`, `__cookPeople`): its imports are what the hash reads. */
 const ENTRY = 'src/render/riggedCitizens.ts';
+/**
+ * The cooks: each a folder of `cooked/`, stamped with the fingerprint of its
+ * own code. `people`: the cast's bodies (`cookedPerson.ts`). `procedural`: the
+ * procedural crowd's classes and hairstyles (`proceduralCook.ts`).
+ */
+const COOKS = [
+  { dir: 'people', entry: ENTRY, define: '__PEOPLE_COOK_HASH__' },
+  { dir: 'procedural', entry: 'src/render/people/proceduralCrowd.ts', define: '__PROCEDURAL_COOK_HASH__' },
+] as const;
+type CookDir = typeof COOKS[number]['dir'];
 const ASSETS = ['public/models/people'];
 /** The path aliases of `tsconfig.json`. */
 const ALIASES: readonly [string, string][] = [
@@ -72,9 +82,9 @@ function walk(root: string, out: string[]): void {
   for (const name of fs.readdirSync(root).sort()) walk(path.join(root, name), out);
 }
 
-export function peopleCookHash(root: string): string {
+export function peopleCookHash(root: string, entry: string = ENTRY): string {
   const hash = createHash('sha256');
-  for (const file of importClosure(root, ENTRY)) {
+  for (const file of importClosure(root, entry)) {
     hash.update(path.relative(root, file).replace(/\\/g, '/'));
     // Line endings do not change a body.
     hash.update(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n'));
@@ -98,18 +108,18 @@ export function peopleCookHash(root: string): string {
  * but neither is allowed through a release build in silence: this throws, the
  * build stops, and the message says what to run.
  */
-function checkCooked(root: string, hash: string): void {
-  const manifest = path.join(root, DIR, 'people', 'manifest.json');
+function checkCooked(root: string, hash: string, dir: CookDir = 'people'): void {
+  const manifest = path.join(root, DIR, dir, 'manifest.json');
   const fix = "Run `npm run cook:people` (a development server must be up: npx vite --port 4196 --strictPort --host 127.0.0.1) and build again.";
   if (!fs.existsSync(manifest)) {
     throw new Error(
-      `No cooked people in ${DIR}/people: this build would build every person during play (21-92 ms each). ${fix}`,
+      `No cooked people in ${DIR}/${dir}: this build would build every person during play (21-92 ms each). ${fix}`,
     );
   }
   const stamp = (JSON.parse(fs.readFileSync(manifest, 'utf8')) as { hash?: string }).hash;
   if (stamp !== hash) {
     throw new Error(
-      `The cooked people are stale: cooked under ${stamp ?? '(no hash)'}, this code fingerprints ${hash}. `
+      `The cooked people in ${DIR}/${dir} are stale: cooked under ${stamp ?? '(no hash)'}, this code fingerprints ${hash}. `
       + `The people sources or assets changed without a fresh cook. ${fix}`,
     );
   }
@@ -118,15 +128,23 @@ function checkCooked(root: string, hash: string): void {
 export function cookPlugin(): Plugin {
   let root = process.cwd();
   let outDir = 'dist';
-  let hash = '';
+  const hashes = new Map<CookDir, string>();
+  const fingerprints = (): Map<CookDir, string> => new Map(COOKS.map((c) => [c.dir, peopleCookHash(root, c.entry)]));
+  const stampOf = (dir: CookDir): string | undefined => {
+    try {
+      return (JSON.parse(fs.readFileSync(path.join(root, DIR, dir, 'manifest.json'), 'utf8')) as { hash?: string }).hash;
+    } catch {
+      return undefined;
+    }
+  };
   let building = false;
   let checked = false;
   return {
     name: 'roadcraft-cook',
     config(config) {
       root = path.resolve(config.root ?? process.cwd());
-      hash = peopleCookHash(root);
-      return { define: { __PEOPLE_COOK_HASH__: JSON.stringify(hash) } };
+      for (const [dir, value] of fingerprints()) hashes.set(dir, value);
+      return { define: Object.fromEntries(COOKS.map((c) => [c.define, JSON.stringify(hashes.get(c.dir))])) };
     },
     // A release build refuses stale people; a dev server must still start,
     // because cooking them needs one running. There the console says it
@@ -134,7 +152,7 @@ export function cookPlugin(): Plugin {
     buildStart() {
       if (!building || checked) return;
       checked = true;
-      checkCooked(root, hash);
+      for (const c of COOKS) checkCooked(root, hashes.get(c.dir)!, c.dir);
     },
     configResolved(resolved) {
       outDir = path.resolve(resolved.root, resolved.build.outDir);
@@ -143,10 +161,11 @@ export function cookPlugin(): Plugin {
     configureServer(server) {
       // A change to how people are built changes the fingerprint: the server
       // restarts with the new one, and the cooked bodies no longer match.
-      const watched = [...importClosure(root, ENTRY), ...ASSETS.map((s) => path.join(root, s))];
+      const watched = [...COOKS.flatMap((c) => importClosure(root, c.entry)), ...ASSETS.map((s) => path.join(root, s))];
       server.watcher.on('change', (file) => {
         if (!watched.some((w) => path.resolve(file).startsWith(path.resolve(w)))) return;
-        if (peopleCookHash(root) !== hash) void server.restart();
+        const now = fingerprints();
+        if (COOKS.some((c) => now.get(c.dir) !== hashes.get(c.dir))) void server.restart();
       });
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? '').split('?')[0]!;
@@ -172,14 +191,13 @@ export function cookPlugin(): Plugin {
       });
     },
     closeBundle() {
-      const from = path.join(root, DIR, 'people');
-      const manifest = path.join(from, 'manifest.json');
-      if (!fs.existsSync(manifest)) return;
-      const stamp = (JSON.parse(fs.readFileSync(manifest, 'utf8')) as { hash?: string }).hash;
-      if (stamp !== hash) return;
-      const to = path.join(outDir, DIR, 'people');
-      fs.mkdirSync(to, { recursive: true });
-      for (const name of fs.readdirSync(from)) fs.copyFileSync(path.join(from, name), path.join(to, name));
+      for (const c of COOKS) {
+        if (stampOf(c.dir) !== hashes.get(c.dir)) continue;
+        const from = path.join(root, DIR, c.dir);
+        const to = path.join(outDir, DIR, c.dir);
+        fs.mkdirSync(to, { recursive: true });
+        for (const name of fs.readdirSync(from)) fs.copyFileSync(path.join(from, name), path.join(to, name));
+      }
     },
   };
 }

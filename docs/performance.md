@@ -45,12 +45,13 @@ Cuidados ao ler os números:
 | 5 | Cabelo: busca de vizinho por força bruta; trança travava o jogo | cada penteado novo | 70–395 ms; trança: sem fim | **CORRIGIDO** (árvore k-d; 48–160 ms restantes) |
 | 6 | Classe de corpo procedural montada de uma vez | cada classe nova (8) | 40–240 ms | **PALIATIVO** (fatiada); causa: não é pré-cozida (#8) |
 | 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **CORRIGIDO** (impressão pelo fecho de imports; recozido) |
-| 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **ABERTO** |
+| 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **CORRIGIDO** (classes e penteados cozidos; só o rig da classe e o ajuste de roupa, ≤ 11 ms, ficam no jogo) |
 | 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **CORRIGIDO** (blocos 4×4 mantidos na placa) |
 | 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** |
 | 11 | Topologia de pedestres refeita no mapa inteiro | toda edição de via | `buildWalkways` 60–130 ms na vila (medido em Node) | **ABERTO** |
 | 12 | Prédios: células remontadas depois de edição de via | edição de via perto de prédios | quadro de 285 ms (`assembleByCell`) | **ABERTO** (medir de novo depois de #1) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
+| 14 | Biblioteca de animações em cache fraco: descartada e decodificada de novo | pessoas novas depois de um tempo | 12,8 MB de base64 decodificados de novo | **CORRIGIDO** (cache permanente, ~10 MB) |
 
 ---
 
@@ -201,14 +202,14 @@ penteado em `HAIR_STYLES` estoura a memória ao ser gerado (a aba do cozimento
 caiu; num teste em Node a geração não terminou em 300 s). Era a trança (#5),
 já corrigida.
 
-**Pronto, não aplicado:** `docs/patches/procedural-cook.patch` (e os arquivos novos
-em `docs/patches/procedural-cook-files/`) põe as classes e os penteados no
-cozimento, com impressão própria (fecho de `proceduralCrowd.ts`) e pasta
-`cooked/procedural`. Não foi aplicado porque não rodou no jogo: o cozimento abre
-um Chrome invisível por cerca de um minuto e a CPU do jogador subiu. Para aplicar:
-`git apply docs/patches/procedural-cook.patch`, copiar os três arquivos para
-`src/render/people/` e `tests/render/`, rodar `npm run cook:people` **uma vez, com
-o jogador avisado**, e verificar no jogo.
+**Aplicado (2026-10-06).** `render/people/proceduralCook.ts` lê de
+`cooked/procedural/` os dados das 8 classes (base de forma, expressões, base das
+juntas, clipes; 6,3 MB cada) e os cartões dos 28 penteados, com impressão própria
+(fecho de `proceduralCrowd.ts`). `npm run cook:people` cozinha tudo (≈ 40 s, em
+prioridade baixa). Medido no jogo: nenhuma classe nem penteado montado em jogo;
+restam o rig de cada classe (`createPersonRig`) e o ajuste de cada roupa (≤ 11 ms).
+**Proteção:** `tests/render/cookPack.spec.ts`; o build recusa cozimento vencido.
+Depois de mexer em código de pessoas: `npm run cook:people`, uma vez.
 
 ## 9. Malha das vias fundida e reenviada inteira a cada edição — ABERTO
 
@@ -246,6 +247,13 @@ se as células remontadas são só as tocadas.
 (`buildStructureDetails`), o cenário (`buildScenery`), os postes
 (`buildUtilities`), o mobiliário e as placas. Hoje somam menos de 10 ms na vila,
 mas crescem com o mapa. Devem passar a depender de regiões, como a #1.
+
+## 14. Biblioteca de animações em cache fraco — CORRIGIDO
+
+`render/citizenWalk.ts` guardava a biblioteca de animações decodificada num
+`WeakRef`; o coletor de lixo a descartava entre uma pessoa e outra, e a próxima
+a baixava e decodificava de novo (12,8 MB de base64, um caractere por vez). Agora
+fica guardada (≈ 10 MB).
 
 ## Já descartado (não é causa)
 

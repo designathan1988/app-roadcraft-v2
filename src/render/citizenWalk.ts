@@ -424,7 +424,13 @@ function decode(file: LibraryFile, walk: WalkFile): Record<LibraryClipName, Libr
   return out;
 }
 
-const libraries: Partial<Record<WalkSex, WeakRef<RocketboxClips>>> = {};
+/**
+ * Kept, decoded, for the whole game: about 5 MB a sex. Held only weakly, the
+ * library was dropped by the garbage collector between people and fetched and
+ * decoded again (12.8 MB of base64, a character at a time) for the next one:
+ * a stall each time (docs/performance.md #14).
+ */
+const libraries: Partial<Record<WalkSex, RocketboxClips>> = {};
 const loadingLibraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
 
 /**
@@ -432,11 +438,10 @@ const loadingLibraries: Partial<Record<WalkSex, Promise<RocketboxClips>>> = {};
  * and stopping, running, turning on the spot, standing, looking round, a
  * phone, talking and listening, sitting down, sitting and standing up, for
  * each sex, from `scripts/extract-rocketbox-clips.mjs`. Each library is fetched
- * when a citizen of that sex is prepared. Active bodies keep their clips;
- * otherwise the weak cache lets the decoded library leave memory.
+ * when a citizen of that sex is first prepared, decoded once and kept.
  */
 export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
-  const cached = libraries[sex]?.deref();
+  const cached = libraries[sex];
   if (cached) return Promise.resolve(cached);
   const pending = loadingLibraries[sex];
   if (pending) return pending;
@@ -445,7 +450,7 @@ export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Rocketbox motion library ${url}: ${response.status}`);
     const clips = decode(await response.json() as LibraryFile, WALKS[sex]);
-    libraries[sex] = new WeakRef(clips);
+    libraries[sex] = clips;
     return clips;
   })();
   loadingLibraries[sex] = work;
