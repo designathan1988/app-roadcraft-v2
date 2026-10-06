@@ -470,7 +470,8 @@ export interface ProceduralCrowd {
   add(spec: PersonSpec): Promise<ProceduralPerson>;
   /** Every person's pose and place into the GPU: once a frame, after setting `matrix`, `clip`, `phase`. */
   /** `eye`: where the camera is, so the people nearest it get their hair's strands. */
-  update(eye?: Vector3): void;
+  /** `time`: the simulation's seconds, which the faces live by (still while paused); wall time without it. */
+  update(eye?: Vector3, time?: number): void;
   clear(): void;
   clipDuration(person: ProceduralPerson): number;
   /** Ground one walk cycle covers at the person's scale, metres. */
@@ -1153,7 +1154,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       people.push(person);
       return person;
     },
-    update(eye) {
+    update(eye, simTime) {
       if (eye) strandsUpdate(eye);
       for (const cls of ready) {
         const width = cls.bones * SKIN_BONE_FLOATS;
@@ -1169,7 +1170,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         }
         cls.uniforms.procBones.value.needsUpdate = true;
         // The face of the moment: blinking, mood, talk, fright (`faceAt`).
-        const time = performance.now() / 1000;
+        const time = simTime ?? performance.now() / 1000;
         for (const person of cls.people) {
           const w = faceAt(person.spec.id, time, person.activity, person.spec.mood ?? 0);
           const at = person.row * EXPR_SLOTS;

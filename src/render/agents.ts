@@ -846,7 +846,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (e && !e.person) { e.person = procSpare.pop()!; procWaiting.splice(i--, 1); }
     }
     procBuildNext();
-    procedural!.update(eye);
+    procedural!.update(eye, gaitClock < 0 ? undefined : gaitClock);
     procFrame++;
   };
   const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
@@ -937,6 +937,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const suspension = new Map<number, { deck: number; pitch: number; roll: number; seen: number }>();
   let suspensionClock = typeof performance !== 'undefined' ? performance.now() : 0;
   let suspensionDt = 0;
+  /**
+   * The simulation's own time between two frames drawn (tick and
+   * interpolation): the stride of the people drawn advances with it. Wall time
+   * made them walk on the spot while paused, each frame the mouse asked for
+   * striding with the last speed they had; and at 4x their feet slid.
+   */
+  let gaitClock = -1;
+  let gaitDt = 0;
   let suspensionFrame = 0;
 
   /**
@@ -1389,6 +1397,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const now = typeof performance !== 'undefined' ? performance.now() : suspensionClock + 16;
       suspensionDt = Math.min(0.1, Math.max(0, (now - suspensionClock) / 1000));
       suspensionClock = now;
+      const simNow = world.clock.time + alpha * DT;
+      gaitDt = gaitClock < 0 ? 0 : Math.min(0.5, Math.max(0, simNow - gaitClock));
+      gaitClock = simNow;
       suspensionFrame++;
       if (suspensionFrame % 600 === 0) {
         for (const [id, ride] of suspension) if (suspensionFrame - ride.seen > 120) suspension.delete(id);
@@ -1531,7 +1542,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // gradient is the road's own under the walker.
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
-          if (procedural && ped.id !== PLAYER_ID) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, suspensionDt, ped.panic ? 'panic' : ped.gesture?.kind);
+          if (procedural && ped.id !== PLAYER_ID) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, ped.panic ? 'panic' : ped.gesture?.kind);
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
         }
