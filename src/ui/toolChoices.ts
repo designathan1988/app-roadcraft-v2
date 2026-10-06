@@ -109,6 +109,12 @@ let zoneColours = stored(ZONE_COLOUR_KEY, ['on', 'off'] as const, 'on') === 'on'
 export function zoneColoursShown(): boolean { return zoneColours; }
 export function setZoneColoursShown(on: boolean): void { zoneColours = on; keep(ZONE_COLOUR_KEY, on ? 'on' : 'off'); }
 
+const ZONE_GRID_KEY = 'roadcraft.zoneGrid';
+let zoneGrid = stored(ZONE_GRID_KEY, ['on', 'off'] as const, 'on') === 'on';
+/** Whether the Zoning tool shows the street grid's 10 m cells. */
+export function zoneGridShown(): boolean { return zoneGrid; }
+export function setZoneGridShown(on: boolean): void { zoneGrid = on; keep(ZONE_GRID_KEY, on ? 'on' : 'off'); }
+
 const LOTS_ROADS_KEY = 'roadcraft.lotsWithRoads';
 let lotsWithRoads = stored(LOTS_ROADS_KEY, ['on', 'off'] as const, 'on') === 'on';
 /** Whether the lots are drawn while roads are built (the road panel's toggle). */

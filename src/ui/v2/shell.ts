@@ -32,7 +32,7 @@ import {
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, lotsShownWithRoads, roadWidth, setLotsShownWithRoads, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
+import { blockGridChoice, lotsShownWithRoads, roadWidth, setLotsShownWithRoads, setRoadWidth, setZoneColoursShown, setZoneGridShown, signChoice, strikeChoice, zoneColoursShown, zoneGridShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -781,6 +781,13 @@ export function mountShell(deps: ShellDeps): void {
       return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
     })));
     options.appendChild(density);
+    // The street grid's 10 m cells: shown or hidden.
+    const gridRow = titled(group(t('zone.grid')), t('zone.grid'));
+    gridRow.appendChild(choices([
+      { label: t('zone.grid.show'), on: zoneGridShown(), run: () => { setZoneGridShown(true); render(); } },
+      { label: t('zone.grid.hide'), on: !zoneGridShown(), run: () => { setZoneGridShown(false); render(); } },
+    ], 2));
+    options.appendChild(gridRow);
     // The colours of zoned land outside this tool: shown or hidden.
     const colours = titled(group(t('zone.colours')), t('zone.colours'));
     colours.appendChild(choices([

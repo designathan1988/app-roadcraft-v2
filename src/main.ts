@@ -1,7 +1,7 @@
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, planLotsSteps, splitLot, zoneLots, type Lot, type LotPlan } from '@world/lots';
+import { addLot, addPolygonLot, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, pruneOrphanLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -22,7 +22,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, lotsShownWithRoads, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, lotsShownWithRoads, signChoice, strikeChoice, zoneColoursShown, zoneGridShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { sectionForWidth } from '@world/roadSection';
@@ -337,11 +337,11 @@ sim.clock.paused = !traffic;
 sim.clock.speed = savedSession?.settings.speed ?? 1;
 sim.trafficIntensity = savedSession?.settings.trafficIntensity ?? 1;
 sim.pedestrianIntensity = savedSession?.settings.pedestrianIntensity ?? 1;
-sim.demandMultiplier = savedSession?.settings.demandMultiplier ?? 1;
-
 // How many cars and people the panel asks for: they come in at the ends of the roads (`sim/ambient` source 'edges').
 sim.trafficCount = savedSession?.settings.cars ?? DEFAULT_TRAFFIC_COUNT;
 sim.pedestrianCount = savedSession?.settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
+sim.demandMultiplier = savedSession?.settings.demandMultiplier ?? 1;
+
 function sessionSettings(): SavedSettings {
   const centre = view.centre;
   return {
@@ -350,10 +350,10 @@ function sessionSettings(): SavedSettings {
     speed: sim.clock.speed,
     trafficIntensity: sim.trafficIntensity,
     pedestrianIntensity: sim.pedestrianIntensity,
-    demandMultiplier: sim.demandMultiplier,
-    congestionOverlay,
     cars: sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT,
     people: sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT,
+    demandMultiplier: sim.demandMultiplier,
+    congestionOverlay,
   };
 }
 
@@ -438,50 +438,18 @@ function frontSideOf(points: readonly Vec2[]): number {
   return best;
 }
 /**
- * The lots (`world/lots.ts`): the land cut into equal plots, kept in step
- * with the roads (`keepLots`); a press of the Zoning tool paints them or
- * edits their drawing, by `zoneMode`.
+ * The lots (`world/lots.ts`): drawn by the player only - land is no longer cut
+ * into lots on its own after every road edit (the player, 2026-10-06: that
+ * replanning made the game crawl, and a deleted road left its lots behind).
+ * Unlotted land is zoned on the street grid (10 m cells along the roads) and
+ * a building of its own size grows there; on a lot, the building takes the
+ * lot's size and shape. A road edit only drops the empty lots no road serves.
  */
 let lotsNetRevision = -1;
 function keepLots(): void {
   if (lotsNetRevision === net.revision) return;
   lotsNetRevision = net.revision;
-  if (!doc.segments.size && !doc.lots.length) return;
-  if (applyLots(doc, planLots(doc, net))) requestDraw();
-}
-/**
- * `keepLots` once the roads have settled, a few milliseconds a frame
- * (`planLotsSteps`, as the zone grid is laid): replanning a town's lots took a
- * quarter of a second, first in the very frame that drew each new road, then
- * in one frame half a second after it. The old lots stay drawn meanwhile; a
- * run of edits is replanned once, after the last, and a plan whose roads or
- * lots changed while it was being made is thrown away and begun again.
- */
-const LOTS_SETTLE_MS = 450;
-const LOTS_SLICE_MS = 5;
-let lotsChange = { revision: -1, at: 0 };
-let lotsWake: ReturnType<typeof setTimeout> | null = null;
-let lotsJob: { revision: number; lotRevision: number; buildings: number; steps: Generator<void, LotPlan> } | null = null;
-function keepLotsSoon(): void {
-  if (lotsNetRevision === net.revision) { lotsJob = null; return; }
-  const now = performance.now();
-  if (lotsChange.revision !== net.revision) lotsChange = { revision: net.revision, at: now };
-  const wait = lotsChange.at + LOTS_SETTLE_MS - now;
-  if (wait > 0) {
-    if (lotsWake === null) lotsWake = setTimeout(() => { lotsWake = null; requestDraw(); }, wait);
-    return;
-  }
-  if (!doc.segments.size && !doc.lots.length) { lotsNetRevision = net.revision; return; }
-  if (!lotsJob || lotsJob.revision !== net.revision || lotsJob.lotRevision !== doc.lotRevision || lotsJob.buildings !== doc.buildings.revision) {
-    lotsJob = { revision: net.revision, lotRevision: doc.lotRevision, buildings: doc.buildings.revision, steps: planLotsSteps(doc, net) };
-  }
-  const until = now + LOTS_SLICE_MS;
-  let step = lotsJob.steps.next();
-  while (!step.done && performance.now() < until) step = lotsJob.steps.next();
-  if (!step.done) { requestDraw(); return; }
-  lotsNetRevision = lotsJob.revision;
-  lotsJob = null;
-  if (applyLots(doc, step.value)) requestDraw();
+  if (pruneOrphanLots(doc, net)) requestDraw();
 }
 const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
 /** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
@@ -504,6 +472,28 @@ function streetAngleNear(p: Vec2): number {
 }
 /** The cells a stroke has passed over, painted on release as one undo step. */
 let zoneDraft: { pointer: number; remove: boolean; cells: Map<string, ZoneCell> } | null = null;
+/** A stroke of the delete mode: the lots, buildings and zoned cells it has passed over, removed on release as one undo step. */
+let zoneErase: { pointer: number; lots: Set<number>; buildings: Set<BuildingId>; cells: Map<string, ZoneCell> } | null = null;
+/** What the delete stroke takes at a point: the lot there, the building there, the cells round it. */
+function eraseUnder(world: Vec2): void {
+  if (!zoneErase) return;
+  const lot = lotAt(world);
+  if (lot) {
+    zoneErase.lots.add(lot.id);
+    if (lot.building !== undefined) zoneErase.buildings.add(lot.building as BuildingId);
+  }
+  for (const b of doc.buildings.all()) {
+    if (Math.hypot(b.x - world.x, b.y - world.y) > m(80)) continue;
+    if (solidFootprints(b).some((ring) => insideLot(world, { corners: ring }))) zoneErase.buildings.add(b.id as BuildingId);
+  }
+  const marks = cachedMarksByCell(zoneGrid());
+  for (const cell of zoneCellsAt(world)) {
+    const found = marks.get(cell.id);
+    if (!found) continue;
+    zoneErase.cells.set(cell.id, cell);
+    if (found.mark.building !== undefined) zoneErase.buildings.add(found.mark.building as BuildingId);
+  }
+}
 let zoneHover: Vec2 | null = null;
 let zoneGridCache: { revision: number; grid: ZoneGrid } | null = null;
 /** The street grid, rebuilt only when the roads change. */
@@ -707,9 +697,9 @@ if (agentsOn && engineFlags.get('residents') === '1') sim.city.useAgents(true);
 else {
   sim.city.enabled = false;
   sim.ambient.enabled = true;
+  sim.ambient.source = engineFlags.get('ambient') === 'view' ? 'view' : 'edges';
 }
 view = scene.viewport;
-  sim.ambient.source = engineFlags.get('ambient') === 'view' ? 'view' : 'edges';
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
 // No loading screen (player, 2026-10-02): the town plays at once and each
@@ -1036,6 +1026,7 @@ function cancelGestures(): void {
   poleChain = null;
   barrierPoints = null;
   zoneDraft = null;
+  zoneErase = null;
   endTerrainStroke();
   cancelMove();
   panning = null;
@@ -1047,7 +1038,7 @@ function cancelGestures(): void {
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null || zoneDraft !== null;
+    poleChain !== null || terrainStroke !== null || moving !== null || zoneDraft !== null || zoneErase !== null;
 }
 
 /**
@@ -1402,9 +1393,14 @@ canvas.addEventListener('pointerdown', (e) => {
       } else if (zoneMode === 'add') {
         lotNew = { pointer: e.pointerId, a: lotSnap(world), b: lotSnap(world), angle: streetAngleNear(world) };
       } else if (zoneMode === 'delete') {
-        if (lot) { mutate(() => deleteLot(doc, lot.id)); flashHint('hint.lot.deleted'); }
+        // Lots, the buildings on them or anywhere under the stroke, and the zoned cells: all at once.
+        zoneErase = { pointer: e.pointerId, lots: new Set(), buildings: new Set(), cells: new Map() };
+        eraseUnder(world);
+      } else if (lot) {
+        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set([lot.id]) };
       } else {
-        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set(lot ? [lot.id] : []) };
+        // Land with no lot: the street grid's cells, a building of its own size grows there.
+        zoneDraft = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, cells: new Map(zoneCellsAt(world).map((cell) => [cell.id, cell])) };
       }
       requestDraw();
       break;
@@ -1691,6 +1687,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
+  if (zoneErase?.pointer === e.pointerId) { eraseUnder(world); requestDraw(); return; }
   if (lotCorner?.pointer === e.pointerId) { lotCorner.to = lotSnapExcept(world, lotCorner.from); requestDraw(); return; }
   if (lotNew?.pointer === e.pointerId) { lotNew.b = lotSnap(world); requestDraw(); return; }
   if (lotCutLine?.pointer === e.pointerId) { lotCutLine.b = { ...world }; requestDraw(); return; }
@@ -1917,6 +1914,21 @@ function endPointer(e: PointerEvent): void {
       let made = false;
       mutate(() => (made = addLot(doc, drawn.a, drawn.b, drawn.angle) !== null));
       flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
+    }
+    requestDraw();
+  }
+  if (zoneErase?.pointer === e.pointerId) {
+    const stroke = zoneErase;
+    zoneErase = null;
+    if (!cancelled && !wasPinching && (stroke.lots.size || stroke.buildings.size || stroke.cells.size)) {
+      mutate(() => {
+        for (const id of stroke.lots) deleteLot(doc, id);
+        for (const id of stroke.buildings) doc.buildings.remove(id);
+        if (stroke.cells.size) paintCells(doc, zoneGrid(), [...stroke.cells.values()], null);
+        return true;
+      });
+      zoneRefused.clear();
+      flashHint('hint.lot.deleted');
     }
     requestDraw();
   }
@@ -3129,6 +3141,10 @@ function restoreSettings(settings: SavedSettings): void {
   setPaused(settings.paused);
   sim.trafficIntensity = settings.trafficIntensity;
   sim.pedestrianIntensity = settings.pedestrianIntensity;
+  sim.trafficCount = settings.cars ?? DEFAULT_TRAFFIC_COUNT;
+  sim.pedestrianCount = settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
+  trafficIntensity.value = String(sim.trafficCount);
+  pedIntensity.value = String(sim.pedestrianCount);
   sim.demandMultiplier = settings.demandMultiplier ?? 1;
   demandLevel.value = String(sim.demandMultiplier);
   text('trafficIntensityValue', trafficIntensity.value);
@@ -3200,10 +3216,6 @@ function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
 
 /**
  * A transient message in the hint bar.
-  sim.trafficCount = settings.cars ?? DEFAULT_TRAFFIC_COUNT;
-  sim.pedestrianCount = settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
-  trafficIntensity.value = String(sim.trafficCount);
-  pedIntensity.value = String(sim.pedestrianCount);
  *
  * It reuses the hint rather than adding a toast, because the player's eyes are
  * already there and a second floating panel over an isometric map costs more
@@ -3975,10 +3987,10 @@ function drawOverlayScreen(): void {
   // The lots, laid on the ground in the scene (`render/lotOverlay.ts`): in
   // the Zoning tool, and while roads are being built (unless the player
   // turned that off); zoned ones faintly with the other tools.
+  // Whatever tool deleted a road, its empty lots go with it (`pruneOrphanLots`, once a road edit).
+  keepLots();
   const showLots = tool === 'zone' || (tool === 'road' && lotsShownWithRoads()) || (doc.lots.some((l) => l.use) && zoneColoursShown());
   if (showLots) {
-    if (tool === 'zone') keepLots();
-    else if (tool === 'road') keepLotsSoon();
     const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
     const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
     const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;
@@ -4055,8 +4067,10 @@ function drawOverlayScreen(): void {
     }
     ctx.restore();
   } else scene.setLotOverlay(null);
-  // The old street grid: only for land zoned before the lots (`ZoneMark`), never in the Zoning tool now.
-  if (doc.zoneMarks.length && zoneColoursShown() && tool !== 'zone') {
+  // The street grid: in the Zoning tool (unless the player hid it), every
+  // cell outlined and the zoned ones filled; with the other tools only the
+  // zoned land still waiting for a building, faintly.
+  if ((tool === 'zone' && zoneGridShown()) || (doc.zoneMarks.length && zoneColoursShown() && tool !== 'zone')) {
     // The street grid: in the Zoning tool every cell, outlined, the zoned ones
     // filled with their use's colour; with any other tool only the zoned land
     // still waiting for a building, faintly, so the plan stays readable.
@@ -4065,8 +4079,10 @@ function drawOverlayScreen(): void {
     // The Zoning tool paints the cells it shows: its grid is the exact one,
     // at once; the other tools' tint and the road preview take the last grid
     // while the new one is laid over a few frames.
-    const zoning = false;
-    const grid = zoneGridForOverlay();
+    const zoning = tool === 'zone';
+    const grid = zoning ? zoneGrid() : zoneGridForOverlay();
+    // Where the player drew lots, the lots are shown, not the cells under them.
+    const underLot = (cell: ZoneCell): boolean => doc.lots.length > 0 && lotAt(cell.centre) !== undefined;
     const marks = cachedMarksByCell(grid);
     // Each corner's height looked up once per grid and ground, not every
     // frame (a lookup per corner of every cell in the town, each frame the
@@ -4094,9 +4110,14 @@ function drawOverlayScreen(): void {
       const found = marks.get(cell.id);
       const built = found?.mark.building !== undefined && doc.buildings.has(found.mark.building as never);
       if (!zoning && (!found || built)) continue;
+      if (zoning && !found && underLot(cell)) continue;
+      const erased = zoneErase?.cells.has(cell.id) ?? false;
       const drafted = zoneDraft?.cells.has(cell.id) ?? false;
       if (!quad(cell)) continue;
-      if (drafted) {
+      if (erased) {
+        ctx.fillStyle = '#e36c6099';
+        ctx.fill();
+      } else if (drafted) {
         ctx.fillStyle = zoneDraft!.remove ? '#e36c6099' : `${colours[zoneUse]}99`;
         ctx.fill();
       } else if (found) {
