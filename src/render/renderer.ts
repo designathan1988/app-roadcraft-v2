@@ -1464,7 +1464,7 @@ export function createSceneRenderer(
     },
     setGrid(on) {
       // Drawn by the ground's own material (`TERRAIN_GRID`): always on it.
-      TERRAIN_GRID.value = [GRID_CELL, on ? 0.22 : 0, MAP_HALF];
+      TERRAIN_GRID.value = [GRID_CELL, on ? 0.08 : 0, MAP_HALF];
       if (on !== gridWanted) { gridWanted = on; onAssetsReady(); }
     },
     wound(x, y, z, dirX, dirY, severed) {
