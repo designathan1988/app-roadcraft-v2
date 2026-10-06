@@ -593,7 +593,13 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         return loaded;
       }
       if (name === 'acc:headband') {
-        loaded = setup().then(({ assets: a, morpher: mo }) => ({ pack: generateHeadband(hairBase(a, mo)), texture: null, transparent: false, textureFile: null }));
+        // From the cook, like the hairstyles: grown here it was the biggest
+        // share of the game's script while people arrived (docs/performance.md #29).
+        loaded = loadProcedural('acc-headband').then(async (cooked) => {
+          if (cooked) return { pack: packFromRecord(cooked), texture: null, transparent: false, textureFile: null };
+          const { assets: a, morpher: mo } = await setup();
+          return { pack: generateHeadband(hairBase(a, mo)), texture: null, transparent: false, textureFile: null };
+        });
         items.set(name, loaded);
         return loaded;
       }
@@ -1217,6 +1223,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         out.set(`hair-${style.name}`, packRecord(packRecordOf(generateHair(style, hairBase(a, mo)))));
         await breathe();
       }
+      out.set('acc-headband', packRecord(packRecordOf(generateHeadband(hairBase(a, mo)))));
       return out;
     },
     async warmClasses() {
