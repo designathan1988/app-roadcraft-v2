@@ -1064,6 +1064,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       return { palette: out, duration: clip.duration };
     },
     /** Draws a body of `index` with a palette of skin matrices (`ragdoll.ts`) and an instance matrix. */
+    /** The body somebody of this identity is drawn with (a rider thrown off is the same person, `ragdoll.fling`). */
+    indexFor(identity: ClipIdentity, helmet: boolean, x: number, y: number): number | null {
+      return bodyFor({ ...identity, helmet, x, y })?.index ?? null;
+    },
     drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred = false): void {
       const batch = batches.get(index);
       if (!batch || batch.count >= CAPACITY || palette.length !== batch.width) return;

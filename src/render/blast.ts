@@ -370,7 +370,9 @@ ${shader.fragmentShader}`.replace('#include <color_fragment>', `#include <color_
     const s = spec.size;
     let object: Mesh | undefined;
     if (spec.shape === 'mesh' && spec.geometry) {
-      object = new Mesh(spec.geometry, carcassMaterial(spec.color ?? 0x444444));
+      // Burnt, or a machine merely knocked down in its own paint.
+      object = new Mesh(spec.geometry, spec.kind === 'char' ? carcassMaterial(spec.color ?? 0x444444)
+        : new MeshStandardMaterial({ color: spec.color ?? 0x666666, roughness: 0.45, metalness: 0.35, side: DoubleSide }));
       object.castShadow = true;
       object.receiveShadow = true;
       group.add(object);

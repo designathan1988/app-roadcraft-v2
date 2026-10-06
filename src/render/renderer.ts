@@ -2,6 +2,7 @@ import { GRID_CELL } from '@world/grid';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
+import type { Vehicle } from '@sim/vehicles/state';
 import { createGore } from './gore';
 import { solidsOf } from '@world/solids';
 import { vehiclePose } from '@sim/pose';
@@ -288,6 +289,16 @@ export interface SceneHandle {
   shootBody(a: readonly [number, number, number], b: readonly [number, number, number]): { alive: number; part: BodyPart } | 'hit' | null;
   /** Whether somebody is down on the ground as a body (not standing to be shot). */
   isDown(id: number): boolean;
+  /**
+   * A shot striking a vehicle at world (x, y, height z), coming along
+   * (dirX, dirY): sparks off the bodywork, or the glass bursting in (and
+   * blood behind it when somebody sat there).
+   */
+  vehicleHit(x: number, y: number, z: number, dirX: number, dirY: number, glass: boolean, blood: boolean): void;
+  /** The body a vehicle's driver or rider is drawn with (`AgentMeshes.driverBody`). */
+  driverBody(vehicle: Vehicle, x: number, y: number): number | null;
+  /** A two-wheeler its rider was shot off: the machine itself falling over and sliding to a stop. */
+  dropVehicle(v: { id: number; archetype: Archetype; x: number; y: number; angle: number; color: number; dirX: number; dirY: number }): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
   /** The universal grid (`world/grid.ts`) drawn over the whole map, on the ground, or not. */
@@ -1509,6 +1520,34 @@ export function createSceneRenderer(
       return hit;
     },
     isDown: (id) => ragdolls.hides(id),
+    driverBody: (vehicle, x, y) => agents.driverBody(vehicle, x, y),
+    vehicleHit(x, y, z, dirX, dirY, glass, blood) {
+      if (glass) {
+        for (let k = 0; k < 14; k++) {
+          blast.debris({ shape: 'box', kind: 'glass', at: new Vector3(x, z, -y),
+            size: new Vector3(m(0.03 + Math.random() * 0.05), m(0.006), m(0.03 + Math.random() * 0.05)),
+            velocity: new Vector3(dirX * m(2) + (Math.random() - 0.5) * m(2.5), m(0.5 + Math.random() * 1.5), -dirY * m(2) + (Math.random() - 0.5) * m(2.5)) });
+        }
+        if (blood) exhaust.burst(x + dirX * m(0.4), y + dirY * m(0.4), z, 40, 4, m(0.2), m(0.04), 0.8);
+      } else {
+        exhaust.burst(x, y, z, 18, 6, m(0.12), m(0.2), 0.35);
+      }
+      onAssetsReady();
+    },
+    dropVehicle(v) {
+      const own = agents.carcass({ id: v.id, archetype: v.archetype }, true);
+      if (!own) return;
+      own.computeBoundingBox();
+      const size = own.boundingBox!.getSize(new Vector3());
+      const g = ragdollWorld.groundAt(v.x, v.y);
+      const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.angle);
+      // Tipping over sideways as it goes, carried on a little by its speed.
+      const forward = new Vector3(Math.cos(v.angle), 0, -Math.sin(v.angle));
+      blast.debris({ shape: 'mesh', geometry: own, kind: 'metal', color: v.color, at: new Vector3(v.x, g + size.y / 2 + m(0.05), -v.y),
+        size, turn, velocity: forward.clone().multiplyScalar(m(2.5)).add(new Vector3(v.dirX * m(0.8), 0, -v.dirY * m(0.8))),
+        spin: forward.multiplyScalar(Math.random() < 0.5 ? 2.2 : -2.2) });
+      onAssetsReady();
+    },
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
       exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 50 : 26, 4, m(severed ? 0.28 : 0.16), m(0.035), 0.8);

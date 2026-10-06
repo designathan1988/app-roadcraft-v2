@@ -327,3 +327,12 @@ export function createVehicle(
     free: null,
   };
 }
+
+/**
+ * The driver shot dead at the wheel: the car rolls to a stop where it is and
+ * stays there (its free-flow speed gone; the integrator brakes it as it
+ * would for any obstacle ahead), the traffic queueing or going round it.
+ */
+export function strandVehicle(v: Vehicle): void {
+  v.v0 = 0;
+}

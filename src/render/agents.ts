@@ -169,7 +169,9 @@ export interface AgentMeshes {
    * with: shell, trim and cabin, no glass, the tyres burnt off the rims),
    * in its frame about the middle of its box; null for a body not built.
    */
-  carcass(vehicle: { readonly id: number; readonly archetype: Archetype }): BufferGeometry | null;
+  carcass(vehicle: { readonly id: number; readonly archetype: Archetype }, intact?: boolean): BufferGeometry | null;
+  /** The body a vehicle's driver or rider is drawn with, for their body when they are thrown out (`Occupant.index`). */
+  driverBody(vehicle: SimVehicle, x: number, y: number): number | null;
   /** Called for each walker drawn bleeding (a limb lost), to drip blood where they go. */
   setBleed(fn: (id: number, x: number, y: number, z: number) => void): void;
   /** Lamps burn brighter than white after dark, so headlights and tail lights glow. */
@@ -1501,7 +1503,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   return {
     meshes,
     census: () => pedestrians.census(),
-    carcass(vehicle) {
+    driverBody(vehicle, x, y) {
+      return pedestrians.indexFor(seatIdentity(vehicle, seatPerson(vehicle, 0), false), vehicle.archetype.shape === 'motorcycle', x, y);
+    },
+    carcass(vehicle, intact = false) {
       const a = vehicle.archetype;
       const plan = planOf(a);
       const pieces: BufferGeometry[] = [];
@@ -1515,9 +1520,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         const md = t.model;
         put(md.body, 0, 0, 0); put(md.trim, 0, 0, 0); put(md.steering, md.headX, md.headY, 0);
         if (md.cranks) put(md.cranks, md.bracketX, md.bracketY, 0);
-        // The tyres burnt away: the rims left, sagging to the ground.
+        // The tyres burnt away: the rims left, sagging to the ground (whole, on a machine merely dropped).
         for (const along of plan.axleAlong) {
-          if (a.shape === 'bicycle') put(spokedGeometry, along, plan.wheelRadius * 0.93, 0, d * 0.95, d * 0.95, plan.tread);
+          if (intact) {
+            put(a.shape === 'bicycle' ? thinTyreGeometry : wheelGeometry, along, plan.wheelRadius, 0, d, d, plan.tread);
+            put(a.shape === 'bicycle' ? spokedGeometry : hubGeometry, along, plan.wheelRadius, 0, d * (a.shape === 'bicycle' ? 1 : 0.45), d * (a.shape === 'bicycle' ? 1 : 0.45), plan.tread);
+          } else if (a.shape === 'bicycle') put(spokedGeometry, along, plan.wheelRadius * 0.93, 0, d * 0.95, d * 0.95, plan.tread);
           else put(hubGeometry, along, plan.wheelRadius * 0.75, 0, d * 0.72, d * 0.72, plan.tread);
         }
       } else {
@@ -1540,6 +1548,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const box = merged.boundingBox!;
       const centre = box.getCenter(new Vector3());
       merged.translate(-centre.x, -centre.y, -centre.z);
+      if (intact) { merged.computeVertexNormals(); return merged; }
       const pos = merged.getAttribute('position');
       const seed = (vehicle.id * 2654435761) >>> 0;
       const wave = (x: number, y: number, z: number, k: number): number => Math.sin(x * k + (seed % 97)) * Math.cos(z * k * 1.3 + (seed % 61)) + Math.sin(y * k * 0.7 + (seed % 13));

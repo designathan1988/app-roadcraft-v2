@@ -71,7 +71,7 @@ import { closestOnSegment } from '@core/intersect';
 import { pointInPolygon } from '@core/polygon';
 import { signalPosts } from '@world/signalPosts';
 import { resolveBlocks } from '@world/buildings/blocks';
-import type { VehicleId } from '@sim/vehicles/state';
+import { strandVehicle, type VehicleId } from '@sim/vehicles/state';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -1040,7 +1040,10 @@ function shootAt(sx: number, sy: number): boolean {
   }
   if (!best) {
     // The bodies on the ground, alive or dead, along the line of sight.
-    const lo = sceneHeightAt(ground) - m(0.3), hi = lo + m(40);
+    // The line of sight between just under the ground and a little above the
+    // tallest thing it can strike (a van, a rider's head): from much higher
+    // the point was behind a camera zoomed in close, and the line went askew.
+    const lo = sceneHeightAt(ground) - m(0.3), hi = lo + m(5);
     const a = view.toWorldAt(sx, sy, hi, w, h), b = view.toWorldAt(sx, sy, lo, w, h);
     const hit = scene.shootBody([a.x, a.y, hi], [b.x, b.y, lo]);
     if (hit && hit !== 'hit') {
@@ -1049,6 +1052,7 @@ function shootAt(sx: number, sy: number): boolean {
       if (done) scene.wound(b.x, b.y, lo + m(0.4), (b.x - a.x) / len, (b.y - a.y) / len, done.severed);
     }
     if (hit) { requestDraw(); return true; }
+    if (shootVehicle(a, b, hi, lo)) { requestDraw(); return true; }
     flashHint('hint.shoot.miss');
     return false;
   }
@@ -1069,6 +1073,75 @@ function shootAt(sx: number, sy: number): boolean {
   requestDraw();
   return true;
 }
+/** Shots each vehicle has taken on its bodywork: enough of them and it burns and blows up (`shootVehicle`). */
+const vehicleShots = new Map<number, number>();
+
+/**
+ * A shot along the line of sight from `a` (height `hi`) to `b` (height `lo`)
+ * at the traffic, as GTA lets a player shoot at it: a cyclist or a
+ * motorcyclist shot off their machine, dead, the machine falling over; a
+ * driver shot through the glass, the car rolling to a stop; the bodywork
+ * sparking, and after a dozen hits the car on fire and blowing up.
+ */
+function shootVehicle(a: Vec2, b: Vec2, hi: number, lo: number): boolean {
+  let best: { v: ReturnType<typeof sim.vehicles.get> & object; t: number; x: number; y: number; z: number; up: number; angle: number } | null = null;
+  for (const v of sim.vehicles.values()) {
+    const pose = vehiclePose(sim, v, 1);
+    if (!pose) continue;
+    const g = sceneHeightAt(pose.p);
+    const c = Math.cos(pose.angle), s = Math.sin(pose.angle);
+    // A rider sits above a two-wheeler's frame: the box up to their head.
+    const two = v.archetype.shape === 'bicycle' || v.archetype.shape === 'motorcycle';
+    const L = v.archetype.length / 2, W = Math.max(v.archetype.width / 2, two ? m(0.35) : 0), H = two ? Math.max(v.archetype.height, m(1.75)) : v.archetype.height;
+    // The segment in the vehicle's frame, clipped by each pair of faces (slabs).
+    const ax = a.x - pose.p.x, ay = a.y - pose.p.y, bx = b.x - pose.p.x, by = b.y - pose.p.y;
+    const p0 = [ax * c + ay * s, -ax * s + ay * c, hi - g], p1 = [bx * c + by * s, -bx * s + by * c, lo - g];
+    const lo3 = [-L, -W, 0], hi3 = [L, W, H];
+    let t0 = 0, t1 = 1;
+    for (let i = 0; i < 3 && t0 <= t1; i++) {
+      const d = p1[i]! - p0[i]!;
+      if (Math.abs(d) < 1e-9) { if (p0[i]! < lo3[i]! || p0[i]! > hi3[i]!) t0 = 2; continue; }
+      let ta = (lo3[i]! - p0[i]!) / d, tb = (hi3[i]! - p0[i]!) / d;
+      if (ta > tb) [ta, tb] = [tb, ta];
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+    }
+    if (t0 > t1 || (best && t0 >= best.t)) continue;
+    const z = hi + (lo - hi) * t0;
+    best = { v, t: t0, x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0, z, up: (z - g) / H, angle: pose.angle };
+  }
+  if (!best) return false;
+  const { v, x, y, z } = best;
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const dirX = (b.x - a.x) / len, dirY = (b.y - a.y) / len;
+  const shape = v.archetype.shape;
+  const css = String(v.color ?? '#777777');
+  const color = parseInt(css.replace('#', '').slice(0, 6), 16) || 0x777777;
+  if (shape === 'bicycle' || shape === 'motorcycle') {
+    // The rider shot off: thrown down dead, the machine falling over.
+    const g = sceneHeightAt({ x, y });
+    scene.wound(x, y, g + m(1.2), dirX, dirY, null);
+    scene.flingOccupants([{ id: 8_000_000 + v.id, x, y, z: g + m(0.9), heading: best.angle, blastX: x - dirX * m(4), blastY: y - dirY * m(4),
+      power: 0.15, kind: 'dead', index: scene.driverBody(v, x, y) }]);
+    scene.dropVehicle({ id: v.id, archetype: v.archetype, x, y, angle: best.angle, color, dirX, dirY });
+    sim.removeVehicle(v);
+    vehicleShots.delete(v.id);
+    return true;
+  }
+  // Through the glass (the upper part of the body): the driver killed, the car rolling to a stop.
+  const glass = best.up > 0.55;
+  scene.vehicleHit(x, y, z, dirX, dirY, glass, glass);
+  if (glass) strandVehicle(v);
+  const n = (vehicleShots.get(v.id) ?? 0) + 1;
+  vehicleShots.set(v.id, n);
+  if (vehicleShots.size > 200) vehicleShots.clear();
+  if (n >= 12) {
+    vehicleShots.delete(v.id);
+    const pose = vehiclePose(sim, v, 1);
+    if (pose) explodeAt(pose.p, sceneHeightAt(pose.p), null, 3);
+  }
+  return true;
+}
+
 /** The bulldozer's box being dragged (screen pixels in the canvas), or its press when it stays a click. */
 let bulldozeBox: { pointer: number; a: Vec2; b: Vec2; world: Vec2; to: Vec2; anchor: Anchor } | null = null;
 /** The bulldozer's click: the one thing under the pointer. */
@@ -5341,7 +5414,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
     const css = String(v.color ?? '#777777');
     hit.vehicles.push({ x: pose.p.x, y: pose.p.y, angle: pose.angle, length: v.archetype.length, width: v.archetype.width,
       height: v.archetype.height, color: parseInt(css.replace('#', '').slice(0, 6), 16) || 0x777777, id: v.id, archetype: v.archetype });
-    throwAboard(v.id, pose.p.x, pose.p.y, pose.angle, v.archetype.shape === 'bicycle' || v.archetype.shape === 'motorcycle');
+    throwAboard(v.id, pose.p.x, pose.p.y, pose.angle, v.archetype.shape === 'bicycle' || v.archetype.shape === 'motorcycle', scene.driverBody(v, pose.p.x, pose.p.y));
     sim.removeVehicle(v);
   }
   (globalThis as Record<string, unknown>)['__lastBlast'] = { ...hit, radius, at: world };

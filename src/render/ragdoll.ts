@@ -74,6 +74,8 @@ export interface Occupant {
   readonly kind: 'dead' | 'torn' | 'knocked';
   /** Burnt black (right under the blow, or in a burning car). */
   readonly charred?: boolean;
+  /** The body they were drawn with (a driver, a rider): thrown as themself, not as somebody else. */
+  readonly index?: number | null;
 }
 
 /** A wall a body can strike: a ring on the ground (world x, y), up to a height. */
@@ -760,7 +762,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       if (!loaded.length) return;
       const turn = new Quaternion(), place = new Vector3(), size = new Vector3();
       for (const o of list) {
-        const index = loaded[Math.abs(o.id) % loaded.length]!;
+        const index = o.index !== undefined && o.index !== null && loaded.includes(o.index) ? o.index : loaded[Math.abs(o.id) % loaded.length]!;
         const clip = citizens.clipPose(index, 'idle', (o.id % 97) / 97);
         if (!clip) continue;
         const transform = new Matrix4().compose(place.set(o.x, o.z, -o.y), turn.setFromAxisAngle(UP, o.heading + Math.PI / 2), size.setScalar(m(1)));
