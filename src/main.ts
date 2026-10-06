@@ -26,6 +26,7 @@ import {
 import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
+import { MAP_HALF } from '@world/bounds';
 import { GRID_CELL, GRID_STEP } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
@@ -3926,8 +3927,10 @@ function drawPolePlan(
 /** The grid lines in view, each a polyline on the ground (`roadGridShown`). */
 function drawRoadGrid(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const corners = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => view.toWorldAt(x!, y!, 0, w, h));
-  const minX = Math.min(...corners.map((p) => p.x)), maxX = Math.max(...corners.map((p) => p.x));
-  const minY = Math.min(...corners.map((p) => p.y)), maxY = Math.max(...corners.map((p) => p.y));
+  // Only over the map: the lines stop at its edge.
+  const minX = Math.max(-MAP_HALF, Math.min(...corners.map((p) => p.x))), maxX = Math.min(MAP_HALF, Math.max(...corners.map((p) => p.x)));
+  const minY = Math.max(-MAP_HALF, Math.min(...corners.map((p) => p.y))), maxY = Math.min(MAP_HALF, Math.max(...corners.map((p) => p.y)));
+  if (minX >= maxX || minY >= maxY) return;
   // Too far out for the cells to read: none drawn.
   if ((maxX - minX) / GRID_CELL > 240 || (maxY - minY) / GRID_CELL > 240) return;
   const origin = view.toScreen({ x: 0, y: 0 }, w, h, 0), unit = view.toScreen({ x: GRID_STEP, y: 0 }, w, h, 0);
@@ -3946,11 +3949,11 @@ function drawRoadGrid(ctx: CanvasRenderingContext2D, w: number, h: number): void
   ctx.lineWidth = 1;
   for (const major of fine ? [false, true] : [true]) {
     ctx.beginPath();
-    for (let x = Math.floor(minX / step) * step; x <= maxX; x += step) {
+    for (let x = Math.ceil(minX / step) * step; x <= maxX; x += step) {
       const isMajor = Math.abs(x / GRID_CELL - Math.round(x / GRID_CELL)) < 1e-6;
       if (isMajor === major) line(x, minY, x, maxY);
     }
-    for (let y = Math.floor(minY / step) * step; y <= maxY; y += step) {
+    for (let y = Math.ceil(minY / step) * step; y <= maxY; y += step) {
       const isMajor = Math.abs(y / GRID_CELL - Math.round(y / GRID_CELL)) < 1e-6;
       if (isMajor === major) line(minX, y, maxX, y);
     }
