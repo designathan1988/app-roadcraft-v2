@@ -164,6 +164,12 @@ export interface AgentMeshes {
   sync(world: SimWorld, alpha: number, detailed: boolean, zoom?: number, options?: AgentRenderOptions): void;
   /** Every figure drawn last frame and the body it was cast as (`citizenCasting.ts`). */
   census(): ReturnType<ReturnType<typeof createRiggedCitizens>['census']>;
+  /**
+   * The burnt-out shell of this vehicle's own body (the model it is drawn
+   * with: shell, trim and cabin, no glass, the tyres burnt off the rims),
+   * in its frame about the middle of its box; null for a body not built.
+   */
+  carcass(vehicle: { readonly id: number; readonly archetype: Archetype }): BufferGeometry | null;
   /** Called for each walker drawn bleeding (a limb lost), to drip blood where they go. */
   setBleed(fn: (id: number, x: number, y: number, z: number) => void): void;
   /** Lamps burn brighter than white after dark, so headlights and tail lights glow. */
@@ -1493,6 +1499,58 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   return {
     meshes,
     census: () => pedestrians.census(),
+    carcass(vehicle) {
+      const a = vehicle.archetype;
+      const plan = planOf(a);
+      const pieces: BufferGeometry[] = [];
+      const put = (g: BufferGeometry, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1): void => {
+        pieces.push(g.clone().scale(sx, sy, sz).translate(x, y, z));
+      };
+      const d = plan.wheelRadius * 2;
+      if (a.shape === 'motorcycle' || a.shape === 'bicycle') {
+        const t = twoWheelerParts.get(a.id);
+        if (!t) return null;
+        const md = t.model;
+        put(md.body, 0, 0, 0); put(md.trim, 0, 0, 0); put(md.steering, md.headX, md.headY, 0);
+        if (md.cranks) put(md.cranks, md.bracketX, md.bracketY, 0);
+        // The tyres burnt away: the rims left, sagging to the ground.
+        for (const along of plan.axleAlong) {
+          if (a.shape === 'bicycle') put(spokedGeometry, along, plan.wheelRadius * 0.93, 0, d * 0.95, d * 0.95, plan.tread);
+          else put(hubGeometry, along, plan.wheelRadius * 0.75, 0, d * 0.72, d * 0.72, plan.tread);
+        }
+      } else {
+        const car = carParts.get(bodyKey(vehicle as SimVehicle));
+        if (!car) return null;
+        const md = car.model;
+        put(md.shell, 0, 0, 0); put(md.trim, 0, 0, 0); put(md.interior, 0, 0, 0);
+        if (md.accent) put(md.accent, 0, 0, 0);
+        if (md.roof) put(md.roof, 0, 0, 0);
+        for (const along of plan.axleAlong) {
+          for (const side of plan.axleSide === 0 ? [0] : SIDES) {
+            put(hubGeometry, along, plan.wheelRadius * 0.72, -side * plan.axleSide, d * 0.62, d * 0.62, plan.tread * 0.6);
+          }
+        }
+      }
+      const merged = merge(pieces);
+      // Each wreck its own: the panels buckled and the roof sagged by the
+      // heat and the blast, by a pattern of its own (its id).
+      merged.computeBoundingBox();
+      const box = merged.boundingBox!;
+      const centre = box.getCenter(new Vector3());
+      merged.translate(-centre.x, -centre.y, -centre.z);
+      const pos = merged.getAttribute('position');
+      const seed = (vehicle.id * 2654435761) >>> 0;
+      const wave = (x: number, y: number, z: number, k: number): number => Math.sin(x * k + (seed % 97)) * Math.cos(z * k * 1.3 + (seed % 61)) + Math.sin(y * k * 0.7 + (seed % 13));
+      const half = (box.max.y - box.min.y) / 2;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+        const top = Math.max(0, y / Math.max(1e-6, half));
+        const dent = wave(x, y, z, 1 / m(0.45)) * m(0.04) + wave(x, y, z, 1 / m(0.18)) * m(0.015);
+        pos.setXYZ(i, x + dent * 0.5, y - top * top * m(0.12) + dent, z + dent * 0.6);
+      }
+      merged.computeVertexNormals();
+      return merged;
+    },
     setBleed: (fn) => { pedestrians.onBleed = fn; procBleed = fn; },
     setNight: (dark) => {
       lampMaterial.color.setScalar(1 + 2.4 * dark);

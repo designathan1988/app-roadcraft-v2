@@ -5320,19 +5320,32 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
   // Cars: thrown, burning shells - the residents' own (parked in their bays,
   // or driving) and the traffic from the edge of the map.
   const colourOf = (css: string): number => parseInt(String(css).replace('#', '').slice(0, 6), 16) || 0x777777;
+  // Who was in them or on them: thrown out dead, torn, burnt black near the blast.
+  const aboard: Occupant[] = [];
+  const throwAboard = (id: number, x: number, y: number, angle: number, rider: boolean): void => {
+    const d = Math.hypot(x - world.x, y - world.y);
+    const close = d < radius * 0.6;
+    aboard.push({ id: 8_000_000 + id, x, y, z: sceneHeightAt({ x, y }) + m(rider ? 1.0 : 0.6), heading: angle,
+      blastX: world.x, blastY: world.y, power: Math.max(0.3, 1 - d / (radius * 1.1)),
+      kind: close && Math.random() < 0.5 ? 'torn' : 'dead', charred: !rider || close });
+  };
   for (const c of sim.city.cars?.wreck(sim, world, radius * 1.1) ?? []) {
-    hit.vehicles.push({ x: c.x, y: c.y, angle: c.angle, length: c.length, width: c.width, height: c.height, color: colourOf(c.colour) });
+    hit.vehicles.push({ x: c.x, y: c.y, angle: c.angle, length: c.length, width: c.width, height: c.height, color: colourOf(c.colour),
+      id: c.id, archetype: c.archetype });
+    if (c.occupied) throwAboard(c.id, c.x, c.y, c.angle, false);
   }
   for (const v of [...sim.vehicles.values()]) {
     const pose = vehiclePose(sim, v, 1);
     if (!pose || !near(pose.p.x, pose.p.y, radius * 1.1)) continue;
     const css = String(v.color ?? '#777777');
     hit.vehicles.push({ x: pose.p.x, y: pose.p.y, angle: pose.angle, length: v.archetype.length, width: v.archetype.width,
-      height: v.archetype.height, color: parseInt(css.replace('#', '').slice(0, 6), 16) || 0x777777 });
+      height: v.archetype.height, color: parseInt(css.replace('#', '').slice(0, 6), 16) || 0x777777, id: v.id, archetype: v.archetype });
+    throwAboard(v.id, pose.p.x, pose.p.y, pose.angle, v.archetype.shape === 'bicycle' || v.archetype.shape === 'motorcycle');
     sim.removeVehicle(v);
   }
   (globalThis as Record<string, unknown>)['__lastBlast'] = { ...hit, radius, at: world };
   scene.explode(world.x, world.y, z, radius, hit);
+  if (aboard.length) scene.flingOccupants(aboard);
   // Soot and ash over the ground round it, kept: streets and lots left dirty.
   const blots = Math.min(40, Math.round(6 + radius / m(3)));
   for (let k = 0; k < blots; k++) {

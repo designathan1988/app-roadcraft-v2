@@ -46,6 +46,20 @@ export type TripReason = 'work' | 'school' | 'home' | 'lunch' | 'errand' | 'outi
 
 export type CarPhase = 'toCar' | 'board' | 'leave' | 'drive' | 'park' | 'alight' | 'fromCar';
 
+/** A car a blow wrecked (`OwnCars.wreck`): where it stood, what it was, whether somebody was in it. */
+export interface Wreck {
+  readonly x: number;
+  readonly y: number;
+  readonly angle: number;
+  readonly length: number;
+  readonly width: number;
+  readonly height: number;
+  readonly colour: string;
+  readonly id: number;
+  readonly archetype: Archetype;
+  readonly occupied: boolean;
+}
+
 export interface OwnCar {
   readonly id: VehicleId;
   readonly owner: number;
@@ -347,8 +361,8 @@ export class OwnCars {
    * traffic, its trip over - and returned as it stood, for the renderer to
    * throw as a burning shell. Its owner has no car any more.
    */
-  wreck(w: SimWorld, at: { x: number; y: number }, radius: number): { x: number; y: number; angle: number; length: number; width: number; height: number; colour: string }[] {
-    const out: { x: number; y: number; angle: number; length: number; width: number; height: number; colour: string }[] = [];
+  wreck(w: SimWorld, at: { x: number; y: number }, radius: number): Wreck[] {
+    const out: Wreck[] = [];
     const poseOf = (body: Vehicle | null, id: VehicleId): { x: number; y: number; angle: number } | null => {
       if (body?.free) return { x: body.free.x, y: body.free.y, angle: body.free.angle };
       const v = w.vehicles.get(id);
@@ -367,14 +381,16 @@ export class OwnCars {
       if (v) w.removeVehicle(v);
       if (car.bay && car.bay.car === car.id) car.bay.car = null;
       this.cars.delete(owner);
-      out.push({ ...pose, length: car.archetype.length, width: car.archetype.width, height: car.archetype.height, colour: car.colour });
+      out.push({ ...pose, length: car.archetype.length, width: car.archetype.width, height: car.archetype.height, colour: car.colour,
+        id: car.id, archetype: car.archetype, occupied: t !== null });
     }
     for (let i = this.loose.length - 1; i >= 0; i--) {
       const body = this.loose[i]!;
       const f = body.free;
       if (!f || Math.hypot(f.x - at.x, f.y - at.y) > radius) continue;
       this.loose.splice(i, 1);
-      out.push({ x: f.x, y: f.y, angle: f.angle, length: body.archetype.length, width: body.archetype.width, height: body.archetype.height, colour: body.color });
+      out.push({ x: f.x, y: f.y, angle: f.angle, length: body.archetype.length, width: body.archetype.width, height: body.archetype.height, colour: body.color,
+        id: body.id, archetype: body.archetype, occupied: false });
     }
     return out;
   }

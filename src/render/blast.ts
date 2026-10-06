@@ -64,8 +64,10 @@ const COLORS: Readonly<Record<DebrisKind, number>> = {
 export interface DebrisSpec {
   /** `car`: a car's shell (bonnet, windscreen, roof, boot), length x height x width. */
   /** `slab`: a broken plate of the ground, jagged at its edges (unit size, thin along y). */
-  readonly shape: 'box' | 'cylinder' | 'car' | 'slab';
+  /** `mesh`: a geometry of its own (`geometry`, world units about its centre): a vehicle's own burnt-out body. */
+  readonly shape: 'box' | 'cylinder' | 'car' | 'slab' | 'mesh';
   readonly kind: DebrisKind;
+  readonly geometry?: BufferGeometry;
   /** World position of the centre (three's frame: y up). */
   readonly at: Vector3;
   /** Box: width, height, depth. Cylinder: radius, length, radius. */
@@ -121,7 +123,9 @@ const WIRE_POINTS = 12;
 const GRAVITY = m(9.8);
 
 interface Piece {
-  readonly mesh: 'box' | 'cylinder' | 'car' | 'slab';
+  readonly mesh: 'box' | 'cylinder' | 'car' | 'slab' | 'mesh';
+  /** A `mesh` piece's own object. */
+  readonly object?: Mesh;
   readonly p: Vector3;
   readonly v: Vector3;
   readonly q: Quaternion;
@@ -322,21 +326,84 @@ export function createBlast(exhaust: Exhaust): Blast {
   const o = new Object3D();
   const mtx = new Matrix4();
 
+  /**
+   * A burnt-out vehicle (as GTA leaves them): the paint gone to grey-brown
+   * ash and soot, rust coming through in patches, a scorched trace of its
+   * colour low on the sides, dull all over. Patterned in the body's own
+   * space, so each wreck carries its burns with it.
+   */
+  const carcassMaterial = (paint: number): MeshStandardMaterial => {
+    const material = new MeshStandardMaterial({ roughness: 0.92, metalness: 0.25, side: DoubleSide });
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms['uPaint'] = { value: new Color(paint) };
+      shader.vertexShader = 'varying vec3 vCarcass;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvCarcass = position;');
+      shader.fragmentShader = `uniform vec3 uPaint; varying vec3 vCarcass;
+float carcassHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float carcassNoise(vec3 p) {
+  vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(carcassHash(i), carcassHash(i + vec3(1, 0, 0)), f.x), mix(carcassHash(i + vec3(0, 1, 0)), carcassHash(i + vec3(1, 1, 0)), f.x), f.y),
+    mix(mix(carcassHash(i + vec3(0, 0, 1)), carcassHash(i + vec3(1, 0, 1)), f.x), mix(carcassHash(i + vec3(0, 1, 1)), carcassHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+${shader.fragmentShader}`.replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec3 q = vCarcass * ${(1 / m(0.22)).toFixed(4)};
+  // Two octaves each: fine-grained burns, not blotches.
+  float n1 = 0.65 * carcassNoise(q) + 0.35 * carcassNoise(q * 3.1 + 7.0);
+  float n2 = 0.6 * carcassNoise(q * 2.3 + 13.0) + 0.4 * carcassNoise(q * 6.0 + 29.0);
+  float n3 = carcassNoise(q * 0.5 + 41.0);
+  vec3 soot = vec3(0.03, 0.028, 0.026);
+  vec3 ash = vec3(0.2, 0.19, 0.18);
+  vec3 rust = vec3(0.24, 0.12, 0.065);
+  vec3 c = mix(soot, ash, smoothstep(0.4, 0.8, n1) * 0.55);
+  c = mix(c, rust, smoothstep(0.62, 0.86, n2) * 0.55);
+  // A trace of the paint, scorched, low down on the sides where it burnt least.
+  float low = 1.0 - smoothstep(${m(0.3).toFixed(3)}, ${m(0.9).toFixed(3)}, vCarcass.y + ${m(0.6).toFixed(3)});
+  c = mix(c, uPaint * 0.22, smoothstep(0.6, 0.85, n3) * low * 0.6);
+  diffuseColor.rgb = c;
+}`);
+    };
+    material.customProgramCacheKey = () => 'vehicle-carcass';
+    return material;
+  };
+
   const piece = (spec: DebrisSpec): void => {
     const s = spec.size;
+    let object: Mesh | undefined;
+    if (spec.shape === 'mesh' && spec.geometry) {
+      object = new Mesh(spec.geometry, carcassMaterial(spec.color ?? 0x444444));
+      object.castShadow = true;
+      object.receiveShadow = true;
+      group.add(object);
+    }
     const corners = spec.shape !== 'cylinder'
       ? [-1, 1].flatMap((x) => [-1, 1].flatMap((y) => [-1, 1].map((z) => new Vector3(x * s.x / 2, y * s.y / 2, z * s.z / 2))))
       : [-1, 1].flatMap((y) => [0, 1, 2, 3].map((k) => new Vector3(Math.cos(k * Math.PI / 2) * s.x, y * s.y / 2, Math.sin(k * Math.PI / 2) * s.z)));
     const extent = spec.shape !== 'cylinder' ? s.x * s.x + s.y * s.y + s.z * s.z : s.y * s.y + 3 * s.x * s.x;
     const body: Piece = {
-      mesh: spec.shape, p: spec.at.clone(), v: spec.velocity.clone(), q: spec.turn?.clone() ?? new Quaternion(),
+      mesh: spec.shape, ...(object ? { object } : {}), p: spec.at.clone(), v: spec.velocity.clone(), q: spec.turn?.clone() ?? new Quaternion(),
       w: spec.spin?.clone() ?? new Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8),
       size: s.clone(), corners, color: new Color(spec.color ?? COLORS[spec.kind]).multiplyScalar(0.85 + Math.random() * 0.3),
       invI: 12 / Math.max(1e-4, extent), burn: spec.burn ?? 0, rest: 0, asleep: spec.still === true, ...(spec.still ? { still: true } : {}),
     };
     pieces.push(body);
     if (body.burn > 0) fires.push({ at: body.p, until: time + body.burn, rate: 28, carry: 0, piece: body });
-    if (pieces.length > MAX_PIECES) pieces.splice(Math.max(0, pieces.findIndex((p) => p.asleep && p.burn <= 0 && !p.still)), 1);
+    if (pieces.length > MAX_PIECES) {
+      const gone = pieces.splice(Math.max(0, pieces.findIndex((p) => p.asleep && p.burn <= 0 && !p.still && !p.object)), 1)[0];
+      if (gone?.object) dropObject(gone.object);
+    }
+    // Not more than this many wrecks kept: the oldest goes.
+    const wrecks = pieces.filter((p) => p.object);
+    if (wrecks.length > 40) {
+      const old = wrecks[0]!;
+      pieces.splice(pieces.indexOf(old), 1);
+      dropObject(old.object!);
+    }
+  };
+
+  const dropObject = (object: Mesh): void => {
+    group.remove(object);
+    object.geometry.dispose();
+    (object.material as MeshStandardMaterial).dispose();
   };
 
   /** One step of a rigid piece: gravity, then each corner below the ground struck with an impulse. */
@@ -621,6 +688,7 @@ export function createBlast(exhaust: Exhaust): Blast {
         if (b.mesh === 'box') { boxes.setMatrixAt(nb, o.matrix); boxes.setColorAt(nb++, b.color); }
         else if (b.mesh === 'car') { if (ns < 80) { shells.setMatrixAt(ns, o.matrix); shells.setColorAt(ns++, b.color); } }
         else if (b.mesh === 'slab') { slabs.setMatrixAt(nl, o.matrix); slabs.setColorAt(nl++, b.color); }
+        else if (b.mesh === 'mesh') { if (b.object) { b.object.position.copy(b.p); b.object.quaternion.copy(b.q); } }
         else { cylinders.setMatrixAt(nc, o.matrix); cylinders.setColorAt(nc++, b.color); }
       }
       if (redraw) {
@@ -690,6 +758,7 @@ export function createBlast(exhaust: Exhaust): Blast {
       void mtx;
     },
     dispose() {
+      for (const p of pieces) if (p.object) dropObject(p.object);
       boxes.geometry.dispose(); cylinders.geometry.dispose(); shellGeometry.dispose(); debrisMaterial.dispose();
       craterGeometry.dispose(); for (const mat of craterMaterials) { mat.map?.dispose(); mat.dispose(); }
       ring.geometry.dispose(); ringMaterial.dispose(); wireGeometry.dispose(); (wires.material as LineBasicMaterial).dispose();

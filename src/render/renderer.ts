@@ -1,6 +1,7 @@
 import { GRID_CELL } from '@world/grid';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
+import type { Archetype } from '@sim/vehicles/archetypes';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
@@ -154,7 +155,8 @@ export interface BlastHit {
   /** Wires torn off a broken pole: from the pole still standing towards the one that went. */
   readonly wires: readonly { fromX: number; fromY: number; toX: number; toY: number }[];
   readonly posts: readonly { x: number; y: number; yaw: number }[];
-  readonly vehicles: readonly { x: number; y: number; angle: number; length: number; width: number; height: number; color: number }[];
+  /** `id` and `archetype`: which vehicle, for a wreck of its own body (`AgentMeshes.carcass`). */
+  readonly vehicles: readonly { x: number; y: number; angle: number; length: number; width: number; height: number; color: number; id?: number; archetype?: Archetype }[];
   readonly items: readonly { kind: string; x: number; y: number }[];
 }
 
@@ -1632,10 +1634,23 @@ export function createSceneRenderer(
         const push = away(v.x, v.y, m(9)).add(new Vector3(0, m(3), 0));
         const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.angle);
         const spin = new Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3);
-        // The burnt shell, black but for a scorched trace of its paint, burning; two wheels flying off.
-        const charred = new Color(v.color).lerp(new Color(0x1f1b18), 0.95).getHex();
-        blast.debris({ shape: 'car', kind: 'char', color: charred, at: new Vector3(v.x, g + v.height * 0.45, -v.y),
-          size: new Vector3(v.length, v.height * 0.85, v.width), turn, velocity: push, spin, burn: 30 + Math.random() * 20 });
+        // The burnt shell of its own body (each model its own wreck, buckled
+        // its own way), burning; a two-wheeler, light, thrown further.
+        const own = v.archetype && v.id !== undefined ? agents.carcass({ id: v.id, archetype: v.archetype }) : null;
+        if (own) {
+          own.computeBoundingBox();
+          const size = own.boundingBox!.getSize(new Vector3());
+          const light = v.archetype!.shape === 'bicycle' || v.archetype!.shape === 'motorcycle';
+          blast.debris({ shape: 'mesh', geometry: own, kind: 'char', color: v.color, at: new Vector3(v.x, g + size.y / 2 + m(0.05), -v.y),
+            size, turn, velocity: light ? push.clone().multiplyScalar(1.6) : push, spin: light ? spin.multiplyScalar(2) : spin,
+            burn: light ? 8 + Math.random() * 6 : 30 + Math.random() * 20 });
+          exhaust.burst(v.x, v.y, g + m(1), light ? 15 : 40, 5, m(light ? 0.6 : 1.2), m(1.4), 1.0);
+          if (light) continue;
+        } else {
+          const charred = new Color(v.color).lerp(new Color(0x1f1b18), 0.95).getHex();
+          blast.debris({ shape: 'car', kind: 'char', color: charred, at: new Vector3(v.x, g + v.height * 0.45, -v.y),
+            size: new Vector3(v.length, v.height * 0.85, v.width), turn, velocity: push, spin, burn: 30 + Math.random() * 20 });
+        }
         for (let k = 0; k < 2; k++) {
           blast.debris({ shape: 'cylinder', kind: 'char', color: 0x141414, at: new Vector3(v.x, g + m(0.35), -v.y),
             size: new Vector3(m(0.32), m(0.22), m(0.32)), turn: new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2),
