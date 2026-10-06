@@ -25,6 +25,7 @@ import { legacyPedestrians } from './peds/engine';
 import { CityLife } from './city/life';
 import { AmbientWorld } from './ambient/ambient';
 import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
+import type { Building } from '@world/buildings/types';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** A queue is counted this far back from the stop line. */
@@ -768,17 +769,29 @@ export class SimWorld {
 }
 
 /** Only ground footprints, doors and poles can change a building's walking links. */
+/**
+ * Each building's share of the signature, by its record (records are replaced,
+ * never changed): every topology change worked out the facades of every
+ * building in town again for it (docs/performance.md #11).
+ */
+const ACCESS_PARTS = new WeakMap<Building, string>();
 function buildingAccessSignature(doc: RoadDoc): string {
   if (doc.buildings.size === 0) return '';
   const parts = [String(doc.utilityRevision)];
   for (const building of doc.buildings.all()) {
-    parts.push(`${building.id}:${building.x}:${building.y}:${building.rotation}`);
-    for (const volume of building.volumes) if (volume.base === 0)
-      parts.push(`${volume.id}:${volume.x}:${volume.y}:${volume.w}:${volume.d}:${JSON.stringify(volume.outline ?? null)}`);
-    for (const bay of facadeBays(building)) {
-      if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
-      parts.push(`D:${bay.volume}:${bay.side}:${bay.index}:${bay.component}:${bay.x}:${bay.y}:${bay.nx}:${bay.ny}`);
+    let part = ACCESS_PARTS.get(building);
+    if (part === undefined) {
+      const mine = [`${building.id}:${building.x}:${building.y}:${building.rotation}`];
+      for (const volume of building.volumes) if (volume.base === 0)
+        mine.push(`${volume.id}:${volume.x}:${volume.y}:${volume.w}:${volume.d}:${JSON.stringify(volume.outline ?? null)}`);
+      for (const bay of facadeBays(building)) {
+        if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
+        mine.push(`D:${bay.volume}:${bay.side}:${bay.index}:${bay.component}:${bay.x}:${bay.y}:${bay.nx}:${bay.ny}`);
+      }
+      part = mine.join('|');
+      ACCESS_PARTS.set(building, part);
     }
+    parts.push(part);
   }
   return parts.join('|');
 }
