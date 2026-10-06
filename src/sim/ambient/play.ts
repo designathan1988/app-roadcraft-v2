@@ -1,3 +1,4 @@
+import { solidsOf } from '@world/solids';
 import { pointInPolygon } from '@core/polygon';
 import { Rng } from '@core/rng';
 import { solidFootprints } from '@world/buildings/geometry';
@@ -645,25 +646,45 @@ export class PlayWorld {
     const people = walkersNear(w, this.x, this.y, m(2));
     for (let it = 0; it < 4; it++) {
       let moved = false;
-      for (const wl of this.wallsOf(w)) {
-        if (this.x < wl.x0 - r || this.x > wl.x1 + r || this.y < wl.y0 - r || this.y > wl.y1 + r) continue;
-        const inside = pointInPolygon({ x: this.x, y: this.y }, wl.ring);
-        let best = Infinity, bx = 0, by = 0;
-        for (let i = 0, j = wl.ring.length - 1; i < wl.ring.length; j = i++) {
-          const a = wl.ring[j]!, b = wl.ring[i]!;
-          const ex = b.x - a.x, ey = b.y - a.y;
-          const u = Math.max(0, Math.min(1, ((this.x - a.x) * ex + (this.y - a.y) * ey) / Math.max(1e-9, ex * ex + ey * ey)));
-          const qx = a.x + ex * u, qy = a.y + ey * u;
-          const d = Math.hypot(this.x - qx, this.y - qy);
-          if (d < best) { best = d; bx = qx; by = qy; }
+      // Everything solid on the map (`world/solids.ts`): buildings and the walls,
+      // fences and furniture of their lots, the walls drawn, poles, trees,
+      // benches - pushed out of along the way out nearest.
+      for (const sd of solidsOf(w.doc).near(this.x, this.y, r)) {
+        if (sd.kind === 'ring') {
+          const ring = sd.ring;
+          const inside = pointInPolygon({ x: this.x, y: this.y }, ring);
+          let best = Infinity, bx = 0, by = 0;
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const a = ring[j]!, b = ring[i]!;
+            const ex = b.x - a.x, ey = b.y - a.y;
+            const u = Math.max(0, Math.min(1, ((this.x - a.x) * ex + (this.y - a.y) * ey) / Math.max(1e-9, ex * ex + ey * ey)));
+            const qx = a.x + ex * u, qy = a.y + ey * u;
+            const d = Math.hypot(this.x - qx, this.y - qy);
+            if (d < best) { best = d; bx = qx; by = qy; }
+          }
+          if (!inside && best >= r) continue;
+          // Out through the nearest edge, to the body's width from it.
+          const nx = inside ? bx - this.x : this.x - bx, ny = inside ? by - this.y : this.y - by;
+          const n = Math.hypot(nx, ny) || 1;
+          const out = inside ? best + r : r - best;
+          this.x += (nx / n) * out;
+          this.y += (ny / n) * out;
+          moved = true;
+          continue;
         }
-        if (!inside && best >= r) continue;
-        // Out through the nearest edge, to the body's width from it.
-        const nx = inside ? bx - this.x : this.x - bx, ny = inside ? by - this.y : this.y - by;
-        const n = Math.hypot(nx, ny) || 1;
-        const out = inside ? best + r : r - best;
-        this.x += (nx / n) * out;
-        this.y += (ny / n) * out;
+        // A disc or a capsule: away from its centre, or from the nearest point of its line.
+        let cx: number, cy: number;
+        if (sd.kind === 'disc') { cx = sd.c.x; cy = sd.c.y; }
+        else {
+          const ex = sd.b.x - sd.a.x, ey = sd.b.y - sd.a.y;
+          const u = Math.max(0, Math.min(1, ((this.x - sd.a.x) * ex + (this.y - sd.a.y) * ey) / Math.max(1e-9, ex * ex + ey * ey)));
+          cx = sd.a.x + ex * u; cy = sd.a.y + ey * u;
+        }
+        const d = Math.hypot(this.x - cx, this.y - cy), min = sd.r + r;
+        if (d >= min) continue;
+        const nx = d > 1e-6 ? (this.x - cx) / d : 1, ny = d > 1e-6 ? (this.y - cy) / d : 0;
+        this.x = cx + nx * min;
+        this.y = cy + ny * min;
         moved = true;
       }
       for (const b of boxes) {
