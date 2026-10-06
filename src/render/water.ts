@@ -257,7 +257,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     side: FrontSide,
     // Stylised, not a mirror: the sky shows as a soft sheen and a horizon
     // tint (below), not as a chrome reflection of the environment map.
-    envMapIntensity: 0.6,
+    envMapIntensity: 0.42,
   });
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
@@ -273,7 +273,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     uShallow: { value: new Color(0x86b4bd) },
     uMid: { value: new Color(0x4a7ea6) },
     uDeep: { value: new Color(0x336889) },
-    uHorizon: { value: new Color(0xb9cbe6) },
+    uHorizon: { value: new Color(0x6f95b8) },
     uFoamTint: { value: new Color(0xe6eef2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
     uScaleB: { value: 1 / LAYER_B_TILE },

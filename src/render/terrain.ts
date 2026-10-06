@@ -235,14 +235,16 @@ export function terrainBakes(anisotropy: number): {
         // Domain-warped: value noise alone is laid on a square lattice and
         // its blobs read as camouflage squares; bending the lookup by a
         // second noise rounds them into tufts.
-        const wx = (fbm(grassClump, u * 24 + 11, v * 24, 24, 2) - 0.5) * 2.2;
-        const wy = (fbm(grassClump, u * 24, v * 24 + 29, 24, 2) - 0.5) * 2.2;
+        // A light warp only: a strong one smeared the patches into swirls of
+        // wet paint (the player, 2026-10-06).
+        const wx = (fbm(grassClump, u * 24 + 11, v * 24, 24, 2) - 0.5) * 0.9;
+        const wy = (fbm(grassClump, u * 24, v * 24 + 29, 24, 2) - 0.5) * 0.9;
         const speck = fbm(grassFine, u * 96 + wx * 2, v * 96 + wy * 2, 96, 2);
         const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 3);
         const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 3);
         // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
-        const dark = [0.25, 0.31, 0.14];
-        const lit = [0.32, 0.37, 0.165];
+        const dark = [0.27, 0.325, 0.15];
+        const lit = [0.31, 0.36, 0.16];
         const dry = [0.46, 0.44, 0.26];
         const soil = [0.36, 0.3, 0.2];
         const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
@@ -256,11 +258,21 @@ export function terrainBakes(anisotropy: number): {
         // Soil showing in the gaps between tufts.
         const soilW = Math.min(1, Math.max(0, (speck - 0.66) / 0.08)) * (1 - k) * 0.8;
         r += (soil[0]! - r) * soilW; g += (soil[1]! - g) * soilW; b += (soil[2]! - b) * soilW;
-        const grain = 0.94 + speck * 0.12;
-        out.r = r * grain;
+        // GRAIN at the texel (9 cm): tufts of a couple of texels, dark gaps
+        // where the blades shade the ground and pale tips in the sun. It is
+        // what grass is made of at any distance a pixel is under a metre,
+        // and the mip chain averages it away further out, so the far view
+        // keeps its patches. Without it every patch was a smooth smear.
+        const tuftlet = fbm(grassFine, u * 384 + 1.7, v * 384 + 5.3, 384, 2);
+        const blade = fbm(grassClump, u * 768 + 9.1, v * 768 + 2.9, 768, 1);
+        const gap = blade < 0.3 ? 0.72 : 1;
+        const tip = blade > 0.78 ? 1.16 : 1;
+        const grain = (0.84 + tuftlet * 0.3) * gap * tip * (0.96 + speck * 0.08);
+        // Sunlit tips lean yellow, shaded gaps blue-green.
+        out.r = r * grain * (tip > 1 ? 1.05 : 1);
         out.g = g * grain;
-        out.b = b * grain;
-        out.h = k * 0.7 + speck * 0.3 - soilW * 0.3;
+        out.b = b * grain * (gap < 1 ? 1.08 : 1);
+        out.h = k * 0.45 + tuftlet * 0.35 + (blade > 0.78 ? 0.2 : 0) - (gap < 1 ? 0.15 : 0) - soilW * 0.3;
         out.rough = 0.99;
       },
     },
@@ -589,11 +601,24 @@ function terrainMaterial(
          uniform vec3 uGrid; // cell, strength, map half
          uniform sampler2D uShore;
          uniform vec3 uShoreGrid; // half, cell, corners per side
-         // The water level at the nearest terrain corner (NO_WATER if none).
+         // The water level here, bilinear over the corners that HAVE water
+         // (NO_WATER if none). Read from the nearest corner only, the level
+         // stepped at every grid line along a falling river and drew dark
+         // bands across the shallows under the water.
          float terrainShoreLevel(vec3 world) {
-           vec2 g = (world.xz + uShoreGrid.x) / uShoreGrid.y;
-           ivec2 p = ivec2(clamp(floor(g + 0.5), vec2(0.0), vec2(uShoreGrid.z - 1.0)));
-           return texelFetch(uShore, p, 0).r;
+           vec2 g = clamp((world.xz + uShoreGrid.x) / uShoreGrid.y, vec2(0.0), vec2(uShoreGrid.z - 1.001));
+           vec2 i = floor(g);
+           vec2 f = g - i;
+           ivec2 p = ivec2(i);
+           float l00 = texelFetch(uShore, p, 0).r;
+           float l10 = texelFetch(uShore, p + ivec2(1, 0), 0).r;
+           float l01 = texelFetch(uShore, p + ivec2(0, 1), 0).r;
+           float l11 = texelFetch(uShore, p + ivec2(1, 1), 0).r;
+           vec4 level = vec4(l00, l10, l01, l11);
+           vec4 has = step(vec4(${NO_WATER / 2}.0), level);
+           vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y) * has;
+           float sum = w.x + w.y + w.z + w.w;
+           return sum > 1e-5 ? dot(level, w) / sum : ${NO_WATER}.0;
          }
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
@@ -609,9 +634,10 @@ function terrainMaterial(
          uniform float uSoilDetailScale;
          ${DETAIL_GLSL}
 
-         // Set once per fragment, before the first dualScale read: how far the
-         // close-zoom layer has taken over, and so how much softer to read the
-         // magnified macro maps.
+         // Set once per fragment: how far the close-zoom layer has taken over.
+         // The macro maps are NOT read softer under it any more: biased two
+         // mips down, the ground at the player's height was one blur (the
+         // player, 2026-10-06).
          float terrainDetailW = 0.0;
 
          // Rotate the wide octave, as well as using an incommensurate scale:
@@ -621,12 +647,12 @@ function terrainMaterial(
                        uv.x * 0.3420201 + uv.y * 0.9396926) * 0.137;
          }
          vec4 dualScale(sampler2D tex, vec2 uv) {
-           vec4 near = texture2D(tex, uv, terrainDetailW * 2.2);
+           vec4 near = texture2D(tex, uv);
            vec4 far = texture2D(tex, terrainWideUv(uv));
            return mix(near, far, 0.42);
          }
          vec3 dualScaleNormal(sampler2D tex, vec2 uv) {
-           vec3 near = texture2D(tex, uv, terrainDetailW * 2.2).xyz * 2.0 - 1.0;
+           vec3 near = texture2D(tex, uv).xyz * 2.0 - 1.0;
            vec3 far = texture2D(tex, terrainWideUv(uv)).xyz * 2.0 - 1.0;
            // Bring the wide octave's tangent slope back into the ground frame.
            far.xy = vec2(far.x * 0.9396926 + far.y * 0.3420201,
@@ -738,6 +764,10 @@ function terrainMaterial(
          float rockMix = bRock / bSum;
          float dirtMix = bDirt / bSum;
          vec4 blended = (grassColor * bGrass + dirtColor * bDirt + rockColor * bRock) / bSum;
+         // The terrain lets the blades in from much further than the shared
+         // layer does (DETAIL_FAR is 0.16 units a pixel): between that and a
+         // unit a pixel the grass had nothing finer than its patches.
+         terrainDetailW = max(terrainDetailW, uDetailOn * (1.0 - smoothstep(0.12, 1.1, max(fwidth(vTerrainWorld.x), fwidth(vTerrainWorld.z)))) * 0.75);
          if (terrainDetailW > 0.001) {
            vec3 bladeDetail = detailSample(uGrassDetail, vTerrainWorld.xz * uGrassDetailScale);
            vec3 soilDetail = detailSample(uSoilDetail, terrainWallUv(vTerrainWorld, uSoilDetailScale, wallX));
@@ -857,7 +887,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v9';
+  material.customProgramCacheKey = () => 'terrain-splat-v10';
   return material;
 }
 
