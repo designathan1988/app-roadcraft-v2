@@ -68,7 +68,14 @@ try {
  * runs along their lines and ends on their corners.
  */
 let gridSnapStep = GRID_STEP;
-export function setGridSnapStep(step: number): void { gridSnapStep = step; }
+/**
+ * Where the snapped points sit within a cell: on its lines (0), or - for a
+ * road an odd number of cells wide - in its middle (half a cell), so the road
+ * fills whole cells between the lines instead of straddling one (the player,
+ * 2026-10-06: "dentro do grid e não na linha").
+ */
+let gridSnapOffset = 0;
+export function setGridSnapStep(step: number, offset = 0): void { gridSnapStep = step; gridSnapOffset = offset; }
 const roadSnapListeners = new Set<() => void>();
 export function roadSnap(): RoadSnap {
   return roadSnapState;
@@ -177,7 +184,7 @@ export function findAnchor(
 export function snapRoadStart(anchor: Anchor): Anchor {
   const snap = roadSnapState;
   if (anchor.kind !== 'free' || !snap.on || !snap.grid) return anchor;
-  return { kind: 'free', at: snapToGrid(anchor.at, gridSnapStep) };
+  return { kind: 'free', at: snapToGrid(anchor.at, gridSnapStep, gridSnapOffset) };
 }
 
 /** Free road drawing follows the pointer exactly, snapping only to compatible networks. */
@@ -455,9 +462,9 @@ export function snapEndpoint(
  * taken, and the heading moves the little it must.
  */
 function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengthStep: number): Vec2 {
-  const g = gridSnapStep;
-  const startOnGrid = Math.abs(start.x / g - Math.round(start.x / g)) < 1e-6 &&
-    Math.abs(start.y / g - Math.round(start.y / g)) < 1e-6;
+  const g = gridSnapStep, o = gridSnapOffset;
+  const startOnGrid = Math.abs((start.x - o) / g - Math.round((start.x - o) / g)) < 1e-6 &&
+    Math.abs((start.y - o) / g - Math.round((start.y - o) / g)) < 1e-6;
   const eighth = Math.round(angle / (Math.PI / 4));
   if (startOnGrid && Math.abs(angle - eighth * (Math.PI / 4)) < 1e-9) {
     const diagonal = eighth % 2 !== 0;
@@ -466,9 +473,9 @@ function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengt
     const step = !diagonal && lengthStep > 0 ? lengthStep : unit;
     const steps = Math.max(1, Math.round(length / step));
     const d = fromAngle(eighth * (Math.PI / 4));
-    return snapToGrid(addScaled(start, d, steps * step), g);
+    return snapToGrid(addScaled(start, d, steps * step), g, o);
   }
-  return snapToGrid(at, g);
+  return snapToGrid(at, g, o);
 }
 
 /**

@@ -612,14 +612,21 @@ export function createSceneRenderer(
   let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
   let worldJobFresh = false;
-  const WORLD_SLICE_MS = 10;
+  /**
+   * The world of an edit is built up to this much a frame: at 10 ms the old
+   * road stayed on screen for up to a second after it was deleted or drawn,
+   * the ground round it changing block by block meanwhile (the player,
+   * 2026-10-06: "um delay feio, onde ela se degrada"). At 28 ms it is in
+   * place in a few frames, each still well under a stall.
+   */
+  const WORLD_SLICE_MS = 28;
   /** Builds the world of the last edit for a few milliseconds; it puts itself in place once complete. */
   const pumpWorld = (): void => {
     if (!worldJob) return;
     // Not in the frame of the edit itself, which has already paid for the
     // edit and the roads' heights: its first slice made that frame 10 ms longer.
     if (worldJobFresh) { worldJobFresh = false; onAssetsReady(); return; }
-    const until = workUntil(WORLD_SLICE_MS);
+    const until = workUntil(WORLD_SLICE_MS, WORLD_SLICE_MS);
     if (!until) { onAssetsReady(); return; }
     let step = worldJob.next();
     while (!step.done && performance.now() < until) step = worldJob.next();

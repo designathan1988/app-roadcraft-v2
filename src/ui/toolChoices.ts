@@ -111,6 +111,17 @@ export function setZoneColoursShown(on: boolean): void { zoneColours = on; keep(
 
 const ROAD_GRID_KEY = 'roadcraft.roadGrid';
 let roadGrid = stored(ROAD_GRID_KEY, ['on', 'off'] as const, 'off') === 'on';
-/** Whether the universal grid (`world/grid.ts`) is drawn while roads are built (the road panel's toggle). */
+const gridListeners = new Set<() => void>();
+/**
+ * Whether the universal grid (`world/grid.ts`) is drawn over the whole map,
+ * with any tool (the top bar's toggle, and the road panel's Grid); the road
+ * snap lands in its cells while it is.
+ */
 export function roadGridShown(): boolean { return roadGrid; }
-export function setRoadGridShown(on: boolean): void { roadGrid = on; keep(ROAD_GRID_KEY, on ? 'on' : 'off'); }
+export function setRoadGridShown(on: boolean): void {
+  roadGrid = on;
+  keep(ROAD_GRID_KEY, on ? 'on' : 'off');
+  for (const listener of gridListeners) listener();
+}
+/** Called whenever the grid is shown or hidden (the map redrawn). */
+export function onRoadGridChange(listener: () => void): void { gridListeners.add(listener); }

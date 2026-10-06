@@ -32,7 +32,7 @@ import {
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -253,6 +253,11 @@ export function mountShell(deps: ShellDeps): void {
   const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('sim', 18));
   const camB = button('v2-pill', t('camera.label'), () => toggle('camera', camB), svg('camera', 18));
   const helpB = button('v2-icon', t('builder.help'), () => toggle('help', helpB), svg('help', 18));
+  // The grid over the whole map, on and off.
+  const gridB = button('v2-icon', t('v2.grid.toggle'), () => { setRoadGridShown(!roadGridShown()); syncGrid(); render(); }, svg('grid', 18));
+  const syncGrid = (): void => { gridB.classList.toggle('on', roadGridShown()); gridB.setAttribute('aria-pressed', String(roadGridShown())); };
+  syncGrid();
+  onRoadGridChange(syncGrid);
   // Into the scenery on foot (`play.ts`): the way in, in plain sight, not only the J key.
   const playB = button('v2-pill v2-play', t('play.button'), () => press('#playButton'), svg('player', 18));
   playB.title = t('play.start');
@@ -272,7 +277,7 @@ export function mountShell(deps: ShellDeps): void {
     insideLevelEl.textContent = insideLevel();
   };
   syncInside();
-  actionsBar.append(playB, insideB, insideDownB, insideLevelEl, insideUpB, simB, camB, undo, redo, helpB, menuB);
+  actionsBar.append(playB, insideB, insideDownB, insideLevelEl, insideUpB, gridB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers

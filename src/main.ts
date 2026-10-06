@@ -23,7 +23,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL, GRID_STEP } from '@world/grid';
@@ -1004,6 +1004,7 @@ function cancelGestures(): void {
   lotCutLine = null;
   lotStroke = null;
   lotJoinFirst = null;
+  bulldozeBox = null;
   endTerrainStroke();
   cancelMove();
   panning = null;
@@ -1012,12 +1013,81 @@ function cancelGestures(): void {
   requestDraw();
 }
 
+/** The bulldozer's box being dragged (screen pixels in the canvas), or its press when it stays a click. */
+let bulldozeBox: { pointer: number; a: Vec2; b: Vec2; world: Vec2; to: Vec2; anchor: Anchor } | null = null;
+/** The bulldozer's click: the one thing under the pointer. */
+function bulldozeClick(screen: Vec2, world: Vec2, anchor: Anchor): void {
+  // A building stands over whatever is under it, so it is tried first.
+  if (buildings.bulldozeAt(screen)) return;
+  // A pole is a thing standing in the world, so the tool whose job is
+  // removing things has to be able to remove it. It is tried first: a
+  // pole stands ON the footway of a road, so the road under it would
+  // otherwise always win the click and the pole could never be hit.
+  {
+    const pole = doc.poleNear(world, poleReach());
+    if (pole) {
+      mutate(() => {
+        doc.removePole(pole.id);
+        return true;
+      });
+      flashHint('hint.pole.removed');
+      return;
+    }
+    // Likewise a bench, a tree or a street light on the footway.
+    const item = landscapeNear(doc.landscape.values(), world, streetscapeReach());
+    if (item) {
+      mutate(() => doc.removeLandscape(item.id));
+      flashHint('hint.streetscape.removed');
+      return;
+    }
+  }
+  if (anchor.kind === 'segment' && anchor.segment !== undefined) {
+    const id = anchor.segment;
+    mutate(() => {
+      doc.removeSegment(id);
+      doc.pruneOrphanNodes();
+      return true;
+    });
+  }
+}
+/**
+ * Everything inside the bulldozer's box removed in one undo step: roads
+ * (their middle inside), buildings, lots, poles, trees and benches, walls.
+ * The box is on the map, its corners the ground pressed and released, square
+ * to the map's axes (the player, 2026-10-06: "o espaço do mapa e não 2D").
+ */
+function bulldozeBoxed(a: Vec2, b: Vec2): void {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const inside = (p: Vec2): boolean => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+  const segments = [...doc.segments.keys()].filter((id) => {
+    const line = net.ribbons.get(id)?.full;
+    return line ? inside(line.sampleAt(line.length / 2).p) : false;
+  });
+  const builtIds = [...doc.buildings.all()].filter((bd) => inside({ x: bd.x, y: bd.y })).map((bd) => bd.id);
+  const lots = doc.lots.filter((l) => inside(lotCentre(l))).map((l) => l.id);
+  const poles = [...doc.poles.values()].filter((p) => inside(p)).map((p) => p.id);
+  const items = [...doc.landscape.values()].filter((it) => inside(it)).map((it) => it.id);
+  const walls = [...doc.barriers.values()].filter((bar) => bar.points.some(inside)).map((bar) => bar.id);
+  if (!segments.length && !builtIds.length && !lots.length && !poles.length && !items.length && !walls.length) return;
+  mutate(() => {
+    for (const id of segments) doc.removeSegment(id);
+    if (segments.length) doc.pruneOrphanNodes();
+    for (const id of lots) deleteLot(doc, id);
+    for (const id of builtIds) doc.buildings.remove(id);
+    for (const id of poles) doc.removePole(id);
+    for (const id of items) doc.removeLandscape(id);
+    for (const id of walls) doc.removeBarrier(id);
+    return true;
+  });
+  flashHint('hint.lot.deleted');
+}
+
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
     poleChain !== null || terrainStroke !== null || moving !== null || zoneErase !== null ||
     lotPolygon.length > 0 || lotNew !== null || lotCorner !== null || lotCurve !== null || lotCutLine !== null ||
-    lotStroke !== null || lotJoinFirst !== null;
+    lotStroke !== null || lotJoinFirst !== null || bulldozeBox !== null;
 }
 
 /**
@@ -1295,7 +1365,11 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       {
       const chained = roadChain !== null;
-      setGridSnapStep(roadGridShown() ? GRID_CELL : GRID_STEP);
+      if (roadGridShown()) {
+        // The road fills whole cells: an odd number of them wide, its middle in a cell's middle.
+        const cells = Math.max(1, Math.round((2 * halfWidth(roadProfile(roadTypeIndex, roadLanePreset), Level.Sidewalk)) / GRID_CELL));
+        setGridSnapStep(GRID_CELL, cells % 2 === 1 ? GRID_CELL / 2 : 0);
+      } else setGridSnapStep(GRID_STEP);
       const start = roadChain ?? snapRoadStart(anchor);
       const startHeightOffset = chained
         ? roadChainHeight
@@ -1518,38 +1592,9 @@ canvas.addEventListener('pointerdown', (e) => {
         strikeAt(e.clientX - r.left, e.clientY - r.top, world);
         break;
       }
-      // A building stands over whatever is under it, so it is tried first.
-      if (buildings.bulldozeAt({ x: e.clientX - r.left, y: e.clientY - r.top })) break;
-      // A pole is a thing standing in the world, so the tool whose job is
-      // removing things has to be able to remove it. It is tried first: a
-      // pole stands ON the footway of a road, so the road under it would
-      // otherwise always win the click and the pole could never be hit.
-      {
-        const pole = doc.poleNear(world, poleReach());
-        if (pole) {
-          mutate(() => {
-            doc.removePole(pole.id);
-            return true;
-          });
-          flashHint('hint.pole.removed');
-          break;
-        }
-        // Likewise a bench, a tree or a street light on the footway.
-        const item = landscapeNear(doc.landscape.values(), world, streetscapeReach());
-        if (item) {
-          mutate(() => doc.removeLandscape(item.id));
-          flashHint('hint.streetscape.removed');
-          break;
-        }
-      }
-      if (anchor.kind === 'segment' && anchor.segment !== undefined) {
-        const id = anchor.segment;
-        mutate(() => {
-          doc.removeSegment(id);
-          doc.pruneOrphanNodes();
-          return true;
-        });
-      }
+      // A click removes what is under it; a drag draws a box and removes
+      // everything inside it, as SimCity's bulldozer does (on release).
+      bulldozeBox = { pointer: e.pointerId, a: { x: e.clientX - r.left, y: e.clientY - r.top }, b: { x: e.clientX - r.left, y: e.clientY - r.top }, world: { ...world }, to: { ...world }, anchor };
       break;
 
     case 'upgrade':
@@ -1669,6 +1714,13 @@ canvas.addEventListener('pointermove', (e) => {
   const world = pointerWorld(e);
 
   if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
+  if (bulldozeBox?.pointer === e.pointerId) {
+    const r = canvas.getBoundingClientRect();
+    bulldozeBox.b = { x: e.clientX - r.left, y: e.clientY - r.top };
+    bulldozeBox.to = { ...world };
+    requestDraw();
+    return;
+  }
   if (zoneErase?.pointer === e.pointerId) { eraseUnder(world); requestDraw(); return; }
   if (lotCorner?.pointer === e.pointerId) { lotCorner.to = lotSnapExcept(world, lotCorner.from); requestDraw(); return; }
   if (lotNew?.pointer === e.pointerId) { lotNew.b = lotSnap(world); requestDraw(); return; }
@@ -1860,6 +1912,15 @@ function endPointer(e: PointerEvent): void {
   }
   if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
   if (tool === 'building') buildings.pointerUp(cancelled || wasPinching);
+  if (bulldozeBox?.pointer === e.pointerId) {
+    const box = bulldozeBox;
+    bulldozeBox = null;
+    if (!cancelled && !wasPinching) {
+      if (Math.hypot(box.b.x - box.a.x, box.b.y - box.a.y) < 6) bulldozeClick(box.a, box.world, box.anchor);
+      else bulldozeBoxed(box.world, box.to);
+    }
+    requestDraw();
+  }
   if (lotStroke?.pointer === e.pointerId) {
     const stroke = lotStroke;
     lotStroke = null;
@@ -3954,7 +4015,7 @@ function drawOverlayScreen(): void {
   drawPolePlan(framePolePlan, ctx, at);
   // The universal grid (`world/grid.ts`) on the ground while roads are built:
   // 10 m cells, and their 1 m subdivisions close up - what the grid snap lands on.
-  if (tool === 'road' && roadGridShown()) drawRoadGrid(ctx, w, h);
+  if (roadGridShown()) drawRoadGrid(ctx, w, h);
   if (tool === 'road' && blockGridChoice.armed && hoverAnchor) {
     // The grid the next click lays, on the ground.
     for (const [a, b] of blockGridLines(hoverAnchor.at, blockGridChoice)) {
@@ -4083,6 +4144,30 @@ function drawOverlayScreen(): void {
   } else scene.setLotOverlay(null);
 
   if (tool === 'building') buildings.drawOverlay(ctx);
+  // The bulldozer's box, on the ground: its edges follow the land.
+  if (bulldozeBox && Math.hypot(bulldozeBox.b.x - bulldozeBox.a.x, bulldozeBox.b.y - bulldozeBox.a.y) >= 6) {
+    const { world: a, to: b } = bulldozeBox;
+    const corners = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }];
+    ctx.save();
+    ctx.beginPath();
+    corners.forEach((p, i) => {
+      const q = corners[(i + 1) % 4]!;
+      const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / GRID_CELL));
+      for (let k = 0; k < n; k++) {
+        const g = { x: p.x + (q.x - p.x) * k / n, y: p.y + (q.y - p.y) * k / n };
+        const s = view.toScreen(g, w, h, sceneHeightAt(g));
+        if (i === 0 && k === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(227, 108, 96, 0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#ff6b5e';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   const strokeScreen = (
     points: readonly Vec2[],

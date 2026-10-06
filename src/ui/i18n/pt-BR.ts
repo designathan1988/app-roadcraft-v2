@@ -30,6 +30,7 @@ export const PT_BR: Dictionary = {
   'hint.lot.front': 'Frente definida: a construção vai olhar para esse lado.',
   'hint.lot.frontPick': 'Clique perto de um lado de um lote.',
   'v2.roadGrid': 'Grade',
+  'v2.grid.toggle': 'Grade no mapa (mostrar ou ocultar)',
   'v2.roadGrid.show': 'Mostrar grade',
   'v2.roadGrid.hide': 'Ocultar grade',
   'hint.lot.split': 'Lote dividido em dois (Shift: frente e fundos).',

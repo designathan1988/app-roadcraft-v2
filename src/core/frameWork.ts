@@ -15,10 +15,14 @@ export function beginFrameWork(): void {
   deadline = -1;
 }
 
-/** Until when a job may work now, at most `slice` ms; 0 when the frame's allowance is spent. */
-export function workUntil(slice: number): number {
+/**
+ * Until when a job may work now, at most `slice` ms; 0 when the frame's
+ * allowance is spent. The first job of a frame opens the allowance at
+ * `allowance` ms (the world of an edit opens a larger one: `renderer.ts`).
+ */
+export function workUntil(slice: number, allowance = FRAME_WORK_MS): number {
   const now = performance.now();
-  if (deadline < 0) deadline = now + FRAME_WORK_MS;
+  if (deadline < 0) deadline = now + allowance;
   const until = Math.min(now + slice, deadline);
   return until > now ? until : 0;
 }

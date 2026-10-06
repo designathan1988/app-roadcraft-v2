@@ -33,6 +33,7 @@ export const EN: Dictionary = {
   'hint.lot.front': 'Front set: the building will face this side.',
   'hint.lot.frontPick': 'Click near a side of a lot.',
   'v2.roadGrid': 'Grid',
+  'v2.grid.toggle': 'Grid on the map (show or hide)',
   'v2.roadGrid.show': 'Show grid',
   'v2.roadGrid.hide': 'Hide grid',
   'hint.lot.split': 'Lot split in two (Shift: front and back).',
