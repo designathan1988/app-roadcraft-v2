@@ -3,7 +3,7 @@ import { REGION, type HumanExtras, type Strands } from './extras';
 import type { HumanBase } from './humanBase';
 
 /** A morphed body with its normals, as the clothes build it (`clothes.bodyFor`). */
-export interface ShapedBody { readonly shape: Float32Array; readonly normals: Float32Array }
+export interface ShapedBody { readonly shape: Float32Array; readonly normals: Float32Array; readonly skin: Uint32Array }
 
 /**
  * The head's skin as a solid: morphed head vertices with their normals in a
@@ -392,6 +392,103 @@ function extend(g: Guide, k: number): Guide {
   return out;
 }
 
+/** A polyline resampled to `n` points evenly along its length. */
+function resample(g: Guide, n: number): Guide {
+  const lens = [0];
+  for (let i = 1; i < g.length; i++) lens.push(lens[i - 1]! + Math.hypot(g[i]![0]! - g[i - 1]![0]!, g[i]![1]! - g[i - 1]![1]!, g[i]![2]! - g[i - 1]![2]!));
+  const total = lens[lens.length - 1]! || 1e-6;
+  const out: Guide = [];
+  let j = 1;
+  for (let k = 0; k < n; k++) {
+    const target = (k / (n - 1)) * total;
+    while (j < g.length - 1 && lens[j]! < target) j++;
+    const t = Math.min(1, Math.max(0, (target - lens[j - 1]!) / (lens[j]! - lens[j - 1]! || 1)));
+    const a = g[j - 1]!, b = g[j]!;
+    out.push([a[0]! + (b[0]! - a[0]!) * t, a[1]! + (b[1]! - a[1]!) * t, a[2]! + (b[2]! - a[2]!) * t]);
+  }
+  return out;
+}
+
+/**
+ * Guide roots in a grid of 1 cm cells. The nearest `k` within `reach` are
+ * found ring by ring outwards, stopping once no closer guide can lie in an
+ * unsearched ring (the k-nearest search of a uniform grid).
+ */
+class GuideIndex {
+  private readonly cells = new Map<number, number[]>();
+  private static readonly C = 0.01;
+  constructor(private readonly roots: readonly number[][], private readonly reach: number) {
+    roots.forEach((r, i) => {
+      const k = GuideIndex.key(Math.floor(r[0]! / GuideIndex.C), Math.floor(r[1]! / GuideIndex.C), Math.floor(r[2]! / GuideIndex.C));
+      let list = this.cells.get(k);
+      if (!list) this.cells.set(k, list = []);
+      list.push(i);
+    });
+  }
+  private static key(x: number, y: number, z: number): number {
+    return ((x + 512) * 1024 + (y + 512)) * 1024 + (z + 512);
+  }
+  /** Up to `k` guides within reach, nearest first: [guide, distance]. */
+  nearest(p: readonly number[], k: number): [number, number][] {
+    const C = GuideIndex.C;
+    const cx = Math.floor(p[0]! / C), cy = Math.floor(p[1]! / C), cz = Math.floor(p[2]! / C);
+    const best: [number, number][] = [];
+    const rings = Math.ceil(this.reach / C);
+    for (let r = 0; r <= rings; r++) {
+      // Everything in ring r is at least (r - 1) cells away.
+      if (best.length === k && best[k - 1]![1] < (r - 1) * C) break;
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== r) continue;
+        const list = this.cells.get(GuideIndex.key(cx + dx, cy + dy, cz + dz));
+        if (!list) continue;
+        for (const i of list) {
+          const q = this.roots[i]!;
+          const d = Math.hypot(q[0]! - p[0]!, q[1]! - p[1]!, q[2]! - p[2]!);
+          if (d >= this.reach || (best.length === k && d >= best[k - 1]![1])) continue;
+          let at = best.length < k ? best.length : k - 1;
+          best[at] = [i, d];
+          while (at > 0 && best[at - 1]![1] > d) { [best[at - 1], best[at]] = [best[at]!, best[at - 1]!]; at--; }
+        }
+      }
+    }
+    return best;
+  }
+}
+
+/**
+ * `count` root points spread over the scalp by area, thinning where the
+ * scalp mask fades (a soft hairline), each on a skin triangle of the
+ * morphed body.
+ */
+function scalpRoots(ex: HumanExtras, body: ShapedBody, count: number, rng: Rng): number[][] {
+  const s = body.shape, tri = body.skin;
+  const picks: number[] = [], cum: number[] = [];
+  let total = 0;
+  for (let i = 0; i < tri.length; i += 3) {
+    const a = tri[i]!, b = tri[i + 1]!, c = tri[i + 2]!;
+    const m = (ex.scalp[a]! + ex.scalp[b]! + ex.scalp[c]!) / 765;
+    if (m < 0.12) continue;
+    const ux = s[b * 3]! - s[a * 3]!, uy = s[b * 3 + 1]! - s[a * 3 + 1]!, uz = s[b * 3 + 2]! - s[a * 3 + 2]!;
+    const vx = s[c * 3]! - s[a * 3]!, vy = s[c * 3 + 1]! - s[a * 3 + 1]!, vz = s[c * 3 + 2]! - s[a * 3 + 2]!;
+    const area = 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    total += area * Math.min(1, (m - 0.12) / 0.45);
+    picks.push(i); cum.push(total);
+  }
+  const out: number[][] = [];
+  if (!picks.length) return out;
+  for (let k = 0; k < count; k++) {
+    const r = rng.float() * total;
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid]! < r) lo = mid + 1; else hi = mid; }
+    const i = picks[lo]!;
+    let u = rng.float(), v = rng.float();
+    if (u + v > 1) { u = 1 - u; v = 1 - v; }
+    const a = tri[i]! * 3, b = tri[i + 1]! * 3, c = tri[i + 2]! * 3;
+    out.push([0, 1, 2].map((d) => s[a + d]! + (s[b + d]! - s[a + d]!) * u + (s[c + d]! - s[a + d]!) * v));
+  }
+  return out;
+}
+
 /**
  * The hair for a person: guides, children and the player's settings, within
  * a point budget.
@@ -413,64 +510,81 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   guides = guides.map((g) => extend(trim(g, Math.min(1, p.length)), Math.max(1, p.length)));
   // An afro is coils: tight curls whatever the slider's floor.
   if (p.style === 'afro') p = { ...p, curl: Math.max(p.curl, 0.85), curlSize: Math.min(p.curlSize, 0.2), frizz: Math.max(p.frizz, 0.3) };
-  const ptsPerGuide = guides.reduce((s, g) => s + g.length, 0) || 1;
+  // Interpolated children (Blender's "interpolated" children, Houdini's
+  // guide interpolation): roots spread evenly over the scalp, each strand
+  // shaped by the guides nearest its root. Children placed round each guide
+  // instead (as before) left the scalp bare between guides: 42% of a bob's
+  // scalp lay more than 5 mm from any root.
+  const N = p.style === 'buzz' ? 2 : 18;
+  // A groom denser than 3000 guides (the side part has 30,000) is thinned
+  // evenly: interpolation fills between them anyway.
+  const stride = Math.max(1, Math.ceil(guides.length / 3000));
+  const shaped = guides.filter((g, i) => g.length >= 2 && i % stride === 0).map((g) => resample(g, N));
+  if (!shaped.length) return empty();
   const budget = ENV.points * Math.max(0.3, Math.min(1.6, p.density));
-  const perGuide = Math.max(1, Math.min(children, Math.floor(budget / ptsPerGuide)));
-  // When the guides alone are over budget, draw a share of them.
-  const keepGuide = Math.min(1, budget / ptsPerGuide);
+  const roots = scalpRoots(ex, body, Math.min(60_000, Math.floor(budget / N)), rng);
+  const near = new GuideIndex(shaped.map((g) => g[0]!), 0.05);
 
   const counts: number[] = [], pts: number[] = [], seeds: number[] = [], grey: number[] = [];
-  for (const g of guides) {
-    if (keepGuide < 1 && !rng.bool(keepGuide)) continue;
-    const t0 = norm([g[1]![0]! - g[0]![0]!, g[1]![1]! - g[0]![1]!, g[1]![2]! - g[0]![2]!]);
-    const a = norm(Math.abs(t0[1]!) < 0.9 ? [t0[2]!, 0, -t0[0]!] : [0, -t0[2]!, t0[1]!]);
-    const b = [t0[1]! * a[2]! - t0[2]! * a[1]!, t0[2]! * a[0]! - t0[0]! * a[2]!, t0[0]! * a[1]! - t0[1]! * a[0]!];
-    for (let c = 0; c < perGuide; c++) {
-      const ang = rng.range(0, Math.PI * 2), rr = radius * Math.sqrt(rng.float()) * (c === 0 ? 0 : 1);
-      const ox = (a[0]! * Math.cos(ang) + b[0]! * Math.sin(ang)) * rr, oy = (a[1]! * Math.cos(ang) + b[1]! * Math.sin(ang)) * rr, oz = (a[2]! * Math.cos(ang) + b[2]! * Math.sin(ang)) * rr;
-      const phase = rng.range(0, Math.PI * 2), sd = rng.float();
-      // Roughness and frizz as smooth waves along the strand (as Blender's
-      // child roughness is), each strand its own directions and phases:
-      // noise per point would draw every strand as a zigzag of specks.
-      const w1 = [rng.normal(0, 1), rng.normal(0, 1), rng.normal(0, 1)], w2 = [rng.normal(0, 1), rng.normal(0, 1), rng.normal(0, 1)];
-      const f1 = rng.range(0.8, 2.2), f2 = rng.range(5, 9), p1 = rng.range(0, 6.28), p2 = rng.range(0, 6.28);
-      let arc = 0;
-      for (let i = 0; i < g.length; i++) {
-        const t = i / (g.length - 1);
-        const q = g[i]!;
-        if (i > 0) arc += Math.hypot(q[0]! - g[i - 1]![0]!, q[1]! - g[i - 1]![1]!, q[2]! - g[i - 1]![2]!);
-        const pull = 1 - clump * t;
-        const point = [q[0]! + ox * pull, q[1]! + oy * pull, q[2]! + oz * pull];
-        if (t > 0) {
-          // Volume: out from the skull's centre, growing to the tip.
-          const out = norm([point[0]! - skull.cx, point[1]! - skull.cy, point[2]! - skull.cz]);
-          const vol = p.volume * 0.035 * Math.pow(t, 0.7);
-          const slow = Math.sin(p1 + f1 * Math.PI * 2 * t) * (roughness * 0.6 + 0.002 * t);
-          const fast = Math.sin(p2 + f2 * Math.PI * 2 * t) * p.frizz * 0.006 * t * t;
-          point[0] = point[0]! + out[0]! * vol + w1[0]! * slow + w2[0]! * fast;
-          point[1] = point[1]! + out[1]! * vol * 0.6 + w1[1]! * slow + w2[1]! * fast;
-          point[2] = point[2]! + out[2]! * vol + w1[2]! * slow + w2[2]! * fast;
-          if (p.curl > 0) {
-            const prev = g[i - 1]!;
-            const tan = norm([q[0]! - prev[0]!, q[1]! - prev[1]!, q[2]! - prev[2]!]);
-            const ca = norm(Math.abs(tan[1]!) < 0.9 ? [tan[2]!, 0, -tan[0]!] : [0, -tan[2]!, tan[1]!]);
-            const cb = [tan[1]! * ca[2]! - tan[2]! * ca[1]!, tan[2]! * ca[0]! - tan[0]! * ca[2]!, tan[0]! * ca[1]! - tan[1]! * ca[0]!];
-            const period = 0.012 + 0.04 * p.curlSize, amp = p.curl * (0.003 + 0.01 * p.curlSize) * Math.min(1, t * 5);
-            const phi = phase + (arc / period) * Math.PI * 2;
-            point[0] = point[0]! + (ca[0]! * Math.cos(phi) + cb[0]! * Math.sin(phi)) * amp;
-            point[1] = point[1]! + (ca[1]! * Math.cos(phi) + cb[1]! * Math.sin(phi)) * amp;
-            point[2] = point[2]! + (ca[2]! * Math.cos(phi) + cb[2]! * Math.sin(phi)) * amp;
-          }
-        }
-        // The skin is solid: every point at least 2 mm out of it, the root on it.
-        solid.push(point, i > 0 ? 0.002 : 0.0003);
-        pts.push(point[0]!, point[1]!, point[2]!);
-      }
-      counts.push(g.length);
-      seeds.push(sd);
-      grey.push(rng.bool(p.grey) ? 1 : 0);
+  for (const root of roots) {
+    const found = near.nearest(root, 3);
+    if (!found.length) continue;
+    let wsum = 0;
+    const ws = found.map(([, d]) => { const w = 1 / (d * d + 1e-6); wsum += w; return w; });
+    const g: number[][] = [];
+    const closest = shaped[found[0]![0]]!;
+    for (let i = 0; i < N; i++) {
+      let x = root[0]!, y = root[1]!, z = root[2]!;
+      found.forEach(([j], k) => {
+        const G = shaped[j]!, w = ws[k]! / wsum;
+        x += w * (G[i]![0]! - G[0]![0]!); y += w * (G[i]![1]! - G[0]![1]!); z += w * (G[i]![2]! - G[0]![2]!);
+      });
+      // Clumping: towards the nearest guide's own path, more at the tip.
+      const c = clump * (i / (N - 1));
+      g.push([x + (closest[i]![0]! - x) * c, y + (closest[i]![1]! - y) * c, z + (closest[i]![2]! - z) * c]);
     }
+    const phase = rng.range(0, Math.PI * 2), sd = rng.float();
+    // Roughness and frizz as smooth waves along the strand (as Blender's
+    // child roughness is), each strand its own directions and phases:
+    // noise per point would draw every strand as a zigzag of specks.
+    const w1 = [rng.normal(0, 1), rng.normal(0, 1), rng.normal(0, 1)], w2 = [rng.normal(0, 1), rng.normal(0, 1), rng.normal(0, 1)];
+    const f1 = rng.range(0.8, 2.2), f2 = rng.range(5, 9), p1 = rng.range(0, 6.28), p2 = rng.range(0, 6.28);
+    let arc = 0;
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      const q = g[i]!;
+      if (i > 0) arc += Math.hypot(q[0]! - g[i - 1]![0]!, q[1]! - g[i - 1]![1]!, q[2]! - g[i - 1]![2]!);
+      const point = [q[0]!, q[1]!, q[2]!];
+      if (t > 0) {
+        // Volume: out from the skull's centre, growing to the tip.
+        const out = norm([point[0]! - skull.cx, point[1]! - skull.cy, point[2]! - skull.cz]);
+        const vol = p.volume * 0.035 * Math.pow(t, 0.7);
+        const slow = Math.sin(p1 + f1 * Math.PI * 2 * t) * (roughness * 0.6 + 0.002 * t);
+        const fast = Math.sin(p2 + f2 * Math.PI * 2 * t) * p.frizz * 0.006 * t * t;
+        point[0] = point[0]! + out[0]! * vol + w1[0]! * slow + w2[0]! * fast;
+        point[1] = point[1]! + out[1]! * vol * 0.6 + w1[1]! * slow + w2[1]! * fast;
+        point[2] = point[2]! + out[2]! * vol + w1[2]! * slow + w2[2]! * fast;
+        if (p.curl > 0) {
+          const prev = g[i - 1]!;
+          const tan = norm([q[0]! - prev[0]!, q[1]! - prev[1]!, q[2]! - prev[2]!]);
+          const ca = norm(Math.abs(tan[1]!) < 0.9 ? [tan[2]!, 0, -tan[0]!] : [0, -tan[2]!, tan[1]!]);
+          const cb = [tan[1]! * ca[2]! - tan[2]! * ca[1]!, tan[2]! * ca[0]! - tan[0]! * ca[2]!, tan[0]! * ca[1]! - tan[1]! * ca[0]!];
+          const period = 0.012 + 0.04 * p.curlSize, amp = p.curl * (0.003 + 0.01 * p.curlSize) * Math.min(1, t * 5);
+          const phi = phase + (arc / period) * Math.PI * 2;
+          point[0] = point[0]! + (ca[0]! * Math.cos(phi) + cb[0]! * Math.sin(phi)) * amp;
+          point[1] = point[1]! + (ca[1]! * Math.cos(phi) + cb[1]! * Math.sin(phi)) * amp;
+          point[2] = point[2]! + (ca[2]! * Math.cos(phi) + cb[2]! * Math.sin(phi)) * amp;
+        }
+      }
+      // The skin is solid: every point at least 2 mm out of it, the root on it.
+      solid.push(point, i > 0 ? 0.002 : 0.0003);
+      pts.push(point[0]!, point[1]!, point[2]!);
+    }
+    counts.push(N);
+    seeds.push(sd);
+    grey.push(rng.bool(p.grey) ? 1 : 0);
   }
+  void children; void radius;
   // Wider than a real hair (0.07 mm): tens of thousands of strands stand
   // for a head's hundred thousand, so each covers for several.
   const w = 0.0009 * p.thickness;
