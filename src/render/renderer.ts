@@ -44,7 +44,7 @@ import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
-import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
+import { buildRoadSurfaces, disposeSurfaceReuse, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { buildingBounds, levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
 import { elementRing, followPieces } from '@world/buildings/elements';
@@ -109,6 +109,7 @@ const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
+import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
 
 /**
  * The scene renderer.
@@ -528,10 +529,28 @@ export function createSceneRenderer(
   let polePreviewKey = '';
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
-  let barriersFor = '';
+  /** Where the walls, fences and hedges stand, by barrier revision. */
+  let barriersAreaFor = -1;
+  let barriersArea: Rect | null = null;
+  const barriersAreaOf = (doc: RoadDoc): Rect | null => {
+    if (barriersAreaFor !== doc.barrierRevision) {
+      barriersAreaFor = doc.barrierRevision;
+      barriersArea = rectAround([...doc.barriers.values()].flatMap((b) => b.points), m(1));
+    }
+    return barriersArea;
+  };
   /** Public transport (`transit.ts`), and the state it was built for. */
   let transit: TransitMeshes | null = null;
-  let transitFor = '';
+  /** Where the transport stands - its stops, stations and tracks, a metro entrance's search round them - by its revision. */
+  let transitAreaFor = -1;
+  let transitArea: Rect | null = null;
+  const transitAreaOf = (doc: RoadDoc): Rect | null => {
+    if (transitAreaFor !== doc.transitRevision) {
+      transitAreaFor = doc.transitRevision;
+      transitArea = rectAround([...doc.transit.stops, ...doc.transit.tracks.flatMap((t) => t.points)], m(40));
+    }
+    return transitArea;
+  };
   let elevation: RoadElevation | null = null;
 
   // What each rebuild keeps for the next: the tiles of every surface an edit
@@ -543,6 +562,7 @@ export function createSceneRenderer(
       .add(terrain.digest(minX, minY, maxX, maxY))
       .value(),
     paint: new Map(),
+    chunks: new Map(),
   };
 
   let networkRevision = -1;
@@ -645,10 +665,21 @@ export function createSceneRenderer(
   let excludedFor: { scenery: Scenery | null; site: string | null } = { scenery: null, site: null };
   /** The buildings' garden plants, and the buildings and ground they were planted for. */
   let gardens: Scenery | null = null;
-  let gardensFor = '';
   /** The forest painted with the landscape brush, planted (`forestPlants`). */
   let forest: Scenery | null = null;
-  let forestFor = '';
+  /** Where forest was painted (the only paint that raises its density), by paint revision. */
+  let forestAreaFor = -1;
+  let forestArea: Rect | null = null;
+  const forestAreaOf = (doc: RoadDoc): Rect | null => {
+    if (forestAreaFor !== doc.paintRevision) {
+      forestAreaFor = doc.paintRevision;
+      forestArea = null;
+      for (const dab of doc.terrainPaint) {
+        if (dab.kind === 'forest') forestArea = unionRect(forestArea, [dab.x - dab.radius, dab.y - dab.radius, dab.x + dab.radius, dab.y + dab.radius]);
+      }
+    }
+    return forestArea;
+  };
   // One representative per material and mesh program variant is enough for
   // compileAsync. Passing the whole scene compiled every repeated instance,
   // including objects hidden outside the view, during the first town frame.
@@ -691,18 +722,41 @@ export function createSceneRenderer(
    */
   /** The ground the buildings were last graded on (frozen while a stroke is held). */
   let buildingGround = '';
-  /** Bumped each time the ground is graded: what stands on it is set again. */
-  let groundVersion = 0;
+  /** Where and when the drawn ground changed: what stands on it is set again only there (`groundChanges.ts`). */
+  const groundChanges = new GroundChanges();
+  const onGround = {
+    buildings: new GroundDependant(groundChanges),
+    barriers: new GroundDependant(groundChanges),
+    transit: new GroundDependant(groundChanges),
+    gardens: new GroundDependant(groundChanges),
+    forest: new GroundDependant(groundChanges),
+  };
+  /** The area every building's bank reaches, by building revision. */
+  let buildingsAreaFor = -1;
+  let buildingsArea: Rect | null = null;
+  const buildingsAreaOf = (doc: RoadDoc): Rect | null => {
+    if (buildingsAreaFor === doc.buildings.revision) return buildingsArea;
+    buildingsAreaFor = doc.buildings.revision;
+    buildingsArea = null;
+    for (const b of doc.buildings.all()) buildingsArea = unionRect(buildingsArea, bankBox(b));
+    return buildingsArea;
+  };
   /** The plants of the buildings' gardens, as `gardenPlants` reads them, by building revision. */
   let plantsFor = -1;
   let plantsKey = '';
+  /** Where the gardens' plants stand (with `plantsKey`). */
+  let plantsArea: Rect | null = null;
   const plantSignature = (doc: RoadDoc): string => {
     if (plantsFor === doc.buildings.revision) return plantsKey;
     plantsFor = doc.buildings.revision;
     const parts: unknown[] = [];
+    plantsArea = null;
     for (const b of doc.buildings.all()) {
       const plants = (b.elements ?? []).filter((el: { kind: string }) => el.kind === 'tree' || el.kind === 'shrub' || el.kind === 'hedge' || el.kind === 'flowers');
-      if (plants.length) parts.push([b.id, b.x, b.y, b.rotation, plants]);
+      if (plants.length) {
+        parts.push([b.id, b.x, b.y, b.rotation, plants]);
+        plantsArea = unionRect(plantsArea, bankBox(b));
+      }
     }
     return (plantsKey = JSON.stringify(parts));
   };
@@ -763,6 +817,11 @@ export function createSceneRenderer(
     }
     return out;
   };
+  /** A terrain region (`terrainRegion`) back as the world box it covers, a cell round. */
+  const regionRect = (region: TerrainRegion): Rect => [
+    (region[0] - 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[3] + 1) * TERRAIN_CELL,
+    (region[1] + 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[2] - 1) * TERRAIN_CELL,
+  ];
   /** A world box as the terrain grid corners it covers. */
   const terrainRegion = (box: readonly [number, number, number, number]): TerrainRegion => {
     const last = MAP_SIZE / TERRAIN_CELL;
@@ -787,16 +846,22 @@ export function createSceneRenderer(
     const touches = (q: readonly [number, number, number, number]): boolean =>
       blocks.some((b) => q[0] <= b[2] && q[2] >= b[0] && q[1] <= b[3] && q[3] >= b[1]);
     for (const b of net.doc.buildings.all()) if (touches(bankBox(b))) padsKnown.delete(b);
-    groundVersion++;
     gradedFor = net.doc.buildings.revision;
     changedSites(net.doc);
     padsCache = net.doc.buildings.size > 0
       ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
       : null;
-    for (const block of blocks) shapeGround(net, terrainRegion(block), false, true);
+    // All the blocks in one pass of the terrain, not one pass each (docs/performance.md).
+    shapeGround(net, blocks.map(terrainRegion), false, true);
   };
 
-  const shapeGround = (net: Network, region: TerrainRegion | null = null, sites = false, padsReady = false): void => {
+  const shapeGround = (net: Network, regions: TerrainRegion | readonly TerrainRegion[] | null = null, sites = false, padsReady = false): void => {
+    const list: readonly TerrainRegion[] | null = regions === null ? null
+      : typeof regions[0] === 'number' ? [regions as TerrainRegion] : regions as readonly TerrainRegion[];
+    if (list && !list.length) return;
+    const region = list;
+    // The ground is cut and filled here, and only here: what stands on it reads where.
+    groundChanges.mark(list ? list.map(regionRect) : null);
     const roads = net.doc.segments.size > 0 ? elevation : null;
     if (!padsReady && (!region || !padsCache || sites)) {
       gradedFor = net.doc.buildings.revision;
@@ -806,7 +871,6 @@ export function createSceneRenderer(
         graded.clear();
         changedSites(net.doc);
       }
-      groundVersion++;
       padsCache = net.doc.buildings.size > 0
         ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
         : null;
@@ -901,22 +965,37 @@ export function createSceneRenderer(
     // be cut and filled to meet these roads, and feeding the next solve its own
     // previous answer would let the two drift a little further apart on every
     // rebuild.
+    let lap = performance.now();
+    // Each step of a road edit timed (`hitch:` entries, read by scripts/probe-hitches.mjs; docs/performance.md).
+    const timed = (what: string): void => { const now = performance.now(); performance.measure(`hitch:road-edit/${what}`, { start: lap, end: now }); lap = now; };
     elevation = buildRoadElevation(net, terrain.naturalRenderedHeightAt);
+    timed('elevation');
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
     // from the same rule, where a road is buried deeply enough — tunnels.
     // A street drawn re-shaped the whole map (a seventh of a second on a
     // small town); now only the blocks its solve changed.
-    const blocks = landStill && previousElevation && padsCache ? changedBlocks(previousElevation, elevation) : null;
+    //
+    // `padsCache` used to be required here too: on a map with no buildings it
+    // is always null, so every street drawn there re-shaped the whole map and
+    // rebuilt everything on the ground (docs/performance.md). The blocks are
+    // known from the two solves alone; `shapeBlocks` works the pads out.
+    const blocks = landStill && previousElevation ? changedBlocks(previousElevation, elevation) : null;
+    // The roads' own heights (the footway, the carriageway) moved where the solve did.
+    groundChanges.mark(blocks);
+    performance.measure(`hitch:road-edit/changed blocks ${blocks ? blocks.length : 'all'}${blocks?.length ? ` x[${Math.min(...blocks.map((b) => b[0]))},${Math.max(...blocks.map((b) => b[2]))}] y[${Math.min(...blocks.map((b) => b[1]))},${Math.max(...blocks.map((b) => b[3]))}]` : ''}`, { start: lap, end: lap + 9 });
     if (blocks && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25) {
       if (blocks.length) shapeBlocks(net, blocks);
     } else shapeGround(net);
+    timed('ground');
 
     roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
     world.add(roads.group);
+    timed('surfaces');
 
     details = buildStructureDetails(net, elevation, terrain.renderedHeightAt, materials);
     world.add(details.group);
+    timed('structures');
 
     scenery = buildScenery(
       net,
@@ -928,6 +1007,7 @@ export function createSceneRenderer(
     );
     for (const mesh of scenery.meshes) world.add(mesh);
     world.add(scenery.grass);
+    timed('scenery');
 
     // The overhead utility network. It is drawn from the document directly
     // rather than from the Network, because a pole line is not derived from
@@ -945,8 +1025,11 @@ export function createSceneRenderer(
 
     builtTriangles =
       roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
+    timed('poles');
     rebuildFurniture(net);
+    timed('furniture');
     rebuildMs = performance.now() - started;
+    performance.measure('hitch:road-edit', { start: started, end: performance.now() });
     rebuilds++;
   };
 
@@ -1477,17 +1560,19 @@ export function createSceneRenderer(
       }
       // The buildings follow the ground once a stroke is over, not on every
       // dab of it: re-grading 600 buildings per dab took seconds a dab.
-      if (!stroking) buildingGround = `${net.doc.terrainRevision}:${rebuilds}`;
-      if (!buildingsHeld) buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt);
-      // The plants under a building's footprints: only a changed site moves them.
-      if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== String(groundVersion))) {
+      // Only when the ground changed under some building, and then each building
+      // samples its ground again only if a change reached its own bank.
+      if (!stroking && onGround.buildings.stale('', buildingsAreaOf(net.doc))) buildingGround = String(groundChanges.version);
+      if (!buildingsHeld) buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
+        (b, since) => groundChanges.touches(Number(since), bankBox(b)));
+      // The plants under a building's footprints: on the scenery and the buildings alone.
+      const siteKey = String(net.doc.buildings.revision);
+      if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== siteKey)) {
         scenery.exclude(net.doc.buildings.size > 0 ? buildings.covers : null);
-        excludedFor = { scenery, site: String(groundVersion) };
+        excludedFor = { scenery, site: siteKey };
       }
       // Walls, fences and hedges: on their own revision, and on the ground they stand on.
-      const barrierKey = `${net.doc.barrierRevision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
-      if (barrierKey !== barriersFor) {
-        barriersFor = barrierKey;
+      if (onGround.barriers.stale(String(net.doc.barrierRevision), barriersAreaOf(net.doc))) {
         if (barriers) {
           builtTriangles -= barriers.triangles;
           world.remove(barriers.group);
@@ -1498,9 +1583,7 @@ export function createSceneRenderer(
         builtTriangles += barriers.triangles;
       }
       // Public transport: tracks, stations, stops (`transit.ts`), on its own revision.
-      const transitKey = `${net.doc.transitRevision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
-      if (transitKey !== transitFor) {
-        transitFor = transitKey;
+      if (onGround.transit.stale(String(net.doc.transitRevision), transitAreaOf(net.doc))) {
         if (transit) {
           builtTriangles -= transit.triangles;
           world.remove(transit.group);
@@ -1514,9 +1597,8 @@ export function createSceneRenderer(
         world.add(transit.group);
         builtTriangles += transit.triangles;
       }
-      const gardenKey = `${plantSignature(net.doc)}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
-      if (gardenKey !== gardensFor) {
-        gardensFor = gardenKey;
+      const gardenKey = plantSignature(net.doc);
+      if (onGround.gardens.stale(gardenKey, plantsArea)) {
         if (gardens) {
           for (const mesh of gardens.meshes) world.remove(mesh);
           gardens.dispose();
@@ -1524,14 +1606,16 @@ export function createSceneRenderer(
         gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
-      const forestKey = `${terrain.forestRevision}:${net.revision}:${net.doc.buildings.revision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
-      if (forestKey !== forestFor) {
-        forestFor = forestKey;
+      // The roads and buildings it keeps off reach it through the change log too:
+      // a street or a building changes the ground where it is.
+      if (onGround.forest.stale(String(terrain.forestRevision), forestAreaOf(net.doc))) {
         if (forest) {
           for (const mesh of forest.meshes) world.remove(mesh);
           forest.dispose();
         }
+        const forestAt = performance.now();
         forest = buildGardens(forestPlants(net), sceneryKit);
+        performance.measure('hitch:forest', { start: forestAt, end: performance.now() });
         for (const mesh of forest.meshes) world.add(mesh);
       }
       // Discover new shader variants across frames, including hidden objects
@@ -1827,7 +1911,7 @@ export function createSceneRenderer(
       signals.dispose();
       buildings.dispose();
       roads?.dispose();
-      for (const paint of surfaceReuse.paint.values()) paint.dispose();
+      disposeSurfaceReuse(surfaceReuse);
       details?.dispose();
       scenery?.dispose();
       furniture?.dispose();

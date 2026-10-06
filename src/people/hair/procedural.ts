@@ -183,6 +183,68 @@ function headOf(base: HairBase) {
   return { P, at, headVerts, skull, local, outward };
 }
 
+/**
+ * The three anchors nearest a point, as [squared distance, vertex], nearest
+ * first; equal distances go to the anchor earlier in the list. A uniform grid
+ * searched ring by ring (the spatial hashing of real-time collision
+ * detection), not every anchor per point: a hairstyle pins tens of thousands
+ * of vertices to some three thousand head vertices, and the search over all
+ * of them stalled the game 70-225 ms on each new hairstyle (docs/performance.md).
+ */
+export function nearestThree(P: ArrayLike<number>, anchors: readonly number[]): (p: V3) => [number, number][] {
+  const lo: V3 = [Infinity, Infinity, Infinity], hi: V3 = [-Infinity, -Infinity, -Infinity];
+  for (const v of anchors) for (let c = 0; c < 3; c++) {
+    lo[c] = Math.min(lo[c]!, P[v * 3 + c]!);
+    hi[c] = Math.max(hi[c]!, P[v * 3 + c]!);
+  }
+  // About four anchors a cell.
+  const volume = Math.max(1e-12, (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]));
+  const size = Math.max(1e-6, Math.cbrt(volume * 4 / Math.max(1, anchors.length)));
+  const dims = [0, 1, 2].map((c) => Math.max(1, Math.ceil((hi[c]! - lo[c]!) / size) + 1)) as V3;
+  const cellOf = (x: number, c: number): number => Math.floor((x - lo[c]!) / size);
+  const cells = new Map<number, number[]>();
+  anchors.forEach((v, order) => {
+    const key = (cellOf(P[v * 3 + 2]!, 2) * dims[1] + cellOf(P[v * 3 + 1]!, 1)) * dims[0] + cellOf(P[v * 3]!, 0);
+    let list = cells.get(key);
+    if (!list) cells.set(key, list = []);
+    list.push(order);
+  });
+  const reach = Math.max(dims[0], dims[1], dims[2]);
+  return (p) => {
+    // [distance, order in the anchor list], kept sorted by both.
+    const best: [number, number][] = [[Infinity, Infinity], [Infinity, Infinity], [Infinity, Infinity]];
+    const consider = (order: number): void => {
+      const v = anchors[order]!;
+      const d = (P[v * 3]! - p[0]) ** 2 + (P[v * 3 + 1]! - p[1]) ** 2 + (P[v * 3 + 2]! - p[2]) ** 2;
+      const worst = best[2]!;
+      if (d > worst[0] || (d === worst[0] && order > worst[1])) return;
+      best[2] = [d, order];
+      best.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    };
+    const cx = cellOf(p[0], 0), cy = cellOf(p[1], 1), cz = cellOf(p[2], 2);
+    for (let r = 0; ; r++) {
+      for (let z = Math.max(0, cz - r); z <= Math.min(dims[2] - 1, cz + r); z++) {
+        for (let y = Math.max(0, cy - r); y <= Math.min(dims[1] - 1, cy + r); y++) {
+          const shell = Math.abs(z - cz) === r || Math.abs(y - cy) === r;
+          for (let x = Math.max(0, cx - r); x <= Math.min(dims[0] - 1, cx + r); x++) {
+            if (!shell && Math.abs(x - cx) !== r) continue;
+            const list = cells.get((z * dims[1] + y) * dims[0] + x);
+            if (list) for (const order of list) consider(order);
+          }
+        }
+      }
+      // Done once nothing outside the cube searched can be nearer than the third.
+      const gap = Math.min(
+        p[0] - (lo[0] + (cx - r) * size), lo[0] + (cx + r + 1) * size - p[0],
+        p[1] - (lo[1] + (cy - r) * size), lo[1] + (cy + r + 1) * size - p[1],
+        p[2] - (lo[2] + (cz - r) * size), lo[2] + (cz + r + 1) * size - p[2]);
+      const covered = cx - r <= 0 && cy - r <= 0 && cz - r <= 0 && cx + r >= dims[0] - 1 && cy + r >= dims[1] - 1 && cz + r >= dims[2] - 1;
+      if (covered || r > reach + Math.max(Math.abs(cx), Math.abs(cy), Math.abs(cz)) || (gap > 0 && best[2]![0] < gap * gap)) break;
+    }
+    return best.map(([d, order]) => [d, order === Infinity ? 0 : anchors[order]!] as [number, number]);
+  };
+}
+
 /** An item from generated geometry: each vertex pinned to the three nearest head vertices. */
 function pinned(head: ReturnType<typeof headOf>, name: string, kind: ProxyPack['kind'],
   positions: readonly number[], uvs: readonly number[], index: readonly number[], fade?: readonly number[],
@@ -193,15 +255,7 @@ function pinned(head: ReturnType<typeof headOf>, name: string, kind: ProxyPack['
   // thousands of strand vertices share a few hundred searches).
   const n = positions.length / 3;
   const refs = new Uint32Array(n * 3), weights = new Float32Array(n * 3), offsets = new Float32Array(n * 3);
-  const anchors = headVerts;
-  const nearest = (p: V3): [number, number][] => {
-    const best: [number, number][] = [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
-    for (const v of anchors) {
-      const d = (P[v * 3]! - p[0]) ** 2 + (P[v * 3 + 1]! - p[1]) ** 2 + (P[v * 3 + 2]! - p[2]) ** 2;
-      if (d < best[2]![0]) { best[2] = [d, v]; best.sort((x, y) => x[0] - y[0]); }
-    }
-    return best;
-  };
+  const nearest = nearestThree(P, headVerts);
   const shared = via ? via.points.map(nearest) : null;
   for (let i = 0; i < n; i++) {
     const p: V3 = [positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!];

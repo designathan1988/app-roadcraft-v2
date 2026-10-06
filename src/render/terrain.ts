@@ -164,7 +164,12 @@ export interface TerrainSurface {
    * carried back to the natural ground over a wide batter. Returns true when
    * anything moved, so the caller knows whether the water needs rebuilding.
    */
-  shapeToRoads(shape: TerrainShaper | null, region?: TerrainRegion | null): boolean;
+  /**
+   * `region`: one region or several, shaped in one pass (each region's own
+   * pass walked every shaped corner, every road's box and the whole plate's
+   * bounds again: an edit touching 20 blocks paid that 20 times).
+   */
+  shapeToRoads(shape: TerrainShaper | null, region?: TerrainRegion | readonly TerrainRegion[] | null): boolean;
   dispose(): void;
 }
 
@@ -814,7 +819,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
 
   /** The corners the last shaping pass moved (`touchesWater`). */
   let lastChanged: readonly number[] = [];
-  const shapeToRoads = (shape: TerrainShaper | null, region: TerrainRegion | null = null): boolean => {
+  const shapeToRoads = (shape: TerrainShaper | null, region: TerrainRegion | readonly TerrainRegion[] | null = null): boolean => {
+    const regions: readonly TerrainRegion[] | null = region === null ? null
+      : typeof region[0] === 'number' ? [region as TerrainRegion] : region as readonly TerrainRegion[];
     // The corners whose height this pass changes, whichever way.
     const changed: number[] = [];
     // Restore whatever the last shaping moved, so this is a pure function of
@@ -824,9 +831,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // plate was re-shaped on every dab - every road and every building pad of
     // the town, sixty-odd times a stroke.
     const inRegion = (i: number): boolean => {
-      if (!region) return true;
+      if (!regions) return true;
       const ix = i % GRID, iy = (i - ix) / GRID;
-      return ix >= region[0] && ix <= region[1] && iy >= region[2] && iy <= region[3];
+      return regions.some((r) => ix >= r[0] && ix <= r[1] && iy >= r[2] && iy <= r[3]);
     };
     const before = new Map<number, number>();
     const kept: number[] = [];
@@ -843,29 +850,29 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       // answers weight 0, and asking all 90 601 of them was most of the pass.
       pass++;
       for (const box of shape.shapeBounds()) {
-        let x0 = Math.max(0, Math.floor((box.minX + TERRAIN_HALF) / TERRAIN_CELL));
-        let x1 = Math.min(GRID - 1, Math.ceil((box.maxX + TERRAIN_HALF) / TERRAIN_CELL));
-        let y0 = Math.max(0, Math.floor((TERRAIN_HALF - box.maxY) / TERRAIN_CELL));
-        let y1 = Math.min(GRID - 1, Math.ceil((TERRAIN_HALF - box.minY) / TERRAIN_CELL));
-        if (region) {
-          x0 = Math.max(x0, region[0]); x1 = Math.min(x1, region[1]);
-          y0 = Math.max(y0, region[2]); y1 = Math.min(y1, region[3]);
-        }
-        for (let iy = y0; iy <= y1; iy++) {
-          for (let ix = x0; ix <= x1; ix++) {
-            const i = ix + iy * GRID;
-            if (visited[i] === pass) continue;
-            visited[i] = pass;
-            const x = position.getX(i);
-            const worldY = -position.getZ(i);
-            const ground = natural[i] as number;
-            const { height, weight } = shape.shapeAt(x, worldY, ground);
-            if (weight <= 0.001) continue;
-            const blended = ground + (height - ground) * weight;
-            if (Math.abs(blended - ground) < 0.002) continue;
-            grid[i] = blended;
-            shapedCorners.push(i);
-            fresh.push(i);
+        const bx0 = Math.max(0, Math.floor((box.minX + TERRAIN_HALF) / TERRAIN_CELL));
+        const bx1 = Math.min(GRID - 1, Math.ceil((box.maxX + TERRAIN_HALF) / TERRAIN_CELL));
+        const by0 = Math.max(0, Math.floor((TERRAIN_HALF - box.maxY) / TERRAIN_CELL));
+        const by1 = Math.min(GRID - 1, Math.ceil((TERRAIN_HALF - box.minY) / TERRAIN_CELL));
+        for (const r of regions ?? [null]) {
+          const x0 = r ? Math.max(bx0, r[0]) : bx0, x1 = r ? Math.min(bx1, r[1]) : bx1;
+          const y0 = r ? Math.max(by0, r[2]) : by0, y1 = r ? Math.min(by1, r[3]) : by1;
+          for (let iy = y0; iy <= y1; iy++) {
+            for (let ix = x0; ix <= x1; ix++) {
+              const i = ix + iy * GRID;
+              if (visited[i] === pass) continue;
+              visited[i] = pass;
+              const x = position.getX(i);
+              const worldY = -position.getZ(i);
+              const ground = natural[i] as number;
+              const { height, weight } = shape.shapeAt(x, worldY, ground);
+              if (weight <= 0.001) continue;
+              const blended = ground + (height - ground) * weight;
+              if (Math.abs(blended - ground) < 0.002) continue;
+              grid[i] = blended;
+              shapedCorners.push(i);
+              fresh.push(i);
+            }
           }
         }
       }

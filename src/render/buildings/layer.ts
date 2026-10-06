@@ -17,9 +17,10 @@ import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from '
  * rebuilt only when what it depends on moves (CLAUDE.md (Execution flow)).
  *
  * The stored buildings depend on `doc.buildings.revision`, on the ground
- * (`groundKey`: the terrain revision and the renderer's world rebuild count,
- * because shaping the terrain to the roads moves it too) and on which one the
- * preview is standing in for. The preview depends on its own serial.
+ * (`groundKey`: the serial of the last ground change that reached a building,
+ * `render/groundChanges.ts`) and on which one the preview is standing in for.
+ * A building samples its ground again only when `groundTouched` says a change
+ * since its last sample reached it. The preview depends on its own serial.
  */
 export interface BuildingPreviewInput {
   readonly building: Building;
@@ -39,7 +40,8 @@ export interface BuildingLayer {
    * Rebuilds what is stale. Returns true if the stored buildings were rebuilt.
    * `pavedAt` is the paving (footways, carriageways) entrances open onto.
    */
-  update(doc: RoadDoc, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt, naturalAt?: GroundAt): boolean;
+  update(doc: RoadDoc, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt, naturalAt?: GroundAt,
+    groundTouched?: (b: Building, sinceKey: string) => boolean): boolean;
   setPreview(preview: BuildingPreviewInput | null): void;
   /**
    * "See inside": every building within `radius` of (x, y) is drawn cut open
@@ -134,9 +136,16 @@ export function createBuildingLayer(): BuildingLayer {
   const cutChunks = new Map<string, { key: string; chunk: BuildingChunk }>();
   /** An edit to one building must not resample the ground under every other building. */
   const groundDigests = new Map<BuildingId, { record: string; groundKey: string; digest: string }>();
+  /** Whether a ground change since a key reached a building; without one, any new key did. */
+  let touched: ((b: Building, sinceKey: string) => boolean) | undefined;
   const digestFor = (b: Building, record: string, groundKey: string, groundAt: GroundAt, pavedAt?: PavedAt): string => {
     const known = groundDigests.get(b.id);
     if (known && known.record === record && known.groundKey === groundKey) return known.digest;
+    // The ground changed somewhere, not under this building: what it sampled stands.
+    if (known && known.record === record && touched && !touched(b, known.groundKey)) {
+      groundDigests.set(b.id, { ...known, groundKey });
+      return known.digest;
+    }
     const digest = groundDigest(b, groundAt, pavedAt);
     groundDigests.set(b.id, { record, groundKey, digest });
     return digest;
@@ -224,8 +233,9 @@ export function createBuildingLayer(): BuildingLayer {
       const { groundAt, groundKey, pavedAt, naturalAt } = lastGround;
       return { chunk: chunkFor(b, groundAt, groundKey, pavedAt, naturalAt), kit };
     },
-    update(doc, groundAt, groundKey, pavedAt, naturalAt = groundAt) {
+    update(doc, groundAt, groundKey, pavedAt, naturalAt = groundAt, groundTouched) {
       lastGround = { groundAt, groundKey, pavedAt, naturalAt };
+      touched = groundTouched;
       const hides = preview?.hides ?? null;
       const dimKey = dimmed === undefined ? 'off' : String(dimmed ?? 'all');
       const cutKey = cutaway

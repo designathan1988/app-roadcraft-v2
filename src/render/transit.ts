@@ -1,9 +1,29 @@
-import { BoxGeometry, Color, Group, InstancedMesh, type Material, MeshStandardMaterial, Object3D } from 'three';
+import { BoxGeometry, Color, Group, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
 export type { Box as TransitBox };
 
 import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import type { TrainView } from '@sim/transit/transit';
+
+/**
+ * The materials of the transport, made once and shared by every rebuild:
+ * one made afresh on each rebuild (every road edit rebuilds the transport)
+ * had its shader program dropped with the old one and linked again, a stall
+ * on every road drawn (docs/performance.md). Keyed by everything set on them.
+ */
+const sharedMaterials = new Map<string, MeshStandardMaterial>();
+function sharedMaterial(colour: number, roughness: number, metalness: number, opacity: number,
+  transparent = opacity < 1, depthTest = true, order = 0): MeshStandardMaterial {
+  const key = `${colour}:${roughness}:${metalness}:${opacity}:${transparent}:${depthTest}:${order}`;
+  let mat = sharedMaterials.get(key);
+  if (!mat) {
+    mat = new MeshStandardMaterial({ color: colour, roughness, metalness, transparent, opacity });
+    mat.depthTest = depthTest;
+    mat.userData['order'] = order;
+    sharedMaterials.set(key, mat);
+  }
+  return mat;
+}
 
 /**
  * Public transport on screen (`world/transit.ts`, `sim/transit/transit.ts`):
@@ -215,12 +235,8 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
   }
 
   const unit = new BoxGeometry(1, 1, 1);
-  const materials: Material[] = [];
-  const material = (colour: number, roughness: number, metalness = 0, opacity = 1): MeshStandardMaterial => {
-    const mat = new MeshStandardMaterial({ color: colour, roughness, metalness, transparent: opacity < 1, opacity });
-    materials.push(mat);
-    return mat;
-  };
+  const material = (colour: number, roughness: number, metalness = 0, opacity = 1): MeshStandardMaterial =>
+    sharedMaterial(colour, roughness, metalness, opacity);
   const o = new Object3D();
   const place = (b: Box): void => {
     o.position.set(b.x, b.z + b.height / 2, -b.y);
@@ -229,7 +245,7 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
     o.updateMatrix();
   };
   let triangles = 0;
-  const add = (name: string, boxes: readonly Box[], mat: Material, coloured = false): void => {
+  const add = (name: string, boxes: readonly Box[], mat: MeshStandardMaterial, coloured = false): void => {
     if (boxes.length === 0) return;
     const mesh = new InstancedMesh(unit, mat, boxes.length);
     mesh.name = name;
@@ -262,13 +278,8 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
   const xray = new Group();
   xray.name = 'transit-xray';
   xray.visible = false;
-  const through = (colour: number, opacity: number, order: number): MeshStandardMaterial => {
-    const mat = material(colour, 0.8, 0, opacity);
-    mat.depthTest = false;
-    mat.transparent = true;
-    mat.userData['order'] = order;
-    return mat;
-  };
+  const through = (colour: number, opacity: number, order: number): MeshStandardMaterial =>
+    sharedMaterial(colour, 0.8, 0, opacity, true, false, order);
   const addThrough = (name: string, boxes: readonly Box[], mat: MeshStandardMaterial): void => {
     if (!boxes.length) return;
     const mesh = new InstancedMesh(unit, mat, boxes.length);
@@ -320,7 +331,6 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
     },
     dispose() {
       unit.dispose();
-      for (const mat of materials) mat.dispose();
     },
   };
 }
@@ -358,13 +368,10 @@ export function buildTrackPreview(points: readonly { x: number; y: number }[], m
   group.name = 'transit-preview';
   const laid = trackBoxes(points, mode, groundAt, pavedAt);
   const unit = new BoxGeometry(1, 1, 1);
-  const mats: MeshStandardMaterial[] = [];
   const o = new Object3D();
   const add = (boxes: readonly Box[], colour: number, opacity: number, order: number, roughness = 0.8, metalness = 0): void => {
     if (!boxes.length) return;
-    const mat = new MeshStandardMaterial({ color: colour, roughness, metalness, transparent: true, opacity });
-    if (mode === 'metro') mat.depthTest = false;
-    mats.push(mat);
+    const mat = sharedMaterial(colour, roughness, metalness, opacity, true, mode !== 'metro');
     const mesh = new InstancedMesh(unit, mat, boxes.length);
     mesh.renderOrder = 30 + order;
     mesh.frustumCulled = false;
@@ -379,5 +386,5 @@ export function buildTrackPreview(points: readonly { x: number; y: number }[], m
   add(laid.sleepers, 0x5b4636, 0.95, 2);
   add(laid.rails, 0x9aa0a6, 1, 3, 0.35, 0.8);
   add(laid.roof, 0x8d8a84, 0.18, 4);
-  return { group, dispose() { unit.dispose(); for (const mat of mats) mat.dispose(); } };
+  return { group, dispose() { unit.dispose(); } };
 }

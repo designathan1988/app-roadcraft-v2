@@ -16,7 +16,7 @@ import { expressionShapes } from '@people/body/expressions';
 import { createPersonRig, type PersonRig } from './personRig';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
 import { captureBind, captureBindRotations, loadRocketboxClips, type WalkSex } from '../citizenWalk';
-import { bakeLibraryClip, bakeWalk, restRig, type ClipFrames } from '../citizenBake';
+import { bakeLibraryClip, bakeWalk, breathe, restRig, type ClipFrames } from '../citizenBake';
 import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS, blendPackedFrames } from '../citizenPalette';
 
 /**
@@ -566,11 +566,13 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         items.set(name, loaded);
         return loaded;
       }
-      loaded = style ? setup().then(({ assets: a, morpher: mo }) => ({
-        pack: generateHair(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
-          joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces }),
-        texture: null, transparent: true, textureFile: null,
-      })) : loadProxyItem(name);
+      loaded = style ? setup().then(({ assets: a, morpher: mo }) => {
+        const at = performance.now();
+        const pack = generateHair(style, { positions: mo.base, vertexCount: a.mesh.vertexCount, bodyRange: a.bodyRange,
+          joints: a.mesh.joints, weights: a.mesh.weights, boneNames: a.mesh.boneNames, faces: a.mesh.faces });
+        performance.measure(`hitch:person/hair ${name}`, { start: at, end: performance.now() });
+        return { pack, texture: null, transparent: true, textureFile: null };
+      }) : loadProxyItem(name);
       items.set(name, loaded);
     }
     return loaded;
@@ -589,9 +591,13 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
     const { assets: a, morpher: mo } = await setup();
     const started = performance.now();
+    // A class is some 250 ms of work: done a few milliseconds a frame
+    // (`breathe`), never in one go - in one go it was a stall of 40-240 ms each
+    // time a new kind of person came in (docs/performance.md).
     const base = classBase(sex, band);
     const shape = mo.shape(base);
     const eyes = await item('eyes');
+    await breathe();
     // Only the eyes on it: no outfit, hair, brows, lashes or hat.
     const { outfit: _o, footwear: _f, brows: _b, lashes: _l, ...bare } = DEFAULT_LOOK;
     const look: PersonLook = { ...bare, hairCut: 'none', hat: 'none', extras: [] };
@@ -599,6 +605,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       nude: true, texturedSkin: true, data: a.mesh, skeleton: a.skeleton, bodyRange: a.bodyRange, positions: shape, look,
       capture: captureBind(sex), captureAxes: captureBindRotations(sex), proxies: new Map([['eyes', eyes]]),
     });
+    await breathe();
     // The shape basis on this body: each component as moves of every base
     // vertex in the bind posture, per unit of its coefficient (a small step,
     // so the feet-to-ground shift stays linear).
@@ -619,6 +626,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         shapePixels[t + 1] = moved[v * 3 + 1]! / eps;
         shapePixels[t + 2] = moved[v * 3 + 2]! / eps;
       }
+      await breathe();
     }
     const shapeTexture = rowTexture(shapePixels, SHAPE_WIDTH * 4, shapeRows);
 
@@ -638,11 +646,15 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     body.setAttribute('aRefW', new Float32BufferAttribute(refW, 3));
     if (!body.getAttribute('eyeMask')) body.setAttribute('eyeMask', new Float32BufferAttribute(new Float32Array(n), 1));
     if (!body.getAttribute('normal')) body.computeVertexNormals();
+    await breathe();
 
     const library = await loadRocketboxClips(sex);
+    await breathe();
     const bakeRig = restRig(rig.scene);
     const walk = await bakeWalk(bakeRig, sex);
+    await breathe();
     const idle = await bakeLibraryClip(bakeRig, library.idle, undefined, 'idle');
+    await breathe();
     const bones = rig.mesh.skeleton.bones.length;
     // Joints follow the shape: a MakeHuman bone's head is the mean of a
     // group of base vertices (its joint cube, `personRig.headOf`), so its
@@ -684,13 +696,17 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     // Each expression channel on this body, as moves of the head's vertices
     // in the bind posture: the channel's ARKit shapes on the class body,
     // posed (`PersonRig.deltas`).
-    const channels = channelShapes(await expressionShapes());
+    const expressions = await expressionShapes();
+    await breathe();
+    const channels = channelShapes(expressions);
+    await breathe();
     const exprPixels = new Float32Array(FACE_WIDTH * 4 * faceRows * EXPR_SLOTS);
     const posedBase = rig.deltas!(shape);
     const withChannel = new Float32Array(shape.length);
-    EXPR.forEach((name, c) => {
+    for (const [c, name] of EXPR.entries()) {
+      await breathe();
       const unit = channels[name];
-      if (!unit) return;
+      if (!unit) continue;
       for (let j = 0; j < shape.length; j++) withChannel[j] = shape[j]! + unit[j]!;
       const moved = rig.deltas!(withChannel);
       faceList.forEach((v, i) => {
@@ -699,7 +715,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         exprPixels[o + 1] = moved[v * 3 + 1]! - posedBase[v * 3 + 1]!;
         exprPixels[o + 2] = moved[v * 3 + 2]! - posedBase[v * 3 + 2]!;
       });
-    });
+    }
+    await breathe();
     const exprW = new Float32Array(EXPR_SLOTS * ROW_START);
     const width = bones * SKIN_BONE_FLOATS;
     const palette = new Float32Array(width * ROW_START);
@@ -856,6 +873,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     const map = await textureOf(name, it);
     const again = cls.pieces.get(name);
     if (again) return again;
+    await breathe();
+    const fitAt = performance.now();
     const fitted = cls.rig.wear!(it, cls.shape);
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new Float32BufferAttribute(fitted.positions, 3));
@@ -870,6 +889,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     geometry.setIndex(Array.from(it.pack.index));
     geometry.computeVertexNormals();
     const piece = makePiece(cls, name, kindOf(it), geometry, map, null, name.startsWith('hair:'));
+    performance.measure(`hitch:person/fit ${cls.key} ${name}`, { start: fitAt, end: performance.now() });
     cls.pieces.set(name, piece);
     return piece;
   };
@@ -991,6 +1011,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       // Shown only with every piece's shaders built: no frame waits for a compile.
       await Promise.all([skin.ready, ...pieces.map((pc) => pc.ready)]);
 
+      await breathe();
       if (epoch !== started) throw new Error('crowd cleared');
       if (cls.rows >= cls.capacity) growRows(cls);
       const row = cls.rows++;

@@ -8,6 +8,7 @@ import { Network } from '@world/network';
 import { buildRoadElevation, type RoadElevation } from '@world/elevation';
 import type { SceneMaterials } from '@render/materials';
 import { buildRoadSurfaces, type SurfaceReuse } from '@render/roadSurfaces';
+import { buildDefaultTown } from '@world/defaultTown';
 
 /**
  * The road surfaces are built a tile at a time, and a tile an edit does not
@@ -129,5 +130,36 @@ describe('road surface tiles', () => {
     expect(warm.built).toBeLessThan(15);
     const fresh = buildRoadSurfaces(net, elevation, materials, ground, reuseFor(() => elevation));
     expect(fingerprint(warm.group)).toBe(fingerprint(fresh.group));
+  }, 120_000);
+
+  it('sends the GPU only the blocks of tiles an edit reaches, keeping the mesh of every other block', () => {
+    // Every tile used to be merged into one mesh per surface on every edit and
+    // sent whole: 50-80 MB and a 400-850 ms frame for a short street in the
+    // default town (docs/performance.md #9).
+    const stable = new Map<PropertyKey, unknown>();
+    const kept = new Proxy({}, {
+      get: (_target, key) => {
+        if (key === 'scale') return new Proxy({}, { get: () => 4 });
+        if (!stable.has(key)) stable.set(key, new MeshBasicMaterial());
+        return stable.get(key);
+      },
+    }) as unknown as SceneMaterials;
+    const town = new RoadDoc();
+    buildDefaultTown(town);
+    const net = new Network(town);
+    net.rebuild();
+    let elevation = buildRoadElevation(net, ground);
+    const reuse: SurfaceReuse = { ...reuseFor(() => elevation), chunks: new Map() };
+    const before = buildRoadSurfaces(net, elevation, kept, ground, reuse);
+    const end = [...town.nodes.values()].filter((n) => n.incident.length === 1).sort((p, q) => q.x - p.x)[0]!;
+    town.addSegment(end.id, town.addNode({ x: end.x + 60, y: end.y + 20 }).id, 1);
+    net.rebuild();
+    elevation = buildRoadElevation(net, ground);
+    const after = buildRoadSurfaces(net, elevation, kept, ground, reuse);
+    const same = after.meshes.filter((mesh) => before.meshes.includes(mesh)).length;
+    expect(after.meshes.length).toBeGreaterThan(8);
+    expect(same).toBeGreaterThan(after.meshes.length * 0.6);
+    const fresh = buildRoadSurfaces(net, elevation, kept, ground, reuseFor(() => elevation));
+    expect(fingerprint(after.group)).toBe(fingerprint(fresh.group));
   }, 120_000);
 });

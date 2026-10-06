@@ -132,6 +132,20 @@ export interface SurfaceReuse {
   readonly dependsOn: (minX: number, minY: number, maxX: number, maxY: number) => number;
   /** The paint materials, by colour: made once, not on every rebuild. */
   readonly paint: Map<string, Material>;
+  /**
+   * The meshes of each block of tiles (`CHUNK` tiles a side), by pass,
+   * surface and block, with the tiles they were merged from. A block whose
+   * tiles are the same objects keeps its mesh and its buffers on the GPU.
+   * Owned by the cache: `disposeSurfaceReuse` frees them.
+   */
+  readonly chunks?: Map<string, { readonly parts: readonly Tile[]; readonly mesh: Mesh }>;
+}
+
+/** Frees what a `SurfaceReuse` holds on the GPU. */
+export function disposeSurfaceReuse(reuse: SurfaceReuse): void {
+  for (const { mesh } of reuse.chunks?.values() ?? []) disposeMesh(mesh);
+  reuse.chunks?.clear();
+  for (const material of reuse.paint.values()) material.dispose();
 }
 
 /** Every surface of one tile, by mesh name. */
@@ -169,6 +183,14 @@ const TILE_ORIGIN = 0.371;
 /** How far round a tile a ring may reach and still be read by it. */
 const TILE_REACH = 0.5;
 const TILE_BIAS = 1 << 15;
+/**
+ * Tiles a side of one mesh. Every tile of the network used to be merged into
+ * one mesh per surface on every edit and sent to the GPU whole - 50 to 80 MB
+ * and a 400-850 ms frame for one short street in the default town
+ * (docs/performance.md #9). A block of tiles is merged on its own, and kept
+ * while its tiles are.
+ */
+const CHUNK = 4;
 
 /** One ring of input, with its box and its digest, measured once per build. */
 interface Input {
@@ -233,6 +255,13 @@ export function buildRoadSurfaces(
   reuse?: SurfaceReuse,
   groundMaterial?: Material,
 ): RoadSurfaces {
+  const started = performance.now();
+  let tilesMs = 0;
+  let mergeMs = 0;
+  let chunksMerged = 0;
+  let chunksKept = 0;
+  const chunks = reuse?.chunks;
+  const usedChunks = new Set<string>();
   const group = new Group();
   group.name = 'road-network';
   const meshes: Mesh[] = [];
@@ -631,8 +660,9 @@ export function buildRoadSurfaces(
 
     const previous = reuse?.tiles.get(pass.id);
     const kept = new Map<number, TileBundle>();
-    const parts = new Map<string, Tile[]>();
-    for (const spec of specs) parts.set(spec.options.name, []);
+    /** Each surface's tiles, by block of tiles, in tile order. */
+    const parts = new Map<string, Map<string, Tile[]>>();
+    for (const spec of specs) parts.set(spec.options.name, new Map());
     // In tile order, so a mesh is laid out the same however it was reached.
     for (const key of [...reach.keys()].sort((a, b) => a - b)) {
       const into = reach.get(key)!;
@@ -665,23 +695,54 @@ export function buildRoadSurfaces(
       let bundle = previous?.get(value);
       if (bundle) reused++;
       else {
+        const tileAt = performance.now();
         bundle = buildTile(into, rect, specs);
+        tilesMs += performance.now() - tileAt;
         built++;
       }
       kept.set(value, bundle);
-      for (const [name, tile] of bundle) parts.get(name)?.push(tile);
+      const chunk = `${Math.floor(ix / CHUNK)},${Math.floor(iy / CHUNK)}`;
+      for (const [name, tile] of bundle) {
+        const blocks = parts.get(name);
+        if (!blocks) continue;
+        const list = blocks.get(chunk);
+        if (list) list.push(tile);
+        else blocks.set(chunk, [tile]);
+      }
     }
     reuse?.tiles.set(pass.id, kept);
 
+    const mergeAt = performance.now();
     for (const spec of specs) {
-      const mesh = mergeTiles(parts.get(spec.options.name) ?? [], spec.options);
-      if (!mesh) continue;
-      if (spec.renderOrder !== undefined) mesh.renderOrder = spec.renderOrder;
-      group.add(mesh);
-      meshes.push(mesh);
-      triangles += (mesh.geometry.index?.count ?? 0) / 3;
+      for (const [chunk, list] of parts.get(spec.options.name) ?? []) {
+        const key = `${pass.id}|${spec.options.name}|${chunk}|${spec.options.material.uuid}|${spec.renderOrder ?? ''}`;
+        const known = chunks?.get(key);
+        let mesh: Mesh | null;
+        if (known && known.parts.length === list.length && known.parts.every((tile, i) => tile === list[i])) {
+          mesh = known.mesh;
+          chunksKept++;
+        } else {
+          if (known) disposeMesh(known.mesh);
+          mesh = mergeTiles(list, spec.options);
+          if (mesh && spec.renderOrder !== undefined) mesh.renderOrder = spec.renderOrder;
+          if (mesh) chunks?.set(key, { parts: list, mesh });
+          else chunks?.delete(key);
+          chunksMerged++;
+        }
+        if (!mesh) continue;
+        usedChunks.add(key);
+        group.add(mesh);
+        meshes.push(mesh);
+        triangles += (mesh.geometry.index?.count ?? 0) / 3;
+      }
     }
+    mergeMs += performance.now() - mergeAt;
   }
+  // Blocks no surface has any more.
+  if (chunks) for (const [key, { mesh }] of chunks) if (!usedChunks.has(key)) { disposeMesh(mesh); chunks.delete(key); }
+  // Where an edit's time went (`hitch:` entries, scripts/probe-hitches.mjs; docs/performance.md).
+  const end = performance.now();
+  performance.measure(`hitch:road-edit/surfaces ${built} tiles built ${reused} kept, ${chunksMerged} blocks merged ${chunksKept} kept: tiles ${tilesMs.toFixed(0)} ms, merge ${mergeMs.toFixed(0)} ms`, { start: started, end });
 
   return {
     group,
@@ -690,7 +751,8 @@ export function buildRoadSurfaces(
     built,
     reused,
     dispose() {
-      for (const mesh of meshes) disposeMesh(mesh);
+      // Meshes the cache keeps are freed by `disposeSurfaceReuse`.
+      if (!chunks) for (const mesh of meshes) disposeMesh(mesh);
       group.clear();
       if (!reuse) for (const material of paint.values()) material.dispose();
     },
