@@ -1907,7 +1907,7 @@ let laidNow: ReadonlySet<SegmentId> = new Set();
 /**
  * The grid's cells under the roads just laid blink, and those round them
  * follow (`SceneHandle.flashGrid`): every cell the road's paving crosses,
- * then rings of neighbours out to three cells.
+ * then the cells right beside them.
  */
 function flashLaidCells(before: ReadonlySet<SegmentId>): void {
   if (!roadGridShown()) return;
@@ -1928,7 +1928,7 @@ function flashLaidCells(before: ReadonlySet<SegmentId>): void {
   if (!hit.size) return;
   const ring = new Map<string, number>([...hit].map((k) => [k, 0]));
   let edge = [...hit];
-  for (let r = 1; r <= 3; r++) {
+  for (let r = 1; r <= 1; r++) {
     const next: string[] = [];
     for (const k of edge) {
       const [i, j] = k.split(',').map(Number) as [number, number];

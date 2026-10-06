@@ -1443,7 +1443,7 @@ export function createSceneRenderer(
         fragmentShader: `uniform float uTime; varying float vRing;
           void main() {
             float t = uTime - vRing * 0.09;
-            float a = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.1, 0.75, t)) * (vRing < 0.5 ? 0.55 : 0.32 / vRing);
+            float a = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.1, 0.75, t)) * (vRing < 0.5 ? 0.3 : 0.12);
             if (a <= 0.001) discard;
             gl_FragColor = vec4(0.62, 0.95, 1.0, a);
           }`,
