@@ -137,7 +137,7 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
     }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', skinLighting())
-      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (vHide > 0.5) discard;')
+      .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (vHide > 0.001) discard;')
       .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
         uniform sampler2D darkMap;
         uniform float melanin, undertone, lipAmount, stubble, follicleOn, hairCover;

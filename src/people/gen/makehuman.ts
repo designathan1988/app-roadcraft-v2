@@ -124,52 +124,72 @@ export function pushOut(positions: Float32Array, index: Uint32Array, body: { rea
 }
 
 /**
- * The skin a fitted item covers (MakeHuman's delete_verts, worked out on our
- * body, since an item's own list is for MakeHuman's): a skin vertex is under
- * the item when an item vertex lies over it - outside it along its normal,
- * within `reach` of its normal line - and that item vertex is not on
- * the item's open edge (so skin at a hem or a cuff stays drawn up to it).
- * Marks `hidden` (one flag per body vertex).
+ * The skin a fitted item covers, by ray as Character Creator's Auto Hide
+ * Mesh does: from inside the body (3 cm under the skin) out along the skin's
+ * normal to 4 cm over it; where the ray meets one of the item's triangles
+ * (Moller-Trumbore) the skin is under the item - 2 when the item is under the
+ * skin there (the skin pokes through it), 1 when it lies over it. Marks
+ * `hidden` (one flag per body vertex, the larger kept). `reach` and `behind`
+ * are kept for the callers' sake: the ray spans `behind` under the skin.
  */
-export function coveredBy(positions: Float32Array, index: Uint32Array, body: { readonly shape: Float32Array; readonly normals: Float32Array; readonly skin: Uint32Array }, hidden: Uint8Array, reach = 0.01, behind = 0.003): void {
-  // The item's open edge: sides used by one triangle.
-  const sides = new Map<number, number>();
-  for (let t = 0; t < index.length; t += 3) {
-    for (let k = 0; k < 3; k++) {
-      const a = index[t + k]!, c = index[t + (k + 1) % 3]!;
-      const key = Math.min(a, c) * 4194304 + Math.max(a, c);
-      sides.set(key, (sides.get(key) ?? 0) + 1);
-    }
-  }
-  const edge = new Uint8Array(positions.length / 3);
-  for (const [key, n] of sides) if (n === 1) { edge[Math.floor(key / 4194304)] = 1; edge[key % 4194304] = 1; }
-  const C = 0.02;
+export function coveredBy(positions: Float32Array, index: Uint32Array, body: { readonly shape: Float32Array; readonly normals: Float32Array; readonly skin: Uint32Array }, hidden: Uint8Array, _reach = 0.01, behind = 0.03): void {
+  const C = 0.03;
   const cell = (x: number, y: number, z: number): number => ((Math.floor(x / C) + 512) * 1024 + Math.floor(y / C) + 512) * 1024 + Math.floor(z / C) + 512;
+  // Triangles by every grid cell their bounds touch.
   const cells = new Map<number, number[]>();
-  for (let v = 0; v < edge.length; v++) {
-    if (edge[v]) continue;
-    const k = cell(positions[v * 3]!, positions[v * 3 + 1]!, positions[v * 3 + 2]!);
-    let l = cells.get(k);
-    if (!l) cells.set(k, l = []);
-    l.push(v);
+  for (let t = 0; t < index.length; t += 3) {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let k = 0; k < 3; k++) {
+      const v = index[t + k]! * 3;
+      x0 = Math.min(x0, positions[v]!); x1 = Math.max(x1, positions[v]!);
+      y0 = Math.min(y0, positions[v + 1]!); y1 = Math.max(y1, positions[v + 1]!);
+      z0 = Math.min(z0, positions[v + 2]!); z1 = Math.max(z1, positions[v + 2]!);
+    }
+    for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C); i++) for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C); j++) for (let k = Math.floor(z0 / C); k <= Math.floor(z1 / C); k++) {
+      const key = ((i + 512) * 1024 + j + 512) * 1024 + k + 512;
+      let l = cells.get(key);
+      if (!l) cells.set(key, l = []);
+      l.push(t);
+    }
   }
   const S = body.shape, N = body.normals;
   const done = new Uint8Array(S.length / 3);
+  const ahead = 0.04, length = behind + ahead;
+  const tested = new Set<number>();
   for (const v of body.skin) {
     if (done[v]) continue;
     done[v] = 1;
-    const x = S[v * 3]!, y = S[v * 3 + 1]!, z = S[v * 3 + 2]!, nx = N[v * 3]!, ny = N[v * 3 + 1]!, nz = N[v * 3 + 2]!;
-    search: for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-      const l = cells.get(cell(x + dx * C, y + dy * C, z + dz * C));
+    const nx = N[v * 3]!, ny = N[v * 3 + 1]!, nz = N[v * 3 + 2]!;
+    const ox = S[v * 3]! - nx * behind, oy = S[v * 3 + 1]! - ny * behind, oz = S[v * 3 + 2]! - nz * behind;
+    tested.clear();
+    let hit = -1;
+    // The cells along the segment, a sample every half cell.
+    for (let s = 0; s <= length + 1e-9 && hit < 0; s += C / 2) {
+      const l = cells.get(cell(ox + nx * s, oy + ny * s, oz + nz * s));
       if (!l) continue;
-      for (const g of l) {
-        const gx = positions[g * 3]! - x, gy = positions[g * 3 + 1]! - y, gz = positions[g * 3 + 2]! - z;
-        const along = gx * nx + gy * ny + gz * nz;
-        if (along < -behind || along > 0.04) continue;
-        const across = Math.hypot(gx - nx * along, gy - ny * along, gz - nz * along);
-        if (across < reach) { hidden[v] = 1; break search; }
+      for (const t of l) {
+        if (tested.has(t)) continue;
+        tested.add(t);
+        const a = index[t]! * 3, b = index[t + 1]! * 3, c = index[t + 2]! * 3;
+        const e1x = positions[b]! - positions[a]!, e1y = positions[b + 1]! - positions[a + 1]!, e1z = positions[b + 2]! - positions[a + 2]!;
+        const e2x = positions[c]! - positions[a]!, e2y = positions[c + 1]! - positions[a + 1]!, e2z = positions[c + 2]! - positions[a + 2]!;
+        const px = ny * e2z - nz * e2y, py = nz * e2x - nx * e2z, pz = nx * e2y - ny * e2x;
+        const det = e1x * px + e1y * py + e1z * pz;
+        if (Math.abs(det) < 1e-12) continue;
+        const inv = 1 / det;
+        const tx = ox - positions[a]!, ty = oy - positions[a + 1]!, tz = oz - positions[a + 2]!;
+        const u = (tx * px + ty * py + tz * pz) * inv;
+        if (u < 0 || u > 1) continue;
+        const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+        const w = (nx * qx + ny * qy + nz * qz) * inv;
+        if (w < 0 || u + w > 1) continue;
+        const d = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        if (d < 0 || d > length) continue;
+        hit = d < behind ? 2 : 1;
+        if (hit === 2) break;
       }
     }
+    if (hit > 0) hidden[v] = Math.max(hidden[v]!, hit);
   }
 }
 

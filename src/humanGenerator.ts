@@ -247,7 +247,7 @@ function draw(p: PersonParams, live: boolean): void {
     const bodyNow = body();
     void Promise.all(worn.map((g) => loadProxyItem(g.item!))).then((items) => {
       if (ticket !== clothesTicket) return;
-      const hidden = new Set<number>();
+      const hidden = new Set<number>(), shoeHidden = new Set<number>();
       let lift = 0, floor = Infinity;
       for (let i = 1; i < shape.length; i += 3) floor = Math.min(floor, shape[i]!);
       // Layers from the skin out: shoes (and their socks) under the trouser
@@ -257,6 +257,8 @@ function draw(p: PersonParams, live: boolean): void {
       const boots = /boot/i.test(o.shoes?.item ?? '');
       const order = worn.map((g, k) => [g === o.shoes ? (boots ? 1.5 : 0) : g === o.bottom ? 1 : 2, k] as const).sort((x, y) => x[0] - y[0]).map(([, k]) => k);
       const covered = new Uint8Array(b.base.vertexCount);
+      // Skin inside a shoe: hidden without a margin (a shoe hugs the foot to its rim).
+      const inShoe = new Uint8Array(b.base.vertexCount);
       const under: { shape: Float32Array; normals: Float32Array; skin: Uint32Array }[] = [];
       const underShoe: boolean[] = [];
       const fitted: Float32Array[] = [];
@@ -264,16 +266,40 @@ function draw(p: PersonParams, live: boolean): void {
         const item = items[k]!;
         const shoe = worn[k] === o.shoes;
         // A shoe is rigid: fitted on MakeHuman's own foot, then carried whole (fitRigid).
-        const dm = shoe ? fitProxy(item.pack, mhRest) : fitProxy(item.pack, mhBody);
-        if (shoe) fitRigid(dm, item.pack.refs, mhRest, mhBody);
+        // Only the foot of it: a boot's shaft follows the leg (rigid groups, not
+        // a rigid boot), blended over the 5 cm above the ankle.
+        const flex = fitProxy(item.pack, mhBody);
+        const dm = flex.slice();
+        let shaft: Float32Array | null = null;
+        if (shoe) {
+          const rigid = fitProxy(item.pack, mhRest);
+          fitRigid(rigid, item.pack.refs, mhRest, mhBody);
+          let lo = Infinity;
+          const rest = fitProxy(item.pack, mhRest);
+          for (let i = 1; i < rest.length; i += 3) lo = Math.min(lo, rest[i]!);
+          shaft = new Float32Array(rest.length / 3);
+          for (let v = 0; v < shaft.length; v++) {
+            const t = Math.min(1, Math.max(0, (rest[v * 3 + 1]! - lo - 0.9) / 0.5));
+            shaft[v] = t * t * (3 - 2 * t);
+            for (let c = 0; c < 3; c++) dm[v * 3 + c] = rigid[v * 3 + c]! + (flex[v * 3 + c]! - rigid[v * 3 + c]!) * shaft[v]!;
+          }
+        }
         const m = new Float32Array(dm.length);
         for (let i = 0; i < dm.length; i++) m[i] = dm[i]! * 0.1;
         if (!shoe) pushOut(m, item.pack.index, bodyNow, 0.003);
+        else {
+          // The shaft kept off the leg; the rigid foot left as it is.
+          const pushed = m.slice();
+          pushOut(pushed, item.pack.index, bodyNow, 0.003);
+          for (let v = 0; v < shaft!.length; v++) for (let c = 0; c < 3; c++) m[v * 3 + c] = m[v * 3 + c]! + (pushed[v * 3 + c]! - m[v * 3 + c]!) * shaft![v]!;
+        }
         // Kept off the layers under it - not off a shoe: pushed against its
         // cut-up surface a hem goes to spikes; the shoe's covered part hides instead.
         under.forEach((inner, i) => { if (!underShoe[i]) pushOut(m, item.pack.index, inner, 0.003); });
-        coveredBy(m, item.pack.index, bodyNow, covered);
-        for (const v of item.pack.deleteVerts) hidden.add(v);
+        // Skin poking through (the item inside it, up to 3 cm) counts as covered too.
+        coveredBy(m, item.pack.index, bodyNow, shoe ? inShoe : covered, 0.01, shoe ? 0.06 : 0.03);
+        // A shoe's own delete_verts (the foot it encloses) hide without a margin.
+        for (const v of item.pack.deleteVerts) (shoe ? shoeHidden : hidden).add(v);
         // Shoes stand the person on their soles.
         if (worn[k] === o.shoes) {
           let lo = Infinity;
@@ -316,11 +342,19 @@ function draw(p: PersonParams, live: boolean): void {
       const mask = new Uint8Array(b.base.vertexCount);
       for (let r = 0; r < beneath.length; r++) if (beneath[r]) mask[b.base.renderSource[r]!] = 1;
       for (let v = 0; v < mask.length; v++) {
-        if (covered[v]) mask[v] = 1;
+        if (covered[v] === 1) mask[v] = 1;
         const r = ex.region[v]!;
         if (r === REGION.head || r === REGION.neck || r === REGION.hand || (r === REGION.forearm && ex.along[v]! > 220)) mask[v] = 0;
       }
       const kept = erode(mask, 2);
+      const footInShoe = coveredSkin(shoeHidden);
+      for (let r = 0; r < footInShoe.length; r++) if (footInShoe[r]) inShoe[b.base.renderSource[r]!] = 1;
+      for (let v = 0; v < kept.length; v++) {
+        const r = ex.region[v]!;
+        const always = r !== REGION.head && r !== REGION.neck && r !== REGION.hand;
+        // Inside a shoe, or poking through any garment: hidden, margin or not.
+        if (always && (inShoe[v] || covered[v] === 2)) kept[v] = 1;
+      }
       const hide = new Float32Array(b.base.renderVertexCount);
       for (let r = 0; r < hide.length; r++) hide[r] = kept[b.base.renderSource[r]!]!;
       stage.hideSkin(hide);

@@ -1,6 +1,6 @@
 import {
   ACESFilmicToneMapping, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, DoubleSide, TextureLoader, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
-  NoColorSpace, PCFSoftShadowMap, PerspectiveCamera, type Material, type Texture, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
+  NoColorSpace, PCFSoftShadowMap, PerspectiveCamera, Texture, type Material, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -15,6 +15,7 @@ import type { FaceAnchors } from '@people/gen/extras';
 import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type SkinUniforms, type TextureSet } from './humanMesh';
 import { HairShadow, strandMaterial, strandMesh, type StrandLook } from './strands';
 import { proxyUrl, type ProxyItem } from '@people/body/proxy';
+import { paddedItemTexture } from '../skinAppearance';
 
 /** What a person wears and grows: hair, brows, lashes, clothes, and the skin's make-up. */
 export interface Dressing {
@@ -333,7 +334,19 @@ export class CreatorStage {
       g.setIndex(new BufferAttribute(index ?? pack.index, 1));
       g.computeVertexNormals();
       let map: Texture | null = null;
-      if (item.textureFile) {
+      // Clothes: the padded texture, drawn opaque (cut by alpha, the sheet's
+      // background showed through every seam and frayed every hem).
+      const garment = pack.kind !== 'hair';
+      const padded = garment ? paddedItemTexture(pack.name, item) : null;
+      if (padded) {
+        map = this.proxyTextures.get(`padded:${pack.name}`) ?? null;
+        if (!map) {
+          const holder = new Texture();
+          this.proxyTextures.set(`padded:${pack.name}`, holder);
+          map = holder;
+          void padded.then((t) => { holder.image = t.image; holder.flipY = t.flipY; holder.colorSpace = t.colorSpace; holder.anisotropy = 8; holder.needsUpdate = true; this.redraw(); });
+        }
+      } else if (item.textureFile) {
         map = this.proxyTextures.get(item.textureFile) ?? null;
         if (!map) {
           map = new TextureLoader().load(proxyUrl(item.textureFile), () => this.redraw());
@@ -344,7 +357,7 @@ export class CreatorStage {
           this.proxyTextures.set(item.textureFile, map);
         }
       }
-      const cut = item.transparent;
+      const cut = item.transparent && !garment;
       const m = new MeshStandardMaterial({ map, side: DoubleSide, roughness: pack.kind === 'hair' ? 0.5 : 0.8, alphaTest: cut ? 0.35 : 0, alphaToCoverage: cut });
       const avg = averageLightness(item);
       const u = { tint: { value: new Color(tint ?? 0xffffff) }, tinted: { value: tint === null ? 0 : 1 }, avgLum: { value: avg } };
