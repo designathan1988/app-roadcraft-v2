@@ -318,6 +318,16 @@ and they have seen it.
 
 ## Open, by area
 
+- **Human generator (`human-generator.html`, the player's request of 2026-10-06):**
+  a realistic, parametric human generator in its own page, people, hair and
+  clothes all generated from parameters (plan: base, body, hair by Hair Meshes,
+  clothes by GarmentCode-style sewing patterns draped by XPBD). The MakeHuman
+  bodies and the SDF "toon" heads were rejected by the player. Slice 0 (base
+  choice) is in the page: CharMorph's Vitruvian (37k quads, 4K skin textures,
+  sex/ancestry/age down to a baby, 148 expressions) beside Meta's MHR (shape
+  from 7,110 scans, no texture or eyes), converted by `scripts/build-human-base.py`
+  (Blender 5.2, sources in the session scratch, not in the repo) into
+  `public/models/humans/<base>`. Waiting for the player to choose the base.
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as

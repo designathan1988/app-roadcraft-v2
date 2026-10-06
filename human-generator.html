@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gerador de humanos — Roadcraft</title>
+  <style>
+    :root { --bg: rgba(18, 20, 24, 0.86); --line: rgba(255, 255, 255, 0.14); --text: #f2f2f0; --muted: #a9adb3; --accent: #7fd4ff; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #3a3d42; font: 14px system-ui, sans-serif; color: var(--text); }
+    #view { width: 100%; height: 100%; display: block; }
+    .panel { position: fixed; left: 12px; top: 12px; width: 280px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+    .panel h1 { font-size: 15px; margin: 0 0 6px; }
+    .panel p { color: var(--muted); font-size: 12px; margin: 0 0 10px; line-height: 1.4; }
+    .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    button { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+    button:hover, button.on { border-color: var(--accent); color: var(--accent); }
+    .label { position: fixed; bottom: 14px; padding: 4px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; max-width: 300px; transform: translateX(-50%); text-align: center; }
+    #status { position: fixed; right: 12px; top: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--muted); font-size: 12.5px; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div class="panel">
+    <h1 data-i18n="hgen.title">Gerador de humanos</h1>
+    <p data-i18n="hgen.compare"></p>
+    <div class="row"><button id="reroll" data-i18n="hgen.reroll"></button><button id="ages" data-i18n="hgen.ages"></button></div>
+    <div class="row" id="views">
+      <button data-view="front" class="on" data-i18n="hgen.front"></button>
+      <button data-view="side" data-i18n="hgen.side"></button>
+      <button data-view="back" data-i18n="hgen.back"></button>
+      <button data-view="face" data-i18n="hgen.face"></button>
+    </div>
+  </div>
+  <div class="label" id="label-vitruvian" data-i18n="hgen.base.vitruvian"></div>
+  <div class="label" id="label-mhr" data-i18n="hgen.base.mhr"></div>
+  <div id="status" data-i18n="hgen.loading"></div>
+  <script type="module" src="/src/humanGenerator.ts"></script>
+</body>
+</html>

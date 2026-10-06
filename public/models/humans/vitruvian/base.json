@@ -1,0 +1,3174 @@
+{
+ "format": "roadcraft-humans/1",
+ "base": "vitruvian",
+ "units": "metres, +Y up, faces +Z",
+ "vertexCount": 37436,
+ "renderVertexCount": 40868,
+ "groups": [
+  {
+   "start": 0,
+   "count": 2304,
+   "material": "Iris",
+   "tile": 1007
+  },
+  {
+   "start": 2304,
+   "count": 52644,
+   "material": "Mouth",
+   "tile": 1008
+  },
+  {
+   "start": 54948,
+   "count": 2304,
+   "material": "Pupil",
+   "tile": 1006
+  },
+  {
+   "start": 57252,
+   "count": 6144,
+   "material": "Sclera_Cornea",
+   "tile": 1005
+  },
+  {
+   "start": 63396,
+   "count": 34752,
+   "material": "Skin",
+   "tile": 1001
+  },
+  {
+   "start": 98148,
+   "count": 10632,
+   "material": "Skin",
+   "tile": 1002
+  },
+  {
+   "start": 108780,
+   "count": 53808,
+   "material": "Skin",
+   "tile": 1003
+  },
+  {
+   "start": 162588,
+   "count": 43248,
+   "material": "Skin",
+   "tile": 1004
+  },
+  {
+   "start": 205836,
+   "count": 12984,
+   "material": "Covered",
+   "tile": 1002
+  },
+  {
+   "start": 218820,
+   "count": 2208,
+   "material": "Covered",
+   "tile": 1004
+  },
+  {
+   "start": 221028,
+   "count": 3504,
+   "material": "Tearline",
+   "tile": 1009
+  }
+ ],
+ "morphs": [
+  {
+   "name": "Generic_Assymetry",
+   "group": "Generic",
+   "min": -1,
+   "max": 1,
+   "start": 0,
+   "count": 16175,
+   "scale": 4.6662620536815434e-07,
+   "maxQuantError": 2.3331206526002216e-07
+  },
+  {
+   "name": "Gender_Female",
+   "group": "Gender",
+   "min": 0,
+   "max": 1,
+   "start": 16175,
+   "count": 24337,
+   "scale": 6.69703214508419e-07,
+   "maxQuantError": 3.348506977317138e-07
+  },
+  {
+   "name": "Gender_Male",
+   "group": "Gender",
+   "min": 0,
+   "max": 1,
+   "start": 40512,
+   "count": 24337,
+   "scale": 6.69703214508419e-07,
+   "maxQuantError": 3.3484518375181613e-07
+  },
+  {
+   "name": "Race_Bengali",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 64849,
+   "count": 16062,
+   "scale": 1.7366785625770114e-07,
+   "maxQuantError": 8.683392812864482e-08
+  },
+  {
+   "name": "Race_Tamil",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 80911,
+   "count": 5586,
+   "scale": 1.6140385543139164e-07,
+   "maxQuantError": 8.070010867075681e-08
+  },
+  {
+   "name": "Race_Punjabi",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 86497,
+   "count": 1312,
+   "scale": 1.4004099193329332e-07,
+   "maxQuantError": 7.000776265219267e-08
+  },
+  {
+   "name": "Race_Marathi",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 87809,
+   "count": 4923,
+   "scale": 1.166335219491713e-07,
+   "maxQuantError": 5.831425978780765e-08
+  },
+  {
+   "name": "Race_Telegu",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 92732,
+   "count": 10707,
+   "scale": 1.3268841238124007e-07,
+   "maxQuantError": 6.63435240487887e-08
+  },
+  {
+   "name": "Race_Sinhalese",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 103439,
+   "count": 8789,
+   "scale": 1.5937016321486628e-07,
+   "maxQuantError": 7.967592953769364e-08
+  },
+  {
+   "name": "Race_Kannada",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 112228,
+   "count": 7276,
+   "scale": 1.111327301220043e-07,
+   "maxQuantError": 5.5541012122483344e-08
+  },
+  {
+   "name": "Race_Hispanic",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 119504,
+   "count": 3639,
+   "scale": 1.624661776625641e-07,
+   "maxQuantError": 8.122694955468926e-08
+  },
+  {
+   "name": "Race_White",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 123143,
+   "count": 11393,
+   "scale": 9.697692258264794e-08,
+   "maxQuantError": 4.8485079004684326e-08
+  },
+  {
+   "name": "Race_African",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 134536,
+   "count": 6959,
+   "scale": 7.737853265344909e-08,
+   "maxQuantError": 3.868358181138365e-08
+  },
+  {
+   "name": "Race_EastAsian",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 141495,
+   "count": 3459,
+   "scale": 1.415144183155702e-07,
+   "maxQuantError": 7.074834131382056e-08
+  },
+  {
+   "name": "Race_MiddleEastern",
+   "group": "Race",
+   "min": 0,
+   "max": 1,
+   "start": 144954,
+   "count": 956,
+   "scale": 1.7803565311643622e-07,
+   "maxQuantError": 8.892736460186165e-08
+  },
+  {
+   "name": "BodyType_Fat",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 145910,
+   "count": 23172,
+   "scale": 3.1012573899081e-06,
+   "maxQuantError": 1.5505820819281327e-06
+  },
+  {
+   "name": "BodyType_Emaciated",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 169082,
+   "count": 18455,
+   "scale": 9.75844835847226e-07,
+   "maxQuantError": 4.879151417439302e-07
+  },
+  {
+   "name": "BodyType_Muscular",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 187537,
+   "count": 22885,
+   "scale": 1.172328972491222e-06,
+   "maxQuantError": 5.861642588650927e-07
+  },
+  {
+   "name": "BodyType_Lean",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 210422,
+   "count": 5724,
+   "scale": 8.325295630644285e-07,
+   "maxQuantError": 4.1624926280531965e-07
+  },
+  {
+   "name": "BodyType_LongProportions",
+   "group": "BodyType",
+   "min": -1,
+   "max": 1,
+   "start": 216146,
+   "count": 37436,
+   "scale": 2.29936008847447e-06,
+   "maxQuantError": 1.1495884098492587e-06
+  },
+  {
+   "name": "Age_Baby",
+   "group": "Age",
+   "min": 0,
+   "max": 1,
+   "start": 253582,
+   "count": 37436,
+   "scale": 3.821209810234664e-05,
+   "maxQuantError": 1.9105426483048693e-05
+  },
+  {
+   "name": "Age_Old",
+   "group": "Age",
+   "min": 0,
+   "max": 1,
+   "start": 291018,
+   "count": 37436,
+   "scale": 1.4478997249651585e-06,
+   "maxQuantError": 7.239353101231878e-07
+  },
+  {
+   "name": "Fantasy_NoNose",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 328454,
+   "count": 994,
+   "scale": 6.772972722731231e-07,
+   "maxQuantError": 3.386274897394315e-07
+  },
+  {
+   "name": "Fantasy_SnakeTongue",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 329448,
+   "count": 310,
+   "scale": 4.176581699381699e-07,
+   "maxQuantError": 2.0867355662873436e-07
+  },
+  {
+   "name": "Fantasy_VampireTeeth",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 329758,
+   "count": 182,
+   "scale": 8.556423477720952e-08,
+   "maxQuantError": 4.2725726996195416e-08
+  },
+  {
+   "name": "Fantasy_SharpTeeth",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 329940,
+   "count": 2726,
+   "scale": 1.1171311914064037e-07,
+   "maxQuantError": 5.585363204490472e-08
+  },
+  {
+   "name": "Fantasy_CatEyes",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 332666,
+   "count": 482,
+   "scale": 3.6897507084079206e-08,
+   "maxQuantError": 1.842328691329092e-08
+  },
+  {
+   "name": "Face_Maxilla",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 333148,
+   "count": 2307,
+   "scale": 1.8663969293710138e-07,
+   "maxQuantError": 9.330995541186916e-08
+  },
+  {
+   "name": "Face_Zygomatic_Bone",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 335455,
+   "count": 614,
+   "scale": 1.4216290782826368e-07,
+   "maxQuantError": 7.105996644606776e-08
+  },
+  {
+   "name": "Chin_Width",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 336069,
+   "count": 218,
+   "scale": 1.21735260797805e-07,
+   "maxQuantError": 6.085211167196325e-08
+  },
+  {
+   "name": "Chin_Portrusion",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 336287,
+   "count": 166,
+   "scale": 1.3442878360499736e-07,
+   "maxQuantError": 6.602541856900578e-08
+  },
+  {
+   "name": "Chin_ChinCleft",
+   "group": "Chin",
+   "min": 0,
+   "max": 1,
+   "start": 336453,
+   "count": 100,
+   "scale": 8.668995356597589e-08,
+   "maxQuantError": 4.260871124743375e-08
+  },
+  {
+   "name": "Ears_Length",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 336553,
+   "count": 1418,
+   "scale": 3.1124608875481534e-07,
+   "maxQuantError": 1.5556699505588772e-07
+  },
+  {
+   "name": "Fantasy_Ear",
+   "group": "Fantasy",
+   "min": 0,
+   "max": 1,
+   "start": 337971,
+   "count": 1132,
+   "scale": 3.6646115076633946e-07,
+   "maxQuantError": 1.83190556395009e-07
+  },
+  {
+   "name": "Ears_Height",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 339103,
+   "count": 1138,
+   "scale": 2.393244634699253e-07,
+   "maxQuantError": 1.194494034786539e-07
+  },
+  {
+   "name": "Ears_Canal_Size",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 340241,
+   "count": 343,
+   "scale": 1.195694604442267e-07,
+   "maxQuantError": 5.967922561700163e-08
+  },
+  {
+   "name": "Ears_LobeAttached",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 340584,
+   "count": 406,
+   "scale": 1.3818920420840708e-07,
+   "maxQuantError": 6.908141402854292e-08
+  },
+  {
+   "name": "Ears_Canal_Depth",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 340990,
+   "count": 356,
+   "scale": 3.5124336206673247e-07,
+   "maxQuantError": 1.7522200275823553e-07
+  },
+  {
+   "name": "Ears_Lobe",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 341346,
+   "count": 450,
+   "scale": 2.0896824190518888e-07,
+   "maxQuantError": 1.0420643237717131e-07
+  },
+  {
+   "name": "Ears_Rot",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 341796,
+   "count": 1887,
+   "scale": 1.290101898699898e-07,
+   "maxQuantError": 6.450458332881923e-08
+  },
+  {
+   "name": "Ears_Round",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 343683,
+   "count": 1514,
+   "scale": 1.5293802039050697e-07,
+   "maxQuantError": 7.646150663488671e-08
+  },
+  {
+   "name": "Ears_Tragus_Portrusion",
+   "group": "Ears",
+   "min": 0,
+   "max": 1,
+   "start": 345197,
+   "count": 246,
+   "scale": 6.254575617942701e-08,
+   "maxQuantError": 3.1247326193163064e-08
+  },
+  {
+   "name": "Jaw_Mandible",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 345443,
+   "count": 1677,
+   "scale": 1.6264717263174505e-07,
+   "maxQuantError": 8.131721965866411e-08
+  },
+  {
+   "name": "Jaw_Mandible_GonialAngle",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 347120,
+   "count": 869,
+   "scale": 3.3398756091892363e-07,
+   "maxQuantError": 1.6699196141449664e-07
+  },
+  {
+   "name": "Shoulders_ShoulderWidth",
+   "group": "Shoulders",
+   "min": 0,
+   "max": 1,
+   "start": 347989,
+   "count": 1380,
+   "scale": 4.310349714920817e-07,
+   "maxQuantError": 2.1548315127205286e-07
+  },
+  {
+   "name": "Shoulders_ShoulderBladeWidth",
+   "group": "Shoulders",
+   "min": 0,
+   "max": 1,
+   "start": 349369,
+   "count": 1993,
+   "scale": 7.1013830919365e-07,
+   "maxQuantError": 3.5496342261107463e-07
+  },
+  {
+   "name": "Shoulders_ShoulderTrapeziusSize",
+   "group": "Shoulders",
+   "min": 0,
+   "max": 1,
+   "start": 351362,
+   "count": 856,
+   "scale": 4.405799549296155e-07,
+   "maxQuantError": 2.2028997746483198e-07
+  },
+  {
+   "name": "Stomach_BellyButtonPotrusion",
+   "group": "Stomach",
+   "min": 0,
+   "max": 1,
+   "start": 352218,
+   "count": 143,
+   "scale": 3.9899567861845433e-07,
+   "maxQuantError": 1.9942735131860123e-07
+  },
+  {
+   "name": "Waist_GluteSize",
+   "group": "Waist",
+   "min": -1,
+   "max": 1,
+   "start": 352361,
+   "count": 932,
+   "scale": 8.32192584993667e-07,
+   "maxQuantError": 4.160633223077286e-07
+  },
+  {
+   "name": "Waist_Hips_Width",
+   "group": "Waist",
+   "min": -1,
+   "max": 1,
+   "start": 353293,
+   "count": 2027,
+   "scale": 1.0201426724124138e-06,
+   "maxQuantError": 5.093685027266425e-07
+  },
+  {
+   "name": "Waist_GlutealFold",
+   "group": "Waist",
+   "min": 0,
+   "max": 1,
+   "start": 355320,
+   "count": 150,
+   "scale": 1.6082358010306286e-07,
+   "maxQuantError": 8.039450912476244e-08
+  },
+  {
+   "name": "Waist_GlutealCleft_Width",
+   "group": "Waist",
+   "min": 0,
+   "max": 1,
+   "start": 355470,
+   "count": 302,
+   "scale": 3.711196963746405e-07,
+   "maxQuantError": 1.8553575294871782e-07
+  },
+  {
+   "name": "Waist_GlutealCleft_Depth",
+   "group": "Waist",
+   "min": 0,
+   "max": 1,
+   "start": 355772,
+   "count": 219,
+   "scale": 9.054848606230578e-07,
+   "maxQuantError": 4.516617684126919e-07
+  },
+  {
+   "name": "Hands_Size",
+   "group": "Hands",
+   "min": -1,
+   "max": 1,
+   "start": 355991,
+   "count": 7460,
+   "scale": 7.781255677050004e-07,
+   "maxQuantError": 3.890555076728388e-07
+  },
+  {
+   "name": "Hands_FingernailLength",
+   "group": "Hands",
+   "min": 0,
+   "max": 1,
+   "start": 363451,
+   "count": 150,
+   "scale": 2.028871747496931e-07,
+   "maxQuantError": 9.980917551732221e-08
+  },
+  {
+   "name": "Hands_FingernailPointiness",
+   "group": "Hands",
+   "min": 0,
+   "max": 1,
+   "start": 363601,
+   "count": 1254,
+   "scale": 1.254286041199228e-07,
+   "maxQuantError": 6.271089135077759e-08
+  },
+  {
+   "name": "Hands_Girth",
+   "group": "Hands",
+   "min": 0,
+   "max": 1,
+   "start": 364855,
+   "count": 5745,
+   "scale": 8.787442182102635e-08,
+   "maxQuantError": 4.392494656847365e-08
+  },
+  {
+   "name": "Torso_RibWidth",
+   "group": "Torso",
+   "min": 0,
+   "max": 1,
+   "start": 370600,
+   "count": 1304,
+   "scale": 4.6406746289005873e-07,
+   "maxQuantError": 2.3199735054671867e-07
+  },
+  {
+   "name": "Face_EyeSocket_Potrusion",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 371904,
+   "count": 825,
+   "scale": 1.2523157881741615e-07,
+   "maxQuantError": 6.258014749742531e-08
+  },
+  {
+   "name": "Face_FrontalBone_BrowRidge",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 372729,
+   "count": 359,
+   "scale": 1.4113594328265358e-07,
+   "maxQuantError": 7.054460828318475e-08
+  },
+  {
+   "name": "Face_FrontalBone_FrontalEminence",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 373088,
+   "count": 348,
+   "scale": 1.3354302242102211e-07,
+   "maxQuantError": 6.675917581212224e-08
+  },
+  {
+   "name": "Face_FrontalBone",
+   "group": "Face",
+   "min": -1,
+   "max": 1,
+   "start": 373436,
+   "count": 2342,
+   "scale": 2.3221529486574666e-07,
+   "maxQuantError": 1.1609826798254742e-07
+  },
+  {
+   "name": "Neck_Girth",
+   "group": "Neck",
+   "min": 0,
+   "max": 1,
+   "start": 375778,
+   "count": 846,
+   "scale": 1.7658958346434726e-07,
+   "maxQuantError": 8.825161783797796e-08
+  },
+  {
+   "name": "Neck_Length",
+   "group": "Neck",
+   "min": -1,
+   "max": 1,
+   "start": 376624,
+   "count": 16997,
+   "scale": 9.758375596675605e-07,
+   "maxQuantError": 4.87825951697848e-07
+  },
+  {
+   "name": "Cheeks_BoneDefinition",
+   "group": "Cheeks",
+   "min": 0,
+   "max": 1,
+   "start": 393621,
+   "count": 1716,
+   "scale": 2.329840687235365e-07,
+   "maxQuantError": 1.1647378706745046e-07
+  },
+  {
+   "name": "Cheeks_CheeksBonePositionZ",
+   "group": "Cheeks",
+   "min": -1,
+   "max": 1,
+   "start": 395337,
+   "count": 2990,
+   "scale": 2.87700143976433e-07,
+   "maxQuantError": 1.4375991557454813e-07
+  },
+  {
+   "name": "Cheeks_UpperCheek_Bone",
+   "group": "Cheeks",
+   "min": -1,
+   "max": 1,
+   "start": 398327,
+   "count": 645,
+   "scale": 9.666541114071595e-08,
+   "maxQuantError": 4.8311331792590485e-08
+  },
+  {
+   "name": "Eyes_EyebrowsAngle",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 398972,
+   "count": 178,
+   "scale": 1.7852834427429846e-07,
+   "maxQuantError": 8.899495348990705e-08
+  },
+  {
+   "name": "Eyes_EyebrowsDroop",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 399150,
+   "count": 243,
+   "scale": 1.6740670365548263e-07,
+   "maxQuantError": 8.368698042350835e-08
+  },
+  {
+   "name": "Eyes_EyelidsAngle",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 399393,
+   "count": 188,
+   "scale": 7.108827533256831e-08,
+   "maxQuantError": 3.5490475841265696e-08
+  },
+  {
+   "name": "Eyes_Size",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 399581,
+   "count": 3798,
+   "scale": 2.0067811523419687e-07,
+   "maxQuantError": 1.0033300360846875e-07
+  },
+  {
+   "name": "Eyes_EyelidsAngle2",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 403379,
+   "count": 120,
+   "scale": 1.0344908439516784e-07,
+   "maxQuantError": 5.1602836723645e-08
+  },
+  {
+   "name": "Eyes_EyelidsCrease",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 403499,
+   "count": 108,
+   "scale": 1.7476019272999407e-08,
+   "maxQuantError": 8.699354932028896e-09
+  },
+  {
+   "name": "Eyes_EyeBagsProminence",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 403607,
+   "count": 148,
+   "scale": 1.5621855420691125e-07,
+   "maxQuantError": 7.784886945462e-08
+  },
+  {
+   "name": "Eyes_EyeBagsSize",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 403755,
+   "count": 573,
+   "scale": 1.690875011582281e-07,
+   "maxQuantError": 8.44945226758688e-08
+  },
+  {
+   "name": "Arms_Forearm_Girth",
+   "group": "Arms",
+   "min": 0,
+   "max": 1,
+   "start": 404328,
+   "count": 1704,
+   "scale": 3.8250086354238706e-07,
+   "maxQuantError": 1.9119202337644636e-07
+  },
+  {
+   "name": "Arms_BicepSize",
+   "group": "Arms",
+   "min": -1,
+   "max": 1,
+   "start": 406032,
+   "count": 561,
+   "scale": 3.332036662502663e-07,
+   "maxQuantError": 1.6658449535327923e-07
+  },
+  {
+   "name": "Arms_TricepSize",
+   "group": "Arms",
+   "min": -1,
+   "max": 1,
+   "start": 406593,
+   "count": 703,
+   "scale": 5.863500288270829e-07,
+   "maxQuantError": 2.9301743964798427e-07
+  },
+  {
+   "name": "Arms_Armpit_Loc_Z",
+   "group": "Arms",
+   "min": -1,
+   "max": 1,
+   "start": 407296,
+   "count": 1342,
+   "scale": 7.255988266992879e-07,
+   "maxQuantError": 3.624228710519305e-07
+  },
+  {
+   "name": "Chest_Breast_Size",
+   "group": "Chest",
+   "min": 0,
+   "max": 1,
+   "start": 408638,
+   "count": 1632,
+   "scale": 1.201190393895914e-06,
+   "maxQuantError": 6.0053687382048e-07
+  },
+  {
+   "name": "Chest_Areola_Radius",
+   "group": "Chest",
+   "min": 0,
+   "max": 1,
+   "start": 410270,
+   "count": 431,
+   "scale": 2.7329353561922925e-07,
+   "maxQuantError": 1.3659503871976762e-07
+  },
+  {
+   "name": "Chest_Nipple_Potrusion",
+   "group": "Chest",
+   "min": 0,
+   "max": 1,
+   "start": 410701,
+   "count": 114,
+   "scale": 1.9856739783449307e-07,
+   "maxQuantError": 9.923867755551666e-08
+  },
+  {
+   "name": "Legs_FeetSize",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 410815,
+   "count": 5377,
+   "scale": 1.8871522318670375e-06,
+   "maxQuantError": 9.43559971909873e-07
+  },
+  {
+   "name": "Legs_Toenail_Length",
+   "group": "Legs",
+   "min": 0,
+   "max": 1,
+   "start": 416192,
+   "count": 100,
+   "scale": 1.419700890671262e-07,
+   "maxQuantError": 5.965716969773618e-08
+  },
+  {
+   "name": "Legs_Calves_Size",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 416292,
+   "count": 994,
+   "scale": 5.618979722997233e-07,
+   "maxQuantError": 2.8065407349281337e-07
+  },
+  {
+   "name": "Legs_Thigh_Size",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 417286,
+   "count": 876,
+   "scale": 7.485388021398974e-07,
+   "maxQuantError": 3.7401837287183437e-07
+  },
+  {
+   "name": "Legs_Quad_Size",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 418162,
+   "count": 1007,
+   "scale": 4.615358071276713e-07,
+   "maxQuantError": 2.3074357383807108e-07
+  },
+  {
+   "name": "Legs_Thigh_Gap",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 419169,
+   "count": 357,
+   "scale": 3.9786764338967727e-07,
+   "maxQuantError": 1.9891432380750307e-07
+  },
+  {
+   "name": "Legs_Hamstring_Size",
+   "group": "Legs",
+   "min": -1,
+   "max": 1,
+   "start": 419526,
+   "count": 1174,
+   "scale": 9.193020984273509e-07,
+   "maxQuantError": 4.5954759103411166e-07
+  },
+  {
+   "name": "Nose_NasalBone",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 420700,
+   "count": 97,
+   "scale": 9.584297545789257e-08,
+   "maxQuantError": 4.78438372490805e-08
+  },
+  {
+   "name": "Nose_NasalBone_AnteriorNasalAperature",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 420797,
+   "count": 946,
+   "scale": 7.698982549287774e-08,
+   "maxQuantError": 3.846207401175935e-08
+  },
+  {
+   "name": "Nose_NasalBone_AnteriorNasalSpine",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 421743,
+   "count": 302,
+   "scale": 1.1472238788388779e-07,
+   "maxQuantError": 5.734995281281473e-08
+  },
+  {
+   "name": "Nose_NoseHeight",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 422045,
+   "count": 1207,
+   "scale": 2.8124617261307704e-07,
+   "maxQuantError": 1.4061646384613978e-07
+  },
+  {
+   "name": "Nose_NasalAngle",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 423252,
+   "count": 603,
+   "scale": 1.52519640059737e-07,
+   "maxQuantError": 7.589055391185248e-08
+  },
+  {
+   "name": "Nose_NostrilSize",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 423855,
+   "count": 242,
+   "scale": 9.305142365307572e-08,
+   "maxQuantError": 4.644476432776306e-08
+  },
+  {
+   "name": "Mouth_Lips_Length",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 424097,
+   "count": 4640,
+   "scale": 1.0895715240200042e-07,
+   "maxQuantError": 5.4472777995338145e-08
+  },
+  {
+   "name": "Mouth_Lips_Height",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 428737,
+   "count": 4127,
+   "scale": 9.309508073106911e-08,
+   "maxQuantError": 4.654572132063717e-08
+  },
+  {
+   "name": "Mouth_Lips_BottomLipDepth",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 432864,
+   "count": 446,
+   "scale": 4.578717959048303e-08,
+   "maxQuantError": 2.2865565134497554e-08
+  },
+  {
+   "name": "Mouth_Lips_UpperLipDepth",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 433310,
+   "count": 297,
+   "scale": 8.001523825975815e-08,
+   "maxQuantError": 3.9994431054229864e-08
+  },
+  {
+   "name": "Mouth_NoTeeth",
+   "group": "Mouth",
+   "min": 0,
+   "max": 1,
+   "start": 433607,
+   "count": 5557,
+   "scale": 2.478485079481345e-07,
+   "maxQuantError": 1.239142492270295e-07
+  },
+  {
+   "name": "Eyes_Distance",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 439164,
+   "count": 3827,
+   "scale": 1.1811786260094653e-07,
+   "maxQuantError": 5.9042332515592787e-08
+  },
+  {
+   "name": "Eyes_VerticalShift",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 442991,
+   "count": 3764,
+   "scale": 1.6646807647862477e-07,
+   "maxQuantError": 8.317435082799739e-08
+  },
+  {
+   "name": "Chin_PosZ",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 446755,
+   "count": 492,
+   "scale": 2.999714209824081e-07,
+   "maxQuantError": 1.4994293451309204e-07
+  },
+  {
+   "name": "Jaw_Definition",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 447247,
+   "count": 290,
+   "scale": 1.4399309439476779e-07,
+   "maxQuantError": 7.194481810746545e-08
+  },
+  {
+   "name": "Neck_ChinConnection",
+   "group": "Neck",
+   "min": -1,
+   "max": 1,
+   "start": 447537,
+   "count": 208,
+   "scale": 4.4304652299108834e-07,
+   "maxQuantError": 2.2095245088529954e-07
+  },
+  {
+   "name": "Head_TopScalpPotrusion",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 447745,
+   "count": 503,
+   "scale": 4.1623749585846836e-07,
+   "maxQuantError": 2.080790700119536e-07
+  },
+  {
+   "name": "Head_SideScalpPotrusion",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 448248,
+   "count": 1722,
+   "scale": 3.3966411796113693e-07,
+   "maxQuantError": 1.6981557388572044e-07
+  },
+  {
+   "name": "Head_BackScalpPotrusion",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 449970,
+   "count": 1896,
+   "scale": 5.506071605036831e-07,
+   "maxQuantError": 2.7530051061356534e-07
+  },
+  {
+   "name": "Head_SphenoidBone",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 451866,
+   "count": 256,
+   "scale": 2.2412452414856042e-07,
+   "maxQuantError": 1.11753706580342e-07
+  },
+  {
+   "name": "Head_TemporalLines",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 452122,
+   "count": 533,
+   "scale": 1.5102302085477613e-07,
+   "maxQuantError": 7.550684912478926e-08
+  },
+  {
+   "name": "Head_ParietalFlatness",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 452655,
+   "count": 265,
+   "scale": 3.304986327692853e-07,
+   "maxQuantError": 1.64585478680708e-07
+  },
+  {
+   "name": "Head_FrontalBoneFlatness",
+   "group": "Head",
+   "min": -1,
+   "max": 1,
+   "start": 452920,
+   "count": 471,
+   "scale": 2.5614096527042567e-07,
+   "maxQuantError": 1.2785162879346695e-07
+  },
+  {
+   "name": "Mouth_Lips_UpperLipArch",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 453391,
+   "count": 214,
+   "scale": 6.702452898935035e-08,
+   "maxQuantError": 3.3402517819934345e-08
+  },
+  {
+   "name": "Mouth_Lips_UpperAngle",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 453605,
+   "count": 1213,
+   "scale": 2.1513798750035876e-07,
+   "maxQuantError": 1.0755500984239649e-07
+  },
+  {
+   "name": "Mouth_Lips_LowerAngle",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 454818,
+   "count": 1086,
+   "scale": 1.1454162029532142e-07,
+   "maxQuantError": 5.726353396800707e-08
+  },
+  {
+   "name": "Nose_Tip_Potrusion",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 455904,
+   "count": 321,
+   "scale": 1.0679544489948401e-07,
+   "maxQuantError": 5.330233628193998e-08
+  },
+  {
+   "name": "Nose_BottomFlatness",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 456225,
+   "count": 399,
+   "scale": 5.352721570972761e-08,
+   "maxQuantError": 2.6736322181113788e-08
+  },
+  {
+   "name": "Nose_Potrusion",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 456624,
+   "count": 673,
+   "scale": 5.442536913719577e-08,
+   "maxQuantError": 2.7131509689204425e-08
+  },
+  {
+   "name": "Nose_BridgeProminence",
+   "group": "Nose",
+   "min": -1,
+   "max": 1,
+   "start": 457297,
+   "count": 241,
+   "scale": 1.6576137752860678e-07,
+   "maxQuantError": 8.28670459274497e-08
+  },
+  {
+   "name": "Eyes_UpperLidOpenness",
+   "group": "Eyes",
+   "min": 0,
+   "max": 1,
+   "start": 457538,
+   "count": 1100,
+   "scale": 9.874503424138019e-08,
+   "maxQuantError": 4.9365468321634076e-08
+  },
+  {
+   "name": "Eyes_LowerLidOpenness",
+   "group": "Eyes",
+   "min": 0,
+   "max": 1,
+   "start": 458638,
+   "count": 891,
+   "scale": 7.024423849136279e-08,
+   "maxQuantError": 3.509409458492946e-08
+  },
+  {
+   "name": "Eyes_LacrimalCaruncle_Rotate",
+   "group": "Eyes",
+   "min": -1,
+   "max": 1,
+   "start": 459529,
+   "count": 432,
+   "scale": 3.101107773463727e-08,
+   "maxQuantError": 1.5469157969003923e-08
+  },
+  {
+   "name": "Eyes_LacrimalCaruncle_Sharpness",
+   "group": "Eyes",
+   "min": 0,
+   "max": 1,
+   "start": 459961,
+   "count": 477,
+   "scale": 3.69411641620726e-08,
+   "maxQuantError": 1.8459667811557756e-08
+  },
+  {
+   "name": "Stomach_Bloating",
+   "group": "Stomach",
+   "min": 0,
+   "max": 1,
+   "start": 460438,
+   "count": 750,
+   "scale": 5.151610238822694e-07,
+   "maxQuantError": 2.574499386228529e-07
+  },
+  {
+   "name": "Waist_Width",
+   "group": "Waist",
+   "min": -1,
+   "max": 1,
+   "start": 461188,
+   "count": 672,
+   "scale": 7.777603944380348e-07,
+   "maxQuantError": 3.8884358894005974e-07
+  },
+  {
+   "name": "Chest_FemaleSiliconeImplants",
+   "group": "Chest",
+   "min": 0,
+   "max": 1,
+   "start": 461860,
+   "count": 1843,
+   "scale": 4.649742567808798e-07,
+   "maxQuantError": 2.3244372711556452e-07
+  },
+  {
+   "name": "Mouth_PhiltrumDepth",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 463703,
+   "count": 18,
+   "scale": 1.9183420307647103e-08,
+   "maxQuantError": 9.441980019145161e-09
+  },
+  {
+   "name": "Mouth_PhiltrumHeight",
+   "group": "Mouth",
+   "min": -1,
+   "max": 1,
+   "start": 463721,
+   "count": 434,
+   "scale": 6.766483279992005e-08,
+   "maxQuantError": 3.37687498278786e-08
+  },
+  {
+   "name": "BodyType_MesoMorph",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 464155,
+   "count": 10998,
+   "scale": 2.409143087268512e-07,
+   "maxQuantError": 1.204316877345419e-07
+  },
+  {
+   "name": "BodyType_EndoMorph",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 475153,
+   "count": 12355,
+   "scale": 6.722980820816509e-07,
+   "maxQuantError": 3.361243133989623e-07
+  },
+  {
+   "name": "BodyType_EctoMorph",
+   "group": "BodyType",
+   "min": 0,
+   "max": 1,
+   "start": 487508,
+   "count": 9646,
+   "scale": 4.4172913655554563e-07,
+   "maxQuantError": 2.2083361609162317e-07
+  },
+  {
+   "name": "Chest_FemaleFlatChested",
+   "group": "Chest",
+   "min": 0,
+   "max": 1,
+   "start": 497154,
+   "count": 1145,
+   "scale": 1.0238410181080515e-06,
+   "maxQuantError": 5.115499923426191e-07
+  },
+  {
+   "name": "Neck_AdamsApple",
+   "group": "Neck",
+   "min": 0,
+   "max": 1,
+   "start": 498299,
+   "count": 141,
+   "scale": 1.6791524039992123e-07,
+   "maxQuantError": 8.377185023791811e-08
+  },
+  {
+   "name": "Legs_FlatFoot",
+   "group": "Legs",
+   "min": 0,
+   "max": 1,
+   "start": 498440,
+   "count": 914,
+   "scale": 3.1377140628257226e-07,
+   "maxQuantError": 1.5686779691794633e-07
+  },
+  {
+   "name": "Eyes_Eyelid_Monolid",
+   "group": "Eyes",
+   "min": 0,
+   "max": 1,
+   "start": 499354,
+   "count": 1408,
+   "scale": 1.1946099989108688e-07,
+   "maxQuantError": 5.970412379425799e-08
+  },
+  {
+   "name": "Eyes_Eyelid_hooded",
+   "group": "Eyes",
+   "min": 0,
+   "max": 1,
+   "start": 500762,
+   "count": 427,
+   "scale": 1.1949192365466553e-07,
+   "maxQuantError": 5.972856721031278e-08
+  },
+  {
+   "name": "Jaw_Ramus_Extrusion",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 501189,
+   "count": 215,
+   "scale": 1.056194323610371e-07,
+   "maxQuantError": 5.2449658977376124e-08
+  },
+  {
+   "name": "Jaw_Ramus_LocY",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 501404,
+   "count": 176,
+   "scale": 2.8365163213438984e-07,
+   "maxQuantError": 1.4119199260404988e-07
+  },
+  {
+   "name": "Face_BrowRidge_Droop",
+   "group": "Face",
+   "min": 0,
+   "max": 1,
+   "start": 501580,
+   "count": 485,
+   "scale": 1.5211945017813093e-07,
+   "maxQuantError": 7.585400247805374e-08
+  },
+  {
+   "name": "Face_BrowRidge_Raise",
+   "group": "Face",
+   "min": 0,
+   "max": 1,
+   "start": 502065,
+   "count": 495,
+   "scale": 1.341545625838514e-07,
+   "maxQuantError": 6.707546224699046e-08
+  },
+  {
+   "name": "Face_BrowRidge_CurvedDroop",
+   "group": "Face",
+   "min": 0,
+   "max": 1,
+   "start": 502560,
+   "count": 499,
+   "scale": 1.152692382618779e-07,
+   "maxQuantError": 5.757424957779692e-08
+  },
+  {
+   "name": "Face_BrowRidge_CurvedRaise",
+   "group": "Face",
+   "min": 0,
+   "max": 1,
+   "start": 503059,
+   "count": 501,
+   "scale": 9.882871030753418e-08,
+   "maxQuantError": 4.9299755324033046e-08
+  },
+  {
+   "name": "Cheeks_BuccalFat",
+   "group": "Cheeks",
+   "min": -1,
+   "max": 1,
+   "start": 503560,
+   "count": 360,
+   "scale": 1.0817257559149943e-07,
+   "maxQuantError": 5.4082251789834643e-08
+  },
+  {
+   "name": "Chin_Height",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 503920,
+   "count": 67,
+   "scale": 1.4343169165744654e-07,
+   "maxQuantError": 7.095332493783522e-08
+  },
+  {
+   "name": "Chin_Tilt",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 503987,
+   "count": 223,
+   "scale": 2.1204606590372281e-07,
+   "maxQuantError": 1.055412134296494e-07
+  },
+  {
+   "name": "Nose_TipCrease",
+   "group": "Nose",
+   "min": 0,
+   "max": 1,
+   "start": 504210,
+   "count": 95,
+   "scale": 5.63315008289592e-08,
+   "maxQuantError": 2.8101742771485615e-08
+  },
+  {
+   "name": "Ears_Potrusion",
+   "group": "Ears",
+   "min": -1,
+   "max": 1,
+   "start": 504305,
+   "count": 1428,
+   "scale": 1.3103285412670954e-07,
+   "maxQuantError": 6.551381218628644e-08
+  },
+  {
+   "name": "Ears_PotrusionTop",
+   "group": "Ears",
+   "min": -1,
+   "max": 1,
+   "start": 505733,
+   "count": 1048,
+   "scale": 1.4072040520956545e-07,
+   "maxQuantError": 7.03486061934093e-08
+  },
+  {
+   "name": "Face_Puffy",
+   "group": "Face",
+   "min": 0,
+   "max": 1,
+   "start": 506781,
+   "count": 1019,
+   "scale": 1.364065401903437e-07,
+   "maxQuantError": 6.814983565081763e-08
+  },
+  {
+   "name": "Chin_SecondaryWidth",
+   "group": "Chin",
+   "min": -1,
+   "max": 1,
+   "start": 507800,
+   "count": 174,
+   "scale": 1.265400405638378e-07,
+   "maxQuantError": 6.315723949710085e-08
+  },
+  {
+   "name": "Jaw_Width",
+   "group": "Jaw",
+   "min": -1,
+   "max": 1,
+   "start": 507974,
+   "count": 294,
+   "scale": 9.49622166474374e-08,
+   "maxQuantError": 4.7342065077958344e-08
+  },
+  {
+   "name": "aa_02",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 508268,
+   "count": 11071,
+   "scale": 7.025806323272736e-07,
+   "maxQuantError": 3.5122323888234314e-07
+  },
+  {
+   "name": "ae_ax_ah_01",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 519339,
+   "count": 10627,
+   "scale": 1.9346997921753582e-07,
+   "maxQuantError": 9.671598911618808e-08
+  },
+  {
+   "name": "Angry",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 529966,
+   "count": 7705,
+   "scale": 1.530944582533166e-07,
+   "maxQuantError": 7.653085772236796e-08
+  },
+  {
+   "name": "ao_03",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 537671,
+   "count": 6873,
+   "scale": 2.457784348332813e-07,
+   "maxQuantError": 1.2287648410228003e-07
+  },
+  {
+   "name": "aw_09",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 544544,
+   "count": 5797,
+   "scale": 1.8025279885503733e-07,
+   "maxQuantError": 9.010093279866629e-08
+  },
+  {
+   "name": "ay_11",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 550341,
+   "count": 1352,
+   "scale": 1.1814696731960879e-07,
+   "maxQuantError": 5.905347416572241e-08
+  },
+  {
+   "name": "Cheeks_Contracted_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 551693,
+   "count": 1393,
+   "scale": 2.1947390843919175e-07,
+   "maxQuantError": 1.0969227392883707e-07
+  },
+  {
+   "name": "Cheeks_Contracted_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 553086,
+   "count": 1390,
+   "scale": 2.1945890131863153e-07,
+   "maxQuantError": 1.0971683103520581e-07
+  },
+  {
+   "name": "Cheeks_Inhaled_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 554476,
+   "count": 1061,
+   "scale": 1.2591895041519748e-07,
+   "maxQuantError": 6.289620655157077e-08
+  },
+  {
+   "name": "Cheeks_Inhaled_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 555537,
+   "count": 1053,
+   "scale": 1.259339575357577e-07,
+   "maxQuantError": 6.29629427619719e-08
+  },
+  {
+   "name": "Cheeks_Puffed",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 556590,
+   "count": 2039,
+   "scale": 2.277266878442441e-07,
+   "maxQuantError": 1.1384719989849558e-07
+  },
+  {
+   "name": "Cheeks_Raised_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 558629,
+   "count": 569,
+   "scale": 2.095466981886013e-07,
+   "maxQuantError": 1.0444205553890014e-07
+  },
+  {
+   "name": "Cheeks_Raised_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 559198,
+   "count": 566,
+   "scale": 2.0953942200893572e-07,
+   "maxQuantError": 1.0461691123148803e-07
+  },
+  {
+   "name": "Chew",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 559764,
+   "count": 7347,
+   "scale": 2.967426162558137e-07,
+   "maxQuantError": 1.4836244028394773e-07
+  },
+  {
+   "name": "Chew_DIrectional",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 567111,
+   "count": 6252,
+   "scale": 2.726568698984923e-07,
+   "maxQuantError": 1.3631808913139656e-07
+  },
+  {
+   "name": "Chin_Raised",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 573363,
+   "count": 11017,
+   "scale": 2.5708925612340183e-07,
+   "maxQuantError": 1.2849494539744766e-07
+  },
+  {
+   "name": "Circumspect",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 584380,
+   "count": 2594,
+   "scale": 3.468154656693144e-07,
+   "maxQuantError": 1.7329614579805622e-07
+  },
+  {
+   "name": "Compressed",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 586974,
+   "count": 9769,
+   "scale": 4.075578093496005e-07,
+   "maxQuantError": 2.0377850675867663e-07
+  },
+  {
+   "name": "d_t_n_19",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 596743,
+   "count": 5906,
+   "scale": 1.629645959696553e-07,
+   "maxQuantError": 8.145069207938843e-08
+  },
+  {
+   "name": "Disgusted",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 602649,
+   "count": 8730,
+   "scale": 2.96311502610629e-07,
+   "maxQuantError": 1.480965186552094e-07
+  },
+  {
+   "name": "Ears_Back_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 611379,
+   "count": 778,
+   "scale": 3.94908966833167e-08,
+   "maxQuantError": 1.974368614183087e-08
+  },
+  {
+   "name": "Ears_Back_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 612157,
+   "count": 778,
+   "scale": 3.958162154852171e-08,
+   "maxQuantError": 1.9784728342827143e-08
+  },
+  {
+   "name": "Ears_Up_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 612935,
+   "count": 725,
+   "scale": 4.415549630048012e-08,
+   "maxQuantError": 2.2072291015317463e-08
+  },
+  {
+   "name": "Ears_Up_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 613660,
+   "count": 725,
+   "scale": 4.415549630048012e-08,
+   "maxQuantError": 2.207382583468108e-08
+  },
+  {
+   "name": "er_05",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 614385,
+   "count": 6929,
+   "scale": 3.329688957657446e-07,
+   "maxQuantError": 1.6646807647797968e-07
+  },
+  {
+   "name": "ey_eh_uh_04",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 621314,
+   "count": 8662,
+   "scale": 1.9589658513600168e-07,
+   "maxQuantError": 9.793010211892224e-08
+  },
+  {
+   "name": "Eyebrows_Frown_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 629976,
+   "count": 567,
+   "scale": 2.2955596488828999e-07,
+   "maxQuantError": 1.1470669862148278e-07
+  },
+  {
+   "name": "Eyebrows_Frown_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 630543,
+   "count": 567,
+   "scale": 2.295550553658318e-07,
+   "maxQuantError": 1.1471352004020427e-07
+  },
+  {
+   "name": "Eyebrows_InnerBrow_Lower_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 631110,
+   "count": 208,
+   "scale": 2.7330422250811305e-07,
+   "maxQuantError": 1.3652364120683865e-07
+  },
+  {
+   "name": "Eyebrows_InnerBrow_Lower_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 631318,
+   "count": 220,
+   "scale": 2.3444578500416411e-07,
+   "maxQuantError": 1.1720538419475782e-07
+  },
+  {
+   "name": "Eyebrows_InnerBrow_Raised_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 631538,
+   "count": 208,
+   "scale": 2.7330422250811305e-07,
+   "maxQuantError": 1.3652364120683865e-07
+  },
+  {
+   "name": "Eyebrows_InnerBrow_Raised_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 631746,
+   "count": 220,
+   "scale": 2.3444578500416411e-07,
+   "maxQuantError": 1.1720538419475782e-07
+  },
+  {
+   "name": "Eyebrows_Lower_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 631966,
+   "count": 466,
+   "scale": 2.0150288156831937e-07,
+   "maxQuantError": 1.006463909402399e-07
+  },
+  {
+   "name": "Eyebrows_Lower_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 632432,
+   "count": 467,
+   "scale": 2.0150288156831937e-07,
+   "maxQuantError": 1.0071392298274546e-07
+  },
+  {
+   "name": "Eyebrows_OuterBrow_Lower_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 632899,
+   "count": 257,
+   "scale": 1.7530488299214596e-07,
+   "maxQuantError": 8.74134076250284e-08
+  },
+  {
+   "name": "Eyebrows_OuterBrow_Lower_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 633156,
+   "count": 262,
+   "scale": 1.8314860467162485e-07,
+   "maxQuantError": 9.155628242205928e-08
+  },
+  {
+   "name": "Eyebrows_OuterBrow_Raised_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 633418,
+   "count": 257,
+   "scale": 2.826622990804876e-07,
+   "maxQuantError": 1.412317842116944e-07
+  },
+  {
+   "name": "Eyebrows_OuterBrow_Raised_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 633675,
+   "count": 257,
+   "scale": 2.1053728183588357e-07,
+   "maxQuantError": 1.0493831373016528e-07
+  },
+  {
+   "name": "Eyebrows_Raised_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 633932,
+   "count": 613,
+   "scale": 3.2643488642606735e-07,
+   "maxQuantError": 1.6320448251800674e-07
+  },
+  {
+   "name": "Eyebrows_Raised_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 634545,
+   "count": 613,
+   "scale": 3.264276102464018e-07,
+   "maxQuantError": 1.6314331713269584e-07
+  },
+  {
+   "name": "Eyes_Closed_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 635158,
+   "count": 1408,
+   "scale": 2.7479220124972107e-07,
+   "maxQuantError": 1.373924625350069e-07
+  },
+  {
+   "name": "Eyes_Closed_Max",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 636566,
+   "count": 4066,
+   "scale": 3.3295434340641345e-07,
+   "maxQuantError": 1.664098670413599e-07
+  },
+  {
+   "name": "Eyes_Closed_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 640632,
+   "count": 1408,
+   "scale": 2.7395907867801387e-07,
+   "maxQuantError": 1.369711262562607e-07
+  },
+  {
+   "name": "Eyes_Opened_Max_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 642040,
+   "count": 655,
+   "scale": 9.64675900060584e-08,
+   "maxQuantError": 4.814864096287048e-08
+  },
+  {
+   "name": "Eyes_Opened_Max_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 642695,
+   "count": 653,
+   "scale": 9.64675900060584e-08,
+   "maxQuantError": 4.8201961716993526e-08
+  },
+  {
+   "name": "Eyes_Squint",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 643348,
+   "count": 2978,
+   "scale": 1.7948516190032024e-07,
+   "maxQuantError": 8.972620954561528e-08
+  },
+  {
+   "name": "f_v_18",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 646326,
+   "count": 1946,
+   "scale": 1.1972589830703636e-07,
+   "maxQuantError": 5.986219595526367e-08
+  },
+  {
+   "name": "Frown_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 648272,
+   "count": 1662,
+   "scale": 1.3291761204070538e-07,
+   "maxQuantError": 6.645809545593269e-08
+  },
+  {
+   "name": "Frown_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 649934,
+   "count": 1953,
+   "scale": 1.3292125013053816e-07,
+   "maxQuantError": 6.644607270593606e-08
+  },
+  {
+   "name": "h_12",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 651887,
+   "count": 6939,
+   "scale": 5.621030696140464e-07,
+   "maxQuantError": 2.8101708664392787e-07
+  },
+  {
+   "name": "Happy",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 658826,
+   "count": 11346,
+   "scale": 3.135992507347819e-07,
+   "maxQuantError": 1.5678649413690366e-07
+  },
+  {
+   "name": "Jaw_back",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 670172,
+   "count": 6806,
+   "scale": 2.1234188808325092e-07,
+   "maxQuantError": 1.0617077350616455e-07
+  },
+  {
+   "name": "Jaw_dn_upper",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 676978,
+   "count": 6165,
+   "scale": 1.214503528877752e-07,
+   "maxQuantError": 6.07124431294847e-08
+  },
+  {
+   "name": "Jaw_Lower",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 683143,
+   "count": 6757,
+   "scale": 2.1805300697887566e-07,
+   "maxQuantError": 1.0901809040664984e-07
+  },
+  {
+   "name": "Jaw_Out",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 689900,
+   "count": 6835,
+   "scale": 2.414134091757861e-07,
+   "maxQuantError": 1.206781683207544e-07
+  },
+  {
+   "name": "k_g_ng_20",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 696735,
+   "count": 5926,
+   "scale": 1.6510743088116414e-07,
+   "maxQuantError": 8.253597975264957e-08
+  },
+  {
+   "name": "Kiss",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 702661,
+   "count": 9513,
+   "scale": 3.387213979332172e-07,
+   "maxQuantError": 1.6935535552219366e-07
+  },
+  {
+   "name": "l_14",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 712174,
+   "count": 9973,
+   "scale": 2.469244331306078e-07,
+   "maxQuantError": 1.234287916153723e-07
+  },
+  {
+   "name": "Lips_Dimple_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 722147,
+   "count": 1053,
+   "scale": 3.1358572158821624e-07,
+   "maxQuantError": 1.5674133066231996e-07
+  },
+  {
+   "name": "Lips_Dimple_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 723200,
+   "count": 1053,
+   "scale": 3.135214865646062e-07,
+   "maxQuantError": 1.5673161014102995e-07
+  },
+  {
+   "name": "Lips_Dn_Bite",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 724253,
+   "count": 5648,
+   "scale": 2.707136751665574e-07,
+   "maxQuantError": 1.3530715491899656e-07
+  },
+  {
+   "name": "Lips_Dn_Corner_Tight_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 729901,
+   "count": 498,
+   "scale": 7.275452047598265e-08,
+   "maxQuantError": 3.637362214815751e-08
+  },
+  {
+   "name": "Lips_Dn_Corner_Tight_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 730399,
+   "count": 498,
+   "scale": 7.277634901497934e-08,
+   "maxQuantError": 3.6366345968491943e-08
+  },
+  {
+   "name": "Lips_Dn_Corner_Wide_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 730897,
+   "count": 218,
+   "scale": 7.03642954558446e-08,
+   "maxQuantError": 3.51733935742473e-08
+  },
+  {
+   "name": "Lips_Dn_Corner_Wide_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 731115,
+   "count": 218,
+   "scale": 7.034246691684791e-08,
+   "maxQuantError": 3.5134397798861376e-08
+  },
+  {
+   "name": "Lips_Dn_Funnel",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 731333,
+   "count": 744,
+   "scale": 2.5098817947382574e-07,
+   "maxQuantError": 1.2543050843241352e-07
+  },
+  {
+   "name": "Lips_Dn_In",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 732077,
+   "count": 518,
+   "scale": 1.723949795774564e-07,
+   "maxQuantError": 8.619589812442857e-08
+  },
+  {
+   "name": "Lips_Dn_Lower_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 732595,
+   "count": 572,
+   "scale": 2.7136148253740725e-07,
+   "maxQuantError": 1.3559547353816578e-07
+  },
+  {
+   "name": "Lips_Dn_Lower_M",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 733167,
+   "count": 475,
+   "scale": 1.0900808565965937e-07,
+   "maxQuantError": 5.444037625774089e-08
+  },
+  {
+   "name": "Lips_Dn_Lower_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 733642,
+   "count": 572,
+   "scale": 2.7136148253740725e-07,
+   "maxQuantError": 1.3564254132546232e-07
+  },
+  {
+   "name": "Lips_Dn_Out",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 734214,
+   "count": 442,
+   "scale": 6.570799523111222e-08,
+   "maxQuantError": 3.284720461970672e-08
+  },
+  {
+   "name": "Lips_Dn_Raised",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 734656,
+   "count": 1127,
+   "scale": 1.2255997028677386e-07,
+   "maxQuantError": 6.125088042476358e-08
+  },
+  {
+   "name": "Lips_Dn_Tighten",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 735783,
+   "count": 487,
+   "scale": 4.2234584868771e-08,
+   "maxQuantError": 2.111092577724953e-08
+  },
+  {
+   "name": "Lips_Inner",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 736270,
+   "count": 2062,
+   "scale": 4.0091249719910157e-07,
+   "maxQuantError": 2.0041577485020896e-07
+  },
+  {
+   "name": "Lips_Push_Dn",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 738332,
+   "count": 10447,
+   "scale": 2.0101901562055932e-07,
+   "maxQuantError": 1.0050177686940628e-07
+  },
+  {
+   "name": "Lips_Push_Up",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 748779,
+   "count": 10395,
+   "scale": 1.6234612069808228e-07,
+   "maxQuantError": 8.115668894479301e-08
+  },
+  {
+   "name": "Lips_Up_Bite",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 759174,
+   "count": 1585,
+   "scale": 3.406543605374974e-07,
+   "maxQuantError": 1.7032718026884636e-07
+  },
+  {
+   "name": "Lips_Up_Corner_Tight_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 760759,
+   "count": 882,
+   "scale": 8.156597405098164e-08,
+   "maxQuantError": 4.075160850069081e-08
+  },
+  {
+   "name": "Lips_Up_Corner_Tight_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 761641,
+   "count": 883,
+   "scale": 8.155142169165052e-08,
+   "maxQuantError": 4.0764796576322365e-08
+  },
+  {
+   "name": "Lips_Up_Corner_Wide_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 762524,
+   "count": 693,
+   "scale": 8.911137236417236e-08,
+   "maxQuantError": 4.455409451776084e-08
+  },
+  {
+   "name": "Lips_Up_Corner_Wide_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 763217,
+   "count": 693,
+   "scale": 8.912592472350349e-08,
+   "maxQuantError": 4.455409451778456e-08
+  },
+  {
+   "name": "Lips_Up_Funnel",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 763910,
+   "count": 2134,
+   "scale": 3.61386015449608e-07,
+   "maxQuantError": 1.806820934553005e-07
+  },
+  {
+   "name": "Lips_Up_In",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 766044,
+   "count": 1421,
+   "scale": 1.2456205659787693e-07,
+   "maxQuantError": 6.225237834150596e-08
+  },
+  {
+   "name": "Lips_Up_Lower_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 767465,
+   "count": 903,
+   "scale": 8.2362715724361e-08,
+   "maxQuantError": 4.117749239173729e-08
+  },
+  {
+   "name": "Lips_Up_Lower_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 768368,
+   "count": 903,
+   "scale": 8.235907763452821e-08,
+   "maxQuantError": 4.117953881729343e-08
+  },
+  {
+   "name": "Lips_Up_Out",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 769271,
+   "count": 1066,
+   "scale": 1.1625766179332197e-07,
+   "maxQuantError": 5.8122123168611456e-08
+  },
+  {
+   "name": "Lips_Up_Raised_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 770337,
+   "count": 1136,
+   "scale": 2.504461040887411e-07,
+   "maxQuantError": 1.2522100561883798e-07
+  },
+  {
+   "name": "Lips_Up_Raised_M",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 771473,
+   "count": 1147,
+   "scale": 1.2269094152075402e-07,
+   "maxQuantError": 6.133455649100228e-08
+  },
+  {
+   "name": "Lips_Up_Raised_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 772620,
+   "count": 1294,
+   "scale": 2.6109843111912804e-07,
+   "maxQuantError": 1.3053142302647488e-07
+  },
+  {
+   "name": "Lips_Up_Tighten",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 773914,
+   "count": 800,
+   "scale": 3.7672420218461864e-08,
+   "maxQuantError": 1.8829161310180862e-08
+  },
+  {
+   "name": "Look_Dwn_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 774714,
+   "count": 1691,
+   "scale": 1.1192583370555086e-07,
+   "maxQuantError": 5.594023563647169e-08
+  },
+  {
+   "name": "Look_Dwn_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 776405,
+   "count": 1691,
+   "scale": 1.1179850056140348e-07,
+   "maxQuantError": 5.589925028068321e-08
+  },
+  {
+   "name": "Look_In_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 778096,
+   "count": 1679,
+   "scale": 2.1899333951034264e-07,
+   "maxQuantError": 1.0948876827919507e-07
+  },
+  {
+   "name": "Look_In_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 779775,
+   "count": 1650,
+   "scale": 1.5649482165358816e-07,
+   "maxQuantError": 7.823189209985038e-08
+  },
+  {
+   "name": "Look_Out_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 781425,
+   "count": 1663,
+   "scale": 1.5648015560394975e-07,
+   "maxQuantError": 7.822291056558406e-08
+  },
+  {
+   "name": "Look_Out_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 783088,
+   "count": 1659,
+   "scale": 2.1897321632595506e-07,
+   "maxQuantError": 1.0948262900217429e-07
+  },
+  {
+   "name": "Look_Up_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 784747,
+   "count": 1682,
+   "scale": 1.169245691357939e-07,
+   "maxQuantError": 5.844955125369061e-08
+  },
+  {
+   "name": "Look_Up_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 786429,
+   "count": 1678,
+   "scale": 1.169245691357939e-07,
+   "maxQuantError": 5.844955125369061e-08
+  },
+  {
+   "name": "Lower_Eyelid_Dn_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 788107,
+   "count": 512,
+   "scale": 7.436255618207248e-08,
+   "maxQuantError": 3.717371768562202e-08
+  },
+  {
+   "name": "Lower_Eyelid_Dn_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 788619,
+   "count": 509,
+   "scale": 7.435164191257413e-08,
+   "maxQuantError": 3.713762101315021e-08
+  },
+  {
+   "name": "Lower_Eyelid_Squint",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 789128,
+   "count": 530,
+   "scale": 3.9531484123013676e-08,
+   "maxQuantError": 1.9746130483489204e-08
+  },
+  {
+   "name": "Lower_Eyelid_Up_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 789658,
+   "count": 481,
+   "scale": 5.858745759620612e-08,
+   "maxQuantError": 2.9269455917345713e-08
+  },
+  {
+   "name": "Lower_Eyelid_Up_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 790139,
+   "count": 482,
+   "scale": 5.86382771635578e-08,
+   "maxQuantError": 2.930822431227993e-08
+  },
+  {
+   "name": "Mouth_Closed_Corner",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 790621,
+   "count": 1968,
+   "scale": 2.1047804918579359e-07,
+   "maxQuantError": 1.0522987252317012e-07
+  },
+  {
+   "name": "Mouth_Closed_Jaw_Move",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 792589,
+   "count": 6800,
+   "scale": 2.2300439039613887e-07,
+   "maxQuantError": 1.1148285363523497e-07
+  },
+  {
+   "name": "Mouth_Closed_Move_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 799389,
+   "count": 11039,
+   "scale": 6.823625165331217e-07,
+   "maxQuantError": 3.41179496066938e-07
+  },
+  {
+   "name": "Mouth_Closed_Move_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 810428,
+   "count": 11604,
+   "scale": 7.246149507801349e-07,
+   "maxQuantError": 3.6230287093260566e-07
+  },
+  {
+   "name": "Mouth_Large_Opened",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 822032,
+   "count": 7195,
+   "scale": 1.272207271715514e-06,
+   "maxQuantError": 6.360508835552212e-07
+  },
+  {
+   "name": "Neck_Contracted",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 829227,
+   "count": 185,
+   "scale": 1.331604545370436e-07,
+   "maxQuantError": 6.651269522601816e-08
+  },
+  {
+   "name": "Neck_Sternomastoid_Contracted",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 829412,
+   "count": 460,
+   "scale": 2.5503311007118976e-07,
+   "maxQuantError": 1.2731047714237166e-07
+  },
+  {
+   "name": "Nostrils_Compressed",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 829872,
+   "count": 1006,
+   "scale": 1.455912106215479e-07,
+   "maxQuantError": 7.273752377503855e-08
+  },
+  {
+   "name": "Nostrils_Corners_Raise_GLOBAL_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 830878,
+   "count": 861,
+   "scale": 2.031109172744092e-07,
+   "maxQuantError": 1.0151362060412811e-07
+  },
+  {
+   "name": "Nostrils_Corners_Raise_GLOBAL_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 831739,
+   "count": 861,
+   "scale": 2.0312910772357311e-07,
+   "maxQuantError": 1.0153988306508405e-07
+  },
+  {
+   "name": "Nostrils_Dilated",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 832600,
+   "count": 976,
+   "scale": 1.0320737880190237e-07,
+   "maxQuantError": 5.157717824243234e-08
+  },
+  {
+   "name": "Nostrils_Lower",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 833576,
+   "count": 1084,
+   "scale": 1.6344846191741538e-07,
+   "maxQuantError": 8.169740004620172e-08
+  },
+  {
+   "name": "Oops",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 834660,
+   "count": 2957,
+   "scale": 1.849532109189922e-07,
+   "maxQuantError": 9.244772812144893e-08
+  },
+  {
+   "name": "Opened_ClosedTeeth_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 837617,
+   "count": 2099,
+   "scale": 2.692877713327213e-07,
+   "maxQuantError": 1.346420666218165e-07
+  },
+  {
+   "name": "Opened_ClosedTeeth_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 839716,
+   "count": 1904,
+   "scale": 2.6927321897339015e-07,
+   "maxQuantError": 1.3461659999261432e-07
+  },
+  {
+   "name": "Opened_GLOBAL_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 841620,
+   "count": 11173,
+   "scale": 3.747259529213861e-07,
+   "maxQuantError": 1.8736156954298616e-07
+  },
+  {
+   "name": "Opened_GLOBAL_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 852793,
+   "count": 11173,
+   "scale": 3.74895351479225e-07,
+   "maxQuantError": 1.874343029172141e-07
+  },
+  {
+   "name": "ow_08",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 863966,
+   "count": 1974,
+   "scale": 1.8824977506872215e-07,
+   "maxQuantError": 9.411420064543013e-08
+  },
+  {
+   "name": "oy_10",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 865940,
+   "count": 1347,
+   "scale": 1.241825583521948e-07,
+   "maxQuantError": 6.208400299629116e-08
+  },
+  {
+   "name": "p_b_m_21",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 867287,
+   "count": 1328,
+   "scale": 1.8139152097269822e-07,
+   "maxQuantError": 9.06532118888565e-08
+  },
+  {
+   "name": "Pupil_Constriction_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 868615,
+   "count": 240,
+   "scale": 4.1005592647134196e-08,
+   "maxQuantError": 2.050279632355434e-08
+  },
+  {
+   "name": "Pupil_Constriction_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 868855,
+   "count": 240,
+   "scale": 4.1005592647134196e-08,
+   "maxQuantError": 2.050279632355434e-08
+  },
+  {
+   "name": "Pupil_Dilation_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 869095,
+   "count": 241,
+   "scale": 8.201107160396112e-08,
+   "maxQuantError": 4.085051906791391e-08
+  },
+  {
+   "name": "Pupil_Dilation_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 869336,
+   "count": 241,
+   "scale": 8.201107160396112e-08,
+   "maxQuantError": 4.072705139432885e-08
+  },
+  {
+   "name": "r_13",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 869577,
+   "count": 5759,
+   "scale": 2.2177431811658297e-07,
+   "maxQuantError": 1.1083699321019769e-07
+  },
+  {
+   "name": "Revulsion",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 875336,
+   "count": 7989,
+   "scale": 2.9089802493944876e-07,
+   "maxQuantError": 1.4543900772267756e-07
+  },
+  {
+   "name": "s_z_15",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 883325,
+   "count": 8680,
+   "scale": 3.214834461636505e-07,
+   "maxQuantError": 1.6059688163030158e-07
+  },
+  {
+   "name": "Sad",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 892005,
+   "count": 7286,
+   "scale": 1.23781231567516e-07,
+   "maxQuantError": 6.188177636236086e-08
+  },
+  {
+   "name": "Scared",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 899291,
+   "count": 11638,
+   "scale": 4.0232180224807567e-07,
+   "maxQuantError": 2.011561261311323e-07
+  },
+  {
+   "name": "sh_ch_jh_zh_16",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 910929,
+   "count": 9688,
+   "scale": 3.296764244670765e-07,
+   "maxQuantError": 1.6475453616735924e-07
+  },
+  {
+   "name": "Smile_Lips_Closed",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 920617,
+   "count": 2152,
+   "scale": 2.3284866356757263e-07,
+   "maxQuantError": 1.164150091785901e-07
+  },
+  {
+   "name": "Smile_Lips_Closed_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 922769,
+   "count": 1094,
+   "scale": 2.7119413040509926e-07,
+   "maxQuantError": 1.355588652592575e-07
+  },
+  {
+   "name": "Smile_Lips_Closed_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 923863,
+   "count": 1093,
+   "scale": 2.7119413040509926e-07,
+   "maxQuantError": 1.3527952817434105e-07
+  },
+  {
+   "name": "th_dh_17",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 924956,
+   "count": 1476,
+   "scale": 1.0306344687289291e-07,
+   "maxQuantError": 5.152058178634078e-08
+  },
+  {
+   "name": "Thinking",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 926432,
+   "count": 11205,
+   "scale": 2.633913940813928e-07,
+   "maxQuantError": 1.316863460130123e-07
+  },
+  {
+   "name": "Tongue_Down",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 937637,
+   "count": 213,
+   "scale": 4.3940849000345956e-07,
+   "maxQuantError": 2.1926767422185064e-07
+  },
+  {
+   "name": "Tongue_Forward",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 937850,
+   "count": 304,
+   "scale": 8.791405426214222e-07,
+   "maxQuantError": 4.3717959152811403e-07
+  },
+  {
+   "name": "Tongue_Left",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 938154,
+   "count": 273,
+   "scale": 2.3271106987319373e-07,
+   "maxQuantError": 1.1602138491222981e-07
+  },
+  {
+   "name": "Tongue_Right",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 938427,
+   "count": 328,
+   "scale": 3.898445752504729e-07,
+   "maxQuantError": 1.9459528587893174e-07
+  },
+  {
+   "name": "Tongue_Roll",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 938755,
+   "count": 365,
+   "scale": 4.081100031720325e-07,
+   "maxQuantError": 2.0392471249388007e-07
+  },
+  {
+   "name": "Tongue_Up",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 939120,
+   "count": 213,
+   "scale": 4.3940849000345956e-07,
+   "maxQuantError": 2.1926767422185064e-07
+  },
+  {
+   "name": "Uncompressed",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 939333,
+   "count": 8746,
+   "scale": 3.1437825672022646e-07,
+   "maxQuantError": 1.571868545541602e-07
+  },
+  {
+   "name": "Upper_Eyelid_Up",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 948079,
+   "count": 1189,
+   "scale": 1.0409666438540312e-07,
+   "maxQuantError": 5.2039521193886044e-08
+  },
+  {
+   "name": "w_uw_07",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 949268,
+   "count": 1260,
+   "scale": 1.5041682413638878e-07,
+   "maxQuantError": 7.516407284835754e-08
+  },
+  {
+   "name": "y_iy_ih_ix_06",
+   "group": "Expression",
+   "min": 0,
+   "max": 1,
+   "start": 950528,
+   "count": 6952,
+   "scale": 3.336273900254782e-07,
+   "maxQuantError": 1.6678459029400433e-07
+  }
+ ],
+ "textures": {
+  "Dark_Skin_Color": [
+   1001,
+   1002,
+   1003,
+   1004
+  ],
+  "Iris_Color": [
+   1007
+  ],
+  "Iris_Height": [
+   1007
+  ],
+  "Iris_Roughness": [
+   1007
+  ],
+  "Light_Skin_Color": [
+   1001,
+   1002,
+   1003,
+   1004
+  ],
+  "Mouth_Color": [
+   1008
+  ],
+  "Mouth_Height": [
+   1008
+  ],
+  "Mouth_Roughness": [
+   1008
+  ],
+  "Sclera_Color": [
+   1005
+  ],
+  "Sclera_Height": [
+   1005
+  ],
+  "Skin_Age_Height": [
+   1001,
+   1002,
+   1003,
+   1004
+  ],
+  "Skin_Height": [
+   1001,
+   1002,
+   1003,
+   1004
+  ],
+  "Skin_Roughness": [
+   1001,
+   1002,
+   1003,
+   1004
+  ]
+ },
+ "sections": [
+  {
+   "name": "positions",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 37436,
+   "byteOffset": 0
+  },
+  {
+   "name": "renderSource",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 40868,
+   "byteOffset": 449232
+  },
+  {
+   "name": "renderUv",
+   "type": "float32",
+   "itemSize": 2,
+   "count": 40868,
+   "byteOffset": 612704
+  },
+  {
+   "name": "index",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 224532,
+   "byteOffset": 939648
+  },
+  {
+   "name": "corneaMask",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 1837776
+  },
+  {
+   "name": "morphIndex",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 957480,
+   "byteOffset": 1875212
+  },
+  {
+   "name": "morphDelta",
+   "type": "int16",
+   "itemSize": 3,
+   "count": 957480,
+   "byteOffset": 5705132
+  }
+ ]
+}
