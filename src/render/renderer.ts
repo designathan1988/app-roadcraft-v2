@@ -911,6 +911,13 @@ export function createSceneRenderer(
     // The sites that changed with the edit (a building the road razed) are
     // graded here too, in the slices, not in the edit's own frame.
     const sites = changedSites(net.doc);
+    // Every platform not known yet, one building a step: all of them in one
+    // step was a frame of 50 ms after the memory of them was dropped.
+    for (const b of net.doc.buildings.all()) {
+      if (padsKnown.has(b)) continue;
+      buildingPads([b], terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown);
+      yield;
+    }
     padsCache = net.doc.buildings.size > 0
       ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
       : null;
