@@ -267,13 +267,14 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   const time = { value: 0 };
   const uniforms = {
     uWaterTime: time,
-    // Three stops, light teal over the shelf to a clear blue to a deep
-    // blue-green: a painted ramp rather than one flat navy.
-    uShallow: { value: new Color(0x7cc7b4) },
-    uMid: { value: new Color(0x3b8c9c) },
-    uDeep: { value: new Color(0x235a72) },
-    uHorizon: { value: new Color(0xa8d8e2) },
-    uFoamTint: { value: new Color(0xf2f6ef) },
+    // Three stops after SimCity 4's water: a pale blue over the shelf, a soft
+    // periwinkle, a dense blue in the channel - a painted ramp, not navy, and
+    // not the icy cyan a single light blue gave.
+    uShallow: { value: new Color(0x9fc3d6) },
+    uMid: { value: new Color(0x6489c2) },
+    uDeep: { value: new Color(0x3a5c9a) },
+    uHorizon: { value: new Color(0xb9cbe6) },
+    uFoamTint: { value: new Color(0xe6eef2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
     uScaleB: { value: 1 / LAYER_B_TILE },
     uDriftA: { value: new Vector2(DRIFT_A[0], DRIFT_A[1]) },
@@ -380,7 +381,8 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // the band's inner edge; it never adds foam over open water.
          float waterFoamOuter = smoothstep(${(RIM_AT * 0.7).toFixed(2)}, ${(RIM_AT * 1.3).toFixed(2)}, waterDepthPx);
          float waterFoam = waterFoamOuter * smoothstep(0.34, 0.4, waterEdge + (waterLace - 0.6) * 0.22);
-         waterFoam = clamp(waterFoam * 0.9, 0.0, 1.0);
+         // A hint of a wash line, not a white outline drawn round the water.
+         waterFoam = clamp(waterFoam * 0.4, 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
          // The first shallow stretch reveals the actual bed. Starting at
