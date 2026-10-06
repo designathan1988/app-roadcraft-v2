@@ -1,5 +1,6 @@
 import { pointInPolygon } from '@core/polygon';
-import { localDirToWorld, localToWorld, solidFootprints, worldToLocal } from '@world/buildings/geometry';
+import { buildingBounds, localDirToWorld, localToWorld, solidFootprints, worldToLocal } from '@world/buildings/geometry';
+import { Digest } from '@core/digest';
 import { type LotGrid, buildLotGrid, wayOut } from './lotNav';
 import type { Building, BuildingId } from '@world/buildings/types';
 import type { Lanelet, LaneletId } from '@world/lanelets';
@@ -131,11 +132,51 @@ function lanesNear(w: SimWorld, x: number, y: number, reach: number): Lanelet[] 
   return [...picked].sort((a, b) => a - b).map((i) => grid.lanes[i]!);
 }
 
+/**
+ * Each building's bays as last worked out, with what they were worked out
+ * from: its record, the lanes within reach (their lines and whether they are
+ * ghosts) and the walls within reach. A road edit worked out the exits and
+ * aisles of every lot in town again; a lot whose surroundings are the same
+ * keeps its bays (docs/performance.md #15).
+ */
+const LOT_BAYS = new WeakMap<SimWorld, Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>>();
+/** How far a lot's bays read lanes and walls (`LANE_REACH`, the exits' reach), with a margin. */
+const LOT_READS = LANE_REACH + m(12);
+
 function workOutBays(w: SimWorld): Bay[] {
   const out: Bay[] = [];
   const walls = wallsOf(w);
   const navCache = new Map<object, { exits: LotExit[]; grid: LotGrid }>();
+  const known = LOT_BAYS.get(w) ?? new Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>();
+  const kept = new Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>();
+  LOT_BAYS.set(w, kept);
   for (const b of w.doc.buildings.all()) {
+    if (!(b.elements ?? []).some((el) => el.kind === 'parking')) continue;
+    const box = buildingBounds(b, LOT_READS);
+    const cx = (box.minX + box.maxX) / 2, cy = (box.minY + box.maxY) / 2;
+    const digest = new Digest();
+    for (const lane of lanesNear(w, cx, cy, Math.hypot(box.maxX - box.minX, box.maxY - box.minY) / 2)) {
+      digest.addText(lane.id).add(lane.length).add(w.rt(lane.id).ghost ? 1 : 0).addAll(lane.centre.xy);
+    }
+    for (const wall of wallsInBox(walls, box.minX, box.minY, box.maxX, box.maxY)) {
+      digest.add(wall.building);
+      for (const q of wall.ring) digest.add(q.x).add(q.y);
+    }
+    const key = digest.value();
+    const was = known.get(b.id);
+    if (was && was.ref === b && was.key === key) {
+      for (const bay of was.bays) out.push({ ...bay, id: out.length });
+      kept.set(b.id, was);
+      continue;
+    }
+    const first = out.length;
+    bayRows(b);
+    kept.set(b.id, { ref: b, key, bays: out.slice(first) });
+  }
+  out.push(...kerbBays(w, out.length));
+  return out;
+
+  function bayRows(b: Building): void {
     for (const el of b.elements ?? []) {
       if (el.kind !== 'parking') continue;
       const stalls = Math.max(1, Math.floor(el.w / STALL));
@@ -200,8 +241,6 @@ function workOutBays(w: SimWorld): Bay[] {
       }
     }
   }
-  out.push(...kerbBays(w, out.length));
-  return out;
 }
 
 /** Ahead of a kerb bay, the place on the lane a car stops at to back in, and leaves for. */
