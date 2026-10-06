@@ -44,13 +44,13 @@ import { PlayWorld } from './play';
  */
 
 /** Most people on foot at once, and cars driving, and the cars driving when zoomed out. */
-export const MAX_WALKERS = 90;
-export const MAX_DRIVERS = 70;
-const MAX_DRIVERS_FAR = 45;
+export const MAX_WALKERS = 260;
+export const MAX_DRIVERS = 180;
+const MAX_DRIVERS_FAR = 110;
 /** Seconds between two looks at the budget. */
 const LOOK_EVERY = 0.25;
 /** Most made in one look: the population fills over a second or two. */
-const MAKE_PER_LOOK = 4;
+const MAKE_PER_LOOK = 8;
 
 /** What kind of place the view is on: shares of each, from the buildings round it. */
 interface Mix { readonly home: number; readonly shop: number; readonly work: number; readonly civic: number }
@@ -61,16 +61,21 @@ function busy(kind: keyof Mix, hour: number): number {
     const d = ((hour - at + 36) % 24) - 12;
     return Math.exp(-(d * d) / (2 * width * width));
   };
+  // A street is never empty by day: the peaks on a floor of half (a quarter by night).
+  const day = 0.25 + 0.25 * bump(13, 4.5);
   switch (kind) {
-    case 'home': return 0.12 + 0.6 * bump(8, 1.3) + 0.35 * bump(13, 3) + 0.7 * bump(18.5, 2);
-    case 'shop': return 0.06 + 0.45 * bump(9, 1.5) + 0.9 * bump(13, 2.5) + 0.8 * bump(18, 2.5);
-    case 'work': return 0.04 + 0.75 * bump(7.5, 1) + 0.35 * bump(12.5, 1.5) + 0.7 * bump(17.5, 1.2);
-    case 'civic': return 0.05 + 0.7 * bump(11, 3) + 0.5 * bump(16, 2);
+    case 'home': return Math.min(1, day + 0.5 * bump(8, 1.3) + 0.3 * bump(13, 3) + 0.6 * bump(18.5, 2));
+    case 'shop': return Math.min(1, day + 0.35 * bump(9, 1.5) + 0.6 * bump(13, 2.5) + 0.6 * bump(18, 2.5));
+    case 'work': return Math.min(1, day + 0.6 * bump(7.5, 1) + 0.3 * bump(12.5, 1.5) + 0.6 * bump(17.5, 1.2));
+    case 'civic': return Math.min(1, day + 0.5 * bump(11, 3) + 0.4 * bump(16, 2));
   }
 }
-/** People per 100 m of street at full bustle, and cars. */
-const PEOPLE: Mix = { home: 2.2, shop: 6.5, work: 1.6, civic: 4 };
-const CARS: Mix = { home: 1.1, shop: 2, work: 1.6, civic: 1.4 };
+/**
+ * People per 100 m of street at full bustle, and cars: a shopping street as a
+ * GTA street is, a body every few metres of pavement; a residential one quieter.
+ */
+const PEOPLE: Mix = { home: 7, shop: 24, work: 9, civic: 15 };
+const CARS: Mix = { home: 2.6, shop: 6, work: 4.8, civic: 3.6 };
 /** Share of the bays with a car in them. */
 const PARKED = 0.62;
 
@@ -133,8 +138,8 @@ export class AmbientWorld {
    * keeps its population ~100 m round the player whatever the camera sees,
    * so a close view still has a street's worth of life round it, coming in.
    */
-  private static readonly LIVE_PEOPLE = m(120);
-  private static readonly LIVE_CARS = m(170);
+  private static readonly LIVE_PEOPLE = m(150);
+  private static readonly LIVE_CARS = m(200);
 
   /** Walkers and drivers this world made, for the status bar. */
   counts(): { walkers: number; drivers: number; parked: number } {
