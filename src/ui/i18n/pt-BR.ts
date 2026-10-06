@@ -1945,7 +1945,7 @@ export const PT_BR: Dictionary = {
   'play.weapon.pistol': 'Pistola',
   'play.view.first': '1ª pessoa',
   'play.view.third': '3ª pessoa',
-  'play.keys.foot': 'Mouse olhar · W A S D andar · Shift correr · botão direito mirar · clique bater/atirar · roda ou Tab trocar arma · C olhar para trás · F entrar no carro ou prédio · G embarcar · E conversar · V câmera · Esc soltar o mouse · P sair',
+  'play.keys.foot': 'Mouse olhar · W A S D andar · Shift + W correr · botão direito mirar · clique bater/atirar · roda ou Tab trocar arma · C olhar para trás · F entrar no carro ou prédio · G embarcar · E conversar · V câmera · Esc soltar o mouse · P sair',
   'play.keys.car': 'W acelerar · S frear e ré · A/D volante · Espaço freio de mão · Mouse olhar · C olhar para trás · F sair · V câmera · P sair',
   'play.keys.inside': 'F sair do prédio · P sair',
   'play.msg.start': 'Você está no cenário. Clique para controlar a câmera com o mouse.',

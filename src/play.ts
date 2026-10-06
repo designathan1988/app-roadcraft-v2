@@ -93,6 +93,10 @@ export function createPlay(host: PlayHost): Play {
   cross.style.cssText = 'position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;z-index:40;display:none;'
     + 'pointer-events:none;border:2px solid rgba(255,255,255,.8);border-radius:50%';
   host.root.appendChild(cross);
+  // No cursor anywhere over the page while playing (the overlay canvas lies over the game's).
+  const cursorless = document.createElement('style');
+  cursorless.textContent = '.playing-cursorless, .playing-cursorless * { cursor: none !important; }';
+  document.head.appendChild(cursorless);
 
   const showHud = (): void => {
     if (!active) { hud.style.display = 'none'; cross.style.display = 'none'; return; }
@@ -119,6 +123,32 @@ export function createPlay(host: PlayHost): Play {
 
   // ------------------------------------------------------------ input
   const playing = (): boolean => active;
+  /**
+   * The mouse captured and its cursor gone, as in GTA: asked for when play
+   * starts (the J key or the Play button, the player's own gesture) and again
+   * on any click while it is not held. Refused once (an embedded browser), it
+   * is still asked for on the next click.
+   */
+  const capture = (): void => {
+    if (document.pointerLockElement === canvas) return;
+    try {
+      void Promise.resolve(canvas.requestPointerLock?.()).catch(() => { lockRefused = true; });
+    } catch { lockRefused = true; }
+  };
+  /**
+   * A key by where it is on the keyboard (`KeyboardEvent.code`), not by the
+   * character it types: with Shift held, or on another layout, `key` was a
+   * capital or another symbol and the key stuck down.
+   */
+  const keyOf = (e: KeyboardEvent): string => {
+    const code = e.code;
+    if (code.startsWith('Key')) return code.slice(3).toLowerCase();
+    if (code.startsWith('Digit')) return code.slice(5);
+    if (code === 'ShiftLeft' || code === 'ShiftRight') return 'shift';
+    if (code === 'Space') return ' ';
+    if (code === 'ArrowUp' || code === 'ArrowDown' || code === 'ArrowLeft' || code === 'ArrowRight') return code.toLowerCase();
+    return e.key.toLowerCase();
+  };
   const onKeyDown = (e: KeyboardEvent): void => {
     if (!playing()) {
       if ((e.key === 'j' || e.key === 'J') && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
@@ -128,7 +158,7 @@ export function createPlay(host: PlayHost): Play {
       }
       return;
     }
-    const k = e.key.toLowerCase();
+    const k = keyOf(e);
     if (k === 'p') { api.toggle(); }
     else if (k === 'f') play.input.enter = true;
     else if (k === 'g') play.input.board = true;
@@ -149,7 +179,7 @@ export function createPlay(host: PlayHost): Play {
   };
   const onKeyUp = (e: KeyboardEvent): void => {
     if (!playing()) return;
-    keys.delete(e.key.toLowerCase());
+    keys.delete(keyOf(e));
     if (e.key === 'Shift') keys.delete('shift');
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -158,11 +188,13 @@ export function createPlay(host: PlayHost): Play {
     if (!playing() || e.target !== canvas) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    // The player's own click captures the mouse (that click does nothing else);
-    // where the capture is refused, clicks act at once.
-    if (!document.pointerLockElement && !lockRefused) {
-      void Promise.resolve(canvas.requestPointerLock?.()).catch(() => { lockRefused = true; });
-      return;
+    // The mouse freed (Esc), a click captures it again (that click does nothing
+    // else); where the capture is refused, clicks act at once.
+    if (document.pointerLockElement !== canvas) {
+      const refused = lockRefused;
+      lockRefused = false;
+      capture();
+      if (!refused) return;
     }
     if (e.button === 0) play.input.attack = true;
     if (e.button === 2) aiming = true;
@@ -190,6 +222,11 @@ export function createPlay(host: PlayHost): Play {
     e.preventDefault();
     e.stopImmediatePropagation();
   };
+  // Keys held when the window loses the focus are let go: they stuck down, and
+  // the player walked on by themselves.
+  const letGo = (): void => { keys.clear(); aiming = false; };
+  window.addEventListener('blur', letGo);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) letGo(); });
   window.addEventListener('keydown', onKeyDown, true);
   window.addEventListener('keyup', onKeyUp, true);
   window.addEventListener('pointerdown', onPointerDown, true);
@@ -299,6 +336,7 @@ export function createPlay(host: PlayHost): Play {
         active = false;
         play.stop(sim);
         keys.clear();
+        document.documentElement.classList.remove('playing-cursorless');
         if (document.pointerLockElement) document.exitPointerLock();
         scene.setChase(null);
         scene.setHiddenPerson(null);
@@ -316,8 +354,13 @@ export function createPlay(host: PlayHost): Play {
       pitch = 0.32;
       smoothEye = null;
       play.start(sim, at.x, at.y, yaw);
-      // The mouse is captured only by a click on the game, never by the key
-      // that starts it: a capture the player did not ask for holds their cursor.
+      // The mouse captured at once, its cursor gone (the player, 2026-10-06:
+      // "o cursor do mouse some e ao mover o mouse move a vista"); the J key
+      // and the Play button are the player's own gestures, which the browser
+      // asks for. Over the game the cursor is hidden whatever the browser allows.
+      lockRefused = false;
+      document.documentElement.classList.add('playing-cursorless');
+      capture();
       showHud();
       host.requestDraw();
     },

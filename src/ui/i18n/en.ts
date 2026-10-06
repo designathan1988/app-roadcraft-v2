@@ -1959,7 +1959,7 @@ export const EN: Dictionary = {
   'play.weapon.pistol': 'Pistol',
   'play.view.first': '1st person',
   'play.view.third': '3rd person',
-  'play.keys.foot': 'Mouse look · W A S D walk · Shift run · right button aim · click punch/shoot · wheel or Tab next weapon · C look behind · F get into a car or building · G board · E talk · V camera · Esc free the mouse · P stop',
+  'play.keys.foot': 'Mouse look · W A S D walk · Shift + W run · right button aim · click punch/shoot · wheel or Tab next weapon · C look behind · F get into a car or building · G board · E talk · V camera · Esc free the mouse · P stop',
   'play.keys.car': 'W throttle · S brake and reverse · A/D steer · Space handbrake · Mouse look · C look behind · F get out · V camera · P stop',
   'play.keys.inside': 'F go out · P stop',
   'play.msg.start': 'You are in the scenery. Click to steer the camera with the mouse.',
