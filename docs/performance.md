@@ -47,8 +47,8 @@ Cuidados ao ler os números:
 | 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **CORRIGIDO** (impressão pelo fecho de imports; recozido) |
 | 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **CORRIGIDO** (classes e penteados cozidos; só o rig da classe e o ajuste de roupa, ≤ 11 ms, ficam no jogo) |
 | 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **CORRIGIDO** (blocos 4×4 mantidos na placa) |
-| 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** |
-| 11 | Topologia de pedestres refeita no mapa inteiro | toda edição de via | `buildWalkways` 60–130 ms na vila (medido em Node) | **ABERTO** |
+| 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** (83% é a malha: altura, moldura e cor consultadas por vértice) |
+| 11 | Calçadas: buscas no mapa inteiro para cada ponto/porta | toda edição de via | `buildWalkways` 57 ms + grafo dos pedestres 62 ms na vila | **REDUZIDO** (28 + 45 ms, redes idênticas) |
 | 12 | Prédios: células remontadas depois de edição de via | edição de via perto de prédios | quadro de 285 ms (`assembleByCell`) | **ABERTO** (medir de novo depois de #1) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
 | 14 | Biblioteca de animações em cache fraco: descartada e decodificada de novo | pessoas novas depois de um tempo | 12,8 MB de base64 decodificados de novo | **CORRIGIDO** (cache permanente, ~10 MB) |
@@ -230,10 +230,22 @@ cada. Falta verificar se a solução de altura (`changedBlocks`) está marcando
 blocos além dos que a via realmente muda (o greide de uma rua se propagando) e
 onde o tempo de `buildTile` se concentra.
 
-## 11. Topologia de pedestres refeita no mapa inteiro — ABERTO
+## 11. Calçadas: buscas no mapa inteiro — REDUZIDO
 
-`sim`: `rebuildWalkTopology` → `rebindPeds` → `buildWalkways` reconstrói toda a
-rede de calçadas a cada edição de via (quadro de 113 ms na vila).
+Medido na vila, cache aquecido, depois de uma via curta (Node, um processo):
+
+- `world/walkways.ts` (rede dos moradores): cada ponto de cada esquina media a
+  distância até a borda externa de **toda** a calçada do mapa (um anel de
+  milhares de pedaços numa rede ligada) - 46 de 57 ms. Agora uma grade dos
+  pedaços (`NearestEdge`): 57 → 28 ms, rede idêntica (mesma impressão, 739 caminhos).
+- `sim/peds/sidewalk.ts` (grafo dos pedestres): cada porta de cada prédio media
+  todas as calçadas do mapa e descartava as além de 30 m; e as fachadas de cada
+  prédio eram recalculadas a cada via. Grade de calçadas por alcance e fachadas
+  guardadas por registro de prédio: 62 → 45 ms, grafo idêntico (2086 arestas).
+- O cache de esquinas funciona: numa edição só 3 de 159 esquinas são refeitas.
+
+Restante: as portas ainda são todas religadas a cada via (≈ 40 ms); o certo é
+religar só as portas perto do que mudou (como a #1).
 
 ## 12. Prédios remontados por célula depois de edição — ABERTO
 
