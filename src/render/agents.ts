@@ -775,6 +775,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         procSpare.push(person);
       }, () => {});
     }
+    // And the rest of the classes while the map is still opening, before the
+    // first walkers come in (`warmClasses`).
+    void procedural.warmClasses().catch(() => {});
   }
   const procBuildNext = (): void => {
     if (procBuilding || !procWaiting.length) return;

@@ -481,6 +481,13 @@ export interface ProceduralCrowd {
   readonly people: readonly ProceduralPerson[];
   /** Drops an item and its pieces, so it is built again on next use (a hairstyle being edited). */
   forget(name: string): void;
+  /**
+   * Every class's rig made ahead, one at a time with a pause between: each is
+   * a single stretch of 50-100 ms (`createPersonRig`) that nothing can be
+   * cooked for, and made when the first person of the class came in, it was
+   * a stall in play (docs/performance.md #8).
+   */
+  warmClasses(): Promise<void>;
   /** Every class and hairstyle built here, packed for the cook (`proceduralCook.ts`, `scripts/cook-people.mjs`). */
   cook(): Promise<Map<string, ArrayBuffer>>;
 }
@@ -1211,6 +1218,14 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         await breathe();
       }
       return out;
+    },
+    async warmClasses() {
+      for (const sex of ['female', 'male'] as const) {
+        for (const band of ['adult', 'young', 'senior', 'child'] as const) {
+          await classFor(sex, band);
+          await new Promise<void>((done) => setTimeout(done, 400));
+        }
+      }
     },
     forget(name) {
       for (const [key, piece] of readyStrand) if (key.endsWith(`/${name}`)) {
