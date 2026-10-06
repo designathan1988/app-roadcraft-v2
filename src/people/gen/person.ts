@@ -1,4 +1,5 @@
 import type { Rng } from '@core/rng';
+import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, METALS, NO_ACCESSORIES, type Accessories } from './accessories';
 import { GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot, type Outfit } from './clothes';
 import { HAIR_COLOURS, type BrowParams, type HairParams, type LashParams } from './hair';
 import { sexAxis } from './sampleBody';
@@ -54,6 +55,7 @@ export interface PersonParams {
   readonly lashes: LashParams;
   readonly outfit: Outfit;
   readonly makeup: Makeup;
+  readonly accessories: Accessories;
   /** Fixes the person's strand and stubble randomness. */
   readonly seed: number;
 }
@@ -122,6 +124,7 @@ export function completePerson(p: PersonParams, rng: Rng): PersonParams {
     lashes: p.lashes ?? { length: female ? 1.15 : 0.9, curl: 0.6, density: 1, colour: 0x161010 },
     outfit: p.outfit ?? randomOutfit(rng, female),
     makeup: p.makeup ?? { lipColour: LIP_COLOURS[0]!, lipAmount: 0, stubble: 0 },
+    accessories: p.accessories ?? NO_ACCESSORIES,
     seed: p.seed ?? Math.floor(rng.float() * 1e9),
   };
 }
@@ -234,6 +237,10 @@ export function randomPerson(base: HumanBase, rng: Rng, years?: number): PersonP
     lashes: { length: sex ? rng.range(0.8, 1) : rng.range(1, 1.35), curl: rng.range(0.4, 0.9), density: rng.range(0.8, 1.2), colour: 0x141010 },
     outfit: randomOutfit(rng, !sex),
     makeup: { lipColour: rng.pick(LIP_COLOURS), lipAmount: !sex && age > 15 && rng.bool(0.4) ? rng.range(0.3, 0.8) : 0, stubble: sex && age > 17 && rng.bool(0.45) ? rng.range(0.3, 1) : 0 },
+    accessories: {
+      glasses: rng.bool(age > 40 ? 0.45 : 0.15) ? { style: rng.pick(GLASSES_STYLES.slice(1)), colour: rng.pick(FRAME_COLOURS), tint: 0xffffff, tintAmount: 0 } : NO_ACCESSORIES.glasses,
+      earrings: !sex && age > 6 && rng.bool(0.5) ? { style: rng.pick(EARRING_STYLES.slice(1)), colour: rng.pick(METALS) } : NO_ACCESSORIES.earrings,
+    },
     seed: Math.floor(rng.float() * 1e9),
     body: Array.from({ length: 20 }, () => rng.normal(0, 0.8)),
     head: Array.from({ length: 20 }, () => rng.normal(0, 0.7)),

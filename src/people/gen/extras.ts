@@ -159,3 +159,50 @@ export function beardMask(ex: HumanExtras, base: HumanBase): Uint8Array {
   BEARDS.set(ex, out);
   return out;
 }
+
+/** Points of the face accessories hang on, in the body's frame: eyes, ear lobes, ear tops (left then right). */
+export interface FaceAnchors {
+  readonly eyes: readonly [number[], number[]];
+  readonly lobes: readonly [number[], number[]];
+  readonly earTops: readonly [number[], number[]];
+}
+
+const IRIS_VERTS = new WeakMap<HumanBase, Uint32Array>();
+
+export function faceAnchors(ex: HumanExtras, base: HumanBase, shape: Float32Array): FaceAnchors {
+  let iris = IRIS_VERTS.get(base);
+  if (!iris) {
+    const set = new Set<number>();
+    for (const g of base.meta.groups) if (g.material === 'Iris') for (let i = g.start; i < g.start + g.count; i++) set.add(base.renderSource[base.index[i]!]!);
+    iris = Uint32Array.from(set);
+    IRIS_VERTS.set(base, iris);
+  }
+  const eye = (sign: number): number[] => {
+    let x = 0, y = 0, z = 0, n = 0;
+    for (const v of iris) if (Math.sign(shape[v * 3]!) === sign) { x += shape[v * 3]!; y += shape[v * 3 + 1]!; z += shape[v * 3 + 2]!; n++; }
+    n ||= 1;
+    return [x / n, y / n, z / n];
+  };
+  const L = eye(1), R = eye(-1);
+  const ez = (L[2]! + R[2]!) / 2, ey = (L[1]! + R[1]!) / 2;
+  // The ears: the head's widest skin behind the eyes, between brow and jaw height.
+  const ear = (sign: number): { lobe: number[]; top: number[] } => {
+    let widest = 0;
+    for (let v = 0; v < ex.region.length; v++) {
+      if (ex.region[v] !== REGION.head) continue;
+      const x = shape[v * 3]! * sign, y = shape[v * 3 + 1]!, z = shape[v * 3 + 2]!;
+      if (x > widest && y > ey - 0.07 && y < ey + 0.02 && z < ez - 0.05) widest = x;
+    }
+    let lobe = [0, Infinity, 0], top = [0, -Infinity, 0];
+    for (let v = 0; v < ex.region.length; v++) {
+      if (ex.region[v] !== REGION.head) continue;
+      const x = shape[v * 3]! * sign, y = shape[v * 3 + 1]!, z = shape[v * 3 + 2]!;
+      if (x < widest - 0.012 || z > ez - 0.05 || z < ez - 0.13 || y < ey - 0.085 || y > ey + 0.04) continue;
+      if (y < lobe[1]!) lobe = [shape[v * 3]!, y, z];
+      if (y > top[1]!) top = [shape[v * 3]!, y, z];
+    }
+    return { lobe, top };
+  };
+  const el = ear(1), er = ear(-1);
+  return { eyes: [L, R], lobes: [el.lobe, er.lobe], earTops: [el.top, er.top] };
+}

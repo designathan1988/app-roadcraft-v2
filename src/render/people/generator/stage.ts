@@ -8,7 +8,10 @@ import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
 import type { Focus } from '@people/gen/catalog';
 import type { GarmentMesh } from '@people/gen/clothes';
 import type { StrandSet } from '@people/gen/hair';
+import type { EarringParams, GlassesParams } from '@people/gen/accessories';
+import { earrings, glasses } from './accessories';
 import { garmentObject } from './fabric';
+import type { FaceAnchors } from '@people/gen/extras';
 import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type SkinUniforms, type TextureSet } from './humanMesh';
 import { strandMaterial, strandMesh, type StrandLook } from './strands';
 
@@ -231,6 +234,19 @@ export class CreatorStage {
     geo.setIndex(new BufferAttribute(cap.index, 1));
     const mat = new MeshStandardMaterial({ color: colour, roughness: 0.75, vertexColors: true, alphaToCoverage: true });
     this.setLayer('cap', [new Mesh(geo, mat)]);
+  }
+
+  /** Glasses and earrings, placed on this face. */
+  accessories(g: GlassesParams, e: EarringParams, a: FaceAnchors): void {
+    const v = (p: readonly number[]): Vector3 => new Vector3(p[0], p[1], p[2]);
+    const anchors = { eyes: [v(a.eyes[0]), v(a.eyes[1])] as const, lobes: [v(a.lobes[0]), v(a.lobes[1])] as const, earTops: [v(a.earTops[0]), v(a.earTops[1])] as const };
+    const meshes: Mesh[] = [];
+    for (const group of [glasses(g, anchors), earrings(e, anchors)]) {
+      if (!group) continue;
+      group.updateMatrixWorld(true);
+      for (const child of [...group.children]) meshes.push(child as Mesh);
+    }
+    this.setLayer('accessories', meshes);
   }
 
   clothes(garments: readonly GarmentMesh[]): void {

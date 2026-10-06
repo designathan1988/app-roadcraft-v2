@@ -15,6 +15,7 @@ const PATHS: Readonly<Record<string, string>> = {
   brow: '<path d="M3 13c3-4 7-5 11-4 3 .6 5 2 7 3"/><path d="M6 17h.01M10 16.5h.01M14 16.5h.01"/>',
   lips: '<path d="M3 12c3-3 5-4 7-3l2 1 2-1c2-1 4 0 7 3-3 4-6 5-9 5s-6-1-9-5z"/><path d="M3 12h18"/>',
   shirt: '<path d="M8 4 4 7l2 4 2-1v10h8V10l2 1 2-4-4-3c-.5 1.5-2 2.5-4 2.5S8.5 5.5 8 4z"/>',
+  glasses: '<circle cx="7" cy="14" r="3.5"/><circle cx="17" cy="14" r="3.5"/><path d="M10.5 14h3M3.5 13 2 9M20.5 13 22 9"/>',
   dice: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h.01M15 15h.01M15 9h.01M9 15h.01M12 12h.01"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',

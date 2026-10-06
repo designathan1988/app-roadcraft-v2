@@ -2,6 +2,7 @@ import { CATALOG, EXPRESSIONS, type CatalogCategory, type CatalogPage, type Focu
 import type { HumanBase } from '@people/gen/humanBase';
 import { FABRICS, GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
 import { HAIR_COLOURS, HAIR_STYLES } from '@people/gen/hair';
+import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, LENS_TINTS, METALS } from '@people/gen/accessories';
 import { ANCESTRIES, BROW_STYLES, CLOTH_COLOURS, IRIS_COLOURS, LIP_COLOURS, darker, typical, type PersonParams } from '@people/gen/person';
 import { applyTranslations, t } from '../i18n';
 import { icon } from './icons';
@@ -251,6 +252,7 @@ export class Creator {
       case 'eyeColour': this.eyeColour(body); break;
       case 'lashes': this.lashes(body); break;
       case 'makeup': this.makeup(body); break;
+      case 'accessories': this.accessories(body); break;
       case 'top': case 'bottom': case 'shoes': this.garment(body, this.page.id as GarmentSlot); break;
       case 'expression': this.expression(body); break;
       default: for (const m of this.page.morphs) this.morphRow(body, m);
@@ -471,6 +473,22 @@ export class Creator {
     this.slider(host, t('hgen.intensity'), () => [0, 1, 0.01], (p) => p.makeup.lipAmount, (p, v) => ({ ...p, makeup: { ...p.makeup, lipAmount: v } }), (v) => `${Math.round(v * 100)}`, 0);
     this.heading(host, 'hgen.beard');
     this.slider(host, t('hgen.stubble'), () => [0, 1, 0.01], (p) => p.makeup.stubble, (p, v) => ({ ...p, makeup: { ...p.makeup, stubble: v } }), (v) => `${Math.round(v * 100)}`, 0);
+  }
+
+  private accessories(host: HTMLElement): void {
+    const gl = (p: PersonParams, patch: object): PersonParams => ({ ...p, accessories: { ...p.accessories, glasses: { ...p.accessories.glasses, ...patch } } });
+    const er = (p: PersonParams, patch: object): PersonParams => ({ ...p, accessories: { ...p.accessories, earrings: { ...p.accessories.earrings, ...patch } } });
+    this.heading(host, 'hgen.glasses');
+    this.chips(host, GLASSES_STYLES.map((s) => [s, t(`hgen.gl.${s}`)] as const), (p) => p.accessories.glasses.style, (p, v) => gl(p, { style: v }));
+    if (this.person.accessories.glasses.style !== 'none') {
+      this.colours(host, FRAME_COLOURS, (p) => p.accessories.glasses.colour, (p, c) => gl(p, { colour: c }));
+      this.heading(host, 'hgen.lenses');
+      this.colours(host, LENS_TINTS, (p) => p.accessories.glasses.tint, (p, c) => gl(p, { tint: c, tintAmount: c === 0xffffff ? 0 : Math.max(0.5, p.accessories.glasses.tintAmount) }));
+      this.slider(host, t('hgen.tint'), () => [0, 1, 0.01], (p) => p.accessories.glasses.tintAmount, (p, v) => gl(p, { tintAmount: v }), (v) => `${Math.round(v * 100)}`, 0);
+    }
+    this.heading(host, 'hgen.earrings');
+    this.chips(host, EARRING_STYLES.map((s) => [s, t(`hgen.er.${s}`)] as const), (p) => p.accessories.earrings.style, (p, v) => er(p, { style: v }));
+    if (this.person.accessories.earrings.style !== 'none') this.colours(host, METALS, (p) => p.accessories.earrings.colour, (p, c) => er(p, { colour: c }));
   }
 
   private garment(host: HTMLElement, slot: GarmentSlot): void {

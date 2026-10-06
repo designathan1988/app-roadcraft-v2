@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { Rng } from '@core/rng';
 import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
-import { HumanExtras, REGION, beardMask, type ExtrasMeta } from '@people/gen/extras';
+import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { GARMENT_TYPES, bodyFor, dressBody, garmentDefaults, hairCap, type GarmentSlot } from '@people/gen/clothes';
 import { HAIR_STYLES, browStrands, hairStrands, lashStrands } from '@people/gen/hair';
 import { BROW_STYLES, randomPerson, resolvePerson } from '@people/gen/person';
@@ -61,5 +61,20 @@ describe('clothes', () => {
       expect(m.index.length).toBeGreaterThan(300);
       expect(m.positions.every(Number.isFinite)).toBe(true);
     }
+  });
+});
+
+describe('accessories', () => {
+  it('glasses and earrings find both eyes and both ear lobes, mirrored', () => {
+    const a = faceAnchors(ex, base, shape);
+    const [l, r] = a.eyes, [ll, rl] = a.lobes;
+    expect(l[0]!).toBeGreaterThan(0.02);
+    expect(r[0]!).toBeLessThan(-0.02);
+    expect(Math.abs(l[0]! + r[0]!)).toBeLessThan(0.01);
+    expect(Math.abs(ll[1]! - rl[1]!)).toBeLessThan(0.015);
+    // Lobes below the eyes, behind them, out at the sides of the head.
+    expect(ll[1]!).toBeLessThan(l[1]!);
+    expect(ll[2]!).toBeLessThan(l[2]! - 0.04);
+    expect(ll[0]!).toBeGreaterThan(l[0]! + 0.03);
   });
 });

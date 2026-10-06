@@ -1,7 +1,7 @@
 import { Rng } from '@core/rng';
 import type { CatalogPage } from '@people/gen/catalog';
 import { bodyFor, dressBody, hairCap } from '@people/gen/clothes';
-import { HumanExtras, beardMask, type ExtrasMeta } from '@people/gen/extras';
+import { HumanExtras, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
 import { randomName } from '@people/gen/names';
 import {
@@ -142,6 +142,7 @@ function draw(p: PersonParams, live: boolean): void {
   times['face'] = Math.round(performance.now() - t); t = performance.now();
   if (stale('clothes', p.outfit) || stale('clothesSex', p.sex < 0.5)) stage.clothes(dressBody(body(), p.outfit, p.sex < 0.5));
   times['clothes'] = Math.round(performance.now() - t);
+  if (stale('accessories', p.accessories)) stage.accessories(p.accessories.glasses, p.accessories.earrings, faceAnchors(ex, b.base, current.shape));
   const scalp = h.style === 'none' ? 0 : h.style === 'buzz' ? 0.75 : 0.9 * Math.min(1, h.density);
   stage.skin({
     undertone: p.undertone, lipColour: p.makeup.lipColour, lipAmount: p.makeup.lipAmount,

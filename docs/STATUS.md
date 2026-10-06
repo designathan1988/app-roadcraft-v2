@@ -353,8 +353,10 @@ and they have seen it.
   dresses, plus CharMorph's shirt and trousers bound to the skin, each with
   colour, second colour, pattern (8, in the shader), fabric (5) and cut
   sliders (`people/gen/clothes.ts`, `render/people/generator/fabric.ts`);
-  lipstick, stubble, scalp tint and undertone in the skin shader. Not yet:
-  pose and animation, hats and accessories, cloth simulation (skirts are
+  lipstick, stubble, scalp tint and undertone in the skin shader; glasses (4
+  frames, frame colour, lens tint) and earrings (studs, hoops, metal) placed
+  on each face (`people/gen/accessories.ts`). Not yet:
+  pose and animation, hats, cloth simulation (skirts are
   lofted, not draped).
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
