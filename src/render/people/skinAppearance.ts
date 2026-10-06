@@ -1,4 +1,4 @@
-import { CanvasTexture, Color, ShaderChunk, SRGBColorSpace, TextureLoader, type BufferGeometry, type MeshStandardMaterial, type Texture } from 'three';
+import { CanvasTexture, Color, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, type BufferGeometry, type MeshStandardMaterial } from 'three';
 import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
@@ -61,10 +61,30 @@ export function skinChoice(person: PersonSpec): { name: string; url: string; eye
   return { name: skin.name, url, eyeFile: eyeTextureFor(person.look.eyes), tint };
 }
 
+/**
+ * A picture decoded off the main thread (`createImageBitmap`), as three's
+ * `ImageBitmapLoader` does: an <img> is decoded when it is first sent to the
+ * graphics card, in the frame, 11-14 ms a skin (docs/performance.md #31). A
+ * bitmap ignores `flipY`, so the flip is made while decoding.
+ */
+async function decodedTexture(url: string, flipY: boolean): Promise<Texture> {
+  if (typeof createImageBitmap !== 'function') {
+    const map = await new TextureLoader().loadAsync(url);
+    map.flipY = flipY;
+    return map;
+  }
+  const blob = await (await fetch(url)).blob();
+  const bitmap = await createImageBitmap(blob, { imageOrientation: flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  const map = new Texture(bitmap);
+  map.flipY = false;
+  map.needsUpdate = true;
+  return map;
+}
+
 /** A skin texture by `skinChoice` name, shared while anyone holds it. */
 function skinLeaseOf(name: string, url: string): TextureLease {
   return acquireTexture(SKINS, name, async () => {
-    const map = await new TextureLoader().loadAsync(url);
+    const map = await decodedTexture(url, true);
     map.colorSpace = SRGBColorSpace;
     return map;
   });
@@ -73,9 +93,8 @@ function skinLeaseOf(name: string, url: string): TextureLease {
 /** An eye or card texture from the proxies folder, shared while anyone holds it. */
 function cardLeaseOf(file: string): TextureLease {
   return acquireTexture(CARDS, file, async () => {
-    const map = await new TextureLoader().loadAsync(proxyUrl(file));
+    const map = await decodedTexture(proxyUrl(file), false);
     map.colorSpace = SRGBColorSpace;
-    map.flipY = false;
     return map;
   });
 }

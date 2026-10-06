@@ -72,7 +72,7 @@ import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, 
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
-import { GRASS_NEAR_REACH, createGrass } from './grassField';
+import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
 import { Indoors } from './indoors';
@@ -411,14 +411,26 @@ export function createSceneRenderer(
   const terrain: TerrainSurface = createTerrainSurface(anisotropy);
   // The grass field round the camera (`grass.ts`): its ground heights and the
   // mask that keeps it off paving and buildings, rebuilt when those change.
-  const grass = createGrass(quality);
+  // One mask for both rings, drawn again only where the roads or the buildings changed (`grassField.ts`).
+  const grassMask = createGrassMask();
+  const grass = createGrass(quality, undefined, grassMask);
   // The far ring: three times the spacing, out to three times the reach, where the near one fades.
-  const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 });
+  const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 }, grassMask);
   scene.add(grass.mesh, grassFar.mesh);
   if (import.meta.env.DEV) (window as unknown as { __grass?: unknown; __scene?: unknown }).__grass = grass;
   if (import.meta.env.DEV) Object.assign(window, { __scene: scene, __gl: renderer });
   let grassGroundFor = '';
   let grassMaskFor = '';
+  /** Where the grass mask must be drawn again: a rectangle, the whole map, or nowhere. */
+  let grassDirty: MaskRect | 'all' | null = 'all';
+  const markGrass = (box: MaskRect | null): void => {
+    if (box === null) { grassDirty = 'all'; return; }
+    if (grassDirty === 'all') return;
+    grassDirty = grassDirty === null ? box
+      : [Math.min(grassDirty[0], box[0]), Math.min(grassDirty[1], box[1]), Math.max(grassDirty[2], box[2]), Math.max(grassDirty[3], box[3])];
+  };
+  /** Each building footprint and lot the mask was drawn with, by key: what it was, and its box. */
+  const grassBlockers = new Map<string, { ref: unknown; box: MaskRect }>();
   let grassCheckedAt = 0;
   const GRASS_SAMPLES = 384;
   const keepGrassInputs = (net: Network): void => {
@@ -440,11 +452,27 @@ export function createSceneRenderer(
     if (maskKey !== grassMaskFor) {
       grassMaskFor = maskKey;
       const rings: { x: number; y: number }[][] = [];
-      for (const b of net.doc.buildings.all()) for (const ring of solidFootprints(b)) rings.push(ring);
-      for (const lot of net.doc.lots) if (lot.building !== undefined) rings.push([...lot.corners]);
+      // What blocks grass, by building and by lot: the box of each one that
+      // came, went or changed joins the area drawn again.
+      const seen = new Set<string>();
+      const blocker = (key: string, ref: unknown, ring: readonly { x: number; y: number }[]): void => {
+        rings.push(ring as { x: number; y: number }[]);
+        seen.add(key);
+        const was = grassBlockers.get(key);
+        if (was?.ref === ref) return;
+        let box: MaskRect = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const p of ring) box = [Math.min(box[0], p.x), Math.min(box[1], p.y), Math.max(box[2], p.x), Math.max(box[3], p.y)];
+        if (was) markGrass(was.box);
+        markGrass(box);
+        grassBlockers.set(key, { ref, box });
+      };
+      for (const b of net.doc.buildings.all()) solidFootprints(b).forEach((ring, i) => blocker(`b${b.id}:${i}`, b, ring));
+      for (const lot of net.doc.lots) if (lot.building !== undefined) blocker(`l${lot.id}`, `${lot.building}:${lot.corners.map((q) => `${q.x},${q.y}`).join(';')}`, [...lot.corners]);
+      for (const [key, was] of grassBlockers) if (!seen.has(key)) { markGrass(was.box); grassBlockers.delete(key); }
       const roads = net.doc.segments.size ? [roadSurfacesOf(net).sidewalk] : [];
-      grass.setBlocked(roads, rings, TERRAIN_HALF * 2);
-      grassFar.setBlocked(roads, rings, TERRAIN_HALF * 2);
+      const rect = grassDirty === 'all' ? null : grassDirty;
+      if (grassDirty !== null) grassMask.draw(roads, rings, TERRAIN_HALF * 2, rect);
+      grassDirty = null;
     }
   };
   scene.add(...terrain.meshes);
@@ -1012,6 +1040,9 @@ export function createSceneRenderer(
     const blocks = changed && pendingBlocks ? [...pendingBlocks, ...changed] : null;
     // The roads' own heights (the footway, the carriageway) moved where the solve did.
     groundChanges.mark(changed);
+    // The footways moved where the solve did: the grass mask is drawn again there.
+    if (changed === null) markGrass(null);
+    else for (const block of changed) markGrass(block);
     const local = blocks !== null && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25;
     pendingBlocks = local ? blocks : null;
     const steps = worldSteps(net, local ? blocks : null, started);

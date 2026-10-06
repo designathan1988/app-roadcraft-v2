@@ -1,5 +1,4 @@
 import {
-  CanvasTexture,
   ClampToEdgeWrapping,
   DataTexture,
   DoubleSide,
@@ -11,6 +10,7 @@ import {
   MeshStandardMaterial,
   RedFormat,
   type Texture,
+  UnsignedByteType,
 } from 'three';
 import type { MultiPoly } from '@core/clipper';
 import { m } from '@world/units';
@@ -45,7 +45,7 @@ export interface Grass {
   /** The ground's heights over the plate, `side` x `side` samples, rows from the south edge (y = -size/2) north. */
   setHeights(heights: Float32Array, side: number, size: number): void;
   /** Where blades may not grow: road surfaces and footprints, in world x/y. */
-  setBlocked(polys: readonly MultiPoly[], rings: readonly (readonly { x: number; y: number }[])[], size: number): void;
+
   /** Each frame: where the field stands (three's x and z), whether it is drawn at all, the clock. */
   update(x: number, z: number, visible: boolean, seconds: number): void;
   dispose(): void;
@@ -73,7 +73,101 @@ export interface GrassRing {
   readonly inner: number;
 }
 
-export function createGrass(quality: { readonly grassBlades: number }, ring: GrassRing = { scale: 1, inner: 0 }): Grass {
+/** A rectangle of the map, [minX, minY, maxX, maxY], world units. */
+export type MaskRect = readonly [number, number, number, number];
+
+/**
+ * Where grass may grow: white open ground, black under the footways, the
+ * buildings and their lots. One for both rings of grass, one channel, and
+ * drawn again only where the roads or the buildings changed. It was a
+ * 2048-square RGBA canvas per ring, redrawn whole and sent whole after every
+ * edit: 2 x 16.8 MB to the graphics card per road drawn (docs/performance.md #30).
+ */
+export interface GrassMask {
+  readonly texture: Texture;
+  /** Draws the blocked ground within `rect` (the whole map when null). */
+  draw(polys: readonly MultiPoly[], rings: readonly (readonly { x: number; y: number }[])[], size: number, rect: MaskRect | null): void;
+}
+
+export function createGrassMask(): GrassMask {
+  const data = new Uint8Array(MASK_SIDE * MASK_SIDE).fill(255);
+  const texture = new DataTexture(data, MASK_SIDE, MASK_SIDE, RedFormat, UnsignedByteType);
+  texture.wrapS = texture.wrapT = ClampToEdgeWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = MASK_SIDE;
+  const g = canvas.getContext('2d', { willReadFrequently: true })!;
+  return {
+    texture,
+    draw(polys, rings, size, rect) {
+      const k = MASK_SIDE / size, half = size / 2;
+      // The rectangle in mask pixels (rows from the north edge), a pixel wider each way.
+      let x0 = 0, y0 = 0, x1 = MASK_SIDE, y1 = MASK_SIDE;
+      if (rect) {
+        x0 = Math.max(0, Math.floor((rect[0] + half) * k) - 1);
+        x1 = Math.min(MASK_SIDE, Math.ceil((rect[2] + half) * k) + 1);
+        y0 = Math.max(0, Math.floor((half - rect[3]) * k) - 1);
+        y1 = Math.min(MASK_SIDE, Math.ceil((half - rect[1]) * k) + 1);
+        if (x1 <= x0 || y1 <= y0) return;
+      }
+      const w = x1 - x0, h = y1 - y0;
+      // Only what reaches the rectangle is drawn, in world units.
+      const wx0 = x0 / k - half, wx1 = x1 / k - half, wy0 = half - y1 / k, wy1 = half - y0 / k;
+      const reaches = (pts: Iterable<{ x: number; y: number } | readonly number[]>): boolean => {
+        let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+        for (const p of pts) {
+          const x = Array.isArray(p) ? p[0] as number : (p as { x: number }).x;
+          const y = Array.isArray(p) ? p[1] as number : (p as { y: number }).y;
+          if (x < a) a = x; if (x > c) c = x; if (y < b) b = y; if (y > d) d = y;
+        }
+        return a <= wx1 && c >= wx0 && b <= wy1 && d >= wy0;
+      };
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = '#fff';
+      g.fillRect(x0, y0, w, h);
+      g.save();
+      g.beginPath();
+      g.rect(x0, y0, w, h);
+      g.clip();
+      // World x/y to mask pixels: x east, y north -> rows from the north edge.
+      g.setTransform(k, 0, 0, -k, half * k, half * k);
+      g.fillStyle = '#000';
+      for (const multi of polys) {
+        for (const poly of multi) {
+          if (!poly[0] || !reaches(poly[0] as Iterable<readonly number[]>)) continue;
+          g.beginPath();
+          for (const ring of poly) {
+            ring.forEach(([x, y], i) => (i === 0 ? g.moveTo(x!, y!) : g.lineTo(x!, y!)));
+            g.closePath();
+          }
+          g.fill('evenodd');
+        }
+      }
+      for (const ring of rings) {
+        if (!reaches(ring)) continue;
+        g.beginPath();
+        ring.forEach((p, i) => (i === 0 ? g.moveTo(p.x, p.y) : g.lineTo(p.x, p.y)));
+        g.closePath();
+        g.fill();
+      }
+      g.restore();
+      // The red channel of those rows into the texture, and only they sent.
+      const pixels = g.getImageData(x0, y0, w, h).data;
+      for (let r = 0; r < h; r++) {
+        const row = (y0 + r) * MASK_SIDE + x0;
+        for (let i = 0; i < w; i++) data[row + i] = pixels[(r * w + i) * 4]!;
+        // three.js reads the ranges as four components a texel (`updateTexture`).
+        if (rect) texture.addUpdateRange(row * 4, w * 4);
+      }
+      texture.needsUpdate = true;
+    },
+  };
+}
+
+export function createGrass(quality: { readonly grassBlades: number }, ring: GrassRing = { scale: 1, inner: 0 }, mask: GrassMask = createGrassMask()): Grass {
   // One blade: four rungs and a tip, x across (-0.5..0.5), y up the blade (0..1).
   const rungs = 4;
   const positions: number[] = [];
@@ -101,20 +195,6 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
   heightTexture.magFilter = LinearFilter;
   heightTexture.minFilter = LinearFilter;
   heightTexture.needsUpdate = true;
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = maskCanvas.height = MASK_SIDE;
-  const maskTexture = new CanvasTexture(maskCanvas);
-  maskTexture.wrapS = maskTexture.wrapT = ClampToEdgeWrapping;
-  maskTexture.magFilter = LinearFilter;
-  maskTexture.minFilter = LinearFilter;
-  maskTexture.generateMipmaps = false;
-  {
-    const g = maskCanvas.getContext('2d')!;
-    g.fillStyle = '#fff';
-    g.fillRect(0, 0, MASK_SIDE, MASK_SIDE);
-    maskTexture.needsUpdate = true;
-  }
-
   const uniforms = {
     uGrassOrigin: { value: [0, 0] as [number, number] },
     uGrassFocus: { value: [0, 0] as [number, number] },
@@ -125,7 +205,7 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
     uGrassInner: { value: ring.inner },
     uGrassScale: { value: ring.scale },
     uGrassHeight: { value: heightTexture as Texture },
-    uGrassMask: { value: maskTexture as Texture },
+    uGrassMask: { value: mask.texture },
     uGrassPlate: { value: [0, 1] as [number, number] },
   };
 
@@ -250,33 +330,6 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
       heightTexture.needsUpdate = true;
       uniforms.uGrassPlate.value = [size / 2, size];
     },
-    setBlocked(polys, rings, size) {
-      const g = maskCanvas.getContext('2d')!;
-      g.setTransform(1, 0, 0, 1, 0, 0);
-      g.fillStyle = '#fff';
-      g.fillRect(0, 0, MASK_SIDE, MASK_SIDE);
-      // World x/y to mask pixels: x east, y north -> rows from the north edge.
-      const k = MASK_SIDE / size, half = size / 2;
-      g.setTransform(k, 0, 0, -k, half * k, half * k);
-      g.fillStyle = '#000';
-      for (const multi of polys) {
-        for (const poly of multi) {
-          g.beginPath();
-          for (const ring of poly) {
-            ring.forEach(([x, y], i) => (i === 0 ? g.moveTo(x!, y!) : g.lineTo(x!, y!)));
-            g.closePath();
-          }
-          g.fill('evenodd');
-        }
-      }
-      for (const ring of rings) {
-        g.beginPath();
-        ring.forEach((p, i) => (i === 0 ? g.moveTo(p.x, p.y) : g.lineTo(p.x, p.y)));
-        g.closePath();
-        g.fill();
-      }
-      maskTexture.needsUpdate = true;
-    },
     update(x, z, visible, seconds) {
       mesh.visible = visible;
       if (!visible) return;
@@ -289,7 +342,6 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
       geometry.dispose();
       material.dispose();
       heightTexture.dispose();
-      maskTexture.dispose();
     },
   };
 }
