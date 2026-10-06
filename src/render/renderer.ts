@@ -1297,8 +1297,6 @@ export function createSceneRenderer(
 
   // The play camera's state: the projection the orbit had before it.
   let buildingsHeld = false;
-  /** Zoom (pixels a unit) from which the grass field is drawn in the orbit view. */
-  const GRASS_ZOOM = 4;
   const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
   /** Playing: the ring round the player always counted as seen (the camera turns), u. */
   const PLAY_NEAR = m(45);
@@ -1958,11 +1956,12 @@ export function createSceneRenderer(
         agents.setNight(dark);
       }
       rig.camera.getWorldDirection(viewDirection);
-      // The grass: close up only (on foot, or the camera near the ground).
+      // The grass blades are off: grown only round the camera, the field ended
+      // in a line a little way off and the land beyond was bare (the player,
+      // 2026-10-06: "melhor tirar e usar uma textura"). The ground's own
+      // grass texture covers the whole map.
       {
-        // Seen from above (the isometric view) a blade is a speck: only in perspective or on foot.
-        const close = rig.chasing || (rig.perspective && rig.viewport.zoom >= GRASS_ZOOM);
-        const show = quality.grassBlades > 0 && close;
+        const show = false;
         const atGrass = performance.now();
         if (show) keepGrassInputs(net);
         performance.measure('hitch:draw/Grass', { start: atGrass, end: performance.now() });
