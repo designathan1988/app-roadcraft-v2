@@ -751,7 +751,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const procedural = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bodies') === 'cooked'
     ? null : createProceduralCrowd({ unit: m(1) });
   /** Each walker's person; a person whose walker left (at the end of a road) waits in `procSpare` for the next one. */
-  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number }>();
+  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number; at?: Matrix4 }>();
   const procSpare: ProceduralPerson[] = [];
   const PROC_CAP = PED_CEILING;
   /**
@@ -824,16 +824,19 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
       .multiply(procSize.makeScale(m(1), m(1), m(1)));
     person.matrix.copy(procMatrix);
+    // Where they were last drawn: a ragdoll takes them from there when they
+    // drop out of the street (killed, `procRagdoll.capturedPose`).
+    (entry.at ??= new Matrix4()).copy(procMatrix);
     person.activity = activity;
     person.lost = lost;
     const metres = speed / m(1);
-    if (walking && metres > 0.15) {
-      if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
-      person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
-    } else {
-      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
-      person.phase += dt / procedural!.clipDuration(person);
-    }
+    // Running from danger runs, past a brisk walk; struck with fear (cowering,
+    // or panicking stood still), they crouch with their arms over their head.
+    const cowering = activity === 'crouch' || activity === 'fall' || (activity === 'panic' && !(walking && metres > 0.15));
+    const clip = cowering ? 'cower' : walking && metres > 0.15 ? (metres > 2.4 ? 'run' : 'walk') : 'idle';
+    if (person.clip !== clip) { person.clip = clip; person.phase = 0; }
+    if (clip === 'walk' || clip === 'run') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    else person.phase += dt / procedural!.clipDuration(person);
   };
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
   const procFinish = (eye: Vector3 | undefined, live: ReadonlySet<number>): void => {
@@ -842,7 +845,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (!entry.person) { if (!live.has(id)) procPeople.delete(id); continue; }
       if (procHeld.has(id)) continue;
       entry.person.matrix.makeScale(0, 0, 0);
-      if (!live.has(id)) { procPeople.delete(id); procSpare.push(entry.person); }
+      // Kept a few frames off the street: somebody killed leaves it at once,
+      // and the ragdolls ask for their pose in the same frame (they fell as
+      // nobody, a blow left only blood).
+      if (!live.has(id) && procFrame - entry.seen > 3) { procPeople.delete(id); procSpare.push(entry.person); }
     }
     // A freed body goes at once to a walker still waiting for one.
     for (let i = 0; i < procWaiting.length && procSpare.length; i++) {
@@ -866,10 +872,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const procScale = new Matrix4();
   const procRagdoll: RagdollCitizens = {
     capturedPose(id) {
-      const person = procPeople.get(id)?.person;
-      const palette = person && procedural ? procedural.ragdoll.pose(person) : null;
-      if (!person || !palette) return pedestrians.capturedPose(id);
-      return { index: -1 - id, palette, transform: person.matrix.clone().multiply(procScale.makeScale(person.scale, person.scale, person.scale)) };
+      const entry = procPeople.get(id);
+      const person = entry?.person;
+      const palette = person && entry.at && procedural ? procedural.ragdoll.pose(person) : null;
+      if (!person || !palette || !entry.at) return pedestrians.capturedPose(id);
+      return { index: -1 - id, palette, transform: entry.at.clone().multiply(procScale.makeScale(person.scale, person.scale, person.scale)) };
     },
     skeletonOf(index) {
       const person = procOf(index);

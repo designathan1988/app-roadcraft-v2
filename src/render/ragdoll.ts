@@ -156,7 +156,9 @@ interface Survivor {
   readonly id: number;
   phase: 'fall' | 'lie' | 'rise';
   t: number;
-  readonly lie: number;
+  lie: number;
+  /** Dragging themself along by the arms (a leg lost): which way, and the drops left behind. */
+  crawl?: { dx: number; dy: number; since: number };
   /** Where and which way they get up, and the lying bones blended from. */
   root?: Matrix4;
   from?: { p: Vector3; q: Quaternion; s: Vector3 }[];
@@ -436,6 +438,14 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const known = bodies.find((b) => b.survivor?.id === c.id);
     if (known) {
       // On the ground already, and struck again: thrown again, and killed if it was a killing blow.
+      if (c.faded) {
+        // Bled out where they lay: the crawling stops, the body goes still in a pool.
+        known.survivor = undefined;
+        known.asleep = false; known.still = 0;
+        const at = known.p[PEL]!;
+        bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(1.6), 20);
+        return;
+      }
       if (c.kind !== 'knocked') { known.survivor = undefined; known.torn = false; bleed(c.x, c.y, groundHere, m(0.8), 0); }
       else if (known.survivor) { known.survivor.phase = 'fall'; known.survivor.t = 0; delete known.survivor.from; }
       known.asleep = false; known.still = 0; known.flying = 0;
@@ -445,6 +455,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
     if (!body) { if (c.kind !== 'knocked') bleed(c.x, c.y, groundHere, m(1.8), 15); return; }
     for (const limb of c.lost ?? []) for (const part of LOST_PARTS[limb]) body.lostParts.add(part);
+    if (body.survivor && c.lieFor !== undefined) body.survivor.lie = c.lieFor;
+    if (body.survivor && c.crawl) {
+      const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
+      body.survivor.crawl = { dx: ax / l, dy: ay / l, since: 0 };
+    }
     const speed = c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = blast(body, c, speed);
     const chest = body.p[CHE]!;
@@ -576,7 +591,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         const alive = body.survivor;
         if (alive) {
           alive.t += wall;
-          if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = true; }
+          if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = !alive.crawl; }
+          else if (alive.phase === 'lie' && alive.crawl) crawlOn(body, alive.crawl, wall, world);
           else if (alive.phase === 'rise' && alive.t > RISE_BLEND + alive.clip + 3) { bodies.splice(i, 1); continue; }
           continue;
         }
@@ -673,6 +689,29 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   }
 
   /** One Verlet step of a body: move, then relax the sticks, the joints and the collisions together. */
+  /**
+   * Somebody down with a leg gone dragging themself along: the arms and the
+   * chest pulled a hand's length at a time, the legs drawn after by the
+   * sticks, a smear of blood left behind (as GTA's wounded crawl).
+   */
+  function crawlOn(body: Body, crawl: NonNullable<Survivor['crawl']>, dt: number, world: RagdollWorld): void {
+    crawl.since += dt;
+    // A pull, then a rest: about one stroke a second.
+    const stroke = Math.max(0, Math.sin(crawl.since * Math.PI * 1.1));
+    const pull = m(0.32) * stroke * dt;
+    for (const k of [HEA, TOP, NEC, CHE, LS, RS, LE, RE, LW, RW]) {
+      body.p[k]!.x += crawl.dx * pull;
+      body.p[k]!.z -= crawl.dy * pull;
+      body.o[k]!.x += crawl.dx * pull;
+      body.o[k]!.z -= crawl.dy * pull;
+    }
+    body.asleep = false;
+    if (stroke > 0.98 && (crawl.since % 2) < dt * 2) {
+      const at = body.p[PEL]!;
+      bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(0.35 + Math.random() * 0.25), 0);
+    }
+  }
+
   function step(body: Body, world: RagdollWorld): void {
     const { p, o, inv } = body;
     let moved = 0;

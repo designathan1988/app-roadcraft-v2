@@ -104,7 +104,7 @@ interface BodyClass {
   readonly coefficients: Float64Array;
   readonly rig: PersonRig;
   readonly height: number;
-  readonly clips: { walk: ClipFrames; idle: ClipFrames };
+  readonly clips: { walk: ClipFrames; idle: ClipFrames; run: ClipFrames; cower: ClipFrames };
   readonly bones: number;
   /** Bones parents first, and each one's parent (-1 for the root). */
   readonly order: readonly number[];
@@ -157,7 +157,7 @@ export interface ProceduralPerson {
   readonly joints: Float32Array;
   /** Where they stand and face; what they play. Set by the caller each frame. */
   readonly matrix: Matrix4;
-  clip: 'walk' | 'idle';
+  clip: 'walk' | 'idle' | 'run' | 'cower';
   phase: number;
   /** What they are doing, as the face shows it (`faceAt`): 'talk', 'panic'... */
   activity?: string | undefined;
@@ -700,15 +700,20 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     readonly exprPixels: Float32Array;
     readonly walk: ClipFrames;
     readonly idle: ClipFrames;
+    /** Running (from danger), and cowering crouched (struck with fear): the reactions' clips. */
+    readonly run: ClipFrames;
+    readonly cower: ClipFrames;
   }
   const classRecord = (d: ClassData): PackRecord => ({
     shapePixels: d.shapePixels, jointBasis: d.jointBasis, faceIndexPixels: d.faceIndexPixels, faceList: d.faceList,
     exprPixels: d.exprPixels, ...clipFields('walk', d.walk), ...clipFields('idle', d.idle),
+    ...clipFields('run', d.run), ...clipFields('cower', d.cower),
   });
   const classFromRecord = (r: Record<string, PackValue>): ClassData => ({
     shapePixels: r['shapePixels'] as Float32Array, jointBasis: r['jointBasis'] as Float32Array,
     faceIndexPixels: r['faceIndexPixels'] as Float32Array, faceList: r['faceList'] as Int32Array,
     exprPixels: r['exprPixels'] as Float32Array, walk: clipOf('walk', r), idle: clipOf('idle', r),
+    run: clipOf('run', r), cower: clipOf('cower', r),
   });
 
   /** A class's rig: its body at the band's age, with only the eyes on it (no outfit, hair, brows, lashes or hat). */
@@ -765,6 +770,10 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     await breathe();
     const idle = await bakeLibraryClip(bakeRig, library.idle, undefined, 'idle');
     await breathe();
+    const run = await bakeLibraryClip(bakeRig, library.run, undefined, 'run');
+    await breathe();
+    const cower = await bakeLibraryClip(bakeRig, library.crouchIdle, undefined, 'crouchIdle');
+    await breathe();
     // Joints follow the shape: a MakeHuman bone's head is the mean of a
     // group of base vertices (its joint cube, `personRig.headOf`), so its
     // move per coefficient is the mean of theirs in the shape basis.
@@ -817,7 +826,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       });
     }
     await breathe();
-    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle };
+    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower };
   };
 
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
@@ -826,7 +835,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     const { base, shape, eyes, rig } = await classRig(sex, band);
     // Read from the cook (`proceduralCook.ts`); built here only when it is missing or stale.
     const cooked = await loadProcedural(`class-${sex}-${band}`);
-    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle } = cooked
+    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower } = cooked
       ? classFromRecord(cooked) : await classData(sex, rig, shape);
     const vertexCount = a.mesh.vertexCount;
     const shapeRows = Math.ceil(vertexCount * SHAPES / SHAPE_WIDTH);
@@ -872,7 +881,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     bakeMs += performance.now() - started;
     const cls: BodyClass = {
       key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
-      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle }, bones, order, parent, jointBasis,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower }, bones, order, parent, jointBasis,
       uniforms: {
         procBones: { value: rowTexture(palette, width, ROW_START) },
         procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
@@ -1314,7 +1323,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     },
     stride(person) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
-      return (cls?.clips.walk.stride ?? 1.4) * person.scale;
+      const clip = person.clip === 'run' ? cls?.clips.run : cls?.clips.walk;
+      return (clip?.stride || 1.4) * person.scale;
     },
     async cook() {
       const out = new Map<string, ArrayBuffer>();
