@@ -132,6 +132,21 @@ export function commitRoadPath(
 function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network): boolean {
   const fresh = [...work.segments.values()].filter((seg) => !before.segments.has(seg.id) && seg.structure === 'ground');
   if (!fresh.length || !work.terrainStamps.length) return false;
+  // A cut that deep needs relief under the new roads, and the land is flat
+  // outside the stamps (the test just above): with no stamp reaching them,
+  // the whole network's heights were solved for nothing, 20 ms of every road
+  // drawn in the default town (docs/performance.md #21).
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const seg of fresh) {
+    const box = workNet.ribbons.get(seg.id)?.full.bbox;
+    if (!box) { minX = -Infinity; maxX = Infinity; minY = -Infinity; maxY = Infinity; break; }
+    minX = Math.min(minX, box.minX); minY = Math.min(minY, box.minY); maxX = Math.max(maxX, box.maxX); maxY = Math.max(maxY, box.maxY);
+  }
+  const margin = m(60);
+  const reached = work.terrainStamps.some((stamp) =>
+    stamp.x + stamp.radius >= minX - margin && stamp.x - stamp.radius <= maxX + margin &&
+    stamp.y + stamp.radius >= minY - margin && stamp.y - stamp.radius <= maxY + margin);
+  if (!reached) return false;
   const index = new TerrainIndex(work.terrainStamps, 0);
   const ground = (x: number, y: number): number => sampleTerrainHeight(index, x, y);
   const elevation = buildRoadElevation(workNet, ground);

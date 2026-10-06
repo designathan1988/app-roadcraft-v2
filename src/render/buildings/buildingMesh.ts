@@ -2697,6 +2697,25 @@ export function assembleBuildingMeshes(
   dim = false,
   selection?: { readonly parts: ReadonlySet<PartKind>; readonly shells: boolean; readonly furniture: boolean },
 ): BuildingMeshes {
+  const steps = assembleBuildingMeshesSteps(chunks, kit, ghost, dim, selection);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * `assembleBuildingMeshes` in steps, a finish or a kind of part at a time: the
+ * buildings layer puts a changed cell together across frames while the town
+ * as it was stays drawn (`layer.ts`); a whole cell at once was a frame of
+ * over 100 ms in the default town (docs/performance.md #12).
+ */
+export function* assembleBuildingMeshesSteps(
+  chunks: readonly BuildingChunk[],
+  kit: BuildingKit,
+  ghost = false,
+  dim = false,
+  selection?: { readonly parts: ReadonlySet<PartKind>; readonly shells: boolean; readonly furniture: boolean },
+): Generator<void, BuildingMeshes, void> {
   const group = new Group();
   group.name = ghost ? 'building-preview' : 'buildings';
   group.matrixAutoUpdate = false;
@@ -2748,6 +2767,7 @@ export function assembleBuildingMeshes(
     mesh.receiveShadow = !ghost;
     meshes.push(mesh);
     triangles += indices / 3;
+    yield;
   }
 
   for (const kind of selection?.parts ?? PART_KINDS) {
@@ -2792,6 +2812,7 @@ export function assembleBuildingMeshes(
     meshes.push(mesh);
     const g = kit.geometry[kind];
     triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;
+    yield;
   }
   // Furniture, only where an interior is drawn: one batch per kind.
   if (!ghost && selection?.furniture !== false && chunks.some((c) => c.furniture)) {
@@ -2817,6 +2838,7 @@ export function assembleBuildingMeshes(
       meshes.push(mesh);
       const g = furniture.geometry[kind];
       triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;
+      yield;
     }
   }
   // Shell vertices and part instance matrices are already in world space.

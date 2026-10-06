@@ -8,7 +8,7 @@ import { buildingBounds, footprintRects, solidFootprints } from '@world/building
 import type { Building, BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
-import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, buildBuildingMeshes, emitChunk } from './buildingMesh';
+import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, assembleBuildingMeshesSteps, buildBuildingMeshes, emitChunk } from './buildingMesh';
 import { createFlagLayer } from './flagLayer';
 import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
@@ -116,7 +116,9 @@ export function createBuildingLayer(): BuildingLayer {
   let storedKey = '';
   /** The buildings of a change being emitted ahead of the cells, a slice a frame. */
   let warming: { key: string; queue: Building[]; at: number;
-    cells?: { stage: CellCache; cell: string; list: BuildingChunk[]; kinds: ReadonlySet<PartKind> }[] } | null = null;
+    cells?: { stage: CellCache; cell: string; list: BuildingChunk[]; kinds: ReadonlySet<PartKind> }[];
+    /** The cell being put together, a part kind a step. */
+    assembling?: { stage: CellCache; cell: string; list: BuildingChunk[]; steps: Generator<void, BuildingMeshes, void> } | null } | null = null;
   /** Cells put together ahead of the swap (`update`), taken by `assembleByCell`. */
   const stagedCells: CellCache = new Map();
   const stagedDetails: CellCache = new Map();
@@ -280,15 +282,22 @@ export function createBuildingLayer(): BuildingLayer {
             }
           }
         }
-        while (warming.cells.length && performance.now() < until) {
-          const { stage, cell, list, kinds } = warming.cells.shift()!;
-          const old = stage.get(cell);
-          if (old && sameChunks(old.chunks, list)) continue;
-          old?.part.dispose();
-          stage.set(cell, { chunks: list, part: assembleBuildingMeshes(list, kit, false, false,
-            { parts: kinds, shells: kinds === COARSE_PARTS, furniture: kinds === COARSE_PARTS }) });
+        while ((warming.cells.length || warming.assembling) && performance.now() < until) {
+          if (!warming.assembling) {
+            const next = warming.cells.shift()!;
+            const old = next.stage.get(next.cell);
+            if (old && sameChunks(old.chunks, next.list)) continue;
+            warming.assembling = { ...next, steps: assembleBuildingMeshesSteps(next.list, kit, false, false,
+              { parts: next.kinds, shells: next.kinds === COARSE_PARTS, furniture: next.kinds === COARSE_PARTS }) };
+          }
+          const job = warming.assembling;
+          const step = job.steps.next();
+          if (!step.done) continue;
+          job.stage.get(job.cell)?.part.dispose();
+          job.stage.set(job.cell, { chunks: job.list, part: step.value });
+          warming.assembling = null;
         }
-        if (warming.cells.length) return false;
+        if (warming.cells.length || warming.assembling) return false;
       }
       warming = null;
       if (key !== storedKey) {
