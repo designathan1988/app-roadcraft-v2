@@ -844,6 +844,9 @@ function serializedDoc(): string {
   return text;
 }
 
+// The autosave writes the same text the undo keeps (`Persistence.documentText`).
+persistence.documentText = (d) => (d === doc ? serializedDoc() : null);
+
 function mutateBuilt(fn: () => boolean): boolean {
   const mutateAt = performance.now();
   const before = serializedDoc();

@@ -104,9 +104,18 @@ export class Persistence {
     }, DEBOUNCE_MS);
   }
 
+  /**
+   * The document as text, when the editor already has it (its undo keeps the
+   * same `JSON.stringify(doc.toJSON())` of the document as it is now): the
+   * autosave wrote it out again, 700 ms after every edit, an 80 ms stall in
+   * the default town (docs/performance.md #22).
+   */
+  documentText: ((doc: RoadDoc) => string | null) | null = null;
+
   saveSession(doc: RoadDoc, settings: SavedSettings): boolean {
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify({ version: 2, document: doc.toJSON(), settings }));
+      const text = this.documentText?.(doc) ?? JSON.stringify(doc.toJSON());
+      localStorage.setItem(this.storageKey, `{"version":2,"document":${text},"settings":${JSON.stringify(settings)}}`);
       this.writeSettings(settings);
       return true;
     } catch {
