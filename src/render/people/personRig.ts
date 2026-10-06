@@ -57,7 +57,7 @@ const COVERING = new Set(['clothes', 'shoes', 'top', 'bottom', 'skirt', 'dress',
 const ARMATURE_SCALE = 0.01;
 
 /** game_engine bone -> the capture's name for it. */
-const CAPTURE_NAME: Readonly<Record<string, string>> = (() => {
+export const CAPTURE_NAME: Readonly<Record<string, string>> = (() => {
   const names: Record<string, string> = {
     Root: 'Bip01', pelvis: 'Bip01_Pelvis', spine_01: 'Bip01_Spine', spine_02: 'Bip01_Spine1', spine_03: 'Bip01_Spine2',
     neck_01: 'Bip01_Neck', head: 'Bip01_Head',

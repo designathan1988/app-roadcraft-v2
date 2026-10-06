@@ -152,8 +152,6 @@ export interface AgentRenderOptions {
   readonly hiddenPed?: (id: number) => boolean;
   /** Where the camera is: the people nearest it get their hair's strands (`?bodies=proc`). */
   readonly eye?: Vector3;
-  /** The dead of the last minute (shots, blows): drawn lying where they fell, as themselves. */
-  readonly fallen?: readonly { readonly id: number; readonly x: number; readonly y: number; readonly heading: number; readonly lost?: readonly Severable[] }[];
 }
 
 export interface AgentMeshes {
@@ -803,10 +801,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     }, () => { procPeople.delete(target); }).finally(() => { procBuilding = false; procBuiltAt = performance.now(); });
   };
   let procFrame = 0;
-  const procTilt = new Matrix4();
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
-    lost?: readonly Severable[], down = false): void => {
+    lost?: readonly Severable[]): void => {
     let entry = procPeople.get(id);
     if (!entry) {
       const spare = procSpare.pop();
@@ -823,16 +820,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     entry.seen = procFrame;
     const person = entry.person;
     if (!person) return;
-    procMatrix.makeTranslation(x, deck + (down ? m(0.12) : 0), -y)
-      .multiply(procTurn.makeRotationY(heading + Math.PI / 2));
-    // Down (struck, or dead): the person themself lying on their back where
-    // they fell - not a body of another look thrown in their place.
-    if (down) procMatrix.multiply(procTilt.makeRotationX(-Math.PI / 2));
-    procMatrix.multiply(procSize.makeScale(m(1), m(1), m(1)));
+    procMatrix.makeTranslation(x, deck, -y)
+      .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
+      .multiply(procSize.makeScale(m(1), m(1), m(1)));
     person.matrix.copy(procMatrix);
-    person.activity = down ? undefined : activity;
+    person.activity = activity;
     person.lost = lost;
-    if (down) { if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0.3; } return; }
     const metres = speed / m(1);
     if (walking && metres > 0.15) {
       if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
@@ -847,6 +840,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     for (const [id, entry] of procPeople) {
       if (entry.seen === procFrame) continue;
       if (!entry.person) { if (!live.has(id)) procPeople.delete(id); continue; }
+      if (procHeld.has(id)) continue;
       entry.person.matrix.makeScale(0, 0, 0);
       if (!live.has(id)) { procPeople.delete(id); procSpare.push(entry.person); }
     }
@@ -856,8 +850,48 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (e && !e.person) { e.person = procSpare.pop()!; procWaiting.splice(i--, 1); }
     }
     procBuildNext();
-    procedural!.update(eye, gaitClock < 0 ? undefined : gaitClock);
+    // `procedural.update` runs after the ragdolls have posed those they hold (`sync`).
+    void eye;
     procFrame++;
+  };
+  /**
+   * The ragdolls' view of the people (`ragdoll.ts` RagdollCitizens): a person
+   * drawn by the procedural crowd falls as themself - their skeleton, their
+   * pose, their clothes and face - an index below zero naming them; anyone
+   * else as the cooked bodies. They fell as a body of another look before
+   * (the player, 2026-10-06).
+   */
+  const procHeld = new Set<number>(), procHeldNow = new Set<number>();
+  const procOf = (index: number): ProceduralPerson | null => (index < 0 ? procPeople.get(-1 - index)?.person ?? null : null);
+  const procScale = new Matrix4();
+  const procRagdoll: RagdollCitizens = {
+    capturedPose(id) {
+      const person = procPeople.get(id)?.person;
+      const palette = person && procedural ? procedural.ragdoll.pose(person) : null;
+      if (!person || !palette) return pedestrians.capturedPose(id);
+      return { index: -1 - id, palette, transform: person.matrix.clone().multiply(procScale.makeScale(person.scale, person.scale, person.scale)) };
+    },
+    skeletonOf(index) {
+      const person = procOf(index);
+      return person && procedural ? procedural.ragdoll.skeleton(person) : pedestrians.skeletonOf(index);
+    },
+    drawPalette(index, palette, instance) {
+      const person = procOf(index);
+      if (!person || !procedural) { pedestrians.drawPalette(index, palette, instance); return; }
+      // The first piece of the body is the person; pieces torn off are not drawn apart.
+      const id = -1 - index;
+      if (procHeldNow.has(id)) return;
+      procHeldNow.add(id);
+      person.matrix.copy(instance).multiply(procScale.makeScale(1 / person.scale, 1 / person.scale, 1 / person.scale));
+      procedural.ragdoll.hold(person, palette);
+    },
+    clipPose(index, key, phase) {
+      const person = procOf(index);
+      if (!person || !procedural) return pedestrians.clipPose(index, key, phase);
+      const palette = procedural.ragdoll.standing(person, key === 'idle' ? phase : 0);
+      return palette ? { palette, duration: 1.2 } : null;
+    },
+    loadedIndices: () => pedestrians.loadedIndices(),
   };
   const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
 
@@ -1554,7 +1588,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
           if (procedural && ped.id !== PLAYER_ID) {
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, ped.panic ? 'panic' : ped.gesture?.kind,
-              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture?.kind === 'fall');
+              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined));
           }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
@@ -1573,15 +1607,20 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (procedural) {
         const live = new Set<number>();
         for (const ped of world.pedViews) live.add(ped.id);
-        // The dead lying where they fell, as they were.
-        for (const f of options.fallen ?? []) {
-          if (!procPeople.get(f.id)?.person) continue;
-          live.add(f.id);
-          procDraw(f.id, f.x, f.y, f.heading, groundAt ? groundAt(f.x, f.y) : elevationAt(world, f.x, f.y, undefined), 0, false, 0, undefined, f.lost, true);
-        }
+        // Those a ragdoll holds (struck, down, or dead) keep their person.
+        for (const id of procHeld) live.add(id);
         procFinish(options.eye, live);
       }
-      options.ragdolls?.(pedestrians);
+      // The ragdolls draw the procedural people as themselves (`procRagdoll`), the rest as cooked bodies.
+      procHeldNow.clear();
+      options.ragdolls?.(procedural ? procRagdoll : pedestrians);
+      if (procedural) {
+        // Let go of those the ragdolls no longer hold (up again).
+        for (const id of procHeld) if (!procHeldNow.has(id)) { const p = procPeople.get(id)?.person; if (p) procedural.ragdoll.hold(p, null); }
+        procHeld.clear();
+        for (const id of procHeldNow) procHeld.add(id);
+        procedural.update(options.eye, gaitClock < 0 ? undefined : gaitClock);
+      }
       pedestrians.finish();
 
       // Upload only what was written this frame.

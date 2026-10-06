@@ -527,9 +527,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         // Each record once (two shots from the same place are two records).
         if (taken.has(c)) continue;
         taken.add(c);
-        // Somebody drawn by the procedural crowd has no pose kept here: they
-        // fall as themselves (`agents.ts`, lying), not as a body of another
-        // look - only their blood is left here.
         spawn(c, citizens, world);
       }
     },

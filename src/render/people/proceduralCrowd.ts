@@ -1,3 +1,4 @@
+import { CAPTURE_NAME } from './personRig';
 import type { Severable } from '@sim/people/view';
 import {
   BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
@@ -475,6 +476,17 @@ export interface ProceduralCrowd {
   /** `eye`: where the camera is, so the people nearest it get their hair's strands. */
   /** `time`: the simulation's seconds, which the faces live by (still while paused); wall time without it. */
   update(eye?: Vector3, time?: number): void;
+  /**
+   * The ragdolls' side (`agents.ts`, `ragdoll.ts`): a person's skeleton (its
+   * bones by the capture's names, as the ragdoll knows them), their pose now,
+   * the standing pose they get up into, and a pose the ragdoll holds them in.
+   */
+  readonly ragdoll: {
+    skeleton(person: ProceduralPerson): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
+    pose(person: ProceduralPerson): Float32Array | null;
+    standing(person: ProceduralPerson, phase: number): Float32Array | null;
+    hold(person: ProceduralPerson, palette: Float32Array | null): void;
+  };
   clear(): void;
   clipDuration(person: ProceduralPerson): number;
   /** Ground one walk cycle covers at the person's scale, metres. */
@@ -583,6 +595,10 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       px[o + 12] = limbAt.x; px[o + 13] = limbAt.y; px[o + 14] = limbAt.z; px[o + 15] = 1;
     }
   };
+
+  /** Poses held by the ragdolls, by person (`ragdoll.hold`). */
+  const holds = new Map<ProceduralPerson, Float32Array>();
+  const classOf = (person: ProceduralPerson): BodyClass | null => ready.find((cls) => cls.people.includes(person)) ?? null;
 
   const setup = async (): Promise<{ assets: PeopleAssets; morpher: Morpher }> => {
     assets ??= await loadPeopleAssets();
@@ -1196,12 +1212,60 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       people.push(person);
       return person;
     },
+    ragdoll: {
+      skeleton(person) {
+        const cls = classOf(person);
+        if (!cls) return null;
+        const mesh = cls.rig.mesh;
+        const bones = mesh.skeleton.bones;
+        return {
+          names: bones.map((b) => CAPTURE_NAME[b.name] ?? b.name),
+          parents: bones.map((b) => bones.indexOf(b.parent as never)),
+          inverses: mesh.skeleton.boneInverses,
+          local: new Matrix4(),
+          bind: mesh.bindMatrix,
+        };
+      },
+      pose(person) {
+        const cls = classOf(person);
+        if (!cls) return null;
+        const width = cls.bones * SKIN_BONE_FLOATS;
+        return cls.palette.slice(person.row * width, person.row * width + width);
+      },
+      standing(person, phase) {
+        const cls = classOf(person);
+        if (!cls) return null;
+        const width = cls.bones * SKIN_BONE_FLOATS, packed = cls.bones * PACKED_BONE_FLOATS;
+        const at = person.row * width;
+        // Worked out in their own row (their proportions, `refit`), then copied out.
+        const keep = cls.palette.slice(at, at + width);
+        const clip = cls.clips.idle;
+        const f = (phase - Math.floor(phase)) * clip.frames;
+        const whole = Math.min(clip.frames, Math.floor(f));
+        cls.palette.fill(0, at, at + width);
+        blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
+        refit(cls, person, at);
+        const out = cls.palette.slice(at, at + width);
+        cls.palette.set(keep, at);
+        return out;
+      },
+      hold(person, palette) {
+        if (palette) holds.set(person, palette.slice()); else holds.delete(person);
+      },
+    },
     update(eye, simTime) {
       if (eye) strandsUpdate(eye);
       for (const cls of ready) {
         const width = cls.bones * SKIN_BONE_FLOATS;
         const packed = cls.bones * PACKED_BONE_FLOATS;
         for (const person of cls.people) {
+          // Held by a ragdoll: its pose, the limbs lost still closed.
+          const held = holds.get(person);
+          if (held && held.length === width) {
+            cls.palette.set(held, person.row * width);
+            for (const limb of person.lost ?? []) closeLimb(cls, person.row * width, limb);
+            continue;
+          }
           const clip = cls.clips[person.clip];
           const f = (person.phase - Math.floor(person.phase)) * clip.frames;
           const whole = Math.min(clip.frames, Math.floor(f));
