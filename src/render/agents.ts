@@ -1299,7 +1299,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // The traffic, then the residents' own cars off the road: parked in their
       // bays or manoeuvring in and out (`sim/agents`), on the ground of the lot.
       const offRoad = world.city.cars?.offRoad() ?? NO_VEHICLES;
-      for (const list of [world.vehiclesInIdOrder(), offRoad, world.ambient.parked]) for (const vehicle of list) {
+      for (const list of [world.vehiclesInIdOrder(), offRoad, world.ambient.parked, world.ambient.extra]) for (const vehicle of list) {
         if (drawn >= MAX_VEHICLES) break;
         const pose = vehiclePose(world, vehicle, alpha);
         if (!pose) continue;

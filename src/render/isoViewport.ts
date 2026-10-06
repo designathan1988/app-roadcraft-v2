@@ -75,7 +75,25 @@ export interface IsoRig {
   readonly viewport: Viewport;
   readonly target: Vector3;
   resize(width: number, height: number): void;
+  /**
+   * The play camera (first or third person, `src/play.ts`): the perspective
+   * camera at `eye` looking at `look`, three's space, `focus` the world point
+   * the view is about (the player). Null: back to the orbit. Only with
+   * perspective on.
+   */
+  setChase(chase: Chase | null): void;
+  readonly chasing: boolean;
 }
+
+/** A free camera: where the eye is, what it looks at, its field of view, and whose view it is. */
+export interface Chase {
+  readonly eye: Vector3;
+  readonly look: Vector3;
+  readonly fov: number;
+  readonly focus: Vector3;
+}
+/** The zoom the play camera reports: the closest detail of everything. */
+const CHASE_ZOOM = 60;
 
 export function createIsoRig(
   initial: Vec2,
@@ -97,9 +115,27 @@ export function createIsoRig(
   let halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, initialHalfHeight));
   let azimuth = wrapAzimuth(Number.isFinite(orbit.azimuth) ? orbit.azimuth : DEFAULT_AZIMUTH);
   let elevation = clampElevation(Number.isFinite(orbit.elevation) ? orbit.elevation : DEFAULT_ELEVATION);
+  let chase: Chase | null = null;
+  /** The orbit's centre while the play camera has it. */
+  const orbitTarget = new Vector3();
 
   const apply = (): void => {
     const aspect = Math.max(0.1, width / Math.max(1, height));
+    if (chase && camera === persp) {
+      persp.fov = chase.fov;
+      persp.aspect = aspect;
+      // Close enough for a face at arm's length, far enough for the horizon.
+      persp.near = 0.25;
+      persp.far = 16000;
+      persp.up.set(0, 1, 0);
+      persp.position.copy(chase.eye);
+      persp.lookAt(chase.look);
+      target.copy(chase.focus);
+      persp.updateProjectionMatrix();
+      persp.updateMatrixWorld(true);
+      return;
+    }
+    persp.fov = PERSPECTIVE_FOV;
     let distance = DISTANCE;
     if (camera === ortho) {
       ortho.left = -halfHeight * aspect;
@@ -215,7 +251,7 @@ export function createIsoRig(
       apply();
     },
     get zoom() {
-      return height / Math.max(1, halfHeight * 2);
+      return chase ? CHASE_ZOOM : height / Math.max(1, halfHeight * 2);
     },
     get facing() {
       const turns = Math.round((azimuth - DEFAULT_AZIMUTH) / (Math.PI * 0.5));
@@ -242,6 +278,15 @@ export function createIsoRig(
     },
     viewport,
     target,
+    get chasing() {
+      return chase !== null;
+    },
+    setChase(next) {
+      if (next && !chase) orbitTarget.copy(target);
+      if (!next && chase) target.copy(orbitTarget);
+      chase = next;
+      apply();
+    },
     resize(nextWidth, nextHeight) {
       width = Math.max(1, nextWidth);
       height = Math.max(1, nextHeight);

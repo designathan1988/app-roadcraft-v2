@@ -55,6 +55,7 @@ import { History, restoreInto, restoreSnapshot, serialize } from '@editor/histor
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
+import { type Play, createPlay } from './play';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
 import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
 import { TransitTool, setTransitTool } from '@editor/transitTools';
@@ -89,6 +90,9 @@ import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { ZONE_CELL, type ZoneCell, type ZoneGrid, buildZoneGrid, zoneGridSteps } from '@world/zoneGrid';
 import { LOT_PLAN_VERSION, blockOf, growOnLot, growOne, marksByCell, paintCells, regrowStale } from '@editor/zoning';
+
+/** Playing in the scenery (`play.ts`); made once the scene and the buildings are. */
+let play: Play | null = null;
 
 type Tool =
   | 'building'
@@ -762,6 +766,17 @@ const buildings = createBuildingWiring({
   flash: (key, params) => flashHint(key, params),
   hintChanged: () => updateHint(),
 });
+// Playing in the scenery as in GTA (`play.ts`, `sim/ambient/play.ts`): J or the top bar's button.
+play = createPlay({
+  sim,
+  scene: () => scene,
+  canvas,
+  root: document.body,
+  requestDraw: () => requestDraw(),
+  openInside: (id) => buildings.openInside(id),
+  centre: () => view.centre,
+});
+document.getElementById('playButton')?.addEventListener('click', () => play?.toggle());
 
 /** The ground the camera sees: the screen's four corners, on the ground. */
 function viewFootprint(): Vec2[] {
@@ -3647,6 +3662,8 @@ function frame(now: number): void {
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
   steerPlayer();
+  // Playing in the scenery (`play.ts`): the player's input and camera, before the picture.
+  play?.frame(wall);
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
   refreshAgentCard(now);
   drawOverlayScreen();

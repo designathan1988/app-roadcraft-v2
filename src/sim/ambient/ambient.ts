@@ -11,6 +11,7 @@ import { vehiclePose } from '../pose';
 import { removeWalker, walkerOf } from '../agents/walk';
 import { collectBays, type Bay } from '../agents/parking';
 import type { PersonAgeClass } from '../people/view';
+import { PlayWorld } from './play';
 
 /**
  * The life of the scenery, as GTA makes it: nobody lives here. People and
@@ -90,6 +91,17 @@ export class AmbientWorld {
   enabled = false;
   /** The cars standing in bays near the view: drawn, solid to walkers, never stepped. */
   readonly parked: Vehicle[] = [];
+  /** The player in the scenery (`play.ts`, driven by `src/play.ts`). */
+  readonly play = new PlayWorld();
+  /** The cars the player drives and left: drawn and solid as parked ones. */
+  get extra(): readonly Vehicle[] { return this.play.cars; }
+
+  /** A parked car taken by the player: out of its bay. */
+  takeParked(car: Vehicle): void {
+    const i = this.parked.indexOf(car);
+    if (i >= 0) this.parked.splice(i, 1);
+    for (const [id, c] of this.bays) if (c === car) { this.bays.delete(id); break; }
+  }
 
   private readonly rng = new Rng(0xa3b1e7);
   private readonly walkers = new Set<number>();
@@ -139,6 +151,7 @@ export class AmbientWorld {
 
   step(w: SimWorld): void {
     if (!this.enabled) return;
+    this.play.step(w);
     // The walks that ended: in through a door.
     const engine = w.pedEngine;
     engine.takeArrivals?.(w);

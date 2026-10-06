@@ -1,4 +1,5 @@
 import { CITIZEN_MODELS } from './citizenCatalog';
+import { wornBy } from '@people/wardrobe';
 import { makeRoster } from '@people/roster';
 import type { PersonSpec } from '@people/spec';
 
@@ -98,6 +99,14 @@ export const CROWD: readonly CitizenModel[] = sceneryCast(makeRoster().map((entr
  * bicycle and motorbike has somebody on it. Each is fetched only when
  * somebody drawn needs it.
  */
+function dressedForSex(c: CitizenModel): boolean {
+  const look = c.person?.look;
+  if (!look) return true;
+  const other = c.gender === 'f' ? 'male' : 'female';
+  return [look.outfit, look.footwear, look.hairCut, look.hat, ...(look.extras ?? [])]
+    .every((item) => !item || item === 'none' || wornBy(item) !== other);
+}
+
 function sceneryCast(all: readonly CitizenModel[]): CitizenModel[] {
   const wanted: readonly [AgeBand, Wardrobe][] = [
     ['adult', 'casual'], ['adult', 'sport-casual'], ['adult', 'smart-casual'], ['adult', 'business'],
@@ -106,7 +115,8 @@ function sceneryCast(all: readonly CitizenModel[]): CitizenModel[] {
   const out: CitizenModel[] = [];
   for (const gender of ['f', 'm'] as const) {
     for (const [ageBand, wardrobe] of wanted) {
-      const fits = all.filter((c) => c.gender === gender && c.ageBand === ageBand && c.wardrobe === wardrobe);
+      // Never anything cut for the other sex: a man in Mary Janes (2026-10-05).
+      const fits = all.filter((c) => c.gender === gender && c.ageBand === ageBand && c.wardrobe === wardrobe && dressedForSex(c));
       const pick = fits.find((c) => c.rides) ?? fits[0];
       if (pick) out.push(pick);
     }

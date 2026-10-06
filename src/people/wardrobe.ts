@@ -47,8 +47,11 @@ const STREET_TRIANGLES = 16000;
 const COSTUME = /fantasy|goddess|viking|medieval|renaissance|priest|monk|wizard|hero|superhero|comic|future|scifi|sci-fi|robe|armou?r|gown|disco|swimwear|toga|tunic/;
 
 function sexOf(name: string, tags: readonly string[]): WardrobeItem['sex'] {
-  const text = `${name} ${tags.join(' ')}`.toLowerCase();
-  const female = /female|woman|women|ladies|lady|girl|dress|skirt|bra\b|bikini/.test(text);
+  // The item's own name, not its author's (`dressupdoc_...` is no dress).
+  const own = /^(female|male)_/.test(name) ? name : name.replace(/^[^_]+_/, '');
+  const text = `${own} ${tags.join(' ')}`.toLowerCase();
+  // Mary Janes, heels, pumps and ballet flats are women's shoes (a man in Mary Janes, 2026-10-05).
+  const female = /female|woman|women|ladies|lady|girl|dress|skirt|bra\b|bikini|mary.?jane|_mj_|heel|pump|ballet/.test(text);
   const male = /\bmale\b|_male|man\b|men\b|boy|beard|moustache/.test(text.replace(/female/g, ''));
   return female && !male ? 'female' : male && !female ? 'male' : 'any';
 }
@@ -99,7 +102,8 @@ export const COMMUNITY: readonly WardrobeItem[] = (community.items as CommunityE
   return {
     name: i.name,
     kind,
-    sex: HAIR[i.name]?.sex ?? SEX[i.name] ?? sexOf(i.name, i.tags),
+    // A review that said "anybody" gives way to a name that says whom it is for.
+    sex: HAIR[i.name]?.sex ?? (SEX[i.name] === 'any' ? null : SEX[i.name]) ?? sexOf(i.name, i.tags),
     ...(kind === 'hair' ? { length: HAIR[i.name]?.length ?? lengthOf(i.name, i.tags) } : {}),
     triangles: i.triangles,
     street: SELECTED.has(i.name) && i.street && !costume && i.triangles <= STREET_TRIANGLES,
@@ -112,6 +116,13 @@ const BY_NAME = new Map(COMMUNITY.map((i) => [i.name, i]));
 export const communityItem = (name: string): WardrobeItem | undefined => BY_NAME.get(name);
 
 /** Community items of a kind; for the street, only the ones a passer-by may wear, suiting their sex. */
+/** Whom a worn item is for: the community items as reviewed, the system outfits by their name. */
+export function wornBy(name: string): WardrobeItem['sex'] {
+  const item = COMMUNITY.find((i) => i.name === name);
+  if (item) return item.sex;
+  return /^female_/.test(name) ? 'female' : /^male_/.test(name) ? 'male' : 'any';
+}
+
 export function itemsOf(kind: WardrobeItem['kind'], options: { street?: boolean; sex?: 'female' | 'male' } = {}): readonly string[] {
   return COMMUNITY.filter((i) => i.kind === kind
     && (!options.street || i.street)

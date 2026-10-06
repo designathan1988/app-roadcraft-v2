@@ -4,6 +4,8 @@ import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
 import { onCarriageway } from '@world/carriageway';
 import {
   BufferGeometry,
+  Line,
+  LineBasicMaterial,
   Float32BufferAttribute,
   Color,
   Quaternion,
@@ -39,7 +41,7 @@ import type { Viewport } from '@view/viewport';
 import { createAgentMeshes, type AgentMeshes } from './agents';
 import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
-import { createIsoRig } from './isoViewport';
+import { type Chase, createIsoRig } from './isoViewport';
 import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
@@ -172,6 +174,14 @@ export interface DrawOptions {
   readonly holdRoads?: boolean;
 }
 
+/** The play camera (`src/play.ts`), world space: x, y and height. */
+export interface PlayCamera {
+  readonly eye: readonly [number, number, number];
+  readonly look: readonly [number, number, number];
+  readonly focus: readonly [number, number, number];
+  readonly fov: number;
+}
+
 export interface SceneHandle {
   readonly backend: 'three-webgl';
   readonly viewport: Viewport;
@@ -231,6 +241,15 @@ export interface SceneHandle {
   setSkyMode(mode: SkyMode): void;
   /** Perspective camera on, or the orthographic (isometric) view. */
   setPerspective(on: boolean): void;
+  /**
+   * The play camera (`src/play.ts`): first or third person, perspective for
+   * as long as it is on; null gives the orbit (and the projection it had) back.
+   */
+  setChase(chase: PlayCamera | null): void;
+  /** A person not drawn (the player's own body, seen from inside the head). */
+  setHiddenPerson(id: number | null): void;
+  /** A shot: a tracer from the muzzle to where it struck, and the muzzle's flash (world x, y, height). */
+  shot(from: readonly [number, number, number], to: readonly [number, number, number]): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
   /**
@@ -1007,7 +1026,50 @@ export function createSceneRenderer(
   let transitPreview: ReturnType<typeof buildTrackPreview> | null = null;
   let transitPreviewKey = '';
 
+  // The play camera's state: the projection the orbit had before it.
+  const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
+  let orbitPerspective: boolean | null = null;
+  let hiddenPerson: number | null = null;
+  const TRACER_LIFE = 0.12;
+  const tracerMaterial = new LineBasicMaterial({ color: 0xfff1b0, transparent: true, opacity: 1, depthWrite: false });
+  const tracers: { line: Line; life: number }[] = [];
+  const muzzle = new PointLight(0xffc070, 0, m(8), 2);
+  scene.add(muzzle);
+
   const handle: SceneHandle = {
+    setChase(chase) {
+      if (chase && orbitPerspective === null) {
+        orbitPerspective = rig.perspective;
+        if (!rig.perspective) handle.setPerspective(true);
+      }
+      if (chase) {
+        chaseCamera.eye.set(chase.eye[0], chase.eye[2], -chase.eye[1]);
+        chaseCamera.look.set(chase.look[0], chase.look[2], -chase.look[1]);
+        chaseCamera.focus.set(chase.focus[0], chase.focus[2], -chase.focus[1]);
+        (chaseCamera as { fov: number }).fov = chase.fov;
+      }
+      rig.setChase(chase ? chaseCamera : null);
+      if (!chase && orbitPerspective !== null) {
+        const was = orbitPerspective;
+        orbitPerspective = null;
+        if (!was) handle.setPerspective(false);
+      }
+      onAssetsReady();
+    },
+    setHiddenPerson(id) {
+      hiddenPerson = id;
+    },
+    shot(from, to) {
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new Float32BufferAttribute([from[0], from[2], -from[1], to[0], to[2], -to[1]], 3));
+      const line = new Line(geometry, tracerMaterial.clone());
+      line.frustumCulled = false;
+      scene.add(line);
+      tracers.push({ line, life: TRACER_LIFE });
+      muzzle.position.set(from[0], from[2], -from[1]);
+      muzzle.intensity = 60;
+      onAssetsReady();
+    },
     inspect,
     census: () => agents.census(),
     backend: 'three-webgl',
@@ -1468,12 +1530,24 @@ export function createSceneRenderer(
           ragdolls.update(wallDt, ragdollWorld);
           ragdolls.draw(citizens, ragdollWorld);
         },
-        hiddenPed: (id) => ragdolls.hides(id),
+        hiddenPed: (id) => id === hiddenPerson || ragdolls.hides(id),
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
       destruction.update(wallDt);
       casualties.sync(ragdolls.decals);
       blast.update(wallDt, ragdollWorld);
+      // Tracers fade in a tenth of a second, the muzzle flash with them.
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        const t = tracers[i]!;
+        t.life -= wallDt;
+        (t.line.material as LineBasicMaterial).opacity = Math.max(0, t.life / TRACER_LIFE);
+        if (t.life <= 0) {
+          scene.remove(t.line);
+          t.line.geometry.dispose();
+          tracers.splice(i, 1);
+        }
+      }
+      muzzle.intensity = tracers.length ? muzzle.intensity * Math.pow(0.02, wallDt * 8) : 0;
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.

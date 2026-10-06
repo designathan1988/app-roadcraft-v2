@@ -77,6 +77,8 @@ export interface BuildingWiring {
   deactivate(): void;
   /** Before each draw: hands the preview to the renderer. */
   beforeDraw(active: boolean): void;
+  /** A building opened from inside at its ground floor (the player went in, `src/play.ts`), or closed. */
+  openInside(id: BuildingId | null): void;
   drawOverlay(ctx: CanvasRenderingContext2D): void;
   /** After an undo, a redo or a load. */
   restored(): void;
@@ -1147,6 +1149,13 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       scene.setBuildingPreview(null);
       scene.setBuildingsDimmed(undefined);
       hideOthers = false;
+    },
+    openInside(id) {
+      seeInside.on = id !== null;
+      seeInside.target = id;
+      seeInside.level = 0;
+      insideBar.show(seeInside);
+      deps.requestDraw();
     },
     beforeDraw(active) {
       if (active !== builderOpen) {
