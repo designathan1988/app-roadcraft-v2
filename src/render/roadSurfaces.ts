@@ -139,12 +139,15 @@ export interface SurfaceReuse {
    * Owned by the cache: `disposeSurfaceReuse` frees them.
    */
   readonly chunks?: Map<string, { readonly parts: readonly Tile[]; readonly mesh: Mesh }>;
+  /** Block meshes replaced but maybe still drawn: freed by the owner once the new roads are in. */
+  readonly retired?: Mesh[];
 }
 
 /** Frees what a `SurfaceReuse` holds on the GPU. */
 export function disposeSurfaceReuse(reuse: SurfaceReuse): void {
   for (const { mesh } of reuse.chunks?.values() ?? []) disposeMesh(mesh);
   reuse.chunks?.clear();
+  for (const mesh of reuse.retired?.splice(0) ?? []) disposeMesh(mesh);
   for (const material of reuse.paint.values()) material.dispose();
 }
 
@@ -255,6 +258,28 @@ export function buildRoadSurfaces(
   reuse?: SurfaceReuse,
   groundMaterial?: Material,
 ): RoadSurfaces {
+  const steps = roadSurfaceSteps(net, elevation, materials, terrainAt, reuse, groundMaterial);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * `buildRoadSurfaces` in steps: it yields after each tile built and each block
+ * merged, so the renderer can spread an edit's tiles over frames while the
+ * roads as they were stay drawn (`renderer.ts`), as a city builder updates a
+ * road's mesh behind the frame (docs/performance.md #10). With
+ * `reuse.retired`, the meshes a block replaces are handed there, not freed:
+ * the roads still drawn may hold them until the new ones take their place.
+ */
+export function* roadSurfaceSteps(
+  net: Network,
+  elevation: RoadElevation,
+  materials: SceneMaterials,
+  terrainAt: (x: number, y: number) => number,
+  reuse?: SurfaceReuse,
+  groundMaterial?: Material,
+): Generator<void, RoadSurfaces, void> {
   const started = performance.now();
   let tilesMs = 0;
   let mergeMs = 0;
@@ -262,6 +287,7 @@ export function buildRoadSurfaces(
   let chunksKept = 0;
   const chunks = reuse?.chunks;
   const usedChunks = new Set<string>();
+  const retire = (mesh: Mesh): void => { if (reuse?.retired) reuse.retired.push(mesh); else disposeMesh(mesh); };
   const group = new Group();
   group.name = 'road-network';
   const meshes: Mesh[] = [];
@@ -323,6 +349,7 @@ export function buildRoadSurfaces(
     for (const id of reuse.tiles.keys()) if (!current.has(id)) reuse.tiles.delete(id);
   }
   for (const pass of passes) {
+    yield;
     const structure = roadStructure(pass.structure);
     const present = [...net.doc.segments.values()].some(
       (segment) => pass.chain !== undefined
@@ -699,6 +726,7 @@ export function buildRoadSurfaces(
         bundle = buildTile(into, rect, specs);
         tilesMs += performance.now() - tileAt;
         built++;
+        yield;
       }
       kept.set(value, bundle);
       const chunk = `${Math.floor(ix / CHUNK)},${Math.floor(iy / CHUNK)}`;
@@ -722,12 +750,13 @@ export function buildRoadSurfaces(
           mesh = known.mesh;
           chunksKept++;
         } else {
-          if (known) disposeMesh(known.mesh);
+          if (known) retire(known.mesh);
           mesh = mergeTiles(list, spec.options);
           if (mesh && spec.renderOrder !== undefined) mesh.renderOrder = spec.renderOrder;
           if (mesh) chunks?.set(key, { parts: list, mesh });
           else chunks?.delete(key);
           chunksMerged++;
+          yield;
         }
         if (!mesh) continue;
         usedChunks.add(key);
@@ -739,7 +768,7 @@ export function buildRoadSurfaces(
     mergeMs += performance.now() - mergeAt;
   }
   // Blocks no surface has any more.
-  if (chunks) for (const [key, { mesh }] of chunks) if (!usedChunks.has(key)) { disposeMesh(mesh); chunks.delete(key); }
+  if (chunks) for (const [key, { mesh }] of chunks) if (!usedChunks.has(key)) { retire(mesh); chunks.delete(key); }
   // Where an edit's time went (`hitch:` entries, scripts/probe-hitches.mjs; docs/performance.md).
   const end = performance.now();
   performance.measure(`hitch:road-edit/surfaces ${built} tiles built ${reused} kept, ${chunksMerged} blocks merged ${chunksKept} kept: tiles ${tilesMs.toFixed(0)} ms, merge ${mergeMs.toFixed(0)} ms`, { start: started, end });

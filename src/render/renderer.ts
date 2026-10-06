@@ -44,7 +44,8 @@ import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
-import { buildRoadSurfaces, disposeSurfaceReuse, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
+import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
+import { disposeMesh } from './mesh/surfaceMesh';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { buildingBounds, levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
 import { elementRing, followPieces } from '@world/buildings/elements';
@@ -563,8 +564,33 @@ export function createSceneRenderer(
       .value(),
     paint: new Map(),
     chunks: new Map(),
+    retired: [],
   };
 
+  /** The road surfaces being built for the last edit (`rebuildWorld`), a slice a frame. */
+  let roadJob: Generator<void, RoadSurfaces, void> | null = null;
+  const ROAD_SLICE_MS = 6;
+  /** Builds the road surfaces of the last edit for a few milliseconds; swaps them in once complete. */
+  const pumpRoads = (): void => {
+    if (!roadJob) return;
+    const until = performance.now() + ROAD_SLICE_MS;
+    let step = roadJob.next();
+    while (!step.done && performance.now() < until) step = roadJob.next();
+    if (!step.done) { onAssetsReady(); return; }
+    roadJob = null;
+    const fresh = step.value;
+    const old = roads;
+    roads = fresh;
+    world.add(fresh.group);
+    if (old && old !== fresh) {
+      builtTriangles -= old.triangles;
+      world.remove(old.group);
+      old.dispose();
+    }
+    builtTriangles += fresh.triangles;
+    for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
+    onAssetsReady();
+  };
   let networkRevision = -1;
   let terrainRevision = -1;
   let builtTriangles = 0;
@@ -947,7 +973,6 @@ export function createSceneRenderer(
     networkRevision = net.revision;
     terrainRevision = net.doc.terrainRevision;
 
-    roads?.dispose();
     details?.dispose();
     scenery?.dispose();
     furniture?.dispose();
@@ -989,7 +1014,18 @@ export function createSceneRenderer(
     } else shapeGround(net);
     timed('ground');
 
-    roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    // The road surfaces: built at once the first time; after an edit, the
+    // tiles it reaches a few milliseconds a frame (`pumpRoads`) while the
+    // roads as they were stay drawn, swapped in when complete. Built in the
+    // frame of the edit, they were a stall of 40-330 ms on every road drawn
+    // (docs/performance.md #10). A job an edit overtakes is dropped.
+    if (!roads) {
+      roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+      for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
+      roadJob = null;
+    } else {
+      roadJob = roadSurfaceSteps(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    }
     world.add(roads.group);
     timed('surfaces');
 
@@ -1549,6 +1585,7 @@ export function createSceneRenderer(
         rebuildWorld(net);
         terrain.settle();
       }
+      pumpRoads();
       // A building placed, moved or reshaped grades its own site.
       // Only the ground round the sites that changed is graded again (growing
       // a building re-graded the whole map and every platform: a hitch for
@@ -1910,6 +1947,7 @@ export function createSceneRenderer(
       agents.dispose();
       signals.dispose();
       buildings.dispose();
+      roadJob = null;
       roads?.dispose();
       disposeSurfaceReuse(surfaceReuse);
       details?.dispose();

@@ -48,9 +48,14 @@ export function pickBuilding(
 ): BuildingHit | null {
   let best: BuildingHit | null = null;
   for (const b of buildings) {
-    const floor = floorOf(b);
-    // Cheap reject: the ray's footprint over the building's height span.
+    // Cheap reject first, before the floor (which samples the ground and the
+    // footways): the ray's footprint over any height. Every building in town
+    // had its floor worked out for every click - 85 ms a click in the default
+    // town (docs/performance.md).
     const box = buildingBounds(b, 1);
+    if (!rayNearBox(ray, box, -1e6, 1e6)) continue;
+    const floor = floorOf(b);
+    // The ray's footprint over the building's height span.
     if (!rayNearBox(ray, box, floor - 2, floor + 400)) continue;
     const c = Math.cos(b.rotation);
     const s = Math.sin(b.rotation);

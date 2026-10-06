@@ -79,7 +79,59 @@ const EDGE_INSET = m(3);
 const EDGE_REACH = m(22);
 
 /** Every stall of every parking element, with the way out of its lot and the lane it is reached from. */
+/**
+ * The bays as last worked out, by world: the ambient traffic and the
+ * residents' cars both asked for them on every edit, and each worked out every
+ * lot, exit and aisle of the town again (docs/performance.md #15). Handed out
+ * as fresh copies (a holder sets `car` on its own).
+ */
+const BAYS = new WeakMap<SimWorld, { key: string; first: unknown; bays: readonly Bay[] }>();
 export function collectBays(w: SimWorld): Bay[] {
+  const key = `${w.doc.buildings.revision}:${w.topologyRevision}:${w.graph.revision}:${w.graph.lanelets.size}`;
+  const first = w.graph.lanelets.values().next().value;
+  let known = BAYS.get(w);
+  if (!known || known.key !== key || known.first !== first) BAYS.set(w, known = { key, first, bays: workOutBays(w) });
+  return known.bays.map((bay) => ({ ...bay, car: null }));
+}
+
+/** Cell of the lanes' grid, world units. */
+const LANE_CELL = m(30);
+const LANE_GRIDS = new WeakMap<object, { key: string; lanes: Lanelet[]; cells: Map<number, number[]> }>();
+/**
+ * The lanes whose bounds come within `reach` of a point, in the graph's order
+ * (the tie-break), from a grid of their bounds: every bay and every lot used to
+ * measure every lane of the town.
+ */
+function lanesNear(w: SimWorld, x: number, y: number, reach: number): Lanelet[] {
+  const key = `${w.graph.revision}:${w.graph.lanelets.size}`;
+  let grid = LANE_GRIDS.get(w.graph);
+  // Rebuilt under the same revision, the lanes are new objects: read again.
+  if (!grid || grid.key !== key || (grid.lanes.length > 0 && grid.lanes[0] !== w.graph.lanelets.values().next().value)) {
+    const lanes = [...w.graph.lanelets.values()];
+    const cells = new Map<number, number[]>();
+    lanes.forEach((lane, i) => {
+      const box = lane.centre.bbox;
+      for (let gx = Math.floor(box.minX / LANE_CELL); gx <= Math.floor(box.maxX / LANE_CELL); gx++) {
+        for (let gy = Math.floor(box.minY / LANE_CELL); gy <= Math.floor(box.maxY / LANE_CELL); gy++) {
+          const k = (gx + 32768) * 65536 + (gy + 32768);
+          const list = cells.get(k);
+          if (list) list.push(i); else cells.set(k, [i]);
+        }
+      }
+    });
+    LANE_GRIDS.set(w.graph, grid = { key, lanes, cells });
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return grid.lanes;
+  const picked = new Set<number>();
+  for (let gx = Math.floor((x - reach) / LANE_CELL); gx <= Math.floor((x + reach) / LANE_CELL); gx++) {
+    for (let gy = Math.floor((y - reach) / LANE_CELL); gy <= Math.floor((y + reach) / LANE_CELL); gy++) {
+      for (const i of grid.cells.get((gx + 32768) * 65536 + (gy + 32768)) ?? []) picked.add(i);
+    }
+  }
+  return [...picked].sort((a, b) => a - b).map((i) => grid.lanes[i]!);
+}
+
+function workOutBays(w: SimWorld): Bay[] {
   const out: Bay[] = [];
   const walls = wallsOf(w);
   const navCache = new Map<object, { exits: LotExit[]; grid: LotGrid }>();
@@ -299,7 +351,7 @@ function exitsOf(w: SimWorld, b: Building, v: { x: number; y: number; w: number;
   // Only the lanes that could be near this lot are asked.
   const centre = localToWorld(b, v.x + v.w / 2, v.y + v.d / 2);
   const reach = Math.hypot(v.w, v.d) / 2 + EDGE_REACH + m(10);
-  const lanes = [...w.graph.lanelets.values()].filter((lane) => lane.centre.closestPoint(centre).distance < reach);
+  const lanes = lanesNear(w, centre.x, centre.y, reach).filter((lane) => lane.centre.closestPoint(centre).distance < reach);
   const out: LotExit[] = [];
   for (const s of sides) {
     if (s.length < 2 * EDGE_MARGIN + m(1)) continue;
@@ -326,7 +378,8 @@ export function laneBeside(w: SimWorld, x: number, y: number, segment?: SegmentI
 function laneFor(w: SimWorld, x: number, y: number, among?: Iterable<Lanelet>, segment?: SegmentId): BayLane | null {
   let best: BayLane | null = null;
   let bestD = LANE_REACH;
-  for (const lane of among ?? w.graph.lanelets.values()) {
+  // A lane farther than LANE_REACH is never taken: only those near are read.
+  for (const lane of among ?? lanesNear(w, x, y, LANE_REACH)) {
     if (lane.kind !== 'link' || lane.length < 2 * LANE_END + m(6)) continue;
     if (segment !== undefined && lane.segment !== segment) continue;
     if (w.rt(lane.id).ghost) continue;
