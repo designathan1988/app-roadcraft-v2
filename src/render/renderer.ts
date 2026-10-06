@@ -404,7 +404,7 @@ export function createSceneRenderer(
   const anisotropy = Math.min(quality.anisotropy, maxAnisotropy);
 
   /** The grid on the ground (`setGrid`): one set of lines for the whole map. */
-  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, depthWrite: false }));
+  const grid = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, depthWrite: false }));
   grid.name = 'map-grid';
   grid.frustumCulled = false;
   grid.visible = false;
@@ -1415,12 +1415,17 @@ export function createSceneRenderer(
         // ground as drawn: built again only when the land changes.
         gridBuiltFor = `${terrainRevision}`;
         const pos: number[] = [];
-        const lift = m(0.12);
+        const lift = m(0.25);
         const n = Math.round((2 * MAP_HALF) / GRID_CELL);
+        // Sampled at the terrain's own cell along each line, so the line bends
+        // where the ground does: sampled a cell of the grid apart, it ran
+        // straight under every hump between (the player saw it broken).
+        const step = Math.min(GRID_CELL, TERRAIN_CELL);
+        const steps = Math.round((2 * MAP_HALF) / step);
         for (let i = 0; i <= n; i++) {
           const c = -MAP_HALF + i * GRID_CELL;
-          for (let k = 0; k < n; k++) {
-            const a = -MAP_HALF + k * GRID_CELL, b = a + GRID_CELL;
+          for (let k = 0; k < steps; k++) {
+            const a = -MAP_HALF + k * step, b = a + step;
             pos.push(c, terrain.renderedHeightAt(c, a) + lift, -a, c, terrain.renderedHeightAt(c, b) + lift, -b);
             pos.push(a, terrain.renderedHeightAt(a, c) + lift, -c, b, terrain.renderedHeightAt(b, c) + lift, -c);
           }
