@@ -434,8 +434,16 @@ export class SimWorld {
    * topology for `topologyRevision`.
    */
   rebuildWalkTopology(): void {
+    const steps = this.walkTopologySteps();
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+  }
+
+  /** `rebuildWalkTopology` in steps (`SidewalkGraph.buildSteps`); the world is held until the last. */
+  *walkTopologySteps(): Generator<void, void, void> {
     if (this.vehicleTopologyRevision !== this.net.trafficRevision) this.rebuildVehicleTopology();
-    this.sidewalks.build(this.doc, this.net, this.graph);
+    yield* this.sidewalks.buildSteps(this.doc, this.net, this.graph);
+    yield;
     this.crossingSpans.build(this);
     this.syncControllers();
     this.topologyRevision = this.net.trafficRevision;

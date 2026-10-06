@@ -146,6 +146,18 @@ export class SidewalkGraph {
   private accessFootprints: Vec2[][] = [];
 
   build(doc: RoadDoc, net: Network, graph: LaneletGraph): void {
+    const steps = this.buildSteps(doc, net, graph);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+  }
+
+  /**
+   * `build` in steps, a junction's corners or a building's doors at a time:
+   * the frame that rebuilt the footways after an edit was a stall of about
+   * 80 ms in the default town (docs/performance.md #11). The simulation is
+   * held until the last step (`main.ts`).
+   */
+  *buildSteps(doc: RoadDoc, net: Network, graph: LaneletGraph): Generator<void, void, void> {
     this.nodes.clear();
     this.edges.clear();
     this.adjacency.clear();
@@ -239,6 +251,7 @@ export class SidewalkGraph {
     const previousCorners = this.cornerCache;
     const nextCorners = new Map<string, Vec2[]>();
     for (const [nodeId, node] of doc.nodes) {
+      yield;
       if (node.incident.length < 2) continue;
 
       const legs = node.incident
@@ -281,6 +294,7 @@ export class SidewalkGraph {
 
     // ---- sidewalk edges along each segment --------------------------------
     for (const [segId, seg] of doc.segments) {
+      yield;
       const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
       if (!carriesPedestrians(rt)) continue;
       const pl = orientedPolyline(doc, seg, seg.a);
@@ -332,11 +346,18 @@ export class SidewalkGraph {
 
     this.fitCorridors(walkable);
     for (const edge of this.edges.values()) if (edge.kind === 'walk') this.baseWalkEdges.set(edge.id, edge);
-    this.refreshBuildingAccess(doc);
+    yield* this.refreshBuildingAccessSteps(doc);
   }
 
   /** Refreshes door links without rebuilding the road's expensive footway corridors. */
   refreshBuildingAccess(doc: RoadDoc): void {
+    const steps = this.refreshBuildingAccessSteps(doc);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+  }
+
+  /** `refreshBuildingAccess` in steps, a building's doors at a time. */
+  *refreshBuildingAccessSteps(doc: RoadDoc): Generator<void, void, void> {
     for (const id of this.accessEdges) this.removeEdge(id);
     for (const id of this.accessNodes) {
       this.nodes.delete(id);
@@ -404,6 +425,7 @@ export class SidewalkGraph {
       const previousDoors = this.doorCache;
       const nextDoors = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
       for (const building of doc.buildings.all()) {
+        yield;
         for (const bay of doorBays(building)) {
           if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
           const door = { x: bay.x + bay.nx * m(0.75), y: bay.y + bay.ny * m(0.75) };

@@ -3639,6 +3639,8 @@ function followAgent(): void {
 
 /** The footways were rebuilt (`rebuildWalkTopology`) and the walkers are rebound onto them next frame. */
 let pedsToRebind = false;
+/** The footways of the last edit being rebuilt, a few milliseconds a frame (`SimWorld.walkTopologySteps`). */
+let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = null;
 
 function frame(now: number): void {
   pending = false;
@@ -3674,8 +3676,16 @@ function frame(now: number): void {
       // The footways now, the walkers rebound onto them in the next frame,
       // the world held until then: the two in one frame were a stall of
       // 130-180 ms after every road in the default town (docs/performance.md #11).
-      sim.rebuildWalkTopology();
-      pedsToRebind = true;
+      if (!walkPrep || walkPrep.revision !== net.trafficRevision) {
+        walkPrep = { revision: net.trafficRevision, steps: sim.walkTopologySteps() };
+      }
+      const until = performance.now() + TOPOLOGY_SLICE_MS;
+      let step = walkPrep.steps.next();
+      while (!step.done && performance.now() < until) step = walkPrep.steps.next();
+      if (step.done) {
+        walkPrep = null;
+        pedsToRebind = true;
+      }
       holdSim = true;
       requestDraw();
     }
