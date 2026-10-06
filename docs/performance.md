@@ -47,11 +47,17 @@ Cuidados ao ler os números:
 | 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **CORRIGIDO** (impressão pelo fecho de imports; recozido) |
 | 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **CORRIGIDO** (classes e penteados cozidos; só o rig da classe e o ajuste de roupa, ≤ 11 ms, ficam no jogo) |
 | 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **CORRIGIDO** (blocos 4×4 mantidos na placa) |
-| 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** (83% é a malha: altura, moldura e cor consultadas por vértice) |
-| 11 | Calçadas: buscas no mapa inteiro para cada ponto/porta | toda edição de via | `buildWalkways` 57 ms + grafo dos pedestres 62 ms na vila | **REDUZIDO** (28 + 45 ms, redes idênticas) |
-| 12 | Prédios: células remontadas depois de edição de via | edição de via perto de prédios | quadro de 285 ms (`assembleByCell`) | **ABERTO** (medir de novo depois de #1) |
+| 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro; o mundo inteiro refeito no quadro da edição | toda edição de via | 900 blocos na primeira via; quadros de 160–500 ms na vila | **CORRIGIDO** (digest local; mundo refeito em fatias e trocado de uma vez) |
+| 11 | Calçadas: buscas no mapa inteiro para cada ponto/porta; tudo num quadro | toda edição de via | `buildWalkways` 57 ms + grafo dos pedestres 62 ms na vila | **CORRIGIDO** (28 + 27 ms, redes idênticas, em quadros separados) |
+| 12 | Prédios: alterados e células montados no quadro da edição | via que remove prédios ou mexe no chão deles | quadros de 285–533 ms (`assembleByCell`, 49 MB) | **CORRIGIDO** (prédios e células montados em fatias antes da troca) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
-| 14 | Biblioteca de animações em cache fraco: descartada e decodificada de novo | pessoas novas depois de um tempo | 12,8 MB de base64 decodificados de novo | **CORRIGIDO** (cache permanente, ~10 MB) |
+| 14 | Biblioteca de animações em cache fraco: descartada e decodificada de novo | pessoas novas depois de um tempo | 12,8 MB de base64 decodificados de novo, um caractere por vez | **CORRIGIDO** (cache permanente; decodificador nativo) |
+| 15 | Vagas: cada vaga e cada lote olhavam todas as faixas; calculadas duas vezes por edição | toda edição de via | 51 + 36 ms na vila | **CORRIGIDO** (grade de faixas, uma conta por revisão: 32 ms, vagas idênticas) |
+| 16 | Clique em prédio: piso de cada prédio calculado antes do descarte barato | clique com a ferramenta de inspeção | 85 ms por clique na vila | **CORRIGIDO** |
+| 17 | Rede viária: todas as junções resolvidas 2–3 vezes por via, cópia de trabalho sem memória | toda via desenhada | 13 ms por rebuild × 3 na vila | **CORRIGIDO** (junções guardadas pelo que as constrói: 2–5 ms, idênticas) |
+| 18 | Fachadas de cada prédio recalculadas por plataformas, portas, assinatura e malhas | toda edição | um prédio grande: ~70 ms numa fatia | **CORRIGIDO** (uma vez por registro) |
+| 19 | Cópia de trabalho do documento por JSON, prédios inclusos, e comparação por JSON | toda via desenhada | cópia 13 ms + volta 20 ms na vila | **CORRIGIDO** (prédios compartilhados: 1 + 2 ms) |
+| 20 | `world.clear()` apagava muros, transporte, jardins e floresta a cada via | toda edição de via | sumiam da tela (defeito introduzido em 4c2f36a) | **CORRIGIDO** (a troca remove só o que substitui) |
 
 ---
 
@@ -223,12 +229,28 @@ vila, uma via curta: fusão de 28–35 ms e 50–80 MB enviados, com quadros de 
 mesmos tiles mantém a malha e o buffer na placa; só os blocos tocados são
 fundidos e enviados.
 
-## 10. Tiles de via: quantos e quanto custam — ABERTO
+## 10. A edição de via refazia o mundo no próprio quadro — CORRIGIDO
 
-Na vila, uma via curta refaz de 9 a 34 tiles (o resto é reaproveitado), a 4–13 ms
-cada. Falta verificar se a solução de altura (`changedBlocks`) está marcando
-blocos além dos que a via realmente muda (o greide de uma rua se propagando) e
-onde o tempo de `buildTile` se concentra.
+**Causa.** `render/renderer.ts` `rebuildWorld` fazia tudo no quadro da edição:
+plataformas dos prédios, chão, superfícies das vias (tiles a 4–13 ms cada),
+estruturas, cenário, postes, mobiliário. Além disso o digest da solução de
+alturas incluía a via inteira (uma junção numa ponta invalidava a rua toda) e
+lia de um jeito diferente uma rede sem buckets (a primeira via mudava os 900
+blocos do mapa).
+
+**Correção.** No quadro da edição só a solução de alturas (≈ 8 ms, que os carros
+leem). O resto é `worldSteps`: um gerador bombeado ~10 ms por quadro
+(`pumpWorld`), o mundo antigo desenhado até o novo ficar completo e trocado de
+uma vez, só o que é substituído (#20). Blocos de chão de uma edição atropelada por
+outra passam para a próxima (`pendingBlocks`). Digest local por retângulo
+(`world/elevation.ts` `localDigest`), alturas a 0,4 mm.
+
+**Proteção.** `tests/render/roadTiles.spec.ts` (cache = construção do zero, bit a
+bit, em várias edições na vila; menos de 25 blocos mudados por via curta).
+
+**Medido na vila** (`scripts/probe-hitches.mjs --town`): pior quadro 851 → ~200 ms
+(o restante são quadros de render no iGPU e o clique, ver #21); no mapa vazio,
+8 vias longas com trânsito e pessoas: pior quadro 553 → 59 ms, nenhum acima de 100 ms.
 
 ## 11. Calçadas: buscas no mapa inteiro — REDUZIDO
 
@@ -247,18 +269,24 @@ Medido na vila, cache aquecido, depois de uma via curta (Node, um processo):
 Restante: as portas ainda são todas religadas a cada via (≈ 40 ms); o certo é
 religar só as portas perto do que mudou (como a #1).
 
-## 12. Prédios remontados por célula depois de edição — ABERTO
+## 12. Prédios montados no quadro da edição — CORRIGIDO
 
-`buildings/layer.ts` `assembleByCell` aparece num quadro de 285 ms depois de uma
-via na vila. Medir de novo com a #1 (agora só reamostram prédios tocados) e ver
-se as células remontadas são só as tocadas.
+`render/buildings/layer.ts`: quando uma via removia prédios ou mexia no chão
+deles, os prédios alterados eram emitidos e as células de 240 m inteiras
+remontadas (até 49 MB enviados) no mesmo quadro. Agora os prédios alterados são
+emitidos ~6 ms por quadro e as células alteradas montadas uma por fatia
+(`stagedCells`), com a cidade antiga desenhada; a troca só usa o que está pronto.
 
 ## 13. Reconstruções globais ainda baratas — ABERTO
 
-`rebuildWorld` refaz no mapa inteiro, a cada via, as estruturas
-(`buildStructureDetails`), o cenário (`buildScenery`), os postes
-(`buildUtilities`), o mobiliário e as placas. Hoje somam menos de 10 ms na vila,
-mas crescem com o mapa. Devem passar a depender de regiões, como a #1.
+Estruturas, cenário, postes, mobiliário e placas ainda são refeitos no mapa
+inteiro a cada via (agora fora do quadro da edição, em fatias). Baratos hoje.
+
+## 21. O clique que grava a via — REDUZIDO
+
+Medido na vila (`hitch:mutate`, `hitch:commit`): 95 → ~60 ms. Restam o
+`boreDeepCuts` (19 ms: resolve as alturas da rede inteira para testar as vias
+novas, o que o renderer refaz em seguida) e o texto do desfazer (~9 ms).
 
 ## 14. Biblioteca de animações em cache fraco — CORRIGIDO
 
