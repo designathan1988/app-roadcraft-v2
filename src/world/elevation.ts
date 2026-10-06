@@ -745,6 +745,7 @@ export function buildRoadElevation(
     return xy;
   };
   const near = { s: 0, distance: 0 };
+  const quantum = (h: number): number => Math.round(h * 1000);
   /**
    * What a profile can give any point of a rectangle: its own figures, and
    * only the part of its line and stations a point of the rectangle can be
@@ -769,9 +770,12 @@ export function buildRoadElevation(
     for (let i = 0; i < profile.h.length; i++) {
       const dx = at[i * 2]! - cx, dy = at[i * 2 + 1]! - cy;
       if (dx * dx + dy * dy > reach2) continue;
-      digest.add(i).add(profile.h[i]!);
-      if (i > 0) digest.add(profile.h[i - 1]!);
-      if (i + 1 < profile.h.length) digest.add(profile.h[i + 1]!);
+      // Heights to a thousandth of a unit (0.4 mm): a solve run again after a
+      // street elsewhere moved them by rounding noise, and the noise marked
+      // blocks all over the town as changed (docs/performance.md #10).
+      digest.add(i).add(quantum(profile.h[i]!));
+      if (i > 0) digest.add(quantum(profile.h[i - 1]!));
+      if (i + 1 < profile.h.length) digest.add(quantum(profile.h[i + 1]!));
     }
     // The line itself where it passes within reach: a piece of it whose
     // nearest point to c is within reach, with its two ends.

@@ -1101,7 +1101,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       rebuildWater(lastStamps);
     },
     shapeToRoads(shape, region = null) {
+      const shapeAt = performance.now();
       const moved = shapeToRoads(shape, region);
+      performance.measure('hitch:road-edit/ground shape', { start: shapeAt, end: performance.now() });
       // A road that cut through a valley changes where the water's shore is:
       // at once, or once the stroke is over when one is held (`settle`).
       if (moved && touchesWater()) {

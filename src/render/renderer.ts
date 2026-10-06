@@ -567,29 +567,17 @@ export function createSceneRenderer(
     retired: [],
   };
 
-  /** The road surfaces being built for the last edit (`rebuildWorld`), a slice a frame. */
-  let roadJob: Generator<void, RoadSurfaces, void> | null = null;
-  const ROAD_SLICE_MS = 6;
-  /** Builds the road surfaces of the last edit for a few milliseconds; swaps them in once complete. */
-  const pumpRoads = (): void => {
-    if (!roadJob) return;
-    const until = performance.now() + ROAD_SLICE_MS;
-    let step = roadJob.next();
-    while (!step.done && performance.now() < until) step = roadJob.next();
-    if (!step.done) { onAssetsReady(); return; }
-    roadJob = null;
-    const fresh = step.value;
-    const old = roads;
-    roads = fresh;
-    world.add(fresh.group);
-    if (old && old !== fresh) {
-      builtTriangles -= old.triangles;
-      world.remove(old.group);
-      old.dispose();
-    }
-    builtTriangles += fresh.triangles;
-    for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
-    onAssetsReady();
+  /** The world being rebuilt for the last edit (`rebuildWorld`), a slice a frame. */
+  let worldJob: Generator<void, void, void> | null = null;
+  const WORLD_SLICE_MS = 10;
+  /** Builds the world of the last edit for a few milliseconds; it puts itself in place once complete. */
+  const pumpWorld = (): void => {
+    if (!worldJob) return;
+    const until = performance.now() + WORLD_SLICE_MS;
+    let step = worldJob.next();
+    while (!step.done && performance.now() < until) step = worldJob.next();
+    if (step.done) worldJob = null;
+    else onAssetsReady();
   };
   let networkRevision = -1;
   let terrainRevision = -1;
@@ -868,18 +856,33 @@ export function createSceneRenderer(
    * reach them are worked out again - their floors read the footway - and
    * every block is re-shaped on its own.
    */
-  const shapeBlocks = (net: Network, blocks: readonly [number, number, number, number][]): void => {
+  /**
+   * `shapeBlocks` in steps (`worldSteps`): each touched building's platform on
+   * its own, then the ground a few blocks at a time - in one go it was 60-150
+   * ms of every road edit in the default town (docs/performance.md #10).
+   */
+  function* shapeBlocksSteps(net: Network, blocks: readonly [number, number, number, number][]): Generator<void, void, void> {
     const touches = (q: readonly [number, number, number, number]): boolean =>
       blocks.some((b) => q[0] <= b[2] && q[2] >= b[0] && q[1] <= b[3] && q[3] >= b[1]);
-    for (const b of net.doc.buildings.all()) if (touches(bankBox(b))) padsKnown.delete(b);
+    for (const b of net.doc.buildings.all()) {
+      if (!touches(bankBox(b))) continue;
+      padsKnown.delete(b);
+      buildingPads([b], terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown);
+      yield;
+    }
     gradedFor = net.doc.buildings.revision;
     changedSites(net.doc);
     padsCache = net.doc.buildings.size > 0
       ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
       : null;
-    // All the blocks in one pass of the terrain, not one pass each (docs/performance.md).
-    shapeGround(net, blocks.map(terrainRegion), false, true);
-  };
+    yield;
+    const BATCH = 3;
+    for (let i = 0; i < blocks.length; i += BATCH) {
+      shapeGround(net, blocks.slice(i, i + BATCH).map(terrainRegion), false, true);
+      yield;
+    }
+  }
+
 
   const shapeGround = (net: Network, regions: TerrainRegion | readonly TerrainRegion[] | null = null, sites = false, padsReady = false): void => {
     const list: readonly TerrainRegion[] | null = regions === null ? null
@@ -960,6 +963,8 @@ export function createSceneRenderer(
     builtTriangles += furniture.triangles;
   };
 
+  /** Blocks whose ground a dropped rebuild had not shaped yet (`null`: the whole map). */
+  let pendingBlocks: [number, number, number, number][] | null = [];
   const rebuildWorld = (net: Network): void => {
     if (networkRevision === net.revision && terrainRevision === net.doc.terrainRevision) {
       if (utilityRevision !== net.doc.utilityRevision) rebuildUtilities(net);
@@ -973,15 +978,6 @@ export function createSceneRenderer(
     networkRevision = net.revision;
     terrainRevision = net.doc.terrainRevision;
 
-    details?.dispose();
-    scenery?.dispose();
-    furniture?.dispose();
-    furniture = null;
-    utilities?.dispose();
-    for (const mesh of scenery?.meshes ?? []) world.remove(mesh);
-    if (scenery) world.remove(scenery.grass);
-    world.clear();
-
     // ONE solve for the whole network, shared by every consumer below. Solving
     // it per structure, or per band, is how two surfaces came to disagree about
     // where the same junction was.
@@ -990,61 +986,49 @@ export function createSceneRenderer(
     // be cut and filled to meet these roads, and feeding the next solve its own
     // previous answer would let the two drift a little further apart on every
     // rebuild.
-    let lap = performance.now();
-    // Each step of a road edit timed (`hitch:` entries, read by scripts/probe-hitches.mjs; docs/performance.md).
-    const timed = (what: string): void => { const now = performance.now(); performance.measure(`hitch:road-edit/${what}`, { start: lap, end: now }); lap = now; };
     elevation = buildRoadElevation(net, terrain.naturalRenderedHeightAt);
-    timed('elevation');
+    performance.measure('hitch:road-edit/elevation', { start: started, end: performance.now() });
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
     // from the same rule, where a road is buried deeply enough — tunnels.
-    // A street drawn re-shaped the whole map (a seventh of a second on a
-    // small town); now only the blocks its solve changed.
-    //
-    // `padsCache` used to be required here too: on a map with no buildings it
-    // is always null, so every street drawn there re-shaped the whole map and
-    // rebuilt everything on the ground (docs/performance.md). The blocks are
-    // known from the two solves alone; `shapeBlocks` works the pads out.
-    const blocks = landStill && previousElevation ? changedBlocks(previousElevation, elevation) : null;
+    // Only the blocks its solve changed, with those a dropped rebuild left.
+    // (`padsCache` used to be required here too: on a map with no buildings
+    // it is always null, so every street drawn there re-shaped the whole map.)
+    const changed = landStill && previousElevation ? changedBlocks(previousElevation, elevation) : null;
+    const blocks = changed && pendingBlocks ? [...pendingBlocks, ...changed] : null;
     // The roads' own heights (the footway, the carriageway) moved where the solve did.
-    groundChanges.mark(blocks);
-    performance.measure(`hitch:road-edit/changed blocks ${blocks ? blocks.length : 'all'}${blocks?.length ? ` x[${Math.min(...blocks.map((b) => b[0]))},${Math.max(...blocks.map((b) => b[2]))}] y[${Math.min(...blocks.map((b) => b[1]))},${Math.max(...blocks.map((b) => b[3]))}]` : ''}`, { start: lap, end: lap + 9 });
-    if (blocks && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25) {
-      if (blocks.length) shapeBlocks(net, blocks);
-    } else shapeGround(net);
-    timed('ground');
-
-    // The road surfaces: built at once the first time; after an edit, the
-    // tiles it reaches a few milliseconds a frame (`pumpRoads`) while the
-    // roads as they were stay drawn, swapped in when complete. Built in the
-    // frame of the edit, they were a stall of 40-330 ms on every road drawn
-    // (docs/performance.md #10). A job an edit overtakes is dropped.
-    if (!roads) {
-      roads = buildRoadSurfaces(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
-      for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
-      roadJob = null;
+    groundChanges.mark(changed);
+    const local = blocks !== null && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25;
+    pendingBlocks = local ? blocks : null;
+    const steps = worldSteps(net, local ? blocks : null, started);
+    // The first build, or the land itself changed: at once. After a road
+    // edit: a few milliseconds a frame (`pumpWorld`), the world as it was
+    // staying drawn until the new one is complete - built in the frame of the
+    // edit, it was a stall of 100-500 ms on every road drawn in the default
+    // town (docs/performance.md #10). A job an edit overtakes is dropped.
+    if (!roads || !local) {
+      let step = steps.next();
+      while (!step.done) step = steps.next();
+      worldJob = null;
     } else {
-      roadJob = roadSurfaceSteps(net, elevation, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+      worldJob = steps;
     }
-    world.add(roads.group);
-    timed('surfaces');
+  };
 
-    details = buildStructureDetails(net, elevation, terrain.renderedHeightAt, materials);
-    world.add(details.group);
-    timed('structures');
-
-    scenery = buildScenery(
-      net,
-      elevation,
-      terrain.renderedHeightAt,
-      terrain.wetAt,
-      { grass: quality.grass },
-      sceneryKit,
-    );
-    for (const mesh of scenery.meshes) world.add(mesh);
-    world.add(scenery.grass);
-    timed('scenery');
-
+  /** What `worldSteps` builds before it is put in place at once. */
+  function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number): Generator<void, void, void> {
+    const solve = elevation!;
+    if (blocks === null) shapeGround(net);
+    else if (blocks.length) yield* shapeBlocksSteps(net, blocks);
+    pendingBlocks = [];
+    yield;
+    const freshRoads = roads === null
+      ? buildRoadSurfaces(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial)
+      : yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    const freshDetails = buildStructureDetails(net, solve, terrain.renderedHeightAt, materials);
+    yield;
+    const freshScenery = buildScenery(net, solve, terrain.renderedHeightAt, terrain.wetAt, { grass: quality.grass }, sceneryKit);
+    yield;
     // The overhead utility network. It is drawn from the document directly
     // rather than from the Network, because a pole line is not derived from
     // the roads - it can be drawn across open ground with no road near it.
@@ -1055,19 +1039,42 @@ export function createSceneRenderer(
     // meant to stand on is exactly the "poles do not sit on the footway"
     // complaint. The lamp columns in `scenery.ts` already do this; the poles
     // were the one piece of street furniture reading the bare ground.
-    utilities = buildUtilities(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit);
+    const freshUtilities = buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt), sceneryKit);
+    yield;
+
+    // Everything in place at once: the world as it was goes - only what is
+    // replaced here. `world.clear()` used to empty the whole group, and the
+    // walls, the transport, the gardens and the forest (in it too, rebuilt only
+    // where the ground changes under them) vanished after a road edit.
+    let triangles = builtTriangles;
+    if (roads && roads !== freshRoads) { triangles -= roads.triangles; world.remove(roads.group); roads.dispose(); }
+    if (details) { triangles -= details.triangles; world.remove(details.group); details.dispose(); }
+    if (scenery) {
+      triangles -= scenery.triangles;
+      for (const mesh of scenery.meshes) world.remove(mesh);
+      world.remove(scenery.grass);
+      scenery.dispose();
+    }
+    if (utilities) { triangles -= utilities.triangles; world.remove(utilities.group); utilities.dispose(); }
+    for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
+    roads = freshRoads;
+    world.add(roads.group);
+    details = freshDetails;
+    world.add(details.group);
+    scenery = freshScenery;
+    for (const mesh of scenery.meshes) world.add(mesh);
+    world.add(scenery.grass);
+    utilities = freshUtilities;
     world.add(utilities.group);
     utilityRevision = net.doc.utilityRevision;
-
-    builtTriangles =
-      roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
-    timed('poles');
+    builtTriangles = triangles + roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
+    // The street furniture and signs: `rebuildFurniture` takes the old ones out itself.
     rebuildFurniture(net);
-    timed('furniture');
     rebuildMs = performance.now() - started;
-    performance.measure('hitch:road-edit', { start: started, end: performance.now() });
+    performance.measure('hitch:road-edit/world rebuilt', { start: started, end: performance.now() });
     rebuilds++;
-  };
+    onAssetsReady();
+  }
 
   /**
    * The road shaders compiled before the first road is drawn. Each material
@@ -1585,7 +1592,7 @@ export function createSceneRenderer(
         rebuildWorld(net);
         terrain.settle();
       }
-      pumpRoads();
+      pumpWorld();
       // A building placed, moved or reshaped grades its own site.
       // Only the ground round the sites that changed is graded again (growing
       // a building re-graded the whole map and every platform: a hitch for
@@ -1947,7 +1954,7 @@ export function createSceneRenderer(
       agents.dispose();
       signals.dispose();
       buildings.dispose();
-      roadJob = null;
+      worldJob = null;
       roads?.dispose();
       disposeSurfaceReuse(surfaceReuse);
       details?.dispose();
