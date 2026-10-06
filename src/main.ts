@@ -4,7 +4,7 @@ import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addPolygonLot, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -12,7 +12,7 @@ import { RoadDoc, fitRoadCurve, type JunctionControl } from '@world/doc';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
-import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
+import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, type TerrainMode } from '@world/terrain';
 import type { NodeId, PoleId, SegmentId } from '@world/ids';
@@ -3177,6 +3177,7 @@ congestionButton.onclick = () => {
 congestionButton.classList.toggle('active', congestionOverlay);
 congestionButton.setAttribute('aria-pressed', String(congestionOverlay));
 initChrome(requestDraw);
+onRoadGridChange(requestDraw);
 mountBuildStamp(document.getElementById('buildStamp'));
 mountAbout();
 
