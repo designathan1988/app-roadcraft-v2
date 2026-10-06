@@ -80,6 +80,12 @@ const GRID = TERRAIN_SEGMENTS + 1;
  */
 export const TERRAIN_HALF = TERRAIN_SIZE / 2;
 
+/**
+ * Where the grass field stands this frame (`grassField.ts`): world x, y, how
+ * far it reaches, and 1 when it is drawn. The ground shades itself under it.
+ */
+export const GRASS_FIELD: { value: [number, number, number, number] } = { value: [0, 0, 0, 0] };
+
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
   readonly ground: Mesh;
@@ -189,11 +195,13 @@ export function terrainBakes(anisotropy: number): {
         const v = y / 512;
         const fine = fbm(grassFine, u * 170, v * 170, 170, 2);
         const clump = fbm(grassClump, u * 11, v * 11, 11, 4);
-        const dry = clump > 0.58 ? (clump - 0.58) * 2.4 : 0;
+        // Dry patches few and soft: strong ones tiled every 17 m into a
+        // pattern of yellow blotches over every field.
+        const dry = clump > 0.64 ? (clump - 0.64) * 1.6 : 0;
         const moss = clump < 0.4 ? (0.4 - clump) * 1.6 : 0;
-        out.r = 0.16 + fine * 0.03 + dry * 0.22 + clump * 0.04;
-        out.g = 0.215 + fine * 0.045 + clump * 0.07 + dry * 0.15 - moss * 0.02;
-        out.b = 0.11 + fine * 0.02 + dry * 0.07 + moss * 0.015;
+        out.r = 0.135 + fine * 0.03 + dry * 0.12 + clump * 0.03;
+        out.g = 0.205 + fine * 0.045 + clump * 0.06 + dry * 0.08 - moss * 0.02;
+        out.b = 0.095 + fine * 0.02 + dry * 0.04 + moss * 0.015;
         out.h = fine * 0.65 + clump * 0.35;
         out.rough = 0.99;
       },
@@ -342,6 +350,7 @@ function terrainMaterial(
     uPaintB: { value: paintB as Texture },
     uPaintHalf: { value: TERRAIN_HALF },
     uPaintSize: { value: TERRAIN_SIZE },
+    uGrassField: GRASS_FIELD,
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
@@ -386,6 +395,7 @@ function terrainMaterial(
          uniform sampler2D uPaintB;
          uniform float uPaintHalf;
          uniform float uPaintSize;
+         uniform vec4 uGrassField; // world x, y, reach, on
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
          uniform float uGrassScale;
@@ -501,6 +511,11 @@ function terrainMaterial(
          // dip from a rise when the sun is behind the slope.
          float damp = smoothstep(2.0, -40.0, vTerrainWorld.y);
          blended.rgb *= mix(1.0, 0.78, damp * 0.7);
+         // Under the grass field the ground is the shade between the blades:
+         // darker, so the blades stand in a lawn and not on a bright card.
+         float grassDist = distance(vec2(vTerrainWorld.x, -vTerrainWorld.z), uGrassField.xy);
+         float grassUnder = uGrassField.w * (1.0 - smoothstep(uGrassField.z * 0.45, uGrassField.z * 0.95, grassDist));
+         blended.rgb *= mix(1.0, 0.66, grassUnder * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0)));
          // Painted ground (world/terrainPaint.ts): a weight per layer, the
          // grass showing through what the weights leave.
          vec2 paintUv = vec2((vTerrainWorld.x + uPaintHalf) / uPaintSize, (uPaintHalf - vTerrainWorld.z) / uPaintSize);
@@ -548,7 +563,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v3';
+  material.customProgramCacheKey = () => 'terrain-splat-v4';
   return material;
 }
 

@@ -69,7 +69,7 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { GRASS_NEAR_REACH, createGrass } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -1662,11 +1662,13 @@ export function createSceneRenderer(
       rig.camera.getWorldDirection(viewDirection);
       // The grass: close up only (on foot, or the camera near the ground).
       {
-        const close = rig.chasing || rig.viewport.zoom >= GRASS_ZOOM;
+        // Seen from above (the isometric view) a blade is a speck: only in perspective or on foot.
+        const close = rig.chasing || (rig.perspective && rig.viewport.zoom >= GRASS_ZOOM);
         const show = quality.grassBlades > 0 && close;
         if (show) keepGrassInputs(net);
         const at = rig.chasing ? chaseCamera.focus : target;
         grass.update(at.x, at.z, show, windClock);
+        GRASS_FIELD.value = [at.x, -at.z, GRASS_NEAR_REACH * 3, show ? 1 : 0];
         grassFar.update(at.x, at.z, show, windClock);
       }
       if (rig.chasing) {
