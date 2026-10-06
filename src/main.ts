@@ -1026,6 +1026,8 @@ function shootAt(sx: number, sy: number): boolean {
   const ground = view.toWorldAt(sx, sy, sceneHeightAt(view.toWorld(sx, sy, w, h)), w, h);
   let best: { id: number; height: number; d: number; x: number; y: number; heading: number } | null = null;
   for (const p of walkersNear(sim, ground.x, ground.y, m(25))) {
+    // Down on the ground: their body is shot where it lies (below).
+    if (scene.isDown(p.id)) continue;
     const base = sceneHeightAt(p);
     // Up the body's axis: where the line of sight through the pointer passes nearest it.
     for (let k = 0; k <= 37; k++) {
@@ -1035,7 +1037,20 @@ function shootAt(sx: number, sy: number): boolean {
       if (d < m(0.3) && (!best || d < best.d)) best = { id: p.id, height, d, x: p.x, y: p.y, heading: p.heading };
     }
   }
-  if (!best) { flashHint('hint.shoot.miss'); return false; }
+  if (!best) {
+    // The bodies on the ground, alive or dead, along the line of sight.
+    const lo = sceneHeightAt(ground) - m(0.3), hi = lo + m(40);
+    const a = view.toWorldAt(sx, sy, hi, w, h), b = view.toWorldAt(sx, sy, lo, w, h);
+    const hit = scene.shootBody([a.x, a.y, hi], [b.x, b.y, lo]);
+    if (hit && hit !== 'hit') {
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const done = sim.pedEngine.shot?.(sim, hit.alive, hit.part, b.x - ((b.x - a.x) / len) * m(10), b.y - ((b.y - a.y) / len) * m(10));
+      if (done) scene.wound(b.x, b.y, lo + m(0.4), (b.x - a.x) / len, (b.y - a.y) / len, done.severed);
+    }
+    if (hit) { requestDraw(); return true; }
+    flashHint('hint.shoot.miss');
+    return false;
+  }
   // Where the line of sight comes from, on the ground plane: the shot's way.
   const near = view.toWorldAt(sx, sy, sceneHeightAt(best) + m(30), w, h);
   let dx = best.x - near.x, dy = best.y - near.y;

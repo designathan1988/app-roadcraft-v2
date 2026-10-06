@@ -153,7 +153,7 @@ export function createExhaust(): Exhaust {
         vec3 dust = vec3(0.6, 0.53, 0.43);
         vec3 dark = vec3(0.16, 0.15, 0.15);
         vec3 concrete = vec3(0.74, 0.71, 0.66);
-        vec3 blood = vec3(0.32, 0.02, 0.03);
+        vec3 blood = vec3(0.2, 0.008, 0.014);
         vec3 c = vKind < 0.5 ? smoke : vKind < 1.5 ? dust : vKind < 2.5 ? dark : vKind < 3.5 ? concrete : blood;
         if (vKind > 3.5) soft = smoothstep(1.0, 0.55, r);
         if (vKind > 4.5 && vKind < 5.5) {

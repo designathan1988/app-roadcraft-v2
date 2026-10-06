@@ -66,6 +66,8 @@ export interface PedView {
   maimed?: 'armL' | 'armR' | 'legL' | 'legR';
   /** Every limb lost (to shots, `PedestrianEngine.shot`), drawn gone; `maimed` is the first of them. */
   lost?: readonly Severable[];
+  /** Wounded and bleeding (shot): blood drips where they go. */
+  bleeding?: boolean;
   /** Position and heading at the end of this tick, and at the end of the last. */
   x: number;
   y: number;

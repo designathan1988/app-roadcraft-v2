@@ -808,6 +808,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     if (!entry) {
       const spare = procSpare.pop();
       if (spare) {
+        // Somebody new in that body: none of the last one's wounds.
+        procedural?.ragdoll.heal(spare);
         entry = { person: spare, seen: procFrame };
         procPeople.set(id, entry);
       } else {
@@ -880,6 +882,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
    * (the player, 2026-10-06).
    */
   const procHeld = new Set<number>(), procHeldNow = new Set<number>();
+  /** Drips blood where a wounded walker drawn procedurally goes (`setBleed`). */
+  let procBleed: ((id: number, x: number, y: number, z: number) => void) | null = null;
   /** Pieces torn off procedural people, drawn apart (`RagdollCitizens.twin`): indices from `TWIN_BASE` down. */
   const procTwins = new Map<number, ProceduralPerson>();
   const TWIN_BASE = -1_000_000_000;
@@ -940,6 +944,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     char(index) {
       const person = procOf(index);
       if (person && procedural) procedural.ragdoll.char(person, true);
+    },
+    wound(index, part) {
+      const person = procOf(index);
+      if (person && procedural) procedural.ragdoll.wound(person, part);
+    },
+    drench(index) {
+      const person = procOf(index);
+      if (person && procedural) procedural.ragdoll.drench(person);
     },
   };
   const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
@@ -1481,7 +1493,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   return {
     meshes,
     census: () => pedestrians.census(),
-    setBleed: (fn) => { pedestrians.onBleed = fn; },
+    setBleed: (fn) => { pedestrians.onBleed = fn; procBleed = fn; },
     setNight: (dark) => {
       lampMaterial.color.setScalar(1 + 2.4 * dark);
     },
@@ -1639,6 +1651,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
             const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' ? doing : ped.panic ? 'panic' : doing;
+            if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined));
           }

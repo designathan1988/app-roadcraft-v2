@@ -1,6 +1,6 @@
 import { GRID_CELL } from '@world/grid';
 import { MAP_HALF } from '@world/bounds';
-import type { Severable } from '@sim/people/view';
+import type { BodyPart, Severable } from '@sim/people/view';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
@@ -275,6 +275,14 @@ export interface SceneHandle {
    * (an arm, a leg, the head) flung along the shot.
    */
   wound(x: number, y: number, z: number, dirX: number, dirY: number, severed: Severable | null): void;
+  /**
+   * A shot along the line of sight between world points `a` and `b` (x, y,
+   * height) at the bodies on the ground (`Ragdolls.shootBody`): somebody
+   * alive down there comes back to be hurt by the simulation.
+   */
+  shootBody(a: readonly [number, number, number], b: readonly [number, number, number]): { alive: number; part: BodyPart } | 'hit' | null;
+  /** Whether somebody is down on the ground as a body (not standing to be shot). */
+  isDown(id: number): boolean;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
   /** The universal grid (`world/grid.ts`) drawn over the whole map, on the ground, or not. */
@@ -1459,9 +1467,15 @@ export function createSceneRenderer(
       TERRAIN_GRID.value = [GRID_CELL, on ? 0.08 : 0, MAP_HALF];
       if (on !== gridWanted) { gridWanted = on; onAssetsReady(); }
     },
+    shootBody(a, b) {
+      const hit = ragdolls.shootBody(new Vector3(a[0], a[2], -a[1]), new Vector3(b[0], b[2], -b[1]));
+      if (hit) onAssetsReady();
+      return hit;
+    },
+    isDown: (id) => ragdolls.hides(id),
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
-      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 70 : 34, 4, m(severed ? 0.35 : 0.2), m(0.05), 0.9);
+      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 50 : 26, 4, m(severed ? 0.28 : 0.16), m(0.035), 0.8);
       // On what is there (the footway stands over the terrain).
       for (let k = 0; k < (severed ? 9 : 4); k++) {
         const d = m(0.3 + Math.random() * 1.6), side = (Math.random() - 0.5) * m(0.6);

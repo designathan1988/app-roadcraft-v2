@@ -53,6 +53,10 @@ export interface RagdollCitizens {
   untwin?(index: number): void;
   /** Burns the person black (a bomb's direct hit). */
   char?(index: number): void;
+  /** A bullet hole in this part of the person, bleeding into their clothes. */
+  wound?(index: number, part: BodyPart): void;
+  /** The person soaked in blood all over (shot to pieces). */
+  drench?(index: number): void;
 }
 
 /** Somebody inside a building a blow struck: thrown out of it from where they were. */
@@ -216,6 +220,11 @@ interface Body {
   drop?: (() => void) | undefined;
   /** Burnt black (a bomb's direct hit). */
   charred?: boolean;
+  /** Shots taken on the ground, all told and by part (`shootBody`). */
+  hits?: number;
+  partHits?: Partial<Record<BodyPart, number>>;
+  /** Shot to a heap of meat (`mush`). */
+  mush?: boolean;
   /**
    * Shot: the muscles still working as they go down (`toneStep`) - the
    * shape they stood in held by springs that weaken over the fall, the legs
@@ -267,6 +276,15 @@ export interface Ragdolls {
   trip(id: number, heading: number, citizens: RagdollCitizens, world: RagdollWorld, away?: number | null): void;
   /** Whether somebody's own body is on the ground here, so the crowd does not draw them standing too. */
   hides(id: number): boolean;
+  /**
+   * A shot along the line of sight from `a` to `b` (three's frame) at the
+   * bodies on the ground: the one it strikes holed, bled, pushed, a limb or
+   * the head shot off at the second hit there, shot to a heap of meat at the
+   * last (the player, 2026-10-06: "se continuar atirando vai causar mais
+   * dano ... até virar um monte de carne"). Somebody alive on the ground is
+   * the simulation's to hurt: their id and the part struck come back.
+   */
+  shootBody(a: Vector3, b: Vector3): { alive: number; part: BodyPart } | 'hit' | null;
   /** Lets go of those who are up again once the simulation has them up too (`down` false). */
   release(down: (id: number) => boolean): void;
   update(dt: number, world: RagdollWorld): void;
@@ -518,6 +536,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       known.asleep = false; known.still = 0; known.flying = 0;
       const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
+      if (c.struck) citizens.wound?.(known.index, c.struck);
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -562,6 +581,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       if (Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
     }
     add(body);
+    if (c.struck) citizens.wound?.(body.index, c.struck);
     sever(body, c, dir, citizens);
   };
 
@@ -575,6 +595,36 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         dir.z * speed + (Math.random() - 0.5) * m(3));
       detach(body, limb, citizens, kick);
     }
+  };
+
+  /** The people's side and the world as last given (`shootBody` comes between frames). */
+  let lastCitizens: RagdollCitizens | null = null;
+  let world0: RagdollWorld | null = null;
+
+  /**
+   * A body shot to pieces: every limb and the head off it if still on, the
+   * trunk soaked through, scraps of flesh over the ground round it and a
+   * wide pool spreading - a heap of meat, as GTA leaves a body shot apart.
+   */
+  const mush = (body: Body, citizens: RagdollCitizens): void => {
+    body.mush = true;
+    const at = body.p[body.pin ? body.pin.root : CHE]!;
+    if (!body.pin) {
+      for (const limb of ['head', 'armL', 'armR', 'legL', 'legR'] as const) {
+        if (LOST_PARTS[limb].every((q) => body.lostParts.has(q))) continue;
+        detach(body, limb, citizens, new Vector3((Math.random() - 0.5) * m(3), m(1 + Math.random() * 2), (Math.random() - 0.5) * m(3)));
+      }
+    }
+    citizens.drench?.(body.index);
+    exhaust.burst(at.x, -at.z, at.y, 160, 4, m(0.7), m(0.2), 1.4);
+    const gx = at.x, gy = -at.z, g = world0?.groundAt(gx, gy) ?? at.y;
+    bleed(gx, gy, g, m(body.pin ? 1.2 : 2.8), body.pin ? 6 : 14);
+    for (let n = 0; n < (body.pin ? 4 : 12); n++) {
+      const a = Math.random() * Math.PI * 2, r = m(0.4 + Math.random() * 2.2);
+      bleed(gx + Math.cos(a) * r, gy + Math.sin(a) * r, g, m(0.3 + Math.random() * 0.6), 0);
+    }
+    api.onGore?.(at.x, -at.z, at.y, 0, 0, m(2), 'torn');
+    body.asleep = false;
   };
 
   const remove = (i: number): void => {
@@ -667,7 +717,58 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         spawn(c, citizens, world, { index, palette: clip.palette, transform });
       }
     },
+    shootBody(a, b) {
+      const citizens = lastCitizens;
+      if (!citizens) return null;
+      const ab = new Vector3().subVectors(b, a);
+      const len2 = Math.max(1e-9, ab.lengthSq());
+      let best: { body: Body; k: number; d: number; t: number } | null = null;
+      for (const body of bodies) {
+        for (let k = 0; k < body.p.length; k++) {
+          if (body.pin && !body.pin.keep.has(k)) continue;
+          if (k === BEL) continue;
+          const v = body.p[k]!;
+          const t = Math.max(0, Math.min(1, tmpA.subVectors(v, a).dot(ab) / len2));
+          const d = tmpB.copy(a).addScaledVector(ab, t).distanceTo(v);
+          const reach = body.radius[k]! * 1.8 + m(0.08);
+          if (d < reach && (!best || t < best.t - 0.002 || (Math.abs(t - best.t) <= 0.002 && d < best.d))) best = { body, k, d, t };
+        }
+      }
+      if (!best) return null;
+      const { body, k } = best;
+      const part: BodyPart = k === HEA || k === TOP ? 'head' : k === LS || k === LE || k === LW ? 'armL' : k === RS || k === RE || k === RW ? 'armR'
+        : k === LH || k === LK || k === LA || k === LT ? 'legL' : k === RH || k === RK || k === RA || k === RT ? 'legR' : 'torso';
+      if (body.survivor) return { alive: body.survivor.id, part };
+      const dir = ab.clone().normalize();
+      const at = body.p[k]!;
+      // The bullet's push, the spray out of the far side, blood under it.
+      body.o[k]!.addScaledVector(dir, -m(1.6) * STEP);
+      body.asleep = false; body.still = 0; body.flying = 0;
+      exhaust.burst(at.x + dir.x * m(0.15), -(at.z + dir.z * m(0.15)), at.y, 26, 4, m(0.18), m(0.035), 0.8);
+      const gx = at.x + dir.x * m(0.5), gy = -(at.z + dir.z * m(0.5));
+      bleed(gx, gy, world0?.groundAt(gx, gy) ?? at.y, m(0.5 + Math.random() * 0.4), 0);
+      citizens.wound?.(body.index, part);
+      body.hits = (body.hits ?? 0) + 1;
+      const tally = body.partHits ??= {};
+      tally[part] = (tally[part] ?? 0) + 1;
+      // A limb shot off at the second hit (the head at the first or second).
+      if (!body.pin && part !== 'torso') {
+        const limb = part as Severable;
+        const gone = LOST_PARTS[limb].every((q) => body.lostParts.has(q));
+        if (!gone && tally[part]! >= (part === 'head' ? 1 + (Math.random() < 0.5 ? 1 : 0) : 2)) {
+          const kick = dir.clone().multiplyScalar(m(2.5)).add(new Vector3((Math.random() - 0.5) * m(1.5), m(1.5 + Math.random() * 2), (Math.random() - 0.5) * m(1.5)));
+          detach(body, limb, citizens, kick);
+        }
+      }
+      // Shot to pieces: what is left a heap of meat, soaked, everything round it red.
+      const bare = (['armL', 'armR', 'legL', 'legR', 'head'] as const).filter((l) => LOST_PARTS[l].every((q) => body.lostParts.has(q))).length;
+      if (!body.pin && !body.mush && (body.hits >= 12 || (bare >= 3 && body.hits >= 8))) mush(body, citizens);
+      else if (body.pin && body.hits >= 3 && !body.mush) mush(body, citizens);
+      return 'hit';
+    },
     absorb(list, citizens, world) {
+      lastCitizens = citizens;
+      world0 = world;
       for (const c of list) {
         // Each record once (two shots from the same place are two records).
         if (taken.has(c)) continue;
@@ -743,6 +844,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       }
     },
     draw(citizens, world) {
+      lastCitizens = citizens;
       for (const body of bodies) {
         const alive = body.survivor;
         // The get-up clip asked for while they fall, so it is baked by the time they get up.

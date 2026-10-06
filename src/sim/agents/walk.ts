@@ -1123,6 +1123,7 @@ function publish(w: SimWorld): void {
     v.panic = (p.fright ?? 0) > p.age;
     if (p.maimed) v.maimed = p.maimed;
     if (p.lost?.length) v.lost = p.lost;
+    if ((p.hp ?? 100) < 100) v.bleeding = true;
     v.kerbWait = p.waiting ? p.waited : 0;
     v.waitingFor = p.waiting ? p.waiting.id : null;
     views.push(v);
