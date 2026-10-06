@@ -30,6 +30,8 @@ import {
 
 /** The player's person in the walking engine: one id, out of every other range. */
 export const PLAYER_ID = 1 << 29;
+/** How long the camera takes a train car to be, to frame it. */
+const TRAIN_CAR_VIEW = m(18);
 
 /** What the player is pressing this tick (set by `src/play.ts`). */
 export interface PlayInput {
@@ -43,10 +45,15 @@ export interface PlayInput {
   /** Where the player aims, world axes (unit). */
   aimX: number;
   aimY: number;
-  /** Pressed once; cleared when used. */
+  /** Pressed once; cleared when used. F: get in at the wheel (or out); G: get on as a passenger; E: talk. */
   enter: boolean;
+  board: boolean;
+  talk: boolean;
   attack: boolean;
 }
+
+/** What the player rides as a passenger: a bus of the traffic, or a train or a metro by its key. */
+export type Ride = { readonly kind: 'bus'; readonly id: number } | { readonly kind: 'train'; readonly key: string };
 
 export type Weapon = 'fists' | 'pistol';
 
@@ -65,9 +72,11 @@ const STAR_COOL = 12, ARREST = m(1.4);
 const KEPT_CARS = 4;
 
 export class PlayWorld {
-  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, enter: false, attack: false };
+  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, enter: false, board: false, talk: false, attack: false };
   active = false;
-  mode: 'foot' | 'car' | 'inside' = 'foot';
+  mode: 'foot' | 'car' | 'inside' | 'ride' = 'foot';
+  /** What the player rides, as a passenger. */
+  ride: Ride | null = null;
   weapon: Weapon = 'fists';
   x = 0; y = 0; heading = 0; v = 0;
   health = 100;
@@ -89,6 +98,8 @@ export class PlayWorld {
   private quiet = 0;
   private sinceStar = 0;
   private readonly officers = new Set<number>();
+  /** People the player's car has already struck: one crime each, not one a tick while the body touches them. */
+  private readonly struck = new Set<number>();
   private retarget = 0;
   private readonly rng = new Rng(0x9a7e5);
   private walls: { ring: readonly { x: number; y: number }[]; id: BuildingId; x0: number; y0: number; x1: number; y1: number }[] = [];
@@ -132,13 +143,14 @@ export class PlayWorld {
         this.down = 0;
         this.say(w, 'back');
       }
-      input.enter = input.attack = false;
+      input.enter = input.board = input.talk = input.attack = false;
       return;
     }
     if (this.mode === 'foot') this.onFoot(w);
     else if (this.mode === 'car') this.driving(w);
-    else if (input.enter) this.goOut(w);
-    input.enter = input.attack = false;
+    else if (this.mode === 'ride') this.riding(w);
+    else if (input.enter || input.board) this.goOut(w);
+    input.enter = input.board = input.talk = input.attack = false;
     this.police(w);
   }
 
@@ -181,6 +193,118 @@ export class PlayWorld {
       else this.punch(w);
     }
     if (input.enter) this.enterNearest(w);
+    if (input.board) this.boardNearest(w);
+    if (input.talk) this.talkTo(w);
+  }
+
+  /** Where the player is seen from: their body, the car they drive, or what they ride. */
+  viewPoint(w: SimWorld): { x: number; y: number; heading: number; vehicle: boolean; length: number } {
+    if (this.mode === 'car' && this.car?.free) {
+      return { x: this.car.free.x, y: this.car.free.y, heading: this.car.free.angle, vehicle: true, length: this.car.archetype.length };
+    }
+    if (this.mode === 'ride' && this.ride) {
+      const at = this.rideAt(w);
+      if (at) return { ...at, vehicle: true };
+    }
+    return { x: this.x, y: this.y, heading: this.heading, vehicle: false, length: 0 };
+  }
+
+  /** The vehicles near (x, y) as boxes, but the one the player is in or rides: what the camera's arm keeps out of. */
+  vehicleBoxes(w: SimWorld, x: number, y: number, r: number): VehicleBox[] {
+    const out: VehicleBox[] = [];
+    const own = this.mode === 'car' ? this.car : null;
+    const ridden = this.ride?.kind === 'bus' ? this.ride.id : null;
+    const add = (v: Vehicle, cx: number, cy: number, angle: number): void => {
+      if (Math.abs(cx - x) > r || Math.abs(cy - y) > r) return;
+      out.push({ x: cx, y: cy, angle, length: v.archetype.length, width: v.archetype.width, height: v.archetype.height });
+    };
+    for (const v of w.vehicles.values()) {
+      if (v.id === ridden) continue;
+      const pose = vehiclePose(w, v, 1);
+      if (pose) add(v, pose.p.x, pose.p.y, pose.angle);
+    }
+    for (const v of [...w.ambient.parked, ...this.cars]) if (v !== own && v.free) add(v, v.free.x, v.free.y, v.free.angle);
+    return out;
+  }
+
+  // ------------------------------------------------------------- talking and riding
+
+  /** A word with the person in front: both stop and face each other a moment. */
+  private talkTo(w: SimWorld): void {
+    let best: { id: number; x: number; y: number } | null = null, bestD = m(2.2);
+    for (const p of walkersNear(w, this.x, this.y, bestD)) {
+      if (p.id === PLAYER_ID) continue;
+      const d = Math.hypot(p.x - this.x, p.y - this.y);
+      if (d < bestD) { best = p; bestD = d; }
+    }
+    if (!best) { this.say(w, 'nobodyToTalk'); return; }
+    walkerAct(w, best.id, 'talk', 6, this.x, this.y);
+    walkerAct(w, PLAYER_ID, 'talk', 6, best.x, best.y);
+    this.heading = Math.atan2(best.y - this.y, best.x - this.x);
+    this.down = 0;
+    this.say(w, 'talked');
+  }
+
+  /** Where the ride is now (its middle, its heading), or null when it has gone. */
+  private rideAt(w: SimWorld): { x: number; y: number; heading: number; v: number; length: number } | null {
+    const ride = this.ride;
+    if (!ride) return null;
+    if (ride.kind === 'bus') {
+      const v = w.vehicles.get(ride.id);
+      const pose = v ? vehiclePose(w, v, 1) : null;
+      return v && pose ? { x: pose.p.x, y: pose.p.y, heading: pose.angle, v: v.v, length: v.archetype.length } : null;
+    }
+    const train = w.city.transit.trains().find((t) => t.key === ride.key);
+    const car = train?.cars[Math.floor((train.cars.length - 1) / 2)];
+    return train && car ? { x: car.x, y: car.y, heading: car.heading, v: train.v, length: TRAIN_CAR_VIEW } : null;
+  }
+
+  /** On as a passenger: a bus standing at its stop, or a train standing at its station, near. */
+  private boardNearest(w: SimWorld): void {
+    let best: { ride: Ride; d: number } | null = null;
+    for (const v of w.vehicles.values()) {
+      if (v.archetype.id !== 'bus' || v.v > m(0.6)) continue;
+      const pose = vehiclePose(w, v, 1);
+      if (!pose) continue;
+      const d = Math.hypot(pose.p.x - this.x, pose.p.y - this.y);
+      if (d < m(7) && (!best || d < best.d)) best = { ride: { kind: 'bus', id: v.id }, d };
+    }
+    for (const t of w.city.transit.trains()) {
+      if (t.v > m(0.6)) continue;
+      for (const c of t.cars) {
+        const d = Math.hypot(c.x - this.x, c.y - this.y);
+        if (d < m(9) && (!best || d < best.d)) best = { ride: { kind: 'train', key: t.key }, d };
+      }
+    }
+    if (!best) { this.say(w, 'noRide'); return; }
+    this.ride = best.ride;
+    this.mode = 'ride';
+    this.v = 0;
+    removeWalker(w, PLAYER_ID);
+    this.say(w, best.ride.kind === 'bus' ? 'onBus' : 'onTrain');
+  }
+
+  private riding(w: SimWorld): void {
+    const at = this.rideAt(w);
+    // The ride gone (off the map, its line deleted): off where it was.
+    if (!at) { this.getOff(w, null); return; }
+    this.x = at.x; this.y = at.y; this.heading = at.heading;
+    if ((this.input.enter || this.input.board) && at.v < m(0.8)) this.getOff(w, at);
+    else if (this.input.enter || this.input.board) this.say(w, 'waitStop');
+  }
+
+  private getOff(w: SimWorld, at: { x: number; y: number; heading: number } | null): void {
+    // A bus, driving on the right, opens onto the kerb on its right; a train
+    // onto its platform, on the left of its way (`transit.ts` PLATFORM).
+    const train = this.ride?.kind === 'train';
+    const side = (at?.heading ?? this.heading) + (train ? Math.PI / 2 : -Math.PI / 2);
+    const out = train ? m(3.2) : m(2.2);
+    this.x += Math.cos(side) * out;
+    this.y += Math.sin(side) * out;
+    this.mode = 'foot';
+    this.ride = null;
+    addPlayerWalker(w, PLAYER_ID, this.x, this.y, this.heading, 'adult', 'm');
+    this.say(w, 'offRide');
   }
 
   private hurt(w: SimWorld, amount: number, key: string): void {
@@ -263,7 +387,7 @@ export class PlayWorld {
     };
     for (const car of [...w.ambient.parked, ...this.cars]) if (car.free) consider(car, false, car.free.x, car.free.y);
     for (const veh of w.vehicles.values()) {
-      if (veh.archetype.id === 'bus' || veh.archetype.id === 'bicycle') continue;
+      if (veh.archetype.id === 'bicycle') continue;
       const pose = vehiclePose(w, veh, 1);
       if (pose) consider(veh, true, pose.p.x, pose.p.y);
     }
@@ -294,7 +418,9 @@ export class PlayWorld {
       const side = pose.angle + Math.PI / 2;
       const sx = pose.p.x + Math.cos(side) * (car.archetype.width / 2 + m(0.8)), sy = pose.p.y + Math.sin(side) * (car.archetype.width / 2 + m(0.8));
       const engine = w.pedEngine;
-      const away = { x: sx + Math.cos(side) * m(40), y: sy + Math.sin(side) * m(40) };
+      // Round behind the car to the kerb (on the right), never ahead of the car the player drives off in.
+      const flee = pose.angle - Math.PI * 3 / 4;
+      const away = { x: sx + Math.cos(flee) * m(40), y: sy + Math.sin(flee) * m(40) };
       const id = engine.walkTrip?.call(engine, w, { trip: -1, fromX: sx, fromY: sy, toX: away.x, toY: away.y, seed: car.id, ageClass: 'adult', reach: m(30) });
       if (id !== null && id !== undefined) sendRunning(w, id, away);
       startle(w, pose.p.x, pose.p.y, m(12), 8, PLAYER_ID);
@@ -388,8 +514,9 @@ export class PlayWorld {
     // People in the way: knocked down (killed, fast enough); everybody runs.
     if (Math.abs(this.v) > m(1)) {
       for (const p of walkersNear(w, nx, ny, half + m(1.5))) {
-        if (p.id === PLAYER_ID || p.busy > 0) continue;
+        if (p.id === PLAYER_ID || p.busy > 0 || this.struck.has(p.id)) continue;
         if (!insideBody(p.x, p.y, nx, ny, heading, car.archetype.length, car.archetype.width, m(0.25))) continue;
+        this.struck.add(p.id);
         if (Math.abs(this.v) > m(9)) w.pedEngine.impact?.(w, p.x, p.y, m(0.3), m(20));
         else { walkerAct(w, p.id, 'fall', 6, nx, ny); startle(w, p.x, p.y, m(12), 8, PLAYER_ID); }
         this.say(w, 'hitPerson');
@@ -414,6 +541,11 @@ export class PlayWorld {
 
   private police(w: SimWorld): void {
     for (const id of [...this.officers]) if (!walkerOf(w, id)) this.officers.delete(id);
+    // Struck once more only after the car has left them behind.
+    for (const id of [...this.struck]) {
+      const q = walkerOf(w, id);
+      if (!q || Math.hypot(q.x - this.x, q.y - this.y) > m(20)) this.struck.delete(id);
+    }
     if (this.wanted === 0) { if (this.officers.size) this.callOff(w); return; }
     // Out of sight of everybody, the stars go one by one.
     const seen = walkersNear(w, this.x, this.y, SEEN).some((p) => p.id !== PLAYER_ID);
@@ -507,7 +639,10 @@ export class PlayWorld {
 }
 
 /** Whether a point is within a body's outline (a rectangle along its heading), grown by `pad`. */
-function insideBody(px: number, py: number, cx: number, cy: number, angle: number, length: number, width: number, pad: number): boolean {
+/** A vehicle seen as a box on the ground: its middle, heading and size. */
+export interface VehicleBox { readonly x: number; readonly y: number; readonly angle: number; readonly length: number; readonly width: number; readonly height: number }
+
+export function insideBody(px: number, py: number, cx: number, cy: number, angle: number, length: number, width: number, pad: number): boolean {
   const rx = px - cx, ry = py - cy;
   const a = rx * Math.cos(angle) + ry * Math.sin(angle), b = -rx * Math.sin(angle) + ry * Math.cos(angle);
   return Math.abs(a) < length / 2 + pad && Math.abs(b) < width / 2 + pad;

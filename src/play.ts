@@ -3,7 +3,7 @@ import type { Vec2 } from '@core/vec2';
 import { buildingHeight, solidFootprints } from '@world/buildings/geometry';
 import type { BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
-import { PLAYER_ID } from '@sim/ambient/play';
+import { insideBody, PLAYER_ID, type VehicleBox } from '@sim/ambient/play';
 import type { SimWorld } from '@sim/world';
 import type { PlayCamera, SceneHandle } from '@render/renderer';
 import { t } from '@ui/i18n';
@@ -77,16 +77,20 @@ export function createPlay(host: PlayHost): Play {
     if (!active) { hud.style.display = 'none'; cross.style.display = 'none'; return; }
     hud.style.display = 'block';
     cross.style.display = play.weapon === 'pistol' && play.mode === 'foot' ? 'block' : 'none';
-    const stars = '★'.repeat(play.wanted) + '☆'.repeat(5 - play.wanted);
+    // GTA's wanted level: the stars earned lit, the rest dim.
+    const stars = `<span style="color:#ffd25e">${'★'.repeat(play.wanted)}</span>`
+      + `<span style="color:rgba(255,255,255,.3)">${'★'.repeat(5 - play.wanted)}</span>`;
     const msg = play.message && sim.clock.time - play.message.at < 4 ? t(`play.msg.${play.message.key}`) : '';
     const mode = play.mode === 'car' ? t('play.driving', { speed: Math.round(Math.abs(play.v) / m(1) * 3.6) })
-      : play.mode === 'inside' ? t('play.inside') : t('play.onFoot');
-    const keyLine = play.mode === 'car' ? t('play.keys.car') : play.mode === 'inside' ? t('play.keys.inside') : t('play.keys.foot');
+      : play.mode === 'inside' ? t('play.inside') : play.mode === 'ride' ? t(play.ride?.kind === 'train' ? 'play.ridingTrain' : 'play.ridingBus')
+        : t('play.onFoot');
+    const keyLine = play.mode === 'car' ? t('play.keys.car') : play.mode === 'inside' ? t('play.keys.inside')
+      : play.mode === 'ride' ? t('play.keys.ride') : t('play.keys.foot');
     hud.innerHTML = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">`
       + `<span>${mode}</span>`
       + `<span>${t('play.health')}: <b style="color:${play.health > 50 ? '#7be38f' : play.health > 20 ? '#f2c94c' : '#ff6b5e'}">${Math.round(play.health)}</b></span>`
       + `<span>${t(`play.weapon.${play.weapon}`)}</span>`
-      + `<span style="color:${play.wanted ? '#ffd25e' : 'rgba(255,255,255,.35)'};letter-spacing:2px">${stars}</span>`
+      + `<span style="letter-spacing:2px">${stars}</span>`
       + `<span>${firstPerson ? t('play.view.first') : t('play.view.third')}</span></div>`
       + (msg ? `<div style="margin-top:6px;color:#ffe9a8">${msg}</div>` : '')
       + `<div style="margin-top:6px;font-weight:500;opacity:.85">${keyLine}</div>`;
@@ -105,7 +109,9 @@ export function createPlay(host: PlayHost): Play {
     }
     const k = e.key.toLowerCase();
     if (k === 'p') { api.toggle(); }
-    else if (k === 'f' || k === 'e') play.input.enter = true;
+    else if (k === 'f') play.input.enter = true;
+    else if (k === 'g') play.input.board = true;
+    else if (k === 'e') play.input.talk = true;
     else if (k === '1') play.weapon = 'fists';
     else if (k === '2') play.weapon = 'pistol';
     else if (k === 'v') {
@@ -169,11 +175,16 @@ export function createPlay(host: PlayHost): Play {
     return walls;
   };
   /** Whether a point (world x, y, height) is inside a building. */
+  /** The vehicles round the player this frame, with the ground they stand on (`placeCamera` fills it). */
+  let boxes: readonly VehicleBox[] = [];
+  let boxGround = 0;
   const solid = (x: number, y: number, h: number): boolean => {
     for (const wl of wallTops()) {
       if (x < wl.x0 || x > wl.x1 || y < wl.y0 || y > wl.y1 || h > wl.top) continue;
       if (pointInPolygon({ x, y }, wl.ring)) return true;
     }
+    // A bus or a van between the player and the camera holds the arm in too.
+    for (const b of boxes) if (h < boxGround + b.height && insideBody(x, y, b.x, b.y, b.angle, b.length, b.width, m(0.3))) return true;
     return false;
   };
 
@@ -181,12 +192,12 @@ export function createPlay(host: PlayHost): Play {
   const placeCamera = (dt: number): void => {
     const scene = host.scene();
     const car = play.car?.free ?? null;
-    const px = play.mode === 'car' && car ? car.x : play.x;
-    const py = play.mode === 'car' && car ? car.y : play.y;
+    const at = play.viewPoint(sim);
+    const px = at.x, py = at.y;
     const ground = scene.surfaceHeightAt(px, py);
     const dirX = Math.cos(yaw), dirY = Math.sin(yaw);
     focus = [px, py, ground];
-    if (firstPerson && play.mode !== 'inside') {
+    if (firstPerson && play.mode !== 'inside' && play.mode !== 'ride') {
       let ex = px, ey = py, eh = ground + HEAD;
       if (play.mode === 'car' && car) {
         // At the wheel: the driver's seat, on the left of the car.
@@ -202,10 +213,13 @@ export function createPlay(host: PlayHost): Play {
       scene.setHiddenPerson(PLAYER_ID);
       smoothEye = null;
     } else {
-      const arm = play.mode === 'car' ? ARM_CAR : ARM_FOOT;
-      const pivotH = ground + (play.mode === 'car' ? PIVOT_CAR : PIVOT_FOOT);
+      // Behind a car at GTA's distance; a bus or a train car framed by its own length.
+      const arm = at.vehicle ? Math.max(ARM_CAR, at.length * 1.1 + m(4)) : ARM_FOOT;
+      const pivotH = ground + (at.vehicle ? PIVOT_CAR : PIVOT_FOOT);
       const cp = Math.cos(pitch), sp = Math.sin(pitch);
-      // The spring arm: drawn in to the first building in the way.
+      // The spring arm: drawn in to the first building or vehicle in the way.
+      boxes = play.vehicleBoxes(sim, px, py, arm + m(8));
+      boxGround = ground;
       let length = arm;
       for (let k = 1; k <= 10; k++) {
         const d = (arm * k) / 10;
@@ -251,7 +265,8 @@ export function createPlay(host: PlayHost): Play {
       pitch = 0.32;
       smoothEye = null;
       play.start(sim, at.x, at.y, yaw);
-      void canvas.requestPointerLock?.();
+      // The mouse is captured only by a click on the game, never by the key
+      // that starts it: a capture the player did not ask for holds their cursor.
       showHud();
       host.requestDraw();
     },
@@ -273,9 +288,9 @@ export function createPlay(host: PlayHost): Play {
       play.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
       play.input.aimX = fx;
       play.input.aimY = fy;
-      // In a car the camera swings round behind it by itself, as GTA's does.
-      if (play.mode === 'car' && play.car?.free && !document.pointerLockElement) {
-        const a = play.car.free.angle;
+      // In a car (or riding) the camera swings round behind it by itself, as GTA's does.
+      if ((play.mode === 'car' || play.mode === 'ride') && !document.pointerLockElement) {
+        const a = play.viewPoint(sim).heading;
         yaw += Math.atan2(Math.sin(a - yaw), Math.cos(a - yaw)) * Math.min(1, dt * 3);
       }
       // Inside a building: the building opened at its ground floor.
