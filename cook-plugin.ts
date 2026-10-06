@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -145,25 +144,6 @@ export function cookPlugin(): Plugin {
       // A change to how people are built changes the fingerprint: the server
       // restarts with the new one, and the cooked bodies no longer match.
       const watched = [...importClosure(root, ENTRY), ...ASSETS.map((s) => path.join(root, s))];
-      // ...and cooks them again itself (about 15 s, headless): a stale cook
-      // used to wait for someone to remember `npm run cook:people`, and until
-      // then the game built every body during play, 200-550 ms each, with only
-      // a console line to say so (docs/performance.md #7). Not under vitest;
-      // ROADCRAFT_NO_AUTOCOOK=1 turns it off.
-      if (!process.env['VITEST'] && !process.env['ROADCRAFT_NO_AUTOCOOK']) {
-        server.httpServer?.once('listening', () => {
-          const manifest = path.join(root, DIR, 'people', 'manifest.json');
-          let stamp: string | undefined;
-          try { stamp = (JSON.parse(fs.readFileSync(manifest, 'utf8')) as { hash?: string }).hash; } catch { stamp = undefined; }
-          if (stamp === hash) return;
-          setTimeout(() => {
-            const base = (server.resolvedUrls?.local[0] ?? `http://127.0.0.1:${server.config.server.port ?? 5173}/`).replace(/\/$/, '');
-            server.config.logger.info(`[cook] the cooked people are stale (${stamp ?? 'none'} -> ${hash}): cooking them again from ${base}`);
-            const cook = spawn(process.execPath, [path.join(root, 'scripts', 'cook-people.mjs'), `--base=${base}`], { cwd: root, stdio: 'inherit' });
-            cook.on('exit', (code) => server.config.logger.info(`[cook] ${code === 0 ? 'done' : `failed (${code})`}`));
-          }, 1000);
-        });
-      }
       server.watcher.on('change', (file) => {
         if (!watched.some((w) => path.resolve(file).startsWith(path.resolve(w)))) return;
         if (peopleCookHash(root) !== hash) void server.restart();

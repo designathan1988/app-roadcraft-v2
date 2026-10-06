@@ -229,9 +229,9 @@ declare const __PEOPLE_COOK_HASH__: string | undefined;
 const COOK_HASH = typeof __PEOPLE_COOK_HASH__ !== 'undefined' ? __PEOPLE_COOK_HASH__ : null;
 let manifest: Promise<ReadonlySet<string> | null> | null = null;
 /**
- * A missing or stale cook is looked for again a little later: the development
- * server cooks the people itself when it finds them stale (`cook-plugin.ts`),
- * and the bodies wanted after that are read from the cook, not built.
+ * A missing or stale cook is looked for again a little later: once
+ * `npm run cook:people` has run, the bodies wanted after that are read from
+ * the cook, not built, without reloading the game.
  */
 function lookAgain(): void {
   if (typeof setTimeout === 'function') setTimeout(() => { manifest = null; }, 20_000);

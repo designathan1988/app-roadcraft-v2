@@ -44,10 +44,10 @@ Cuidados ao ler os números:
 | 4 | Materiais do transporte criados a cada reconstrução | toda edição de via | 1 shader relinkado por via | **CORRIGIDO** |
 | 5 | Cabelo: busca de vizinho por força bruta | cada penteado novo | 70–225 ms | **CORRIGIDO** (grade; 27–100 ms restantes são o resto da geração) |
 | 6 | Classe de corpo procedural montada de uma vez | cada classe nova (8) | 40–240 ms | **PALIATIVO** (fatiada); causa: não é pré-cozida (#8) |
-| 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **ABERTO** — recozinhar; proteção a fazer |
+| 7 | Corpos cozidos vencidos: queda silenciosa para montagem em runtime | motorista, pessoas em prédios | 200–550 ms por corpo | **CORRIGIDO** (impressão pelo fecho de imports; recozido) |
 | 8 | Pessoas procedurais (classes, cabelo, roupas) sem caminho de cozimento | primeiros minutos, cada tipo novo | soma de segundos | **ABERTO** |
-| 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **ABERTO** |
-| 10 | Tiles de via: custo por tile e quantos são refeitos | toda edição de via | 4–13 ms por tile; 9–34 tiles numa via curta na vila | **ABERTO** |
+| 9 | Malha das vias: todos os tiles fundidos e reenviados a cada edição | toda edição de via | fusão 28–35 ms + 50–80 MB enviados (quadros de 400–850 ms na vila) | **CORRIGIDO** (blocos 4×4 mantidos na placa) |
+| 10 | Digest da solução de alturas invalidava a rua inteira / o mapa inteiro | toda edição de via | 900 blocos na primeira via; rua inteira por junção | **CORRIGIDO** (digest local); custo por tile ainda **ABERTO** |
 | 11 | Topologia de pedestres refeita no mapa inteiro | toda edição de via | quadro de 113 ms (`buildWalkways`) | **ABERTO** |
 | 12 | Prédios: células remontadas depois de edição de via | edição de via perto de prédios | quadro de 285 ms (`assembleByCell`) | **ABERTO** (medir de novo depois de #1) |
 | 13 | Calçadas, cenário, mobiliário, postes, placas refeitos no mapa inteiro | toda edição de via | baratos hoje (< 10 ms na vila), mas globais | **ABERTO** |
@@ -166,9 +166,17 @@ desenvolvimento.
 depois disso (e7174cf, 2a1cbac). Medido: `person-rig` 35–80 ms, `person-face`
 33–80 ms e `person-bake` 130–555 ms por corpo, durante o jogo.
 
-**Correção a fazer.** (a) recozinhar depois desta série; (b) proteção: o
-`npm run check` falhar com cozimento vencido, como o build já falha, para que
-ninguém entregue mudança em pessoas sem recozinhar.
+**Correção (6673cfb).** A impressão é o fecho de imports de
+`riggedCitizens.ts` (`cook-plugin.ts` `importClosure`): editar a multidão
+procedural não invalida mais os corpos. Recozido (`npm run cook:people`, 14 s).
+**Proteção:** `tests/tooling/cookFingerprint.spec.ts`; o build (e portanto o
+`npm run check`) recusa cozimento vencido.
+
+**Não fazer:** cozinhar automaticamente no servidor de desenvolvimento. Foi
+tentado: a cada reinício do servidor ele abria um Chrome invisível, e com edições
+seguidas isso pôs a CPU do jogador a 100% e travou o computador (2026-10-06).
+Removido. Depois de mexer em código de pessoas, rode `npm run cook:people` à mão,
+uma vez.
 
 ## 8. Pessoas procedurais sem caminho de cozimento — ABERTO
 
@@ -179,8 +187,11 @@ função só dos assets e do código, igual em toda partida. É o caso clássico
 conteúdo que se cozinha antes (*cooked assets*, como as engines fazem).
 
 **Correção a fazer.** Incluir no cozimento os dados de cada classe (texturas de
-forma e expressão, base das juntas, clipes) e os pacotes de cabelo e de roupa
-por classe. No jogo, só carregar.
+forma e expressão, base das juntas, clipes; 6,3 MB por classe, medido) e os
+pacotes de cabelo. Tentado em 2026-10-06: as 8 classes cozinham bem, mas algum
+penteado em `HAIR_STYLES` estoura a memória ao ser gerado (a aba do cozimento
+caiu; num teste em Node a geração não terminou em 300 s). Achar esse penteado
+antes de retomar, e nunca rodar o cozimento em segundo plano.
 
 ## 9. Malha das vias fundida e reenviada inteira a cada edição — ABERTO
 
