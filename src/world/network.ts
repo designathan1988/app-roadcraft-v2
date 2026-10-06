@@ -124,6 +124,8 @@ export class Network {
    * where the second pass did not fully converge.
    */
   rebuild(): void {
+    this.junctionMemo = this.nextJunctionMemo.size ? this.nextJunctionMemo : this.junctionMemo;
+    this.nextJunctionMemo = new Map();
     this.crossingWalkable = null;
     this.crossingDistances.clear();
     this.polylines.clear();
@@ -238,7 +240,18 @@ export class Network {
    * `replaceWith` the ids and their geometry are the same objects' values, so
    * every entry in it is still the right answer.
    */
+  /**
+   * Takes another network's solved junctions as its memory (`solve`): a
+   * working copy of the document made for an edit starts from the junctions
+   * of the network it was copied from, not from nothing.
+   */
+  seedJunctions(from: Network): void {
+    this.junctionMemo = new Map([...from.junctionMemo, ...from.nextJunctionMemo]);
+  }
+
   adopt(other: Network): void {
+    this.junctionMemo = new Map();
+    this.nextJunctionMemo = new Map([...other.junctionMemo, ...other.nextJunctionMemo]);
     this.junctions.clear();
     for (const [node, byLevel] of other.junctions) this.junctions.set(node, byLevel);
     this.ribbons.clear();
@@ -271,6 +284,21 @@ export class Network {
   ): Map<NodeId, Map<SurfaceLevel, Junction>> {
     const out = new Map<NodeId, Map<SurfaceLevel, Junction>>();
     for (const node of nodes) {
+      // A junction is built from its node, the segments that meet there and
+      // their lines (`buildJunction` reads nothing else), the radius scale and
+      // the trim caps of this pass: a node whose inputs are the same as at the
+      // last rebuild takes the junction solved then. Every junction of the
+      // map was solved again, two or three times, for every road drawn
+      // (docs/performance.md #17).
+      const key = this.junctionKey(node, radiusScaleBySegment, useReconciledTrimCaps);
+      const known = this.junctionMemo.get(key) ?? this.nextJunctionMemo.get(key);
+      if (known) {
+        this.nextJunctionMemo.set(key, known);
+        for (const [seg, reach] of known.plate) this.plateReach.set(`${node}:${seg}`, reach);
+        if (known.byLevel.size) out.set(node, known.byLevel);
+        continue;
+      }
+      const plate: [SegmentId, number][] = [];
       const byLevel = new Map<SurfaceLevel, Junction>();
       const build = (level: SurfaceLevel): Junction | null => {
         const maxTrimBySegment = useReconciledTrimCaps
@@ -286,7 +314,10 @@ export class Network {
       // the carriageway cannot draw as one (a taper, a merge) is built per surface.
       const carriageway = build(Level.Asphalt);
       const footprint = build(Level.Casing);
-      footprint?.legs.forEach((leg, i) => this.plateReach.set(`${node}:${leg.seg}`, footprint.trims[i] as number));
+      footprint?.legs.forEach((leg, i) => {
+        this.plateReach.set(`${node}:${leg.seg}`, footprint.trims[i] as number);
+        plate.push([leg.seg, footprint.trims[i] as number]);
+      });
       for (const level of SURFACE_LEVELS) {
         const j = level === Level.Asphalt
           ? carriageway
@@ -294,8 +325,32 @@ export class Network {
         if (j) byLevel.set(level, j);
       }
       if (byLevel.size) out.set(node, byLevel);
+      this.nextJunctionMemo.set(key, { byLevel, plate });
     }
     return out;
+  }
+
+  /** Junctions as solved at the last rebuild, and at this one, by `junctionKey`. */
+  private junctionMemo = new Map<string, { byLevel: Map<SurfaceLevel, Junction>; plate: [SegmentId, number][] }>();
+  private nextJunctionMemo = new Map<string, { byLevel: Map<SurfaceLevel, Junction>; plate: [SegmentId, number][] }>();
+
+  /** Everything `solve` builds a node's junction from, as a key. */
+  private junctionKey(node: NodeId, scales: ReadonlyMap<number, number>, capped: boolean): string {
+    const source = this.doc.node(node);
+    if (!source) return `${node}|gone`;
+    const parts: string[] = [JSON.stringify(source), capped ? 'capped' : 'free'];
+    for (const id of source.incident) {
+      const segment = this.doc.segment(id);
+      if (!segment) { parts.push(`${id}:gone`); continue; }
+      parts.push(JSON.stringify(segment), String(scales.get(id) ?? 1));
+      const line = this.polylines.get(this.doc, id);
+      parts.push(Array.from(line.xy).join(','));
+      if (capped) {
+        const trims = this.trims.get(id);
+        parts.push(JSON.stringify(trims ? (segment.a === node ? trims.a : trims.b) : null));
+      }
+    }
+    return parts.join('|');
   }
 
   /** Final per-leg caps for one junction after segment-end reconciliation. */

@@ -70,6 +70,7 @@ export function commitRoadPath(
   pieces = joinShortPieces(pieces);
   const work = doc.clone();
   const workNet = new Network(work);
+  workNet.seedJunctions(net);
   workNet.rebuild();
   let committed = false;
   let heightLimited = false;
@@ -228,6 +229,7 @@ export function commitDraft(
 
   const work = doc.clone();
   const workNet = new Network(work);
+  workNet.seedJunctions(net);
   workNet.rebuild();
   const result = commitDraftInPlace(work, workNet, start, end, type, shape, structure);
   if (!result.committed) return result;

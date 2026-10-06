@@ -80,6 +80,7 @@ export function commitRoundabout(
     entrances.push(segment.id);
   }
   const workNet = new Network(work);
+  workNet.seedJunctions(net);
   workNet.rebuild();
   if (nodes.some((id) => workNet.impossible.has(id))) return { committed: false, reason: 'geometry' };
   doc.replaceWith(work);

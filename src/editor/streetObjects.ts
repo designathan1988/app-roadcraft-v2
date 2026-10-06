@@ -46,6 +46,7 @@ export function commitPedestrianCrossing(
 
   const work = doc.clone();
   const workNet = new Network(work);
+  workNet.seedJunctions(net);
   workNet.rebuild();
   const node = splitSegment(work, workNet, segmentId, splitAt, original.sampleAt(splitAt).p);
   if (node === null || node === segment.a || node === segment.b) {
