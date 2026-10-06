@@ -563,6 +563,26 @@ export function addPolygonLot(doc: RoadDoc, points: readonly Vec2[], front: numb
   return lot;
 }
 
+/**
+ * Makes one side of a lot its front - the side on the street, which the
+ * building grown there faces (`Lot.corners`: the first side is the front).
+ * A building already standing faced the old front: it is taken down, and one
+ * facing the new front grows in its place.
+ */
+export function setLotFront(doc: RoadDoc, id: number, side: number): boolean {
+  const at = doc.lots.findIndex((l) => l.id === id);
+  const lot = doc.lots[at];
+  if (!lot) return false;
+  const n = lot.corners.length;
+  const k = ((side % n) + n) % n;
+  if (k === 0) return false;
+  if (lot.building !== undefined) doc.buildings.remove(lot.building as Parameters<typeof doc.buildings.remove>[0]);
+  const { building: _gone, ...rest } = lot;
+  doc.lots[at] = { ...rest, corners: [...lot.corners.slice(k), ...lot.corners.slice(0, k)] };
+  doc.lotRevision++;
+  return true;
+}
+
 /** Whether a corner or the middle of one polygon is well inside the other (the separating-axis test is only for convex shapes). */
 function overlapDeep(p: readonly Vec2[], q: readonly Vec2[]): boolean {
   const inner = (a: readonly Vec2[], b: readonly Vec2[]): boolean => {

@@ -2,7 +2,7 @@ import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -23,9 +23,10 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
+import { GRID_CELL, GRID_STEP } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
@@ -394,7 +395,7 @@ let zoneUse: ZoneUse = 'residential';
 let zoneDensity: ZoneDensity = 'low';
 let zoneEraser = false;
 /** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
-let zoneMode: 'brush' | 'fill' | 'edit' | 'split' | 'join' | 'add' | 'polygon' | 'curve' | 'delete' = 'brush';
+let zoneMode: 'brush' | 'fill' | 'edit' | 'front' | 'split' | 'join' | 'add' | 'polygon' | 'curve' | 'delete' = 'brush';
 /** How the split tool cuts (`LotCut`): across the front, parallel to it, or along a drawn line; into how many. */
 let lotSplitKind: 'vertical' | 'horizontal' | 'line' = 'vertical';
 let lotSplitParts = 2;
@@ -415,6 +416,19 @@ function lotSideNear(p: Vec2): { a: Vec2; b: Vec2 } | null {
     const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
     const d = Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y);
     if (d < bestD) { bestD = d; best = { a, b }; }
+  }
+  return best;
+}
+/** The side of a lot nearest a point within reach: the lot and the side's index (corner i to i + 1). */
+function lotSideAt(p: Vec2): { lot: Lot; side: number; a: Vec2; b: Vec2 } | null {
+  let best: { lot: Lot; side: number; a: Vec2; b: Vec2 } | null = null, bestD = 18 / Math.max(0.05, view.zoom);
+  for (const l of doc.lots) for (let i = 0; i < l.corners.length; i++) {
+    const a = l.corners[i]!, b = l.corners[(i + 1) % l.corners.length]!;
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    // Inside the lot counts as nearer: of two lots sharing a side, the one the pointer is in.
+    const d = Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y) - (insideLot(p, l) ? 1e-3 : 0);
+    if (d < bestD) { bestD = d; best = { lot: l, side: i, a, b }; }
   }
   return best;
 }
@@ -1313,6 +1327,15 @@ canvas.addEventListener('pointerdown', (e) => {
           if (d < bestD) { bestD = d; best = q; }
         }
         if (best) lotCorner = { pointer: e.pointerId, from: { ...best }, to: { ...world } };
+      } else if (zoneMode === 'front') {
+        // The side clicked becomes the lot's front, the side its building faces.
+        const side = lotSideAt(world);
+        if (!side) flashHint('hint.lot.frontPick');
+        else {
+          mutate(() => setLotFront(doc, side.lot.id, side.side));
+          lotRefused.clear();
+          flashHint('hint.lot.front');
+        }
       } else if (zoneMode === 'split') {
         if (lotSplitKind === 'line') lotCutLine = { pointer: e.pointerId, a: { ...world }, b: { ...world } };
         else if (lot) {
@@ -2490,7 +2513,7 @@ zoneRemoveButton.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button) => {
   button.addEventListener('click', () => {
     const wanted = button.dataset['zoneMode'];
-    zoneMode = wanted === 'fill' || wanted === 'edit' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
+    zoneMode = wanted === 'fill' || wanted === 'edit' || wanted === 'front' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
       wanted === 'polygon' || wanted === 'curve' || wanted === 'delete' ? wanted : 'brush';
     lotJoinFirst = null;
     lotPolygon = [];
@@ -3828,6 +3851,43 @@ function drawPolePlan(
   }
 }
 
+/** The grid lines in view, each a polyline on the ground (`roadGridShown`). */
+function drawRoadGrid(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const corners = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => view.toWorldAt(x!, y!, 0, w, h));
+  const minX = Math.min(...corners.map((p) => p.x)), maxX = Math.max(...corners.map((p) => p.x));
+  const minY = Math.min(...corners.map((p) => p.y)), maxY = Math.max(...corners.map((p) => p.y));
+  // Too far out for the cells to read: none drawn.
+  if ((maxX - minX) / GRID_CELL > 240 || (maxY - minY) / GRID_CELL > 240) return;
+  const origin = view.toScreen({ x: 0, y: 0 }, w, h, 0), unit = view.toScreen({ x: GRID_STEP, y: 0 }, w, h, 0);
+  const fine = Math.hypot(unit.x - origin.x, unit.y - origin.y) > 7;
+  const step = fine ? GRID_STEP : GRID_CELL;
+  const line = (ax: number, ay: number, bx: number, by: number): void => {
+    // Sampled every cell, at the ground's height, so the line lies on hills.
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / GRID_CELL));
+    for (let k = 0; k <= n; k++) {
+      const p = { x: ax + (bx - ax) * k / n, y: ay + (by - ay) * k / n };
+      const q = view.toScreen(p, w, h, sceneHeightAt(p));
+      if (k === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+    }
+  };
+  ctx.save();
+  ctx.lineWidth = 1;
+  for (const major of fine ? [false, true] : [true]) {
+    ctx.beginPath();
+    for (let x = Math.floor(minX / step) * step; x <= maxX; x += step) {
+      const isMajor = Math.abs(x / GRID_CELL - Math.round(x / GRID_CELL)) < 1e-6;
+      if (isMajor === major) line(x, minY, x, maxY);
+    }
+    for (let y = Math.floor(minY / step) * step; y <= maxY; y += step) {
+      const isMajor = Math.abs(y / GRID_CELL - Math.round(y / GRID_CELL)) < 1e-6;
+      if (isMajor === major) line(minX, y, maxX, y);
+    }
+    ctx.strokeStyle = major ? 'rgba(255, 255, 255, 0.38)' : 'rgba(255, 255, 255, 0.12)';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawOverlayScreen(): void {
   const w = overlayCanvas.clientWidth;
   const h = overlayCanvas.clientHeight;
@@ -3881,6 +3941,9 @@ function drawOverlayScreen(): void {
   // hang between them with its real sag, and a ring round any pole the run is
   // about to tie into. If it looks right here it is right when built.
   drawPolePlan(framePolePlan, ctx, at);
+  // The universal grid (`world/grid.ts`) on the ground while roads are built:
+  // 10 m cells, and their 1 m subdivisions close up - what the grid snap lands on.
+  if (tool === 'road' && roadGridShown()) drawRoadGrid(ctx, w, h);
   if (tool === 'road' && blockGridChoice.armed && hoverAnchor) {
     // The grid the next click lays, on the ground.
     for (const [a, b] of blockGridLines(hoverAnchor.at, blockGridChoice)) {
@@ -3930,6 +3993,12 @@ function drawOverlayScreen(): void {
         width: picked ? 0.7 : 0.35 });
     }
     if (editing && zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
+    // Each lot's front, the side its building faces: marked in the Zoning tool.
+    if (editing) for (const l of doc.lots) if (l.corners.length > 1) lines.push({ a: dragged(l.corners[0]!), b: dragged(l.corners[1]!), colour: 0x5ee0ff, dashed: false, width: 0.8 });
+    if (editing && zoneMode === 'front' && zoneHover) {
+      const side = lotSideAt(zoneHover);
+      if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 1 });
+    }
     if (editing && zoneMode === 'split' && lotSplitKind !== 'line' && hoverLot) {
       for (const [a, b] of cutLines(hoverLot, { kind: lotSplitKind, parts: lotSplitParts })) lines.push({ a, b, colour: 0xffd25e, dashed: true, width: 0.5 });
     }

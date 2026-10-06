@@ -32,7 +32,7 @@ import {
 import { roadSnap, setRoadSnap } from '@editor/snap';
 import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
-import { blockGridChoice, roadWidth, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
+import { blockGridChoice, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -109,6 +109,7 @@ const ICON: Record<string, string> = {
   lotCurve: '<path d="M4 20V8"/><path d="M4 8Q12 2 20 8"/><path d="M20 8v12H4"/>',
   lotEdit: '<path d="M4 4h16v16H4Z"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="20" r="2"/>',
   lotDelete: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="m8 8 8 8M16 8l-8 8"/>',
+  lotFront: '<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="2 2"/><path d="M4 20h16" stroke-width="3"/><path d="m12 9 0 7M9 13l3 3 3-3"/>',
   split: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 17M8 15.5 20 7"/>',
   control: '<rect x="8" y="2" width="8" height="17" rx="2"/><circle cx="12" cy="6" r="1.4"/><circle cx="12" cy="10.5" r="1.4"/><circle cx="12" cy="15" r="1.4"/><path d="M12 19v3"/>',
   roundabout: '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/><path d="M12 1v2.5M12 20.5V23M1 12h2.5M20.5 12H23"/>',
@@ -633,6 +634,12 @@ export function mountShell(deps: ShellDeps): void {
         { label: t('v2.snap.angles'), on: snap.on && snap.angles, run: () => { setRoadSnap({ angles: !snap.angles }); render(); }, disabled: !snap.on, icon: svg('angle', 18) },
         { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('grid', 18) },
       ]));
+      // The grid itself, drawn on the ground while the road is laid.
+      const gridGroup = titled(group(t('v2.roadGrid')), t('v2.roadGrid'));
+      gridGroup.appendChild(choices([
+        { label: t('v2.roadGrid.show'), on: roadGridShown(), run: () => { setRoadGridShown(true); if (!snap.on || !snap.grid) setRoadSnap({ on: true, grid: true }); render(); } },
+        { label: t('v2.roadGrid.hide'), on: !roadGridShown(), run: () => { setRoadGridShown(false); render(); } },
+      ], 2));
       // Parking the new road is drawn with (`editor/roadParking.ts`).
       const parking = group(t('palette.parking'));
       const parkingNow = roadParkingPreset();
@@ -697,7 +704,7 @@ export function mountShell(deps: ShellDeps): void {
       );
       titled(trace, t('palette.trace')); titled(snapping, t('v2.snap.title')); titled(parking, t('palette.parking'));
       titled(height, t('palette.height')); titled(lanes, t('palette.lanes')); titled(widthGroup, t('palette.width'));
-      options.append(trace, snapping, lanes, widthGroup, height, parking, blocks);
+      options.append(trace, snapping, gridGroup, lanes, widthGroup, height, parking, blocks);
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));
@@ -739,7 +746,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     // The lots themselves: their drawing edited as a cadastre is (`world/lots.ts`).
     const lots = section(t('zone.lots'), 'verbs');
-    for (const [mode, icon] of [['edit', 'lotEdit'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['polygon', 'lotPolygon'], ['curve', 'lotCurve'], ['delete', 'lotDelete']] as const) {
+    for (const [mode, icon] of [['edit', 'lotEdit'], ['front', 'lotFront'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['polygon', 'lotPolygon'], ['curve', 'lotCurve'], ['delete', 'lotDelete']] as const) {
       const b = q<HTMLButtonElement>(`[data-zone-mode="${mode}"]`);
       lots.items.appendChild(verb(t(`zone.lot.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), mode === 'delete'));
     }
