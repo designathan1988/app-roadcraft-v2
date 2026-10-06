@@ -412,7 +412,8 @@ export function createSceneRenderer(
   // The far ring: three times the spacing, out to three times the reach, where the near one fades.
   const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 });
   scene.add(grass.mesh, grassFar.mesh);
-  if (import.meta.env.DEV) (window as unknown as { __grass?: unknown }).__grass = grass;
+  if (import.meta.env.DEV) (window as unknown as { __grass?: unknown; __scene?: unknown }).__grass = grass;
+  if (import.meta.env.DEV) (window as unknown as { __scene?: unknown }).__scene = scene;
   let grassGroundFor = '';
   let grassMaskFor = '';
   let grassCheckedAt = 0;

@@ -102,7 +102,9 @@ export const WATER_DEPTH_ATTRIBUTE = 'aDepth';
 /** Depth, in world units, at which the tint has reached its deep-water value. */
 const DEEP_AT = 3.6;
 /** Depth over which the shore foam band fades out. */
-const FOAM_AT = 0.95;
+// A thin line at the bank: as wide as 0.95 it whitened every pool shallower
+// than 38 cm from bank to bank, a sheet of foam seen from the side.
+const FOAM_AT = 0.3;
 /**
  * Depth over which the sheet fades in from nothing.
  *
@@ -136,7 +138,7 @@ const FRESNEL_POWER = 4;
  * the horizon, where the Schlick term reaches one and a river turned into
  * sheets of white sky; real water at a glance still shows its body.
  */
-const FRESNEL_MAX = 0.78;
+const FRESNEL_MAX = 0.62;
 
 /** Low enough for the sun to catch, high enough not to alias into fireflies. */
 const WATER_ROUGHNESS = 0.085;
@@ -251,7 +253,8 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     transparent: true,
     opacity: 1,
     side: FrontSide,
-    envMapIntensity: 1.0,
+    // The sky's light near the horizon is near white at full strength: half of it.
+    envMapIntensity: 0.5,
   });
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
@@ -324,9 +327,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // seen. Broken up by the noise the normal map carries in its alpha, or
          // it draws a contour line along the bank.
          float waterShore = smoothstep(0.0, ${FOAM_AT.toFixed(2)}, vWaterDepth);
-         float waterBand = (1.0 - waterShore) * smoothstep(0.0, 0.3, vWaterDepth);
+         float waterBand = (1.0 - waterShore) * smoothstep(0.0, 0.08, vWaterDepth);
          float waterFroth = smoothstep(0.34, 0.8, waterA.a * 0.55 + waterB.a * 0.65);
-         float waterFoam = clamp(waterBand * waterFroth * 0.58, 0.0, 1.0);
+         float waterFoam = clamp(waterBand * waterFroth * 0.4, 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
          // The first shallow stretch reveals the actual bed. Starting at
@@ -342,6 +345,10 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
       .replace(
         '#include <roughnessmap_fragment>',
         `float roughnessFactor = roughness;
+         // Rougher with distance (roughness filtering, after Toksvig and LEAN
+         // mapping): the ripples the mip chain averages away stay as a blur of
+         // the sky, not as a hundred sun glints summed into a sheet of white.
+         roughnessFactor = mix(roughnessFactor, 0.42, smoothstep(40.0, 600.0, length(vViewPosition)));
          // Foam is churn, not a mirror.
          roughnessFactor = mix(roughnessFactor, ${FOAM_ROUGHNESS.toFixed(2)}, waterFoam);`,
       )
@@ -369,10 +376,16 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
            (1.0 - ${FRESNEL_BASE.toFixed(2)}) * pow(1.0 - waterNdv, ${FRESNEL_POWER.toFixed(1)}));
          // Both fields, because three reads \`specularColorBlended\` for the
          // direct lobe and \`specularColor\` for the environment one.
-         vec3 waterSpecular = mix(vec3(0.04), vec3(1.0), waterFresnel);
+         // The sky it mirrors is the blue the eye sees (the environment map is
+         // the scattering model's own, pale near the horizon): tinted, a pool
+         // seen from the side read as a sheet of white.
+         vec3 waterSpecular = mix(vec3(0.04), vec3(0.62, 0.8, 1.0), waterFresnel);
          material.specularColor = waterSpecular;
          material.specularColorBlended = waterSpecular;
-         material.specularF90 = 1.0;
+         // The grazing reflectance capped too: three's own Schlick climbs from
+         // the colour above to F90 as the view grazes, and at 1.0 it made every
+         // pool seen from the side a sheet of white whatever the cap above said.
+         material.specularF90 = ${FRESNEL_MAX.toFixed(2)};
          // What is reflected is not transmitted: the bed goes away under the
          // glancing parts of the surface, and the body of the water dims by as
          // much as the reflection gains.
@@ -382,7 +395,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v3';
+  material.customProgramCacheKey = () => 'water-two-layer-v7';
 
   const started = performance.now();
   return {
