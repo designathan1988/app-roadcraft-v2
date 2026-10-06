@@ -144,13 +144,27 @@ const edgeLength = (b: Builder, i: number, j: number): number =>
  * that share it, or for neither.
  */
 function refine(b: Builder, maxEdge: number, maxRounds = 24, budget = 600_000): void {
-  for (let round = 0; round < maxRounds; round++) {
-    if (b.tris.length / 3 > budget) return;
+  // A triangle with every edge within `maxEdge` is finished: no round marks
+  // one of its edges (a mark is a triangle's own longest edge over the
+  // limit), so it is never split again. Each round reads only the triangles
+  // still too big - every round used to measure every triangle of the piece
+  // again, most of a road edit (docs/performance.md #10). The vertices are
+  // made in the same order as before; only the triangles' order differs.
+  const done: number[] = [];
+  let active: number[] = [];
+  const long = (x: number, y: number, z: number): boolean =>
+    edgeLength(b, x, y) > maxEdge || edgeLength(b, y, z) > maxEdge || edgeLength(b, z, x) > maxEdge;
+  for (let t = 0; t < b.tris.length; t += 3) {
+    const a = b.tris[t] as number, c = b.tris[t + 1] as number, d = b.tris[t + 2] as number;
+    if (long(a, c, d)) active.push(a, c, d); else done.push(a, c, d);
+  }
+  for (let round = 0; round < maxRounds && active.length; round++) {
+    if ((done.length + active.length) / 3 > budget) break;
     const marked = new Set<number>();
-    for (let t = 0; t < b.tris.length; t += 3) {
-      const a = b.tris[t] as number;
-      const c = b.tris[t + 1] as number;
-      const d = b.tris[t + 2] as number;
+    for (let t = 0; t < active.length; t += 3) {
+      const a = active[t] as number;
+      const c = active[t + 1] as number;
+      const d = active[t + 2] as number;
       // The three edges in the order a-c, c-d, d-a; the first of equal longest wins.
       const ac = edgeLength(b, a, c);
       const cd = edgeLength(b, c, d);
@@ -163,7 +177,7 @@ function refine(b: Builder, maxEdge: number, maxRounds = 24, budget = 600_000): 
       if (da > bestLength) { i = d; j = a; }
       if (i >= 0) marked.add(i < j ? i * 0x4000_0000 + j : j * 0x4000_0000 + i);
     }
-    if (marked.size === 0) return;
+    if (marked.size === 0) break;
 
     const split = (i: number, j: number): number | null => {
       const key = i < j ? i * 0x4000_0000 + j : j * 0x4000_0000 + i;
@@ -171,15 +185,21 @@ function refine(b: Builder, maxEdge: number, maxRounds = 24, budget = 600_000): 
     };
 
     const next: number[] = [];
-    for (let t = 0; t < b.tris.length; t += 3) {
-      const a = b.tris[t] as number;
-      const c = b.tris[t + 1] as number;
-      const d = b.tris[t + 2] as number;
+    for (let t = 0; t < active.length; t += 3) {
+      const a = active[t] as number;
+      const c = active[t + 1] as number;
+      const d = active[t + 2] as number;
       emit(next, a, c, d, split(a, c), split(c, d), split(d, a));
     }
-    b.tris.length = next.length;
-    for (let i = 0; i < next.length; i++) b.tris[i] = next[i] as number;
+    active = [];
+    for (let t = 0; t < next.length; t += 3) {
+      const a = next[t] as number, c = next[t + 1] as number, d = next[t + 2] as number;
+      if (long(a, c, d)) active.push(a, c, d); else done.push(a, c, d);
+    }
   }
+  b.tris.length = 0;
+  for (const v of done) b.tris.push(v);
+  for (const v of active) b.tris.push(v);
 }
 
 /** The red/green cases: 0, 1, 2 or 3 split edges of one triangle. */
