@@ -511,7 +511,41 @@ export function onLand(net: Network, points: readonly Vec2[]): Vec2[] | null {
     const area = Math.abs(lotArea({ corners: ring }));
     if (ring.length >= 3 && area > bestArea) { bestArea = area; best = ring; }
   }
-  return best && bestArea >= MIN_LOT * MIN_LOT / 2 ? best : null;
+  return best && bestArea >= MIN_LOT * MIN_LOT / 2 ? squareCorners(best) : null;
+}
+
+/**
+ * A lot cut back to the footways, its corners made square: each run of short
+ * sides round a corner's curve between two long straight ones is replaced by
+ * the point where the two straight ones meet. The lot is then a straight line
+ * from corner to corner, and what grows on it reaches the footway at the
+ * corner with no gap (the player, 2026-10-06), standing over the curve's
+ * sliver of paving as a building on a street corner does.
+ */
+function squareCorners(ring: Vec2[]): Vec2[] {
+  const n = ring.length;
+  const longSides: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = ring[i]!, q = ring[(i + 1) % n]!;
+    if (Math.hypot(q.x - p.x, q.y - p.y) >= STRAIGHT_BACK) longSides.push(i);
+  }
+  if (longSides.length < 2) return ring;
+  // The corners between each long side and the next: their shared point, or
+  // - with a curve's short sides between them - where their lines meet.
+  const out: Vec2[] = [];
+  for (let k = 0; k < longSides.length; k++) {
+    const i = longSides[k]!, j = longSides[(k + 1) % longSides.length]!;
+    const a = ring[i]!, b = ring[(i + 1) % n]!, c = ring[j]!, d = ring[(j + 1) % n]!;
+    if ((i + 1) % n === j) { out.push(b); continue; }
+    const ux = b.x - a.x, uy = b.y - a.y, vx = d.x - c.x, vy = d.y - c.y;
+    const den = ux * vy - uy * vx;
+    const t = Math.abs(den) > 0.3 * Math.hypot(ux, uy) * Math.hypot(vx, vy) ? ((c.x - a.x) * vy - (c.y - a.y) * vx) / den : NaN;
+    const x = { x: a.x + ux * t, y: a.y + uy * t };
+    if (Number.isFinite(t) && Math.hypot(x.x - b.x, x.y - b.y) < m(8)) out.push(x);
+    // Not a corner of two streets: the short sides kept as they are.
+    else for (let r = (i + 1) % n; r !== (j + 1) % n; r = (r + 1) % n) out.push(ring[r]!);
+  }
+  return out.length >= 3 ? out : ring;
 }
 
 /**
@@ -661,6 +695,8 @@ function nearerStreet(at: (s: number, t: number) => Vec2, s0: number, s1: number
 
 /** The footways' outer edges as drawn, in a grid, by network (`footwayEdges`). */
 const EDGE_CELL = m(16);
+/** An outline edge at least this long is a straight back of a footway; shorter ones are a corner's curve. */
+const STRAIGHT_BACK = m(2);
 interface FootwayEdges {
   readonly revision: number;
   readonly cells: Map<number, number[]>;
@@ -718,10 +754,13 @@ export function lotSnapper(doc: RoadDoc, net: Network, lots: readonly Pick<Lot, 
     }
     if (lotBest) return { p: { x: lotBest.x, y: lotBest.y }, kind: 'lot' };
     let best: Vec2 | null = null, bestD = reach;
-    let corner: Vec2 | null = null, cornerD = reach * 0.5;
+    // The straight backs of the footways near the point (their curves round
+    // the corners left out): two of them that meet make a corner.
+    const backs: { d: number; x0: number; y0: number; dx: number; dy: number }[] = [];
     const seen = new Set<number>();
-    for (let i = Math.floor((p.x - reach) / EDGE_CELL); i <= Math.floor((p.x + reach) / EDGE_CELL); i++) {
-      for (let j = Math.floor((p.y - reach) / EDGE_CELL); j <= Math.floor((p.y + reach) / EDGE_CELL); j++) {
+    const span = reach * 1.5;
+    for (let i = Math.floor((p.x - span) / EDGE_CELL); i <= Math.floor((p.x + span) / EDGE_CELL); i++) {
+      for (let j = Math.floor((p.y - span) / EDGE_CELL); j <= Math.floor((p.y + span) / EDGE_CELL); j++) {
         for (const e of cells.get(edgeKey(i, j)) ?? []) {
           if (seen.has(e)) continue;
           seen.add(e);
@@ -730,18 +769,22 @@ export function lotSnapper(doc: RoadDoc, net: Network, lots: readonly Pick<Lot, 
           const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - x0) * dx + (p.y - y0) * dy) / len2)) : 0;
           const qx = x0 + dx * t, qy = y0 + dy * t, d = Math.hypot(qx - p.x, qy - p.y);
           if (d < bestD) { bestD = d; best = { x: qx, y: qy }; }
-          // A corner of the outline: where its direction turns by more than a few degrees.
-          const dc = Math.hypot(x0 - p.x, y0 - p.y);
-          if (dc < cornerD) {
-            const prev = cells.get(edgeKey(Math.floor(x0 / EDGE_CELL), Math.floor(y0 / EDGE_CELL)))?.find((o) =>
-              o !== e && Math.abs(edges[o * 4 + 2]! - x0) < 1e-6 && Math.abs(edges[o * 4 + 3]! - y0) < 1e-6);
-            if (prev !== undefined) {
-              const ax = x0 - edges[prev * 4]!, ay = y0 - edges[prev * 4 + 1]!;
-              const turn = Math.abs(Math.atan2(ax * dy - ay * dx, ax * dx + ay * dy));
-              if (turn > 0.2) { cornerD = dc; corner = { x: x0, y: y0 }; }
-            }
-          }
+          if (len2 >= STRAIGHT_BACK * STRAIGHT_BACK && d < span) backs.push({ d, x0, y0, dx, dy });
         }
+      }
+    }
+    backs.sort((u, v) => u.d - v.d);
+    let corner: Vec2 | null = null;
+    const first = backs[0];
+    if (first) {
+      for (const other of backs) {
+        const den = first.dx * other.dy - first.dy * other.dx;
+        // Square enough to be two streets, not one back cut in two.
+        if (Math.abs(den) < 0.3 * Math.hypot(first.dx, first.dy) * Math.hypot(other.dx, other.dy)) continue;
+        const k = ((other.x0 - first.x0) * other.dy - (other.y0 - first.y0) * other.dx) / den;
+        const x = { x: first.x0 + first.dx * k, y: first.y0 + first.dy * k };
+        if (Math.hypot(x.x - p.x, x.y - p.y) < span) corner = x;
+        break;
       }
     }
     if (corner) return { p: corner, kind: 'corner' };
