@@ -404,8 +404,6 @@ export function createSceneRenderer(
   // instance matrices.
   const sceneryKit: SceneryKit = createSceneryKit();
   const terrain: TerrainSurface = createTerrainSurface(anisotropy);
-  // The orbit camera kept above the land it looks over (`isoViewport.ts`).
-  rig.setGround((x, z) => terrain.renderedHeightAt(x, -z));
   // The grass field round the camera (`grass.ts`): its ground heights and the
   // mask that keeps it off paving and buildings, rebuilt when those change.
   const grass = createGrass(quality);
@@ -1079,10 +1077,6 @@ export function createSceneRenderer(
 
   // The play camera's state: the projection the orbit had before it.
   let buildingsHeld = false;
-  /** The sun's light shafts (`postprocess.ts`), as strong as they get looking into a clear sky. */
-  const SHAFT_STRENGTH = 0.4;
-  const sunWay = new Vector3();
-  const sunOnScreen = new Vector3();
   /** Zoom (pixels a unit) from which the grass field is drawn in the orbit view. */
   const GRASS_ZOOM = 4;
   const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
@@ -1735,25 +1729,6 @@ export function createSceneRenderer(
         grass.update(at.x, at.z, show, windClock);
         GRASS_FIELD.value = [at.x, -at.z, GRASS_NEAR_REACH * 3, show ? 1 : 0];
         grassFar.update(at.x, at.z, show, windClock);
-      }
-      // The light shafts: in perspective, the sun ahead of the camera (it may
-      // stand above the top of the screen), by day.
-      {
-        sunWay.copy(environment.sun.position).sub(environment.sun.target.position).normalize();
-        const facing = viewDirection.dot(sunWay);
-        const day = 1 - Math.min(1, Math.max(0, lastDark) * 1.6);
-        if ((rig.perspective || rig.chasing) && facing > 0.05 && day > 0) {
-          sunOnScreen.copy(rig.camera.position).addScaledVector(sunWay, 5000).project(rig.camera);
-          const c = environment.sun.color;
-          const k = SHAFT_STRENGTH * Math.min(1, (facing - 0.05) / 0.5) * day;
-          // Held to a guard band round the screen (GPU Gems 3: far off it the
-          // samples spread to nothing), and never a non-number: one turned the
-          // whole picture black.
-          const sx = (sunOnScreen.x + 1) / 2, sy = (sunOnScreen.y + 1) / 2;
-          if (Number.isFinite(sx) && Number.isFinite(sy)) {
-            post.setSun(Math.max(-0.6, Math.min(1.6, sx)), Math.max(-0.6, Math.min(1.6, sy)), k, [c.r, c.g * 0.96, c.b * 0.86]);
-          } else post.setSun(0, 0, 0, [1, 1, 1]);
-        } else post.setSun(0, 0, 0, [1, 1, 1]);
       }
       if (rig.chasing) {
         // Playing, the camera sees down the street: the shadows cover the

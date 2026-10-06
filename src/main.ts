@@ -34,7 +34,7 @@ import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type BlastHit, type SceneHandle, type SkyMode } from '@render/renderer';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
-import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, MIN_ELEVATION, isoZoomBounds } from '@render/isoViewport';
+import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
 import { SimWorld } from '@sim/world';
 import { createPeopleEngine } from '@sim/people/people';
@@ -1249,7 +1249,7 @@ canvas.addEventListener('pointerdown', (e) => {
   // a right CLICK - pressed and let go without moving - cancels whatever is
   // in progress. The middle button dragged pans. Both work mid-gesture, so a
   // road half placed can still be looked round.
-  if (e.pointerType === 'mouse' && ((e.button === 2 && !e.shiftKey) || (e.button === 0 && e.altKey))) {
+  if (e.pointerType === 'mouse' && e.button === 2 && !e.shiftKey) {
     if (tool === 'building' && buildings.cancelOperation()) {
       requestDraw();
       return;
@@ -1658,9 +1658,7 @@ canvas.addEventListener('pointermove', (e) => {
     const dy = screen.y - orbiting.last.y;
     orbiting.last = screen;
     // A turntable: the near side of the map follows the hand; dragging down
-    // lifts the camera towards a plan view. Tilted past the flat view's
-    // lowest, the camera turns perspective and goes on down to the horizon.
-    if (dy < 0 && !perspective && view.elevation <= MIN_ELEVATION + 1e-3) setPerspective(true);
+    // lifts the camera towards a plan view.
     view.orbit(dx * ORBIT_PER_PX, dy * ORBIT_PER_PX);
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
@@ -2099,9 +2097,7 @@ window.addEventListener('keydown', (e) => {
   // with the arrows) puts it back where the game starts and frames the map.
   if (!meta && (e.key === 'q' || e.key === 'Q' || e.key === 'e' || e.key === 'E')) {
     const sign = e.key.toLowerCase() === 'q' ? -1 : 1;
-    // Shift: a quarter turn at once; held alone, the camera turns while it is held.
-    if (e.shiftKey) view.orbit(sign * Math.PI / 2, 0);
-    else { flyKeys.add(sign < 0 ? 'turnLeft' : 'turnRight'); void KEY_TURN; }
+    view.orbit(sign * (e.shiftKey ? Math.PI / 2 : KEY_TURN), 0);
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
     return;
@@ -3042,13 +3038,7 @@ function setPerspective(on: boolean): void {
   try { localStorage.setItem(PERSPECTIVE_KEY, on ? '1' : '0'); } catch { /* not kept */ }
   requestDraw();
 }
-// Perspective unless the player chose the isometric view (a free camera, 2026-10-06).
-// Once the module has finished loading: drawing is not set up yet here.
-queueMicrotask(() => {
-  let iso = false;
-  try { iso = localStorage.getItem(PERSPECTIVE_KEY) === '0'; } catch { /* storage blocked: perspective */ }
-  if (!iso) setPerspective(true);
-});
+try { if (localStorage.getItem(PERSPECTIVE_KEY) === '1') setPerspective(true); } catch { /* storage blocked: isometric */ }
 
 // The camera's own buttons: a step per press, and the needle keeps north.
 const cameraNeedle = document.querySelector<SVGElement>('#cameraControls .camera-needle');
@@ -3295,46 +3285,6 @@ minimapCanvas.addEventListener('pointermove', (e) => {
  * isometric renderer never reads, so even with the minimap focused it moved
  * nothing at all.
  */
-/** Camera keys held down: the camera flies while they are (`flyCamera`). */
-const flyKeys = new Set<'left' | 'right' | 'forward' | 'back' | 'turnLeft' | 'turnRight'>();
-let flyFast = false;
-window.addEventListener('keyup', (e) => {
-  const k = e.key.toLowerCase();
-  if (e.key === 'ArrowLeft' || k === 'a') flyKeys.delete('left');
-  if (e.key === 'ArrowRight' || k === 'd') flyKeys.delete('right');
-  if (e.key === 'ArrowUp' || k === 'w') flyKeys.delete('forward');
-  if (e.key === 'ArrowDown' || k === 's') flyKeys.delete('back');
-  if (k === 'q') flyKeys.delete('turnLeft');
-  if (k === 'e') flyKeys.delete('turnRight');
-  if (e.key === 'Shift') flyFast = false;
-});
-window.addEventListener('blur', () => flyKeys.clear());
-/**
- * The camera flown by the keys held: along the ground the way it looks, at a
- * walking pace down in the street and faster the higher it is (the height of
- * the view), three times with Shift; Q and E turn it.
- */
-function flyCamera(dt: number): void {
-  if (!flyKeys.size || controlling() || play?.active) return;
-  const s = Math.min(0.1, Math.max(0, dt));
-  const fwd = (flyKeys.has('forward') ? 1 : 0) - (flyKeys.has('back') ? 1 : 0);
-  const side = (flyKeys.has('right') ? 1 : 0) - (flyKeys.has('left') ? 1 : 0);
-  const turn = (flyKeys.has('turnRight') ? 1 : 0) - (flyKeys.has('turnLeft') ? 1 : 0);
-  if (turn) view.orbit(turn * 1.3 * s, 0);
-  if (fwd || side) {
-    const halfHeight = surface.cssH / Math.max(0.001, view.zoom * 2);
-    const speed = Math.max(UNITS_PER_METER * 3.5, halfHeight * 1.4) * (flyFast ? 3 : 1);
-    // The camera looks along -(cos az, sin az) in three's x/z: on the map, (-cos, +sin).
-    const fx = -Math.cos(view.azimuth), fy = Math.sin(view.azimuth);
-    const rx = fy, ry = -fx;
-    const len = Math.hypot(fwd, side) || 1;
-    const c = view.centre;
-    view.moveTo({ x: c.x + ((fx * fwd + rx * side) / len) * speed * s, y: c.y + ((fy * fwd + ry * side) / len) * speed * s });
-  }
-  persistence.saveSettingsSoon(sessionSettings);
-  requestDraw();
-}
-
 const arrowPan = (e: KeyboardEvent): void => {
   // Somebody in the player's hands has the keys (`playerKey`).
   if (controlling()) return;
@@ -3366,12 +3316,10 @@ const arrowPan = (e: KeyboardEvent): void => {
   // W A S D as well as the arrows, as in every city builder; never with
   // Ctrl or Alt (Ctrl+S saves, Ctrl+D duplicates).
   const key = e.ctrlKey || e.metaKey || e.altKey ? '' : e.key.toLowerCase();
-  // Held, they fly the camera every frame (`flyCamera`), as an editor's
-  // viewport does - not a jump a key press.
-  const fly = e.key === 'ArrowLeft' || key === 'a' ? 'left' : e.key === 'ArrowRight' || key === 'd' ? 'right'
-    : e.key === 'ArrowUp' || key === 'w' ? 'forward' : e.key === 'ArrowDown' || key === 's' ? 'back' : null;
-  void along; void step;
-  if (fly) { flyKeys.add(fly); flyFast = e.shiftKey; requestDraw(); }
+  if (e.key === 'ArrowLeft' || key === 'a') along(-step, 0);
+  else if (e.key === 'ArrowRight' || key === 'd') along(step, 0);
+  else if (e.key === 'ArrowUp' || key === 'w') along(0, -step);
+  else if (e.key === 'ArrowDown' || key === 's') along(0, step);
   else if (e.key === 'Home') {
     view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION);
     fitView();
@@ -3663,7 +3611,6 @@ function frame(now: number): void {
   pending = false;
   const wall = (now - last) / 1000;
   last = now;
-  flyCamera(wall);
 
   // Moving a node is an authoring preview. Freeze simulation time until the
   // gesture finishes so agents never rebuild against every intermediate shape.

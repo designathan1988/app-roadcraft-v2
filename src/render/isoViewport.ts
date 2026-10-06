@@ -17,7 +17,7 @@ import type { Facing, Viewport } from '@view/viewport';
  * is 4 m tall and a person fills about half of it; at 2 (the player asked to
  * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
  */
-export const MIN_HALF_HEIGHT = 0.5;
+export const MIN_HALF_HEIGHT = 2;
 export const MAX_HALF_HEIGHT = 950;
 
 /**
@@ -47,16 +47,7 @@ export const DEFAULT_ELEVATION = (48 * Math.PI) / 180;
  * gained. Straight down (90) is a true plan view.
  */
 export const MIN_ELEVATION = (30 * Math.PI) / 180;
-/**
- * In perspective the camera may look almost level, out to the horizon and the
- * sky (the player, 2026-10-06: "não dá para ver o céu").
- */
-export const MIN_ELEVATION_PERSPECTIVE = (4 * Math.PI) / 180;
 export const MAX_ELEVATION = Math.PI / 2;
-/** How far above the ground the orbit's camera is kept, units (4 m). */
-const GROUND_CLEARANCE = 1.5;
-/** The point the perspective camera turns about stands this high over the ground: eye height, 1.7 m. */
-const EYE = 4.25;
 /** How far from the middle of the map the view's centre may go, units. */
 const VIEW_REACH = MAP_HALF + 200;
 const DISTANCE = 2400;
@@ -95,11 +86,6 @@ export interface IsoRig {
    */
   setChase(chase: Chase | null): void;
   readonly chasing: boolean;
-  /**
-   * The ground's height under a point of three's space (x, z): the orbit's
-   * perspective camera is kept above it, as a camera on a spring arm is.
-   */
-  setGround(at: ((x: number, z: number) => number) | null): void;
 }
 
 /** A free camera: where the eye is, what it looks at, its field of view, and whose view it is. */
@@ -120,9 +106,6 @@ export function createIsoRig(
   const ortho = new OrthographicCamera(-1, 1, 1, -1, 1, 7000);
   const persp = new PerspectiveCamera(PERSPECTIVE_FOV, 1, 1, 20000);
   let perspective = false;
-  let groundAt: ((x: number, z: number) => number) | null = null;
-  /** The tilt allowed: down to the horizon in perspective, thirty degrees in the orthographic view. */
-  const tilt = (e: number): number => Math.min(MAX_ELEVATION, Math.max(perspective ? MIN_ELEVATION_PERSPECTIVE : MIN_ELEVATION, e));
   let camera: OrthographicCamera | PerspectiveCamera = ortho;
   const target = new Vector3(initial.x, 0, -initial.y);
   const raycaster = new Raycaster();
@@ -156,13 +139,8 @@ export function createIsoRig(
       return;
     }
     persp.fov = PERSPECTIVE_FOV;
-    // In perspective the camera turns about a point at eye height over the
-    // ground there, so zoomed right in it stands in the street, not under it.
-    if (camera === persp && groundAt) target.y = groundAt(target.x, target.z) + EYE;
-    else if (camera !== persp) target.y = 0;
-    // The view's centre stays over the map. Tilted low, a drag near the horizon
-    // grabs ground kilometres away, and the centre was carried off the map into
-    // empty sky - a white screen.
+    // The view's centre stays over the map: dragged off it, the view showed
+    // nothing but sky - a white screen.
     target.x = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.x));
     target.z = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.z));
     let distance = DISTANCE;
@@ -186,22 +164,6 @@ export function createIsoRig(
       (camera === persp ? target.y : 0) + Math.sin(elevation) * distance,
       target.z + Math.sin(azimuth) * horizontal,
     );
-    // Tilted low over hills, the camera never goes under the ground: where the
-    // ground under it, or between it and what it looks at, stands higher than
-    // the line of sight, the camera is lifted over it (it had gone under the
-    // land and showed it from below).
-    if (camera === persp && groundAt) {
-      let lift = 0;
-      for (let k = 0; k <= 8; k++) {
-        const t = k / 8;
-        const x = camera.position.x + (target.x - camera.position.x) * t * 0.85;
-        const z = camera.position.z + (target.z - camera.position.z) * t * 0.85;
-        const y = camera.position.y + (target.y - camera.position.y) * t * 0.85;
-        const clear = groundAt(x, z) + GROUND_CLEARANCE - y;
-        if (clear > 0) lift = Math.max(lift, clear / Math.max(0.15, 1 - t * 0.85));
-      }
-      camera.position.y += lift;
-    }
     // "Up" on screen is the way the camera faces over the ground. At any tilt
     // below vertical that is exactly what the world's up gives; looking
     // straight down the world's up is the view direction itself and `lookAt`
@@ -274,12 +236,12 @@ export function createIsoRig(
       // swings round and over it. Orbiting about the pointer instead sends the
       // view sliding off whenever the pointer is near an edge.
       azimuth = wrapAzimuth(azimuth + dAzimuth);
-      elevation = tilt(elevation + dElevation);
+      elevation = clampElevation(elevation + dElevation);
       apply();
     },
     setOrbit(nextAzimuth, nextElevation) {
       azimuth = wrapAzimuth(nextAzimuth);
-      elevation = tilt(nextElevation);
+      elevation = clampElevation(nextElevation);
       apply();
     },
     get azimuth() {
@@ -319,17 +281,12 @@ export function createIsoRig(
       if (on === perspective) return;
       perspective = on;
       camera = on ? persp : ortho;
-      elevation = tilt(elevation);
       apply();
     },
     viewport,
     target,
     get chasing() {
       return chase !== null;
-    },
-    setGround(at) {
-      groundAt = at;
-      apply();
     },
     setChase(next) {
       if (next && !chase) orbitTarget.copy(target);

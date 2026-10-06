@@ -199,13 +199,11 @@ export function terrainBakes(anisotropy: number): {
         const v = y / 512;
         const fine = fbm(grassFine, u * 170, v * 170, 170, 2);
         const clump = fbm(grassClump, u * 11, v * 11, 11, 4);
-        // Dry patches few and soft: strong ones tiled every 17 m into a
-        // pattern of yellow blotches over every field.
-        const dry = clump > 0.64 ? (clump - 0.64) * 1.6 : 0;
+        const dry = clump > 0.58 ? (clump - 0.58) * 2.4 : 0;
         const moss = clump < 0.4 ? (0.4 - clump) * 1.6 : 0;
-        out.r = 0.135 + fine * 0.03 + dry * 0.12 + clump * 0.03;
-        out.g = 0.205 + fine * 0.045 + clump * 0.06 + dry * 0.08 - moss * 0.02;
-        out.b = 0.095 + fine * 0.02 + dry * 0.04 + moss * 0.015;
+        out.r = 0.16 + fine * 0.03 + dry * 0.22 + clump * 0.04;
+        out.g = 0.215 + fine * 0.045 + clump * 0.07 + dry * 0.15 - moss * 0.02;
+        out.b = 0.11 + fine * 0.02 + dry * 0.07 + moss * 0.015;
         out.h = fine * 0.65 + clump * 0.35;
         out.rough = 0.99;
       },

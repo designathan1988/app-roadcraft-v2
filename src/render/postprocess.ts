@@ -1,4 +1,4 @@
-import { BufferGeometry, DepthTexture, Float32BufferAttribute, HalfFloatType, Mesh, PlaneGeometry, Scene, Vector2, Vector3, WebGLRenderTarget, type Camera, type WebGLRenderer } from 'three';
+import { BufferGeometry, DepthTexture, Float32BufferAttribute, HalfFloatType, Mesh, PlaneGeometry, Scene, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -48,11 +48,6 @@ export interface PostChain {
    * with it), and comes up with the dusk.
    */
   setNight(dark: number): void;
-  /**
-   * The sun for the light shafts: where it is on screen (0..1, may lie off
-   * it), how strongly the shafts show (0 off), and its colour.
-   */
-  setSun(x: number, y: number, strength: number, color: readonly [number, number, number]): void;
   dispose(): void;
 }
 
@@ -76,9 +71,6 @@ export function createPostChain(
       setNight() {
         /* no bloom without the chain */
       },
-      setSun() {
-        /* no shafts without the chain */
-      },
       dispose() {
         /* nothing owned */
       },
@@ -97,6 +89,7 @@ export function createPostChain(
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(size.x, size.y);
   composer.addPass(new RenderPass(scene, camera));
+
   let gtao: GTAOPass | null = null;
   if (quality.ambientOcclusion) {
     gtao = new GTAOPass(scene, camera, size.x, size.y);
@@ -179,20 +172,6 @@ export function createPostChain(
   // The grade, on the finished image: a film's contrast and colour.
   const grade = new ShaderPass(GRADE);
   composer.addPass(grade);
-  // Light shafts (Kenny Mitchell, "Volumetric Light Scattering as a
-  // Post-Process", GPU Gems 3, ch. 13): the sky seen past every hill, tree
-  // and roof, blurred out from the sun's place on screen. Only when the sun
-  // is near the view; off otherwise, its pass skipped. The LAST pass, drawn
-  // to the screen: it reads the scene's depth, and anywhere in the chain its
-  // output could land in the very target that depth belongs to - a feedback
-  // loop, and the frame came out black.
-  const shafts = quality.lightShafts ? new ShaderPass(SHAFTS) : null;
-  if (shafts) {
-    (shafts.uniforms['tDepth'] as { value: unknown }).value = target.depthTexture;
-    shafts.enabled = false;
-    composer.addPass(shafts);
-  }
-
 
   return {
     enabled: true,
@@ -205,14 +184,6 @@ export function createPostChain(
       bloom.enabled = dark > 0.05;
       bloom.strength = bloomStrength * Math.min(1, dark);
     },
-    setSun(x, y, strength, color) {
-      if (!shafts) return;
-      shafts.enabled = strength > 0.01;
-      if (!shafts.enabled) return;
-      (shafts.uniforms['uSun'] as { value: Vector2 }).value.set(x, y);
-      (shafts.uniforms['uStrength'] as { value: number }).value = strength;
-      (shafts.uniforms['uColor'] as { value: Vector3 }).value.set(color[0], color[1], color[2]);
-    },
     setSize(width, height, pixelRatio) {
       composer.setPixelRatio(pixelRatio);
       composer.setSize(width, height);
@@ -224,7 +195,6 @@ export function createPostChain(
       gtao?.dispose();
       bloom.dispose();
       smaa?.dispose();
-      shafts?.dispose();
       output.dispose();
       grade.dispose();
     },
@@ -270,65 +240,6 @@ const GRADE = {
       // Film grain.
       c += (hash(vUv * 1024.0 + fract(uTime) * 61.0) - 0.5) * 0.018;
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), src.a);
-    }
-  `,
-};
-
-/**
- * The shafts: from each pixel, samples along the way to the sun; a sample
- * counts where it is open sky (nothing drawn there: the depth is the far
- * plane), its brightness decaying with each step away from the sun. Added to
- * the picture in the sun's colour. Linear light, before the tone mapping.
- */
-const SHAFTS = {
-  uniforms: {
-    tDiffuse: { value: null },
-    tDepth: { value: null as unknown },
-    uSun: { value: new Vector2(0.5, 0.5) },
-    uStrength: { value: 0 },
-    uColor: { value: new Vector3(1, 0.95, 0.85) },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-  `,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform sampler2D tDepth;
-    uniform vec2 uSun;
-    uniform float uStrength;
-    uniform vec3 uColor;
-    varying vec2 vUv;
-    const int SAMPLES = 48;
-    const float DENSITY = 0.9;
-    const float DECAY = 0.955;
-    const float WEIGHT = 0.5;
-    float skyAt(vec2 uv) {
-      if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return 0.0;
-      if (texture2D(tDepth, uv).r < 0.99999) return 0.0;
-      vec3 c = min(texture2D(tDiffuse, uv).rgb, vec3(8.0));
-      // Only the sun and the glow round it shine through (the occlusion pass
-      // of the original draws the light source alone, not the whole sky).
-      float nearSun = exp(-dot(uv - uSun, uv - uSun) / 0.02);
-      return clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 4.0) * nearSun;
-    }
-    void main() {
-      vec4 src = texture2D(tDiffuse, vUv);
-      vec2 step = (vUv - uSun) * (DENSITY / float(SAMPLES));
-      // Jittered start, so the steps do not show as rings.
-      float j = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
-      vec2 at = vUv - step * j;
-      float light = 0.0, decay = 1.0;
-      for (int i = 0; i < SAMPLES; i++) {
-        at -= step;
-        light += skyAt(at) * decay * WEIGHT;
-        decay *= DECAY;
-      }
-      light /= float(SAMPLES) * 0.25;
-      // A non-number never leaves this pass (the sun's disc can overflow a half float).
-      vec3 add = uColor * light * uStrength;
-      if (!(add.r >= 0.0 && add.g >= 0.0 && add.b >= 0.0)) add = vec3(0.0);
-      gl_FragColor = vec4(src.rgb + add, src.a);
     }
   `,
 };

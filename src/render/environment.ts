@@ -5,6 +5,7 @@ import {
   DirectionalLight,
   Fog,
   HemisphereLight,
+  Mesh,
   PMREMGenerator,
   Scene,
   ShaderMaterial,
@@ -12,7 +13,6 @@ import {
   Vector3,
   type WebGLRenderer,
 } from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
 
 /**
  * Sky, sun and atmosphere.
@@ -59,16 +59,6 @@ const SUN_ELEVATION = (47 * Math.PI) / 180;
  * passes over the road beneath it.
  */
 const SUN_AZIMUTH = (14 * Math.PI) / 180;
-/** The physical sky's light, brought into the scene's exposure (ACES at 1.0). */
-const SKY_EXPOSURE = 0.13;
-/** The sky's light as the environment map takes it (the exposure the materials were tuned under). */
-const ENV_SKY_EXPOSURE = 0.38;
-/** How much of its light the baked sky gives every surface. */
-const ENV_INTENSITY = 0.5;
-/** How much more colour the sky shows than the scattering model gives. */
-const SKY_SATURATION = 1.6;
-/** The sky's hue, pulled from the model's cyan towards a clear sky's blue. */
-const SKY_TINT = [0.62, 0.8, 1.4] as const;
 const SUN_DISTANCE = 1_600;
 /**
  * Depth offset of the shadow test, WORLD units (4 cm): enough to keep a lit
@@ -137,7 +127,7 @@ const SKY_FRAGMENT = `
 
 const DAY_ZENITH = new Color(0x4d7fc4);
 const NIGHT_ZENITH = new Color(0x0b1424);
-const DAY_HORIZON = new Color(0xb4cbe3);
+const DAY_HORIZON = new Color(0xc9dcea);
 const DUSK_HORIZON = new Color(0xf0b383);
 const NIGHT_HORIZON = new Color(0x1c2638);
 const DAY_SUN = new Color(0xfff0d2);
@@ -160,101 +150,45 @@ export function createEnvironment(
     Math.sin(SUN_AZIMUTH) * Math.cos(SUN_ELEVATION),
   ).normalize();
 
-  // The sky: Preetham's analytic daylight ("A Practical Analytic Model for
-  // Daylight", 1999), the three.js `Sky` - Rayleigh and Mie scattering of the
-  // sun through the air, deep blue overhead, pale at the horizon, orange at
-  // dusk, the sun's disc, and drifting clouds lit by the same sun. Its light
-  // is scaled into the scene's exposure (`uSkyExposure`).
-  const sky = new Sky();
-  const skyMaterial = sky.material as ShaderMaterial;
-  skyMaterial.uniforms['uSkyExposure'] = { value: SKY_EXPOSURE };
-  // Down to the horizon the sky turns into the haze the land is fogged with,
-  // the very same colour: the far land and the sky meet with no line between
-  // them (they had met at a hard edge, cream above and grey below).
-  const hazeColor = new Color(0xc9dcea);
-  skyMaterial.uniforms['uHaze'] = { value: hazeColor };
-  // The scattering model alone gives a pale, nearly white band for the first
-  // twenty degrees over the horizon - all a low camera sees of the sky. The
-  // colour is brought up round its own luminance (an art control, as
-  // Unreal's sky atmosphere has), so the sky reads blue above the haze.
-  skyMaterial.uniforms['uSkySat'] = { value: SKY_SATURATION };
-  // And its hue pulled from the model's cyan towards a clear sky's blue.
-  skyMaterial.uniforms['uSkyTint'] = { value: new Vector3(...SKY_TINT) };
-  skyMaterial.fragmentShader = 'uniform float uSkyExposure;\nuniform vec3 uHaze;\nuniform float uSkySat;\nuniform vec3 uSkyTint;\n' + skyMaterial.fragmentShader
-    .replace('gl_FragColor = vec4( texColor, 1.0 );',
-      'vec3 skyLit = texColor * uSkyExposure * uSkyTint;\n'
-      + 'skyLit = max( mix( vec3( dot( skyLit, vec3( 0.2126, 0.7152, 0.0722 ) ) ), skyLit, uSkySat ), 0.0 );\n'
-      + 'vec3 skyC = mix( uHaze, skyLit, smoothstep( -0.01, 0.06, direction.y ) );\ngl_FragColor = vec4( skyC, 1.0 );');
-  skyMaterial.depthTest = false;
-  // Probes tune the sky live in development (`scripts`): never in a build.
-  if (import.meta.env.DEV) (window as unknown as { __sky?: unknown }).__sky = { uniforms: skyMaterial.uniforms, rebake: () => { bakedFor.set(2, 2, 2); bakedAt = -Infinity; bakeSky(); } };
-  const air = skyMaterial.uniforms;
-  air['turbidity']!.value = 1.8;
-  air['rayleigh']!.value = 2.0;
-  air['mieCoefficient']!.value = 0.003;
-  air['mieDirectionalG']!.value = 0.86;
-  air['cloudCoverage']!.value = 0.3;
-  air['cloudDensity']!.value = 0.55;
-  air['cloudElevation']!.value = 0.55;
-  air['cloudScale']!.value = 0.00018;
-  air['cloudSpeed']!.value = 0.000012;
-  /** Where the sun is for the sky - below the horizon at night, unlike the light (the moon then). */
-  const skySun = sunDirection.clone();
-  air['sunPosition']!.value = skySun;
+  const skyMaterial = new ShaderMaterial({
+    uniforms: {
+      uZenith: { value: zenith },
+      uHorizon: { value: horizon },
+      uGround: { value: groundTint },
+      uSunDirection: { value: sunDirection },
+      uSunColor: { value: sunColor },
+    },
+    vertexShader: SKY_VERTEX,
+    fragmentShader: SKY_FRAGMENT,
+    side: BackSide,
+    depthWrite: false,
+    depthTest: false,
+    fog: false,
+  });
+  const sky = new Mesh(new SphereGeometry(1, 32, 16), skyMaterial);
   sky.name = 'sky';
   sky.renderOrder = -1000;
   sky.frustumCulled = false;
   scene.add(sky);
-  void SKY_VERTEX; void SKY_FRAGMENT; void BackSide; void SphereGeometry; void groundTint;
 
-  // The sky doubles as the environment map - the light every surface takes
-  // from the sky, and what water, glass and paint reflect - baked again
-  // whenever the sun has moved (`bakeSky`), so the ambient light follows the
-  // hour as the sky does. The probe's sky has no disc: a sun baked into the
-  // map lit every surface twice.
+  // The sky doubles as the environment map, so water, glass and metal reflect
+  // the same sky the player sees instead of a flat grey.
   const pmrem = new PMREMGenerator(renderer);
   const probeScene = new Scene();
-  const probe = new Sky();
-  const probeMaterial = probe.material as ShaderMaterial;
-  probeMaterial.uniforms = air;
-  probeMaterial.fragmentShader = skyMaterial.fragmentShader;
-  probeMaterial.defines = { ...probeMaterial.defines };
-  probe.scale.setScalar(90);
+  const probe = new Mesh(new SphereGeometry(1, 32, 16), skyMaterial.clone());
   probe.frustumCulled = false;
   probeScene.add(probe);
-  let envTarget = pmrem.fromScene(probeScene, 0, 0.1, 100);
-  let bakedFor = new Vector3(2, 2, 2);
-  let bakedAt = -Infinity;
-  const bakeSky = (): void => {
-    if (bakedFor.angleTo(skySun) < 0.01 || performance.now() - bakedAt < 400) return;
-    bakedFor = skySun.clone();
-    bakedAt = performance.now();
-    // The light the sky gives is the scattering model's own: without the
-    // colour lifted for the eye (it tinted every lawn teal) and at the
-    // exposure the materials were lit at.
-    const keep = { disc: air['showSunDisc']!.value as number, sat: air['uSkySat']!.value as number, exposure: air['uSkyExposure']!.value as number };
-    const tint = (air['uSkyTint']!.value as Vector3).clone();
-    air['showSunDisc']!.value = 0;
-    air['uSkySat']!.value = 1;
-    air['uSkyExposure']!.value = ENV_SKY_EXPOSURE;
-    (air['uSkyTint']!.value as Vector3).set(1, 1, 1);
-    const next = pmrem.fromScene(probeScene, 0, 0.1, 100);
-    air['showSunDisc']!.value = keep.disc;
-    air['uSkySat']!.value = keep.sat;
-    air['uSkyExposure']!.value = keep.exposure;
-    (air['uSkyTint']!.value as Vector3).copy(tint);
-    envTarget.dispose();
-    envTarget = next;
-    scene.environment = envTarget.texture;
-  };
-  bakeSky();
+  const envTarget = pmrem.fromScene(probeScene, 0, 0.1, 100);
   scene.environment = envTarget.texture;
-  scene.environmentIntensity = ENV_INTENSITY;
+  // Enough for paint, glass and wet or polished surfaces to show the sky.
+  scene.environmentIntensity = 0.6;
+  probe.geometry.dispose();
+  (probe.material as ShaderMaterial).dispose();
+  pmrem.dispose();
 
   // Fog tinted to the horizon, so distance dissolves into the sky rather than
   // into a grey wall. It starts well past the play area.
   scene.fog = new Fog(horizon.clone().lerp(zenith, 0.18).getHex(), 2_600, 8_200);
-  hazeColor.copy((scene.fog as Fog).color);
   scene.background = null;
 
   // A near-neutral sky fill: the saturated blue it was tinted every shadow
@@ -320,15 +254,6 @@ export function createEnvironment(
     follow(target, halfWidth, halfHeight, view, rise = 0) {
       sky.position.copy(target);
       sky.scale.setScalar(9_000);
-      air['time']!.value = performance.now() / 1000;
-      // The haze is brighter and warmer looking towards the sun (the inscattering
-      // of an exponential height fog, Unreal's), the horizon's colour away from it.
-      if (view && scene.fog) {
-        const flat = Math.hypot(view.x, view.z) || 1;
-        const towards = Math.max(0, (view.x * skySun.x + view.z * skySun.z) / flat / (Math.hypot(skySun.x, skySun.z) || 1));
-        (scene.fog as Fog).color.copy(horizon).lerp(zenith, 0.12).lerp(sunColor, Math.pow(towards, 6) * 0.35);
-        hazeColor.copy((scene.fog as Fog).color);
-      }
       lightRight.crossVectors(WORLD_UP, sunDirection).normalize();
       lightUp.crossVectors(sunDirection, lightRight).normalize();
       // What the camera sees is not a patch of ground but a column: the
@@ -392,13 +317,6 @@ export function createEnvironment(
       // How much daylight: full from a few degrees up, none below the horizon.
       const light = Math.min(1, Math.max(0, (height + 0.1) / 0.25));
       const dark = 1 - light;
-      {
-        // The sky's sun follows its path below the horizon too: the sky darkens
-        // and reddens as it sets, whatever lights the ground.
-        const e = height * (58 * Math.PI) / 180;
-        const a = SUN_AZIMUTH + (Math.min(1.2, Math.max(-0.2, day)) - 0.5) * (110 * Math.PI) / 180;
-        skySun.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)).normalize();
-      }
       if (height > -0.1) {
         const elevation = Math.max(0.12, height) * (58 * Math.PI) / 180;
         const azimuth = SUN_AZIMUTH + (Math.min(1, Math.max(0, day)) - 0.5) * (110 * Math.PI) / 180;
@@ -417,11 +335,9 @@ export function createEnvironment(
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
       sunColor.copy(DAY_SUN).lerp(DUSK_SUN, warm).multiplyScalar(light);
       (scene.fog as Fog).color.copy(horizon).lerp(zenith, 0.18);
-      hazeColor.copy((scene.fog as Fog).color);
       // No town-wide haze (the player: the smoke stays where the fire is).
       void smog; void SMOG;
-      scene.environmentIntensity = ENV_INTENSITY * (0.25 + 0.75 * light) * (1 - smog * 0.4);
-      bakeSky();
+      scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);
       return dark;
     },
     setSmog(k) { smog = Math.max(0, Math.min(1, k)); },
@@ -438,9 +354,6 @@ export function createEnvironment(
       sky.geometry.dispose();
       skyMaterial.dispose();
       envTarget.dispose();
-      probe.geometry.dispose();
-      probeMaterial.dispose();
-      pmrem.dispose();
       scene.environment = null;
       hemisphere.dispose();
       ambient.dispose();
