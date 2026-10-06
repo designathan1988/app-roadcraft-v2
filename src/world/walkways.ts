@@ -452,6 +452,18 @@ function stretch(lines: readonly Polyline[], from: Vec2, to: Vec2, avoid: readon
 
 /** The pedestrian network of the whole map. Pure: the same network gives the same graph. */
 export function buildWalkways(net: Network): WalkGraph {
+  const steps = walkwaySteps(net);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/**
+ * `buildWalkways` in steps, a junction's corners at a time: the simulation
+ * builds it ahead of a topology change across frames (`SimWorld.prepareVehicleTopology`);
+ * in one go it was a stall of about 100 ms in the default town (docs/performance.md #11).
+ */
+export function* walkwaySteps(net: Network): Generator<void, WalkGraph, void> {
   const g = new WalkGraph();
   const doc = net.doc;
   const ends = new Map<NodeId, FootwayEnd[]>();
@@ -610,6 +622,7 @@ export function buildWalkways(net: Network): WalkGraph {
       structure: from.way.structure, a: from.node, b: to.node });
   };
   for (const [nodeId, here] of ends) {
+    yield;
     const node = doc.requireNode(nodeId);
     const byLevel = net.junctions.get(nodeId);
     const junction = byLevel?.get(Level.Sidewalk);
@@ -639,6 +652,7 @@ export function buildWalkways(net: Network): WalkGraph {
       }
     }
   }
+  yield;
   // --- crossings: over the carriageway on each zebra
   for (const [nodeId, node] of doc.nodes) {
     if (node.incident.length < 2) continue;

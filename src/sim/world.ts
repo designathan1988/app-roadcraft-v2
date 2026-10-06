@@ -24,7 +24,7 @@ import type { PedestrianEngine } from './people/engine';
 import { legacyPedestrians } from './peds/engine';
 import { CityLife } from './city/life';
 import { AmbientWorld } from './ambient/ambient';
-import { buildWalkways, type WalkGraph } from '@world/walkways';
+import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** A queue is counted this far back from the stop line. */
@@ -392,7 +392,11 @@ export class SimWorld {
     // own: built in the frame that rebinds the walkers, with the footway graph
     // and the crossings, they made it a stall of 170 ms in the default town
     // (docs/performance.md #11).
-    this.walkwaysFor(this.net.revision);
+    if (!this.walkwaysCache || this.walkwaysCache.revision !== this.net.revision) {
+      const revision = this.net.revision;
+      const graph = yield* walkwaySteps(this.net);
+      this.walkwaysCache = { revision, graph };
+    }
   }
 
   private walkwaysCache: { revision: number; graph: WalkGraph } | null = null;
