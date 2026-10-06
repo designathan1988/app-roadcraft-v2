@@ -41,7 +41,7 @@ import type { Viewport } from '@view/viewport';
 import { createAgentMeshes, type AgentMeshes } from './agents';
 import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
-import { type Chase, createIsoRig } from './isoViewport';
+import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { createPostChain, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
@@ -1727,11 +1727,29 @@ export function createSceneRenderer(
           view: { ex: chaseCamera.eye.x, ey: -chaseCamera.eye.z, dx: dx / len, dy: dy / len, cos: Math.cos(Math.min(Math.PI, halfAcross + VIEW_MARGIN)), far: PLAY_SEEN },
         };
       } else {
+        // In perspective, tilted towards the horizon, the camera sees far past
+        // the circle round the centre of the view: its cone is given too, so
+        // nobody is made or taken away anywhere it looks (the circle alone let
+        // cars and people vanish down the street in full view).
+        let view: { ex: number; ey: number; dx: number; dy: number; cos: number; far: number } | null = null;
+        if (rig.perspective) {
+          const flat = Math.hypot(viewDirection.x, viewDirection.z);
+          if (flat > 0.05) {
+            const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+            const halfAcross = Math.atan(Math.tan((PERSPECTIVE_FOV * Math.PI) / 360) * aspect);
+            view = {
+              ex: rig.camera.position.x, ey: -rig.camera.position.z,
+              dx: viewDirection.x / flat, dy: -viewDirection.z / flat,
+              cos: Math.cos(Math.min(Math.PI, halfAcross + VIEW_MARGIN)), far: PLAY_SEEN,
+            };
+          }
+        }
         sim.focus = {
           x: target.x,
           y: -target.z,
           r: Math.hypot(halfWidth, groundHalfDepth) + m(20),
           detail: rig.viewport.zoom * m(1.7) >= 10,
+          view,
         };
       }
 
