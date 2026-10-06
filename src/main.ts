@@ -996,6 +996,14 @@ function cancelGestures(): void {
   poleChain = null;
   barrierPoints = null;
   zoneErase = null;
+  // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
+  lotPolygon = [];
+  lotNew = null;
+  lotCorner = null;
+  lotCurve = null;
+  lotCutLine = null;
+  lotStroke = null;
+  lotJoinFirst = null;
   endTerrainStroke();
   cancelMove();
   panning = null;
@@ -1007,7 +1015,9 @@ function cancelGestures(): void {
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null || zoneErase !== null;
+    poleChain !== null || terrainStroke !== null || moving !== null || zoneErase !== null ||
+    lotPolygon.length > 0 || lotNew !== null || lotCorner !== null || lotCurve !== null || lotCutLine !== null ||
+    lotStroke !== null || lotJoinFirst !== null;
 }
 
 /**
@@ -3994,7 +4004,24 @@ function drawOverlayScreen(): void {
     }
     if (editing && zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
     // Each lot's front, the side its building faces: marked in the Zoning tool.
-    if (editing) for (const l of doc.lots) if (l.corners.length > 1) lines.push({ a: dragged(l.corners[0]!), b: dragged(l.corners[1]!), colour: 0x5ee0ff, dashed: false, width: 0.8 });
+    if (editing) for (const l of doc.lots) if (l.corners.length > 1) {
+      const a = dragged(l.corners[0]!), b = dragged(l.corners[1]!);
+      lines.push({ a, b, colour: 0x5ee0ff, dashed: false, width: 0.8 });
+      // An arrow from inside the lot out through the middle of its front, towards the street.
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < m(2)) continue;
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const centre = lotCentre(l);
+      let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      if ((mid.x - centre.x) * nx + (mid.y - centre.y) * ny < 0) { nx = -nx; ny = -ny; }
+      const size = Math.min(m(7), len * 0.35, Math.max(m(2), Math.hypot(mid.x - centre.x, mid.y - centre.y) * 0.6));
+      const tail = { x: mid.x - nx * size, y: mid.y - ny * size };
+      const tip = { x: mid.x - nx * size * 0.15, y: mid.y - ny * size * 0.15 };
+      const head = size * 0.4, tx = -ny, ty = nx;
+      lines.push({ a: tail, b: tip, colour: 0x5ee0ff, dashed: false, width: 1 });
+      lines.push({ a: tip, b: { x: tip.x - nx * head + tx * head * 0.7, y: tip.y - ny * head + ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
+      lines.push({ a: tip, b: { x: tip.x - nx * head - tx * head * 0.7, y: tip.y - ny * head - ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
+    }
     if (editing && zoneMode === 'front' && zoneHover) {
       const side = lotSideAt(zoneHover);
       if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 1 });

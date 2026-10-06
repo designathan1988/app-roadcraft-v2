@@ -736,19 +736,30 @@ export function mountShell(deps: ShellDeps): void {
   }
 
   // ------------------------------------------------------------ zones
+  /** The shape the Create lot tool draws (`data-zone-mode`): a dragged rectangle or a polygon point by point. */
+  let lotShape: 'add' | 'polygon' = 'add';
   function renderZones(): void {
     title.textContent = t('tool.zone');
-    const tool2 = section(t('v2.zone.tool'), 'verbs');
-    const modes: [string, string, string][] = [['[data-zone-mode="brush"]', t('zone.brush'), 'brush'], ['#zoneRemove', t('zone.remove'), 'eraser']];
-    for (const [selector, label, icon] of modes) {
-      const b = q<HTMLButtonElement>(selector);
-      tool2.items.appendChild(verb(label, b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), icon === 'eraser'));
-    }
-    // The lots themselves: their drawing edited as a cadastre is (`world/lots.ts`).
+    const active = (selector: string): boolean => q<HTMLButtonElement>(selector)?.classList.contains('active') ?? false;
+    const pick = (selector: string): void => { q<HTMLButtonElement>(selector)?.click(); };
+    // The lots first: made, then shaped, then given a front, cut, joined or
+    // deleted (`world/lots.ts`). Creating one is one tool whatever its shape.
     const lots = section(t('zone.lots'), 'verbs');
-    for (const [mode, icon] of [['edit', 'lotEdit'], ['front', 'lotFront'], ['split', 'split'], ['join', 'join'], ['add', 'plus'], ['polygon', 'lotPolygon'], ['curve', 'lotCurve'], ['delete', 'lotDelete']] as const) {
-      const b = q<HTMLButtonElement>(`[data-zone-mode="${mode}"]`);
-      lots.items.appendChild(verb(t(`zone.lot.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, svg(icon, 20), mode === 'delete'));
+    const creating = active('[data-zone-mode="add"]') || active('[data-zone-mode="polygon"]');
+    lots.items.appendChild(verb(t('zone.lot.create'), creating, () => { pick(`[data-zone-mode="${lotShape}"]`); render(); }, svg(lotShape === 'add' ? 'plus' : 'lotPolygon', 20)));
+    for (const [mode, icon] of [['edit', 'lotEdit'], ['curve', 'lotCurve'], ['front', 'lotFront'], ['split', 'split'], ['join', 'join'], ['delete', 'lotDelete']] as const) {
+      lots.items.appendChild(verb(t(`zone.lot.${mode}`), active(`[data-zone-mode="${mode}"]`), () => { pick(`[data-zone-mode="${mode}"]`); render(); }, svg(icon, 20), mode === 'delete'));
+    }
+    // The shape of the lot being created - shown while creating.
+    if (creating) {
+      const shape = titled(group(t('zone.lot.shape')), t('zone.lot.shape'));
+      shape.appendChild(choices((['add', 'polygon'] as const).map((kind) => ({
+        label: t(kind === 'add' ? 'zone.lot.shape.rect' : 'zone.lot.shape.polygon'),
+        on: active(`[data-zone-mode="${kind}"]`),
+        run: () => { lotShape = kind; pick(`[data-zone-mode="${kind}"]`); render(); },
+        icon: svg(kind === 'add' ? 'plus' : 'lotPolygon', 18),
+      })), 2));
+      options.appendChild(shape);
     }
     // How the split tool cuts, and into how many - shown while it is chosen.
     if (q<HTMLButtonElement>('[data-zone-mode="split"]')?.classList.contains('active')) {
@@ -767,6 +778,11 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(parts);
       }
     }
+    // Then the zoning of the lots: painted on, or taken off.
+    const paint = section(t('v2.zone.paint'), 'verbs');
+    const brush = active('[data-zone-mode="brush"]'), erasing = active('#zoneRemove');
+    paint.items.appendChild(verb(t('zone.brush'), brush && !erasing, () => { pick('[data-zone-mode="brush"]'); if (erasing) pick('#zoneRemove'); render(); }, svg('brush', 20)));
+    paint.items.appendChild(verb(t('zone.remove'), brush && erasing, () => { pick('[data-zone-mode="brush"]'); if (!erasing) pick('#zoneRemove'); render(); }, svg('eraser', 20), true));
     note(t('zone.lots.help'));
     const use = section(t('v2.zone.use'));
     for (const [key, colour] of [['residential', '#58c26f'], ['commercial', '#4aa3e8'], ['industrial', '#e6b84a']] as const) {

@@ -47,6 +47,8 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
   let key = '';
   let meshes: Mesh[] = [];
   const LIFT = m(0.12);
+  /** The longest side of a fill triangle: about the terrain's own cell, so the fill bends with it. */
+  const FILL_EDGE = m(3);
 
   /** World (x, y) on the ground, as three's (x, height, -y). */
   const at = (x: number, y: number, lift = LIFT): [number, number, number] => [x, groundAt(x, y) + lift, -y];
@@ -90,10 +92,24 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
           for (let k = 0; k < steps; k++) pts.push({ x: a.x + (b.x - a.x) * k / steps, y: a.y + (b.y - a.y) * k / steps });
         }
         const tris = ShapeUtils.triangulateShape(pts.map((p) => new Vector2(p.x, p.y)), []);
-        for (const tri of tris) {
-          for (const i of tri) fillPos.push(...at(pts[i]!.x, pts[i]!.y));
-          pushColour(fillCol, poly.fill, poly.fillAlpha, 3);
-        }
+        // Each triangle cut until no side is longer than 3 m, every vertex on
+        // the ground: with vertices on the edges only, a lot's middle was a
+        // few large flat triangles, and wherever the land rose inside it the
+        // ground showed through the colour in holes (the player, 2026-10-06).
+        const fill = poly.fill;
+        const emit = (a: Vec2, b: Vec2, cc: Vec2, depth: number): void => {
+          const ab = Math.hypot(b.x - a.x, b.y - a.y), bc = Math.hypot(cc.x - b.x, cc.y - b.y), ca = Math.hypot(a.x - cc.x, a.y - cc.y);
+          if (Math.max(ab, bc, ca) <= FILL_EDGE || depth > 12) {
+            fillPos.push(...at(a.x, a.y), ...at(b.x, b.y), ...at(cc.x, cc.y));
+            pushColour(fillCol, fill, poly.fillAlpha, 3);
+            return;
+          }
+          // The longest side halved: two triangles, no T-junctions along shared sides.
+          if (ab >= bc && ab >= ca) { const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; emit(a, mid, cc, depth + 1); emit(mid, b, cc, depth + 1); }
+          else if (bc >= ca) { const mid = { x: (b.x + cc.x) / 2, y: (b.y + cc.y) / 2 }; emit(a, b, mid, depth + 1); emit(a, mid, cc, depth + 1); }
+          else { const mid = { x: (cc.x + a.x) / 2, y: (cc.y + a.y) / 2 }; emit(a, b, mid, depth + 1); emit(mid, b, cc, depth + 1); }
+        };
+        for (const tri of tris) emit(pts[tri[0]!]!, pts[tri[1]!]!, pts[tri[2]!]!, 0);
       }
       for (let i = 0; i < ring.length; i++) ribbon(ring[i]!, ring[(i + 1) % ring.length]!, m(poly.width), poly.line, poly.lineAlpha, LIFT * 1.5);
     }
