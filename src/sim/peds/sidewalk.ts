@@ -128,6 +128,13 @@ export class SidewalkGraph {
    * build: a corner whose junction the edit did not touch is reused as it is.
    */
   private cornerCache = new Map<string, Vec2[]>();
+  /**
+   * Each door's link as last chosen (edge id and arc), with what it was chosen
+   * from: the footways within reach, the footway and carriageway there, the
+   * masses and obstacles there. A road edit relinked every door in town; a
+   * door whose surroundings are the same keeps its link (docs/performance.md #11).
+   */
+  private doorCache = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
   /** Corridor walls by the path and footway patch they were fitted to (`fitCorridors`). */
   private corridorCache = new Map<string, CachedCorridor>();
   private readonly reversedPaths = new Map<SidewalkEdgeId, Polyline>();
@@ -376,12 +383,48 @@ export class SidewalkGraph {
           }
         }
       }
+      // What a door's choice reads, digested per piece once per build.
+      const edgeDigest = new Map<SidewalkEdge, number>();
+      const digestOf = (edge: SidewalkEdge): number => {
+        let d = edgeDigest.get(edge);
+        if (d === undefined) edgeDigest.set(edge, d = new Digest().addText(edge.id).add(edge.length).addAll(edge.path.xy).value());
+        return d;
+      };
+      const massesNear = new Map<number, number[]>();
+      footprints.forEach((ring, i) => {
+        const box = ringBox(ring);
+        for (let x = Math.floor((box.minX - REACH) / CELL); x <= Math.floor((box.maxX + REACH) / CELL); x++) {
+          for (let y = Math.floor((box.minY - REACH) / CELL); y <= Math.floor((box.maxY + REACH) / CELL); y++) {
+            const list = massesNear.get(cellKey(x, y));
+            if (list) list.push(i); else massesNear.set(cellKey(x, y), [i]);
+          }
+        }
+      });
+      const ringDigest = footprints.map((ring) => { const d = new Digest(); for (const p of ring) d.add(p.x).add(p.y); return d.value(); });
+      const previousDoors = this.doorCache;
+      const nextDoors = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
       for (const building of doc.buildings.all()) {
         for (const bay of doorBays(building)) {
           if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
           const door = { x: bay.x + bay.nx * m(0.75), y: bay.y + bay.ny * m(0.75) };
-          const reachable = Number.isFinite(door.x) && Number.isFinite(door.y)
-            ? near.get(cellKey(Math.floor(door.x / CELL), Math.floor(door.y / CELL))) ?? [] : walks;
+          const finite = Number.isFinite(door.x) && Number.isFinite(door.y);
+          const cell = finite ? cellKey(Math.floor(door.x / CELL), Math.floor(door.y / CELL)) : 0;
+          const reachable = finite ? near.get(cell) ?? [] : walks;
+          const doorId = `B:${building.id}:${bay.volume}:${bay.side}:${bay.index}`;
+          const key = new Digest().add(door.x).add(door.y)
+            .addAll(reachable.map(digestOf))
+            .add(walkable.digest(door.x - REACH, door.y - REACH, door.x + REACH, door.y + REACH))
+            .addAll((finite ? massesNear.get(cell) ?? [] : []).map((i) => ringDigest[i]!))
+            .addAll(obstacles.filter((o) => Math.abs(o.x - door.x) <= REACH + o.radius && Math.abs(o.y - door.y) <= REACH + o.radius)
+              .flatMap((o) => [o.x, o.y, o.radius]))
+            .value().toString();
+          const known = previousDoors.get(doorId);
+          let chosen: { edge: SidewalkEdge; nearest: { s: number; point: Vec2 } } | undefined;
+          if (known && known.key === key) {
+            const edge = known.edge === null ? undefined : this.baseWalkEdges.get(known.edge);
+            chosen = edge ? { edge, nearest: { s: known.s, point: edge.path.sampleAt(known.s).p } } : undefined;
+            nextDoors.set(doorId, known);
+          } else {
           const candidates = reachable.flatMap((edge) => {
             const closest = edge.path.closestPoint(door);
             if (closest.distance > m(30)) return [];
@@ -392,8 +435,10 @@ export class SidewalkGraph {
             }).filter(({ nearest }) => nearest.distance <= m(30));
           }).sort((a, b) => a.nearest.distance - b.nearest.distance ||
             a.edge.id.localeCompare(b.edge.id) || a.nearest.s - b.nearest.s);
-          const chosen = candidates.find(({ nearest }) =>
+          chosen = candidates.find(({ nearest }) =>
             accessLineClear(door, nearest.point, walkable, footprints, obstacles));
+          nextDoors.set(doorId, { key, edge: chosen?.edge.id ?? null, s: chosen?.nearest.s ?? 0 });
+          }
           if (!chosen) continue;
           const { edge, nearest } = chosen;
           const id = `B:${building.id}:${bay.volume}:${bay.side}:${bay.index}`;
@@ -421,6 +466,7 @@ export class SidewalkGraph {
           this.accessEdges.add(link);
         }
       }
+      this.doorCache = nextDoors;
       for (const [edgeId, list] of spurs) {
         const edge = this.baseWalkEdges.get(edgeId)!;
         this.removeEdge(edgeId);
