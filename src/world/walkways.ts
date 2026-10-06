@@ -1,3 +1,4 @@
+import { EPS } from '@core/scalar';
 import { Polyline } from '@core/polyline';
 import { filletCorner } from '@core/fillet';
 import { lineLine } from '@core/intersect';
@@ -283,6 +284,21 @@ class WalkingLines {
     return false;
   }
 
+  private readonly outerIndex = new Map<string, NearestEdge>();
+  /**
+   * The nearest point of the footway's outer edge on one deck, as the nearest
+   * of `outer`'s lines' `closestPoint`s (earlier lines and pieces win ties),
+   * read off a grid: every point of every corner used to measure the whole
+   * map's edge - one ring of thousands of pieces on a connected network -
+   * 46 of the 62 ms a road edit spent here in the default town
+   * (docs/performance.md #11).
+   */
+  nearestOuter(deck: RoadStructure, p: Vec2): { point: Vec2; distance: number } | null {
+    let index = this.outerIndex.get(deck);
+    if (!index) this.outerIndex.set(deck, index = new NearestEdge(this.outer(deck)));
+    return index.nearest(p);
+  }
+
   /** The footway's outer edge on one deck: the outline of the paving, as drawn. */
   outer(deck: RoadStructure): Polyline[] {
     const known = this.edges.get(deck);
@@ -309,6 +325,79 @@ class WalkingLines {
     return lines;
   }
 }
+
+/** The pieces of some lines on a grid: the nearest point among all of them, reading only the cells near it. */
+class NearestEdge {
+  private static readonly CELL = 24;
+  /** Each piece: ax, ay, bx, by, in line then piece order. */
+  private readonly pieces: number[] = [];
+  private readonly cells = new Map<number, number[]>();
+  private lo = [Infinity, Infinity];
+  private hi = [-Infinity, -Infinity];
+
+  constructor(lines: readonly Polyline[]) {
+    const C = NearestEdge.CELL;
+    for (const line of lines) {
+      const xy = line.xy;
+      for (let k = 0; k + 3 < xy.length; k += 2) {
+        const i = this.pieces.length / 4;
+        const ax = xy[k]!, ay = xy[k + 1]!, bx = xy[k + 2]!, by = xy[k + 3]!;
+        this.pieces.push(ax, ay, bx, by);
+        const x0 = Math.floor(Math.min(ax, bx) / C), x1 = Math.floor(Math.max(ax, bx) / C);
+        const y0 = Math.floor(Math.min(ay, by) / C), y1 = Math.floor(Math.max(ay, by) / C);
+        this.lo = [Math.min(this.lo[0]!, x0), Math.min(this.lo[1]!, y0)];
+        this.hi = [Math.max(this.hi[0]!, x1), Math.max(this.hi[1]!, y1)];
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+          const key = (x + 32768) * 65536 + (y + 32768);
+          const list = this.cells.get(key);
+          if (list) list.push(i); else this.cells.set(key, [i]);
+        }
+      }
+    }
+  }
+
+  nearest(p: Vec2): { point: Vec2; distance: number } | null {
+    if (!this.cells.size || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+    const C = NearestEdge.CELL, P = this.pieces;
+    const cx = Math.floor(p.x / C), cy = Math.floor(p.y / C);
+    let bestSq = Infinity, bestI = -1, bestX = 0, bestY = 0;
+    const seen = new Set<number>();
+    const visit = (x: number, y: number): void => {
+      const list = this.cells.get((x + 32768) * 65536 + (y + 32768));
+      if (!list) return;
+      for (const i of list) {
+        if (seen.has(i)) continue;
+        seen.add(i);
+        const ax = P[i * 4]!, ay = P[i * 4 + 1]!, abx = P[i * 4 + 2]! - ax, aby = P[i * 4 + 3]! - ay;
+        const l2 = abx * abx + aby * aby;
+        let qx = ax, qy = ay;
+        if (l2 >= EDGE_EPS) {
+          let t = ((p.x - ax) * abx + (p.y - ay) * aby) / l2;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          qx = ax + abx * t; qy = ay + aby * t;
+        }
+        const d = (p.x - qx) ** 2 + (p.y - qy) ** 2;
+        if (d < bestSq || (d === bestSq && i < bestI)) { bestSq = d; bestI = i; bestX = qx; bestY = qy; }
+      }
+    };
+    const reach = Math.max(Math.abs(cx - this.lo[0]!), Math.abs(cx - this.hi[0]!), Math.abs(cy - this.lo[1]!), Math.abs(cy - this.hi[1]!));
+    for (let r = 0; r <= reach; r++) {
+      for (let x = cx - r; x <= cx + r; x++) {
+        visit(x, cy - r);
+        if (r) visit(x, cy + r);
+      }
+      for (let y = cy - r + 1; y <= cy + r - 1; y++) {
+        visit(cx - r, y);
+        visit(cx + r, y);
+      }
+      // Anything outside the square searched is at least r cells away.
+      if (bestI >= 0 && Math.sqrt(bestSq) < r * C) break;
+    }
+    return bestI < 0 ? null : { point: { x: bestX, y: bestY }, distance: Math.sqrt(bestSq) };
+  }
+}
+/** A piece shorter than this is its first point (`Polyline`'s own threshold). */
+const EDGE_EPS = EPS;
 
 interface PavingRing { readonly points: Vec2[]; readonly minX: number; readonly minY: number; readonly maxX: number; readonly maxY: number }
 function pavingRing(ring: readonly (readonly number[])[]): PavingRing {
@@ -426,12 +515,10 @@ export function buildWalkways(net: Network): WalkGraph {
     // edge tapering faster than the kerb, at a change of road width), the
     // line keeps half its usable width clear of the outer edge instead: it
     // moves towards the kerb by as much as the footway is narrower there.
-    const outer = walking.outer(from.way.structure);
     for (let q = 1; q < count; q++) {
       const p = pts[q]!;
       const u = q / count, half = (from.way.width + (to.way.width - from.way.width) * u) / 2;
-      let edge: { point: Vec2; distance: number } | null = null;
-      for (const l of outer) { const c = l.closestPoint(p); if (!edge || c.distance < edge.distance) edge = c; }
+      const edge = walking.nearestOuter(from.way.structure, p);
       if (!edge) continue;
       const kd = Math.hypot(p.x - edge.point.x, p.y - edge.point.y);
       const lack = half - kd;
