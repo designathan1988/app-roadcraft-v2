@@ -160,7 +160,10 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
   const melanin: MelaninUniform = { value: look.melanin };
   for (const g of base.meta.groups) {
     geometry.addGroup(g.start, g.count, materials.length);
-    materials.push(material(g.material, g.tile, tex, look, melanin));
+    const m = material(g.material, g.tile, tex, look, melanin);
+    // Named by the pack's material: the stage finds the eyes and mouth by it.
+    m.name = g.material;
+    materials.push(m);
   }
   geometry.computeBoundingSphere();
   const mesh = new Mesh(geometry, materials);
@@ -193,6 +196,13 @@ export function updateHumanMesh(mesh: Mesh, base: HumanBase, shape: Float32Array
   mesh.geometry.computeBoundingSphere();
   mesh.geometry.computeBoundingBox();
   (mesh.userData['melanin'] as MelaninUniform).value = melanin;
+}
+
+/** Sets the iris colour of a person's eyes. */
+export function setIris(mesh: Mesh, colour: number): void {
+  for (const m of mesh.material as Material[]) {
+    if (m.name === 'Iris') (m as MeshStandardMaterial).color.setHex(colour);
+  }
 }
 
 export function disposeHumanMesh(mesh: Mesh): void {

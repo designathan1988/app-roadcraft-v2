@@ -3,48 +3,80 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gerador de humanos — Roadcraft</title>
+  <title>Criador de pessoas — Roadcraft</title>
   <style>
-    :root { --bg: rgba(18, 20, 24, 0.88); --line: rgba(255, 255, 255, 0.14); --text: #f2f2f0; --muted: #a9adb3; --accent: #7fd4ff; }
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #3a3d42; font: 13px system-ui, sans-serif; color: var(--text); }
-    #view { width: 100%; height: 100%; display: block; }
-    .panel { position: fixed; left: 12px; top: 12px; width: 268px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-    .panel h1 { font-size: 14px; margin: 0 0 8px; }
-    .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
-    button, select { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; cursor: pointer; font: inherit; }
-    select { width: 100%; }
-    select option { color: #000; }
-    button:hover, button.on { border-color: var(--accent); color: var(--accent); }
-    .group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 8px 0 2px; }
-    .slider { display: grid; grid-template-columns: 74px 1fr 52px; align-items: center; gap: 6px; height: 24px; }
-    .slider span { color: var(--muted); white-space: nowrap; }
-    .slider output { text-align: right; font-variant-numeric: tabular-nums; }
-    .slider input { width: 100%; accent-color: var(--accent); }
-    #readout { color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
-    #status { position: fixed; right: 12px; top: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--muted); font-size: 12px; }
-    #hint { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; color: var(--muted); font-size: 12px; }
+    :root {
+      --panel: rgba(22, 24, 29, 0.92); --panel-2: rgba(255, 255, 255, 0.05); --line: rgba(255, 255, 255, 0.12);
+      --text: #eef0f2; --muted: #9aa1aa; --accent: #6cc7ff; --accent-2: rgba(108, 199, 255, 0.16);
+    }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #2f3237; font: 13px system-ui, sans-serif; color: var(--text); }
+    #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+    button { font: inherit; color: inherit; }
+
+    .cr-top { position: fixed; left: 12px; right: 12px; top: 10px; height: 44px; display: flex; align-items: center; gap: 12px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 8px 0 12px; box-sizing: border-box; }
+    .cr-name { flex: 0 1 280px; min-width: 120px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+      color: var(--text); font: 600 15px system-ui, sans-serif; padding: 6px 10px; }
+    .cr-name:focus { outline: none; border-color: var(--accent); }
+    .cr-actions { margin-left: auto; display: flex; gap: 4px; }
+    .cr-icon { width: 36px; height: 34px; display: grid; place-items: center; background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: var(--text); padding: 0; }
+    .cr-icon:hover { background: var(--panel-2); border-color: var(--line); color: var(--accent); }
+    .cr-icon[disabled] { opacity: 0.3; pointer-events: none; }
+
+    .cr-rail { position: fixed; left: 12px; top: 64px; width: 56px; display: flex; flex-direction: column; gap: 4px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-sizing: border-box; }
+    .cr-cat { height: 42px; background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; color: var(--muted); display: grid; place-items: center; padding: 0; }
+    .cr-cat:hover { color: var(--text); background: var(--panel-2); }
+    .cr-cat.on { color: var(--accent); background: var(--accent-2); border-color: rgba(108, 199, 255, 0.4); }
+
+    .cr-page { position: fixed; right: 12px; top: 64px; bottom: 12px; width: 340px; display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-sizing: border-box; }
+    .cr-page-head { display: flex; align-items: center; justify-content: space-between; }
+    .cr-page-head h2 { font-size: 15px; margin: 2px 0; }
+    .cr-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 4px; }
+    .cr-tab { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; cursor: pointer; color: var(--muted); font-size: 12px; }
+    .cr-tab.on, .cr-tab:hover { color: var(--accent); border-color: rgba(108, 199, 255, 0.5); }
+    .cr-body { flex: 1; min-height: 0; margin-top: 4px; }
+    .cr-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 10px 0 4px; }
+    .cr-note { color: var(--muted); font-size: 12px; margin: 2px 0 6px; line-height: 1.35; }
+    .cr-row { display: grid; grid-template-columns: 104px 1fr 56px 20px; align-items: center; gap: 6px; height: 27px; }
+    .cr-label { color: #cdd2d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cr-row output { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+    .cr-row input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+    .cr-row input.two-way { background: linear-gradient(90deg, transparent calc(50% - 1px), rgba(255,255,255,0.35) calc(50% - 1px), rgba(255,255,255,0.35) calc(50% + 1px), transparent calc(50% + 1px)); }
+    .cr-reset { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; border-radius: 6px; }
+    .cr-reset svg { width: 15px; height: 15px; }
+    .cr-reset:hover { color: var(--accent); background: var(--panel-2); }
+    .cr-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 4px; }
+    .cr-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 12px; }
+    .cr-chip:hover { border-color: rgba(108, 199, 255, 0.5); }
+    .cr-chip.on { background: var(--accent-2); border-color: var(--accent); color: var(--accent); }
+    .cr-swatches { display: flex; gap: 8px; margin: 4px 0; }
+    .cr-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); cursor: pointer; padding: 0; }
+    .cr-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(108, 199, 255, 0.35); }
+    .cr-readout { border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .cr-gallery { position: fixed; left: 80px; right: 364px; bottom: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+    .cr-gallery[hidden] { display: none; }
+    .cr-gallery-head { display: flex; align-items: center; justify-content: space-between; }
+    .cr-gallery-head h2 { font-size: 14px; margin: 0; }
+    .cr-cards { display: flex; gap: 10px; overflow-x: auto; padding: 8px 2px 4px; }
+    .cr-card { position: relative; flex: 0 0 auto; }
+    .cr-card-open { display: flex; flex-direction: column; align-items: center; gap: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px; cursor: pointer; width: 112px; }
+    .cr-card-open:hover { border-color: var(--accent); }
+    .cr-card-open img { width: 100px; height: 100px; border-radius: 7px; object-fit: cover; background: #222; }
+    .cr-card-open span { font-size: 12px; max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cr-card-del { position: absolute; top: 2px; right: 2px; width: 28px; height: 28px; background: rgba(0,0,0,0.45); }
+    .cr-empty { color: var(--muted); margin: 6px 0; }
+    .cr-toast { position: fixed; left: 50%; top: 66px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent); border-radius: 9px; padding: 7px 14px; }
+    .cr-toast[hidden] { display: none; }
   </style>
 </head>
 <body>
   <canvas id="view"></canvas>
-  <div class="panel">
-    <h1 data-i18n="hgen.title"></h1>
-    <div class="row">
-      <button id="reroll" data-i18n="hgen.reroll"></button>
-      <button id="reroll-one" data-i18n="hgen.rerollOne"></button>
-      <button id="ages" data-i18n="hgen.ages"></button>
-    </div>
-    <div class="row" id="views">
-      <button data-view="front" class="on" data-i18n="hgen.front"></button>
-      <button data-view="side" data-i18n="hgen.side"></button>
-      <button data-view="back" data-i18n="hgen.back"></button>
-      <button data-view="face" data-i18n="hgen.face"></button>
-    </div>
-    <div id="sliders"></div>
-    <div id="readout"></div>
-  </div>
-  <div id="hint" data-i18n="hgen.hint"></div>
-  <div id="status" data-i18n="hgen.loading"></div>
+  <div id="loading" data-i18n="hgen.loading"></div>
+  <div id="creator"></div>
   <script type="module" src="/src/humanGenerator.ts"></script>
 </body>
 </html>

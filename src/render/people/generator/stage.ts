@@ -1,27 +1,27 @@
 import {
-  ACESFilmicToneMapping, CircleGeometry, Color, MeshBasicMaterial, Raycaster, RingGeometry, Vector2, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial,
-  PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Scene, SRGBColorSpace, Vector3, WebGLRenderer,
+  ACESFilmicToneMapping, CircleGeometry, Color, CylinderGeometry, DirectionalLight, HemisphereLight, Mesh, MeshStandardMaterial,
+  PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
-import { createHumanMesh, disposeHumanMesh, loadHumanTextures, updateHumanMesh, type TextureSet } from './humanMesh';
+import type { Focus } from '@people/gen/catalog';
+import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type TextureSet } from './humanMesh';
 
 /**
- * The human generator's 3D view: a studio (warm key light from the front
- * left, cool fill, rim from behind, a soft room reflection) and the people.
- * The people stand in one row, every base's in turn.
+ * The creator's 3D view: one person on a pedestal in a studio (warm key light
+ * from the front left, cool fill, rim from behind, a soft room reflection).
+ * The camera glides to the part being edited (`frame`), as The Sims' Create a
+ * Sim zooms to a feature; a drag turns the view round the person. The frame
+ * keeps the person in the middle of the screen's free area, between the
+ * interface's side panels (`setInsets`).
  */
-
-export type GeneratorView = 'front' | 'side' | 'back' | 'face';
 
 export interface LoadedBase {
   readonly name: string;
   readonly base: HumanBase;
   readonly tex: TextureSet;
 }
-
-const SPACING = 0.8;
 
 /** One person to draw: their shaped body, its scale, skin and eyes. */
 export interface DrawnPerson {
@@ -40,15 +40,36 @@ export async function loadBase(name: string, urlOf: (file: string) => string): P
   return { name, base, tex: await loadHumanTextures(base, urlOf) };
 }
 
-export class GeneratorStage {
+/** Landmarks of the drawn person, in the scene (metres). */
+interface Landmarks { height: number; eyes: Vector3; mouth: Vector3; headHalfWidth: number }
+
+/** How each focus frames: target, view direction (azimuth, rad) and half the height shown. */
+function shot(f: Focus, m: Landmarks): { target: Vector3; azimuth: number; half: number } {
+  const H = m.height, k = m.headHalfWidth / 0.075;
+  switch (f) {
+    case 'torso': return { target: new Vector3(0, H * 0.64, 0), azimuth: 0.25, half: H * 0.22 };
+    case 'arms': return { target: new Vector3(0, H * 0.62, 0), azimuth: 0.5, half: H * 0.3 };
+    case 'legs': return { target: new Vector3(0, H * 0.27, 0), azimuth: 0.3, half: H * 0.3 };
+    case 'head': return { target: new Vector3(0, m.eyes.y - 0.02 * k, m.eyes.z - 0.04 * k), azimuth: 0.35, half: 0.15 * k };
+    case 'eyes': return { target: new Vector3(0, m.eyes.y, m.eyes.z), azimuth: 0.15, half: 0.075 * k };
+    case 'nose': return { target: new Vector3(0, (m.eyes.y + m.mouth.y) / 2, m.eyes.z + 0.01 * k), azimuth: 0.6, half: 0.085 * k };
+    case 'mouth': return { target: new Vector3(0, m.mouth.y - 0.012 * k, m.mouth.z), azimuth: 0.3, half: 0.07 * k };
+    case 'ears': return { target: new Vector3(m.headHalfWidth, m.eyes.y - 0.02 * k, m.eyes.z - 0.09 * k), azimuth: 1.45, half: 0.07 * k };
+    case 'chin': return { target: new Vector3(0, m.mouth.y - 0.03 * k, m.mouth.z - 0.03 * k), azimuth: 0.55, half: 0.085 * k };
+    default: return { target: new Vector3(0, H * 0.52, 0), azimuth: 0.2, half: H * 0.58 };
+  }
+}
+
+export class CreatorStage {
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(30, 1, 0.05, 100);
+  private readonly camera = new PerspectiveCamera(30, 1, 0.02, 100);
   private readonly controls: OrbitControls;
-  private readonly people = new Group();
-  private view: GeneratorView = 'front';
-  private readonly marker: Mesh;
-  private selected = 0;
+  private person: Mesh | null = null;
+  private focus: Focus = 'body';
+  private insets: [number, number] = [0, 0];
+  private glide: { from: [Vector3, Vector3]; to: [Vector3, Vector3]; t0: number } | null = null;
+  private pending = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -60,7 +81,7 @@ export class GeneratorStage {
     this.renderer = renderer;
 
     const scene = this.scene;
-    scene.background = new Color(0x3a3d42);
+    scene.background = new Color(0x2f3237);
     scene.environment = new PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environmentIntensity = 0.35;
     scene.add(new HemisphereLight(0xdfe6f0, 0x4a4540, 0.6));
@@ -68,7 +89,7 @@ export class GeneratorStage {
     key.position.set(-3, 5, 6);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
-    Object.assign(key.shadow.camera, { left: -6, right: 6, top: 4, bottom: -1 });
+    Object.assign(key.shadow.camera, { left: -2, right: 2, top: 2.5, bottom: -0.5 });
     key.shadow.bias = -0.0002;
     key.shadow.normalBias = 0.01;
     scene.add(key);
@@ -78,27 +99,26 @@ export class GeneratorStage {
     const rim = new DirectionalLight(0xffffff, 1.2);
     rim.position.set(0, 4, -6);
     scene.add(rim);
-    const floor = new Mesh(new CircleGeometry(12, 64), new MeshStandardMaterial({ color: 0x55585e, roughness: 0.95 }));
+    const floor = new Mesh(new CircleGeometry(14, 64), new MeshStandardMaterial({ color: 0x45484e, roughness: 0.95 }));
     floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.06;
     floor.receiveShadow = true;
     scene.add(floor);
-    scene.add(this.people);
-    // The selected person's ring on the floor.
-    this.marker = new Mesh(new RingGeometry(0.3, 0.34, 48), new MeshBasicMaterial({ color: 0x7fd4ff }));
-    this.marker.rotation.x = -Math.PI / 2;
-    this.marker.position.y = 0.002;
-    scene.add(this.marker);
+    const pedestal = new Mesh(new CylinderGeometry(0.55, 0.58, 0.06, 64), new MeshStandardMaterial({ color: 0x6b6f76, roughness: 0.6 }));
+    pedestal.position.y = -0.03;
+    pedestal.receiveShadow = true;
+    scene.add(pedestal);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
-    // Drawn only when something changes (three.js manual, "Rendering on
-    // Demand"): a still page costs nothing. While the orbit glides to a
-    // stop, `update()` keeps reporting changes and so keeps asking.
+    this.controls.enablePan = false;
+    this.controls.minPolarAngle = 0.35;
+    this.controls.maxPolarAngle = 1.75;
+    // Drawn only when something changes (three.js manual, "Rendering on Demand").
     this.controls.addEventListener('change', () => this.redraw());
+    this.controls.addEventListener('start', () => { this.glide = null; });
     this.resize();
   }
-
-  private pending = false;
 
   /** Asks for one frame; several asks before it is drawn make one frame. */
   redraw(): void {
@@ -106,110 +126,149 @@ export class GeneratorStage {
     this.pending = true;
     requestAnimationFrame(() => {
       this.pending = false;
+      if (this.glide) {
+        const t = Math.min(1, (performance.now() - this.glide.t0) / 380);
+        const e = t * t * (3 - 2 * t);
+        this.camera.position.lerpVectors(this.glide.from[0], this.glide.to[0], e);
+        this.controls.target.lerpVectors(this.glide.from[1], this.glide.to[1], e);
+        if (t >= 1) this.glide = null; else this.redraw();
+      }
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     });
+  }
+
+  /** Screen pixels the interface covers on the left and right: the person is framed between them. */
+  setInsets(left: number, right: number): void {
+    this.insets = [left, right];
+    this.resize();
   }
 
   resize(): void {
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    // Shift the image so its centre is the free area's centre.
+    const shift = (this.insets[0] - this.insets[1]) / 2;
+    this.camera.setViewOffset(w, h, -shift, 0, w, h);
     this.camera.updateProjectionMatrix();
     this.redraw();
   }
 
-  /** Replaces the row with these people. */
-  setPeople(b: LoadedBase, people: readonly DrawnPerson[]): void {
-    for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
-    people.forEach((p, slot) => {
-      const mesh = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) });
-      mesh.scale.setScalar(p.scale);
-      mesh.userData['slot'] = { slot };
-      this.people.add(mesh);
-    });
-    this.setView(this.view);
+  setPerson(b: LoadedBase, p: DrawnPerson): void {
+    if (this.person) { disposeHumanMesh(this.person); this.scene.remove(this.person); }
+    this.person = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) });
+    this.person.scale.setScalar(p.scale);
+    this.scene.add(this.person);
+    this.frame(this.focus, false);
   }
 
-  /** Reshapes one person in place. */
-  updatePerson(b: LoadedBase, slot: number, p: DrawnPerson): void {
-    const mesh = this.people.children[slot] as Mesh | undefined;
-    if (!mesh) return;
-    updateHumanMesh(mesh, b.base, p.shape, p.melanin);
-    mesh.scale.setScalar(p.scale);
-    this.setView(this.view);
+  /** Reshapes the person in place; the camera follows the part on show. */
+  updatePerson(b: LoadedBase, p: DrawnPerson): void {
+    if (!this.person) return this.setPerson(b, p);
+    updateHumanMesh(this.person, b.base, p.shape, p.melanin);
+    setIris(this.person, p.iris);
+    this.person.scale.setScalar(p.scale);
+    this.redraw();
   }
 
-  select(slot: number): void {
-    this.selected = slot;
-    this.setView(this.view);
+  private landmarks(): Landmarks {
+    const mesh = this.person!;
+    const g = mesh.geometry;
+    const pos = g.getAttribute('position');
+    const index = g.getIndex()!;
+    const s = mesh.scale.x;
+    const centroid = (material: string): Vector3 => {
+      const out = new Vector3();
+      let n = 0;
+      for (const grp of g.groups) {
+        const mat = (mesh.material as { name?: string }[])[grp.materialIndex ?? 0];
+        if (mat?.name !== material) continue;
+        for (let i = grp.start; i < grp.start + grp.count; i += 7) {
+          const v = index.getX(i);
+          out.x += pos.getX(v); out.y += pos.getY(v); out.z += pos.getZ(v); n++;
+        }
+      }
+      return n ? out.multiplyScalar(s / n) : out;
+    };
+    g.computeBoundingBox();
+    const eyes = centroid('Iris');
+    const mouth = centroid('Mouth');
+    // Half the head's width at eye height: the widest skin there.
+    let half = 0;
+    for (let v = 0; v < pos.count; v++) {
+      if (Math.abs(pos.getY(v) * s - eyes.y) < 0.02 * s) half = Math.max(half, Math.abs(pos.getX(v)) * s);
+    }
+    return { height: g.boundingBox!.max.y * s, eyes, mouth, headHalfWidth: Math.min(half, 0.11 * s) || 0.075 };
   }
 
-  /** The person under a screen point (CSS px in the canvas), or null. */
-  pick(x: number, y: number): number | null {
-    const ndc = new Vector2((x / this.canvas.clientWidth) * 2 - 1, -(y / this.canvas.clientHeight) * 2 + 1);
+  /** Points the camera at a part of the person (gliding unless `glide` is false). */
+  frame(focus: Focus, glide = true): void {
+    this.focus = focus;
+    if (!this.person) return;
+    const { target, azimuth, half } = shot(focus, this.landmarks());
+    const dist = half / Math.tan((this.camera.fov * Math.PI) / 360) * 1.08;
+    const eye = new Vector3(target.x + Math.sin(azimuth) * dist, target.y + dist * 0.06, target.z + Math.cos(azimuth) * dist);
+    this.controls.minDistance = Math.min(0.25, dist * 0.5);
+    this.controls.maxDistance = 7;
+    if (glide) {
+      this.glide = { from: [this.camera.position.clone(), this.controls.target.clone()], to: [eye, target], t0: performance.now() };
+    } else {
+      this.glide = null;
+      this.camera.position.copy(eye);
+      this.controls.target.copy(target);
+    }
+    this.redraw();
+  }
+
+  /** The part of the person under a screen point (CSS px in the canvas), or null. */
+  pick(x: number, y: number): Focus | null {
+    if (!this.person) return null;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    const ndc = new Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1);
     const ray = new Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    const hit = ray.intersectObjects(this.people.children.filter((p) => p.visible), false)[0];
-    return hit ? (hit.object.userData['slot'] as { slot: number }).slot : null;
-  }
-
-  private placeMarker(): void {
-    const p = this.people.children[this.selected];
-    this.marker.visible = !!p && this.view !== 'face';
-    if (p) this.marker.position.x = p.position.x;
-  }
-
-  /** One person with exactly these morph weights, alone in the middle (probes). */
-  showWeights(b: LoadedBase, weights: Readonly<Record<string, number>>, melanin = 0.2): void {
-    for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
-    const mesh = createHumanMesh(b.base, b.tex, b.base.shape(weights), { melanin, flatSkin: new Color(0xd0a080), iris: new Color(0x506070) });
-    mesh.userData['slot'] = { slot: 0 };
-    this.people.add(mesh);
-    this.setView(this.view);
-  }
-
-  setView(view: GeneratorView): void {
-    this.view = view;
-    const turn = view === 'side' ? Math.PI / 2 : view === 'back' ? Math.PI : 0;
-    let top = 0;
-    const count = this.people.children.length;
-    for (const p of this.people.children) {
-      const { slot } = p.userData['slot'] as { slot: number };
-      p.rotation.y = turn;
-      // Close up, the selected person alone.
-      p.visible = view !== 'face' || slot === this.selected;
-      p.position.x = view === 'face' ? 0 : (slot - (count - 1) / 2) * SPACING;
-      if (p.visible) {
-        const g = (p as Mesh).geometry;
-        g.computeBoundingBox();
-        top = Math.max(top, g.boundingBox!.max.y * p.scale.y);
-      }
+    const hit = ray.intersectObject(this.person, false)[0];
+    if (!hit) return null;
+    const m = this.landmarks();
+    const p = hit.point, k = m.headHalfWidth / 0.075;
+    if (p.y > m.mouth.y - 0.08 * k) {
+      if (Math.abs(p.x) > m.headHalfWidth * 0.85) return 'ears';
+      if (Math.abs(p.y - m.eyes.y) < 0.022 * k) return 'eyes';
+      if (p.y < m.mouth.y - 0.025 * k) return 'chin';
+      if (Math.abs(p.y - m.mouth.y) < 0.02 * k) return 'mouth';
+      if (p.y < m.eyes.y && Math.abs(p.x) < 0.025 * k) return 'nose';
+      return 'head';
     }
-    this.placeMarker();
-    if (view === 'face') {
-      this.controls.target.set(-0.12, top - 0.13, 0);
-      this.camera.position.set(-0.12, top - 0.11, 0.85);
-    } else {
-      // The row is framed right of the controls panel (a quarter of a
-      // 1280-wide screen): the camera looks a little left of its middle.
-      this.controls.target.set(-1.1, 0.95, 0);
-      this.camera.position.set(-1.1, 1.25, 10.5);
-    }
-    this.redraw();
+    const rel = p.y / m.height;
+    if (rel < 0.47) return 'legs';
+    if (Math.abs(p.x) > m.height * 0.12) return 'arms';
+    return 'torso';
   }
 
-  /** Puts the camera at `eye` looking at `target` (probes and close-ups). */
-  look(eye: readonly [number, number, number], target: readonly [number, number, number]): void {
-    this.camera.position.set(...eye);
-    this.controls.target.set(...target);
-    this.redraw();
-  }
-
-  /** Screen x (CSS px) of each person's feet, in row order (for labels). */
-  screenXs(): number[] {
-    const w = this.canvas.clientWidth;
-    return this.people.children.filter((p) => p.visible)
-      .map((p) => (new Vector3(p.position.x, 0, 0).project(this.camera).x * 0.5 + 0.5) * w);
+  /** A head-and-shoulders portrait, `size` px square, as a JPEG data URL (for the gallery). */
+  portrait(size = 160): string {
+    if (!this.person) return '';
+    const before = [this.camera.position.clone(), this.controls.target.clone()] as const;
+    const m = this.landmarks();
+    const k = m.headHalfWidth / 0.075;
+    const target = new Vector3(0, m.eyes.y - 0.06 * k, m.eyes.z - 0.05 * k);
+    const dist = 0.24 * k / Math.tan((this.camera.fov * Math.PI) / 360);
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    this.camera.clearViewOffset();
+    this.camera.aspect = w / h;
+    this.camera.position.set(target.x + dist * 0.35, target.y + 0.02, target.z + dist * 0.94);
+    this.camera.lookAt(target);
+    this.camera.updateProjectionMatrix();
+    this.renderer.render(this.scene, this.camera);
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    const src = this.renderer.domElement;
+    const side = Math.min(src.width, src.height);
+    out.getContext('2d')!.drawImage(src, (src.width - side) / 2, (src.height - side) / 2, side, side, 0, 0, size, size);
+    this.camera.position.copy(before[0]);
+    this.controls.target.copy(before[1]);
+    this.resize();
+    return out.toDataURL('image/jpeg', 0.85);
   }
 }

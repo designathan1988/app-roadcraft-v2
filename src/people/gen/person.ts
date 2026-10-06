@@ -22,6 +22,7 @@ import type { HumanBase, MorphWeights } from './humanBase';
  */
 
 export interface PersonParams {
+  readonly name: string;
   /** 0 female .. 1 male. */
   readonly sex: number;
   readonly years: number;
@@ -35,8 +36,15 @@ export interface PersonParams {
   readonly body: readonly number[];
   readonly head: readonly number[];
   readonly hands: readonly number[];
-  /** Small Vitruvian regional variations (face and body detail). */
+  /** The Vitruvian's regional sliders (face and body features), by morph name. */
   readonly detail: MorphWeights;
+  /** 0 .. 1: the Vitruvian's muscular build. */
+  readonly muscle: number;
+  /** Iris colour, 0xRRGGBB. */
+  readonly iris: number;
+  /** A Vitruvian expression morph ('' for none) and how strongly it shows. */
+  readonly expression: string;
+  readonly expressionAmount: number;
 }
 
 export interface ResolvedPerson {
@@ -99,7 +107,17 @@ export function babyWeight(years: number): number {
 }
 
 const mhr = (group: string, i: number): string => `MHR_${group}_${String(i).padStart(2, '0')}`;
-const NOT_DETAIL = new Set(['Expression', 'Fantasy', 'Race', 'Gender', 'Age', 'BodyType', 'Generic', 'Body', 'Head', 'Hands']);
+const NOT_DETAIL = new Set(['Expression', 'Fantasy', 'Race', 'Gender', 'Age', 'BodyType', 'Generic']);
+
+/** The Vitruvian's own regional sliders: what a feature page edits. */
+export function isFeatureMorph(name: string, group: string): boolean {
+  return !NOT_DETAIL.has(group) && !name.startsWith('MHR_') && name !== 'Mouth_NoTeeth';
+}
+
+/** Eye colours as people have them, with how common each is. */
+export const IRIS_COLOURS: readonly (readonly [number, number])[] = [
+  [0x3b2416, 0.45], [0x5a3a24, 0.2], [0x7a5a32, 0.08], [0x6e7a4a, 0.08], [0x5d7a8a, 0.1], [0x8aa3b8, 0.06], [0x6a6a6a, 0.03],
+];
 
 export function randomPerson(base: HumanBase, rng: Rng, years?: number): PersonParams {
   const sex = rng.bool() ? 1 : 0;
@@ -113,13 +131,16 @@ export function randomPerson(base: HumanBase, rng: Rng, years?: number): PersonP
   const melanin = Math.min(1, Math.max(0, ANCESTRY_MELANIN[ancestry]! + rng.normal(0, 0.08)));
   const detail: Record<string, number> = {};
   for (const m of base.morphs.values()) {
-    if (NOT_DETAIL.has(m.group) || m.name.startsWith('MHR_')) continue;
+    if (!isFeatureMorph(m.name, m.group)) continue;
     if (m.group === 'Chest' && sex) continue;
     detail[m.name] = m.min < 0 ? rng.normal(0, 0.12) : rng.bool(0.4) ? Math.max(0, rng.normal(0, 0.15)) : 0;
   }
   detail['Generic_Assymetry'] = rng.normal(0, 0.2);
   return {
-    sex, years: age, heightCm, bmi, melanin, ancestry,
+    name: '', sex, years: age, heightCm, bmi, melanin, ancestry,
+    muscle: Math.max(0, rng.normal(0, sex ? 0.25 : 0.12)),
+    iris: rng.weighted(IRIS_COLOURS),
+    expression: '', expressionAmount: 0,
     body: Array.from({ length: 20 }, () => rng.normal(0, 0.8)),
     head: Array.from({ length: 20 }, () => rng.normal(0, 0.7)),
     hands: Array.from({ length: 5 }, () => rng.normal(0, 0.8)),
@@ -177,6 +198,8 @@ function solver(base: HumanBase): Solver {
 function weightsFor(base: HumanBase, p: PersonParams, body: readonly number[], fat = 0): Record<string, number> {
   const w: Record<string, number> = { ...p.detail };
   if (fat > 0) w['BodyType_Fat'] = fat;
+  if (p.muscle > 0) w['BodyType_Muscular'] = p.muscle;
+  if (p.expression) w[p.expression] = p.expressionAmount;
   w['Gender_Female'] = 1 - p.sex;
   w['Gender_Male'] = p.sex;
   w[p.ancestry] = 0.85;

@@ -331,13 +331,17 @@ and they have seen it.
   components with the sex direction removed (sex is the Vitruvian morph).
   Skin: body tiles' blotches evened by frequency separation; no self-shadow
   on people (grey on skin). Sources (CharMorph data, MHR assets) live in the
-  session scratch, not in the repo. LIVE: a row of 8 people drawn as a
-  population (adult heights NCD-RisC by sex, BMI ~25, children by the WHO
-  growth references, every age 2-88); click one to edit: sex, age, height,
-  BMI (reached through the body's own volume x 1010 kg/m3, along the MHR
-  components with height held, then the Vitruvian fat morph past BMI ~32),
-  skin tone, ancestry, 4 body and 4 face components (`people/gen/person.ts`).
-  Not yet: hair, clothes, pose, expressions, eye colour control.
+  session scratch, not in the repo. LIVE: the page is a person creator laid
+  out as The Sims 4's Create a Sim (`ui/creator/creator.ts`): one person on a
+  pedestal; a top bar (name, new, random, undo/redo, save, my people with
+  portraits, export/import JSON); a rail of 10 categories (person, body,
+  head and face, eyes, nose, mouth, ears, chin and jaw, skin and eyes,
+  expression) with 19 pages of sliders (the Vitruvian's named features,
+  the MHR's body and face variations), each with a reset and a die per
+  page; the camera glides to the part edited; a click on the person opens
+  that part. Height and BMI solved through the body's volume
+  (`people/gen/person.ts`), population-calibrated random people. Saved in
+  localStorage. Not yet: hair, clothes, pose.
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as
