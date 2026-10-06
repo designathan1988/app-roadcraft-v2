@@ -473,6 +473,7 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
         !isFiniteNumber(stamp.radius) || stamp.radius <= 0 || stamp.radius > MAX_STAMP_RADIUS ||
         (stamp.level !== undefined && !isFiniteNumber(stamp.level)) ||
         (stamp.stroke !== undefined && !isId(stamp.stroke)) ||
+        (stamp.rough !== undefined && typeof stamp.rough !== 'boolean') ||
         !isFiniteNumber(stamp.strength) || stamp.strength < 0 ||
         !isTerrainMode(stamp.mode)) return false;
       terrainIds.add(stamp.id);

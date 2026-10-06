@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   RIVER_CARVE,
+  ROUGH_REACH_MIN,
   TERRAIN_MAX_HEIGHT,
   TERRAIN_MIN_HEIGHT,
   TerrainIndex,
@@ -236,5 +237,31 @@ describe('a brush stroke', () => {
     const path = Array.from({ length: 30 }, (_, i) => dab(i + 1, (i % 10) * 15, { stroke: 1 + Math.floor(i / 10) }));
     const index = new TerrainIndex(path, 1);
     for (const x of [-40, 0, 33, 90, 160]) expect(sampleTerrainHeight(index, x, 12)).toBeCloseTo(sampleTerrainHeight(path, x, 12), 9);
+  });
+});
+
+describe('natural brush (rough dabs)', () => {
+  const lift = (stamps: TerrainStamp[], x: number, y: number): number => sampleTerrainHeight(stamps, x, y) - baseRelief(x, y);
+
+  it('leaves a dab without the flag exactly the smooth dome', () => {
+    for (const r of [0, 25, 50, 75, 99]) {
+      expect(lift([stamp()], r, 0)).toBeCloseTo(10 * terrainInfluence(1 - r / 100), 9);
+    }
+  });
+
+  it('never reaches past its radius, and always within ROUGH_REACH_MIN of it', () => {
+    const rough = stamp({ rough: true, x: 400, y: -300 });
+    for (let a = 0; a < 64; a++) {
+      const angle = (a / 64) * Math.PI * 2;
+      const at = (r: number): number => lift([rough], 400 + Math.cos(angle) * r, -300 + Math.sin(angle) * r);
+      expect(at(100.5)).toBe(0);
+      expect(at(ROUGH_REACH_MIN * 100 - 2)).toBeGreaterThan(0);
+    }
+  });
+
+  it('is not a circle: the same distance lifts the ground by different amounts round it', () => {
+    const rough = stamp({ rough: true });
+    const ring = Array.from({ length: 32 }, (_, a) => lift([rough], Math.cos(a / 5.1) * 60, Math.sin(a / 5.1) * 60));
+    expect(Math.max(...ring) - Math.min(...ring)).toBeGreaterThan(0.5);
   });
 });

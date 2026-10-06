@@ -1301,6 +1301,7 @@ function stampTerrain(at: Vec2, level: number): void {
     mode: terrainMode,
     ...(terrainMode === 'flatten' ? { level } : {}),
     ...(terrainStroke && terrainMode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
+    ...(terrainMode === 'raise' || terrainMode === 'lower' ? { rough: true } : {}),
   });
 }
 

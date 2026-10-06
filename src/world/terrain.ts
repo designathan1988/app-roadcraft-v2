@@ -37,6 +37,18 @@ export interface TerrainStamp {
    * dab of its own, added as before.
    */
   readonly stroke?: number;
+  /**
+   * A natural brush (raise and lower dabs the player paints): the reach
+   * wanders between ROUGH_REACH_MIN and the full radius with a world-space
+   * noise, so a dab is not a circle, and the height is carved by a ridged
+   * noise into crests and gullies (Unity Terrain Tools' noise brush: a noise
+   * type over the falloff). Ten smooth domes on one spot made a perfect cone.
+   *
+   * Absent (the town's landform, maps saved before this field) means the
+   * smooth dome, so saved ground is unchanged. The reach only ever SHRINKS,
+   * so the spatial index's buckets, built on `radius`, stay right.
+   */
+  readonly rough?: boolean;
 }
 
 /**
@@ -82,6 +94,9 @@ export const RIVER_CARVE = 1.45;
  * a shoreline sits.
  */
 export const terrainInfluence = (unit: number): number => unit * unit * (3 - 2 * unit);
+
+/** The smallest share of its radius a rough dab reaches (`TerrainStamp.rough`). */
+export const ROUGH_REACH_MIN = 0.78;
 
 // --------------------------------------------------------------- base relief
 
@@ -222,7 +237,21 @@ export function sampleTerrainHeight(
     const dy = y - stamp.y;
     const distanceSquared = dx * dx + dy * dy;
     if (distanceSquared >= stamp.radius * stamp.radius) continue;
-    const influence = terrainInfluence(1 - Math.sqrt(distanceSquared) / stamp.radius);
+    const distance = Math.sqrt(distanceSquared);
+    let reach = stamp.radius;
+    let carve = 1;
+    if (stamp.rough && (stamp.mode === 'raise' || stamp.mode === 'lower')) {
+      // World-space noise scaled by the brush, so every dab of a stroke (one
+      // radius) agrees on the same lobes and crests.
+      const lobe = stamp.radius * 0.45;
+      reach *= ROUGH_REACH_MIN + (1 - ROUGH_REACH_MIN) * (0.5 + 0.5 * valueNoise(x / lobe + 41.3, y / lobe - 17.9));
+      if (distance >= reach) continue;
+      const crest = stamp.radius * 0.55;
+      const ridge = 1 - Math.abs(valueNoise(x / crest - 5.1, y / crest + 8.6));
+      // Gentle: dabs stack, and a strong carve stacked ten times drew spires.
+      carve = 0.82 + 0.36 * ridge * ridge;
+    }
+    const influence = terrainInfluence(1 - distance / reach) * carve;
     const move = stamp.mode === 'raise' ? stamp.strength * influence
       : stamp.mode === 'lower' ? -stamp.strength * influence
         : stamp.mode === 'river' ? -stamp.strength * RIVER_CARVE * influence
