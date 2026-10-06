@@ -191,6 +191,25 @@ export class LaneletGraph {
   private junctionCache = new Map<string, JunctionCache>();
 
   build(doc: RoadDoc, net: Network): void {
+    const steps = this.buildSteps(doc, net);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+  }
+
+  /**
+   * Another graph's caches, as this one's own: the simulation builds the graph
+   * of an edit ahead on a graph of its own, a few milliseconds a frame
+   * (`SimWorld.prepareVehicleTopology`), and the graph its agents run on then
+   * takes every link and junction from it instead of turning them all again
+   * in the frame of the swap (docs/performance.md #25).
+   */
+  seedCaches(from: LaneletGraph): void {
+    for (const [key, value] of from.linkCache) this.linkCache.set(key, value);
+    for (const [key, value] of from.junctionCache) this.junctionCache.set(key, value);
+  }
+
+  /** `build` in steps, a segment's links or a junction's connectors at a time. */
+  *buildSteps(doc: RoadDoc, net: Network): Generator<void, void, void> {
     this.lanelets.clear();
     this.connectors.clear();
     this.junctions.clear();
@@ -201,19 +220,20 @@ export class LaneletGraph {
     const previousLinks = this.linkCache;
     const nextLinks = new Map<string, Lanelet[]>();
     this.laneletKeys.clear();
-    this.buildLinks(doc, net, previousLinks, nextLinks);
+    yield* this.buildLinks(doc, net, previousLinks, nextLinks);
     this.linkCache = nextLinks;
     const previousJunctions = this.junctionCache;
     const nextJunctions = new Map<string, JunctionCache>();
-    this.buildJunctions(doc, net, previousJunctions, nextJunctions);
+    yield* this.buildJunctions(doc, net, previousJunctions, nextJunctions);
     this.junctionCache = nextJunctions;
     this.revision = net.revision;
   }
 
-  private buildLinks(doc: RoadDoc, net: Network, previous: Map<string, Lanelet[]>, next: Map<string, Lanelet[]>): void {
+  private *buildLinks(doc: RoadDoc, net: Network, previous: Map<string, Lanelet[]>, next: Map<string, Lanelet[]>): Generator<void, void, void> {
     const ids = [...doc.segments.keys()].sort((a, b) => a - b);
 
     for (const segId of ids) {
+      yield;
       const seg = doc.requireSegment(segId);
       // A tunnel with no geometry carries no traffic. Skipping the link
       // lanelets removes the segment from the routing graph outright — no
@@ -337,9 +357,10 @@ export class LaneletGraph {
     }
   }
 
-  private buildJunctions(doc: RoadDoc, net: Network,
-    previous: Map<string, JunctionCache>, next: Map<string, JunctionCache>): void {
+  private *buildJunctions(doc: RoadDoc, net: Network,
+    previous: Map<string, JunctionCache>, next: Map<string, JunctionCache>): Generator<void, void, void> {
     for (const [nodeId, node] of doc.nodes) {
+      yield;
       if (node.incident.length < 2) continue;
       // The surface a turn has to stay on, built once per node and only when
       // the node actually has a movement to shape.

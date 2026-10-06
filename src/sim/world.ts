@@ -385,7 +385,7 @@ export class SimWorld {
    */
   *prepareVehicleTopology(): Generator<void, void> {
     const graph = this.prepGraph ??= new LaneletGraph();
-    graph.build(this.doc, this.net);
+    yield* graph.buildSteps(this.doc, this.net);
     yield;
     yield* this.conflicts.prepare(graph);
     yield;
@@ -416,6 +416,8 @@ export class SimWorld {
   }
 
   rebuildVehicleTopology(): void {
+    // The links and junctions the preparation turned (`prepareVehicleTopology`).
+    if (this.prepGraph && this.prepGraph.revision === this.net.revision) this.graph.seedCaches(this.prepGraph);
     this.graph.build(this.doc, this.net);
     this.conflicts.build(this.graph);
     this.claims.dropMissing(this.conflicts);
