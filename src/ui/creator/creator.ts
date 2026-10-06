@@ -2,6 +2,7 @@ import { CATALOG, EXPRESSIONS, type CatalogCategory, type CatalogPage, type Focu
 import type { HumanBase } from '@people/gen/humanBase';
 import { garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
 import { HAIR_COLOURS } from '@people/gen/hair';
+import type { HairBrush, HairSculptState } from '@people/gen/hairSculpt';
 import { garmentsFor, hairFor, isWhole, itemLabel } from '@people/wardrobe';
 import { proxyUrl } from '@people/body/proxy';
 import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, LENS_TINTS, METALS } from '@people/gen/accessories';
@@ -38,6 +39,15 @@ export interface CreatorHost {
   /** The part of the person under a canvas point, or null. */
   pick(x: number, y: number): Focus | null;
   portrait(): string;
+  /** Hair sculpting: starts a stroke at a canvas point on the hair (false when the point is not on it). */
+  sculptStart(x: number, y: number, brush: HairBrush, radius: number, strength: number): boolean;
+  sculptMove(x: number, y: number): void;
+  /** Ends the stroke: what the hair now holds, to save with the person. */
+  sculptEnd(): HairSculptState | null;
+  /** The left button sculpts (true) or turns the camera. */
+  sculptMode(on: boolean): void;
+  /** On-screen radius (px) of a brush of `radius` metres over the hair at a canvas point, or null off the hair. */
+  brushPixels(x: number, y: number, radius: number): number | null;
 }
 
 const FOCUS_PAGE: Readonly<Record<Focus, [string, string]>> = {
@@ -101,9 +111,37 @@ export class Creator {
     });
     // A click on the person (not the end of a drag) opens the part clicked.
     let down: [number, number] | null = null;
-    canvas.addEventListener('pointerdown', (e) => { down = [e.offsetX, e.offsetY]; });
+    // On the sculpting page the left button sculpts the hair (Blender's curves sculpt brushes).
+    let sculpting = false;
+    const ring = document.createElement('div');
+    ring.className = 'cr-brush';
+    canvas.parentElement?.append(ring);
+    const showRing = (x: number, y: number): void => {
+      const px = this.page.id === 'hairSculpt' ? host.brushPixels(x, y, this.brush.radius) : null;
+      ring.style.display = px ? 'block' : 'none';
+      if (px) Object.assign(ring.style, { left: `${canvas.offsetLeft + x - px}px`, top: `${canvas.offsetTop + y - px}px`, width: `${px * 2}px`, height: `${px * 2}px` });
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      down = [e.offsetX, e.offsetY];
+      if (this.page.id === 'hairSculpt' && e.button === 0 && host.sculptStart(e.offsetX, e.offsetY, this.brush.kind, this.brush.radius, this.brush.strength)) {
+        sculpting = true;
+        canvas.setPointerCapture(e.pointerId);
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (sculpting) host.sculptMove(e.offsetX, e.offsetY);
+      showRing(e.offsetX, e.offsetY);
+    });
+    canvas.addEventListener('pointerleave', () => { ring.style.display = 'none'; });
     canvas.addEventListener('pointerup', (e) => {
+      if (sculpting) {
+        sculpting = false;
+        const state = host.sculptEnd();
+        if (state) this.commit({ ...this.person, hair: { ...this.person.hair, sculpt: state } });
+        return;
+      }
       if (!down || Math.hypot(e.offsetX - down[0], e.offsetY - down[1]) > 4) return;
+      if (this.page.id === 'hairSculpt') return;
       const f = host.pick(e.offsetX, e.offsetY);
       if (f) { const [c, pg] = FOCUS_PAGE[f]; this.open(c, pg); }
     });
@@ -233,6 +271,7 @@ export class Creator {
       ? c.pages.map((p) => `<button class="cr-tab${p === this.page ? ' on' : ''}" data-page="${p.id}">${t(p.label)}</button>`).join('') : '';
     this.el['title']!.textContent = t(c.label);
     this.host.focus(this.page.focus);
+    this.host.sculptMode(this.page.id === 'hairSculpt');
     this.renderPage();
   }
 
@@ -249,6 +288,7 @@ export class Creator {
       case 'skin': this.skin(body); break;
       case 'hairStyle': this.hairStyle(body); break;
       case 'hairColour': this.hairColour(body); break;
+      case 'hairSculpt': this.hairSculpt(body); break;
       case 'hairShape': this.hairShape(body); break;
       case 'browHair': this.browHair(body); break;
       case 'eyeColour': this.eyeColour(body); break;
@@ -437,6 +477,51 @@ export class Creator {
   private hairStyle(host: HTMLElement): void {
     // The hair meshes that suit the person, each with its picture.
     this.thumbs(host, ['none', ...hairFor(this.person.sex < 0.5 ? 'female' : 'male')], (p) => p.hair.style, (p, name) => ({ ...p, hair: { ...p.hair, style: name } }), 'hgen.hair.none');
+  }
+
+  /** The sculpting brush: which, how big (metres), how strong. */
+  private brush: { kind: HairBrush; radius: number; strength: number } = { kind: 'comb', radius: 0.07, strength: 0.6 };
+
+  private hairSculpt(host: HTMLElement): void {
+    const note = document.createElement('p');
+    note.className = 'cr-note';
+    note.textContent = t(this.person.hair.style === 'none' ? 'hgen.sculpt.noHair' : 'hgen.sculpt.how');
+    host.append(note);
+    if (this.person.hair.style === 'none') return;
+    this.heading(host, 'hgen.sculpt.brush');
+    const row = document.createElement('div');
+    row.className = 'cr-chips';
+    const kinds: HairBrush[] = ['comb', 'hook', 'grow', 'shrink', 'cut', 'puff', 'smooth'];
+    for (const k of kinds) {
+      const b = document.createElement('button');
+      b.className = `cr-chip${this.brush.kind === k ? ' on' : ''}`;
+      b.textContent = t(`hgen.sculpt.${k}`);
+      b.title = t(`hgen.sculpt.${k}.tip`);
+      b.addEventListener('click', () => { this.brush = { ...this.brush, kind: k }; row.querySelectorAll('.cr-chip').forEach((c) => c.classList.toggle('on', c === b)); });
+      row.append(b);
+    }
+    host.append(row);
+    const slider = (label: string, lo: number, hi: number, get: () => number, set: (v: number) => void, show: (v: number) => string): void => {
+      const r = document.createElement('label');
+      r.className = 'cr-row';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range'; input.min = `${lo}`; input.max = `${hi}`; input.step = `${(hi - lo) / 100}`; input.value = `${get()}`;
+      const out = document.createElement('output');
+      out.textContent = show(get());
+      input.addEventListener('input', () => { set(+input.value); out.textContent = show(+input.value); });
+      r.append(name, input, out);
+      host.append(r);
+    };
+    slider(t('hgen.sculpt.size'), 0.01, 0.15, () => this.brush.radius, (v) => { this.brush = { ...this.brush, radius: v }; }, (v) => `${Math.round(v * 100)} cm`);
+    slider(t('hgen.sculpt.strength'), 0.05, 1, () => this.brush.strength, (v) => { this.brush = { ...this.brush, strength: v }; }, (v) => `${Math.round(v * 100)}%`);
+    const reset = document.createElement('button');
+    reset.className = 'cr-chip';
+    reset.textContent = t('hgen.sculpt.reset');
+    reset.disabled = !this.person.hair.sculpt;
+    reset.addEventListener('click', () => this.commit({ ...this.person, hair: { ...this.person.hair, sculpt: null } }));
+    host.append(reset);
   }
 
   private hairColour(host: HTMLElement): void {

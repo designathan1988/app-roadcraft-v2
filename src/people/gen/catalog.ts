@@ -52,7 +52,7 @@ export const CATALOG: readonly CatalogCategory[] = [
     ],
   },
   {
-    id: 'hair', label: 'hgen.cat.hair', icon: 'hair', pages: [page('hairStyle', 'head'), page('hairColour', 'head')],
+    id: 'hair', label: 'hgen.cat.hair', icon: 'hair', pages: [page('hairStyle', 'head'), page('hairColour', 'head'), page('hairSculpt', 'head')],
   },
   {
     id: 'brows', label: 'hgen.cat.brows', icon: 'brow', pages: [

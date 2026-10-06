@@ -3,6 +3,7 @@ import type { CatalogPage } from '@people/gen/catalog';
 import { bodyFor } from '@people/gen/clothes';
 import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
+import { HairSculpt, type HairBrush } from '@people/gen/hairSculpt';
 import { coveredBy, fitRigid, makehumanBody, parseMakeHuman, pushOut, surfaceOf, tuckUnder, type MakeHumanMeta } from '@people/gen/makehuman';
 import { randomName } from '@people/gen/names';
 import { fitProxy, loadProxyItem } from '@people/body/proxy';
@@ -121,6 +122,9 @@ const times: Record<string, number> = {};
 /** The latest hair asked for: an older load that lands late is dropped. */
 let hairTicket = 0;
 let clothesTicket = 0;
+/** The hair being drawn, as a sculptable mesh. */
+let hairSculpt: HairSculpt | null = null;
+let stroke: { x: number; y: number; at: readonly number[]; brush: HairBrush; radius: number; strength: number; grab: { verts: number[]; weights: number[] } | null } | null = null;
 
 /** A triangle list without the triangles two or three of whose corners are hidden. */
 function hideFaces(index: Uint32Array, hidden: Uint8Array): Uint32Array {
@@ -228,7 +232,10 @@ function draw(p: PersonParams, live: boolean): void {
         const dm = fitProxy(item.pack, mhBody);
         const m = new Float32Array(dm.length);
         for (let i = 0; i < dm.length; i++) m[i] = dm[i]! * 0.1;
-        stage.proxies('hair', [{ item, positions: m, tint: h.colour }]);
+        // What was sculpted on this hair, rebuilt on this body.
+        const sculpt = new HairSculpt(h.style, m, item.pack.index, body(), h.sculpt);
+        hairSculpt = sculpt;
+        stage.proxies('hair', [{ item, positions: sculpt.positions, tint: h.colour, index: sculpt.index() }]);
       }).catch(() => { if (ticket === hairTicket) stage.proxies('hair', []); });
     }
   }
@@ -384,6 +391,41 @@ const creator = new Creator({
   measure: (p) => resolved(p),
   focus: (f) => stage.frame(f),
   pick: (x, y) => stage.pick(x, y),
+  sculptStart: (x, y, brush, radius, strength) => {
+    if (!hairSculpt) return false;
+    const at = stage.hairHit(x, y);
+    if (!at) return false;
+    stroke = { x, y, at, brush, radius, strength, grab: brush === 'comb' || brush === 'hook' ? hairSculpt.capture(at, radius) : null };
+    if (brush !== 'comb' && brush !== 'hook') {
+      hairSculpt.stroke(brush, at, radius, strength);
+      stage.setHairMesh(hairSculpt.positions, hairSculpt.index());
+    }
+    return true;
+  },
+  sculptMove: (x, y) => {
+    if (!stroke || !hairSculpt) return;
+    const s = stroke;
+    if (s.brush === 'comb' || s.brush === 'hook') {
+      // The hair under the brush follows the pointer, on the plane facing the camera.
+      const drag = stage.dragInBody(s.x, s.y, x, y, s.at);
+      hairSculpt.carry(s.grab!, drag, s.strength, s.brush === 'hook');
+      s.at = [s.at[0]! + drag[0], s.at[1]! + drag[1], s.at[2]! + drag[2]];
+    } else {
+      const at = stage.hairHit(x, y);
+      if (at) { hairSculpt.stroke(s.brush, at, s.radius, s.strength); s.at = at; }
+    }
+    s.x = x; s.y = y;
+    stage.setHairMesh(hairSculpt.positions, hairSculpt.index());
+  },
+  sculptEnd: () => {
+    stroke = null;
+    return hairSculpt ? hairSculpt.state() : null;
+  },
+  sculptMode: (on) => stage.sculptMode(on),
+  brushPixels: (x, y, radius) => {
+    const at = stage.hairHit(x, y);
+    return at ? stage.pixelsFor(radius, at) : null;
+  },
   portrait: () => stage.portrait(),
 }, document.getElementById('creator')!, canvas);
 
@@ -397,4 +439,4 @@ insets();
 window.addEventListener('resize', insets);
 
 // For probes: a known state without clicking.
-(window as unknown as { __hgen: object }).__hgen = { creator, stage, open: (c: string, p?: string) => creator.open(c, p) };
+(window as unknown as { __hgen: object }).__hgen = { creator, stage, open: (c: string, p?: string) => creator.open(c, p), sculpt: () => ({ hair: hairSculpt, stroke }) };

@@ -1,5 +1,5 @@
 import {
-  ACESFilmicToneMapping, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, DoubleSide, TextureLoader, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
+  ACESFilmicToneMapping, MOUSE, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, DoubleSide, TextureLoader, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
   NoColorSpace, PCFSoftShadowMap, PerspectiveCamera, Texture, type Material, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -150,9 +150,12 @@ export class CreatorStage {
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
-    this.controls.enablePan = false;
-    this.controls.minPolarAngle = 0.35;
-    this.controls.maxPolarAngle = 1.75;
+    // Free view: left turns, right moves the view sideways, the wheel comes closer.
+    this.controls.enablePan = true;
+    this.controls.screenSpacePanning = true;
+    this.controls.minPolarAngle = 0.05;
+    this.controls.maxPolarAngle = Math.PI - 0.05;
+    this.controls.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.PAN };
     // Drawn only when something changes (three.js manual, "Rendering on Demand").
     this.controls.addEventListener('change', () => this.redraw());
     this.controls.addEventListener('start', () => { this.glide = null; });
@@ -385,6 +388,66 @@ export class CreatorStage {
     this.setLayer(layer, meshes);
   }
 
+  /** The hair mesh under a canvas point: the hit in the body's frame, or null. */
+  hairHit(x: number, y: number): [number, number, number] | null {
+    const hair = this.layers.get('hair')?.find((m) => !(m.material instanceof ShaderMaterial));
+    if (!hair) return null;
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    const ray = new Raycaster();
+    ray.setFromCamera(new Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1), this.camera);
+    const hit = ray.intersectObject(hair, false)[0];
+    if (!hit) return null;
+    const p = this.worn.worldToLocal(hit.point.clone());
+    return [p.x, p.y, p.z];
+  }
+
+  /**
+   * How far a pointer move from (x0, y0) to (x1, y1) is in the body's frame,
+   * on the plane facing the camera through `at` (body frame).
+   */
+  dragInBody(x0: number, y0: number, x1: number, y1: number, at: readonly number[]): [number, number, number] {
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    const point = this.worn.localToWorld(new Vector3(at[0], at[1], at[2]));
+    const normal = this.camera.getWorldDirection(new Vector3());
+    const onPlane = (x: number, y: number): Vector3 => {
+      const ray = new Raycaster();
+      ray.setFromCamera(new Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1), this.camera);
+      const t = point.clone().sub(ray.ray.origin).dot(normal) / Math.max(1e-6, ray.ray.direction.dot(normal));
+      return ray.ray.origin.clone().addScaledVector(ray.ray.direction, t);
+    };
+    const a = this.worn.worldToLocal(onPlane(x0, y0)), b = this.worn.worldToLocal(onPlane(x1, y1));
+    return [b.x - a.x, b.y - a.y, b.z - a.z];
+  }
+
+  /** Pixels a length in the body's frame covers on screen at a point (the brush's circle). */
+  pixelsFor(length: number, at: readonly number[]): number {
+    const p = this.worn.localToWorld(new Vector3(at[0], at[1], at[2]));
+    const s = this.worn.getWorldScale(new Vector3()).x;
+    const d = p.distanceTo(this.camera.position);
+    return (length * s) / (2 * d * Math.tan((this.camera.fov * Math.PI) / 360)) * this.canvas.clientHeight;
+  }
+
+  /** Redraws the hair mesh from sculpted positions and triangles. */
+  setHairMesh(positions: Float32Array, index: Uint32Array): void {
+    const hair = this.layers.get('hair')?.find((m) => !(m.material instanceof ShaderMaterial));
+    if (!hair) return;
+    const g = hair.geometry;
+    (g.getAttribute('position') as BufferAttribute).copyArray(positions);
+    g.getAttribute('position').needsUpdate = true;
+    g.setIndex(new BufferAttribute(index, 1));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    this.redraw();
+  }
+
+  /** Lets the left button sculpt instead of turning the camera (the right still turns it). */
+  sculptMode(on: boolean): void {
+    // Sculpting: left sculpts, right turns, middle moves the view.
+    this.controls.mouseButtons = on
+      ? { LEFT: null as unknown as MOUSE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE }
+      : { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.PAN };
+  }
+
   /** Glasses and earrings, placed on this face. */
   accessories(g: GlassesParams, e: EarringParams, a: FaceAnchors): void {
     const v = (p: readonly number[]): Vector3 => new Vector3(p[0], p[1], p[2]);
@@ -482,8 +545,8 @@ export class CreatorStage {
     const { target, azimuth, half } = shot(focus, this.landmarks());
     const dist = half / Math.tan((this.camera.fov * Math.PI) / 360) * 1.08;
     const eye = new Vector3(target.x + Math.sin(azimuth) * dist, target.y + dist * 0.06, target.z + Math.cos(azimuth) * dist);
-    this.controls.minDistance = Math.min(0.25, dist * 0.5);
-    this.controls.maxDistance = 7;
+    this.controls.minDistance = 0.05;
+    this.controls.maxDistance = 12;
     if (glide) {
       this.glide = { from: [this.camera.position.clone(), this.controls.target.clone()], to: [eye, target], t0: performance.now() };
     } else {

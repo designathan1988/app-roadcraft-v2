@@ -116,6 +116,8 @@ export interface HairParams {
   readonly density: number;
   /** 0.5 .. 2: strand width. */
   readonly thickness: number;
+  /** What was sculpted on the hair mesh (`hairSculpt.ts`), kept with the person. */
+  readonly sculpt?: import('./hairSculpt').HairSculptState | null;
 }
 
 export interface BrowParams { readonly style: string; readonly colour: number; readonly thickness: number; readonly density: number; readonly length: number }

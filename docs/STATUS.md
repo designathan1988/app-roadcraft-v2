@@ -363,6 +363,20 @@ and they have seen it.
   on each face (`people/gen/accessories.ts`). Not yet:
   pose and animation, hats, cloth simulation (skirts are
   lofted, not draped).
+  2026-10-06 (later): hair and clothes are MakeHuman meshes, LIVE - the
+  strand groom and the clothes cut from the skin are gone from the page.
+  `scripts/register-makehuman.py` registers hm08 on the Vitruvian (nonrigid
+  ICP, helper shells carried on the body surface); `people/gen/makehuman.ts`
+  fits any of the 502 proxies (`fitProxy`), layers them (shoes, bottom,
+  boots, top; outer pushed out, inner tucked under and its covered faces
+  dropped), fits shoes rigidly at the foot (shaft follows the leg), hides
+  covered skin by ray (Auto Hide Mesh, ring kept round openings, shoes'
+  delete_verts). Galleries for hair, top, bottom, shoes; own or dyed colours.
+  Hair sculpting LIVE (`people/gen/hairSculpt.ts`, Hair > Sculpt): comb,
+  pull, lengthen, shorten, cut, volume, smooth; roots pinned, hair kept
+  within its length of its root and out of the body; saved with the person.
+  Free camera (pan, near zoom). Not yet: parametric hair/garment generation
+  on top of the library; heeled shoes pose the foot flat.
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as
