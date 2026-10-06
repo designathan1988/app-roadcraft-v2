@@ -80,6 +80,14 @@ export class BuildingStore {
     this.revision++;
   }
 
+  /** The same records as another store (they are never changed in place): `RoadDoc.clone`. */
+  shareFrom(source: BuildingStore): void {
+    this.items.clear();
+    for (const [id, b] of source.items) this.items.set(id, b);
+    this.ids = new IdAllocator(Math.max(this.ids.peek, source.ids.peek));
+    this.revision++;
+  }
+
   /** Keeps id allocation monotonic across a clone (see `RoadDoc.clone`). */
   copyAllocator(from: BuildingStore): void {
     this.ids = new IdAllocator(Math.max(this.ids.peek, from.ids.peek));
@@ -92,6 +100,8 @@ export class BuildingStore {
    */
   replaceWith(source: BuildingStore): void {
     this.ids = new IdAllocator(Math.max(this.ids.peek, source.ids.peek));
+    // The same records (a clone shares them, `shareFrom`): nothing to compare.
+    if (this.items.size === source.items.size && [...source.items].every(([id, b]) => this.items.get(id) === b)) return;
     if (JSON.stringify(this.toJSON()) === JSON.stringify(source.toJSON())) return;
     this.items.clear();
     for (const b of source.items.values()) this.items.set(b.id, cloneBuilding(b));

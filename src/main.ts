@@ -845,7 +845,9 @@ function serializedDoc(): string {
 }
 
 function mutateBuilt(fn: () => boolean): boolean {
+  const mutateAt = performance.now();
   const before = serializedDoc();
+  performance.measure('hitch:mutate/before', { start: mutateAt, end: performance.now() });
   if (!fn()) return false;
   // An edit that reports success without changing anything - the same lane
   // count, a split on an existing endpoint, a pole line traced over itself -
@@ -853,6 +855,7 @@ function mutateBuilt(fn: () => boolean): boolean {
   docText = null;
   if (before === serializedDoc()) return false;
   history.recordText(before);
+  performance.measure('hitch:mutate/edit+after', { start: mutateAt, end: performance.now() });
   // A pole or a wire moves `doc.utilityRevision`, not `doc.revision`: the
   // network is unchanged, and rebuilding it (and, behind it, the simulation
   // topology) cost about 330 ms per pole on a large map.

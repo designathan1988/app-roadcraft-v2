@@ -68,10 +68,15 @@ export function commitRoadPath(
     return { committed: false, reason: 'degenerate' };
   }
   pieces = joinShortPieces(pieces);
+  // Each step of a road drawn timed (`hitch:` entries, scripts/probe-hitches.mjs; docs/performance.md).
+  let lap = performance.now();
+  const timed = (what: string): void => { const now = performance.now(); performance.measure(`hitch:commit/${what}`, { start: lap, end: now }); lap = now; };
   const work = doc.clone();
+  timed('clone');
   const workNet = new Network(work);
   workNet.seedJunctions(net);
   workNet.rebuild();
+  timed('network');
   let committed = false;
   let heightLimited = false;
   let currentHeight = pieces[0]?.start.heightOffset ?? 0;
@@ -105,10 +110,13 @@ export function commitRoadPath(
     currentHeight = nextHeight;
     workNet.rebuild();
   }
+  timed('pieces');
   if (!committed) return { committed: false, reason: 'duplicate' };
   if (boreDeepCuts(doc, work, workNet)) workNet.rebuild();
+  timed('tunnels');
   doc.replaceWith(work);
   net.adopt(workNet);
+  timed('replace');
   return { committed: true, heightLimited, finalHeightOffset: currentHeight };
 }
 

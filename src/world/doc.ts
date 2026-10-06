@@ -816,7 +816,10 @@ export class RoadDoc {
    * clone so a failed operation never mutates the live document.
    */
   clone(): RoadDoc {
-    const copy = RoadDoc.fromJSON(this.toJSON(), { repair: false });
+    // The buildings are shared, not copied: their records are replaced, never
+    // changed in place. Copied through JSON, every road drawn copied every
+    // building in town twice (docs/performance.md #19).
+    const copy = RoadDoc.fromJSON(this.serialized(false), { repair: false, shareBuildings: this.buildings });
     copy.nodeIds = new IdAllocator(this.nodeIds.peek);
     copy.segIds = new IdAllocator(this.segIds.peek);
     copy.poleIds = new IdAllocator(this.poleIds.peek);
@@ -947,6 +950,11 @@ export class RoadDoc {
   // ------------------------------------------------------------ serialization
 
   toJSON(): SerializedDoc {
+    return this.serialized(true);
+  }
+
+  /** `toJSON`, the buildings left out when `withBuildings` is false (`clone` shares them). */
+  private serialized(withBuildings: boolean): SerializedDoc {
     return {
       version: 1,
       nodes: [...this.nodes.values()].map((n) => ({
@@ -988,7 +996,7 @@ export class RoadDoc {
       } : {}),
       // Only when there are any, so a map without buildings serialises
       // exactly as it did before buildings existed.
-      ...(this.buildings.size > 0 ? { buildings: this.buildings.toJSON() } : {}),
+      ...(withBuildings && this.buildings.size > 0 ? { buildings: this.buildings.toJSON() } : {}),
       ...(this.zones.length > 0 ? { zones: this.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })) } : {}),
       ...(this.zoneMarks.length > 0 ? { zoneMarks: this.zoneMarks.map((mark) => ({ ...mark })) } : {}),
       ...(this.lots.length > 0 || this.lotKeys.length > 0 ? {
@@ -1011,7 +1019,7 @@ export class RoadDoc {
    * and must come back EXACTLY (`repair: false`): merging there deleted a road
    * the player could see the next time they drew, undid or reloaded.
    */
-  static fromJSON(data: SerializedDoc, options: { readonly repair?: boolean } = {}): RoadDoc {
+  static fromJSON(data: SerializedDoc, options: { readonly repair?: boolean; readonly shareBuildings?: BuildingStore } = {}): RoadDoc {
     const repair = options.repair ?? true;
     const doc = new RoadDoc();
     const canonicalNode = new Map<number, NodeId>();
@@ -1135,7 +1143,8 @@ export class RoadDoc {
       doc.barrierIds.reserve(raw.id);
     }
     // Buildings, if the map has any; each one through `migrateBuilding`.
-    if (data.buildings) doc.buildings.load(data.buildings);
+    if (options.shareBuildings) doc.buildings.shareFrom(options.shareBuildings);
+    else if (data.buildings) doc.buildings.load(data.buildings);
     for (const zone of data.zones ?? []) {
       if (!Number.isInteger(zone.id) || zone.id < 1 || !isZoneUse(zone.use) || !isZoneDensity(zone.density)) continue;
       if (![zone.x0, zone.y0, zone.x1, zone.y1, zone.seed].every(Number.isFinite)) continue;
