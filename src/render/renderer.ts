@@ -262,6 +262,8 @@ export interface SceneHandle {
   shot(from: readonly [number, number, number], to: readonly [number, number, number]): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
+  /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
+  naturalTerrainHeightAt(x: number, y: number): number;
   /**
    * The top of what is drawn at a point: a deck where a road's casing covers
    * it, the terrain elsewhere. (`elevationAt` is the NEAREST road's height
@@ -1327,6 +1329,9 @@ export function createSceneRenderer(
     },
     terrainHeightAt(x, y) {
       return terrain.renderedHeightAt(x, y);
+    },
+    naturalTerrainHeightAt(x, y) {
+      return terrain.naturalRenderedHeightAt(x, y);
     },
     surfaceHeightAt(x, y) {
       const ground = terrain.renderedHeightAt(x, y);

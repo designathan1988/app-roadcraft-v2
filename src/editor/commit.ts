@@ -9,7 +9,7 @@ import {
 import { segSeg } from '@core/intersect';
 import { Polyline } from '@core/polyline';
 import { type Vec2, dist } from '@core/vec2';
-import { type RoadDoc, fitRoadCurve } from '@world/doc';
+import { type RoadDoc, fitRoadCurve, sameStamps } from '@world/doc';
 import { Network } from '@world/network';
 import type { NodeId, SegmentId } from '@world/ids';
 import { MIN_LINK_LENGTH } from '@world/approach';
@@ -63,6 +63,12 @@ export function commitRoadPath(
   lanes: number | null = null,
   /** Parking left and right of the drawing direction, for every segment laid. */
   parking?: SegmentParking,
+  /**
+   * The ground as already sampled for the roads' heights (the renderer's
+   * natural terrain); read analytically from the stamps without it, which
+   * cost 20 ms per road drawn in the default town (docs/performance.md #21).
+   */
+  ground?: (x: number, y: number) => number,
 ): DraftResult {
   if (!pieces.length || !Number.isInteger(type) || type < 0 || type >= ROAD_TYPES.length) {
     return { committed: false, reason: 'degenerate' };
@@ -112,7 +118,7 @@ export function commitRoadPath(
   }
   timed('pieces');
   if (!committed) return { committed: false, reason: 'duplicate' };
-  if (boreDeepCuts(doc, work, workNet)) workNet.rebuild();
+  if (boreDeepCuts(doc, work, workNet, ground)) workNet.rebuild();
   timed('tunnels');
   doc.replaceWith(work);
   net.adopt(workNet);
@@ -129,7 +135,14 @@ export function commitRoadPath(
  * (`render/structures.ts`), so the road reads as a cutting, a portal, a bore
  * and a portal - and only the roads this gesture made are touched.
  */
-function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network): boolean {
+/** The terrain's index as last built; a road edit does not move the land, so the next one reuses it. */
+let terrainIndex: TerrainIndex | null = null;
+function terrainIndexOf(doc: RoadDoc): TerrainIndex {
+  if (!terrainIndex || !sameStamps(terrainIndex.stamps, doc.terrainStamps)) terrainIndex = new TerrainIndex(doc.terrainStamps, 0);
+  return terrainIndex;
+}
+
+function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number): boolean {
   const fresh = [...work.segments.values()].filter((seg) => !before.segments.has(seg.id) && seg.structure === 'ground');
   if (!fresh.length || !work.terrainStamps.length) return false;
   // A cut that deep needs relief under the new roads, and the land is flat
@@ -147,8 +160,8 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network): boolean
     stamp.x + stamp.radius >= minX - margin && stamp.x - stamp.radius <= maxX + margin &&
     stamp.y + stamp.radius >= minY - margin && stamp.y - stamp.radius <= maxY + margin);
   if (!reached) return false;
-  const index = new TerrainIndex(work.terrainStamps, 0);
-  const ground = (x: number, y: number): number => sampleTerrainHeight(index, x, y);
+  const index = sampled ? null : terrainIndexOf(work);
+  const ground = sampled ?? ((x: number, y: number): number => sampleTerrainHeight(index!, x, y));
   const elevation = buildRoadElevation(workNet, ground);
   let changed = false;
   for (const seg of fresh) {

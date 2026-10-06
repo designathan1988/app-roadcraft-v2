@@ -2,6 +2,9 @@ import { IdAllocator } from '../ids';
 import { migrateBuilding, type SerializedBuilding } from './serialize';
 import { type Building, type BuildingId, asBuildingId, cloneBuilding } from './types';
 
+/** Each stored record's text (`BuildingStore.toText`). */
+const RECORD_TEXT = new WeakMap<Building, string>();
+
 /**
  * The document's buildings, with their own revision clock.
  *
@@ -68,6 +71,25 @@ export class BuildingStore {
     return [...this.items.values()].map((b) => cloneBuilding(b));
   }
 
+  /**
+   * `JSON.stringify(this.toJSON())`, each record's text written once: records
+   * are never changed in place (`put` stores a copy), and writing every
+   * furnished building again was most of the text the undo took on each road
+   * drawn (docs/performance.md #21).
+   */
+  toText(): string {
+    const parts: string[] = [];
+    for (const b of this.items.values()) {
+      let text = RECORD_TEXT.get(b);
+      if (text === undefined) {
+        text = JSON.stringify(cloneBuilding(b));
+        RECORD_TEXT.set(b, text);
+      }
+      parts.push(text);
+    }
+    return `[${parts.join(',')}]`;
+  }
+
   /** Loads stored buildings, repairing or dropping what cannot be read. */
   load(data: readonly unknown[] | undefined): void {
     this.items.clear();
@@ -102,7 +124,7 @@ export class BuildingStore {
     this.ids = new IdAllocator(Math.max(this.ids.peek, source.ids.peek));
     // The same records (a clone shares them, `shareFrom`): nothing to compare.
     if (this.items.size === source.items.size && [...source.items].every(([id, b]) => this.items.get(id) === b)) return;
-    if (JSON.stringify(this.toJSON()) === JSON.stringify(source.toJSON())) return;
+    if (this.toText() === source.toText()) return;
     this.items.clear();
     for (const b of source.items.values()) this.items.set(b.id, cloneBuilding(b));
     this.revision++;

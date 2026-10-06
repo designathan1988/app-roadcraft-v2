@@ -1822,7 +1822,8 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   let result: ReturnType<typeof commitRoadPath> = { committed: false };
   mutate(() => {
     const before = new Set(doc.segments.keys());
-    result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking());
+    result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking(),
+      (x, y) => scene.naturalTerrainHeightAt(x, y));
     // A chosen total width (Vias > Largura): the segments just laid take it.
     const roadWidthMetres = roadWidth();
     if (result.committed && roadWidthMetres !== null) {

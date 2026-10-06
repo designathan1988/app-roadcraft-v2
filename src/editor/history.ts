@@ -102,7 +102,7 @@ export class History {
 
 /** A document as the text the history keeps. */
 export function serialize(doc: RoadDoc): string {
-  return JSON.stringify(doc.toJSON());
+  return doc.toText();
 }
 
 function sum(values: readonly number[]): number {

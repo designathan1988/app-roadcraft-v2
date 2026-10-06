@@ -58,6 +58,7 @@ Cuidados ao ler os números:
 | 18 | Fachadas de cada prédio recalculadas por plataformas, portas, assinatura e malhas | toda edição | um prédio grande: ~70 ms numa fatia | **CORRIGIDO** (uma vez por registro) |
 | 19 | Cópia de trabalho do documento por JSON, prédios inclusos, e comparação por JSON | toda via desenhada | cópia 13 ms + volta 20 ms na vila | **CORRIGIDO** (prédios compartilhados: 1 + 2 ms) |
 | 20 | `world.clear()` apagava muros, transporte, jardins e floresta a cada via | toda edição de via | sumiam da tela (defeito introduzido em 4c2f36a) | **CORRIGIDO** (a troca remove só o que substitui) |
+| 21 | Clique que grava a via: mapa inteiro escrito como texto, túnel testado com o chão analítico | toda via desenhada | 58–95 ms por clique na vila | **CORRIGIDO** (texto por prédio guardado; chão já amostrado: 14–26 ms) |
 | 22 | Gravação automática serializava o mapa inteiro 700 ms depois de cada edição | toda edição | tarefa de 83 ms (trace) | **CORRIGIDO** (reaproveita o texto do desfazer) |
 | 23 | `surfaces()` unia os quatro níveis do mapa para devolver um (calçadas, postes, verge) | toda edição | 4× o trabalho de união | **CORRIGIDO** (`levelPolygons` do nível usado) |
 | 24 | Rig de cada classe de corpo montado quando o primeiro pedestre da classe chegava | primeiros pedestres | 58–105 ms × 8 | **CORRIGIDO** (os 8 preparados ao abrir o mapa, um por vez) |
@@ -285,11 +286,28 @@ emitidos ~6 ms por quadro e as células alteradas montadas uma por fatia
 Estruturas, cenário, postes, mobiliário e placas ainda são refeitos no mapa
 inteiro a cada via (agora fora do quadro da edição, em fatias). Baratos hoje.
 
-## 21. O clique que grava a via — REDUZIDO
+## 21. O clique que grava a via — CORRIGIDO
 
-Medido na vila (`hitch:mutate`, `hitch:commit`): 95 → ~60 ms. Restam o
-`boreDeepCuts` (19 ms: resolve as alturas da rede inteira para testar as vias
-novas, o que o renderer refaz em seguida) e o texto do desfazer (~9 ms).
+Medido na vila (`hitch:mutate`, `hitch:commit`, 6 vias seguidas): 95 → 14–26 ms,
+dentro de um quadro. Três trabalhos que não deviam acontecer:
+
+- **Texto do desfazer.** Cada edição escrevia o mapa inteiro como texto (~9 ms),
+  quase tudo prédios que não mudaram. Os registros de prédio nunca mudam no
+  lugar (`put` guarda uma cópia), então o texto de cada um é escrito uma vez e
+  guardado por registro (`world/buildings/store.ts` `toText`,
+  `world/doc.ts` `toText`): agora ~1 ms. Mesmo texto, caractere por caractere.
+- **Teste de túnel com o chão analítico.** `editor/commit.ts` `boreDeepCuts`
+  resolvia as alturas da rede inteira lendo o chão carimbo a carimbo (22 ms).
+  Agora lê o chão já amostrado que o renderer usa para as mesmas alturas
+  (`SceneHandle.naturalTerrainHeightAt`, passado pelo `main.ts`): 5–10 ms. Só
+  roda se algum carimbo de terreno alcança as vias novas.
+- **Índice do terreno refeito a cada via.** Guardado enquanto os carimbos são os
+  mesmos (`sameStamps`).
+
+**Proteção.** `tests/world/docText.spec.ts` (o texto é exatamente
+`JSON.stringify(toJSON())` na vila, depois de mexer em prédios e vias, numa cópia
+e num documento recarregado); os testes do editor seguem cobrindo o túnel com o
+chão analítico.
 
 ## 14. Biblioteca de animações em cache fraco — CORRIGIDO
 

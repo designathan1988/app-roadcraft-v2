@@ -953,6 +953,23 @@ export class RoadDoc {
     return this.serialized(true);
   }
 
+  /**
+   * `JSON.stringify(this.toJSON())`, the same text, with the buildings' text
+   * kept per record (`BuildingStore.toText`) instead of written again.
+   */
+  toText(): string {
+    if (this.buildings.size === 0) return JSON.stringify(this.serialized(false));
+    // The keys in `toJSON`'s order: those before the buildings, the buildings,
+    // those after.
+    const head: Record<string, unknown> = {};
+    const tail: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(this.serialized(false))) {
+      (AFTER_BUILDINGS.has(key) ? tail : head)[key] = value;
+    }
+    const after = JSON.stringify(tail);
+    return `${JSON.stringify(head).slice(0, -1)},"buildings":${this.buildings.toText()}${after === '{}' ? '' : `,${after.slice(1, -1)}`}}`;
+  }
+
   /** `toJSON`, the buildings left out when `withBuildings` is false (`clone` shares them). */
   private serialized(withBuildings: boolean): SerializedDoc {
     return {
@@ -1312,7 +1329,11 @@ function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
-function sameStamps(a: readonly TerrainStamp[], b: readonly TerrainStamp[]): boolean {
+/** `toJSON`'s keys written after the buildings (`RoadDoc.toText`). */
+const AFTER_BUILDINGS = new Set(['zones', 'zoneMarks', 'lots', 'lotKeys', 'people', 'transit']);
+
+/** Two stamp lists that shape the same land (stamp by stamp, field by field). */
+export function sameStamps(a: readonly TerrainStamp[], b: readonly TerrainStamp[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const p = a[i] as TerrainStamp;
