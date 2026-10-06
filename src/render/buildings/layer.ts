@@ -36,6 +36,8 @@ export interface BuildingLayer {
   readonly triangles: number;
   /** Bumped whenever the stored buildings are rebuilt. */
   readonly version: number;
+  /** A change is still being emitted (`update` keeps the town as it was until it is done). */
+  readonly pending: boolean;
   /**
    * Rebuilds what is stale. Returns true if the stored buildings were rebuilt.
    * `pavedAt` is the paving (footways, carriageways) entrances open onto.
@@ -112,6 +114,8 @@ export function createBuildingLayer(): BuildingLayer {
   let dimmed: BuildingId | null | undefined = undefined;
   let ghost: BuildingMeshes | null = null;
   let storedKey = '';
+  /** The buildings of a change being emitted ahead of the cells, a slice a frame. */
+  let warming: { key: string; queue: Building[]; at: number } | null = null;
   let ghostKey = '';
   let preview: BuildingPreviewInput | null = null;
   let cutaway: CutawaySpec | null = null;
@@ -227,6 +231,9 @@ export function createBuildingLayer(): BuildingLayer {
     get version() {
       return version;
     },
+    get pending() {
+      return warming !== null;
+    },
     kit,
     chunkOf(b) {
       if (!lastGround) return null;
@@ -243,6 +250,23 @@ export function createBuildingLayer(): BuildingLayer {
         : 'whole';
       const key = `${doc.buildings.revision}|${groundKey}|${hides}|${dimKey}|${cutKey}|${[...ruined].join(',')}`;
       let rebuilt = false;
+      // The buildings an edit changed (or whose ground it moved) are emitted a
+      // few milliseconds a frame first, the town as it was staying drawn; the
+      // cells are put together once every one is ready - a copy of what is
+      // made. Emitted in the frame of the edit, they and the cells were a
+      // stall of 100-500 ms when a road took buildings away or reshaped the
+      // ground beside them (docs/performance.md #16).
+      if (key !== storedKey && stored && dimmed === undefined && !cutaway) {
+        if (!warming || warming.key !== key) {
+          warming = { key, queue: [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id)), at: 0 };
+        }
+        const until = performance.now() + WARM_SLICE_MS;
+        while (warming.at < warming.queue.length && performance.now() < until) {
+          drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);
+        }
+        if (warming.at < warming.queue.length) return false;
+      }
+      warming = null;
       if (key !== storedKey) {
         storedKey = key;
         for (const batch of [stored, details, faded]) {
@@ -367,6 +391,8 @@ function groundDigest(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): strin
   }
   return out;
 }
+/** Milliseconds a frame spent emitting the buildings of a change (`update`). */
+const WARM_SLICE_MS = 6;
 /** Side of the cells the buildings are batched in, world units. */
 const BATCH_CELL = m(240);
 const DETAIL_CELL = m(120);

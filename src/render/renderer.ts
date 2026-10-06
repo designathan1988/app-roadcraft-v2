@@ -1607,8 +1607,11 @@ export function createSceneRenderer(
       // Only when the ground changed under some building, and then each building
       // samples its ground again only if a change reached its own bank.
       if (!stroking && onGround.buildings.stale('', buildingsAreaOf(net.doc))) buildingGround = String(groundChanges.version);
-      if (!buildingsHeld) buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
-        (b, since) => groundChanges.touches(Number(since), bankBox(b)));
+      if (!buildingsHeld) {
+        buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
+          (b, since) => groundChanges.touches(Number(since), bankBox(b)));
+        if (buildings.pending) onAssetsReady();
+      }
       // The plants under a building's footprints: on the scenery and the buildings alone.
       const siteKey = String(net.doc.buildings.revision);
       if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== siteKey)) {
