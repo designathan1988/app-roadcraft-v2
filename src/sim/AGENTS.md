@@ -11,8 +11,7 @@ breaks far from where you edit in `sim/`.
 - `?agents=0`: the People engine, `sim/people/people.ts` (ORCA locomotion,
   `orca.ts`, navmesh `nav.ts`), with the old diaries and kerb cars.
 - `?people=crowd`: the Detour crowd engine, `sim/people/crowd.ts` and
-  `crowdNav.ts` (Recast/Detour). Its state and rules are in
-  `docs/handoff/people-crowd.md` and the skill `.agents/skills/roadcraft-people-crowd/`.
+  `crowdNav.ts` (Recast/Detour).
 - `?peds=legacy`: the old sidewalk-graph model, `sim/peds/`, kept for comparison
   and still installed by `simOf` in the traffic suites.
 
@@ -89,6 +88,3 @@ run (their decision of 2026-10-04); spend no more work on them.
   tick's displacement made every sidestep swing the body (the zigzag) and turned
   a standing person round on still legs. The heading follows the path through a
   turn rate and holds while standing; the renderer steps the feet round.
-- **Rejected approaches are recorded** in `docs/handoff/people-crowd.md` and in
-  the research notes under `docs/research/`. Read them before retrying an idea
-  for pedestrian motion.

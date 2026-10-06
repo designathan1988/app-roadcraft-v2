@@ -5,16 +5,13 @@ the player's standing decisions. Every session reads it at the start of a task a
 rewrites its own area's lines when they change (no appended logs; git keeps the
 history). Rules of work are in `AGENTS.md`, not here.
 
-Last full rewrite: 2026-10-04 19:10, from the agents' memories and the sessions
-then running. Live build: `master` at ef567e3, served on http://127.0.0.1:4180 (rebuilt 2026-10-05 02:10).
+Last full rewrite: 2026-10-04 19:10; old docs, handoffs and audits removed 2026-10-05.
 
 ## Who works here
 
 One Claude session works on this repository at a time (the player, 2026-10-04),
-on `master` in `C:/Codex-Shared/Road`. The Codex handoff of 2026-10-01 ended on
-2026-10-02 (`docs/handoff/` is history); old branches on the remote
-(`codex/performance-audit`, `codex/stages-b`, `perf-audit-followup`) are unmerged:
-ask the player before merging any of them.
+on `master` in `C:/Codex-Shared/Roadcraft`, pushed to `origin`
+(github.com/designathan1988/app-roadcraft-v2, branch `master`).
 
 **Work under way:** the agents engine (GTA + The Sims; not LLM agents, the
 player's decision of 2026-10-04): every resident a persistent agent with their
@@ -47,8 +44,7 @@ and they have seen it.
   keep, a crowd leaving one building coming out one after another. Measured:
   `tests/sim/agents/walk.spec.ts` (default town, 17:00, 150 s: 211 walks, 0
   jumps, 0 backward, 0 slides, longest hold 6.8 s, kerb waits up to one
-  signal cycle). Photos: `scripts/walk-shots.mjs`
-  (`docs/audit/2026-10-05/walk/`).
+  signal cycle). Photos: `scripts/walk-shots.mjs`.
 - **Slice 4, LIVE** (2026-10-05): a car owner keeps their car in the lot
   behind their building or, failing that, in the free bay nearest their door
   within a minute's walk (a lot down the street or a kerb bay); with no bay
@@ -58,11 +54,10 @@ and they have seen it.
   street with its parking lanes: 761 buildings, 2004 residents, 580 cars
   (was 80 with no street parking). A kerb bay whose joining point falls behind
   it (near a street's end) is not used: the car would turn on the spot.
-  Photos: `docs/audit/2026-10-05/new-town/`.
 - **Cars and walkers on the footway, LIVE (default since slice 5)** (2026-10-05):
   a car leaving or entering a lot crosses the footway square in front of the
   lot's edge (it used to run metres along it to a joining point kept clear of
-  the junction, `docs/audit/2026-10-05/stuck-plan.png`); it takes the ground of
+  the junction); it takes the ground of
   the rest of its manoeuvre in turn with the people, as a zebra is taken
   (`OwnCars.holdWay`): it waits until nobody is on it or about to step on, then
   drives it without stopping, the walkers keeping off it, those already on it
@@ -94,8 +89,7 @@ and they have seen it.
   the game's own interface (`ui/insideBar.ts`). `CityLife.skip` no longer runs
   needs down for the hours skipped. Measured: `tests/sim/agents/activities.spec.ts`
   (03:00: 1110 asleep; 09:30: workers at posts; evening: 20+ different doings;
-  no piece held by two). Photos: `scripts/life-shots.mjs`
-  (`docs/audit/2026-10-05/life/`). Not yet: a walk across town takes game
+  no piece held by two). Photos: `scripts/life-shots.mjs`. Not yet: a walk across town takes game
   hours (20x time, 1.34 m/s), so fewer reach work than are due.
 - **A person in the player's hands (GTA), LIVE** (2026-10-05): the agent
   card's Control button takes any resident (walking, driving, or inside a
@@ -109,7 +103,7 @@ and they have seen it.
   put stars on (GTA's wanted level); out of sight they go one by one; the
   residents on duty at the police stations run after the player and arrest
   them on foot. Children do not drive. Measured: `tests/sim/agents/player.spec.ts`;
-  photos: `scripts/player-shots.mjs` (`docs/audit/2026-10-05/player/`). E by
+  photos: `scripts/player-shots.mjs`. E by
   a door (nearer than any car) takes them in: they are in the building as
   anybody there, doing what it is for (shopping at a supermarket, dining at a
   restaurant, at the bank's counter, paying at a bakery, a sofa at a home),
@@ -135,7 +129,7 @@ and they have seen it.
   at the kerb with the line's colour, trains in their line's colour.
   Measured: `tests/sim/transit/transit.spec.ts` (buses serve stop after stop,
   trains stand at stations, residents carried, nobody and no vehicle inside a
-  train). Photos: `scripts/transit-shots.mjs` (`docs/audit/2026-10-05/transit/`).
+  train). Photos: `scripts/transit-shots.mjs`.
   Not yet: transfers between lines, fares, trains with windows.
   Rails near a junction: traffic waits for the junction before the track,
   never on it (`TransitSim.crossingNearEnd`, used by `vehicles/obstacles.ts`
@@ -153,7 +147,7 @@ and they have seen it.
   onibus", "Dirigindo o onibus da linha N"). Measured:
   `tests/sim/agents/jobs.spec.ts` (nannies at the family home doing childcare,
   cleaning, cooking) and `tests/sim/transit/transit.spec.ts` (buses driven by
-  residents). Photo: `docs/audit/2026-10-05/transit/05-bus-driver-card.png`.
+  residents).
   Not yet: train and metro drivers, taxi drivers, a photo of a nanny indoors.
 - **Crime in the streets and the police, LIVE** (2026-10-05): one adult in
   25 is a thief (`sim/agents/crime.ts`). From 13:00 to 23:00 a thief leaves
@@ -183,7 +177,7 @@ and they have seen it.
   `bike`); clicking the bicycle opens their card ("De bicicleta ate ...").
   Measured: `tests/sim/agents/cycleLane.spec.ts` (bicycles in the band, cars
   pass them, no overlap, residents ride and get off). Photos:
-  `scripts/cycle-shots.mjs` and the app (`docs/audit/2026-10-05/cycle/`).
+  `scripts/cycle-shots.mjs` and the app.
   Not yet: two-way cycle tracks, bicycle parking, bicycles at give-way
   priority over turning cars.
 - **By design, not missing:** every person on the streets is a resident (no
@@ -194,7 +188,7 @@ and they have seen it.
   places for walkers (nobody walks over open ground).
 - **Slice 5, LIVE by default** (2026-10-05): the game runs the agents with no
   flag; `?agents=0` (or `?people=crowd`, `?peds=legacy`) brings back the old
-  engines. Photographed with no flag: `docs/audit/2026-10-05/default/`.
+  engines.
 - **Next:** People, the Detour crowd flag and `sim/peds` deleted once the
   player has seen the agents and says so.
 
@@ -327,15 +321,6 @@ and they have seen it.
   After hair: the player's full list for faces (eyes, lids, lashes, brows,
   skin, mouth, teeth, expressions, variety) is open.
 
-- **Crowd engine (`?people=crowd`) after the grid:** the furnishing zone now
-  starts 36 cm from the kerb FACE whatever the stone's width (`section.ts`
-  `EDGE_ZONE`, NACTO's edge zone), and the scenarios' fixed places follow the
-  urban footway (`tests/fixtures/crowdScenarios.ts`). Still failing:
-  `release-both` (6 ticks of sliding over 90 s, after the urban street went
-  from 8.8 to 8 m), besides `crowd` and `bidirectional-dense` (failing before)
-  and `post` (fails since ef567e3). The engine is to be replaced (agents
-  slice 3); the default People engine is not affected.
-
 - **Planet (the world as a real sphere): put aside on branch `planeta`
   (2026-10-05, the player's decision).** The game is the flat city again;
   `master` has no planet page. The branch holds `planet.html` and
@@ -381,10 +366,6 @@ and they have seen it.
   simulation in a worker and animation shared per skeleton.
 - **Tests known red before any recent change:** `tests/world/walkways.spec.ts` (8
   failures); `tests/sim/kerbStops.spec.ts` takes over 200 s.
-- **The 14-stage plan of 2026-10-01** (`docs/handoff/master-plan.md`): stage 0 done
-  (1c431c3); stage 1 partly (`section.ts`, `walkways.ts`). Work since 2026-10-02
-  has followed the player's direct orders instead; ask the player before resuming
-  it in order.
 
 ## The player's standing decisions
 
@@ -404,15 +385,7 @@ and they have seen it.
 
 ## This machine
 
-- The player's game: `vite preview` of `C:/Codex-Shared/road-play-dist` on 4180,
-  built with `npx vite build --outDir C:/Codex-Shared/road-play-dist --emptyOutDir`
-  from a clean worktree of HEAD (junction `node_modules`, and copy `cooked/` and
-  `public/models/people` from the main tree, or the cook fingerprint fails).
 - The player's data on 127.0.0.1 storage is theirs; test on another origin
   (localhost) and never overwrite it.
 - Headless Chrome renders on the Intel UHD 770; the player has an RTX 3060 and an
   i9-12900K. A visible slowdown that only the player sees: check `chrome://gpu`.
-- Old scratch files (root `zz-*`, `.claude/_*`, untracked `zz*` scripts and specs)
-  were moved on 2026-10-04 to `C:/Codex-Shared/Road-archive/2026-10-04/`, with the
-  same relative paths. Superseded agent memories are in the memory folder's
-  `archive/`.

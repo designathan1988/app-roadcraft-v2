@@ -4,8 +4,6 @@ A 3D road-building and traffic-simulation game that runs in the
 browser. Draw a road network onto terrain you can sculpt, and watch a continuous
 traffic simulation adapt to every edit.
 
-![A city grid on edited terrain](docs/screenshots/city-on-edited-terrain.jpg)
-
 ---
 
 ## Quick start
@@ -18,7 +16,7 @@ npm run dev
 Open the URL Vite prints. No build step. Every texture is generated
 procedurally at start-up; the one downloaded asset is the citizen roster
 (80 rigged Microsoft Rocketbox bodies, about 65 MB, fetched as they first
-appear) and its motion library (about 4 MB), see [docs/pedestrians.md](docs/pedestrians.md).
+appear) and its motion library (about 4 MB).
 
 Requires Node 22 or newer and a browser with WebGL 2.
 
@@ -49,8 +47,7 @@ from the top bar; it defaults to the browser's own language.
 The selector in the top bar offers **Automatic**, **Low**, **Medium**, **High**
 and **Ultra**. Automatic starts at High and steps down if the measured frame time
 says the machine cannot hold it — and back up if it can. What each tier changes
-is a single table in [`src/render/quality.ts`](src/render/quality.ts), described
-in [docs/performance.md](docs/performance.md).
+is a single table in [`src/render/quality.ts`](src/render/quality.ts).
 
 ---
 
@@ -74,22 +71,7 @@ in [docs/performance.md](docs/performance.md).
 Start with **[AGENTS.md](AGENTS.md)** — it is the map: where every system lives,
 what depends on what, and which invariants must not be broken.
 
-| Document | What it covers |
-|---|---|
-| [docs/architecture.md](docs/architecture.md) | The layers, the data flow, the revision gates |
-| [docs/folder-structure.md](docs/folder-structure.md) | Every folder and what it is responsible for |
-| [docs/terrain.md](docs/terrain.md) | The height field, brushes, rivers, the terrain mesh |
-| [docs/road-system.md](docs/road-system.md) | Classes, widths, ribbons, surface bands, markings |
-| [docs/elevation.md](docs/elevation.md) | How every road surface gets its height — the keystone |
-| [docs/intersections.md](docs/intersections.md) | Junction geometry and how structures connect |
-| [docs/mesh-generation.md](docs/mesh-generation.md) | Polygon → triangles, without cracks or explosions |
-| [docs/rendering.md](docs/rendering.md) | The scene graph, the rebuild contract, post-processing |
-| [docs/materials-textures.md](docs/materials-textures.md) | Procedural texture baking and material set-up |
-| [docs/lighting.md](docs/lighting.md) | Sun, sky, shadows, fog, environment |
-| [docs/performance.md](docs/performance.md) | Where the time goes and what keeps it bounded |
-| [docs/i18n.md](docs/i18n.md) | Adding a string, adding a language |
-| [docs/testing.md](docs/testing.md) | What is tested, how, and what to run |
-| [CHANGELOG.md](CHANGELOG.md) | What changed in this revision and why |
+What is live in the game and what is open is in [docs/STATUS.md](docs/STATUS.md).
 
 ---
 
@@ -125,7 +107,7 @@ src/
   main.ts    wiring, input handling, the frame loop
 tests/       vitest suites, mirroring src/
 scripts/     verify-visual.mjs — the browser-driven scene check
-docs/        the documentation listed above
+docs/        STATUS.md: what is live and what is open
 ```
 
 ---
