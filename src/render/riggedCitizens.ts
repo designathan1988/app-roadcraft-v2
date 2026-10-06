@@ -3,6 +3,7 @@ import {
   Matrix4, MeshDepthMaterial, MeshStandardMaterial, Object3D, Quaternion, RGBAFormat,
   RGBADepthPacking, SkinnedMesh, Texture, Vector3, type BufferAttribute,
 } from 'three';
+import { PIXAR, REALISTIC, cartoonBody, styleFor, type CartoonStyle } from './people/cartoon';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { personHash, type PartyView, type PedView } from '@sim/people/view';
 import { DT } from '@sim/params';
@@ -311,8 +312,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   async function personAsset(model: CitizenModel, fresh = false,
     owned: Set<{ dispose(): void }> = resources): Promise<GLTF> {
     const person = model.person!;
-    // Cooked ahead (`cookedPerson.ts`, `npm run cook:people`): read back, not built.
-    const cooked = fresh ? null : await loadCookedPerson(model.id);
+    // Cooked ahead (`cookedPerson.ts`, `npm run cook:people`): read back, not
+    // built - the realistic bodies; an animated film's are built here.
+    const style = peopleStyle();
+    const cooked = fresh || style !== REALISTIC ? null : await loadCookedPerson(model.id);
     if (cooked) {
       let mesh: SkinnedMesh | undefined;
       cooked.traverse((o) => { if (o instanceof SkinnedMesh && !mesh) mesh = o; });
@@ -336,7 +339,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       proxies,
       texturedSkin: true,
       data: people.mesh, skeleton: people.skeleton, bodyRange: people.bodyRange,
-      positions: morpher.shape(person.body, person.features), look: person.look,
+      positions: cartoonBody(morpher.shape(person.body, person.features), people.mesh, styleFor(style, person.id)), look: person.look,
       capture: captureBind(model.gender === 'f' ? 'female' : 'male'), captureAxes: captureBindRotations(model.gender === 'f' ? 'female' : 'male'),
     };
     await personSimplifier;
@@ -1076,4 +1079,18 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       releaseIdleBakeWorkers();
     },
   };
+}
+
+/**
+ * The people's style: realistic, or as an animated film draws them
+ * (`people/cartoon.ts`). Chosen with `?style=pixar` or kept in
+ * `roadcraft.peopleStyle`; realistic otherwise.
+ */
+export function peopleStyle(): CartoonStyle {
+  try {
+    const asked = new URLSearchParams(location.search).get('style') ?? localStorage.getItem('roadcraft.peopleStyle');
+    return asked === 'pixar' ? PIXAR : REALISTIC;
+  } catch {
+    return REALISTIC;
+  }
 }
