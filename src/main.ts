@@ -1902,6 +1902,48 @@ function currentPolePlan(): PoleRunPlan | null {
   return null;
 }
 
+/** The segments there were before the road being committed (`commitRoadGesture`), for the grid's blink. */
+let laidNow: ReadonlySet<SegmentId> = new Set();
+/**
+ * The grid's cells under the roads just laid blink, and those round them
+ * follow (`SceneHandle.flashGrid`): every cell the road's paving crosses,
+ * then rings of neighbours out to three cells.
+ */
+function flashLaidCells(before: ReadonlySet<SegmentId>): void {
+  if (!roadGridShown()) return;
+  const hit = new Set<string>();
+  for (const id of doc.segments.keys()) {
+    if (before.has(id)) continue;
+    const seg = doc.segment(id);
+    if (!seg) continue;
+    const line = net.polylines.get(doc, id);
+    const half = halfWidth(roadType(seg.type), Level.Sidewalk);
+    for (let s = 0; s <= line.length; s += m(1)) {
+      const f = line.sampleAt(Math.min(s, line.length));
+      for (let o = -half; o <= half; o += m(1)) {
+        hit.add(`${Math.floor((f.p.x + f.n.x * o) / GRID_CELL)},${Math.floor((f.p.y + f.n.y * o) / GRID_CELL)}`);
+      }
+    }
+  }
+  if (!hit.size) return;
+  const ring = new Map<string, number>([...hit].map((k) => [k, 0]));
+  let edge = [...hit];
+  for (let r = 1; r <= 3; r++) {
+    const next: string[] = [];
+    for (const k of edge) {
+      const [i, j] = k.split(',').map(Number) as [number, number];
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+        const nk = `${i + di},${j + dj}`;
+        if (!ring.has(nk)) { ring.set(nk, r); next.push(nk); }
+      }
+    }
+    edge = next;
+  }
+  scene.flashGrid([...ring].map(([k, r]) => {
+    const [i, j] = k.split(',').map(Number) as [number, number];
+    return { x: i * GRID_CELL, y: j * GRID_CELL, ring: r };
+  }));
+}
 /**
  * The road just committed, drawn as its preview was until the world with it
  * is built (a few frames, `SceneHandle.worldBusy`): the world is built in
@@ -1918,6 +1960,7 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   let result: ReturnType<typeof commitRoadPath> = { committed: false };
   mutate(() => {
     const before = new Set(doc.segments.keys());
+    laidNow = before;
     result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking(),
       (x, y) => scene.naturalTerrainHeightAt(x, y));
     if (result.elevation) scene.offerElevation(result.elevation, net.revision);
@@ -1947,6 +1990,7 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   roadHeightEdited = false;
   updateRoadHeightValue();
   if (result.heightLimited) flashHint('hint.road.gradeLimited');
+  flashLaidCells(laidNow);
   return true;
 }
 

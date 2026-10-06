@@ -11,6 +11,9 @@ import {
   Line,
   LineBasicMaterial,
   LineSegments,
+  ShaderMaterial,
+  AdditiveBlending,
+  DoubleSide,
   Float32BufferAttribute,
   Color,
   Quaternion,
@@ -277,6 +280,13 @@ export interface SceneHandle {
   terrainHeightAt(x: number, y: number): number;
   /** The universal grid (`world/grid.ts`) drawn over the whole map, on the ground, or not. */
   setGrid(on: boolean): void;
+  /**
+   * The grid's cells a road was just laid over light up and fade back, a
+   * blink; the cells round them follow a little later and fainter, by `ring`
+   * (0 the cells under the road, 1 next to them, ...). Cells by their lower
+   * corner, world units.
+   */
+  flashGrid(cells: readonly { x: number; y: number; ring: number }[]): void;
   /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
   naturalTerrainHeightAt(x: number, y: number): number;
   /**
@@ -410,7 +420,10 @@ export function createSceneRenderer(
   grid.visible = false;
   grid.renderOrder = 5;
   let gridWanted = false;
+  /** The blinks of cells under a road just laid (`flashGrid`), until each has faded. */
+  const gridFlashes: { mesh: Mesh; material: ShaderMaterial; start: number; end: number }[] = [];
   let gridBuiltFor = '';
+  let gridBuiltAt = 0;
   /** Behind the map while building it (`draw`): a plain dark blue. */
   const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
@@ -1408,12 +1421,55 @@ export function createSceneRenderer(
     holdBuildings(on) {
       buildingsHeld = on;
     },
+    flashGrid(cells) {
+      if (!cells.length) return;
+      const pos: number[] = [], ring: number[] = [];
+      const lift = m(0.3), sub = 4, d = GRID_CELL / sub;
+      for (const c of cells) {
+        // Each cell in 4 x 4 pieces on the ground, so it bends with it.
+        for (let i = 0; i < sub; i++) for (let j = 0; j < sub; j++) {
+          const x0 = c.x + i * d, y0 = c.y + j * d, x1 = x0 + d, y1 = y0 + d;
+          const v = (x: number, y: number): void => { pos.push(x, terrain.renderedHeightAt(x, y) + lift, -y); ring.push(c.ring); };
+          v(x0, y0); v(x1, y0); v(x1, y1); v(x0, y0); v(x1, y1); v(x0, y1);
+        }
+      }
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
+      geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
+      const material = new ShaderMaterial({
+        uniforms: { uTime: { value: 0 } },
+        vertexShader: `attribute float aRing; varying float vRing;
+          void main() { vRing = aRing; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform float uTime; varying float vRing;
+          void main() {
+            float t = uTime - vRing * 0.09;
+            float a = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.1, 0.75, t)) * (vRing < 0.5 ? 0.55 : 0.32 / vRing);
+            if (a <= 0.001) discard;
+            gl_FragColor = vec4(0.62, 0.95, 1.0, a);
+          }`,
+        transparent: true, depthWrite: false, side: DoubleSide, blending: AdditiveBlending,
+      });
+      const mesh = new Mesh(geometry, material);
+      mesh.name = 'grid-flash';
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 6;
+      scene.add(mesh);
+      const rings = Math.max(...cells.map((c) => c.ring));
+      gridFlashes.push({ mesh, material, start: performance.now(), end: 0.8 + rings * 0.09 });
+      onAssetsReady();
+    },
     setGrid(on) {
       gridWanted = on;
-      if (on && gridBuiltFor !== `${terrainRevision}`) {
+      // The ground moves under every road laid or removed (cut and filled to
+      // it), not only under the brush: the lines are laid on it again then,
+      // at most a few times a second (left as they were, a road removed left
+      // the ground over them, the player saw no lines there).
+      const groundKey = `${terrainRevision}:${groundChanges.version}`;
+      if (on && gridBuiltFor !== groundKey && performance.now() - gridBuiltAt > 300) {
+        gridBuiltAt = performance.now();
         // The cells' lines over the whole map, sampled every cell on the
         // ground as drawn: built again only when the land changes.
-        gridBuiltFor = `${terrainRevision}`;
+        gridBuiltFor = groundKey;
         const pos: number[] = [];
         const lift = m(0.25);
         const n = Math.round((2 * MAP_HALF) / GRID_CELL);
@@ -1913,6 +1969,13 @@ export function createSceneRenderer(
       forest?.setMap(plantMap);
       for (const mesh of forest?.meshes ?? []) mesh.visible = !plantMap || !mesh.name.endsWith('-leaves');
       forest?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM || rig.chasing);
+      for (let i = gridFlashes.length - 1; i >= 0; i--) {
+        const f = gridFlashes[i]!;
+        const t = (performance.now() - f.start) / 1000;
+        f.material.uniforms['uTime']!.value = t;
+        if (t > f.end) { scene.remove(f.mesh); f.mesh.geometry.dispose(); f.material.dispose(); gridFlashes.splice(i, 1); }
+        else onAssetsReady();
+      }
       // Building the city, the map stands on a plain dark blue: no sky and no
       // land past its edge; in play, the sky and the land round it (the player,
       // 2026-10-06).
