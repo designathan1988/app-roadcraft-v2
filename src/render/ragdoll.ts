@@ -1,4 +1,4 @@
-import type { Severable } from '@sim/people/view';
+import type { BodyPart, Severable } from '@sim/people/view';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
 import type { Casualty } from '@sim/people/people';
@@ -42,7 +42,8 @@ import type { Exhaust } from './exhaust';
 export interface RagdollCitizens {
   capturedPose(id: number): { index: number; palette: Float32Array; transform: Matrix4 } | null;
   skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
-  drawPalette(index: number, palette: Float32Array, instance: Matrix4): void;
+  /** `charred`: burnt black (a bomb's direct hit). */
+  drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred?: boolean): void;
   clipPose(index: number, key: 'crouchUp' | 'idle', phase: number): { palette: Float32Array; duration: number } | null;
   /** Bodies loaded now, for people with no pose of their own (indoors). */
   loadedIndices(): number[];
@@ -66,6 +67,8 @@ export interface Occupant {
   readonly blastY: number;
   readonly power: number;
   readonly kind: 'dead' | 'torn' | 'knocked';
+  /** Burnt black (right under the blow, or in a burning car). */
+  readonly charred?: boolean;
 }
 
 /** A wall a body can strike: a ring on the ground (world x, y), up to a height. */
@@ -167,7 +170,7 @@ interface Survivor {
   crawl?: { dx: number; dy: number; since: number };
   /** Where and which way they get up, and the lying bones blended from. */
   root?: Matrix4;
-  from?: { p: Vector3; q: Quaternion; s: Vector3 }[];
+  from?: Matrix4[];
   clip: number;
   /** Whether the get-up clip is baked. */
   ready?: boolean;
@@ -211,6 +214,14 @@ interface Body {
   pin?: { readonly root: number; readonly keep: ReadonlySet<number> };
   /** Called when the body goes (a twin given back). */
   drop?: (() => void) | undefined;
+  /** Burnt black (a bomb's direct hit). */
+  charred?: boolean;
+  /**
+   * Shot: the muscles still working as they go down (`toneStep`) - the
+   * shape they stood in held by springs that weaken over the fall, the legs
+   * giving way first, a hand going to the wound.
+   */
+  tone?: { t: number; readonly struck: BodyPart; readonly rest: readonly Vector3[]; readonly clutch: number; readonly dead: boolean };
   /** Which piece each particle is on: the body itself, or a limb torn off. */
   comp: number[];
   palettes: Float32Array[];
@@ -444,6 +455,40 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     return dir;
   };
 
+  /** The particles a bullet strikes, by where it went in. */
+  const STRUCK: Readonly<Record<BodyPart, readonly number[]>> = {
+    head: [HEA, TOP], torso: [CHE, NEC, BEL], armL: [LE, LW], armR: [RE, RW], legL: [LK, LA], legR: [RK, RA],
+  };
+
+  /**
+   * A bullet's push: the part it went into knocked back from the shooter, the
+   * chest a little with it (a leg shot takes the leg from under them).
+   */
+  const shove = (body: Body, c: Casualty): Vector3 => {
+    const dir = new Vector3(c.x - c.blastX, 0, -(c.y - c.blastY));
+    if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+    dir.normalize();
+    const hit = STRUCK[c.struck ?? 'torso'];
+    const leg = c.struck === 'legL' || c.struck === 'legR';
+    for (let k = 0; k < body.p.length; k++) {
+      const push = hit.includes(k) ? m(leg ? 2.2 : 1.6) : k === CHE || k === NEC || k === HEA || k === TOP ? m(0.7) : 0;
+      if (push > 0) body.o[k]!.addScaledVector(dir, -push * STEP);
+    }
+    body.asleep = false;
+    return dir;
+  };
+
+  /** The muscles' hold on a body just shot (`toneStep`): the pose it stood in, and its torso's frame then. */
+  const startTone = (body: Body, c: Casualty): void => {
+    // The pose they stood in, in their upright frame.
+    const back = uprightFrame(body.p, body.front, new Matrix4()).invert();
+    const rest = body.p.map((v) => v.clone().applyMatrix4(back));
+    const clutch = c.struck === 'armL' ? RW : c.struck === 'armR' ? LW : Math.random() < 0.5 ? LW : RW;
+    // A shot through the head: nothing left to hold them.
+    if (c.struck === 'head' && c.kind !== 'knocked') return;
+    body.tone = { t: 0, struck: c.struck ?? 'torso', rest, clutch, dead: c.kind !== 'knocked' };
+  };
+
   /** The body of a casualty of a blow. */
   const spawn = (c: Casualty, citizens: RagdollCitizens, world: RagdollWorld,
     given?: { index: number; palette: Float32Array; transform: Matrix4 }): void => {
@@ -471,7 +516,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       }
       for (const limb of c.lost ?? []) if (!(c.severed ?? []).includes(limb)) for (const part of LOST_PARTS[limb]) known.lostParts.add(part);
       known.asleep = false; known.still = 0; known.flying = 0;
-      const away = blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
+      const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
       return;
     }
@@ -483,8 +528,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
       body.survivor.crawl = { dx: ax / l, dy: ay / l, since: 0 };
     }
-    const speed = c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
-    const dir = blast(body, c, speed);
+    // A bullet does not throw a body: a small push where it went in, the
+    // rest is the body itself giving way (`toneStep`).
+    const speed = c.struck ? m(0.6) : c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
+    const dir = c.struck ? shove(body, c) : blast(body, c, speed);
+    if (c.struck) startTone(body, c);
     const chest = body.p[CHE]!;
     if (c.kind === 'torn') {
       // Torn: thrown harder, limbs flung, blood everywhere - but whole. A
@@ -520,7 +568,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   /** What came off at this blow thrown off the body (`detach`), and the body burnt black right under a bomb. */
   const sever = (body: Body, c: Casualty, dir: Vector3, citizens: RagdollCitizens): void => {
     // Charred first: the pieces are twins of the body as it is.
-    if (c.charred) citizens.char?.(body.index);
+    if (c.charred) { body.charred = true; citizens.char?.(body.index); }
     for (const limb of c.severed ?? []) {
       const speed = m(2.5 + 6 * Math.max(0.15, c.power)) * (0.7 + Math.random() * 0.6);
       const kick = new Vector3(dir.x * speed + (Math.random() - 0.5) * m(3), m(1.5 + Math.random() * 3) * (0.6 + c.power),
@@ -610,8 +658,12 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         const clip = citizens.clipPose(index, 'idle', (o.id % 97) / 97);
         if (!clip) continue;
         const transform = new Matrix4().compose(place.set(o.x, o.z, -o.y), turn.setFromAxisAngle(UP, o.heading + Math.PI / 2), size.setScalar(m(1)));
+        // Torn: an arm, a leg, the head off; killed: now and then a limb.
+        const all: Severable[] = ['head', 'armL', 'armR', 'legL', 'legR'];
+        const severed = o.kind === 'torn' ? all.filter(() => Math.random() < 0.45)
+          : o.kind === 'dead' && Math.random() < 0.35 ? [all[1 + Math.floor(Math.random() * 4)]!] : [];
         const c = { x: o.x, y: o.y, heading: o.heading, kind: o.kind, t: 0, id: o.id, gender: 'm', ageClass: 'adult', party: null,
-          blastX: o.blastX, blastY: o.blastY, power: o.power } as unknown as Casualty;
+          blastX: o.blastX, blastY: o.blastY, power: o.power, severed, lost: severed, charred: o.charred === true } as unknown as Casualty;
         spawn(c, citizens, world, { index, palette: clip.palette, transform });
       }
     },
@@ -701,7 +753,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
         } else if (!body.asleep || !body.palettes.length || body.age > LIE) {
           body.palettes = palettes(body, bonesWorld(body));
         }
-        for (const palette of body.palettes) citizens.drawPalette(body.index, palette, body.anchor);
+        for (const palette of body.palettes) citizens.drawPalette(body.index, palette, body.anchor, body.charred === true);
       }
     },
   };
@@ -728,7 +780,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       new Quaternion().setFromAxisAngle(UP, heading + Math.PI / 2),
       new Vector3(body.scale, body.scale, body.scale),
     );
-    alive.from = bonesWorld(body).map((w) => { const d = { p: new Vector3(), q: new Quaternion(), s: new Vector3() }; w.decompose(d.p, d.q, d.s); return d; });
+    alive.from = bonesWorld(body);
     alive.phase = 'rise';
     alive.t = 0;
     getUp(alive.id, x, y, heading, RISE_BLEND + alive.clip);
@@ -740,25 +792,50 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const phase = Math.max(0, alive.t - RISE_BLEND) / Math.max(0.1, alive.clip);
     const clip = citizens.clipPose(body.index, RISE_KEY, phase);
     const bones = body.pos0.length;
-    const world: Matrix4[] = [];
-    const g = new Matrix4(), w = new Matrix4();
-    const p = new Vector3(), q = new Quaternion(), s = new Vector3();
-    for (let i = 0; i < bones; i++) {
-      const from = alive.from![i]!;
-      if (!clip) { world.push(new Matrix4().compose(from.p, from.q, from.s)); continue; }
-      w.fromArray(clip.palette, i * 16).multiply(body.binds[i]!);
-      g.multiplyMatrices(alive.root!, body.rebind).multiply(w);
+    const from = alive.from!;
+    let world: Matrix4[];
+    if (!clip) world = from;
+    else {
+      const w = new Matrix4();
+      const target = from.map((_, i) => {
+        w.fromArray(clip.palette, i * 16).multiply(body.binds[i]!);
+        return new Matrix4().multiplyMatrices(alive.root!, body.rebind).multiply(w);
+      });
       // Blended in, the clip's own matrix exactly: a bone of these rigs is
-      // scaled unevenly (sheared), and taken apart into position, rotation
-      // and scale and put back together it came out crooked - every body
-      // getting up stood bent and twisted.
-      if (blend >= 0.999) { world.push(g.clone()); continue; }
-      g.decompose(p, q, s);
-      p.lerpVectors(from.p, p, blend);
-      q.slerpQuaternions(from.q, q, blend);
-      s.lerpVectors(from.s, s, blend);
-      world.push(new Matrix4().compose(p, q, s));
+      // scaled unevenly (sheared), and taken apart and put back together it
+      // came out crooked.
+      if (blend >= 0.999) world = target;
+      else {
+        // Before that, blended as animation systems blend poses: each bone's
+        // turn relative to its parent, then the chain put back together from
+        // the root. Each bone blended on its own in the world (position along
+        // a straight line, turn on its own) pulled the limbs off their joints
+        // and folded the body through itself on the way up (the player,
+        // 2026-10-06: "a forma totalmente deformada").
+        world = new Array<Matrix4>(bones);
+        const p0 = new Vector3(), q0 = new Quaternion(), s0 = new Vector3();
+        const p1 = new Vector3(), q1 = new Quaternion(), s1 = new Vector3();
+        const local = (list: readonly Matrix4[], i: number, out: Matrix4): Matrix4 => {
+          const parent = body.parents[i]!;
+          return parent >= 0 ? out.copy(list[parent]!).invert().multiply(list[i]!) : out.copy(list[i]!);
+        };
+        const a = new Matrix4(), b = new Matrix4();
+        const solve = (i: number): Matrix4 => {
+          const known = world[i];
+          if (known) return known;
+          local(from, i, a).decompose(p0, q0, s0);
+          local(target, i, b).decompose(p1, q1, s1);
+          p0.lerp(p1, blend); q0.slerp(q1, blend); s0.lerp(s1, blend);
+          const own = new Matrix4().compose(p0, q0, s0);
+          const parent = body.parents[i]!;
+          const out = parent >= 0 ? new Matrix4().multiplyMatrices(solve(parent), own) : own;
+          world[i] = out;
+          return out;
+        };
+        for (let i = 0; i < bones; i++) solve(i);
+      }
     }
+    const w = new Matrix4();
     body.anchor.copy(alive.root!);
     const back = body.unbind.clone().multiply(body.anchor.clone().invert());
     const out = new Float32Array(bones * 16);
@@ -790,6 +867,88 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     }
   }
 
+  /**
+   * The frame a shot body's pose is held in: at the pelvis, x straight up,
+   * z across the hips (level), y the way the body faces. Upright whatever the
+   * torso does, as an animated character's root is - a frame taken from the
+   * torso itself would turn with every lean it asked for.
+   */
+  function uprightFrame(p: readonly Vector3[], front: number, out: Matrix4): Matrix4 {
+    const side = tmpE.subVectors(p[RH]!, p[LH]!).setY(0);
+    if (side.lengthSq() < 1e-9) side.set(0, 0, 1);
+    frameOf(UP, side, out);
+    // y = z x x: make it the body's front.
+    if (front < 0) {
+      const e = out.elements;
+      e[4] = -e[4]!; e[5] = -e[5]!; e[6] = -e[6]!;
+      e[8] = -e[8]!; e[9] = -e[9]!; e[10] = -e[10]!;
+    }
+    return out.setPosition(p[PEL]!);
+  }
+
+  /**
+   * Physical animation (as Unreal's physical animation drives bodies towards
+   * an animated pose by springs of a strength, and NaturalMotion's Euphoria
+   * keeps GTA's shot peds working their muscles as they go down): each
+   * particle pulled towards a pose played out in the body's upright frame -
+   * the blow rocking the chest back, the knees giving way to a kneel, the
+   * body folding forward over them, one hand pressed to the wound - while the
+   * springs weaken and let it go to the ground: neither a stiff board
+   * toppling over nor a rag doll dropped.
+   */
+  function toneStep(body: Body, tone: NonNullable<Body['tone']>): void {
+    tone.t += STEP;
+    const t = tone.t;
+    // The dead give way at once and go limp in under a second; the wounded
+    // stand a moment, sink to their knees, then go down.
+    const pace = tone.dead ? 2.2 : 1;
+    const T = t * pace;
+    if (T > 2.4) { delete body.tone; return; }
+    const M = body.scale;
+    const frame = uprightFrame(body.p, body.front, new Matrix4());
+    const buckle = smooth((T - 0.22) / 0.5);
+    // Rocked back by the blow, then folding forward over the knees.
+    const lean = -0.22 * Math.sin(Math.min(1, T / 0.3) * Math.PI) * (1 - buckle) + 0.75 * smooth((T - 0.7) / 0.6);
+    const hold = (from: number, to: number): number => 1 - smooth((T - from) / (to - from));
+    const upperK = 0.14 * hold(1.0, 1.8);
+    const legK = 0.12 * hold(1.1, 1.6);
+    const armK = 0.05 * hold(0.9, 1.6);
+    const goal = new Vector3();
+    const cos = Math.cos(lean), sin = Math.sin(lean);
+    for (let k = 0; k < body.p.length; k++) {
+      if (k === PEL) continue;
+      const q = tone.rest[k]!;
+      const leg = k === LK || k === LA || k === LT || k === RK || k === RA || k === RT;
+      const upper = k === CHE || k === BEL || k === NEC || k === HEA || k === TOP || k === LS || k === RS || k === LE || k === LW || k === RE || k === RW;
+      let x = q.x, y = q.y;
+      const z = q.z;
+      if (leg) {
+        // Kneeling: knees down and forward of the hips, shins back along the ground.
+        const knee = k === LK || k === RK, ankle = k === LA || k === RA;
+        const kx = knee ? -0.3 * M : ankle ? -0.36 * M : -0.37 * M;
+        const ky = knee ? 0.32 * M : ankle ? -0.1 * M : -0.26 * M;
+        x += (kx - x) * buckle;
+        y += (ky - y) * buckle;
+      } else if (upper) {
+        const rx = x * cos - y * sin, ry = x * sin + y * cos;
+        x = rx; y = ry;
+      }
+      const strength = leg ? legK : k === LH || k === RH ? 0.1 * hold(1.1, 1.6) : (k === LE || k === LW || k === RE || k === RW) ? armK : upperK;
+      if (strength <= 0) continue;
+      goal.set(x, y, z).applyMatrix4(frame);
+      const v = body.p[k]!;
+      v.lerp(goal, strength);
+      // The muscles take up the swing: less flailing.
+      body.o[k]!.lerp(v, 0.03 * strength / 0.14);
+    }
+    // A hand to the wound (or to the chest), while there is strength in the arm.
+    if (T < 1.8) {
+      const at = STRUCK[tone.struck]![0]!;
+      const target = tone.clutch === at || at === LE || at === RE ? body.p[at === LE ? LE : at === RE ? RE : CHE]! : body.p[at === TOP ? HEA : at]!;
+      body.p[tone.clutch]!.lerp(target, 0.1 * hold(1.2, 1.8));
+    }
+  }
+
   function step(body: Body, world: RagdollWorld): void {
     const { p, o, inv } = body;
     let moved = 0;
@@ -802,6 +961,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       // The ground under each particle, looked up once a step.
       body.ground[k] = world.groundAt(v.x, -v.z);
     }
+    if (body.tone) toneStep(body, body.tone);
     // Walls within reach of the body this step.
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const v of p) { x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, -v.z); y1 = Math.max(y1, -v.z); }

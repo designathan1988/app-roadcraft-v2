@@ -1,6 +1,6 @@
 import type { Severable } from '@sim/people/view';
 import {
-  BufferGeometry, Color, DataTexture, DynamicDrawUsage, Float32BufferAttribute, FloatType, Group, InstancedMesh,
+  BufferGeometry, Color, DataTexture, DynamicDrawUsage, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute, InstancedMesh,
   Matrix4, MeshDepthMaterial, MeshStandardMaterial, Object3D, Quaternion, RGBAFormat,
   RGBADepthPacking, SkinnedMesh, Texture, Vector3, type BufferAttribute,
 } from 'three';
@@ -101,6 +101,10 @@ function seatedChat(seed: number, time: number): boolean {
   const cycle = 14 + (hash >>> 4 & 7) * 2;
   return ((time + (hash >>> 8 & 255) / 10) % cycle) < cycle * 0.3;
 }
+
+/** A body's colour over its own: none, or burnt black by a bomb. */
+const UNBURNT = new Color(1, 1, 1);
+const BURNT = new Color(0.075, 0.062, 0.055);
 
 /** No expression: what a body drawn from a ragdoll palette shows (`drawPalette`). */
 const NEUTRAL_FACE: FaceWeights = {};
@@ -485,6 +489,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         // InstancedMesh does not initialise this array itself. WebGL's morph
         // setup still reads it before it checks the per-instance texture.
         if (o.morphTargetInfluences) mesh.morphTargetInfluences = [...o.morphTargetInfluences];
+        // A colour per body from the start (white): a body burnt black by a
+        // bomb is the same program, its colour near black (`drawPalette`).
+        mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(CAPACITY * 3).fill(1), 3);
+        mesh.instanceColor.setUsage(DynamicDrawUsage);
         mesh.name = `citizen-${models[index]}-${o.name}`;
         mesh.count = 0;
         // Hidden until it has somebody to draw (`finish` shows it then). Shown
@@ -723,6 +731,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     for (let i = 0; i < batch.meshes.length; i++) {
       matrix.multiplyMatrices(transform.matrix, batch.local[i]!);
       batch.meshes[i]!.setMatrixAt(batch.count, matrix);
+      batch.meshes[i]!.setColorAt(batch.count, UNBURNT);
     }
     // Faces are read only close up: from the nearest level of detail on, no
     // expression is computed or uploaded.
@@ -998,6 +1007,11 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
             mesh.instanceMatrix.clearUpdateRanges();
             mesh.instanceMatrix.addUpdateRange(0, batch.count * 16);
             mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) {
+              mesh.instanceColor.clearUpdateRanges();
+              mesh.instanceColor.addUpdateRange(0, batch.count * 3);
+              mesh.instanceColor.needsUpdate = true;
+            }
             if (mesh.morphTexture && lod === 0) mesh.morphTexture.needsUpdate = true;
           }
         }
@@ -1050,7 +1064,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       return { palette: out, duration: clip.duration };
     },
     /** Draws a body of `index` with a palette of skin matrices (`ragdoll.ts`) and an instance matrix. */
-    drawPalette(index: number, palette: Float32Array, instance: Matrix4): void {
+    drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred = false): void {
       const batch = batches.get(index);
       if (!batch || batch.count >= CAPACITY || palette.length !== batch.width) return;
       if (batch.count >= batch.rows) grow(batch);
@@ -1058,6 +1072,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       for (let i = 0; i < batch.meshes.length; i++) {
         matrix.multiplyMatrices(instance, batch.local[i]!);
         batch.meshes[i]!.setMatrixAt(batch.count, matrix);
+        batch.meshes[i]!.setColorAt(batch.count, charred ? BURNT : UNBURNT);
       }
       // Its face's weights too, close up: the slot otherwise keeps whatever
       // the morph texture held there - zero, never written - and three scales

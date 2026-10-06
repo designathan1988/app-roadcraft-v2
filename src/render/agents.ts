@@ -899,9 +899,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const person = procOf(index);
       return person && procedural ? procedural.ragdoll.skeleton(person) : pedestrians.skeletonOf(index);
     },
-    drawPalette(index, palette, instance) {
+    drawPalette(index, palette, instance, charred) {
       const person = procOf(index);
-      if (!person || !procedural) { pedestrians.drawPalette(index, palette, instance); return; }
+      if (!person || !procedural) { pedestrians.drawPalette(index, palette, instance, charred); return; }
       if (index <= TWIN_BASE) {
         person.matrix.copy(instance).multiply(procScale.makeScale(1 / person.scale, 1 / person.scale, 1 / person.scale));
         procedural.ragdoll.hold(person, palette);
@@ -917,8 +917,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     clipPose(index, key, phase) {
       const person = procOf(index);
       if (!person || !procedural) return pedestrians.clipPose(index, key, phase);
-      const palette = procedural.ragdoll.standing(person, key === 'idle' ? phase : 0);
-      return palette ? { palette, duration: 1.2 } : null;
+      const palette = procedural.ragdoll.standing(person, phase, key === 'crouchUp' ? 'getUp' : 'idle');
+      return palette ? { palette, duration: key === 'crouchUp' ? procedural.ragdoll.duration(person, 'getUp') : 1.2 } : null;
     },
     loadedIndices: () => pedestrians.loadedIndices(),
     twin(index) {

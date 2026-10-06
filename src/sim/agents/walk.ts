@@ -638,7 +638,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       if (p.hp <= 0 || severed === 'head') {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
-          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], ...(severed ? { severed: [severed] } : {}) });
+          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], struck: part, ...(severed ? { severed: [severed] } : {}) });
         finish(s, p, false);
         prune(s);
         startle(w, p.x, p.y, m(45), 26, null);
@@ -656,7 +656,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
         party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
         blastX: fromX, blastY: fromY, kind: 'knocked', power: severed ? 0.35 : 0.15, lost: [...p.lost],
-        lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone, ...(severed ? { severed: [severed] } : {}) });
+        lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone, struck: part, ...(severed ? { severed: [severed] } : {}) });
       p.v = 0;
       p.fright = p.age + 30;
       startle(w, p.x, p.y, m(45), 26, null);

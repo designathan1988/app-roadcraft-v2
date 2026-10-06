@@ -140,7 +140,7 @@ interface BodyClass {
 }
 
 /** What a procedural person plays: walking, standing, running, sprinting for their life, cowering, photographing. */
-export type ProcClip = 'walk' | 'idle' | 'run' | 'sprint' | 'cower' | 'photo';
+export type ProcClip = 'walk' | 'idle' | 'run' | 'sprint' | 'cower' | 'photo' | 'getUp';
 
 export interface ProceduralPerson {
   readonly spec: PersonSpec;
@@ -493,8 +493,11 @@ export interface ProceduralCrowd {
   readonly ragdoll: {
     skeleton(person: ProceduralPerson): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
     pose(person: ProceduralPerson): Float32Array | null;
-    standing(person: ProceduralPerson, phase: number): Float32Array | null;
+    /** A pose of a clip (`idle`, or `getUp` played once: its phase held at the end), in the person's row. */
+    standing(person: ProceduralPerson, phase: number, clip?: 'idle' | 'getUp'): Float32Array | null;
     hold(person: ProceduralPerson, palette: Float32Array | null): void;
+    /** A clip's length, seconds. */
+    duration(person: ProceduralPerson, clip: ProcClip): number;
     /**
      * Another of this person - their row's shape, face, clothes and colours -
      * for a piece of them torn off (an arm, a leg, the head) drawn apart from
@@ -724,17 +727,19 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     /** Sprinting from a blow (GTA's peds flee at a flat-out run), and holding a phone up at it. */
     readonly sprint: ClipFrames;
     readonly photo: ClipFrames;
+    /** Up off the ground from a crouch: what a body knocked down gets up with (`ragdoll.ts` rise). */
+    readonly getUp: ClipFrames;
   }
   const classRecord = (d: ClassData): PackRecord => ({
     shapePixels: d.shapePixels, jointBasis: d.jointBasis, faceIndexPixels: d.faceIndexPixels, faceList: d.faceList,
     exprPixels: d.exprPixels, ...clipFields('walk', d.walk), ...clipFields('idle', d.idle),
-    ...clipFields('run', d.run), ...clipFields('cower', d.cower), ...clipFields('sprint', d.sprint), ...clipFields('photo', d.photo),
+    ...clipFields('run', d.run), ...clipFields('cower', d.cower), ...clipFields('sprint', d.sprint), ...clipFields('photo', d.photo), ...clipFields('getUp', d.getUp),
   });
   const classFromRecord = (r: Record<string, PackValue>): ClassData => ({
     shapePixels: r['shapePixels'] as Float32Array, jointBasis: r['jointBasis'] as Float32Array,
     faceIndexPixels: r['faceIndexPixels'] as Float32Array, faceList: r['faceList'] as Int32Array,
     exprPixels: r['exprPixels'] as Float32Array, walk: clipOf('walk', r), idle: clipOf('idle', r),
-    run: clipOf('run', r), cower: clipOf('cower', r), sprint: clipOf('sprint', r), photo: clipOf('photo', r),
+    run: clipOf('run', r), cower: clipOf('cower', r), sprint: clipOf('sprint', r), photo: clipOf('photo', r), getUp: clipOf('getUp', r),
   });
 
   /** A class's rig: its body at the band's age, with only the eyes on it (no outfit, hair, brows, lashes or hat). */
@@ -799,6 +804,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     await breathe();
     const photo = await bakeLibraryClip(bakeRig, library.photo, undefined, 'photo');
     await breathe();
+    const getUp = await bakeLibraryClip(bakeRig, library.crouchUp, undefined, 'crouchUp');
+    await breathe();
     // Joints follow the shape: a MakeHuman bone's head is the mean of a
     // group of base vertices (its joint cube, `personRig.headOf`), so its
     // move per coefficient is the mean of theirs in the shape basis.
@@ -851,7 +858,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       });
     }
     await breathe();
-    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower, sprint, photo };
+    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower, sprint, photo, getUp };
   };
 
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
@@ -860,7 +867,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     const { base, shape, eyes, rig } = await classRig(sex, band);
     // Read from the cook (`proceduralCook.ts`); built here only when it is missing or stale.
     const cooked = await loadProcedural(`class-${sex}-${band}`);
-    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower, sprint, photo } = cooked
+    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower, sprint, photo, getUp } = cooked
       ? classFromRecord(cooked) : await classData(sex, rig, shape);
     const vertexCount = a.mesh.vertexCount;
     const shapeRows = Math.ceil(vertexCount * SHAPES / SHAPE_WIDTH);
@@ -906,7 +913,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     bakeMs += performance.now() - started;
     const cls: BodyClass = {
       key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
-      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower, sprint, photo }, bones, order, parent, jointBasis,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower, sprint, photo, getUp }, bones, order, parent, jointBasis,
       uniforms: {
         procBones: { value: rowTexture(palette, width, ROW_START) },
         procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
@@ -1300,15 +1307,15 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         const width = cls.bones * SKIN_BONE_FLOATS;
         return cls.palette.slice(person.row * width, person.row * width + width);
       },
-      standing(person, phase) {
+      standing(person, phase, which = 'idle') {
         const cls = classOf(person);
         if (!cls) return null;
         const width = cls.bones * SKIN_BONE_FLOATS, packed = cls.bones * PACKED_BONE_FLOATS;
         const at = person.row * width;
         // Worked out in their own row (their proportions, `refit`), then copied out.
         const keep = cls.palette.slice(at, at + width);
-        const clip = cls.clips.idle;
-        const f = (phase - Math.floor(phase)) * clip.frames;
+        const clip = cls.clips[which];
+        const f = (which === 'getUp' ? Math.min(0.999, Math.max(0, phase)) : phase - Math.floor(phase)) * clip.frames;
         const whole = Math.min(clip.frames, Math.floor(f));
         cls.palette.fill(0, at, at + width);
         blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
@@ -1366,6 +1373,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         spareRows.set(cls, spare);
       },
       char(person, on) { charSlots(person, on); },
+      duration(person, clip) { return classOf(person)?.clips[clip].duration ?? 1.2; },
     },
     update(eye, simTime) {
       if (eye) strandsUpdate(eye);

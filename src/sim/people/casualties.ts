@@ -1,4 +1,4 @@
-import type { Severable } from './view';
+import type { BodyPart, Severable } from './view';
 import type { SimWorld } from '../world';
 import type { PartyView, PersonAgeClass, PersonGender } from './view';
 
@@ -37,6 +37,8 @@ export interface Casualty {
   readonly severed?: readonly Severable[];
   /** Burnt black (right under a bomb). */
   readonly charred?: boolean;
+  /** Shot, and where: a bullet's small push there, the body falling with its muscles still working (`ragdoll.ts` tone). */
+  readonly struck?: BodyPart;
 }
 
 const RECORDS = new WeakMap<SimWorld, Casualty[]>();
