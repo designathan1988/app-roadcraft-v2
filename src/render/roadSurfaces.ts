@@ -614,10 +614,18 @@ export function buildRoadSurfaces(
 
     // Everything a tile's build reads besides its rings and its surroundings:
     // the constants of every surface, so a change to one is a change to all.
+    // A paint colour's surface draws only in the tiles that hold lines of that
+    // colour, so its constants are in those tiles' keys alone: in every key,
+    // a road of a class with a colour new to the map (its centre line) made
+    // every tile of the town build again, a second's stall for one street.
+    const specSalt = (spec: SurfaceSpec): number => new Digest().addText(spec.options.name).add(spec.options.maxEdge)
+      .add(spec.options.uvWorld ?? 0).add(spec.options.skirtUvScale ?? 0).add(spec.options.bottom ? 1 : 0)
+      .add(spec.options.tint ? 1 : 0).value();
     const salt = new Digest().addText(pass.id);
+    const paintSalt = new Map<string, number>();
     for (const spec of specs) {
-      salt.addText(spec.options.name).add(spec.options.maxEdge).add(spec.options.uvWorld ?? 0)
-        .add(spec.options.skirtUvScale ?? 0).add(spec.options.bottom ? 1 : 0).add(spec.options.tint ? 1 : 0);
+      if (spec.source.kind === 'paint') paintSalt.set(spec.source.color, specSalt(spec));
+      else salt.add(specSalt(spec));
     }
     const saltValue = salt.value();
 
@@ -645,9 +653,12 @@ export function buildRoadSurfaces(
       addAll(into.medians.kerb);
       addAll(into.medians.planting);
       addAll(into.ribbons);
-      for (const [color, list] of into.quads) {
-        digest.addText(color);
-        addAll(list);
+      // In a fixed order: the colours come in the order the network first
+      // paints them, which a street drawn elsewhere can change, and what a
+      // tile builds does not depend on it (its surfaces are kept by name).
+      for (const color of [...into.quads.keys()].sort()) {
+        digest.addText(color).add(paintSalt.get(color) ?? 0);
+        addAll(into.quads.get(color)!);
       }
       if (reuse) digest.add(reuse.dependsOn(rect[0] - 1, rect[1] - 1, rect[2] + 1, rect[3] + 1));
       const value = digest.value();

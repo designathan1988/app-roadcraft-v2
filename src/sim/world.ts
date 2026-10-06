@@ -341,6 +341,35 @@ export class SimWorld {
    * player map, the conflict zones and the footway graph each cost up to about
    * 110 ms. The world is not stepped until the second half has run.
    */
+  /**
+   * A second lanelet graph, built from the same document, that is never run:
+   * `prepareVehicleTopology` measures the conflict zones of an edit on it
+   * while this world keeps the graph its agents are bound to. It keeps its
+   * own caches, so building it again after an edit costs what the edit
+   * touched.
+   */
+  private prepGraph: LaneletGraph | null = null;
+
+  /**
+   * The slow half of `rebuildVehicleTopology` ahead of time, in steps: the
+   * conflict zones of every new pair of movements measured into the caches
+   * (`ConflictIndex.prepare`). Nothing the agents read changes; the rebuild
+   * that follows reads every pair back. A new crossroads used to stall the
+   * frame of its rebuild about a tenth of a second.
+   */
+  *prepareVehicleTopology(): Generator<void, void> {
+    const graph = this.prepGraph ??= new LaneletGraph();
+    graph.build(this.doc, this.net);
+    yield;
+    yield* this.conflicts.prepare(graph);
+  }
+
+  /** Builds the preparation graph with a map's load, so its first edit does not build it from nothing. */
+  warmTopologyPrep(): void {
+    const graph = this.prepGraph ??= new LaneletGraph();
+    if (graph.revision !== this.net.revision) graph.build(this.doc, this.net);
+  }
+
   rebuildVehicleTopology(): void {
     this.graph.build(this.doc, this.net);
     this.conflicts.build(this.graph);

@@ -181,6 +181,42 @@ export class ConflictIndex {
    */
   private sweepCache = new Map<string, Float64Array>();
 
+  /**
+   * Measures, a pair at a time, the zones the next `build` of `graph` will
+   * need and the caches do not hold yet, and leaves them in the caches; the
+   * index itself is not touched. `pairZones` is about a millisecond a pair
+   * and a new crossroads has a hundred pairs: done here in slices across
+   * frames (`main.ts`), the build that follows reads every pair back and
+   * costs a frame of its own no more.
+   */
+  /** Pairs measured (not read from the caches) by the last `build` and the last `prepare`: for the probes. */
+  readonly measured = { build: 0, prepare: 0 };
+
+  *prepare(graph: LaneletGraph): Generator<void, void> {
+    this.measured.prepare = 0;
+    for (const junction of graph.junctions.values()) {
+      const ids = junction.connectors.slice().sort();
+      const sweeps: { sweep: Sweep; shape: SweepShape }[] = [];
+      for (const id of ids) {
+        const c = graph.connectors.get(id);
+        if (!c) continue;
+        const sweep = sweepOf(graph, c, this.sweepCache, this.sweepCache);
+        if (sweep) sweeps.push({ sweep, shape: shapeOf(sweep) });
+      }
+      for (let i = 0; i < sweeps.length; i++) {
+        for (let j = i + 1; j < sweeps.length; j++) {
+          const a = sweeps[i]!, b = sweeps[j]!;
+          const key = `${a.shape.hash}|${b.shape.hash}`;
+          const known = this.pairCache.get(key);
+          if (known && sameShape(known.a, a.shape) && sameShape(known.b, b.shape)) continue;
+          this.pairCache.set(key, { a: a.shape, b: b.shape, zones: pairZones(a.sweep, b.sweep) });
+          this.measured.prepare++;
+          yield;
+        }
+      }
+    }
+  }
+
   build(graph: LaneletGraph): void {
     this.points.length = 0;
     this.byConnector.clear();
@@ -188,6 +224,7 @@ export class ConflictIndex {
     this.queueIntrusions.length = 0;
     const previous = this.pairCache;
     const next = new Map<string, CachedPair>();
+    const measuredBefore = pairsMeasured;
     const previousSweeps = this.sweepCache;
     const nextSweeps = new Map<string, Float64Array>();
 
@@ -254,6 +291,7 @@ export class ConflictIndex {
       }
     }
 
+    this.measured.build = pairsMeasured - measuredBefore;
     this.pairCache = next;
     this.sweepCache = nextSweeps;
     for (const list of this.byConnector.values()) list.sort((p, q) => p.s - q.s);
@@ -368,8 +406,11 @@ function sweepOf(graph: LaneletGraph, c: Connector,
 
   // The frame is a function of the three centrelines alone, so a movement
   // whose road was not touched reads back the samples it already had.
-  const key = `${new Digest().addAll(inbound.centre.xy).addAll(crossing.centre.xy)
-    .addAll(outbound.centre.xy).add(count).value()}`;
+  // Each centreline's digest is kept with it (a polyline never changes): the
+  // approach lanes are long, and digesting them again for every movement of
+  // every junction on every build was most of a build where nothing moved.
+  const key = `${new Digest().add(lineDigest(inbound.centre.xy)).add(lineDigest(crossing.centre.xy))
+    .add(lineDigest(outbound.centre.xy)).add(count).value()}`;
   let frame = previous.get(key) ?? next.get(key);
   if (!frame) {
     frame = new Float64Array(count * 4);
@@ -462,16 +503,44 @@ interface CachedPair {
   centre?: Vec2;
 }
 
-function shapeOf(s: Sweep): SweepShape {
-  // FNV-1a over the frame's bytes. Only a key: a collision costs a recompute,
-  // never a wrong answer, because a hit is confirmed by `sameShape`.
-  let h = 0x811c9dc5;
-  for (const values of [s.frame, s.crossing.centre.xy]) {
-    const words = new Uint32Array(values.buffer, values.byteOffset, values.length * 2);
-    for (let i = 0; i < words.length; i++) h = Math.imul(h ^ (words[i] as number), 0x01000193);
+const LINE_DIGESTS = new WeakMap<Float64Array, number>();
+function lineDigest(xy: Float64Array): number {
+  let value = LINE_DIGESTS.get(xy);
+  if (value === undefined) {
+    value = new Digest().addAll(xy).value();
+    LINE_DIGESTS.set(xy, value);
   }
+  return value;
+}
+
+/**
+ * The shape of a sweep, kept with its frame: a movement whose frame came back
+ * from the cache hands back the same shape object, so its hash is not taken
+ * again and a cached pair is confirmed by identity (`sameShape`).
+ */
+const SHAPES = new WeakMap<Float64Array, SweepShape>();
+function shapeOf(s: Sweep): SweepShape {
+  const kept = SHAPES.get(s.frame);
+  if (kept && kept.centre === s.crossing.centre.xy && kept.count === s.count && kept.c0 === s.c0 && kept.length === s.crossing.length) {
+    return kept;
+  }
+  const shape = measureShape(s);
+  SHAPES.set(s.frame, shape);
+  return shape;
+}
+
+function measureShape(s: Sweep): SweepShape {
+  // Only a key: a collision costs a recompute, never a wrong answer, because a
+  // hit is confirmed by `sameShape`. It was a plain FNV-1a over the bytes,
+  // which mirrored movements beat: negating a double flips only its top bit,
+  // a multiply never carries a top bit down, and the flips cancelled in
+  // pairs - so in a town laid out symmetrically about the origin every
+  // movement shared its key with its mirror image, the two threw each other
+  // out of the cache, and every rebuild measured some six hundred pairs
+  // again (a third of a second). `Digest` mixes its words.
+  const h = new Digest().addAll(s.frame).addAll(s.crossing.centre.xy).value();
   return {
-    hash: `${(h >>> 0).toString(36)}:${s.count}:${s.c0}:${s.crossing.length}`,
+    hash: `${h.toString(36)}:${s.count}:${s.c0}:${s.crossing.length}`,
     c0: s.c0,
     count: s.count,
     length: s.crossing.length,
@@ -481,15 +550,20 @@ function shapeOf(s: Sweep): SweepShape {
 }
 
 function sameShape(p: SweepShape, q: SweepShape): boolean {
+  if (p === q) return true;
   if (p.count !== q.count || p.c0 !== q.c0 || p.length !== q.length) return false;
   return sameValues(p.frame, q.frame) && sameValues(p.centre, q.centre);
 }
 
 function sameValues(p: Float64Array, q: Float64Array): boolean {
+  if (p === q) return true;
   if (p.length !== q.length) return false;
   for (let i = 0; i < p.length; i++) if (p[i] !== q[i]) return false;
   return true;
 }
+
+/** Pairs measured by `cachedPair` since the module loaded (`ConflictIndex.measured`). */
+let pairsMeasured = 0;
 
 /** A pair's zones, answered from the previous build when neither sweep moved. */
 function cachedPair(
@@ -507,6 +581,7 @@ function cachedPair(
     return known;
   }
   const pair: CachedPair = { a: shapeA, b: shapeB, zones: pairZones(a, b) };
+  pairsMeasured++;
   next.set(key, pair);
   return pair;
 }

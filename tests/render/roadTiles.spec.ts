@@ -110,4 +110,24 @@ describe('road surface tiles', () => {
     buildRoadSurfaces(net, buildRoadElevation(net, ground), materials, ground, reuse);
     expect([...reuse.tiles.keys()].filter((id) => id.startsWith('alignment-'))).toHaveLength(1);
   });
+  it('builds again only the tiles a street reaches, when it changes the order the lines are painted in', () => {
+    // A street of a new class at the east end of the parking town: its centre
+    // line made the town's paint colours come in another order, and with the
+    // order in every tile's key all hundred tiles were built again (a second's
+    // stall in the game for one street). The new street reaches eight.
+    const doc = RoadDoc.fromJSON(JSON.parse(readFileSync('maps/cidade-com-estacionamento.json', 'utf8')));
+    const net = new Network(doc);
+    net.rebuild();
+    let elevation = buildRoadElevation(net, ground);
+    const reuse = reuseFor(() => elevation);
+    buildRoadSurfaces(net, elevation, materials, ground, reuse);
+    const end = [...doc.nodes.values()].filter((n) => n.incident.length === 1).sort((p, q) => q.x - p.x)[0]!;
+    doc.addSegment(end.id, doc.addNode({ x: end.x - 177, y: end.y + 178 }).id, 1);
+    net.rebuild();
+    elevation = buildRoadElevation(net, ground);
+    const warm = buildRoadSurfaces(net, elevation, materials, ground, reuse);
+    expect(warm.built).toBeLessThan(15);
+    const fresh = buildRoadSurfaces(net, elevation, materials, ground, reuseFor(() => elevation));
+    expect(fingerprint(warm.group)).toBe(fingerprint(fresh.group));
+  }, 120_000);
 });

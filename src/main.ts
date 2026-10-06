@@ -1,7 +1,7 @@
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, planLotsSteps, splitLot, zoneLots, type Lot, type LotPlan } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -441,26 +441,38 @@ function keepLots(): void {
   if (applyLots(doc, planLots(doc, net))) requestDraw();
 }
 /**
- * `keepLots` once the roads have settled: replanning every lot of a town took
- * about 250 ms, and the overlay asked for it in the very frame that drew each
- * new road (the stall felt on every click of the road tool). The old lots stay
- * drawn meanwhile; a run of edits is replanned once, after the last.
+ * `keepLots` once the roads have settled, a few milliseconds a frame
+ * (`planLotsSteps`, as the zone grid is laid): replanning a town's lots took a
+ * quarter of a second, first in the very frame that drew each new road, then
+ * in one frame half a second after it. The old lots stay drawn meanwhile; a
+ * run of edits is replanned once, after the last, and a plan whose roads or
+ * lots changed while it was being made is thrown away and begun again.
  */
 const LOTS_SETTLE_MS = 450;
-let lotsTimer: ReturnType<typeof setTimeout> | null = null;
-let lotsTimerFor = -1;
+const LOTS_SLICE_MS = 5;
+let lotsChange = { revision: -1, at: 0 };
+let lotsWake: ReturnType<typeof setTimeout> | null = null;
+let lotsJob: { revision: number; lotRevision: number; buildings: number; steps: Generator<void, LotPlan> } | null = null;
 function keepLotsSoon(): void {
-  if (lotsNetRevision === net.revision) return;
-  if (lotsTimer !== null) {
-    if (lotsTimerFor === net.revision) return;
-    clearTimeout(lotsTimer);
+  if (lotsNetRevision === net.revision) { lotsJob = null; return; }
+  const now = performance.now();
+  if (lotsChange.revision !== net.revision) lotsChange = { revision: net.revision, at: now };
+  const wait = lotsChange.at + LOTS_SETTLE_MS - now;
+  if (wait > 0) {
+    if (lotsWake === null) lotsWake = setTimeout(() => { lotsWake = null; requestDraw(); }, wait);
+    return;
   }
-  lotsTimerFor = net.revision;
-  lotsTimer = setTimeout(() => {
-    lotsTimer = null;
-    keepLots();
-    requestDraw();
-  }, LOTS_SETTLE_MS);
+  if (!doc.segments.size && !doc.lots.length) { lotsNetRevision = net.revision; return; }
+  if (!lotsJob || lotsJob.revision !== net.revision || lotsJob.lotRevision !== doc.lotRevision || lotsJob.buildings !== doc.buildings.revision) {
+    lotsJob = { revision: net.revision, lotRevision: doc.lotRevision, buildings: doc.buildings.revision, steps: planLotsSteps(doc, net) };
+  }
+  const until = now + LOTS_SLICE_MS;
+  let step = lotsJob.steps.next();
+  while (!step.done && performance.now() < until) step = lotsJob.steps.next();
+  if (!step.done) { requestDraw(); return; }
+  lotsNetRevision = lotsJob.revision;
+  lotsJob = null;
+  if (applyLots(doc, step.value)) requestDraw();
 }
 const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
 /** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
@@ -856,6 +868,8 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   }
   // Only when the road plan the simulation runs on actually changed.
   if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
+  // A different map: the graph the next edit is measured on, built now.
+  if (source === 'import') sim.warmTopologyPrep();
   buildings.restored();
   selectedSegment = null;
   selectedNode = null;
@@ -3331,6 +3345,10 @@ function movePreviewInterval(): number {
  * mesh rebuild alone, and the traffic pauses for the topology afterwards.
  */
 let topologyAfterDraw = false;
+/** The conflict zones of an edit being measured ahead of the swap (`SimWorld.prepareVehicleTopology`). */
+let topologyPrep: { revision: number; steps: Generator<void, void> } | null = null;
+/** Milliseconds a frame spends measuring them. */
+const TOPOLOGY_SLICE_MS = 6;
 
 function requestDraw(): void {
   if (pending) return;
@@ -3574,8 +3592,20 @@ function frame(now: number): void {
     // together were one stall of up to 240 ms after every edit. The world is
     // held until both are done.
     if (sim.vehicleTopologyRevision !== net.trafficRevision) {
-      sim.rebuildVehicleTopology();
-      rebindVehicles(sim);
+      // The conflict zones of the new junctions measured first, a few
+      // milliseconds a frame on a graph of their own (`prepareVehicleTopology`);
+      // then the swap, which finds every pair measured.
+      if (!topologyPrep || topologyPrep.revision !== net.trafficRevision) {
+        topologyPrep = { revision: net.trafficRevision, steps: sim.prepareVehicleTopology() };
+      }
+      const until = performance.now() + TOPOLOGY_SLICE_MS;
+      let prep = topologyPrep.steps.next();
+      while (!prep.done && performance.now() < until) prep = topologyPrep.steps.next();
+      if (prep.done) {
+        topologyPrep = null;
+        sim.rebuildVehicleTopology();
+        rebindVehicles(sim);
+      }
       holdSim = true;
       requestDraw();
     } else {

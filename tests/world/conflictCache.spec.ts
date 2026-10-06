@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { RoadDoc as Doc } from '@world/doc';
 import type { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { LaneletGraph } from '@world/lanelets';
@@ -118,5 +120,34 @@ describe('conflict zone cache', () => {
     const warm = performance.now() - t;
     // Measured at about a fifth; half leaves room for a noisy machine.
     expect(warm).toBeLessThan(cold * 0.5);
+  });
+  it('measures no pair again when nothing changed, in a town laid out symmetrically', () => {
+    // The parking town is symmetric about the origin. Hashed with a plain
+    // FNV-1a, every movement shared its key with its mirror image, the two
+    // threw each other out of the cache, and every rebuild measured some six
+    // hundred pairs again - a third of a second on every road edit.
+    const doc = Doc.fromJSON(JSON.parse(readFileSync('maps/cidade-com-estacionamento.json', 'utf8')));
+    const graph = graphOf(doc);
+    const index = new ConflictIndex();
+    index.build(graph);
+    index.build(graph);
+    expect(index.measured.build).toBe(0);
+  });
+
+  it('leaves nothing for the build to measure once a graph is prepared', () => {
+    const doc = fixtureDoc();
+    const index = new ConflictIndex();
+    index.build(graphOf(doc));
+    const nodes = [...doc.nodes.values()];
+    const a = nodes[0]!;
+    doc.addSegment(a.id, doc.addNode({ x: a.x + 30, y: a.y + 220 }).id, 1);
+    const graph = graphOf(doc);
+    const steps = index.prepare(graph);
+    while (!steps.next().done) { /* measured a pair at a time */ }
+    index.build(graph);
+    expect(index.measured.build).toBe(0);
+    const cold = new ConflictIndex();
+    cold.build(graph);
+    expect(snapshot(index)).toEqual(snapshot(cold));
   });
 });

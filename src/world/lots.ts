@@ -137,12 +137,34 @@ export function facingCorners<T extends readonly Vec2[]>(c: T): Vec2[] {
  * New lots for land with none yet, and the lots the paving now covers. Pure:
  * the caller stores the result (`applyLots`).
  */
-export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: string[]; drop: number[] } {
+export interface LotPlan { add: Candidate[]; keys: string[]; drop: number[] }
+
+export function planLots(doc: RoadDoc, net: Network): LotPlan {
+  const steps = planLotsSteps(doc, net);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * `planLots` a little at a time: it yields between rows of the raster, blocks
+ * and streets, and returns the plan. Replanning a town's lots in one go was a
+ * quarter-second frame after every road edit; the game runs this a few
+ * milliseconds a frame (`main.ts`, as `zoneGridSteps`) and applies the plan
+ * only if nothing it read has changed meanwhile.
+ */
+export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotPlan> {
   const { onRoad, onPlate } = pavedTester(doc, net);
+  yield;
   const paved = (p: Vec2): boolean => onRoad(p) || onPlate(p);
   const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground' && carriesPedestrians(r.road));
-  const drop = doc.lots.filter((l) => paved(lotCentre(l)) ||
-    l.corners.some((q) => paved({ x: q.x + (lotCentre(l).x - q.x) * 0.15, y: q.y + (lotCentre(l).y - q.y) * 0.15 }))).map((l) => l.id);
+  const drop: number[] = [];
+  for (const [i, l] of doc.lots.entries()) {
+    if (paved(lotCentre(l)) ||
+      l.corners.some((q) => paved({ x: q.x + (lotCentre(l).x - q.x) * 0.15, y: q.y + (lotCentre(l).y - q.y) * 0.15 }))) drop.push(l.id);
+    if (i % 64 === 63) yield;
+  }
   if (!ribbons.length) return { add: [], keys: [], drop };
   const known = new Set(doc.lotKeys);
   const kept = doc.lots.filter((l) => !drop.includes(l.id));
@@ -164,8 +186,11 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
   const W = Math.ceil((maxX - minX) / RASTER), H = Math.ceil((maxY - minY) / RASTER);
   const label = new Int32Array(W * H).fill(-1);
   const isPaved = new Uint8Array(W * H);
-  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-    if (paved({ x: minX + (i + 0.5) * RASTER, y: minY + (j + 0.5) * RASTER })) isPaved[j * W + i] = 1;
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      if (paved({ x: minX + (i + 0.5) * RASTER, y: minY + (j + 0.5) * RASTER })) isPaved[j * W + i] = 1;
+    }
+    yield;
   }
   const pieces: { cells: number[]; open: boolean }[] = [];
   const stack: number[] = [];
@@ -196,6 +221,7 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
   // --- closed blocks
   for (const [id, piece] of pieces.entries()) {
     if (piece.open || piece.cells.length * RASTER * RASTER < MIN_LOT * MIN_LOT * 2) continue;
+    yield;
     const pts = piece.cells.map((c) => ({ x: minX + ((c % W) + 0.5) * RASTER, y: minY + (Math.floor(c / W) + 0.5) * RASTER }));
     const box = orientedBox(hull(pts));
     const key = `b:${Math.round(box.c.x / m(4))},${Math.round(box.c.y / m(4))},${Math.round(box.L / m(4))},${Math.round(box.D / m(4))}`;
@@ -233,6 +259,7 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
   for (const segId of ids) {
     const ribbon = net.ribbons.get(segId);
     if (!ribbon || !ribbons.includes(ribbon)) continue;
+    yield;
     const line = ribbon.full;
     const face = halfWidth(ribbon.road, Level.Sidewalk) + m(0.3);
     const length = line.length;
@@ -281,7 +308,7 @@ export function planLots(doc: RoadDoc, net: Network): { add: Candidate[]; keys: 
 }
 
 /** Stores a plan: the covered lots removed, the new ones added, the land's keys kept. */
-export function applyLots(doc: RoadDoc, plan: ReturnType<typeof planLots>): boolean {
+export function applyLots(doc: RoadDoc, plan: LotPlan): boolean {
   if (!plan.add.length && !plan.drop.length && plan.keys.every((k) => doc.lotKeys.includes(k))) return false;
   const dropped = new Set(plan.drop);
   const kept = doc.lots.filter((l) => !dropped.has(l.id));
