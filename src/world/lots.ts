@@ -44,16 +44,16 @@ export interface Lot {
 }
 
 /** Depth of a lot along an open street. */
-export const LOT_DEPTH = m(25);
+export const LOT_DEPTH = m(32);
 /**
  * The frontage a lot aims at: a block's rows and a street's strip are cut
  * into equal lots of about this width (the player, 2026-10-05: square lots of
- * 26-30 m were too big).
+ * 26-30 m were too big; 2026-10-06: 15 m too small).
  */
-export const LOT_FRONTAGE = m(15);
+export const LOT_FRONTAGE = m(22);
 /** A block deeper than this is cut in two rows, back to back. */
-const TWO_ROWS = m(36);
-const MIN_LOT = m(8);
+const TWO_ROWS = m(44);
+const MIN_LOT = m(10);
 const RASTER = m(2);
 
 /** The boundary's area centroid (the corners' mean for a degenerate one). */
