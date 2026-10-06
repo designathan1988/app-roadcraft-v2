@@ -16,8 +16,9 @@ import { COARSE_EPS, hypot2 } from '@core/scalar';
 import { WalkableSurface } from '@world/walkable';
 import { Corridor, type CorridorFrame } from './corridor';
 import { PED_BEHAVIOUR } from './behaviour';
-import { facadeBays, solidFootprints } from '@world/buildings/geometry';
+import { facadeBays, solidFootprints, type FacadeBay } from '@world/buildings/geometry';
 import { ACCESS_COMPONENTS } from '@world/buildings/foundation';
+import type { Building } from '@world/buildings/types';
 import { blocksPedestrians, streetFurniture } from '@world/streetFurniture';
 import { SIGNAL_POST_RADIUS, signalPosts } from '@world/signalPosts';
 
@@ -358,11 +359,30 @@ export class SidewalkGraph {
           ...[...doc.poles.values()].map((pole) => ({ x: pole.x, y: pole.y, radius: m(0.18) })),
         ] : [];
       const spurs = new Map<SidewalkEdgeId, { s: number; id: SidewalkNodeId }[]>();
+      // The footways within a door's reach, from a grid of their boxes grown
+      // by that reach: every door measured every footway of the town, a
+      // million measurements and 60 ms of each road edit in the default town
+      // (docs/performance.md #11). A footway outside the grown box is farther
+      // than the reach, which the door would have dropped anyway.
+      const REACH = m(30), CELL = REACH;
+      const near = new Map<number, SidewalkEdge[]>();
+      const cellKey = (x: number, y: number): number => (x + 32768) * 65536 + (y + 32768);
+      for (const edge of walks) {
+        const box = edge.path.bbox;
+        for (let x = Math.floor((box.minX - REACH) / CELL); x <= Math.floor((box.maxX + REACH) / CELL); x++) {
+          for (let y = Math.floor((box.minY - REACH) / CELL); y <= Math.floor((box.maxY + REACH) / CELL); y++) {
+            const list = near.get(cellKey(x, y));
+            if (list) list.push(edge); else near.set(cellKey(x, y), [edge]);
+          }
+        }
+      }
       for (const building of doc.buildings.all()) {
-        for (const bay of facadeBays(building)) {
+        for (const bay of doorBays(building)) {
           if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
           const door = { x: bay.x + bay.nx * m(0.75), y: bay.y + bay.ny * m(0.75) };
-          const candidates = walks.flatMap((edge) => {
+          const reachable = Number.isFinite(door.x) && Number.isFinite(door.y)
+            ? near.get(cellKey(Math.floor(door.x / CELL), Math.floor(door.y / CELL))) ?? [] : walks;
+          const candidates = reachable.flatMap((edge) => {
             const closest = edge.path.closestPoint(door);
             if (closest.distance > m(30)) return [];
             return [0, 2, -2, 4, -4, 7, -7, 10, -10].map((metres) => {
@@ -678,6 +698,21 @@ export class SidewalkGraph {
     next.set(key, points);
     return points;
   }
+}
+
+/**
+ * A building's street-level door bays, worked out once per building record
+ * (records are replaced, never changed, on an edit): every road edit worked
+ * out the facades of every building in town again (docs/performance.md #11).
+ */
+const DOOR_BAYS = new WeakMap<Building, readonly FacadeBay[]>();
+function doorBays(building: Building): readonly FacadeBay[] {
+  let bays = DOOR_BAYS.get(building);
+  if (!bays) {
+    bays = facadeBays(building).filter((bay) => bay.level === 0 && ACCESS_COMPONENTS.has(bay.component));
+    DOOR_BAYS.set(building, bays);
+  }
+  return bays;
 }
 
 /** The box of a footprint ring, kept with the ring (`accessLineClear`). */
