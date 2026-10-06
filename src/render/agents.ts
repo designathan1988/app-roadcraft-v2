@@ -909,9 +909,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const person = procOf(index);
       return person && procedural ? procedural.ragdoll.skeleton(person) : pedestrians.skeletonOf(index);
     },
-    drawPalette(index, palette, instance, charred) {
+    drawPalette(index, palette, instance, charred, alive) {
       const person = procOf(index);
       if (!person || !procedural) { pedestrians.drawPalette(index, palette, instance, charred); return; }
+      // On the ground: in pain if alive, slack if not.
+      person.activity = alive ? 'hurt' : 'dead';
       if (index <= TWIN_BASE) {
         person.matrix.copy(instance).multiply(procScale.makeScale(1 / person.scale, 1 / person.scale, 1 / person.scale));
         procedural.ragdoll.hold(person, palette);
@@ -1708,7 +1710,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           if (procedural && ped.id !== PLAYER_ID) {
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
-            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' ? doing : ped.panic ? 'panic' : doing;
+            // Shot and still going: the pain on their face over the fright.
+            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined));

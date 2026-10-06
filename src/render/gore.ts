@@ -64,7 +64,7 @@ export function createGore(): Gore {
   const group = new Group();
   group.name = 'gore';
   // Wet: glossy, dark.
-  const flesh = new MeshStandardMaterial({ roughness: 0.28, metalness: 0 });
+  const flesh = new MeshStandardMaterial({ roughness: 0.4, metalness: 0 });
   const boneMaterial = new MeshStandardMaterial({ roughness: 0.6, metalness: 0, color: 0xd9cdb6 });
   const segments = new InstancedMesh(new CylinderGeometry(1, 1, 1, 7), flesh, MAX_SEGMENTS);
   const organs = new InstancedMesh(new SphereGeometry(1, 10, 7), flesh, MAX_ORGANS);
@@ -104,7 +104,7 @@ export function createGore(): Gore {
       if (!at) return;
       if (chains.length * LINKS >= MAX_SEGMENTS) chains.shift();
       const p: Vector3[] = [], o: Vector3[] = [];
-      const seg = m(0.085 + Math.random() * 0.03);
+      const seg = m(0.055 + Math.random() * 0.02);
       for (let i = 0; i < LINKS; i++) {
         // Coiled a little out of the wound, the way it was packed.
         const a = i * 1.3;
@@ -113,21 +113,21 @@ export function createGore(): Gore {
         o.push(v.clone().addScaledVector(kick, -(1 / 60) * (i / LINKS)));
       }
       chains.push({
-        p, o, anchor, hold: Math.random() < 0.45 ? 2 + Math.random() * 6 : Infinity, seg, radius: m(0.028 + Math.random() * 0.01),
-        color: new Color([0x8a3a40, 0x7a2c33, 0x94464a][Math.floor(Math.random() * 3)]!), age: 0, still: 0,
+        p, o, anchor, hold: Math.random() < 0.45 ? 2 + Math.random() * 6 : Infinity, seg, radius: m(0.016 + Math.random() * 0.006),
+        color: new Color([0x5e2228, 0x4e1a20, 0x66282e][Math.floor(Math.random() * 3)]!), age: 0, still: 0,
       });
     },
     scatter(at, count, kick) {
       for (let i = 0; i < count; i++) {
         if (loose.length >= MAX_ORGANS) loose.shift();
-        const r = m(0.05 + Math.random() * 0.07);
+        const r = m(0.025 + Math.random() * 0.035);
         loose.push({
           p: at.clone(),
           v: kick.clone().add(new Vector3((Math.random() - 0.5) * m(3), m(1 + Math.random() * 2.5), (Math.random() - 0.5) * m(3))),
           q: new Quaternion().setFromAxisAngle(new Vector3(Math.random(), Math.random(), Math.random()).normalize(), Math.random() * Math.PI),
           size: new Vector3(r * (1 + Math.random() * 0.8), r * (0.45 + Math.random() * 0.3), r),
           // Liver, kidney, stomach, lung: dark reds, purple, a pinkish grey.
-          color: new Color([0x4e0f14, 0x5a1a26, 0x6b2a35, 0x7d4a52, 0x3c0a10][Math.floor(Math.random() * 5)]!),
+          color: new Color([0x3a0a0e, 0x44121a, 0x4e1a22, 0x5a2a30, 0x2e080c][Math.floor(Math.random() * 5)]!),
           rest: false,
         });
       }

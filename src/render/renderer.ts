@@ -3,6 +3,8 @@ import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
 import { createGore } from './gore';
+import { solidsOf } from '@world/solids';
+import { vehiclePose } from '@sim/pose';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
@@ -631,6 +633,34 @@ export function createSceneRenderer(
         for (const e of b.elements ?? []) {
           if ((e.kind === 'wall' || e.kind === 'fence' || e.kind === 'hedge') && e.z <= 0.01) out.push({ ring: elementRing(b, e), top: floor + e.h });
         }
+      }
+      // Everything else standing there (the player, 2026-10-06: a body goes
+      // through nothing): poles, trees, benches, bins, drawn walls and
+      // fences, and the cars - each a ring up to its height.
+      const doc = ragdollSim?.doc;
+      if (doc) {
+        for (const s of solidsOf(doc).near(x, y, reach)) {
+          if (s.kind === 'ring') continue;
+          const ground = terrain.renderedHeightAt(s.kind === 'disc' ? s.c.x : s.a.x, s.kind === 'disc' ? s.c.y : s.a.y);
+          if (s.kind === 'disc') {
+            const ring = Array.from({ length: 8 }, (_, i) => ({ x: s.c.x + Math.cos(i * Math.PI / 4) * s.r, y: s.c.y + Math.sin(i * Math.PI / 4) * s.r }));
+            // A pole or a trunk stands tall; street furniture is low.
+            out.push({ ring, top: ground + (s.r < m(0.2) ? m(6) : s.r < m(0.35) ? m(4) : m(0.9)) });
+          } else {
+            const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, l = Math.hypot(dx, dy) || 1;
+            const nx = (-dy / l) * s.r, ny = (dx / l) * s.r, tx = (dx / l) * s.r, ty = (dy / l) * s.r;
+            out.push({ ring: [{ x: s.a.x - tx + nx, y: s.a.y - ty + ny }, { x: s.b.x + tx + nx, y: s.b.y + ty + ny },
+              { x: s.b.x + tx - nx, y: s.b.y + ty - ny }, { x: s.a.x - tx - nx, y: s.a.y - ty - ny }], top: ground + m(1.6) });
+          }
+        }
+      }
+      for (const v of ragdollSim?.vehicles.values() ?? []) {
+        const pose = vehiclePose(ragdollSim!, v, 1);
+        if (!pose || Math.hypot(pose.p.x - x, pose.p.y - y) > reach) continue;
+        const a = v.archetype, c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
+        const hl = a.length / 2, hw = a.width / 2;
+        const ring = [[hl, hw], [hl, -hw], [-hl, -hw], [-hl, hw]].map(([u, w]) => ({ x: pose.p.x + c * u! - sn * w!, y: pose.p.y + sn * u! + c * w! }));
+        out.push({ ring, top: ragdollWorld.groundAt(pose.p.x, pose.p.y) + a.height * 0.85 });
       }
       return out.filter((w) => w.ring.length >= 3);
     },

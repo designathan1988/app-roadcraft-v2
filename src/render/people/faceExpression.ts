@@ -116,6 +116,24 @@ export function faceAt(seed: number, time: number, activity?: string, mood = 0):
     add('mouthOpen', 0.15 + 0.45 * sob * sob);
     add('faceBlink', 0.55 + 0.3 * sob);
   }
+  if (activity === 'hurt') {
+    // Pain (FACS AU4+6+7+9+10+43, Prkachin's pain face): brows down, eyes
+    // squeezed, the lip drawn up off clenched teeth; groaning, the mouth
+    // opening on each breath.
+    for (const k of Object.keys(out)) if (k !== 'lookLeft' && k !== 'lookRight') delete out[k];
+    add('faceAnger', 0.75);
+    add('faceSadness', 0.35);
+    const breath = Math.max(0, Math.sin(time * 3.2 + (hash & 63)));
+    add('faceBlink', 0.5 + 0.35 * breath);
+    add('mouthSpread', 0.65);
+    add('mouthOpen', 0.12 + 0.4 * breath * breath);
+  }
+  if (activity === 'dead') {
+    // Slack: eyes half shut and still, the jaw dropped a little, no blink.
+    for (const k of Object.keys(out)) delete out[k];
+    add('faceBlink', 0.62);
+    add('mouthOpen', 0.28);
+  }
   return out;
 }
 

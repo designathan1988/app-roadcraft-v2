@@ -469,7 +469,7 @@ ${shader.fragmentShader}`
       hole = max(hole, (1.0 - drench) * (1.0 - smoothstep(u * 0.007, u * 0.015, length(vProcBind - wd.xyz))));
     }
     // Blood soaked into cloth is near black-red, a little of the cloth's own shade through it.
-    texel.rgb = mix(texel.rgb, vec3(0.085, 0.004, 0.007) * (0.75 + 0.5 * texel.rgb), blood * 0.95);
+    texel.rgb = mix(texel.rgb, vec3(0.16, 0.006, 0.01) * (0.8 + 0.4 * texel.rgb), blood * 0.95);
     texel.rgb = mix(texel.rgb, vec3(0.04, 0.0, 0.0), hole);
   }
   // Burnt black (a bomb's direct hit, see char): soot over everything, a few

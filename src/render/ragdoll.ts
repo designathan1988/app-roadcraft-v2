@@ -44,7 +44,7 @@ export interface RagdollCitizens {
   capturedPose(id: number): { index: number; palette: Float32Array; transform: Matrix4 } | null;
   skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
   /** `charred`: burnt black (a bomb's direct hit). */
-  drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred?: boolean): void;
+  drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred?: boolean, alive?: boolean): void;
   clipPose(index: number, key: 'crouchUp' | 'idle', phase: number): { palette: Float32Array; duration: number } | null;
   /** Bodies loaded now, for people with no pose of their own (indoors). */
   loadedIndices(): number[];
@@ -378,8 +378,10 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     range(HEA, CHE, 0.8, 1.04);
     range(TOP, CHE, 0.82, 1.03);
     range(TOP, BEL, 0.85, 1.1);
-    fold(LS, LE, LW, 0.3); fold(RS, RE, RW, 0.3);
-    fold(LH, LK, LA, 0.38); fold(RH, RK, RA, 0.38);
+    // Not folded past what the clothes follow: tighter than this the skin
+    // came through the sleeves and trouser legs at the elbow and the knee.
+    fold(LS, LE, LW, 0.42); fold(RS, RE, RW, 0.42);
+    fold(LH, LK, LA, 0.5); fold(RH, RK, RA, 0.5);
     // Ankles: the foot keeps near its rest angle to the shin.
     range(LK, LT, 0.86, 1.06); range(RK, RT, 0.86, 1.06);
     // Shoulders and hips: an arm or a leg swings wide, but not through the body.
@@ -392,7 +394,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     sticks.push({ a: LA, b: RA, min: 0.1 * metre, max: Infinity, broken: false });
     sticks.push({ a: LW, b: RW, min: 0.08 * metre, max: Infinity, broken: false });
     const inv = p.map((_, k) => (k === PEL || k === CHE || k === BEL || k === LH || k === RH || k === LS || k === RS ? 0.45 : k === HEA ? 0.7 : 1));
-    const radius = p.map((_, k) => metre * (k === HEA ? 0.11 : k === TOP ? 0.05 : k === PEL || k === CHE || k === BEL ? 0.12 : k === LS || k === RS || k === LH || k === RH ? 0.08 : 0.05));
+    const radius = p.map((_, k) => metre * (k === HEA ? 0.11 : k === TOP ? 0.05 : k === PEL || k === CHE || k === BEL ? 0.12 : k === LS || k === RS || k === LH || k === RH ? 0.08
+      // Limbs as thick as they are drawn: thinner, a knee or a shin sank into the ground.
+      : k === LW || k === RW || k === LT || k === RT ? 0.055 : 0.07));
     const walls: Wall[] = world.wallsNear(x, y, m(35))
       // A wall the body starts in or against does not hold it: the building it
       // is blown out of (its pieces still being made), a doorway, a lot it
@@ -540,7 +544,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
       if (c.struck) citizens.wound?.(known.index, c.struck);
-      if (c.struck === 'torso' && Math.random() < 0.35) openBelly(known, away.clone().multiplyScalar(m(1.2)), Math.random() < 0.5 ? 1 : 0);
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -587,9 +590,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     add(body);
     if (c.struck) citizens.wound?.(body.index, c.struck);
     sever(body, c, dir, citizens);
-    // A bullet in the belly opens it now and then; a blast tears bodies open more often.
-    if (c.struck === 'torso' ? Math.random() < 0.3 : (c.kind === 'torn' ? Math.random() < 0.75 : c.kind === 'dead' && Math.random() < 0.25)) {
-      openBelly(body, dir.clone().multiplyScalar(m(c.struck ? 1.2 : 3)), c.struck ? 1 : 3 + Math.floor(Math.random() * 4));
+    // A blast tears a body open (one torn apart, most often); a bullet never
+    // does it at once - only a body already dead, shot again and again in
+    // the belly (`shootBody`).
+    if (!c.struck && (c.kind === 'torn' ? Math.random() < 0.7 : c.kind === 'dead' && Math.random() < 0.12)) {
+      openBelly(body, dir.clone().multiplyScalar(m(3)), 2 + Math.floor(Math.random() * 3));
     }
   };
 
@@ -797,7 +802,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       body.hits = (body.hits ?? 0) + 1;
       const tally = body.partHits ??= {};
       tally[part] = (tally[part] ?? 0) + 1;
-      if (part === 'torso' && !body.opened && (tally.torso ?? 0) >= 2 && Math.random() < 0.6) openBelly(body, dir.clone().multiplyScalar(m(1.5)), 2);
+      if (part === 'torso' && !body.opened && (tally.torso ?? 0) >= 4 && Math.random() < 0.5) openBelly(body, dir.clone().multiplyScalar(m(1.2)), 1);
       // A limb shot off at the second hit (the head at the first or second).
       if (!body.pin && part !== 'torso') {
         const limb = part as Severable;
@@ -903,7 +908,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         } else if (!body.asleep || !body.palettes.length || body.age > LIE) {
           body.palettes = palettes(body, bonesWorld(body));
         }
-        for (const palette of body.palettes) citizens.drawPalette(body.index, palette, body.anchor, body.charred === true);
+        for (const palette of body.palettes) citizens.drawPalette(body.index, palette, body.anchor, body.charred === true, body.survivor !== undefined);
       }
     },
   };
@@ -924,7 +929,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const heading = Math.atan2(-facing.z, facing.x);
     const x = body.p[PEL]!.x, y = -body.p[PEL]!.z;
     const clip = citizens.clipPose(body.index, RISE_KEY, 0);
-    alive.clip = clip?.duration ?? RISE_CLIP;
+    // Played in two seconds at most: the crouch-to-stand clip runs four and more.
+    alive.clip = Math.min(2, clip?.duration ?? RISE_CLIP);
     alive.root = new Matrix4().compose(
       new Vector3(x, world.groundAt(x, y), -y),
       new Quaternion().setFromAxisAngle(UP, heading + Math.PI / 2),
@@ -1062,6 +1068,19 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
    * toppling over nor a rag doll dropped.
    */
   function toneStep(body: Body, tone: NonNullable<Body['tone']>): void {
+    // The muscles only move the body within itself: whatever their pulls add
+    // up to across the ground is taken back, or the body crept metres off
+    // where it was shot (positions pulled against the sticks, every step).
+    let sx = 0, sz = 0;
+    for (const v of body.p) { sx += v.x; sz += v.z; }
+    toneMove(body, tone);
+    let ex = 0, ez = 0;
+    for (const v of body.p) { ex += v.x; ez += v.z; }
+    const n = body.p.length, dx = (ex - sx) / n, dz = (ez - sz) / n;
+    for (let k = 0; k < n; k++) { body.p[k]!.x -= dx; body.p[k]!.z -= dz; body.o[k]!.x -= dx; body.o[k]!.z -= dz; }
+  }
+
+  function toneMove(body: Body, tone: NonNullable<Body['tone']>): void {
     tone.t += STEP;
     const t = tone.t;
     // The dead give way at once and go limp in under a second; the wounded
@@ -1075,9 +1094,13 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // Rocked back by the blow, then folding forward over the knees.
     const lean = -0.22 * Math.sin(Math.min(1, T / 0.3) * Math.PI) * (1 - buckle) + 0.75 * smooth((T - 0.7) / 0.6);
     const hold = (from: number, to: number): number => 1 - smooth((T - from) / (to - from));
-    const upperK = 0.14 * hold(1.0, 1.8);
-    const legK = 0.12 * hold(1.1, 1.6);
-    const armK = 0.05 * hold(0.9, 1.6);
+    // Down on the ground the muscles let go: a pose held upright against the
+    // ground bent the neck back over and folded the legs through the clothes.
+    const chestUp = (body.p[CHE]!.y - body.ground[CHE]!) / M;
+    const standing = Math.min(1, Math.max(0, (chestUp - 0.3) / 0.35));
+    const upperK = 0.14 * hold(1.0, 1.8) * standing;
+    const legK = 0.12 * hold(1.1, 1.6) * standing;
+    const armK = 0.05 * hold(0.9, 1.6) * standing;
     const goal = new Vector3();
     const cos = Math.cos(lean), sin = Math.sin(lean);
     for (let k = 0; k < body.p.length; k++) {
@@ -1098,7 +1121,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         const rx = x * cos - y * sin, ry = x * sin + y * cos;
         x = rx; y = ry;
       }
-      const strength = leg ? legK : k === LH || k === RH ? 0.1 * hold(1.1, 1.6) : (k === LE || k === LW || k === RE || k === RW) ? armK : upperK;
+      const strength = leg ? legK : k === LH || k === RH ? 0.1 * hold(1.1, 1.6) * standing : (k === LE || k === LW || k === RE || k === RW) ? armK
+        : k === HEA || k === TOP ? upperK * 0.6 : upperK;
       if (strength <= 0) continue;
       goal.set(x, y, z).applyMatrix4(frame);
       const v = body.p[k]!;

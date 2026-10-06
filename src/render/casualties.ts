@@ -51,8 +51,9 @@ function bloodTexture(variant: Variant): CanvasTexture | null {
   const g = c.getContext('2d')!;
   let seed = variant === 'pool' ? 11 : variant === 'splat' ? 23 : 37;
   const rnd = (): number => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  const deep = (a: number): string => `rgba(38, 2, 4, ${a})`;
-  const thin = (a: number): string => `rgba(74, 6, 9, ${a})`;
+  // Blood red: deep where it pools, brighter where it thins (near black it read as purple on the grass).
+  const deep = (a: number): string => `rgba(96, 6, 9, ${a})`;
+  const thin = (a: number): string => `rgba(132, 12, 16, ${a})`;
   const blob = (x: number, y: number, rad: number, core: number): void => {
     const grad = g.createRadialGradient(x, y, 0, x, y, rad);
     grad.addColorStop(0, deep(core));

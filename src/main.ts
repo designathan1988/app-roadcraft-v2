@@ -1034,7 +1034,8 @@ function shootAt(sx: number, sy: number): boolean {
       const height = m(0.05) * k;
       const q = view.toWorldAt(sx, sy, base + height, w, h);
       const d = Math.hypot(q.x - p.x, q.y - p.y);
-      if (d < m(0.3) && (!best || d < best.d)) best = { id: p.id, height, d, x: p.x, y: p.y, heading: p.heading };
+      // The body's reach about its axis, arms out included (at 0.3 m a shot on an arm out swinging missed).
+      if (d < m(0.42) && (!best || d < best.d)) best = { id: p.id, height, d, x: p.x, y: p.y, heading: p.heading };
     }
   }
   if (!best) {

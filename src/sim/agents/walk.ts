@@ -595,7 +595,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
           dead++;
           continue;
         }
-        p.act = { kind: 'fall', from: p.age, until: p.age + 9, faceX: x, faceY: y };
+        p.act = { kind: 'fall', from: p.age, until: p.age + 14, faceX: x, faceY: y };
         p.v = 0;
         // Near the blow, some lose an arm or a leg and go on without it.
         if (d < kill * 1.5 && !p.maimed && (personHash(p.id ^ 0x3c1) & 3) !== 0) {
@@ -641,7 +641,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
           blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], struck: part, ...(severed ? { severed: [severed] } : {}) });
         finish(s, p, false);
         prune(s);
-        startle(w, p.x, p.y, m(45), 26, null);
+        startle(w, p.x, p.y, m(45), 18, null);
         shock(s, p.x, p.y, BODY_SHOCK);
         return { killed: true, severed };
       }
@@ -650,7 +650,11 @@ export function createAgentWalkEngine(): PedestrianEngine {
       // good, dragging themself away and bleeding to death; an arm gone:
       // running off bleeding until they drop (as GTA's wounded do).
       const legGone = p.lost.includes('legL') || p.lost.includes('legR');
-      const down = legGone ? 600 : severed ? 5 : 2.5;
+      // Held down until the body is up (`getUp` gives the moment): let go at
+      // a guess, they walked off unseen while their body still lay there,
+      // and appeared somewhere else once it stood (the player, 2026-10-06).
+      // The cap only for a body never drawn (nobody looking).
+      const down = legGone ? 600 : 14;
       p.act = { kind: 'fall', from: p.age, until: p.age + down, faceX: fromX, faceY: fromY };
       if (severed || legGone) p.bleeding = legGone ? 3 : 1.6;
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
@@ -659,7 +663,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
         lieFor: legGone ? 600 : severed ? 3 : 1.2, crawl: legGone, struck: part, ...(severed ? { severed: [severed] } : {}) });
       p.v = 0;
       p.fright = p.age + 30;
-      startle(w, p.x, p.y, m(45), 26, null);
+      startle(w, p.x, p.y, m(45), 18, null);
       shock(s, p.x, p.y, BODY_SHOCK);
       return { killed: false, severed };
     },
@@ -676,16 +680,16 @@ export function createAgentWalkEngine(): PedestrianEngine {
         return;
       }
       {
-        const hit = nearestWay(s, { x, y }, m(6));
-        if (hit) {
-          const at = hit.way.path.sampleAt(hit.s).p;
-          const goal = p.rush?.goal ?? lastOf(p);
-          p.x = p.prevX = at.x; p.y = p.prevY = at.y;
-          replan(w, s, p, goal);
-        }
+        // Exactly where the body lies (they were put on the nearest walkway,
+        // metres off: a jump the moment they stood), walking back onto the
+        // walkways from there.
+        const goal = p.rush?.goal ?? lastOf(p);
+        p.x = p.prevX = x; p.y = p.prevY = y;
+        replan(w, s, p, goal);
         p.heading = p.prevHeading = heading;
       }
-      if (p.act?.kind === 'fall') p.act = { ...p.act, until: Math.max(p.act.until, p.age + seconds) };
+      // The body says when they are up: exactly then.
+      if (p.act?.kind === 'fall') p.act = { ...p.act, until: p.age + seconds };
       if (p.rush) p.rush = { ...p.rush, until: Math.max(p.rush.until, p.age + seconds + 6) };
     },
     walkableNear(w, x, y, reach) {
@@ -1279,17 +1283,37 @@ function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: num
     const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
     const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
-    p.rush = { by: seconds >= 14 ? PANIC_RUN : RUN, until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
+    // The wounded get away as they can: a hurried stagger, not a sprint.
+    const hurt = (p.hp ?? 100) < 100 ? ((p.hp ?? 100) < 50 ? 1.35 : 1.8) : null;
+    p.rush = { by: hurt ?? (seconds >= 14 ? PANIC_RUN : RUN), until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
     p.fright = p.rush.until;
     // In a stampede some trip over and go down, a second or a few in; some
     // break down where they are, crouched and sobbing; a few faint.
-    if (seconds >= 14) {
+    // A blast's stampede (26 s of running): some trip, some crouch sobbing,
+    // a few faint. A shot frightens without that: nobody far off drops as if
+    // shot themself (the player, 2026-10-06) - those near crouch, others film.
+    const stampede = seconds >= 20;
+    if (!stampede && seconds >= 14) {
       const roll = personHash(p.id ^ 0x7a11) & 255;
-      if (roll < 60) p.tripAt = p.age + after + 0.8 + ((personHash(p.id ^ 0x51) & 255) / 255) * 4;
+      if (roll < 90 && after === 0 && d < m(12)) {
+        p.act = { kind: 'crouch', from: p.age, until: p.age + 3 + (roll % 4), faceX: x, faceY: y };
+        p.v = 0;
+        if (p.rush) p.rush = { ...p.rush, until: p.rush.until + 3 + (roll % 4) };
+      } else if (roll < 130 && after === 0 && d > m(12)) {
+        const hold = 3 + (roll % 5);
+        p.act = { kind: 'photo', from: p.age, until: p.age + hold, faceX: x, faceY: y };
+        p.v = 0;
+        if (p.rush) p.rush = { ...p.rush, until: p.rush.until + hold };
+        p.fright = p.rush?.until ?? p.fright;
+      }
+    }
+    if (stampede) {
+      const roll = personHash(p.id ^ 0x7a11) & 255;
+      if (roll < 60 && d < m(30)) p.tripAt = p.age + after + 0.8 + ((personHash(p.id ^ 0x51) & 255) / 255) * 4;
       else if (roll < 100 && after === 0) {
         p.act = { kind: 'crouch', from: p.age, until: p.age + 8 + (roll % 9), faceX: x, faceY: y };
         p.v = 0;
-      } else if (roll < 118 && after === 0) {
+      } else if (roll < 118 && after === 0 && d < m(25)) {
         p.act = { kind: 'fall', from: p.age + 1.5, until: p.age + 14 + (roll % 7), faceX: p.x + Math.cos(p.heading), faceY: p.y + Math.sin(p.heading) };
         p.v = 0;
       } else if (roll < 150 && after === 0 && d > m(12)) {
