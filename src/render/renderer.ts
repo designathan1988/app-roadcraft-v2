@@ -671,6 +671,13 @@ export function createSceneRenderer(
     // sank to the knees in a raised terrace).
     (x, y) => {
       const lot = buildings.anyLotHeightAt(x, y);
+      // On a road's footway or carriageway, its paving; the terrain elsewhere.
+      const paved = pavedHeightAt(x, y);
+      const ground = Number.isFinite(paved) ? paved : terrain.renderedHeightAt(x, y);
+      return Number.isFinite(lot) ? Math.max(lot, ground) : ground;
+    },
+    // A resident's parked car stands on its lot as the lot is drawn.
+    (building, x, y) => buildings.lotHeightAt(building as BuildingId, x, y));
   // A body torn apart: a limb or two and what was inside thrown over the
   // street, where they stay; blood spraying off them as they fly.
   ragdolls.onGore = (x, y, z, dx, dy, speed, kind) => {
@@ -701,11 +708,6 @@ export function createSceneRenderer(
     if (lastDrip.size > 500) lastDrip.clear();
     ragdolls.drip(x + (Math.random() - 0.5) * m(0.3), y + (Math.random() - 0.5) * m(0.3), z + m(0.02), m(0.25 + Math.random() * 0.35));
   });
-      const ground = terrain.renderedHeightAt(x, y);
-      return Number.isFinite(lot) ? Math.max(lot, ground) : ground;
-    },
-    // A resident's parked car stands on its lot as the lot is drawn.
-    (building, x, y) => buildings.lotHeightAt(building as BuildingId, x, y));
 
   const crowdFrustum = new Frustum();
   const crowdProjection = new Matrix4();

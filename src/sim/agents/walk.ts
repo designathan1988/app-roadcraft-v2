@@ -986,7 +986,10 @@ function publish(w: SimWorld): void {
     v.x = p.x; v.y = p.y; v.heading = p.heading;
     v.prev.x = p.prevX; v.prev.y = p.prevY; v.prev.heading = p.prevHeading;
     v.v = p.v; v.turnV = p.turnV; v.age = p.age;
-    v.ground = on ? 'crossing' : 'footway';
+    // Off the footways - the player, or a stretch of a route over open
+    // ground - the body stands on what is drawn under it, not at the height
+    // of the nearest road (the player sank into the grass or floated over it).
+    v.ground = on ? 'crossing' : p.player || !st.way ? 'open' : 'footway';
     v.segment = (st.way?.segment ?? undefined) as SegmentId | undefined;
     v.stretch = st.way ? `${st.way.id}:${st.dir}` : '';
     v.walking = p.v > m(0.1);
