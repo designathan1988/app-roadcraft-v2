@@ -135,11 +135,11 @@ function draw(p: PersonParams, live: boolean): void {
   if (stale('hair', h)) {
     const hair = hairStrands(ex, b.base, body(), h, p.seed);
     stage.strands('hair', hair, { root: darker(h.colour, 0.8), tip: h.tipColour, grey: 0xc4c2be, shine: 1 });
-    stage.follicles(hair.follicles ?? null, h.style === 'buzz' ? 0.35 : 1);
+    stage.follicles(hair.follicles ?? null, h.style === 'buzz' ? 0.35 : 1, hair.widths);
   }
   times['hair'] = Math.round(performance.now() - t); t = performance.now();
   if (stale('brows', p.brows)) stage.strands('brows', browStrands(ex, b.base, shaped.shape, p.brows, p.seed + 1), { root: p.brows.colour, tip: p.brows.colour, shine: 0.25, fadeThin: true });
-  if (stale('lashes', p.lashes)) stage.strands('lashes', lashStrands(ex, b.base, shaped.shape, p.lashes, p.seed + 2), { root: p.lashes.colour, tip: p.lashes.colour, shine: 0.15, fadeThin: true });
+  if (stale('lashes', p.lashes)) stage.strands('lashes', lashStrands(ex, b.base, shaped.shape, p.lashes, p.seed + 2), { root: p.lashes.colour, tip: p.lashes.colour, shine: 0.15 });
   times['face'] = Math.round(performance.now() - t); t = performance.now();
   if (stale('clothes', p.outfit) || stale('clothesSex', p.sex < 0.5)) stage.clothes(dressBody(body(), p.outfit, p.sex < 0.5));
   times['clothes'] = Math.round(performance.now() - t);

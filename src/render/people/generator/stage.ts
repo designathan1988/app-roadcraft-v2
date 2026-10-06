@@ -249,7 +249,12 @@ export class CreatorStage {
    * strands is skin with hair roots, never painted the hair's colour. Each
    * skin tile hit by roots gets its own map.
    */
-  follicles(f: { readonly tris: Uint32Array; readonly bary: Float32Array } | null, cover = 1): void {
+  /**
+   * `inside` (per strand, 0.3 at the hairline's edge to 1 well inside it,
+   * the strands' width scale) weighs each root: hairline roots are fine
+   * hair, and the scalp there is not under a head of hair.
+   */
+  follicles(f: { readonly tris: Uint32Array; readonly bary: Float32Array } | null, cover = 1, inside?: Float32Array): void {
     if (!this.person) return;
     const mesh = this.person, g = mesh.geometry;
     const uv = g.getAttribute('uv'), index = g.getIndex()!;
@@ -274,6 +279,7 @@ export class CreatorStage {
           this.follicleCanvases.set(slot, entry);
         }
         ctx = entry.canvas.getContext('2d')!;
+        ctx.globalAlpha = 1;
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, SIZE, SIZE);
         ctx.fillStyle = '#fff';
@@ -284,6 +290,8 @@ export class CreatorStage {
       const a = index.getX(start), b = index.getX(start + 1), c = index.getX(start + 2);
       const x = uv.getX(a) + (uv.getX(b) - uv.getX(a)) * u + (uv.getX(c) - uv.getX(a)) * v;
       const y = uv.getY(a) + (uv.getY(b) - uv.getY(a)) * u + (uv.getY(c) - uv.getY(a)) * v;
+      const w = inside ? Math.max(0, (inside[k]! - 0.3) / 0.7) : 1;
+      ctx.globalAlpha = 0.15 + 0.85 * w * w;
       ctx.beginPath();
       ctx.arc(x * SIZE, (1 - y) * SIZE, 1.3, 0, Math.PI * 2);
       ctx.fill();

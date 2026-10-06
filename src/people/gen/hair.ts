@@ -300,19 +300,19 @@ function grownGuides(ex: HumanExtras, shape: Float32Array, style: string, skull:
    * way `want` asks, turned into the skin's tangent plane, then is kept
    * `lift` off the skin (pushed out, and drawn back if it drifted away).
    */
-  const walk = (start: number[], steps: number, step: number, want: (p: number[], i: number) => number[], lift: number, stop?: (p: number[]) => boolean): Guide => {
+  const walk = (start: number[], steps: number, step: number, want: (p: number[], i: number) => number[], lift: number, stop?: (p: number[]) => boolean, hug = false): Guide => {
     const g: Guide = [start];
     let p = start;
     for (let i = 1; i <= steps; i++) {
       const s = solid.surface(p);
       let d = want(p, i);
-      if (s && p[1]! > earY) {
+      if (s && (hug || p[1]! > earY)) {
         const k = d[0]! * s.n[0]! + d[1]! * s.n[1]! + d[2]! * s.n[2]!;
         d = norm([d[0]! - s.n[0]! * k, d[1]! - s.n[1]! * k, d[2]! - s.n[2]! * k]);
       }
       p = [p[0]! + d[0]! * step, p[1]! + d[1]! * step, p[2]! + d[2]! * step];
       const after = solid.surface(p);
-      if (after && p[1]! > earY && after.along > lift + 0.002) {
+      if (after && (hug || p[1]! > earY) && after.along > lift + 0.002) {
         const back2 = Math.min(after.along - lift, 0.004);
         p = [p[0]! - after.n[0]! * back2, p[1]! - after.n[1]! * back2, p[2]! - after.n[2]! * back2];
       }
@@ -362,7 +362,10 @@ function grownGuides(ex: HumanExtras, shape: Float32Array, style: string, skull:
     } else {
       const tie = style === 'bun' ? bunAt : back;
       g = walk(r, 24, 0.012, (p) => norm([tie[0]! - p[0]!, tie[1]! - p[1]!, tie[2]! - p[2]!]), 0.003,
-        (p) => Math.hypot(p[0]! - tie[0]!, p[1]! - tie[1]!, p[2]! - tie[2]!) < 0.012);
+        (p) => Math.hypot(p[0]! - tie[0]!, p[1]! - tie[1]!, p[2]! - tie[2]!) < 0.012,
+        // Pulled tight to the tie: hair below the ears hugs the head too
+        // (left to hang, the sideburns fell straight down before the ears).
+        true);
       if (style === 'ponytail') {
         const sx = rng.range(-1, 1) * 0.012, sz = rng.range(-1, 1) * 0.012;
         for (let i = 1; i <= 10; i++) g.push([tie[0]! + sx * Math.sqrt(i), tie[1]! - 0.026 * i, tie[2]! - 0.015 - 0.004 * i + sz * Math.sqrt(i)]);
@@ -536,7 +539,8 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   const rng = new Rng(seed);
   const skull = skullOf(ex, shape);
   const sets = vertSets(ex);
-  const solid = new HeadSolid(body, sets.upper, sets.torso, 0.012);
+  // The torso kept 2 cm off: clothes stand off the skin, and hair lies on them.
+  const solid = new HeadSolid(body, sets.upper, sets.torso, 0.02);
   let guides: Guide[], children: number, radius: number, clump: number, roughness = 0.003;
   if (p.style === 'none') return empty();
   const info = ex.grooms.get(p.style);
@@ -559,7 +563,7 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   const lengths = guides.filter((g) => g.length >= 2).map((g) => g.slice(1).reduce((s, q, i) => s + Math.hypot(q[0]! - g[i]![0]!, q[1]! - g[i]![1]!, q[2]! - g[i]![2]!), 0)).sort((a, b) => a - b);
   const typical = lengths[Math.floor(lengths.length / 2)] ?? 0.05;
   const seg = p.curl > 0.15 ? Math.min(0.015, (0.012 + 0.04 * p.curlSize) / 5) : 0.015;
-  const N = p.style === 'buzz' ? 2 : Math.max(5, Math.min(32, Math.ceil(typical / seg) + 1));
+  const N = p.style === 'buzz' ? 2 : Math.max(5, Math.min(24, Math.ceil(typical / seg) + 1));
   // A groom denser than 3000 guides (the side part has 30,000) is thinned
   // evenly: interpolation fills between them anyway.
   const stride = Math.max(1, Math.ceil(guides.length / 3000));
@@ -696,7 +700,8 @@ export function lashStrands(ex: HumanExtras, base: HumanBase, shape: Float32Arra
     for (const [run, up] of [[rims.upper, 1], [rims.lower, -1]] as const) {
       if (run.length < 2) continue;
       const line = run.map((v) => [shape[v * 3]!, shape[v * 3 + 1]!, shape[v * 3 + 2]!]);
-      const total = Math.round((up > 0 ? 70 : 30) * p.density);
+      // About 100-150 upper lashes and 50-80 lower per eye.
+      const total = Math.round((up > 0 ? 130 : 65) * p.density);
       for (let k = 0; k < total; k++) {
         const u = (k + rng.float()) / total;
         const f = u * (line.length - 1), i = Math.min(line.length - 2, Math.floor(f)), t = f - i;
