@@ -331,6 +331,15 @@ export interface RoadElevation {
    * did not reach.
    */
   digest(minX: number, minY: number, maxX: number, maxY: number): number;
+  /**
+   * Where this solve and another can differ: the boxes (as the spatial index
+   * files them) of every road whose solved profile is not the same in both,
+   * or that only one has; `null` for everywhere (a road too big to file).
+   * A rectangle no box reaches has the same `digest` in both.
+   */
+  differences?(other: RoadElevation): { minX: number; minY: number; maxX: number; maxY: number }[] | null;
+  /** Each road's whole solved profile as a digest, with its box (for `differences`). */
+  summaries?(): ReadonlyMap<SegmentId, { digest: number; box: Aabb; oversized: boolean }>;
 }
 
 export interface RoadSample {
@@ -726,6 +735,13 @@ export function buildRoadElevation(
 
   // --------------------------------------------------------------- the index
   const index = new SpatialIndex(profiles);
+  /** Each road's whole solved profile as a digest, with its box (`differences`). */
+  const profileSummaries = new Map<SegmentId, { digest: number; box: Aabb; oversized: boolean }>();
+  for (const profile of profiles) {
+    const d = new Digest().add(profile.id).addText(profile.structure).add(profile.manualVertical ? 1 : 0).add(profile.type)
+      .add(profile.half).add(profile.median).add(profile.sidewalk).add(profile.step).addAll(profile.h).addAll(profile.line.xy);
+    profileSummaries.set(profile.id, { digest: d.value(), box: profile.bbox, oversized: index.isOversized(profile) });
+  }
 
   /** Everything a query reads from one profile, digested once per build. */
 
@@ -912,6 +928,25 @@ export function buildRoadElevation(
 
   return {
     at: query,
+    differences(other) {
+      const mine = profileSummaries;
+      const theirs = other.summaries?.();
+      if (!theirs) return null;
+      const out: { minX: number; minY: number; maxX: number; maxY: number }[] = [];
+      const take = (s: { box: Aabb; oversized: boolean }): boolean => {
+        if (s.oversized) return false;
+        out.push({ minX: s.box.minX - INDEX_CELL, minY: s.box.minY - INDEX_CELL, maxX: s.box.maxX + INDEX_CELL, maxY: s.box.maxY + INDEX_CELL });
+        return true;
+      };
+      for (const [id, s] of mine) {
+        const t = theirs.get(id);
+        if (t && t.digest === s.digest) continue;
+        if (!take(s) || (t && !take(t))) return null;
+      }
+      for (const [id, t] of theirs) if (!mine.has(id) && !take(t)) return null;
+      return out;
+    },
+    summaries: () => profileSummaries,
     digest: (minX, minY, maxX, maxY) => {
       const known = new Map<Profile, number>();
       return index.digest(minX, minY, maxX, maxY, (profile) => {
@@ -1592,10 +1627,15 @@ function heightAtArc(profile: Profile, s: number): number {
  * the size of the network. The grid makes it proportional to the number of roads
  * that actually reach the point, which is a handful.
  */
+/** Side of the spatial index's cells, world units. */
+const INDEX_CELL = 64;
 class SpatialIndex {
-  private readonly cell = 64;
+  private readonly cell = INDEX_CELL;
   private readonly buckets = new Map<number, Profile[]>();
   private readonly oversized: Profile[] = [];
+  isOversized(profile: Profile): boolean {
+    return this.oversized.includes(profile);
+  }
   private readonly all: readonly Profile[];
 
   constructor(profiles: readonly Profile[]) {

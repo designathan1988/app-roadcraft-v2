@@ -823,9 +823,14 @@ export function createSceneRenderer(
   const changedBlocks = (before: RoadElevation, after: RoadElevation): [number, number, number, number][] => {
     const out: [number, number, number, number][] = [];
     const half = MAP_SIZE / 2;
+    // Only blocks a road that differs reaches can differ (`differences`):
+    // every block of the map used to be digested twice on every edit.
+    const where = after.differences?.(before) ?? null;
+    if (where && !where.length) return out;
     for (let x = -half; x < half; x += SHAPE_BLOCK) {
       for (let y = -half; y < half; y += SHAPE_BLOCK) {
         const x1 = x + SHAPE_BLOCK, y1 = y + SHAPE_BLOCK;
+        if (where && !where.some((r) => r.minX <= x1 && r.maxX >= x && r.minY <= y1 && r.maxY >= y)) continue;
         if (before.digest(x, y, x1, y1) !== after.digest(x, y, x1, y1)) out.push([x, y, x1, y1]);
       }
     }
