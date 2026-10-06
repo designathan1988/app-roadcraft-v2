@@ -130,7 +130,13 @@ const FRESNEL_BASE = 0.11;
  * like paint however good the environment map was. A gentler exponent spreads
  * the same transition across the range of angles the rippled normals do reach.
  */
-const FRESNEL_POWER = 3;
+const FRESNEL_POWER = 4;
+/**
+ * Most of the light the surface may reflect. The camera now tilts down to
+ * the horizon, where the Schlick term reaches one and a river turned into
+ * sheets of white sky; real water at a glance still shows its body.
+ */
+const FRESNEL_MAX = 0.78;
 
 /** Low enough for the sun to catch, high enough not to alias into fireflies. */
 const WATER_ROUGHNESS = 0.085;
@@ -245,7 +251,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     transparent: true,
     opacity: 1,
     side: FrontSide,
-    envMapIntensity: 1.5,
+    envMapIntensity: 1.0,
   });
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
@@ -359,8 +365,8 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
         '#include <lights_physical_fragment>',
         `#include <lights_physical_fragment>
          float waterNdv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-         float waterFresnel = ${FRESNEL_BASE.toFixed(2)} +
-           (1.0 - ${FRESNEL_BASE.toFixed(2)}) * pow(1.0 - waterNdv, ${FRESNEL_POWER.toFixed(1)});
+         float waterFresnel = min(${FRESNEL_MAX.toFixed(2)}, ${FRESNEL_BASE.toFixed(2)} +
+           (1.0 - ${FRESNEL_BASE.toFixed(2)}) * pow(1.0 - waterNdv, ${FRESNEL_POWER.toFixed(1)}));
          // Both fields, because three reads \`specularColorBlended\` for the
          // direct lobe and \`specularColor\` for the environment one.
          vec3 waterSpecular = mix(vec3(0.04), vec3(1.0), waterFresnel);
@@ -376,7 +382,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v2';
+  material.customProgramCacheKey = () => 'water-two-layer-v3';
 
   const started = performance.now();
   return {

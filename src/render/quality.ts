@@ -26,6 +26,8 @@ export interface QualitySettings {
   readonly vegetation: number;
   /** Grass clumps (tufts and wildflowers), drawn at close zoom only. */
   readonly grass: number;
+  /** Blades in the GPU grass field round the camera (`grass.ts`); 0 draws none. */
+  readonly grassBlades: number;
   /** The close-zoom texture detail layer (`mesh/detailLayer.ts`). */
   readonly surfaceDetail: boolean;
   /** Zoom below which markings, props and agents stop being drawn. */
@@ -52,6 +54,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailProps: false,
     vegetation: 0,
     grass: 0,
+    grassBlades: 0,
     surfaceDetail: false,
     detailCutoffZoom: 0.5,
     pedestrianDetail: 0,
@@ -68,6 +71,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailProps: true,
     vegetation: 600,
     grass: 600,
+    grassBlades: 30_000,
     surfaceDetail: true,
     detailCutoffZoom: 0.34,
     pedestrianDetail: 1,
@@ -84,6 +88,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailProps: true,
     vegetation: 1_400,
     grass: 1_400,
+    grassBlades: 60_000,
     surfaceDetail: true,
     detailCutoffZoom: 0.26,
     pedestrianDetail: 2,
@@ -100,6 +105,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     detailProps: true,
     vegetation: 2_600,
     grass: 2_600,
+    grassBlades: 90_000,
     surfaceDetail: true,
     detailCutoffZoom: 0.2,
     pedestrianDetail: 2,

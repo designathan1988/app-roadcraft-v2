@@ -70,6 +70,8 @@ import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, 
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { createGrass } from './grassField';
+import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
 import { Indoors } from './indoors';
 import { setLit, slotOf, slotsOnFloor } from './buildings/lightSlots';
@@ -404,6 +406,39 @@ export function createSceneRenderer(
   const terrain: TerrainSurface = createTerrainSurface(anisotropy);
   // The orbit camera kept above the land it looks over (`isoViewport.ts`).
   rig.setGround((x, z) => terrain.renderedHeightAt(x, -z));
+  // The grass field round the camera (`grass.ts`): its ground heights and the
+  // mask that keeps it off paving and buildings, rebuilt when those change.
+  const grass = createGrass(quality);
+  scene.add(grass.mesh);
+  if (import.meta.env.DEV) (window as unknown as { __grass?: unknown }).__grass = grass;
+  let grassGroundFor = '';
+  let grassMaskFor = '';
+  let grassCheckedAt = 0;
+  const GRASS_SAMPLES = 384;
+  const keepGrassInputs = (net: Network): void => {
+    if (performance.now() - grassCheckedAt < 300) return;
+    grassCheckedAt = performance.now();
+    const groundKey = `${net.doc.terrainRevision}:${net.revision}`;
+    if (groundKey !== grassGroundFor) {
+      grassGroundFor = groundKey;
+      const n = GRASS_SAMPLES, size = TERRAIN_HALF * 2;
+      const heights = new Float32Array(n * n);
+      for (let r = 0; r < n; r++) {
+        const y = -TERRAIN_HALF + ((r + 0.5) / n) * size;
+        for (let c = 0; c < n; c++) heights[r * n + c] = terrain.renderedHeightAt(-TERRAIN_HALF + ((c + 0.5) / n) * size, y);
+      }
+      grass.setHeights(heights, n, size);
+    }
+    const maskKey = `${net.revision}:${net.doc.buildings.revision}:${net.doc.lotRevision}`;
+    if (maskKey !== grassMaskFor) {
+      grassMaskFor = maskKey;
+      const rings: { x: number; y: number }[][] = [];
+      for (const b of net.doc.buildings.all()) for (const ring of solidFootprints(b)) rings.push(ring);
+      for (const lot of net.doc.lots) if (lot.building !== undefined) rings.push([...lot.corners]);
+      const roads = net.doc.segments.size ? [roadSurfacesOf(net).sidewalk] : [];
+      grass.setBlocked(roads, rings, TERRAIN_HALF * 2);
+    }
+  };
   scene.add(...terrain.meshes);
 
   const world = new Group();
@@ -1036,6 +1071,8 @@ export function createSceneRenderer(
 
   // The play camera's state: the projection the orbit had before it.
   let buildingsHeld = false;
+  /** Zoom (pixels a unit) from which the grass field is drawn in the orbit view. */
+  const GRASS_ZOOM = 4;
   const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
   /** Playing: the ring round the player always counted as seen (the camera turns), u. */
   const PLAY_NEAR = m(45);
@@ -1619,6 +1656,14 @@ export function createSceneRenderer(
         agents.setNight(dark);
       }
       rig.camera.getWorldDirection(viewDirection);
+      // The grass: close up only (on foot, or the camera near the ground).
+      {
+        const close = rig.chasing || rig.viewport.zoom >= GRASS_ZOOM;
+        const show = quality.grassBlades > 0 && close;
+        if (show) keepGrassInputs(net);
+        const at = rig.chasing ? chaseCamera.focus : target;
+        grass.update(at.x, at.z, show, windClock);
+      }
       if (rig.chasing) {
         // Playing, the camera sees down the street: the shadows cover the
         // view out past PLAY_SHADOW_FAR, inside one fixed disc round that slice
