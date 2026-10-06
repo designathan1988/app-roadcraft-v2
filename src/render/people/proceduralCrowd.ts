@@ -578,6 +578,13 @@ export interface ProceduralCrowd {
     duration(person: ProceduralPerson, clip: ProcClip): number;
     /** A bullet hole in this part of them, blood soaking out of it from now on. */
     wound(person: ProceduralPerson, part: BodyPart): void;
+    /**
+     * The jolt of a bullet (Euphoria's shot: the spine giving way along the
+     * shot for a moment, then recovering): the upper body thrown back along
+     * world (dirX, dirY) and coming back over half a second, laid over
+     * whatever they are playing.
+     */
+    jolt(person: ProceduralPerson, dirX: number, dirY: number, strength: number): void;
     /** Blood all over them (a body shot to pieces). */
     drench(person: ProceduralPerson): void;
     /** Their wounds gone (the person drawn as somebody new). */
@@ -1282,6 +1289,39 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     piece.people.pop();
     piece.mesh.count = piece.people.length;
   };
+  /** Bullets' jolts running (`jolt`): when, about which axis (model space), how hard (radians). */
+  const jolts = new Map<ProceduralPerson, { start: number; axis: Vector3; strength: number }>();
+  const joltRot = new Matrix4(), joltDir = new Vector3();
+  const joltSpine = new Map<BodyClass, { root: number; bind: Vector3; bones: number[] } | null>();
+  const joltM = new Matrix4(), joltT = new Matrix4(), joltP = new Vector3();
+  /** The upper body turned about the lower spine by `angle`, in a palette row at `at`. */
+  const applyJolt = (cls: BodyClass, at: number, axis: Vector3, angle: number): void => {
+    let spine = joltSpine.get(cls);
+    if (spine === undefined) {
+      const bones = cls.rig.mesh.skeleton.bones;
+      const root = bones.findIndex((b) => (CAPTURE_NAME[b.name] ?? b.name) === 'Bip01_Spine');
+      if (root < 0) spine = null;
+      else {
+        const parents = bones.map((b) => bones.indexOf(b.parent as never));
+        const list: number[] = [];
+        for (let i = 0; i < bones.length; i++) { let j = i; while (j >= 0 && j !== root) j = parents[j]!; if (j === root) list.push(i); }
+        spine = { root, bind: new Vector3().setFromMatrixPosition(joltM.copy(cls.rig.mesh.skeleton.boneInverses[root]!).invert()), bones: list };
+      }
+      joltSpine.set(cls, spine);
+    }
+    if (!spine || Math.abs(angle) < 1e-4) return;
+    const px = cls.palette;
+    joltM.fromArray(px, at + spine.root * SKIN_BONE_FLOATS);
+    joltP.copy(spine.bind).applyMatrix4(joltM);
+    // T(p) R T(-p), before each upper-body bone's own matrix.
+    joltT.makeTranslation(joltP.x, joltP.y, joltP.z).multiply(joltM.makeRotationAxis(axis, angle)).multiply(new Matrix4().makeTranslation(-joltP.x, -joltP.y, -joltP.z));
+    const bone = new Matrix4();
+    for (const i of spine.bones) {
+      const o = at + i * SKIN_BONE_FLOATS;
+      bone.fromArray(px, o).premultiply(joltT).toArray(px, o);
+    }
+  };
+
   /** Rows given back by twins (`untwin`), for the next. */
   const spareRows = new Map<BodyClass, number[]>();
   const charred = new Set<ProceduralPerson>();
@@ -1478,6 +1518,18 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       },
       char(person, on) { charSlots(person, on); },
       duration(person, clip) { return classOf(person)?.clips[clip].duration ?? 1.2; },
+      jolt(person, dirX, dirY, strength) {
+        const cls = classOf(person);
+        if (!cls) return;
+        // The world direction into the person's own (model) frame.
+        joltRot.extractRotation(person.matrix).invert();
+        const d = joltDir.set(dirX, 0, -dirY).applyMatrix4(joltRot).setY(0);
+        if (d.lengthSq() < 1e-9) return;
+        d.normalize();
+        // Turning the upright towards the shot's way: about up x way.
+        const axis = new Vector3(0, 1, 0).cross(d).normalize();
+        jolts.set(person, { start: cls.uniforms.procTime.value, axis, strength });
+      },
       wound(person, part) {
         const cls = classOf(person);
         if (!cls) return;
@@ -1532,6 +1584,12 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
           blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
           refit(cls, person, at);
           for (const limb of person.lost ?? []) closeLimb(cls, at, limb);
+          const jolt = jolts.get(person);
+          if (jolt) {
+            const age = (simTime ?? performance.now() / 1000) - jolt.start;
+            if (age > 0.7 || age < 0) jolts.delete(person);
+            else applyJolt(cls, at, jolt.axis, jolt.strength * (age < 0.07 ? age / 0.07 : Math.exp(-(age - 0.07) / 0.16)));
+          }
         }
         cls.uniforms.procBones.value.needsUpdate = true;
         // The face of the moment: blinking, mood, talk, fright (`faceAt`).

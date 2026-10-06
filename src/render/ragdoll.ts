@@ -55,7 +55,8 @@ export interface RagdollCitizens {
   /** Burns the person black (a bomb's direct hit). */
   char?(index: number): void;
   /** A bullet hole in this part of the person, bleeding into their clothes. */
-  wound?(index: number, part: BodyPart): void;
+  /** From world (fromX, fromY) when known: the shot's jolt through them too. */
+  wound?(index: number, part: BodyPart, fromX?: number, fromY?: number): void;
   /** The person soaked in blood all over (shot to pieces). */
   drench?(index: number): void;
 }
@@ -130,6 +131,11 @@ const PARTS: Readonly<Record<PartName, { origin: number; to: number; ref: 'side'
   lth: { origin: LH, to: LK, ref: 'lleg' }, lca: { origin: LK, to: LA, ref: 'lleg' }, lfo: { origin: LA, to: LT, ref: 'lleg' },
   rth: { origin: RH, to: RK, ref: 'rleg' }, rca: { origin: RK, to: RA, ref: 'rleg' }, rfo: { origin: RA, to: RT, ref: 'rleg' },
 };
+/** Parents first (`PART_NAMES` follows this order): each part's parent part, for `bonesWorld`. */
+const PART_PARENT: Readonly<Record<PartName, PartName | null>> = {
+  torso: null, neck: 'torso', head: 'neck', lua: 'torso', lfa: 'lua', rua: 'torso', rfa: 'rua',
+  lth: 'torso', lca: 'lth', lfo: 'lca', rth: 'torso', rca: 'rth', rfo: 'rca',
+};
 const PART_NAMES = Object.keys(PARTS) as PartName[];
 const LIMB_JOINTS: readonly (readonly [Limb, number, number, number])[] = [['larm', LS, LE, LW], ['rarm', RS, RE, RW], ['lleg', LH, LK, LA], ['rleg', RH, RK, RA]];
 
@@ -137,6 +143,13 @@ const LIMB_JOINTS: readonly (readonly [Limb, number, number, number])[] = [['lar
 const LOST_PARTS: Readonly<Record<Severable, readonly PartName[]>> = {
   armL: ['lfa'], armR: ['rfa'], legL: ['lca', 'lfo'], legR: ['rca', 'rfo'], head: ['head'],
 };
+
+/** The bones that collide along their length (`capsules`), and where along each the body is tested. */
+const CAPSULE_BONES: readonly (readonly [number, number])[] = [
+  [PEL, CHE], [CHE, NEC], [NEC, HEA], [HEA, TOP], [LS, LE], [LE, LW], [RS, RE], [RE, RW],
+  [LH, LK], [LK, LA], [RH, RK], [RK, RA], [LA, LT], [RA, RT], [LS, RS], [LH, RH],
+];
+const CAPSULE_SAMPLES: readonly number[] = [0.33, 0.67];
 
 /** What tears off a body right under a blow: the particles that go with it. */
 const LIMBS: readonly (readonly number[])[] = [[HEA, TOP], [LS, LE, LW], [RS, RE, RW], [LH, LK, LA, LT], [RH, RK, RA, RT]];
@@ -412,7 +425,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       [LS, LE], [LE, LW], [RS, RE], [RE, RW], [LH, LK], [LK, LA], [LA, LT], [RH, RK], [RK, RA], [RA, RT],
     ] as const) rigid(a, b);
     // The neck bends, the head nods and turns, but neither folds into the chest.
-    range(HEA, CHE, 0.8, 1.04);
+    // Firmer than a free joint: a shot body's head does not flop (Euphoria's shot keeps the neck stiff at first).
+    range(HEA, CHE, 0.88, 1.03);
     range(TOP, CHE, 0.82, 1.03);
     range(TOP, BEL, 0.85, 1.1);
     // Not folded past what the clothes follow: tighter than this the skin
@@ -589,6 +603,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // rest is the body itself giving way under its own weight.
     const speed = c.struck ? m(0.6) : c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = c.struck ? shove(body, c) : blast(body, c, speed);
+    // Alive going down: the arms out the way they fall, to take it
+    // (Euphoria's catch-fall), not dead weight hitting the ground face first.
+    if (c.struck && c.kind === 'knocked') {
+      for (const k of [LW, RW, LE, RE]) body.o[k]!.addScaledVector(dir, -m(k === LW || k === RW ? 1.4 : 0.8) * STEP).y += m(0.6) * STEP;
+    }
     // Joint friction while it falls: dead weight, not a rag.
     body.stiff = 1.6;
     const chest = body.p[CHE]!;
@@ -634,9 +653,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // Charred first: the pieces are twins of the body as it is.
     if (c.charred) { body.charred = true; citizens.char?.(body.index); }
     for (const limb of c.severed ?? []) {
-      const speed = m(2.5 + 6 * Math.max(0.15, c.power)) * (0.7 + Math.random() * 0.6);
-      const kick = new Vector3(dir.x * speed + (Math.random() - 0.5) * m(3), m(1.5 + Math.random() * 3) * (0.6 + c.power),
-        dir.z * speed + (Math.random() - 0.5) * m(3));
+      // A bullet takes a limb off and drops it near; a blast throws it.
+      const speed = (c.struck ? m(0.8 + Math.random() * 0.8) : m(2.5 + 6 * Math.max(0.15, c.power))) * (0.7 + Math.random() * 0.6);
+      const spread = c.struck ? m(0.6) : m(3);
+      const kick = new Vector3(dir.x * speed + (Math.random() - 0.5) * spread, (c.struck ? m(0.4 + Math.random() * 0.6) : m(1.5 + Math.random() * 3) * (0.6 + c.power)),
+        dir.z * speed + (Math.random() - 0.5) * spread);
       detach(body, limb, citizens, kick);
     }
   };
@@ -872,7 +893,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         const limb = part as Severable;
         const gone = LOST_PARTS[limb].every((q) => body.lostParts.has(q));
         if (!gone && tally[part]! >= (part === 'head' ? 1 + (Math.random() < 0.5 ? 1 : 0) : 2)) {
-          const kick = dir.clone().multiplyScalar(m(2.5)).add(new Vector3((Math.random() - 0.5) * m(1.5), m(1.5 + Math.random() * 2), (Math.random() - 0.5) * m(1.5)));
+          const kick = dir.clone().multiplyScalar(m(1)).add(new Vector3((Math.random() - 0.5) * m(0.6), m(0.5 + Math.random() * 0.8), (Math.random() - 0.5) * m(0.6)));
           detach(body, limb, citizens, kick);
         }
       }
@@ -1156,6 +1177,21 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       }
       hinges(body);
       collide(body, near, it === ITERATIONS - 1, world);
+      if (it % 3 === 2 || it === ITERATIONS - 1) capsules(body, near, world);
+    }
+    // The bones' lengths last (a little into a wall reads less than a body
+    // pulled apart; Unity's ragdoll "projection" does the same).
+    for (let it = 0; it < 3; it++) {
+      for (const s of body.sticks) {
+        if (s.broken || s.min !== s.max) continue;
+        const a = p[s.a]!, b = p[s.b]!;
+        const d = tmpA.subVectors(b, a);
+        const l = d.length() || 1e-6;
+        const wa = inv[s.a]!, wb = inv[s.b]!;
+        const diff = (l - s.min) / (l * (wa + wb));
+        a.addScaledVector(d, wa * diff);
+        b.addScaledVector(d, -wb * diff);
+      }
     }
     if (body.pin) {
       const { root, keep } = body.pin;
@@ -1264,6 +1300,59 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     }
   }
 
+  /**
+   * The bones as capped cylinders (Jakobsen, "Advanced Character Physics":
+   * each limb a capsule projected out of what it strikes): two points along
+   * every bone kept out of the ground and the walls, the bone's two ends
+   * moved by their share of the correction. With the joints alone colliding,
+   * a forearm or a shin lying across a kerb, a step or a pole sank into it.
+   */
+  function capsules(body: Body, walls: readonly Wall[], world: RagdollWorld): void {
+    const { p, o, radius } = body;
+    for (const [a, b] of CAPSULE_BONES) {
+      if (body.pin && !(body.pin.keep.has(a) && body.pin.keep.has(b))) continue;
+      if (body.comp[a] !== body.comp[b]) continue;
+      const pa = p[a]!, pb = p[b]!;
+      const r = (radius[a]! + radius[b]!) / 2;
+      for (const t of CAPSULE_SAMPLES) {
+        const wa = 1 - t, wb = t, share = wa * wa + wb * wb;
+        const qx = pa.x + (pb.x - pa.x) * t, qy = pa.y + (pb.y - pa.y) * t, qz = pa.z + (pb.z - pa.z) * t;
+        const pen = world.groundAt(qx, -qz) + r - qy;
+        if (pen > 0) {
+          // Moved out, not thrown out: the old positions go with them, so the
+          // correction adds no speed (a push out turned into a launch).
+          const l = pen / share;
+          pa.y += wa * l; pb.y += wb * l;
+          o[a]!.y += wa * l; o[b]!.y += wb * l;
+          // Friction along the ground, as for a joint.
+          o[a]!.x += (pa.x - o[a]!.x) * 0.18 * wa; o[a]!.z += (pa.z - o[a]!.z) * 0.18 * wa;
+          o[b]!.x += (pb.x - o[b]!.x) * 0.18 * wb; o[b]!.z += (pb.z - o[b]!.z) * 0.18 * wb;
+        }
+        for (const wall of walls) {
+          const wx = qx, wy = -qz;
+          if (wx < wall.x0 - r || wx > wall.x1 + r || wy < wall.y0 - r || wy > wall.y1 + r) continue;
+          const top = wall.roof ? wall.roof(wx, wy) : wall.top;
+          if (qy > top + r) continue;
+          const into = inside(wall.ring, wx, wy);
+          const edge = nearestEdge(wall.ring, wx, wy);
+          let nx = wx - edge.x, ny = wy - edge.y;
+          const away = Math.hypot(nx, ny);
+          if (!into && away >= r) continue;
+          if (away < 1e-9) continue;
+          nx /= away; ny /= away;
+          if (into) { nx = -nx; ny = -ny; }
+          // Out to the face, a radius off it, the ends sharing the move.
+          const depth = into ? away + r : r - away;
+          const l = depth / share;
+          pa.x += nx * wa * l; pa.z -= ny * wa * l;
+          pb.x += nx * wb * l; pb.z -= ny * wb * l;
+          o[a]!.x += nx * wa * l; o[a]!.z -= ny * wa * l;
+          o[b]!.x += nx * wb * l; o[b]!.z -= ny * wb * l;
+        }
+      }
+    }
+  }
+
   /** The torso's side axis (left to right), from the hips and the shoulders still on it. */
   function torsoSide(body: Body, out: Vector3): Vector3 {
     out.set(0, 0, 0);
@@ -1313,12 +1402,25 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       f0t.copy(body.frame0[part]).transpose();
       turn[part] = new Quaternion().setFromRotationMatrix(f.multiply(f0t));
     }
+    // Each part placed from its parent part, at its rest distance turned
+    // with the parent (forward kinematics, as retargeting keeps bone
+    // lengths: only rotations reach the children), not at its own particle:
+    // squeezed against a wall or a kerb the particles come closer than the
+    // bones are long, and the skin between them was crushed or stretched.
+    // A part on another piece (torn off) keeps its particle.
+    const origin: Partial<Record<PartName, Vector3>> = {};
+    for (const part of PART_NAMES) {
+      const parent = PART_PARENT[part];
+      const own = body.p[PARTS[part].origin]!;
+      if (!parent || body.comp[PARTS[part].origin] !== body.comp[PARTS[parent].origin]) { origin[part] = own; continue; }
+      origin[part] = tmpE.subVectors(body.origin0[part], body.origin0[parent]).applyQuaternion(turn[parent]!).add(origin[parent]!).clone();
+    }
     const world: Matrix4[] = [];
     const pos = new Vector3(), q = new Quaternion();
     for (let i = 0; i < body.pos0.length; i++) {
       const part = body.bonePart[i]!;
       const r = turn[part]!;
-      pos.subVectors(body.pos0[i]!, body.origin0[part]).applyQuaternion(r).add(body.p[PARTS[part].origin]!);
+      pos.subVectors(body.pos0[i]!, body.origin0[part]).applyQuaternion(r).add(origin[part]!);
       q.multiplyQuaternions(r, body.rot0[i]!);
       world.push(new Matrix4().compose(pos, q, body.scl0[i]!));
     }

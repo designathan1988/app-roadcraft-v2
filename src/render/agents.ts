@@ -976,9 +976,16 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const person = procOf(index);
       if (person && procedural) procedural.ragdoll.char(person, true);
     },
-    wound(index, part) {
+    wound(index, part, fromX, fromY) {
       const person = procOf(index);
-      if (person && procedural) procedural.ragdoll.wound(person, part);
+      if (!person || !procedural) return;
+      procedural.ragdoll.wound(person, part);
+      if (fromX !== undefined && fromY !== undefined) {
+        const x = person.matrix.elements[12]!, y = -person.matrix.elements[14]!;
+        const l = Math.hypot(x - fromX, y - fromY) || 1;
+        // Harder in the trunk; a limb hit turns the body less.
+        procedural.ragdoll.jolt(person, (x - fromX) / l, (y - fromY) / l, part === 'torso' ? 0.42 : part === 'head' ? 0.5 : 0.22);
+      }
     },
     drench(index) {
       const person = procOf(index);
@@ -1535,14 +1542,25 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         const sk = procedural.ragdoll.skeleton(person);
         if (!pal || !sk) continue;
         const bind = sk.inverses.map((m4) => { const e = inv.copy(m4).invert().elements; return [e[12]!, e[13]!, e[14]!] as const; });
-        const at = (b: number): [number, number, number] => {
+        // Measured against the same person standing (their own proportions,
+        // `refit`): against the class's bind, a broad-hipped body read as a
+        // thigh stretched 2.6 times.
+        const rest = procedural.ragdoll.standing(person, 0);
+        if (!rest) continue;
+        const atIn = (m: Float32Array, b: number): [number, number, number] => {
           const o = b * 16, [x, y, z] = bind[b]!;
-          return [pal[o]! * x + pal[o + 4]! * y + pal[o + 8]! * z + pal[o + 12]!, pal[o + 1]! * x + pal[o + 5]! * y + pal[o + 9]! * z + pal[o + 13]!,
-            pal[o + 2]! * x + pal[o + 6]! * y + pal[o + 10]! * z + pal[o + 14]!];
+          return [m[o]! * x + m[o + 4]! * y + m[o + 8]! * z + m[o + 12]!, m[o + 1]! * x + m[o + 5]! * y + m[o + 9]! * z + m[o + 13]!,
+            m[o + 2]! * x + m[o + 6]! * y + m[o + 10]! * z + m[o + 14]!];
         };
+        const at = (b: number): [number, number, number] => atIn(pal, b);
         const norm = (b: number): number => Math.max(Math.hypot(pal[b * 16]!, pal[b * 16 + 1]!, pal[b * 16 + 2]!),
           Math.hypot(pal[b * 16 + 4]!, pal[b * 16 + 5]!, pal[b * 16 + 6]!), Math.hypot(pal[b * 16 + 8]!, pal[b * 16 + 9]!, pal[b * 16 + 10]!));
         let stretch = 1, stretchBone = '', scale = 0, scaleBone = '';
+        let longest = 0;
+        for (let b = 0; b < sk.parents.length; b++) {
+          const p = sk.parents[b]!;
+          if (p >= 0) longest = Math.max(longest, Math.hypot(bind[b]![0] - bind[p]![0], bind[b]![1] - bind[p]![1], bind[b]![2] - bind[p]![2]));
+        }
         for (let b = 0; b < sk.parents.length; b++) {
           const name = sk.names[b] ?? '';
           if (/Finger|Toe|Nub|_end|twist/i.test(name)) continue;
@@ -1551,8 +1569,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           const p = sk.parents[b]!;
           // Not against the root (it stays at the feet: a crouch lowers the pelvis to it, no skin between).
           if (p < 0 || sk.parents[p]! < 0 || n < 0.5 || norm(p) < 0.5) continue;
-          const l0 = Math.hypot(bind[b]![0] - bind[p]![0], bind[b]![1] - bind[p]![1], bind[b]![2] - bind[p]![2]);
-          if (l0 < 1e-3) continue;
+          const ra = atIn(rest, b), rc = atIn(rest, p);
+          const l0 = Math.hypot(ra[0] - rc[0], ra[1] - rc[1], ra[2] - rc[2]);
+          // Bones of real length only: a few millimetres between the spine and the pelvis made a 3x from nothing.
+          if (l0 < longest * 0.12) continue;
           const a = at(b), c = at(p);
           const r = Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]) / l0;
           if (Math.abs(r - 1) > Math.abs(stretch - 1)) { stretch = r; stretchBone = name; }

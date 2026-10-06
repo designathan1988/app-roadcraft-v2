@@ -235,6 +235,8 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       host.requestDraw();
     },
     clear() {
+      // The street as built (a blast leaves craters, rubble and broken things in the document).
+      host.loadDoc(labDoc().toJSON());
       host.scene().clearCasualties();
       for (const w of watchers.splice(0)) removeWalker(sim, w);
       lab.spawn();
@@ -254,11 +256,17 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
         underGround: worst((f) => Math.max(0, ...f.bodies.map((b) => b.underGround))),
         inWall: worst((f) => Math.max(0, ...f.bodies.map((b) => b.inWall))),
         boneError: worst((f) => Math.max(0, ...f.bodies.map((b) => b.boneError))),
-        stretch: worst((f) => Math.max(0, ...f.mesh.map((x) => Math.abs(x.stretch - 1)))),
+        stretch: worst((f) => Math.max(0, ...f.mesh.filter((x) => x.held).map((x) => Math.abs(x.stretch - 1)))),
         scale: worst((f) => Math.max(0, ...f.mesh.map((x) => x.scale))),
         topSpeed: worst((f) => Math.max(0, ...f.bodies.map((b) => b.speed))),
         flags: flagCount,
         acts: [...new Set(frames.map((f) => f.person?.act ?? (f.person ? 'none' : 'gone')))],
+        // The person jumping from one frame to the next (a teleport), metres.
+        personJump: frames.reduce((j, f, i) => {
+          const a = frames[i - 1]?.person, b = f.person;
+          return a && b ? Math.max(j, Math.hypot(b.x - a.x, b.y - a.y) / M(1)) : j;
+        }, 0),
+        bodies: Math.max(0, ...frames.map((f) => f.bodies.length)),
       };
     },
   };
@@ -291,7 +299,9 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       if (b.boneError > 0.05) flags.push('boneError');
     }
     for (const x of mesh) {
-      if (Math.abs(x.stretch - 1) > 0.3) flags.push('stretch');
+      // On a body (a ragdoll): a played clip's own poses are authored, and
+      // short bones (a twist, a clavicle) read noisy against a standing pose.
+      if (x.held && Math.abs(x.stretch - 1) > 0.3) flags.push('stretch');
       if (x.scale > 1.3) flags.push('scale');
     }
     last = { t: now - started, person, bodies, mesh, flags };

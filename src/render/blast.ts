@@ -110,6 +110,8 @@ export interface Blast {
   leak(x: number, y: number, z: number, seconds: number): void;
   /** Whether anything is still moving, burning or flashing. */
   active(): boolean;
+  /** Everything gone: debris, wrecks, craters, soot, fires, wires, jets (the weapons lab's clean slate). */
+  clear(): void;
   update(dt: number, world: BlastWorld): void;
   dispose(): void;
 }
@@ -610,6 +612,13 @@ ${shader.fragmentShader}`.replace('#include <color_fragment>', `#include <color_
     },
     burn(x, y, z, size, seconds) {
       fires.push({ at: new Vector3(x, z, -y), until: time + seconds, rate: Math.min(9, 4 + size / m(2)), carry: 0, size: Math.min(size, m(3)), smoke: 0.5 });
+    },
+    clear() {
+      for (const p of pieces) if (p.object) dropObject(p.object);
+      pieces.length = 0; ropes.length = 0; craters.length = 0; soots.length = 0; geysers.length = 0; fires.length = 0; arcs.length = 0;
+      sootDirty = true;
+      drawnPieces = -1;
+      flash = 0; ringAge = Infinity; shakeAmp = 0;
     },
     active: () => geysers.length > 0 || flash > 1 || ringAge < 0.7 || fires.length > 0 || arcs.length > 0 || pieces.some((b) => !b.asleep) || ropes.some((r) => r.age < 12),
     update(dt, world) {

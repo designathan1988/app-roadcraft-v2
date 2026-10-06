@@ -641,7 +641,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       }
       const v = p.view;
       // The hole and the blood on their clothes (`render/agents.ts`).
-      recordWound(w, p.id, part);
+      recordWound(w, p.id, part, fromX, fromY);
       if (p.hp <= 0 || severed === 'head') {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },

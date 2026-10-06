@@ -1539,7 +1539,7 @@ export function createSceneRenderer(
     setEffectsSpeed(speed) { fxSpeed = Math.max(0, speed); onAssetsReady(); },
     stepEffects(seconds) { fxStep += Math.max(0, seconds); onAssetsReady(); },
     ragdollProbe: () => ragdolls.probe(),
-    clearCasualties() { ragdolls.clear(); gore.clear(); onAssetsReady(); },
+    clearCasualties() { ragdolls.clear(); gore.clear(); blast.clear(); onAssetsReady(); },
     meshProbe: () => agents.meshProbe(),
     driverBody: (vehicle, x, y) => agents.driverBody(vehicle, x, y),
     vehicleHit(x, y, z, dirX, dirY, glass, blood) {
@@ -2128,7 +2128,7 @@ export function createSceneRenderer(
         ragdolls: (citizens) => {
           ragdollSim = sim;
           // Bullet holes on the people shot, alive or not (`recordWound`).
-          for (const wd of takeWounds(sim)) citizens.wound?.(-1 - wd.id, wd.part);
+          for (const wd of takeWounds(sim)) citizens.wound?.(-1 - wd.id, wd.part, wd.fromX, wd.fromY);
           ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
           if (occupantQueue.length) { ragdolls.fling(occupantQueue, citizens, ragdollWorld); occupantQueue.length = 0; }
           // Somebody tripping on the pavement falls as a ragdoll too.

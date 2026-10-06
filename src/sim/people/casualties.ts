@@ -42,17 +42,17 @@ export interface Casualty {
 }
 
 const RECORDS = new WeakMap<SimWorld, Casualty[]>();
-const WOUNDS = new WeakMap<SimWorld, { id: number; part: BodyPart }[]>();
+const WOUNDS = new WeakMap<SimWorld, { id: number; part: BodyPart; fromX: number; fromY: number }[]>();
 
 /** A bullet wound on somebody (alive or not): their clothes holed and bloodied by the renderer. */
-export function recordWound(w: SimWorld, id: number, part: BodyPart): void {
+export function recordWound(w: SimWorld, id: number, part: BodyPart, fromX: number, fromY: number): void {
   let list = WOUNDS.get(w);
   if (!list) WOUNDS.set(w, (list = []));
-  if (list.length < 256) list.push({ id, part });
+  if (list.length < 256) list.push({ id, part, fromX, fromY });
 }
 
 /** The wounds recorded since the last call (`recordWound`), taken. */
-export function takeWounds(w: SimWorld): { id: number; part: BodyPart }[] {
+export function takeWounds(w: SimWorld): { id: number; part: BodyPart; fromX: number; fromY: number }[] {
   const list = WOUNDS.get(w);
   if (!list?.length) return [];
   const out = list.slice();
