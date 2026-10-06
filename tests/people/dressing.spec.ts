@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Rng } from '@core/rng';
 import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
 import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
-import { GARMENT_TYPES, bodyFor, dressBody, garmentDefaults, hairCap, type GarmentSlot } from '@people/gen/clothes';
+import { GARMENT_TYPES, bodyFor, dressBody, garmentDefaults, type GarmentSlot } from '@people/gen/clothes';
 import { HAIR_STYLES, browStrands, hairStrands, lashStrands } from '@people/gen/hair';
 import { BROW_STYLES, randomPerson, resolvePerson } from '@people/gen/person';
 
@@ -44,8 +44,10 @@ describe('hair, brows and lashes', () => {
     expect(lashStrands(ex, base, shape, person.lashes, 1).counts.length).toBeGreaterThan(100);
   });
 
-  it('the cap and the beard cover their places', () => {
-    expect(hairCap(body)!.index.length).toBeGreaterThan(1000);
+  it('every strand of hair has its follicle on a skin triangle; the beard covers its place', () => {
+    const hair = hairStrands(ex, base, body, person.hair, 1);
+    expect(hair.follicles!.tris.length).toBe(hair.counts.length);
+    for (const t of hair.follicles!.tris) expect(base.meta.groups.some((g) => (g.material === 'Skin' || g.material === 'Covered') && t >= g.start && t < g.start + g.count)).toBe(true);
     const beard = beardMask(ex, base);
     expect(beard.filter((v) => v > 128).length).toBeGreaterThan(100);
   });

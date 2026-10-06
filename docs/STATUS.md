@@ -347,7 +347,12 @@ and they have seen it.
   CharMorph grooms (each point following the skin under it) and seven grown
   styles combed over the real skin (buzz, crew, mohawk, afro, long,
   ponytail, bun), child strands, length/volume/curl/frizz/density/thickness,
-  colour with ombre tips and grey, a hair cap under the strands; 14 brow
+  colour with ombre tips and grey; no cap and no paint on the scalp: up to
+  60,000 strands of 0.25 mm (points per strand by length, as Frostbite's),
+  finer and shorter at the hairline, a few crossing a parting, shaded with
+  Karis's Marschner approximation and a Deep Opacity Map from the key light
+  (hair self-shadow and its shadow on the skin), the scalp a follicle map
+  (a root dot per strand, its blurred density occluding the scalp); 14 brow
   grooms; lashes along the tear line; clothes cut from the body by region
   and limb fraction (tops, bottoms, underwear, shoes) or hung as skirts and
   dresses, plus CharMorph's shirt and trousers bound to the skin, each with

@@ -309,38 +309,3 @@ export function dressBody(b: Body, outfit: Outfit, female: boolean): GarmentMesh
   if (outfit.shoes) out.push(shell(b, 'shoes', outfit.shoes, 0));
   return out.filter((g): g is GarmentMesh => !!g);
 }
-
-/**
- * A hair cap: the scalp's skin lifted 1.5 mm, under the strands, so a head
- * of hair reads full where strands alone would let the scalp show (the base
- * layer games put under hair cards and strands). `alpha` fades it at the
- * hairline, from the scalp mask.
- */
-export function hairCap(b: Body, lift = 0.0015): { positions: Float32Array; normals: Float32Array; alpha: Float32Array; index: Uint32Array } | null {
-  const { ex } = b;
-  const map = new Int32Array(b.base.vertexCount).fill(-1);
-  const verts: number[] = [];
-  const index: number[] = [];
-  const s = b.skin;
-  for (let i = 0; i < s.length; i += 3) {
-    const a = s[i]!, c = s[i + 1]!, d = s[i + 2]!;
-    if (ex.scalp[a]! < 30 || ex.scalp[c]! < 30 || ex.scalp[d]! < 30) continue;
-    for (const v of [a, c, d]) {
-      if (map[v]! < 0) { map[v] = verts.length; verts.push(v); }
-      index.push(map[v]!);
-    }
-  }
-  if (!index.length) return null;
-  const n = verts.length;
-  const positions = new Float32Array(n * 3), normals = new Float32Array(n * 3), alpha = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const v = verts[i]!;
-    for (let k = 0; k < 3; k++) {
-      positions[i * 3 + k] = b.shape[v * 3 + k]! + b.normals[v * 3 + k]! * lift;
-      normals[i * 3 + k] = b.normals[v * 3 + k]!;
-    }
-    const m = ex.scalp[v]! / 255;
-    alpha[i] = Math.min(1, Math.max(0, (m - 0.15) / 0.45));
-  }
-  return { positions, normals, alpha, index: Uint32Array.from(index) };
-}

@@ -1,6 +1,6 @@
 import {
-  ACESFilmicToneMapping, BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
-  PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
+  ACESFilmicToneMapping, CanvasTexture, CircleGeometry, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
+  NoColorSpace, PCFSoftShadowMap, PerspectiveCamera, type Material, type Texture, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -13,7 +13,7 @@ import { earrings, glasses } from './accessories';
 import { garmentObject } from './fabric';
 import type { FaceAnchors } from '@people/gen/extras';
 import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type SkinUniforms, type TextureSet } from './humanMesh';
-import { strandMaterial, strandMesh, type StrandLook } from './strands';
+import { HairShadow, strandMaterial, strandMesh, type StrandLook } from './strands';
 
 /** What a person wears and grows: hair, brows, lashes, clothes, and the skin's make-up. */
 export interface Dressing {
@@ -26,7 +26,7 @@ export interface Dressing {
   readonly garments: readonly GarmentMesh[];
   readonly skin: {
     readonly undertone: number; readonly lipColour: number; readonly lipAmount: number;
-    readonly stubble: number; readonly stubbleColour: number; readonly scalpColour: number; readonly scalpAmount: number;
+    readonly stubble: number; readonly stubbleColour: number; readonly follicleColour: number;
   };
 }
 
@@ -92,6 +92,9 @@ export class CreatorStage {
   private worn = new Group();
   private lift = 0;
   private readonly strandMats: { hair: ShaderMaterial; brows: ShaderMaterial; lashes: ShaderMaterial };
+  /** The hair's opacity map from the key light, redrawn before the next frame when the hair or body moves. */
+  private readonly hairShadow: HairShadow;
+  private shadowStale = false;
   private focus: Focus = 'body';
   private insets: [number, number] = [0, 0];
   private glide: { from: [Vector3, Vector3]; to: [Vector3, Vector3]; t0: number } | null = null;
@@ -130,7 +133,9 @@ export class CreatorStage {
       colours: [key.color.clone().multiplyScalar(key.intensity * 0.55), fill.color.clone().multiplyScalar(fill.intensity * 0.55), rim.color.clone().multiplyScalar(rim.intensity * 0.55)],
       ambient: new Color(0x8a8f99).multiplyScalar(0.55),
     };
-    this.strandMats = { hair: strandMaterial(lights), brows: strandMaterial(lights), lashes: strandMaterial(lights) };
+    this.hairShadow = new HairShadow(key.position.clone());
+    const shadow = this.hairShadow.uniforms;
+    this.strandMats = { hair: strandMaterial(lights, shadow), brows: strandMaterial(lights, shadow), lashes: strandMaterial(lights, shadow) };
     const floor = new Mesh(new CircleGeometry(14, 64), new MeshStandardMaterial({ color: 0x45484e, roughness: 0.95 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.06;
@@ -166,8 +171,17 @@ export class CreatorStage {
         if (t >= 1) this.glide = null; else this.redraw();
       }
       this.controls.update();
+      this.updateShadow();
       this.renderer.render(this.scene, this.camera);
     });
+  }
+
+  private updateShadow(): void {
+    if (!this.shadowStale) return;
+    this.shadowStale = false;
+    const hair = this.layers.get('hair')?.[0] ?? null;
+    const u = hair ? (hair.material as ShaderMaterial).uniforms : null;
+    this.hairShadow.update(this.renderer, hair, u?.['rootWidth']!.value as number, u?.['tipWidth']!.value as number);
   }
 
   /** Screen pixels the interface covers on the left and right: the person is framed between them. */
@@ -179,6 +193,9 @@ export class CreatorStage {
   resize(): void {
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     this.renderer.setSize(w, h, false);
+    // Strands are at least half a pixel wide: of the canvas's drawn pixels.
+    const rows = this.renderer.getDrawingBufferSize(new Vector2()).y;
+    for (const m of Object.values(this.strandMats)) m.uniforms['pixelRows']!.value = rows;
     this.camera.aspect = w / h;
     // Shift the image so its centre is the free area's centre.
     const shift = (this.insets[0] - this.insets[1]) / 2;
@@ -189,7 +206,7 @@ export class CreatorStage {
 
   setPerson(b: LoadedBase, p: DrawnPerson, masks?: Float32Array): void {
     if (this.person) { disposeHumanMesh(this.person); this.scene.remove(this.person); }
-    this.person = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) }, masks);
+    this.person = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris), hairShadow: this.hairShadow.uniforms }, masks);
     this.person.scale.setScalar(p.scale);
     this.person.add(this.worn);
     this.place();
@@ -202,6 +219,7 @@ export class CreatorStage {
     if (!this.person) return;
     this.worn.position.y = -(this.person.userData['floor'] as number ?? 0);
     this.person.position.y = this.lift * this.person.scale.y;
+    this.shadowStale = true;
   }
 
   private readonly layers = new Map<string, Mesh[]>();
@@ -215,6 +233,7 @@ export class CreatorStage {
     }
     for (const m of meshes) this.worn.add(m);
     this.layers.set(name, meshes);
+    if (name === 'hair') this.shadowStale = true;
     this.redraw();
   }
 
@@ -222,18 +241,67 @@ export class CreatorStage {
     this.setLayer(name, set.counts.length ? [strandMesh(set, look, this.strandMats[name])] : []);
   }
 
-  /** The hair cap under the strands (see `clothes.hairCap`), in the hair's colour. */
-  cap(cap: { positions: Float32Array; normals: Float32Array; alpha: Float32Array; index: Uint32Array } | null, colour: number): void {
-    if (!cap) { this.setLayer('cap', []); return; }
-    const geo = new BufferGeometry();
-    geo.setAttribute('position', new BufferAttribute(cap.positions, 3));
-    geo.setAttribute('normal', new BufferAttribute(cap.normals, 3));
-    const rgba = new Float32Array(cap.alpha.length * 4);
-    for (let i = 0; i < cap.alpha.length; i++) { rgba.fill(1, i * 4, i * 4 + 3); rgba[i * 4 + 3] = cap.alpha[i]!; }
-    geo.setAttribute('color', new BufferAttribute(rgba, 4));
-    geo.setIndex(new BufferAttribute(cap.index, 1));
-    const mat = new MeshStandardMaterial({ color: colour, roughness: 0.75, vertexColors: true, alphaToCoverage: true });
-    this.setLayer('cap', [new Mesh(geo, mat)]);
+  private readonly follicleCanvases = new Map<number, { canvas: HTMLCanvasElement; texture: CanvasTexture }>();
+
+  /**
+   * The scalp's follicle map (Unreal's groom "follicle mask"): a dot on the
+   * skin's texture where each strand of hair leaves it, so the scalp between
+   * strands is skin with hair roots, never painted the hair's colour. Each
+   * skin tile hit by roots gets its own map.
+   */
+  follicles(f: { readonly tris: Uint32Array; readonly bary: Float32Array } | null, cover = 1): void {
+    if (!this.person) return;
+    const mesh = this.person, g = mesh.geometry;
+    const uv = g.getAttribute('uv'), index = g.getIndex()!;
+    const materials = mesh.material as Material[];
+    const SIZE = 2048;
+    const used = new Set<number>();
+    const draw = new Map<number, CanvasRenderingContext2D>();
+    for (let k = 0; f && k < f.tris.length; k++) {
+      const start = f.tris[k]!;
+      const group = g.groups.find((gr) => start >= gr.start && start < gr.start + gr.count);
+      if (!group) continue;
+      const slot = group.materialIndex ?? 0;
+      let ctx = draw.get(slot);
+      if (!ctx) {
+        let entry = this.follicleCanvases.get(slot);
+        if (!entry) {
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = SIZE;
+          entry = { canvas, texture: new CanvasTexture(canvas) };
+          entry.texture.colorSpace = NoColorSpace;
+          entry.texture.anisotropy = 8;
+          this.follicleCanvases.set(slot, entry);
+        }
+        ctx = entry.canvas.getContext('2d')!;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, SIZE, SIZE);
+        ctx.fillStyle = '#fff';
+        draw.set(slot, ctx);
+        used.add(slot);
+      }
+      const u = f.bary[k * 2]!, v = f.bary[k * 2 + 1]!;
+      const a = index.getX(start), b = index.getX(start + 1), c = index.getX(start + 2);
+      const x = uv.getX(a) + (uv.getX(b) - uv.getX(a)) * u + (uv.getX(c) - uv.getX(a)) * v;
+      const y = uv.getY(a) + (uv.getY(b) - uv.getY(a)) * u + (uv.getY(c) - uv.getY(a)) * v;
+      ctx.beginPath();
+      ctx.arc(x * SIZE, (1 - y) * SIZE, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Green: the roots' density, blurred over 2-3 mm and scaled so a full
+    // head of roots reads 1 (it shuts the scalp off from the light).
+    for (const slot of used) packDensity(this.follicleCanvases.get(slot)!.canvas);
+    materials.forEach((m, slot) => {
+      const u = m.userData['follicle'] as { follicleMap: { value: Texture | null }; follicleOn: { value: number }; hairCover: { value: number } } | undefined;
+      if (!u) return;
+      const entry = this.follicleCanvases.get(slot);
+      const on = used.has(slot) && !!entry;
+      u.hairCover.value = cover;
+      if (on) entry.texture.needsUpdate = true;
+      u.follicleMap.value = on ? entry.texture : null;
+      u.follicleOn.value = on ? 1 : 0;
+    });
+    this.redraw();
   }
 
   /** Glasses and earrings, placed on this face. */
@@ -263,8 +331,7 @@ export class CreatorStage {
     u.lipAmount.value = s.lipAmount;
     u.stubble.value = s.stubble;
     u.stubbleColour.value.setHex(s.stubbleColour);
-    u.scalpColour.value.setHex(s.scalpColour);
-    u.scalpAmount.value = s.scalpAmount;
+    u.follicleColour.value.setHex(s.follicleColour);
     this.redraw();
   }
 
@@ -380,4 +447,26 @@ export class CreatorStage {
     this.resize();
     return out.toDataURL('image/jpeg', 0.85);
   }
+}
+
+/** Packs a follicle canvas: red keeps the dots, green gets their blurred density, normalised. */
+function packDensity(canvas: HTMLCanvasElement): void {
+  const size = canvas.width;
+  const blur = document.createElement('canvas');
+  blur.width = blur.height = size;
+  const b = blur.getContext('2d')!;
+  b.filter = 'blur(8px)';
+  b.drawImage(canvas, 0, 0);
+  const dots = canvas.getContext('2d')!.getImageData(0, 0, size, size);
+  const dense = b.getImageData(0, 0, size, size).data;
+  // The 90th percentile of the density where there is any: a full head of roots.
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < dense.length; i += 4) if (dense[i]! > 2) hist[dense[i]!]!++;
+  let total = 0;
+  for (const h of hist) total += h;
+  let top = 255;
+  for (let v = 0, seen = 0; v < 256; v++) { seen += hist[v]!; if (seen >= total * 0.9) { top = Math.max(1, v); break; } }
+  const d = dots.data;
+  for (let i = 0; i < d.length; i += 4) d[i + 1] = Math.min(255, Math.round((dense[i]! * 255) / top));
+  canvas.getContext('2d')!.putImageData(dots, 0, 0);
 }

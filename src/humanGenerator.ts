@@ -1,6 +1,6 @@
 import { Rng } from '@core/rng';
 import type { CatalogPage } from '@people/gen/catalog';
-import { bodyFor, dressBody, hairCap } from '@people/gen/clothes';
+import { bodyFor, dressBody } from '@people/gen/clothes';
 import { HumanExtras, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
 import { randomName } from '@people/gen/names';
@@ -133,20 +133,20 @@ function draw(p: PersonParams, live: boolean): void {
   const h = p.hair;
   let t = performance.now();
   if (stale('hair', h)) {
-    stage.strands('hair', hairStrands(ex, b.base, body(), h, p.seed), { root: darker(h.colour, 0.8), tip: h.tipColour, grey: 0xc4c2be, shine: 1 });
-    stage.cap(h.style === 'none' ? null : hairCap(body()), darker(h.colour, h.style === 'buzz' ? 0.9 : 0.7));
+    const hair = hairStrands(ex, b.base, body(), h, p.seed);
+    stage.strands('hair', hair, { root: darker(h.colour, 0.8), tip: h.tipColour, grey: 0xc4c2be, shine: 1 });
+    stage.follicles(hair.follicles ?? null, h.style === 'buzz' ? 0.35 : 1);
   }
   times['hair'] = Math.round(performance.now() - t); t = performance.now();
-  if (stale('brows', p.brows)) stage.strands('brows', browStrands(ex, b.base, shaped.shape, p.brows, p.seed + 1), { root: p.brows.colour, tip: p.brows.colour, shine: 0.25 });
-  if (stale('lashes', p.lashes)) stage.strands('lashes', lashStrands(ex, b.base, shaped.shape, p.lashes, p.seed + 2), { root: p.lashes.colour, tip: p.lashes.colour, shine: 0.15 });
+  if (stale('brows', p.brows)) stage.strands('brows', browStrands(ex, b.base, shaped.shape, p.brows, p.seed + 1), { root: p.brows.colour, tip: p.brows.colour, shine: 0.25, fadeThin: true });
+  if (stale('lashes', p.lashes)) stage.strands('lashes', lashStrands(ex, b.base, shaped.shape, p.lashes, p.seed + 2), { root: p.lashes.colour, tip: p.lashes.colour, shine: 0.15, fadeThin: true });
   times['face'] = Math.round(performance.now() - t); t = performance.now();
   if (stale('clothes', p.outfit) || stale('clothesSex', p.sex < 0.5)) stage.clothes(dressBody(body(), p.outfit, p.sex < 0.5));
   times['clothes'] = Math.round(performance.now() - t);
   if (stale('accessories', p.accessories)) stage.accessories(p.accessories.glasses, p.accessories.earrings, faceAnchors(ex, b.base, current.shape));
-  const scalp = h.style === 'none' ? 0 : h.style === 'buzz' ? 0.75 : 0.9 * Math.min(1, h.density);
   stage.skin({
     undertone: p.undertone, lipColour: p.makeup.lipColour, lipAmount: p.makeup.lipAmount,
-    stubble: p.makeup.stubble, stubbleColour: h.grey > 0.6 ? 0x8a8680 : darker(h.colour, 0.9), scalpColour: darker(h.colour, 0.85), scalpAmount: scalp,
+    stubble: p.makeup.stubble, stubbleColour: h.grey > 0.6 ? 0x8a8680 : darker(h.colour, 0.9), follicleColour: h.grey > 0.6 ? 0x8a8680 : darker(h.colour, 0.85),
   });
   shown = p;
   times['total'] = Math.round(performance.now() - t0);

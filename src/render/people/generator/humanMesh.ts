@@ -3,6 +3,7 @@ import {
   ShaderChunk, SRGBColorSpace, TextureLoader, type Material, type Texture,
 } from 'three';
 import type { HumanBase } from '@people/gen/humanBase';
+import { HAIR_SHADOW_GLSL, type HairShadowUniforms } from './strands';
 
 /**
  * A generated human drawn: one mesh over the base's render vertices, one
@@ -45,7 +46,12 @@ export interface HumanLook {
   /** A skin colour for a base without textures. */
   readonly flatSkin: Color;
   readonly iris: Color;
+  /** The hair's opacity map: the key light reaches the skin through the hair. */
+  readonly hairShadow?: HairShadowUniforms;
 }
+
+/** The key light (three puts the shadow-casting light first) scaled by its transmittance through the hair. */
+const DIR_LIGHT = 'getDirectionalLightInfo( directionalLight, directLight );';
 
 const DIFFUSE = 'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );';
 
@@ -71,14 +77,14 @@ export interface SkinUniforms {
   lipAmount: { value: number };
   stubble: { value: number };
   stubbleColour: { value: Color };
-  scalpColour: { value: Color };
-  scalpAmount: { value: number };
+  /** The colour of the hair where it leaves the skin (the follicle map's dots). */
+  follicleColour: { value: Color };
 }
 
 export function skinUniforms(melanin: number): SkinUniforms {
   return {
     melanin: { value: melanin }, undertone: { value: 0 }, lipColour: { value: new Color(0xa03040) }, lipAmount: { value: 0 },
-    stubble: { value: 0 }, stubbleColour: { value: new Color(0x2a1d16) }, scalpColour: { value: new Color(0x2a1d16) }, scalpAmount: { value: 0 },
+    stubble: { value: 0 }, stubbleColour: { value: new Color(0x2a1d16) }, follicleColour: { value: new Color(0x2a1d16) },
   };
 }
 
@@ -101,18 +107,41 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
     sheenColor: new Color(0.9, 0.75, 0.7),
     specularIntensity: 0.55,
   });
+  // This tile's follicle map (each skin tile has its own), set by the stage.
+  const follicle = { follicleMap: { value: null as Texture | null }, follicleOn: { value: 0 }, hairCover: { value: 1 } };
+  m.userData['follicle'] = follicle;
   m.onBeforeCompile = (shader) => {
     shader.uniforms['darkMap'] = { value: dark ?? light ?? null };
-    Object.assign(shader.uniforms, melanin);
+    Object.assign(shader.uniforms, melanin, follicle);
+    if (look.hairShadow) Object.assign(shader.uniforms, look.hairShadow);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 aMasks;\nvarying vec3 vMasks;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMasks = aMasks;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 aMasks;\nvarying vec3 vMasks;\nvarying vec3 vHairWorld;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMasks = aMasks;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvHairWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    if (look.hairShadow) {
+      const chunk = ShaderChunk.lights_fragment_begin;
+      if (!chunk.includes(DIR_LIGHT)) throw new Error('three lighting chunk changed: the hair shadow on skin must be updated');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <lights_fragment_begin>', `
+          // The scalp under the hair is shut off from every light by the hair
+          // over it, by how dense its roots are (the follicle map's blurred channel).
+          float scalpOcc = 0.0;
+          #ifdef USE_MAP
+          if (follicleOn > 0.5) scalpOcc = 0.9 * hairCover * smoothstep(0.0, 1.0, texture2D(follicleMap, vMapUv).g);
+          #endif
+          ${chunk.replace(DIR_LIGHT, `${DIR_LIGHT}\ndirectLight.color *= 1.0 - scalpOcc;\n#if UNROLLED_LOOP_INDEX == 0\ndirectLight.color *= hairTransmittance(vHairWorld);\n#endif`)}`)
+        .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+          reflectedLight.indirectDiffuse *= 1.0 - scalpOcc;
+          reflectedLight.indirectSpecular *= 1.0 - scalpOcc;`)
+        .replace('#include <common>', `#include <common>\nvarying vec3 vHairWorld;\n${HAIR_SHADOW_GLSL}`);
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', skinLighting())
       .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
         uniform sampler2D darkMap;
-        uniform float melanin, undertone, lipAmount, stubble, scalpAmount;
-        uniform vec3 lipColour, stubbleColour, scalpColour;
+        uniform float melanin, undertone, lipAmount, stubble, follicleOn, hairCover;
+        uniform vec3 lipColour, stubbleColour, follicleColour;
+        uniform sampler2D follicleMap;
         varying vec3 vMasks;
         float skinHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }`);
     if (light) {
@@ -127,11 +156,11 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
         // Stubble: dark hair stumps, one per few texels, where a beard grows.
         float stump = step(0.55, skinHash(floor(vMapUv * 2600.0)));
         diffuseColor.rgb = mix(diffuseColor.rgb, stubbleColour, stubble * vMasks.y * (0.35 + 0.5 * stump));
-        // The scalp under hair takes its colour, so hair reads full.
-        diffuseColor.rgb = mix(diffuseColor.rgb, scalpColour, scalpAmount * vMasks.z);`);
+        // A dark dot where each strand leaves the skin (the groom's follicle map, painted from its roots).
+        if (follicleOn > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, follicleColour, 0.9 * texture2D(follicleMap, vMapUv).r);`);
     }
   };
-  m.customProgramCacheKey = () => `human-skin-${light ? 1 : 0}`;
+  m.customProgramCacheKey = () => `human-skin-${light ? 1 : 0}-${look.hairShadow ? 1 : 0}`;
   return m;
 }
 

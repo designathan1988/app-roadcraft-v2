@@ -15,7 +15,12 @@ class HeadSolid {
   private readonly lo: number[] = [Infinity, Infinity, Infinity];
   private readonly hi: number[] = [-Infinity, -Infinity, -Infinity];
   private static readonly C = 0.012;
-  constructor(private readonly body: ShapedBody, verts: Uint32Array) {
+  /**
+   * `torso`: vertices of the neck, shoulders, chest, back and upper arms,
+   * kept `torsoMargin` clear (over the clothes), so long hair falls over the
+   * shoulders and down the back instead of through them.
+   */
+  constructor(private readonly body: ShapedBody, verts: Uint32Array, private readonly torso: Uint8Array | null = null, private readonly torsoMargin = 0) {
     const s = body.shape;
     for (const v of verts) {
       for (let k = 0; k < 3; k++) { this.lo[k] = Math.min(this.lo[k]!, s[v * 3 + k]!); this.hi[k] = Math.max(this.hi[k]!, s[v * 3 + k]!); }
@@ -69,8 +74,9 @@ class HeadSolid {
     if (best < 0) return;
     const b = best * 3;
     const along = (p[0]! - s[b]!) * n[b]! + (p[1]! - s[b + 1]!) * n[b + 1]! + (p[2]! - s[b + 2]!) * n[b + 2]!;
-    if (along >= margin) return;
-    const k = margin - along;
+    const m = this.torso?.[best] ? Math.max(margin, this.torsoMargin) : margin;
+    if (along >= m) return;
+    const k = m - along;
     p[0] = p[0]! + n[b]! * k; p[1] = p[1]! + n[b + 1]! * k; p[2] = p[2]! + n[b + 2]! * k;
   }
 }
@@ -122,6 +128,14 @@ export interface StrandSet extends Strands {
   readonly grey: Uint8Array;
   readonly rootWidth: number;
   readonly tipWidth: number;
+  /** Per strand, a scale on the widths (thinner at the hairline); 1 if absent. */
+  readonly widths?: Float32Array;
+  /**
+   * Where each strand leaves the skin, for the scalp's follicle map (Unreal's
+   * groom "follicle mask"): the first index of its triangle in the base's
+   * render index, and its barycentric (u, v) there.
+   */
+  readonly follicles?: { readonly tris: Uint32Array; readonly bary: Float32Array };
 }
 
 export const GROOM_STYLES = ['Bob', 'Eve', 'Back1', 'SlickedBack', 'Combover_zoro_d', 'SceneHair_1_O4saken'] as const;
@@ -134,7 +148,7 @@ export const HAIR_COLOURS: readonly number[] = [
   0x1f3a7a, 0x6a1f7a, 0xc0306a, 0x2f7a4a,
 ];
 
-const ENV: { points: number } = { points: 420_000 };
+const ENV: { points: number } = { points: 900_000 };
 
 /** The skull as an ellipsoid (centre, radii), fitted to the head region's skin above the eyes. */
 export interface Skull { cx: number; cy: number; cz: number; rx: number; ry: number; rz: number }
@@ -215,17 +229,20 @@ function rootBinding(key: object, strands: Strands, base: HumanBase, candidates:
   return out;
 }
 
-const VERT_SETS = new WeakMap<HumanExtras, { head: Uint32Array; scalp: Uint32Array }>();
+const VERT_SETS = new WeakMap<HumanExtras, { head: Uint32Array; scalp: Uint32Array; upper: Uint32Array; torso: Uint8Array }>();
 /** Root candidates: the scalp's vertices for hair, the head's for brows. */
-function vertSets(ex: HumanExtras): { head: Uint32Array; scalp: Uint32Array } {
+function vertSets(ex: HumanExtras): { head: Uint32Array; scalp: Uint32Array; upper: Uint32Array; torso: Uint8Array } {
   let v = VERT_SETS.get(ex);
   if (!v) {
-    const head: number[] = [], scalp: number[] = [];
+    const head: number[] = [], scalp: number[] = [], upper: number[] = [];
+    const torso = new Uint8Array(ex.region.length);
+    const body = new Set<number>([REGION.neck, REGION.chest, REGION.abdomen, REGION.upperarm]);
     for (let i = 0; i < ex.region.length; i++) {
-      if (ex.region[i] === REGION.head) head.push(i);
+      if (ex.region[i] === REGION.head) { head.push(i); upper.push(i); }
+      if (body.has(ex.region[i]!)) { upper.push(i); torso[i] = 1; }
       if (ex.scalp[i]! > 0) scalp.push(i);
     }
-    v = { head: Uint32Array.from(head), scalp: Uint32Array.from(scalp) };
+    v = { head: Uint32Array.from(head), scalp: Uint32Array.from(scalp), upper: Uint32Array.from(upper), torso };
     VERT_SETS.set(ex, v);
   }
   return v;
@@ -460,7 +477,25 @@ class GuideIndex {
  * scalp mask fades (a soft hairline), each on a skin triangle of the
  * morphed body.
  */
-function scalpRoots(ex: HumanExtras, body: ShapedBody, count: number, rng: Rng): number[][] {
+/** A root: where, on which skin triangle, and how far inside the hairline (0 at its edge, 1 well inside). */
+interface Root { readonly p: number[]; readonly tri: number; readonly u: number; readonly v: number; readonly inside: number }
+
+/** Per skin triangle of `bodyFor` (in its order), where it starts in the base's render index. */
+const SKIN_INDEX = new WeakMap<HumanBase, Uint32Array>();
+function skinIndex(base: HumanBase): Uint32Array {
+  let out = SKIN_INDEX.get(base);
+  if (!out) {
+    const list: number[] = [];
+    for (const g of base.meta.groups) {
+      if (g.material !== 'Skin' && g.material !== 'Covered') continue;
+      for (let i = g.start; i < g.start + g.count; i += 3) list.push(i);
+    }
+    SKIN_INDEX.set(base, out = Uint32Array.from(list));
+  }
+  return out;
+}
+
+function scalpRoots(ex: HumanExtras, body: ShapedBody, count: number, rng: Rng): Root[] {
   const s = body.shape, tri = body.skin;
   const picks: number[] = [], cum: number[] = [];
   let total = 0;
@@ -474,7 +509,7 @@ function scalpRoots(ex: HumanExtras, body: ShapedBody, count: number, rng: Rng):
     total += area * Math.min(1, (m - 0.12) / 0.45);
     picks.push(i); cum.push(total);
   }
-  const out: number[][] = [];
+  const out: Root[] = [];
   if (!picks.length) return out;
   for (let k = 0; k < count; k++) {
     const r = rng.float() * total;
@@ -484,7 +519,10 @@ function scalpRoots(ex: HumanExtras, body: ShapedBody, count: number, rng: Rng):
     let u = rng.float(), v = rng.float();
     if (u + v > 1) { u = 1 - u; v = 1 - v; }
     const a = tri[i]! * 3, b = tri[i + 1]! * 3, c = tri[i + 2]! * 3;
-    out.push([0, 1, 2].map((d) => s[a + d]! + (s[b + d]! - s[a + d]!) * u + (s[c + d]! - s[a + d]!) * v));
+    const ma = ex.scalp[tri[i]!]!, mb = ex.scalp[tri[i + 1]!]!, mc = ex.scalp[tri[i + 2]!]!;
+    const m = (ma + (mb - ma) * u + (mc - ma) * v) / 255;
+    const inside = Math.min(1, Math.max(0, (m - 0.12) / 0.5));
+    out.push({ p: [0, 1, 2].map((d) => s[a + d]! + (s[b + d]! - s[a + d]!) * u + (s[c + d]! - s[a + d]!) * v), tri: i / 3, u, v, inside });
   }
   return out;
 }
@@ -497,7 +535,8 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   const shape = body.shape;
   const rng = new Rng(seed);
   const skull = skullOf(ex, shape);
-  const solid = new HeadSolid(body, vertSets(ex).head);
+  const sets = vertSets(ex);
+  const solid = new HeadSolid(body, sets.upper, sets.torso, 0.012);
   let guides: Guide[], children: number, radius: number, clump: number, roughness = 0.003;
   if (p.style === 'none') return empty();
   const info = ex.grooms.get(p.style);
@@ -515,7 +554,12 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   // shaped by the guides nearest its root. Children placed round each guide
   // instead (as before) left the scalp bare between guides: 42% of a bob's
   // scalp lay more than 5 mm from any root.
-  const N = p.style === 'buzz' ? 2 : 18;
+  // Points per strand by its length, as Frostbite's (short hair 5 a strand,
+  // long 24): a segment every 1.5 cm, or a fifth of a curl's turn.
+  const lengths = guides.filter((g) => g.length >= 2).map((g) => g.slice(1).reduce((s, q, i) => s + Math.hypot(q[0]! - g[i]![0]!, q[1]! - g[i]![1]!, q[2]! - g[i]![2]!), 0)).sort((a, b) => a - b);
+  const typical = lengths[Math.floor(lengths.length / 2)] ?? 0.05;
+  const seg = p.curl > 0.15 ? Math.min(0.015, (0.012 + 0.04 * p.curlSize) / 5) : 0.015;
+  const N = p.style === 'buzz' ? 2 : Math.max(5, Math.min(32, Math.ceil(typical / seg) + 1));
   // A groom denser than 3000 guides (the side part has 30,000) is thinned
   // evenly: interpolation fills between them anyway.
   const stride = Math.max(1, Math.ceil(guides.length / 3000));
@@ -523,12 +567,31 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
   if (!shaped.length) return empty();
   const budget = ENV.points * Math.max(0.3, Math.min(1.6, p.density));
   const roots = scalpRoots(ex, body, Math.min(60_000, Math.floor(budget / N)), rng);
-  const near = new GuideIndex(shaped.map((g) => g[0]!), 0.05);
+  // Within 3 cm of a guide: between the sparsest guides (a bob's, 4 cm apart)
+  // but not past the groom's own hairline, where a far guide's fall would
+  // hang strands over the forehead.
+  const near = new GuideIndex(shaped.map((g) => g[0]!), 0.03);
 
   const counts: number[] = [], pts: number[] = [], seeds: number[] = [], grey: number[] = [];
-  for (const root of roots) {
-    const found = near.nearest(root, 3);
+  const folTris: number[] = [], folBary: number[] = [], widths: number[] = [];
+  const toIndex = skinIndex(base);
+  for (const r of roots) {
+    const root = r.p;
+    let found = near.nearest(root, 4);
     if (!found.length) continue;
+    // Only guides heading the way the nearest one heads: mixing a guide
+    // combed left with one combed right (at a parting) averages to a strand
+    // hanging straight down over the face.
+    // A few strands by a parting follow a guide from the other side and
+    // cross it, as real hair does (away from a parting every guide near a
+    // root heads the same way, so this changes nothing there).
+    const lead = shaped[found[found.length > 1 && rng.bool(0.12) ? 1 + Math.floor(rng.float() * (found.length - 1)) : 0]![0]]!;
+    const dir = (G: Guide): number[] => norm([G[N - 1]![0]! - G[0]![0]!, G[N - 1]![1]! - G[0]![1]!, G[N - 1]![2]! - G[0]![2]!]);
+    const d0 = dir(lead);
+    found = found.filter(([j]) => { const d = dir(shaped[j]!); return d[0]! * d0[0]! + d[1]! * d0[1]! + d[2]! * d0[2]! > 0.85; }).slice(0, 3);
+    // Hairline strands are shorter and finer (a groom's density, length and
+    // width painted down towards the hairline's edge).
+    const keep = 0.5 + 0.5 * r.inside;
     let wsum = 0;
     const ws = found.map(([, d]) => { const w = 1 / (d * d + 1e-6); wsum += w; return w; });
     const g: number[][] = [];
@@ -541,7 +604,8 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
       });
       // Clumping: towards the nearest guide's own path, more at the tip.
       const c = clump * (i / (N - 1));
-      g.push([x + (closest[i]![0]! - x) * c, y + (closest[i]![1]! - y) * c, z + (closest[i]![2]! - z) * c]);
+      const px = x + (closest[i]![0]! - x) * c, py = y + (closest[i]![1]! - y) * c, pz = z + (closest[i]![2]! - z) * c;
+      g.push([root[0]! + (px - root[0]!) * keep, root[1]! + (py - root[1]!) * keep, root[2]! + (pz - root[2]!) * keep]);
     }
     const phase = rng.range(0, Math.PI * 2), sd = rng.float();
     // Roughness and frizz as smooth waves along the strand (as Blender's
@@ -581,14 +645,18 @@ export function hairStrands(ex: HumanExtras, base: HumanBase, body: ShapedBody, 
       pts.push(point[0]!, point[1]!, point[2]!);
     }
     counts.push(N);
+    widths.push(0.3 + 0.7 * r.inside);
+    folTris.push(toIndex[r.tri]!); folBary.push(r.u, r.v);
     seeds.push(sd);
     grey.push(rng.bool(p.grey) ? 1 : 0);
   }
   void children; void radius;
-  // Wider than a real hair (0.07 mm): tens of thousands of strands stand
-  // for a head's hundred thousand, so each covers for several.
-  const w = 0.0009 * p.thickness;
-  return { counts: Uint16Array.from(counts), points: Float32Array.from(pts), seeds: Float32Array.from(seeds), grey: Uint8Array.from(grey), rootWidth: w, tipWidth: w * 0.3 };
+  // A few times a real hair (0.07 mm): up to 60,000 strands stand for a
+  // head's hundred thousand. Much wider reads as straw (Frostbite, 2019).
+  const w = 0.00025 * p.thickness;
+  return { counts: Uint16Array.from(counts), points: Float32Array.from(pts), seeds: Float32Array.from(seeds), grey: Uint8Array.from(grey), rootWidth: w, tipWidth: w * 0.3,
+    widths: Float32Array.from(widths), follicles: { tris: Uint32Array.from(folTris), bary: Float32Array.from(folBary) },
+  };
 }
 
 function empty(): StrandSet {
