@@ -90,7 +90,7 @@ export interface RoadType {
  *
  * These lived in `ui/overlay/palette.ts`, and that made `world` import `ui` -
  * the one import cycle in the project, and a violation of the layer order in
- * AGENTS.md section 2. A line's colour is a property of the ROAD CLASS, not of
+ * CLAUDE.md (Layers). A line's colour is a property of the ROAD CLASS, not of
  * the interface: the same yellow centre line has to be produced by the mesh
  * builder, by the minimap and by the overlay, and three consumers in three
  * layers mean the value belongs beside the class it describes.

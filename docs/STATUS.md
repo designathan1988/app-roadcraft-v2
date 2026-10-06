@@ -3,7 +3,7 @@
 The one place for what is live in the game, who owns which area, what is open, and
 the player's standing decisions. Every session reads it at the start of a task and
 rewrites its own area's lines when they change (no appended logs; git keeps the
-history). Rules of work are in `AGENTS.md`, not here.
+history). Rules of work are in `CLAUDE.md`, not here.
 
 Last full rewrite: 2026-10-04 19:10; old docs, handoffs and audits removed 2026-10-05.
 

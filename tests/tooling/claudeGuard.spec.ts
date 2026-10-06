@@ -55,7 +55,7 @@ describe('Claude guard hook', () => {
     expect(ps("$env:FUZZ_HUNT='1'; npx vitest run tests/fuzz/fuzz.spec.ts --maxWorkers=1")).toBe('ask');
     expect(bash('node scripts/test-light.mjs tests/world/elevation.spec.ts', true)).toBe('deny');
     expect(bash('npm run build')).toBe('allow');
-    expect(bash('grep -n "npm run check" AGENTS.md')).toBe('allow');
+    expect(bash('grep -n "npm run check" CLAUDE.md')).toBe('allow');
     expect(bash('grep -rn vitest package.json')).toBe('allow');
   });
 
@@ -73,6 +73,6 @@ describe('Claude guard hook', () => {
   it('stays out of the way of everything else', () => {
     expect(bash('git status --porcelain')).toBe('allow');
     expect(bash('npm run dev', true)).toBe('allow');
-    expect(run('Read', { file_path: 'AGENTS.md' })).toBe('allow');
+    expect(run('Read', { file_path: 'CLAUDE.md' })).toBe('allow');
   });
 });

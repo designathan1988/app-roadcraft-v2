@@ -20,7 +20,7 @@ import { SLOT_WIDTH, litTexture } from './lightSlots';
 /**
  * Everything the buildings layer draws with, built ONCE per renderer.
  *
- * AGENTS.md: materials and textures are made once and never inside a
+ * CLAUDE.md: materials and textures are made once and never inside a
  * rebuild, and repeated scene parts are instanced. Each component part here
  * is a unit geometry in a component frame - X along the facade, Y up, Z out
  * of the wall - scaled and turned per instance by `buildingMesh.ts`.

@@ -14,7 +14,7 @@ import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from '
 
 /**
  * The buildings layer: the stored buildings and the editor's preview, each
- * rebuilt only when what it depends on moves (AGENTS.md section 4).
+ * rebuilt only when what it depends on moves (CLAUDE.md (Execution flow)).
  *
  * The stored buildings depend on `doc.buildings.revision`, on the ground
  * (`groundKey`: the terrain revision and the renderer's world rebuild count,

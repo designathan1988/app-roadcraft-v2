@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * The invariants that are about the SOURCE rather than about the geometry.
  *
  * `core/rng.ts` said `Math.random` was "enforced by a source scan in
- * `tests/arch`". There was no `tests/arch`. Invariant 5 in AGENTS.md — that
+ * `tests/arch`". There was no `tests/arch`. Invariant 5 in CLAUDE.md — that
  * `world` and `sim` never call `Math.random`, because determinism is what
  * makes every regression fixture in this suite mean anything — was a paragraph
  * nothing checked, and it has stayed true only by luck.
@@ -53,7 +53,7 @@ describe('determinism', () => {
   });
 
   it('keeps three.js inside the render layer', () => {
-    // The other rule AGENTS.md states in bold: nothing outside `src/render/`
+    // The other rule CLAUDE.md states in bold: nothing outside `src/render/`
     // may import three. A lint rule covers the project's own aliases; this
     // covers the one bare package name that matters.
     //

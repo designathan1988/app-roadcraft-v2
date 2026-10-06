@@ -31,7 +31,7 @@ import { createInsideBar } from '@ui/insideBar';
  * The building tool's share of the composition root.
  *
  * This is `main.ts`, split: the one other file allowed to wire every layer
- * together (AGENTS.md section 2), kept apart so the building feature touches
+ * together (CLAUDE.md (Layers)), kept apart so the building feature touches
  * `main.ts` in a handful of lines. It builds the `ToolView` from the viewport,
  * the `ToolHost` from the history and the autosave, the Builder Workspace
  * (`ui/builder/`), the overlay and the road-wins rule. See docs/buildings.md.

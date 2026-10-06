@@ -13,7 +13,7 @@ import { type SurfaceRecipe, bakeSurface, fbm, makeNoise } from '../mesh/texture
  * wing and a yellow brick one. Shell UVs are in world units on the face's own
  * plane (see `Shell` in `buildingMesh.ts`), so each map is scaled here to the
  * size of its tile, and brick courses run level on every wall. Baked ONCE per
- * renderer and cached by key (AGENTS.md: never inside a rebuild).
+ * renderer and cached by key (CLAUDE.md: never inside a rebuild).
  */
 
 type Shade = SurfaceRecipe['shade'];

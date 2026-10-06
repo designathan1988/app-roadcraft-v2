@@ -8,7 +8,7 @@ import type { BayComponent, Building, FaceId } from './types';
  *
  * The caller passes the ground: the renderer passes the height the terrain
  * TRIANGLES are drawn at (`renderedHeightAt`), because that is what a floor
- * has to clear - AGENTS.md's trap about terrain height having two meanings.
+ * has to clear - CLAUDE.md's trap about terrain height having two meanings.
  */
 
 /**

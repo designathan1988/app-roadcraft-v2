@@ -300,7 +300,7 @@ class Shell {
   /**
    * A planar polygon (3 or 4 world points, x/y map, z up) facing world normal
    * `n`. The winding is measured, never assumed: world y is mirrored into
-   * three's z, which flips handedness (AGENTS.md trap: winding).
+   * three's z, which flips handedness (CLAUDE.md trap: winding).
    */
   face(points: readonly (readonly [number, number, number])[], n: readonly [number, number, number], c: Paint): void {
     let part = this.parts.get(c.finish);

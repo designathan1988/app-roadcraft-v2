@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 /**
  * THE LAYER ORDER, ENFORCED.
  *
- * AGENTS.md section 2 states the dependency order and says never to violate
+ * CLAUDE.md (Layers) states the dependency order and says never to violate
  * it. Nothing checked, and two violations had grown:
  *
  *   - `world/markings.ts` imported its line colours from `ui/overlay/palette`,
@@ -46,7 +46,7 @@ const layerRules = Object.entries(LAYERS).map(([layer, allowed]) => ({
           group: [`@${other}/*`, `@/${other}/*`],
           message:
             `${layer} may not import ${other}. See the dependency order in ` +
-            'AGENTS.md section 2 - if the thing you want is in the wrong ' +
+            'CLAUDE.md (Layers) - if the thing you want is in the wrong ' +
             'layer, move the thing rather than the import.',
         })),
       },

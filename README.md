@@ -68,7 +68,7 @@ is a single table in [`src/render/quality.ts`](src/render/quality.ts).
 
 ## Documentation
 
-Start with **[AGENTS.md](AGENTS.md)** — it is the map: where every system lives,
+Start with **[CLAUDE.md](CLAUDE.md)** — it is the map: where every system lives,
 what depends on what, and which invariants must not be broken.
 
 What is live in the game and what is open is in [docs/STATUS.md](docs/STATUS.md).
@@ -119,7 +119,7 @@ TypeScript (strict, with `noUncheckedIndexedAccess` and
 booleans, `earcut` for triangulation, Vite for the build, Vitest for tests and
 Playwright for the browser check. No runtime framework; the only asset
 pipeline is the citizen roster's (`scripts/fetch-citizens.py` and the scripts
-after it, see AGENTS.md).
+after it, see CLAUDE.md).
 
 ## Licence
 

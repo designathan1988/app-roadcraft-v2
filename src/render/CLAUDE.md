@@ -1,1 +1,56 @@
-@AGENTS.md
+# src/render — everything three.js
+
+Rules for the whole repository are in the root `CLAUDE.md`. Nothing outside this
+folder imports `three`. This file lists what breaks far from where you edit here.
+
+## Couplings
+
+1. **The asphalt shader** (`materials.ts`, `ROAD_SPACE_FRAGMENT`) assumes
+   `uv.x * ASPHALT_TILE` is the across direction of `world/elevation.roadAt`.
+2. **Shadow bias is in world units over the fitted depth range**
+   (`environment.ts` `fitDepth`); change the range and the bias follows.
+3. **`SUN_AZIMUTH` against the camera's azimuth** decides whether shadows are
+   visible at all: with the sun opposite the camera every shadow falls behind its
+   own caster.
+4. **Instance buffers** in `agents.ts` are sized by `FLEET_CEILING` and
+   `PED_CEILING` (`sim/params.ts`).
+5. **Door edges** in `vehicleModels.ts` must agree with the seat count in
+   `sim/vehicles/kerbStops.ts`.
+
+## Traps that have already caught someone
+
+- **Winding.** World `y` is mirrored into three's `z`, which flips handedness.
+  `mesh/surfaceMesh.ts` measures each ring's signed area instead of assuming;
+  assuming once back-face culled the whole road network.
+- **Ear clipping fans.** `earcut` on a long thin band makes triangles with
+  1400-unit edges. `splitToSpan` cuts the polygon first; never feed it a long one.
+- **`shadowMap.enabled` is a quality tier setting.** If shadows stop working, check
+  the tier first.
+- **Textures are baked once** (`materials.ts`, `mesh/textureBaker.ts` cache by key).
+  Never create a material inside a rebuild.
+- **Repeated parts are instanced, never one object each.** Signal heads as single
+  meshes cost over a thousand draw calls a frame. A material shared by instanced
+  meshes must see all of them with the same program variant (all with instance
+  colours or none, never also a plain mesh), and a transparent DoubleSide
+  material needs `forceSinglePass`, or three re-evaluates its program every draw.
+- **A vertex colour attribute does nothing unless the material sets
+  `vertexColors: true`.** If a per-vertex tint has no effect, check the material
+  before the maths.
+- **Shader variants must be compiled for the target they draw to.**
+  `compileAsync` runs with the renderer target set to the post-processing target
+  (linear, no tone mapping), or it builds the wrong variants and the first frame
+  stalls.
+- **A seated person must fit the seat.** Car-seat poses are IK poses sized by
+  `seatFitScale` against measured extents. After changing a body profile or a
+  pose, rerun `scripts/measure-seated-poses.mjs` (against `npm run dev`) and
+  `tests/render/occupantFit.spec.ts`.
+- **People are MakeHuman bodies cooked ahead** (`cooked/people`, gitignored).
+  After any change to people code or assets the cook fingerprint changes and
+  bodies are built slowly at runtime until `npm run cook:people` runs again.
+- **Main-thread JavaScript, not the GPU, was the frame cost** in the 2026-10-02
+  profile. Profile before optimising the GPU side.
+
+## How to add a visual effect
+
+Put it in `postprocess.ts` behind a flag in `quality.ts`, so a weak machine can turn
+it off. Never add an unconditional cost.

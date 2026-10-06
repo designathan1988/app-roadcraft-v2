@@ -21,7 +21,7 @@ const bays = (n: number): number => n * DEFAULT_MODULE;
 
 /**
  * The building meshes (docs/buildings.md section 5). Winding is measured, not
- * assumed (AGENTS.md trap: world y is mirrored into three's z), so every
+ * assumed (CLAUDE.md trap: world y is mirrored into three's z), so every
  * shell triangle must face the way its normal says - or the back-face cull
  * removes it and the wall is simply not there.
  */

@@ -316,7 +316,7 @@ export function createSceneRenderer(
   // meshes, instanced meshes and instanced meshes with per-instance colour
   // compile to three different programs of it: interleaved in the shadow pass,
   // three re-derived the program on nearly every draw (`getParameters`,
-  // `setProgram` - the trap AGENTS.md describes, inside three). Each variant
+  // `setProgram` - the trap CLAUDE.md describes, inside three). Each variant
   // now has its own material, so each keeps its program.
   const depthVariants = {
     plain: new MeshDepthMaterial({ depthPacking: RGBADepthPacking }),

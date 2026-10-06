@@ -859,7 +859,7 @@ export class RoadDoc {
     // Likewise the roads and the utility network: undoing a storey or a
     // brush dab replaced the whole document and moved both revisions, which
     // rebuilt every road mesh, the lanelets and the simulation topology for a
-    // network that had not changed (AGENTS.md: a building edit never moves
+    // network that had not changed (CLAUDE.md: a building edit never moves
     // `doc.revision`).
     const roadsChanged = !sameRoads(this, source);
     const utilitiesChanged = !samePoles(this, source);
