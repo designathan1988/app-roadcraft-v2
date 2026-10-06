@@ -274,10 +274,10 @@ export function terrainBakes(anisotropy: number): {
         const v = y / 256;
         const grain = fbm(dirtGrain, u * 90, v * 90, 90, 3);
         const patch = fbm(dirtGrain, u * 8 + 3, v * 8 + 9, 8, 3);
-        const tone = 0.4 + (grain - 0.5) * 0.08 + patch * 0.08;
-        out.r = tone * 1.1;
-        out.g = tone * 0.94;
-        out.b = tone * 0.72;
+        const tone = 0.33 + (grain - 0.5) * 0.1 + patch * 0.08;
+        out.r = tone * 1.08;
+        out.g = tone * 0.86;
+        out.b = tone * 0.64;
         out.h = grain * 0.7 + patch * 0.3;
         out.rough = 0.97;
       },
@@ -529,17 +529,48 @@ function terrainMaterial(
          // 26. On a map with real hills that painted every hillside tan, and
          // the whole country read as savanna. Soil now starts where a slope
          // stops holding turf (18 degrees), rock where it stops holding soil.
-         float rockMix = max(smoothstep(38.0, 58.0, slopeDeg), altitude * 0.92);
-         float dirtMix = smoothstep(18.0, 38.0, slopeDeg) * (1.0 - rockMix) * 0.8;
+         //
+         // The bands WANDER: a slow noise shifts each threshold by up to some
+         // fifteen degrees, so the soil and the rock follow the landform
+         // loosely instead of drawing concentric rings round every hill.
+         float wanderA = texture2D(uDirtMap, vTerrainWorld.xz * 0.0023).g;
+         float wanderB = texture2D(map, terrainWideUv(vTerrainWorld.xz * 0.011)).g;
+         // And a hill-sized one (about 50 m), or a hill still wears one
+         // even, wobbly ring of soil round its foot.
+         float wanderC = texture2D(uDirtMap, vTerrainWorld.xz * 0.02 + 0.37).g;
+         float wander = (wanderA - 0.5) * 14.0 + (wanderB - 0.5) * 10.0 + (wanderC - 0.5) * 30.0;
+         float rockW = max(smoothstep(32.0, 50.0, slopeDeg + wander), altitude * 0.92);
+         float dirtW = smoothstep(18.0, 36.0, slopeDeg + wander * 1.3) * (1.0 - rockW);
+         float grassW = max(0.0, 1.0 - rockW - dirtW);
          vec4 grassColor = dualScale(map, tGrass);
          vec4 rockColor = dualScale(uRockMap, tRock);
-         vec4 dirtColor = dualScale(uDirtMap, tDirt);
-         vec4 blended = mix(grassColor, dirtColor, dirtMix);
-         blended = mix(blended, rockColor, rockMix);
+         // Soil on a slope is read from the side, as the rock is: from above
+         // it smeared down every bank in long streaks.
+         vec4 dirtPlan = dualScale(uDirtMap, tDirt);
+         vec4 dirtSide = dualScale(uDirtMap, terrainWallUv(vTerrainWorld, uDirtScale, wallX));
+         vec4 dirtColor = mix(dirtPlan, dirtSide, smoothstep(22.0, 42.0, slopeDeg));
+         // Height blending (Mishkinis, "Advanced Terrain Texture Splatting"):
+         // each surface rises by its own relief, read from its brightness, and
+         // the highest within a thin depth wins, so soil fills the hollows
+         // between stones and the turf breaks into tufts at its edge instead
+         // of a soft fade. A surface with no weight gets no relief either.
+         float hGrass = grassW + dot(grassColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.4 * smoothstep(0.0, 0.35, grassW);
+         float hDirt = dirtW + dot(dirtColor.rgb, vec3(0.3, 0.6, 0.1)) * 0.9 * smoothstep(0.0, 0.35, dirtW);
+         float hRock = rockW + dot(rockColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.1 * smoothstep(0.0, 0.35, rockW);
+         float hTop = max(hGrass, max(hDirt, hRock)) - 0.12;
+         float bGrass = max(hGrass - hTop, 0.0);
+         float bDirt = max(hDirt - hTop, 0.0);
+         float bRock = max(hRock - hTop, 0.0);
+         float bSum = max(bGrass + bDirt + bRock, 1e-4);
+         float rockMix = bRock / bSum;
+         float dirtMix = bDirt / bSum;
+         vec4 blended = (grassColor * bGrass + dirtColor * bDirt + rockColor * bRock) / bSum;
          if (terrainDetailW > 0.001) {
            vec3 bladeDetail = detailSample(uGrassDetail, vTerrainWorld.xz * uGrassDetailScale);
            vec3 soilDetail = detailSample(uSoilDetail, terrainWallUv(vTerrainWorld, uSoilDetailScale, wallX));
-           float soilMix = clamp(dirtMix + rockMix, 0.0, 1.0);
+           // Blades only where the ground is gentle: projected from above
+           // onto a bank they stretched into long hairs.
+           float soilMix = max(clamp(dirtMix + rockMix, 0.0, 1.0), smoothstep(12.0, 24.0, slopeDeg));
            vec3 fine = mix(bladeDetail, soilDetail, soilMix);
            blended.rgb *= mix(vec3(1.0), fine, terrainDetailW);
          }
@@ -613,6 +644,10 @@ function terrainMaterial(
          vec3 rockTangent = normalize(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), wallX));
          vec3 rockWorldN = normalize(rockTangent * rockN.x + vec3(0.0, 1.0, 0.0) * rockN.y + vTerrainNormal * rockN.z);
          rockN = vec3(dot(rockWorldN, tbn[0]), dot(rockWorldN, tbn[1]), dot(rockWorldN, tbn[2]));
+         // Softened: with height blending the rock's edge is crisp, and its
+         // full relief turned every facet facing away from the sun into a
+         // black blot.
+         rockN = normalize(mix(rockN, vec3(0.0, 0.0, 1.0), 0.6));
          vec3 mapN = normalize(mix(grassN, rockN, rockMix));
          mapN.xy *= normalScale;
          if (terrainDetailW > 0.001) {
@@ -626,7 +661,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v6';
+  material.customProgramCacheKey = () => 'terrain-splat-v7';
   return material;
 }
 
