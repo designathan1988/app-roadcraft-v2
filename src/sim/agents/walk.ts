@@ -1,5 +1,5 @@
 import type { Vec2 } from '@core/vec2';
-import { buildWalkways, type WalkGraph, type Walkway } from '@world/walkways';
+import type { WalkGraph, Walkway } from '@world/walkways';
 import { m } from '@world/units';
 import type { SegmentId } from '@world/ids';
 import { DT, PED } from '../params';
@@ -235,7 +235,7 @@ const cellKey = (x: number, y: number, size: number): number => cell(Math.floor(
 function ensureGraph(w: SimWorld, s: State): WalkGraph | null {
   const key = `${w.net.revision}:${w.topologyRevision}`;
   if (s.graph && s.builtFor === key) return s.graph;
-  s.graph = buildWalkways(w.net);
+  s.graph = w.walkwaysFor(w.net.revision);
   s.builtFor = key;
   s.wayIndex.clear();
   for (const way of s.graph.ways) {

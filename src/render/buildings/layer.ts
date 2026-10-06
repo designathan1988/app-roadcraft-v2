@@ -115,7 +115,11 @@ export function createBuildingLayer(): BuildingLayer {
   let ghost: BuildingMeshes | null = null;
   let storedKey = '';
   /** The buildings of a change being emitted ahead of the cells, a slice a frame. */
-  let warming: { key: string; queue: Building[]; at: number } | null = null;
+  let warming: { key: string; queue: Building[]; at: number;
+    cells?: { stage: CellCache; cell: string; list: BuildingChunk[]; kinds: ReadonlySet<PartKind> }[] } | null = null;
+  /** Cells put together ahead of the swap (`update`), taken by `assembleByCell`. */
+  const stagedCells: CellCache = new Map();
+  const stagedDetails: CellCache = new Map();
   let ghostKey = '';
   let preview: BuildingPreviewInput | null = null;
   let cutaway: CutawaySpec | null = null;
@@ -265,6 +269,26 @@ export function createBuildingLayer(): BuildingLayer {
           drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);
         }
         if (warming.at < warming.queue.length) return false;
+        // Then the cells whose buildings changed, a cell at a time.
+        if (!warming.cells) {
+          const chunkOf = (b: Building): BuildingChunk => drawn(b, groundAt, groundKey, pavedAt, naturalAt);
+          warming.cells = [];
+          for (const [cache, size, kinds, stage] of [[cells, BATCH_CELL, COARSE_PARTS, stagedCells], [detailCells, DETAIL_CELL, DETAIL_PARTS, stagedDetails]] as const) {
+            for (const [cell, list] of chunksByCell(warming.queue, chunkOf, size)) {
+              const known = cache.get(cell);
+              if (!known || !sameChunks(known.chunks, list)) warming.cells.push({ stage, cell, list, kinds });
+            }
+          }
+        }
+        while (warming.cells.length && performance.now() < until) {
+          const { stage, cell, list, kinds } = warming.cells.shift()!;
+          const old = stage.get(cell);
+          if (old && sameChunks(old.chunks, list)) continue;
+          old?.part.dispose();
+          stage.set(cell, { chunks: list, part: assembleBuildingMeshes(list, kit, false, false,
+            { parts: kinds, shells: kinds === COARSE_PARTS, furniture: kinds === COARSE_PARTS }) });
+        }
+        if (warming.cells.length) return false;
       }
       warming = null;
       if (key !== storedKey) {
@@ -282,8 +306,13 @@ export function createBuildingLayer(): BuildingLayer {
         const solid = dimmed === undefined ? shown : shown.filter((b) => b.id === dimmed);
         const others = dimmed === undefined ? [] : shown.filter((b) => b.id !== dimmed);
         if (cutChunks.size > 64) cutChunks.clear();
-        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, cells, BATCH_CELL, COARSE_PARTS);
-        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS);
+        stored = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, cells, BATCH_CELL, COARSE_PARTS, stagedCells);
+        details = assembleByCell(solid, (b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt), kit, detailCells, DETAIL_CELL, DETAIL_PARTS, stagedDetails);
+        // Staged for a change overtaken by another: not used.
+        for (const stage of [stagedCells, stagedDetails]) {
+          for (const { part } of stage.values()) part.dispose();
+          stage.clear();
+        }
         group.add(stored.group, details.group);
         faded = others.length > 0
           ? assembleBuildingMeshes(others.map((b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt)), kit, false, true)
@@ -416,8 +445,8 @@ type CellCache = Map<string, { chunks: readonly BuildingChunk[]; part: BuildingM
  * storey added to one building - as voxel and tile engines rebuild only the
  * chunks an edit made dirty.
  */
-function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk,
-  kit: BuildingKit, cache: CellCache, cellSize: number, partKinds: ReadonlySet<PartKind>): BuildingMeshes {
+/** The buildings' chunks by cell, in list order. */
+function chunksByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk, cellSize: number): Map<string, BuildingChunk[]> {
   const byCell = new Map<string, BuildingChunk[]>();
   for (const b of buildings) {
     const key = `${Math.floor(b.x / cellSize)},${Math.floor(b.y / cellSize)}`;
@@ -425,6 +454,15 @@ function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) =
     if (list) list.push(chunkOf(b));
     else byCell.set(key, [chunkOf(b)]);
   }
+  return byCell;
+}
+
+const sameChunks = (a: readonly BuildingChunk[], b: readonly BuildingChunk[]): boolean =>
+  a.length === b.length && a.every((c, i) => c === b[i]);
+
+function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) => BuildingChunk,
+  kit: BuildingKit, cache: CellCache, cellSize: number, partKinds: ReadonlySet<PartKind>, staged?: CellCache): BuildingMeshes {
+  const byCell = chunksByCell(buildings, chunkOf, cellSize);
   const group = new Group();
   group.name = 'buildings';
   group.matrixAutoUpdate = false;
@@ -433,8 +471,15 @@ function assembleByCell(buildings: readonly Building[], chunkOf: (b: Building) =
   for (const [key, chunks] of byCell) {
     const known = cache.get(key);
     let part: BuildingMeshes;
-    if (known && known.chunks.length === chunks.length && known.chunks.every((c, i) => c === chunks[i])) {
+    const ready = staged?.get(key);
+    if (known && sameChunks(known.chunks, chunks)) {
       part = known.part;
+    } else if (ready && sameChunks(ready.chunks, chunks)) {
+      // Put together ahead, a cell a frame (`update`).
+      known?.part.dispose();
+      part = ready.part;
+      staged!.delete(key);
+      cache.set(key, { chunks, part });
     } else {
       known?.part.dispose();
       part = assembleBuildingMeshes(chunks, kit, false, false,

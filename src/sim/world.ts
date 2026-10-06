@@ -24,6 +24,7 @@ import type { PedestrianEngine } from './people/engine';
 import { legacyPedestrians } from './peds/engine';
 import { CityLife } from './city/life';
 import { AmbientWorld } from './ambient/ambient';
+import { buildWalkways, type WalkGraph } from '@world/walkways';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** A queue is counted this far back from the stop line. */
@@ -386,6 +387,21 @@ export class SimWorld {
     graph.build(this.doc, this.net);
     yield;
     yield* this.conflicts.prepare(graph);
+    yield;
+    // The residents' walkways of the network (`walkways`), in a frame of their
+    // own: built in the frame that rebinds the walkers, with the footway graph
+    // and the crossings, they made it a stall of 170 ms in the default town
+    // (docs/performance.md #11).
+    this.walkwaysFor(this.net.revision);
+  }
+
+  private walkwaysCache: { revision: number; graph: WalkGraph } | null = null;
+  /** The walkways of the network at `revision` (`world/walkways.ts`), built once per revision. */
+  walkwaysFor(revision: number): WalkGraph {
+    if (!this.walkwaysCache || this.walkwaysCache.revision !== revision) {
+      this.walkwaysCache = { revision, graph: buildWalkways(this.net) };
+    }
+    return this.walkwaysCache.graph;
   }
 
   /** Builds the preparation graph with a map's load, so its first edit does not build it from nothing. */
