@@ -2,7 +2,7 @@ import { CAPTURE_NAME } from './personRig';
 import type { BodyPart, Severable } from '@sim/people/view';
 import {
   BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
-  InstancedMesh, Matrix4, MeshDepthMaterial, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
+  InstancedMesh, Matrix4, MeshDepthMaterial, Quaternion, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
   Uint16BufferAttribute, UnsignedByteType, type Material, type Texture,
 } from 'three';
 import { loadPeopleAssets, type PeopleAssets } from '@people/body/assets';
@@ -189,7 +189,7 @@ interface BodyClass {
 }
 
 /** What a procedural person plays: walking, standing, running, sprinting for their life, cowering, photographing. */
-export type ProcClip = 'walk' | 'idle' | 'run' | 'sprint' | 'cower' | 'photo' | 'getUp' | 'duck';
+export type ProcClip = 'walk' | 'idle' | 'run' | 'sprint' | 'cower' | 'photo' | 'getUp' | 'duck' | 'hurtWalk';
 
 export interface ProceduralPerson {
   readonly spec: PersonSpec;
@@ -585,6 +585,10 @@ export interface ProceduralCrowd {
      * whatever they are playing.
      */
     jolt(person: ProceduralPerson, dirX: number, dirY: number, strength: number): void;
+    /** The layers over the clip now (a jolt and its weight), for probes. */
+    layers(person: ProceduralPerson): string[];
+    /** A wounded posture laid over their clip (null takes it off): bent over by `hunch` radians, a hand on the wound by `reach` (0-1). */
+    posture(person: ProceduralPerson, pose: { hunch: number; reach: number; part: BodyPart } | null): void;
     /** Blood all over them (a body shot to pieces). */
     drench(person: ProceduralPerson): void;
     /** Their wounds gone (the person drawn as somebody new). */
@@ -824,17 +828,19 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     readonly getUp: ClipFrames;
     /** Down into a crouch (a first wound doubles them over, `agents.ts` flinch). */
     readonly duck: ClipFrames;
+    /** Walking hurt: the library's slow walk (`walkSlow`), the posture laid over it. */
+    readonly hurtWalk: ClipFrames;
   }
   const classRecord = (d: ClassData): PackRecord => ({
     shapePixels: d.shapePixels, jointBasis: d.jointBasis, faceIndexPixels: d.faceIndexPixels, faceList: d.faceList,
     exprPixels: d.exprPixels, ...clipFields('walk', d.walk), ...clipFields('idle', d.idle),
-    ...clipFields('run', d.run), ...clipFields('cower', d.cower), ...clipFields('sprint', d.sprint), ...clipFields('photo', d.photo), ...clipFields('getUp', d.getUp), ...clipFields('duck', d.duck),
+    ...clipFields('run', d.run), ...clipFields('cower', d.cower), ...clipFields('sprint', d.sprint), ...clipFields('photo', d.photo), ...clipFields('getUp', d.getUp), ...clipFields('duck', d.duck), ...clipFields('hurtWalk', d.hurtWalk),
   });
   const classFromRecord = (r: Record<string, PackValue>): ClassData => ({
     shapePixels: r['shapePixels'] as Float32Array, jointBasis: r['jointBasis'] as Float32Array,
     faceIndexPixels: r['faceIndexPixels'] as Float32Array, faceList: r['faceList'] as Int32Array,
     exprPixels: r['exprPixels'] as Float32Array, walk: clipOf('walk', r), idle: clipOf('idle', r),
-    run: clipOf('run', r), cower: clipOf('cower', r), sprint: clipOf('sprint', r), photo: clipOf('photo', r), getUp: clipOf('getUp', r), duck: clipOf('duck', r),
+    run: clipOf('run', r), cower: clipOf('cower', r), sprint: clipOf('sprint', r), photo: clipOf('photo', r), getUp: clipOf('getUp', r), duck: clipOf('duck', r), hurtWalk: clipOf('hurtWalk', r),
   });
 
   /** A class's rig: its body at the band's age, with only the eyes on it (no outfit, hair, brows, lashes or hat). */
@@ -903,6 +909,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     await breathe();
     const duck = await bakeLibraryClip(bakeRig, library.crouchDown, undefined, 'crouchDown');
     await breathe();
+    const hurtWalk = await bakeLibraryClip(bakeRig, library.walkSlow, undefined, 'walkSlow');
+    await breathe();
     // Joints follow the shape: a MakeHuman bone's head is the mean of a
     // group of base vertices (its joint cube, `personRig.headOf`), so its
     // move per coefficient is the mean of theirs in the shape basis.
@@ -955,7 +963,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       });
     }
     await breathe();
-    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower, sprint, photo, getUp, duck };
+    return { shapePixels, jointBasis, faceIndexPixels, faceList: Int32Array.from(faceList), exprPixels, walk, idle, run, cower, sprint, photo, getUp, duck, hurtWalk };
   };
 
   const buildClass = async (sex: WalkSex, band: AgeBand): Promise<BodyClass> => {
@@ -964,7 +972,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     const { base, shape, eyes, rig } = await classRig(sex, band);
     // Read from the cook (`proceduralCook.ts`); built here only when it is missing or stale.
     const cooked = await loadProcedural(`class-${sex}-${band}`);
-    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower, sprint, photo, getUp, duck } = cooked
+    const { shapePixels, jointBasis, faceIndexPixels, faceList, exprPixels, walk, idle, run, cower, sprint, photo, getUp, duck, hurtWalk } = cooked
       ? classFromRecord(cooked) : await classData(sex, rig, shape);
     const vertexCount = a.mesh.vertexCount;
     const shapeRows = Math.ceil(vertexCount * SHAPES / SHAPE_WIDTH);
@@ -1011,7 +1019,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     bakeMs += performance.now() - started;
     const cls: BodyClass = {
       key: `${sex}-${band}`, sex, band, base, shape, coefficients: mo.coefficients(base), rig,
-      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower, sprint, photo, getUp, duck }, bones, order, parent, jointBasis,
+      height: bodyHeight(shape, a.bodyRange) / 10, clips: { walk, idle, run, cower, sprint, photo, getUp, duck, hurtWalk }, bones, order, parent, jointBasis,
       uniforms: {
         procBones: { value: rowTexture(palette, width, ROW_START) },
         procCoef: { value: rowTexture(coef, SHAPES, ROW_START) },
@@ -1294,6 +1302,130 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   const joltRot = new Matrix4(), joltDir = new Vector3();
   const joltSpine = new Map<BodyClass, { root: number; bind: Vector3; bones: number[] } | null>();
   const joltM = new Matrix4(), joltT = new Matrix4(), joltP = new Vector3();
+  /**
+   * A wounded body's posture over its clip (Euphoria's reach-for-wound and a
+   * body guarding a wound): the trunk bent over it by `hunch` radians and
+   * one hand pressed on it - the arm put there by a two-bone solve (the
+   * elbow's angle from the law of cosines, then the whole arm turned at the
+   * shoulder onto the target), blended in by `reach`.
+   */
+  interface Posture { hunch: number; reach: number; part: BodyPart; miss?: number; hand?: 'L' | 'R' }
+  const postures = new Map<ProceduralPerson, Posture>();
+  interface PostureRig {
+    spine: number; spineBind: Vector3; upper: number[];
+    forward: Vector3; up: Vector3;
+    arm: Record<'L' | 'R', { shoulder: number; elbow: number; hand: number; upperSet: number[]; foreSet: number[]; bind: [Vector3, Vector3, Vector3] } | null>;
+    pelvis: number; chest: number; thigh: Record<'L' | 'R', number>;
+    bindOf: (i: number) => Vector3;
+  }
+  const postureRigs = new Map<BodyClass, PostureRig | null>();
+  const postureRig = (cls: BodyClass): PostureRig | null => {
+    let rig = postureRigs.get(cls);
+    if (rig !== undefined) return rig;
+    const bones = cls.rig.mesh.skeleton.bones;
+    const name = (i: number): string => CAPTURE_NAME[bones[i]!.name] ?? bones[i]!.name;
+    const find = (n: string): number => bones.findIndex((_, i) => name(i) === n);
+    const parents = bones.map((b) => bones.indexOf(b.parent as never));
+    const subtree = (root: number): number[] => {
+      const out: number[] = [];
+      for (let i = 0; i < bones.length; i++) { let j = i; while (j >= 0 && j !== root) j = parents[j]!; if (j === root) out.push(i); }
+      return out;
+    };
+    const bindOf = (i: number): Vector3 => new Vector3().setFromMatrixPosition(new Matrix4().copy(cls.rig.mesh.skeleton.boneInverses[i]!).invert());
+    const spine = find('Bip01_Spine'), pelvis = find('Bip01_Pelvis'), chest = find('Bip01_Spine2');
+    const foot = find('Bip01_L_Foot'), toe = find('Bip01_L_Toe0');
+    if (spine < 0 || pelvis < 0 || chest < 0 || foot < 0 || toe < 0) { postureRigs.set(cls, null); return null; }
+    const forward = bindOf(toe).sub(bindOf(foot)).setY(0).normalize();
+    const up = bindOf(chest).sub(bindOf(pelvis)).normalize();
+    const arm = (side: 'L' | 'R') => {
+      const shoulder = find(`Bip01_${side}_UpperArm`), elbow = find(`Bip01_${side}_Forearm`), hand = find(`Bip01_${side}_Hand`);
+      if (shoulder < 0 || elbow < 0 || hand < 0) return null;
+      return { shoulder, elbow, hand, upperSet: subtree(shoulder), foreSet: subtree(elbow), bind: [bindOf(shoulder), bindOf(elbow), bindOf(hand)] as [Vector3, Vector3, Vector3] };
+    };
+    rig = {
+      spine, spineBind: bindOf(spine), upper: subtree(spine), forward, up, arm: { L: arm('L'), R: arm('R') },
+      pelvis, chest, thigh: { L: find('Bip01_L_Thigh'), R: find('Bip01_R_Thigh') }, bindOf,
+    };
+    postureRigs.set(cls, rig);
+    return rig;
+  };
+  const pM = new Matrix4(), pT = new Matrix4(), pR = new Matrix4(), pQ = new Quaternion(), pA = new Vector3(), pB = new Vector3(), pC = new Vector3(), pD = new Vector3();
+  /** Where a joint (bind point `bind`) is in the posed row `at`, bone `i`. */
+  const posed = (cls: BodyClass, at: number, i: number, bind: Vector3, out: Vector3): Vector3 =>
+    out.copy(bind).applyMatrix4(pM.fromArray(cls.palette, at + i * SKIN_BONE_FLOATS));
+  /** Every bone of `set` turned by `rot` about point `p`, in the row `at`. */
+  const turnAbout = (cls: BodyClass, at: number, set: readonly number[], p: Vector3, rot: Matrix4): void => {
+    pT.makeTranslation(p.x, p.y, p.z).multiply(rot).multiply(pR.makeTranslation(-p.x, -p.y, -p.z));
+    for (const i of set) {
+      const o = at + i * SKIN_BONE_FLOATS;
+      pM.fromArray(cls.palette, o).premultiply(pT).toArray(cls.palette, o);
+    }
+  };
+  const applyPosture = (cls: BodyClass, at: number, pose: Posture): void => {
+    const rig = postureRig(cls);
+    if (!rig) return;
+    // Bent over: the upper body tipped forward about the lower spine.
+    if (pose.hunch > 1e-3) {
+      const p = posed(cls, at, rig.spine, rig.spineBind, pA);
+      turnAbout(cls, at, rig.upper, p, pR.makeRotationAxis(pB.crossVectors(rig.up, rig.forward).normalize(), pose.hunch));
+    }
+    if (pose.reach < 1e-3) return;
+    // The hand on the wound: the other hand when an arm is hit; for the
+    // trunk, the right; on the belly, the chest or the thigh, in front.
+    const side: 'L' | 'R' = pose.part === 'armR' ? 'L' : pose.part === 'armL' ? 'R' : pose.part === 'legL' ? 'L' : 'R';
+    const arm = rig.arm[side];
+    if (!arm) return;
+    const pelvis = posed(cls, at, rig.pelvis, rig.bindOf(rig.pelvis), pC);
+    const chest = posed(cls, at, rig.chest, rig.bindOf(rig.chest), pD);
+    const along = chest.clone().sub(pelvis);
+    const torsoLen = along.length();
+    const fwd = rig.forward.clone();
+    // The posed forward: the bind forward carried by the chest's turn.
+    pM.fromArray(cls.palette, at + rig.chest * SKIN_BONE_FLOATS);
+    fwd.transformDirection(pM).setY(0).normalize();
+    let target: Vector3;
+    if (pose.part === 'legL' || pose.part === 'legR') {
+      const thigh = rig.thigh[pose.part === 'legL' ? 'L' : 'R'];
+      target = thigh >= 0 ? posed(cls, at, thigh, rig.bindOf(thigh), new Vector3()).addScaledVector(fwd, torsoLen * 0.35).addScaledVector(rig.up, -torsoLen * 0.4) : pelvis.clone();
+    } else if (pose.part === 'armL' || pose.part === 'armR') {
+      const other = rig.arm[pose.part === 'armL' ? 'L' : 'R'];
+      // The wrist at the middle of the hurt upper arm, in front of it and a
+      // little in from it: the hand beyond the wrist then lies over the wound
+      // (aimed at the arm itself, the hand stuck up past the shoulder).
+      target = other ? posed(cls, at, other.shoulder, other.bind[0], new Vector3()).lerp(posed(cls, at, other.elbow, other.bind[1], new Vector3()), 0.6) : chest.clone();
+      target.addScaledVector(fwd, torsoLen * 0.2).lerp(chest, 0.22);
+    } else {
+      // Belly or chest, a hand's breadth in front of the trunk, towards the hand's own side a little.
+      target = pelvis.clone().addScaledVector(along, pose.part === 'head' ? 1.15 : 0.45).addScaledVector(fwd, torsoLen * 0.42);
+      const lateral = posed(cls, at, arm.shoulder, arm.bind[0], new Vector3()).sub(chest).setY(0);
+      target.addScaledVector(lateral, 0.25);
+    }
+    const S = posed(cls, at, arm.shoulder, arm.bind[0], new Vector3());
+    const E = posed(cls, at, arm.elbow, arm.bind[1], new Vector3());
+    const H = posed(cls, at, arm.hand, arm.bind[2], new Vector3());
+    const T = H.clone().lerp(target, pose.reach);
+    const l1 = E.distanceTo(S), l2 = H.distanceTo(E);
+    const d = Math.min(l1 + l2 - 1e-4, Math.max(Math.abs(l1 - l2) + 1e-4, T.distanceTo(S)));
+    // The elbow's angle for that reach.
+    const want = Math.acos(Math.min(1, Math.max(-1, (l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2))));
+    const a = S.clone().sub(E), b = H.clone().sub(E);
+    const now = a.angleTo(b);
+    // The elbow bends in the arm's natural plane, the forearm coming forward:
+    // taken from the arm's own bend, a nearly straight arm (hanging at rest)
+    // gave no plane, or the wrong side of one, and the hand flew up.
+    let n = new Vector3().crossVectors(a, fwd);
+    if (n.lengthSq() < 1e-10) n = new Vector3().crossVectors(a, b);
+    n.normalize();
+    turnAbout(cls, at, arm.foreSet, E, pR.makeRotationAxis(n, want - now));
+    // Then the arm turned at the shoulder so the hand comes onto the target.
+    const H2 = posed(cls, at, arm.hand, arm.bind[2], new Vector3());
+    pQ.setFromUnitVectors(H2.sub(S).normalize(), T.clone().sub(S).normalize());
+    turnAbout(cls, at, arm.upperSet, S, pR.makeRotationFromQuaternion(pQ));
+    // How far the hand ended from where it was sent, against the arm's length (for probes).
+    pose.miss = posed(cls, at, arm.hand, arm.bind[2], new Vector3()).distanceTo(T) / (l1 + l2);
+    pose.hand = side;
+  };
+
   /** The upper body turned about the lower spine by `angle`, in a palette row at `at`. */
   const applyJolt = (cls: BodyClass, at: number, axis: Vector3, angle: number): void => {
     let spine = joltSpine.get(cls);
@@ -1518,6 +1650,19 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       },
       char(person, on) { charSlots(person, on); },
       duration(person, clip) { return classOf(person)?.clips[clip].duration ?? 1.2; },
+      posture(person, pose) {
+        const was = postures.get(person);
+        if (pose) postures.set(person, { ...pose, ...(was?.miss !== undefined ? { miss: was.miss, hand: was.hand } : {}) }); else postures.delete(person);
+      },
+      layers(person) {
+        const j = jolts.get(person);
+        const p = postures.get(person);
+        const own = p ? [`posture hunch ${p.hunch.toFixed(2)} rad, ${p.hand ?? '?'} hand ${p.reach.toFixed(2)} on ${p.part}, miss ${((p.miss ?? 0) * 100).toFixed(0)}%`] : [];
+        if (!j) return own;
+        const cls = classOf(person);
+        const age = (cls?.uniforms.procTime.value ?? 0) - j.start;
+        return [...own, `jolt ${(j.strength * (age < 0.07 ? age / 0.07 : Math.exp(-(age - 0.07) / 0.16))).toFixed(2)} rad`];
+      },
       jolt(person, dirX, dirY, strength) {
         const cls = classOf(person);
         if (!cls) return;
@@ -1584,6 +1729,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
           blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
           refit(cls, person, at);
           for (const limb of person.lost ?? []) closeLimb(cls, at, limb);
+          const pose = postures.get(person);
+          if (pose) applyPosture(cls, at, pose);
           const jolt = jolts.get(person);
           if (jolt) {
             const age = (simTime ?? performance.now() / 1000) - jolt.start;
@@ -1633,7 +1780,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     },
     stride(person) {
       const cls = ready.find((c) => c.sex === person.sex && c.band === person.band);
-      const clip = person.clip === 'run' ? cls?.clips.run : person.clip === 'sprint' ? cls?.clips.sprint : cls?.clips.walk;
+      const clip = person.clip === 'run' ? cls?.clips.run : person.clip === 'sprint' ? cls?.clips.sprint
+        : person.clip === 'hurtWalk' ? cls?.clips.hurtWalk : cls?.clips.walk;
       return (clip?.stride || 1.4) * person.scale;
     },
     async cook() {

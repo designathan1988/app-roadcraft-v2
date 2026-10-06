@@ -298,6 +298,10 @@ export interface SceneHandle {
   clearCasualties(): void;
   /** Every body on the ground as the weapons lab measures it (`Ragdolls.probe`). */
   ragdollProbe(): RagdollProbe[];
+  /** What poses a person now (`AgentMeshes.animProbe`). */
+  animProbe(id: number): ReturnType<AgentMeshes['animProbe']>;
+  /** Plays a clip on a person regardless (`AgentMeshes.forceClip`). */
+  forceClip(id: number, clip: string | null): void;
   /** Every procedural person's skeleton measured against their body (`AgentMeshes.meshProbe`). */
   meshProbe(): ReturnType<AgentMeshes['meshProbe']>;
   /**
@@ -1541,6 +1545,8 @@ export function createSceneRenderer(
     ragdollProbe: () => ragdolls.probe(),
     clearCasualties() { ragdolls.clear(); gore.clear(); blast.clear(); onAssetsReady(); },
     meshProbe: () => agents.meshProbe(),
+    animProbe: (id) => agents.animProbe(id),
+    forceClip: (id, clip) => agents.forceClip(id, clip as never),
     driverBody: (vehicle, x, y) => agents.driverBody(vehicle, x, y),
     vehicleHit(x, y, z, dirX, dirY, glass, blood) {
       if (glass) {

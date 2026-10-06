@@ -1,6 +1,6 @@
 import type { SceneHandle } from '@render/renderer';
 import type { RagdollProbe } from '@render/ragdoll';
-import { removeWalker, walkerAct, walkerState } from '@sim/agents/walk';
+import { removeWalker, traceWalkers, walkerAct, walkerState, type WalkTrace } from '@sim/agents/walk';
 import type { BodyPart } from '@sim/people/view';
 import { archetypeById } from '@sim/vehicles/archetypes';
 import { makeDriver } from '@sim/vehicles/driver';
@@ -95,12 +95,29 @@ function labDoc(): RoadDoc {
   return d;
 }
 
+/** One change in the timeline (`WeaponsLab.timeline`): the simulation's, or the clip the renderer plays. */
+export interface LabEvent {
+  /** Milliseconds since the lab started, and the frame. */
+  readonly t: number;
+  readonly frame: number;
+  readonly id: number;
+  readonly field: string;
+  readonly from: string;
+  readonly to: string;
+  readonly reason: string;
+  readonly hp: number;
+  readonly stack: string;
+}
+
 interface Frame {
   readonly t: number;
   readonly person: ReturnType<typeof walkerState>;
+  readonly anim: ReturnType<SceneHandle['animProbe']>;
   readonly bodies: readonly RagdollProbe[];
   readonly mesh: ReturnType<SceneHandle['meshProbe']>;
   readonly flags: readonly string[];
+  /** The person the frame is about. */
+  readonly id: number | null;
 }
 
 export interface WeaponsLab {
@@ -117,6 +134,10 @@ export interface WeaponsLab {
   clear(): void;
   record(on: boolean): void;
   log(): readonly Frame[];
+  /** Every change to the person since they came (what they do, their flight, the clip drawn), with why and from where. */
+  timeline(): readonly LabEvent[];
+  /** Plays a clip on the person whatever they are doing (to see the clip alone); null gives them back. */
+  playClip(clip: string | null): void;
   summary(): Record<string, unknown>;
   readonly spots: readonly string[];
 }
@@ -140,6 +161,13 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
   let speed = 1;
   let autoRespawn = true;
   let goneSince: number | null = null;
+  const events: LabEvent[] = [];
+  const labStart = performance.now();
+  let frameNo = 0;
+  let lastClip = '';
+  const onTrace = (e: WalkTrace): void => {
+    if (events.length < 2000) events.push({ t: performance.now() - labStart, frame: frameNo, id: e.id, field: e.field, from: e.from, to: e.to, reason: e.reason, hp: e.hp, stack: e.stack });
+  };
 
   // The parked car beside the `car` spot: a sedan at the kerb, off the traffic.
   const parkCar = (): void => {
@@ -173,6 +201,9 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       if (who !== undefined) personId = who;
       id = spawnWalker(spot, personId);
       goneSince = null;
+      events.length = 0;
+      lastClip = '';
+      traceWalkers(id !== null ? [id] : [], onTrace);
       if (follow) host.lookAt(spot.x, spot.y, zoom);
       host.requestDraw();
       return id ?? -1;
@@ -247,6 +278,10 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       refresh();
     },
     log: () => frames,
+    timeline: () => events,
+    playClip(clip) {
+      if (id !== null) host.scene().forceClip(id, clip);
+    },
     summary() {
       const worst = (f: (x: Frame) => number): number => frames.reduce((s, x) => Math.max(s, f(x)), 0);
       const flagCount: Record<string, number> = {};
@@ -289,7 +324,15 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
   const tick = (): void => {
     const now = performance.now();
     const scene = host.scene();
+    frameNo++;
     const person = id !== null ? walkerState(sim, id) : null;
+    const anim = id !== null ? scene.animProbe(id) : null;
+    const clipNow = anim ? `${anim.source}:${anim.clip}` : 'none';
+    if (id !== null && clipNow !== lastClip) {
+      events.push({ t: now - labStart, frame: frameNo, id, field: 'clip', from: lastClip || 'none', to: clipNow,
+        reason: `renderer (agents.ts procDraw) for act ${person?.act ?? '-'} at ${person ? (person.v / M(1)).toFixed(2) : '-'} m/s`, hp: person?.hp ?? 0, stack: '' });
+      lastClip = clipNow;
+    }
     const bodies = scene.ragdollProbe();
     const mesh = scene.meshProbe().filter((x) => x.id === id || watchers.includes(x.id) || x.held);
     const flags: string[] = [];
@@ -304,7 +347,7 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
       if (x.held && Math.abs(x.stretch - 1) > 0.3) flags.push('stretch');
       if (x.scale > 1.3) flags.push('scale');
     }
-    last = { t: now - started, person, bodies, mesh, flags };
+    last = { t: now - started, person, anim, bodies, mesh, flags, id };
     if (recording && frames.length < 4000) frames.push(last);
     // Following the person, or their body once they are down.
     if (follow) {
@@ -329,6 +372,13 @@ export function startWeaponsLab(host: LabHost): WeaponsLab {
   requestAnimationFrame(tick);
   (globalThis as Record<string, unknown>)['__weaponsLab'] = lab;
   return lab;
+}
+
+/** The state of a walker's wounds, in words for the panel. */
+function woundOf(p: NonNullable<ReturnType<typeof walkerState>>): string {
+  if (p.hits === 0 && p.hp >= 100) return t('lab.unhurt');
+  const grave = p.hp < 50 || p.lost.length > 0;
+  return `${grave ? t('lab.grave') : t('lab.light')} (${p.hits} ${t('lab.hits')})`;
 }
 
 /** The lab's panel: the actions, and the probes read out live. */
@@ -405,6 +455,10 @@ function panel(lab: WeaponsLab, set: { follow: (on: boolean) => void; zoom: (z: 
   const people = section(t('lab.bystanders'));
   for (const n of [0, 3, 6]) button(String(n), () => lab.bystanders(n), people);
 
+  const clips = section(t('lab.clipCheck'));
+  for (const c of ['idle', 'walk', 'hurtWalk', 'run', 'duck', 'cower', 'getUp']) button(c, () => lab.playClip(c), clips);
+  button(t('lab.clipOff'), () => lab.playClip(null), clips);
+
   const time = section(t('lab.time'));
   const speeds = [1, 0.5, 0.25, 0.1, 0];
   const speedButtons = speeds.map((s) => button(s === 0 ? t('lab.pause') : `${s}x`, () => lab.setSpeed(s), time));
@@ -446,9 +500,15 @@ function panel(lab: WeaponsLab, set: { follow: (on: boolean) => void; zoom: (z: 
     speedButtons.forEach((b, i) => b.classList.toggle('on', speeds[i] === speed));
     const p = f.person;
     const lines: string[] = [];
-    lines.push(p ? `${t('lab.person')}: ${p.act ?? '-'} ${p.actLeft.toFixed(1)}s  hp ${p.hp.toFixed(0)}  ${t('lab.hits')} ${p.hits}`
-      + `\n  v ${(p.v / M(1)).toFixed(2)} m/s  ${t('lab.bleeding')} ${p.bleeding.toFixed(1)}/s${p.fleeing ? `  ${t('lab.fleeing')}` : ''}`
+    const a = f.anim;
+    lines.push(p ? `${t('lab.person')} #${f.id}  hp ${p.hp.toFixed(0)}  ${t('lab.wound')}: ${woundOf(p)}`
+      + `\n  ${t('lab.behaviour')}: ${p.act ?? '-'}${p.act ? ` ${p.actLeft.toFixed(1)}s` : ''}${p.rush ? `  ${t('lab.fleeing')} x${p.rush.by.toFixed(2)} ${p.rush.left.toFixed(1)}s` : ''}`
+      + `\n  ${t('lab.movement')}: ${(p.v / M(1)).toFixed(2)} m/s  ${t('lab.bleeding')} ${p.bleeding.toFixed(1)}/s`
+      + (p.lastHit ? `\n  ${t('lab.lastHit')}: ${t(`lab.part.${p.lastHit.part}`)} -${p.lastHit.damage.toFixed(0)} hp, ${p.lastHit.ago.toFixed(1)}s` : '')
       + (p.lost.length ? `\n  ${t('lab.lost')}: ${p.lost.join(', ')}` : '') : `${t('lab.person')}: ${t('lab.gone')}`);
+    if (a) lines.push(`${t('lab.anim')}: ${a.clip}  t ${a.time.toFixed(2)}/${a.duration.toFixed(2)}s  ${t('lab.weight')} ${a.weight}`
+      + `  ${a.paused ? t('lab.paused') : t('lab.playing')}  ${t('lab.source')}: ${a.source}${a.layers.length ? `\n  + ${a.layers.join(', ')}` : ''}`);
+    for (const e of lab.timeline().slice(-6)) lines.push(`· ${(e.t / 1000).toFixed(2)}s ${e.field}: ${e.from} → ${e.to}\n    ${e.reason}`);
     for (const b of f.bodies) {
       lines.push(`${b.piece ? t('lab.piece') : t('lab.body')} #${b.id} ${b.phase}${b.asleep ? ' z' : ''}  v ${b.speed.toFixed(2)}`
         + `\n  ${t('lab.under')} ${(b.underGround * 100).toFixed(1)}cm  ${t('lab.inWall')} ${(b.inWall * 100).toFixed(1)}cm  ${t('lab.bone')} ${(b.boneError * 100).toFixed(1)}%`);

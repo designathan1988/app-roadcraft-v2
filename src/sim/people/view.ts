@@ -70,6 +70,8 @@ export interface PedView {
   lost?: readonly Severable[];
   /** Wounded and bleeding (shot): blood drips where they go. */
   bleeding?: boolean;
+  /** Shot and hurt: where, and how badly (grave: half their health gone or a limb lost). It sets how they move. */
+  wound?: { part: BodyPart; grave: boolean };
   /** Position and heading at the end of this tick, and at the end of the last. */
   x: number;
   y: number;

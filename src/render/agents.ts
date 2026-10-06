@@ -1,4 +1,4 @@
-import type { Severable } from '@sim/people/view';
+import type { BodyPart, Severable } from '@sim/people/view';
 import { simplified } from './mesh/simplify';
 import {
   BoxGeometry,
@@ -177,6 +177,15 @@ export interface AgentMeshes {
    * skin stretched into blades or a part blown up shows here.
    */
   meshProbe(): { id: number; stretch: number; stretchBone: string; scale: number; scaleBone: string; held: boolean; clip: string }[];
+  /**
+   * What is posing a procedural person now (the weapons lab): the baked clip
+   * played (this renderer plays baked clips, not three's AnimationMixer - one
+   * clip at full weight, its phase driven here), its time and length, whether
+   * it is frozen, the jolt layered on it, and whether a ragdoll holds the body.
+   */
+  animProbe(id: number): { clip: string; time: number; duration: number; weight: number; paused: boolean; layers: string[]; source: 'animation' | 'physics' } | null;
+  /** Plays `clip` on a person whatever they are doing (the lab's clip check); null gives them back. */
+  forceClip(id: number, clip: ProcClip | null): void;
   /** The body a vehicle's driver or rider is drawn with, for their body when they are thrown out (`Occupant.index`). */
   driverBody(vehicle: SimVehicle, x: number, y: number): number | null;
   /** Called for each walker drawn bleeding (a limb lost), to drip blood where they go. */
@@ -818,7 +827,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   let procFrame = 0;
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
-    lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number }): void => {
+    lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number },
+    wound?: { readonly part: BodyPart; readonly grave: boolean }): void => {
     let entry = procPeople.get(id);
     if (!entry) {
       const spare = procSpare.pop();
@@ -846,20 +856,32 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     (entry.at ??= new Matrix4()).copy(procMatrix);
     person.activity = activity;
     person.lost = lost;
-    if (activity === 'flinch' && act) {
-      // A first wound (`walk.ts` FLINCH): doubled over - the crouch-down
-      // clip, quick - held a moment hunched over the wound, then up with
-      // the stand-up clip, each blended from the last by the clips
-      // themselves (one authored sequence), the face in pain.
-      person.activity = 'hurt';
-      const duck = 0.5, up = 0.95;
-      const next: ProcClip = act.t < duck ? 'duck' : act.t > act.hold - up ? 'getUp' : 'cower';
-      if (person.clip !== next) { person.clip = next; person.phase = 0; }
-      if (next === 'duck') person.phase = Math.min(0.999, act.t / duck);
-      else if (next === 'getUp') person.phase = Math.min(0.999, (act.t - (act.hold - up)) / up);
-      else person.phase += dt / procedural!.clipDuration(person);
+    const forced = procForced.get(id);
+    if (forced) {
+      if (person.clip !== forced) { person.clip = forced; person.phase = 0; }
+      person.phase += dt / procedural!.clipDuration(person);
       return;
     }
+    procFrozen.delete(id);
+    if (activity === 'flinch' && act) {
+      // A first wound (`walk.ts` FLINCH), as GTA's shot peds take it
+      // (Euphoria's shot: the jolt, then reach-for-wound a moment later):
+      // standing, struck back by the bullet (the jolt, `wound`), then bent
+      // over the wound with a hand pressed to it - the standing clip under
+      // the wounded posture. Not a squat (the crouch clips read as somebody
+      // picking a thing up), and its end is not a recovery: the wound goes
+      // on governing how they move (`walk.ts` woundOf).
+      person.activity = 'hurt';
+      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
+      person.phase += dt / procedural!.clipDuration(person);
+      const k = Math.min(1, Math.max(0, (act.t - 0.12) / 0.3));
+      procedural!.ragdoll.posture(person, { hunch: (wound?.grave ? 0.55 : 0.42) * k, reach: Math.min(1, Math.max(0, (act.t - 0.2) / 0.35)), part: wound?.part ?? 'torso' });
+      return;
+    }
+    // Hurt: bent over the wound, a hand on it, walking slowly (the slow walk
+    // clip under the posture), however fast the flight (`walk.ts` caps the pace).
+    procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.4 : 0.26, reach: 1, part: wound.part } : null);
+    if (wound) person.activity = 'hurt';
     const metres = speed / m(1);
     // Running from danger runs, past a brisk walk; struck with fear (cowering,
     // or panicking stood still), they crouch with their arms over their head.
@@ -870,15 +892,15 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     const moving = walking && metres > 0.15;
     const sprint = metres > (was === 'sprint' ? 3.6 : 4.2);
     const run = metres > (was === 'run' || was === 'sprint' ? 2.1 : 2.6);
-    const clip: ProcClip = cowering ? 'cower' : activity === 'photo' && !moving ? 'photo'
-      : moving ? (sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
+    const clip: ProcClip = cowering && !wound ? 'cower' : activity === 'photo' && !moving ? 'photo'
+      : moving ? (wound ? 'hurtWalk' : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
     if (person.clip !== clip) {
       // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
-      const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint';
+      const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk';
       if (!(gait(was) && gait(clip))) person.phase = 0;
       person.clip = clip;
     }
-    if (clip === 'walk' || clip === 'run' || clip === 'sprint') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    if (clip === 'walk' || clip === 'run' || clip === 'sprint' || clip === 'hurtWalk') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
     else person.phase += dt / procedural!.clipDuration(person);
   };
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
@@ -911,6 +933,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
    * (the player, 2026-10-06).
    */
   const procHeld = new Set<number>(), procHeldNow = new Set<number>();
+  /** People made to play a clip (`forceClip`), and those whose clip did not move this frame. */
+  const procForced = new Map<number, ProcClip>();
+  const procFrozen = new Set<number>();
   /** Drips blood where a wounded walker drawn procedurally goes (`setBleed`). */
   let procBleed: ((id: number, x: number, y: number, z: number) => void) | null = null;
   /** Pieces torn off procedural people, drawn apart (`RagdollCitizens.twin`): indices from `TWIN_BASE` down. */
@@ -1581,6 +1606,19 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       }
       return out;
     },
+    animProbe(id) {
+      const person = procPeople.get(id)?.person;
+      if (!person || !procedural) return null;
+      const duration = procedural.ragdoll.duration(person, person.clip);
+      const held = procHeld.has(id);
+      return {
+        clip: person.clip, time: (person.phase - Math.floor(person.phase)) * duration, duration, weight: held ? 0 : 1,
+        paused: procFrozen.has(id), layers: procedural.ragdoll.layers(person), source: held ? 'physics' : 'animation',
+      };
+    },
+    forceClip(id, clip) {
+      if (clip) procForced.set(id, clip); else procForced.delete(id);
+    },
     driverBody(vehicle, x, y) {
       return pedestrians.indexFor(seatIdentity(vehicle, seatPerson(vehicle, 0), false), vehicle.archetype.shape === 'motorcycle', x, y);
     },
@@ -1801,7 +1839,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
-              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined);
+              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound);
           }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
