@@ -177,32 +177,92 @@ export function validateBuilding(
 
 /** Whether a footprint rectangle reaches any road's footway or junction plate. */
 export function touchesRoad(net: Network, rect: readonly Vec2[]): boolean {
-  const box = boundsOf(rect);
-  for (const ribbon of net.ribbons.values()) {
-    const segment = net.doc.segment(ribbon.id);
-    if (segment?.structure === 'tunnel') continue;
-    const reach = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
-    const bb = ribbon.full.bbox;
-    if (bb.minX - reach > box.maxX || bb.maxX + reach < box.minX || bb.minY - reach > box.maxY || bb.maxY + reach < box.minY) continue;
-    if (polylineDistance(ribbon.full.toPoints(), rect) < reach - ROAD_CONTACT_EPS) return true;
+  return roadContacts(net).touches(rect);
+}
+
+/** A road's reach, or a junction's carriageway, with its box (`RoadContacts`). */
+type Contact =
+  | { kind: 'road'; minX: number; minY: number; maxX: number; maxY: number; line: readonly Vec2[]; reach: number }
+  | { kind: 'junction'; minX: number; minY: number; maxX: number; maxY: number; ring: readonly Vec2[] };
+
+const CONTACT_CELL = 64;
+
+/**
+ * The roads and junction carriageways a building must keep off, binned in a
+ * grid, built once per network revision. Every building tested every road and
+ * junction of the map: the road-wins rule after each road drawn, and every
+ * candidate a lot or a zone tries (docs/performance.md #25).
+ */
+class RoadContacts {
+  private readonly cells = new Map<number, Contact[]>();
+  private stamp = 0;
+  private readonly seen = new Map<Contact, number>();
+
+  constructor(net: Network) {
+    for (const ribbon of net.ribbons.values()) {
+      const segment = net.doc.segment(ribbon.id);
+      if (segment?.structure === 'tunnel') continue;
+      const reach = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
+      const bb = ribbon.full.bbox;
+      this.add({ kind: 'road', minX: bb.minX - reach, minY: bb.minY - reach, maxX: bb.maxX + reach, maxY: bb.maxY + reach,
+        line: ribbon.full.toPoints(), reach });
+    }
+    for (const levels of net.junctions.values()) {
+      // The carriageway and kerb of the junction, not its footway plate. The
+      // footways along each road are kept clear by the distance test above,
+      // carried through the junction (`ribbon.full` runs to the node); what
+      // lies beyond them at a corner is the plate's square reaching into the
+      // block, and buildings were held back off it, leaving an empty corner of
+      // paving at every crossroads (player, 2026-10-03). A building may stand
+      // on it now, flush with the two footways; the people's walkable ground
+      // has the building's footprint cut out of it (`nav.ts`, solids).
+      const junction = levels.get(Level.Curb);
+      if (!junction || junction.ring.isEmpty) continue;
+      const jb = junction.ring.bbox;
+      this.add({ kind: 'junction', minX: jb.minX, minY: jb.minY, maxX: jb.maxX, maxY: jb.maxY, ring: junction.ring.flatten() });
+    }
   }
-  for (const levels of net.junctions.values()) {
-    // The carriageway and kerb of the junction, not its footway plate. The
-    // footways along each road are kept clear by the distance test above,
-    // carried through the junction (`ribbon.full` runs to the node); what
-    // lies beyond them at a corner is the plate's square reaching into the
-    // block, and buildings were held back off it, leaving an empty corner of
-    // paving at every crossroads (player, 2026-10-03). A building may stand
-    // on it now, flush with the two footways; the people's walkable ground
-    // has the building's footprint cut out of it (`nav.ts`, solids).
-    const junction = levels.get(Level.Curb);
-    if (!junction || junction.ring.isEmpty) continue;
-    const jb = junction.ring.bbox;
-    if (jb.minX > box.maxX || jb.maxX < box.minX || jb.minY > box.maxY || jb.maxY < box.minY) continue;
-    const ring = junction.ring.flatten();
-    if (polygonsOverlap(ring, rect) && overlapArea(ring, rect) > JUNCTION_TOUCH) return true;
+
+  private add(contact: Contact): void {
+    for (let i = Math.floor(contact.minX / CONTACT_CELL); i <= Math.floor(contact.maxX / CONTACT_CELL); i++) {
+      for (let j = Math.floor(contact.minY / CONTACT_CELL); j <= Math.floor(contact.maxY / CONTACT_CELL); j++) {
+        const key = i * 65_536 + j;
+        const list = this.cells.get(key);
+        if (list) list.push(contact);
+        else this.cells.set(key, [contact]);
+      }
+    }
   }
-  return false;
+
+  touches(rect: readonly Vec2[]): boolean {
+    const box = boundsOf(rect);
+    const stamp = ++this.stamp;
+    for (let i = Math.floor(box.minX / CONTACT_CELL); i <= Math.floor(box.maxX / CONTACT_CELL); i++) {
+      for (let j = Math.floor(box.minY / CONTACT_CELL); j <= Math.floor(box.maxY / CONTACT_CELL); j++) {
+        for (const c of this.cells.get(i * 65_536 + j) ?? []) {
+          if (this.seen.get(c) === stamp) continue;
+          this.seen.set(c, stamp);
+          if (c.minX > box.maxX || c.maxX < box.minX || c.minY > box.maxY || c.maxY < box.minY) continue;
+          if (c.kind === 'road') {
+            if (polylineDistance(c.line, rect) < c.reach - ROAD_CONTACT_EPS) return true;
+          } else if (polygonsOverlap(c.ring, rect) && overlapArea(c.ring, rect) > JUNCTION_TOUCH) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+}
+
+const CONTACTS = new WeakMap<Network, { revision: number; contacts: RoadContacts }>();
+
+function roadContacts(net: Network): RoadContacts {
+  const known = CONTACTS.get(net);
+  if (known && known.revision === net.revision) return known.contacts;
+  const contacts = new RoadContacts(net);
+  CONTACTS.set(net, { revision: net.revision, contacts });
+  return contacts;
 }
 
 // ------------------------------------------------------------------ geometry

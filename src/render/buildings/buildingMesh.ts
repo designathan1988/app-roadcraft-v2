@@ -16,6 +16,7 @@ import {
   InstancedBufferAttribute,
   InstancedMesh,
   Mesh,
+  Sphere,
   Uint32BufferAttribute,
 } from 'three';
 
@@ -2617,6 +2618,17 @@ function writeMatrix(out: Float32Array, offset: number, p: Placement): void {
   out[offset + 12] = p.x; out[offset + 13] = p.z; out[offset + 14] = -p.y; out[offset + 15] = 1;
 }
 
+/**
+ * An instanced batch's box and sphere, in one pass over its instances, while
+ * it is put together a slice at a time. The box was otherwise computed in the
+ * frame the batch first showed (`Box3.setFromObject` for the tallest
+ * building, docs/performance.md #26), walking every window of a cell.
+ */
+function boundInstances(mesh: InstancedMesh): void {
+  mesh.computeBoundingBox();
+  mesh.boundingSphere = mesh.boundingBox!.getBoundingSphere(new Sphere());
+}
+
 export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, naturalAt: GroundAt = groundAt): BuildingChunk {
   const shell = new Shell();
   shell.decay = b.decay ?? 0;
@@ -2761,6 +2773,9 @@ export function* assembleBuildingMeshesSteps(
     g.setAttribute('aDecay', new Float32BufferAttribute(decay, 1));
     g.setIndex(new Uint32BufferAttribute(index, 1));
     g.computeBoundingSphere();
+    // Here, in the sliced assembly, not in the frame that shows it: the
+    // renderer reads every mesh's box for the tallest building (the shadows).
+    g.computeBoundingBox();
     const mesh = new Mesh(g, ghost ? kit.ghostShell : dim ? kit.dimShell[finish] : kit.shell[finish]);
     mesh.name = ghost ? `building-preview-shell-${finish}` : `building-shell-${finish}`;
     mesh.castShadow = !ghost;
@@ -2808,7 +2823,7 @@ export function* assembleBuildingMeshesSteps(
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
+    boundInstances(mesh);
     meshes.push(mesh);
     const g = kit.geometry[kind];
     triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;
@@ -2834,7 +2849,7 @@ export function* assembleBuildingMeshesSteps(
         at += batch.count;
       }
       mesh.instanceMatrix.needsUpdate = true;
-      mesh.computeBoundingSphere();
+      boundInstances(mesh);
       meshes.push(mesh);
       const g = furniture.geometry[kind];
       triangles += ((g.index ? g.index.count : g.getAttribute('position').count) / 3) * count;

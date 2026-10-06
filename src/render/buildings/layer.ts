@@ -1,3 +1,4 @@
+import { workUntil } from '@core/frameWork';
 import { Group, type InstancedMesh } from 'three';
 
 import { pointInPolygon } from '@core/polygon';
@@ -266,7 +267,8 @@ export function createBuildingLayer(): BuildingLayer {
         if (!warming || warming.key !== key) {
           warming = { key, queue: [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id)), at: 0 };
         }
-        const until = performance.now() + WARM_SLICE_MS;
+        const until = workUntil(WARM_SLICE_MS);
+        if (!until) return false;
         while (warming.at < warming.queue.length && performance.now() < until) {
           drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);
         }

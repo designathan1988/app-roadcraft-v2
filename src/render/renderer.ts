@@ -1,3 +1,4 @@
+import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
 import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
@@ -575,7 +576,8 @@ export function createSceneRenderer(
   /** Builds the world of the last edit for a few milliseconds; it puts itself in place once complete. */
   const pumpWorld = (): void => {
     if (!worldJob) return;
-    const until = performance.now() + WORLD_SLICE_MS;
+    const until = workUntil(WORLD_SLICE_MS);
+    if (!until) { onAssetsReady(); return; }
     let step = worldJob.next();
     while (!step.done && performance.now() < until) step = worldJob.next();
     if (step.done) worldJob = null;
@@ -878,14 +880,18 @@ export function createSceneRenderer(
       yield;
     }
     gradedFor = net.doc.buildings.revision;
-    changedSites(net.doc);
+    // The sites that changed with the edit (a building the road razed) are
+    // graded here too, in the slices, not in the edit's own frame.
+    const sites = changedSites(net.doc);
     padsCache = net.doc.buildings.size > 0
       ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
       : null;
     yield;
+    const regions = blocks.map(terrainRegion);
+    if (sites) regions.push(terrainRegion(sites));
     const BATCH = 3;
-    for (let i = 0; i < blocks.length; i += BATCH) {
-      shapeGround(net, blocks.slice(i, i + BATCH).map(terrainRegion), false, true);
+    for (let i = 0; i < regions.length; i += BATCH) {
+      shapeGround(net, regions.slice(i, i + BATCH), false, true);
       yield;
     }
   }
@@ -1026,7 +1032,7 @@ export function createSceneRenderer(
   function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number): Generator<void, void, void> {
     const solve = elevation!;
     if (blocks === null) shapeGround(net);
-    else if (blocks.length) yield* shapeBlocksSteps(net, blocks);
+    else if (blocks.length || gradedFor !== net.doc.buildings.revision) yield* shapeBlocksSteps(net, blocks);
     pendingBlocks = [];
     yield;
     const freshRoads = roads === null
@@ -1607,7 +1613,8 @@ export function createSceneRenderer(
       // Only the ground round the sites that changed is graded again (growing
       // a building re-graded the whole map and every platform: a hitch for
       // every building the zones grew, the profile of 2026-10-05).
-      if (!buildingsHeld && gradedFor !== net.doc.buildings.revision) {
+      // While a road edit is prepared in slices its steps grade the sites (`shapeBlocksSteps`).
+      if (!buildingsHeld && !worldJob && gradedFor !== net.doc.buildings.revision) {
         gradedFor = net.doc.buildings.revision;
         const changed = changedSites(net.doc);
         if (changed) shapeGround(net, terrainRegion(changed), true);

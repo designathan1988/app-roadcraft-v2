@@ -1,3 +1,4 @@
+import { Heap } from '@core/heap';
 import type { Vec2 } from '@core/vec2';
 import type { WalkGraph, Walkway } from '@world/walkways';
 import { m } from '@world/units';
@@ -290,27 +291,27 @@ function route(g: WalkGraph, from: { way: Walkway; s: number }, to: { way: Walkw
   const n = g.nodes.length;
   const dist = new Float64Array(n).fill(Infinity);
   const via = new Int32Array(n).fill(-1);
-  const open: { node: number; d: number }[] = [];
+  // A binary heap, and done once both ends of the goal way are settled: the
+  // open list was scanned whole for every node taken and the search went on
+  // over the whole graph, for every walker, when an edit moved them all onto
+  // the new footways in one frame (docs/performance.md #27).
+  const open = new Heap();
   const push = (node: number, d: number, way: number): void => {
     if (d >= dist[node]!) return;
     dist[node] = d;
     via[node] = way;
-    open.push({ node, d });
+    open.push(node, d);
   };
   push(from.way.a, from.s, from.way.id);
   push(from.way.b, from.way.path.length - from.s, from.way.id);
   const done = new Uint8Array(n);
-  while (open.length) {
-    let bi = 0;
-    for (let i = 1; i < open.length; i++) if (open[i]!.d < open[bi]!.d) bi = i;
-    const { node, d } = open[bi]!;
-    open[bi] = open[open.length - 1]!;
-    open.pop();
+  let goals = to.way.a === to.way.b ? 1 : 2;
+  while (open.size && goals > 0) {
+    const node = open.pop();
     if (done[node]) continue;
     done[node] = 1;
-    if (node === to.way.a || node === to.way.b) {
-      // Settled at one end of the goal way; the other end is settled too or farther.
-    }
+    if (node === to.way.a || node === to.way.b) goals--;
+    const d = dist[node]!;
     for (const wid of g.at.get(node) ?? []) {
       const way = g.ways[wid]!;
       if (way.id === from.way.id) continue;

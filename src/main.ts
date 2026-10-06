@@ -1,7 +1,8 @@
+import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addLot, addPolygonLot, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, pruneOrphanLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addLot, addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotSnapper, moveLotCorner, planLots, pruneOrphanLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -3645,6 +3646,7 @@ let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = 
 
 function frame(now: number): void {
   pending = false;
+  beginFrameWork();
   const wall = (now - last) / 1000;
   last = now;
 
@@ -3663,7 +3665,7 @@ function frame(now: number): void {
       if (!topologyPrep || topologyPrep.revision !== net.trafficRevision) {
         topologyPrep = { revision: net.trafficRevision, steps: sim.prepareVehicleTopology() };
       }
-      const until = performance.now() + TOPOLOGY_SLICE_MS;
+      const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
       let prep = topologyPrep.steps.next();
       while (!prep.done && performance.now() < until) prep = topologyPrep.steps.next();
       if (prep.done) {
@@ -3680,7 +3682,7 @@ function frame(now: number): void {
       if (!walkPrep || walkPrep.revision !== net.trafficRevision) {
         walkPrep = { revision: net.trafficRevision, steps: sim.walkTopologySteps() };
       }
-      const until = performance.now() + TOPOLOGY_SLICE_MS;
+      const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
       let step = walkPrep.steps.next();
       while (!step.done && performance.now() < until) step = walkPrep.steps.next();
       if (step.done) {
