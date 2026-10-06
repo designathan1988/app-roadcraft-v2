@@ -11,6 +11,11 @@ import type { HumanBase, MorphWeights } from './humanBase';
  * - Vitruvian: CharMorph's own randomiser nudges every slider uniformly; here
  *   the sliders are drawn by what they mean: a sex, one or two ancestries, a
  *   build, and small independent variations of every face and body region.
+ * - Vitruvian with the MHR's shape (`MHR_*` morphs, the player's choice of
+ *   2026-10-06): the build comes from the MHR's components drawn as the MHR
+ *   draws them, less the part of them that is sex - sex is the Vitruvian's
+ *   own morph, which also shapes the face and chest - and the Vitruvian's
+ *   regional sliders add smaller face and body detail.
  */
 
 export type Sex = 'female' | 'male';
@@ -58,6 +63,22 @@ export function sampleBody(base: HumanBase, rng: Rng, age: 'adult' | 'any' = 'an
   melanin = Math.min(1, Math.max(0, melanin / total + rng.normal(0, 0.06)));
 
   const half = (sd: number): number => Math.max(0, rng.normal(0, sd));
+  if (base.morphs.has('MHR_Body_00')) {
+    const body = Array.from({ length: 20 }, () => rng.normal(0, 0.8));
+    const axis = sexAxis(base);
+    const along = body.reduce((sum, c, i) => sum + c * axis[i]!, 0);
+    body.forEach((c, i) => { w[mhrName('Body', i)] = c - along * axis[i]!; });
+    for (let i = 20; i < 40; i++) w[mhrName('Head', i)] = rng.normal(0, 0.7);
+    for (let i = 40; i < 45; i++) w[mhrName('Hands', i)] = rng.normal(0, 0.8);
+    w['Generic_Assymetry'] = rng.normal(0, 0.2);
+    if (age === 'any' && rng.bool(0.3)) w['Age_Old'] = rng.range(0.2, 0.9);
+    for (const m of base.morphs.values()) {
+      if (NOT_REGIONAL.has(m.group) || m.name in w || m.name.startsWith('MHR_')) continue;
+      if (m.group === 'Chest' && sex === 'male') continue;
+      w[m.name] = m.min < 0 ? rng.normal(0, 0.12) : rng.bool(0.4) ? half(0.15) : 0;
+    }
+    return { weights: w, sex, melanin };
+  }
   w['BodyType_Fat'] = half(0.35);
   w['BodyType_Muscular'] = half(sex === 'male' ? 0.3 : 0.15);
   w['BodyType_Lean'] = half(0.2);
@@ -72,4 +93,45 @@ export function sampleBody(base: HumanBase, rng: Rng, age: 'adult' | 'any' = 'an
     w[m.name] = m.min < 0 ? rng.normal(0, 0.22) : rng.bool(0.5) ? half(0.25) : 0;
   }
   return { weights: w, sex, melanin };
+}
+
+const mhrName = (group: string, i: number): string => `MHR_${group}_${String(i).padStart(2, '0')}`;
+
+const AXES = new WeakMap<HumanBase, number[]>();
+
+/**
+ * The unit direction in the MHR's 20 body components that best reproduces
+ * the Vitruvian's female-minus-male morph (least squares over every vertex):
+ * the part of a random MHR body that is its sex.
+ */
+export function sexAxis(base: HumanBase): readonly number[] {
+  const cached = AXES.get(base);
+  if (cached) return cached;
+  const f = base.denseDelta('Gender_Female');
+  const m = base.denseDelta('Gender_Male');
+  for (let i = 0; i < f.length; i++) f[i] = f[i]! - m[i]!;
+  const B = Array.from({ length: 20 }, (_, i) => base.denseDelta(mhrName('Body', i)));
+  const n = B.length;
+  // Normal equations (B^T B) c = B^T f, solved by Gaussian elimination.
+  const a = Array.from({ length: n }, (_, i) => {
+    const row = new Array<number>(n + 1).fill(0);
+    for (let j = 0; j < n; j++) { let s = 0; const bi = B[i]!, bj = B[j]!; for (let k = 0; k < bi.length; k++) s += bi[k]! * bj[k]!; row[j] = s; }
+    let r = 0; const bi = B[i]!; for (let k = 0; k < bi.length; k++) r += bi[k]! * f[k]!; row[n] = r;
+    return row;
+  });
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(a[r]![c]!) > Math.abs(a[p]![c]!)) p = r;
+    [a[c], a[p]] = [a[p]!, a[c]!];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const k = a[r]![c]! / a[c]![c]!;
+      for (let j = c; j <= n; j++) a[r]![j] = a[r]![j]! - k * a[c]![j]!;
+    }
+  }
+  const x = a.map((row, i) => row[n]! / row[i]!);
+  const len = Math.hypot(...x) || 1;
+  const axis = x.map((v) => v / len);
+  AXES.set(base, axis);
+  return axis;
 }

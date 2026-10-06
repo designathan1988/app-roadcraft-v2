@@ -3062,6 +3062,456 @@
    "count": 6952,
    "scale": 3.336273900254782e-07,
    "maxQuantError": 1.6678459029400433e-07
+  },
+  {
+   "name": "MHR_Body_00",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 957480,
+   "count": 16593,
+   "scale": 7.740529436741786e-07,
+   "maxQuantError": 3.870205046811048e-07
+  },
+  {
+   "name": "MHR_Body_01",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 974073,
+   "count": 16551,
+   "scale": 3.188809575743137e-07,
+   "maxQuantError": 1.594368169830396e-07
+  },
+  {
+   "name": "MHR_Body_02",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 990624,
+   "count": 15759,
+   "scale": 2.03737815826882e-07,
+   "maxQuantError": 1.0186586622609457e-07
+  },
+  {
+   "name": "MHR_Body_03",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1006383,
+   "count": 15413,
+   "scale": 1.0185004665559196e-07,
+   "maxQuantError": 5.092330428125777e-08
+  },
+  {
+   "name": "MHR_Body_04",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1021796,
+   "count": 15781,
+   "scale": 1.1011363041792386e-07,
+   "maxQuantError": 5.505629857824005e-08
+  },
+  {
+   "name": "MHR_Body_05",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1037577,
+   "count": 15878,
+   "scale": 1.0153120876172659e-07,
+   "maxQuantError": 5.076473129841529e-08
+  },
+  {
+   "name": "MHR_Body_06",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1053455,
+   "count": 15300,
+   "scale": 7.594881529919334e-08,
+   "maxQuantError": 3.7973117572604906e-08
+  },
+  {
+   "name": "MHR_Body_07",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1068755,
+   "count": 15421,
+   "scale": 8.877652206324103e-08,
+   "maxQuantError": 4.4388178244937415e-08
+  },
+  {
+   "name": "MHR_Body_08",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1084176,
+   "count": 15331,
+   "scale": 5.233549188897535e-08,
+   "maxQuantError": 2.6167693941909397e-08
+  },
+  {
+   "name": "MHR_Body_09",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1099507,
+   "count": 15450,
+   "scale": 4.245312850017101e-08,
+   "maxQuantError": 2.122653150018111e-08
+  },
+  {
+   "name": "MHR_Body_10",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1114957,
+   "count": 15202,
+   "scale": 3.893589037357506e-08,
+   "maxQuantError": 1.9467593967527677e-08
+  },
+  {
+   "name": "MHR_Body_11",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1130159,
+   "count": 15325,
+   "scale": 9.088185846567631e-08,
+   "maxQuantError": 4.543881305524571e-08
+  },
+  {
+   "name": "MHR_Body_12",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1145484,
+   "count": 15181,
+   "scale": 2.7968583829187713e-08,
+   "maxQuantError": 1.3983296838039749e-08
+  },
+  {
+   "name": "MHR_Body_13",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1160665,
+   "count": 14944,
+   "scale": 7.086793263194427e-08,
+   "maxQuantError": 3.5432364394377474e-08
+  },
+  {
+   "name": "MHR_Body_14",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1175609,
+   "count": 15391,
+   "scale": 4.246516603402917e-08,
+   "maxQuantError": 2.1231727043049924e-08
+  },
+  {
+   "name": "MHR_Body_15",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1191000,
+   "count": 15486,
+   "scale": 6.451421464425555e-08,
+   "maxQuantError": 3.2256488515988984e-08
+  },
+  {
+   "name": "MHR_Body_16",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1206486,
+   "count": 15405,
+   "scale": 2.6912323352555273e-08,
+   "maxQuantError": 1.3455967048760296e-08
+  },
+  {
+   "name": "MHR_Body_17",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1221891,
+   "count": 15366,
+   "scale": 3.118050192255934e-08,
+   "maxQuantError": 1.5590212652154354e-08
+  },
+  {
+   "name": "MHR_Body_18",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1237257,
+   "count": 15288,
+   "scale": 2.85683072282329e-08,
+   "maxQuantError": 1.4283981623430895e-08
+  },
+  {
+   "name": "MHR_Body_19",
+   "group": "Body",
+   "min": -3,
+   "max": 3,
+   "start": 1252545,
+   "count": 15484,
+   "scale": 2.0816580891270608e-08,
+   "maxQuantError": 1.0408100730914142e-08
+  },
+  {
+   "name": "MHR_Head_20",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1268029,
+   "count": 17558,
+   "scale": 2.4593730949933505e-07,
+   "maxQuantError": 1.2296813501873685e-07
+  },
+  {
+   "name": "MHR_Head_21",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1285587,
+   "count": 17458,
+   "scale": 1.5251740737743863e-07,
+   "maxQuantError": 7.625821816072478e-08
+  },
+  {
+   "name": "MHR_Head_22",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1303045,
+   "count": 17367,
+   "scale": 7.930447432883925e-08,
+   "maxQuantError": 3.9651557836835674e-08
+  },
+  {
+   "name": "MHR_Head_23",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1320412,
+   "count": 17412,
+   "scale": 1.030947627408148e-07,
+   "maxQuantError": 5.154644901520476e-08
+  },
+  {
+   "name": "MHR_Head_24",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1337824,
+   "count": 17436,
+   "scale": 7.601039868614406e-08,
+   "maxQuantError": 3.8003996135882706e-08
+  },
+  {
+   "name": "MHR_Head_25",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1355260,
+   "count": 17467,
+   "scale": 6.068614016692842e-08,
+   "maxQuantError": 3.034180353303918e-08
+  },
+  {
+   "name": "MHR_Head_26",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1372727,
+   "count": 17367,
+   "scale": 5.499575325984535e-08,
+   "maxQuantError": 2.7497804999551635e-08
+  },
+  {
+   "name": "MHR_Head_27",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1390094,
+   "count": 17380,
+   "scale": 4.813884905090441e-08,
+   "maxQuantError": 2.406913521853097e-08
+  },
+  {
+   "name": "MHR_Head_28",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1407474,
+   "count": 17431,
+   "scale": 5.138051630748792e-08,
+   "maxQuantError": 2.5689277605614566e-08
+  },
+  {
+   "name": "MHR_Head_29",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1424905,
+   "count": 17451,
+   "scale": 4.565686252749966e-08,
+   "maxQuantError": 2.282829994243625e-08
+  },
+  {
+   "name": "MHR_Head_30",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1442356,
+   "count": 17479,
+   "scale": 5.570039065188893e-08,
+   "maxQuantError": 2.785017251310997e-08
+  },
+  {
+   "name": "MHR_Head_31",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1459835,
+   "count": 17480,
+   "scale": 5.594093119827897e-08,
+   "maxQuantError": 2.797046294682464e-08
+  },
+  {
+   "name": "MHR_Head_32",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1477315,
+   "count": 17428,
+   "scale": 4.424991683995737e-08,
+   "maxQuantError": 2.2123450932711505e-08
+  },
+  {
+   "name": "MHR_Head_33",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1494743,
+   "count": 17463,
+   "scale": 3.674753234061214e-08,
+   "maxQuantError": 1.837305489032267e-08
+  },
+  {
+   "name": "MHR_Head_34",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1512206,
+   "count": 17398,
+   "scale": 4.650080960957754e-08,
+   "maxQuantError": 2.3249387182301554e-08
+  },
+  {
+   "name": "MHR_Head_35",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1529604,
+   "count": 17386,
+   "scale": 3.989493941010648e-08,
+   "maxQuantError": 1.9947321647247984e-08
+  },
+  {
+   "name": "MHR_Head_36",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1546990,
+   "count": 17406,
+   "scale": 5.302342585218021e-08,
+   "maxQuantError": 2.6510096231871744e-08
+  },
+  {
+   "name": "MHR_Head_37",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1564396,
+   "count": 17419,
+   "scale": 3.8407733783354466e-08,
+   "maxQuantError": 1.92037646403377e-08
+  },
+  {
+   "name": "MHR_Head_38",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1581815,
+   "count": 17440,
+   "scale": 3.3346399515866826e-08,
+   "maxQuantError": 1.667311582580818e-08
+  },
+  {
+   "name": "MHR_Head_39",
+   "group": "Head",
+   "min": -3,
+   "max": 3,
+   "start": 1599255,
+   "count": 17428,
+   "scale": 2.2997089259716335e-08,
+   "maxQuantError": 1.1498518930736466e-08
+  },
+  {
+   "name": "MHR_Hands_40",
+   "group": "Hands",
+   "min": -3,
+   "max": 3,
+   "start": 1616683,
+   "count": 7570,
+   "scale": 5.354553992898228e-08,
+   "maxQuantError": 2.6772354905769372e-08
+  },
+  {
+   "name": "MHR_Hands_41",
+   "group": "Hands",
+   "min": -3,
+   "max": 3,
+   "start": 1624253,
+   "count": 7504,
+   "scale": 2.8810120058424028e-08,
+   "maxQuantError": 1.4404786839982689e-08
+  },
+  {
+   "name": "MHR_Hands_42",
+   "group": "Hands",
+   "min": -3,
+   "max": 3,
+   "start": 1631757,
+   "count": 7408,
+   "scale": 1.5403623782179296e-08,
+   "maxQuantError": 7.701661719317253e-09
+  },
+  {
+   "name": "MHR_Hands_43",
+   "group": "Hands",
+   "min": -3,
+   "max": 3,
+   "start": 1639165,
+   "count": 7430,
+   "scale": 1.1750591405433194e-08,
+   "maxQuantError": 5.875147214100252e-09
+  },
+  {
+   "name": "MHR_Hands_44",
+   "group": "Hands",
+   "min": -3,
+   "max": 3,
+   "start": 1646595,
+   "count": 7474,
+   "scale": 7.04355465162282e-09,
+   "maxQuantError": 3.52173451548764e-09
   }
  ],
  "textures": {
@@ -3160,15 +3610,15 @@
    "name": "morphIndex",
    "type": "uint32",
    "itemSize": 1,
-   "count": 957480,
+   "count": 1654069,
    "byteOffset": 1875212
   },
   {
    "name": "morphDelta",
    "type": "int16",
    "itemSize": 3,
-   "count": 957480,
-   "byteOffset": 5705132
+   "count": 1654069,
+   "byteOffset": 8491488
   }
  ]
 }

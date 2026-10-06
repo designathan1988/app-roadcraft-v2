@@ -12,7 +12,7 @@ import { createHumanMesh, disposeHumanMesh, loadHumanTextures, type TextureSet }
 /**
  * The human generator's 3D view: a studio (warm key light from the front
  * left, cool fill, rim from behind, a soft room reflection) and the people.
- * Slice 0 lays out the candidate bases side by side, the first on the left.
+ * The people stand in one row, every base's in turn.
  */
 
 export type GeneratorView = 'front' | 'side' | 'back' | 'face';
@@ -23,9 +23,8 @@ export interface LoadedBase {
   readonly tex: TextureSet;
 }
 
-const PER_BASE = 5;
+const PER_BASE = 8;
 const SPACING = 0.8;
-const NEAR = 0.55;
 
 export async function loadBase(name: string, urlOf: (file: string) => string): Promise<LoadedBase> {
   const [meta, bin] = await Promise.all([
@@ -80,10 +79,23 @@ export class GeneratorStage {
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
+    // Drawn only when something changes (three.js manual, "Rendering on
+    // Demand"): a still page costs nothing. While the orbit glides to a
+    // stop, `update()` keeps reporting changes and so keeps asking.
+    this.controls.addEventListener('change', () => this.redraw());
     this.resize();
-    renderer.setAnimationLoop(() => {
+  }
+
+  private pending = false;
+
+  /** Asks for one frame; several asks before it is drawn make one frame. */
+  redraw(): void {
+    if (this.pending) return;
+    this.pending = true;
+    requestAnimationFrame(() => {
+      this.pending = false;
       this.controls.update();
-      renderer.render(scene, this.camera);
+      this.renderer.render(this.scene, this.camera);
     });
   }
 
@@ -92,6 +104,7 @@ export class GeneratorStage {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.redraw();
   }
 
   /**
@@ -102,6 +115,7 @@ export class GeneratorStage {
   populate(bases: readonly LoadedBase[], seed: number, ages: boolean): { count: number; ms: number } {
     for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
     const started = performance.now();
+    let slot = 0;
     bases.forEach((b, side) => {
       const rng = new Rng(seed * 7919 + side);
       for (let i = 0; i < PER_BASE; i++) {
@@ -111,7 +125,7 @@ export class GeneratorStage {
         const flatSkin = new Color().setHSL(0.07, 0.45, 0.72 - 0.5 * body.melanin);
         const iris = new Color().setHSL(rng.range(0.05, 0.6), 0.35, rng.range(0.25, 0.6));
         const mesh = createHumanMesh(b.base, b.tex, shape, { melanin: body.melanin, flatSkin, iris });
-        mesh.userData['slot'] = { side, i };
+        mesh.userData['slot'] = { side, i, slot: slot++ };
         this.people.add(mesh);
       }
     });
@@ -120,17 +134,26 @@ export class GeneratorStage {
     return { count: this.people.children.length, ms };
   }
 
+  /** One person with exactly these morph weights, alone in the middle (probes). */
+  showWeights(b: LoadedBase, weights: Readonly<Record<string, number>>, melanin = 0.2): void {
+    for (const child of [...this.people.children]) { disposeHumanMesh(child as Mesh); this.people.remove(child); }
+    const mesh = createHumanMesh(b.base, b.tex, b.base.shape(weights), { melanin, flatSkin: new Color(0xd0a080), iris: new Color(0x506070) });
+    mesh.userData['slot'] = { side: 0, i: 0, slot: 0 };
+    this.people.add(mesh);
+    this.setView(this.view);
+  }
+
   setView(view: GeneratorView): void {
     this.view = view;
     const turn = view === 'side' ? Math.PI / 2 : view === 'back' ? Math.PI : 0;
     let top = 0;
+    const count = this.people.children.length;
     for (const p of this.people.children) {
-      const { side, i } = p.userData['slot'] as { side: number; i: number };
-      // In profile the two lines face each other.
-      p.rotation.y = view === 'side' && side === 1 ? -turn : turn;
-      // Close up, the first of each base stands next to the other.
-      p.visible = view !== 'face' || i === 0;
-      p.position.x = view === 'face' ? (side === 0 ? -0.14 : 0.14) : (side === 0 ? -1 : 1) * (NEAR + i * SPACING);
+      const { slot } = p.userData['slot'] as { slot: number };
+      p.rotation.y = turn;
+      // Close up, the first two stand side by side.
+      p.visible = view !== 'face' || slot < 2;
+      p.position.x = view === 'face' ? (slot === 0 ? -0.14 : 0.14) : (slot - (count - 1) / 2) * SPACING;
       if (p.visible) {
         const g = (p as Mesh).geometry;
         g.computeBoundingBox();
@@ -144,14 +167,20 @@ export class GeneratorStage {
       this.controls.target.set(0, 0.95, 0);
       this.camera.position.set(0, 1.25, 10.5);
     }
+    this.redraw();
   }
 
-  /** Screen x (CSS px) under the middle of each base's line, left base first. */
-  baseCentres(): [number, number] {
+  /** Puts the camera at `eye` looking at `target` (probes and close-ups). */
+  look(eye: readonly [number, number, number], target: readonly [number, number, number]): void {
+    this.camera.position.set(...eye);
+    this.controls.target.set(...target);
+    this.redraw();
+  }
+
+  /** Screen x (CSS px) of each person's feet, in row order (for labels). */
+  screenXs(): number[] {
     const w = this.canvas.clientWidth;
-    if (this.view === 'face') return [w * 0.3, w * 0.7];
-    const mid = NEAR + ((PER_BASE - 1) * SPACING) / 2;
-    const at = (x: number): number => (new Vector3(x, 0, 0).project(this.camera).x * 0.5 + 0.5) * w;
-    return [at(-mid), at(mid)];
+    return this.people.children.filter((p) => p.visible)
+      .map((p) => (new Vector3(p.position.x, 0, 0).project(this.camera).x * 0.5 + 0.5) * w);
   }
 }

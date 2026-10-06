@@ -1965,7 +1965,7 @@ export const PT_BR: Dictionary = {
   'play.msg.waitStop': 'Espere parar para descer.',
   'play.msg.offRide': 'Você desembarcou.',
   'hgen.title': 'Gerador de humanos',
-  'hgen.compare': 'Escolha a base do corpo: a mesma luz, pessoas sorteadas de cada base.',
+  'hgen.intro': 'Pessoas realistas: pele, olhos e rostos da Vitruvian com o formato do corpo aprendido de 7.110 escaneamentos (MHR).',
   'hgen.reroll': 'Sortear outras',
   'hgen.ages': 'Idades',
   'hgen.front': 'Frente',
@@ -1974,6 +1974,5 @@ export const PT_BR: Dictionary = {
   'hgen.face': 'Rosto',
   'hgen.loading': 'Carregando as bases…',
   'hgen.ready': '{count} pessoas, geradas em {ms} ms',
-  'hgen.base.vitruvian': 'Vitruvian (CharMorph): pele com textura, olhos, dentes',
-  'hgen.base.mhr': 'MHR (Meta): forma aprendida de 7.110 escaneamentos, sem textura nem olhos',
+  'hgen.base.hybrid': 'Vitruvian + forma da MHR',
 };

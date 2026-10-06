@@ -1979,7 +1979,7 @@ export const EN: Dictionary = {
   'play.msg.waitStop': 'Wait until it stops to get off.',
   'play.msg.offRide': 'You got off.',
   'hgen.title': 'Human generator',
-  'hgen.compare': 'Choose the base body: the same light, random people of each base.',
+  'hgen.intro': "Realistic people: Vitruvian's skin, eyes and faces with a body shape learned from 7,110 scans (MHR).",
   'hgen.reroll': 'New people',
   'hgen.ages': 'Ages',
   'hgen.front': 'Front',
@@ -1988,6 +1988,5 @@ export const EN: Dictionary = {
   'hgen.face': 'Face',
   'hgen.loading': 'Loading the bases…',
   'hgen.ready': '{count} people, generated in {ms} ms',
-  'hgen.base.vitruvian': 'Vitruvian (CharMorph): textured skin, eyes, teeth',
-  'hgen.base.mhr': 'MHR (Meta): shape learned from 7,110 scans, no texture or eyes',
+  'hgen.base.hybrid': 'Vitruvian + MHR shape',
 };

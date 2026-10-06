@@ -99,6 +99,9 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook): MeshPhysi
 function material(name: string, tile: number, tex: TextureSet, look: HumanLook): Material {
   switch (name) {
     case 'Skin':
+    case 'Covered':
+      // `Covered` is the base's modesty patch (chest, groin): skin, with the
+      // skin tiles' own texture there; clothes are what covers a person.
       return skinMaterial(tex, tile, look);
     case 'Iris':
       return new MeshStandardMaterial({
@@ -126,7 +129,6 @@ function material(name: string, tile: number, tex: TextureSet, look: HumanLook):
     case 'EyeHair':
       return new MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 });
     default:
-      // `Covered`: the base's modesty patch, drawn as plain cotton.
       return new MeshStandardMaterial({ color: 0x8f8a84, roughness: 0.9 });
   }
 }
@@ -163,7 +165,10 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
   geometry.computeBoundingSphere();
   const mesh = new Mesh(geometry, materials);
   mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  // No shadow map on the person themselves: a hard self-shadow (the chin's
+  // on the neck) is grey on skin without light scattered under it, and read
+  // as a stain; the wrapped skin shading darkens those places softly.
+  mesh.receiveShadow = false;
   return mesh;
 }
 

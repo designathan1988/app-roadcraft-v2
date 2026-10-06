@@ -110,6 +110,20 @@ export class HumanBase {
     return result;
   }
 
+  /** One morph's full delta at weight 1, one xyz per mesh vertex (zeros where it does not move). */
+  denseDelta(name: string): Float32Array {
+    const out = new Float32Array(this.positions.length);
+    const m = this.morphs.get(name);
+    if (!m) return out;
+    for (let e = m.start, end = m.start + m.count; e < end; e++) {
+      const v = this.morphIndex[e]! * 3, q = e * 3;
+      out[v] = this.morphDelta[q]! * m.scale;
+      out[v + 1] = this.morphDelta[q + 1]! * m.scale;
+      out[v + 2] = this.morphDelta[q + 2]! * m.scale;
+    }
+    return out;
+  }
+
   /** Mesh-vertex positions copied out to the render vertices. */
   renderPositions(shape: Float32Array, out?: Float32Array): Float32Array {
     const n = this.renderVertexCount;

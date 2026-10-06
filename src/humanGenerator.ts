@@ -3,9 +3,10 @@ import { applyTranslations, initLanguage, t } from '@ui/i18n';
 
 /**
  * The human generator's page (`human-generator.html`): composition root.
- * Slice 0: the two candidate bases side by side under the same light, random
- * people of each, seen from the front, side, back and close at the face, and
- * in an ages line, for the player to choose the base the generator is built on.
+ * The base is CharMorph's Vitruvian (mesh, skin, eyes, expressions) with the
+ * MHR's scan-learned shape carried onto it (the player's choice, 2026-10-06):
+ * a row of random people, seen from the front, side, back and close at the
+ * face, and an ages row.
  */
 
 const URLS = import.meta.glob('/public/models/humans/*/*.{json,bin,jpg}', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
@@ -27,10 +28,9 @@ let ages = false;
 let view: GeneratorView = 'front';
 
 function placeLabels(): void {
-  const [left, right] = stage.baseCentres();
-  const w = canvas.clientWidth;
-  document.getElementById('label-vitruvian')!.style.left = `${Math.max(160, left)}px`;
-  document.getElementById('label-mhr')!.style.left = `${Math.min(w - 160, right)}px`;
+  const xs = stage.screenXs();
+  const mid = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : canvas.clientWidth / 2;
+  document.getElementById('label-base')!.style.left = `${mid}px`;
 }
 
 function setView(next: GeneratorView): void {
@@ -42,7 +42,7 @@ function setView(next: GeneratorView): void {
 
 window.addEventListener('resize', () => { stage.resize(); placeLabels(); });
 
-const bases = await Promise.all([loadBase('vitruvian', urlOf('vitruvian')), loadBase('mhr', urlOf('mhr'))]);
+const bases = [await loadBase('vitruvian', urlOf('vitruvian'))];
 
 function populate(): void {
   const { count, ms } = stage.populate(bases, seed, ages);
@@ -62,4 +62,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('#views button')) {
   setView,
   reroll: () => { seed++; populate(); },
   setAges: (on: boolean) => { ages = on; populate(); },
+  look: (eye: [number, number, number], target: [number, number, number]) => stage.look(eye, target),
+  show: (weights: Record<string, number>) => stage.showWeights(bases[0]!, weights),
+  stage,
 };

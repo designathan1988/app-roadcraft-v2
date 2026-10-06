@@ -322,12 +322,17 @@ and they have seen it.
   a realistic, parametric human generator in its own page, people, hair and
   clothes all generated from parameters (plan: base, body, hair by Hair Meshes,
   clothes by GarmentCode-style sewing patterns draped by XPBD). The MakeHuman
-  bodies and the SDF "toon" heads were rejected by the player. Slice 0 (base
-  choice) is in the page: CharMorph's Vitruvian (37k quads, 4K skin textures,
-  sex/ancestry/age down to a baby, 148 expressions) beside Meta's MHR (shape
-  from 7,110 scans, no texture or eyes), converted by `scripts/build-human-base.py`
-  (Blender 5.2, sources in the session scratch, not in the repo) into
-  `public/models/humans/<base>`. Waiting for the player to choose the base.
+  bodies and the SDF "toon" heads were rejected by the player. LIVE in the
+  page: the player's chosen base, CharMorph's Vitruvian (mesh, 4K skin, eyes,
+  sex/ancestry/age morphs, 148 expressions) with Meta's MHR identity space
+  (45 components learned from 7,110 scans) carried onto it by
+  `scripts/build-human-base.py --mhr` (per-bone-segment correspondence,
+  Laplacian-smoothed deltas, rigid eyes); random people draw the MHR
+  components with the sex direction removed (sex is the Vitruvian morph).
+  Skin: body tiles' blotches evened by frequency separation; no self-shadow
+  on people (grey on skin). Sources (CharMorph data, MHR assets) live in the
+  session scratch, not in the repo. Not yet: population calibration (WHO
+  height/BMI), sliders, hair, clothes, pose.
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as
