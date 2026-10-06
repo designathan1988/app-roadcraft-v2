@@ -606,10 +606,14 @@ export function createAgentWalkEngine(): PedestrianEngine {
         startle(w, p.x, p.y, m(45), 26, null);
         return { killed: true, severed };
       }
-      // Struck: knocked down by a leg giving way or a limb lost, else a stagger;
-      // then up and running, slower on a hurt leg.
-      const down = severed || part === 'legL' || part === 'legR' ? 2.5 : 0.7;
+      // Struck: knocked down (the body to the ragdolls, which hand it back
+      // when it is up, `getUp`), harder for a leg or a limb lost; then up and
+      // running, slower on a hurt leg.
+      const down = severed || part === 'legL' || part === 'legR' ? 6 : 3.5;
       p.act = { kind: 'fall', from: p.age, until: p.age + down, faceX: fromX, faceY: fromY };
+      recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
+        party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
+        blastX: fromX, blastY: fromY, kind: 'knocked', power: severed ? 0.35 : 0.15, lost: [...p.lost] });
       p.v = 0;
       p.fright = p.age + 30;
       startle(w, p.x, p.y, m(45), 26, null);

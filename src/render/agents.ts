@@ -1,3 +1,4 @@
+import type { Severable } from '@sim/people/view';
 import { simplified } from './mesh/simplify';
 import {
   BoxGeometry,
@@ -151,6 +152,8 @@ export interface AgentRenderOptions {
   readonly hiddenPed?: (id: number) => boolean;
   /** Where the camera is: the people nearest it get their hair's strands (`?bodies=proc`). */
   readonly eye?: Vector3;
+  /** The dead of the last minute (shots, blows): drawn lying where they fell, as themselves. */
+  readonly fallen?: readonly { readonly id: number; readonly x: number; readonly y: number; readonly heading: number; readonly lost?: readonly Severable[] }[];
 }
 
 export interface AgentMeshes {
@@ -800,8 +803,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     }, () => { procPeople.delete(target); }).finally(() => { procBuilding = false; procBuiltAt = performance.now(); });
   };
   let procFrame = 0;
+  const procTilt = new Matrix4();
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
-  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string): void => {
+  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
+    lost?: readonly Severable[], down = false): void => {
     let entry = procPeople.get(id);
     if (!entry) {
       const spare = procSpare.pop();
@@ -818,11 +823,16 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     entry.seen = procFrame;
     const person = entry.person;
     if (!person) return;
-    procMatrix.makeTranslation(x, deck, -y)
-      .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
-      .multiply(procSize.makeScale(m(1), m(1), m(1)));
+    procMatrix.makeTranslation(x, deck + (down ? m(0.12) : 0), -y)
+      .multiply(procTurn.makeRotationY(heading + Math.PI / 2));
+    // Down (struck, or dead): the person themself lying on their back where
+    // they fell - not a body of another look thrown in their place.
+    if (down) procMatrix.multiply(procTilt.makeRotationX(-Math.PI / 2));
+    procMatrix.multiply(procSize.makeScale(m(1), m(1), m(1)));
     person.matrix.copy(procMatrix);
-    person.activity = activity;
+    person.activity = down ? undefined : activity;
+    person.lost = lost;
+    if (down) { if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0.3; } return; }
     const metres = speed / m(1);
     if (walking && metres > 0.15) {
       if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
@@ -1542,7 +1552,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // gradient is the road's own under the walker.
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
-          if (procedural && ped.id !== PLAYER_ID) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, ped.panic ? 'panic' : ped.gesture?.kind);
+          if (procedural && ped.id !== PLAYER_ID) {
+            procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, ped.panic ? 'panic' : ped.gesture?.kind,
+              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture?.kind === 'fall');
+          }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
         }
@@ -1560,6 +1573,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (procedural) {
         const live = new Set<number>();
         for (const ped of world.pedViews) live.add(ped.id);
+        // The dead lying where they fell, as they were.
+        for (const f of options.fallen ?? []) {
+          if (!procPeople.get(f.id)?.person) continue;
+          live.add(f.id);
+          procDraw(f.id, f.x, f.y, f.heading, groundAt ? groundAt(f.x, f.y) : elevationAt(world, f.x, f.y, undefined), 0, false, 0, undefined, f.lost, true);
+        }
         procFinish(options.eye, live);
       }
       options.ragdolls?.(pedestrians);

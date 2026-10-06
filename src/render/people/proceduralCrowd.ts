@@ -1,3 +1,4 @@
+import type { Severable } from '@sim/people/view';
 import {
   BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, FloatType, Group, InstancedBufferAttribute,
   InstancedMesh, Matrix4, MeshDepthMaterial, MeshStandardMaterial, Vector3, NearestFilter, RedFormat, RGBADepthPacking, RGBAFormat,
@@ -159,6 +160,8 @@ export interface ProceduralPerson {
   phase: number;
   /** What they are doing, as the face shows it (`faceAt`): 'talk', 'panic'... */
   activity?: string | undefined;
+  /** Limbs (or the head) lost to shots: their bones closed at the joint they were torn from. Set by the caller. */
+  lost?: readonly Severable[] | undefined;
 }
 
 export interface ProceduralStats {
@@ -539,6 +542,45 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       m[o + 12] = m[o + 12]! + shift[i * 3]! - (m[o]! * dx + m[o + 4]! * dy + m[o + 8]! * dz);
       m[o + 13] = m[o + 13]! + shift[i * 3 + 1]! - (m[o + 1]! * dx + m[o + 5]! * dy + m[o + 9]! * dz);
       m[o + 14] = m[o + 14]! + shift[i * 3 + 2]! - (m[o + 2]! * dx + m[o + 6]! * dy + m[o + 10]! * dz);
+    }
+  };
+
+  /**
+   * A limb lost: every bone from its joint down shrunk to that joint, so the
+   * stump closes there (as `riggedCitizens` maim does on the cooked bodies).
+   */
+  const limbBones = new WeakMap<BodyClass, Record<string, { bones: number[]; parent: number; joint: Vector3 } | null>>();
+  const limbTmp = new Matrix4(), limbAt = new Vector3();
+  const LIMB_ROOT: Record<Severable, string> = { armL: 'lowerarm_l', armR: 'lowerarm_r', legL: 'calf_l', legR: 'calf_r', head: 'head' };
+  const closeLimb = (cls: BodyClass, at: number, limb: Severable): void => {
+    let info = limbBones.get(cls);
+    if (!info) {
+      info = {};
+      const bones = cls.rig.mesh.skeleton.bones;
+      const parents = bones.map((b) => bones.indexOf(b.parent as never));
+      for (const [key, name] of Object.entries(LIMB_ROOT)) {
+        const root = bones.findIndex((b) => b.name === name);
+        if (root < 0) { info[key] = null; continue; }
+        const set = [root];
+        for (let i = 0; i < bones.length; i++) {
+          let j = parents[i]!;
+          while (j >= 0 && j !== root) j = parents[j]!;
+          if (j === root) set.push(i);
+        }
+        const joint = new Vector3().setFromMatrixPosition(limbTmp.copy(cls.rig.mesh.skeleton.boneInverses[root]!).invert());
+        info[key] = { bones: set, parent: parents[root]!, joint };
+      }
+      limbBones.set(cls, info);
+    }
+    const which = info[limb];
+    if (!which || which.parent < 0) return;
+    const px = cls.palette;
+    limbTmp.fromArray(px, at + which.parent * SKIN_BONE_FLOATS);
+    limbAt.copy(which.joint).applyMatrix4(limbTmp);
+    for (const i of which.bones) {
+      const o = at + i * SKIN_BONE_FLOATS;
+      px.fill(0, o, o + 16);
+      px[o + 12] = limbAt.x; px[o + 13] = limbAt.y; px[o + 14] = limbAt.z; px[o + 15] = 1;
     }
   };
 
@@ -1167,6 +1209,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
           cls.palette.fill(0, at, at + width);
           blendPackedFrames(cls.palette, at, clip.data, whole * packed, packed, cls.bones, 1 - (f - whole), f - whole);
           refit(cls, person, at);
+          for (const limb of person.lost ?? []) closeLimb(cls, at, limb);
         }
         cls.uniforms.procBones.value.needsUpdate = true;
         // The face of the moment: blinking, mood, talk, fright (`faceAt`).

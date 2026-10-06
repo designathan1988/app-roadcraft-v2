@@ -256,7 +256,8 @@ export interface Ragdolls {
 export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   const bodies: Body[] = [];
   const decals: BloodDecal[] = [];
-  const seen = new Set<string>();
+  /** The casualty records already turned into bodies (`absorb`). */
+  const taken = new WeakSet<Casualty>();
   let clock = 0;
 
   const api: { onGore: Ragdolls['onGore'] } = { onGore: null };
@@ -523,12 +524,14 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     },
     absorb(list, citizens, world) {
       for (const c of list) {
-        const key = `${c.id}:${c.kind}:${c.blastX.toFixed(2)}:${c.blastY.toFixed(2)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        // Each record once (two shots from the same place are two records).
+        if (taken.has(c)) continue;
+        taken.add(c);
+        // Somebody drawn by the procedural crowd has no pose kept here: they
+        // fall as themselves (`agents.ts`, lying), not as a body of another
+        // look - only their blood is left here.
         spawn(c, citizens, world);
       }
-      if (seen.size > 4000) seen.clear();
     },
     trip(id, heading, citizens, world, away = null) {
       if (bodies.some((b) => b.survivor?.id === id)) return;

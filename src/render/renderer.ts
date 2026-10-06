@@ -2015,6 +2015,8 @@ export function createSceneRenderer(
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);
         },
+        // The dead of the last minute, lying where they fell as themselves (the procedural crowd).
+        fallen: impactCasualties(sim, 0).filter((c) => c.kind !== 'knocked'),
         ragdolls: (citizens) => {
           ragdollSim = sim;
           ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
