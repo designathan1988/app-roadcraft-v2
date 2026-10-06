@@ -59,6 +59,7 @@ const SWATCHES: readonly number[] = [
 const hexOf = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
 const ICON: Record<string, string> = {
+  player: '<circle cx="12" cy="5" r="2.2"/><path d="M12 8v6m0 0-3 6m3-6 3 6M8 11l4-2 4 2"/>',
   roads: '<path d="M7 21 10 3h4l3 18"/><path d="M12 6v2m0 3v2m0 3v2"/>',
   zones: '<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>',
   build: '<path d="M4 21V9l6-4v16"/><path d="M10 21V3h10v18"/><path d="M2 21h20"/><path d="M13 7h1m3 0h1m-5 4h1m3 0h1m-5 4h1m3 0h1"/>',
@@ -251,6 +252,9 @@ export function mountShell(deps: ShellDeps): void {
   const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('sim', 18));
   const camB = button('v2-pill', t('camera.label'), () => toggle('camera', camB), svg('camera', 18));
   const helpB = button('v2-icon', t('builder.help'), () => toggle('help', helpB), svg('help', 18));
+  // Into the scenery on foot (`play.ts`): the way in, in plain sight, not only the J key.
+  const playB = button('v2-pill v2-play', t('play.button'), () => press('#playButton'), svg('player', 18));
+  playB.title = t('play.start');
   // See inside the buildings (the Builder's own toggle, `workspace.ts`): on,
   // with the floor shown and a step down and up beside it.
   const insideButtons = (): HTMLButtonElement[] => [...document.querySelectorAll<HTMLButtonElement>('.bw-inside .bw-icon-button')];
@@ -267,7 +271,7 @@ export function mountShell(deps: ShellDeps): void {
     insideLevelEl.textContent = insideLevel();
   };
   syncInside();
-  actionsBar.append(insideB, insideDownB, insideLevelEl, insideUpB, simB, camB, undo, redo, helpB, menuB);
+  actionsBar.append(playB, insideB, insideDownB, insideLevelEl, insideUpB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers

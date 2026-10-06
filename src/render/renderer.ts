@@ -1034,6 +1034,9 @@ export function createSceneRenderer(
   const PLAY_SEEN = m(320);
   /** Playing: radians added to each side of the camera's width (the mouse turns it). */
   const VIEW_MARGIN = 0.35;
+  /** Playing: how far ahead the sun's shadows are drawn, u (one map; beyond it, cascades would be needed). */
+  const PLAY_SHADOW_FAR = m(80);
+  const shadowCentre = new Vector3();
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
   const TRACER_LIFE = 0.12;
@@ -1604,7 +1607,23 @@ export function createSceneRenderer(
         agents.setNight(dark);
       }
       rig.camera.getWorldDirection(viewDirection);
-      environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
+      if (rig.chasing) {
+        // Playing, the camera sees down the street: the shadows cover the
+        // view out past PLAY_SHADOW_FAR, inside one fixed disc round that slice
+        // of the frustum - its size never changes as the camera turns, so the
+        // map neither resizes nor shimmers (Microsoft, "Common Techniques to
+        // Improve Shadow Depth Maps": fit to the view frustum, bound by a
+        // sphere, move in texel steps). Fitted to the screen at the orbit's
+        // zoom, it was 5 m round the player and every shadow farther off
+        // came and went.
+        // A disc of PLAY_SHADOW_FAR round a point half that far ahead of the
+        // player: the street ahead to one and a half times it, the sides, a
+        // little behind.
+        shadowCentre.copy(viewDirection).setY(0).normalize().multiplyScalar(PLAY_SHADOW_FAR / 2).add(chaseCamera.focus);
+        environment.follow(shadowCentre, PLAY_SHADOW_FAR / 1.25, PLAY_SHADOW_FAR / 1.25, viewDirection, Math.max(0, tallestTop - target.y));
+      } else {
+        environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
+      }
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
       if (rig.chasing) {

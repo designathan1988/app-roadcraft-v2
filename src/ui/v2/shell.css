@@ -61,6 +61,7 @@
 }
 .v2-pill { padding: 0 11px 0 9px; font-size: 13px; }
 .v2-icon { width: 32px; padding: 0; }
+.v2-play { background: rgba(79, 224, 191, 0.16); border-color: rgba(79, 224, 191, 0.6); font-weight: 600; }
 .v2-icon > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .v2-pill:hover, .v2-icon:hover:not(:disabled) { background: var(--v-raise-2); border-color: rgba(79, 224, 191, 0.5); }
 .v2-icon.on { color: var(--v-accent); border-color: var(--v-accent); background: rgba(79, 224, 191, 0.12); }
@@ -326,6 +327,11 @@
 /* The HUD buttons are icons too; their names are tooltips. */
 .v2-pill { position: relative; width: 32px; padding: 0; }
 .v2-pill > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+/* But the way into play, named: it is the one a newcomer looks for. */
+@media (min-width: 781px) {
+  .v2-pill.v2-play { width: auto; padding: 0 12px 0 9px; }
+  .v2-pill.v2-play > span { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+}
 
 /* ---------------------------------------------------------------- people: create a person
    As a life-simulation game's create-a-person: a rail of categories, the

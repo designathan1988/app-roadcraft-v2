@@ -45,6 +45,10 @@ export interface PlayInput {
   /** Where the player aims, world axes (unit). */
   aimX: number;
   aimY: number;
+  /** Held: aiming (right mouse, GTA's), the body faces where the camera looks and steps sideways. */
+  aiming: boolean;
+  /** Held in a car: the handbrake (Space). */
+  handbrake: boolean;
   /** Pressed once; cleared when used. F: get in at the wheel (or out); G: get on as a passenger; E: talk. */
   enter: boolean;
   board: boolean;
@@ -60,6 +64,10 @@ export type Weapon = 'fists' | 'pistol';
 const WALK = m(1.6), RUN = m(5);
 const TURN = 10;
 const BODY = m(0.3);
+/** The gap kept to walls and cars (Rapier's offset): never touching, never flickering inside. */
+const SKIN = m(0.03);
+/** Longest a knocked-down player stays down: the ragdoll's fall, lie and rise end it sooner (`walk.ts` getUp). */
+const DOWN = 12;
 const PUNCH_REACH = m(1.5), DOOR_REACH = m(4.5), BUILDING_REACH = m(2.2);
 const TOP = m(26), TOP_BACK = m(7), ACCEL = m(5.5), BRAKE = m(11), DRAG = 0.22, LOCK = 0.62;
 /** A pistol: how far it reaches, how close to the line a body is hit, seconds between shots. */
@@ -72,7 +80,7 @@ const STAR_COOL = 12, ARREST = m(1.4);
 const KEPT_CARS = 4;
 
 export class PlayWorld {
-  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, enter: false, board: false, talk: false, attack: false };
+  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, aiming: false, handbrake: false, enter: false, board: false, talk: false, attack: false };
   active = false;
   mode: 'foot' | 'car' | 'inside' | 'ride' = 'foot';
   /** What the player rides, as a passenger. */
@@ -160,26 +168,34 @@ export class PlayWorld {
     const input = this.input;
     if (!walkerOf(w, PLAYER_ID)) addPlayerWalker(w, PLAYER_ID, this.x, this.y, this.heading, 'adult', 'm');
     if (this.down > 0) {
+      // Down until the body has got up (the ragdoll tells the walk when, `getUp`), and up where it lies.
       this.down -= DT;
       this.v = 0;
-      movePlayerWalker(w, PLAYER_ID, this.x, this.y, this.heading, 0);
-      return;
+      const me = walkerOf(w, PLAYER_ID);
+      if (me && me.busy > 0 && this.down > 0) return;
+      this.down = 0;
+      if (me) { this.x = me.x; this.y = me.y; this.heading = me.heading; }
     }
     const len = Math.hypot(input.moveX, input.moveY);
-    const want = Math.min(1, len) * (input.run ? RUN : WALK);
+    // Aiming, a walk at most, sideways or back as well (GTA's strafe); else a run if asked.
+    const want = Math.min(1, len) * (input.aiming ? WALK : input.run ? RUN : WALK);
     this.v += Math.max(-m(10) * DT, Math.min(m(8) * DT, want - this.v));
-    if (len > 0.05) {
+    let goX = Math.cos(this.heading), goY = Math.sin(this.heading);
+    if (input.aiming) {
+      const to = Math.atan2(input.aimY, input.aimX);
+      const err = Math.atan2(Math.sin(to - this.heading), Math.cos(to - this.heading));
+      this.heading += Math.max(-TURN * 2 * DT, Math.min(TURN * 2 * DT, err));
+      if (len > 0.05) { goX = input.moveX / len; goY = input.moveY / len; }
+    } else if (len > 0.05) {
       const to = Math.atan2(input.moveY, input.moveX);
       const err = Math.atan2(Math.sin(to - this.heading), Math.cos(to - this.heading));
       this.heading += Math.max(-TURN * DT, Math.min(TURN * DT, err));
+      goX = Math.cos(this.heading); goY = Math.sin(this.heading);
     }
-    const nx = this.x + Math.cos(this.heading) * this.v * DT, ny = this.y + Math.sin(this.heading) * this.v * DT;
-    if (!this.wallAt(w, nx, ny, BODY)) { this.x = nx; this.y = ny; }
-    else if (!this.wallAt(w, nx, this.y, BODY)) this.x = nx;
-    else if (!this.wallAt(w, this.x, ny, BODY)) this.y = ny;
-    else this.v = 0;
-    movePlayerWalker(w, PLAYER_ID, this.x, this.y, this.heading, this.v);
-    // Run over by the traffic.
+    const fromX = this.x, fromY = this.y;
+    this.x += goX * this.v * DT;
+    this.y += goY * this.v * DT;
+    // Run over by the traffic (before the body is pushed out of the car that hit it).
     for (const veh of w.vehicles.values()) {
       if (veh.v < m(2)) continue;
       const pose = vehiclePose(w, veh, 1);
@@ -188,6 +204,10 @@ export class PlayWorld {
         break;
       }
     }
+    this.pushOut(w);
+    // Against a wall the body slows to what it really moved, as a body sliding along it does.
+    if (this.v > 0) this.v = Math.min(this.v, Math.hypot(this.x - fromX, this.y - fromY) / DT + m(0.4));
+    movePlayerWalker(w, PLAYER_ID, this.x, this.y, this.heading, this.v);
     if (input.attack) {
       if (this.weapon === 'pistol') this.shoot(w);
       else this.punch(w);
@@ -309,8 +329,8 @@ export class PlayWorld {
 
   private hurt(w: SimWorld, amount: number, key: string): void {
     this.health = Math.max(0, this.health - amount);
-    this.down = 2.5;
-    walkerAct(w, PLAYER_ID, 'fall', 2.5, this.x, this.y);
+    this.down = DOWN;
+    walkerAct(w, PLAYER_ID, 'fall', DOWN, this.x, this.y);
     this.say(w, key);
     if (this.health <= 0) {
       this.wasted = 4;
@@ -479,11 +499,13 @@ export class PlayWorld {
     if (t > 0) this.v += (this.v < 0 ? BRAKE : ACCEL) * t * DT;
     else if (t < 0) this.v += (this.v > 0 ? -BRAKE : -ACCEL * 0.6) * -t * DT;
     this.v -= this.v * DRAG * DT;
+    // The handbrake: the wheels locked, the car stops short and turns tighter.
+    if (input.handbrake) this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), BRAKE * 1.3 * DT);
     if (Math.abs(this.v) < m(0.05) && t === 0) this.v = 0;
     this.v = Math.max(-TOP_BACK, Math.min(TOP, this.v));
     // The kinematic bicycle: the heading turns by v / L * tan(steer).
     const wheelbase = car.archetype.length * 0.6;
-    const steer = -input.steer * LOCK * (1 - 0.5 * Math.min(1, Math.abs(this.v) / TOP));
+    const steer = -input.steer * LOCK * (input.handbrake ? 1.4 : 1) * (1 - 0.5 * Math.min(1, Math.abs(this.v) / TOP));
     const heading = f.angle + (this.v / wheelbase) * Math.tan(steer) * DT;
     const nx = f.x + Math.cos(heading) * this.v * DT, ny = f.y + Math.sin(heading) * this.v * DT;
     const half = car.archetype.length / 2, wide = car.archetype.width / 2;
@@ -608,6 +630,71 @@ export class PlayWorld {
       }
     }
     return this.walls;
+  }
+
+  /**
+   * Move and slide (Rapier's character controller, Unreal's SlideAlongSurface):
+   * after the step, the body (a disc of BODY) is pushed out of every wall,
+   * car and person it entered, along the way out nearest; what is left of
+   * the step runs along the surface. Steps are shorter than the body, so
+   * nothing is passed through between two ticks.
+   */
+  private pushOut(w: SimWorld): void {
+    const r = BODY + SKIN;
+    const boxes = this.vehicleBoxes(w, this.x, this.y, m(10));
+    const people = walkersNear(w, this.x, this.y, m(2));
+    for (let it = 0; it < 4; it++) {
+      let moved = false;
+      for (const wl of this.wallsOf(w)) {
+        if (this.x < wl.x0 - r || this.x > wl.x1 + r || this.y < wl.y0 - r || this.y > wl.y1 + r) continue;
+        const inside = pointInPolygon({ x: this.x, y: this.y }, wl.ring);
+        let best = Infinity, bx = 0, by = 0;
+        for (let i = 0, j = wl.ring.length - 1; i < wl.ring.length; j = i++) {
+          const a = wl.ring[j]!, b = wl.ring[i]!;
+          const ex = b.x - a.x, ey = b.y - a.y;
+          const u = Math.max(0, Math.min(1, ((this.x - a.x) * ex + (this.y - a.y) * ey) / Math.max(1e-9, ex * ex + ey * ey)));
+          const qx = a.x + ex * u, qy = a.y + ey * u;
+          const d = Math.hypot(this.x - qx, this.y - qy);
+          if (d < best) { best = d; bx = qx; by = qy; }
+        }
+        if (!inside && best >= r) continue;
+        // Out through the nearest edge, to the body's width from it.
+        const nx = inside ? bx - this.x : this.x - bx, ny = inside ? by - this.y : this.y - by;
+        const n = Math.hypot(nx, ny) || 1;
+        const out = inside ? best + r : r - best;
+        this.x += (nx / n) * out;
+        this.y += (ny / n) * out;
+        moved = true;
+      }
+      for (const b of boxes) {
+        const c = Math.cos(b.angle), s = Math.sin(b.angle);
+        const lx = (this.x - b.x) * c + (this.y - b.y) * s, ly = -(this.x - b.x) * s + (this.y - b.y) * c;
+        const hx = b.length / 2, hy = b.width / 2;
+        const qx = Math.max(-hx, Math.min(hx, lx)), qy = Math.max(-hy, Math.min(hy, ly));
+        let ox: number, oy: number;
+        if (qx === lx && qy === ly) {
+          // Inside the car: out by the nearest side.
+          const toX = hx - Math.abs(lx), toY = hy - Math.abs(ly);
+          if (toX < toY) { ox = Math.sign(lx || 1) * (toX + r); oy = 0; } else { ox = 0; oy = Math.sign(ly || 1) * (toY + r); }
+        } else {
+          const d = Math.hypot(lx - qx, ly - qy);
+          if (d >= r) continue;
+          ox = ((lx - qx) / d) * (r - d); oy = ((ly - qy) / d) * (r - d);
+        }
+        this.x += ox * c - oy * s;
+        this.y += ox * s + oy * c;
+        moved = true;
+      }
+      for (const q of people) {
+        if (q.id === PLAYER_ID) continue;
+        const d = Math.hypot(this.x - q.x, this.y - q.y), min = BODY * 2;
+        if (d >= min || d < 1e-6) continue;
+        this.x += ((this.x - q.x) / d) * (min - d);
+        this.y += ((this.y - q.y) / d) * (min - d);
+        moved = true;
+      }
+      if (!moved) break;
+    }
   }
 
   private wallAt(w: SimWorld, x: number, y: number, r: number): boolean {

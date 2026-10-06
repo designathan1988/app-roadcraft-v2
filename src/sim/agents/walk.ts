@@ -575,7 +575,13 @@ export function createAgentWalkEngine(): PedestrianEngine {
       const s = stateOf(w);
       const p = s.byId.get(id);
       if (!p || p.done) return;
-      if (!p.player) {
+      if (p.player) {
+        // The player gets up where their body lies, and is held down exactly until up (`ambient/play.ts`).
+        p.x = p.prevX = x; p.y = p.prevY = y; p.heading = p.prevHeading = heading;
+        if (p.act?.kind === 'fall') p.act = { ...p.act, until: p.age + seconds };
+        return;
+      }
+      {
         const hit = nearestWay(s, { x, y }, m(6));
         if (hit) {
           const at = hit.way.path.sampleAt(hit.s).p;
@@ -778,8 +784,13 @@ function stepWalkers(w: SimWorld): void {
       if (clear) { p.inside = false; p.prevX = p.x; p.prevY = p.y; p.prevHeading = p.heading; enter(p); }
       continue;
     }
-    // The player's body goes where the player moves it (`movePlayerWalker`).
-    if (p.player) continue;
+    // The player's body goes where the player moves it (`movePlayerWalker`);
+    // what it does (a punch, a fall) ends in its time as anybody's does, or
+    // a knocked-down player lies half risen for ever.
+    if (p.player) {
+      if (p.act && p.age >= p.act.until) p.act = null;
+      continue;
+    }
     // Stopped for something (a word, a fall): standing there, facing it.
     if (p.act) {
       if (p.age < p.act.until) {

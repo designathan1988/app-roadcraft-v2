@@ -21,9 +21,16 @@ import { t } from '@ui/i18n';
  * - The simulation side is `sim/ambient/play.ts`; this file is the input,
  *   the camera and the HUD, and nothing else.
  *
- * Keys: W A S D walk (in a car: throttle, brake, steer), Shift run, F (or E)
- * get in or out of a car or a building, mouse click punch or shoot, 1 fists,
- * 2 pistol, V first/third person, Esc releases the mouse, P stops playing.
+ * Keys and mouse as GTA V's on PC (its default bindings): W A S D walk (in
+ * a car: throttle, brake and reverse, steer), Shift run, Space the handbrake,
+ * mouse look, right button aim (over the shoulder, the body faces the aim and
+ * steps sideways), left button punch or shoot, wheel or Tab the next weapon,
+ * 1 and 2 a weapon, C look behind, F get in or out, G board as a passenger, E
+ * talk, V first/third person, Esc frees the mouse, P stops playing.
+ *
+ * The mouse turns the camera captured (Pointer Lock, asked for only by the
+ * player's own click) or not: where the capture is refused (an embedded
+ * browser) its movement still turns it.
  */
 
 export interface PlayHost {
@@ -48,6 +55,8 @@ export interface Play {
 const HEAD = m(1.62);
 const ARM_FOOT = m(4.2), ARM_CAR = m(8.5);
 const PIVOT_FOOT = m(1.55), PIVOT_CAR = m(1.6);
+/** Aiming: the arm drawn in over the right shoulder (GTA's aim camera). */
+const ARM_AIM = m(2.4), SHOULDER = m(0.55);
 
 export function createPlay(host: PlayHost): Play {
   const { sim, canvas } = host;
@@ -56,6 +65,18 @@ export function createPlay(host: PlayHost): Play {
   let firstPerson = false;
   let yaw = 0, pitch = 0.32;
   const keys = new Set<string>();
+  /** Right button held: aiming over the shoulder. */
+  let aiming = false;
+  /** The browser refused to capture the mouse (an embedded view): it turns the camera uncaptured. */
+  let lockRefused = false;
+  document.addEventListener('pointerlockerror', () => { lockRefused = true; });
+  /** When the mouse last turned the camera (ms): a car's camera swings back behind it after a while. */
+  let mouseAt = 0;
+  const WEAPONS = ['fists', 'pistol'] as const;
+  const nextWeapon = (step: number): void => {
+    const i = WEAPONS.indexOf(play.weapon as typeof WEAPONS[number]);
+    play.weapon = WEAPONS[(i + step + WEAPONS.length) % WEAPONS.length]!;
+  };
   type V3 = [number, number, number];
   let eye: V3 = [0, 0, 0], look: V3 = [0, 0, 0], focus: V3 = [0, 0, 0];
   let smoothEye: V3 | null = null;
@@ -76,7 +97,7 @@ export function createPlay(host: PlayHost): Play {
   const showHud = (): void => {
     if (!active) { hud.style.display = 'none'; cross.style.display = 'none'; return; }
     hud.style.display = 'block';
-    cross.style.display = play.weapon === 'pistol' && play.mode === 'foot' ? 'block' : 'none';
+    cross.style.display = play.mode === 'foot' && (aiming || play.weapon === 'pistol') ? 'block' : 'none';
     // GTA's wanted level: the stars earned lit, the rest dim.
     const stars = `<span style="color:#ffd25e">${'★'.repeat(play.wanted)}</span>`
       + `<span style="color:rgba(255,255,255,.3)">${'★'.repeat(5 - play.wanted)}</span>`;
@@ -114,6 +135,7 @@ export function createPlay(host: PlayHost): Play {
     else if (k === 'e') play.input.talk = true;
     else if (k === '1') play.weapon = 'fists';
     else if (k === '2') play.weapon = 'pistol';
+    else if (k === 'tab') nextWeapon(1);
     else if (k === 'v') {
       firstPerson = !firstPerson;
       // Through the eyes, the look starts where the body faces (or the car points).
@@ -128,6 +150,7 @@ export function createPlay(host: PlayHost): Play {
   const onKeyUp = (e: KeyboardEvent): void => {
     if (!playing()) return;
     keys.delete(e.key.toLowerCase());
+    if (e.key === 'Shift') keys.delete('shift');
     e.preventDefault();
     e.stopImmediatePropagation();
   };
@@ -135,13 +158,32 @@ export function createPlay(host: PlayHost): Play {
     if (!playing() || e.target !== canvas) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    if (!document.pointerLockElement) { void canvas.requestPointerLock?.(); return; }
+    // The player's own click captures the mouse (that click does nothing else);
+    // where the capture is refused, clicks act at once.
+    if (!document.pointerLockElement && !lockRefused) {
+      void Promise.resolve(canvas.requestPointerLock?.()).catch(() => { lockRefused = true; });
+      return;
+    }
     if (e.button === 0) play.input.attack = true;
+    if (e.button === 2) aiming = true;
+  };
+  const onPointerUp = (e: PointerEvent): void => {
+    if (!playing()) return;
+    if (e.button === 2) aiming = false;
   };
   const onMouseMove = (e: MouseEvent): void => {
-    if (!playing() || document.pointerLockElement !== canvas) return;
-    yaw -= e.movementX * 0.0028;
-    pitch = Math.max(-0.75, Math.min(1.1, pitch + e.movementY * 0.0024));
+    if (!playing()) return;
+    // Captured, the mouse turns the camera; not captured (refused, or freed with
+    // Esc), over the game it still does, as long as no button of the page is under it.
+    if (document.pointerLockElement !== canvas && e.target !== canvas) return;
+    const k = aiming ? 0.55 : 1;
+    yaw -= e.movementX * 0.0028 * k;
+    pitch = Math.max(-0.75, Math.min(1.1, pitch + e.movementY * 0.0024 * k));
+    if (e.movementX || e.movementY) mouseAt = performance.now();
+  };
+  const onWheel = (e: WheelEvent): void => {
+    if (!playing() || e.target !== canvas) return;
+    nextWeapon(e.deltaY > 0 ? 1 : -1);
   };
   const swallow = (e: Event): void => {
     if (!playing()) return;
@@ -152,6 +194,8 @@ export function createPlay(host: PlayHost): Play {
   window.addEventListener('keyup', onKeyUp, true);
   window.addEventListener('pointerdown', onPointerDown, true);
   window.addEventListener('mousemove', onMouseMove, true);
+  window.addEventListener('pointerup', onPointerUp, true);
+  canvas.addEventListener('wheel', onWheel, { capture: true, passive: true });
   for (const type of ['pointerup', 'pointermove', 'wheel', 'dblclick', 'contextmenu']) {
     canvas.addEventListener(type, swallow, { capture: true, passive: false });
   }
@@ -195,7 +239,10 @@ export function createPlay(host: PlayHost): Play {
     const at = play.viewPoint(sim);
     const px = at.x, py = at.y;
     const ground = scene.surfaceHeightAt(px, py);
-    const dirX = Math.cos(yaw), dirY = Math.sin(yaw);
+    // C held: looking behind (GTA's look-behind).
+    const viewYaw = keys.has('c') ? yaw + Math.PI : yaw;
+    const dirX = Math.cos(viewYaw), dirY = Math.sin(viewYaw);
+    const aimed = aiming && play.mode === 'foot' && !firstPerson;
     focus = [px, py, ground];
     if (firstPerson && play.mode !== 'inside' && play.mode !== 'ride') {
       let ex = px, ey = py, eh = ground + HEAD;
@@ -213,9 +260,12 @@ export function createPlay(host: PlayHost): Play {
       scene.setHiddenPerson(PLAYER_ID);
       smoothEye = null;
     } else {
-      // Behind a car at GTA's distance; a bus or a train car framed by its own length.
-      const arm = at.vehicle ? Math.max(ARM_CAR, at.length * 1.1 + m(4)) : ARM_FOOT;
+      // Behind a car at GTA's distance; a bus or a train car framed by its own length;
+      // aiming, close over the right shoulder.
+      const arm = aimed ? ARM_AIM : at.vehicle ? Math.max(ARM_CAR, at.length * 1.1 + m(4)) : ARM_FOOT;
       const pivotH = ground + (at.vehicle ? PIVOT_CAR : PIVOT_FOOT);
+      const shoulder = aimed ? SHOULDER : 0;
+      const pvx = px + Math.sin(viewYaw) * shoulder, pvy = py - Math.cos(viewYaw) * shoulder;
       const cp = Math.cos(pitch), sp = Math.sin(pitch);
       // The spring arm: drawn in to the first building or vehicle in the way.
       boxes = play.vehicleBoxes(sim, px, py, arm + m(8));
@@ -223,19 +273,20 @@ export function createPlay(host: PlayHost): Play {
       let length = arm;
       for (let k = 1; k <= 10; k++) {
         const d = (arm * k) / 10;
-        const x = px - dirX * cp * d, y = py - dirY * cp * d, h = pivotH + sp * d;
+        const x = pvx - dirX * cp * d, y = pvy - dirY * cp * d, h = pivotH + sp * d;
         if (solid(x, y, h)) { length = Math.max(m(0.6), (arm * (k - 1)) / 10); break; }
       }
-      const target: V3 = [px - dirX * cp * length, py - dirY * cp * length, pivotH + sp * length];
+      const target: V3 = [pvx - dirX * cp * length, pvy - dirY * cp * length, pivotH + sp * length];
       // A little lag, as a camera on an arm has.
       if (!smoothEye) smoothEye = [...target];
       const k = 1 - Math.exp(-dt * 12);
       smoothEye = [smoothEye[0] + (target[0] - smoothEye[0]) * k, smoothEye[1] + (target[1] - smoothEye[1]) * k, smoothEye[2] + (target[2] - smoothEye[2]) * k];
       eye = smoothEye;
-      look = [px, py, pivotH];
+      // Aiming, the camera looks where the shot goes, past the shoulder; else at the player.
+      look = aimed ? [pvx + dirX * cp * m(20), pvy + dirY * cp * m(20), pivotH - sp * m(20)] : [px, py, pivotH];
       scene.setHiddenPerson(null);
     }
-    const camera: PlayCamera = { eye, look, fov: firstPerson ? 70 : 60, focus };
+    const camera: PlayCamera = { eye, look, fov: firstPerson ? 70 : aimed ? 45 : 60, focus };
     scene.setChase(camera);
   };
 
@@ -288,8 +339,10 @@ export function createPlay(host: PlayHost): Play {
       play.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
       play.input.aimX = fx;
       play.input.aimY = fy;
-      // In a car (or riding) the camera swings round behind it by itself, as GTA's does.
-      if ((play.mode === 'car' || play.mode === 'ride') && !document.pointerLockElement) {
+      play.input.aiming = aiming && play.mode === 'foot';
+      play.input.handbrake = keys.has(' ');
+      // In a car (or riding) the camera swings round behind it by itself once the mouse rests, as GTA's does.
+      if ((play.mode === 'car' || play.mode === 'ride') && performance.now() - mouseAt > 1500) {
         const a = play.viewPoint(sim).heading;
         yaw += Math.atan2(Math.sin(a - yaw), Math.cos(a - yaw)) * Math.min(1, dt * 3);
       }
