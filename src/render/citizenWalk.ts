@@ -390,6 +390,14 @@ interface LibraryFile {
 }
 
 function bytes(base64: string): ArrayBuffer {
+  // The browser's own decoder where it has one (`Uint8Array.fromBase64`): a
+  // character at a time, the clips of one library were a 57 ms frame the
+  // first time a person of that sex came in (docs/performance.md #14).
+  const native = (Uint8Array as unknown as { fromBase64?: (text: string) => Uint8Array }).fromBase64;
+  if (native) {
+    const decoded = native(base64);
+    return decoded.buffer.byteLength === decoded.byteLength ? decoded.buffer as ArrayBuffer : decoded.slice().buffer as ArrayBuffer;
+  }
   const text = atob(base64);
   const out = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
