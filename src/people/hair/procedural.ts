@@ -185,70 +185,75 @@ function headOf(base: HairBase) {
 
 /**
  * The three anchors nearest a point, as [squared distance, vertex], nearest
- * first; equal distances go to the anchor earlier in the list. A uniform grid
- * searched ring by ring (the spatial hashing of real-time collision
- * detection), not every anchor per point: a hairstyle pins tens of thousands
- * of vertices to some three thousand head vertices, and the search over all
- * of them stalled the game 70-225 ms on each new hairstyle (docs/performance.md).
+ * first; equal distances go to the anchor earlier in the list. A k-d tree
+ * (Friedman, Bentley and Finkel 1977): a hairstyle pins tens of thousands of
+ * vertices to some three thousand head vertices, and the search over all of
+ * them stalled the game 70-225 ms on each new hairstyle. A uniform grid was
+ * tried first: hair standing well off the scalp (an afro) made it sweep most
+ * of its cells per point, and a NaN point never ended it (docs/performance.md #5).
  */
 export function nearestThree(P: ArrayLike<number>, anchors: readonly number[]): (p: V3) => [number, number][] {
-  const lo: V3 = [Infinity, Infinity, Infinity], hi: V3 = [-Infinity, -Infinity, -Infinity];
-  for (const v of anchors) for (let c = 0; c < 3; c++) {
-    lo[c] = Math.min(lo[c]!, P[v * 3 + c]!);
-    hi[c] = Math.max(hi[c]!, P[v * 3 + c]!);
-  }
-  // About four anchors a cell.
-  const volume = Math.max(1e-12, (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]));
-  const size = Math.max(1e-6, Math.cbrt(volume * 4 / Math.max(1, anchors.length)));
-  const dims = [0, 1, 2].map((c) => Math.max(1, Math.ceil((hi[c]! - lo[c]!) / size) + 1)) as V3;
-  const cellOf = (x: number, c: number): number => Math.floor((x - lo[c]!) / size);
-  const cells = new Map<number, number[]>();
-  anchors.forEach((v, order) => {
-    const key = (cellOf(P[v * 3 + 2]!, 2) * dims[1] + cellOf(P[v * 3 + 1]!, 1)) * dims[0] + cellOf(P[v * 3]!, 0);
-    let list = cells.get(key);
-    if (!list) cells.set(key, list = []);
-    list.push(order);
-  });
-  const reach = Math.max(dims[0], dims[1], dims[2]);
-  return (p) => {
-    // A point that is not a number (a braid's lobe has some) is nearest to
-    // nothing, as the search over every anchor found: here every bound of the
-    // search below compares false with NaN and it never ended - the game froze
-    // on the first braid (docs/performance.md #5).
-    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
-    // [distance, order in the anchor list], kept sorted by both.
-    const best: [number, number][] = [[Infinity, Infinity], [Infinity, Infinity], [Infinity, Infinity]];
-    const consider = (order: number): void => {
-      const v = anchors[order]!;
-      const d = (P[v * 3]! - p[0]) ** 2 + (P[v * 3 + 1]! - p[1]) ** 2 + (P[v * 3 + 2]! - p[2]) ** 2;
-      const worst = best[2]!;
-      if (d > worst[0] || (d === worst[0] && order > worst[1])) return;
-      best[2] = [d, order];
-      best.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-    };
-    const cx = cellOf(p[0], 0), cy = cellOf(p[1], 1), cz = cellOf(p[2], 2);
-    // However far the point, the cube covers the grid after this many rings.
-    const rings = reach + Math.max(Math.abs(cx), Math.abs(cy), Math.abs(cz)) + 1;
-    for (let r = 0; r <= rings; r++) {
-      for (let z = Math.max(0, cz - r); z <= Math.min(dims[2] - 1, cz + r); z++) {
-        for (let y = Math.max(0, cy - r); y <= Math.min(dims[1] - 1, cy + r); y++) {
-          const shell = Math.abs(z - cz) === r || Math.abs(y - cy) === r;
-          for (let x = Math.max(0, cx - r); x <= Math.min(dims[0] - 1, cx + r); x++) {
-            if (!shell && Math.abs(x - cx) !== r) continue;
-            const list = cells.get((z * dims[1] + y) * dims[0] + x);
-            if (list) for (const order of list) consider(order);
-          }
-        }
-      }
-      // Done once nothing outside the cube searched can be nearer than the third.
-      const gap = Math.min(
-        p[0] - (lo[0] + (cx - r) * size), lo[0] + (cx + r + 1) * size - p[0],
-        p[1] - (lo[1] + (cy - r) * size), lo[1] + (cy + r + 1) * size - p[1],
-        p[2] - (lo[2] + (cz - r) * size), lo[2] + (cz + r + 1) * size - p[2]);
-      const covered = cx - r <= 0 && cy - r <= 0 && cz - r <= 0 && cx + r >= dims[0] - 1 && cy + r >= dims[1] - 1 && cz + r >= dims[2] - 1;
-      if (covered || r > reach + Math.max(Math.abs(cx), Math.abs(cy), Math.abs(cz)) || (gap > 0 && best[2]![0] < gap * gap)) break;
+  // The tree: anchors (as their order in the list) laid out in place, each
+  // node the median of its range on the axis of its depth.
+  const order = Int32Array.from(anchors.keys());
+  const coord = (o: number, axis: number): number => P[anchors[o]! * 3 + axis]!;
+  // Each subtree's box, kept at its median's slot: a point far from the head
+  // has every anchor about as far, and only the boxes tell the subtrees apart.
+  const box = new Float64Array(order.length * 6);
+  const build = (lo: number, hi: number, axis: number): void => {
+    if (hi <= lo) return;
+    const mid = (lo + hi) >> 1;
+    const part = Array.from(order.subarray(lo, hi)).sort((a, b) => coord(a, axis) - coord(b, axis) || a - b);
+    order.set(part, lo);
+    for (let c = 0; c < 3; c++) { box[mid * 6 + c] = Infinity; box[mid * 6 + 3 + c] = -Infinity; }
+    for (let i = lo; i < hi; i++) for (let c = 0; c < 3; c++) {
+      const x = coord(order[i]!, c);
+      if (x < box[mid * 6 + c]!) box[mid * 6 + c] = x;
+      if (x > box[mid * 6 + 3 + c]!) box[mid * 6 + 3 + c] = x;
     }
-    return best.map(([d, order]) => [d, order === Infinity ? 0 : anchors[order]!] as [number, number]);
+    build(lo, mid, (axis + 1) % 3);
+    build(mid + 1, hi, (axis + 1) % 3);
+  };
+  build(0, order.length, 0);
+  // The search's state, reused (no allocation per candidate): the three best
+  // as (distance, order), sorted by both.
+  let d0 = 0, d1 = 0, d2 = 0, o0 = 0, o1 = 0, o2 = 0, px = 0, py = 0, pz = 0;
+  const less = (d: number, o: number, e: number, q: number): boolean => d < e || (d === e && o < q);
+  const consider = (o: number): void => {
+    const v = anchors[o]! * 3;
+    const dx = P[v]! - px, dy = P[v + 1]! - py, dz = P[v + 2]! - pz;
+    const d = dx * dx + dy * dy + dz * dz;
+    if (!less(d, o, d2, o2)) return;
+    if (less(d, o, d1, o1)) {
+      d2 = d1; o2 = o1;
+      if (less(d, o, d0, o0)) { d1 = d0; o1 = o0; d0 = d; o0 = o; } else { d1 = d; o1 = o; }
+    } else { d2 = d; o2 = o; }
+  };
+  const visit = (lo: number, hi: number, axis: number): void => {
+    if (hi <= lo) return;
+    const mid = (lo + hi) >> 1;
+    // Nothing in this subtree is nearer than its box (an equally near one
+    // can still win on its place in the list).
+    const b = mid * 6;
+    const ex = box[b]! - px > 0 ? box[b]! - px : px - box[b + 3]! > 0 ? px - box[b + 3]! : 0;
+    const ey = box[b + 1]! - py > 0 ? box[b + 1]! - py : py - box[b + 4]! > 0 ? py - box[b + 4]! : 0;
+    const ez = box[b + 2]! - pz > 0 ? box[b + 2]! - pz : pz - box[b + 5]! > 0 ? pz - box[b + 5]! : 0;
+    if (ex * ex + ey * ey + ez * ez > d2) return;
+    const o = order[mid]!;
+    consider(o);
+    const gap = (axis === 0 ? px : axis === 1 ? py : pz) - coord(o, axis);
+    const next = axis === 2 ? 0 : axis + 1;
+    if (gap < 0) { visit(lo, mid, next); visit(mid + 1, hi, next); } else { visit(mid + 1, hi, next); visit(lo, mid, next); }
+  };
+  return (p) => {
+    // A point that is not a number is nearest to nothing, as the search over
+    // every anchor found.
+    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1]) || !Number.isFinite(p[2])) return [[Infinity, 0], [Infinity, 0], [Infinity, 0]];
+    px = p[0]; py = p[1]; pz = p[2];
+    d0 = d1 = d2 = Infinity; o0 = o1 = o2 = Infinity;
+    visit(0, order.length, 0);
+    const vertex = (o: number): number => (o === Infinity ? 0 : anchors[o]!);
+    return [[d0, vertex(o0)], [d1, vertex(o1)], [d2, vertex(o2)]];
   };
 }
 
