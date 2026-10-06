@@ -29,6 +29,8 @@ export interface Gore {
   /** A bone's end out of a stump: drawn from `ends()` (the joint, the tip) while it returns them. */
   bone(ends: Ends): void;
   update(dt: number, groundAt: (x: number, y: number) => number): void;
+  /** All of it gone. */
+  clear(): void;
   dispose(): void;
 }
 
@@ -220,6 +222,11 @@ export function createGore(): Gore {
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       }
+    },
+    clear() {
+      chains.length = 0;
+      loose.length = 0;
+      stubs.length = 0;
     },
     dispose() {
       for (const mesh of [segments, organs, bones, cuffs]) mesh.geometry.dispose();

@@ -223,6 +223,8 @@ interface Body {
   drop?: (() => void) | undefined;
   /** Burnt black (a bomb's direct hit). */
   charred?: boolean;
+  /** Whose body it was (the casualty's id), for probes. */
+  recordId?: number;
   /** Shots taken on the ground, all told and by part (`shootBody`). */
   hits?: number;
   partHits?: Partial<Record<BodyPart, number>>;
@@ -265,6 +267,29 @@ function frameOf(x: Vector3, ref: Vector3, out: Matrix4): Matrix4 {
 
 const smooth = (t: number): number => { const k = Math.min(1, Math.max(0, t)); return k * k * (3 - 2 * k); };
 
+/** One body as the weapons lab measures it (`Ragdolls.probe`). Distances in metres. */
+export interface RagdollProbe {
+  /** The person's id (alive or dead: the record's), or -1 for a piece torn off. */
+  readonly id: number;
+  readonly phase: string;
+  readonly piece: boolean;
+  readonly asleep: boolean;
+  readonly charred: boolean;
+  /** Particles: world x, y and height (world units). */
+  readonly points: readonly (readonly [number, number, number])[];
+  /** Deepest a particle sits under the ground it lies on (its radius counted), metres; 0 when none does. */
+  readonly underGround: number;
+  /** Deepest a particle sits inside a wall, a pole, a car (below its top), metres. */
+  readonly inWall: number;
+  /** Worst bone off its length, as a share of it (0: all exact). */
+  readonly boneError: number;
+  /** Fastest particle, metres a second. */
+  readonly speed: number;
+  /** Parts gone. */
+  readonly lost: readonly string[];
+  readonly hits: number;
+}
+
 export interface Ragdolls {
   /** Takes in the casualties of blows (each once): bodies thrown from the pose they were last drawn in. */
   absorb(list: readonly Casualty[], citizens: RagdollCitizens, world: RagdollWorld): void;
@@ -301,6 +326,15 @@ export interface Ragdolls {
   stats(): { bodies: number; moving: number; pieces: number; living: number };
   /** Each body's pelvis, phase and fate (for probes). */
   debug(): { pelvis: number[]; head: number[]; asleep: boolean; phase: string; torn: boolean }[];
+  /**
+   * Everything about each body for a test bench (the weapons lab,
+   * `src/weaponsLab.ts`): its particles (world x, y, height), how far the
+   * lowest sits into the ground, how deep any is inside a wall, how far the
+   * bones are off their lengths, how fast it moves, what it is doing.
+   */
+  probe(): RagdollProbe[];
+  /** Every body, piece and stain gone (the weapons lab's clean slate). */
+  clear(): void;
 }
 
 export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null = null): Ragdolls {
@@ -545,6 +579,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
     if (!body) { if (c.kind !== 'knocked') bleed(c.x, c.y, groundHere, m(1.8), 15); return; }
     for (const limb of c.lost ?? []) for (const part of LOST_PARTS[limb]) body.lostParts.add(part);
+    body.recordId = c.id;
     if (body.survivor && c.lieFor !== undefined) body.survivor.lie = c.lieFor;
     if (body.survivor && c.crawl) {
       const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
@@ -730,6 +765,39 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     stats: () => ({
       bodies: bodies.length, moving: bodies.filter((b) => !b.asleep).length,
       pieces: bodies.reduce((n, b) => n + new Set(b.comp).size, 0), living: bodies.filter((b) => b.survivor).length,
+    }),
+    clear() {
+      for (const b of bodies) b.drop?.();
+      bodies.length = 0;
+      decals.length = 0;
+    },
+    probe: () => bodies.map((b) => {
+      const M = b.scale || 1;
+      let under = 0, inWall = 0, boneError = 0, speed = 0;
+      b.p.forEach((v, k) => {
+        if (b.pin && !b.pin.keep.has(k)) return;
+        const g = b.ground[k]!;
+        if (Number.isFinite(g)) under = Math.max(under, (g + b.radius[k]! * 0.5 - v.y) / M);
+        speed = Math.max(speed, v.distanceTo(b.o[k]!) / STEP / M);
+        for (const w of b.walls) {
+          const x = v.x, y = -v.z;
+          if (x < w.x0 || x > w.x1 || y < w.y0 || y > w.y1) continue;
+          const top = w.roof ? w.roof(x, y) : w.top;
+          if (v.y > top || !inside(w.ring, x, y)) continue;
+          const e = nearestEdge(w.ring, x, y);
+          inWall = Math.max(inWall, Math.min(Math.hypot(x - e.x, y - e.y), top - v.y) / M);
+        }
+      });
+      for (const s of b.sticks) {
+        if (s.broken || s.min !== s.max || (b.pin && !(b.pin.keep.has(s.a) && b.pin.keep.has(s.b)))) continue;
+        const l = b.p[s.a]!.distanceTo(b.p[s.b]!);
+        boneError = Math.max(boneError, Math.abs(l - s.min) / Math.max(1e-6, s.min));
+      }
+      return {
+        id: b.survivor?.id ?? b.recordId ?? -1, phase: b.survivor?.phase ?? 'dead', piece: !!b.pin, asleep: b.asleep, charred: !!b.charred,
+        points: b.p.map((v) => [v.x, -v.z, v.y] as const), underGround: Math.max(0, under), inWall, boneError, speed,
+        lost: [...b.lostParts], hits: b.hits ?? 0,
+      };
     }),
     debug: () => bodies.map((b) => ({
       pelvis: b.p[PEL]!.toArray(), head: b.p[HEA]!.toArray(), asleep: b.asleep, phase: `${b.survivor?.phase ?? 'dead'}${b.survivor ? `#${b.survivor.id}/${b.survivor.lie.toFixed(1)}${b.survivor.crawl ? 'c' : ''}` : b.pin ? '/piece' : ''}`, torn: b.torn,

@@ -70,7 +70,7 @@ import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
 import { createCasualties } from './casualties';
-import { createRagdolls, type RagdollWall, type RagdollWorld } from './ragdoll';
+import { createRagdolls, type RagdollProbe, type RagdollWall, type RagdollWorld } from './ragdoll';
 import { createBlast } from './blast';
 import { POLE_ARM_DROP, POLE_ARM_HALF, POLE_HEIGHT, POLE_LAMP_REACH } from '@world/utilities';
 import { impactCasualties } from '@sim/people/people';
@@ -290,6 +290,16 @@ export interface SceneHandle {
   shootBody(a: readonly [number, number, number], b: readonly [number, number, number]): { alive: number; part: BodyPart } | 'hit' | null;
   /** Whether somebody is down on the ground as a body (not standing to be shot). */
   isDown(id: number): boolean;
+  /** The bodies, guts and debris run at this share of real time (0: stopped; the weapons lab). */
+  setEffectsSpeed(speed: number): void;
+  /** Moves the bodies, guts and debris on by `seconds` once (a frame step while stopped). */
+  stepEffects(seconds: number): void;
+  /** Every body, piece, gut and blood stain gone (the weapons lab's clean slate). */
+  clearCasualties(): void;
+  /** Every body on the ground as the weapons lab measures it (`Ragdolls.probe`). */
+  ragdollProbe(): RagdollProbe[];
+  /** Every procedural person's skeleton measured against their body (`AgentMeshes.meshProbe`). */
+  meshProbe(): ReturnType<AgentMeshes['meshProbe']>;
   /**
    * A shot striking a vehicle at world (x, y, height z), coming along
    * (dirX, dirY): sparks off the bodywork, or the glass bursting in (and
@@ -594,6 +604,8 @@ export function createSceneRenderer(
   const shakeOffset = new Vector3();
   scene.add(blast.group);
   /** The bodies of the people blows killed (`ragdoll.ts`). */
+  /** The effects' clock against real time, and a step owed (`setEffectsSpeed`, `stepEffects`). */
+  let fxSpeed = 1, fxStep = 0;
   // Guts, organs and bones out of bodies opened up (`gore.ts`).
   const gore = createGore();
   scene.add(gore.group);
@@ -666,8 +678,11 @@ export function createSceneRenderer(
           }
         }
       }
-      for (const v of ragdollSim?.vehicles.values() ?? []) {
-        const pose = vehiclePose(ragdollSim!, v, 1);
+      // The traffic, and the cars standing off the road (parked, the player's).
+      const standing = [...(ragdollSim?.ambient.parked ?? []), ...(ragdollSim?.ambient.extra ?? []), ...(ragdollSim?.city.cars?.offRoad() ?? [])]
+        .filter((v) => v.free).map((v) => ({ v, pose: { p: { x: v.free!.x, y: v.free!.y }, angle: v.free!.angle } }));
+      const moving = [...(ragdollSim?.vehicles.values() ?? [])].map((v) => ({ v, pose: vehiclePose(ragdollSim!, v, 1) }));
+      for (const { v, pose } of [...moving, ...standing]) {
         if (!pose || Math.hypot(pose.p.x - x, pose.p.y - y) > reach) continue;
         const a = v.archetype, c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
         const hl = a.length / 2, hw = a.width / 2;
@@ -1521,6 +1536,11 @@ export function createSceneRenderer(
       return hit;
     },
     isDown: (id) => ragdolls.hides(id),
+    setEffectsSpeed(speed) { fxSpeed = Math.max(0, speed); onAssetsReady(); },
+    stepEffects(seconds) { fxStep += Math.max(0, seconds); onAssetsReady(); },
+    ragdollProbe: () => ragdolls.probe(),
+    clearCasualties() { ragdolls.clear(); gore.clear(); onAssetsReady(); },
+    meshProbe: () => agents.meshProbe(),
     driverBody: (vehicle, x, y) => agents.driverBody(vehicle, x, y),
     vehicleHit(x, y, z, dirX, dirY, glass, blood) {
       if (glass) {
@@ -1860,6 +1880,10 @@ export function createSceneRenderer(
       if (Math.floor(cityMinutes / 60) !== growthHour && [...net.doc.landscape.values()].some((i) => i.planted !== undefined && cityMinutes - i.planted < GROW_MINUTES + 60)) rebuildFurniture(net);
       const wallNow = performance.now();
       const wallDt = lastWall < 0 ? 0 : Math.min(0.1, (wallNow - lastWall) / 1000);
+      // The bodies, guts and debris on their own clock (the weapons lab slows,
+      // stops and steps it, `setEffectsSpeed` / `stepEffects`).
+      const fxDt = Math.min(0.1, wallDt * fxSpeed + fxStep);
+      fxStep = 0;
       lastWall = wallNow;
       if (canvas.clientWidth !== lastWidth || canvas.clientHeight !== lastHeight) {
         lastWidth = canvas.clientWidth;
@@ -2121,8 +2145,8 @@ export function createSceneRenderer(
             }
           }
           ragdolls.release((id) => ragdollDown.has(id));
-          ragdolls.update(wallDt, ragdollWorld);
-          gore.update(wallDt, ragdollWorld.groundAt);
+          ragdolls.update(fxDt, ragdollWorld);
+          gore.update(fxDt, ragdollWorld.groundAt);
           ragdolls.draw(citizens, ragdollWorld);
         },
         hiddenPed: (id) => id === hiddenPerson || ragdolls.hides(id),
@@ -2130,7 +2154,7 @@ export function createSceneRenderer(
       exhaust.tick(windClock, renderer.domElement.height / 2);
       destruction.update(wallDt);
       casualties.sync(ragdolls.decals);
-      blast.update(wallDt, ragdollWorld);
+      blast.update(fxDt, ragdollWorld);
       // Tracers fade in a tenth of a second, the muzzle flash with them.
       for (let i = tracers.length - 1; i >= 0; i--) {
         const t = tracers[i]!;

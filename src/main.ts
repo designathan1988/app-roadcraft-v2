@@ -37,6 +37,7 @@ import { type Viewport, flatViewport } from '@view/viewport';
 import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type BlastHit, type SceneHandle, type SkyMode } from '@render/renderer';
+import { startWeaponsLab } from './weaponsLab';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
@@ -3180,6 +3181,24 @@ initChrome(requestDraw);
 onRoadGridChange(requestDraw);
 mountBuildStamp(document.getElementById('buildStamp'));
 mountAbout();
+
+// The weapons lab (`?lab=armas`): a test street, a person always ready, the
+// guns and the bomb, and probes of every frame (`weaponsLab.ts`).
+if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab') ?? '')) {
+  setTimeout(() => startWeaponsLab({
+    sim, scene: () => scene, view: () => view, canvas: () => canvas3d,
+    loadDoc: (data) => { history.record(doc); applySnapshot(data, 'import'); },
+    lookAt: (x, y, zoom) => { camera.x = x; camera.y = y; camera.zoom = zoom; syncViewFromFlatCamera(); requestDraw(); },
+    heightAt: (p) => sceneHeightAt(p),
+    explode: (at, z, strength) => explodeAt(at, z, null, strength),
+    setSpeed: (speed) => setSpeed(speed),
+    runSim: (seconds) => {
+      sim.clock.run(Math.max(1, Math.round(seconds / DT)), () => step(sim, { traffic: true, pedestrians: true }));
+      requestDraw();
+    },
+    requestDraw,
+  }), 300);
+}
 
 (document.getElementById('newMap') as HTMLButtonElement).onclick = () => {
   if (!window.confirm(t('confirm.newMap'))) return;

@@ -1297,7 +1297,8 @@ function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: num
     // Away from it: to the walkway point some way off on the far side.
     const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
-    const after = p.act?.kind === 'fall' ? p.act.until - p.age : 0;
+    // Busy with their own fall or wound: the fright waits till that is over.
+    const after = p.act?.kind === 'fall' || p.act?.kind === 'flinch' ? p.act.until - p.age : 0;
     // The wounded get away as they can: a hurried stagger, not a sprint.
     const hurt = (p.hp ?? 100) < 100 ? ((p.hp ?? 100) < 50 ? 1.35 : 1.8) : null;
     p.rush = { by: hurt ?? (seconds >= 14 ? PANIC_RUN : RUN), until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
@@ -1380,4 +1381,22 @@ export function releaseWalker(w: SimWorld, id: number, to: Vec2 | null): void {
   p.player = false;
   if (!to) { finish(s, p, false); prune(s); return; }
   replan(w, s, p, to);
+}
+
+/**
+ * One walker as a test bench reads them (the weapons lab, `src/weaponsLab.ts`):
+ * where, how fast, what they are doing and for how long yet, how hurt.
+ * Null once they are off the street (dead, arrived).
+ */
+export function walkerState(w: SimWorld, id: number): {
+  x: number; y: number; heading: number; v: number; act: string | null; actLeft: number; hp: number; hits: number;
+  bleeding: number; lost: readonly Severable[]; fleeing: boolean; frightened: boolean;
+} | null {
+  const p = stateOf(w).byId.get(id);
+  if (!p || p.done) return null;
+  return {
+    x: p.x, y: p.y, heading: p.heading, v: p.v, act: p.act?.kind ?? null, actLeft: p.act ? Math.max(0, p.act.until - p.age) : 0,
+    hp: p.hp ?? 100, hits: p.hits ?? 0, bleeding: p.bleeding ?? 0, lost: p.lost ?? [], fleeing: p.rush !== null && p.age < p.rush.until,
+    frightened: (p.fright ?? 0) > p.age,
+  };
 }

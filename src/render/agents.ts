@@ -170,6 +170,13 @@ export interface AgentMeshes {
    * in its frame about the middle of its box; null for a body not built.
    */
   carcass(vehicle: { readonly id: number; readonly archetype: Archetype }, intact?: boolean): BufferGeometry | null;
+  /**
+   * How far each procedural person's drawn skeleton is from a body (the
+   * weapons lab's mesh probe): the bone pulled furthest off its length
+   * against its parent (1 = as built), and the most a bone is scaled; a
+   * skin stretched into blades or a part blown up shows here.
+   */
+  meshProbe(): { id: number; stretch: number; stretchBone: string; scale: number; scaleBone: string; held: boolean; clip: string }[];
   /** The body a vehicle's driver or rider is drawn with, for their body when they are thrown out (`Occupant.index`). */
   driverBody(vehicle: SimVehicle, x: number, y: number): number | null;
   /** Called for each walker drawn bleeding (a limb lost), to drip blood where they go. */
@@ -1517,6 +1524,43 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   return {
     meshes,
     census: () => pedestrians.census(),
+    meshProbe() {
+      const out: { id: number; stretch: number; stretchBone: string; scale: number; scaleBone: string; held: boolean; clip: string }[] = [];
+      if (!procedural) return out;
+      const inv = new Matrix4();
+      for (const [id, entry] of procPeople) {
+        const person = entry.person;
+        if (!person) continue;
+        const pal = procedural.ragdoll.pose(person);
+        const sk = procedural.ragdoll.skeleton(person);
+        if (!pal || !sk) continue;
+        const bind = sk.inverses.map((m4) => { const e = inv.copy(m4).invert().elements; return [e[12]!, e[13]!, e[14]!] as const; });
+        const at = (b: number): [number, number, number] => {
+          const o = b * 16, [x, y, z] = bind[b]!;
+          return [pal[o]! * x + pal[o + 4]! * y + pal[o + 8]! * z + pal[o + 12]!, pal[o + 1]! * x + pal[o + 5]! * y + pal[o + 9]! * z + pal[o + 13]!,
+            pal[o + 2]! * x + pal[o + 6]! * y + pal[o + 10]! * z + pal[o + 14]!];
+        };
+        const norm = (b: number): number => Math.max(Math.hypot(pal[b * 16]!, pal[b * 16 + 1]!, pal[b * 16 + 2]!),
+          Math.hypot(pal[b * 16 + 4]!, pal[b * 16 + 5]!, pal[b * 16 + 6]!), Math.hypot(pal[b * 16 + 8]!, pal[b * 16 + 9]!, pal[b * 16 + 10]!));
+        let stretch = 1, stretchBone = '', scale = 0, scaleBone = '';
+        for (let b = 0; b < sk.parents.length; b++) {
+          const name = sk.names[b] ?? '';
+          if (/Finger|Toe|Nub|_end|twist/i.test(name)) continue;
+          const n = norm(b);
+          if (n > scale) { scale = n; scaleBone = name; }
+          const p = sk.parents[b]!;
+          // Not against the root (it stays at the feet: a crouch lowers the pelvis to it, no skin between).
+          if (p < 0 || sk.parents[p]! < 0 || n < 0.5 || norm(p) < 0.5) continue;
+          const l0 = Math.hypot(bind[b]![0] - bind[p]![0], bind[b]![1] - bind[p]![1], bind[b]![2] - bind[p]![2]);
+          if (l0 < 1e-3) continue;
+          const a = at(b), c = at(p);
+          const r = Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]) / l0;
+          if (Math.abs(r - 1) > Math.abs(stretch - 1)) { stretch = r; stretchBone = name; }
+        }
+        out.push({ id, stretch, stretchBone, scale, scaleBone, held: procHeld.has(id), clip: person.clip });
+      }
+      return out;
+    },
     driverBody(vehicle, x, y) {
       return pedestrians.indexFor(seatIdentity(vehicle, seatPerson(vehicle, 0), false), vehicle.archetype.shape === 'motorcycle', x, y);
     },
