@@ -889,7 +889,8 @@ export function createSceneRenderer(
     yield;
     const regions = blocks.map(terrainRegion);
     if (sites) regions.push(terrainRegion(sites));
-    const BATCH = 3;
+    // A block a step: three were 33 ms, past the frame's allowance (`core/frameWork.ts`).
+    const BATCH = 1;
     for (let i = 0; i < regions.length; i += BATCH) {
       shapeGround(net, regions.slice(i, i + BATCH), false, true);
       yield;
