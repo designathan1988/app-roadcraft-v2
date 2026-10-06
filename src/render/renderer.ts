@@ -1447,7 +1447,10 @@ export function createSceneRenderer(
             if (a <= 0.001) discard;
             gl_FragColor = vec4(0.62, 0.95, 1.0, a);
           }`,
-        transparent: true, depthWrite: false, side: DoubleSide, blending: AdditiveBlending,
+        // Over the ground whatever it does meanwhile: laid at the height the
+        // ground had at the click, the cut and fill that follows the road rose
+        // through it and broke it into pieces (the player, 2026-10-06).
+        transparent: true, depthWrite: false, depthTest: false, side: DoubleSide, blending: AdditiveBlending,
       });
       const mesh = new Mesh(geometry, material);
       mesh.name = 'grid-flash';
