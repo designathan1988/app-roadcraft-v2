@@ -1070,6 +1070,24 @@ export function movePlayerWalker(w: SimWorld, id: number, x: number, y: number, 
   p.x = x; p.y = y; p.heading = heading; p.v = v;
 }
 
+/**
+ * On their last stretch, a walk goes on to somewhere else instead of ending
+ * (a passer-by in sight never vanishes where they stop, as GTA's peds wander
+ * on): the route from where it would end to `to`, joined on. False when they
+ * are not on their last stretch, or no way leads there.
+ */
+export function walkOn(w: SimWorld, id: number, toX: number, toY: number, reach: number): boolean {
+  const s = stateOf(w);
+  const p = s.byId.get(id);
+  if (!p || p.done || p.player || p.inside || p.leg !== p.steps.length - 1) return false;
+  const last = p.steps[p.leg]!;
+  const end = frame(last, stepLength(last));
+  const more = plan(w, s, { x: end.x, y: end.y }, { x: toX, y: toY }, Math.max(reach, REACH));
+  if (!more?.length) return false;
+  p.steps.push(...more);
+  return true;
+}
+
 /** Takes somebody off the street altogether (into a car, into a building): no arrival is told. */
 export function removeWalker(w: SimWorld, id: number): void {
   const s = stateOf(w);

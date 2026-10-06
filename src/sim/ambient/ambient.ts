@@ -1,14 +1,17 @@
 import { Rng } from '@core/rng';
 import { m } from '@world/units';
 import type { Building } from '@world/buildings/types';
+import { solidFootprints } from '@world/buildings/geometry';
 import { DT } from '../params';
 import type { SimWorld } from '../world';
-import { ARCHETYPES, type Archetype } from '../vehicles/archetypes';
+import { ARCHETYPES, bodyClassOfArchetype, type Archetype } from '../vehicles/archetypes';
+import { chooseVehicleDestination } from '../routing/destination';
+import { planFrom } from '../routing/router';
 import { makeDriver } from '../vehicles/driver';
 import { createVehicle, type Vehicle } from '../vehicles/state';
 import { spawnVehicleAt } from '../vehicles/spawn';
 import { vehiclePose } from '../pose';
-import { removeWalker, walkerOf } from '../agents/walk';
+import { removeWalker, walkerOf, walkOn } from '../agents/walk';
 import { collectBays, type Bay } from '../agents/parking';
 import type { PersonAgeClass } from '../people/view';
 import { PlayWorld } from './play';
@@ -106,6 +109,8 @@ export class AmbientWorld {
   private readonly rng = new Rng(0xa3b1e7);
   private readonly walkers = new Set<number>();
   private readonly drivers = new Set<number>();
+  /** The drivers made here that may be on screen now: never taken off the road at a dead end (`vehicles/spawn.ts` stepDespawn). */
+  readonly sighted = new Set<number>();
   private readonly bays = new Map<number, Vehicle>();
   private clock = 0;
   private nextTrip = 1 << 26;
@@ -142,6 +147,7 @@ export class AmbientWorld {
     for (const id of this.drivers) { const v = w.vehicles.get(id); if (v) w.removeVehicle(v); }
     this.walkers.clear();
     this.drivers.clear();
+    this.sighted.clear();
     this.bays.clear();
     this.parked.length = 0;
     this.baysFor = '';
@@ -156,7 +162,7 @@ export class AmbientWorld {
     const engine = w.pedEngine;
     engine.takeArrivals?.(w);
     for (const id of this.walkers) if (!walkerOf(w, id)) this.walkers.delete(id);
-    for (const id of this.drivers) if (!w.vehicles.has(id)) this.drivers.delete(id);
+    for (const id of this.drivers) if (!w.vehicles.has(id)) { this.drivers.delete(id); this.sighted.delete(id); }
     this.clock += DT;
     if (this.clock < LOOK_EVERY) return;
     this.clock = 0;
@@ -184,6 +190,58 @@ export class AmbientWorld {
 
   // ------------------------------------------------------------ on foot
 
+  /**
+   * Whether a point may be on screen: in the circle of the view from above,
+   * or, playing, near the player or inside the camera's cone this side of how
+   * far anything is noticed (`SimWorld.focus.view`).
+   */
+  private seen(w: SimWorld, focus: NonNullable<SimWorld['focus']>, x: number, y: number, pad: number): boolean {
+    if (Math.hypot(x - focus.x, y - focus.y) < focus.r + pad) return true;
+    const v = focus.view;
+    if (!v) return false;
+    const rx = x - v.ex, ry = y - v.ey, d = Math.hypot(rx, ry);
+    if (d > v.far + pad) return false;
+    if (d < pad) return true;
+    if ((rx * v.dx + ry * v.dy) / d <= v.cos) return false;
+    // In the cone, but behind a building: hidden, as GTA fills a street from
+    // behind the corners. The point grown by `pad` must be hidden whole.
+    return !this.behindWall(w, v.ex, v.ey, x, y, pad);
+  }
+
+  /** The walls of the buildings, as rings with their boxes, for the line of sight. */
+  private walls: { ring: readonly { x: number; y: number }[]; x0: number; y0: number; x1: number; y1: number }[] = [];
+  private wallsFor = -1;
+
+  /** True when a wall stands between the eye and (x, y), and between the eye and each side of it `pad` across. */
+  private behindWall(w: SimWorld, ex: number, ey: number, x: number, y: number, pad: number): boolean {
+    if (this.wallsFor !== w.doc.buildings.revision) {
+      this.wallsFor = w.doc.buildings.revision;
+      this.walls = [];
+      for (const b of w.doc.buildings.all()) {
+        for (const ring of solidFootprints(b)) {
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+          for (const p of ring) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+          this.walls.push({ ring, x0, y0, x1, y1 });
+        }
+      }
+    }
+    const dx = x - ex, dy = y - ey, d = Math.hypot(dx, dy) || 1;
+    const sx = (-dy / d) * pad, sy = (dx / d) * pad;
+    return this.blocked(ex, ey, x + sx, y + sy) && this.blocked(ex, ey, x - sx, y - sy);
+  }
+
+  private blocked(ax: number, ay: number, bx: number, by: number): boolean {
+    const lx = Math.min(ax, bx), ly = Math.min(ay, by), hx = Math.max(ax, bx), hy = Math.max(ay, by);
+    for (const wl of this.walls) {
+      if (wl.x1 < lx || wl.x0 > hx || wl.y1 < ly || wl.y0 > hy) continue;
+      const r = wl.ring;
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        if (crosses(ax, ay, bx, by, r[j]!.x, r[j]!.y, r[i]!.x, r[i]!.y)) return true;
+      }
+    }
+    return false;
+  }
+
   private people(w: SimWorld, focus: NonNullable<SimWorld['focus']>, reach: number, want: number): void {
     // Drawn (`detail`), the view is the circle of radius `focus.r`: nobody is
     // made or taken away inside it. Not drawn, nothing is seen: they are kept
@@ -194,9 +252,15 @@ export class AmbientWorld {
       const at = walkerOf(w, id);
       if (!at) { this.walkers.delete(id); continue; }
       const d = Math.hypot(at.x - focus.x, at.y - focus.y);
-      if (d > far || (this.walkers.size > want && (!seen || d > focus.r * 1.05))) {
+      // Never taken away where they may be seen; drawn from above, the view is the circle.
+      const inSight = seen && this.seen(w, focus, at.x, at.y, m(4));
+      if (!inSight && (d > far || this.walkers.size > want)) {
         removeWalker(w, id);
         this.walkers.delete(id);
+      } else if (inSight) {
+        // In sight on their last stretch: on to somewhere else, never ending where they are seen.
+        const b = this.rng.float() * Math.PI * 2, e = reach * (0.3 + this.rng.float() * 0.7);
+        walkOn(w, id, focus.x + Math.cos(b) * e, focus.y + Math.sin(b) * e, m(30));
       }
     }
     const engine = w.pedEngine;
@@ -206,7 +270,7 @@ export class AmbientWorld {
       const a = this.rng.float() * Math.PI * 2;
       const d = anywhere ? reach * Math.sqrt(this.rng.float()) : focus.r * 1.05 + (reach - focus.r * 1.05) * this.rng.float();
       const from = engine.walkableNear.call(engine, w, focus.x + Math.cos(a) * d, focus.y + Math.sin(a) * d, m(30));
-      if (!from) continue;
+      if (!from || (seen && !this.fresh && this.seen(w, focus, from.x, from.y, m(6)))) continue;
       // Somewhere across the view: the walk passes through what is seen.
       const b = this.rng.float() * Math.PI * 2, e = reach * (0.3 + this.rng.float() * 0.9);
       const to = engine.walkableNear.call(engine, w, focus.x + Math.cos(b) * e, focus.y + Math.sin(b) * e, m(30));
@@ -227,12 +291,23 @@ export class AmbientWorld {
     const far = reach * 1.15;
     for (const id of [...this.drivers]) {
       const v = w.vehicles.get(id);
-      if (!v) { this.drivers.delete(id); continue; }
+      if (!v) { this.drivers.delete(id); this.sighted.delete(id); continue; }
       const pose = vehiclePose(w, v, 1);
       const d = pose ? Math.hypot(pose.p.x - focus.x, pose.p.y - focus.y) : Infinity;
-      if (d > far || (this.drivers.size > want && d > focus.r * 1.05)) {
+      const inSight = pose !== null && this.seen(w, focus, pose.p.x, pose.p.y, v.archetype.length);
+      if (inSight) {
+        this.sighted.add(id);
+        // Near the end of its way (a road off the map), somewhere else instead: a car in sight drives on.
+        const at = v.route.indexOf(v.lanelet);
+        if (at >= 0 && v.route.length - at <= 5) {
+          const next = chooseVehicleDestination(w, v.lanelet, bodyClassOfArchetype(v.archetype));
+          if (next && next !== v.destination) { v.destination = next; planFrom(w, v); }
+        }
+      } else this.sighted.delete(id);
+      if (!inSight && (d > far || this.drivers.size > want)) {
         w.removeVehicle(v);
         this.drivers.delete(id);
+        this.sighted.delete(id);
       }
     }
     if (this.drivers.size >= want) return;
@@ -250,7 +325,7 @@ export class AmbientWorld {
       const s = arch.length + 1 + this.rng.float() * Math.max(0, lane.length - arch.length - 2);
       const at = lane.centre.sampleAt(s).p;
       const d = Math.hypot(at.x - focus.x, at.y - focus.y);
-      const ok = anywhere ? d < reach : d > focus.r * 1.1 && d < reach;
+      const ok = anywhere ? d < reach : d < reach && !this.seen(w, focus, at.x, at.y, arch.length + m(4));
       if (!ok) continue;
       const id = spawnVehicleAt(w, lane.id, s, arch);
       if (id !== null) { this.drivers.add(id); made++; }
@@ -340,4 +415,13 @@ export class AmbientWorld {
     this.road = total;
     return total;
   }
+}
+
+/** Whether segment a-b crosses segment c-d (proper crossing). */
+function crosses(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
+  const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  return (d1 > 0) !== (d2 > 0) && (d3 > 0) !== (d4 > 0);
 }

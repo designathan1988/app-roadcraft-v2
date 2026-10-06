@@ -177,7 +177,18 @@ export class SimWorld {
    * negotiating with each other (`sim/people`): nobody can see that, and it
    * was most of a frame's simulation in a town.
    */
-  focus: { readonly x: number; readonly y: number; readonly r: number; readonly detail: boolean } | null = null;
+  focus: {
+    readonly x: number; readonly y: number; readonly r: number; readonly detail: boolean;
+    /**
+     * Playing (`play.ts`), the camera looks along the ground from behind the
+     * player and sees far down the street, past `r`: its eye, the way it
+     * looks (unit), the cosine of half its width with a margin, and how far
+     * anybody is still drawn big enough to notice. What is made or taken away
+     * (`ambient/ambient.ts`) is made or taken away outside this cone, as GTA
+     * spawns and culls off screen. Null in the view from above.
+     */
+    readonly view?: { readonly ex: number; readonly ey: number; readonly dx: number; readonly dy: number; readonly cos: number; readonly far: number } | null;
+  } | null = null;
 
   auditEnabled = false;
   auditLevel: 'cheap' | 'full' = 'cheap';

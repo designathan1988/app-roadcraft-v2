@@ -1028,6 +1028,12 @@ export function createSceneRenderer(
 
   // The play camera's state: the projection the orbit had before it.
   const chaseCamera: Chase = { eye: new Vector3(), look: new Vector3(), fov: 60, focus: new Vector3() };
+  /** Playing: the ring round the player always counted as seen (the camera turns), u. */
+  const PLAY_NEAR = m(45);
+  /** Playing: how far down the street a person or a car is still big enough to see appear, u. */
+  const PLAY_SEEN = m(320);
+  /** Playing: radians added to each side of the camera's width (the mouse turns it). */
+  const VIEW_MARGIN = 0.35;
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
   const TRACER_LIFE = 0.12;
@@ -1601,12 +1607,27 @@ export function createSceneRenderer(
       environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
-      sim.focus = {
-        x: target.x,
-        y: -target.z,
-        r: Math.hypot(halfWidth, groundHalfDepth) + m(20),
-        detail: rig.viewport.zoom * m(1.7) >= 10,
-      };
+      if (rig.chasing) {
+        // Playing: the ring round the player, and the camera's own cone.
+        const dx = chaseCamera.look.x - chaseCamera.eye.x, dy = -(chaseCamera.look.z - chaseCamera.eye.z);
+        const len = Math.hypot(dx, dy) || 1;
+        const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+        const halfAcross = Math.atan(Math.tan((chaseCamera.fov * Math.PI) / 360) * aspect);
+        sim.focus = {
+          x: target.x,
+          y: -target.z,
+          r: PLAY_NEAR,
+          detail: true,
+          view: { ex: chaseCamera.eye.x, ey: -chaseCamera.eye.z, dx: dx / len, dy: dy / len, cos: Math.cos(Math.min(Math.PI, halfAcross + VIEW_MARGIN)), far: PLAY_SEEN },
+        };
+      } else {
+        sim.focus = {
+          x: target.x,
+          y: -target.z,
+          r: Math.hypot(halfWidth, groundHalfDepth) + m(20),
+          detail: rig.viewport.zoom * m(1.7) >= 10,
+        };
+      }
 
       renderer.shadowMap.needsUpdate = true;
       // Cheap (a few hundred objects), and it follows meshes a rebuild or an

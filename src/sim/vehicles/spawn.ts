@@ -282,7 +282,8 @@ export function stepDespawn(w: SimWorld): void {
     const body = bodyClassOfArchetype(v.archetype);
     const nowhereToGo = w.graph.exitsOf(v.lanelet).every((id) =>
       (w.connector(id)?.maxBodyClass ?? -1) < body);
-    if (lane.kind === 'link' && atEnd && nowhereToGo) {
+    // A car of the ambient traffic that may be on screen waits there: taken away out of sight.
+    if (lane.kind === 'link' && atEnd && nowhereToGo && !w.ambient.sighted.has(v.id)) {
       if (v.destination === lane.id) w.completedTrips++;
       w.removeVehicle(v);
     }
