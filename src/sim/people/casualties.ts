@@ -1,3 +1,4 @@
+import type { Severable } from './view';
 import type { SimWorld } from '../world';
 import type { PartyView, PersonAgeClass, PersonGender } from './view';
 
@@ -24,6 +25,8 @@ export interface Casualty {
   readonly blastY: number;
   /** 0 at the edge of the reach, 1 at the blow's centre. */
   readonly power: number;
+  /** Limbs (or the head) already lost when they fell: the body on the ground lacks them too. */
+  readonly lost?: readonly Severable[];
 }
 
 const RECORDS = new WeakMap<SimWorld, Casualty[]>();

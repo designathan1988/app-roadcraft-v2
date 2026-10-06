@@ -1,3 +1,4 @@
+import type { BodyPart, Severable } from './view';
 import type { LaneletId } from '@world/lanelets';
 import type { AuditIssue } from '../audit';
 import type { SimWorld } from '../world';
@@ -49,6 +50,13 @@ export interface PedestrianEngine {
    * away from it for a while. Returns how many died.
    */
   impact?(w: SimWorld, x: number, y: number, kill: number, scare: number): number;
+  /**
+   * A shot striking one person in one part (`BodyPart`) from (fromX, fromY):
+   * the wound, the reaction (a stagger, a fall, a limp, running off), a limb
+   * shot off once it has taken enough, death when they have. What happened,
+   * for the blood and the pieces drawn; null when there is nobody to hit.
+   */
+  shot?(w: SimWorld, id: number, part: BodyPart, fromX: number, fromY: number): { killed: boolean; severed: Severable | null } | null;
   /**
    * Somebody knocked down (`impact`) or fallen gets up at (x, y) facing
    * `heading`, in `seconds`: where their body came to rest (`render/ragdoll.ts`).

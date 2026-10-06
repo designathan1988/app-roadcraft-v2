@@ -1,3 +1,4 @@
+import type { Severable } from '@sim/people/view';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
@@ -263,6 +264,12 @@ export interface SceneHandle {
   holdBuildings(on: boolean): void;
   /** A shot: a tracer from the muzzle to where it struck, and the muzzle's flash (world x, y, height). */
   shot(from: readonly [number, number, number], to: readonly [number, number, number]): void;
+  /**
+   * A person struck by a shot (world x, y, the height struck): blood sprayed
+   * out of the far side and on the ground behind, and what the shot took off
+   * (an arm, a leg, the head) flung along the shot.
+   */
+  wound(x: number, y: number, z: number, dirX: number, dirY: number, severed: Severable | null): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
   /** The land before the roads shape it, as the roads' heights read it (`buildRoadElevation`). */
@@ -1384,6 +1391,27 @@ export function createSceneRenderer(
     },
     holdBuildings(on) {
       buildingsHeld = on;
+    },
+    wound(x, y, z, dirX, dirY, severed) {
+      // The spray, out of the far side, then the drops on the ground behind.
+      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 70 : 34, 4, m(severed ? 0.35 : 0.2), m(0.05), 0.9);
+      const ground = terrain.renderedHeightAt(x, y);
+      for (let k = 0; k < (severed ? 9 : 4); k++) {
+        const d = m(0.3 + Math.random() * 1.6), side = (Math.random() - 0.5) * m(0.6);
+        ragdolls.drip(x + dirX * d - dirY * side, y + dirY * d + dirX * side, ground + m(0.02), m(0.12 + Math.random() * 0.3));
+      }
+      if (severed) {
+        const skin = [0xc89878, 0x9c6b4e, 0x6e4632, 0xe0b49a][Math.floor(Math.random() * 4)]!;
+        const head = severed === 'head', leg = severed === 'legL' || severed === 'legR';
+        const speed = m(3 + Math.random() * 3);
+        blast.debris({
+          shape: head ? 'box' : 'cylinder', kind: 'flesh', color: skin, at: new Vector3(x, z, -y),
+          size: head ? new Vector3(m(0.2), m(0.24), m(0.2)) : new Vector3(m(leg ? 0.075 : 0.05), m(leg ? 0.8 : 0.55), m(leg ? 0.075 : 0.05)),
+          velocity: new Vector3(dirX * speed, m(1.5 + Math.random() * 2.5), -dirY * speed),
+          spin: new Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 10),
+        });
+      }
+      onAssetsReady();
     },
     shot(from, to) {
       const geometry = new BufferGeometry();

@@ -11,7 +11,7 @@ import { emptyCrossingState } from '../crossings/state';
 import { indexReservations, mayEnterCrossing } from '../crossings/permission';
 import { makeCrossingId, type CrossingId } from '../signals/plan';
 import type { SidewalkEdge } from '../peds/sidewalk';
-import { type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender } from '../people/view';
+import { type BodyPart, type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender, type Severable } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
 import { recordCasualty } from '../people/casualties';
 import { ASK_WAY, type CarTrip, carSweep, crossesFootway } from './cars';
@@ -193,6 +193,12 @@ interface Walker {
   tripAt?: number | undefined;
   /** A limb lost to a blow (`PedView.maimed`). */
   maimed?: 'armL' | 'armR' | 'legL' | 'legR';
+  /** Health, 100 whole (`shot`); absent: never hurt. */
+  hp?: number;
+  /** Damage taken by each part, for a limb shot off once it has taken enough. */
+  hurt?: Partial<Record<BodyPart, number>>;
+  /** Every limb lost (`PedView.lost`). */
+  lost?: Severable[];
 }
 
 interface State {
@@ -570,6 +576,45 @@ export function createAgentWalkEngine(): PedestrianEngine {
       startle(w, x, y, scare, 26, null);
       return dead;
     },
+    shot(w, id, part, fromX, fromY) {
+      const s = stateOf(w);
+      const p = s.byId.get(id);
+      if (!p || p.done || p.inside || p.player) return null;
+      // As GTA's peds take it: a shot to the head kills; to the body a third
+      // of their health; to an arm or a leg a fifth, the limb gone at the
+      // second; each hit staggers them or knocks them down, and they run.
+      const DAMAGE: Record<BodyPart, number> = { head: 100, torso: 34, armL: 20, armR: 20, legL: 20, legR: 20 };
+      p.hp = (p.hp ?? 100) - DAMAGE[part];
+      p.hurt ??= {};
+      p.hurt[part] = (p.hurt[part] ?? 0) + DAMAGE[part];
+      p.lost ??= p.maimed ? [p.maimed] : [];
+      let severed: Severable | null = null;
+      if (part !== 'torso' && !p.lost.includes(part) && (part === 'head' || p.hurt[part]! >= 40)) {
+        severed = part;
+        p.lost.push(part);
+        if (part !== 'head') p.maimed ??= part;
+        // A limb shot off takes a good share of the blood with it.
+        if (part !== 'head') p.hp -= 15;
+      }
+      const v = p.view;
+      if (p.hp <= 0 || severed === 'head') {
+        recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
+          party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
+          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost] });
+        finish(s, p, false);
+        prune(s);
+        startle(w, p.x, p.y, m(45), 26, null);
+        return { killed: true, severed };
+      }
+      // Struck: knocked down by a leg giving way or a limb lost, else a stagger;
+      // then up and running, slower on a hurt leg.
+      const down = severed || part === 'legL' || part === 'legR' ? 2.5 : 0.7;
+      p.act = { kind: 'fall', from: p.age, until: p.age + down, faceX: fromX, faceY: fromY };
+      p.v = 0;
+      p.fright = p.age + 30;
+      startle(w, p.x, p.y, m(45), 26, null);
+      return { killed: false, severed };
+    },
     getUp(w, id, x, y, heading, seconds) {
       // Up where the body came to rest (the walkway nearest it), facing the
       // way it rises, the fall held until the getting-up is over.
@@ -905,7 +950,9 @@ function stepWalkers(w: SimWorld): void {
     // --- the speed: the room ahead in its own stripe, the wait, and the turn still to make.
     const crossing = crossingOf(w, st.way) !== null;
     const jammed = p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER);
-    let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1) * (p.maimed === 'legL' || p.maimed === 'legR' ? 0.22 : 1);
+    // A leg lost: a hobble; both: no walking at all.
+    const legsLost = (p.lost ?? (p.maimed ? [p.maimed] : [])).filter((l) => l === 'legL' || l === 'legR').length;
+    let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1) * (legsLost >= 2 ? 0 : legsLost === 1 ? 0.22 : 1);
     if (jammed) want *= JAM_SHARE;
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
@@ -997,6 +1044,7 @@ function publish(w: SimWorld): void {
       ...(p.act.kind === 'fall' ? { fromX: p.act.faceX, fromY: p.act.faceY } : {}) } : null;
     v.panic = (p.fright ?? 0) > p.age;
     if (p.maimed) v.maimed = p.maimed;
+    if (p.lost?.length) v.lost = p.lost;
     v.kerbWait = p.waiting ? p.waited : 0;
     v.waitingFor = p.waiting ? p.waiting.id : null;
     views.push(v);

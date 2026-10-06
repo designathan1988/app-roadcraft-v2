@@ -101,13 +101,27 @@ export const blockGridChoice = { cols: 3, rows: 2, blockMetres: 100, angle: 0, a
 export const signChoice: { type: SignType; text: string; streetName: string } = { type: 'stop', text: '', streetName: '' };
 
 /** The demolish tool: knock a building down at once, or strike it (and streets) with a chosen force. */
-export const strikeChoice: { mode: 'demolish' | 'strike'; strength: number } = { mode: 'demolish', strength: 5 };
+export const strikeChoice: { mode: 'demolish' | 'strike' | 'shoot'; strength: number } = { mode: 'demolish', strength: 5 };
 
 const ZONE_COLOUR_KEY = 'roadcraft.zoneColours';
 let zoneColours = stored(ZONE_COLOUR_KEY, ['on', 'off'] as const, 'on') === 'on';
 /** Whether zoned land is tinted with its use's colour outside the Zoning tool. */
 export function zoneColoursShown(): boolean { return zoneColours; }
 export function setZoneColoursShown(on: boolean): void { zoneColours = on; keep(ZONE_COLOUR_KEY, on ? 'on' : 'off'); }
+
+const SHOOT_PEOPLE_KEY = 'roadcraft.actions.shootPeople';
+let shootPeople = stored(SHOOT_PEOPLE_KEY, ['on', 'off'] as const, 'off') === 'on';
+/** The dock's Actions: whether shots in play strike people (wounds, limbs off, death). */
+export function shootPeopleAllowed(): boolean { return shootPeople; }
+export function setShootPeopleAllowed(on: boolean): void { shootPeople = on; keep(SHOOT_PEOPLE_KEY, on ? 'on' : 'off'); }
+
+/**
+ * The weapon chosen in the Actions (`sim/ambient/play.ts` Weapon), with a
+ * count of the choices: the game applies a new choice once, and the keys
+ * (1, 2, wheel) still change it in play.
+ */
+export const weaponChoice: { weapon: 'fists' | 'pistol'; serial: number } = { weapon: 'fists', serial: 0 };
+export function chooseWeapon(weapon: 'fists' | 'pistol'): void { weaponChoice.weapon = weapon; weaponChoice.serial++; }
 
 const ROAD_GRID_KEY = 'roadcraft.roadGrid';
 let roadGrid = stored(ROAD_GRID_KEY, ['on', 'off'] as const, 'off') === 'on';

@@ -382,6 +382,8 @@ export function createPlay(host: PlayHost): Play {
       play.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
       play.input.aimX = fx;
       play.input.aimY = fy;
+      // The camera looks down by its pitch; aiming over the shoulder the shot goes where it looks.
+      play.input.aimPitch = firstPerson ? pitch * 0.9 - 0.3 : Math.atan2(Math.sin(pitch) * m(20) - (PIVOT_FOOT - m(1.4)), m(20) * Math.cos(pitch)) * 0.55;
       play.input.aiming = aiming && play.mode === 'foot';
       play.input.handbrake = keys.has(' ');
       // In a car (or riding) the camera swings round behind it by itself once the mouse rests, as GTA's does.
@@ -401,6 +403,8 @@ export function createPlay(host: PlayHost): Play {
         const h1 = scene.surfaceHeightAt(s.to.x, s.to.y) + m(1.2);
         scene.shot([s.from.x, s.from.y, h0], [s.to.x, s.to.y, h1]);
       }
+      // The people the shots struck: the blood and what came off.
+      for (const h of play.hits.splice(0)) scene.wound(h.x, h.y, scene.surfaceHeightAt(h.x, h.y) + h.z, h.dirX, h.dirY, h.severed);
       showHud();
       host.requestDraw();
     },

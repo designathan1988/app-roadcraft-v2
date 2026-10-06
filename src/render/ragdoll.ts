@@ -1,3 +1,4 @@
+import type { Severable } from '@sim/people/view';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
 import type { Casualty } from '@sim/people/people';
@@ -116,6 +117,11 @@ const PARTS: Readonly<Record<PartName, { origin: number; to: number; ref: 'side'
 const PART_NAMES = Object.keys(PARTS) as PartName[];
 const LIMB_JOINTS: readonly (readonly [Limb, number, number, number])[] = [['larm', LS, LE, LW], ['rarm', RS, RE, RW], ['lleg', LH, LK, LA], ['rleg', RH, RK, RA]];
 
+/** The parts gone with each limb shot off (as the living lose them, `riggedCitizens` maim). */
+const LOST_PARTS: Readonly<Record<Severable, readonly PartName[]>> = {
+  armL: ['lfa'], armR: ['rfa'], legL: ['lca', 'lfo'], legR: ['rca', 'rfo'], head: ['head'],
+};
+
 /** What tears off a body right under a blow: the particles that go with it. */
 const LIMBS: readonly (readonly number[])[] = [[HEA, TOP], [LS, LE, LW], [RS, RE, RW], [LH, LK, LA, LT], [RH, RK, RA, RT]];
 
@@ -187,6 +193,8 @@ interface Body {
   readonly unbind: Matrix4;
   readonly walls: Wall[];
   torn: boolean;
+  /** Parts lost before the fall (shot off, `Casualty.lost`): drawn closed at their joint. */
+  lostParts: Set<PartName>;
   survivor: Survivor | undefined;
   /** Which piece each particle is on: the body itself, or a limb torn off. */
   comp: number[];
@@ -365,7 +373,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       bonePart, parents: sk.parents, pos0, rot0, scl0,
       origin0: {} as Record<PartName, Vector3>, frame0: {} as Record<PartName, Matrix4>,
       normals: { larm: side0.clone(), rarm: side0.clone(), lleg: side0.clone(), rleg: side0.clone() },
-      front, inverses: sk.inverses, binds, rebind, unbind, walls, torn: fate === 'torn',
+      front, inverses: sk.inverses, binds, rebind, unbind, walls, torn: fate === 'torn', lostParts: new Set<PartName>(),
       survivor: living ? { id, phase: 'fall', t: 0, lie: fate === 'trip' ? 0.6 + Math.random() * 0.8 : 1.5 + Math.random() * 1.5, clip: RISE_CLIP } : undefined,
       comp: p.map(() => 0), palettes: [], anchor: new Matrix4(), still: 0, asleep: false, age: 0, flying: 0, pooled: false, splats: 0, spray: 0,
     };
@@ -435,6 +443,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
     if (!body) { if (c.kind !== 'knocked') bleed(c.x, c.y, groundHere, m(1.8), 15); return; }
+    for (const limb of c.lost ?? []) for (const part of LOST_PARTS[limb]) body.lostParts.add(part);
     const speed = c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = blast(body, c, speed);
     const chest = body.p[CHE]!;
@@ -869,7 +878,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const m4 = new Matrix4();
     return [...new Set(body.comp)].map((piece) => {
       const out = new Float32Array(bones * 16);
-      const on = body.bonePart.map((part) => body.comp[PARTS[part].origin] === piece);
+      const on = body.bonePart.map((part) => body.comp[PARTS[part].origin] === piece && !body.lostParts.has(part));
       // The piece's own root: its topmost bone (the shoulder of an arm, the hip of a leg).
       let root = on.findIndex((own, i) => own && !(body.parents[i]! >= 0 && on[body.parents[i]!]));
       if (root < 0) root = 0;

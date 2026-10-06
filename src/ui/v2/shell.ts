@@ -72,6 +72,8 @@ const ICON: Record<string, string> = {
   tr_station: '<path d="M3 20h18M5 20V9h14v11M3 9l9-5 9 5"/><path d="M9 13h6"/>',
   tr_line: '<circle cx="5" cy="17" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="19" cy="17" r="2"/><path d="M6.4 15.6 10.6 8.4M13.4 8.4l4.2 7.2"/>',
   people: '<circle cx="12" cy="6" r="3"/><path d="M6 21v-5a6 6 0 0 1 12 0v5"/>',
+  actions: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  bomb: '<circle cx="11" cy="14" r="7"/><path d="M15 8l2-2M17 6l1.5-1.5M19 3l1 1M20 6l1 0"/>',
   demolish: '<path d="m5 9 8-5 5 8-8 5Z"/><path d="m7 15 5 5m4-8 3 5"/>',
   info: '<circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -303,8 +305,18 @@ export function mountShell(deps: ShellDeps): void {
     pop.appendChild(popBody(id));
     pop.hidden = false;
     const r = anchor.getBoundingClientRect();
-    pop.style.top = `${Math.round(r.bottom + 8)}px`;
-    pop.style.right = `${Math.max(12, Math.round(window.innerWidth - r.right))}px`;
+    if (r.top > window.innerHeight / 2) {
+      // From the dock at the bottom: opened above its button.
+      pop.style.top = 'auto';
+      pop.style.bottom = `${Math.round(window.innerHeight - r.top + 8)}px`;
+      pop.style.right = 'auto';
+      pop.style.left = `${Math.max(12, Math.round(r.left + r.width / 2 - 140))}px`;
+    } else {
+      pop.style.bottom = 'auto';
+      pop.style.left = 'auto';
+      pop.style.top = `${Math.round(r.bottom + 8)}px`;
+      pop.style.right = `${Math.max(12, Math.round(window.innerWidth - r.right))}px`;
+    }
   };
   const row = (label: string, run: () => void, icon = ''): HTMLButtonElement => {
     const b = button('v2-row', label, () => { run(); closePop(); }, icon);
@@ -364,6 +376,25 @@ export function mountShell(deps: ShellDeps): void {
         el('hr'),
         row(t('action.about'), () => press('#aboutButton')),
       );
+    } else if (id === 'actions') {
+      // One button an action: a click and it is ready.
+      body.classList.add('icons');
+      // The pistol, as the bomb: clicked on a person in the map, the shot strikes where clicked.
+      body.appendChild(button('v2-row', t('actions.pistol'), () => {
+        strikeChoice.mode = 'shoot';
+        open = true;
+        closePop();
+        press('.tool[data-tool="bulldoze"]');
+        render();
+      }, svg('actions', 18)));
+      // The bomb (what Demolish called its Impact): clicked on the map, it strikes with a force.
+      body.appendChild(button('v2-row', t('actions.bomb'), () => {
+        strikeChoice.mode = 'strike';
+        open = true;
+        closePop();
+        press('.tool[data-tool="bulldoze"]');
+        render();
+      }, svg('bomb', 18)));
     } else if (id === 'sim') {
       body.append(
         slider(t('sim.traffic'), '#trafficIntensity', '#trafficIntensityValue', svg('car', 18)),
@@ -420,6 +451,13 @@ export function mountShell(deps: ShellDeps): void {
     { id: 'info', tool: 'inspect', key: 'I', label: () => t('v2.cat.info') },
   ];
   const catButtons = new Map<Category, HTMLButtonElement>();
+  // The Actions: not a tool, a panel of what the player may do in play.
+  const actionsB = el('button', 'v2-cat');
+  actionsB.type = 'button';
+  actionsB.title = t('v2.cat.actions');
+  actionsB.setAttribute('aria-label', t('v2.cat.actions'));
+  actionsB.innerHTML = `${svg('actions', 26)}<span class="v2-cat-name"></span>`;
+  actionsB.onclick = () => toggle('actions', actionsB);
   for (const c of CATS) {
     const b = el('button', 'v2-cat' + (c.id === 'demolish' ? ' danger' : ''));
     b.type = 'button';
@@ -434,11 +472,14 @@ export function mountShell(deps: ShellDeps): void {
         return;
       }
       open = true;
+      // Demolish knocks down; the bomb is chosen from the Actions.
+      if (c.id === 'demolish') strikeChoice.mode = 'demolish';
       press(`.tool[data-tool="${c.tool}"]`);
       render();
     };
     catButtons.set(c.id, b);
     dock.appendChild(b);
+    if (c.id === 'demolish') dock.appendChild(actionsB);
   }
 
   // ================================================================ drawer
@@ -950,13 +991,11 @@ export function mountShell(deps: ShellDeps): void {
   function renderSimple(current: string): void {
     title.textContent = t(`tool.${current}`);
     if (current === 'bulldoze') {
-      // Knock down at once, or strike with a force: things break piece by piece.
-      const mode = group(t('strike.mode'));
-      mode.appendChild(choices((['demolish', 'strike'] as const).map((k) => ({
-        label: t(`strike.mode.${k}`), on: strikeChoice.mode === k, run: () => { strikeChoice.mode = k; render(); },
-      })), 2));
-      options.appendChild(mode);
+      // Demolish knocks down at once; the bomb (from the Actions) strikes
+      // with a force, things breaking piece by piece.
+      if (strikeChoice.mode === 'shoot') title.textContent = t('actions.pistol');
       if (strikeChoice.mode === 'strike') {
+        title.textContent = t('actions.bomb');
         const force = group(t('strike.force'));
         const row = el('div', 'v2-stepper');
         row.append(
@@ -1204,8 +1243,11 @@ plan.appendChild(choices([
   function render(): void {
     const current = tool();
     const cat = categoryOf(current);
+    // The bomb is an Action: its button is lit, not Demolish's.
+    const bombing = current === 'bulldoze' && strikeChoice.mode !== 'demolish' && open;
+    actionsB.classList.toggle('on', bombing);
     for (const [id, b] of catButtons) {
-      b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info'));
+      b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info') && !(bombing && id === 'demolish'));
       const c = CATS.find((x) => x.id === id);
       (b.querySelector('.v2-cat-name') as HTMLElement).textContent = c?.label() ?? '';
       // Only the icon shows: the name and the key are in the tooltip.

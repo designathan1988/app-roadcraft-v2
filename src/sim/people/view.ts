@@ -53,6 +53,10 @@ export const STAND_UP_SECONDS = { m: 2.5, f: 3.33 } as const;
 
 /** What the body stands on, which sets the height it is drawn at. */
 export type PedGround = 'footway' | 'crossing' | 'open';
+/** What a body can lose: an arm or a leg (each side), or the head. */
+export type Severable = 'armL' | 'armR' | 'legL' | 'legR' | 'head';
+/** Where a shot strikes a body. */
+export type BodyPart = 'head' | 'torso' | Severable;
 
 export interface PedView {
   readonly id: number;
@@ -60,6 +64,8 @@ export interface PedView {
   panic?: boolean;
   /** A limb lost to a blow, the rest of the walk on without it (and bleeding). */
   maimed?: 'armL' | 'armR' | 'legL' | 'legR';
+  /** Every limb lost (to shots, `PedestrianEngine.shot`), drawn gone; `maimed` is the first of them. */
+  lost?: readonly Severable[];
   /** Position and heading at the end of this tick, and at the end of the last. */
   x: number;
   y: number;

@@ -1,3 +1,5 @@
+import { walkersNear } from '@sim/agents/walk';
+import type { BodyPart } from '@sim/people/view';
 import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
@@ -23,11 +25,11 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { MAP_HALF } from '@world/bounds';
-import { GRID_CELL, GRID_STEP } from '@world/grid';
+import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
 
@@ -1014,6 +1016,44 @@ function cancelGestures(): void {
   requestDraw();
 }
 
+/**
+ * The Actions' pistol: a shot at the person under the pointer, striking the
+ * part of the body clicked - the head, the body, an arm or a leg, the side
+ * as the body faces (`PedestrianEngine.shot`): the wound, the blood, a limb
+ * off, death. From the view, with no player on the map.
+ */
+function shootAt(sx: number, sy: number): boolean {
+  const w = surface.cssW, h = surface.cssH;
+  const ground = view.toWorldAt(sx, sy, sceneHeightAt(view.toWorld(sx, sy, w, h)), w, h);
+  let best: { id: number; height: number; d: number; x: number; y: number; heading: number } | null = null;
+  for (const p of walkersNear(sim, ground.x, ground.y, m(25))) {
+    const base = sceneHeightAt(p);
+    // Up the body's axis: where the line of sight through the pointer passes nearest it.
+    for (let k = 0; k <= 37; k++) {
+      const height = m(0.05) * k;
+      const q = view.toWorldAt(sx, sy, base + height, w, h);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d < m(0.3) && (!best || d < best.d)) best = { id: p.id, height, d, x: p.x, y: p.y, heading: p.heading };
+    }
+  }
+  if (!best) { flashHint('hint.shoot.miss'); return false; }
+  // Where the line of sight comes from, on the ground plane: the shot's way.
+  const near = view.toWorldAt(sx, sy, sceneHeightAt(best) + m(30), w, h);
+  let dx = best.x - near.x, dy = best.y - near.y;
+  const len = Math.hypot(dx, dy) || 1;
+  dx /= len; dy /= len;
+  // Left or right of the body's middle, as the body faces.
+  const at = view.toWorldAt(sx, sy, sceneHeightAt(best) + best.height, w, h);
+  const side = (at.x - best.x) * -Math.sin(best.heading) + (at.y - best.y) * Math.cos(best.heading);
+  const part: BodyPart = best.height > m(1.5) ? 'head'
+    : best.height > m(0.9) ? (Math.abs(side) > m(0.17) ? (side > 0 ? 'armL' : 'armR') : 'torso')
+      : side >= 0 ? 'legL' : 'legR';
+  const done = sim.pedEngine.shot?.(sim, best.id, part, best.x - dx * m(10), best.y - dy * m(10));
+  if (!done) return false;
+  scene.wound(best.x, best.y, sceneHeightAt(best) + best.height, dx, dy, done.severed);
+  requestDraw();
+  return true;
+}
 /** The bulldozer's box being dragged (screen pixels in the canvas), or its press when it stays a click. */
 let bulldozeBox: { pointer: number; a: Vec2; b: Vec2; world: Vec2; to: Vec2; anchor: Anchor } | null = null;
 /** The bulldozer's click: the one thing under the pointer. */
@@ -1366,12 +1406,29 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       {
       const chained = roadChain !== null;
+      let gridOffset = 0;
       if (roadGridShown()) {
         // The road fills whole cells: an odd number of them wide, its middle in a cell's middle.
         const cells = Math.max(1, Math.round((2 * halfWidth(roadProfile(roadTypeIndex, roadLanePreset), Level.Sidewalk)) / GRID_CELL));
-        setGridSnapStep(GRID_CELL, cells % 2 === 1 ? GRID_CELL / 2 : 0);
+        gridOffset = cells % 2 === 1 ? GRID_CELL / 2 : 0;
+        setGridSnapStep(GRID_CELL, gridOffset);
       } else setGridSnapStep(GRID_STEP);
-      const start = roadChain ?? snapRoadStart(anchor);
+      let start = roadChain ?? snapRoadStart(anchor);
+      // Drawn from a road with the grid on: from the grid point on that road,
+      // not from wherever the press fell on it - the new road came out askew
+      // and off the grid (the player, 2026-10-06).
+      if (!roadChain && roadGridShown() && start.kind === 'segment' && start.segment !== undefined) {
+        const line = net.polylines.get(doc, start.segment);
+        const q = snapToGrid(start.at, GRID_CELL, gridOffset);
+        let best: { at: Vec2; s: number; d: number } | null = null;
+        for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
+          const hit = line.closestPoint({ x: q.x + dx * GRID_CELL, y: q.y + dy * GRID_CELL });
+          if (hit.distance < m(0.6) && (!best || Math.hypot(hit.point.x - start.at.x, hit.point.y - start.at.y) < best.d)) {
+            best = { at: hit.point, s: hit.s, d: Math.hypot(hit.point.x - start.at.x, hit.point.y - start.at.y) };
+          }
+        }
+        if (best) start = { ...start, at: best.at, s: best.s };
+      }
       const startHeightOffset = chained
         ? roadChainHeight
         : start.kind === 'free' ? roadHeightOffset : anchorHeightOffset(start);
@@ -1591,6 +1648,10 @@ canvas.addEventListener('pointerdown', (e) => {
     case 'bulldoze':
       if (strikeChoice.mode === 'strike') {
         strikeAt(e.clientX - r.left, e.clientY - r.top, world);
+        break;
+      }
+      if (strikeChoice.mode === 'shoot') {
+        shootAt(e.clientX - r.left, e.clientY - r.top);
         break;
       }
       // A click removes what is under it; a drag draws a box and removes
@@ -1997,7 +2058,11 @@ function endPointer(e: PointerEvent): void {
         dist(d.samples[d.samples.length - 1]!.at, d.snap.at);
       const dragged = d.samples.slice(1).some((sample) =>
         dist(sample.at, d.pressedAt) > camera.px(7));
-      if (!d.chained && traveled < camera.px(7)) {
+      // A click, by where the pointer itself went: with the snaps on, the
+      // start and the snapped end both jump onto the grid, and a click read
+      // as a short drag that laid nothing.
+      const clicked = !dragged && dist(pointerWorld(e), d.pressedAt) < camera.px(7);
+      if (!d.chained && (traveled < camera.px(7) || clicked)) {
         roadChain = d.start;
         roadChainHeight = d.startHeightOffset;
         requestDraw();
@@ -3668,9 +3733,15 @@ let pedsToRebind = false;
 /** The footways of the last edit being rebuilt, a few milliseconds a frame (`SimWorld.walkTopologySteps`). */
 let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = null;
 
+/** The Actions' weapon choice last applied (`weaponChoice.serial`). */
+let weaponApplied = 0;
 function frame(now: number): void {
   pending = false;
   beginFrameWork();
+  // The dock's Actions: may shots strike people.
+  sim.ambient.play.shootPeople = shootPeopleAllowed();
+  // ...and the weapon chosen there, applied once per choice (the keys still change it in play).
+  if (weaponChoice.serial !== weaponApplied) { weaponApplied = weaponChoice.serial; sim.ambient.play.weapon = weaponChoice.weapon; }
   const wall = (now - last) / 1000;
   last = now;
 
@@ -4422,11 +4493,36 @@ function drawOverlayScreen(): void {
       ctx.fillStyle = previewHeight >= 0 ? 'rgba(101, 229, 195, 0.16)' : 'rgba(244, 184, 103, 0.20)';
       ctx.fill();
     }
-    if (!settling) strokeScreen(points, ok ? SELECTION : INVALID, casingWidth + 4, [], projected);
-    strokeScreen(points, '#536b47', casingWidth, [], projected);
-    strokeScreen(points, '#a7a498', footwayWidth, [], projected);
-    strokeScreen(points, '#87877f', kerbWidth, [], projected);
-    strokeScreen(points, asphaltPreviewPattern(ctx), asphaltWidth, [], projected);
+    // Each band of the road as it will be laid: its two edges worked out on
+    // the ground at their real width and projected point by point, ends cut
+    // square - not strokes of a fixed pixel width with round caps, which in
+    // perspective swelled a short road into a ball (the player, 2026-10-06).
+    const band = (half: number, fill: string | CanvasPattern): void => {
+      if (points.length < 2) return;
+      const left: Vec2[] = [], right: Vec2[] = [];
+      for (let i = 0; i < points.length; i++) {
+        const a = points[Math.max(0, i - 1)]!, b = points[Math.min(points.length - 1, i + 1)]!;
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+        const p = points[i]!, z = (projected[i] && groundProjected[i]) ? offsets[i]! : 0;
+        const l = { x: p.x + nx * half, y: p.y + ny * half }, r = { x: p.x - nx * half, y: p.y - ny * half };
+        left.push(view.toScreen(l, w, h, scene.terrainHeightAt(l.x, l.y) + z));
+        right.push(view.toScreen(r, w, h, scene.terrainHeightAt(r.x, r.y) + z));
+      }
+      ctx.beginPath();
+      left.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+      for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i]!.x, right[i]!.y);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+    };
+    const asphaltHalf = rt.width / 2, kerbHalf = (rt.width + 1.8) / 2;
+    const footwayHalf = (rt.width + 1.8 + rt.sidewalk * 2) / 2, casingHalf = footwayHalf + 1.5;
+    if (!settling) band(casingHalf + 2, ok ? SELECTION : INVALID);
+    band(casingHalf, '#536b47');
+    band(footwayHalf, '#a7a498');
+    band(kerbHalf, '#87877f');
+    band(asphaltHalf, asphaltPreviewPattern(ctx));
     if (rt.markings !== 'none') {
       const dash = [Math.max(4, 10 * pixelsPerUnit), Math.max(3, 8 * pixelsPerUnit)];
       strokeScreen(points, rt.line, Math.max(1, 1.1 * pixelsPerUnit), dash, projected);

@@ -1,3 +1,4 @@
+import type { Severable } from '@sim/people/view';
 import {
   BufferGeometry, Color, DataTexture, DynamicDrawUsage, Float32BufferAttribute, FloatType, Group, InstancedMesh,
   Matrix4, MeshDepthMaterial, MeshStandardMaterial, Object3D, Quaternion, RGBAFormat,
@@ -205,7 +206,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
    */
   const maimBones = new WeakMap<CitizenBatch, Record<string, { bones: number[]; parent: number; joint: Vector3 } | null>>();
   const maimTmp = new Matrix4(), maimP = new Vector3();
-  const maim = (batch: CitizenBatch, offset: number, limb: 'armL' | 'armR' | 'legL' | 'legR'): void => {
+  const maim = (batch: CitizenBatch, offset: number, limb: Severable): void => {
     let info = maimBones.get(batch);
     if (!info) {
       const source = batch.sources[0];
@@ -213,7 +214,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       if (source) {
         const bones = source.skeleton.bones;
         const parents = bones.map((b) => bones.indexOf(b.parent as never));
-        for (const [key, name] of [['armL', 'Bip01_L_Forearm'], ['armR', 'Bip01_R_Forearm'], ['legL', 'Bip01_L_Calf'], ['legR', 'Bip01_R_Calf']] as const) {
+        for (const [key, name] of [['armL', 'Bip01_L_Forearm'], ['armR', 'Bip01_R_Forearm'], ['legL', 'Bip01_L_Calf'], ['legR', 'Bip01_R_Calf'], ['head', 'Bip01_Head']] as const) {
           const root = bones.findIndex((b) => b.name === name);
           if (root < 0) { info[key] = null; continue; }
           const set = [root];
@@ -809,8 +810,10 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       emit(batch, mixClips, mixPhases, mixWeights, x, deck, y, gaitHeading(gait), m(scale), lean, ground,
         lod === 0 ? faceAt(ped.id, time, ped.panic ? (ped.gesture?.kind === 'crouch' ? 'cry' : 'panic') : ped.gesture?.kind, CROWD[index]?.person?.mood) : undefined);
-      if (ped.maimed) {
-        maim(batch, (batch.count - 1) * batch.width, ped.maimed);
+      // Every limb lost (shots take more than one), the stump closed at its joint.
+      const lost = ped.lost ?? (ped.maimed ? [ped.maimed] : null);
+      if (lost) {
+        for (const limb of lost) maim(batch, (batch.count - 1) * batch.width, limb);
         onBleed?.(ped.id, x, y, deck);
       }
       {

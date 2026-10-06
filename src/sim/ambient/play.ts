@@ -1,3 +1,4 @@
+import type { BodyPart, Severable } from '../people/view';
 import { solidsOf } from '@world/solids';
 import { pointInPolygon } from '@core/polygon';
 import { Rng } from '@core/rng';
@@ -46,6 +47,8 @@ export interface PlayInput {
   /** Where the player aims, world axes (unit). */
   aimX: number;
   aimY: number;
+  /** How far the aim looks down (radians, the camera's pitch): where on a body a shot strikes. */
+  aimPitch: number;
   /** Held: aiming (right mouse, GTA's), the body faces where the camera looks and steps sideways. */
   aiming: boolean;
   /** Held in a car: the handbrake (Space). */
@@ -73,6 +76,25 @@ const PUNCH_REACH = m(1.5), DOOR_REACH = m(4.5), BUILDING_REACH = m(2.2);
 const TOP = m(26), TOP_BACK = m(7), ACCEL = m(5.5), BRAKE = m(11), DRAG = 0.22, LOCK = 0.62;
 /** A pistol: how far it reaches, how close to the line a body is hit, seconds between shots. */
 const RANGE = m(70), HIT = m(0.45), COOLDOWN = 0.28;
+/** Where the shot leaves the gun, above the ground. */
+const GUN_HEIGHT = m(1.4);
+
+/**
+ * The part of a body a shot strikes: by the height it passes at, and how far
+ * to the body's left or right of its middle (`across`, positive left of the
+ * shot's line). Null: over the head or under the feet, a miss.
+ */
+function partStruck(height: number, across: number, ax: number, ay: number, heading: number): BodyPart | null {
+  if (height > m(1.85) || height < 0) return null;
+  // The shot's offset as the body sees it: positive on the body's own left.
+  const bodyLeftX = -Math.sin(heading), bodyLeftY = Math.cos(heading);
+  const offX = -ay * across, offY = ax * across;
+  const side = offX * bodyLeftX + offY * bodyLeftY;
+  const left = side >= 0;
+  if (height > m(1.5)) return Math.abs(side) < m(0.16) ? 'head' : null;
+  if (height > m(0.9)) return Math.abs(side) > m(0.19) ? (left ? 'armL' : 'armR') : 'torso';
+  return left ? 'legL' : 'legR';
+}
 /** How far people see a crime, and how far a shot is heard. */
 const SEEN = m(30), HEARD = m(45);
 /** Seconds out of sight before a star goes, and an officer's reach to arrest. */
@@ -81,7 +103,11 @@ const STAR_COOL = 12, ARREST = m(1.4);
 const KEPT_CARS = 4;
 
 export class PlayWorld {
-  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, aiming: false, handbrake: false, enter: false, board: false, talk: false, attack: false };
+  readonly input: PlayInput = { moveX: 0, moveY: 0, run: false, throttle: 0, steer: 0, aimX: 1, aimY: 0, aimPitch: 0.1, aiming: false, handbrake: false, enter: false, board: false, talk: false, attack: false };
+  /** The menu's Actions: shots strike people (off: they pass by them). */
+  shootPeople = false;
+  /** The people struck since the renderer last looked: where (height above their ground, world units), from where, what came off. */
+  readonly hits: { x: number; y: number; z: number; dirX: number; dirY: number; part: BodyPart; severed: Severable | null; killed: boolean }[] = [];
   active = false;
   mode: 'foot' | 'car' | 'inside' | 'ride' = 'foot';
   /** What the player rides, as a passenger. */
@@ -372,14 +398,21 @@ export class PlayWorld {
     for (let t = m(0.5); t < RANGE; t += m(0.5)) {
       if (this.wallAt(w, fromX + ax * t, fromY + ay * t, 0)) { reach = t; break; }
     }
-    let hit: { id: number; t: number } | null = null;
-    for (const p of walkersNear(w, fromX + ax * reach / 2, fromY + ay * reach / 2, reach / 2 + HIT)) {
-      if (p.id === PLAYER_ID) continue;
-      const rx = p.x - fromX, ry = p.y - fromY;
-      const t = rx * ax + ry * ay;
-      if (t < 0 || t > reach) continue;
-      if (Math.abs(-rx * ay + ry * ax) > HIT) continue;
-      if (!hit || t < hit.t) hit = { id: p.id, t };
+    // The shot's height along its line: from the gun at chest height, down by the aim's pitch.
+    const slope = Math.tan(Math.max(-0.6, Math.min(1.2, this.input.aimPitch)));
+    const heightAt = (t: number): number => GUN_HEIGHT - slope * t;
+    let hit: { id: number; t: number; part: BodyPart } | null = null;
+    if (this.shootPeople) {
+      for (const p of walkersNear(w, fromX + ax * reach / 2, fromY + ay * reach / 2, reach / 2 + HIT)) {
+        if (p.id === PLAYER_ID) continue;
+        const rx = p.x - fromX, ry = p.y - fromY;
+        const t = rx * ax + ry * ay;
+        if (t < 0 || t > reach) continue;
+        const across = -rx * ay + ry * ax;
+        if (Math.abs(across) > HIT) continue;
+        const part = partStruck(heightAt(t), across, ax, ay, p.heading);
+        if (part && (!hit || t < hit.t)) hit = { id: p.id, t, part };
+      }
     }
     const end = hit ? hit.t : reach;
     this.shots.push({ from: { x: fromX, y: fromY }, to: { x: fromX + ax * end, y: fromY + ay * end } });
@@ -387,8 +420,13 @@ export class PlayWorld {
     startle(w, this.x, this.y, HEARD, 14, PLAYER_ID);
     if (hit) {
       const at = walkerOf(w, hit.id);
-      // Struck: down for good (the engine's blow, the body to the ragdolls).
-      if (at) w.pedEngine.impact?.(w, at.x, at.y, m(0.35), HEARD);
+      // Struck where the line meets them: wounded, a limb off, or dead (`PedestrianEngine.shot`).
+      const done = at ? w.pedEngine.shot?.(w, hit.id, hit.part, fromX, fromY) : null;
+      if (at && done) {
+        this.hits.push({ x: at.x, y: at.y, z: Math.max(m(0.2), Math.min(m(1.75), heightAt(hit.t))), dirX: ax, dirY: ay,
+          part: hit.part, severed: done.severed, killed: done.killed });
+        if (this.hits.length > 64) this.hits.splice(0, this.hits.length - 64);
+      }
       this.say(w, 'shot');
       this.crime(w, fromX + ax * end, fromY + ay * end, 2);
     } else {
