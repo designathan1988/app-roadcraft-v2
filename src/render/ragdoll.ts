@@ -5,6 +5,7 @@ import type { Casualty } from '@sim/people/people';
 import { m } from '@world/units';
 import type { BloodDecal } from './casualties';
 import type { Exhaust } from './exhaust';
+import type { Gore } from './gore';
 
 /**
  * Ragdolls: people knocked over or killed by a blow, or tripping, their own
@@ -225,6 +226,8 @@ interface Body {
   partHits?: Partial<Record<BodyPart, number>>;
   /** Shot to a heap of meat (`mush`). */
   mush?: boolean;
+  /** Opened at the belly, the guts out (`openBelly`). */
+  opened?: boolean;
   /**
    * Shot: the muscles still working as they go down (`toneStep`) - the
    * shape they stood in held by springs that weaken over the fall, the legs
@@ -297,7 +300,7 @@ export interface Ragdolls {
   debug(): { pelvis: number[]; head: number[]; asleep: boolean; phase: string; torn: boolean }[];
 }
 
-export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
+export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null = null): Ragdolls {
   const bodies: Body[] = [];
   const decals: BloodDecal[] = [];
   /** The casualty records already turned into bodies (`absorb`). */
@@ -537,6 +540,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
       if (c.struck) citizens.wound?.(known.index, c.struck);
+      if (c.struck === 'torso' && Math.random() < 0.35) openBelly(known, away.clone().multiplyScalar(m(1.2)), Math.random() < 0.5 ? 1 : 0);
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -583,6 +587,10 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     add(body);
     if (c.struck) citizens.wound?.(body.index, c.struck);
     sever(body, c, dir, citizens);
+    // A bullet in the belly opens it now and then; a blast tears bodies open more often.
+    if (c.struck === 'torso' ? Math.random() < 0.3 : (c.kind === 'torn' ? Math.random() < 0.75 : c.kind === 'dead' && Math.random() < 0.25)) {
+      openBelly(body, dir.clone().multiplyScalar(m(c.struck ? 1.2 : 3)), c.struck ? 1 : 3 + Math.floor(Math.random() * 4));
+    }
   };
 
   /** What came off at this blow thrown off the body (`detach`), and the body burnt black right under a bomb. */
@@ -616,6 +624,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       }
     }
     citizens.drench?.(body.index);
+    if (!body.pin) { body.opened = false; openBelly(body, new Vector3(0, m(1), 0), 6); }
     exhaust.burst(at.x, -at.z, at.y, 160, 4, m(0.7), m(0.2), 1.4);
     const gx = at.x, gy = -at.z, g = world0?.groundAt(gx, gy) ?? at.y;
     bleed(gx, gy, g, m(body.pin ? 1.2 : 2.8), body.pin ? 6 : 14);
@@ -625,6 +634,38 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     }
     api.onGore?.(at.x, -at.z, at.y, 0, 0, m(2), 'torn');
     body.asleep = false;
+  };
+
+  /** The belly opened: the guts hanging out of it, swinging with the body, some spilled on the ground. */
+  const openBelly = (body: Body, kick: Vector3, organs = 0): void => {
+    if (!gore || body.opened || body.pin) return;
+    body.opened = true;
+    gore.spill(() => (bodies.includes(body) ? body.p[BEL]! : null), kick);
+    if (Math.random() < 0.5) gore.spill(() => (bodies.includes(body) ? body.p[PEL]! : null), kick.clone().multiplyScalar(0.6));
+    if (organs > 0) gore.scatter(body.p[BEL]!.clone(), organs, kick);
+    exhaust.burst(body.p[BEL]!.x, -body.p[BEL]!.z, body.p[BEL]!.y, 60, 4, m(0.25), m(0.05), 1);
+  };
+
+  /** A bone's end out of a stump: from joint `at`, along `from` to `at` and on, `len` long, while the body lasts. */
+  const boneOut = (body: Body, from: number, at: number, len: number): void => {
+    if (!gore) return;
+    const tip = new Vector3(), dir = new Vector3();
+    gore.bone(() => {
+      if (!bodies.includes(body)) return null;
+      const a = body.p[at]!;
+      dir.subVectors(a, body.p[from]!);
+      const l = dir.length();
+      if (l < 1e-6) return null;
+      tip.copy(a).addScaledVector(dir, len / l);
+      return [a, tip] as const;
+    });
+  };
+
+  /** The stump and the cut end of each part that can come off: the joint it went at, and the particle it points from. */
+  const STUMP: Readonly<Record<Severable, { body: readonly [number, number]; piece: readonly [number, number] }>> = {
+    armL: { body: [LS, LE], piece: [LW, LE] }, armR: { body: [RS, RE], piece: [RW, RE] },
+    legL: { body: [LH, LK], piece: [LA, LK] }, legR: { body: [RH, RK], piece: [RA, RK] },
+    head: { body: [CHE, NEC], piece: [TOP, HEA] },
   };
 
   const remove = (i: number): void => {
@@ -667,6 +708,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     const at = body.p[root]!;
     exhaust.burst(at.x, -at.z, at.y, 60, 4, m(0.35), m(0.08), 1.1);
     add(piece);
+    // Now and then the bone shows: out of the stump, out of the piece, or both.
+    const stump = STUMP[limb];
+    const roll = Math.random();
+    if (roll < 0.55) boneOut(body, stump.body[0], stump.body[1], m(limb === 'head' ? 0.05 : 0.07));
+    if (roll > 0.3 && roll < 0.8) boneOut(piece, stump.piece[0], stump.piece[1], m(limb === 'head' ? 0.04 : 0.06));
   };
 
   const add = (body: Body): void => {
@@ -751,6 +797,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       body.hits = (body.hits ?? 0) + 1;
       const tally = body.partHits ??= {};
       tally[part] = (tally[part] ?? 0) + 1;
+      if (part === 'torso' && !body.opened && (tally.torso ?? 0) >= 2 && Math.random() < 0.6) openBelly(body, dir.clone().multiplyScalar(m(1.5)), 2);
       // A limb shot off at the second hit (the head at the first or second).
       if (!body.pin && part !== 'torso') {
         const limb = part as Severable;
@@ -828,6 +875,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
           continue;
         }
         if (body.age > LIE + SINK) { remove(i); continue; }
+        if (body.charred && !body.pin && body.age < 6) body.asleep = false;
         if (body.age > LIE) for (const v of body.p) v.y -= wall * m(0.12);
         if (body.asleep && !body.pooled) {
           body.pooled = true;
@@ -970,6 +1018,21 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   }
 
   /**
+   * A body burnt black draws up as burnt bodies do (the heat contracting
+   * the muscles: the "pugilistic attitude" of forensics): the forearms drawn
+   * up to the chest, the fists before the face, the knees and hips bent.
+   */
+  function curl(body: Body): void {
+    const k = 0.015 * Math.min(1, body.age / 1.5);
+    const chest = body.p[CHE]!, head = body.p[HEA]!;
+    tmpA.lerpVectors(chest, head, 0.6);
+    body.p[LW]!.lerp(tmpA, k); body.p[RW]!.lerp(tmpA, k);
+    body.p[LE]!.lerp(chest, k * 0.5); body.p[RE]!.lerp(chest, k * 0.5);
+    body.p[LA]!.lerp(body.p[LH]!, k * 0.8); body.p[RA]!.lerp(body.p[RH]!, k * 0.8);
+    body.p[LK]!.lerp(chest, k * 0.4); body.p[RK]!.lerp(chest, k * 0.4);
+  }
+
+  /**
    * The frame a shot body's pose is held in: at the pelvis, x straight up,
    * z across the hips (level), y the way the body faces. Upright whatever the
    * torso does, as an animated character's root is - a frame taken from the
@@ -1064,6 +1127,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       body.ground[k] = world.groundAt(v.x, -v.z);
     }
     if (body.tone) toneStep(body, body.tone);
+    if (body.charred && !body.pin && body.age < 6) curl(body);
     // Walls within reach of the body this step.
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const v of p) { x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, -v.z); y1 = Math.max(y1, -v.z); }

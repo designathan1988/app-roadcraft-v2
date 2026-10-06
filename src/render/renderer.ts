@@ -2,6 +2,7 @@ import { GRID_CELL } from '@world/grid';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
+import { createGore } from './gore';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
 import type { Occupant } from './ragdoll';
@@ -579,10 +580,13 @@ export function createSceneRenderer(
   const shakeOffset = new Vector3();
   scene.add(blast.group);
   /** The bodies of the people blows killed (`ragdoll.ts`). */
+  // Guts, organs and bones out of bodies opened up (`gore.ts`).
+  const gore = createGore();
+  scene.add(gore.group);
   const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds) => {
     // Up again where the body came to rest (`PeopleEngine.getUp`).
     if (ragdollSim) ragdollSim.pedEngine.getUp?.(ragdollSim, id, x, y, heading, seconds);
-  });
+  }, gore);
   (globalThis as Record<string, unknown>)['__ragdolls'] = ragdolls;
   /** Who is down (a `fall` pause) this frame. */
   const ragdollDown = new Set<number>();
@@ -2046,6 +2050,7 @@ export function createSceneRenderer(
           }
           ragdolls.release((id) => ragdollDown.has(id));
           ragdolls.update(wallDt, ragdollWorld);
+          gore.update(wallDt, ragdollWorld.groundAt);
           ragdolls.draw(citizens, ragdollWorld);
         },
         hiddenPed: (id) => id === hiddenPerson || ragdolls.hides(id),
