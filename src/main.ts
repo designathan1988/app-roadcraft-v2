@@ -2029,12 +2029,12 @@ canvas.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault();
-    // With the terrain tool up the wheel sizes the BRUSH, not the camera.
-    // Reaching for a slider between every stroke is the single thing that made
-    // sculpting tedious, and the camera is still one modifier away.
-    if (tool === 'terrain' && !e.ctrlKey && !e.metaKey) {
-      const notches = -Math.sign(e.deltaY);
-      if (e.shiftKey) setTerrainStrength(terrainStrength + notches);
+    // The wheel zooms, whatever tool is in hand (the player, 2026-10-06); with
+    // the landscape tool, Shift+wheel sizes the brush and Alt+wheel sets its
+    // strength. With Shift held a browser may scroll sideways: either axis.
+    if (tool === 'terrain' && (e.shiftKey || e.altKey)) {
+      const notches = -Math.sign(e.deltaY || e.deltaX);
+      if (e.altKey) setTerrainStrength(terrainStrength + notches);
       else setTerrainRadius(terrainRadius + notches * 10);
       return;
     }
@@ -2167,6 +2167,11 @@ window.addEventListener('keydown', (e) => {
     }
     if (e.key === '[' || e.key === ']') {
       setTerrainRadius(terrainRadius + (e.key === ']' ? 10 : -10));
+      return;
+    }
+    // Shift with the brackets: the strength (the wheel only zooms now).
+    if (e.key === '{' || e.key === '}') {
+      setTerrainStrength(terrainStrength + (e.key === '}' ? 1 : -1));
       return;
     }
     if (e.key === '-' || e.key === '_' || e.key === '=' || e.key === '+') {
