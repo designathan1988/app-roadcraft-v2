@@ -600,10 +600,15 @@ export function createSceneRenderer(
 
   /** The world being rebuilt for the last edit (`rebuildWorld`), a slice a frame. */
   let worldJob: Generator<void, void, void> | null = null;
+  /** The job was started in this frame (`pumpWorld` waits for the next). */
+  let worldJobFresh = false;
   const WORLD_SLICE_MS = 10;
   /** Builds the world of the last edit for a few milliseconds; it puts itself in place once complete. */
   const pumpWorld = (): void => {
     if (!worldJob) return;
+    // Not in the frame of the edit itself, which has already paid for the
+    // edit and the roads' heights: its first slice made that frame 10 ms longer.
+    if (worldJobFresh) { worldJobFresh = false; onAssetsReady(); return; }
     const until = workUntil(WORLD_SLICE_MS);
     if (!until) { onAssetsReady(); return; }
     let step = worldJob.next();
@@ -922,8 +927,14 @@ export function createSceneRenderer(
       ? buildingPads(net.doc.buildings.all(), terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown)
       : null;
     yield;
-    const regions = blocks.map(terrainRegion);
-    if (sites) regions.push(terrainRegion(sites));
+    // Each block in quarters, a quarter a step: a whole block was 18 ms of
+    // terrain in one step, past the frame's allowance (`core/frameWork.ts`).
+    const quarters = (q: readonly [number, number, number, number]): [number, number, number, number][] => {
+      const mx = (q[0] + q[2]) / 2, my = (q[1] + q[3]) / 2;
+      return [[q[0], q[1], mx, my], [mx, q[1], q[2], my], [q[0], my, mx, q[3]], [mx, my, q[2], q[3]]];
+    };
+    const regions = blocks.flatMap(quarters).map(terrainRegion);
+    if (sites) regions.push(...quarters(sites).map(terrainRegion));
     // A block a step: three were 33 ms, past the frame's allowance (`core/frameWork.ts`).
     const BATCH = 1;
     for (let i = 0; i < regions.length; i += BATCH) {
@@ -1064,6 +1075,7 @@ export function createSceneRenderer(
       worldJob = null;
     } else {
       worldJob = steps;
+      worldJobFresh = true;
     }
   };
 
@@ -1644,10 +1656,14 @@ export function createSceneRenderer(
           terrainMs = performance.now() - terrainStarted;
         }
       } else {
+        const atRebuild = performance.now();
         rebuildWorld(net);
+        performance.measure('hitch:draw/Rebuild', { start: atRebuild, end: performance.now() });
         terrain.settle();
       }
+      const atPump = performance.now();
       pumpWorld();
+      performance.measure('hitch:draw/Pump', { start: atPump, end: performance.now() });
       // A building placed, moved or reshaped grades its own site.
       // Only the ground round the sites that changed is graded again (growing
       // a building re-graded the whole map and every platform: a hitch for
@@ -1911,7 +1927,9 @@ export function createSceneRenderer(
         // Seen from above (the isometric view) a blade is a speck: only in perspective or on foot.
         const close = rig.chasing || (rig.perspective && rig.viewport.zoom >= GRASS_ZOOM);
         const show = quality.grassBlades > 0 && close;
+        const atGrass = performance.now();
         if (show) keepGrassInputs(net);
+        performance.measure('hitch:draw/Grass', { start: atGrass, end: performance.now() });
         const at = rig.chasing ? chaseCamera.focus : target;
         grass.update(at.x, at.z, show, windClock);
         GRASS_FIELD.value = [at.x, -at.z, GRASS_NEAR_REACH * 3, show ? 1 : 0];
@@ -1987,7 +2005,9 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
+      const atRender = performance.now();
       post.render(delta);
+      performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
       if (shake > 0) { rig.camera.position.sub(shakeOffset); rig.camera.updateMatrixWorld(); }
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);

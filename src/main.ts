@@ -874,6 +874,7 @@ function mutateBuilt(fn: () => boolean): boolean {
   updateStatus();
   refreshInspector();
   requestDraw();
+  performance.measure('hitch:mutate/after edit', { start: mutateAt, end: performance.now() });
   return true;
 }
 
