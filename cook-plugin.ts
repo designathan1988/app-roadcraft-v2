@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,8 +8,14 @@ import type { Plugin } from 'vite';
  * The people cooked ahead (`src/render/people/cookedPerson.ts`).
  *
  * `__PEOPLE_COOK_HASH__` is a fingerprint of everything a body is built from:
- * the people code (its sources, read in full) and the people assets (their
- * names and sizes). The cook (`scripts/cook-people.mjs`) stamps it on what it
+ * the code a cooked body is made by - the import closure of `ENTRY`, read in
+ * full - and the people assets (their names and sizes).
+ *
+ * The closure, not whole folders: hashing all of `src/render/people` made an
+ * edit to code no cooked body uses (the procedural crowd) stale every body,
+ * and the game built each of them during play, 200-550 ms a body, unseen
+ * (docs/performance.md #7); and it missed `riggedCitizens.ts`, `citizenBake.ts`
+ * and `citizenWalk.ts`, which do build them. The cook (`scripts/cook-people.mjs`) stamps it on what it
  * writes; the game reads a cooked body only under the same fingerprint, and
  * builds it otherwise - a change to how people are built is never served a
  * stale body.
@@ -17,8 +24,46 @@ import type { Plugin } from 'vite';
  * PUTs its files to `/__cook/...`. Build: `cooked/people` is copied into
  * `dist/cooked/people` when its stamp matches.
  */
-const SOURCES = ['src/people', 'src/render/people', 'src/render/citizenCasting.ts'];
+/** Where a cooked body is built (`personAsset`, `__cookPeople`): its imports are what the hash reads. */
+const ENTRY = 'src/render/riggedCitizens.ts';
 const ASSETS = ['public/models/people'];
+/** The path aliases of `tsconfig.json`. */
+const ALIASES: readonly [string, string][] = [
+  ['@core/', 'src/core/'], ['@world/', 'src/world/'], ['@sim/', 'src/sim/'], ['@render/', 'src/render/'],
+  ['@view/', 'src/view/'], ['@editor/', 'src/editor/'], ['@ui/', 'src/ui/'], ['@people/', 'src/people/'],
+];
+
+/**
+ * Every source file `entry` runs, transitively: static imports and exports
+ * (not `import type`), dynamic imports and `new URL(...)` workers and data.
+ * Packages are left out (their versions are in the lockfile).
+ */
+export function importClosure(root: string, entry: string): string[] {
+  const resolve = (from: string, spec: string): string | null => {
+    const alias = ALIASES.find(([key]) => spec.startsWith(key));
+    const base = alias ? path.join(root, alias[1], spec.slice(alias[0].length))
+      : spec.startsWith('.') ? path.join(path.dirname(from), spec) : null;
+    if (!base) return null;
+    for (const candidate of [base, `${base}.ts`, path.join(base, 'index.ts')]) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
+    return null;
+  };
+  const seen = new Set<string>();
+  const visit = (file: string): void => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!file.endsWith('.ts')) return;
+    const text = fs.readFileSync(file, 'utf8');
+    const refs = /^\s*(?:import|export)\s+(?!type\b)[^'";]*?from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|new URL\(\s*['"]([^'"]+)['"]/gm;
+    for (const m of text.matchAll(refs)) {
+      const found = resolve(file, (m[1] ?? m[2] ?? m[3])!);
+      if (found) visit(found);
+    }
+  };
+  visit(path.join(root, entry));
+  return [...seen].sort();
+}
 const DIR = 'cooked';
 
 function walk(root: string, out: string[]): void {
@@ -30,9 +75,7 @@ function walk(root: string, out: string[]): void {
 
 export function peopleCookHash(root: string): string {
   const hash = createHash('sha256');
-  const sources: string[] = [];
-  for (const s of SOURCES) walk(path.join(root, s), sources);
-  for (const file of sources) {
+  for (const file of importClosure(root, ENTRY)) {
     hash.update(path.relative(root, file).replace(/\\/g, '/'));
     // Line endings do not change a body.
     hash.update(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n'));
@@ -101,7 +144,26 @@ export function cookPlugin(): Plugin {
     configureServer(server) {
       // A change to how people are built changes the fingerprint: the server
       // restarts with the new one, and the cooked bodies no longer match.
-      const watched = [...SOURCES, ...ASSETS].map((s) => path.join(root, s));
+      const watched = [...importClosure(root, ENTRY), ...ASSETS.map((s) => path.join(root, s))];
+      // ...and cooks them again itself (about 15 s, headless): a stale cook
+      // used to wait for someone to remember `npm run cook:people`, and until
+      // then the game built every body during play, 200-550 ms each, with only
+      // a console line to say so (docs/performance.md #7). Not under vitest;
+      // ROADCRAFT_NO_AUTOCOOK=1 turns it off.
+      if (!process.env['VITEST'] && !process.env['ROADCRAFT_NO_AUTOCOOK']) {
+        server.httpServer?.once('listening', () => {
+          const manifest = path.join(root, DIR, 'people', 'manifest.json');
+          let stamp: string | undefined;
+          try { stamp = (JSON.parse(fs.readFileSync(manifest, 'utf8')) as { hash?: string }).hash; } catch { stamp = undefined; }
+          if (stamp === hash) return;
+          setTimeout(() => {
+            const base = (server.resolvedUrls?.local[0] ?? `http://127.0.0.1:${server.config.server.port ?? 5173}/`).replace(/\/$/, '');
+            server.config.logger.info(`[cook] the cooked people are stale (${stamp ?? 'none'} -> ${hash}): cooking them again from ${base}`);
+            const cook = spawn(process.execPath, [path.join(root, 'scripts', 'cook-people.mjs'), `--base=${base}`], { cwd: root, stdio: 'inherit' });
+            cook.on('exit', (code) => server.config.logger.info(`[cook] ${code === 0 ? 'done' : `failed (${code})`}`));
+          }, 1000);
+        });
+      }
       server.watcher.on('change', (file) => {
         if (!watched.some((w) => path.resolve(file).startsWith(path.resolve(w)))) return;
         if (peopleCookHash(root) !== hash) void server.restart();

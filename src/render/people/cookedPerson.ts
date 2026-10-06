@@ -228,6 +228,14 @@ declare const __PEOPLE_COOK_HASH__: string | undefined;
 /** The fingerprint of how people are built in this build (`cook-plugin.ts`); null in tests. */
 const COOK_HASH = typeof __PEOPLE_COOK_HASH__ !== 'undefined' ? __PEOPLE_COOK_HASH__ : null;
 let manifest: Promise<ReadonlySet<string> | null> | null = null;
+/**
+ * A missing or stale cook is looked for again a little later: the development
+ * server cooks the people itself when it finds them stale (`cook-plugin.ts`),
+ * and the bodies wanted after that are read from the cook, not built.
+ */
+function lookAgain(): void {
+  if (typeof setTimeout === 'function') setTimeout(() => { manifest = null; }, 20_000);
+}
 
 /** The ids cooked for this build, or null when there are none (or another build's). */
 function cookedIds(): Promise<ReadonlySet<string> | null> {
@@ -238,6 +246,7 @@ function cookedIds(): Promise<ReadonlySet<string> | null> {
       const response = await fetch('/cooked/people/manifest.json', { cache: 'no-cache' });
       if (!response.ok) {
         console.warn(`No cooked people for this build (fingerprint ${COOK_HASH}): every person is built during play, which stutters. Run "npm run cook:people".`);
+        lookAgain();
         return null;
       }
       const m = (await response.json()) as { hash?: string; ids?: string[] };
@@ -245,6 +254,7 @@ function cookedIds(): Promise<ReadonlySet<string> | null> {
         // Named rather than silent: a stale cook is how a rebuild turned into
         // a stutter nobody could explain.
         console.warn(`The cooked people are stale: they were cooked under ${m.hash ?? '(no hash)'}, this build fingerprints ${COOK_HASH}. Every person is built during play until "npm run cook:people" is run again.`);
+        lookAgain();
         return null;
       }
       return Array.isArray(m.ids) ? new Set(m.ids) : null;

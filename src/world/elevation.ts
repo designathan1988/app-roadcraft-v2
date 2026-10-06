@@ -728,15 +728,64 @@ export function buildRoadElevation(
   const index = new SpatialIndex(profiles);
 
   /** Everything a query reads from one profile, digested once per build. */
-  const profileDigests = new Map<Profile, number>();
-  const profileDigest = (profile: Profile): number => {
-    let value = profileDigests.get(profile);
-    if (value === undefined) {
-      value = new Digest().add(profile.id).addText(profile.structure).add(profile.type).add(profile.half)
-        .add(profile.median).add(profile.sidewalk).add(profile.step).addAll(profile.h).addAll(profile.line.xy).value();
-      profileDigests.set(profile, value);
+
+  /** Where each station of a profile lies (`h[i]` at arc `i * step`), measured once. */
+  const stationsOf = new Map<Profile, Float64Array>();
+  const stations = (profile: Profile): Float64Array => {
+    let xy = stationsOf.get(profile);
+    if (!xy) {
+      xy = new Float64Array(profile.h.length * 2);
+      for (let i = 0; i < profile.h.length; i++) {
+        const p = profile.line.sampleAt(Math.min(profile.length, i * profile.step)).p;
+        xy[i * 2] = p.x;
+        xy[i * 2 + 1] = p.y;
+      }
+      stationsOf.set(profile, xy);
     }
-    return value;
+    return xy;
+  };
+  const near = { s: 0, distance: 0 };
+  /**
+   * What a profile can give any point of a rectangle: its own figures, and
+   * only the part of its line and stations a point of the rectangle can be
+   * nearest to. A query takes, for a point, the nearest point of a road's
+   * line (`closestInto`) - at any distance - and the height there. For the
+   * rectangle's centre c, half-diagonal r and distance d from c to the line,
+   * every point of the rectangle has its nearest point of the line within
+   * d + 2r of c: that part, its stations and their neighbours are all a point
+   * of the rectangle can read. The whole profile used to be digested, so a
+   * junction made at one end of a street changed every block along it, and
+   * every road tile and the ground there were built again (docs/performance.md #10).
+   */
+  const localDigest = (profile: Profile, minX: number, minY: number, maxX: number, maxY: number): number => {
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const r = Math.hypot(maxX - minX, maxY - minY) / 2;
+    profile.line.closestInto(cx, cy, near);
+    const reach = near.distance + 2 * r + profile.step;
+    const reach2 = reach * reach;
+    const digest = new Digest().add(profile.id).addText(profile.structure).add(profile.manualVertical ? 1 : 0)
+      .add(profile.type).add(profile.half).add(profile.median).add(profile.sidewalk).add(profile.step).add(profile.h.length);
+    const at = stations(profile);
+    for (let i = 0; i < profile.h.length; i++) {
+      const dx = at[i * 2]! - cx, dy = at[i * 2 + 1]! - cy;
+      if (dx * dx + dy * dy > reach2) continue;
+      digest.add(i).add(profile.h[i]!);
+      if (i > 0) digest.add(profile.h[i - 1]!);
+      if (i + 1 < profile.h.length) digest.add(profile.h[i + 1]!);
+    }
+    // The line itself where it passes within reach: a piece of it whose
+    // nearest point to c is within reach, with its two ends.
+    const xy = profile.line.xy;
+    for (let k = 0; k + 3 < xy.length; k += 2) {
+      const ax = xy[k]!, ay = xy[k + 1]!, bx = xy[k + 2]!, by = xy[k + 3]!;
+      const ex = bx - ax, ey = by - ay;
+      const len2 = ex * ex + ey * ey;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((cx - ax) * ex + (cy - ay) * ey) / len2)) : 0;
+      const qx = ax + ex * t - cx, qy = ay + ey * t - cy;
+      if (qx * qx + qy * qy > reach2) continue;
+      digest.add(k).add(ax).add(ay).add(bx).add(by);
+    }
+    return digest.value();
   };
 
   const hit = { s: 0, distance: 0 };
@@ -859,7 +908,14 @@ export function buildRoadElevation(
 
   return {
     at: query,
-    digest: (minX, minY, maxX, maxY) => index.digest(minX, minY, maxX, maxY, profileDigest),
+    digest: (minX, minY, maxX, maxY) => {
+      const known = new Map<Profile, number>();
+      return index.digest(minX, minY, maxX, maxY, (profile) => {
+        let value = known.get(profile);
+        if (value === undefined) known.set(profile, value = localDigest(profile, minX, minY, maxX, maxY));
+        return value;
+      });
+    },
     onSegment(segment, x, y) {
       const profile = byId.get(segment);
       if (!profile) return terrainAt(x, y) + ROAD_GROUND_CLEARANCE;
@@ -1565,11 +1621,10 @@ class SpatialIndex {
 
   /** Digest of every profile `near` can return for a point of the rectangle, in its order. */
   digest(minX: number, minY: number, maxX: number, maxY: number, of: (profile: Profile) => number): number {
+    // The same reading with or without buckets: a network with no bucketed
+    // road (empty, or every road oversized) read differently, so its first
+    // bucketed road changed every block of the map (docs/performance.md #10).
     const digest = new Digest();
-    if (this.buckets.size === 0) {
-      for (const profile of this.all) digest.add(of(profile));
-      return digest.value();
-    }
     for (let x = Math.floor(minX / this.cell); x <= Math.floor(maxX / this.cell); x++) {
       for (let y = Math.floor(minY / this.cell); y <= Math.floor(maxY / this.cell); y++) {
         const key = x * 73_856_093 + y * 19_349_663;

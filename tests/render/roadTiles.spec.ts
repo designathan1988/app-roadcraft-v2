@@ -162,4 +162,33 @@ describe('road surface tiles', () => {
     const fresh = buildRoadSurfaces(net, elevation, kept, ground, reuseFor(() => elevation));
     expect(fingerprint(after.group)).toBe(fingerprint(fresh.group));
   }, 120_000);
+
+  it('changes the solve only near a short street joined to a long one, and the cache stays exact over many edits', () => {
+    // A street's whole profile was in the digest of every block it passes, so
+    // a junction made at one end built again every tile along it (9 to 34
+    // tiles for a 16 m street in the default town, docs/performance.md #10).
+    const town = new RoadDoc();
+    buildDefaultTown(town);
+    const net = new Network(town);
+    net.rebuild();
+    let elevation = buildRoadElevation(net, ground);
+    const reuse = reuseFor(() => elevation);
+    buildRoadSurfaces(net, elevation, materials, ground, reuse);
+    const middles = [...town.nodes.values()].filter((n) => n.incident.length === 2);
+    for (let k = 0; k < 4; k++) {
+      const at = middles[(k * 7919) % middles.length]!;
+      const before = elevation;
+      town.addSegment(at.id, town.addNode({ x: at.x + 30 + 10 * k, y: at.y + 35 }).id, 1);
+      net.rebuild();
+      elevation = buildRoadElevation(net, ground);
+      let changed = 0;
+      for (let x = -2400; x < 2400; x += 160) for (let y = -2400; y < 2400; y += 160) {
+        if (before.digest(x, y, x + 160, y + 160) !== elevation.digest(x, y, x + 160, y + 160)) changed++;
+      }
+      expect(changed).toBeLessThan(25);
+      const warm = buildRoadSurfaces(net, elevation, materials, ground, reuse);
+      const fresh = buildRoadSurfaces(net, elevation, materials, ground, reuseFor(() => elevation));
+      expect(fingerprint(warm.group)).toBe(fingerprint(fresh.group));
+    }
+  }, 240_000);
 });
