@@ -56,10 +56,24 @@ const GRID = 300;
 const SPACING = m(0.12);
 /** Half the field's side: the grass is drawn this far from the camera's focus. */
 const RADIUS = (GRID * SPACING) / 2;
+/** How far the nearest ring of blades reaches, units. */
+export const GRASS_NEAR_REACH = RADIUS;
 /** The mask's resolution over the whole plate. */
 const MASK_SIDE = 2048;
 
-export function createGrass(quality: { readonly grassBlades: number }): Grass {
+/**
+ * A ring of the field: the near one dense, the far one (from where the near
+ * one fades out) sparser with broader blades - the LOD rings of every grass
+ * system, crossfaded so neither has an edge.
+ */
+export interface GrassRing {
+  /** Spacing and blade width, times the near ring's. */
+  readonly scale: number;
+  /** Within this distance the ring has no blades (the nearer ring's ground), units; 0 for the nearest. */
+  readonly inner: number;
+}
+
+export function createGrass(quality: { readonly grassBlades: number }, ring: GrassRing = { scale: 1, inner: 0 }): Grass {
   // One blade: four rungs and a tip, x across (-0.5..0.5), y up the blade (0..1).
   const rungs = 4;
   const positions: number[] = [];
@@ -106,8 +120,10 @@ export function createGrass(quality: { readonly grassBlades: number }): Grass {
     uGrassFocus: { value: [0, 0] as [number, number] },
     uGrassTime: { value: 0 },
     uGrassSide: { value: side },
-    uGrassSpacing: { value: SPACING * (GRID / side) },
-    uGrassRadius: { value: RADIUS },
+    uGrassSpacing: { value: SPACING * (GRID / side) * ring.scale },
+    uGrassRadius: { value: RADIUS * ring.scale },
+    uGrassInner: { value: ring.inner },
+    uGrassScale: { value: ring.scale },
     uGrassHeight: { value: heightTexture as Texture },
     uGrassMask: { value: maskTexture as Texture },
     uGrassPlate: { value: [0, 1] as [number, number] },
@@ -126,6 +142,8 @@ export function createGrass(quality: { readonly grassBlades: number }): Grass {
         uniform float uGrassSide;
         uniform float uGrassSpacing;
         uniform float uGrassRadius;
+        uniform float uGrassInner;
+        uniform float uGrassScale;
         uniform sampler2D uGrassHeight;
         uniform sampler2D uGrassMask;
         uniform vec2 uGrassPlate; // half and size of the plate
@@ -165,12 +183,14 @@ export function createGrass(quality: { readonly grassBlades: number }): Grass {
         // Fade out over the field's last quarter, each blade at its own distance.
         float dist = length(root - uGrassFocus);
         float fade = 1.0 - smoothstep(uGrassRadius * (0.55 + 0.3 * r3), uGrassRadius * 0.98, dist);
+        // A far ring grows in where the nearer one thins out, each blade at its own distance.
+        if (uGrassInner > 0.0) fade *= smoothstep(uGrassInner * (0.5 + 0.35 * r2), uGrassInner * 0.95, dist);
         // Patchy: some ground is barer than other.
         float grassPatch = smoothstep(0.15, 0.55, grassHash(floor(root / ${m(7).toFixed(3)})) * 0.6 + clumpH * 0.6);
         float tall = (${m(0.14).toFixed(3)} + ${m(0.32).toFixed(3)} * (clumpH * 0.7 + r1 * 0.3)) * mix(0.55, 1.0, grassPatch);
         float keep = allowed * fade * step(0.25, allowed);
         tall *= keep;
-        float wide = ${m(0.032).toFixed(3)} * (0.75 + r2 * 0.5) * keep;
+        float wide = ${m(0.032).toFixed(3)} * uGrassScale * (0.75 + r2 * 0.5) * keep;
         // Facing: round the clump's own lean, spread a little.
         vec2 toCentre = normalize(clump.xy * ${m(2.4).toFixed(3)} - root + 1e-4);
         float facing = atan(toCentre.y, toCentre.x) + (r1 - 0.5) * 2.4;
@@ -214,7 +234,7 @@ export function createGrass(quality: { readonly grassBlades: number }): Grass {
         // Sun through the blade: a warm glow at the tip that does not depend on facing.
         totalEmissiveRadiance += vec3(0.012, 0.018, 0.004) * vGrassThrough * vGrassThrough;`);
   };
-  material.customProgramCacheKey = () => 'grass-field-v2';
+  material.customProgramCacheKey = () => 'grass-field-v3';
 
   const mesh = new Mesh(geometry, material);
   mesh.name = 'grass';

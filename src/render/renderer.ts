@@ -70,7 +70,7 @@ import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, 
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { TERRAIN_CELL, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
-import { createGrass } from './grassField';
+import { GRASS_NEAR_REACH, createGrass } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
 import { Indoors } from './indoors';
@@ -409,7 +409,9 @@ export function createSceneRenderer(
   // The grass field round the camera (`grass.ts`): its ground heights and the
   // mask that keeps it off paving and buildings, rebuilt when those change.
   const grass = createGrass(quality);
-  scene.add(grass.mesh);
+  // The far ring: three times the spacing, out to three times the reach, where the near one fades.
+  const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 });
+  scene.add(grass.mesh, grassFar.mesh);
   if (import.meta.env.DEV) (window as unknown as { __grass?: unknown }).__grass = grass;
   let grassGroundFor = '';
   let grassMaskFor = '';
@@ -428,6 +430,7 @@ export function createSceneRenderer(
         for (let c = 0; c < n; c++) heights[r * n + c] = terrain.renderedHeightAt(-TERRAIN_HALF + ((c + 0.5) / n) * size, y);
       }
       grass.setHeights(heights, n, size);
+      grassFar.setHeights(heights, n, size);
     }
     const maskKey = `${net.revision}:${net.doc.buildings.revision}:${net.doc.lotRevision}`;
     if (maskKey !== grassMaskFor) {
@@ -437,6 +440,7 @@ export function createSceneRenderer(
       for (const lot of net.doc.lots) if (lot.building !== undefined) rings.push([...lot.corners]);
       const roads = net.doc.segments.size ? [roadSurfacesOf(net).sidewalk] : [];
       grass.setBlocked(roads, rings, TERRAIN_HALF * 2);
+      grassFar.setBlocked(roads, rings, TERRAIN_HALF * 2);
     }
   };
   scene.add(...terrain.meshes);
@@ -1663,6 +1667,7 @@ export function createSceneRenderer(
         if (show) keepGrassInputs(net);
         const at = rig.chasing ? chaseCamera.focus : target;
         grass.update(at.x, at.z, show, windClock);
+        grassFar.update(at.x, at.z, show, windClock);
       }
       if (rig.chasing) {
         // Playing, the camera sees down the street: the shadows cover the
