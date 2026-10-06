@@ -95,6 +95,11 @@ export const RIVER_CARVE = 1.45;
  */
 export const terrainInfluence = (unit: number): number => unit * unit * (3 - 2 * unit);
 
+/** A natural river dab carves this share of the old canyon's depth. */
+export const RIVER_BED_DEPTH = 0.42;
+/** The share of a natural river dab's reach, from its edge, that is bank; inside it the bed is flat. */
+export const RIVER_BED_FLOOR = 0.72;
+
 /** The smallest share of its radius a rough dab reaches (`TerrainStamp.rough`). */
 export const ROUGH_REACH_MIN = 0.78;
 
@@ -142,6 +147,64 @@ function valueNoise(x: number, y: number): number {
   return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
 }
 
+/**
+ * Which land a map starts from (`RoadDoc.terrainRelief`): 1 the gentle
+ * four-octave field every map saved before this existed was built on, 2 the
+ * natural landform (`naturalRelief`). A map keeps the one it was made on, so
+ * its roads never find the ground moved under them.
+ */
+export type ReliefVersion = 1 | 2;
+export const RELIEF_LEGACY: ReliefVersion = 1;
+export const RELIEF_NATURAL: ReliefVersion = 2;
+export const isReliefVersion = (value: unknown): value is ReliefVersion => value === 1 || value === 2;
+
+/** 0..1 smoothstep of `t`, clamped. */
+const smooth01 = (t: number): number => {
+  const k = Math.min(1, Math.max(0, t));
+  return k * k * (3 - 2 * k);
+};
+
+/**
+ * The natural landform: country, not a plate.
+ *
+ * - DOMAIN-WARPED (Inigo Quilez, "warp"): every octave is read at a position
+ *   bent by a slow noise, so ridges curve and valleys meander instead of the
+ *   isotropic blobs plain fbm gives.
+ * - REGIONS: a slow mask decides where the land is hilly and where it is a
+ *   plain, so a map has flat ground to build a town on and hills to look at,
+ *   not one even roughness everywhere.
+ * - RIDGED octaves (1 - |n|, squared) in the hills: crests and spurs with
+ *   gullies between, the shape erosion leaves, not round domes.
+ * - Rolling swells and a metre-scale micro-relief over everything, so a
+ *   slope catches the light in more than one plane.
+ *
+ * Amplitudes in world units (2.5 to the metre): a plain within a few metres,
+ * hills to some 75 m over it - enough to read from the map camera.
+ */
+export function naturalRelief(x: number, y: number): number {
+  const wx = valueNoise(x / 1400 + 3.1, y / 1400 - 7.4) * 420;
+  const wy = valueNoise(x / 1400 - 11.2, y / 1400 + 2.6) * 420;
+  const px = x + wx;
+  const py = y + wy;
+  const continent = valueNoise(px / 1900, py / 1900);
+  const hilly = smooth01((valueNoise(px / 1300 + 17.3, py / 1300 - 5.9) + 0.1) / 0.85);
+  let ridge = 0;
+  let weight = 0;
+  let amplitude = 1;
+  let frequency = 1 / 640;
+  for (let octave = 0; octave < 4; octave++) {
+    const n = 1 - Math.abs(valueNoise(px * frequency + octave * 13.7, py * frequency - octave * 9.1));
+    ridge += n * n * amplitude;
+    weight += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2.07;
+  }
+  ridge /= weight;
+  const rolling = valueNoise(px / 260 + 2.2, py / 260 - 8.8) * 0.65 + valueNoise(px / 110 + 4.4, py / 110 + 1.3) * 0.35;
+  const micro = valueNoise(x / 38 - 6.6, y / 38 + 3.3) * 0.6 + valueNoise(x / 17 + 9.9, y / 17 - 2.7) * 0.4;
+  return 55 * continent + hilly * (190 * ridge - 60) + 22 * rolling * (0.35 + 0.65 * hilly) + 1.6 * micro;
+}
+
 /** The procedural land under every map, in world units. */
 export function baseRelief(x: number, y: number): number {
   const broad = valueNoise(x / 620, y / 620);
@@ -167,8 +230,11 @@ export class TerrainIndex {
   readonly stamps: readonly TerrainStamp[];
   /** Incremented whenever the index is rebuilt, for cache invalidation. */
   readonly revision: number;
+  /** The land under the stamps (`ReliefVersion`). */
+  readonly relief: ReliefVersion;
 
-  constructor(stamps: readonly TerrainStamp[], revision: number) {
+  constructor(stamps: readonly TerrainStamp[], revision: number, relief: ReliefVersion = RELIEF_LEGACY) {
+    this.relief = relief;
     // COPIED, not aliased. The document's stamp list is mutated in place, so
     // holding the live array made every index look identical to the next one and
     // the renderer could never tell what had just changed.
@@ -220,7 +286,7 @@ export function sampleTerrainHeight(
   y: number,
 ): number {
   const list = stamps instanceof TerrainIndex ? stamps.near(x, y) : stamps;
-  let height = baseRelief(x, y);
+  let height = stamps instanceof TerrainIndex && stamps.relief === RELIEF_NATURAL ? naturalRelief(x, y) : baseRelief(x, y);
   // The stroke being gathered (see `TerrainStamp.stroke`): its id, its mode,
   // and the strongest signed move any of its dabs makes here so far.
   let stroke: number | undefined;
@@ -240,7 +306,17 @@ export function sampleTerrainHeight(
     const distance = Math.sqrt(distanceSquared);
     let reach = stamp.radius;
     let carve = 1;
-    if (stamp.rough && (stamp.mode === 'raise' || stamp.mode === 'lower')) {
+    let bedProfile = false;
+    if (stamp.rough && stamp.mode === 'river') {
+      // A river with a BED: a wide flat floor and ramped banks that wander
+      // in and out along its length, at a depth a river has (some 6 m at
+      // full strength) - not the smooth-walled canyon the dome profile cut.
+      const lobe = stamp.radius * 0.6;
+      reach *= ROUGH_REACH_MIN + (1 - ROUGH_REACH_MIN) * (0.5 + 0.5 * valueNoise(x / lobe + 23.9, y / lobe + 31.4));
+      if (distance >= reach) continue;
+      carve = RIVER_BED_DEPTH;
+      bedProfile = true;
+    } else if (stamp.rough && (stamp.mode === 'raise' || stamp.mode === 'lower')) {
       // World-space noise scaled by the brush, so every dab of a stroke (one
       // radius) agrees on the same lobes and crests.
       const lobe = stamp.radius * 0.45;
@@ -251,7 +327,8 @@ export function sampleTerrainHeight(
       // Gentle: dabs stack, and a strong carve stacked ten times drew spires.
       carve = 0.82 + 0.36 * ridge * ridge;
     }
-    const influence = terrainInfluence(1 - distance / reach) * carve;
+    const unit = 1 - distance / reach;
+    const influence = (bedProfile ? terrainInfluence(Math.min(1, unit / RIVER_BED_FLOOR)) : terrainInfluence(unit)) * carve;
     const move = stamp.mode === 'raise' ? stamp.strength * influence
       : stamp.mode === 'lower' ? -stamp.strength * influence
         : stamp.mode === 'river' ? -stamp.strength * RIVER_CARVE * influence

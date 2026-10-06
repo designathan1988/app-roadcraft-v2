@@ -58,7 +58,7 @@ const WATER_RADIUS = 0.92;
 /** How far past the brush the surface may reach to find its shore. */
 const WATER_SPREAD = 1.6;
 /** Share of a channel's depth the water fills, measured down from its banks. */
-const WATER_FILL = 0.3;
+const WATER_FILL = 0.45;
 /** How far under the ground the surface stays, so its rim is never left dry. */
 const WATER_MARGIN = 0.4;
 /** Grid resolution of the unified river surface. */
@@ -876,25 +876,59 @@ const TOPSOIL = 4;
  * so it tiles along the rim and down the wall with no seam.
  */
 function strataTexture(anisotropy: number): DataTexture {
-  const res = 256;
+  const res = 512;
   const noise = makeNoise(4_177);
-  // sRGB, top to bottom of one repeat.
-  const layers: readonly (readonly [number, number, number])[] = [
-    [132, 92, 60], [158, 118, 78], [120, 84, 56], [170, 134, 90],
-    [140, 100, 66], [116, 82, 58], [162, 124, 84], [128, 92, 64],
+  const grit = makeNoise(0x77a1);
+  // One repeat of the section, top to bottom: a THICKNESS (share of the
+  // repeat) and an sRGB colour per bed. Real beds are anything but even - a
+  // thick sandstone, a thin dark shale, a lens of gravel - and a repeat of
+  // equal wavy bands read as striped paper.
+  const beds: readonly (readonly [number, number, number, number, number])[] = [
+    // thickness, r, g, b, texture (0 fine, 1 gravel)
+    [0.16, 168, 134, 94, 0],
+    [0.035, 92, 74, 60, 0],
+    [0.09, 140, 102, 70, 0],
+    [0.05, 150, 140, 124, 1],
+    [0.21, 178, 146, 104, 0],
+    [0.03, 104, 82, 64, 0],
+    [0.12, 126, 90, 64, 0],
+    [0.065, 160, 128, 92, 1],
+    [0.2, 148, 112, 78, 0],
+    [0.04, 98, 80, 66, 0],
   ];
+  const total = beds.reduce((sum, bed) => sum + bed[0], 0);
   const data = new Uint8Array(res * res * 4);
   for (let y = 0; y < res; y++) {
     for (let x = 0; x < res; x++) {
-      const warp = fbm(noise, x / 32, y / 32, 8, 3) - 0.5;
-      const t = (y / res) * layers.length + warp * 1.4;
-      const band = ((Math.floor(t) % layers.length) + layers.length) % layers.length;
-      const colour = layers[band]!;
-      const grain = 0.88 + 0.24 * fbm(noise, x / 4 + 97, y / 4 + 31, 64, 3);
-      // A thin dark seam at each band's top edge, as a cut bank shows.
-      const seam = t - Math.floor(t) < 0.035 ? 0.86 : 1;
+      const u = x / res;
+      const v = y / res;
+      // Nearly level, with a long gentle undulation, not a wave every metre.
+      const sway = (fbm(noise, u * 3, v * 3, 3, 2) - 0.5) * 0.035;
+      const t = (((v + sway) % 1) + 1) % 1;
+      // Each bed pinches and swells along the cut on its own noise.
+      let top = 0;
+      let bed = beds.length - 1;
+      let depthIn = 0;
+      for (let i = 0; i < beds.length; i++) {
+        const swell = 1 + (fbm(noise, u * 5 + i * 3, i * 7.3, 5, 2) - 0.5) * 0.9;
+        const thick = (beds[i]![0] / total) * swell;
+        if (t < top + thick || i === beds.length - 1) { bed = i; depthIn = (t - top) / Math.max(thick, 1e-4); break; }
+        top += thick;
+      }
+      const [, r, g, b, kind] = beds[bed]!;
+      const fine = 0.9 + 0.2 * fbm(grit, u * 128, v * 128, 128, 2);
+      const pebble = kind === 1 ? (fbm(grit, u * 256 + 9, v * 256 + 4, 256, 1) > 0.62 ? 1.22 : 0.92) : 1;
+      // Rain wash: faint vertical streaks down the face.
+      let wash = 0;
+      for (let k = 0; k < 6; k++) wash += fbm(grit, u * 90, v * 90 + k, 90, 1);
+      wash = 0.94 + 0.12 * (wash / 6);
+      // The top of each bed a touch darker, where the one above weathers into it.
+      const seam = 0.9 + 0.1 * Math.min(1, depthIn * 6);
+      const shade = fine * pebble * wash * seam;
       const i = (y * res + x) * 4;
-      for (let c = 0; c < 3; c++) data[i + c] = Math.min(255, colour[c]! * grain * seam);
+      data[i] = Math.min(255, r * shade);
+      data[i + 1] = Math.min(255, g * shade);
+      data[i + 2] = Math.min(255, b * shade);
       data[i + 3] = 255;
     }
   }
@@ -1465,13 +1499,21 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // a fixed world datum it vanished under raised ground, and level with the
     // banks it covered the whole valley as one flat sheet.
     const land = stamps.filter((stamp) => stamp.mode !== 'river');
-    const landIndex = new TerrainIndex(land, 0);
+    const landIndex = new TerrainIndex(land, 0, index.relief);
     const landAt = (x: number, y: number): number => TERRAIN_BASE + sampleTerrainHeight(landIndex, x, y);
 
     const discs: WaterStamp[] = [];
     for (const stamp of stamps) {
       if (stamp.mode !== 'river' || discs.length >= MAX_TERRAIN_STAMPS) continue;
-      const bank = landAt(stamp.x, stamp.y);
+      // The LOWEST bank round the dab, not the ground at its centre: on a
+      // hillside one bank is lower than the other, and water standing at the
+      // centre's level spilled over it, flooded the slope past the basin
+      // limit and was dropped, leaving a stepped sheet at the brush's reach.
+      let bank = landAt(stamp.x, stamp.y);
+      for (let k = 0; k < 8; k++) {
+        const angle = (k / 8) * Math.PI * 2;
+        bank = Math.min(bank, landAt(stamp.x + Math.cos(angle) * stamp.radius, stamp.y + Math.sin(angle) * stamp.radius));
+      }
       const bed = heightAt(stamp.x, stamp.y);
       const level = bank - Math.max(WATER_MARGIN, WATER_FILL * (bank - bed));
       if (bed + TERRAIN_WATER_HEIGHT >= level) continue;
@@ -1601,7 +1643,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       const firstBuild = revision < 0;
       const previous = index;
       revision = doc.terrainRevision;
-      index = new TerrainIndex(doc.terrainStamps, revision);
+      index = new TerrainIndex(doc.terrainStamps, revision, doc.terrainRelief);
 
       // Only the cells a new stamp reaches are rewritten. A brush stroke adds
       // one 80-unit stamp; rewriting all 90 601 corners for it is what made

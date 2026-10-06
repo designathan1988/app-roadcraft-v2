@@ -102,7 +102,7 @@ export const WATER_DRIFTS: readonly (readonly [number, number])[] = [DRIFT_A, DR
 export const WATER_DEPTH_ATTRIBUTE = 'aDepth';
 
 /** Depth, in world units, at which the tint has reached its deep-water value. */
-const DEEP_AT = 3;
+const DEEP_AT = 6;
 /** Depth over which the shore foam band fades out. */
 const FOAM_AT = 4;
 /**
@@ -272,7 +272,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     // not the icy cyan a single light blue gave.
     uShallow: { value: new Color(0x86b4bd) },
     uMid: { value: new Color(0x4a7ea6) },
-    uDeep: { value: new Color(0x2a5079) },
+    uDeep: { value: new Color(0x336889) },
     uHorizon: { value: new Color(0xb9cbe6) },
     uFoamTint: { value: new Color(0xe6eef2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
@@ -392,6 +392,10 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          waterAlpha = max(waterAlpha, waterFoam * 0.9);
          float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, waterDepthPx);
 
+         // Slicks and currents: a slow, wide swing in tone, so a long river is
+         // not one flat colour from bank to horizon. One more fetch.
+         float waterSlick = texture2D(normalMap, waterPoint * 0.0031 + uWaterTime * vec2(0.0011, 0.0006)).a;
+         waterTint *= 0.94 + 0.12 * waterSlick;
          diffuseColor.rgb = waterTint;
          diffuseColor.a = waterAlpha;`,
       )
@@ -437,7 +441,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // the light scattered back, a fraction of what a matte surface of
          // that colour would return under the same sun. Lit as paint, the
          // river read as a pale sheet of plastic.
-         material.diffuseContribution *= mix(0.55, 1.0, waterFoam);
+         material.diffuseContribution *= mix(0.65, 1.0, waterFoam);
          // The horizon tint: what faces away from the eye takes the sky's pale
          // colour as a painted wash, instead of a sharp reflection.
          material.diffuseContribution = mix(material.diffuseContribution, uHorizon, waterFresnel * 0.35 * (1.0 - waterFoam));
@@ -446,7 +450,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v4';
+  material.customProgramCacheKey = () => 'water-two-layer-v5';
 
   const started = performance.now();
   return {

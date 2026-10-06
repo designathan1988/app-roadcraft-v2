@@ -14,7 +14,7 @@ import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
 import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
-import { MAX_TERRAIN_STAMPS, type TerrainMode } from '@world/terrain';
+import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
 import type { NodeId, PoleId, SegmentId } from '@world/ids';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
@@ -162,6 +162,8 @@ const canvas = document.getElementById('game') as HTMLCanvasElement;
 const minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
 
 const doc = new RoadDoc();
+// A new map is made on the natural land; a saved one keeps its own (restored below).
+doc.terrainRelief = RELIEF_NATURAL;
 const net = new Network(doc);
 const camera = new Camera();
 const surface = new CanvasSurface(canvas, () => requestDraw());
@@ -210,7 +212,9 @@ if (saved) {
   } catch (error) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
-    doc.replaceWith(new RoadDoc());
+    const fresh = new RoadDoc();
+    fresh.terrainRelief = RELIEF_NATURAL;
+    doc.replaceWith(fresh);
     net.rebuild();
     bootFailed = true;
   }
@@ -1301,7 +1305,7 @@ function stampTerrain(at: Vec2, level: number): void {
     mode: terrainMode,
     ...(terrainMode === 'flatten' ? { level } : {}),
     ...(terrainStroke && terrainMode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
-    ...(terrainMode === 'raise' || terrainMode === 'lower' ? { rough: true } : {}),
+    ...(terrainMode === 'raise' || terrainMode === 'lower' || terrainMode === 'river' ? { rough: true } : {}),
   });
 }
 
@@ -3208,7 +3212,7 @@ if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab'
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty.
-  applySnapshot(new RoadDoc().toJSON(), 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL }, 'import');
   roadHeightOffset = 0;
   roadHeightEdited = false;
   updateRoadHeightValue();

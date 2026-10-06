@@ -152,7 +152,9 @@ export function commitRoadPath(
 /** The terrain's index as last built; a road edit does not move the land, so the next one reuses it. */
 let terrainIndex: TerrainIndex | null = null;
 function terrainIndexOf(doc: RoadDoc): TerrainIndex {
-  if (!terrainIndex || !sameStamps(terrainIndex.stamps, doc.terrainStamps)) terrainIndex = new TerrainIndex(doc.terrainStamps, 0);
+  if (!terrainIndex || terrainIndex.relief !== doc.terrainRelief || !sameStamps(terrainIndex.stamps, doc.terrainStamps)) {
+    terrainIndex = new TerrainIndex(doc.terrainStamps, 0, doc.terrainRelief);
+  }
   return terrainIndex;
 }
 

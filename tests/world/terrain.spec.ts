@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   RIVER_CARVE,
+  RELIEF_LEGACY,
+  RELIEF_NATURAL,
   ROUGH_REACH_MIN,
+  naturalRelief,
   TERRAIN_MAX_HEIGHT,
   TERRAIN_MIN_HEIGHT,
   TerrainIndex,
@@ -263,5 +266,38 @@ describe('natural brush (rough dabs)', () => {
     const rough = stamp({ rough: true });
     const ring = Array.from({ length: 32 }, (_, a) => lift([rough], Math.cos(a / 5.1) * 60, Math.sin(a / 5.1) * 60));
     expect(Math.max(...ring) - Math.min(...ring)).toBeGreaterThan(0.5);
+  });
+});
+
+describe('relief versions', () => {
+  it('reads the old field unless the index is on the natural land', () => {
+    expect(sampleTerrainHeight(new TerrainIndex([], 0), 300, -200)).toBeCloseTo(baseRelief(300, -200), 9);
+    expect(sampleTerrainHeight(new TerrainIndex([], 0, RELIEF_NATURAL), 300, -200)).toBeCloseTo(naturalRelief(300, -200), 9);
+  });
+
+  it('keeps a saved map on its own land, and a natural map natural, through JSON', async () => {
+    const { RoadDoc } = await import('@world/doc');
+    const legacy = RoadDoc.fromJSON({ ...new RoadDoc().toJSON() });
+    expect(legacy.terrainRelief).toBe(RELIEF_LEGACY);
+    expect('relief' in legacy.toJSON()).toBe(false);
+    const natural = new RoadDoc();
+    natural.terrainRelief = RELIEF_NATURAL;
+    expect(RoadDoc.fromJSON(natural.toJSON()).terrainRelief).toBe(RELIEF_NATURAL);
+    expect(natural.clone().terrainRelief).toBe(RELIEF_NATURAL);
+  });
+
+  it('has plains and hills, within a range a map can hold', () => {
+    let low = Infinity;
+    let high = -Infinity;
+    for (let x = -2400; x <= 2400; x += 60) {
+      for (let y = -2400; y <= 2400; y += 60) {
+        const h = naturalRelief(x, y);
+        low = Math.min(low, h);
+        high = Math.max(high, h);
+      }
+    }
+    expect(high - low).toBeGreaterThan(80);
+    expect(high).toBeLessThan(300);
+    expect(low).toBeGreaterThan(-200);
   });
 });

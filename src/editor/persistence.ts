@@ -464,6 +464,7 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
     segmentIds.add(segment.id);
   }
 
+  if (value.relief !== undefined && value.relief !== 1 && value.relief !== 2) return false;
   if (value.terrain !== undefined) {
     if (!Array.isArray(value.terrain)) return false;
     const terrainIds = new Set<number>();

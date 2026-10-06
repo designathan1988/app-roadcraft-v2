@@ -18,7 +18,7 @@ import { type Barrier, type BarrierKind, isBarrierKind } from './barriers';
 // Runtime imports, and safe: `geometry` and `legAngles` take `RoadDoc` as a
 // TYPE only, so nothing here is part of a runtime cycle.
 import { TUNNEL_HEADROOM, type RoadStructure, migrateStructure } from './structures';
-import { MAX_TERRAIN_STAMPS, type TerrainStamp } from './terrain';
+import { MAX_TERRAIN_STAMPS, RELIEF_LEGACY, isReliefVersion, type ReliefVersion, type TerrainStamp } from './terrain';
 import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
@@ -179,6 +179,14 @@ export class RoadDoc {
   private nextTerrainId = 1;
 
   readonly terrainStamps: TerrainStamp[] = [];
+  /**
+   * The land this map was made on (`world/terrain.ts` `ReliefVersion`). A
+   * document starts on the old field, as every map saved before the natural
+   * landform did and as the tests and tools that build one expect; the game
+   * puts a NEW map on the natural land (`main.ts`). A saved map without the
+   * key loads on the old field, so its roads stay where they were.
+   */
+  terrainRelief: ReliefVersion = RELIEF_LEGACY;
   /** Ground painted over the terrain (`terrainPaint.ts`), oldest first. */
   readonly terrainPaint: PaintDab[] = [];
   /** Moves with every change to `terrainPaint`, and only then. */
@@ -838,6 +846,7 @@ export class RoadDoc {
     for (const id of this.dirtySegments) copy.dirtySegments.add(id);
     copy.terrainStamps.length = 0;
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
+    copy.terrainRelief = this.terrainRelief;
     copy.buildings.copyAllocator(this.buildings);
     copy.buildings.revision = this.buildings.revision;
     copy.nextZoneId = this.nextZoneId;
@@ -857,7 +866,7 @@ export class RoadDoc {
     // document with an edited clone (`commitDraft`), and bumping the terrain
     // revision for it rewrote all 90 601 terrain corners, their normals and
     // the rivers on every road drawn, for ground that had not changed.
-    const landMoved = !sameStamps(this.terrainStamps, source.terrainStamps);
+    const landMoved = !sameStamps(this.terrainStamps, source.terrainStamps) || this.terrainRelief !== source.terrainRelief;
     const nextTerrainRevision = landMoved ? this.terrainRevision + 1 : this.terrainRevision;
     // Likewise the roads and the utility network: undoing a storey or a
     // brush dab replaced the whole document and moved both revisions, which
@@ -929,6 +938,7 @@ export class RoadDoc {
     if (landMoved) {
       this.terrainStamps.length = 0;
       this.terrainStamps.push(...source.terrainStamps.map((stamp) => ({ ...stamp })));
+      this.terrainRelief = source.terrainRelief;
     }
 
     this.nodeIds = new IdAllocator(source.nodeIds.peek);
@@ -999,6 +1009,8 @@ export class RoadDoc {
         ...(s.parking ? { parking: { ...s.parking } } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
+      // Only for the natural land: a legacy map serialises as before.
+      ...(this.terrainRelief !== RELIEF_LEGACY ? { relief: this.terrainRelief } : {}),
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
@@ -1115,6 +1127,8 @@ export class RoadDoc {
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
     if (doc.terrainPaint.length) doc.paintRevision = 1;
+    // Absent: a map from before the natural land, which stays on the old one.
+    doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
     for (const stamp of data.terrain ?? []) {
       doc.terrainStamps.push({ ...stamp });
       doc.nextTerrainId = Math.max(doc.nextTerrainId, stamp.id + 1);
@@ -1230,6 +1244,8 @@ export interface SerializedDoc {
     structure?: RoadStructure | 'viaduct';
   }[];
   readonly terrain?: readonly TerrainStamp[];
+  /** `ReliefVersion`; absent on maps made before the natural landform. */
+  readonly relief?: number;
   /**
    * The utility network. OPTIONAL, and it has to stay that way: every map
    * saved before poles existed has no such key, and loading one must not
