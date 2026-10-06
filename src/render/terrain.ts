@@ -13,6 +13,9 @@ import {
   UnsignedByteType,
   LinearFilter,
   ClampToEdgeWrapping,
+  LinearMipmapLinearFilter,
+  RepeatWrapping,
+  SRGBColorSpace,
   Vector3,
   type Material,
   type Texture,
@@ -613,6 +616,55 @@ function terrainMaterial(
   return material;
 }
 
+/** Metres along the rim one strata texture spans before it repeats. */
+const STRATA_SPAN_X = 140;
+/** Metres of depth one strata texture spans before it repeats. */
+const STRATA_SPAN_Y = 96;
+/** How far the map's cut sides reach below the base level (SimCity 4's slab). */
+const SLAB_DEPTH = 320;
+/** The darker topsoil band under the rim, in metres. */
+const TOPSOIL = 4;
+
+/**
+ * The soil layers of the map's cut sides: horizontal bands of earth, clay and
+ * stone, wavy rather than ruled, with a fine grain over them. Periodic noise,
+ * so it tiles along the rim and down the wall with no seam.
+ */
+function strataTexture(anisotropy: number): DataTexture {
+  const res = 256;
+  const noise = makeNoise(4_177);
+  // sRGB, top to bottom of one repeat.
+  const layers: readonly (readonly [number, number, number])[] = [
+    [118, 86, 58], [138, 104, 70], [104, 76, 52], [150, 120, 84],
+    [112, 98, 84], [128, 96, 64], [96, 86, 78], [142, 112, 78],
+  ];
+  const data = new Uint8Array(res * res * 4);
+  for (let y = 0; y < res; y++) {
+    for (let x = 0; x < res; x++) {
+      const warp = fbm(noise, x / 32, y / 32, 8, 3) - 0.5;
+      const t = (y / res) * layers.length + warp * 0.9;
+      const band = ((Math.floor(t) % layers.length) + layers.length) % layers.length;
+      const colour = layers[band]!;
+      const grain = 0.82 + 0.36 * fbm(noise, x / 4 + 97, y / 4 + 31, 64, 3);
+      // A thin dark seam at each band's top edge, as a cut bank shows.
+      const seam = t - Math.floor(t) < 0.06 ? 0.78 : 1;
+      const i = (y * res + x) * 4;
+      for (let c = 0; c < 3; c++) data[i + c] = Math.min(255, colour[c]! * grain * seam);
+      data[i + 3] = 255;
+    }
+  }
+  const texture = new DataTexture(data, res, res, RGBAFormat, UnsignedByteType);
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = anisotropy;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const bakes = terrainBakes(anisotropy);
   const material = terrainMaterial(bakes, anisotropy);
@@ -656,6 +708,20 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   backdrop.receiveShadow = false;
   backdrop.matrixAutoUpdate = false;
   backdrop.updateMatrix();
+
+  // The map's cut sides, SimCity 4's slab: from the rim straight down to a flat
+  // bottom, in soil layers, so the plate reads as a block of land standing on
+  // the plain background rather than a sheet ending in mid-air. In play the
+  // backdrop is drawn over the rim and hides them.
+  const walls = new Mesh(
+    new BufferGeometry(),
+    new MeshStandardMaterial({ map: strataTexture(anisotropy), vertexColors: true, roughness: 1, metalness: 0 }),
+  );
+  walls.name = 'terrain-walls';
+  walls.receiveShadow = false;
+  walls.castShadow = false;
+  walls.matrixAutoUpdate = false;
+  walls.updateMatrix();
 
   const waterSurface = createWaterSurface(anisotropy);
   const water = new Mesh(new BufferGeometry(), waterSurface.material);
@@ -796,6 +862,91 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     next.computeBoundingSphere();
     const previous = backdrop.geometry;
     backdrop.geometry = next;
+    previous.dispose();
+    rebuildWalls();
+  };
+
+  /**
+   * The cut sides, sewn to the same rim: per side one column per plate cell,
+   * from the rim's drawn height down past a topsoil band to a flat bottom
+   * below the lowest point of the rim. The layers are laid by ABSOLUTE height,
+   * so they run level under a hill as real strata do.
+   */
+  const rebuildWalls = (): void => {
+    const h = TERRAIN_HALF;
+    const n = TERRAIN_SEGMENTS;
+    // Each side from corner to corner, with its outward normal (local x/z).
+    const sides: readonly (readonly [number, number, number, number, number, number])[] = [
+      [-h, -h, h, -h, 0, -1],
+      [h, -h, h, h, 1, 0],
+      [h, h, -h, h, 0, 1],
+      [-h, h, -h, -h, -1, 0],
+    ];
+    let lowest = Infinity;
+    const tops = sides.map(([x0, z0, x1, z1]) => {
+      const row: number[] = [];
+      for (let k = 0; k <= n; k++) {
+        const x = x0 + ((x1 - x0) * k) / n;
+        const z = z0 + ((z1 - z0) * k) / n;
+        const y = sampleGrid(grid, x, -z);
+        row.push(y);
+        lowest = Math.min(lowest, y);
+      }
+      return row;
+    });
+    const floor = Math.min(TERRAIN_BASE - SLAB_DEPTH, lowest - 40);
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const colours: number[] = [];
+    // Row shades: topsoil darker at the lip, full in the body, shaded to the bottom.
+    const LIP = 0.55;
+    const BODY = 1;
+    const BOTTOM = 0.42;
+    sides.forEach(([x0, z0, x1, z1, nx, nz], s) => {
+      const top = tops[s]!;
+      const length = Math.hypot(x1 - x0, z1 - z0);
+      const vertex = (k: number, y: number, shade: number): void => {
+        const x = x0 + ((x1 - x0) * k) / n;
+        const z = z0 + ((z1 - z0) * k) / n;
+        positions.push(x, y, z);
+        normals.push(nx, 0, nz);
+        uvs.push(((s * length + (length * k) / n) / STRATA_SPAN_X), y / STRATA_SPAN_Y);
+        colours.push(shade, shade, shade);
+      };
+      for (let k = 0; k < n; k++) {
+        const ya = top[k]!;
+        const yb = top[k + 1]!;
+        const bands: readonly (readonly [number, number, number, number])[] = [
+          [ya, yb, LIP, LIP],
+          [ya - TOPSOIL, yb - TOPSOIL, BODY, BODY],
+          [floor, floor, BOTTOM, BOTTOM],
+        ];
+        for (let b = 0; b + 1 < bands.length; b++) {
+          const [ua, ub, sa] = bands[b]!;
+          const [la, lb, sl] = bands[b + 1]!;
+          // Wound so the face points OUT, measured rather than assumed:
+          // (b - a) x (c - a) for a = upper k, b = lower k, c = upper k+1.
+          const ax = x0 + ((x1 - x0) * k) / n;
+          const az = z0 + ((z1 - z0) * k) / n;
+          const cx = x0 + ((x1 - x0) * (k + 1)) / n;
+          const cz = z0 + ((z1 - z0) * (k + 1)) / n;
+          // b - a = (0, la - ua, 0); c - a = (cx - ax, ., cz - az).
+          const outward = (la - ua) * (cz - az) * nx - (la - ua) * (cx - ax) * nz;
+          const quad: [number, number, number][] = [[k, ua, sa], [k, la, sl], [k + 1, ub, sa], [k + 1, lb, sl]];
+          const order = outward > 0 ? [0, 1, 2, 2, 1, 3] : [0, 2, 1, 2, 3, 1];
+          for (const o of order) vertex(...quad[o]!);
+        }
+      }
+    });
+    const next = new BufferGeometry();
+    next.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    next.setAttribute('normal', new Float32BufferAttribute(normals, 3));
+    next.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+    next.setAttribute('color', new Float32BufferAttribute(colours, 3));
+    next.computeBoundingSphere();
+    const previous = walls.geometry;
+    walls.geometry = next;
     previous.dispose();
   };
   rebuildFrame();
@@ -1079,7 +1230,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
 
   return {
-    meshes: [backdrop, ground, water],
+    meshes: [backdrop, walls, ground, water],
     ground,
     vergeMaterial,
     updatePaint,
@@ -1197,6 +1348,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       material.dispose();
       backdrop.geometry.dispose();
       (backdrop.material as MeshStandardMaterial).dispose();
+      walls.geometry.dispose();
+      (walls.material as MeshStandardMaterial).map?.dispose();
+      (walls.material as MeshStandardMaterial).dispose();
       water.geometry.dispose();
       waterSurface.dispose();
     },
