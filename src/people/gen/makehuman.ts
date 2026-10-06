@@ -256,3 +256,57 @@ export function tuckUnder(self: { readonly shape: Float32Array; readonly normals
     P[v * 3] = x - nx * need; P[v * 3 + 1] = y - ny * need; P[v * 3 + 2] = z - nz * need;
   }
 }
+
+/**
+ * A rigid item (a shoe) fitted as a whole, not vertex by vertex: a shoe is
+ * stiff and the foot fits it, but pinned point by point it takes every bump
+ * of the toes (Daz 3D's answer is rigid groups). `onRest` is the item fitted
+ * on MakeHuman's own body (`restBody`, decimetres); each side (x > 0, x < 0)
+ * goes to this body (`body`, decimetres) by the one affine map that best
+ * carries the body vertices it is pinned to (least squares), so it scales and
+ * turns with the foot but keeps its shape. In place, decimetres.
+ */
+export function fitRigid(onRest: Float32Array, refs: Uint32Array, restBody: Float32Array, body: Float32Array): void {
+  for (const side of [1, -1]) {
+    // Normal equations for T = A S + t over the pinned vertices of this side.
+    const M = new Float64Array(16), R = [new Float64Array(4), new Float64Array(4), new Float64Array(4)];
+    const seen = new Set<number>();
+    for (const r of refs) {
+      if (seen.has(r) || Math.sign(restBody[r * 3]!) !== side) continue;
+      seen.add(r);
+      const s = [restBody[r * 3]!, restBody[r * 3 + 1]!, restBody[r * 3 + 2]!, 1];
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) M[i * 4 + j]! += s[i]! * s[j]!;
+        for (let k = 0; k < 3; k++) R[k]![i]! += s[i]! * body[r * 3 + k]!;
+      }
+    }
+    if (seen.size < 8) continue;
+    const rows = R.map((b) => solve4(M, b));
+    for (let v = 0; v < onRest.length / 3; v++) {
+      const x = onRest[v * 3]!;
+      if (Math.sign(x) !== side) continue;
+      const y = onRest[v * 3 + 1]!, z = onRest[v * 3 + 2]!;
+      for (let k = 0; k < 3; k++) {
+        const a = rows[k]!;
+        onRest[v * 3 + k] = a[0]! * x + a[1]! * y + a[2]! * z + a[3]!;
+      }
+    }
+  }
+}
+
+/** Solves a 4x4 symmetric system by Gaussian elimination with pivoting. */
+function solve4(M: Float64Array, b: Float64Array): Float64Array {
+  const a = Array.from({ length: 4 }, (_, i) => [M[i * 4]!, M[i * 4 + 1]!, M[i * 4 + 2]!, M[i * 4 + 3]!, b[i]!]);
+  for (let c = 0; c < 4; c++) {
+    let p = c;
+    for (let r = c + 1; r < 4; r++) if (Math.abs(a[r]![c]!) > Math.abs(a[p]![c]!)) p = r;
+    [a[c], a[p]] = [a[p]!, a[c]!];
+    const d = a[c]![c]! || 1e-12;
+    for (let r = 0; r < 4; r++) {
+      if (r === c) continue;
+      const f = a[r]![c]! / d;
+      for (let k = c; k < 5; k++) a[r]![k]! -= f * a[c]![k]!;
+    }
+  }
+  return Float64Array.from(a.map((row, i) => row[4]! / (row[i]! || 1e-12)));
+}

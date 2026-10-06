@@ -3,9 +3,10 @@ import type { CatalogPage } from '@people/gen/catalog';
 import { bodyFor } from '@people/gen/clothes';
 import { HumanExtras, REGION, beardMask, faceAnchors, type ExtrasMeta } from '@people/gen/extras';
 import { browStrands, hairStrands, lashStrands } from '@people/gen/hair';
-import { coveredBy, makehumanBody, parseMakeHuman, pushOut, surfaceOf, tuckUnder, type MakeHumanMeta } from '@people/gen/makehuman';
+import { coveredBy, fitRigid, makehumanBody, parseMakeHuman, pushOut, surfaceOf, tuckUnder, type MakeHumanMeta } from '@people/gen/makehuman';
 import { randomName } from '@people/gen/names';
 import { fitProxy, loadProxyItem } from '@people/body/proxy';
+import mhBaseBin from '../public/models/people/base.bin?url';
 import { isWhole } from '@people/wardrobe';
 import type { GarmentParams } from '@people/gen/clothes';
 import {
@@ -47,6 +48,8 @@ const [b, ex, mh] = await Promise.all([
     fetch(urlOf('vitruvian')('makehuman.bin')).then((r) => r.arrayBuffer()),
   ]).then(([meta, bin]) => parseMakeHuman(meta, bin)),
 ]);
+// MakeHuman's own body at rest (decimetres): rigid items (shoes) are fitted there first.
+const mhRest = new Float32Array(await (await fetch(mhBaseBin)).arrayBuffer(), 0, mh.positions.length);
 document.getElementById('loading')?.remove();
 
 // Per render vertex: lips, beard, scalp (the skin shader's make-up masks).
@@ -255,14 +258,20 @@ function draw(p: PersonParams, live: boolean): void {
       const order = worn.map((g, k) => [g === o.shoes ? (boots ? 1.5 : 0) : g === o.bottom ? 1 : 2, k] as const).sort((x, y) => x[0] - y[0]).map(([, k]) => k);
       const covered = new Uint8Array(b.base.vertexCount);
       const under: { shape: Float32Array; normals: Float32Array; skin: Uint32Array }[] = [];
+      const underShoe: boolean[] = [];
       const fitted: Float32Array[] = [];
       for (const k of order) {
         const item = items[k]!;
-        const dm = fitProxy(item.pack, mhBody);
+        const shoe = worn[k] === o.shoes;
+        // A shoe is rigid: fitted on MakeHuman's own foot, then carried whole (fitRigid).
+        const dm = shoe ? fitProxy(item.pack, mhRest) : fitProxy(item.pack, mhBody);
+        if (shoe) fitRigid(dm, item.pack.refs, mhRest, mhBody);
         const m = new Float32Array(dm.length);
         for (let i = 0; i < dm.length; i++) m[i] = dm[i]! * 0.1;
-        pushOut(m, item.pack.index, bodyNow, 0.003);
-        for (const inner of under) pushOut(m, item.pack.index, inner, 0.003);
+        if (!shoe) pushOut(m, item.pack.index, bodyNow, 0.003);
+        // Kept off the layers under it - not off a shoe: pushed against its
+        // cut-up surface a hem goes to spikes; the shoe's covered part hides instead.
+        under.forEach((inner, i) => { if (!underShoe[i]) pushOut(m, item.pack.index, inner, 0.003); });
         coveredBy(m, item.pack.index, bodyNow, covered);
         for (const v of item.pack.deleteVerts) hidden.add(v);
         // Shoes stand the person on their soles.
@@ -272,6 +281,7 @@ function draw(p: PersonParams, live: boolean): void {
           lift = Math.max(lift, floor - lo);
         }
         under.push(surfaceOf(m, item.pack.index, bodyNow));
+        underShoe.push(shoe);
         fitted[k] = m;
       }
       // An inner garment's faces under an outer one are hidden too (Auto Hide
@@ -283,8 +293,11 @@ function draw(p: PersonParams, live: boolean): void {
         const flags = new Uint8Array(n);
         const self = under[i]!;
         // Tucked under every layer over it, then kept off the skin.
-        for (let j = i + 1; j < order.length; j++) tuckUnder(self, fitted[order[j]!]!);
-        pushOut(fitted[k]!, item.pack.index, bodyNow, 0.0015);
+        // (A rigid shoe keeps its shape: what goes over it is pushed out instead.)
+        if (worn[k] !== o.shoes) {
+          for (let j = i + 1; j < order.length; j++) tuckUnder(self, fitted[order[j]!]!);
+          pushOut(fitted[k]!, item.pack.index, bodyNow, 0.0015);
+        }
         // Clothes are coarser than skin: a wider reach. No ring of the inner
         // garment is kept (its own edge, a waistband, is what must not show);
         // the outer garment's open edge, which never hides, is the margin.
