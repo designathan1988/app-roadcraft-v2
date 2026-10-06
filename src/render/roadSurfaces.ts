@@ -6,7 +6,7 @@ import { offsetPolyline } from '@core/offset';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
-import { levelRings, surfaces } from '@world/surfaces';
+import { levelPolygons, levelRings } from '@world/surfaces';
 import { Polyline } from '@core/polyline';
 import {
   ROAD_STRUCTURES,
@@ -442,7 +442,7 @@ export function* roadSurfaceSteps(
     const edges = (): Polyline[] => {
       if (!footwayEdges) {
         footwayEdges = [];
-        for (const poly of surfaces(net, include).sidewalk) for (const ring of poly) {
+        for (const poly of levelPolygons(net, Level.Sidewalk, include)) for (const ring of poly) {
           if (ring.length >= 3) footwayEdges.push(Polyline.fromPoints([...ring.map(([px, py]) => ({ x: px!, y: py! })), { x: ring[0]![0]!, y: ring[0]![1]! }]));
         }
       }

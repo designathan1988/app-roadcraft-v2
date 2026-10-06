@@ -13,7 +13,7 @@ import { bandMid, bandWidth, sectionOf } from './section';
 import { orientedPolyline } from './geometry';
 import { CROSSWALK_DEPTH } from './approach';
 import { EndType, FillRule, JoinType, inflatePathsD, unionD, type PathsD } from 'clipper2-ts';
-import { surfaces } from './surfaces';
+import { levelPolygons } from './surfaces';
 import { pointInPolygon } from '@core/polygon';
 import type { MultiPoly } from '@core/clipper';
 import type { RoadStructure } from './structures';
@@ -253,7 +253,9 @@ class WalkingLines {
   paving(deck: RoadStructure): MultiPoly {
     let known = this.pavings.get(deck);
     if (!known) {
-      known = surfaces(this.net, (id) => deckOf(this.net.doc, id) === deck).sidewalk;
+      // The footway level alone: `surfaces` unions all four levels of the map
+      // to hand back one (docs/performance.md #11).
+      known = levelPolygons(this.net, Level.Sidewalk, (id) => deckOf(this.net.doc, id) === deck);
       this.pavings.set(deck, known);
     }
     return known;
@@ -316,7 +318,7 @@ class WalkingLines {
     const key = `${deck}:${inset.toFixed(4)}`;
     const known = this.cache.get(key);
     if (known) return known;
-    const kerbs = surfaces(this.net, (id) => deckOf(this.net.doc, id) === deck).curb;
+    const kerbs = levelPolygons(this.net, Level.Curb, (id) => deckOf(this.net.doc, id) === deck);
     const paths: PathsD = [];
     for (const poly of kerbs) for (const ring of poly) paths.push(ring.map(([x, y]) => ({ x: x!, y: y! })));
     const grown = inflatePathsD(unionD(paths, [], FillRule.NonZero, 3), inset, JoinType.Round, EndType.Polygon, 2, 3, 0.02);

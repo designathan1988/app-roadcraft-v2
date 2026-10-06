@@ -7,7 +7,9 @@ import type { Network } from './network';
 import { carriesPedestrians } from './pedestrianAccess';
 import { LAMP_ZONE } from './section';
 import { crossingAccesses, type CrossingAccess } from './landscape';
-import { surfaces } from './surfaces';
+import { levelPolygons } from './surfaces';
+import { Level } from './roadTypes';
+import type { SegmentId } from './ids';
 import { deckOf } from './walkways';
 
 /**
@@ -43,19 +45,22 @@ export function poleLines(net: Network): PoleLines {
   const known = cache.get(net);
   if (known && known.revision === net.revision) return known.lines;
   const doc = net.doc;
-  const s = surfaces(net, (id) => {
+  // The two levels read (`surfaces` unions all four).
+  const include = (id: SegmentId): boolean => {
     if (deckOf(doc, id) !== 'ground') return false;
     const ribbon = net.ribbons.get(id);
     return !!ribbon && carriesPedestrians(ribbon.road) && ribbon.road.sidewalk > 0;
-  });
+  };
+  const curb = levelPolygons(net, Level.Curb, include);
+  const sidewalk = levelPolygons(net, Level.Sidewalk, include);
   const paths: PathsD = [];
-  for (const poly of s.curb) for (const ring of poly) paths.push(ring.map(([x, y]) => ({ x: x!, y: y! })));
+  for (const poly of curb) for (const ring of poly) paths.push(ring.map(([x, y]) => ({ x: x!, y: y! })));
   const contours: Polyline[] = [];
   if (paths.length) {
     const grown = inflatePathsD(unionD(paths, [], FillRule.NonZero, 3), POLE_KERB_INSET, JoinType.Round, EndType.Polygon, 2, 3, 0.02);
     for (const ring of grown) if (ring.length >= 3) contours.push(Polyline.fromPoints([...ring, ring[0]!]));
   }
-  const lines = { contours, paving: s.sidewalk, kerbed: s.curb, accesses: crossingAccesses(net) };
+  const lines = { contours, paving: sidewalk, kerbed: curb, accesses: crossingAccesses(net) };
   cache.set(net, { revision: net.revision, lines });
   return lines;
 }
