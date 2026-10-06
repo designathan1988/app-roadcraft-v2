@@ -52,7 +52,7 @@ import { commitRoundabout } from '@editor/roundabout';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
-import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings } from '@editor/persistence';
+import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
 import { type Play, createPlay } from './play';
@@ -339,6 +339,9 @@ sim.trafficIntensity = savedSession?.settings.trafficIntensity ?? 1;
 sim.pedestrianIntensity = savedSession?.settings.pedestrianIntensity ?? 1;
 sim.demandMultiplier = savedSession?.settings.demandMultiplier ?? 1;
 
+// How many cars and people the panel asks for: they come in at the ends of the roads (`sim/ambient` source 'edges').
+sim.trafficCount = savedSession?.settings.cars ?? DEFAULT_TRAFFIC_COUNT;
+sim.pedestrianCount = savedSession?.settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
 function sessionSettings(): SavedSettings {
   const centre = view.centre;
   return {
@@ -349,6 +352,8 @@ function sessionSettings(): SavedSettings {
     pedestrianIntensity: sim.pedestrianIntensity,
     demandMultiplier: sim.demandMultiplier,
     congestionOverlay,
+    cars: sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT,
+    people: sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT,
   };
 }
 
@@ -692,16 +697,19 @@ if (agentsOn) {
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
 } else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
-// The scenery's life, as GTA's (`sim/ambient`): nobody lives here; people and
-// traffic are made round the view, out of sight, and walk with the agents'
-// walking engine. The residents' days are off (`?residents=1` brings them back
-// to compare, until they are deleted).
+// The scenery's life (`sim/ambient`): nobody lives here; cars and people come
+// in at the ends of the roads, as many as the panel says, cross the map and
+// leave at another road end - never anywhere else (the player's order of
+// 2026-10-06). People walk with the agents' walking engine. `?ambient=view`
+// brings back GTA's way (made and taken away round the view) to compare. The
+// residents' days are off (`?residents=1` brings them back).
 if (agentsOn && engineFlags.get('residents') === '1') sim.city.useAgents(true);
 else {
   sim.city.enabled = false;
   sim.ambient.enabled = true;
 }
 view = scene.viewport;
+  sim.ambient.source = engineFlags.get('ambient') === 'view' ? 'view' : 'edges';
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
 // No loading screen (player, 2026-10-02): the town plays at once and each
@@ -2916,20 +2924,22 @@ document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) =>
 
 const trafficIntensity = document.getElementById('trafficIntensity') as HTMLInputElement;
 const pedIntensity = document.getElementById('pedIntensity') as HTMLInputElement;
-trafficIntensity.value = String(Math.round(sim.trafficIntensity * 100));
-pedIntensity.value = String(Math.round(sim.pedestrianIntensity * 100));
-function bindIntensity(input: HTMLInputElement, outputId: string, assign: (value: number) => void): void {
+// The panel's Traffic and People: how many cars and how many people on foot.
+trafficIntensity.max = String(MAX_TRAFFIC_COUNT);
+pedIntensity.max = String(MAX_PEDESTRIAN_COUNT);
+trafficIntensity.value = String(sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT);
+pedIntensity.value = String(sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT);
+function bindCount(input: HTMLInputElement, outputId: string, assign: (value: number) => void): void {
   const update = () => {
-    const value = Number(input.value) / 100;
-    assign(value);
-    text(outputId, `${input.value}%`);
+    assign(Number(input.value));
+    text(outputId, input.value);
     persistence.saveSettingsSoon(sessionSettings);
   };
   input.oninput = update;
   update();
 }
-bindIntensity(trafficIntensity, 'trafficIntensityValue', (value) => { sim.trafficIntensity = value; });
-bindIntensity(pedIntensity, 'pedIntensityValue', (value) => { sim.pedestrianIntensity = value; });
+bindCount(trafficIntensity, 'trafficIntensityValue', (value) => { sim.trafficCount = value; });
+bindCount(pedIntensity, 'pedIntensityValue', (value) => { sim.pedestrianCount = value; });
 const demandLevel = document.getElementById('demandLevel') as HTMLSelectElement;
 demandLevel.value = String(sim.demandMultiplier);
 demandLevel.onchange = () => {
@@ -3117,14 +3127,12 @@ function restoreSettings(settings: SavedSettings): void {
   restoreOrbit(settings.camera);
   sim.clock.speed = settings.speed;
   setPaused(settings.paused);
-  trafficIntensity.value = String(Math.round(settings.trafficIntensity * 100));
-  pedIntensity.value = String(Math.round(settings.pedestrianIntensity * 100));
   sim.trafficIntensity = settings.trafficIntensity;
   sim.pedestrianIntensity = settings.pedestrianIntensity;
   sim.demandMultiplier = settings.demandMultiplier ?? 1;
   demandLevel.value = String(sim.demandMultiplier);
-  text('trafficIntensityValue', `${trafficIntensity.value}%`);
-  text('pedIntensityValue', `${pedIntensity.value}%`);
+  text('trafficIntensityValue', trafficIntensity.value);
+  text('pedIntensityValue', pedIntensity.value);
   congestionOverlay = settings.congestionOverlay;
   congestionButton.classList.toggle('active', congestionOverlay);
   congestionButton.setAttribute('aria-pressed', String(congestionOverlay));
@@ -3192,6 +3200,10 @@ function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
 
 /**
  * A transient message in the hint bar.
+  sim.trafficCount = settings.cars ?? DEFAULT_TRAFFIC_COUNT;
+  sim.pedestrianCount = settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
+  trafficIntensity.value = String(sim.trafficCount);
+  pedIntensity.value = String(sim.pedestrianCount);
  *
  * It reuses the hint rather than adding a toast, because the player's eyes are
  * already there and a second floating panel over an isometric map costs more

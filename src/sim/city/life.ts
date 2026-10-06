@@ -316,10 +316,10 @@ export class CityLife {
 
   step(w: SimWorld): void {
     // No residents (the scenery, `sim/ambient`): only the lines run, and the
-    // clock. Nothing comes in at the map's edges either: the ambient traffic
-    // brings cars in out of sight.
+    // clock. Traffic comes in at the ends of the roads when the scenery is
+    // fed from them; made round the view, nothing comes in at the edges.
     if (!this.enabled) {
-      w.edgeTraffic = false;
+      w.edgeTraffic = w.ambient.enabled && w.ambient.source === 'edges';
       this.transit.step(w);
       return;
     }

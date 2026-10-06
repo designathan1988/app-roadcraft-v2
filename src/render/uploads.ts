@@ -1,4 +1,4 @@
-import type { BufferGeometry, Camera, Light, Mesh, Object3D, Scene, Texture, WebGLRenderTarget, WebGLRenderer } from 'three';
+import { WebGLRenderTarget, type BufferGeometry, type Camera, type Light, type Mesh, type Object3D, type Scene, type Texture, type WebGLRenderer } from 'three';
 
 /**
  * Textures waiting to be sent to the GPU ahead of their first use.
@@ -47,13 +47,21 @@ export function drainUploads(renderer: WebGLRenderer, count = 1): void {
  * the renderer compiles each in parallel (`compileAsync`). Drawn first, a new
  * shader stopped that frame for as long as the driver took to build it.
  */
-const toCompile: { object: Object3D; done: () => void }[] = [];
+const toCompile: { object: Object3D; shadow: boolean; done: () => void }[] = [];
+/**
+ * What a shadow program is built for: a render target as a shadow map is (no
+ * colour space, no tone mapping). Built for the scene's target, a depth
+ * material's program came out different and was built again, in the frame,
+ * by the shadow pass.
+ */
+let shadowTarget: WebGLRenderTarget | null = null;
 /** Whether a renderer is answering (none in tests: nothing is waited for there). */
 let compiler = false;
 
-export function compileAhead(object: Object3D): Promise<void> {
+/** `shadow`: the object's material is a shadow's depth material, compiled for a shadow map. */
+export function compileAhead(object: Object3D, shadow = false): Promise<void> {
   if (!compiler) return Promise.resolve();
-  return new Promise((done) => toCompile.push({ object, done }));
+  return new Promise((done) => toCompile.push({ object, shadow, done }));
 }
 
 /** Starts compiling what is waiting; each promise settles when its shaders are ready. */
@@ -66,8 +74,10 @@ export function drainCompiles(renderer: WebGLRenderer, camera: Camera, scene: Sc
   const previous = renderer.getRenderTarget();
   renderer.setRenderTarget(target);
   while (toCompile.length) {
-    const { object, done } = toCompile.shift()!;
+    const { object, shadow, done } = toCompile.shift()!;
+    if (shadow) renderer.setRenderTarget(shadowTarget ??= new WebGLRenderTarget(1, 1));
     renderer.compileAsync(object, camera, scene).then(done, done);
+    if (shadow) renderer.setRenderTarget(target);
   }
   renderer.setRenderTarget(previous);
 }

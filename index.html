@@ -147,8 +147,8 @@
         <div class="speed-controls" role="group" data-i18n-label="sim.speed" aria-label="Simulation speed">
           <button type="button" data-speed="0" data-i18n="sim.pause">Pause</button><button type="button" data-speed="1" class="active">1×</button><button type="button" data-speed="2">2×</button><button type="button" data-speed="4">4×</button>
         </div>
-        <label class="density-control"><span data-i18n="sim.traffic">Traffic</span> <input id="trafficIntensity" type="range" min="0" max="200" value="100" step="10" /><output id="trafficIntensityValue">100%</output></label>
-        <label class="density-control"><span data-i18n="sim.people">People</span> <input id="pedIntensity" type="range" min="0" max="200" value="100" step="10" /><output id="pedIntensityValue">100%</output></label>
+        <label class="density-control"><span data-i18n="sim.traffic">Traffic</span> <input id="trafficIntensity" type="range" min="0" max="400" value="10" step="10" /><output id="trafficIntensityValue">10</output></label>
+        <label class="density-control"><span data-i18n="sim.people">People</span> <input id="pedIntensity" type="range" min="0" max="400" value="10" step="10" /><output id="pedIntensityValue">10</output></label>
         <label class="density-control"><span data-i18n="sim.demand">Demand</span> <select id="demandLevel" class="themed-select"><option value="0.55" data-i18n="sim.demand.low">Low</option><option value="1" selected data-i18n="sim.demand.normal">Normal</option><option value="1.55" data-i18n="sim.demand.peak">Peak</option></select></label>
         <button id="congestionToggle" class="toggle-row" type="button" data-i18n-title="sim.congestion" title="Colour the roads by congestion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16c3-4 5-4 8 0s5 4 8 0"/><path d="M3 10c3-4 5-4 8 0s5 4 8 0"/></svg><span data-i18n="sim.congestionLabel">Congestion map</span><i class="switch" aria-hidden="true"></i></button>
         <dl class="sim-metrics" aria-live="off">

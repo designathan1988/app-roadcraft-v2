@@ -29,6 +29,13 @@ export interface SavedSettings {
   readonly speed: number;
   readonly trafficIntensity: number;
   readonly pedestrianIntensity: number;
+  /**
+   * Cars and people on foot on the map, as the panel chose (`SimWorld.trafficCount`,
+   * `pedestrianCount`). Named apart from the earlier builds' keys, which saved too
+   * high a default that every session then restored.
+   */
+  readonly cars?: number;
+  readonly people?: number;
   readonly demandMultiplier?: number;
   readonly congestionOverlay: boolean;
 }
@@ -294,9 +301,17 @@ export function normalizeSettings(settings: SavedSettings): SavedSettings {
     speed: SPEEDS.includes(settings.speed) ? settings.speed : 1,
     trafficIntensity: intensity(settings.trafficIntensity),
     pedestrianIntensity: intensity(settings.pedestrianIntensity),
+    ...(settings.cars === undefined ? {} : { cars: Math.round(Math.min(MAX_TRAFFIC_COUNT, Math.max(0, settings.cars))) }),
+    ...(settings.people === undefined ? {} : { people: Math.round(Math.min(MAX_PEDESTRIAN_COUNT, Math.max(0, settings.people))) }),
     ...(demand === undefined ? {} : { demandMultiplier: DEMANDS.reduce((best, d) => Math.abs(d - demand) < Math.abs(best - demand) ? d : best, 1) }),
   };
 }
+
+/** The panel's Traffic and People: how many, at first and at most. */
+export const DEFAULT_TRAFFIC_COUNT = 10;
+export const DEFAULT_PEDESTRIAN_COUNT = 10;
+export const MAX_TRAFFIC_COUNT = 400;
+export const MAX_PEDESTRIAN_COUNT = 400;
 
 function defaultSettings(): SavedSettings {
   return { camera: { x: 0, y: 0, zoom: 1 }, paused: false, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false };
@@ -314,7 +329,10 @@ function isSavedSettings(settings: unknown): settings is SavedSettings {
     (camera.azimuth === undefined || isFiniteNumber(camera.azimuth)) &&
     (camera.elevation === undefined || isFiniteNumber(camera.elevation)) &&
     typeof settings.paused === 'boolean' && isFiniteNumber(settings.speed) && isFiniteNumber(settings.trafficIntensity) &&
-    isFiniteNumber(settings.pedestrianIntensity) && (settings.demandMultiplier === undefined || isFiniteNumber(settings.demandMultiplier)) &&
+    isFiniteNumber(settings.pedestrianIntensity) &&
+    (settings.cars === undefined || isFiniteNumber(settings.cars)) &&
+    (settings.people === undefined || isFiniteNumber(settings.people)) &&
+    (settings.demandMultiplier === undefined || isFiniteNumber(settings.demandMultiplier)) &&
     typeof settings.congestionOverlay === 'boolean';
 }
 

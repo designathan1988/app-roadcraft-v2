@@ -411,7 +411,7 @@ export function createSceneRenderer(
   const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 });
   scene.add(grass.mesh, grassFar.mesh);
   if (import.meta.env.DEV) (window as unknown as { __grass?: unknown; __scene?: unknown }).__grass = grass;
-  if (import.meta.env.DEV) (window as unknown as { __scene?: unknown }).__scene = scene;
+  if (import.meta.env.DEV) Object.assign(window, { __scene: scene, __gl: renderer });
   let grassGroundFor = '';
   let grassMaskFor = '';
   let grassCheckedAt = 0;

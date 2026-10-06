@@ -10,6 +10,7 @@ import { loadProxyItem, type ProxyItem } from '@people/body/proxy';
 import { DEFAULT_LOOK, wornItems, type PersonLook, type PersonSpec } from '@people/spec';
 import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHair, generateHairStrands, generateHeadband } from '@people/hair/procedural';
 import { hairStrandTexture } from './hairTexture';
+import { compileAhead } from '../uploads';
 import { CHANNELS, channelShapes, faceAt } from './faceExpression';
 import { expressionShapes } from '@people/body/expressions';
 import { createPersonRig, type PersonRig } from './personRig';
@@ -86,6 +87,8 @@ interface Piece {
   readonly tints: InstancedBufferAttribute | null;
   people: ProceduralPerson[];
   readonly vertices: number;
+  /** Settles once its shaders are built and it is in the scene (`makePiece`). */
+  readonly ready: Promise<void>;
 }
 
 interface BodyClass {
@@ -798,11 +801,29 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     mesh.frustumCulled = false;
     mesh.castShadow = kind !== 'face';
     mesh.receiveShadow = true;
-    if (mesh.castShadow) mesh.customDepthMaterial = depthMaterial(cls, kind);
+    if (mesh.castShadow) {
+      const depth = depthMaterial(cls, kind);
+      // As the shadow pass sets it on every draw (three's WebGLShadowMap
+      // getDepthMaterial): the main material's map and alpha test - so the
+      // program compiled ahead below is the one the shadow pass uses.
+      const main = mesh.material as MeshStandardMaterial;
+      depth.map = main.map;
+      depth.alphaTest = main.alphaToCoverage ? 0.5 : main.alphaTest;
+      depth.side = main.side;
+      mesh.customDepthMaterial = depth;
+    }
     mesh.name = `${cls.key}/${name}`;
     mesh.userData['cls'] = cls.key;
-    group.add(mesh);
-    return { name, kind, mesh, rows, dyes, worn, tints: null, people: [], vertices: geometry.getAttribute('position').count };
+    // Into the scene only once its shaders are built, in parallel and off the
+    // frame (`uploads.ts` compileAhead): a mesh in the scene builds its program
+    // the first frame it is drawn, even with no instance, and each new piece
+    // (a garment, a hairstyle, a class's skin) stopped the game for up to a
+    // second on the first person wearing it (profiled 2026-10-06). Its shadow
+    // program too, through a stand-in drawn with the depth material.
+    const jobs: Promise<void>[] = [compileAhead(mesh)];
+    if (mesh.customDepthMaterial) jobs.push(compileAhead(new InstancedMesh(geometry, mesh.customDepthMaterial, 1), true));
+    const ready = Promise.all(jobs).then(() => { group.add(mesh); });
+    return { name, kind, mesh, rows, dyes, worn, tints: null, people: [], vertices: geometry.getAttribute('position').count, ready };
   };
 
   /**
@@ -967,6 +988,8 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       const worn = loaded.filter((x): x is readonly [string, ProxyItem] => !!x);
       const skin = await skinPiece(cls, spec);
       const pieces = await Promise.all(worn.map(([nm]) => wornPiece(cls, nm)));
+      // Shown only with every piece's shaders built: no frame waits for a compile.
+      await Promise.all([skin.ready, ...pieces.map((pc) => pc.ready)]);
 
       if (epoch !== started) throw new Error('crowd cleared');
       if (cls.rows >= cls.capacity) growRows(cls);

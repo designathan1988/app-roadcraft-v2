@@ -41,6 +41,14 @@ import { PlayWorld } from './play';
  *
  * SET BY THE COMPOSITION ROOT (`enabled`) and fed by the renderer
  * (`SimWorld.focus`): with no focus (tests, harnesses) nothing is made.
+ *
+ * FED FROM THE ENDS OF THE ROADS (`source: 'edges'`, the game's way since the
+ * player's order of 2026-10-06): none of the above is made round the view.
+ * Cars come in at the road ends (`vehicles/spawn.ts` stepDispatch) and
+ * people on the footways there (`edgePeople`), as many as the panel says
+ * (`SimWorld.trafficCount`, `pedestrianCount`); each crosses the map to
+ * another road end and leaves there - never anywhere else. The parked cars
+ * and the player stay as they are.
  */
 
 /** Most people on foot at once, and cars driving, and the cars driving when zoomed out. */
@@ -97,6 +105,8 @@ const PARKED_KINDS = ARCHETYPES.filter((a) => a.id === 'hatch' || a.id === 'seda
 export class AmbientWorld {
   /** On in the game (`main.ts`); off under test. */
   enabled = false;
+  /** Where people and cars come from: round the view (GTA's way) or the ends of the roads. */
+  source: 'view' | 'edges' = 'edges';
   /** The cars standing in bays near the view: drawn, solid to walkers, never stepped. */
   readonly parked: Vehicle[] = [];
   /** The player in the scenery (`play.ts`, driven by `src/play.ts`). */
@@ -151,6 +161,7 @@ export class AmbientWorld {
     for (const id of this.walkers) removeWalker(w, id);
     for (const id of this.drivers) { const v = w.vehicles.get(id); if (v) w.removeVehicle(v); }
     this.walkers.clear();
+    this.roaming.clear();
     this.drivers.clear();
     this.sighted.clear();
     this.bays.clear();
@@ -171,6 +182,11 @@ export class AmbientWorld {
     this.clock += DT;
     if (this.clock < LOOK_EVERY) return;
     this.clock = 0;
+    if (this.source === 'edges') {
+      this.edgePeople(w);
+      this.parking(w);
+      return;
+    }
     const focus = w.focus;
     if (!focus) return;
     if (this.fresh) { this.freshFor -= LOOK_EVERY; if (this.freshFor <= 0) this.fresh = false; }
@@ -288,6 +304,102 @@ export class AmbientWorld {
       });
       if (id !== null) this.walkers.add(id);
     }
+  }
+
+  // ------------------------------------------------------------ on foot, from the road ends
+
+  private endsFor = '';
+  /** The footway points at the end of each road, by the road end's node. */
+  private ends: { node: number; x: number; y: number }[] = [];
+  /** Walkers whose walk does not end at a road end (a map with one): sent on to one when they can be. */
+  private readonly roaming = new Set<number>();
+  private nextEdgeLook = 0;
+
+  /** Where people come in and leave: the footways round every road end (a node with one road). */
+  private roadEnds(w: SimWorld): { node: number; x: number; y: number }[] {
+    const key = `${w.topologyRevision}:${w.net.revision}`;
+    if (key === this.endsFor) return this.ends;
+    this.endsFor = key;
+    this.ends = [];
+    const engine = w.pedEngine;
+    if (!engine.walkableNear) return this.ends;
+    for (const node of w.doc.nodes.values()) {
+      if (w.doc.degree(node.id) !== 1) continue;
+      const found: { x: number; y: number }[] = [];
+      // Round the end, out to past the widest footway: each side's walkway once.
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        for (const r of [m(4), m(8), m(12)]) {
+          const p = engine.walkableNear.call(engine, w, node.x + Math.cos(a) * r, node.y + Math.sin(a) * r, m(3));
+          if (!p || Math.hypot(p.x - node.x, p.y - node.y) > m(16)) continue;
+          if (found.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < m(3))) continue;
+          found.push({ x: p.x, y: p.y });
+        }
+      }
+      for (const p of found) this.ends.push({ node: node.id, x: p.x, y: p.y });
+    }
+    return this.ends;
+  }
+
+  /**
+   * People on foot from the road ends, up to the number chosen: each comes in
+   * on the footway at one road end, walks to another road end and leaves
+   * there (`walk.ts` ends the walk on arrival). A map with a single road end
+   * sends them somewhere across the map and back to it.
+   */
+  private edgePeople(w: SimWorld): void {
+    const engine = w.pedEngine;
+    if (!engine.walkTrip) return;
+    for (const id of this.roaming) {
+      if (!this.walkers.has(id)) { this.roaming.delete(id); continue; }
+      const end = this.pickEnd(w, null);
+      if (end && walkOn(w, id, end.x, end.y, m(30))) this.roaming.delete(id);
+    }
+    // The number chosen; past one person per 8 m of street they would only
+    // stand in each other's way, so not more than that.
+    const want = Math.min(Math.max(0, Math.round(w.pedestrianCount ?? 0)), Math.floor(this.roadAround(w, 0, 0, Infinity) / m(8)));
+    // Everybody on foot counts (riders getting off a bus, the player too), not only those made here.
+    const onFoot = Math.max(this.walkers.size, w.pedViews.length);
+    if (onFoot >= want) return;
+    const ends = this.roadEnds(w);
+    if (!ends.length) return;
+    this.nextEdgeLook -= LOOK_EVERY;
+    if (this.nextEdgeLook > 0) return;
+    // Two a second at most: the street fills over a while, and each new body
+    // is built without a stall (`render/agents.ts` builds one at a time).
+    const batch = Math.min(want - onFoot, 2);
+    this.nextEdgeLook = 1;
+    for (let made = 0, tries = 0; made < batch && tries < batch * 4; tries++) {
+      const from = ends[Math.floor(this.rng.float() * ends.length)]!;
+      // Not onto somebody standing there.
+      if (engine.bridge.anyoneWithin(w, from.x, from.y, m(1.5), null)) continue;
+      let to = this.pickEnd(w, from.node);
+      let roams = false;
+      if (!to) {
+        // One road end only: across the map and back.
+        const a = this.rng.float() * Math.PI * 2, d = m(60) + this.rng.float() * m(200);
+        const p = engine.walkableNear?.call(engine, w, from.x + Math.cos(a) * d, from.y + Math.sin(a) * d, m(30));
+        if (!p) continue;
+        to = { node: -1, x: p.x, y: p.y };
+        roams = true;
+      }
+      const roll = this.rng.float();
+      const ageClass: PersonAgeClass = roll < 0.12 ? 'child' : roll < 0.28 ? 'elder' : 'adult';
+      const id = engine.walkTrip.call(engine, w, {
+        trip: this.nextTrip++, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
+        seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30),
+      });
+      if (id === null) continue;
+      this.walkers.add(id);
+      if (roams) this.roaming.add(id);
+      made++;
+    }
+  }
+
+  /** A road end's footway point at another road end than `not`; null when there is none. */
+  private pickEnd(w: SimWorld, not: number | null): { node: number; x: number; y: number } | null {
+    const ends = this.roadEnds(w).filter((e) => e.node !== not);
+    return ends.length ? ends[Math.floor(this.rng.float() * ends.length)]! : null;
   }
 
   // ------------------------------------------------------------ traffic

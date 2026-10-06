@@ -34,6 +34,9 @@ import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
+import { createProceduralCrowd, type ProceduralPerson } from './people/proceduralCrowd';
+import { randomPerson } from '@people/spec';
+import { PLAYER_ID } from '@sim/ambient/play';
 import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';
@@ -739,7 +742,111 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   // The scenery's people: the few bodies of the scenery cast
   // (`citizenCasting.ts` `sceneryCast`), each fetched when first needed.
   const pedestrians = createRiggedCitizens(CROWD_IDS, onAssetsReady);
-  const meshes = [...allParts.map((part) => part.mesh), pedestrians.group];
+  // The walkers drawn as procedural people (`people/proceduralCrowd.ts`, the
+  // player's choice of 2026-10-06): one MakeHuman body per class, each person
+  // numbers on it - shape, clothes, hair, face. The player's own body, the
+  // people in vehicles, those indoors and the bodies thrown by a blow stay on
+  // the cooked ones. `?bodies=cooked` draws every walker cooked, to compare.
+  const procedural = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bodies') === 'cooked'
+    ? null : createProceduralCrowd({ unit: m(1) });
+  /** Each walker's person; a person whose walker left (at the end of a road) waits in `procSpare` for the next one. */
+  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number }>();
+  const procSpare: ProceduralPerson[] = [];
+  const PROC_CAP = PED_CEILING;
+  /**
+   * Walkers waiting for a body of their own. A body costs the main thread
+   * some 50-80 ms to build (its shape, its face), so they are built one at a
+   * time, a few frames apart, never several in one frame (the player's
+   * complaint of 2026-10-06: the game stalled while people came in). A
+   * walker whose body is not ready yet is not drawn: they come in at the end
+   * of a road, and every walker who leaves frees a body for the next.
+   */
+  const procWaiting: number[] = [];
+  let procBuilding = false;
+  let procBuiltAt = 0;
+  const PROC_BUILD_GAP_MS = 120;
+  // Two spare bodies built while the map opens, drawn hidden: the first
+  // procedural body's shaders and classes are made then, not mid-game when the
+  // first walker comes in (a one-time stall of about a second, measured).
+  if (procedural) {
+    for (const seed of [0x51a7e, 0x2b0d1]) {
+      void procedural.add(randomPerson(-seed, seed)).then((person) => {
+        person.matrix.makeScale(0, 0, 0);
+        procSpare.push(person);
+      }, () => {});
+    }
+  }
+  const procBuildNext = (): void => {
+    if (procBuilding || !procWaiting.length) return;
+    const now = performance.now();
+    if (now - procBuiltAt < PROC_BUILD_GAP_MS) return;
+    // A walker who got a freed body meanwhile, or left, needs none.
+    let id: number | undefined;
+    while (procWaiting.length) {
+      const next = procWaiting.shift()!;
+      const e = procPeople.get(next);
+      if (e && !e.person) { id = next; break; }
+    }
+    if (id === undefined) return;
+    const target = id;
+    procBuilding = true;
+    void procedural!.add(randomPerson(target, (Math.imul(target, 2654435761) >>> 0) + 1)).then((person) => {
+      const e = procPeople.get(target);
+      if (e && !e.person) e.person = person;
+      else { person.matrix.makeScale(0, 0, 0); procSpare.push(person); }
+    }, () => { procPeople.delete(target); }).finally(() => { procBuilding = false; procBuiltAt = performance.now(); });
+  };
+  let procFrame = 0;
+  const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
+  const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string): void => {
+    let entry = procPeople.get(id);
+    if (!entry) {
+      const spare = procSpare.pop();
+      if (spare) {
+        entry = { person: spare, seen: procFrame };
+        procPeople.set(id, entry);
+      } else {
+        if (procPeople.size >= PROC_CAP) return;
+        entry = { person: null, seen: procFrame };
+        procPeople.set(id, entry);
+        procWaiting.push(id);
+      }
+    }
+    entry.seen = procFrame;
+    const person = entry.person;
+    if (!person) return;
+    procMatrix.makeTranslation(x, deck, -y)
+      .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
+      .multiply(procSize.makeScale(m(1), m(1), m(1)));
+    person.matrix.copy(procMatrix);
+    person.activity = activity;
+    const metres = speed / m(1);
+    if (walking && metres > 0.15) {
+      if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
+      person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    } else {
+      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
+      person.phase += dt / procedural!.clipDuration(person);
+    }
+  };
+  /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
+  const procFinish = (eye: Vector3 | undefined, live: ReadonlySet<number>): void => {
+    for (const [id, entry] of procPeople) {
+      if (entry.seen === procFrame) continue;
+      if (!entry.person) { if (!live.has(id)) procPeople.delete(id); continue; }
+      entry.person.matrix.makeScale(0, 0, 0);
+      if (!live.has(id)) { procPeople.delete(id); procSpare.push(entry.person); }
+    }
+    // A freed body goes at once to a walker still waiting for one.
+    for (let i = 0; i < procWaiting.length && procSpare.length; i++) {
+      const e = procPeople.get(procWaiting[i]!);
+      if (e && !e.person) { e.person = procSpare.pop()!; procWaiting.splice(i--, 1); }
+    }
+    procBuildNext();
+    procedural!.update(eye);
+    procFrame++;
+  };
+  const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
 
   const object = new Object3D();
   // Yaw outermost, so the third Euler component becomes a rotation about the
@@ -1421,7 +1528,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // gradient is the road's own under the walker.
           const ground = groundGradient(land,
             pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
-          pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
+          if (procedural && ped.id !== PLAYER_ID) procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, suspensionDt, ped.panic ? 'panic' : ped.gesture?.kind);
+          else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;
         }
         // And the people indoors, on the floors that are cut open.
@@ -1435,6 +1543,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         }
       }
 
+      if (procedural) {
+        const live = new Set<number>();
+        for (const ped of world.pedViews) live.add(ped.id);
+        procFinish(options.eye, live);
+      }
       options.ragdolls?.(pedestrians);
       pedestrians.finish();
 

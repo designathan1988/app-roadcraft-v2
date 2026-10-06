@@ -150,6 +150,16 @@ export class SimWorld {
   /** User-facing density multipliers; topology and physics remain unchanged. */
   trafficIntensity = 1;
   pedestrianIntensity = 1;
+  /**
+   * How many cars and how many people on foot the player wants on the map
+   * (the panel's Traffic and People, `main.ts`). Set, they come in at the
+   * ends of the roads until there are that many and leave only at a road's
+   * end (`vehicles/spawn.ts` stepDispatch, `ambient/ambient.ts` edgePeople);
+   * null (tests, harnesses), the arrival rates of `trafficIntensity` and the
+   * density ceiling rule as before.
+   */
+  trafficCount: number | null = null;
+  pedestrianCount: number | null = null;
   /** Shared demand multiplier for the current simulation period. */
   demandMultiplier = 1;
   /**

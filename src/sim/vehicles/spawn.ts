@@ -22,6 +22,8 @@ import { assignOccupancy } from './kerbStops';
 export const ENTRY_RATE = 0.05;
 /** Vehicles an entry holds outside the map before further arrivals are lost. */
 export const ENTRY_QUEUE = 6;
+/** Arrivals a second at one entry while the map has fewer cars than chosen (`SimWorld.trafficCount`). */
+const FILL_RATE = 0.25;
 /** Most vehicles admitted onto the map in one tick, city-wide. */
 const ADMIT_PER_TICK = 4;
 
@@ -36,6 +38,9 @@ const ADMIT_PER_TICK = 4;
 export function trafficTarget(w: SimWorld): number {
   let total = 0;
   for (const ribbon of w.net.ribbons.values()) total += ribbon.full.length;
+  // The number chosen; past one car per 12 m of road they would only stand
+  // bumper to bumper, so not more than that.
+  if (w.trafficCount !== null) return Math.min(FLEET_CEILING, Math.max(0, Math.round(w.trafficCount)), Math.floor(total / m(12)));
   const ceiling = Math.floor(FLEET_CEILING * w.populationShare);
   return Math.min(
     ceiling,
@@ -77,7 +82,11 @@ export function stepDispatch(w: SimWorld, enabled: boolean): void {
   if (!enabled) return;
   w.vehicleSpawnClock += DT;
   const now = w.vehicleSpawnClock;
-  const rate = ENTRY_RATE * w.trafficIntensity * w.demandMultiplier;
+  // A number of cars chosen (`SimWorld.trafficCount`): each entry brings one
+  // in about every four seconds while the map has fewer, so the count is
+  // reached in a minute or so and a car that leaves is soon replaced.
+  const rate = w.trafficCount !== null ? (w.trafficCount > 0 ? FILL_RATE : 0)
+    : ENTRY_RATE * w.trafficIntensity * w.demandMultiplier;
   const entries = entryLanes(w);
 
   const live = new Set(entries);
@@ -266,7 +275,11 @@ function birthSpeed(driver: ReturnType<typeof makeDriver>, v0: number, usual: nu
   return lo;
 }
 
-/** Removes vehicles that have reached a dead end and stopped there. */
+/**
+ * Removes the vehicles that reached the end of a road and stopped there: the
+ * only place a car leaves the map (the player's rule, 2026-10-06 - once made,
+ * a car is never taken away anywhere else).
+ */
 export function stepDespawn(w: SimWorld): void {
   for (const v of w.vehiclesInIdOrder()) {
     const lane = w.lanelet(v.lanelet);
@@ -282,8 +295,9 @@ export function stepDespawn(w: SimWorld): void {
     const body = bodyClassOfArchetype(v.archetype);
     const nowhereToGo = w.graph.exitsOf(v.lanelet).every((id) =>
       (w.connector(id)?.maxBodyClass ?? -1) < body);
+    const roadEnd = lane.to !== undefined && w.doc.degree(lane.to) === 1;
     // A car of the ambient traffic that may be on screen waits there: taken away out of sight.
-    if (lane.kind === 'link' && atEnd && nowhereToGo && !w.ambient.sighted.has(v.id)) {
+    if (lane.kind === 'link' && atEnd && nowhereToGo && roadEnd && !w.ambient.sighted.has(v.id)) {
       if (v.destination === lane.id) w.completedTrips++;
       w.removeVehicle(v);
     }
