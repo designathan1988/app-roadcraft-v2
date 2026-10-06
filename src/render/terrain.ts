@@ -238,8 +238,8 @@ export function terrainBakes(anisotropy: number): {
         const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 3);
         const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 3);
         // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
-        const dark = [0.235, 0.295, 0.13];
-        const lit = [0.33, 0.38, 0.17];
+        const dark = [0.25, 0.31, 0.14];
+        const lit = [0.32, 0.37, 0.165];
         const dry = [0.46, 0.44, 0.26];
         const soil = [0.36, 0.3, 0.2];
         const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
@@ -248,7 +248,7 @@ export function terrainBakes(anisotropy: number): {
         let g = dark[1]! + (lit[1]! - dark[1]!) * k;
         let b = dark[2]! + (lit[2]! - dark[2]!) * k;
         // Dry patches over the higher, sunnier tufts of some clumps.
-        const dryW = Math.min(1, Math.max(0, (clump - 0.58) / 0.12)) * k * 0.7;
+        const dryW = Math.min(1, Math.max(0, (clump - 0.6) / 0.12)) * k * 0.45;
         r += (dry[0]! - r) * dryW; g += (dry[1]! - g) * dryW; b += (dry[2]! - b) * dryW;
         // Soil showing in the gaps between tufts.
         const soilW = Math.min(1, Math.max(0, (speck - 0.66) / 0.08)) * (1 - k) * 0.8;
@@ -341,6 +341,54 @@ export function terrainBakes(anisotropy: number): {
  */
 /** Texels across the map in each painted-ground weight texture. */
 const PAINT_RES = 1024;
+
+/**
+ * The land's colour map: a tint per region, a few hundred metres to a field,
+ * stored as half its factor (0.5 = unchanged) so the shader multiplies the
+ * grass by it. Domain-warped, so fields have the soft, irregular edges of
+ * country seen from the air, not noise blobs.
+ */
+function macroTexture(anisotropy: number): DataTexture {
+  const res = 256;
+  const fields = makeNoise(0x6d1c);
+  const warp = makeNoise(0x2b77);
+  // Tint factors: lush, yellowing meadow, deep green, olive.
+  const lush = [0.84, 1.08, 0.84];
+  const meadow = [1.24, 1.1, 0.7];
+  const deep = [0.7, 0.86, 0.84];
+  const olive = [1.1, 0.96, 0.76];
+  const data = new Uint8Array(res * res * 4);
+  for (let y = 0; y < res; y++) {
+    for (let x = 0; x < res; x++) {
+      const u = x / res;
+      const v = y / res;
+      const wx = (fbm(warp, u * 6, v * 6, 6, 3) - 0.5) * 1.6;
+      const wy = (fbm(warp, u * 6 + 17, v * 6 + 5, 6, 3) - 0.5) * 1.6;
+      const a = fbm(fields, u * 4 + wx, v * 4 + wy, 4, 4);
+      const b = fbm(fields, u * 8 + wy + 31, v * 8 + wx + 7, 8, 3);
+      const k1 = Math.min(1, Math.max(0, (a - 0.42) / 0.2));
+      const k2 = Math.min(1, Math.max(0, (b - 0.55) / 0.15));
+      const k3 = Math.min(1, Math.max(0, (0.4 - a) / 0.12));
+      const i = (y * res + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        let t = lush[c]! + (meadow[c]! - lush[c]!) * k1;
+        t += (deep[c]! - t) * k2 * 0.8;
+        t += (olive[c]! - t) * k3 * 0.7;
+        data[i + c] = Math.round(Math.min(1, t / 2) * 255);
+      }
+      data[i + 3] = 255;
+    }
+  }
+  const texture = new DataTexture(data, res, res, RGBAFormat, UnsignedByteType);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = anisotropy;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 function paintTexture(): DataTexture {
   const texture = new DataTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4), PAINT_RES, PAINT_RES, RGBAFormat, UnsignedByteType);
@@ -441,6 +489,7 @@ function terrainMaterial(
     uRockMap: { value: bakes.rock.map as Texture },
     uRockNormal: { value: bakes.rock.normalMap as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
+    uMacroMap: { value: macroTexture(anisotropy) as Texture },
     uGrassScale: { value: 1 / 96 },
     uRockScale: { value: 1 / 58 },
     uDirtScale: { value: 1 / 34 },
@@ -486,6 +535,7 @@ function terrainMaterial(
          uniform vec3 uGrid; // cell, strength, map half
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
+         uniform sampler2D uMacroMap;
          uniform float uGrassScale;
          uniform float uRockScale;
          uniform float uDirtScale;
@@ -541,6 +591,28 @@ function terrainMaterial(
            vec2 acrossX = world.zy * scale;
            vec2 acrossZ = world.xy * scale;
            return mix(acrossZ, acrossX, wXl);
+         }
+         // TRIPLANAR (GPU Gems 3 ch. 1; Golus, "Normal Mapping for a Triplanar
+         // Shader"): one sample per plane, the SAMPLES blended. Blending the
+         // coordinates instead (terrainWallUv) twisted the rock into curved
+         // wood grain wherever a face turned between the two axes.
+         vec3 terrainTriWeights(vec3 n) {
+           vec3 w = pow(abs(n), vec3(4.0));
+           return w / max(w.x + w.y + w.z, 1e-4);
+         }
+         vec4 terrainTriColor(sampler2D tex, vec3 p, float scale, vec3 w) {
+           return texture2D(tex, p.zy * scale) * w.x + texture2D(tex, p.xz * scale) * w.y + texture2D(tex, p.xy * scale) * w.z;
+         }
+         // The UDN blend with each axis's sign restored, in WORLD space.
+         vec3 terrainTriNormal(sampler2D tex, vec3 p, float scale, vec3 n, vec3 w) {
+           vec3 tx = texture2D(tex, p.zy * scale).xyz * 2.0 - 1.0;
+           vec3 ty = texture2D(tex, p.xz * scale).xyz * 2.0 - 1.0;
+           vec3 tz = texture2D(tex, p.xy * scale).xyz * 2.0 - 1.0;
+           vec3 s = sign(n);
+           tx = vec3(tx.xy + n.zy, abs(n.x) * s.x);
+           ty = vec3(ty.xy + n.xz, abs(n.y) * s.y);
+           tz = vec3(tz.xy + n.xy, abs(n.z) * s.z);
+           return normalize(tx.zyx * w.x + ty.xzy * w.y + tz.xyz * w.z);
          }`,
       )
       .replace(
@@ -550,6 +622,8 @@ function terrainMaterial(
          vec2 tDirt = vTerrainWorld.xz * uDirtScale;
          float wallX = terrainWallAxis().x;
          vec2 tRock = terrainWallUv(vTerrainWorld, uRockScale, wallX);
+         vec3 triN = normalize(vTerrainNormal);
+         vec3 triW = terrainTriWeights(triN);
          // In DEGREES, not in one-minus-cosine. The cosine of a small angle is
          // almost one, so thresholds written against it are unreadable and were
          // simply wrong: a 10-degree hillside came out at 0.015, under a
@@ -573,16 +647,18 @@ function terrainMaterial(
          // And a hill-sized one (about 50 m), or a hill still wears one
          // even, wobbly ring of soil round its foot.
          float wanderC = texture2D(uDirtMap, vTerrainWorld.xz * 0.02 + 0.37).g;
-         float wander = (wanderA - 0.5) * 14.0 + (wanderB - 0.5) * 10.0 + (wanderC - 0.5) * 30.0;
+         // And a ragged one of about 12 m, so the edge itself frays.
+         float wanderD = texture2D(uDirtMap, vTerrainWorld.xz * 0.083 + 0.61).b;
+         float wander = (wanderA - 0.5) * 14.0 + (wanderB - 0.5) * 10.0 + (wanderC - 0.5) * 30.0 + (wanderD - 0.5) * 16.0;
          float rockW = max(smoothstep(32.0, 50.0, slopeDeg + wander), altitude * 0.92);
          float dirtW = smoothstep(18.0, 36.0, slopeDeg + wander * 1.3) * (1.0 - rockW);
          float grassW = max(0.0, 1.0 - rockW - dirtW);
          vec4 grassColor = dualScale(map, tGrass);
-         vec4 rockColor = dualScale(uRockMap, tRock);
+         vec4 rockColor = terrainTriColor(uRockMap, vTerrainWorld, uRockScale, triW);
          // Soil on a slope is read from the side, as the rock is: from above
          // it smeared down every bank in long streaks.
          vec4 dirtPlan = dualScale(uDirtMap, tDirt);
-         vec4 dirtSide = dualScale(uDirtMap, terrainWallUv(vTerrainWorld, uDirtScale, wallX));
+         vec4 dirtSide = terrainTriColor(uDirtMap, vTerrainWorld, uDirtScale, triW);
          vec4 dirtColor = mix(dirtPlan, dirtSide, smoothstep(22.0, 42.0, slopeDeg));
          // Height blending (Mishkinis, "Advanced Terrain Texture Splatting"):
          // each surface rises by its own relief, read from its brightness, and
@@ -609,11 +685,13 @@ function terrainMaterial(
            vec3 fine = mix(bladeDetail, soilDetail, soilMix);
            blended.rgb *= mix(vec3(1.0), fine, terrainDetailW);
          }
-         // Wide, slow tint so whole regions read warm or cool.
-         float macro = texture2D(uDirtMap, vTerrainWorld.xz * 0.0009).r;
-         // A hue swing, not only a brightness one: cool blue-green in some
-         // regions, sunny yellow-green in others, as a painter varies a field.
-         blended.rgb *= mix(vec3(0.86, 0.95, 1.08), vec3(1.12, 1.05, 0.84), macro);
+         // The land's own colour map, as an aerial photograph shows it: wide
+         // fields of lush green, yellowing meadow, deep green and olive, a few
+         // hundred metres each (macroTexture). It tints the grass fully and
+         // the bare ground a little, so a valley reads as country and not as
+         // one lawn tiled to the horizon.
+         vec3 macroTint = texture2D(uMacroMap, terrainWideUv(vTerrainWorld.xz) * 0.0024).rgb * 2.0;
+         blended.rgb *= mix(vec3(1.0), macroTint, 1.0 - (rockMix + dirtMix) * 0.7);
          // A hillshade written into the ALBEDO, on top of the light the surface
          // actually receives. Direct sun alone moves a 10-degree slope by about
          // a tenth, which is under what the eye reads as shape at map zoom; this
@@ -621,7 +699,8 @@ function terrainMaterial(
          // ground untouched, so the hills are legible without the scene turning
          // into a relief map.
          float relief = clamp(dot(normalize(vTerrainNormal), normalize(vec3(0.24, 0.62, -0.75))), -1.0, 1.0);
-         blended.rgb *= 1.0 + relief * 0.46 * smoothstep(1.5, 13.0, slopeDeg);
+         // Kept gentle: at 0.46 the far side of every hill went navy.
+         blended.rgb *= 1.0 + relief * 0.26 * smoothstep(1.5, 13.0, slopeDeg);
          // Higher ground dries out, low ground stays lush. Measured in the
          // units the land can actually reach now (a 560-unit mountain), so a
          // valley town stays green instead of the whole map turning tan the
@@ -672,17 +751,14 @@ function terrainMaterial(
       .replace(
         '#include <normal_fragment_maps>',
         `vec3 grassN = dualScaleNormal(normalMap, vTerrainWorld.xz * uGrassScale);
-         vec3 rockN = dualScaleNormal(uRockNormal, tRock);
-         // The rock's bumps belong to the WALL's frame, not the ground's: read
-         // through the same projection its colour came from, then brought back
-         // into the geometry's tangent frame so the two can be mixed.
-         vec3 rockTangent = normalize(mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), wallX));
-         vec3 rockWorldN = normalize(rockTangent * rockN.x + vec3(0.0, 1.0, 0.0) * rockN.y + vTerrainNormal * rockN.z);
-         rockN = vec3(dot(rockWorldN, tbn[0]), dot(rockWorldN, tbn[1]), dot(rockWorldN, tbn[2]));
+         // The rock's bumps, triplanar in world space like its colour, then
+         // brought into the geometry's tangent frame so the two can be mixed.
+         vec3 rockWorldN = terrainTriNormal(uRockNormal, vTerrainWorld, uRockScale, triN, triW);
+         vec3 rockN = vec3(dot(rockWorldN, tbn[0]), dot(rockWorldN, tbn[1]), dot(rockWorldN, tbn[2]));
          // Softened: with height blending the rock's edge is crisp, and its
          // full relief turned every facet facing away from the sun into a
          // black blot.
-         rockN = normalize(mix(rockN, vec3(0.0, 0.0, 1.0), 0.6));
+         rockN = normalize(mix(rockN, vec3(0.0, 0.0, 1.0), 0.45));
          vec3 mapN = normalize(mix(grassN, rockN, rockMix));
          mapN.xy *= normalScale;
          if (terrainDetailW > 0.001) {
@@ -696,7 +772,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v7';
+  material.customProgramCacheKey = () => 'terrain-splat-v8';
   return material;
 }
 
