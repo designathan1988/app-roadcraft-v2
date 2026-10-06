@@ -55,6 +55,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 // Pointer lock in a headless page traps the real mouse on this machine.
+// eslint-disable-next-line no-undef -- runs in the page
 await page.addInitScript(() => { Element.prototype.requestPointerLock = function () { return Promise.resolve(); }; });
 await page.goto(`${base}/?lab=armas`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => Boolean(globalThis.__weaponsLab), null, { timeout: 120_000 });
