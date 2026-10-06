@@ -135,6 +135,8 @@ const FALL_MOST = 4;
 const RISE_BLEND = 0.7;
 /** The get-up clip's length when it has not loaded yet. */
 const RISE_CLIP = 1.6;
+/** The clip a body that fell gets up with. */
+const RISE_KEY: 'crouchUp' | 'idle' = 'crouchUp';
 const MAX_BODIES = 40;
 
 type Fate = 'dead' | 'torn' | 'knocked' | 'trip';
@@ -589,7 +591,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       for (const body of bodies) {
         const alive = body.survivor;
         // The get-up clip asked for while they fall, so it is baked by the time they get up.
-        if (alive && alive.phase !== 'rise' && !alive.ready) alive.ready = citizens.clipPose(body.index, 'crouchUp', 0) !== null;
+        if (alive && alive.phase !== 'rise' && !alive.ready) alive.ready = citizens.clipPose(body.index, RISE_KEY, 0) !== null;
         if (alive && alive.phase === 'lie' && alive.t >= alive.lie && (alive.ready || alive.t > alive.lie + 3)) rise(body, alive, citizens, world);
         if (alive?.phase === 'rise' && alive.from && alive.root) {
           body.palettes = [risePalette(body, alive, citizens)];
@@ -616,7 +618,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
     facing.normalize();
     const heading = Math.atan2(-facing.z, facing.x);
     const x = body.p[PEL]!.x, y = -body.p[PEL]!.z;
-    const clip = citizens.clipPose(body.index, 'crouchUp', 0);
+    const clip = citizens.clipPose(body.index, RISE_KEY, 0);
     alive.clip = clip?.duration ?? RISE_CLIP;
     alive.root = new Matrix4().compose(
       new Vector3(x, world.groundAt(x, y), -y),
@@ -633,7 +635,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
   function risePalette(body: Body, alive: Survivor, citizens: RagdollCitizens): Float32Array {
     const blend = smooth(alive.t / RISE_BLEND);
     const phase = Math.max(0, alive.t - RISE_BLEND) / Math.max(0.1, alive.clip);
-    const clip = citizens.clipPose(body.index, 'crouchUp', phase);
+    const clip = citizens.clipPose(body.index, RISE_KEY, phase);
     const bones = body.pos0.length;
     const world: Matrix4[] = [];
     const g = new Matrix4(), w = new Matrix4();
@@ -643,6 +645,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp): Ragdolls {
       if (!clip) { world.push(new Matrix4().compose(from.p, from.q, from.s)); continue; }
       w.fromArray(clip.palette, i * 16).multiply(body.binds[i]!);
       g.multiplyMatrices(alive.root!, body.rebind).multiply(w);
+      // Blended in, the clip's own matrix exactly: a bone of these rigs is
+      // scaled unevenly (sheared), and taken apart into position, rotation
+      // and scale and put back together it came out crooked - every body
+      // getting up stood bent and twisted.
+      if (blend >= 0.999) { world.push(g.clone()); continue; }
       g.decompose(p, q, s);
       p.lerpVectors(from.p, p, blend);
       q.slerpQuaternions(from.q, q, blend);
