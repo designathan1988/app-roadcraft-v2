@@ -1,4 +1,6 @@
 import type { Rng } from '@core/rng';
+import { GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot, type Outfit } from './clothes';
+import { HAIR_COLOURS, type BrowParams, type HairParams, type LashParams } from './hair';
 import { sexAxis } from './sampleBody';
 import type { HumanBase, MorphWeights } from './humanBase';
 
@@ -45,6 +47,83 @@ export interface PersonParams {
   /** A Vitruvian expression morph ('' for none) and how strongly it shows. */
   readonly expression: string;
   readonly expressionAmount: number;
+  /** -1 cool .. 1 warm skin. */
+  readonly undertone: number;
+  readonly hair: HairParams;
+  readonly brows: BrowParams;
+  readonly lashes: LashParams;
+  readonly outfit: Outfit;
+  readonly makeup: Makeup;
+  /** Fixes the person's strand and stubble randomness. */
+  readonly seed: number;
+}
+
+export interface Makeup {
+  readonly lipColour: number;
+  readonly lipAmount: number;
+  /** 0 clean-shaven .. 1 a few days' beard. */
+  readonly stubble: number;
+}
+
+export const LIP_COLOURS: readonly number[] = [0xb03a48, 0x8c1c2c, 0xd0606a, 0xc47a6a, 0x9a4a3a, 0x6a2a40, 0xe0909a, 0x5a2030];
+export const CLOTH_COLOURS: readonly number[] = [
+  0xf2f0ea, 0x1c1c1e, 0x6b6e73, 0x2b3a5c, 0x3e6ea8, 0x8fb8de, 0x7a1f2a, 0xc23a32, 0xe08a3c, 0xe8c94a, 0x3f6b3a, 0x8aa86a,
+  0x5a3d2b, 0xb08a64, 0xd9c4a2, 0x6b3f7a, 0xd88aa8, 0x2f8a8a,
+];
+
+/** Hair as people have it, by melanin and age: darker for darker skin, grey with years. */
+function hairColourFor(rng: Rng, melanin: number): number {
+  if (melanin > 0.45 || rng.bool(0.55)) return rng.pick(HAIR_COLOURS.slice(0, 3));
+  return rng.pick(HAIR_COLOURS.slice(1, 10));
+}
+
+function randomGarment(rng: Rng, slot: GarmentSlot, type?: string): GarmentParams {
+  const t = type ?? rng.pick(GARMENT_TYPES[slot]);
+  const colour = rng.pick(CLOTH_COLOURS);
+  const d = garmentDefaults(t);
+  const pattern = d.fabric === 'denim' ? 'denim' : rng.bool(0.7) ? 'solid' : rng.pick(PATTERNS.slice(1, 5));
+  return { ...d, colour: t === 'trousers' ? rng.pick([0x2b3a5c, 0x3e5a80, 0x1c1c1e, 0x6b6e73]) : colour, colour2: rng.pick(CLOTH_COLOURS), pattern, patternScale: 1 };
+}
+
+/** A whole outfit, by sex: tops, then trousers, skirts, a dress. */
+export function randomOutfit(rng: Rng, female: boolean): Outfit {
+  const shoes = randomGarment(rng, 'shoes', rng.pick(['sneakers', 'sneakers', 'flats', 'boots']));
+  if (female && rng.bool(0.2)) return { top: randomGarment(rng, 'top', 'dress'), bottom: null, shoes };
+  const top = randomGarment(rng, 'top', rng.pick(female ? ['tshirt', 'tank', 'longsleeve', 'crop', 'turtleneck', 'shirt'] : ['tshirt', 'tshirt', 'longsleeve', 'shirt', 'tank', 'turtleneck']));
+  const bottom = randomGarment(rng, 'bottom', rng.pick(female ? ['trousers', 'skirt', 'shorts', 'leggings', 'pants', 'capri'] : ['trousers', 'trousers', 'shorts', 'pants']));
+  return { top, bottom, shoes };
+}
+
+export function randomHair(rng: Rng, female: boolean, years: number, melanin: number): HairParams {
+  const curlyOdds = melanin > 0.75 ? 0.75 : 0.2;
+  const styles = female
+    ? ['Bob', 'Eve', 'Back1', 'long', 'ponytail', 'bun', 'SceneHair_1_O4saken', 'afro']
+    : ['crew', 'buzz', 'SlickedBack', 'Combover_zoro_d', 'crew', 'afro', 'mohawk', 'Back1'];
+  let style = rng.pick(styles);
+  if (!female && years > 55 && rng.bool(0.3)) style = rng.bool() ? 'none' : 'buzz';
+  const colour = hairColourFor(rng, melanin);
+  const curly = style === 'afro' || rng.bool(curlyOdds * 0.4);
+  return {
+    style, colour, tipColour: rng.bool(0.12) ? rng.pick(HAIR_COLOURS.slice(5, 10)) : colour,
+    grey: Math.max(0, Math.min(1, (years - 38) / 40 + rng.normal(0, 0.1))),
+    length: 1, volume: rng.range(0, 0.4), curl: curly ? rng.range(0.5, 1) : rng.bool(0.25) ? rng.range(0.1, 0.4) : 0,
+    curlSize: curly ? rng.range(0.05, 0.4) : rng.range(0.4, 1), frizz: rng.range(0, 0.3), density: 1, thickness: 1,
+  };
+}
+
+/** Fills what an older saved person lacks (people saved before hair and clothes existed). */
+export function completePerson(p: PersonParams, rng: Rng): PersonParams {
+  const female = p.sex < 0.5;
+  return {
+    ...p,
+    undertone: p.undertone ?? 0,
+    hair: p.hair ?? randomHair(rng, female, p.years, p.melanin),
+    brows: p.brows ?? { style: 'mind_eyebrows_11_Default', colour: 0x2a1d16, thickness: 1, density: 1, length: 1 },
+    lashes: p.lashes ?? { length: female ? 1.15 : 0.9, curl: 0.6, density: 1, colour: 0x161010 },
+    outfit: p.outfit ?? randomOutfit(rng, female),
+    makeup: p.makeup ?? { lipColour: LIP_COLOURS[0]!, lipAmount: 0, stubble: 0 },
+    seed: p.seed ?? Math.floor(rng.float() * 1e9),
+  };
 }
 
 export interface ResolvedPerson {
@@ -107,6 +186,13 @@ export function babyWeight(years: number): number {
 }
 
 const mhr = (group: string, i: number): string => `MHR_${group}_${String(i).padStart(2, '0')}`;
+export const BROW_STYLES: readonly string[] = Array.from({ length: 14 }, (_, i) => `mind_eyebrows_${String(i + 1).padStart(2, '0')}${i === 10 ? '_Default' : ''}`);
+
+/** A colour a little darker (brows are darker than the hair on the head). */
+export function darker(c: number, k = 0.75): number {
+  return (Math.round(((c >> 16) & 255) * k) << 16) | (Math.round(((c >> 8) & 255) * k) << 8) | Math.round((c & 255) * k);
+}
+
 const NOT_DETAIL = new Set(['Expression', 'Fantasy', 'Race', 'Gender', 'Age', 'BodyType', 'Generic']);
 
 /** The Vitruvian's own regional sliders: what a feature page edits. */
@@ -136,11 +222,19 @@ export function randomPerson(base: HumanBase, rng: Rng, years?: number): PersonP
     detail[m.name] = m.min < 0 ? rng.normal(0, 0.12) : rng.bool(0.4) ? Math.max(0, rng.normal(0, 0.15)) : 0;
   }
   detail['Generic_Assymetry'] = rng.normal(0, 0.2);
+  const hair = age < 1.5 ? { ...randomHair(rng, !sex, age, melanin), style: 'buzz' } : randomHair(rng, !sex, age, melanin);
   return {
     name: '', sex, years: age, heightCm, bmi, melanin, ancestry,
     muscle: Math.max(0, rng.normal(0, sex ? 0.25 : 0.12)),
     iris: rng.weighted(IRIS_COLOURS),
     expression: '', expressionAmount: 0,
+    undertone: rng.normal(0, 0.35),
+    hair: hair,
+    brows: { style: rng.pick(BROW_STYLES), colour: darker(hair.colour), thickness: rng.range(0.8, sex ? 1.4 : 1.1), density: rng.range(0.7, 1.1), length: 1 },
+    lashes: { length: sex ? rng.range(0.8, 1) : rng.range(1, 1.35), curl: rng.range(0.4, 0.9), density: rng.range(0.8, 1.2), colour: 0x141010 },
+    outfit: randomOutfit(rng, !sex),
+    makeup: { lipColour: rng.pick(LIP_COLOURS), lipAmount: !sex && age > 15 && rng.bool(0.4) ? rng.range(0.3, 0.8) : 0, stubble: sex && age > 17 && rng.bool(0.45) ? rng.range(0.3, 1) : 0 },
+    seed: Math.floor(rng.float() * 1e9),
     body: Array.from({ length: 20 }, () => rng.normal(0, 0.8)),
     head: Array.from({ length: 20 }, () => rng.normal(0, 0.7)),
     hands: Array.from({ length: 5 }, () => rng.normal(0, 0.8)),

@@ -26,7 +26,7 @@
 
     .cr-rail { position: fixed; left: 12px; top: 64px; width: 56px; display: flex; flex-direction: column; gap: 4px;
       background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-sizing: border-box; }
-    .cr-cat { height: 42px; background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; color: var(--muted); display: grid; place-items: center; padding: 0; }
+    .cr-cat { height: 38px; background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; color: var(--muted); display: grid; place-items: center; padding: 0; }
     .cr-cat:hover { color: var(--text); background: var(--panel-2); }
     .cr-cat.on { color: var(--accent); background: var(--accent-2); border-color: rgba(108, 199, 255, 0.4); }
 
@@ -38,9 +38,9 @@
     .cr-tab { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; cursor: pointer; color: var(--muted); font-size: 12px; }
     .cr-tab.on, .cr-tab:hover { color: var(--accent); border-color: rgba(108, 199, 255, 0.5); }
     .cr-body { flex: 1; min-height: 0; margin-top: 4px; }
-    .cr-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 10px 0 4px; }
+    .cr-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 8px 0 3px; }
     .cr-note { color: var(--muted); font-size: 12px; margin: 2px 0 6px; line-height: 1.35; }
-    .cr-row { display: grid; grid-template-columns: 104px 1fr 56px 20px; align-items: center; gap: 6px; height: 27px; }
+    .cr-row { display: grid; grid-template-columns: 104px 1fr 56px 20px; align-items: center; gap: 6px; height: 25px; }
     .cr-label { color: #cdd2d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .cr-row output { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
     .cr-row input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
@@ -48,13 +48,17 @@
     .cr-reset { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; border-radius: 6px; }
     .cr-reset svg { width: 15px; height: 15px; }
     .cr-reset:hover { color: var(--accent); background: var(--panel-2); }
-    .cr-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 4px; }
-    .cr-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 12px; }
+    .cr-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 3px; }
+    .cr-chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
     .cr-chip:hover { border-color: rgba(108, 199, 255, 0.5); }
     .cr-chip.on { background: var(--accent-2); border-color: var(--accent); color: var(--accent); }
     .cr-swatches { display: flex; gap: 8px; margin: 4px 0; }
     .cr-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); cursor: pointer; padding: 0; }
     .cr-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(108, 199, 255, 0.35); }
+    .cr-swatches { flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+    .cr-swatch { width: 21px; height: 21px; border-width: 2px; }
+    .cr-picker { width: 26px; height: 23px; padding: 0; border: 1px dashed rgba(255,255,255,0.4); border-radius: 7px; background: transparent; cursor: pointer; }
+    .cr-picker.on { border: 2px solid var(--accent); }
     .cr-readout { border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
     .cr-gallery { position: fixed; left: 80px; right: 364px; bottom: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }

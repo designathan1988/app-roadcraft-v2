@@ -1,0 +1,842 @@
+{
+ "format": "roadcraft-humans-extras/1",
+ "regions": {
+  "names": [
+   "head",
+   "neck",
+   "chest",
+   "abdomen",
+   "pelvis",
+   "upperarm",
+   "forearm",
+   "hand",
+   "thigh",
+   "shin",
+   "foot",
+   "toes"
+  ],
+  "landmarks": {
+   "hip": 0.9634899920716921,
+   "knee": 0.5296170385548997,
+   "ankle": 0.09309246208518346,
+   "waist": 1.1459932253938088,
+   "chest": 1.2598254643438243,
+   "neckBase": 1.4495679610388799,
+   "shoulder": 1.4142543521251756,
+   "crotch": 0.9003686517744159
+  }
+ },
+ "lashes": {
+  "L": {
+   "upper": [
+    36585,
+    36592,
+    36603,
+    36970,
+    37053,
+    36999,
+    18589,
+    36591,
+    37052,
+    36969,
+    36799,
+    36911,
+    36877,
+    36908,
+    36909,
+    37060,
+    36907,
+    6261,
+    37061,
+    36910,
+    36968,
+    36897,
+    36912,
+    36895,
+    37059,
+    36522,
+    36961,
+    36896,
+    37057,
+    36894,
+    37058,
+    6223,
+    36960,
+    36899,
+    36900,
+    36953,
+    36952,
+    36528,
+    36898,
+    36924,
+    36923,
+    37089,
+    36951,
+    36950,
+    36517,
+    37088,
+    36906,
+    37090,
+    36945,
+    19513,
+    36944,
+    36515
+   ],
+   "lower": [
+    36956,
+    36577,
+    36578,
+    37013,
+    37012,
+    36579,
+    36611,
+    18902,
+    36921,
+    36963,
+    36580,
+    36523,
+    36581,
+    36939,
+    36563,
+    37010,
+    36940,
+    37001,
+    37003,
+    37011,
+    37016,
+    36575,
+    36576,
+    36562,
+    36582,
+    37004,
+    37079,
+    36589,
+    36590,
+    36588,
+    36574,
+    37080,
+    37002,
+    36573,
+    36571,
+    36570,
+    36607,
+    36566,
+    36597,
+    36587,
+    36572,
+    36922,
+    36599,
+    37007,
+    36516,
+    36949,
+    36593,
+    37005,
+    36565,
+    37006,
+    36884,
+    36564,
+    37014,
+    36885,
+    37056,
+    36883,
+    36518,
+    36942,
+    36920,
+    36881,
+    37054,
+    36878,
+    37075,
+    37055,
+    6210,
+    36941,
+    36879,
+    36933,
+    36934,
+    36880,
+    18131,
+    36943,
+    36931,
+    36932,
+    37091,
+    6226,
+    36935,
+    36964,
+    36915,
+    36918,
+    36526,
+    36919,
+    36948,
+    36917,
+    37065,
+    6212,
+    36947
+   ]
+  },
+  "R": {
+   "upper": [
+    36602,
+    36609,
+    36534,
+    36693,
+    37024,
+    36535,
+    22637,
+    36610,
+    37074,
+    36760,
+    36621,
+    36761,
+    37023,
+    36721,
+    36722,
+    37038,
+    36720,
+    36514,
+    37039,
+    36789,
+    36788,
+    36710,
+    36713,
+    36709,
+    37037,
+    11806,
+    36783,
+    37081,
+    36712,
+    36706,
+    37036,
+    36512,
+    36782,
+    36708,
+    37082,
+    36775,
+    36774,
+    11373,
+    36707,
+    36739,
+    36737,
+    36741,
+    37086,
+    36773,
+    36509,
+    36740,
+    37083,
+    36719,
+    36768,
+    36520,
+    36766,
+    36506
+   ],
+   "lower": [
+    36778,
+    36547,
+    36548,
+    36991,
+    36986,
+    37019,
+    36987,
+    36532,
+    36735,
+    36772,
+    36543,
+    36533,
+    36992,
+    36762,
+    36538,
+    36541,
+    36753,
+    36537,
+    36542,
+    36544,
+    37017,
+    36545,
+    37078,
+    37020,
+    36556,
+    36546,
+    36553,
+    36552,
+    36554,
+    36983,
+    36995,
+    36982,
+    36598,
+    36540,
+    36984,
+    36539,
+    37077,
+    36551,
+    36994,
+    36600,
+    36990,
+    36734,
+    36979,
+    36559,
+    36508,
+    36771,
+    36558,
+    36981,
+    36550,
+    36980,
+    37084,
+    36601,
+    36996,
+    36736,
+    37027,
+    36732,
+    22752,
+    36765,
+    36733,
+    36702,
+    37025,
+    36700,
+    37029,
+    37026,
+    36505,
+    36763,
+    36701,
+    37028,
+    37049,
+    36751,
+    36530,
+    36764,
+    36748,
+    36749,
+    36750,
+    36513,
+    36786,
+    36785,
+    37085,
+    36728,
+    18923,
+    36729,
+    36975,
+    37040,
+    37041,
+    36507,
+    36769
+   ]
+  }
+ },
+ "hair": [
+  {
+   "id": "SlickedBack",
+   "children": 50,
+   "radius": 0.005,
+   "clump": 0.19,
+   "roughness": 0.05,
+   "guides": 1071
+  },
+  {
+   "id": "Back1",
+   "children": 100,
+   "radius": 0.006,
+   "clump": 0.25,
+   "roughness": 0.05,
+   "guides": 1044
+  },
+  {
+   "id": "Bob",
+   "children": 100,
+   "radius": 0.01,
+   "clump": 0.0,
+   "roughness": 0.05,
+   "guides": 248
+  },
+  {
+   "id": "Combover_zoro_d",
+   "children": 10,
+   "radius": 0.005,
+   "clump": 0.81,
+   "roughness": 0.05,
+   "guides": 30534
+  },
+  {
+   "id": "Eve",
+   "children": 25,
+   "radius": 0.005,
+   "clump": 0.4,
+   "roughness": 0.0,
+   "guides": 1077
+  },
+  {
+   "id": "SceneHair_1_O4saken",
+   "children": 10,
+   "radius": 0.01,
+   "clump": 1.0,
+   "roughness": 0.05,
+   "guides": 3780
+  }
+ ],
+ "brows": [
+  {
+   "id": "mind_eyebrows_01",
+   "strands": 794
+  },
+  {
+   "id": "mind_eyebrows_02",
+   "strands": 1144
+  },
+  {
+   "id": "mind_eyebrows_03",
+   "strands": 1224
+  },
+  {
+   "id": "mind_eyebrows_04",
+   "strands": 1822
+  },
+  {
+   "id": "mind_eyebrows_05",
+   "strands": 1264
+  },
+  {
+   "id": "mind_eyebrows_06",
+   "strands": 1762
+  },
+  {
+   "id": "mind_eyebrows_07",
+   "strands": 2206
+  },
+  {
+   "id": "mind_eyebrows_08",
+   "strands": 1132
+  },
+  {
+   "id": "mind_eyebrows_09",
+   "strands": 1794
+  },
+  {
+   "id": "mind_eyebrows_10",
+   "strands": 2138
+  },
+  {
+   "id": "mind_eyebrows_11_Default",
+   "strands": 2140
+  },
+  {
+   "id": "mind_eyebrows_12",
+   "strands": 1932
+  },
+  {
+   "id": "mind_eyebrows_13",
+   "strands": 1354
+  },
+  {
+   "id": "mind_eyebrows_14",
+   "strands": 2430
+  }
+ ],
+ "garments": [
+  {
+   "id": "Shirt",
+   "vertices": 75070,
+   "bindK": 6
+  },
+  {
+   "id": "Pants",
+   "vertices": 73983,
+   "bindK": 6
+  }
+ ],
+ "sections": [
+  {
+   "name": "scalpMask",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 0
+  },
+  {
+   "name": "lipMask",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 37436
+  },
+  {
+   "name": "beardMask",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 74872
+  },
+  {
+   "name": "region",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 112308
+  },
+  {
+   "name": "along",
+   "type": "uint8",
+   "itemSize": 1,
+   "count": 37436,
+   "byteOffset": 149744
+  },
+  {
+   "name": "hair.SlickedBack.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1071,
+   "byteOffset": 187180
+  },
+  {
+   "name": "hair.SlickedBack.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 12437,
+   "byteOffset": 189324
+  },
+  {
+   "name": "hair.Back1.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1044,
+   "byteOffset": 338568
+  },
+  {
+   "name": "hair.Back1.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 33408,
+   "byteOffset": 340656
+  },
+  {
+   "name": "hair.Bob.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 248,
+   "byteOffset": 741552
+  },
+  {
+   "name": "hair.Bob.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 3968,
+   "byteOffset": 742048
+  },
+  {
+   "name": "hair.Combover_zoro_d.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 30534,
+   "byteOffset": 789664
+  },
+  {
+   "name": "hair.Combover_zoro_d.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 244272,
+   "byteOffset": 850732
+  },
+  {
+   "name": "hair.Eve.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1077,
+   "byteOffset": 3781996
+  },
+  {
+   "name": "hair.Eve.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 30439,
+   "byteOffset": 3784152
+  },
+  {
+   "name": "hair.SceneHair_1_O4saken.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 3780,
+   "byteOffset": 4149420
+  },
+  {
+   "name": "hair.SceneHair_1_O4saken.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 38659,
+   "byteOffset": 4156980
+  },
+  {
+   "name": "brow.mind_eyebrows_01.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 794,
+   "byteOffset": 4620888
+  },
+  {
+   "name": "brow.mind_eyebrows_01.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 28584,
+   "byteOffset": 4622476
+  },
+  {
+   "name": "brow.mind_eyebrows_02.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1144,
+   "byteOffset": 4965484
+  },
+  {
+   "name": "brow.mind_eyebrows_02.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 35304,
+   "byteOffset": 4967772
+  },
+  {
+   "name": "brow.mind_eyebrows_03.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1224,
+   "byteOffset": 5391420
+  },
+  {
+   "name": "brow.mind_eyebrows_03.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 44064,
+   "byteOffset": 5393868
+  },
+  {
+   "name": "brow.mind_eyebrows_04.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1822,
+   "byteOffset": 5922636
+  },
+  {
+   "name": "brow.mind_eyebrows_04.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 61008,
+   "byteOffset": 5926280
+  },
+  {
+   "name": "brow.mind_eyebrows_05.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1264,
+   "byteOffset": 6658376
+  },
+  {
+   "name": "brow.mind_eyebrows_05.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 70200,
+   "byteOffset": 6660904
+  },
+  {
+   "name": "brow.mind_eyebrows_06.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1762,
+   "byteOffset": 7503304
+  },
+  {
+   "name": "brow.mind_eyebrows_06.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 63432,
+   "byteOffset": 7506828
+  },
+  {
+   "name": "brow.mind_eyebrows_07.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 2206,
+   "byteOffset": 8268012
+  },
+  {
+   "name": "brow.mind_eyebrows_07.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 79416,
+   "byteOffset": 8272424
+  },
+  {
+   "name": "brow.mind_eyebrows_08.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1132,
+   "byteOffset": 9225416
+  },
+  {
+   "name": "brow.mind_eyebrows_08.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 57312,
+   "byteOffset": 9227680
+  },
+  {
+   "name": "brow.mind_eyebrows_09.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1794,
+   "byteOffset": 9915424
+  },
+  {
+   "name": "brow.mind_eyebrows_09.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 60240,
+   "byteOffset": 9919012
+  },
+  {
+   "name": "brow.mind_eyebrows_10.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 2138,
+   "byteOffset": 10641892
+  },
+  {
+   "name": "brow.mind_eyebrows_10.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 71016,
+   "byteOffset": 10646168
+  },
+  {
+   "name": "brow.mind_eyebrows_11_Default.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 2140,
+   "byteOffset": 11498360
+  },
+  {
+   "name": "brow.mind_eyebrows_11_Default.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 74064,
+   "byteOffset": 11502640
+  },
+  {
+   "name": "brow.mind_eyebrows_12.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1932,
+   "byteOffset": 12391408
+  },
+  {
+   "name": "brow.mind_eyebrows_12.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 60336,
+   "byteOffset": 12395272
+  },
+  {
+   "name": "brow.mind_eyebrows_13.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 1354,
+   "byteOffset": 13119304
+  },
+  {
+   "name": "brow.mind_eyebrows_13.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 48744,
+   "byteOffset": 13122012
+  },
+  {
+   "name": "brow.mind_eyebrows_14.cnt",
+   "type": "uint16",
+   "itemSize": 1,
+   "count": 2430,
+   "byteOffset": 13706940
+  },
+  {
+   "name": "brow.mind_eyebrows_14.pts",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 84072,
+   "byteOffset": 13711800
+  },
+  {
+   "name": "garment.Shirt.positions",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 75070,
+   "byteOffset": 14720664
+  },
+  {
+   "name": "garment.Shirt.renderSource",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 76944,
+   "byteOffset": 15621504
+  },
+  {
+   "name": "garment.Shirt.renderUv",
+   "type": "float32",
+   "itemSize": 2,
+   "count": 76944,
+   "byteOffset": 15929280
+  },
+  {
+   "name": "garment.Shirt.index",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 448512,
+   "byteOffset": 16544832
+  },
+  {
+   "name": "garment.Shirt.bindIndex",
+   "type": "uint32",
+   "itemSize": 6,
+   "count": 75070,
+   "byteOffset": 18338880
+  },
+  {
+   "name": "garment.Shirt.bindWeight",
+   "type": "float32",
+   "itemSize": 6,
+   "count": 75070,
+   "byteOffset": 20140560
+  },
+  {
+   "name": "garment.Pants.positions",
+   "type": "float32",
+   "itemSize": 3,
+   "count": 73983,
+   "byteOffset": 21942240
+  },
+  {
+   "name": "garment.Pants.renderSource",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 75660,
+   "byteOffset": 22830036
+  },
+  {
+   "name": "garment.Pants.renderUv",
+   "type": "float32",
+   "itemSize": 2,
+   "count": 75660,
+   "byteOffset": 23132676
+  },
+  {
+   "name": "garment.Pants.index",
+   "type": "uint32",
+   "itemSize": 1,
+   "count": 442368,
+   "byteOffset": 23737956
+  },
+  {
+   "name": "garment.Pants.bindIndex",
+   "type": "uint32",
+   "itemSize": 6,
+   "count": 73983,
+   "byteOffset": 25507428
+  },
+  {
+   "name": "garment.Pants.bindWeight",
+   "type": "float32",
+   "itemSize": 6,
+   "count": 73983,
+   "byteOffset": 27283020
+  }
+ ]
+}

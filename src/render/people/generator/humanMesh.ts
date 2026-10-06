@@ -62,8 +62,27 @@ function skinLighting(): string {
   }`);
 }
 
-/** Per person, shared by their skin materials so the skin tone can change live. */
-type MelaninUniform = { value: number };
+/** Per person, shared by their skin materials so skin and make-up change live. */
+export interface SkinUniforms {
+  melanin: { value: number };
+  /** -1 cool .. 1 warm. */
+  undertone: { value: number };
+  lipColour: { value: Color };
+  lipAmount: { value: number };
+  stubble: { value: number };
+  stubbleColour: { value: Color };
+  scalpColour: { value: Color };
+  scalpAmount: { value: number };
+}
+
+export function skinUniforms(melanin: number): SkinUniforms {
+  return {
+    melanin: { value: melanin }, undertone: { value: 0 }, lipColour: { value: new Color(0xa03040) }, lipAmount: { value: 0 },
+    stubble: { value: 0 }, stubbleColour: { value: new Color(0x2a1d16) }, scalpColour: { value: new Color(0x2a1d16) }, scalpAmount: { value: 0 },
+  };
+}
+
+type MelaninUniform = SkinUniforms;
 
 function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: MelaninUniform): MeshPhysicalMaterial {
   const light = tex.get(`Light_Skin_Color.${tile}`);
@@ -84,15 +103,32 @@ function skinMaterial(tex: TextureSet, tile: number, look: HumanLook, melanin: M
   });
   m.onBeforeCompile = (shader) => {
     shader.uniforms['darkMap'] = { value: dark ?? light ?? null };
-    shader.uniforms['melanin'] = melanin;
+    Object.assign(shader.uniforms, melanin);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 aMasks;\nvarying vec3 vMasks;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMasks = aMasks;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', skinLighting())
-      .replace('#include <map_pars_fragment>', '#include <map_pars_fragment>\nuniform sampler2D darkMap;\nuniform float melanin;');
+      .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
+        uniform sampler2D darkMap;
+        uniform float melanin, undertone, lipAmount, stubble, scalpAmount;
+        uniform vec3 lipColour, stubbleColour, scalpColour;
+        varying vec3 vMasks;
+        float skinHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }`);
     if (light) {
       shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
         vec4 lightSkin = texture2D( map, vMapUv );
         vec4 darkSkin = texture2D( darkMap, vMapUv );
-        diffuseColor *= mix( lightSkin, darkSkin, melanin );`);
+        diffuseColor *= mix( lightSkin, darkSkin, melanin );
+        // Undertone: warmer (olive-gold) or cooler (pink).
+        diffuseColor.rgb *= vec3(1.0 + 0.05 * undertone, 1.0 + 0.015 * undertone, 1.0 - 0.07 * undertone);
+        // Lipstick over the lips' mask.
+        diffuseColor.rgb = mix(diffuseColor.rgb, lipColour * (0.55 + 0.45 * dot(diffuseColor.rgb, vec3(0.6))), lipAmount * vMasks.x);
+        // Stubble: dark hair stumps, one per few texels, where a beard grows.
+        float stump = step(0.55, skinHash(floor(vMapUv * 2600.0)));
+        diffuseColor.rgb = mix(diffuseColor.rgb, stubbleColour, stubble * vMasks.y * (0.35 + 0.5 * stump));
+        // The scalp under hair takes its colour, so hair reads full.
+        diffuseColor.rgb = mix(diffuseColor.rgb, scalpColour, scalpAmount * vMasks.z);`);
     }
   };
   m.customProgramCacheKey = () => `human-skin-${light ? 1 : 0}`;
@@ -140,7 +176,7 @@ function material(name: string, tile: number, tex: TextureSet, look: HumanLook, 
  * A mesh for one person. `shape` is the morphed base (one xyz per mesh
  * vertex); the mesh stands with its lowest point on y = 0.
  */
-export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32Array, look: HumanLook): Mesh {
+export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32Array, look: HumanLook, masks?: Float32Array): Mesh {
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(standing(base, shape), 3));
   geometry.setAttribute('normal', new BufferAttribute(base.renderNormals(shape), 3));
@@ -155,9 +191,10 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
     }
     geometry.setAttribute('color', new BufferAttribute(colours, 4));
   }
+  geometry.setAttribute('aMasks', new BufferAttribute(masks ?? new Float32Array(base.renderVertexCount * 3), 3));
   geometry.setIndex(new BufferAttribute(base.index, 1));
   const materials: Material[] = [];
-  const melanin: MelaninUniform = { value: look.melanin };
+  const melanin: MelaninUniform = skinUniforms(look.melanin);
   for (const g of base.meta.groups) {
     geometry.addGroup(g.start, g.count, materials.length);
     const m = material(g.material, g.tile, tex, look, melanin);
@@ -172,16 +209,20 @@ export function createHumanMesh(base: HumanBase, tex: TextureSet, shape: Float32
   // on the neck) is grey on skin without light scattered under it, and read
   // as a stain; the wrapped skin shading darkens those places softly.
   mesh.receiveShadow = false;
-  mesh.userData['melanin'] = melanin;
+  mesh.userData['skin'] = melanin;
+  mesh.userData['floor'] = lastFloor;
   return mesh;
 }
 
-/** Render positions with the lowest point on y = 0. */
+let lastFloor = 0;
+
+/** Render positions with the lowest point on y = 0 (`userData.floor` keeps how far it moved). */
 function standing(base: HumanBase, shape: Float32Array, out?: Float32Array): Float32Array {
   const positions = base.renderPositions(shape, out);
   let lo = Infinity;
   for (let i = 1; i < positions.length; i += 3) lo = Math.min(lo, positions[i]!);
   for (let i = 1; i < positions.length; i += 3) positions[i] = positions[i]! - lo;
+  lastFloor = lo;
   return positions;
 }
 
@@ -190,12 +231,13 @@ export function updateHumanMesh(mesh: Mesh, base: HumanBase, shape: Float32Array
   const pos = mesh.geometry.getAttribute('position') as BufferAttribute;
   const nor = mesh.geometry.getAttribute('normal') as BufferAttribute;
   standing(base, shape, pos.array as Float32Array);
+  mesh.userData['floor'] = lastFloor;
   base.renderNormals(shape, nor.array as Float32Array);
   pos.needsUpdate = true;
   nor.needsUpdate = true;
   mesh.geometry.computeBoundingSphere();
   mesh.geometry.computeBoundingBox();
-  (mesh.userData['melanin'] as MelaninUniform).value = melanin;
+  (mesh.userData['skin'] as SkinUniforms).melanin.value = melanin;
 }
 
 /** Sets the iris colour of a person's eyes. */

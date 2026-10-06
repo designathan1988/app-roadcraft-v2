@@ -341,7 +341,21 @@ and they have seen it.
   page; the camera glides to the part edited; a click on the person opens
   that part. Height and BMI solved through the body's volume
   (`people/gen/person.ts`), population-calibrated random people. Saved in
-  localStorage. Not yet: hair, clothes, pose.
+  localStorage. Hair, brows, lashes, clothes and make-up LIVE
+  (`scripts/build-human-extras.py` -> `extras.bin`): hair as strands
+  (`people/gen/hair.ts`, `render/people/generator/strands.ts`) - six
+  CharMorph grooms (each point following the skin under it) and seven grown
+  styles combed over the real skin (buzz, crew, mohawk, afro, long,
+  ponytail, bun), child strands, length/volume/curl/frizz/density/thickness,
+  colour with ombre tips and grey, a hair cap under the strands; 14 brow
+  grooms; lashes along the tear line; clothes cut from the body by region
+  and limb fraction (tops, bottoms, underwear, shoes) or hung as skirts and
+  dresses, plus CharMorph's shirt and trousers bound to the skin, each with
+  colour, second colour, pattern (8, in the shader), fabric (5) and cut
+  sliders (`people/gen/clothes.ts`, `render/people/generator/fabric.ts`);
+  lipstick, stubble, scalp tint and undertone in the skin shader. Not yet:
+  pose and animation, hats and accessories, cloth simulation (skirts are
+  lofted, not draped).
 - **Procedural people (`people-lab.html`, branch `claude/sandbox`, not in the
   game yet):** one MakeHuman body per class (sex x age band), shape as 16 PCA
   coefficients summed on the GPU, joints follow the shape, clothes/hair as

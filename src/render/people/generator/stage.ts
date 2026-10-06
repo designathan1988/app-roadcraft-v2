@@ -1,12 +1,31 @@
 import {
-  ACESFilmicToneMapping, CircleGeometry, Color, CylinderGeometry, DirectionalLight, HemisphereLight, Mesh, MeshStandardMaterial,
+  ACESFilmicToneMapping, BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, DirectionalLight, Group, HemisphereLight, Mesh, MeshStandardMaterial, ShaderMaterial,
   PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { HumanBase, type HumanBaseMeta } from '@people/gen/humanBase';
 import type { Focus } from '@people/gen/catalog';
-import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type TextureSet } from './humanMesh';
+import type { GarmentMesh } from '@people/gen/clothes';
+import type { StrandSet } from '@people/gen/hair';
+import { garmentObject } from './fabric';
+import { createHumanMesh, disposeHumanMesh, loadHumanTextures, setIris, updateHumanMesh, type SkinUniforms, type TextureSet } from './humanMesh';
+import { strandMaterial, strandMesh, type StrandLook } from './strands';
+
+/** What a person wears and grows: hair, brows, lashes, clothes, and the skin's make-up. */
+export interface Dressing {
+  readonly hair: StrandSet;
+  readonly hairLook: StrandLook;
+  readonly brows: StrandSet;
+  readonly browLook: StrandLook;
+  readonly lashes: StrandSet;
+  readonly lashLook: StrandLook;
+  readonly garments: readonly GarmentMesh[];
+  readonly skin: {
+    readonly undertone: number; readonly lipColour: number; readonly lipAmount: number;
+    readonly stubble: number; readonly stubbleColour: number; readonly scalpColour: number; readonly scalpAmount: number;
+  };
+}
 
 /**
  * The creator's 3D view: one person on a pedestal in a studio (warm key light
@@ -66,6 +85,10 @@ export class CreatorStage {
   private readonly camera = new PerspectiveCamera(30, 1, 0.02, 100);
   private readonly controls: OrbitControls;
   private person: Mesh | null = null;
+  /** The person's hair, brows, lashes and clothes, in the body's frame. */
+  private worn = new Group();
+  private lift = 0;
+  private readonly strandMats: { hair: ShaderMaterial; brows: ShaderMaterial; lashes: ShaderMaterial };
   private focus: Focus = 'body';
   private insets: [number, number] = [0, 0];
   private glide: { from: [Vector3, Vector3]; to: [Vector3, Vector3]; t0: number } | null = null;
@@ -99,6 +122,12 @@ export class CreatorStage {
     const rim = new DirectionalLight(0xffffff, 1.2);
     rim.position.set(0, 4, -6);
     scene.add(rim);
+    const lights = {
+      dirs: [key.position.clone(), fill.position.clone(), rim.position.clone()],
+      colours: [key.color.clone().multiplyScalar(key.intensity * 0.55), fill.color.clone().multiplyScalar(fill.intensity * 0.55), rim.color.clone().multiplyScalar(rim.intensity * 0.55)],
+      ambient: new Color(0x8a8f99).multiplyScalar(0.55),
+    };
+    this.strandMats = { hair: strandMaterial(lights), brows: strandMaterial(lights), lashes: strandMaterial(lights) };
     const floor = new Mesh(new CircleGeometry(14, 64), new MeshStandardMaterial({ color: 0x45484e, roughness: 0.95 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.06;
@@ -155,12 +184,72 @@ export class CreatorStage {
     this.redraw();
   }
 
-  setPerson(b: LoadedBase, p: DrawnPerson): void {
+  setPerson(b: LoadedBase, p: DrawnPerson, masks?: Float32Array): void {
     if (this.person) { disposeHumanMesh(this.person); this.scene.remove(this.person); }
-    this.person = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) });
+    this.person = createHumanMesh(b.base, b.tex, p.shape, { melanin: p.melanin, flatSkin: new Color(0xd0a080), iris: new Color(p.iris) }, masks);
     this.person.scale.setScalar(p.scale);
+    this.person.add(this.worn);
+    this.place();
     this.scene.add(this.person);
     this.frame(this.focus, false);
+  }
+
+  /** The worn things follow the body's shift to the floor; shoes lift the person. */
+  private place(): void {
+    if (!this.person) return;
+    this.worn.position.y = -(this.person.userData['floor'] as number ?? 0);
+    this.person.position.y = this.lift * this.person.scale.y;
+  }
+
+  private readonly layers = new Map<string, Mesh[]>();
+
+  /** Replaces one worn layer ('hair', 'brows', 'lashes', 'clothes') with these meshes. */
+  private setLayer(name: string, meshes: Mesh[]): void {
+    for (const m of this.layers.get(name) ?? []) {
+      m.geometry.dispose();
+      if (!(m.material instanceof ShaderMaterial)) (m.material as { dispose(): void }).dispose();
+      this.worn.remove(m);
+    }
+    for (const m of meshes) this.worn.add(m);
+    this.layers.set(name, meshes);
+    this.redraw();
+  }
+
+  strands(name: 'hair' | 'brows' | 'lashes', set: StrandSet, look: StrandLook): void {
+    this.setLayer(name, set.counts.length ? [strandMesh(set, look, this.strandMats[name])] : []);
+  }
+
+  /** The hair cap under the strands (see `clothes.hairCap`), in the hair's colour. */
+  cap(cap: { positions: Float32Array; normals: Float32Array; alpha: Float32Array; index: Uint32Array } | null, colour: number): void {
+    if (!cap) { this.setLayer('cap', []); return; }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(cap.positions, 3));
+    geo.setAttribute('normal', new BufferAttribute(cap.normals, 3));
+    const rgba = new Float32Array(cap.alpha.length * 4);
+    for (let i = 0; i < cap.alpha.length; i++) { rgba.fill(1, i * 4, i * 4 + 3); rgba[i * 4 + 3] = cap.alpha[i]!; }
+    geo.setAttribute('color', new BufferAttribute(rgba, 4));
+    geo.setIndex(new BufferAttribute(cap.index, 1));
+    const mat = new MeshStandardMaterial({ color: colour, roughness: 0.75, vertexColors: true, alphaToCoverage: true });
+    this.setLayer('cap', [new Mesh(geo, mat)]);
+  }
+
+  clothes(garments: readonly GarmentMesh[]): void {
+    this.lift = garments.reduce((m, g) => Math.max(m, g.lift), 0);
+    this.setLayer('clothes', garments.map(garmentObject));
+    this.place();
+  }
+
+  skin(s: Dressing['skin']): void {
+    if (!this.person) return;
+    const u = this.person.userData['skin'] as SkinUniforms;
+    u.undertone.value = s.undertone;
+    u.lipColour.value.setHex(s.lipColour);
+    u.lipAmount.value = s.lipAmount;
+    u.stubble.value = s.stubble;
+    u.stubbleColour.value.setHex(s.stubbleColour);
+    u.scalpColour.value.setHex(s.scalpColour);
+    u.scalpAmount.value = s.scalpAmount;
+    this.redraw();
   }
 
   /** Reshapes the person in place; the camera follows the part on show. */
@@ -169,6 +258,7 @@ export class CreatorStage {
     updateHumanMesh(this.person, b.base, p.shape, p.melanin);
     setIris(this.person, p.iris);
     this.person.scale.setScalar(p.scale);
+    this.place();
     this.redraw();
   }
 
@@ -199,7 +289,10 @@ export class CreatorStage {
     for (let v = 0; v < pos.count; v++) {
       if (Math.abs(pos.getY(v) * s - eyes.y) < 0.02 * s) half = Math.max(half, Math.abs(pos.getX(v)) * s);
     }
-    return { height: g.boundingBox!.max.y * s, eyes, mouth, headHalfWidth: Math.min(half, 0.11 * s) || 0.075 };
+    // Shoes lift the person off the pedestal.
+    const up = mesh.position.y;
+    eyes.y += up; mouth.y += up;
+    return { height: g.boundingBox!.max.y * s + up, eyes, mouth, headHalfWidth: Math.min(half, 0.11 * s) || 0.075 };
   }
 
   /** Points the camera at a part of the person (gliding unless `glide` is false). */

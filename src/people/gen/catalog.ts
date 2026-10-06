@@ -47,14 +47,24 @@ export const CATALOG: readonly CatalogCategory[] = [
     id: 'head', label: 'hgen.cat.head', icon: 'head', pages: [
       page('headShape', 'head', ['Head_TopScalpPotrusion', 'Head_SideScalpPotrusion', 'Head_BackScalpPotrusion', 'Head_ParietalFlatness', 'Head_FrontalBoneFlatness',
         'Head_SphenoidBone', 'Head_TemporalLines', 'Face_FrontalBone', 'Face_FrontalBone_FrontalEminence', 'Face_Puffy']),
-      page('brow', 'eyes', ['Face_FrontalBone_BrowRidge', 'Face_BrowRidge_Raise', 'Face_BrowRidge_Droop', 'Face_BrowRidge_CurvedRaise', 'Face_BrowRidge_CurvedDroop',
-        'Eyes_EyebrowsAngle', 'Eyes_EyebrowsDroop', 'Face_EyeSocket_Potrusion']),
       page('cheeks', 'head', ['Cheeks_BoneDefinition', 'Cheeks_CheeksBonePositionZ', 'Cheeks_UpperCheek_Bone', 'Cheeks_BuccalFat', 'Face_Zygomatic_Bone', 'Face_Maxilla']),
       page('faceShape', 'head'),
     ],
   },
   {
+    id: 'hair', label: 'hgen.cat.hair', icon: 'hair', pages: [page('hairStyle', 'head'), page('hairColour', 'head'), page('hairShape', 'head')],
+  },
+  {
+    id: 'brows', label: 'hgen.cat.brows', icon: 'brow', pages: [
+      page('browHair', 'eyes'),
+      page('brow', 'eyes', ['Face_FrontalBone_BrowRidge', 'Face_BrowRidge_Raise', 'Face_BrowRidge_Droop', 'Face_BrowRidge_CurvedRaise', 'Face_BrowRidge_CurvedDroop',
+        'Eyes_EyebrowsAngle', 'Eyes_EyebrowsDroop', 'Face_EyeSocket_Potrusion']),
+    ],
+  },
+  {
     id: 'eyes', label: 'hgen.cat.eyes', icon: 'eye', pages: [
+      page('eyeColour', 'eyes'),
+      page('lashes', 'eyes'),
       page('eyeShape', 'eyes', ['Eyes_Size', 'Eyes_Distance', 'Eyes_VerticalShift', 'Eyes_EyelidsAngle', 'Eyes_EyelidsAngle2', 'Eyes_UpperLidOpenness', 'Eyes_LowerLidOpenness', 'Eyes_EyelidsCrease']),
       page('eyelids', 'eyes', ['Eyes_Eyelid_Monolid', 'Eyes_Eyelid_hooded', 'Eyes_EyeBagsSize', 'Eyes_EyeBagsProminence', 'Eyes_LacrimalCaruncle_Rotate', 'Eyes_LacrimalCaruncle_Sharpness']),
     ],
@@ -84,6 +94,8 @@ export const CATALOG: readonly CatalogCategory[] = [
     ],
   },
   { id: 'skin', label: 'hgen.cat.skin', icon: 'palette', pages: [page('skin', 'head')] },
+  { id: 'makeup', label: 'hgen.cat.makeup', icon: 'lips', pages: [page('makeup', 'mouth')] },
+  { id: 'outfit', label: 'hgen.cat.outfit', icon: 'shirt', pages: [page('top', 'torso'), page('bottom', 'legs'), page('shoes', 'legs')] },
   { id: 'expression', label: 'hgen.cat.expression', icon: 'smile', pages: [page('expression', 'head')] },
 ];
 

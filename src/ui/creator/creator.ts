@@ -1,6 +1,8 @@
 import { CATALOG, EXPRESSIONS, type CatalogCategory, type CatalogPage, type Focus } from '@people/gen/catalog';
 import type { HumanBase } from '@people/gen/humanBase';
-import { ANCESTRIES, IRIS_COLOURS, typical, type PersonParams } from '@people/gen/person';
+import { FABRICS, GARMENT_TYPES, PATTERNS, garmentDefaults, type GarmentParams, type GarmentSlot } from '@people/gen/clothes';
+import { HAIR_COLOURS, HAIR_STYLES } from '@people/gen/hair';
+import { ANCESTRIES, BROW_STYLES, CLOTH_COLOURS, IRIS_COLOURS, LIP_COLOURS, darker, typical, type PersonParams } from '@people/gen/person';
 import { applyTranslations, t } from '../i18n';
 import { icon } from './icons';
 import { deleteSaved, exportPerson, importPerson, loadSaved, savePerson } from './store';
@@ -22,10 +24,12 @@ export interface CreatorHost {
   readonly base: HumanBase;
   /** A whole new random person. */
   random(): PersonParams;
+  /** A saved or imported person with whatever they lack filled in. */
+  complete(p: PersonParams): PersonParams;
   /** The same person with one page's settings drawn again. */
   randomPage(p: PersonParams, page: CatalogPage): PersonParams;
-  /** Draws the person (cheap enough for every slider move). */
-  show(p: PersonParams): void;
+  /** Draws the person; `live` while a slider moves (the host may leave slow layers for the release). */
+  show(p: PersonParams, live?: boolean): void;
   measure(p: PersonParams): { heightCm: number; massKg: number };
   focus(f: Focus): void;
   /** The part of the person under a canvas point, or null. */
@@ -89,7 +93,7 @@ export class Creator {
       const f = (e.target as HTMLInputElement).files?.[0];
       if (!f) return;
       const p = await importPerson(f);
-      if (p) { this.savedId = null; this.commit(p); this.toast(t('hgen.toast.imported')); } else this.toast(t('hgen.toast.badFile'));
+      if (p) { this.savedId = null; this.commit(host.complete(p)); this.toast(t('hgen.toast.imported')); } else this.toast(t('hgen.toast.badFile'));
       (e.target as HTMLInputElement).value = '';
     });
     // A click on the person (not the end of a drag) opens the part clicked.
@@ -129,7 +133,7 @@ export class Creator {
     requestAnimationFrame(() => {
       const p = this.pending!;
       this.pending = null;
-      this.host.show(p);
+      this.host.show(p, true);
       this.syncValues();
     });
   }
@@ -165,7 +169,7 @@ export class Creator {
     if (tab) { this.open(this.category.id, tab); return; }
     switch (btn.dataset['act']) {
       case 'new': this.savedId = null; this.past = []; this.future = []; this.set(this.host.random()); this.open('person', 'basics'); break;
-      case 'random': this.commit({ ...this.host.random(), name: this.person.name }); break;
+      case 'random': this.commit(this.host.random()); break;
       case 'undo': this.undo(); break;
       case 'redo': this.redo(); break;
       case 'save': this.save(); break;
@@ -193,7 +197,7 @@ export class Creator {
       card.querySelector('span')!.textContent = s.params.name || t('hgen.unnamed');
       card.querySelector('.cr-card-open')!.addEventListener('click', () => {
         this.savedId = s.id; this.past = []; this.future = [];
-        this.set(s.params);
+        this.set(this.host.complete(s.params));
         this.el['gallery']!.hidden = true;
       });
       card.querySelector('.cr-card-del')!.addEventListener('click', () => {
@@ -240,6 +244,14 @@ export class Creator {
       case 'build': this.components(body, 'body', 'hgen.shape', 8); break;
       case 'faceShape': this.components(body, 'head', 'hgen.faceVar', 8); break;
       case 'skin': this.skin(body); break;
+      case 'hairStyle': this.hairStyle(body); break;
+      case 'hairColour': this.hairColour(body); break;
+      case 'hairShape': this.hairShape(body); break;
+      case 'browHair': this.browHair(body); break;
+      case 'eyeColour': this.eyeColour(body); break;
+      case 'lashes': this.lashes(body); break;
+      case 'makeup': this.makeup(body); break;
+      case 'top': case 'bottom': case 'shoes': this.garment(body, this.page.id as GarmentSlot); break;
       case 'expression': this.expression(body); break;
       default: for (const m of this.page.morphs) this.morphRow(body, m);
     }
@@ -278,6 +290,7 @@ export class Creator {
       else if (!before) { this.past.push(this.person); this.future = []; }
       before = null;
       this.person = after;
+      this.host.show(after);
       this.syncValues();
     });
     resetBtn.addEventListener('click', () => { if (reset !== null) this.commit(set(this.person, reset)); });
@@ -359,21 +372,136 @@ export class Creator {
     this.slider(host, t('hgen.skinTone'), () => [0, 1, 0.01], (p) => p.melanin, (p, v) => ({ ...p, melanin: v }), (v) => `${Math.round(v * 100)}`, null);
     this.heading(host, 'hgen.ancestry');
     this.chips(host, ANCESTRIES.map((a) => [a, t(`hgen.anc.${a}`)] as const), (p) => p.ancestry, (p, v) => ({ ...p, ancestry: v }));
-    this.heading(host, 'hgen.eyeColour');
-    const sw = document.createElement('div');
-    sw.className = 'cr-swatches';
-    for (const [c] of IRIS_COLOURS) {
-      const b = document.createElement('button');
-      b.className = 'cr-swatch';
-      b.style.background = `#${c.toString(16).padStart(6, '0')}`;
-      b.title = t('hgen.eyeColour');
-      b.addEventListener('click', () => this.commit({ ...this.person, iris: c }));
-      sw.append(b);
-      this.rows.push({ input: document.createElement('input'), out: document.createElement('output'), sync: (p) => b.classList.toggle('on', p.iris === c) });
-    }
-    host.append(sw);
+    this.slider(host, t('hgen.undertone'), () => [-1, 1, 0.01], (p) => p.undertone, (p, v) => ({ ...p, undertone: v }),
+      (v) => (v < -0.15 ? t('hgen.cool') : v > 0.15 ? t('hgen.warm') : t('hgen.neutral')), 0, true);
     this.heading(host, 'hgen.group.detail');
     this.morphRow(host, 'Generic_Assymetry');
+  }
+
+  /**
+   * A colour choice: the palette's swatches and a picker for any colour.
+   */
+  private colours(host: HTMLElement, palette: readonly number[], get: (p: PersonParams) => number, set: (p: PersonParams, c: number) => PersonParams): void {
+    const row = document.createElement('div');
+    row.className = 'cr-swatches';
+    const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
+    for (const c of palette) {
+      const b = document.createElement('button');
+      b.className = 'cr-swatch';
+      b.style.background = hex(c);
+      b.title = hex(c);
+      b.addEventListener('click', () => this.commit(set(this.person, c)));
+      row.append(b);
+      this.rows.push({ input: document.createElement('input'), out: document.createElement('output'), sync: (p) => b.classList.toggle('on', get(p) === c) });
+    }
+    const pick = document.createElement('input');
+    pick.type = 'color';
+    pick.className = 'cr-picker';
+    pick.title = t('hgen.anyColour');
+    pick.addEventListener('input', () => this.live(set(this.person, parseInt(pick.value.slice(1), 16))));
+    pick.addEventListener('change', () => this.commit(set(this.person, parseInt(pick.value.slice(1), 16))));
+    row.append(pick);
+    this.rows.push({ input: pick, out: document.createElement('output'), sync: (p) => {
+      pick.value = hex(get(p));
+      pick.classList.toggle('on', !palette.includes(get(p)));
+    } });
+    host.append(row);
+  }
+
+  private hairStyle(host: HTMLElement): void {
+    this.chips(host, HAIR_STYLES.map((s) => [s, t(`hgen.hair.${s}`)] as const), (p) => p.hair.style, (p, v) => ({ ...p, hair: { ...p.hair, style: v } }));
+  }
+
+  private hairColour(host: HTMLElement): void {
+    const set = (p: PersonParams, c: number, tip: boolean): PersonParams => ({
+      ...p, hair: { ...p.hair, colour: tip ? p.hair.colour : c, tipColour: tip ? c : (p.hair.tipColour === p.hair.colour ? c : p.hair.tipColour) },
+      // Brows follow the hair unless set apart.
+      brows: !tip && p.brows.colour === darker(p.hair.colour) ? { ...p.brows, colour: darker(c) } : p.brows,
+    });
+    this.heading(host, 'hgen.hairColour');
+    this.colours(host, HAIR_COLOURS, (p) => p.hair.colour, (p, c) => set(p, c, false));
+    this.heading(host, 'hgen.tipColour');
+    this.colours(host, HAIR_COLOURS, (p) => p.hair.tipColour, (p, c) => set(p, c, true));
+    this.heading(host, 'hgen.group.detail');
+    this.slider(host, t('hgen.grey'), () => [0, 1, 0.01], (p) => p.hair.grey, (p, v) => ({ ...p, hair: { ...p.hair, grey: v } }), (v) => `${Math.round(v * 100)}%`, 0);
+  }
+
+  private hairShape(host: HTMLElement): void {
+    const s = (label: string, key: 'length' | 'volume' | 'curl' | 'curlSize' | 'frizz' | 'density' | 'thickness', lo: number, hi: number, reset: number): void =>
+      this.slider(host, t(label), () => [lo, hi, 0.01], (p) => p.hair[key], (p, v) => ({ ...p, hair: { ...p.hair, [key]: v } }), (v) => `${Math.round(v * 100)}`, reset);
+    s('hgen.length', 'length', 0.3, 1.8, 1);
+    s('hgen.volume', 'volume', 0, 1, 0);
+    s('hgen.curl', 'curl', 0, 1, 0);
+    s('hgen.curlSize', 'curlSize', 0, 1, 0.5);
+    s('hgen.frizz', 'frizz', 0, 1, 0);
+    s('hgen.density', 'density', 0.3, 1.6, 1);
+    s('hgen.thickness', 'thickness', 0.5, 2, 1);
+  }
+
+  private browHair(host: HTMLElement): void {
+    this.chips(host, [['none', t('hgen.none')] as const, ...BROW_STYLES.map((s, i) => [s, `${i + 1}`] as const)], (p) => p.brows.style,
+      (p, v) => ({ ...p, brows: { ...p.brows, style: v } }));
+    this.heading(host, 'hgen.colour');
+    this.colours(host, HAIR_COLOURS.slice(0, 12), (p) => p.brows.colour, (p, c) => ({ ...p, brows: { ...p.brows, colour: c } }));
+    const s = (label: string, key: 'thickness' | 'density' | 'length', lo: number, hi: number): void =>
+      this.slider(host, t(label), () => [lo, hi, 0.01], (p) => p.brows[key], (p, v) => ({ ...p, brows: { ...p.brows, [key]: v } }), (v) => `${Math.round(v * 100)}`, 1);
+    this.heading(host, 'hgen.group.detail');
+    s('hgen.thickness', 'thickness', 0.4, 2.5);
+    s('hgen.density', 'density', 0.2, 1);
+    s('hgen.length', 'length', 0.5, 1.6);
+  }
+
+  private eyeColour(host: HTMLElement): void {
+    this.colours(host, IRIS_COLOURS.map(([c]) => c), (p) => p.iris, (p, c) => ({ ...p, iris: c }));
+  }
+
+  private lashes(host: HTMLElement): void {
+    const s = (label: string, key: 'length' | 'curl' | 'density', lo: number, hi: number, reset: number): void =>
+      this.slider(host, t(label), () => [lo, hi, 0.01], (p) => p.lashes[key], (p, v) => ({ ...p, lashes: { ...p.lashes, [key]: v } }), (v) => `${Math.round(v * 100)}`, reset);
+    s('hgen.length', 'length', 0.3, 2, 1);
+    s('hgen.curl', 'curl', 0, 1.5, 0.6);
+    s('hgen.density', 'density', 0, 1.6, 1);
+    this.heading(host, 'hgen.colour');
+    this.colours(host, [0x141010, 0x2a1d16, 0x5a3a24, 0x1f3a7a, 0x6a1f7a], (p) => p.lashes.colour, (p, c) => ({ ...p, lashes: { ...p.lashes, colour: c } }));
+  }
+
+  private makeup(host: HTMLElement): void {
+    this.heading(host, 'hgen.lipstick');
+    this.colours(host, LIP_COLOURS, (p) => p.makeup.lipColour, (p, c) => ({ ...p, makeup: { ...p.makeup, lipColour: c, lipAmount: p.makeup.lipAmount || 0.6 } }));
+    this.slider(host, t('hgen.intensity'), () => [0, 1, 0.01], (p) => p.makeup.lipAmount, (p, v) => ({ ...p, makeup: { ...p.makeup, lipAmount: v } }), (v) => `${Math.round(v * 100)}`, 0);
+    this.heading(host, 'hgen.beard');
+    this.slider(host, t('hgen.stubble'), () => [0, 1, 0.01], (p) => p.makeup.stubble, (p, v) => ({ ...p, makeup: { ...p.makeup, stubble: v } }), (v) => `${Math.round(v * 100)}`, 0);
+  }
+
+  private garment(host: HTMLElement, slot: GarmentSlot): void {
+    const get = (p: PersonParams): GarmentParams | null => p.outfit[slot];
+    const put = (p: PersonParams, g: GarmentParams | null): PersonParams => ({ ...p, outfit: { ...p.outfit, [slot]: g } });
+    this.chips(host, [['', t('hgen.none')] as const, ...GARMENT_TYPES[slot].map((type) => [type, t(`hgen.g.${type}`)] as const)],
+      (p) => get(p)?.type ?? '', (p, type) => {
+        if (!type) return put(p, null);
+        const was = get(p);
+        return put(p, { ...garmentDefaults(type), colour: was?.colour ?? CLOTH_COLOURS[3]!, colour2: was?.colour2 ?? CLOTH_COLOURS[0]!, pattern: was?.pattern ?? 'solid', patternScale: was?.patternScale ?? 1 });
+      });
+    const g = get(this.person);
+    if (!g) return;
+    const edit = (patch: Partial<GarmentParams>) => (p: PersonParams): PersonParams => (get(p) ? put(p, { ...get(p)!, ...patch }) : p);
+    this.heading(host, 'hgen.colour');
+    this.colours(host, CLOTH_COLOURS.slice(0, 11), (p) => get(p)?.colour ?? 0, (p, c) => edit({ colour: c })(p));
+    this.heading(host, 'hgen.pattern');
+    this.chips(host, PATTERNS.map((x) => [x, t(`hgen.pat.${x}`)] as const), (p) => get(p)?.pattern ?? 'solid', (p, v) => edit({ pattern: v })(p));
+    if (g.pattern !== 'solid' && g.pattern !== 'knit') {
+      this.colours(host, CLOTH_COLOURS.slice(0, 11), (p) => get(p)?.colour2 ?? 0, (p, c) => edit({ colour2: c })(p));
+    }
+    this.chips(host, FABRICS.map((x) => [x, t(`hgen.fab.${x}`)] as const), (p) => get(p)?.fabric ?? 'cotton', (p, v) => edit({ fabric: v })(p));
+    this.heading(host, 'hgen.group.cut');
+    const s = (label: string, key: 'sleeve' | 'length' | 'neckline' | 'loose' | 'flare' | 'patternScale', lo = 0, hi = 1): void =>
+      this.slider(host, t(label), () => [lo, hi, 0.01], (p) => get(p)?.[key] ?? 0, (p, v) => edit({ [key]: v })(p), (v) => `${Math.round(v * 100)}`, null);
+    if (slot === 'top' && !['bra'].includes(g.type) && g.type !== 'shirt') { s('hgen.sleeve', 'sleeve'); s('hgen.hem', 'length'); s('hgen.neckline', 'neckline'); }
+    if (slot === 'bottom' && g.type !== 'pants') { s(g.type === 'skirt' ? 'hgen.skirtLength' : 'hgen.legLength', 'length'); s('hgen.rise', 'neckline'); }
+    if (slot === 'shoes' && g.type !== 'flats') s('hgen.shaft', 'length');
+    if (g.type === 'skirt' || g.type === 'dress') s('hgen.flare', 'flare');
+    if (g.type !== 'shirt' && g.type !== 'pants') s('hgen.loose', 'loose');
+    if (g.pattern !== 'solid') s('hgen.patternScale', 'patternScale', 0.4, 2.5);
   }
 
   private expression(host: HTMLElement): void {
