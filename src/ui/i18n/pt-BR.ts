@@ -532,6 +532,7 @@ export const PT_BR: Dictionary = {
   'paint.kind.asphalt': 'Asfalto',
   'paint.kind.concrete': 'Concreto',
   'paint.kind.grass': 'Grama (apaga)',
+  'paint.kind.forest': 'Floresta',
   'hint.terrain.paint': 'Arraste para pintar o chão · Shift+roda: tamanho · Alt+roda: intensidade',
   'hint.mobile.terrain.paint': '1 dedo: pintar o chão · 2 dedos: câmera',
   'terrain.radius': 'Raio',

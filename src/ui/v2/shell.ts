@@ -39,7 +39,7 @@ import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
 const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
-  sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36',
+  sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36', forest: '#2c4f26',
 };
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';
@@ -805,7 +805,8 @@ export function mountShell(deps: ShellDeps): void {
       }
       // Painting: which ground the brush lays (`world/terrainPaint.ts`).
       if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
-        const grounds = group(t('paint.kind'));
+        // Named, so its nine swatches wrap under the name instead of running off the panel.
+        const grounds = titled(group(t('paint.kind')), t('paint.kind'));
         const now = paintKind();
         grounds.appendChild(choices(PAINT_KINDS.map((kind) => ({
           label: t(`paint.kind.${kind}`),
@@ -815,7 +816,8 @@ export function mountShell(deps: ShellDeps): void {
         })), 4));
         options.appendChild(grounds);
       }
-      const brush = group(t('v2.options'));
+      // Named too: the two sliders and the clear button ran off the panel's edge.
+      const brush = titled(group(t('v2.options')), t('v2.options'));
       brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)));
       brush.appendChild(button('v2-icon danger', t('terrain.clear'), () => press('#clearTerrain'), svg('flatten', 16)));
       options.append(brush);

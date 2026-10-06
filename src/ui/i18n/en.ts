@@ -540,6 +540,7 @@ export const EN: Dictionary = {
   'paint.kind.asphalt': 'Asphalt',
   'paint.kind.concrete': 'Concrete',
   'paint.kind.grass': 'Grass (erases)',
+  'paint.kind.forest': 'Forest',
   'hint.terrain.paint': 'Drag to paint the ground · Shift+wheel: brush size · Alt+wheel: strength',
   'hint.mobile.terrain.paint': '1 finger: paint the ground · 2 fingers: camera',
   'terrain.radius': 'Radius',

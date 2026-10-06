@@ -715,6 +715,10 @@ export interface GardenPlant {
   readonly h: number;
   readonly yaw: number;
   readonly seed: number;
+  /** A tree's species, when it is not a garden's mix (a painted forest's). */
+  readonly species?: TreeSpecies;
+  /** A shrub that never flowers (a wood's understorey). */
+  readonly plain?: boolean;
 }
 
 /** A garden tree's species: mostly broadleaf, some conifers, now and then a flowering ipê. */
@@ -738,7 +742,8 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
     switch (p.kind) {
       case 'tree': {
         const spread = 0.82 + rng.float() * 0.3;
-        (trees.get(gardenSpecies(rng.float())) as Placement[]).push({
+        const roll = rng.float();
+        (trees.get(p.species ?? gardenSpecies(roll)) as Placement[]).push({
           x: p.x, y: p.y, z: p.z - m(0.05), yaw: rng.float() * Math.PI * 2,
           sx: p.h * spread, sy: p.h, sz: p.h * spread * (0.9 + rng.float() * 0.2), tint: foliageTint(rng),
         });
@@ -754,7 +759,7 @@ export function buildGardens(list: readonly GardenPlant[], kit: SceneryKit): Sce
         const across = (Math.min(p.w, p.d) / 1.5) * 0.8;
         const tall = Math.min(p.h, across * 1.3);
         const wide = Math.max(across, tall / 1.3);
-        (bushes.get(rng.float() < 0.25 ? 'bushFlowering' : 'bush') as Placement[]).push({
+        (bushes.get(!p.plain && rng.float() < 0.25 ? 'bushFlowering' : 'bush') as Placement[]).push({
           x: p.x, y: p.y, z: p.z - m(0.05), yaw: rng.float() * Math.PI * 2,
           sx: wide, sy: tall, sz: wide * (0.9 + rng.float() * 0.2), tint: foliageTint(rng),
         });

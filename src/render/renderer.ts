@@ -647,6 +647,9 @@ export function createSceneRenderer(
   /** The buildings' garden plants, and the buildings and ground they were planted for. */
   let gardens: Scenery | null = null;
   let gardensFor = '';
+  /** The forest painted with the landscape brush, planted (`forestPlants`). */
+  let forest: Scenery | null = null;
+  let forestFor = '';
   // One representative per material and mesh program variant is enough for
   // compileAsync. Passing the whole scene compiled every repeated instance,
   // including objects hidden outside the view, during the first town frame.
@@ -1091,6 +1094,48 @@ export function createSceneRenderer(
   /** Playing: how far ahead the sun's shadows are drawn, u (one map; beyond it, cascades would be needed). */
   const PLAY_SHADOW_FAR = m(80);
   const shadowCentre = new Vector3();
+  /**
+   * The trees of the painted forest (`world/terrainPaint.ts` 'forest'): one
+   * candidate a cell of FOREST_SPACING, jittered by a hash of the cell so a
+   * stroke elsewhere never moves them, kept with the odds the painted density
+   * gives; never on a road, a footway or a building. A shrub of the
+   * understorey with some. Species, height and spread from the same hash.
+   */
+  const FOREST_SPACING = m(7);
+  const FOREST_MAX = 15_000;
+  const forestPlants = (net: Network): GardenPlant[] => {
+    const out: GardenPlant[] = [];
+    const hash = (a: number, b: number, salt: number): number => {
+      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+    };
+    const n = Math.floor((TERRAIN_HALF * 2) / FOREST_SPACING);
+    for (let j = 0; j < n && out.length < FOREST_MAX; j++) {
+      for (let i = 0; i < n && out.length < FOREST_MAX; i++) {
+        const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
+        const density = terrain.forestAt(cx, cy);
+        if (density < 0.04 || hash(i, j, 1) > density * 0.92) continue;
+        const x = cx + (hash(i, j, 2) - 0.5) * FOREST_SPACING * 0.9, y = cy + (hash(i, j, 3) - 0.5) * FOREST_SPACING * 0.9;
+        const p = { x, y };
+        if (onCarriageway(net, p) || buildings.covers(x, y)) continue;
+        const z = terrain.renderedHeightAt(x, y);
+        const h = m(10) + m(8) * hash(i, j, 4) * (0.6 + 0.4 * density);
+        // A wood is green: broadleaf with some conifers, a flowering ipê now and then.
+        const roll = hash(i, j, 13);
+        const species = roll < 0.45 ? 'broadleaf' : roll < 0.8 ? 'broadleafTall' : roll < 0.98 ? 'conifer' : roll < 0.99 ? 'ipeYellow' : 'ipePink';
+        out.push({ kind: 'tree', x, y, z, w: h * 0.6, d: h * 0.6, h, yaw: hash(i, j, 5) * Math.PI * 2, seed: hash(i, j, 6), species });
+        if (hash(i, j, 7) < 0.45 * density) {
+          const sx = x + (hash(i, j, 8) - 0.5) * FOREST_SPACING * 0.7, sy = y + (hash(i, j, 9) - 0.5) * FOREST_SPACING * 0.7;
+          if (!onCarriageway(net, { x: sx, y: sy }) && !buildings.covers(sx, sy)) {
+            const sh = m(1.2) + m(1.4) * hash(i, j, 10);
+            out.push({ kind: 'shrub', x: sx, y: sy, z: terrain.renderedHeightAt(sx, sy), w: sh * 1.6, d: sh * 1.6, h: sh, yaw: hash(i, j, 11) * Math.PI * 2, seed: hash(i, j, 12), plain: true });
+          }
+        }
+      }
+    }
+    return out;
+  };
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
   const TRACER_LIFE = 0.12;
@@ -1484,6 +1529,16 @@ export function createSceneRenderer(
         gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
+      const forestKey = `${terrain.forestRevision}:${net.revision}:${net.doc.buildings.revision}:${groundVersion}:${net.doc.terrainRevision}:${rebuilds}`;
+      if (forestKey !== forestFor) {
+        forestFor = forestKey;
+        if (forest) {
+          for (const mesh of forest.meshes) world.remove(mesh);
+          forest.dispose();
+        }
+        forest = buildGardens(forestPlants(net), sceneryKit);
+        for (const mesh of forest.meshes) world.add(mesh);
+      }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
       // traverses everything passed to it regardless of visibility, so only
@@ -1546,6 +1601,10 @@ export function createSceneRenderer(
         mesh.visible = detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
       }
       gardens?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
+      // A forest is seen from any distance: its crowns at map zoom, its leaves closer.
+      forest?.setMap(plantMap);
+      for (const mesh of forest?.meshes ?? []) mesh.visible = !plantMap || !mesh.name.endsWith('-leaves');
+      forest?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM || rig.chasing);
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
         scenery.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
@@ -1560,6 +1619,7 @@ export function createSceneRenderer(
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
       gardens?.cull(crowdFrustum, crowdProjection);
+      forest?.cull(crowdFrustum, crowdProjection);
       transit?.update(sim.city.transit.trains(), terrain.renderedHeightAt);
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
@@ -1796,6 +1856,7 @@ export function createSceneRenderer(
       scenery?.dispose();
       furniture?.dispose();
       gardens?.dispose();
+      forest?.dispose();
       sceneryKit.dispose();
       terrain.dispose();
       materials.dispose();

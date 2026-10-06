@@ -1,6 +1,8 @@
 /**
  * Ground the player paints over the terrain: sand, soil, meadow, snow,
- * gravel, asphalt, concrete - and grass, which paints the others away.
+ * gravel, asphalt, concrete - and grass, which paints the others away -
+ * and forest, where trees grow (`render/terrain.ts` keeps its density,
+ * `render/renderer.ts` plants it).
  *
  * Texture splatting, as engines store painted terrain layers: a weight per
  * layer per texel, four layers to an RGBA texture, the weights summing to at
@@ -13,7 +15,7 @@
  */
 
 /** The paintable layers, in channel order: two RGBA textures, then grass. */
-export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass'] as const;
+export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass', 'forest'] as const;
 export type PaintKind = (typeof PAINT_KINDS)[number];
 
 export interface PaintDab {

@@ -142,6 +142,10 @@ export interface TerrainSurface {
   update(doc: RoadDoc, stroking?: boolean): boolean;
   /** Brings the painted ground up to `doc.paintRevision`. */
   updatePaint(doc: RoadDoc): void;
+  /** How much forest was painted at a point, 0..1 (`world/terrainPaint.ts` 'forest'). */
+  forestAt(x: number, y: number): number;
+  /** Moves whenever the forest painted changes. */
+  readonly forestRevision: number;
   /**
    * The grid cells (x0, x1, y0, y1) the last `update` rewrote, or null when it
    * rewrote the whole plate: where a stroke's dab changed the ground.
@@ -317,6 +321,27 @@ function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
         const target = k === layer ? 255 : 0;
         data[j] = Math.round(data[j]! + (target - data[j]!) * w);
       }
+    }
+  }
+}
+
+/** Side of the forest density grid over the plate (7.5 m a cell). */
+const FOREST_RES = 256;
+
+/** Lays one dab into the forest density: forest towards full, any other ground towards none. */
+function rasterForest(forest: Uint8Array, dab: PaintDab): void {
+  const cell = TERRAIN_SIZE / FOREST_RES;
+  const cx = (dab.x + TERRAIN_HALF) / cell, cy = (dab.y + TERRAIN_HALF) / cell, r = dab.radius / cell;
+  const target = dab.kind === 'forest' ? 255 : 0;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(FOREST_RES - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(FOREST_RES - 1, Math.ceil(cy + r));
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / Math.max(1e-6, r);
+      if (d >= 1) continue;
+      const w = Math.min(1, dab.strength * (1 - d * d * (3 - 2 * d)));
+      const i = y * FOREST_RES + x;
+      forest[i] = Math.round(forest[i]! + (target - forest[i]!) * w);
     }
   }
 }
@@ -1009,6 +1034,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let paintRevision = 0;
   let paintCount = 0;
   let paintFirst: PaintDab | undefined;
+  const forest = new Uint8Array(FOREST_RES * FOREST_RES);
+  let forestRevision = 0;
   const updatePaint = (doc: RoadDoc): void => {
     if (doc.paintRevision === paintRevision) return;
     paintRevision = doc.paintRevision;
@@ -1016,11 +1043,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // Dabs only added since the last time: lay just those. Anything else (an
     // undo, a load, the oldest dabs dropped): lay them all again.
     if (dabs.length >= paintCount && dabs[0] === paintFirst && paintCount > 0) {
-      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) rasterPaint(paint, t);
+      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) { rasterPaint(paint, t); rasterForest(forest, t); }
     } else {
       for (const t of paint) (t.image.data as Uint8Array).fill(0);
-      for (const dab of dabs) rasterPaint(paint, dab);
+      forest.fill(0);
+      for (const dab of dabs) { rasterPaint(paint, dab); rasterForest(forest, dab); }
     }
+    forestRevision++;
     paintCount = dabs.length;
     paintFirst = dabs[0];
     for (const t of paint) t.needsUpdate = true;
@@ -1031,6 +1060,15 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     ground,
     vergeMaterial,
     updatePaint,
+    forestAt(x, y) {
+      const cell = TERRAIN_SIZE / FOREST_RES;
+      const gx = Math.floor((x + TERRAIN_HALF) / cell), gy = Math.floor((y + TERRAIN_HALF) / cell);
+      if (gx < 0 || gy < 0 || gx >= FOREST_RES || gy >= FOREST_RES) return 0;
+      return forest[gy * FOREST_RES + gx]! / 255;
+    },
+    get forestRevision() {
+      return forestRevision;
+    },
     heightAt,
     naturalRenderedHeightAt,
     renderedHeightAt,
