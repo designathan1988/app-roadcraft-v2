@@ -10,6 +10,8 @@ import {
   RepeatWrapping,
   UnsignedByteType,
   Vector2,
+  Vector3,
+  type Texture,
 } from 'three';
 
 import { fbm, makeNoise } from './mesh/textureBaker';
@@ -100,9 +102,9 @@ export const WATER_DRIFTS: readonly (readonly [number, number])[] = [DRIFT_A, DR
 export const WATER_DEPTH_ATTRIBUTE = 'aDepth';
 
 /** Depth, in world units, at which the tint has reached its deep-water value. */
-const DEEP_AT = 3.6;
+const DEEP_AT = 3;
 /** Depth over which the shore foam band fades out. */
-const FOAM_AT = 0.95;
+const FOAM_AT = 4;
 /**
  * Depth over which the sheet fades in from nothing.
  *
@@ -111,7 +113,7 @@ const FOAM_AT = 0.95;
  * ABRUPTLY: a constant alpha ends the river on a cut line. Fading the last third
  * of a unit of depth hides the edge under the bank instead.
  */
-const RIM_AT = 0.32;
+const RIM_AT = 0.7;
 
 /**
  * Reflectance straight down at the surface, before the angular term.
@@ -119,7 +121,7 @@ const RIM_AT = 0.32;
  * Water's real value is 0.02. This is raised because the scene is lit by one
  * low sun and a sky, and a 2% floor leaves the river reading as a hole.
  */
-const FRESNEL_BASE = 0.11;
+const FRESNEL_BASE = 0.06;
 /**
  * The Schlick exponent, lowered from the physical 5.
  *
@@ -133,7 +135,7 @@ const FRESNEL_BASE = 0.11;
 const FRESNEL_POWER = 3;
 
 /** Low enough for the sun to catch, high enough not to alias into fireflies. */
-const WATER_ROUGHNESS = 0.085;
+const WATER_ROUGHNESS = 0.2;
 const FOAM_ROUGHNESS = 0.72;
 
 /**
@@ -225,6 +227,14 @@ export interface WaterSurface {
    * not at all when it is off screen or when there is no river.
    */
   attach(mesh: Mesh): void;
+  /**
+   * The ground under the water as a texture of the terrain's grid heights
+   * (one texel per grid corner, `half` and `cell` in world units), so the
+   * depth is measured per PIXEL. Interpolated per vertex across the shore's
+   * fan triangles, the depth bent at every triangle edge, and the foam band
+   * and the fade drawn from it came out as a sawtooth along every bank.
+   */
+  setGround(texture: Texture, half: number, cell: number, size: number): void;
   dispose(): void;
 }
 
@@ -245,23 +255,32 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     transparent: true,
     opacity: 1,
     side: FrontSide,
-    envMapIntensity: 1.5,
+    // Stylised, not a mirror: the sky shows as a soft sheen and a horizon
+    // tint (below), not as a chrome reflection of the environment map.
+    envMapIntensity: 0.6,
   });
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
   // entirely once the camera pulls back and the river goes glassy again.
-  material.normalScale.set(0.85, 0.85);
+  material.normalScale.set(0.8, 0.8);
 
   const time = { value: 0 };
   const uniforms = {
     uWaterTime: time,
-    uShallow: { value: new Color(0x4b8269) },
-    uDeep: { value: new Color(0x123b52) },
-    uFoamTint: { value: new Color(0xb7c7b2) },
+    // Three stops, light teal over the shelf to a clear blue to a deep
+    // blue-green: a painted ramp rather than one flat navy.
+    uShallow: { value: new Color(0x7cc7b4) },
+    uMid: { value: new Color(0x3b8c9c) },
+    uDeep: { value: new Color(0x235a72) },
+    uHorizon: { value: new Color(0xa8d8e2) },
+    uFoamTint: { value: new Color(0xf2f6ef) },
     uScaleA: { value: 1 / LAYER_A_TILE },
     uScaleB: { value: 1 / LAYER_B_TILE },
     uDriftA: { value: new Vector2(DRIFT_A[0], DRIFT_A[1]) },
     uDriftB: { value: new Vector2(DRIFT_B[0], DRIFT_B[1]) },
+    uGround: { value: null as Texture | null },
+    // half extent, cell, corners per side; z = 0 until a ground is set.
+    uGroundGrid: { value: new Vector3(0, 1, 0) },
   };
 
   material.onBeforeCompile = (shader) => {
@@ -292,16 +311,41 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          varying vec3 vWaterWorld;
          uniform float uWaterTime;
          uniform vec3 uShallow;
+         uniform vec3 uMid;
          uniform vec3 uDeep;
+         uniform vec3 uHorizon;
          uniform vec3 uFoamTint;
          uniform float uScaleA;
          uniform float uScaleB;
          uniform vec2 uDriftA;
-         uniform vec2 uDriftB;`,
+         uniform vec2 uDriftB;
+         uniform sampler2D uGround;
+         uniform vec3 uGroundGrid;
+         // The terrain mesh's own surface at a world (x, z): the same corners
+         // and the same diagonal split as \`sampleGrid\` in terrain.ts, read
+         // with texelFetch so nothing is filtered.
+         float waterGroundAt(vec2 xz) {
+           float gx = (xz.x + uGroundGrid.x) / uGroundGrid.y;
+           float gy = (xz.y + uGroundGrid.x) / uGroundGrid.y;
+           float last = uGroundGrid.z - 2.0;
+           float ix = clamp(floor(gx), 0.0, last);
+           float iy = clamp(floor(gy), 0.0, last);
+           float u = clamp(gx - ix, 0.0, 1.0);
+           float v = clamp(gy - iy, 0.0, 1.0);
+           ivec2 p = ivec2(int(ix), int(iy));
+           float a = texelFetch(uGround, p, 0).r;
+           float b = texelFetch(uGround, p + ivec2(0, 1), 0).r;
+           float c = texelFetch(uGround, p + ivec2(1, 1), 0).r;
+           float d = texelFetch(uGround, p + ivec2(1, 0), 0).r;
+           return u + v <= 1.0 ? a * (1.0 - u - v) + d * u + b * v : b * (1.0 - u) + c * (u + v - 1.0) + d * (1.0 - v);
+         }`,
       )
       .replace(
         '#include <map_fragment>',
-        `// The two layers, and the only two texture fetches this material adds.
+        `// Depth per pixel against the ground (see \`setGround\`), the vertex
+         // value only until a ground is set.
+         float waterDepthPx = uGroundGrid.z > 0.5 ? vWaterWorld.y - waterGroundAt(vWaterWorld.xz) : vWaterDepth;
+         // The two layers, and the only two texture fetches this material adds.
          // Sampled in WORLD space, not from the mesh uv, so the pattern does not
          // stretch where the surface grid is cut at an angle by the shore.
          vec2 waterPoint = vWaterWorld.xz;
@@ -310,25 +354,41 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
 
          // Shallow reads green and lets the bed through; deep reads blue and
          // does not. One opacity for both is what left the river with no bed.
-         float waterDeep = smoothstep(0.0, ${DEEP_AT.toFixed(2)}, vWaterDepth);
-         vec3 waterTint = mix(uShallow, uDeep, waterDeep);
+         // Beer-Lambert absorption, 1 - exp(-depth / k), through three stops,
+         // so the ramp keeps changing across a deep channel instead of
+         // reaching its deep colour a metre from the bank.
+         float waterDeep = 1.0 - exp(-max(waterDepthPx, 0.0) / ${(DEEP_AT * 0.6).toFixed(2)});
+         vec3 waterTint = waterDeep < 0.5
+           ? mix(uShallow, uMid, waterDeep * 2.0)
+           : mix(uMid, uDeep, waterDeep * 2.0 - 1.0);
 
          // A BAND, not a threshold: foam that simply grows towards zero depth is
          // brightest exactly where the sheet fades out, so none of it is ever
          // seen. Broken up by the noise the normal map carries in its alpha, or
          // it draws a contour line along the bank.
-         float waterShore = smoothstep(0.0, ${FOAM_AT.toFixed(2)}, vWaterDepth);
-         float waterBand = (1.0 - waterShore) * smoothstep(0.0, 0.3, vWaterDepth);
-         float waterFroth = smoothstep(0.34, 0.8, waterA.a * 0.55 + waterB.a * 0.65);
-         float waterFoam = clamp(waterBand * waterFroth * 0.58, 0.0, 1.0);
+         float waterShore = smoothstep(0.0, ${FOAM_AT.toFixed(2)}, waterDepthPx);
+         // A crisp edge, as stylised foam is drawn: the band is cut by the
+         // drifting noise at a hard-ish threshold, so it frays into lacy
+         // scallops instead of a soft white smear.
+         float waterLace = waterA.a * 0.55 + waterB.a * 0.65;
+         float waterEdge = 1.0 - waterShore;
+         // A band set IN from the shore, never on it: the outline itself is
+         // where the surface is clipped against the ground, cell by cell, and
+         // foam drawn there traced every tooth of it. The outline is faded
+         // out instead (RIM_AT), as soft particles fade where they meet a
+         // surface, and the foam starts just inside it. The lace only moves
+         // the band's inner edge; it never adds foam over open water.
+         float waterFoamOuter = smoothstep(${(RIM_AT * 0.7).toFixed(2)}, ${(RIM_AT * 1.3).toFixed(2)}, waterDepthPx);
+         float waterFoam = waterFoamOuter * smoothstep(0.34, 0.4, waterEdge + (waterLace - 0.6) * 0.22);
+         waterFoam = clamp(waterFoam * 0.9, 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
          // The first shallow stretch reveals the actual bed. Starting at
          // 0.34 opacity mixed green water with brown ground into a bright
          // cyan outline before the river became deep blue a few pixels in.
-         float waterAlpha = mix(0.08, 0.94, smoothstep(0.25, ${(DEEP_AT * 0.7).toFixed(2)}, vWaterDepth));
+         float waterAlpha = mix(0.08, 0.94, smoothstep(0.25, ${(DEEP_AT * 0.7).toFixed(2)}, waterDepthPx));
          waterAlpha = max(waterAlpha, waterFoam * 0.9);
-         float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, vWaterDepth);
+         float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, waterDepthPx);
 
          diffuseColor.rgb = waterTint;
          diffuseColor.a = waterAlpha;`,
@@ -371,17 +431,24 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // glancing parts of the surface, and the body of the water dims by as
          // much as the reflection gains.
          material.diffuseContribution *= 1.0 - waterFresnel * 0.6;
+         // The horizon tint: what faces away from the eye takes the sky's pale
+         // colour as a painted wash, instead of a sharp reflection.
+         material.diffuseContribution = mix(material.diffuseContribution, uHorizon, waterFresnel * 0.55 * (1.0 - waterFoam));
          diffuseColor.a = clamp(diffuseColor.a + waterFresnel * 0.5, 0.0, 1.0) * waterRim;`,
       );
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v2';
+  material.customProgramCacheKey = () => 'water-two-layer-v4';
 
   const started = performance.now();
   return {
     material,
     time,
+    setGround(texture, half, cell, size) {
+      uniforms.uGround.value = texture;
+      uniforms.uGroundGrid.value.set(half, cell, size);
+    },
     attach(mesh) {
       mesh.onBeforeRender = () => {
         time.value = waterClock(performance.now() - started);

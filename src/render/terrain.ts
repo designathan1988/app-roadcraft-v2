@@ -14,6 +14,9 @@ import {
   LinearFilter,
   ClampToEdgeWrapping,
   LinearMipmapLinearFilter,
+  NearestFilter,
+  RedFormat,
+  FloatType,
   RepeatWrapping,
   SRGBColorSpace,
   Vector3,
@@ -209,18 +212,23 @@ export function terrainBakes(anisotropy: number): {
       // Kept quiet: the ground is the backdrop, so the fine grain is low in
       // contrast and the green is muted, and the variation that reads is the
       // slow one, the clumps and dry patches.
-      relief: 1.1,
+      // Painted, not photographed: soft brush-sized patches of a warm and a
+      // cool green, and a grain kept quiet enough that it never reads as a
+      // speckle of glints.
+      relief: 0.6,
       shade: (x, y, out) => {
         const u = x / 512;
         const v = y / 512;
         const fine = fbm(grassFine, u * 170, v * 170, 170, 2);
         const clump = fbm(grassClump, u * 11, v * 11, 11, 4);
-        const dry = clump > 0.58 ? (clump - 0.58) * 2.4 : 0;
-        const moss = clump < 0.4 ? (0.4 - clump) * 1.6 : 0;
-        out.r = 0.16 + fine * 0.03 + dry * 0.22 + clump * 0.04;
-        out.g = 0.215 + fine * 0.045 + clump * 0.07 + dry * 0.15 - moss * 0.02;
-        out.b = 0.11 + fine * 0.02 + dry * 0.07 + moss * 0.015;
-        out.h = fine * 0.65 + clump * 0.35;
+        // Posterised a little, so patches have edges as brush strokes do.
+        const patch = Math.round(clump * 5) / 5 * 0.55 + clump * 0.45;
+        const warm = Math.max(0, patch - 0.5) * 2;
+        const cool = Math.max(0, 0.5 - patch) * 2;
+        out.r = 0.2 + fine * 0.025 + warm * 0.09 - cool * 0.03;
+        out.g = 0.27 + fine * 0.03 + warm * 0.04 - cool * 0.015;
+        out.b = 0.13 + fine * 0.012 - warm * 0.02 + cool * 0.035;
+        out.h = fine * 0.5 + clump * 0.5;
         out.rough = 0.99;
       },
     },
@@ -234,18 +242,20 @@ export function terrainBakes(anisotropy: number): {
     {
       size: 512,
       worldSize: 58,
-      relief: 4.6,
+      // Broad facets of warm and cool stone, no inked cracks: a black crack
+      // line every few metres drew contour stripes over every hillside.
+      relief: 1.8,
       shade: (x, y, out) => {
         const u = x / 512;
         const v = y / 512;
-        const strata = fbm(rockCrack, u * 7, v * 22, 7, 4);
-        const grain = fbm(rockGrain, u * 110, v * 110, 110, 3);
-        const crack = Math.abs(strata - 0.5) < 0.045 ? 1 : 0;
-        const tone = 0.38 + (grain - 0.5) * 0.16 + strata * 0.16 - crack * 0.18;
-        out.r = tone * 1.04;
+        const strata = fbm(rockCrack, u * 5, v * 12, 5, 3);
+        const grain = fbm(rockGrain, u * 110, v * 110, 110, 2);
+        const facet = strata;
+        const tone = 0.4 + (facet - 0.5) * 0.24 + (grain - 0.5) * 0.07;
+        out.r = tone * 1.06;
         out.g = tone * 0.99;
-        out.b = tone * 0.92;
-        out.h = crack ? 0.05 : 0.35 + strata * 0.4 + grain * 0.25;
+        out.b = tone * 0.9;
+        out.h = facet * 0.7 + grain * 0.3;
         out.rough = 0.92;
       },
     },
@@ -264,10 +274,10 @@ export function terrainBakes(anisotropy: number): {
         const v = y / 256;
         const grain = fbm(dirtGrain, u * 90, v * 90, 90, 3);
         const patch = fbm(dirtGrain, u * 8 + 3, v * 8 + 9, 8, 3);
-        const tone = 0.34 + (grain - 0.5) * 0.14 + patch * 0.1;
-        out.r = tone * 1.22;
-        out.g = tone * 0.96;
-        out.b = tone * 0.68;
+        const tone = 0.4 + (grain - 0.5) * 0.08 + patch * 0.08;
+        out.r = tone * 1.1;
+        out.g = tone * 0.94;
+        out.b = tone * 0.72;
         out.h = grain * 0.7 + patch * 0.3;
         out.rough = 0.97;
       },
@@ -375,9 +385,11 @@ function terrainMaterial(
     roughness: 1,
     metalness: 0,
     side: FrontSide,
-    envMapIntensity: 0.4,
+    // Almost no environment reflection: a dielectric's 4 % reflects the whole
+    // sky at any roughness, and over a field of grass that is the plastic sheen.
+    envMapIntensity: 0.12,
   });
-  material.normalScale.set(1.35, 1.35);
+  material.normalScale.set(0.8, 0.8);
 
   const grassDetail = detailTextures('grass', anisotropy);
   const soilDetail = detailTextures('soil', anisotropy);
@@ -533,7 +545,9 @@ function terrainMaterial(
          }
          // Wide, slow tint so whole regions read warm or cool.
          float macro = texture2D(uDirtMap, vTerrainWorld.xz * 0.0009).r;
-         blended.rgb *= mix(0.84, 1.16, macro);
+         // A hue swing, not only a brightness one: cool blue-green in some
+         // regions, sunny yellow-green in others, as a painter varies a field.
+         blended.rgb *= mix(vec3(0.86, 0.95, 1.08), vec3(1.12, 1.05, 0.84), macro);
          // A hillshade written into the ALBEDO, on top of the light the surface
          // actually receives. Direct sun alone moves a 10-degree slope by about
          // a tenth, which is under what the eye reads as shape at map zoom; this
@@ -612,14 +626,14 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v5';
+  material.customProgramCacheKey = () => 'terrain-splat-v6';
   return material;
 }
 
 /** Metres along the rim one strata texture spans before it repeats. */
-const STRATA_SPAN_X = 140;
+const STRATA_SPAN_X = 320;
 /** Metres of depth one strata texture spans before it repeats. */
-const STRATA_SPAN_Y = 96;
+const STRATA_SPAN_Y = 260;
 /** How far the map's cut sides reach below the base level (SimCity 4's slab). */
 const SLAB_DEPTH = 320;
 /** The darker topsoil band under the rim, in metres. */
@@ -635,19 +649,19 @@ function strataTexture(anisotropy: number): DataTexture {
   const noise = makeNoise(4_177);
   // sRGB, top to bottom of one repeat.
   const layers: readonly (readonly [number, number, number])[] = [
-    [118, 86, 58], [138, 104, 70], [104, 76, 52], [150, 120, 84],
-    [112, 98, 84], [128, 96, 64], [96, 86, 78], [142, 112, 78],
+    [132, 92, 60], [158, 118, 78], [120, 84, 56], [170, 134, 90],
+    [140, 100, 66], [116, 82, 58], [162, 124, 84], [128, 92, 64],
   ];
   const data = new Uint8Array(res * res * 4);
   for (let y = 0; y < res; y++) {
     for (let x = 0; x < res; x++) {
       const warp = fbm(noise, x / 32, y / 32, 8, 3) - 0.5;
-      const t = (y / res) * layers.length + warp * 0.9;
+      const t = (y / res) * layers.length + warp * 1.4;
       const band = ((Math.floor(t) % layers.length) + layers.length) % layers.length;
       const colour = layers[band]!;
-      const grain = 0.82 + 0.36 * fbm(noise, x / 4 + 97, y / 4 + 31, 64, 3);
+      const grain = 0.88 + 0.24 * fbm(noise, x / 4 + 97, y / 4 + 31, 64, 3);
       // A thin dark seam at each band's top edge, as a cut bank shows.
-      const seam = t - Math.floor(t) < 0.06 ? 0.78 : 1;
+      const seam = t - Math.floor(t) < 0.035 ? 0.86 : 1;
       const i = (y * res + x) * 4;
       for (let c = 0; c < 3; c++) data[i + c] = Math.min(255, colour[c]! * grain * seam);
       data[i + 3] = 255;
@@ -663,6 +677,61 @@ function strataTexture(anisotropy: number): DataTexture {
   texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
   return texture;
+}
+
+/**
+ * The cut sides' material: the strata texture, and over it what a painted
+ * cross-section shows at its top - a ragged lip of turf hanging over the
+ * edge, a dark band of topsoil with roots under it - and at its bottom the
+ * layers giving way to grey bedrock. Drawn from the metres under the rim
+ * (`aBelow`), so the lip follows a hill as the rim does.
+ */
+function wallMaterial(anisotropy: number): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({
+    map: strataTexture(anisotropy),
+    vertexColors: true,
+    roughness: 1,
+    metalness: 0,
+    envMapIntensity: 0.1,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+         attribute float aBelow;
+         varying float vBelow;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+         vBelow = aBelow;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+         varying float vBelow;
+         float wallHash(float n) { return fract(sin(n) * 43758.5453); }
+         // 1-D value noise along the rim, in metres.
+         float wallNoise(float x) {
+           float i = floor(x);
+           float f = fract(x);
+           return mix(wallHash(i), wallHash(i + 1.0), f * f * (3.0 - 2.0 * f));
+         }`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+         float along = vMapUv.x * ${STRATA_SPAN_X.toFixed(1)};
+         // The turf lip: 5 to 12 m, ragged in tufts, thick enough to read at map zoom.
+         float lip = 5.0 + 5.0 * wallNoise(along * 0.12) + 2.5 * wallNoise(along * 0.6 + 11.0);
+         // The topsoil under it, darker and redder, with a wavy bottom.
+         float soil = lip + 10.0 + 8.0 * wallNoise(along * 0.04 + 5.0);
+         vec3 strata = diffuseColor.rgb;
+         vec3 topsoil = vec3(0.2, 0.13, 0.085) * (0.85 + 0.3 * wallNoise(along * 2.3 + vBelow * 1.7));
+         // Roots: thin pale streaks hanging into the topsoil.
+         float root = step(0.9, wallNoise(along * 0.9)) * smoothstep(soil, lip, vBelow);
+         topsoil = mix(topsoil, vec3(0.42, 0.33, 0.22), root * 0.6);
+         vec3 turf = mix(vec3(0.24, 0.34, 0.13), vec3(0.15, 0.22, 0.09), smoothstep(0.0, lip, vBelow));
+         vec3 wall = mix(topsoil, strata, smoothstep(soil - 0.6, soil + 0.6, vBelow));
+         // Bedrock: the deep layers turn to grey stone.
+         float bedrock = smoothstep(230.0, 300.0, vBelow + 30.0 * wallNoise(along * 0.02));
+         wall = mix(wall, vec3(0.13, 0.12, 0.11) * (0.7 + 1.2 * strata.r), bedrock * 0.8);
+         wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
+         diffuseColor.rgb = wall;`);
+  };
+  material.customProgramCacheKey = () => 'terrain-walls-v1';
+  return material;
 }
 
 export function createTerrainSurface(anisotropy: number): TerrainSurface {
@@ -715,7 +784,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   // backdrop is drawn over the rim and hides them.
   const walls = new Mesh(
     new BufferGeometry(),
-    new MeshStandardMaterial({ map: strataTexture(anisotropy), vertexColors: true, roughness: 1, metalness: 0 }),
+    wallMaterial(anisotropy),
   );
   walls.name = 'terrain-walls';
   walls.receiveShadow = false;
@@ -755,6 +824,14 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let lastStamps: readonly TerrainStamp[] = [];
 
   const heightAt = naturalHeightAt;
+
+  // The drawn corners again, for the water to measure its depth per pixel
+  // (`WaterSurface.setGround`). Refreshed with the water.
+  const groundTexture = new DataTexture(new Float32Array(GRID * GRID), GRID, GRID, RedFormat, FloatType);
+  groundTexture.magFilter = NearestFilter;
+  groundTexture.minFilter = NearestFilter;
+  groundTexture.generateMipmaps = false;
+  waterSurface.setGround(groundTexture, TERRAIN_HALF, TERRAIN_CELL, GRID);
 
   /** Bilinear read of one corner array, reproducing the plane's own diagonal. */
   const sampleGrid = (corners: Float64Array, x: number, y: number): number => {
@@ -899,8 +976,10 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const normals: number[] = [];
     const uvs: number[] = [];
     const colours: number[] = [];
-    // Row shades: topsoil darker at the lip, full in the body, shaded to the bottom.
-    const LIP = 0.55;
+    /** Metres under the rim, for the shader's grass lip and topsoil (`wallMaterial`). */
+    const below: number[] = [];
+    // Row shades: full under the rim (the shader draws the lip), shaded to the bottom.
+    const LIP = 1;
     const BODY = 1;
     const BOTTOM = 0.42;
     sides.forEach(([x0, z0, x1, z1, nx, nz], s) => {
@@ -913,6 +992,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
         normals.push(nx, 0, nz);
         uvs.push(((s * length + (length * k) / n) / STRATA_SPAN_X), y / STRATA_SPAN_Y);
         colours.push(shade, shade, shade);
+        below.push(top[k]! - y);
       };
       for (let k = 0; k < n; k++) {
         const ya = top[k]!;
@@ -944,6 +1024,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     next.setAttribute('normal', new Float32BufferAttribute(normals, 3));
     next.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
     next.setAttribute('color', new Float32BufferAttribute(colours, 3));
+    next.setAttribute('aBelow', new Float32BufferAttribute(below, 1));
     next.computeBoundingSphere();
     const previous = walls.geometry;
     walls.geometry = next;
@@ -1166,6 +1247,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       discs.push({ x: stamp.x, y: stamp.y, radius: stamp.radius * WATER_RADIUS, level });
     }
     wetDiscs = discs;
+    (groundTexture.image.data as Float32Array).set(grid);
+    groundTexture.needsUpdate = true;
     const previous = water.geometry;
     floodCells = new Map();
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
@@ -1353,6 +1436,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       (walls.material as MeshStandardMaterial).dispose();
       water.geometry.dispose();
       waterSurface.dispose();
+      groundTexture.dispose();
     },
   };
 }
@@ -1537,9 +1621,18 @@ export function unifiedWaterGeometry(
 
   for (const cell of cells) {
     const [ix, iy] = waterCell(cell);
-    const l0 = levelAt(ix, iy), l1 = levelAt(ix + 1, iy);
-    const l2 = levelAt(ix + 1, iy + 1), l3 = levelAt(ix, iy + 1);
-    if (l0 === null || l1 === null || l2 === null || l3 === null) continue;
+    const k0 = levelAt(ix, iy), k1 = levelAt(ix + 1, iy);
+    const k2 = levelAt(ix + 1, iy + 1), k3 = levelAt(ix, iy + 1);
+    // A flooded basin carries a level only at its WET corners (`floodBasins`),
+    // so every cell on a lake's shore had a corner with none, and dropping
+    // those cells cut the lake's outline into a staircase of whole cells. The
+    // missing corners take the water's level instead: they stand above it, so
+    // the clip against the ground below draws the shore where it really is.
+    let known = 0, sum = 0;
+    for (const level of [k0, k1, k2, k3]) if (level !== null) { known++; sum += level; }
+    if (known === 0) continue;
+    const fill = sum / known;
+    const l0 = k0 ?? fill, l1 = k1 ?? fill, l2 = k2 ?? fill, l3 = k3 ?? fill;
     const wx = ix * WATER_CELL, wy = iy * WATER_CELL;
     const p0 = points[0]!, p1 = points[1]!, p2 = points[2]!, p3 = points[3]!;
     p0.x = wx; p0.y = wy; p0.level = l0; p0.depth = l0 - terrainHeightAt(wx, wy);
