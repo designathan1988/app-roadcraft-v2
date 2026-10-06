@@ -418,7 +418,24 @@ export interface FacadeBay {
  * stands against on the same level is a shared wall and is left out; a bay
  * only partly against one keeps its exposed piece, as plain wall.
  */
+/**
+ * Each building's bays as last worked out, with the record they came from:
+ * the platforms, the door links, the access signature and the meshes each
+ * worked them out again for every building on every edit (docs/performance.md
+ * #18). Checked against the record's text, in case one is changed in place.
+ * The list handed out is shared: read it, never change it.
+ */
+const BAYS = new WeakMap<Building, { text: string; bays: FacadeBay[] }>();
 export function facadeBays(b: Building): FacadeBay[] {
+  const text = JSON.stringify(b);
+  const known = BAYS.get(b);
+  if (known && known.text === text) return known.bays;
+  const bays = workOutFacadeBays(b);
+  BAYS.set(b, { text, bays });
+  return bays;
+}
+
+function workOutFacadeBays(b: Building): FacadeBay[] {
   const out: FacadeBay[] = [];
   const elevations: number[] = [];
   const top = topLevel(b);
