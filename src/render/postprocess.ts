@@ -250,6 +250,7 @@ export function createPostChain(
   composer.addPass(output);
   // The grade, on the finished image: a film's contrast and colour.
   const grade = new ShaderPass(GRADE);
+  (grade.uniforms['uSharpen'] as { value: number }).value = quality.sharpen;
   composer.addPass(grade);
 
   return {
@@ -767,6 +768,7 @@ const GRADE = {
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
+    uSharpen: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -775,11 +777,28 @@ const GRADE = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime;
+    uniform float uSharpen;
     varying vec2 vUv;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
       vec3 c = src.rgb;
+      // SHARPENING, AMD FidelityFX CAS (ffx_cas.h, the sharpen-only path):
+      // each pixel against the cross of its neighbours, weighted down where
+      // the local contrast is already high, so detail comes out crisp
+      // without halos or noise.
+      if (uSharpen > 0.0) {
+        vec2 texel = 1.0 / vec2(textureSize(tDiffuse, 0));
+        vec3 b = texture2D(tDiffuse, vUv + vec2(0.0, -texel.y)).rgb;
+        vec3 d = texture2D(tDiffuse, vUv + vec2(-texel.x, 0.0)).rgb;
+        vec3 f = texture2D(tDiffuse, vUv + vec2(texel.x, 0.0)).rgb;
+        vec3 h = texture2D(tDiffuse, vUv + vec2(0.0, texel.y)).rgb;
+        vec3 mn = min(min(min(d, c), min(f, b)), h);
+        vec3 mx = max(max(max(d, c), max(f, b)), h);
+        vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
+        float w = amp.g * (-1.0 / mix(8.0, 5.0, uSharpen));
+        c = clamp(((b + d + f + h) * w + c) / (1.0 + 4.0 * w), 0.0, 1.0);
+      }
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
       c = mix(c, smoothstep(0.0, 1.0, c), 0.25);

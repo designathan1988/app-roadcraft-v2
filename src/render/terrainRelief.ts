@@ -1,5 +1,6 @@
 import {
   ClampToEdgeWrapping,
+  DataArrayTexture,
   DataTexture,
   FloatType,
   HalfFloatType,
@@ -14,7 +15,9 @@ import {
   Scene,
   ShaderMaterial,
   UnsignedByteType,
-  WebGLRenderTarget,
+  Vector3,
+  Vector4,
+  WebGLArrayRenderTarget,
   type Texture,
   type WebGLRenderer,
 } from 'three';
@@ -36,25 +39,48 @@ import {
  * once each time the land changes, over the mesh's height read smoothly
  * (Catmull-Rom between its corners).
  *
- * The texture: R the height the relief adds (world units), G its ridge map
+ * Two levels, as a clipmap's nested grids (Asirvatham and Hoppe, "Terrain
+ * Rendering Using GPU-Based Geometry Clipmaps", GPU Gems 2 ch. 2): layer 0
+ * the whole map, layer 1 a window round the ground the camera looks at,
+ * eight times finer and with more octaves of gullies, baked again as the
+ * view moves on - so zooming in sharpens the land instead of blurring it
+ * (the player, 2026-10-07). The terrain shader blends the fine level into
+ * the coarse one over the window's outer tenth.
+ *
+ * Each layer: R the height the relief adds (world units), G its ridge map
  * (about +1 on crests, -1 in creases), B the brightness of the land's macro
  * colour map (`terrain.ts` macroTexture) - carried here because the terrain
  * shader is at the sixteen textures a fragment shader may bind.
  */
 
-/** Texels across the map: 2.3 units a texel over the 4800-unit map. */
+/** Texels across a level: 2.3 units a texel over the 4800-unit map, 0.3 in the close window. */
 export const RELIEF_RES = 2048;
+/** The close window's side, world units. */
+const WINDOW_SPAN = 600;
+/** How far the view's ground may wander from the window's centre before it is baked again. */
+const WINDOW_SLACK = 110;
+/** Octaves of gullies over the whole map, and in the close window. */
+const OCTAVES_MAP = 5;
+const OCTAVES_CLOSE = 8;
 /** World units to one unit of the filter's own space (its first gullies some 150 units apart). */
 const RELIEF_LENGTH = 1400;
 
-/** A flat relief until the first bake: one texel, nothing added. */
+/** A flat relief until the first bake: one texel a level, nothing added. */
 export const RELIEF_TEXTURE: { value: Texture } = {
   value: (() => {
-    const flat = new DataTexture(new Uint8Array([0, 0, 255, 255]), 1, 1, RGBAFormat, UnsignedByteType);
+    const flat = new DataArrayTexture(new Uint8Array([0, 0, 255, 255, 0, 0, 255, 255]), 1, 1, 2);
+    flat.format = RGBAFormat;
+    flat.type = UnsignedByteType;
     flat.needsUpdate = true;
     return flat;
   })(),
 };
+
+/**
+ * The close window: x, z of its corner (three's axes), its side, and 1 while
+ * it holds a bake (0 off - the coarse level alone).
+ */
+export const RELIEF_WINDOW: { value: Vector4 } = { value: new Vector4(0, 0, WINDOW_SPAN, 0) };
 
 const BAKE_FRAGMENT = /* glsl */ `
   precision highp float;
@@ -64,6 +90,8 @@ const BAKE_FRAGMENT = /* glsl */ `
   uniform float uCell;
   uniform float uHalf;
   uniform float uLength;
+  uniform vec3 uFrame; // x, z of the level's corner, its side
+  uniform float uOctaves;
   varying vec2 vUv;
 
   #define TAU 6.283185307
@@ -77,7 +105,7 @@ const BAKE_FRAGMENT = /* glsl */ `
   const vec2 ASSUMED = vec2(0.7, 1.0);
   #define CELL_SCALE 0.7
   #define NORMALIZATION 0.5
-  #define OCTAVES 5
+  #define OCTAVES 9
   #define LACUNARITY 2.0
   #define GAIN 0.5
 
@@ -153,6 +181,7 @@ const BAKE_FRAGMENT = /* glsl */ `
     // The gully direction: the real slope, its length replaced by an ideal one.
     vec2 g = mix(d, d / slopeLength * ASSUMED.x, ASSUMED.y);
     for (int i = 0; i < OCTAVES; i++) {
+      if (float(i) >= uOctaves) break;
       float gl = length(g);
       vec2 n = gl > 1e-10 ? g / gl : g;
       vec4 ph = phacelle(p * freq, n, CELL_SCALE, 0.25, NORMALIZATION);
@@ -176,7 +205,7 @@ const BAKE_FRAGMENT = /* glsl */ `
   }
 
   void main() {
-    vec2 xz = vUv * (2.0 * uHalf) - uHalf;
+    vec2 xz = uFrame.xy + vUv * uFrame.z;
     float h = heightAt(xz);
     float e = 3.0;
     vec2 slope = vec2(heightAt(xz + vec2(e, 0.0)) - heightAt(xz - vec2(e, 0.0)), heightAt(xz + vec2(0.0, e)) - heightAt(xz - vec2(0.0, e))) / (2.0 * e);
@@ -191,13 +220,17 @@ const BAKE_FRAGMENT = /* glsl */ `
 export interface ReliefBake {
   /** The land moved: bake again at the next chance. */
   markDirty(): void;
-  /** Bakes the relief over these corner heights (row by row, GRID by GRID) if it is stale. */
-  bake(renderer: WebGLRenderer, heights: Float64Array): void;
+  /**
+   * Bakes the relief over these corner heights (row by row, GRID by GRID) if
+   * it is stale, and the close window round `focus` (three's x, z) - or turns
+   * it off when there is none (the view too far out for it to show).
+   */
+  bake(renderer: WebGLRenderer, heights: Float64Array, focus: { readonly x: number; readonly z: number } | null): void;
   dispose(): void;
 }
 
 export function createReliefBake(gridN: number, cell: number, half: number, macro: Texture): ReliefBake {
-  const target = new WebGLRenderTarget(RELIEF_RES, RELIEF_RES, {
+  const target = new WebGLArrayRenderTarget(RELIEF_RES, RELIEF_RES, 2, {
     type: HalfFloatType,
     format: RGBAFormat,
     minFilter: LinearMipmapLinearFilter,
@@ -220,6 +253,8 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
       uCell: { value: cell },
       uHalf: { value: half },
       uLength: { value: RELIEF_LENGTH },
+      uFrame: { value: new Vector3() },
+      uOctaves: { value: OCTAVES_MAP },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -234,21 +269,44 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
   const scene = new Scene();
   scene.add(quad);
   const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const frame = material.uniforms['uFrame']!.value as Vector3;
+  const octaves = material.uniforms['uOctaves']!;
+  const window = RELIEF_WINDOW.value;
   let dirty = true;
+  let closeDirty = true;
+  const layer = (renderer: WebGLRenderer, index: number, x: number, z: number, span: number, count: number): void => {
+    frame.set(x, z, span);
+    octaves.value = count;
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(target, index);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(previous);
+  };
   return {
-    markDirty() { dirty = true; },
-    bake(renderer, grid) {
-      if (!dirty) return;
-      dirty = false;
+    markDirty() { dirty = true; closeDirty = true; },
+    bake(renderer, grid, focus) {
+      if (dirty) {
+        dirty = false;
+        const startedAt = performance.now();
+        for (let i = 0; i < corners.length; i++) corners[i] = grid[i]!;
+        heights.needsUpdate = true;
+        layer(renderer, 0, -half, -half, 2 * half, OCTAVES_MAP);
+        RELIEF_TEXTURE.value = target.texture;
+        performance.measure('hitch:terrain-relief', { start: startedAt, end: performance.now() });
+      }
+      if (!focus) { window.w = 0; return; }
+      const cx = window.x + window.z / 2, cz = window.y + window.z / 2;
+      if (!closeDirty && window.w > 0 && Math.abs(focus.x - cx) < WINDOW_SLACK && Math.abs(focus.z - cz) < WINDOW_SLACK) return;
+      closeDirty = false;
       const startedAt = performance.now();
-      for (let i = 0; i < corners.length; i++) corners[i] = grid[i]!;
-      heights.needsUpdate = true;
-      const previous = renderer.getRenderTarget();
-      renderer.setRenderTarget(target);
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(previous);
-      RELIEF_TEXTURE.value = target.texture;
-      performance.measure('hitch:terrain-relief', { start: startedAt, end: performance.now() });
+      // On whole texels of the window, so a re-bake lays the same relief
+      // where the two windows overlap.
+      const texel = WINDOW_SPAN / RELIEF_RES;
+      const x0 = Math.round((focus.x - WINDOW_SPAN / 2) / texel) * texel;
+      const z0 = Math.round((focus.z - WINDOW_SPAN / 2) / texel) * texel;
+      layer(renderer, 1, x0, z0, WINDOW_SPAN, OCTAVES_CLOSE);
+      window.set(x0, z0, WINDOW_SPAN, 1);
+      performance.measure('hitch:terrain-relief-close', { start: startedAt, end: performance.now() });
     },
     dispose() {
       target.dispose();

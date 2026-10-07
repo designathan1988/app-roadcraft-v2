@@ -18,6 +18,11 @@ export interface QualitySettings {
   readonly postProcessing: boolean;
   readonly ambientOcclusion: boolean;
   readonly smaa: boolean;
+  /**
+   * AMD FidelityFX Contrast Adaptive Sharpening on the final image, 0 (off)
+   * to 1 (strongest): the texture's detail kept crisp to the distance.
+   */
+  readonly sharpen: number;
   /** Maximum anisotropic filtering taps requested for ground textures. */
   readonly anisotropy: number;
   /** Draw street furniture, kerb detail, parapets and roadside props. */
@@ -70,6 +75,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: false,
     ambientOcclusion: false,
     smaa: false,
+    sharpen: 0,
     anisotropy: 2,
     detailProps: false,
     vegetation: 0,
@@ -95,6 +101,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: false,
     ambientOcclusion: false,
     smaa: false,
+    sharpen: 0.35,
     anisotropy: 4,
     detailProps: true,
     vegetation: 600,
@@ -120,6 +127,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
+    sharpen: 0.55,
     anisotropy: 8,
     detailProps: true,
     vegetation: 1_400,
@@ -145,6 +153,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
+    sharpen: 0.6,
     anisotropy: 16,
     detailProps: true,
     vegetation: 2_600,

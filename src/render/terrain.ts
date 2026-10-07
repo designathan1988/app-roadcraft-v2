@@ -45,7 +45,7 @@ import {
 import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } from './mesh/textureBaker';
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, createWaterSurface } from './water';
-import { RELIEF_RES, RELIEF_TEXTURE, createReliefBake } from './terrainRelief';
+import { RELIEF_RES, RELIEF_TEXTURE, RELIEF_WINDOW, createReliefBake } from './terrainRelief';
 
 /**
  * Side of the playable, editable terrain plate, in world units.
@@ -142,7 +142,7 @@ export interface TerrainSurface {
    * Bakes the fine relief the light reads (`terrainRelief.ts`) when the land
    * has changed since - once a stroke is let go, as the water is.
    */
-  bakeRelief(renderer: WebGLRenderer): void;
+  bakeRelief(renderer: WebGLRenderer, focus: { readonly x: number; readonly z: number } | null): void;
   /**
    * The terrain's own surface for the batter from a footway down to the
    * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
@@ -1034,6 +1034,7 @@ function terrainMaterial(
     uSoilDetailN: { value: soilDetail.normalMap },
     uSoilDetailScale: { value: 1 / soilDetail.worldSize },
     uRelief: RELIEF_TEXTURE,
+    uReliefWindow: RELIEF_WINDOW,
   };
 
   material.onBeforeCompile = (shader) => {
@@ -1062,7 +1063,31 @@ function terrainMaterial(
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainNormal;
          varying float vTerrainSteep;
-         uniform sampler2D uRelief;
+         uniform sampler2DArray uRelief;
+         uniform vec4 uReliefWindow; // x, z of the close window's corner, its side, on
+         // One level of the relief round xz: its slope, its crease, its ridge
+         // and macro brightness, read across a pixel's footprint or a texel,
+         // whichever is wider, so a far view takes the mean and never shimmers.
+         void terrainReliefLevel(vec2 uv, float layer, float span, out vec2 grad, out float crease, out vec2 rest) {
+           float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(uv.x), fwidth(uv.y)));
+           vec3 c0 = texture(uRelief, vec3(uv, layer)).rgb;
+           float xp = texture(uRelief, vec3(uv + vec2(e, 0.0), layer)).r;
+           float xm = texture(uRelief, vec3(uv - vec2(e, 0.0), layer)).r;
+           float zp = texture(uRelief, vec3(uv + vec2(0.0, e), layer)).r;
+           float zm = texture(uRelief, vec3(uv - vec2(0.0, e), layer)).r;
+           float d = e * span;
+           grad = vec2(xp - xm, zp - zm) / (2.0 * d);
+           // The crease over four units at the least: read at a texel, the
+           // finest octaves' curvature drowned the gullies in speckle.
+           float ec = max(e, 4.0 / span);
+           float cxp = texture(uRelief, vec3(uv + vec2(ec, 0.0), layer)).r;
+           float cxm = texture(uRelief, vec3(uv - vec2(ec, 0.0), layer)).r;
+           float czp = texture(uRelief, vec3(uv + vec2(0.0, ec), layer)).r;
+           float czm = texture(uRelief, vec3(uv - vec2(0.0, ec), layer)).r;
+           float dc = ec * span;
+           crease = (cxp + cxm + czp + czm - 4.0 * c0.r) / (dc * dc);
+           rest = c0.gb;
+         }
          // The fine relief here (terrainRelief.ts): its slope, how much of a
          // crease (+) or a crest (-) the point is, and the filter's ridge map.
          vec2 terrainGrad = vec2(0.0);
@@ -1325,24 +1350,35 @@ function terrainMaterial(
          {
            // Read across a pixel's footprint or a texel, whichever is wider,
            // so the far view takes the relief's mean and never shimmers.
-           vec2 ruv = (vTerrainWorld.xz + uPaintHalf) / uPaintSize;
-           float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(ruv.x), fwidth(ruv.y)));
-           vec3 c0 = texture2D(uRelief, ruv).rgb;
-           float xp = texture2D(uRelief, ruv + vec2(e, 0.0)).r;
-           float xm = texture2D(uRelief, ruv - vec2(e, 0.0)).r;
-           float zp = texture2D(uRelief, ruv + vec2(0.0, e)).r;
-           float zm = texture2D(uRelief, ruv - vec2(0.0, e)).r;
-           float span = e * uPaintSize;
+           vec2 grad;
+           float creaseAt;
+           vec2 rest;
+           terrainReliefLevel((vTerrainWorld.xz + uPaintHalf) / uPaintSize, 0.0, uPaintSize, grad, creaseAt, rest);
+           // The close window's finer level (the clipmap's nested grid),
+           // blended in over the window's outer tenth. The test is on a
+           // uniform, so the reads inside keep their derivatives.
+           if (uReliefWindow.w > 0.5) {
+             vec2 wuv = (vTerrainWorld.xz - uReliefWindow.xy) / uReliefWindow.z;
+             vec2 fineGrad;
+             float fineCrease;
+             vec2 fineRest;
+             terrainReliefLevel(wuv, 1.0, uReliefWindow.z, fineGrad, fineCrease, fineRest);
+             vec2 edge = min(wuv, 1.0 - wuv);
+             float fine = smoothstep(0.0, 0.1, min(edge.x, edge.y));
+             grad = mix(grad, fineGrad, fine);
+             creaseAt = mix(creaseAt, fineCrease, fine);
+             rest = mix(rest, fineRest, fine);
+           }
            // Carved into the hillsides, the plains left smooth: over the
            // whole map it read as crumpled paper, and a town's ground has to
            // look level. Full from some seventeen degrees.
            float meshSlope = length(normalize(vTerrainNormal).xz) / max(normalize(vTerrainNormal).y, 0.25);
            float carved = smoothstep(0.06, 0.3, meshSlope);
            terrainCarved = carved;
-           terrainGrad = vec2(xp - xm, zp - zm) / (2.0 * span) * carved;
-           terrainCrease = (xp + xm + zp + zm - 4.0 * c0.r) / (span * span) * carved;
-           terrainRidge = c0.g;
-           terrainMacro = c0.b;
+           terrainGrad = grad * carved;
+           terrainCrease = creaseAt * carved;
+           terrainRidge = rest.x;
+           terrainMacro = rest.y;
          }
          // Taken here, in uniform control flow: the rock is read only where
          // rock shows, with these gradients.
@@ -3061,8 +3097,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     ground,
     skirt,
     setSun,
-    bakeRelief(renderer) {
-      if (!waterStale) relief.bake(renderer, grid);
+    bakeRelief(renderer, focus) {
+      if (!waterStale) relief.bake(renderer, grid, focus);
     },
     vergeMaterial,
     updatePaint,

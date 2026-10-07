@@ -510,6 +510,8 @@ export function createSceneRenderer(
   scene.matrixAutoUpdate = false;
   scene.updateMatrix();
   const initialHeight = Math.max(1, canvas.clientHeight || window.innerHeight);
+  /** Where the relief's close window is centred (three's x, z; see `draw`). */
+  const reliefFocus = { x: 0, z: 0 };
   const rig = createIsoRig(initialCentre, initialHeight / Math.max(0.001, initialZoom * 2));
 
   const environment = createEnvironment(scene, renderer, {
@@ -2615,7 +2617,23 @@ export function createSceneRenderer(
       if (performance.now() >= spinSettled) {
         terrain.setSun(unspin(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position)), planetRadius());
       }
-      terrain.bakeRelief(renderer);
+      {
+        // The relief's close window (terrainRelief.ts) round the ground the
+        // view looks at, drawn a little towards the camera, where the ground
+        // is nearest and largest on the screen; none from far out.
+        const centre = rig.viewport.centre;
+        const cam = rig.camera.position;
+        const dx = cam.x - centre.x, dz = cam.z + centre.y;
+        const across = Math.hypot(dx, dz);
+        const pull = across > 1 ? Math.min(150, across * 0.3) / across : 0;
+        reliefFocus.x = centre.x + dx * pull;
+        reliefFocus.z = -centre.y + dz * pull;
+        // Close: the screen's height under some 1800 units of ground, in
+        // either camera (the orthographic one stands at a fixed distance).
+        const halfHeight = renderer.domElement.clientHeight / Math.max(1e-3, 2 * rig.viewport.zoom);
+        const close = halfHeight < 900 && rig.viewport.globe < 0.05;
+        terrain.bakeRelief(renderer, close ? reliefFocus : null);
+      }
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();
