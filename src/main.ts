@@ -4106,7 +4106,15 @@ function frame(now: number): void {
 
   // Keep animating while anything is moving; otherwise settle.
   if (!document.hidden && (traffic || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
+  else if (!document.hidden && scene.drifting() && !driftQueued) {
+    // Only the clouds moving (they drift, form and fade): twenty frames a
+    // second keeps them alive without holding the GPU at full speed.
+    driftQueued = true;
+    setTimeout(() => { driftQueued = false; requestDraw(); }, 50);
+  }
 }
+/** A frame for the drifting clouds is already on its way. */
+let driftQueued = false;
 
 /**
  * The same hints as `drawOverlay`, projected instead of transformed.

@@ -250,6 +250,8 @@ export interface SceneHandle {
   burn(x: number, y: number, z: number, size: number, seconds: number): void;
   /** Whether anything is still moving on its own (an explosion, bodies, debris): keep drawing. */
   busy(): boolean;
+  /** Clouds drifting over the map: worth a frame now and then even with nothing else moving. */
+  drifting(): boolean;
   /** Forgets a building's ruin (it was removed). */
   forgetRuin(id: number): void;
   /**
@@ -2060,6 +2062,7 @@ export function createSceneRenderer(
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0,
+    drifting: () => atmosphere.clouds > 0 && post.enabled && (quality.cloudShadows || quality.skyClouds),
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
@@ -2580,7 +2583,7 @@ export function createSceneRenderer(
       }
       terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
-        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity));
+        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();
       post.render(delta);
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });

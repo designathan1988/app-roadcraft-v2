@@ -53,8 +53,12 @@ export interface PostChain {
    * with it), and comes up with the dusk.
    */
   setNight(dark: number): void;
-  /** The sky the player set (`Atmosphere`) and the light it is lit by. */
-  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color): void;
+  /**
+   * The sky the player set (`Atmosphere`), the light it is lit by, and
+   * whether the map is seen as a model over the void (building it), when
+   * the air round it is drawn too: the backdrop and the haze of distance.
+   */
+  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color, backdrop: boolean): void;
   dispose(): void;
 }
 
@@ -245,7 +249,7 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        u['uCloudCount']!.value = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[]);
+        u['uCloudCount']!.value = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[]);
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
       }
@@ -258,10 +262,11 @@ export function createPostChain(
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
     },
-    setAtmosphere(atmosphere, sun, skyColor, sunLight) {
+    setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop) {
       if (!clouds) return;
       sky = atmosphere;
       const u = clouds.uniforms as Record<string, { value: unknown }>;
+      u['uBackdrop']!.value = backdrop ? 1 : 0;
       u['uCloudBase']!.value = atmosphere.cloudBase;
       (u['uSunLight']!.value as Color).copy(sunLight);
       u['uFog']!.value = atmosphere.fog;
@@ -312,8 +317,10 @@ const PUFFS: readonly (readonly [number, number, number, number])[] = [
   [0.12, 0.36, 0.38, 0.33],
 ];
 
-/** Units a second the clouds drift with the wind. */
-const CLOUD_DRIFT = new Vector2(7, 2.6);
+/** Units a second the clouds drift with the wind (some 10 m/s). */
+const CLOUD_DRIFT = new Vector2(24, 9);
+/** Seconds a cloud lives, from its first wisps to its last, at the least and the most. */
+const CLOUD_LIFE: readonly [number, number] = [80, 150];
 
 /** 0..1 hash of an integer and a salt (the same clouds every visit). */
 function cloudHash(i: number, salt: number): number {
@@ -324,29 +331,42 @@ function cloudHash(i: number, salt: number): number {
 
 /**
  * Lays the clouds out for this moment: as many as the player's cover asks
- * for, scattered over the map and a little past its edges, drifting with the
- * wind and wrapping round so the sky never empties. Writes each cloud's
- * bounding sphere (centre, size) and its puffs (world centre, radius).
+ * for, scattered over the map and a little past its edges, drifting with
+ * the wind and wrapping round so the sky never empties. Each LIVES: it
+ * condenses out of wisps, grows, holds, and is worn away again, and in its
+ * place another forms somewhere else (each slot's clouds out of step with
+ * the others', so the sky is always some forming and some fading). Writes
+ * each cloud's bounding sphere (centre, size), its puffs (world centre,
+ * radius) and how far through its life it is (0 none, 1 grown).
  */
-function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[]): number {
+function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[], lives: number[]): number {
   const count = Math.min(MAX_CLOUDS, Math.round(atmosphere.clouds * MAX_CLOUDS));
   const span = MAP_SIZE * 1.3;
   const wrap = (v: number): number => ((((v + span / 2) % span) + span) % span) - span / 2;
+  const ease = (v: number): number => { const t = Math.min(1, Math.max(0, v)); return t * t * (3 - 2 * t); };
   for (let i = 0; i < count; i++) {
+    const life = CLOUD_LIFE[0] + (CLOUD_LIFE[1] - CLOUD_LIFE[0]) * cloudHash(i, 10);
+    const age = time / life + cloudHash(i, 11);
+    const generation = Math.floor(age);
+    const phase = age - generation;
+    // A new cloud every generation, out of the slot's own sequence.
+    const id = i + generation * 131;
+    lives[i] = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38));
+    const grown = 0.6 + 0.4 * lives[i]!;
     // Its size from the thickness the player set: a cumulus about twice as wide as tall.
-    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(i, 3));
-    const x = wrap((cloudHash(i, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
-    const z = wrap((cloudHash(i, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
-    const base = atmosphere.cloudBase + (cloudHash(i, 4) - 0.5) * size * 0.3;
-    const yaw = cloudHash(i, 5) * Math.PI * 2;
+    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(id, 3));
+    const x = wrap((cloudHash(id, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
+    const z = wrap((cloudHash(id, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
+    const base = atmosphere.cloudBase + (cloudHash(id, 4) - 0.5) * size * 0.3;
+    const yaw = cloudHash(id, 5) * Math.PI * 2;
     const c = Math.cos(yaw), sn = Math.sin(yaw);
     bounds[i]!.set(x, base + size * 0.5, z, size * 1.12);
     for (let k = 0; k < CLOUD_PUFFS; k++) {
       const [a, up, b, r] = PUFFS[k]!;
-      const ja = a + (cloudHash(i * 11 + k, 6) - 0.5) * 0.16;
-      const jb = b + (cloudHash(i * 11 + k, 7) - 0.5) * 0.16;
-      const jr = r * (0.88 + 0.24 * cloudHash(i * 11 + k, 8));
-      puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size, z + (ja * sn + jb * c) * size, jr * size);
+      const ja = a + (cloudHash(id * 11 + k, 6) - 0.5) * 0.16;
+      const jb = b + (cloudHash(id * 11 + k, 7) - 0.5) * 0.16;
+      const jr = r * (0.88 + 0.24 * cloudHash(id * 11 + k, 8)) * grown;
+      puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size * grown, z + (ja * sn + jb * c) * size, jr * size);
     }
   }
   return count;
@@ -381,12 +401,20 @@ const CLOUD_SHADOWS = {
     uCloudCount: { value: 0 },
     uCloud: { value: Array.from({ length: MAX_CLOUDS }, () => new Vector4()) },
     uPuff: { value: Array.from({ length: MAX_CLOUDS * CLOUD_PUFFS }, () => new Vector4()) },
+    uLife: { value: Array.from({ length: MAX_CLOUDS }, () => 0) },
     uCloudBase: { value: DEFAULT_ATMOSPHERE.cloudBase },
     uFog: { value: DEFAULT_ATMOSPHERE.fog },
     uFogHeight: { value: DEFAULT_ATMOSPHERE.fogHeight },
     uSunDir: { value: new Vector3(0.5, 0.8, 0.3).normalize() },
     uSunLight: { value: new Color(3, 2.8, 2.5) },
     uFogColor: { value: new Color(0xc9dcea) },
+    uBackdrop: { value: 0 },
+    // The void round the map: its deep blue, the paler air towards the
+    // horizon, and the abyss below (sRGB, as the page's own colours).
+    uSkyDeep: { value: new Color(0x0c1a2c) },
+    uSkyGlow: { value: new Color(0x3d5a82) },
+    uSkyLow: { value: new Color(0x0a1830) },
+    uAbyss: { value: new Color(0x1e160f) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -405,12 +433,18 @@ const CLOUD_SHADOWS = {
     uniform int uCloudCount;
     uniform vec4 uCloud[MAX_CLOUDS];
     uniform vec4 uPuff[MAX_CLOUDS * PUFFS];
+    uniform float uLife[MAX_CLOUDS];
     uniform float uCloudBase;
     uniform float uFog;
     uniform float uFogHeight;
     uniform vec3 uSunDir;
     uniform vec3 uSunLight;
     uniform vec3 uFogColor;
+    uniform float uBackdrop;
+    uniform vec3 uSkyDeep;
+    uniform vec3 uSkyGlow;
+    uniform vec3 uSkyLow;
+    uniform vec3 uAbyss;
     varying vec2 vUv;
     vec3 worldAt(vec2 uv, float depth) {
       vec4 view = uProjectionInverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -465,10 +499,12 @@ const CLOUD_SHADOWS = {
     // by its bounding sphere.
     float cloudDensity(int c, vec3 p) {
       float size = uCloud[c].w;
-      vec3 drift = vec3(uTime * 0.03, uTime * 0.012, 0.0);
+      // The billows boil: they rise and turn over as the cloud lives.
+      vec3 drift = vec3(uTime * 0.05, -uTime * 0.04, uTime * 0.02);
+      float life = uLife[c];
       vec3 q = p / (size * 0.3) + drift;
       float low = noise3(q) * 0.62 + noise3(q * 2.03 + 5.1) * 0.38;
-      float shape = clamp(heap(c, p) * 3.6 - (1.0 - low) * 0.3, 0.0, 1.0);
+      float shape = clamp(heap(c, p) * 3.6 - (1.0 - low) * (0.3 + 0.4 * (1.0 - life)) - (1.0 - life) * 0.8, 0.0, 1.0);
       if (shape <= 0.0) return 0.0;
       vec3 r = p / (size * 0.055) + drift * 2.3;
       float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
@@ -478,7 +514,7 @@ const CLOUD_SHADOWS = {
       detail = mix(1.0 - detail, detail, clamp(up * 3.0, 0.0, 1.0));
       // remap(base, detail * 0.35, 1, 0, 1): the heart (1) stays whole, the
       // thin edge is worn into wisps.
-      float erode = detail * 0.55;
+      float erode = detail * (0.55 + 0.3 * (1.0 - life));
       return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0);
     }
     void main() {
@@ -500,7 +536,7 @@ const CLOUD_SHADOWS = {
           float a = max(span.x, 0.0);
           float len = (span.y - a) / 5.0;
           for (int i = 0; i < 5; i++) {
-            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 3.0, 0.0, 1.0) * len / uCloud[c].w;
+            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 3.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
           }
         }
         colour *= 1.0 - uStrength * (1.0 - exp(-through * 3.5));
@@ -513,6 +549,40 @@ const CLOUD_SHADOWS = {
         float amount = 1.0 - exp(-uFog * 0.0009 * dist * thickness);
         vec3 mist = mix(uFogColor, uFogColor * 0.18, uDark);
         colour = mix(colour, mist, clamp(amount, 0.0, 0.95));
+      }
+      // THE AIR round the map while it is built, seen as a model over the
+      // void (the player, 2026-10-07). The path a ray takes through the air
+      // grows towards the horizon - Preetham's optical length, as three's Sky
+      // has it - so the backdrop pales there, round the map's edge, and deepens
+      // up and further still down into the abyss. And the land beyond the
+      // middle of the view takes on that air, L0 e^(-b s) plus the air's own
+      // light (the aerial perspective of Preetham and of Hillaire's
+      // atmosphere), by the real distance, so the far edge melts into the
+      // pale horizon from afar and ground seen close up stays clear. The backdrop hangs on the view's direction, as a
+      // sky infinitely far: the map slides over it, and it turns only with the
+      // camera - its parallax.
+      if (uBackdrop > 0.5) {
+        float zen = acos(clamp(abs(rd.y), 0.0, 1.0));
+        float air = 1.0 / (cos(zen) + 0.15 * pow(max(93.885 - degrees(zen), 1e-3), -1.253));
+        float glow = 1.0 - exp(-air * 0.12);
+        float sunSide = pow(max(dot(rd, uSunDir), 0.0), 3.0);
+        vec3 haze = mix(uSkyGlow, uSkyGlow * vec3(1.4, 1.18, 0.9), sunSide * 0.6) * (1.0 - 0.85 * uDark);
+        if (sky) {
+          vec3 backdrop = mix(uSkyDeep, haze, glow);
+          // Below the horizon: a deeper blue at once, going down into the
+          // earth's own dark brown (the player, 2026-10-07).
+          backdrop = mix(backdrop, uSkyLow, smoothstep(0.0, 0.3, -rd.y) * 0.85);
+          backdrop = mix(backdrop, uAbyss, smoothstep(0.18, 0.8, -rd.y) * 0.9);
+          // A faint veil of high haze, fixed in the sky.
+          float veil = noise3(rd * 4.0 + 3.1) * 0.6 + noise3(rd * 9.0 + 7.7) * 0.4;
+          colour = backdrop * (0.88 + 0.24 * veil);
+        } else {
+          // By the real distance, as air is: the whole map seen from afar
+          // takes it on, ground seen close up none (the player, 2026-10-07).
+          float far = max(0.0, tScene - 2200.0);
+          float amount = (1.0 - exp(-far / 9000.0)) * 0.55;
+          colour = mix(colour, haze * (1.0 + 0.6 * glow), amount);
+        }
       }
       // The clouds, nearest first.
       if (uCloudCount > 0) {
