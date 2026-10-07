@@ -457,6 +457,6 @@
 .v2-actions .v2-icon.on { box-shadow: 0 0 0 2px var(--v-accent) inset; }
 /* The fog brush's and the sky's sliders say what they set: a column of bare
    bars and numbers left the player guessing (2026-10-07). */
-.v2-group.stack .v2-slider { display: grid; grid-template-columns: 1fr 44px; gap: 2px 8px; padding: 2px 0; }
-.v2-group.stack .v2-slider-name { display: block; grid-column: 1 / -1; font-size: 12px; color: var(--v-muted); }
-.v2-group.stack .v2-slider input { width: 100%; }
+.v2-group.stack .v2-slider:not(.iconic) { display: grid; grid-template-columns: 1fr 44px; gap: 2px 8px; padding: 2px 0; }
+.v2-group.stack .v2-slider:not(.iconic) .v2-slider-name { display: block; grid-column: 1 / -1; font-size: 12px; color: var(--v-muted); }
+.v2-group.stack .v2-slider:not(.iconic) input { width: 100%; }

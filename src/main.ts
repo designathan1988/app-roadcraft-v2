@@ -27,7 +27,8 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, cloudMode, cloudBrush, setCloudBrush } from '@ui/toolChoices';
+import { cloudUnder } from '@world/clouds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
@@ -341,7 +342,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | 'fog' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -1417,6 +1418,78 @@ function paintTerrain(at: Vec2, force = false): void {
   requestDraw();
 }
 
+// THE CLOUD TOOL (Paisagem > Terreno > Nuvens): a click puts a cloud in the
+// sky right under the pointer, drags one to move it, sets one to the tool's
+// size, height and density, or takes one away (`world/clouds.ts`). Each is
+// one undo step. A cloud is found where the pointer's ray crosses its body.
+let cloudDrag: { pointer: number; id: number; dx: number; dy: number } | null = null;
+/** Where the pointer's ray meets the plane at `height`, on the map. */
+function pointerAtHeight(px: number, py: number, height: number): Vec2 {
+  return view.toWorldAt(px, py, height, surface.cssW, surface.cssH);
+}
+function cloudPointerDown(pointer: number, px: number, py: number): void {
+  const mode = cloudMode();
+  const brush = cloudBrush();
+  const size = brush.size * UNITS_PER_METER;
+  const height = brush.height * UNITS_PER_METER;
+  const picked = cloudUnder(doc.clouds, (h) => pointerAtHeight(px, py, h));
+  const done = (): void => {
+    updateHistoryButtons();
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  };
+  if (mode === 'add') {
+    const at = pointerAtHeight(px, py, height + size * 0.3);
+    history.record(doc);
+    const cloud = doc.addCloud({ x: at.x, y: at.y, height, size, density: brush.density / 100, yaw: ((at.x * 0.013 + at.y * 0.007) % 1) * Math.PI * 2 });
+    if (!cloud) flashHint('hint.cloud.full');
+    done();
+    return;
+  }
+  if (!picked) return;
+  history.record(doc);
+  if (mode === 'remove') doc.removeCloud(picked.id);
+  else if (mode === 'edit') doc.updateCloud(picked.id, { size, height, density: brush.density / 100 });
+  else {
+    const at = pointerAtHeight(px, py, picked.height + picked.size * 0.3);
+    cloudDrag = { pointer, id: picked.id, dx: picked.x - at.x, dy: picked.y - at.y };
+  }
+  done();
+}
+function cloudDragTo(px: number, py: number): void {
+  const drag = cloudDrag;
+  const cloud = drag ? doc.clouds.find((c) => c.id === drag.id) : undefined;
+  if (!drag || !cloud) return;
+  const at = pointerAtHeight(px, py, cloud.height + cloud.size * 0.3);
+  doc.updateCloud(cloud.id, { x: at.x + drag.dx, y: at.y + drag.dy });
+  persistence.saveSessionSoon(doc, sessionSettings);
+  requestDraw();
+}
+{
+  const bind = (id: string, read: () => number, write: (v: number) => void): void => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return;
+    input.value = String(read());
+    text(`${id}Value`, String(read()));
+    input.addEventListener('input', () => {
+      write(Number(input.value));
+      text(`${id}Value`, input.value);
+    });
+  };
+  bind('cloudSize', () => cloudBrush().size, (v) => setCloudBrush({ size: v }));
+  bind('cloudHeight', () => cloudBrush().height, (v) => setCloudBrush({ height: v }));
+  bind('cloudDensity', () => cloudBrush().density, (v) => setCloudBrush({ density: v }));
+  (document.getElementById('clearClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
+    if (doc.clouds.length === 0) return;
+    if (!window.confirm(t('confirm.clearClouds'))) return;
+    history.record(doc);
+    for (const cloud of [...doc.clouds]) doc.removeCloud(cloud.id);
+    updateHistoryButtons();
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
+}
+
 /** Starts a stroke, capturing the level target and arming the held repeat. */
 function beginTerrainStroke(pointer: number, at: Vec2): void {
   history.record(doc);
@@ -1618,7 +1691,8 @@ canvas.addEventListener('pointerdown', (e) => {
       }
 
     case 'terrain':
-      beginTerrainStroke(e.pointerId, world);
+      if (terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
+      else beginTerrainStroke(e.pointerId, world);
       break;
 
     case 'building':
@@ -2018,6 +2092,11 @@ canvas.addEventListener('pointermove', (e) => {
     paintTerrain(world);
     return;
   }
+  if (cloudDrag?.pointer === e.pointerId) {
+    const rect = canvas.getBoundingClientRect();
+    cloudDragTo(e.clientX - rect.left, e.clientY - rect.top);
+    return;
+  }
 
   // The hover preview uses the same height-aware connection rule as the commit.
   const hovered = findAnchor(doc, net, world, view.zoom, undefined,
@@ -2148,6 +2227,7 @@ function endPointer(e: PointerEvent): void {
     }
   }
   if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
+  if (cloudDrag?.pointer === e.pointerId) cloudDrag = null;
   if (tool === 'building') buildings.pointerUp(cancelled || wasPinching);
   if (bulldozeBox?.pointer === e.pointerId) {
     const box = bulldozeBox;
@@ -2456,7 +2536,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -2889,6 +2969,8 @@ function setTerrainMode(next: BrushMode): void {
   });
   const fogPanel = document.querySelector<HTMLElement>('.terrain-fog');
   if (fogPanel) fogPanel.hidden = next !== 'fog';
+  const cloudPanel = document.querySelector<HTMLElement>('.terrain-cloud');
+  if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
   updateHint();
 }
 
@@ -4903,6 +4985,7 @@ function drawOverlayScreen(): void {
 const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   paint: '#f2d27a',
   fog: '#e8eef4',
+  cloud: '#ffffff',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
@@ -4916,6 +4999,7 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
 const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   paint: 'rgba(242,210,122,0.10)',
   fog: 'rgba(232,238,244,0.12)',
+  cloud: 'rgba(255,255,255,0)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',

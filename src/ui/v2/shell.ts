@@ -34,7 +34,7 @@ import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
-import { POLE_TOOL_MODES, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
@@ -96,6 +96,7 @@ const ICON: Record<string, string> = {
   river: '<path d="M3 8c3-3 6 3 9 0s6 3 9 0"/><path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>',
   paint: '<path d="M4 20c2 0 4-1 4-4 0-2 2-3 4-3"/><path d="M12 13l7-7a2 2 0 0 0-3-3l-7 7"/><path d="M9 10l3 3"/>',
   cloud: '<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.3 1.7A3.2 3.2 0 0 0 7 18Z"/>',
+  fog: '<path d="M3 9h13"/><path d="M6 13h15"/><path d="M3 17h13"/><path d="M19 9h2M3 13h1M18 17h3"/>',
   mesa: '<path d="M2 20h20"/><path d="M4 20 7 9h10l3 11"/><path d="M7.6 13h8.8M6.6 16.5h10.8"/>',
   canyon: '<path d="M2 6h6l2 13h4l2-13h6"/><path d="M8.6 10h-6M15.4 10h6M9.3 14.5h-7M14.7 14.5h7"/>',
   escarpment: '<path d="M2 20h20"/><path d="M3 20V8h9l1 12"/><path d="M5 8v12M7.5 8v12M10 8v12"/><path d="M13 20c3-1 5-2 9-2"/>',
@@ -869,7 +870,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'cloud']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -923,11 +924,29 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
       }
+      // The cloud tool: put clouds in the sky, move them, set them to the
+      // tool's size, height and density, or take them away (`world/clouds.ts`).
+      const cloudActive = q<HTMLButtonElement>('[data-terrain-mode="cloud"]')?.classList.contains('active') ?? false;
+      if (cloudActive) {
+        const tool = titled(group(t('cloud.title')), t('cloud.title'));
+        tool.classList.add('stack');
+        const icons: Record<(typeof CLOUD_MODES)[number], string> = { add: 'plus', move: 'move', edit: 'draw', remove: 'eraser' };
+        tool.appendChild(choices(CLOUD_MODES.map((mode) => ({
+          label: t(`cloud.${mode}`), on: cloudMode() === mode, run: () => { setCloudMode(mode); render(); }, icon: svg(icons[mode], 18),
+        })), 4));
+        tool.append(
+          slider(t('cloud.size'), '#cloudSize', '#cloudSizeValue'),
+          slider(t('cloud.height'), '#cloudHeight', '#cloudHeightValue'),
+          slider(t('cloud.density'), '#cloudDensity', '#cloudDensityValue'),
+        );
+        tool.appendChild(button('v2-icon danger', t('cloud.clear'), () => press('#clearClouds'), svg('eraser', 16)));
+        options.appendChild(tool);
+      }
       // The sky - clouds and the haze over the whole map - with the weather
-      // brush only, named: shown under every terrain brush it was clutter
+      // tools only, named: shown under every terrain brush it was clutter
       // (the player, 2026-10-07). No planet radius: the planet is off.
       const fogActive = q<HTMLButtonElement>('[data-terrain-mode="fog"]')?.classList.contains('active') ?? false;
-      if (fogActive) {
+      if (fogActive || cloudActive) {
         const sky = titled(group(t('atmo.title')), t('atmo.title'));
         sky.classList.add('stack');
         sky.append(
@@ -957,8 +976,8 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(mapBiome);
       }
       // Named too: the two sliders and the clear button ran off the panel's edge.
-      // Not under the fog brush, which has its own (size included).
-      if (fogActive) return;
+      // Not under the fog brush or the cloud tool, which have their own.
+      if (fogActive || cloudActive) return;
       const brush = titled(group(t('v2.options')), t('v2.options'));
       brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)),
         slider(t('terrain.hardness'), '#terrainHardness', '#terrainHardnessValue', svg('flatten', 16)));

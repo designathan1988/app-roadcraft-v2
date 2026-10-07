@@ -23,6 +23,7 @@ import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
+import { MAX_PLACED_CLOUDS, readCloud, type PlacedCloud } from './clouds';
 import { DEFAULT_FOG, MAX_FOG_DABS, readFogDab, readFogSettings, type FogDab, type FogSettings } from './fogPaint';
 import { isNatureSettings, type NatureSettings } from './ecology';
 import { type TransitData, emptyTransit, hasTransit, normalizeTransit } from './transit';
@@ -206,6 +207,10 @@ export class RoadDoc {
   fogSettings: FogSettings = DEFAULT_FOG;
   /** Moves with every change to `fogDabs` or `fogSettings`, and only then. */
   fogRevision = 0;
+  /** Clouds the player placed in the sky (`clouds.ts`). */
+  readonly clouds: PlacedCloud[] = [];
+  /** Moves with every change to `clouds`, and only then. */
+  cloudRevision = 0;
 
   /**
    * Modular buildings (docs/buildings.md). They keep their OWN revision,
@@ -707,6 +712,30 @@ export class RoadDoc {
     this.fogRevision++;
   }
 
+  /** A new cloud; null when the sky already holds as many as it may. */
+  addCloud(value: Omit<PlacedCloud, 'id'>): PlacedCloud | null {
+    if (this.clouds.length >= MAX_PLACED_CLOUDS) return null;
+    const id = this.clouds.reduce((m, c) => Math.max(m, c.id), 0) + 1;
+    const cloud = { ...value, id };
+    this.clouds.push(cloud);
+    this.cloudRevision++;
+    return cloud;
+  }
+
+  updateCloud(id: number, change: Partial<Omit<PlacedCloud, 'id'>>): void {
+    const i = this.clouds.findIndex((c) => c.id === id);
+    if (i < 0) return;
+    this.clouds[i] = { ...this.clouds[i]!, ...change, id };
+    this.cloudRevision++;
+  }
+
+  removeCloud(id: number): void {
+    const i = this.clouds.findIndex((c) => c.id === id);
+    if (i < 0) return;
+    this.clouds.splice(i, 1);
+    this.cloudRevision++;
+  }
+
   clearFog(): void {
     if (this.fogDabs.length === 0) return;
     this.fogDabs.length = 0;
@@ -882,6 +911,7 @@ export class RoadDoc {
     copy.terrainRevision = this.terrainRevision;
     copy.paintRevision = this.paintRevision;
     copy.fogRevision = this.fogRevision;
+    copy.cloudRevision = this.cloudRevision;
     copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
     for (const id of this.dirtyNodes) copy.dirtyNodes.add(id);
@@ -978,6 +1008,12 @@ export class RoadDoc {
       this.natureRevision++;
     }
 
+    if (JSON.stringify(this.clouds) !== JSON.stringify(source.clouds)) {
+      this.clouds.length = 0;
+      this.clouds.push(...source.clouds.map((c) => ({ ...c })));
+      this.cloudRevision++;
+    }
+
     if (JSON.stringify(this.fogDabs) !== JSON.stringify(source.fogDabs) || JSON.stringify(this.fogSettings) !== JSON.stringify(source.fogSettings)) {
       this.fogDabs.length = 0;
       this.fogDabs.push(...source.fogDabs.map((dab) => ({ ...dab })));
@@ -1071,6 +1107,7 @@ export class RoadDoc {
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       ...(this.fogDabs.length > 0 || JSON.stringify(this.fogSettings) !== JSON.stringify(DEFAULT_FOG)
         ? { fog: { dabs: this.fogDabs.map((dab) => ({ ...dab })), settings: { ...this.fogSettings } } } : {}),
+      ...(this.clouds.length > 0 ? { clouds: this.clouds.map((c) => ({ ...c })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
@@ -1186,6 +1223,12 @@ export class RoadDoc {
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
     if (doc.terrainPaint.length) doc.paintRevision = 1;
+    // Absent: a map with no clouds placed.
+    for (const raw of data.clouds ?? []) {
+      const cloud = readCloud(raw);
+      if (cloud && doc.clouds.length < MAX_PLACED_CLOUDS && !doc.clouds.some((c) => c.id === cloud.id)) doc.clouds.push(cloud);
+    }
+    if (doc.clouds.length) doc.cloudRevision = 1;
     // Absent: a map with no fog painted.
     if (data.fog) {
       for (const raw of data.fog.dabs ?? []) {
@@ -1328,6 +1371,7 @@ export interface SerializedDoc {
   /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
   readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
   readonly fog?: { readonly dabs?: readonly unknown[]; readonly settings?: unknown };
+  readonly clouds?: readonly unknown[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string; planted?: number }[];
   /** Public transport (`transit.ts`); OPTIONAL like the poles. */

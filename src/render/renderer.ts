@@ -916,6 +916,8 @@ export function createSceneRenderer(
   let fogLayer: FogLayer | null = null;
   let fogFor = '';
   let fogMoving = false;
+  /** Clouds placed on the map: they boil, so the frame is drawn now and then. */
+  let placedCloudsShown = false;
   void loadNatureTrees(anisotropy).then((kit) => {
     natureTreeKit = kit;
     natureFor = '';
@@ -2113,7 +2115,7 @@ export function createSceneRenderer(
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
-    drifting: () => (atmosphere.clouds > 0 || fogMoving) && post.enabled && (quality.cloudShadows || quality.skyClouds),
+    drifting: () => (atmosphere.clouds > 0 || fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds),
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
@@ -2727,8 +2729,10 @@ export function createSceneRenderer(
           performance.measure('hitch:fog', { start: startedAt, end: performance.now() });
         }
         const f = doc.fogSettings;
+        post.setPlacedClouds(doc.clouds);
         post.setGroundFog(fogLayer?.any ? { texture: fogLayer.texture, low: fogLayer.low, high: fogLayer.high, density: f.density } : null);
         fogMoving = !!fogLayer?.any;
+        placedCloudsShown = doc.clouds.length > 0;
       }
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);

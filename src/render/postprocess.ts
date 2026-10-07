@@ -3,6 +3,7 @@ import {
   PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { MAP_SIZE } from '@world/bounds';
+import type { PlacedCloud } from '@world/clouds';
 import { PLANET_SHADER, planetPoint } from './planet';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -66,6 +67,8 @@ export interface PostChain {
    * the depth of a whole planet its reconstruction drew a line across it.
    */
   setGlobe(globe: number): void;
+  /** The clouds the player placed (`world/clouds.ts`). */
+  setPlacedClouds(clouds: readonly PlacedCloud[]): void;
   /**
    * The painted fog (`render/fogLayer.ts`): its map, the slab of ground it
    * lies over, and the map's settings - or none.
@@ -120,6 +123,9 @@ export function createPostChain(
       },
       setGroundFog() {
         /* no painted fog without the chain */
+      },
+      setPlacedClouds() {
+        /* no clouds without the chain */
       },
       dispose() {
         /* nothing owned */
@@ -242,6 +248,7 @@ export function createPostChain(
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
   let sky: Atmosphere = DEFAULT_ATMOSPHERE;
   let cloudClock = 0;
+  let placedClouds: readonly PlacedCloud[] = [];
   const globePoint = new Vector3();
   if (clouds) {
     const pass = clouds;
@@ -271,7 +278,7 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        const count = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[]);
+        const count = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], placedClouds);
         u['uCloudCount']!.value = count;
         // Laid over the plane, drawn over the globe (`planet.ts`).
         const onGlobe = (v: Vector4): void => {
@@ -294,6 +301,9 @@ export function createPostChain(
     },
     setGlobe(globe) {
       if (gtao) gtao.enabled = globe < 0.05;
+    },
+    setPlacedClouds(clouds) {
+      placedClouds = clouds;
     },
     setGroundFog(fog) {
       if (!clouds) return;
@@ -338,7 +348,9 @@ const CLOUD_SHADOW_STRENGTH = 0.55;
 
 
 /** Most cumulus clouds over the map at once, and the puffs each is built of. */
-const MAX_CLOUDS = 12;
+const MAX_CLOUDS = 24;
+/** The sky's own clouds at full cover (the player's placed ones come on top, `PlacedCloud`). */
+const SKY_CLOUDS = 12;
 const CLOUD_PUFFS = 7;
 
 /**
@@ -380,8 +392,15 @@ function cloudHash(i: number, salt: number): number {
  * each cloud's bounding sphere (centre, size), its puffs (world centre,
  * radius) and how far through its life it is (0 none, 1 grown).
  */
-function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[], lives: number[]): number {
-  const count = Math.min(MAX_CLOUDS, Math.round(atmosphere.clouds * MAX_CLOUDS));
+function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[], lives: number[], placed: readonly PlacedCloud[]): number {
+  // The player's own clouds first, where they put them, whole (`world/clouds.ts`).
+  let slot = 0;
+  for (const cloud of placed) {
+    if (slot >= MAX_CLOUDS) break;
+    layOne(slot, 1_000_003 + cloud.id * 7919, cloud.x, -cloud.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
+    slot++;
+  }
+  const count = Math.min(MAX_CLOUDS - slot, Math.round(atmosphere.clouds * SKY_CLOUDS));
   // Over the map only: a cloud past its edge hung in the empty space round
   // the diorama like a snowball (the player, 2026-10-07). It fades out
   // before it gets there, and wraps round unseen.
@@ -398,25 +417,32 @@ function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puff
     const x = wrap((cloudHash(id, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
     const z = wrap((cloudHash(id, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
     const edge = 1 - ease((Math.max(Math.abs(x), Math.abs(z)) - span * 0.3) / (span * 0.17));
-    lives[i] = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38)) * edge;
+    // The sky's own clouds take the slots after the placed ones.
+    const lifeNow = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38)) * edge;
     // It thins into wisps as it forms and fades, at nearly its full size: a
     // cloud that shrank as it went was a small bright ball.
-    const grown = 0.85 + 0.15 * lives[i]!;
+    const grown = 0.85 + 0.15 * lifeNow;
     // Its size from the thickness the player set: a cumulus about twice as wide as tall.
     const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(id, 3));
     const base = atmosphere.cloudBase + (cloudHash(id, 4) - 0.5) * size * 0.3;
-    const yaw = cloudHash(id, 5) * Math.PI * 2;
-    const c = Math.cos(yaw), sn = Math.sin(yaw);
-    bounds[i]!.set(x, base + size * 0.5, z, size * 1.12);
-    for (let k = 0; k < CLOUD_PUFFS; k++) {
-      const [a, up, b, r] = PUFFS[k]!;
-      const ja = a + (cloudHash(id * 11 + k, 6) - 0.5) * 0.16;
-      const jb = b + (cloudHash(id * 11 + k, 7) - 0.5) * 0.16;
-      const jr = r * (0.88 + 0.24 * cloudHash(id * 11 + k, 8)) * grown;
-      puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size * grown, z + (ja * sn + jb * c) * size, jr * size);
-    }
+    layOne(slot + i, id, x, z, base, size, cloudHash(id, 5) * Math.PI * 2, lifeNow, grown, bounds, puffs, lives);
   }
-  return count;
+  return slot + count;
+}
+
+/** One cloud into slot `i`: its bounding sphere, its puffs (jittered by `id`), how grown it is (`life`). */
+function layOne(i: number, id: number, x: number, z: number, base: number, size: number, yaw: number, life: number, grown: number,
+  bounds: Vector4[], puffs: Vector4[], lives: number[]): void {
+  lives[i] = life;
+  const c = Math.cos(yaw), sn = Math.sin(yaw);
+  bounds[i]!.set(x, base + size * 0.5, z, size * 1.12);
+  for (let k = 0; k < CLOUD_PUFFS; k++) {
+    const [a, up, b, r] = PUFFS[k]!;
+    const ja = a + (cloudHash(id * 11 + k, 6) - 0.5) * 0.16;
+    const jb = b + (cloudHash(id * 11 + k, 7) - 0.5) * 0.16;
+    const jr = r * (0.88 + 0.24 * cloudHash(id * 11 + k, 8)) * grown;
+    puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size * grown, z + (ja * sn + jb * c) * size, jr * size);
+  }
 }
 
 /**
@@ -798,7 +824,10 @@ const CLOUD_SHADOWS = {
         // the orthographic view and in perspective (both ends of the
         // screen's middle column at the depth of its centre).
         float spanFocus = focusDepth >= 0.9999 ? 1e5 : length(worldAt(vec2(0.5, 1.0), focusDepth) - worldAt(vec2(0.5, 0.0), focusDepth));
-        float bodies = 1.0 - smoothstep(1400.0, 2400.0, spanFocus);
+        // Over the map only now (layClouds), so they show from every zoom
+        // (the player, 2026-10-07: "quero que as nuvens apareçam"); only
+        // past the whole map's width do they give way to their shadows.
+        float bodies = 1.0 - smoothstep(9000.0, 14000.0, spanFocus);
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
           spans[c] = vec2(-1.0);
@@ -832,12 +861,13 @@ const CLOUD_SHADOWS = {
             float t = t0 + (float(i) + jitter) * stepLen;
             vec3 q = ro + rd * t;
             float density = cloudDensity(best, q);
-            // Never in front of the camera (the player, 2026-10-07): a cloud
-            // nearer than most of the way to the ground the view looks at
-            // (the middle of the screen) fades out, and always within its own
-            // size of the eye - so none hangs between the eye and the land.
-            float near = max(size * 1.1, tFocus * 0.85);
-            density *= smoothstep(near * 0.45, near, t) * bodies;
+            // Never pressed against the camera: a cloud within its own size
+            // of the eye fades out. (Fading every cloud nearer than most of
+            // the way to the ground looked at hid them all from above - the
+            // camera looks down through the sky at the land - and no cloud
+            // ever showed: the player, 2026-10-07.)
+            float near = size * 1.3;
+            density *= smoothstep(near * 0.4, near, t) * bodies;
             if (density < 0.01) continue;
             // The sun's light reaching this point: a short march towards it
             // through the cloud itself (Horizon Zero Dawn's light samples,
