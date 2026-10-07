@@ -1072,7 +1072,7 @@ function terrainMaterial(
          // the small ones (A) gentler up close: at full height they are
          // wrinkles near 45 degrees every few metres, and grassland seen at
          // that scale only undulates.
-         float terrainReliefHeight(vec4 t, float wide) { return t.r * wide + t.a * mix(0.2, 1.0, wide); }
+         float terrainReliefHeight(vec4 t, float wide) { return t.r * wide + t.a * mix(0.5, 1.0, wide); }
          void terrainReliefLevel(vec2 uv, float layer, float span, float wide, out vec2 grad, out float crease, out vec2 rest) {
            float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(uv.x), fwidth(uv.y)));
            vec4 t0 = texture(uRelief, vec3(uv, layer));
@@ -1366,7 +1366,7 @@ function terrainMaterial(
            // From well out only: at the usual close zoom (a pixel a unit or two)
            // the gullies still read as folded cloth (the player, 2026-10-07:
            // "dar uma suavizada nessa textura do chão").
-           float wide = smoothstep(1.4, 4.0, footprint);
+           float wide = smoothstep(0.8, 3.0, footprint);
            terrainWide = wide;
            terrainReliefLevel((vTerrainWorld.xz + uPaintHalf) / uPaintSize, 0.0, uPaintSize, wide, grad, creaseAt, rest);
            // The close window's finer level (the clipmap's nested grid),
@@ -1390,7 +1390,7 @@ function terrainMaterial(
            float meshSlope = length(normalize(vTerrainNormal).xz) / max(normalize(vTerrainNormal).y, 0.25);
            float carved = smoothstep(0.06, 0.3, meshSlope);
            terrainCarved = carved;
-           terrainGrad = grad * carved * mix(0.55, 1.0, wide);
+           terrainGrad = grad * carved * mix(0.8, 1.0, wide);
            terrainCrease = creaseAt * carved;
            terrainRidge = rest.x;
            terrainMacro = rest.y;
