@@ -6,11 +6,14 @@ import {
   IcosahedronGeometry,
   InstancedMesh,
   DataTexture,
+  DoubleSide,
   LinearFilter,
   LinearMipmapLinearFilter,
   Matrix4,
+  MeshDepthMaterial,
   MeshStandardMaterial,
   NoColorSpace,
+  RGBADepthPacking,
   RGBAFormat,
   RepeatWrapping,
   UnsignedByteType,
@@ -62,10 +65,12 @@ const LOD_SLACK = 60;
 const CROWN_CLUSTERS = 48;
 const CROWN_LUMPS = 8;
 const CROWN_MID = 16;
-/** Solid leaves standing out of each near cluster. */
-const LEAF_FRINGE = 14;
+/** Leaf cards round each near cluster. */
+const LEAF_CARDS = 6;
 /** World units one tile of the foliage detail covers (eight leaf clusters across). */
 const FOLIAGE_TILE = 18;
+/** World units one photographed twig of leaves covers on a crown. */
+const LEAF_TILE = 6;
 /** Neighbours within this reach (world units) make a tree's stand. */
 const STAND_REACH = 45;
 
@@ -78,6 +83,10 @@ interface Variant {
   readonly crown: BufferGeometry;
   readonly mid: BufferGeometry;
   readonly far: BufferGeometry;
+  /** Near: the photographed leaf cards round the clusters, their material and shadow. */
+  readonly cards: BufferGeometry;
+  readonly leafMaterial: MeshStandardMaterial;
+  readonly leafDepth: MeshDepthMaterial;
   readonly barkMaterial: MeshStandardMaterial;
 }
 
@@ -170,7 +179,12 @@ function crownShaded(p: Primitive): Primitive {
  * the crown's one ellipsoid with its depth darkened; on a plain trunk.
  * Colours linear, in the vertex colour.
  */
-function crownProxy(leaves: Primitive, height: number, green: readonly number[], bark: readonly number[] | null, detail: number, lumps: number, grow: number, fringe = 0): BufferGeometry {
+/**
+ * Where a crown's leaves gather: its leaf vertices in `lumps` groups by
+ * k-means (from evenly spread starts, so the same every time), each group's
+ * middle and the root-mean-square spread of its leaves about it.
+ */
+function crownClusters(leaves: Primitive, lumps: number): { c: number[]; r: number[]; centres: number[][]; spread: number[] } {
   const pts: number[][] = [];
   for (let v = 0; v < leaves.position.length / 3; v += 3) pts.push([leaves.position[v * 3]!, leaves.position[v * 3 + 1]!, leaves.position[v * 3 + 2]!]);
   const { c, r } = crownEllipsoid(leaves.position);
@@ -190,12 +204,96 @@ function crownProxy(leaves: Primitive, height: number, green: readonly number[],
       if (n > 0) for (let k = 0; k < 3; k++) m[k] = sum[k]! / n;
     });
   }
-  const positions: number[] = [], normals: number[] = [], colours: number[] = [];
-  centres.forEach((m, j) => {
+  const spread = centres.map((m, j) => {
     let n = 0, sq = 0;
     pts.forEach((q, i) => { if (owner[i] === j) { n++; sq += d2(q, m); } });
-    if (n === 0) return;
-    const radius = Math.sqrt(sq / n) * grow;
+    return n > 0 ? Math.sqrt(sq / n) : 0;
+  });
+  return { c, r, centres, spread };
+}
+
+/**
+ * LEAF CARDS round each cluster of a near crown: quads of the tree's own
+ * photographed twig (alpha-tested), set over the cluster's skin facing out,
+ * spread by the golden angle - the leaf-cluster cards real-time trees are
+ * made of (Habrador on The Witness's trees; Polycount, "Low Poly Foliage"),
+ * here round the solid cluster, which fills every gap the cut-out leaves
+ * leave (the player, 2026-10-07: "use alpha em cada bola ... aquelas texturas
+ * de cacho"). Lit as the crown's volume (its ellipsoid's normal) with its
+ * depth darkened; the photograph gives the colour.
+ */
+function leafCards(leaves: Primitive, height: number, lumps: number, grow: number, perCluster: number): BufferGeometry {
+  const { c, r, centres, spread } = crownClusters(leaves, lumps);
+  const positions: number[] = [], normals: number[] = [], uvs: number[] = [], colours: number[] = [], index: number[] = [];
+  centres.forEach((m, j) => {
+    const radius = spread[j]! * grow;
+    if (radius <= 0) return;
+    for (let k = 0; k < perCluster; k++) {
+      const yk = 1 - ((k + 0.5) / perCluster) * 1.6;
+      const ring = Math.sqrt(Math.max(0, 1 - yk * yk));
+      const theta = k * 2.399963 + j * 1.3;
+      const out = [Math.cos(theta) * ring, yk, Math.sin(theta) * ring];
+      // Half out of the cluster's skin, a card twice its radius across.
+      const centre = [0, 1, 2].map((q) => m[q]! + out[q]! * radius * 0.75);
+      const side = Math.abs(out[1]!) < 0.95 ? [out[2]!, 0, -out[0]!] : [1, 0, 0];
+      const sl = Math.hypot(side[0]!, side[1]!, side[2]!) || 1;
+      const t0 = side.map((v) => v / sl);
+      const b0 = [out[1]! * t0[2]! - out[2]! * t0[1]!, out[2]! * t0[0]! - out[0]! * t0[2]!, out[0]! * t0[1]! - out[1]! * t0[0]!];
+      const spin = k * 1.618 + j * 0.7;
+      const u = [0, 1, 2].map((q) => t0[q]! * Math.cos(spin) + b0[q]! * Math.sin(spin));
+      const v = [0, 1, 2].map((q) => b0[q]! * Math.cos(spin) - t0[q]! * Math.sin(spin));
+      const half = radius * 1.05;
+      const first = positions.length / 3;
+      for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+        const p = [0, 1, 2].map((q) => centre[q]! + (u[q]! * su + v[q]! * sv) * half);
+        positions.push(p[0]! / height, p[1]! / height, p[2]! / height);
+        const { n, ao } = crownLight(p, c, r);
+        normals.push(n[0]!, n[1]!, n[2]!);
+        uvs.push((su + 1) / 2, (sv + 1) / 2);
+        colours.push(ao, ao, ao);
+      }
+      index.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    }
+  });
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+  g.setAttribute('normal', new BufferAttribute(new Float32Array(normals), 3));
+  g.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
+  g.setAttribute('color', new BufferAttribute(new Float32Array(colours), 3));
+  g.setIndex(index);
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
+ * Keeps an alpha-tested leaf texture's coverage at a distance: each mip level
+ * averages the leaves' alpha down under the cutoff and crowns thin to bare
+ * cards. The alpha is raised by the mip level the pixel reads (Ben Golus,
+ * "Anti-aliased Alpha Test: The Esoteric Alpha To Coverage": CalcMipLevel,
+ * a quarter a level).
+ */
+function preserveAlphaCoverage(material: MeshStandardMaterial | MeshDepthMaterial): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        vec2 texel = vMapUv * vec2(textureSize(map, 0));
+        vec2 ddxT = dFdx(texel), ddyT = dFdy(texel);
+        float mip = max(0.0, 0.5 * log2(max(dot(ddxT, ddxT), dot(ddyT, ddyT))));
+        diffuseColor.a *= 1.0 + mip * 0.25;
+      }`);
+  };
+  const key = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${key()}-mip-alpha`;
+}
+
+function crownProxy(leaves: Primitive, height: number, green: readonly number[], bark: readonly number[] | null, detail: number, lumps: number, grow: number): BufferGeometry {
+  const { c, r, centres, spread } = crownClusters(leaves, lumps);
+  const positions: number[] = [], normals: number[] = [], colours: number[] = [];
+  centres.forEach((m, j) => {
+    if (spread[j]! <= 0) return;
+    const radius = spread[j]! * grow;
     // Each cluster a little apart in colour - lighter and warmer at the top
     // of the crown, where the sun reaches - so the crown reads as many
     // clusters and not one surface.
@@ -222,43 +320,6 @@ function crownProxy(leaves: Primitive, height: number, green: readonly number[],
       colours.push(clumpGreen[0]! * ao, clumpGreen[1]! * ao, clumpGreen[2]! * ao);
     }
     ball.dispose();
-    if (fringe > 0) {
-      // Solid leaves standing out of the cluster's skin, pointed diamonds
-      // tilted outwards, both faces drawn: up close the outline breaks
-      // into leaves instead of a ball's curve (the player, 2026-10-07: "efeito
-      // de folhas"), with no alpha cut-out to alias.
-      for (let k = 0; k < fringe; k++) {
-        // Spread over the cluster by the golden angle, the underside spared.
-        const yk = 1 - (k + 0.5) / fringe * 1.4;
-        const ring = Math.sqrt(Math.max(0, 1 - yk * yk));
-        const theta = k * 2.399963 + j;
-        const out = [Math.cos(theta) * ring, yk, Math.sin(theta) * ring];
-        const base = [m[0]! + out[0]! * radius * 0.9, m[1]! + out[1]! * radius * 0.8, m[2]! + out[2]! * radius * 0.9];
-        // Along the surface, turned by the leaf's own angle, then tipped outwards.
-        const side = Math.abs(out[1]!) < 0.9 ? [out[2]!, 0, -out[0]!] : [1, 0, 0];
-        const sl = Math.hypot(side[0]!, side[1]!, side[2]!) || 1;
-        const t = side.map((v) => v / sl);
-        const b = [out[1]! * t[2]! - out[2]! * t[1]!, out[2]! * t[0]! - out[0]! * t[2]!, out[0]! * t[1]! - out[1]! * t[0]!];
-        const spin = k * 1.618 + j * 0.7;
-        const along = [0, 1, 2].map((q) => t[q]! * Math.cos(spin) + b[q]! * Math.sin(spin));
-        const across = [0, 1, 2].map((q) => b[q]! * Math.cos(spin) - t[q]! * Math.sin(spin));
-        const length = radius * (0.42 + 0.18 * (((k * 0.37 + j * 0.11) % 1 + 1) % 1));
-        const dir = [0, 1, 2].map((q) => along[q]! * 0.8 + out[q]! * 0.6);
-        const tip = [0, 1, 2].map((q) => base[q]! + dir[q]! * length);
-        const mid = [0, 1, 2].map((q) => base[q]! + dir[q]! * length * 0.45);
-        const left = [0, 1, 2].map((q) => mid[q]! + across[q]! * length * 0.22);
-        const right = [0, 1, 2].map((q) => mid[q]! - across[q]! * length * 0.22);
-        const { n: e, ao } = crownLight(mid, c, r);
-        const shade = ao * (1.02 + 0.12 * ((k * 0.53) % 1));
-        for (const tri of [[base, left, tip], [base, tip, right], [base, tip, left], [base, right, tip]]) {
-          for (const v of tri) {
-            positions.push(v[0]! / height, v[1]! / height, v[2]! / height);
-            normals.push(e[0]!, e[1]!, e[2]!);
-            colours.push(clumpGreen[0]! * shade, clumpGreen[1]! * shade, clumpGreen[2]! * shade);
-          }
-        }
-      }
-    }
   });
   // A plain trunk up into the crown's underside (far; near, the tree's own).
   if (bark) appendTrunk(c, r, height, bark, positions, normals, colours);
@@ -359,11 +420,12 @@ function foliageTexture(): DataTexture {
  * ("Normal Mapping for a Triplanar Shader") over the crown's own smooth
  * volume normal, and each cluster's shade on the colour.
  */
-function applyFoliageDetail(material: MeshStandardMaterial, texture: Texture): void {
+function applyFoliageDetail(material: MeshStandardMaterial, texture: Texture, leafPhoto: Texture): void {
   const previous = material.onBeforeCompile.bind(material);
   material.onBeforeCompile = (shader, renderer) => {
     previous(shader, renderer);
     shader.uniforms['uFoliage'] = { value: texture };
+    shader.uniforms['uLeafPhoto'] = { value: leafPhoto };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         varying vec3 vFoliagePos;
@@ -384,8 +446,10 @@ function applyFoliageDetail(material: MeshStandardMaterial, texture: Texture): v
         uniform sampler2D uFoliage;
         varying vec3 vFoliagePos;
         varying vec3 vFoliageNormal;
+        uniform sampler2D uLeafPhoto;
         vec3 foliageN;
         float foliageShade;
+        float foliageLeaf;
         void foliageDetail() {
           vec3 n = normalize(vFoliageNormal);
           vec3 w = pow(abs(n), vec3(4.0));
@@ -403,30 +467,40 @@ function applyFoliageDetail(material: MeshStandardMaterial, texture: Texture): v
           nz = vec3(nz.xy + n.xy, abs(nz.z) * n.z);
           foliageN = normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
           foliageShade = tx.a * w.x + ty.a * w.y + tz.a * w.z;
-          // Up close, single leaves inside the clusters: the same tile a
-          // quarter the size, faded in as a pixel covers under a tenth of a
-          // unit, so far off it never shimmers.
+          // From the usual zoom inwards, LEAVES: the photographed twigs of
+          // the trees' own leaf texture printed over the crown, triplanar, in
+          // two layers turned and offset so they overlap and never tile in
+          // rows - each leaf's light and shade from the photograph, its
+          // colour the crown's, the gaps between leaves the dark inside of
+          // the crown. Solid, nothing cut out: it reads as foliage without
+          // alpha-tested cards (the player, 2026-10-07: "parecer realmente
+          // folhas"). Faded out as a pixel covers more than a unit.
+          foliageLeaf = 1.0;
           float footprint = max(fwidth(vFoliagePos.x), max(fwidth(vFoliagePos.y), fwidth(vFoliagePos.z)));
-          float close = 1.0 - smoothstep(0.06, 0.2, footprint);
-          if (close > 0.0) {
-            vec3 q = p * 4.1 + 0.37;
-            vec4 sx = texture2D(uFoliage, q.zy);
-            vec4 sy = texture2D(uFoliage, q.xz);
-            vec4 sz = texture2D(uFoliage, q.xy);
-            vec3 mx = sx.xyz * 2.0 - 1.0;
-            vec3 my = sy.xyz * 2.0 - 1.0;
-            vec3 mz = sz.xyz * 2.0 - 1.0;
-            mx = vec3(mx.xy + foliageN.zy, abs(mx.z) * foliageN.x);
-            my = vec3(my.xy + foliageN.xz, abs(my.z) * foliageN.y);
-            mz = vec3(mz.xy + foliageN.xy, abs(mz.z) * foliageN.z);
-            vec3 leafN = normalize(mx.zyx * w.x + my.xzy * w.y + mz.xyz * w.z);
-            foliageN = normalize(mix(foliageN, leafN, close));
-            foliageShade = mix(foliageShade, foliageShade * mix(0.7, 1.15, sx.a * w.x + sy.a * w.y + sz.a * w.z), close);
+          float near = 1.0 - smoothstep(0.4, 1.2, footprint);
+          if (near > 0.0) {
+            vec3 lp = vFoliagePos / ${LEAF_TILE.toFixed(1)};
+            vec2 uvs[3] = vec2[3](lp.zy, lp.xz, lp.xy);
+            float ws[3] = float[3](w.x, w.y, w.z);
+            float cover = 0.0, lum = 0.0;
+            for (int i = 0; i < 3; i++) {
+              vec2 u = uvs[i];
+              vec4 a = texture2D(uLeafPhoto, u);
+              vec4 b = texture2D(uLeafPhoto, vec2(-u.y, u.x) * 1.31 + 0.47);
+              float la = dot(a.rgb, vec3(0.3, 0.6, 0.1)) / max(a.a, 0.05);
+              float lb = dot(b.rgb, vec3(0.3, 0.6, 0.1)) / max(b.a, 0.05);
+              float c = max(a.a, b.a);
+              cover += c * ws[i];
+              lum += (a.a > 0.5 ? la : lb) * c * ws[i];
+            }
+            lum /= max(cover, 0.01);
+            float leafy = mix(0.4, 0.62 + 1.3 * lum, smoothstep(0.3, 0.6, cover));
+            foliageLeaf = mix(1.0, leafy, near);
           }
         }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         foliageDetail();
-        diffuseColor.rgb *= mix(0.45, 1.2, foliageShade);`)
+        diffuseColor.rgb *= mix(0.45, 1.2, foliageShade) * foliageLeaf;`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         normal = normalize((viewMatrix * vec4(foliageN, 0.0)).xyz);`);
   };
@@ -467,6 +541,8 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
   const { Tree } = await import('@dgreenheck/ez-tree');
   await MeshoptSimplifier.ready;
   const variants: Variant[] = [];
+  /** The first variety's photographed leaves (an oak's), printed over every crown up close. */
+  let leafPhoto: Texture | null = null;
   for (const [preset, seed] of VARIANTS) {
     const tree = new Tree();
     tree.loadPreset(preset);
@@ -486,6 +562,12 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
     const leafTexture = leafSource.map!;
     await loaded(leafTexture);
     leafTexture.anisotropy = anisotropy;
+    if (!leafPhoto) {
+      leafTexture.wrapS = RepeatWrapping;
+      leafTexture.wrapT = RepeatWrapping;
+      leafTexture.needsUpdate = true;
+      leafPhoto = leafTexture;
+    }
     const tint = leafSource.color;
     const mean = meanLeafColour(leafTexture);
     const green = [mean[0] * tint.r * 0.85, mean[1] * tint.g * 0.85, mean[2] * tint.b * 0.85];
@@ -493,12 +575,22 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
       map: barkSource.map, normalMap: barkSource.normalMap, color: barkSource.color, roughness: 0.95, metalness: 0,
     });
     applyWind(barkMaterial, FOREST_WIND, 'nature-bark');
+    const leafMaterial = new MeshStandardMaterial({
+      map: leafTexture, color: tint, alphaTest: 0.5, side: DoubleSide, vertexColors: true, roughness: 0.8, metalness: 0, envMapIntensity: 0.3,
+    });
+    applyWind(leafMaterial, FOREST_WIND, 'nature-leaves');
+    preserveAlphaCoverage(leafMaterial);
+    const leafDepth = new MeshDepthMaterial({ depthPacking: RGBADepthPacking, map: leafTexture, alphaTest: 0.5 });
+    preserveAlphaCoverage(leafDepth);
     variants.push({
       bark: geometryOf(bark, top),
       // Near, many small clusters where the branches carry their leaves
       // (the blob is never drawn itself - Habrador on The Witness's trees);
       // far, a few coarse lumps, a fraction of the triangles.
-      crown: crownProxy(leaves, top, green, null, 1, CROWN_CLUSTERS, 1.5, LEAF_FRINGE),
+      crown: crownProxy(leaves, top, green, null, 1, CROWN_CLUSTERS, 1.5),
+      cards: leafCards(leaves, top, CROWN_CLUSTERS, 1.5, LEAF_CARDS),
+      leafMaterial,
+      leafDepth,
       mid: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 1, CROWN_MID, 1.35),
       far: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 0, CROWN_LUMPS, 1.2),
       barkMaterial,
@@ -510,14 +602,16 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
   applyWind(crownMaterial, FOREST_WIND, 'nature-crowns');
   const foliage = foliageTexture();
   foliage.anisotropy = anisotropy;
-  applyFoliageDetail(crownMaterial, foliage);
+  applyFoliageDetail(crownMaterial, foliage, leafPhoto!);
   console.info('[nature] tree variants (triangles near / far):', variants.map((v) => `${v.bark.index!.count / 3 + v.crown.getAttribute('position').count / 3} / ${v.far.getAttribute('position').count / 3}`).join(', '));
   return {
     variants,
     crownMaterial,
     dispose() {
       for (const v of variants) {
-        for (const g of [v.bark, v.crown, v.mid, v.far]) g.dispose();
+        for (const g of [v.bark, v.crown, v.mid, v.far, v.cards]) g.dispose();
+        v.leafMaterial.dispose();
+        v.leafDepth.dispose();
         v.barkMaterial.dispose();
       }
       crownMaterial.dispose();
@@ -580,17 +674,22 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
   byVariant.forEach((indices, k) => {
     if (indices.length === 0) return;
     const variant = kit.variants[k]!;
-    const make = (geometry: BufferGeometry, material: MeshStandardMaterial, name: string): InstancedMesh => {
+    const make = (geometry: BufferGeometry, material: MeshStandardMaterial, name: string, depth?: MeshDepthMaterial): InstancedMesh => {
       const mesh = new InstancedMesh(geometry, material, indices.length);
       mesh.name = name;
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.receiveShadow = !depth;
+      if (depth) mesh.customDepthMaterial = depth;
       mesh.frustumCulled = false;
       mesh.count = 0;
       meshes.push(mesh);
       return mesh;
     };
-    const near = [make(variant.bark, variant.barkMaterial, 'nature-bark'), make(variant.crown, kit.crownMaterial, 'nature-crown')];
+    const near = [
+      make(variant.bark, variant.barkMaterial, 'nature-bark'),
+      make(variant.crown, kit.crownMaterial, 'nature-crown'),
+      make(variant.cards, variant.leafMaterial, 'nature-leaves', variant.leafDepth),
+    ];
     const mid = [make(variant.mid, kit.crownMaterial, 'nature-crowns-mid')];
     const far = [make(variant.far, kit.crownMaterial, 'nature-crowns')];
     const items = indices.map((i) => trees[i]!);
