@@ -95,6 +95,13 @@ export interface SceneEnvironment {
   setTimeOfDay(minutes: number): number;
   /** Smoke in the air, 0..1: the fog closes in and browns, the light dims. */
   setSmog(k: number): void;
+  /**
+   * The weather on the light (`world/weather.ts`): how overcast (0 clear ..
+   * 1 a storm sky - the sun dimmed behind the clouds, the sky greyed, the
+   * shadows softened into the sky's light) and how bright a lightning flash
+   * is this moment (0 none .. 1).
+   */
+  setWeather(overcast: number, flash: number): void;
   /** The globe's turn (`planet.ts`): the sun stays put over the planet, so it turns with it. */
   setSpin(q: Quaternion): void;
   dispose(): void;
@@ -277,6 +284,10 @@ export function createEnvironment(
   /** Smoke in the air (`setSmog`), and the brown-grey it turns the fog. */
   let smog = 0;
   const SMOG = new Color(0xc9a27a);
+  let overcast = 0;
+  let flash = 0;
+  const STORM_SKY = new Color(0x6f7782);
+  const FLASH = new Color(0xdfe6ff);
   return {
     sun,
     skyColor: horizon,
@@ -372,6 +383,22 @@ export function createEnvironment(
       ambient.intensity = 0.07 * light + 0.05 * dark;
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
+      // An overcast sky: the sun behind the clouds - much less of it, and
+      // what light there is comes from the whole grey sky - and the sky greyed.
+      if (overcast > 0) {
+        sun.intensity *= 1 - 0.85 * overcast;
+        hemisphere.intensity *= 1 + 0.15 * overcast;
+        fill.intensity *= 1 - 0.4 * overcast;
+        zenith.lerp(STORM_SKY, overcast * 0.85 * light);
+        horizon.lerp(STORM_SKY, overcast * 0.7 * light);
+      }
+      // A lightning flash: the whole scene lit at once from the sky, cold white.
+      if (flash > 0) {
+        hemisphere.intensity += 2.6 * flash;
+        ambient.intensity += 0.6 * flash;
+        zenith.lerp(FLASH, flash * 0.6);
+        horizon.lerp(FLASH, flash * 0.5);
+      }
       sunColor.copy(DAY_SUN).lerp(DUSK_SUN, warm).multiplyScalar(light);
       // No town-wide haze (the player: the smoke stays where the fire is).
       void smog; void SMOG;
@@ -382,6 +409,7 @@ export function createEnvironment(
       return dark;
     },
     setSmog(k) { smog = Math.max(0, Math.min(1, k)); },
+    setWeather(k, f) { overcast = Math.max(0, Math.min(1, k)); flash = Math.max(0, Math.min(1.5, f)); },
     setSpin(q) { spin.copy(q); },
     setQuality(next) {
       sun.castShadow = next.shadows;

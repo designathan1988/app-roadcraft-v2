@@ -7,6 +7,8 @@
  * (`render/postprocess.ts`), which ray-marches each as a heap of puffs.
  */
 
+import { MAP_SIZE } from './bounds';
+
 export interface PlacedCloud {
   readonly id: number;
   /** Map position under the cloud's middle, world units. */
@@ -109,4 +111,19 @@ export function cloudUnder(clouds: readonly PlacedCloud[], at: (height: number) 
     if (entry > bestEntry) { bestEntry = entry; best = cloud; }
   }
   return best;
+}
+
+/**
+ * Where a cloud is now, carried by the wind (`world/weather.ts`): its place
+ * plus how far the wind has blown since the map opened, wrapped round the
+ * map so the sky never empties; and how much of it shows (1, thinning away
+ * as it nears the edge it wraps round, so it never pops).
+ */
+export function driftedCloud(cloud: PlacedCloud, drift: { readonly x: number; readonly y: number }): { x: number; y: number; show: number } {
+  const span = MAP_SIZE;
+  const wrap = (v: number): number => ((((v + span / 2) % span) + span) % span) - span / 2;
+  const x = wrap(cloud.x + drift.x), y = wrap(cloud.y + drift.y);
+  const out = (Math.max(Math.abs(x), Math.abs(y)) - span * 0.36) / (span * 0.12);
+  const t = Math.min(1, Math.max(0, out));
+  return { x, y, show: 1 - t * t * (3 - 2 * t) };
 }

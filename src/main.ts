@@ -29,8 +29,9 @@ import {
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { scatter } from '@world/elements';
-import { cloudUnder, scatterClouds } from '@world/clouds';
+import { cloudUnder, driftedCloud, scatterClouds } from '@world/clouds';
 import { oneTree, plantTrees } from '@world/trees';
+import { playThunder } from '@ui/thunder';
 import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
@@ -345,7 +346,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | 'trees' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | 'trees' | 'weather' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -899,6 +900,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   buildings.restored();
   syncFogInputs();
   syncGullyInputs();
+  syncWeatherInputs();
   selectedSegment = null;
   selectedNode = null;
   closeInspector();
@@ -1503,7 +1505,11 @@ function cloudPointerDown(pointer: number, px: number, py: number): void {
   const brush = cloudBrush();
   const size = brush.size * UNITS_PER_METER;
   const height = brush.height * UNITS_PER_METER;
-  const picked = cloudUnder(doc.clouds, (h) => pointerAtHeight(px, py, h));
+  // Where the wind has carried them (`world/clouds.ts` driftedCloud): picked
+  // where they are seen, and a new or moved one kept where it is put.
+  const drift = scene.cloudDrift();
+  const seen = doc.clouds.map((c) => ({ ...c, ...driftedCloud(c, drift) }));
+  const picked = cloudUnder(seen, (h) => pointerAtHeight(px, py, h));
   const done = (): void => {
     updateHistoryButtons();
     persistence.saveSessionSoon(doc, sessionSettings);
@@ -1512,7 +1518,7 @@ function cloudPointerDown(pointer: number, px: number, py: number): void {
   if (mode === 'add') {
     const at = pointerAtHeight(px, py, height + size * 0.3);
     history.record(doc);
-    const cloud = doc.addCloud({ x: at.x, y: at.y, height, size, density: brush.density / 100, yaw: ((at.x * 0.013 + at.y * 0.007) % 1) * Math.PI * 2 });
+    const cloud = doc.addCloud({ x: at.x - drift.x, y: at.y - drift.y, height, size, density: brush.density / 100, yaw: ((at.x * 0.013 + at.y * 0.007) % 1) * Math.PI * 2 });
     if (!cloud) flashHint('hint.cloud.full');
     done();
     return;
@@ -1532,7 +1538,8 @@ function cloudDragTo(px: number, py: number): void {
   const cloud = drag ? doc.clouds.find((c) => c.id === drag.id) : undefined;
   if (!drag || !cloud) return;
   const at = pointerAtHeight(px, py, cloud.height + cloud.size * 0.3);
-  doc.updateCloud(cloud.id, { x: at.x + drag.dx, y: at.y + drag.dy });
+  const drift = scene.cloudDrift();
+  doc.updateCloud(cloud.id, { x: at.x + drag.dx - drift.x, y: at.y + drag.dy - drift.y });
   persistence.saveSessionSoon(doc, sessionSettings);
   requestDraw();
 }
@@ -1783,6 +1790,8 @@ canvas.addEventListener('pointerdown', (e) => {
 
     case 'terrain':
       if (terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
+      // The weather tool: a click calls a lightning bolt down there.
+      else if (terrainMode === 'weather') scene.strikeAt(world.x, world.y);
       else beginTerrainStroke(e.pointerId, world);
       break;
 
@@ -2627,7 +2636,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully', 'trees'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully', 'trees', 'weather'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -3062,6 +3071,8 @@ function setTerrainMode(next: BrushMode): void {
   if (fogPanel) fogPanel.hidden = next !== 'fog';
   const cloudPanel = document.querySelector<HTMLElement>('.terrain-cloud');
   if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
+  const weatherPanel = document.querySelector<HTMLElement>('.terrain-weather');
+  if (weatherPanel) weatherPanel.hidden = next !== 'weather';
   const treePanel = document.querySelector<HTMLElement>('.terrain-trees');
   if (treePanel) treePanel.hidden = next !== 'trees';
   const gullyPanel = document.querySelector<HTMLElement>('.terrain-gully');
@@ -3112,6 +3123,37 @@ function syncFogInputs(): void {
   });
   input?.addEventListener('change', () => { recorded = false; });
   syncFogInputs();
+}
+// THE WEATHER (Paisagem > Terreno > Clima, `world/weather.ts`): the map's
+// rain, wind, lightning and thunder; one undo step a drag of a slider. The
+// thunder is heard at every strike, as late as sound takes to come.
+const WEATHER_INPUTS = [
+  ['weatherRain', 'rain', 100], ['weatherWind', 'wind', 1], ['weatherWindDir', 'windDirection', 1],
+  ['weatherLightning', 'lightning', 1], ['weatherThunder', 'thunder', 100],
+] as const;
+function syncWeatherInputs(): void {
+  for (const [id, key, scale] of WEATHER_INPUTS) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) continue;
+    input.value = String(Math.round(doc.weather[key] * scale));
+    text(`${id}Value`, input.value);
+  }
+}
+{
+  for (const [id, key, scale] of WEATHER_INPUTS) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    let recorded = false;
+    input?.addEventListener('input', () => {
+      if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
+      text(`${id}Value`, input.value);
+      doc.setWeather({ [key]: Number(input.value) / scale });
+      persistence.saveSessionSoon(doc, sessionSettings);
+      requestDraw();
+    });
+    input?.addEventListener('change', () => { recorded = false; });
+  }
+  syncWeatherInputs();
+  scene.onStrike((_x, _y, distance) => playThunder(distance / UNITS_PER_METER, doc.weather.thunder));
 }
 // The tree brush's settings (Paisagem > Terreno > Árvores), kept between
 // sessions; and clearing every planted tree and every clearing at once.
@@ -5161,6 +5203,7 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   elements: '#b8e07a',
   gully: '#c98a5a',
   trees: '#5fbf5a',
+  weather: '#cfe3ff',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
@@ -5178,6 +5221,7 @@ const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   elements: 'rgba(184,224,122,0.10)',
   gully: 'rgba(201,138,90,0.10)',
   trees: 'rgba(95,191,90,0.10)',
+  weather: 'rgba(207,227,255,0)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',

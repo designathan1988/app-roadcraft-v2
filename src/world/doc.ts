@@ -24,6 +24,7 @@ import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { MAX_PLACED_CLOUDS, readCloud, type PlacedCloud } from './clouds';
+import { DEFAULT_WEATHER, readWeather, type Weather } from './weather';
 import { MAX_PLANTED_TREES, MAX_TREE_CLEARINGS, readPlantedTree, readTreeClearing, type PlantedTree, type TreeClearing } from './trees';
 import { MAX_ELEMENTS, readElement, type ElementItem, type ElementKind } from './elements';
 import { DEFAULT_GULLY_AUTO, MAX_GULLY_DABS, readGullyDab, type GullyDab } from './gullies';
@@ -219,6 +220,10 @@ export class RoadDoc {
   readonly clouds: PlacedCloud[] = [];
   /** Moves with every change to `clouds`, and only then. */
   cloudRevision = 0;
+  /** The map's weather (`weather.ts`). */
+  weather: Weather = DEFAULT_WEATHER;
+  /** Moves with every change to `weather`, and only then. */
+  weatherRevision = 0;
   /** Trees the player planted (`trees.ts`), oldest first. */
   readonly trees: PlantedTree[] = [];
   /** Moves with every change to `trees`, and only then. */
@@ -751,6 +756,13 @@ export class RoadDoc {
     this.gullyRevision++;
   }
 
+  setWeather(change: Partial<Weather>): void {
+    const next = readWeather({ ...this.weather, ...change }, this.weather);
+    if (JSON.stringify(next) === JSON.stringify(this.weather)) return;
+    this.weather = next;
+    this.weatherRevision++;
+  }
+
   plantTrees(trees: readonly PlantedTree[]): void {
     if (trees.length === 0) return;
     this.trees.push(...trees.map((t) => ({ ...t })));
@@ -1021,6 +1033,7 @@ export class RoadDoc {
     copy.cloudRevision = this.cloudRevision;
     copy.elementRevision = this.elementRevision;
     copy.treeRevision = this.treeRevision;
+    copy.weatherRevision = this.weatherRevision;
     copy.clearingRevision = this.clearingRevision;
     copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
@@ -1118,6 +1131,10 @@ export class RoadDoc {
       this.natureRevision++;
     }
 
+    if (JSON.stringify(this.weather) !== JSON.stringify(source.weather)) {
+      this.weather = { ...source.weather };
+      this.weatherRevision++;
+    }
     if (JSON.stringify(this.trees) !== JSON.stringify(source.trees)) {
       this.trees.length = 0;
       this.trees.push(...source.trees.map((t) => ({ ...t })));
@@ -1246,6 +1263,7 @@ export class RoadDoc {
       ...(this.clouds.length > 0 ? { clouds: this.clouds.map((c) => ({ ...c })) } : {}),
       ...(this.elements.length > 0 ? { elements: this.elements.map((e) => ({ ...e })) } : {}),
       ...(this.trees.length > 0 ? { trees: this.trees.map((t) => ({ ...t })) } : {}),
+      ...(JSON.stringify(this.weather) !== JSON.stringify(DEFAULT_WEATHER) ? { weather: { ...this.weather } } : {}),
       ...(this.treeClearings.length > 0 ? { treeClearings: this.treeClearings.map((c) => ({ ...c })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
@@ -1362,6 +1380,8 @@ export class RoadDoc {
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
     if (doc.terrainPaint.length) doc.paintRevision = 1;
+    // Absent: a map with the default weather (dry and still).
+    if (data.weather) { doc.weather = readWeather(data.weather); doc.weatherRevision = 1; }
     // Absent: a map with no trees planted or cut.
     for (const raw of data.trees ?? []) {
       const tree = readPlantedTree(raw);
@@ -1541,6 +1561,7 @@ export interface SerializedDoc {
   readonly clouds?: readonly unknown[];
   readonly elements?: readonly unknown[];
   readonly trees?: readonly unknown[];
+  readonly weather?: unknown;
   readonly treeClearings?: readonly unknown[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string; planted?: number }[];

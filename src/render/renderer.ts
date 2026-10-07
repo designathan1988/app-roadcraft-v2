@@ -38,6 +38,7 @@ import {
   PCFShadowMap,
   Scene,
   SRGBColorSpace,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
@@ -67,7 +68,10 @@ import { elementRing, followPieces } from '@world/buildings/elements';
 import { RoadDoc } from '@world/doc';
 import { compileAhead, drainCompiles, drainUploads, drainWarm } from './uploads';
 import { GRASS_MIN_ZOOM } from './grass';
-import { advanceWind } from './wind';
+import { advanceWind, setWindWeather } from './wind';
+import { createRain } from './rain';
+import { createLightning } from './lightning';
+import { windVector } from '@world/weather';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
@@ -252,6 +256,12 @@ export interface SceneHandle {
   soot(x: number, y: number, z: number, radius: number): void;
   /** Smoke in the air, 0 clear to 1 thick: the fog closes in, browner, the light dims. */
   setSmog(k: number): void;
+  /** A lightning bolt onto the map point (x, y) now (`render/lightning.ts`). */
+  strikeAt(x: number, y: number): void;
+  /** Called at every strike with where it fell and how far from the view's centre, world units (for the thunder). */
+  onStrike(listener: (x: number, y: number, distance: number) => void): void;
+  /** How far the wind has carried the clouds, on the map (`world/clouds.ts` driftedCloud). */
+  cloudDrift(): { readonly x: number; readonly y: number };
   /** A lasting fire at world (x, y), height z (a building burning). */
   burn(x: number, y: number, z: number, size: number, seconds: number): void;
   /** Whether anything is still moving on its own (an explosion, bodies, debris): keep drawing. */
@@ -924,6 +934,26 @@ export function createSceneRenderer(
   void loadElementKit(anisotropy).then((kit) => { elementKit = kit; elementsFor = ''; }, (error: unknown) => {
     console.warn('[elements] models not loaded', error);
   });
+  /**
+   * The weather drawn (`world/weather.ts`): the rain, the lightning, how far
+   * the wind has carried the clouds, and whether any of it moves.
+   */
+  const rain = createRain();
+  const lightning = createLightning();
+  const cloudDrift = { x: 0, y: 0 };
+  const canvasSize = new Vector2();
+  const rainWind = new Vector2();
+  let weatherActive = false;
+  scene.add(rain.object, lightning.group);
+  const strikeListeners: ((x: number, y: number, distance: number) => void)[] = [];
+  /** A bolt onto the map point (x, y), from some way up in the sky. */
+  const strikeAt = (x: number, y: number): void => {
+    const ground = terrain.renderedHeightAt(x, y);
+    const up = m(260) + Math.random() * m(140);
+    lightning.strike(new Vector3(x + (Math.random() - 0.5) * up * 0.3, ground + up, -y + (Math.random() - 0.5) * up * 0.3), new Vector3(x, ground, -y));
+    const distance = Math.hypot(x - rig.target.x, y + rig.target.z);
+    for (const listener of strikeListeners) listener(x, y, distance);
+  };
   /** The gully revision the relief was baked for. */
   let gulliesFor = -1;
   /** The painted fog's map (`fogLayer.ts`), and the fog and land it was built for. */
@@ -2134,8 +2164,11 @@ export function createSceneRenderer(
     onBuildingDown: (listener) => { destruction.onDown = listener; },
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
+    strikeAt: (x, y) => strikeAt(x, y),
+    onStrike(listener) { strikeListeners.push(listener); },
+    cloudDrift: () => cloudDrift,
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
-    drifting: () => (fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds),
+    drifting: () => ((fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds)) || weatherActive,
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
@@ -2644,6 +2677,31 @@ export function createSceneRenderer(
       planetBody.setSpin(PLANET_SPIN);
       post.setGlobe(rig.viewport.globe);
       if (!spunAt.equals(PLANET_SPIN)) { spunAt.copy(PLANET_SPIN); spinSettled = performance.now() + 300; }
+      {
+        // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
+        // bends the plants and the smoke; the rain falls through the view;
+        // lightning strikes at random, as often a minute as asked, and lights
+        // the scene; an overcast sky dims the sun.
+        const weather = net.doc.weather;
+        const step = Math.min(0.1, Math.max(0, delta));
+        const wind = windVector(weather, m(1));
+        cloudDrift.x += wind.x * step;
+        cloudDrift.y += wind.y * step;
+        post.setCloudDrift(cloudDrift.x, cloudDrift.y);
+        setWindWeather(wind.x, -wind.y, weather.wind);
+        const span = 2 * Math.max(halfWidth, halfHeight);
+        if (weather.lightning > 0 && Math.random() < (step * weather.lightning) / 60) {
+          const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * span * 0.45;
+          strikeAt(target.x + Math.cos(a) * r, -target.z + Math.sin(a) * r);
+        }
+        canvasSize.set(canvas.clientWidth, canvas.clientHeight);
+        const flash = lightning.update(step, canvasSize);
+        const storm = Math.min(1, weather.lightning / 8);
+        environment.setWeather(Math.max(weather.rain * 0.85, storm * 0.6), flash);
+        rainWind.set(wind.x, -wind.y);
+        rain.update(weather.rain, target, span, rainWind, step);
+        weatherActive = weather.rain > 0 || weather.lightning > 0 || flash > 0 || (weather.wind > 0 && placedCloudsShown);
+      }
       const dark = environment.setTimeOfDay(clock);
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
@@ -2801,7 +2859,10 @@ export function createSceneRenderer(
         fogMoving = !!fogLayer?.any;
         placedCloudsShown = doc.clouds.length > 0 || !!elementLayer?.hasEffects;
       }
-      post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
+      // Rain thickens the air: a grey mist over the distance (`world/weather.ts`).
+      const rainNow = net.doc.weather.rain;
+      const air = rainNow > 0 ? { ...atmosphere, fog: Math.max(atmosphere.fog, rainNow * 0.2), fogHeight: Math.max(atmosphere.fogHeight, m(120)) } : atmosphere;
+      post.setAtmosphere(air, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();
       post.render(delta);
@@ -2847,6 +2908,8 @@ export function createSceneRenderer(
       elementKit?.dispose();
       paintedForest?.dispose();
       plantedForest?.dispose();
+      rain.dispose();
+      lightning.dispose();
       natureTreeKit?.dispose();
       sceneryKit.dispose();
       terrain.dispose();

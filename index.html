@@ -218,6 +218,7 @@
         <button type="button" class="terrain-mode" data-terrain-mode="elements" aria-pressed="false" data-i18n="terrain.elements">Elements</button>
         <button type="button" class="terrain-mode" data-terrain-mode="gully" aria-pressed="false" data-i18n="terrain.gully">Gullies</button>
         <button type="button" class="terrain-mode" data-terrain-mode="trees" aria-pressed="false" data-i18n="terrain.trees">Trees</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="weather" aria-pressed="false" data-i18n="terrain.weather">Weather</button>
         <button type="button" class="terrain-mode" data-terrain-mode="mesa" aria-pressed="false" data-i18n="terrain.mesa">Mesa</button>
         <button type="button" class="terrain-mode" data-terrain-mode="canyon" aria-pressed="false" data-i18n="terrain.canyon">Canyon</button>
         <button type="button" class="terrain-mode" data-terrain-mode="escarpment" aria-pressed="false" data-i18n="terrain.escarpment">Basalt escarpment</button>
@@ -267,6 +268,13 @@
         <label><span data-i18n="fog.speed">Fog speed</span> <input id="fogSpeed" type="range" min="0" max="24" value="6" step="0.5" /><output id="fogSpeedValue">6</output></label>
         <label><span data-i18n="fog.mapDensity">All fog on the map</span> <input id="fogMapDensity" type="range" min="0" max="200" value="100" step="10" /><output id="fogMapDensityValue">100</output></label>
         <button id="clearFog" type="button" data-i18n="fog.clear">Clear all fog</button>
+      </div>
+      <div class="terrain-weather" hidden>
+        <label><span data-i18n="weather.rain">Rain (%)</span> <input id="weatherRain" type="range" min="0" max="100" value="0" step="5" /><output id="weatherRainValue">0</output></label>
+        <label><span data-i18n="weather.wind">Wind (m/s)</span> <input id="weatherWind" type="range" min="0" max="30" value="0" step="1" /><output id="weatherWindValue">0</output></label>
+        <label><span data-i18n="weather.windDirection">Wind direction (°)</span> <input id="weatherWindDir" type="range" min="0" max="355" value="30" step="5" /><output id="weatherWindDirValue">30</output></label>
+        <label><span data-i18n="weather.lightning">Lightning a minute</span> <input id="weatherLightning" type="range" min="0" max="30" value="0" step="1" /><output id="weatherLightningValue">0</output></label>
+        <label><span data-i18n="weather.thunder">Thunder volume (%)</span> <input id="weatherThunder" type="range" min="0" max="100" value="60" step="5" /><output id="weatherThunderValue">60</output></label>
       </div>
       <div class="terrain-trees" hidden>
         <label><span data-i18n="tree.density">Trees per hectare</span> <input id="treeDensity" type="range" min="10" max="600" value="120" step="10" /><output id="treeDensityValue">120</output></label>

@@ -35,7 +35,21 @@ export const windUniforms = {
   uWindTime: { value: 0 },
   /** Direction the wind blows TOWARDS, in three's XZ plane. */
   uWindDir: { value: new Vector2(0.82, -0.57).normalize() },
+  /** How hard it blows, 1 the breeze the plants were tuned to (`setWindWeather`). */
+  uWindStrength: { value: 1 },
 };
+
+/**
+ * The map's wind (`world/weather.ts`): which way it blows, towards (three's
+ * x and z), and how fast, metres a second. Still air leaves a breath of a
+ * breeze; the plants were tuned to some 4.5 m/s, and a gale bends them
+ * about four times as far.
+ */
+export function setWindWeather(dirX: number, dirZ: number, metresPerSecond: number): void {
+  const length = Math.hypot(dirX, dirZ);
+  if (length > 1e-6) windUniforms.uWindDir.value.set(dirX / length, dirZ / length);
+  windUniforms.uWindStrength.value = Math.min(4.2, 0.3 + metresPerSecond / 6.5);
+}
 
 export interface WindResponse {
   /** Top displacement as a fraction of height, at a full gust. */
@@ -47,6 +61,7 @@ export interface WindResponse {
 const WIND_GLSL = /* glsl */ `
   uniform float uWindTime;
   uniform vec2 uWindDir;
+  uniform float uWindStrength;
   uniform float uWindSway;
   uniform float uWindFlutter;
 
@@ -63,10 +78,10 @@ const WIND_GLSL = /* glsl */ `
       + 0.4 * sin(uWindTime * 1.35 + phase * 7.0 + root.x * 0.031)
       + 0.15 * sin(uWindTime * 2.9 + phase * 11.0);
     vec3 dir = vec3(uWindDir.x, 0.0, uWindDir.y);
-    vec3 offset = dir * sway * gust * bend * uWindSway * height;
+    vec3 offset = dir * sway * gust * bend * uWindSway * uWindStrength * height;
     float leaf = sin(uWindTime * 7.3 + dot(local, vec3(37.0, 19.0, 29.0)) + phase * 17.0);
     float leaf2 = cos(uWindTime * 5.1 + dot(local, vec3(23.0, 41.0, 13.0)));
-    offset += vec3(leaf, 0.35 * leaf2, leaf2) * uWindFlutter * h * height * (0.4 + gust);
+    offset += vec3(leaf, 0.35 * leaf2, leaf2) * uWindFlutter * h * height * (0.4 + gust) * min(uWindStrength, 2.0);
     // A bent stem is no longer: drop the tip by what it moved sideways, so a
     // tree leans rather than stretches.
     offset.y -= dot(offset.xz, offset.xz) / max(2.0 * height * max(h, 0.2), 0.001);
@@ -135,6 +150,7 @@ export function applyWireWind(material: Material, amplitude: number): void {
       .replace('#include <common>', `#include <common>
         uniform float uWindTime;
         uniform vec2 uWindDir;
+        uniform float uWindStrength;
         uniform float uWireAmp;
         attribute float aSwing;
         attribute float aPhase;`)
@@ -142,8 +158,8 @@ export function applyWireWind(material: Material, amplitude: number): void {
         float front = dot(transformed.xz, uWindDir) * 0.012 - uWindTime * 0.42;
         float gust = 0.45 + 0.55 * smoothstep(-0.6, 1.0, sin(front) + 0.35 * sin(front * 2.3 + 1.7));
         float swing = sin(uWindTime * 1.9 + aPhase) + 0.35 * sin(uWindTime * 3.7 + aPhase * 2.3);
-        transformed.xz += uWindDir * (0.55 + 0.45 * swing) * gust * aSwing * uWireAmp;
-        transformed.y += 0.25 * cos(uWindTime * 1.9 + aPhase) * gust * aSwing * uWireAmp;`);
+        transformed.xz += uWindDir * (0.55 + 0.45 * swing) * gust * aSwing * uWireAmp * uWindStrength;
+        transformed.y += 0.25 * cos(uWindTime * 1.9 + aPhase) * gust * aSwing * uWireAmp * uWindStrength;`);
   };
   material.customProgramCacheKey = () => 'wire-wind';
 }
@@ -166,6 +182,7 @@ export function applyStructureSway(material: Material, originHeight: number, tal
       .replace('#include <common>', `#include <common>
         uniform float uWindTime;
         uniform vec2 uWindDir;
+        uniform float uWindStrength;
         uniform float uSwayOrigin;
         uniform float uSwayTall;
         uniform float uSwayAmp;`)
@@ -178,7 +195,7 @@ export function applyStructureSway(material: Material, originHeight: number, tal
            float swayFront = dot(swayRoot, uWindDir) * 0.012 - uWindTime * 0.42;
            float swayGust = 0.45 + 0.55 * smoothstep(-0.6, 1.0, sin(swayFront));
            float swayPhase = dot(floor(swayRoot / 4.0), vec2(1.7, 2.3));
-           float swayK = uSwayAmp * swayH * swayH * swayGust * (0.55 + 0.45 * sin(uWindTime * 2.3 + swayPhase));
+           float swayK = uSwayAmp * swayH * swayH * swayGust * (0.55 + 0.45 * sin(uWindTime * 2.3 + swayPhase)) * uWindStrength;
            mvPosition.xz += uWindDir * swayK;
          #endif
          mvPosition = modelViewMatrix * mvPosition;`,

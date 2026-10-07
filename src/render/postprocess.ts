@@ -3,7 +3,7 @@ import {
   PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { MAP_SIZE } from '@world/bounds';
-import type { PlacedCloud } from '@world/clouds';
+import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { PLANET_SHADER, planetPoint } from './planet';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -69,6 +69,8 @@ export interface PostChain {
   setGlobe(globe: number): void;
   /** The clouds the player placed (`world/clouds.ts`). */
   setPlacedClouds(clouds: readonly PlacedCloud[]): void;
+  /** How far the wind has carried the clouds, on the map (`world/clouds.ts` driftedCloud). */
+  setCloudDrift(x: number, y: number): void;
   /**
    * The painted fog (`render/fogLayer.ts`): its map, the slab of ground it
    * lies over, and the map's settings - or none.
@@ -128,6 +130,7 @@ export function createPostChain(
       setGroundFog() {
         /* no painted fog without the chain */
       },
+      setCloudDrift() {},
       setPlacedClouds() {
         /* no clouds without the chain */
       },
@@ -252,6 +255,7 @@ export function createPostChain(
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
   let cloudClock = 0;
   let placedClouds: readonly PlacedCloud[] = [];
+  const cloudDrift = { x: 0, y: 0 };
   const globePoint = new Vector3();
   if (clouds) {
     const pass = clouds;
@@ -281,7 +285,7 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds);
+        const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds, cloudDrift);
         u['uCloudCount']!.value = count;
         // Laid over the plane, drawn over the globe (`planet.ts`).
         const onGlobe = (v: Vector4): void => {
@@ -307,6 +311,10 @@ export function createPostChain(
     },
     setPlacedClouds(clouds) {
       placedClouds = clouds;
+    },
+    setCloudDrift(x, y) {
+      cloudDrift.x = x;
+      cloudDrift.y = y;
     },
     setGroundFog(fog) {
       if (!clouds) return;
@@ -384,11 +392,13 @@ function cloudHash(i: number, salt: number): number {
  * 2026-10-07). Writes each cloud's bounding sphere (centre, size), its puffs
  * (world centre, radius) and how grown it is (1).
  */
-function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: number[], placed: readonly PlacedCloud[]): number {
+function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: number[], placed: readonly PlacedCloud[], drift: { x: number; y: number }): number {
   let slot = 0;
   for (const cloud of placed) {
     if (slot >= MAX_CLOUDS) break;
-    layOne(slot, 1_000_003 + cloud.id * 7919, cloud.x, -cloud.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
+    // Where the wind has carried it, thinning away near the edge it wraps round.
+    const at = driftedCloud(cloud, drift);
+    layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, cloud.height, cloud.size, cloud.yaw, cloud.density * at.show, 1, bounds, puffs, lives);
     // Each its own flat base, at its own height (one height for the whole
     // sky cut away every cloud set lower than it, and its shadow with it).
     bases[slot] = cloud.height;

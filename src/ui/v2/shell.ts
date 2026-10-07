@@ -98,6 +98,7 @@ const ICON: Record<string, string> = {
   river: '<path d="M3 8c3-3 6 3 9 0s6 3 9 0"/><path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>',
   paint: '<path d="M4 20c2 0 4-1 4-4 0-2 2-3 4-3"/><path d="M12 13l7-7a2 2 0 0 0-3-3l-7 7"/><path d="M9 10l3 3"/>',
   cloud: '<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.3 1.7A3.2 3.2 0 0 0 7 18Z"/>',
+  storm: '<path d="M7 15h9a4 4 0 0 0 0-8 6 6 0 0 0-11.3 1.7A3.2 3.2 0 0 0 7 15Z"/><path d="m12 15-2 4h3l-2 4"/>',
   fog: '<path d="M3 9h13"/><path d="M6 13h15"/><path d="M3 17h13"/><path d="M19 9h2M3 13h1M18 17h3"/>',
   mesa: '<path d="M2 20h20"/><path d="M4 20 7 9h10l3 11"/><path d="M7.6 13h8.8M6.6 16.5h10.8"/>',
   canyon: '<path d="M2 6h6l2 13h4l2-13h6"/><path d="M8.6 10h-6M15.4 10h6M9.3 14.5h-7M14.7 14.5h7"/>',
@@ -872,7 +873,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon'], ['trees', 'ls_tree']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon'], ['trees', 'ls_tree'], ['weather', 'storm']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -925,6 +926,26 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
+      }
+      // The weather (`world/weather.ts`): rain, wind, lightning and thunder
+      // over the whole map; a click on the map calls a bolt down there.
+      if (q<HTMLButtonElement>('[data-terrain-mode="weather"]')?.classList.contains('active')) {
+        const rainAndWind = titled(group(t('weather.title')), t('weather.title'));
+        rainAndWind.classList.add('stack');
+        rainAndWind.append(
+          slider(t('weather.rain'), '#weatherRain', '#weatherRainValue'),
+          slider(t('weather.wind'), '#weatherWind', '#weatherWindValue'),
+          slider(t('weather.windDirection'), '#weatherWindDir', '#weatherWindDirValue'),
+        );
+        options.appendChild(rainAndWind);
+        const storm = titled(group(t('weather.storm')), t('weather.storm'));
+        storm.classList.add('stack');
+        storm.append(
+          slider(t('weather.lightning'), '#weatherLightning', '#weatherLightningValue'),
+          slider(t('weather.thunder'), '#weatherThunder', '#weatherThunderValue'),
+        );
+        options.appendChild(storm);
+        return;
       }
       // The tree brush (`world/trees.ts`): which trees, whether it plants a
       // stand, one tree a click or cuts trees away (the woods' own too), and
