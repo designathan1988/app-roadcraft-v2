@@ -33,6 +33,7 @@ import { GroundChanges } from './groundChanges';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
+  RIVER_BED_FLOOR,
   TERRAIN_WATER_HEIGHT,
   TerrainIndex,
   sampleTerrainHeight,
@@ -607,10 +608,16 @@ function shoreLevels(water: BufferGeometry, levels: Float32Array, ground: ArrayL
   const position = water.getAttribute('position');
   if (position) {
     for (let i = 0; i < position.count; i++) {
-      const ix = Math.round((position.getX(i) + TERRAIN_HALF) / TERRAIN_CELL);
-      const iy = Math.round((position.getZ(i) + TERRAIN_HALF) / TERRAIN_CELL);
+      const gx = (position.getX(i) + TERRAIN_HALF) / TERRAIN_CELL;
+      const gy = (position.getZ(i) + TERRAIN_HALF) / TERRAIN_CELL;
+      const ix = Math.round(gx);
+      const iy = Math.round(gy);
       if (ix < 0 || iy < 0 || ix >= GRID || iy >= GRID) continue;
       const k = iy * GRID + ix;
+      // Only a corner the water really stands over: a shore vertex marked
+      // the nearest corner even where that corner was dry or past the
+      // water, and the bed was painted a terrain cell beyond it, in steps.
+      if ((ground[k] as number) >= position.getY(i)) continue;
       levels[k] = Math.max(levels[k] as number, position.getY(i));
     }
   }
@@ -1042,6 +1049,9 @@ function terrainMaterial(
          // w: the painted forest, all bilinear (G, B and A channels).
          // The painted geology here: x sandstone, y basalt (the rest granite).
          vec2 terrainGeo = vec2(0.0);
+         // How much of this point the corners with a water level cover, 0..1:
+         // the shore's bands fade with it, instead of ending in the grid's polygons.
+         float terrainShoreCover = 0.0;
          vec4 terrainShoreSample(vec3 world) {
            vec2 g = clamp((world.xz + uShoreGrid.x) / uShoreGrid.y, vec2(0.0), vec2(uShoreGrid.z - 1.001));
            vec2 i = floor(g);
@@ -1056,6 +1066,7 @@ function terrainMaterial(
            vec4 has = step(vec4(${NO_WATER / 2}.0), level);
            vec4 w = bilinear * has;
            float sum = w.x + w.y + w.z + w.w;
+           terrainShoreCover = sum;
            // G and B carry two bytes each (packGroundCorners): flowers and
            // scrub low, sandstone and basalt high, split per corner first.
            vec4 gPair = vec4(c00.y, c10.y, c01.y, c11.y);
@@ -1488,15 +1499,16 @@ function terrainMaterial(
            float sandLuma = dot(dirtPlan.rgb, vec3(0.3, 0.6, 0.1));
            vec3 sand = vec3(0.42, 0.36, 0.23) * (0.82 + sandLuma * 1.4);
            float gentle = 1.0 - smoothstep(24.0, 40.0, slopeDeg);
-           float beach = (1.0 - smoothstep(2.5 + wanderD * 3.0, 6.0 + wanderD * 3.0, above)) * gentle;
+           float shoreFade = smoothstep(0.15, 0.85, terrainShoreCover + (wanderD - 0.5) * 0.3);
+           float beach = (1.0 - smoothstep(2.5 + wanderD * 3.0, 6.0 + wanderD * 3.0, above)) * gentle * shoreFade;
            blended.rgb = mix(blended.rgb, sand, beach * (1.0 - rockMix * 0.6));
            // A steep bank holds no beach: it is a cut of damp earth from the
            // water up to the turf, frayed at its top.
-           float bank = (1.0 - smoothstep(5.0 + wanderD * 5.0, 10.0 + wanderD * 5.0, above)) * (1.0 - gentle);
+           float bank = (1.0 - smoothstep(5.0 + wanderD * 5.0, 10.0 + wanderD * 5.0, above)) * (1.0 - gentle) * shoreFade;
            blended.rgb = mix(blended.rgb, dirtColor.rgb * vec3(0.78, 0.72, 0.62), bank * (1.0 - rockMix));
            // Below the water: a bed of sand and pebbles, seen through the
            // shallows, going to silt as it deepens.
-           float bed = smoothstep(0.0, -2.0, above);
+           float bed = smoothstep(0.0, -2.0, above) * smoothstep(0.03, 0.35, terrainShoreCover);
            float pebble = texture2D(uDirtMap, vTerrainWorld.xz * 0.53).r;
            float stones = texture2D(uDirtMap, vTerrainWorld.xz * 0.21 + 0.4).g;
            vec3 gravelBed = vec3(0.34, 0.3, 0.22) * mix(0.62, 1.3, pebble) * mix(0.85, 1.12, stones);
@@ -1504,7 +1516,7 @@ function terrainMaterial(
            vec3 bedColour = mix(gravelBed, silt, smoothstep(-2.0, -12.0, above));
            blended.rgb = mix(blended.rgb, bedColour, bed * 0.9);
            // Wet: darker from a little above the line down into the water.
-           float wet = 1.0 - smoothstep(-0.2, 1.4, above);
+           float wet = (1.0 - smoothstep(-0.2, 1.4, above)) * smoothstep(0.03, 0.35, terrainShoreCover);
            blended.rgb *= mix(1.0, 0.6, wet);
          }
          // Kept gentle: at 0.46 the far side of every hill went navy.
@@ -1599,7 +1611,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v20';
+  material.customProgramCacheKey = () => 'terrain-splat-v23';
   return material;
 }
 
@@ -2387,9 +2399,37 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const landIndex = new TerrainIndex(land, 0, index.relief);
     const landAt = (x: number, y: number): number => TERRAIN_BASE + sampleTerrainHeight(landIndex, x, y);
 
+    // A river drawn as a stroke is ONE body of water along its course: a
+    // ribbon down the channel, its level only ever falling downstream (the
+    // spline rivers of Unreal's Water and of Unity's river tools). Built
+    // from discs on a grid, a river crossing lower ground ended in steps.
+    const strokes = new Map<number, TerrainStamp[]>();
+    for (const stamp of stamps) {
+      if (stamp.mode !== 'river' || stamp.stroke === undefined) continue;
+      const list = strokes.get(stamp.stroke);
+      if (list) list.push(stamp);
+      else strokes.set(stamp.stroke, [stamp]);
+    }
+    const ribbonStamps = new Set<TerrainStamp>();
+    const ribbons: RiverPath[] = [];
+    const bankLevel = (stamp: TerrainStamp): number => {
+      let bank = landAt(stamp.x, stamp.y);
+      for (let k = 0; k < 8; k++) {
+        const angle = (k / 8) * Math.PI * 2;
+        bank = Math.min(bank, landAt(stamp.x + Math.cos(angle) * stamp.radius, stamp.y + Math.sin(angle) * stamp.radius));
+      }
+      const bed = heightAt(stamp.x, stamp.y);
+      return bank - Math.max(WATER_MARGIN, WATER_FILL * (bank - bed));
+    };
+    for (const list of strokes.values()) {
+      if (list.length < 3) continue;
+      for (const stamp of list) ribbonStamps.add(stamp);
+      ribbons.push(list.map((stamp) => ({ x: stamp.x, y: stamp.y, half: stamp.radius * RIBBON_HALF_WIDTH, level: bankLevel(stamp) })));
+    }
+
     const discs: WaterStamp[] = [];
     for (const stamp of stamps) {
-      if (stamp.mode !== 'river' || discs.length >= MAX_TERRAIN_STAMPS) continue;
+      if (stamp.mode !== 'river' || discs.length >= MAX_TERRAIN_STAMPS || ribbonStamps.has(stamp)) continue;
       // The LOWEST bank round the dab, not the ground at its centre: on a
       // hillside one bank is lower than the other, and water standing at the
       // centre's level spilled over it, flooded the slope past the basin
@@ -2409,7 +2449,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     groundTexture.needsUpdate = true;
     const previous = water.geometry;
     floodCells = new Map();
-    water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
+    water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells, ribbons);
     previous.dispose();
     shoreLevels(water.geometry, material.userData['shoreLevels'] as Float32Array, grid);
     packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array, material.userData['forestCorners'] as Float32Array, material.userData['sandCorners'] as Float32Array, material.userData['basaltCorners'] as Float32Array);
@@ -2448,7 +2488,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v20-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v23-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
@@ -2756,6 +2796,8 @@ const MAX_FLOOD_CELLS = 40_000;
  * low country the water would drain into; it is withdrawn and that water keeps
  * the extent the brush gave it.
  */
+/** How many water cells (24 units, about 10 m) of an over-large flood stay, so a river meets its own banks. */
+const SHORE_BAND = 6;
 function floodBasins(
   vertices: Map<WaterKey, WaterVertex>,
   groundAt: (x: number, y: number) => number,
@@ -2783,10 +2825,13 @@ function floodBasins(
     // Its flood, breadth first from its whole edge, each new cell at the level
     // of the water that reached it.
     const added: WaterKey[] = [];
+    /** How many cells out from the body each flooded cell is. */
+    const steps = new Map<WaterKey, number>();
     const queue = body.slice();
     let overflow = false;
     for (let head = 0; head < queue.length && !overflow; head++) {
       const v = queue[head] as WaterVertex;
+      const out = steps.get(waterKey(v.ix, v.iy)) ?? 0;
       const level = v.weightedLevel / v.weight;
       for (const [dx, dy] of NEIGHBOURS) {
         const ix = v.ix + dx;
@@ -2798,12 +2843,18 @@ function floodBasins(
         vertices.set(key, wet);
         seen.add(key);
         added.push(key);
+        steps.set(key, out + 1);
         queue.push(wet);
         if (added.length > MAX_FLOOD_CELLS) { overflow = true; break; }
       }
     }
-    if (overflow) for (const key of added) vertices.delete(key);
-    else if (flooded) for (const key of added) {
+    // Open country is not a basin: that flood is withdrawn - but not the
+    // band next to the water, or the sheet stopped at the brush's reach in
+    // steps over a bed it left dry. Within SHORE_BAND cells it reaches its
+    // bank; beyond, the water keeps the extent the brush gave it.
+    if (overflow) {
+      for (const key of added) if ((steps.get(key) ?? 0) > SHORE_BAND) vertices.delete(key);
+    } else if (flooded) for (const key of added) {
       const v = vertices.get(key) as WaterVertex;
       flooded.set(`${v.ix}:${v.iy}`, v.weightedLevel / v.weight);
     }
@@ -2830,9 +2881,11 @@ export function unifiedWaterGeometry(
   terrainHeightAt: (x: number, y: number) => number,
   /** Filled with the cells the water flooded into, and their level. */
   flooded?: Map<string, number>,
+  /** Rivers drawn as strokes (`riverRibbon`). */
+  ribbons: readonly RiverPath[] = [],
 ): BufferGeometry {
   const geometry = new BufferGeometry();
-  if (stamps.length === 0) return geometry;
+  if (stamps.length === 0 && ribbons.length === 0) return geometry;
 
   const vertices = new Map<WaterKey, WaterVertex>();
   for (const stamp of stamps) {
@@ -2883,6 +2936,7 @@ export function unifiedWaterGeometry(
     cells.add(waterKey(vertex.ix - 1, vertex.iy - 1));
   }
 
+  for (const path of ribbons) riverRibbon(path, terrainHeightAt, positions, depths);
   for (const cell of cells) {
     const [ix, iy] = waterCell(cell);
     const k0 = levelAt(ix, iy), k1 = levelAt(ix + 1, iy);
@@ -2903,10 +2957,17 @@ export function unifiedWaterGeometry(
     p1.x = wx + WATER_CELL; p1.y = wy; p1.level = l1; p1.depth = l1 - terrainHeightAt(p1.x, p1.y);
     p2.x = wx + WATER_CELL; p2.y = wy + WATER_CELL; p2.level = l2; p2.depth = l2 - terrainHeightAt(p2.x, p2.y);
     p3.x = wx; p3.y = wy + WATER_CELL; p3.level = l3; p3.depth = l3 - terrainHeightAt(p3.x, p3.y);
+    // A corner past the water's extent is DRY even over ground below the
+    // level (a canyon the river crosses): as wet, every such cell was drawn
+    // whole and the sheet ended in steps of a cell in mid-air. Its edge is
+    // cut where the contour crosses, interpolated (marching squares).
+    p0.outside = k0 === null; p1.outside = k1 === null; p2.outside = k2 === null; p3.outside = k3 === null;
+    for (const p of points) if (p.outside) p.depth = -Math.max(0.5, Math.abs(p.depth));
     centre.x = wx + WATER_CELL / 2;
     centre.y = wy + WATER_CELL / 2;
     centre.level = (l0 + l1 + l2 + l3) / 4;
     centre.depth = centre.level - terrainHeightAt(centre.x, centre.y);
+    centre.outside = false;
     const wetCorners = Number(p0.depth > TERRAIN_WATER_HEIGHT) + Number(p1.depth > TERRAIN_WATER_HEIGHT) +
       Number(p2.depth > TERRAIN_WATER_HEIGHT) + Number(p3.depth > TERRAIN_WATER_HEIGHT);
     if (wetCorners === 0 && centre.depth <= TERRAIN_WATER_HEIGHT) continue;
@@ -2947,11 +3008,109 @@ export function unifiedWaterGeometry(
   return geometry;
 }
 
+/** One point of a river's course: where, how wide its water each side, at what level. */
+export interface RiverPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly half: number;
+  readonly level: number;
+}
+export type RiverPath = readonly RiverPoint[];
+
+/** The river's water reaches this share of its brush each side (the banks clip the rest). */
+const RIBBON_HALF_WIDTH = RIVER_BED_FLOOR;
+/** The least water over a river's bed, units (half a metre). */
+const RIVER_MIN_DEPTH = 1.25;
+/** Most units between two cross-sections of a ribbon. */
+const RIBBON_STEP = 6;
+/** Strips across a ribbon. */
+const RIBBON_ACROSS = 6;
+
+/**
+ * A river's water as one ribbon down its course: resampled along a smooth
+ * curve through the stroke's dabs (Catmull-Rom), at the level of each
+ * reach's banks, smoothed (the end whose banks stand higher is the source).
+ * The ribbon is wider than the water: where a bank rises over the level the
+ * ground hides it, so the shore is where the ground meets the water, with no
+ * grid in it.
+ */
+export function riverRibbon(path: RiverPath, groundAt: (x: number, y: number) => number, positions: number[], depths: number[]): void {
+  if (path.length < 2) return;
+  // Downstream: from the higher end (the order the falls are read in).
+  const n = path.length;
+  const head = path.slice(0, Math.max(1, Math.floor(n / 3))).reduce((s, p) => s + p.level, 0) / Math.max(1, Math.floor(n / 3));
+  const tail = path.slice(n - Math.max(1, Math.floor(n / 3))).reduce((s, p) => s + p.level, 0) / Math.max(1, Math.floor(n / 3));
+  const course = head >= tail ? path : [...path].reverse();
+  // Resample on a Catmull-Rom curve.
+  const pts: { x: number; y: number; half: number; level: number }[] = [];
+  const at = (i: number): RiverPoint => course[Math.max(0, Math.min(course.length - 1, i))]!;
+  for (let i = 0; i + 1 < course.length; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    const span = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const steps = Math.max(1, Math.ceil(span / RIBBON_STEP));
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps, t2 = t * t, t3 = t2 * t;
+      const cr = (a: number, b: number, c: number, d: number): number =>
+        0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      pts.push({ x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y), half: p1.half + (p2.half - p1.half) * t, level: p1.level + (p2.level - p1.level) * t });
+    }
+  }
+  const last = at(course.length - 1);
+  pts.push({ x: last.x, y: last.y, half: last.half, level: last.level });
+  // The level follows each reach's own banks, smoothed. Held never to rise
+  // downstream, a river that crossed lower ground (a canyon) dropped to its
+  // floor and ran dry, under its own bed, the rest of its course.
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 1; i + 1 < pts.length; i++) pts[i]!.level = (pts[i - 1]!.level + pts[i]!.level * 2 + pts[i + 1]!.level) / 4;
+  }
+  // Never dry: at least RIVER_MIN_DEPTH over the bed along the whole course,
+  // or a reach over higher ground broke the river into ponds.
+  for (const p of pts) p.level = Math.max(p.level, groundAt(p.x, p.y) + RIVER_MIN_DEPTH);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i + 1 < pts.length; i++) pts[i]!.level = Math.max(groundAt(pts[i]!.x, pts[i]!.y) + RIVER_MIN_DEPTH, (pts[i - 1]!.level + pts[i]!.level * 2 + pts[i + 1]!.level) / 4);
+  }
+  // Cross-sections.
+  const rows: { x: number; y: number; level: number; depth: number }[][] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)]!, b = pts[Math.min(pts.length - 1, i + 1)]!;
+    let tx = b.x - a.x, ty = b.y - a.y;
+    const len = Math.hypot(tx, ty) || 1;
+    tx /= len; ty /= len;
+    const nx = -ty, ny = tx;
+    const p = pts[i]!;
+    const row: { x: number; y: number; level: number; depth: number }[] = [];
+    for (let j = 0; j <= RIBBON_ACROSS; j++) {
+      const s = (j / RIBBON_ACROSS) * 2 - 1;
+      const x = p.x + nx * p.half * s, y = p.y + ny * p.half * s;
+      row.push({ x, y, level: p.level, depth: p.level - groundAt(x, y) });
+    }
+    rows.push(row);
+  }
+  // Quads, anticlockwise seen from above (as the grid's cells are wound).
+  const push = (v: { x: number; y: number; level: number; depth: number }): void => {
+    positions.push(v.x, v.level, -v.y);
+    depths.push(v.depth);
+  };
+  for (let i = 0; i + 1 < rows.length; i++) {
+    for (let j = 0; j < RIBBON_ACROSS; j++) {
+      const a = rows[i]![j]!, b = rows[i]![j + 1]!, c = rows[i + 1]![j + 1]!, d = rows[i + 1]![j]!;
+      // Skip a quad over ground or under a film of water: a sheet a few
+      // centimetres deep over the floodplain drew grey slabs off the river.
+      if (Math.max(a.depth, b.depth, c.depth, d.depth) < 0.75) continue;
+      const cross = (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x);
+      if (cross > 0) { push(a); push(b); push(c); push(a); push(c); push(d); }
+      else { push(a); push(c); push(b); push(a); push(d); push(c); }
+    }
+  }
+}
+
 interface WaterPoint {
   x: number;
   y: number;
   level: number;
   depth: number;
+  /** A corner past the water's extent (no level of its own): dry, whatever the ground under it. */
+  outside?: boolean;
 }
 
 function pushTriangle(
@@ -2980,6 +3139,16 @@ function pushWetTriangle(
     if (fromWet === toWet) continue;
     let wet = fromWet ? from : to;
     let dry = fromWet ? to : from;
+    if (dry.outside) {
+      // Past the water's extent: the crossing by the depths, as marching
+      // squares interpolates along an edge - if the ground there is under
+      // the water; on a bank, it is resolved against the ground below.
+      const t = wet.depth / Math.max(1e-6, wet.depth - dry.depth);
+      const x = wet.x + (dry.x - wet.x) * t, y = wet.y + (dry.y - wet.y) * t;
+      const cut = { x, y, level: wet.level, depth: wet.level - groundAt(x, y) };
+      if (cut.depth > TERRAIN_WATER_HEIGHT) { polygon.push(cut); continue; }
+      dry = cut;
+    }
     // Resolve against the ground sampler itself. A linear depth estimate can
     // place the vertex in air where the terrain bends or has a step.
     for (let step = 0; step < 8; step++) {
