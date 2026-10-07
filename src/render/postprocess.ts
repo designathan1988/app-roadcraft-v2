@@ -1,6 +1,6 @@
 import {
   BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh,
-  PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type WebGLRenderer,
+  PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { MAP_SIZE } from '@world/bounds';
 import { PLANET_SHADER, planetPoint } from './planet';
@@ -66,6 +66,11 @@ export interface PostChain {
    * the depth of a whole planet its reconstruction drew a line across it.
    */
   setGlobe(globe: number): void;
+  /**
+   * The painted fog (`render/fogLayer.ts`): its map, the slab of ground it
+   * lies over, and the map's settings - or none.
+   */
+  setGroundFog(fog: { texture: Texture; low: number; high: number; density: number } | null): void;
   dispose(): void;
 }
 
@@ -112,6 +117,9 @@ export function createPostChain(
       },
       setGlobe() {
         /* no crease shading without the chain */
+      },
+      setGroundFog() {
+        /* no painted fog without the chain */
       },
       dispose() {
         /* nothing owned */
@@ -287,6 +295,14 @@ export function createPostChain(
     setGlobe(globe) {
       if (gtao) gtao.enabled = globe < 0.05;
     },
+    setGroundFog(fog) {
+      if (!clouds) return;
+      const u = clouds.uniforms as Record<string, { value: unknown }>;
+      if (!fog) { (u['uGroundFog']!.value as Vector4).set(0, 0, 0, 0); return; }
+      u['tGroundFog']!.value = fog.texture;
+      (u['uGroundFog']!.value as Vector4).set(fog.density, 0, 0, 1);
+      (u['uGroundFogSlab']!.value as Vector2).set(fog.low - 2, fog.high);
+    },
     setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop) {
       if (!clouds) return;
       sky = atmosphere;
@@ -439,6 +455,12 @@ const CLOUD_SHADOWS = {
     uSunDir: { value: new Vector3(0.5, 0.8, 0.3).normalize() },
     uSunLight: { value: new Color(3, 2.8, 2.5) },
     uFogColor: { value: new Color(0xc9dcea) },
+    // The painted fog (`setGroundFog`): its map; the map's density, -, -, on;
+    // the lowest and highest the bank reaches.
+    tGroundFog: { value: null as Texture | null },
+    uGroundFog: { value: new Vector4() },
+    uGroundFogSlab: { value: new Vector2() },
+    uMapHalf: { value: MAP_SIZE / 2 },
     uBackdrop: { value: 0 },
     planetBend: PLANET_SHADER.uniform,
     planetSpin: PLANET_SHADER.spin,
@@ -478,6 +500,10 @@ const CLOUD_SHADOWS = {
     uniform vec3 uSunDir;
     uniform vec3 uSunLight;
     uniform vec3 uFogColor;
+    uniform sampler2D tGroundFog;
+    uniform vec4 uGroundFog;
+    uniform vec2 uGroundFogSlab;
+    uniform float uMapHalf;
     uniform float uBackdrop;
     uniform vec4 planetBend;
     // Height over the ground's base level: over the globe, out from its centre.
@@ -676,6 +702,84 @@ const CLOUD_SHADOWS = {
           float far = max(0.0, tScene - 2200.0);
           float amount = (1.0 - exp(-far / 9000.0)) * 0.55;
           colour = mix(colour, haze * (1.0 + 0.6 * glow), amount);
+        }
+      }
+      // THE PAINTED FOG (world/fogPaint.ts): a bank of mist lying on the
+      // land where the player laid it, thick near the ground and thinning
+      // with height over it (Unreal's local fog volumes over an exponential
+      // height fog), torn into drifting wisps by a noise the wind carries
+      // through. The view's ray is marched through the slab of air the bank
+      // can fill, as far as the scene; each step's density from the painted
+      // map, the ground under it from the map's other channel. Lit by the
+      // sky and, looking towards the sun, its warm glow (Inigo Quilez,
+      // "Better Fog").
+      if (uGroundFog.w > 0.5 && planetBend.x <= 0.0) {
+        float t0 = 0.0, t1 = min(tScene, 30000.0);
+        // Into the slab [low, high] along the ray.
+        if (abs(rd.y) > 1e-4) {
+          float ta = (uGroundFogSlab.x - ro.y) / rd.y, tb = (uGroundFogSlab.y - ro.y) / rd.y;
+          t0 = max(t0, min(ta, tb));
+          t1 = min(t1, max(ta, tb));
+        } else if (ro.y < uGroundFogSlab.x || ro.y > uGroundFogSlab.y) {
+          t1 = -1.0;
+        }
+        if (t1 > t0) {
+          const int FOG_STEPS = 28;
+          float stepLen = (t1 - t0) / float(FOG_STEPS);
+          float jitterF = fract(sin(dot(gl_FragCoord.xy, vec2(41.31, 289.97))) * 43758.5453);
+          vec2 windDir = normalize(vec2(24.0, 9.0));
+          // The FLOW MAP (Vlachos, "Water Flow in Portal 2", Valve 2010):
+          // each texel's fog moves at its own speed, so the offset cannot
+          // grow with time (neighbours of different speeds would shear the
+          // wisps apart); two layers half a cycle apart each slide for one
+          // cycle and start again, the one restarting always faded out.
+          const float CYCLE = 9.0;
+          float phaseA = fract(uTime / CYCLE);
+          float phaseB = fract(uTime / CYCLE + 0.5);
+          float blendB = abs(phaseA - 0.5) * 2.0;
+          float transmit = 1.0;
+          for (int i = 0; i < FOG_STEPS; i++) {
+            float t = t0 + (float(i) + jitterF) * stepLen;
+            vec3 q = ro + rd * t;
+            vec2 uv = vec2(q.x + uMapHalf, -q.z + uMapHalf) / (2.0 * uMapHalf);
+            if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) continue;
+            vec4 m = texture2D(tGroundFog, uv);
+            if (m.r < 0.003) continue;
+            float over = q.y - m.g;
+            if (over < -4.0) continue;
+            float thin = exp(-max(over, 0.0) / max(m.b, 1.0));
+            vec2 flow = windDir * m.a * CYCLE;
+            // Wisps: two layers of billows the wind carries at different
+            // speeds and a little apart in heading, each rolling over in
+            // time as it goes, so the bank streams, curls and frays instead
+            // of sliding as one sheet (the player, 2026-10-07: "tem que se
+            // mexer").
+            // The rolling-over goes at the fog's own pace too: still fog
+            // barely stirs, fast fog boils.
+            float roll = uTime * (0.01 + m.a * 0.002);
+            vec2 flow2 = vec2(flow.x * 1.7 - flow.y * 0.4, flow.y * 1.7 + flow.x * 0.4);
+            float n = 0.0;
+            for (int layer = 0; layer < 2; layer++) {
+              float phase = layer == 0 ? phaseA : phaseB;
+              // Each layer starts its cycle in a different place (Valve's noise against the pulsing).
+              vec2 shift = layer == 0 ? vec2(0.0) : vec2(37.1, 91.7);
+              vec3 nq = vec3(q.x - flow.x * phase + shift.x, q.y * 1.6, -q.z - flow.y * phase + shift.y) / 55.0 + vec3(0.0, roll, roll * 0.7);
+              vec3 nr = vec3(q.x - flow2.x * phase + shift.y, q.y * 2.0, -q.z - flow2.y * phase + shift.x) / 23.0 + vec3(roll * 1.4, 0.0, 0.0);
+              float nl = noise3(nq) * 0.6 + noise3(nq * 2.1 + 4.1) * 0.15 + noise3(nr) * 0.25;
+              n += nl * (layer == 0 ? 1.0 - blendB : blendB);
+            }
+            float wisp = smoothstep(0.25, 0.75, n * (0.7 + 0.6 * thin));
+            float density = m.r * uGroundFog.x * thin * wisp * 0.012;
+            transmit *= exp(-density * stepLen);
+            if (transmit < 0.02) break;
+          }
+          float amount = 1.0 - transmit;
+          if (amount > 0.001) {
+            float sunAmount = pow(max(dot(rd, uSunDir), 0.0), 8.0);
+            vec3 mist = mix(vec3(0.86, 0.9, 0.95), vec3(1.0, 0.95, 0.84), sunAmount) * (0.72 + 0.28 * max(uSunDir.y, 0.0));
+            mist *= 1.0 - 0.85 * uDark;
+            colour = mix(colour, mist, amount);
+          }
         }
       }
       // The clouds, nearest first.

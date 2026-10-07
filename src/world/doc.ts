@@ -23,6 +23,7 @@ import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
+import { DEFAULT_FOG, MAX_FOG_DABS, readFogDab, readFogSettings, type FogDab, type FogSettings } from './fogPaint';
 import { isNatureSettings, type NatureSettings } from './ecology';
 import { type TransitData, emptyTransit, hasTransit, normalizeTransit } from './transit';
 import { casingHalf, roadProfile } from './roadTypes';
@@ -200,6 +201,11 @@ export class RoadDoc {
   readonly terrainPaint: PaintDab[] = [];
   /** Moves with every change to `terrainPaint`, and only then. */
   paintRevision = 0;
+  /** Fog painted over the land (`fogPaint.ts`), oldest first, and how it behaves. */
+  readonly fogDabs: FogDab[] = [];
+  fogSettings: FogSettings = DEFAULT_FOG;
+  /** Moves with every change to `fogDabs` or `fogSettings`, and only then. */
+  fogRevision = 0;
 
   /**
    * Modular buildings (docs/buildings.md). They keep their OWN revision,
@@ -695,6 +701,25 @@ export class RoadDoc {
     this.paintRevision++;
   }
 
+  addFogDab(dab: FogDab): void {
+    this.fogDabs.push({ ...dab });
+    if (this.fogDabs.length > MAX_FOG_DABS) this.fogDabs.shift();
+    this.fogRevision++;
+  }
+
+  clearFog(): void {
+    if (this.fogDabs.length === 0) return;
+    this.fogDabs.length = 0;
+    this.fogRevision++;
+  }
+
+  setFogSettings(next: Partial<FogSettings>): void {
+    const merged = readFogSettings({ ...this.fogSettings, ...next });
+    if (JSON.stringify(merged) === JSON.stringify(this.fogSettings)) return;
+    this.fogSettings = merged;
+    this.fogRevision++;
+  }
+
   clearPaint(): void {
     if (this.terrainPaint.length === 0) return;
     this.terrainPaint.length = 0;
@@ -856,6 +881,7 @@ export class RoadDoc {
     copy.trafficRevision = this.trafficRevision;
     copy.terrainRevision = this.terrainRevision;
     copy.paintRevision = this.paintRevision;
+    copy.fogRevision = this.fogRevision;
     copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
     for (const id of this.dirtyNodes) copy.dirtyNodes.add(id);
@@ -952,6 +978,13 @@ export class RoadDoc {
       this.natureRevision++;
     }
 
+    if (JSON.stringify(this.fogDabs) !== JSON.stringify(source.fogDabs) || JSON.stringify(this.fogSettings) !== JSON.stringify(source.fogSettings)) {
+      this.fogDabs.length = 0;
+      this.fogDabs.push(...source.fogDabs.map((dab) => ({ ...dab })));
+      this.fogSettings = { ...source.fogSettings };
+      this.fogRevision++;
+    }
+
     if (!samePaint(this.terrainPaint, source.terrainPaint)) {
       this.terrainPaint.length = 0;
       this.terrainPaint.push(...source.terrainPaint.map((dab) => ({ ...dab })));
@@ -1036,6 +1069,8 @@ export class RoadDoc {
       ...(this.terrainRelief !== RELIEF_LEGACY ? { relief: this.terrainRelief } : {}),
       ...(this.nature ? { nature: { ...this.nature } } : {}),
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
+      ...(this.fogDabs.length > 0 || JSON.stringify(this.fogSettings) !== JSON.stringify(DEFAULT_FOG)
+        ? { fog: { dabs: this.fogDabs.map((dab) => ({ ...dab })), settings: { ...this.fogSettings } } } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
@@ -1151,6 +1186,15 @@ export class RoadDoc {
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
     if (doc.terrainPaint.length) doc.paintRevision = 1;
+    // Absent: a map with no fog painted.
+    if (data.fog) {
+      for (const raw of data.fog.dabs ?? []) {
+        const dab = readFogDab(raw);
+        if (dab) doc.fogDabs.push(dab);
+      }
+      doc.fogSettings = readFogSettings(data.fog.settings);
+      doc.fogRevision = 1;
+    }
     // Absent: a map from before the natural land, which stays on the old one.
     doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
     // Absent: a map from before the ecosystem, which keeps its ground.
@@ -1283,6 +1327,7 @@ export interface SerializedDoc {
   readonly poleSpans?: readonly { id: number; a: number; b: number }[];
   /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
   readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
+  readonly fog?: { readonly dabs?: readonly unknown[]; readonly settings?: unknown };
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string; planted?: number }[];
   /** Public transport (`transit.ts`); OPTIONAL like the poles. */

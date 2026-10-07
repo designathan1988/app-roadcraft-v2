@@ -128,6 +128,7 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
 import { buildNatureForest, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
+import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { isCoverKind } from '@world/terrainPaint';
 
 /**
@@ -910,6 +911,11 @@ export function createSceneRenderer(
   let paintedForest: NatureForest | null = null;
   let paintedTrees: TreePlacement[] | null = null;
   let natureTreesPending = true;
+  /** The painted fog's map (`fogLayer.ts`), and the fog and land it was built for. */
+  const fogTexture = createFogTexture();
+  let fogLayer: FogLayer | null = null;
+  let fogFor = '';
+  let fogMoving = false;
   void loadNatureTrees(anisotropy).then((kit) => {
     natureTreeKit = kit;
     natureFor = '';
@@ -2107,7 +2113,7 @@ export function createSceneRenderer(
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
-    drifting: () => atmosphere.clouds > 0 && post.enabled && (quality.cloudShadows || quality.skyClouds),
+    drifting: () => (atmosphere.clouds > 0 || fogMoving) && post.enabled && (quality.cloudShadows || quality.skyClouds),
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);
@@ -2707,6 +2713,23 @@ export function createSceneRenderer(
         const close = halfHeight < 900 && rig.viewport.globe < 0.05;
         terrain.bakeRelief(renderer, close ? reliefFocus : null);
       }
+      {
+        // The painted fog: its map again when the fog or the land under it
+        // changed (never in the middle of a sculpting stroke).
+        const doc = net.doc;
+        const key = `${doc.fogRevision}:${doc.terrainRevision}`;
+        // A fog stroke shows as it is painted; a land stroke waits for its end.
+        const landHeld = !!options?.holdRoads && fogFor.split(':')[1] !== String(doc.terrainRevision);
+        if (key !== fogFor && !landHeld) {
+          fogFor = key;
+          const startedAt = performance.now();
+          fogLayer = doc.fogDabs.length > 0 ? rasterFog(fogTexture, doc.fogDabs, (x, y) => terrain.renderedHeightAt(x, y)) : null;
+          performance.measure('hitch:fog', { start: startedAt, end: performance.now() });
+        }
+        const f = doc.fogSettings;
+        post.setGroundFog(fogLayer?.any ? { texture: fogLayer.texture, low: fogLayer.low, high: fogLayer.high, density: f.density } : null);
+        fogMoving = !!fogLayer?.any;
+      }
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();
@@ -2748,6 +2771,7 @@ export function createSceneRenderer(
       nature?.dispose();
       coverKit.dispose();
       natureForest?.dispose();
+      fogTexture.dispose();
       paintedForest?.dispose();
       natureTreeKit?.dispose();
       sceneryKit.dispose();

@@ -65,6 +65,39 @@ export function setPoleToolMode(next: PoleToolMode): void {
   poleMode = next;
 }
 
+/** The fog brush (Paisagem > Terreno > Neblina): laying fog, or taking it away. Not kept between sessions. */
+let fogErasing = false;
+export function fogErase(): boolean {
+  return fogErasing;
+}
+export function setFogErase(next: boolean): void {
+  fogErasing = next;
+}
+
+/** The fog brush's settings: strength (%), height (m), speed (m/s). Kept between sessions. */
+export interface FogBrush {
+  readonly strength: number;
+  readonly height: number;
+  readonly speed: number;
+}
+const FOG_BRUSH_KEY = 'roadcraft.fogBrush';
+let fogBrushNow: FogBrush = (() => {
+  const fallback: FogBrush = { strength: 40, height: 24, speed: 6 };
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOG_BRUSH_KEY) ?? 'null') as Partial<FogBrush> | null;
+    if (!saved) return fallback;
+    const n = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+    return { strength: n(saved.strength, fallback.strength), height: n(saved.height, fallback.height), speed: n(saved.speed, fallback.speed) };
+  } catch { return fallback; }
+})();
+export function fogBrush(): FogBrush {
+  return fogBrushNow;
+}
+export function setFogBrush(next: Partial<FogBrush>): void {
+  fogBrushNow = { ...fogBrushNow, ...next };
+  try { localStorage.setItem(FOG_BRUSH_KEY, JSON.stringify(fogBrushNow)); } catch { /* not kept */ }
+}
+
 const PAINT_KEY = 'roadcraft.paintKind';
 let paint: PaintKind = stored(PAINT_KEY, PAINT_KINDS, 'sand');
 

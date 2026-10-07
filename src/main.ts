@@ -27,7 +27,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush } from '@ui/toolChoices';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
@@ -341,7 +341,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -893,6 +893,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   // A different map: the graph the next edit is measured on, built now.
   if (source === 'import') sim.warmTopologyPrep();
   buildings.restored();
+  syncFogInputs();
   selectedSegment = null;
   selectedNode = null;
   closeInspector();
@@ -1337,6 +1338,19 @@ function terrainPaintInterval(): number {
 
 /** One dab, with no spacing or rate checks of its own. */
 function stampTerrain(at: Vec2, level: number): void {
+  if (terrainMode === 'fog') {
+    // Fog moves no height either: a dab of mist laid, or taken away.
+    // The brush's own settings go with the dab.
+    const brush = fogBrush();
+    doc.addFogDab({
+      x: at.x, y: at.y, radius: terrainRadius,
+      strength: Math.max(0.02, Math.min(1, brush.strength / 100)),
+      height: brush.height * UNITS_PER_METER,
+      speed: brush.speed * UNITS_PER_METER,
+      ...(fogErase() ? { erase: true } : {}),
+    });
+    return;
+  }
   if (terrainMode === 'paint') {
     // Painting moves no height: a dab of the chosen ground, nothing re-solved.
     doc.addPaintDab({
@@ -2442,7 +2456,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -2873,8 +2887,62 @@ function setTerrainMode(next: BrushMode): void {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
+  const fogPanel = document.querySelector<HTMLElement>('.terrain-fog');
+  if (fogPanel) fogPanel.hidden = next !== 'fog';
   updateHint();
 }
+
+// The fog BRUSH's settings (Paisagem > Terreno > Neblina): how thick, how
+// high over the ground, how fast the wind carries it - laid with every dab,
+// so each bank keeps its own (`world/fogPaint.ts`); kept between sessions.
+// And the map's own thickness over all of them, kept in the map. Heights and
+// speeds shown in metres.
+{
+  const bind = (id: string, read: () => number, write: (v: number) => void): void => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return;
+    input.value = String(read());
+    text(`${id}Value`, String(read()));
+    input.addEventListener('input', () => {
+      write(Number(input.value));
+      text(`${id}Value`, input.value);
+    });
+  };
+  bind('fogStrength', () => fogBrush().strength, (v) => setFogBrush({ strength: v }));
+  bind('fogHeight', () => fogBrush().height, (v) => setFogBrush({ height: v }));
+  bind('fogSpeed', () => fogBrush().speed, (v) => setFogBrush({ speed: v }));
+}
+/** The map's fog thickness slider made to show the map (after a load or an undo). */
+function syncFogInputs(): void {
+  const input = document.getElementById('fogMapDensity') as HTMLInputElement | null;
+  if (!input) return;
+  const value = Math.round(doc.fogSettings.density * 100);
+  input.value = String(value);
+  text('fogMapDensityValue', String(value));
+}
+{
+  let recorded = false;
+  const input = document.getElementById('fogMapDensity') as HTMLInputElement | null;
+  input?.addEventListener('input', () => {
+    // One undo step a drag of the slider.
+    if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
+    text('fogMapDensityValue', input.value);
+    doc.setFogSettings({ density: Number(input.value) / 100 });
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
+  input?.addEventListener('change', () => { recorded = false; });
+  syncFogInputs();
+}
+(document.getElementById('clearFog') as HTMLButtonElement | null)?.addEventListener('click', () => {
+  if (doc.fogDabs.length === 0) return;
+  if (!window.confirm(t('confirm.clearFog'))) return;
+  history.record(doc);
+  doc.clearFog();
+  updateHistoryButtons();
+  persistence.saveSessionSoon(doc, sessionSettings);
+  requestDraw();
+});
 
 document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
   button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as BrushMode) ?? 'raise');
@@ -4834,6 +4902,7 @@ function drawOverlayScreen(): void {
 /** The brush's colour, by what it does to the ground. */
 const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   paint: '#f2d27a',
+  fog: '#e8eef4',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
@@ -4846,6 +4915,7 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
 
 const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   paint: 'rgba(242,210,122,0.10)',
+  fog: 'rgba(232,238,244,0.12)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',

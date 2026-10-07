@@ -34,7 +34,7 @@ import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
-import { POLE_TOOL_MODES, paintKind, poleLampMode, poleToolMode, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { POLE_TOOL_MODES, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
@@ -869,7 +869,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'cloud']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -899,21 +899,49 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(grounds);
         options.appendChild(biomes);
       }
-      // The sky: clouds (how many, how high, how thick) and mist.
-      {
+      // The fog brush: lay mist or take it away, and how the map's fog
+      // looks - how thick, how high, how fast it drifts (`world/fogPaint.ts`).
+      if (q<HTMLButtonElement>('[data-terrain-mode="fog"]')?.classList.contains('active')) {
+        // The brush: what the next strokes lay, each bank keeping its own.
+        const fog = titled(group(t('fog.brush')), t('fog.brush'));
+        fog.classList.add('stack');
+        fog.appendChild(choices([
+          { label: t('fog.lay'), on: !fogErase(), run: () => { setFogErase(false); render(); }, icon: svg('brush', 18) },
+          { label: t('fog.erase'), on: fogErase(), run: () => { setFogErase(true); render(); }, icon: svg('eraser', 18) },
+        ], 2));
+        fog.append(
+          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
+          slider(t('fog.strength'), '#fogStrength', '#fogStrengthValue'),
+          slider(t('fog.height'), '#fogHeight', '#fogHeightValue'),
+          slider(t('fog.speed'), '#fogSpeed', '#fogSpeedValue'),
+        );
+        options.appendChild(fog);
+        // The map's: over every bank at once.
+        const all = titled(group(t('fog.map')), t('fog.map'));
+        all.classList.add('stack');
+        all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
+        all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
+        options.appendChild(all);
+      }
+      // The sky - clouds and the haze over the whole map - with the weather
+      // brush only, named: shown under every terrain brush it was clutter
+      // (the player, 2026-10-07). No planet radius: the planet is off.
+      const fogActive = q<HTMLButtonElement>('[data-terrain-mode="fog"]')?.classList.contains('active') ?? false;
+      if (fogActive) {
         const sky = titled(group(t('atmo.title')), t('atmo.title'));
+        sky.classList.add('stack');
         sky.append(
-          slider(t('atmo.clouds'), '#atmoClouds', '#atmoCloudsValue', svg('cloud', 16)),
-          slider(t('atmo.cloudBase'), '#atmoCloudBase', '#atmoCloudBaseValue', svg('raise', 16)),
-          slider(t('atmo.cloudThickness'), '#atmoCloudThickness', '#atmoCloudThicknessValue', svg('strength', 16)),
-          slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue', svg('cloud', 16)),
-          slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue', svg('raise', 16)),
-          slider(t('atmo.planet'), '#atmoPlanet', '#atmoPlanetValue', svg('cloud', 16)),
+          slider(t('atmo.clouds'), '#atmoClouds', '#atmoCloudsValue'),
+          slider(t('atmo.cloudBase'), '#atmoCloudBase', '#atmoCloudBaseValue'),
+          slider(t('atmo.cloudThickness'), '#atmoCloudThickness', '#atmoCloudThicknessValue'),
+          slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue'),
+          slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue'),
         );
         options.appendChild(sky);
       }
-      // The map's own biome: the ecosystem everywhere nothing else is painted.
-      {
+      // The map's own biome - the ecosystem everywhere nothing else is
+      // painted - with the paint brush only.
+      if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
         const mapBiome = titled(group(t('terrain.mapBiome')), t('terrain.mapBiome'));
         mapBiome.appendChild(choices([...document.querySelectorAll<HTMLButtonElement>('[data-map-biome]')].map((b) => {
           const key = b.dataset['mapBiome'] as string;
@@ -929,6 +957,8 @@ export function mountShell(deps: ShellDeps): void {
         options.appendChild(mapBiome);
       }
       // Named too: the two sliders and the clear button ran off the panel's edge.
+      // Not under the fog brush, which has its own (size included).
+      if (fogActive) return;
       const brush = titled(group(t('v2.options')), t('v2.options'));
       brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)),
         slider(t('terrain.hardness'), '#terrainHardness', '#terrainHardnessValue', svg('flatten', 16)));
