@@ -199,7 +199,10 @@ export function createEnvironment(
   // blue at close zoom (a parapet's shadow on a roof read as blue paint).
   // Neutral, a touch warm: the blue-white sky fill turned every shadow on
   // the grass teal (the player, 2026-10-07: dark, ugly colours).
-  const hemisphere = new HemisphereLight(0xe6e4da, 0x6a6b4c, 0.42);
+  // Strong enough that a shaded hillside stays green: at a tenth of the sun
+  // the side of every hill turned near black and the land read as mud (the
+  // player, 2026-10-07); open sky gives shade a fifth to a third of the light.
+  const hemisphere = new HemisphereLight(0xe6e4da, 0x6a6b4c, 0.8);
   hemisphere.name = 'sky-fill';
   scene.add(hemisphere);
 
@@ -242,6 +245,17 @@ export function createEnvironment(
   };
   fitDepth(SHADOW_SPAN_MIN);
   scene.add(sun, sun.target);
+
+  // THE FILL LIGHT, the second light of the standard rig (Shawn Hargreaves,
+  // "The standard lighting rig"; three-point lighting): dimmer than the key,
+  // from about a right angle to it, casting no shadow. It gives the slopes
+  // turned from the sun their own shading instead of one flat dark, so a
+  // hill reads round from every side (the player, 2026-10-07: "more lights").
+  // Directional, at the scene's origin, its direction set with the sun's.
+  const fill = new DirectionalLight(0xf2f2ee, 0);
+  fill.name = 'fill';
+  fill.castShadow = false;
+  scene.add(fill);
 
   let span = -1;
   const lightRight = new Vector3();
@@ -333,11 +347,21 @@ export function createEnvironment(
         // The moon: high, cold and faint, from a fixed bearing.
         sunDirection.set(Math.cos(SUN_AZIMUTH + 0.6) * 0.55, 0.83, Math.sin(SUN_AZIMUTH + 0.6) * 0.55).normalize();
       }
-      // Low sun is warm and weaker; the moon is blue.
+      // Low sun is warm and weaker; the moon is blue. Daylight is near white
+      // (some 5500 K with the sun high); a sun of (1, 0.94, 0.81), and half
+      // the blue at the morning the game opens on, turned the whole land a
+      // yellow olive (the player, 2026-10-07).
       const warm = Math.max(0, 1 - height * 1.6);
-      sun.color.setRGB(1, 0.94 - warm * 0.2, 0.81 - warm * 0.38).lerp(MOON, dark);
-      sun.intensity = 3.6 * (0.25 + 0.75 * Math.min(1, height * 2.5 + 0.2)) * light + 0.85 * dark;
-      hemisphere.intensity = 0.42 * light + 0.2 * dark;
+      sun.color.setRGB(1, 0.96 - warm * 0.12, 0.9 - warm * 0.28).lerp(MOON, dark);
+      sun.intensity = 4.2 * (0.25 + 0.75 * Math.min(1, height * 2.5 + 0.2)) * light + 0.85 * dark;
+      hemisphere.intensity = 0.8 * light + 0.2 * dark;
+      {
+        // A right angle and a little more round from the sun, lower than it.
+        const fillAzimuth = Math.atan2(sunDirection.z, sunDirection.x) + (100 * Math.PI) / 180;
+        const fillElevation = (32 * Math.PI) / 180;
+        fill.position.set(Math.cos(fillAzimuth) * Math.cos(fillElevation), Math.sin(fillElevation), Math.sin(fillAzimuth) * Math.cos(fillElevation)).multiplyScalar(1000);
+        fill.intensity = 1.0 * light;
+      }
       ambient.intensity = 0.07 * light + 0.05 * dark;
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
@@ -361,7 +385,7 @@ export function createEnvironment(
       }
     },
     dispose() {
-      scene.remove(sky, hemisphere, ambient, sun, sun.target);
+      scene.remove(sky, hemisphere, ambient, sun, sun.target, fill);
       sky.geometry.dispose();
       skyMaterial.dispose();
       envTarget.dispose();

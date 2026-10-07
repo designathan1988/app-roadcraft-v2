@@ -22,7 +22,7 @@ import {
   Float32BufferAttribute,
   Color,
   Quaternion,
-  NeutralToneMapping,
+  ACESFilmicToneMapping,
   Box3,
   PointLight,
   Group,
@@ -408,13 +408,14 @@ export function createSceneRenderer(
   // The default reset on each `render()` left stats showing only the last quad.
   renderer.info.autoReset = false;
   renderer.outputColorSpace = SRGBColorSpace;
-  // Khronos PBR Neutral: hue and saturation kept, only the highlights rolled
-  // off. ACES cannot put a bright green, a canary yellow or a clear blue on
-  // the screen (model-viewer's tone-mapping notes); the grass came out olive.
-  renderer.toneMapping = NeutralToneMapping;
-  // three's ACES carried its own lift (the input over 0.6); Neutral does
-  // not, and at 1.0 the whole scene came out darker.
-  renderer.toneMappingExposure = 1.4;
+  // A film curve (ACES): contrast, deep shade and bright light, the look of
+  // the diorama the player holds up as the target (2026-10-07). Khronos PBR
+  // Neutral is made for product viewers - hue kept, contrast low on purpose
+  // (Khronos; the three.js forum's tone-mapping overview) - and drew the
+  // land flat and washed out. The colours are set for this curve: ACES pulls
+  // bright colours towards white, so the albedos carry the chroma.
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.3;
   renderer.shadowMap.enabled = true;
   // PCFSoftShadowMap was REMOVED in three r186. Asking for it logged
   // "PCFSoftShadowMap has been removed. Using PCFShadowMap instead." on every

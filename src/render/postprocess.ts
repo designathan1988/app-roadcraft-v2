@@ -365,7 +365,10 @@ function cloudHash(i: number, salt: number): number {
  */
 function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[], lives: number[]): number {
   const count = Math.min(MAX_CLOUDS, Math.round(atmosphere.clouds * MAX_CLOUDS));
-  const span = MAP_SIZE * 1.3;
+  // Over the map only: a cloud past its edge hung in the empty space round
+  // the diorama like a snowball (the player, 2026-10-07). It fades out
+  // before it gets there, and wraps round unseen.
+  const span = MAP_SIZE * 0.9;
   const wrap = (v: number): number => ((((v + span / 2) % span) + span) % span) - span / 2;
   const ease = (v: number): number => { const t = Math.min(1, Math.max(0, v)); return t * t * (3 - 2 * t); };
   for (let i = 0; i < count; i++) {
@@ -375,12 +378,15 @@ function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puff
     const phase = age - generation;
     // A new cloud every generation, out of the slot's own sequence.
     const id = i + generation * 131;
-    lives[i] = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38));
-    const grown = 0.6 + 0.4 * lives[i]!;
-    // Its size from the thickness the player set: a cumulus about twice as wide as tall.
-    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(id, 3));
     const x = wrap((cloudHash(id, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
     const z = wrap((cloudHash(id, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
+    const edge = 1 - ease((Math.max(Math.abs(x), Math.abs(z)) - span * 0.3) / (span * 0.17));
+    lives[i] = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38)) * edge;
+    // It thins into wisps as it forms and fades, at nearly its full size: a
+    // cloud that shrank as it went was a small bright ball.
+    const grown = 0.85 + 0.15 * lives[i]!;
+    // Its size from the thickness the player set: a cumulus about twice as wide as tall.
+    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(id, 3));
     const base = atmosphere.cloudBase + (cloudHash(id, 4) - 0.5) * size * 0.3;
     const yaw = cloudHash(id, 5) * Math.PI * 2;
     const c = Math.cos(yaw), sn = Math.sin(yaw);
@@ -521,7 +527,11 @@ const CLOUD_SHADOWS = {
       float d = 1e5;
       for (int k = 0; k < PUFFS; k++) {
         vec4 s = uPuff[c * PUFFS + k];
-        d = smin(d, length(p - s.xyz) - s.w, size * 0.12);
+        // Each puff a little flattened, and joined wide: one heap with a
+        // lumpy top, not a bunch of balls.
+        vec3 o = p - s.xyz;
+        o.y *= 1.3;
+        d = smin(d, length(o) - s.w, size * 0.2);
       }
       // A flat base: the cloud stops at its condensation level.
       float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, altitude(p));
@@ -541,8 +551,10 @@ const CLOUD_SHADOWS = {
       vec3 drift = vec3(uTime * 0.05, -uTime * 0.04, uTime * 0.02);
       float life = uLife[c];
       vec3 q = p / (size * 0.3) + drift;
-      float low = noise3(q) * 0.62 + noise3(q * 2.03 + 5.1) * 0.38;
-      float shape = clamp(heap(c, p) * 3.6 - (1.0 - low) * (0.3 + 0.4 * (1.0 - life)) - (1.0 - life) * 0.8, 0.0, 1.0);
+      float low = noise3(q) * 0.5 + noise3(q * 2.03 + 5.1) * 0.3 + noise3(q * 4.1 + 9.7) * 0.2;
+      // The outline broken by that noise, deep enough that no puff keeps a
+      // sphere's clean edge.
+      float shape = clamp(heap(c, p) * 3.2 - (1.0 - low) * (0.55 + 0.4 * (1.0 - life)) - (1.0 - life) * 0.8, 0.0, 1.0);
       if (shape <= 0.0) return 0.0;
       vec3 r = p / (size * 0.055) + drift * 2.3;
       float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
@@ -669,6 +681,15 @@ const CLOUD_SHADOWS = {
       if (uCloudCount > 0) {
         float focusDepth = texture2D(tDepth, vec2(0.5)).r;
         float tFocus = focusDepth >= 0.9999 ? 1e5 : length(worldAt(vec2(0.5), focusDepth) - ro);
+        // Drawn from up close only: from far enough to take in the whole
+        // diorama every cloud stands out against the empty space round it,
+        // a ball hanging in the void (the player, 2026-10-07); there only
+        // their shadows cross the land.
+        // How tall the view is there, in world units: the same measure in
+        // the orthographic view and in perspective (both ends of the
+        // screen's middle column at the depth of its centre).
+        float spanFocus = focusDepth >= 0.9999 ? 1e5 : length(worldAt(vec2(0.5, 1.0), focusDepth) - worldAt(vec2(0.5, 0.0), focusDepth));
+        float bodies = 1.0 - smoothstep(1400.0, 2400.0, spanFocus);
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
           spans[c] = vec2(-1.0);
@@ -682,7 +703,7 @@ const CLOUD_SHADOWS = {
         vec3 baseShade = mix(vec3(0.22, 0.24, 0.3), vec3(0.02, 0.025, 0.035), uDark);
         float done = -1.0;
         for (int pass = 0; pass < MAX_CLOUDS; pass++) {
-          if (pass >= uCloudCount || transmit < 0.03) break;
+          if (pass >= uCloudCount || transmit < 0.03 || bodies <= 0.0) break;
           int best = -1;
           float bestKey = 1e9;
           for (int c = 0; c < MAX_CLOUDS; c++) {
@@ -707,7 +728,7 @@ const CLOUD_SHADOWS = {
             // (the middle of the screen) fades out, and always within its own
             // size of the eye - so none hangs between the eye and the land.
             float near = max(size * 1.1, tFocus * 0.85);
-            density *= smoothstep(near * 0.45, near, t);
+            density *= smoothstep(near * 0.45, near, t) * bodies;
             if (density < 0.01) continue;
             // The sun's light reaching this point: a short march towards it
             // through the cloud itself (Horizon Zero Dawn's light samples,
@@ -761,11 +782,11 @@ const GRADE = {
       vec3 c = src.rgb;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
-      c = mix(c, smoothstep(0.0, 1.0, c), 0.18);
+      c = mix(c, smoothstep(0.0, 1.0, c), 0.25);
       // Vibrance: the dull colours gain more than the vivid.
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float sat = mx - mn;
-      c = mix(vec3(l), c, 1.0 + 0.12 * (1.0 - sat));
+      c = mix(vec3(l), c, 1.0 + 0.3 * (1.0 - sat));
       // Split toning: warm highlights, cool shadows.
       // Warm light, shadows left neutral: a blue push in them read as a
       // teal cast over every shaded slope.

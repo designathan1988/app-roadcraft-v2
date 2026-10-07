@@ -346,7 +346,9 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     const upright = (1 - smoothstep(1.2, 3, ud)) * smoothstep(0.52, 0.64, fbm(g2, u * 5 + 1.7, v * 5 + 6.1, 5, 1));
     const crack = Math.max(joint, upright);
     // Streaks: water and the cyanobacteria it feeds, down from every crest.
-    const st = gs(u * 36, v * 2, 36, 2) * 0.65 + gs(u * 90 + 7, v * 5, 90, 5) * 0.35;
+    // Broad and faint: thin dark ones packed close read as straw on a dome
+    // (the player, 2026-10-07).
+    const st = gs(u * 8, v * 2, 8, 2) * 0.7 + gs(u * 20 + 7, v * 4, 20, 4) * 0.3;
     const streak = smoothstep(0.52, 0.8, st);
     const groove = gs(u * 150, v * 3 + 1.7, 150, 3);
     const lichen = smoothstep(0.72, 0.82, fbm(gf, u * 20 + 5, v * 20 + 9, 20, 2)) * (1 - streak);
@@ -355,9 +357,9 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     out.r = grey[0] - 0.03 + slab * 0.07;
     out.g = grey[1] - 0.025 + slab * 0.05;
     out.b = grey[2] - 0.015 + slab * 0.03;
-    const k = (0.9 + fine * 0.18) * (0.95 + groove * 0.07) * (crystal < 0.06 ? 0.72 : crystal > 0.93 ? 1.16 : 1);
+    const k = (0.9 + fine * 0.18) * (0.98 + groove * 0.03) * (crystal < 0.06 ? 0.72 : crystal > 0.93 ? 1.16 : 1);
     out.r *= k; out.g *= k; out.b *= k;
-    tintTowards(out, [0.17, 0.17, 0.175], streak * 0.7);
+    tintTowards(out, [0.3, 0.3, 0.3], streak * 0.35);
     tintTowards(out, [0.6, 0.61, 0.54], lichen * 0.35);
     out.r *= 1 - crack * 0.38; out.g *= 1 - crack * 0.38; out.b *= 1 - crack * 0.38;
     out.h = slab * 0.4 + groove * 0.18 - crack * 0.55 + fine * 0.12 + lichen * 0.05;
@@ -397,13 +399,13 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     const jd = Math.abs(ju - Math.round(ju)) * (ROCK_SIZE / 3);
     const joint = (1 - smoothstep(1, 2.6, jd)) * smoothstep(0.55, 0.68, fbm(s1, u * 6 + 2, v * 6 + 5, 6, 1));
     // Varnish hanging from the bed contacts (texture v runs down the face).
-    const vs = ss(u * 28, v * 4, 28, 4) * 0.6 + ss(u * 70 + 3, v * 8, 70, 8) * 0.4;
+    const vs = ss(u * 8, v * 3, 8, 3) * 0.7 + ss(u * 20 + 3, v * 6, 20, 6) * 0.3;
     const varnish = smoothstep(0.5, 0.78, vs) * (0.3 + 0.7 * (1 - setF));
     const grain = fbm(s2, u * 128 + 7, v * 128 + 1, 128, 2);
     const speck = latticeHash(x, y, 0x7a55);
     const k = (0.94 + hard * 0.1) * (0.97 + lam * 0.06) * (0.92 + grain * 0.14) * (speck < 0.05 ? 0.86 : speck > 0.95 ? 1.08 : 1);
     out.r = sand[0] * k; out.g = sand[1] * k; out.b = sand[2] * k;
-    tintTowards(out, [0.3, 0.2, 0.14], varnish * 0.5);
+    tintTowards(out, [0.4, 0.27, 0.19], varnish * 0.3);
     out.r *= 1 - bound * 0.1 - joint * 0.3; out.g *= 1 - bound * 0.11 - joint * 0.32; out.b *= 1 - bound * 0.12 - joint * 0.33;
     out.h = 0.35 + hard * 0.3 + lam * 0.08 - bound * 0.3 - joint * 0.5 + grain * 0.12;
     out.rough = 0.93;
@@ -526,9 +528,11 @@ export function terrainBakes(anisotropy: number): {
         const speck = fbm(grassFine, u * 96 + wx * 2, v * 96 + wy * 2, 96, 2);
         const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 2);
         const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 2);
-        // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
-        const dark = [0.29, 0.36, 0.12];
-        const lit = [0.42, 0.5, 0.18];
+        // sRGB: deep clump green, sunlit green, dry straw, bare soil. Grass
+        // keeps about half as much blue as green; with a third it was an
+        // acid yellow olive on screen (the player, 2026-10-07).
+        const dark = [0.25, 0.4, 0.1];
+        const lit = [0.44, 0.6, 0.15];
         const dry = [0.46, 0.44, 0.26];
         const soil = [0.36, 0.3, 0.2];
         const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
@@ -1322,7 +1326,9 @@ function terrainMaterial(
          float slopeDeg = terrainSlope();
          // High ground is bare whatever its slope: the quickest way to say
          // "mountain" is that nothing grows on the top of it.
-         float altitude = smoothstep(260.0, 460.0, vTerrainWorld.y);
+         // Only the real summits: from 260 it greyed the top of every hill
+         // and dome into an olive mat (the player, 2026-10-07).
+         float altitude = smoothstep(420.0, 580.0, vTerrainWorld.y);
          // The bands are in degrees of slope, and they were set for land that
          // could not rise more than ten metres: soil from 9 degrees, rock from
          // 26. On a map with real hills that painted every hillside tan, and
@@ -1350,7 +1356,10 @@ function terrainMaterial(
          float rockW = max(smoothstep(30.0, 56.0, slopeDeg + wander * (1.0 - 0.5 * smoothstep(45.0, 70.0, slopeDeg)) + breakup), altitude * 0.92);
          // Narrowed where the rock is near: turf meets the stone across a thin
          // band of soil, not a red ring drawn round every outcrop.
-         float dirtW = smoothstep(14.0, 32.0, slopeDeg + wander * 1.3) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(26.0, 40.0, slopeDeg + wander * 1.3));
+         // Grass holds a hillside to some thirty degrees: soil from fourteen
+         // capped every hill and dome in a mat of brown straw (the player,
+         // 2026-10-07).
+         float dirtW = smoothstep(27.0, 42.0, slopeDeg + wander * 1.0) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(36.0, 48.0, slopeDeg + wander * 1.0));
          float grassW = max(0.0, 1.0 - rockW - dirtW);
          vec4 grassColor = dualScale(map, tGrass);
          // Which rock breaks out here: the painted geology, granite where none
@@ -1506,7 +1515,7 @@ function terrainMaterial(
            // Each patch either green or gold, its edge broken by the tufts:
            // half of each mixed was an olive wash.
            float lift = clamp((luma - 0.17) / 0.2, 0.0, 1.0);
-           float goldMask = smoothstep(0.35, 0.8, golden + (lift - 0.5) * 0.3) * 0.45;
+           float goldMask = smoothstep(0.35, 0.8, golden + (lift - 0.5) * 0.3) * 0.25;
            blended.rgb = mix(blended.rgb, straw, goldMask * living);
            // Bare red soil only where the herbs are sparse.
            blended.rgb = mix(blended.rgb, dirtColor.rgb * (0.85 + 0.25 * lift), eco.a * 0.4 * living);
@@ -1527,12 +1536,15 @@ function terrainMaterial(
            float convex = land.b * 2.0 - 1.0;
            float vegetated = 1.0 - clamp(rockMix + dirtMix, 0.0, 1.0);
            float tone = dot(grassColor.rgb, vec3(0.3, 0.6, 0.1));
-           vec3 dryGrass = tone * vec3(1.42, 1.18, 0.6);
+           // A paler, drier green, a hint of it: a full straw yellow over every
+           // top and bank capped each hill in a mat of olive hay (the player,
+           // 2026-10-07).
+           vec3 dryGrass = tone * vec3(1.22, 1.2, 0.78);
            float wornNoise = texture2D(uDirtMap, vTerrainWorld.xz * 0.043 + 0.21).g;
            float worn = smoothstep(9.0, 24.0, slopeDeg + (wornNoise - 0.5) * 14.0);
-           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.25 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.35 * vegetated);
+           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.25 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.15 * vegetated);
            float ridge = smoothstep(0.05, 0.6, convex + (wornNoise - 0.5) * 0.3);
-           blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.5 * vegetated);
+           blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.2 * vegetated);
            float hollow = smoothstep(0.05, 0.6, -convex);
            blended.rgb *= mix(vec3(1.0), vec3(0.88, 0.97, 0.88), hollow * vegetated);
          }
@@ -1605,7 +1617,9 @@ function terrainMaterial(
          // valley town stays green instead of the whole map turning tan the
          // moment the ground passes ten metres.
          float dryness = smoothstep(10.0, 240.0, vTerrainWorld.y);
-         blended.rgb = mix(blended.rgb, blended.rgb * vec3(1.16, 1.07, 0.8), dryness * 0.6);
+         // Gently: strong, it turned every hill a mustard olive that read as
+         // mould (the player, 2026-10-07).
+         blended.rgb = mix(blended.rgb, blended.rgb * vec3(1.08, 1.04, 0.9), dryness * 0.35);
          // Hollows hold moisture and read darker, which is the cue that tells a
          // dip from a rise when the sun is behind the slope.
          float damp = smoothstep(2.0, -40.0, vTerrainWorld.y);
@@ -1614,7 +1628,7 @@ function terrainMaterial(
          // darker, so the blades stand in a lawn and not on a bright card.
          float grassDist = distance(vec2(vTerrainWorld.x, -vTerrainWorld.z), uGrassField.xy);
          float grassUnder = uGrassField.w * (1.0 - smoothstep(uGrassField.z * 0.45, uGrassField.z * 0.95, grassDist));
-         blended.rgb *= mix(1.0, 0.66, grassUnder * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0)));
+         blended.rgb *= mix(1.0, 0.8, grassUnder * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0)));
          // Painted ground (world/terrainPaint.ts): a weight per layer, the
          // grass showing through what the weights leave.
          vec2 paintUv = vec2((vTerrainWorld.x + uPaintHalf) / uPaintSize, (uPaintHalf - vTerrainWorld.z) / uPaintSize);
@@ -1665,6 +1679,12 @@ function terrainMaterial(
            float skySeen = mix(0.7, 1.0, landLight.g);
            reflectedLight.directDiffuse *= landLight.r;
            reflectedLight.directSpecular *= landLight.r;
+           #if NUM_DIR_LIGHTS > 1
+             // The relief's shadow is the SUN's (light 0, the one casting
+             // shadows, sorted first): the fill light (environment.ts) lights
+             // a slope in that shadow all the same, so it is given back here.
+             reflectedLight.directDiffuse += (1.0 - landLight.r) * clamp(dot(normal, directionalLights[1].direction), 0.0, 1.0) * directionalLights[1].color * BRDF_Lambert(diffuseColor.rgb);
+           #endif
            reflectedLight.indirectDiffuse *= skySeen;
            reflectedLight.indirectSpecular *= skySeen;
          }`,
