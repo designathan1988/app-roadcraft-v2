@@ -441,8 +441,10 @@ const CLOUD_SHADOWS = {
     uSkyGlow: { value: new Color(0x3d5a82) },
     uSkyLow: { value: new Color(0x0a1830) },
     // The sky seen from near the ground: pale at the horizon, deeper above.
-    uSkyHorizon: { value: new Color(0xa9c9e6) },
-    uSkyHigh: { value: new Color(0x3b6fb3) },
+    // Sky blue, not grey (the player, 2026-10-07): a clear pale blue at
+    // the horizon, a deep clear blue above.
+    uSkyHorizon: { value: new Color(0x86bdf0) },
+    uSkyHigh: { value: new Color(0x2a66c8) },
     uAbyss: { value: new Color(0x1e160f) },
   },
   vertexShader: /* glsl */ `
@@ -643,7 +645,7 @@ const CLOUD_SHADOWS = {
         // from high over the map it stays the dark blue round the model.
         float low = 1.0 - smoothstep(600.0, 1800.0, ro.y);
         vec3 horizon = mix(uSkyHorizon, uSkyHorizon * vec3(1.12, 1.04, 0.92), sunSide * 0.5) * (1.0 - 0.85 * uDark);
-        vec3 overhead = mix(uSkyHigh, uSkyDeep, 0.25) * (1.0 - 0.7 * uDark);
+        vec3 overhead = uSkyHigh * (1.0 - 0.7 * uDark);
         haze = mix(haze, horizon, low);
         if (sky) {
           vec3 backdrop = mix(uSkyDeep, haze, glow);
