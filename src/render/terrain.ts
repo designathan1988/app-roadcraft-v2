@@ -832,9 +832,10 @@ function macroTexture(anisotropy: number): DataTexture {
  */
 const PAINT_LAYERS = 4;
 /**
- * The array layer holding the land's own light (`terrainLight`): R the sun it
- * sees past the relief, G the sky it sees past the hills round it, one texel
- * a terrain corner in the layer's first GRID x GRID texels.
+ * The array layer holding the land's own light and shape (`terrainLight`):
+ * R the sun it sees past the relief, G the sky it sees past the hills round
+ * it, B its convexity, A its steepness over 90 degrees; one texel a terrain
+ * corner in the layer's first GRID x GRID texels.
  */
 const LIGHT_LAYER = 3;
 /** The array layer the ecosystem's ground is written into. */
@@ -1160,9 +1161,20 @@ function terrainMaterial(
          // The slope, in degrees: the smooth vertex normal's, or - where a
          // corner touches a WALL (a face over 50 degrees, \`aSteep\`) - the
          // wall's, so a cliff narrower than the grid is drawn as rock.
+         // The land's light and shape per corner (terrainLight), bilinear.
+         vec4 terrainLand() {
+           vec2 cell = vec2((vTerrainWorld.x + uPaintHalf) / ${TERRAIN_CELL.toFixed(6)}, (uPaintHalf + vTerrainWorld.z) / ${TERRAIN_CELL.toFixed(6)});
+           return texture(uPaint, vec3((cell + 0.5) / ${PAINT_RES.toFixed(1)}, ${LIGHT_LAYER.toFixed(1)}));
+         }
+         // The steepness that decides grass, soil and rock: the smooth
+         // normal's, raised to a wall's where the corners say the land is one.
+         // Those corners are read bilinearly from the texture: interpolated
+         // per triangle (vTerrainSteep) the edge of a wall followed the mesh's
+         // triangles in teeth.
          float terrainSlope() {
            float smoothSlope = degrees(acos(clamp(vTerrainNormal.y, 0.0, 1.0)));
-           return max(smoothSlope, mix(smoothSlope, vTerrainSteep, smoothstep(50.0, 66.0, vTerrainSteep)));
+           float landSlope = terrainLand().a * 90.0;
+           return max(smoothSlope, mix(smoothSlope, landSlope, smoothstep(38.0, 60.0, landSlope)));
          }
          vec3 terrainTriWeights(vec3 n) {
            vec3 w = pow(abs(n), vec3(4.0));
@@ -1325,7 +1337,7 @@ function terrainMaterial(
          float rockW = max(smoothstep(30.0, 56.0, slopeDeg + wander * (1.0 - 0.5 * smoothstep(45.0, 70.0, slopeDeg)) + breakup), altitude * 0.92);
          // Narrowed where the rock is near: turf meets the stone across a thin
          // band of soil, not a red ring drawn round every outcrop.
-         float dirtW = smoothstep(18.0, 36.0, slopeDeg + wander * 1.3) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(26.0, 40.0, slopeDeg + wander * 1.3));
+         float dirtW = smoothstep(14.0, 32.0, slopeDeg + wander * 1.3) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(26.0, 40.0, slopeDeg + wander * 1.3));
          float grassW = max(0.0, 1.0 - rockW - dirtW);
          vec4 grassColor = dualScale(map, tGrass);
          // Which rock breaks out here: the painted geology, granite where none
@@ -1367,7 +1379,7 @@ function terrainMaterial(
          float hGrass = grassW + dot(grassColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.4 * smoothstep(0.0, 0.35, grassW);
          float hDirt = dirtW + dot(dirtColor.rgb, vec3(0.3, 0.6, 0.1)) * 0.9 * smoothstep(0.0, 0.35, dirtW);
          float hRock = rockW + dot(rockColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.1 * smoothstep(0.0, 0.35, rockW);
-         float hTop = max(hGrass, max(hDirt, hRock)) - 0.2;
+         float hTop = max(hGrass, max(hDirt, hRock)) - 0.3;
          float bGrass = max(hGrass - hTop, 0.0);
          float bDirt = max(hDirt - hTop, 0.0);
          float bRock = max(hRock - hTop, 0.0);
@@ -1492,6 +1504,24 @@ function terrainMaterial(
            // darkened under the canopy, its texture kept. The ecosystem's own
            // canopy (eco.r) darkens it only once its trees stand there.
            blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
+         }
+         // THE LAND'S SHAPE IN ITS COLOURS (Gaea's and World Machine's slope
+         // and convexity masks): a slope wears its turf thin, in patches,
+         // showing straw and soil; ridges and tops are drier and paler;
+         // hollows and valley floors keep a deeper, lusher green.
+         {
+           vec4 land = terrainLand();
+           float convex = land.b * 2.0 - 1.0;
+           float vegetated = 1.0 - clamp(rockMix + dirtMix, 0.0, 1.0);
+           float tone = dot(grassColor.rgb, vec3(0.3, 0.6, 0.1));
+           vec3 dryGrass = tone * vec3(1.42, 1.18, 0.6);
+           float wornNoise = texture2D(uDirtMap, vTerrainWorld.xz * 0.043 + 0.21).g;
+           float worn = smoothstep(9.0, 24.0, slopeDeg + (wornNoise - 0.5) * 14.0);
+           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.45 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.6 * vegetated);
+           float ridge = smoothstep(0.05, 0.6, convex + (wornNoise - 0.5) * 0.3);
+           blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.5 * vegetated);
+           float hollow = smoothstep(0.05, 0.6, -convex);
+           blended.rgb *= mix(vec3(1.0), vec3(0.78, 0.94, 0.78), hollow * vegetated);
          }
          {
            float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
@@ -1618,8 +1648,7 @@ function terrainMaterial(
          // The land's own light (terrainLight): the relief's shadow takes the
          // sun, the hills round a hollow take some of the sky.
          {
-           vec2 lightCell = vec2((vTerrainWorld.x + uPaintHalf) / ${TERRAIN_CELL.toFixed(6)}, (uPaintHalf + vTerrainWorld.z) / ${TERRAIN_CELL.toFixed(6)});
-           vec4 landLight = texture(uPaint, vec3((lightCell + 0.5) / ${PAINT_RES.toFixed(1)}, ${LIGHT_LAYER.toFixed(1)}));
+           vec4 landLight = terrainLand();
            float skySeen = mix(0.5, 1.0, landLight.g);
            reflectedLight.directDiffuse *= landLight.r;
            reflectedLight.directSpecular *= landLight.r;
@@ -1658,7 +1687,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v25';
+  material.customProgramCacheKey = () => 'terrain-splat-v26';
   return material;
 }
 
@@ -1846,7 +1875,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
 function terrainLight(
   heights: Float64Array,
   sun: { readonly x: number; readonly y: number; readonly z: number },
-  sky: Float32Array | null,
+  shape: LandShape | null,
   out: Uint8Array,
   outWidth: number,
 ): void {
@@ -1884,10 +1913,77 @@ function terrainLight(
       const smooth = lit * lit * (3 - 2 * lit);
       const o = (iy * outWidth + ix) * 4;
       out[o] = Math.round(smooth * 255);
-      if (sky) out[o + 1] = Math.round((sky[iy * GRID + ix] as number) * 255);
-      out[o + 3] = 255;
+      if (shape) {
+        const k = iy * GRID + ix;
+        out[o + 1] = Math.round((shape.sky[k] as number) * 255);
+        out[o + 2] = Math.round((0.5 + 0.5 * (shape.convex[k] as number)) * 255);
+        out[o + 3] = Math.round(Math.min(1, (shape.slope[k] as number) / 90) * 255);
+      }
     }
   }
+}
+
+/**
+ * What the land's shape says per corner, for its colours (`terrainLight`):
+ * its share of the sky past the hills round it, its steepness - the steepest
+ * of the four cells it shares, half blended with its neighbours', so a wall
+ * stays a wall and its edge is a curve read bilinearly, not the mesh's
+ * triangles - and its CONVEXITY, the Laplacian of the heights (World
+ * Machine's convexity selector, Gaea's curvature map): ridges and tops
+ * against hollows and valley floors.
+ */
+interface LandShape {
+  readonly sky: Float32Array;
+  /** Degrees. */
+  readonly slope: Float32Array;
+  /** -1 a hollow, 0 even ground, 1 a ridge. */
+  readonly convex: Float32Array;
+}
+
+function terrainShape(heights: Float64Array): LandShape {
+  const steep = new Float32Array(GRID * GRID);
+  for (let iy = 0; iy < GRID; iy++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      let most = 0;
+      for (let cy = iy - 1; cy <= iy; cy++) {
+        for (let cx = ix - 1; cx <= ix; cx++) {
+          if (cx < 0 || cy < 0 || cx >= GRID - 1 || cy >= GRID - 1) continue;
+          const k = cy * GRID + cx;
+          const a = heights[k] as number, b = heights[k + 1] as number, c = heights[k + GRID] as number, d = heights[k + GRID + 1] as number;
+          const gx = (b - a + d - c) / (2 * TERRAIN_CELL), gy = (c - a + d - b) / (2 * TERRAIN_CELL);
+          most = Math.max(most, Math.hypot(gx, gy));
+        }
+      }
+      steep[iy * GRID + ix] = (Math.atan(most) * 180) / Math.PI;
+    }
+  }
+  const slope = new Float32Array(GRID * GRID);
+  const convex = new Float32Array(GRID * GRID);
+  const R = 3;
+  for (let iy = 0; iy < GRID; iy++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      let sum = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const jx = ix + dx, jy = iy + dy;
+          if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) continue;
+          sum += steep[jy * GRID + jx] as number; n++;
+        }
+      }
+      const k = iy * GRID + ix;
+      slope[k] = 0.5 * (steep[k] as number) + 0.5 * (sum / n);
+      // Height over the mean of a ring three cells out.
+      let ring = 0, m = 0;
+      for (let a = 0; a < 8; a++) {
+        const jx = Math.round(ix + Math.cos((a * Math.PI) / 4) * R), jy = Math.round(iy + Math.sin((a * Math.PI) / 4) * R);
+        if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) continue;
+        ring += heights[jy * GRID + jx] as number; m++;
+      }
+      const lap = m > 0 ? (heights[k] as number) - ring / m : 0;
+      convex[k] = Math.max(-1, Math.min(1, lap / (R * TERRAIN_CELL * 0.12)));
+    }
+  }
+  return { sky: terrainSky(heights), slope, convex };
 }
 
 /** Each corner's share of the sky past the hills round it (`terrainLight`), 0..1. */
@@ -2658,7 +2754,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v25-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v26-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
@@ -2666,12 +2762,12 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   // is first worked out.
   const lightLayer = paintLayer(paintArray, LIGHT_LAYER);
   for (let i = 0; i < GRID; i++) {
-    for (let j = 0; j < GRID; j++) lightLayer.set([255, 255, 0, 255], (i * PAINT_RES + j) * 4);
+    for (let j = 0; j < GRID; j++) lightLayer.set([255, 255, 128, 0], (i * PAINT_RES + j) * 4);
   }
   paintArray.addLayerUpdate(LIGHT_LAYER);
   paintArray.needsUpdate = true;
   let landMoved = true;
-  let skyShare: Float32Array | null = null;
+  let landShape: LandShape | null = null;
   const litSun = { x: 0, y: -1, z: 0 };
   const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }): void => {
     // A stroke held: the water waits for its end, and so does this.
@@ -2680,8 +2776,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const turned = (sun.x * litSun.x + sun.y * litSun.y + sun.z * litSun.z) / len < Math.cos((2 * Math.PI) / 180);
     if (!landMoved && !turned) return;
     const startedAt = performance.now();
-    if (landMoved || !skyShare) skyShare = terrainSky(grid);
-    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, skyShare, lightLayer, PAINT_RES);
+    if (landMoved || !landShape) landShape = terrainShape(grid);
+    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, landShape, lightLayer, PAINT_RES);
     landMoved = false;
     litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
     paintArray.addLayerUpdate(LIGHT_LAYER);
