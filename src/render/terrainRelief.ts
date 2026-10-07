@@ -21,6 +21,7 @@ import {
   type Texture,
   type WebGLRenderer,
 } from 'three';
+import { DEFAULT_GULLY_AUTO, gulliesAt, type GullyDab } from '@world/gullies';
 
 /**
  * THE FINE RELIEF: the land's gullies, spurs and wrinkles, far finer than the
@@ -94,6 +95,16 @@ const BAKE_FRAGMENT = /* glsl */ `
   precision highp float;
   uniform sampler2D uHeights;
   uniform sampler2D uMacro;
+  // Where gullies are cut (R) or wiped (G) by the player's brush, over the
+  // map; and how much of the steep land carries them of itself.
+  uniform sampler2D uGullies;
+  uniform float uGullyAuto;
+  float gullyHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float gullyNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(gullyHash(i), gullyHash(i + vec2(1.0, 0.0)), f.x), mix(gullyHash(i + vec2(0.0, 1.0)), gullyHash(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
   uniform float uGridN;
   uniform float uCell;
   uniform float uHalf;
@@ -221,6 +232,16 @@ const BAKE_FRAGMENT = /* glsl */ `
     float e = 3.0;
     vec2 slope = vec2(heightAt(xz + vec2(e, 0.0)) - heightAt(xz - vec2(e, 0.0)), heightAt(xz + vec2(0.0, e)) - heightAt(xz - vec2(0.0, e))) / (2.0 * e);
     vec3 r = erosion(xz / uLength, h / uLength, slope, 0.0);
+    // GULLIES ONLY WHERE THEY BELONG (world/gullies.ts): of itself only on
+    // steep ground (some 17 to 33 degrees and up) and there in scattered
+    // patches - as much of it as the map's setting asks - and wherever the
+    // player cut them; nowhere they were wiped away.
+    vec2 g = texture2D(uGullies, (xz + uHalf) / (2.0 * uHalf)).rg;
+    float steep = smoothstep(0.3, 0.65, length(slope));
+    float patchN = gullyNoise(xz / 1100.0) * 0.65 + gullyNoise(xz / 380.0 + 17.0) * 0.35;
+    float own = steep * smoothstep(1.0 - uGullyAuto - 0.08, 1.0 - uGullyAuto + 0.08, patchN) * step(0.001, uGullyAuto);
+    float mask = clamp(own + g.r, 0.0, 1.0) * (1.0 - g.g);
+    r *= mask;
     // The macro map as the terrain shader read it (terrainWideUv * 0.0024).
     vec2 wide = vec2(xz.x * 0.9396926 - xz.y * 0.3420201, xz.x * 0.3420201 + xz.y * 0.9396926) * 0.137 * 0.0024;
     float macro = dot(texture2D(uMacro, wide).rgb * 2.0, vec3(0.3, 0.59, 0.11));
@@ -231,6 +252,8 @@ const BAKE_FRAGMENT = /* glsl */ `
 export interface ReliefBake {
   /** The land moved: bake again at the next chance. */
   markDirty(): void;
+  /** The player's gully dabs and how much of the steep land carries gullies of itself (0..1): bake again. */
+  setGullies(dabs: readonly GullyDab[], auto: number): void;
   /**
    * Bakes the relief over these corner heights (row by row, GRID by GRID) if
    * it is stale, and the close window round `focus` (three's x, z) - or turns
@@ -240,7 +263,16 @@ export interface ReliefBake {
   dispose(): void;
 }
 
+/** Texels across the map of the gully brush's mask. */
+const GULLY_RES = 256;
+
 export function createReliefBake(gridN: number, cell: number, half: number, macro: Texture): ReliefBake {
+  const gullyData = new Uint8Array(GULLY_RES * GULLY_RES * 4);
+  const gullies = new DataTexture(gullyData, GULLY_RES, GULLY_RES, RGBAFormat, UnsignedByteType);
+  gullies.magFilter = LinearFilter;
+  gullies.minFilter = LinearFilter;
+  gullies.generateMipmaps = false;
+  gullies.needsUpdate = true;
   const target = new WebGLArrayRenderTarget(RELIEF_RES, RELIEF_RES, 2, {
     type: HalfFloatType,
     format: RGBAFormat,
@@ -260,6 +292,8 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     uniforms: {
       uHeights: { value: heights },
       uMacro: { value: macro },
+      uGullies: { value: gullies },
+      uGullyAuto: { value: DEFAULT_GULLY_AUTO },
       uGridN: { value: gridN },
       uCell: { value: cell },
       uHalf: { value: half },
@@ -295,6 +329,28 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
   };
   return {
     markDirty() { dirty = true; closeDirty = true; },
+    setGullies(dabs, auto) {
+      // Rasterised with the dabs culled per row, as the fog's map is.
+      const step = (2 * half) / GULLY_RES;
+      for (let j = 0; j < GULLY_RES; j++) {
+        // Texture rows run along +z (three's), which is -y on the map.
+        const z = -half + (j + 0.5) * step;
+        const y = -z;
+        const row = dabs.filter((d) => Math.abs(d.y - y) < d.radius);
+        for (let i = 0; i < GULLY_RES; i++) {
+          const x = -half + (i + 0.5) * step;
+          const k = (j * GULLY_RES + i) * 4;
+          const near = row.length ? row.filter((d) => Math.abs(d.x - x) < d.radius) : row;
+          const { cut, wipe } = near.length ? gulliesAt(near, x, y) : { cut: 0, wipe: 0 };
+          gullyData[k] = Math.round(cut * 255);
+          gullyData[k + 1] = Math.round(wipe * 255);
+        }
+      }
+      gullies.needsUpdate = true;
+      material.uniforms['uGullyAuto']!.value = auto;
+      dirty = true;
+      closeDirty = true;
+    },
     bake(renderer, grid, focus) {
       if (dirty) {
         dirty = false;
@@ -322,6 +378,7 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     dispose() {
       target.dispose();
       heights.dispose();
+      gullies.dispose();
       material.dispose();
       quad.geometry.dispose();
     },

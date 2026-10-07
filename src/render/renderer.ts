@@ -919,6 +919,8 @@ export function createSceneRenderer(
   void loadElementKit(anisotropy).then((kit) => { elementKit = kit; elementsFor = ''; }, (error: unknown) => {
     console.warn('[elements] models not loaded', error);
   });
+  /** The gully revision the relief was baked for. */
+  let gulliesFor = -1;
   /** The painted fog's map (`fogLayer.ts`), and the fog and land it was built for. */
   const fogTexture = createFogTexture();
   let fogLayer: FogLayer | null = null;
@@ -2721,6 +2723,10 @@ export function createSceneRenderer(
         // either camera (the orthographic one stands at a fixed distance).
         const halfHeight = renderer.domElement.clientHeight / Math.max(1e-3, 2 * rig.viewport.zoom);
         const close = halfHeight < 900 && rig.viewport.globe < 0.05;
+        if (net.doc.gullyRevision !== gulliesFor) {
+          gulliesFor = net.doc.gullyRevision;
+          terrain.setGullies(net.doc.gullyDabs, net.doc.gullyAuto);
+        }
         terrain.bakeRelief(renderer, close ? reliefFocus : null);
       }
       {

@@ -45,6 +45,7 @@ import {
 import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } from './mesh/textureBaker';
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, createWaterSurface } from './water';
+import type { GullyDab } from '@world/gullies';
 import { RELIEF_RES, RELIEF_TEXTURE, RELIEF_WINDOW, createReliefBake } from './terrainRelief';
 
 /**
@@ -143,6 +144,8 @@ export interface TerrainSurface {
    * has changed since - once a stroke is let go, as the water is.
    */
   bakeRelief(renderer: WebGLRenderer, focus: { readonly x: number; readonly z: number } | null): void;
+  /** The gullies the player cut or wiped, and how much of the steep land carries them of itself (`world/gullies.ts`). */
+  setGullies(dabs: readonly GullyDab[], auto: number): void;
   /**
    * The terrain's own surface for the batter from a footway down to the
    * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
@@ -3113,6 +3116,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     ground,
     skirt,
     setSun,
+    setGullies(dabs, auto) { relief.setGullies(dabs, auto); },
     bakeRelief(renderer, focus) {
       if (!waterStale) relief.bake(renderer, grid, focus);
     },

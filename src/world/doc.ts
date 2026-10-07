@@ -25,6 +25,7 @@ import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, i
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { MAX_PLACED_CLOUDS, readCloud, type PlacedCloud } from './clouds';
 import { MAX_ELEMENTS, readElement, type ElementItem, type ElementKind } from './elements';
+import { DEFAULT_GULLY_AUTO, MAX_GULLY_DABS, readGullyDab, type GullyDab } from './gullies';
 import { DEFAULT_FOG, MAX_FOG_DABS, readFogDab, readFogSettings, type FogDab, type FogSettings } from './fogPaint';
 import { isNatureSettings, type NatureSettings } from './ecology';
 import { type TransitData, emptyTransit, hasTransit, normalizeTransit } from './transit';
@@ -208,6 +209,11 @@ export class RoadDoc {
   fogSettings: FogSettings = DEFAULT_FOG;
   /** Moves with every change to `fogDabs` or `fogSettings`, and only then. */
   fogRevision = 0;
+  /** Gullies cut or wiped with the brush (`gullies.ts`), oldest first, and how much of the steep land carries them of itself (0..1). */
+  readonly gullyDabs: GullyDab[] = [];
+  gullyAuto = DEFAULT_GULLY_AUTO;
+  /** Moves with every change to `gullyDabs` or `gullyAuto`, and only then. */
+  gullyRevision = 0;
   /** Clouds the player placed in the sky (`clouds.ts`). */
   readonly clouds: PlacedCloud[] = [];
   /** Moves with every change to `clouds`, and only then. */
@@ -717,6 +723,25 @@ export class RoadDoc {
     this.fogRevision++;
   }
 
+  addGullyDab(dab: GullyDab): void {
+    this.gullyDabs.push({ ...dab });
+    if (this.gullyDabs.length > MAX_GULLY_DABS) this.gullyDabs.shift();
+    this.gullyRevision++;
+  }
+
+  clearGullies(): void {
+    if (this.gullyDabs.length === 0) return;
+    this.gullyDabs.length = 0;
+    this.gullyRevision++;
+  }
+
+  setGullyAuto(amount: number): void {
+    const next = Math.min(1, Math.max(0, Number.isFinite(amount) ? amount : DEFAULT_GULLY_AUTO));
+    if (next === this.gullyAuto) return;
+    this.gullyAuto = next;
+    this.gullyRevision++;
+  }
+
   addElements(items: readonly ElementItem[]): void {
     if (items.length === 0) return;
     this.elements.push(...items);
@@ -941,6 +966,7 @@ export class RoadDoc {
     copy.terrainRevision = this.terrainRevision;
     copy.paintRevision = this.paintRevision;
     copy.fogRevision = this.fogRevision;
+    copy.gullyRevision = this.gullyRevision;
     copy.cloudRevision = this.cloudRevision;
     copy.elementRevision = this.elementRevision;
     copy.utilityRevision = this.utilityRevision;
@@ -1051,6 +1077,13 @@ export class RoadDoc {
       this.cloudRevision++;
     }
 
+    if (this.gullyAuto !== source.gullyAuto || JSON.stringify(this.gullyDabs) !== JSON.stringify(source.gullyDabs)) {
+      this.gullyDabs.length = 0;
+      this.gullyDabs.push(...source.gullyDabs.map((dab) => ({ ...dab })));
+      this.gullyAuto = source.gullyAuto;
+      this.gullyRevision++;
+    }
+
     if (JSON.stringify(this.fogDabs) !== JSON.stringify(source.fogDabs) || JSON.stringify(this.fogSettings) !== JSON.stringify(source.fogSettings)) {
       this.fogDabs.length = 0;
       this.fogDabs.push(...source.fogDabs.map((dab) => ({ ...dab })));
@@ -1144,6 +1177,8 @@ export class RoadDoc {
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       ...(this.fogDabs.length > 0 || JSON.stringify(this.fogSettings) !== JSON.stringify(DEFAULT_FOG)
         ? { fog: { dabs: this.fogDabs.map((dab) => ({ ...dab })), settings: { ...this.fogSettings } } } : {}),
+      ...(this.gullyDabs.length > 0 || this.gullyAuto !== DEFAULT_GULLY_AUTO
+        ? { gullies: { dabs: this.gullyDabs.map((dab) => ({ ...dab })), auto: this.gullyAuto } } : {}),
       ...(this.clouds.length > 0 ? { clouds: this.clouds.map((c) => ({ ...c })) } : {}),
       ...(this.elements.length > 0 ? { elements: this.elements.map((e) => ({ ...e })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
@@ -1273,6 +1308,16 @@ export class RoadDoc {
       if (cloud && doc.clouds.length < MAX_PLACED_CLOUDS && !doc.clouds.some((c) => c.id === cloud.id)) doc.clouds.push(cloud);
     }
     if (doc.clouds.length) doc.cloudRevision = 1;
+    // Absent: a map with no gullies laid and the land's own at the default.
+    if (data.gullies) {
+      for (const raw of data.gullies.dabs ?? []) {
+        const dab = readGullyDab(raw);
+        if (dab && doc.gullyDabs.length < MAX_GULLY_DABS) doc.gullyDabs.push(dab);
+      }
+      const auto = data.gullies.auto;
+      if (typeof auto === 'number' && Number.isFinite(auto)) doc.gullyAuto = Math.min(1, Math.max(0, auto));
+      doc.gullyRevision = 1;
+    }
     // Absent: a map with no fog painted.
     if (data.fog) {
       for (const raw of data.fog.dabs ?? []) {
@@ -1415,6 +1460,7 @@ export interface SerializedDoc {
   /** Ground painted over the terrain (`terrainPaint.ts`); OPTIONAL. */
   readonly paint?: readonly { kind: string; x: number; y: number; radius: number; strength: number }[];
   readonly fog?: { readonly dabs?: readonly unknown[]; readonly settings?: unknown };
+  readonly gullies?: { readonly dabs?: readonly unknown[]; readonly auto?: unknown };
   readonly clouds?: readonly unknown[];
   readonly elements?: readonly unknown[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */

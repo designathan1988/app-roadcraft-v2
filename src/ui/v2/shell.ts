@@ -35,7 +35,7 @@ import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
-import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, gullyErase, setGullyErase, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
@@ -871,7 +871,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -924,6 +924,28 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
+      }
+      // The gully brush (`world/gullies.ts`): cut gullies where the player
+      // wants them, or wipe them away (the land's own too), and how much of
+      // the steep land carries them of itself.
+      if (q<HTMLButtonElement>('[data-terrain-mode="gully"]')?.classList.contains('active')) {
+        const brush = titled(group(t('gully.brush')), t('gully.brush'));
+        brush.classList.add('stack');
+        brush.appendChild(choices([
+          { label: t('gully.cut'), on: !gullyErase(), run: () => { setGullyErase(false); render(); }, icon: svg('brush', 18) },
+          { label: t('gully.erase'), on: gullyErase(), run: () => { setGullyErase(true); render(); }, icon: svg('eraser', 18) },
+        ], 2));
+        brush.append(
+          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
+          slider(t('gully.strength'), '#gullyStrength', '#gullyStrengthValue'),
+        );
+        options.appendChild(brush);
+        const all = titled(group(t('gully.map')), t('gully.map'));
+        all.classList.add('stack');
+        all.appendChild(slider(t('gully.auto'), '#gullyAuto', '#gullyAutoValue'));
+        all.appendChild(button('v2-icon danger', t('gully.clear'), () => press('#clearGullies'), svg('eraser', 16)));
+        options.appendChild(all);
+        return;
       }
       // The element brush (`world/elements.ts`): what it lays - ground,
       // plants or effects - whether it lays or erases, and that kind's settings.

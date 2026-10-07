@@ -216,6 +216,7 @@
         <button type="button" class="terrain-mode" data-terrain-mode="fog" aria-pressed="false" data-i18n="terrain.fog">Fog</button>
         <button type="button" class="terrain-mode" data-terrain-mode="cloud" aria-pressed="false" data-i18n="terrain.cloud">Clouds</button>
         <button type="button" class="terrain-mode" data-terrain-mode="elements" aria-pressed="false" data-i18n="terrain.elements">Elements</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="gully" aria-pressed="false" data-i18n="terrain.gully">Gullies</button>
         <button type="button" class="terrain-mode" data-terrain-mode="mesa" aria-pressed="false" data-i18n="terrain.mesa">Mesa</button>
         <button type="button" class="terrain-mode" data-terrain-mode="canyon" aria-pressed="false" data-i18n="terrain.canyon">Canyon</button>
         <button type="button" class="terrain-mode" data-terrain-mode="escarpment" aria-pressed="false" data-i18n="terrain.escarpment">Basalt escarpment</button>
@@ -262,6 +263,11 @@
         <label><span data-i18n="fog.speed">Fog speed</span> <input id="fogSpeed" type="range" min="0" max="24" value="6" step="0.5" /><output id="fogSpeedValue">6</output></label>
         <label><span data-i18n="fog.mapDensity">All fog on the map</span> <input id="fogMapDensity" type="range" min="0" max="200" value="100" step="10" /><output id="fogMapDensityValue">100</output></label>
         <button id="clearFog" type="button" data-i18n="fog.clear">Clear all fog</button>
+      </div>
+      <div class="terrain-gully" hidden>
+        <label><span data-i18n="gully.strength">Brush strength</span> <input id="gullyStrength" type="range" min="5" max="100" value="60" step="5" /><output id="gullyStrengthValue">60</output></label>
+        <label><span data-i18n="gully.auto">Gullies of the land itself</span> <input id="gullyAuto" type="range" min="0" max="100" value="25" step="5" /><output id="gullyAutoValue">25</output></label>
+        <button id="clearGullies" type="button" data-i18n="gully.clear">Clear all gully strokes</button>
       </div>
       <button id="clearTerrain" class="terrain-clear" type="button" data-i18n="terrain.clear">Flatten the whole map</button>
       </div>

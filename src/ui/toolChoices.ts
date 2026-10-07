@@ -75,6 +75,15 @@ export function setFogErase(next: boolean): void {
   fogErasing = next;
 }
 
+/** The gully brush (Paisagem > Terreno > Ravinas, `world/gullies.ts`): cutting gullies, or wiping them away. Not kept between sessions. */
+let gullyErasing = false;
+export function gullyErase(): boolean {
+  return gullyErasing;
+}
+export function setGullyErase(next: boolean): void {
+  gullyErasing = next;
+}
+
 /**
  * The element brush (Paisagem > Terreno > Elementos, `world/elements.ts`):
  * which kind it lays, whether it lays or erases (this kind, or every kind),

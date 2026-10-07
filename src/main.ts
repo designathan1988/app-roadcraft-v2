@@ -27,7 +27,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { scatter } from '@world/elements';
 import { cloudUnder } from '@world/clouds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
@@ -343,7 +343,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -898,6 +898,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   syncFogInputs();
   selectedSegment = null;
   selectedNode = null;
+  syncGullyInputs();
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
   updateHistoryButtons();
@@ -1356,6 +1357,17 @@ function stampTerrain(at: Vec2, level: number): void {
   }
   if (terrainMode === 'fog') {
     // Fog moves no height either: a dab of mist laid, or taken away.
+  if (terrainMode === 'gully') {
+    // Gullies move no height the roads read: the relief the light reads is
+    // cut there (or wiped), `render/terrainRelief.ts`.
+    const strength = Number((document.getElementById('gullyStrength') as HTMLInputElement | null)?.value ?? 60);
+    doc.addGullyDab({
+      x: at.x, y: at.y, radius: terrainRadius,
+      strength: Math.max(0.05, Math.min(1, strength / 100)),
+      ...(gullyErase() ? { erase: true } : {}),
+    });
+    return;
+  }
     // The brush's own settings go with the dab.
     const brush = fogBrush();
     doc.addFogDab({
@@ -2574,7 +2586,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -3011,6 +3023,8 @@ function setTerrainMode(next: BrushMode): void {
   if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
   const elementPanel = document.querySelector<HTMLElement>('.terrain-elements');
   if (elementPanel) elementPanel.hidden = next !== 'elements';
+  const gullyPanel = document.querySelector<HTMLElement>('.terrain-gully');
+  if (gullyPanel) gullyPanel.hidden = next !== 'gully';
   updateHint();
 }
 
@@ -3058,6 +3072,40 @@ function syncFogInputs(): void {
 }
 (document.getElementById('clearFog') as HTMLButtonElement | null)?.addEventListener('click', () => {
   if (doc.fogDabs.length === 0) return;
+// The gully brush's strength, and how much of the steep land carries gullies
+// of itself (the map's, `world/gullies.ts`): one undo step a drag.
+{
+  const strength = document.getElementById('gullyStrength') as HTMLInputElement | null;
+  strength?.addEventListener('input', () => text('gullyStrengthValue', strength.value));
+  let recorded = false;
+  const input = document.getElementById('gullyAuto') as HTMLInputElement | null;
+  input?.addEventListener('input', () => {
+    if (!recorded) { history.record(doc); recorded = true; updateHistoryButtons(); }
+    text('gullyAutoValue', input.value);
+    doc.setGullyAuto(Number(input.value) / 100);
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
+  input?.addEventListener('change', () => { recorded = false; });
+  syncGullyInputs();
+}
+/** The map's gully slider made to show the map (after a load or an undo). */
+function syncGullyInputs(): void {
+  const input = document.getElementById('gullyAuto') as HTMLInputElement | null;
+  if (!input) return;
+  const value = Math.round(doc.gullyAuto * 100);
+  input.value = String(value);
+  text('gullyAutoValue', String(value));
+}
+(document.getElementById('clearGullies') as HTMLButtonElement | null)?.addEventListener('click', () => {
+  if (doc.gullyDabs.length === 0) return;
+  if (!window.confirm(t('confirm.clearGullies'))) return;
+  history.record(doc);
+  doc.clearGullies();
+  updateHistoryButtons();
+  persistence.saveSessionSoon(doc, sessionSettings);
+  requestDraw();
+});
   if (!window.confirm(t('confirm.clearFog'))) return;
   history.record(doc);
   doc.clearFog();
@@ -5104,6 +5152,7 @@ function curveFromGesture(value: RoadDraft): CurveShape | null {
 
 function piecesForDraft(value: RoadDraft, endHeightOffset = value.heightOffset): RoadPathPiece[] {
   const start = { at: value.start.at, heightOffset: value.startHeightOffset };
+  gully: '#c98a5a',
   const end = { at: value.snap.at, heightOffset: endHeightOffset };
   if (alignment === 'free') return roadPathFromGesture(value.samples, start, end).map((piece) => ({
     ...piece,
@@ -5119,6 +5168,7 @@ function setNodeHeightMetres(id: NodeId, metres: number): void {
   let lower = -Infinity;
   let upper = Infinity;
   for (const segmentId of node.incident) {
+  gully: 'rgba(201,138,90,0.10)',
     const segment = doc.segment(segmentId);
     if (!segment) continue;
     const other = doc.node(segment.a === id ? segment.b : segment.a);
