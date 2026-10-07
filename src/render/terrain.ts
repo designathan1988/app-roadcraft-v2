@@ -1068,22 +1068,28 @@ function terrainMaterial(
          // One level of the relief round xz: its slope, its crease, its ridge
          // and macro brightness, read across a pixel's footprint or a texel,
          // whichever is wider, so a far view takes the mean and never shimmers.
-         void terrainReliefLevel(vec2 uv, float layer, float span, out vec2 grad, out float crease, out vec2 rest) {
+         // The large octaves (R) weighted by how far out the view is (wide);
+         // the small ones (A) gentler up close: at full height they are
+         // wrinkles near 45 degrees every few metres, and grassland seen at
+         // that scale only undulates.
+         float terrainReliefHeight(vec4 t, float wide) { return t.r * wide + t.a * mix(0.4, 1.0, wide); }
+         void terrainReliefLevel(vec2 uv, float layer, float span, float wide, out vec2 grad, out float crease, out vec2 rest) {
            float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(uv.x), fwidth(uv.y)));
-           vec3 c0 = texture(uRelief, vec3(uv, layer)).rgb;
-           float xp = texture(uRelief, vec3(uv + vec2(e, 0.0), layer)).r;
-           float xm = texture(uRelief, vec3(uv - vec2(e, 0.0), layer)).r;
-           float zp = texture(uRelief, vec3(uv + vec2(0.0, e), layer)).r;
-           float zm = texture(uRelief, vec3(uv - vec2(0.0, e), layer)).r;
+           vec4 t0 = texture(uRelief, vec3(uv, layer));
+           vec3 c0 = vec3(terrainReliefHeight(t0, wide), t0.gb);
+           float xp = terrainReliefHeight(texture(uRelief, vec3(uv + vec2(e, 0.0), layer)), wide);
+           float xm = terrainReliefHeight(texture(uRelief, vec3(uv - vec2(e, 0.0), layer)), wide);
+           float zp = terrainReliefHeight(texture(uRelief, vec3(uv + vec2(0.0, e), layer)), wide);
+           float zm = terrainReliefHeight(texture(uRelief, vec3(uv - vec2(0.0, e), layer)), wide);
            float d = e * span;
            grad = vec2(xp - xm, zp - zm) / (2.0 * d);
            // The crease over four units at the least: read at a texel, the
            // finest octaves' curvature drowned the gullies in speckle.
            float ec = max(e, 4.0 / span);
-           float cxp = texture(uRelief, vec3(uv + vec2(ec, 0.0), layer)).r;
-           float cxm = texture(uRelief, vec3(uv - vec2(ec, 0.0), layer)).r;
-           float czp = texture(uRelief, vec3(uv + vec2(0.0, ec), layer)).r;
-           float czm = texture(uRelief, vec3(uv - vec2(0.0, ec), layer)).r;
+           float cxp = terrainReliefHeight(texture(uRelief, vec3(uv + vec2(ec, 0.0), layer)), wide);
+           float cxm = terrainReliefHeight(texture(uRelief, vec3(uv - vec2(ec, 0.0), layer)), wide);
+           float czp = terrainReliefHeight(texture(uRelief, vec3(uv + vec2(0.0, ec), layer)), wide);
+           float czm = terrainReliefHeight(texture(uRelief, vec3(uv - vec2(0.0, ec), layer)), wide);
            float dc = ec * span;
            crease = (cxp + cxm + czp + czm - 4.0 * c0.r) / (dc * dc);
            rest = c0.gb;
@@ -1095,6 +1101,7 @@ function terrainMaterial(
          float terrainRidge = 0.0;
          float terrainMacro = 1.0;
          float terrainCarved = 0.0;
+         float terrainWide = 1.0;
          uniform sampler2DArray uRockMap;
          uniform sampler2DArray uPaint;
          uniform float uPaintHalf;
@@ -1353,7 +1360,12 @@ function terrainMaterial(
            vec2 grad;
            float creaseAt;
            vec2 rest;
-           terrainReliefLevel((vTerrainWorld.xz + uPaintHalf) / uPaintSize, 0.0, uPaintSize, grad, creaseAt, rest);
+           // How much ground a pixel covers: the large gullies only where it
+           // is two units or more, where the flat outline cannot give them away.
+           float footprint = max(fwidth(vTerrainWorld.x), fwidth(vTerrainWorld.z));
+           float wide = smoothstep(0.6, 2.4, footprint);
+           terrainWide = wide;
+           terrainReliefLevel((vTerrainWorld.xz + uPaintHalf) / uPaintSize, 0.0, uPaintSize, wide, grad, creaseAt, rest);
            // The close window's finer level (the clipmap's nested grid),
            // blended in over the window's outer tenth. The test is on a
            // uniform, so the reads inside keep their derivatives.
@@ -1362,7 +1374,7 @@ function terrainMaterial(
              vec2 fineGrad;
              float fineCrease;
              vec2 fineRest;
-             terrainReliefLevel(wuv, 1.0, uReliefWindow.z, fineGrad, fineCrease, fineRest);
+             terrainReliefLevel(wuv, 1.0, uReliefWindow.z, wide, fineGrad, fineCrease, fineRest);
              vec2 edge = min(wuv, 1.0 - wuv);
              float fine = smoothstep(0.0, 0.1, min(edge.x, edge.y));
              grad = mix(grad, fineGrad, fine);
@@ -1623,7 +1635,8 @@ function terrainMaterial(
            blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.2 * vegetated);
            // The fine relief's crests worn to pale earth and stone, as the
            // spurs of an eroded hillside are where the turf thins.
-           float crest = smoothstep(0.3, 0.85, terrainRidge) * terrainCarved;
+           // From afar only: up close the pale lines read as scratches.
+           float crest = smoothstep(0.3, 0.85, terrainRidge) * terrainCarved * terrainWide;
            vec3 bareCrest = mix(dirtColor.rgb, rockColor.rgb, 0.5) * vec3(1.15, 1.08, 0.95);
            blended.rgb = mix(blended.rgb, bareCrest, crest * 0.55 * vegetated);
            float hollow = smoothstep(0.05, 0.6, -convex);

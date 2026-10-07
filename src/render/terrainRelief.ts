@@ -47,7 +47,15 @@ import {
  * (the player, 2026-10-07). The terrain shader blends the fine level into
  * the coarse one over the window's outer tenth.
  *
- * Each layer: R the height the relief adds (world units), G its ridge map
+ * Each layer: R the height the three largest octaves add (world units:
+ * gullies 150, 75 and 37 apart, wider than the mesh's 16-unit cells can
+ * hold), A the height the smaller ones add - kept apart because the large gullies are
+ * shapes a normal map cannot carry close up (a normal map leaves the outline
+ * flat and has no parallax: big forms belong to the geometry, a normal map
+ * to small detail - Polycount, Blender Artists; the player, 2026-10-07: the
+ * land read as draped cloth up close), so the terrain shader draws them
+ * only where a pixel covers enough ground for the outline not to tell -,
+ * G its ridge map
  * (about +1 on crests, -1 in creases), B the brightness of the land's macro
  * colour map (`terrain.ts` macroTexture) - carried here because the terrain
  * shader is at the sixteen textures a fragment shader may bind.
@@ -166,11 +174,13 @@ const BAKE_FRAGMENT = /* glsl */ `
     return vec4(acc / magnitude, side);
   }
 
-  // The filter at p over a height h with slope d: x the height to add, y the ridge map.
-  vec2 erosion(vec2 p, float h, vec2 d, float fadeTargetIn) {
+  // The filter at p over a height h with slope d: x the height to add, y the
+  // ridge map, z of x the part the three largest octaves add.
+  vec3 erosion(vec2 p, float h, vec2 d, float fadeTargetIn) {
     float strength = STRENGTH * SCALE;
     float fadeTarget = clamp(fadeTargetIn, -1.0, 1.0);
     float hh = h;
+    float large = 0.0;
     float freq = 1.0 / (SCALE * CELL_SCALE);
     float slopeLength = max(length(d), 1e-10);
     float roundingMult = 1.0;
@@ -191,6 +201,7 @@ const BAKE_FRAGMENT = /* glsl */ `
       g += (ph.y >= 0.0 ? 1.0 : -1.0) * z * strength * GULLY;
       float fh = mix(fadeTarget, ph.x * GULLY, combiMask);
       hh += fh * strength;
+      if (i == 2) large = hh - h;
       fadeTarget = fh;
       float roundingForOctave = mix(ROUND.y, ROUND.x, clamp(ph.x + 0.5, 0.0, 1.0)) * roundingMult;
       float newMask = easeOut(smoothStart(sloping * ONSET.y, roundingForOctave * ONSET.y));
@@ -201,7 +212,7 @@ const BAKE_FRAGMENT = /* glsl */ `
       freq *= LACUNARITY;
       roundingMult *= ROUND.w;
     }
-    return vec2(hh - h, ridgeTarget * (1.0 - ridgeMask));
+    return vec3(hh - h, ridgeTarget * (1.0 - ridgeMask), large);
   }
 
   void main() {
@@ -209,11 +220,11 @@ const BAKE_FRAGMENT = /* glsl */ `
     float h = heightAt(xz);
     float e = 3.0;
     vec2 slope = vec2(heightAt(xz + vec2(e, 0.0)) - heightAt(xz - vec2(e, 0.0)), heightAt(xz + vec2(0.0, e)) - heightAt(xz - vec2(0.0, e))) / (2.0 * e);
-    vec2 r = erosion(xz / uLength, h / uLength, slope, 0.0);
+    vec3 r = erosion(xz / uLength, h / uLength, slope, 0.0);
     // The macro map as the terrain shader read it (terrainWideUv * 0.0024).
     vec2 wide = vec2(xz.x * 0.9396926 - xz.y * 0.3420201, xz.x * 0.3420201 + xz.y * 0.9396926) * 0.137 * 0.0024;
     float macro = dot(texture2D(uMacro, wide).rgb * 2.0, vec3(0.3, 0.59, 0.11));
-    gl_FragColor = vec4(r.x * uLength, r.y, macro, 1.0);
+    gl_FragColor = vec4(r.z * uLength, r.y, macro, (r.x - r.z) * uLength);
   }
 `;
 
