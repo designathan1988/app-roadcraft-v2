@@ -49,7 +49,33 @@ export interface TerrainStamp {
    * so the spatial index's buckets, built on `radius`, stay right.
    */
   readonly rough?: boolean;
+  /**
+   * How hard the brush's edge is, 0..1, for raise and lower: 0 (absent) the
+   * smooth dome; towards 1 the full height holds over the dab and drops in
+   * the outer rim only - a mesa's flat top and its cliff, a canyon's floor
+   * and walls (a terrain brush's falloff curve, Unity's Brush "Falloff",
+   * from smooth fades to sharp edges).
+   */
+  readonly hardness?: number;
+  /**
+   * A raise's SHAPE other than the dome of its falloff. 'dome': a granite
+   * sugarloaf (a bornhardt - Rio's Pão de Açúcar, Quixadá's monoliths): a
+   * rounded crown on sides that steepen to a wall at the foot, its outline
+   * wandering if the dab is rough but its crown smooth. Absent: the falloff.
+   */
+  readonly profile?: TerrainProfile;
 }
+
+/** The raise shapes besides the falloff's dome (`TerrainStamp.profile`). */
+export type TerrainProfile = 'dome';
+export const isTerrainProfile = (value: unknown): value is TerrainProfile => value === 'dome';
+
+/**
+ * A sugarloaf's section, 1 at its centre to 0 at its foot, over `d` = the
+ * share of the reach out from the centre: a crown that stays round over the
+ * inner half, then sides steepening to a near wall (a bornhardt's).
+ */
+export const sugarloafProfile = (d: number): number => Math.pow(Math.max(0, 1 - Math.pow(Math.min(1, Math.max(0, d)), 2.4)), 0.6);
 
 /**
  * How many brush dabs one map may hold.
@@ -94,6 +120,11 @@ export const RIVER_CARVE = 1.45;
  * a shoreline sits.
  */
 export const terrainInfluence = (unit: number): number => unit * unit * (3 - 2 * unit);
+
+/** The narrowest share of its radius a hard dab's edge falls over (`TerrainStamp.hardness`). */
+export const MIN_HARD_RIM = 0.08;
+/** The narrowest a hard dab's wall is, in world units: two cells of the drawn terrain grid (16 units). */
+export const MIN_HARD_WALL = 32;
 
 /** A natural river dab carves this share of the old canyon's depth. */
 export const RIVER_BED_DEPTH = 0.42;
@@ -322,13 +353,23 @@ export function sampleTerrainHeight(
       const lobe = stamp.radius * 0.45;
       reach *= ROUGH_REACH_MIN + (1 - ROUGH_REACH_MIN) * (0.5 + 0.5 * valueNoise(x / lobe + 41.3, y / lobe - 17.9));
       if (distance >= reach) continue;
-      const crest = stamp.radius * 0.55;
-      const ridge = 1 - Math.abs(valueNoise(x / crest - 5.1, y / crest + 8.6));
-      // Gentle: dabs stack, and a strong carve stacked ten times drew spires.
-      carve = 0.82 + 0.36 * ridge * ridge;
+      // A sugarloaf's crown is smooth rock: its outline wanders, its top does not.
+      if (stamp.profile !== 'dome') {
+        const crest = stamp.radius * 0.55;
+        const ridge = 1 - Math.abs(valueNoise(x / crest - 5.1, y / crest + 8.6));
+        // Gentle: dabs stack, and a strong carve stacked ten times drew spires.
+        // A hard dab (a mesa, a canyon) keeps a flatter top and floor.
+        carve = 1 + (0.36 * ridge * ridge - 0.18) * (1 - 0.75 * (stamp.hardness ?? 0));
+      }
     }
     const unit = 1 - distance / reach;
-    const influence = (bedProfile ? terrainInfluence(Math.min(1, unit / RIVER_BED_FLOOR)) : terrainInfluence(unit)) * carve;
+    // A hard edge: the falloff squeezed into the dab's outer rim.
+    // Never narrower than MIN_HARD_WALL: a wall thinner than a few cells of the drawn grid
+    // came out a zigzag of teeth along its rim.
+    const rim = stamp.hardness && (stamp.mode === 'raise' || stamp.mode === 'lower') ? Math.min(1, Math.max(MIN_HARD_RIM, 1 - stamp.hardness, MIN_HARD_WALL / reach)) : 1;
+    const influence = (bedProfile ? terrainInfluence(Math.min(1, unit / RIVER_BED_FLOOR))
+      : stamp.profile === 'dome' && stamp.mode === 'raise' ? sugarloafProfile(1 - unit)
+        : terrainInfluence(Math.min(1, unit / rim))) * carve;
     const move = stamp.mode === 'raise' ? stamp.strength * influence
       : stamp.mode === 'lower' ? -stamp.strength * influence
         : stamp.mode === 'river' ? -stamp.strength * RIVER_CARVE * influence

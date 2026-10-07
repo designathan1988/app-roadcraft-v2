@@ -9,6 +9,8 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   DataTexture,
+  DataArrayTexture,
+  NoColorSpace,
   RGBAFormat,
   UnsignedByteType,
   LinearFilter,
@@ -25,7 +27,8 @@ import {
 } from 'three';
 
 import type { RoadDoc } from '@world/doc';
-import { COVER_KINDS, PAINT_KINDS, type CoverKind, type PaintDab } from '@world/terrainPaint';
+import { COVER_KINDS, PAINT_KINDS, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
+import { GroundChanges } from './groundChanges';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
@@ -35,7 +38,7 @@ import {
   terrainInfluence,
   type TerrainStamp,
 } from '@world/terrain';
-import { bakeSurface, fbm, makeNoise, type SurfaceBake } from './mesh/textureBaker';
+import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } from './mesh/textureBaker';
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, createWaterSurface } from './water';
 
@@ -165,6 +168,10 @@ export interface TerrainSurface {
   coverAt(kind: CoverKind, x: number, y: number): number;
   /** Moves whenever the covers painted change. */
   readonly forestRevision: number;
+  /** Which rock the land is made of at a point (the painted geology; granite where none was). */
+  geologyAt(x: number, y: number): GeologyKind;
+  /** Where the painted geology changed: the stones on the ground take its colour. */
+  readonly geologyChanges: GroundChanges;
   /** The water's level near a point (lake or river, within a few cells of it), or null. */
   shoreLevelAt(x: number, y: number): number | null;
   /** Where water is, world (x, y), or null when there is none. */
@@ -208,6 +215,240 @@ export interface TerrainShaper {
   shapeBounds(): readonly Aabb[];
 }
 
+/** 0..1 hash of an integer lattice point. */
+function latticeHash(x: number, y: number, seed: number): number {
+  let h = Math.imul(x | 0, 374_761_393) ^ Math.imul(y | 0, 668_265_263) ^ Math.imul(seed, 2_246_822_519);
+  h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+}
+
+/**
+ * Value noise tiling with its own period on each axis: a streak long down a
+ * face and narrow across it, still seamless (`makeNoise` has one period).
+ */
+function makeNoiseXY(seed: number): (x: number, y: number, px: number, py: number) => number {
+  const smooth = (t: number): number => t * t * (3 - 2 * t);
+  return (x, y, px, py) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const fx = smooth(x - x0), fy = smooth(y - y0);
+    const ax = ((x0 % px) + px) % px, ay = ((y0 % py) + py) % py;
+    const bx = ax + 1 === px ? 0 : ax + 1, by = ay + 1 === py ? 0 : ay + 1;
+    const a = latticeHash(ax, ay, seed), b = latticeHash(bx, ay, seed);
+    const c = latticeHash(ax, by, seed), d = latticeHash(bx, by, seed);
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+}
+
+/** The nearest and second-nearest jittered points of an n x n tiling grid. */
+const cell = { f1: 0, f2: 0, id: 0 };
+function cellular(u: number, v: number, n: number, seed: number): typeof cell {
+  const x = u * n, y = v * n;
+  const ix = Math.floor(x), iy = Math.floor(y);
+  cell.f1 = 9;
+  cell.f2 = 9;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = ix + dx, cy = iy + dy;
+      const wx = ((cx % n) + n) % n, wy = ((cy % n) + n) % n;
+      const px = cx + 0.12 + 0.76 * latticeHash(wx, wy, seed);
+      const py = cy + 0.12 + 0.76 * latticeHash(wx, wy, seed + 1);
+      const d = Math.hypot(px - x, py - y);
+      if (d < cell.f1) { cell.f2 = cell.f1; cell.f1 = d; cell.id = wy * n + wx; } else if (d < cell.f2) cell.f2 = d;
+    }
+  }
+  return cell;
+}
+
+const smoothstep = (a: number, b: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Mixes `out`'s colour towards an sRGB colour by `w`. */
+function tintTowards(out: { r: number; g: number; b: number }, c: readonly [number, number, number], w: number): void {
+  out.r += (c[0] - out.r) * w;
+  out.g += (c[1] - out.g) * w;
+  out.b += (c[2] - out.b) * w;
+}
+
+/** Texels across a rock layer; every layer of the array is this size. */
+const ROCK_SIZE = 512;
+/** World units one rock tile covers (`uRockScale`). */
+const ROCK_WORLD = 58;
+
+/**
+ * The rocks, two layers each - its FACE, read by the side projections of the
+ * triplanar mapping (texture v is height, so beds lie level and streaks run
+ * down), and its TOP, read from above on the gentler rock, with no direction
+ * in it (a face texture laid flat drew parallel stripes over every outcrop).
+ * In the shader's order: granite, sandstone, basalt.
+ *
+ *  - GRANITE / GNEISS, the land's own rock (Rio's sugarloaves, the Serra do
+ *    Mar, the inselbergs of the sertão): grey slabs split by long sheeting
+ *    joints, black streaks of the cyanobacteria the rain feeds running down
+ *    the face, grooves (caneluras) and pale lichen.
+ *  - SANDSTONE (the chapadas and their canyons): cross-bedded sets between
+ *    level bounding surfaces, vertical joints, varnish hanging from the bed
+ *    contacts. Its broad beds of colour are laid by the shader from the
+ *    world height, so they never repeat with the tile.
+ *  - BASALT (the Serra Geral, Itaimbezinho): dark columns of uneven width, each
+ *    a facet, cross joints, rusty weathering; from above, the polygons of
+ *    their tops.
+ */
+const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
+  const g1 = makeNoise(0x61a1), g2 = makeNoise(0x61d4), gs = makeNoiseXY(0x61b2), gf = makeNoise(0x61c3);
+  const s1 = makeNoise(0x7a11), s2 = makeNoise(0x7a22), ss = makeNoiseXY(0x7a33);
+  const b1 = makeNoise(0x8b11), bs = makeNoiseXY(0x8b22);
+  const grey: readonly [number, number, number] = [0.45, 0.44, 0.415];
+  const graniteFace = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    const slab = fbm(g1, u * 4, v * 4, 4, 3);
+    // Sheeting joints: long cracks across the face, gently curved, broken.
+    const jt = v * 5 + (fbm(g2, u * 3, v * 3, 3, 2) - 0.5) * 0.9;
+    const jd = Math.abs(jt - Math.round(jt)) * (ROCK_SIZE / 5);
+    const joint = (1 - smoothstep(1.2, 3, jd)) * smoothstep(0.5, 0.62, fbm(g2, u * 7 + 3.3, v * 7 + 1.1, 7, 1));
+    // And a few running down it.
+    const ju = u * 3 + (fbm(g2, u * 2 + 9, v * 2, 2, 2) - 0.5) * 0.5;
+    const ud = Math.abs(ju - Math.round(ju)) * (ROCK_SIZE / 3);
+    const upright = (1 - smoothstep(1.2, 3, ud)) * smoothstep(0.52, 0.64, fbm(g2, u * 5 + 1.7, v * 5 + 6.1, 5, 1));
+    const crack = Math.max(joint, upright);
+    // Streaks: water and the cyanobacteria it feeds, down from every crest.
+    const st = gs(u * 36, v * 2, 36, 2) * 0.65 + gs(u * 90 + 7, v * 5, 90, 5) * 0.35;
+    const streak = smoothstep(0.52, 0.8, st);
+    const groove = gs(u * 150, v * 3 + 1.7, 150, 3);
+    const lichen = smoothstep(0.72, 0.82, fbm(gf, u * 20 + 5, v * 20 + 9, 20, 2)) * (1 - streak);
+    const fine = fbm(gf, u * 96, v * 96, 96, 2);
+    const crystal = latticeHash(x, y, 0x61e5);
+    out.r = grey[0] - 0.03 + slab * 0.07;
+    out.g = grey[1] - 0.025 + slab * 0.05;
+    out.b = grey[2] - 0.015 + slab * 0.03;
+    const k = (0.9 + fine * 0.18) * (0.95 + groove * 0.07) * (crystal < 0.06 ? 0.72 : crystal > 0.93 ? 1.16 : 1);
+    out.r *= k; out.g *= k; out.b *= k;
+    tintTowards(out, [0.17, 0.17, 0.175], streak * 0.7);
+    tintTowards(out, [0.6, 0.61, 0.54], lichen * 0.35);
+    out.r *= 1 - crack * 0.38; out.g *= 1 - crack * 0.38; out.b *= 1 - crack * 0.38;
+    out.h = slab * 0.4 + groove * 0.18 - crack * 0.55 + fine * 0.12 + lichen * 0.05;
+    out.rough = 0.86;
+  };
+  const graniteTop = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    const c = cellular(u, v, 6, 0x61f1);
+    const crack = 1 - smoothstep(0.02, 0.07, c.f2 - c.f1);
+    const block = latticeHash(c.id, 3, 0x61f2);
+    const stain = smoothstep(0.58, 0.8, fbm(g1, u * 8 + 2, v * 8 + 7, 8, 3));
+    const lichen = smoothstep(0.62, 0.72, fbm(gf, u * 24 + 1, v * 24 + 4, 24, 2));
+    const fine = fbm(gf, u * 96 + 3, v * 96 + 8, 96, 2);
+    const crystal = latticeHash(x, y, 0x61f3);
+    const k = (0.88 + block * 0.16) * (0.9 + fine * 0.18) * (crystal < 0.06 ? 0.74 : crystal > 0.93 ? 1.14 : 1);
+    out.r = grey[0] * k; out.g = grey[1] * k; out.b = grey[2] * k;
+    tintTowards(out, [0.27, 0.27, 0.26], stain * 0.45);
+    tintTowards(out, [0.64, 0.65, 0.57], lichen * 0.3);
+    // Grit and soil caught in the joints.
+    tintTowards(out, [0.3, 0.25, 0.19], crack * 0.85);
+    out.h = 0.5 + block * 0.2 - crack * 0.5 + fine * 0.15;
+    out.rough = 0.88;
+  };
+  const sand: readonly [number, number, number] = [0.68, 0.48, 0.33];
+  const sandstoneFace = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    // Sets of cross-beds between level bounding surfaces, four to a tile.
+    const setT = v * 4 + (fbm(s1, u * 2, v * 2, 2, 2) - 0.5) * 0.22;
+    const setI = Math.floor(setT), setF = setT - setI;
+    const setId = ((setI % 4) + 4) % 4;
+    const slope = [9, -7, 12, -5][setId]!;
+    const lam = 0.5 + 0.5 * Math.sin(2 * Math.PI * (v * 40 + u * slope + fbm(s2, u * 6, v * 6, 6, 1) * 1.4));
+    const bound = 1 - smoothstep(0.8, 2.4, Math.min(setF, 1 - setF) * (ROCK_SIZE / 4));
+    const hard = latticeHash(setId, 1, 0x7a44);
+    // Joints down the face, in pieces.
+    const ju = u * 3 + (fbm(s2, u * 2 + 4, v * 2, 2, 2) - 0.5) * 0.35;
+    const jd = Math.abs(ju - Math.round(ju)) * (ROCK_SIZE / 3);
+    const joint = (1 - smoothstep(1, 2.6, jd)) * smoothstep(0.55, 0.68, fbm(s1, u * 6 + 2, v * 6 + 5, 6, 1));
+    // Varnish hanging from the bed contacts (texture v runs down the face).
+    const vs = ss(u * 28, v * 4, 28, 4) * 0.6 + ss(u * 70 + 3, v * 8, 70, 8) * 0.4;
+    const varnish = smoothstep(0.5, 0.78, vs) * (0.3 + 0.7 * (1 - setF));
+    const grain = fbm(s2, u * 128 + 7, v * 128 + 1, 128, 2);
+    const speck = latticeHash(x, y, 0x7a55);
+    const k = (0.94 + hard * 0.1) * (0.97 + lam * 0.06) * (0.92 + grain * 0.14) * (speck < 0.05 ? 0.86 : speck > 0.95 ? 1.08 : 1);
+    out.r = sand[0] * k; out.g = sand[1] * k; out.b = sand[2] * k;
+    tintTowards(out, [0.3, 0.2, 0.14], varnish * 0.5);
+    out.r *= 1 - bound * 0.1 - joint * 0.3; out.g *= 1 - bound * 0.11 - joint * 0.32; out.b *= 1 - bound * 0.12 - joint * 0.33;
+    out.h = 0.35 + hard * 0.3 + lam * 0.08 - bound * 0.3 - joint * 0.5 + grain * 0.12;
+    out.rough = 0.93;
+  };
+  const sandstoneTop = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    const c = cellular(u, v, 5, 0x7a66);
+    const edge = c.f2 - c.f1;
+    const crack = 1 - smoothstep(0.015, 0.055, edge);
+    const fill = (1 - smoothstep(0.05, 0.14, edge)) * (1 - crack);
+    const block = latticeHash(c.id, 7, 0x7a77);
+    const crust = fbm(s1, u * 10 + 3, v * 10 + 1, 10, 3);
+    const grain = fbm(s2, u * 128 + 2, v * 128 + 9, 128, 2);
+    const pit = latticeHash(x, y, 0x7a88) < 0.03 ? 1 : 0;
+    const k = (0.9 + block * 0.14) * (0.9 + crust * 0.2) * (0.93 + grain * 0.12) * (1 - pit * 0.25);
+    out.r = sand[0] * k; out.g = sand[1] * k; out.b = sand[2] * k;
+    // Sand blown into the joints, paler; the joints themselves dark.
+    tintTowards(out, [0.82, 0.7, 0.52], fill * 0.5);
+    tintTowards(out, [0.36, 0.26, 0.19], crack * 0.8);
+    tintTowards(out, [0.34, 0.33, 0.28], smoothstep(0.7, 0.8, fbm(s1, u * 22, v * 22 + 5, 22, 2)) * 0.5);
+    out.h = 0.5 + block * 0.15 + crust * 0.15 - crack * 0.5 - fill * 0.15 + grain * 0.1;
+    out.rough = 0.94;
+  };
+  const dark: readonly [number, number, number] = [0.3, 0.29, 0.275];
+  const basaltFace = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    // Columns of uneven width, swaying a little as they rise.
+    const cu = u * 9 + (bs(u * 9, v * 1.0, 9, 1) - 0.5) * 0.8 + (bs(u * 3 + 5, v * 2, 3, 2) - 0.5) * 0.4;
+    const colI = Math.floor(cu), colF = cu - colI;
+    const col = ((colI % 9) + 9) % 9;
+    const ridge = 0.3 + 0.4 * latticeHash(col, 2, 0x8b33);
+    const facet = 1 - Math.abs(colF - ridge) / Math.max(ridge, 1 - ridge);
+    const gap = 1 - smoothstep(1, 2.6, Math.min(colF, 1 - colF) * (ROCK_SIZE / 9));
+    // Cross joints at each column's own heights.
+    const ct = v * 6 + latticeHash(col, 5, 0x8b44) * 3;
+    const cd = Math.abs(ct - Math.round(ct)) * (ROCK_SIZE / 6);
+    const cross = (1 - smoothstep(0.8, 2.2, cd)) * (latticeHash(col, Math.round(ct), 0x8b55) < 0.3 ? 1 : 0);
+    const rust = smoothstep(0.6, 0.76, fbm(b1, u * 6 + 2, v * 6 + 9, 6, 3));
+    const lichen = smoothstep(0.76, 0.86, fbm(b1, u * 18 + 5, v * 18 + 3, 18, 2));
+    const streak = smoothstep(0.6, 0.85, bs(u * 40 + 3, v * 3, 40, 3));
+    const grain = fbm(b1, u * 128, v * 128 + 4, 128, 2);
+    const k = (0.86 + latticeHash(col, 9, 0x8b66) * 0.22) * (0.92 + facet * 0.12) * (0.9 + grain * 0.18);
+    out.r = dark[0] * k; out.g = dark[1] * k; out.b = dark[2] * k;
+    tintTowards(out, [0.4, 0.26, 0.18], rust * 0.45);
+    tintTowards(out, [0.47, 0.49, 0.43], lichen * 0.3);
+    tintTowards(out, [0.42, 0.41, 0.39], streak * 0.25);
+    const shut = Math.max(gap, cross * 0.7);
+    out.r *= 1 - shut * 0.45; out.g *= 1 - shut * 0.45; out.b *= 1 - shut * 0.45;
+    out.h = facet * 0.45 - gap * 0.6 - cross * 0.35 + grain * 0.1 + 0.3;
+    out.rough = 0.84;
+  };
+  const basaltTop = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
+    const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
+    const c = cellular(u, v, 10, 0x8b77);
+    const joint = 1 - smoothstep(0.03, 0.09, c.f2 - c.f1);
+    const top = latticeHash(c.id, 4, 0x8b88);
+    const rust = smoothstep(0.62, 0.78, fbm(b1, u * 7 + 4, v * 7 + 2, 7, 3));
+    const lichen = smoothstep(0.66, 0.78, fbm(b1, u * 20 + 8, v * 20 + 1, 20, 2));
+    const grain = fbm(b1, u * 128 + 5, v * 128 + 6, 128, 2);
+    const k = (0.84 + top * 0.24) * (0.9 + grain * 0.18) * (0.94 + c.f1 * 0.1);
+    out.r = dark[0] * k; out.g = dark[1] * k; out.b = dark[2] * k;
+    tintTowards(out, [0.42, 0.27, 0.19], rust * 0.55);
+    tintTowards(out, [0.48, 0.5, 0.44], lichen * 0.5);
+    out.r *= 1 - joint * 0.6; out.g *= 1 - joint * 0.6; out.b *= 1 - joint * 0.6;
+    out.h = 0.55 + top * 0.15 - c.f1 * 0.2 - joint * 0.55 + grain * 0.1;
+    out.rough = 0.86;
+  };
+  const layer = (shade: SurfaceRecipe['shade'], relief: number): SurfaceRecipe => ({ size: ROCK_SIZE, worldSize: ROCK_WORLD, relief, shade });
+  return [
+    ['terrain-rock-granite', layer(graniteFace, 2.2)],
+    ['terrain-rock-granite-top', layer(graniteTop, 2.2)],
+    ['terrain-rock-sandstone', layer(sandstoneFace, 2.0)],
+    ['terrain-rock-sandstone-top', layer(sandstoneTop, 2.0)],
+    ['terrain-rock-basalt', layer(basaltFace, 2.6)],
+    ['terrain-rock-basalt-top', layer(basaltTop, 2.4)],
+  ];
+})();
+
 /**
  * Tiling noise stretched along v: the mean of samples stacked up the column,
  * which smears each blob into a streak while both axes keep the one period
@@ -222,7 +463,7 @@ function streakNoise(noise: (x: number, y: number, period: number) => number, u:
 
 export function terrainBakes(anisotropy: number): {
   grass: SurfaceBake;
-  rock: SurfaceBake;
+  rocks: readonly SurfaceBake[];
   dirt: SurfaceBake;
 } {
   const grassFine = makeNoise(0x1234);
@@ -289,34 +530,7 @@ export function terrainBakes(anisotropy: number): {
     anisotropy,
   );
 
-  const rockCrack = makeNoise(0x5ac1);
-  const rockGrain = makeNoise(0x77b3);
-  const rock = bakeSurface(
-    'terrain-rock',
-    {
-      size: 512,
-      worldSize: 58,
-      // Broad facets of warm and cool stone, no inked cracks: a black crack
-      // line every few metres drew contour stripes over every hillside.
-      relief: 1.8,
-      shade: (x, y, out) => {
-        const u = x / 512;
-        const v = y / 512;
-        // Long vertical ribs and gullies, as eroded rock faces show.
-        const strata = streakNoise(rockCrack, u, v, 22);
-        const grain = fbm(rockGrain, u * 110, v * 110, 110, 2);
-        const facet = strata;
-        const tone = 0.4 + (facet - 0.5) * 0.24 + (grain - 0.5) * 0.07;
-        // Warm, reddish stone rather than concrete grey.
-        out.r = tone * 1.14;
-        out.g = tone * 0.98;
-        out.b = tone * 0.84;
-        out.h = facet * 0.7 + grain * 0.3;
-        out.rough = 0.92;
-      },
-    },
-    anisotropy,
-  );
+  const rocks = ROCK_RECIPES.map(([key, recipe]) => bakeSurface(key, recipe, anisotropy));
 
   const dirtGrain = makeNoise(0x3311);
   const dirt = bakeSurface(
@@ -335,9 +549,10 @@ export function terrainBakes(anisotropy: number): {
         const gully = streakNoise(dirtGrain, u, v, 48);
         const cut = Math.max(0, 0.5 - gully) * 2;
         const tone = 0.34 + (grain - 0.5) * 0.08 + patch * 0.07 - cut * 0.09 + Math.max(0, gully - 0.6) * 0.12;
-        out.r = tone * 1.08;
-        out.g = tone * 0.86;
-        out.b = tone * 0.64;
+        // Red-brown, the colour of the tropics' weathered soils (latossolo).
+        out.r = tone * 1.22;
+        out.g = tone * 0.8;
+        out.b = tone * 0.58;
         out.h = grain * 0.7 + patch * 0.3;
         out.rough = 0.97;
       },
@@ -345,7 +560,7 @@ export function terrainBakes(anisotropy: number): {
     anisotropy,
   );
 
-  return { grass, rock, dirt };
+  return { grass, rocks, dirt };
 }
 
 /**
@@ -407,20 +622,100 @@ function shoreLevels(water: BufferGeometry, levels: Float32Array): void {
 
 /**
  * The ground texture the terrain shader reads per corner: R the water's level
- * (`shoreLevels`), G the painted flowers' density, B the painted scrub's. One
- * texture for all: the terrain material already binds sixteen textures, the
+ * (`shoreLevels`), G the painted flowers' density, B the painted scrub's, A
+ * the painted forest's. One texture for all: the terrain material already binds sixteen textures, the
  * most a fragment shader may, and a texture of its own for the flowers took
  * the whole terrain off the screen.
  */
-function packGroundCorners(texture: DataTexture, levels: Float32Array, flowers: Float32Array, scrub: Float32Array): void {
+function packGroundCorners(texture: DataTexture, levels: Float32Array, flowers: Float32Array, scrub: Float32Array, forest: Float32Array, sand: Float32Array, basalt: Float32Array): void {
   const data = texture.image.data as Float32Array;
+  const byte = (value: number): number => Math.round(Math.min(1, Math.max(0, value)) * 255);
   for (let k = 0; k < levels.length; k++) {
     data[k * 4] = levels[k] as number;
-    data[k * 4 + 1] = flowers[k] as number;
-    data[k * 4 + 2] = scrub[k] as number;
-    data[k * 4 + 3] = 0;
+    // Two bytes to a channel, exact in a float: the flowers (the scrub) low,
+    // the painted sandstone (basalt) high. The shader splits them per corner
+    // before it interpolates.
+    data[k * 4 + 1] = byte(flowers[k] as number) + 256 * byte(sand[k] as number);
+    data[k * 4 + 2] = byte(scrub[k] as number) + 256 * byte(basalt[k] as number);
+    data[k * 4 + 3] = forest[k] as number;
   }
   texture.needsUpdate = true;
+}
+
+/**
+ * Lays one geology dab on the terrain's corners: within its radius the rock
+ * moves towards the dab's (granite: towards neither sandstone nor basalt) by
+ * its strength times a smooth falloff, as a cover does. Returns the world
+ * rectangle it reached.
+ */
+function rasterGeology(sand: Float32Array, basalt: Float32Array, dab: PaintDab): readonly [number, number, number, number] {
+  const toSand = dab.kind === 'sandstone' ? 1 : 0;
+  const toBasalt = dab.kind === 'basalt' ? 1 : 0;
+  // Rows run from +y downwards, as the plane lays them.
+  const cx = (dab.x + TERRAIN_HALF) / TERRAIN_CELL;
+  const cy = (TERRAIN_HALF - dab.y) / TERRAIN_CELL;
+  const r = dab.radius / TERRAIN_CELL;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(GRID - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(GRID - 1, Math.ceil(cy + r));
+  for (let iy = y0; iy <= y1; iy++) {
+    for (let ix = x0; ix <= x1; ix++) {
+      const d = Math.hypot(ix - cx, iy - cy) / Math.max(1e-6, r);
+      if (d >= 1) continue;
+      // Flat to near its rim: a landform's cliff stands at the rim of its
+      // dabs, and a falloff from the centre left every wall granite.
+      const t = Math.min(1, Math.max(0, (d - 0.78) / 0.22));
+      const w = Math.min(1, dab.strength * (1 - t * t * (3 - 2 * t)));
+      const k = iy * GRID + ix;
+      sand[k] = (sand[k] as number) + (toSand - (sand[k] as number)) * w;
+      basalt[k] = (basalt[k] as number) + (toBasalt - (basalt[k] as number)) * w;
+    }
+  }
+  return [dab.x - dab.radius, dab.y - dab.radius, dab.x + dab.radius, dab.y + dab.radius];
+}
+
+/** The pixels of a baked texture, rows top first as its canvas holds them, or null. */
+function bakedRows(texture: Texture): Uint8Array | Uint8ClampedArray | null {
+  const image = texture.image as { data?: Uint8Array; width: number; height: number; getContext?: (kind: '2d') => CanvasRenderingContext2D | null };
+  if (image.data) return image.data;
+  const context = image.getContext?.('2d');
+  return context ? context.getImageData(0, 0, image.width, image.height).data : null;
+}
+
+/**
+ * The rock layers as ONE texture array: a single texture unit for all of them
+ * (the terrain material is at the sixteen a fragment shader may bind), each
+ * layer chosen in the shader by index (three's DataArrayTexture; Terrain3D
+ * keeps its terrain textures the same way).
+ */
+function layeredTexture(textures: readonly Texture[], srgb: boolean, anisotropy: number): DataArrayTexture {
+  const first = textures[0]!.image as { width: number; height: number };
+  const width = first.width, height = first.height;
+  const layer = width * height * 4;
+  const data = new Uint8Array(layer * textures.length);
+  textures.forEach((texture, i) => {
+    const rows = bakedRows(texture);
+    if (!rows) {
+      // No canvas (a headless test): flat grey, a flat normal.
+      data.fill(srgb ? 110 : 128, i * layer, (i + 1) * layer);
+      if (!srgb) for (let k = i * layer + 2; k < (i + 1) * layer; k += 4) data[k] = 255;
+      return;
+    }
+    // A 2-D texture is uploaded flipped (flipY); an array cannot be, so the
+    // rows are flipped here and each layer reads as its 2-D twin did.
+    for (let y = 0; y < height; y++) data.set(rows.subarray((height - 1 - y) * width * 4, (height - y) * width * 4), i * layer + y * width * 4);
+  });
+  const array = new DataArrayTexture(data, width, height, textures.length);
+  array.format = RGBAFormat;
+  array.type = UnsignedByteType;
+  array.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
+  array.wrapS = RepeatWrapping;
+  array.wrapT = RepeatWrapping;
+  array.magFilter = LinearFilter;
+  array.minFilter = LinearMipmapLinearFilter;
+  array.generateMipmaps = true;
+  array.anisotropy = anisotropy;
+  array.needsUpdate = true;
+  return array;
 }
 
 /**
@@ -546,7 +841,7 @@ function rasterCover(covers: Readonly<Record<CoverKind, Uint8Array>>, dab: Paint
 function terrainMaterial(
   bakes: {
     grass: SurfaceBake;
-    rock: SurfaceBake;
+    rocks: readonly SurfaceBake[];
     dirt: SurfaceBake;
   },
   anisotropy: number,
@@ -577,15 +872,23 @@ function terrainMaterial(
   const shoreLevelData = new Float32Array(GRID * GRID).fill(NO_WATER);
   const flowerCornerData = new Float32Array(GRID * GRID);
   const scrubCornerData = new Float32Array(GRID * GRID);
+  const forestCornerData = new Float32Array(GRID * GRID);
+  // The painted geology at each corner: how much is sandstone, how much basalt
+  // (the rest granite).
+  const sandCornerData = new Float32Array(GRID * GRID);
+  const basaltCornerData = new Float32Array(GRID * GRID);
   const shore = new DataTexture(new Float32Array(GRID * GRID * 4), GRID, GRID, RGBAFormat, FloatType);
   shore.magFilter = NearestFilter;
   shore.minFilter = NearestFilter;
   shore.generateMipmaps = false;
-  packGroundCorners(shore, shoreLevelData, flowerCornerData, scrubCornerData);
+  packGroundCorners(shore, shoreLevelData, flowerCornerData, scrubCornerData, forestCornerData, sandCornerData, basaltCornerData);
   material.userData['shore'] = shore;
+  material.userData['sandCorners'] = sandCornerData;
+  material.userData['basaltCorners'] = basaltCornerData;
   material.userData['shoreLevels'] = shoreLevelData;
   material.userData['flowerCorners'] = flowerCornerData;
   material.userData['scrubCorners'] = scrubCornerData;
+  material.userData['forestCorners'] = forestCornerData;
   const uniforms = {
     uPaintA: { value: paintA as Texture },
     uPaintB: { value: paintB as Texture },
@@ -595,8 +898,8 @@ function terrainMaterial(
     uGrid: TERRAIN_GRID,
     uShore: { value: shore as Texture },
     uShoreGrid: { value: new Vector3(TERRAIN_HALF, TERRAIN_CELL, GRID) },
-    uRockMap: { value: bakes.rock.map as Texture },
-    uRockNormal: { value: bakes.rock.normalMap as Texture },
+    uRockMap: { value: layeredTexture(bakes.rocks.map((bake) => bake.map), true, anisotropy) as Texture },
+    uRockNormal: { value: layeredTexture(bakes.rocks.map((bake) => bake.normalMap), false, anisotropy) as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
     uMacroMap: { value: macroTexture(anisotropy) as Texture },
     uGrassScale: { value: 1 / 96 },
@@ -620,13 +923,16 @@ function terrainMaterial(
         '#include <common>',
         `#include <common>
          varying vec3 vTerrainWorld;
-         varying vec3 vTerrainNormal;`,
+         varying vec3 vTerrainNormal;
+         attribute float aSteep;
+         varying float vTerrainSteep;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
          vTerrainWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
-         vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);`,
+         vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);
+         vTerrainSteep = aSteep;`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -635,7 +941,8 @@ function terrainMaterial(
         `#include <common>
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainNormal;
-         uniform sampler2D uRockMap;
+         varying float vTerrainSteep;
+         uniform sampler2DArray uRockMap;
          uniform sampler2D uPaintA;
          uniform sampler2D uPaintB;
          uniform float uPaintHalf;
@@ -650,26 +957,36 @@ function terrainMaterial(
          // stepped at every grid line along a falling river and drew dark
          // bands across the shallows under the water.
          // x: that level; y: the painted flowers here, z: the painted scrub,
-         // both bilinear (G and B channels).
-         vec3 terrainShoreSample(vec3 world) {
+         // w: the painted forest, all bilinear (G, B and A channels).
+         // The painted geology here: x sandstone, y basalt (the rest granite).
+         vec2 terrainGeo = vec2(0.0);
+         vec4 terrainShoreSample(vec3 world) {
            vec2 g = clamp((world.xz + uShoreGrid.x) / uShoreGrid.y, vec2(0.0), vec2(uShoreGrid.z - 1.001));
            vec2 i = floor(g);
            vec2 f = g - i;
            ivec2 p = ivec2(i);
-           vec3 c00 = texelFetch(uShore, p, 0).rgb;
-           vec3 c10 = texelFetch(uShore, p + ivec2(1, 0), 0).rgb;
-           vec3 c01 = texelFetch(uShore, p + ivec2(0, 1), 0).rgb;
-           vec3 c11 = texelFetch(uShore, p + ivec2(1, 1), 0).rgb;
+           vec4 c00 = texelFetch(uShore, p, 0);
+           vec4 c10 = texelFetch(uShore, p + ivec2(1, 0), 0);
+           vec4 c01 = texelFetch(uShore, p + ivec2(0, 1), 0);
+           vec4 c11 = texelFetch(uShore, p + ivec2(1, 1), 0);
            vec4 level = vec4(c00.x, c10.x, c01.x, c11.x);
            vec4 bilinear = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
            vec4 has = step(vec4(${NO_WATER / 2}.0), level);
            vec4 w = bilinear * has;
            float sum = w.x + w.y + w.z + w.w;
-           float flowers = dot(vec4(c00.y, c10.y, c01.y, c11.y), bilinear);
-           float scrub = dot(vec4(c00.z, c10.z, c01.z, c11.z), bilinear);
-           return vec3(sum > 1e-5 ? dot(level, w) / sum : ${NO_WATER}.0, flowers, scrub);
+           // G and B carry two bytes each (packGroundCorners): flowers and
+           // scrub low, sandstone and basalt high, split per corner first.
+           vec4 gPair = vec4(c00.y, c10.y, c01.y, c11.y);
+           vec4 bPair = vec4(c00.z, c10.z, c01.z, c11.z);
+           vec4 gHigh = floor(gPair / 256.0);
+           vec4 bHigh = floor(bPair / 256.0);
+           float flowers = dot(gPair - gHigh * 256.0, bilinear) / 255.0;
+           float scrub = dot(bPair - bHigh * 256.0, bilinear) / 255.0;
+           terrainGeo = vec2(dot(gHigh, bilinear), dot(bHigh, bilinear)) / 255.0;
+           float forest = dot(vec4(c00.w, c10.w, c01.w, c11.w), bilinear);
+           return vec4(sum > 1e-5 ? dot(level, w) / sum : ${NO_WATER}.0, flowers, scrub, forest);
          }
-         uniform sampler2D uRockNormal;
+         uniform sampler2DArray uRockNormal;
          uniform sampler2D uDirtMap;
          uniform sampler2D uMacroMap;
          uniform float uGrassScale;
@@ -733,6 +1050,13 @@ function terrainMaterial(
          // Shader"): one sample per plane, the SAMPLES blended. Blending the
          // coordinates instead (terrainWallUv) twisted the rock into curved
          // wood grain wherever a face turned between the two axes.
+         // The slope, in degrees: the smooth vertex normal's, or - where a
+         // corner touches a WALL (a face over 50 degrees, \`aSteep\`) - the
+         // wall's, so a cliff narrower than the grid is drawn as rock.
+         float terrainSlope() {
+           float smoothSlope = degrees(acos(clamp(vTerrainNormal.y, 0.0, 1.0)));
+           return max(smoothSlope, mix(smoothSlope, vTerrainSteep, smoothstep(50.0, 66.0, vTerrainSteep)));
+         }
          vec3 terrainTriWeights(vec3 n) {
            vec3 w = pow(abs(n), vec3(4.0));
            return w / max(w.x + w.y + w.z, 1e-4);
@@ -750,11 +1074,94 @@ function terrainMaterial(
            ty = vec3(ty.xy + n.xz, abs(n.y) * s.y);
            tz = vec3(tz.xy + n.xy, abs(n.z) * s.z);
            return normalize(tx.zyx * w.x + ty.xzy * w.y + tz.xyz * w.z);
-         }`,
+         }
+         // THE ROCKS: granite, sandstone, basalt, a face layer and a top layer
+         // each in one texture array (layer = kind * 2, + 1 for the top),
+         // read with gradients taken once in uniform control flow, so a kind
+         // or a projection with no weight is skipped (MicroSplat's dynamic
+         // branching over a texture array).
+         vec3 rockDpdx = vec3(0.0);
+         vec3 rockDpdy = vec3(0.0);
+         // How much of each rock the colour took (granite, sandstone, basalt);
+         // the normal reads the same.
+         vec3 terrainRockMix = vec3(1.0, 0.0, 0.0);
+         vec4 rockTriColor(float kind, vec3 p, vec3 w) {
+           float face = kind * 2.0;
+           vec4 c = vec4(0.0);
+           float used = 0.0;
+           if (w.x > 0.01) { c += textureGrad(uRockMap, vec3(p.zy * uRockScale, face), rockDpdx.zy, rockDpdy.zy) * w.x; used += w.x; }
+           if (w.y > 0.01) { c += textureGrad(uRockMap, vec3(p.xz * uRockScale, face + 1.0), rockDpdx.xz, rockDpdy.xz) * w.y; used += w.y; }
+           if (w.z > 0.01) { c += textureGrad(uRockMap, vec3(p.xy * uRockScale, face), rockDpdx.xy, rockDpdy.xy) * w.z; used += w.z; }
+           return c / max(used, 1e-4);
+         }
+         vec3 rockTriNormal(float kind, vec3 p, vec3 n, vec3 w) {
+           float face = kind * 2.0;
+           vec3 s = sign(n);
+           vec3 acc = vec3(0.0);
+           if (w.x > 0.01) {
+             vec3 t = textureGrad(uRockNormal, vec3(p.zy * uRockScale, face), rockDpdx.zy, rockDpdy.zy).xyz * 2.0 - 1.0;
+             t = vec3(t.xy + n.zy, abs(n.x) * s.x);
+             acc += t.zyx * w.x;
+           }
+           if (w.y > 0.01) {
+             vec3 t = textureGrad(uRockNormal, vec3(p.xz * uRockScale, face + 1.0), rockDpdx.xz, rockDpdy.xz).xyz * 2.0 - 1.0;
+             t = vec3(t.xy + n.xz, abs(n.y) * s.y);
+             acc += t.xzy * w.y;
+           }
+           if (w.z > 0.01) {
+             vec3 t = textureGrad(uRockNormal, vec3(p.xy * uRockScale, face), rockDpdx.xy, rockDpdy.xy).xyz * 2.0 - 1.0;
+             t = vec3(t.xy + n.xy, abs(n.z) * s.z);
+             acc += t.xyz * w.z;
+           }
+           return normalize(acc + n * 1e-4);
+         }
+         // One sandstone bed's tint over the face texture: mostly tan and
+         // orange, now and then a cream, a rust or a brown-grey one.
+         vec3 sandstoneBed(float i) {
+           float r = terrainHash(vec2(i, 17.0));
+           return r < 0.12 ? vec3(1.13, 1.12, 1.1)
+             : r < 0.3 ? vec3(1.05, 1.0, 0.95)
+             : r < 0.58 ? vec3(1.0)
+             : r < 0.8 ? vec3(1.05, 0.9, 0.78)
+             : r < 0.92 ? vec3(0.9, 0.72, 0.62)
+             : vec3(0.84, 0.78, 0.74);
+         }
+         // The sandstone's beds by HEIGHT, level on every cliff and never
+         // repeating: principal beds 34 units (14 m) apart and thinner ones
+         // between at a third of the contrast (Terragen's strata), read at a
+         // height a slow noise bends (Unity's strata noise), a shade where a
+         // softer bed weathers back under a hard one.
+         vec3 sandstoneBeds(float y, float warpA, float warpC) {
+           float t = (y + (warpA - 0.5) * 30.0 + (warpC - 0.5) * 9.0) / 34.0;
+           float i = floor(t);
+           float f = t - i;
+           vec3 tint = mix(sandstoneBed(i), sandstoneBed(i + 1.0), smoothstep(0.82, 1.0, f));
+           float t2 = t * 3.3 + 0.37;
+           float i2 = floor(t2);
+           tint *= mix(vec3(1.0), mix(sandstoneBed(i2 + 40.0), sandstoneBed(i2 + 41.0), smoothstep(0.8, 1.0, t2 - i2)), 0.35);
+           float hard = step(0.6, terrainHash(vec2(i + 1.0, 5.0)));
+           tint *= 1.0 - hard * 0.18 * smoothstep(0.84, 0.92, f) * (1.0 - smoothstep(0.96, 1.0, f));
+           return tint;
+         }
+         // Basalt's lava flows, stacked some 22 m each: barely different
+         // greys, the weathered, bubbly top of each a little redder.
+         vec3 basaltFlows(float y, float warpA) {
+           float t = (y + (warpA - 0.5) * 34.0) / 56.0;
+           float i = floor(t);
+           float f = t - i;
+           vec3 tint = mix(vec3(0.9, 0.93, 0.97), vec3(1.08, 1.0, 0.93), terrainHash(vec2(i, 31.0)));
+           tint *= mix(vec3(1.0), vec3(1.2, 0.92, 0.8), smoothstep(0.8, 0.94, f) * (1.0 - smoothstep(0.97, 1.0, f)));
+           return tint;
+         }
+`,
       )
       .replace(
         '#include <map_fragment>',
         `terrainDetailW = detailWeight(vTerrainWorld.xz);
+         // Taken here, in uniform control flow: the rock is read only where
+         // rock shows, with these gradients.
+         rockDpdx = dFdx(vTerrainWorld) * uRockScale;
+         rockDpdy = dFdy(vTerrainWorld) * uRockScale;
          vec2 tGrass = vTerrainWorld.xz * uGrassScale;
          vec2 tDirt = vTerrainWorld.xz * uDirtScale;
          float wallX = terrainWallAxis().x;
@@ -766,7 +1173,11 @@ function terrainMaterial(
          // simply wrong: a 10-degree hillside came out at 0.015, under a
          // threshold meant to start at a gentle slope, and the whole map stayed
          // one flat green however steep it got.
-         float slopeDeg = degrees(acos(clamp(vTerrainNormal.y, 0.0, 1.0)));
+         // And the steeper of the vertex normal and the drawn face: a cliff a
+         // cell or two wide shares its corners with the flat ground above and
+         // below it, so its averaged normals called the wall a 30-degree bank
+         // and it was drawn as turf.
+         float slopeDeg = terrainSlope();
          // High ground is bare whatever its slope: the quickest way to say
          // "mountain" is that nothing grows on the top of it.
          float altitude = smoothstep(260.0, 460.0, vTerrainWorld.y);
@@ -787,16 +1198,50 @@ function terrainMaterial(
          // And a ragged one of about 12 m, so the edge itself frays.
          float wanderD = texture2D(uDirtMap, vTerrainWorld.xz * 0.083 + 0.61).b;
          float wander = (wanderA - 0.5) * 14.0 + (wanderB - 0.5) * 10.0 + (wanderC - 0.5) * 30.0 + (wanderD - 0.5) * 16.0;
-         float rockW = max(smoothstep(32.0, 50.0, slopeDeg + wander), altitude * 0.92);
-         float dirtW = smoothstep(18.0, 36.0, slopeDeg + wander * 1.3) * (1.0 - rockW);
+         // The wander eases on a cliff (nothing holds turf on a wall) but
+         // never lets go: it frays the rim, where the cliff's triangles meet
+         // the flat in the grid's zigzag, into ragged turf instead of teeth.
+         // A wide FUZZY ZONE broken by a fine noise (Terragen's surface layers:
+         // a slope constraint with a fuzzy zone, its mask broken up), so turf
+         // and rock interfinger over a few metres instead of meeting on a line.
+         float breakup = (texture2D(uDirtMap, vTerrainWorld.xz * 0.19 + 0.13).g - 0.5) * 26.0;
+         float rockW = max(smoothstep(30.0, 56.0, slopeDeg + wander * (1.0 - 0.5 * smoothstep(45.0, 70.0, slopeDeg)) + breakup), altitude * 0.92);
+         // Narrowed where the rock is near: turf meets the stone across a thin
+         // band of soil, not a red ring drawn round every outcrop.
+         float dirtW = smoothstep(18.0, 36.0, slopeDeg + wander * 1.3) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(26.0, 40.0, slopeDeg + wander * 1.3));
          float grassW = max(0.0, 1.0 - rockW - dirtW);
          vec4 grassColor = dualScale(map, tGrass);
-         vec4 rockColor = terrainTriColor(uRockMap, vTerrainWorld, uRockScale, triW);
+         // Which rock breaks out here: the painted geology, granite where none
+         // was painted. Each kind is its own pair of layers (face, top) and is
+         // read only where it is and only where rock shows.
+         vec4 shoreSample = terrainShoreSample(vTerrainWorld);
+         vec3 geology = vec3(max(0.0, 1.0 - terrainGeo.x - terrainGeo.y), terrainGeo.x, terrainGeo.y);
+         vec4 rockColor = vec4(0.45, 0.43, 0.4, 1.0);
+         if (rockW > 0.001) {
+           vec4 cGranite = vec4(0.0);
+           vec4 cSand = vec4(0.0);
+           vec4 cBasalt = vec4(0.0);
+           if (geology.x > 0.01) cGranite = rockTriColor(0.0, vTerrainWorld, triW);
+           if (geology.y > 0.01) { cSand = rockTriColor(1.0, vTerrainWorld, triW); cSand.rgb *= sandstoneBeds(vTerrainWorld.y, wanderA, wanderC); }
+           if (geology.z > 0.01) { cBasalt = rockTriColor(2.0, vTerrainWorld, triW); cBasalt.rgb *= basaltFlows(vTerrainWorld.y, wanderA); }
+           // Height-blended between the rocks too: a boundary breaks along the
+           // stone instead of fading one rock into the other.
+           vec3 has = step(vec3(0.01), geology);
+           vec3 hk = (geology + vec3(dot(cGranite.rgb, vec3(0.3, 0.6, 0.1)), dot(cSand.rgb, vec3(0.3, 0.6, 0.1)), dot(cBasalt.rgb, vec3(0.3, 0.6, 0.1))) * 0.6) * has;
+           float topK = max(hk.x, max(hk.y, hk.z)) - 0.12;
+           vec3 bk = max(hk - topK, vec3(0.0)) * has;
+           terrainRockMix = bk / max(bk.x + bk.y + bk.z, 1e-4);
+           rockColor = cGranite * terrainRockMix.x + cSand * terrainRockMix.y + cBasalt * terrainRockMix.z;
+         }
          // Soil on a slope is read from the side, as the rock is: from above
          // it smeared down every bank in long streaks.
          vec4 dirtPlan = dualScale(uDirtMap, tDirt);
          vec4 dirtSide = terrainTriColor(uDirtMap, vTerrainWorld, uDirtScale, triW);
          vec4 dirtColor = mix(dirtPlan, dirtSide, smoothstep(22.0, 42.0, slopeDeg));
+         // The soil is the rock it weathered from: red-yellow over granite,
+         // pale and sandy over sandstone, the dark purple-red terra roxa over
+         // basalt.
+         dirtColor.rgb *= geology.x * vec3(0.88, 0.86, 0.88) + geology.y * vec3(1.14, 1.06, 0.92) + geology.z * vec3(0.8, 0.56, 0.52);
          // Height blending (Mishkinis, "Advanced Terrain Texture Splatting"):
          // each surface rises by its own relief, read from its brightness, and
          // the highest within a thin depth wins, so soil fills the hollows
@@ -805,7 +1250,7 @@ function terrainMaterial(
          float hGrass = grassW + dot(grassColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.4 * smoothstep(0.0, 0.35, grassW);
          float hDirt = dirtW + dot(dirtColor.rgb, vec3(0.3, 0.6, 0.1)) * 0.9 * smoothstep(0.0, 0.35, dirtW);
          float hRock = rockW + dot(rockColor.rgb, vec3(0.3, 0.6, 0.1)) * 1.1 * smoothstep(0.0, 0.35, rockW);
-         float hTop = max(hGrass, max(hDirt, hRock)) - 0.12;
+         float hTop = max(hGrass, max(hDirt, hRock)) - 0.2;
          float bGrass = max(hGrass - hTop, 0.0);
          float bDirt = max(hDirt - hTop, 0.0);
          float bRock = max(hRock - hTop, 0.0);
@@ -813,6 +1258,17 @@ function terrainMaterial(
          float rockMix = bRock / bSum;
          float dirtMix = bDirt / bSum;
          vec4 blended = (grassColor * bGrass + dirtColor * bDirt + rockColor * bRock) / bSum;
+         // TALUS where the rock gives out: its own rubble and grit, darker,
+         // mixed with the soil (each rock its own scree, so a sandstone foot is
+         // orange and a basalt one near black), so the cliff stands on a
+         // skirt of debris and not straight in the lawn.
+         float talus = smoothstep(0.06, 0.4, rockW) * (1.0 - smoothstep(0.5, 0.92, rockW));
+         if (talus > 0.001) {
+           float pebbles = texture2D(uDirtMap, vTerrainWorld.xz * 0.53).r;
+           vec3 scree = mix(rockColor.rgb * 0.7, dirtColor.rgb * 0.8, 0.4) * mix(0.75, 1.2, pebbles);
+           blended.rgb = mix(blended.rgb, scree, talus * 0.75);
+           rockMix = max(rockMix, talus * 0.5);
+         }
          // The terrain lets the blades in from much further than the shared
          // layer does (DETAIL_FAR is 0.16 units a pixel): between that and a
          // unit a pixel the grass had nothing finer than its patches.
@@ -845,7 +1301,6 @@ function terrainMaterial(
          // 0.4-unit cell holds at most one, at a jittered point; they fade to
          // their average tint where a pixel is wider than a blossom, so the
          // far view shows a flowering meadow and not flickering dots.
-         vec3 shoreSample = terrainShoreSample(vTerrainWorld);
          // Derivatives taken outside any branch, where they are defined: how
          // many 0.4-unit blossom cells one pixel spans.
          vec2 fp = vTerrainWorld.xz / 0.4;
@@ -854,6 +1309,13 @@ function terrainMaterial(
          // a thicket's shade, so the patch reads from the whole map's zoom
          // and not only where its bushes are big enough to see.
          blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.42, 0.52, 0.32), clamp(shoreSample.z * 1.4, 0.0, 0.85));
+         // Under a forest the floor is the canopy's shade: dark, mossy, with
+         // leaf litter - so the gaps between crowns read as the depth of a
+         // closed forest from above, not as a lawn showing through (near
+         // trees drawn one by one, the forest's far effect on the ground:
+         // Bruneton & Neyret, "Real-time realistic rendering and lighting of
+         // forests").
+         blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
          {
            float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
            if (flowersW > 0.01) {
@@ -969,7 +1431,14 @@ function terrainMaterial(
         `vec3 grassN = dualScaleNormal(normalMap, vTerrainWorld.xz * uGrassScale);
          // The rock's bumps, triplanar in world space like its colour, then
          // brought into the geometry's tangent frame so the two can be mixed.
-         vec3 rockWorldN = terrainTriNormal(uRockNormal, vTerrainWorld, uRockScale, triN, triW);
+         vec3 rockWorldN = triN;
+         if (rockMix > 0.001) {
+           vec3 acc = vec3(0.0);
+           if (terrainRockMix.x > 0.01) acc += rockTriNormal(0.0, vTerrainWorld, triN, triW) * terrainRockMix.x;
+           if (terrainRockMix.y > 0.01) acc += rockTriNormal(1.0, vTerrainWorld, triN, triW) * terrainRockMix.y;
+           if (terrainRockMix.z > 0.01) acc += rockTriNormal(2.0, vTerrainWorld, triN, triW) * terrainRockMix.z;
+           rockWorldN = normalize(acc + triN * 1e-4);
+         }
          vec3 rockN = vec3(dot(rockWorldN, tbn[0]), dot(rockWorldN, tbn[1]), dot(rockWorldN, tbn[2]));
          // Softened: with height blending the rock's edge is crisp, and its
          // full relief turned every facet facing away from the sun into a
@@ -988,7 +1457,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v13';
+  material.customProgramCacheKey = () => 'terrain-splat-v15';
   return material;
 }
 
@@ -1231,6 +1700,42 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   groundTexture.generateMipmaps = false;
   waterSurface.setGround(groundTexture, TERRAIN_HALF, TERRAIN_CELL, GRID);
 
+  /**
+   * Which diagonal each cell is drawn with: 0 the plane's own (b-d), 1 the
+   * other (a-c). Chosen per cell as the one with the smaller rise along it - a
+   * data-dependent triangulation (Garland & Heckbert): the triangles' edges
+   * then follow the contour, and a cliff running across the grid's fixed
+   * diagonal no longer breaks into a zigzag of teeth.
+   */
+  const flip = new Uint8Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS);
+  const triangles = geometry.index!;
+  /** Re-chooses the diagonals of the cells round a box of corners (inclusive). */
+  const retriangulate = (x0: number, x1: number, y0: number, y1: number): void => {
+    const cx0 = Math.max(0, x0 - 1), cx1 = Math.min(TERRAIN_SEGMENTS - 1, x1);
+    const cy0 = Math.max(0, y0 - 1), cy1 = Math.min(TERRAIN_SEGMENTS - 1, y1);
+    const index = triangles.array as Uint32Array | Uint16Array;
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const a = cx + GRID * cy, b = cx + GRID * (cy + 1), c = cx + 1 + GRID * (cy + 1), d = cx + 1 + GRID * cy;
+        const ac = Math.abs((grid[a] as number) - (grid[c] as number));
+        const bd = Math.abs((grid[b] as number) - (grid[d] as number));
+        // A margin, so near-flat cells keep the plane's diagonal.
+        const flipped = ac + 0.5 < bd ? 1 : 0;
+        const k = cx + cy * TERRAIN_SEGMENTS;
+        flip[k] = flipped;
+        const o = k * 6;
+        if (flipped) {
+          index[o] = a; index[o + 1] = b; index[o + 2] = c;
+          index[o + 3] = a; index[o + 4] = c; index[o + 5] = d;
+        } else {
+          index[o] = a; index[o + 1] = b; index[o + 2] = d;
+          index[o + 3] = b; index[o + 4] = c; index[o + 5] = d;
+        }
+      }
+    }
+    triangles.needsUpdate = true;
+  };
+
   /** Bilinear read of one corner array, reproducing the plane's own diagonal. */
   const sampleGrid = (corners: Float64Array, x: number, y: number): number => {
     if (!(x >= -TERRAIN_HALF && x <= TERRAIN_HALF && y >= -TERRAIN_HALF && y <= TERRAIN_HALF)) {
@@ -1248,7 +1753,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const b = corners[ix + (iy + 1) * GRID] as number;
     const c = corners[ix + 1 + (iy + 1) * GRID] as number;
     const d = corners[ix + 1 + iy * GRID] as number;
-    // Each cell is split into (a, b, d) and (b, c, d): the diagonal runs b-d.
+    // Each cell is split along the diagonal it is DRAWN with (`retriangulate`):
+    // b-d into (a, b, d) and (b, c, d), or a-c into (a, d, c) and (a, b, c).
+    if (flip[ix + iy * TERRAIN_SEGMENTS]) {
+      return u >= v ? a * (1 - u) + d * (u - v) + c * v : a * (1 - v) + b * (v - u) + c * u;
+    }
     return u + v <= 1 ? a * (1 - u - v) + d * u + b * v : b * (1 - u) + c * (u + v - 1) + d * (1 - v);
   };
 
@@ -1535,6 +2044,14 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     if (changed.length === 0) return false;
     for (const i of changed) position.setY(i, grid[i] as number);
     position.needsUpdate = true;
+    {
+      let x0 = GRID, x1 = -1, y0 = GRID, y1 = -1;
+      for (const i of changed) {
+        const ix = i % GRID, iy = (i - ix) / GRID;
+        if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+      }
+      retriangulate(x0, x1 + 1, y0, y1 + 1);
+    }
     refreshNormals(changed);
     geometry.computeBoundingSphere();
     for (const i of changed) if (onRim(i)) { rebuildFrame(); break; }
@@ -1556,6 +2073,20 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const cb = new Vector3();
   const ab = new Vector3();
   const sum = new Vector3();
+  /**
+   * The steepest face round each corner, in degrees: what the shader calls a
+   * WALL. A cliff a cell or two wide shares its corners with the flat above
+   * and below it, so its smooth normals called it a bank and drew turf on it,
+   * and its drawn faces alone alternate steep and gentle along the grid's
+   * diagonals (rock in teeth). Read per corner, both triangles of a wall cell
+   * are steep, and the rock frays one cell onto the rim as a cliff edge does.
+   */
+  // Written through the attribute's own array: Float32BufferAttribute copies
+  // the array it is given.
+  const steepAttribute = new Float32BufferAttribute(new Float32Array(GRID * GRID), 1);
+  const steep = steepAttribute.array as Float32Array;
+  geometry.setAttribute('aSteep', steepAttribute);
+  let faceSteep = 0;
   /** Adds one face's area-weighted normal, as `computeVertexNormals` forms it. */
   const addFace = (a: number, b: number, c: number): void => {
     pa.fromBufferAttribute(position, a);
@@ -1563,7 +2094,28 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     pc.fromBufferAttribute(position, c);
     cb.subVectors(pc, pb);
     ab.subVectors(pa, pb);
-    sum.add(cb.cross(ab));
+    cb.cross(ab);
+    sum.add(cb);
+    const length = cb.length();
+    if (length > 1e-9) faceSteep = Math.max(faceSteep, Math.acos(Math.min(1, Math.abs(cb.y) / length)) * (180 / Math.PI));
+  };
+  /** Every corner's steepest face, over the whole plate. */
+  const refreshAllSteep = (): void => {
+    for (let v = 0; v < GRID * GRID; v++) {
+      faceSteep = 0;
+      sum.set(0, 0, 0);
+      const ix = v % GRID;
+      const iy = (v - ix) / GRID;
+      for (let cy = iy - 1; cy <= iy; cy++) {
+        for (let cx = ix - 1; cx <= ix; cx++) {
+          if (cx < 0 || cy < 0 || cx >= TERRAIN_SEGMENTS || cy >= TERRAIN_SEGMENTS) continue;
+          const a = cx + GRID * cy, b = cx + GRID * (cy + 1), c = cx + 1 + GRID * (cy + 1), d = cx + 1 + GRID * cy;
+          if (flip[cx + cy * TERRAIN_SEGMENTS]) { addFace(a, b, c); addFace(a, c, d); } else { addFace(a, b, d); addFace(b, c, d); }
+        }
+      }
+      steep[v] = faceSteep;
+    }
+    steepAttribute.needsUpdate = true;
   };
   /**
    * Recomputes the normals round the corners that moved: the corners
@@ -1586,6 +2138,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     }
     for (const v of touched) {
       sum.set(0, 0, 0);
+      faceSteep = 0;
       const ix = v % GRID;
       const iy = (v - ix) / GRID;
       // The cells round the corner, split as `PlaneGeometry` splits them:
@@ -1597,14 +2150,21 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
           const b = cx + GRID * (cy + 1);
           const c = cx + 1 + GRID * (cy + 1);
           const d = cx + 1 + GRID * cy;
-          if (v === a || v === b || v === d) addFace(a, b, d);
-          if (v === b || v === c || v === d) addFace(b, c, d);
+          if (flip[cx + cy * TERRAIN_SEGMENTS]) {
+            if (v === a || v === b || v === c) addFace(a, b, c);
+            if (v === a || v === c || v === d) addFace(a, c, d);
+          } else {
+            if (v === a || v === b || v === d) addFace(a, b, d);
+            if (v === b || v === c || v === d) addFace(b, c, d);
+          }
         }
       }
       sum.normalize();
       normal.setXYZ(v, sum.x, sum.y, sum.z);
+      steep[v] = faceSteep;
     }
     normal.needsUpdate = true;
+    steepAttribute.needsUpdate = true;
   };
 
   let wetDiscs: readonly WaterStamp[] = [];
@@ -1661,7 +2221,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
     previous.dispose();
     shoreLevels(water.geometry, material.userData['shoreLevels'] as Float32Array);
-    packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array);
+    packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array, material.userData['forestCorners'] as Float32Array, material.userData['sandCorners'] as Float32Array, material.userData['basaltCorners'] as Float32Array);
     water.geometry.computeBoundingBox();
     const box = water.geometry.boundingBox;
     // In world (x, y): the mesh is three's (x, height, -y).
@@ -1691,11 +2251,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   vergeMaterial.onBeforeCompile = (shader, renderer) => {
     material.onBeforeCompile(shader, renderer);
     shader.fragmentShader = shader.fragmentShader.replace(
-      'float slopeDeg = degrees(acos(clamp(vTerrainNormal.y, 0.0, 1.0)));',
+      'float slopeDeg = terrainSlope();',
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v3-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v15-verge';
 
   const paint = material.userData['paint'] as DataTexture[];
   let paintRevision = 0;
@@ -1714,36 +2274,63 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     if (gx < 0 || gy < 0 || gx >= FOREST_RES || gy >= FOREST_RES) return 0;
     return covers[kind][gy * FOREST_RES + gx]! / 255;
   };
+  const sandCorners = material.userData['sandCorners'] as Float32Array;
+  const basaltCorners = material.userData['basaltCorners'] as Float32Array;
+  const geologyChanges = new GroundChanges();
   const updatePaint = (doc: RoadDoc): void => {
     if (doc.paintRevision === paintRevision) return;
     paintRevision = doc.paintRevision;
     const dabs = doc.terrainPaint;
+    // Whether a dab of ground or cover was laid: the plants follow those, and
+    // a dab of geology changes neither.
+    let covered = false;
+    const geologyRects: (readonly [number, number, number, number])[] = [];
+    const lay = (dab: PaintDab): void => {
+      if (isGeologyKind(dab.kind)) {
+        geologyRects.push(rasterGeology(sandCorners, basaltCorners, dab));
+        return;
+      }
+      rasterPaint(paint, dab);
+      rasterCover(covers, dab);
+      covered = true;
+    };
     // Dabs only added since the last time: lay just those. Anything else (an
     // undo, a load, the oldest dabs dropped): lay them all again.
     if (dabs.length >= paintCount && dabs[0] === paintFirst && paintCount > 0) {
-      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) { rasterPaint(paint, t); rasterCover(covers, t); }
+      for (let i = paintCount; i < dabs.length; i++) lay(dabs[i]!);
+      if (geologyRects.length > 0) geologyChanges.mark(geologyRects);
     } else {
       for (const t of paint) (t.image.data as Uint8Array).fill(0);
       for (const kind of COVER_KINDS) covers[kind].fill(0);
-      for (const dab of dabs) { rasterPaint(paint, dab); rasterCover(covers, dab); }
+      sandCorners.fill(0);
+      basaltCorners.fill(0);
+      for (const dab of dabs) lay(dab);
+      covered = true;
+      geologyChanges.mark(null);
     }
-    forestRevision++;
     paintCount = dabs.length;
     paintFirst = dabs[0];
+    if (!covered) {
+      packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array, material.userData['forestCorners'] as Float32Array, sandCorners, basaltCorners);
+      return;
+    }
+    forestRevision++;
     for (const t of paint) t.needsUpdate = true;
     {
       // The flowers and the scrub at each terrain corner, into the shader's
       // ground texture.
       const flowers = material.userData['flowerCorners'] as Float32Array;
       const scrub = material.userData['scrubCorners'] as Float32Array;
+      const forest = material.userData['forestCorners'] as Float32Array;
       for (let iy = 0; iy < GRID; iy++) {
         for (let ix = 0; ix < GRID; ix++) {
           const x = -TERRAIN_HALF + ix * TERRAIN_CELL, y = TERRAIN_HALF - iy * TERRAIN_CELL;
           flowers[iy * GRID + ix] = coverAt('flowers', x, y);
           scrub[iy * GRID + ix] = coverAt('scrub', x, y);
+          forest[iy * GRID + ix] = coverAt('forest', x, y);
         }
       }
-      packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, flowers, scrub);
+      packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, flowers, scrub, forest, sandCorners, basaltCorners);
     }
   };
 
@@ -1759,6 +2346,14 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     get forestRevision() {
       return forestRevision;
     },
+    geologyAt(x, y) {
+      const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL);
+      const iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
+      if (ix < 0 || iy < 0 || ix >= GRID || iy >= GRID) return 'granite';
+      const sand = sandCorners[iy * GRID + ix] as number, basalt = basaltCorners[iy * GRID + ix] as number;
+      return sand >= 0.5 && sand >= basalt ? 'sandstone' : basalt >= 0.5 ? 'basalt' : 'granite';
+    },
+    geologyChanges,
     shoreLevelAt(x, y) {
       const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL);
       const iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
@@ -1845,6 +2440,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       }
 
       position.needsUpdate = true;
+      if (box) retriangulate(box[0], Math.min(GRID - 1, box[1] + 1), box[2], Math.min(GRID - 1, box[3] + 1));
+      else retriangulate(0, GRID - 1, 0, GRID - 1);
       let rimMoved = !box;
       if (box) {
         // Only the corners the dab rewrote can have tilted, with their ring of
@@ -1857,6 +2454,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
         rimMoved = moved.some(onRim);
       } else {
         geometry.computeVertexNormals();
+        refreshAllSteep();
       }
       // The backdrop is sewn to the rim (see `rebuildFrame`): a dab that moved
       // an edge corner re-sews it, and one in the middle of the plate does not.

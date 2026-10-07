@@ -2,7 +2,7 @@ import { RoadDoc, type JunctionControl, type SegmentDirection, type SerializedDo
 import { ROAD_TYPES } from '@world/roadTypes';
 import { normalizeRoadSection } from '@world/roadSection';
 import { migrateStructure } from '@world/structures';
-import { isTerrainMode } from '@world/terrain';
+import { isTerrainMode, isTerrainProfile } from '@world/terrain';
 import { isSerializedBuildings } from '@world/buildings/serialize';
 
 const KEY = 'roadcraft.world.v7';
@@ -475,6 +475,8 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
         (stamp.level !== undefined && !isFiniteNumber(stamp.level)) ||
         (stamp.stroke !== undefined && !isId(stamp.stroke)) ||
         (stamp.rough !== undefined && typeof stamp.rough !== 'boolean') ||
+        (stamp.hardness !== undefined && (!isFiniteNumber(stamp.hardness) || stamp.hardness < 0 || stamp.hardness > 1)) ||
+        (stamp.profile !== undefined && !isTerrainProfile(stamp.profile)) ||
         !isFiniteNumber(stamp.strength) || stamp.strength < 0 ||
         !isTerrainMode(stamp.mode)) return false;
       terrainIds.add(stamp.id);

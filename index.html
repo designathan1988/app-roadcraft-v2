@@ -213,9 +213,14 @@
         <button type="button" class="terrain-mode" data-terrain-mode="flatten" aria-pressed="false" data-i18n="terrain.flatten">Level</button>
         <button type="button" class="terrain-mode water" data-terrain-mode="river" aria-pressed="false" data-i18n="terrain.river">River</button>
         <button type="button" class="terrain-mode" data-terrain-mode="paint" aria-pressed="false" data-i18n="terrain.paint">Paint</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="mesa" aria-pressed="false" data-i18n="terrain.mesa">Mesa</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="canyon" aria-pressed="false" data-i18n="terrain.canyon">Canyon</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="escarpment" aria-pressed="false" data-i18n="terrain.escarpment">Basalt escarpment</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="sugarloaf" aria-pressed="false" data-i18n="terrain.sugarloaf">Sugarloaf</button>
       </div>
       <label class="terrain-control"><span data-i18n="terrain.radius">Radius</span> <input id="terrainRadius" type="range" min="30" max="300" value="80" step="10" /><output id="terrainRadiusValue">80</output></label>
       <label class="terrain-control"><span data-i18n="terrain.strength">Strength</span> <input id="terrainStrength" type="range" min="1" max="160" value="24" step="1" /><output id="terrainStrengthValue">24</output></label>
+      <label class="terrain-control"><span data-i18n="terrain.hardness">Hardness</span> <input id="terrainHardness" type="range" min="0" max="95" value="0" step="5" /><output id="terrainHardnessValue">0</output></label>
       <button id="clearTerrain" class="terrain-clear" type="button" data-i18n="terrain.clear">Flatten the whole map</button>
       </div>
     </section>

@@ -940,6 +940,8 @@ export function createSceneRenderer(
     gardens: new GroundDependant(groundChanges),
     cover: new GroundDependant(groundChanges),
   };
+  /** The stones again where the painted geology changed (`TerrainSurface.geologyChanges`). */
+  const coverGeology = new GroundDependant(terrain.geologyChanges);
   /** The area every building's bank reaches, by building revision. */
   let buildingsAreaFor = -1;
   let buildingsArea: Rect | null = null;
@@ -1579,7 +1581,7 @@ export function createSceneRenderer(
         // Mostly modest stones, now and then a big boulder.
         const roll = hash(i, j, 44);
         const size = roll > 0.88 ? m(2.2) + m(2) * hash(i, j, 45) : m(0.6) + m(1.5) * roll;
-        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size, yaw: hash(i, j, 46) * Math.PI * 2, seed: hash(i, j, 47) });
+        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size, yaw: hash(i, j, 46) * Math.PI * 2, seed: hash(i, j, 47), rock: terrain.geologyAt(x, y) });
       }
     }
     const water = terrain.waterArea();
@@ -1599,7 +1601,7 @@ export function createSceneRenderer(
           if (hash(i, j, 53) > odds) continue;
           if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
           const size = m(0.6) + m(1.6) * hash(i, j, 54) ** 1.6;
-          out.push({ x, y, z, size, yaw: hash(i, j, 55) * Math.PI * 2, seed: hash(i, j, 56) });
+          out.push({ x, y, z, size, yaw: hash(i, j, 55) * Math.PI * 2, seed: hash(i, j, 56), rock: terrain.geologyAt(x, y) });
         }
       }
     }
@@ -2114,7 +2116,11 @@ export function createSceneRenderer(
       // change log too: a street or a building changes the ground where it is.
       const waterArea = terrain.waterArea();
       const coverArea = waterArea ? unionRect(forestAreaOf(net.doc), [waterArea.minX - m(12), waterArea.minY - m(12), waterArea.maxX + m(12), waterArea.maxY + m(12)]) : forestAreaOf(net.doc);
-      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}`, coverArea)) {
+      // The stones take the colour of the painted rock under them: a change of
+      // geology where they lie builds them again (both gates are asked, so
+      // each keeps its own record).
+      const geologyStale = coverGeology.stale('', coverArea);
+      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}`, coverArea) || geologyStale) {
         if (cover) {
           for (const mesh of cover.meshes) world.remove(mesh);
           cover.dispose();

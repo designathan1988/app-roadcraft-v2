@@ -15,6 +15,7 @@ import { Network } from '@world/network';
 import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
+import type { GeologyKind } from '@world/terrainPaint';
 import type { NodeId, PoleId, SegmentId } from '@world/ids';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
@@ -335,10 +336,27 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint';
+type BrushMode = TerrainMode | 'paint' | Landform;
+/**
+ * The landforms: a shape and its ROCK in one tool, so a chapada stands in
+ * sandstone and a sugarloaf in granite without the player painting the rock
+ * (a biome layer of a terrain auto-material, laid as the land is sculpted).
+ * Each dab also lays a geology dab of its rock (`world/terrainPaint.ts`).
+ */
+type Landform = 'mesa' | 'canyon' | 'escarpment' | 'sugarloaf';
+const LANDFORMS: Readonly<Record<Landform, { readonly mode: 'raise' | 'lower'; readonly rock: GeologyKind; readonly hardness: number; readonly profile?: 'dome' }>> = {
+  mesa: { mode: 'raise', rock: 'sandstone', hardness: 85 },
+  canyon: { mode: 'lower', rock: 'sandstone', hardness: 80 },
+  escarpment: { mode: 'raise', rock: 'basalt', hardness: 75 },
+  sugarloaf: { mode: 'raise', rock: 'granite', hardness: 0, profile: 'dome' },
+};
+const landformOf = (mode: BrushMode): (typeof LANDFORMS)[Landform] | undefined => (LANDFORMS as Partial<Record<BrushMode, (typeof LANDFORMS)[Landform]>>)[mode];
 let terrainMode: BrushMode = 'raise';
 let terrainRadius = 80;
 let terrainStrength = 24;
+/** 0..95: how hard the raise/lower brush's edge is (`TerrainStamp.hardness`); 0 the smooth dome. Each tool keeps its own. */
+let terrainHardness = 0;
+const hardnessByMode: Partial<Record<BrushMode, number>> = { raise: 0, lower: 0, mesa: 85, canyon: 80, escarpment: 75 };
 let traffic = !savedSession?.settings.paused;
 let congestionOverlay = savedSession?.settings.congestionOverlay ?? false;
 sim.clock.paused = !traffic;
@@ -1302,16 +1320,23 @@ function stampTerrain(at: Vec2, level: number): void {
     });
     return;
   }
+  const landform = landformOf(terrainMode);
+  const mode: TerrainMode = landform ? landform.mode : terrainMode as TerrainMode;
   doc.addTerrainStamp({
     x: at.x,
     y: at.y,
     radius: terrainRadius,
     strength: terrainStrength,
-    mode: terrainMode,
-    ...(terrainMode === 'flatten' ? { level } : {}),
-    ...(terrainStroke && terrainMode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
-    ...(terrainMode === 'raise' || terrainMode === 'lower' || terrainMode === 'river' ? { rough: true } : {}),
+    mode,
+    ...(mode === 'flatten' ? { level } : {}),
+    ...(terrainStroke && mode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
+    ...(mode === 'raise' || mode === 'lower' || mode === 'river' ? { rough: true } : {}),
+    ...(terrainHardness > 0 && !landform?.profile && (mode === 'raise' || mode === 'lower') ? { hardness: terrainHardness / 100 } : {}),
+    ...(landform?.profile ? { profile: landform.profile } : {}),
   });
+  // The landform's rock, under the whole dab.
+  // A little wider than the dab, so the rock reaches the foot of its cliff.
+  if (landform) doc.addPaintDab({ kind: landform.rock, x: at.x, y: at.y, radius: terrainRadius * 1.15, strength: 1 });
 }
 
 /**
@@ -2392,7 +2417,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -2810,6 +2835,14 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((but
 
 function setTerrainMode(next: BrushMode): void {
   terrainMode = next;
+  // Each tool its own hardness: a chapada's cliff is not the hill's slope.
+  const hardness = hardnessByMode[next];
+  const hardnessInput = document.getElementById('terrainHardness') as HTMLInputElement | null;
+  if (hardness !== undefined && hardnessInput) {
+    terrainHardness = hardness;
+    hardnessInput.value = String(hardness);
+    text('terrainHardnessValue', String(hardness));
+  }
   document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((button) => {
     const active = button.dataset['terrainMode'] === next;
     button.classList.toggle('active', active);
@@ -2853,6 +2886,17 @@ function setTerrainStrength(value: number): void {
 
 terrainRadiusInput.oninput = () => setTerrainRadius(Number(terrainRadiusInput.value));
 terrainStrengthInput.oninput = () => setTerrainStrength(Number(terrainStrengthInput.value));
+{
+  // The brush's hardness: a mesa's cliff or a canyon's wall instead of a dome.
+  const input = document.getElementById('terrainHardness') as HTMLInputElement | null;
+  if (input) {
+    input.oninput = () => {
+      terrainHardness = clamp(Math.round(Number(input.value)), 0, 95);
+      if (hardnessByMode[terrainMode] !== undefined) hardnessByMode[terrainMode] = terrainHardness;
+      text('terrainHardnessValue', String(terrainHardness));
+    };
+  }
+}
 (document.getElementById('clearTerrain') as HTMLButtonElement).onclick = () => {
   if (!window.confirm(t('confirm.clearTerrain'))) return;
   history.record(doc);
@@ -4701,6 +4745,10 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   lower: '#ffc864',
   flatten: '#cfd8d4',
   river: '#73cfe7',
+  mesa: '#e29a5c',
+  canyon: '#e29a5c',
+  escarpment: '#9aa0a8',
+  sugarloaf: '#c9c4bb',
 };
 
 const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
@@ -4709,6 +4757,10 @@ const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',
   river: 'rgba(70,160,190,0.12)',
+  mesa: 'rgba(226,154,92,0.10)',
+  canyon: 'rgba(226,154,92,0.10)',
+  escarpment: 'rgba(154,160,168,0.10)',
+  sugarloaf: 'rgba(201,196,187,0.10)',
 };
 
 /**

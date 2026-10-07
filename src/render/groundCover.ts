@@ -18,6 +18,7 @@ import {
 } from 'three';
 
 import { Rng } from '@core/rng';
+import type { GeologyKind } from '@world/terrainPaint';
 import { leafCards } from './propGeometry';
 import { applyFoliageShading } from './foliageShading';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
@@ -60,6 +61,8 @@ export interface CoverPlacement {
   readonly yaw: number;
   /** 0..1: which variant, its tilt, its tint. */
   readonly seed: number;
+  /** A stone: the rock of the land it lies on (granite when absent). */
+  readonly rock?: GeologyKind;
 }
 
 /** The trees a painted forest grows. */
@@ -448,8 +451,17 @@ export function createGroundCoverKit(): GroundCoverKit {
 }
 
 /** A stone's colour: warm grey with some brown and some moss-green ones. */
-function rockTint(seed: number, out: Color): Color {
-  const t = (seed * 9.73) % 1;
+function rockTint(item: CoverPlacement, out: Color): Color {
+  const t = (item.seed * 9.73) % 1;
+  // The rock of the land it broke from: orange sandstone, near-black basalt.
+  if (item.rock === 'sandstone') {
+    if (t < 0.7) return out.setRGB(0.3 + t * 0.06, 0.16 + t * 0.04, 0.085 + t * 0.02);
+    return out.setRGB(0.36, 0.25, 0.15);
+  }
+  if (item.rock === 'basalt') {
+    if (t < 0.75) return out.setRGB(0.06 + t * 0.02, 0.058 + t * 0.018, 0.055 + t * 0.016);
+    return out.setRGB(0.1, 0.065, 0.045);
+  }
   // LINEAR values (three's colour management): 0.17 is a mid grey on
   // screen; the 0.4s first used drew every stone a pale chalk.
   if (t < 0.6) return out.setRGB(0.15 + t * 0.06, 0.145 + t * 0.05, 0.13 + t * 0.04);
@@ -458,8 +470,8 @@ function rockTint(seed: number, out: Color): Color {
 }
 
 /** A bush's colour: greens from olive to deep, a few going yellow. Linear. */
-function scrubTint(seed: number, out: Color): Color {
-  const t = (seed * 7.31) % 1;
+function scrubTint(item: CoverPlacement, out: Color): Color {
+  const t = (item.seed * 7.31) % 1;
   if (t < 0.45) return out.setRGB(0.07 + t * 0.04, 0.13 + t * 0.05, 0.03);
   if (t < 0.85) return out.setRGB(0.09, 0.15, 0.04);
   return out.setRGB(0.15, 0.16, 0.05);
@@ -470,7 +482,7 @@ function instanced(
   geometries: readonly BufferGeometry[],
   material: MeshStandardMaterial,
   name: string,
-  tint: (seed: number, out: Color) => Color,
+  tint: (item: CoverPlacement, out: Color) => Color,
   sink: number,
   tilt: number,
   upright = false,
@@ -508,7 +520,7 @@ function instanced(
       }
       matrix.compose(position, rotation, scale);
       mesh.setMatrixAt(i, matrix);
-      mesh.setColorAt(i, tint(item.seed, colour));
+      mesh.setColorAt(i, tint(item, colour));
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -519,7 +531,8 @@ function instanced(
 }
 
 /** A tree's tint: its own colour is in its vertices; this only varies it a little. */
-function treeTint(seed: number, out: Color): Color {
+function treeTint(item: CoverPlacement, out: Color): Color {
+  const seed = item.seed;
   const t = 0.86 + ((seed * 3.77) % 1) * 0.28;
   return out.setRGB(t * (0.97 + ((seed * 1.3) % 1) * 0.06), t, t * 0.96);
 }

@@ -40,7 +40,7 @@ import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 /** The colour of each paintable ground, for its button. */
 const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
   sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36', forest: '#2c4f26',
-  scrub: '#4c6a2c', flowers: '#c86a8e', rocks: '#7d776c',
+  scrub: '#4c6a2c', flowers: '#c86a8e', rocks: '#7d776c', granite: '#8d8a84', sandstone: '#c27a44', basalt: '#3b3836',
 };
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';
@@ -92,6 +92,10 @@ const ICON: Record<string, string> = {
   flatten: '<path d="M3 15h18"/><path d="M6 11h12"/>',
   river: '<path d="M3 8c3-3 6 3 9 0s6 3 9 0"/><path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>',
   paint: '<path d="M4 20c2 0 4-1 4-4 0-2 2-3 4-3"/><path d="M12 13l7-7a2 2 0 0 0-3-3l-7 7"/><path d="M9 10l3 3"/>',
+  mesa: '<path d="M2 20h20"/><path d="M4 20 7 9h10l3 11"/><path d="M7.6 13h8.8M6.6 16.5h10.8"/>',
+  canyon: '<path d="M2 6h6l2 13h4l2-13h6"/><path d="M8.6 10h-6M15.4 10h6M9.3 14.5h-7M14.7 14.5h7"/>',
+  escarpment: '<path d="M2 20h20"/><path d="M3 20V8h9l1 12"/><path d="M5 8v12M7.5 8v12M10 8v12"/><path d="M13 20c3-1 5-2 9-2"/>',
+  sugarloaf: '<path d="M2 20h20"/><path d="M5 20c0-9 2-14 6-14s6 5 6 14"/><path d="M9 9c0 3 0 7 .5 11M13 9c.3 3 .4 7 .2 11"/>',
   brush: '<path d="M14 4 20 10 10 20H4v-6Z"/>',
   fill: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>',
   eraser: '<path d="m8 20-5-5L14 4l7 7-9 9Z"/><path d="M8 20h12"/>',
@@ -865,6 +869,12 @@ export function mountShell(deps: ShellDeps): void {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
+      // Landforms: each a shape with its own rock (`main.ts` LANDFORMS).
+      const forms = section(t('v2.terrain.landforms')).items;
+      for (const mode of ['mesa', 'canyon', 'escarpment', 'sugarloaf'] as const) {
+        const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
+        forms.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(mode, 34)));
+      }
       // Painting: which ground the brush lays (`world/terrainPaint.ts`).
       if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
         // Named, so its nine swatches wrap under the name instead of running off the panel.
@@ -880,7 +890,8 @@ export function mountShell(deps: ShellDeps): void {
       }
       // Named too: the two sliders and the clear button ran off the panel's edge.
       const brush = titled(group(t('v2.options')), t('v2.options'));
-      brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)));
+      brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)),
+        slider(t('terrain.hardness'), '#terrainHardness', '#terrainHardnessValue', svg('flatten', 16)));
       brush.appendChild(button('v2-icon danger', t('terrain.clear'), () => press('#clearTerrain'), svg('flatten', 16)));
       options.append(brush);
     } else if (landTab === 'barrier') {
