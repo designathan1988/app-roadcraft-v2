@@ -33,7 +33,7 @@ import type { SegmentId } from '@world/ids';
 import { m } from '@world/units';
 import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
-import { staggerSpeed } from '@sim/agents/walk';
+import { STAGGER_FROM, STAGGER_TIME, staggerSpeed } from '@sim/agents/walk';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
 import { createProceduralCrowd, type ProcClip, type ProceduralPerson } from './people/proceduralCrowd';
@@ -904,9 +904,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         if (person.clip !== 'hit') person.clip = 'hit';
         person.phase = Math.min(0.999, act.t / hitFor);
       } else if (back > 0.05) {
-        if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
-        person.phase -= dt * back / Math.max(0.1, procedural!.stride(person));
-        person.phase -= Math.floor(person.phase);
+        // Knocked back: steps back as captured (CMU 76_11), played over the stagger.
+        if (person.clip !== 'staggerBack') person.clip = 'staggerBack';
+        person.phase = Math.min(0.999, (act.t - STAGGER_FROM) / STAGGER_TIME * 0.85);
       } else {
         if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
         person.phase += dt / procedural!.clipDuration(person);
@@ -990,6 +990,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     if (gait(clip)) person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
     else person.phase += dt / procedural!.clipDuration(person);
   };
+  /** The cooked bodies as the ragdolls ask for them: no captured getting-up off the ground (the key poses then). */
+  const riggedRagdoll: RagdollCitizens = Object.assign(Object.create(pedestrians) as typeof pedestrians, {
+    clipPose: (index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack', phase: number) =>
+      key === 'getUpFront' || key === 'getUpBack' ? null : pedestrians.clipPose(index, key, phase),
+  });
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
   const procFinish = (eye: Vector3 | undefined, live: ReadonlySet<number>): void => {
     for (const [id, entry] of procPeople) {
@@ -1065,9 +1070,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     },
     clipPose(index, key, phase) {
       const person = procOf(index);
-      if (!person || !procedural) return pedestrians.clipPose(index, key, phase);
-      const palette = procedural.ragdoll.standing(person, phase, key === 'crouchUp' ? 'getUp' : 'idle');
-      return palette ? { palette, duration: key === 'crouchUp' ? procedural.ragdoll.duration(person, 'getUp') : 1.2 } : null;
+      if (!person || !procedural) return pedestrians.clipPose(index, key === 'getUpFront' || key === 'getUpBack' ? 'crouchUp' : key, phase);
+      const clip = key === 'crouchUp' ? 'getUp' : key === 'getUpFront' ? 'riseFront' : key === 'getUpBack' ? 'riseBack' : 'idle';
+      const palette = procedural.ragdoll.standing(person, phase, clip);
+      return palette ? { palette, duration: clip === 'idle' ? 1.2 : procedural.ragdoll.duration(person, clip) } : null;
     },
     loadedIndices: () => pedestrians.loadedIndices(),
     twin(index) {
@@ -1949,7 +1955,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       }
       // The ragdolls draw the procedural people as themselves (`procRagdoll`), the rest as cooked bodies.
       procHeldNow.clear();
-      options.ragdolls?.(procedural ? procRagdoll : pedestrians);
+      options.ragdolls?.(procedural ? procRagdoll : riggedRagdoll);
       if (procedural) {
         // Let go of those the ragdolls no longer hold (up again).
         for (const id of procHeld) if (!procHeldNow.has(id)) { const p = procPeople.get(id)?.person; if (p) procedural.ragdoll.hold(p, null); }

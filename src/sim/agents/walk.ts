@@ -304,11 +304,14 @@ const KNOCKED_MOST = 12;
  * shot person was never seen pushed - the player, 2026-10-06). Seconds, and
  * how far.
  */
-export const STAGGER_TIME = 0.55;
-const STAGGER_DISTANCE = m(0.7);
+export const STAGGER_TIME = 0.75;
+/** It starts after the hit itself (the captured jerk, `render/agents.ts`). */
+export const STAGGER_FROM = 0.3;
+const STAGGER_DISTANCE = m(0.8);
 /** The stagger's speed `t` seconds into a flinch: fast at first, slowing to a stop. */
 export function staggerSpeed(t: number): number {
-  return t < 0 || t >= STAGGER_TIME ? 0 : (2 * STAGGER_DISTANCE / STAGGER_TIME) * (1 - t / STAGGER_TIME);
+  const u = t - STAGGER_FROM;
+  return u < 0 || u >= STAGGER_TIME ? 0 : (2 * STAGGER_DISTANCE / STAGGER_TIME) * (1 - u / STAGGER_TIME);
 }
 
 /** A shocking event's life (seconds), and the reach of a body lying in the street. */

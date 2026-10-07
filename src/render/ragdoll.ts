@@ -46,7 +46,7 @@ export interface RagdollCitizens {
   skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
   /** `charred`: burnt black (a bomb's direct hit). */
   drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred?: boolean, alive?: boolean): void;
-  clipPose(index: number, key: 'crouchUp' | 'idle', phase: number): { palette: Float32Array; duration: number } | null;
+  clipPose(index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack', phase: number): { palette: Float32Array; duration: number } | null;
   /** Bodies loaded now, for people with no pose of their own (indoors). */
   loadedIndices(): number[];
   /** The index to draw a piece torn off this person with (their twin, or the same body); null when none can be drawn. */
@@ -232,6 +232,8 @@ interface Survivor {
   keys?: { stages: { from: Vector3[]; to: Vector3[]; start: number; end: number; roll?: { axis: Vector3; at: Vector3; lift: number } }[] };
   pre?: number;
   blend?: number;
+  /** The captured getting-up off the ground played (face down, face up), when there is one. */
+  riseKey?: 'getUpFront' | 'getUpBack';
 }
 
 interface Body {
@@ -1143,6 +1145,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     facing.normalize();
     const heading = Math.atan2(-facing.z, facing.x);
     const x = body.p[PEL]!.x, y = -body.p[PEL]!.z;
+    if (captured(body, alive, citizens, world, faceUp)) return;
     const clip = citizens.clipPose(body.index, RISE_KEY, 0);
     // Played in two seconds at most: the crouch-to-stand clip runs four and more.
     alive.clip = Math.min(2, clip?.duration ?? RISE_CLIP);
@@ -1183,6 +1186,47 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     alive.blend = 0.2;
     body.asleep = true;
     getUp(alive.id, x, y, heading, t + alive.blend + alive.clip);
+  }
+
+  /**
+   * Getting up as captured (CMU 140_01 face down, 140_08 face up): the clip's
+   * first frame, lying, laid where the body lies - turned so that its hips
+   * to head line runs along the body's, its hips over the body's - the
+   * lying pose blended into it, then the clip played to standing; the
+   * person stands where the clip ends, facing as it ends. False when the
+   * clip is not there (the key poses then).
+   */
+  function captured(body: Body, alive: Survivor, citizens: RagdollCitizens, world: RagdollWorld, faceUp: boolean): boolean {
+    const key = faceUp ? 'getUpBack' : 'getUpFront';
+    const first = citizens.clipPose(body.index, key, 0);
+    const last = citizens.clipPose(body.index, key, 0.999);
+    if (!first || !last) return false;
+    const pel = body.p[PEL]!;
+    const ground = world.groundAt(pel.x, -pel.z);
+    const rootAt = (heading: number, at: Vector3): Matrix4 => new Matrix4().compose(at, new Quaternion().setFromAxisAngle(UP, heading), new Vector3(body.scale, body.scale, body.scale));
+    const ang = (v: Vector3): number => Math.atan2(-v.z, v.x);
+    const probe = particlesOf(body, first.palette, rootAt(0, new Vector3(pel.x, ground, pel.z)));
+    if (!probe) return false;
+    const along = (p: readonly Vector3[]): Vector3 => new Vector3().subVectors(p[HEA]!, p[PEL]!).setY(0);
+    const heading = ang(along(body.p)) - ang(along(probe));
+    let root = rootAt(heading, new Vector3(pel.x, ground, pel.z));
+    const placed = particlesOf(body, first.palette, root);
+    if (!placed) return false;
+    root = rootAt(heading, new Vector3(pel.x + (pel.x - placed[PEL]!.x), ground, pel.z + (pel.z - placed[PEL]!.z)));
+    const end = particlesOf(body, last.palette, root);
+    if (!end) return false;
+    const toes = new Vector3().subVectors(end[LT]!, end[LA]!).add(tmpA.subVectors(end[RT]!, end[RA]!)).setY(0);
+    alive.riseKey = key;
+    alive.root = root;
+    alive.clip = first.duration / 1.15;
+    alive.phase = 'rise';
+    alive.t = 0;
+    alive.from = bonesWorld(body);
+    alive.pre = 0;
+    alive.blend = 0.35;
+    body.asleep = true;
+    getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, toes.lengthSq() > 1e-8 ? ang(toes) : heading, alive.blend + alive.clip);
+    return true;
   }
 
   /** The particles of the body in a pose read off its skeleton (a clip's palette under `root`). */
@@ -1273,7 +1317,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const t = alive.t - (alive.pre ?? 0);
     const blend = smooth(t / into);
     const phase = Math.max(0, t - into) / Math.max(0.1, alive.clip);
-    const clip = citizens.clipPose(body.index, RISE_KEY, phase);
+    const clip = citizens.clipPose(body.index, alive.riseKey ?? RISE_KEY, phase);
     const bones = body.pos0.length;
     const from = alive.from!;
     let world: Matrix4[];

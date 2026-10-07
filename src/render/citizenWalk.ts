@@ -357,7 +357,9 @@ export type LibraryClipName =
   // Hurt and afraid (`people/proceduralCrowd.ts`: the wounded's run and limp, a bystander standing scared).
   | 'runInjured' | 'walkInjured' | 'nervous'
   // Struck by a round (Quaternius's Universal Animation Library, `scripts/extract-quaternius-clips.mjs`).
-  | 'hitChest' | 'hitHead';
+  | 'hitChest' | 'hitHead'
+  // Off the ground, steps back, a crawl (CMU motion capture, `scripts/extract-cmu-clips.mjs`).
+  | 'getUpFront' | 'getUpBack' | 'staggerBack' | 'crawl';
 
 /**
  * One clip of the library, decoded and ready to transfer.
