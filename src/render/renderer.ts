@@ -2125,7 +2125,7 @@ export function createSceneRenderer(
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
     busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
-    drifting: () => (atmosphere.clouds > 0 || fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds),
+    drifting: () => (fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds),
     forgetRuin(id) {
       void id;
       buildings.setRuined(destruction.ruined);

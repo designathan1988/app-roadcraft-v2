@@ -993,8 +993,18 @@ export function mountShell(deps: ShellDeps): void {
           slider(t('cloud.height'), '#cloudHeight', '#cloudHeightValue'),
           slider(t('cloud.density'), '#cloudDensity', '#cloudDensityValue'),
         );
-        tool.appendChild(button('v2-icon danger', t('cloud.clear'), () => press('#clearClouds'), svg('eraser', 16)));
         options.appendChild(tool);
+        // Many at once, over the whole sky: each one then the tool's to move,
+        // set or take away (the sky makes none of its own).
+        const spread = titled(group(t('cloud.spread')), t('cloud.spread'));
+        spread.classList.add('stack');
+        spread.append(
+          slider(t('cloud.count'), '#cloudCount', '#cloudCountValue'),
+          slider(t('cloud.variation'), '#cloudVariation', '#cloudVariationValue'),
+        );
+        spread.appendChild(button('v2-icon', t('cloud.scatter'), () => press('#scatterClouds'), svg('cloud', 16)));
+        spread.appendChild(button('v2-icon danger', t('cloud.clear'), () => press('#clearClouds'), svg('eraser', 16)));
+        options.appendChild(spread);
       }
       // The sky - clouds and the haze over the whole map - with the weather
       // tools only, named: shown under every terrain brush it was clutter
@@ -1003,10 +1013,8 @@ export function mountShell(deps: ShellDeps): void {
       if (fogActive || cloudActive) {
         const sky = titled(group(t('atmo.title')), t('atmo.title'));
         sky.classList.add('stack');
+        // No cloud cover here: every cloud is the map's, laid with the tool.
         sky.append(
-          slider(t('atmo.clouds'), '#atmoClouds', '#atmoCloudsValue'),
-          slider(t('atmo.cloudBase'), '#atmoCloudBase', '#atmoCloudBaseValue'),
-          slider(t('atmo.cloudThickness'), '#atmoCloudThickness', '#atmoCloudThicknessValue'),
           slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue'),
           slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue'),
         );

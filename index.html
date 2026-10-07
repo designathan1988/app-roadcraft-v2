@@ -255,7 +255,10 @@
         <label><span data-i18n="cloud.size">Cloud size</span> <input id="cloudSize" type="range" min="30" max="600" value="150" step="10" /><output id="cloudSizeValue">150</output></label>
         <label><span data-i18n="cloud.height">Cloud base</span> <input id="cloudHeight" type="range" min="40" max="900" value="180" step="10" /><output id="cloudHeightValue">180</output></label>
         <label><span data-i18n="cloud.density">Cloud density</span> <input id="cloudDensity" type="range" min="10" max="100" value="80" step="5" /><output id="cloudDensityValue">80</output></label>
-        <button id="clearClouds" type="button" data-i18n="cloud.clear">Remove all placed clouds</button>
+        <label><span data-i18n="cloud.count">Clouds to spread</span> <input id="cloudCount" type="range" min="1" max="24" value="8" step="1" /><output id="cloudCountValue">8</output></label>
+        <label><span data-i18n="cloud.variation">Variation</span> <input id="cloudVariation" type="range" min="0" max="80" value="40" step="5" /><output id="cloudVariationValue">40</output></label>
+        <button id="scatterClouds" type="button" data-i18n="cloud.scatter">Spread over the sky</button>
+        <button id="clearClouds" type="button" data-i18n="cloud.clear">Remove all clouds</button>
       </div>
       <div class="terrain-fog" hidden>
         <label><span data-i18n="fog.strength">Brush strength</span> <input id="fogStrength" type="range" min="5" max="100" value="40" step="5" /><output id="fogStrengthValue">40</output></label>

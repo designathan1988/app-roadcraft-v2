@@ -83,7 +83,11 @@ export interface PostChain {
  * land and how high it reaches. World units.
  */
 export interface Atmosphere {
-  /** 0 a clear sky, 1 a sky full of cumulus (`MAX_CLOUDS`). */
+  /**
+   * How much of the sky the old setting covered (0..1). The sky draws only
+   * the map's own clouds now (`world/clouds.ts`); a cover still kept is
+   * turned into clouds of the map once (`main.ts`).
+   */
   readonly clouds: number;
   readonly cloudBase: number;
   readonly cloudThickness: number;
@@ -246,7 +250,6 @@ export function createPostChain(
   // depth the scene was drawn with, so the patches lie on the ground, the
   // roads and the roofs alike, and scroll with the wind.
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
-  let sky: Atmosphere = DEFAULT_ATMOSPHERE;
   let cloudClock = 0;
   let placedClouds: readonly PlacedCloud[] = [];
   const globePoint = new Vector3();
@@ -278,7 +281,7 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        const count = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], placedClouds);
+        const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds);
         u['uCloudCount']!.value = count;
         // Laid over the plane, drawn over the globe (`planet.ts`).
         const onGlobe = (v: Vector4): void => {
@@ -315,7 +318,6 @@ export function createPostChain(
     },
     setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop) {
       if (!clouds) return;
-      sky = atmosphere;
       const u = clouds.uniforms as Record<string, { value: unknown }>;
       u['uBackdrop']!.value = backdrop ? 1 : 0;
       u['uCloudBase']!.value = atmosphere.cloudBase;
@@ -344,13 +346,11 @@ export function createPostChain(
 }
 
 /** How much a cloud's shadow takes from the light under it at its heart. */
-const CLOUD_SHADOW_STRENGTH = 0.55;
+const CLOUD_SHADOW_STRENGTH = 0.62;
 
 
 /** Most cumulus clouds over the map at once, and the puffs each is built of. */
 const MAX_CLOUDS = 24;
-/** The sky's own clouds at full cover (the player's placed ones come on top, `PlacedCloud`). */
-const SKY_CLOUDS = 12;
 const CLOUD_PUFFS = 7;
 
 /**
@@ -370,12 +370,7 @@ const PUFFS: readonly (readonly [number, number, number, number])[] = [
   [0.12, 0.36, 0.38, 0.33],
 ];
 
-/** Units a second the clouds drift with the wind (some 10 m/s). */
-const CLOUD_DRIFT = new Vector2(24, 9);
-/** Seconds a cloud lives, from its first wisps to its last, at the least and the most. */
-const CLOUD_LIFE: readonly [number, number] = [80, 150];
-
-/** 0..1 hash of an integer and a salt (the same clouds every visit). */
+/** 0..1 hash of an integer and a salt (the same puffs every visit). */
 function cloudHash(i: number, salt: number): number {
   let h = Math.imul(i + 1, 374_761_393) ^ Math.imul(salt, 668_265_263);
   h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
@@ -383,51 +378,23 @@ function cloudHash(i: number, salt: number): number {
 }
 
 /**
- * Lays the clouds out for this moment: as many as the player's cover asks
- * for, scattered over the map and a little past its edges, drifting with
- * the wind and wrapping round so the sky never empties. Each LIVES: it
- * condenses out of wisps, grows, holds, and is worn away again, and in its
- * place another forms somewhere else (each slot's clouds out of step with
- * the others', so the sky is always some forming and some fading). Writes
- * each cloud's bounding sphere (centre, size), its puffs (world centre,
- * radius) and how far through its life it is (0 none, 1 grown).
+ * Lays the clouds out: the map's own, each where the player put it or the
+ * sky's spreader laid it (`world/clouds.ts`), whole. The sky invents none of
+ * its own - every cloud can be moved, set and taken away (the player,
+ * 2026-10-07). Writes each cloud's bounding sphere (centre, size), its puffs
+ * (world centre, radius) and how grown it is (1).
  */
-function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[], lives: number[], placed: readonly PlacedCloud[]): number {
-  // The player's own clouds first, where they put them, whole (`world/clouds.ts`).
+function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: number[], placed: readonly PlacedCloud[]): number {
   let slot = 0;
   for (const cloud of placed) {
     if (slot >= MAX_CLOUDS) break;
     layOne(slot, 1_000_003 + cloud.id * 7919, cloud.x, -cloud.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
+    // Each its own flat base, at its own height (one height for the whole
+    // sky cut away every cloud set lower than it, and its shadow with it).
+    bases[slot] = cloud.height;
     slot++;
   }
-  const count = Math.min(MAX_CLOUDS - slot, Math.round(atmosphere.clouds * SKY_CLOUDS));
-  // Over the map only: a cloud past its edge hung in the empty space round
-  // the diorama like a snowball (the player, 2026-10-07). It fades out
-  // before it gets there, and wraps round unseen.
-  const span = MAP_SIZE * 0.9;
-  const wrap = (v: number): number => ((((v + span / 2) % span) + span) % span) - span / 2;
-  const ease = (v: number): number => { const t = Math.min(1, Math.max(0, v)); return t * t * (3 - 2 * t); };
-  for (let i = 0; i < count; i++) {
-    const life = CLOUD_LIFE[0] + (CLOUD_LIFE[1] - CLOUD_LIFE[0]) * cloudHash(i, 10);
-    const age = time / life + cloudHash(i, 11);
-    const generation = Math.floor(age);
-    const phase = age - generation;
-    // A new cloud every generation, out of the slot's own sequence.
-    const id = i + generation * 131;
-    const x = wrap((cloudHash(id, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
-    const z = wrap((cloudHash(id, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
-    const edge = 1 - ease((Math.max(Math.abs(x), Math.abs(z)) - span * 0.3) / (span * 0.17));
-    // The sky's own clouds take the slots after the placed ones.
-    const lifeNow = ease(phase / 0.3) * (1 - ease((phase - 0.62) / 0.38)) * edge;
-    // It thins into wisps as it forms and fades, at nearly its full size: a
-    // cloud that shrank as it went was a small bright ball.
-    const grown = 0.85 + 0.15 * lifeNow;
-    // Its size from the thickness the player set: a cumulus about twice as wide as tall.
-    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(id, 3));
-    const base = atmosphere.cloudBase + (cloudHash(id, 4) - 0.5) * size * 0.3;
-    layOne(slot + i, id, x, z, base, size, cloudHash(id, 5) * Math.PI * 2, lifeNow, grown, bounds, puffs, lives);
-  }
-  return slot + count;
+  return slot;
 }
 
 /** One cloud into slot `i`: its bounding sphere, its puffs (jittered by `id`), how grown it is (`life`). */
@@ -475,6 +442,7 @@ const CLOUD_SHADOWS = {
     uCloud: { value: Array.from({ length: MAX_CLOUDS }, () => new Vector4()) },
     uPuff: { value: Array.from({ length: MAX_CLOUDS * CLOUD_PUFFS }, () => new Vector4()) },
     uLife: { value: Array.from({ length: MAX_CLOUDS }, () => 0) },
+    uBase: { value: Array.from({ length: MAX_CLOUDS }, () => 0) },
     uCloudBase: { value: DEFAULT_ATMOSPHERE.cloudBase },
     uFog: { value: DEFAULT_ATMOSPHERE.fog },
     uFogHeight: { value: DEFAULT_ATMOSPHERE.fogHeight },
@@ -520,6 +488,7 @@ const CLOUD_SHADOWS = {
     uniform vec4 uCloud[MAX_CLOUDS];
     uniform vec4 uPuff[MAX_CLOUDS * PUFFS];
     uniform float uLife[MAX_CLOUDS];
+    uniform float uBase[MAX_CLOUDS];
     uniform float uCloudBase;
     uniform float uFog;
     uniform float uFogHeight;
@@ -587,7 +556,7 @@ const CLOUD_SHADOWS = {
         d = smin(d, length(o) - s.w, size * 0.2);
       }
       // A flat base: the cloud stops at its condensation level.
-      float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, altitude(p));
+      float base = smoothstep(uBase[c] - size * 0.12, uBase[c] + size * 0.08, altitude(p));
       return -d / size * base;
     }
     // Its density, as Horizon Zero Dawn's clouds are built (Schneider; the
@@ -613,7 +582,7 @@ const CLOUD_SHADOWS = {
       float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
       float b2 = 1.0 - abs(noise3(r * 2.13 + 3.3) * 2.0 - 1.0);
       float detail = b1 * 0.65 + b2 * 0.35;
-      float up = clamp((altitude(p) - uCloudBase) / size, 0.0, 1.0);
+      float up = clamp((altitude(p) - uBase[c]) / size, 0.0, 1.0);
       detail = mix(1.0 - detail, detail, clamp(up * 3.0, 0.0, 1.0));
       // remap(base, detail * 0.35, 1, 0, 1): the heart (1) stays whole, the
       // thin edge is worn into wisps.
@@ -639,10 +608,10 @@ const CLOUD_SHADOWS = {
           float a = max(span.x, 0.0);
           float len = (span.y - a) / 5.0;
           for (int i = 0; i < 5; i++) {
-            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 3.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
+            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
           }
         }
-        colour *= 1.0 - uStrength * (1.0 - exp(-through * 3.5));
+        colour *= 1.0 - uStrength * (1.0 - exp(-through * 7.0));
       }
       // Mist: exponential in height, along the ray to what the pixel sees.
       if (uFog > 0.0) {
@@ -879,7 +848,7 @@ const CLOUD_SHADOWS = {
             float sunT = exp(-towards * size * 0.02 * 2.2);
             float facing = smoothstep(-0.05, 0.1, heap(best, q) - heap(best, q + uSunDir * size * 0.16));
             float lit = sunT * mix(0.55, 1.0, facing);
-            float up = clamp((altitude(q) - uCloudBase) / size, 0.0, 1.0);
+            float up = clamp((altitude(q) - uBase[best]) / size, 0.0, 1.0);
             vec3 c = mix(baseShade, skyLight, 0.25 + 0.75 * up) * 0.85 + uSunLight * 0.36 * lit * (1.0 - uDark);
             // Little extinction: the eroded edge is a veil the land shows through.
             float alpha = 1.0 - exp(-density * stepLen * 0.015);

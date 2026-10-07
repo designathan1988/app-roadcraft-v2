@@ -777,6 +777,19 @@ export class RoadDoc {
     return cloud;
   }
 
+  /** Several clouds at once, as many as the sky has room for: how many were added. */
+  addClouds(values: readonly Omit<PlacedCloud, 'id'>[]): number {
+    let id = this.clouds.reduce((m, c) => Math.max(m, c.id), 0);
+    let added = 0;
+    for (const value of values) {
+      if (this.clouds.length >= MAX_PLACED_CLOUDS) break;
+      this.clouds.push({ ...value, id: ++id });
+      added++;
+    }
+    if (added > 0) this.cloudRevision++;
+    return added;
+  }
+
   updateCloud(id: number, change: Partial<Omit<PlacedCloud, 'id'>>): void {
     const i = this.clouds.findIndex((c) => c.id === id);
     if (i < 0) return;

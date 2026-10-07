@@ -22,8 +22,12 @@ export interface PlacedCloud {
   readonly yaw: number;
 }
 
-/** The most clouds a map keeps placed (the sky draws at most `MAX_CLOUDS` in all). */
-export const MAX_PLACED_CLOUDS = 16;
+/**
+ * The most clouds a map keeps (the sky draws `MAX_CLOUDS`, all of them the
+ * map's own: since 2026-10-07 the sky invents none the player cannot move or
+ * take away).
+ */
+export const MAX_PLACED_CLOUDS = 24;
 
 export const CLOUD_LIMITS = {
   height: [80, 2400],
@@ -49,15 +53,60 @@ export function readCloud(data: unknown): PlacedCloud | null {
   };
 }
 
-/** The placed cloud whose body covers the map point `(x, y)` seen at its own height, nearest first; null if none. */
+/**
+ * Clouds spread over the map, as a procedural spawner fills a volume and the
+ * placed instances are then edited one by one (Unreal's Procedural Foliage
+ * and its Foliage tools): `count` of them, each of about the given size,
+ * height and density, varied by `variation` (0..1), kept apart by about
+ * their size and off the clouds already there. `random` gives 0..1.
+ */
+export function scatterClouds(count: number, like: { size: number; height: number; density: number }, variation: number,
+  half: number, existing: readonly PlacedCloud[], random: () => number): Omit<PlacedCloud, 'id'>[] {
+  const out: Omit<PlacedCloud, 'id'>[] = [];
+  const vary = (v: number): number => v * (1 + (random() * 2 - 1) * variation);
+  const reach = half * 0.8;
+  for (let tries = 0; out.length < count && tries < count * 40; tries++) {
+    const size = clamp(vary(like.size), CLOUD_LIMITS.size);
+    const x = (random() * 2 - 1) * reach, y = (random() * 2 - 1) * reach;
+    const crowded = [...existing, ...out].some((c) => Math.hypot(c.x - x, c.y - y) < (c.size + size) * 0.45);
+    if (crowded) continue;
+    out.push({
+      x, y, size,
+      height: clamp(vary(like.height), CLOUD_LIMITS.height),
+      density: clamp(vary(like.density), CLOUD_LIMITS.density),
+      yaw: random() * Math.PI * 2,
+    });
+  }
+  return out;
+}
+
+/**
+ * The cloud the pointer is on: of the clouds whose body (a sphere about its
+ * heap, `render/postprocess.ts` layOne) the pointer's ray passes through, the
+ * one it meets first coming from the camera - a big cloud far behind never
+ * steals the click from the one in front (2026-10-07). `at(height)` is where
+ * the ray crosses the plane at that height; the camera looks down, so the
+ * ray meets higher ground first. Null if the ray misses every cloud.
+ */
 export function cloudUnder(clouds: readonly PlacedCloud[], at: (height: number) => { x: number; y: number }): PlacedCloud | null {
+  // The ray as a line through two of its points, a kilometre of height apart.
+  const lo = at(0), hi = at(1000);
+  const dx = hi.x - lo.x, dy = hi.y - lo.y, dz = 1000;
+  const length = Math.hypot(dx, dy, dz);
+  const ux = dx / length, uy = dy / length, uz = dz / length;
   let best: PlacedCloud | null = null;
-  let bestD = Infinity;
+  let bestEntry = -Infinity;
   for (const cloud of clouds) {
-    // Where the pointer's ray crosses the middle of this cloud's body.
-    const p = at(cloud.height + cloud.size * 0.3);
-    const d = Math.hypot(p.x - cloud.x, p.y - cloud.y) / (cloud.size * 0.6);
-    if (d < 1 && d < bestD) { bestD = d; best = cloud; }
+    const cz = cloud.height + cloud.size * 0.4;
+    const radius = cloud.size * 0.55;
+    // Along the ray (towards the camera) to the point nearest the centre.
+    const t = (cloud.x - lo.x) * ux + (cloud.y - lo.y) * uy + cz * uz;
+    const px = lo.x + ux * t - cloud.x, py = lo.y + uy * t - cloud.y, pz = uz * t - cz;
+    const miss = px * px + py * py + pz * pz;
+    if (miss >= radius * radius) continue;
+    // Where the ray enters the sphere, measured towards the camera.
+    const entry = t + Math.sqrt(radius * radius - miss);
+    if (entry > bestEntry) { bestEntry = entry; best = cloud; }
   }
   return best;
 }

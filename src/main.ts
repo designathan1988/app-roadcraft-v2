@@ -29,7 +29,8 @@ import {
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { scatter } from '@world/elements';
-import { cloudUnder } from '@world/clouds';
+import { cloudUnder, scatterClouds } from '@world/clouds';
+import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
@@ -1529,6 +1530,26 @@ function cloudDragTo(px: number, py: number): void {
   bind('cloudSize', () => cloudBrush().size, (v) => setCloudBrush({ size: v }));
   bind('cloudHeight', () => cloudBrush().height, (v) => setCloudBrush({ height: v }));
   bind('cloudDensity', () => cloudBrush().density, (v) => setCloudBrush({ density: v }));
+  // Spread clouds over the sky: as many as asked, about the tool's size,
+  // height and density, varied - each one then to move, set or take away.
+  (document.getElementById('scatterClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
+    const count = Number((document.getElementById('cloudCount') as HTMLInputElement | null)?.value ?? 8);
+    const variation = Number((document.getElementById('cloudVariation') as HTMLInputElement | null)?.value ?? 40) / 100;
+    const brush = cloudBrush();
+    const laid = scatterClouds(count, {
+      size: brush.size * UNITS_PER_METER, height: brush.height * UNITS_PER_METER, density: brush.density / 100,
+    }, variation, MAP_SIZE / 2, doc.clouds, Math.random);
+    history.record(doc);
+    const added = doc.addClouds(laid);
+    if (added < count) flashHint('hint.cloud.full');
+    updateHistoryButtons();
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
+  for (const id of ['cloudCount', 'cloudVariation']) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    input?.addEventListener('input', () => text(`${id}Value`, input.value));
+  }
   (document.getElementById('clearClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
     if (doc.clouds.length === 0) return;
     if (!window.confirm(t('confirm.clearClouds'))) return;
@@ -3148,6 +3169,20 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
     if (redraw) requestDraw();
   };
   for (const input of inputs) if (input) input.oninput = () => apply();
+  // The sky made no clouds of its own any more (every cloud is the map's, to
+  // move or take away): a cover kept from before becomes clouds of the map
+  // where it has none, once, and the setting goes to nought.
+  const cover = Number(inputs[0]?.value ?? 0) / 100;
+  if (cover > 0 && inputs[0]) {
+    if (doc.clouds.length === 0) {
+      const value = (i: number): number => Number(inputs[i]?.value ?? 0);
+      doc.addClouds(scatterClouds(Math.round(cover * 12), {
+        size: Math.max(40, value(2) * UNITS_PER_METER), height: value(1) * UNITS_PER_METER, density: 0.8,
+      }, 0.3, MAP_SIZE / 2, [], Math.random));
+      persistence.saveSessionSoon(doc, sessionSettings);
+    }
+    inputs[0].value = '0';
+  }
   apply(false);
 }
 
