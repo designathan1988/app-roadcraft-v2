@@ -2883,9 +2883,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
 // The sky the player sets (Paisagem > Céu e clima): clouds - how many, how
 // high, how thick - and mist. Kept between sessions; heights in metres.
 {
-  // v4: the map on a planet by default (the player, 2026-10-07); an older
-  // choice is not read.
-  const KEY = 'roadcraft.atmosphere.v4';
+  // v5: back to the flat map by default (the player, 2026-10-07: "volta
+  // para o mapa plano original"); the planet stays one setting away. An
+  // older choice is not read.
+  const KEY = 'roadcraft.atmosphere.v5';
   const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight', 'atmoPlanet'] as const;
   const inputs = ids.map((id) => document.getElementById(id) as HTMLInputElement | null);
   try {

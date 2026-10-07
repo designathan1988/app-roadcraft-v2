@@ -85,7 +85,7 @@ export interface Atmosphere {
   /** The planet the map is drawn on, its radius in units (`planet.ts`); 0: flat. */
   readonly planet: number;
 }
-export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150, planet: 14_000 };
+export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150, planet: 0 };
 
 export function createPostChain(
   renderer: WebGLRenderer,
