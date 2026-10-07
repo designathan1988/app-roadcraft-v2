@@ -1,6 +1,6 @@
 import {
-  BufferGeometry, DataTexture, DepthTexture, Float32BufferAttribute, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh,
-  PlaneGeometry, RGBAFormat, RepeatWrapping, Scene, UnsignedByteType, Vector2, WebGLRenderTarget, type Camera, type WebGLRenderer,
+  BufferGeometry, Color, DataTexture, DepthTexture, Float32BufferAttribute, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh,
+  PlaneGeometry, RGBAFormat, RepeatWrapping, Scene, UnsignedByteType, Vector2, Vector3, WebGLRenderTarget, type Camera, type WebGLRenderer,
 } from 'three';
 import { fbm, makeNoise } from './mesh/textureBaker';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -53,8 +53,26 @@ export interface PostChain {
    * with it), and comes up with the dusk.
    */
   setNight(dark: number): void;
+  /** The sky the player set (`Atmosphere`) and the light it is lit by. */
+  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color): void;
   dispose(): void;
 }
+
+/**
+ * The player's sky (Paisagem > Céu e clima): how much of it is cloud, at
+ * what height and how thick the layer is, and how much mist lies over the
+ * land and how high it reaches. World units.
+ */
+export interface Atmosphere {
+  /** 0 a clear sky, 1 overcast. */
+  readonly clouds: number;
+  readonly cloudBase: number;
+  readonly cloudThickness: number;
+  /** 0 none (the default: the map seen clear), 1 a thick mist. */
+  readonly fog: number;
+  readonly fogHeight: number;
+}
+export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.45, cloudBase: 875, cloudThickness: 150, fog: 0, fogHeight: 150 };
 
 export function createPostChain(
   renderer: WebGLRenderer,
@@ -75,6 +93,9 @@ export function createPostChain(
       },
       setNight() {
         /* no bloom without the chain */
+      },
+      setAtmosphere() {
+        /* no clouds or mist without the chain */
       },
       dispose() {
         /* nothing owned */
@@ -194,7 +215,7 @@ export function createPostChain(
   // before tone mapping. Each pixel's world position is rebuilt from the
   // depth the scene was drawn with, so the patches lie on the ground, the
   // roads and the roofs alike, and scroll with the wind.
-  const clouds = quality.cloudShadows ? new ShaderPass(CLOUD_SHADOWS) : null;
+  const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
   const cloudMap = clouds ? cloudTexture() : null;
   if (clouds && cloudMap) {
     clouds.uniforms['tClouds']!.value = cloudMap;
@@ -232,6 +253,18 @@ export function createPostChain(
       bloom.strength = bloomStrength * Math.min(1, dark);
       // No sun, no cloud shadow.
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
+      if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
+    },
+    setAtmosphere(atmosphere, sun, skyColor) {
+      if (!clouds) return;
+      const u = clouds.uniforms as Record<string, { value: unknown }>;
+      u['uCloudCover']!.value = atmosphere.clouds;
+      u['uCloudBase']!.value = atmosphere.cloudBase;
+      u['uCloudThickness']!.value = Math.max(10, atmosphere.cloudThickness);
+      u['uFog']!.value = atmosphere.fog;
+      u['uFogHeight']!.value = Math.max(5, atmosphere.fogHeight);
+      (u['uSunDir']!.value as Vector3).copy(sun).normalize();
+      (u['uFogColor']!.value as Color).copy(skyColor);
     },
     setSize(width, height, pixelRatio) {
       composer.setPixelRatio(pixelRatio);
@@ -286,10 +319,21 @@ function cloudTexture(): DataTexture {
 }
 
 /**
- * Fake cloud shadows (Total War's and Unity's light-cookie trick, done on the
- * image): a scrolling cloud cover laid on each pixel's world position, the
- * colour dimmed under it. The sky and the empty background (depth 1) are left
- * alone.
+ * THE ATMOSPHERE, on the image (the player sets it: Paisagem > Céu e clima):
+ *
+ *  - CLOUDS with a height and a thickness: each pixel's ray, from the camera
+ *    to what it sees (or to the sky), is marched in a few steps through the
+ *    slab between the cloud base and its top, the cover read from the same
+ *    drifting cloud texture as ever, shaped round in height and lit brighter
+ *    at the top than at the base - the shape cheap volumetric layers take
+ *    (Schneider, "The Real-time Volumetric Cloudscapes of Horizon Zero
+ *    Dawn"), in a handful of steps rather than dozens.
+ *  - Their SHADOWS on the land, now where the sun throws them from that
+ *    height, so a cloud and its shadow belong together.
+ *  - MIST: exponential height fog, thickest in the low ground.
+ *
+ * Every pixel's world position is rebuilt from the depth the scene was drawn
+ * with (the composer swaps its targets, so the depth is captured per frame).
  */
 const CLOUD_SHADOWS = {
   uniforms: {
@@ -300,6 +344,14 @@ const CLOUD_SHADOWS = {
     uCameraWorld: { value: new Matrix4() },
     uTime: { value: 0 },
     uStrength: { value: CLOUD_SHADOW_STRENGTH },
+    uDark: { value: 0 },
+    uCloudCover: { value: DEFAULT_ATMOSPHERE.clouds },
+    uCloudBase: { value: DEFAULT_ATMOSPHERE.cloudBase },
+    uCloudThickness: { value: DEFAULT_ATMOSPHERE.cloudThickness },
+    uFog: { value: DEFAULT_ATMOSPHERE.fog },
+    uFogHeight: { value: DEFAULT_ATMOSPHERE.fogHeight },
+    uSunDir: { value: new Vector3(0.5, 0.8, 0.3).normalize() },
+    uFogColor: { value: new Color(0xc9dcea) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -313,20 +365,87 @@ const CLOUD_SHADOWS = {
     uniform mat4 uCameraWorld;
     uniform float uTime;
     uniform float uStrength;
+    uniform float uDark;
+    uniform float uCloudCover;
+    uniform float uCloudBase;
+    uniform float uCloudThickness;
+    uniform float uFog;
+    uniform float uFogHeight;
+    uniform vec3 uSunDir;
+    uniform vec3 uFogColor;
     varying vec2 vUv;
+    vec3 worldAt(vec2 uv, float depth) {
+      vec4 view = uProjectionInverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+      return (uCameraWorld * vec4(view.xyz / view.w, 1.0)).xyz;
+    }
+    // The cloud cover over a point, 0..1, as the player's cover thresholds it.
+    float coverAt(vec2 p) {
+      // Two layers at different sizes and drifts, so the shapes change as
+      // they pass instead of sliding by as one stencil.
+      float a = texture2D(tClouds, p / 2600.0 + uTime * vec2(0.0042, 0.0017)).r;
+      float b = texture2D(tClouds, p / 1500.0 + uTime * vec2(0.0058, 0.0009) + 0.37).r;
+      float raw = clamp(a * 0.75 + b * 0.45 - 0.15, 0.0, 1.0);
+      return clamp((raw - (1.0 - uCloudCover) * 0.95) / 0.35, 0.0, 1.0);
+    }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
       float depth = texture2D(tDepth, vUv).r;
-      if (depth >= 0.9999 || uStrength <= 0.0) { gl_FragColor = src; return; }
-      vec4 view = uProjectionInverse * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-      vec3 world = (uCameraWorld * vec4(view.xyz / view.w, 1.0)).xyz;
-      // Two layers at different sizes and drifts, so the shapes change as
-      // they pass instead of sliding by as one stencil.
-      vec2 p = world.xz;
-      float a = texture2D(tClouds, p / 2600.0 + uTime * vec2(0.0042, 0.0017)).r;
-      float b = texture2D(tClouds, p / 1500.0 + uTime * vec2(0.0058, 0.0009) + 0.37).r;
-      float cover = clamp(a * 0.75 + b * 0.45 - 0.15, 0.0, 1.0);
-      gl_FragColor = vec4(src.rgb * (1.0 - uStrength * cover), src.a);
+      bool sky = depth >= 0.9999;
+      vec3 ro = worldAt(vUv, 0.0);
+      vec3 hit = worldAt(vUv, sky ? 0.99999 : depth);
+      vec3 rd = normalize(hit - ro);
+      float tScene = sky ? 1e7 : length(hit - ro);
+      vec3 colour = src.rgb;
+      // The clouds' shadow, thrown by the sun from the middle of the layer.
+      if (!sky && uStrength > 0.0 && uCloudCover > 0.0) {
+        float lift = (uCloudBase + uCloudThickness * 0.5 - hit.y) / max(uSunDir.y, 0.2);
+        float shade = coverAt(hit.xz + uSunDir.xz * lift);
+        colour *= 1.0 - uStrength * shade;
+      }
+      // Mist: exponential in height, along the ray to what the pixel sees.
+      if (uFog > 0.0) {
+        float dist = min(tScene, 6000.0);
+        float yMid = ro.y + rd.y * dist * 0.5;
+        float thickness = exp(-max(0.0, min(yMid, hit.y)) / uFogHeight);
+        float amount = 1.0 - exp(-uFog * 0.0009 * dist * thickness);
+        vec3 mist = mix(uFogColor, uFogColor * 0.18, uDark);
+        colour = mix(colour, mist, clamp(amount, 0.0, 0.95));
+      }
+      // The clouds: a few steps through the slab the ray crosses.
+      if (uCloudCover > 0.0 && abs(rd.y) > 1e-4) {
+        float top = uCloudBase + uCloudThickness;
+        float ta = (uCloudBase - ro.y) / rd.y;
+        float tb = (top - ro.y) / rd.y;
+        float t0 = max(0.0, min(ta, tb));
+        float t1 = min(max(ta, tb), tScene);
+        if (t1 > t0) {
+          const int STEPS = 10;
+          float stepLen = (t1 - t0) / float(STEPS);
+          // Each pixel starts its steps at its own offset: fixed steps drew
+          // the layer as a stack of slices.
+          float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+          float transmit = 1.0;
+          vec3 light = vec3(0.0);
+          vec3 lit = mix(vec3(1.0, 0.98, 0.95), vec3(0.12, 0.14, 0.2), uDark);
+          vec3 base = mix(vec3(0.62, 0.66, 0.72), vec3(0.05, 0.06, 0.09), uDark);
+          for (int i = 0; i < STEPS; i++) {
+            vec3 q = ro + rd * (t0 + (float(i) + jitter) * stepLen);
+            float h = clamp((q.y - uCloudBase) / uCloudThickness, 0.0, 1.0);
+            // Billowing: the cover a point needs grows towards the base and
+            // much more towards the top, so each cloud is a mound with a
+            // flat-ish base and a rounded top, not its outline extruded.
+            float need = 0.12 + 0.75 * pow(abs(h * 1.6 - 0.45), 1.6);
+            float density = smoothstep(need, need + 0.25, coverAt(q.xz));
+            if (density <= 0.0) continue;
+            float alpha = 1.0 - exp(-density * stepLen * 0.006);
+            light += transmit * alpha * mix(base, lit, h);
+            transmit *= 1.0 - alpha;
+            if (transmit < 0.02) break;
+          }
+          colour = colour * transmit + light;
+        }
+      }
+      gl_FragColor = vec4(colour, src.a);
     }
   `,
 };

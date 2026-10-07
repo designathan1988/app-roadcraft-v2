@@ -2860,6 +2860,34 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
   button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as BrushMode) ?? 'raise');
 });
 
+// The sky the player sets (Paisagem > Céu e clima): clouds - how many, how
+// high, how thick - and mist. Kept between sessions; heights in metres.
+{
+  const KEY = 'roadcraft.atmosphere';
+  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight'] as const;
+  const inputs = ids.map((id) => document.getElementById(id) as HTMLInputElement | null);
+  try {
+    const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Record<string, number> | null;
+    if (kept) ids.forEach((id, i) => { const v = kept[id]; const input = inputs[i]; if (input && Number.isFinite(v)) input.value = String(v); });
+  } catch { /* storage blocked: the defaults */ }
+  const apply = (redraw = true): void => {
+    const value = (i: number): number => Number(inputs[i]?.value ?? 0);
+    ids.forEach((id, i) => text(`${id}Value`, String(value(i))));
+    scene.setAtmosphere({
+      clouds: value(0) / 100,
+      cloudBase: value(1) * UNITS_PER_METER,
+      cloudThickness: value(2) * UNITS_PER_METER,
+      fog: value(3) / 100,
+      fogHeight: value(4) * UNITS_PER_METER,
+    });
+    try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(ids.map((id, i) => [id, value(i)])))); } catch { /* not kept */ }
+    // Not at boot: the frame loop is not set up yet then.
+    if (redraw) requestDraw();
+  };
+  for (const input of inputs) if (input) input.oninput = () => apply();
+  apply(false);
+}
+
 // The map's biome (`world/ecology.ts`): choosing one gives an old map its
 // ecosystem too; "none" takes it away. Undoable.
 let mapBiomeShown = -1;

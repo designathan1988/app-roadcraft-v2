@@ -55,7 +55,7 @@ import { createAgentMeshes, type AgentMeshes } from './agents';
 import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
-import { createPostChain, type PostChain } from './postprocess';
+import { DEFAULT_ATMOSPHERE, createPostChain, type Atmosphere, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { disposeMesh } from './mesh/surfaceMesh';
@@ -261,6 +261,8 @@ export interface SceneHandle {
   setBuildingCutaway(spec: CutawaySpec | null): void;
   /** The sky: always day, always night, or the residents' own clock. */
   setSkyMode(mode: SkyMode): void;
+  /** Clouds and mist as the player set them (Paisagem > Céu e clima). */
+  setAtmosphere(atmosphere: Atmosphere): void;
   /** Perspective camera on, or the orthographic (isometric) view. */
   setPerspective(on: boolean): void;
   /**
@@ -905,6 +907,8 @@ export function createSceneRenderer(
   /** The buildings cut open, for the people drawn inside them (`indoors.ts`). */
   let cutSpec: CutawaySpec | null = null;
   let skyMode: SkyMode = 'day';
+  /** Clouds and mist as the player set them (`setAtmosphere`). */
+  let atmosphere: Atmosphere = DEFAULT_ATMOSPHERE;
   const indoors = new Indoors();
   // Room lights for the floors cut open: a fixed set, so switching them on and
   // off never changes the scene's light count (which recompiles every shader).
@@ -2000,6 +2004,9 @@ export function createSceneRenderer(
       // Read by the next frame drawn.
       skyMode = mode;
     },
+    setAtmosphere(next) {
+      atmosphere = next;
+    },
     setBuildingCutaway(spec) {
       buildings.setCutaway(spec);
       cutSpec = spec;
@@ -2444,6 +2451,7 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
+      post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor);
       const atRender = performance.now();
       post.render(delta);
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });

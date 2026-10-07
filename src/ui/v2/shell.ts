@@ -95,6 +95,7 @@ const ICON: Record<string, string> = {
   flatten: '<path d="M3 15h18"/><path d="M6 11h12"/>',
   river: '<path d="M3 8c3-3 6 3 9 0s6 3 9 0"/><path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>',
   paint: '<path d="M4 20c2 0 4-1 4-4 0-2 2-3 4-3"/><path d="M12 13l7-7a2 2 0 0 0-3-3l-7 7"/><path d="M9 10l3 3"/>',
+  cloud: '<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.3 1.7A3.2 3.2 0 0 0 7 18Z"/>',
   mesa: '<path d="M2 20h20"/><path d="M4 20 7 9h10l3 11"/><path d="M7.6 13h8.8M6.6 16.5h10.8"/>',
   canyon: '<path d="M2 6h6l2 13h4l2-13h6"/><path d="M8.6 10h-6M15.4 10h6M9.3 14.5h-7M14.7 14.5h7"/>',
   escarpment: '<path d="M2 20h20"/><path d="M3 20V8h9l1 12"/><path d="M5 8v12M7.5 8v12M10 8v12"/><path d="M13 20c3-1 5-2 9-2"/>',
@@ -897,6 +898,18 @@ export function mountShell(deps: ShellDeps): void {
         })), 8));
         options.appendChild(grounds);
         options.appendChild(biomes);
+      }
+      // The sky: clouds (how many, how high, how thick) and mist.
+      {
+        const sky = titled(group(t('atmo.title')), t('atmo.title'));
+        sky.append(
+          slider(t('atmo.clouds'), '#atmoClouds', '#atmoCloudsValue', svg('cloud', 16)),
+          slider(t('atmo.cloudBase'), '#atmoCloudBase', '#atmoCloudBaseValue', svg('raise', 16)),
+          slider(t('atmo.cloudThickness'), '#atmoCloudThickness', '#atmoCloudThicknessValue', svg('strength', 16)),
+          slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue', svg('cloud', 16)),
+          slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue', svg('raise', 16)),
+        );
+        options.appendChild(sky);
       }
       // The map's own biome: the ecosystem everywhere nothing else is painted.
       {

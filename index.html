@@ -230,6 +230,13 @@
       <label class="terrain-control"><span data-i18n="terrain.radius">Radius</span> <input id="terrainRadius" type="range" min="30" max="300" value="80" step="10" /><output id="terrainRadiusValue">80</output></label>
       <label class="terrain-control"><span data-i18n="terrain.strength">Strength</span> <input id="terrainStrength" type="range" min="1" max="160" value="24" step="1" /><output id="terrainStrengthValue">24</output></label>
       <label class="terrain-control"><span data-i18n="terrain.hardness">Hardness</span> <input id="terrainHardness" type="range" min="0" max="95" value="0" step="5" /><output id="terrainHardnessValue">0</output></label>
+      <div class="atmosphere-controls" hidden>
+        <label><span data-i18n="atmo.clouds">Clouds</span> <input id="atmoClouds" type="range" min="0" max="100" value="45" step="5" /><output id="atmoCloudsValue">45</output></label>
+        <label><span data-i18n="atmo.cloudBase">Cloud height</span> <input id="atmoCloudBase" type="range" min="100" max="1200" value="350" step="25" /><output id="atmoCloudBaseValue">350</output></label>
+        <label><span data-i18n="atmo.cloudThickness">Thickness</span> <input id="atmoCloudThickness" type="range" min="20" max="400" value="60" step="10" /><output id="atmoCloudThicknessValue">60</output></label>
+        <label><span data-i18n="atmo.fog">Mist</span> <input id="atmoFog" type="range" min="0" max="100" value="0" step="5" /><output id="atmoFogValue">0</output></label>
+        <label><span data-i18n="atmo.fogHeight">Mist height</span> <input id="atmoFogHeight" type="range" min="5" max="200" value="60" step="5" /><output id="atmoFogHeightValue">60</output></label>
+      </div>
       <button id="clearTerrain" class="terrain-clear" type="button" data-i18n="terrain.clear">Flatten the whole map</button>
       </div>
     </section>
