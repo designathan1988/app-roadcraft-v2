@@ -627,23 +627,34 @@ export function createSceneRenderer(
   /** The lots near the bodies (their raised yards are ground too), and the ground found, by small cells. */
   const ragdollLots = new Set<BuildingId>();
   const ragdollGround = new Map<number, number>();
+  /** The ground at a corner of the bodies' ground grid (0.2 units a cell): a lot's yard as drawn, else the paving (a footway stands over the terrain), else the terrain. */
+  const ragdollCorner = (ix: number, iy: number): number => {
+    const key = ix * 100003 + iy;
+    const known = ragdollGround.get(key);
+    if (known !== undefined) return known;
+    const cx = ix / 5, cy = iy / 5;
+    let h = NaN;
+    for (const id of ragdollLots) {
+      h = buildings.lotHeightAt(id, cx, cy);
+      if (Number.isFinite(h)) break;
+    }
+    if (!Number.isFinite(h)) h = pavedHeightAt(cx, cy);
+    if (!Number.isFinite(h)) h = terrain.renderedHeightAt(cx, cy);
+    if (ragdollGround.size > 60000) ragdollGround.clear();
+    ragdollGround.set(key, h);
+    return h;
+  };
   const ragdollWorld: RagdollWorld = {
     groundAt(x, y) {
-      const key = Math.round(x * 5) * 100003 + Math.round(y * 5);
-      const known = ragdollGround.get(key);
-      if (known !== undefined) return known;
-      // A lot's yard as drawn, else the paving (a footway stands over the
-      // terrain), else the terrain.
-      let h = NaN;
-      for (const id of ragdollLots) {
-        h = buildings.lotHeightAt(id, x, y);
-        if (Number.isFinite(h)) break;
-      }
-      if (!Number.isFinite(h)) h = pavedHeightAt(x, y);
-      if (!Number.isFinite(h)) h = terrain.renderedHeightAt(x, y);
-      if (ragdollGround.size > 60000) ragdollGround.clear();
-      ragdollGround.set(key, h);
-      return h;
+      // Between the heights at the corners of its cell, as a physics
+      // engine's heightfield is a surface between its samples (PhysX): one
+      // height a cell, read where it was first asked, a cell across a
+      // footway's edge held the footway's height or the grass's by turns, and
+      // a hand lying still on the grass was thrown up the 28 cm between them
+      // (measured 2026-10-06).
+      const gx = x * 5, gy = y * 5, ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy;
+      const a = ragdollCorner(ix, iy), b = ragdollCorner(ix + 1, iy), c = ragdollCorner(ix, iy + 1), d = ragdollCorner(ix + 1, iy + 1);
+      return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
     },
     wallsNear(x, y, reach) {
       // The buildings standing (not a ruin) and the walls, fences and hedges of their lots.

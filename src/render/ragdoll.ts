@@ -138,6 +138,12 @@ const PART_PARENT: Readonly<Record<PartName, PartName | null>> = {
 };
 const PART_NAMES = Object.keys(PARTS) as PartName[];
 const LIMB_JOINTS: readonly (readonly [Limb, number, number, number])[] = [['larm', LS, LE, LW], ['rarm', RS, RE, RW], ['lleg', LH, LK, LA], ['rleg', RH, RK, RA]];
+/** Each leg's knee, ankle and toe (`ankles`). */
+const FEET: readonly (readonly ['lleg' | 'rleg', number, number, number])[] = [['lleg', LK, LA, LT], ['rleg', RK, RA, RT]];
+/** How far a foot turns from where it stood: up (dorsiflexion), down (plantarflexion), to either side; radians. */
+const ANKLE_UP = 0.35, ANKLE_DOWN = 1.2, ANKLE_SIDE = 0.45;
+/** Deeper than this under the middle of a bone: a bank beside it, not ground under it - left to its ends (`collide`). */
+const STEP_FACE = m(0.08);
 
 /** The parts gone with each limb shot off (as the living lose them, `riggedCitizens` maim). */
 const LOST_PARTS: Readonly<Record<Severable, readonly PartName[]>> = {
@@ -186,8 +192,8 @@ interface Survivor {
   phase: 'fall' | 'lie' | 'rise';
   t: number;
   lie: number;
-  /** Dragging themself along by the arms (a leg lost): which way, and the drops left behind. */
-  crawl?: { dx: number; dy: number; since: number };
+  /** Down for good and hurt, writhing where they lie (`writhe`): seconds since they lay. */
+  crawl?: { since: number };
   /** Where and which way they get up, and the lying bones blended from. */
   root?: Matrix4;
   from?: Matrix4[];
@@ -225,6 +231,8 @@ interface Body {
   readonly normals: Record<Limb, Vector3>;
   /** +1 or -1: which way side x spine points the body's front. */
   readonly front: number;
+  /** Each foot's way where it stood, in its shin's frame (`ankles`): its pitch and its turn out of the leg's plane, radians. */
+  ankle: Record<'lleg' | 'rleg', { pitch: number; yaw: number }>;
   readonly inverses: Matrix4[];
   /** Each bone's bind matrix (the inverse of its inverse). */
   readonly binds: Matrix4[];
@@ -277,6 +285,16 @@ interface Body {
 }
 
 const tmpA = new Vector3(), tmpB = new Vector3(), tmpC = new Vector3(), tmpD = new Vector3(), tmpE = new Vector3();
+
+/** An angle brought within [lo, hi] (radians, the range under a turn): itself when inside, else the nearer end round the circle. */
+function clampAngle(a: number, lo: number, hi: number): number {
+  const mid = (lo + hi) / 2;
+  const x = mid + Math.atan2(Math.sin(a - mid), Math.cos(a - mid));
+  if (x >= lo && x <= hi) return a;
+  const toLo = Math.abs(Math.atan2(Math.sin(x - lo), Math.cos(x - lo)));
+  const toHi = Math.abs(Math.atan2(Math.sin(x - hi), Math.cos(x - hi)));
+  return toLo < toHi ? lo : hi;
+}
 const UP = new Vector3(0, 1, 0);
 
 /** A frame with its x along `x` and its z as near `ref` as stays square to x. */
@@ -444,8 +462,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // came through the sleeves and trouser legs at the elbow and the knee.
     fold(LS, LE, LW, 0.42); fold(RS, RE, RW, 0.42);
     fold(LH, LK, LA, 0.5); fold(RH, RK, RA, 0.5);
-    // Ankles: the foot keeps near its rest angle to the shin.
-    range(LK, LT, 0.86, 1.06); range(RK, RT, 0.86, 1.06);
+    // Ankles: `ankles` (an angle range; a knee-to-toe distance let the foot swing round the shin).
     // Shoulders and hips: an arm or a leg swings wide, but not through the body.
     range(CHE, LE, 0.5, 1.6); range(CHE, RE, 0.5, 1.6);
     range(BEL, LK, 0.55, 1.45); range(BEL, RK, 0.55, 1.45);
@@ -488,7 +505,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       bonePart, parents: sk.parents, pos0, rot0, scl0,
       origin0: {} as Record<PartName, Vector3>, frame0: {} as Record<PartName, Matrix4>,
       normals: { larm: side0.clone(), rarm: side0.clone(), lleg: side0.clone(), rleg: side0.clone() },
-      front, inverses: sk.inverses, binds, rebind, unbind, walls, torn: fate === 'torn', lostParts: new Set<PartName>(),
+      front, ankle: { lleg: { pitch: 0, yaw: 0 }, rleg: { pitch: 0, yaw: 0 } },
+      inverses: sk.inverses, binds, rebind, unbind, walls, torn: fate === 'torn', lostParts: new Set<PartName>(),
       survivor: living ? { id, phase: 'fall', t: 0, lie: fate === 'trip' ? 0.6 + Math.random() * 0.8 : 1.5 + Math.random() * 1.5, clip: RISE_CLIP } : undefined,
       comp: p.map(() => 0), palettes: [], anchor: new Matrix4(), still: 0, asleep: false, age: 0, flying: 0, pooled: false, splats: 0, spray: 0,
     };
@@ -497,6 +515,14 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const side = torsoSide(body, new Vector3());
     for (const [limb] of LIMB_JOINTS) body.normals[limb].copy(side);
     updateNormals(body, side, 1);
+    // Each foot's way as it stood, in its shin's frame (`ankles`).
+    for (const [limb, knee, ankle, toe] of FEET) {
+      const s = new Vector3().subVectors(p[ankle]!, p[knee]!).normalize();
+      const n = body.normals[limb].clone().addScaledVector(s, -body.normals[limb].dot(s)).normalize();
+      const f = new Vector3().crossVectors(n, s);
+      const d = new Vector3().subVectors(p[toe]!, p[ankle]!).normalize();
+      body.ankle[limb] = { pitch: Math.atan2(d.dot(s), d.dot(f)), yaw: Math.asin(Math.max(-1, Math.min(1, d.dot(n)))) };
+    }
     for (const part of PART_NAMES) {
       body.origin0[part] = p[PARTS[part].origin]!.clone();
       body.frame0[part] = partFrame(body, part, side, new Matrix4());
@@ -562,6 +588,13 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       const push = hit.includes(k) ? m(leg ? 2.2 : 1.6) : k === CHE || k === NEC || k === HEA || k === TOP ? m(0.7) : 0;
       if (push > 0) body.o[k]!.addScaledVector(dir, -push * STEP);
     }
+    // And over it goes, backwards, the way the round went: the upper body
+    // carried on along it while the knees give. Dropped straight down, the
+    // body folded onto its knees and stayed there kneeling, or curled in a
+    // ball; toppled forwards, a shot person was never seen knocked back (the
+    // player, 2026-10-06).
+    for (const k of [CHE, NEC, HEA, TOP, LS, RS, BEL]) body.o[k]!.addScaledVector(dir, -(c.kind === 'knocked' ? m(1.5) : m(1.8)) * STEP);
+    body.o[PEL]!.addScaledVector(dir, -m(0.5) * STEP);
     body.asleep = false;
     return dir;
   };
@@ -574,7 +607,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     if (known) {
       // On the ground already, and struck again: thrown again, and killed if it was a killing blow.
       if (c.faded) {
-        // Bled out where they lay: the crawling stops, the body goes still in a pool.
+        // Bled out where they lay: the writhing stops, the body goes still in a pool.
         known.survivor = undefined;
         known.asleep = false; known.still = 0;
         const at = known.p[PEL]!;
@@ -591,10 +624,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         const alive = known.survivor;
         alive.phase = 'fall'; alive.t = 0; delete alive.from;
         if (c.lieFor !== undefined) alive.lie = Math.max(alive.lie, c.lieFor);
-        if (c.crawl && !alive.crawl) {
-          const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
-          alive.crawl = { dx: ax / l, dy: ay / l, since: 0 };
-        }
+        if (c.crawl && !alive.crawl) alive.crawl = { since: 0 };
       }
       for (const limb of c.lost ?? []) if (!(c.severed ?? []).includes(limb)) for (const part of LOST_PARTS[limb]) known.lostParts.add(part);
       known.asleep = false; known.still = 0; known.flying = 0;
@@ -607,16 +637,13 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     for (const limb of c.lost ?? []) for (const part of LOST_PARTS[limb]) body.lostParts.add(part);
     body.recordId = c.id;
     if (body.survivor && c.lieFor !== undefined) body.survivor.lie = c.lieFor;
-    if (body.survivor && c.crawl) {
-      const ax = c.x - c.blastX, ay = c.y - c.blastY, l = Math.hypot(ax, ay) || 1;
-      body.survivor.crawl = { dx: ax / l, dy: ay / l, since: 0 };
-    }
+    if (body.survivor && c.crawl) body.survivor.crawl = { since: 0 };
     // A bullet does not throw a body: a small push where it went in, the
     // rest is the body itself giving way under its own weight.
     const speed = c.struck ? m(0.6) : c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power);
     const dir = c.struck ? shove(body, c) : blast(body, c, speed);
     // Alive going down: the arms out the way they fall, to take it
-    // (Euphoria's catch-fall), not dead weight hitting the ground face first.
+    // (Euphoria's catch-fall), not dead weight hitting the ground.
     if (c.struck && c.kind === 'knocked') {
       for (const k of [LW, RW, LE, RE]) body.o[k]!.addScaledVector(dir, -m(k === LW || k === RW ? 1.4 : 0.8) * STEP).y += m(0.6) * STEP;
     }
@@ -633,7 +660,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         const kick = new Vector3(Math.random() - 0.5, 0.3 + Math.random() * 0.6, Math.random() - 0.5).multiplyScalar(speed * 0.5).addScaledVector(dir, speed * 0.3);
         for (const k of limb) body.o[k]!.addScaledVector(kick, -STEP);
       }
-      exhaust.burst(chest.x, -chest.z, chest.y, 160, 4, m(0.8), m(0.2), 1.6);
+      exhaust.burst(chest.x, -chest.z, chest.y, 90, 4, m(0.6), m(0.06), 1.2);
       for (let k = 0; k < 18; k++) {
         const a = Math.random() * Math.PI * 2, r = m(1 + Math.random() * 6);
         bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.5 + Math.random() * 1.1), 0);
@@ -642,7 +669,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       // Pieces of them: an arm, a leg, and what was inside, flung over the street.
       api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed, 'torn');
     } else if (c.kind === 'dead') {
-      exhaust.burst(chest.x, -chest.z, chest.y, 50, 4, m(0.4), m(0.16), 1.2);
+      exhaust.burst(chest.x, -chest.z, chest.y, 24, 4, m(0.25), m(0.045), 0.9);
       bleed(c.x, c.y, groundHere, m(1.2), 0.6);
       for (let k = 0; k < 4; k++) {
         const a = Math.random() * Math.PI * 2, r = m(0.8 + Math.random() * 2.5);
@@ -694,7 +721,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     }
     citizens.drench?.(body.index);
     if (!body.pin) { body.opened = false; openBelly(body, new Vector3(0, m(1), 0), 6); }
-    exhaust.burst(at.x, -at.z, at.y, 160, 4, m(0.7), m(0.2), 1.4);
+    exhaust.burst(at.x, -at.z, at.y, 80, 4, m(0.5), m(0.06), 1.1);
     const gx = at.x, gy = -at.z, g = world0?.groundAt(gx, gy) ?? at.y;
     bleed(gx, gy, g, m(body.pin ? 1.2 : 2.8), body.pin ? 6 : 14);
     for (let n = 0; n < (body.pin ? 4 : 12); n++) {
@@ -712,7 +739,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     gore.spill(() => (bodies.includes(body) ? body.p[BEL]! : null), kick);
     if (Math.random() < 0.5) gore.spill(() => (bodies.includes(body) ? body.p[PEL]! : null), kick.clone().multiplyScalar(0.6));
     if (organs > 0) gore.scatter(body.p[BEL]!.clone(), organs, kick);
-    exhaust.burst(body.p[BEL]!.x, -body.p[BEL]!.z, body.p[BEL]!.y, 60, 4, m(0.25), m(0.05), 1);
+    exhaust.burst(body.p[BEL]!.x, -body.p[BEL]!.z, body.p[BEL]!.y, 30, 4, m(0.2), m(0.04), 0.9);
   };
 
   /** A bone's end out of a stump: from joint `at`, along `from` to `at` and on, `len` long, while the body lasts. */
@@ -775,7 +802,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     body.asleep = false;
     // The stump spurting.
     const at = body.p[root]!;
-    exhaust.burst(at.x, -at.z, at.y, 60, 4, m(0.35), m(0.08), 1.1);
+    exhaust.burst(at.x, -at.z, at.y, 30, 4, m(0.22), m(0.04), 0.9);
     add(piece);
     // Now and then the bone shows: out of the stump, out of the piece, or both.
     const stump = STUMP[limb];
@@ -972,7 +999,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         if (alive) {
           alive.t += wall;
           if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = !alive.crawl; }
-          else if (alive.phase === 'lie' && alive.crawl) crawlOn(body, alive.crawl, wall, world);
+          else if (alive.phase === 'lie' && alive.crawl) writhe(body, alive.crawl, wall, world);
           else if (alive.phase === 'rise' && alive.t > (alive.pre ?? 0) + (alive.blend ?? RISE_BLEND) + alive.clip + 3) { remove(i); continue; }
           continue;
         }
@@ -1222,26 +1249,27 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
 
   /** One Verlet step of a body: move, then relax the sticks, the joints and the collisions together. */
   /**
-   * Somebody down with a leg gone dragging themself along: the arms and the
-   * chest pulled a hand's length at a time, the legs drawn after by the
-   * sticks, a smear of blood left behind (as GTA's wounded crawl).
+   * Somebody down for good and hurt, where they lie (GTA's writhe: on the
+   * ground in pain, going nowhere): a knee drawn up towards the belly and
+   * let go, one then the other, weaker as they bleed, the blood spreading
+   * under them. Nothing moves them along the ground: the body pulled along
+   * with no hand or knee pushing on anything slid (the player, 2026-10-06).
    */
-  function crawlOn(body: Body, crawl: NonNullable<Survivor['crawl']>, dt: number, world: RagdollWorld): void {
+  function writhe(body: Body, crawl: NonNullable<Survivor['crawl']>, dt: number, world: RagdollWorld): void {
+    if (crawl.since === 0) {
+      const at = body.p[PEL]!;
+      bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(1.3), 25);
+    }
     crawl.since += dt;
-    // A pull, then a rest: about one stroke a second.
-    const stroke = Math.max(0, Math.sin(crawl.since * Math.PI * 1.1));
-    const pull = m(0.32) * stroke * dt;
-    for (const k of [HEA, TOP, NEC, CHE, LS, RS, LE, RE, LW, RW]) {
-      body.p[k]!.x += crawl.dx * pull;
-      body.p[k]!.z -= crawl.dy * pull;
-      body.o[k]!.x += crawl.dx * pull;
-      body.o[k]!.z -= crawl.dy * pull;
+    const t = crawl.since;
+    const strength = Math.min(1, t / 1.5) * Math.max(0.3, 1 - t / 40);
+    for (const [knee, hip, phase] of [[LK, LH, 0], [RK, RH, 2.4]] as const) {
+      const s = Math.sin(t * 1.3 + phase);
+      if (s <= 0) continue;
+      tmpA.lerpVectors(body.p[hip]!, body.p[BEL]!, 0.5).add(tmpB.subVectors(body.p[CHE]!, body.p[PEL]!).multiplyScalar(0.3));
+      body.p[knee]!.lerp(tmpA, 0.3 * dt * s * strength);
     }
     body.asleep = false;
-    if (stroke > 0.98 && (crawl.since % 2) < dt * 2) {
-      const at = body.p[PEL]!;
-      bleed(at.x, -at.z, world.groundAt(at.x, -at.z), m(0.35 + Math.random() * 0.25), 0);
-    }
   }
 
   /**
@@ -1288,8 +1316,6 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       old.copy(v);
       v.x += vx; v.y += vy - GRAVITY * STEP * STEP; v.z += vz;
       moved = Math.max(moved, Math.abs(vx) + Math.abs(vy) + Math.abs(vz));
-      // The ground under each particle, looked up once a step.
-      body.ground[k] = world.groundAt(v.x, -v.z);
     }
     if (body.stiff && body.stiff > 0) { body.stiff -= STEP; joints(body); }
     if (body.charred && !body.pin && body.age < 6) curl(body);
@@ -1312,6 +1338,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         b.addScaledVector(d, -wb * diff);
       }
       hinges(body);
+      ankles(body);
       collide(body, near, it === ITERATIONS - 1, world);
       if (it % 3 === 2 || it === ITERATIONS - 1) capsules(body, near, world);
     }
@@ -1343,8 +1370,51 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       if (body.spray <= 0) {
         body.spray = 0.06;
         const k = Math.floor(Math.random() * p.length);
-        exhaust.burst(p[k]!.x, -p[k]!.z, p[k]!.y, 3, 4, m(0.1), m(0.12), 0.8);
+        exhaust.burst(p[k]!.x, -p[k]!.z, p[k]!.y, 3, 4, m(0.08), m(0.04), 0.7);
       }
+    }
+  }
+
+  /**
+   * Ankles: each foot kept within the reach a real ankle has, in its shin's
+   * frame (the shin, the knee's bend normal, forward across them): 20
+   * degrees up and 70 down from where it stood (a foot lying slack on the
+   * ground points back along the shin), 25 to either side - the
+   * swing and twist limits of a ragdoll's character joint (Unity's
+   * CharacterJoint). Held by a knee-to-toe distance alone the foot was free
+   * to swing round the shin: on the ground it turned until it pointed back,
+   * the shoe off the leg (the player, 2026-10-06).
+   */
+  function ankles(body: Body): void {
+    for (const [limb, knee, ankle, toe] of FEET) {
+      if (body.comp[knee] !== body.comp[ankle] || body.comp[ankle] !== body.comp[toe]) continue;
+      if (body.pin && !(body.pin.keep.has(knee) && body.pin.keep.has(ankle) && body.pin.keep.has(toe))) continue;
+      const a = body.p[ankle]!, t = body.p[toe]!;
+      const s = tmpA.subVectors(a, body.p[knee]!);
+      const sl = s.length();
+      if (sl < 1e-6) continue;
+      s.divideScalar(sl);
+      const normal = body.normals[limb];
+      const n = tmpB.copy(normal).addScaledVector(s, -normal.dot(s));
+      const nl = n.length();
+      if (nl < 1e-3) continue;
+      n.divideScalar(nl);
+      const f = tmpC.crossVectors(n, s);
+      const d = tmpD.subVectors(t, a);
+      const len = d.length();
+      if (len < 1e-6) continue;
+      const pitch = Math.atan2(d.dot(s), d.dot(f));
+      const yaw = Math.asin(Math.max(-1, Math.min(1, d.dot(n) / len)));
+      const rest = body.ankle[limb];
+      const p2 = clampAngle(pitch, rest.pitch - ANKLE_UP, rest.pitch + ANKLE_DOWN);
+      const y2 = Math.max(rest.yaw - ANKLE_SIDE, Math.min(rest.yaw + ANKLE_SIDE, yaw));
+      if (p2 === pitch && y2 === yaw) continue;
+      // Back within its reach, the toe moving most.
+      const c = Math.cos(y2);
+      const fix = tmpE.copy(f).multiplyScalar(Math.cos(p2) * c).addScaledVector(s, Math.sin(p2) * c).addScaledVector(n, Math.sin(y2))
+        .multiplyScalar(len).add(a).sub(t);
+      t.addScaledVector(fix, 0.8);
+      a.addScaledVector(fix, -0.2);
     }
   }
 
@@ -1377,18 +1447,30 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     for (let k = 0; k < p.length; k++) {
       if (body.pin && !body.pin.keep.has(k)) continue;
       const v = p[k]!, old = o[k]!, r = radius[k]!;
+      // The ground where it is now (looked up once a step, a particle the
+      // sticks drew across a footway's edge was left inside the footway, and
+      // thrown up out of it the next step - measured 2026-10-06).
+      body.ground[k] = world.groundAt(v.x, -v.z);
       const floor = body.ground[k]! + r;
       if (v.y < floor) {
-        const vy = v.y - old.y;
-        v.y = floor;
-        // Friction on the ground, and a small bounce.
-        old.x = v.x - (v.x - old.x) * 0.82;
-        old.z = v.z - (v.z - old.z) * 0.82;
-        old.y = v.y + Math.min(0, vy) * 0.18;
+        // Out along the ground's normal, the shortest way (a heightfield is
+        // a surface, as PhysX's: a footway's edge a steep bank, `groundAt`):
+        // straight up, a hand beside a footway 27 cm over the grass was
+        // thrown up its whole height, the body after it.
+        const e = m(0.04);
+        const gx = (world.groundAt(v.x + e, -v.z) - world.groundAt(v.x - e, -v.z)) / (2 * e);
+        const gz = (world.groundAt(v.x, -v.z - e) - world.groundAt(v.x, -v.z + e)) / (2 * e);
+        const n = tmpA.set(-gx, 1, -gz).normalize();
+        const vx = v.x - old.x, vy = v.y - old.y, vz = v.z - old.z;
+        v.addScaledVector(n, (floor - v.y) * n.y);
+        // Friction along the ground, and a small bounce off it.
+        const vn = vx * n.x + vy * n.y + vz * n.z;
+        const keep = vn < 0 ? -0.18 * vn : vn;
+        old.set(v.x - ((vx - vn * n.x) * 0.82 + keep * n.x), v.y - ((vy - vn * n.y) * 0.82 + keep * n.y), v.z - ((vz - vn * n.z) * 0.82 + keep * n.z));
         if (bloody && last && vy < -m(4) * STEP && body.splats < 12 && Math.random() < 0.35) {
           body.splats++;
           bleed(v.x, -v.z, floor - r, m(0.35 + Math.random() * 0.5), 0.5);
-          exhaust.burst(v.x, -v.z, floor, 5, 4, m(0.1), m(0.12), 0.7);
+          exhaust.burst(v.x, -v.z, floor, 5, 4, m(0.08), m(0.04), 0.6);
         }
       }
       for (const wall of walls) {
@@ -1430,7 +1512,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         if (bloody && last && vn < -m(3) * STEP && body.splats < 12) {
           body.splats++;
           bleed(edge.x + nx * m(0.3), edge.y + ny * m(0.3), world.groundAt(edge.x, edge.y), m(0.5 + Math.random() * 0.4), 1);
-          exhaust.burst(v.x, -v.z, v.y, 8, 4, m(0.15), m(0.12), 0.7);
+          exhaust.burst(v.x, -v.z, v.y, 6, 4, m(0.1), m(0.04), 0.6);
         }
       }
     }
@@ -1449,12 +1531,17 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       if (body.pin && !(body.pin.keep.has(a) && body.pin.keep.has(b))) continue;
       if (body.comp[a] !== body.comp[b]) continue;
       const pa = p[a]!, pb = p[b]!;
-      const r = (radius[a]! + radius[b]!) / 2;
       for (const t of CAPSULE_SAMPLES) {
+        // Tapered, from one end's radius to the other's: with the two ends'
+        // mean all along, a bone lying with its ends on the ground (a head
+        // and a neck, a chest and a neck) had a point inside it, lifted each
+        // step and dropped again - a body that never lay still.
+        const r = radius[a]! + (radius[b]! - radius[a]!) * t;
         const wa = 1 - t, wb = t, share = wa * wa + wb * wb;
         const qx = pa.x + (pb.x - pa.x) * t, qy = pa.y + (pb.y - pa.y) * t, qz = pa.z + (pb.z - pa.z) * t;
         const pen = world.groundAt(qx, -qz) + r - qy;
-        if (pen > 0) {
+        // Deeper than a bank's face: the bone is beside it, not on it (`collide`).
+        if (pen > 0 && pen <= STEP_FACE) {
           // Moved out, not thrown out: the old positions go with them, so the
           // correction adds no speed (a push out turned into a launch).
           const l = pen / share;
@@ -1501,14 +1588,28 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
 
   /** Each limb's bend normal, carried on so it keeps its sign and survives the limb going straight. */
   function updateNormals(body: Body, side: Vector3, rate: number): void {
+    // A leg's knee bends to the body's front (`hinges`), so its bend normal
+    // is the torso's side give or take the hip's turn: its sign taken from
+    // the torso, and a straight leg's normal drawn to the side. Carried in
+    // the world instead, a straight leg kept its normal while the body
+    // rolled over, and the leg was drawn turned half round, the foot and the
+    // shoe pointing back (the player, 2026-10-06).
+    const torso = !body.pin && side.lengthSq() > 0.5;
     for (const [limb, a, mid, b] of LIMB_JOINTS) {
       const u = tmpA.subVectors(body.p[mid]!, body.p[a]!), w = tmpB.subVectors(body.p[b]!, body.p[mid]!);
       const n = tmpC.crossVectors(u, w);
       const prev = body.normals[limb];
+      const leg = torso && (limb === 'lleg' || limb === 'rleg');
       if (n.lengthSq() > 0.03 * u.lengthSq() * w.lengthSq()) {
         n.normalize();
-        if (n.dot(prev) < 0) n.negate();
-        prev.lerp(n, rate).normalize();
+        if (n.dot(leg ? side : prev) < 0) n.negate();
+        prev.lerp(n, rate);
+        if (prev.lengthSq() < 1e-6) prev.copy(n);
+        prev.normalize();
+      } else if (leg) {
+        prev.lerp(side, rate);
+        if (prev.lengthSq() < 1e-6) prev.copy(side);
+        prev.normalize();
       } else if (prev.lengthSq() < 1e-6) prev.copy(side);
     }
   }

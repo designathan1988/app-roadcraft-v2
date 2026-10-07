@@ -29,7 +29,7 @@ export interface Casualty {
   readonly lost?: readonly Severable[];
   /** Knocked down for this long before getting up (seconds); a leg lost keeps them down for good. */
   readonly lieFor?: number;
-  /** Down for good but alive: dragging themself along by the arms, away from the blow. */
+  /** Down for good but alive: writhing where they lie, bleeding (`render/ragdoll.ts` writhe). */
   readonly crawl?: boolean;
   /** Bled to death where they lay: the body already down goes still, not thrown again. */
   readonly faded?: boolean;

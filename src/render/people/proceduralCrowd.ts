@@ -588,7 +588,7 @@ export interface ProceduralCrowd {
     /** The layers over the clip now (a jolt and its weight), for probes. */
     layers(person: ProceduralPerson): string[];
     /** A wounded posture laid over their clip (null takes it off): bent over by `hunch` radians, a hand on the wound by `reach` (0-1). */
-    posture(person: ProceduralPerson, pose: { hunch: number; reach: number; part: BodyPart } | null): void;
+    posture(person: ProceduralPerson, pose: { hunch: number; reach: number; part: BodyPart; limp?: boolean } | null): void;
     /** Blood all over them (a body shot to pieces). */
     drench(person: ProceduralPerson): void;
     /** Their wounds gone (the person drawn as somebody new). */
@@ -1309,13 +1309,13 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
    * elbow's angle from the law of cosines, then the whole arm turned at the
    * shoulder onto the target), blended in by `reach`.
    */
-  interface Posture { hunch: number; reach: number; part: BodyPart; miss?: number; hand?: 'L' | 'R' }
+  interface Posture { hunch: number; reach: number; part: BodyPart; limp?: boolean; miss?: number; hand?: 'L' | 'R' }
   const postures = new Map<ProceduralPerson, Posture>();
   interface PostureRig {
     spine: number; spineBind: Vector3; upper: number[];
     forward: Vector3; up: Vector3;
     arm: Record<'L' | 'R', { shoulder: number; elbow: number; hand: number; upperSet: number[]; foreSet: number[]; bind: [Vector3, Vector3, Vector3] } | null>;
-    pelvis: number; chest: number; thigh: Record<'L' | 'R', number>;
+    pelvis: number; chest: number; thigh: Record<'L' | 'R', number>; foot: Record<'L' | 'R', number>; left: Vector3;
     bindOf: (i: number) => Vector3;
   }
   const postureRigs = new Map<BodyClass, PostureRig | null>();
@@ -1344,7 +1344,9 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     };
     rig = {
       spine, spineBind: bindOf(spine), upper: subtree(spine), forward, up, arm: { L: arm('L'), R: arm('R') },
-      pelvis, chest, thigh: { L: find('Bip01_L_Thigh'), R: find('Bip01_R_Thigh') }, bindOf,
+      pelvis, chest, thigh: { L: find('Bip01_L_Thigh'), R: find('Bip01_R_Thigh') }, foot: { L: find('Bip01_L_Foot'), R: find('Bip01_R_Foot') },
+      left: (() => { const l = find('Bip01_L_UpperArm'), r = find('Bip01_R_UpperArm'); return l >= 0 && r >= 0 ? bindOf(l).sub(bindOf(r)).setY(0).normalize() : new Vector3(1, 0, 0); })(),
+      bindOf,
     };
     postureRigs.set(cls, rig);
     return rig;
@@ -1364,10 +1366,28 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   const applyPosture = (cls: BodyClass, at: number, pose: Posture): void => {
     const rig = postureRig(cls);
     if (!rig) return;
+    // A limp: while the hurt leg bears the weight (its foot the lower one,
+    // read off the clip's own pose), the upper body lurches over the good
+    // side and down a little, as somebody sparing a leg walks.
+    let lurch = 0;
+    if (pose.limp && (pose.part === 'legL' || pose.part === 'legR')) {
+      const hurt = pose.part === 'legL' ? 'L' : 'R', good = hurt === 'L' ? 'R' : 'L';
+      if (rig.foot[hurt] >= 0 && rig.foot[good] >= 0) {
+        const hy = posed(cls, at, rig.foot[hurt], rig.bindOf(rig.foot[hurt]), pA).dot(rig.up);
+        const gy = posed(cls, at, rig.foot[good], rig.bindOf(rig.foot[good]), pB).dot(rig.up);
+        const scale = rig.bindOf(rig.chest).sub(rig.bindOf(rig.pelvis)).length();
+        lurch = Math.min(1, Math.max(0, (gy - hy) / (0.12 * scale)));
+        if (lurch > 1e-3) {
+          const toGood = rig.left.clone().multiplyScalar(good === 'L' ? 1 : -1);
+          const p = posed(cls, at, rig.spine, rig.spineBind, pC);
+          turnAbout(cls, at, rig.upper, p, pR.makeRotationAxis(pD.crossVectors(rig.up, toGood).normalize(), 0.3 * lurch));
+        }
+      }
+    }
     // Bent over: the upper body tipped forward about the lower spine.
-    if (pose.hunch > 1e-3) {
+    if (pose.hunch + lurch * 0.15 > 1e-3) {
       const p = posed(cls, at, rig.spine, rig.spineBind, pA);
-      turnAbout(cls, at, rig.upper, p, pR.makeRotationAxis(pB.crossVectors(rig.up, rig.forward).normalize(), pose.hunch));
+      turnAbout(cls, at, rig.upper, p, pR.makeRotationAxis(pB.crossVectors(rig.up, rig.forward).normalize(), pose.hunch + lurch * 0.15));
     }
     if (pose.reach < 1e-3) return;
     // The hand on the wound: the other hand when an arm is hit; for the
@@ -1564,10 +1584,17 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         if (!cls) return null;
         const mesh = cls.rig.mesh;
         const bones = mesh.skeleton.bones;
+        // Each bone's bind moved to this person's own joint (`joints`, the
+        // offsets `refit` places them by): a ragdoll turns each part about
+        // the joint it shares with the next - at the class body's joints, a
+        // child's limbs pivoted centimetres off theirs and the skin between
+        // stretched. inverse' = inverse * T(-d), so bind' = T(d) * bind.
+        const d = person.joints;
+        const shift = new Matrix4();
         return {
           names: bones.map((b) => CAPTURE_NAME[b.name] ?? b.name),
           parents: bones.map((b) => bones.indexOf(b.parent as never)),
-          inverses: mesh.skeleton.boneInverses,
+          inverses: mesh.skeleton.boneInverses.map((inv, i) => inv.clone().multiply(shift.makeTranslation(-d[i * 3]!, -d[i * 3 + 1]!, -d[i * 3 + 2]!))),
           local: new Matrix4(),
           bind: mesh.bindMatrix,
         };

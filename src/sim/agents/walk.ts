@@ -277,13 +277,33 @@ function woundOf(p: Walker): { part: BodyPart; grave: boolean } | null {
   if (!p.lastHit) return null;
   return { part: p.lastHit.part, grave: (p.hp ?? 100) < 50 || (p.lost?.length ?? 0) > 0 };
 }
-/** A wounded walker's fastest pace, as a share of their own: a hurried, hurting walk, never a sprint. */
-const WOUNDED_PACE = { light: 0.75, grave: 0.5 } as const;
-/** Fleeing hurt, against their own pace: as fast as the wound lets them. */
-const WOUNDED_RUSH = { light: 1.15, grave: 0.75 } as const;
+/** A wounded walker's pace walking on, as a share of their own: slow, bent over the wound, never their own walk again. */
+const WOUNDED_PACE = { light: 0.55, leg: 0.45, grave: 0.4 } as const;
+/**
+ * Getting away hurt, against their own pace: a run bent over the wound, as
+ * GTA's shot peds flee clutching it (a hurried walk away read as somebody
+ * walking on unhurt - the player, 2026-10-06); on a hurt leg, a hobble.
+ */
+const WOUNDED_RUSH = { light: 2.2, leg: 0.6, grave: 0.6 } as const;
+/** Which of those a wound sets. */
+function woundPace(wound: { part: BodyPart; grave: boolean }): 'light' | 'leg' | 'grave' {
+  return wound.grave ? 'grave' : wound.part === 'legL' || wound.part === 'legR' ? 'leg' : 'light';
+}
 
 /** A first wound's reaction (`flinch`): struck, hunched over the wound standing, then on, wounded (seconds). */
 export const FLINCH = 1.6;
+/**
+ * Struck by the round: a stagger of a couple of steps back, the way it went
+ * (GTA's shot peds are knocked back; stood still where they were struck, a
+ * shot person was never seen pushed - the player, 2026-10-06). Seconds, and
+ * how far.
+ */
+export const STAGGER_TIME = 0.55;
+const STAGGER_DISTANCE = m(0.7);
+/** The stagger's speed `t` seconds into a flinch: fast at first, slowing to a stop. */
+export function staggerSpeed(t: number): number {
+  return t < 0 || t >= STAGGER_TIME ? 0 : (2 * STAGGER_DISTANCE / STAGGER_TIME) * (1 - t / STAGGER_TIME);
+}
 
 /** A shocking event's life (seconds), and the reach of a body lying in the street. */
 const SHOCK_LIFE = 90;
@@ -677,6 +697,9 @@ export function createAgentWalkEngine(): PedestrianEngine {
       // As GTA's peds take it: a shot to the head kills; to the body a third
       // of their health; to an arm or a leg a fifth, the limb gone at the
       // second; each hit staggers them or knocks them down, and they run.
+      // A head shot kills and leaves the head on: it comes off only to more
+      // shots into the body (`render/ragdoll.ts` shootBody). One pistol
+      // round took it off (recorded 2026-10-06).
       const DAMAGE: Record<BodyPart, number> = { head: 100, torso: 34, armL: 20, armR: 20, legL: 20, legR: 20 };
       const hpBefore = p.hp ?? 100;
       p.hp = (p.hp ?? 100) - DAMAGE[part];
@@ -684,19 +707,19 @@ export function createAgentWalkEngine(): PedestrianEngine {
       p.hurt[part] = (p.hurt[part] ?? 0) + DAMAGE[part];
       p.lost ??= p.maimed ? [p.maimed] : [];
       let severed: Severable | null = null;
-      if (part !== 'torso' && !p.lost.includes(part) && (part === 'head' || p.hurt[part]! >= 40)) {
+      if (part !== 'torso' && part !== 'head' && !p.lost.includes(part) && p.hurt[part]! >= 40) {
         severed = part;
         p.lost.push(part);
-        if (part !== 'head') p.maimed ??= part;
+        p.maimed ??= part;
         // A limb shot off takes a good share of the blood with it.
-        if (part !== 'head') p.hp -= 15;
+        p.hp -= 15;
       }
       const v = p.view;
       // The hole and the blood on their clothes (`render/agents.ts`).
       recordWound(w, p.id, part, fromX, fromY);
       p.lastHit = { part, damage: hpBefore - p.hp, at: p.age };
       trace(p, 'hit', `hp ${hpBefore}`, `hp ${p.hp} ${part}${severed ? ` severed ${severed}` : ''}`, 'shot');
-      if (p.hp <= 0 || severed === 'head') {
+      if (p.hp <= 0) {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
           blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], struck: part, ...(severed ? { severed: [severed] } : {}) });
@@ -712,7 +735,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       // fall (a light hit played by physics looked like elastic, and getting
       // up off the ground with no get-up-from-lying clip popped into a
       // crouch). Hurt badly - a second wound, a limb gone, already down -
-      // they go down and stay down: dragging themself along, bleeding.
+      // they go down and stay down: writhing where they lie, bleeding.
       const wasDown = p.act?.kind === 'fall';
       p.hits = (p.hits ?? 0) + 1;
       const legGone = p.lost.includes('legL') || p.lost.includes('legR');
@@ -1001,8 +1024,17 @@ function stepWalkers(w: SimWorld): void {
     if (p.act) {
       if (p.age < p.act.until) {
         p.v = 0;
+        if (p.act.kind === 'flinch') {
+          // Knocked back the way the round went (away from where it came from).
+          const back = staggerSpeed(p.age - p.act.from);
+          const ax = p.x - p.act.faceX, ay = p.y - p.act.faceY, l = hypot(ax, ay);
+          if (back > 0 && l > 1e-6) { p.x += (ax / l) * back * DT; p.y += (ay / l) * back * DT; }
+        }
         const want = Math.atan2(p.act.faceY - p.y, p.act.faceX - p.x);
-        if (hypot(p.act.faceX - p.x, p.act.faceY - p.y) > m(0.1) && p.act.kind !== 'fall') {
+        // Not for a fall or a wound: a shot person does not turn round on the
+        // spot to face the shot (recorded 2026-10-06: a 180-degree spin, back
+        // to the camera for 1.3 s, then a spin back to walk on).
+        if (hypot(p.act.faceX - p.x, p.act.faceY - p.y) > m(0.1) && p.act.kind !== 'fall' && p.act.kind !== 'flinch') {
           const err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
           p.heading += Math.max(-TURN_STANDING * DT, Math.min(TURN_STANDING * DT, err));
         }
@@ -1011,8 +1043,10 @@ function stepWalkers(w: SimWorld): void {
       {
         const wound = woundOf(p);
         trace(p, 'act', actName(p.act), 'none', `act timer ran out (age ${p.age.toFixed(2)} >= until ${p.act.until.toFixed(2)}): `
-          + (wound ? `moving on wounded (${wound.grave ? 'grave' : 'light'}, ${wound.part}), at most ${(wound.grave ? WOUNDED_PACE.grave : WOUNDED_PACE.light)} of their pace` : 'walking resumes'));
+          + (wound ? `moving on wounded (${woundPace(wound)}, ${wound.part}), at most ${WOUNDED_RUSH[woundPace(wound)]} of their pace fleeing, ${WOUNDED_PACE[woundPace(wound)]} walking` : 'walking resumes'));
       }
+      // On from where the stagger left them, not from where they were struck.
+      if (p.act.kind === 'flinch') replan(w, s, p, lastOf(p));
       p.act = null;
     }
     // A run from danger over: on again to where they were going.
@@ -1119,10 +1153,11 @@ function stepWalkers(w: SimWorld): void {
     // A leg lost: a hobble; both: no walking at all.
     const legsLost = (p.lost ?? (p.maimed ? [p.maimed] : [])).filter((l) => l === 'legL' || l === 'legR').length;
     let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1) * (legsLost >= 2 ? 0 : legsLost === 1 ? 0.22 : 1);
-    // Wounded: the wound sets the pace, whatever they were told (a flight,
-    // their own route afterwards): the reaction's end is not a recovery.
+    // Wounded: the wound sets the pace, whatever they were told - fleeing, a
+    // hurt run (a hobble on a hurt leg); after, a slow hurt walk: the
+    // reaction's end is not a recovery.
     const wound = woundOf(p);
-    if (wound) want = Math.min(want, p.pace * (wound.grave ? WOUNDED_PACE.grave : WOUNDED_PACE.light));
+    if (wound) want = Math.min(want, p.pace * (p.rush !== null && p.age < p.rush.until ? WOUNDED_RUSH : WOUNDED_PACE)[woundPace(wound)]);
     if (jammed) want *= JAM_SHARE;
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
@@ -1376,9 +1411,9 @@ function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: num
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
     // Busy with their own fall or wound: the fright waits till that is over.
     const after = p.act?.kind === 'fall' || p.act?.kind === 'flinch' ? p.act.until - p.age : 0;
-    // The wounded get away as they can: a hurried stagger, not a sprint.
+    // The wounded get away as the wound lets them: a hurt run, a hobble on a hurt leg.
     const wound = woundOf(p);
-    const hurt = wound ? (wound.grave ? WOUNDED_RUSH.grave : WOUNDED_RUSH.light) : null;
+    const hurt = wound ? WOUNDED_RUSH[woundPace(wound)] : null;
     const rushBefore = rushName(p.rush);
     p.rush = { by: hurt ?? (seconds >= 14 ? PANIC_RUN : RUN), until: p.age + after + seconds * (0.7 + 0.6 * ((personHash(p.id) & 255) / 255)), goal };
     trace(p, 'rush', rushBefore, `${rushName(p.rush)} for ${(p.rush.until - p.age).toFixed(1)}s`, `frighten (startle ${seconds}s, ${(d / m(1)).toFixed(1)} m off)`);

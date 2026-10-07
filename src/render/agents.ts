@@ -1,4 +1,4 @@
-import type { BodyPart, Severable } from '@sim/people/view';
+import type { BodyPart, PersonAgeClass, Severable } from '@sim/people/view';
 import { simplified } from './mesh/simplify';
 import {
   BoxGeometry,
@@ -33,10 +33,12 @@ import type { SegmentId } from '@world/ids';
 import { m } from '@world/units';
 import { hypot2 } from '@core/scalar';
 import { DT, FLEET_CEILING, PED_CEILING } from '@sim/params';
+import { staggerSpeed } from '@sim/agents/walk';
 import { buildCarModel, carStyleOf, carStylesFor } from './carBody';
 import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity } from './riggedCitizens';
 import { createProceduralCrowd, type ProcClip, type ProceduralPerson } from './people/proceduralCrowd';
 import { randomPerson } from '@people/spec';
+import { ageFromYears } from '@people/body/macro';
 import { PLAYER_ID } from '@sim/ambient/play';
 import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
@@ -775,7 +777,21 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const procedural = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bodies') === 'cooked'
     ? null : createProceduralCrowd({ unit: m(1) });
   /** Each walker's person; a person whose walker left (at the end of a road) waits in `procSpare` for the next one. */
-  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number; at?: Matrix4 }>();
+  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number; at?: Matrix4; age?: PersonAgeClass }>();
+  /**
+   * Whether a body suits a walker's age (the simulation's child, adult or
+   * elder: their pace, their company): a child is drawn as a child, an elder
+   * as an elder. A body was taken from the pool whatever its age, and a
+   * child walked in an adult's body and the other way round.
+   */
+  const procSuits = (person: ProceduralPerson, age: PersonAgeClass | undefined): boolean =>
+    age === undefined || (age === 'child' ? person.band === 'child' : age === 'elder' ? person.band === 'senior'
+      : person.band === 'young' || person.band === 'adult');
+  /** A spare body of that age, taken out of the pool; null when there is none. */
+  const procSpareFor = (age: PersonAgeClass | undefined): ProceduralPerson | null => {
+    const i = procSpare.findIndex((p) => procSuits(p, age));
+    return i >= 0 ? procSpare.splice(i, 1)[0]! : null;
+  };
   const procSpare: ProceduralPerson[] = [];
   const PROC_CAP = PED_CEILING;
   /**
@@ -818,7 +834,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     if (id === undefined) return;
     const target = id;
     procBuilding = true;
-    void procedural!.add(randomPerson(target, (Math.imul(target, 2654435761) >>> 0) + 1)).then((person) => {
+    // Bodies of the other ages left over in the pool: the oldest given back
+    // (its rows freed, `untwin`), so the pool does not grow without end.
+    while (procSpare.length > 12) procedural!.ragdoll.untwin(procSpare.shift()!);
+    // Of the walker's age: a child 5 to 13, an elder 66 to 88, an adult between.
+    const age = procPeople.get(target)?.age;
+    const roll = ((Math.imul(target ^ 0x9e37, 2246822519) >>> 0) % 1000) / 1000;
+    const years = age === 'child' ? 5 + roll * 8 : age === 'elder' ? 66 + roll * 22 : 18 + roll * 42;
+    void procedural!.add(randomPerson(target, (Math.imul(target, 2654435761) >>> 0) + 1, age ? { body: { age: ageFromYears(years) } } : {})).then((person) => {
       const e = procPeople.get(target);
       if (e && !e.person) e.person = person;
       else { person.matrix.makeScale(0, 0, 0); procSpare.push(person); }
@@ -828,18 +851,18 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
     lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number },
-    wound?: { readonly part: BodyPart; readonly grave: boolean }): void => {
+    wound?: { readonly part: BodyPart; readonly grave: boolean }, age?: PersonAgeClass): void => {
     let entry = procPeople.get(id);
     if (!entry) {
-      const spare = procSpare.pop();
+      const spare = procSpareFor(age);
       if (spare) {
         // Somebody new in that body: none of the last one's wounds.
         procedural?.ragdoll.heal(spare);
-        entry = { person: spare, seen: procFrame };
+        entry = { person: spare, seen: procFrame, ...(age ? { age } : {}) };
         procPeople.set(id, entry);
       } else {
         if (procPeople.size >= PROC_CAP) return;
-        entry = { person: null, seen: procFrame };
+        entry = { person: null, seen: procFrame, ...(age ? { age } : {}) };
         procPeople.set(id, entry);
         procWaiting.push(id);
       }
@@ -872,8 +895,17 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // picking a thing up), and its end is not a recovery: the wound goes
       // on governing how they move (`walk.ts` woundOf).
       person.activity = 'hurt';
-      if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
-      person.phase += dt / procedural!.clipDuration(person);
+      // Knocked back first (`walk.ts` staggerSpeed): the walk played
+      // backwards at the stagger's pace, the feet stepping, not sliding.
+      const back = staggerSpeed(act.t) / m(1);
+      if (back > 0.05) {
+        if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
+        person.phase -= dt * back / Math.max(0.1, procedural!.stride(person));
+        person.phase -= Math.floor(person.phase);
+      } else {
+        if (person.clip !== 'idle') { person.clip = 'idle'; person.phase = 0; }
+        person.phase += dt / procedural!.clipDuration(person);
+      }
       const k = Math.min(1, Math.max(0, (act.t - 0.12) / 0.3));
       procedural!.ragdoll.posture(person, { hunch: (wound?.grave ? 0.55 : 0.42) * k, reach: Math.min(1, Math.max(0, (act.t - 0.2) / 0.35)), part: wound?.part ?? 'torso' });
       return;
@@ -891,11 +923,15 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       procedural!.ragdoll.posture(person, null);
       return;
     }
-    // Hurt: bent over the wound, a hand on it, walking slowly (the slow walk
-    // clip under the posture), however fast the flight (`walk.ts` caps the pace).
-    procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.4 : 0.26, reach: 1, part: wound.part } : null);
-    if (wound) person.activity = 'hurt';
+    // Hurt: bent over the wound, a hand pressed to it - running so while they
+    // flee (the run clip under the posture), then a slow hurt walk (the slow
+    // walk clip), a limp on a hurt leg (`walk.ts` sets the pace). A hunch of
+    // 15 degrees at three quarters of their pace read as walking on unhurt
+    // (the player, 2026-10-06).
     const metres = speed / m(1);
+    const hurtRun = wound !== undefined && walking && metres > (person.clip === 'run' ? 1.5 : 1.9);
+    procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.5 : hurtRun ? 0.34 : 0.45, reach: 1, part: wound.part, limp: walking && speed > m(0.15) && !hurtRun } : null);
+    if (wound) person.activity = 'hurt';
     // Running from danger runs, past a brisk walk; struck with fear (cowering,
     // or panicking stood still), they crouch with their arms over their head.
     // A sprint past a run (fleeing a blow flat out); a little either side
@@ -917,7 +953,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     const sprint = metres > (was === 'sprint' ? 3.6 : 4.2);
     const run = metres > (was === 'run' || was === 'sprint' ? 2.1 : 2.6);
     const clip: ProcClip = activity === 'photo' && !moving ? 'photo'
-      : moving ? (wound ? 'hurtWalk' : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
+      : moving ? (wound ? (hurtRun ? 'run' : 'hurtWalk') : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
     if (person.clip !== clip) {
       // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
       const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk';
@@ -942,7 +978,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     // A freed body goes at once to a walker still waiting for one.
     for (let i = 0; i < procWaiting.length && procSpare.length; i++) {
       const e = procPeople.get(procWaiting[i]!);
-      if (e && !e.person) { e.person = procSpare.pop()!; procWaiting.splice(i--, 1); }
+      if (!e || e.person) continue;
+      const spare = procSpareFor(e.age);
+      if (spare) { procedural?.ragdoll.heal(spare); e.person = spare; procWaiting.splice(i--, 1); }
     }
     procBuildNext();
     // `procedural.update` runs after the ragdolls have posed those they hold (`sync`).
@@ -1590,6 +1628,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         const pal = procedural.ragdoll.pose(person);
         const sk = procedural.ragdoll.skeleton(person);
         if (!pal || !sk) continue;
+        // At this person's own joints (`skeleton` gives the binds moved to them).
         const bind = sk.inverses.map((m4) => { const e = inv.copy(m4).invert().elements; return [e[12]!, e[13]!, e[14]!] as const; });
         // Measured against the same person standing (their own proportions,
         // `refit`): against the class's bind, a broad-hipped body read as a
@@ -1863,7 +1902,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
-              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound);
+              ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound, ped.ageClass);
           }
           else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           pedCount++;

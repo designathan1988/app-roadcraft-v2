@@ -1062,8 +1062,13 @@ function shootAt(sx: number, sy: number): boolean {
     return false;
   }
   // Where the line of sight comes from, on the ground plane: the shot's way.
-  const near = view.toWorldAt(sx, sy, sceneHeightAt(best) + m(30), w, h);
-  let dx = best.x - near.x, dy = best.y - near.y;
+  // The shot's way: from the viewer into the scene, which on the ground is
+  // the way up the screen (measured 2026-10-06: taken from a point higher on
+  // the line of sight it pointed back at the viewer, so the shot "came from"
+  // behind the person, who turned away from the camera to face it).
+  const gz = sceneHeightAt(best);
+  const farther = view.toWorldAt(sx, sy - 40, gz, w, h), nearer = view.toWorldAt(sx, sy + 40, gz, w, h);
+  let dx = farther.x - nearer.x, dy = farther.y - nearer.y;
   const len = Math.hypot(dx, dy) || 1;
   dx /= len; dy /= len;
   // Left or right of the body's middle, as the body faces.
