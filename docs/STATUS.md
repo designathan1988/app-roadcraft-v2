@@ -364,9 +364,11 @@ and they have seen it.
 - Bomb: everybody it kills burnt black and drawn up, dismemberment, guts
   (`render/gore.ts`), each vehicle's own burnt shell; vehicles shot: riders
   thrown, drivers killed, cars blow up.
-- Not yet: a crawl and a walk backwards captured (only in the paid UAL Pro;
-  the stagger back plays the walk backwards; the gravely wounded writhe in
-  place).
+- CMU motion captures (`scripts/extract-cmu-clips.mjs`, 2026-10-07): getting
+  up off the ground face down (140_01) and face up (140_08), laid where the
+  body lies; the steps back after a hit (76_11); the gravely hurt, after a few
+  seconds writhing, onto hands and knees and crawling off at 0.12 m/s
+  (111_03) till they bleed out and slump over.
 - Weapons lab: `?lab=armas` (`src/weaponsLab.ts`), served without reloads by
   `vite --config vite.lab.config.ts` (port 5190; restart it to load new code);
   probes, a timeline of each transition with its call stack (`traceWalkers`),

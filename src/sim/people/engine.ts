@@ -61,7 +61,8 @@ export interface PedestrianEngine {
    * Somebody knocked down (`impact`) or fallen gets up at (x, y) facing
    * `heading`, in `seconds`: where their body came to rest (`render/ragdoll.ts`).
    */
-  getUp?(w: SimWorld, id: number, x: number, y: number, heading: number, seconds: number): void;
+  /** `crawl`: not up but onto hands and knees, crawling off from there (a grave wound, `sim/agents/walk.ts`). */
+  getUp?(w: SimWorld, id: number, x: number, y: number, heading: number, seconds: number, crawl?: boolean): void;
 }
 
 /**

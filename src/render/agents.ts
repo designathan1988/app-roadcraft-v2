@@ -937,6 +937,15 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       procedural!.ragdoll.posture(person, { hunch: 0, reach: 0, part: 'torso', cover: entry.cover });
       return;
     }
+    if (activity === 'crawl') {
+      // Dragging themself off, gravely hurt: the captured crawl (CMU 111_03), stepped by the ground covered.
+      person.activity = 'hurt';
+      if (person.clip !== 'crawl') { person.clip = 'crawl'; person.phase = 0; }
+      person.phase += dt * (speed / m(1)) / Math.max(0.05, procedural!.stride(person));
+      entry.cover = 0;
+      procedural!.ragdoll.posture(person, null);
+      return;
+    }
     if (activity === 'look' && act && !wound) {
       // A bystander's first moment after a shot (`walk.ts` frighten): turned
       // to it, standing scared (the captured nervous idle), before they run.
@@ -1927,7 +1936,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
             // Shot and still going: the pain on their face over the fright.
-            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' || doing === 'look' || doing === 'mourn' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
+            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' || doing === 'look' || doing === 'mourn' || doing === 'crawl' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound, ped.ageClass);

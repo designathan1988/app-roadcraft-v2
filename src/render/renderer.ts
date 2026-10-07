@@ -620,9 +620,9 @@ export function createSceneRenderer(
   // Guts, organs and bones out of bodies opened up (`gore.ts`).
   const gore = createGore();
   scene.add(gore.group);
-  const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds) => {
-    // Up again where the body came to rest (`PeopleEngine.getUp`).
-    if (ragdollSim) ragdollSim.pedEngine.getUp?.(ragdollSim, id, x, y, heading, seconds);
+  const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds, crawl) => {
+    // Up again where the body came to rest (`PeopleEngine.getUp`), or onto hands and knees to crawl.
+    if (ragdollSim) ragdollSim.pedEngine.getUp?.(ragdollSim, id, x, y, heading, seconds, crawl);
   }, gore);
   (globalThis as Record<string, unknown>)['__ragdolls'] = ragdolls;
   /** Who is down (a `fall` pause) this frame. */

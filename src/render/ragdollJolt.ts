@@ -365,8 +365,20 @@ export class JoltRagdoll {
    * let go, and they go to a ragdoll of their own; the particles they carried
    * here stay where the tear is, carried by `stump` at the point `at`.
    */
-  tear(torn: readonly number[], stump: number, at: Vector3, moved: readonly number[]): JoltRagdoll {
+  tear(torn: readonly number[], stump: number, at: Vector3, moved: readonly number[], root?: { particle: number; part: number }): JoltRagdoll {
     const set = new Set(torn);
+    // The joint it came off at goes with the piece too, on its first part:
+    // left behind, the piece's bone was drawn from there to wherever the
+    // limb flew, a sleeve stretched metres long.
+    let rootOwner: { part: number; local: Vector3 } | null = null;
+    const rootBody = root ? this.parts[root.part] : null;
+    if (root && rootBody) {
+      const p = this.point(root.particle, new Vector3());
+      if (p) {
+        this.world.rotation(rootBody.GetID(), tmpQ);
+        rootOwner = { part: root.part, local: p.sub(this.world.position(rootBody.GetID(), tmpV)).applyQuaternion(tmpQ.clone().invert()) };
+      }
+    }
     this.jointSpecs.forEach((j, i) => {
       const c = this.joints[i];
       if (!c) return;
@@ -385,6 +397,7 @@ export class JoltRagdoll {
       for (const k of moved) this.owner.set(k, { part: stump, local: local.clone() });
     }
     for (const k of pieceOwner.keys()) if (!moved.includes(k)) this.owner.delete(k);
+    if (root && rootOwner) pieceOwner.set(root.particle, rootOwner);
     return new JoltRagdoll(this.world, pieceParts, pieceJoints, this.jointSpecs, pieceOwner);
   }
 

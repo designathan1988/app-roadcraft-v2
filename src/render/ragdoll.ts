@@ -97,7 +97,7 @@ export interface RagdollWorld {
 }
 
 /** Somebody alive getting up at world (x, y) facing `heading`, taking `seconds` (`PeopleEngine.getUp`). */
-export type GetUp = (id: number, x: number, y: number, heading: number, seconds: number) => void;
+export type GetUp = (id: number, x: number, y: number, heading: number, seconds: number, crawl?: boolean) => void;
 
 /** The skeleton's joints the particles sit on ('' for a particle with no bone of its own). */
 const JOINTS = [
@@ -180,6 +180,8 @@ const RISE_CLIP = 1.6;
 /** The clip a body that fell gets up with. */
 const RISE_KEY: 'crouchUp' | 'idle' = 'crouchUp';
 const MAX_BODIES = 40;
+/** Seconds the gravely hurt lie writhing before they try to crawl off (face down). */
+const CRAWL_AFTER = 4;
 /**
  * Bodies simulated by Jolt (`ragdollJolt.ts`), not the stick figure (`step`,
  * which still carries a body until Jolt has loaded; `?ragdoll=verlet` keeps
@@ -234,6 +236,8 @@ interface Survivor {
   blend?: number;
   /** The captured getting-up off the ground played (face down, face up), when there is one. */
   riseKey?: 'getUpFront' | 'getUpBack';
+  /** How far into it they go (onto hands and knees, to crawl: `writhe`); all the way when absent. */
+  riseMax?: number;
 }
 
 interface Body {
@@ -679,6 +683,14 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     for (const limb of c.lost ?? []) for (const part of LOST_PARTS[limb]) body.lostParts.add(part);
     body.recordId = c.id;
     if (body.survivor && c.lieFor !== undefined) body.survivor.lie = c.lieFor;
+    // Bled out on their feet or crawling: the strength goes and they slump
+    // over, the trunk down and to a side - left as it was, a body on hands
+    // and knees stood there like a table (2026-10-07).
+    if (c.faded) {
+      const side = Math.random() < 0.5 ? 1 : -1;
+      const lean = new Vector3(Math.cos(c.heading + side * Math.PI / 2), -1.2, -Math.sin(c.heading + side * Math.PI / 2));
+      for (const k of [CHE, NEC, HEA, TOP, LS, RS, BEL]) body.o[k]!.addScaledVector(lean, -m(1.4) * STEP);
+    }
     if (body.survivor && c.crawl) body.survivor.crawl = { since: 0 };
     // A bullet does not throw a body: a small push where it went in, the
     // rest is the body itself giving way under its own weight.
@@ -861,7 +873,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       const torn = [...new Set(parts.map((q) => J_PART[q]))];
       const at = body.p[limb === 'head' ? NEC : root]!.clone().divideScalar(METRE);
       const moved = body.p.map((_, k) => k).filter((k) => torn.includes(body.jolt!.partOf(k)));
-      piece.jolt = body.jolt.tear(torn, J_STUMP[limb], at, moved);
+      piece.jolt = body.jolt.tear(torn, J_STUMP[limb], at, moved, { particle: root, part: J_PART[parts[0]!] });
       piece.synced = body.synced ? { p: body.synced.p.map((v) => v.clone()), o: body.synced.o.map((v) => v.clone()) } : undefined;
       if (body.colliders) body.colliders.users++;
     }
@@ -1080,7 +1092,11 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
         if (alive) {
           alive.t += wall;
           if (alive.phase === 'fall' && (body.asleep || alive.t > FALL_MOST)) { alive.phase = 'lie'; alive.t = 0; body.asleep = !alive.crawl; }
-          else if (alive.phase === 'lie' && alive.crawl) writhe(body, alive.crawl, wall, world);
+          else if (alive.phase === 'lie' && alive.crawl) {
+            writhe(body, alive.crawl, wall, world);
+            // A few seconds in: onto hands and knees and crawling off (CMU 111_03).
+            if (alive.crawl.since > CRAWL_AFTER && lastCitizens) captured(body, alive, lastCitizens, world, faceUpOf(body), true);
+          }
           else if (alive.phase === 'rise' && alive.t > (alive.pre ?? 0) + (alive.blend ?? RISE_BLEND) + alive.clip + 3) { remove(i); continue; }
           continue;
         }
@@ -1196,10 +1212,13 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
    * person stands where the clip ends, facing as it ends. False when the
    * clip is not there (the key poses then).
    */
-  function captured(body: Body, alive: Survivor, citizens: RagdollCitizens, world: RagdollWorld, faceUp: boolean): boolean {
+  function captured(body: Body, alive: Survivor, citizens: RagdollCitizens, world: RagdollWorld, faceUp: boolean, crawl = false): boolean {
     const key = faceUp ? 'getUpBack' : 'getUpFront';
+    // To crawl: only onto hands and knees (four tenths of the way up face
+    // down; face up, sat up and turned onto them, a little over half).
+    const upTo = crawl ? (faceUp ? 0.55 : 0.4) : 0.999;
     const first = citizens.clipPose(body.index, key, 0);
-    const last = citizens.clipPose(body.index, key, 0.999);
+    const last = citizens.clipPose(body.index, key, upTo);
     if (!first || !last) return false;
     const pel = body.p[PEL]!;
     const ground = world.groundAt(pel.x, -pel.z);
@@ -1217,16 +1236,25 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     if (!end) return false;
     const toes = new Vector3().subVectors(end[LT]!, end[LA]!).add(tmpA.subVectors(end[RT]!, end[RA]!)).setY(0);
     alive.riseKey = key;
+    alive.riseMax = upTo;
     alive.root = root;
-    alive.clip = first.duration / 1.15;
+    alive.clip = first.duration * upTo / 1.15;
     alive.phase = 'rise';
     alive.t = 0;
     alive.from = bonesWorld(body);
     alive.pre = 0;
     alive.blend = 0.35;
     body.asleep = true;
-    getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, toes.lengthSq() > 1e-8 ? ang(toes) : heading, alive.blend + alive.clip);
+    if (crawl) getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, ang(along(end)), alive.blend + alive.clip, true);
+    else getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, toes.lengthSq() > 1e-8 ? ang(toes) : heading, alive.blend + alive.clip);
     return true;
+  }
+
+  /** Whether a body lies face up (its chest's front to the sky). */
+  function faceUpOf(body: Body): boolean {
+    const spine = new Vector3().subVectors(body.p[CHE]!, body.p[PEL]!).normalize();
+    const side = torsoSide(body, new Vector3()).clone();
+    return new Vector3().crossVectors(side, spine).multiplyScalar(body.front).y > 0;
   }
 
   /** The particles of the body in a pose read off its skeleton (a clip's palette under `root`). */
@@ -1316,7 +1344,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     const into = alive.blend ?? RISE_BLEND;
     const t = alive.t - (alive.pre ?? 0);
     const blend = smooth(t / into);
-    const phase = Math.max(0, t - into) / Math.max(0.1, alive.clip);
+    const phase = Math.min(1, Math.max(0, t - into) / Math.max(0.1, alive.clip)) * (alive.riseMax ?? 1);
     const clip = citizens.clipPose(body.index, alive.riseKey ?? RISE_KEY, phase);
     const bones = body.pos0.length;
     const from = alive.from!;

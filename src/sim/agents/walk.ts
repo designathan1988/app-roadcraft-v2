@@ -201,6 +201,8 @@ interface Walker {
   opened?: boolean;
   /** The walker they walk with (a companion keeps to their side, `stepWalkers`). */
   leader?: number;
+  /** Down and to crawl off once the body is on hands and knees (`getUp` crawl). */
+  crawlNext?: boolean;
   /** The last shot that struck them: where, how much it took, when (their age). */
   lastHit?: { part: BodyPart; damage: number; at: number };
   /** Damage taken by each part, for a limb shot off once it has taken enough. */
@@ -296,6 +298,8 @@ function woundPace(wound: { part: BodyPart; grave: boolean }): 'light' | 'leg' |
 
 /** A first wound's reaction (`flinch`): struck, hunched over the wound standing, then on, wounded (seconds). */
 export const FLINCH = 1.6;
+/** A crawl's speed, u/s: the captured crawl's own (its feet and knees do not slide). */
+const CRAWL_PACE = m(0.12);
 /** Knocked down by a light wound: the longest they can be down before they are up (`getUp` sets the real end). */
 const KNOCKED_MOST = 12;
 /**
@@ -803,7 +807,7 @@ export function createAgentWalkEngine(): PedestrianEngine {
       shock(s, p.x, p.y, BODY_SHOCK);
       return { killed: false, severed };
     },
-    getUp(w, id, x, y, heading, seconds) {
+    getUp(w, id, x, y, heading, seconds, crawl) {
       // Up where the body came to rest (the walkway nearest it), facing the
       // way it rises, the fall held until the getting-up is over.
       const s = stateOf(w);
@@ -826,6 +830,11 @@ export function createAgentWalkEngine(): PedestrianEngine {
       }
       // The body says when they are up: exactly then.
       if (p.act?.kind === 'fall') p.act = { ...p.act, until: p.age + seconds };
+      if (crawl) {
+        // Onto hands and knees, then crawling off the way the head points.
+        p.crawlNext = true;
+        replan(w, s, p, { x: x + Math.cos(heading) * m(25), y: y + Math.sin(heading) * m(25) });
+      }
       if (p.rush) p.rush = { ...p.rush, until: Math.max(p.rush.until, p.age + seconds + 6) };
     },
     walkableNear(w, x, y, reach) {
@@ -1069,7 +1078,8 @@ function stepWalkers(w: SimWorld): void {
       continue;
     }
     // Stopped for something (a word, a fall): standing there, facing it.
-    if (p.act) {
+    // (Crawling is moving: on below, at a crawl.)
+    if (p.act && p.act.kind !== 'crawl') {
       if (p.age < p.act.until) {
         p.v = 0;
         if (p.act.kind === 'flinch') {
@@ -1096,6 +1106,12 @@ function stepWalkers(w: SimWorld): void {
       // On from where the stagger left them, not from where they were struck.
       if (p.act.kind === 'flinch') replan(w, s, p, lastOf(p));
       p.act = null;
+      // On hands and knees: crawling off till they bleed out.
+      if (p.crawlNext) {
+        p.crawlNext = false;
+        p.act = { kind: 'crawl', from: p.age, until: p.age + 600, faceX: p.x, faceY: p.y };
+        trace(p, 'act', 'none', 'crawl', 'down, gravely hurt: crawling off');
+      }
     }
     // A run from danger over: on again to where they were going.
     if (p.rush && p.age >= p.rush.until) {
@@ -1206,6 +1222,8 @@ function stepWalkers(w: SimWorld): void {
     // reaction's end is not a recovery.
     const wound = woundOf(p);
     if (wound) want = Math.min(want, p.pace * (p.rush !== null && p.age < p.rush.until ? WOUNDED_RUSH : WOUNDED_PACE)[woundPace(wound)]);
+    // Crawling: the capture's own pace (CMU 111_03, half a metre in four seconds).
+    if (p.act?.kind === 'crawl') want = Math.min(want, CRAWL_PACE);
     // Walking with somebody: level with them - a little faster behind, slower ahead.
     if (p.leader !== undefined && !p.rush) {
       const lead = s.byId.get(p.leader);
