@@ -2326,10 +2326,10 @@ export function createSceneRenderer(
         }
         performance.measure('hitch:nature', { start: natureAt, end: performance.now() });
       }
-      // Near trees in full, far ones light, round the ground the view looks at.
+      // Near trees in full, far ones light, by their distance to the camera.
       if (natureForest) {
-        const centre = rig.viewport.centre;
-        natureForest.updateLod(centre.x, -centre.y);
+        const eye = rig.camera.position;
+        natureForest.updateLod(eye.x, eye.y, eye.z);
       }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync

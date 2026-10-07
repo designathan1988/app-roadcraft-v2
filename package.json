@@ -51,6 +51,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "@dgreenheck/ez-tree": "^1.1.0",
     "clipper2-ts": "^2.0.1-18",
     "earcut": "^3.2.3",
     "jolt-physics": "^1.1.0",
