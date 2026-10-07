@@ -919,6 +919,8 @@ export function createSceneRenderer(
   let atmosphere: Atmosphere = DEFAULT_ATMOSPHERE;
   /** The sun's colour times its strength, that the clouds are lit by. */
   const sunLight = new Color();
+  /** Towards the sun, for the relief's own shadows (`TerrainSurface.setSun`). */
+  const sunTowards = new Vector3();
   const indoors = new Indoors();
   // Room lights for the floors cut open: a fixed set, so switching them on and
   // off never changes the scene's light count (which recompiles every shader).
@@ -2480,7 +2482,9 @@ export function createSceneRenderer(
         updateLitRooms(sim);
       }
       // Day and night, by the residents' clock (`sim/city`).
-      const clock = skyMode === 'day' ? 13 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);
+      // "Dia": four in the afternoon, the sun 29 degrees up - long enough
+      // shadows to model the land, as the player's picture (2026-10-07).
+      const clock = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);
       const dark = environment.setTimeOfDay(clock);
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
@@ -2574,6 +2578,7 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
+      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity));
       const atRender = performance.now();

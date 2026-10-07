@@ -60,7 +60,7 @@ const SUN_ELEVATION = (47 * Math.PI) / 180;
  * light and shade, the shadows thrown sideways across the ground where they
  * show, the faces towards the camera still lit.
  */
-const SUN_AZIMUTH = (-59 * Math.PI) / 180;
+const SUN_AZIMUTH = (-87 * Math.PI) / 180;
 const SUN_DISTANCE = 1_600;
 /**
  * Depth offset of the shadow test, WORLD units (4 cm): enough to keep a lit
@@ -327,7 +327,7 @@ export function createEnvironment(
         sunDirection.set(Math.cos(SUN_AZIMUTH + 0.6) * 0.55, 0.83, Math.sin(SUN_AZIMUTH + 0.6) * 0.55).normalize();
       }
       // Low sun is warm and weaker; the moon is blue.
-      const warm = Math.max(0, 1 - height * 2.2);
+      const warm = Math.max(0, 1 - height * 1.6);
       sun.color.setRGB(1, 0.94 - warm * 0.2, 0.81 - warm * 0.38).lerp(MOON, dark);
       sun.intensity = 3.6 * (0.25 + 0.75 * Math.min(1, height * 2.5 + 0.2)) * light + 0.85 * dark;
       hemisphere.intensity = 0.32 * light + 0.2 * dark;

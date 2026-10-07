@@ -118,6 +118,12 @@ export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
   readonly ground: Mesh;
   /**
+   * Where the sun is (a direction towards it, three's axes): the relief's
+   * shadows are cast again when it has moved, and its sky again when the
+   * land has (`terrainLight`).
+   */
+  setSun(direction: { readonly x: number; readonly y: number; readonly z: number }): void;
+  /**
    * The terrain's own surface for the batter from a footway down to the
    * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
    * its slope. The batter is steep over a short run, and the slope bands of
@@ -824,7 +830,13 @@ function macroTexture(anisotropy: number): DataTexture {
  * the eight paint weights (`rasterPaint`), 2 the ecology's ground classes
  * (`ECOLOGY_LAYER`), each updated alone (`addLayerUpdate`).
  */
-const PAINT_LAYERS = 3;
+const PAINT_LAYERS = 4;
+/**
+ * The array layer holding the land's own light (`terrainLight`): R the sun it
+ * sees past the relief, G the sky it sees past the hills round it, one texel
+ * a terrain corner in the layer's first GRID x GRID texels.
+ */
+const LIGHT_LAYER = 3;
 /** The array layer the ecosystem's ground is written into. */
 export const ECOLOGY_LAYER = 2;
 function paintLayers(): DataArrayTexture {
@@ -1602,7 +1614,18 @@ function terrainMaterial(
          // are lit exactly as before.
          #if NUM_DIR_LIGHTS > 0
            reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.3, 0.28, 0.23) * rockMix * (1.0 - clamp(dot(normal, normalize(directionalLights[0].direction)), 0.0, 1.0));
-         #endif`,
+         #endif
+         // The land's own light (terrainLight): the relief's shadow takes the
+         // sun, the hills round a hollow take some of the sky.
+         {
+           vec2 lightCell = vec2((vTerrainWorld.x + uPaintHalf) / ${TERRAIN_CELL.toFixed(6)}, (uPaintHalf + vTerrainWorld.z) / ${TERRAIN_CELL.toFixed(6)});
+           vec4 landLight = texture(uPaint, vec3((lightCell + 0.5) / ${PAINT_RES.toFixed(1)}, ${LIGHT_LAYER.toFixed(1)}));
+           float skySeen = mix(0.5, 1.0, landLight.g);
+           reflectedLight.directDiffuse *= landLight.r;
+           reflectedLight.directSpecular *= landLight.r;
+           reflectedLight.indirectDiffuse *= skySeen;
+           reflectedLight.indirectSpecular *= skySeen;
+         }`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -1635,7 +1658,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v24';
+  material.customProgramCacheKey = () => 'terrain-splat-v25';
   return material;
 }
 
@@ -1801,6 +1824,105 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
   };
   material.customProgramCacheKey = () => 'terrain-walls-v2';
   return material;
+}
+
+/**
+ * THE LAND'S OWN LIGHT, from its heights alone - what makes a relief read as
+ * one: the ground itself casts no shadow map (180 000 triangles drawn twice a
+ * frame), so a chapada threw no shadow over the plain and a valley was as
+ * bright as a ridge.
+ *
+ *  - SUN: from every corner a ray is marched towards the sun over the
+ *    heightfield, keeping how near it passes over the ground for its distance
+ *    (Inigo Quilez's soft shadows, min(k h / t)): fully lit, in the penumbra
+ *    of a ridge, or behind it (the heightfield shadows of horizon and shadow
+ *    height maps).
+ *  - SKY: the horizon is found in eight directions round every corner and
+ *    each direction sees 1 - sin^2 of it - three's GTAO integral for a surface
+ *    seen from above - so valleys, hollows and the feet of walls see less sky.
+ *
+ * Worked out once for a moved land or a moved sun, never per frame.
+ */
+function terrainLight(
+  heights: Float64Array,
+  sun: { readonly x: number; readonly y: number; readonly z: number },
+  sky: Float32Array | null,
+  out: Uint8Array,
+  outWidth: number,
+): void {
+  let maxH = -Infinity;
+  for (let i = 0; i < heights.length; i++) maxH = Math.max(maxH, heights[i] as number);
+  // Towards the sun on the grid: x grows with world x, the rows with -y
+  // (world y is three's -z, so the rows grow with three's z).
+  const hl = Math.hypot(sun.x, sun.z) || 1e-6;
+  const dgx = sun.x / hl;
+  const dgy = sun.z / hl;
+  // Height gained per grid cell along the ray.
+  const rise = (Math.max(0.03, sun.y) / hl) * TERRAIN_CELL;
+  const at = (gx: number, gy: number): number => {
+    const ix = Math.min(GRID - 2, Math.max(0, Math.floor(gx)));
+    const iy = Math.min(GRID - 2, Math.max(0, Math.floor(gy)));
+    const u = Math.min(1, Math.max(0, gx - ix)), v = Math.min(1, Math.max(0, gy - iy));
+    const k = iy * GRID + ix;
+    const a = heights[k] as number, b = heights[k + 1] as number, c = heights[k + GRID] as number, d = heights[k + GRID + 1] as number;
+    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+  };
+  /** The penumbra's width: k of Quilez's k h / t. */
+  const SOFT = 9;
+  for (let iy = 0; iy < GRID; iy++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      const h0 = (heights[iy * GRID + ix] as number) + 0.4;
+      let lit = 1;
+      for (let t = 0.7; ; t += Math.max(0.5, t * 0.06)) {
+        const gx = ix + dgx * t, gy = iy + dgy * t;
+        if (gx < 0 || gy < 0 || gx > GRID - 1 || gy > GRID - 1) break;
+        const ray = h0 + t * rise;
+        if (ray > maxH + 1) break;
+        lit = Math.min(lit, (SOFT * (ray - at(gx, gy))) / (t * TERRAIN_CELL));
+        if (lit <= 0) { lit = 0; break; }
+      }
+      const smooth = lit * lit * (3 - 2 * lit);
+      const o = (iy * outWidth + ix) * 4;
+      out[o] = Math.round(smooth * 255);
+      if (sky) out[o + 1] = Math.round((sky[iy * GRID + ix] as number) * 255);
+      out[o + 3] = 255;
+    }
+  }
+}
+
+/** Each corner's share of the sky past the hills round it (`terrainLight`), 0..1. */
+function terrainSky(heights: Float64Array): Float32Array {
+  const sky = new Float32Array(GRID * GRID);
+  const reach = [1, 2, 3, 5, 8, 12, 18, 27];
+  // Each sample as a grid offset and the distance it lies at, worked out once.
+  const offX: number[] = [], offY: number[] = [], inv: number[] = [];
+  for (let k = 0; k < 8; k++) {
+    for (const r of reach) {
+      const ox = Math.round(Math.cos((k * Math.PI) / 4) * r), oy = Math.round(Math.sin((k * Math.PI) / 4) * r);
+      offX.push(ox); offY.push(oy); inv.push(1 / (Math.hypot(ox, oy) * TERRAIN_CELL));
+    }
+  }
+  const per = reach.length;
+  for (let iy = 0; iy < GRID; iy++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      const h0 = heights[iy * GRID + ix] as number;
+      let seen = 0;
+      for (let k = 0; k < 8; k++) {
+        let tan = 0;
+        for (let r = 0; r < per; r++) {
+          const n = k * per + r;
+          const jx = ix + (offX[n] as number), jy = iy + (offY[n] as number);
+          if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) break;
+          const t = ((heights[jy * GRID + jx] as number) - h0) * (inv[n] as number);
+          if (t > tan) tan = t;
+        }
+        // 1 - sin^2(horizon) = 1 / (1 + tan^2).
+        seen += 1 / (1 + tan * tan);
+      }
+      sky[iy * GRID + ix] = seen / 8;
+    }
+  }
+  return sky;
 }
 
 export function createTerrainSurface(anisotropy: number): TerrainSurface {
@@ -2536,10 +2658,36 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v23-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v25-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
+  // The land's own light (`terrainLight`): lit and open to the sky until it
+  // is first worked out.
+  const lightLayer = paintLayer(paintArray, LIGHT_LAYER);
+  for (let i = 0; i < GRID; i++) {
+    for (let j = 0; j < GRID; j++) lightLayer.set([255, 255, 0, 255], (i * PAINT_RES + j) * 4);
+  }
+  paintArray.addLayerUpdate(LIGHT_LAYER);
+  paintArray.needsUpdate = true;
+  let landMoved = true;
+  let skyShare: Float32Array | null = null;
+  const litSun = { x: 0, y: -1, z: 0 };
+  const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }): void => {
+    // A stroke held: the water waits for its end, and so does this.
+    if (waterStale) return;
+    const len = Math.hypot(sun.x, sun.y, sun.z) || 1;
+    const turned = (sun.x * litSun.x + sun.y * litSun.y + sun.z * litSun.z) / len < Math.cos((2 * Math.PI) / 180);
+    if (!landMoved && !turned) return;
+    const startedAt = performance.now();
+    if (landMoved || !skyShare) skyShare = terrainSky(grid);
+    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, skyShare, lightLayer, PAINT_RES);
+    landMoved = false;
+    litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
+    paintArray.addLayerUpdate(LIGHT_LAYER);
+    paintArray.needsUpdate = true;
+    performance.measure('hitch:terrain-light', { start: startedAt, end: performance.now() });
+  };
   let paintRevision = 0;
   let paintCount = 0;
   let paintFirst: PaintDab | undefined;
@@ -2642,6 +2790,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   return {
     meshes: [backdrop, walls, ground, water],
     ground,
+    setSun,
     vergeMaterial,
     updatePaint,
     forestAt(x, y) {
@@ -2704,6 +2853,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     shapeToRoads(shape, region = null) {
       const shapeAt = performance.now();
       const moved = shapeToRoads(shape, region);
+      if (moved) landMoved = true;
       performance.measure('hitch:road-edit/ground shape', { start: shapeAt, end: performance.now() });
       // A road that cut through a valley changes where the water's shore is:
       // at once, or once the stroke is over when one is held (`settle`).
@@ -2776,6 +2926,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       // rebuilt on every dab, it was the largest single cost of painting.
       if (stroking) waterStale = true;
       else { waterStale = false; rebuildWater(lastStamps); }
+      landMoved = true;
       return true;
     },
     dispose() {
