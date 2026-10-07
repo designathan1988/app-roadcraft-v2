@@ -149,20 +149,9 @@ and they have seen it.
   cleaning, cooking) and `tests/sim/transit/transit.spec.ts` (buses driven by
   residents).
   Not yet: train and metro drivers, taxi drivers, a photo of a nanny indoors.
-- **Crime in the streets and the police, LIVE** (2026-10-05): one adult in
-  25 is a thief (`sim/agents/crime.ts`). From 13:00 to 23:00 a thief leaves
-  where they are, follows somebody walking near, robs them (the victim
-  falls), and runs for home. Round the robbery, the behaviour zones of
-  Hitman's crowds: close by people run off, farther they stop and look. The
-  victim calls the police: the nearest officer on foot patrol (half of those
-  on duty walk beats of up to 1.2 km round their station) or one from the
-  station runs after the thief; one who catches up arrests them, both walk to
-  the station and the thief is held 8 game hours (`CityLife.hold`). A thief
-  home first got away. The agent card shows "ladrão", the phase (robbing,
-  running, arrested, held) and officers on patrol or in a chase. Measured:
-  `tests/sim/agents/crime.spec.ts` (robberies, witnesses, officers out,
-  arrests held at a police station). Not yet: police cars, weapons, uniforms
-  (officers look like anybody), burglary of houses, car theft by NPCs.
+- **Crime in the streets and the police: OUT of the game** (2026-10-06, the
+  player's decision). The module, its spec and its photo script are kept in
+  `src/backup/crime/` (see `src/backup/README.md`), not compiled, linted or run.
 - **Cycle lanes (ciclofaixa), LIVE** (2026-10-05): a band by the kerb can be
   `cycle` (`world/parking.ts`): painted red with a solid white line
   (`world/parkingLayout.ts`). The road tool offers "Ciclofaixa dos dois

@@ -18,7 +18,6 @@ import { type ActivityKind, BuildingUse, type Doing, type YardPlaces, chooseActi
 import { addPlayerWalker, removeWalker, takeWalker, walkerAct, walkerOf } from '../agents/walk';
 import { type Rider, TransitSim } from '../transit/transit';
 import { Player } from '../agents/player';
-import { CrimeSim, type CrimePhase } from '../agents/crime';
 import type { VehicleId } from '../vehicles/state';
 import { vehiclePose } from '../pose';
 import { localToWorld } from '@world/buildings/geometry';
@@ -152,8 +151,6 @@ export class CityLife {
   private moved(): void { this.occupancy = null; }
   /** Trips under way, by id. */
   readonly trips = new Map<number, Trip>();
-  /** The game minute of the last look at the diaries. */
-  private lastMinutes: number | null = null;
   private nextTrip = 1;
   private lookClock = 0;
   private readonly doors = new Map<BuildingId, { x: number; y: number }>();
@@ -253,10 +250,7 @@ export class CityLife {
     } : null;
     const needs = this.minds.get(resident)?.needs;
     const doing = this.doingOf(resident);
-    const crime: AgentView['crime'] = this.crime.phaseOf(resident)
-      ?? (this.crime.chasing(resident) ? 'chasing' : this.crime.patrolling(resident) ? 'patrolling' : this.lastMinutes !== null && this.isHeld(resident, this.lastMinutes) ? 'held' : null);
     return { resident, person: OwnCars.personOf(resident), ageClass: r.ageClass, home: r.home, work: r.work, at: d.at, trip, car,
-      thief: CrimeSim.isThief(r), crime,
       job: this.drivers.has(resident) ? 'busDriver' : r.work !== null && isHome(this.places?.kindOf(r.work)) ? 'nanny' : null,
       ...(this.drivers.has(resident) ? { line: this.drivers.get(resident)! } : {}),
       ...(needs ? { needs: { ...needs } } : {}), ...(doing && d.at !== null ? { activity: doing.kind } : {}) };
@@ -340,7 +334,6 @@ export class CityLife {
     this.arrivals(w);
     this.cars?.step(w, (id) => { const t = this.trips.get(id); if (t) this.arrive(t); });
     this.player.step(w);
-    this.crime.step(w);
     this.ride(w);
     this.lookClock += DT;
     if (this.lookClock < LOOK_EVERY) return;
@@ -348,7 +341,6 @@ export class CityLife {
     this.giveUp(w);
 
     const now = this.minutes(w);
-    this.lastMinutes = now;
     const day = Math.floor(now / 1440);
     const clock = now - day * 1440;
     let walks = 0, drives = 0;
@@ -396,7 +388,7 @@ export class CityLife {
       const doing = this.doingNow(w, r, d.at, mind, now, clock);
       live(mind, r, d.at, now, places.kindOf, doing?.offer ?? null);
       // The player's person decides nothing: the player does.
-      if (d.at === null || this.isHeld(r.id, now) || this.controlled === r.id) continue;
+      if (d.at === null || this.controlled === r.id) continue;
       const due = committedTo(r, clock);
       const owed = due !== null && d.at !== due;
       if (!owed && now - mind.decided < DECIDE_EVERY) continue;
@@ -609,20 +601,6 @@ export class CityLife {
   /** The person in the player's hands, and the police after them (`agents/player.ts`). */
   readonly player = new Player();
 
-  /** Thieves in the streets and the police after them (`agents/crime.ts`). */
-  readonly crime = new CrimeSim();
-  /** Residents held where they are until a game minute (a thief at the police station). */
-  private readonly held = new Map<number, number>();
-
-  /** Holds a resident in a building for some game minutes: they make no trip till then. */
-  hold(resident: number, building: BuildingId, minutes: number): void {
-    const d = this.diaries.get(resident);
-    if (!d) return;
-    d.at = building;
-    this.held.set(resident, (this.lastMinutes ?? 0) + minutes);
-    this.moved();
-  }
-
   /** Residents driving a bus now, and the line. */
   private readonly drivers = new Map<number, number>();
 
@@ -635,7 +613,7 @@ export class CityLife {
     let best: Resident | null = null, bestD = Infinity;
     for (const r of this.population.residents) {
       if (r.ageClass !== 'adult' || r.work !== null || this.drivers.has(r.id) || this.controlled === r.id) continue;
-      if (this.diaries.get(r.id)?.at !== r.home || CrimeSim.isThief(r)) continue;
+      if (this.diaries.get(r.id)?.at !== r.home) continue;
       const door = this.doors.get(r.home);
       if (!door) continue;
       const d = Math.hypot(door.x - x, door.y - y);
@@ -656,15 +634,6 @@ export class CityLife {
 
   /** The line a resident drives a bus of, or null. */
   drivesLine(resident: number): number | null { return this.drivers.get(resident) ?? null; }
-
-  /** Whether a resident is held now. */
-  isHeld(resident: number, now: number): boolean {
-    const until = this.held.get(resident);
-    if (until === undefined) return false;
-    if (now < until) return true;
-    this.held.delete(resident);
-    return false;
-  }
 
   /** A resident called out of where they are (a police officer sent after the player): off their life until given back. */
   borrow(resident: number): boolean {
@@ -1072,10 +1041,6 @@ export interface AgentView {
   /** A trade shown on the card: driving a bus (and its line), or nanny in another family's home. */
   readonly job: 'busDriver' | 'nanny' | null;
   readonly line?: number;
-  /** A thief (one in 25 adults, `agents/crime.ts`). */
-  readonly thief: boolean;
-  /** Their part in a crime now: robbing, running off, arrested, held at the station, or an officer chasing. */
-  readonly crime: CrimePhase | 'held' | 'chasing' | 'patrolling' | null;
   /** What they are doing where they are (agents only): `agent.act.<kind>`. */
   readonly activity?: ActivityKind;
 }

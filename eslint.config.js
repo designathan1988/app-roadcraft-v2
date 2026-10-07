@@ -66,6 +66,8 @@ export default tseslint.config(
       'incoming/**',
       'exports/**',
       'cooked/**',
+      // Systems taken out of the game, kept for reference only (`src/backup/README.md`).
+      'src/backup/**',
       // Agent worktrees are full checkouts of the repository; they are linted
       // in their own checkout, never from this one.
       '.claude/**',
