@@ -19,7 +19,7 @@ import {
 
 import { Rng } from '@core/rng';
 import type { GeologyKind } from '@world/terrainPaint';
-import { leafCards } from './propGeometry';
+import { billboardCards, leafCards } from './propGeometry';
 import { applyFoliageShading } from './foliageShading';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 
@@ -385,7 +385,9 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
   // the crown's centre's) and colours (`propGeometry.leafCards`).
   // The cards ARE the crown the eye reads: 24 of them, large enough to cover
   // the heart, in the sunlit green of leaves (brighter than the heart).
-  const cards = leafCards(body, 30, tall ? 0.42 : 0.46, 0xf0e5 + seed * 97);
+  // Billboarded (`billboardCards`): turned to the eye, a crown of round
+  // leaf clusters, never a card edge-on or a flat sheet on top.
+  const cards = leafCards(body, 36, tall ? 0.44 : 0.48, 0xf0e5 + seed * 97, true);
   const colour = cards.getAttribute('color');
   const position = cards.getAttribute('position');
   for (let i = 0; i < colour.count; i++) {
@@ -419,7 +421,9 @@ export function createGroundCoverKit(): GroundCoverKit {
     color: 0xffffff, vertexColors: true, map: cluster, alphaTest: 0.5, side: DoubleSide, roughness: 0.8, metalness: 0, envMapIntensity: 0.2,
   });
   applyWind(cardMaterial, FOREST_WIND, 'forest-cards');
+  billboardCards(cardMaterial, 'forest');
   const cardDepth = windDepthMaterial(FOREST_WIND, 'forest-cards');
+  billboardCards(cardDepth, 'forest-depth');
   cardDepth.map = cluster;
   cardDepth.alphaTest = 0.5;
   // Weathered stone and leaves: rough, no sheen of the sky on them.

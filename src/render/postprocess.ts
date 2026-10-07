@@ -440,6 +440,9 @@ const CLOUD_SHADOWS = {
     uSkyDeep: { value: new Color(0x0c1a2c) },
     uSkyGlow: { value: new Color(0x3d5a82) },
     uSkyLow: { value: new Color(0x0a1830) },
+    // The sky seen from near the ground: pale at the horizon, deeper above.
+    uSkyHorizon: { value: new Color(0xa9c9e6) },
+    uSkyHigh: { value: new Color(0x3b6fb3) },
     uAbyss: { value: new Color(0x1e160f) },
   },
   vertexShader: /* glsl */ `
@@ -475,6 +478,8 @@ const CLOUD_SHADOWS = {
     uniform vec3 uSkyDeep;
     uniform vec3 uSkyGlow;
     uniform vec3 uSkyLow;
+    uniform vec3 uSkyHorizon;
+    uniform vec3 uSkyHigh;
     uniform vec3 uAbyss;
     varying vec2 vUv;
     vec3 worldAt(vec2 uv, float depth) {
@@ -632,8 +637,17 @@ const CLOUD_SHADOWS = {
         float glow = 1.0 - exp(-air * 0.12);
         float sunSide = pow(max(dot(rd, uSunDir), 0.0), 3.0);
         vec3 haze = mix(uSkyGlow, uSkyGlow * vec3(1.4, 1.18, 0.9), sunSide * 0.6) * (1.0 - 0.85 * uDark);
+        // Brought down near the ground the view gets a SKY: pale blue at the
+        // horizon deepening upwards (the player, 2026-10-07: "azul mais
+        // clarinho com transição para o mais escuro, só quando der zoom");
+        // from high over the map it stays the dark blue round the model.
+        float low = 1.0 - smoothstep(600.0, 1800.0, ro.y);
+        vec3 horizon = mix(uSkyHorizon, uSkyHorizon * vec3(1.12, 1.04, 0.92), sunSide * 0.5) * (1.0 - 0.85 * uDark);
+        vec3 overhead = mix(uSkyHigh, uSkyDeep, 0.25) * (1.0 - 0.7 * uDark);
+        haze = mix(haze, horizon, low);
         if (sky) {
           vec3 backdrop = mix(uSkyDeep, haze, glow);
+          backdrop = mix(backdrop, mix(horizon, overhead, smoothstep(0.0, 0.5, rd.y)), low * step(0.0, rd.y));
           // Below the horizon: a deeper blue at once, going down into the
           // earth's own dark brown (the player, 2026-10-07).
           backdrop = mix(backdrop, uSkyLow, smoothstep(0.0, 0.3, -rd.y) * 0.85);

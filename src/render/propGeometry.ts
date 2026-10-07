@@ -14,6 +14,7 @@ import {
   Vector2,
   Quaternion,
   Vector3,
+  type Material,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -760,7 +761,7 @@ export const trianglesOf = (geometry: BufferGeometry): number =>
  * `count` cards of `size` (in the plant's units: it is one unit tall), on
  * the vertices of `crown` that are leaf (not bark).
  */
-export function leafCards(crown: BufferGeometry, count: number, size: number, seed: number): BufferGeometry {
+export function leafCards(crown: BufferGeometry, count: number, size: number, seed: number, billboard = false): BufferGeometry {
   const rng = new Rng(seed);
   const pos = crown.getAttribute('position');
   if (!crown.getAttribute('normal')) crown.computeVertexNormals();
@@ -774,6 +775,8 @@ export function leafCards(crown: BufferGeometry, count: number, size: number, se
     if (!bark && pos.getY(i) > 0.12) leaves.push(i);
   }
   const positions: number[] = [], normals: number[] = [], colours: number[] = [], uvs: number[] = [];
+  /** Billboarded cards: each corner's offset from the card's centre, in the view's plane (`billboard`). */
+  const corners: number[] = [];
   const n = new Vector3(), t = new Vector3(), bt = new Vector3(), up = new Vector3(0, 1, 0), c = new Vector3();
   for (let k = 0; k < count && leaves.length; k++) {
     const v = leaves[Math.floor(rng.float() * leaves.length)]!;
@@ -789,7 +792,15 @@ export function leafCards(crown: BufferGeometry, count: number, size: number, se
     const s = size * (0.7 + rng.float() * 0.6);
     c.set(pos.getX(v), pos.getY(v), pos.getZ(v)).addScaledVector(n, s * (0.05 + rng.float() * 0.25));
     const corner = (u: number, w: number): void => {
-      positions.push(c.x + (ax.x * (u - 0.5) + ay.x * (w - 0.5)) * s, c.y + (ax.y * (u - 0.5) + ay.y * (w - 0.5)) * s, c.z + (ax.z * (u - 0.5) + ay.z * (w - 0.5)) * s);
+      if (billboard) {
+        // Every corner at the card's centre; the shader spreads it in the
+        // view's plane by its own offset, turned by the card's roll.
+        positions.push(c.x, c.y, c.z);
+        const ou = (u - 0.5) * s, ow = (w - 0.5) * s;
+        corners.push(ou * ct - ow * st, ou * st + ow * ct);
+      } else {
+        positions.push(c.x + (ax.x * (u - 0.5) + ay.x * (w - 0.5)) * s, c.y + (ax.y * (u - 0.5) + ay.y * (w - 0.5)) * s, c.z + (ax.z * (u - 0.5) + ay.z * (w - 0.5)) * s);
+      }
       normals.push(n.x, n.y, n.z);
       const shade = 0.85 + rng.float() * 0.3;
       colours.push((col ? col.getX(v) : 0.3) * shade, (col ? col.getY(v) : 0.5) * shade, (col ? col.getZ(v) : 0.2) * shade);
@@ -804,7 +815,38 @@ export function leafCards(crown: BufferGeometry, count: number, size: number, se
   g.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   g.setAttribute('color', new Float32BufferAttribute(colours, 3));
   g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  if (billboard) g.setAttribute('aCorner', new Float32BufferAttribute(corners, 2));
   g.computeBoundingSphere();
+  // The cards reach past their centres by up to their size.
+  if (billboard && g.boundingSphere) g.boundingSphere.radius += size;
   g.computeBoundingBox();
   return g;
+}
+
+/**
+ * Turns a card material's leaf cards (`leafCards(..., billboard)`) to face
+ * the camera - or the light, in a shadow pass - the fluffy stylized tree of
+ * Pontus Karlsson's and Michael Dougall's write-ups: no card is ever seen
+ * edge-on or lying flat, and the crown reads as round clusters of leaves.
+ * Each corner is spread from its card's centre in the view's plane, scaled
+ * by the instance's size.
+ */
+export function billboardCards(material: Material, key: string): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec2 aCorner;`)
+      .replace('mvPosition = modelViewMatrix * mvPosition;', `mvPosition = modelViewMatrix * mvPosition;
+        {
+          float cardScale = 1.0;
+          #ifdef USE_INSTANCING
+            cardScale = 0.5 * (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz));
+          #endif
+          mvPosition.xy += aCorner * cardScale;
+        }`);
+  };
+  const cacheKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${cacheKey()}-billboard-${key}`;
 }
