@@ -3130,12 +3130,14 @@ function syncFogInputs(): void {
 const WEATHER_INPUTS = [
   ['weatherRain', 'rain', 100], ['weatherWind', 'wind', 1], ['weatherWindDir', 'windDirection', 1],
   ['weatherLightning', 'lightning', 1], ['weatherThunder', 'thunder', 100],
+  // The water's, under the river brush.
+  ['waterWaves', 'waves', 100], ['waterFoam', 'foam', 100], ['waterCurrent', 'current', 1],
 ] as const;
 function syncWeatherInputs(): void {
   for (const [id, key, scale] of WEATHER_INPUTS) {
     const input = document.getElementById(id) as HTMLInputElement | null;
     if (!input) continue;
-    input.value = String(Math.round(doc.weather[key] * scale));
+    input.value = String(Math.round(doc.weather[key] * scale * 10) / 10);
     text(`${id}Value`, input.value);
   }
 }

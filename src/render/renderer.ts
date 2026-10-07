@@ -2689,6 +2689,18 @@ export function createSceneRenderer(
         cloudDrift.y += wind.y * step;
         post.setCloudDrift(cloudDrift.x, cloudDrift.y);
         setWindWeather(wind.x, -wind.y, weather.wind);
+        // The water: its waves run with the wind, rougher the harder it
+        // blows; its foam; how fast the rivers run.
+        const windLength = Math.hypot(wind.x, wind.y);
+        const angle = (weather.windDirection * Math.PI) / 180;
+        terrain.setWaterLook({
+          waves: Math.min(1, weather.waves + weather.wind / 40),
+          foam: weather.foam,
+          current: weather.current * m(1),
+          windX: windLength > 1e-6 ? wind.x / windLength : Math.cos(angle),
+          windZ: windLength > 1e-6 ? -wind.y / windLength : -Math.sin(angle),
+          windSpeed: windLength,
+        });
         const span = 2 * Math.max(halfWidth, halfHeight);
         if (weather.lightning > 0 && Math.random() < (step * weather.lightning) / 60) {
           const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * span * 0.45;

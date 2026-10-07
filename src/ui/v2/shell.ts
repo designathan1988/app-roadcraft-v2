@@ -927,6 +927,18 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
       }
+      // The water under the river brush (`world/weather.ts`, `render/water.ts`):
+      // how rough its waves, how much foam, how fast the rivers run.
+      if (q<HTMLButtonElement>('[data-terrain-mode="river"]')?.classList.contains('active')) {
+        const water = titled(group(t('water.title')), t('water.title'));
+        water.classList.add('stack');
+        water.append(
+          slider(t('water.waves'), '#waterWaves', '#waterWavesValue'),
+          slider(t('water.foam'), '#waterFoam', '#waterFoamValue'),
+          slider(t('water.current'), '#waterCurrent', '#waterCurrentValue'),
+        );
+        options.appendChild(water);
+      }
       // The weather (`world/weather.ts`): rain, wind, lightning and thunder
       // over the whole map; a click on the map calls a bolt down there.
       if (q<HTMLButtonElement>('[data-terrain-mode="weather"]')?.classList.contains('active')) {

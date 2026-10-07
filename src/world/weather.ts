@@ -18,9 +18,15 @@ export interface Weather {
   readonly lightning: number;
   /** Thunder's loudness, 0..1. */
   readonly thunder: number;
+  /** The rivers' and lakes' waves, 0 glassy .. 1 a rough sea. */
+  readonly waves: number;
+  /** How much foam on the water, 0..1. */
+  readonly foam: number;
+  /** How fast the rivers run, metres a second (0 still .. 4 a torrent). */
+  readonly current: number;
 }
 
-export const DEFAULT_WEATHER: Weather = { rain: 0, wind: 0, windDirection: 30, lightning: 0, thunder: 0.6 };
+export const DEFAULT_WEATHER: Weather = { rain: 0, wind: 0, windDirection: 30, lightning: 0, thunder: 0.6, waves: 0.3, foam: 0.4, current: 1.2 };
 
 export const WEATHER_LIMITS = {
   rain: [0, 1],
@@ -28,6 +34,9 @@ export const WEATHER_LIMITS = {
   windDirection: [0, 360],
   lightning: [0, 30],
   thunder: [0, 1],
+  waves: [0, 1],
+  foam: [0, 1],
+  current: [0, 4],
 } as const;
 
 const clamp = (v: number, [lo, hi]: readonly [number, number]): number => Math.min(hi, Math.max(lo, v));
@@ -39,7 +48,10 @@ export function readWeather(data: unknown, base: Weather = DEFAULT_WEATHER): Wea
     const v = d[key];
     return clamp(typeof v === 'number' && Number.isFinite(v) ? v : base[key], WEATHER_LIMITS[key]);
   };
-  return { rain: pick('rain'), wind: pick('wind'), windDirection: pick('windDirection') % 360, lightning: pick('lightning'), thunder: pick('thunder') };
+  return {
+    rain: pick('rain'), wind: pick('wind'), windDirection: pick('windDirection') % 360, lightning: pick('lightning'), thunder: pick('thunder'),
+    waves: pick('waves'), foam: pick('foam'), current: pick('current'),
+  };
 }
 
 /** The wind on the map, world units a second along x and y. */

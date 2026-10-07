@@ -100,6 +100,27 @@ export const WATER_DRIFTS: readonly (readonly [number, number])[] = [DRIFT_A, DR
 
 /** The per-vertex water depth the builder writes and the shader reads. */
 export const WATER_DEPTH_ATTRIBUTE = 'aDepth';
+/** The per-vertex way the water runs (three's x and z, unit down a river, nought in a lake). */
+export const WATER_FLOW_ATTRIBUTE = 'aFlow';
+
+/**
+ * How the water looks and moves (`world/weather.ts`): waves 0..1, foam 0..1,
+ * the current, world units a second down a river, and the wind's way
+ * (three's x and z, unit) and speed, world units a second.
+ */
+export interface WaterLook {
+  readonly waves: number;
+  readonly foam: number;
+  readonly current: number;
+  readonly windX: number;
+  readonly windZ: number;
+  readonly windSpeed: number;
+}
+
+/** Seconds of one phase of the flow map (Vlachos, "Water Flow in Portal 2"). */
+const FLOW_CYCLE = 2;
+/** World units across one tile of the wave layer. */
+const WAVE_TILE = 90;
 
 /** Depth, in world units, at which the tint has reached its deep-water value. */
 const DEEP_AT = 6;
@@ -235,6 +256,8 @@ export interface WaterSurface {
    * and the fade drawn from it came out as a sawtooth along every bank.
    */
   setGround(texture: Texture, half: number, cell: number, size: number): void;
+  /** The waves, foam and current (`WaterLook`). */
+  setLook(look: WaterLook): void;
   dispose(): void;
 }
 
@@ -282,6 +305,11 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     uGround: { value: null as Texture | null },
     // half extent, cell, corners per side; z = 0 until a ground is set.
     uGroundGrid: { value: new Vector3(0, 1, 0) },
+    uWaves: { value: 0.3 },
+    uFoamAmount: { value: 0.4 },
+    uCurrent: { value: 3 },
+    uScaleWave: { value: 1 / WAVE_TILE },
+    uWaveDrift: { value: new Vector2(0.004, 0.002) },
   };
 
   material.onBeforeCompile = (shader) => {
@@ -292,7 +320,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
         '#include <common>',
         `#include <common>
          attribute float ${WATER_DEPTH_ATTRIBUTE};
+         attribute vec2 ${WATER_FLOW_ATTRIBUTE};
          varying float vWaterDepth;
+         varying vec2 vWaterFlow;
          varying vec3 vWaterWorld;`,
       )
       .replace(
@@ -301,7 +331,8 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // Computed here rather than read from \`worldPosition\`, which three
          // only declares for a handful of feature combinations.
          vWaterWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
-         vWaterDepth = ${WATER_DEPTH_ATTRIBUTE};`,
+         vWaterDepth = ${WATER_DEPTH_ATTRIBUTE};
+         vWaterFlow = ${WATER_FLOW_ATTRIBUTE};`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -309,7 +340,13 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
         '#include <common>',
         `#include <common>
          varying float vWaterDepth;
+         varying vec2 vWaterFlow;
          varying vec3 vWaterWorld;
+         uniform float uWaves;
+         uniform float uFoamAmount;
+         uniform float uCurrent;
+         uniform float uScaleWave;
+         uniform vec2 uWaveDrift;
          uniform float uWaterTime;
          uniform vec3 uShallow;
          uniform vec3 uMid;
@@ -352,6 +389,28 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          vec2 waterPoint = vWaterWorld.xz;
          vec4 waterA = texture2D(normalMap, waterPoint * uScaleA + uWaterTime * uDriftA);
          vec4 waterB = texture2D(normalMap, waterPoint * uScaleB + uWaterTime * uDriftB);
+         // THE CURRENT: down a river the ripples are carried the way the water
+         // runs - a flow map (Vlachos, "Water Flow in Portal 2"; Catlike
+         // Coding's "Texture Distortion"): each layer read twice, pushed
+         // downstream over a cycle, the two reads half a cycle apart and
+         // weighted by a triangle wave so neither's restart is ever seen. A
+         // lake keeps the still layers above. Read in every pixel, not behind
+         // a branch, so the mip derivatives stay whole.
+         float waterFlowing = clamp(length(vWaterFlow), 0.0, 1.0);
+         float waterCycle = uWaterTime / ${FLOW_CYCLE.toFixed(1)};
+         float waterP0 = fract(waterCycle), waterP1 = fract(waterCycle + 0.5);
+         float waterW0 = 1.0 - abs(1.0 - 2.0 * waterP0);
+         vec2 waterShift = vWaterFlow * uCurrent * ${FLOW_CYCLE.toFixed(1)};
+         vec4 waterFA = texture2D(normalMap, (waterPoint - waterShift * waterP0) * uScaleA) * waterW0
+           + texture2D(normalMap, (waterPoint - waterShift * waterP1) * uScaleA + vec2(0.37, 0.61)) * (1.0 - waterW0);
+         vec4 waterFB = texture2D(normalMap, (waterPoint - waterShift * waterP0) * uScaleB + vec2(0.13, 0.29)) * waterW0
+           + texture2D(normalMap, (waterPoint - waterShift * waterP1) * uScaleB + vec2(0.71, 0.43)) * (1.0 - waterW0);
+         float waterRun = smoothstep(0.02, 0.3, waterFlowing) * step(0.001, uCurrent);
+         waterA = mix(waterA, waterFA, waterRun);
+         waterB = mix(waterB, waterFB, waterRun);
+         // THE WAVES: a broad swell travelling with the wind, as tall as the
+         // map's setting asks, calm in the shallows.
+         vec4 waterW = texture2D(normalMap, waterPoint * uScaleWave + uWaterTime * uWaveDrift);
 
          // Shallow reads green and lets the bed through; deep reads blue and
          // does not. One opacity for both is what left the river with no bed.
@@ -382,7 +441,13 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          float waterFoamOuter = smoothstep(${(RIM_AT * 0.7).toFixed(2)}, ${(RIM_AT * 1.3).toFixed(2)}, waterDepthPx);
          float waterFoam = waterFoamOuter * smoothstep(0.34, 0.4, waterEdge + (waterLace - 0.6) * 0.22);
          // A hint of a wash line, not a white outline drawn round the water.
-         waterFoam = clamp(waterFoam * 0.4, 0.0, 1.0);
+         waterFoam = clamp(waterFoam * uFoamAmount, 0.0, 1.0);
+         // Whitecaps on the crests of tall waves, and streaks where a fast
+         // current churns: as much as the foam setting asks.
+         float waterOpen = smoothstep(1.5, 6.0, waterDepthPx);
+         float waterCaps = smoothstep(0.8 - 0.22 * uWaves, 0.97, waterW.a) * smoothstep(0.25, 0.8, uWaves) * waterOpen;
+         float waterChurn = waterRun * waterFlowing * smoothstep(0.66, 0.78, waterLace) * smoothstep(2.0, 8.0, uCurrent);
+         waterFoam = clamp(max(waterFoam, (waterCaps + waterChurn * 0.6) * uFoamAmount * 1.6), 0.0, 1.0);
          waterTint = mix(waterTint, uFoamTint, waterFoam);
 
          // The first shallow stretch reveals the actual bed. Starting at
@@ -415,8 +480,10 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // lerp between two opposed normals cancels to flat, so a mixed
          // two-layer surface goes glassy exactly where the layers cross — which
          // is everywhere, a few times a second.
+         vec3 waterNormalW = waterW.xyz * 2.0 - 1.0;
+         float waterSwell = uWaves * 1.3 * smoothstep(0.8, 5.0, waterDepthPx);
          vec3 mapN = normalize(vec3(
-           waterNormalA.xy * 0.62 + waterNormalB.xy * 0.48,
+           waterNormalA.xy * 0.62 + waterNormalB.xy * 0.48 + waterNormalW.xy * waterSwell,
            waterNormalA.z * waterNormalB.z
          ));
          mapN.xy *= normalScale;
@@ -452,7 +519,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   };
   // A changed key keeps this variant out of the cache slot the road and terrain
   // standard materials share.
-  material.customProgramCacheKey = () => 'water-two-layer-v5';
+  material.customProgramCacheKey = () => 'water-flow-waves-v6';
 
   const started = performance.now();
   return {
@@ -461,6 +528,15 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     setGround(texture, half, cell, size) {
       uniforms.uGround.value = texture;
       uniforms.uGroundGrid.value.set(half, cell, size);
+    },
+    setLook(look) {
+      uniforms.uWaves.value = look.waves;
+      uniforms.uFoamAmount.value = look.foam;
+      uniforms.uCurrent.value = look.current;
+      // The swell runs with the wind, a little faster the harder it blows
+      // (tiles a second; a breath of a drift in still air).
+      const speed = (1.5 + look.windSpeed * 0.35) / WAVE_TILE;
+      uniforms.uWaveDrift.value.set(look.windX * speed, look.windZ * speed);
     },
     attach(mesh) {
       mesh.onBeforeRender = () => {

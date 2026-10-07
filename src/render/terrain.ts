@@ -44,7 +44,7 @@ import {
 } from '@world/terrain';
 import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } from './mesh/textureBaker';
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
-import { WATER_DEPTH_ATTRIBUTE, createWaterSurface } from './water';
+import { WATER_DEPTH_ATTRIBUTE, WATER_FLOW_ATTRIBUTE, createWaterSurface, type WaterLook } from './water';
 import type { GullyDab } from '@world/gullies';
 import { RELIEF_RES, RELIEF_TEXTURE, RELIEF_WINDOW, createReliefBake } from './terrainRelief';
 
@@ -144,6 +144,8 @@ export interface TerrainSurface {
    * has changed since - once a stroke is let go, as the water is.
    */
   bakeRelief(renderer: WebGLRenderer, focus: { readonly x: number; readonly z: number } | null): void;
+  /** How the rivers and lakes look and move: waves, foam, current (`render/water.ts` WaterLook). */
+  setWaterLook(look: WaterLook): void;
   /** The gullies the player cut or wiped, and how much of the steep land carries them of itself (`world/gullies.ts`). */
   setGullies(dabs: readonly GullyDab[], auto: number): void;
   /**
@@ -3117,6 +3119,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     skirt,
     setSun,
     setGullies(dabs, auto) { relief.setGullies(dabs, auto); },
+    setWaterLook(look) { waterSurface.setLook(look); },
     bakeRelief(renderer, focus) {
       if (!waterStale) relief.bake(renderer, grid, focus);
     },
@@ -3466,7 +3469,11 @@ export function unifiedWaterGeometry(
     cells.add(waterKey(vertex.ix - 1, vertex.iy - 1));
   }
 
-  for (const path of ribbons) riverRibbon(path, terrainHeightAt, positions, depths);
+  // Which way the water runs at every vertex (three's x and z, unit length
+  // down a river's course; still in a lake): the shader carries its ripples
+  // that way (`water.ts`, a flow map).
+  const flows: number[] = [];
+  for (const path of ribbons) riverRibbon(path, terrainHeightAt, positions, depths, flows);
   for (const cell of cells) {
     const [ix, iy] = waterCell(cell);
     const k0 = levelAt(ix, iy), k1 = levelAt(ix + 1, iy);
@@ -3520,6 +3527,8 @@ export function unifiedWaterGeometry(
 
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
   geometry.setAttribute(WATER_DEPTH_ATTRIBUTE, new Float32BufferAttribute(depths, 1));
+  while (flows.length < depths.length * 2) flows.push(0, 0);
+  geometry.setAttribute(WATER_FLOW_ATTRIBUTE, new Float32BufferAttribute(flows, 2));
   const uvs: number[] = [];
   // Flat UP, not the face normals `computeVertexNormals` would give. The level
   // field steps by a fraction of a unit per cell, and on a surface this
@@ -3564,7 +3573,7 @@ const RIBBON_ACROSS = 6;
  * ground hides it, so the shore is where the ground meets the water, with no
  * grid in it.
  */
-export function riverRibbon(path: RiverPath, groundAt: (x: number, y: number) => number, positions: number[], depths: number[]): void {
+export function riverRibbon(path: RiverPath, groundAt: (x: number, y: number) => number, positions: number[], depths: number[], flows?: number[]): void {
   if (path.length < 2) return;
   // Downstream: from the higher end (the order the falls are read in).
   const n = path.length;
@@ -3600,7 +3609,7 @@ export function riverRibbon(path: RiverPath, groundAt: (x: number, y: number) =>
     for (let i = 1; i + 1 < pts.length; i++) pts[i]!.level = Math.max(groundAt(pts[i]!.x, pts[i]!.y) + RIVER_MIN_DEPTH, (pts[i - 1]!.level + pts[i]!.level * 2 + pts[i + 1]!.level) / 4);
   }
   // Cross-sections.
-  const rows: { x: number; y: number; level: number; depth: number }[][] = [];
+  const rows: { x: number; y: number; level: number; depth: number; fx: number; fz: number }[][] = [];
   for (let i = 0; i < pts.length; i++) {
     const a = pts[Math.max(0, i - 1)]!, b = pts[Math.min(pts.length - 1, i + 1)]!;
     let tx = b.x - a.x, ty = b.y - a.y;
@@ -3608,18 +3617,21 @@ export function riverRibbon(path: RiverPath, groundAt: (x: number, y: number) =>
     tx /= len; ty /= len;
     const nx = -ty, ny = tx;
     const p = pts[i]!;
-    const row: { x: number; y: number; level: number; depth: number }[] = [];
+    const row: { x: number; y: number; level: number; depth: number; fx: number; fz: number }[] = [];
     for (let j = 0; j <= RIBBON_ACROSS; j++) {
       const s = (j / RIBBON_ACROSS) * 2 - 1;
       const x = p.x + nx * p.half * s, y = p.y + ny * p.half * s;
-      row.push({ x, y, level: p.level, depth: p.level - groundAt(x, y) });
+      // Fastest down the middle, slower towards the banks.
+      const pace = 1 - 0.6 * s * s;
+      row.push({ x, y, level: p.level, depth: p.level - groundAt(x, y), fx: tx * pace, fz: -ty * pace });
     }
     rows.push(row);
   }
   // Quads, anticlockwise seen from above (as the grid's cells are wound).
-  const push = (v: { x: number; y: number; level: number; depth: number }): void => {
+  const push = (v: { x: number; y: number; level: number; depth: number; fx: number; fz: number }): void => {
     positions.push(v.x, v.level, -v.y);
     depths.push(v.depth);
+    flows?.push(v.fx, v.fz);
   };
   for (let i = 0; i + 1 < rows.length; i++) {
     for (let j = 0; j < RIBBON_ACROSS; j++) {
