@@ -85,6 +85,8 @@ export interface ResidentWalk {
    * walk, in their car and out of it. Absent, the engine numbers a new walker.
    */
   readonly person?: number;
+  /** Walking with this walker (their companion: the same way, at their pace, `sim/agents/walk.ts`). */
+  readonly with?: number;
   /** Farthest `from` and `to` may be from the walkable area; the engine's own default when absent. */
   readonly reach?: number;
 }

@@ -777,7 +777,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const procedural = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bodies') === 'cooked'
     ? null : createProceduralCrowd({ unit: m(1) });
   /** Each walker's person; a person whose walker left (at the end of a road) waits in `procSpare` for the next one. */
-  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number; at?: Matrix4; age?: PersonAgeClass }>();
+  const procPeople = new Map<number, { person: ProceduralPerson | null; seen: number; at?: Matrix4; age?: PersonAgeClass; cover?: number }>();
   /**
    * Whether a body suits a walker's age (the simulation's child, adult or
    * elder: their pace, their company): a child is drawn as a child, an elder
@@ -910,7 +910,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       procedural!.ragdoll.posture(person, { hunch: (wound?.grave ? 0.55 : 0.42) * k, reach: Math.min(1, Math.max(0, (act.t - 0.2) / 0.35)), part: wound?.part ?? 'torso' });
       return;
     }
-    if (activity === 'crouch' && act && !wound) {
+    if ((activity === 'crouch' || activity === 'mourn') && act && !wound) {
       // Crouching in fear (a `crouch` act): down into it (the crouch-down
       // clip), held, and up again before the act ends (the stand-up clip) -
       // never popped into the squat or out of it.
@@ -920,17 +920,39 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (next === 'duck') person.phase = Math.min(0.999, act.t / down);
       else if (next === 'getUp') person.phase = Math.min(0.999, (act.t - (act.hold - up)) / up);
       else person.phase += dt / procedural!.clipDuration(person);
+      // Both hands over the head while down (GTA's cower), on as they duck;
+      // grieving beside somebody they walked with (`mourn`), crying instead.
+      if (activity === 'mourn') {
+        person.activity = 'cry';
+        entry.cover = 0;
+        procedural!.ragdoll.posture(person, null);
+        return;
+      }
+      entry.cover = Math.min(1, act.t / 0.4) * Math.min(1, Math.max(0, (act.hold - act.t) / 0.5));
+      procedural!.ragdoll.posture(person, { hunch: 0, reach: 0, part: 'torso', cover: entry.cover });
+      return;
+    }
+    if (activity === 'look' && act && !wound) {
+      // A bystander's first moment after a shot (`walk.ts` frighten): turned
+      // to it, standing scared (the captured nervous idle), before they run.
+      if (person.clip !== 'nervous') { person.clip = 'nervous'; person.phase = 0; }
+      person.phase += dt / procedural!.clipDuration(person);
+      entry.cover = 0;
       procedural!.ragdoll.posture(person, null);
       return;
     }
-    // Hurt: bent over the wound, a hand pressed to it - running so while they
-    // flee (the run clip under the posture), then a slow hurt walk (the slow
-    // walk clip), a limp on a hurt leg (`walk.ts` sets the pace). A hunch of
-    // 15 degrees at three quarters of their pace read as walking on unhurt
-    // (the player, 2026-10-06).
+    // Hurt: a hand pressed to the wound over the captured hurt gaits - the
+    // injured run while they flee, the limp after (`walk.ts` sets the pace).
+    // The trunk is bent by the captures themselves; stood still, bent over it.
     const metres = speed / m(1);
-    const hurtRun = wound !== undefined && walking && metres > (person.clip === 'run' ? 1.5 : 1.9);
-    procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.5 : hurtRun ? 0.34 : 0.45, reach: 1, part: wound.part, limp: walking && speed > m(0.15) && !hurtRun } : null);
+    const hurtRun = wound !== undefined && walking && metres > (person.clip === 'hurtRun' ? 1.3 : 1.7);
+    // Fleeing in panic: both hands over the head as they run (GTA's peds run
+    // from gunfire so; in a plain run they read as somebody jogging), eased
+    // on and off.
+    const panicRun = !wound && activity === 'panic' && walking && metres > 1.6;
+    entry.cover = (entry.cover ?? 0) + ((panicRun ? 1 : 0) - (entry.cover ?? 0)) * Math.min(1, dt * 5);
+    procedural!.ragdoll.posture(person, wound ? { hunch: wound.grave ? 0.5 : walking && metres > 0.15 ? 0.08 : 0.42, reach: 1, part: wound.part }
+      : entry.cover > 0.02 ? { hunch: 0, reach: 0, part: 'torso', cover: entry.cover } : null);
     if (wound) person.activity = 'hurt';
     // Running from danger runs, past a brisk walk; struck with fear (cowering,
     // or panicking stood still), they crouch with their arms over their head.
@@ -953,14 +975,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     const sprint = metres > (was === 'sprint' ? 3.6 : 4.2);
     const run = metres > (was === 'run' || was === 'sprint' ? 2.1 : 2.6);
     const clip: ProcClip = activity === 'photo' && !moving ? 'photo'
-      : moving ? (wound ? (hurtRun ? 'run' : 'hurtWalk') : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
+      : moving ? (wound ? (hurtRun ? 'hurtRun' : 'hurtWalk') : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
+    // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
+    const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk' || c === 'hurtRun';
     if (person.clip !== clip) {
-      // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
-      const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk';
       if (!(gait(was) && gait(clip))) person.phase = 0;
       person.clip = clip;
     }
-    if (clip === 'walk' || clip === 'run' || clip === 'sprint' || clip === 'hurtWalk') person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    if (gait(clip)) person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
     else person.phase += dt / procedural!.clipDuration(person);
   };
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
@@ -1899,7 +1921,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
             // Shot and still going: the pain on their face over the fright.
-            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
+            const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' || doing === 'look' || doing === 'mourn' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound, ped.ageClass);

@@ -94,7 +94,9 @@ export function faceAt(seed: number, time: number, activity?: string, mood = 0):
     if (personHash(hash ^ (syllable * 7)) % 5 === 0) add('faceBrowRaise', 0.4 * open);
   }
   if (act?.laugh) add('mouthOpen', 0.7 * (0.5 + 0.5 * Math.sin(time * 9 + (hash & 63))));
-  if (activity === 'panic') {
+  // Turned to a gunshot a moment before running (`walk.ts` frighten: the
+  // `look` act, and a crouch with the hands over the head): the same terror.
+  if (activity === 'panic' || activity === 'look' || activity === 'crouch') {
     // Terror (FACS fear, AU1+2+4+5+20+26): brows up and drawn together, eyes
     // wide, lips stretched back, the jaw dropped - screaming, a breath between
     // screams.

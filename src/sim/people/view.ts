@@ -35,7 +35,9 @@ export type GestureKind = 'look' | 'phone' | 'talk' | 'bench'
   // A trip and a fall: down, a few seconds on the ground, up again.
   | 'fall'
   // Shot, a first wound: doubled over a moment, a hand to it, up again.
-  | 'flinch';
+  | 'flinch'
+  // Somebody they were walking with shot: down beside them, crying, then away.
+  | 'mourn';
 export type GesturePhase = 'approach' | 'hold' | 'step' | 'turn' | 'sitDown' | 'seated' | 'standUp' | 'leave';
 export interface GestureView {
   kind: GestureKind;

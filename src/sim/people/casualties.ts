@@ -39,6 +39,8 @@ export interface Casualty {
   readonly charred?: boolean;
   /** Shot, and where: a bullet's small push there, the body falling with its muscles still working (`ragdoll.ts` tone). */
   readonly struck?: BodyPart;
+  /** Shot open at the belly (a grave trunk wound, two or three rounds in it): the guts out (`ragdoll.ts` openBelly). */
+  readonly opened?: boolean;
 }
 
 const RECORDS = new WeakMap<SimWorld, Casualty[]>();

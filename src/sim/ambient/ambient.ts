@@ -302,7 +302,7 @@ export class AmbientWorld {
         trip: this.nextTrip++, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
         seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30),
       });
-      if (id !== null) this.walkers.add(id);
+      if (id !== null) { this.walkers.add(id); this.company(w, id, ageClass, from, to, false); }
     }
   }
 
@@ -392,8 +392,31 @@ export class AmbientWorld {
       if (id === null) continue;
       this.walkers.add(id);
       if (roams) this.roaming.add(id);
+      this.company(w, id, ageClass, from, to, roams);
       made++;
     }
+  }
+
+  /**
+   * Now and then somebody walking with a walker just made (`walkTrip` with):
+   * a couple three times in ten, an adult with a child once in ten - the
+   * same way, at the same pace; shot, the one left grieves beside them
+   * (`sim/agents/walk.ts` mourn). Everybody walked alone, and nobody near a
+   * shot person was theirs (the player, 2026-10-06).
+   */
+  private company(w: SimWorld, leader: number, age: PersonAgeClass, from: { x: number; y: number }, to: { x: number; y: number }, roams: boolean): void {
+    const engine = w.pedEngine;
+    if (!engine.walkTrip) return;
+    const roll = this.rng.float();
+    if (roll >= 0.4) return;
+    const ageClass: PersonAgeClass = age === 'child' ? 'adult' : roll < 0.1 && age === 'adult' ? 'child' : age;
+    const id = engine.walkTrip.call(engine, w, {
+      trip: this.nextTrip++, fromX: from.x + m(0.6), fromY: from.y, toX: to.x, toY: to.y,
+      seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30), with: leader,
+    });
+    if (id === null) return;
+    this.walkers.add(id);
+    if (roams) this.roaming.add(id);
   }
 
   /** A road end's footway point at another road end than `not`; null when there is none. */

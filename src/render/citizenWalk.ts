@@ -353,7 +353,9 @@ export type LibraryClipName =
   | 'read' | 'bag' | 'trolley' | 'umbrella' | 'cheer' | 'dance' | 'wave' | 'drink' | 'photo'
   | 'crouchDown' | 'crouchIdle' | 'crouchUp' | 'laugh' | 'angry' | 'argue' | 'knock' | 'headphones'
   | 'eatIdle' | 'workTable' | 'walkDrunk' | 'runFast'
-  | 'walkN1' | 'walkN2' | 'walkN3' | 'walkStroll' | 'walkCool' | 'walkFast';
+  | 'walkN1' | 'walkN2' | 'walkN3' | 'walkStroll' | 'walkCool' | 'walkFast'
+  // Hurt and afraid (`people/proceduralCrowd.ts`: the wounded's run and limp, a bystander standing scared).
+  | 'runInjured' | 'walkInjured' | 'nervous';
 
 /**
  * One clip of the library, decoded and ready to transfer.

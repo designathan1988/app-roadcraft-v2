@@ -593,8 +593,12 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // body folded onto its knees and stayed there kneeling, or curled in a
     // ball; toppled forwards, a shot person was never seen knocked back (the
     // player, 2026-10-06).
-    for (const k of [CHE, NEC, HEA, TOP, LS, RS, BEL]) body.o[k]!.addScaledVector(dir, -(c.kind === 'knocked' ? m(1.5) : m(1.8)) * STEP);
-    body.o[PEL]!.addScaledVector(dir, -m(0.5) * STEP);
+    // A leg shot out from under them: down forwards onto knees and hands
+    // (euphoria's leg-shot reaction), not thrown back.
+    const buckle = c.kind === 'knocked' && leg;
+    const over = buckle ? new Vector3(Math.cos(c.heading), 0, -Math.sin(c.heading)) : dir;
+    for (const k of [CHE, NEC, HEA, TOP, LS, RS, BEL]) body.o[k]!.addScaledVector(over, -(buckle ? m(0.9) : c.kind === 'knocked' ? m(1.5) : m(1.8)) * STEP);
+    body.o[PEL]!.addScaledVector(over, -m(buckle ? 0.2 : 0.5) * STEP);
     body.asleep = false;
     return dir;
   };
@@ -630,6 +634,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       known.asleep = false; known.still = 0; known.flying = 0;
       const away = c.struck ? shove(known, c) : blast(known, c, c.kind === 'knocked' ? m(2.5 + 4 * c.power) : m(4 + 9 * c.power));
       sever(known, c, away, citizens);
+      if (c.opened && !known.opened && !known.pin) openBelly(known, away.clone().multiplyScalar(m(1.5)), 1 + Math.floor(Math.random() * 2));
       return;
     }
     const body = build(c.id, c.heading, citizens, world, c.x, c.y, c.kind, given);
@@ -645,7 +650,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     // Alive going down: the arms out the way they fall, to take it
     // (Euphoria's catch-fall), not dead weight hitting the ground.
     if (c.struck && c.kind === 'knocked') {
-      for (const k of [LW, RW, LE, RE]) body.o[k]!.addScaledVector(dir, -m(k === LW || k === RW ? 1.4 : 0.8) * STEP).y += m(0.6) * STEP;
+      const leg = c.struck === 'legL' || c.struck === 'legR';
+      const way = leg ? new Vector3(Math.cos(c.heading), 0, -Math.sin(c.heading)) : dir;
+      for (const k of [LW, RW, LE, RE]) body.o[k]!.addScaledVector(way, -m(k === LW || k === RW ? 1.4 : 0.8) * STEP).y += m(0.6) * STEP;
     }
     // Joint friction while it falls: dead weight, not a rag.
     body.stiff = 1.6;
@@ -685,6 +692,8 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     if (!c.struck && (c.kind === 'torn' ? Math.random() < 0.7 : c.kind === 'dead' && Math.random() < 0.12)) {
       openBelly(body, dir.clone().multiplyScalar(m(3)), 2 + Math.floor(Math.random() * 3));
     }
+    // Shot open (`walk.ts` shot: a grave trunk wound, two or three rounds in it).
+    if (c.opened && !body.opened) openBelly(body, dir.clone().multiplyScalar(m(1.5)), 1 + Math.floor(Math.random() * 2));
   };
 
   /** What came off at this blow thrown off the body (`detach`), and the body burnt black right under a bomb. */
@@ -926,7 +935,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       body.hits = (body.hits ?? 0) + 1;
       const tally = body.partHits ??= {};
       tally[part] = (tally[part] ?? 0) + 1;
-      if (part === 'torso' && !body.opened && (tally.torso ?? 0) >= 4 && Math.random() < 0.5) openBelly(body, dir.clone().multiplyScalar(m(1.2)), 1);
+      if (part === 'torso' && !body.opened && (tally.torso ?? 0) >= 2) openBelly(body, dir.clone().multiplyScalar(m(1.2)), 1);
       // A limb shot off at the second hit (the head at the first or second).
       if (!body.pin && part !== 'torso') {
         const limb = part as Severable;

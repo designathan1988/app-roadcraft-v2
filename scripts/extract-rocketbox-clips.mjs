@@ -99,9 +99,16 @@ const CLIPS = {
   walkStroll: ['walk_stroll_01', 'cycle', true],
   walkCool: ['walk_cool_01', 'cycle', true],
   walkFast: ['walk_fast_01', 'cycle', true],
+  // Hurt and afraid, as captured (the player's order of 2026-10-06: no
+  // improvised limp or hunch where a capture exists): running hurt, walking
+  // with a limp (a man's walk_bruised, a woman's walk_injured - the library
+  // has no man's walk_injured), and standing scared.
+  runInjured: ['run_injured', 'cycle', true],
+  walkInjured: [{ m: 'walk_bruised', f: 'walk_injured' }, 'cycle', true],
+  nervous: ['idle_nervous_01', 'static', true],
 };
 /** Cycles phase-aligned to the neutral walk, because they are blended with it. */
-const ALIGN = new Set(['walkSlow', 'walkN1', 'walkN2', 'walkN3', 'walkStroll', 'walkCool', 'walkFast']);
+const ALIGN = new Set(['walkSlow', 'walkN1', 'walkN2', 'walkN3', 'walkStroll', 'walkCool', 'walkFast', 'walkInjured']);
 const LIBRARIES = { male: ['m', 'walkMale.json'], female: ['f', 'walkFemale.json'] };
 const out = path.join('src', 'render', 'motion');
 

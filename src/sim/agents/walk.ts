@@ -197,6 +197,10 @@ interface Walker {
   hp?: number;
   /** Shots taken. */
   hits?: number;
+  /** Shot open at the belly already (`shot`: the guts out once). */
+  opened?: boolean;
+  /** The walker they walk with (a companion keeps to their side, `stepWalkers`). */
+  leader?: number;
   /** The last shot that struck them: where, how much it took, when (their age). */
   lastHit?: { part: BodyPart; damage: number; at: number };
   /** Damage taken by each part, for a limb shot off once it has taken enough. */
@@ -292,6 +296,8 @@ function woundPace(wound: { part: BodyPart; grave: boolean }): 'light' | 'leg' |
 
 /** A first wound's reaction (`flinch`): struck, hunched over the wound standing, then on, wounded (seconds). */
 export const FLINCH = 1.6;
+/** Knocked down by a light wound: the longest they can be down before they are up (`getUp` sets the real end). */
+const KNOCKED_MOST = 12;
 /**
  * Struck by the round: a stagger of a couple of steps back, the way it went
  * (GTA's shot peds are knocked back; stood still where they were struck, a
@@ -666,7 +672,9 @@ export function createAgentWalkEngine(): PedestrianEngine {
           const all: Severable[] = ['head', 'armL', 'armR', 'legL', 'legR'];
           const severed = torn ? all.filter((_, i) => ((roll >> i) & 1) === 1 || i === (roll >>> 8) % 5)
             : (roll & 3) !== 0 ? [all[1 + ((roll >>> 4) % 4)]!, ...((roll & 12) === 12 ? ['head' as const] : [])] : [];
-          recordCasualty(w, { ...who, kind: torn ? 'torn' : 'dead', power: 1 - d / kill, severed, lost: severed, charred: torn });
+          // Burnt black, everybody it kills (only those right under it were:
+          // a charred body was hardly ever seen - the player, 2026-10-06).
+          recordCasualty(w, { ...who, kind: torn ? 'torn' : 'dead', power: 1 - d / kill, severed, lost: severed, charred: true });
           finish(s, p, false);
           dead++;
           continue;
@@ -706,8 +714,10 @@ export function createAgentWalkEngine(): PedestrianEngine {
       p.hurt ??= {};
       p.hurt[part] = (p.hurt[part] ?? 0) + DAMAGE[part];
       p.lost ??= p.maimed ? [p.maimed] : [];
+      // Already down (`fall`): shot where they lie, a limb hit comes off at once.
+      const wasDown = p.act?.kind === 'fall';
       let severed: Severable | null = null;
-      if (part !== 'torso' && part !== 'head' && !p.lost.includes(part) && p.hurt[part]! >= 40) {
+      if (part !== 'torso' && part !== 'head' && !p.lost.includes(part) && (p.hurt[part]! >= 40 || wasDown)) {
         severed = part;
         p.lost.push(part);
         p.maimed ??= part;
@@ -715,6 +725,13 @@ export function createAgentWalkEngine(): PedestrianEngine {
         p.hp -= 15;
       }
       const v = p.view;
+      // A grave trunk wound opens the belly, the guts out: always at the third
+      // round in the trunk, now and then at the second - never at the first
+      // (the player, 2026-10-06: organs from one shot are absurd; in grave
+      // cases they come out).
+      const trunkHits = Math.round((p.hurt.torso ?? 0) / DAMAGE.torso);
+      const opened = part === 'torso' && !p.opened && (trunkHits >= 3 || (trunkHits === 2 && (personHash(p.id ^ 0x0b1e) & 255) < 102));
+      if (opened) p.opened = true;
       // The hole and the blood on their clothes (`render/agents.ts`).
       recordWound(w, p.id, part, fromX, fromY);
       p.lastHit = { part, damage: hpBefore - p.hp, at: p.age };
@@ -722,21 +739,22 @@ export function createAgentWalkEngine(): PedestrianEngine {
       if (p.hp <= 0) {
         recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
           party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
-          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], struck: part, ...(severed ? { severed: [severed] } : {}) });
+          blastX: fromX, blastY: fromY, kind: 'dead', power: 0.25, lost: [...p.lost], struck: part, ...(severed ? { severed: [severed] } : {}),
+          ...(opened ? { opened } : {}) });
         finish(s, p, false);
         prune(s);
+        mourn(s, p);
         startle(w, p.x, p.y, m(45), 18, null);
         shock(s, p.x, p.y, BODY_SHOCK);
         return { killed: true, severed };
       }
-      // Hurt, not killed. As GTA's shot peds do (NaturalMotion's
-      // reach-for-wound): a first pistol wound doubles them over where they
-      // stand, a hand to it, and they get away hurt - an animation, not a
-      // fall (a light hit played by physics looked like elastic, and getting
-      // up off the ground with no get-up-from-lying clip popped into a
-      // crouch). Hurt badly - a second wound, a limb gone, already down -
-      // they go down and stay down: writhing where they lie, bleeding.
-      const wasDown = p.act?.kind === 'fall';
+      // Hurt, not killed. As GTA's shot peds take it (NaturalMotion's
+      // euphoria: a stagger with a hand to the wound, a leg shot dropping them
+      // onto their knees and hands): a leg wound puts them down, a trunk
+      // wound half the time, and they get up and away hurt; otherwise a
+      // stagger back, a hand to it, and away. Hurt badly - a second wound, a
+      // limb gone, already down - they go down and stay down: writhing where
+      // they lie, bleeding.
       p.hits = (p.hits ?? 0) + 1;
       const legGone = p.lost.includes('legL') || p.lost.includes('legR');
       // Incapacitated (`woundOf` grave: half their health gone or a limb lost),
@@ -745,10 +763,24 @@ export function createAgentWalkEngine(): PedestrianEngine {
       const grave = woundOf(p)?.grave ?? false;
       if (!wasDown && !grave) {
         const before = actName(p.act);
-        p.act = { kind: 'flinch', from: p.age, until: p.age + FLINCH, faceX: fromX, faceY: fromY };
-        trace(p, 'act', before, actName(p.act), `shot: light wound (hp ${p.hp}), taken standing`);
+        const leg = part === 'legL' || part === 'legR';
+        if (leg || (part === 'torso' && (personHash(p.id ^ (p.hits * 0x2f9b)) & 255) < 128)) {
+          // Knocked down (`render/ragdoll.ts`: a leg gives way and they go
+          // onto their knees and hands, a round in the trunk throws them back),
+          // a moment on the ground, then up (`getUp`, which sets when) and away.
+          p.act = { kind: 'fall', from: p.age, until: p.age + KNOCKED_MOST, faceX: fromX, faceY: fromY };
+          trace(p, 'act', before, actName(p.act), `shot: light wound (hp ${p.hp}), knocked down`);
+          recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
+            party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
+            blastX: fromX, blastY: fromY, kind: 'knocked', power: 0.1, lost: [...p.lost],
+            lieFor: 1.2 + ((personHash(p.id ^ 0x1e4) & 255) / 255) * 1.6, struck: part });
+        } else {
+          p.act = { kind: 'flinch', from: p.age, until: p.age + FLINCH, faceX: fromX, faceY: fromY };
+          trace(p, 'act', before, actName(p.act), `shot: light wound (hp ${p.hp}), taken standing`);
+        }
         p.v = 0;
         p.fright = p.age + 30;
+        mourn(s, p);
         startle(w, p.x, p.y, m(45), 18, null);
         shock(s, p.x, p.y, BODY_SHOCK);
         return { killed: false, severed };
@@ -760,9 +792,10 @@ export function createAgentWalkEngine(): PedestrianEngine {
       recordCasualty(w, { x: p.x, y: p.y, heading: p.heading, t: 0, id: p.id, gender: v.gender, ageClass: v.ageClass,
         party: { id: v.party.id, size: v.party.size, archetype: v.party.archetype, hasChild: v.party.hasChild },
         blastX: fromX, blastY: fromY, kind: 'knocked', power: severed ? 0.35 : 0.15, lost: [...p.lost],
-        lieFor: 600, crawl: true, struck: part, ...(severed ? { severed: [severed] } : {}) });
+        lieFor: 600, crawl: true, struck: part, ...(severed ? { severed: [severed] } : {}), ...(opened ? { opened } : {}) });
       p.v = 0;
       p.fright = p.age + 30;
+      mourn(s, p);
       startle(w, p.x, p.y, m(45), 18, null);
       shock(s, p.x, p.y, BODY_SHOCK);
       return { killed: false, severed };
@@ -833,7 +866,9 @@ function startWalk(w: SimWorld, trip: ResidentWalk): number | null {
     : (trip.seed & 1) === 1 ? 'f' : 'm';
   const ageClass: PersonAgeClass = trip.ageClass;
   const h = personHash(id);
-  const pace = Math.max(PED.minSpeed, Math.min(PED.maxSpeed,
+  // Walking with somebody: their pace, their group.
+  const leader = trip.with !== undefined ? s.byId.get(trip.with) : undefined;
+  const pace = leader ? leader.pace : Math.max(PED.minSpeed, Math.min(PED.maxSpeed,
     PED.meanSpeed + ((h % 1000) / 1000 - 0.5) * 2 * PED.speedSd)) * (ageClass === 'elder' ? 0.8 : ageClass === 'child' ? 0.9 : 1);
   const first = frame(steps[0]!, 0);
   const heading = Math.atan2(first.ty, first.tx);
@@ -849,6 +884,16 @@ function startWalk(w: SimWorld, trip: ResidentWalk): number | null {
     turnV: 0, age: 0, held: 0, waited: 0, asked: 0, granted: null, done: false, waiting: null, zebra: null, inside: true,
     player: false, act: null, rush: null,
   };
+  if (leader) {
+    // One group: the leader's id, its size, a child in it or not; a pair a couple, with a child a family.
+    p.leader = leader.id;
+    const members = s.walkers.filter((q) => !q.done && q.view.party.id === leader.view.party.id);
+    const hasChild = ageClass === 'child' || members.some((q) => q.view.ageClass === 'child');
+    const party = { id: leader.view.party.id, size: members.length + 1, archetype: hasChild ? 'family' as const : 'couple' as const, hasChild };
+    for (const q of members) q.view.party = party;
+    view.party = party;
+    view.rank = members.length;
+  }
   const pr = project(steps[0]!, p.x, p.y);
   p.s = pr.s; p.d = pr.d; p.aim = clamp(pr.d, room(steps[0]!));
   s.walkers.push(p);
@@ -1158,6 +1203,14 @@ function stepWalkers(w: SimWorld): void {
     // reaction's end is not a recovery.
     const wound = woundOf(p);
     if (wound) want = Math.min(want, p.pace * (p.rush !== null && p.age < p.rush.until ? WOUNDED_RUSH : WOUNDED_PACE)[woundPace(wound)]);
+    // Walking with somebody: level with them - a little faster behind, slower ahead.
+    if (p.leader !== undefined && !p.rush) {
+      const lead = s.byId.get(p.leader);
+      if (lead && !lead.done && !lead.act) {
+        const ahead = (lead.x - p.x) * Math.cos(p.heading) + (lead.y - p.y) * Math.sin(p.heading);
+        if (hypot(lead.x - p.x, lead.y - p.y) < m(6)) want *= ahead > m(0.5) ? 1.2 : ahead < -m(0.5) ? 0.8 : 1;
+      }
+    }
     if (jammed) want *= JAM_SHARE;
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
@@ -1402,6 +1455,22 @@ export function startle(w: SimWorld, x: number, y: number, radius: number, secon
   return saw;
 }
 
+/**
+ * Those walking with somebody shot (`startWalk` with): down beside them,
+ * crying, a few seconds, then away (`frighten` waits on it).
+ */
+function mourn(s: State, p: Walker): void {
+  if (p.view.party.size < 2) return;
+  for (const q of s.walkers) {
+    if (q === p || q.done || q.inside || q.player || q.view.party.id !== p.view.party.id) continue;
+    if (hypot(q.x - p.x, q.y - p.y) > m(12) || woundOf(q) || q.act?.kind === 'fall') continue;
+    const hold = 3 + (personHash(q.id ^ 0x3e1) % 4);
+    q.act = { kind: 'mourn', from: q.age, until: q.age + hold, faceX: p.x, faceY: p.y };
+    q.v = 0;
+    trace(q, 'act', 'none', 'mourn', `companion ${p.id} shot`);
+  }
+}
+
 /** Somebody who saw a fright at (x, y), `d` off: running away from it, some tripping, crouching or fainting. */
 function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: number, seconds: number): void {
   {
@@ -1410,7 +1479,7 @@ function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: num
     const ax = d > 1e-6 ? (p.x - x) / d : Math.cos(p.heading), ay = d > 1e-6 ? (p.y - y) / d : Math.sin(p.heading);
     replan(w, s, p, { x: p.x + ax * m(40), y: p.y + ay * m(40) });
     // Busy with their own fall or wound: the fright waits till that is over.
-    const after = p.act?.kind === 'fall' || p.act?.kind === 'flinch' ? p.act.until - p.age : 0;
+    const after = p.act?.kind === 'fall' || p.act?.kind === 'flinch' || p.act?.kind === 'mourn' ? p.act.until - p.age : 0;
     // The wounded get away as the wound lets them: a hurt run, a hobble on a hurt leg.
     const wound = woundOf(p);
     const hurt = wound ? WOUNDED_RUSH[woundPace(wound)] : null;
@@ -1424,19 +1493,30 @@ function frighten(w: SimWorld, s: State, p: Walker, x: number, y: number, d: num
     // a few faint. A shot frightens without that: nobody far off drops as if
     // shot themself (the player, 2026-10-06) - those near crouch, others film.
     const stampede = seconds >= 20;
-    if (!stampede && seconds >= 14) {
+    if (!stampede && seconds >= 14 && after === 0) {
+      // A shot (GTA V: everybody near a gunshot flees, some film it): first
+      // the head round to it; near it, two in five drop where they are, both
+      // hands over the head (`render/agents.ts` cower) and run after; farther
+      // off some hold a phone up at it a few seconds; the rest run at once, a
+      // few of those near tripping as they go. Stood looking, or running in
+      // a plain run, a bystander read as somebody out jogging (2026-10-06).
       const roll = personHash(p.id ^ 0x7a11) & 255;
-      if (roll < 90 && after === 0 && d < m(12)) {
-        p.act = { kind: 'crouch', from: p.age, until: p.age + 3 + (roll % 4), faceX: x, faceY: y };
-        p.v = 0;
-        if (p.rush) p.rush = { ...p.rush, until: p.rush.until + 3 + (roll % 4) };
-      } else if (roll < 130 && after === 0 && d > m(12)) {
-        const hold = 3 + (roll % 5);
+      const near = d < m(15);
+      let hold: number;
+      if (near && roll < 102) {
+        hold = 2 + (roll % 4);
+        p.act = { kind: 'crouch', from: p.age, until: p.age + hold, faceX: x, faceY: y };
+      } else if (!near && roll >= 102 && roll < 140) {
+        hold = 3 + (roll % 5);
         p.act = { kind: 'photo', from: p.age, until: p.age + hold, faceX: x, faceY: y };
-        p.v = 0;
-        if (p.rush) p.rush = { ...p.rush, until: p.rush.until + hold };
-        p.fright = p.rush?.until ?? p.fright;
+      } else {
+        hold = near ? 0.35 : 0.5 + (roll % 6) / 10;
+        p.act = { kind: 'look', from: p.age, until: p.age + hold, faceX: x, faceY: y };
+        if (near && (personHash(p.id ^ 0x51) & 255) < 26) p.tripAt = p.age + hold + 0.8 + (roll % 10) / 5;
       }
+      p.v = 0;
+      if (p.rush) p.rush = { ...p.rush, until: p.rush.until + hold };
+      p.fright = p.rush?.until ?? p.fright;
     }
     if (stampede) {
       const roll = personHash(p.id ^ 0x7a11) & 255;
