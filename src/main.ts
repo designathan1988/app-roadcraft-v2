@@ -569,7 +569,7 @@ const CLICK_SLOP = 5;
 /** Camera turn per Q/E press, rad. */
 const KEY_TURN = Math.PI / 12;
 /** A camera orbit in progress: the pointer and where it last was, CSS px. */
-let orbiting: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean } | null = null;
+let orbiting: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean; height: number } | null = null;
 /**
  * A node being dragged, with the document as it was when the drag began. The
  * live preview edits the document, and each step through a spot where an
@@ -942,6 +942,26 @@ function worldAtScreen(px: number, py: number, heightOffset?: number): Vec2 {
     point = view.toWorldAt(px, py, height, surface.cssW, surface.cssH);
   }
   return point;
+}
+
+/**
+ * The height of what is drawn under a screen point: the ray marched down from
+ * over the highest mountain until it meets a surface, then bisected (the
+ * cursor pick's own method, reaching the whole relief). A fixed point of
+ * "the height under the cursor at that height" wandered off on a tilted view
+ * over hills, and the zoom and the turn slid away from the pointer.
+ */
+function groundHeightUnder(at: Vec2): number {
+  const point = (h: number): Vec2 => view.toWorldAt(at.x, at.y, h, surface.cssW, surface.cssH);
+  const below = (h: number): boolean => { const p = point(h); return scene.surfaceHeightAt(p.x, p.y) >= h; };
+  let above = 600;
+  for (let h = 592; h >= -360; h -= 8) {
+    if (!below(h)) { above = h; continue; }
+    let lo = h;
+    for (let i = 0; i < 14; i++) { const mid = (lo + above) / 2; if (below(mid)) lo = mid; else above = mid; }
+    return lo;
+  }
+  return 0;
 }
 
 /** Whatever the player can see at a world point: a road deck, or the ground. */
@@ -1473,7 +1493,8 @@ canvas.addEventListener('pointerdown', (e) => {
       return;
     }
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
-    orbiting = { id: e.pointerId, last: at, pressed: at, moved: false, cancelOnClick: gestureInProgress() };
+    // The camera turns about the ground under the pointer, at its own height.
+    orbiting = { id: e.pointerId, last: at, pressed: at, moved: false, cancelOnClick: gestureInProgress(), height: groundHeightUnder(at) };
     return;
   }
 
@@ -1886,7 +1907,7 @@ canvas.addEventListener('pointermove', (e) => {
     orbiting.last = screen;
     // A turntable: the near side of the map follows the hand; dragging down
     // lifts the camera towards a plan view.
-    view.orbit(dx * ORBIT_PER_PX, dy * ORBIT_PER_PX);
+    view.orbit(dx * ORBIT_PER_PX, dy * ORBIT_PER_PX, { px: orbiting.pressed.x, py: orbiting.pressed.y, height: orbiting.height });
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
     return;
@@ -2302,13 +2323,10 @@ canvas.addEventListener(
       return;
     }
     const r = canvas.getBoundingClientRect();
-    view.zoomAt(
-      e.clientX - r.left,
-      e.clientY - r.top,
-      Math.exp(-e.deltaY * 0.0013),
-      surface.cssW,
-      surface.cssH,
-    );
+    const at = { x: e.clientX - r.left, y: e.clientY - r.top };
+    // About the ground under the pointer at its real height: on the plane at
+    // zero a hill or a chapada under the pointer slid away as the view zoomed.
+    view.zoomAt(at.x, at.y, Math.exp(-e.deltaY * 0.0013), surface.cssW, surface.cssH, groundHeightUnder(at));
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
   },

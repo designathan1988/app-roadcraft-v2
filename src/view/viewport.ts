@@ -49,15 +49,16 @@ export interface Viewport {
   toScreen(p: Vec2, cssW: number, cssH: number, height?: number): Vec2;
   /** Moves the view so `grabbed` sits under the pointer again. */
   panTo(grabbed: Vec2, px: number, py: number, cssW: number, cssH: number): void;
-  /** Zooms about a pointer, keeping the ground under it. */
-  zoomAt(px: number, py: number, factor: number, cssW: number, cssH: number): void;
+  /** Zooms about a pointer, keeping the ground under it (at `height`, the ground's own height there). */
+  zoomAt(px: number, py: number, factor: number, cssW: number, cssH: number, height?: number): void;
   /** Turns the view. A no-op where there is nothing to turn. */
   rotate(quarterTurns: number, px: number, py: number, cssW: number, cssH: number): void;
   /**
    * Swings the camera round (`dAzimuth`, rad) and over (`dElevation`, rad) the
+   * `pivot` (the ground under that pointer, at its height, stays put) or the
    * centre of the view. Free: any bearing, any tilt the view allows.
    */
-  orbit(dAzimuth: number, dElevation: number): void;
+  orbit(dAzimuth: number, dElevation: number, pivot?: { readonly px: number; readonly py: number; readonly height: number }): void;
   /** Puts the camera at an exact bearing and tilt about the centre of the view. */
   setOrbit(azimuth: number, elevation: number): void;
   /** Bearing the camera looks from, rad, measured as the rig measures it. */

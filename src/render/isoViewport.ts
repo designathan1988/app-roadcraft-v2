@@ -194,12 +194,12 @@ export function createIsoRig(
     return { x: hit.x, y: -hit.z };
   };
 
-  /** Re-applies, keeping the ground point that was under (px, py) under it. */
-  const keeping = (px: number, py: number, change: () => void): void => {
-    const before = worldAt(px, py);
+  /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
+  const keeping = (px: number, py: number, change: () => void, atHeight = 0): void => {
+    const before = worldAt(px, py, atHeight);
     change();
     apply();
-    const after = worldAt(px, py);
+    const after = worldAt(px, py, atHeight);
     target.x += before.x - after.x;
     target.z -= before.y - after.y;
     apply();
@@ -222,23 +222,26 @@ export function createIsoRig(
       target.z -= grabbed.y - now.y;
       apply();
     },
-    zoomAt(px, py, factor) {
+    zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0) {
       keeping(px, py, () => {
         halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, halfHeight / factor));
-      });
+      }, atHeight);
     },
     rotate(quarterTurns, px, py) {
       keeping(px, py, () => {
         azimuth = wrapAzimuth(azimuth + quarterTurns * Math.PI * 0.5);
       });
     },
-    orbit(dAzimuth, dElevation) {
-      // About the centre of the view: the ground there stays put, the camera
-      // swings round and over it. Orbiting about the pointer instead sends the
-      // view sliding off whenever the pointer is near an edge.
-      azimuth = wrapAzimuth(azimuth + dAzimuth);
-      elevation = clampElevation(elevation + dElevation);
-      apply();
+    orbit(dAzimuth, dElevation, pivot) {
+      // About the point the player grabbed (the player, 2026-10-07): that
+      // ground stays under the pointer while the camera swings round and over
+      // it. Without a pivot, about the centre of the view.
+      const turn = (): void => {
+        azimuth = wrapAzimuth(azimuth + dAzimuth);
+        elevation = clampElevation(elevation + dElevation);
+      };
+      if (pivot) keeping(pivot.px, pivot.py, turn, pivot.height);
+      else { turn(); apply(); }
     },
     setOrbit(nextAzimuth, nextElevation) {
       azimuth = wrapAzimuth(nextAzimuth);
