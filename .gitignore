@@ -22,3 +22,4 @@ zz-*
 zz[A-Z]*
 /.claude/_*
 /.claude/wt-*/
+release/

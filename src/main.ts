@@ -176,7 +176,13 @@ const newNature = (region = DEFAULT_REGION): NatureSettings => ({ region, seed: 
 doc.nature = newNature();
 const net = new Network(doc);
 const camera = new Camera();
-const surface = new CanvasSurface(canvas, () => requestDraw());
+/**
+ * Whether the whole module has run. The boot awaits (the surface bake, the
+ * crowd) let a resize draw a frame half-way through it, before the buildings
+ * and the rest exist; no frame is drawn until the end, which asks for one.
+ */
+let booted = false;
+const surface = new CanvasSurface(canvas, () => { if (booted) requestDraw(); });
 const history = new History();
 const persistence = new Persistence();
 
@@ -4357,6 +4363,7 @@ let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = 
 let weaponApplied = 0;
 function frame(now: number): void {
   pending = false;
+  if (!booted) return;
   beginFrameWork();
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
@@ -6064,3 +6071,7 @@ function rayOnBuilding(b: Building, sx: number, sy: number, ground: number): (Ve
   }
   return null;
 }
+
+// Everything is set up: the first frame may be drawn.
+booted = true;
+requestDraw();
