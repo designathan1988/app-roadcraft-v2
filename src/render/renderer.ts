@@ -127,6 +127,7 @@ import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
+import { buildNatureForest, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { isCoverKind } from '@world/terrainPaint';
 
 /**
@@ -900,6 +901,19 @@ export function createSceneRenderer(
   let nature: GroundCover | null = null;
   let natureFor = '';
   const coverKit = createGroundCoverKit();
+  // The countryside's trees are hand-made models (`natureTrees.ts`), loaded
+  // once; until they are, the procedural ones stand in. Busy (drawing) until
+  // the first forest of them is built.
+  let natureTreeKit: NatureTreeKit | null = null;
+  let natureForest: NatureForest | null = null;
+  let natureTreesPending = true;
+  void loadNatureTrees(anisotropy).then((kit) => {
+    natureTreeKit = kit;
+    natureFor = '';
+  }, (error: unknown) => {
+    natureTreesPending = false;
+    console.warn('[nature] trees not loaded; the procedural ones stay', error);
+  });
   /** Where a cover was painted (the only paints that raise a density), by paint revision. */
   let forestAreaFor = -1;
   let forestArea: Rect | null = null;
@@ -1603,7 +1617,8 @@ export function createSceneRenderer(
    * the painted covers (`groundCover.ts`, under 130 triangles each).
    */
   const NATURE_SPACING = m(5);
-  const NATURE_TREES = 5_000;
+  /** Trees the ecosystem grows at full vegetation quality (the forests take most). */
+  const NATURE_TREES = 26_000;
   const natureNoise = (x: number, y: number, scale: number, salt: number): number => {
     const gx = x / scale, gy = y / scale;
     const x0 = Math.floor(gx), y0 = Math.floor(gy);
@@ -1628,53 +1643,70 @@ export function createSceneRenderer(
       h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
       return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
     };
+    // THE TREE MAP, as Horizon Zero Dawn's Placement_Trees (Guerrilla, GDC
+    // 2017): one density per place, decoded by a curve into bands - the
+    // inner forest, its edge, scattered trees - and below them open
+    // ground. Woods gather in masses and the open country stays open, as in
+    // the diorama the player holds up (2026-10-07); evenly scattered single
+    // trees read as confetti over the whole map. The density: the
+    // ecosystem's canopy and trees, broad patches of a slow noise, and the
+    // slopes and valleys (woods hold the hillsides; the plains are the
+    // fields a town is built on).
     const cells = Math.floor((TERRAIN_HALF * 2) / NATURE_SPACING);
-    const odds = new Float32Array(cells * cells * 2);
+    const odds = new Float32Array(cells * cells);
+    const band = new Uint8Array(cells * cells);
     let treeSum = 0;
+    const d = m(6);
     for (let j = 0; j < cells; j++) {
       for (let i = 0; i < cells; i++) {
         const x = -TERRAIN_HALF + (i + 0.5) * NATURE_SPACING, y = -TERRAIN_HALF + (j + 0.5) * NATURE_SPACING;
         const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
         const k = iy * field.side + ix;
-        const tree = Math.min(1, (field.trees[k] ?? 0) + (field.canopy[k] ?? 0) * 0.8 + (field.emergent[k] ?? 0) * 0.5);
-        // Copses some 40 m across with smaller knots in them, and open grass between.
-        const clump = Math.min(1, Math.max(0, (natureNoise(x, y, m(38), 7) * 0.65 + natureNoise(x, y, m(11), 9) * 0.35 - 0.55) / 0.18));
-        const o = (j * cells + i) * 2;
-        odds[o] = tree * clump * (0.5 + 0.5 * clump);
+        const ecology = Math.min(1, (field.canopy[k] ?? 0) * 0.9 + (field.trees[k] ?? 0) * 0.5 + (field.emergent[k] ?? 0) * 0.3);
+        const patch = natureNoise(x, y, m(170), 7) * 0.6 + natureNoise(x, y, m(55), 9) * 0.3 + natureNoise(x, y, m(18), 11) * 0.1;
+        const slope = Math.hypot(terrain.renderedHeightAt(x + d, y) - terrain.renderedHeightAt(x - d, y), terrain.renderedHeightAt(x, y + d) - terrain.renderedHeightAt(x, y - d)) / (2 * d);
+        const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
+        // The patches drawn out to clear masses: woods on the plains too, as
+        // capões, and clean meadows between them.
+        const masses = Math.min(1, Math.max(0, (patch - 0.47) / 0.3));
+        const density = masses * 0.72 + hillside * 0.3 + ecology * 0.3 - 0.06;
+        const o = j * cells + i;
+        // The bands: inner forest, its edge, scattered trees, a rare lone one.
+        if (density > 0.62) { odds[o] = 0.92; band[o] = 3; }
+        else if (density > 0.5) { odds[o] = 0.25 + (density - 0.5) / 0.12 * 0.6; band[o] = 2; }
+        else if (density > 0.38) { odds[o] = 0.025; band[o] = 1; }
+        else { odds[o] = 0.003; band[o] = 1; }
         treeSum += odds[o]!;
       }
     }
-    const treeScale = Math.min(0.6, NATURE_TREES / Math.max(1, treeSum));
+    const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
+    const treeScale = Math.min(1, budget / Math.max(1, treeSum));
     // Water, a cliff, a road or a building: nothing grows there.
     const open = (x: number, y: number, z: number): boolean => {
       if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
       const level = terrain.shoreLevelAt(x, y);
       if (level !== null && level > z - m(0.3)) return false;
-      const d = m(2);
-      const grade = Math.hypot(terrain.renderedHeightAt(x + d, y) - terrain.renderedHeightAt(x - d, y), terrain.renderedHeightAt(x, y + d) - terrain.renderedHeightAt(x, y - d)) / (2 * d);
+      const g = m(2);
+      const grade = Math.hypot(terrain.renderedHeightAt(x + g, y) - terrain.renderedHeightAt(x - g, y), terrain.renderedHeightAt(x, y + g) - terrain.renderedHeightAt(x, y - g)) / (2 * g);
       if (grade > 0.75) return false;
       return !onCarriageway(net, { x, y }) && !buildings.covers(x, y);
     };
     for (let j = 0; j < cells; j++) {
       for (let i = 0; i < cells; i++) {
-        const o = (j * cells + i) * 2;
-        // Trees only: the blob bushes read as lumps on the lawn (the player,
-        // 2026-10-07), and are left to the scrub the player paints.
-        const isTree = hash(i, j, 41) < odds[o]! * treeScale;
-        if (!isTree) continue;
+        const o = j * cells + i;
+        if (hash(i, j, 41) >= odds[o]! * treeScale) continue;
         const x = -TERRAIN_HALF + (i + 0.5 + (hash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
         const y = -TERRAIN_HALF + (j + 0.5 + (hash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
         const z = terrain.renderedHeightAt(x, y);
         if (!open(x, y, z)) continue;
-        if (isTree && trees.length < NATURE_TREES) {
-          const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
-          const canopy = field.canopy[iy * field.side + ix] ?? 0;
-          // Short crooked savanna trees; taller where the canopy closes (gallery forest, cerradão).
-          const h = m(4.5) + m(4) * hash(i, j, 45) + m(8) * canopy;
-          const roll = hash(i, j, 46);
-          const species = canopy > 0.45 && roll < 0.55 ? 'broadleafTall' : 'broadleaf';
-          trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
-        }
+        if (trees.length >= budget) break;
+        // Tall in the heart of a wood, crowns meeting into one canopy;
+        // lower at its edge; short and crooked out in the open.
+        const inner = band[o] === 3, edge = band[o] === 2;
+        const h = inner ? m(11) + m(8) * hash(i, j, 45) : edge ? m(8) + m(6) * hash(i, j, 45) : m(5.5) + m(4) * hash(i, j, 45);
+        const roll = hash(i, j, 46);
+        const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
+        trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
       }
     }
     return { trees, shrubs };
@@ -2071,7 +2103,7 @@ export function createSceneRenderer(
     onBuildingDown: (listener) => { destruction.onDown = listener; },
     flingOccupants: (list) => { occupantQueue.push(...list); },
     setSmog: (k) => environment.setSmog(k),
-    busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0,
+    busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
     drifting: () => atmosphere.clouds > 0 && post.enabled && (quality.cloudShadows || quality.skyClouds),
     forgetRuin(id) {
       void id;
@@ -2275,13 +2307,29 @@ export function createSceneRenderer(
           nature.dispose();
           nature = null;
         }
+        if (natureForest) {
+          for (const mesh of natureForest.meshes) world.remove(mesh);
+          natureForest.dispose();
+          natureForest = null;
+        }
         const natureAt = performance.now();
         const plants = naturePlants(net);
-        if (plants.trees.length + plants.shrubs.length > 0) {
-          nature = buildGroundCover([], plants.shrubs, coverKit, plants.trees);
+        if (natureTreeKit && plants.trees.length > 0) {
+          natureForest = buildNatureForest(plants.trees, natureTreeKit);
+          for (const mesh of natureForest.meshes) world.add(mesh);
+          natureTreesPending = false;
+        }
+        const standIns = natureTreeKit ? [] : plants.trees;
+        if (standIns.length + plants.shrubs.length > 0) {
+          nature = buildGroundCover([], plants.shrubs, coverKit, standIns);
           for (const mesh of nature.meshes) world.add(mesh);
         }
         performance.measure('hitch:nature', { start: natureAt, end: performance.now() });
+      }
+      // Near trees in full, far ones light, round the ground the view looks at.
+      if (natureForest) {
+        const centre = rig.viewport.centre;
+        natureForest.updateLod(centre.x, -centre.y);
       }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
@@ -2674,6 +2722,8 @@ export function createSceneRenderer(
       cover?.dispose();
       nature?.dispose();
       coverKit.dispose();
+      natureForest?.dispose();
+      natureTreeKit?.dispose();
       sceneryKit.dispose();
       terrain.dispose();
       materials.dispose();
