@@ -299,7 +299,7 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
   const g1 = makeNoise(0x61a1), g2 = makeNoise(0x61d4), gs = makeNoiseXY(0x61b2), gf = makeNoise(0x61c3);
   const s1 = makeNoise(0x7a11), s2 = makeNoise(0x7a22), ss = makeNoiseXY(0x7a33);
   const b1 = makeNoise(0x8b11), bs = makeNoiseXY(0x8b22);
-  const grey: readonly [number, number, number] = [0.45, 0.44, 0.415];
+  const grey: readonly [number, number, number] = [0.46, 0.455, 0.44];
   const graniteFace = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
     const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
     const slab = fbm(g1, u * 4, v * 4, 4, 3);
@@ -394,7 +394,7 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     out.h = 0.5 + block * 0.15 + crust * 0.15 - crack * 0.5 - fill * 0.15 + grain * 0.1;
     out.rough = 0.94;
   };
-  const dark: readonly [number, number, number] = [0.3, 0.29, 0.275];
+  const dark: readonly [number, number, number] = [0.4, 0.385, 0.37];
   const basaltFace = (x: number, y: number, out: { r: number; g: number; b: number; h: number; rough: number }): void => {
     const u = x / ROCK_SIZE, v = y / ROCK_SIZE;
     // Columns of uneven width, swaying a little as they rise.
@@ -414,7 +414,7 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     const grain = fbm(b1, u * 128, v * 128 + 4, 128, 2);
     const k = (0.86 + latticeHash(col, 9, 0x8b66) * 0.22) * (0.92 + facet * 0.12) * (0.9 + grain * 0.18);
     out.r = dark[0] * k; out.g = dark[1] * k; out.b = dark[2] * k;
-    tintTowards(out, [0.4, 0.26, 0.18], rust * 0.45);
+    tintTowards(out, [0.42, 0.3, 0.22], rust * 0.25);
     tintTowards(out, [0.47, 0.49, 0.43], lichen * 0.3);
     tintTowards(out, [0.42, 0.41, 0.39], streak * 0.25);
     const shut = Math.max(gap, cross * 0.7);
@@ -432,7 +432,7 @@ const ROCK_RECIPES: readonly (readonly [string, SurfaceRecipe])[] = (() => {
     const grain = fbm(b1, u * 128 + 5, v * 128 + 6, 128, 2);
     const k = (0.84 + top * 0.24) * (0.9 + grain * 0.18) * (0.94 + c.f1 * 0.1);
     out.r = dark[0] * k; out.g = dark[1] * k; out.b = dark[2] * k;
-    tintTowards(out, [0.42, 0.27, 0.19], rust * 0.55);
+    tintTowards(out, [0.42, 0.3, 0.22], rust * 0.3);
     tintTowards(out, [0.48, 0.5, 0.44], lichen * 0.5);
     out.r *= 1 - joint * 0.6; out.g *= 1 - joint * 0.6; out.b *= 1 - joint * 0.6;
     out.h = 0.55 + top * 0.15 - c.f1 * 0.2 - joint * 0.55 + grain * 0.1;
@@ -1143,14 +1143,24 @@ function terrainMaterial(
            tint *= 1.0 - hard * 0.18 * smoothstep(0.84, 0.92, f) * (1.0 - smoothstep(0.96, 1.0, f));
            return tint;
          }
+         // Granite's exfoliation sheets: no beds, but broad shells of slightly
+         // different weathering a dozen metres apart, warmer and cooler.
+         vec3 graniteSheets(float y, float warpA, float warpC) {
+           float t = (y + (warpA - 0.5) * 60.0 + (warpC - 0.5) * 20.0) / 30.0;
+           float i = floor(t);
+           float f = t - i;
+           vec3 a = mix(vec3(0.9, 0.92, 0.95), vec3(1.06, 1.04, 1.0), terrainHash(vec2(i, 47.0)));
+           vec3 b = mix(vec3(0.9, 0.92, 0.95), vec3(1.06, 1.04, 1.0), terrainHash(vec2(i + 1.0, 47.0)));
+           return mix(a, b, smoothstep(0.7, 1.0, f));
+         }
          // Basalt's lava flows, stacked some 22 m each: barely different
          // greys, the weathered, bubbly top of each a little redder.
          vec3 basaltFlows(float y, float warpA) {
            float t = (y + (warpA - 0.5) * 34.0) / 56.0;
            float i = floor(t);
            float f = t - i;
-           vec3 tint = mix(vec3(0.9, 0.93, 0.97), vec3(1.08, 1.0, 0.93), terrainHash(vec2(i, 31.0)));
-           tint *= mix(vec3(1.0), vec3(1.2, 0.92, 0.8), smoothstep(0.8, 0.94, f) * (1.0 - smoothstep(0.97, 1.0, f)));
+           vec3 tint = mix(vec3(0.84, 0.87, 0.9), vec3(1.12, 1.06, 1.0), terrainHash(vec2(i, 31.0)));
+           tint *= mix(vec3(1.0), vec3(1.14, 0.97, 0.88), smoothstep(0.78, 0.92, f) * (1.0 - smoothstep(0.97, 1.0, f)));
            return tint;
          }
 `,
@@ -1221,7 +1231,7 @@ function terrainMaterial(
            vec4 cGranite = vec4(0.0);
            vec4 cSand = vec4(0.0);
            vec4 cBasalt = vec4(0.0);
-           if (geology.x > 0.01) cGranite = rockTriColor(0.0, vTerrainWorld, triW);
+           if (geology.x > 0.01) { cGranite = rockTriColor(0.0, vTerrainWorld, triW); cGranite.rgb *= graniteSheets(vTerrainWorld.y, wanderA, wanderC); }
            if (geology.y > 0.01) { cSand = rockTriColor(1.0, vTerrainWorld, triW); cSand.rgb *= sandstoneBeds(vTerrainWorld.y, wanderA, wanderC); }
            if (geology.z > 0.01) { cBasalt = rockTriColor(2.0, vTerrainWorld, triW); cBasalt.rgb *= basaltFlows(vTerrainWorld.y, wanderA); }
            // Height-blended between the rocks too: a boundary breaks along the
@@ -1425,6 +1435,15 @@ function terrainMaterial(
            float onMap = step(abs(vTerrainWorld.x), uGrid.z) * step(abs(vTerrainWorld.z), uGrid.z);
            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), line * uGrid.y * onMap);
          }`,
+      )
+      .replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+         // GROUND BOUNCE on the walls: a cliff faces the lit land as much as the
+         // sky, and the hemisphere light gives it a blue sky and a dim floor, so
+         // a face away from the sun went a navy hole with no stone in it. Only
+         // the steep faces take it; the flat ground is lit as before.
+         reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.34, 0.31, 0.25) * smoothstep(30.0, 70.0, slopeDeg);`,
       )
       .replace(
         '#include <normal_fragment_maps>',
