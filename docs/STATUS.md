@@ -259,6 +259,25 @@ and they have seen it.
   over with clearance, or is refused.
 - Terrain brush is opacity per stroke (strength 1-160); a cut deeper than 18 m is
   bored as a tunnel; water floods adjacent basins.
+- **Terrain look (2026-10-06, LIVE):** a NEW map starts on a natural landform
+  (`world/terrain.ts` `naturalRelief`: domain-warped, plains and ridged hills,
+  `RoadDoc.terrainRelief` = 2); saved maps keep the old field (no `relief`
+  key). New raise/lower/river dabs are `rough` (irregular reach, soft ridges;
+  a river cuts a flat bed with ramped banks); old dabs are unchanged. Ground:
+  grass with grain, soil and rock height-blended by slope with noise-wandering
+  limits, triplanar rock, a regional colour map, sand/wet/earth-bank bands at
+  the water by its level per terrain corner, a gravel bed seen through the
+  shallows; water by absorption (clear shallows, teal, deep blue), slow tone
+  swings, ripples; the block's sides in uneven geological beds; cloud shadows
+  (high/ultra, post pass). Paint brushes **scrub, flowers, rocks** besides
+  forest (`world/terrainPaint.ts` COVER_KINDS): scrub and rocks are low-poly
+  instanced (`render/groundCover.ts`: 60 and 36 triangles), flowers have no
+  geometry (blossoms in the terrain shader, by levels of detail, seen from the
+  whole map). River stones are scattered on beds and banks by the player's
+  request of 2026-10-06 (an exception to "nothing generated on terrain").
+  Measured on the RTX 3060, same map: 11.1 -> 11.8 ms a frame (overview),
+  8.0 -> 8.7 (close); painted worst case 11.2 / 9.5 ms. The terrain material
+  binds 16 textures, the WebGL limit: a new one must share a channel.
 - Pedestrian walkways graph (`world/walkways.ts`) and the cross-section model
   (`world/section.ts`, NACTO zones) exist; the section is not yet stored on
   `RoadSegment`.

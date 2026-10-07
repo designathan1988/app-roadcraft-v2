@@ -1492,6 +1492,14 @@ export function createSceneRenderer(
    */
   const SCRUB_SPACING = m(2.4);
   const SCRUB_MAX = 12_000;
+  /** The cell range [i0, i1, j0, j1] of a grid of `spacing` that the painted covers reach; empty when none. */
+  const paintedCells = (net: Network, spacing: number): [number, number, number, number] => {
+    const area = forestAreaOf(net.doc);
+    if (!area) return [0, -1, 0, -1];
+    const last = Math.floor((TERRAIN_HALF * 2) / spacing) - 1;
+    const cell = (v: number): number => Math.max(0, Math.min(last, Math.floor((v + TERRAIN_HALF) / spacing)));
+    return [cell(area[0]), cell(area[2]), cell(area[1]), cell(area[3])];
+  };
   const scrubPlacements = (net: Network): CoverPlacement[] => {
     const out: CoverPlacement[] = [];
     const hash = (a: number, b: number, salt: number): number => {
@@ -1499,9 +1507,11 @@ export function createSceneRenderer(
       h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
       return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
     };
-    const cells = Math.floor((TERRAIN_HALF * 2) / SCRUB_SPACING);
-    for (let j = 0; j < cells && out.length < SCRUB_MAX; j++) {
-      for (let i = 0; i < cells && out.length < SCRUB_MAX; i++) {
+    // Only the cells under the painted covers: the whole map's grid was some
+    // 640 000 cells and stalled every dab of a stroke for tens of milliseconds.
+    const [i0, i1, j0, j1] = paintedCells(net, SCRUB_SPACING);
+    for (let j = j0; j <= j1 && out.length < SCRUB_MAX; j++) {
+      for (let i = i0; i <= i1 && out.length < SCRUB_MAX; i++) {
         const cx = -TERRAIN_HALF + (i + 0.5) * SCRUB_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * SCRUB_SPACING;
         const density = terrain.coverAt('scrub', cx, cy);
         if (density < 0.04) continue;
@@ -1547,9 +1557,9 @@ export function createSceneRenderer(
       h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
       return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
     };
-    const cells = Math.floor((TERRAIN_HALF * 2) / ROCK_SPACING);
-    for (let j = 0; j < cells && out.length < ROCK_MAX; j++) {
-      for (let i = 0; i < cells && out.length < ROCK_MAX; i++) {
+    const [i0, i1, j0, j1] = paintedCells(net, ROCK_SPACING);
+    for (let j = j0; j <= j1 && out.length < ROCK_MAX; j++) {
+      for (let i = i0; i <= i1 && out.length < ROCK_MAX; i++) {
         const cx = -TERRAIN_HALF + (i + 0.5) * ROCK_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * ROCK_SPACING;
         const density = terrain.coverAt('rocks', cx, cy);
         if (density < 0.04 || hash(i, j, 41) > Math.sqrt(density) * 0.7) continue;

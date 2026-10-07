@@ -245,11 +245,13 @@ export function terrainBakes(anisotropy: number): {
         // second noise rounds them into tufts.
         // A light warp only: a strong one smeared the patches into swirls of
         // wet paint (the player, 2026-10-06).
-        const wx = (fbm(grassClump, u * 24 + 11, v * 24, 24, 2) - 0.5) * 0.9;
-        const wy = (fbm(grassClump, u * 24, v * 24 + 29, 24, 2) - 0.5) * 0.9;
+        // One octave each: the warp only bends the patches' edges, and the
+        // bake runs while the game loads.
+        const wx = (fbm(grassClump, u * 24 + 11, v * 24, 24, 1) - 0.5) * 0.9;
+        const wy = (fbm(grassClump, u * 24, v * 24 + 29, 24, 1) - 0.5) * 0.9;
         const speck = fbm(grassFine, u * 96 + wx * 2, v * 96 + wy * 2, 96, 2);
-        const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 3);
-        const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 3);
+        const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 2);
+        const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 2);
         // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
         const dark = [0.27, 0.325, 0.15];
         const lit = [0.31, 0.36, 0.16];
@@ -1005,7 +1007,9 @@ const TOPSOIL = 4;
  * so it tiles along the rim and down the wall with no seam.
  */
 function strataTexture(anisotropy: number): DataTexture {
-  const res = 512;
+  // 1.25 m a texel over the 320 m the texture spans along a wall: finer than
+  // the wall is ever seen, and four times cheaper at load than 512.
+  const res = 256;
   const noise = makeNoise(4_177);
   const grit = makeNoise(0x77a1);
   // One repeat of the section, top to bottom: a THICKNESS (share of the
@@ -1049,8 +1053,8 @@ function strataTexture(anisotropy: number): DataTexture {
       const pebble = kind === 1 ? (fbm(grit, u * 256 + 9, v * 256 + 4, 256, 1) > 0.62 ? 1.22 : 0.92) : 1;
       // Rain wash: faint vertical streaks down the face.
       let wash = 0;
-      for (let k = 0; k < 6; k++) wash += fbm(grit, u * 90, v * 90 + k, 90, 1);
-      wash = 0.94 + 0.12 * (wash / 6);
+      for (let k = 0; k < 3; k++) wash += fbm(grit, u * 90, v * 90 + k, 90, 1);
+      wash = 0.94 + 0.12 * (wash / 3);
       // The top of each bed a touch darker, where the one above weathers into it.
       const seam = 0.9 + 0.1 * Math.min(1, depthIn * 6);
       const shade = fine * pebble * wash * seam;
