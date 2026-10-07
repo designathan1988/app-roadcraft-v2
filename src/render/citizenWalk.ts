@@ -355,7 +355,9 @@ export type LibraryClipName =
   | 'eatIdle' | 'workTable' | 'walkDrunk' | 'runFast'
   | 'walkN1' | 'walkN2' | 'walkN3' | 'walkStroll' | 'walkCool' | 'walkFast'
   // Hurt and afraid (`people/proceduralCrowd.ts`: the wounded's run and limp, a bystander standing scared).
-  | 'runInjured' | 'walkInjured' | 'nervous';
+  | 'runInjured' | 'walkInjured' | 'nervous'
+  // Struck by a round (Quaternius's Universal Animation Library, `scripts/extract-quaternius-clips.mjs`).
+  | 'hitChest' | 'hitHead';
 
 /**
  * One clip of the library, decoded and ready to transfer.

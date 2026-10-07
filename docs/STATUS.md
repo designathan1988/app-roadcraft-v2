@@ -339,20 +339,34 @@ and they have seen it.
 
 ### Actions: pistol and bomb (2026-10-06, LIVE)
 - Actions dock button: Pistola and Bomba, used from the map view (no play mode).
-- Shot people (`sim/agents/walk.ts` `shot`, `woundOf`): damage by part; the
-  wound's gravity decides - light (most health left): taken standing (the
-  bullet's jolt, bent over the wound, a hand on it by two-bone IK,
-  `proceduralCrowd` posture), then walking hurt (slow-walk clip, posture kept,
-  75% pace, fleeing at most 1.15x); grave (half health gone or a limb lost) or
-  shot while down: falls (ragdoll, arms out) and stays down crawling and
-  bleeding; dead stay down. The end of a reaction is never a recovery.
-- Getting up from lying (bomb knock-downs, stampede trips, `ragdoll.ts` rise):
-  key poses from the pose lying - rolled onto the front if face up, hands and
-  knees, crouch - then the crouch-up clip.
-- Bodies drawn by forward kinematics (rotations only, bone lengths kept);
-  bones collide as capsules with ground, walls, poles, furniture and cars.
-- Bomb: charring, dismemberment, guts (`render/gore.ts`), each vehicle's own
-  burnt shell; vehicles shot: riders thrown, drivers killed, cars blow up.
+- Shot people (`sim/agents/walk.ts` `shot`, `woundOf`), 2026-10-07: the hit
+  itself captured (Quaternius Hit_Chest, `scripts/extract-quaternius-clips.mjs`);
+  light trunk/arm wound: a stagger back, bent over it with a hand on it, then
+  fleeing on the captured injured run (Rocketbox run_injured) and after on the
+  captured limp (walk_bruised/walk_injured); a leg wound or half the trunk
+  wounds knock them down onto knees and hands, up again and away; grave or
+  shot while down: down for good, writhing (muscle pulls), bleeding out. A
+  limb hit on somebody down comes off; the belly opens at the third trunk
+  round (now and then the second), at the second on a corpse. Head: dead.
+- Bystanders (`frighten`): turned to the shot (captured nervous idle), two in
+  five near it down with both hands over the head, some filming farther off,
+  everybody running with hands over the head, a few tripping. The scenery
+  makes couples and adult-with-child pairs (`ambient.ts` company); the one
+  left grieves crouched beside a shot companion, then runs.
+- Bodies on the ground: Jolt Physics (`render/ragdollJolt.ts`, loaded a few
+  seconds in): twelve rigid parts, hinges and swing-twist cones with human
+  reach, weak knee/elbow tone, a height field of the ground, walls and cars
+  as prisms; pushes from the rest of `ragdoll.ts` become impulses.
+  `?ragdoll=verlet` brings back the stick figure.
+- Getting up from lying (`ragdoll.ts` rise): key poses from the pose lying -
+  rolled onto the front if face up, hands and knees, crouch - then the
+  crouch-up clip.
+- Bomb: everybody it kills burnt black and drawn up, dismemberment, guts
+  (`render/gore.ts`), each vehicle's own burnt shell; vehicles shot: riders
+  thrown, drivers killed, cars blow up.
+- Not yet: a crawl and a walk backwards captured (only in the paid UAL Pro;
+  the stagger back plays the walk backwards; the gravely wounded writhe in
+  place).
 - Weapons lab: `?lab=armas` (`src/weaponsLab.ts`), served without reloads by
   `vite --config vite.lab.config.ts` (port 5190; restart it to load new code);
   probes, a timeline of each transition with its call stack (`traceWalkers`),

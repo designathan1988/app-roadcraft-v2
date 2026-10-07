@@ -895,10 +895,15 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // picking a thing up), and its end is not a recovery: the wound goes
       // on governing how they move (`walk.ts` woundOf).
       person.activity = 'hurt';
-      // Knocked back first (`walk.ts` staggerSpeed): the walk played
+      // The hit itself first, as captured (Quaternius Hit_Chest, a third of a
+      // second); then knocked back (`walk.ts` staggerSpeed): the walk played
       // backwards at the stagger's pace, the feet stepping, not sliding.
+      const hitFor = procedural!.ragdoll.duration(person, 'hit');
       const back = staggerSpeed(act.t) / m(1);
-      if (back > 0.05) {
+      if (act.t < hitFor) {
+        if (person.clip !== 'hit') person.clip = 'hit';
+        person.phase = Math.min(0.999, act.t / hitFor);
+      } else if (back > 0.05) {
         if (person.clip !== 'walk') { person.clip = 'walk'; person.phase = 0; }
         person.phase -= dt * back / Math.max(0.1, procedural!.stride(person));
         person.phase -= Math.floor(person.phase);
@@ -1085,16 +1090,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       const person = procOf(index);
       if (person && procedural) procedural.ragdoll.char(person, true);
     },
-    wound(index, part, fromX, fromY) {
+    wound(index, part) {
       const person = procOf(index);
       if (!person || !procedural) return;
       procedural.ragdoll.wound(person, part);
-      if (fromX !== undefined && fromY !== undefined) {
-        const x = person.matrix.elements[12]!, y = -person.matrix.elements[14]!;
-        const l = Math.hypot(x - fromX, y - fromY) || 1;
-        // Harder in the trunk; a limb hit turns the body less.
-        procedural.ragdoll.jolt(person, (x - fromX) / l, (y - fromY) / l, part === 'torso' ? 0.42 : part === 'head' ? 0.5 : 0.22);
-      }
+      // The jerk of the hit is the captured one now (the `hit` clip, `procDraw` flinch), not a turn of the spine laid over the clip.
     },
     drench(index) {
       const person = procOf(index);
