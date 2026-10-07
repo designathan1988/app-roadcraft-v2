@@ -726,10 +726,10 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed, 'torn');
     } else if (c.kind === 'dead') {
       exhaust.burst(chest.x, -chest.z, chest.y, 24, 4, m(0.25), m(0.045), 0.9);
-      // Shot dead: the pool spreads under the body where it comes to rest
-      // (`update`, pooled), not where they stood; and a bullet throws no
-      // pieces of them about - a blast does.
-      if (!c.struck) bleed(c.x, c.y, groundHere, m(1.2), 0.6);
+      // Dead: the pool spreads under the body where it comes to rest
+      // (`update`, pooled), not where they stood or were thrown from (a rider
+      // shot off a motorcycle, somebody thrown by a blast); and a bullet
+      // throws no pieces of them about - a blast does.
       for (let k = 0; k < 4; k++) {
         const a = Math.random() * Math.PI * 2, r = m(0.8 + Math.random() * 2.5);
         bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.3 + Math.random() * 0.5), 0);

@@ -1426,10 +1426,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // (`occupants.ts`). A car seat sizes its occupant to clear the roof
       // lining; an upright cab or bus seat, whose feet must be on the floor,
       // draws them at the size the pose was solved at.
-      const plays = occupantPlays(seat, who.seed, frameClock, seatPlays);
+      const slain = seat.driver && vehicle.slain === true;
+      const plays = occupantPlays(seat, who.seed, frameClock, seatPlays, slain);
       const fixed = seat.pose === 'car' ? 0 : 1;
       const drawn = pedestrians.drawClip(who, seatPoint.x, seatPoint.y, seatPoint.h ?? fdeck + seat.hipY, fyaw, plays as readonly { key: CitizenClipKey; phase: number; weight: number }[],
-        0, seatFitScale(seat), false, fixed);
+        0, seatFitScale(seat), false, fixed, null, slain ? 'dead' : undefined);
       if (seat.driver) driverScale = drawn;
     }
     // The wheel where this driver's hands are: at their own size, and turned

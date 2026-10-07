@@ -66,8 +66,14 @@ const smooth = (x: number): number => {
  * choice come from `seed`, so two people side by side do not move together,
  * and a passenger on the right looks out of the right-hand window.
  */
-export function occupantPlays(seat: Pick<SeatModel, 'pose' | 'driver' | 'row' | 'z'>, seed: number, time: number, out: Play[]): Play[] {
+export function occupantPlays(seat: Pick<SeatModel, 'pose' | 'driver' | 'row' | 'z'>, seed: number, time: number, out: Play[], slain = false): Play[] {
   const clips = clipsFor(seat);
+  // Shot dead at the wheel: slumped over it, still.
+  if (slain && seat.driver && seat.pose !== 'chair') {
+    out.length = 0;
+    out.push({ key: seat.pose === 'cab' ? 'cabDead' : 'carDead', phase: 0, weight: 1 });
+    return out;
+  }
   const h = mix(seed);
   const period = 6 + (h % 7);
   const t = time / period + ((h >>> 8) & 0xff) / 256;

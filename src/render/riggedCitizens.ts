@@ -895,7 +895,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         /** For a walk: ground covered, world units; the phase then follows this body's own stride. */
         readonly distance?: number }[],
       lean = 0, maxScale = Infinity, fromGround: boolean | 'pelvisOver' = false, fixedScale = 0,
-      helmet: Matrix4 | null = null): number {
+      helmet: Matrix4 | null = null, face?: 'dead'): number {
       const hash = personHash(identity.seed);
       const body = bodyFor({ ...identity, helmet: helmet !== null, x: pelvisX, y: pelvisY });
       if (!body) return 0;
@@ -960,7 +960,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         // In a seat a face lives too: blinking, glancing, a passenger
         // chatting now and then (wall time: the render's own clock).
         lod === 0 ? faceAt(identity.seed, performance.now() / 1000 + identity.seed * 0.13,
-          seatedChat(identity.seed, performance.now() / 1000) ? 'talk' : undefined, CROWD[body.index]?.person?.mood) : undefined);
+          face ?? (seatedChat(identity.seed, performance.now() / 1000) ? 'talk' : undefined), CROWD[body.index]?.person?.mood) : undefined);
       if (helmet) {
         // This body's helmet on the head of the pose carrying the most
         // weight, through the transform `emit` just drew the body with: at

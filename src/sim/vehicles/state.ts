@@ -62,6 +62,8 @@ export interface Vehicle {
 
   /** Free-flow speed, already including this driver's personal factor. */
   v0: number;
+  /** The driver shot dead at the wheel (`strandVehicle`): drawn slumped over it. */
+  slain?: boolean;
 
   /** Planned lanelet sequence ahead, current lanelet first. */
   route: LaneletId[];
@@ -335,4 +337,5 @@ export function createVehicle(
  */
 export function strandVehicle(v: Vehicle): void {
   v.v0 = 0;
+  v.slain = true;
 }

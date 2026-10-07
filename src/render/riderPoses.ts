@@ -31,7 +31,7 @@ import { Box3, Bone, Matrix4, Object3D, Quaternion, SkinnedMesh, Vector3 } from 
  */
 
 export type RiderClipKey =
-  | 'carDrive' | 'carDriveMirror' | 'carDriveRight'
+  | 'carDrive' | 'carDriveMirror' | 'carDriveRight' | 'carDead' | 'cabDead'
   | 'carRide' | 'carRideLeft' | 'carRideRight'
   | 'carRearRide' | 'carRearLeft' | 'carRearRight'
   | 'cabDrive' | 'cabDriveMirror' | 'cabDriveRight'
@@ -309,6 +309,19 @@ const CHAIR_SIT: Targets = {
   look: 0.05,
 };
 
+/**
+ * A driver shot dead at the wheel, as GTA V draws one: slumped forward over
+ * the wheel, the head hanging down and to one side, one hand slid off the
+ * rim into the lap and the other arm hanging by the seat. The feet stay on
+ * the pedals.
+ */
+const dead = (t: Targets, lean: number): Targets => ({
+  ...t, lean, twist: 0.12, turn: 0.55, look: 0.75,
+  leftHand: [0.24, -0.2, 0.16],
+  rightHand: [-0.06, 0.02, 0.3],
+  elbowPole: [0.4, -1, -0.3],
+});
+
 /** A head turned, and the shoulders a little with it. */
 const turned = (t: Targets, turn: number, look = t.look ?? 0): Targets => ({ ...t, turn, look, twist: (t.twist ?? 0) + turn * 0.15 });
 
@@ -350,6 +363,8 @@ export const RIDER_CLIPS: readonly RiderClip[] = [
   seated('carDrive', CAR_DRIVE),
   seated('carDriveMirror', turned(CAR_DRIVE, 0.45, -0.05)),
   seated('carDriveRight', turned(CAR_DRIVE, -0.45)),
+  still('carDead', dead(CAR_DRIVE, 0.4)),
+  still('cabDead', dead(CAB_DRIVE, 0.45)),
   seated('carRide', CAR_RIDE),
   seated('carRideLeft', turned(CAR_RIDE, 0.45)),
   seated('carRideRight', turned(CAR_RIDE, -0.45)),

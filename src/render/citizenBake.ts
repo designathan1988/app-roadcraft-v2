@@ -415,7 +415,7 @@ export const CORE_LIBRARY: ReadonlySet<Played> = new Set<Played>([
  * Each is a seated loop solved by IK frame by frame, the dearest bake there is.
  */
 export const RIDER_BASE: Readonly<Partial<Record<RiderClipKey, RiderClipKey>>> = {
-  carDriveMirror: 'carDrive', carDriveRight: 'carDrive',
+  carDriveMirror: 'carDrive', carDriveRight: 'carDrive', carDead: 'carDrive', cabDead: 'cabDrive',
   carRideLeft: 'carRide', carRideRight: 'carRide',
   carRearLeft: 'carRearRide', carRearRight: 'carRearRide',
   cabDriveMirror: 'cabDrive', cabDriveRight: 'cabDrive',
