@@ -1,26 +1,46 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   Color,
+  ConeGeometry,
+  CylinderGeometry,
   DodecahedronGeometry,
+  DoubleSide,
   IcosahedronGeometry,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
   Quaternion,
+  SRGBColorSpace,
   Vector3,
+  type MeshDepthMaterial,
 } from 'three';
 
+import { Rng } from '@core/rng';
+import { leafCards } from './propGeometry';
+import { applyFoliageShading } from './foliageShading';
+import { applyWind, windDepthMaterial, type WindResponse } from './wind';
+
 /**
- * What stands low on the ground: rocks and boulders (the painted "rocks"
- * ground and the stones of a river's bed and banks) and low scrub (the
- * painted "scrub").
+ * What stands on the open ground: rocks and boulders (the painted "rocks"
+ * ground and the stones of a river's bed and banks), low scrub (the painted
+ * "scrub") and the trees of a painted forest.
  *
- * Both are LOW-POLY by rule (the player: nothing of hundreds or thousands of
- * polygons): a stone is 36 triangles, a bush 60, with no leaf cards and no
- * alpha. They are read by silhouette and a few flat-shaded facets, and a
- * field of thousands costs a few draw calls and tens of thousands of
- * triangles - a single garden bush with its leaf cards is 700.
+ * All LOW-POLY by rule (the player: nothing of hundreds or thousands of
+ * polygons): a stone is 36 triangles, a bush 60, a broadleaf tree 82 and a
+ * conifer 31. A forest of thousands costs a few draw calls - one instanced
+ * mesh per variant, as instanced forests are drawn (three.js forum,
+ * "Procedural instanced forest") - where a garden tree is 1 700 triangles.
+ *
+ * A broadleaf is built as games build stylized trees: a small inner crown
+ * and a handful of large FOLIAGE CARDS - quads of a leaf-cluster texture,
+ * alpha-tested and two-sided - all lit with normals pointing out from the
+ * crown's centre (Polycount and SideFX on stylized foliage; The Witness's
+ * trees), so the canopy shades as one soft mass and the cards never show
+ * their flat sides; the project's leaf-clump shading (`foliageShading.ts`)
+ * breaks the inner crown into leaves for free. At under a hundred triangles
+ * a tree needs no impostor: the model is already cheaper than one.
  *
  * Each variant is a convex solid pushed in and out by layered noise, the
  * large form first and then detail at a fraction of the amplitude, as
@@ -42,12 +62,76 @@ export interface CoverPlacement {
   readonly seed: number;
 }
 
+/** The trees a painted forest grows. */
+export type ForestSpecies = 'broadleaf' | 'broadleafTall' | 'conifer' | 'ipeYellow' | 'ipePink';
+export const FOREST_SPECIES: readonly ForestSpecies[] = ['broadleaf', 'broadleafTall', 'conifer', 'ipeYellow', 'ipePink'];
+
+/** A tree: `size` is its height. */
+export interface TreePlacement extends CoverPlacement {
+  readonly species: ForestSpecies;
+}
+
+/** One tree model: its trunk and inner crown, and its foliage cards (none on a conifer). */
+export interface TreeModel {
+  readonly body: BufferGeometry;
+  readonly cards: BufferGeometry | null;
+}
+
 export interface GroundCoverKit {
   readonly rocks: readonly BufferGeometry[];
   readonly scrub: readonly BufferGeometry[];
+  /** Per species, its variants; one unit tall, the crown some 0.6 across. */
+  readonly trees: Readonly<Record<ForestSpecies, readonly TreeModel[]>>;
   readonly rockMaterial: MeshStandardMaterial;
   readonly scrubMaterial: MeshStandardMaterial;
+  readonly treeMaterial: MeshStandardMaterial;
+  readonly cardMaterial: MeshStandardMaterial;
+  readonly cardDepth: MeshDepthMaterial;
   dispose(): void;
+}
+
+/** The forest's sway: the crown more than the trunk, as the garden trees. */
+const FOREST_WIND: WindResponse = { sway: 0.045, flutter: 0.009 };
+
+/**
+ * A cluster of small leaves on a card, for a tree's foliage cards: many
+ * leaves (a card is metres across) in a rounded clump with ragged gaps, each
+ * leaf its own shade, the alpha cut round them. Grey: the card's vertex
+ * colour gives it the species' green.
+ */
+function leafClusterTexture(): CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const rng = new Rng(0xc1a5);
+  ctx.clearRect(0, 0, size, size);
+  for (let i = 0; i < 340; i++) {
+    const a = rng.float() * Math.PI * 2;
+    // Denser at the heart of the clump, ragged at its rim.
+    const r = Math.pow(rng.float(), 0.7) * 112;
+    const x = size / 2 + Math.cos(a) * r;
+    const y = size / 2 + Math.sin(a) * r * 0.92;
+    const len = 12 + rng.float() * 9;
+    const wid = 5 + rng.float() * 4;
+    const tone = 150 + Math.floor(rng.float() * 105);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rng.float() * Math.PI * 2);
+    ctx.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.quadraticCurveTo(0, -wid, len / 2, 0);
+    ctx.quadraticCurveTo(0, wid, -len / 2, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
 }
 
 export interface GroundCover {
@@ -158,21 +242,146 @@ export function scrubGeometry(seed: number): BufferGeometry {
   return geometry;
 }
 
+/** Appends a non-indexed copy of `part` (positions, normals) in one colour. */
+function appendPart(part: BufferGeometry, colour: readonly [number, number, number], positions: number[], normals: number[], colours: number[]): void {
+  const flat = part.index ? part.toNonIndexed() : part;
+  const position = flat.getAttribute('position');
+  const normal = flat.getAttribute('normal');
+  for (let i = 0; i < position.count; i++) {
+    positions.push(position.getX(i), position.getY(i), position.getZ(i));
+    normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+    colours.push(colour[0], colour[1], colour[2]);
+  }
+  if (flat !== part) flat.dispose();
+  part.dispose();
+}
+
+/**
+ * A tree one unit tall. A conifer: a five-sided trunk (10 triangles, open -
+ * its ends are never seen) and three stacked cones (7 triangles each, faceted
+ * as needles read), 31 triangles. A broadleaf: the trunk, an inner crown of
+ * two lumps (20 triangles each) and 16 foliage cards (32 triangles) - 82 -
+ * every crown vertex and card lit with the normal from the CROWN's centre.
+ * Colours LINEAR, lighter where the sun reaches the top of the crown.
+ */
+export function treeModel(species: ForestSpecies, seed: number): TreeModel {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colours: number[] = [];
+  const bark: [number, number, number] = [0.07, 0.045, 0.03];
+  const finish = (): BufferGeometry => {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+    geometry.setAttribute('normal', new BufferAttribute(new Float32Array(normals), 3));
+    geometry.setAttribute('color', new BufferAttribute(new Float32Array(colours), 3));
+    geometry.computeBoundingSphere();
+    return geometry;
+  };
+  if (species === 'conifer') {
+    const trunk = new CylinderGeometry(0.022, 0.034, 0.3, 5, 1, true);
+    trunk.translate(0, 0.15, 0);
+    appendPart(trunk, bark, positions, normals, colours);
+    const tiers: [number, number, number][] = [[0.2, 0.46, 0.27], [0.43, 0.38, 0.2], [0.64, 0.34, 0.13]];
+    tiers.forEach(([base, height, radius], k) => {
+      const cone = new ConeGeometry(radius * (0.92 + ((seed + k) % 3) * 0.06), height, 7, 1, true).toNonIndexed();
+      cone.computeVertexNormals();
+      cone.translate(0, base + height / 2, 0);
+      const shade = 0.85 + k * 0.14;
+      appendPart(cone, [0.035 * shade, 0.075 * shade, 0.035 * shade], positions, normals, colours);
+    });
+    return { body: finish(), cards: null };
+  }
+  const tall = species === 'broadleafTall';
+  const trunkHeight = tall ? 0.5 : 0.42;
+  const trunk = new CylinderGeometry(0.03, 0.05, trunkHeight, 5, 1, true);
+  trunk.translate(0, trunkHeight / 2, 0);
+  appendPart(trunk, bark, positions, normals, colours);
+  const leaf: [number, number, number] = species === 'ipeYellow' ? [0.42, 0.32, 0.04]
+    : species === 'ipePink' ? [0.4, 0.13, 0.22]
+      : tall ? [0.055, 0.105, 0.03] : [0.07, 0.12, 0.034];
+  const lift = tall ? 0.1 : 0;
+  const centre = new Vector3(0, 0.66 + lift, 0);
+  const lumps: [number, number, number, number][] = [
+    [0.03, 0.68 + lift, 0, 0.27],
+    [-0.08 + (seed % 3) * 0.05, 0.58 + lift, 0.06 - (seed % 2) * 0.12, 0.21],
+  ];
+  const p = new Vector3();
+  const out = new Vector3();
+  const own = new Vector3();
+  lumps.forEach(([cx, cy, cz, r], lump) => {
+    const solid = new IcosahedronGeometry(1, 0);
+    const position = solid.getAttribute('position');
+    for (let i = 0; i < position.count; i++) {
+      p.fromBufferAttribute(position, i);
+      own.copy(p).normalize();
+      const bump = noise3(p.x * 1.7 + seed * 5 + lump * 3, p.y * 1.7, p.z * 1.7, seed + lump);
+      p.multiplyScalar(r * (1 + bump * 0.18));
+      if (tall) p.y *= 1.35;
+      p.x += cx;
+      p.y += cy;
+      p.z += cz;
+      positions.push(p.x, p.y, p.z);
+      // Out from the crown's centre, a little of the lump's own: the canopy
+      // shades as one mass (Polycount, SideFX on stylized foliage).
+      out.copy(p).sub(centre).normalize().lerp(own, 0.3).normalize();
+      normals.push(out.x, out.y, out.z);
+      const shade = 0.55 + Math.max(0, Math.min(1, (p.y - (cy - r)) / (2 * r))) * 0.8;
+      colours.push(leaf[0] * shade, leaf[1] * shade, leaf[2] * shade);
+    }
+    solid.dispose();
+  });
+  const body = finish();
+  // The cards sit on the crown's leaf vertices and take their normals (so,
+  // the crown's centre's) and colours (`propGeometry.leafCards`).
+  const cards = leafCards(body, 16, tall ? 0.3 : 0.34, 0xf0e5 + seed * 97);
+  return { body, cards };
+}
+
 export function createGroundCoverKit(): GroundCoverKit {
   const rocks = Array.from({ length: ROCK_VARIANTS }, (_, k) => rockGeometry(k * 17 + 3));
   const scrub = Array.from({ length: SCRUB_VARIANTS }, (_, k) => scrubGeometry(k * 7 + 5));
+  const trees: Record<ForestSpecies, TreeModel[]> = {
+    broadleaf: [treeModel('broadleaf', 1), treeModel('broadleaf', 4)],
+    broadleafTall: [treeModel('broadleafTall', 2), treeModel('broadleafTall', 5)],
+    conifer: [treeModel('conifer', 0), treeModel('conifer', 2)],
+    ipeYellow: [treeModel('ipeYellow', 3)],
+    ipePink: [treeModel('ipePink', 1)],
+  };
+  const treeMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.2 });
+  applyWind(treeMaterial, FOREST_WIND, 'forest-crown');
+  applyFoliageShading(treeMaterial, 34);
+  const cluster = leafClusterTexture();
+  const cardMaterial = new MeshStandardMaterial({
+    color: 0xffffff, vertexColors: true, map: cluster, alphaTest: 0.5, side: DoubleSide, roughness: 0.8, metalness: 0, envMapIntensity: 0.2,
+  });
+  applyWind(cardMaterial, FOREST_WIND, 'forest-cards');
+  const cardDepth = windDepthMaterial(FOREST_WIND, 'forest-cards');
+  cardDepth.map = cluster;
+  cardDepth.alphaTest = 0.5;
   // Weathered stone and leaves: rough, no sheen of the sky on them.
   const rockMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 0.25 });
   const scrubMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 0.2 });
   return {
     rocks,
     scrub,
+    trees,
     rockMaterial,
     scrubMaterial,
+    treeMaterial,
+    cardMaterial,
+    cardDepth,
     dispose() {
       for (const geometry of [...rocks, ...scrub]) geometry.dispose();
+      for (const model of FOREST_SPECIES.flatMap((s) => trees[s])) {
+        model.body.dispose();
+        model.cards?.dispose();
+      }
       rockMaterial.dispose();
       scrubMaterial.dispose();
+      treeMaterial.dispose();
+      cardMaterial.dispose();
+      cardDepth.dispose();
+      cluster?.dispose();
     },
   };
 }
@@ -203,6 +412,7 @@ function instanced(
   tint: (seed: number, out: Color) => Color,
   sink: number,
   tilt: number,
+  upright = false,
 ): InstancedMesh[] {
   const byVariant: CoverPlacement[][] = Array.from({ length: geometries.length }, () => []);
   for (const item of list) byVariant[Math.min(byVariant.length - 1, Math.floor(item.seed * byVariant.length))]!.push(item);
@@ -227,8 +437,14 @@ function instanced(
       rotation.setFromAxisAngle(up, item.yaw);
       lean.setFromAxisAngle(side, ((item.seed * 31.7) % 1 - 0.5) * tilt);
       rotation.multiply(lean);
-      const squat = 0.75 + ((item.seed * 5.3) % 1) * 0.5;
-      scale.set(half, half * squat, half * (0.8 + ((item.seed * 13.1) % 1) * 0.4));
+      if (upright) {
+        // A tree keeps its proportions, a little narrower or broader.
+        const spread = 0.9 + ((item.seed * 5.3) % 1) * 0.25;
+        scale.set(half * 2 * spread, half * 2, half * 2 * spread);
+      } else {
+        const squat = 0.75 + ((item.seed * 5.3) % 1) * 0.5;
+        scale.set(half, half * squat, half * (0.8 + ((item.seed * 13.1) % 1) * 0.4));
+      }
       matrix.compose(position, rotation, scale);
       mesh.setMatrixAt(i, matrix);
       mesh.setColorAt(i, tint(item.seed, colour));
@@ -241,11 +457,36 @@ function instanced(
   return meshes;
 }
 
-export function buildGroundCover(rocks: readonly CoverPlacement[], scrub: readonly CoverPlacement[], kit: GroundCoverKit): GroundCover {
+/** A tree's tint: its own colour is in its vertices; this only varies it a little. */
+function treeTint(seed: number, out: Color): Color {
+  const t = 0.86 + ((seed * 3.77) % 1) * 0.28;
+  return out.setRGB(t * (0.97 + ((seed * 1.3) % 1) * 0.06), t, t * 0.96);
+}
+
+export function buildGroundCover(
+  rocks: readonly CoverPlacement[],
+  scrub: readonly CoverPlacement[],
+  kit: GroundCoverKit,
+  trees: readonly TreePlacement[] = [],
+): GroundCover {
+  const forest: InstancedMesh[] = [];
+  for (const species of FOREST_SPECIES) {
+    const ofSpecies = trees.filter((tree) => tree.species === species);
+    const models = kit.trees[species];
+    // Its size is its height; it stands straight (`upright`). The cards are
+    // the same instances with the cards' model and material.
+    forest.push(...instanced(ofSpecies, models.map((model) => model.body), kit.treeMaterial, 'forest', treeTint, 0, 0.05, true));
+    if (models.every((model) => model.cards)) {
+      const cards = instanced(ofSpecies, models.map((model) => model.cards!), kit.cardMaterial, 'forest-cards', treeTint, 0, 0.05, true);
+      for (const mesh of cards) mesh.customDepthMaterial = kit.cardDepth;
+      forest.push(...cards);
+    }
+  }
   const meshes = [
     // A stone sunk by a fifth of its height, so it grows out of the ground.
     ...instanced(rocks, kit.rocks, kit.rockMaterial, 'rocks', rockTint, 0.12, 0.35),
     ...instanced(scrub, kit.scrub, kit.scrubMaterial, 'scrub', scrubTint, 0.05, 0.12),
+    ...forest,
   ];
   return {
     meshes,

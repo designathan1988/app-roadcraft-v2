@@ -124,7 +124,7 @@ import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
-import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover } from './groundCover';
+import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
 import { isCoverKind } from '@world/terrainPaint';
 
 /**
@@ -833,7 +833,7 @@ export function createSceneRenderer(
     if (last && Math.hypot(last.x - x, last.y - y) < m(0.9)) return;
     lastDrip.set(id, { x, y });
     if (lastDrip.size > 500) lastDrip.clear();
-    ragdolls.drip(x + (Math.random() - 0.5) * m(0.3), y + (Math.random() - 0.5) * m(0.3), z + m(0.02), m(0.25 + Math.random() * 0.35));
+    ragdolls.drip(x + (Math.random() - 0.5) * m(0.3), y + (Math.random() - 0.5) * m(0.3), z + m(0.02), m(0.06 + Math.random() * 0.08));
   });
 
   const crowdFrustum = new Frustum();
@@ -862,8 +862,6 @@ export function createSceneRenderer(
   let excludedFor: { scenery: Scenery | null; site: string | null } = { scenery: null, site: null };
   /** The buildings' garden plants, and the buildings and ground they were planted for. */
   let gardens: Scenery | null = null;
-  /** The forest painted with the landscape brush, planted (`forestPlants`). */
-  let forest: Scenery | null = null;
   /** The painted rocks and scrub and the stones of the rivers (`rockPlacements`, `scrubPlacements`). */
   let cover: GroundCover | null = null;
   const coverKit = createGroundCoverKit();
@@ -929,7 +927,6 @@ export function createSceneRenderer(
     barriers: new GroundDependant(groundChanges),
     transit: new GroundDependant(groundChanges),
     gardens: new GroundDependant(groundChanges),
-    forest: new GroundDependant(groundChanges),
     cover: new GroundDependant(groundChanges),
   };
   /** The area every building's bank reaches, by building revision. */
@@ -1442,23 +1439,26 @@ export function createSceneRenderer(
   const shadowCentre = new Vector3();
   /**
    * The trees of the painted forest (`world/terrainPaint.ts` 'forest'): one
-   * candidate a cell of FOREST_SPACING, jittered by a hash of the cell so a
-   * stroke elsewhere never moves them, kept with the odds the painted density
-   * gives; never on a road, a footway or a building. A shrub of the
-   * understorey with some. Species, height and spread from the same hash.
+   * candidate a cell of FOREST_SPACING under the painted area, jittered by a
+   * hash of the cell so a stroke elsewhere never moves them, kept with the
+   * odds the painted density gives; never on a road, a footway or a building.
+   * A low bush of the understorey with some. Species, height and spread from
+   * the same hash. Low-poly trees (`groundCover.ts`, 33 to 72 triangles): the
+   * garden trees they replace were 1 700 with their leaf cards.
    */
   const FOREST_SPACING = m(7);
   const FOREST_MAX = 15_000;
-  const forestPlants = (net: Network): GardenPlant[] => {
-    const out: GardenPlant[] = [];
+  const forestPlants = (net: Network): { trees: TreePlacement[]; shrubs: CoverPlacement[] } => {
+    const trees: TreePlacement[] = [];
+    const shrubs: CoverPlacement[] = [];
     const hash = (a: number, b: number, salt: number): number => {
       let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
       h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
       return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
     };
-    const n = Math.floor((TERRAIN_HALF * 2) / FOREST_SPACING);
-    for (let j = 0; j < n && out.length < FOREST_MAX; j++) {
-      for (let i = 0; i < n && out.length < FOREST_MAX; i++) {
+    const [i0, i1, j0, j1] = paintedCells(net, FOREST_SPACING);
+    for (let j = j0; j <= j1 && trees.length < FOREST_MAX; j++) {
+      for (let i = i0; i <= i1 && trees.length < FOREST_MAX; i++) {
         const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
         const density = terrain.forestAt(cx, cy);
         if (density < 0.04 || hash(i, j, 1) > density * 0.92) continue;
@@ -1470,17 +1470,17 @@ export function createSceneRenderer(
         // A wood is green: broadleaf with some conifers, a flowering ipê now and then.
         const roll = hash(i, j, 13);
         const species = roll < 0.45 ? 'broadleaf' : roll < 0.8 ? 'broadleafTall' : roll < 0.98 ? 'conifer' : roll < 0.99 ? 'ipeYellow' : 'ipePink';
-        out.push({ kind: 'tree', x, y, z, w: h * 0.6, d: h * 0.6, h, yaw: hash(i, j, 5) * Math.PI * 2, seed: hash(i, j, 6), species });
+        trees.push({ x, y, z, size: h, yaw: hash(i, j, 5) * Math.PI * 2, seed: hash(i, j, 6), species });
         if (hash(i, j, 7) < 0.45 * density) {
           const sx = x + (hash(i, j, 8) - 0.5) * FOREST_SPACING * 0.7, sy = y + (hash(i, j, 9) - 0.5) * FOREST_SPACING * 0.7;
           if (!onCarriageway(net, { x: sx, y: sy }) && !buildings.covers(sx, sy)) {
-            const sh = m(1.2) + m(1.4) * hash(i, j, 10);
-            out.push({ kind: 'shrub', x: sx, y: sy, z: terrain.renderedHeightAt(sx, sy), w: sh * 1.6, d: sh * 1.6, h: sh, yaw: hash(i, j, 11) * Math.PI * 2, seed: hash(i, j, 12), plain: true });
+            const sh = m(1.6) + m(1.6) * hash(i, j, 10);
+            shrubs.push({ x: sx, y: sy, z: terrain.renderedHeightAt(sx, sy), size: sh, yaw: hash(i, j, 11) * Math.PI * 2, seed: hash(i, j, 12) });
           }
         }
       }
     }
-    return out;
+    return { trees, shrubs };
   };
   /**
    * Low scrub (`world/terrainPaint.ts` 'scrub'): close-set low-poly bushes of
@@ -1695,12 +1695,12 @@ export function createSceneRenderer(
     },
     wound(x, y, z, dirX, dirY, severed) {
       // The spray, out of the far side, then the drops on the ground behind.
-      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 50 : 26, 4, m(severed ? 0.28 : 0.16), m(0.035), 0.8);
+      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 36 : 18, 4, m(severed ? 0.22 : 0.14), m(0.035), 0.7);
       // On what is there (the footway stands over the terrain).
       for (let k = 0; k < (severed ? 9 : 4); k++) {
         const d = m(0.3 + Math.random() * 1.6), side = (Math.random() - 0.5) * m(0.6);
         const dx = x + dirX * d - dirY * side, dy = y + dirY * d + dirX * side;
-        ragdolls.drip(dx, dy, ragdollWorld.groundAt(dx, dy) + m(0.02), m(0.12 + Math.random() * 0.3));
+        ragdolls.drip(dx, dy, ragdollWorld.groundAt(dx, dy) + m(0.02), m(0.06 + Math.random() * 0.12));
       }
       // The limb shot off is the person's own, thrown by the ragdolls (`detach`).
       onAssetsReady();
@@ -2098,19 +2098,9 @@ export function createSceneRenderer(
         gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
-      // The roads and buildings it keeps off reach it through the change log too:
-      // a street or a building changes the ground where it is.
-      if (onGround.forest.stale(String(terrain.forestRevision), forestAreaOf(net.doc))) {
-        if (forest) {
-          for (const mesh of forest.meshes) world.remove(mesh);
-          forest.dispose();
-        }
-        const forestAt = performance.now();
-        forest = buildGardens(forestPlants(net), sceneryKit);
-        performance.measure('hitch:forest', { start: forestAt, end: performance.now() });
-        for (const mesh of forest.meshes) world.add(mesh);
-      }
-      // The stones and the scrub follow the painted covers and the water.
+      // The forest, the stones and the scrub follow the painted covers and the
+      // water. The roads and buildings they keep off reach them through the
+      // change log too: a street or a building changes the ground where it is.
       const waterArea = terrain.waterArea();
       const coverArea = waterArea ? unionRect(forestAreaOf(net.doc), [waterArea.minX - m(12), waterArea.minY - m(12), waterArea.maxX + m(12), waterArea.maxY + m(12)]) : forestAreaOf(net.doc);
       if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}`, coverArea)) {
@@ -2119,7 +2109,8 @@ export function createSceneRenderer(
           cover.dispose();
         }
         const coverAt = performance.now();
-        cover = buildGroundCover(rockPlacements(net), scrubPlacements(net), coverKit);
+        const forest = forestPlants(net);
+        cover = buildGroundCover(rockPlacements(net), [...scrubPlacements(net), ...forest.shrubs], coverKit, forest.trees);
         performance.measure('hitch:cover', { start: coverAt, end: performance.now() });
         for (const mesh of cover.meshes) world.add(mesh);
       }
@@ -2185,10 +2176,6 @@ export function createSceneRenderer(
         mesh.visible = detailed && (!plantMap || !mesh.name.endsWith('-leaves'));
       }
       gardens?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM);
-      // A forest is seen from any distance: its crowns at map zoom, its leaves closer.
-      forest?.setMap(plantMap);
-      for (const mesh of forest?.meshes ?? []) mesh.visible = !plantMap || !mesh.name.endsWith('-leaves');
-      forest?.setNear(rig.viewport.zoom >= PLANT_NEAR_ZOOM || rig.chasing);
       // The roads just laid: a strip over their whole width, on their own deck.
       if (pendingRoadFlash.length && elevation) {
         const pos: number[] = [], ring: number[] = [];
@@ -2246,7 +2233,6 @@ export function createSceneRenderer(
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
       gardens?.cull(crowdFrustum, crowdProjection);
-      forest?.cull(crowdFrustum, crowdProjection);
       transit?.update(sim.city.transit.trains(), terrain.renderedHeightAt);
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
@@ -2473,7 +2459,6 @@ export function createSceneRenderer(
       scenery?.dispose();
       furniture?.dispose();
       gardens?.dispose();
-      forest?.dispose();
       cover?.dispose();
       coverKit.dispose();
       sceneryKit.dispose();

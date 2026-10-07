@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildGroundCover, createGroundCoverKit, rockGeometry, scrubGeometry } from '../../src/render/groundCover';
+import { FOREST_SPECIES, buildGroundCover, createGroundCoverKit, rockGeometry, scrubGeometry, treeModel } from '../../src/render/groundCover';
 
 const triangles = (geometry: { index: { count: number } | null; getAttribute(name: string): { count: number } }): number =>
   (geometry.index ? geometry.index.count : geometry.getAttribute('position').count) / 3;
@@ -11,6 +11,16 @@ describe('ground cover', () => {
     for (let seed = 0; seed < 8; seed++) {
       expect(triangles(rockGeometry(seed * 17 + 3))).toBeLessThanOrEqual(36);
       expect(triangles(scrubGeometry(seed * 7 + 5))).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it('keeps a broadleaf to 82 triangles with its foliage cards, a conifer to 31', () => {
+    for (const species of FOREST_SPECIES) {
+      for (let seed = 0; seed < 4; seed++) {
+        const model = treeModel(species, seed);
+        const total = triangles(model.body) + (model.cards ? triangles(model.cards) : 0);
+        expect(total).toBeLessThanOrEqual(species === 'conifer' ? 31 : 82);
+      }
     }
   });
 
