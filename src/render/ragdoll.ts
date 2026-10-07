@@ -6,6 +6,7 @@ import { m } from '@world/units';
 import type { BloodDecal } from './casualties';
 import type { Exhaust } from './exhaust';
 import type { Gore } from './gore';
+import { joltWorld, startJolt, type JointSpec, type JoltRagdoll, type JoltStatic, type JoltWorld, type PartSpec } from './ragdollJolt';
 
 /**
  * Ragdolls: people knocked over or killed by a blow, or tripping, their own
@@ -179,6 +180,28 @@ const RISE_CLIP = 1.6;
 /** The clip a body that fell gets up with. */
 const RISE_KEY: 'crouchUp' | 'idle' = 'crouchUp';
 const MAX_BODIES = 40;
+/**
+ * Bodies simulated by Jolt (`ragdollJolt.ts`), not the stick figure (`step`,
+ * which still carries a body until Jolt has loaded; `?ragdoll=verlet` keeps
+ * it for every body).
+ */
+const JOLT = typeof location !== 'undefined' && new URLSearchParams(location.search).get('ragdoll') !== 'verlet';
+/** World units in a metre (Jolt works in metres). */
+const METRE = m(1);
+/** Jolt's parts: the trunk, the head (with the neck), and each limb's bones. */
+const J_TORSO = 0, J_HEAD = 1, J_LUA = 2, J_LFA = 3, J_RUA = 4, J_RFA = 5, J_LTH = 6, J_LCA = 7, J_LFO = 8, J_RTH = 9, J_RCA = 10, J_RFO = 11;
+/** The Jolt part each drawn part moves with. */
+const J_PART: Readonly<Record<PartName, number>> = {
+  torso: J_TORSO, neck: J_HEAD, head: J_HEAD, lua: J_LUA, lfa: J_LFA, rua: J_RUA, rfa: J_RFA,
+  lth: J_LTH, lca: J_LCA, lfo: J_LFO, rth: J_RTH, rca: J_RCA, rfo: J_RFO,
+};
+/** What each limb is torn from: the part left with the stump. */
+const J_STUMP: Readonly<Record<Severable, number>> = { armL: J_LUA, armR: J_RUA, legL: J_LTH, legR: J_RTH, head: J_TORSO };
+/** Parts joined to each other (parent, child): they do not collide. */
+const J_PAIRS: readonly (readonly [number, number])[] = [
+  [J_TORSO, J_HEAD], [J_TORSO, J_LUA], [J_LUA, J_LFA], [J_TORSO, J_RUA], [J_RUA, J_RFA],
+  [J_TORSO, J_LTH], [J_LTH, J_LCA], [J_LCA, J_LFO], [J_TORSO, J_RTH], [J_RTH, J_RCA], [J_RCA, J_RFO],
+];
 
 type Fate = 'dead' | 'torn' | 'knocked' | 'trip';
 
@@ -280,6 +303,15 @@ interface Body {
   age: number;
   flying: number;
   pooled: boolean;
+  /**
+   * Simulated by Jolt (`ragdollJolt.ts`): its parts; the colliders made for
+   * it (its ground, the walls round it), shared with the pieces torn off it;
+   * and its particles as last set from the parts, to tell a change made to
+   * them since (a push) from the motion itself.
+   */
+  jolt?: JoltRagdoll | undefined;
+  colliders?: { list: JoltStatic[]; users: number } | undefined;
+  synced?: { p: Vector3[]; o: Vector3[] } | undefined;
   splats: number;
   spray: number;
 }
@@ -381,6 +413,9 @@ export interface Ragdolls {
 
 export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null = null): Ragdolls {
   const bodies: Body[] = [];
+  // Jolt loaded a few seconds in, not at the start (some 3 MB of WebAssembly).
+  if (JOLT) setTimeout(startJolt, 3000);
+  let separated = false;
   const decals: BloodDecal[] = [];
   /** The casualty records already turned into bodies (`absorb`). */
   const taken = new WeakSet<Casualty>();
@@ -677,12 +712,15 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed, 'torn');
     } else if (c.kind === 'dead') {
       exhaust.burst(chest.x, -chest.z, chest.y, 24, 4, m(0.25), m(0.045), 0.9);
-      bleed(c.x, c.y, groundHere, m(1.2), 0.6);
+      // Shot dead: the pool spreads under the body where it comes to rest
+      // (`update`, pooled), not where they stood; and a bullet throws no
+      // pieces of them about - a blast does.
+      if (!c.struck) bleed(c.x, c.y, groundHere, m(1.2), 0.6);
       for (let k = 0; k < 4; k++) {
         const a = Math.random() * Math.PI * 2, r = m(0.8 + Math.random() * 2.5);
         bleed(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, groundHere, m(0.3 + Math.random() * 0.5), 0);
       }
-      if (Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
+      if (!c.struck && Math.random() < 0.35) api.onGore?.(chest.x, -chest.z, chest.y, dir.x, -dir.z, speed * 0.6, 'dead');
     }
     add(body);
     sever(body, c, dir, citizens);
@@ -775,7 +813,17 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
 
   const remove = (i: number): void => {
     bodies[i]?.drop?.();
+    release(bodies[i]);
     bodies.splice(i, 1);
+  };
+  /** A body's parts out of Jolt, and its colliders once nothing else stands on them. */
+  const release = (body: Body | undefined): void => {
+    if (!body) return;
+    body.jolt?.destroy();
+    body.jolt = undefined;
+    const c = body.colliders;
+    if (c && --c.users <= 0) joltWorld()?.release(c.list);
+    body.colliders = undefined;
   };
 
   /**
@@ -805,6 +853,16 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       comp: [], palettes: [], anchor: new Matrix4(), still: 0, asleep: false, age: 0, flying: 0, pooled: false, splats: 0, spray: 0, torn: true,
     };
     components(piece);
+    if (body.jolt) {
+      // In Jolt: the joint holding it lets go, and its parts go with the
+      // piece; what they carried stays at the stump on the body.
+      const torn = [...new Set(parts.map((q) => J_PART[q]))];
+      const at = body.p[limb === 'head' ? NEC : root]!.clone().divideScalar(METRE);
+      const moved = body.p.map((_, k) => k).filter((k) => torn.includes(body.jolt!.partOf(k)));
+      piece.jolt = body.jolt.tear(torn, J_STUMP[limb], at, moved);
+      piece.synced = body.synced ? { p: body.synced.p.map((v) => v.clone()), o: body.synced.o.map((v) => v.clone()) } : undefined;
+      if (body.colliders) body.colliders.users++;
+    }
     const spin = new Vector3((Math.random() - 0.5) * 2, Math.random(), (Math.random() - 0.5) * 2).multiplyScalar(kick.length() * 0.6);
     for (const k of keep) piece.o[k]!.copy(piece.p[k]!).addScaledVector(kick, -STEP).addScaledVector(spin, k === root ? 0 : -STEP);
     for (const part of parts) body.lostParts.add(part);
@@ -836,7 +894,7 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       pieces: bodies.reduce((n, b) => n + new Set(b.comp).size, 0), living: bodies.filter((b) => b.survivor).length,
     }),
     clear() {
-      for (const b of bodies) b.drop?.();
+      for (const b of bodies) { b.drop?.(); release(b); }
       bodies.length = 0;
       decals.length = 0;
     },
@@ -926,7 +984,10 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       const dir = ab.clone().normalize();
       const at = body.p[k]!;
       // The bullet's push, the spray out of the far side, blood under it.
-      body.o[k]!.addScaledVector(dir, -m(1.6) * STEP);
+      // In Jolt the part struck takes the round's push itself (a corpse
+      // jerks); in the stick figure, the particle.
+      if (body.jolt) body.jolt.push(k, dir.clone().multiplyScalar(2.2), 0.7);
+      else body.o[k]!.addScaledVector(dir, -m(1.6) * STEP);
       body.asleep = false; body.still = 0; body.flying = 0;
       exhaust.burst(at.x + dir.x * m(0.15), -(at.z + dir.z * m(0.15)), at.y, 26, 4, m(0.18), m(0.035), 0.8);
       const gx = at.x + dir.x * m(0.5), gy = -(at.z + dir.z * m(0.5));
@@ -999,7 +1060,16 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
       for (const d of decals) d.age += wall;
       while (clock >= STEP) {
         clock -= STEP;
-        for (const body of bodies) if (!body.asleep) step(body, world);
+        const physics = JOLT ? joltWorld() : null;
+        let simulated = false;
+        for (const body of bodies) {
+          if (body.asleep) continue;
+          if (physics) { prepare(physics, body, world); simulated = true; } else step(body, world);
+        }
+        if (physics && simulated) {
+          physics.step(STEP);
+          for (const body of bodies) if (!body.asleep && body.jolt) sync(body, world);
+        }
       }
       for (let i = bodies.length - 1; i >= 0; i--) {
         const body = bodies[i]!;
@@ -1256,6 +1326,192 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     return out;
   }
 
+  /**
+   * A body into Jolt, or a change since its last step passed on: made the
+   * first time (its colliders, its parts from where its particles are), the
+   * particles' speeds then given to the parts as pushes; after that, a
+   * particle moved or sped up by anything but Jolt (a bullet, a blast, arms
+   * thrown out, a knee drawn up) pushes its part by the difference. Moved
+   * far (the getting-up poses), the parts are made again where it is.
+   */
+  function prepare(physics: JoltWorld, body: Body, world: RagdollWorld): void {
+    if (!separated) { for (const [a, b] of J_PAIRS) physics.separate(a, b); separated = true; }
+    // Burnt black: drawn up as burnt bodies are (`curl`), by muscle pulls.
+    if (body.jolt && body.charred && !body.pin && body.age < 6) {
+      const k = 9 * STEP * Math.min(1, body.age / 1.5);
+      body.jolt.pull(LW, CHE, k); body.jolt.pull(RW, CHE, k);
+      body.jolt.pull(LE, CHE, k * 0.4); body.jolt.pull(RE, CHE, k * 0.4);
+      body.jolt.pull(LA, LH, k); body.jolt.pull(RA, RH, k);
+      body.jolt.pull(LK, CHE, k * 0.8); body.jolt.pull(RK, CHE, k * 0.8);
+    }
+    if (!body.jolt) {
+      body.colliders ??= { list: colliders(physics, body, world), users: 1 };
+      body.jolt = physics.ragdoll(joltSpec(body));
+      body.synced = undefined;
+    }
+    const s = body.synced;
+    const jr = body.jolt;
+    if (s) {
+      for (let k = 0; k < body.p.length; k++) {
+        if (body.pin && !body.pin.keep.has(k)) continue;
+        if (body.p[k]!.distanceTo(s.p[k]!) > m(0.08)) {
+          jr.destroy();
+          body.jolt = physics.ragdoll(joltSpec(body));
+          body.synced = undefined;
+          prepare(physics, body, world);
+          return;
+        }
+      }
+    }
+    const dv = new Vector3();
+    for (let k = 0; k < body.p.length; k++) {
+      if (body.pin && !body.pin.keep.has(k)) continue;
+      const p = body.p[k]!, o = body.o[k]!;
+      if (s && p.equals(s.p[k]!) && o.equals(s.o[k]!)) continue;
+      dv.subVectors(p, o);
+      if (s) dv.sub(tmpB.subVectors(s.p[k]!, s.o[k]!));
+      dv.divideScalar(STEP * METRE);
+      if (dv.lengthSq() < 1e-6) continue;
+      const part = body.jolt.partOf(k);
+      if (part < 0) continue;
+      body.jolt.push(k, dv, 1 / Math.max(1, body.jolt.carried(part)));
+    }
+  }
+
+  /** The particles from the parts after a Jolt step; asleep when Jolt has put the parts to sleep, or they have lain still. */
+  function sync(body: Body, world: RagdollWorld): void {
+    const jr = body.jolt!;
+    let moved = 0;
+    for (let k = 0; k < body.p.length; k++) {
+      if (body.pin && !body.pin.keep.has(k)) continue;
+      const at = jr.point(k, tmpA);
+      if (!at) continue;
+      const p = body.p[k]!;
+      body.o[k]!.copy(p);
+      p.copy(at).multiplyScalar(METRE);
+      moved = Math.max(moved, p.distanceTo(body.o[k]!));
+      body.ground[k] = world.groundAt(p.x, -p.z);
+    }
+    if (body.pin) {
+      const { root, keep } = body.pin;
+      for (let k = 0; k < body.p.length; k++) if (!keep.has(k)) { body.p[k]!.copy(body.p[root]!); body.o[k]!.copy(body.o[root]!); }
+    }
+    if (!body.synced) body.synced = { p: body.p.map((v) => v.clone()), o: body.o.map((v) => v.clone()) };
+    else body.p.forEach((v, k) => { body.synced!.p[k]!.copy(v); body.synced!.o[k]!.copy(body.o[k]!); });
+    body.flying += STEP;
+    body.still = moved < m(0.0025) ? body.still + STEP : 0;
+    // Asleep a moment after Jolt has put its parts to sleep (or when it lies
+    // still): asleep the step it was woken, its pose was never drawn again -
+    // a limb shot off a body lying still went on being drawn on it.
+    if ((!jr.active() && body.still > 0.25) || body.still > 0.8 || body.flying > SETTLE) { body.asleep = true; jr.sleep(); }
+    if (body.torn && moved > m(0.01)) {
+      body.spray -= STEP;
+      if (body.spray <= 0) {
+        body.spray = 0.06;
+        const k = Math.floor(Math.random() * body.p.length);
+        exhaust.burst(body.p[k]!.x, -body.p[k]!.z, body.p[k]!.y, 3, 4, m(0.08), m(0.04), 0.7);
+      }
+    }
+  }
+
+  /**
+   * The ground under a body and round it (a height field from the same
+   * ground the rest reads, `groundAt`) and the walls, poles, street things
+   * and cars beside it, as Jolt colliders. A body thrown far gets a wider
+   * ground.
+   */
+  function colliders(physics: JoltWorld, body: Body, world: RagdollWorld): JoltStatic[] {
+    const pel = body.p[PEL]!;
+    const fast = body.p.some((v, k) => v.distanceTo(body.o[k]!) / STEP > m(6));
+    const n = fast ? 256 : 128, cell = fast ? 0.12 : 0.1;
+    const half = ((n - 1) * cell) / 2;
+    const cx = pel.x / METRE, cz = pel.z / METRE;
+    const list: JoltStatic[] = [physics.ground(cx - half, cz - half, n, cell, (x, z) => world.groundAt(x * METRE, -z * METRE) / METRE)];
+    for (const w of body.walls) {
+      const ring = w.ring.map((q) => ({ x: q.x / METRE, z: -q.y / METRE }));
+      if (ring.every((q) => Math.abs(q.x - cx) > half || Math.abs(q.z - cz) > half)) continue;
+      const bottom = Math.min(...w.ring.map((q) => world.groundAt(q.x, q.y))) / METRE - 0.3;
+      const s = physics.prism(ring, bottom, w.top / METRE);
+      if (s) list.push(s);
+    }
+    return list;
+  }
+
+  /**
+   * A body as Jolt parts and joints, from where its particles are (metres):
+   * the trunk a box from the hips to the neck, the head and neck one capsule,
+   * each limb bone a capsule; the knees and elbows hinges bending the way
+   * they bend (0 to 150 and 145 degrees), the shoulders, hips, neck and
+   * ankles cones with a twist (the hips leaning forwards, as a leg lifts far
+   * more forwards than back).
+   */
+  function joltSpec(body: Body): { parts: PartSpec[]; joints: JointSpec[]; points: Vector3[] } {
+    const P = body.p.map((v) => v.clone().divideScalar(METRE));
+    const R = (k: number): number => body.radius[k]! / METRE;
+    const dir = (a: number, b: number): Vector3 => new Vector3().subVectors(P[b]!, P[a]!).normalize();
+    const side = new Vector3().subVectors(P[RH]!, P[LH]!).add(tmpA.subVectors(P[RS]!, P[LS]!));
+    const up = dir(PEL, NEC);
+    side.addScaledVector(up, -side.dot(up)).normalize();
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+    const fwd = new Vector3().crossVectors(side, new Vector3().subVectors(P[CHE]!, P[PEL]!)).normalize().multiplyScalar(body.front);
+    const capsule = (a: Vector3, b: Vector3, radius: number): PartSpec['shape'] => ({ kind: 'capsule', a, b, radius });
+    const hand = (e: number, w: number): Vector3 => P[w]!.clone().addScaledVector(dir(e, w), 0.06);
+    const width = Math.max(P[LS]!.distanceTo(P[RS]!), P[LH]!.distanceTo(P[RH]!));
+    const trunkLen = P[PEL]!.distanceTo(P[NEC]!);
+    const zAxis = new Vector3().crossVectors(side, up);
+    const parts: PartSpec[] = [
+      { shape: { kind: 'box', centre: P[PEL]!.clone().lerp(P[NEC]!, 0.5).addScaledVector(up, -0.03), axes: [side.clone(), up.clone(), zAxis], half: [width / 2 + 0.03, trunkLen / 2 + 0.05, 0.11] },
+        particles: [PEL, CHE, BEL, LS, RS, LH, RH, NEC] },
+      { shape: capsule(P[NEC]!, P[TOP]!, R(HEA) * 0.8), particles: [HEA, TOP] },
+      { shape: capsule(P[LS]!, P[LE]!, R(LE) * 0.7), particles: [LE] },
+      { shape: capsule(P[LE]!, hand(LE, LW), R(LW) * 0.8), particles: [LW] },
+      { shape: capsule(P[RS]!, P[RE]!, R(RE) * 0.7), particles: [RE] },
+      { shape: capsule(P[RE]!, hand(RE, RW), R(RW) * 0.8), particles: [RW] },
+      { shape: capsule(P[LH]!, P[LK]!, R(LK)), particles: [LK] },
+      { shape: capsule(P[LK]!, P[LA]!, R(LA) * 0.85), particles: [LA] },
+      { shape: capsule(P[LA]!, P[LT]!, R(LT) * 0.8), particles: [LT] },
+      { shape: capsule(P[RH]!, P[RK]!, R(RK)), particles: [RK] },
+      { shape: capsule(P[RK]!, P[RA]!, R(RA) * 0.85), particles: [RA] },
+      { shape: capsule(P[RA]!, P[RT]!, R(RT) * 0.8), particles: [RT] },
+    ];
+    const plane = (twist: Vector3): Vector3 => {
+      const q = side.clone().addScaledVector(twist, -side.dot(twist));
+      return q.lengthSq() > 1e-6 ? q.normalize() : new Vector3().crossVectors(twist, fwd).normalize();
+    };
+    const cone = (parent: number, child: number, at: number, a: number, b: number, planeCone: number, normalCone: number, twist: number, lean = 0): JointSpec => {
+      const t2 = dir(a, b);
+      // The cone's middle leant forwards (`lean`, about the side axis) from where the bone is now.
+      const t1 = lean ? t2.clone().applyAxisAngle(side, lean) : t2.clone();
+      return { parent, child, at: P[at]!.clone(), kind: 'cone', twist1: t1, twist2: t2, plane: plane(t2), planeCone, normalCone, twistMin: -twist, twistMax: twist };
+    };
+    const hinge = (parent: number, child: number, a: number, mid: number, b: number, bends: Vector3, most: number, relaxed: number, tone: number): JointSpec => {
+      const t = dir(a, mid), s = dir(mid, b);
+      // The axis it bends about, the bend the right way (`bends`: where the lower bone goes as it bends).
+      const fallback = new Vector3().crossVectors(t, bends).normalize();
+      let axis = new Vector3().crossVectors(t, s);
+      let bent = axis.length() > 0.15 ? Math.atan2(axis.length(), t.dot(s)) : 0;
+      if (axis.length() <= 0.15 || axis.dot(fallback) < 0) { axis = fallback; bent = Math.atan2(new Vector3().crossVectors(t, s).dot(axis), t.dot(s)); }
+      else axis.normalize();
+      const normal = t.clone().addScaledVector(axis, -t.dot(axis)).normalize();
+      return { parent, child, at: P[mid]!.clone(), kind: 'hinge', axis, normal, min: -bent - 0.05, max: most - bent, relax: -bent + relaxed, tone };
+    };
+    const back = fwd.clone().negate();
+    const joints: JointSpec[] = [
+      cone(J_TORSO, J_HEAD, NEC, NEC, TOP, 0.6, 0.5, 0.7),
+      cone(J_TORSO, J_LUA, LS, LS, LE, 1.4, 1.3, 1.0),
+      hinge(J_LUA, J_LFA, LS, LE, LW, fwd, 2.5, 0.4, 2),
+      cone(J_TORSO, J_RUA, RS, RS, RE, 1.4, 1.3, 1.0),
+      hinge(J_RUA, J_RFA, RS, RE, RW, fwd, 2.5, 0.4, 2),
+      cone(J_TORSO, J_LTH, LH, LH, LK, 1.15, 0.6, 0.6, 0.5),
+      hinge(J_LTH, J_LCA, LH, LK, LA, back, 2.6, 0.2, 6),
+      cone(J_LCA, J_LFO, LA, LA, LT, 0.6, 0.3, 0.2),
+      cone(J_TORSO, J_RTH, RH, RH, RK, 1.15, 0.6, 0.6, 0.5),
+      hinge(J_RTH, J_RCA, RH, RK, RA, back, 2.6, 0.2, 6),
+      cone(J_RCA, J_RFO, RA, RA, RT, 0.6, 0.3, 0.2),
+    ];
+    return { parts, joints, points: P };
+  }
+
   /** One Verlet step of a body: move, then relax the sticks, the joints and the collisions together. */
   /**
    * Somebody down for good and hurt, where they lie (GTA's writhe: on the
@@ -1275,6 +1531,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     for (const [knee, hip, phase] of [[LK, LH, 0], [RK, RH, 2.4]] as const) {
       const s = Math.sin(t * 1.3 + phase);
       if (s <= 0) continue;
+      // In Jolt, a muscle's pull between the knee and the belly (the body as
+      // a whole unmoved); pushed alone, the knee sat the body up.
+      if (body.jolt) { body.jolt.pull(knee, BEL, 14 * dt * s * strength); continue; }
       tmpA.lerpVectors(body.p[hip]!, body.p[BEL]!, 0.5).add(tmpB.subVectors(body.p[CHE]!, body.p[PEL]!).multiplyScalar(0.3));
       body.p[knee]!.lerp(tmpA, 0.3 * dt * s * strength);
     }
