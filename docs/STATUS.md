@@ -363,12 +363,16 @@ and they have seen it.
   crouch-up clip.
 - Bomb: everybody it kills burnt black and drawn up, dismemberment, guts
   (`render/gore.ts`), each vehicle's own burnt shell; vehicles shot: riders
-  thrown, drivers killed, cars blow up.
+  thrown (their pool under where the body comes to rest), drivers killed and
+  drawn slumped over the wheel (`carDead`/`cabDead`, `Vehicle.slain`), the car
+  rolling to a stop, cars blow up.
 - CMU motion captures (`scripts/extract-cmu-clips.mjs`, 2026-10-07): getting
   up off the ground face down (140_01) and face up (140_08), laid where the
   body lies; the steps back after a hit (76_11); the gravely hurt, after a few
   seconds writhing, onto hands and knees and crawling off at 0.12 m/s
-  (111_03) till they bleed out and slump over.
+  (111_03) till they bleed out and slump over: face down, the lying pose
+  blended into the crawl's first frame (1.1 s, hips and head line aligned),
+  crawling straight the way the head points, off the walkway routes.
 - Weapons lab: `?lab=armas` (`src/weaponsLab.ts`), served without reloads by
   `vite --config vite.lab.config.ts` (port 5190; restart it to load new code);
   probes, a timeline of each transition with its call stack (`traceWalkers`),
