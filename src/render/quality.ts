@@ -42,6 +42,24 @@ export interface QualitySettings {
   readonly occupantZoom: number;
   /** Soft shadows of drifting clouds over the land (`postprocess.ts`, needs post-processing). */
   readonly cloudShadows: boolean;
+  /**
+   * The ecosystem's vegetation (`render/nature/`): how far from the camera's
+   * focus, in world units, plants are drawn as models; beyond it they are
+   * impostors (or, with `impostors` off, only the ground's canopy tint).
+   */
+  readonly vegetationDistance: number;
+  /** Far plants as impostors - billboards baked from each species. */
+  readonly impostors: boolean;
+  /** Most birds in the air at once; 0 draws none. */
+  readonly birds: number;
+  /** Raindrops in the air (the wet ground is drawn on every tier). */
+  readonly rain: boolean;
+  /** The cloud layer of the play sky. */
+  readonly skyClouds: boolean;
+  /** Morning mist in the valleys and over the water. */
+  readonly mist: boolean;
+  /** The spray and mist at the foot of waterfalls (their falling water is drawn on every tier). */
+  readonly waterfalls: boolean;
 }
 
 export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
@@ -62,6 +80,13 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     pedestrianDetail: 0,
     occupantZoom: 3,
     cloudShadows: false,
+    vegetationDistance: 450,
+    impostors: true,
+    birds: 0,
+    rain: false,
+    skyClouds: false,
+    mist: false,
+    waterfalls: false,
   },
   medium: {
     pixelRatio: 1.25,
@@ -80,6 +105,13 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     pedestrianDetail: 1,
     occupantZoom: 2.2,
     cloudShadows: false,
+    vegetationDistance: 750,
+    impostors: true,
+    birds: 150,
+    rain: true,
+    skyClouds: true,
+    mist: false,
+    waterfalls: true,
   },
   high: {
     pixelRatio: 1.5,
@@ -98,6 +130,13 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     pedestrianDetail: 2,
     occupantZoom: 1.6,
     cloudShadows: true,
+    vegetationDistance: 1100,
+    impostors: true,
+    birds: 400,
+    rain: true,
+    skyClouds: true,
+    mist: true,
+    waterfalls: true,
   },
   ultra: {
     pixelRatio: 2,
@@ -116,6 +155,13 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     pedestrianDetail: 2,
     occupantZoom: 1.3,
     cloudShadows: true,
+    vegetationDistance: 1600,
+    impostors: true,
+    birds: 600,
+    rain: true,
+    skyClouds: true,
+    mist: true,
+    waterfalls: true,
   },
 };
 

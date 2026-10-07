@@ -766,14 +766,31 @@ function macroTexture(anisotropy: number): DataTexture {
   return texture;
 }
 
-function paintTexture(): DataTexture {
-  const texture = new DataTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4), PAINT_RES, PAINT_RES, RGBAFormat, UnsignedByteType);
+/**
+ * The painted ground's layers, as ONE texture array (one texture unit for all:
+ * the terrain material is at the sixteen a fragment shader may bind): 0 and 1
+ * the eight paint weights (`rasterPaint`), 2 the ecology's ground classes
+ * (`ECOLOGY_LAYER`), each updated alone (`addLayerUpdate`).
+ */
+const PAINT_LAYERS = 3;
+/** The array layer the ecosystem's ground is written into. */
+export const ECOLOGY_LAYER = 2;
+function paintLayers(): DataArrayTexture {
+  const texture = new DataArrayTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4 * PAINT_LAYERS), PAINT_RES, PAINT_RES, PAINT_LAYERS);
+  texture.format = RGBAFormat;
+  texture.type = UnsignedByteType;
   texture.magFilter = LinearFilter;
   texture.minFilter = LinearFilter;
   texture.wrapS = ClampToEdgeWrapping;
   texture.wrapT = ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
   texture.needsUpdate = true;
   return texture;
+}
+/** One layer of the painted ground's array, as a view on its data. */
+function paintLayer(texture: DataArrayTexture, layer: number): Uint8Array {
+  const size = PAINT_RES * PAINT_RES * 4;
+  return (texture.image.data as Uint8Array).subarray(layer * size, (layer + 1) * size);
 }
 
 /**
@@ -781,9 +798,9 @@ function paintTexture(): DataTexture {
  * toward the dab's (grass: toward none) by the dab's strength times a smooth
  * falloff, so the weights keep summing to at most one.
  */
-function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
-  const a = textures[0]!.image.data as Uint8Array;
-  const b = textures[1]!.image.data as Uint8Array;
+function rasterPaint(layers: readonly Uint8Array[], dab: PaintDab): void {
+  const a = layers[0]!;
+  const b = layers[1]!;
   // Rocks lie on bare ground: they lay the soil layer part way.
   const layer = PAINT_KINDS.indexOf(dab.kind === 'rocks' ? 'soil' : dab.kind);
   const reach = dab.kind === 'rocks' ? 0.2 : 1;
@@ -861,9 +878,8 @@ function terrainMaterial(
 
   const grassDetail = detailTextures('grass', anisotropy);
   const soilDetail = detailTextures('soil', anisotropy);
-  const paintA = paintTexture();
-  const paintB = paintTexture();
-  material.userData['paint'] = [paintA, paintB];
+  const paint = paintLayers();
+  material.userData['paint'] = paint;
   // The water's level at each terrain corner near water (`shoreLevels`),
   // NO_WATER elsewhere: where the ground stands just above it is beach,
   // just at it is wet, under it is the bed.
@@ -890,8 +906,7 @@ function terrainMaterial(
   material.userData['scrubCorners'] = scrubCornerData;
   material.userData['forestCorners'] = forestCornerData;
   const uniforms = {
-    uPaintA: { value: paintA as Texture },
-    uPaintB: { value: paintB as Texture },
+    uPaint: { value: paint as Texture },
     uPaintHalf: { value: TERRAIN_HALF },
     uPaintSize: { value: TERRAIN_SIZE },
     uGrassField: GRASS_FIELD,
@@ -943,8 +958,7 @@ function terrainMaterial(
          varying vec3 vTerrainNormal;
          varying float vTerrainSteep;
          uniform sampler2DArray uRockMap;
-         uniform sampler2D uPaintA;
-         uniform sampler2D uPaintB;
+         uniform sampler2DArray uPaint;
          uniform float uPaintHalf;
          uniform float uPaintSize;
          uniform vec4 uGrassField; // world x, y, reach, on
@@ -1407,8 +1421,8 @@ function terrainMaterial(
          // Painted ground (world/terrainPaint.ts): a weight per layer, the
          // grass showing through what the weights leave.
          vec2 paintUv = vec2((vTerrainWorld.x + uPaintHalf) / uPaintSize, (uPaintHalf - vTerrainWorld.z) / uPaintSize);
-         vec4 pa = texture2D(uPaintA, paintUv);
-         vec4 pb = texture2D(uPaintB, paintUv);
+         vec4 pa = texture(uPaint, vec3(paintUv, 0.0));
+         vec4 pb = texture(uPaint, vec3(paintUv, 1.0));
          float painted = pa.r + pa.g + pa.b + pa.a + pb.r + pb.g + pb.b;
          if (painted > 0.002) {
            float grain = texture2D(uDirtMap, vTerrainWorld.xz * 0.11).r;
@@ -2276,7 +2290,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
   vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v15-verge';
 
-  const paint = material.userData['paint'] as DataTexture[];
+  const paintArray = material.userData['paint'] as DataArrayTexture;
+  const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
   let paintRevision = 0;
   let paintCount = 0;
   let paintFirst: PaintDab | undefined;
@@ -2319,7 +2334,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       for (let i = paintCount; i < dabs.length; i++) lay(dabs[i]!);
       if (geologyRects.length > 0) geologyChanges.mark(geologyRects);
     } else {
-      for (const t of paint) (t.image.data as Uint8Array).fill(0);
+      for (const layer of paint) layer.fill(0);
       for (const kind of COVER_KINDS) covers[kind].fill(0);
       sandCorners.fill(0);
       basaltCorners.fill(0);
@@ -2334,7 +2349,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       return;
     }
     forestRevision++;
-    for (const t of paint) t.needsUpdate = true;
+    paintArray.addLayerUpdate(0);
+    paintArray.addLayerUpdate(1);
+    paintArray.needsUpdate = true;
     {
       // The flowers and the scrub at each terrain corner, into the shader's
       // ground texture.
