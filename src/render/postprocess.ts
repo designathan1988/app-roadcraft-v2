@@ -1,8 +1,8 @@
 import {
-  BufferGeometry, Color, DataTexture, DepthTexture, Float32BufferAttribute, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh,
-  PlaneGeometry, RGBAFormat, RepeatWrapping, Scene, UnsignedByteType, Vector2, Vector3, WebGLRenderTarget, type Camera, type WebGLRenderer,
+  BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh,
+  PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type WebGLRenderer,
 } from 'three';
-import { fbm, makeNoise } from './mesh/textureBaker';
+import { MAP_SIZE } from '@world/bounds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -54,7 +54,7 @@ export interface PostChain {
    */
   setNight(dark: number): void;
   /** The sky the player set (`Atmosphere`) and the light it is lit by. */
-  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color): void;
+  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color): void;
   dispose(): void;
 }
 
@@ -64,7 +64,7 @@ export interface PostChain {
  * land and how high it reaches. World units.
  */
 export interface Atmosphere {
-  /** 0 a clear sky, 1 overcast. */
+  /** 0 a clear sky, 1 a sky full of cumulus (`MAX_CLOUDS`). */
   readonly clouds: number;
   readonly cloudBase: number;
   readonly cloudThickness: number;
@@ -72,7 +72,7 @@ export interface Atmosphere {
   readonly fog: number;
   readonly fogHeight: number;
 }
-export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.45, cloudBase: 875, cloudThickness: 150, fog: 0, fogHeight: 150 };
+export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150 };
 
 export function createPostChain(
   renderer: WebGLRenderer,
@@ -216,9 +216,9 @@ export function createPostChain(
   // depth the scene was drawn with, so the patches lie on the ground, the
   // roads and the roofs alike, and scroll with the wind.
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
-  const cloudMap = clouds ? cloudTexture() : null;
-  if (clouds && cloudMap) {
-    clouds.uniforms['tClouds']!.value = cloudMap;
+  let sky: Atmosphere = DEFAULT_ATMOSPHERE;
+  let cloudClock = 0;
+  if (clouds) {
     const pass = clouds;
     const shade = pass.render.bind(pass);
     pass.render = (...args: Parameters<ShaderPass['render']>) => {
@@ -242,7 +242,10 @@ export function createPostChain(
       (grade.uniforms['uTime'] as { value: number }).value += delta;
       if (clouds) {
         camera.updateMatrixWorld();
-        (clouds.uniforms['uTime'] as { value: number }).value += delta;
+        cloudClock += delta;
+        (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
+        const u = clouds.uniforms as Record<string, { value: unknown }>;
+        u['uCloudCount']!.value = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[]);
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
       }
@@ -255,12 +258,12 @@ export function createPostChain(
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
     },
-    setAtmosphere(atmosphere, sun, skyColor) {
+    setAtmosphere(atmosphere, sun, skyColor, sunLight) {
       if (!clouds) return;
+      sky = atmosphere;
       const u = clouds.uniforms as Record<string, { value: unknown }>;
-      u['uCloudCover']!.value = atmosphere.clouds;
       u['uCloudBase']!.value = atmosphere.cloudBase;
-      u['uCloudThickness']!.value = Math.max(10, atmosphere.cloudThickness);
+      (u['uSunLight']!.value as Color).copy(sunLight);
       u['uFog']!.value = atmosphere.fog;
       u['uFogHeight']!.value = Math.max(5, atmosphere.fogHeight);
       (u['uSunDir']!.value as Vector3).copy(sun).normalize();
@@ -280,56 +283,87 @@ export function createPostChain(
       output.dispose();
       grade.dispose();
       clouds?.dispose();
-      cloudMap?.dispose();
     },
   };
 }
 
-/** How much a cloud's shadow takes from the light under it: a soft patch, not a dark blot. */
-const CLOUD_SHADOW_STRENGTH = 0.2;
+/** How much a cloud's shadow takes from the light under it at its heart. */
+const CLOUD_SHADOW_STRENGTH = 0.55;
+
+
+/** Most cumulus clouds over the map at once, and the puffs each is built of. */
+const MAX_CLOUDS = 12;
+const CLOUD_PUFFS = 7;
 
 /**
- * Tiling cloud cover: billowy fbm with gaps between, so the patches are
- * separate clouds rather than an even grey film.
+ * Each cloud's puffs, in units of its size: across, up from the base, along,
+ * radius. A cumulus is a flat-bottomed heap - a row of broad puffs on the
+ * base, two smaller ones over them and a crown (the sphere clusters of Maxime
+ * Heckel's "Real-time dreamy Cloudscapes" and the three.js volume cloud's
+ * spherical mask).
  */
-function cloudTexture(): DataTexture {
-  const res = 256;
-  const noise = makeNoise(0x51c3);
-  const data = new Uint8Array(res * res * 4);
-  for (let y = 0; y < res; y++) {
-    for (let x = 0; x < res; x++) {
-      const v = fbm(noise, (x / res) * 6, (y / res) * 6, 6, 5);
-      const cover = Math.min(1, Math.max(0, (v - 0.47) / 0.16));
-      const i = (y * res + x) * 4;
-      const c = Math.round(cover * cover * (3 - 2 * cover) * 255);
-      data[i] = c;
-      data[i + 1] = c;
-      data[i + 2] = c;
-      data[i + 3] = 255;
+const PUFFS: readonly (readonly [number, number, number, number])[] = [
+  [-0.46, 0.26, 0.02, 0.4],
+  [0.0, 0.3, 0.06, 0.48],
+  [0.46, 0.25, -0.04, 0.4],
+  [-0.2, 0.58, 0.1, 0.37],
+  [0.24, 0.56, -0.08, 0.35],
+  [0.02, 0.8, 0.0, 0.3],
+  [0.12, 0.36, 0.38, 0.33],
+];
+
+/** Units a second the clouds drift with the wind. */
+const CLOUD_DRIFT = new Vector2(7, 2.6);
+
+/** 0..1 hash of an integer and a salt (the same clouds every visit). */
+function cloudHash(i: number, salt: number): number {
+  let h = Math.imul(i + 1, 374_761_393) ^ Math.imul(salt, 668_265_263);
+  h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+}
+
+/**
+ * Lays the clouds out for this moment: as many as the player's cover asks
+ * for, scattered over the map and a little past its edges, drifting with the
+ * wind and wrapping round so the sky never empties. Writes each cloud's
+ * bounding sphere (centre, size) and its puffs (world centre, radius).
+ */
+function layClouds(atmosphere: Atmosphere, time: number, bounds: Vector4[], puffs: Vector4[]): number {
+  const count = Math.min(MAX_CLOUDS, Math.round(atmosphere.clouds * MAX_CLOUDS));
+  const span = MAP_SIZE * 1.3;
+  const wrap = (v: number): number => ((((v + span / 2) % span) + span) % span) - span / 2;
+  for (let i = 0; i < count; i++) {
+    // Its size from the thickness the player set: a cumulus about twice as wide as tall.
+    const size = Math.max(40, atmosphere.cloudThickness) * (0.85 + 0.55 * cloudHash(i, 3));
+    const x = wrap((cloudHash(i, 1) - 0.5) * span + CLOUD_DRIFT.x * time);
+    const z = wrap((cloudHash(i, 2) - 0.5) * span + CLOUD_DRIFT.y * time);
+    const base = atmosphere.cloudBase + (cloudHash(i, 4) - 0.5) * size * 0.3;
+    const yaw = cloudHash(i, 5) * Math.PI * 2;
+    const c = Math.cos(yaw), sn = Math.sin(yaw);
+    bounds[i]!.set(x, base + size * 0.5, z, size * 1.12);
+    for (let k = 0; k < CLOUD_PUFFS; k++) {
+      const [a, up, b, r] = PUFFS[k]!;
+      const ja = a + (cloudHash(i * 11 + k, 6) - 0.5) * 0.16;
+      const jb = b + (cloudHash(i * 11 + k, 7) - 0.5) * 0.16;
+      const jr = r * (0.88 + 0.24 * cloudHash(i * 11 + k, 8));
+      puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size, z + (ja * sn + jb * c) * size, jr * size);
     }
   }
-  const texture = new DataTexture(data, res, res, RGBAFormat, UnsignedByteType);
-  texture.wrapS = RepeatWrapping;
-  texture.wrapT = RepeatWrapping;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-  return texture;
+  return count;
 }
 
 /**
  * THE ATMOSPHERE, on the image (the player sets it: Paisagem > Céu e clima):
  *
- *  - CLOUDS with a height and a thickness: each pixel's ray, from the camera
- *    to what it sees (or to the sky), is marched in a few steps through the
- *    slab between the cloud base and its top, the cover read from the same
- *    drifting cloud texture as ever, shaped round in height and lit brighter
- *    at the top than at the base - the shape cheap volumetric layers take
- *    (Schneider, "The Real-time Volumetric Cloudscapes of Horizon Zero
- *    Dawn"), in a handful of steps rather than dozens.
- *  - Their SHADOWS on the land, now where the sun throws them from that
- *    height, so a cloud and its shadow belong together.
+ *  - CUMULUS CLOUDS, each its own heap over the map: puffs joined by a
+ *    smooth union, their rims eaten by 3-D noise (the sphere-plus-fbm density
+ *    of Heckel's cloudscapes), a flat base; lit by the directional derivative
+ *    towards the sun (brighter where the cloud thins sunwards), absorbed by
+ *    Beer's law. Marched only where the ray crosses a cloud's bounding
+ *    sphere, nearest first, and faded within its own size of the camera, so a
+ *    cloud is never a wall in front of it (the player, 2026-10-07).
+ *  - Their SHADOWS: from each pixel towards the sun through the clouds'
+ *    smooth shapes, one big soft shadow where the sun throws each cloud's.
  *  - MIST: exponential height fog, thickest in the low ground.
  *
  * Every pixel's world position is rebuilt from the depth the scene was drawn
@@ -339,18 +373,19 @@ const CLOUD_SHADOWS = {
   uniforms: {
     tDiffuse: { value: null },
     tDepth: { value: null },
-    tClouds: { value: null },
     uProjectionInverse: { value: new Matrix4() },
     uCameraWorld: { value: new Matrix4() },
     uTime: { value: 0 },
     uStrength: { value: CLOUD_SHADOW_STRENGTH },
     uDark: { value: 0 },
-    uCloudCover: { value: DEFAULT_ATMOSPHERE.clouds },
+    uCloudCount: { value: 0 },
+    uCloud: { value: Array.from({ length: MAX_CLOUDS }, () => new Vector4()) },
+    uPuff: { value: Array.from({ length: MAX_CLOUDS * CLOUD_PUFFS }, () => new Vector4()) },
     uCloudBase: { value: DEFAULT_ATMOSPHERE.cloudBase },
-    uCloudThickness: { value: DEFAULT_ATMOSPHERE.cloudThickness },
     uFog: { value: DEFAULT_ATMOSPHERE.fog },
     uFogHeight: { value: DEFAULT_ATMOSPHERE.fogHeight },
     uSunDir: { value: new Vector3(0.5, 0.8, 0.3).normalize() },
+    uSunLight: { value: new Color(3, 2.8, 2.5) },
     uFogColor: { value: new Color(0xc9dcea) },
   },
   vertexShader: /* glsl */ `
@@ -358,34 +393,76 @@ const CLOUD_SHADOWS = {
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
   `,
   fragmentShader: /* glsl */ `
+    #define MAX_CLOUDS ${MAX_CLOUDS}
+    #define PUFFS ${CLOUD_PUFFS}
     uniform sampler2D tDiffuse;
     uniform sampler2D tDepth;
-    uniform sampler2D tClouds;
     uniform mat4 uProjectionInverse;
     uniform mat4 uCameraWorld;
     uniform float uTime;
     uniform float uStrength;
     uniform float uDark;
-    uniform float uCloudCover;
+    uniform int uCloudCount;
+    uniform vec4 uCloud[MAX_CLOUDS];
+    uniform vec4 uPuff[MAX_CLOUDS * PUFFS];
     uniform float uCloudBase;
-    uniform float uCloudThickness;
     uniform float uFog;
     uniform float uFogHeight;
     uniform vec3 uSunDir;
+    uniform vec3 uSunLight;
     uniform vec3 uFogColor;
     varying vec2 vUv;
     vec3 worldAt(vec2 uv, float depth) {
       vec4 view = uProjectionInverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
       return (uCameraWorld * vec4(view.xyz / view.w, 1.0)).xyz;
     }
-    // The cloud cover over a point, 0..1, as the player's cover thresholds it.
-    float coverAt(vec2 p) {
-      // Two layers at different sizes and drifts, so the shapes change as
-      // they pass instead of sliding by as one stencil.
-      float a = texture2D(tClouds, p / 2600.0 + uTime * vec2(0.0042, 0.0017)).r;
-      float b = texture2D(tClouds, p / 1500.0 + uTime * vec2(0.0058, 0.0009) + 0.37).r;
-      float raw = clamp(a * 0.75 + b * 0.45 - 0.15, 0.0, 1.0);
-      return clamp((raw - (1.0 - uCloudCover) * 0.95) / 0.35, 0.0, 1.0);
+    // Where a ray enters and leaves a sphere (both negative: it misses).
+    vec2 sphereSpan(vec3 ro, vec3 rd, vec4 s) {
+      vec3 oc = ro - s.xyz;
+      float b = dot(oc, rd);
+      float h = b * b - (dot(oc, oc) - s.w * s.w);
+      if (h < 0.0) return vec2(-1.0);
+      h = sqrt(h);
+      return vec2(-b - h, -b + h);
+    }
+    float smin(float a, float b, float k) {
+      float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+      return mix(b, a, h) - k * h * (1.0 - h);
+    }
+    float hash3(vec3 p) {
+      p = fract(p * 0.3183099 + 0.1);
+      p *= 17.0;
+      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+    float noise3(vec3 x) {
+      vec3 i = floor(x);
+      vec3 f = fract(x);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(
+        mix(mix(hash3(i), hash3(i + vec3(1.0, 0.0, 0.0)), f.x), mix(hash3(i + vec3(0.0, 1.0, 0.0)), hash3(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+        mix(mix(hash3(i + vec3(0.0, 0.0, 1.0)), hash3(i + vec3(1.0, 0.0, 1.0)), f.x), mix(hash3(i + vec3(0.0, 1.0, 1.0)), hash3(i + vec3(1.0)), f.x), f.y),
+        f.z);
+    }
+    // The heap's smooth shape: how far inside it a point is, in its own size (> 0 inside).
+    float heap(int c, vec3 p) {
+      float size = uCloud[c].w;
+      float d = 1e5;
+      for (int k = 0; k < PUFFS; k++) {
+        vec4 s = uPuff[c * PUFFS + k];
+        d = smin(d, length(p - s.xyz) - s.w, size * 0.12);
+      }
+      // A flat base: the cloud stops at its condensation level.
+      float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, p.y);
+      return -d / size * base;
+    }
+    // Its density: the shape, its rim eaten by billows of noise.
+    float cloudDensity(int c, vec3 p) {
+      float size = uCloud[c].w;
+      vec3 q = p / (size * 0.22) + vec3(uTime * 0.03, uTime * 0.012, 0.0);
+      float n = noise3(q) * 0.55 + noise3(q * 2.07 + 5.1) * 0.3 + noise3(q * 4.3 + 9.7) * 0.15;
+      // The noise only eats into the heap, never adds to it: nothing past
+      // its surface, so no cloud is cut off by its bounding sphere.
+      return clamp(heap(c, p) * 5.0 - (1.0 - n) * 0.85, 0.0, 1.0);
     }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
@@ -396,11 +473,20 @@ const CLOUD_SHADOWS = {
       vec3 rd = normalize(hit - ro);
       float tScene = sky ? 1e7 : length(hit - ro);
       vec3 colour = src.rgb;
-      // The clouds' shadow, thrown by the sun from the middle of the layer.
-      if (!sky && uStrength > 0.0 && uCloudCover > 0.0) {
-        float lift = (uCloudBase + uCloudThickness * 0.5 - hit.y) / max(uSunDir.y, 0.2);
-        float shade = coverAt(hit.xz + uSunDir.xz * lift);
-        colour *= 1.0 - uStrength * shade;
+      // The clouds' shadows: from the point towards the sun, through each heap.
+      if (!sky && uStrength > 0.0 && uCloudCount > 0) {
+        float through = 0.0;
+        for (int c = 0; c < MAX_CLOUDS; c++) {
+          if (c >= uCloudCount) break;
+          vec2 span = sphereSpan(hit, uSunDir, uCloud[c]);
+          if (span.y <= 0.0) continue;
+          float a = max(span.x, 0.0);
+          float len = (span.y - a) / 5.0;
+          for (int i = 0; i < 5; i++) {
+            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 3.0, 0.0, 1.0) * len / uCloud[c].w;
+          }
+        }
+        colour *= 1.0 - uStrength * (1.0 - exp(-through * 3.5));
       }
       // Mist: exponential in height, along the ray to what the pixel sees.
       if (uFog > 0.0) {
@@ -411,39 +497,61 @@ const CLOUD_SHADOWS = {
         vec3 mist = mix(uFogColor, uFogColor * 0.18, uDark);
         colour = mix(colour, mist, clamp(amount, 0.0, 0.95));
       }
-      // The clouds: a few steps through the slab the ray crosses.
-      if (uCloudCover > 0.0 && abs(rd.y) > 1e-4) {
-        float top = uCloudBase + uCloudThickness;
-        float ta = (uCloudBase - ro.y) / rd.y;
-        float tb = (top - ro.y) / rd.y;
-        float t0 = max(0.0, min(ta, tb));
-        float t1 = min(max(ta, tb), tScene);
-        if (t1 > t0) {
-          const int STEPS = 10;
-          float stepLen = (t1 - t0) / float(STEPS);
-          // Each pixel starts its steps at its own offset: fixed steps drew
-          // the layer as a stack of slices.
-          float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-          float transmit = 1.0;
-          vec3 light = vec3(0.0);
-          vec3 lit = mix(vec3(1.0, 0.98, 0.95), vec3(0.12, 0.14, 0.2), uDark);
-          vec3 base = mix(vec3(0.62, 0.66, 0.72), vec3(0.05, 0.06, 0.09), uDark);
-          for (int i = 0; i < STEPS; i++) {
-            vec3 q = ro + rd * (t0 + (float(i) + jitter) * stepLen);
-            float h = clamp((q.y - uCloudBase) / uCloudThickness, 0.0, 1.0);
-            // Billowing: the cover a point needs grows towards the base and
-            // much more towards the top, so each cloud is a mound with a
-            // flat-ish base and a rounded top, not its outline extruded.
-            float need = 0.12 + 0.75 * pow(abs(h * 1.6 - 0.45), 1.6);
-            float density = smoothstep(need, need + 0.25, coverAt(q.xz));
-            if (density <= 0.0) continue;
-            float alpha = 1.0 - exp(-density * stepLen * 0.006);
-            light += transmit * alpha * mix(base, lit, h);
-            transmit *= 1.0 - alpha;
-            if (transmit < 0.02) break;
-          }
-          colour = colour * transmit + light;
+      // The clouds, nearest first.
+      if (uCloudCount > 0) {
+        vec2 spans[MAX_CLOUDS];
+        for (int c = 0; c < MAX_CLOUDS; c++) {
+          spans[c] = vec2(-1.0);
+          if (c < uCloudCount) spans[c] = sphereSpan(ro, rd, uCloud[c]);
         }
+        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        float transmit = 1.0;
+        vec3 light = vec3(0.0);
+        // Lit by the sun on its sunward side, by the sky elsewhere; dim at night.
+        vec3 skyLight = mix(uFogColor * 0.55 + vec3(0.12), vec3(0.03, 0.035, 0.05), uDark);
+        vec3 baseShade = mix(vec3(0.22, 0.24, 0.3), vec3(0.02, 0.025, 0.035), uDark);
+        float done = -1.0;
+        for (int pass = 0; pass < MAX_CLOUDS; pass++) {
+          if (pass >= uCloudCount || transmit < 0.03) break;
+          int best = -1;
+          float bestKey = 1e9;
+          for (int c = 0; c < MAX_CLOUDS; c++) {
+            if (c >= uCloudCount || spans[c].y <= 0.0) continue;
+            float key = max(spans[c].x, 0.0) + float(c) * 0.001;
+            if (key > done && key < bestKey) { bestKey = key; best = c; }
+          }
+          if (best < 0) break;
+          done = bestKey;
+          float size = uCloud[best].w;
+          float t0 = max(spans[best].x, 0.0);
+          float t1 = min(spans[best].y, tScene);
+          if (t1 <= t0) continue;
+          const int STEPS = 26;
+          float stepLen = (t1 - t0) / float(STEPS);
+          for (int i = 0; i < STEPS; i++) {
+            float t = t0 + (float(i) + jitter) * stepLen;
+            vec3 q = ro + rd * t;
+            float density = cloudDensity(best, q);
+            // Never in front of the camera (the player, 2026-10-07): a cloud
+            // fades out within its own size of it, and from high over the map
+            // within most of the camera's height over the clouds, so the near
+            // ones never hang over the view.
+            float near = max(size * 1.1, (ro.y - uCloudBase) * 0.75);
+            density *= smoothstep(near * 0.45, near, t);
+            if (density < 0.01) continue;
+            // Lit where the heap's surface faces the sun: a step towards it
+            // leaves the shape (the directional derivative of its smooth
+            // form, not of the clamped density, which is flat inside).
+            float lit = smoothstep(-0.05, 0.1, heap(best, q) - heap(best, q + uSunDir * size * 0.16));
+            float up = clamp((q.y - uCloudBase) / size, 0.0, 1.0);
+            vec3 c = mix(baseShade, skyLight, 0.25 + 0.75 * up) + uSunLight * 0.55 * lit * (1.0 - uDark);
+            float alpha = 1.0 - exp(-density * stepLen * 0.03);
+            light += transmit * alpha * c;
+            transmit *= 1.0 - alpha;
+            if (transmit < 0.03) break;
+          }
+        }
+        colour = colour * transmit + light;
       }
       gl_FragColor = vec4(colour, src.a);
     }

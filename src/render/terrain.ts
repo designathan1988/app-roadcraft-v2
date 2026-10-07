@@ -1745,13 +1745,37 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          topsoil = mix(topsoil, vec3(0.42, 0.33, 0.22), root * 0.6);
          vec3 turf = mix(vec3(0.24, 0.34, 0.13), vec3(0.15, 0.22, 0.09), smoothstep(0.0, lip, vBelow));
          vec3 wall = mix(topsoil, strata, smoothstep(soil - 0.6, soil + 0.6, vBelow));
-         // Bedrock: the deep layers turn to grey stone.
-         float bedrock = smoothstep(230.0, 300.0, vBelow + 30.0 * wallNoise(along * 0.02));
-         wall = mix(wall, vec3(0.13, 0.12, 0.11) * (0.7 + 1.2 * strata.r), bedrock * 0.8);
+         // Bedrock: the deepest third of the cut is dark stones packed
+         // together, mortar-dark gaps between them (a Voronoi cell per
+         // stone, flattened as bedded cobbles are), under a thin pale line of
+         // gravel - the base of the cross-sections the player showed.
+         float bedTop = 200.0 + 16.0 * wallNoise(along * 0.025) + 5.0 * wallNoise(along * 0.11 + 3.0);
+         vec2 cp = vec2(along / 7.0, vBelow / 5.0);
+         vec2 ci = floor(cp);
+         vec2 cf = fract(cp);
+         float f1 = 9.0;
+         float f2 = 9.0;
+         float stoneId = 0.0;
+         for (int j = -1; j <= 1; j++) {
+           for (int i = -1; i <= 1; i++) {
+             vec2 g = vec2(float(i), float(j));
+             float id = dot(ci + g, vec2(127.1, 311.7));
+             vec2 r = g + 0.15 + 0.7 * vec2(wallHash(id), wallHash(id + 57.3)) - cf;
+             float d = dot(r, r);
+             if (d < f1) { f2 = f1; f1 = d; stoneId = id; } else if (d < f2) { f2 = d; }
+           }
+         }
+         float joint = smoothstep(0.03, 0.16, sqrt(f2) - sqrt(f1));
+         vec3 stone = mix(vec3(0.055, 0.058, 0.064), vec3(0.13, 0.125, 0.12), wallHash(stoneId + 9.1));
+         stone *= 0.75 + 0.35 * sqrt(f1 + 0.1) * (1.0 - sqrt(f1));
+         stone = mix(vec3(0.018, 0.017, 0.016), stone, joint);
+         float gravel = smoothstep(bedTop - 6.0, bedTop - 4.5, vBelow) * (1.0 - smoothstep(bedTop - 1.0, bedTop, vBelow));
+         wall = mix(wall, vec3(0.34, 0.33, 0.3) * (0.8 + 0.4 * wallNoise(along * 1.7 + vBelow * 2.3)), gravel * 0.85);
+         wall = mix(wall, stone, smoothstep(bedTop - 0.5, bedTop + 0.5, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v1';
+  material.customProgramCacheKey = () => 'terrain-walls-v2';
   return material;
 }
 

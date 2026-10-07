@@ -52,12 +52,15 @@ const SUN_ELEVATION = (47 * Math.PI) / 180;
  * sun at -128°, turning shadows off changed the rendered image by 0.08 of a
  * luminance level — the shadow map was correct, fully populated, and invisible.
  *
- * Putting the sun a little clockwise of the camera's own bearing throws every
- * shadow away from the viewer and across the ground, where it does its job: it
- * is what tells the eye that a pier stands on the terrain and that a viaduct
- * passes over the road beneath it.
+ * Nearly behind the camera (14°, the camera's home bearing 13.5°) every face
+ * the player saw was lit flat and each shadow lay hidden behind its caster:
+ * the land read without depth, and a cloud covered its own shadow. The sun
+ * now stands well to the camera's left and a little behind it - side light,
+ * the diorama's (the player's picture, 2026-10-07): the relief modelled in
+ * light and shade, the shadows thrown sideways across the ground where they
+ * show, the faces towards the camera still lit.
  */
-const SUN_AZIMUTH = (14 * Math.PI) / 180;
+const SUN_AZIMUTH = (-59 * Math.PI) / 180;
 const SUN_DISTANCE = 1_600;
 /**
  * Depth offset of the shadow test, WORLD units (4 cm): enough to keep a lit

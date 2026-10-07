@@ -345,7 +345,7 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
   appendPart(trunk, bark, positions, normals, colours);
   const leaf: [number, number, number] = species === 'ipeYellow' ? [0.42, 0.32, 0.04]
     : species === 'ipePink' ? [0.4, 0.13, 0.22]
-      : tall ? [0.055, 0.105, 0.03] : [0.07, 0.12, 0.034];
+      : tall ? [0.065, 0.15, 0.03] : [0.095, 0.19, 0.035];
   const lift = tall ? 0.1 : 0;
   const centre = new Vector3(0, 0.66 + lift, 0);
   // The inner crown is the shaded heart the cards stand out of: smaller and
@@ -472,9 +472,9 @@ function rockTint(item: CoverPlacement, out: Color): Color {
 /** A bush's colour: greens from olive to deep, a few going yellow. Linear. */
 function scrubTint(item: CoverPlacement, out: Color): Color {
   const t = (item.seed * 7.31) % 1;
-  if (t < 0.45) return out.setRGB(0.07 + t * 0.04, 0.13 + t * 0.05, 0.03);
-  if (t < 0.85) return out.setRGB(0.09, 0.15, 0.04);
-  return out.setRGB(0.15, 0.16, 0.05);
+  if (t < 0.45) return out.setRGB(0.08 + t * 0.05, 0.17 + t * 0.07, 0.03);
+  if (t < 0.85) return out.setRGB(0.1, 0.2, 0.04);
+  return out.setRGB(0.17, 0.2, 0.05);
 }
 
 function instanced(

@@ -22,7 +22,7 @@ import {
   Float32BufferAttribute,
   Color,
   Quaternion,
-  ACESFilmicToneMapping,
+  NeutralToneMapping,
   Box3,
   PointLight,
   Group,
@@ -402,8 +402,13 @@ export function createSceneRenderer(
   // The default reset on each `render()` left stats showing only the last quad.
   renderer.info.autoReset = false;
   renderer.outputColorSpace = SRGBColorSpace;
-  renderer.toneMapping = ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  // Khronos PBR Neutral: hue and saturation kept, only the highlights rolled
+  // off. ACES cannot put a bright green, a canary yellow or a clear blue on
+  // the screen (model-viewer's tone-mapping notes); the grass came out olive.
+  renderer.toneMapping = NeutralToneMapping;
+  // three's ACES carried its own lift (the input over 0.6); Neutral does
+  // not, and at 1.0 the whole scene came out darker.
+  renderer.toneMappingExposure = 1.4;
   renderer.shadowMap.enabled = true;
   // PCFSoftShadowMap was REMOVED in three r186. Asking for it logged
   // "PCFSoftShadowMap has been removed. Using PCFShadowMap instead." on every
@@ -880,6 +885,9 @@ export function createSceneRenderer(
   let gardens: Scenery | null = null;
   /** The painted rocks and scrub and the stones of the rivers (`rockPlacements`, `scrubPlacements`). */
   let cover: GroundCover | null = null;
+  /** The ecosystem's trees and bushes (`naturePlants`), and what they were grown for. */
+  let nature: GroundCover | null = null;
+  let natureFor = '';
   const coverKit = createGroundCoverKit();
   /** Where a cover was painted (the only paints that raise a density), by paint revision. */
   let forestAreaFor = -1;
@@ -909,6 +917,8 @@ export function createSceneRenderer(
   let skyMode: SkyMode = 'day';
   /** Clouds and mist as the player set them (`setAtmosphere`). */
   let atmosphere: Atmosphere = DEFAULT_ATMOSPHERE;
+  /** The sun's colour times its strength, that the clouds are lit by. */
+  const sunLight = new Color();
   const indoors = new Indoors();
   // Room lights for the floors cut open: a fixed set, so switching them on and
   // off never changes the scene's light count (which recompiles every shader).
@@ -1561,6 +1571,101 @@ export function createSceneRenderer(
     return top + (bottom - top) * sy;
   };
   /**
+   * What grows of itself on a map with an ecosystem (`world/ecology.ts`):
+   * trees and bushes from the field's densities, gathered by a slow noise
+   * into copses and thickets with open grass between, as Horizon Zero Dawn
+   * places its plants from density maps (Guerrilla, "GPU-Based Procedural
+   * Placement"). One candidate a cell of NATURE_SPACING, jittered by a hash
+   * of the cell so an edit elsewhere never moves a plant; the odds scaled so
+   * the whole map stays within its budget; never in water, on a cliff, a
+   * road, a footway or under a building. The low-poly trees and bushes of
+   * the painted covers (`groundCover.ts`, under 130 triangles each).
+   */
+  const NATURE_SPACING = m(5);
+  const NATURE_TREES = 5_000;
+  const NATURE_SHRUBS = 9_000;
+  const natureNoise = (x: number, y: number, scale: number, salt: number): number => {
+    const gx = x / scale, gy = y / scale;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = gx - x0, fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const h = (a: number, b: number): number => {
+      let v = Math.imul(a, 374_761_393) ^ Math.imul(b, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+      v = Math.imul(v ^ (v >>> 13), 1_274_126_177);
+      return ((v ^ (v >>> 16)) >>> 0) / 4_294_967_296;
+    };
+    const top = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * sx;
+    const bottom = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * sx;
+    return top + (bottom - top) * sy;
+  };
+  const naturePlants = (net: Network): { trees: TreePlacement[]; shrubs: CoverPlacement[] } => {
+    const trees: TreePlacement[] = [];
+    const shrubs: CoverPlacement[] = [];
+    const field = terrain.ecology();
+    if (!field || quality.vegetation <= 0) return { trees, shrubs };
+    const hash = (a: number, b: number, salt: number): number => {
+      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+    };
+    const cells = Math.floor((TERRAIN_HALF * 2) / NATURE_SPACING);
+    const odds = new Float32Array(cells * cells * 2);
+    let treeSum = 0;
+    let shrubSum = 0;
+    for (let j = 0; j < cells; j++) {
+      for (let i = 0; i < cells; i++) {
+        const x = -TERRAIN_HALF + (i + 0.5) * NATURE_SPACING, y = -TERRAIN_HALF + (j + 0.5) * NATURE_SPACING;
+        const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
+        const k = iy * field.side + ix;
+        const tree = Math.min(1, (field.trees[k] ?? 0) + (field.canopy[k] ?? 0) * 0.8 + (field.emergent[k] ?? 0) * 0.5);
+        const shrub = Math.min(1, (field.shrub[k] ?? 0) + (field.cactus[k] ?? 0) * 0.5);
+        // Copses some 40 m across with smaller knots in them, and open grass between.
+        const clump = Math.min(1, Math.max(0, (natureNoise(x, y, m(38), 7) * 0.65 + natureNoise(x, y, m(11), 9) * 0.35 - 0.55) / 0.18));
+        const o = (j * cells + i) * 2;
+        odds[o] = tree * clump * (0.5 + 0.5 * clump);
+        odds[o + 1] = Math.min(1, (shrub + tree * 0.6) * clump);
+        treeSum += odds[o]!;
+        shrubSum += odds[o + 1]!;
+      }
+    }
+    const treeScale = Math.min(0.6, NATURE_TREES / Math.max(1, treeSum));
+    const shrubScale = Math.min(0.9, NATURE_SHRUBS / Math.max(1, shrubSum));
+    // Water, a cliff, a road or a building: nothing grows there.
+    const open = (x: number, y: number, z: number): boolean => {
+      if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
+      const level = terrain.shoreLevelAt(x, y);
+      if (level !== null && level > z - m(0.3)) return false;
+      const d = m(2);
+      const grade = Math.hypot(terrain.renderedHeightAt(x + d, y) - terrain.renderedHeightAt(x - d, y), terrain.renderedHeightAt(x, y + d) - terrain.renderedHeightAt(x, y - d)) / (2 * d);
+      if (grade > 0.75) return false;
+      return !onCarriageway(net, { x, y }) && !buildings.covers(x, y);
+    };
+    for (let j = 0; j < cells; j++) {
+      for (let i = 0; i < cells; i++) {
+        const o = (j * cells + i) * 2;
+        const isTree = hash(i, j, 41) < odds[o]! * treeScale;
+        const isShrub = !isTree && hash(i, j, 42) < odds[o + 1]! * shrubScale;
+        if (!isTree && !isShrub) continue;
+        const x = -TERRAIN_HALF + (i + 0.5 + (hash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
+        const y = -TERRAIN_HALF + (j + 0.5 + (hash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
+        const z = terrain.renderedHeightAt(x, y);
+        if (!open(x, y, z)) continue;
+        if (isTree && trees.length < NATURE_TREES) {
+          const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
+          const canopy = field.canopy[iy * field.side + ix] ?? 0;
+          // Short crooked savanna trees; taller where the canopy closes (gallery forest, cerradão).
+          const h = m(4.5) + m(4) * hash(i, j, 45) + m(8) * canopy;
+          const roll = hash(i, j, 46);
+          const species = roll < 0.03 ? 'ipeYellow' : canopy > 0.45 && roll < 0.55 ? 'broadleafTall' : 'broadleaf';
+          trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
+        } else if (isShrub && shrubs.length < NATURE_SHRUBS) {
+          shrubs.push({ x, y, z, size: m(1.4) + m(1.8) * hash(i, j, 49), yaw: hash(i, j, 50) * Math.PI * 2, seed: hash(i, j, 51) });
+        }
+      }
+    }
+    return { trees, shrubs };
+  };
+  /**
    * The stones: where rocks were painted, one candidate a cell of
    * ROCK_SPACING kept by the density (boulders of half a metre to two and a
    * half), and along every body of water - in the shallows, on the line and
@@ -2141,6 +2246,24 @@ export function createSceneRenderer(
         performance.measure('hitch:cover', { start: coverAt, end: performance.now() });
         for (const mesh of cover.meshes) world.add(mesh);
       }
+      // The ecosystem's own trees and bushes: again when the ecology, the
+      // roads or the buildings change, never in the middle of a stroke.
+      const natureKey = `${terrain.ecologyRevision}:${net.doc.revision}:${net.doc.buildings.revision}:${quality.vegetation > 0}`;
+      if (!stroking && natureKey !== natureFor) {
+        natureFor = natureKey;
+        if (nature) {
+          for (const mesh of nature.meshes) world.remove(mesh);
+          nature.dispose();
+          nature = null;
+        }
+        const natureAt = performance.now();
+        const plants = naturePlants(net);
+        if (plants.trees.length + plants.shrubs.length > 0) {
+          nature = buildGroundCover([], plants.shrubs, coverKit, plants.trees);
+          for (const mesh of nature.meshes) world.add(mesh);
+        }
+        performance.measure('hitch:nature', { start: natureAt, end: performance.now() });
+      }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
       // traverses everything passed to it regardless of visibility, so only
@@ -2451,7 +2574,8 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
-      post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor);
+      post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
+        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity));
       const atRender = performance.now();
       post.render(delta);
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
@@ -2488,6 +2612,7 @@ export function createSceneRenderer(
       furniture?.dispose();
       gardens?.dispose();
       cover?.dispose();
+      nature?.dispose();
       coverKit.dispose();
       sceneryKit.dispose();
       terrain.dispose();
