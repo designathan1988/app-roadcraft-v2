@@ -6,6 +6,7 @@ import {
   HemisphereLight,
   Mesh,
   PMREMGenerator,
+  Quaternion,
   Scene,
   ShaderMaterial,
   SphereGeometry,
@@ -94,6 +95,8 @@ export interface SceneEnvironment {
   setTimeOfDay(minutes: number): number;
   /** Smoke in the air, 0..1: the fog closes in and browns, the light dims. */
   setSmog(k: number): void;
+  /** The globe's turn (`planet.ts`): the sun stays put over the planet, so it turns with it. */
+  setSpin(q: Quaternion): void;
   dispose(): void;
 }
 
@@ -246,6 +249,8 @@ export function createEnvironment(
   const offset = new Vector3();
   const centre = new Vector3();
 
+  /** The globe's turn (`setSpin`). */
+  const spin = new Quaternion();
   /** Smoke in the air (`setSmog`), and the brown-grey it turns the fog. */
   let smog = 0;
   const SMOG = new Color(0xc9a27a);
@@ -338,9 +343,13 @@ export function createEnvironment(
       // No town-wide haze (the player: the smoke stays where the fire is).
       void smog; void SMOG;
       scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);
+      // Over a planet the sun keeps its place over the planet: turned as the
+      // globe is, so its other side comes round into the night.
+      sunDirection.applyQuaternion(spin);
       return dark;
     },
     setSmog(k) { smog = Math.max(0, Math.min(1, k)); },
+    setSpin(q) { spin.copy(q); },
     setQuality(next) {
       sun.castShadow = next.shadows;
       if (sun.shadow.mapSize.x !== next.shadowMapSize) {

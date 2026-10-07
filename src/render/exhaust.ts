@@ -73,6 +73,7 @@ export function createExhaust(): Exhaust {
       uWindDir: windUniforms.uWindDir,
       uHalfH: { value: 400 },
       planetBend: PLANET_SHADER.uniform,
+      planetSpin: PLANET_SHADER.spin,
     },
     vertexShader: /* glsl */ `
       ${PLANET_SHADER.glsl}

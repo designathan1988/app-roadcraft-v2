@@ -57,7 +57,7 @@ import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { DEFAULT_ATMOSPHERE, createPostChain, type Atmosphere, type PostChain } from './postprocess';
-import { PLANET_SHADER, createPlanetBody, installPlanet, planeCamera, planetPoint, planetRadius, setPlanetRadius } from './planet';
+import { PLANET_SHADER, PLANET_SPIN, createPlanetBody, installPlanet, planeCamera, planetPoint, planetRadius, planetScene, setPlanetRadius, unspin } from './planet';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { disposeMesh } from './mesh/surfaceMesh';
@@ -477,7 +477,7 @@ export function createSceneRenderer(
     geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
     geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
     const material = new ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, planetBend: PLANET_SHADER.uniform },
+      uniforms: { uTime: { value: 0 }, planetBend: PLANET_SHADER.uniform, planetSpin: PLANET_SHADER.spin },
       vertexShader: `${PLANET_SHADER.glsl} attribute float aRing; varying float vRing;
         void main() { vRing = aRing; gl_Position = projectionMatrix * planetView(modelViewMatrix * vec4(position, 1.0)); }`,
       fragmentShader: `uniform float uTime; varying float vRing;
@@ -927,9 +927,13 @@ export function createSceneRenderer(
   const sunLight = new Color();
   /** Towards the sun, for the relief's own shadows (`TerrainSurface.setSun`). */
   const sunTowards = new Vector3();
+  /** The globe's turn last seen, and when it was last still (the relief's shadows wait for it). */
+  const spunAt = new Quaternion();
+  let spinSettled = 0;
   /** The camera taken back to the plane, for the CPU's culling (`planeCamera`). */
   let flatCamera = rig.camera.clone();
   /** The rest of the globe round the map (`planet.ts`). */
+  planetScene(scene);
   const planetBody = createPlanetBody(TERRAIN_HALF + PLANET_SKIRT_WIDTH, PLANET_GROUND_LEVEL, (terrain.ground.material as MeshStandardMaterial).map);
   scene.add(planetBody.mesh);
   terrain.skirt.material = planetBody.skirtMaterial;
@@ -2514,6 +2518,12 @@ export function createSceneRenderer(
       // "Dia": four in the afternoon, the sun 29 degrees up - long enough
       // shadows to model the land, as the player's picture (2026-10-07).
       const clock = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);
+      // The globe's turn (`planet.ts`): the rest of the planet turns with it.
+      // The sun stays with the view, as a globe viewer lights the side it
+      // looks at; the relief's shadows follow once the globe stops turning.
+      planetBody.setSpin(PLANET_SPIN);
+      post.setGlobe(rig.viewport.globe);
+      if (!spunAt.equals(PLANET_SPIN)) { spunAt.copy(PLANET_SPIN); spinSettled = performance.now() + 300; }
       const dark = environment.setTimeOfDay(clock);
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
@@ -2610,7 +2620,10 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
-      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position), planetRadius());
+      // In the planet's own frame (`unspin`): turning the globe does not move it.
+      if (performance.now() >= spinSettled) {
+        terrain.setSun(unspin(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position)), planetRadius());
+      }
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();

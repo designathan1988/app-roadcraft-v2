@@ -60,6 +60,12 @@ export interface PostChain {
    * the air round it is drawn too: the backdrop and the haze of distance.
    */
   setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color, backdrop: boolean): void;
+  /**
+   * How far out to the whole globe the view is (`Viewport.globe`): out there
+   * the crease shading is off - nothing at that scale has a crease, and over
+   * the depth of a whole planet its reconstruction drew a line across it.
+   */
+  setGlobe(globe: number): void;
   dispose(): void;
 }
 
@@ -103,6 +109,9 @@ export function createPostChain(
       },
       setAtmosphere() {
         /* no clouds or mist without the chain */
+      },
+      setGlobe() {
+        /* no crease shading without the chain */
       },
       dispose() {
         /* nothing owned */
@@ -274,6 +283,9 @@ export function createPostChain(
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
     },
+    setGlobe(globe) {
+      if (gtao) gtao.enabled = globe < 0.05;
+    },
     setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop) {
       if (!clouds) return;
       sky = atmosphere;
@@ -422,6 +434,7 @@ const CLOUD_SHADOWS = {
     uFogColor: { value: new Color(0xc9dcea) },
     uBackdrop: { value: 0 },
     planetBend: PLANET_SHADER.uniform,
+    planetSpin: PLANET_SHADER.spin,
     // The void round the map: its deep blue, the paler air towards the
     // horizon, and the abyss below (sRGB, as the page's own colours).
     uSkyDeep: { value: new Color(0x0c1a2c) },
@@ -579,7 +592,41 @@ const CLOUD_SHADOWS = {
       // pale horizon from afar and ground seen close up stays clear. The backdrop hangs on the view's direction, as a
       // sky infinitely far: the map slides over it, and it turns only with the
       // camera - its parallax.
-      if (uBackdrop > 0.5) {
+      if (uBackdrop > 0.5 && planetBend.x > 0.0) {
+        // ON A PLANET the air is a shell round the globe, and each pixel
+        // takes on the air its ray crosses inside the shell (the in-scattering
+        // and extinction along the ray of Preetham's and Hillaire's
+        // atmospheres): from the street the horizon pales and nearby ground
+        // stays clear; from space the globe is clear and its limb glows,
+        // ringed by the lit air, against the dark.
+        float R = planetBend.x;
+        vec3 centre = vec3(0.0, -R, 0.0);
+        vec2 shell = sphereSpan(ro, rd, vec4(centre, R + 1100.0));
+        float enter = max(shell.x, 0.0);
+        float path = shell.y > 0.0 ? max(0.0, (sky ? shell.y : tScene) - enter) : 0.0;
+        float sunSide = pow(max(dot(rd, uSunDir), 0.0), 3.0);
+        vec3 haze = mix(uSkyGlow, uSkyGlow * vec3(1.4, 1.18, 0.9), sunSide * 0.6) * (1.0 - 0.85 * uDark);
+        // How far out into space the eye is: the sky goes from the day's
+        // blue to the dark of space round the whole planet.
+        float altitude = length(ro - centre) - R;
+        float space = smoothstep(1500.0, 9000.0, altitude);
+        if (sky) {
+          float veil = noise3(rd * 4.0 + 3.1) * 0.6 + noise3(rd * 9.0 + 7.7) * 0.4;
+          vec3 inside = mix(uSkyDeep * (0.88 + 0.24 * veil), haze * 1.2, 1.0 - exp(-path / 5000.0));
+          // From space: the air's glow at the limb, thickest where the ray
+          // grazes the ground and fading out with height (an exponential
+          // atmosphere, Chapman's grazing column: exp(-h / H)).
+          vec3 toCentre = centre - ro;
+          float along = dot(toCentre, rd);
+          float graze = along > 0.0 ? length(toCentre - rd * along) - R : altitude;
+          float limb = exp(-max(graze, 0.0) / 380.0);
+          vec3 outside = vec3(0.0015, 0.002, 0.006) + haze * 1.3 * limb;
+          colour = mix(inside, outside, space);
+        } else {
+          float far = max(0.0, path - 2200.0);
+          colour = mix(colour, haze, (1.0 - exp(-far / 9000.0)) * 0.55);
+        }
+      } else if (uBackdrop > 0.5) {
         float zen = acos(clamp(abs(rd.y), 0.0, 1.0));
         float air = 1.0 / (cos(zen) + 0.15 * pow(max(93.885 - degrees(zen), 1e-3), -1.253));
         float glow = 1.0 - exp(-air * 0.12);

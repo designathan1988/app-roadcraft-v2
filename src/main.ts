@@ -1498,7 +1498,9 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
-  if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2)) {
+  if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && view.globe > 0.35))) {
+    // Out at the whole planet the left button grabs the globe and turns it,
+    // as in a globe viewer (the player, 2026-10-07): no tool works out there.
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
     panning = { id: e.pointerId, grabbed: panAnchor(at.x, at.y) };
     return;
