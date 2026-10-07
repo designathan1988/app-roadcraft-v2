@@ -270,9 +270,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     // Three stops after SimCity 4's water: a pale blue over the shelf, a soft
     // periwinkle, a dense blue in the channel - a painted ramp, not navy, and
     // not the icy cyan a single light blue gave.
-    uShallow: { value: new Color(0x86b4bd) },
-    uMid: { value: new Color(0x4a7ea6) },
-    uDeep: { value: new Color(0x336889) },
+    uShallow: { value: new Color(0x7fb2a8) },
+    uMid: { value: new Color(0x3d7a8e) },
+    uDeep: { value: new Color(0x245a74) },
     uHorizon: { value: new Color(0x6f95b8) },
     uFoamTint: { value: new Color(0xe6eef2) },
     uScaleA: { value: 1 / LAYER_A_TILE },
@@ -388,9 +388,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // The first shallow stretch reveals the actual bed. Starting at
          // 0.34 opacity mixed green water with brown ground into a bright
          // cyan outline before the river became deep blue a few pixels in.
-         // The bed shows through until some four and a half metres: a river of a
+         // The bed shows through until some five and a half metres: a river of a
          // couple of metres is clear to its stones, only the deep goes opaque.
-         float waterAlpha = mix(0.06, 0.9, smoothstep(0.3, 11.0, waterDepthPx));
+         float waterAlpha = mix(0.05, 0.88, smoothstep(0.3, 14.0, waterDepthPx));
          waterAlpha = max(waterAlpha, waterFoam * 0.9);
          float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, waterDepthPx);
 
