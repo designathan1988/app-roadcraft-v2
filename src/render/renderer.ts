@@ -906,6 +906,9 @@ export function createSceneRenderer(
   // the first forest of them is built.
   let natureTreeKit: NatureTreeKit | null = null;
   let natureForest: NatureForest | null = null;
+  /** The painted woods' trees (`forestPlants`), grown as the countryside's once the kit is in. */
+  let paintedForest: NatureForest | null = null;
+  let paintedTrees: TreePlacement[] | null = null;
   let natureTreesPending = true;
   void loadNatureTrees(anisotropy).then((kit) => {
     natureTreeKit = kit;
@@ -2293,7 +2296,10 @@ export function createSceneRenderer(
         }
         const coverAt = performance.now();
         const forest = forestPlants(net);
-        cover = buildGroundCover(rockPlacements(net), [...scrubPlacements(net), ...forest.shrubs], coverKit, forest.trees);
+        // Its trees are the countryside's (`natureTrees.ts`), built below
+        // once those are grown; the old card trees only if they cannot be.
+        paintedTrees = forest.trees;
+        cover = buildGroundCover(rockPlacements(net), [...scrubPlacements(net), ...forest.shrubs], coverKit, natureTreesPending || natureTreeKit ? [] : forest.trees);
         performance.measure('hitch:cover', { start: coverAt, end: performance.now() });
         for (const mesh of cover.meshes) world.add(mesh);
       }
@@ -2319,7 +2325,10 @@ export function createSceneRenderer(
           for (const mesh of natureForest.meshes) world.add(mesh);
           natureTreesPending = false;
         }
-        const standIns = natureTreeKit ? [] : plants.trees;
+        // The old card trees only if the new ones could not be grown: shown
+        // while they load, they were the first trees the player saw and
+        // then changed under them (2026-10-07).
+        const standIns = natureTreeKit || natureTreesPending ? [] : plants.trees;
         if (standIns.length + plants.shrubs.length > 0) {
           nature = buildGroundCover([], plants.shrubs, coverKit, standIns);
           for (const mesh of nature.meshes) world.add(mesh);
@@ -2330,6 +2339,22 @@ export function createSceneRenderer(
       if (natureForest) {
         const eye = rig.camera.position;
         natureForest.updateLod(eye.x, eye.y, eye.z);
+      }
+      if (natureTreeKit && paintedTrees) {
+        if (paintedForest) {
+          for (const mesh of paintedForest.meshes) world.remove(mesh);
+          paintedForest.dispose();
+          paintedForest = null;
+        }
+        if (paintedTrees.length > 0) {
+          paintedForest = buildNatureForest(paintedTrees, natureTreeKit);
+          for (const mesh of paintedForest.meshes) world.add(mesh);
+        }
+        paintedTrees = null;
+      }
+      if (paintedForest) {
+        const eye = rig.camera.position;
+        paintedForest.updateLod(eye.x, eye.y, eye.z);
       }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
@@ -2723,6 +2748,7 @@ export function createSceneRenderer(
       nature?.dispose();
       coverKit.dispose();
       natureForest?.dispose();
+      paintedForest?.dispose();
       natureTreeKit?.dispose();
       sceneryKit.dispose();
       terrain.dispose();

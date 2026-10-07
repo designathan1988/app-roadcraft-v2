@@ -18,6 +18,7 @@ import {
   type MeshPhongMaterial,
   type Texture,
 } from 'three';
+import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import type { TreePlacement } from './groundCover';
 import { applyWind, type WindResponse } from './wind';
 
@@ -38,9 +39,10 @@ import { applyWind, type WindResponse } from './wind';
  *
  * The crown is shaded as one volume (normals from its ellipsoid, as foliage
  * normals are transferred from a sphere - Polycount, "Correct vertex normals
- * for foliage") with its depth darkened, in its leaves' own mean green. Two
- * levels of detail by the distance to the camera: near, the tree's bark and
- * a finely divided crown; far, a coarse crown on a plain trunk.
+ * for foliage") with its depth darkened, in its leaves' own mean green. Three
+ * levels of detail by the distance to the camera, as a game's foliage LODs:
+ * near, the tree's bark (simplified) and 48 leaf clusters; mid, 16 clusters
+ * on a plain trunk; far, 8 coarse lumps.
  */
 
 /** The varieties grown, preset and seed: oaks, ashes, an aspen (its crown the autumn gold of its leaves). */
@@ -49,11 +51,19 @@ const VARIANTS: readonly (readonly [string, number])[] = [
   ['Ash Medium', 41], ['Ash Large', 53], ['Aspen Medium', 67],
 ];
 /** Within this distance of the camera a tree is drawn in full, world units. */
-const NEAR_REACH = 700;
+const NEAR_REACH = 250;
+/** Within this distance a tree is drawn at mid detail; beyond, at its lightest. */
+const MID_REACH = 800;
+/** The share of its triangles a near tree's bark keeps (meshopt): it is mostly under the crown. */
+const BARK_KEEP = 0.2;
 /** How far the view moves before the trees are sorted near and far again. */
 const LOD_SLACK = 60;
-/** Lumps in a crown. */
-const CROWN_LUMPS = 7;
+/** Leaf clusters in a near crown, and lumps in a far one. */
+const CROWN_CLUSTERS = 48;
+const CROWN_LUMPS = 8;
+const CROWN_MID = 16;
+/** Solid leaves standing out of each near cluster. */
+const LEAF_FRINGE = 14;
 /** World units one tile of the foliage detail covers (eight leaf clusters across). */
 const FOLIAGE_TILE = 18;
 /** Neighbours within this reach (world units) make a tree's stand. */
@@ -66,6 +76,7 @@ interface Variant {
   readonly bark: BufferGeometry;
   /** The solid crown in detail, near; and light, far, on a plain trunk. */
   readonly crown: BufferGeometry;
+  readonly mid: BufferGeometry;
   readonly far: BufferGeometry;
   readonly barkMaterial: MeshStandardMaterial;
 }
@@ -159,11 +170,11 @@ function crownShaded(p: Primitive): Primitive {
  * the crown's one ellipsoid with its depth darkened; on a plain trunk.
  * Colours linear, in the vertex colour.
  */
-function crownProxy(leaves: Primitive, height: number, green: readonly number[], bark: readonly number[] | null, detail: number): BufferGeometry {
+function crownProxy(leaves: Primitive, height: number, green: readonly number[], bark: readonly number[] | null, detail: number, lumps: number, grow: number, fringe = 0): BufferGeometry {
   const pts: number[][] = [];
   for (let v = 0; v < leaves.position.length / 3; v += 3) pts.push([leaves.position[v * 3]!, leaves.position[v * 3 + 1]!, leaves.position[v * 3 + 2]!]);
   const { c, r } = crownEllipsoid(leaves.position);
-  const centres = Array.from({ length: CROWN_LUMPS }, (_, i) => [...pts[Math.floor(((i + 0.5) * pts.length) / CROWN_LUMPS)]!]);
+  const centres = Array.from({ length: lumps }, (_, i) => [...pts[Math.floor(((i + 0.5) * pts.length) / lumps)]!]);
   const owner = new Int32Array(pts.length);
   const d2 = (a: readonly number[], b: readonly number[]): number => (a[0]! - b[0]!) ** 2 + (a[1]! - b[1]!) ** 2 + (a[2]! - b[2]!) ** 2;
   for (let it = 0; it < 10; it++) {
@@ -184,7 +195,13 @@ function crownProxy(leaves: Primitive, height: number, green: readonly number[],
     let n = 0, sq = 0;
     pts.forEach((q, i) => { if (owner[i] === j) { n++; sq += d2(q, m); } });
     if (n === 0) return;
-    const radius = Math.sqrt(sq / n) * 1.2;
+    const radius = Math.sqrt(sq / n) * grow;
+    // Each cluster a little apart in colour - lighter and warmer at the top
+    // of the crown, where the sun reaches - so the crown reads as many
+    // clusters and not one surface.
+    const jitter = 0.86 + 0.28 * (((j * 0.6180339 + m[1]! * 0.37) % 1 + 1) % 1);
+    const sunlit = 0.92 + 0.18 * smooth(-0.2, 0.9, (m[1]! - c[1]!) / r[1]!);
+    const clumpGreen = [green[0]! * jitter * sunlit * 1.04, green[1]! * jitter * sunlit, green[2]! * jitter * sunlit * 0.92];
     const ball = new IcosahedronGeometry(1, detail).toNonIndexed();
     const pos = ball.getAttribute('position');
     for (let v = 0; v < pos.count; v++) {
@@ -197,12 +214,51 @@ function crownProxy(leaves: Primitive, height: number, green: readonly number[],
       const p = [m[0]! + dx * rr, m[1]! + dy * rr * 0.85, m[2]! + dz * rr];
       positions.push(p[0]! / height, p[1]! / height, p[2]! / height);
       const { n: e, ao } = crownLight(p, c, r);
-      const nn = [e[0]! * 0.65 + dx * 0.35, e[1]! * 0.65 + dy * 0.35, e[2]! * 0.65 + dz * 0.35];
+      // The crown's volume normal, with some of the cluster's own (The
+      // Witness's trees: leaves lit from the blob they fill).
+      const nn = [e[0]! * 0.6 + dx * 0.4, e[1]! * 0.6 + dy * 0.4, e[2]! * 0.6 + dz * 0.4];
       const nl = Math.hypot(nn[0]!, nn[1]!, nn[2]!) || 1;
       normals.push(nn[0]! / nl, nn[1]! / nl, nn[2]! / nl);
-      colours.push(green[0]! * ao, green[1]! * ao, green[2]! * ao);
+      colours.push(clumpGreen[0]! * ao, clumpGreen[1]! * ao, clumpGreen[2]! * ao);
     }
     ball.dispose();
+    if (fringe > 0) {
+      // Solid leaves standing out of the cluster's skin, pointed diamonds
+      // tilted outwards, both faces drawn: up close the outline breaks
+      // into leaves instead of a ball's curve (the player, 2026-10-07: "efeito
+      // de folhas"), with no alpha cut-out to alias.
+      for (let k = 0; k < fringe; k++) {
+        // Spread over the cluster by the golden angle, the underside spared.
+        const yk = 1 - (k + 0.5) / fringe * 1.4;
+        const ring = Math.sqrt(Math.max(0, 1 - yk * yk));
+        const theta = k * 2.399963 + j;
+        const out = [Math.cos(theta) * ring, yk, Math.sin(theta) * ring];
+        const base = [m[0]! + out[0]! * radius * 0.9, m[1]! + out[1]! * radius * 0.8, m[2]! + out[2]! * radius * 0.9];
+        // Along the surface, turned by the leaf's own angle, then tipped outwards.
+        const side = Math.abs(out[1]!) < 0.9 ? [out[2]!, 0, -out[0]!] : [1, 0, 0];
+        const sl = Math.hypot(side[0]!, side[1]!, side[2]!) || 1;
+        const t = side.map((v) => v / sl);
+        const b = [out[1]! * t[2]! - out[2]! * t[1]!, out[2]! * t[0]! - out[0]! * t[2]!, out[0]! * t[1]! - out[1]! * t[0]!];
+        const spin = k * 1.618 + j * 0.7;
+        const along = [0, 1, 2].map((q) => t[q]! * Math.cos(spin) + b[q]! * Math.sin(spin));
+        const across = [0, 1, 2].map((q) => b[q]! * Math.cos(spin) - t[q]! * Math.sin(spin));
+        const length = radius * (0.42 + 0.18 * (((k * 0.37 + j * 0.11) % 1 + 1) % 1));
+        const dir = [0, 1, 2].map((q) => along[q]! * 0.8 + out[q]! * 0.6);
+        const tip = [0, 1, 2].map((q) => base[q]! + dir[q]! * length);
+        const mid = [0, 1, 2].map((q) => base[q]! + dir[q]! * length * 0.45);
+        const left = [0, 1, 2].map((q) => mid[q]! + across[q]! * length * 0.22);
+        const right = [0, 1, 2].map((q) => mid[q]! - across[q]! * length * 0.22);
+        const { n: e, ao } = crownLight(mid, c, r);
+        const shade = ao * (1.02 + 0.12 * ((k * 0.53) % 1));
+        for (const tri of [[base, left, tip], [base, tip, right], [base, tip, left], [base, right, tip]]) {
+          for (const v of tri) {
+            positions.push(v[0]! / height, v[1]! / height, v[2]! / height);
+            normals.push(e[0]!, e[1]!, e[2]!);
+            colours.push(clumpGreen[0]! * shade, clumpGreen[1]! * shade, clumpGreen[2]! * shade);
+          }
+        }
+      }
+    }
   });
   // A plain trunk up into the crown's underside (far; near, the tree's own).
   if (bark) appendTrunk(c, r, height, bark, positions, normals, colours);
@@ -347,6 +403,26 @@ function applyFoliageDetail(material: MeshStandardMaterial, texture: Texture): v
           nz = vec3(nz.xy + n.xy, abs(nz.z) * n.z);
           foliageN = normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
           foliageShade = tx.a * w.x + ty.a * w.y + tz.a * w.z;
+          // Up close, single leaves inside the clusters: the same tile a
+          // quarter the size, faded in as a pixel covers under a tenth of a
+          // unit, so far off it never shimmers.
+          float footprint = max(fwidth(vFoliagePos.x), max(fwidth(vFoliagePos.y), fwidth(vFoliagePos.z)));
+          float close = 1.0 - smoothstep(0.06, 0.2, footprint);
+          if (close > 0.0) {
+            vec3 q = p * 4.1 + 0.37;
+            vec4 sx = texture2D(uFoliage, q.zy);
+            vec4 sy = texture2D(uFoliage, q.xz);
+            vec4 sz = texture2D(uFoliage, q.xy);
+            vec3 mx = sx.xyz * 2.0 - 1.0;
+            vec3 my = sy.xyz * 2.0 - 1.0;
+            vec3 mz = sz.xyz * 2.0 - 1.0;
+            mx = vec3(mx.xy + foliageN.zy, abs(mx.z) * foliageN.x);
+            my = vec3(my.xy + foliageN.xz, abs(my.z) * foliageN.y);
+            mz = vec3(mz.xy + foliageN.xy, abs(mz.z) * foliageN.z);
+            vec3 leafN = normalize(mx.zyx * w.x + my.xzy * w.y + mz.xyz * w.z);
+            foliageN = normalize(mix(foliageN, leafN, close));
+            foliageShade = mix(foliageShade, foliageShade * mix(0.7, 1.15, sx.a * w.x + sy.a * w.y + sz.a * w.z), close);
+          }
         }`)
       .replace('#include <map_fragment>', `#include <map_fragment>
         foliageDetail();
@@ -389,6 +465,7 @@ function meanLeafColour(texture: Texture): [number, number, number] {
 /** Grows the trees and builds their levels; their materials share the forest's wind. */
 export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit> {
   const { Tree } = await import('@dgreenheck/ez-tree');
+  await MeshoptSimplifier.ready;
   const variants: Variant[] = [];
   for (const [preset, seed] of VARIANTS) {
     const tree = new Tree();
@@ -399,7 +476,9 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
     const leavesMesh = tree.leavesMesh as Mesh;
     const barkSource = branches.material as MeshPhongMaterial;
     const leafSource = leavesMesh.material as MeshPhongMaterial;
-    const bark = primitiveOf(branches.geometry);
+    const full = primitiveOf(branches.geometry);
+    const target = Math.max(3, Math.floor((full.index.length * BARK_KEEP) / 3) * 3);
+    const bark = { ...full, index: MeshoptSimplifier.simplify(full.index, full.position, 3, target, 0.05, [])[0] };
     const leaves = crownShaded(primitiveOf(leavesMesh.geometry));
     // One unit tall, standing on its own origin (the ground).
     let top = 0;
@@ -416,8 +495,12 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
     applyWind(barkMaterial, FOREST_WIND, 'nature-bark');
     variants.push({
       bark: geometryOf(bark, top),
-      crown: crownProxy(leaves, top, green, null, 3),
-      far: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 1),
+      // Near, many small clusters where the branches carry their leaves
+      // (the blob is never drawn itself - Habrador on The Witness's trees);
+      // far, a few coarse lumps, a fraction of the triangles.
+      crown: crownProxy(leaves, top, green, null, 1, CROWN_CLUSTERS, 1.5, LEAF_FRINGE),
+      mid: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 1, CROWN_MID, 1.35),
+      far: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 0, CROWN_LUMPS, 1.2),
       barkMaterial,
     });
     tree.branchesMesh.geometry.dispose();
@@ -434,7 +517,7 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
     crownMaterial,
     dispose() {
       for (const v of variants) {
-        for (const g of [v.bark, v.crown, v.far]) g.dispose();
+        for (const g of [v.bark, v.crown, v.mid, v.far]) g.dispose();
         v.barkMaterial.dispose();
       }
       crownMaterial.dispose();
@@ -508,6 +591,7 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       return mesh;
     };
     const near = [make(variant.bark, variant.barkMaterial, 'nature-bark'), make(variant.crown, kit.crownMaterial, 'nature-crown')];
+    const mid = [make(variant.mid, kit.crownMaterial, 'nature-crowns-mid')];
     const far = [make(variant.far, kit.crownMaterial, 'nature-crowns')];
     const items = indices.map((i) => trees[i]!);
     const matrices = indices.map((i) => {
@@ -533,15 +617,16 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       const t = 0.9 + ((item.seed * 3.77) % 1) * 0.2;
       return new Color(t * (0.96 + ((item.seed * 1.3) % 1) * 0.08), t, t * 0.94);
     });
-    groups.push({ items, matrices, colours, levels: [near, far] });
+    groups.push({ items, matrices, colours, levels: [near, mid, far] });
   });
   let sortedX = Infinity, sortedY = Infinity, sortedZ = Infinity;
   const sort = (x: number, y: number, z: number): void => {
     for (const g of groups) {
-      const counts = [0, 0];
+      const counts = [0, 0, 0];
       for (let i = 0; i < g.items.length; i++) {
         const item = g.items[i]!;
-        const level = Math.hypot(item.x - x, item.z - y, -item.y - z) < NEAR_REACH ? 0 : 1;
+        const distance = Math.hypot(item.x - x, item.z - y, -item.y - z);
+        const level = distance < NEAR_REACH ? 0 : distance < MID_REACH ? 1 : 2;
         const slot = counts[level]!++;
         for (const mesh of g.levels[level]!) {
           mesh.setMatrixAt(slot, g.matrices[i]!);
