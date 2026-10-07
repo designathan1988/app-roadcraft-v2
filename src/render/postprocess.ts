@@ -455,14 +455,31 @@ const CLOUD_SHADOWS = {
       float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, p.y);
       return -d / size * base;
     }
-    // Its density: the shape, its rim eaten by billows of noise.
+    // Its density, as Horizon Zero Dawn's clouds are built (Schneider; the
+    // TerrainEngine-OpenGL shader after it): a soft base shape - the heap
+    // ramped over a wide band, its outline broken by large noise - and then
+    // ERODED by fine billowy noise, remapped so the erosion eats the thin
+    // edge away into wisps while the dense heart stays whole; wispy towards
+    // the base, billowy towards the top. The noise only takes away, never
+    // adds, so nothing lies past the heap's surface and no cloud is cut off
+    // by its bounding sphere.
     float cloudDensity(int c, vec3 p) {
       float size = uCloud[c].w;
-      vec3 q = p / (size * 0.22) + vec3(uTime * 0.03, uTime * 0.012, 0.0);
-      float n = noise3(q) * 0.55 + noise3(q * 2.07 + 5.1) * 0.3 + noise3(q * 4.3 + 9.7) * 0.15;
-      // The noise only eats into the heap, never adds to it: nothing past
-      // its surface, so no cloud is cut off by its bounding sphere.
-      return clamp(heap(c, p) * 5.0 - (1.0 - n) * 0.85, 0.0, 1.0);
+      vec3 drift = vec3(uTime * 0.03, uTime * 0.012, 0.0);
+      vec3 q = p / (size * 0.3) + drift;
+      float low = noise3(q) * 0.62 + noise3(q * 2.03 + 5.1) * 0.38;
+      float shape = clamp(heap(c, p) * 3.6 - (1.0 - low) * 0.3, 0.0, 1.0);
+      if (shape <= 0.0) return 0.0;
+      vec3 r = p / (size * 0.055) + drift * 2.3;
+      float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
+      float b2 = 1.0 - abs(noise3(r * 2.13 + 3.3) * 2.0 - 1.0);
+      float detail = b1 * 0.65 + b2 * 0.35;
+      float up = clamp((p.y - uCloudBase) / size, 0.0, 1.0);
+      detail = mix(1.0 - detail, detail, clamp(up * 3.0, 0.0, 1.0));
+      // remap(base, detail * 0.35, 1, 0, 1): the heart (1) stays whole, the
+      // thin edge is worn into wisps.
+      float erode = detail * 0.55;
+      return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0);
     }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
@@ -526,7 +543,7 @@ const CLOUD_SHADOWS = {
           float t0 = max(spans[best].x, 0.0);
           float t1 = min(spans[best].y, tScene);
           if (t1 <= t0) continue;
-          const int STEPS = 26;
+          const int STEPS = 24;
           float stepLen = (t1 - t0) / float(STEPS);
           for (int i = 0; i < STEPS; i++) {
             float t = t0 + (float(i) + jitter) * stepLen;
@@ -539,13 +556,20 @@ const CLOUD_SHADOWS = {
             float near = max(size * 1.1, (ro.y - uCloudBase) * 0.75);
             density *= smoothstep(near * 0.45, near, t);
             if (density < 0.01) continue;
-            // Lit where the heap's surface faces the sun: a step towards it
-            // leaves the shape (the directional derivative of its smooth
-            // form, not of the clamped density, which is flat inside).
-            float lit = smoothstep(-0.05, 0.1, heap(best, q) - heap(best, q + uSunDir * size * 0.16));
+            // The sun's light reaching this point: a short march towards it
+            // through the cloud itself (Horizon Zero Dawn's light samples,
+            // Beer's law), so every billow shades its neighbours - bright
+            // crowns, grey hollows and undersides - and the heap's smooth
+            // form facing the sun on top of it.
+            float towards = cloudDensity(best, q + uSunDir * size * 0.06) * 0.06
+              + cloudDensity(best, q + uSunDir * size * 0.18) * 0.12;
+            float sunT = exp(-towards * size * 0.02 * 2.2);
+            float facing = smoothstep(-0.05, 0.1, heap(best, q) - heap(best, q + uSunDir * size * 0.16));
+            float lit = sunT * mix(0.55, 1.0, facing);
             float up = clamp((q.y - uCloudBase) / size, 0.0, 1.0);
-            vec3 c = mix(baseShade, skyLight, 0.25 + 0.75 * up) + uSunLight * 0.55 * lit * (1.0 - uDark);
-            float alpha = 1.0 - exp(-density * stepLen * 0.03);
+            vec3 c = mix(baseShade, skyLight, 0.25 + 0.75 * up) * 0.85 + uSunLight * 0.36 * lit * (1.0 - uDark);
+            // Little extinction: the eroded edge is a veil the land shows through.
+            float alpha = 1.0 - exp(-density * stepLen * 0.015);
             light += transmit * alpha * c;
             transmit *= 1.0 - alpha;
             if (transmit < 0.03) break;

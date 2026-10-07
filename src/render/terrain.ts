@@ -508,8 +508,8 @@ export function terrainBakes(anisotropy: number): {
         const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 2);
         const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 2);
         // sRGB: deep clump green, sunlit olive, dry straw, bare soil.
-        const dark = [0.27, 0.325, 0.15];
-        const lit = [0.31, 0.36, 0.16];
+        const dark = [0.29, 0.36, 0.12];
+        const lit = [0.42, 0.5, 0.18];
         const dry = [0.46, 0.44, 0.26];
         const soil = [0.36, 0.3, 0.2];
         const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
@@ -518,10 +518,10 @@ export function terrainBakes(anisotropy: number): {
         let g = dark[1]! + (lit[1]! - dark[1]!) * k;
         let b = dark[2]! + (lit[2]! - dark[2]!) * k;
         // Dry patches over the higher, sunnier tufts of some clumps.
-        const dryW = Math.min(1, Math.max(0, (clump - 0.6) / 0.12)) * k * 0.45;
+        const dryW = Math.min(1, Math.max(0, (clump - 0.6) / 0.12)) * k * 0.2;
         r += (dry[0]! - r) * dryW; g += (dry[1]! - g) * dryW; b += (dry[2]! - b) * dryW;
         // Soil showing in the gaps between tufts.
-        const soilW = Math.min(1, Math.max(0, (speck - 0.66) / 0.08)) * (1 - k) * 0.8;
+        const soilW = Math.min(1, Math.max(0, (speck - 0.7) / 0.08)) * (1 - k) * 0.45;
         r += (soil[0]! - r) * soilW; g += (soil[1]! - g) * soilW; b += (soil[2]! - b) * soilW;
         // GRAIN at the texel (9 cm): tufts of a couple of texels, dark gaps
         // where the blades shade the ground and pale tips in the sun. It is
@@ -1392,8 +1392,32 @@ function terrainMaterial(
          // hundred metres each (macroTexture). It tints the grass fully and
          // the bare ground a little, so a valley reads as country and not as
          // one lawn tiled to the horizon.
+         // Light and dark only, and gently (Unreal's landscape macro
+         // variation): fields of yellow, olive and deep green laid over the
+         // lawn read as blotches from the map's zoom.
          vec3 macroTint = texture2D(uMacroMap, terrainWideUv(vTerrainWorld.xz) * 0.0024).rgb * 2.0;
-         blended.rgb *= mix(vec3(1.0), macroTint, 1.0 - (rockMix + dirtMix) * 0.7);
+         float macroLight = mix(1.0, dot(macroTint, vec3(0.3, 0.59, 0.11)), 0.55);
+         blended.rgb *= mix(1.0, macroLight, 1.0 - (rockMix + dirtMix) * 0.7);
+         // THE GRAIN AT EVERY ZOOM (distance tiling, as landscape materials
+         // switch a texture to a larger tiling with the camera's distance):
+         // the grass read again at the scale where its tufts are a few pixels
+         // across, two neighbouring scales blended, and laid on the lawn as
+         // light and shade. Up close the texture's own detail is that grain;
+         // from the whole map's zoom the mip chain had averaged it into flat
+         // felt, and the lawn read as paint, not grass.
+         {
+           vec2 grainFp = fwidth(vTerrainWorld.xz);
+           float grainLod = max(0.0, log2(max(grainFp.x, grainFp.y) * 0.9));
+           float grainLevel = floor(grainLod);
+           float grainBlend = grainLod - grainLevel;
+           vec2 grainUv = vTerrainWorld.xz * uGrassScale * 2.7;
+           float g0 = dot(texture2D(map, grainUv / exp2(grainLevel)).rgb, vec3(0.3, 0.6, 0.1));
+           float g1 = dot(texture2D(map, grainUv / exp2(grainLevel + 1.0) + 0.37).rgb, vec3(0.3, 0.6, 0.1));
+           float gAvg = dot(texture2D(map, grainUv, 14.0).rgb, vec3(0.3, 0.6, 0.1));
+           float grain = mix(g0, g1, grainBlend) / max(gAvg, 0.02);
+           float grainW = smoothstep(0.15, 0.6, grainLod) * grassW * (1.0 - clamp(rockMix + dirtMix, 0.0, 1.0));
+           blended.rgb *= mix(1.0, clamp(grain, 0.55, 1.5), grainW * 0.75);
+         }
          // A hillshade written into the ALBEDO, on top of the light the surface
          // actually receives. Direct sun alone moves a 10-degree slope by about
          // a tenth, which is under what the eye reads as shape at map zoom; this
@@ -1445,10 +1469,10 @@ function terrainMaterial(
            // Each patch either green or gold, its edge broken by the tufts:
            // half of each mixed was an olive wash.
            float lift = clamp((luma - 0.17) / 0.2, 0.0, 1.0);
-           float goldMask = smoothstep(0.4, 0.55, golden + (lift - 0.5) * 0.3);
+           float goldMask = smoothstep(0.35, 0.8, golden + (lift - 0.5) * 0.3) * 0.45;
            blended.rgb = mix(blended.rgb, straw, goldMask * living);
            // Bare red soil only where the herbs are sparse.
-           blended.rgb = mix(blended.rgb, dirtColor.rgb * (0.85 + 0.25 * lift), eco.a * 0.75 * living);
+           blended.rgb = mix(blended.rgb, dirtColor.rgb * (0.85 + 0.25 * lift), eco.a * 0.4 * living);
            // Waterlogged: darker, deeper green, a little blue, in hummocks.
            vec3 sodden = blended.rgb * vec3(0.55, 0.72, 0.55);
            blended.rgb = mix(blended.rgb, sodden, eco.b * 0.85 * living);
@@ -1611,7 +1635,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v23';
+  material.customProgramCacheKey = () => 'terrain-splat-v24';
   return material;
 }
 
