@@ -35,7 +35,7 @@ import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
-import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, gullyErase, setGullyErase, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, gullyErase, setGullyErase, TREE_MODES, treeMode, setTreeMode, treeKind, setTreeKind, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
@@ -54,6 +54,7 @@ import { t, onLanguageChange } from '../i18n';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
+import { TREE_KINDS } from '@world/trees';
 
 type Category = 'roads' | 'zones' | 'build' | 'landscape' | 'transit' | 'people' | 'demolish' | 'info';
 
@@ -871,7 +872,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon'], ['trees', 'ls_tree']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -924,6 +925,32 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
+      }
+      // The tree brush (`world/trees.ts`): which trees, whether it plants a
+      // stand, one tree a click or cuts trees away (the woods' own too), and
+      // how dense, tall, varied and far apart.
+      if (q<HTMLButtonElement>('[data-terrain-mode="trees"]')?.classList.contains('active')) {
+        const kinds = titled(group(t('tree.kind')), t('tree.kind'));
+        kinds.appendChild(choices(TREE_KINDS.map((kind) => ({
+          label: t(`tree.kind.${kind}`), on: treeKind() === kind, run: () => { setTreeKind(kind); render(); },
+        })), 4));
+        options.appendChild(kinds);
+        const brush = titled(group(t('tree.brush')), t('tree.brush'));
+        brush.classList.add('stack');
+        const icons: Record<(typeof TREE_MODES)[number], string> = { plant: 'brush', one: 'plus', cut: 'eraser' };
+        brush.appendChild(choices(TREE_MODES.map((mode) => ({
+          label: t(`tree.mode.${mode}`), on: treeMode() === mode, run: () => { setTreeMode(mode); render(); }, icon: svg(icons[mode], 18),
+        })), 3));
+        brush.append(
+          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
+          slider(t('tree.density'), '#treeDensity', '#treeDensityValue'),
+          slider(t('tree.height'), '#treeHeight', '#treeHeightValue'),
+          slider(t('tree.variation'), '#treeVariation', '#treeVariationValue'),
+          slider(t('tree.spacing'), '#treeSpacing', '#treeSpacingValue'),
+        );
+        brush.appendChild(button('v2-icon danger', t('tree.clear'), () => press('#clearTrees'), svg('eraser', 16)));
+        options.appendChild(brush);
+        return;
       }
       // The gully brush (`world/gullies.ts`): cut gullies where the player
       // wants them, or wipe them away (the land's own too), and how much of

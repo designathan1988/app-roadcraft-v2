@@ -2,6 +2,7 @@ import { DEFAULT_BRUSH, type ElementBrush, type ElementKind } from '@world/eleme
 import { LANDSCAPE_KINDS, type LandscapeKind, type SignType } from '@world/landscape';
 import { POLE_LAMP_MODES, type PoleLampMode } from '@world/utilities';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
+import { DEFAULT_TREE_BRUSH, type TreeBrush, type TreeKind } from '@world/trees';
 
 /**
  * What the player has chosen in the tools' panels and the game reads when
@@ -73,6 +74,29 @@ export function fogErase(): boolean {
 }
 export function setFogErase(next: boolean): void {
   fogErasing = next;
+}
+
+/**
+ * The tree brush (Paisagem > Terreno > Árvores, `world/trees.ts`): which
+ * trees it plants, whether it plants a stand, one tree a click, or cuts trees
+ * away, and its settings (kept between sessions).
+ */
+export const TREE_MODES = ['plant', 'one', 'cut'] as const;
+export type TreeMode = (typeof TREE_MODES)[number];
+let treeModeNow: TreeMode = 'plant';
+let treeKindNow: TreeKind = 'mixed';
+const TREE_BRUSH_KEY = 'roadcraft.treeBrush';
+let treeBrushNow: TreeBrush = (() => {
+  try { return { ...DEFAULT_TREE_BRUSH, ...((JSON.parse(localStorage.getItem(TREE_BRUSH_KEY) ?? '{}') ?? {}) as Partial<TreeBrush>) }; } catch { return DEFAULT_TREE_BRUSH; }
+})();
+export function treeMode(): TreeMode { return treeModeNow; }
+export function setTreeMode(next: TreeMode): void { treeModeNow = next; }
+export function treeKind(): TreeKind { return treeKindNow; }
+export function setTreeKind(next: TreeKind): void { treeKindNow = next; }
+export function treeBrush(): TreeBrush { return treeBrushNow; }
+export function setTreeBrush(change: Partial<TreeBrush>): void {
+  treeBrushNow = { ...treeBrushNow, ...change };
+  try { localStorage.setItem(TREE_BRUSH_KEY, JSON.stringify(treeBrushNow)); } catch { /* not kept */ }
 }
 
 /** The gully brush (Paisagem > Terreno > Ravinas, `world/gullies.ts`): cutting gullies, or wiping them away. Not kept between sessions. */

@@ -24,6 +24,7 @@ import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { MAX_PLACED_CLOUDS, readCloud, type PlacedCloud } from './clouds';
+import { MAX_PLANTED_TREES, MAX_TREE_CLEARINGS, readPlantedTree, readTreeClearing, type PlantedTree, type TreeClearing } from './trees';
 import { MAX_ELEMENTS, readElement, type ElementItem, type ElementKind } from './elements';
 import { DEFAULT_GULLY_AUTO, MAX_GULLY_DABS, readGullyDab, type GullyDab } from './gullies';
 import { DEFAULT_FOG, MAX_FOG_DABS, readFogDab, readFogSettings, type FogDab, type FogSettings } from './fogPaint';
@@ -218,6 +219,14 @@ export class RoadDoc {
   readonly clouds: PlacedCloud[] = [];
   /** Moves with every change to `clouds`, and only then. */
   cloudRevision = 0;
+  /** Trees the player planted (`trees.ts`), oldest first. */
+  readonly trees: PlantedTree[] = [];
+  /** Moves with every change to `trees`, and only then. */
+  treeRevision = 0;
+  /** Where trees were cut away, the woods' own too (`trees.ts`), oldest first. */
+  readonly treeClearings: TreeClearing[] = [];
+  /** Moves with every change to `treeClearings`, and only then. */
+  clearingRevision = 0;
   /** The elements the player laid with the brush (`elements.ts`), oldest first. */
   readonly elements: ElementItem[] = [];
   /** Moves with every change to `elements`, and only then. */
@@ -742,6 +751,35 @@ export class RoadDoc {
     this.gullyRevision++;
   }
 
+  plantTrees(trees: readonly PlantedTree[]): void {
+    if (trees.length === 0) return;
+    this.trees.push(...trees.map((t) => ({ ...t })));
+    if (this.trees.length > MAX_PLANTED_TREES) this.trees.splice(0, this.trees.length - MAX_PLANTED_TREES);
+    this.treeRevision++;
+  }
+
+  /**
+   * Cuts the trees away within `radius` of (x, y): the planted ones there go,
+   * and a clearing is kept so none of the woods' own grows there either.
+   */
+  cutTrees(x: number, y: number, radius: number): void {
+    const before = this.trees.length;
+    for (let i = this.trees.length - 1; i >= 0; i--) {
+      const t = this.trees[i]!;
+      if (Math.hypot(t.x - x, t.y - y) <= radius) this.trees.splice(i, 1);
+    }
+    if (this.trees.length !== before) this.treeRevision++;
+    this.treeClearings.push({ x, y, radius });
+    if (this.treeClearings.length > MAX_TREE_CLEARINGS) this.treeClearings.shift();
+    this.clearingRevision++;
+  }
+
+  /** Every planted tree gone, and every clearing grown over again. */
+  clearTrees(): void {
+    if (this.trees.length > 0) { this.trees.length = 0; this.treeRevision++; }
+    if (this.treeClearings.length > 0) { this.treeClearings.length = 0; this.clearingRevision++; }
+  }
+
   addElements(items: readonly ElementItem[]): void {
     if (items.length === 0) return;
     this.elements.push(...items);
@@ -982,6 +1020,8 @@ export class RoadDoc {
     copy.gullyRevision = this.gullyRevision;
     copy.cloudRevision = this.cloudRevision;
     copy.elementRevision = this.elementRevision;
+    copy.treeRevision = this.treeRevision;
+    copy.clearingRevision = this.clearingRevision;
     copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
     for (const id of this.dirtyNodes) copy.dirtyNodes.add(id);
@@ -1076,6 +1116,17 @@ export class RoadDoc {
     if (JSON.stringify(this.nature) !== JSON.stringify(source.nature)) {
       this.nature = source.nature ? { ...source.nature } : null;
       this.natureRevision++;
+    }
+
+    if (JSON.stringify(this.trees) !== JSON.stringify(source.trees)) {
+      this.trees.length = 0;
+      this.trees.push(...source.trees.map((t) => ({ ...t })));
+      this.treeRevision++;
+    }
+    if (JSON.stringify(this.treeClearings) !== JSON.stringify(source.treeClearings)) {
+      this.treeClearings.length = 0;
+      this.treeClearings.push(...source.treeClearings.map((c) => ({ ...c })));
+      this.clearingRevision++;
     }
 
     if (this.elements.length !== source.elements.length || JSON.stringify(this.elements) !== JSON.stringify(source.elements)) {
@@ -1194,6 +1245,8 @@ export class RoadDoc {
         ? { gullies: { dabs: this.gullyDabs.map((dab) => ({ ...dab })), auto: this.gullyAuto } } : {}),
       ...(this.clouds.length > 0 ? { clouds: this.clouds.map((c) => ({ ...c })) } : {}),
       ...(this.elements.length > 0 ? { elements: this.elements.map((e) => ({ ...e })) } : {}),
+      ...(this.trees.length > 0 ? { trees: this.trees.map((t) => ({ ...t })) } : {}),
+      ...(this.treeClearings.length > 0 ? { treeClearings: this.treeClearings.map((c) => ({ ...c })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
       ...(this.landscape.size > 0 ? {
@@ -1309,6 +1362,17 @@ export class RoadDoc {
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
     if (doc.terrainPaint.length) doc.paintRevision = 1;
+    // Absent: a map with no trees planted or cut.
+    for (const raw of data.trees ?? []) {
+      const tree = readPlantedTree(raw);
+      if (tree && doc.trees.length < MAX_PLANTED_TREES) doc.trees.push(tree);
+    }
+    if (doc.trees.length) doc.treeRevision = 1;
+    for (const raw of data.treeClearings ?? []) {
+      const clearing = readTreeClearing(raw);
+      if (clearing && doc.treeClearings.length < MAX_TREE_CLEARINGS) doc.treeClearings.push(clearing);
+    }
+    if (doc.treeClearings.length) doc.clearingRevision = 1;
     // Absent: a map with no elements laid.
     for (const raw of data.elements ?? []) {
       const item = readElement(raw);
@@ -1476,6 +1540,8 @@ export interface SerializedDoc {
   readonly gullies?: { readonly dabs?: readonly unknown[]; readonly auto?: unknown };
   readonly clouds?: readonly unknown[];
   readonly elements?: readonly unknown[];
+  readonly trees?: readonly unknown[];
+  readonly treeClearings?: readonly unknown[];
   /** The player's landscaping (`landscape.ts`); OPTIONAL like the poles. */
   readonly landscape?: readonly { id: number; kind: string; x: number; y: number; signType?: string; text?: string; planted?: number }[];
   /** Public transport (`transit.ts`); OPTIONAL like the poles. */

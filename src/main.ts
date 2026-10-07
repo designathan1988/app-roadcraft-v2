@@ -27,9 +27,10 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { scatter } from '@world/elements';
 import { cloudUnder, scatterClouds } from '@world/clouds';
+import { oneTree, plantTrees } from '@world/trees';
 import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
@@ -344,7 +345,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | 'trees' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -897,9 +898,9 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   if (source === 'import') sim.warmTopologyPrep();
   buildings.restored();
   syncFogInputs();
+  syncGullyInputs();
   selectedSegment = null;
   selectedNode = null;
-  syncGullyInputs();
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
   updateHistoryButtons();
@@ -1356,8 +1357,25 @@ function stampTerrain(at: Vec2, level: number): void {
     doc.addElements(scatter(kind, brush, at.x, at.y, terrainRadius, UNITS_PER_METER, Math.random, nearby));
     return;
   }
-  if (terrainMode === 'fog') {
-    // Fog moves no height either: a dab of mist laid, or taken away.
+  if (terrainMode === 'trees') {
+    // Trees move no height: a dab plants a stand (or one tree), or cuts the
+    // trees away there - the woods' own too (`world/trees.ts`).
+    const mode = treeMode();
+    if (mode === 'cut') {
+      doc.cutTrees(at.x, at.y, terrainRadius);
+      return;
+    }
+    const brush = treeBrush();
+    const reach = terrainRadius + brush.spacing * UNITS_PER_METER;
+    const nearby = doc.trees.filter((t) => Math.abs(t.x - at.x) < reach && Math.abs(t.y - at.y) < reach);
+    if (mode === 'one') {
+      const spacing = brush.spacing * UNITS_PER_METER;
+      if (nearby.every((t) => Math.hypot(t.x - at.x, t.y - at.y) >= spacing)) doc.plantTrees([oneTree(treeKind(), brush, at.x, at.y, UNITS_PER_METER, Math.random)]);
+      return;
+    }
+    doc.plantTrees(plantTrees(treeKind(), brush, at.x, at.y, terrainRadius, UNITS_PER_METER, Math.random, nearby));
+    return;
+  }
   if (terrainMode === 'gully') {
     // Gullies move no height the roads read: the relief the light reads is
     // cut there (or wiped), `render/terrainRelief.ts`.
@@ -1369,6 +1387,8 @@ function stampTerrain(at: Vec2, level: number): void {
     });
     return;
   }
+  if (terrainMode === 'fog') {
+    // Fog moves no height either: a dab of mist laid, or taken away.
     // The brush's own settings go with the dab.
     const brush = fogBrush();
     doc.addFogDab({
@@ -2607,7 +2627,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully', 'trees'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -3042,10 +3062,12 @@ function setTerrainMode(next: BrushMode): void {
   if (fogPanel) fogPanel.hidden = next !== 'fog';
   const cloudPanel = document.querySelector<HTMLElement>('.terrain-cloud');
   if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
-  const elementPanel = document.querySelector<HTMLElement>('.terrain-elements');
-  if (elementPanel) elementPanel.hidden = next !== 'elements';
+  const treePanel = document.querySelector<HTMLElement>('.terrain-trees');
+  if (treePanel) treePanel.hidden = next !== 'trees';
   const gullyPanel = document.querySelector<HTMLElement>('.terrain-gully');
   if (gullyPanel) gullyPanel.hidden = next !== 'gully';
+  const elementPanel = document.querySelector<HTMLElement>('.terrain-elements');
+  if (elementPanel) elementPanel.hidden = next !== 'elements';
   updateHint();
 }
 
@@ -3091,8 +3113,33 @@ function syncFogInputs(): void {
   input?.addEventListener('change', () => { recorded = false; });
   syncFogInputs();
 }
-(document.getElementById('clearFog') as HTMLButtonElement | null)?.addEventListener('click', () => {
-  if (doc.fogDabs.length === 0) return;
+// The tree brush's settings (Paisagem > Terreno > Árvores), kept between
+// sessions; and clearing every planted tree and every clearing at once.
+{
+  const bind = (id: string, key: 'density' | 'height' | 'variation' | 'spacing'): void => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return;
+    input.value = String(treeBrush()[key]);
+    text(`${id}Value`, input.value);
+    input.addEventListener('input', () => {
+      setTreeBrush({ [key]: Number(input.value) });
+      text(`${id}Value`, input.value);
+    });
+  };
+  bind('treeDensity', 'density');
+  bind('treeHeight', 'height');
+  bind('treeVariation', 'variation');
+  bind('treeSpacing', 'spacing');
+  (document.getElementById('clearTrees') as HTMLButtonElement | null)?.addEventListener('click', () => {
+    if (doc.trees.length === 0 && doc.treeClearings.length === 0) return;
+    if (!window.confirm(t('confirm.clearTrees'))) return;
+    history.record(doc);
+    doc.clearTrees();
+    updateHistoryButtons();
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
+}
 // The gully brush's strength, and how much of the steep land carries gullies
 // of itself (the map's, `world/gullies.ts`): one undo step a drag.
 {
@@ -3127,6 +3174,8 @@ function syncGullyInputs(): void {
   persistence.saveSessionSoon(doc, sessionSettings);
   requestDraw();
 });
+(document.getElementById('clearFog') as HTMLButtonElement | null)?.addEventListener('click', () => {
+  if (doc.fogDabs.length === 0) return;
   if (!window.confirm(t('confirm.clearFog'))) return;
   history.record(doc);
   doc.clearFog();
@@ -5110,6 +5159,8 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   fog: '#e8eef4',
   cloud: '#ffffff',
   elements: '#b8e07a',
+  gully: '#c98a5a',
+  trees: '#5fbf5a',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
@@ -5125,6 +5176,8 @@ const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   fog: 'rgba(232,238,244,0.12)',
   cloud: 'rgba(255,255,255,0)',
   elements: 'rgba(184,224,122,0.10)',
+  gully: 'rgba(201,138,90,0.10)',
+  trees: 'rgba(95,191,90,0.10)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',
@@ -5187,7 +5240,6 @@ function curveFromGesture(value: RoadDraft): CurveShape | null {
 
 function piecesForDraft(value: RoadDraft, endHeightOffset = value.heightOffset): RoadPathPiece[] {
   const start = { at: value.start.at, heightOffset: value.startHeightOffset };
-  gully: '#c98a5a',
   const end = { at: value.snap.at, heightOffset: endHeightOffset };
   if (alignment === 'free') return roadPathFromGesture(value.samples, start, end).map((piece) => ({
     ...piece,
@@ -5203,7 +5255,6 @@ function setNodeHeightMetres(id: NodeId, metres: number): void {
   let lower = -Infinity;
   let upper = Infinity;
   for (const segmentId of node.incident) {
-  gully: 'rgba(201,138,90,0.10)',
     const segment = doc.segment(segmentId);
     if (!segment) continue;
     const other = doc.node(segment.a === id ? segment.b : segment.a);

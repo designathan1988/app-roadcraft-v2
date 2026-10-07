@@ -127,6 +127,7 @@ import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
+import { clearingIndex } from '@world/trees';
 import { buildNatureForest, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
@@ -911,6 +912,10 @@ export function createSceneRenderer(
   /** The painted woods' trees (`forestPlants`), grown as the countryside's once the kit is in. */
   let paintedForest: NatureForest | null = null;
   let paintedTrees: TreePlacement[] | null = null;
+  /** The trees the player planted, drawn, and the document they were built for. */
+  let plantedForest: NatureForest | null = null;
+  let plantedFor = '';
+  let plantedTerrain = -1;
   let natureTreesPending = true;
   /** The elements laid with the brush (`elements.ts`): their models, loaded once, and the layer built for the map. */
   let elementKit: ElementKit | null = null;
@@ -1548,6 +1553,8 @@ export function createSceneRenderer(
       return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
     };
     const [i0, i1, j0, j1] = paintedCells(net, FOREST_SPACING);
+    // Where the player cut the trees away (`world/trees.ts`), none grows.
+    const cleared = clearingIndex(net.doc.treeClearings);
     for (let j = j0; j <= j1 && trees.length < FOREST_MAX; j++) {
       for (let i = i0; i <= i1 && trees.length < FOREST_MAX; i++) {
         const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
@@ -1555,7 +1562,7 @@ export function createSceneRenderer(
         if (density < 0.04 || hash(i, j, 1) > density * 0.92) continue;
         const x = cx + (hash(i, j, 2) - 0.5) * FOREST_SPACING * 0.9, y = cy + (hash(i, j, 3) - 0.5) * FOREST_SPACING * 0.9;
         const p = { x, y };
-        if (onCarriageway(net, p) || buildings.covers(x, y)) continue;
+        if (onCarriageway(net, p) || buildings.covers(x, y) || cleared(x, y)) continue;
         const z = terrain.renderedHeightAt(x, y);
         const h = m(10) + m(8) * hash(i, j, 4) * (0.6 + 0.4 * density);
         // A wood is green: broadleaf with some conifers. No ipê (its crown a
@@ -1701,6 +1708,8 @@ export function createSceneRenderer(
       }
     }
     const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
+    // Where the player cut the trees away (`world/trees.ts`), none grows.
+    const cleared = clearingIndex(net.doc.treeClearings);
     const treeScale = Math.min(1, budget / Math.max(1, treeSum));
     // Water, a cliff, a road or a building: nothing grows there.
     const open = (x: number, y: number, z: number): boolean => {
@@ -1727,6 +1736,7 @@ export function createSceneRenderer(
         const h = inner ? m(11) + m(8) * hash(i, j, 45) : edge ? m(8) + m(6) * hash(i, j, 45) : m(5.5) + m(4) * hash(i, j, 45);
         const roll = hash(i, j, 46);
         const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
+        if (cleared(x, y)) continue;
         trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
       }
     }
@@ -2307,7 +2317,7 @@ export function createSceneRenderer(
       // geology where they lie builds them again (both gates are asked, so
       // each keeps its own record).
       const geologyStale = coverGeology.stale('', coverArea);
-      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}`, coverArea) || geologyStale) {
+      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}:${net.doc.clearingRevision}`, coverArea) || geologyStale) {
         if (cover) {
           for (const mesh of cover.meshes) world.remove(mesh);
           cover.dispose();
@@ -2323,7 +2333,7 @@ export function createSceneRenderer(
       }
       // The ecosystem's own trees and bushes: again when the ecology, the
       // roads or the buildings change, never in the middle of a stroke.
-      const natureKey = `${terrain.ecologyRevision}:${net.doc.revision}:${net.doc.buildings.revision}:${quality.vegetation > 0}`;
+      const natureKey = `${terrain.ecologyRevision}:${net.doc.revision}:${net.doc.buildings.revision}:${quality.vegetation > 0}:${net.doc.clearingRevision}`;
       if (!stroking && natureKey !== natureFor) {
         natureFor = natureKey;
         if (nature) {
@@ -2373,6 +2383,32 @@ export function createSceneRenderer(
       if (paintedForest) {
         const eye = rig.camera.position;
         paintedForest.updateLod(eye.x, eye.y, eye.z);
+      }
+      // The trees the player planted (`world/trees.ts`), with the woods' own
+      // models: again when they, the land, the roads or the buildings change
+      // (none on a road or under a building).
+      const plantedKey = `${net.doc.treeRevision}:${net.doc.terrainRevision}:${net.doc.revision}:${net.doc.buildings.revision}`;
+      if (natureTreeKit && plantedKey !== plantedFor && !(stroking && net.doc.terrainRevision !== plantedTerrain)) {
+        plantedFor = plantedKey;
+        plantedTerrain = net.doc.terrainRevision;
+        if (plantedForest) {
+          for (const mesh of plantedForest.meshes) world.remove(mesh);
+          plantedForest.dispose();
+          plantedForest = null;
+        }
+        const planted: TreePlacement[] = [];
+        for (const t of net.doc.trees) {
+          if (onCarriageway(net, t) || buildings.covers(t.x, t.y)) continue;
+          planted.push({ x: t.x, y: t.y, z: terrain.renderedHeightAt(t.x, t.y), size: t.height, yaw: t.yaw, seed: t.seed, species: 'broadleaf' });
+        }
+        if (planted.length > 0) {
+          plantedForest = buildNatureForest(planted, natureTreeKit);
+          for (const mesh of plantedForest.meshes) world.add(mesh);
+        }
+      }
+      if (plantedForest) {
+        const eye = rig.camera.position;
+        plantedForest.updateLod(eye.x, eye.y, eye.z);
       }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
@@ -2810,6 +2846,7 @@ export function createSceneRenderer(
       elementLayer?.dispose();
       elementKit?.dispose();
       paintedForest?.dispose();
+      plantedForest?.dispose();
       natureTreeKit?.dispose();
       sceneryKit.dispose();
       terrain.dispose();
