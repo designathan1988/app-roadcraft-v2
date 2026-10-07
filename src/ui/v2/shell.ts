@@ -40,6 +40,7 @@ import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 /** The colour of each paintable ground, for its button. */
 const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
   sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36', forest: '#2c4f26',
+  scrub: '#4c6a2c', flowers: '#c86a8e', rocks: '#7d776c',
 };
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';

@@ -135,7 +135,7 @@ const FRESNEL_BASE = 0.06;
 const FRESNEL_POWER = 3;
 
 /** Low enough for the sun to catch, high enough not to alias into fireflies. */
-const WATER_ROUGHNESS = 0.2;
+const WATER_ROUGHNESS = 0.15;
 const FOAM_ROUGHNESS = 0.72;
 
 /**
@@ -262,7 +262,7 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   // Measured against a screenshot at the zoom the game is actually played at,
   // not at a close-up: below about 0.8 the mip chain washes the ripple out
   // entirely once the camera pulls back and the river goes glassy again.
-  material.normalScale.set(0.55, 0.55);
+  material.normalScale.set(0.85, 0.85);
 
   const time = { value: 0 };
   const uniforms = {
@@ -388,7 +388,9 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          // The first shallow stretch reveals the actual bed. Starting at
          // 0.34 opacity mixed green water with brown ground into a bright
          // cyan outline before the river became deep blue a few pixels in.
-         float waterAlpha = mix(0.08, 0.94, smoothstep(0.25, ${(DEEP_AT * 0.7).toFixed(2)}, waterDepthPx));
+         // The bed shows through until some four and a half metres: a river of a
+         // couple of metres is clear to its stones, only the deep goes opaque.
+         float waterAlpha = mix(0.06, 0.9, smoothstep(0.3, 11.0, waterDepthPx));
          waterAlpha = max(waterAlpha, waterFoam * 0.9);
          float waterRim = smoothstep(0.0, ${RIM_AT.toFixed(2)}, waterDepthPx);
 

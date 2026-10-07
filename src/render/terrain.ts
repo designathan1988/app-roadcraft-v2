@@ -25,7 +25,7 @@ import {
 } from 'three';
 
 import type { RoadDoc } from '@world/doc';
-import { PAINT_KINDS, type PaintDab } from '@world/terrainPaint';
+import { COVER_KINDS, PAINT_KINDS, type CoverKind, type PaintDab } from '@world/terrainPaint';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
@@ -161,8 +161,16 @@ export interface TerrainSurface {
   updatePaint(doc: RoadDoc): void;
   /** How much forest was painted at a point, 0..1 (`world/terrainPaint.ts` 'forest'). */
   forestAt(x: number, y: number): number;
-  /** Moves whenever the forest painted changes. */
+  /** How much of a cover (forest, scrub, flowers, rocks) was painted at a point, 0..1. */
+  coverAt(kind: CoverKind, x: number, y: number): number;
+  /** Moves whenever the covers painted change. */
   readonly forestRevision: number;
+  /** The water's level near a point (lake or river, within a few cells of it), or null. */
+  shoreLevelAt(x: number, y: number): number | null;
+  /** Where water is, world (x, y), or null when there is none. */
+  waterArea(): { minX: number; maxX: number; minY: number; maxY: number } | null;
+  /** Moves whenever the water is rebuilt. */
+  readonly waterRevision: number;
   /**
    * The grid cells (x0, x1, y0, y1) the last `update` rewrote, or null when it
    * rewrote the whole plate: where a stroke's dab changed the ground.
@@ -364,8 +372,7 @@ const PAINT_RES = 1024;
  * are the same thing here, then spread outwards so the beach above the line
  * knows which water it belongs to.
  */
-function shoreLevels(water: BufferGeometry, texture: DataTexture): void {
-  const levels = texture.image.data as Float32Array;
+function shoreLevels(water: BufferGeometry, levels: Float32Array): void {
   levels.fill(NO_WATER);
   const position = water.getAttribute('position');
   if (position) {
@@ -393,6 +400,23 @@ function shoreLevels(water: BufferGeometry, texture: DataTexture): void {
         levels[k] = best;
       }
     }
+  }
+}
+
+/**
+ * The ground texture the terrain shader reads per corner: R the water's level
+ * (`shoreLevels`), G the painted flowers' density, B the painted scrub's. One
+ * texture for all: the terrain material already binds sixteen textures, the
+ * most a fragment shader may, and a texture of its own for the flowers took
+ * the whole terrain off the screen.
+ */
+function packGroundCorners(texture: DataTexture, levels: Float32Array, flowers: Float32Array, scrub: Float32Array): void {
+  const data = texture.image.data as Float32Array;
+  for (let k = 0; k < levels.length; k++) {
+    data[k * 4] = levels[k] as number;
+    data[k * 4 + 1] = flowers[k] as number;
+    data[k * 4 + 2] = scrub[k] as number;
+    data[k * 4 + 3] = 0;
   }
   texture.needsUpdate = true;
 }
@@ -463,7 +487,9 @@ function paintTexture(): DataTexture {
 function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
   const a = textures[0]!.image.data as Uint8Array;
   const b = textures[1]!.image.data as Uint8Array;
-  const layer = PAINT_KINDS.indexOf(dab.kind);
+  // Rocks lie on bare ground: they lay the soil layer part way.
+  const layer = PAINT_KINDS.indexOf(dab.kind === 'rocks' ? 'soil' : dab.kind);
+  const reach = dab.kind === 'rocks' ? 0.2 : 1;
   const cell = TERRAIN_SIZE / PAINT_RES;
   const cx = (dab.x + TERRAIN_HALF) / cell;
   const cy = (dab.y + TERRAIN_HALF) / cell;
@@ -475,7 +501,7 @@ function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
       const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / Math.max(1e-6, r);
       if (d >= 1) continue;
       const fall = 1 - d * d * (3 - 2 * d);
-      const w = Math.min(1, dab.strength * fall);
+      const w = Math.min(1, dab.strength * fall) * reach;
       const i = (y * PAINT_RES + x) * 4;
       for (let k = 0; k < 8; k++) {
         const data = k < 4 ? a : b;
@@ -490,11 +516,14 @@ function rasterPaint(textures: readonly DataTexture[], dab: PaintDab): void {
 /** Side of the forest density grid over the plate (7.5 m a cell). */
 const FOREST_RES = 256;
 
-/** Lays one dab into the forest density: forest towards full, any other ground towards none. */
-function rasterForest(forest: Uint8Array, dab: PaintDab): void {
+/**
+ * Lays one dab into the cover densities: its own cover towards full, every
+ * other towards none (a cover replaces another, and any plain ground clears
+ * them all), as the forest alone always did.
+ */
+function rasterCover(covers: Readonly<Record<CoverKind, Uint8Array>>, dab: PaintDab): void {
   const cell = TERRAIN_SIZE / FOREST_RES;
   const cx = (dab.x + TERRAIN_HALF) / cell, cy = (dab.y + TERRAIN_HALF) / cell, r = dab.radius / cell;
-  const target = dab.kind === 'forest' ? 255 : 0;
   const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(FOREST_RES - 1, Math.ceil(cx + r));
   const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(FOREST_RES - 1, Math.ceil(cy + r));
   for (let y = y0; y <= y1; y++) {
@@ -503,7 +532,11 @@ function rasterForest(forest: Uint8Array, dab: PaintDab): void {
       if (d >= 1) continue;
       const w = Math.min(1, dab.strength * (1 - d * d * (3 - 2 * d)));
       const i = y * FOREST_RES + x;
-      forest[i] = Math.round(forest[i]! + (target - forest[i]!) * w);
+      for (const kind of COVER_KINDS) {
+        const density = covers[kind];
+        const target = dab.kind === kind ? 255 : 0;
+        density[i] = Math.round(density[i]! + (target - density[i]!) * w);
+      }
     }
   }
 }
@@ -537,12 +570,20 @@ function terrainMaterial(
   // The water's level at each terrain corner near water (`shoreLevels`),
   // NO_WATER elsewhere: where the ground stands just above it is beach,
   // just at it is wet, under it is the bed.
-  const shore = new DataTexture(new Float32Array(GRID * GRID).fill(NO_WATER), GRID, GRID, RedFormat, FloatType);
+  // R: the water's level at each corner near water, G: the painted flowers,
+  // B: the painted scrub (`packGroundCorners`).
+  const shoreLevelData = new Float32Array(GRID * GRID).fill(NO_WATER);
+  const flowerCornerData = new Float32Array(GRID * GRID);
+  const scrubCornerData = new Float32Array(GRID * GRID);
+  const shore = new DataTexture(new Float32Array(GRID * GRID * 4), GRID, GRID, RGBAFormat, FloatType);
   shore.magFilter = NearestFilter;
   shore.minFilter = NearestFilter;
   shore.generateMipmaps = false;
-  shore.needsUpdate = true;
+  packGroundCorners(shore, shoreLevelData, flowerCornerData, scrubCornerData);
   material.userData['shore'] = shore;
+  material.userData['shoreLevels'] = shoreLevelData;
+  material.userData['flowerCorners'] = flowerCornerData;
+  material.userData['scrubCorners'] = scrubCornerData;
   const uniforms = {
     uPaintA: { value: paintA as Texture },
     uPaintB: { value: paintB as Texture },
@@ -600,25 +641,31 @@ function terrainMaterial(
          uniform vec4 uGrassField; // world x, y, reach, on
          uniform vec3 uGrid; // cell, strength, map half
          uniform sampler2D uShore;
+         float terrainHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
          uniform vec3 uShoreGrid; // half, cell, corners per side
          // The water level here, bilinear over the corners that HAVE water
          // (NO_WATER if none). Read from the nearest corner only, the level
          // stepped at every grid line along a falling river and drew dark
          // bands across the shallows under the water.
-         float terrainShoreLevel(vec3 world) {
+         // x: that level; y: the painted flowers here, z: the painted scrub,
+         // both bilinear (G and B channels).
+         vec3 terrainShoreSample(vec3 world) {
            vec2 g = clamp((world.xz + uShoreGrid.x) / uShoreGrid.y, vec2(0.0), vec2(uShoreGrid.z - 1.001));
            vec2 i = floor(g);
            vec2 f = g - i;
            ivec2 p = ivec2(i);
-           float l00 = texelFetch(uShore, p, 0).r;
-           float l10 = texelFetch(uShore, p + ivec2(1, 0), 0).r;
-           float l01 = texelFetch(uShore, p + ivec2(0, 1), 0).r;
-           float l11 = texelFetch(uShore, p + ivec2(1, 1), 0).r;
-           vec4 level = vec4(l00, l10, l01, l11);
+           vec3 c00 = texelFetch(uShore, p, 0).rgb;
+           vec3 c10 = texelFetch(uShore, p + ivec2(1, 0), 0).rgb;
+           vec3 c01 = texelFetch(uShore, p + ivec2(0, 1), 0).rgb;
+           vec3 c11 = texelFetch(uShore, p + ivec2(1, 1), 0).rgb;
+           vec4 level = vec4(c00.x, c10.x, c01.x, c11.x);
+           vec4 bilinear = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
            vec4 has = step(vec4(${NO_WATER / 2}.0), level);
-           vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y) * has;
+           vec4 w = bilinear * has;
            float sum = w.x + w.y + w.z + w.w;
-           return sum > 1e-5 ? dot(level, w) / sum : ${NO_WATER}.0;
+           float flowers = dot(vec4(c00.y, c10.y, c01.y, c11.y), bilinear);
+           float scrub = dot(vec4(c00.z, c10.z, c01.z, c11.z), bilinear);
+           return vec3(sum > 1e-5 ? dot(level, w) / sum : ${NO_WATER}.0, flowers, scrub);
          }
          uniform sampler2D uRockNormal;
          uniform sampler2D uDirtMap;
@@ -791,11 +838,57 @@ function terrainMaterial(
          // ground untouched, so the hills are legible without the scene turning
          // into a relief map.
          float relief = clamp(dot(normalize(vTerrainNormal), normalize(vec3(0.24, 0.62, -0.75))), -1.0, 1.0);
+         // Painted flowers: blossoms a hand across scattered through the
+         // grass, as many as the painted density, in a meadow's colours. Each
+         // 0.4-unit cell holds at most one, at a jittered point; they fade to
+         // their average tint where a pixel is wider than a blossom, so the
+         // far view shows a flowering meadow and not flickering dots.
+         vec3 shoreSample = terrainShoreSample(vTerrainWorld);
+         // Derivatives taken outside any branch, where they are defined: how
+         // many 0.4-unit blossom cells one pixel spans.
+         vec2 fp = vTerrainWorld.xz / 0.4;
+         float footprint = max(fwidth(fp.x), fwidth(fp.y));
+         // Scrubland: the ground under painted scrub goes the dark olive of
+         // a thicket's shade, so the patch reads from the whole map's zoom
+         // and not only where its bushes are big enough to see.
+         blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.42, 0.52, 0.32), clamp(shoreSample.z * 1.4, 0.0, 0.85));
+         {
+           float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
+           if (flowersW > 0.01) {
+             // Blossoms at EVERY zoom, as levels of detail: a hand across up
+             // close, and as the camera pulls back the cells double - patches
+             // of flowers a metre, two, four across - so a flower is always a
+             // few pixels wide, two neighbouring levels blended so nothing
+             // pops. A painted meadow stays a flowering meadow on the map.
+             float lod = max(0.0, log2(footprint * 2.5));
+             float level0 = floor(lod);
+             float between = lod - level0;
+             vec3 bloom = vec3(0.0);
+             float cover = 0.0;
+             for (int k = 0; k < 2; k++) {
+               float size = exp2(level0 + float(k));
+               vec2 q = fp / size;
+               vec2 cellId = floor(q) + (level0 + float(k)) * 17.0;
+               float pick = terrainHash(cellId);
+               vec2 centre = vec2(terrainHash(cellId + 7.1), terrainHash(cellId + 3.3)) * 0.6 + 0.2;
+               float dist = length(fract(q) - centre);
+               float roll = terrainHash(cellId + 11.9);
+               vec3 petal = roll < 0.34 ? vec3(0.85, 0.66, 0.06) : roll < 0.46 ? vec3(0.86, 0.86, 0.82) : roll < 0.74 ? vec3(0.74, 0.22, 0.42) : vec3(0.44, 0.26, 0.7);
+               float present = step(pick, flowersW * 0.36);
+               float edge = footprint / size;
+               float blossom = present * (1.0 - smoothstep(0.17, 0.17 + edge, dist));
+               float weight = k == 0 ? 1.0 - between : between;
+               bloom += petal * blossom * weight;
+               cover += blossom * weight;
+             }
+             blended.rgb = mix(blended.rgb, bloom / max(cover, 1e-4), clamp(cover, 0.0, 1.0));
+           }
+         }
          // The shore (Terragen's "wet shores": a band set by height over the
          // water, darkened where it is wet). Under the water a muddy bed, at
          // the waterline a dark wet strip, above it a beach of pale sand that
          // only lies where the bank is gentle enough to hold it.
-         float shoreLevel = terrainShoreLevel(vTerrainWorld);
+         float shoreLevel = shoreSample.x;
          if (shoreLevel > ${NO_WATER / 2}.0) {
            float above = vTerrainWorld.y - shoreLevel;
            float sandLuma = dot(dirtPlan.rgb, vec3(0.3, 0.6, 0.1));
@@ -807,9 +900,15 @@ function terrainMaterial(
            // water up to the turf, frayed at its top.
            float bank = (1.0 - smoothstep(5.0 + wanderD * 5.0, 10.0 + wanderD * 5.0, above)) * (1.0 - gentle);
            blended.rgb = mix(blended.rgb, dirtColor.rgb * vec3(0.78, 0.72, 0.62), bank * (1.0 - rockMix));
-           // Below the water: the bed goes to a dark olive mud with depth.
-           float bed = smoothstep(0.0, -3.0, above);
-           blended.rgb = mix(blended.rgb, vec3(0.16, 0.15, 0.09) * (0.8 + sandLuma), bed * 0.8);
+           // Below the water: a bed of sand and pebbles, seen through the
+           // shallows, going to silt as it deepens.
+           float bed = smoothstep(0.0, -2.0, above);
+           float pebble = texture2D(uDirtMap, vTerrainWorld.xz * 0.53).r;
+           float stones = texture2D(uDirtMap, vTerrainWorld.xz * 0.21 + 0.4).g;
+           vec3 gravelBed = vec3(0.34, 0.3, 0.22) * mix(0.62, 1.3, pebble) * mix(0.85, 1.12, stones);
+           vec3 silt = vec3(0.18, 0.17, 0.12) * (0.85 + sandLuma);
+           vec3 bedColour = mix(gravelBed, silt, smoothstep(-2.0, -12.0, above));
+           blended.rgb = mix(blended.rgb, bedColour, bed * 0.9);
            // Wet: darker from a little above the line down into the water.
            float wet = 1.0 - smoothstep(-0.2, 1.4, above);
            blended.rgb *= mix(1.0, 0.6, wet);
@@ -887,7 +986,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v10';
+  material.customProgramCacheKey = () => 'terrain-splat-v13';
   return material;
 }
 
@@ -1507,6 +1606,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let wetDiscs: readonly WaterStamp[] = [];
   /** Where the water's mesh lies, world units (`touchesWater`). */
   let waterBox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+  let waterRevision = 0;
   /** The cells water flooded into past the brush (`floodBasins`), with their level. */
   let floodCells = new Map<string, number>();
   const wetAt = (x: number, y: number): boolean => {
@@ -1556,11 +1656,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     floodCells = new Map();
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
     previous.dispose();
-    shoreLevels(water.geometry, material.userData['shore'] as DataTexture);
+    shoreLevels(water.geometry, material.userData['shoreLevels'] as Float32Array);
+    packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array);
     water.geometry.computeBoundingBox();
     const box = water.geometry.boundingBox;
     // In world (x, y): the mesh is three's (x, height, -y).
     waterBox = box && !box.isEmpty() ? { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z } : null;
+    waterRevision++;
   };
   /** How near the water a moved corner can be and still leave it as it was: two water cells and two terrain cells. */
   const WATER_REACH = 2 * WATER_CELL + 2 * TERRAIN_CELL;
@@ -1595,8 +1697,19 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let paintRevision = 0;
   let paintCount = 0;
   let paintFirst: PaintDab | undefined;
-  const forest = new Uint8Array(FOREST_RES * FOREST_RES);
+  const covers: Record<CoverKind, Uint8Array> = {
+    forest: new Uint8Array(FOREST_RES * FOREST_RES),
+    scrub: new Uint8Array(FOREST_RES * FOREST_RES),
+    flowers: new Uint8Array(FOREST_RES * FOREST_RES),
+    rocks: new Uint8Array(FOREST_RES * FOREST_RES),
+  };
   let forestRevision = 0;
+  const coverAt = (kind: CoverKind, x: number, y: number): number => {
+    const cell = TERRAIN_SIZE / FOREST_RES;
+    const gx = Math.floor((x + TERRAIN_HALF) / cell), gy = Math.floor((y + TERRAIN_HALF) / cell);
+    if (gx < 0 || gy < 0 || gx >= FOREST_RES || gy >= FOREST_RES) return 0;
+    return covers[kind][gy * FOREST_RES + gx]! / 255;
+  };
   const updatePaint = (doc: RoadDoc): void => {
     if (doc.paintRevision === paintRevision) return;
     paintRevision = doc.paintRevision;
@@ -1604,16 +1717,30 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // Dabs only added since the last time: lay just those. Anything else (an
     // undo, a load, the oldest dabs dropped): lay them all again.
     if (dabs.length >= paintCount && dabs[0] === paintFirst && paintCount > 0) {
-      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) { rasterPaint(paint, t); rasterForest(forest, t); }
+      for (let i = paintCount; i < dabs.length; i++) for (const t of [dabs[i]!]) { rasterPaint(paint, t); rasterCover(covers, t); }
     } else {
       for (const t of paint) (t.image.data as Uint8Array).fill(0);
-      forest.fill(0);
-      for (const dab of dabs) { rasterPaint(paint, dab); rasterForest(forest, dab); }
+      for (const kind of COVER_KINDS) covers[kind].fill(0);
+      for (const dab of dabs) { rasterPaint(paint, dab); rasterCover(covers, dab); }
     }
     forestRevision++;
     paintCount = dabs.length;
     paintFirst = dabs[0];
     for (const t of paint) t.needsUpdate = true;
+    {
+      // The flowers and the scrub at each terrain corner, into the shader's
+      // ground texture.
+      const flowers = material.userData['flowerCorners'] as Float32Array;
+      const scrub = material.userData['scrubCorners'] as Float32Array;
+      for (let iy = 0; iy < GRID; iy++) {
+        for (let ix = 0; ix < GRID; ix++) {
+          const x = -TERRAIN_HALF + ix * TERRAIN_CELL, y = TERRAIN_HALF - iy * TERRAIN_CELL;
+          flowers[iy * GRID + ix] = coverAt('flowers', x, y);
+          scrub[iy * GRID + ix] = coverAt('scrub', x, y);
+        }
+      }
+      packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, flowers, scrub);
+    }
   };
 
   return {
@@ -1622,13 +1749,22 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     vergeMaterial,
     updatePaint,
     forestAt(x, y) {
-      const cell = TERRAIN_SIZE / FOREST_RES;
-      const gx = Math.floor((x + TERRAIN_HALF) / cell), gy = Math.floor((y + TERRAIN_HALF) / cell);
-      if (gx < 0 || gy < 0 || gx >= FOREST_RES || gy >= FOREST_RES) return 0;
-      return forest[gy * FOREST_RES + gx]! / 255;
+      return coverAt('forest', x, y);
     },
+    coverAt,
     get forestRevision() {
       return forestRevision;
+    },
+    shoreLevelAt(x, y) {
+      const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL);
+      const iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
+      if (ix < 0 || iy < 0 || ix >= GRID || iy >= GRID) return null;
+      const level = (material.userData['shoreLevels'] as Float32Array)[iy * GRID + ix] as number;
+      return level > NO_WATER / 2 ? level : null;
+    },
+    waterArea: () => waterBox,
+    get waterRevision() {
+      return waterRevision;
     },
     heightAt,
     naturalRenderedHeightAt,

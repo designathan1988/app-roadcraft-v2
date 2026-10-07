@@ -1,8 +1,9 @@
 /**
  * Ground the player paints over the terrain: sand, soil, meadow, snow,
- * gravel, asphalt, concrete - and grass, which paints the others away -
- * and forest, where trees grow (`render/terrain.ts` keeps its density,
- * `render/renderer.ts` plants it).
+ * gravel, asphalt, concrete - and grass, which paints the others away - and
+ * the COVERS, painted as a density and planted by the renderer
+ * (`render/terrain.ts` keeps it, `render/renderer.ts` plants it): forest
+ * (trees with an understorey), scrub (low bush), flowers and rocks.
  *
  * Texture splatting, as engines store painted terrain layers: a weight per
  * layer per texel, four layers to an RGBA texture, the weights summing to at
@@ -14,9 +15,18 @@
  * re-solves no road.
  */
 
-/** The paintable layers, in channel order: two RGBA textures, then grass. */
-export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass', 'forest'] as const;
+/**
+ * The paintable layers, in channel order: two RGBA textures, then grass, then
+ * the covers. New kinds go on the END: a saved map stores kinds by name, but
+ * the first eight are texture channels by their place in this list.
+ */
+export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass', 'forest', 'scrub', 'flowers', 'rocks'] as const;
 export type PaintKind = (typeof PAINT_KINDS)[number];
+
+/** The kinds painted as a density of things standing on the ground. */
+export const COVER_KINDS = ['forest', 'scrub', 'flowers', 'rocks'] as const;
+export type CoverKind = (typeof COVER_KINDS)[number];
+export const isCoverKind = (kind: PaintKind): kind is CoverKind => (COVER_KINDS as readonly string[]).includes(kind);
 
 export interface PaintDab {
   readonly kind: PaintKind;

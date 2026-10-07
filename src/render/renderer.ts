@@ -124,6 +124,8 @@ import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
+import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover } from './groundCover';
+import { isCoverKind } from '@world/terrainPaint';
 
 /**
  * The scene renderer.
@@ -862,7 +864,10 @@ export function createSceneRenderer(
   let gardens: Scenery | null = null;
   /** The forest painted with the landscape brush, planted (`forestPlants`). */
   let forest: Scenery | null = null;
-  /** Where forest was painted (the only paint that raises its density), by paint revision. */
+  /** The painted rocks and scrub and the stones of the rivers (`rockPlacements`, `scrubPlacements`). */
+  let cover: GroundCover | null = null;
+  const coverKit = createGroundCoverKit();
+  /** Where a cover was painted (the only paints that raise a density), by paint revision. */
   let forestAreaFor = -1;
   let forestArea: Rect | null = null;
   const forestAreaOf = (doc: RoadDoc): Rect | null => {
@@ -870,7 +875,7 @@ export function createSceneRenderer(
       forestAreaFor = doc.paintRevision;
       forestArea = null;
       for (const dab of doc.terrainPaint) {
-        if (dab.kind === 'forest') forestArea = unionRect(forestArea, [dab.x - dab.radius, dab.y - dab.radius, dab.x + dab.radius, dab.y + dab.radius]);
+        if (isCoverKind(dab.kind)) forestArea = unionRect(forestArea, [dab.x - dab.radius, dab.y - dab.radius, dab.x + dab.radius, dab.y + dab.radius]);
       }
     }
     return forestArea;
@@ -925,6 +930,7 @@ export function createSceneRenderer(
     transit: new GroundDependant(groundChanges),
     gardens: new GroundDependant(groundChanges),
     forest: new GroundDependant(groundChanges),
+    cover: new GroundDependant(groundChanges),
   };
   /** The area every building's bank reaches, by building revision. */
   let buildingsAreaFor = -1;
@@ -1476,6 +1482,108 @@ export function createSceneRenderer(
     }
     return out;
   };
+  /**
+   * Low scrub (`world/terrainPaint.ts` 'scrub'): close-set low-poly bushes of
+   * a metre to two and a half, no trees - the mata baixa of a hillside or a
+   * field gone wild. One candidate a cell of SCRUB_SPACING kept by the root
+   * of the painted density (one ordinary stroke already makes a thicket) and
+   * clumped by a slow noise into thickets and clearings; never on a road or
+   * under a building.
+   */
+  const SCRUB_SPACING = m(2.4);
+  const SCRUB_MAX = 12_000;
+  const scrubPlacements = (net: Network): CoverPlacement[] => {
+    const out: CoverPlacement[] = [];
+    const hash = (a: number, b: number, salt: number): number => {
+      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+    };
+    const cells = Math.floor((TERRAIN_HALF * 2) / SCRUB_SPACING);
+    for (let j = 0; j < cells && out.length < SCRUB_MAX; j++) {
+      for (let i = 0; i < cells && out.length < SCRUB_MAX; i++) {
+        const cx = -TERRAIN_HALF + (i + 0.5) * SCRUB_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * SCRUB_SPACING;
+        const density = terrain.coverAt('scrub', cx, cy);
+        if (density < 0.04) continue;
+        const clump = 0.35 + 0.65 * Math.max(0, Math.min(1, (scrubClump(cx, cy) + 0.15) * 1.6));
+        if (hash(i, j, 21) > Math.sqrt(density) * clump) continue;
+        const x = cx + (hash(i, j, 22) - 0.5) * SCRUB_SPACING * 0.95, y = cy + (hash(i, j, 23) - 0.5) * SCRUB_SPACING * 0.95;
+        if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
+        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size: m(1.5) + m(2) * hash(i, j, 24) * clump, yaw: hash(i, j, 26) * Math.PI * 2, seed: hash(i, j, 27) });
+      }
+    }
+    return out;
+  };
+  /** -1..1 value noise of about 25 m: where scrub gathers into thickets. */
+  const scrubClump = (x: number, y: number): number => {
+    const s = m(25);
+    const gx = x / s, gy = y / s;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = gx - x0, fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const h = (a: number, b: number): number => {
+      let v = Math.imul(a, 374_761_393) ^ Math.imul(b, 668_265_263) ^ 0x51b;
+      v = Math.imul(v ^ (v >>> 13), 1_274_126_177);
+      return ((v ^ (v >>> 16)) >>> 0) / 2_147_483_648 - 1;
+    };
+    const top = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * sx;
+    const bottom = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * sx;
+    return top + (bottom - top) * sy;
+  };
+  /**
+   * The stones: where rocks were painted, one candidate a cell of
+   * ROCK_SPACING kept by the density (boulders of half a metre to two and a
+   * half), and along every body of water - in the shallows, on the line and
+   * up the bank - a scatter of smaller stones, as a river bed and its banks
+   * have. Never on a road or under a building.
+   */
+  const ROCK_SPACING = m(3.2);
+  const ROCK_MAX = 9_000;
+  const RIVER_ROCK_SPACING = m(3);
+  const rockPlacements = (net: Network): CoverPlacement[] => {
+    const out: CoverPlacement[] = [];
+    const hash = (a: number, b: number, salt: number): number => {
+      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
+    };
+    const cells = Math.floor((TERRAIN_HALF * 2) / ROCK_SPACING);
+    for (let j = 0; j < cells && out.length < ROCK_MAX; j++) {
+      for (let i = 0; i < cells && out.length < ROCK_MAX; i++) {
+        const cx = -TERRAIN_HALF + (i + 0.5) * ROCK_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * ROCK_SPACING;
+        const density = terrain.coverAt('rocks', cx, cy);
+        if (density < 0.04 || hash(i, j, 41) > Math.sqrt(density) * 0.7) continue;
+        const x = cx + (hash(i, j, 42) - 0.5) * ROCK_SPACING * 0.9, y = cy + (hash(i, j, 43) - 0.5) * ROCK_SPACING * 0.9;
+        if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
+        // Mostly modest stones, now and then a big boulder.
+        const roll = hash(i, j, 44);
+        const size = roll > 0.88 ? m(2.2) + m(2) * hash(i, j, 45) : m(0.6) + m(1.5) * roll;
+        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size, yaw: hash(i, j, 46) * Math.PI * 2, seed: hash(i, j, 47) });
+      }
+    }
+    const water = terrain.waterArea();
+    if (water) {
+      const reach = m(12);
+      const i0 = Math.floor((water.minX - reach + TERRAIN_HALF) / RIVER_ROCK_SPACING), i1 = Math.ceil((water.maxX + reach + TERRAIN_HALF) / RIVER_ROCK_SPACING);
+      const j0 = Math.floor((water.minY - reach + TERRAIN_HALF) / RIVER_ROCK_SPACING), j1 = Math.ceil((water.maxY + reach + TERRAIN_HALF) / RIVER_ROCK_SPACING);
+      for (let j = j0; j <= j1 && out.length < ROCK_MAX; j++) {
+        for (let i = i0; i <= i1 && out.length < ROCK_MAX; i++) {
+          const x = -TERRAIN_HALF + (i + hash(i, j, 51)) * RIVER_ROCK_SPACING, y = -TERRAIN_HALF + (j + hash(i, j, 52)) * RIVER_ROCK_SPACING;
+          const level = terrain.shoreLevelAt(x, y);
+          if (level === null) continue;
+          const z = terrain.renderedHeightAt(x, y);
+          const above = z - level;
+          // Thickest at the waterline, thinning up the bank and into the deep.
+          const odds = above < -m(2.5) ? 0.06 : above < -m(0.3) ? 0.3 : above < m(0.6) ? 0.45 : above < m(2) ? 0.22 : above < m(4) ? 0.07 : 0;
+          if (hash(i, j, 53) > odds) continue;
+          if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
+          const size = m(0.6) + m(1.6) * hash(i, j, 54) ** 1.6;
+          out.push({ x, y, z, size, yaw: hash(i, j, 55) * Math.PI * 2, seed: hash(i, j, 56) });
+        }
+      }
+    }
+    return out;
+  };
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
   const TRACER_LIFE = 0.12;
@@ -1992,6 +2100,19 @@ export function createSceneRenderer(
         performance.measure('hitch:forest', { start: forestAt, end: performance.now() });
         for (const mesh of forest.meshes) world.add(mesh);
       }
+      // The stones and the scrub follow the painted covers and the water.
+      const waterArea = terrain.waterArea();
+      const coverArea = waterArea ? unionRect(forestAreaOf(net.doc), [waterArea.minX - m(12), waterArea.minY - m(12), waterArea.maxX + m(12), waterArea.maxY + m(12)]) : forestAreaOf(net.doc);
+      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}`, coverArea)) {
+        if (cover) {
+          for (const mesh of cover.meshes) world.remove(mesh);
+          cover.dispose();
+        }
+        const coverAt = performance.now();
+        cover = buildGroundCover(rockPlacements(net), scrubPlacements(net), coverKit);
+        performance.measure('hitch:cover', { start: coverAt, end: performance.now() });
+        for (const mesh of cover.meshes) world.add(mesh);
+      }
       // Discover new shader variants across frames, including hidden objects
       // that may become visible as the player moves. Three's compileAsync
       // traverses everything passed to it regardless of visibility, so only
@@ -2343,6 +2464,8 @@ export function createSceneRenderer(
       furniture?.dispose();
       gardens?.dispose();
       forest?.dispose();
+      cover?.dispose();
+      coverKit.dispose();
       sceneryKit.dispose();
       terrain.dispose();
       materials.dispose();
