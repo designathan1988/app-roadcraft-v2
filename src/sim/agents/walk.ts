@@ -1201,7 +1201,10 @@ function stepWalkers(w: SimWorld): void {
     const t = target(p);
     const tx = t.x - p.x, ty = t.y - p.y;
     let err = 0;
-    if (hypot(tx, ty) > m(0.05)) {
+    // Crawling drags on straight the way the head points, not round the walkways.
+    const crawling = p.act?.kind === 'crawl';
+    if (crawling) p.turnV = 0;
+    else if (hypot(tx, ty) > m(0.05)) {
       const want = Math.atan2(ty, tx);
       err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
       const rate = (p.v < m(0.3) ? TURN_STANDING : TURN_RATE) * DT;
@@ -1243,7 +1246,7 @@ function stepWalkers(w: SimWorld): void {
     p.y += Math.sin(p.heading) * p.v * DT;
     // Held up, or slow, a person steps aside into their stripe when it is free.
     const aside = p.aim - p.d;
-    if (Math.abs(aside) > m(0.02) && free(p.aim) > KEEP) {
+    if (!crawling && Math.abs(aside) > m(0.02) && free(p.aim) > KEEP) {
       const ls = Math.max(-SIDESTEP, Math.min(SIDESTEP, aside / 0.25)) * Math.max(0, 1 - p.v / (0.6 * p.pace));
       // Square to the body, to the side the stripe is on: never a step back.
       const side = Math.sign(-Math.sin(p.heading) * -f.ty + Math.cos(p.heading) * f.tx) || 1;

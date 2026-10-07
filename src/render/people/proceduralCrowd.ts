@@ -572,7 +572,7 @@ export interface ProceduralCrowd {
     skeleton(person: ProceduralPerson): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
     pose(person: ProceduralPerson): Float32Array | null;
     /** A pose of a clip (`idle`, or `getUp` played once: its phase held at the end), in the person's row. */
-    standing(person: ProceduralPerson, phase: number, clip?: 'idle' | 'getUp' | 'riseFront' | 'riseBack'): Float32Array | null;
+    standing(person: ProceduralPerson, phase: number, clip?: 'idle' | 'getUp' | 'riseFront' | 'riseBack' | 'crawl'): Float32Array | null;
     hold(person: ProceduralPerson, palette: Float32Array | null): void;
     /** A clip's length, seconds. */
     duration(person: ProceduralPerson, clip: ProcClip): number;

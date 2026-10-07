@@ -1001,8 +1001,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   };
   /** The cooked bodies as the ragdolls ask for them: no captured getting-up off the ground (the key poses then). */
   const riggedRagdoll: RagdollCitizens = Object.assign(Object.create(pedestrians) as typeof pedestrians, {
-    clipPose: (index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack', phase: number) =>
-      key === 'getUpFront' || key === 'getUpBack' ? null : pedestrians.clipPose(index, key, phase),
+    clipPose: (index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack' | 'crawl', phase: number) =>
+      key === 'getUpFront' || key === 'getUpBack' || key === 'crawl' ? null : pedestrians.clipPose(index, key, phase),
   });
   /** Gone from the street: hidden; gone a second, its person freed for the next walker. */
   const procFinish = (eye: Vector3 | undefined, live: ReadonlySet<number>): void => {
@@ -1079,8 +1079,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     },
     clipPose(index, key, phase) {
       const person = procOf(index);
-      if (!person || !procedural) return pedestrians.clipPose(index, key === 'getUpFront' || key === 'getUpBack' ? 'crouchUp' : key, phase);
-      const clip = key === 'crouchUp' ? 'getUp' : key === 'getUpFront' ? 'riseFront' : key === 'getUpBack' ? 'riseBack' : 'idle';
+      if (!person || !procedural) return key === 'crawl' ? null : pedestrians.clipPose(index, key === 'getUpFront' || key === 'getUpBack' ? 'crouchUp' : key, phase);
+      const clip = key === 'crouchUp' ? 'getUp' : key === 'getUpFront' ? 'riseFront' : key === 'getUpBack' ? 'riseBack' : key === 'crawl' ? 'crawl' : 'idle';
       const palette = procedural.ragdoll.standing(person, phase, clip);
       return palette ? { palette, duration: clip === 'idle' ? 1.2 : procedural.ragdoll.duration(person, clip) } : null;
     },

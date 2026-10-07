@@ -46,7 +46,7 @@ export interface RagdollCitizens {
   skeletonOf(index: number): { names: string[]; parents: number[]; inverses: Matrix4[]; local: Matrix4; bind: Matrix4 } | null;
   /** `charred`: burnt black (a bomb's direct hit). */
   drawPalette(index: number, palette: Float32Array, instance: Matrix4, charred?: boolean, alive?: boolean): void;
-  clipPose(index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack', phase: number): { palette: Float32Array; duration: number } | null;
+  clipPose(index: number, key: 'crouchUp' | 'idle' | 'getUpFront' | 'getUpBack' | 'crawl', phase: number): { palette: Float32Array; duration: number } | null;
   /** Bodies loaded now, for people with no pose of their own (indoors). */
   loadedIndices(): number[];
   /** The index to draw a piece torn off this person with (their twin, or the same body); null when none can be drawn. */
@@ -182,6 +182,8 @@ const RISE_KEY: 'crouchUp' | 'idle' = 'crouchUp';
 const MAX_BODIES = 40;
 /** Seconds the gravely hurt lie writhing before they try to crawl off (face down). */
 const CRAWL_AFTER = 4;
+/** Seconds from lying face down to on hands and knees, ready to crawl. */
+const CRAWL_UP = 1.1;
 /**
  * Bodies simulated by Jolt (`ragdollJolt.ts`), not the stick figure (`step`,
  * which still carries a body until Jolt has loaded; `?ragdoll=verlet` keeps
@@ -235,7 +237,7 @@ interface Survivor {
   pre?: number;
   blend?: number;
   /** The captured getting-up off the ground played (face down, face up), when there is one. */
-  riseKey?: 'getUpFront' | 'getUpBack';
+  riseKey?: 'getUpFront' | 'getUpBack' | 'crawl';
   /** How far into it they go (onto hands and knees, to crawl: `writhe`); all the way when absent. */
   riseMax?: number;
 }
@@ -1213,10 +1215,13 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
    * clip is not there (the key poses then).
    */
   function captured(body: Body, alive: Survivor, citizens: RagdollCitizens, world: RagdollWorld, faceUp: boolean, crawl = false): boolean {
-    const key = faceUp ? 'getUpBack' : 'getUpFront';
-    // To crawl: only onto hands and knees (four tenths of the way up face
-    // down; face up, sat up and turned onto them, a little over half).
-    const upTo = crawl ? (faceUp ? 0.55 : 0.4) : 0.999;
+    // To crawl (face down): the crawl's own first frame, on hands and knees,
+    // blended into from where they lie, and crawling on from exactly there.
+    // Part of the getting-up played instead ended kneeling half up, its
+    // limbs some 40 degrees off the crawl's and its hips-to-head line near
+    // vertical: the crawl then set off turned any way at all.
+    const key = crawl ? 'crawl' : faceUp ? 'getUpBack' : 'getUpFront';
+    const upTo = crawl ? 0 : 0.999;
     const first = citizens.clipPose(body.index, key, 0);
     const last = citizens.clipPose(body.index, key, upTo);
     if (!first || !last) return false;
@@ -1243,9 +1248,15 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     alive.t = 0;
     alive.from = bonesWorld(body);
     alive.pre = 0;
-    alive.blend = 0.35;
+    alive.blend = crawl ? CRAWL_UP : 0.35;
     body.asleep = true;
-    if (crawl) getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, ang(along(end)), alive.blend + alive.clip, true);
+    if (crawl) {
+      // Crawling on the way the clip faces (a walking body's toes under the same root).
+      const idle = citizens.clipPose(body.index, 'idle', 0);
+      const stood = idle ? particlesOf(body, idle.palette, root) : null;
+      const ahead = stood ? new Vector3().subVectors(stood[LT]!, stood[LA]!).add(tmpA.subVectors(stood[RT]!, stood[RA]!)).setY(0) : null;
+      getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, ahead && ahead.lengthSq() > 1e-8 ? ang(ahead) : ang(along(end)), alive.blend + alive.clip, true);
+    }
     else getUp(alive.id, end[PEL]!.x, -end[PEL]!.z, toes.lengthSq() > 1e-8 ? ang(toes) : heading, alive.blend + alive.clip);
     return true;
   }
