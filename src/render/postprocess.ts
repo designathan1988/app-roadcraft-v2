@@ -745,13 +745,15 @@ const GRADE = {
       vec3 c = src.rgb;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
-      c = mix(c, smoothstep(0.0, 1.0, c), 0.28);
+      c = mix(c, smoothstep(0.0, 1.0, c), 0.18);
       // Vibrance: the dull colours gain more than the vivid.
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float sat = mx - mn;
-      c = mix(vec3(l), c, 1.0 + 0.32 * (1.0 - sat));
+      c = mix(vec3(l), c, 1.0 + 0.12 * (1.0 - sat));
       // Split toning: warm highlights, cool shadows.
-      c += mix(vec3(-0.012, 0.0, 0.03), vec3(0.03, 0.012, -0.022), smoothstep(0.15, 0.85, l));
+      // Warm light, shadows left neutral: a blue push in them read as a
+      // teal cast over every shaded slope.
+      c += mix(vec3(0.0), vec3(0.02, 0.008, -0.014), smoothstep(0.15, 0.85, l));
       // Vignette.
       vec2 d = vUv - 0.5;
       c *= mix(1.0, 0.78, smoothstep(0.3, 0.85, dot(d, d) * 2.4));

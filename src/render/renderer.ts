@@ -1520,17 +1520,12 @@ export function createSceneRenderer(
         if (onCarriageway(net, p) || buildings.covers(x, y)) continue;
         const z = terrain.renderedHeightAt(x, y);
         const h = m(10) + m(8) * hash(i, j, 4) * (0.6 + 0.4 * density);
-        // A wood is green: broadleaf with some conifers, a flowering ipê now and then.
+        // A wood is green: broadleaf with some conifers. No ipê (its crown a
+        // bare block, no leaves) and no blob bushes under the trees (the
+        // player, 2026-10-07: "árvore feia", "cocozinhos").
         const roll = hash(i, j, 13);
-        const species = roll < 0.45 ? 'broadleaf' : roll < 0.8 ? 'broadleafTall' : roll < 0.98 ? 'conifer' : roll < 0.99 ? 'ipeYellow' : 'ipePink';
+        const species = roll < 0.45 ? 'broadleaf' : roll < 0.82 ? 'broadleafTall' : 'conifer';
         trees.push({ x, y, z, size: h, yaw: hash(i, j, 5) * Math.PI * 2, seed: hash(i, j, 6), species });
-        if (hash(i, j, 7) < 0.45 * density) {
-          const sx = x + (hash(i, j, 8) - 0.5) * FOREST_SPACING * 0.7, sy = y + (hash(i, j, 9) - 0.5) * FOREST_SPACING * 0.7;
-          if (!onCarriageway(net, { x: sx, y: sy }) && !buildings.covers(sx, sy)) {
-            const sh = m(1.6) + m(1.6) * hash(i, j, 10);
-            shrubs.push({ x: sx, y: sy, z: terrain.renderedHeightAt(sx, sy), size: sh, yaw: hash(i, j, 11) * Math.PI * 2, seed: hash(i, j, 12) });
-          }
-        }
       }
     }
     return { trees, shrubs };
@@ -1606,7 +1601,6 @@ export function createSceneRenderer(
    */
   const NATURE_SPACING = m(5);
   const NATURE_TREES = 5_000;
-  const NATURE_SHRUBS = 9_000;
   const natureNoise = (x: number, y: number, scale: number, salt: number): number => {
     const gx = x / scale, gy = y / scale;
     const x0 = Math.floor(gx), y0 = Math.floor(gy);
@@ -1634,25 +1628,20 @@ export function createSceneRenderer(
     const cells = Math.floor((TERRAIN_HALF * 2) / NATURE_SPACING);
     const odds = new Float32Array(cells * cells * 2);
     let treeSum = 0;
-    let shrubSum = 0;
     for (let j = 0; j < cells; j++) {
       for (let i = 0; i < cells; i++) {
         const x = -TERRAIN_HALF + (i + 0.5) * NATURE_SPACING, y = -TERRAIN_HALF + (j + 0.5) * NATURE_SPACING;
         const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
         const k = iy * field.side + ix;
         const tree = Math.min(1, (field.trees[k] ?? 0) + (field.canopy[k] ?? 0) * 0.8 + (field.emergent[k] ?? 0) * 0.5);
-        const shrub = Math.min(1, (field.shrub[k] ?? 0) + (field.cactus[k] ?? 0) * 0.5);
         // Copses some 40 m across with smaller knots in them, and open grass between.
         const clump = Math.min(1, Math.max(0, (natureNoise(x, y, m(38), 7) * 0.65 + natureNoise(x, y, m(11), 9) * 0.35 - 0.55) / 0.18));
         const o = (j * cells + i) * 2;
         odds[o] = tree * clump * (0.5 + 0.5 * clump);
-        odds[o + 1] = Math.min(1, (shrub + tree * 0.6) * clump);
         treeSum += odds[o]!;
-        shrubSum += odds[o + 1]!;
       }
     }
     const treeScale = Math.min(0.6, NATURE_TREES / Math.max(1, treeSum));
-    const shrubScale = Math.min(0.9, NATURE_SHRUBS / Math.max(1, shrubSum));
     // Water, a cliff, a road or a building: nothing grows there.
     const open = (x: number, y: number, z: number): boolean => {
       if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
@@ -1666,9 +1655,10 @@ export function createSceneRenderer(
     for (let j = 0; j < cells; j++) {
       for (let i = 0; i < cells; i++) {
         const o = (j * cells + i) * 2;
+        // Trees only: the blob bushes read as lumps on the lawn (the player,
+        // 2026-10-07), and are left to the scrub the player paints.
         const isTree = hash(i, j, 41) < odds[o]! * treeScale;
-        const isShrub = !isTree && hash(i, j, 42) < odds[o + 1]! * shrubScale;
-        if (!isTree && !isShrub) continue;
+        if (!isTree) continue;
         const x = -TERRAIN_HALF + (i + 0.5 + (hash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
         const y = -TERRAIN_HALF + (j + 0.5 + (hash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
         const z = terrain.renderedHeightAt(x, y);
@@ -1679,10 +1669,8 @@ export function createSceneRenderer(
           // Short crooked savanna trees; taller where the canopy closes (gallery forest, cerradão).
           const h = m(4.5) + m(4) * hash(i, j, 45) + m(8) * canopy;
           const roll = hash(i, j, 46);
-          const species = roll < 0.03 ? 'ipeYellow' : canopy > 0.45 && roll < 0.55 ? 'broadleafTall' : 'broadleaf';
+          const species = canopy > 0.45 && roll < 0.55 ? 'broadleafTall' : 'broadleaf';
           trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
-        } else if (isShrub && shrubs.length < NATURE_SHRUBS) {
-          shrubs.push({ x, y, z, size: m(1.4) + m(1.8) * hash(i, j, 49), yaw: hash(i, j, 50) * Math.PI * 2, seed: hash(i, j, 51) });
         }
       }
     }

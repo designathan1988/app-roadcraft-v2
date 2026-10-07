@@ -197,7 +197,9 @@ export function createEnvironment(
 
   // A near-neutral sky fill: the saturated blue it was tinted every shadow
   // blue at close zoom (a parapet's shadow on a roof read as blue paint).
-  const hemisphere = new HemisphereLight(0xd3dde6, 0x5c6346, 0.32);
+  // Neutral, a touch warm: the blue-white sky fill turned every shadow on
+  // the grass teal (the player, 2026-10-07: dark, ugly colours).
+  const hemisphere = new HemisphereLight(0xe6e4da, 0x6a6b4c, 0.42);
   hemisphere.name = 'sky-fill';
   scene.add(hemisphere);
 
@@ -335,7 +337,7 @@ export function createEnvironment(
       const warm = Math.max(0, 1 - height * 1.6);
       sun.color.setRGB(1, 0.94 - warm * 0.2, 0.81 - warm * 0.38).lerp(MOON, dark);
       sun.intensity = 3.6 * (0.25 + 0.75 * Math.min(1, height * 2.5 + 0.2)) * light + 0.85 * dark;
-      hemisphere.intensity = 0.32 * light + 0.2 * dark;
+      hemisphere.intensity = 0.42 * light + 0.2 * dark;
       ambient.intensity = 0.07 * light + 0.05 * dark;
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);

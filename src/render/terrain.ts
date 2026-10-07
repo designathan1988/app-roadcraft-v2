@@ -1530,11 +1530,11 @@ function terrainMaterial(
            vec3 dryGrass = tone * vec3(1.42, 1.18, 0.6);
            float wornNoise = texture2D(uDirtMap, vTerrainWorld.xz * 0.043 + 0.21).g;
            float worn = smoothstep(9.0, 24.0, slopeDeg + (wornNoise - 0.5) * 14.0);
-           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.45 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.6 * vegetated);
+           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.25 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.35 * vegetated);
            float ridge = smoothstep(0.05, 0.6, convex + (wornNoise - 0.5) * 0.3);
            blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.5 * vegetated);
            float hollow = smoothstep(0.05, 0.6, -convex);
-           blended.rgb *= mix(vec3(1.0), vec3(0.78, 0.94, 0.78), hollow * vegetated);
+           blended.rgb *= mix(vec3(1.0), vec3(0.88, 0.97, 0.88), hollow * vegetated);
          }
          {
            float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
@@ -1662,7 +1662,7 @@ function terrainMaterial(
          // sun, the hills round a hollow take some of the sky.
          {
            vec4 landLight = terrainLand();
-           float skySeen = mix(0.5, 1.0, landLight.g);
+           float skySeen = mix(0.7, 1.0, landLight.g);
            reflectedLight.directDiffuse *= landLight.r;
            reflectedLight.directSpecular *= landLight.r;
            reflectedLight.indirectDiffuse *= skySeen;
@@ -1700,7 +1700,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v26';
+  material.customProgramCacheKey = () => 'terrain-splat-v27';
   return material;
 }
 
@@ -2840,7 +2840,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v26-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v27-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
