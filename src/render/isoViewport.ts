@@ -8,6 +8,8 @@ import {
 } from 'three';
 
 import type { Vec2 } from '@core/vec2';
+import { placeCamera, planetFrame, planetPick, planetPoint, planetRadius } from './planet';
+import { Quaternion } from 'three';
 import { MAP_HALF } from '@world/bounds';
 import type { Facing, Viewport } from '@view/viewport';
 
@@ -133,8 +135,18 @@ export function createIsoRig(
       persp.far = 16000;
       persp.up.set(0, 1, 0);
       persp.position.copy(chase.eye);
-      persp.lookAt(chase.look);
       target.copy(chase.focus);
+      if (planetRadius() > 0) {
+        // On the globe: the eye and what it looks at carried with the ground
+        // round the player, the world's up turned with it.
+        planetFrame(target.x, target.z, turn);
+        planetPoint(target.x, target.y, target.z, bentFocus);
+        persp.position.sub(target).applyQuaternion(turn).add(bentFocus);
+        persp.up.applyQuaternion(turn);
+        persp.lookAt(look.copy(chase.look).sub(target).applyQuaternion(turn).add(bentFocus));
+      } else {
+        persp.lookAt(chase.look);
+      }
       persp.updateProjectionMatrix();
       persp.updateMatrixWorld(true);
       return;
@@ -171,9 +183,14 @@ export function createIsoRig(
     // would have no roll to go by, so the plan view would spin at random.
     camera.up.set(-Math.cos(azimuth), 0, -Math.sin(azimuth));
     camera.lookAt(target);
+    // On the globe (`planet.ts`): carried with the ground it looks at.
+    placeCamera(camera, target);
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
   };
+  const turn = new Quaternion();
+  const bentFocus = new Vector3();
+  const look = new Vector3();
 
   /**
    * The point under a pointer, on the horizontal plane at `atHeight`.
@@ -187,6 +204,11 @@ export function createIsoRig(
   const worldAt = (px: number, py: number, atHeight = 0): Vec2 => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
     raycaster.setFromCamera(ndc, camera);
+    if (planetRadius() > 0) {
+      // On the globe: the sphere at that height, taken back to the plane exactly.
+      const onGlobe = planetPick(raycaster.ray.origin, raycaster.ray.direction, atHeight, hit);
+      return onGlobe ? { x: onGlobe.x, y: -onGlobe.z } : { x: target.x, y: -target.z };
+    }
     ground.constant = -atHeight;
     const ok = raycaster.ray.intersectPlane(ground, hit);
     ground.constant = 0;
@@ -199,10 +221,14 @@ export function createIsoRig(
     const before = worldAt(px, py, atHeight);
     change();
     apply();
-    const after = worldAt(px, py, atHeight);
-    target.x += before.x - after.x;
-    target.z -= before.y - after.y;
-    apply();
+    // On the plane one step is exact; on the globe the view turns as the
+    // centre moves, and a second step takes up what the first left.
+    for (let pass = planetRadius() > 0 ? 2 : 1; pass > 0; pass--) {
+      const after = worldAt(px, py, atHeight);
+      target.x += before.x - after.x;
+      target.z -= before.y - after.y;
+      apply();
+    }
   };
 
   const viewport: Viewport = {
@@ -210,7 +236,7 @@ export function createIsoRig(
     toWorld: (px, py) => worldAt(px, py),
     toWorldAt: (px, py, atHeight) => worldAt(px, py, atHeight),
     toScreen(p, cssW, cssH, atHeight = 0) {
-      const projected = new Vector3(p.x, atHeight, -p.y).project(camera);
+      const projected = planetPoint(p.x, atHeight, -p.y, new Vector3()).project(camera);
       return {
         x: (projected.x * 0.5 + 0.5) * cssW,
         y: (-projected.y * 0.5 + 0.5) * cssH,

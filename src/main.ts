@@ -2881,10 +2881,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
 // The sky the player sets (Paisagem > Céu e clima): clouds - how many, how
 // high, how thick - and mist. Kept between sessions; heights in metres.
 {
-  // v3: cumulus clouds over the map by default (the player's picture,
-  // 2026-10-07); an older choice is not read.
-  const KEY = 'roadcraft.atmosphere.v3';
-  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight'] as const;
+  // v4: the map on a planet by default (the player, 2026-10-07); an older
+  // choice is not read.
+  const KEY = 'roadcraft.atmosphere.v4';
+  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight', 'atmoPlanet'] as const;
   const inputs = ids.map((id) => document.getElementById(id) as HTMLInputElement | null);
   try {
     const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Record<string, number> | null;
@@ -2899,6 +2899,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
       cloudThickness: value(2) * UNITS_PER_METER,
       fog: value(3) / 100,
       fogHeight: value(4) * UNITS_PER_METER,
+      // Kilometres; 0 a flat map.
+      planet: value(5) * 1000 * UNITS_PER_METER,
     });
     try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(ids.map((id, i) => [id, value(i)])))); } catch { /* not kept */ }
     // Not at boot: the frame loop is not set up yet then.

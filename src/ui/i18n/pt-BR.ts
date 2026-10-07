@@ -652,6 +652,7 @@ export const PT_BR: Dictionary = {
   'atmo.cloudThickness': 'Espessura das nuvens (m)',
   'atmo.fog': 'Névoa (%)',
   'atmo.fogHeight': 'Altura da névoa (m)',
+  'atmo.planet': 'Raio do planeta (km, 0 plano)',
   'hint.terrain.mesa': 'Arraste para erguer uma chapada de topo plano e paredões de arenito · Shift+roda: tamanho · Alt+roda: altura',
   'hint.terrain.canyon': 'Arraste para cavar um cânion de paredes de arenito · Shift+roda: tamanho · Alt+roda: profundidade',
   'hint.terrain.escarpment': 'Arraste para erguer um planalto de paredões escuros de basalto · Shift+roda: tamanho · Alt+roda: altura',

@@ -31,6 +31,7 @@ import {
   type Material,
   Mesh,
   MeshDepthMaterial,
+  MeshStandardMaterial,
   type Object3D,
   RGBADepthPacking,
   Sphere,
@@ -56,6 +57,7 @@ import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { DEFAULT_ATMOSPHERE, createPostChain, type Atmosphere, type PostChain } from './postprocess';
+import { PLANET_SHADER, createPlanetBody, installPlanet, planeCamera, planetPoint, planetRadius, setPlanetRadius } from './planet';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { disposeMesh } from './mesh/surfaceMesh';
@@ -83,7 +85,7 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, PLANET_GROUND_LEVEL, PLANET_SKIRT_WIDTH, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -393,6 +395,8 @@ export function createSceneRenderer(
   initialQuality: QualityLevel | 'auto' = 'auto',
   onAssetsReady: () => void = () => {},
 ): SceneHandle {
+  // The globe's vertex chunks, before any program is built (`planet.ts`).
+  installPlanet();
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -473,9 +477,9 @@ export function createSceneRenderer(
     geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
     geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
     const material = new ShaderMaterial({
-      uniforms: { uTime: { value: 0 } },
-      vertexShader: `attribute float aRing; varying float vRing;
-        void main() { vRing = aRing; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      uniforms: { uTime: { value: 0 }, planetBend: PLANET_SHADER.uniform },
+      vertexShader: `${PLANET_SHADER.glsl} attribute float aRing; varying float vRing;
+        void main() { vRing = aRing; gl_Position = projectionMatrix * planetView(modelViewMatrix * vec4(position, 1.0)); }`,
       fragmentShader: `uniform float uTime; varying float vRing;
         void main() {
           float t = uTime - vRing * 0.09;
@@ -923,6 +927,15 @@ export function createSceneRenderer(
   const sunLight = new Color();
   /** Towards the sun, for the relief's own shadows (`TerrainSurface.setSun`). */
   const sunTowards = new Vector3();
+  /** The camera taken back to the plane, for the CPU's culling (`planeCamera`). */
+  let flatCamera = rig.camera.clone();
+  /** The rest of the globe round the map (`planet.ts`). */
+  const planetBody = createPlanetBody(TERRAIN_HALF + PLANET_SKIRT_WIDTH, PLANET_GROUND_LEVEL, (terrain.ground.material as MeshStandardMaterial).map);
+  scene.add(planetBody.mesh);
+  terrain.skirt.material = planetBody.skirtMaterial;
+  setPlanetRadius(atmosphere.planet);
+  planetBody.setRadius(atmosphere.planet);
+  const flatDirection = new Vector3();
   const indoors = new Indoors();
   // Room lights for the floors cut open: a fixed set, so switching them on and
   // off never changes the scene's light count (which recompiles every shader).
@@ -2116,6 +2129,10 @@ export function createSceneRenderer(
     },
     setAtmosphere(next) {
       atmosphere = next;
+      if (next.planet !== planetRadius()) {
+        setPlanetRadius(next.planet);
+        planetBody.setRadius(next.planet);
+      }
     },
     setBuildingCutaway(spec) {
       buildings.setCutaway(spec);
@@ -2371,7 +2388,12 @@ export function createSceneRenderer(
       {
         const sky = scene.getObjectByName('sky');
         if (sky) sky.visible = rig.chasing;
-        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing;
+        // On a planet the globe itself is the land round the map.
+        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing && planetRadius() <= 0;
+        // On a planet the map's rim runs down into the globe (its skirt); on a
+        // flat map it stands on its cut sides.
+        terrain.skirt.visible = planetRadius() > 0;
+        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-walls') mesh.visible = planetRadius() <= 0;
         scene.background = rig.chasing ? null : MAP_BACKGROUND;
       }
       if (scenery) {
@@ -2382,7 +2404,11 @@ export function createSceneRenderer(
       windClock += Math.min(0.1, Math.max(0, delta));
       advanceWind(windClock);
 
-      crowdProjection.multiplyMatrices(rig.camera.projectionMatrix, rig.camera.matrixWorldInverse);
+      // On the plane, as everything the CPU culls (`planet.ts`): the camera
+      // taken back from the globe about the point it looks at.
+      if (flatCamera.type !== rig.camera.type) flatCamera = rig.camera.clone();
+      const cullCamera = planeCamera(rig.camera, rig.target, flatCamera);
+      crowdProjection.multiplyMatrices(cullCamera.projectionMatrix, cullCamera.matrixWorldInverse);
       crowdFrustum.setFromProjectionMatrix(crowdProjection);
       // Plants and street furniture outside the view are not drawn at all.
       scenery?.cull(crowdFrustum, crowdProjection);
@@ -2392,7 +2418,7 @@ export function createSceneRenderer(
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,
-        eye: rig.camera.position,
+        eye: cullCamera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
         // Zoomed out past the crowd's band nobody is drawn: the people in
@@ -2526,7 +2552,8 @@ export function createSceneRenderer(
         shadowCentre.copy(viewDirection).setY(0).normalize().multiplyScalar(PLAY_SHADOW_FAR / 2).add(chaseCamera.focus);
         environment.follow(shadowCentre, PLAY_SHADOW_FAR / 1.25, PLAY_SHADOW_FAR / 1.25, viewDirection, Math.max(0, tallestTop - target.y));
       } else {
-        environment.follow(target, halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
+        // The shadows round the ground looked at, where the globe draws it.
+        environment.follow(planetPoint(target.x, target.y, target.z, shadowCentre), halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
       }
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
@@ -2550,13 +2577,15 @@ export function createSceneRenderer(
         // cars and people vanish down the street in full view).
         let view: { ex: number; ey: number; dx: number; dy: number; cos: number; far: number } | null = null;
         if (rig.perspective) {
-          const flat = Math.hypot(viewDirection.x, viewDirection.z);
+          // The cone on the plane, as the simulation sees it.
+          const coneDirection = flatCamera.getWorldDirection(flatDirection);
+          const flat = Math.hypot(coneDirection.x, coneDirection.z);
           if (flat > 0.05) {
             const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
             const halfAcross = Math.atan(Math.tan((PERSPECTIVE_FOV * Math.PI) / 360) * aspect);
             view = {
-              ex: rig.camera.position.x, ey: -rig.camera.position.z,
-              dx: viewDirection.x / flat, dy: -viewDirection.z / flat,
+              ex: flatCamera.position.x, ey: -flatCamera.position.z,
+              dx: coneDirection.x / flat, dy: -coneDirection.z / flat,
               cos: Math.cos(Math.min(Math.PI, halfAcross + VIEW_MARGIN)), far: PLAY_SEEN,
             };
           }
@@ -2581,7 +2610,7 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
-      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
+      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position), planetRadius());
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();

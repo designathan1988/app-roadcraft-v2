@@ -3,6 +3,7 @@ import {
   PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type WebGLRenderer,
 } from 'three';
 import { MAP_SIZE } from '@world/bounds';
+import { PLANET_SHADER, planetPoint } from './planet';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -75,8 +76,10 @@ export interface Atmosphere {
   /** 0 none (the default: the map seen clear), 1 a thick mist. */
   readonly fog: number;
   readonly fogHeight: number;
+  /** The planet the map is drawn on, its radius in units (`planet.ts`); 0: flat. */
+  readonly planet: number;
 }
-export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150 };
+export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150, planet: 14_000 };
 
 export function createPostChain(
   renderer: WebGLRenderer,
@@ -222,6 +225,7 @@ export function createPostChain(
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
   let sky: Atmosphere = DEFAULT_ATMOSPHERE;
   let cloudClock = 0;
+  const globePoint = new Vector3();
   if (clouds) {
     const pass = clouds;
     const shade = pass.render.bind(pass);
@@ -249,7 +253,15 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        u['uCloudCount']!.value = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[]);
+        const count = layClouds(sky, cloudClock, u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[]);
+        u['uCloudCount']!.value = count;
+        // Laid over the plane, drawn over the globe (`planet.ts`).
+        const onGlobe = (v: Vector4): void => {
+          planetPoint(v.x, v.y, v.z, globePoint);
+          v.set(globePoint.x, globePoint.y, globePoint.z, v.w);
+        };
+        for (let i = 0; i < count; i++) onGlobe((u['uCloud']!.value as Vector4[])[i]!);
+        for (let i = 0; i < count * CLOUD_PUFFS; i++) onGlobe((u['uPuff']!.value as Vector4[])[i]!);
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
       }
@@ -409,6 +421,7 @@ const CLOUD_SHADOWS = {
     uSunLight: { value: new Color(3, 2.8, 2.5) },
     uFogColor: { value: new Color(0xc9dcea) },
     uBackdrop: { value: 0 },
+    planetBend: PLANET_SHADER.uniform,
     // The void round the map: its deep blue, the paler air towards the
     // horizon, and the abyss below (sRGB, as the page's own colours).
     uSkyDeep: { value: new Color(0x0c1a2c) },
@@ -441,6 +454,11 @@ const CLOUD_SHADOWS = {
     uniform vec3 uSunLight;
     uniform vec3 uFogColor;
     uniform float uBackdrop;
+    uniform vec4 planetBend;
+    // Height over the ground's base level: over the globe, out from its centre.
+    float altitude(vec3 p) {
+      return planetBend.x > 0.0 ? length(p + vec3(0.0, planetBend.x, 0.0)) - planetBend.x : p.y;
+    }
     uniform vec3 uSkyDeep;
     uniform vec3 uSkyGlow;
     uniform vec3 uSkyLow;
@@ -486,7 +504,7 @@ const CLOUD_SHADOWS = {
         d = smin(d, length(p - s.xyz) - s.w, size * 0.12);
       }
       // A flat base: the cloud stops at its condensation level.
-      float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, p.y);
+      float base = smoothstep(uCloudBase - size * 0.12, uCloudBase + size * 0.08, altitude(p));
       return -d / size * base;
     }
     // Its density, as Horizon Zero Dawn's clouds are built (Schneider; the
@@ -510,7 +528,7 @@ const CLOUD_SHADOWS = {
       float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
       float b2 = 1.0 - abs(noise3(r * 2.13 + 3.3) * 2.0 - 1.0);
       float detail = b1 * 0.65 + b2 * 0.35;
-      float up = clamp((p.y - uCloudBase) / size, 0.0, 1.0);
+      float up = clamp((altitude(p) - uCloudBase) / size, 0.0, 1.0);
       detail = mix(1.0 - detail, detail, clamp(up * 3.0, 0.0, 1.0));
       // remap(base, detail * 0.35, 1, 0, 1): the heart (1) stays whole, the
       // thin edge is worn into wisps.
@@ -545,7 +563,7 @@ const CLOUD_SHADOWS = {
       if (uFog > 0.0) {
         float dist = min(tScene, 6000.0);
         float yMid = ro.y + rd.y * dist * 0.5;
-        float thickness = exp(-max(0.0, min(yMid, hit.y)) / uFogHeight);
+        float thickness = exp(-max(0.0, min(yMid, altitude(hit))) / uFogHeight);
         float amount = 1.0 - exp(-uFog * 0.0009 * dist * thickness);
         vec3 mist = mix(uFogColor, uFogColor * 0.18, uDark);
         colour = mix(colour, mist, clamp(amount, 0.0, 0.95));
@@ -586,6 +604,8 @@ const CLOUD_SHADOWS = {
       }
       // The clouds, nearest first.
       if (uCloudCount > 0) {
+        float focusDepth = texture2D(tDepth, vec2(0.5)).r;
+        float tFocus = focusDepth >= 0.9999 ? 1e5 : length(worldAt(vec2(0.5), focusDepth) - ro);
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
           spans[c] = vec2(-1.0);
@@ -620,10 +640,10 @@ const CLOUD_SHADOWS = {
             vec3 q = ro + rd * t;
             float density = cloudDensity(best, q);
             // Never in front of the camera (the player, 2026-10-07): a cloud
-            // fades out within its own size of it, and from high over the map
-            // within most of the camera's height over the clouds, so the near
-            // ones never hang over the view.
-            float near = max(size * 1.1, (ro.y - uCloudBase) * 0.75);
+            // nearer than most of the way to the ground the view looks at
+            // (the middle of the screen) fades out, and always within its own
+            // size of the eye - so none hangs between the eye and the land.
+            float near = max(size * 1.1, tFocus * 0.85);
             density *= smoothstep(near * 0.45, near, t);
             if (density < 0.01) continue;
             // The sun's light reaching this point: a short march towards it
@@ -636,7 +656,7 @@ const CLOUD_SHADOWS = {
             float sunT = exp(-towards * size * 0.02 * 2.2);
             float facing = smoothstep(-0.05, 0.1, heap(best, q) - heap(best, q + uSunDir * size * 0.16));
             float lit = sunT * mix(0.55, 1.0, facing);
-            float up = clamp((q.y - uCloudBase) / size, 0.0, 1.0);
+            float up = clamp((altitude(q) - uCloudBase) / size, 0.0, 1.0);
             vec3 c = mix(baseShade, skyLight, 0.25 + 0.75 * up) * 0.85 + uSunLight * 0.36 * lit * (1.0 - uDark);
             // Little extinction: the eroded edge is a veil the land shows through.
             float alpha = 1.0 - exp(-density * stepLen * 0.015);

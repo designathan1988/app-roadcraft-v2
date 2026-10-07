@@ -29,6 +29,7 @@ import {
 import type { RoadDoc } from '@world/doc';
 import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
 import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from '@world/ecology';
+import { chartAngle } from '@world/planet/sphere';
 import { GroundChanges } from './groundChanges';
 import { MAP_SIZE } from '@world/bounds';
 import {
@@ -78,6 +79,11 @@ const WATER_CELL = 4;
  */
 export const TERRAIN_CELL = TERRAIN_SIZE / TERRAIN_SEGMENTS;
 
+/** How far past the map's rim the planet's skirt reaches the globe, units (`render/planet.ts`). */
+export const PLANET_SKIRT_WIDTH = 600;
+/** The globe's ground level round the map: a little under the map's base. */
+export const PLANET_GROUND_LEVEL = TERRAIN_BASE - 0.6;
+
 /** A shore texel with no water near it (`shoreLevels`). */
 const NO_WATER = -100_000;
 
@@ -118,11 +124,18 @@ export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
   readonly ground: Mesh;
   /**
+   * On a planet (`render/planet.ts`): the land from the map's rim down to the
+   * globe's level, PLANET_SKIRT wide, sewn to the rim as the frame is - the
+   * map's cut sides give way to it. Hidden on a flat map; its material is the
+   * globe's (`PlanetBody.skirtMaterial`).
+   */
+  readonly skirt: Mesh;
+  /**
    * Where the sun is (a direction towards it, three's axes): the relief's
    * shadows are cast again when it has moved, and its sky again when the
    * land has (`terrainLight`).
    */
-  setSun(direction: { readonly x: number; readonly y: number; readonly z: number }): void;
+  setSun(direction: { readonly x: number; readonly y: number; readonly z: number }, planet?: number): void;
   /**
    * The terrain's own surface for the batter from a footway down to the
    * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
@@ -1878,16 +1891,36 @@ function terrainLight(
   shape: LandShape | null,
   out: Uint8Array,
   outWidth: number,
+  /** The planet the map is drawn on (`render/planet.ts`), units; 0 flat. */
+  planet = 0,
 ): void {
   let maxH = -Infinity;
   for (let i = 0; i < heights.length; i++) maxH = Math.max(maxH, heights[i] as number);
   // Towards the sun on the grid: x grows with world x, the rows with -y
-  // (world y is three's -z, so the rows grow with three's z).
-  const hl = Math.hypot(sun.x, sun.z) || 1e-6;
-  const dgx = sun.x / hl;
-  const dgy = sun.z / hl;
-  // Height gained per grid cell along the ray.
-  const rise = (Math.max(0.03, sun.y) / hl) * TERRAIN_CELL;
+  // (world y is three's -z, so the rows grow with three's z). On a planet
+  // each corner sees the sun from its own up: the sun turned back by the turn
+  // the globe gives that corner (Rodrigues', as `planet.ts`).
+  let dgx = 0, dgy = 0, rise = 0;
+  const aim = (x: number, z: number): void => {
+    let sx = sun.x, sy = sun.y, sz = sun.z;
+    const d = Math.hypot(x, z);
+    if (planet > 0 && d > 1e-6) {
+      const ax = z / d, az = -x / d;
+      const th = -chartAngle(d, planet), c = Math.cos(th), sn = Math.sin(th);
+      // a x v, with a = (ax, 0, az).
+      const cx = -az * sy, cy = az * sx - ax * sz, cz = ax * sy;
+      const dot = ax * sx + az * sz;
+      sx = sx * c + cx * sn + ax * dot * (1 - c);
+      sy = sy * c + cy * sn;
+      sz = sz * c + cz * sn + az * dot * (1 - c);
+    }
+    const hl = Math.hypot(sx, sz) || 1e-6;
+    dgx = sx / hl;
+    dgy = sz / hl;
+    // Height gained per grid cell along the ray.
+    rise = (Math.max(0.03, sy) / hl) * TERRAIN_CELL;
+  };
+  aim(0, 0);
   const at = (gx: number, gy: number): number => {
     const ix = Math.min(GRID - 2, Math.max(0, Math.floor(gx)));
     const iy = Math.min(GRID - 2, Math.max(0, Math.floor(gy)));
@@ -1901,6 +1934,7 @@ function terrainLight(
   for (let iy = 0; iy < GRID; iy++) {
     for (let ix = 0; ix < GRID; ix++) {
       const h0 = (heights[iy * GRID + ix] as number) + 0.4;
+      if (planet > 0) aim(ix * TERRAIN_CELL - TERRAIN_HALF, iy * TERRAIN_CELL - TERRAIN_HALF);
       let lit = 1;
       for (let t = 0.7; ; t += Math.max(0.5, t * 0.06)) {
         const gx = ix + dgx * t, gy = iy + dgy * t;
@@ -2069,6 +2103,12 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   // bottom, in soil layers, so the plate reads as a block of land standing on
   // the plain background rather than a sheet ending in mid-air. In play the
   // backdrop is drawn over the rim and hides them.
+  const skirt = new Mesh(new BufferGeometry(), new MeshStandardMaterial({ color: 0x53694a }));
+  skirt.name = 'terrain-skirt';
+  skirt.receiveShadow = true;
+  skirt.visible = false;
+  skirt.matrixAutoUpdate = false;
+  skirt.updateMatrix();
   const walls = new Mesh(
     new BufferGeometry(),
     wallMaterial(anisotropy),
@@ -2202,6 +2242,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
    * a frame, not a budget.
    */
   const FRAME_STEP_OUT = 700;
+  /** How far past the rim the planet's skirt reaches the globe's level, units. */
+  const PLANET_SKIRT = PLANET_SKIRT_WIDTH;
+  const PLANET_LEVEL = PLANET_GROUND_LEVEL;
   const FRAME_FAR = 13_000;
   const DISTANT_LEVEL = TERRAIN_BASE - 3.5;
   const rebuildFrame = (): void => {
@@ -2267,7 +2310,50 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const previous = backdrop.geometry;
     backdrop.geometry = next;
     previous.dispose();
+    rebuildSkirt(rimHeight, ring);
     rebuildWalls();
+  };
+
+  /**
+   * The planet's skirt: from the rim's own heights out and down to the
+   * globe's level over PLANET_SKIRT, eased, in rings close enough that the
+   * globe's curve bends it smoothly (a long face would be a straight chord).
+   */
+  const rebuildSkirt = (rimHeight: readonly number[], ring: (h: number) => { x: number; z: number }[]): void => {
+    const steps = 8;
+    const count = rimHeight.length;
+    const positions = new Float32Array(count * (steps + 1) * 3);
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps;
+      const ease = t * t * (3 - 2 * t);
+      const points = ring(TERRAIN_HALF + PLANET_SKIRT * t);
+      for (let k = 0; k < count; k++) {
+        const o = (j * count + k) * 3;
+        positions[o] = points[k]!.x;
+        positions[o + 1] = (rimHeight[k] as number) + (PLANET_LEVEL - (rimHeight[k] as number)) * ease;
+        positions[o + 2] = points[k]!.z;
+      }
+    }
+    const index: number[] = [];
+    const area = (a: number, b: number, c: number): number =>
+      (positions[b * 3]! - positions[a * 3]!) * (positions[c * 3 + 2]! - positions[a * 3 + 2]!)
+      - (positions[c * 3]! - positions[a * 3]!) * (positions[b * 3 + 2]! - positions[a * 3 + 2]!);
+    for (let j = 0; j < steps; j++) {
+      for (let k = 0; k < count; k++) {
+        const a = j * count + k, b = j * count + ((k + 1) % count), c = (j + 1) * count + ((k + 1) % count), d = (j + 1) * count + k;
+        // Facing up, measured (three's z is the map's -y).
+        if (area(a, b, c) < 0) index.push(a, b, c, a, c, d);
+        else index.push(a, c, b, a, d, c);
+      }
+    }
+    const next = new BufferGeometry();
+    next.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    next.setIndex(index);
+    next.computeVertexNormals();
+    next.computeBoundingSphere();
+    const previous = skirt.geometry;
+    skirt.geometry = next;
+    previous.dispose();
   };
 
   /**
@@ -2769,15 +2855,17 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let landMoved = true;
   let landShape: LandShape | null = null;
   const litSun = { x: 0, y: -1, z: 0 };
-  const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }): void => {
+  let litPlanet = 0;
+  const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }, planet = 0): void => {
     // A stroke held: the water waits for its end, and so does this.
     if (waterStale) return;
     const len = Math.hypot(sun.x, sun.y, sun.z) || 1;
     const turned = (sun.x * litSun.x + sun.y * litSun.y + sun.z * litSun.z) / len < Math.cos((2 * Math.PI) / 180);
-    if (!landMoved && !turned) return;
+    if (!landMoved && !turned && planet === litPlanet) return;
+    litPlanet = planet;
     const startedAt = performance.now();
     if (landMoved || !landShape) landShape = terrainShape(grid);
-    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, landShape, lightLayer, PAINT_RES);
+    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, landShape, lightLayer, PAINT_RES, planet);
     landMoved = false;
     litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
     paintArray.addLayerUpdate(LIGHT_LAYER);
@@ -2884,8 +2972,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
 
   return {
-    meshes: [backdrop, walls, ground, water],
+    meshes: [backdrop, walls, skirt, ground, water],
     ground,
+    skirt,
     setSun,
     vergeMaterial,
     updatePaint,

@@ -908,6 +908,7 @@ export function mountShell(deps: ShellDeps): void {
           slider(t('atmo.cloudThickness'), '#atmoCloudThickness', '#atmoCloudThicknessValue', svg('strength', 16)),
           slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue', svg('cloud', 16)),
           slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue', svg('raise', 16)),
+          slider(t('atmo.planet'), '#atmoPlanet', '#atmoPlanetValue', svg('cloud', 16)),
         );
         options.appendChild(sky);
       }
