@@ -47,7 +47,7 @@ import { applyWind, type WindResponse } from './wind';
  * near, the tree's bark (simplified) and leaf cards round 48 clusters, no
  * solid crown (the player, 2026-10-07: "só o alpha, não mostrar as bolas");
  * mid, cards round 24 larger clusters on a plain trunk; far, where a tree is
- * a few pixels, 8 solid lumps.
+ * a few pixels, cards round 8 large clusters.
  */
 
 /** The varieties grown, preset and seed: oaks, ashes, an aspen (its crown the autumn gold of its leaves). */
@@ -618,7 +618,9 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
       leafMaterial,
       leafDepth,
       mid: leafCards(leaves, top, CROWN_MID, 1.6, LEAF_CARDS),
-      far: crownProxy(leaves, top, green, [0.05, 0.035, 0.025], 0, CROWN_LUMPS, 1.2),
+      // Far: the same leaf cards, few and large - no solid lumps anywhere
+      // (the player, 2026-10-07: "deixar assim em tudo e tirar as bolas").
+      far: leafCards(leaves, top, CROWN_LUMPS, 2.1, 6),
       barkMaterial,
     });
     tree.branchesMesh.geometry.dispose();
@@ -718,7 +720,7 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       make(variant.cards, variant.leafMaterial, 'nature-leaves', variant.leafDepth),
     ];
     const mid = [make(variant.trunk, kit.crownMaterial, 'nature-trunk-mid'), make(variant.mid, variant.leafMaterial, 'nature-leaves-mid', variant.leafDepth)];
-    const far = [make(variant.far, kit.crownMaterial, 'nature-crowns')];
+    const far = [make(variant.trunk, kit.crownMaterial, 'nature-trunk-far'), make(variant.far, variant.leafMaterial, 'nature-leaves-far', variant.leafDepth)];
     const items = indices.map((i) => trees[i]!);
     const matrices = indices.map((i) => {
       const item = trees[i]!;
