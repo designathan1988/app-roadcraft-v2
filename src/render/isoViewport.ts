@@ -102,7 +102,15 @@ export interface IsoRig {
    */
   setChase(chase: Chase | null): void;
   readonly chasing: boolean;
+  /**
+   * The height of what is drawn at a map point (x, y): the perspective view
+   * looks at the ground there, and never goes under it (`apply`).
+   */
+  setGround(groundAt: (x: number, y: number) => number): void;
 }
+
+/** How far over the ground under it the perspective camera keeps, units. */
+const GROUND_CLEARANCE = 4;
 
 /** A free camera: where the eye is, what it looks at, its field of view, and whose view it is. */
 export interface Chase {
@@ -203,6 +211,11 @@ export function createIsoRig(
     // turns (`planet.ts` PLANET_SPIN), as a globe viewer's does: the ground
     // looked at is always brought to the top, any way round, with no pole the
     // view cannot pass. `target` is that ground on the map's chart.
+    // In perspective the view looks at the ground itself, at its height
+    // there: at the height of the plane at zero, a camera brought close over
+    // a hill or a chapada ended inside it and showed the land from below
+    // (the player, 2026-10-07).
+    if (camera === persp && R <= 0 && groundAt) target.y = groundAt(target.x, -target.z);
     const looked = R > 0 ? look.set(0, target.y, 0) : target;
     const horizontal = Math.cos(elevation) * distance;
     camera.position.set(
@@ -215,6 +228,13 @@ export function createIsoRig(
     // straight down the world's up is the view direction itself and `lookAt`
     // would have no roll to go by, so the plan view would spin at random.
     camera.up.set(-Math.cos(azimuth), 0, -Math.sin(azimuth));
+    if (camera === persp && R <= 0 && groundAt) {
+      // And never under the ground where it stands: raised over it, still
+      // looking at the same point (the camera-terrain clamp of Cesium's and
+      // Unity's orbit cameras, read from the height field).
+      const floor = groundAt(camera.position.x, -camera.position.z) + GROUND_CLEARANCE;
+      if (camera.position.y < floor) camera.position.y = floor;
+    }
     camera.lookAt(looked);
     if (globe > 0) {
       // Pulled back to the whole planet: the view slides from the ground it
@@ -226,6 +246,8 @@ export function createIsoRig(
   };
   /** How far out to the whole globe the view is (`Viewport.globe`). */
   let globe = 0;
+  /** The drawn ground's height at a map point (`setGround`). */
+  let groundAt: ((x: number, y: number) => number) | null = null;
   /** The planet's radius the view was last set for (0: flat). */
   let litFor = 0;
   const spin = new Quaternion();
@@ -314,9 +336,10 @@ export function createIsoRig(
     const before = worldAt(px, py, atHeight);
     change();
     apply();
-    // On the plane one step is exact; on the globe the view turns as the
-    // centre moves, and a second step takes up what the first left.
-    for (let pass = planetRadius() > 0 ? 2 : 1; pass > 0; pass--) {
+    // On the plane one step is exact; looking at the ground, the view's
+    // height moves with its centre, and a second step takes up what the
+    // first left.
+    for (let pass = camera === persp && groundAt ? 2 : 1; pass > 0; pass--) {
       const after = worldAt(px, py, atHeight);
       target.x += before.x - after.x;
       target.z -= before.y - after.y;
@@ -425,6 +448,10 @@ export function createIsoRig(
     target,
     get chasing() {
       return chase !== null;
+    },
+    setGround(next) {
+      groundAt = next;
+      apply();
     },
     setChase(next) {
       if (next && !chase) orbitTarget.copy(target);

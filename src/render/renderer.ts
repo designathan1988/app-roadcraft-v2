@@ -529,6 +529,8 @@ export function createSceneRenderer(
   // instance matrices.
   const sceneryKit: SceneryKit = createSceneryKit();
   const terrain: TerrainSurface = createTerrainSurface(anisotropy);
+  // The perspective view looks at the ground and stays over it (`IsoRig.setGround`).
+  rig.setGround((x, y) => terrain.renderedHeightAt(x, y));
   // The grass field round the camera (`grass.ts`): its ground heights and the
   // mask that keeps it off paving and buildings, rebuilt when those change.
   // One mask for both rings, drawn again only where the roads or the buildings changed (`grassField.ts`).
