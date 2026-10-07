@@ -16,6 +16,7 @@ import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
 import type { GeologyKind } from '@world/terrainPaint';
+import { DEFAULT_REGION, isRegionId, type NatureSettings } from '@world/ecology';
 import type { NodeId, PoleId, SegmentId } from '@world/ids';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
@@ -165,6 +166,9 @@ const minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
 const doc = new RoadDoc();
 // A new map is made on the natural land; a saved one keeps its own (restored below).
 doc.terrainRelief = RELIEF_NATURAL;
+/** A new map's ecosystem: the default biome, its patches laid by a seed of its own. */
+const newNature = (region = DEFAULT_REGION): NatureSettings => ({ region, seed: Math.floor(Math.random() * 1_000_000_000) });
+doc.nature = newNature();
 const net = new Network(doc);
 const camera = new Camera();
 const surface = new CanvasSurface(canvas, () => requestDraw());
@@ -215,6 +219,7 @@ if (saved) {
     persistence.quarantineStored();
     const fresh = new RoadDoc();
     fresh.terrainRelief = RELIEF_NATURAL;
+    fresh.nature = newNature();
     doc.replaceWith(fresh);
     net.rebuild();
     bootFailed = true;
@@ -2855,6 +2860,31 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
   button.onclick = () => setTerrainMode((button.dataset['terrainMode'] as BrushMode) ?? 'raise');
 });
 
+// The map's biome (`world/ecology.ts`): choosing one gives an old map its
+// ecosystem too; "none" takes it away. Undoable.
+let mapBiomeShown = -1;
+function syncMapBiome(): void {
+  mapBiomeShown = doc.natureRevision;
+  const now = doc.nature?.region ?? 'none';
+  document.querySelectorAll<HTMLButtonElement>('[data-map-biome]').forEach((button) => {
+    const active = button.dataset['mapBiome'] === now;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+document.querySelectorAll<HTMLButtonElement>('[data-map-biome]').forEach((button) => {
+  button.onclick = () => {
+    const key = button.dataset['mapBiome'];
+    const next = isRegionId(key) ? { region: key, seed: doc.nature?.seed ?? newNature().seed } : null;
+    if (JSON.stringify(doc.nature) === JSON.stringify(next)) return;
+    history.record(doc);
+    doc.setNature(next);
+    updateHistoryButtons();
+    syncMapBiome();
+    requestDraw();
+  };
+});
+
 const terrainRadiusInput = document.getElementById('terrainRadius') as HTMLInputElement;
 const terrainStrengthInput = document.getElementById('terrainStrength') as HTMLInputElement;
 
@@ -3261,7 +3291,7 @@ if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab'
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty.
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL }, 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL, nature: newNature() }, 'import');
   roadHeightOffset = 0;
   roadHeightEdited = false;
   updateRoadHeightValue();
@@ -3909,6 +3939,8 @@ let weaponApplied = 0;
 function frame(now: number): void {
   pending = false;
   beginFrameWork();
+  // The map's biome shown as it is after an undo, a load or a new map.
+  if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   // The dock's Actions: may shots strike people.
   sim.ambient.play.shootPeople = shootPeopleAllowed();
   // ...and the weapon chosen there, applied once per choice (the keys still change it in play).

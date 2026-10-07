@@ -27,7 +27,8 @@ import {
 } from 'three';
 
 import type { RoadDoc } from '@world/doc';
-import { COVER_KINDS, PAINT_KINDS, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
+import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
+import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from '@world/ecology';
 import { GroundChanges } from './groundChanges';
 import { MAP_SIZE } from '@world/bounds';
 import {
@@ -105,6 +106,12 @@ export const GRASS_FIELD: { value: [number, number, number, number] } = { value:
  * wherever the ground was cut or filled after them (the player, 2026-10-06).
  */
 export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0, 2400] };
+/**
+ * How far into the dry season the land is, 0 (the rains: everything green)
+ * to 1 (the height of the drought: the savanna's grass straw-gold). Shared
+ * by the ground and the grass; the seasons set it.
+ */
+export const SEASON_DRY: { value: number } = { value: 0.4 };
 
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
@@ -170,6 +177,12 @@ export interface TerrainSurface {
   readonly forestRevision: number;
   /** Which rock the land is made of at a point (the painted geology; granite where none was). */
   geologyAt(x: number, y: number): GeologyKind;
+  /** What grows on the land (`world/ecology.ts`), or null on a map with no ecosystem. */
+  ecology(): EcologyField | null;
+  /** Moves whenever `ecology()` changes. */
+  readonly ecologyRevision: number;
+  /** The ecology's ground classes per terrain corner, for the grass and the plants' shaders. */
+  readonly ecologyTexture: Texture;
   /** Where the painted geology changed: the stones on the ground take its colour. */
   readonly geologyChanges: GroundChanges;
   /** The water's level near a point (lake or river, within a few cells of it), or null. */
@@ -589,7 +602,7 @@ const PAINT_RES = 1024;
  * are the same thing here, then spread outwards so the beach above the line
  * knows which water it belongs to.
  */
-function shoreLevels(water: BufferGeometry, levels: Float32Array): void {
+function shoreLevels(water: BufferGeometry, levels: Float32Array, ground: ArrayLike<number>): void {
   levels.fill(NO_WATER);
   const position = water.getAttribute('position');
   if (position) {
@@ -614,6 +627,10 @@ function shoreLevels(water: BufferGeometry, levels: Float32Array): void {
         if (ix + 1 < GRID) best = Math.max(best, from[k + 1] as number);
         if (iy > 0) best = Math.max(best, from[k - GRID] as number);
         if (iy + 1 < GRID) best = Math.max(best, from[k + GRID] as number);
+        // Only onto a BANK, ground above the water: a corner under the level
+        // the water does not cover was drawn as a dry grey river bed, in
+        // the grid's steps, beside every pool.
+        if (best > NO_WATER / 2 && (ground[k] as number) < best) continue;
         levels[k] = best;
       }
     }
@@ -671,6 +688,34 @@ function rasterGeology(sand: Float32Array, basalt: Float32Array, dab: PaintDab):
     }
   }
   return [dab.x - dab.radius, dab.y - dab.radius, dab.x + dab.radius, dab.y + dab.radius];
+}
+
+/**
+ * Lays one biome dab on the terrain's corners: within its radius the painted
+ * biome weights move towards the dab's biome (all of it at the centre, with
+ * a falloff flat to near the rim, as the rock dabs), as a cover replaces another.
+ */
+function rasterBiome(weights: Float32Array, dab: PaintDab): void {
+  const target = (BIOME_KINDS as readonly string[]).indexOf(dab.kind);
+  const n = BIOME_KINDS.length;
+  const cx = (dab.x + TERRAIN_HALF) / TERRAIN_CELL;
+  const cy = (TERRAIN_HALF - dab.y) / TERRAIN_CELL;
+  const r = dab.radius / TERRAIN_CELL;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(GRID - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(GRID - 1, Math.ceil(cy + r));
+  for (let iy = y0; iy <= y1; iy++) {
+    for (let ix = x0; ix <= x1; ix++) {
+      const d = Math.hypot(ix - cx, iy - cy) / Math.max(1e-6, r);
+      if (d >= 1) continue;
+      const t = Math.min(1, Math.max(0, (d - 0.7) / 0.3));
+      const w = Math.min(1, dab.strength * (1 - t * t * (3 - 2 * t)));
+      const k = (iy * GRID + ix) * n;
+      for (let b = 0; b < n; b++) {
+        const goal = b === target ? 1 : 0;
+        weights[k + b] = (weights[k + b] as number) + (goal - (weights[k + b] as number)) * w;
+      }
+    }
+  }
 }
 
 /** The pixels of a baked texture, rows top first as its canvas holds them, or null. */
@@ -901,6 +946,16 @@ function terrainMaterial(
   material.userData['shore'] = shore;
   material.userData['sandCorners'] = sandCornerData;
   material.userData['basaltCorners'] = basaltCornerData;
+  // The ecosystem's ground per corner (`refreshEcology`): R the forest floor,
+  // G the dry savanna grass, B waterlogged ground, A bare soil.
+  const ecologyTexture = new DataTexture(new Uint8Array(GRID * GRID * 4), GRID, GRID, RGBAFormat, UnsignedByteType);
+  ecologyTexture.magFilter = LinearFilter;
+  ecologyTexture.minFilter = LinearFilter;
+  ecologyTexture.wrapS = ClampToEdgeWrapping;
+  ecologyTexture.wrapT = ClampToEdgeWrapping;
+  ecologyTexture.generateMipmaps = false;
+  ecologyTexture.needsUpdate = true;
+  material.userData['ecology'] = ecologyTexture;
   material.userData['shoreLevels'] = shoreLevelData;
   material.userData['flowerCorners'] = flowerCornerData;
   material.userData['scrubCorners'] = scrubCornerData;
@@ -917,6 +972,8 @@ function terrainMaterial(
     uRockNormal: { value: layeredTexture(bakes.rocks.map((bake) => bake.normalMap), false, anisotropy) as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
     uMacroMap: { value: macroTexture(anisotropy) as Texture },
+    uEcology: { value: ecologyTexture as Texture },
+    uSeasonDry: SEASON_DRY,
     uGrassScale: { value: 1 / 96 },
     uRockScale: { value: 1 / 58 },
     uDirtScale: { value: 1 / 34 },
@@ -965,6 +1022,17 @@ function terrainMaterial(
          uniform vec3 uGrid; // cell, strength, map half
          uniform sampler2D uShore;
          float terrainHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+         float ecoHash(vec2 p) {
+           vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+           p3 += dot(p3, p3.yzx + 33.33);
+           return fract((p3.x + p3.y) * p3.z);
+         }
+         float ecoNoise(vec2 p) {
+           vec2 i = floor(p);
+           vec2 f = fract(p);
+           vec2 u = f * f * (3.0 - 2.0 * f);
+           return mix(mix(ecoHash(i), ecoHash(i + vec2(1.0, 0.0)), u.x), mix(ecoHash(i + vec2(0.0, 1.0)), ecoHash(i + vec2(1.0, 1.0)), u.x), u.y);
+         }
          uniform vec3 uShoreGrid; // half, cell, corners per side
          // The water level here, bilinear over the corners that HAVE water
          // (NO_WATER if none). Read from the nearest corner only, the level
@@ -1003,6 +1071,8 @@ function terrainMaterial(
          uniform sampler2DArray uRockNormal;
          uniform sampler2D uDirtMap;
          uniform sampler2D uMacroMap;
+         uniform sampler2D uEcology;
+         uniform float uSeasonDry;
          uniform float uGrassScale;
          uniform float uRockScale;
          uniform float uDirtScale;
@@ -1339,7 +1409,43 @@ function terrainMaterial(
          // trees drawn one by one, the forest's far effect on the ground:
          // Bruneton & Neyret, "Real-time realistic rendering and lighting of
          // forests").
-         blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
+         // THE ECOSYSTEM'S GROUND (world/ecology.ts), only where the ground is
+         // vegetated (not on the rock or the bare slopes): the savanna's
+         // tufts of straw-gold grass with red soil between them, going
+         // greener with the rains; bare soil where the herbs are sparse (the
+         // caatinga); the dark sodden green of veredas, brejos and várzeas;
+         // and under a canopy the forest floor's litter. The fine detail fades
+         // with the pixel's footprint, so the far view keeps the mix of colours
+         // and never shimmers.
+         vec4 eco = texture2D(uEcology, ((vec2(vTerrainWorld.x, vTerrainWorld.z) + uShoreGrid.x) / uShoreGrid.y + 0.5) / uShoreGrid.z);
+         float living = 1.0 - clamp(rockMix + dirtMix, 0.0, 1.0);
+         {
+           vec2 q = vTerrainWorld.xz;
+           // The grass's OWN texture, its HUE turned to straw where the
+           // savanna is dry - the same brightness and the same contrast, so
+           // the ground keeps its texture and is never lit any lighter (a
+           // flat khaki laid over it washed the whole map out). Green stays
+           // the rule; the gold comes in broad patches, most on the exposed
+           // tops and the rocky fields (eco.g), more as the dry season deepens.
+           float luma = dot(grassColor.rgb, vec3(0.3, 0.6, 0.1));
+           vec3 straw = luma * vec3(1.32, 1.04, 0.46) * 1.05;
+           float patchy = ecoNoise(q / 37.0 + 7.0) * 0.6 + ecoNoise(q / 13.0 + 3.0) * 0.4;
+           float golden = clamp(eco.g * mix(0.25, 1.0, uSeasonDry) * (0.35 + 0.9 * patchy), 0.0, 1.0);
+           // Each patch either green or gold, its edge broken by the tufts:
+           // half of each mixed was an olive wash.
+           float lift = clamp((luma - 0.17) / 0.2, 0.0, 1.0);
+           float goldMask = smoothstep(0.4, 0.55, golden + (lift - 0.5) * 0.3);
+           blended.rgb = mix(blended.rgb, straw, goldMask * living);
+           // Bare red soil only where the herbs are sparse.
+           blended.rgb = mix(blended.rgb, dirtColor.rgb * (0.85 + 0.25 * lift), eco.a * 0.75 * living);
+           // Waterlogged: darker, deeper green, a little blue, in hummocks.
+           vec3 sodden = blended.rgb * vec3(0.55, 0.72, 0.55);
+           blended.rgb = mix(blended.rgb, sodden, eco.b * 0.85 * living);
+           // The forest floor as the painted forest's always was: the grass
+           // darkened under the canopy, its texture kept. The ecosystem's own
+           // canopy (eco.r) darkens it only once its trees stand there.
+           blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
+         }
          {
            float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
            if (flowersW > 0.01) {
@@ -1453,11 +1559,14 @@ function terrainMaterial(
       .replace(
         '#include <lights_fragment_end>',
         `#include <lights_fragment_end>
-         // GROUND BOUNCE on the walls: a cliff faces the lit land as much as the
-         // sky, and the hemisphere light gives it a blue sky and a dim floor, so
-         // a face away from the sun went a navy hole with no stone in it. Only
-         // the steep faces take it; the flat ground is lit as before.
-         reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.34, 0.31, 0.25) * smoothstep(30.0, 70.0, slopeDeg);`,
+         // Light thrown back from the sunlit land, on the ROCK TEXTURE only
+         // (weighted by how much of the pixel is rock): a cliff turned from
+         // the sun sees the lit ground, and without it a basalt or granite
+         // wall in shade was a black hole. The grass, the soil and the rims
+         // are lit exactly as before.
+         #if NUM_DIR_LIGHTS > 0
+           reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.3, 0.28, 0.23) * rockMix * (1.0 - clamp(dot(normal, normalize(directionalLights[0].direction)), 0.0, 1.0));
+         #endif`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -1490,7 +1599,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v15';
+  material.customProgramCacheKey = () => 'terrain-splat-v20';
   return material;
 }
 
@@ -2221,6 +2330,55 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     return false;
   };
 
+  // ---- the ecosystem (world/ecology.ts)
+  const ecologyTexture = material.userData['ecology'] as DataTexture;
+  /** The biomes painted per corner, `REGIONS.length` weights a corner (`rasterBiome`). */
+  const biomeCorners = new Float32Array(GRID * GRID * REGIONS.length);
+  let biomePainted = false;
+  let nature: NatureSettings | null = null;
+  let natureSeen = -1;
+  let ecologyField: EcologyField | null = null;
+  let ecologyRevision = 0;
+  /** The ecosystem must be read again; done when no stroke is held (as the water is). */
+  let ecologyStale = true;
+  const refreshEcology = (): void => {
+    ecologyStale = false;
+    const data = ecologyTexture.image.data as Uint8Array;
+    if (!nature) {
+      if (ecologyField) {
+        ecologyField = null;
+        data.fill(0);
+        ecologyTexture.needsUpdate = true;
+        ecologyRevision++;
+      }
+      return;
+    }
+    const levels = material.userData['shoreLevels'] as Float32Array;
+    const wet = new Uint8Array(GRID * GRID);
+    for (let i = 0; i < wet.length; i++) {
+      const level = levels[i] as number;
+      wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
+    }
+    const startedAt = performance.now();
+    const field = computeEcology({
+      side: GRID, cell: TERRAIN_CELL, heights: natural, water: wet,
+      sandstone: material.userData['sandCorners'] as Float32Array, basalt: material.userData['basaltCorners'] as Float32Array,
+      painted: biomePainted ? biomeCorners : null, settings: nature,
+    });
+    performance.measure('hitch:ecology', { start: startedAt, end: performance.now() });
+    ecologyField = field;
+    const byte = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 255);
+    for (let i = 0; i < GRID * GRID; i++) {
+      const canopy = field.canopy[i] as number, trees = field.trees[i] as number, grass = field.grass[i] as number;
+      data[i * 4] = byte(canopy + trees * 0.3 + (field.palm[i] as number) * 0.25);
+      data[i * 4 + 1] = byte(grass * (field.dry[i] as number));
+      data[i * 4 + 2] = byte(field.wet[i] as number);
+      data[i * 4 + 3] = byte((1 - grass) * (1 - Math.min(1, canopy + trees)));
+    }
+    ecologyTexture.needsUpdate = true;
+    ecologyRevision++;
+  };
+
   const rebuildWater = (stamps: readonly TerrainStamp[]): void => {
     // A river stands at the level its channel was cut INTO, below the banks: at
     // a fixed world datum it vanished under raised ground, and level with the
@@ -2253,13 +2411,15 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     floodCells = new Map();
     water.geometry = unifiedWaterGeometry(discs, renderedHeightAt, floodCells);
     previous.dispose();
-    shoreLevels(water.geometry, material.userData['shoreLevels'] as Float32Array);
+    shoreLevels(water.geometry, material.userData['shoreLevels'] as Float32Array, grid);
     packGroundCorners(material.userData['shore'] as DataTexture, material.userData['shoreLevels'] as Float32Array, material.userData['flowerCorners'] as Float32Array, material.userData['scrubCorners'] as Float32Array, material.userData['forestCorners'] as Float32Array, material.userData['sandCorners'] as Float32Array, material.userData['basaltCorners'] as Float32Array);
     water.geometry.computeBoundingBox();
     const box = water.geometry.boundingBox;
     // In world (x, y): the mesh is three's (x, height, -y).
     waterBox = box && !box.isEmpty() ? { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z } : null;
     waterRevision++;
+    // The water moved, and with it the rivers' forests and the veredas.
+    ecologyStale = true;
   };
   /** How near the water a moved corner can be and still leave it as it was: two water cells and two terrain cells. */
   const WATER_REACH = 2 * WATER_CELL + 2 * TERRAIN_CELL;
@@ -2288,7 +2448,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v15-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v20-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
@@ -2312,6 +2472,17 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const basaltCorners = material.userData['basaltCorners'] as Float32Array;
   const geologyChanges = new GroundChanges();
   const updatePaint = (doc: RoadDoc): void => {
+    if (doc.natureRevision !== natureSeen) {
+      natureSeen = doc.natureRevision;
+      nature = doc.nature;
+      ecologyStale = true;
+    }
+    paintStep(doc);
+    // The ecosystem follows the land, the water and the paint, once no stroke
+    // is held (a stroke defers the water, and with it this).
+    if (ecologyStale && !waterStale) refreshEcology();
+  };
+  const paintStep = (doc: RoadDoc): void => {
     if (doc.paintRevision === paintRevision) return;
     paintRevision = doc.paintRevision;
     const dabs = doc.terrainPaint;
@@ -2322,6 +2493,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const lay = (dab: PaintDab): void => {
       if (isGeologyKind(dab.kind)) {
         geologyRects.push(rasterGeology(sandCorners, basaltCorners, dab));
+        ecologyStale = true;
+        return;
+      }
+      if (isBiomeKind(dab.kind)) {
+        rasterBiome(biomeCorners, dab);
+        biomePainted = true;
+        ecologyStale = true;
         return;
       }
       rasterPaint(paint, dab);
@@ -2338,6 +2516,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       for (const kind of COVER_KINDS) covers[kind].fill(0);
       sandCorners.fill(0);
       basaltCorners.fill(0);
+      biomeCorners.fill(0);
+      biomePainted = false;
+      ecologyStale = true;
       for (const dab of dabs) lay(dab);
       covered = true;
       geologyChanges.mark(null);
@@ -2379,6 +2560,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       return coverAt('forest', x, y);
     },
     coverAt,
+    ecology: () => ecologyField,
+    get ecologyRevision() {
+      return ecologyRevision;
+    },
+    ecologyTexture,
     get forestRevision() {
       return forestRevision;
     },

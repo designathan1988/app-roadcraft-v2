@@ -83,7 +83,7 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { GRASS_FIELD, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -524,6 +524,9 @@ export function createSceneRenderer(
   // The far ring: three times the spacing, out to three times the reach, where the near one fades.
   const grassFar = createGrass(quality, { scale: 3, inner: GRASS_NEAR_REACH * 0.85 }, grassMask);
   scene.add(grass.mesh, grassFar.mesh);
+  // The blades follow the ecosystem's ground and the season.
+  grass.setEcology(terrain.ecologyTexture, TERRAIN_HALF, TERRAIN_CELL, SEASON_DRY);
+  grassFar.setEcology(terrain.ecologyTexture, TERRAIN_HALF, TERRAIN_CELL, SEASON_DRY);
   if (import.meta.env.DEV) (window as unknown as { __grass?: unknown; __scene?: unknown }).__grass = grass;
   if (import.meta.env.DEV) Object.assign(window, { __scene: scene, __gl: renderer });
   let grassGroundFor = '';

@@ -24,7 +24,8 @@
  * the covers. New kinds go on the END: a saved map stores kinds by name, but
  * the first eight are texture channels by their place in this list.
  */
-export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass', 'forest', 'scrub', 'flowers', 'rocks', 'granite', 'sandstone', 'basalt'] as const;
+export const PAINT_KINDS = ['sand', 'soil', 'meadow', 'snow', 'gravel', 'asphalt', 'concrete', 'grass', 'forest', 'scrub', 'flowers', 'rocks', 'granite', 'sandstone', 'basalt',
+  'cerrado', 'atlantic', 'amazon', 'caatinga', 'pampa', 'pantanal'] as const;
 export type PaintKind = (typeof PAINT_KINDS)[number];
 
 /** The kinds painted as a density of things standing on the ground. */
@@ -40,6 +41,15 @@ export const isCoverKind = (kind: PaintKind): kind is CoverKind => (COVER_KINDS 
 export const GEOLOGY_KINDS = ['granite', 'sandstone', 'basalt'] as const;
 export type GeologyKind = (typeof GEOLOGY_KINDS)[number];
 export const isGeologyKind = (kind: PaintKind): kind is GeologyKind => (GEOLOGY_KINDS as readonly string[]).includes(kind);
+
+/**
+ * The BIOMES (`world/ecology.ts`): painting one makes that ground the biome's
+ * own country - its plant communities chosen by the land, as the map's
+ * region does everywhere else. Moves no ground and paints no surface.
+ */
+export const BIOME_KINDS = ['cerrado', 'atlantic', 'amazon', 'caatinga', 'pampa', 'pantanal'] as const;
+export type BiomeKind = (typeof BIOME_KINDS)[number];
+export const isBiomeKind = (kind: PaintKind): kind is BiomeKind => (BIOME_KINDS as readonly string[]).includes(kind);
 
 export interface PaintDab {
   readonly kind: PaintKind;

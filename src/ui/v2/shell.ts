@@ -41,7 +41,10 @@ import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
   sand: '#ccb380', soil: '#7a5a3c', meadow: '#7d8f3a', snow: '#eef1f6', gravel: '#8b8a84', asphalt: '#2d2e32', concrete: '#a8a69f', grass: '#4f7a36', forest: '#2c4f26',
   scrub: '#4c6a2c', flowers: '#c86a8e', rocks: '#7d776c', granite: '#8d8a84', sandstone: '#c27a44', basalt: '#3b3836',
+  cerrado: '#b8933e', atlantic: '#2f6b34', amazon: '#1b4f27', caatinga: '#a08b68', pampa: '#86ad4c', pantanal: '#4e8f7c',
 };
+/** The biomes, painted or chosen for the whole map (`world/ecology.ts`). */
+const BIOME_SWATCHES = ['cerrado', 'atlantic', 'amazon', 'caatinga', 'pampa', 'pantanal'] as const;
 import { LANDSCAPE_KINDS } from '@world/landscape';
 import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
@@ -880,13 +883,36 @@ export function mountShell(deps: ShellDeps): void {
         // Named, so its nine swatches wrap under the name instead of running off the panel.
         const grounds = titled(group(t('paint.kind')), t('paint.kind'));
         const now = paintKind();
-        grounds.appendChild(choices(PAINT_KINDS.map((kind) => ({
+        const swatchOf = (kind: PaintKind): string => `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[kind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`;
+        // The biomes on a row of their own: each one is a whole country.
+        const biomes = titled(group(t('paint.biome')), t('paint.biome'));
+        biomes.appendChild(choices(BIOME_SWATCHES.map((kind) => ({
+          label: t(`paint.kind.${kind}`), on: now === kind, run: () => { setPaintKind(kind); render(); }, icon: swatchOf(kind),
+        })), 6));
+        grounds.appendChild(choices(PAINT_KINDS.filter((kind) => !(BIOME_SWATCHES as readonly string[]).includes(kind)).map((kind) => ({
           label: t(`paint.kind.${kind}`),
           on: now === kind,
           run: () => { setPaintKind(kind); render(); },
           icon: `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[kind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`,
-        })), 4));
+        })), 8));
         options.appendChild(grounds);
+        options.appendChild(biomes);
+      }
+      // The map's own biome: the ecosystem everywhere nothing else is painted.
+      {
+        const mapBiome = titled(group(t('terrain.mapBiome')), t('terrain.mapBiome'));
+        mapBiome.appendChild(choices([...document.querySelectorAll<HTMLButtonElement>('[data-map-biome]')].map((b) => {
+          const key = b.dataset['mapBiome'] as string;
+          return {
+            label: key === 'none' ? t('terrain.mapBiome.none') : t(`paint.kind.${key}`),
+            on: b.getAttribute('aria-pressed') === 'true',
+            run: () => { b.click(); render(); },
+            icon: key === 'none'
+              ? '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/><path d="M4 12 12 4" stroke="currentColor" stroke-opacity="0.6"/></svg>'
+              : `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[key as PaintKind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`,
+          };
+        }), 7));
+        options.appendChild(mapBiome);
       }
       // Named too: the two sliders and the clear button ran off the panel's edge.
       const brush = titled(group(t('v2.options')), t('v2.options'));

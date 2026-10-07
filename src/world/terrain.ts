@@ -164,7 +164,8 @@ function hash2(x: number, y: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 2_147_483_648 - 1;
 }
 
-function valueNoise(x: number, y: number): number {
+/** Smooth deterministic value noise, -1..1 (the land's and the ecosystem's). */
+export function valueNoise(x: number, y: number): number {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
   const fx = x - x0;

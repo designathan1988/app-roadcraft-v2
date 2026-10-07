@@ -3,6 +3,7 @@ import { ROAD_TYPES } from '@world/roadTypes';
 import { normalizeRoadSection } from '@world/roadSection';
 import { migrateStructure } from '@world/structures';
 import { isTerrainMode, isTerrainProfile } from '@world/terrain';
+import { isNatureSettings } from '@world/ecology';
 import { isSerializedBuildings } from '@world/buildings/serialize';
 
 const KEY = 'roadcraft.world.v7';
@@ -465,6 +466,7 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
   }
 
   if (value.relief !== undefined && value.relief !== 1 && value.relief !== 2) return false;
+  if (value.nature !== undefined && !isNatureSettings(value.nature)) return false;
   if (value.terrain !== undefined) {
     if (!Array.isArray(value.terrain)) return false;
     const terrainIds = new Set<number>();

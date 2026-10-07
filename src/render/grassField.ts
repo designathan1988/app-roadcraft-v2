@@ -46,6 +46,12 @@ export interface Grass {
   setHeights(heights: Float32Array, side: number, size: number): void;
   /** Where blades may not grow: road surfaces and footprints, in world x/y. */
 
+  /**
+   * The ecosystem's ground (`TerrainSurface.ecologyTexture`): the blades go
+   * straw-gold and tall in the dry savanna, thin out over bare soil and under
+   * a canopy, and darken in the veredas. `season` is the dry season's depth.
+   */
+  setEcology(texture: Texture, half: number, cell: number, season: { value: number }): void;
   /** Each frame: where the field stands (three's x and z), whether it is drawn at all, the clock. */
   update(x: number, z: number, visible: boolean, seconds: number): void;
   dispose(): void;
@@ -167,6 +173,13 @@ export function createGrassMask(): GrassMask {
   };
 }
 
+/** No ecosystem: every blade as it always was. */
+const blankEcology = (() => {
+  const texture = new DataTexture(new Uint8Array(4), 1, 1);
+  texture.needsUpdate = true;
+  return texture;
+})();
+
 export function createGrass(quality: { readonly grassBlades: number }, ring: GrassRing = { scale: 1, inner: 0 }, mask: GrassMask = createGrassMask()): Grass {
   // One blade: four rungs and a tip, x across (-0.5..0.5), y up the blade (0..1).
   const rungs = 4;
@@ -207,6 +220,10 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
     uGrassHeight: { value: heightTexture as Texture },
     uGrassMask: { value: mask.texture },
     uGrassPlate: { value: [0, 1] as [number, number] },
+    uGrassEco: { value: blankEcology as Texture },
+    // half, cell and corners per side of the ecology grid
+    uGrassEcoGrid: { value: [1, 1, 1] as [number, number, number] },
+    uGrassSeasonDry: { value: 0 },
   };
 
   // Matte, and taking less of the sky's light than the ground does: blades lit
@@ -227,6 +244,10 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
         uniform sampler2D uGrassHeight;
         uniform sampler2D uGrassMask;
         uniform vec2 uGrassPlate; // half and size of the plate
+        uniform sampler2D uGrassEco;
+        uniform vec3 uGrassEcoGrid;
+        uniform float uGrassSeasonDry;
+        varying vec2 vGrassEco;
         varying float vGrassUp;
         varying vec3 vGrassTint;
         varying float vGrassThrough;
@@ -268,7 +289,13 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
         // Patchy: some ground is barer than other.
         float grassPatch = smoothstep(0.15, 0.55, grassHash(floor(root / ${m(7).toFixed(3)})) * 0.6 + clumpH * 0.6);
         float tall = (${m(0.14).toFixed(3)} + ${m(0.32).toFixed(3)} * (clumpH * 0.7 + r1 * 0.3)) * mix(0.55, 1.0, grassPatch);
-        float keep = allowed * fade * step(0.25, allowed);
+        // The ecosystem (world/ecology.ts): R canopy, G dry savanna grass, B wet, A bare.
+        vec4 eco = texture2D(uGrassEco, (vec2(root.x + uGrassEcoGrid.x, uGrassEcoGrid.x - root.y) / uGrassEcoGrid.y + 0.5) / uGrassEcoGrid.z);
+        float sparse = (1.0 - eco.a * 0.92) * (1.0 - eco.r * 0.55);
+        float keep = allowed * fade * step(0.25, allowed) * step(r2 * 0.999, sparse);
+        // The savanna's capim stands taller, the more so the drier the season.
+        tall *= (1.0 + eco.g * (0.8 + 0.9 * uGrassSeasonDry)) * (1.0 + eco.b * 0.35);
+        vGrassEco = vec2(eco.g * mix(0.2, 1.0, uGrassSeasonDry), eco.b);
         tall *= keep;
         float wide = ${m(0.032).toFixed(3)} * uGrassScale * (0.75 + r2 * 0.5) * keep;
         // Facing: round the clump's own lean, spread a little.
@@ -303,18 +330,25 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
       .replace('#include <common>', `#include <common>
         varying float vGrassUp;
         varying vec3 vGrassTint;
-        varying float vGrassThrough;`)
+        varying float vGrassThrough;
+        varying vec2 vGrassEco;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         // Dark at the root, pale green at the tip; clumps a little drier or lusher.
         vec3 grassBase = vec3(0.018, 0.04, 0.014);
         vec3 grassTip = mix(vec3(0.075, 0.15, 0.04), vec3(0.15, 0.17, 0.05), vGrassTint.x * 0.6);
         grassTip = mix(grassTip, vec3(0.06, 0.13, 0.035), vGrassTint.y * 0.35);
+        // Straw in the dry savanna (linear values), darker green in the wet.
+        vec3 strawBase = vec3(0.07, 0.045, 0.018);
+        vec3 strawTip = mix(vec3(0.42, 0.32, 0.12), vec3(0.3, 0.24, 0.1), vGrassTint.y * 0.6);
+        grassBase = mix(grassBase, strawBase, vGrassEco.x);
+        grassTip = mix(grassTip, strawTip, vGrassEco.x);
+        grassTip = mix(grassTip, grassTip * vec3(0.6, 0.85, 0.65), vGrassEco.y);
         diffuseColor.rgb = mix(grassBase, grassTip, smoothstep(0.0, 1.0, vGrassUp));`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         // Sun through the blade: a warm glow at the tip that does not depend on facing.
         totalEmissiveRadiance += vec3(0.012, 0.018, 0.004) * vGrassThrough * vGrassThrough;`);
   };
-  material.customProgramCacheKey = () => 'grass-field-v3';
+  material.customProgramCacheKey = () => 'grass-field-v4';
 
   const mesh = new Mesh(geometry, material);
   mesh.name = 'grass';
@@ -329,6 +363,12 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
       heightTexture.image = { data: heights, width: n, height: n } as unknown as typeof heightTexture.image;
       heightTexture.needsUpdate = true;
       uniforms.uGrassPlate.value = [size / 2, size];
+    },
+    setEcology(texture, half, cell, season) {
+      uniforms.uGrassEco.value = texture;
+      uniforms.uGrassEcoGrid.value = [half, cell, (texture.image as { width: number }).width];
+      uniforms.uGrassSeasonDry = season;
+      material.needsUpdate = true;
     },
     update(x, z, visible, seconds) {
       mesh.visible = visible;

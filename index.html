@@ -218,6 +218,15 @@
         <button type="button" class="terrain-mode" data-terrain-mode="escarpment" aria-pressed="false" data-i18n="terrain.escarpment">Basalt escarpment</button>
         <button type="button" class="terrain-mode" data-terrain-mode="sugarloaf" aria-pressed="false" data-i18n="terrain.sugarloaf">Sugarloaf</button>
       </div>
+      <div class="map-biomes" role="group" data-i18n-label="terrain.mapBiome" aria-label="Map biome" hidden>
+        <button type="button" data-map-biome="none" aria-pressed="false" data-i18n="terrain.mapBiome.none">No ecosystem</button>
+        <button type="button" data-map-biome="cerrado" aria-pressed="false" data-i18n="paint.kind.cerrado">Cerrado</button>
+        <button type="button" data-map-biome="atlantic" aria-pressed="false" data-i18n="paint.kind.atlantic">Atlantic forest</button>
+        <button type="button" data-map-biome="amazon" aria-pressed="false" data-i18n="paint.kind.amazon">Amazon</button>
+        <button type="button" data-map-biome="caatinga" aria-pressed="false" data-i18n="paint.kind.caatinga">Caatinga</button>
+        <button type="button" data-map-biome="pampa" aria-pressed="false" data-i18n="paint.kind.pampa">Pampa</button>
+        <button type="button" data-map-biome="pantanal" aria-pressed="false" data-i18n="paint.kind.pantanal">Pantanal</button>
+      </div>
       <label class="terrain-control"><span data-i18n="terrain.radius">Radius</span> <input id="terrainRadius" type="range" min="30" max="300" value="80" step="10" /><output id="terrainRadiusValue">80</output></label>
       <label class="terrain-control"><span data-i18n="terrain.strength">Strength</span> <input id="terrainStrength" type="range" min="1" max="160" value="24" step="1" /><output id="terrainStrengthValue">24</output></label>
       <label class="terrain-control"><span data-i18n="terrain.hardness">Hardness</span> <input id="terrainHardness" type="range" min="0" max="95" value="0" step="5" /><output id="terrainHardnessValue">0</output></label>

@@ -23,6 +23,7 @@ import { clampToMap } from './bounds';
 import { normalizeParking, sameParking, type SegmentParking } from './parking';
 import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, isLandscapeKind, isSignType } from './landscape';
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
+import { isNatureSettings, type NatureSettings } from './ecology';
 import { type TransitData, emptyTransit, hasTransit, normalizeTransit } from './transit';
 import { casingHalf, roadProfile } from './roadTypes';
 import { BuildingStore } from './buildings/store';
@@ -187,6 +188,14 @@ export class RoadDoc {
    * key loads on the old field, so its roads stay where they were.
    */
   terrainRelief: ReliefVersion = RELIEF_LEGACY;
+  /**
+   * The map's ecosystem (`world/ecology.ts`): its biome and seed. Null on a
+   * map made before it, which keeps its ground as it was; the game gives a
+   * NEW map one (`main.ts`), and the player can give an old one one.
+   */
+  nature: NatureSettings | null = null;
+  /** Moves with every change to `nature`, and only then. */
+  natureRevision = 0;
   /** Ground painted over the terrain (`terrainPaint.ts`), oldest first. */
   readonly terrainPaint: PaintDab[] = [];
   /** Moves with every change to `terrainPaint`, and only then. */
@@ -673,6 +682,13 @@ export class RoadDoc {
     this.markNode(id, junctionModeChanged);
   }
 
+  /** Gives the map an ecosystem (or takes it away: null). */
+  setNature(next: NatureSettings | null): void {
+    if (JSON.stringify(this.nature) === JSON.stringify(next)) return;
+    this.nature = next ? { ...next } : null;
+    this.natureRevision++;
+  }
+
   addPaintDab(dab: PaintDab): void {
     this.terrainPaint.push({ ...dab });
     if (this.terrainPaint.length > MAX_PAINT_DABS) this.terrainPaint.shift();
@@ -847,6 +863,8 @@ export class RoadDoc {
     copy.terrainStamps.length = 0;
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
     copy.terrainRelief = this.terrainRelief;
+    copy.nature = this.nature ? { ...this.nature } : null;
+    copy.natureRevision = this.natureRevision;
     copy.buildings.copyAllocator(this.buildings);
     copy.buildings.revision = this.buildings.revision;
     copy.nextZoneId = this.nextZoneId;
@@ -927,6 +945,11 @@ export class RoadDoc {
       this.people.length = 0;
       this.people.push(...source.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec));
       this.peopleRevision++;
+    }
+
+    if (JSON.stringify(this.nature) !== JSON.stringify(source.nature)) {
+      this.nature = source.nature ? { ...source.nature } : null;
+      this.natureRevision++;
     }
 
     if (!samePaint(this.terrainPaint, source.terrainPaint)) {
@@ -1011,6 +1034,7 @@ export class RoadDoc {
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       // Only for the natural land: a legacy map serialises as before.
       ...(this.terrainRelief !== RELIEF_LEGACY ? { relief: this.terrainRelief } : {}),
+      ...(this.nature ? { nature: { ...this.nature } } : {}),
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       poles: [...this.poles.values()].map((p) => ({ id: p.id, x: p.x, y: p.y, lamp: p.lamp })),
       poleSpans: [...this.poleSpans.values()].map((s) => ({ id: s.id, a: s.a, b: s.b })),
@@ -1129,6 +1153,8 @@ export class RoadDoc {
     if (doc.terrainPaint.length) doc.paintRevision = 1;
     // Absent: a map from before the natural land, which stays on the old one.
     doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
+    // Absent: a map from before the ecosystem, which keeps its ground.
+    doc.nature = isNatureSettings(data.nature) ? { region: data.nature.region, seed: data.nature.seed } : null;
     for (const stamp of data.terrain ?? []) {
       doc.terrainStamps.push({ ...stamp });
       doc.nextTerrainId = Math.max(doc.nextTerrainId, stamp.id + 1);
@@ -1246,6 +1272,8 @@ export interface SerializedDoc {
   readonly terrain?: readonly TerrainStamp[];
   /** `ReliefVersion`; absent on maps made before the natural landform. */
   readonly relief?: number;
+  /** The ecosystem (`NatureSettings`); absent on maps made before it. */
+  readonly nature?: { readonly region: string; readonly seed: number };
   /**
    * The utility network. OPTIONAL, and it has to stay that way: every map
    * saved before poles existed has no such key, and loading one must not
