@@ -2615,6 +2615,7 @@ export function createSceneRenderer(
       if (performance.now() >= spinSettled) {
         terrain.setSun(unspin(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position)), planetRadius());
       }
+      terrain.bakeRelief(renderer);
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();

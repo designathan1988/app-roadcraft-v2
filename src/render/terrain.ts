@@ -24,6 +24,7 @@ import {
   Vector3,
   type Material,
   type Texture,
+  type WebGLRenderer,
 } from 'three';
 
 import type { RoadDoc } from '@world/doc';
@@ -44,6 +45,7 @@ import {
 import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } from './mesh/textureBaker';
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, createWaterSurface } from './water';
+import { RELIEF_RES, RELIEF_TEXTURE, createReliefBake } from './terrainRelief';
 
 /**
  * Side of the playable, editable terrain plate, in world units.
@@ -136,6 +138,11 @@ export interface TerrainSurface {
    * land has (`terrainLight`).
    */
   setSun(direction: { readonly x: number; readonly y: number; readonly z: number }, planet?: number): void;
+  /**
+   * Bakes the fine relief the light reads (`terrainRelief.ts`) when the land
+   * has changed since - once a stroke is let go, as the water is.
+   */
+  bakeRelief(renderer: WebGLRenderer): void;
   /**
    * The terrain's own surface for the batter from a footway down to the
    * ground (`roadSurfaces.ts`): the same lawn, read as LEVEL ground whatever
@@ -997,6 +1004,10 @@ function terrainMaterial(
   material.userData['flowerCorners'] = flowerCornerData;
   material.userData['scrubCorners'] = scrubCornerData;
   material.userData['forestCorners'] = forestCornerData;
+  // Read by the relief's bake, which carries its brightness in its blue
+  // channel: the terrain shader is at the sixteen textures a fragment shader
+  // may bind, and the relief took the macro map's place.
+  material.userData['macro'] = macroTexture(anisotropy);
   const uniforms = {
     uPaint: { value: paint as Texture },
     uPaintHalf: { value: TERRAIN_HALF },
@@ -1008,7 +1019,6 @@ function terrainMaterial(
     uRockMap: { value: layeredTexture(bakes.rocks.map((bake) => bake.map), true, anisotropy) as Texture },
     uRockNormal: { value: layeredTexture(bakes.rocks.map((bake) => bake.normalMap), false, anisotropy) as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
-    uMacroMap: { value: macroTexture(anisotropy) as Texture },
     uEcology: { value: ecologyTexture as Texture },
     uSeasonDry: SEASON_DRY,
     uGrassScale: { value: 1 / 96 },
@@ -1023,6 +1033,7 @@ function terrainMaterial(
     uSoilDetail: { value: soilDetail.map },
     uSoilDetailN: { value: soilDetail.normalMap },
     uSoilDetailScale: { value: 1 / soilDetail.worldSize },
+    uRelief: RELIEF_TEXTURE,
   };
 
   material.onBeforeCompile = (shader) => {
@@ -1051,6 +1062,14 @@ function terrainMaterial(
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainNormal;
          varying float vTerrainSteep;
+         uniform sampler2D uRelief;
+         // The fine relief here (terrainRelief.ts): its slope, how much of a
+         // crease (+) or a crest (-) the point is, and the filter's ridge map.
+         vec2 terrainGrad = vec2(0.0);
+         float terrainCrease = 0.0;
+         float terrainRidge = 0.0;
+         float terrainMacro = 1.0;
+         float terrainCarved = 0.0;
          uniform sampler2DArray uRockMap;
          uniform sampler2DArray uPaint;
          uniform float uPaintHalf;
@@ -1111,7 +1130,6 @@ function terrainMaterial(
          }
          uniform sampler2DArray uRockNormal;
          uniform sampler2D uDirtMap;
-         uniform sampler2D uMacroMap;
          uniform sampler2D uEcology;
          uniform float uSeasonDry;
          uniform float uGrassScale;
@@ -1304,6 +1322,28 @@ function terrainMaterial(
       .replace(
         '#include <map_fragment>',
         `terrainDetailW = detailWeight(vTerrainWorld.xz);
+         {
+           // Read across a pixel's footprint or a texel, whichever is wider,
+           // so the far view takes the relief's mean and never shimmers.
+           vec2 ruv = (vTerrainWorld.xz + uPaintHalf) / uPaintSize;
+           float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(ruv.x), fwidth(ruv.y)));
+           vec3 c0 = texture2D(uRelief, ruv).rgb;
+           float xp = texture2D(uRelief, ruv + vec2(e, 0.0)).r;
+           float xm = texture2D(uRelief, ruv - vec2(e, 0.0)).r;
+           float zp = texture2D(uRelief, ruv + vec2(0.0, e)).r;
+           float zm = texture2D(uRelief, ruv - vec2(0.0, e)).r;
+           float span = e * uPaintSize;
+           // Carved into the hillsides, the plains left smooth: over the
+           // whole map it read as crumpled paper, and a town's ground has to
+           // look level. Full from some seventeen degrees.
+           float meshSlope = length(normalize(vTerrainNormal).xz) / max(normalize(vTerrainNormal).y, 0.25);
+           float carved = smoothstep(0.06, 0.3, meshSlope);
+           terrainCarved = carved;
+           terrainGrad = vec2(xp - xm, zp - zm) / (2.0 * span) * carved;
+           terrainCrease = (xp + xm + zp + zm - 4.0 * c0.r) / (span * span) * carved;
+           terrainRidge = c0.g;
+           terrainMacro = c0.b;
+         }
          // Taken here, in uniform control flow: the rock is read only where
          // rock shows, with these gradients.
          rockDpdx = dFdx(vTerrainWorld) * uRockScale;
@@ -1441,8 +1481,8 @@ function terrainMaterial(
          // Light and dark only, and gently (Unreal's landscape macro
          // variation): fields of yellow, olive and deep green laid over the
          // lawn read as blotches from the map's zoom.
-         vec3 macroTint = texture2D(uMacroMap, terrainWideUv(vTerrainWorld.xz) * 0.0024).rgb * 2.0;
-         float macroLight = mix(1.0, dot(macroTint, vec3(0.3, 0.59, 0.11)), 0.55);
+         // Its brightness, baked with the relief (terrainRelief.ts).
+         float macroLight = mix(1.0, terrainMacro, 0.55);
          blended.rgb *= mix(1.0, macroLight, 1.0 - (rockMix + dirtMix) * 0.7);
          // THE GRAIN AT EVERY ZOOM (distance tiling, as landscape materials
          // switch a texture to a larger tiling with the camera's distance):
@@ -1545,6 +1585,11 @@ function terrainMaterial(
            blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.25 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.15 * vegetated);
            float ridge = smoothstep(0.05, 0.6, convex + (wornNoise - 0.5) * 0.3);
            blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.2 * vegetated);
+           // The fine relief's crests worn to pale earth and stone, as the
+           // spurs of an eroded hillside are where the turf thins.
+           float crest = smoothstep(0.3, 0.85, terrainRidge) * terrainCarved;
+           vec3 bareCrest = mix(dirtColor.rgb, rockColor.rgb, 0.5) * vec3(1.15, 1.08, 0.95);
+           blended.rgb = mix(blended.rgb, bareCrest, crest * 0.55 * vegetated);
            float hollow = smoothstep(0.05, 0.6, -convex);
            blended.rgb *= mix(vec3(1.0), vec3(0.88, 0.97, 0.88), hollow * vegetated);
          }
@@ -1687,6 +1732,12 @@ function terrainMaterial(
            #endif
            reflectedLight.indirectDiffuse *= skySeen;
            reflectedLight.indirectSpecular *= skySeen;
+           // The fine relief's creases see less of the sky and of the sun
+           // that rakes across them: the dark lines that give the land its
+           // carved look.
+           float crease = clamp(terrainCrease * 0.8, 0.0, 1.0);
+           reflectedLight.indirectDiffuse *= 1.0 - 0.55 * crease;
+           reflectedLight.directDiffuse *= 1.0 - 0.25 * crease;
          }`,
       )
       .replace(
@@ -1715,7 +1766,19 @@ function terrainMaterial(
            vec3 fineN = mix(bladeN, soilN, clamp(dirtMix + rockMix, 0.0, 1.0));
            mapN.xy += fineN.xy * 1.2 * terrainDetailW;
          }
-         normal = normalize(tbn * mapN);`,
+         normal = normalize(tbn * mapN);
+         {
+           // The fine relief's slope added to the mesh's, as a heightfield's
+           // normal is (-dh/dx, 1, -dh/dz), and the difference it makes laid
+           // on the normal the maps have already bent. Walls keep their rock.
+           vec3 meshN = normalize(vTerrainNormal);
+           vec2 meshGrad = -meshN.xz / max(meshN.y, 0.25);
+           float reliefOn = 1.0 - smoothstep(48.0, 62.0, slopeDeg);
+           vec3 reliefN = normalize(vec3(-(meshGrad.x + terrainGrad.x * reliefOn), 1.0, -(meshGrad.y + terrainGrad.y * reliefOn)));
+           vec3 viewMesh = normalize((viewMatrix * vec4(meshN, 0.0)).xyz);
+           vec3 viewRelief = normalize((viewMatrix * vec4(reliefN, 0.0)).xyz);
+           normal = normalize(normal + viewRelief - viewMesh);
+         }`,
       );
   };
   // A changed program key forces three to compile this variant separately from
@@ -2160,6 +2223,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   // The heights the mesh actually carries, one per grid corner, so
   // `renderedHeightAt` interpolates exactly the numbers that are on screen.
   const grid = new Float64Array(GRID * GRID);
+  /** The fine relief the light reads, baked from `grid` (`terrainRelief.ts`). */
+  const relief = createReliefBake(GRID, TERRAIN_CELL, TERRAIN_HALF, material.userData['macro'] as Texture);
   /** The same corners before any road shaped them, so shaping is idempotent. */
   const natural = new Float64Array(GRID * GRID);
   /** Corners a road has moved, so an unshaped one can be restored cheaply. */
@@ -2996,6 +3061,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     ground,
     skirt,
     setSun,
+    bakeRelief(renderer) {
+      if (!waterStale) relief.bake(renderer, grid);
+    },
     vergeMaterial,
     updatePaint,
     forestAt(x, y) {
@@ -3132,9 +3200,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       if (stroking) waterStale = true;
       else { waterStale = false; rebuildWater(lastStamps); }
       landMoved = true;
+      relief.markDirty();
       return true;
     },
     dispose() {
+      relief.dispose();
       geometry.dispose();
       material.dispose();
       backdrop.geometry.dispose();
