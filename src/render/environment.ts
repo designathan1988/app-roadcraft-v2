@@ -235,12 +235,19 @@ export function createEnvironment(
   sun.shadow.normalBias = 0.05;
   /** Height above the view's ground that the depth range last made room for. */
   let depthRise = 0;
+  /** How far back along the sun the light stands (`fitDepth`). */
+  let sunDistance = SUN_DISTANCE;
   const fitDepth = (halfSpan: number): void => {
     // Room along the light for everything in the frustum, the tallest roof
     // included: a tower whose top lay nearer the sun than `near` cast nothing.
     const reach = halfSpan * 1.6 + 240 + depthRise;
-    sun.shadow.camera.near = Math.max(1, SUN_DISTANCE - reach);
-    sun.shadow.camera.far = SUN_DISTANCE + reach;
+    // The light stands as far back as the frustum reaches: at the fixed
+    // 1600 units, a view of the whole map put the ground on the sun's side
+    // more than that away BEHIND the light, out of the shadow map - half
+    // the map in shadow, half not (the player, 2026-10-07).
+    sunDistance = Math.max(SUN_DISTANCE, reach + 50);
+    sun.shadow.camera.near = Math.max(1, sunDistance - reach);
+    sun.shadow.camera.far = sunDistance + reach;
     sun.shadow.bias = -SHADOW_BIAS_WORLD / (sun.shadow.camera.far - sun.shadow.camera.near);
   };
   fitDepth(SHADOW_SPAN_MIN);
@@ -326,7 +333,7 @@ export function createEnvironment(
       snapped.copy(lightRight).multiplyScalar(u)
         .addScaledVector(lightUp, v)
         .addScaledVector(sunDirection, w);
-      sun.position.copy(snapped).addScaledVector(sunDirection, SUN_DISTANCE);
+      sun.position.copy(snapped).addScaledVector(sunDirection, sunDistance);
       sun.target.position.copy(snapped);
       sun.target.updateMatrixWorld();
     },
