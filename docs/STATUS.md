@@ -248,6 +248,19 @@ and they have seen it.
   over with clearance, or is refused.
 - Terrain brush is opacity per stroke (strength 1-160); a cut deeper than 18 m is
   bored as a tunnel; water floods adjacent basins.
+- **Geology and landforms (2026-10-06, LIVE):** the rock of the land is
+  painted per region (granite by default, sandstone, basalt: paint kinds
+  `granite`/`sandstone`/`basalt`, rasterised per terrain corner and packed
+  in the high bytes of the shore texture's G/B). Each rock is a face and a
+  top layer of one `DataArrayTexture` (one texture unit; the terrain material
+  is at 16). Sandstone beds and basalt flows are laid by world height in the
+  shader. Landform tools Mesa, Canyon, Basalt escarpment and Sugarloaf (dome
+  profile, `TerrainStamp.profile`) stamp their shape and paint their rock.
+  Walls: per-corner steepest face (`aSteep`), a data-dependent diagonal per
+  cell (`retriangulate`; `sampleGrid` follows it), walls at least
+  `MIN_HARD_WALL` wide, a fuzzy, noise-broken rock edge with a talus skirt,
+  ground bounce on steep faces. Open: the water shader's ground lookup still
+  assumes the fixed diagonal.
 - **Terrain look (2026-10-06, LIVE):** a NEW map starts on a natural landform
   (`world/terrain.ts` `naturalRelief`: domain-warped, plains and ridged hills,
   `RoadDoc.terrainRelief` = 2); saved maps keep the old field (no `relief`
