@@ -318,26 +318,27 @@ and they have seen it.
 
 ### Actions: pistol and bomb (2026-10-06, LIVE)
 - Actions dock button: Pistola and Bomba, used from the map view (no play mode).
-- Shot people (`sim/agents/walk.ts` `shot`, `render/ragdoll.ts`): damage by
-  part; a limb or the head comes off as the person's own piece (a twin of their
-  procedural body, `proceduralCrowd.twin`), sometimes with the bone showing;
-  wounds soak blood through clothes and skin (`procWounds`); the fall is a
-  physical animation (staggers, knees give, hand to the wound, then limp), the
-  body held by the simulation until it is up (`getUp` gives the moment), up
-  where it lay with the get-up clip; a leg gone: crawling and bleeding out; pain
-  and dead faces. Bodies on the ground take more shots (`shootBody`): holes,
-  limbs off, guts out after several belly hits, a heap of meat at the end.
-- Bystanders: shocking events (blast, shot, bodies) frighten whoever comes near;
-  they sprint, crouch or film (`photo` clip); only a blast trips or faints people.
-- Bomb: torn bodies charred and dismembered, guts and organs spilled
-  (`render/gore.ts`); charred bodies curl; each car, motorcycle and bicycle
-  becomes the burnt shell of its own model (`AgentMeshes.carcass`), its riders
-  and drivers thrown as themselves.
-- Vehicles shot: riders killed and thrown, the machine falls over; a driver shot
-  through the glass, the car stops (`strandVehicle`); a dozen hits on a car
-  blow it up.
-- Bodies collide with buildings, lot walls, poles, trees, street furniture,
-  drawn barriers and cars (`ragdollWorld.wallsNear`).
+- Shot people (`sim/agents/walk.ts` `shot`, `woundOf`): damage by part; the
+  wound's gravity decides - light (most health left): taken standing (the
+  bullet's jolt, bent over the wound, a hand on it by two-bone IK,
+  `proceduralCrowd` posture), then walking hurt (slow-walk clip, posture kept,
+  75% pace, fleeing at most 1.15x); grave (half health gone or a limb lost) or
+  shot while down: falls (ragdoll, arms out) and stays down crawling and
+  bleeding; dead stay down. The end of a reaction is never a recovery.
+- Getting up from lying (bomb knock-downs, stampede trips, `ragdoll.ts` rise):
+  key poses from the pose lying - rolled onto the front if face up, hands and
+  knees, crouch - then the crouch-up clip.
+- Bodies drawn by forward kinematics (rotations only, bone lengths kept);
+  bones collide as capsules with ground, walls, poles, furniture and cars.
+- Bomb: charring, dismemberment, guts (`render/gore.ts`), each vehicle's own
+  burnt shell; vehicles shot: riders thrown, drivers killed, cars blow up.
+- Weapons lab: `?lab=armas` (`src/weaponsLab.ts`), served without reloads by
+  `vite --config vite.lab.config.ts` (port 5190; restart it to load new code);
+  probes, a timeline of each transition with its call stack (`traceWalkers`),
+  the clip drawn, a clip played alone; `scripts/weapons-lab.mjs` runs 23
+  scenarios. Open: the lab's age choice has no effect (procedural bodies are
+  not chosen by the walker's age class); the mesh probe reads 20-36% on the
+  male child class's walk (thigh, hand) with nothing visible.
 
 ## Open, by area
 

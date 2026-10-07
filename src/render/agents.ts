@@ -1624,7 +1624,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           if (l0 < longest * 0.12) continue;
           const a = at(b), c = at(p);
           const r = Math.hypot(a[0] - c[0], a[1] - c[1], a[2] - c[2]) / l0;
-          if (Math.abs(r - 1) > Math.abs(stretch - 1)) { stretch = r; stretchBone = name; }
+          if (Math.abs(r - 1) > Math.abs(stretch - 1)) { stretch = r; stretchBone = `${name}<${sk.names[p]} ${(l0 * 100).toFixed(1)}cm ${person.sex}-${person.band}`; }
         }
         out.push({ id, stretch, stretchBone, scale, scaleBone, held: procHeld.has(id), clip: person.clip });
       }
