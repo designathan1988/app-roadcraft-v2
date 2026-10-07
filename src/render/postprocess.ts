@@ -724,9 +724,13 @@ const CLOUD_SHADOWS = {
           t1 = -1.0;
         }
         if (t1 > t0) {
-          const int FOG_STEPS = 28;
+          const int FOG_STEPS = 36;
           float stepLen = (t1 - t0) / float(FOG_STEPS);
-          float jitterF = fract(sin(dot(gl_FragCoord.xy, vec2(41.31, 289.97))) * 43758.5453);
+          // Interleaved gradient noise (Jimenez, "Next Generation Post
+          // Processing in Call of Duty: Advanced Warfare", 2014) to start each
+          // pixel's march: a sine hash drew a visible cross-hatch over the
+          // bank (the player's screenshot, 2026-10-07).
+          float jitterF = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
           vec2 windDir = normalize(vec2(24.0, 9.0));
           // The FLOW MAP (Vlachos, "Water Flow in Portal 2", Valve 2010):
           // each texel's fog moves at its own speed, so the offset cannot
