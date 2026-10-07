@@ -285,6 +285,28 @@ function leafCards(leaves: Primitive, height: number, lumps: number, grow: numbe
  * "Anti-aliased Alpha Test: The Esoteric Alpha To Coverage": CalcMipLevel,
  * a quarter a level).
  */
+/**
+ * Lights both faces of a leaf card by the normal the crown gave it. three
+ * turns a double-sided triangle's normal round when its back faces the eye,
+ * so every card seen from behind was lit as if it faced away from the sun -
+ * half the crown, at random - and the woods came out a dark, flat mass
+ * beside the sunlit grass (the player, 2026-10-07). Foliage normals are the
+ * crown's, not the card's (Polycount, "Correct vertex normals for foliage").
+ */
+function crownNormalsBothSides(material: MeshStandardMaterial): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+      #ifdef DOUBLE_SIDED
+        normal *= faceDirection;
+        nonPerturbedNormal = normal;
+      #endif`);
+  };
+  const key = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${key()}-crown-normals`;
+}
+
 function preserveAlphaCoverage(material: MeshStandardMaterial | MeshDepthMaterial, bias = 0): void {
   const previous = material.onBeforeCompile.bind(material);
   material.onBeforeCompile = (shader, renderer) => {
@@ -294,7 +316,16 @@ function preserveAlphaCoverage(material: MeshStandardMaterial | MeshDepthMateria
     // averaged into a blur (the player, 2026-10-07: "cara de borrado").
     shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
       #ifdef USE_MAP
-        diffuseColor *= texture2D(map, vMapUv, ${bias.toFixed(2)});
+        {
+          // The leaf photographs are uploaded premultiplied (EZ-Tree sets
+          // premultiplyAlpha): their colour is times their alpha, and in the
+          // far mip levels, where the alpha averages to a half, the leaves
+          // came out half as bright - the woods a dark mass beside the
+          // sunlit grass (the player, 2026-10-07). Divided back here.
+          vec4 leaf = texture2D(map, vMapUv, ${bias.toFixed(2)});
+          leaf.rgb /= max(leaf.a, 0.04);
+          diffuseColor *= leaf;
+        }
       #endif
       {
         vec2 texel = vMapUv * vec2(textureSize(map, 0));
@@ -605,6 +636,7 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
     });
     applyWind(leafMaterial, FOREST_WIND, 'nature-leaves');
     preserveAlphaCoverage(leafMaterial, -0.75);
+    crownNormalsBothSides(leafMaterial);
     const leafDepth = new MeshDepthMaterial({ depthPacking: RGBADepthPacking, map: leafTexture, alphaTest: 0.5 });
     preserveAlphaCoverage(leafDepth);
     variants.push({
