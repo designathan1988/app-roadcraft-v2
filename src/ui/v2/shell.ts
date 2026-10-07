@@ -15,6 +15,7 @@
  * through its actions, the map tools through the game's own (now invisible)
  * controls - so nothing the player does here can disagree with the rules.
  */
+import { EFFECT_KINDS, type ElementKind } from '@world/elements';
 import { BLUEPRINTS } from '@world/buildings/blueprints';
 import { CITY_BUILDINGS } from '@world/buildings/cityBuildings';
 import { FINISHES, STYLES } from '@world/buildings/materials';
@@ -34,7 +35,7 @@ import { type TransitToolKind, transitTool } from '@editor/transitTools';
 import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
-import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
+import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
 
 /** The colour of each paintable ground, for its button. */
@@ -870,7 +871,7 @@ export function mountShell(deps: ShellDeps): void {
     }
     if (landTab === 'terrain') {
       const { items } = section(t('v2.terrain.brush'));
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud']] as const) {
+      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
@@ -923,6 +924,37 @@ export function mountShell(deps: ShellDeps): void {
         all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
         all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
         options.appendChild(all);
+      }
+      // The element brush (`world/elements.ts`): what it lays - ground,
+      // plants or effects - whether it lays or erases, and that kind's settings.
+      const elementsActive = q<HTMLButtonElement>('[data-terrain-mode="elements"]')?.classList.contains('active') ?? false;
+      if (elementsActive) {
+        const now = elementKind();
+        const kinds = (title: string, list: readonly ElementKind[]): void => {
+          const g = titled(group(title), title);
+          g.appendChild(choices(list.map((kind) => ({ label: t(`el.kind.${kind}`), on: now === kind, run: () => { setElementKind(kind); render(); } })), 3));
+          options.appendChild(g);
+        };
+        kinds(t('el.ground'), ['stones', 'pebbles', 'gravel', 'leaves']);
+        kinds(t('el.plants'), ['grass', 'tallGrass', 'scrub', 'fern', 'clover', 'flowers', 'mushrooms']);
+        kinds(t('el.effects'), [...EFFECT_KINDS]);
+        const brush = titled(group(t('el.brush')), t('el.brush'));
+        brush.classList.add('stack');
+        brush.appendChild(choices((['lay', 'eraseKind', 'eraseAll'] as const).map((mode) => ({
+          label: t(`el.mode.${mode}`), on: elementMode() === mode, run: () => { setElementMode(mode); render(); },
+        })), 3));
+        brush.append(
+          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
+          slider(t('el.density'), '#elDensity', '#elDensityValue'),
+          slider(t('el.size'), '#elSize', '#elSizeValue'),
+          slider(t('el.variation'), '#elVariation', '#elVariationValue'),
+          slider(t('el.spacing'), '#elSpacing', '#elSpacingValue'),
+          slider(t('el.strength'), '#elStrength', '#elStrengthValue'),
+        );
+        if ((EFFECT_KINDS as readonly string[]).includes(now)) brush.appendChild(slider(t('el.intensity'), '#elIntensity', '#elIntensityValue'));
+        brush.appendChild(button('v2-icon danger', t('el.clear'), () => press('#clearElements'), svg('eraser', 16)));
+        options.appendChild(brush);
+        return;
       }
       // The cloud tool: put clouds in the sky, move them, set them to the
       // tool's size, height and density, or take them away (`world/clouds.ts`).

@@ -129,6 +129,7 @@ import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
 import { buildNatureForest, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
+import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
 import { isCoverKind } from '@world/terrainPaint';
 
 /**
@@ -911,6 +912,13 @@ export function createSceneRenderer(
   let paintedForest: NatureForest | null = null;
   let paintedTrees: TreePlacement[] | null = null;
   let natureTreesPending = true;
+  /** The elements laid with the brush (`elements.ts`): their models, loaded once, and the layer built for the map. */
+  let elementKit: ElementKit | null = null;
+  let elementLayer: ElementLayer | null = null;
+  let elementsFor = '';
+  void loadElementKit(anisotropy).then((kit) => { elementKit = kit; elementsFor = ''; }, (error: unknown) => {
+    console.warn('[elements] models not loaded', error);
+  });
   /** The painted fog's map (`fogLayer.ts`), and the fog and land it was built for. */
   const fogTexture = createFogTexture();
   let fogLayer: FogLayer | null = null;
@@ -2730,9 +2738,26 @@ export function createSceneRenderer(
         }
         const f = doc.fogSettings;
         post.setPlacedClouds(doc.clouds);
+        // The elements: again when they or the land under them change.
+        const elementKey = `${doc.elementRevision}:${doc.terrainRevision}`;
+        if (elementKit && elementKey !== elementsFor && !landHeld) {
+          elementsFor = elementKey;
+          if (elementLayer) {
+            for (const mesh of elementLayer.meshes) world.remove(mesh);
+            elementLayer.dispose();
+            elementLayer = null;
+          }
+          const startedAt = performance.now();
+          if (doc.elements.length > 0) {
+            elementLayer = buildElementLayer(doc.elements, elementKit, (x, y) => terrain.renderedHeightAt(x, y));
+            for (const mesh of elementLayer.meshes) world.add(mesh);
+          }
+          performance.measure('hitch:elements', { start: startedAt, end: performance.now() });
+        }
+        elementLayer?.emit(Math.min(0.1, Math.max(0, delta)), rig.camera.position, exhaust);
         post.setGroundFog(fogLayer?.any ? { texture: fogLayer.texture, low: fogLayer.low, high: fogLayer.high, density: f.density } : null);
         fogMoving = !!fogLayer?.any;
-        placedCloudsShown = doc.clouds.length > 0;
+        placedCloudsShown = doc.clouds.length > 0 || !!elementLayer?.hasEffects;
       }
       post.setAtmosphere(atmosphere, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
@@ -2776,6 +2801,8 @@ export function createSceneRenderer(
       coverKit.dispose();
       natureForest?.dispose();
       fogTexture.dispose();
+      elementLayer?.dispose();
+      elementKit?.dispose();
       paintedForest?.dispose();
       natureTreeKit?.dispose();
       sceneryKit.dispose();

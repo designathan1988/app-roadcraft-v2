@@ -1,3 +1,4 @@
+import { DEFAULT_BRUSH, type ElementBrush, type ElementKind } from '@world/elements';
 import { LANDSCAPE_KINDS, type LandscapeKind, type SignType } from '@world/landscape';
 import { POLE_LAMP_MODES, type PoleLampMode } from '@world/utilities';
 import { PAINT_KINDS, type PaintKind } from '@world/terrainPaint';
@@ -72,6 +73,46 @@ export function fogErase(): boolean {
 }
 export function setFogErase(next: boolean): void {
   fogErasing = next;
+}
+
+/**
+ * The element brush (Paisagem > Terreno > Elementos, `world/elements.ts`):
+ * which kind it lays, whether it lays or erases (this kind, or every kind),
+ * and each kind's own settings - a stone's brush is not a blade of grass's -
+ * kept between sessions.
+ */
+export type ElementBrushMode = 'lay' | 'eraseKind' | 'eraseAll';
+let elementKindNow: ElementKind = 'stones';
+let elementModeNow: ElementBrushMode = 'lay';
+const ELEMENT_BRUSH_KEY = 'roadcraft.elementBrush';
+let elementBrushes: Partial<Record<ElementKind, ElementBrush>> = (() => {
+  try { return (JSON.parse(localStorage.getItem(ELEMENT_BRUSH_KEY) ?? '{}') ?? {}) as Partial<Record<ElementKind, ElementBrush>>; } catch { return {}; }
+})();
+export function elementKind(): ElementKind { return elementKindNow; }
+export function elementMode(): ElementBrushMode { return elementModeNow; }
+export function setElementMode(next: ElementBrushMode): void { elementModeNow = next; }
+export function elementBrush(kind: ElementKind = elementKindNow): ElementBrush {
+  return { ...DEFAULT_BRUSH[kind], ...(elementBrushes[kind] ?? {}) };
+}
+export function setElementBrush(change: Partial<ElementBrush>): void {
+  elementBrushes = { ...elementBrushes, [elementKindNow]: { ...elementBrush(), ...change } };
+  try { localStorage.setItem(ELEMENT_BRUSH_KEY, JSON.stringify(elementBrushes)); } catch { /* not kept */ }
+}
+/** The element sliders (index.html) made to show the chosen kind's settings. */
+export function syncElementInputs(): void {
+  const b = elementBrush();
+  const set = (id: string, v: number): void => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (input) input.value = String(v);
+    const out = document.getElementById(`${id}Value`);
+    if (out) out.textContent = String(v);
+  };
+  set('elDensity', b.density); set('elSize', b.size); set('elVariation', b.variation);
+  set('elSpacing', b.spacing); set('elStrength', b.strength); set('elIntensity', b.intensity);
+}
+export function setElementKind(next: ElementKind): void {
+  elementKindNow = next;
+  syncElementInputs();
 }
 
 /** The cloud tool (Paisagem > Terreno > Nuvens): what a click does. Not kept between sessions. */

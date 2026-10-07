@@ -27,7 +27,8 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, cloudMode, cloudBrush, setCloudBrush } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
+import { scatter } from '@world/elements';
 import { cloudUnder } from '@world/clouds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
@@ -342,7 +343,7 @@ let roadHeightOffset = 0;
 let draftShift = { x: 0, y: 0 };
 let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
-type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | Landform;
+type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | Landform;
 /**
  * The landforms: a shape and its ROCK in one tool, so a chapada stands in
  * sandstone and a sugarloaf in granite without the player painting the rock
@@ -1339,6 +1340,20 @@ function terrainPaintInterval(): number {
 
 /** One dab, with no spacing or rate checks of its own. */
 function stampTerrain(at: Vec2, level: number): void {
+  if (terrainMode === 'elements') {
+    // Elements move no height: a dab lays instances (or takes them away).
+    const mode = elementMode();
+    if (mode !== 'lay') {
+      doc.removeElements(at.x, at.y, terrainRadius, mode === 'eraseKind' ? elementKind() : null);
+      return;
+    }
+    const kind = elementKind();
+    const brush = elementBrush(kind);
+    const reach = terrainRadius + brush.spacing * UNITS_PER_METER;
+    const nearby = doc.elements.filter((e) => e.kind === kind && Math.abs(e.x - at.x) < reach && Math.abs(e.y - at.y) < reach);
+    doc.addElements(scatter(kind, brush, at.x, at.y, terrainRadius, UNITS_PER_METER, Math.random, nearby));
+    return;
+  }
   if (terrainMode === 'fog') {
     // Fog moves no height either: a dab of mist laid, or taken away.
     // The brush's own settings go with the dab.
@@ -1416,6 +1431,29 @@ function paintTerrain(at: Vec2, force = false): void {
   stroke.last = at;
   stroke.applied = now;
   requestDraw();
+}
+
+// The element brush's settings (Paisagem > Terreno > Elementos), each kind its
+// own (`ui/toolChoices.ts`); the sliders show the chosen kind's.
+{
+  const keys = { elDensity: 'density', elSize: 'size', elVariation: 'variation', elSpacing: 'spacing', elStrength: 'strength', elIntensity: 'intensity' } as const;
+  for (const [id, key] of Object.entries(keys) as [keyof typeof keys, (typeof keys)[keyof typeof keys]][]) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    input?.addEventListener('input', () => {
+      setElementBrush({ [key]: Number(input.value) });
+      text(`${id}Value`, input.value);
+    });
+  }
+  syncElementInputs();
+  (document.getElementById('clearElements') as HTMLButtonElement | null)?.addEventListener('click', () => {
+    if (doc.elements.length === 0) return;
+    if (!window.confirm(t('confirm.clearElements'))) return;
+    history.record(doc);
+    doc.clearElements();
+    updateHistoryButtons();
+    persistence.saveSessionSoon(doc, sessionSettings);
+    requestDraw();
+  });
 }
 
 // THE CLOUD TOOL (Paisagem > Terreno > Nuvens): a click puts a cloud in the
@@ -2536,7 +2574,7 @@ window.addEventListener('keydown', (e) => {
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
   if (tool === 'terrain') {
-    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud'];
+    const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
       setTerrainMode(chosen);
@@ -2971,6 +3009,8 @@ function setTerrainMode(next: BrushMode): void {
   if (fogPanel) fogPanel.hidden = next !== 'fog';
   const cloudPanel = document.querySelector<HTMLElement>('.terrain-cloud');
   if (cloudPanel) cloudPanel.hidden = next !== 'cloud';
+  const elementPanel = document.querySelector<HTMLElement>('.terrain-elements');
+  if (elementPanel) elementPanel.hidden = next !== 'elements';
   updateHint();
 }
 
@@ -4986,6 +5026,7 @@ const TERRAIN_BRUSH_COLOUR: Readonly<Record<BrushMode, string>> = {
   paint: '#f2d27a',
   fog: '#e8eef4',
   cloud: '#ffffff',
+  elements: '#b8e07a',
   raise: SELECTION,
   lower: '#ffc864',
   flatten: '#cfd8d4',
@@ -5000,6 +5041,7 @@ const TERRAIN_BRUSH_FILL: Readonly<Record<BrushMode, string>> = {
   paint: 'rgba(242,210,122,0.10)',
   fog: 'rgba(232,238,244,0.12)',
   cloud: 'rgba(255,255,255,0)',
+  elements: 'rgba(184,224,122,0.10)',
   raise: 'rgba(101,229,195,0.08)',
   lower: 'rgba(255,200,100,0.08)',
   flatten: 'rgba(207,216,212,0.08)',

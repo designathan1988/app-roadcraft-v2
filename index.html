@@ -215,6 +215,7 @@
         <button type="button" class="terrain-mode" data-terrain-mode="paint" aria-pressed="false" data-i18n="terrain.paint">Paint</button>
         <button type="button" class="terrain-mode" data-terrain-mode="fog" aria-pressed="false" data-i18n="terrain.fog">Fog</button>
         <button type="button" class="terrain-mode" data-terrain-mode="cloud" aria-pressed="false" data-i18n="terrain.cloud">Clouds</button>
+        <button type="button" class="terrain-mode" data-terrain-mode="elements" aria-pressed="false" data-i18n="terrain.elements">Elements</button>
         <button type="button" class="terrain-mode" data-terrain-mode="mesa" aria-pressed="false" data-i18n="terrain.mesa">Mesa</button>
         <button type="button" class="terrain-mode" data-terrain-mode="canyon" aria-pressed="false" data-i18n="terrain.canyon">Canyon</button>
         <button type="button" class="terrain-mode" data-terrain-mode="escarpment" aria-pressed="false" data-i18n="terrain.escarpment">Basalt escarpment</button>
@@ -239,6 +240,15 @@
         <label><span data-i18n="atmo.fog">Mist</span> <input id="atmoFog" type="range" min="0" max="100" value="0" step="5" /><output id="atmoFogValue">0</output></label>
         <label><span data-i18n="atmo.fogHeight">Mist height</span> <input id="atmoFogHeight" type="range" min="5" max="200" value="60" step="5" /><output id="atmoFogHeightValue">60</output></label>
         <label><span data-i18n="atmo.planet">Planet radius</span> <input id="atmoPlanet" type="range" min="0" max="20" value="0" step="0.2" /><output id="atmoPlanetValue">0</output></label>
+      </div>
+      <div class="terrain-elements" hidden>
+        <label><span data-i18n="el.density">Density</span> <input id="elDensity" type="range" min="0.1" max="200" value="0.1" step="0.1" /><output id="elDensityValue">0.1</output></label>
+        <label><span data-i18n="el.size">Size</span> <input id="elSize" type="range" min="0.05" max="10" value="0.05" step="0.05" /><output id="elSizeValue">0.05</output></label>
+        <label><span data-i18n="el.variation">Variation</span> <input id="elVariation" type="range" min="0" max="100" value="0" step="5" /><output id="elVariationValue">0</output></label>
+        <label><span data-i18n="el.spacing">Spacing</span> <input id="elSpacing" type="range" min="0" max="20" value="0" step="0.1" /><output id="elSpacingValue">0</output></label>
+        <label><span data-i18n="el.strength">Strength</span> <input id="elStrength" type="range" min="5" max="100" value="5" step="5" /><output id="elStrengthValue">5</output></label>
+        <label><span data-i18n="el.intensity">Intensity</span> <input id="elIntensity" type="range" min="0" max="100" value="0" step="5" /><output id="elIntensityValue">0</output></label>
+        <button id="clearElements" type="button" data-i18n="el.clear">Remove every element</button>
       </div>
       <div class="terrain-cloud" hidden>
         <label><span data-i18n="cloud.size">Cloud size</span> <input id="cloudSize" type="range" min="30" max="600" value="150" step="10" /><output id="cloudSizeValue">150</output></label>
