@@ -14,12 +14,12 @@ describe('ground cover', () => {
     }
   });
 
-  it('keeps a broadleaf to 82 triangles with its foliage cards, a conifer to 31', () => {
+  it('keeps a broadleaf to 90 triangles with its foliage cards, a conifer to 34', () => {
     for (const species of FOREST_SPECIES) {
       for (let seed = 0; seed < 4; seed++) {
         const model = treeModel(species, seed);
         const total = triangles(model.body) + (model.cards ? triangles(model.cards) : 0);
-        expect(total).toBeLessThanOrEqual(species === 'conifer' ? 31 : 82);
+        expect(total).toBeLessThanOrEqual(species === 'conifer' ? 34 : 90);
       }
     }
   });

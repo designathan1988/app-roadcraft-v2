@@ -28,8 +28,8 @@ import { applyWind, windDepthMaterial, type WindResponse } from './wind';
  * "scrub") and the trees of a painted forest.
  *
  * All LOW-POLY by rule (the player: nothing of hundreds or thousands of
- * polygons): a stone is 36 triangles, a bush 60, a broadleaf tree 82 and a
- * conifer 31. A forest of thousands costs a few draw calls - one instanced
+ * polygons): a stone is 36 triangles, a bush 60, a broadleaf tree 90 and a
+ * conifer 34. A forest of thousands costs a few draw calls - one instanced
  * mesh per variant, as instanced forests are drawn (three.js forum,
  * "Procedural instanced forest") - where a garden tree is 1 700 triangles.
  *
@@ -88,6 +88,40 @@ export interface GroundCoverKit {
   readonly cardMaterial: MeshStandardMaterial;
   readonly cardDepth: MeshDepthMaterial;
   dispose(): void;
+}
+
+/**
+ * Bark on the trunks, drawn in the shader: vertical furrows and a few knots,
+ * in the model's own space so they stay on the tree. Bark is told by its
+ * colour (dark, redder than green, greener than blue), as the leaf shading
+ * tells it (`foliageShading.ts`); the leaves are left alone.
+ */
+function applyBark(material: MeshStandardMaterial): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vBarkPos;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vBarkPos = position;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vBarkPos;
+        float barkHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec3 c = diffuseColor.rgb;
+          float bark = step(c.b, c.g) * step(c.g, c.r) * (1.0 - smoothstep(0.1, 0.2, max(c.r, max(c.g, c.b))));
+          // Furrows round the trunk, long up it.
+          float around = atan(vBarkPos.z, vBarkPos.x) * 9.0;
+          float furrow = barkHash(vec2(floor(around), floor(vBarkPos.y * 14.0)));
+          float lines = 0.72 + 0.4 * smoothstep(0.15, 0.85, abs(fract(around) - 0.5) * 2.0) * (0.7 + 0.3 * furrow);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * lines * vec3(1.1, 1.0, 0.92), bark);
+        }`);
+  };
+  const key = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${key()}-bark`;
 }
 
 /** The forest's sway: the crown more than the trunk, as the garden trees. */
@@ -258,9 +292,9 @@ function appendPart(part: BufferGeometry, colour: readonly [number, number, numb
 
 /**
  * A tree one unit tall. A conifer: a five-sided trunk (10 triangles, open -
- * its ends are never seen) and three stacked cones (7 triangles each, faceted
- * as needles read), 31 triangles. A broadleaf: the trunk, an inner crown of
- * two lumps (20 triangles each) and 16 foliage cards (32 triangles) - 82 -
+ * its ends are never seen) and four stacked cones (6 triangles each, faceted
+ * as needles read), 34 triangles. A broadleaf: the trunk, an inner crown of
+ * one lump (20 triangles) and 30 foliage cards (60 triangles) - 90 -
  * every crown vertex and card lit with the normal from the CROWN's centre.
  * Colours LINEAR, lighter where the sun reaches the top of the crown.
  */
@@ -278,22 +312,32 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
     return geometry;
   };
   if (species === 'conifer') {
-    const trunk = new CylinderGeometry(0.022, 0.034, 0.3, 5, 1, true);
+    const trunk = new CylinderGeometry(0.014, 0.022, 0.3, 5, 1, true);
     trunk.translate(0, 0.15, 0);
     appendPart(trunk, bark, positions, normals, colours);
-    const tiers: [number, number, number][] = [[0.2, 0.46, 0.27], [0.43, 0.38, 0.2], [0.64, 0.34, 0.13]];
+    // Four narrow tiers of six sides: a fir's layered silhouette.
+    const tiers: [number, number, number][] = [[0.16, 0.36, 0.24], [0.34, 0.32, 0.19], [0.51, 0.3, 0.14], [0.67, 0.3, 0.09]];
     tiers.forEach(([base, height, radius], k) => {
-      const cone = new ConeGeometry(radius * (0.92 + ((seed + k) % 3) * 0.06), height, 7, 1, true).toNonIndexed();
+      const cone = new ConeGeometry(radius * (0.92 + ((seed + k) % 3) * 0.06), height, 6, 1, true).toNonIndexed();
       cone.computeVertexNormals();
       cone.translate(0, base + height / 2, 0);
-      const shade = 0.85 + k * 0.14;
-      appendPart(cone, [0.035 * shade, 0.075 * shade, 0.035 * shade], positions, normals, colours);
+      const shade = 1.2 + k * 0.18;
+      const first = positions.length / 3;
+      appendPart(cone, [0.035 * shade, 0.08 * shade, 0.035 * shade], positions, normals, colours);
+      // The tier's rim lighter than its top, as sunlit needle tips are.
+      for (let v = first; v < positions.length / 3; v++) {
+        const rim = (positions[v * 3 + 1]! - base) / height < 0.15 ? 1.35 : 1;
+        colours[v * 3] = colours[v * 3]! * rim;
+        colours[v * 3 + 1] = colours[v * 3 + 1]! * rim;
+        colours[v * 3 + 2] = colours[v * 3 + 2]! * rim;
+      }
     });
     return { body: finish(), cards: null };
   }
   const tall = species === 'broadleafTall';
   const trunkHeight = tall ? 0.5 : 0.42;
-  const trunk = new CylinderGeometry(0.03, 0.05, trunkHeight, 5, 1, true);
+  // Some 0.6 m across at the foot of a 15 m tree.
+  const trunk = new CylinderGeometry(0.016, 0.026, trunkHeight, 5, 1, true);
   trunk.translate(0, trunkHeight / 2, 0);
   appendPart(trunk, bark, positions, normals, colours);
   const leaf: [number, number, number] = species === 'ipeYellow' ? [0.42, 0.32, 0.04]
@@ -301,9 +345,10 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
       : tall ? [0.055, 0.105, 0.03] : [0.07, 0.12, 0.034];
   const lift = tall ? 0.1 : 0;
   const centre = new Vector3(0, 0.66 + lift, 0);
+  // The inner crown is the shaded heart the cards stand out of: smaller and
+  // darker than the leaves, never what the eye reads as the tree.
   const lumps: [number, number, number, number][] = [
-    [0.03, 0.68 + lift, 0, 0.27],
-    [-0.08 + (seed % 3) * 0.05, 0.58 + lift, 0.06 - (seed % 2) * 0.12, 0.21],
+    [0.02, 0.66 + lift, 0, 0.19],
   ];
   const p = new Vector3();
   const out = new Vector3();
@@ -323,9 +368,11 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
       positions.push(p.x, p.y, p.z);
       // Out from the crown's centre, a little of the lump's own: the canopy
       // shades as one mass (Polycount, SideFX on stylized foliage).
-      out.copy(p).sub(centre).normalize().lerp(own, 0.3).normalize();
+      out.copy(p).sub(centre).normalize().lerp(own, 0.1).normalize();
       normals.push(out.x, out.y, out.z);
-      const shade = 0.55 + Math.max(0, Math.min(1, (p.y - (cy - r)) / (2 * r))) * 0.8;
+      // The shadowed heart: dark, so what shows of it between the cards
+      // reads as depth in the canopy and not as a solid.
+      const shade = 0.28 + Math.max(0, Math.min(1, (p.y - (cy - r)) / (2 * r))) * 0.22;
       colours.push(leaf[0] * shade, leaf[1] * shade, leaf[2] * shade);
     }
     solid.dispose();
@@ -333,7 +380,18 @@ export function treeModel(species: ForestSpecies, seed: number): TreeModel {
   const body = finish();
   // The cards sit on the crown's leaf vertices and take their normals (so,
   // the crown's centre's) and colours (`propGeometry.leafCards`).
-  const cards = leafCards(body, 16, tall ? 0.3 : 0.34, 0xf0e5 + seed * 97);
+  // The cards ARE the crown the eye reads: 24 of them, large enough to cover
+  // the heart, in the sunlit green of leaves (brighter than the heart).
+  const cards = leafCards(body, 30, tall ? 0.42 : 0.46, 0xf0e5 + seed * 97);
+  const colour = cards.getAttribute('color');
+  const position = cards.getAttribute('position');
+  for (let i = 0; i < colour.count; i++) {
+    // Lighter towards the top of the crown, where the sun is.
+    const top = Math.max(0, Math.min(1, (position.getY(i) - 0.45) / 0.5));
+    // Brought back up from the dark heart they took their colour from.
+    const k = 3.2 + top * 1.4;
+    colour.setXYZ(i, colour.getX(i) * k, colour.getY(i) * k, colour.getZ(i) * k);
+  }
   return { body, cards };
 }
 
@@ -347,9 +405,12 @@ export function createGroundCoverKit(): GroundCoverKit {
     ipeYellow: [treeModel('ipeYellow', 3)],
     ipePink: [treeModel('ipePink', 1)],
   };
-  const treeMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.2 });
+  // Two-sided: a conifer's open cones, seen from under the canopy, must not
+  // turn into loose green planes.
+  const treeMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.2, side: DoubleSide });
   applyWind(treeMaterial, FOREST_WIND, 'forest-crown');
   applyFoliageShading(treeMaterial, 34);
+  applyBark(treeMaterial);
   const cluster = leafClusterTexture();
   const cardMaterial = new MeshStandardMaterial({
     color: 0xffffff, vertexColors: true, map: cluster, alphaTest: 0.5, side: DoubleSide, roughness: 0.8, metalness: 0, envMapIntensity: 0.2,
@@ -475,10 +536,16 @@ export function buildGroundCover(
     const models = kit.trees[species];
     // Its size is its height; it stands straight (`upright`). The cards are
     // the same instances with the cards' model and material.
-    forest.push(...instanced(ofSpecies, models.map((model) => model.body), kit.treeMaterial, 'forest', treeTint, 0, 0.05, true));
+    const bodies = instanced(ofSpecies, models.map((model) => model.body), kit.treeMaterial, 'forest', treeTint, 0, 0.05, true);
+    for (const mesh of bodies) mesh.receiveShadow = false;
+    forest.push(...bodies);
     if (models.every((model) => model.cards)) {
       const cards = instanced(ofSpecies, models.map((model) => model.cards!), kit.cardMaterial, 'forest-cards', treeTint, 0, 0.05, true);
-      for (const mesh of cards) mesh.customDepthMaterial = kit.cardDepth;
+      for (const mesh of cards) {
+        mesh.customDepthMaterial = kit.cardDepth;
+        // A crown is lit by its normals; its own cards' shadows only spot it.
+        mesh.receiveShadow = false;
+      }
       forest.push(...cards);
     }
   }
