@@ -193,8 +193,8 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
           }
         }
       }
-      // The traffic, and the cars standing off the road (parked, the player's).
-      const standing = [...(ragdollSim?.ambient.parked ?? []), ...(ragdollSim?.ambient.extra ?? []), ...(ragdollSim?.city.cars?.offRoad() ?? [])]
+      // The traffic, and the cars parked off the road.
+      const standing = [...(ragdollSim?.ambient.parked ?? [])]
         .filter((v) => v.free).map((v) => ({ v, pose: { p: { x: v.free!.x, y: v.free!.y }, angle: v.free!.angle } }));
       const moving = [...(ragdollSim?.vehicles.values() ?? [])].map((v) => ({ v, pose: vehiclePose(ragdollSim!, v, 1) }));
       for (const { v, pose } of [...moving, ...standing]) {

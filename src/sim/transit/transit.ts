@@ -10,7 +10,6 @@ import { makeDriver } from '../vehicles/driver';
 import { createVehicle, snapshot, type Vehicle, type VehicleId } from '../vehicles/state';
 import { planFrom } from '../routing/router';
 import { laneBeside } from '../agents/parking';
-import { AGENT_PERSON_BASE } from '../people/engine';
 import type { BayLane } from '../agents/parking';
 
 /**
@@ -159,7 +158,6 @@ export class TransitSim {
     // Buses of lines gone come off the road.
     for (const b of this.buses) {
       if (b.id !== null) { const v = w.vehicles.get(b.id); if (v) w.removeVehicle(v); }
-      if (b.staff !== null) w.city.releaseDriver(b.staff);
     }
     this.buses = [];
     for (const line of t.lines) {
@@ -262,19 +260,13 @@ export class TransitSim {
       // Not on the road (not yet, or taken off it): put on at the stop it was going to, in its time.
       for (const r of bus.riders) this.dropRider(r);
       bus.riders.clear();
-      // Its driver home.
-      if (bus.staff !== null) { w.city.releaseDriver(bus.staff); bus.staff = null; }
+      bus.staff = null;
       bus.wait -= DT;
       if (bus.wait > 0) return;
       bus.id = this.spawnBus(w, line, bus);
-      // A resident of the city at the wheel: the nearest one free, living by the line's first stop.
+      // Somebody at the wheel (the residents who drove the buses are kept apart, `src/backup/residents`).
       const v2 = bus.id !== null ? w.vehicles.get(bus.id) : undefined;
-      const first = this.stops.get(line.stops[0]!);
-      if (v2 && first) {
-        bus.staff = w.city.hireDriver(w, first.x, first.y, line.id);
-        v2.seats |= 1;
-        if (bus.staff !== null) { v2.people = [AGENT_PERSON_BASE + bus.staff]; v2.peopleAge = ['adult']; }
-      }
+      if (v2) v2.seats |= 1;
       bus.wait = BUS_SPACING;
       return;
     }

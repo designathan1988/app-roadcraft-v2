@@ -14,7 +14,6 @@ import type { SidewalkEdge } from '../peds/sidewalk';
 import { type BodyPart, type GestureKind, personHash, type PedView, type PersonAgeClass, type PersonGender, type Severable } from '../people/view';
 import type { PedestrianEngine, PeopleBridge, ResidentWalk } from '../people/engine';
 import { recordCasualty, recordWound } from '../people/casualties';
-import { ASK_WAY, type CarTrip, carSweep, crossesFootway } from './cars';
 import type { FreePose, Vehicle } from '../vehicles/state';
 
 /**
@@ -1112,35 +1111,15 @@ function stepWalkers(w: SimWorld): void {
   const carZones: CarZone[] = [];
   /** The cars standing with no trip: their bodies, the same objects while they stand where they stood. */
   const parkedNow: CarZone[] = [];
-  const holding = new Set<number>();
-  // One pass over the trips instead of a search of them per car (`tripOfCar`):
-  // with hundreds of parked cars that search was a tenth of the step.
-  const tripByCar = new Map<number, CarTrip>();
-  for (const t of w.city.cars?.trips.values() ?? []) if (!tripByCar.has(t.car.id)) tripByCar.set(t.car.id, t);
-  for (const car of [...(w.city.cars?.offRoad() ?? []), ...w.ambient.parked, ...w.ambient.extra]) {
+  // The scenery's parked cars stand where they stand (the residents' own
+  // cars, which drove across the footway in and out of their bays, were kept
+  // apart with them, `src/backup/residents`).
+  for (const car of w.ambient.parked) {
     const f = car.free;
     if (!f) continue;
-    const t = tripByCar.get(car.id) ?? null;
-    const body = parkedZone(car, f);
-    if (!t) { parkedNow.push(body); continue; }
-    const discs = body.discs.slice();
-    let on: Set<number> | null = null;
-    if (t.reserved || t.waitedPeople >= ASK_WAY) {
-      const way = carSweep(t, m(0.5));
-      discs.push(...way);
-      holding.add(car.id);
-      on = s.onCarWay.get(car.id) ?? null;
-      if (!on) {
-        // The ground just taken: whoever is on it now walks on off it.
-        on = new Set(s.walkers.filter((p) => !p.inside && way.some((c) => hypot(c.x - p.x, c.y - p.y) < c.r)).map((p) => p.id));
-        s.onCarWay.set(car.id, on);
-      }
-    }
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const d of discs) { x0 = Math.min(x0, d.x - d.r); y0 = Math.min(y0, d.y - d.r); x1 = Math.max(x1, d.x + d.r); y1 = Math.max(y1, d.y + d.r); }
-    carZones.push({ x0, y0, x1, y1, discs, on, crossingOnly: !crossesFootway(t) });
+    parkedNow.push(parkedZone(car, f));
   }
-  for (const id of [...s.onCarWay.keys()]) if (!holding.has(id)) s.onCarWay.delete(id);
+  s.onCarWay.clear();
   // The trains at grade: solid as cars are (nobody walks across a level crossing under one).
   for (const discs of w.city.transit.trainZones()) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

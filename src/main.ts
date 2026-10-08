@@ -30,7 +30,7 @@ import {
   snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
-import { blockGridChoice, onRoadGridChange, roadGridShown, shootPeopleAllowed, signChoice, weaponChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
+import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { scatter } from '@world/elements';
 import { cloudUnder, driftedCloud, scatterClouds } from '@world/clouds';
 import { oneTree, plantTrees } from '@world/trees';
@@ -68,11 +68,7 @@ import { History, restoreInto, restoreSnapshot, serialize } from '@editor/histor
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
-import type { Play } from './play';
-import { type AgentCard, createAgentCard } from '@ui/agentCard';
-import type { PlayerHud } from '@ui/playerHud';
 import { TransitTool, setTransitTool } from '@editor/transitTools';
-import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
 import { type Building, type BuildingId, decayOf } from '@world/buildings/types';
 import { solidFootprints, worldToLocal } from '@world/buildings/geometry';
@@ -80,7 +76,7 @@ import { closestOnSegment } from '@core/intersect';
 import { pointInPolygon } from '@core/polygon';
 import { signalPosts } from '@world/signalPosts';
 import { resolveBlocks } from '@world/buildings/blocks';
-import { strandVehicle, type VehicleId } from '@sim/vehicles/state';
+import { strandVehicle } from '@sim/vehicles/state';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
@@ -102,9 +98,6 @@ import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { LOT_PLAN_VERSION, growOnLot } from '@editor/zoning';
-
-/** Playing in the scenery (`play.ts`); made once the scene and the buildings are. */
-let play: Play | null = null;
 
 type Tool =
   | 'building'
@@ -251,15 +244,6 @@ function syncPopulationShare(): void {
   sim.populationShare = window.innerWidth < NARROW_SCREEN_WIDTH ? NARROW_SCREEN_SHARE : 1;
 }
 syncPopulationShare();
-// Half the residents a town's floor area would hold: each one is a whole
-// agent (a day, a walk, a car, a body), and the player ordered fewer people
-// so the town stays fast (2026-10-05).
-sim.city.density = 0.5;
-// No more than 90 on foot at once, and a building's people out of its door
-// two a game minute: a block of flats emptied in one instant at 07:30 and
-// stood at the corner as one crowd (the player's report, 2026-10-05).
-sim.city.maxWalks = 90;
-sim.city.doorsPerMinute = 2;
 
 /**
  * The zoom range the renderer we are about to boot can actually represent.
@@ -685,13 +669,9 @@ sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine
 // leave at another road end - never anywhere else (the player's order of
 // 2026-10-06). People walk with the agents' walking engine. `?ambient=view`
 // brings back GTA's way (made and taken away round the view) to compare. The
-// residents' days are off (`?residents=1` brings them back).
-if (engineFlags.get('residents') === '1') sim.city.useAgents(true);
-else {
-  sim.city.enabled = false;
-  sim.ambient.enabled = true;
-  sim.ambient.source = engineFlags.get('ambient') === 'view' ? 'view' : 'edges';
-}
+// residents' days are kept apart (`src/backup/residents`).
+sim.ambient.enabled = true;
+sim.ambient.source = engineFlags.get('ambient') === 'view' ? 'view' : 'edges';
 view = scene.viewport;
 restoreOrbit(savedSession?.settings.camera);
 canvas.style.opacity = '0';
@@ -757,32 +737,6 @@ const buildings = createBuildingWiring({
   flash: (key, params) => flashHint(key, params),
   hintChanged: () => updateHint(),
 });
-// Playing in the scenery as in GTA (`play.ts`, `sim/ambient/play.ts`): J or
-// the top bar's button. Behind `__PLAY_MODE__` (vite.config.ts): off, none of
-// it is bundled and the button stays hidden (docs/STATUS.md says how to turn
-// it back on).
-if (__PLAY_MODE__) {
-  void Promise.all([import('./play'), import('@sim/ambient/play'), import('@sim/agents/player'), scene.effects()])
-    .then(([{ createPlay }, { PlayWorld }, { Player }]) => {
-      sim.ambient.play ??= new PlayWorld();
-      sim.city.player ??= new Player();
-      play = createPlay({
-        sim,
-        scene: () => scene,
-        canvas,
-        root: document.body,
-        requestDraw: () => requestDraw(),
-        openInside: (id) => buildings.openInside(id),
-        centre: () => view.centre,
-      });
-      const button = document.getElementById('playButton');
-      if (button) {
-        button.hidden = false;
-        button.addEventListener('click', () => play?.toggle());
-      }
-    });
-}
-
 /** The ground the camera sees: the screen's four corners, on the ground. */
 function viewFootprint(): Vec2[] {
   const { cssW: w, cssH: h } = surface;
@@ -2064,14 +2018,6 @@ canvas.addEventListener('pointerdown', (e) => {
 
     case 'inspect': {
       const box = canvas.getBoundingClientRect();
-      // A person, or their car: their card - what they are doing, and why.
-      const who = pickAgent(e.clientX - box.left, e.clientY - box.top);
-      if (who !== null) {
-        theAgentCard().open(who);
-        agentCardClock = 0;
-        refreshAgentCard(performance.now());
-        break;
-      }
       // A click on a building is for seeing inside it (the click handlers
       // above), not for the street that happens to run past it.
       const hitBuilding = buildings.tool.buildingAt({ x: e.clientX - box.left, y: e.clientY - box.top });
@@ -4164,8 +4110,6 @@ minimapCanvas.addEventListener('pointermove', (e) => {
  * nothing at all.
  */
 const arrowPan = (e: KeyboardEvent): void => {
-  // Somebody in the player's hands has the keys (`playerKey`).
-  if (controlling()) return;
   const target = e.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
   // Escape ends whatever is being drawn. A pole line is traced in stretches,
@@ -4286,198 +4230,11 @@ setInterval(() => {
   }
 }, 500);
 
-// ------------------------------------------------------------ resident agents
-
-/** How near a click must be to a person or a car, in screen pixels, to pick them. */
-const AGENT_PICK_PX = 22;
-let agentCard: AgentCard | null = null;
-let agentCardClock = 0;
-const theAgentCard = (): AgentCard =>
-  // "Control" only with walking the city on (`__PLAY_MODE__`): off, the card has no such button.
-  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw, __PLAY_MODE__ ? takeControlOf : null);
-
-// ------------------------------------------------------------ a person in the player's hands (GTA)
-
-let playerHud: PlayerHud | null = null;
-let playerHudClock = 0;
-/** Keys held down while somebody is controlled. */
-const held = new Set<string>();
-
-/** Takes a resident into the player's hands (the card's "Control"). */
-function takeControlOf(resident: number): void {
-  const player = sim.city.player;
-  if (!player || !player.take(sim, resident)) return;
-  if (!playerHud) void import('@ui/playerHud').then(({ createPlayerHud }) => { playerHud ??= createPlayerHud(document.querySelector<HTMLElement>('.v2') ?? document.body); });
-  // The game goes on in real time with somebody to move.
-  if (sim.clock.paused) sim.clock.paused = false;
-  requestDraw();
-}
-
-const controlling = (): boolean => (sim.city.player?.resident ?? null) !== null;
-
-/** The keys of the player's hands; nothing else sees them while somebody is controlled. */
-function playerKey(e: KeyboardEvent, down: boolean): boolean {
-  const player = sim.city.player;
-  if (!player || !controlling()) return false;
-  const target = e.target as HTMLElement | null;
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return false;
-  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  const input = player.input;
-  if (down && !e.repeat) {
-    if (key === 'e') input.enter = true;
-    else if (key === 'f') input.talk = true;
-    else if (key === ' ') input.punch = true;
-    else if (key === 'Escape' || key === 'q') input.release = true;
-  }
-  if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Shift', ' ', 'e', 'f', 'q', 'Escape'].includes(key)) {
-    if (down) held.add(key); else held.delete(key);
-    e.preventDefault();
-    e.stopPropagation();
-    return true;
-  }
-  return false;
-}
-if (__PLAY_MODE__) {
-  window.addEventListener('keydown', (e) => { playerKey(e, true); }, true);
-  window.addEventListener('keyup', (e) => { playerKey(e, false); }, true);
-  window.addEventListener('blur', () => held.clear());
-}
-
-/** The keys held, as the player's move this frame: on foot along the screen, in a car throttle and wheel. */
-function steerPlayer(): void {
-  const player = sim.city.player;
-  if (!player || player.resident === null) { held.clear(); playerHud?.update(null, '', 0); return; }
-  const up = held.has('w') || held.has('ArrowUp'), down = held.has('s') || held.has('ArrowDown');
-  const left = held.has('a') || held.has('ArrowLeft'), right = held.has('d') || held.has('ArrowRight');
-  const input = player.input;
-  input.run = held.has('Shift');
-  input.throttle = (up ? 1 : 0) - (down ? 1 : 0);
-  input.steer = (right ? 1 : 0) - (left ? 1 : 0);
-  // Along the screen: "up" is wherever the camera looks.
-  const sx = (right ? 1 : 0) - (left ? 1 : 0), sy = (down ? 1 : 0) - (up ? 1 : 0);
-  if (sx === 0 && sy === 0) { input.moveX = 0; input.moveY = 0; }
-  else {
-    const { cssW: w, cssH: h } = surface;
-    const c = view.toWorld(w / 2, h / 2, w, h), to = view.toWorld(w / 2 + sx * 100, h / 2 + sy * 100, w, h);
-    const dx = to.x - c.x, dy = to.y - c.y, len = Math.hypot(dx, dy) || 1;
-    input.moveX = dx / len; input.moveY = dy / len;
-  }
-  // In a car the wheel turns with the car: "right" is the driver's right.
-  // The camera stays on them.
-  const cam = view.centre;
-  view.moveTo({ x: cam.x + (player.x - cam.x) * 0.25, y: cam.y + (player.y - cam.y) * 0.25 });
-  const now = performance.now();
-  if (now - playerHudClock > 100) {
-    playerHudClock = now;
-    const v = player.view();
-    // Inside a building: its name, and what they are doing there.
-    const inside = v && v.place !== null ? { ...v, placeName: placeName(v.place), activity: sim.city.doingOf(v.resident)?.kind ?? null } : v;
-    playerHud?.update(inside, v ? residentName(v.resident) : '', sim.clock.time);
-  }
-  requestDraw();
-}
-
-/** A resident as the player knows them: their name. */
-function residentName(resident: number): string {
-  return t('agent.title', { n: resident });
-}
-
-/** Where a resident agent is now: on foot, in or at their car, or at the door of where they are. */
-function agentPosition(resident: number): Vec2 | null {
-  const city = sim.city;
-  const person = sim.pedViewById.get(AGENT_PERSON_BASE + resident);
-  if (person) return { x: person.x, y: person.y };
-  const car = city.cars?.cars.get(resident);
-  const trip = city.cars?.tripOfCar(car?.id ?? -1);
-  if (car && trip) {
-    const v = car.body ?? sim.vehicles.get(car.id);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) return pose.p;
-  }
-  for (const d of city.transit.drivers()) {
-    if (d.resident !== resident) continue;
-    const v = sim.vehicles.get(d.bus);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) return pose.p;
-  }
-  for (const trip of city.trips.values()) {
-    if (trip.resident !== resident || trip.mode !== 'bike') continue;
-    const v = sim.vehicles.get(trip.agent as VehicleId);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) return pose.p;
-  }
-  const at = city.whereIs(resident);
-  return at !== null ? city.doorOf(at) : null;
-}
-
-/** The resident agent under a screen point (on foot, or by their car), or null. */
-function pickAgent(px: number, py: number): number | null {
-  const cars = sim.city.cars;
-  if (!cars) return null;
-  let best: number | null = null;
-  let bestD = AGENT_PICK_PX;
-  const consider = (x: number, y: number, resident: number): void => {
-    const h = scene.surfaceHeightAt(x, y);
-    const s = view.toScreen({ x, y }, surface.cssW, surface.cssH, Number.isFinite(h) ? h : 0);
-    const d = Math.hypot(s.x - px, s.y - py);
-    if (d < bestD) { bestD = d; best = resident; }
-  };
-  for (const p of sim.pedViews) if (p.id >= AGENT_PERSON_BASE) consider(p.x, p.y, p.id - AGENT_PERSON_BASE);
-  for (const car of cars.cars.values()) {
-    const v = car.body ?? sim.vehicles.get(car.id);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) consider(pose.p.x, pose.p.y, car.owner);
-  }
-  // A resident at the wheel of a bus.
-  for (const d of sim.city.transit.drivers()) {
-    const v = d.resident === null ? undefined : sim.vehicles.get(d.bus);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) consider(pose.p.x, pose.p.y, d.resident!);
-  }
-  // A resident riding their bicycle.
-  for (const trip of sim.city.trips.values()) {
-    if (trip.mode !== 'bike') continue;
-    const v = sim.vehicles.get(trip.agent as VehicleId);
-    const pose = v ? vehiclePose(sim, v, 1) : null;
-    if (pose) consider(pose.p.x, pose.p.y, trip.resident);
-  }
-  return best;
-}
-
-/** A building as the player knows it: its name, or what it is. */
-function placeName(id: number): string {
-  const b = doc.buildings.get(id as BuildingId);
-  if (!b) return '—';
-  if (b.name) return b.name;
-  const key = `building.fn.${b.function ?? 'house'}`;
-  return hasKey(key) ? t(key) : t('building.fn.house');
-}
-
-/** The open agent card, kept up to date a few times a second. */
-function refreshAgentCard(now: number): void {
-  if (!agentCard || agentCard.resident === null || now - agentCardClock < 250) return;
-  agentCardClock = now;
-  agentCard.update(sim.city.describe(agentCard.resident), placeName);
-}
-
-/** The camera kept on the agent the card follows. */
-function followAgent(): void {
-  if (!agentCard?.following || agentCard.resident === null) return;
-  const p = agentPosition(agentCard.resident);
-  if (!p) return;
-  // Eased onto them, through the view's own seam: the zoom and the bearing stay
-  // the player's.
-  const c = view.centre;
-  view.moveTo({ x: c.x + (p.x - c.x) * 0.2, y: c.y + (p.y - c.y) * 0.2 });
-}
-
 /** The footways were rebuilt (`rebuildWalkTopology`) and the walkers are rebound onto them next frame. */
 let pedsToRebind = false;
 /** The footways of the last edit being rebuilt, a few milliseconds a frame (`SimWorld.walkTopologySteps`). */
 let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = null;
 
-/** The Actions' weapon choice last applied (`weaponChoice.serial`). */
-let weaponApplied = 0;
 /** A frame has been drawn, and the first world has been put in place (the opening builds it in parts). */
 let drawnOnce = false;
 let worldShown = false;
@@ -4487,13 +4244,6 @@ function frame(now: number): void {
   beginFrameWork();
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
-  // The dock's Actions: may shots strike people.
-  const playWorld = __PLAY_MODE__ ? sim.ambient.play : null;
-  if (playWorld) {
-    playWorld.shootPeople = shootPeopleAllowed();
-    // ...and the weapon chosen there, applied once per choice (the keys still change it in play).
-    if (weaponChoice.serial !== weaponApplied) { weaponApplied = weaponChoice.serial; playWorld.weapon = weaponChoice.weapon; }
-  }
   const wall = (now - last) / 1000;
   last = now;
 
@@ -4568,19 +4318,14 @@ function frame(now: number): void {
     }
   }
   buildings.beforeDraw(tool === 'building');
-  followAgent();
   // The pole run under the pointer, planned once per frame: the 3D preview
   // shows it as it will stand, the overlay marks only what cannot be built.
   framePolePlan = currentPolePlan();
   scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
-  if (__PLAY_MODE__) steerPlayer();
-  // Playing in the scenery (`play.ts`): the player's input and camera, before the picture.
-  play?.frame(wall);
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
   drawnOnce = true;
-  refreshAgentCard(now);
   drawOverlayScreen();
   updateCameraNeedle();
   if (topologyAfterDraw) {
@@ -5712,10 +5457,6 @@ function updateStatus(): void {
   // The time of day and the residents' day (`sim/city`).
   const minutes = sim.city.minutes(sim) % 1440;
   text('cityClock', `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`);
-  const life = sim.city.counts();
-  text('residentCount', life.residents > 0
-    ? t('status.residents', { count: life.residents, travelling: life.walking + life.driving, working: life.atWork })
-    : '');
   // The city's numbers, computed all along and shown nowhere (audit P2-02).
   text('metricTrips', String(sim.completedTrips));
   text('metricLost', String(sim.entryDemandLost));
@@ -6070,28 +5811,6 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
           else scene.leak(jx, jy, h, 1 + Math.random() * 1.5);
         }
       }
-      // Those inside, thrown out through its walls and windows from the floor
-      // they were on: killed near the blow, knocked flying further off.
-      const inside = sim.city.inside(c.id as BuildingId);
-      const rings = solidFootprints(c);
-      const ring = rings[0];
-      if (inside.length && ring) {
-        const base = sceneHeightAt({ x: c.x, y: c.y });
-        const floors = Math.max(1, Math.max(...c.volumes.map((v) => v.base + v.storeys.length)));
-        const thrown: Occupant[] = [];
-        for (const r of inside.slice(0, 16)) {
-          const a = ring[Math.floor(Math.random() * ring.length)]!, q = ring[Math.floor(Math.random() * ring.length)]!;
-          const t = Math.random();
-          const px = a.x + (q.x - a.x) * t, py = a.y + (q.y - a.y) * t;
-          const level = Math.floor(Math.random() * floors);
-          const d = Math.hypot(px - world.x, py - world.y);
-          const near = d < radius * 0.6;
-          thrown.push({ id: 7_000_000 + r.id, x: px, y: py, z: base + levelElevation(c, level), heading: Math.random() * Math.PI * 2,
-            blastX: world.x, blastY: world.y, power: Math.min(1, force / 10),
-            kind: near ? (Math.random() < 0.45 ? 'torn' : 'dead') : Math.random() < 0.5 ? 'dead' : 'knocked' });
-        }
-        scene.flingOccupants(thrown);
-      }
     }
     // Everything round it left filthy: the buildings within twice the reach
     // blackened with soot and dust (their weathering, `decay`).
@@ -6148,9 +5867,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
     }
     return changed;
   });
-  // Cars: thrown, burning shells - the residents' own (parked in their bays,
-  // or driving) and the traffic from the edge of the map.
-  const colourOf = (css: string): number => parseInt(String(css).replace('#', '').slice(0, 6), 16) || 0x777777;
+  // Cars: thrown, burning shells - the traffic.
   // Who was in them or on them: thrown out dead, torn, burnt black near the blast.
   const aboard: Occupant[] = [];
   const throwAboard = (id: number, x: number, y: number, angle: number, rider: boolean, index: number | null = null): void => {
@@ -6160,11 +5877,6 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
       blastX: world.x, blastY: world.y, power: Math.max(0.3, 1 - d / (radius * 1.1)),
       kind: close && Math.random() < 0.5 ? 'torn' : 'dead', charred: !rider || close, index });
   };
-  for (const c of sim.city.cars?.wreck(sim, world, radius * 1.1) ?? []) {
-    hit.vehicles.push({ x: c.x, y: c.y, angle: c.angle, length: c.length, width: c.width, height: c.height, color: colourOf(c.colour),
-      id: c.id, archetype: c.archetype });
-    if (c.occupied) throwAboard(c.id, c.x, c.y, c.angle, false);
-  }
   for (const v of [...sim.vehicles.values()]) {
     const pose = vehiclePose(sim, v, 1);
     if (!pose || !near(pose.p.x, pose.p.y, radius * 1.1)) continue;

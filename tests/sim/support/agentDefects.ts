@@ -87,7 +87,6 @@ function people(sim: SimWorld, peds: number, traffic: number): SimWorld {
   // here, people and cars coming in at the road ends.
   sim.usePedestrianEngine(createAgentWalkEngine());
   sim.driveModel = 'v2';
-  sim.city.enabled = false;
   sim.ambient.enabled = true;
   sim.ambient.source = 'edges';
   return sim;

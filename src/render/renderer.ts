@@ -79,36 +79,9 @@ import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, crea
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
-import { Indoors } from './indoors';
-import { setLit, slotOf, slotsOnFloor } from './buildings/lightSlots';
+import { RoomLamps } from './roomLamps';
 import { m } from '@world/units';
-/**
- * Marks lit every space somebody is in, awake: a resident's own flat at home
- * (none after bedtime), the floor of their job at work, the ground floor for
- * a visitor, and the lobby of a block of flats with people in it after dark.
- */
-function updateLitRooms(sim: SimWorld): void {
-  const lit = new Set<number>();
-  const hour = (sim.city.minutes(sim) % 1440) / 60;
-  const asleep = hour >= 23 || hour < 6.5;
-  const addFloor = (b: number, level: number): void => { for (const slot of slotsOnFloor(b, level)) lit.add(slot); };
-  for (const b of sim.doc.buildings.all()) {
-    const inside = sim.city.inside(b.id);
-    if (inside.length === 0) continue;
-    for (const r of inside) {
-      if (r.home === b.id) {
-        if (asleep) continue;
-        const flat = r.homeSpace;
-        const slot = flat ? slotOf(b.id, r.homeLevel, flat.volume, flat.x, flat.y) : -1;
-        if (slot >= 0) lit.add(slot); else addFloor(b.id, r.homeLevel);
-      } else addFloor(b.id, r.work === b.id ? r.workLevel : 0);
-    }
-    if (b.function === 'apartments' || b.function === 'residentialTower') addFloor(b.id, 0);
-  }
-  setLit(lit);
-}
-
-/** Room lights kept in the scene for the floors cut open (`indoors.ts`). */
+/** Room lights kept in the scene for the floors cut open (`roomLamps.ts`). */
 const ROOM_LIGHTS = 6;
 /** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
 const FACADE_SHADOW_ZOOM = 11;
@@ -957,7 +930,7 @@ export function createSceneRenderer(
   /** Towards the sun, for the relief's own shadows (`TerrainSurface.setSun`). */
   const sunTowards = new Vector3();
   const flatDirection = new Vector3();
-  const indoors = new Indoors();
+  const roomLamps = new RoomLamps();
   // Room lights for the floors cut open: a fixed set, so switching them on and
   // off never changes the scene's light count (which recompiles every shader).
   const roomLights: PointLight[] = [];
@@ -969,7 +942,6 @@ export function createSceneRenderer(
     roomLights.push(light);
   }
   let lampsKey = '';
-  let litAt = 0;
   let tallestFor = -1;
   let lastDark = -1;
   let tallestTop = 0;
@@ -2630,10 +2602,6 @@ export function createSceneRenderer(
         eye: cullCamera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
-        // Zoomed out past the crowd's band nobody is drawn: the people in
-        // the rooms and the lots are not even listed (they were, every frame).
-        indoor: detailed ? [...indoors.figures(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt),
-          ...indoors.yard(sim, terrain.naturalRenderedHeightAt)] : [],
         exhaust: (x, y, z, angle, length, speed, dusty) => {
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);
@@ -2650,7 +2618,7 @@ export function createSceneRenderer(
       const key = cutSpec ? `${cutSpec.level}@${cutSpec.x},${cutSpec.y}:${sim.doc.buildings.revision}` : '';
       if (key !== lampsKey) {
         lampsKey = key;
-        const lamps = indoors.lamps(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt, ROOM_LIGHTS);
+        const lamps = roomLamps.lamps(sim, cutSpec, terrain.naturalRenderedHeightAt, pavedHeightAt, ROOM_LIGHTS);
         roomLights.forEach((light, i) => {
           const at = lamps[i];
           light.userData['used'] = !!at;
@@ -2677,13 +2645,7 @@ export function createSceneRenderer(
         tallestBox.setFromObject(buildings.group);
         tallestTop = tallestBox.isEmpty() ? 0 : tallestBox.max.y;
       }
-      // The windows of the rooms people are in, and awake in, are lit; the rest
-      // are dark (`buildings/lightSlots.ts`). Once a second of play is enough.
-      if (performance.now() - litAt > 1000) {
-        litAt = performance.now();
-        updateLitRooms(sim);
-      }
-      // Day and night, by the residents' clock (`sim/city`).
+      // Day and night, by the city's clock (`sim/city/city.ts`).
       // "Dia": four in the afternoon, the sun 29 degrees up - long enough
       // shadows to model the land, as the player's picture (2026-10-07).
       const clock = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);

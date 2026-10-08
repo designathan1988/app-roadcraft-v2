@@ -47,7 +47,6 @@ import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops
 import { FOOTWAY_RISE } from '@world/roadTypes';
 import { groundGradient } from './groundShear';
 import { WheelOdometer, blinkOn, indicatorSide, pathCurvature, steerAngle } from './vehicleSignals';
-import type { IndoorFigure } from './indoors';
 import {
   axleStations, buildBusModel, buildTruckModel, buildTwoWheelerModel, seatFitScale, rimGeometry, spokedRimGeometry,
   merge, tyreGeometry, type TwoWheelerModel, type VehicleModel,
@@ -73,8 +72,6 @@ import { createBlobShadows } from './blobShadows';
  * so nothing can be simulated that cannot be drawn.
  */
 const MAX_VEHICLES = FLEET_CEILING;
-/** No cars off the road (residents without agents). */
-const NO_VEHICLES: readonly SimVehicle[] = [];
 const MAX_PEDS = PED_CEILING;
 /** Two-wheeler riders' own batches (frames, wheels, helmets). */
 const MAX_RIDERS = 400;
@@ -162,8 +159,6 @@ export interface AgentRenderOptions {
   readonly vehicleVisible?: (x: number, y: number, height: number, radius: number) => boolean;
   /** Zoom from which vehicle cabins and occupants are drawn. */
   readonly occupantZoom?: number;
-  /** Residents inside the buildings cut open (`indoors.ts`), drawn where they are on the floor shown. */
-  readonly indoor?: readonly IndoorFigure[];
   /** Each motor vehicle drawn: where its tail smoke leaves from (`exhaust.ts`). */
   readonly exhaust?: (x: number, y: number, z: number, angle: number, length: number, speed: number, dusty: boolean) => void;
   /** The bodies of people killed by a blow (`ragdoll.ts`), drawn with the crowd's own meshes. */
@@ -1889,10 +1884,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       nearCandidates.length = 0;
       vehicleBlobs.begin();
       if (suspensionFrame % 600 === 0) for (const [id, entry] of parkedDraws) if (suspensionFrame - entry.seen > 120) parkedDraws.delete(id);
-      // The traffic, then the residents' own cars off the road: parked in their
-      // bays or manoeuvring in and out (`sim/agents`), on the ground of the lot.
-      const offRoad = world.city.cars?.offRoad() ?? NO_VEHICLES;
-      for (const list of [world.vehiclesInIdOrder(), offRoad, world.ambient.parked, world.ambient.extra]) for (const vehicle of list) {
+      // The traffic, then the scenery's cars parked in their bays, on the ground of the lot.
+      for (const list of [world.vehiclesInIdOrder(), world.ambient.parked]) for (const vehicle of list) {
         if (drawn >= MAX_VEHICLES) break;
         const pose = vehiclePose(world, vehicle, alpha);
         if (!pose) continue;
@@ -2087,15 +2080,6 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
               pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
             pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           }
-          pedCount++;
-        }
-        // And the people indoors, on the floors that are cut open.
-        for (const figure of options.indoor ?? []) {
-          if (pedCount >= MAX_PEDS) break;
-          // Out of the view, as the walkers are: not written at all.
-          if (options.pedestrianVisible && !options.pedestrianVisible(figure.x, figure.y, figure.z)) continue;
-          frameAt(figure.x, figure.y, figure.heading, figure.z);
-          pedestrians.draw(figure.view, figure.x, figure.y, figure.heading, figure.z, alpha, null, figure.lean, true);
           pedCount++;
         }
       }

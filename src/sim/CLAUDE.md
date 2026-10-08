@@ -1,4 +1,4 @@
-# src/sim — vehicles, pedestrians, residents, signals
+# src/sim — vehicles, pedestrians, signals
 
 Rules for the whole repository are in the root `CLAUDE.md`. This file lists what
 breaks far from where you edit in `sim/`.
@@ -15,32 +15,25 @@ breaks far from where you edit in `sim/`.
   `sim/people/` (`engine.ts`, `view.ts`, `casualties.ts`) is read by live code
   (the footway graph, the crossings, the views the renderer draws).
 
-## The agents engine (`sim/agents/`)
+## The people and the city (`sim/agents/`, `sim/ambient/`, `sim/city/`)
 
-- `cars.ts`: a resident's own car and the GTA-style task chain of a car trip
-  (board, leave, drive, park, alight). The only writer of `Vehicle.free` and of
-  an off-road car's doors and kerb stop.
-- `parking.ts`: the bays (stalls of `parking` elements), the way out of each
-  lot onto a street, the lane each bay is reached from.
-- `lotNav.ts`: the grid inside a lot and the distance field to its exits.
-- `manoeuvre.ts`: the curves a car drives off the road (reverse out, aisles,
-  into the bay nose first).
-- `mind.ts`: needs, the places that advertise what they give, and the choice of
-  where to go next.
-- `activities.ts`: what a resident does in the building they are in, the
-  furniture's ads against their needs at home, their post at work, what the
-  place is for elsewhere; kept by `CityLife.doingOf`, drawn by `render/indoors.ts`.
-- `walk.ts`: the agents' walking engine (the game's only one). Lanes on `world/walkways.ts`, SUMO striping, the body following a
-  point ahead, zebras by `crossings/permission.ts`, published to
-  `crossingStates` for the cars. The engine object carries `inspect` for
-  probes in the page.
-- `CityLife` (`city/life.ts`) still runs the diaries; with `cars` set it starts
-  car trips through `OwnCars` and never makes a car at the kerb.
-- Measure with `tests/sim/agents/ownCars.spec.ts`, `mind.spec.ts` and
-  `walk.spec.ts`; photograph with `scripts/agents-shots.mjs`,
-  `scripts/agent-card-shots.mjs` and `scripts/walk-shots.mjs`.
-  `defects.spec.ts` runs the game's setup: this engine with the scenery's
-  life coming in at the road ends.
+- `agents/walk.ts`: the agents' walking engine (the game's only one). Lanes on
+  `world/walkways.ts`, SUMO striping, the body following a point ahead, zebras
+  by `crossings/permission.ts`, published to `crossingStates` for the cars.
+  The engine object carries `inspect` for probes in the page.
+- `agents/parking.ts`: the bays (stalls of `parking` elements), the way out of
+  each lot onto a street, the lane each bay is reached from; `agents/lotNav.ts`
+  the grid inside a lot.
+- `ambient/ambient.ts`: the scenery's life - people and cars coming in at the
+  road ends (or round the view, `?ambient=view`), the cars parked in the bays.
+- `city/city.ts` (`City`, `SimWorld.city`): the time of day, the public
+  transport (`transit/transit.ts`), the edge traffic flag. Nobody lives in the
+  city: the residents' days (homes, jobs, minds, their own cars) and walking
+  the city as one of them are kept apart in `src/backup/residents` (the
+  player's decision of 2026-10-08; its README says how to bring them back).
+  The Actions (pistol and bomb) are not part of that and stay live.
+- `defects.spec.ts` runs the game's setup: the walking engine with the
+  scenery's life coming in at the road ends.
 
 ## Couplings
 
@@ -58,10 +51,6 @@ breaks far from where you edit in `sim/`.
 
 ## Traps that have already caught someone
 
-- **The game runs fewer residents than the specs.** `main.ts` sets
-  `CityLife.density = 0.5`, `maxWalks = 90` and `doorsPerMinute = 2`; the specs
-  keep the defaults (full density, no door limit), so a town in a spec is not the
-  town the player sees. Change the game's numbers there, not in `population.ts`.
 - **`clock.tick` and `clock.time` do not advance under test.** They move only inside
   `SimClock.advance` and `SimClock.run`, and the specs drive `step` directly.
   Behaviour keyed on the clock silently never happens in the suite (that is how

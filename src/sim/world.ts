@@ -21,7 +21,7 @@ import type { CrossingStates } from './crossings/state';
 import { publishCrossingStates, publishPedViews } from './peds/publish';
 import type { PedView } from './people/view';
 import type { PedestrianEngine } from './people/engine';
-import { CityLife } from './city/life';
+import { City } from './city/city';
 import { AmbientWorld } from './ambient/ambient';
 import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
 import type { Building } from '@world/buildings/types';
@@ -181,12 +181,11 @@ export class SimWorld {
   demandMultiplier = 1;
   /**
    * Traffic from outside: cars at the map's edge entries, people at doors and
-   * road ends. Off once the city has residents (`sim/city`): what moves is
-   * then their own trips.
+   * road ends (set by `City.step`).
    */
   edgeTraffic = true;
-  /** The residents' days (`sim/city/life.ts`), stepped by the pipeline. */
-  city: CityLife = new CityLife();
+  /** The city's services - the time of day, the public transport (`sim/city/city.ts`) - stepped by the pipeline. */
+  readonly city = new City();
   /** The life of the scenery: people and traffic made round the view (`sim/ambient`). */
   readonly ambient = new AmbientWorld();
   /**
