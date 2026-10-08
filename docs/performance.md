@@ -73,6 +73,21 @@ Cuidados ao ler os números:
 | 22 | Gravação automática serializava o mapa inteiro 700 ms depois de cada edição | toda edição | tarefa de 83 ms (trace) | **CORRIGIDO** (reaproveita o texto do desfazer) |
 | 23 | `surfaces()` unia os quatro níveis do mapa para devolver um (calçadas, postes, verge) | toda edição | 4× o trabalho de união | **CORRIGIDO** (`levelPolygons` do nível usado) |
 | 24 | Rig de cada classe de corpo montado quando o primeiro pedestre da classe chegava | primeiros pedestres | 58–105 ms × 8 | **CORRIGIDO** (os 8 preparados ao abrir o mapa, um por vez) |
+| 36 | Vegetação do ecossistema com chave `doc.revision`/`buildings.revision`: varredura do mapa (147 456 células) e 36 malhas instanciadas recriadas | toda via, prédio, crescimento de zona (2/s) e desgaste (3 s) | não medido (lido no código, 2026-10-08) | **CORRIGIDO** (varredura × passe; malhas reescritas no lugar; `renderer.ts` `natureSweep`/`natureKeep`, `natureTrees.ts` `update`) |
+| 37 | Pedras, mato, floresta pintada e pedras de rio refeitos por toque na união da área pintada e da água (rio: retângulo inteiro a 3 u) | toda via e prédio perto de rio ou pintura | não medido | **CORRIGIDO** (`coverSweep`/`coverKeep`) |
+| 38 | LOD das árvores reenviava a capacidade inteira dos buffers | câmera andando 60 u | não medido | **CORRIGIDO** (`addUpdateRange` só do desenhado) |
+| 39 | `onCarriageway` percorria todas as vias por ponto | toda reconstrução de plantas | não medido | **CORRIGIDO** (grade por rede, `world/carriageway.ts`) |
+| 40 | Jardins, muros, transporte e fila dos prédios refeitos a cada quadro do job da edição (cada fatia marca o chão) e testados contra a união de todos os itens | toda via | não medido | **CORRIGIDO** (esperam o fim do job; áreas por item em `groundChanges.ts`; plantas por prédio) |
+| 41 | Desgaste/nome/plano do lote renivelavam o lote (registro novo = lote novo) e refaziam as vagas | a cada 3 s com a cidade envelhecendo | não medido | **CORRIGIDO** (texto do lote por registro: `renderer.ts` `siteTextOf`, `agents/parking.ts` `lotText`) |
+| 42 | Religação das portas: filtro de todos os obstáculos do mapa por porta | todo prédio novo | ~40 ms medidos para a religação inteira (#11) | **REDUZIDO** (grade de obstáculos, mesma chave); a religação ainda passa por todos os prédios |
+| 43 | Viadutos, postes e mobiliário do mapa inteiro refeitos a cada via | toda via | < 10 ms cada na vila (#13) | **CORRIGIDO** (mantidos quando os blocos da edição não os alcançam) |
+| 44 | Construir: segundo contexto WebGL solto a cada 4 s ocioso, `readPixels` e `toDataURL` síncronos por miniatura, miniaturas refeitas toda sessão | 1º uso do Construir e cada volta após 4 s | não medido | **CORRIGIDO** (cache no IndexedDB, `toBlob`, contexto mantido em uso) |
+| 45 | Prévias das ferramentas (fantasma do prédio, trilhos, lotes) compiladas no quadro do 1º uso | 1º uso de cada ferramenta | não medido | **CORRIGIDO** (`warmPreviewShaders`) |
+| 46 | Gravação automática síncrona no meio de um quadro, 700 ms após a edição | toda edição | não medido | **CORRIGIDO** (tempo ocioso; fechamento continua síncrono) |
+| 47 | Pick do ponteiro descia o raio de 160/600 u, 2 leituras de layout por movimento | todo movimento do ponteiro | não medido | **CORRIGIDO** (`surfaceTop`, `landTop`) |
+| 48 | Abertura: texturas procedurais (~70 MB) assadas a cada abertura antes do renderer | toda abertura | não medido | **CORRIGIDO** (cache derivado no IndexedDB sob a impressão das receitas) |
+| 49 | Abertura: mundo, prédios e programas de shader num quadro só | toda abertura | não medido | **CORRIGIDO** (job fatiado, `compileAhead` antes da troca, prédios fatiados) |
+| 50 | Abertura: ez-tree (4 MB) e as 6 árvores geradas numa tarefa, durante a abertura | toda abertura | não medido | **REDUZIDO** (depois do 1º mundo, uma variedade por tarefa); o kit não é guardado |
 
 ---
 
@@ -326,6 +341,33 @@ chão analítico.
 `WeakRef`; o coletor de lixo a descartava entre uma pessoa e outra, e a próxima
 a baixava e decodificava de novo (12,8 MB de base64, um caractere por vez). Agora
 fica guardada (≈ 10 MB).
+
+## 36-50. Ações mínimas e abertura (2026-10-08) — lido no código
+
+O jogador relatou ações mínimas lentas (estrada, prédio, ferramenta, câmera) e a
+abertura lenta. Diagnóstico pela leitura do fluxo, sem medir aqui (a iGPU desta
+máquina não representa a RTX 3060 do jogador). O padrão comum: uma entrada barata e
+frequente (uma via, um prédio, o crescimento de uma zona, o envelhecimento da
+cidade a cada 3 s) presa à mesma chave de uma reconstrução cara do mapa inteiro
+(Nystrom, "Dirty Flag": a marca grossa reprocessa o que não mudou).
+
+- **Regra:** o que é caro e depende da terra, da pintura ou do ecossistema é
+  *varrido* só quando essas mudam; o que depende de vias, prédios e chão é um
+  *passe* sobre o que a varredura achou; malhas instanciadas são reescritas no
+  lugar (buffers não mudam de tamanho, mas o conteúdo sim — manual do three.js
+  r186, "How to update things") e só enviam à placa o que é desenhado.
+- **Regra:** o que fica sobre o chão espera o job de uma edição terminar, e é
+  testado contra os retângulos dos próprios itens, não contra a união da camada.
+- **Regra:** um registro novo de prédio não é um lote novo: o nivelamento e as
+  vagas comparam o texto do registro sem idade, nome e versão do plano do lote.
+- **Cache derivado** (`render/derivedCache.ts`, IndexedDB): miniaturas do
+  Construir e texels das superfícies, sob a impressão digital do código que os
+  faz (`cook-plugin.ts` `DERIVED`). Sempre regenerável: o navegador pode despejar.
+- **Abertura em partes** (escolha do jogador): terreno primeiro; o primeiro mundo
+  pelo job fatiado das edições, trocado só com os shaders compilados; prédios
+  depois, em fatias; árvores por último.
+- **Aberto:** religar só as portas dos prédios mudados (#42); guardar o kit de
+  árvores (#50).
 
 ## Estado medido (2026-10-06, fim da sessão)
 

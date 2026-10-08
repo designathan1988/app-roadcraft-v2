@@ -336,6 +336,29 @@ and they have seen it.
   zones of new junctions (~0.1 s each) and the lots raster (~0.25 s, after
   the edit) still stall a frame; a road joined to the network can move the
   grade of every street, which re-meshes the whole town once.
+- **Performance pass of 2026-10-08 (LIVE, read from the code, not measured
+  here; the player measures on their own PC):** what a small action rebuilt over the
+  whole map now follows only what it touched (docs/performance.md #36-#50):
+  the countryside's trees, stones and scrub are swept again only when the
+  land, the paint, the water or the ecosystem change and kept again by a pass
+  over the places found (they were rebuilt, 36 instanced meshes, on every
+  road, building, zone growth and the town's ageing every 3 s); tree LODs
+  upload only the instances drawn; `onCarriageway` on a grid; gardens, walls,
+  transport and buildings wait while a road edit's world is built and are
+  rebuilt only where the ground changed under one of their own items; a
+  building's age, name or lot plan no longer re-grade its lot or rework its
+  bays; viaducts, poles and street furniture kept when an edit does not reach
+  them; the Builder's pictures kept in the browser (IndexedDB) and its second
+  GPU context kept while the Builder is in use; the tools' previews' shaders
+  compiled ahead; the autosave written in idle time; the pointer pick starts
+  at the highest surface there is. Opening in parts (the player's choice): the
+  procedural textures kept in the browser under the recipes' fingerprint, the
+  first world built in slices and swapped in once its shaders are compiled,
+  the traffic held until the roads are in, buildings after, trees last.
+  Open: the pedestrians' door links are still all rebuilt when a building is
+  added (only the obstacle search is on a grid); the countryside's tree kit
+  is still generated (and ez-tree imported) at every opening, a variety a
+  task, after the first world.
 
 ### Actions: pistol and bomb (2026-10-06, LIVE)
 - Actions dock button: Pistola and Bomba, used from the map view (no play mode).
