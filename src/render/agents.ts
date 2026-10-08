@@ -39,7 +39,7 @@ import { CROWD_IDS, createRiggedCitizens, type CitizenClipKey, type ClipIdentity
 import { createProceduralCrowd, type ProcClip, type ProceduralPerson } from './people/proceduralCrowd';
 import { randomPerson } from '@people/spec';
 import { ageFromYears } from '@people/body/macro';
-import { PLAYER_ID } from '@sim/ambient/play';
+import { PLAYER_ID } from '@sim/ambient/playerId';
 import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';

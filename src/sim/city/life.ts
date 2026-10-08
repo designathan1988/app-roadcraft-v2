@@ -17,7 +17,7 @@ import { DECIDE_EVERY, type Mind, type Needs, type PlaceIndex, committedTo, deci
 import { type ActivityKind, BuildingUse, type Doing, type YardPlaces, chooseActivity } from '../agents/activities';
 import { addPlayerWalker, removeWalker, takeWalker, walkerAct, walkerOf } from '../agents/walk';
 import { type Rider, TransitSim } from '../transit/transit';
-import { Player } from '../agents/player';
+import type { Player } from '../agents/player';
 import type { VehicleId } from '../vehicles/state';
 import { vehiclePose } from '../pose';
 import { localToWorld } from '@world/buildings/geometry';
@@ -333,7 +333,7 @@ export class CityLife {
 
     this.arrivals(w);
     this.cars?.step(w, (id) => { const t = this.trips.get(id); if (t) this.arrive(t); });
-    this.player.step(w);
+    this.player?.step(w);
     this.ride(w);
     this.lookClock += DT;
     if (this.lookClock < LOOK_EVERY) return;
@@ -598,8 +598,12 @@ export class CityLife {
   /** A trip ended where it is, without arriving (a car taken by the player from its driver). */
   dropTrip(id: number): void { this.trips.delete(id); }
 
-  /** The person in the player's hands, and the police after them (`agents/player.ts`). */
-  readonly player = new Player();
+  /**
+   * The person in the player's hands, and the police after them
+   * (`agents/player.ts`): put here by walking the city (`__PLAY_MODE__`,
+   * `main.ts`); null while it is off.
+   */
+  player: Player | null = null;
 
   /** Residents driving a bus now, and the line. */
   private readonly drivers = new Map<number, number>();

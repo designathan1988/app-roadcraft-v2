@@ -7,6 +7,34 @@ history). Rules of work are in `CLAUDE.md`, not here.
 
 Last full rewrite: 2026-10-04 19:10; old docs, handoffs and audits removed 2026-10-05.
 
+## Walking the city (play mode) — OFF since 2026-10-08
+
+The player's decision of 2026-10-08: walking the city as a person is off for
+now, behind one compile-time key, with no code deleted.
+
+- **The key:** `__PLAY_MODE__` in `vite.config.ts` and `vitest.config.ts`
+  (`define`, now `'false'`), declared in `src/globals.d.ts`. The build replaces
+  it with `false`, so everything behind it is dead code and its modules are not
+  in any chunk.
+- **Off with it:** walking/driving as a person (`src/play.ts`, J key, the
+  `#playButton` in `index.html` born `hidden`, the v2 "Jogar" pill in
+  `ui/v2/shell.ts`), the play world in the simulation (`sim/ambient/play.ts`
+  `PlayWorld`, now `AmbientWorld.play: PlayWorld | null`), taking control of a
+  resident (`sim/agents/player.ts` `Player`, now `CityLife.player: Player | null`;
+  the agent card's "Control" button; `ui/playerHud.ts`), and the weapons lab
+  (`?lab=armas`, `src/weaponsLab.ts`). `PLAYER_ID` lives in
+  `sim/ambient/playerId.ts`.
+- **Still on (not exclusive to walking):** the dock's Actions (the pistol and
+  the bomb at any moment) and what they leave behind - bodies (ragdolls with
+  Jolt), blood, explosions, broken buildings, fire. Those live in
+  `render/playEffects.ts`, loaded by `import()` the first time Actions (or
+  walking) want them (`SceneHandle.effects()`): until somebody shoots or drops
+  a bomb none of it is downloaded, made or run in a frame. Interiors and "see
+  inside" stay as they were.
+- **To turn it back on:** set `__PLAY_MODE__: 'true'` in both configs and build
+  (`npm run build`); `main.ts` then loads `play.ts`, the play world, the player
+  and the lab, and shows the buttons.
+
 ## Who works here
 
 One Claude session works on this repository at a time (the player, 2026-10-04),

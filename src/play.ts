@@ -3,7 +3,7 @@ import type { Vec2 } from '@core/vec2';
 import { buildingHeight, solidFootprints } from '@world/buildings/geometry';
 import type { BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
-import { insideBody, PLAYER_ID, type VehicleBox } from '@sim/ambient/play';
+import { insideBody, PLAYER_ID, PlayWorld, type VehicleBox } from '@sim/ambient/play';
 import type { SimWorld } from '@sim/world';
 import type { PlayCamera, SceneHandle } from '@render/renderer';
 import { t } from '@ui/i18n';
@@ -60,7 +60,8 @@ const ARM_AIM = m(2.4), SHOULDER = m(0.55);
 
 export function createPlay(host: PlayHost): Play {
   const { sim, canvas } = host;
-  const play = sim.ambient.play;
+  // The play world exists only while walking the city is on (`main.ts`).
+  const play = sim.ambient.play ??= new PlayWorld();
   let active = false;
   let firstPerson = false;
   let yaw = 0, pitch = 0.32;

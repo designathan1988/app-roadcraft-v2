@@ -292,7 +292,8 @@ export function mountShell(deps: ShellDeps): void {
     insideLevelEl.textContent = insideLevel();
   };
   syncInside();
-  actionsBar.append(playB, insideB, insideDownB, insideLevelEl, insideUpB, gridB, simB, camB, undo, redo, helpB, menuB);
+  // "Play" only with walking the city on (`__PLAY_MODE__`, vite.config.ts).
+  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), insideB, insideDownB, insideLevelEl, insideUpB, gridB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers

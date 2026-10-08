@@ -3,19 +3,14 @@ import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
 import type { Vehicle } from '@sim/vehicles/state';
-import { createGore } from './gore';
-import { takeWounds } from '@sim/people/casualties';
-import { solidsOf } from '@world/solids';
-import { vehiclePose } from '@sim/pose';
 import { workUntil } from '@core/frameWork';
 import { pointInPolygon } from '@core/polygon';
-import type { Occupant } from './ragdoll';
+import type { Occupant, RagdollProbe } from './ragdoll';
+import type { PlayEffects } from './playEffects';
 import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
 import { onCarriageway } from '@world/carriageway';
 import {
   BufferGeometry,
-  Line,
-  LineBasicMaterial,
   ShaderMaterial,
   AdditiveBlending,
   DoubleSide,
@@ -63,8 +58,8 @@ import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { disposeMesh } from './mesh/surfaceMesh';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
-import { buildingBounds, levelElevation, localToWorld, roofHeightAt, roofRise, solidFootprints, volumeCorners, worldToLocal } from '@world/buildings/geometry';
-import { elementRing, followPieces } from '@world/buildings/elements';
+import { buildingBounds, localToWorld, solidFootprints } from '@world/buildings/geometry';
+import { followPieces } from '@world/buildings/elements';
 import { RoadDoc } from '@world/doc';
 import { compileAhead, drainCompiles, drainUploads, drainWarm } from './uploads';
 import { GRASS_MIN_ZOOM } from './grass';
@@ -75,13 +70,6 @@ import { windVector } from '@world/weather';
 import { createSignalHeads, type SignalHeads } from './signals';
 import { buildStructureDetails, structureRibbons, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
-import { createCasualties } from './casualties';
-import { createRagdolls, type RagdollProbe, type RagdollWall, type RagdollWorld } from './ragdoll';
-import { createBlast } from './blast';
-import { POLE_ARM_DROP, POLE_ARM_HALF, POLE_HEIGHT, POLE_LAMP_REACH } from '@world/utilities';
-import { impactCasualties } from '@sim/people/people';
-import { createDestruction } from './destruction';
-import { floorHeight } from '@world/buildings/foundation';
 import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
 import { MAP_SIZE } from '@world/bounds';
@@ -215,6 +203,13 @@ export interface PlayCamera {
 }
 
 export interface SceneHandle {
+  /**
+   * Loads what shots and blows leave behind (`playEffects.ts`: bodies, blood,
+   * explosions, broken buildings) the first time the dock's Actions or walking
+   * the city want them; resolves at once after that. Until then every effect
+   * method below does nothing.
+   */
+  effects(): Promise<void>;
   /** The world of the last edit is still being built (`worldSteps`); the old one is drawn meanwhile. */
   readonly worldBusy: boolean;
   readonly backend: 'three-webgl';
@@ -637,117 +632,33 @@ export function createSceneRenderer(
   /** Vehicle exhaust and dust (`exhaust.ts`): one particle cloud for the map. */
   const exhaust = createExhaust();
   scene.add(exhaust.points);
-  /** Buildings knocked down block by block (`destruction.ts`). */
-  const destruction = createDestruction(exhaust, (b) => buildings.chunkOf(b));
-  scene.add(destruction.group);
-  destruction.onRuined = () => { buildings.setRuined(destruction.ruined); };
-  /** Blood where blows killed people (`casualties.ts`). */
-  const casualties = createCasualties();
-  scene.add(casualties.group);
-  /** Explosions and what they throw (`blast.ts`). */
-  const blast = createBlast(exhaust);
   const shakeOffset = new Vector3();
-  scene.add(blast.group);
-  /** The bodies of the people blows killed (`ragdoll.ts`). */
-  /** The effects' clock against real time, and a step owed (`setEffectsSpeed`, `stepEffects`). */
-  let fxSpeed = 1, fxStep = 0;
-  // Guts, organs and bones out of bodies opened up (`gore.ts`).
-  const gore = createGore();
-  scene.add(gore.group);
-  const ragdolls = createRagdolls(exhaust, (id, x, y, heading, seconds, crawl) => {
-    // Up again where the body came to rest (`PeopleEngine.getUp`), or onto hands and knees to crawl.
-    if (ragdollSim) ragdollSim.pedEngine.getUp?.(ragdollSim, id, x, y, heading, seconds, crawl);
-  }, gore);
-  (globalThis as Record<string, unknown>)['__ragdolls'] = ragdolls;
-  /** Who is down (a `fall` pause) this frame. */
-  const ragdollDown = new Set<number>();
-  /** The world drawn this frame, for the walls a body strikes. */
-  let ragdollSim: SimWorld | null = null;
-  /** The lots near the bodies (their raised yards are ground too), and the ground found, by small cells. */
-  const ragdollLots = new Set<BuildingId>();
-  const ragdollGround = new Map<number, number>();
-  /** The ground at a corner of the bodies' ground grid (0.2 units a cell): a lot's yard as drawn, else the paving (a footway stands over the terrain), else the terrain. */
-  const ragdollCorner = (ix: number, iy: number): number => {
-    const key = ix * 100003 + iy;
-    const known = ragdollGround.get(key);
-    if (known !== undefined) return known;
-    const cx = ix / 5, cy = iy / 5;
-    let h = NaN;
-    for (const id of ragdollLots) {
-      h = buildings.lotHeightAt(id, cx, cy);
-      if (Number.isFinite(h)) break;
-    }
-    if (!Number.isFinite(h)) h = pavedHeightAt(cx, cy);
-    if (!Number.isFinite(h)) h = terrain.renderedHeightAt(cx, cy);
-    if (ragdollGround.size > 60000) ragdollGround.clear();
-    ragdollGround.set(key, h);
-    return h;
-  };
-  const ragdollWorld: RagdollWorld = {
-    groundAt(x, y) {
-      // Between the heights at the corners of its cell, as a physics
-      // engine's heightfield is a surface between its samples (PhysX): one
-      // height a cell, read where it was first asked, a cell across a
-      // footway's edge held the footway's height or the grass's by turns, and
-      // a hand lying still on the grass was thrown up the 28 cm between them
-      // (measured 2026-10-06).
-      const gx = x * 5, gy = y * 5, ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy;
-      const a = ragdollCorner(ix, iy), b = ragdollCorner(ix + 1, iy), c = ragdollCorner(ix, iy + 1), d = ragdollCorner(ix + 1, iy + 1);
-      return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
-    },
-    wallsNear(x, y, reach) {
-      // The buildings standing (not a ruin) and the walls, fences and hedges of their lots.
-      const out: RagdollWall[] = [];
-      if (ragdollLots.size > 400) ragdollLots.clear();
-      ragdollGround.clear();
-      for (const b of ragdollSim?.doc.buildings.all() ?? []) {
-        if (destruction.ruined.has(b.id) || Math.hypot(b.x - x, b.y - y) > reach + m(40)) continue;
-        ragdollLots.add(b.id);
-        const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
-        for (const v of b.volumes) {
-          if (v.base !== 0 || v.mode === 'void' || v.mode === 'intersect' || v.open) continue;
-          // The walls up to the eaves, the roof over them: a body lands on it and slides down a pitch.
-          const eaves = floor + levelElevation(b, v.base + v.storeys.length);
-          out.push({ ring: volumeCorners(b, v), top: eaves + roofRise(b, v), roof: (wx, wy) => eaves + Math.max(0, roofHeightAt(b, v, worldToLocal(b, { x: wx, y: wy }))) });
-        }
-        for (const e of b.elements ?? []) {
-          if ((e.kind === 'wall' || e.kind === 'fence' || e.kind === 'hedge') && e.z <= 0.01) out.push({ ring: elementRing(b, e), top: floor + e.h });
-        }
-      }
-      // Everything else standing there (the player, 2026-10-06: a body goes
-      // through nothing): poles, trees, benches, bins, drawn walls and
-      // fences, and the cars - each a ring up to its height.
-      const doc = ragdollSim?.doc;
-      if (doc) {
-        for (const s of solidsOf(doc).near(x, y, reach)) {
-          if (s.kind === 'ring') continue;
-          const ground = terrain.renderedHeightAt(s.kind === 'disc' ? s.c.x : s.a.x, s.kind === 'disc' ? s.c.y : s.a.y);
-          if (s.kind === 'disc') {
-            const ring = Array.from({ length: 8 }, (_, i) => ({ x: s.c.x + Math.cos(i * Math.PI / 4) * s.r, y: s.c.y + Math.sin(i * Math.PI / 4) * s.r }));
-            // A pole or a trunk stands tall; street furniture is low.
-            out.push({ ring, top: ground + (s.r < m(0.2) ? m(6) : s.r < m(0.35) ? m(4) : m(0.9)) });
-          } else {
-            const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, l = Math.hypot(dx, dy) || 1;
-            const nx = (-dy / l) * s.r, ny = (dx / l) * s.r, tx = (dx / l) * s.r, ty = (dy / l) * s.r;
-            out.push({ ring: [{ x: s.a.x - tx + nx, y: s.a.y - ty + ny }, { x: s.b.x + tx + nx, y: s.b.y + ty + ny },
-              { x: s.b.x + tx - nx, y: s.b.y + ty - ny }, { x: s.a.x - tx - nx, y: s.a.y - ty - ny }], top: ground + m(1.6) });
-          }
-        }
-      }
-      // The traffic, and the cars standing off the road (parked, the player's).
-      const standing = [...(ragdollSim?.ambient.parked ?? []), ...(ragdollSim?.ambient.extra ?? []), ...(ragdollSim?.city.cars?.offRoad() ?? [])]
-        .filter((v) => v.free).map((v) => ({ v, pose: { p: { x: v.free!.x, y: v.free!.y }, angle: v.free!.angle } }));
-      const moving = [...(ragdollSim?.vehicles.values() ?? [])].map((v) => ({ v, pose: vehiclePose(ragdollSim!, v, 1) }));
-      for (const { v, pose } of [...moving, ...standing]) {
-        if (!pose || Math.hypot(pose.p.x - x, pose.p.y - y) > reach) continue;
-        const a = v.archetype, c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
-        const hl = a.length / 2, hw = a.width / 2;
-        const ring = [[hl, hw], [hl, -hw], [-hl, -hw], [-hl, hw]].map(([u, w]) => ({ x: pose.p.x + c * u! - sn * w!, y: pose.p.y + sn * u! + c * w! }));
-        out.push({ ring, top: ragdollWorld.groundAt(pose.p.x, pose.p.y) + a.height * 0.85 });
-      }
-      return out.filter((w) => w.ring.length >= 3);
-    },
-  };
+  /**
+   * What shots and blows leave behind - bodies, blood, explosions, broken
+   * buildings (`playEffects.ts`) - loaded the first time the dock's Actions or
+   * walking the city want them (`SceneHandle.effects`): until somebody shoots
+   * or drops a bomb none of it is downloaded, made or run in a frame.
+   */
+  let fx: PlayEffects | null = null;
+  let fxLoading: Promise<void> | null = null;
+  const buildingDownListeners: ((id: number) => void)[] = [];
+  const loadEffects = (): Promise<void> => fxLoading ??= import('./playEffects').then((mod) => {
+    fx = mod.createPlayEffects({
+      scene, exhaust, agents,
+      buildings: {
+        chunkOf: (b) => buildings.chunkOf(b),
+        setRuined: (ruined) => buildings.setRuined(ruined),
+        lotHeightAt: (id, x, y) => buildings.lotHeightAt(id, x, y),
+      },
+      renderedHeightAt: (x, y) => terrain.renderedHeightAt(x, y),
+      naturalRenderedHeightAt: (x, y) => terrain.naturalRenderedHeightAt(x, y),
+      pavedHeightAt: (x, y) => pavedHeightAt(x, y),
+      camera: () => rig.camera,
+      onAssetsReady,
+    });
+    fx.onBuildingDown((id) => { for (const listener of buildingDownListeners) listener(id); });
+    onAssetsReady();
+  });
   let polePreview: Utilities | null = null;
   /** Placed signs and street name plates (`signs.ts`), on `doc.utilityRevision` with the furniture. */
   let signs: SignLayer | null = null;
@@ -885,28 +796,6 @@ export function createSceneRenderer(
     },
     // A resident's parked car stands on its lot as the lot is drawn.
     (building, x, y) => buildings.lotHeightAt(building as BuildingId, x, y));
-  // A body torn apart: a limb or two and what was inside thrown over the
-  // street, where they stay; blood spraying off them as they fly.
-  ragdolls.onGore = (x, y, z, dx, dy, speed, kind) => {
-    // The limbs themselves are the person's own, thrown by the ragdolls (`detach`).
-    // Scraps of flesh: small, dark with blood, not bright cubes.
-    const organs = kind === 'torn' ? 4 + Math.floor(Math.random() * 4) : 1;
-    for (let k = 0; k < organs; k++) {
-      const s0 = m(0.04 + Math.random() * 0.07);
-      blast.debris({ shape: Math.random() < 0.7 ? 'cylinder' : 'box', kind: 'flesh', color: [0x3a0507, 0x4a0b0e, 0x561418, 0x2e0405][k % 4]!,
-        at: new Vector3(x, z, -y), size: new Vector3(s0, s0 * (0.6 + Math.random()), s0 * (0.7 + Math.random() * 0.6)),
-        velocity: new Vector3(dx * speed * 0.5 + (Math.random() - 0.5) * m(6), m(2 + Math.random() * 4), -dy * speed * 0.5 + (Math.random() - 0.5) * m(6)) });
-    }
-  };
-  // A trail of blood behind those who lost a limb: a drop every metre or so.
-  const lastDrip = new Map<number, { x: number; y: number }>();
-  agents.setBleed((id, x, y, z) => {
-    const last = lastDrip.get(id);
-    if (last && Math.hypot(last.x - x, last.y - y) < m(0.9)) return;
-    lastDrip.set(id, { x, y });
-    if (lastDrip.size > 500) lastDrip.clear();
-    ragdolls.drip(x + (Math.random() - 0.5) * m(0.3), y + (Math.random() - 0.5) * m(0.3), z + m(0.02), m(0.06 + Math.random() * 0.08));
-  });
 
   const crowdFrustum = new Frustum();
   const crowdProjection = new Matrix4();
@@ -1636,7 +1525,6 @@ export function createSceneRenderer(
     group.visible = false;
     scene.add(group);
     void compileAhead(group).then(() => { scene.remove(group); tiny.dispose(); });
-    void compileAhead(blast.group);
   };
 
   /**
@@ -1713,7 +1601,6 @@ export function createSceneRenderer(
   // drops the inspector with it.
   const inspect = import.meta.env.DEV ? createInspector(renderer, scene) : null;
   let lotOverlay: ReturnType<typeof createLotOverlay> | null = null;
-  const occupantQueue: Occupant[] = [];
   let transitXray = false;
   let transitPreview: ReturnType<typeof buildTrackPreview> | null = null;
   let transitPreviewKey = '';
@@ -2090,13 +1977,9 @@ export function createSceneRenderer(
   };
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
-  const TRACER_LIFE = 0.12;
-  const tracerMaterial = new LineBasicMaterial({ color: 0xfff1b0, transparent: true, opacity: 1, depthWrite: false });
-  const tracers: { line: Line; life: number }[] = [];
-  const muzzle = new PointLight(0xffc070, 0, m(8), 2);
-  scene.add(muzzle);
 
   const handle: SceneHandle = {
+    effects: () => loadEffects(),
     setChase(chase) {
       if (chase && orbitPerspective === null) {
         orbitPerspective = rig.perspective;
@@ -2146,70 +2029,20 @@ export function createSceneRenderer(
       TERRAIN_GRID.value = [GRID_CELL, on ? 0.08 : 0, MAP_HALF];
       if (on !== gridWanted) { gridWanted = on; onAssetsReady(); }
     },
-    shootBody(a, b) {
-      const hit = ragdolls.shootBody(new Vector3(a[0], a[2], -a[1]), new Vector3(b[0], b[2], -b[1]));
-      if (hit) onAssetsReady();
-      return hit;
-    },
-    isDown: (id) => ragdolls.hides(id),
-    setEffectsSpeed(speed) { fxSpeed = Math.max(0, speed); onAssetsReady(); },
-    stepEffects(seconds) { fxStep += Math.max(0, seconds); onAssetsReady(); },
-    ragdollProbe: () => ragdolls.probe(),
-    clearCasualties() { ragdolls.clear(); gore.clear(); blast.clear(); onAssetsReady(); },
+    shootBody: (a, b) => fx?.shootBody(a, b) ?? null,
+    isDown: (id) => fx?.hides(id) ?? false,
+    setEffectsSpeed(speed) { fx?.setEffectsSpeed(speed); },
+    stepEffects(seconds) { fx?.stepEffects(seconds); },
+    ragdollProbe: () => fx?.ragdollProbe() ?? [],
+    clearCasualties() { fx?.clearCasualties(); },
     meshProbe: () => agents.meshProbe(),
     animProbe: (id) => agents.animProbe(id),
     forceClip: (id, clip) => agents.forceClip(id, clip as never),
     driverBody: (vehicle, x, y) => agents.driverBody(vehicle, x, y),
-    vehicleHit(x, y, z, dirX, dirY, glass, blood) {
-      if (glass) {
-        for (let k = 0; k < 14; k++) {
-          blast.debris({ shape: 'box', kind: 'glass', at: new Vector3(x, z, -y),
-            size: new Vector3(m(0.03 + Math.random() * 0.05), m(0.006), m(0.03 + Math.random() * 0.05)),
-            velocity: new Vector3(dirX * m(2) + (Math.random() - 0.5) * m(2.5), m(0.5 + Math.random() * 1.5), -dirY * m(2) + (Math.random() - 0.5) * m(2.5)) });
-        }
-        if (blood) exhaust.burst(x + dirX * m(0.4), y + dirY * m(0.4), z, 40, 4, m(0.2), m(0.04), 0.8);
-      } else {
-        exhaust.burst(x, y, z, 18, 6, m(0.12), m(0.2), 0.35);
-      }
-      onAssetsReady();
-    },
-    dropVehicle(v) {
-      const own = agents.carcass({ id: v.id, archetype: v.archetype }, true);
-      if (!own) return;
-      own.computeBoundingBox();
-      const size = own.boundingBox!.getSize(new Vector3());
-      const g = ragdollWorld.groundAt(v.x, v.y);
-      const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.angle);
-      // Tipping over sideways as it goes, carried on a little by its speed.
-      const forward = new Vector3(Math.cos(v.angle), 0, -Math.sin(v.angle));
-      blast.debris({ shape: 'mesh', geometry: own, kind: 'metal', color: v.color, at: new Vector3(v.x, g + size.y / 2 + m(0.05), -v.y),
-        size, turn, velocity: forward.clone().multiplyScalar(m(2.5)).add(new Vector3(v.dirX * m(0.8), 0, -v.dirY * m(0.8))),
-        spin: forward.multiplyScalar(Math.random() < 0.5 ? 2.2 : -2.2) });
-      onAssetsReady();
-    },
-    wound(x, y, z, dirX, dirY, severed) {
-      // The spray, out of the far side, then the drops on the ground behind.
-      exhaust.burst(x + dirX * m(0.15), y + dirY * m(0.15), z, severed ? 36 : 18, 4, m(severed ? 0.22 : 0.14), m(0.035), 0.7);
-      // On what is there (the footway stands over the terrain).
-      for (let k = 0; k < (severed ? 9 : 4); k++) {
-        const d = m(0.3 + Math.random() * 1.6), side = (Math.random() - 0.5) * m(0.6);
-        const dx = x + dirX * d - dirY * side, dy = y + dirY * d + dirX * side;
-        ragdolls.drip(dx, dy, ragdollWorld.groundAt(dx, dy) + m(0.02), m(0.06 + Math.random() * 0.12));
-      }
-      // The limb shot off is the person's own, thrown by the ragdolls (`detach`).
-      onAssetsReady();
-    },
-    shot(from, to) {
-      const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new Float32BufferAttribute([from[0], from[2], -from[1], to[0], to[2], -to[1]], 3));
-      const line = new Line(geometry, tracerMaterial.clone());
-      line.frustumCulled = false;
-      scene.add(line);
-      tracers.push({ line, life: TRACER_LIFE });
-      muzzle.position.set(from[0], from[2], -from[1]);
-      muzzle.intensity = 60;
-      onAssetsReady();
-    },
+    vehicleHit(x, y, z, dirX, dirY, glass, blood) { fx?.vehicleHit(x, y, z, dirX, dirY, glass, blood); },
+    dropVehicle(v) { fx?.dropVehicle(v); },
+    wound(x, y, z, dirX, dirY, severed) { fx?.wound(x, y, z, dirX, dirY, severed); },
+    shot(from, to) { fx?.shot(from, to); },
     inspect,
     census: () => agents.census(),
     backend: 'three-webgl',
@@ -2270,13 +2103,7 @@ export function createSceneRenderer(
     setBuildingPreview(preview) {
       buildings.setPreview(preview);
     },
-    strikeBuilding(b, x, y, z, strength) {
-      // The building's own floor, as it is drawn on its pad.
-      const floor = floorHeight(b, terrain.naturalRenderedHeightAt, pavedHeightAt);
-      const down = destruction.hit(b, floor, x, y, z, strength, rig.camera.getWorldDirection(new Vector3()));
-      buildings.setRuined(destruction.ruined);
-      return down;
-    },
+    strikeBuilding: (b, x, y, z, strength) => fx?.strikeBuilding(b, x, y, z, strength) ?? false,
     strikeGround(x, y, strength) {
       for (let k = 0; k < 6 + strength * 2; k++) {
         const a = Math.random() * Math.PI * 2, r = Math.random() * m(0.6 + strength * 0.25);
@@ -2285,168 +2112,21 @@ export function createSceneRenderer(
       wear.tick(10);
       exhaust.burst(x, y, terrain.renderedHeightAt(x, y), 20 + strength * 6, 1, m(1 + strength * 0.4), m(3), 5);
     },
-    explode(x, y, z, radius, hit) {
-      const ground = (px: number, py: number): number => ragdollWorld.groundAt(px, py);
-      blast.explode(x, y, z, radius, hit.ground);
-      if (hit.crater && hit.ground !== 'building') blast.crater(x, y, ground(x, y), radius * 0.75, hit.ground);
-      const away = (px: number, py: number, k: number): Vector3 => {
-        const dx = px - x, dy = py - y, d = Math.hypot(dx, dy) || 1;
-        const f = k * Math.max(0.25, 1 - d / (radius * 1.6));
-        return new Vector3((dx / d) * f, f * 0.6, -(dy / d) * f);
-      };
-      const wood = 0x5e4630;
-      for (const pole of hit.poles) {
-        const g = ground(pole.x, pole.y);
-        const r = m(0.15);
-        const top = new Vector3(pole.x, g + POLE_HEIGHT - POLE_ARM_DROP, -pole.y);
-        // Falls the way it is thrown: a turn about the horizontal axis across that way.
-        const axis = new Vector3(-pole.dirY, 0, -pole.dirX).normalize();
-        const push = away(pole.x, pole.y, m(5));
-        if (pole.mode === 'whole') {
-          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + POLE_HEIGHT / 2 + m(0.05), -pole.y),
-            size: new Vector3(r, POLE_HEIGHT, r), velocity: push.clone().multiplyScalar(0.4), spin: axis.clone().multiplyScalar(0.9 + Math.random() * 0.6) });
-        } else if (pole.mode === 'snap') {
-          // Snapped: the stump left standing, the top thrown over.
-          const cut = POLE_HEIGHT * (0.25 + Math.random() * 0.3);
-          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + cut / 2, -pole.y),
-            size: new Vector3(r * 1.1, cut, r * 1.1), velocity: new Vector3(), spin: new Vector3() });
-          blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + cut + (POLE_HEIGHT - cut) / 2 + m(0.1), -pole.y),
-            size: new Vector3(r, POLE_HEIGHT - cut, r), velocity: push.clone().multiplyScalar(0.7), spin: axis.clone().multiplyScalar(1.5 + Math.random()) });
-        } else {
-          // To splinters: pieces of it flung out.
-          let h = 0;
-          while (h < POLE_HEIGHT - m(0.5)) {
-            const l = Math.min(POLE_HEIGHT - h, m(1 + Math.random() * 2.5));
-            blast.debris({ shape: 'cylinder', kind: 'wood', color: wood, at: new Vector3(pole.x, g + h + l / 2, -pole.y),
-              size: new Vector3(r * (0.6 + Math.random() * 0.4), l, r * (0.6 + Math.random() * 0.4)),
-              velocity: push.clone().multiplyScalar(0.8 + Math.random()).add(new Vector3((Math.random() - 0.5) * m(4), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(4))) });
-            h += l;
-          }
-        }
-        // The cross-arm and the lamp, knocked off.
-        blast.debris({ shape: 'box', kind: 'wood', color: wood, at: top.clone(), size: new Vector3(POLE_ARM_HALF * 2, m(0.1), m(0.1)),
-          velocity: push.clone().add(new Vector3(0, m(2), 0)) });
-        if (pole.lamp) blast.debris({ shape: 'box', kind: 'metal', at: top.clone().add(new Vector3(POLE_LAMP_REACH * 0.5, 0, 0)), size: new Vector3(m(0.5), m(0.14), m(0.26)), velocity: push.clone().multiplyScalar(1.2) });
-        // A flash and sparks off the line as it goes.
-        blast.arc(top, 1.5 + Math.random() * 2);
-      }
-      for (const w of hit.wires) {
-        const g = ground(w.fromX, w.fromY);
-        const gt = ground(w.toX, w.toY);
-        const dx = w.toX - w.fromX, dy = w.toY - w.fromY, d = Math.hypot(dx, dy) || 1;
-        for (const offset of [-0.8, 0, 0.8]) {
-          const side = new Vector3(-dy / d, 0, -dx / d).multiplyScalar(offset * POLE_ARM_HALF);
-          const from = new Vector3(w.fromX, g + POLE_HEIGHT - POLE_ARM_DROP, -w.fromY).add(side);
-          const to = new Vector3(w.toX, gt + POLE_HEIGHT * 0.6, -w.toY).add(side);
-          blast.wire(from, to, away(w.toX, w.toY, m(3)));
-        }
-      }
-      for (const post of hit.posts) {
-        const g = ground(post.x, post.y);
-        const push = away(post.x, post.y, m(5));
-        const axis = new Vector3(push.z, 0, -push.x).normalize();
-        blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x2a2d31, at: new Vector3(post.x, g + m(3.1) + m(0.05), -post.y),
-          size: new Vector3(m(0.165), m(6.2), m(0.165)), velocity: push.clone().multiplyScalar(0.3), spin: axis.multiplyScalar(1.2) });
-        const head = new Vector3(post.x + Math.cos(post.yaw) * m(3), g + m(5.5), -(post.y + Math.sin(post.yaw) * m(3)));
-        blast.debris({ shape: 'box', kind: 'metal', color: 0x1b1d20, at: head, size: new Vector3(m(0.35), m(1.0), m(0.35)), velocity: push.clone().add(new Vector3(0, m(3), 0)) });
-        blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x2a2d31, at: head.clone().lerp(new Vector3(post.x, g + m(5.9), -post.y), 0.5),
-          size: new Vector3(m(0.06), m(3.5), m(0.06)), turn: new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2), velocity: push.clone() });
-        blast.arc(head, 1 + Math.random() * 2);
-      }
-      for (const v of hit.vehicles) {
-        const g = ground(v.x, v.y);
-        const push = away(v.x, v.y, m(9)).add(new Vector3(0, m(3), 0));
-        const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.angle);
-        const spin = new Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 3);
-        // The burnt shell of its own body (each model its own wreck, buckled
-        // its own way), burning; a two-wheeler, light, thrown further.
-        const own = v.archetype && v.id !== undefined ? agents.carcass({ id: v.id, archetype: v.archetype }) : null;
-        if (own) {
-          own.computeBoundingBox();
-          const size = own.boundingBox!.getSize(new Vector3());
-          const light = v.archetype!.shape === 'bicycle' || v.archetype!.shape === 'motorcycle';
-          blast.debris({ shape: 'mesh', geometry: own, kind: 'char', color: v.color, at: new Vector3(v.x, g + size.y / 2 + m(0.05), -v.y),
-            size, turn, velocity: light ? push.clone().multiplyScalar(1.6) : push, spin: light ? spin.multiplyScalar(2) : spin,
-            burn: light ? 8 + Math.random() * 6 : 30 + Math.random() * 20 });
-          exhaust.burst(v.x, v.y, g + m(1), light ? 15 : 40, 5, m(light ? 0.6 : 1.2), m(1.4), 1.0);
-          if (light) continue;
-        } else {
-          const charred = new Color(v.color).lerp(new Color(0x1f1b18), 0.95).getHex();
-          blast.debris({ shape: 'car', kind: 'char', color: charred, at: new Vector3(v.x, g + v.height * 0.45, -v.y),
-            size: new Vector3(v.length, v.height * 0.85, v.width), turn, velocity: push, spin, burn: 30 + Math.random() * 20 });
-        }
-        for (let k = 0; k < 2; k++) {
-          blast.debris({ shape: 'cylinder', kind: 'char', color: 0x141414, at: new Vector3(v.x, g + m(0.35), -v.y),
-            size: new Vector3(m(0.32), m(0.22), m(0.32)), turn: new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 2),
-            velocity: push.clone().multiplyScalar(0.6 + Math.random()).add(new Vector3((Math.random() - 0.5) * m(8), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(8))) });
-        }
-        exhaust.burst(v.x, v.y, g + m(1), 40, 5, m(1.2), m(1.4), 1.0);
-      }
-      for (const item of hit.items) {
-        const g = ground(item.x, item.y);
-        const push = away(item.x, item.y, m(6));
-        if (item.kind === 'tree') {
-          // Split: a broken stump left standing, charred; the top - trunk
-          // and crown - torn off at the break and thrown over, burning.
-          const tall = m(6 + Math.random() * 3), cut = tall * (0.25 + Math.random() * 0.25);
-          const axis = new Vector3(push.z, 0, -push.x).normalize();
-          blast.debris({ shape: 'cylinder', kind: 'char', color: 0x2b211a, at: new Vector3(item.x, g + cut / 2, -item.y), size: new Vector3(m(0.22), cut, m(0.22)),
-            velocity: new Vector3(), spin: new Vector3() });
-          blast.debris({ shape: 'cylinder', kind: 'wood', at: new Vector3(item.x, g + cut + (tall - cut) / 2, -item.y), size: new Vector3(m(0.18), tall - cut, m(0.18)),
-            velocity: push.clone().multiplyScalar(0.6), spin: axis.clone().multiplyScalar(1.4 + Math.random()), burn: 12 + Math.random() * 10 });
-          // The splinters at the break.
-          for (let k = 0; k < 6; k++) {
-            blast.debris({ shape: 'box', kind: 'wood', at: new Vector3(item.x, g + cut, -item.y), size: new Vector3(m(0.05), m(0.3 + Math.random() * 0.5), m(0.05)),
-              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(5), m(2 + Math.random() * 4), (Math.random() - 0.5) * m(5))) });
-          }
-          // The crown, in clumps of leaves and branches.
-          for (let k = 0; k < 24; k++) {
-            blast.debris({ shape: 'box', kind: 'leaf', at: new Vector3(item.x, g + tall * 0.85, -item.y), size: new Vector3(m(0.4 + Math.random() * 0.6), m(0.1), m(0.4 + Math.random() * 0.6)),
-              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(7), m(1 + Math.random() * 5), (Math.random() - 0.5) * m(7))) });
-          }
-          exhaust.burst(item.x, item.y, g + tall * 0.7, 10, 5, m(1.5), m(1.2), 1);
-        } else if (item.kind === 'shrub') {
-          const tall = m(1.2);
-          blast.debris({ shape: 'cylinder', kind: 'wood', at: new Vector3(item.x, g + tall / 2, -item.y), size: new Vector3(m(0.14), tall, m(0.14)),
-            velocity: push.clone().multiplyScalar(0.4), spin: new Vector3(push.z, 0, -push.x).normalize().multiplyScalar(1.2) });
-          for (let k = 0; k < 14; k++) {
-            blast.debris({ shape: 'box', kind: 'leaf', at: new Vector3(item.x, g + tall * 0.8, -item.y), size: new Vector3(m(0.3), m(0.05), m(0.3)),
-              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(6), m(2 + Math.random() * 5), (Math.random() - 0.5) * m(6))) });
-          }
-        } else if (item.kind === 'lamp') {
-          // A street light: its column bent over and thrown, the head and its glass flung off, sparks.
-          const axis = new Vector3(push.z, 0, -push.x).normalize();
-          blast.debris({ shape: 'cylinder', kind: 'metal', color: 0x3a3e43, at: new Vector3(item.x, g + m(3), -item.y), size: new Vector3(m(0.1), m(6), m(0.1)),
-            velocity: push.clone().multiplyScalar(0.5), spin: axis.multiplyScalar(1.6) });
-          blast.debris({ shape: 'box', kind: 'metal', color: 0x2a2d31, at: new Vector3(item.x, g + m(6), -item.y), size: new Vector3(m(0.6), m(0.15), m(0.3)),
-            velocity: push.clone().add(new Vector3(0, m(4), 0)) });
-          exhaust.burst(item.x, item.y, g + m(6), 30, 6, m(0.3), m(0.12), 0.8);
-        } else {
-          for (let k = 0; k < 4; k++) {
-            blast.debris({ shape: 'box', kind: item.kind === 'bench' ? 'wood' : 'metal', at: new Vector3(item.x, g + m(0.5), -item.y),
-              size: new Vector3(m(0.2 + Math.random() * 0.5), m(0.06 + Math.random() * 0.2), m(0.1 + Math.random() * 0.3)),
-              velocity: push.clone().add(new Vector3((Math.random() - 0.5) * m(4), m(2 + Math.random() * 5), (Math.random() - 0.5) * m(4))) });
-          }
-        }
-      }
-    },
-    burn: (x, y, z, size, seconds) => blast.burn(x, y, z, size, seconds),
-    soot: (x, y, z, r) => blast.soot(x, y, z, r),
-    geyser: (x, y, z, seconds) => blast.geyser(x, y, z, seconds),
-    sparkAt: (x, y, z, seconds) => blast.arc(new Vector3(x, z, -y), seconds),
-    leak: (x, y, z, seconds) => blast.leak(x, y, z, seconds),
-    onBuildingDown: (listener) => { destruction.onDown = listener; },
-    flingOccupants: (list) => { occupantQueue.push(...list); },
+    explode(x, y, z, radius, hit) { fx?.explode(x, y, z, radius, hit); },
+    burn: (x, y, z, size, seconds) => fx?.burn(x, y, z, size, seconds),
+    soot: (x, y, z, r) => fx?.soot(x, y, z, r),
+    geyser: (x, y, z, seconds) => fx?.geyser(x, y, z, seconds),
+    sparkAt: (x, y, z, seconds) => fx?.sparkAt(x, y, z, seconds),
+    leak: (x, y, z, seconds) => fx?.leak(x, y, z, seconds),
+    onBuildingDown: (listener) => { buildingDownListeners.push(listener); },
+    flingOccupants: (list) => { fx?.flingOccupants(list); },
     setSmog: (k) => environment.setSmog(k),
     strikeAt: (x, y) => strikeAt(x, y),
     onStrike(listener) { strikeListeners.push(listener); },
     cloudDrift: () => cloudDrift,
-    busy: () => blast.active() || ragdolls.stats().living > 0 || ragdolls.stats().moving > 0 || natureTreesPending,
+    busy: () => (fx?.busy() ?? false) || natureTreesPending,
     drifting: () => ((fogMoving || placedCloudsShown) && post.enabled && (quality.cloudShadows || quality.skyClouds)) || weatherActive,
-    forgetRuin(id) {
-      void id;
-      buildings.setRuined(destruction.ruined);
-    },
+    forgetRuin(id) { fx?.forgetRuin(id); },
     setTransitXray(on) {
       transitXray = on;
       transit?.setXray(on);
@@ -2523,8 +2203,7 @@ export function createSceneRenderer(
       const wallDt = lastWall < 0 ? 0 : Math.min(0.1, (wallNow - lastWall) / 1000);
       // The bodies, guts and debris on their own clock (the weapons lab slows,
       // stops and steps it, `setEffectsSpeed` / `stepEffects`).
-      const fxDt = Math.min(0.1, wallDt * fxSpeed + fxStep);
-      fxStep = 0;
+      const fxDt = fx ? fx.clock(wallDt) : 0;
       lastWall = wallNow;
       if (canvas.clientWidth !== lastWidth || canvas.clientHeight !== lastHeight) {
         lastWidth = canvas.clientWidth;
@@ -2941,48 +2620,12 @@ export function createSceneRenderer(
           exhaust.emit(x, y, z, angle, length, speed, dusty);
           if (!dusty && Math.abs(speed) > 0.5) wear.wheels(x, y, angle, Math.min(length * 0.42, m(1.7)), wallDt);
         },
-        ragdolls: (citizens) => {
-          ragdollSim = sim;
-          // Bullet holes on the people shot, alive or not (`recordWound`).
-          for (const wd of takeWounds(sim)) citizens.wound?.(-1 - wd.id, wd.part, wd.fromX, wd.fromY);
-          ragdolls.absorb(impactCasualties(sim, wallDt), citizens, ragdollWorld);
-          if (occupantQueue.length) { ragdolls.fling(occupantQueue, citizens, ragdollWorld); occupantQueue.length = 0; }
-          // Somebody tripping on the pavement falls as a ragdoll too.
-          ragdollDown.clear();
-          for (const ped of sim.pedViews) {
-            const g = ped.gesture;
-            if (g?.kind !== 'fall') continue;
-            ragdollDown.add(ped.id);
-            if (g.t < 0.5 && !ragdolls.hides(ped.id)) {
-              // Knocked from a point (a punch, a shove): down away from it; else a trip, forwards.
-              const away = g.fromX !== undefined && g.fromY !== undefined && Math.hypot(ped.x - g.fromX, ped.y - g.fromY) > 1e-3
-                ? Math.atan2(ped.y - g.fromY, ped.x - g.fromX) : null;
-              ragdolls.trip(ped.id, ped.heading, citizens, ragdollWorld, away);
-            }
-          }
-          ragdolls.release((id) => ragdollDown.has(id));
-          ragdolls.update(fxDt, ragdollWorld);
-          gore.update(fxDt, ragdollWorld.groundAt);
-          ragdolls.draw(citizens, ragdollWorld);
-        },
-        hiddenPed: (id) => id === hiddenPerson || ragdolls.hides(id),
+        // The bodies of shots and blows (`playEffects.ts`), once anybody has shot or struck.
+        ...(fx ? { ragdolls: (citizens: Parameters<PlayEffects['frame']>[0]) => fx!.frame(citizens, sim, wallDt, fxDt) } : {}),
+        hiddenPed: (id) => id === hiddenPerson || (fx?.hides(id) ?? false),
       });
       exhaust.tick(windClock, renderer.domElement.height / 2);
-      destruction.update(wallDt);
-      casualties.sync(ragdolls.decals);
-      blast.update(fxDt, ragdollWorld);
-      // Tracers fade in a tenth of a second, the muzzle flash with them.
-      for (let i = tracers.length - 1; i >= 0; i--) {
-        const t = tracers[i]!;
-        t.life -= wallDt;
-        (t.line.material as LineBasicMaterial).opacity = Math.max(0, t.life / TRACER_LIFE);
-        if (t.life <= 0) {
-          scene.remove(t.line);
-          t.line.geometry.dispose();
-          tracers.splice(i, 1);
-        }
-      }
-      muzzle.intensity = tracers.length ? muzzle.intensity * Math.pow(0.02, wallDt * 8) : 0;
+      fx?.update(wallDt, fxDt);
       for (const ped of sim.pedViews) if (ped.v > 0.05) wear.feet(ped.x, ped.y, wallDt);
       wear.tick(wallDt);
       // The rooms cut open are lit from inside: brighter as the day goes.
@@ -3159,7 +2802,7 @@ export function createSceneRenderer(
       // asset load adds, and instance colours created on first use.
       if (renderer.shadowMap.enabled) assignShadowDepth(scene);
       // An explosion shakes the camera for a moment.
-      const shake = blast.shake();
+      const shake = fx?.shake() ?? 0;
       if (shake > 0) {
         shakeOffset.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
         rig.camera.position.add(shakeOffset);

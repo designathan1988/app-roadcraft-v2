@@ -9,6 +9,7 @@ import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { createAgentWalkEngine, walkerOf, walkersNear } from '@sim/agents/walk';
 import { OwnCars } from '@sim/agents/cars';
+import { Player } from '@sim/agents/player';
 
 /**
  * A person of the city in the player's hands (`sim/agents/player.ts`), as in
@@ -33,7 +34,8 @@ describe('the player: a person of the city in the player hands', () => {
     sim.city.skip(4 * 60);
     const run = (seconds: number): void => sim.clock.run(Math.round(seconds / DT), () => step(sim));
     run(60);
-    const player = sim.city.player;
+    // Walking the city puts the player in (`main.ts`, `__PLAY_MODE__`); the test does it itself.
+    const player = sim.city.player ??= new Player();
     const input = player.input;
 
     // Somebody walking, with somebody else near them.

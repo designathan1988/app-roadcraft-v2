@@ -46,7 +46,6 @@ import { type Viewport, flatViewport } from '@view/viewport';
 import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type BlastHit, type SceneHandle, type SkyMode } from '@render/renderer';
-import { startWeaponsLab } from './weaponsLab';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
@@ -69,9 +68,9 @@ import { History, restoreInto, restoreSnapshot, serialize } from '@editor/histor
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
-import { type Play, createPlay } from './play';
+import type { Play } from './play';
 import { type AgentCard, createAgentCard } from '@ui/agentCard';
-import { type PlayerHud, createPlayerHud } from '@ui/playerHud';
+import type { PlayerHud } from '@ui/playerHud';
 import { TransitTool, setTransitTool } from '@editor/transitTools';
 import { AGENT_PERSON_BASE } from '@sim/people/engine';
 import { vehiclePose } from '@sim/pose';
@@ -770,17 +769,31 @@ const buildings = createBuildingWiring({
   flash: (key, params) => flashHint(key, params),
   hintChanged: () => updateHint(),
 });
-// Playing in the scenery as in GTA (`play.ts`, `sim/ambient/play.ts`): J or the top bar's button.
-play = createPlay({
-  sim,
-  scene: () => scene,
-  canvas,
-  root: document.body,
-  requestDraw: () => requestDraw(),
-  openInside: (id) => buildings.openInside(id),
-  centre: () => view.centre,
-});
-document.getElementById('playButton')?.addEventListener('click', () => play?.toggle());
+// Playing in the scenery as in GTA (`play.ts`, `sim/ambient/play.ts`): J or
+// the top bar's button. Behind `__PLAY_MODE__` (vite.config.ts): off, none of
+// it is bundled and the button stays hidden (docs/STATUS.md says how to turn
+// it back on).
+if (__PLAY_MODE__) {
+  void Promise.all([import('./play'), import('@sim/ambient/play'), import('@sim/agents/player'), scene.effects()])
+    .then(([{ createPlay }, { PlayWorld }, { Player }]) => {
+      sim.ambient.play ??= new PlayWorld();
+      sim.city.player ??= new Player();
+      play = createPlay({
+        sim,
+        scene: () => scene,
+        canvas,
+        root: document.body,
+        requestDraw: () => requestDraw(),
+        openInside: (id) => buildings.openInside(id),
+        centre: () => view.centre,
+      });
+      const button = document.getElementById('playButton');
+      if (button) {
+        button.hidden = false;
+        button.addEventListener('click', () => play?.toggle());
+      }
+    });
+}
 
 /** The ground the camera sees: the screen's four corners, on the ground. */
 function viewFootprint(): Vec2[] {
@@ -2020,12 +2033,17 @@ canvas.addEventListener('pointerdown', (e) => {
       break;
 
     case 'bulldoze':
+      // The Actions' bomb and pistol: what they leave behind (bodies, blood,
+      // blasts, ruins) is loaded the first time either is used
+      // (`SceneHandle.effects`), then the blow or the shot lands.
       if (strikeChoice.mode === 'strike') {
-        strikeAt(e.clientX - r.left, e.clientY - r.top, world);
+        const sx = e.clientX - r.left, sy = e.clientY - r.top, at = { ...world };
+        void scene.effects().then(() => strikeAt(sx, sy, at));
         break;
       }
       if (strikeChoice.mode === 'shoot') {
-        shootAt(e.clientX - r.left, e.clientY - r.top);
+        const sx = e.clientX - r.left, sy = e.clientY - r.top;
+        void scene.effects().then(() => shootAt(sx, sy));
         break;
       }
       // A click removes what is under it; a drag draws a box and removes
@@ -3721,8 +3739,8 @@ mountAbout();
 
 // The weapons lab (`?lab=armas`): a test street, a person always ready, the
 // guns and the bomb, and probes of every frame (`weaponsLab.ts`).
-if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab') ?? '')) {
-  setTimeout(() => startWeaponsLab({
+if (__PLAY_MODE__ && ['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab') ?? '')) {
+  void Promise.all([import('./weaponsLab'), scene.effects()]).then(([{ startWeaponsLab }]) => setTimeout(() => startWeaponsLab({
     sim, scene: () => scene, view: () => view, canvas: () => canvas3d,
     loadDoc: (data) => { history.record(doc); applySnapshot(data, 'import'); },
     lookAt: (x, y, zoom) => { camera.x = x; camera.y = y; camera.zoom = zoom; syncViewFromFlatCamera(); requestDraw(); },
@@ -3734,7 +3752,7 @@ if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab'
       requestDraw();
     },
     requestDraw,
-  }), 300);
+  }), 300));
 }
 
 /**
@@ -4277,7 +4295,8 @@ const AGENT_PICK_PX = 22;
 let agentCard: AgentCard | null = null;
 let agentCardClock = 0;
 const theAgentCard = (): AgentCard =>
-  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw, takeControlOf);
+  // "Control" only with walking the city on (`__PLAY_MODE__`): off, the card has no such button.
+  agentCard ??= createAgentCard(document.querySelector<HTMLElement>('.v2') ?? document.body, requestDraw, __PLAY_MODE__ ? takeControlOf : null);
 
 // ------------------------------------------------------------ a person in the player's hands (GTA)
 
@@ -4288,22 +4307,24 @@ const held = new Set<string>();
 
 /** Takes a resident into the player's hands (the card's "Control"). */
 function takeControlOf(resident: number): void {
-  if (!sim.city.player.take(sim, resident)) return;
-  playerHud ??= createPlayerHud(document.querySelector<HTMLElement>('.v2') ?? document.body);
+  const player = sim.city.player;
+  if (!player || !player.take(sim, resident)) return;
+  if (!playerHud) void import('@ui/playerHud').then(({ createPlayerHud }) => { playerHud ??= createPlayerHud(document.querySelector<HTMLElement>('.v2') ?? document.body); });
   // The game goes on in real time with somebody to move.
   if (sim.clock.paused) sim.clock.paused = false;
   requestDraw();
 }
 
-const controlling = (): boolean => sim.city.player.resident !== null;
+const controlling = (): boolean => (sim.city.player?.resident ?? null) !== null;
 
 /** The keys of the player's hands; nothing else sees them while somebody is controlled. */
 function playerKey(e: KeyboardEvent, down: boolean): boolean {
-  if (!controlling()) return false;
+  const player = sim.city.player;
+  if (!player || !controlling()) return false;
   const target = e.target as HTMLElement | null;
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return false;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  const input = sim.city.player.input;
+  const input = player.input;
   if (down && !e.repeat) {
     if (key === 'e') input.enter = true;
     else if (key === 'f') input.talk = true;
@@ -4318,14 +4339,16 @@ function playerKey(e: KeyboardEvent, down: boolean): boolean {
   }
   return false;
 }
-window.addEventListener('keydown', (e) => { playerKey(e, true); }, true);
-window.addEventListener('keyup', (e) => { playerKey(e, false); }, true);
-window.addEventListener('blur', () => held.clear());
+if (__PLAY_MODE__) {
+  window.addEventListener('keydown', (e) => { playerKey(e, true); }, true);
+  window.addEventListener('keyup', (e) => { playerKey(e, false); }, true);
+  window.addEventListener('blur', () => held.clear());
+}
 
 /** The keys held, as the player's move this frame: on foot along the screen, in a car throttle and wheel. */
 function steerPlayer(): void {
   const player = sim.city.player;
-  if (player.resident === null) { held.clear(); playerHud?.update(null, '', 0); return; }
+  if (!player || player.resident === null) { held.clear(); playerHud?.update(null, '', 0); return; }
   const up = held.has('w') || held.has('ArrowUp'), down = held.has('s') || held.has('ArrowDown');
   const left = held.has('a') || held.has('ArrowLeft'), right = held.has('d') || held.has('ArrowRight');
   const input = player.input;
@@ -4467,9 +4490,12 @@ function frame(now: number): void {
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   // The dock's Actions: may shots strike people.
-  sim.ambient.play.shootPeople = shootPeopleAllowed();
-  // ...and the weapon chosen there, applied once per choice (the keys still change it in play).
-  if (weaponChoice.serial !== weaponApplied) { weaponApplied = weaponChoice.serial; sim.ambient.play.weapon = weaponChoice.weapon; }
+  const playWorld = __PLAY_MODE__ ? sim.ambient.play : null;
+  if (playWorld) {
+    playWorld.shootPeople = shootPeopleAllowed();
+    // ...and the weapon chosen there, applied once per choice (the keys still change it in play).
+    if (weaponChoice.serial !== weaponApplied) { weaponApplied = weaponChoice.serial; playWorld.weapon = weaponChoice.weapon; }
+  }
   const wall = (now - last) / 1000;
   last = now;
 
@@ -4551,7 +4577,7 @@ function frame(now: number): void {
   scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
-  steerPlayer();
+  if (__PLAY_MODE__) steerPlayer();
   // Playing in the scenery (`play.ts`): the player's input and camera, before the picture.
   play?.frame(wall);
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
@@ -5967,7 +5993,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
       // Breaking a building into its pieces is the costly part (a Voronoi
       // fracture of its meshes): the one struck now, the others a frame each
       // after, so a big blow does not freeze the game for seconds.
-      if (c !== b) { if (best < radius * 0.75 || force >= 4) deferredHits.push({ id: c.id, ...at, force }); continue; }
+      if (c !== b) { if (best < radius * 0.75 || force >= 4) { deferredHits.push({ id: c.id, ...at, force }); scheduleBreak(); } continue; }
       if (scene.strikeBuilding(c, at.x, at.y, at.z, force)) {
         doc.buildings.remove(c.id);
         scene.forgetRuin(c.id);
@@ -6128,8 +6154,17 @@ scene.onBuildingDown((id) => {
   mutate(() => { doc.buildings.remove(id as BuildingId); scene.forgetRuin(id); burning.delete(id); return true; });
   requestDraw();
 });
+/** A frame asked for the buildings waiting to break (`breakDeferred`); none while none wait. */
+let breaking = false;
 function breakDeferred(): void {
+  breaking = false;
   for (let k = 0; k < 4 && deferredHits.length; k++) breakOne(deferredHits.shift()!);
+  if (deferredHits.length) scheduleBreak();
+}
+/** A frame for the buildings a blow reached: asked only while some wait (it ran every frame for ever). */
+function scheduleBreak(): void {
+  if (breaking) return;
+  breaking = true;
   requestAnimationFrame(breakDeferred);
 }
 function breakOne(next: { id: number; x: number; y: number; z: number; force: number }): void {
@@ -6141,7 +6176,6 @@ function breakOne(next: { id: number; x: number; y: number; z: number; force: nu
     requestDraw();
   }
 }
-requestAnimationFrame(breakDeferred);
 const burning = new Map<number, { since: number; nextFlame: number; until: number }>();
 function ignite(id: number): void {
   if (burning.has(id) || burning.size >= 3) return;

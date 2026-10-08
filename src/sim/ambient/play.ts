@@ -13,6 +13,7 @@ import { makeDriver } from '../vehicles/driver';
 import {
   addPlayerWalker, movePlayerWalker, removeWalker, sendRunning, startle, walkerAct, walkerOf, walkersNear,
 } from '../agents/walk';
+import { PLAYER_ID } from './playerId';
 
 /**
  * The player inside the scenery, as in GTA (`src/play.ts` drives it): a person
@@ -31,7 +32,7 @@ import {
  */
 
 /** The player's person in the walking engine: one id, out of every other range. */
-export const PLAYER_ID = 1 << 29;
+export { PLAYER_ID };
 /** How long the camera takes a train car to be, to frame it. */
 const TRAIN_CAR_VIEW = m(18);
 
