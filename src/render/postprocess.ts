@@ -249,23 +249,40 @@ export function createPostChain(
   const bodiesSize = (n: number): number => Math.max(1, Math.ceil(n / 2));
   const bodiesTarget = new WebGLRenderTarget(bodiesSize(size.x * ratio), bodiesSize(size.y * ratio), { type: HalfFloatType, depthBuffer: false });
   let bodiesQuad: FullScreenQuad | null = null;
+  // The clouds' shadow map (`CLOUD_SHADOW_MAP_MAIN`): drawn once a frame, read once a pixel.
+  const shadowMapTarget = new WebGLRenderTarget(CLOUD_SHADOW_MAP, CLOUD_SHADOW_MAP, { type: HalfFloatType, depthBuffer: false });
+  let shadowMapQuad: FullScreenQuad | null = null;
   if (clouds) {
     const pass = clouds;
     const fragment = CLOUD_SHADOWS.fragmentShader;
+    const functions = fragment.slice(0, fragment.indexOf('void main()'));
     bodiesQuad = new FullScreenQuad(new ShaderMaterial({
       uniforms: pass.uniforms, vertexShader: CLOUD_SHADOWS.vertexShader,
-      fragmentShader: fragment.slice(0, fragment.indexOf('void main()')) + CLOUD_BODIES_MAIN,
+      fragmentShader: functions + CLOUD_BODIES_MAIN,
+      blending: NoBlending, depthTest: false, depthWrite: false,
+    }));
+    shadowMapQuad = new FullScreenQuad(new ShaderMaterial({
+      uniforms: pass.uniforms, vertexShader: CLOUD_SHADOWS.vertexShader,
+      fragmentShader: functions + CLOUD_SHADOW_MAP_MAIN,
       blending: NoBlending, depthTest: false, depthWrite: false,
     }));
     pass.uniforms['tClouds']!.value = bodiesTarget.texture;
+    pass.uniforms['tCloudShadow']!.value = shadowMapTarget.texture;
     const quad = bodiesQuad;
+    const mapQuad = shadowMapQuad;
     const shade = pass.render.bind(pass);
     pass.render = (...args: Parameters<ShaderPass['render']>) => {
       pass.uniforms['tDepth']!.value = sceneDepth;
       const on = (pass.uniforms['uCloudCount']!.value as number) > 0;
       pass.uniforms['uCloudsOn']!.value = on ? 1 : 0;
+      const gl = args[0];
+      if (on && (pass.uniforms['uShadowMapOn']!.value as number) > 0.5 && (pass.uniforms['uStrength']!.value as number) > 0) {
+        const previous = gl.getRenderTarget();
+        gl.setRenderTarget(shadowMapTarget);
+        mapQuad.render(gl);
+        gl.setRenderTarget(previous);
+      }
       if (on) {
-        const gl = args[0];
         const previous = gl.getRenderTarget();
         gl.setRenderTarget(bodiesTarget);
         quad.render(gl);
@@ -296,6 +313,10 @@ export function createPostChain(
         const u = clouds.uniforms as Record<string, { value: unknown }>;
         const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds, cloudDrift);
         u['uCloudCount']!.value = count;
+        const plane = cloudShadowFrame(u['uCloud']!.value as Vector4[], u['uBase']!.value as number[], count,
+          u['uSunDir']!.value as Vector3, u['uShadowRect']!.value as Vector4);
+        u['uShadowMapOn']!.value = plane === null ? 0 : 1;
+        if (plane !== null) u['uShadowPlane']!.value = plane;
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
         // Nothing of it shows - no cloud, no mist, no painted fog, no air round
@@ -355,6 +376,8 @@ export function createPostChain(
       clouds?.dispose();
       (bodiesQuad?.material as ShaderMaterial | undefined)?.dispose();
       bodiesTarget.dispose();
+      (shadowMapQuad?.material as ShaderMaterial | undefined)?.dispose();
+      shadowMapTarget.dispose();
     },
   };
 }
@@ -486,6 +509,11 @@ const CLOUD_SHADOWS = {
     // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`): light, and what of the scene shows through.
     tClouds: { value: null as Texture | null },
     uCloudsOn: { value: 0 },
+    // The clouds' shadow map (`CLOUD_SHADOW_MAP_MAIN`), its plane's height and its rectangle (x0, z0, x1, z1).
+    tCloudShadow: { value: null as Texture | null },
+    uShadowMapOn: { value: 0 },
+    uShadowPlane: { value: 0 },
+    uShadowRect: { value: new Vector4() },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -607,6 +635,28 @@ const CLOUD_SHADOWS = {
     }
     uniform sampler2D tClouds;
     uniform float uCloudsOn;
+    // The clouds' shadow map (Unreal's cloud shadow map in place of a march
+    // per pixel): what lies between a point of the plane under every cloud's
+    // base and the sun, over the rectangle the shadows fall in.
+    uniform sampler2D tCloudShadow;
+    uniform float uShadowMapOn;
+    uniform float uShadowPlane;
+    uniform vec4 uShadowRect;
+    // How much cloud lies from a point towards the sun, through each heap.
+    float shadowThrough(vec3 from) {
+      float through = 0.0;
+      for (int c = 0; c < MAX_CLOUDS; c++) {
+        if (c >= uCloudCount) break;
+        vec2 span = sphereSpan(from, uSunDir, uCloud[c]);
+        if (span.y <= 0.0) continue;
+        float a = max(span.x, 0.0);
+        float len = (span.y - a) / 5.0;
+        for (int i = 0; i < 5; i++) {
+          through += clamp(heap(c, from + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
+        }
+      }
+      return through;
+    }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
       float depth = texture2D(tDepth, vUv).r;
@@ -616,18 +666,18 @@ const CLOUD_SHADOWS = {
       vec3 rd = normalize(hit - ro);
       float tScene = sky ? 1e7 : length(hit - ro);
       vec3 colour = src.rgb;
-      // The clouds' shadows: from the point towards the sun, through each heap.
+      // The clouds' shadows. No cloud has anything below the plane of the
+      // lowest base, so a point under it is shaded as the point where its ray
+      // to the sun crosses that plane: one read of the map. Above the plane
+      // (a roof over a low cloud's base) the march itself.
       if (!sky && uStrength > 0.0 && uCloudCount > 0) {
         float through = 0.0;
-        for (int c = 0; c < MAX_CLOUDS; c++) {
-          if (c >= uCloudCount) break;
-          vec2 span = sphereSpan(hit, uSunDir, uCloud[c]);
-          if (span.y <= 0.0) continue;
-          float a = max(span.x, 0.0);
-          float len = (span.y - a) / 5.0;
-          for (int i = 0; i < 5; i++) {
-            through += clamp(heap(c, hit + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
-          }
+        if (uShadowMapOn > 0.5 && hit.y <= uShadowPlane) {
+          vec3 onPlane = hit + uSunDir * ((uShadowPlane - hit.y) / uSunDir.y);
+          vec2 at = (onPlane.xz - uShadowRect.xy) / (uShadowRect.zw - uShadowRect.xy);
+          if (at.x >= 0.0 && at.y >= 0.0 && at.x <= 1.0 && at.y <= 1.0) through = texture2D(tCloudShadow, at).r;
+        } else {
+          through = shadowThrough(hit);
         }
         colour *= 1.0 - uStrength * (1.0 - exp(-through * 7.0));
       }
@@ -776,6 +826,46 @@ const CLOUD_SHADOWS = {
 };
 
 /**
+ * The clouds' shadow map (`CLOUD_SHADOWS`'s functions and uniforms): each
+ * texel a point of the plane under every cloud's base, over the rectangle the
+ * shadows fall in, and how much cloud lies from it towards the sun - the
+ * march each pixel of the screen made for itself, made once a texel.
+ */
+const CLOUD_SHADOW_MAP_MAIN = /* glsl */ `
+    void main() {
+      vec3 from = vec3(mix(uShadowRect.x, uShadowRect.z, vUv.x), uShadowPlane, mix(uShadowRect.y, uShadowRect.w, vUv.y));
+      gl_FragColor = vec4(shadowThrough(from), 0.0, 0.0, 1.0);
+    }
+`;
+
+/** Texels a side of the clouds' shadow map: some 10 world units a texel over the whole map, for shadows tens to hundreds of units soft. */
+const CLOUD_SHADOW_MAP = 512;
+
+/**
+ * The plane under every cloud (none has density below `uBase - 0.12 size`,
+ * `heap`) and the rectangle on it where their shadows fall: each cloud's
+ * bounding sphere carried down the sun's ray to the plane, stretched by the
+ * sun's slant. Null with no cloud or the sun too low for a map.
+ */
+function cloudShadowFrame(bounds: readonly Vector4[], bases: readonly number[], count: number, sun: Vector3,
+  rect: Vector4): number | null {
+  if (count === 0 || sun.y < 0.08) return null;
+  let plane = Infinity;
+  for (let c = 0; c < count; c++) plane = Math.min(plane, bases[c]! - bounds[c]!.w / 1.12 * 0.12);
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (let c = 0; c < count; c++) {
+    const s = bounds[c]!;
+    const down = (s.y - plane) / sun.y;
+    const x = s.x - sun.x * down, z = s.z - sun.z * down;
+    const reach = s.w / sun.y;
+    x0 = Math.min(x0, x - reach); x1 = Math.max(x1, x + reach);
+    z0 = Math.min(z0, z - reach); z1 = Math.max(z1, z + reach);
+  }
+  rect.set(x0, z0, x1, z1);
+  return plane;
+}
+
+/**
  * The clouds' bodies (`CLOUD_SHADOWS`'s functions and uniforms), nearest
  * first, into a target of half the width and half the height: a quarter of
  * the pixels, as volumetric clouds are marched in games (Horizon Zero Dawn's
@@ -839,9 +929,16 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
           float t0 = max(spans[best].x, 0.0);
           float t1 = min(spans[best].y, tScene);
           if (t1 <= t0) continue;
+          // Steps of one length through every cloud: 24 across its diameter,
+          // fewer through a chord near its rim or cut short by the scene.
+          // Each step's opacity is integrated over its length (Beer's law),
+          // so its light does not depend on how long the step is (Högfeldt,
+          // "Optimisations for Real-Time Volumetric Cloudscapes", 3.1).
           const int STEPS = 24;
-          float stepLen = (t1 - t0) / float(STEPS);
+          int steps = int(clamp(ceil(float(STEPS) * (t1 - t0) / (2.0 * uCloud[best].w)), 6.0, float(STEPS)));
+          float stepLen = (t1 - t0) / float(steps);
           for (int i = 0; i < STEPS; i++) {
+            if (i >= steps) break;
             float t = t0 + (float(i) + jitter) * stepLen;
             vec3 q = ro + rd * t;
             float density = cloudDensity(best, q);
