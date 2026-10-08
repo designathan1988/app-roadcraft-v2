@@ -814,7 +814,7 @@ export function createSceneRenderer(
    * frame. A step that yields 'wait' is waiting on something off the thread
    * (shaders compiling): nothing more is pumped that frame.
    */
-  let worldJob: Generator<'wait' | undefined, void, void> | null = null;
+  let worldJob: Generator<'wait' | void, void, void> | null = null;
   /** The roads' heights an edit solved ahead (`offerElevation`). */
   let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
@@ -1461,7 +1461,7 @@ export function createSceneRenderer(
    * What `worldSteps` builds before it is put in place at once. `sliced`: run
    * a slice a frame (`pumpWorld`), so it may wait for its shaders.
    */
-  function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number, sliced: boolean): Generator<'wait' | undefined, void, void> {
+  function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number, sliced: boolean): Generator<'wait' | void, void, void> {
     const solve = elevation!;
     if (blocks === null) shapeGround(net);
     else if (blocks.length || gradedFor !== net.doc.buildings.revision) yield* shapeBlocksSteps(net, blocks);
