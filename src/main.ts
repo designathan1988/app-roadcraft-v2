@@ -27,7 +27,7 @@ import type { GeologyKind } from '@world/terrainPaint';
 import { DEFAULT_REGION, isRegionId, type NatureSettings } from '@world/ecology';
 import type { NodeId, PoleId, SegmentId } from '@world/ids';
 import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
-import { barrierProblem, snapBarrierPoint } from '@editor/barriers';
+import { BarrierTool } from '@editor/barriers';
 import {
   POLE_PICK_PIXELS,
   commitPoleRun,
@@ -467,14 +467,20 @@ let poleHover: Vec2 | null = null;
 let streetscapeHover: LandscapeSnap | null = null;
 /** Pick radius for a placed item and the reach of the footway snap, world units. */
 const streetscapeReach = (): number => Math.max(m(1.5), 26 / view.zoom);
-/**
- * The wall, fence or hedge being traced (`world/barriers.ts`): the kind in
- * hand, the points put down so far, and where the pointer is.
- */
-let barrierPoints: Vec2[] | null = null;
-/** The last click of the walls tool, to tell a double click (which ends the run). */
-let lastBarrierClick: { t: number; x: number; y: number } | null = null;
-let barrierCursor: Vec2 | null = null;
+/** The walls tool (`editor/barriers.ts`): the wall, fence or hedge being traced. */
+const barrierTool = new BarrierTool({
+  net: () => net,
+  kind: () => game.barrierKind,
+  removeAt: (at) => {
+    const hit = doc.barrierNear(at, BARRIER_PICK_PIXELS / view.zoom);
+    if (!hit) return false;
+    mutate(() => doc.removeBarrier(hit.id));
+    return true;
+  },
+  build: (kind, path) => mutate(() => doc.addBarrier(kind, path) !== null),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 /**
  * The Zoning tool (`editor/lotTool.ts`): the lots the player draws, edits and
  * zones, with its gestures' own state. Buildings grow on the zoned lots; the
@@ -1013,7 +1019,7 @@ function cancelGestures(): void {
   curvePending = null;
   poleDraft = null;
   poleChain = null;
-  barrierPoints = null;
+  barrierTool.cancel();
   // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
   lotTool.cancel();
   bulldozeBox = null;
@@ -1044,7 +1050,8 @@ function currentGesture(): string | null {
   if (settlingRoad) return 'via: assentando';
   if (terrainStroke) return 'terreno: pincelando';
   if (poleDraft || poleChain) return 'poste: traçando a linha';
-  if (barrierPoints) return 'cerca: traçando';
+  const barrier = barrierTool.gesture();
+  if (barrier) return barrier;
   if (bulldozeBox) return 'demolir: retângulo';
   if (cloudDrag) return 'nuvem: arrastando';
   return lotTool.gesture();
@@ -1817,30 +1824,9 @@ canvas.addEventListener('pointerdown', (e) => {
       transitEditor.click(world, e.shiftKey, e.detail >= 2);
       break;
 
-    case 'barrier': {
-      // Shift-click removes a run; a click puts a point down, a double click
-      // (or Enter) ends the run there.
-      const hit = e.shiftKey ? doc.barrierNear(world, BARRIER_PICK_PIXELS / view.zoom) : null;
-      if (hit) {
-        mutate(() => doc.removeBarrier(hit.id));
-        flashHint('hint.barrier.removed');
-        break;
-      }
-      const point = snapBarrierPoint(net, game.barrierKind, world);
-      barrierPoints = [...(barrierPoints ?? []), point];
-      // A double click ends the run. Detected here by time and distance:
-      // `detail` on a pointerdown is 0 in Chrome, so the run never ended and
-      // the wall, fence or hedge was never built - only its path was drawn.
-      const now = performance.now();
-      const last = lastBarrierClick;
-      lastBarrierClick = { t: now, x: e.clientX, y: e.clientY };
-      if (e.detail >= 2 || (last && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 10)) {
-        lastBarrierClick = null;
-        finishBarrier();
-      }
-      requestDraw();
+    case 'barrier':
+      barrierTool.down(world, e.shiftKey, e.clientX, e.clientY, e.detail);
       break;
-    }
 
     case 'streetscape': {
       // Shift-click removes an item; a click places the chosen one on the
@@ -2090,10 +2076,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (game.tool === 'barrier') {
-    barrierCursor = world;
-    requestDraw();
-  }
+  if (game.tool === 'barrier') barrierTool.move(world);
   if (game.tool === 'transit') {
     transitEditor.move(world);
     requestDraw();
@@ -2414,17 +2397,7 @@ window.addEventListener('keydown', (e) => {
   // A run being traced: Enter ends it, Backspace takes the last point back,
   // Esc drops it.
   if (!meta && game.tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
-  if (!meta && game.tool === 'barrier' && barrierPoints) {
-    if (e.key === 'Enter') { e.preventDefault(); finishBarrier(); return; }
-    if (e.key === 'Backspace') {
-      e.preventDefault();
-      barrierPoints.pop();
-      if (barrierPoints.length === 0) barrierPoints = null;
-      requestDraw();
-      return;
-    }
-    if (e.key === 'Escape') { e.preventDefault(); barrierPoints = null; requestDraw(); return; }
-  }
+  if (!meta && game.tool === 'barrier' && barrierTool.key(e.key)) { e.preventDefault(); return; }
 
   if (!meta && game.tool === 'road' && (e.key === 'PageUp' || e.key === 'PageDown')) {
     e.preventDefault();
@@ -4313,37 +4286,11 @@ let driftQueued = false;
 /** Pick radius for a barrier under a shift-click, screen pixels. */
 const BARRIER_PICK_PIXELS = 10;
 
-/** The run being traced, with the pointer's point added: what would be built. */
-function barrierPlan(): Vec2[] {
-  const points = [...(barrierPoints ?? [])];
-  if (barrierPoints && barrierCursor) points.push(snapBarrierPoint(net, game.barrierKind, barrierCursor));
-  return points;
-}
-
-/** Builds the run traced so far, in one undo step, or says why it cannot be. */
-function finishBarrier(): void {
-  const points = barrierPoints ?? [];
-  barrierPoints = null;
-  // A double click lands two points on one spot: one of them is enough.
-  const path = points.filter((p, i) => i === 0 || Math.hypot(p.x - points[i - 1]!.x, p.y - points[i - 1]!.y) > 1e-3);
-  if (path.length < 2) { requestDraw(); return; }
-  const problem = barrierProblem(net, game.barrierKind, path);
-  if (problem) {
-    flashHint(`hint.barrier.${problem}`);
-    requestDraw();
-    return;
-  }
-  mutate(() => doc.addBarrier(game.barrierKind, path) !== null);
-  flashHint('hint.barrier.built');
-}
-
-/** The run being traced, as it will stand: red where it cannot be built. */
+/** The run being traced (`editor/barriers.ts` `BarrierTool.plan`), as it will stand: red where it cannot be built. */
 function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
-  const points = barrierPlan();
-  const cursor = barrierCursor ? snapBarrierPoint(net, game.barrierKind, barrierCursor) : null;
+  const { line: points, bad, dots } = barrierTool.plan();
   ctx.save();
   if (points.length >= 2) {
-    const bad = barrierProblem(net, game.barrierKind, points) === 'road';
     ctx.strokeStyle = bad ? '#ff6f63' : SELECTION;
     ctx.lineWidth = game.barrierKind === 'hedge' ? 5 : game.barrierKind === 'wall' ? 4 : 2.5;
     ctx.lineJoin = 'round';
@@ -4352,7 +4299,7 @@ function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): 
     ctx.stroke();
   }
   ctx.fillStyle = SELECTION;
-  for (const p of [...(barrierPoints ?? []), ...(cursor ? [cursor] : [])]) {
+  for (const p of dots) {
     const s = at(p);
     ctx.beginPath();
     ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2);

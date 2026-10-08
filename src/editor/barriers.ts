@@ -64,6 +64,116 @@ export function barrierProblem(net: Network | null, kind: BarrierKind, points: r
   return null;
 }
 
+/** What the walls tool reads of the game and does to it. */
+export interface BarrierToolHost {
+  net(): Network | null;
+  kind(): BarrierKind;
+  /** Removes the run under a shift-click, if any; true when one was. */
+  removeAt(at: Vec2): boolean;
+  /** Builds a run, one undo step. */
+  build(kind: BarrierKind, path: readonly Vec2[]): void;
+  hint(key: string): void;
+  redraw(): void;
+}
+
+/**
+ * THE WALLS TOOL: a wall, fence or hedge traced point by point - a click a
+ * point, a double click or Enter ends the run, Backspace takes the last
+ * point back, Esc drops it, Shift-click removes a run. The run being traced
+ * lives here, with the handlers that use it, not in `main.ts`.
+ */
+export class BarrierTool {
+  /** The points put down so far; null when no run is being traced. */
+  private points: Vec2[] | null = null;
+  /** The last click, to tell a double click (which ends the run). */
+  private lastClick: { t: number; x: number; y: number } | null = null;
+  /** The pointer over the map. */
+  private cursor: Vec2 | null = null;
+
+  constructor(private readonly host: BarrierToolHost) {}
+
+  gesture(): string | null {
+    return this.points ? 'cerca: traçando' : null;
+  }
+
+  cancel(): void {
+    this.points = null;
+  }
+
+  /** A press at `world` (screen position `screenX/Y`, `detail` the click count the browser reports). */
+  down(world: Vec2, shift: boolean, screenX: number, screenY: number, detail: number): void {
+    const { host } = this;
+    // Shift-click removes a run; a click puts a point down.
+    if (shift && host.removeAt(world)) {
+      host.hint('hint.barrier.removed');
+      return;
+    }
+    const point = snapBarrierPoint(host.net(), host.kind(), world);
+    this.points = [...(this.points ?? []), point];
+    // A double click ends the run. Detected here by time and distance:
+    // `detail` on a pointerdown is 0 in Chrome, so the run never ended and
+    // the wall, fence or hedge was never built - only its path was drawn.
+    const now = performance.now();
+    const last = this.lastClick;
+    this.lastClick = { t: now, x: screenX, y: screenY };
+    if (detail >= 2 || (last && now - last.t < 450 && Math.hypot(screenX - last.x, screenY - last.y) < 10)) {
+      this.lastClick = null;
+      this.finish();
+    }
+    host.redraw();
+  }
+
+  move(world: Vec2): void {
+    this.cursor = world;
+    this.host.redraw();
+  }
+
+  /** A key while a run is traced; true when the tool took it. */
+  key(key: string): boolean {
+    if (!this.points) return false;
+    if (key === 'Enter') { this.finish(); return true; }
+    if (key === 'Backspace') {
+      this.points.pop();
+      if (this.points.length === 0) this.points = null;
+      this.host.redraw();
+      return true;
+    }
+    if (key === 'Escape') { this.points = null; this.host.redraw(); return true; }
+    return false;
+  }
+
+  /** Builds the run traced so far, in one undo step, or says why it cannot be. */
+  private finish(): void {
+    const { host } = this;
+    const points = this.points ?? [];
+    this.points = null;
+    // A double click lands two points on one spot: one of them is enough.
+    const path = points.filter((p, i) => i === 0 || Math.hypot(p.x - points[i - 1]!.x, p.y - points[i - 1]!.y) > 1e-3);
+    if (path.length < 2) { host.redraw(); return; }
+    const problem = barrierProblem(host.net(), host.kind(), path);
+    if (problem) {
+      host.hint(`hint.barrier.${problem}`);
+      host.redraw();
+      return;
+    }
+    host.build(host.kind(), path);
+    host.hint('hint.barrier.built');
+  }
+
+  /**
+   * The run as it will stand, for the overlay: its points (the pointer's
+   * added), whether it would reach a road, and the points put down with the
+   * pointer's snapped point.
+   */
+  plan(): { line: Vec2[]; bad: boolean; dots: Vec2[] } {
+    const kind = this.host.kind(), net = this.host.net();
+    const cursor = this.cursor ? snapBarrierPoint(net, kind, this.cursor) : null;
+    const line = [...(this.points ?? []), ...(this.points && cursor ? [cursor] : [])];
+    const bad = line.length >= 2 && barrierProblem(net, kind, line) === 'road';
+    return { line, bad, dots: [...(this.points ?? []), ...(cursor ? [cursor] : [])] };
+  }
+}
+
 /** Whether any corner of a footprint is on a carriageway or its kerb (a kerb barrier may stand on the footway). */
 function onCarriageway(net: Network, rect: readonly Vec2[]): boolean {
   for (const ribbon of net.ribbons.values()) {
