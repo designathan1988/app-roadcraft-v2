@@ -36,7 +36,7 @@ import { BuildingStore } from './buildings/store';
 import type { SerializedBuilding } from './buildings/serialize';
 import { isZoneDensity, isZoneMark, isZoneUse, type Zone, type ZoneMark } from './zones';
 import { normalizePerson, type PersonSpec } from '@people/spec';
-import { ChangeJournal, rectAround, type ChangeKind, type ChangeRect } from './changes';
+import { ChangeJournal, rectAround, type ChangeRect, type DocChangeKind } from './changes';
 
 /** `shape` flattened until no band of a road of this profile folds over (see `RoadDoc.fitCurve`). */
 export function fitRoadCurve(
@@ -152,7 +152,6 @@ export class RoadDoc {
    * `barrierRevision`: a fence drawn must not rebuild the roads.
    */
   readonly barriers = new Map<number, Barrier>();
-  barrierRevision = 0;
   private barrierIds = new IdAllocator(1);
 
   /**
@@ -172,13 +171,10 @@ export class RoadDoc {
    * placed never rebuilds the roads.
    */
   transit: TransitData = emptyTransit();
-  transitRevision = 0;
 
   /** The public transport replaced by an edit of it. */
   setTransit(next: TransitData): void {
-    this.transit = next;
-    this.transitRevision++;
-    this.changes.record('transit', null);
+    this.transit = next;    this.changes.record('transit', null);
   }
 
   private nodeIds = new IdAllocator(1);
@@ -202,49 +198,43 @@ export class RoadDoc {
    * NEW map one (`main.ts`), and the player can give an old one one.
    */
   nature: NatureSettings | null = null;
-  /** Moves with every change to `nature`, and only then. */
-  natureRevision = 0;
   /** Ground painted over the terrain (`terrainPaint.ts`), oldest first. */
   readonly terrainPaint: PaintDab[] = [];
-  /** Moves with every change to `terrainPaint`, and only then. */
-  paintRevision = 0;
   /** Fog painted over the land (`fogPaint.ts`), oldest first, and how it behaves. */
   readonly fogDabs: FogDab[] = [];
   fogSettings: FogSettings = DEFAULT_FOG;
-  /** Moves with every change to `fogDabs` or `fogSettings`, and only then. */
-  fogRevision = 0;
   /** Gullies cut or wiped with the brush (`gullies.ts`), oldest first, and how much of the steep land carries them of itself (0..1). */
   readonly gullyDabs: GullyDab[] = [];
   gullyAuto = DEFAULT_GULLY_AUTO;
-  /** Moves with every change to `gullyDabs` or `gullyAuto`, and only then. */
-  gullyRevision = 0;
   /** Clouds the player placed in the sky (`clouds.ts`). */
   readonly clouds: PlacedCloud[] = [];
-  /** Moves with every change to `clouds`, and only then. */
-  cloudRevision = 0;
   /** The map's weather (`weather.ts`). */
   weather: Weather = DEFAULT_WEATHER;
-  /** Moves with every change to `weather`, and only then. */
-  weatherRevision = 0;
   /** Trees the player planted (`trees.ts`), oldest first. */
   readonly trees: PlantedTree[] = [];
-  /** Moves with every change to `trees`, and only then. */
-  treeRevision = 0;
   /** Where trees were cut away, the woods' own too (`trees.ts`), oldest first. */
   readonly treeClearings: TreeClearing[] = [];
-  /** Moves with every change to `treeClearings`, and only then. */
-  clearingRevision = 0;
   /** The elements the player laid with the brush (`elements.ts`), oldest first. */
   readonly elements: ElementItem[] = [];
-  /** Moves with every change to `elements`, and only then. */
-  elementRevision = 0;
+
+  /**
+   * What changed in this document, where and why (`changes.ts`): every
+   * method below that changes it writes an entry, and `replaceWith` - every
+   * road drawn and every undo - writes what differs. It is the document's
+   * only clock: every revision below is the serial of the latest entry of
+   * its kind (Fowler, "Event Sourcing": every change goes through an event,
+   * and what is derived is derived from them), so nothing changes without
+   * the diary knowing where and why.
+   */
+  readonly changes = new ChangeJournal();
 
   /**
    * Modular buildings (docs/buildings.md). They keep their OWN revision,
-   * `buildings.revision`: a building edit must not move `revision`, which
-   * would rebuild the road network and the simulation for nothing.
+   * `buildings.revision` (the diary's `buildings` kind): a building edit must
+   * not move `revision`, which would rebuild the road network and the
+   * simulation for nothing.
    */
-  readonly buildings = new BuildingStore();
+  readonly buildings = new BuildingStore(this.changes);
 
   /** Authored land-use strokes, separate from the buildings they generated. */
   readonly zones: Zone[] = [];
@@ -255,37 +245,42 @@ export class RoadDoc {
    * only so old maps load; nothing makes them any more.
    */
   readonly zoneMarks: ZoneMark[] = [];
-  /** Moves on every zoning change, so the overlay and the growth notice it. */
-  zoneRevision = 0;
   /** The land's lots (`world/lots.ts`): the cadastre the player zones and edits. */
   readonly lots: Lot[] = [];
   /** The blocks and strips already cut into lots, so a lot deleted on purpose is not made again. */
   readonly lotKeys: string[] = [];
   nextLotId = 1;
-  lotRevision = 0;
+
+  /**
+   * The zoning or the lots changed there (`zoneRevision`, `lotRevision`):
+   * the way in for the tools that change them in place (`world/lots.ts`,
+   * `editor/zoning.ts`), so the overlay and the growth notice it.
+   */
+  zonesChanged(rects: readonly ChangeRect[] | null, cause?: string): void {
+    this.changes.record('zones', rects, cause ? { cause } : {});
+  }
+
+  lotsChanged(rects: readonly ChangeRect[] | null, cause?: string): void {
+    this.changes.record('lots', rects, cause ? { cause } : {});
+  }
 
   /**
    * The people made in the Person Creator, saved with the city. Their own
    * revision, `peopleRevision`: a person is not part of any network.
    */
   readonly people: PersonSpec[] = [];
-  peopleRevision = 0;
 
   /** Adds a person, or replaces the one with the same id. */
   savePerson(person: PersonSpec): void {
     const at = this.people.findIndex((p) => p.id === person.id);
     if (at >= 0) this.people[at] = person;
-    else this.people.push(person);
-    this.peopleRevision++;
-    this.changes.record('people', null, { ids: [person.id] });
+    else this.people.push(person);    this.changes.record('people', null, { ids: [person.id] });
   }
 
   removePerson(id: number): void {
     const at = this.people.findIndex((p) => p.id === id);
     if (at < 0) return;
-    this.people.splice(at, 1);
-    this.peopleRevision++;
-    this.changes.record('people', null, { ids: [id] });
+    this.people.splice(at, 1);    this.changes.record('people', null, { ids: [id] });
   }
 
   /** An id no saved person has. */
@@ -293,28 +288,40 @@ export class RoadDoc {
     return this.people.reduce((m, p) => Math.max(m, p.id), 0) + 1;
   }
 
-  /** Bumped on every structural change; consumers use it to invalidate caches. */
-  revision = 0;
-  /** Horizontal road and junction topology read by vehicles and pedestrians. */
-  trafficRevision = 0;
-  terrainRevision = 0;
-  /**
-   * Bumped by pole and wire edits, which do NOT move `revision`: a pole is
-   * not part of the road network, and moving `revision` for one rebuilt the
-   * network, the lanelets, the whole simulation topology and every road mesh
-   * - about 330 ms per pole on a 180-segment map (tests/bench) - to draw a
-   * post. The renderer's utility layer and the footway graph
-   * (`sim/peds/sidewalk.ts`) watch this instead.
-   */
-  utilityRevision = 0;
+  // ------------------------------------------------------------ revisions
+  // Each is the serial of the latest diary entry of its kind (`changes`):
+  // read-only, moved only by writing the change down.
 
+  /** The roads' geometry: every structural change; consumers use it to invalidate caches. */
+  get revision(): number { return this.changes.serialOf('roads'); }
+  /** Horizontal road and junction topology read by vehicles and pedestrians. */
+  get trafficRevision(): number { return this.changes.serialOf('traffic'); }
+  get terrainRevision(): number { return this.changes.serialOf('terrain'); }
   /**
-   * What changed in this document, where and why (`changes.ts`): every
-   * method below that changes it writes an entry, and `replaceWith` - every
-   * road drawn and every undo - writes what differs. The revision counters
-   * stay as they were for whoever still reads them.
+   * Pole and wire edits and the street landscaping, which do NOT move
+   * `revision`: a pole is not part of the road network, and moving
+   * `revision` for one rebuilt the network, the lanelets, the whole
+   * simulation topology and every road mesh - about 330 ms per pole on a
+   * 180-segment map (tests/bench) - to draw a post. The renderer's utility
+   * layer and the footway graph (`sim/peds/sidewalk.ts`) watch this instead.
    */
-  readonly changes = new ChangeJournal();
+  get utilityRevision(): number { return this.changes.serialOf('utilities', 'landscape'); }
+  /** Walls, fences and hedges: a fence drawn must not rebuild the roads. */
+  get barrierRevision(): number { return this.changes.serialOf('barriers'); }
+  /** Public transport: a bus stop placed never rebuilds the roads. */
+  get transitRevision(): number { return this.changes.serialOf('transit'); }
+  get natureRevision(): number { return this.changes.serialOf('nature'); }
+  get paintRevision(): number { return this.changes.serialOf('paint'); }
+  get fogRevision(): number { return this.changes.serialOf('fog'); }
+  get gullyRevision(): number { return this.changes.serialOf('gullies'); }
+  get cloudRevision(): number { return this.changes.serialOf('clouds'); }
+  get weatherRevision(): number { return this.changes.serialOf('weather'); }
+  get treeRevision(): number { return this.changes.serialOf('trees'); }
+  get clearingRevision(): number { return this.changes.serialOf('clearings'); }
+  get elementRevision(): number { return this.changes.serialOf('elements'); }
+  get zoneRevision(): number { return this.changes.serialOf('zones'); }
+  get lotRevision(): number { return this.changes.serialOf('lots'); }
+  get peopleRevision(): number { return this.changes.serialOf('people'); }
 
   /** A road segment's rectangle as drawn: its ends, its bulge and its width. */
   segmentRect(id: SegmentId): ChangeRect | null {
@@ -368,9 +375,7 @@ export class RoadDoc {
     const on = clampToMap(at);
     const id = asPoleId(this.poleIds.take());
     const pole: UtilityPole = { id, x: on.x, y: on.y, lamp };
-    this.poles.set(id, pole);
-    this.utilityRevision++;
-    this.changes.record('utilities', [rectAround([pole], ITEM_PAD)!], { ids: [id] });
+    this.poles.set(id, pole);    this.changes.record('utilities', [rectAround([pole], ITEM_PAD)!], { ids: [id] });
     return pole;
   }
 
@@ -385,9 +390,7 @@ export class RoadDoc {
     }
     const id = asSpanId(this.spanIds.take());
     const span: UtilitySpan = { id, a, b };
-    this.poleSpans.set(id, span);
-    this.utilityRevision++;
-    this.changes.record('utilities', [rectAround([this.poles.get(a)!, this.poles.get(b)!], ITEM_PAD)!], { ids: [a, b] });
+    this.poleSpans.set(id, span);    this.changes.record('utilities', [rectAround([this.poles.get(a)!, this.poles.get(b)!], ITEM_PAD)!], { ids: [a, b] });
     return span;
   }
 
@@ -396,17 +399,13 @@ export class RoadDoc {
     const path = points.map((p) => clampToMap(p));
     if (path.length < 2) return null;
     const barrier: Barrier = { id: this.barrierIds.take(), kind, points: path.map((p) => ({ x: p.x, y: p.y })) };
-    this.barriers.set(barrier.id, barrier);
-    this.barrierRevision++;
-    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [barrier.id] });
+    this.barriers.set(barrier.id, barrier);    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [barrier.id] });
     return barrier;
   }
 
   removeBarrier(id: number): boolean {
     const barrier = this.barriers.get(id);
-    if (!barrier || !this.barriers.delete(id)) return false;
-    this.barrierRevision++;
-    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [id] });
+    if (!barrier || !this.barriers.delete(id)) return false;    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [id] });
     return true;
   }
 
@@ -434,17 +433,13 @@ export class RoadDoc {
     const item: LandscapeItem = { id: this.landscapeIds.take(), kind, x: on.x, y: on.y,
       ...(extra.signType ? { signType: extra.signType } : {}), ...(text ? { text } : {}),
       ...(extra.planted !== undefined && Number.isFinite(extra.planted) ? { planted: extra.planted } : {}) };
-    this.landscape.set(item.id, item);
-    this.utilityRevision++;
-    this.changes.record('landscape', [rectAround([item], ITEM_PAD)!], { ids: [item.id] });
+    this.landscape.set(item.id, item);    this.changes.record('landscape', [rectAround([item], ITEM_PAD)!], { ids: [item.id] });
     return item;
   }
 
   removeLandscape(id: number): boolean {
     const item = this.landscape.get(id);
-    if (!item || !this.landscape.delete(id)) return false;
-    this.utilityRevision++;
-    this.changes.record('landscape', [rectAround([item], ITEM_PAD)!], { ids: [id] });
+    if (!item || !this.landscape.delete(id)) return false;    this.changes.record('landscape', [rectAround([item], ITEM_PAD)!], { ids: [id] });
     return true;
   }
 
@@ -458,9 +453,7 @@ export class RoadDoc {
       const other = this.poles.get(span.a === id ? span.b : span.a);
       if (other) reached.push(other);
       this.poleSpans.delete(spanId);
-    }
-    this.utilityRevision++;
-    this.changes.record('utilities', [rectAround(reached, ITEM_PAD)!], { ids: [id] });
+    }    this.changes.record('utilities', [rectAround(reached, ITEM_PAD)!], { ids: [id] });
   }
 
   /** The pole nearest a point, within `radius`, or null. */
@@ -583,8 +576,8 @@ export class RoadDoc {
       if (!n.blockedMovements.includes(moved)) n.blockedMovements.push(moved);
     }
     this.dirtyNodes.add(node);
-    this.trafficRevision++;
-    this.changes.record('roads', [this.nodeRect(node)!], { ids: [node], detail: 'turn bans carried' });
+    // The geometry is the same; what moves is the plan the traffic runs on.
+    this.changes.record('traffic', this.rectsOrMap(this.nodeRect(node)), { ids: [node], detail: 'turn bans carried' });
   }
 
   /**
@@ -603,13 +596,11 @@ export class RoadDoc {
   removeNode(id: NodeId): void {
     const n = this.nodes.get(id);
     if (!n) return;
-    const where = this.nodeRect(id);
+    const where = this.rectsOrMap(this.nodeRect(id));
     for (const sid of n.incident.slice()) this.removeSegment(sid);
-    if (where) this.changes.record('roads', [where], { ids: [id] });
     this.nodes.delete(id);
     this.dirtyNodes.add(id);
-    this.revision++;
-    this.trafficRevision++;
+    this.roadsChanged(where, true, { ids: [id], detail: 'node removed' });
   }
 
   /**
@@ -771,66 +762,50 @@ export class RoadDoc {
   /** Gives the map an ecosystem (or takes it away: null). */
   setNature(next: NatureSettings | null): void {
     if (JSON.stringify(this.nature) === JSON.stringify(next)) return;
-    this.nature = next ? { ...next } : null;
-    this.natureRevision++;
-    this.changes.record('nature', null);
+    this.nature = next ? { ...next } : null;    this.changes.record('nature', null);
   }
 
   addPaintDab(dab: PaintDab): void {
     this.terrainPaint.push({ ...dab });
     // The oldest dab dropped changes the ground where it lay too: the whole map is laid again.
     const dropped = this.terrainPaint.length > MAX_PAINT_DABS;
-    if (dropped) this.terrainPaint.shift();
-    this.paintRevision++;
-    this.changes.record('paint', dropped ? null : [circleRect(dab)]);
+    if (dropped) this.terrainPaint.shift();    this.changes.record('paint', dropped ? null : [circleRect(dab)]);
   }
 
   addFogDab(dab: FogDab): void {
     this.fogDabs.push({ ...dab });
     const dropped = this.fogDabs.length > MAX_FOG_DABS;
-    if (dropped) this.fogDabs.shift();
-    this.fogRevision++;
-    this.changes.record('fog', dropped ? null : [circleRect(dab)]);
+    if (dropped) this.fogDabs.shift();    this.changes.record('fog', dropped ? null : [circleRect(dab)]);
   }
 
   addGullyDab(dab: GullyDab): void {
     this.gullyDabs.push({ ...dab });
     const dropped = this.gullyDabs.length > MAX_GULLY_DABS;
-    if (dropped) this.gullyDabs.shift();
-    this.gullyRevision++;
-    this.changes.record('gullies', dropped ? null : [circleRect(dab)]);
+    if (dropped) this.gullyDabs.shift();    this.changes.record('gullies', dropped ? null : [circleRect(dab)]);
   }
 
   clearGullies(): void {
     if (this.gullyDabs.length === 0) return;
-    this.gullyDabs.length = 0;
-    this.gullyRevision++;
-    this.changes.record('gullies', null);
+    this.gullyDabs.length = 0;    this.changes.record('gullies', null);
   }
 
   setGullyAuto(amount: number): void {
     const next = Math.min(1, Math.max(0, Number.isFinite(amount) ? amount : DEFAULT_GULLY_AUTO));
     if (next === this.gullyAuto) return;
-    this.gullyAuto = next;
-    this.gullyRevision++;
-    this.changes.record('gullies', null);
+    this.gullyAuto = next;    this.changes.record('gullies', null);
   }
 
   setWeather(change: Partial<Weather>): void {
     const next = readWeather({ ...this.weather, ...change }, this.weather);
     if (JSON.stringify(next) === JSON.stringify(this.weather)) return;
-    this.weather = next;
-    this.weatherRevision++;
-    this.changes.record('weather', null);
+    this.weather = next;    this.changes.record('weather', null);
   }
 
   plantTrees(trees: readonly PlantedTree[]): void {
     if (trees.length === 0) return;
     this.trees.push(...trees.map((t) => ({ ...t })));
     const dropped = this.trees.length > MAX_PLANTED_TREES;
-    if (dropped) this.trees.splice(0, this.trees.length - MAX_PLANTED_TREES);
-    this.treeRevision++;
-    this.changes.record('trees', dropped ? null : [rectAround(trees, ITEM_PAD)!]);
+    if (dropped) this.trees.splice(0, this.trees.length - MAX_PLANTED_TREES);    this.changes.record('trees', dropped ? null : [rectAround(trees, ITEM_PAD)!]);
   }
 
   /**
@@ -843,29 +818,24 @@ export class RoadDoc {
       const t = this.trees[i]!;
       if (Math.hypot(t.x - x, t.y - y) <= radius) this.trees.splice(i, 1);
     }
-    if (this.trees.length !== before) this.treeRevision++;
+    if (this.trees.length !== before) this.changes.record('trees', [circleRect({ x, y, radius })], { detail: `${before - this.trees.length} cut` });
     this.treeClearings.push({ x, y, radius });
     const dropped = this.treeClearings.length > MAX_TREE_CLEARINGS;
     if (dropped) this.treeClearings.shift();
-    this.clearingRevision++;
-    this.changes.record('trees', dropped ? null : [circleRect({ x, y, radius })]);
+    this.changes.record('clearings', dropped ? null : [circleRect({ x, y, radius })]);
   }
 
   /** Every planted tree gone, and every clearing grown over again. */
   clearTrees(): void {
-    const any = this.trees.length > 0 || this.treeClearings.length > 0;
-    if (this.trees.length > 0) { this.trees.length = 0; this.treeRevision++; }
-    if (this.treeClearings.length > 0) { this.treeClearings.length = 0; this.clearingRevision++; }
-    if (any) this.changes.record('trees', null);
+    if (this.trees.length > 0) { this.trees.length = 0; this.changes.record('trees', null); }
+    if (this.treeClearings.length > 0) { this.treeClearings.length = 0; this.changes.record('clearings', null); }
   }
 
   addElements(items: readonly ElementItem[]): void {
     if (items.length === 0) return;
     this.elements.push(...items);
     const dropped = this.elements.length > MAX_ELEMENTS;
-    if (dropped) this.elements.splice(0, this.elements.length - MAX_ELEMENTS);
-    this.elementRevision++;
-    this.changes.record('elements', dropped ? null : [rectAround(items, Math.max(ITEM_PAD, ...items.map((e) => e.size)))!]);
+    if (dropped) this.elements.splice(0, this.elements.length - MAX_ELEMENTS);    this.changes.record('elements', dropped ? null : [rectAround(items, Math.max(ITEM_PAD, ...items.map((e) => e.size)))!]);
   }
 
   /** Takes away the elements within `radius` of (x, y) - of one kind, or every kind (`kind` null). How many went. */
@@ -876,18 +846,14 @@ export class RoadDoc {
       if ((kind === null || e.kind === kind) && Math.hypot(e.x - x, e.y - y) <= radius) this.elements.splice(i, 1);
     }
     const gone = before - this.elements.length;
-    if (gone > 0) {
-      this.elementRevision++;
-      this.changes.record('elements', [circleRect({ x, y, radius })]);
+    if (gone > 0) {      this.changes.record('elements', [circleRect({ x, y, radius })]);
     }
     return gone;
   }
 
   clearElements(): void {
     if (this.elements.length === 0) return;
-    this.elements.length = 0;
-    this.elementRevision++;
-    this.changes.record('elements', null);
+    this.elements.length = 0;    this.changes.record('elements', null);
   }
 
   /** A new cloud; null when the sky already holds as many as it may. */
@@ -895,9 +861,7 @@ export class RoadDoc {
     if (this.clouds.length >= MAX_PLACED_CLOUDS) return null;
     const id = this.clouds.reduce((m, c) => Math.max(m, c.id), 0) + 1;
     const cloud = { ...value, id };
-    this.clouds.push(cloud);
-    this.cloudRevision++;
-    this.changes.record('clouds', [rectAround([cloud], cloud.size)!], { ids: [id] });
+    this.clouds.push(cloud);    this.changes.record('clouds', [rectAround([cloud], cloud.size)!], { ids: [id] });
     return cloud;
   }
 
@@ -910,9 +874,7 @@ export class RoadDoc {
       this.clouds.push({ ...value, id: ++id });
       added++;
     }
-    if (added > 0) {
-      this.cloudRevision++;
-      const placed = this.clouds.slice(-added);
+    if (added > 0) {      const placed = this.clouds.slice(-added);
       this.changes.record('clouds', [rectAround(placed, Math.max(...placed.map((c) => c.size)))!]);
     }
     return added;
@@ -923,39 +885,29 @@ export class RoadDoc {
     if (i < 0) return;
     const was = this.clouds[i]!;
     const now = { ...was, ...change, id };
-    this.clouds[i] = now;
-    this.cloudRevision++;
-    this.changes.record('clouds', [rectAround([was, now], Math.max(was.size, now.size))!], { ids: [id] });
+    this.clouds[i] = now;    this.changes.record('clouds', [rectAround([was, now], Math.max(was.size, now.size))!], { ids: [id] });
   }
 
   removeCloud(id: number): void {
     const i = this.clouds.findIndex((c) => c.id === id);
     if (i < 0) return;
-    const [was] = this.clouds.splice(i, 1);
-    this.cloudRevision++;
-    this.changes.record('clouds', [rectAround([was!], was!.size)!], { ids: [id] });
+    const [was] = this.clouds.splice(i, 1);    this.changes.record('clouds', [rectAround([was!], was!.size)!], { ids: [id] });
   }
 
   clearFog(): void {
     if (this.fogDabs.length === 0) return;
-    this.fogDabs.length = 0;
-    this.fogRevision++;
-    this.changes.record('fog', null);
+    this.fogDabs.length = 0;    this.changes.record('fog', null);
   }
 
   setFogSettings(next: Partial<FogSettings>): void {
     const merged = readFogSettings({ ...this.fogSettings, ...next });
     if (JSON.stringify(merged) === JSON.stringify(this.fogSettings)) return;
-    this.fogSettings = merged;
-    this.fogRevision++;
-    this.changes.record('fog', null);
+    this.fogSettings = merged;    this.changes.record('fog', null);
   }
 
   clearPaint(): void {
     if (this.terrainPaint.length === 0) return;
-    this.terrainPaint.length = 0;
-    this.paintRevision++;
-    this.changes.record('paint', null);
+    this.terrainPaint.length = 0;    this.changes.record('paint', null);
   }
 
   addTerrainStamp(value: Omit<TerrainStamp, 'id'>): TerrainStamp {
@@ -963,17 +915,13 @@ export class RoadDoc {
     this.terrainStamps.push(stamp);
     // The oldest stamp dropped moves the land where it lay too.
     const dropped = this.terrainStamps.length > MAX_TERRAIN_STAMPS;
-    if (dropped) this.terrainStamps.shift();
-    this.terrainRevision++;
-    this.changes.record('terrain', dropped ? null : [circleRect(stamp)], { ids: [stamp.id] });
+    if (dropped) this.terrainStamps.shift();    this.changes.record('terrain', dropped ? null : [circleRect(stamp)], { ids: [stamp.id] });
     return stamp;
   }
 
   clearTerrain(): void {
     if (this.terrainStamps.length === 0) return;
-    this.terrainStamps.length = 0;
-    this.terrainRevision++;
-    this.changes.record('terrain', null);
+    this.terrainStamps.length = 0;    this.changes.record('terrain', null);
   }
 
   setNodeControl(id: NodeId, control: JunctionControl): void {
@@ -1027,7 +975,7 @@ export class RoadDoc {
         removed++;
       }
     }
-    if (removed) { this.revision++; this.trafficRevision++; this.changes.record('roads', null, { detail: `${removed} loose nodes dropped` }); }
+    if (removed) this.roadsChanged(null, true, { detail: `${removed} loose nodes dropped` });
     return removed;
   }
 
@@ -1062,11 +1010,12 @@ export class RoadDoc {
     // The dirty set is an invalidation *set*, while revision is a mutation
     // clock: every real edit must advance it even when the same id is present.
     this.dirtyNodes.add(id);
-    this.revision++;
-    if (traffic) this.trafficRevision++;
+    // Every real edit is written, even of a node already dirty: the diary is
+    // the mutation clock (`revision` is its latest `roads` entry). A node gone
+    // has no rectangle: the whole map.
+    this.roadsChanged(this.rectsOrMap(this.nodeRect(id)), traffic, { ids: [id] });
     const n = this.nodes.get(id);
     if (!n) return;
-    this.changes.record('roads', [this.nodeRect(id)!], { ids: [id] });
     for (const sid of n.incident) {
       if (!this.dirtySegments.has(sid)) {
         this.dirtySegments.add(sid);
@@ -1081,12 +1030,9 @@ export class RoadDoc {
 
   markSegment(id: SegmentId): void {
     this.dirtySegments.add(id);
-    this.revision++;
-    this.trafficRevision++;
+    this.roadsChanged(this.rectsOrMap(this.segmentRect(id)), true, { ids: [id] });
     const s = this.segments.get(id);
     if (!s) return;
-    const where = this.segmentRect(id);
-    if (where) this.changes.record('roads', [where], { ids: [id] });
     this.dirtyNodes.add(s.a);
     this.dirtyNodes.add(s.b);
   }
@@ -1094,6 +1040,22 @@ export class RoadDoc {
   clearDirty(): void {
     this.dirtyNodes.clear();
     this.dirtySegments.clear();
+  }
+
+  /** A rectangle as the diary takes it: itself, or the whole map when there is none. */
+  private rectsOrMap(rect: ChangeRect | null): readonly ChangeRect[] | null {
+    return rect ? [rect] : null;
+  }
+
+  /**
+   * The roads changed there: their geometry (`roads`, read as `revision`)
+   * and, when the plan the traffic runs on changes with it, `traffic` (read
+   * as `trafficRevision`; a node raised without changing how it is crossed
+   * leaves it).
+   */
+  private roadsChanged(rects: readonly ChangeRect[] | null, traffic: boolean, extra: { readonly ids?: readonly number[]; readonly detail?: string } = {}): void {
+    const roads = this.changes.record('roads', rects, extra);
+    if (traffic) this.changes.record('traffic', rects, { ...extra, parent: roads });
   }
 
   /**
@@ -1114,20 +1076,7 @@ export class RoadDoc {
     copy.spanIds = new IdAllocator(this.spanIds.peek);
     copy.barrierIds = new IdAllocator(this.barrierIds.peek);
     copy.landscapeIds = new IdAllocator(this.landscapeIds.peek);
-    copy.barrierRevision = this.barrierRevision;
     copy.nextTerrainId = this.nextTerrainId;
-    copy.revision = this.revision;
-    copy.trafficRevision = this.trafficRevision;
-    copy.terrainRevision = this.terrainRevision;
-    copy.paintRevision = this.paintRevision;
-    copy.fogRevision = this.fogRevision;
-    copy.gullyRevision = this.gullyRevision;
-    copy.cloudRevision = this.cloudRevision;
-    copy.elementRevision = this.elementRevision;
-    copy.treeRevision = this.treeRevision;
-    copy.weatherRevision = this.weatherRevision;
-    copy.clearingRevision = this.clearingRevision;
-    copy.utilityRevision = this.utilityRevision;
     copy.clearDirty();
     for (const id of this.dirtyNodes) copy.dirtyNodes.add(id);
     for (const id of this.dirtySegments) copy.dirtySegments.add(id);
@@ -1135,10 +1084,12 @@ export class RoadDoc {
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
     copy.terrainRelief = this.terrainRelief;
     copy.nature = this.nature ? { ...this.nature } : null;
-    copy.natureRevision = this.natureRevision;
     copy.buildings.copyAllocator(this.buildings);
-    copy.buildings.revision = this.buildings.revision;
     copy.nextZoneId = this.nextZoneId;
+    // At the same revisions as this document, every one of them: the copy's
+    // diary goes on from this one's (what loading the copy wrote is not a
+    // change), so the live network is taken over as it stands (`adopt`).
+    copy.changes.continueFrom(this.changes);
     return copy;
   }
 
@@ -1159,39 +1110,34 @@ export class RoadDoc {
     const roads = roadDifferences(this, source);
     const stamps = this.terrainRelief !== source.terrainRelief ? null : stampDifferences(this.terrainStamps, source.terrainStamps);
     const items = itemDifferences(this, source);
-    const before = this.revisionsByKind();
-    this.replaceContents(source);
-    const after = this.revisionsByKind();
-    const record = (kind: ChangeKind, rects: readonly ChangeRect[] | null, ids?: readonly number[]): void => {
-      this.changes.record(kind, rects, ids ? { ids } : {});
-    };
-    if (roads.rects.length) record('roads', roads.rects, roads.ids);
-    if (stamps === null || stamps.rects.length) record('terrain', stamps?.rects ?? null, stamps?.ids);
-    if (items.utilities.length) record('utilities', items.utilities);
-    if (items.landscape.length) record('landscape', items.landscape);
-    if (items.barriers.length) record('barriers', items.barriers);
-    for (const kind of ['zones', 'lots', 'buildings', 'transit', 'people', 'nature', 'weather', 'trees', 'elements', 'clouds', 'gullies', 'fog', 'paint'] as const) {
-      if (before[kind] !== after[kind]) record(kind, null);
+    const changed = this.replaceContents(source);
+    const where = (rects: readonly ChangeRect[] | undefined): readonly ChangeRect[] | null => rects && rects.length ? rects : null;
+    if (changed.roads || roads.rects.length) this.roadsChanged(where(roads.rects), changed.roads, { ids: roads.ids });
+    if (changed.land || (stamps !== null && stamps.rects.length)) {
+      this.changes.record('terrain', where(stamps?.rects), stamps?.ids ? { ids: stamps.ids } : {});
     }
+    if (changed.utilities || items.utilities.length) this.changes.record('utilities', where(items.utilities));
+    if (items.landscape.length) this.changes.record('landscape', items.landscape);
+    if (changed.barriers || items.barriers.length) this.changes.record('barriers', where(items.barriers));
+    // The buildings write their own (`BuildingStore.replaceWith`), each where it stands.
+    for (const kind of changed.others) this.changes.record(kind, null);
   }
 
-  /** Each kind's revision, to see which moved. */
-  private revisionsByKind(): Record<'zones' | 'lots' | 'buildings' | 'transit' | 'people' | 'nature' | 'weather' | 'trees' | 'elements' | 'clouds' | 'gullies' | 'fog' | 'paint', number> {
-    return {
-      zones: this.zoneRevision, lots: this.lotRevision, buildings: this.buildings.revision, transit: this.transitRevision, people: this.peopleRevision, nature: this.natureRevision,
-      weather: this.weatherRevision, trees: this.treeRevision * 1_000_003 + this.clearingRevision, elements: this.elementRevision,
-      clouds: this.cloudRevision, gullies: this.gullyRevision, fog: this.fogRevision, paint: this.paintRevision,
-    };
-  }
-
-  private replaceContents(source: RoadDoc): void {
-    const nextRevision = this.revision + 1;
+  /**
+   * Takes `source`'s contents and says what differed: the roads, the land,
+   * the poles and the barriers (written with their places by `replaceWith`),
+   * and every other kind whose content moved.
+   */
+  private replaceContents(source: RoadDoc): {
+    roads: boolean; land: boolean; utilities: boolean; barriers: boolean; others: DocChangeKind[];
+  } {
+    const others: DocChangeKind[] = [];
+    let barriersChanged = false;
     // The land moves only when its stamps do. Drawing a road replaces the whole
-    // document with an edited clone (`commitDraft`), and bumping the terrain
-    // revision for it rewrote all 90 601 terrain corners, their normals and
+    // document with an edited clone (`commitDraft`), and moving the terrain
+    // for it rewrote all 90 601 terrain corners, their normals and
     // the rivers on every road drawn, for ground that had not changed.
     const landMoved = !sameStamps(this.terrainStamps, source.terrainStamps) || this.terrainRelief !== source.terrainRelief;
-    const nextTerrainRevision = landMoved ? this.terrainRevision + 1 : this.terrainRevision;
     // Likewise the roads and the utility network: undoing a storey or a
     // brush dab replaced the whole document and moved both revisions, which
     // rebuilt every road mesh, the lanelets and the simulation topology for a
@@ -1220,16 +1166,15 @@ export class RoadDoc {
     this.poles.clear();
     this.poleSpans.clear();
     for (const [id, pole] of source.poles) this.poles.set(id, { ...pole });
-    if (utilitiesChanged) this.utilityRevision++;
     for (const [id, span] of source.poleSpans) this.poleSpans.set(id, { ...span });
     this.landscape.clear();
     for (const [id, item] of source.landscape) this.landscape.set(id, { ...item });
     if (!sameBarriers(this, source)) {
       this.barriers.clear();
       for (const [id, barrier] of source.barriers) this.barriers.set(id, { ...barrier, points: barrier.points.map((p) => ({ ...p })) });
-      this.barrierRevision++;
+      barriersChanged = true;
     }
-    // Moves `buildings.revision` only if the buildings differ.
+    // Writes a change only of the buildings that differ.
     this.buildings.replaceWith(source.buildings);
     // The zones and the lots moved only when their content did: every road
     // drawn replaces the document, and moving their revisions for it made
@@ -1241,7 +1186,7 @@ export class RoadDoc {
       this.zones.push(...source.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })));
       this.zoneMarks.length = 0;
       this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
-      this.zoneRevision++;
+      others.push('zones');
     }
     this.nextLotId = source.nextLotId;
     if (JSON.stringify(this.lots) !== JSON.stringify(source.lots) || this.lotKeys.join('\n') !== source.lotKeys.join('\n')) {
@@ -1249,68 +1194,68 @@ export class RoadDoc {
       this.lots.push(...source.lots.map((lot) => ({ ...lot, corners: lot.corners.map((q) => ({ ...q })) as unknown as Lot['corners'] })));
       this.lotKeys.length = 0;
       this.lotKeys.push(...source.lotKeys);
-      this.lotRevision++;
+      others.push('lots');
     }
     if (JSON.stringify(this.transit) !== JSON.stringify(source.transit)) {
       this.transit = JSON.parse(JSON.stringify(source.transit)) as TransitData;
-      this.transitRevision++;
+      others.push('transit');
     }
     if (JSON.stringify(this.people) !== JSON.stringify(source.people)) {
       this.people.length = 0;
       this.people.push(...source.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec));
-      this.peopleRevision++;
+      others.push('people');
     }
 
     if (JSON.stringify(this.nature) !== JSON.stringify(source.nature)) {
       this.nature = source.nature ? { ...source.nature } : null;
-      this.natureRevision++;
+      others.push('nature');
     }
 
     if (JSON.stringify(this.weather) !== JSON.stringify(source.weather)) {
       this.weather = { ...source.weather };
-      this.weatherRevision++;
+      others.push('weather');
     }
     if (JSON.stringify(this.trees) !== JSON.stringify(source.trees)) {
       this.trees.length = 0;
       this.trees.push(...source.trees.map((t) => ({ ...t })));
-      this.treeRevision++;
+      others.push('trees');
     }
     if (JSON.stringify(this.treeClearings) !== JSON.stringify(source.treeClearings)) {
       this.treeClearings.length = 0;
       this.treeClearings.push(...source.treeClearings.map((c) => ({ ...c })));
-      this.clearingRevision++;
+      others.push('clearings');
     }
 
     if (this.elements.length !== source.elements.length || JSON.stringify(this.elements) !== JSON.stringify(source.elements)) {
       this.elements.length = 0;
       this.elements.push(...source.elements);
-      this.elementRevision++;
+      others.push('elements');
     }
 
     if (JSON.stringify(this.clouds) !== JSON.stringify(source.clouds)) {
       this.clouds.length = 0;
       this.clouds.push(...source.clouds.map((c) => ({ ...c })));
-      this.cloudRevision++;
+      others.push('clouds');
     }
 
     if (this.gullyAuto !== source.gullyAuto || JSON.stringify(this.gullyDabs) !== JSON.stringify(source.gullyDabs)) {
       this.gullyDabs.length = 0;
       this.gullyDabs.push(...source.gullyDabs.map((dab) => ({ ...dab })));
       this.gullyAuto = source.gullyAuto;
-      this.gullyRevision++;
+      others.push('gullies');
     }
 
     if (JSON.stringify(this.fogDabs) !== JSON.stringify(source.fogDabs) || JSON.stringify(this.fogSettings) !== JSON.stringify(source.fogSettings)) {
       this.fogDabs.length = 0;
       this.fogDabs.push(...source.fogDabs.map((dab) => ({ ...dab })));
       this.fogSettings = { ...source.fogSettings };
-      this.fogRevision++;
+      others.push('fog');
     }
 
     if (!samePaint(this.terrainPaint, source.terrainPaint)) {
       this.terrainPaint.length = 0;
       this.terrainPaint.push(...source.terrainPaint.map((dab) => ({ ...dab })));
-      this.paintRevision++;
+      others.push('paint');
     }
 
     if (landMoved) {
@@ -1326,13 +1271,12 @@ export class RoadDoc {
     this.barrierIds = new IdAllocator(source.barrierIds.peek);
     this.landscapeIds = new IdAllocator(source.landscapeIds.peek);
     this.nextTerrainId = source.nextTerrainId;
-    this.terrainRevision = nextTerrainRevision;
-    if (!roadsChanged) return;
+    const changed = { roads: roadsChanged, land: landMoved, utilities: utilitiesChanged, barriers: barriersChanged, others };
+    if (!roadsChanged) return changed;
     this.clearDirty();
     for (const id of this.nodes.keys()) this.dirtyNodes.add(id);
     for (const id of this.segments.keys()) this.dirtySegments.add(id);
-    this.revision = nextRevision;
-    this.trafficRevision++;
+    return changed;
   }
 
   // ------------------------------------------------------------ serialization
@@ -1514,32 +1458,33 @@ export class RoadDoc {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
       doc.terrainPaint.push({ kind: dab.kind, x: dab.x, y: dab.y, radius: dab.radius, strength: dab.strength });
     }
-    if (doc.terrainPaint.length) doc.paintRevision = 1;
+    const loaded = { cause: 'mapa carregado' } as const;
+    if (doc.terrainPaint.length) doc.changes.record('paint', null, loaded);
     // Absent: a map with the default weather (dry and still).
-    if (data.weather) { doc.weather = readWeather(data.weather); doc.weatherRevision = 1; }
+    if (data.weather) { doc.weather = readWeather(data.weather); doc.changes.record('weather', null, loaded); }
     // Absent: a map with no trees planted or cut.
     for (const raw of data.trees ?? []) {
       const tree = readPlantedTree(raw);
       if (tree && doc.trees.length < MAX_PLANTED_TREES) doc.trees.push(tree);
     }
-    if (doc.trees.length) doc.treeRevision = 1;
+    if (doc.trees.length) doc.changes.record('trees', null, loaded);
     for (const raw of data.treeClearings ?? []) {
       const clearing = readTreeClearing(raw);
       if (clearing && doc.treeClearings.length < MAX_TREE_CLEARINGS) doc.treeClearings.push(clearing);
     }
-    if (doc.treeClearings.length) doc.clearingRevision = 1;
+    if (doc.treeClearings.length) doc.changes.record('clearings', null, loaded);
     // Absent: a map with no elements laid.
     for (const raw of data.elements ?? []) {
       const item = readElement(raw);
       if (item) doc.elements.push(item);
     }
-    if (doc.elements.length) doc.elementRevision = 1;
+    if (doc.elements.length) doc.changes.record('elements', null, loaded);
     // Absent: a map with no clouds placed.
     for (const raw of data.clouds ?? []) {
       const cloud = readCloud(raw);
       if (cloud && doc.clouds.length < MAX_PLACED_CLOUDS && !doc.clouds.some((c) => c.id === cloud.id)) doc.clouds.push(cloud);
     }
-    if (doc.clouds.length) doc.cloudRevision = 1;
+    if (doc.clouds.length) doc.changes.record('clouds', null, loaded);
     // Absent: a map with no gullies laid and the land's own at the default.
     if (data.gullies) {
       for (const raw of data.gullies.dabs ?? []) {
@@ -1548,7 +1493,7 @@ export class RoadDoc {
       }
       const auto = data.gullies.auto;
       if (typeof auto === 'number' && Number.isFinite(auto)) doc.gullyAuto = Math.min(1, Math.max(0, auto));
-      doc.gullyRevision = 1;
+      doc.changes.record('gullies', null, loaded);
     }
     // Absent: a map with no fog painted.
     if (data.fog) {
@@ -1557,7 +1502,7 @@ export class RoadDoc {
         if (dab) doc.fogDabs.push(dab);
       }
       doc.fogSettings = readFogSettings(data.fog.settings);
-      doc.fogRevision = 1;
+      doc.changes.record('fog', null, loaded);
     }
     // Absent: a map from before the natural land, which stays on the old one.
     doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
@@ -1642,9 +1587,8 @@ export class RoadDoc {
     }
     for (const id of doc.nodes.keys()) doc.dirtyNodes.add(id);
     for (const id of doc.segments.keys()) doc.dirtySegments.add(id);
-    doc.revision = 1;
-    doc.trafficRevision = 1;
-    doc.terrainRevision = data.terrain?.length ? 1 : 0;
+    doc.roadsChanged(null, true, { detail: 'mapa carregado' });
+    if (data.terrain?.length) doc.changes.record('terrain', null, { cause: 'mapa carregado' });
     return doc;
   }
 }

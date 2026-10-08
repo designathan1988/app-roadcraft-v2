@@ -30,10 +30,14 @@
 /** A world rectangle: [minX, minY, maxX, maxY]. */
 export type ChangeRect = readonly [number, number, number, number];
 
-/** What the player changes in the document. */
+/**
+ * What the player changes in the document. `roads` is the roads' geometry;
+ * `traffic` the plan the traffic runs on, written with it when the plan
+ * changes (a node raised without changing how it is crossed is not).
+ */
 export type DocChangeKind =
-  | 'roads' | 'terrain' | 'paint' | 'buildings' | 'zones' | 'lots' | 'utilities' | 'barriers' | 'landscape'
-  | 'transit' | 'people' | 'trees' | 'elements' | 'fog' | 'clouds' | 'weather' | 'nature' | 'gullies';
+  | 'roads' | 'traffic' | 'terrain' | 'paint' | 'buildings' | 'zones' | 'lots' | 'utilities' | 'barriers' | 'landscape'
+  | 'transit' | 'people' | 'trees' | 'clearings' | 'elements' | 'fog' | 'clouds' | 'weather' | 'nature' | 'gullies';
 /** What the game works out from it. */
 export type DerivedChangeKind = 'elevation' | 'ground' | 'light' | 'surfaces';
 export type ChangeKind = DocChangeKind | DerivedChangeKind;
@@ -83,10 +87,41 @@ export class ChangeJournal {
   private count = 0;
   /** The cause given to the document's entries until the next (`causeNext`). */
   private pendingCause = 'edit';
+  /** The serial of the latest entry of each kind, kept after the entry itself is forgotten. */
+  private readonly lastOf = new Map<ChangeKind, number>();
 
   /** The serial of the latest entry: what a reader that has seen everything holds. */
   get version(): number {
     return this.serial;
+  }
+
+  /**
+   * The serial of the latest entry of any of these kinds, 0 when none was
+   * written: the document's revisions (`RoadDoc.revision`, `terrainRevision`...)
+   * are this, so a change not written in the diary moves no revision and
+   * nothing can change without the diary knowing (Nystrom, "Dirty Flag": one
+   * narrow way in, where the flag is set).
+   */
+  serialOf(...kinds: readonly ChangeKind[]): number {
+    let latest = 0;
+    for (const kind of kinds) latest = Math.max(latest, this.lastOf.get(kind) ?? 0);
+    return latest;
+  }
+
+  /**
+   * Goes on from where `other` stands: its serial and the latest serial of
+   * each kind, with none of its entries (a reader asking about them is told
+   * `null`, everything changed). A working copy of the document
+   * (`RoadDoc.clone`) is at the same revisions as the document it was copied
+   * from, so the live network can be taken over as it stands.
+   */
+  continueFrom(other: ChangeJournal): void {
+    this.serial = other.serial;
+    this.count = 0;
+    this.ring.fill(undefined);
+    this.lastOf.clear();
+    for (const [kind, serial] of other.lastOf) this.lastOf.set(kind, serial);
+    this.pendingCause = other.pendingCause;
   }
 
   /** The serial before which entries are no longer kept. */
@@ -118,6 +153,7 @@ export class ChangeJournal {
     };
     this.ring[serial % KEPT] = entry;
     if (this.count < KEPT) this.count++;
+    this.lastOf.set(kind, serial);
     return serial;
   }
 

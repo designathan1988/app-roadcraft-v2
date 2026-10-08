@@ -1,22 +1,49 @@
 import { IdAllocator } from '../ids';
+import { ChangeJournal, type ChangeRect } from '../changes';
+import { buildingBounds } from './geometry';
 import { migrateBuilding, type SerializedBuilding } from './serialize';
 import { type Building, type BuildingId, asBuildingId, cloneBuilding } from './types';
 
 /** Each stored record's text (`BuildingStore.toText`). */
 const RECORD_TEXT = new WeakMap<Building, string>();
 
+/** Where a building stands, for the diary. */
+function rectOf(b: Building): ChangeRect | null {
+  const box = buildingBounds(b);
+  return Number.isFinite(box.minX) ? [box.minX, box.minY, box.maxX, box.maxY] : null;
+}
+
 /**
- * The document's buildings, with their own revision clock.
+ * The document's buildings, with their own revision.
  *
  * `revision` is deliberately NOT the document's: a building edit must not
  * rebuild the road network, the lanelets or the simulation, which is what
  * moving `RoadDoc.revision` does. The renderer gates the buildings layer on
  * this number (and on the terrain, which the foundations stand on).
+ *
+ * Every change is written in the document's diary (`changes.ts`, kind
+ * `buildings`) with where the building stands, and `revision` is the serial
+ * of the latest one: a building cannot change without the diary knowing.
  */
 export class BuildingStore {
   private readonly items = new Map<BuildingId, Building>();
   private ids = new IdAllocator(1);
-  revision = 0;
+
+  /** `journal`: the document's diary; a store on its own keeps one of its own. */
+  constructor(private readonly journal: ChangeJournal = new ChangeJournal()) {}
+
+  /** The serial of the latest change of the buildings in the diary. */
+  get revision(): number {
+    return this.journal.serialOf('buildings');
+  }
+
+  /** Writes a change of these buildings (their rectangles, or the whole map when any has none). */
+  private changed(buildings: readonly Building[] | null, detail?: string): void {
+    const rects = buildings?.map(rectOf) ?? null;
+    const known = rects && rects.every((r): r is ChangeRect => r !== null) ? rects : null;
+    const ids = buildings?.map((b) => b.id as number);
+    this.journal.record('buildings', known, { ...(ids ? { ids } : {}), ...(detail ? { detail } : {}) });
+  }
 
   get size(): number {
     return this.items.size;
@@ -44,27 +71,32 @@ export class BuildingStore {
     const id = asBuildingId(this.ids.take());
     const building = { ...cloneBuilding(value as Building), id } as Building;
     this.items.set(id, building);
-    this.revision++;
+    this.changed([building], 'added');
     return building;
   }
 
   /** Replaces an existing building's record (same id). */
   put(building: Building): void {
-    if (!this.items.has(building.id)) return;
-    this.items.set(building.id, cloneBuilding(building));
-    this.revision++;
+    const was = this.items.get(building.id);
+    if (!was) return;
+    const now = cloneBuilding(building);
+    this.items.set(building.id, now);
+    // Where it stood and where it stands: a moved building changes both.
+    this.changed([was, now], 'replaced');
   }
 
   remove(id: BuildingId): boolean {
-    if (!this.items.delete(id)) return false;
-    this.revision++;
+    const was = this.items.get(id);
+    if (!was) return false;
+    this.items.delete(id);
+    this.changed([was], 'removed');
     return true;
   }
 
   clear(): void {
     if (this.items.size === 0) return;
     this.items.clear();
-    this.revision++;
+    this.changed(null, 'cleared');
   }
 
   toJSON(): SerializedBuilding[] {
@@ -99,15 +131,19 @@ export class BuildingStore {
       this.items.set(building.id, building);
       this.ids.reserve(building.id);
     }
-    this.revision++;
+    this.changed(null, 'loaded');
   }
 
-  /** The same records as another store (they are never changed in place): `RoadDoc.clone`. */
+  /**
+   * The same records as another store (they are never changed in place):
+   * `RoadDoc.clone`, whose diary then goes on from the source's
+   * (`ChangeJournal.continueFrom`), so the copy is at the same revision.
+   */
   shareFrom(source: BuildingStore): void {
     this.items.clear();
     for (const [id, b] of source.items) this.items.set(id, b);
     this.ids = new IdAllocator(Math.max(this.ids.peek, source.ids.peek));
-    this.revision++;
+    this.changed(null, 'shared');
   }
 
   /** Keeps id allocation monotonic across a clone (see `RoadDoc.clone`). */
@@ -116,17 +152,37 @@ export class BuildingStore {
   }
 
   /**
-   * Replaces the contents from another store, moving the revision only when
-   * the buildings actually differ. Drawing a road replaces the whole
-   * document with an edited clone; that must not rebuild every building.
+   * Replaces the contents from another store, writing a change only when
+   * the buildings actually differ, and only of those that do (where they
+   * stood and where they stand). Drawing a road replaces the whole document
+   * with an edited clone; that must not rebuild every building.
    */
   replaceWith(source: BuildingStore): void {
     this.ids = new IdAllocator(Math.max(this.ids.peek, source.ids.peek));
     // The same records (a clone shares them, `shareFrom`): nothing to compare.
     if (this.items.size === source.items.size && [...source.items].every(([id, b]) => this.items.get(id) === b)) return;
     if (this.toText() === source.toText()) return;
+    const touched: Building[] = [];
+    for (const [id, was] of this.items) {
+      const now = source.items.get(id);
+      if (!now || (now !== was && this.textOf(now) !== this.textOf(was))) touched.push(was);
+    }
+    for (const [id, now] of source.items) {
+      const was = this.items.get(id);
+      if (!was || (now !== was && this.textOf(now) !== this.textOf(was))) touched.push(now);
+    }
     this.items.clear();
     for (const b of source.items.values()) this.items.set(b.id, cloneBuilding(b));
-    this.revision++;
+    this.changed(touched, 'replaced by an edit or an undo');
+  }
+
+  /** One record's text, written once (`toText`). */
+  private textOf(b: Building): string {
+    let text = RECORD_TEXT.get(b);
+    if (text === undefined) {
+      text = JSON.stringify(cloneBuilding(b));
+      RECORD_TEXT.set(b, text);
+    }
+    return text;
   }
 }

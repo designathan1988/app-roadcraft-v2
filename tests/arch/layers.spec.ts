@@ -85,6 +85,37 @@ describe('one writer per number', () => {
   });
 });
 
+describe('the document changes only through its diary', () => {
+  it('keeps no revision counter of its own: every revision is read from the diary', () => {
+    // `RoadDoc.revision`, `terrainRevision`... and `buildings.revision` are the
+    // serial of the latest diary entry of their kind (`world/changes.ts`
+    // `serialOf`). A counter moved beside the diary is the second flag a path
+    // forgets (zones and lots moved theirs from `lots.ts` and `zoning.ts` with
+    // no entry: nothing could tell where they changed).
+    const owners = ['world/doc.ts', 'world/buildings/store.ts'];
+    const offenders: string[] = [];
+    for (const file of owners) {
+      const lines = code(readFileSync(join(SRC, file), 'utf8')).split('\n');
+      lines.forEach((l, i) => {
+        if (/\b(revision|[a-z]\w*Revision)\s*(\+\+|\+=|-=|=(?!=))/.test(l)) offenders.push(`${file}:${i + 1}: ${l.trim()}`);
+      });
+    }
+    // Nobody else writes one either (the getters refuse it at compile time;
+    // this names the place if a counter comes back as a field).
+    for (const layer of ['world', 'editor', 'ui']) {
+      for (const path of tsFilesUnder(join(SRC, layer))) {
+        const lines = code(readFileSync(path, 'utf8')).split('\n');
+        lines.forEach((l, i) => {
+          if (/\bdoc\.(buildings\.)?(revision|\w+Revision)\s*(\+\+|\+=|=(?!=))/.test(l)) {
+            offenders.push(`${relative(SRC, path).split(sep).join('/')}:${i + 1}: ${l.trim()}`);
+          }
+        });
+      }
+    }
+    expect(offenders, `write the change in the diary instead (doc.changes.record, zonesChanged, lotsChanged):\n${offenders.join('\n')}`).toEqual([]);
+  });
+});
+
 describe('the simulation is headless', () => {
   it('never reads window or document in world or sim', () => {
     // The spawners read `window.innerWidth`, so one seed grew a different city

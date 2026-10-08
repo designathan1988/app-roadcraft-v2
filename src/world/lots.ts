@@ -8,6 +8,17 @@ import { type MultiPoly, difference } from '@core/clipper';
 import { m } from './units';
 import { pavedTester, quadsOverlap } from './zoneGrid';
 import type { ZoneDensity, ZoneUse } from './zones';
+import { rectAround, type ChangeRect } from './changes';
+
+/**
+ * Where these lots lie, for the diary (`RoadDoc.lotsChanged`): only that
+ * region is marked as changed (Unity `TerrainData.DirtyHeightmapRegion`
+ * does the same for a heightmap), the whole map when there is none.
+ */
+function lotRects(lots: readonly { readonly corners: readonly Vec2[] }[]): readonly ChangeRect[] | null {
+  const rects = lots.map((l) => rectAround(l.corners)).filter((r): r is ChangeRect => r !== null);
+  return rects.length ? rects : null;
+}
 
 /**
  * Lots: the land cut into plots the player zones and buildings grow on, as a
@@ -313,11 +324,12 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
 export function applyLots(doc: RoadDoc, plan: LotPlan): boolean {
   if (!plan.add.length && !plan.drop.length && plan.keys.every((k) => doc.lotKeys.includes(k))) return false;
   const dropped = new Set(plan.drop);
+  const gone = doc.lots.filter((l) => dropped.has(l.id));
   const kept = doc.lots.filter((l) => !dropped.has(l.id));
   doc.lots.splice(0, doc.lots.length, ...kept);
   for (const c of plan.add) doc.lots.push({ id: doc.nextLotId++, corners: c.corners });
   for (const k of plan.keys) if (!doc.lotKeys.includes(k)) doc.lotKeys.push(k);
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects([...gone, ...plan.add]), 'lotes planejados');
   return true;
 }
 
@@ -414,7 +426,7 @@ export function splitLot(doc: RoadDoc, id: number, cut: LotCut): boolean {
   if (pieces.length < 2) return false;
   const made = pieces.map((piece) => ({ id: doc.nextLotId++, corners: facingCorners(withFront(piece, front)), ...(lot.use ? { use: lot.use, density: lot.density ?? 'low' as const } : {}) }));
   doc.lots.splice(at, 1, ...made);
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects([lot]), 'lote dividido');
   return true;
 }
 
@@ -451,15 +463,15 @@ export function joinLots(doc: RoadDoc, idA: number, idB: number): boolean {
   const joined: Lot = { id: doc.nextLotId++, corners: facingCorners(ordered), ...(lotA.use ? { use: lotA.use, density: lotA.density ?? 'low' } : {}) };
   doc.lots.splice(Math.max(ia, ib), 1);
   doc.lots.splice(Math.min(ia, ib), 1, joined);
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects([joined]), 'lotes unidos');
   return true;
 }
 
 export function deleteLot(doc: RoadDoc, id: number): boolean {
   const at = doc.lots.findIndex((l) => l.id === id);
   if (at < 0) return false;
-  doc.lots.splice(at, 1);
-  doc.lotRevision++;
+  const gone = doc.lots.splice(at, 1);
+  doc.lotsChanged(lotRects(gone), 'lote apagado');
   return true;
 }
 
@@ -559,7 +571,7 @@ export function addPolygonLot(doc: RoadDoc, points: readonly Vec2[], front: numb
   if (doc.lots.some((l) => quadsOverlap(corners, l.corners, m(0.5)) && overlapDeep(corners, l.corners))) return null;
   const lot: Lot = { id: doc.nextLotId++, corners };
   doc.lots.push(lot);
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects([lot]), 'lote desenhado');
   return lot;
 }
 
@@ -579,7 +591,7 @@ export function setLotFront(doc: RoadDoc, id: number, side: number): boolean {
   if (lot.building !== undefined) doc.buildings.remove(lot.building as Parameters<typeof doc.buildings.remove>[0]);
   const { building: _gone, ...rest } = lot;
   doc.lots[at] = { ...rest, corners: [...lot.corners.slice(k), ...lot.corners.slice(0, k)] };
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects([lot]), 'frente do lote');
   return true;
 }
 
@@ -597,7 +609,7 @@ function overlapDeep(p: readonly Vec2[], q: readonly Vec2[]): boolean {
  * same point with it, so neighbours keep sharing their boundary.
  */
 export function moveLotCorner(doc: RoadDoc, from: Vec2, to: Vec2): boolean {
-  let moved = false;
+  const touched: { corners: readonly Vec2[] }[] = [];
   for (let i = 0; i < doc.lots.length; i++) {
     const l = doc.lots[i]!;
     let changed = false;
@@ -605,10 +617,10 @@ export function moveLotCorner(doc: RoadDoc, from: Vec2, to: Vec2): boolean {
       if (near(q, from, m(0.8))) { changed = true; return { x: to.x, y: to.y }; }
       return q;
     });
-    if (changed) { doc.lots[i] = { ...l, corners }; moved = true; }
+    if (changed) { doc.lots[i] = { ...l, corners }; touched.push(l, { corners }); }
   }
-  if (moved) doc.lotRevision++;
-  return moved;
+  if (touched.length) doc.lotsChanged(lotRects(touched), 'canto do lote movido');
+  return touched.length > 0;
 }
 
 /**
@@ -642,23 +654,23 @@ export function curveLotSide(doc: RoadDoc, a: Vec2, b: Vec2, through: Vec2): boo
       break;
     }
   }
-  if (changed) doc.lotRevision++;
+  if (changed) doc.lotsChanged(lotRects([{ corners: [a, b, through] }]), 'lado do lote curvado');
   return changed;
 }
 
 /** Zones lots (or clears them, `zone` null). */
 export function zoneLots(doc: RoadDoc, ids: readonly number[], zone: { use: ZoneUse; density: ZoneDensity } | null): boolean {
-  let changed = false;
+  const zoned: Lot[] = [];
   for (let i = 0; i < doc.lots.length; i++) {
     const l = doc.lots[i]!;
     if (!ids.includes(l.id)) continue;
     if (zone ? l.use === zone.use && l.density === zone.density : !l.use) continue;
     const { use: _u, density: _d, ...rest } = l;
     doc.lots[i] = zone ? { ...rest, use: zone.use, density: zone.density } : rest;
-    changed = true;
+    zoned.push(l);
   }
-  if (changed) doc.lotRevision++;
-  return changed;
+  if (zoned.length) doc.lotsChanged(lotRects(zoned), zone ? 'lotes zoneados' : 'zona tirada dos lotes');
+  return zoned.length > 0;
 }
 
 export function isLot(raw: unknown): raw is Lot {
@@ -850,7 +862,8 @@ export function pruneOrphanLots(doc: RoadDoc, net: Network): boolean {
     return !(onRoad(c) || onPlate(c));
   });
   if (kept.length === doc.lots.length) return false;
+  const gone = doc.lots.filter((l) => !kept.includes(l));
   doc.lots.splice(0, doc.lots.length, ...kept);
-  doc.lotRevision++;
+  doc.lotsChanged(lotRects(gone), 'lotes sem rua tirados');
   return true;
 }

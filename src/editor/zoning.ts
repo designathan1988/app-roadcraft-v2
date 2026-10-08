@@ -14,6 +14,16 @@ import { addBuildingRecord, type placeBuilding } from './buildings';
 import { buildingBounds, footprintRects } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
 import { Level, halfWidth } from '@world/roadTypes';
+import { rectAround, type ChangeRect } from '@world/changes';
+
+/**
+ * Where these zone cells lie, for the diary (`RoadDoc.zonesChanged`): only
+ * that region is marked as changed, the whole map when there is none.
+ */
+function cellRects(points: readonly Vec2[]): readonly ChangeRect[] | null {
+  const rect = rectAround(points, ZONE_CELL);
+  return rect ? [rect] : null;
+}
 
 /**
  * Zoning, the way city builders do it (Cities: Skylines 1 and 2): the player
@@ -161,10 +171,11 @@ export function paintCells(
     if (zone) add.push({ x: cell.centre.x, y: cell.centre.y, use: zone.use, density: zone.density });
   }
   if (!changed) return 0;
+  const touched: Vec2[] = [...add, ...[...drop].map((index) => doc.zoneMarks[index]!)];
   const kept = doc.zoneMarks.filter((_, index) => !drop.has(index));
   doc.zoneMarks.splice(0, doc.zoneMarks.length, ...kept, ...add);
   demolishGrown(doc, doomed);
-  doc.zoneRevision++;
+  doc.zonesChanged(cellRects(touched), zone ? 'zona pintada' : 'zona apagada');
   return changed;
 }
 
@@ -330,7 +341,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       const found = marks.get(cell.id)!;
       doc.zoneMarks[found.index] = { ...found.mark, building: id };
     }
-    doc.zoneRevision++;
+    doc.zonesChanged(cellRects(lot.map((cell) => cell.centre)), 'prédio cresceu na zona');
     return id;
   }
   return null;
@@ -363,13 +374,15 @@ export function regrowStale(doc: RoadDoc, limit = 6): number {
   for (const id of stale) {
     if (doc.buildings.remove(id as Parameters<typeof doc.buildings.remove>[0])) gone++;
   }
+  const freed: Vec2[] = [];
   doc.zoneMarks.forEach((mark, i) => {
     if (mark.building !== undefined && stale.has(mark.building)) {
       const { building: _b, ...rest } = mark;
       doc.zoneMarks[i] = rest as typeof mark;
+      freed.push(mark);
     }
   });
-  if (gone) doc.zoneRevision++;
+  if (gone) doc.zonesChanged(cellRects(freed), 'prédios antigos refeitos');
   return gone;
 }
 
@@ -432,7 +445,8 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     if (!result.ok || result.id === undefined) continue;
     const at = doc.lots.findIndex((l) => l.id === lot.id);
     doc.lots[at] = { ...lot, building: result.id as number };
-    doc.lotRevision++;
+    const where = rectAround(lot.corners);
+    doc.lotsChanged(where ? [where] : null, 'prédio cresceu no lote');
     return result.id as number;
   }
   refused.add(lot.id);
