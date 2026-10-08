@@ -1,4 +1,5 @@
 import { workUntil } from '@core/frameWork';
+import { Digest } from '@core/digest';
 import { Group, type InstancedMesh } from 'three';
 
 import { pointInPolygon } from '@core/polygon';
@@ -70,6 +71,8 @@ export interface BuildingLayer {
   readonly kit: BuildingKit;
   /** Whether a world point is under a building (for the scenery's plant cull). */
   covers(x: number, y: number): boolean;
+  /** Bumped when what `covers` answers changes (a footprint or a lot moved, came or went). */
+  readonly coversVersion: number;
   /**
    * Height of a building's lot or parking bay as drawn at a world point, NaN
    * off them: what a resident's parked car stands on (`render/agents.ts`).
@@ -203,11 +206,16 @@ export function createBuildingLayer(): BuildingLayer {
     chunks.set(b.id, { key, chunk });
     return chunk;
   };
-  /** Footprints bucketed on a coarse grid, for `covers`. */
-  let buckets = new Map<string, Vec2[][]>();
+  /** Footprints bucketed on a coarse grid, for `covers` (a cell as one number: a string per query was most of a plant pass). */
+  let buckets = new Map<number, Vec2[][]>();
+  const bucketKey = (i: number, j: number): number => i * 100_003 + j;
+  /** What the footprints were last indexed from, and how many times they changed (`coversVersion`). */
+  let coversDigest = -1;
+  let coversVersion = 0;
 
   const index = (buildings: Iterable<Building>): void => {
     buckets = new Map();
+    const digest = new Digest();
     for (const b of buildings) {
       // The built parts with a margin for the crowns, and the open lots as
       // they are: grown round the lots too, every street tree on a pavement a
@@ -217,16 +225,25 @@ export function createBuildingLayer(): BuildingLayer {
         for (const p of rect) {
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
           maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+          digest.add(p.x).add(p.y);
         }
+        digest.add(rect.length);
         for (let i = Math.floor(minX / CELL); i <= Math.floor(maxX / CELL); i++) {
           for (let j = Math.floor(minY / CELL); j <= Math.floor(maxY / CELL); j++) {
-            const key = `${i},${j}`;
+            const key = bucketKey(i, j);
             const list = buckets.get(key);
             if (list) list.push(rect);
             else buckets.set(key, [rect]);
           }
         }
       }
+    }
+    // Only a change of the ground the buildings take moves it: a building
+    // drawn again for its paint or its age leaves the plants round it alone.
+    const value = digest.value();
+    if (value !== coversDigest) {
+      coversDigest = value;
+      coversVersion++;
     }
   };
 
@@ -380,8 +397,11 @@ export function createBuildingLayer(): BuildingLayer {
     setCutaway(next) {
       cutaway = next;
     },
+    get coversVersion() {
+      return coversVersion;
+    },
     covers(x, y) {
-      const list = buckets.get(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`);
+      const list = buckets.get(bucketKey(Math.floor(x / CELL), Math.floor(y / CELL)));
       if (!list) return false;
       const p = { x, y };
       for (const rect of list) if (pointInPolygon(p, rect)) return true;

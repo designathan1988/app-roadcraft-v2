@@ -130,9 +130,9 @@ import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
-import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type GroundCover, type TreePlacement } from './groundCover';
+import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
-import { buildNatureForest, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
+import { buildNatureForest, forestRoom, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
 import { isCoverKind } from '@world/terrainPaint';
@@ -908,25 +908,33 @@ export function createSceneRenderer(
   let excludedFor: { scenery: Scenery | null; site: string | null } = { scenery: null, site: null };
   /** The buildings' garden plants, and the buildings and ground they were planted for. */
   let gardens: Scenery | null = null;
-  /** The painted rocks and scrub and the stones of the rivers (`rockPlacements`, `scrubPlacements`). */
+  /** The painted rocks and scrub and the stones of the rivers (`coverSweep`, `coverKeep`). */
   let cover: GroundCover | null = null;
-  /** The ecosystem's trees and bushes (`naturePlants`), and what they were grown for. */
+  /** The ecosystem's stand-in trees, when the countryside's models could not be grown. */
   let nature: GroundCover | null = null;
-  let natureFor = '';
   const coverKit = createGroundCoverKit();
   // The countryside's trees are hand-made models (`natureTrees.ts`), loaded
   // once; until they are, the procedural ones stand in. Busy (drawing) until
   // the first forest of them is built.
   let natureTreeKit: NatureTreeKit | null = null;
   let natureForest: NatureForest | null = null;
-  /** The painted woods' trees (`forestPlants`), grown as the countryside's once the kit is in. */
+  /** The painted woods' trees (`coverKeep`), grown as the countryside's once the kit is in. */
   let paintedForest: NatureForest | null = null;
-  let paintedTrees: TreePlacement[] | null = null;
-  /** The trees the player planted, drawn, and the document they were built for. */
+  /** The trees the player planted, drawn, and what they were kept for. */
   let plantedForest: NatureForest | null = null;
   let plantedFor = '';
-  let plantedTerrain = -1;
   let natureTreesPending = true;
+  /**
+   * The placements' two steps (`natureSweep`/`natureKeep`, `coverSweep`/
+   * `coverKeep`): each sweep with the key it was made for, the inputs the
+   * last keep read, and what it kept.
+   */
+  let natureSweepState: NatureSweep | null = null;
+  let natureKeepFor = '';
+  let natureKept: Kept | null = null;
+  let coverSweepState: CoverSweep | null = null;
+  let coverKeepFor = '';
+  let coverKept: (CoverKept & { readonly geology: number; readonly standIns: boolean }) | null = null;
   /** The elements laid with the brush (`elements.ts`): their models, loaded once, and the layer built for the map. */
   let elementKit: ElementKit | null = null;
   let elementLayer: ElementLayer | null = null;
@@ -965,9 +973,14 @@ export function createSceneRenderer(
   let placedCloudsShown = false;
   void loadNatureTrees(anisotropy).then((kit) => {
     natureTreeKit = kit;
-    natureFor = '';
+    // The kept trees are grown with it at the next look.
+    natureKeepFor = '';
+    coverKeepFor = '';
+    plantedFor = '';
   }, (error: unknown) => {
     natureTreesPending = false;
+    natureKeepFor = '';
+    coverKeepFor = '';
     console.warn('[nature] trees not loaded; the procedural ones stay', error);
   });
   /** Where a cover was painted (the only paints that raise a density), by paint revision. */
@@ -1051,10 +1064,7 @@ export function createSceneRenderer(
     barriers: new GroundDependant(groundChanges),
     transit: new GroundDependant(groundChanges),
     gardens: new GroundDependant(groundChanges),
-    cover: new GroundDependant(groundChanges),
   };
-  /** The stones again where the painted geology changed (`TerrainSurface.geologyChanges`). */
-  const coverGeology = new GroundDependant(terrain.geologyChanges);
   /** The area every building's bank reaches, by building revision. */
   let buildingsAreaFor = -1;
   let buildingsArea: Rect | null = null;
@@ -1574,37 +1584,58 @@ export function createSceneRenderer(
    */
   const FOREST_SPACING = m(7);
   const FOREST_MAX = 15_000;
-  const forestPlants = (net: Network): { trees: TreePlacement[]; shrubs: CoverPlacement[] } => {
-    const trees: TreePlacement[] = [];
-    const shrubs: CoverPlacement[] = [];
-    const hash = (a: number, b: number, salt: number): number => {
-      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
-      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
-    };
-    const [i0, i1, j0, j1] = paintedCells(net, FOREST_SPACING);
-    // Where the player cut the trees away (`world/trees.ts`), none grows.
-    const cleared = clearingIndex(net.doc.treeClearings);
-    for (let j = j0; j <= j1 && trees.length < FOREST_MAX; j++) {
-      for (let i = i0; i <= i1 && trees.length < FOREST_MAX; i++) {
-        const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
-        const density = terrain.forestAt(cx, cy);
-        if (density < 0.04 || hash(i, j, 1) > density * 0.92) continue;
-        const x = cx + (hash(i, j, 2) - 0.5) * FOREST_SPACING * 0.9, y = cy + (hash(i, j, 3) - 0.5) * FOREST_SPACING * 0.9;
-        const p = { x, y };
-        if (onCarriageway(net, p) || buildings.covers(x, y) || cleared(x, y)) continue;
-        const z = terrain.renderedHeightAt(x, y);
-        const h = m(10) + m(8) * hash(i, j, 4) * (0.6 + 0.4 * density);
-        // A wood is green: broadleaf with some conifers. No ipê (its crown a
-        // bare block, no leaves) and no blob bushes under the trees (the
-        // player, 2026-10-07: "árvore feia", "cocozinhos").
-        const roll = hash(i, j, 13);
-        const species = roll < 0.45 ? 'broadleaf' : roll < 0.82 ? 'broadleafTall' : 'conifer';
-        trees.push({ x, y, z, size: h, yaw: hash(i, j, 5) * Math.PI * 2, seed: hash(i, j, 6), species });
-      }
-    }
-    return { trees, shrubs };
+  /** A cell's hash in 0..1: the same wherever a placement asks it, so an edit elsewhere never moves a plant. */
+  const cellHash = (a: number, b: number, salt: number): number => {
+    let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
+    h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
   };
+  /**
+   * PLACEMENTS IN TWO STEPS (a dirty flag per input, Nystrom's "Dirty Flag":
+   * one coarse flag reprocesses what did not change). The SWEEP finds where a
+   * plant or a stone may stand - from the land, the paint, the water and the
+   * ecosystem, over the whole map or the painted area - and is done again
+   * only when those change. The KEEP is a pass over what the sweep found:
+   * clear of the roads, the buildings and the clearings, on the ground as it
+   * is drawn. A road, a building, a town growing or ageing moves only the
+   * keep; the sweep and the forests' meshes were made again on each of them.
+   */
+  interface Candidate {
+    readonly x: number;
+    readonly y: number;
+    readonly size: number;
+    readonly yaw: number;
+    readonly seed: number;
+    readonly species: ForestSpecies;
+  }
+  /** A stone of a river's bed or bank: kept by its height over the water, read on the ground as drawn. */
+  interface ShoreCandidate extends Candidate {
+    readonly level: number;
+    /** Its cell's draw against the odds of its height over the water. */
+    readonly draw: number;
+  }
+  /** What a keep let stand: indices into the sweep's list, and the ground under each. */
+  interface Kept {
+    readonly idx: Int32Array;
+    readonly z: Float64Array;
+  }
+  const keptOf = (idx: readonly number[], z: readonly number[]): Kept => ({ idx: Int32Array.from(idx), z: Float64Array.from(z) });
+  /** The same places kept on the same ground: nothing to draw again. */
+  const sameKept = (a: Kept | null | undefined, b: Kept): boolean => {
+    if (!a || a.idx.length !== b.idx.length) return false;
+    for (let i = 0; i < b.idx.length; i++) if (a.idx[i] !== b.idx[i] || a.z[i] !== b.z[i]) return false;
+    return true;
+  };
+  /** The kept places as trees on their ground. */
+  const placedTrees = (list: readonly Candidate[], kept: Kept): TreePlacement[] =>
+    Array.from(kept.idx, (i, n) => { const c = list[i]!; return { x: c.x, y: c.y, z: kept.z[n]!, size: c.size, yaw: c.yaw, seed: c.seed, species: c.species }; });
+  /** The kept places as stones or bushes on their ground; a stone takes the rock of the land it lies on. */
+  const placedCover = (list: readonly Candidate[], kept: Kept, stone: boolean): CoverPlacement[] =>
+    Array.from(kept.idx, (i, n) => {
+      const c = list[i]!;
+      return stone ? { x: c.x, y: c.y, z: kept.z[n]!, size: c.size, yaw: c.yaw, seed: c.seed, rock: terrain.geologyAt(c.x, c.y) }
+        : { x: c.x, y: c.y, z: kept.z[n]!, size: c.size, yaw: c.yaw, seed: c.seed };
+    });
   /**
    * Low scrub (`world/terrainPaint.ts` 'scrub'): close-set low-poly bushes of
    * a metre to two and a half, no trees - the mata baixa of a hillside or a
@@ -1616,36 +1647,12 @@ export function createSceneRenderer(
   const SCRUB_SPACING = m(2.4);
   const SCRUB_MAX = 12_000;
   /** The cell range [i0, i1, j0, j1] of a grid of `spacing` that the painted covers reach; empty when none. */
-  const paintedCells = (net: Network, spacing: number): [number, number, number, number] => {
-    const area = forestAreaOf(net.doc);
+  const paintedCells = (doc: RoadDoc, spacing: number): [number, number, number, number] => {
+    const area = forestAreaOf(doc);
     if (!area) return [0, -1, 0, -1];
     const last = Math.floor((TERRAIN_HALF * 2) / spacing) - 1;
     const cell = (v: number): number => Math.max(0, Math.min(last, Math.floor((v + TERRAIN_HALF) / spacing)));
     return [cell(area[0]), cell(area[2]), cell(area[1]), cell(area[3])];
-  };
-  const scrubPlacements = (net: Network): CoverPlacement[] => {
-    const out: CoverPlacement[] = [];
-    const hash = (a: number, b: number, salt: number): number => {
-      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
-      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
-    };
-    // Only the cells under the painted covers: the whole map's grid was some
-    // 640 000 cells and stalled every dab of a stroke for tens of milliseconds.
-    const [i0, i1, j0, j1] = paintedCells(net, SCRUB_SPACING);
-    for (let j = j0; j <= j1 && out.length < SCRUB_MAX; j++) {
-      for (let i = i0; i <= i1 && out.length < SCRUB_MAX; i++) {
-        const cx = -TERRAIN_HALF + (i + 0.5) * SCRUB_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * SCRUB_SPACING;
-        const density = terrain.coverAt('scrub', cx, cy);
-        if (density < 0.04) continue;
-        const clump = 0.35 + 0.65 * Math.max(0, Math.min(1, (scrubClump(cx, cy) + 0.15) * 1.6));
-        if (hash(i, j, 21) > Math.sqrt(density) * clump) continue;
-        const x = cx + (hash(i, j, 22) - 0.5) * SCRUB_SPACING * 0.95, y = cy + (hash(i, j, 23) - 0.5) * SCRUB_SPACING * 0.95;
-        if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
-        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size: m(1.5) + m(2) * hash(i, j, 24) * clump, yaw: hash(i, j, 26) * Math.PI * 2, seed: hash(i, j, 27) });
-      }
-    }
-    return out;
   };
   /** -1..1 value noise of about 25 m: where scrub gathers into thickets. */
   const scrubClump = (x: number, y: number): number => {
@@ -1691,16 +1698,17 @@ export function createSceneRenderer(
     const bottom = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * sx;
     return top + (bottom - top) * sy;
   };
-  const naturePlants = (net: Network): { trees: TreePlacement[]; shrubs: CoverPlacement[] } => {
-    const trees: TreePlacement[] = [];
-    const shrubs: CoverPlacement[] = [];
+  /** The ecosystem's sweep: where a tree may grow, the budget the tier allows, and the room a forest of them needs. */
+  interface NatureSweep {
+    readonly key: string;
+    readonly trees: readonly Candidate[];
+    readonly budget: number;
+    room: number[] | null;
+  }
+  const natureSweep = (key: string): NatureSweep => {
+    const trees: Candidate[] = [];
     const field = terrain.ecology();
-    if (!field || quality.vegetation <= 0) return { trees, shrubs };
-    const hash = (a: number, b: number, salt: number): number => {
-      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
-      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
-    };
+    if (!field || quality.vegetation <= 0) return { key, trees, budget: 0, room: null };
     // THE TREE MAP, as Horizon Zero Dawn's Placement_Trees (Guerrilla, GDC
     // 2017): one density per place, decoded by a curve into bands - the
     // inner forest, its edge, scattered trees - and below them open
@@ -1722,7 +1730,11 @@ export function createSceneRenderer(
         const k = iy * field.side + ix;
         const ecology = Math.min(1, (field.canopy[k] ?? 0) * 0.9 + (field.trees[k] ?? 0) * 0.5 + (field.emergent[k] ?? 0) * 0.3);
         const patch = natureNoise(x, y, m(170), 7) * 0.6 + natureNoise(x, y, m(55), 9) * 0.3 + natureNoise(x, y, m(18), 11) * 0.1;
-        const slope = Math.hypot(terrain.renderedHeightAt(x + d, y) - terrain.renderedHeightAt(x - d, y), terrain.renderedHeightAt(x, y + d) - terrain.renderedHeightAt(x, y - d)) / (2 * d);
+        // The land's own slope, before the roads cut and fill it: a wood
+        // holds a hillside, not the bank of a street (and a street drawn no
+        // longer moves the woods round it).
+        const natural = terrain.naturalRenderedHeightAt;
+        const slope = Math.hypot(natural(x + d, y) - natural(x - d, y), natural(x, y + d) - natural(x, y - d)) / (2 * d);
         const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
         // The patches drawn out to clear masses: woods on the plains too, as
         // capões, and clean meadows between them.
@@ -1738,39 +1750,49 @@ export function createSceneRenderer(
       }
     }
     const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
-    // Where the player cut the trees away (`world/trees.ts`), none grows.
-    const cleared = clearingIndex(net.doc.treeClearings);
     const treeScale = Math.min(1, budget / Math.max(1, treeSum));
-    // Water, a cliff, a road or a building: nothing grows there.
-    const open = (x: number, y: number, z: number): boolean => {
-      if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
-      const level = terrain.shoreLevelAt(x, y);
-      if (level !== null && level > z - m(0.3)) return false;
-      const g = m(2);
-      const grade = Math.hypot(terrain.renderedHeightAt(x + g, y) - terrain.renderedHeightAt(x - g, y), terrain.renderedHeightAt(x, y + g) - terrain.renderedHeightAt(x, y - g)) / (2 * g);
-      if (grade > 0.75) return false;
-      return !onCarriageway(net, { x, y }) && !buildings.covers(x, y);
-    };
     for (let j = 0; j < cells; j++) {
       for (let i = 0; i < cells; i++) {
         const o = j * cells + i;
-        if (hash(i, j, 41) >= odds[o]! * treeScale) continue;
-        const x = -TERRAIN_HALF + (i + 0.5 + (hash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
-        const y = -TERRAIN_HALF + (j + 0.5 + (hash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
-        const z = terrain.renderedHeightAt(x, y);
-        if (!open(x, y, z)) continue;
-        if (trees.length >= budget) break;
+        if (cellHash(i, j, 41) >= odds[o]! * treeScale) continue;
+        const x = -TERRAIN_HALF + (i + 0.5 + (cellHash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
+        const y = -TERRAIN_HALF + (j + 0.5 + (cellHash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
         // Tall in the heart of a wood, crowns meeting into one canopy;
         // lower at its edge; short and crooked out in the open.
         const inner = band[o] === 3, edge = band[o] === 2;
-        const h = inner ? m(11) + m(8) * hash(i, j, 45) : edge ? m(8) + m(6) * hash(i, j, 45) : m(5.5) + m(4) * hash(i, j, 45);
-        const roll = hash(i, j, 46);
+        const h = inner ? m(11) + m(8) * cellHash(i, j, 45) : edge ? m(8) + m(6) * cellHash(i, j, 45) : m(5.5) + m(4) * cellHash(i, j, 45);
+        const roll = cellHash(i, j, 46);
         const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
-        if (cleared(x, y)) continue;
-        trees.push({ x, y, z, size: h, yaw: hash(i, j, 47) * Math.PI * 2, seed: hash(i, j, 48), species });
+        trees.push({ x, y, size: h, yaw: cellHash(i, j, 47) * Math.PI * 2, seed: cellHash(i, j, 48), species });
       }
     }
-    return { trees, shrubs };
+    return { key, trees, budget, room: null };
+  };
+  /** Water, a cliff, a road or a building: nothing of the ecosystem grows there. */
+  const natureOpen = (net: Network, x: number, y: number, z: number): boolean => {
+    if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
+    const level = terrain.shoreLevelAt(x, y);
+    if (level !== null && level > z - m(0.3)) return false;
+    const g = m(2);
+    const grade = Math.hypot(terrain.renderedHeightAt(x + g, y) - terrain.renderedHeightAt(x - g, y), terrain.renderedHeightAt(x, y + g) - terrain.renderedHeightAt(x, y - g)) / (2 * g);
+    if (grade > 0.75) return false;
+    return !onCarriageway(net, { x, y }) && !buildings.covers(x, y);
+  };
+  /** The ecosystem's keep: the swept trees on open ground, within the budget, out of the clearings. */
+  const natureKeep = (net: Network, sweep: NatureSweep): Kept => {
+    // Where the player cut the trees away (`world/trees.ts`), none grows.
+    const cleared = clearingIndex(net.doc.treeClearings);
+    const idx: number[] = [], z: number[] = [];
+    for (let k = 0; k < sweep.trees.length; k++) {
+      const c = sweep.trees[k]!;
+      const ground = terrain.renderedHeightAt(c.x, c.y);
+      if (!natureOpen(net, c.x, c.y, ground)) continue;
+      if (idx.length >= sweep.budget) break;
+      if (cleared(c.x, c.y)) continue;
+      idx.push(k);
+      z.push(ground);
+    }
+    return keptOf(idx, z);
   };
   /**
    * The stones: where rocks were painted, one candidate a cell of
@@ -1782,49 +1804,132 @@ export function createSceneRenderer(
   const ROCK_SPACING = m(3.2);
   const ROCK_MAX = 9_000;
   const RIVER_ROCK_SPACING = m(3);
-  const rockPlacements = (net: Network): CoverPlacement[] => {
-    const out: CoverPlacement[] = [];
-    const hash = (a: number, b: number, salt: number): number => {
-      let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
-      h = Math.imul(h ^ (h >>> 13), 1_274_126_177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4_294_967_296;
-    };
-    const [i0, i1, j0, j1] = paintedCells(net, ROCK_SPACING);
-    for (let j = j0; j <= j1 && out.length < ROCK_MAX; j++) {
-      for (let i = i0; i <= i1 && out.length < ROCK_MAX; i++) {
-        const cx = -TERRAIN_HALF + (i + 0.5) * ROCK_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * ROCK_SPACING;
-        const density = terrain.coverAt('rocks', cx, cy);
-        if (density < 0.04 || hash(i, j, 41) > Math.sqrt(density) * 0.7) continue;
-        const x = cx + (hash(i, j, 42) - 0.5) * ROCK_SPACING * 0.9, y = cy + (hash(i, j, 43) - 0.5) * ROCK_SPACING * 0.9;
-        if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
-        // Mostly modest stones, now and then a big boulder.
-        const roll = hash(i, j, 44);
-        const size = roll > 0.88 ? m(2.2) + m(2) * hash(i, j, 45) : m(0.6) + m(1.5) * roll;
-        out.push({ x, y, z: terrain.renderedHeightAt(x, y), size, yaw: hash(i, j, 46) * Math.PI * 2, seed: hash(i, j, 47), rock: terrain.geologyAt(x, y) });
+  /** The painted covers' and the rivers' sweep (`coverSweep`): where each kind may stand. */
+  interface CoverSweep {
+    readonly key: string;
+    /** The painted woods' trees. */
+    readonly forest: readonly Candidate[];
+    readonly scrub: readonly Candidate[];
+    /** Painted stones, then the rivers' (kept in that order, under one cap). */
+    readonly rocks: readonly Candidate[];
+    readonly shore: readonly ShoreCandidate[];
+    room: number[] | null;
+  }
+  /** What a cover keep let stand. */
+  interface CoverKept {
+    readonly forest: Kept;
+    readonly scrub: Kept;
+    readonly rocks: Kept;
+    readonly shore: Kept;
+  }
+  const coverSweep = (doc: RoadDoc, key: string): CoverSweep => {
+    // The trees of the painted forest (`world/terrainPaint.ts` 'forest').
+    const forest: Candidate[] = [];
+    {
+      const [i0, i1, j0, j1] = paintedCells(doc, FOREST_SPACING);
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
+          const density = terrain.forestAt(cx, cy);
+          if (density < 0.04 || cellHash(i, j, 1) > density * 0.92) continue;
+          const x = cx + (cellHash(i, j, 2) - 0.5) * FOREST_SPACING * 0.9, y = cy + (cellHash(i, j, 3) - 0.5) * FOREST_SPACING * 0.9;
+          const h = m(10) + m(8) * cellHash(i, j, 4) * (0.6 + 0.4 * density);
+          // A wood is green: broadleaf with some conifers. No ipê (its crown a
+          // bare block, no leaves) and no blob bushes under the trees (the
+          // player, 2026-10-07: "árvore feia", "cocozinhos").
+          const roll = cellHash(i, j, 13);
+          const species = roll < 0.45 ? 'broadleaf' : roll < 0.82 ? 'broadleafTall' : 'conifer';
+          forest.push({ x, y, size: h, yaw: cellHash(i, j, 5) * Math.PI * 2, seed: cellHash(i, j, 6), species });
+        }
       }
     }
+    // Low scrub ('scrub'). Only the cells under the painted covers: the whole
+    // map's grid was some 640 000 cells and stalled every dab of a stroke.
+    const scrub: Candidate[] = [];
+    {
+      const [i0, i1, j0, j1] = paintedCells(doc, SCRUB_SPACING);
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const cx = -TERRAIN_HALF + (i + 0.5) * SCRUB_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * SCRUB_SPACING;
+          const density = terrain.coverAt('scrub', cx, cy);
+          if (density < 0.04) continue;
+          const clump = 0.35 + 0.65 * Math.max(0, Math.min(1, (scrubClump(cx, cy) + 0.15) * 1.6));
+          if (cellHash(i, j, 21) > Math.sqrt(density) * clump) continue;
+          const x = cx + (cellHash(i, j, 22) - 0.5) * SCRUB_SPACING * 0.95, y = cy + (cellHash(i, j, 23) - 0.5) * SCRUB_SPACING * 0.95;
+          scrub.push({ x, y, size: m(1.5) + m(2) * cellHash(i, j, 24) * clump, yaw: cellHash(i, j, 26) * Math.PI * 2, seed: cellHash(i, j, 27), species: 'broadleaf' });
+        }
+      }
+    }
+    // The painted stones ('rocks').
+    const rocks: Candidate[] = [];
+    {
+      const [i0, i1, j0, j1] = paintedCells(doc, ROCK_SPACING);
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const cx = -TERRAIN_HALF + (i + 0.5) * ROCK_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * ROCK_SPACING;
+          const density = terrain.coverAt('rocks', cx, cy);
+          if (density < 0.04 || cellHash(i, j, 41) > Math.sqrt(density) * 0.7) continue;
+          const x = cx + (cellHash(i, j, 42) - 0.5) * ROCK_SPACING * 0.9, y = cy + (cellHash(i, j, 43) - 0.5) * ROCK_SPACING * 0.9;
+          // Mostly modest stones, now and then a big boulder.
+          const roll = cellHash(i, j, 44);
+          const size = roll > 0.88 ? m(2.2) + m(2) * cellHash(i, j, 45) : m(0.6) + m(1.5) * roll;
+          rocks.push({ x, y, size, yaw: cellHash(i, j, 46) * Math.PI * 2, seed: cellHash(i, j, 47), species: 'broadleaf' });
+        }
+      }
+    }
+    // Along every body of water - in the shallows, on the line and up the
+    // bank - the places a stone may lie: kept by their height over the water.
+    const shore: ShoreCandidate[] = [];
     const water = terrain.waterArea();
     if (water) {
       const reach = m(12);
       const i0 = Math.floor((water.minX - reach + TERRAIN_HALF) / RIVER_ROCK_SPACING), i1 = Math.ceil((water.maxX + reach + TERRAIN_HALF) / RIVER_ROCK_SPACING);
       const j0 = Math.floor((water.minY - reach + TERRAIN_HALF) / RIVER_ROCK_SPACING), j1 = Math.ceil((water.maxY + reach + TERRAIN_HALF) / RIVER_ROCK_SPACING);
-      for (let j = j0; j <= j1 && out.length < ROCK_MAX; j++) {
-        for (let i = i0; i <= i1 && out.length < ROCK_MAX; i++) {
-          const x = -TERRAIN_HALF + (i + hash(i, j, 51)) * RIVER_ROCK_SPACING, y = -TERRAIN_HALF + (j + hash(i, j, 52)) * RIVER_ROCK_SPACING;
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const x = -TERRAIN_HALF + (i + cellHash(i, j, 51)) * RIVER_ROCK_SPACING, y = -TERRAIN_HALF + (j + cellHash(i, j, 52)) * RIVER_ROCK_SPACING;
           const level = terrain.shoreLevelAt(x, y);
           if (level === null) continue;
-          const z = terrain.renderedHeightAt(x, y);
-          const above = z - level;
-          // Thickest at the waterline, thinning up the bank and into the deep.
-          const odds = above < -m(2.5) ? 0.06 : above < -m(0.3) ? 0.3 : above < m(0.6) ? 0.45 : above < m(2) ? 0.22 : above < m(4) ? 0.07 : 0;
-          if (hash(i, j, 53) > odds) continue;
-          if (onCarriageway(net, { x, y }) || buildings.covers(x, y)) continue;
-          const size = m(0.6) + m(1.6) * hash(i, j, 54) ** 1.6;
-          out.push({ x, y, z, size, yaw: hash(i, j, 55) * Math.PI * 2, seed: hash(i, j, 56), rock: terrain.geologyAt(x, y) });
+          const size = m(0.6) + m(1.6) * cellHash(i, j, 54) ** 1.6;
+          shore.push({ x, y, level, draw: cellHash(i, j, 53), size, yaw: cellHash(i, j, 55) * Math.PI * 2, seed: cellHash(i, j, 56), species: 'broadleaf' });
         }
       }
     }
-    return out;
+    return { key, forest, scrub, rocks, shore, room: null };
+  };
+  /** The covers' keep: never on a road or under a building, the woods out of the clearings, each kind under its cap. */
+  const coverKeep = (net: Network, sweep: CoverSweep): CoverKept => {
+    const free = (x: number, y: number): boolean => !onCarriageway(net, { x, y }) && !buildings.covers(x, y);
+    // Where the player cut the trees away (`world/trees.ts`), none grows.
+    const cleared = clearingIndex(net.doc.treeClearings);
+    const keep = (list: readonly Candidate[], cap: number, also: (c: Candidate) => boolean = () => true): Kept => {
+      const idx: number[] = [], z: number[] = [];
+      for (let k = 0; k < list.length && idx.length < cap; k++) {
+        const c = list[k]!;
+        if (!free(c.x, c.y) || !also(c)) continue;
+        idx.push(k);
+        z.push(terrain.renderedHeightAt(c.x, c.y));
+      }
+      return keptOf(idx, z);
+    };
+    const rocks = keep(sweep.rocks, ROCK_MAX);
+    const idx: number[] = [], z: number[] = [];
+    for (let k = 0; k < sweep.shore.length && rocks.idx.length + idx.length < ROCK_MAX; k++) {
+      const c = sweep.shore[k]!;
+      const ground = terrain.renderedHeightAt(c.x, c.y);
+      const above = ground - c.level;
+      // Thickest at the waterline, thinning up the bank and into the deep.
+      const odds = above < -m(2.5) ? 0.06 : above < -m(0.3) ? 0.3 : above < m(0.6) ? 0.45 : above < m(2) ? 0.22 : above < m(4) ? 0.07 : 0;
+      if (c.draw > odds || !free(c.x, c.y)) continue;
+      idx.push(k);
+      z.push(ground);
+    }
+    return {
+      forest: keep(sweep.forest, FOREST_MAX, (c) => !cleared(c.x, c.y)),
+      scrub: keep(sweep.scrub, SCRUB_MAX),
+      rocks,
+      shore: keptOf(idx, z),
+    };
   };
   let orbitPerspective: boolean | null = null;
   let hiddenPerson: number | null = null;
@@ -2341,103 +2446,147 @@ export function createSceneRenderer(
         gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
-      // The forest, the stones and the scrub follow the painted covers and the
-      // water. The roads and buildings they keep off reach them through the
-      // change log too: a street or a building changes the ground where it is.
-      const waterArea = terrain.waterArea();
-      const coverArea = waterArea ? unionRect(forestAreaOf(net.doc), [waterArea.minX - m(12), waterArea.minY - m(12), waterArea.maxX + m(12), waterArea.maxY + m(12)]) : forestAreaOf(net.doc);
-      // The stones take the colour of the painted rock under them: a change of
-      // geology where they lie builds them again (both gates are asked, so
-      // each keeps its own record).
-      const geologyStale = coverGeology.stale('', coverArea);
-      if (onGround.cover.stale(`${terrain.forestRevision}:${terrain.waterRevision}:${net.doc.clearingRevision}`, coverArea) || geologyStale) {
-        if (cover) {
-          for (const mesh of cover.meshes) world.remove(mesh);
-          cover.dispose();
+      // THE PLANTS AND STONES (`coverSweep`/`coverKeep`, `natureSweep`/
+      // `natureKeep`, the planted trees): swept again when the land, the
+      // paint, the water, the ecosystem or the tier change; kept again when
+      // the roads, the ground under the buildings, the clearings or the
+      // drawn ground do - a pass over the places already found - and drawn
+      // again only when what is kept is not the same, into the meshes they
+      // have. Not in the middle of a stroke, and not while an edit's world is
+      // still being built: the old one is drawn meanwhile, and the ground the
+      // plants stand on is only final when it is swapped in.
+      if (!stroking && !worldJob) {
+        /** What every keep reads besides its own sweep: the roads, the buildings' ground, the clearings, the drawn ground. */
+        const standing = `${net.revision}:${buildings.coversVersion}:${net.doc.clearingRevision}:${groundChanges.version}`;
+        const treesState = natureTreeKit ? 'kit' : natureTreesPending ? 'waiting' : 'none';
+        // The stones, the scrub and the painted woods.
+        const coverSweepKey = `${terrain.forestRevision}:${terrain.waterRevision}`;
+        if (coverSweepState?.key !== coverSweepKey) {
+          const at = performance.now();
+          coverSweepState = coverSweep(net.doc, coverSweepKey);
+          coverKept = null;
+          performance.measure('hitch:cover/sweep', { start: at, end: performance.now() });
         }
-        const coverAt = performance.now();
-        const forest = forestPlants(net);
-        // Its trees are the countryside's (`natureTrees.ts`), built below
-        // once those are grown; the old card trees only if they cannot be.
-        paintedTrees = forest.trees;
-        cover = buildGroundCover(rockPlacements(net), [...scrubPlacements(net), ...forest.shrubs], coverKit, natureTreesPending || natureTreeKit ? [] : forest.trees);
-        performance.measure('hitch:cover', { start: coverAt, end: performance.now() });
-        for (const mesh of cover.meshes) world.add(mesh);
-      }
-      // The ecosystem's own trees and bushes: again when the ecology, the
-      // roads or the buildings change, never in the middle of a stroke.
-      const natureKey = `${terrain.ecologyRevision}:${net.doc.revision}:${net.doc.buildings.revision}:${quality.vegetation > 0}:${net.doc.clearingRevision}`;
-      if (!stroking && natureKey !== natureFor) {
-        natureFor = natureKey;
-        if (nature) {
-          for (const mesh of nature.meshes) world.remove(mesh);
-          nature.dispose();
-          nature = null;
+        const coverKey = `${coverSweepKey}:${standing}:${terrain.geologyChanges.version}:${treesState}`;
+        if (coverKey !== coverKeepFor) {
+          coverKeepFor = coverKey;
+          const at = performance.now();
+          const sweep = coverSweepState;
+          const next = coverKeep(net, sweep);
+          // The painted woods' trees are the countryside's (`natureTrees.ts`);
+          // the old card trees only if those cannot be grown.
+          const standIns = !natureTreeKit && !natureTreesPending;
+          // The stones take the colour of the painted rock under them.
+          const geology = terrain.geologyChanges.version;
+          const meshes = !coverKept || coverKept.geology !== geology || coverKept.standIns !== standIns
+            || !sameKept(coverKept.rocks, next.rocks) || !sameKept(coverKept.shore, next.shore) || !sameKept(coverKept.scrub, next.scrub)
+            || (standIns && !sameKept(coverKept.forest, next.forest));
+          if (meshes) {
+            if (cover) {
+              for (const mesh of cover.meshes) world.remove(mesh);
+              cover.dispose();
+            }
+            cover = buildGroundCover([...placedCover(sweep.rocks, next.rocks, true), ...placedCover(sweep.shore, next.shore, true)],
+              placedCover(sweep.scrub, next.scrub, false), coverKit, standIns ? placedTrees(sweep.forest, next.forest) : []);
+            for (const mesh of cover.meshes) world.add(mesh);
+          }
+          if (natureTreeKit && (!paintedForest || !sameKept(coverKept?.forest, next.forest))) {
+            const trees = placedTrees(sweep.forest, next.forest);
+            if (paintedForest ? !paintedForest.update(trees) : trees.length > 0) {
+              if (paintedForest) {
+                for (const mesh of paintedForest.meshes) world.remove(mesh);
+                paintedForest.dispose();
+              }
+              sweep.room ??= forestRoom(sweep.forest, natureTreeKit);
+              paintedForest = buildNatureForest(trees, natureTreeKit, sweep.room);
+              for (const mesh of paintedForest.meshes) world.add(mesh);
+            }
+          }
+          coverKept = { ...next, geology, standIns };
+          performance.measure('hitch:cover', { start: at, end: performance.now() });
         }
-        if (natureForest) {
-          for (const mesh of natureForest.meshes) world.remove(mesh);
-          natureForest.dispose();
-          natureForest = null;
+        // The ecosystem's own trees.
+        const natureSweepKey = `${terrain.ecologyRevision}:${net.doc.terrainRevision}:${quality.vegetation}`;
+        if (natureSweepState?.key !== natureSweepKey) {
+          const at = performance.now();
+          natureSweepState = natureSweep(natureSweepKey);
+          natureKept = null;
+          performance.measure('hitch:nature/sweep', { start: at, end: performance.now() });
         }
-        const natureAt = performance.now();
-        const plants = naturePlants(net);
-        if (natureTreeKit && plants.trees.length > 0) {
-          natureForest = buildNatureForest(plants.trees, natureTreeKit);
-          for (const mesh of natureForest.meshes) world.add(mesh);
-          natureTreesPending = false;
+        const natureKey = `${natureSweepKey}:${standing}:${treesState}`;
+        if (natureKey !== natureKeepFor) {
+          natureKeepFor = natureKey;
+          const at = performance.now();
+          const sweep = natureSweepState;
+          const next = natureKeep(net, sweep);
+          const changed = !sameKept(natureKept, next);
+          if (natureTreeKit) {
+            if (nature) {
+              for (const mesh of nature.meshes) world.remove(mesh);
+              nature.dispose();
+              nature = null;
+            }
+            if (changed || !natureForest) {
+              const trees = placedTrees(sweep.trees, next);
+              if (natureForest ? !natureForest.update(trees) : trees.length > 0) {
+                if (natureForest) {
+                  for (const mesh of natureForest.meshes) world.remove(mesh);
+                  natureForest.dispose();
+                }
+                sweep.room ??= forestRoom(sweep.trees, natureTreeKit);
+                natureForest = buildNatureForest(trees, natureTreeKit, sweep.room);
+                for (const mesh of natureForest.meshes) world.add(mesh);
+              }
+            }
+            // Grown (or nothing to grow): no longer drawing while waiting for them.
+            natureTreesPending = false;
+          } else if (!natureTreesPending && (changed || !nature)) {
+            // The old card trees only if the new ones could not be grown:
+            // shown while they load, they were the first trees the player saw
+            // and then changed under them (2026-10-07).
+            if (nature) {
+              for (const mesh of nature.meshes) world.remove(mesh);
+              nature.dispose();
+              nature = null;
+            }
+            const trees = placedTrees(sweep.trees, next);
+            if (trees.length > 0) {
+              nature = buildGroundCover([], [], coverKit, trees);
+              for (const mesh of nature.meshes) world.add(mesh);
+            }
+          }
+          natureKept = next;
+          performance.measure('hitch:nature', { start: at, end: performance.now() });
         }
-        // The old card trees only if the new ones could not be grown: shown
-        // while they load, they were the first trees the player saw and
-        // then changed under them (2026-10-07).
-        const standIns = natureTreeKit || natureTreesPending ? [] : plants.trees;
-        if (standIns.length + plants.shrubs.length > 0) {
-          nature = buildGroundCover([], plants.shrubs, coverKit, standIns);
-          for (const mesh of nature.meshes) world.add(mesh);
+        // The trees the player planted (`world/trees.ts`), with the woods' own
+        // models: none on a road or under a building, each on the ground as
+        // drawn; written into the meshes they have.
+        const plantedKey = `${net.doc.treeRevision}:${standing}`;
+        if (natureTreeKit && plantedKey !== plantedFor) {
+          plantedFor = plantedKey;
+          const planted: TreePlacement[] = [];
+          for (const t of net.doc.trees) {
+            if (onCarriageway(net, t) || buildings.covers(t.x, t.y)) continue;
+            planted.push({ x: t.x, y: t.y, z: terrain.renderedHeightAt(t.x, t.y), size: t.height, yaw: t.yaw, seed: t.seed, species: 'broadleaf' });
+          }
+          if (plantedForest ? !plantedForest.update(planted) : planted.length > 0) {
+            if (plantedForest) {
+              for (const mesh of plantedForest.meshes) world.remove(mesh);
+              plantedForest.dispose();
+            }
+            plantedForest = buildNatureForest(planted, natureTreeKit, forestRoom(net.doc.trees, natureTreeKit));
+            for (const mesh of plantedForest.meshes) world.add(mesh);
+          }
         }
-        performance.measure('hitch:nature', { start: natureAt, end: performance.now() });
       }
       // Near trees in full, far ones light, by their distance to the camera.
       if (natureForest) {
         const eye = rig.camera.position;
         natureForest.updateLod(eye.x, eye.y, eye.z);
       }
-      if (natureTreeKit && paintedTrees) {
-        if (paintedForest) {
-          for (const mesh of paintedForest.meshes) world.remove(mesh);
-          paintedForest.dispose();
-          paintedForest = null;
-        }
-        if (paintedTrees.length > 0) {
-          paintedForest = buildNatureForest(paintedTrees, natureTreeKit);
-          for (const mesh of paintedForest.meshes) world.add(mesh);
-        }
-        paintedTrees = null;
-      }
       if (paintedForest) {
         const eye = rig.camera.position;
         paintedForest.updateLod(eye.x, eye.y, eye.z);
-      }
-      // The trees the player planted (`world/trees.ts`), with the woods' own
-      // models: again when they, the land, the roads or the buildings change
-      // (none on a road or under a building).
-      const plantedKey = `${net.doc.treeRevision}:${net.doc.terrainRevision}:${net.doc.revision}:${net.doc.buildings.revision}`;
-      if (natureTreeKit && plantedKey !== plantedFor && !(stroking && net.doc.terrainRevision !== plantedTerrain)) {
-        plantedFor = plantedKey;
-        plantedTerrain = net.doc.terrainRevision;
-        if (plantedForest) {
-          for (const mesh of plantedForest.meshes) world.remove(mesh);
-          plantedForest.dispose();
-          plantedForest = null;
-        }
-        const planted: TreePlacement[] = [];
-        for (const t of net.doc.trees) {
-          if (onCarriageway(net, t) || buildings.covers(t.x, t.y)) continue;
-          planted.push({ x: t.x, y: t.y, z: terrain.renderedHeightAt(t.x, t.y), size: t.height, yaw: t.yaw, seed: t.seed, species: 'broadleaf' });
-        }
-        if (planted.length > 0) {
-          plantedForest = buildNatureForest(planted, natureTreeKit);
-          for (const mesh of plantedForest.meshes) world.add(mesh);
-        }
       }
       if (plantedForest) {
         const eye = rig.camera.position;

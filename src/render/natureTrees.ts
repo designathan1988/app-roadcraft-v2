@@ -4,12 +4,12 @@ import {
   Color,
   CylinderGeometry,
   IcosahedronGeometry,
+  InstancedBufferAttribute,
   InstancedMesh,
   DataTexture,
   DoubleSide,
   LinearFilter,
   LinearMipmapLinearFilter,
-  Matrix4,
   MeshDepthMaterial,
   MeshStandardMaterial,
   NoColorSpace,
@@ -682,10 +682,30 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
 
 export interface NatureForest {
   readonly meshes: readonly InstancedMesh[];
+  /**
+   * Takes these trees in place of the ones it holds, written into the meshes
+   * it already has: a buffer cannot be resized, but its content can be
+   * rewritten (three's manual, "How to update things"). False when a variety
+   * has more trees than its meshes hold: a new forest is built then.
+   */
+  update(trees: readonly TreePlacement[]): boolean;
   /** Sorts the trees into near and far by their distance to the camera (three's x, y, z), when it has moved. */
   updateLod(x: number, y: number, z: number): void;
   dispose(): void;
 }
+
+/** The variety a tree is grown as, from its seed. */
+const varietyOf = (tree: { readonly seed: number }, varieties: number): number => Math.min(varieties - 1, Math.floor(tree.seed * varieties));
+
+/** How many of these trees (or places a tree may stand, by seed) each variety of the kit takes: the room a forest built for them needs. */
+export function forestRoom(trees: readonly { readonly seed: number }[], kit: NatureTreeKit): number[] {
+  const room = kit.variants.map(() => 0);
+  for (const tree of trees) room[varietyOf(tree, room.length)]!++;
+  return room;
+}
+
+/** A cell of the stand grid as one number (a string key per tree and neighbour was most of the cost). */
+const standKey = (cx: number, cy: number): number => cx * 100_003 + cy;
 
 /**
  * How each tree stands among its neighbours: how crowded it is (0 alone .. 1
@@ -693,9 +713,9 @@ export interface NatureForest {
  */
 function stands(trees: readonly TreePlacement[]): { crowd: Float32Array; openX: Float32Array; openY: Float32Array } {
   const cell = STAND_REACH;
-  const grid = new Map<string, number[]>();
+  const grid = new Map<number, number[]>();
   trees.forEach((t, i) => {
-    const key = `${Math.floor(t.x / cell)},${Math.floor(t.y / cell)}`;
+    const key = standKey(Math.floor(t.x / cell), Math.floor(t.y / cell));
     const list = grid.get(key);
     if (list) list.push(i); else grid.set(key, [i]);
   });
@@ -705,7 +725,7 @@ function stands(trees: readonly TreePlacement[]): { crowd: Float32Array; openX: 
     let n = 0, ax = 0, ay = 0;
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        for (const j of grid.get(`${cx + dx},${cy + dy}`) ?? []) {
+        for (const j of grid.get(standKey(cx + dx, cy + dy)) ?? []) {
           if (j === i) continue;
           const o = trees[j]!;
           const ex = o.x - t.x, ey = o.y - t.y;
@@ -724,18 +744,30 @@ function stands(trees: readonly TreePlacement[]): { crowd: Float32Array; openX: 
   return { crowd, openX, openY };
 }
 
-/** The trees, instanced per variant and level; `updateLod` picks which instance draws where. */
-export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTreeKit): NatureForest {
-  const stand = stands(trees);
-  const byVariant: number[][] = kit.variants.map(() => []);
-  trees.forEach((tree, i) => byVariant[Math.min(byVariant.length - 1, Math.floor(tree.seed * byVariant.length))]!.push(i));
+/**
+ * The trees, instanced per variant and level; `updateLod` picks which instance
+ * draws where. `room`: how many trees each variety's meshes hold (at least
+ * the trees given; more lets `update` take a larger forest without new meshes).
+ */
+export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTreeKit, room: readonly number[] = forestRoom(trees, kit)): NatureForest {
+  const varieties = kit.variants.length;
   const meshes: InstancedMesh[] = [];
-  const groups: { items: TreePlacement[]; matrices: Matrix4[]; colours: Color[]; levels: InstancedMesh[][] }[] = [];
-  byVariant.forEach((indices, k) => {
-    if (indices.length === 0) return;
-    const variant = kit.variants[k]!;
+  /**
+   * One variety: its meshes by level, how many trees they hold, and the trees
+   * it draws with each one's transform (16, column-major) and tint (3).
+   */
+  interface Group {
+    readonly levels: readonly (readonly InstancedMesh[])[];
+    readonly capacity: number;
+    items: TreePlacement[];
+    readonly matrices: Float32Array;
+    readonly colours: Float32Array;
+  }
+  const groups: (Group | null)[] = kit.variants.map((variant, k) => {
+    const capacity = Math.max(0, Math.floor(room[k] ?? 0));
+    if (capacity === 0) return null;
     const make = (geometry: BufferGeometry, material: MeshStandardMaterial, name: string, depth?: MeshDepthMaterial): InstancedMesh => {
-      const mesh = new InstancedMesh(geometry, material, indices.length);
+      const mesh = new InstancedMesh(geometry, material, capacity);
       mesh.name = name;
       mesh.castShadow = true;
       // Every part of a tree takes the sun's shadows, the leaf cards too: the
@@ -743,6 +775,8 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       mesh.receiveShadow = true;
       if (depth) mesh.customDepthMaterial = depth;
       mesh.frustumCulled = false;
+      // The tint per tree from the start: the program is built once with it.
+      mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
       mesh.count = 0;
       meshes.push(mesh);
       return mesh;
@@ -753,35 +787,52 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
     ];
     const mid = [make(variant.trunk, kit.crownMaterial, 'nature-trunk-mid'), make(variant.mid, variant.leafMaterial, 'nature-leaves-mid', variant.leafDepth)];
     const far = [make(variant.trunk, kit.crownMaterial, 'nature-trunk-far'), make(variant.far, variant.leafMaterial, 'nature-leaves-far', variant.leafDepth)];
-    const items = indices.map((i) => trees[i]!);
-    const matrices = indices.map((i) => {
-      const item = trees[i]!;
-      const crowd = stand.crowd[i]!;
-      // Deep in a wood taller and narrower; at its edge and alone broader,
-      // the crown leaning out over the open side (a shear, the foot kept).
-      const tall = item.size * (0.92 + 0.22 * crowd);
-      const wide = item.size * (1.12 - 0.3 * crowd) * (0.94 + ((item.seed * 5.3) % 1) * 0.12);
-      const lean = 0.22 * (1 - crowd) * Math.min(1, crowd * 4);
-      const sx = stand.openX[i]! * lean, sz = -stand.openY[i]! * lean;
-      const c = Math.cos(item.yaw), s = Math.sin(item.yaw);
-      // World = translate * shear * rotateY * scale.
-      return new Matrix4().set(
-        c * wide, sx * tall, s * wide, item.x,
-        0, tall, 0, item.z,
-        -s * wide, sz * tall, c * wide, -item.y,
-        0, 0, 0, 1,
-      );
-    });
-    // A little variety of green between trees, none of it far from the leaves' own.
-    const colours = items.map((item) => {
-      const t = 0.9 + ((item.seed * 3.77) % 1) * 0.2;
-      return new Color(t * (0.96 + ((item.seed * 1.3) % 1) * 0.08), t, t * 0.94);
-    });
-    groups.push({ items, matrices, colours, levels: [near, mid, far] });
+    return { levels: [near, mid, far], capacity, items: [], matrices: new Float32Array(capacity * 16), colours: new Float32Array(capacity * 3) };
   });
   let sortedX = Infinity, sortedY = Infinity, sortedZ = Infinity;
+
+  const place = (list: readonly TreePlacement[]): boolean => {
+    const byVariety: number[][] = kit.variants.map(() => []);
+    list.forEach((tree, i) => byVariety[varietyOf(tree, varieties)]!.push(i));
+    if (byVariety.some((indices, k) => indices.length > (groups[k]?.capacity ?? 0))) return false;
+    const stand = stands(list);
+    groups.forEach((g, k) => {
+      if (!g) return;
+      const indices = byVariety[k]!;
+      g.items = indices.map((i) => list[i]!);
+      const m = g.matrices, col = g.colours;
+      indices.forEach((i, slot) => {
+        const item = list[i]!;
+        const crowd = stand.crowd[i]!;
+        // Deep in a wood taller and narrower; at its edge and alone broader,
+        // the crown leaning out over the open side (a shear, the foot kept).
+        const tall = item.size * (0.92 + 0.22 * crowd);
+        const wide = item.size * (1.12 - 0.3 * crowd) * (0.94 + ((item.seed * 5.3) % 1) * 0.12);
+        const lean = 0.22 * (1 - crowd) * Math.min(1, crowd * 4);
+        const sx = stand.openX[i]! * lean, sz = -stand.openY[i]! * lean;
+        const c = Math.cos(item.yaw), s = Math.sin(item.yaw);
+        // World = translate * shear * rotateY * scale, column by column as
+        // three keeps a matrix (`Matrix4.elements`).
+        const o = slot * 16;
+        m[o] = c * wide; m[o + 1] = 0; m[o + 2] = -s * wide; m[o + 3] = 0;
+        m[o + 4] = sx * tall; m[o + 5] = tall; m[o + 6] = sz * tall; m[o + 7] = 0;
+        m[o + 8] = s * wide; m[o + 9] = 0; m[o + 10] = c * wide; m[o + 11] = 0;
+        m[o + 12] = item.x; m[o + 13] = item.z; m[o + 14] = -item.y; m[o + 15] = 1;
+        // A little variety of green between trees, none of it far from the leaves' own.
+        const t = 0.9 + ((item.seed * 3.77) % 1) * 0.2;
+        col[slot * 3] = t * (0.96 + ((item.seed * 1.3) % 1) * 0.08);
+        col[slot * 3 + 1] = t;
+        col[slot * 3 + 2] = t * 0.94;
+      });
+    });
+    // Sorted again at the next look, whatever the camera did.
+    sortedX = Infinity;
+    return true;
+  };
+
   const sort = (x: number, y: number, z: number): void => {
     for (const g of groups) {
+      if (!g) continue;
       const counts = [0, 0, 0];
       for (let i = 0; i < g.items.length; i++) {
         const item = g.items[i]!;
@@ -789,21 +840,36 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
         const level = distance < NEAR_REACH ? 0 : distance < MID_REACH ? 1 : 2;
         const slot = counts[level]!++;
         for (const mesh of g.levels[level]!) {
-          mesh.setMatrixAt(slot, g.matrices[i]!);
-          mesh.setColorAt(slot, g.colours[i]!);
+          const matrix = mesh.instanceMatrix.array as Float32Array;
+          for (let e = 0; e < 16; e++) matrix[slot * 16 + e] = g.matrices[i * 16 + e]!;
+          const tint = mesh.instanceColor!.array as Float32Array;
+          tint[slot * 3] = g.colours[i * 3]!;
+          tint[slot * 3 + 1] = g.colours[i * 3 + 1]!;
+          tint[slot * 3 + 2] = g.colours[i * 3 + 2]!;
         }
       }
-      g.levels.forEach((meshes, level) => {
-        for (const mesh of meshes) {
-          mesh.count = counts[level]!;
+      g.levels.forEach((levelMeshes, level) => {
+        const count = counts[level]!;
+        for (const mesh of levelMeshes) {
+          mesh.count = count;
+          // Only the instances drawn go to the GPU (`addUpdateRange`); with no
+          // range three sends the whole buffer, the forest's full capacity, at
+          // every change of level as the camera moves.
+          if (count === 0) continue;
+          mesh.instanceMatrix.clearUpdateRanges();
+          mesh.instanceMatrix.addUpdateRange(0, count * 16);
           mesh.instanceMatrix.needsUpdate = true;
-          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          mesh.instanceColor!.clearUpdateRanges();
+          mesh.instanceColor!.addUpdateRange(0, count * 3);
+          mesh.instanceColor!.needsUpdate = true;
         }
       });
     }
   };
+  place(trees);
   return {
     meshes,
+    update: place,
     updateLod(x, y, z) {
       if (Math.hypot(x - sortedX, y - sortedY, z - sortedZ) < LOD_SLACK) return;
       sortedX = x; sortedY = y; sortedZ = z;
