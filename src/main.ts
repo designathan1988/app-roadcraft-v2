@@ -398,6 +398,8 @@ const gameState = new GameState({
   // The view.
   congestionOverlay: savedSession?.settings.congestionOverlay ?? false,
   perspective: false,
+  /** What the player is in the middle of doing (`currentGesture`), null between gestures. */
+  gesture: null as string | null,
 }, () => { if (booted) requestDraw(); });
 /** The game's state, read-only: `game.tool`, `game.paused`, `game.selectedSegment`... */
 const game = gameState.values;
@@ -1091,6 +1093,48 @@ function cancelGestures(): void {
   orbiting = null;
   if (game.tool === 'building') buildings.pointerUp(true);
   requestDraw();
+}
+
+/**
+ * The gesture in progress, named: what the player is in the middle of
+ * doing, read from the same variables `cancelGestures` ends. Written to the
+ * game's state after every pointer and key event (`syncGesture`): since a
+ * value set to what it already is writes nothing, the record holds where
+ * each gesture began and ended, with the tool in hand - so a defect can be
+ * traced back to what the player was doing when it happened.
+ */
+function currentGesture(): string | null {
+  if (pinch) return 'câmera: pinça';
+  if (orbiting) return 'câmera: girando';
+  if (panning) return 'câmera: arrastando';
+  if (moving) return 'via: movendo um nó';
+  if (draft) return 'via: desenhando';
+  if (curvePending) return 'via: curvando';
+  if (roadChain) return 'via: encadeando';
+  if (settlingRoad) return 'via: assentando';
+  if (terrainStroke) return 'terreno: pincelando';
+  if (poleDraft || poleChain) return 'poste: traçando a linha';
+  if (barrierPoints) return 'cerca: traçando';
+  if (bulldozeBox) return 'demolir: retângulo';
+  if (cloudDrag) return 'nuvem: arrastando';
+  if (zoneErase) return 'zona: apagando';
+  if (lotStroke) return lotStroke.remove ? 'lote: tirando zona' : 'lote: pintando zona';
+  if (lotCorner) return 'lote: movendo um canto';
+  if (lotNew) return 'lote: desenhando';
+  if (lotCutLine) return 'lote: cortando';
+  if (lotCurve) return 'lote: curvando um lado';
+  if (lotPolygon.length > 0) return 'lote: polígono';
+  if (lotJoinFirst !== null) return 'lote: unindo';
+  return null;
+}
+function syncGesture(): void {
+  // Before the boot the file may not have run to the gestures' own variables.
+  if (!booted) return;
+  gameState.set('gesture', currentGesture(), `ferramenta ${game.tool}`);
+}
+// After the event's own handlers (a microtask, after the whole dispatch).
+for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'keyup'] as const) {
+  window.addEventListener(type, () => queueMicrotask(syncGesture), { capture: true, passive: true });
 }
 
 /**
