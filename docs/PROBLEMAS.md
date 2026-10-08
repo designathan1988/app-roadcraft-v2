@@ -28,6 +28,9 @@ UHD 770, cerca de 5× mais lenta que a RTX 3060 do jogador.
 | P15 | "Por que os pedestres estão com gráfico tão lixo?" | Toda pessoa, em todo zoom jogável (18-133 px de altura), no nível 3: malha única de ~270 triângulos sem textura | `render/people/crowdLod.ts` `LEVEL_PIXELS = [1200, 400, 150, 8]`: corpo completo só acima de 1 200 px | Faixas pela altura na tela e pelo que cada nível perde (Unity LOD Group): 100 / 45 / 18 / 4 px; custo segurado pelos tetos [20, 100] | fechado | zoom normal (58 px): nível 1 texturizado; de perto: corpo completo | (este commit) |
 | P7a | "Se tem muitas pessoas trava" | Tarefas longas de 60-580 ms ao aparecerem pessoas novas; `getProgramInfoLog` 9 × até 146 ms (851 ms) | Duas causas. (1) `riggedCitizens.ts`: os stand-ins da compilação antecipada não tinham `instanceColor`, e `instancingColor` é parte da chave do programa (`WebGLPrograms.getProgramCacheKeyBooleans`): o programa compilado antes nunca era o desenhado, e cada corpo novo linkava o seu no quadro em que aparecia. (2) `skinAppearance.ts`: a chave levava `cardMask`/`garmentMask`, um programa por combinação de roupa | Stand-ins com `instanceColor` (os programas compilados antes são os desenhados); GLSL igual para toda combinação (todos os samplers declarados, textura 1×1 nos slots vazios, flags `cardTextures`/`garmentTextures` em uniform), masks fora da chave | corrigido, falta a medida no jogo | | (este commit) |
 | P16 | Suíte de testes depois de tirar o motor de pedestre legado e o Drive v1 | 73 falhas em 30 arquivos | (1) `sim/city/city.ts`: sem o cenário ligado em 'edges' nenhum carro entrava pelas pontas (o `CityLife` sem moradores deixava sempre); (2) testes lendo `sim.peds` (motor legado) e `simOf` sem motor de pedestre; (3) `kerbStops.ts`: o Drive v2 rastejava até o ponto da parada de porta aberta; (4) três defeitos do fuzz que não se reproduzem mais | Regra do `CityLife` de volta; testes leem `pedViews` e `simOf` monta como o jogo; parada fixa onde o carro parou (freio de intertravamento de porta, Transalt); marca `open` tirada | corrigido o que a remoção quebrou. Aberto, anterior a esta conversa (código não mexido): comportamento do Drive v2 contra critérios medidos no v1 (curva, conversão a 13,5 contra 17, rotatória, cauda curta), passos a 0,07 m/s (`citizenLocomotion`), pads, cobertura do chão (102 triângulos contra 90), mobiliário no prado, camada de prédios, topologia por altura; arquivos de outra pessoa (`.claude/hooks`, `maps/cidade-com-estacionamento.json` apagado, `docs/audit`). Aberto, do motor de caminhada com o cenário: pessoas girando no lugar em 3 cidades (`defects.spec`, millingSpell 1,6-2,5 s contra 1 s) | ver a linha "Depois" na resposta final | 84ad81d2 |
+| P17 | Portas religadas em todo prédio a cada via (vindo de `performance.md` #11 e #42) | ≈ 40 ms por via na vila (medido 2026-10-06) | `sim/peds/sidewalk.ts`, `world/walkways.ts`: a religação passa por todos os prédios | Religar só as portas perto do que mudou, pelos retângulos do diário (`world/changes.ts`) | aberto (Etapa 3) | | |
+| P18 | Cenário e placas refeitos no mapa inteiro a cada via (vindo de `performance.md` #13; viadutos, postes e mobiliário já fechados em #43) | < 10 ms na vila (2026-10-06) | `render/renderer.ts` `rebuildWorld` | Mantidos quando os blocos da edição não os alcançam, como #43 | aberto, medir de novo (Etapa 3) | | |
+| P19 | Kit de árvores (ez-tree, 4 MB) gerado a cada abertura (vindo de `performance.md` #50) | não medido | `render/natureTrees.ts` | Guardar o kit no cache derivado (`derivedCache.ts`) | aberto (Etapa 3) | | |
 | P10 | "Onde você otimizou árvores?" | Árvores novas não carregavam; nível longe com 0 triângulos ou o modelo inteiro | `natureTrees.ts`: URL fora do Vite (`publicDir: false`); nível longe feito do original | URLs por `import.meta.glob`; cadeia de LODs (longe feito do médio) | fechado | 8 variedades carregam; longe 12-74 triângulos | fc4e2479 |
 
 ## Já tentado e que não resolveu
@@ -40,6 +43,51 @@ Para não repetir:
 - **"Otimização" das vias anunciada sem medir.** O caminho de desenhar
   estrada ficou como estava. A causa real está em P1 e P2.
 - **Árvores do Nature Kit "com LOD".** Não carregavam (P10).
+- **Cozinhar pessoas automaticamente no servidor de desenvolvimento.** A cada
+  reinício ele abria um Chrome invisível; com edições seguidas pôs a CPU do
+  jogador a 100% e travou o computador (2026-10-06). Depois de mexer em código
+  de pessoas: `npm run cook:people` à mão, uma vez.
+- **Não são causa:** o coletor de lixo (uma coleta de 11 ms em quatro edições
+  na vila); `forestPlants` no topo das amostras (medido abaixo de 8 ms, amostra
+  mal atribuída); "7 MB por quadro" de buffers de veículos (erro de contagem: os
+  veículos já enviam só o intervalo usado).
+
+## Regras que já custaram caro
+
+- Nada em `render/` usa um contador global como chave de cache de coisa local.
+  O que depende do chão ou do mundo lê o diário (`world/changes.ts`) pela área.
+- Nunca criar material dentro de uma reconstrução: um material por combinação
+  de parâmetros, feito uma vez (cada material novo relinka um shader).
+- O que fica sobre o chão espera o job da edição terminar, e é testado contra o
+  retângulo de cada item, não contra a união da camada.
+- Um registro novo de prédio não é um lote novo: nivelamento e vagas comparam o
+  texto do registro sem idade, nome e versão do plano do lote.
+- Conteúdo que depende só dos assets e do código é cozido (`npm run cook:people`)
+  ou guardado no cache derivado (`render/derivedCache.ts`), não refeito em jogo.
+
+## Como medir
+
+```bash
+npm run dev
+node scripts/probe-hitches.mjs            # mapa vazio: 8 vias com a ferramenta real, 10 carros, 10 pessoas
+node scripts/probe-hitches.mjs --town     # a vila padrão (761 prédios): vias curtas dentro dela
+```
+
+Para cada quadro acima de 50 ms o roteiro mostra os programas de shader
+linkados, os bytes enviados à placa, as leituras síncronas, as amostras de
+JavaScript do quadro e as etapas `hitch:…` que o código grava.
+
+- O Chrome headless daqui desenha na Intel UHD 770: compare números de GPU só
+  entre si. A medida que vale é a do jogo aberto na RTX 3060.
+- As amostras do profiler dizem *onde* está o custo; o tempo exato vem dos
+  `hitch:…` (User Timing).
+- Rode antes e depois na mesma sessão: a máquina é compartilhada.
+
+## Arquivo histórico
+
+`docs/performance.md` guarda os mecanismos #1-#50 corrigidos até 2026-10-08,
+com causa, evidência e proteção. Está congelado: o código cita os números dele
+(`performance.md #11`, `#28`…). Problema novo ou aberto entra só nesta tabela.
 
 ## Fontes
 

@@ -1,4 +1,9 @@
-# Onde o jogo trava — registro permanente
+# Onde o jogo trava — arquivo histórico (congelado em 2026-10-08)
+
+> **Congelado.** O registro vivo é `docs/PROBLEMAS.md`; os itens ainda abertos
+> daqui passaram para lá (P17, P18, P19), junto com o roteiro de medida e as
+> regras. Este arquivo fica só porque o código cita os números dele (#1-#50).
+> Não acrescente nada aqui.
 
 Este arquivo existe para que ninguém precise refazer a auditoria. Cada travamento
 encontrado fica aqui com: **causa** (o mecanismo, não o sintoma), **evidência
