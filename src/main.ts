@@ -3,12 +3,13 @@ import type { BodyPart } from '@sim/people/view';
 import { beginFrameWork, workUntil } from '@core/frameWork';
 import { GameState } from '@core/gameState';
 import { FrameTimer, HealthLog } from '@core/health';
+import { LotTool, type LotSplitKind, type ZoneMode } from '@editor/lotTool';
 import { watchHealth } from '@ui/healthWatch';
 import { mountHealthPanel } from '@ui/healthPanel';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
+import { applyLots, deleteLot, lotCentre, planLots } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -374,10 +375,6 @@ const LANDFORMS: Readonly<Record<Landform, { readonly mode: 'raise' | 'lower'; r
 };
 const landformOf = (mode: BrushMode): (typeof LANDFORMS)[Landform] | undefined => (LANDFORMS as Partial<Record<BrushMode, (typeof LANDFORMS)[Landform]>>)[mode];
 const hardnessByMode: Partial<Record<BrushMode, number>> = { raise: 0, lower: 0, mesa: 85, canyon: 80, escarpment: 75 };
-/** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
-type ZoneMode = 'brush' | 'fill' | 'edit' | 'front' | 'split' | 'join' | 'add' | 'polygon' | 'curve' | 'delete';
-/** How the split tool cuts (`LotCut`): across the front, parallel to it, or along a drawn line. */
-type LotSplitKind = 'vertical' | 'horizontal' | 'line';
 sim.clock.paused = savedSession?.settings.paused === true;
 sim.clock.speed = savedSession?.settings.speed ?? 1;
 sim.trafficIntensity = savedSession?.settings.trafficIntensity ?? 1;
@@ -478,110 +475,23 @@ let barrierPoints: Vec2[] | null = null;
 /** The last click of the walls tool, to tell a double click (which ends the run). */
 let lastBarrierClick: { t: number; x: number; y: number } | null = null;
 let barrierCursor: Vec2 | null = null;
-/** The corners of a lot being drawn point by point (the polygon tool). */
-let lotPolygon: Vec2[] = [];
-/** A drawn cut line, and a side being curved. */
-let lotCutLine: { pointer: number; a: Vec2; b: Vec2 } | null = null;
-let lotCurve: { pointer: number; a: Vec2; b: Vec2; through: Vec2 } | null = null;
-/** The snap of lot points to the footways, the blocks' corners and the other lots' corners. */
-const lotSnapReach = (): number => Math.max(m(2.5), 16 / Math.max(0.05, view.zoom));
-const lotSnap = (p: Vec2, skip?: number): Vec2 => lotSnapper(doc, net)(p, lotSnapReach(), skip).p;
-/** The side of a lot nearest a point: its two corners. */
-function lotSideNear(p: Vec2): { a: Vec2; b: Vec2 } | null {
-  let best: { a: Vec2; b: Vec2 } | null = null, bestD = 18 / Math.max(0.05, view.zoom);
-  for (const l of doc.lots) for (let i = 0; i < l.corners.length; i++) {
-    const a = l.corners[i]!, b = l.corners[(i + 1) % l.corners.length]!;
-    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-    const d = Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y);
-    if (d < bestD) { bestD = d; best = { a, b }; }
-  }
-  return best;
-}
-/** The side of a lot nearest a point within reach: the lot and the side's index (corner i to i + 1). */
-function lotSideAt(p: Vec2): { lot: Lot; side: number; a: Vec2; b: Vec2 } | null {
-  let best: { lot: Lot; side: number; a: Vec2; b: Vec2 } | null = null, bestD = 18 / Math.max(0.05, view.zoom);
-  for (const l of doc.lots) for (let i = 0; i < l.corners.length; i++) {
-    const a = l.corners[i]!, b = l.corners[(i + 1) % l.corners.length]!;
-    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-    // Inside the lot counts as nearer: of two lots sharing a side, the one the pointer is in.
-    const d = Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y) - (insideLot(p, l) ? 1e-3 : 0);
-    if (d < bestD) { bestD = d; best = { lot: l, side: i, a, b }; }
-  }
-  return best;
-}
-/** A dragged corner's snap: onto the streets and other corners, never onto itself. */
-function lotSnapExcept(p: Vec2, from: Vec2): Vec2 {
-  const snap = lotSnapper(doc, net, doc.lots.map((l) => ({ id: l.id, corners: l.corners.filter((q) => Math.hypot(q.x - from.x, q.y - from.y) > m(0.8)) })));
-  return snap(p, lotSnapReach()).p;
-}
-/** Whether the segment a-b passes through the inside of a lot. */
-function segmentCrossesLot(a: Vec2, b: Vec2, q: readonly Vec2[]): boolean {
-  for (let k = 0; k <= 20; k++) if (insideLot({ x: a.x + (b.x - a.x) * k / 20, y: a.y + (b.y - a.y) * k / 20 }, { corners: q })) return true;
-  return false;
-}
 /**
- * Which side of a lot is its front: the longest of those against a street
- * (a lot cut back to the footway has many short sides round a corner's curve,
- * and its front is the long straight one).
+ * The Zoning tool (`editor/lotTool.ts`): the lots the player draws, edits and
+ * zones, with its gestures' own state. Buildings grow on the zoned lots; the
+ * roads neither make, change nor show them (the player, 2026-10-06).
  */
-function frontSideOf(points: readonly Vec2[]): number {
-  const sides = points.map((p, i) => {
-    const q = points[(i + 1) % points.length]!;
-    const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-    let d = Infinity;
-    for (const r of net.ribbons.values()) d = Math.min(d, r.full.distanceTo(mid));
-    return { i, d, length: Math.hypot(q.x - p.x, q.y - p.y) };
-  });
-  const nearest = Math.min(...sides.map((side) => side.d));
-  return sides.filter((side) => side.d < nearest + m(1.5)).sort((a, b) => b.length - a.length)[0]?.i ?? 0;
-}
-/** A lot as drawn, cut back to the footways (`onLand`), with its front; null when nothing is left on land. */
-function landLot(points: readonly Vec2[]): { corners: Vec2[]; front: number } | null {
-  const corners = onLand(net, points);
-  return corners ? { corners, front: frontSideOf(corners) } : null;
-}
-/**
- * The lots (`world/lots.ts`): drawn by the player in the Zoning tool, as
- * areas, and zoned there; buildings grow on the zoned ones. The roads neither
- * make, change nor show them (the player, 2026-10-06).
- */
-const lotAt = (p: Vec2): Lot | undefined => doc.lots.find((l) => insideLot(p, l));
-/** A stroke of the lot brush, a corner being dragged, a lot being drawn, the first lot of a join. */
-let lotStroke: { pointer: number; remove: boolean; ids: Set<number> } | null = null;
-let lotCorner: { pointer: number; from: Vec2; to: Vec2 } | null = null;
-let lotNew: { pointer: number; a: Vec2; b: Vec2; angle: number } | null = null;
-let lotJoinFirst: number | null = null;
-const lotRefused = new Set<number>();
-let lotRefusedNet = -1;
-/** The direction of the street nearest a point, for a lot drawn there. */
-function streetAngleNear(p: Vec2): number {
-  let best = Infinity, angle = 0;
-  for (const r of net.ribbons.values()) {
-    const d = r.full.distanceTo(p);
-    if (d >= best) continue;
-    const f = r.full.sampleAt(r.full.closestPoint(p).s);
-    best = d; angle = Math.atan2(f.t.y, f.t.x);
-  }
-  return angle;
-}
-/** A stroke of the delete mode: the lots and buildings it has passed over, removed on release as one undo step. */
-let zoneErase: { pointer: number; lots: Set<number>; buildings: Set<BuildingId> } | null = null;
-/** What the delete stroke takes at a point: the lot there, the building there. */
-function eraseUnder(world: Vec2): void {
-  if (!zoneErase) return;
-  const lot = lotAt(world);
-  if (lot) {
-    zoneErase.lots.add(lot.id);
-    if (lot.building !== undefined) zoneErase.buildings.add(lot.building as BuildingId);
-  }
-  for (const b of doc.buildings.all()) {
-    if (Math.hypot(b.x - world.x, b.y - world.y) > m(80)) continue;
-    if (solidFootprints(b).some((ring) => insideLot(world, { corners: ring }))) zoneErase.buildings.add(b.id as BuildingId);
-  }
-}
-let zoneHover: Vec2 | null = null;
+const lotTool = new LotTool({
+  doc,
+  net,
+  zoom: () => view.zoom,
+  settings: () => ({
+    mode: game.zoneMode, use: game.zoneUse, density: game.zoneDensity, eraser: game.zoneEraser,
+    splitKind: game.lotSplitKind, splitParts: game.lotSplitParts,
+  }),
+  mutate: (fn) => mutate(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 let hoverAnchor: Anchor | null = null;
 /** What is selected - a road (and where along it) or a junction - written through the game's state with why (`gameState`). */
 function select(segment: SegmentId | null, s: number | null, node: NodeId | null, cause: string): void {
@@ -1104,15 +1014,8 @@ function cancelGestures(): void {
   poleDraft = null;
   poleChain = null;
   barrierPoints = null;
-  zoneErase = null;
   // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
-  lotPolygon = [];
-  lotNew = null;
-  lotCorner = null;
-  lotCurve = null;
-  lotCutLine = null;
-  lotStroke = null;
-  lotJoinFirst = null;
+  lotTool.cancel();
   bulldozeBox = null;
   endTerrainStroke();
   cancelMove();
@@ -1144,15 +1047,7 @@ function currentGesture(): string | null {
   if (barrierPoints) return 'cerca: traçando';
   if (bulldozeBox) return 'demolir: retângulo';
   if (cloudDrag) return 'nuvem: arrastando';
-  if (zoneErase) return 'zona: apagando';
-  if (lotStroke) return lotStroke.remove ? 'lote: tirando zona' : 'lote: pintando zona';
-  if (lotCorner) return 'lote: movendo um canto';
-  if (lotNew) return 'lote: desenhando';
-  if (lotCutLine) return 'lote: cortando';
-  if (lotCurve) return 'lote: curvando um lado';
-  if (lotPolygon.length > 0) return 'lote: polígono';
-  if (lotJoinFirst !== null) return 'lote: unindo';
-  return null;
+  return lotTool.gesture();
 }
 function syncGesture(): void {
   // Before the boot the file may not have run to the gestures' own variables.
@@ -1394,9 +1289,7 @@ function bulldozeBoxed(a: Vec2, b: Vec2): void {
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
   return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null || zoneErase !== null ||
-    lotPolygon.length > 0 || lotNew !== null || lotCorner !== null || lotCurve !== null || lotCutLine !== null ||
-    lotStroke !== null || lotJoinFirst !== null || bulldozeBox !== null;
+    poleChain !== null || terrainStroke !== null || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
 }
 
 /**
@@ -1915,71 +1808,9 @@ canvas.addEventListener('pointerdown', (e) => {
       buildings.pointerDown({ x: e.clientX - r.left, y: e.clientY - r.top }, world, e.shiftKey);
       break;
 
-    case 'zone': {
-      const lot = lotAt(world);
-      if (game.zoneMode === 'edit') {
-        // The nearest corner within reach of the pointer.
-        const reach = 14 / Math.max(0.05, view.zoom);
-        let best: Vec2 | null = null, bestD = reach;
-        for (const l of doc.lots) for (const q of l.corners) {
-          const d = Math.hypot(q.x - world.x, q.y - world.y);
-          if (d < bestD) { bestD = d; best = q; }
-        }
-        if (best) lotCorner = { pointer: e.pointerId, from: { ...best }, to: { ...world } };
-      } else if (game.zoneMode === 'front') {
-        // The side clicked becomes the lot's front, the side its building faces.
-        const side = lotSideAt(world);
-        if (!side) flashHint('hint.lot.frontPick');
-        else {
-          mutate(() => setLotFront(doc, side.lot.id, side.side));
-          lotRefused.clear();
-          flashHint('hint.lot.front');
-        }
-      } else if (game.zoneMode === 'split') {
-        if (game.lotSplitKind === 'line') lotCutLine = { pointer: e.pointerId, a: { ...world }, b: { ...world } };
-        else if (lot) {
-          let ok = false;
-          mutate(() => (ok = splitLot(doc, lot.id, { kind: game.lotSplitKind as 'vertical' | 'horizontal', parts: game.lotSplitParts })));
-          flashHint(ok ? 'hint.lot.split' : 'hint.lot.splitFail');
-        }
-      } else if (game.zoneMode === 'polygon') {
-        // A point a click; the first point again (or a double click) closes it.
-        const p = lotSnap(world);
-        const first = lotPolygon[0];
-        const closing = first && lotPolygon.length >= 3 && (Math.hypot(p.x - first.x, p.y - first.y) < 12 / Math.max(0.05, view.zoom) || e.detail >= 2);
-        if (closing) {
-          const points = [...lotPolygon];
-          lotPolygon = [];
-          let made = false;
-          const lot = landLot(points);
-          mutate(() => (made = lot !== null && addPolygonLot(doc, lot.corners, lot.front) !== null));
-          flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
-        } else lotPolygon.push(p);
-      } else if (game.zoneMode === 'curve') {
-        const side = lotSideNear(world);
-        if (side) lotCurve = { pointer: e.pointerId, a: side.a, b: side.b, through: { ...world } };
-      } else if (game.zoneMode === 'join') {
-        if (lot && lotJoinFirst === null) { lotJoinFirst = lot.id; flashHint('hint.lot.joinPick'); }
-        else if (lot && lotJoinFirst !== null && lot.id !== lotJoinFirst) {
-          const first = lotJoinFirst;
-          let ok = false;
-          mutate(() => (ok = joinLots(doc, first, lot.id)));
-          flashHint(ok ? 'hint.lot.join' : 'hint.lot.joinFail');
-          lotJoinFirst = null;
-        } else lotJoinFirst = null;
-      } else if (game.zoneMode === 'add') {
-        lotNew = { pointer: e.pointerId, a: lotSnap(world), b: lotSnap(world), angle: streetAngleNear(world) };
-      } else if (game.zoneMode === 'delete') {
-        // Lots, the buildings on them or anywhere under the stroke, and the zoned cells: all at once.
-        zoneErase = { pointer: e.pointerId, lots: new Set(), buildings: new Set() };
-        eraseUnder(world);
-      } else {
-        // The brush zones the lots it passes over; land with no lot is not zoned.
-        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || game.zoneEraser, ids: new Set(lot ? [lot.id] : []) };
-      }
-      requestDraw();
+    case 'zone':
+      lotTool.down(e.pointerId, world, e.shiftKey, e.detail);
       break;
-    }
 
     case 'transit':
       // Stops, tracks, stations, lines (`editor/transitTools.ts`).
@@ -2227,7 +2058,7 @@ canvas.addEventListener('pointermove', (e) => {
 
   const world = pointerWorld(e, r);
 
-  if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
+  if (lotTool.move(e.pointerId, world)) return;
   if (bulldozeBox?.pointer === e.pointerId) {
     const r = canvas.getBoundingClientRect();
     bulldozeBox.b = { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -2235,13 +2066,8 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
     return;
   }
-  if (zoneErase?.pointer === e.pointerId) { eraseUnder(world); requestDraw(); return; }
-  if (lotCorner?.pointer === e.pointerId) { lotCorner.to = lotSnapExcept(world, lotCorner.from); requestDraw(); return; }
-  if (lotNew?.pointer === e.pointerId) { lotNew.b = lotSnap(world); requestDraw(); return; }
-  if (lotCutLine?.pointer === e.pointerId) { lotCutLine.b = { ...world }; requestDraw(); return; }
-  if (lotCurve?.pointer === e.pointerId) { lotCurve.through = { ...world }; requestDraw(); return; }
   if (game.tool === 'zone') {
-    zoneHover = world;
+    lotTool.hover = world;
     requestDraw();
   }
 
@@ -2449,72 +2275,7 @@ function endPointer(e: PointerEvent): void {
     }
     requestDraw();
   }
-  if (lotStroke?.pointer === e.pointerId) {
-    const stroke = lotStroke;
-    lotStroke = null;
-    if (!cancelled && !wasPinching && !stroke.ids.size) flashHint('hint.zone.empty');
-    else if (!cancelled && !wasPinching) {
-      mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: game.zoneUse, density: game.zoneDensity }));
-      lotRefused.clear();
-      flashHint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
-    }
-    requestDraw();
-  }
-  if (lotCorner?.pointer === e.pointerId) {
-    const drag = lotCorner;
-    lotCorner = null;
-    if (!cancelled && !wasPinching && Math.hypot(drag.to.x - drag.from.x, drag.to.y - drag.from.y) > m(0.3)) {
-      mutate(() => moveLotCorner(doc, drag.from, drag.to));
-      lotRefused.clear();
-    }
-    requestDraw();
-  }
-  if (lotCutLine?.pointer === e.pointerId) {
-    const line = lotCutLine;
-    lotCutLine = null;
-    if (!cancelled && !wasPinching && Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y) > m(2)) {
-      // Every lot the line crosses is cut along it.
-      const crossed = doc.lots.filter((l) => cutLines(l, { kind: 'line', a: line.a, b: line.b }).length &&
-        l.corners.some((q) => (line.b.x - line.a.x) * (q.y - line.a.y) - (line.b.y - line.a.y) * (q.x - line.a.x) > 0) &&
-        l.corners.some((q) => (line.b.x - line.a.x) * (q.y - line.a.y) - (line.b.y - line.a.y) * (q.x - line.a.x) < 0) &&
-        segmentCrossesLot(line.a, line.b, l.corners));
-      let ok = false;
-      mutate(() => { for (const l of crossed) ok = splitLot(doc, l.id, { kind: 'line', a: line.a, b: line.b }) || ok; return ok; });
-      flashHint(ok ? 'hint.lot.split' : 'hint.lot.splitFail');
-    }
-    requestDraw();
-  }
-  if (lotCurve?.pointer === e.pointerId) {
-    const bend = lotCurve;
-    lotCurve = null;
-    if (!cancelled && !wasPinching) mutate(() => curveLotSide(doc, bend.a, bend.b, bend.through));
-    requestDraw();
-  }
-  if (lotNew?.pointer === e.pointerId) {
-    const drawn = lotNew;
-    lotNew = null;
-    if (!cancelled && !wasPinching) {
-      let made = false;
-      const rect = lotRect(drawn.a, drawn.b, drawn.angle);
-      const lot = rect ? landLot(rect) : null;
-      mutate(() => (made = lot !== null && addPolygonLot(doc, lot.corners, lot.front) !== null));
-      flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
-    }
-    requestDraw();
-  }
-  if (zoneErase?.pointer === e.pointerId) {
-    const stroke = zoneErase;
-    zoneErase = null;
-    if (!cancelled && !wasPinching && (stroke.lots.size || stroke.buildings.size)) {
-      mutate(() => {
-        for (const id of stroke.lots) deleteLot(doc, id);
-        for (const id of stroke.buildings) doc.buildings.remove(id);
-        return true;
-      });
-      flashHint('hint.lot.deleted');
-    }
-    requestDraw();
-  }
+  lotTool.up(e.pointerId, !cancelled && !wasPinching);
   if (draft) {
     const d = draft;
     draft = null;
@@ -3123,8 +2884,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button
     const wanted = button.dataset['zoneMode'];
     gameState.set('zoneMode', wanted === 'fill' || wanted === 'edit' || wanted === 'front' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
       wanted === 'polygon' || wanted === 'curve' || wanted === 'delete' ? wanted : 'brush', 'modo de zona');
-    lotJoinFirst = null;
-    lotPolygon = [];
+    lotTool.modeChanged();
     document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((item) => {
       const active = item === button;
       item.classList.toggle('active', active);
@@ -3848,8 +3608,8 @@ function generateCity(options: CityOptions): { roads: number; lots: number; zone
   if (net.revision !== doc.revision) net.rebuild();
   applyLots(doc, planLots(doc, net));
   const zoned = zoneCity(doc, plan);
-  lotRefused.clear();
-  lotRefusedNet = net.revision;
+  lotTool.refused.clear();
+  lotTool.refusedFor(net.revision);
   cityGrowth = { left: zoned, total: zoned, started: performance.now() };
   fitView();
   requestDraw();
@@ -3882,10 +3642,10 @@ function growCity(): void {
   cityGrowth = null;
   setTimeout(() => caused('cidade gerada', () => {
     for (let guard = 0; guard < growing.total * 3 + 50; guard++) {
-      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
+      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotTool.refused, 0x5eed);
       if (id === null) {
         // A lot refused (nothing fits it) is set aside; done when none is left open.
-        const open = doc.lots.some((l) => l.use && (l.building === undefined || !doc.buildings.has(l.building as BuildingId)) && !lotRefused.has(l.id));
+        const open = doc.lots.some((l) => l.use && (l.building === undefined || !doc.buildings.has(l.building as BuildingId)) && !lotTool.refused.has(l.id));
         if (!open) break;
         continue;
       }
@@ -4355,7 +4115,7 @@ let zoneGrowthHold = 0;
 setInterval(() => {
   // Buildings on zoned lots (`world/lots.ts`).
   // A road edit can make room on a lot refused before: try them again.
-  if (lotRefusedNet !== net.revision) { lotRefused.clear(); lotRefusedNet = net.revision; }
+  const lotRefused = lotTool.refusedFor(net.revision);
   if (!moving && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
     const grown = caused('crescimento da zona', () => {
       const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
@@ -4815,100 +4575,25 @@ function drawOverlayScreen(): void {
   // turned that off); zoned ones faintly with the other tools.
   const showLots = game.tool === 'zone' || (doc.lots.some((l) => l.use) && zoneColoursShown());
   if (showLots) {
-    const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
-    const hoverLot = game.tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
-    const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;
-    const polygons: LotOverlayInput['polygons'][number][] = [];
-    const lines: LotOverlayInput['lines'][number][] = [];
-    const points: LotOverlayInput['points'][number][] = [];
-    const editing = game.tool === 'zone';
-    for (const l of doc.lots) {
-      const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
-      if (!editing && (!l.use || built)) continue;
-      const painting = lotStroke?.ids.has(l.id);
-      const brushHover = l === hoverLot && game.zoneMode === 'brush';
-      const picked = editing && (l.id === lotJoinFirst || (l === hoverLot && !brushHover && game.zoneMode !== 'edit'));
-      const fill = painting ? (lotStroke!.remove ? 0xe36c60 : colours[game.zoneUse]) : l.use ? colours[l.use] : brushHover ? (game.zoneEraser ? 0xe36c60 : colours[game.zoneUse]) : null;
-      const fillAlpha = painting ? 0.6 : l.use ? (editing ? (built ? 0.22 : 0.45) : 0.25) : brushHover ? 0.35 : 0;
-      polygons.push({ corners: l.corners.map(dragged), fill, fillAlpha,
-        line: picked ? (game.zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
-        width: picked ? 0.7 : 0.35 });
-    }
-    if (editing && game.zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
-    // Each lot's front, the side its building faces: marked in the Zoning tool.
-    if (editing) for (const l of doc.lots) if (l.corners.length > 1) {
-      const a = dragged(l.corners[0]!), b = dragged(l.corners[1]!);
-      lines.push({ a, b, colour: 0x5ee0ff, dashed: false, width: 0.8 });
-      // An arrow from inside the lot out through the middle of its front, towards the street.
-      const len = Math.hypot(b.x - a.x, b.y - a.y);
-      if (len < m(2)) continue;
-      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const centre = lotCentre(l);
-      let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
-      if ((mid.x - centre.x) * nx + (mid.y - centre.y) * ny < 0) { nx = -nx; ny = -ny; }
-      const size = Math.min(m(7), len * 0.35, Math.max(m(2), Math.hypot(mid.x - centre.x, mid.y - centre.y) * 0.6));
-      const tail = { x: mid.x - nx * size, y: mid.y - ny * size };
-      const tip = { x: mid.x - nx * size * 0.15, y: mid.y - ny * size * 0.15 };
-      const head = size * 0.4, tx = -ny, ty = nx;
-      lines.push({ a: tail, b: tip, colour: 0x5ee0ff, dashed: false, width: 1 });
-      lines.push({ a: tip, b: { x: tip.x - nx * head + tx * head * 0.7, y: tip.y - ny * head + ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
-      lines.push({ a: tip, b: { x: tip.x - nx * head - tx * head * 0.7, y: tip.y - ny * head - ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
-    }
-    if (editing && game.zoneMode === 'front' && zoneHover) {
-      const side = lotSideAt(zoneHover);
-      if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 1 });
-    }
-    if (editing && game.zoneMode === 'split' && game.lotSplitKind !== 'line' && hoverLot) {
-      for (const [a, b] of cutLines(hoverLot, { kind: game.lotSplitKind, parts: game.lotSplitParts })) lines.push({ a, b, colour: 0xffd25e, dashed: true, width: 0.5 });
-    }
-    if (lotCutLine) lines.push({ a: lotCutLine.a, b: lotCutLine.b, colour: 0xffd25e, dashed: true, width: 0.5 });
-    if (lotCurve) {
-      const { a, b, through } = lotCurve;
-      const c = { x: 2 * through.x - (a.x + b.x) / 2, y: 2 * through.y - (a.y + b.y) / 2 };
-      let prev = a;
-      for (let k = 1; k <= 16; k++) {
-        const t = k / 16, s1 = 1 - t;
-        const q = { x: s1 * s1 * a.x + 2 * s1 * t * c.x + t * t * b.x, y: s1 * s1 * a.y + 2 * s1 * t * c.y + t * t * b.y };
-        lines.push({ a: prev, b: q, colour: 0xffd25e, dashed: false, width: 0.6 });
-        prev = q;
-      }
-    }
-    if (editing && game.zoneMode === 'curve' && !lotCurve && zoneHover) {
-      const side = lotSideNear(zoneHover);
-      if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 0.7 });
-    }
-    if (lotPolygon.length) {
-      const pts = [...lotPolygon, ...(zoneHover ? [lotSnap(zoneHover)] : [])];
-      for (let i = 1; i < pts.length; i++) lines.push({ a: pts[i - 1]!, b: pts[i]!, colour: 0xffffff, dashed: false, width: 0.5 });
-      for (const q of lotPolygon) points.push({ p: q, colour: 0xffffff, radius: 0.6 });
-    }
-    if (editing && (game.zoneMode === 'polygon' || game.zoneMode === 'add' || lotCorner) && zoneHover) {
-      points.push({ p: lotCorner ? lotCorner.to : lotSnap(zoneHover), colour: 0x5ee0ff, radius: 0.9 });
-    }
-    if (lotNew) {
-      // As it will be made: cut back to the footways.
-      const rect = lotRect(lotNew.a, lotNew.b, lotNew.angle);
-      const cut = rect ? onLand(net, rect) : null;
-      if (cut) polygons.push({ corners: cut, fill: 0xffffff, fillAlpha: 0.2, line: 0xffffff, lineAlpha: 1, width: 0.5 });
-    }
-    const key = JSON.stringify([polygons, lines, points]);
-    scene.setLotOverlay({ key, polygons, lines, points });
+    // What the Zoning tool draws (`editor/lotTool.ts`), in the scene; its labels on the 2D layer.
+    const { polygons, lines, points, labels } = lotTool.overlay(game.tool === 'zone');
+    const input: LotOverlayInput = { key: JSON.stringify([polygons, lines, points]), polygons, lines, points };
+    scene.setLotOverlay(input);
     // Labels stay on the 2D layer, projected at the ground's real height.
     const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.surfaceHeightAt(p.x, p.y));
     ctx.save();
-    if (editing && hoverLot && !lotPolygon.length) {
-      const f = lotFrame(hoverLot), c = ground(lotCentre(hoverLot));
-      const label = t('zone.lot.size', { w: Math.round(f.width * METERS_PER_UNIT), d: Math.round(f.depth * METERS_PER_UNIT) });
-      ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.lineWidth = 3; ctx.strokeStyle = '#0b1416cc'; ctx.strokeText(label, c.x, c.y);
-      ctx.fillStyle = '#ffffff'; ctx.fillText(label, c.x, c.y);
-    }
-    if (lotPolygon.length && zoneHover) {
-      const a = lotPolygon[lotPolygon.length - 1]!, b = lotSnap(zoneHover);
-      const sm = ground({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-      const label = `${Math.round(Math.hypot(b.x - a.x, b.y - a.y) * METERS_PER_UNIT)} m`;
-      ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = '#0b1416cc';
-      ctx.strokeText(label, sm.x, sm.y - 10); ctx.fillStyle = '#ffffff'; ctx.fillText(label, sm.x, sm.y - 10);
+    for (const label of labels) {
+      const c = ground(label.at);
+      ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = '#0b1416cc'; ctx.fillStyle = '#ffffff';
+      if (label.kind === 'size') {
+        const text = t('zone.lot.size', { w: Math.round(label.width * METERS_PER_UNIT), d: Math.round(label.depth * METERS_PER_UNIT) });
+        ctx.font = '600 13px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+        ctx.strokeText(text, c.x, c.y); ctx.fillText(text, c.x, c.y);
+      } else {
+        const text = `${Math.round(label.length * METERS_PER_UNIT)} m`;
+        ctx.font = '600 12px system-ui, sans-serif';
+        ctx.strokeText(text, c.x, c.y - 10); ctx.fillText(text, c.x, c.y - 10);
+      }
     }
     ctx.restore();
   } else scene.setLotOverlay(null);
@@ -5819,7 +5504,7 @@ mountHealthPanel({
   /** A generated city (`editor/cityGenerator.ts`), and how far its building has gone. */
   generateCity: (options: Partial<CityOptions> = {}) => generateCity({ ...DEFAULT_CITY, ...options }),
   /** Probe: one building grown on a zoned lot, and what it cost (ms). */
-  growTimed: () => { const t = performance.now(); const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed); return { id, ms: performance.now() - t }; },
+  growTimed: () => { const t = performance.now(); const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotTool.refused, 0x5eed); return { id, ms: performance.now() - t }; },
   cityGrowth: () => (cityGrowth || cityProgress.style.display === 'block' ? { pending: true } : null),
   cityBuiltIn: () => cityBuiltIn,
   /** Replaces the map as loading a file does: document, network and simulation topology. */
