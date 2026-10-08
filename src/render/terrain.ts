@@ -32,6 +32,7 @@ import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type
 import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from '@world/ecology';
 import { GroundChanges } from './groundChanges';
 import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
+import type { ChangeJournal } from '@world/changes';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
@@ -2855,6 +2856,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let lightWorker: Worker | null = null;
   let lightLocal: ((request: LightRequest) => LightResult) | null = null;
   let lightBusy = false;
+  /** The document's diary (`world/changes.ts`), as the last `update` saw it, and the entry the light in flight follows from. */
+  let diary: ChangeJournal | null = null;
+  let lightCause = 0;
   const applyLight = (result: LightResult): void => {
     const startedAt = performance.now();
     const { rect, rgba } = result;
@@ -2867,6 +2871,9 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     paintArray.needsUpdate = true;
     performance.measure('hitch:terrain-light', { start: startedAt, end: performance.now() });
     performance.measure('terrain-light/worker', { start: startedAt - result.ms, end: startedAt, detail: `${width}x${rect.y1 - rect.y0 + 1} corners` });
+    // Rows run from +y downwards.
+    diary?.record('light', [[-TERRAIN_HALF + rect.x0 * TERRAIN_CELL, TERRAIN_HALF - rect.y1 * TERRAIN_CELL, -TERRAIN_HALF + rect.x1 * TERRAIN_CELL, TERRAIN_HALF - rect.y0 * TERRAIN_CELL]],
+      { cause: 'luz do terreno refeita', ...(lightCause ? { parent: lightCause } : {}), ms: result.ms, detail: `${width}×${rect.y1 - rect.y0 + 1} cantos, num worker` });
   };
   if (typeof Worker !== 'undefined') {
     try {
@@ -2900,6 +2907,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
     const request: LightRequest = { heights: grid.slice(), sun: { ...litSun }, planet, moved: landMoved, relightAll: turned || replanet };
     landMoved = null;
+    lightCause = diary?.version ?? 0;
     if (lightWorker) {
       lightBusy = true;
       lightWorker.postMessage(request, [request.heights.buffer]);
@@ -3089,6 +3097,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       return moved;
     },
     update(doc, stroking = false) {
+      diary = doc.changes;
       if (revision === doc.terrainRevision) return false;
       const firstBuild = revision < 0;
       const previous = index;

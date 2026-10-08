@@ -39,6 +39,7 @@ import {
 } from 'three';
 
 import { Digest } from '@core/digest';
+import type { ChangeRect, DerivedChangeKind } from '@world/changes';
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
@@ -1208,10 +1209,15 @@ export function createSceneRenderer(
     if (sites) regions.push(...quarters(sites).map(terrainRegion));
     // A block a step: three were 33 ms, past the frame's allowance (`core/frameWork.ts`).
     const BATCH = 1;
+    let shaping = 0;
     for (let i = 0; i < regions.length; i += BATCH) {
+      const at = performance.now();
       shapeGround(net, regions.slice(i, i + BATCH), false, true);
+      shaping += performance.now() - at;
       yield;
     }
+    derived(net, 'ground', regions.map(regionRect), 'chão cortado e aterrado até as vias', worldCause,
+      { ms: shaping, detail: `${regions.length} regiões` });
   }
 
 
@@ -1222,6 +1228,8 @@ export function createSceneRenderer(
     const region = list;
     // The ground is cut and filled here, and only here: what stands on it reads where.
     groundChanges.mark(list ? list.map(regionRect) : null);
+    // In the diary, once per call; a road edit's quarter blocks are written together (`shapeBlocksSteps`).
+    if (!padsReady) derived(net, 'ground', list ? list.map(regionRect) : null, sites ? 'chão dos lotes nivelado' : 'chão cortado e aterrado', net.doc.changes.version);
     const roads = net.doc.segments.size > 0 ? elevation : null;
     if (!padsReady && (!region || !padsCache || sites)) {
       gradedFor = net.doc.buildings.revision;
@@ -1308,6 +1316,12 @@ export function createSceneRenderer(
 
   /** Blocks whose ground a dropped rebuild had not shaped yet (`null`: the whole map). */
   let pendingBlocks: [number, number, number, number][] | null = [];
+  /** The diary entry the world being built follows from (`world/changes.ts`). */
+  let worldCause = 0;
+  /** Writes what the world derived in the document's diary, after `parent`; its serial (0: nothing written). */
+  const derived = (net: Network, kind: DerivedChangeKind, rects: readonly ChangeRect[] | null, cause: string, parent: number,
+    extra: { readonly ms?: number; readonly detail?: string } = {}): number =>
+    net.doc.changes.record(kind, rects, { cause, ...(parent ? { parent } : {}), ...extra });
   const rebuildWorld = (net: Network): void => {
     if (networkRevision === net.revision && terrainRevision === net.doc.terrainRevision) {
       if (utilityRevision !== net.doc.utilityRevision) rebuildUtilities(net);
@@ -1343,6 +1357,9 @@ export function createSceneRenderer(
     // (`padsCache` used to be required here too: on a map with no buildings
     // it is always null, so every street drawn there re-shaped the whole map.)
     const changed = landStill && previousElevation ? changedBlocks(previousElevation, elevation) : null;
+    // In the diary: the roads' heights solved again where they differ, after the edit that moved them.
+    worldCause = derived(net, 'elevation', changed, 'alturas das vias resolvidas', net.doc.changes.version,
+      { ms: performance.now() - started, detail: changed ? `${changed.length} blocos de ${SHAPE_BLOCK} u` : 'mapa inteiro' }) || net.doc.changes.version;
     const blocks = changed && pendingBlocks ? [...pendingBlocks, ...changed] : null;
     // The roads' own heights (the footway, the carriageway) moved where the solve did.
     groundChanges.mark(changed);
@@ -1381,6 +1398,8 @@ export function createSceneRenderer(
     pendingBlocks = [];
     yield;
     const freshRoads = yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    derived(net, 'surfaces', freshRoads.rebuilt, 'superfícies das vias refeitas', worldCause,
+      { ms: freshRoads.workMs, detail: `${freshRoads.built} tiles feitos, ${freshRoads.reused} aproveitados` });
     // The structures' details, the poles and the street furniture are each
     // kept as they are when the edit's blocks reach none of their own things
     // (their heights, ground and kerbs moved only there) and, for the

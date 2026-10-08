@@ -9,6 +9,7 @@ import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
 import { RoadDoc, fitRoadCurve, type JunctionControl } from '@world/doc';
+import type { Change, ChangeKind } from '@world/changes';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
@@ -224,7 +225,9 @@ function clearOldMapsOnce(): void {
 let bootFailed = false;
 if (saved) {
   try {
+    doc.changes.causeNext('mapa salvo carregado');
     restoreInto(doc, saved, net);
+    doc.changes.causeNext('jogo');
   } catch (error) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
@@ -871,7 +874,11 @@ function mutateBuilt(fn: () => boolean): boolean {
   const mutateAt = performance.now();
   const before = serializedDoc();
   performance.measure('hitch:mutate/before', { start: mutateAt, end: performance.now() });
-  if (!fn()) return false;
+  // What the diary says this edit came from (`world/changes.ts`).
+  doc.changes.causeNext(`ferramenta ${tool}`);
+  const changed = fn();
+  doc.changes.causeNext('jogo');
+  if (!changed) return false;
   // An edit that reports success without changing anything - the same lane
   // count, a split on an existing endpoint, a pole line traced over itself -
   // used to push an undo step and throw away the redo stack.
@@ -2719,6 +2726,13 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // F8: what changed, where (`drawChanges`).
+  if (e.key === 'F8') {
+    showChanges = !showChanges;
+    requestDraw();
+    return;
+  }
+
   // R is the building's rotation and nothing else; the road tool is the
   // number row, which also picks the class (above).
   const shortcuts: Record<string, Tool> = {
@@ -3968,14 +3982,18 @@ undoButton.onclick = () => {
   // A drag or stroke in progress ends first: undoing mid-drag used to go on
   // moving a node of the restored map, and record the half-done state as redo.
   cancelGestures();
+  doc.changes.causeNext('desfazer');
   const snapshot = history.undo(doc);
   applySnapshot(snapshot);
+  doc.changes.causeNext('jogo');
   if (snapshot) flashHint('hint.undone');
 };
 redoButton.onclick = () => {
   cancelGestures();
+  doc.changes.causeNext('refazer');
   const snapshot = history.redo(doc);
   applySnapshot(snapshot);
+  doc.changes.causeNext('jogo');
   if (snapshot) flashHint('hint.redone');
 };
 
@@ -4780,6 +4798,53 @@ function drawPolePlan(
   }
 }
 
+/** F8: the diary's last changes drawn where they happened (`world/changes.ts`). */
+let showChanges = false;
+/** How long a change stays drawn, ms. */
+const CHANGE_SHOWN = 8000;
+const CHANGE_COLOURS: Record<ChangeKind, string> = {
+  roads: '#ffd23f', terrain: '#c8823c', paint: '#9be564', buildings: '#ff8fab', zones: '#7bdff2', lots: '#b2f7ef',
+  utilities: '#f7aef8', barriers: '#d0d0d0', landscape: '#6bd425', transit: '#4cc9f0', people: '#ffffff',
+  trees: '#2d6a4f', elements: '#e0aaff', fog: '#e9ecef', clouds: '#f8f9fa', weather: '#adb5bd', nature: '#52b788',
+  gullies: '#8d5524', elevation: '#ff6b6b', ground: '#f4a261', light: '#ffe066', surfaces: '#4361ee',
+};
+
+/**
+ * The rectangles of the changes of the last seconds, each in its kind's
+ * colour and labelled with what it was and why, fading out: what an edit
+ * touched in the document, and what the game worked out again from it - the
+ * roads' heights, the ground cut and filled, the land relit, the road tiles.
+ */
+function drawChanges(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
+  const now = performance.now();
+  const recent = doc.changes.latest(200).filter((c) => now - c.at < CHANGE_SHOWN);
+  if (recent.length === 0) return;
+  ctx.save();
+  ctx.lineWidth = 1.5;
+  ctx.font = '600 11px system-ui, sans-serif';
+  for (const change of recent) {
+    ctx.globalAlpha = 1 - (now - change.at) / CHANGE_SHOWN;
+    ctx.strokeStyle = CHANGE_COLOURS[change.kind];
+    ctx.fillStyle = CHANGE_COLOURS[change.kind];
+    ctx.setLineDash(change.parent ? [5, 4] : []);
+    for (const [minX, minY, maxX, maxY] of change.rects ?? []) {
+      const corners = [at({ x: minX, y: minY }), at({ x: maxX, y: minY }), at({ x: maxX, y: maxY }), at({ x: minX, y: maxY })];
+      ctx.beginPath();
+      corners.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.stroke();
+    }
+    const first = change.rects?.[0];
+    if (first) {
+      const p = at({ x: first[0], y: first[3] });
+      ctx.fillText(`#${change.serial} ${change.kind}: ${change.cause}${change.detail ? ` (${change.detail})` : ''}`, p.x + 3, p.y - 3);
+    }
+  }
+  ctx.restore();
+  // Drawn again while they fade.
+  requestDraw();
+}
+
 function drawOverlayScreen(): void {
   const w = overlayCanvas.clientWidth;
   const h = overlayCanvas.clientHeight;
@@ -4804,6 +4869,8 @@ function drawOverlayScreen(): void {
   // the viaduct it belonged to — the on-screen feedback disagreed with what the
   // editor was about to build.
   const at = (p: Vec2): Vec2 => view.toScreen(p, w, h, sceneHeightAt(p));
+
+  if (showChanges) drawChanges(ctx, at);
 
   if (tool === 'roundabout' && hoverAnchor) {
     ctx.save();
@@ -5794,6 +5861,29 @@ qualitySelect.onchange = () => {
   }
   requestDraw();
 };
+/**
+ * The diary of changes in the console (`world/changes.ts`): `__changes()`
+ * lists the last ones - what, why, after what, where, how long it took -
+ * newest first; `__changes(n, serial)` the chain back from one entry to the
+ * edit it follows from.
+ */
+(window as unknown as { __changes: unknown }).__changes = (count = 30, serial?: number): unknown => {
+  const row = (c: Change) => ({
+    serial: c.serial, kind: c.kind, cause: c.cause, after: c.parent ?? '',
+    where: c.rects === null ? 'mapa inteiro' : `${c.rects.length} ret. ${Math.round(c.rects.reduce((a, r) => a + (r[2] - r[0]) * (r[3] - r[1]), 0) / 1e3)} mil u²`,
+    ids: c.ids?.slice(0, 8).join(' ') ?? '', ms: c.ms === undefined ? '' : c.ms.toFixed(1), detail: c.detail ?? '',
+  });
+  if (serial !== undefined) {
+    const chain: Change[] = [];
+    for (let c = doc.changes.get(serial); c && chain.length < count; c = c.parent ? doc.changes.get(c.parent) : undefined) chain.push(c);
+    console.table(chain.map(row));
+    return chain;
+  }
+  const rows = doc.changes.latest(count);
+  console.table(rows.map(row));
+  return rows;
+};
+
 // Diagnostic surface for browser-driven checks.
 (window as unknown as { __roadcraft: unknown }).__roadcraft = {
   doc,

@@ -161,6 +161,10 @@ export interface RoadSurfaces {
   /** Tiles the build made afresh, and copied from the build before. */
   readonly built: number;
   readonly reused: number;
+  /** Where the tiles made afresh lie (`world/changes.ts`). */
+  readonly rebuilt: readonly TileRect[];
+  /** The time the tiles and their blocks took, ms, without the frames between slices. */
+  readonly workMs: number;
   dispose(): void;
 }
 
@@ -294,6 +298,7 @@ export function* roadSurfaceSteps(
   let triangles = 0;
   let built = 0;
   let reused = 0;
+  const rebuilt: TileRect[] = [];
   // Without a caller to own them, the paint materials belong to this build.
   const paint = reuse?.paint ?? new Map<string, Material>();
   const paintFor = (color: string): Material => {
@@ -730,6 +735,7 @@ export function* roadSurfaceSteps(
         bundle = buildTile(into, rect, specs);
         tilesMs += performance.now() - tileAt;
         built++;
+        rebuilt.push(rect);
         yield;
       }
       kept.set(value, bundle);
@@ -782,6 +788,8 @@ export function* roadSurfaceSteps(
     triangles,
     built,
     reused,
+    rebuilt,
+    workMs: tilesMs + mergeMs,
     dispose() {
       // Meshes the cache keeps are freed by `disposeSurfaceReuse`.
       if (!chunks) for (const mesh of meshes) disposeMesh(mesh);
