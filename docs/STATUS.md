@@ -425,6 +425,16 @@ and they have seen it.
   unchanged): its manifest was re-stamped `33beacd25827893e` ->
   `69b2586ab530eef3` without re-cooking, the data being the same; a change to
   how the crowd is drawn no longer stales it.
+- **Walkers simulated by level (2026-10-08, LIVE):** the agents' walking
+  engine (`sim/agents/walk.ts`) now reads `SimWorld.focus` as People did:
+  out of the view a walker is stepped one tick in four (four ticks' time;
+  route, zebras and waits as before, nobody stepped round); zoomed out past
+  `focus.detail`, nobody steps round the others. A gap at a crossing with no
+  zebra reads the vehicles near it from a grid filed once a tick (every
+  vehicle's pose was worked out at every ask); `anyoneWithin` reads a grid;
+  the parked cars' zones are filed again only when a car comes, goes or
+  moves; after an edit only those whose route ran on a walkway that changed
+  look for a way again (a building's doors replan nobody).
 
 ### Actions: pistol and bomb (2026-10-06, LIVE)
 - Actions dock button: Pistola and Bomba, used from the map view (no play mode).

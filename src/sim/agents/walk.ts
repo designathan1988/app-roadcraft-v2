@@ -237,7 +237,28 @@ interface State {
   clock: number;
   /** When the walkers were last checked against the shocks. */
   shockLook: number;
+  /** The walkers by cell for `anyoneWithin`, and the clock they were filed at (-1: again). */
+  near: Map<number, Walker[]>;
+  nearAt: number;
+  /** The vehicles by cell for `gapOpen`, filed once a tick when somebody first asks; the fastest of them. */
+  traffic: Map<number, TrafficSeen[]>;
+  trafficAt: number;
+  fastest: number;
+  /** The parked cars' zones by cell, kept while the same cars stand where they stood. */
+  parkedCells: Map<number, CarZone[]>;
+  parkedList: CarZone[];
 }
+
+/** A vehicle as `gapOpen` reads it: where it is, which way it faces, how fast it goes. */
+interface TrafficSeen { readonly x: number; readonly y: number; readonly angle: number; readonly speed: number }
+/** Cells for the vehicles near a crossing (`gapOpen`). */
+const TRAFFIC_CELL = m(32);
+/**
+ * Out of the player's view (`SimWorld.focus`) a walker is stepped one tick in
+ * this many, by as many ticks' time, without stepping round the others: their
+ * route, the zebras and the waits go on as before, and nobody sees the rest.
+ */
+const COARSE = 4;
 
 /**
  * A test bench's trace of what happens to chosen walkers (the weapons lab,
@@ -333,7 +354,8 @@ function stateOf(w: SimWorld): State {
   let s = STATES.get(w);
   if (!s) {
     s = { graph: null, builtFor: '', wayIndex: new Map(), walkers: [], byId: new Map(), arrivals: [], nextId: 1, onCarWay: new Map(),
-      shocks: [], clock: 0, shockLook: 0 };
+      shocks: [], clock: 0, shockLook: 0, near: new Map(), nearAt: -1, traffic: new Map(), trafficAt: -1, fastest: 0,
+      parkedCells: new Map(), parkedList: [] };
     STATES.set(w, s);
   }
   return s;
@@ -558,20 +580,42 @@ const GAP_NEAR = m(6);
  * margin more (gap acceptance, as SUMO's pedestrians take a crossing without
  * priority). Nothing stops for them there.
  */
-function gapOpen(w: SimWorld, z: Zebra, pace: number, waited: number): boolean {
+function gapOpen(w: SimWorld, s: State, z: Zebra, pace: number, waited: number): boolean {
   const path = z.way.path;
   const time = path.length / Math.max(pace, m(0.5)) + (waited < IMPATIENT ? GAP_MARGIN : 0);
-  for (const v of w.vehicles.values()) {
-    const pose = vehiclePose(w, v, 1);
-    if (!pose) continue;
-    const hit = path.closestPoint(pose.p);
-    if (hit.distance < GAP_NEAR) return false;
-    if (v.v < m(0.5) || hit.distance > v.v * time) continue;
-    // Coming towards it, not going away.
-    if ((hit.point.x - pose.p.x) * Math.cos(pose.angle) + (hit.point.y - pose.p.y) * Math.sin(pose.angle) > 0) return false;
+  // The vehicles by cell, filed once this tick (their poses were worked out
+  // for every vehicle at every ask): only those within reach of the
+  // crossing - the nearest, or the fastest's distance in that time - are read.
+  if (s.trafficAt !== s.clock) {
+    s.trafficAt = s.clock;
+    s.traffic.clear();
+    s.fastest = 0;
+    for (const v of w.vehicles.values()) {
+      const pose = vehiclePose(w, v, 1);
+      if (!pose) continue;
+      const k = cellKey(pose.p.x, pose.p.y, TRAFFIC_CELL);
+      const seen: TrafficSeen = { x: pose.p.x, y: pose.p.y, angle: pose.angle, speed: v.v };
+      const list = s.traffic.get(k);
+      if (list) list.push(seen); else s.traffic.set(k, [seen]);
+      if (v.v > s.fastest) s.fastest = v.v;
+    }
+  }
+  const reach = Math.max(GAP_NEAR, s.fastest * time);
+  const box = path.bbox;
+  const gx0 = Math.floor((box.minX - reach) / TRAFFIC_CELL), gx1 = Math.floor((box.maxX + reach) / TRAFFIC_CELL);
+  const gy0 = Math.floor((box.minY - reach) / TRAFFIC_CELL), gy1 = Math.floor((box.maxY + reach) / TRAFFIC_CELL);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    for (const v of s.traffic.get(cell(gx, gy)) ?? NO_TRAFFIC) {
+      const hit = path.closestPoint(v);
+      if (hit.distance < GAP_NEAR) return false;
+      if (v.speed < m(0.5) || hit.distance > v.speed * time) continue;
+      // Coming towards it, not going away.
+      if ((hit.point.x - v.x) * Math.cos(v.angle) + (hit.point.y - v.y) * Math.sin(v.angle) > 0) return false;
+    }
   }
   return true;
 }
+const NO_TRAFFIC: readonly TrafficSeen[] = [];
 
 /**
  * The zebra a walker is coming up to and has not been let onto, and the
@@ -603,13 +647,44 @@ function onZebra(w: SimWorld, p: Walker): Zebra | null {
 
 // ------------------------------------------------------------------ engine
 
+const wayKeys = new WeakMap<Walkway, string>();
+/** A walkway by what it is and where it runs: the same on both sides of an edit that left it as it was. */
+function wayKey(way: Walkway): string {
+  let key = wayKeys.get(way);
+  if (key === undefined) {
+    const points = way.path.toPoints().map((q) => `${q.x.toFixed(3)},${q.y.toFixed(3)}`).join(';');
+    key = `${way.kind}|${way.segment ?? ''}|${way.node ?? ''}|${way.kerb}|${way.structure}|${way.unmarked ? 1 : 0}|`
+      + `${way.lo.toFixed(4)}|${way.hi.toFixed(4)}|${points}`;
+    wayKeys.set(way, key);
+  }
+  return key;
+}
+
 export function createAgentWalkEngine(): PedestrianEngine {
   const bridge: PeopleBridge = {
     hailable: () => null,
     board: () => null,
     alight: () => {},
     anyoneWithin(w, x, y, radius, except) {
-      for (const p of stateOf(w).walkers) if (!p.inside && p.id !== except && hypot(p.x - x, p.y - y) < radius) return true;
+      // The walkers by cell, filed once a tick (every walker was read at every ask).
+      const s = stateOf(w);
+      if (s.nearAt !== s.clock) {
+        s.nearAt = s.clock;
+        s.near.clear();
+        for (const p of s.walkers) {
+          if (p.inside || p.done) continue;
+          const k = cellKey(p.x, p.y, CELL);
+          const list = s.near.get(k);
+          if (list) list.push(p); else s.near.set(k, [p]);
+        }
+      }
+      // A cell's margin: anybody moved since they were filed is still found.
+      const r = radius + CELL;
+      const gx0 = Math.floor((x - r) / CELL), gx1 = Math.floor((x + r) / CELL);
+      const gy0 = Math.floor((y - r) / CELL), gy1 = Math.floor((y + r) / CELL);
+      for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+        for (const p of s.near.get(cell(gx, gy)) ?? []) if (!p.inside && !p.done && p.id !== except && hypot(p.x - x, p.y - y) < radius) return true;
+      }
       return false;
     },
   };
@@ -623,9 +698,24 @@ export function createAgentWalkEngine(): PedestrianEngine {
     step(w) { stepWalkers(w); },
     rebind(w) {
       const s = stateOf(w);
-      ensureGraph(w, s);
-      // Everybody walking goes on from where they stand, on what is left.
+      const before = s.graph;
+      const g = ensureGraph(w, s);
+      // The walkways themselves unchanged (a building's doors, say): every
+      // route stands as it is.
+      if (g && g === before) return;
+      // The walkways the edit left as they were, by what they are and where
+      // they run: a walker whose route is all on those goes on with it; only
+      // the others look for a way again (each a search of the walkways).
+      const kept = new Map<string, Walkway>();
+      if (g && before) for (const way of g.ways) kept.set(wayKey(way), way);
       for (const p of s.walkers) {
+        if (kept.size && p.steps.every((st) => !st.way || kept.has(wayKey(st.way)))) {
+          for (let i = 0; i < p.steps.length; i++) {
+            const st = p.steps[i]!;
+            if (st.way) p.steps[i] = { ...st, way: kept.get(wayKey(st.way))! };
+          }
+          continue;
+        }
         const last = p.steps[p.steps.length - 1]!;
         const end = frame(last, stepLength(last));
         const steps = plan(w, s, { x: p.x, y: p.y }, { x: end.x, y: end.y }, REACH);
@@ -813,6 +903,8 @@ export function createAgentWalkEngine(): PedestrianEngine {
       const s = stateOf(w);
       const p = s.byId.get(id);
       if (!p || p.done) return;
+      // Moved to where the body lies: the walkers are filed again (`anyoneWithin`).
+      s.nearAt = -1;
       if (p.player) {
         // The player gets up where their body lies, and is held down exactly until up (`ambient/play.ts`).
         p.x = p.prevX = x; p.y = p.prevY = y; p.heading = p.prevHeading = heading;
@@ -942,6 +1034,21 @@ function target(p: Walker): { x: number; y: number } {
 
 // ------------------------------------------------------------------ the step
 
+/** Zones by cell: each in every cell its box reaches with a walker's look ahead round it. */
+function fileZones(zones: readonly CarZone[]): Map<number, CarZone[]> {
+  const cells = new Map<number, CarZone[]>();
+  for (const z of zones) {
+    const gx0 = Math.floor((z.x0 - LOOK) / ZONE_CELL), gx1 = Math.floor((z.x1 + LOOK) / ZONE_CELL);
+    const gy0 = Math.floor((z.y0 - LOOK) / ZONE_CELL), gy1 = Math.floor((z.y1 + LOOK) / ZONE_CELL);
+    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+      const k = cell(gx, gy);
+      const list = cells.get(k);
+      if (list) list.push(z); else cells.set(k, [z]);
+    }
+  }
+  return cells;
+}
+
 function stepWalkers(w: SimWorld): void {
   traceTick++;
   const s = stateOf(w);
@@ -1003,6 +1110,8 @@ function stepWalkers(w: SimWorld): void {
   // asking for it (`OwnCars.holdWay`), the ground it is about to cover, kept
   // off with a little room. Somebody already inside one walks on out of it.
   const carZones: CarZone[] = [];
+  /** The cars standing with no trip: their bodies, the same objects while they stand where they stood. */
+  const parkedNow: CarZone[] = [];
   const holding = new Set<number>();
   // One pass over the trips instead of a search of them per car (`tripOfCar`):
   // with hundreds of parked cars that search was a tenth of the step.
@@ -1013,7 +1122,7 @@ function stepWalkers(w: SimWorld): void {
     if (!f) continue;
     const t = tripByCar.get(car.id) ?? null;
     const body = parkedZone(car, f);
-    if (!t) { carZones.push(body); continue; }
+    if (!t) { parkedNow.push(body); continue; }
     const discs = body.discs.slice();
     let on: Set<number> | null = null;
     if (t.reserved || t.waitedPeople >= ASK_WAY) {
@@ -1042,18 +1151,34 @@ function stepWalkers(w: SimWorld): void {
   // The zones by cell, each in every cell its box reaches with a walker's look
   // ahead round it: a walker reads its own cell instead of every car in town
   // (the town's parked cars made that the step's second largest cost). A zone
-  // a walker could see or touch is always in the walker's cell.
-  const zoneCells = new Map<number, CarZone[]>();
-  for (const z of carZones) {
-    const gx0 = Math.floor((z.x0 - LOOK) / ZONE_CELL), gx1 = Math.floor((z.x1 + LOOK) / ZONE_CELL);
-    const gy0 = Math.floor((z.y0 - LOOK) / ZONE_CELL), gy1 = Math.floor((z.y1 + LOOK) / ZONE_CELL);
-    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
-      const k = cell(gx, gy);
-      const list = zoneCells.get(k);
-      if (list) list.push(z); else zoneCells.set(k, [z]);
-    }
+  // a walker could see or touch is always in the walker's cell. The parked
+  // cars' are filed again only when a car came, went or moved; the moving
+  // ones' and the trains' every tick.
+  let sameParked = parkedNow.length === s.parkedList.length;
+  for (let i = 0; sameParked && i < parkedNow.length; i++) sameParked = parkedNow[i] === s.parkedList[i];
+  if (!sameParked) {
+    s.parkedList = parkedNow;
+    s.parkedCells = fileZones(parkedNow);
   }
-  const zonesNear = (p: Walker): readonly CarZone[] => zoneCells.get(cellKey(p.x, p.y, ZONE_CELL)) ?? NO_ZONES;
+  const zoneCells = fileZones(carZones);
+  const parkedCells = s.parkedCells;
+  const zonesNear = (p: Walker): readonly CarZone[] => {
+    const k = cellKey(p.x, p.y, ZONE_CELL);
+    const standing = parkedCells.get(k), moving = zoneCells.get(k);
+    return standing ? (moving ? standing.concat(moving) : standing) : moving ?? NO_ZONES;
+  };
+  // Where the player looks (`SimWorld.focus`, set by the renderer; null in the
+  // specs: everybody in full). Out of it, a walker steps one tick in `COARSE`;
+  // stepping round the others only where people are seen big enough to see it.
+  const focus = w.focus;
+  const tick = Math.round(s.clock / DT);
+  const watched = (p: Walker): boolean => {
+    if (!focus || hypot(p.x - focus.x, p.y - focus.y) <= focus.r) return true;
+    const view = focus.view;
+    if (!view) return false;
+    const ex = p.x - view.ex, ey = p.y - view.ey, l = hypot(ex, ey);
+    return l <= view.far && ex * view.dx + ey * view.dy >= view.cos * l;
+  };
 
 
   for (const p of s.walkers) {
@@ -1077,6 +1202,12 @@ function stepWalkers(w: SimWorld): void {
       if (p.act && p.age >= p.act.until) p.act = null;
       continue;
     }
+    // Out of the view: a step one tick in `COARSE`, by as many ticks' time.
+    const seen = watched(p);
+    if (!seen && ((tick + p.id) % COARSE + COARSE) % COARSE !== 0) continue;
+    const dt = seen ? DT : COARSE * DT;
+    // Stepping round the others where people are seen, and big enough to see it.
+    const crowded = seen && (!focus || focus.detail);
     // Stopped for something (a word, a fall): standing there, facing it.
     // (Crawling is moving: on below, at a crawl.)
     if (p.act && p.act.kind !== 'crawl') {
@@ -1086,7 +1217,7 @@ function stepWalkers(w: SimWorld): void {
           // Knocked back the way the round went (away from where it came from).
           const back = staggerSpeed(p.age - p.act.from);
           const ax = p.x - p.act.faceX, ay = p.y - p.act.faceY, l = hypot(ax, ay);
-          if (back > 0 && l > 1e-6) { p.x += (ax / l) * back * DT; p.y += (ay / l) * back * DT; }
+          if (back > 0 && l > 1e-6) { p.x += (ax / l) * back * dt; p.y += (ay / l) * back * dt; }
         }
         const want = Math.atan2(p.act.faceY - p.y, p.act.faceX - p.x);
         // Not for a fall or a wound: a shot person does not turn round on the
@@ -1094,7 +1225,7 @@ function stepWalkers(w: SimWorld): void {
         // to the camera for 1.3 s, then a spin back to walk on).
         if (hypot(p.act.faceX - p.x, p.act.faceY - p.y) > m(0.1) && p.act.kind !== 'fall' && p.act.kind !== 'flinch') {
           const err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
-          p.heading += Math.max(-TURN_STANDING * DT, Math.min(TURN_STANDING * DT, err));
+          p.heading += Math.max(-TURN_STANDING * dt, Math.min(TURN_STANDING * dt, err));
         }
         continue;
       }
@@ -1130,7 +1261,7 @@ function stepWalkers(w: SimWorld): void {
     // --- the others, in this walker's own frame: how far ahead, how far across, which way they go.
     others.length = 0;
     const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
-    for (let gx = cx - 2; gx <= cx + 2; gx++) for (let gy = cy - 2; gy <= cy + 2; gy++) {
+    if (crowded) for (let gx = cx - 2; gx <= cx + 2; gx++) for (let gy = cy - 2; gy <= cy + 2; gy++) {
       for (const q of cells.get(cell(gx, gy)) ?? []) {
         if (q === p) continue;
         const rx = q.x - p.x, ry = q.y - p.y;
@@ -1141,7 +1272,8 @@ function stepWalkers(w: SimWorld): void {
         others.push({ along, lat, oncoming, r: SHOULDERS - BODY });
       }
     }
-    for (const z of zonesNear(p)) {
+    // The cars and trains: kept off wherever anybody can see it.
+    if (seen) for (const z of zonesNear(p)) {
       if (p.x < z.x0 - LOOK || p.x > z.x1 + LOOK || p.y < z.y0 - LOOK || p.y > z.y1 + LOOK) continue;
       // On it when the car took it, or inside the car's body (the car came to
       // them): they walk on out of its way.
@@ -1187,11 +1319,11 @@ function stepWalkers(w: SimWorld): void {
     p.waiting = null;
     if (zebra && zebra.stop < ASK_FROM) {
       p.waiting = zebra.zebra;
-      p.waited += DT;
-      p.asked -= DT;
+      p.waited += dt;
+      p.asked -= dt;
       if (p.asked <= 0) {
         p.asked = ASK_EVERY;
-        const open = zebra.zebra.edge ? mayEnterCrossing(w, zebra.zebra.edge, p.waited) : gapOpen(w, zebra.zebra, p.pace, p.waited);
+        const open = zebra.zebra.edge ? mayEnterCrossing(w, zebra.zebra.edge, p.waited) : gapOpen(w, s, zebra.zebra, p.pace, p.waited);
         if (open || (p.fright ?? 0) > p.age) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
       }
     }
@@ -1207,10 +1339,10 @@ function stepWalkers(w: SimWorld): void {
     else if (hypot(tx, ty) > m(0.05)) {
       const want = Math.atan2(ty, tx);
       err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
-      const rate = (p.v < m(0.3) ? TURN_STANDING : TURN_RATE) * DT;
+      const rate = (p.v < m(0.3) ? TURN_STANDING : TURN_RATE) * dt;
       const turn = Math.max(-rate, Math.min(rate, err));
       p.heading += turn;
-      p.turnV = turn / DT;
+      p.turnV = turn / dt;
       err -= turn;
     } else p.turnV = 0;
 
@@ -1239,19 +1371,19 @@ function stepWalkers(w: SimWorld): void {
     else want = Math.min(want, Math.max(0, (free(p.d) - KEEP) / HEADWAY));
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
     want *= Math.max(0, (Math.cos(err) - 0.5) / 0.5);
-    p.v = want > p.v ? Math.min(want, p.v + ACCEL * DT) : Math.max(want, p.v - BRAKE * DT);
+    p.v = want > p.v ? Math.min(want, p.v + ACCEL * dt) : Math.max(want, p.v - BRAKE * dt);
     const meansToGo = !(stop < m(0.1));
-    p.held = meansToGo && p.v < m(0.1) ? p.held + DT : 0;
-    p.x += Math.cos(p.heading) * p.v * DT;
-    p.y += Math.sin(p.heading) * p.v * DT;
+    p.held = meansToGo && p.v < m(0.1) ? p.held + dt : 0;
+    p.x += Math.cos(p.heading) * p.v * dt;
+    p.y += Math.sin(p.heading) * p.v * dt;
     // Held up, or slow, a person steps aside into their stripe when it is free.
     const aside = p.aim - p.d;
     if (!crawling && Math.abs(aside) > m(0.02) && free(p.aim) > KEEP) {
       const ls = Math.max(-SIDESTEP, Math.min(SIDESTEP, aside / 0.25)) * Math.max(0, 1 - p.v / (0.6 * p.pace));
       // Square to the body, to the side the stripe is on: never a step back.
       const side = Math.sign(-Math.sin(p.heading) * -f.ty + Math.cos(p.heading) * f.tx) || 1;
-      p.x += -Math.sin(p.heading) * side * ls * DT;
-      p.y += Math.cos(p.heading) * side * ls * DT;
+      p.x += -Math.sin(p.heading) * side * ls * dt;
+      p.y += Math.cos(p.heading) * side * ls * dt;
       if (Math.abs(ls) > m(0.05)) p.held = 0;
     }
 
