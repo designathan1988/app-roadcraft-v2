@@ -588,7 +588,7 @@ export function mountShell(deps: ShellDeps): void {
 
   // ================================================================ state
   let open = false;
-  let landTab: 'terrain' | 'barrier' | 'pole' | 'streetscape' = 'terrain';
+  let landTab: 'terrain' | 'trees' | 'barrier' | 'pole' | 'streetscape' = 'terrain';
   let builder: BuilderState | null = null;
 
   let modelQuery = '';
@@ -874,21 +874,39 @@ export function mountShell(deps: ShellDeps): void {
   // ------------------------------------------------------------ landscape
   function renderLandscape(current: string): void {
     title.textContent = t('v2.cat.landscape');
-    landTab = current === 'barrier' ? 'barrier' : current === 'pole' ? 'pole' : current === 'streetscape' ? 'streetscape' : 'terrain';
-    for (const [id, label, icon] of [['terrain', t('tool.terrain'), 'terrain'], ['streetscape', t('tool.streetscape'), 'streetscape'], ['barrier', t('v2.land.walls'), 'walls'], ['pole', t('tool.pole'), 'poles']] as const) {
-      tabs.appendChild(tab(label, landTab === id, () => { press(`.tool[data-tool="${id}"]`); render(); }, false, svg(icon, 18)));
+    // The trees have a tab of their own (the player, 2026-10-08: "a ferramenta
+    // para adicionar árvores que hoje não tem" - it was a card among the
+    // terrain's brushes): the terrain tool with its tree brush.
+    const treesButton = q<HTMLButtonElement>('[data-terrain-mode="trees"]');
+    const treesOn = current === 'terrain' && (treesButton?.classList.contains('active') ?? false);
+    landTab = current === 'barrier' ? 'barrier' : current === 'pole' ? 'pole' : current === 'streetscape' ? 'streetscape' : treesOn ? 'trees' : 'terrain';
+    for (const [id, label, icon] of [['terrain', t('tool.terrain'), 'terrain'], ['trees', t('terrain.trees'), 'ls_tree'], ['streetscape', t('tool.streetscape'), 'streetscape'], ['barrier', t('v2.land.walls'), 'walls'], ['pole', t('tool.pole'), 'poles']] as const) {
+      tabs.appendChild(tab(label, landTab === id, () => {
+        if (id === 'trees') {
+          // The terrain tool pressed only when not in hand (pressed again it is put away).
+          if (current !== 'terrain') press('.tool[data-tool="terrain"]');
+          treesButton?.click();
+        } else if (id === 'terrain' && treesOn) {
+          q<HTMLButtonElement>('[data-terrain-mode="raise"]')?.click();
+        } else {
+          press(`.tool[data-tool="${id}"]`);
+        }
+        render();
+      }, false, svg(icon, 18)));
     }
-    if (landTab === 'terrain') {
-      const { items } = section(t('v2.terrain.brush'));
+    if (landTab === 'terrain' || landTab === 'trees') {
+      const { items } = landTab === 'terrain' ? section(t('v2.terrain.brush')) : { items: document.createElement('div') };
       for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon'], ['trees', 'ls_tree'], ['weather', 'storm']] as const) {
         const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
         items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
       }
       // Landforms: each a shape with its own rock (`main.ts` LANDFORMS).
-      const forms = section(t('v2.terrain.landforms')).items;
-      for (const mode of ['mesa', 'canyon', 'escarpment', 'sugarloaf'] as const) {
-        const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
-        forms.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(mode, 34)));
+      if (landTab === 'terrain') {
+        const forms = section(t('v2.terrain.landforms')).items;
+        for (const mode of ['mesa', 'canyon', 'escarpment', 'sugarloaf'] as const) {
+          const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
+          forms.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(mode, 34)));
+        }
       }
       // Painting: which ground the brush lays (`world/terrainPaint.ts`).
       if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {

@@ -10,11 +10,11 @@
  * and grows no tree of its own inside a clearing.
  */
 
-/** The tree models to choose from (`render/natureTrees.ts` VARIANTS, in order): each its share of the seed's range. */
-export const TREE_KINDS = ['mixed', 'oak', 'ash', 'aspen'] as const;
+/** The tree models to choose from (`render/natureTrees.ts` TREE_MODELS, in order): each its share of the seed's range. */
+export const TREE_KINDS = ['mixed', 'oak', 'cypress', 'palm'] as const;
 export type TreeKind = (typeof TREE_KINDS)[number];
-/** The models' slots in the forest kit: oaks the first three, ashes the next two, the aspen the last. */
-const KIND_SLOTS: Readonly<Record<Exclude<TreeKind, 'mixed'>, readonly number[]>> = { oak: [0, 1, 2], ash: [3, 4], aspen: [5] };
+/** The models' slots (`render/natureTrees.ts` TREE_MODELS): two oaks, two cypresses, two palms. */
+const KIND_SLOTS: Readonly<Record<Exclude<TreeKind, 'mixed'>, readonly number[]>> = { oak: [0, 1], cypress: [2, 3], palm: [4, 5] };
 const MODEL_COUNT = 6;
 
 export interface PlantedTree {

@@ -93,7 +93,7 @@ import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } fro
 import { GroundDependant, type GroundRecord, type Rect, rectAround, unionRect } from './groundChanges';
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
-import { buildNatureForest, forestRoom, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
+import { buildNatureForest, forestRoom, loadNatureTrees, seedOfKind, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
 import { buildElementLayer, loadElementKit, type ElementKit, type ElementLayer } from './elements';
 import { isCoverKind } from '@world/terrainPaint';
@@ -1658,8 +1658,10 @@ export function createSceneRenderer(
    * the same hash. Low-poly trees (`groundCover.ts`, 33 to 72 triangles): the
    * garden trees they replace were 1 700 with their leaf cards.
    */
-  const FOREST_SPACING = m(7);
-  const FOREST_MAX = 15_000;
+  // A tree every twelve metres at the most where a wood is painted: the
+  // player wants few trees, not woods filling the map (2026-10-08).
+  const FOREST_SPACING = m(12);
+  const FOREST_MAX = 4_000;
   /** A cell's hash in 0..1: the same wherever a placement asks it, so an edit elsewhere never moves a plant. */
   const cellHash = (a: number, b: number, salt: number): number => {
     let h = Math.imul(a | 0, 374_761_393) ^ Math.imul(b | 0, 668_265_263) ^ Math.imul(salt, 2_246_822_519);
@@ -1758,8 +1760,12 @@ export function createSceneRenderer(
    * the painted covers (`groundCover.ts`, under 130 triangles each).
    */
   const NATURE_SPACING = m(5);
-  /** Trees the ecosystem grows at full vegetation quality (the forests take most). */
-  const NATURE_TREES = 26_000;
+  /**
+   * Trees the ecosystem grows at full vegetation quality (the forests take
+   * most). Few: the woods were 26 000 trees filling the countryside, and the
+   * player asked for few (2026-10-08) - the masses stay, thinned evenly.
+   */
+  const NATURE_TREES = 2_500;
   const natureNoise = (x: number, y: number, scale: number, salt: number): number => {
     const gx = x / scale, gy = y / scale;
     const x0 = Math.floor(gx), y0 = Math.floor(gy);
@@ -1839,7 +1845,11 @@ export function createSceneRenderer(
         const h = inner ? m(11) + m(8) * cellHash(i, j, 45) : edge ? m(8) + m(6) * cellHash(i, j, 45) : m(5.5) + m(4) * cellHash(i, j, 45);
         const roll = cellHash(i, j, 46);
         const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
-        trees.push({ x, y, size: h, yaw: cellHash(i, j, 47) * Math.PI * 2, seed: cellHash(i, j, 48), species });
+        // Which of the low-poly trees (`natureTrees.ts`): oaks and cypresses
+        // most, a palm now and then out in the open.
+        const pick = cellHash(i, j, 49);
+        const kind = pick < 0.55 ? 'oak' : pick < (inner ? 0.97 : 0.85) ? 'cypress' : 'palm';
+        trees.push({ x, y, size: h, yaw: cellHash(i, j, 47) * Math.PI * 2, seed: seedOfKind(kind, cellHash(i, j, 48)), species });
       }
     }
     return { key, trees, budget, room: null };
@@ -1915,7 +1925,8 @@ export function createSceneRenderer(
           // player, 2026-10-07: "árvore feia", "cocozinhos").
           const roll = cellHash(i, j, 13);
           const species = roll < 0.45 ? 'broadleaf' : roll < 0.82 ? 'broadleafTall' : 'conifer';
-          forest.push({ x, y, size: h, yaw: cellHash(i, j, 5) * Math.PI * 2, seed: cellHash(i, j, 6), species });
+          const kind = roll < 0.5 ? 'oak' : roll < 0.9 ? 'cypress' : 'palm';
+          forest.push({ x, y, size: h, yaw: cellHash(i, j, 5) * Math.PI * 2, seed: seedOfKind(kind, cellHash(i, j, 6)), species });
         }
       }
     }

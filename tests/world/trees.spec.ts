@@ -18,8 +18,9 @@ describe('planted trees', () => {
   it('pick the chosen kind’s models', () => {
     const next = random(2);
     for (let i = 0; i < 50; i++) {
-      expect(Math.floor(treeSeed('oak', next) * 6)).toBeLessThan(3);
-      expect(Math.floor(treeSeed('aspen', next) * 6)).toBe(5);
+      // The models in order (`render/natureTrees.ts` TREE_MODELS): two oaks, two cypresses, two palms.
+      expect(Math.floor(treeSeed('oak', next) * 6)).toBeLessThan(2);
+      expect(Math.floor(treeSeed('palm', next) * 6)).toBeGreaterThanOrEqual(4);
     }
   });
 
