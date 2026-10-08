@@ -37,7 +37,7 @@ import {
 } from 'three';
 
 import { Digest } from '@core/digest';
-import type { ChangeRect, DerivedChangeKind } from '@world/changes';
+import type { ChangeJournal, ChangeRect, DerivedChangeKind } from '@world/changes';
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
@@ -90,7 +90,7 @@ import { buildBuildingMeshes } from './buildings/buildingMesh';
 import { BLUEPRINTS, instantiate } from '@world/buildings/blueprints';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
-import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
+import { GroundDependant, type GroundRecord, type Rect, rectAround, unionRect } from './groundChanges';
 import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
 import { buildNatureForest, forestRoom, loadNatureTrees, type NatureForest, type NatureTreeKit } from './natureTrees';
@@ -958,8 +958,28 @@ export function createSceneRenderer(
    */
   /** The ground the buildings were last graded on (frozen while a stroke is held). */
   let buildingGround = '';
-  /** Where and when the drawn ground changed: what stands on it is set again only there (`groundChanges.ts`). */
-  const groundChanges = new GroundChanges();
+  /**
+   * Where and when the drawn ground changed: what stands on it is set again
+   * only there (`groundChanges.ts`). Read from the document's diary - the
+   * roads' heights solved again and the ground cut and filled, both written
+   * there with their rectangles - not kept in a second record beside it.
+   */
+  let groundDiary: ChangeJournal | null = null;
+  const GROUND_KINDS: readonly DerivedChangeKind[] = ['elevation', 'ground'];
+  /** The serial of the latest change of the ground (not of the diary: a zone drawn is no change of the ground), and how far the diary was read for it. */
+  let groundVersion = 0, groundScanned = 0;
+  const groundChanges: GroundRecord = {
+    get version() {
+      const diary = groundDiary;
+      if (!diary || diary.version === groundScanned) return groundVersion;
+      const fresh = diary.since(groundScanned, GROUND_KINDS);
+      if (fresh === null) groundVersion = diary.version;
+      else if (fresh.length) groundVersion = fresh[fresh.length - 1]!.serial;
+      groundScanned = diary.version;
+      return groundVersion;
+    },
+    touches: (since, area) => groundDiary?.touches(since, area, GROUND_KINDS) ?? false,
+  };
   const onGround = {
     buildings: new GroundDependant(groundChanges),
     barriers: new GroundDependant(groundChanges),
@@ -1181,9 +1201,9 @@ export function createSceneRenderer(
       : typeof regions[0] === 'number' ? [regions as TerrainRegion] : regions as readonly TerrainRegion[];
     if (list && !list.length) return;
     const region = list;
-    // The ground is cut and filled here, and only here: what stands on it reads where.
-    groundChanges.mark(list ? list.map(regionRect) : null);
-    // In the diary, once per call; a road edit's quarter blocks are written together (`shapeBlocksSteps`).
+    // The ground is cut and filled here, and only here: what stands on it reads
+    // where from the diary - once per call; a road edit's quarter blocks are
+    // written together when the last is shaped (`shapeBlocksSteps`).
     if (!padsReady) derived(net, 'ground', list ? list.map(regionRect) : null, sites ? 'chão dos lotes nivelado' : 'chão cortado e aterrado', net.doc.changes.version);
     const roads = net.doc.segments.size > 0 ? elevation : null;
     if (!padsReady && (!region || !padsCache || sites)) {
@@ -1316,8 +1336,9 @@ export function createSceneRenderer(
     worldCause = derived(net, 'elevation', changed, 'alturas das vias resolvidas', net.doc.changes.version,
       { ms: performance.now() - started, detail: changed ? `${changed.length} blocos de ${SHAPE_BLOCK} u` : 'mapa inteiro' }) || net.doc.changes.version;
     const blocks = changed && pendingBlocks ? [...pendingBlocks, ...changed] : null;
-    // The roads' own heights (the footway, the carriageway) moved where the solve did.
-    groundChanges.mark(changed);
+    // The roads' own heights (the footway, the carriageway) moved where the
+    // solve did: the 'elevation' entry just written is what the things on the
+    // ground read (`groundChanges`).
     // The footways moved where the solve did: the grass mask is drawn again there.
     if (changed === null) markGrass(null);
     else for (const block of changed) markGrass(block);
@@ -2190,6 +2211,7 @@ export function createSceneRenderer(
     // Wall-clock time between drawn frames, for things that age as they are watched.
     draw(net, sim, alpha, delta, options) {
       renderer.info.reset();
+      groundDiary = net.doc.changes;
       // Planted trees and shrubs grow with the city's clock: resized once a city hour.
       cityMinutes = sim.city.minutes(sim);
       if (Math.floor(cityMinutes / 60) !== growthHour && [...net.doc.landscape.values()].some((i) => i.planted !== undefined && cityMinutes - i.planted < GROW_MINUTES + 60)) rebuildFurniture(net);

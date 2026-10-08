@@ -21,7 +21,17 @@ export type Rect = readonly [number, number, number, number];
 /** How many changes are remembered; a dependant older than that is built again. */
 const KEPT = 512;
 
-export class GroundChanges {
+/**
+ * What a dependant reads: the serial of the latest change, and whether a
+ * change since one reaches an area. A `GroundChanges`, or a view of the
+ * document's diary (`world/changes.ts`) over its ground kinds.
+ */
+export interface GroundRecord {
+  readonly version: number;
+  touches(since: number, area: Area): boolean;
+}
+
+export class GroundChanges implements GroundRecord {
   private serial = 0;
   /** Changes after `forgotten`, oldest first; `null` is the whole map. */
   private readonly log: { readonly serial: number; readonly rect: Rect | null }[] = [];
@@ -96,7 +106,7 @@ export class GroundDependant {
   private key: string | null = null;
   private seen = -1;
 
-  constructor(private readonly changes: GroundChanges) {}
+  constructor(private readonly changes: GroundRecord) {}
 
   stale(key: string, area: Area): boolean {
     if (key === this.key && !this.changes.touches(this.seen, area)) return false;
