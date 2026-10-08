@@ -52,8 +52,8 @@ export type KerbPerson = Boarder;
 export interface KerbStop {
   readonly kind: TaskKind;
   readonly lanelet: LaneletId;
-  /** Arc position of the FRONT of the vehicle where it stops. */
-  readonly at: number;
+  /** Arc position of the FRONT of the vehicle where it stops: planned, then where it stood still (`halt`). */
+  at: number;
   readonly door: number;
   readonly seat: number;
   phase: KerbStopPhase;
@@ -239,7 +239,14 @@ export function stepKerbStops(w: SimWorld): void {
     }
     switch (stop.phase) {
       case 'approach':
-        if (v.v < 0.05 && stop.at - v.s < m(1)) enter(stop, 'halt');
+        if (v.v < 0.05 && stop.at - v.s < m(1)) {
+          // Stopped: the stop is where the car stands, and it is held there
+          // until its doors are shut (a bus's door brake interlock). Kept at
+          // the place it aimed for, up to a metre on, the car crept on to it
+          // with its doors opening.
+          stop.at = v.s;
+          enter(stop, 'halt');
+        }
         else if (v.s > stop.at + m(2)) abandon(v);
         break;
       case 'halt':

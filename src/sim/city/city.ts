@@ -35,9 +35,16 @@ export class City {
     this.skipped += Math.max(0, minutes);
   }
 
-  /** Stage 2 (`pipeline.ts`): the lines run; traffic comes in at the road ends when the scenery is fed from them. */
+  /**
+   * Stage 2 (`pipeline.ts`): the lines run; traffic comes in at the road ends
+   * (`vehicles/spawn.ts`) unless the scenery makes its cars round the view
+   * (`?ambient=view`). With nobody living here that is what `CityLife` did
+   * too (`edgeTraffic = !live`): reading only the scenery's flag, a
+   * simulation without the scenery switched on - every traffic spec - had
+   * no car come in at all.
+   */
   step(w: SimWorld): void {
-    w.edgeTraffic = w.ambient.enabled && w.ambient.source === 'edges';
+    w.edgeTraffic = !(w.ambient.enabled && w.ambient.source === 'view');
     this.transit.step(w);
   }
 }

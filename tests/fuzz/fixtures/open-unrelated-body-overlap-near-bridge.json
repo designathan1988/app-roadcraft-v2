@@ -50,6 +50,5 @@
    "curve": null,
    "structure": "ground"
   }
- ],
- "open": "An independently drawn ground road and bridge approach produce overlapping projected vehicle bodies in this seeded run. The current detector uses a coarse set of recent road structures, so the vertical separation and the road geometry need to be checked before the overlap can be classified or resolved."
+ ]
 }

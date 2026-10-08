@@ -111,7 +111,8 @@ describe('benchmark', () => {
     const total = time(() => sim.clock.run(MEASURE_TICKS, () => {
       step(sim, { timings });
       population.vehicles += sim.vehicles.size;
-      population.peds += sim.peds.size;
+      // As every pedestrian engine publishes them (the legacy engine's own map is gone).
+      population.peds += sim.pedViews.length;
     }));
 
     const perTick = Object.fromEntries([...timings].sort().map(([k, v]) => [k, +(v / MEASURE_TICKS).toFixed(3)]));

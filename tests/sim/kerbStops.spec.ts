@@ -27,7 +27,8 @@ describe('kerb stops', () => {
     let droppedOnFootway = 0;
 
     for (let i = 0; i < Math.round(300 / DT); i++) {
-      const before = new Set(sim.peds.keys());
+      // The people as every pedestrian engine publishes them (`SimWorld.pedViews`).
+      const before = new Set(sim.pedViews.map((p) => p.id));
       step(sim, { traffic: true, pedestrians: true });
       if (i % 10 === 0) overlaps += collisions(sim).length;
       for (const v of sim.vehicles.values()) {
@@ -39,7 +40,7 @@ describe('kerb stops', () => {
           // The door starts to open: nobody inside its swing.
           const lane = sim.lanelet(v.lanelet)!;
           const f = lane.centre.sampleAt(Math.max(0, v.s - v.archetype.length * 0.5));
-          for (const p of sim.peds.values()) {
+          for (const p of sim.pedViews) {
             if (p.id === stop.pedId) continue;
             if (Math.hypot(p.x - f.p.x, p.y - f.p.y) < v.archetype.width / 2 + m(0.3)) openedIntoSomebody++;
           }
@@ -55,12 +56,12 @@ describe('kerb stops', () => {
         }
         phaseOf.set(v.id, key);
       }
-      for (const p of sim.peds.values()) {
+      for (const p of sim.pedViews) {
         if (before.has(p.id)) continue;
         // A new pedestrian next to a car with a door open is a passenger out.
         const near = [...sim.vehicles.values()].some((v) => v.kerbStop?.kind === 'drop' &&
           (v.kerbStop.phase === 'transfer' || v.kerbStop.phase === 'close'));
-        if (near && sim.sidewalks.edges.get(p.edge)?.kind === 'walk') droppedOnFootway++;
+        if (near && p.ground === 'footway') droppedOnFootway++;
       }
     }
 

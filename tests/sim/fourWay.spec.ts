@@ -130,8 +130,9 @@ function run(layout: Layout, seconds = SECONDS): RunReport {
     }
 
     // A vehicle body over somebody walking on a crossing.
-    for (const p of sim.peds.values()) {
-      if (sim.sidewalks.edges.get(p.edge)?.kind !== 'crossing') continue;
+    // The people as every pedestrian engine publishes them (`SimWorld.pedViews`).
+    for (const p of sim.pedViews) {
+      if (p.ground !== 'crossing') continue;
       for (const v of inBox) {
         const body = bodyOf(sim, v);
         if (!body) continue;

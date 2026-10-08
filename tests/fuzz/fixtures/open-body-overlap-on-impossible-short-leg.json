@@ -153,6 +153,5 @@
    "h0": 0,
    "h1": 0
   }
- ],
- "open": "A 15 m local street leaves a boulevard at 45 degrees and is shorter than the distance at which the two carriageways stop crossing (39 units against 38.6): the whole leg lies inside the boulevard's carriageway, so a vehicle leaving on one meets a vehicle standing on the other. No mouth can fix it; the geometry has to be refused like a hairpin (legAngles.ts MIN_LEG_ANGLE: an editor rule for legs shorter than their separation from a neighbour) and flagged on load."
+ ]
 }

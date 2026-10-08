@@ -5,6 +5,7 @@ import { RoadDoc } from '@world/doc';
 import type { NodeId } from '@world/ids';
 import { Network } from '@world/network';
 import { SimWorld } from '@sim/world';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 import { pedPose, vehiclePose, type Pose } from '@sim/pose';
 import type { Vehicle } from '@sim/vehicles/state';
 import type { Ped } from '@sim/peds/state';
@@ -187,6 +188,15 @@ export function simOf(doc: RoadDoc, seed: number, intensity = 2): SimWorld {
   sim.trafficIntensity = intensity;
   sim.demandMultiplier = intensity;
   sim.clock.paused = false;
+  // People on the footways as the game has them (`main.ts`): the agents'
+  // walking engine, the scenery's life coming in at the road ends. Until
+  // 2026-10-08 a world was made with the legacy pedestrian engine running;
+  // with it gone a world had nobody walking, and every spec measuring
+  // walkers, crossings or kerb stops measured nothing.
+  sim.usePedestrianEngine(createAgentWalkEngine());
+  sim.ambient.enabled = true;
+  sim.ambient.source = 'edges';
+  sim.pedestrianCount = Math.round(50 * intensity);
   return sim;
 }
 

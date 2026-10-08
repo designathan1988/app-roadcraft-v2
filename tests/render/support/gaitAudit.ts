@@ -5,7 +5,6 @@ import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { pedPose } from '@sim/pose';
 import { personHash, type PedView } from '@sim/people/view';
-import type { Ped } from '@sim/peds/state';
 import type { SimWorld } from '@sim/world';
 import { m } from '@world/units';
 import { SIGNAL_POST_RADIUS, signalPosts } from '@world/signalPosts';
@@ -152,7 +151,7 @@ export function auditGait<S>(controller: GaitController<S>, seconds: number, see
           audit.unsteppedRotation += turned;
           if (breakdown && turned > 0) {
             const top = out.reduce((a, b) => (b.weight > a.weight ? b : a), out[0]!);
-            const key = `${top.name}|${sim.peds.get(ped.id)?.state}|${ped.gesture ? ped.gesture.kind + ':' + ped.gesture.phase : '-'}|${Math.abs(ped.turnV) > 0.35 ? 'spin' : 'slowturn'}|${speed < 0.06 ? 'still' : 'creep'}`;
+            const key = `${top.name}|${ped.walking ? 'walking' : 'standing'}|${ped.gesture ? ped.gesture.kind + ':' + ped.gesture.phase : '-'}|${Math.abs(ped.turnV) > 0.35 ? 'spin' : 'slowturn'}|${speed < 0.06 ? 'still' : 'creep'}`;
             breakdown.set(key, (breakdown.get(key) ?? 0) + turned);
           }
         }
@@ -163,7 +162,7 @@ export function auditGait<S>(controller: GaitController<S>, seconds: number, see
           audit.glideSeconds += DT;
           if (breakdown) {
             const top = out.reduce((a, b) => (b.weight > a.weight ? b : a), out[0]!);
-            const key = `G:${top.name}|${sim.peds.get(ped.id)?.state}|${ped.gesture ? ped.gesture.kind : '-'}|${speed < 0.5 ? 'slow' : speed < 1 ? 'mid' : 'fast'}`;
+            const key = `G:${top.name}|${ped.walking ? 'walking' : 'standing'}|${ped.gesture ? ped.gesture.kind : '-'}|${speed < 0.5 ? 'slow' : speed < 1 ? 'mid' : 'fast'}`;
             breakdown.set(key, (breakdown.get(key) ?? 0) + DT);
           }
         }
@@ -249,8 +248,10 @@ export function auditFlow(seconds: number, seed = 3, breakdown?: Map<string, num
   const PERSON = m(0.3);
   sim.clock.run(Math.round(seconds / DT), () => {
     step(sim, { traffic: true, pedestrians: true });
-    const peds = [...sim.peds.values()];
-    const cells = new Map<string, Ped[]>();
+    // What every pedestrian engine publishes (`SimWorld.pedViews`), not the
+    // inner state of one: the legacy engine's walkers this read are gone.
+    const peds = sim.pedViews;
+    const cells = new Map<string, PedView[]>();
     for (const p of peds) {
       const key = `${Math.floor(p.x / CELL)}:${Math.floor(p.y / CELL)}`;
       const list = cells.get(key) ?? [];
@@ -259,9 +260,8 @@ export function auditFlow(seconds: number, seed = 3, breakdown?: Map<string, num
     }
     for (const p of peds) {
       flow.pedSeconds += DT;
-      const edge = sim.sidewalks.edges.get(p.edge);
-      const seated = p.activity?.kind === 'bench' && p.activity.phase !== 'approach';
-      if (!seated && edge?.kind !== 'crossing') {
+      const seated = p.gesture?.kind === 'bench' && p.gesture.phase !== 'approach';
+      if (!seated && p.ground !== 'crossing') {
         let nearest = Infinity;
         let nearestKind = '';
         let aheadClose = false;
@@ -275,15 +275,16 @@ export function auditFlow(seconds: number, seed = 3, breakdown?: Map<string, num
         if (nearest < PERSON) {
           flow.insideFurniture += DT;
           if (breakdown) {
-            const key = `${p.state}|${p.activity ? p.activity.kind + ':' + p.activity.phase : '-'}|${edge?.kind ?? '?'}|${p.v < 0.1 ? 'still' : 'moving'}|${nearestKind}`;
+            const key = `${p.walking ? 'walking' : 'standing'}|${p.gesture ? p.gesture.kind + ':' + p.gesture.phase : '-'}|${p.ground}|${p.v < 0.1 ? 'still' : 'moving'}|${nearestKind}`;
             breakdown.set(key, (breakdown.get(key) ?? 0) + DT);
           }
         }
         flow.nearestFurniture = Math.min(flow.nearestFurniture, nearest / m(1));
-        if (p.state === 'Walking' && !p.activity && p.pause <= 0) {
+        if (p.walking && !p.gesture) {
           flow.walkingSeconds += DT;
-          if (aheadClose && p.v < 0.5 * Math.min(p.speed, p.party.pace)) flow.slowedByFurniture += DT;
-          if (p.v < 0.05 && p.stuck > 0) flow.heldUp += DT;
+          // Below half a walking pace (1.3 m/s) beside something in the way.
+          if (aheadClose && p.v < m(0.65)) flow.slowedByFurniture += DT;
+          if (p.v < 0.05) flow.heldUp += DT;
         }
       }
       const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);

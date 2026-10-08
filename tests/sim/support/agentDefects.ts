@@ -82,6 +82,11 @@ function people(sim: SimWorld, peds: number, traffic: number): SimWorld {
   sim.pedestrianIntensity = peds;
   sim.trafficIntensity = traffic;
   sim.demandMultiplier = traffic || 1;
+  // How many people and cars the panel asks for (`main.ts` from the settings):
+  // the scenery brings that many in at the road ends (`sim/ambient`,
+  // `vehicles/spawn.ts`). Left unset, nobody came in at all.
+  sim.pedestrianCount = peds * 50;
+  sim.trafficCount = traffic * 50;
   sim.clock.paused = false;
   // As the game runs (`main.ts`): the agents' walking engine, nobody living
   // here, people and cars coming in at the road ends.
