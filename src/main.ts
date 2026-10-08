@@ -2,6 +2,9 @@ import { walkersNear } from '@sim/agents/walk';
 import type { BodyPart } from '@sim/people/view';
 import { beginFrameWork, workUntil } from '@core/frameWork';
 import { GameState } from '@core/gameState';
+import { FrameTimer, HealthLog } from '@core/health';
+import { watchHealth } from '@ui/healthWatch';
+import { mountHealthPanel } from '@ui/healthPanel';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
@@ -161,6 +164,30 @@ initLanguage();
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
+
+/**
+ * The game's health (`core/health.ts`): what broke and what was slow, with
+ * what the player was doing. Watched from here on, before the boot, so a map
+ * that fails to load or a worker that dies while opening is written down too
+ * (`ui/healthWatch.ts`); shown by the top bar's health button and F9
+ * (`ui/healthPanel.ts`); `__health()` in the console.
+ */
+const health = new HealthLog();
+const frameTimer = new FrameTimer();
+const healthWatch = watchHealth({
+  log: health,
+  frames: frameTimer,
+  canvas,
+  context: () => {
+    const last = doc.changes.latest(1)[0];
+    return [
+      `ferramenta ${game.tool}`,
+      game.gesture ?? '',
+      last ? `última mudança #${last.serial} ${last.kind} (${last.cause})` : '',
+      booted ? '' : 'abrindo o jogo',
+    ].filter(Boolean).join(' · ');
+  },
+});
 
 const doc = new RoadDoc();
 // A new map is made on the natural land; a saved one keeps its own (restored below).
@@ -4326,11 +4353,14 @@ let worldShown = false;
 function frame(now: number): void {
   pending = false;
   if (!booted) return;
+  // Each system's time in this frame (`core/health.ts`): a long frame is told with the systems that took it.
+  frameTimer.begin();
   beginFrameWork();
   // Everyone watching the game's state is told what changed, once, here.
   gameState.flush();
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
+  frameTimer.mark('painéis');
   const wall = (now - last) / 1000;
   last = now;
 
@@ -4390,9 +4420,11 @@ function frame(now: number): void {
     pedsToRebind = false;
     rebindPeds(sim);
   }
+  frameTimer.mark('topologia');
   const alpha = holdSim
     ? 1
     : sim.clock.advance(wall, () => step(sim, { traffic: !game.paused, pedestrians: !game.paused }));
+  frameTimer.mark('simulação');
 
   if (net.revision !== doc.revision) {
     // Geometry is still refreshed during a drag, but a 20 Hz preview is more
@@ -4404,17 +4436,22 @@ function frame(now: number): void {
       else if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
     }
   }
+  frameTimer.mark('rede viária');
   buildings.beforeDraw(game.tool === 'building');
+  frameTimer.mark('prédios');
   // The pole run under the pointer, planned once per frame: the 3D preview
   // shows it as it will stand, the overlay marks only what cannot be built.
   framePolePlan = currentPolePlan();
   scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
+  frameTimer.mark('postes');
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
+  frameTimer.mark('desenho');
   drawnOnce = true;
   drawOverlayScreen();
   updateCameraNeedle();
+  frameTimer.mark('sobreposição');
   if (topologyAfterDraw) {
     topologyAfterDraw = false;
     requestDraw();
@@ -4438,6 +4475,7 @@ function frame(now: number): void {
     syncFlatCameraFromView();
     drawMinimap(minimapCanvas, doc, net, sim, camera, surface, viewFootprint());
   }
+  frameTimer.mark('minimapa');
 
   uiClock += wall;
   if (uiClock > 0.4) {
@@ -4446,7 +4484,11 @@ function frame(now: number): void {
     // Safe while the player is using the panel: an unchanged selection only
     // rewrites the statistics block, never the control under the pointer.
     refreshInspector();
+    noteSimulationIssues();
   }
+  frameTimer.mark('painéis');
+  const timed = frameTimer.end();
+  healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
   if (!document.hidden && (!game.paused || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
@@ -5672,6 +5714,35 @@ qualitySelect.onchange = () => {
 (window as unknown as { __state: unknown }).__state = (count = 20): unknown => ({
   now: gameState.snapshot(),
   changes: gameState.latest(count).map((c) => `#${c.serial} ${c.key}: ${String(c.from)} → ${String(c.to)} (${c.cause})`),
+});
+/** The game's health in the console (`core/health.ts`): what broke or was slow, newest first. */
+(window as unknown as { __health: unknown }).__health = (count = 30): unknown => health.latest(count);
+
+/**
+ * The simulation's own checks (`sim/invariants.ts`, run every 60 ticks) in
+ * the health log: a check that did not hold is a warning with where and
+ * when. Each issue once (they stay in `sim.issues` until it is cleared).
+ */
+const issuesSeen = new WeakSet<object>();
+function noteSimulationIssues(): void {
+  for (const issue of sim.issues) {
+    if (issuesSeen.has(issue)) continue;
+    issuesSeen.add(issue);
+    health.record('invariant', 'warning', `Simulação: ${issue.code}`, { detail: `${issue.subject}: ${issue.detail} (passo ${issue.tick})` });
+  }
+}
+
+const valueText = (value: unknown): string => (value === null || value === undefined ? '—' : typeof value === 'number' ? String(Math.round(value * 100) / 100) : String(value));
+mountHealthPanel({
+  log: health,
+  world: (n) => doc.changes.latest(n).map((c) => {
+    const where = c.rects === null ? 'mapa inteiro' : `${c.rects.length} ret.`;
+    return `#${c.serial} ${c.kind} · ${c.cause}${c.parent ? ` ← #${c.parent}` : ''} · ${where}${c.ms !== undefined ? ` · ${c.ms.toFixed(1)} ms` : ''}${c.detail ? ` · ${c.detail}` : ''}`;
+  }),
+  state: (n) => ({
+    now: Object.entries(gameState.snapshot()).map(([key, value]) => `${key}: ${valueText(value)}`),
+    changes: gameState.latest(n).map((c) => `${c.key}: ${valueText(c.from)} → ${valueText(c.to)} (${c.cause})`),
+  }),
 });
 /**
  * The diary of changes in the console (`world/changes.ts`): `__changes()`
