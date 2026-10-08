@@ -325,8 +325,20 @@ and they have seen it.
   were rejected by the player and reverted in 429e098.
 
 ### People and city life
-- Pedestrian engine by default: People (ORCA, `sim/people/people.ts`). The Detour
-  crowd engine runs only with `?people=crowd`; the old model with `?peds=legacy`.
+- Pedestrian engine by default: the agents (`sim/agents/walk.ts`). People (ORCA,
+  `sim/people/people.ts`) with `?agents=0`, the Detour crowd with
+  `?people=crowd`, the old sidewalk model with `?peds=legacy`: each loaded by
+  `import()` only when asked for (2026-10-08), none in the game's bundle; the
+  old model stays the default of `SimWorld` in the specs only
+  (`__LEGACY_PEDS__`, `vitest.config.ts`).
+- Two drawing systems remain (2026-10-08): walkers are the procedural crowd;
+  people in vehicles, riders, people at the kerb and indoor figures are still
+  the cooked bodies (`riggedCitizens.ts`). Moving them over needs the seated
+  poses' reach measured again on the procedural bodies
+  (`render/vehicleModels.ts` SEATED_EXTENTS, `scripts/measure-seated-poses.mjs`
+  against the running game, `tests/render/occupantFit.spec.ts`), which only
+  runs when the player asks; the helmets (`riderPoses.ts` NO_HELMET) and the
+  held props (`people/heldProps.ts`) are fitted per cooked body too.
 - People are MakeHuman bodies (Rocketbox removed in 64ecfa1), with all 453
   community items importable in the Creator; the street wardrobe is
   `wardrobeSelection.json`. Bodies are cooked ahead (`npm run cook:people`,

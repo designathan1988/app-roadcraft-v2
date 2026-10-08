@@ -28,6 +28,13 @@ import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
 import type { Building } from '@world/buildings/types';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
+/** Nobody walks until an engine is installed (`SimWorld.usePedestrianEngine`). */
+const NO_PEDESTRIANS: PedestrianEngine = {
+  kind: 'people',
+  beginTick() {}, dispatch() {}, step() {}, rebind() {}, publish() {}, audit() {}, reset() {},
+  bridge: { hailable: () => null, board: () => null, alight() {}, anyoneWithin: () => false },
+};
+
 /** A queue is counted this far back from the stop line. */
 const DEMAND_QUEUE_REACH = m(80);
 /** Moving vehicles are counted when they will arrive within this, seconds. */
@@ -72,8 +79,13 @@ export class SimWorld {
 
   readonly vehicles = new VersionedMap<VehicleId, Vehicle>();
   readonly peds = new VersionedMap<PedId, Ped>();
-  /** What moves the people (`people/engine.ts`); everything else reaches them through it. */
-  pedEngine: PedestrianEngine = legacyPedestrians;
+  /**
+   * What moves the people (`people/engine.ts`); everything else reaches them
+   * through it. The game installs one as it opens (`main.ts`); the old
+   * sidewalk model is the default only in the specs (`__LEGACY_PEDS__`,
+   * `vitest.config.ts`), so the game's bundle does not carry it.
+   */
+  pedEngine: PedestrianEngine = __LEGACY_PEDS__ ? legacyPedestrians : NO_PEDESTRIANS;
   /** Which vehicle model drives: the legacy one, or Drive v2 (`drive/*`) as it replaces it layer by layer. */
   driveModel: 'v1' | 'v2' = 'v1';
   readonly runtime = new Map<LaneletId, LaneletRuntime>();

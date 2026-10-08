@@ -50,7 +50,6 @@ import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine } from '@sim/people/people';
 import { rebindAgents, rebindPeds, rebindVehicles, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
@@ -691,7 +690,9 @@ if (agentsOn) {
   crowdModule = await import('@sim/people/crowd');
   await crowdModule.initCrowd();
   sim.usePedestrianEngine(crowdModule.createCrowdEngine());
-} else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine(createPeopleEngine());
+} else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine((await import('@sim/people/people')).createPeopleEngine());
+// The old engines are loaded only when asked for: the game's bundle carries neither.
+else sim.usePedestrianEngine((await import('@sim/peds/engine')).legacyPedestrians);
 // The scenery's life (`sim/ambient`): nobody lives here; cars and people come
 // in at the ends of the roads, as many as the panel says, cross the map and
 // leave at another road end - never anywhere else (the player's order of
