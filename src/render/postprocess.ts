@@ -247,7 +247,16 @@ export function createPostChain(
   const cloudDrift = { x: 0, y: 0 };
   /** The clouds' bodies at a quarter of the pixels (`CLOUD_BODIES_MAIN`), drawn just before the pass that blends them in. */
   const bodiesSize = (n: number): number => Math.max(1, Math.ceil(n / 2));
-  const bodiesTarget = new WebGLRenderTarget(bodiesSize(size.x * ratio), bodiesSize(size.y * ratio), { type: HalfFloatType, depthBuffer: false });
+  // Two, one written each frame while the other is read as its history (`uHistory`).
+  const bodiesTargets = [0, 1].map(() => new WebGLRenderTarget(bodiesSize(size.x * ratio), bodiesSize(size.y * ratio), { type: HalfFloatType, depthBuffer: false }));
+  let bodiesWrite = 0;
+  /** Whether the target not written this frame holds the last frame's clouds, for this same view. */
+  let historyValid = false;
+  /** The view the history was made from: the camera's world matrix and projection, as last drawn. */
+  const lastView = new Matrix4(), lastProjection = new Matrix4();
+  let cloudFrame = 0;
+  /** Whether the last frame drew any cloud (a history of nothing is none). */
+  let hadClouds = false;
   let bodiesQuad: FullScreenQuad | null = null;
   // The clouds' shadow map (`CLOUD_SHADOW_MAP_MAIN`): drawn once a frame, read once a pixel.
   const shadowMapTarget = new WebGLRenderTarget(CLOUD_SHADOW_MAP, CLOUD_SHADOW_MAP, { type: HalfFloatType, depthBuffer: false });
@@ -266,7 +275,6 @@ export function createPostChain(
       fragmentShader: functions + CLOUD_SHADOW_MAP_MAIN,
       blending: NoBlending, depthTest: false, depthWrite: false,
     }));
-    pass.uniforms['tClouds']!.value = bodiesTarget.texture;
     pass.uniforms['tCloudShadow']!.value = shadowMapTarget.texture;
     const quad = bodiesQuad;
     const mapQuad = shadowMapQuad;
@@ -283,10 +291,22 @@ export function createPostChain(
         gl.setRenderTarget(previous);
       }
       if (on) {
+        // With the view still, fewer steps and the last frame blended in
+        // (Playdead's TAA feedback); moving, the full steps and no history -
+        // nothing is carried across a change of view, so nothing trails.
+        const u = pass.uniforms as Record<string, { value: unknown }>;
+        const still = historyValid;
+        u['uSteps']!.value = still ? CLOUD_STEPS_STILL : CLOUD_STEPS_MOVING;
+        u['uHistory']!.value = still ? CLOUD_HISTORY : 0;
+        u['uFrame']!.value = still ? cloudFrame++ % 4096 : 0;
+        const write = bodiesTargets[bodiesWrite]!, read = bodiesTargets[1 - bodiesWrite]!;
+        u['tCloudHistory']!.value = read.texture;
         const previous = gl.getRenderTarget();
-        gl.setRenderTarget(bodiesTarget);
+        gl.setRenderTarget(write);
         quad.render(gl);
         gl.setRenderTarget(previous);
+        u['tClouds']!.value = write.texture;
+        bodiesWrite = 1 - bodiesWrite;
       }
       shade(...args);
     };
@@ -319,6 +339,13 @@ export function createPostChain(
         if (plane !== null) u['uShadowPlane']!.value = plane;
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
+        // The history holds for the same view only: the last frame drew
+        // clouds, from this camera, at this size.
+        const same = camera.matrixWorld.equals(lastView) && camera.projectionMatrix.equals(lastProjection);
+        historyValid = same && count > 0 && hadClouds;
+        hadClouds = count > 0;
+        lastView.copy(camera.matrixWorld);
+        lastProjection.copy(camera.projectionMatrix);
         // Nothing of it shows - no cloud, no mist, no painted fog, no air round
         // the map: the pass is skipped, not run over every pixel for nothing.
         clouds.enabled = count > 0 || (u['uFog']!.value as number) > 0 || (u['uGroundFog']!.value as Vector4).w > 0.5
@@ -363,7 +390,8 @@ export function createPostChain(
       composer.setPixelRatio(pixelRatio);
       composer.setSize(width, height);
       bloom.setSize(width, height);
-      bodiesTarget.setSize(bodiesSize(width * pixelRatio), bodiesSize(height * pixelRatio));
+      for (const t of bodiesTargets) t.setSize(bodiesSize(width * pixelRatio), bodiesSize(height * pixelRatio));
+      historyValid = false;
     },
     dispose() {
       composer.dispose();
@@ -375,7 +403,7 @@ export function createPostChain(
       grade.dispose();
       clouds?.dispose();
       (bodiesQuad?.material as ShaderMaterial | undefined)?.dispose();
-      bodiesTarget.dispose();
+      for (const t of bodiesTargets) t.dispose();
       (shadowMapQuad?.material as ShaderMaterial | undefined)?.dispose();
       shadowMapTarget.dispose();
     },
@@ -509,6 +537,13 @@ const CLOUD_SHADOWS = {
     // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`): light, and what of the scene shows through.
     tClouds: { value: null as Texture | null },
     uCloudsOn: { value: 0 },
+    // The bodies' accumulation (`CLOUD_BODIES_MAIN`): the last frame's
+    // result, its weight (0: none), the frame number for the start's jitter,
+    // and the steps across a cloud's diameter.
+    tCloudHistory: { value: null as Texture | null },
+    uHistory: { value: 0 },
+    uFrame: { value: 0 },
+    uSteps: { value: 24 },
     // The clouds' shadow map (`CLOUD_SHADOW_MAP_MAIN`), its plane's height and its rectangle (x0, z0, x1, z1).
     tCloudShadow: { value: null as Texture | null },
     uShadowMapOn: { value: 0 },
@@ -635,6 +670,10 @@ const CLOUD_SHADOWS = {
     }
     uniform sampler2D tClouds;
     uniform float uCloudsOn;
+    uniform sampler2D tCloudHistory;
+    uniform float uHistory;
+    uniform float uFrame;
+    uniform float uSteps;
     // The clouds' shadow map (Unreal's cloud shadow map in place of a march
     // per pixel): what lies between a point of the plane under every cloud's
     // base and the sun, over the rectangle the shadows fall in.
@@ -838,6 +877,17 @@ const CLOUD_SHADOW_MAP_MAIN = /* glsl */ `
     }
 `;
 
+/**
+ * The clouds' bodies' steps across a cloud's diameter: the full 24 with the
+ * camera moving (no history then), 10 with it still, each frame's start
+ * moved on and the last frames blended in with this weight (Playdead's TAA
+ * feedback; with ten jittered steps a frame it gathers the full count's
+ * samples within three frames).
+ */
+const CLOUD_STEPS_MOVING = 24;
+const CLOUD_STEPS_STILL = 16;
+const CLOUD_HISTORY = 0.9;
+
 /** Texels a side of the clouds' shadow map: some 10 world units a texel over the whole map, for shadows tens to hundreds of units soft. */
 const CLOUD_SHADOW_MAP = 512;
 
@@ -909,7 +959,11 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
           spans[c] = vec2(-1.0);
           if (c < uCloudCount) spans[c] = sphereSpan(ro, rd, uCloud[c]);
         }
-        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        // Each pixel its own start, moved on every frame (the golden ratio's
+        // step) so the accumulation sees other depths each time (arXiv
+        // 1609.05344, 3.2); with the camera moving no history is kept and the
+        // start stays put, as before.
+        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 + uFrame * 0.6180339887);
         // Lit by the sun on its sunward side, by the sky elsewhere; dim at night.
         vec3 skyLight = mix(uFogColor * 0.55 + vec3(0.12), vec3(0.03, 0.035, 0.05), uDark);
         vec3 baseShade = mix(vec3(0.22, 0.24, 0.3), vec3(0.02, 0.025, 0.035), uDark);
@@ -935,7 +989,9 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
           // so its light does not depend on how long the step is (Högfeldt,
           // "Optimisations for Real-Time Volumetric Cloudscapes", 3.1).
           const int STEPS = 24;
-          int steps = int(clamp(ceil(float(STEPS) * (t1 - t0) / (2.0 * uCloud[best].w)), 6.0, float(STEPS)));
+          // uSteps across the diameter: 24 with the camera moving, fewer
+          // with it still, the history filling in what a frame leaves out.
+          int steps = int(clamp(ceil(uSteps * (t1 - t0) / (2.0 * uCloud[best].w)), 4.0, float(STEPS)));
           float stepLen = (t1 - t0) / float(steps);
           for (int i = 0; i < STEPS; i++) {
             if (i >= steps) break;
@@ -970,7 +1026,12 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
           }
         }
       }
-      gl_FragColor = vec4(light, transmit);
+      vec4 now = vec4(light, transmit);
+      // The view unchanged since the last frame: this pixel's last result is
+      // at this same place, blended in (Playdead's TAA: lerp(current,
+      // history, feedback)).
+      if (uHistory > 0.0) now = mix(now, texture2D(tCloudHistory, vUv), uHistory);
+      gl_FragColor = now;
     }
 `;
 
