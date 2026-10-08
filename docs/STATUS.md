@@ -396,9 +396,15 @@ and they have seen it.
   first world built in slices and swapped in once its shaders are compiled,
   the traffic held until the roads are in, buildings after, trees last.
   Open: the pedestrians' door links are still all rebuilt when a building is
-  added (only the obstacle search is on a grid); the countryside's tree kit
-  is still generated (and ez-tree imported) at every opening, a variety a
-  task, after the first world.
+  added (only the obstacle search is on a grid).
+- **Countryside trees from the Nature Kit (2026-10-08, LIVE; the player's
+  choice):** eight of Kenney's low-poly trees (CC0, `public/models/nature/`,
+  docs/CREDITOS.md) replace the ez-tree ones grown at every opening (no
+  leaf cards, no alpha): solid, a colour a vertex from the terrain's own
+  grass and soil tones (`terrain.ts` GRASS_TONES, FIELD_TINTS), three levels
+  (the model 50-400 triangles near, about a third mid, about 20 far),
+  real shadows near and mid, the forest's wind. ez-tree is no longer
+  imported (still a dependency in `package.json`).
 
 - **People drawn by level of detail (2026-10-08, LIVE, same look):** the
   procedural crowd (`render/people/proceduralCrowd.ts`) picks a level for each

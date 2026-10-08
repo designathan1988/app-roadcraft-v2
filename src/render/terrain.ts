@@ -508,6 +508,26 @@ function streakNoise(noise: (x: number, y: number, period: number) => number, u:
   return Math.min(1, Math.max(0, 0.5 + (sum / 8 - 0.5) * 2.2));
 }
 
+/**
+ * The grass's tones, sRGB: deep clump green, sunlit green, dry straw, bare
+ * soil. Grass keeps about half as much blue as green; with a third it was an
+ * acid yellow olive on screen (the player, 2026-10-07). The countryside's
+ * trees take their greens and bark from these (`natureTrees.ts`).
+ */
+export const GRASS_TONES = {
+  dark: [0.25, 0.4, 0.1],
+  lit: [0.44, 0.6, 0.15],
+  dry: [0.46, 0.44, 0.26],
+  soil: [0.36, 0.3, 0.2],
+} as const;
+/** The fields' tint factors (`macroTexture`): lush, yellowing meadow, deep green, olive. */
+export const FIELD_TINTS = {
+  lush: [0.84, 1.08, 0.84],
+  meadow: [1.24, 1.1, 0.7],
+  deep: [0.7, 0.86, 0.84],
+  olive: [1.1, 0.96, 0.76],
+} as const;
+
 export function terrainBakes(anisotropy: number): {
   grass: SurfaceBake;
   rocks: readonly SurfaceBake[];
@@ -540,13 +560,8 @@ export function terrainBakes(anisotropy: number): {
         const speck = fbm(grassFine, u * 96 + wx * 2, v * 96 + wy * 2, 96, 2);
         const tuft = fbm(grassFine, u * 32 + wx + 3.1, v * 32 + wy + 7.7, 32, 2);
         const clump = fbm(grassClump, u * 10 + wx * 0.5, v * 10 + wy * 0.5, 10, 2);
-        // sRGB: deep clump green, sunlit green, dry straw, bare soil. Grass
-        // keeps about half as much blue as green; with a third it was an
-        // acid yellow olive on screen (the player, 2026-10-07).
-        const dark = [0.25, 0.4, 0.1];
-        const lit = [0.44, 0.6, 0.15];
-        const dry = [0.46, 0.44, 0.26];
-        const soil = [0.36, 0.3, 0.2];
+        // sRGB: deep clump green, sunlit green, dry straw, bare soil (`GRASS_TONES`).
+        const { dark, lit, dry, soil } = GRASS_TONES;
         const t = Math.min(1, Math.max(0, (tuft - 0.3) / 0.42));
         const k = t * t * (3 - 2 * t);
         let r = dark[0]! + (lit[0]! - dark[0]!) * k;
@@ -815,11 +830,8 @@ function macroTexture(anisotropy: number): DataTexture {
   const res = 256;
   const fields = makeNoise(0x6d1c);
   const warp = makeNoise(0x2b77);
-  // Tint factors: lush, yellowing meadow, deep green, olive.
-  const lush = [0.84, 1.08, 0.84];
-  const meadow = [1.24, 1.1, 0.7];
-  const deep = [0.7, 0.86, 0.84];
-  const olive = [1.1, 0.96, 0.76];
+  // Tint factors: lush, yellowing meadow, deep green, olive (`FIELD_TINTS`).
+  const { lush, meadow, deep, olive } = FIELD_TINTS;
   const data = new Uint8Array(res * res * 4);
   for (let y = 0; y < res; y++) {
     for (let x = 0; x < res; x++) {
