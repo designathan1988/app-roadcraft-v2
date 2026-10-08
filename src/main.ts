@@ -4,7 +4,7 @@ import { beginFrameWork, workUntil } from '@core/frameWork';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { addPolygonLot, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, splitLot, zoneLots, type Lot } from '@world/lots';
+import { addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper, moveLotCorner, onLand, setLotFront, planLots, splitLot, zoneLots, type Lot } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
@@ -12,6 +12,8 @@ import { RoadDoc, fitRoadCurve, type JunctionControl } from '@world/doc';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
+import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
+import { layCity, zoneCity } from '@editor/cityGenerator';
 import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
@@ -968,8 +970,8 @@ function worldAtScreen(px: number, py: number, heightOffset?: number): Vec2 {
 function groundHeightUnder(at: Vec2): number {
   const point = (h: number): Vec2 => view.toWorldAt(at.x, at.y, h, surface.cssW, surface.cssH);
   const below = (h: number): boolean => { const p = point(h); return scene.surfaceHeightAt(p.x, p.y) >= h; };
-  let above = 600;
-  for (let h = 592; h >= -360; h -= 8) {
+  let above = Math.min(600, surfaceTop());
+  for (let h = above - 8; h >= -360; h -= 8) {
     if (!below(h)) { above = h; continue; }
     let lo = h;
     for (let i = 0; i < 14; i++) { const mid = (lo + above) / 2; if (below(mid)) lo = mid; else above = mid; }
@@ -988,6 +990,31 @@ const PICK_TOP = 160;
 const PICK_STEP = 2;
 
 /**
+ * The highest surface drawn anywhere - the ground's corners (the mesh is flat
+ * between them, so its top is one of them) and every road's height at its
+ * nodes - with a margin for the decks between nodes and the platforms graded
+ * under buildings, once per road or land edit. The picks march down the ray
+ * from here: from a fixed ceiling over the highest possible mountain they
+ * sampled the scene a hundred times and more on every pointer move above
+ * nothing at all.
+ */
+let surfaceTopFor = '';
+let surfaceTopValue = PICK_TOP;
+function surfaceTop(): number {
+  // The land as drawn (`SceneHandle.landTop`, read again by the renderer when
+  // it rewrites the ground); a road's cut and fill only brings the ground to
+  // its deck, which the nodes' heights cover.
+  const land = scene.landTop();
+  const key = `${doc.revision}:${land}`;
+  if (key === surfaceTopFor) return surfaceTopValue;
+  surfaceTopFor = key;
+  let top = land;
+  for (const node of doc.nodes.values()) top = Math.max(top, scene.elevationAt(node.x, node.y));
+  surfaceTopValue = Number.isFinite(top) ? top + 12 : PICK_TOP;
+  return surfaceTopValue;
+}
+
+/**
  * Where the ray under the cursor first meets what is drawn - a deck, or the
  * ground - marched down from above. It used to be solved as a fixed point of
  * "the height at the point under the cursor at that height" over the nearest
@@ -1001,8 +1028,8 @@ function firstSurfaceAt(px: number, py: number): Vec2 | null {
     const p = at(h);
     return scene.surfaceHeightAt(p.x, p.y) >= h;
   };
-  let above = PICK_TOP;
-  for (let h = PICK_TOP - PICK_STEP; h >= -PICK_TOP; h -= PICK_STEP) {
+  let above = Math.min(PICK_TOP, surfaceTop());
+  for (let h = above - PICK_STEP; h >= -PICK_TOP; h -= PICK_STEP) {
     if (!below(h)) { above = h; continue; }
     let lo = h;
     for (let i = 0; i < 12; i++) {
@@ -1014,8 +1041,9 @@ function firstSurfaceAt(px: number, py: number): Vec2 | null {
   return null;
 }
 
-function pointerWorld(e: PointerEvent): Vec2 {
-  const r = canvas.getBoundingClientRect();
+/** `rect`: the canvas's box when the caller has already read it for this event (a layout read each). */
+function pointerWorld(e: PointerEvent, rect?: DOMRect): Vec2 {
+  const r = rect ?? canvas.getBoundingClientRect();
   const authoredHeight = tool === 'road' && (draft || roadChain || curvePending)
     ? roadHeightOffset
     : undefined;
@@ -2119,7 +2147,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  const world = pointerWorld(e);
+  const world = pointerWorld(e, r);
 
   if (lotStroke?.pointer === e.pointerId) { const lot = lotAt(world); if (lot) lotStroke.ids.add(lot.id); requestDraw(); return; }
   if (bulldozeBox?.pointer === e.pointerId) {
@@ -3709,6 +3737,74 @@ if (['armas', 'weapons'].includes(new URLSearchParams(location.search).get('lab'
   }), 300);
 }
 
+/**
+ * A generated city (`world/cityGen/plan.ts`, `editor/cityGenerator.ts`): the
+ * map replaced (one undo step), the planned streets laid, the lots cut and
+ * zoned, then every lot built on, a slice of each frame until all stand.
+ */
+let cityGrowth: { left: number; total: number; started: number } | null = null;
+function generateCity(options: CityOptions): { roads: number; lots: number; zoned: number } {
+  const plan = planCity(options);
+  const cityDoc = layCity(plan);
+  history.record(doc);
+  applySnapshot(cityDoc.toJSON(), 'import');
+  if (net.revision !== doc.revision) net.rebuild();
+  applyLots(doc, planLots(doc, net));
+  const zoned = zoneCity(doc, plan);
+  lotRefused.clear();
+  lotRefusedNet = net.revision;
+  cityGrowth = { left: zoned, total: zoned, started: performance.now() };
+  fitView();
+  requestDraw();
+  return { roads: doc.segments.size, lots: doc.lots.length, zoned };
+}
+/**
+ * Builds on the generated city's lots, forty milliseconds a frame, the
+ * buildings held from the renderer meanwhile (`holdBuildings`) and drawn
+ * once at the end: growing one costs a millisecond or two, but drawing each
+ * as it came re-meshed the layer every frame - two buildings a second.
+ */
+const cityProgress = document.createElement('div');
+cityProgress.className = 'city-progress';
+cityProgress.style.cssText = 'position:fixed;left:50%;top:76px;transform:translateX(-50%);z-index:50;display:none;'
+  + 'background:rgba(10,16,18,.85);color:#fff;font:600 14px system-ui,sans-serif;padding:10px 16px;border-radius:10px';
+document.body.appendChild(cityProgress);
+function growCity(): void {
+  if (!cityGrowth) return;
+  // The notice painted first, then every lot built in one go: between frames
+  // each new building set off the rebuilds that follow a building edit (the
+  // ground, the walkways, the bays, the lots), and the city grew at three
+  // buildings a second. Grown in one go, they follow once.
+  if (cityProgress.style.display !== 'block') {
+    cityProgress.style.display = 'block';
+    cityProgress.textContent = t('city.building', { done: 0, total: cityGrowth.total });
+    requestDraw();
+    return;
+  }
+  const growing = cityGrowth;
+  cityGrowth = null;
+  setTimeout(() => {
+    for (let guard = 0; guard < growing.total * 3 + 50; guard++) {
+      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
+      if (id === null) {
+        // A lot refused (nothing fits it) is set aside; done when none is left open.
+        const open = doc.lots.some((l) => l.use && (l.building === undefined || !doc.buildings.has(l.building as BuildingId)) && !lotRefused.has(l.id));
+        if (!open) break;
+        continue;
+      }
+      const fresh = doc.buildings.get(id as BuildingId);
+      if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
+    }
+    cityBuiltIn = (performance.now() - growing.started) / 1000;
+    cityProgress.style.display = 'none';
+    persistence.saveSessionSoon(doc, sessionSettings);
+    updateStatus();
+    requestDraw();
+  }, 30);
+}
+/** Seconds the last generated city took, from the call to its last building (probes). */
+let cityBuiltIn = 0;
+
 (document.getElementById('newMap') as HTMLButtonElement).onclick = () => {
   if (!window.confirm(t('confirm.newMap'))) return;
   // Discarding the whole map is the largest edit the editor can make, so it is
@@ -4378,7 +4474,14 @@ function frame(now: number): void {
   // gesture finishes so agents never rebuild against every intermediate shape.
   // The frame that first draws an edit is held the same way.
   let holdSim = moving || topologyAfterDraw;
-  if (!holdSim && sim.topologyRevision !== net.trafficRevision) {
+  // A generated city being built (`generateCity`).
+  growCity();
+  if (!holdSim && sim.topologyRevision !== net.trafficRevision && scene.worldBusy) {
+    // The road being built first: the traffic and the footways wait for it,
+    // the simulation held meanwhile, so the frame's allowance goes to the road.
+    holdSim = true;
+    requestDraw();
+  } else if (!holdSim && sim.topologyRevision !== net.trafficRevision) {
     // In two frames, vehicles then footways, each drawn in between: the two
     // together were one stall of up to 240 ms after every edit. The world is
     // held until both are done.
@@ -5678,6 +5781,12 @@ qualitySelect.onchange = () => {
     updateRoadHeightValue();
     requestDraw();
   },
+  /** A generated city (`editor/cityGenerator.ts`), and how far its building has gone. */
+  generateCity: (options: Partial<CityOptions> = {}) => generateCity({ ...DEFAULT_CITY, ...options }),
+  /** Probe: one building grown on a zoned lot, and what it cost (ms). */
+  growTimed: () => { const t = performance.now(); const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed); return { id, ms: performance.now() - t }; },
+  cityGrowth: () => (cityGrowth || cityProgress.style.display === 'block' ? { pending: true } : null),
+  cityBuiltIn: () => cityBuiltIn,
   /** Replaces the map as loading a file does: document, network and simulation topology. */
   loadDoc: (data: ReturnType<RoadDoc['toJSON']>) => {
     history.record(doc);

@@ -128,7 +128,26 @@ export class Persistence {
   saveSessionSoon(doc: RoadDoc, settings: () => SavedSettings): void {
     if (this.timer) clearTimeout(this.timer);
     this.pending = () => this.saveSession(doc, settings());
-    this.timer = setTimeout(() => this.flush(), DEBOUNCE_MS);
+    this.timer = setTimeout(() => this.flushWhenIdle(), DEBOUNCE_MS);
+  }
+
+  /** The idle callback a debounced save waits in (`flushWhenIdle`). */
+  private idle: number | null = null;
+
+  /**
+   * The debounced save, in the browser's idle time - within two seconds -
+   * rather than at a fixed moment: writing the whole map is synchronous (MDN,
+   * "Web Storage API"), and at a fixed 700 ms it fell in the middle of
+   * whatever frame was being drawn, a camera drag or the traffic. Closing or
+   * hiding the page still writes at once (`flush`): an asynchronous store may
+   * lose a write as the browser closes (MDN, "Using IndexedDB").
+   */
+  private flushWhenIdle(): void {
+    this.timer = null;
+    const host = globalThis as { requestIdleCallback?: (run: () => void, options?: { timeout: number }) => number };
+    if (!host.requestIdleCallback) { this.flush(); return; }
+    if (this.idle !== null) return;
+    this.idle = host.requestIdleCallback(() => { this.idle = null; this.flush(); }, { timeout: 2000 });
   }
 
   private settingsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -180,6 +199,10 @@ export class Persistence {
   flush(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.idle !== null) {
+      (globalThis as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(this.idle);
+      this.idle = null;
+    }
     const pending = this.pending;
     this.pending = null;
     pending?.();

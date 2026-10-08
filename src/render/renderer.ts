@@ -340,6 +340,8 @@ export interface SceneHandle {
   dropVehicle(v: { id: number; archetype: Archetype; x: number; y: number; angle: number; color: number; dirX: number; dirY: number }): void;
   /** The height the terrain is drawn at — what anything laid on it must clear. */
   terrainHeightAt(x: number, y: number): number;
+  /** The highest corner of the ground as drawn now (the mesh is flat between corners), read once per change of it. */
+  landTop(): number;
   /** The universal grid (`world/grid.ts`) drawn over the whole map, on the ground, or not. */
   setGrid(on: boolean): void;
   /**
@@ -789,6 +791,10 @@ export function createSceneRenderer(
     return transitArea;
   };
   let elevation: RoadElevation | null = null;
+  /** Each rewrite of the drawn ground by the land (`terrain.update`), and the highest corner read after one (`landTop`). */
+  let landVersion = 0;
+  let landTopFor = -1;
+  let landTopValue = 0;
 
   // What each rebuild keeps for the next: the tiles of every surface an edit
   // does not reach, keyed by the solved roads and the ground they read.
@@ -2194,6 +2200,18 @@ export function createSceneRenderer(
     terrainHeightAt(x, y) {
       return terrain.renderedHeightAt(x, y);
     },
+    landTop() {
+      if (landTopFor !== landVersion) {
+        landTopFor = landVersion;
+        let top = -Infinity;
+        const corners = Math.round((TERRAIN_HALF * 2) / TERRAIN_CELL);
+        for (let j = 0; j <= corners; j++) {
+          for (let i = 0; i <= corners; i++) top = Math.max(top, terrain.renderedHeightAt(-TERRAIN_HALF + i * TERRAIN_CELL, TERRAIN_HALF - j * TERRAIN_CELL));
+        }
+        landTopValue = top;
+      }
+      return landTopValue;
+    },
     naturalTerrainHeightAt(x, y) {
       return terrain.naturalRenderedHeightAt(x, y);
     },
@@ -2485,6 +2503,7 @@ export function createSceneRenderer(
       const terrainStarted = performance.now();
       const stroking = !!options?.holdRoads && !!elevation && networkRevision === net.revision;
       const groundMoved = terrain.update(net.doc, stroking);
+      if (groundMoved) landVersion++;
       terrain.updatePaint(net.doc);
       // A brush stroke in progress: every dab used to re-solve the whole road
       // network and re-mesh every road, tree and tuft of grass near it - 450 ms
