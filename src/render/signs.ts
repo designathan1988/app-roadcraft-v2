@@ -3,6 +3,8 @@ import {
   CylinderGeometry,
   DoubleSide,
   Group,
+  InstancedMesh,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
   PlaneGeometry,
@@ -177,28 +179,46 @@ function streetChain(net: Network, at: Vec2): SegmentId[] {
   return [...chain];
 }
 
-export function buildSigns(net: Network, elevation: RoadElevation, items: Iterable<LandscapeItem>): SignLayer {
-  const group = new Group();
-  group.name = 'signs';
-  if (typeof document === 'undefined') return { group, dispose() {} };
-  const post = new CylinderGeometry(m(0.04), m(0.045), 1, 8);
-  const postMaterial = new MeshStandardMaterial({ color: 0x8e979b, roughness: 0.45, metalness: 0.6 });
-  const plate = new PlaneGeometry(1, 1);
-  const owned: { dispose(): void }[] = [post, postMaterial, plate];
-  // `yaw` turns the plate (a plane facing three's +Z) so its face looks along world (sin yaw, -cos yaw).
-  const stand = (x: number, y: number, ground: number, type: SignType, text: string, yaw: number): void => {
-    const size = PLATE[type];
-    const top = m(size.z + size.h / 2);
-    const pole = new Mesh(post, postMaterial);
-    pole.position.set(x, ground + top / 2, -y);
-    pole.scale.set(1, top, 1);
-    pole.castShadow = true;
-    group.add(pole);
+/**
+ * Each plate's picture and material, by type and words, kept from one build
+ * of the signs to the next: a street drawn anywhere painted every plate of
+ * the town again (a canvas each, sent to the graphics card). A plate no build
+ * uses any more is let go (`buildSigns`).
+ */
+const plates = new Map<string, { texture: CanvasTexture; material: MeshStandardMaterial; build: number }>();
+let builds = 0;
+function plateMaterial(type: SignType, text: string): MeshStandardMaterial {
+  const key = `${type}|${text}`;
+  let kept = plates.get(key);
+  if (!kept) {
     const texture = new CanvasTexture(plateCanvas(type, text));
     texture.colorSpace = SRGBColorSpace;
     texture.anisotropy = 4;
     const material = new MeshStandardMaterial({ map: texture, transparent: true, alphaTest: 0.5, side: DoubleSide, roughness: 0.5, metalness: 0.1 });
-    owned.push(texture, material);
+    kept = { texture, material, build: builds };
+    plates.set(key, kept);
+  }
+  kept.build = builds;
+  return kept.material;
+}
+
+export function buildSigns(net: Network, elevation: RoadElevation, items: Iterable<LandscapeItem>): SignLayer {
+  const group = new Group();
+  group.name = 'signs';
+  if (typeof document === 'undefined') return { group, dispose() {} };
+  builds++;
+  const post = new CylinderGeometry(m(0.04), m(0.045), 1, 8);
+  const postMaterial = new MeshStandardMaterial({ color: 0x8e979b, roughness: 0.45, metalness: 0.6 });
+  const plate = new PlaneGeometry(1, 1);
+  const owned: { dispose(): void }[] = [post, postMaterial, plate];
+  /** The posts, one instance each (`setPosts` at the end): a mesh and a draw each before. */
+  const posts: Matrix4[] = [];
+  // `yaw` turns the plate (a plane facing three's +Z) so its face looks along world (sin yaw, -cos yaw).
+  const stand = (x: number, y: number, ground: number, type: SignType, text: string, yaw: number): void => {
+    const size = PLATE[type];
+    const top = m(size.z + size.h / 2);
+    posts.push(new Matrix4().makeScale(1, top, 1).setPosition(x, ground + top / 2, -y));
+    const material = plateMaterial(type, text);
     const face = new Mesh(plate, material);
     face.position.set(x, ground + m(size.z), -y);
     face.rotation.set(0, yaw, 0);
@@ -240,9 +260,24 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
       }
     }
   }
+  if (posts.length) {
+    const poles = new InstancedMesh(post, postMaterial, posts.length);
+    posts.forEach((matrix, i) => poles.setMatrixAt(i, matrix));
+    poles.castShadow = true;
+    poles.computeBoundingSphere();
+    group.add(poles);
+  }
+  // The plates no sign of this build reads: let go.
+  for (const [key, kept] of plates) {
+    if (kept.build === builds) continue;
+    kept.texture.dispose();
+    kept.material.dispose();
+    plates.delete(key);
+  }
   return {
     group,
     dispose() {
+      // The plates' pictures stay for the next build (`plates`).
       for (const o of owned) o.dispose();
       group.clear();
     },
