@@ -19,18 +19,29 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 `C:/Codex-Shared/Roadcraft`, com push para `origin`
 (github.com/designathan1988/app-roadcraft-v2).
 
-## Controlador de estado e eventos (Etapa 1 do plano)
+## Controlador de estado e eventos, e o monitor
 
-- **Ativo:** o diário de mudanças do mundo (`src/world/changes.ts`,
-  `RoadDoc.changes`): o que mudou, onde e por quê, com as mudanças derivadas
-  encadeadas (estrada → alturas → chão → luz → tiles). F8 desenha as mudanças
-  dos últimos 8 s; no console, `__changes()`.
-- **Ativo, mas pela metade:** o estado do jogo (`src/core/gameState.ts`)
-  registra ferramenta, pausa, velocidade, qualidade e seleção com a causa
-  (`__state()`), e ninguém o lê ainda. O `main.ts` tem 91 variáveis soltas.
-- **Não feito:** o diário tem 2 leitores; cerca de 30 contadores `*Revision`
-  em `world/doc.ts` ainda decidem o que é refeito, em 15 arquivos.
-- **Não existe:** monitor de quebra e lentidão no jogo (Etapa 2).
+- **Diário do mundo** (`src/world/changes.ts`, `RoadDoc.changes`): o que
+  mudou, onde e por quê, com as mudanças derivadas encadeadas (estrada →
+  trânsito → alturas → chão → luz → tiles). Todas as revisões do documento e
+  `buildings.revision` são o serial da última entrada do seu tipo
+  (`serialOf`): nada muda sem passar por ele (`tests/arch` reprova contador
+  à parte). Zonas, lotes e prédios gravam onde mudaram. A causa é a
+  ferramenta e o gesto do jogador, ou o que o jogo fez (desgaste, crescimento
+  da zona, mapa aberto). F8 desenha as mudanças dos últimos 8 s;
+  `__changes()`.
+- **Estado do jogo** (`src/core/gameState.ts`): ferramenta, pausa,
+  velocidade, seleção, opções de cada ferramenta e o gesto em andamento, numa
+  cópia só (o `tsc` recusa escrita direta). A interface reage por `watch`,
+  avisada uma vez depois de cada mudança. `__state()`.
+- **Monitor** (`src/core/health.ts`, `ui/healthWatch.ts`,
+  `ui/healthPanel.ts`): erros, promessas rejeitadas, `console.error`, erros
+  de shader e de workers, contexto WebGL perdido, quadros acima de 50 ms com
+  os sistemas que os tomaram, invariantes da simulação; cada um com o que o
+  jogador fazia. Botão de pulso na barra de cima (ponto verde, amarelo ou
+  vermelho) e F9: abas Saúde, Mudanças e Estado; "copiar registro" para um
+  relato. O registro sobrevive a recarregar a página. `__health()`.
+- **Ainda não:** o `main.ts` dividido por ferramenta (Etapa 1d).
 
 ## Ativo no jogo
 

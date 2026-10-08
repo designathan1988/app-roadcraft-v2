@@ -19,17 +19,47 @@ de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 
 | Etapa | O quê | Estado |
 |---|---|---|
-| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | **ATUAL** |
-| 1 | Controlador global de estado e eventos (B2 até o fim) | a fazer |
-| 2 | Monitor: saber quando quebrou e quando ficou lento | a fazer |
+| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | feita (`e169da0a`); falta o jogador restaurar o `CLAUDE.md` |
+| 1a | Estado do jogo: ferramenta, pausa, velocidade, seleção, opções das ferramentas, gesto; interface por `watch` | feita (`de0ecfe6`, `46ca5873`, `4c535183`) |
+| 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
+| 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
+| 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | **ATUAL** |
 | 3 | Otimização completa, guiada pelo monitor | a fazer |
 | 4 | Todos os defeitos abertos | a fazer |
+
+**Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
+mudança mais arriscada do plano. Com o monitor ligado, um erro ou um quadro
+lento que a divisão causar aparece na hora, com a causa; sem ele, só o
+jogador veria.
 
 ## Fila (pedidos do jogador ainda não atendidos)
 
 1. Árvores low-poly bonitas, "nada de losangos pendurados" (pedido de
    2026-10-08 na sessão anterior, que foi interrompida antes de fazê-lo).
    Entra na Etapa 4, com pesquisa de como se fazem árvores low-poly.
+2. Quarentena de mapa ilegível com um lugar só (`editor/persistence.ts`
+   `quarantine`): uma segunda falha de carregamento grava por cima da
+   primeira e o mapa posto de lado se perde (aconteceu com o mapa de teste em
+   localhost em 2026-10-08, durante uma edição em vários passos com o jogo
+   aberto). Etapa 2 (uma quarentena é uma quebra que o monitor mostra) e
+   correção na Etapa 4.
+3. O envelhecimento da cidade troca prédios a cada 3 s e cada troca move
+   `buildings.revision` (visto no diário em 2026-10-08): medir na Etapa 3 o
+   que isso refaz. (P23)
+4. `npm run check` vermelho desde antes de 2026-10-08: o lint varre
+   `release/` (o executável do Electron, 9 000 erros de código compilado) e
+   `src/ui/v2/shell.ts` tem 244 escapes inúteis, 3 importações de `editor`
+   na camada `ui` (proibidas) e um `prefer-const`. Etapa 4, primeiro item:
+   sem o check verde nenhuma etapa pode fechar com ele.
+5. As 29 falhas da suíte em 2026-10-08 (todas anteriores a esta sessão,
+   conferidas): fuzz (6 sequências e `open-road-drawn-over-road`), motor de
+   caminhada em 4 cidades (`defects.spec`), Drive v2 (`curvature`,
+   `shortTail`, `fourWay` ×2, `roundabout` ×3), `buildingMesh` (camada de
+   prédios), `heightTopology`, `citizenLocomotion` ×2 (0,07 m/s),
+   `groundCover`, `pads`, `streetFurniture` (prado), `occupantFit` e
+   `builderCatalog` (não carregam fora do navegador), e os testes dos hooks
+   de `.claude` (`claudeGuard` ×5, `researchHook` ×4), que só o jogador
+   pode resolver, porque os hooks são dele. Etapa 4.
 
 ## Etapa 0 — Arrumar a casa
 
