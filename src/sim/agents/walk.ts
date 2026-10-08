@@ -1355,10 +1355,18 @@ function stepWalkers(w: SimWorld): void {
     const aside = p.aim - p.d;
     if (!crawling && Math.abs(aside) > m(0.02) && free(p.aim) > KEEP) {
       const ls = Math.max(-SIDESTEP, Math.min(SIDESTEP, aside / 0.25)) * Math.max(0, 1 - p.v / (0.6 * p.pace));
-      // Square to the body, to the side the stripe is on: never a step back.
-      const side = Math.sign(-Math.sin(p.heading) * -f.ty + Math.cos(p.heading) * f.tx) || 1;
-      p.x += -Math.sin(p.heading) * side * ls * dt;
-      p.y += Math.cos(p.heading) * side * ls * dt;
+      // Across the way itself, towards the stripe: its left normal runs on
+      // smoothly round a corner. Square to the body instead, the side was
+      // the sign of the body against the way, which flips as a body turns
+      // across a tight corner - the step went to and fro and people swayed
+      // and spun at the corners (`defects.spec`, the corner walkways). Never
+      // a step back: what of it goes against the body's heading is dropped.
+      let mx = -f.ty * ls * dt, my = f.tx * ls * dt;
+      const hx = Math.cos(p.heading), hy = Math.sin(p.heading);
+      const back = mx * hx + my * hy;
+      if (back < 0) { mx -= hx * back; my -= hy * back; }
+      p.x += mx;
+      p.y += my;
       if (Math.abs(ls) > m(0.05)) p.held = 0;
     }
 
@@ -1448,10 +1456,13 @@ function publish(w: SimWorld): void {
 export function inspectAgentWalkers(w: SimWorld): readonly {
   id: number; x: number; y: number; v: number; s: number; d: number; len: number;
   leg: number; legs: number; held: number; waited: number; kind: string;
+  aim: number; heading: number; span: [number, number]; waiting: boolean; nextKind: string;
 }[] {
   return stateOf(w).walkers.map((p) => ({
     id: p.id, x: p.x, y: p.y, v: p.v, s: p.s, d: p.d, len: stepLength(p.steps[p.leg]!),
     leg: p.leg, legs: p.steps.length, held: p.held, waited: p.waited, kind: p.steps[p.leg]!.way?.kind ?? 'off',
+    aim: p.aim, heading: p.heading, span: room(p.steps[p.leg]!), waiting: p.waiting !== null,
+    nextKind: p.steps[p.leg + 1]?.way?.kind ?? 'end',
   }));
 }
 
