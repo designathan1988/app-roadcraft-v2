@@ -14,11 +14,11 @@ import { lodPool } from './lodPool';
  * primitive"): a body's visible area is about H x H/4 over half its
  * triangles, so T <= H² / 32.
  *
- *   level 0  H >= 100  the whole model (its hair never more than its body)
- *   level 1  45..100   about 4 800 triangles
- *   level 2  18..45    about 1 440
- *   level 3  4..18     about 330: one merged mesh a class and outfit, the hair apart
- *   none     < 4       not drawn
+ *   level 0  H >= 40   the whole model (its hair never more than its body)
+ *   level 1  20..40    about 4 800 triangles
+ *   level 2  8..20     about 1 440
+ *   level 3  3..8      about 330: one merged mesh a class and outfit, the hair apart
+ *   none     < 3       not drawn
  *
  * The bands are the person's height as a share of the screen, as an engine
  * sets a LOD Group's transitions (Unity, "Transition (% Screen Size)"), and
@@ -27,13 +27,18 @@ import { lodPool } from './lodPool';
  * show a face or a print. The triangle rule alone put it on everybody up to
  * 150 px - every person at every playable zoom (58 px at the usual one) -
  * and the player asked why the pedestrians looked like rubbish (2026-10-08).
- * The cost is held by the caps below, not by the bands.
+ * Then the whole model began at 100 px, and at the street view the player
+ * plays at (people 60-80 px tall) everybody was level 1 - no lashes, no
+ * mouth, a faceted body: "the detail must not appear only when the zoom is
+ * rubbed in their faces". As Unity's "Set to Camera" does it, the closest
+ * level covers the height a person has in the view in use. The cost is held
+ * by the caps below, not by the bands.
  *
  * Every level of a piece is an index buffer over the same vertices
  * (meshoptimizer for the meshes; hair cards, which a simplifier cannot merge,
  * chosen card by card), so a piece's vertex data is on the GPU once.
  */
-export const LEVEL_PIXELS = [100, 45, 18, 4] as const;
+export const LEVEL_PIXELS = [40, 20, 8, 3] as const;
 /** Levels drawn: 0..3. */
 export const LEVELS = 4;
 /** Hysteresis: a person goes back up a level only this far past its edge. */
@@ -42,7 +47,7 @@ const HYSTERESIS = 0.1;
  * The closest levels' safety caps: past them, the people smallest on the
  * screen go one level down (a street-level camera in a packed square).
  */
-export const LEVEL_CAPS = [20, 100] as const;
+export const LEVEL_CAPS = [30, 120] as const;
 
 /** The level for a person `pixels` tall on the screen, given the one they had (-1: none). */
 export function levelFor(pixels: number, was: number): number {
