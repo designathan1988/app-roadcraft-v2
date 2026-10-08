@@ -13,6 +13,7 @@ import { wornItems, type PersonLook, type PersonSpec } from '@people/spec';
 import { FEMALE_HAIR, HAIR_STYLES, MALE_HAIR, generateHairStrands, generateHeadband } from '@people/hair/procedural';
 import { hairStrandTexture } from './hairTexture';
 import { compileAhead } from '../uploads';
+import { forgetOtherDerived, readDerived, writeDerived } from '../derivedCache';
 import { loadProcedural } from './proceduralCook';
 import { faceAt } from './faceExpression';
 import { itemTexture, personLighting, skinChoice, skinTextures } from './skinAppearance';
@@ -752,6 +753,24 @@ function meanColour(texture: Texture | null, geometry: BufferGeometry, keep?: (v
   return n ? new Color(r / n, g / n, b / n) : new Color(0.3, 0.3, 0.3);
 }
 
+declare const __CROWD_LOD_HASH__: string | undefined;
+declare const __PROCEDURAL_COOK_HASH__: string | undefined;
+/**
+ * The fingerprint the pieces' levels are kept under (`derivedCache.ts`): the
+ * code that plans them (`crowdLod.ts`, `cook-plugin.ts` DERIVED) and the
+ * code and items the pieces are fitted from (the procedural cook's).
+ */
+const LOD_PLAN_HASH = typeof __CROWD_LOD_HASH__ !== 'undefined' && typeof __PROCEDURAL_COOK_HASH__ !== 'undefined'
+  && __CROWD_LOD_HASH__ && __PROCEDURAL_COOK_HASH__ ? `${__CROWD_LOD_HASH__}-${__PROCEDURAL_COOK_HASH__}` : null;
+if (LOD_PLAN_HASH) forgetOtherDerived('crowd-lod', LOD_PLAN_HASH);
+/** A `LodPlan` as the browser keeps it: plain arrays. */
+interface StoredPlan {
+  readonly indices: readonly (Uint32Array | 'all' | null)[];
+  readonly widen: readonly number[];
+  readonly cardOf: Int32Array | null;
+  readonly triangles: readonly number[];
+}
+
 /** How an item is drawn at each level: its index (null: not drawn there; 'all': its own) and its cards' widening. */
 interface LodPlan {
   readonly indices: readonly (BufferAttribute | 'all' | null)[];
@@ -1258,7 +1277,32 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   const lodPlan = (key: string, geometry: BufferGeometry, kind: Kind, role: PieceRole): Promise<LodPlan> => {
     const known = lodPlans.get(key);
     if (known) return known;
-    const plan = makeLodPlan(geometry, kind, role);
+    // Kept in the browser between sessions (`derivedCache.ts`), under the
+    // fingerprint of the code and the items it is made from: the worker's
+    // simplifying done once, not on the first person wearing a piece in
+    // every session.
+    const stored = LOD_PLAN_HASH ? `crowd-lod:${LOD_PLAN_HASH}:${role}:${key}` : null;
+    const plan = (async (): Promise<LodPlan> => {
+      if (stored) {
+        const kept = await readDerived<StoredPlan>(stored);
+        const vertices = geometry.getAttribute('position').count;
+        if (kept && kept.indices.length === LEVELS
+          && kept.indices.every((x) => x === null || x === 'all' || (x instanceof Uint32Array && x.every((v) => v < vertices)))) {
+          return {
+            indices: kept.indices.map((x) => (x === null || x === 'all' ? x : new BufferAttribute(x, 1))),
+            widen: kept.widen, cardOf: kept.cardOf, triangles: kept.triangles,
+          };
+        }
+      }
+      const made = await makeLodPlan(geometry, kind, role);
+      if (stored) {
+        writeDerived(stored, {
+          indices: made.indices.map((x) => (x === null || x === 'all' ? x : Uint32Array.from(x.array as ArrayLike<number>))),
+          widen: [...made.widen], cardOf: made.cardOf, triangles: [...made.triangles],
+        } satisfies StoredPlan);
+      }
+      return made;
+    })();
     lodPlans.set(key, plan);
     plan.catch(() => { if (lodPlans.get(key) === plan) lodPlans.delete(key); });
     return plan;

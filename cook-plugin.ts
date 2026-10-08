@@ -47,6 +47,8 @@ type CookDir = typeof COOKS[number]['dir'];
 const DERIVED = [
   { entry: 'src/render/buildings/parts.ts', also: [] as string[], define: '__BUILDING_KIT_HASH__' },
   { entry: 'src/render/surfaceBake.worker.ts', also: [] as string[], define: '__SURFACE_BAKE_HASH__' },
+  // The procedural crowd's levels of each piece (`proceduralCrowd.ts` lodPlan).
+  { entry: 'src/render/people/crowdLod.ts', also: [] as string[], define: '__CROWD_LOD_HASH__' },
 ] as const;
 const ASSETS = ['public/models/people'];
 /** The path aliases of `tsconfig.json`. */
