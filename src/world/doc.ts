@@ -1159,8 +1159,6 @@ export class RoadDoc {
     const roads = roadDifferences(this, source);
     const stamps = this.terrainRelief !== source.terrainRelief ? null : stampDifferences(this.terrainStamps, source.terrainStamps);
     const items = itemDifferences(this, source);
-    const zonesMoved = JSON.stringify(this.zones) !== JSON.stringify(source.zones) || JSON.stringify(this.zoneMarks) !== JSON.stringify(source.zoneMarks);
-    const lotsMoved = JSON.stringify(this.lots) !== JSON.stringify(source.lots);
     const before = this.revisionsByKind();
     this.replaceContents(source);
     const after = this.revisionsByKind();
@@ -1172,17 +1170,15 @@ export class RoadDoc {
     if (items.utilities.length) record('utilities', items.utilities);
     if (items.landscape.length) record('landscape', items.landscape);
     if (items.barriers.length) record('barriers', items.barriers);
-    if (zonesMoved) record('zones', null);
-    if (lotsMoved) record('lots', null);
-    for (const kind of ['buildings', 'transit', 'people', 'nature', 'weather', 'trees', 'elements', 'clouds', 'gullies', 'fog', 'paint'] as const) {
+    for (const kind of ['zones', 'lots', 'buildings', 'transit', 'people', 'nature', 'weather', 'trees', 'elements', 'clouds', 'gullies', 'fog', 'paint'] as const) {
       if (before[kind] !== after[kind]) record(kind, null);
     }
   }
 
   /** Each kind's revision, to see which moved. */
-  private revisionsByKind(): Record<'buildings' | 'transit' | 'people' | 'nature' | 'weather' | 'trees' | 'elements' | 'clouds' | 'gullies' | 'fog' | 'paint', number> {
+  private revisionsByKind(): Record<'zones' | 'lots' | 'buildings' | 'transit' | 'people' | 'nature' | 'weather' | 'trees' | 'elements' | 'clouds' | 'gullies' | 'fog' | 'paint', number> {
     return {
-      buildings: this.buildings.revision, transit: this.transitRevision, people: this.peopleRevision, nature: this.natureRevision,
+      zones: this.zoneRevision, lots: this.lotRevision, buildings: this.buildings.revision, transit: this.transitRevision, people: this.peopleRevision, nature: this.natureRevision,
       weather: this.weatherRevision, trees: this.treeRevision * 1_000_003 + this.clearingRevision, elements: this.elementRevision,
       clouds: this.cloudRevision, gullies: this.gullyRevision, fog: this.fogRevision, paint: this.paintRevision,
     };
@@ -1235,18 +1231,26 @@ export class RoadDoc {
     }
     // Moves `buildings.revision` only if the buildings differ.
     this.buildings.replaceWith(source.buildings);
-    this.zones.length = 0;
-    this.zones.push(...source.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })));
+    // The zones and the lots moved only when their content did: every road
+    // drawn replaces the document, and moving their revisions for it made
+    // every reader of them redo its work for nothing (the dirty flag set
+    // only when the primary data changes).
     this.nextZoneId = source.nextZoneId;
-    this.zoneMarks.length = 0;
-    this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
-    this.zoneRevision++;
-    this.lots.length = 0;
-    this.lots.push(...source.lots.map((lot) => ({ ...lot, corners: lot.corners.map((q) => ({ ...q })) as unknown as Lot['corners'] })));
-    this.lotKeys.length = 0;
-    this.lotKeys.push(...source.lotKeys);
+    if (JSON.stringify(this.zones) !== JSON.stringify(source.zones) || JSON.stringify(this.zoneMarks) !== JSON.stringify(source.zoneMarks)) {
+      this.zones.length = 0;
+      this.zones.push(...source.zones.map((zone) => ({ ...zone, buildingIds: [...zone.buildingIds] })));
+      this.zoneMarks.length = 0;
+      this.zoneMarks.push(...source.zoneMarks.map((mark) => ({ ...mark })));
+      this.zoneRevision++;
+    }
     this.nextLotId = source.nextLotId;
-    this.lotRevision++;
+    if (JSON.stringify(this.lots) !== JSON.stringify(source.lots) || this.lotKeys.join('\n') !== source.lotKeys.join('\n')) {
+      this.lots.length = 0;
+      this.lots.push(...source.lots.map((lot) => ({ ...lot, corners: lot.corners.map((q) => ({ ...q })) as unknown as Lot['corners'] })));
+      this.lotKeys.length = 0;
+      this.lotKeys.push(...source.lotKeys);
+      this.lotRevision++;
+    }
     if (JSON.stringify(this.transit) !== JSON.stringify(source.transit)) {
       this.transit = JSON.parse(JSON.stringify(source.transit)) as TransitData;
       this.transitRevision++;
