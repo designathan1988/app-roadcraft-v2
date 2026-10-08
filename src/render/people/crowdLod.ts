@@ -1,6 +1,8 @@
 import { BufferGeometry, Float32BufferAttribute, Uint16BufferAttribute } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshoptSimplifier } from 'meshoptimizer';
+import { simplifyIndex } from './lodWorker';
+import { lodPool } from './lodPool';
 
 /**
  * The crowd's levels of detail (`proceduralCrowd.ts`), from its own meshes.
@@ -102,18 +104,22 @@ export function simplifiedIndex(geometry: BufferGeometry, triangles: number, ind
   const source = indices ?? (geometry.getIndex() ? Uint32Array.from(geometry.getIndex()!.array as ArrayLike<number>) : null);
   if (!source || !geometry.getAttribute('position')) return null;
   if (!Number.isFinite(triangles) || source.length <= triangles * 3) return source;
-  if (!MeshoptSimplifier.supported || triangles <= 0) return null;
-  const target = Math.max(3, Math.floor(triangles) * 3);
-  const positions = positionsOf(geometry);
-  try {
-    // No error bound: the budget decides, the cheapest collapses first;
-    // attribute seams (UV splits) are kept consistent by the simplifier.
-    let [kept] = MeshoptSimplifier.simplify(source, positions, 3, target, 1);
-    if (kept.length > target * 1.3) [kept] = MeshoptSimplifier.simplifySloppy(source, positions, 3, null, target, 1);
-    return kept;
-  } catch {
-    return null;
-  }
+  return simplifyIndex(source, positionsOf(geometry), triangles);
+}
+
+/**
+ * `simplifiedIndex` done by the simplifier worker (`lodPool.ts`): the same
+ * result, off the main thread - each new piece's levels were 2-14 ms of a
+ * frame. Here, as before, where there is no worker.
+ */
+export async function simplifiedIndexAway(geometry: BufferGeometry, triangles: number, indices?: Uint32Array): Promise<Uint32Array | null> {
+  const source = indices ?? (geometry.getIndex() ? Uint32Array.from(geometry.getIndex()!.array as ArrayLike<number>) : null);
+  if (!source || !geometry.getAttribute('position')) return null;
+  if (!Number.isFinite(triangles) || source.length <= triangles * 3) return source;
+  const pool = lodPool();
+  if (!pool || !MeshoptSimplifier.supported) return simplifiedIndex(geometry, triangles, indices);
+  // A copy goes: the worker takes what it is sent, and the caller may still use its own.
+  return pool.index({ positions: positionsOf(geometry), index: source.slice(), triangles });
 }
 
 /** The triangles of `index` whose three vertices pass `keep`. */

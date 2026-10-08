@@ -185,7 +185,17 @@ export class Morpher {
     // Breast macro targets (sparse, regional pack).
     for (const [name, w] of macroTargetWeights(this.packs.modifiers.macro, this.breastNames(), params)) this.addLocal(result, name, w);
 
-    // Regional sliders.
+    this.addRegional(result, regional);
+    return result;
+  }
+
+  /**
+   * The regional sliders' moves added into `into` (decimetres, base frame):
+   * sparse targets summed at their weights, as MakeHuman applies a target
+   * (`algos3d.Target.apply`), whatever the macro shape under them. `shape`
+   * is the macro body plus exactly this.
+   */
+  addRegional(into: Float32Array, regional: RegionalValues): void {
     for (const [key, value] of Object.entries(regional)) {
       if (!value) continue;
       const side = key.startsWith('l-') ? 'left' : key.startsWith('r-') ? 'right' : null;
@@ -199,10 +209,61 @@ export class Morpher {
         const target = slider.category.opposites
           ? slider.category.opposites[`${sign}-${s}`]
           : value > 0 ? slider.category.targets?.[0] : undefined;
-        if (target) this.addLocal(result, `${slider.group}/${target}`, Math.min(1, Math.abs(value)));
+        if (target) this.addLocal(into, `${slider.group}/${target}`, Math.min(1, Math.abs(value)));
       }
     }
-    return result;
+  }
+
+  /**
+   * `bodyHeight(shape(params), bodyRange)` from the heights alone: only each
+   * vertex's Y of the macro sum, its residuals and the breast targets - a
+   * third of the work of the whole shape, for a body's standing height.
+   */
+  height(params: MacroParams, bodyRange: readonly (readonly [number, number])[]): number {
+    const n = this.vertexCount;
+    const D = n * 3;
+    const y = new Float32Array(n);
+    for (let v = 0; v < n; v++) y[v] = this.base[v * 3 + 1]!;
+    const K = this.packs.macro.components;
+    const scales = this.packs.macro.layout.basis.scales;
+    const weights = macroTargetWeights(this.packs.modifiers.macro, this.macroNames, params);
+    const c = new Float64Array(K);
+    for (const [name, w] of weights) {
+      const t = this.macroRow.get(name);
+      if (!t) continue;
+      for (let k = 0; k < K; k++) c[k] = (c[k] ?? 0) + w * (this.coeff[t.row * K + k] ?? 0);
+    }
+    for (let k = 0; k < K; k++) {
+      const ck = (c[k] ?? 0) * (scales[k] ?? 0);
+      if (ck === 0) continue;
+      const offset = k * D + 1;
+      for (let v = 0; v < n; v++) y[v] = y[v]! + ck * (this.basis[offset + v * 3] ?? 0);
+    }
+    for (const [name, w] of weights) {
+      const t = this.macroRow.get(name);
+      if (!t) continue;
+      const s = w * t.residualScale;
+      for (let e = t.residualStart; e < t.residualStart + t.residualCount; e++) {
+        const v = this.rIdx[e] ?? 0;
+        y[v] = y[v]! + s * (this.rDelta[e * 3 + 1] ?? 0);
+      }
+    }
+    for (const [name, w] of macroTargetWeights(this.packs.modifiers.macro, this.breastNames(), params)) {
+      const t = this.localByName.get(name);
+      if (!t || w === 0) continue;
+      const s = w * t.scale;
+      for (let e = t.start; e < t.start + t.count; e++) {
+        const v = this.lIdx[e] ?? 0;
+        y[v] = y[v]! + s * (this.lDelta[e * 3 + 1] ?? 0);
+      }
+    }
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of bodyRange) for (let v = a; v <= b; v++) {
+      const h = y[v]!;
+      if (h < lo) lo = h;
+      if (h > hi) hi = h;
+    }
+    return hi - lo;
   }
 
   private addLocal(into: Float32Array, name: string, w: number): void {

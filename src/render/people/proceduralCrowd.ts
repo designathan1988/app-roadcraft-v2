@@ -27,7 +27,7 @@ import { buildClassAnimation, createPalettePass, type ClassAnimation, type Palet
 import { BODY_WIDTH, createClassBodies, type ClassBodies } from './crowdBodies';
 import {
   EYE_TRIANGLES, FAR_TRIANGLES, LEVELS, LEVEL_CAPS, LEVEL_TRIANGLES, REGION, cardCentres, cardSelections, farMesh, filterTriangles,
-  levelFor, lodReady, simplifiedIndex, sortSkinWeights, type FarPart, type PieceRole,
+  levelFor, lodReady, simplifiedIndexAway, sortSkinWeights, type FarPart, type PieceRole,
 } from './crowdLod';
 import { createBlobShadows } from '../blobShadows';
 
@@ -877,7 +877,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   const blobs = createBlobShadows('procedural-people-shadows', 1024);
   group.add(blobs.mesh);
   /** How every item is drawn at each level, by item (the body: 'skin'): the same for every class, whose fits share their vertices' order. */
-  const lodPlans = new Map<string, LodPlan>();
+  const lodPlans = new Map<string, Promise<LodPlan>>();
   const levelCount = [0, 0, 0, 0];
   let trianglesDrawn = 0;
 
@@ -1255,9 +1255,16 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
   };
 
   /** How an item is drawn at each level (`LodPlan`), worked out once for every class. */
-  const lodPlan = (key: string, geometry: BufferGeometry, kind: Kind, role: PieceRole): LodPlan => {
+  const lodPlan = (key: string, geometry: BufferGeometry, kind: Kind, role: PieceRole): Promise<LodPlan> => {
     const known = lodPlans.get(key);
     if (known) return known;
+    const plan = makeLodPlan(geometry, kind, role);
+    lodPlans.set(key, plan);
+    plan.catch(() => { if (lodPlans.get(key) === plan) lodPlans.delete(key); });
+    return plan;
+  };
+  /** The simplifying itself by the worker (`simplifiedIndexAway`), every level at once. */
+  const makeLodPlan = async (geometry: BufferGeometry, kind: Kind, role: PieceRole): Promise<LodPlan> => {
     const budgets = LEVEL_TRIANGLES[role];
     const all = geometry.getIndex()!.count / 3;
     const attr = (index: Uint32Array | null): BufferAttribute | null => (index && index.length ? new BufferAttribute(index, 1) : null);
@@ -1265,12 +1272,12 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     if (kind === 'hair' || kind === 'face') {
       // Cards kept by their area; a stock hair that is one mesh is simplified instead.
       const { cardOf, selections } = cardSelections(geometry, budgets);
-      const indices = selections.map((s, level) => {
+      const indices = await Promise.all(selections.map(async (s, level) => {
         if (!s) return null;
         if (s.index.length / 3 >= all && s.widen === 1) return 'all' as const;
-        if (s.index.length / 3 > budgets[level]! * 1.3) return attr(simplifiedIndex(geometry, budgets[level]!));
+        if (s.index.length / 3 > budgets[level]! * 1.3) return attr(await simplifiedIndexAway(geometry, budgets[level]!));
         return attr(s.index);
-      });
+      }));
       plan = {
         indices,
         widen: selections.map((s, level) => (kind === 'hair' && indices[level] !== null && s && s.index.length / 3 <= budgets[level]! * 1.3 ? s.widen : 1)),
@@ -1283,23 +1290,23 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       const eye = geometry.getAttribute('eyeMask');
       const eyes = filterTriangles(index, (v) => eye.getX(v) > 0.5);
       const rest = filterTriangles(index, (v) => eye.getX(v) <= 0.5);
-      const indices = budgets.map((budget, level) => {
+      const indices = await Promise.all(budgets.map(async (budget, level) => {
         if (level === 0) return 'all' as const;
         if (budget <= 0) return null;
-        const own = simplifiedIndex(geometry, budget - EYE_TRIANGLES[level]!, rest);
-        const eyeIndex = EYE_TRIANGLES[level]! > 0 ? simplifiedIndex(geometry, EYE_TRIANGLES[level]!, eyes) : null;
+        const [own, eyeIndex] = await Promise.all([simplifiedIndexAway(geometry, budget - EYE_TRIANGLES[level]!, rest),
+          EYE_TRIANGLES[level]! > 0 ? simplifiedIndexAway(geometry, EYE_TRIANGLES[level]!, eyes) : null]);
         if (!own) return null;
         const both = new Uint32Array(own.length + (eyeIndex?.length ?? 0));
         both.set(own);
         if (eyeIndex) both.set(eyeIndex, own.length);
         return attr(both);
-      });
+      }));
       plan = { indices, widen: [1, 1, 1, 1], cardOf: null, triangles: indices.map((x) => (x === 'all' ? all : x ? x.count / 3 : 0)) };
     } else {
-      const indices = budgets.map((budget, level) => (level === 0 ? 'all' as const : budget > 0 ? attr(simplifiedIndex(geometry, budget)) : null));
+      const indices = await Promise.all(budgets.map(async (budget, level) => (level === 0 ? 'all' as const
+        : budget > 0 ? attr(await simplifiedIndexAway(geometry, budget)) : null)));
       plan = { indices, widen: [1, 1, 1, 1], cardOf: null, triangles: indices.map((x) => (x === 'all' ? all : x ? x.count / 3 : 0)) };
     }
-    lodPlans.set(key, plan);
     return plan;
   };
 
@@ -1316,7 +1323,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     map: Texture | null, eyes: Texture | null, grown: boolean): Promise<Item> => {
     await lodReady;
     sortSkinWeights(source);
-    const plan = lodPlan(role === 'skin' ? 'skin' : name, source, kind, role);
+    const plan = await lodPlan(role === 'skin' ? 'skin' : name, source, kind, role);
     const widen = !!plan.cardOf && plan.widen.some((w) => w !== 1);
     if (widen) source.setAttribute('aCard', new Float32BufferAttribute(cardCentres(source, plan.cardOf!), 3));
     if (grown && !source.getAttribute('aFade')) source.setAttribute('aFade', new Float32BufferAttribute(new Float32Array(source.getAttribute('position').count).fill(1), 1));
@@ -1925,19 +1932,26 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       const body = cls.bodies.pick(coef);
       // Their own face: the regional sliders on the class body, posed as it
       // is - the shape basis carries the macro build, this the features.
+      // The sliders are sparse targets added to the class body (MakeHuman's
+      // `Target.apply`), so only their moves are made, and posed at the head's
+      // vertices alone (`deltasAt`): the whole body shaped and posed for them
+      // was some 10 ms of the main thread a person.
       if (Object.keys(spec.features).length) {
-        const moved = cls.rig.deltas!(mo.shape(cls.base, spec.features));
+        const offset = new Float32Array(mo.vertexCount * 3);
+        mo.addRegional(offset, spec.features);
+        const moved = cls.rig.deltasAt!(offset, cls.faceVerts);
         const faceRows = cls.uniforms.procFaceRows.value;
         const at = row * faceRows * FACE_WIDTH * 4;
-        cls.faceVerts.forEach((v, i) => {
-          cls.face[at + i * 4] = moved[v * 3]!;
-          cls.face[at + i * 4 + 1] = moved[v * 3 + 1]!;
-          cls.face[at + i * 4 + 2] = moved[v * 3 + 2]!;
-        });
+        for (let i = 0; i < cls.faceVerts.length; i++) {
+          cls.face[at + i * 4] = moved[i * 3]!;
+          cls.face[at + i * 4 + 1] = moved[i * 3 + 1]!;
+          cls.face[at + i * 4 + 2] = moved[i * 3 + 2]!;
+        }
         touchRows(cls.uniforms.procFace.value, row * faceRows, faceRows);
       }
-      const tall = bodyHeight(mo.shape(spec.body), a.bodyRange);
-      const level0 = bodyHeight(mo.shape(level), a.bodyRange);
+      // Heights from the vertices' Y alone (MakeHuman's `getHeightCm`).
+      const tall = mo.height(spec.body, a.bodyRange);
+      const level0 = mo.height(level, a.bodyRange);
       const scale = tall / Math.max(1e-3, level0);
       const person: ProceduralPerson = {
         spec, band, sex, row, scale, height: tall / 10, items: worn.map(([nm]) => nm),

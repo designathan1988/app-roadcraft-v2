@@ -541,6 +541,13 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
             if (!material) continue;
             const stand = new InstancedMesh(geometry, material as MeshStandardMaterial, 1);
             stand.frustumCulled = false;
+            // Every body is drawn with a colour per instance (burnt or not):
+            // `instancingColor` is part of three's program key
+            // (WebGLPrograms.getProgramCacheKeyBooleans). Without one here the
+            // program compiled ahead was never the one drawn, and each new body
+            // linked its real program in the frame it appeared: 60-90 ms each.
+            stand.instanceColor = new InstancedBufferAttribute(new Float32Array(3).fill(1), 3);
+            stand.receiveShadow = mesh.receiveShadow;
             if (face && source.morphTargetInfluences) {
               stand.morphTargetInfluences = [...source.morphTargetInfluences];
               stand.setMorphAt(0, source);

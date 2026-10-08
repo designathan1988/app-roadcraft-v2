@@ -1,5 +1,6 @@
 import { MeshoptSimplifier } from 'meshoptimizer';
-import { type LodLevel, type LodRequest, simplifyLevels } from './lodWorker';
+import { type LodLevel, simplifyLevels } from './lodWorker';
+import { lodPool } from './lodPool';
 import {
   Bone,
   BufferAttribute,
@@ -7,6 +8,7 @@ import {
   Color,
   DoubleSide,
   Group,
+  Matrix3,
   Matrix4,
   MeshStandardMaterial,
   Quaternion,
@@ -158,6 +160,12 @@ export interface PersonRig {
    * pinned to them follows too.
    */
   readonly deltas?: (shape: Float32Array) => Float32Array;
+  /**
+   * `deltas(positions + offset)` at the listed vertices only (`offset` in
+   * decimetres, the packs' frame), three numbers per listed vertex: a few
+   * hundred vertices posed instead of the whole mesh.
+   */
+  readonly deltasAt?: (offset: Float32Array, vertices: ArrayLike<number>) => Float32Array;
 }
 
 export function createPersonRig(input: PersonRigInput): PersonRig {
@@ -383,7 +391,35 @@ export function createPersonRig(input: PersonRigInput): PersonRig {
     }
     return body;
   };
-  return { scene, mesh, height: highest - lowest, wear, deltas, ...(morph ? { morph } : {}) };
+  // The posture's linear parts: what a move of a vertex (a direction, not a
+  // point) is turned by - MakeHuman skins a target's offsets with the 3x3
+  // part alone (`animation.skinMesh`, "translations do not affect").
+  const linear = correction.map((c) => new Matrix3().setFromMatrix4(c));
+  const deltasAt = (offset: Float32Array, vertices: ArrayLike<number>): Float32Array => {
+    // `toMetres` stands the shape on its lowest body vertex: an offset that
+    // moves the feet lifts or drops the whole body.
+    let lowestOffset = Infinity;
+    for (const [a, b] of bodyRange) for (let v = a; v <= b; v++) lowestOffset = Math.min(lowestOffset, positions[v * 3 + 1]! + offset[v * 3 + 1]!);
+    const drop = lowestOffset - lowestDm;
+    const out = new Float32Array(vertices.length * 3);
+    const d = new Vector3(), q = new Vector3();
+    for (let i = 0; i < vertices.length; i++) {
+      const v = vertices[i]!;
+      d.set(offset[v * 3]! / 10, (offset[v * 3 + 1]! - drop) / 10, offset[v * 3 + 2]! / 10);
+      let sum = 0, x = 0, y = 0, z = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = data.weights[v * 4 + k]! / 65535;
+        if (w === 0) continue;
+        q.copy(d).applyMatrix3(linear[data.joints[v * 4 + k]!]!);
+        x += q.x * w; y += q.y * w; z += q.z * w; sum += w;
+      }
+      out[i * 3] = sum > 0 ? x / sum : d.x;
+      out[i * 3 + 1] = sum > 0 ? y / sum : d.y;
+      out[i * 3 + 2] = sum > 0 ? z / sum : d.z;
+    }
+    return out;
+  };
+  return { scene, mesh, height: highest - lowest, wear, deltas, deltasAt, ...(morph ? { morph } : {}) };
 }
 
 // ---------------------------------------------------------------- geometry
@@ -799,9 +835,9 @@ function setLevels(geometry: BufferGeometry, positions: readonly number[], colou
   };
   // In the browser the work is done by a worker, and the body is shown when
   // its levels are ready (\`lodReady\`); elsewhere (tests) it is done here.
-  const worker = lodWorker();
+  const worker = lodPool();
   if (worker) {
-    geometry.userData['lodReady'] = worker.run({ positions: pos, colours: col, index: all, ranges, levels: LOD_LEVELS }).then(store);
+    geometry.userData['lodReady'] = worker.levels({ positions: pos, colours: col, index: all, ranges, levels: LOD_LEVELS }).then(store);
     return;
   }
   store(simplifyLevels({ positions: pos, colours: col, index: all, ranges, levels: LOD_LEVELS }));
@@ -894,28 +930,4 @@ function insetUvs(uvs: ArrayLike<number>, index: ArrayLike<number>, n: number, r
     out[v * 2 + 1] = out[v * 2 + 1]! + (dv / len) * reach;
   }
   return out;
-}
-
-/** The simplifier worker, started once; null where there are no workers (tests). */
-let lodPool: { run(req: Omit<LodRequest, 'id'>): Promise<LodLevel[]> } | null | undefined;
-function lodWorker(): typeof lodPool {
-  if (lodPool !== undefined) return lodPool;
-  if (typeof Worker === 'undefined' || typeof window === 'undefined') return (lodPool = null);
-  const worker = new Worker(new URL('./lodWorker.ts', import.meta.url), { type: 'module' });
-  const waiting = new Map<number, (levels: LodLevel[]) => void>();
-  let next = 1;
-  worker.onmessage = (e: MessageEvent<{ id: number; levels: LodLevel[] }>) => {
-    waiting.get(e.data.id)?.(e.data.levels);
-    waiting.delete(e.data.id);
-  };
-  lodPool = {
-    run(req) {
-      const id = next++;
-      return new Promise((resolve) => {
-        waiting.set(id, resolve);
-        worker.postMessage({ id, ...req });
-      });
-    },
-  };
-  return lodPool;
 }
