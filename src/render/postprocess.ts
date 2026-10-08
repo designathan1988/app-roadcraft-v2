@@ -5,7 +5,6 @@ import {
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { MAP_SIZE } from '@world/bounds';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
-import { PLANET_SHADER, planetPoint } from './planet';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -62,12 +61,6 @@ export interface PostChain {
    * the air round it is drawn too: the backdrop and the haze of distance.
    */
   setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color, backdrop: boolean): void;
-  /**
-   * How far out to the whole globe the view is (`Viewport.globe`): out there
-   * the crease shading is off - nothing at that scale has a crease, and over
-   * the depth of a whole planet its reconstruction drew a line across it.
-   */
-  setGlobe(globe: number): void;
   /** The clouds the player placed (`world/clouds.ts`). */
   setPlacedClouds(clouds: readonly PlacedCloud[]): void;
   /** How far the wind has carried the clouds, on the map (`world/clouds.ts` driftedCloud). */
@@ -97,10 +90,8 @@ export interface Atmosphere {
   /** 0 none (the default: the map seen clear), 1 a thick mist. */
   readonly fog: number;
   readonly fogHeight: number;
-  /** The planet the map is drawn on, its radius in units (`planet.ts`); 0: flat. */
-  readonly planet: number;
 }
-export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150, planet: 0 };
+export const DEFAULT_ATMOSPHERE: Atmosphere = { clouds: 0.4, cloudBase: 450, cloudThickness: 375, fog: 0, fogHeight: 150 };
 
 export function createPostChain(
   renderer: WebGLRenderer,
@@ -124,9 +115,6 @@ export function createPostChain(
       },
       setAtmosphere() {
         /* no clouds or mist without the chain */
-      },
-      setGlobe() {
-        /* no crease shading without the chain */
       },
       setGroundFog() {
         /* no painted fog without the chain */
@@ -257,7 +245,6 @@ export function createPostChain(
   let cloudClock = 0;
   let placedClouds: readonly PlacedCloud[] = [];
   const cloudDrift = { x: 0, y: 0 };
-  const globePoint = new Vector3();
   /** The clouds' bodies at a quarter of the pixels (`CLOUD_BODIES_MAIN`), drawn just before the pass that blends them in. */
   const bodiesSize = (n: number): number => Math.max(1, Math.ceil(n / 2));
   const bodiesTarget = new WebGLRenderTarget(bodiesSize(size.x * ratio), bodiesSize(size.y * ratio), { type: HalfFloatType, depthBuffer: false });
@@ -309,13 +296,6 @@ export function createPostChain(
         const u = clouds.uniforms as Record<string, { value: unknown }>;
         const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds, cloudDrift);
         u['uCloudCount']!.value = count;
-        // Laid over the plane, drawn over the globe (`planet.ts`).
-        const onGlobe = (v: Vector4): void => {
-          planetPoint(v.x, v.y, v.z, globePoint);
-          v.set(globePoint.x, globePoint.y, globePoint.z, v.w);
-        };
-        for (let i = 0; i < count; i++) onGlobe((u['uCloud']!.value as Vector4[])[i]!);
-        for (let i = 0; i < count * CLOUD_PUFFS; i++) onGlobe((u['uPuff']!.value as Vector4[])[i]!);
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
         // Nothing of it shows - no cloud, no mist, no painted fog, no air round
@@ -331,9 +311,6 @@ export function createPostChain(
       // No sun, no cloud shadow.
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
-    },
-    setGlobe(globe) {
-      if (gtao) gtao.enabled = globe < 0.05;
     },
     setPlacedClouds(clouds) {
       placedClouds = clouds;
@@ -495,8 +472,6 @@ const CLOUD_SHADOWS = {
     uGroundFogSlab: { value: new Vector2() },
     uMapHalf: { value: MAP_SIZE / 2 },
     uBackdrop: { value: 0 },
-    planetBend: PLANET_SHADER.uniform,
-    planetSpin: PLANET_SHADER.spin,
     // The void round the map: its deep blue, the paler air towards the
     // horizon, and the abyss below (sRGB, as the page's own colours).
     uSkyDeep: { value: new Color(0x0c1a2c) },
@@ -542,10 +517,9 @@ const CLOUD_SHADOWS = {
     uniform vec2 uGroundFogSlab;
     uniform float uMapHalf;
     uniform float uBackdrop;
-    uniform vec4 planetBend;
-    // Height over the ground's base level: over the globe, out from its centre.
+    // Height over the ground's base level.
     float altitude(vec3 p) {
-      return planetBend.x > 0.0 ? length(p + vec3(0.0, planetBend.x, 0.0)) - planetBend.x : p.y;
+      return p.y;
     }
     uniform vec3 uSkyDeep;
     uniform vec3 uSkyGlow;
@@ -677,41 +651,7 @@ const CLOUD_SHADOWS = {
       // pale horizon from afar and ground seen close up stays clear. The backdrop hangs on the view's direction, as a
       // sky infinitely far: the map slides over it, and it turns only with the
       // camera - its parallax.
-      if (uBackdrop > 0.5 && planetBend.x > 0.0) {
-        // ON A PLANET the air is a shell round the globe, and each pixel
-        // takes on the air its ray crosses inside the shell (the in-scattering
-        // and extinction along the ray of Preetham's and Hillaire's
-        // atmospheres): from the street the horizon pales and nearby ground
-        // stays clear; from space the globe is clear and its limb glows,
-        // ringed by the lit air, against the dark.
-        float R = planetBend.x;
-        vec3 centre = vec3(0.0, -R, 0.0);
-        vec2 shell = sphereSpan(ro, rd, vec4(centre, R + 1100.0));
-        float enter = max(shell.x, 0.0);
-        float path = shell.y > 0.0 ? max(0.0, (sky ? shell.y : tScene) - enter) : 0.0;
-        float sunSide = pow(max(dot(rd, uSunDir), 0.0), 3.0);
-        vec3 haze = mix(uSkyGlow, uSkyGlow * vec3(1.4, 1.18, 0.9), sunSide * 0.6) * (1.0 - 0.85 * uDark);
-        // How far out into space the eye is: the sky goes from the day's
-        // blue to the dark of space round the whole planet.
-        float altitude = length(ro - centre) - R;
-        float space = smoothstep(1500.0, 9000.0, altitude);
-        if (sky) {
-          float veil = noise3(rd * 4.0 + 3.1) * 0.6 + noise3(rd * 9.0 + 7.7) * 0.4;
-          vec3 inside = mix(uSkyDeep * (0.88 + 0.24 * veil), haze * 1.2, 1.0 - exp(-path / 5000.0));
-          // From space: the air's glow at the limb, thickest where the ray
-          // grazes the ground and fading out with height (an exponential
-          // atmosphere, Chapman's grazing column: exp(-h / H)).
-          vec3 toCentre = centre - ro;
-          float along = dot(toCentre, rd);
-          float graze = along > 0.0 ? length(toCentre - rd * along) - R : altitude;
-          float limb = exp(-max(graze, 0.0) / 380.0);
-          vec3 outside = vec3(0.0015, 0.002, 0.006) + haze * 1.3 * limb;
-          colour = mix(inside, outside, space);
-        } else {
-          float far = max(0.0, path - 2200.0);
-          colour = mix(colour, haze, (1.0 - exp(-far / 9000.0)) * 0.55);
-        }
-      } else if (uBackdrop > 0.5) {
+      if (uBackdrop > 0.5) {
         float zen = acos(clamp(abs(rd.y), 0.0, 1.0));
         float air = 1.0 / (cos(zen) + 0.15 * pow(max(93.885 - degrees(zen), 1e-3), -1.253));
         float glow = 1.0 - exp(-air * 0.12);
@@ -752,7 +692,7 @@ const CLOUD_SHADOWS = {
       // map, the ground under it from the map's other channel. Lit by the
       // sky and, looking towards the sun, its warm glow (Inigo Quilez,
       // "Better Fog").
-      if (uGroundFog.w > 0.5 && planetBend.x <= 0.0) {
+      if (uGroundFog.w > 0.5) {
         float t0 = 0.0, t1 = min(tScene, 30000.0);
         // Into the slab [low, high] along the ray.
         if (abs(rd.y) > 1e-4) {

@@ -89,12 +89,6 @@ export interface Viewport {
    * reload of a zoomed-in session back to 320%.
    */
   readonly zoomBounds: { readonly min: number; readonly max: number };
-  /**
-   * How far the view has pulled back to a whole planet: 0 at the ground (or
-   * on a flat map), 1 with the globe filling the view. Out there a drag turns
-   * the globe whatever tool is in hand, as a globe viewer's does.
-   */
-  readonly globe: number;
 }
 
 /** The existing flat camera, behind the same seam. */
@@ -141,6 +135,5 @@ export function flatViewport(camera: Camera): Viewport {
     get zoomBounds() {
       return { min: MIN_ZOOM, max: MAX_ZOOM };
     },
-    globe: 0,
   };
 }

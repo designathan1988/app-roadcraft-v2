@@ -89,8 +89,8 @@ const WIND_GLSL = /* glsl */ `
   }
 `;
 
-// Read when a program is built, not when this module loads: the chunk is
-// rewritten for the globe (`planet.ts`) after the modules load.
+// Three's own `project_vertex`, with the wind added before the model-view
+// matrix (read when a program is built).
 const projectWithWind = (): string => ShaderChunk.project_vertex.replace(
   'mvPosition = modelViewMatrix * mvPosition;',
   `#ifdef USE_INSTANCING

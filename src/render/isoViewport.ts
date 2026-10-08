@@ -8,8 +8,6 @@ import {
 } from 'three';
 
 import type { Vec2 } from '@core/vec2';
-import { PLANET_SPIN, planetFrame, planetPick, planetPoint, planetRadius, planetUnbend, setPlanetSpin } from './planet';
-import { Quaternion } from 'three';
 import { MAP_HALF } from '@world/bounds';
 import type { Facing, Viewport } from '@view/viewport';
 
@@ -33,15 +31,7 @@ export const MAX_HALF_HEIGHT = 1_600;
  * the boot-time clamp before the rig exists.
  */
 export function isoZoomBounds(height: number): { min: number; max: number } {
-  return { min: height / (maxHalfHeight() * 2), max: height / (MIN_HALF_HEIGHT * 2) };
-}
-
-/**
- * How far out the view may go: on a planet, far enough to see the whole globe
- * (`planet.ts`); on a flat map, MAX_HALF_HEIGHT.
- */
-export function maxHalfHeight(): number {
-  return Math.max(MAX_HALF_HEIGHT, planetRadius() * 1.5);
+  return { min: height / (MAX_HALF_HEIGHT * 2), max: height / (MIN_HALF_HEIGHT * 2) };
 }
 
 /**
@@ -68,11 +58,6 @@ const DISTANCE = 5000;
  */
 export const PERSPECTIVE_FOV = 35;
 const TAU = Math.PI * 2;
-
-const smooth = (v: number): number => {
-  const t = Math.min(1, Math.max(0, v));
-  return t * t * (3 - 2 * t);
-};
 
 export function clampElevation(e: number): number {
   return Math.min(MAX_ELEVATION, Math.max(MIN_ELEVATION, e));
@@ -139,7 +124,7 @@ export function createIsoRig(
 
   let width = 1;
   let height = 1;
-  let halfHeight = Math.min(maxHalfHeight(), Math.max(MIN_HALF_HEIGHT, initialHalfHeight));
+  let halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, initialHalfHeight));
   let azimuth = wrapAzimuth(Number.isFinite(orbit.azimuth) ? orbit.azimuth : DEFAULT_AZIMUTH);
   let elevation = clampElevation(Number.isFinite(orbit.elevation) ? orbit.elevation : DEFAULT_ELEVATION);
   let chase: Chase | null = null;
@@ -157,66 +142,38 @@ export function createIsoRig(
       persp.up.set(0, 1, 0);
       persp.position.copy(chase.eye);
       target.copy(chase.focus);
-      if (planetRadius() > 0) {
-        // On the globe: the eye and what it looks at carried with the ground
-        // round the player, the world's up turned with it.
-        planetFrame(target.x, target.z, turn);
-        planetPoint(target.x, target.y, target.z, bentFocus);
-        persp.position.sub(target).applyQuaternion(turn).add(bentFocus);
-        persp.up.applyQuaternion(turn);
-        persp.lookAt(look.copy(chase.look).sub(target).applyQuaternion(turn).add(bentFocus));
-      } else {
-        persp.lookAt(chase.look);
-      }
+      persp.lookAt(chase.look);
       persp.updateProjectionMatrix();
       persp.updateMatrixWorld(true);
       return;
     }
     persp.fov = PERSPECTIVE_FOV;
-    const R = planetRadius();
-    if (R > 0 && litFor <= 0) {
-      // The planet just came on: the ground the view was over brought to
-      // the top of the globe.
-      litFor = R;
-      bringToTop(target.x, target.z);
-    }
-    litFor = R;
-    if (R <= 0) {
-      // The view's centre stays over the map: dragged off it, the view
-      // showed nothing but sky - a white screen.
-      target.x = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.x));
-      target.z = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.z));
-    }
-    // Pulled back from a planet to see it whole: how far the view has gone
-    // from the street to the globe (0 on the ground, 1 the globe filling it).
-    globe = R > 0 ? smooth((halfHeight - R * 0.15) / (R * 1.05)) : 0;
-    let distance = DISTANCE + globe * R * 2.4;
+    // The view's centre stays over the map: dragged off it, the view
+    // showed nothing but sky - a white screen.
+    target.x = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.x));
+    target.z = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.z));
+    let distance = DISTANCE;
     if (camera === ortho) {
       ortho.left = -halfHeight * aspect;
       ortho.right = halfHeight * aspect;
       ortho.top = halfHeight;
       ortho.bottom = -halfHeight;
-      // Room for the whole globe behind the point looked at.
-      ortho.far = Math.max(14000, distance + R * 2.6);
+      ortho.far = 14000;
     } else {
       // As far back as makes the view `halfHeight` tall at the centre: the
       // same scale there as the orthographic view had.
       distance = halfHeight / Math.tan((PERSPECTIVE_FOV * Math.PI) / 360);
       persp.aspect = aspect;
       persp.near = Math.max(0.5, distance * 0.02);
-      persp.far = distance * 4 + 6000 + R * 2.6;
+      persp.far = distance * 4 + 6000;
     }
 
-    // On a planet the camera stays over the top of the globe and the GLOBE
-    // turns (`planet.ts` PLANET_SPIN), as a globe viewer's does: the ground
-    // looked at is always brought to the top, any way round, with no pole the
-    // view cannot pass. `target` is that ground on the map's chart.
     // In perspective the view looks at the ground itself, at its height
     // there: at the height of the plane at zero, a camera brought close over
     // a hill or a chapada ended inside it and showed the land from below
     // (the player, 2026-10-07).
-    if (camera === persp && R <= 0 && groundAt) target.y = groundAt(target.x, -target.z);
-    const looked = R > 0 ? look.set(0, target.y, 0) : target;
+    if (camera === persp && groundAt) target.y = groundAt(target.x, -target.z);
+    const looked = target;
     const horizontal = Math.cos(elevation) * distance;
     camera.position.set(
       looked.x + Math.cos(azimuth) * horizontal,
@@ -228,7 +185,7 @@ export function createIsoRig(
     // straight down the world's up is the view direction itself and `lookAt`
     // would have no roll to go by, so the plan view would spin at random.
     camera.up.set(-Math.cos(azimuth), 0, -Math.sin(azimuth));
-    if (camera === persp && R <= 0 && groundAt) {
+    if (camera === persp && groundAt) {
       // And never under the ground where it stands: raised over it, still
       // looking at the same point (the camera-terrain clamp of Cesium's and
       // Unity's orbit cameras, read from the height field).
@@ -236,65 +193,12 @@ export function createIsoRig(
       if (camera.position.y < floor) camera.position.y = floor;
     }
     camera.lookAt(looked);
-    if (globe > 0) {
-      // Pulled back to the whole planet: the view slides from the ground it
-      // looked at down to the planet's centre, the globe whole in the middle.
-      camera.position.y -= globe * R;
-    }
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
   };
-  /** How far out to the whole globe the view is (`Viewport.globe`). */
-  let globe = 0;
   /** The drawn ground's height at a map point (`setGround`). */
   let groundAt: ((x: number, y: number) => number) | null = null;
-  /** The planet's radius the view was last set for (0: flat). */
-  let litFor = 0;
-  const spin = new Quaternion();
-  const from = new Vector3();
-  const to = new Vector3();
-  /** Turns the globe so a direction from its centre comes round to another. */
-  const turnGlobe = (a: Vector3, b: Vector3): void => {
-    if (a.lengthSq() < 1e-9 || b.lengthSq() < 1e-9) return;
-    spin.setFromUnitVectors(a.normalize(), b.normalize()).multiply(PLANET_SPIN);
-    setPlanetSpin(spin);
-  };
-  /** The map's chart point now at the top of the globe, into `target`. */
-  const syncTarget = (): void => {
-    planetUnbend(to.set(0, 0, 0), from);
-    const rho = Math.hypot(from.x, from.z), most = planetRadius() * 400;
-    const k = rho > most ? most / rho : 1;
-    target.x = from.x * k;
-    target.z = from.z * k;
-  };
-  /** Turns the globe to bring a chart point (three's x, z) to its top. */
-  const bringToTop = (x: number, z: number): void => {
-    const R = planetRadius();
-    planetPoint(x, 0, z, from);
-    from.y += R;
-    turnGlobe(from, to.set(0, 1, 0));
-    syncTarget();
-  };
-  /**
-   * Where a pointer's ray meets the globe at height `atHeight`, as a direction
-   * from its centre; past the limb, the direction of the ray's nearest pass,
-   * so a drag off the edge still turns the globe.
-   */
-  const globeDirection = (px: number, py: number, atHeight: number, out: Vector3): Vector3 => {
-    ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
-    raycaster.setFromCamera(ndc, camera);
-    const R = planetRadius();
-    const o = raycaster.ray.origin, d = raycaster.ray.direction;
-    const ox = o.x, oy = o.y + R, oz = o.z;
-    const b = ox * d.x + oy * d.y + oz * d.z;
-    const c = ox * ox + oy * oy + oz * oz - (R + atHeight) * (R + atHeight);
-    const disc = b * b - c;
-    const t = disc >= 0 ? -b - Math.sqrt(disc) : -b;
-    return out.set(ox + d.x * t, oy + d.y * t, oz + d.z * t);
-  };
-  const turn = new Quaternion();
-  const bentFocus = new Vector3();
-  const look = new Vector3();
+  const projected = new Vector3();
 
   /**
    * The point under a pointer, on the horizontal plane at `atHeight`.
@@ -308,11 +212,6 @@ export function createIsoRig(
   const worldAt = (px: number, py: number, atHeight = 0): Vec2 => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
     raycaster.setFromCamera(ndc, camera);
-    if (planetRadius() > 0) {
-      // On the globe: the sphere at that height, taken back to the plane exactly.
-      const onGlobe = planetPick(raycaster.ray.origin, raycaster.ray.direction, atHeight, hit);
-      return onGlobe ? { x: onGlobe.x, y: -onGlobe.z } : { x: target.x, y: -target.z };
-    }
     ground.constant = -atHeight;
     const ok = raycaster.ray.intersectPlane(ground, hit);
     ground.constant = 0;
@@ -322,17 +221,6 @@ export function createIsoRig(
 
   /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
   const keeping = (px: number, py: number, change: () => void, atHeight = 0): void => {
-    if (planetRadius() > 0) {
-      // The globe turned under the camera so the ground under the pointer
-      // stays there: one exact step (the camera does not follow the turn).
-      const before = globeDirection(px, py, atHeight, new Vector3());
-      change();
-      apply();
-      turnGlobe(before, globeDirection(px, py, atHeight, new Vector3()));
-      syncTarget();
-      apply();
-      return;
-    }
     const before = worldAt(px, py, atHeight);
     change();
     apply();
@@ -352,24 +240,13 @@ export function createIsoRig(
     toWorld: (px, py) => worldAt(px, py),
     toWorldAt: (px, py, atHeight) => worldAt(px, py, atHeight),
     toScreen(p, cssW, cssH, atHeight = 0) {
-      const projected = planetPoint(p.x, atHeight, -p.y, new Vector3()).project(camera);
+      projected.set(p.x, atHeight, -p.y).project(camera);
       return {
         x: (projected.x * 0.5 + 0.5) * cssW,
         y: (-projected.y * 0.5 + 0.5) * cssH,
       };
     },
     panTo(grabbed, px, py) {
-      const R = planetRadius();
-      if (R > 0) {
-        // The grabbed ground turned round to under the hand: the globe
-        // spins any way, as in a globe viewer.
-        planetPoint(grabbed.x, 0, -grabbed.y, from);
-        from.y += R;
-        turnGlobe(from, globeDirection(px, py, 0, to));
-        syncTarget();
-        apply();
-        return;
-      }
       const now = worldAt(px, py);
       target.x += grabbed.x - now.x;
       target.z -= grabbed.y - now.y;
@@ -377,7 +254,7 @@ export function createIsoRig(
     },
     zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0) {
       keeping(px, py, () => {
-        halfHeight = Math.min(maxHalfHeight(), Math.max(MIN_HALF_HEIGHT, halfHeight / factor));
+        halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, halfHeight / factor));
       }, atHeight);
     },
     rotate(quarterTurns, px, py) {
@@ -412,7 +289,6 @@ export function createIsoRig(
     },
     moveTo(p) {
       target.set(p.x, 0, -p.y);
-      if (planetRadius() > 0) bringToTop(target.x, target.z);
       apply();
     },
     get zoom() {
@@ -424,9 +300,6 @@ export function createIsoRig(
     },
     get zoomBounds() {
       return isoZoomBounds(height);
-    },
-    get globe() {
-      return globe;
     },
   };
 

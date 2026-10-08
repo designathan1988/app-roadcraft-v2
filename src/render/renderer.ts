@@ -16,7 +16,6 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Color,
-  Quaternion,
   ACESFilmicToneMapping,
   Box3,
   PointLight,
@@ -26,7 +25,6 @@ import {
   type Material,
   Mesh,
   MeshDepthMaterial,
-  MeshStandardMaterial,
   type Object3D,
   RGBADepthPacking,
   Sphere,
@@ -54,7 +52,6 @@ import { createEnvironment } from './environment';
 import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { DEFAULT_ATMOSPHERE, createPostChain, type Atmosphere, type PostChain } from './postprocess';
-import { PLANET_SHADER, PLANET_SPIN, createPlanetBody, installPlanet, planeCamera, planetPoint, planetRadius, planetScene, setPlanetRadius, unspin } from './planet';
 import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
 import { disposeMesh } from './mesh/surfaceMesh';
@@ -78,7 +75,7 @@ import { buildSigns, type SignLayer } from './signs';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { GRASS_FIELD, PLANET_GROUND_LEVEL, PLANET_SKIRT_WIDTH, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -409,8 +406,6 @@ export function createSceneRenderer(
   initialQuality: QualityLevel | 'auto' = 'auto',
   onAssetsReady: () => void = () => {},
 ): SceneHandle {
-  // The globe's vertex chunks, before any program is built (`planet.ts`).
-  installPlanet();
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -492,9 +487,9 @@ export function createSceneRenderer(
     geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
     geometry.setAttribute('aRing', new Float32BufferAttribute(ring, 1));
     const material = new ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, planetBend: PLANET_SHADER.uniform, planetSpin: PLANET_SHADER.spin },
-      vertexShader: `${PLANET_SHADER.glsl} attribute float aRing; varying float vRing;
-        void main() { vRing = aRing; gl_Position = projectionMatrix * planetView(modelViewMatrix * vec4(position, 1.0)); }`,
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `attribute float aRing; varying float vRing;
+        void main() { vRing = aRing; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
       fragmentShader: `uniform float uTime; varying float vRing;
         void main() {
           float t = uTime - vRing * 0.09;
@@ -961,18 +956,6 @@ export function createSceneRenderer(
   const sunLight = new Color();
   /** Towards the sun, for the relief's own shadows (`TerrainSurface.setSun`). */
   const sunTowards = new Vector3();
-  /** The globe's turn last seen, and when it was last still (the relief's shadows wait for it). */
-  const spunAt = new Quaternion();
-  let spinSettled = 0;
-  /** The camera taken back to the plane, for the CPU's culling (`planeCamera`). */
-  let flatCamera = rig.camera.clone();
-  /** The rest of the globe round the map (`planet.ts`). */
-  planetScene(scene);
-  const planetBody = createPlanetBody(TERRAIN_HALF + PLANET_SKIRT_WIDTH, PLANET_GROUND_LEVEL, (terrain.ground.material as MeshStandardMaterial).map);
-  scene.add(planetBody.mesh);
-  terrain.skirt.material = planetBody.skirtMaterial;
-  setPlanetRadius(atmosphere.planet);
-  planetBody.setRadius(atmosphere.planet);
   const flatDirection = new Vector3();
   const indoors = new Indoors();
   // Room lights for the floors cut open: a fixed set, so switching them on and
@@ -2219,10 +2202,6 @@ export function createSceneRenderer(
     },
     setAtmosphere(next) {
       atmosphere = next;
-      if (next.planet !== planetRadius()) {
-        setPlanetRadius(next.planet);
-        planetBody.setRadius(next.planet);
-      }
     },
     setBuildingCutaway(spec) {
       buildings.setCutaway(spec);
@@ -2622,12 +2601,7 @@ export function createSceneRenderer(
       {
         const sky = scene.getObjectByName('sky');
         if (sky) sky.visible = rig.chasing;
-        // On a planet the globe itself is the land round the map.
-        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing && planetRadius() <= 0;
-        // On a planet the map's rim runs down into the globe (its skirt); on a
-        // flat map it stands on its cut sides.
-        terrain.skirt.visible = planetRadius() > 0;
-        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-walls') mesh.visible = planetRadius() <= 0;
+        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing;
         scene.background = rig.chasing ? null : MAP_BACKGROUND;
       }
       if (scenery) {
@@ -2638,10 +2612,7 @@ export function createSceneRenderer(
       windClock += Math.min(0.1, Math.max(0, delta));
       advanceWind(windClock);
 
-      // On the plane, as everything the CPU culls (`planet.ts`): the camera
-      // taken back from the globe about the point it looks at.
-      if (flatCamera.type !== rig.camera.type) flatCamera = rig.camera.clone();
-      const cullCamera = planeCamera(rig.camera, rig.target, flatCamera);
+      const cullCamera = rig.camera;
       crowdProjection.multiplyMatrices(cullCamera.projectionMatrix, cullCamera.matrixWorldInverse);
       crowdFrustum.setFromProjectionMatrix(crowdProjection);
       cameraRight.setFromMatrixColumn(cullCamera.matrixWorld, 0).normalize();
@@ -2716,12 +2687,6 @@ export function createSceneRenderer(
       // "Dia": four in the afternoon, the sun 29 degrees up - long enough
       // shadows to model the land, as the player's picture (2026-10-07).
       const clock = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);
-      // The globe's turn (`planet.ts`): the rest of the planet turns with it.
-      // The sun stays with the view, as a globe viewer lights the side it
-      // looks at; the relief's shadows follow once the globe stops turning.
-      planetBody.setSpin(PLANET_SPIN);
-      post.setGlobe(rig.viewport.globe);
-      if (!spunAt.equals(PLANET_SPIN)) { spunAt.copy(PLANET_SPIN); spinSettled = performance.now() + 300; }
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
         // bends the plants and the smoke; the rain falls through the view;
@@ -2797,8 +2762,8 @@ export function createSceneRenderer(
         shadowCentre.copy(viewDirection).setY(0).normalize().multiplyScalar(PLAY_SHADOW_FAR / 2).add(chaseCamera.focus);
         environment.follow(shadowCentre, PLAY_SHADOW_FAR / 1.25, PLAY_SHADOW_FAR / 1.25, viewDirection, Math.max(0, tallestTop - target.y));
       } else {
-        // The shadows round the ground looked at, where the globe draws it.
-        environment.follow(planetPoint(target.x, target.y, target.z, shadowCentre), halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
+        // The shadows round the ground looked at.
+        environment.follow(shadowCentre.copy(target), halfWidth, groundHalfDepth, viewDirection, Math.max(0, tallestTop - target.y));
       }
       // What the simulation must show in full: people step round each other
       // only where they are seen, and big enough to see it (`SimWorld.focus`).
@@ -2823,13 +2788,13 @@ export function createSceneRenderer(
         let view: { ex: number; ey: number; dx: number; dy: number; cos: number; far: number } | null = null;
         if (rig.perspective) {
           // The cone on the plane, as the simulation sees it.
-          const coneDirection = flatCamera.getWorldDirection(flatDirection);
+          const coneDirection = rig.camera.getWorldDirection(flatDirection);
           const flat = Math.hypot(coneDirection.x, coneDirection.z);
           if (flat > 0.05) {
             const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
             const halfAcross = Math.atan(Math.tan((PERSPECTIVE_FOV * Math.PI) / 360) * aspect);
             view = {
-              ex: flatCamera.position.x, ey: -flatCamera.position.z,
+              ex: rig.camera.position.x, ey: -rig.camera.position.z,
               dx: coneDirection.x / flat, dy: -coneDirection.z / flat,
               cos: Math.cos(Math.min(Math.PI, halfAcross + VIEW_MARGIN)), far: PLAY_SEEN,
             };
@@ -2855,10 +2820,7 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
-      // In the planet's own frame (`unspin`): turning the globe does not move it.
-      if (performance.now() >= spinSettled) {
-        terrain.setSun(unspin(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position)), planetRadius());
-      }
+      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
       {
         // The relief's close window (terrainRelief.ts) round the ground the
         // view looks at, drawn a little towards the camera, where the ground
@@ -2873,7 +2835,7 @@ export function createSceneRenderer(
         // Close: the screen's height under some 1800 units of ground, in
         // either camera (the orthographic one stands at a fixed distance).
         const halfHeight = renderer.domElement.clientHeight / Math.max(1e-3, 2 * rig.viewport.zoom);
-        const close = halfHeight < 900 && rig.viewport.globe < 0.05;
+        const close = halfHeight < 900;
         if (net.doc.gullyRevision !== gulliesFor) {
           gulliesFor = net.doc.gullyRevision;
           terrain.setGullies(net.doc.gullyDabs, net.doc.gullyAuto);

@@ -1,5 +1,3 @@
-import { chartAngle } from '@world/planet/sphere';
-
 /**
  * THE LAND'S OWN LIGHT, from its heights alone (`terrain.ts` draws it, the
  * worker in `terrainLight.worker.ts` works it out) - what makes a relief read
@@ -178,31 +176,15 @@ function skyOf(grid: LightGrid, heights: Float64Array, sky: Float32Array, rect: 
   }
 }
 
-/** Towards the sun on the grid, per corner on a planet (`lightLand`). */
-interface Aim { dgx: number; dgy: number; rise: number }
+/** Towards the sun on the grid (`lightLand`). */
+interface Aim { readonly dgx: number; readonly dgy: number; readonly rise: number }
 
-function aimAt(grid: LightGrid, sun: Sun, planet: number, x: number, z: number, out: Aim): void {
-  let sx = sun.x, sy = sun.y, sz = sun.z;
-  const d = Math.hypot(x, z);
-  // On a planet each corner sees the sun from its own up: the sun turned back
-  // by the turn the globe gives that corner (Rodrigues', as `planet.ts`).
-  if (planet > 0 && d > 1e-6) {
-    const ax = z / d, az = -x / d;
-    const th = -chartAngle(d, planet), c = Math.cos(th), sn = Math.sin(th);
-    // a x v, with a = (ax, 0, az).
-    const cx = -az * sy, cy = az * sx - ax * sz, cz = ax * sy;
-    const dot = ax * sx + az * sz;
-    sx = sx * c + cx * sn + ax * dot * (1 - c);
-    sy = sy * c + cy * sn;
-    sz = sz * c + cz * sn + az * dot * (1 - c);
-  }
+function aimAt(grid: LightGrid, sun: Sun): Aim {
   // x grows with world x, the rows with -y (world y is three's -z, so the
   // rows grow with three's z).
-  const hl = Math.hypot(sx, sz) || 1e-6;
-  out.dgx = sx / hl;
-  out.dgy = sz / hl;
+  const hl = Math.hypot(sun.x, sun.z) || 1e-6;
   // Height gained per grid cell along the ray.
-  out.rise = (Math.max(0.03, sy) / hl) * grid.cell;
+  return { dgx: sun.x / hl, dgy: sun.z / hl, rise: (Math.max(0.03, sun.y) / hl) * grid.cell };
 }
 
 function heightRange(heights: Float64Array): { min: number; max: number } {
@@ -220,13 +202,10 @@ function heightRange(heights: Float64Array): { min: number; max: number } {
  * shape's reach (`shapeReach`), and every corner whose ray towards the sun
  * crosses the moved ground - those lying away from the sun from it, as far
  * as a ray can still pass under the highest ground ((max - min) / rise
- * cells; a ray above it is cut off, `lightLand`). On a planet the sun's
- * direction differs per corner: the whole map.
+ * cells; a ray above it is cut off, `lightLand`).
  */
-export function lightReach(grid: LightGrid, heights: Float64Array, sun: Sun, planet: number, moved: CornerRect): CornerRect {
-  if (planet > 0) return wholeGrid(grid);
-  const aim: Aim = { dgx: 0, dgy: 0, rise: 0 };
-  aimAt(grid, sun, 0, 0, 0, aim);
+export function lightReach(grid: LightGrid, heights: Float64Array, sun: Sun, moved: CornerRect): CornerRect {
+  const aim = aimAt(grid, sun);
   const { min, max } = heightRange(heights);
   const t = Math.min(grid.n * 1.5, (max + 1 - min) / aim.rise + 1);
   // The moved ground carried back along the ray, plus the bilinear sample's corner.
@@ -248,13 +227,10 @@ export function lightLand(
   rect: CornerRect,
   out: Uint8Array,
   outWidth: number,
-  /** The planet the map is drawn on (`render/planet.ts`), units; 0 flat. */
-  planet = 0,
 ): void {
-  const n = grid.n, cell = grid.cell, half = ((n - 1) * cell) / 2;
+  const n = grid.n, cell = grid.cell;
   const { max: maxH } = heightRange(heights);
-  const aim: Aim = { dgx: 0, dgy: 0, rise: 0 };
-  aimAt(grid, sun, planet, 0, 0, aim);
+  const aim = aimAt(grid, sun);
   const at = (gx: number, gy: number): number => {
     const ix = Math.min(n - 2, Math.max(0, Math.floor(gx)));
     const iy = Math.min(n - 2, Math.max(0, Math.floor(gy)));
@@ -266,7 +242,6 @@ export function lightLand(
   for (let iy = rect.y0; iy <= rect.y1; iy++) {
     for (let ix = rect.x0; ix <= rect.x1; ix++) {
       const h0 = (heights[iy * n + ix] as number) + 0.4;
-      if (planet > 0) aimAt(grid, sun, planet, ix * cell - half, iy * cell - half, aim);
       let lit = 1;
       for (let t = 0.7; ; t += Math.max(0.5, t * 0.06)) {
         const gx = ix + aim.dgx * t, gy = iy + aim.dgy * t;
@@ -291,10 +266,9 @@ export function lightLand(
 export interface LightRequest {
   readonly heights: Float64Array;
   readonly sun: Sun;
-  readonly planet: number;
   /** The corners whose heights moved; 'all' the whole land; null none (the sun turned). */
   readonly moved: CornerRect | 'all' | null;
-  /** The sun or the planet changed: every corner relit. */
+  /** The sun turned: every corner relit. */
   readonly relightAll: boolean;
 }
 
@@ -315,7 +289,7 @@ export function createLandLighter(grid: LightGrid): (request: LightRequest) => L
   let shape: LandShape | null = null;
   return (request) => {
     const started = performance.now();
-    const { heights, sun, planet, moved } = request;
+    const { heights, sun, moved } = request;
     const whole = wholeGrid(grid);
     let rect: CornerRect;
     if (!shape || moved === 'all') {
@@ -324,14 +298,14 @@ export function createLandLighter(grid: LightGrid): (request: LightRequest) => L
       rect = whole;
     } else if (moved) {
       shapeLand(grid, heights, shape, shapeReach(grid, moved));
-      rect = request.relightAll ? whole : lightReach(grid, heights, sun, planet, moved);
+      rect = request.relightAll ? whole : lightReach(grid, heights, sun, moved);
     } else {
       rect = whole;
     }
     if (request.relightAll) rect = whole;
     const width = rect.x1 - rect.x0 + 1;
     const rgba = new Uint8Array(width * (rect.y1 - rect.y0 + 1) * 4);
-    lightLand(grid, heights, sun, shape, rect, rgba, width, planet);
+    lightLand(grid, heights, sun, shape, rect, rgba, width);
     return { rect, rgba, ms: performance.now() - started };
   };
 }

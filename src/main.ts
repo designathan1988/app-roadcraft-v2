@@ -1738,9 +1738,7 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
-  if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && view.globe > 0.35))) {
-    // Out at the whole planet the left button grabs the globe and turns it,
-    // as in a globe viewer (the player, 2026-10-07): no tool works out there.
+  if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2)) {
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
     panning = { id: e.pointerId, grabbed: panAnchor(at.x, at.y) };
     return;
@@ -3302,11 +3300,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
 // The sky the player sets (Paisagem > Céu e clima): clouds - how many, how
 // high, how thick - and mist. Kept between sessions; heights in metres.
 {
-  // v5: back to the flat map by default (the player, 2026-10-07: "volta
-  // para o mapa plano original"); the planet stays one setting away. An
-  // older choice is not read.
+  // v5: the flat map (the planet was taken out, the player's decision of
+  // 2026-10-08). An older choice is not read.
   const KEY = 'roadcraft.atmosphere.v5';
-  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight', 'atmoPlanet'] as const;
+  const ids = ['atmoClouds', 'atmoCloudBase', 'atmoCloudThickness', 'atmoFog', 'atmoFogHeight'] as const;
   const inputs = ids.map((id) => document.getElementById(id) as HTMLInputElement | null);
   try {
     const kept = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Record<string, number> | null;
@@ -3321,8 +3318,6 @@ document.querySelectorAll<HTMLButtonElement>('[data-terrain-mode]').forEach((but
       cloudThickness: value(2) * UNITS_PER_METER,
       fog: value(3) / 100,
       fogHeight: value(4) * UNITS_PER_METER,
-      // Kilometres; 0 a flat map.
-      planet: value(5) * 1000 * UNITS_PER_METER,
     });
     try { localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(ids.map((id, i) => [id, value(i)])))); } catch { /* not kept */ }
     // Not at boot: the frame loop is not set up yet then.

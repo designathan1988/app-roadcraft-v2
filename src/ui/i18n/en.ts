@@ -765,7 +765,6 @@ export const EN: Dictionary = {
   'atmo.cloudThickness': 'Cloud thickness (m)',
   'atmo.fog': 'Mist (%)',
   'atmo.fogHeight': 'Mist height (m)',
-  'atmo.planet': 'Planet radius (km, 0 flat)',
   'hint.terrain.mesa': 'Drag to raise a flat-topped mesa with sandstone cliffs · Shift+wheel: size · Alt+wheel: height',
   'hint.terrain.canyon': 'Drag to cut a canyon with sandstone walls · Shift+wheel: size · Alt+wheel: depth',
   'hint.terrain.escarpment': 'Drag to raise a plateau with dark basalt cliffs · Shift+wheel: size · Alt+wheel: height',
