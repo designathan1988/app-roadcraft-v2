@@ -1,6 +1,7 @@
 import { walkersNear } from '@sim/agents/walk';
 import type { BodyPart } from '@sim/people/view';
 import { beginFrameWork, workUntil } from '@core/frameWork';
+import { GameState } from '@core/gameState';
 import { METERS_PER_UNIT } from '@world/units';
 import type { Occupant } from '@render/ragdoll';
 import type { LotOverlayInput } from '@render/lotOverlay';
@@ -365,6 +366,22 @@ sim.pedestrianIntensity = savedSession?.settings.pedestrianIntensity ?? 1;
 sim.trafficCount = savedSession?.settings.cars ?? DEFAULT_TRAFFIC_COUNT;
 sim.pedestrianCount = savedSession?.settings.people ?? DEFAULT_PEDESTRIAN_COUNT;
 sim.demandMultiplier = savedSession?.settings.demandMultiplier ?? 1;
+/**
+ * The game's state - the tool in hand, the pause and speed, the quality, the
+ * selection - owned here and every change written down with why
+ * (`core/gameState.ts`, `__state()` in the console). The loose variables of
+ * this file that mirror it (`tool`, `traffic`, `selectedSegment`...) are
+ * written only where it is (`setTool`, `setPaused`, `setSpeed`, `select`).
+ */
+const gameState = new GameState({
+  tool: 'inspect' as Tool,
+  paused: sim.clock.paused,
+  speed: sim.clock.speed,
+  quality: 'high' as string,
+  selectedSegment: null as SegmentId | null,
+  selectedSegmentS: null as number | null,
+  selectedNode: null as NodeId | null,
+});
 
 function sessionSettings(): SavedSettings {
   const centre = view.centre;
@@ -530,6 +547,15 @@ let hoverAnchor: Anchor | null = null;
 let selectedSegment: SegmentId | null = null;
 let selectedSegmentS: number | null = null;
 let selectedNode: NodeId | null = null;
+/** What is selected - a road (and where along it) or a junction - written through the game's state with why (`gameState`). */
+function select(segment: SegmentId | null, s: number | null, node: NodeId | null, cause: string): void {
+  gameState.set('selectedSegment', segment, cause);
+  gameState.set('selectedSegmentS', s, cause);
+  gameState.set('selectedNode', node, cause);
+  selectedSegment = segment;
+  selectedSegmentS = s;
+  selectedNode = node;
+}
 
 /**
  * Panning is stored as the GROUND POINT that was grabbed, not as a screen
@@ -868,8 +894,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   syncFogInputs();
   syncGullyInputs();
   syncWeatherInputs();
-  selectedSegment = null;
-  selectedNode = null;
+  select(null, selectedSegmentS, null, 'outro mapa');
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
   updateHistoryButtons();
@@ -1969,8 +1994,7 @@ canvas.addEventListener('pointerdown', (e) => {
           return node !== null;
         });
         if (node !== null) {
-          selectedSegment = null;
-          selectedNode = node;
+          select(null, selectedSegmentS, node, 'via dividida');
           showInspector();
         }
       }
@@ -2033,9 +2057,9 @@ canvas.addEventListener('pointerdown', (e) => {
         break;
       }
     }
-      selectedSegment = anchor.kind === 'segment' ? (anchor.segment ?? null) : null;
-      selectedSegmentS = anchor.kind === 'segment' ? (anchor.s ?? null) : null;
-      selectedNode = anchor.kind === 'node' ? (anchor.node ?? null) : null;
+      select(anchor.kind === 'segment' ? (anchor.segment ?? null) : null,
+        anchor.kind === 'segment' ? (anchor.s ?? null) : null,
+        anchor.kind === 'node' ? (anchor.node ?? null) : null, 'clique de inspeção');
       showInspector();
       break;
   }
@@ -3349,6 +3373,7 @@ terrainStrengthInput.oninput = () => setTerrainStrength(Number(terrainStrengthIn
 
 function setTool(next: Tool): void {
   cancelGestures();
+  gameState.set('tool', next, 'ferramenta escolhida');
   tool = next;
   // Improving a road, moving its points, splitting a segment and setting up a
   // junction are things done TO a road, so they are the road's own options and
@@ -3367,8 +3392,7 @@ function setTool(next: Tool): void {
     b.setAttribute('aria-pressed', String(on));
   }
   if (next !== 'inspect') {
-    selectedSegment = null;
-    selectedNode = null;
+    select(null, selectedSegmentS, null, `ferramenta ${next}`);
     closeInspector();
   }
   canvas.dataset['tool'] = next;
@@ -3603,6 +3627,7 @@ labelTools();
 
 const trafficButton = document.getElementById('trafficToggle') as HTMLButtonElement;
 function setPaused(paused: boolean): void {
+  gameState.set('paused', paused, paused ? 'pausa' : 'simulação retomada');
   traffic = !paused;
   sim.clock.paused = paused;
   trafficButton.classList.toggle('active', traffic);
@@ -3618,6 +3643,7 @@ trafficButton.onclick = () => setSpeed(traffic ? 0 : sim.clock.speed);
 function setSpeed(speed: number): void {
   if (speed <= 0) setPaused(true);
   else {
+    gameState.set('speed', speed, 'velocidade escolhida');
     sim.clock.speed = speed;
     setPaused(false);
   }
@@ -3963,8 +3989,7 @@ function restoreSettings(settings: SavedSettings): void {
 updateHistoryButtons();
 
 (document.getElementById('closeInspector') as HTMLButtonElement).onclick = () => {
-  selectedSegment = null;
-  selectedNode = null;
+  select(null, selectedSegmentS, null, 'inspetor fechado');
   closeInspector();
   requestDraw();
 };
@@ -4009,8 +4034,7 @@ function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
     doc.setNodeControl(id, next);
     return true;
   });
-  selectedNode = id;
-  selectedSegment = null;
+  select(null, selectedSegmentS, id, `controle ${next}`);
   flashHint(`control.${next}`);
 }
 
@@ -5340,9 +5364,7 @@ function showInspector(): void {
           return true;
         });
         if (placed !== null) {
-          selectedSegment = null;
-          selectedSegmentS = null;
-          selectedNode = placed;
+          select(null, null, placed, 'ponto inserido na via');
           showInspector();
         }
       },
@@ -5369,9 +5391,7 @@ function showInspector(): void {
           return true;
         });
         if (node !== null) {
-          selectedSegment = null;
-          selectedSegmentS = null;
-          selectedNode = node;
+          select(null, null, node, 'ponto suave inserido');
           showInspector();
         }
       },
@@ -5406,7 +5426,7 @@ function showInspector(): void {
       },
       onJoin: (node) => {
         mutate(() => joinSegments(doc, node));
-        selectedNode = null;
+        select(selectedSegment, selectedSegmentS, null, 'vias unidas');
         closeInspector();
       },
       onRemoveNode: (node) => {
@@ -5418,7 +5438,7 @@ function showInspector(): void {
           doc.pruneOrphanNodes();
           return true;
         });
-        selectedNode = null;
+        select(selectedSegment, selectedSegmentS, null, 'ponto removido');
         closeInspector();
       },
       onDelete: (id) => {
@@ -5427,7 +5447,7 @@ function showInspector(): void {
           doc.pruneOrphanNodes();
           return true;
         });
-        selectedSegment = null;
+        select(null, selectedSegmentS, selectedNode, 'via apagada');
         closeInspector();
       },
     },
@@ -5443,8 +5463,7 @@ function duplicateSelectedSegment(id = selectedSegment): void {
     return copy !== null;
   });
   if (copy !== null) {
-    selectedSegment = copy;
-    selectedNode = null;
+    select(copy, selectedSegmentS, null, 'via duplicada');
     showInspector();
   }
 }
@@ -5570,9 +5589,11 @@ const savedQuality = (() => {
   }
 })();
 qualitySelect.value = isQualityLevel(savedQuality) ? savedQuality : 'high';
+gameState.set('quality', qualitySelect.value, 'preferência guardada');
 qualitySelect.onchange = () => {
   const value = qualitySelect.value;
   if (!isQualityLevel(value)) return;
+  gameState.set('quality', value, 'menu de qualidade');
   scene.setQuality(value);
   try {
     window.localStorage.setItem(QUALITY_STORAGE_KEY, value);
@@ -5581,6 +5602,14 @@ qualitySelect.onchange = () => {
   }
   requestDraw();
 };
+/**
+ * The game's state in the console (`core/gameState.ts`): `__state()` its
+ * values now and the last changes - what, from what to what, why - newest first.
+ */
+(window as unknown as { __state: unknown }).__state = (count = 20): unknown => ({
+  now: gameState.snapshot(),
+  changes: gameState.latest(count).map((c) => `#${c.serial} ${c.key}: ${String(c.from)} → ${String(c.to)} (${c.cause})`),
+});
 /**
  * The diary of changes in the console (`world/changes.ts`): `__changes()`
  * lists the last ones - what, why, after what, where, how long it took -
