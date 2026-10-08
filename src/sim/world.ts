@@ -21,7 +21,6 @@ import type { CrossingStates } from './crossings/state';
 import { publishCrossingStates, publishPedViews } from './peds/publish';
 import type { PedView } from './people/view';
 import type { PedestrianEngine } from './people/engine';
-import { legacyPedestrians } from './peds/engine';
 import { CityLife } from './city/life';
 import { AmbientWorld } from './ambient/ambient';
 import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
@@ -81,11 +80,11 @@ export class SimWorld {
   readonly peds = new VersionedMap<PedId, Ped>();
   /**
    * What moves the people (`people/engine.ts`); everything else reaches them
-   * through it. The game installs one as it opens (`main.ts`); the old
-   * sidewalk model is the default only in the specs (`__LEGACY_PEDS__`,
-   * `vitest.config.ts`), so the game's bundle does not carry it.
+   * through it. The game installs the agents' walking engine as it opens
+   * (`main.ts`, `agents/walk.ts`); until one is installed nobody walks (the
+   * null engine, Nystrom's "null service").
    */
-  pedEngine: PedestrianEngine = __LEGACY_PEDS__ ? legacyPedestrians : NO_PEDESTRIANS;
+  pedEngine: PedestrianEngine = NO_PEDESTRIANS;
   /** Which vehicle model drives: the legacy one, or Drive v2 (`drive/*`) as it replaces it layer by layer. */
   driveModel: 'v1' | 'v2' = 'v1';
   readonly runtime = new Map<LaneletId, LaneletRuntime>();

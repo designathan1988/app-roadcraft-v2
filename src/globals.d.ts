@@ -6,6 +6,3 @@
 
 /** Walking the city as a person: weapons, shots, ragdolls, blood, blasts, destruction, Jolt. Off: none of it is bundled. */
 declare const __PLAY_MODE__: boolean;
-
-/** The old sidewalk pedestrians (`sim/peds`) as the simulation's default engine: the test suites only. */
-declare const __LEGACY_PEDS__: boolean;

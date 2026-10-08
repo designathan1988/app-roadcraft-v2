@@ -1,7 +1,7 @@
 import type { BodyPart, Severable } from '@sim/people/view';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
-import type { Casualty } from '@sim/people/people';
+import type { Casualty } from '@sim/people/casualties';
 import { m } from '@world/units';
 import type { BloodDecal } from './casualties';
 import type { Exhaust } from './exhaust';

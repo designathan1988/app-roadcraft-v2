@@ -7,15 +7,14 @@ import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
 import { VehicleMotionMetrics } from '@sim/drive/motionMetrics';
 import { SimWorld } from '@sim/world';
-import { createPeopleEngine, inspectPeople } from '@sim/people/people';
-import { createCrowdEngine } from '@sim/people/crowd';
 import { createAgentWalkEngine } from '@sim/agents/walk';
 import { blueprintByKey, instantiate } from '@world/buildings/blueprints';
 import { fixtureDoc, LAYOUTS, layoutDoc } from './bodies';
 
 /**
  * WHAT THE PLAYER SEES GO WRONG WITH THE AGENTS, measured on the drawn bodies
- * and the vehicles, in the engines the game runs (People, Drive v2):
+ * and the vehicles, in the engines the game runs (the agents' walking engine
+ * with the scenery's life coming in at the road ends, Drive v2):
  *
  * - `zebraStand`: longest anybody stood still on a zebra (the cars wait for
  *   them: a frozen junction);
@@ -84,13 +83,13 @@ function people(sim: SimWorld, peds: number, traffic: number): SimWorld {
   sim.trafficIntensity = traffic;
   sim.demandMultiplier = traffic || 1;
   sim.clock.paused = false;
-  // `AGENT_ENGINE=crowd` measures the Detour crowd engine (call `initCrowd` first);
-  // `AGENT_ENGINE=agents`, the residents as agents walking on lanes (`?agents=1`).
-  const engine = process.env.AGENT_ENGINE;
-  sim.usePedestrianEngine(engine === 'crowd' ? createCrowdEngine() : engine === 'agents' ? createAgentWalkEngine() : createPeopleEngine());
+  // As the game runs (`main.ts`): the agents' walking engine, nobody living
+  // here, people and cars coming in at the road ends.
+  sim.usePedestrianEngine(createAgentWalkEngine());
   sim.driveModel = 'v2';
-  // Residents go out on their own; late afternoon is when most of them do.
-  if (engine === 'agents') { sim.city.useAgents(true); sim.city.skip(10 * 60); }
+  sim.city.enabled = false;
+  sim.ambient.enabled = true;
+  sim.ambient.source = 'edges';
   return sim;
 }
 
@@ -241,9 +240,6 @@ export function measureDefects(city: City, seconds: number): AgentDefects {
       const lane = sim.lanelet(v.lanelet);
       if (lane?.kind === 'connector' && where.get(v.id) !== v.lanelet) lastEntry.set(lane.node!, t);
       where.set(v.id, v.lanelet);
-    }
-    if (i % 30 === 0) {
-      for (const q of inspectPeople(sim)) { if (q.urgent > 0) r.urgent += 1; if (q.ghost > 0) r.ghost += 1; }
     }
     if (i % 30 !== 0) continue;
     for (const v of sim.vehicles.values()) r.still = Math.max(r.still, sim.clock.since(v.lastMovedTick));

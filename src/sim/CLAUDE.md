@@ -5,18 +5,15 @@ breaks far from where you edit in `sim/`.
 
 ## Which pedestrian engine runs
 
-- Default (since 2026-10-05): the agents engine, `sim/agents/` - residents
-  walking with `sim/agents/walk.ts` and driving their own cars
-  (`CityLife.useAgents`).
-- `?agents=0`: the People engine, `sim/people/people.ts` (ORCA locomotion,
-  `orca.ts`, navmesh `nav.ts`), with the old diaries and kerb cars.
-- `?people=crowd`: the Detour crowd engine, `sim/people/crowd.ts` and
-  `crowdNav.ts` (Recast/Detour).
-- `?peds=legacy`: the old sidewalk-graph model, `sim/peds/`, kept for comparison
-  and still installed by `simOf` in the traffic suites.
-
-The three old engines are to be deleted once the player has seen the agents
-run (their decision of 2026-10-04); spend no more work on them.
+- ONE: the agents' walking engine, `sim/agents/walk.ts`, installed by
+  `main.ts`; the people are the scenery's life (`sim/ambient`), coming in at
+  the road ends. `SimWorld` starts with a null engine (nobody walks) until one
+  is installed - the specs install it themselves.
+- The People (navmesh/ORCA), Detour crowd and sidewalk-graph engines were
+  deleted on 2026-10-08 (the player's decision). What is left in `sim/peds/`
+  (`sidewalk.ts`, `state.ts`, `publish.ts`, `behaviour.ts`, `corridor.ts`) and
+  `sim/people/` (`engine.ts`, `view.ts`, `casualties.ts`) is read by live code
+  (the footway graph, the crossings, the views the renderer draws).
 
 ## The agents engine (`sim/agents/`)
 
@@ -33,8 +30,7 @@ run (their decision of 2026-10-04); spend no more work on them.
 - `activities.ts`: what a resident does in the building they are in, the
   furniture's ads against their needs at home, their post at work, what the
   place is for elsewhere; kept by `CityLife.doingOf`, drawn by `render/indoors.ts`.
-- `walk.ts`: the agents' walking engine (the game's default; `?agents=0`
-  brings back People). Lanes on `world/walkways.ts`, SUMO striping, the body following a
+- `walk.ts`: the agents' walking engine (the game's only one). Lanes on `world/walkways.ts`, SUMO striping, the body following a
   point ahead, zebras by `crossings/permission.ts`, published to
   `crossingStates` for the cars. The engine object carries `inspect` for
   probes in the page.
@@ -43,8 +39,8 @@ run (their decision of 2026-10-04); spend no more work on them.
 - Measure with `tests/sim/agents/ownCars.spec.ts`, `mind.spec.ts` and
   `walk.spec.ts`; photograph with `scripts/agents-shots.mjs`,
   `scripts/agent-card-shots.mjs` and `scripts/walk-shots.mjs`.
-  `AGENT_ENGINE=agents` runs `defects.spec.ts` with this engine (its cities
-  have few residents, so most of it says little).
+  `defects.spec.ts` runs the game's setup: this engine with the scenery's
+  life coming in at the road ends.
 
 ## Couplings
 
@@ -59,8 +55,6 @@ run (their decision of 2026-10-04); spend no more work on them.
    size the renderer's instance buffers (`render/agents.ts`).
 4. **`HEADING_CHORD`** is shared with `world/conflictPoints.ts` and
    `world/turnPaths.ts` (see `src/world/CLAUDE.md`).
-5. **The pedestrians' crossing-reservation index** (`peds/crossingFsm.ts`) is built
-   at the start of `stepPedestrians` and valid only inside it.
 
 ## Traps that have already caught someone
 

@@ -12,12 +12,9 @@ export default defineConfig({
   // the build so a branch behind `false` is dead code and its imports never
   // reach a chunk. `__PLAY_MODE__`: walking the city as a person - weapons,
   // shots, ragdolls, blood, blasts, destruction, the Jolt physics - off for
-  // now (docs/STATUS.md says how to turn it back on). `__LEGACY_PEDS__`: the
-  // old sidewalk pedestrians as the simulation's default engine, which only
-  // the test suites still use; the game runs the agents' engine.
+  // now (docs/STATUS.md says how to turn it back on).
   define: {
     __PLAY_MODE__: 'false',
-    __LEGACY_PEDS__: 'false',
   },
   publicDir: false,
   resolve: {

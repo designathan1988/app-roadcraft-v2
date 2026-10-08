@@ -303,8 +303,8 @@ export class RoadDoc {
    * not part of the road network, and moving `revision` for one rebuilt the
    * network, the lanelets, the whole simulation topology and every road mesh
    * - about 330 ms per pole on a 180-segment map (tests/bench) - to draw a
-   * post. The renderer's utility layer and the pedestrians' obstacles
-   * (`sim/peds/clearance.ts`, `waitArea.ts`) watch this instead.
+   * post. The renderer's utility layer and the footway graph
+   * (`sim/peds/sidewalk.ts`) watch this instead.
    */
   utilityRevision = 0;
 

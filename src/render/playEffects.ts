@@ -14,7 +14,7 @@ import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
 import type { SimWorld } from '@sim/world';
 import { takeWounds } from '@sim/people/casualties';
-import { impactCasualties } from '@sim/people/people';
+import { impactCasualties } from '@sim/people/casualties';
 import { vehiclePose } from '@sim/pose';
 import { solidsOf } from '@world/solids';
 import { floorHeight } from '@world/buildings/foundation';

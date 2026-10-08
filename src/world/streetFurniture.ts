@@ -11,7 +11,8 @@ export { TREE_PIT } from './section';
  *
  * This used to be written twice: once in `render/scenery.ts`, which drew the
  * lamps, bins and benches, and once, by hand and "at the same positions", in
- * `sim/peds/clearance.ts`, which keeps pedestrians from walking through them.
+ * the simulation's pedestrian obstacles (today the footway graph,
+ * `sim/peds/sidewalk.ts`).
  * Two copies of a layout drift - adding a street tree to one would have put a
  * tree on the pavement that people walked straight through. It is one list now,
  * derived from the document and the network, and both read it.

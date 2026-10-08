@@ -221,7 +221,7 @@ export interface Ped {
   /**
    * What this person is doing besides walking: sitting on a bench, stopping
    * at the side of the footway to look round or read a phone, talking with
-   * their party. Null while simply walking. `sim/peds/activities.ts`.
+   * their party. Null while simply walking.
    */
   activity: PedActivity | null;
   /**

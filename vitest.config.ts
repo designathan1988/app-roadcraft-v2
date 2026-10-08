@@ -4,12 +4,9 @@ import { fileURLToPath, URL } from 'node:url';
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
-  // The game's compile-time keys (`vite.config.ts`). The suites keep the old
-  // sidewalk pedestrians as the simulation's default engine, which the game
-  // no longer bundles.
+  // The game's compile-time keys (`vite.config.ts`).
   define: {
     __PLAY_MODE__: 'false',
-    __LEGACY_PEDS__: 'true',
   },
   resolve: {
     alias: {

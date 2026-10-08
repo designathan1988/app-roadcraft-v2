@@ -9,10 +9,9 @@ import type { PersonAgeClass, PersonGender } from './view';
  *
  * The pipeline, the vehicles and the audit talk to pedestrians only through
  * this, `SimWorld.crossingStates` and `SimWorld.pedViews`; the model's own
- * state (edges, crossing state machine, navmesh, minds) stays behind it. The
- * legacy model (`peds/engine.ts`) and the People engine that replaces it
- * (`docs/design/agency-architecture.md` §3) both implement it, chosen by the
- * `?peds=` flag.
+ * state stays behind it. The game's one implementation is the agents'
+ * walking engine (`agents/walk.ts`); `SimWorld` starts with a null engine
+ * (nobody walks) until one is installed.
  */
 export interface PedestrianEngine {
   readonly kind: 'legacy' | 'people';

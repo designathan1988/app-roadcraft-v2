@@ -11,8 +11,8 @@ import { m } from './units';
  * junction, on the kerb side, two metres back from the zebra.
  *
  * ONE definition, read by the renderer that draws the posts
- * (`render/signals.ts`) and by the pedestrians who must walk round them
- * (`sim/peds/clearance.ts`). The position used to be worked out only in the
+ * (`render/signals.ts`) and by the footway graph the pedestrians walk
+ * (`sim/peds/sidewalk.ts`). The position used to be worked out only in the
  * renderer, so the simulation never knew the posts were there: people queued
  * for the crossing standing inside them, exactly where the post is, and
  * walked through them along the footway.

@@ -138,13 +138,6 @@ export const SIGNAL = {
   uncontrolledGreen: 3600,
 } as const;
 
-/**
- * Pedestrians walk as agents that perceive and choose a velocity
- * (`sim/peds/agent.ts`), on footways and crossings alike. The crossing state
- * machine still owns permission to enter; the agent owns movement once in.
- */
-export const PED_AGENT = { on: true, crossings: true };
-
 /** Pedestrian parameters. */
 export const PED = {
   /** Design speed used to size clearance intervals. */

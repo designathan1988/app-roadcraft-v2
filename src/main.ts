@@ -241,8 +241,6 @@ if (saved) {
 }
 
 const sim = new SimWorld(doc, net, 0x2024);
-type CrowdModule = typeof import('@sim/people/crowd');
-let crowdModule: CrowdModule | null = null;
 // Vehicles are driven by Drive v2 where it has replaced a layer of the
 // legacy model; `?drive=v1` runs the legacy model throughout, for comparison.
 if (new URLSearchParams(location.search).get('drive') !== 'v1') sim.driveModel = 'v2';
@@ -679,30 +677,19 @@ const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camer
 // The renderer starts its asynchronous shader preparation while topology and
 // pedestrian navigation still build. Both finish before the first game frame.
 sim.rebuildTopology();
-// The agents (`sim/agents`) by default: every resident is one person all day,
-// walking on lanes of the footways (`sim/agents/walk.ts`) and driving their own
-// car from a real bay; no car or person is made up at the kerb. The old
-// engines stay behind flags until they are retired: `?agents=0` the People
-// engine (navmesh), `?people=crowd` the Detour crowd, `?peds=legacy` the old
-// sidewalk graph.
+// The people walk with the agents' engine (`sim/agents/walk.ts`), on lanes of
+// the footways - the only pedestrian engine the game has (the People, Detour
+// crowd and sidewalk-graph engines were taken out, the player's decision of
+// 2026-10-08).
 const engineFlags = new URLSearchParams(location.search);
-const agentsOn = engineFlags.get('agents') !== '0' && engineFlags.get('people') !== 'crowd' && engineFlags.get('peds') !== 'legacy';
-if (agentsOn) {
-  sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine());
-} else if (engineFlags.get('people') === 'crowd') {
-  crowdModule = await import('@sim/people/crowd');
-  await crowdModule.initCrowd();
-  sim.usePedestrianEngine(crowdModule.createCrowdEngine());
-} else if (engineFlags.get('peds') !== 'legacy') sim.usePedestrianEngine((await import('@sim/people/people')).createPeopleEngine());
-// The old engines are loaded only when asked for: the game's bundle carries neither.
-else sim.usePedestrianEngine((await import('@sim/peds/engine')).legacyPedestrians);
+sim.usePedestrianEngine((await import('@sim/agents/walk')).createAgentWalkEngine());
 // The scenery's life (`sim/ambient`): nobody lives here; cars and people come
 // in at the ends of the roads, as many as the panel says, cross the map and
 // leave at another road end - never anywhere else (the player's order of
 // 2026-10-06). People walk with the agents' walking engine. `?ambient=view`
 // brings back GTA's way (made and taken away round the view) to compare. The
 // residents' days are off (`?residents=1` brings them back).
-if (agentsOn && engineFlags.get('residents') === '1') sim.city.useAgents(true);
+if (engineFlags.get('residents') === '1') sim.city.useAgents(true);
 else {
   sim.city.enabled = false;
   sim.ambient.enabled = true;
@@ -5967,21 +5954,6 @@ qualitySelect.onchange = () => {
   view: () => view,
   /** The building tool, for browser-driven checks. */
   buildings: buildings.tool,
-  /**
-   * The crowd engine's scenario hooks (`tests/fixtures/crowdScenarios.ts`),
-   * from the instance the game runs: a module imported again by a harness can
-   * be a second instance after a hot update. Only active with ?people=crowd.
-   */
-  crowd: {
-    add: (...args: Parameters<CrowdModule['addScriptedWalker']>) => {
-      if (!crowdModule) throw new Error('Crowd engine is not active');
-      return crowdModule.addScriptedWalker(...args);
-    },
-    inspect: (...args: Parameters<CrowdModule['inspectCrowd']>) => {
-      if (!crowdModule) throw new Error('Crowd engine is not active');
-      return crowdModule.inspectCrowd(...args);
-    },
-  },
   /** One fixed simulation step, as the game takes it, without traffic or new pedestrians if asked. */
   step: (traffic = true, pedestrians = true) => step(sim, { traffic, pedestrians }),
 };
