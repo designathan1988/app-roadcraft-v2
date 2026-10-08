@@ -41,19 +41,39 @@ export class GroundChanges {
     while (this.log.length > KEPT) this.forgotten = this.log.shift()!.serial;
   }
 
-  /** Whether a change after `since` reaches `area` (`null`: a dependant with nothing on the ground). */
-  touches(since: number, area: Rect | null): boolean {
+  /**
+   * Whether a change after `since` reaches `area` (`null`: a dependant with
+   * nothing on the ground). An area may be the list of its items' own
+   * rectangles: then only a change that reaches one of them counts. The
+   * union of a whole layer's items covered most of a town, and every street
+   * or lot drawn anywhere in it built the whole layer again (Nystrom, "Dirty
+   * Flag": a coarse flag reprocesses what did not change).
+   */
+  touches(since: number, area: Area): boolean {
     if (area === null || since >= this.serial) return false;
+    const list = isRect(area) ? [area] : area;
+    if (list.length === 0) return false;
     if (since < this.forgotten) return true;
+    let all: Rect | null = null;
+    for (const r of list) all = unionRect(all, r);
     for (let i = this.log.length - 1; i >= 0; i--) {
       const entry = this.log[i]!;
       if (entry.serial <= since) break;
       const r = entry.rect;
-      if (r === null || (r[0] <= area[2] && r[2] >= area[0] && r[1] <= area[3] && r[3] >= area[1])) return true;
+      if (r === null) return true;
+      if (!overlaps(r, all!)) continue;
+      for (const a of list) if (overlaps(r, a)) return true;
     }
     return false;
   }
 }
+
+/** What a dependant stands on: one rectangle, its items' rectangles, or nothing. */
+export type Area = Rect | readonly Rect[] | null;
+
+const isRect = (area: Rect | readonly Rect[]): area is Rect => typeof area[0] === 'number';
+
+const overlaps = (r: Rect, a: Rect): boolean => r[0] <= a[2] && r[2] >= a[0] && r[1] <= a[3] && r[3] >= a[1];
 
 /** Grows a rectangle to take another in (`null` is nothing yet). */
 export function unionRect(a: Rect | null, b: Rect): Rect {
@@ -78,7 +98,7 @@ export class GroundDependant {
 
   constructor(private readonly changes: GroundChanges) {}
 
-  stale(key: string, area: Rect | null): boolean {
+  stale(key: string, area: Area): boolean {
     if (key === this.key && !this.changes.touches(this.seen, area)) return false;
     this.key = key;
     this.seen = this.changes.version;

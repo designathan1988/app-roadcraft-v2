@@ -750,25 +750,39 @@ export function createSceneRenderer(
   let polePreviewKey = '';
   /** Walls, fences and hedges (`barriers.ts`), and the state they were built for. */
   let barriers: Barriers | null = null;
-  /** Where the walls, fences and hedges stand, by barrier revision. */
+  /**
+   * The rectangles a run of points stands on, piece by piece, grown by `pad`:
+   * a long diagonal wall or track has a box over half the map, and every
+   * street drawn in it rebuilt the whole layer.
+   */
+  const piecesOf = (points: readonly { readonly x: number; readonly y: number }[], pad: number): Rect[] => {
+    const out: Rect[] = [];
+    if (points.length === 1) out.push(rectAround(points, pad)!);
+    for (let i = 1; i < points.length; i++) out.push(rectAround([points[i - 1]!, points[i]!], pad)!);
+    return out;
+  };
+  /** Where the walls, fences and hedges stand, each piece its own rectangle, by barrier revision. */
   let barriersAreaFor = -1;
-  let barriersArea: Rect | null = null;
-  const barriersAreaOf = (doc: RoadDoc): Rect | null => {
+  let barriersArea: Rect[] = [];
+  const barriersAreaOf = (doc: RoadDoc): Rect[] => {
     if (barriersAreaFor !== doc.barrierRevision) {
       barriersAreaFor = doc.barrierRevision;
-      barriersArea = rectAround([...doc.barriers.values()].flatMap((b) => b.points), m(1));
+      barriersArea = [...doc.barriers.values()].flatMap((b) => piecesOf(b.points, m(1)));
     }
     return barriersArea;
   };
   /** Public transport (`transit.ts`), and the state it was built for. */
   let transit: TransitMeshes | null = null;
-  /** Where the transport stands - its stops, stations and tracks, a metro entrance's search round them - by its revision. */
+  /** Where the transport stands - its stops, stations and tracks, a metro entrance's search round them - piece by piece, by its revision. */
   let transitAreaFor = -1;
-  let transitArea: Rect | null = null;
-  const transitAreaOf = (doc: RoadDoc): Rect | null => {
+  let transitArea: Rect[] = [];
+  const transitAreaOf = (doc: RoadDoc): Rect[] => {
     if (transitAreaFor !== doc.transitRevision) {
       transitAreaFor = doc.transitRevision;
-      transitArea = rectAround([...doc.transit.stops, ...doc.transit.tracks.flatMap((t) => t.points)], m(40));
+      transitArea = [
+        ...doc.transit.stops.flatMap((stop) => piecesOf([stop], m(40))),
+        ...doc.transit.tracks.flatMap((track) => piecesOf(track.points, m(40))),
+      ];
     }
     return transitArea;
   };
@@ -1065,34 +1079,58 @@ export function createSceneRenderer(
     transit: new GroundDependant(groundChanges),
     gardens: new GroundDependant(groundChanges),
   };
-  /** The area every building's bank reaches, by building revision. */
+  /** Each building's bank, by building revision: what the buildings stand on, building by building. */
   let buildingsAreaFor = -1;
-  let buildingsArea: Rect | null = null;
-  const buildingsAreaOf = (doc: RoadDoc): Rect | null => {
+  let buildingsArea: Rect[] = [];
+  const buildingsAreaOf = (doc: RoadDoc): Rect[] => {
     if (buildingsAreaFor === doc.buildings.revision) return buildingsArea;
     buildingsAreaFor = doc.buildings.revision;
-    buildingsArea = null;
-    for (const b of doc.buildings.all()) buildingsArea = unionRect(buildingsArea, bankBox(b));
+    buildingsArea = [...doc.buildings.all()].map((b) => bankBox(b));
     return buildingsArea;
   };
-  /** The plants of the buildings' gardens, as `gardenPlants` reads them, by building revision. */
-  let plantsFor = -1;
-  let plantsKey = '';
-  /** Where the gardens' plants stand (with `plantsKey`). */
-  let plantsArea: Rect | null = null;
-  const plantSignature = (doc: RoadDoc): string => {
-    if (plantsFor === doc.buildings.revision) return plantsKey;
-    plantsFor = doc.buildings.revision;
-    const parts: unknown[] = [];
-    plantsArea = null;
-    for (const b of doc.buildings.all()) {
+  /**
+   * The plants of the buildings' gardens, as `gardenPlants` reads them: each
+   * building's plant elements and where it stands, as text, once per record
+   * (a record is replaced on any change, its age included). The whole town's
+   * plants were written out as one text at every change of any building.
+   */
+  const plantText = new WeakMap<Building, string>();
+  const plantTextOf = (b: Building): string => {
+    let text = plantText.get(b);
+    if (text === undefined) {
       const plants = (b.elements ?? []).filter((el: { kind: string }) => el.kind === 'tree' || el.kind === 'shrub' || el.kind === 'hedge' || el.kind === 'flowers');
-      if (plants.length) {
-        parts.push([b.id, b.x, b.y, b.rotation, plants]);
-        plantsArea = unionRect(plantsArea, bankBox(b));
-      }
+      text = plants.length ? JSON.stringify([b.x, b.y, b.rotation, plants]) : '';
+      plantText.set(b, text);
     }
-    return (plantsKey = JSON.stringify(parts));
+    return text;
+  };
+  /** Each planted building's plants on the drawn ground, the text they were read from and the ground change they follow. */
+  const gardenCache = new Map<number, { readonly text: string; readonly seen: number; readonly plants: readonly GardenPlant[] }>();
+  /** The gardens as last read: each planted building's text and bank; a serial moved when one changed. */
+  const plantedSites = new Map<number, { readonly text: string; readonly box: Rect }>();
+  let plantsFor = -1;
+  let plantsSerial = 0;
+  /** Where the gardens' plants stand, building by building. */
+  let plantsArea: Rect[] = [];
+  const plantSignature = (doc: RoadDoc): string => {
+    if (plantsFor === doc.buildings.revision) return String(plantsSerial);
+    plantsFor = doc.buildings.revision;
+    let changed = false;
+    const seen = new Set<number>();
+    for (const b of doc.buildings.all()) {
+      const text = plantTextOf(b);
+      if (!text) continue;
+      seen.add(b.id);
+      if (plantedSites.get(b.id)?.text === text) continue;
+      plantedSites.set(b.id, { text, box: bankBox(b) });
+      changed = true;
+    }
+    for (const id of [...plantedSites.keys()]) if (!seen.has(id)) { plantedSites.delete(id); changed = true; }
+    if (changed) {
+      plantsSerial++;
+      plantsArea = [...plantedSites.values()].map((site) => site.box);
+    }
+    return String(plantsSerial);
   };
   /**
    * Cuts and fills the ground to the roads AND to the buildings: a level
@@ -2395,24 +2433,32 @@ export function createSceneRenderer(
         const changed = changedSites(net.doc);
         if (changed) shapeGround(net, terrainRegion(changed), true);
       }
+      // What stands on the ground - the buildings, the walls, the transport,
+      // the gardens - waits while an edit's world is still being built: each
+      // slice of it cuts and fills a quarter block, and each layer was built
+      // again on every frame of it (and the buildings' own queue started over),
+      // though only the ground the swap puts in place is the one they stand
+      // on. The old ones are drawn meanwhile, as the old roads are.
+      const groundSettled = !stroking && !worldJob;
       // The buildings follow the ground once a stroke is over, not on every
       // dab of it: re-grading 600 buildings per dab took seconds a dab.
-      // Only when the ground changed under some building, and then each building
-      // samples its ground again only if a change reached its own bank.
-      if (!stroking && onGround.buildings.stale('', buildingsAreaOf(net.doc))) buildingGround = String(groundChanges.version);
+      // Only when the ground changed under some building's own bank, and then
+      // each building samples its ground again only if a change reached it.
+      if (groundSettled && onGround.buildings.stale('', buildingsAreaOf(net.doc))) buildingGround = String(groundChanges.version);
       if (!buildingsHeld) {
         buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
           (b, since) => groundChanges.touches(Number(since), bankBox(b)));
         if (buildings.pending) onAssetsReady();
       }
-      // The plants under a building's footprints: on the scenery and the buildings alone.
-      const siteKey = String(net.doc.buildings.revision);
+      // The plants under a building's footprints: on the scenery and the
+      // ground the buildings take (not their age or their paint).
+      const siteKey = String(buildings.coversVersion);
       if (scenery && (excludedFor.scenery !== scenery || excludedFor.site !== siteKey)) {
         scenery.exclude(net.doc.buildings.size > 0 ? buildings.covers : null);
         excludedFor = { scenery, site: siteKey };
       }
-      // Walls, fences and hedges: on their own revision, and on the ground they stand on.
-      if (onGround.barriers.stale(String(net.doc.barrierRevision), barriersAreaOf(net.doc))) {
+      // Walls, fences and hedges: on their own revision, and on the ground under each piece of them.
+      if (groundSettled && onGround.barriers.stale(String(net.doc.barrierRevision), barriersAreaOf(net.doc))) {
         if (barriers) {
           builtTriangles -= barriers.triangles;
           world.remove(barriers.group);
@@ -2423,27 +2469,49 @@ export function createSceneRenderer(
         builtTriangles += barriers.triangles;
       }
       // Public transport: tracks, stations, stops (`transit.ts`), on its own revision.
-      if (onGround.transit.stale(String(net.doc.transitRevision), transitAreaOf(net.doc))) {
+      if (groundSettled && onGround.transit.stale(String(net.doc.transitRevision), transitAreaOf(net.doc))) {
         if (transit) {
           builtTriangles -= transit.triangles;
           world.remove(transit.group);
           transit.dispose();
         }
-        // A metro entrance stands off the streets and out of the buildings.
-        const solids = [...net.doc.buildings.all()].flatMap((b) => solidFootprints(b));
-        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt,
-          (p) => onCarriageway(net, p) || solids.some((ring) => pointInPolygon(p, ring)));
+        // A metro entrance stands off the streets and out of the buildings:
+        // their footprints read only if an entrance asks.
+        let solids: Vec2[][] | null = null;
+        transit = buildTransit(net.doc, terrain.renderedHeightAt, pavedHeightAt, (p) => {
+          if (onCarriageway(net, p)) return true;
+          solids ??= [...net.doc.buildings.all()].flatMap((b) => solidFootprints(b));
+          return solids.some((ring) => pointInPolygon(p, ring));
+        });
         transit.setXray(transitXray);
         world.add(transit.group);
         builtTriangles += transit.triangles;
       }
       const gardenKey = plantSignature(net.doc);
-      if (onGround.gardens.stale(gardenKey, plantsArea)) {
+      if (groundSettled && onGround.gardens.stale(gardenKey, plantsArea)) {
         if (gardens) {
           for (const mesh of gardens.meshes) world.remove(mesh);
           gardens.dispose();
         }
-        gardens = buildGardens(gardenPlants(net.doc.buildings.all(), terrain.renderedHeightAt), sceneryKit);
+        // Each building's plants sampled on the ground again only when they
+        // changed or a change of the ground reached its bank.
+        const plants: GardenPlant[] = [];
+        const seen = new Set<number>();
+        for (const b of net.doc.buildings.all()) {
+          const text = plantTextOf(b);
+          if (!text) continue;
+          seen.add(b.id);
+          const was = gardenCache.get(b.id);
+          if (was && was.text === text && !groundChanges.touches(was.seen, bankBox(b))) {
+            plants.push(...was.plants);
+            continue;
+          }
+          const own = gardenPlants([b], terrain.renderedHeightAt);
+          gardenCache.set(b.id, { text, seen: groundChanges.version, plants: own });
+          plants.push(...own);
+        }
+        for (const id of [...gardenCache.keys()]) if (!seen.has(id)) gardenCache.delete(id);
+        gardens = buildGardens(plants, sceneryKit);
         for (const mesh of gardens.meshes) world.add(mesh);
       }
       // THE PLANTS AND STONES (`coverSweep`/`coverKeep`, `natureSweep`/
