@@ -25,6 +25,17 @@ Last full rewrite: 2026-10-04 19:10; old docs, handoffs and audits removed 2026-
 - **Ativos:** as Ações (pistola e bomba em pessoas, carros e prédios, com os
   efeitos de `render/playEffects.ts`), o transporte público (`sim/city/city.ts`
   `City`), o laboratório de armas (`?lab=armas`, atrás de `__PLAY_MODE__`).
+- **Estado do jogo:** `src/core/gameState.ts` (ferramenta, pausa, velocidade,
+  qualidade, seleção), toda mudança por `set` com a causa; no console,
+  `__state()`.
+- **Desempenho, 2026-10-08 (detalhes em `docs/PROBLEMAS.md`):** os shaders das
+  pessoas compilados antes são os desenhados (`instanceColor` nos stand-ins) e
+  um programa só para qualquer roupa; rosto e altura de cada pessoa da
+  multidão sem refazer o corpo inteiro; simplificação das peças no worker de
+  LOD; sombra das nuvens lida de um mapa 512² (corpos com passos de
+  comprimento fixo); chão das estradas sem varrer o mapa por quarto de
+  quarteirão; zonas e lotes só mudam de revisão quando mudam. Medido na RTX
+  3060: sombra do sol 0,10 ms por quadro (não é gargalo).
 - As seções abaixo sobre o "agents engine" com moradores são histórico: os
   moradores estão no backup.
 
@@ -34,11 +45,29 @@ One Claude session works on this repository at a time (the player, 2026-10-04),
 on `master` in `C:/Codex-Shared/Roadcraft`, pushed to `origin`
 (github.com/designathan1988/app-roadcraft-v2, branch `master`).
 
-**Work under way:** the agents engine (GTA + The Sims; not LLM agents, the
-player's decision of 2026-10-04): every resident a persistent agent with their
-own car, replacing the three pedestrian engines and the cars that appear from
-nowhere. The player approved deleting the old engines once the new one is live
-and they have seen it.
+**O que ficou da obra dos agentes (2026-10-04 a 10-08), ativo hoje:**
+
+- O motor de caminhada `sim/agents/walk.ts` (faixas do SUMO nas calçadas de
+  `world/walkways.ts`, corpo seguindo um ponto à frente, faixas de pedestre
+  pela regra de `crossings/permission.ts`, travessia sem faixa no fim das ruas
+  sem saída) é o único motor de pedestre. Quem anda são os NPCs do cenário
+  (`sim/ambient`), entrando pelas pontas das vias.
+- Transporte público (`sim/transit/transit.ts`, ferramentas em
+  `editor/transitTools.ts`): ônibus no trânsito de parada em parada, sem
+  motorista morador; trens e metrô nos trilhos; passagens de nível.
+- Ciclofaixas (`world/parking.ts`, `sim/vehicles/cycleLane.ts`).
+
+**Guardado em `src/backup/residents`** (decisão do jogador de 2026-10-08; o
+README diz como religar): moradores com casa, trabalho, necessidades e carro
+próprio (fatias 1, 2 e 4), a vida dentro dos prédios, a pessoa nas mãos do
+jogador, babás e motoristas de ônibus moradores, e quem ia de bicicleta ou de
+ônibus. A lógica de passageiros de `transit.ts` (`riders`, `addRider`) e
+`hireDriver`/`releaseDriver` ficam como o encaixe para religar. **Removidos:**
+os motores People, Crowd e de calçada legado, `?agents=0`, `?people=crowd`,
+`?peds=legacy`. O crime e a polícia continuam em `src/backup/crime`.
+
+O texto abaixo, até "Live in the game", é o histórico de como cada fatia foi
+medida quando estava ativa; os testes e scripts citados nele estão no backup.
 
 - **Slice 1, LIVE (default since slice 5)** (b3ef7ab, 0090c88; on 4180 since
   2026-10-04 20:47): a car owner's car stands in a real bay of the lot behind
