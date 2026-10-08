@@ -41,7 +41,52 @@ import type { SceneMaterials } from './materials';
 export interface StructureDetails {
   readonly group: Group;
   readonly triangles: number;
+  /**
+   * Where the structures built stand: each raised or buried road's box, with
+   * room for its abutments and the casings it meets. An edit that reaches
+   * none of them, and makes no new one, leaves these details as they are.
+   */
+  readonly spans: readonly (readonly [number, number, number, number])[];
   dispose(): void;
+}
+
+/** Room round a structure's road that its details read (abutments, casings met, portals). */
+const SPAN_REACH = 60;
+
+/**
+ * The roads that carry structures: raised ones (a viaduct, a bridge, or a
+ * deck lifted more than five units off the ground) and buried ones (a tunnel,
+ * or a road deeper than the bore). With `within`, only the roads whose line
+ * reaches one of those boxes are asked.
+ */
+export function structureRibbons(
+  net: Network,
+  elevation: RoadElevation,
+  terrainAt: (x: number, y: number) => number,
+  within?: readonly (readonly [number, number, number, number])[],
+): { raised: SegmentRibbon[]; tunnels: SegmentRibbon[] } {
+  const samples = (ribbon: SegmentRibbon,
+    predicate: (cover: number) => boolean): boolean => {
+    for (let s = 0; s <= ribbon.full.length; s += Math.max(4, ribbon.full.length / 32)) {
+      const p = ribbon.full.sampleAt(s).p;
+      const cover = elevation.onSegment(ribbon.id, p.x, p.y) - terrainAt(p.x, p.y);
+      if (predicate(cover)) return true;
+    }
+    return false;
+  };
+  const asked = within === undefined ? [...net.ribbons.values()] : [...net.ribbons.values()].filter((ribbon) => {
+    const bb = ribbon.full.bbox;
+    return within.some((r) => r[0] <= bb.maxX + SPAN_REACH && r[2] >= bb.minX - SPAN_REACH && r[1] <= bb.maxY + SPAN_REACH && r[3] >= bb.minY - SPAN_REACH);
+  });
+  const raised = asked.filter((ribbon) =>
+    isRaised(net.doc.segment(ribbon.id)?.structure ?? 'ground') || samples(ribbon, (lift) => lift > 5),
+  );
+  const tunnels = TUNNELS_DRAWN
+    ? asked.filter((ribbon) =>
+      ribbon.full.length > 0 &&
+      (net.doc.segment(ribbon.id)?.structure === 'tunnel' || samples(ribbon, (lift) => lift < -TUNNEL_BORE)))
+    : [];
+  return { raised, tunnels };
 }
 
 /** Bearing inset: the deck rests ON the pier, so its top stops just under it. */
@@ -369,23 +414,11 @@ export function buildStructureDetails(
   const group = new Group();
   group.name = 'road-structure-details';
 
-  const samples = (ribbon: SegmentRibbon,
-    predicate: (cover: number) => boolean): boolean => {
-    for (let s = 0; s <= ribbon.full.length; s += Math.max(4, ribbon.full.length / 32)) {
-      const p = ribbon.full.sampleAt(s).p;
-      const cover = elevation.onSegment(ribbon.id, p.x, p.y) - terrainAt(p.x, p.y);
-      if (predicate(cover)) return true;
-    }
-    return false;
-  };
-  const raised = [...net.ribbons.values()].filter((ribbon) =>
-    isRaised(net.doc.segment(ribbon.id)?.structure ?? 'ground') || samples(ribbon, (lift) => lift > 5),
-  );
-  const tunnels = TUNNELS_DRAWN
-    ? [...net.ribbons.values()].filter((ribbon) =>
-      ribbon.full.length > 0 &&
-      (net.doc.segment(ribbon.id)?.structure === 'tunnel' || samples(ribbon, (lift) => lift < -TUNNEL_BORE)))
-    : [];
+  const { raised, tunnels } = structureRibbons(net, elevation, terrainAt);
+  const spans = [...raised, ...tunnels].map((ribbon) => {
+    const bb = ribbon.full.bbox;
+    return [bb.minX - SPAN_REACH, bb.minY - SPAN_REACH, bb.maxX + SPAN_REACH, bb.maxY + SPAN_REACH] as const;
+  });
 
   const piers: Placement[] = [];
   const caps: Placement[] = [];
@@ -636,6 +669,7 @@ export function buildStructureDetails(
   return {
     group,
     triangles,
+    spans,
     dispose() {
       for (const geometry of owned) geometry.dispose();
       group.clear();

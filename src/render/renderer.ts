@@ -73,7 +73,7 @@ import { createRain } from './rain';
 import { createLightning } from './lightning';
 import { windVector } from '@world/weather';
 import { createSignalHeads, type SignalHeads } from './signals';
-import { buildStructureDetails, type StructureDetails } from './structures';
+import { buildStructureDetails, structureRibbons, type StructureDetails } from './structures';
 import { createExhaust } from './exhaust';
 import { createCasualties } from './casualties';
 import { createRagdolls, type RagdollProbe, type RagdollWall, type RagdollWorld } from './ragdoll';
@@ -1347,23 +1347,35 @@ export function createSceneRenderer(
   /** The city hour the plants were last sized at (`plantGrowth`). */
   let growthHour = Number.NaN;
   let cityMinutes = Number.NaN;
-  const rebuildFurniture = (net: Network): void => {
-    growthHour = Math.floor(cityMinutes / 60);
+  /** `keepFurniture`: a road edit that reached none of the placed things - only the signs (street names, junctions) are made again. */
+  const rebuildFurniture = (net: Network, keepFurniture = false): void => {
+    if (!keepFurniture) growthHour = Math.floor(cityMinutes / 60);
     if (!elevation) return;
-    if (furniture) {
-      builtTriangles -= furniture.triangles;
-      for (const mesh of furniture.meshes) world.remove(mesh);
-      world.remove(furniture.grass);
-      furniture.dispose();
+    if (!keepFurniture || !furniture) {
+      if (furniture) {
+        builtTriangles -= furniture.triangles;
+        for (const mesh of furniture.meshes) world.remove(mesh);
+        world.remove(furniture.grass);
+        furniture.dispose();
+      }
+      furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt, cityMinutes);
+      for (const mesh of furniture.meshes) world.add(mesh);
+      world.add(furniture.grass);
+      builtTriangles += furniture.triangles;
     }
-    furniture = buildStreetFurniture(net, elevation, sceneryKit, terrain.renderedHeightAt, cityMinutes);
     if (signs) { world.remove(signs.group); signs.dispose(); }
     signs = buildSigns(net, elevation, net.doc.landscape.values());
     world.add(signs.group);
-    for (const mesh of furniture.meshes) world.add(mesh);
-    world.add(furniture.grass);
-    builtTriangles += furniture.triangles;
   };
+  /** Whether a change in `blocks` (`null`: everywhere) reaches any of these boxes. */
+  const blocksReach = (blocks: readonly (readonly [number, number, number, number])[] | null,
+    boxes: Iterable<readonly [number, number, number, number]>): boolean => {
+    if (blocks === null) return true;
+    for (const r of boxes) for (const b of blocks) if (r[0] <= b[2] && r[2] >= b[0] && r[1] <= b[3] && r[3] >= b[1]) return true;
+    return false;
+  };
+  /** The box round a placed point that its own build reads (the kerb, the footway, the ground). */
+  const around = (x: number, y: number, reach: number): readonly [number, number, number, number] => [x - reach, y - reach, x + reach, y + reach];
 
   /** Blocks whose ground a dropped rebuild had not shaped yet (`null`: the whole map). */
   let pendingBlocks: [number, number, number, number][] | null = [];
@@ -1436,8 +1448,16 @@ export function createSceneRenderer(
     const freshRoads = roads === null
       ? buildRoadSurfaces(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial)
       : yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    // The structures' details, the poles and the street furniture are each
+    // kept as they are when the edit's blocks reach none of their own things
+    // (their heights, ground and kerbs moved only there) and, for the
+    // structures, when the edit raised or buried no road of its own: a street
+    // drawn anywhere built every viaduct, pole and bench of the map again
+    // (docs/performance.md #13).
     const atdetails = performance.now();
-    const freshDetails = buildStructureDetails(net, solve, terrain.renderedHeightAt, materials);
+    const keepDetails = details !== null && !blocksReach(blocks, details.spans)
+      && (() => { const near = structureRibbons(net, solve, terrain.renderedHeightAt, blocks!); return near.raised.length + near.tunnels.length === 0; })();
+    const freshDetails = keepDetails ? details! : buildStructureDetails(net, solve, terrain.renderedHeightAt, materials);
     performance.measure('hitch:road-edit/details', { start: atdetails, end: performance.now() });
     yield;
     const atscenery = performance.now();
@@ -1455,8 +1475,13 @@ export function createSceneRenderer(
     // complaint. The lamp columns in `scenery.ts` already do this; the poles
     // were the one piece of street furniture reading the bare ground.
     const atutilities = performance.now();
-    const freshUtilities = buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt), sceneryKit);
+    const keepUtilities = utilities !== null && utilityRevision === net.doc.utilityRevision
+      && !blocksReach(blocks, [...net.doc.poles.values()].map((pole) => around(pole.x, pole.y, m(12))));
+    const freshUtilities = keepUtilities ? utilities! : buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt), sceneryKit);
     performance.measure('hitch:road-edit/utilities', { start: atutilities, end: performance.now() });
+    // The placed things (benches, lamps, street trees) on the footways they stand on.
+    const keepFurniture = furniture !== null && utilityRevision === net.doc.utilityRevision
+      && !blocksReach(blocks, [...net.doc.landscape.values()].map((item) => around(item.x, item.y, m(15))));
     yield;
 
     // Everything in place at once: the world as it was goes - only what is
@@ -1465,14 +1490,14 @@ export function createSceneRenderer(
     // where the ground changes under them) vanished after a road edit.
     let triangles = builtTriangles;
     if (roads && roads !== freshRoads) { triangles -= roads.triangles; world.remove(roads.group); roads.dispose(); }
-    if (details) { triangles -= details.triangles; world.remove(details.group); details.dispose(); }
+    if (details) { triangles -= details.triangles; world.remove(details.group); if (details !== freshDetails) details.dispose(); }
     if (scenery) {
       triangles -= scenery.triangles;
       for (const mesh of scenery.meshes) world.remove(mesh);
       world.remove(scenery.grass);
       scenery.dispose();
     }
-    if (utilities) { triangles -= utilities.triangles; world.remove(utilities.group); utilities.dispose(); }
+    if (utilities) { triangles -= utilities.triangles; world.remove(utilities.group); if (utilities !== freshUtilities) utilities.dispose(); }
     for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
     roads = freshRoads;
     world.add(roads.group);
@@ -1487,7 +1512,7 @@ export function createSceneRenderer(
     builtTriangles = triangles + roads.triangles + details.triangles + scenery.triangles + utilities.triangles;
     // The street furniture and signs: `rebuildFurniture` takes the old ones out itself.
     const atfurniture = performance.now();
-    rebuildFurniture(net);
+    rebuildFurniture(net, keepFurniture);
     performance.measure('hitch:road-edit/furniture', { start: atfurniture, end: performance.now() });
     rebuildMs = performance.now() - started;
     performance.measure('hitch:road-edit/world rebuilt', { start: started, end: performance.now() });
