@@ -2093,8 +2093,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const relief = createReliefBake(GRID, TERRAIN_CELL, TERRAIN_HALF, material.userData['macro'] as Texture);
   /** The same corners before any road shaped them, so shaping is idempotent. */
   const natural = new Float64Array(GRID * GRID);
-  /** Corners a road has moved, so an unshaped one can be restored cheaply. */
-  let shapedCorners: number[] = [];
+  /**
+   * Corners a road has moved (1), so an unshaped one can be restored cheaply:
+   * a mark per corner, read over a region's own corners - a list of them all
+   * was walked whole for every quarter block of every road edit.
+   */
+  const shapedCorners = new Uint8Array(GRID * GRID);
+  const spherePoint = new Vector3();
   /** The cells the last `update` rewrote (see `lastRegion`). */
   let lastRegion: TerrainRegion | null = null;
   /** The water waits for the end of a stroke (see `settle`). */
@@ -2418,19 +2423,19 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // are shaped again: every other one keeps its cut and fill. The whole
     // plate was re-shaped on every dab - every road and every building pad of
     // the town, sixty-odd times a stroke.
-    const inRegion = (i: number): boolean => {
-      if (!regions) return true;
-      const ix = i % GRID, iy = (i - ix) / GRID;
-      return regions.some((r) => ix >= r[0] && ix <= r[1] && iy >= r[2] && iy <= r[3]);
-    };
     const before = new Map<number, number>();
-    const kept: number[] = [];
-    for (const i of shapedCorners) {
-      if (!inRegion(i)) { kept.push(i); continue; }
+    const restore = (i: number): void => {
+      if (!shapedCorners[i]) return;
+      shapedCorners[i] = 0;
       before.set(i, grid[i] as number);
       grid[i] = natural[i] as number;
+    };
+    if (!regions) for (let i = 0; i < shapedCorners.length; i++) restore(i);
+    else for (const r of regions) {
+      for (let iy = Math.max(0, r[2]); iy <= Math.min(GRID - 1, r[3]); iy++) {
+        for (let ix = Math.max(0, r[0]); ix <= Math.min(GRID - 1, r[1]); ix++) restore(ix + iy * GRID);
+      }
     }
-    shapedCorners = kept;
     const fresh: number[] = [];
 
     if (shape) {
@@ -2458,7 +2463,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
               const blended = ground + (height - ground) * weight;
               if (Math.abs(blended - ground) < 0.002) continue;
               grid[i] = blended;
-              shapedCorners.push(i);
+              shapedCorners[i] = 1;
               fresh.push(i);
             }
           }
@@ -2486,7 +2491,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       markLand({ x0, x1, y0, y1 });
     }
     refreshNormals(changed);
-    geometry.computeBoundingSphere();
+    // The bounds grown over the corners that moved (`Sphere.expandByPoint`
+    // keeps everything it held): worked out again over all 90 601 corners it
+    // was 0.8 ms for each of the hundred-odd quarter blocks of a road edit.
+    if (geometry.boundingSphere) for (const i of changed) geometry.boundingSphere.expandByPoint(spherePoint.fromBufferAttribute(position, i));
+    else geometry.computeBoundingSphere();
     for (const i of changed) if (onRim(i)) { rebuildFrame(); break; }
     lastChanged = changed;
     return true;
