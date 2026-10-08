@@ -7,33 +7,26 @@ history). Rules of work are in `CLAUDE.md`, not here.
 
 Last full rewrite: 2026-10-04 19:10; old docs, handoffs and audits removed 2026-10-05.
 
-## Walking the city (play mode) — OFF since 2026-10-08
+## Estado em 2026-10-08 (lê primeiro)
 
-The player's decision of 2026-10-08: walking the city as a person is off for
-now, behind one compile-time key, with no code deleted.
-
-- **The key:** `__PLAY_MODE__` in `vite.config.ts` and `vitest.config.ts`
-  (`define`, now `'false'`), declared in `src/globals.d.ts`. The build replaces
-  it with `false`, so everything behind it is dead code and its modules are not
-  in any chunk.
-- **Off with it:** walking/driving as a person (`src/play.ts`, J key, the
-  `#playButton` in `index.html` born `hidden`, the v2 "Jogar" pill in
-  `ui/v2/shell.ts`), the play world in the simulation (`sim/ambient/play.ts`
-  `PlayWorld`, now `AmbientWorld.play: PlayWorld | null`), taking control of a
-  resident (`sim/agents/player.ts` `Player`, now `CityLife.player: Player | null`;
-  the agent card's "Control" button; `ui/playerHud.ts`), and the weapons lab
-  (`?lab=armas`, `src/weaponsLab.ts`). `PLAYER_ID` lives in
-  `sim/ambient/playerId.ts`.
-- **Still on (not exclusive to walking):** the dock's Actions (the pistol and
-  the bomb at any moment) and what they leave behind - bodies (ragdolls with
-  Jolt), blood, explosions, broken buildings, fire. Those live in
-  `render/playEffects.ts`, loaded by `import()` the first time Actions (or
-  walking) want them (`SceneHandle.effects()`): until somebody shoots or drops
-  a bomb none of it is downloaded, made or run in a frame. Interiors and "see
-  inside" stay as they were.
-- **To turn it back on:** set `__PLAY_MODE__: 'true'` in both configs and build
-  (`npm run build`); `main.ts` then loads `play.ts`, the play world, the player
-  and the lab, and shows the buttons.
+- **Problemas de desempenho e o que foi feito:** `docs/PROBLEMAS.md` (uma linha
+  por problema, medida antes e depois, causa, commit).
+- **Diário de mudanças:** `src/world/changes.ts` (`RoadDoc.changes`): o que
+  mudou, onde e por quê, com as mudanças derivadas encadeadas. No jogo, F8
+  desenha as mudanças dos últimos 8 s; no console, `__changes()`.
+- **Pessoas no jogo:** só os NPCs do cenário (`sim/ambient`), andando com o
+  motor dos agentes (`sim/agents/walk.ts`), o único motor de pedestre. Drive
+  v2 é o único modelo de direção.
+- **Guardados fora do código ativo** (`src/backup/residents`, o README diz como
+  religar): a vida dos moradores (casa, trabalho, mente, carros próprios, o
+  cartão do morador) e andar pela cidade como uma pessoa (`play.ts`, `Player`,
+  HUD). Removidos: o mundo planeta e os motores People, Crowd e de calçada
+  legado.
+- **Ativos:** as Ações (pistola e bomba em pessoas, carros e prédios, com os
+  efeitos de `render/playEffects.ts`), o transporte público (`sim/city/city.ts`
+  `City`), o laboratório de armas (`?lab=armas`, atrás de `__PLAY_MODE__`).
+- As seções abaixo sobre o "agents engine" com moradores são histórico: os
+  moradores estão no backup.
 
 ## Who works here
 
