@@ -397,6 +397,13 @@ and they have seen it.
   the traffic held until the roads are in, buildings after, trees last.
   Open: the pedestrians' door links are still all rebuilt when a building is
   added (only the obstacle search is on a grid).
+- **Clouds at a quarter of the pixels (2026-10-08, LIVE):** the clouds'
+  bodies are marched into a target of half the width and height
+  (`postprocess.ts` CLOUD_BODIES_MAIN, to the nearest of the four scene
+  depths under each texel, so none spills over the edge of something in
+  front) and blended in by the atmosphere pass; that pass is skipped when
+  there is no cloud, mist, painted fog or air round the map. Their edges are
+  a little softer.
 - **Countryside trees from the Nature Kit (2026-10-08, LIVE; the player's
   choice):** eight of Kenney's low-poly trees (CC0, `public/models/nature/`,
   docs/CREDITOS.md) replace the ez-tree ones grown at every opening (no

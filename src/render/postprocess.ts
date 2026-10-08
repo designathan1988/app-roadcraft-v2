@@ -1,7 +1,8 @@
 import {
-  BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh,
-  PlaneGeometry, Scene, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
+  BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh, NoBlending,
+  PlaneGeometry, Scene, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
+import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { MAP_SIZE } from '@world/bounds';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { PLANET_SHADER, planetPoint } from './planet';
@@ -257,11 +258,32 @@ export function createPostChain(
   let placedClouds: readonly PlacedCloud[] = [];
   const cloudDrift = { x: 0, y: 0 };
   const globePoint = new Vector3();
+  /** The clouds' bodies at a quarter of the pixels (`CLOUD_BODIES_MAIN`), drawn just before the pass that blends them in. */
+  const bodiesSize = (n: number): number => Math.max(1, Math.ceil(n / 2));
+  const bodiesTarget = new WebGLRenderTarget(bodiesSize(size.x * ratio), bodiesSize(size.y * ratio), { type: HalfFloatType, depthBuffer: false });
+  let bodiesQuad: FullScreenQuad | null = null;
   if (clouds) {
     const pass = clouds;
+    const fragment = CLOUD_SHADOWS.fragmentShader;
+    bodiesQuad = new FullScreenQuad(new ShaderMaterial({
+      uniforms: pass.uniforms, vertexShader: CLOUD_SHADOWS.vertexShader,
+      fragmentShader: fragment.slice(0, fragment.indexOf('void main()')) + CLOUD_BODIES_MAIN,
+      blending: NoBlending, depthTest: false, depthWrite: false,
+    }));
+    pass.uniforms['tClouds']!.value = bodiesTarget.texture;
+    const quad = bodiesQuad;
     const shade = pass.render.bind(pass);
     pass.render = (...args: Parameters<ShaderPass['render']>) => {
       pass.uniforms['tDepth']!.value = sceneDepth;
+      const on = (pass.uniforms['uCloudCount']!.value as number) > 0;
+      pass.uniforms['uCloudsOn']!.value = on ? 1 : 0;
+      if (on) {
+        const gl = args[0];
+        const previous = gl.getRenderTarget();
+        gl.setRenderTarget(bodiesTarget);
+        quad.render(gl);
+        gl.setRenderTarget(previous);
+      }
       shade(...args);
     };
     composer.addPass(clouds);
@@ -296,6 +318,10 @@ export function createPostChain(
         for (let i = 0; i < count * CLOUD_PUFFS; i++) onGlobe((u['uPuff']!.value as Vector4[])[i]!);
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
         (clouds.uniforms['uCameraWorld'] as { value: Matrix4 }).value.copy(camera.matrixWorld);
+        // Nothing of it shows - no cloud, no mist, no painted fog, no air round
+        // the map: the pass is skipped, not run over every pixel for nothing.
+        clouds.enabled = count > 0 || (u['uFog']!.value as number) > 0 || (u['uGroundFog']!.value as Vector4).w > 0.5
+          || (u['uBackdrop']!.value as number) > 0.5;
       }
       composer.render(delta);
     },
@@ -339,6 +365,7 @@ export function createPostChain(
       composer.setPixelRatio(pixelRatio);
       composer.setSize(width, height);
       bloom.setSize(width, height);
+      bodiesTarget.setSize(bodiesSize(width * pixelRatio), bodiesSize(height * pixelRatio));
     },
     dispose() {
       composer.dispose();
@@ -349,6 +376,8 @@ export function createPostChain(
       output.dispose();
       grade.dispose();
       clouds?.dispose();
+      (bodiesQuad?.material as ShaderMaterial | undefined)?.dispose();
+      bodiesTarget.dispose();
     },
   };
 }
@@ -479,6 +508,9 @@ const CLOUD_SHADOWS = {
     uSkyHorizon: { value: new Color(0x86bdf0) },
     uSkyHigh: { value: new Color(0x2a66c8) },
     uAbyss: { value: new Color(0x1e160f) },
+    // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`): light, and what of the scene shows through.
+    tClouds: { value: null as Texture | null },
+    uCloudsOn: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -599,6 +631,8 @@ const CLOUD_SHADOWS = {
       float erode = detail * (0.55 + 0.3 * (1.0 - life));
       return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0);
     }
+    uniform sampler2D tClouds;
+    uniform float uCloudsOn;
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
       float depth = texture2D(tDepth, vUv).r;
@@ -791,6 +825,39 @@ const CLOUD_SHADOWS = {
           }
         }
       }
+      // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`).
+      if (uCloudsOn > 0.5) {
+        vec4 bodies = texture2D(tClouds, vUv);
+        colour = colour * bodies.a + bodies.rgb;
+      }
+      gl_FragColor = vec4(colour, src.a);
+    }
+  `,
+};
+
+/**
+ * The clouds' bodies (`CLOUD_SHADOWS`'s functions and uniforms), nearest
+ * first, into a target of half the width and half the height: a quarter of
+ * the pixels, as volumetric clouds are marched in games (Horizon Zero Dawn's
+ * cloudscapes, the Nubis line of work) - they are soft, and every pixel of
+ * them cost up to 24 clouds of 24 steps of noise. Each is marched to the
+ * nearest of the scene's four depths under it, so no cloud is laid over the
+ * edge of something in front of it; the full-size pass blends them in
+ * (light, and what of the scene shows through).
+ */
+const CLOUD_BODIES_MAIN = /* glsl */ `
+    void main() {
+      ivec2 full = textureSize(tDepth, 0);
+      ivec2 at = ivec2(gl_FragCoord.xy) * 2;
+      float depth = 1.0;
+      for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) depth = min(depth, texelFetch(tDepth, min(at + ivec2(i, j), full - 1), 0).r);
+      bool sky = depth >= 0.9999;
+      vec3 ro = worldAt(vUv, 0.0);
+      vec3 hit = worldAt(vUv, sky ? 0.99999 : depth);
+      vec3 rd = normalize(hit - ro);
+      float tScene = sky ? 1e7 : length(hit - ro);
+      float transmit = 1.0;
+      vec3 light = vec3(0.0);
       // The clouds, nearest first.
       if (uCloudCount > 0) {
         float focusDepth = texture2D(tDepth, vec2(0.5)).r;
@@ -813,8 +880,6 @@ const CLOUD_SHADOWS = {
           if (c < uCloudCount) spans[c] = sphereSpan(ro, rd, uCloud[c]);
         }
         float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
-        float transmit = 1.0;
-        vec3 light = vec3(0.0);
         // Lit by the sun on its sunward side, by the sky elsewhere; dim at night.
         vec3 skyLight = mix(uFogColor * 0.55 + vec3(0.12), vec3(0.03, 0.035, 0.05), uDark);
         vec3 baseShade = mix(vec3(0.22, 0.24, 0.3), vec3(0.02, 0.025, 0.035), uDark);
@@ -867,12 +932,10 @@ const CLOUD_SHADOWS = {
             if (transmit < 0.03) break;
           }
         }
-        colour = colour * transmit + light;
       }
-      gl_FragColor = vec4(colour, src.a);
+      gl_FragColor = vec4(light, transmit);
     }
-  `,
-};
+`;
 
 /**
  * A film grade on the display image: a gentle S-curve of contrast, colour
