@@ -594,6 +594,12 @@ export async function loadNatureTrees(anisotropy: number): Promise<NatureTreeKit
   /** The first variety's photographed leaves (an oak's), printed over every crown up close. */
   let leafPhoto: Texture | null = null;
   for (const [preset, seed] of VARIANTS) {
+    // A variety at a time, the page drawn in between: the six grown in one
+    // go were one long task (web.dev, "Optimize long tasks").
+    if (variants.length > 0) {
+      const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+      await (scheduler?.yield ? scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0)));
+    }
     const tree = new Tree();
     tree.loadPreset(preset);
     tree.options.seed = seed;

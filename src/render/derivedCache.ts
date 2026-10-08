@@ -88,18 +88,27 @@ export async function readDerivedAll<T>(prefix: string): Promise<Map<string, T>>
   });
 }
 
-/** Keeps a value under `key`, without waiting: a write that fails is made again next time. */
+/**
+ * Keeps a value under `key`. Resolves once the store has taken its copy
+ * (`put` copies the value as it is called): the caller may then change the
+ * value or hand its buffers to another thread. A write that fails is made
+ * again next time.
+ */
+export async function keepDerived(key: string, value: unknown): Promise<void> {
+  const db = await database();
+  if (!db) return;
+  try {
+    const tx = db.transaction(STORE, 'readwrite');
+    const request = tx.objectStore(STORE).put(value, key);
+    request.onerror = (event) => event.preventDefault();
+  } catch {
+    // Not kept (no space, private window): made again next time.
+  }
+}
+
+/** Keeps a value under `key`, without waiting. */
 export function writeDerived(key: string, value: unknown): void {
-  void database().then((db) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction(STORE, 'readwrite');
-      const request = tx.objectStore(STORE).put(value, key);
-      request.onerror = (event) => event.preventDefault();
-    } catch {
-      // Not kept (no space, private window): made again next time.
-    }
-  });
+  void keepDerived(key, value);
 }
 
 /** Forgets the entries of `kind` kept under any other fingerprint (an older build's). */

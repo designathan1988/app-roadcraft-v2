@@ -280,7 +280,9 @@ export function createBuildingLayer(): BuildingLayer {
       // made. Emitted in the frame of the edit, they and the cells were a
       // stall of 100-500 ms when a road took buildings away or reshaped the
       // ground beside them (docs/performance.md #16).
-      if (key !== storedKey && stored && dimmed === undefined && !cutaway) {
+      // The first town too (the opening, a map loaded): built in one frame it
+      // was the longest task of the opening.
+      if (key !== storedKey && dimmed === undefined && !cutaway) {
         if (!warming || warming.key !== key) {
           warming = { key, queue: [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id)), at: 0 };
         }

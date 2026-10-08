@@ -6,7 +6,15 @@ interface SurfaceBakeResult {
   readonly details: readonly DetailBakePixels[];
 }
 
-/** Start the exact procedural recipes while the main thread builds the town. */
+declare const __SURFACE_BAKE_HASH__: string | undefined;
+/**
+ * The fingerprint of the recipes' code (`cook-plugin.ts`), read here and sent
+ * to the worker: its texels are kept in the browser under it
+ * (`derivedCache.ts`) and read back instead of baked again.
+ */
+const BAKE_HASH = typeof __SURFACE_BAKE_HASH__ !== 'undefined' ? __SURFACE_BAKE_HASH__ : null;
+
+/** Start the exact procedural recipes (or read back the texels they made) while the main thread builds the town. */
 export function startSurfaceBake(): Promise<SurfaceBakeResult | null> {
   if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return Promise.resolve(null);
   return new Promise(resolve => {
@@ -35,6 +43,7 @@ export function startSurfaceBake(): Promise<SurfaceBakeResult | null> {
       console.warn('Surface bake pixels could not be transferred; using the canvas recipes on the main thread.');
       resolve(null);
     };
+    worker.postMessage({ hash: BAKE_HASH });
   });
 }
 

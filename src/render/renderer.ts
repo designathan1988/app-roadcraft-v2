@@ -809,8 +809,12 @@ export function createSceneRenderer(
     retired: [],
   };
 
-  /** The world being rebuilt for the last edit (`rebuildWorld`), a slice a frame. */
-  let worldJob: Generator<void, void, void> | null = null;
+  /**
+   * The world being rebuilt for the last edit (`rebuildWorld`), a slice a
+   * frame. A step that yields 'wait' is waiting on something off the thread
+   * (shaders compiling): nothing more is pumped that frame.
+   */
+  let worldJob: Generator<'wait' | undefined, void, void> | null = null;
   /** The roads' heights an edit solved ahead (`offerElevation`). */
   let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
@@ -832,7 +836,7 @@ export function createSceneRenderer(
     const until = workUntil(WORLD_SLICE_MS, WORLD_SLICE_MS);
     if (!until) { onAssetsReady(); return; }
     let step = worldJob.next();
-    while (!step.done && performance.now() < until) step = worldJob.next();
+    while (!step.done && step.value !== 'wait' && performance.now() < until) step = worldJob.next();
     if (step.done) worldJob = null;
     else onAssetsReady();
   };
@@ -993,18 +997,24 @@ export function createSceneRenderer(
   let fogMoving = false;
   /** Clouds placed on the map: they boil, so the frame is drawn now and then. */
   let placedCloudsShown = false;
-  void loadNatureTrees(anisotropy).then((kit) => {
-    natureTreeKit = kit;
-    // The kept trees are grown with it at the next look.
-    natureKeepFor = '';
-    coverKeepFor = '';
-    plantedFor = '';
-  }, (error: unknown) => {
-    natureTreesPending = false;
-    natureKeepFor = '';
-    coverKeepFor = '';
-    console.warn('[nature] trees not loaded; the procedural ones stay', error);
-  });
+  let natureTreesStarted = false;
+  const startNatureTrees = (): void => {
+    natureTreesStarted = true;
+    void loadNatureTrees(anisotropy).then((kit) => {
+      natureTreeKit = kit;
+      // The kept trees are grown with it at the next look.
+      natureKeepFor = '';
+      coverKeepFor = '';
+      plantedFor = '';
+      onAssetsReady();
+    }, (error: unknown) => {
+      natureTreesPending = false;
+      natureKeepFor = '';
+      coverKeepFor = '';
+      console.warn('[nature] trees not loaded; the procedural ones stay', error);
+      onAssetsReady();
+    });
+  };
   /** Where a cover was painted (the only paints that raise a density), by paint revision. */
   let forestAreaFor = -1;
   let forestArea: Rect | null = null;
@@ -1428,13 +1438,16 @@ export function createSceneRenderer(
     else for (const block of changed) markGrass(block);
     const local = blocks !== null && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25;
     pendingBlocks = local ? blocks : null;
-    const steps = worldSteps(net, local ? blocks : null, started);
-    // The first build, or the land itself changed: at once. After a road
-    // edit: a few milliseconds a frame (`pumpWorld`), the world as it was
-    // staying drawn until the new one is complete - built in the frame of the
-    // edit, it was a stall of 100-500 ms on every road drawn in the default
-    // town (docs/performance.md #10). A job an edit overtakes is dropped.
-    if (!roads || !local) {
+    // The land itself changed: at once. After a road edit, and for the first
+    // world when the game opens: a few milliseconds a frame (`pumpWorld`) -
+    // built in the frame of the edit, it was a stall of 100-500 ms on every
+    // road drawn in the default town (docs/performance.md #10), and the
+    // opening drew nothing until the whole town was built in one frame. The
+    // world as it was (at the opening, the bare land) stays drawn until the
+    // new one is complete. A job an edit overtakes is dropped.
+    const sliced = !roads || local;
+    const steps = worldSteps(net, local ? blocks : null, started, sliced);
+    if (!sliced) {
       let step = steps.next();
       while (!step.done) step = steps.next();
       worldJob = null;
@@ -1444,16 +1457,17 @@ export function createSceneRenderer(
     }
   };
 
-  /** What `worldSteps` builds before it is put in place at once. */
-  function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number): Generator<void, void, void> {
+  /**
+   * What `worldSteps` builds before it is put in place at once. `sliced`: run
+   * a slice a frame (`pumpWorld`), so it may wait for its shaders.
+   */
+  function* worldSteps(net: Network, blocks: [number, number, number, number][] | null, started: number, sliced: boolean): Generator<'wait' | undefined, void, void> {
     const solve = elevation!;
     if (blocks === null) shapeGround(net);
     else if (blocks.length || gradedFor !== net.doc.buildings.revision) yield* shapeBlocksSteps(net, blocks);
     pendingBlocks = [];
     yield;
-    const freshRoads = roads === null
-      ? buildRoadSurfaces(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial)
-      : yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    const freshRoads = yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
     // The structures' details, the poles and the street furniture are each
     // kept as they are when the edit's blocks reach none of their own things
     // (their heights, ground and kerbs moved only there) and, for the
@@ -1489,6 +1503,23 @@ export function createSceneRenderer(
     const keepFurniture = furniture !== null && utilityRevision === net.doc.utilityRevision
       && !blocksReach(blocks, [...net.doc.landscape.values()].map((item) => around(item.x, item.y, m(15))));
     yield;
+
+    // The new pieces' shaders compiled before they are drawn - in parallel
+    // where the driver can (`compileAhead`, KHR_parallel_shader_compile) - and
+    // the swap waits for them, as an engine holds a draw until its pipeline
+    // state is ready (Unreal's PSO precaching): drawn first, each new program
+    // stopped its frame while the driver built it.
+    if (sliced) {
+      const stage = new Group();
+      for (const piece of [freshRoads.group, freshDetails.group, freshUtilities.group, freshScenery.grass, ...freshScenery.meshes]) {
+        if (piece.parent === null) stage.add(piece);
+      }
+      if (stage.children.length > 0) {
+        let compiled = false;
+        void compileAhead(stage).then(() => { compiled = true; });
+        while (!compiled) yield 'wait';
+      }
+    }
 
     // Everything in place at once: the world as it was goes - only what is
     // replaced here. `world.clear()` used to empty the whole group, and the
@@ -2546,11 +2577,17 @@ export function createSceneRenderer(
       // Only when the ground changed under some building's own bank, and then
       // each building samples its ground again only if a change reached it.
       if (groundSettled && onGround.buildings.stale('', buildingsAreaOf(net.doc))) buildingGround = String(groundChanges.version);
-      if (!buildingsHeld) {
+      // At the opening the buildings come once the first world (the roads,
+      // the ground cut and filled to them) is in: emitted on the bare land
+      // they were all emitted again on the shaped one.
+      if (!buildingsHeld && roads !== null) {
         buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
           (b, since) => groundChanges.touches(Number(since), bankBox(b)));
         if (buildings.pending) onAssetsReady();
       }
+      // The countryside's trees are grown once the first world is in, not
+      // while the opening builds it (`loadNatureTrees`).
+      if (!natureTreesStarted && roads !== null && !worldJob) startNatureTrees();
       // The plants under a building's footprints: on the scenery and the
       // ground the buildings take (not their age or their paint).
       const siteKey = String(buildings.coversVersion);

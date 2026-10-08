@@ -4457,6 +4457,9 @@ let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = 
 
 /** The Actions' weapon choice last applied (`weaponChoice.serial`). */
 let weaponApplied = 0;
+/** A frame has been drawn, and the first world has been put in place (the opening builds it in parts). */
+let drawnOnce = false;
+let worldShown = false;
 function frame(now: number): void {
   pending = false;
   if (!booted) return;
@@ -4470,10 +4473,13 @@ function frame(now: number): void {
   const wall = (now - last) / 1000;
   last = now;
 
+  // The opening puts the town together in parts (`SceneHandle.worldBusy`):
+  // the traffic waits for the roads it drives on to be drawn.
+  if (!worldShown && drawnOnce && !scene.worldBusy) worldShown = true;
   // Moving a node is an authoring preview. Freeze simulation time until the
   // gesture finishes so agents never rebuild against every intermediate shape.
   // The frame that first draws an edit is held the same way.
-  let holdSim = moving || topologyAfterDraw;
+  let holdSim = moving || topologyAfterDraw || !worldShown;
   // A generated city being built (`generateCity`).
   growCity();
   if (!holdSim && sim.topologyRevision !== net.trafficRevision && scene.worldBusy) {
@@ -4549,6 +4555,7 @@ function frame(now: number): void {
   // Playing in the scenery (`play.ts`): the player's input and camera, before the picture.
   play?.frame(wall);
   scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
+  drawnOnce = true;
   refreshAgentCard(now);
   drawOverlayScreen();
   updateCameraNeedle();
