@@ -12,17 +12,26 @@ import { MeshoptSimplifier } from 'meshoptimizer';
  * primitive"): a body's visible area is about H x H/4 over half its
  * triangles, so T <= H² / 32.
  *
- *   level 0  H >= 1 200  the whole model (its hair never more than its body)
- *   level 1  400..1 200  about 4 800 triangles
- *   level 2  150..400    about 1 440
- *   level 3  8..150      about 330: one merged mesh a class and outfit, the hair apart
- *   none     < 8         not drawn
+ *   level 0  H >= 100  the whole model (its hair never more than its body)
+ *   level 1  45..100   about 4 800 triangles
+ *   level 2  18..45    about 1 440
+ *   level 3  4..18     about 330: one merged mesh a class and outfit, the hair apart
+ *   none     < 4       not drawn
+ *
+ * The bands are the person's height as a share of the screen, as an engine
+ * sets a LOD Group's transitions (Unity, "Transition (% Screen Size)"), and
+ * they are set by what each level LOSES, not by triangles alone: the far mesh
+ * has no texture (one colour a vertex), so it is for a person too small to
+ * show a face or a print. The triangle rule alone put it on everybody up to
+ * 150 px - every person at every playable zoom (58 px at the usual one) -
+ * and the player asked why the pedestrians looked like rubbish (2026-10-08).
+ * The cost is held by the caps below, not by the bands.
  *
  * Every level of a piece is an index buffer over the same vertices
  * (meshoptimizer for the meshes; hair cards, which a simplifier cannot merge,
  * chosen card by card), so a piece's vertex data is on the GPU once.
  */
-export const LEVEL_PIXELS = [1200, 400, 150, 8] as const;
+export const LEVEL_PIXELS = [100, 45, 18, 4] as const;
 /** Levels drawn: 0..3. */
 export const LEVELS = 4;
 /** Hysteresis: a person goes back up a level only this far past its edge. */
@@ -31,7 +40,7 @@ const HYSTERESIS = 0.1;
  * The closest levels' safety caps: past them, the people smallest on the
  * screen go one level down (a street-level camera in a packed square).
  */
-export const LEVEL_CAPS = [12, 60] as const;
+export const LEVEL_CAPS = [20, 100] as const;
 
 /** The level for a person `pixels` tall on the screen, given the one they had (-1: none). */
 export function levelFor(pixels: number, was: number): number {
