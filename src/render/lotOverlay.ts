@@ -153,6 +153,23 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
       if (input) build(input);
       else { for (const mesh of meshes) { group.remove(mesh); mesh.geometry.dispose(); } meshes = []; }
     },
+    /**
+     * Its materials on a triangle each, out of the scene: for their programs
+     * to be compiled ahead (`renderer.ts` `warmPreviewShaders`), not in the
+     * frame the Zoning tool first draws a lot.
+     */
+    warm(): { group: Group; dispose(): void } {
+      const warm = new Group();
+      const geometry = new BufferGeometry();
+      geometry.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 0, 1], 3));
+      geometry.setAttribute('color', new Float32BufferAttribute([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 4));
+      for (const mat of [fillMat, lineMat]) {
+        const mesh = new Mesh(geometry, mat);
+        mesh.frustumCulled = false;
+        warm.add(mesh);
+      }
+      return { group: warm, dispose() { geometry.dispose(); } };
+    },
     dispose(): void {
       for (const mesh of meshes) mesh.geometry.dispose();
       fillMat.dispose(); lineMat.dispose();

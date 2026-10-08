@@ -520,7 +520,10 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       for (const id of ids) deferredPictures.add(id);
       return;
     }
-    studio ??= createThumbnailStudio(scene.gl);
+    if (!studio) {
+      studio = createThumbnailStudio(scene.gl);
+      studio.hold(builderOpen);
+    }
     studio.request(ids, (images) => workspace.setPresetThumbnails(images));
   }
 
@@ -1160,6 +1163,8 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
     beforeDraw(active) {
       if (active !== builderOpen) {
         builderOpen = active;
+        // The pictures' context is kept while the Builder is in use.
+        studio?.hold(active);
         if (active && deferredPictures.size) {
           const ids = [...deferredPictures];
           deferredPictures.clear();

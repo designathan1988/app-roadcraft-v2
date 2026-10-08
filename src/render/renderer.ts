@@ -127,6 +127,8 @@ const ROOM_LIGHTS = 6;
 /** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
 const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
+import { buildBuildingMeshes } from './buildings/buildingMesh';
+import { BLUEPRINTS, instantiate } from '@world/buildings/blueprints';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundChanges, GroundDependant, type Rect, rectAround, unionRect } from './groundChanges';
@@ -1573,6 +1575,42 @@ export function createSceneRenderer(
     scene.add(group);
     void compileAhead(group).then(() => { scene.remove(group); tiny.dispose(); });
     void compileAhead(blast.group);
+  };
+
+  /**
+   * The tools' previews compiled ahead, as the roads' and the blows' are (a
+   * pipeline cache, Unreal's PSO precaching: what may be drawn is compiled in
+   * the background before it is): the building ghost, the track being laid,
+   * the lots overlay each built their programs in the frame a tool first
+   * showed them - a stall on the first use of each tool.
+   */
+  let previewShadersWarm = false;
+  const warmPreviewShaders = (): void => {
+    if (previewShadersWarm) return;
+    previewShadersWarm = true;
+    try {
+      const group = new Group();
+      const done: (() => void)[] = [];
+      const blueprint = BLUEPRINTS[0];
+      if (blueprint) {
+        const sample = { ...instantiate(blueprint.body, { x: 0, y: 0 }, 0), id: -1 } as Building;
+        const ghost = buildBuildingMeshes([sample], () => 0, buildings.kit, true);
+        group.add(ghost.group);
+        done.push(() => ghost.dispose());
+      }
+      for (const mode of ['train', 'metro'] as const) {
+        const track = buildTrackPreview([{ x: 0, y: 0 }, { x: m(60), y: 0 }], mode, () => 0);
+        group.add(track.group);
+        done.push(() => track.dispose());
+      }
+      lotOverlay ??= createLotOverlay(scene, (x, y) => handle.surfaceHeightAt(x, y));
+      const lots = lotOverlay.warm();
+      group.add(lots.group);
+      done.push(() => lots.dispose());
+      void compileAhead(group).then(() => { for (const finish of done) finish(); });
+    } catch (error) {
+      console.warn('preview shader warm-up skipped', error);
+    }
   };
 
   const applyQuality = (level: QualityLevel): void => {
@@ -3122,6 +3160,7 @@ export function createSceneRenderer(
       // From the second frame on, the compiler answers: warm the road shaders.
       warmRoadShaders();
       warmBlastShaders();
+      warmPreviewShaders();
       // One waiting body's geometry a frame to the GPU, before anybody draws it.
       drainWarm(renderer, rig.camera, scene, post.target);
 

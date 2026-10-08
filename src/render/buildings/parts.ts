@@ -17,6 +17,7 @@ import { cityBuilding } from '@world/buildings/cityBuildings';
 import { buildingBounds, buildingHeight } from '@world/buildings/geometry';
 import { buildBuildingMeshes } from './buildingMesh';
 import { type BuildingKit, createBuildingKit } from './kit';
+import { forgetOtherDerived, readDerivedAll, writeDerived } from '../derivedCache';
 
 /**
  * Pictures of the things the galleries offer - a model, a window, a roof, a
@@ -134,15 +135,39 @@ export interface ThumbnailStudio {
   request(ids: readonly string[], onBatch: (images: ReadonlyMap<string, string>) => void): void;
   /** Releases the second GPU context at once. */
   dispose(): void;
+  /**
+   * While held (the Builder in use) the studio keeps its context between
+   * galleries: let go after four idle seconds, it was made again - a context,
+   * a kit and every shader of it - each time the player came back to a gallery.
+   */
+  hold(on: boolean): void;
   /** How long the studio holds its context after the last picture. */
   IDLE_MS?: number;
 }
+
+declare const __BUILDING_KIT_HASH__: string | undefined;
+/** The fingerprint of the code the pictures are made by (`cook-plugin.ts`): pictures are kept under it. */
+const KIT_HASH = typeof __BUILDING_KIT_HASH__ !== 'undefined' ? __BUILDING_KIT_HASH__ : null;
 
 export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
   const done = new Set<string>();
   const queued = new Set<string>();
   const waiting: { id: string; onBatch: (images: ReadonlyMap<string, string>) => void }[] = [];
   let frame: number | null = null;
+  let held = false;
+  /**
+   * The pictures taken in earlier sessions (`derivedCache.ts`), read once:
+   * a picture is the same while the code that makes it is the same, and
+   * taking it costs a building built and drawn.
+   */
+  let kept: Promise<Map<string, Blob>> | null = null;
+  const keptPictures = (): Promise<Map<string, Blob>> => {
+    if (!kept) {
+      if (KIT_HASH) forgetOtherDerived('thumb', KIT_HASH);
+      kept = KIT_HASH ? readDerivedAll<Blob>(`thumb:${KIT_HASH}:`) : Promise.resolve(new Map());
+    }
+    return kept;
+  };
 
   let idle: ReturnType<typeof setTimeout> | null = null;
   let canvas: HTMLCanvasElement | null = null;
@@ -177,11 +202,18 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
     }
   };
 
-  const shoot = (id: string, batch: Map<string, string>): void => {
+  const shoot = (id: string, onBatch: (images: ReadonlyMap<string, string>) => void): void => {
     const sample = partSample(id);
     if (!sample || !renderer || !kit || !scene || !camera) return;
     try {
       const meshes = buildBuildingMeshes([sample], () => 0, kit);
+      // A part that builds nothing keeps its glyph: an empty tile is a defect.
+      // (Read from the meshes: reading the picture's pixels back stopped the
+      // frame until the GPU had finished - MDN, "WebGL best practices".)
+      if (meshes.triangles === 0) {
+        meshes.dispose();
+        return;
+      }
       scene.add(meshes.group);
       const box = buildingBounds(sample);
       const height = Math.max(buildingHeight(sample), 3);
@@ -221,13 +253,13 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
       camera.lookAt(centre);
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
-      // A part that drew nothing keeps its glyph: an empty tile is a defect.
-      const gl = renderer.getContext();
-      const pixels = new Uint8Array(SIZE * SIZE * 4);
-      gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      let solid = 0;
-      for (let i = 3; i < pixels.length; i += 16) if ((pixels[i] ?? 0) > 16) solid++;
-      if (solid / (pixels.length / 16) > 0.02) batch.set(id, renderer.domElement.toDataURL('image/png'));
+      // The picture is taken now and encoded off the frame (`toBlob`); it is
+      // kept for the next sessions (`derivedCache.ts`).
+      renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        if (KIT_HASH) writeDerived(`thumb:${KIT_HASH}:${id}`, blob);
+        onBatch(new Map([[id, URL.createObjectURL(blob)]]));
+      }, 'image/png');
       scene.remove(meshes.group);
       meshes.dispose();
     } catch {
@@ -241,7 +273,6 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
       waiting.length = 0;
       return;
     }
-    const batch = new Map<string, string>();
     // At least one a frame, and no more once the frame's share is spent: a
     // picture costs from a few to forty milliseconds, and three of the dear
     // ones in a frame were a 130 ms stall.
@@ -249,19 +280,18 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
     for (let i = 0; i < PER_FRAME && waiting.length > 0 && (i === 0 || performance.now() - started < FRAME_SHARE_MS); i++) {
       const next = waiting.shift();
       if (!next) break;
-      shoot(next.id, batch);
+      shoot(next.id, next.onBatch);
       done.add(next.id);
-      if (batch.size > 0) next.onBatch(new Map(batch));
     }
     if (waiting.length > 0) {
       frame = requestAnimationFrame(step);
       return;
     }
-    // Nothing left to shoot: hand the second GPU context back rather than
-    // holding two of them open for the rest of the session, and take it again
-    // when another gallery asks. The pictures already on screen are the ones
-    // the studio was holding.
-    idle = setTimeout(release, IDLE_MS);
+    // Nothing left to shoot and the Builder put down: hand the second GPU
+    // context back rather than holding two of them open for the rest of the
+    // session. The pictures already on screen are the ones the studio was
+    // holding.
+    if (!held) idle = setTimeout(release, IDLE_MS);
   };
 
   const release = (): void => {
@@ -282,12 +312,32 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
         clearTimeout(idle);
         idle = null;
       }
-      for (const id of ids) {
-        if (done.has(id) || queued.has(id)) continue;
-        queued.add(id);
-        waiting.push({ id, onBatch });
+      const fresh = ids.filter((id) => !done.has(id) && !queued.has(id));
+      for (const id of fresh) queued.add(id);
+      if (!fresh.length) return;
+      // The pictures kept from earlier sessions go up at once, with no GPU;
+      // only the others are taken.
+      void keptPictures().then((pictures) => {
+        const ready = new Map<string, string>();
+        for (const id of fresh) {
+          const blob = pictures.get(id);
+          if (blob) {
+            ready.set(id, URL.createObjectURL(blob));
+            done.add(id);
+          } else waiting.push({ id, onBatch });
+        }
+        if (ready.size) onBatch(ready);
+        if (frame === null && waiting.length > 0) frame = requestAnimationFrame(step);
+      });
+    },
+    hold(on) {
+      held = on;
+      if (on && idle !== null) {
+        clearTimeout(idle);
+        idle = null;
+      } else if (!on && renderer && frame === null && waiting.length === 0 && idle === null) {
+        idle = setTimeout(release, IDLE_MS);
       }
-      if (frame === null && waiting.length > 0) frame = requestAnimationFrame(step);
     },
     dispose() {
       if (frame !== null) cancelAnimationFrame(frame);

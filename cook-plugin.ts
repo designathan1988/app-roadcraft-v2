@@ -35,6 +35,18 @@ const COOKS = [
   { dir: 'procedural', entry: 'src/render/people/proceduralCrowd.ts', define: '__PROCEDURAL_COOK_HASH__' },
 ] as const;
 type CookDir = typeof COOKS[number]['dir'];
+/**
+ * The derived data kept in the player's browser (`src/render/derivedCache.ts`):
+ * each kind filed under the fingerprint of the code that makes it - the
+ * import closure of its maker and the package files it reads - so a change to
+ * that code never serves an old one. Nothing is cooked here: the game makes
+ * each the first time and keeps it.
+ */
+const DERIVED = [
+  { entry: 'src/render/buildings/parts.ts', also: [] as string[], define: '__BUILDING_KIT_HASH__' },
+  { entry: 'src/render/surfaceBake.worker.ts', also: [] as string[], define: '__SURFACE_BAKE_HASH__' },
+  { entry: 'src/render/natureTrees.ts', also: ['node_modules/@dgreenheck/ez-tree/package.json'], define: '__NATURE_TREES_HASH__' },
+] as const;
 const ASSETS = ['public/models/people'];
 /** The path aliases of `tsconfig.json`. */
 const ALIASES: readonly [string, string][] = [
@@ -95,6 +107,20 @@ export function peopleCookHash(root: string, entry: string = ENTRY): string {
   return hash.digest('hex').slice(0, 16);
 }
 
+/** The fingerprint of a derived kind (`DERIVED`): its maker's import closure and the files it also reads. */
+export function derivedHash(root: string, entry: string, also: readonly string[] = []): string {
+  const hash = createHash('sha256');
+  for (const file of importClosure(root, entry)) {
+    hash.update(path.relative(root, file).replace(/\\/g, '/'));
+    hash.update(fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n'));
+  }
+  for (const file of also) {
+    const at = path.join(root, file);
+    if (fs.existsSync(at)) hash.update(fs.readFileSync(at, 'utf8').replace(/\r\n/g, '\n'));
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
 /**
  * Refuses to build a game whose people are not the ones this code makes.
  *
@@ -130,6 +156,8 @@ export function cookPlugin(): Plugin {
   let outDir = 'dist';
   const hashes = new Map<CookDir, string>();
   const fingerprints = (): Map<CookDir, string> => new Map(COOKS.map((c) => [c.dir, peopleCookHash(root, c.entry)]));
+  const derived = (): Map<string, string> => new Map(DERIVED.map((d) => [d.define, derivedHash(root, d.entry, d.also)]));
+  let derivedHashes = new Map<string, string>();
   const stampOf = (dir: CookDir): string | undefined => {
     try {
       return (JSON.parse(fs.readFileSync(path.join(root, DIR, dir, 'manifest.json'), 'utf8')) as { hash?: string }).hash;
@@ -144,7 +172,13 @@ export function cookPlugin(): Plugin {
     config(config) {
       root = path.resolve(config.root ?? process.cwd());
       for (const [dir, value] of fingerprints()) hashes.set(dir, value);
-      return { define: Object.fromEntries(COOKS.map((c) => [c.define, JSON.stringify(hashes.get(c.dir))])) };
+      derivedHashes = derived();
+      return {
+        define: {
+          ...Object.fromEntries(COOKS.map((c) => [c.define, JSON.stringify(hashes.get(c.dir))])),
+          ...Object.fromEntries([...derivedHashes].map(([name, value]) => [name, JSON.stringify(value)])),
+        },
+      };
     },
     // A release build refuses stale people; a dev server must still start,
     // because cooking them needs one running. There the console says it
@@ -161,11 +195,18 @@ export function cookPlugin(): Plugin {
     configureServer(server) {
       // A change to how people are built changes the fingerprint: the server
       // restarts with the new one, and the cooked bodies no longer match.
-      const watched = [...COOKS.flatMap((c) => importClosure(root, c.entry)), ...ASSETS.map((s) => path.join(root, s))];
+      // So does a change to how a derived kind is made: kept under the old
+      // fingerprint, an old one would be read back.
+      const watched = [
+        ...COOKS.flatMap((c) => importClosure(root, c.entry)), ...ASSETS.map((s) => path.join(root, s)),
+        ...DERIVED.flatMap((d) => importClosure(root, d.entry)),
+      ];
       server.watcher.on('change', (file) => {
         if (!watched.some((w) => path.resolve(file).startsWith(path.resolve(w)))) return;
         const now = fingerprints();
-        if (COOKS.some((c) => now.get(c.dir) !== hashes.get(c.dir))) void server.restart();
+        const nowDerived = derived();
+        if (COOKS.some((c) => now.get(c.dir) !== hashes.get(c.dir))
+          || [...nowDerived].some(([name, value]) => derivedHashes.get(name) !== value)) void server.restart();
       });
       server.middlewares.use((req, res, next) => {
         const url = (req.url ?? '').split('?')[0]!;
