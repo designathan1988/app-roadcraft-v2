@@ -30,8 +30,8 @@ import {
 import type { RoadDoc } from '@world/doc';
 import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
 import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from '@world/ecology';
-import { chartAngle } from '@world/planet/sphere';
 import { GroundChanges } from './groundChanges';
+import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
@@ -2020,193 +2020,6 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
   return material;
 }
 
-/**
- * THE LAND'S OWN LIGHT, from its heights alone - what makes a relief read as
- * one: the ground itself casts no shadow map (180 000 triangles drawn twice a
- * frame), so a chapada threw no shadow over the plain and a valley was as
- * bright as a ridge.
- *
- *  - SUN: from every corner a ray is marched towards the sun over the
- *    heightfield, keeping how near it passes over the ground for its distance
- *    (Inigo Quilez's soft shadows, min(k h / t)): fully lit, in the penumbra
- *    of a ridge, or behind it (the heightfield shadows of horizon and shadow
- *    height maps).
- *  - SKY: the horizon is found in eight directions round every corner and
- *    each direction sees 1 - sin^2 of it - three's GTAO integral for a surface
- *    seen from above - so valleys, hollows and the feet of walls see less sky.
- *
- * Worked out once for a moved land or a moved sun, never per frame.
- */
-function terrainLight(
-  heights: Float64Array,
-  sun: { readonly x: number; readonly y: number; readonly z: number },
-  shape: LandShape | null,
-  out: Uint8Array,
-  outWidth: number,
-  /** The planet the map is drawn on (`render/planet.ts`), units; 0 flat. */
-  planet = 0,
-): void {
-  let maxH = -Infinity;
-  for (let i = 0; i < heights.length; i++) maxH = Math.max(maxH, heights[i] as number);
-  // Towards the sun on the grid: x grows with world x, the rows with -y
-  // (world y is three's -z, so the rows grow with three's z). On a planet
-  // each corner sees the sun from its own up: the sun turned back by the turn
-  // the globe gives that corner (Rodrigues', as `planet.ts`).
-  let dgx = 0, dgy = 0, rise = 0;
-  const aim = (x: number, z: number): void => {
-    let sx = sun.x, sy = sun.y, sz = sun.z;
-    const d = Math.hypot(x, z);
-    if (planet > 0 && d > 1e-6) {
-      const ax = z / d, az = -x / d;
-      const th = -chartAngle(d, planet), c = Math.cos(th), sn = Math.sin(th);
-      // a x v, with a = (ax, 0, az).
-      const cx = -az * sy, cy = az * sx - ax * sz, cz = ax * sy;
-      const dot = ax * sx + az * sz;
-      sx = sx * c + cx * sn + ax * dot * (1 - c);
-      sy = sy * c + cy * sn;
-      sz = sz * c + cz * sn + az * dot * (1 - c);
-    }
-    const hl = Math.hypot(sx, sz) || 1e-6;
-    dgx = sx / hl;
-    dgy = sz / hl;
-    // Height gained per grid cell along the ray.
-    rise = (Math.max(0.03, sy) / hl) * TERRAIN_CELL;
-  };
-  aim(0, 0);
-  const at = (gx: number, gy: number): number => {
-    const ix = Math.min(GRID - 2, Math.max(0, Math.floor(gx)));
-    const iy = Math.min(GRID - 2, Math.max(0, Math.floor(gy)));
-    const u = Math.min(1, Math.max(0, gx - ix)), v = Math.min(1, Math.max(0, gy - iy));
-    const k = iy * GRID + ix;
-    const a = heights[k] as number, b = heights[k + 1] as number, c = heights[k + GRID] as number, d = heights[k + GRID + 1] as number;
-    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
-  };
-  /** The penumbra's width: k of Quilez's k h / t. */
-  const SOFT = 9;
-  for (let iy = 0; iy < GRID; iy++) {
-    for (let ix = 0; ix < GRID; ix++) {
-      const h0 = (heights[iy * GRID + ix] as number) + 0.4;
-      if (planet > 0) aim(ix * TERRAIN_CELL - TERRAIN_HALF, iy * TERRAIN_CELL - TERRAIN_HALF);
-      let lit = 1;
-      for (let t = 0.7; ; t += Math.max(0.5, t * 0.06)) {
-        const gx = ix + dgx * t, gy = iy + dgy * t;
-        if (gx < 0 || gy < 0 || gx > GRID - 1 || gy > GRID - 1) break;
-        const ray = h0 + t * rise;
-        if (ray > maxH + 1) break;
-        lit = Math.min(lit, (SOFT * (ray - at(gx, gy))) / (t * TERRAIN_CELL));
-        if (lit <= 0) { lit = 0; break; }
-      }
-      const smooth = lit * lit * (3 - 2 * lit);
-      const o = (iy * outWidth + ix) * 4;
-      out[o] = Math.round(smooth * 255);
-      if (shape) {
-        const k = iy * GRID + ix;
-        out[o + 1] = Math.round((shape.sky[k] as number) * 255);
-        out[o + 2] = Math.round((0.5 + 0.5 * (shape.convex[k] as number)) * 255);
-        out[o + 3] = Math.round(Math.min(1, (shape.slope[k] as number) / 90) * 255);
-      }
-    }
-  }
-}
-
-/**
- * What the land's shape says per corner, for its colours (`terrainLight`):
- * its share of the sky past the hills round it, its steepness - the steepest
- * of the four cells it shares, half blended with its neighbours', so a wall
- * stays a wall and its edge is a curve read bilinearly, not the mesh's
- * triangles - and its CONVEXITY, the Laplacian of the heights (World
- * Machine's convexity selector, Gaea's curvature map): ridges and tops
- * against hollows and valley floors.
- */
-interface LandShape {
-  readonly sky: Float32Array;
-  /** Degrees. */
-  readonly slope: Float32Array;
-  /** -1 a hollow, 0 even ground, 1 a ridge. */
-  readonly convex: Float32Array;
-}
-
-function terrainShape(heights: Float64Array): LandShape {
-  const steep = new Float32Array(GRID * GRID);
-  for (let iy = 0; iy < GRID; iy++) {
-    for (let ix = 0; ix < GRID; ix++) {
-      let most = 0;
-      for (let cy = iy - 1; cy <= iy; cy++) {
-        for (let cx = ix - 1; cx <= ix; cx++) {
-          if (cx < 0 || cy < 0 || cx >= GRID - 1 || cy >= GRID - 1) continue;
-          const k = cy * GRID + cx;
-          const a = heights[k] as number, b = heights[k + 1] as number, c = heights[k + GRID] as number, d = heights[k + GRID + 1] as number;
-          const gx = (b - a + d - c) / (2 * TERRAIN_CELL), gy = (c - a + d - b) / (2 * TERRAIN_CELL);
-          most = Math.max(most, Math.hypot(gx, gy));
-        }
-      }
-      steep[iy * GRID + ix] = (Math.atan(most) * 180) / Math.PI;
-    }
-  }
-  const slope = new Float32Array(GRID * GRID);
-  const convex = new Float32Array(GRID * GRID);
-  const R = 3;
-  for (let iy = 0; iy < GRID; iy++) {
-    for (let ix = 0; ix < GRID; ix++) {
-      let sum = 0, n = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const jx = ix + dx, jy = iy + dy;
-          if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) continue;
-          sum += steep[jy * GRID + jx] as number; n++;
-        }
-      }
-      const k = iy * GRID + ix;
-      slope[k] = 0.5 * (steep[k] as number) + 0.5 * (sum / n);
-      // Height over the mean of a ring three cells out.
-      let ring = 0, m = 0;
-      for (let a = 0; a < 8; a++) {
-        const jx = Math.round(ix + Math.cos((a * Math.PI) / 4) * R), jy = Math.round(iy + Math.sin((a * Math.PI) / 4) * R);
-        if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) continue;
-        ring += heights[jy * GRID + jx] as number; m++;
-      }
-      const lap = m > 0 ? (heights[k] as number) - ring / m : 0;
-      convex[k] = Math.max(-1, Math.min(1, lap / (R * TERRAIN_CELL * 0.12)));
-    }
-  }
-  return { sky: terrainSky(heights), slope, convex };
-}
-
-/** Each corner's share of the sky past the hills round it (`terrainLight`), 0..1. */
-function terrainSky(heights: Float64Array): Float32Array {
-  const sky = new Float32Array(GRID * GRID);
-  const reach = [1, 2, 3, 5, 8, 12, 18, 27];
-  // Each sample as a grid offset and the distance it lies at, worked out once.
-  const offX: number[] = [], offY: number[] = [], inv: number[] = [];
-  for (let k = 0; k < 8; k++) {
-    for (const r of reach) {
-      const ox = Math.round(Math.cos((k * Math.PI) / 4) * r), oy = Math.round(Math.sin((k * Math.PI) / 4) * r);
-      offX.push(ox); offY.push(oy); inv.push(1 / (Math.hypot(ox, oy) * TERRAIN_CELL));
-    }
-  }
-  const per = reach.length;
-  for (let iy = 0; iy < GRID; iy++) {
-    for (let ix = 0; ix < GRID; ix++) {
-      const h0 = heights[iy * GRID + ix] as number;
-      let seen = 0;
-      for (let k = 0; k < 8; k++) {
-        let tan = 0;
-        for (let r = 0; r < per; r++) {
-          const n = k * per + r;
-          const jx = ix + (offX[n] as number), jy = iy + (offY[n] as number);
-          if (jx < 0 || jy < 0 || jx >= GRID || jy >= GRID) break;
-          const t = ((heights[jy * GRID + jx] as number) - h0) * (inv[n] as number);
-          if (t > tan) tan = t;
-        }
-        // 1 - sin^2(horizon) = 1 / (1 + tan^2).
-        seen += 1 / (1 + tan * tan);
-      }
-      sky[iy * GRID + ix] = seen / 8;
-    }
-  }
-  return sky;
-}
-
 export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const bakes = terrainBakes(anisotropy);
   const material = terrainMaterial(bakes, anisotropy);
@@ -2322,21 +2135,40 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
    * diagonal no longer breaks into a zigzag of teeth.
    */
   const flip = new Uint8Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS);
+  /**
+   * The diagonals the land would be drawn with before any road shaped it, by
+   * the same rule on the natural corners: the natural ground
+   * (`naturalRenderedHeightAt`) the roads' heights are solved against must
+   * not move when the roads shape the drawn one. Read through `flip`, every
+   * cell a road had shaped changed it by millimetres to centimetres, every
+   * road was solved anew on the next edit, and the whole map was cut, filled
+   * and paved again (the player, 2026-10-08).
+   */
+  const naturalFlip = new Uint8Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS);
+  /** The cells round a box of corners (inclusive) and the diagonal `corners` gives each. */
+  const chooseDiagonals = (corners: Float64Array, into: Uint8Array, x0: number, x1: number, y0: number, y1: number): void => {
+    const cx0 = Math.max(0, x0 - 1), cx1 = Math.min(TERRAIN_SEGMENTS - 1, x1);
+    const cy0 = Math.max(0, y0 - 1), cy1 = Math.min(TERRAIN_SEGMENTS - 1, y1);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const a = cx + GRID * cy, b = cx + GRID * (cy + 1), c = cx + 1 + GRID * (cy + 1), d = cx + 1 + GRID * cy;
+        // A margin, so near-flat cells keep the plane's diagonal.
+        into[cx + cy * TERRAIN_SEGMENTS] = Math.abs((corners[a] as number) - (corners[c] as number)) + 0.5 < Math.abs((corners[b] as number) - (corners[d] as number)) ? 1 : 0;
+      }
+    }
+  };
   const triangles = geometry.index!;
   /** Re-chooses the diagonals of the cells round a box of corners (inclusive). */
   const retriangulate = (x0: number, x1: number, y0: number, y1: number): void => {
     const cx0 = Math.max(0, x0 - 1), cx1 = Math.min(TERRAIN_SEGMENTS - 1, x1);
     const cy0 = Math.max(0, y0 - 1), cy1 = Math.min(TERRAIN_SEGMENTS - 1, y1);
     const index = triangles.array as Uint32Array | Uint16Array;
+    chooseDiagonals(grid, flip, x0, x1, y0, y1);
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
         const a = cx + GRID * cy, b = cx + GRID * (cy + 1), c = cx + 1 + GRID * (cy + 1), d = cx + 1 + GRID * cy;
-        const ac = Math.abs((grid[a] as number) - (grid[c] as number));
-        const bd = Math.abs((grid[b] as number) - (grid[d] as number));
-        // A margin, so near-flat cells keep the plane's diagonal.
-        const flipped = ac + 0.5 < bd ? 1 : 0;
         const k = cx + cy * TERRAIN_SEGMENTS;
-        flip[k] = flipped;
+        const flipped = flip[k];
         const o = k * 6;
         if (flipped) {
           index[o] = a; index[o + 1] = b; index[o + 2] = c;
@@ -2351,7 +2183,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   };
 
   /** Bilinear read of one corner array, reproducing the plane's own diagonal. */
-  const sampleGrid = (corners: Float64Array, x: number, y: number): number => {
+  const sampleGrid = (corners: Float64Array, diagonals: Uint8Array, x: number, y: number): number => {
     if (!(x >= -TERRAIN_HALF && x <= TERRAIN_HALF && y >= -TERRAIN_HALF && y <= TERRAIN_HALF)) {
       return naturalHeightAt(x, y);
     }
@@ -2369,14 +2201,14 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const d = corners[ix + 1 + iy * GRID] as number;
     // Each cell is split along the diagonal it is DRAWN with (`retriangulate`):
     // b-d into (a, b, d) and (b, c, d), or a-c into (a, d, c) and (a, b, c).
-    if (flip[ix + iy * TERRAIN_SEGMENTS]) {
+    if (diagonals[ix + iy * TERRAIN_SEGMENTS]) {
       return u >= v ? a * (1 - u) + d * (u - v) + c * v : a * (1 - v) + b * (v - u) + c * u;
     }
     return u + v <= 1 ? a * (1 - u - v) + d * u + b * v : b * (1 - u) + c * (u + v - 1) + d * (1 - v);
   };
 
-  const renderedHeightAt = (x: number, y: number): number => sampleGrid(grid, x, y);
-  const naturalRenderedHeightAt = (x: number, y: number): number => sampleGrid(natural, x, y);
+  const renderedHeightAt = (x: number, y: number): number => sampleGrid(grid, flip, x, y);
+  const naturalRenderedHeightAt = (x: number, y: number): number => sampleGrid(natural, naturalFlip, x, y);
 
   /**
    * Stitches the land outside the plate to the plate's own rim.
@@ -2423,7 +2255,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // The rim's own heights, and the level the land outside continues at.
     let sum = 0;
     const rimHeight = inner.map((p) => {
-      const value = sampleGrid(grid, p.x, -p.z);
+      const value = sampleGrid(grid, flip, p.x, -p.z);
       sum += value;
       return value;
     });
@@ -2532,7 +2364,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       for (let k = 0; k <= n; k++) {
         const x = x0 + ((x1 - x0) * k) / n;
         const z = z0 + ((z1 - z0) * k) / n;
-        const y = sampleGrid(grid, x, -z);
+        const y = sampleGrid(grid, flip, x, -z);
         row.push(y);
         lowest = Math.min(lowest, y);
       }
@@ -2613,6 +2445,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
         natural[i] = height;
       }
     }
+    chooseDiagonals(natural, naturalFlip, x0, x1, y0, y1);
   };
 
   /**
@@ -2711,6 +2544,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
         if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
       }
       retriangulate(x0, x1 + 1, y0, y1 + 1);
+      // The land's light is worked out again round these corners only (`setSun`).
+      markLand({ x0, x1, y0, y1 });
     }
     refreshNormals(changed);
     geometry.computeBoundingSphere();
@@ -3006,25 +2841,72 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   }
   paintArray.addLayerUpdate(LIGHT_LAYER);
   paintArray.needsUpdate = true;
-  let landMoved = true;
-  let landShape: LandShape | null = null;
+  // The corners whose heights moved since the light was last asked for
+  // ('all': the whole land), joined over every shaping step of an edit.
+  let landMoved: CornerRect | 'all' | null = 'all';
+  const markLand = (rect: CornerRect | 'all'): void => {
+    landMoved = rect === 'all' || landMoved === 'all' ? 'all' : landMoved ? unionCorners(landMoved, rect) : rect;
+  };
   const litSun = { x: 0, y: -1, z: 0 };
   let litPlanet = 0;
-  const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }, planet = 0): void => {
-    // A stroke held: the water waits for its end, and so does this.
-    if (waterStale) return;
-    const len = Math.hypot(sun.x, sun.y, sun.z) || 1;
-    const turned = (sun.x * litSun.x + sun.y * litSun.y + sun.z * litSun.z) / len < Math.cos((2 * Math.PI) / 180);
-    if (!landMoved && !turned && planet === litPlanet) return;
-    litPlanet = planet;
+  // Worked out in a worker (`terrainLight.worker.ts`), one request at a time:
+  // the edits and sun turns made meanwhile wait, joined, for the next.
+  const lightGrid = { n: GRID, cell: TERRAIN_CELL };
+  let lightWorker: Worker | null = null;
+  let lightLocal: ((request: LightRequest) => LightResult) | null = null;
+  let lightBusy = false;
+  const applyLight = (result: LightResult): void => {
     const startedAt = performance.now();
-    if (landMoved || !landShape) landShape = terrainShape(grid);
-    terrainLight(grid, { x: sun.x / len, y: sun.y / len, z: sun.z / len }, landShape, lightLayer, PAINT_RES, planet);
-    landMoved = false;
-    litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
+    const { rect, rgba } = result;
+    const width = rect.x1 - rect.x0 + 1;
+    for (let iy = rect.y0; iy <= rect.y1; iy++) {
+      const row = (iy - rect.y0) * width * 4;
+      lightLayer.set(rgba.subarray(row, row + width * 4), (iy * PAINT_RES + rect.x0) * 4);
+    }
     paintArray.addLayerUpdate(LIGHT_LAYER);
     paintArray.needsUpdate = true;
     performance.measure('hitch:terrain-light', { start: startedAt, end: performance.now() });
+    performance.measure('terrain-light/worker', { start: startedAt - result.ms, end: startedAt, detail: `${width}x${rect.y1 - rect.y0 + 1} corners` });
+  };
+  if (typeof Worker !== 'undefined') {
+    try {
+      lightWorker = new Worker(new URL('./terrainLight.worker.ts', import.meta.url), { type: 'module' });
+      lightWorker.postMessage({ grid: lightGrid });
+      lightWorker.onmessage = (event: MessageEvent<LightResult | { error: string }>) => {
+        lightBusy = false;
+        if ('error' in event.data) console.warn('[terrain] the land\'s light failed in its worker', event.data.error);
+        else applyLight(event.data);
+      };
+      lightWorker.onerror = (event) => {
+        console.warn('[terrain] the land\'s light worker is unavailable; it is worked out on the page', event.message);
+        lightWorker?.terminate();
+        lightWorker = null;
+        lightBusy = false;
+        landMoved = 'all';
+      };
+    } catch (error) {
+      console.warn('[terrain] the land\'s light worker is unavailable; it is worked out on the page', error);
+      lightWorker = null;
+    }
+  }
+  const setSun = (sun: { readonly x: number; readonly y: number; readonly z: number }, planet = 0): void => {
+    // A stroke held: the water waits for its end, and so does this.
+    if (waterStale || lightBusy) return;
+    const len = Math.hypot(sun.x, sun.y, sun.z) || 1;
+    const turned = (sun.x * litSun.x + sun.y * litSun.y + sun.z * litSun.z) / len < Math.cos((2 * Math.PI) / 180);
+    const replanet = planet !== litPlanet;
+    if (!landMoved && !turned && !replanet) return;
+    litPlanet = planet;
+    litSun.x = sun.x / len; litSun.y = sun.y / len; litSun.z = sun.z / len;
+    const request: LightRequest = { heights: grid.slice(), sun: { ...litSun }, planet, moved: landMoved, relightAll: turned || replanet };
+    landMoved = null;
+    if (lightWorker) {
+      lightBusy = true;
+      lightWorker.postMessage(request, [request.heights.buffer]);
+      return;
+    }
+    lightLocal ??= createLandLighter(lightGrid);
+    applyLight(lightLocal(request));
   };
   let paintRevision = 0;
   let paintCount = 0;
@@ -3197,7 +3079,6 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     shapeToRoads(shape, region = null) {
       const shapeAt = performance.now();
       const moved = shapeToRoads(shape, region);
-      if (moved) landMoved = true;
       performance.measure('hitch:road-edit/ground shape', { start: shapeAt, end: performance.now() });
       // A road that cut through a valley changes where the water's shore is:
       // at once, or once the stroke is over when one is held (`settle`).
@@ -3270,7 +3151,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       // rebuilt on every dab, it was the largest single cost of painting.
       if (stroking) waterStale = true;
       else { waterStale = false; rebuildWater(lastStamps); }
-      landMoved = true;
+      markLand(box ? { x0: box[0], x1: box[1], y0: box[2], y1: box[3] } : 'all');
       relief.markDirty();
       return true;
     },

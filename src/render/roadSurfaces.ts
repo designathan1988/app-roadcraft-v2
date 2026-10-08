@@ -776,7 +776,6 @@ export function* roadSurfaceSteps(
   // Where an edit's time went (`hitch:` entries, scripts/probe-hitches.mjs; docs/performance.md).
   const end = performance.now();
   performance.measure(`hitch:road-edit/surfaces ${built} tiles built ${reused} kept, ${chunksMerged} blocks merged ${chunksKept} kept: tiles ${tilesMs.toFixed(0)} ms, merge ${mergeMs.toFixed(0)} ms`, { start: started, end });
-
   return {
     group,
     meshes,
