@@ -118,7 +118,6 @@ type Tool =
   | 'transit'
   | 'person';
 type Alignment = 'straight' | 'curve' | 'free';
-let roundaboutRadius = 100;
 interface RoadDraft {
   readonly start: Anchor;
   readonly startHeightOffset: number;
@@ -321,10 +320,8 @@ function worldBounds() {
 
 // ------------------------------------------------------------------ state
 // The tool in hand, the pause, the speed and the selection are the game's
-// state (`gameState` below, read as `game.tool`...): there is no copy here.
-let roadTypeIndex = 1;
-let alignment: Alignment = 'straight';
-let roadHeightOffset = 0;
+// state (`gameState` below, read as `game.tool`...), and so is what each tool
+// is set to (road class, brush, zone, lot cut...): there is no copy here.
 /**
  * How far a drag's stroke is carried, in plan, by the heights changed during
  * it. The cursor is read on the plane at the road's height; raising the road
@@ -349,13 +346,11 @@ const LANDFORMS: Readonly<Record<Landform, { readonly mode: 'raise' | 'lower'; r
   sugarloaf: { mode: 'raise', rock: 'granite', hardness: 0, profile: 'dome' },
 };
 const landformOf = (mode: BrushMode): (typeof LANDFORMS)[Landform] | undefined => (LANDFORMS as Partial<Record<BrushMode, (typeof LANDFORMS)[Landform]>>)[mode];
-let terrainMode: BrushMode = 'raise';
-let terrainRadius = 80;
-let terrainStrength = 24;
-/** 0..95: how hard the raise/lower brush's edge is (`TerrainStamp.hardness`); 0 the smooth dome. Each tool keeps its own. */
-let terrainHardness = 0;
 const hardnessByMode: Partial<Record<BrushMode, number>> = { raise: 0, lower: 0, mesa: 85, canyon: 80, escarpment: 75 };
-let congestionOverlay = savedSession?.settings.congestionOverlay ?? false;
+/** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
+type ZoneMode = 'brush' | 'fill' | 'edit' | 'front' | 'split' | 'join' | 'add' | 'polygon' | 'curve' | 'delete';
+/** How the split tool cuts (`LotCut`): across the front, parallel to it, or along a drawn line. */
+type LotSplitKind = 'vertical' | 'horizontal' | 'line';
 sim.clock.paused = savedSession?.settings.paused === true;
 sim.clock.speed = savedSession?.settings.speed ?? 1;
 sim.trafficIntensity = savedSession?.settings.trafficIntensity ?? 1;
@@ -380,6 +375,29 @@ const gameState = new GameState({
   selectedSegment: null as SegmentId | null,
   selectedSegmentS: null as number | null,
   selectedNode: null as NodeId | null,
+  // The road tool: class, plan, height above the ground, lanes.
+  roadTypeIndex: 1,
+  alignment: 'straight' as Alignment,
+  roadHeightOffset: 0,
+  roadLanePreset: null as number | null,
+  roundaboutRadius: 100,
+  // The terrain brush. Hardness, 0..95: how hard the raise/lower brush's edge
+  // is (`TerrainStamp.hardness`), 0 the smooth dome; each mode keeps its own.
+  terrainMode: 'raise' as BrushMode,
+  terrainRadius: 80,
+  terrainStrength: 24,
+  terrainHardness: 0,
+  // Walls, zones and lots.
+  barrierKind: 'fence' as BarrierKind,
+  zoneUse: 'residential' as ZoneUse,
+  zoneDensity: 'low' as ZoneDensity,
+  zoneEraser: false,
+  zoneMode: 'brush' as ZoneMode,
+  lotSplitKind: 'vertical' as LotSplitKind,
+  lotSplitParts: 2,
+  // The view.
+  congestionOverlay: savedSession?.settings.congestionOverlay ?? false,
+  perspective: false,
 }, () => { if (booted) requestDraw(); });
 /** The game's state, read-only: `game.tool`, `game.paused`, `game.selectedSegment`... */
 const game = gameState.values;
@@ -395,7 +413,7 @@ function sessionSettings(): SavedSettings {
     cars: sim.trafficCount ?? DEFAULT_TRAFFIC_COUNT,
     people: sim.pedestrianCount ?? DEFAULT_PEDESTRIAN_COUNT,
     demandMultiplier: sim.demandMultiplier,
-    congestionOverlay,
+    congestionOverlay: game.congestionOverlay,
   };
 }
 
@@ -427,19 +445,10 @@ const streetscapeReach = (): number => Math.max(m(1.5), 26 / view.zoom);
  * The wall, fence or hedge being traced (`world/barriers.ts`): the kind in
  * hand, the points put down so far, and where the pointer is.
  */
-let barrierKind: BarrierKind = 'fence';
 let barrierPoints: Vec2[] | null = null;
 /** The last click of the walls tool, to tell a double click (which ends the run). */
 let lastBarrierClick: { t: number; x: number; y: number } | null = null;
 let barrierCursor: Vec2 | null = null;
-let zoneUse: ZoneUse = 'residential';
-let zoneDensity: ZoneDensity = 'low';
-let zoneEraser = false;
-/** Brush paints the cells under the pointer; Fill paints a street side's whole block. */
-let zoneMode: 'brush' | 'fill' | 'edit' | 'front' | 'split' | 'join' | 'add' | 'polygon' | 'curve' | 'delete' = 'brush';
-/** How the split tool cuts (`LotCut`): across the front, parallel to it, or along a drawn line; into how many. */
-let lotSplitKind: 'vertical' | 'horizontal' | 'line' = 'vertical';
-let lotSplitParts = 2;
 /** The corners of a lot being drawn point by point (the polygon tool). */
 let lotPolygon: Vec2[] = [];
 /** A drawn cut line, and a side being curved. */
@@ -1024,7 +1033,7 @@ function firstSurfaceAt(px: number, py: number): Vec2 | null {
 function pointerWorld(e: PointerEvent, rect?: DOMRect): Vec2 {
   const r = rect ?? canvas.getBoundingClientRect();
   const authoredHeight = game.tool === 'road' && (draft || roadChain || curvePending)
-    ? roadHeightOffset
+    ? game.roadHeightOffset
     : undefined;
   return worldAtScreen(e.clientX - r.left, e.clientY - r.top, authoredHeight);
 }
@@ -1318,7 +1327,7 @@ function cancelMove(): void {
 
 /** Height of an authored connection; open ground takes the height being drawn at. */
 function anchorHeightOffset(anchor: Anchor): number {
-  return anchorHeightAt(doc, net, anchor, roadHeightOffset);
+  return anchorHeightAt(doc, net, anchor, game.roadHeightOffset);
 }
 
 /** A nearby road at another height is a crossing, not an accidental junction. */
@@ -1358,56 +1367,56 @@ function terrainPaintInterval(): number {
 
 /** One dab, with no spacing or rate checks of its own. */
 function stampTerrain(at: Vec2, level: number): void {
-  if (terrainMode === 'elements') {
+  if (game.terrainMode === 'elements') {
     // Elements move no height: a dab lays instances (or takes them away).
     const mode = elementMode();
     if (mode !== 'lay') {
-      doc.removeElements(at.x, at.y, terrainRadius, mode === 'eraseKind' ? elementKind() : null);
+      doc.removeElements(at.x, at.y, game.terrainRadius, mode === 'eraseKind' ? elementKind() : null);
       return;
     }
     const kind = elementKind();
     const brush = elementBrush(kind);
-    const reach = terrainRadius + brush.spacing * UNITS_PER_METER;
+    const reach = game.terrainRadius + brush.spacing * UNITS_PER_METER;
     const nearby = doc.elements.filter((e) => e.kind === kind && Math.abs(e.x - at.x) < reach && Math.abs(e.y - at.y) < reach);
-    doc.addElements(scatter(kind, brush, at.x, at.y, terrainRadius, UNITS_PER_METER, Math.random, nearby));
+    doc.addElements(scatter(kind, brush, at.x, at.y, game.terrainRadius, UNITS_PER_METER, Math.random, nearby));
     return;
   }
-  if (terrainMode === 'trees') {
+  if (game.terrainMode === 'trees') {
     // Trees move no height: a dab plants a stand (or one tree), or cuts the
     // trees away there - the woods' own too (`world/trees.ts`).
     const mode = treeMode();
     if (mode === 'cut') {
-      doc.cutTrees(at.x, at.y, terrainRadius);
+      doc.cutTrees(at.x, at.y, game.terrainRadius);
       return;
     }
     const brush = treeBrush();
-    const reach = terrainRadius + brush.spacing * UNITS_PER_METER;
+    const reach = game.terrainRadius + brush.spacing * UNITS_PER_METER;
     const nearby = doc.trees.filter((t) => Math.abs(t.x - at.x) < reach && Math.abs(t.y - at.y) < reach);
     if (mode === 'one') {
       const spacing = brush.spacing * UNITS_PER_METER;
       if (nearby.every((t) => Math.hypot(t.x - at.x, t.y - at.y) >= spacing)) doc.plantTrees([oneTree(treeKind(), brush, at.x, at.y, UNITS_PER_METER, Math.random)]);
       return;
     }
-    doc.plantTrees(plantTrees(treeKind(), brush, at.x, at.y, terrainRadius, UNITS_PER_METER, Math.random, nearby));
+    doc.plantTrees(plantTrees(treeKind(), brush, at.x, at.y, game.terrainRadius, UNITS_PER_METER, Math.random, nearby));
     return;
   }
-  if (terrainMode === 'gully') {
+  if (game.terrainMode === 'gully') {
     // Gullies move no height the roads read: the relief the light reads is
     // cut there (or wiped), `render/terrainRelief.ts`.
     const strength = Number((document.getElementById('gullyStrength') as HTMLInputElement | null)?.value ?? 60);
     doc.addGullyDab({
-      x: at.x, y: at.y, radius: terrainRadius,
+      x: at.x, y: at.y, radius: game.terrainRadius,
       strength: Math.max(0.05, Math.min(1, strength / 100)),
       ...(gullyErase() ? { erase: true } : {}),
     });
     return;
   }
-  if (terrainMode === 'fog') {
+  if (game.terrainMode === 'fog') {
     // Fog moves no height either: a dab of mist laid, or taken away.
     // The brush's own settings go with the dab.
     const brush = fogBrush();
     doc.addFogDab({
-      x: at.x, y: at.y, radius: terrainRadius,
+      x: at.x, y: at.y, radius: game.terrainRadius,
       strength: Math.max(0.02, Math.min(1, brush.strength / 100)),
       height: brush.height * UNITS_PER_METER,
       speed: brush.speed * UNITS_PER_METER,
@@ -1415,31 +1424,31 @@ function stampTerrain(at: Vec2, level: number): void {
     });
     return;
   }
-  if (terrainMode === 'paint') {
+  if (game.terrainMode === 'paint') {
     // Painting moves no height: a dab of the chosen ground, nothing re-solved.
     doc.addPaintDab({
-      kind: paintKind(), x: at.x, y: at.y, radius: terrainRadius,
-      strength: Math.max(0.05, Math.min(1, terrainStrength / 80)),
+      kind: paintKind(), x: at.x, y: at.y, radius: game.terrainRadius,
+      strength: Math.max(0.05, Math.min(1, game.terrainStrength / 80)),
     });
     return;
   }
-  const landform = landformOf(terrainMode);
-  const mode: TerrainMode = landform ? landform.mode : terrainMode as TerrainMode;
+  const landform = landformOf(game.terrainMode);
+  const mode: TerrainMode = landform ? landform.mode : game.terrainMode as TerrainMode;
   doc.addTerrainStamp({
     x: at.x,
     y: at.y,
-    radius: terrainRadius,
-    strength: terrainStrength,
+    radius: game.terrainRadius,
+    strength: game.terrainStrength,
     mode,
     ...(mode === 'flatten' ? { level } : {}),
     ...(terrainStroke && mode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
     ...(mode === 'raise' || mode === 'lower' || mode === 'river' ? { rough: true } : {}),
-    ...(terrainHardness > 0 && !landform?.profile && (mode === 'raise' || mode === 'lower') ? { hardness: terrainHardness / 100 } : {}),
+    ...(game.terrainHardness > 0 && !landform?.profile && (mode === 'raise' || mode === 'lower') ? { hardness: game.terrainHardness / 100 } : {}),
     ...(landform?.profile ? { profile: landform.profile } : {}),
   });
   // The landform's rock, under the whole dab.
   // A little wider than the dab, so the rock reaches the foot of its cliff.
-  if (landform) doc.addPaintDab({ kind: landform.rock, x: at.x, y: at.y, radius: terrainRadius * 1.15, strength: 1 });
+  if (landform) doc.addPaintDab({ kind: landform.rock, x: at.x, y: at.y, radius: game.terrainRadius * 1.15, strength: 1 });
 }
 
 /**
@@ -1462,10 +1471,10 @@ function paintTerrain(at: Vec2, force = false): void {
   if (!force) {
     if (now - stroke.applied < terrainPaintInterval()) return;
     const moved = Math.hypot(at.x - stroke.last.x, at.y - stroke.last.y);
-    if (moved < terrainRadius * TERRAIN_SPACING) return;
+    if (moved < game.terrainRadius * TERRAIN_SPACING) return;
   }
 
-  const spacing = Math.max(4, terrainRadius * TERRAIN_SPACING);
+  const spacing = Math.max(4, game.terrainRadius * TERRAIN_SPACING);
   const dx = at.x - stroke.last.x;
   const dy = at.y - stroke.last.y;
   const distance = Math.hypot(dx, dy);
@@ -1614,7 +1623,7 @@ function beginTerrainStroke(pointer: number, at: Vec2): void {
   // every dab. A raise, a lower or a river stroke moves the ground by its
   // strength and no more however long it is held (its dabs are one stroke),
   // so repeating them would only spend the map's dab budget.
-  if (terrainMode === 'flatten') terrainRepeat = setInterval(() => {
+  if (game.terrainMode === 'flatten') terrainRepeat = setInterval(() => {
     const stroke = terrainStroke;
     if (!stroke) return;
     if (performance.now() - stroke.applied < terrainPaintInterval()) return;
@@ -1732,7 +1741,7 @@ canvas.addEventListener('pointerdown', (e) => {
     case 'roundabout':
       if (freeRoadsEnabled()) {
         mutate(() => {
-          const result = commitRoundabout(doc, net, world, roundaboutRadius, 0);
+          const result = commitRoundabout(doc, net, world, game.roundaboutRadius, 0);
           if (!result.committed) flashHint(`hint.roundabout.${result.reason}`);
           return result.committed;
         });
@@ -1744,7 +1753,7 @@ canvas.addEventListener('pointerdown', (e) => {
         blockGridChoice.armed = false;
         let laid = 0;
         mutate(() => {
-          laid = commitBlockGrid(doc, world, blockGridChoice, roadTypeIndex, roadLanePreset, roadParking());
+          laid = commitBlockGrid(doc, world, blockGridChoice, game.roadTypeIndex, game.roadLanePreset, roadParking());
           return laid > 0;
         });
         flashHint(laid > 0 ? 'hint.blocks.built' : 'hint.road.invalid');
@@ -1757,7 +1766,7 @@ canvas.addEventListener('pointerdown', (e) => {
       let gridOffset = 0;
       if (roadGridShown()) {
         // The road fills whole cells: an odd number of them wide, its middle in a cell's middle.
-        const cells = Math.max(1, Math.round((2 * halfWidth(roadProfile(roadTypeIndex, roadLanePreset), Level.Sidewalk)) / GRID_CELL));
+        const cells = Math.max(1, Math.round((2 * halfWidth(roadProfile(game.roadTypeIndex, game.roadLanePreset), Level.Sidewalk)) / GRID_CELL));
         gridOffset = cells % 2 === 1 ? GRID_CELL / 2 : 0;
         setGridSnapStep(GRID_CELL, gridOffset);
       } else setGridSnapStep(GRID_STEP);
@@ -1779,10 +1788,9 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       const startHeightOffset = chained
         ? roadChainHeight
-        : start.kind === 'free' ? roadHeightOffset : anchorHeightOffset(start);
+        : start.kind === 'free' ? game.roadHeightOffset : anchorHeightOffset(start);
       if (!chained && start.kind !== 'free' && !roadHeightEdited) {
-        roadHeightOffset = startHeightOffset;
-        updateRoadHeightValue();
+        gameState.set('roadHeightOffset', startHeightOffset, 'via começa num ponto existente');
       }
       roadHeightEdited = false;
       chainPreview = null;
@@ -1792,17 +1800,17 @@ canvas.addEventListener('pointerdown', (e) => {
         startHeightOffset,
         chained,
         pressedAt: world,
-        snap: snapRoadEndpoint(doc, net, start, world, view.zoom, roadHeightOffset),
+        snap: snapRoadEndpoint(doc, net, start, world, view.zoom, game.roadHeightOffset),
         samples: [{ at: start.at, heightOffset: startHeightOffset }],
-        heightOffset: roadHeightOffset,
+        heightOffset: game.roadHeightOffset,
       };
       break;
       }
 
     case 'terrain':
-      if (terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
+      if (game.terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
       // The weather tool: a click calls a lightning bolt down there.
-      else if (terrainMode === 'weather') scene.strikeAt(world.x, world.y);
+      else if (game.terrainMode === 'weather') scene.strikeAt(world.x, world.y);
       else beginTerrainStroke(e.pointerId, world);
       break;
 
@@ -1812,7 +1820,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
     case 'zone': {
       const lot = lotAt(world);
-      if (zoneMode === 'edit') {
+      if (game.zoneMode === 'edit') {
         // The nearest corner within reach of the pointer.
         const reach = 14 / Math.max(0.05, view.zoom);
         let best: Vec2 | null = null, bestD = reach;
@@ -1821,7 +1829,7 @@ canvas.addEventListener('pointerdown', (e) => {
           if (d < bestD) { bestD = d; best = q; }
         }
         if (best) lotCorner = { pointer: e.pointerId, from: { ...best }, to: { ...world } };
-      } else if (zoneMode === 'front') {
+      } else if (game.zoneMode === 'front') {
         // The side clicked becomes the lot's front, the side its building faces.
         const side = lotSideAt(world);
         if (!side) flashHint('hint.lot.frontPick');
@@ -1830,14 +1838,14 @@ canvas.addEventListener('pointerdown', (e) => {
           lotRefused.clear();
           flashHint('hint.lot.front');
         }
-      } else if (zoneMode === 'split') {
-        if (lotSplitKind === 'line') lotCutLine = { pointer: e.pointerId, a: { ...world }, b: { ...world } };
+      } else if (game.zoneMode === 'split') {
+        if (game.lotSplitKind === 'line') lotCutLine = { pointer: e.pointerId, a: { ...world }, b: { ...world } };
         else if (lot) {
           let ok = false;
-          mutate(() => (ok = splitLot(doc, lot.id, { kind: lotSplitKind as 'vertical' | 'horizontal', parts: lotSplitParts })));
+          mutate(() => (ok = splitLot(doc, lot.id, { kind: game.lotSplitKind as 'vertical' | 'horizontal', parts: game.lotSplitParts })));
           flashHint(ok ? 'hint.lot.split' : 'hint.lot.splitFail');
         }
-      } else if (zoneMode === 'polygon') {
+      } else if (game.zoneMode === 'polygon') {
         // A point a click; the first point again (or a double click) closes it.
         const p = lotSnap(world);
         const first = lotPolygon[0];
@@ -1850,10 +1858,10 @@ canvas.addEventListener('pointerdown', (e) => {
           mutate(() => (made = lot !== null && addPolygonLot(doc, lot.corners, lot.front) !== null));
           flashHint(made ? 'hint.lot.added' : 'hint.lot.addFail');
         } else lotPolygon.push(p);
-      } else if (zoneMode === 'curve') {
+      } else if (game.zoneMode === 'curve') {
         const side = lotSideNear(world);
         if (side) lotCurve = { pointer: e.pointerId, a: side.a, b: side.b, through: { ...world } };
-      } else if (zoneMode === 'join') {
+      } else if (game.zoneMode === 'join') {
         if (lot && lotJoinFirst === null) { lotJoinFirst = lot.id; flashHint('hint.lot.joinPick'); }
         else if (lot && lotJoinFirst !== null && lot.id !== lotJoinFirst) {
           const first = lotJoinFirst;
@@ -1862,15 +1870,15 @@ canvas.addEventListener('pointerdown', (e) => {
           flashHint(ok ? 'hint.lot.join' : 'hint.lot.joinFail');
           lotJoinFirst = null;
         } else lotJoinFirst = null;
-      } else if (zoneMode === 'add') {
+      } else if (game.zoneMode === 'add') {
         lotNew = { pointer: e.pointerId, a: lotSnap(world), b: lotSnap(world), angle: streetAngleNear(world) };
-      } else if (zoneMode === 'delete') {
+      } else if (game.zoneMode === 'delete') {
         // Lots, the buildings on them or anywhere under the stroke, and the zoned cells: all at once.
         zoneErase = { pointer: e.pointerId, lots: new Set(), buildings: new Set() };
         eraseUnder(world);
       } else {
         // The brush zones the lots it passes over; land with no lot is not zoned.
-        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || zoneEraser, ids: new Set(lot ? [lot.id] : []) };
+        lotStroke = { pointer: e.pointerId, remove: e.shiftKey || game.zoneEraser, ids: new Set(lot ? [lot.id] : []) };
       }
       requestDraw();
       break;
@@ -1890,7 +1898,7 @@ canvas.addEventListener('pointerdown', (e) => {
         flashHint('hint.barrier.removed');
         break;
       }
-      const point = snapBarrierPoint(net, barrierKind, world);
+      const point = snapBarrierPoint(net, game.barrierKind, world);
       barrierPoints = [...(barrierPoints ?? []), point];
       // A double click ends the run. Detected here by time and distance:
       // `detail` on a pointerdown is 0 in Chrome, so the run never ended and
@@ -2207,22 +2215,22 @@ canvas.addEventListener('pointermove', (e) => {
 
   // The hover preview uses the same height-aware connection rule as the commit.
   const hovered = findAnchor(doc, net, world, view.zoom, undefined,
-    game.tool === 'road' ? roadHeightOffset : undefined);
+    game.tool === 'road' ? game.roadHeightOffset : undefined);
   if (game.tool === 'road' && roadChain) {
     chainPreview = {
       start: roadChain,
       startHeightOffset: roadChainHeight,
       chained: true,
       pressedAt: world,
-      snap: snapRoadEndpoint(doc, net, roadChain, world, view.zoom, roadHeightOffset),
+      snap: snapRoadEndpoint(doc, net, roadChain, world, view.zoom, game.roadHeightOffset),
       samples: [{ at: roadChain.at, heightOffset: roadChainHeight }],
-      heightOffset: roadHeightOffset,
+      heightOffset: game.roadHeightOffset,
     };
   }
   hoverAnchor = game.tool === 'terrain'
     ? { kind: 'free', at: world }
     : game.tool === 'road'
-      ? anchorForHeight(hovered, roadHeightOffset)
+      ? anchorForHeight(hovered, game.roadHeightOffset)
       : hovered;
   requestDraw();
 });
@@ -2279,7 +2287,7 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   mutate(() => {
     const before = new Set(doc.segments.keys());
     laidNow = before;
-    result = commitRoadPath(doc, net, d.start, end, roadTypeIndex, pieces, roadLanePreset, roadParking(),
+    result = commitRoadPath(doc, net, d.start, end, game.roadTypeIndex, pieces, game.roadLanePreset, roadParking(),
       (x, y) => scene.naturalTerrainHeightAt(x, y));
     if (result.elevation) scene.offerElevation(result.elevation, net.revision);
     // Drawn as it was previewed until the new world is in place (`settlingRoad`).
@@ -2287,7 +2295,7 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
     // A chosen total width (Vias > Largura): the segments just laid take it.
     const roadWidthMetres = roadWidth();
     if (result.committed && roadWidthMetres !== null) {
-      const rt = roadProfile(roadTypeIndex, roadLanePreset);
+      const rt = roadProfile(game.roadTypeIndex, game.roadLanePreset);
       const section = sectionForWidth(rt, roadWidthMetres, Math.round(rt.speedLimit * 3.6 * METERS_PER_UNIT));
       for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentSection(id, section);
     }
@@ -2304,9 +2312,8 @@ function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
   chainPreview = null;
   curvePending = null;
   roadChainHeight = finalHeight;
-  roadHeightOffset = finalHeight;
+  gameState.set('roadHeightOffset', finalHeight, 'via terminada');
   roadHeightEdited = false;
-  updateRoadHeightValue();
   if (result.heightLimited) flashHint('hint.road.gradeLimited');
   flashLaidCells(laidNow);
   return true;
@@ -2350,7 +2357,7 @@ function endPointer(e: PointerEvent): void {
     lotStroke = null;
     if (!cancelled && !wasPinching && !stroke.ids.size) flashHint('hint.zone.empty');
     else if (!cancelled && !wasPinching) {
-      mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: zoneUse, density: zoneDensity }));
+      mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: game.zoneUse, density: game.zoneDensity }));
       lotRefused.clear();
       flashHint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
     }
@@ -2428,7 +2435,7 @@ function endPointer(e: PointerEvent): void {
         roadChain = d.start;
         roadChainHeight = d.startHeightOffset;
         requestDraw();
-      } else if (d.chained && alignment === 'curve' && !dragged) {
+      } else if (d.chained && game.alignment === 'curve' && !dragged) {
         // A curve uses endpoint, then bend point. A drag still draws it at once.
         const anchor = anchorForHeight(
           findAnchor(doc, net, d.snap.at, view.zoom, undefined, d.heightOffset), d.heightOffset);
@@ -2521,8 +2528,8 @@ canvas.addEventListener(
     // strength. With Shift held a browser may scroll sideways: either axis.
     if (game.tool === 'terrain' && (e.shiftKey || e.altKey)) {
       const notches = -Math.sign(e.deltaY || e.deltaX);
-      if (e.altKey) setTerrainStrength(terrainStrength + notches);
-      else setTerrainRadius(terrainRadius + notches * 10);
+      if (e.altKey) setTerrainStrength(game.terrainStrength + notches);
+      else setTerrainRadius(game.terrainRadius + notches * 10);
       return;
     }
     const r = canvas.getBoundingClientRect();
@@ -2650,16 +2657,16 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     if (e.key === '[' || e.key === ']') {
-      setTerrainRadius(terrainRadius + (e.key === ']' ? 10 : -10));
+      setTerrainRadius(game.terrainRadius + (e.key === ']' ? 10 : -10));
       return;
     }
     // Shift with the brackets: the strength (the wheel only zooms now).
     if (e.key === '{' || e.key === '}') {
-      setTerrainStrength(terrainStrength + (e.key === '}' ? 1 : -1));
+      setTerrainStrength(game.terrainStrength + (e.key === '}' ? 1 : -1));
       return;
     }
     if (e.key === '-' || e.key === '_' || e.key === '=' || e.key === '+') {
-      setTerrainStrength(terrainStrength + (e.key === '=' || e.key === '+' ? 1 : -1));
+      setTerrainStrength(game.terrainStrength + (e.key === '=' || e.key === '+' ? 1 : -1));
       return;
     }
   }
@@ -2708,11 +2715,11 @@ const roadTypesEl = document.getElementById('roadTypes') as HTMLElement;
 ROAD_TYPES.forEach((rt, i) => {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'road-type' + (i === roadTypeIndex ? ' active' : '');
+  b.className = 'road-type' + (i === game.roadTypeIndex ? ' active' : '');
   b.dataset['typeIndex'] = String(i);
   // Its total width in metres, which the width stepper starts from.
   b.dataset['widthM'] = String(Math.round((rt.width + rt.sidewalk * 2) * METERS_PER_UNIT));
-  b.setAttribute('aria-pressed', String(i === roadTypeIndex));
+  b.setAttribute('aria-pressed', String(i === game.roadTypeIndex));
   b.setAttribute('aria-label', `${roadTypeName(rt)}: ${roadTypeDescription(rt)}`);
   b.innerHTML = `<img class="road-type-art" src="${roadSwatch(rt)}" alt="" /><span class="road-type-name"></span>`;
   b.querySelector('.road-type-name')!.textContent = roadTypeName(rt);
@@ -2792,7 +2799,7 @@ roundaboutSettings.innerHTML = '<span data-i18n="road.roundabout.radius"></span>
 roundaboutSettings.querySelector('span')!.textContent = t('road.roundabout.radius');
 const roundaboutSize = roundaboutSettings.querySelector('input')!;
 roundaboutSize.oninput = () => {
-  roundaboutRadius = Number(roundaboutSize.value) * UNITS_PER_METER;
+  gameState.set('roundaboutRadius', Number(roundaboutSize.value) * UNITS_PER_METER, 'tamanho da rotatória');
   roundaboutSettings.querySelector('output')!.value = `${roundaboutSize.value} m`;
   requestDraw();
 };
@@ -2801,9 +2808,8 @@ document.getElementById('paletteBody')?.prepend(roundaboutSettings);
 /**
  * The lanes a road is laid at. The count is stored per segment, so a street
  * can be four lanes wide while the avenue beside it is six; the last choice
- * is the class that carries a central reservation.
+ * is the class that carries a central reservation (`game.roadLanePreset`).
  */
-let roadLanePreset: number | null = null;
 const MEDIAN_CLASS = ROAD_TYPES.findIndex((rt) => rt.median > 0);
 const roadLanesEl = document.getElementById('roadLanes') as HTMLElement;
 const LANE_CHOICES: readonly { readonly id: string; readonly lanes: number | null }[] = [
@@ -2820,13 +2826,13 @@ for (const choice of LANE_CHOICES) {
   b.setAttribute('aria-pressed', 'false');
   const sample = choice.lanes === null
     ? roadType(MEDIAN_CLASS)
-    : roadProfile(roadTypeIndex, choice.lanes);
+    : roadProfile(game.roadTypeIndex, choice.lanes);
   const laneLabel = choice.lanes === null ? t('palette.lanes.median') : t('palette.lanes.count', { count: choice.lanes });
   b.innerHTML = `<img src="${roadSwatch(sample, 74, 38)}" alt="" /><span></span>`;
   b.querySelector('span')!.textContent = laneLabel;
   b.title = laneLabel;
   b.onclick = () => {
-    roadLanePreset = choice.lanes;
+    gameState.set('roadLanePreset', choice.lanes, 'faixas escolhidas');
     if (choice.lanes === null) selectRoadType(MEDIAN_CLASS);
     updateLaneChoices();
     refreshLaneSwatches();
@@ -2843,8 +2849,8 @@ function updateLaneChoices(): void {
     // says what the next road will actually be laid as.
     const on = choice !== undefined && (
       choice.lanes === null
-        ? roadLanePreset === null && roadTypeIndex === MEDIAN_CLASS
-        : roadTypeIndex !== MEDIAN_CLASS && choice.lanes === (roadLanePreset ?? roadType(roadTypeIndex).lanes)
+        ? game.roadLanePreset === null && game.roadTypeIndex === MEDIAN_CLASS
+        : game.roadTypeIndex !== MEDIAN_CLASS && choice.lanes === (game.roadLanePreset ?? roadType(game.roadTypeIndex).lanes)
     );
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', String(on));
@@ -2858,7 +2864,7 @@ function refreshLaneSwatches(): void {
     if (!choice) continue;
     const img = b.querySelector('img');
     if (!img) continue;
-    const sample = choice.lanes === null ? roadType(MEDIAN_CLASS) : roadProfile(roadTypeIndex, choice.lanes);
+    const sample = choice.lanes === null ? roadType(MEDIAN_CLASS) : roadProfile(game.roadTypeIndex, choice.lanes);
     img.src = roadSwatch(sample, 74, 38);
     const label = b.querySelector('span');
     if (label) label.textContent = choice.lanes === null
@@ -2908,7 +2914,7 @@ function refreshRoadTypeLabels(): void {
 }
 
 function selectRoadType(i: number): void {
-  roadTypeIndex = i;
+  gameState.set('roadTypeIndex', i, 'classe de via escolhida');
   for (const child of roadTypesEl.querySelectorAll<HTMLElement>('[data-type-index]')) {
     const on = Number(child.dataset['typeIndex']) === i;
     child.classList.toggle('active', on);
@@ -2920,7 +2926,7 @@ function selectRoadType(i: number): void {
 }
 
 function setAlignment(next: Alignment): void {
-  alignment = next;
+  gameState.set('alignment', next, 'traçado escolhido');
   if (next !== 'curve') curvePending = null;
   document.querySelectorAll<HTMLButtonElement>('.alignment-mode').forEach((button) => {
     const active = button.dataset['alignment'] === next;
@@ -2943,10 +2949,10 @@ document.querySelectorAll<HTMLButtonElement>('.road-op').forEach((button) => {
 function updateRoadHeightValue(): void {
   const value = document.getElementById('roadHeightValue');
   const context = document.getElementById('roadHeightContext');
-  const stateKey = roadHeightOffset > 1e-6 ? 'palette.height.above'
-    : roadHeightOffset < -1e-6 ? 'palette.height.below' : 'palette.height.ground';
+  const stateKey = game.roadHeightOffset > 1e-6 ? 'palette.height.above'
+    : game.roadHeightOffset < -1e-6 ? 'palette.height.below' : 'palette.height.ground';
   if (value) {
-    const metres = roadHeightOffset / UNITS_PER_METER;
+    const metres = game.roadHeightOffset / UNITS_PER_METER;
     value.textContent = `${Math.abs(metres - Math.round(metres)) < 1e-6
       ? Math.round(metres) : metres.toFixed(1)} m`;
   }
@@ -2957,27 +2963,27 @@ function updateRoadHeightValue(): void {
 }
 
 function stepRoadHeight(metres: number): void {
-  const before = roadHeightOffset;
+  const before = game.roadHeightOffset;
   // Steps land on whole metres. A road cut short by the safe grade leaves the
   // height at a fraction (1.1 m), and stepping by a metre from there never
   // came back to the terrain's own level.
-  const now = roadHeightOffset / UNITS_PER_METER;
+  const now = game.roadHeightOffset / UNITS_PER_METER;
   const next = metres > 0 ? Math.floor(now + 1e-6) + metres : Math.ceil(now - 1e-6) + metres;
-  roadHeightOffset = next * UNITS_PER_METER;
+  gameState.set('roadHeightOffset', next * UNITS_PER_METER, 'altura da via');
   roadHeightEdited = true;
   const underPointer = roadPointerScreen
-    ? worldAtScreen(roadPointerScreen.x, roadPointerScreen.y, roadHeightOffset)
+    ? worldAtScreen(roadPointerScreen.x, roadPointerScreen.y, game.roadHeightOffset)
     : null;
   if (draft) {
-    draft.heightOffset = roadHeightOffset;
+    draft.heightOffset = game.roadHeightOffset;
     if (roadPointerScreen) {
       // The stroke goes on from where it is: the jump of the plane is carried.
       const was = worldAtScreen(roadPointerScreen.x, roadPointerScreen.y, before);
       draftShift = { x: draftShift.x + was.x - underPointer!.x, y: draftShift.y + was.y - underPointer!.y };
     }
     const at = underPointer ? { x: underPointer.x + draftShift.x, y: underPointer.y + draftShift.y } : draft.snap.at;
-    draft.snap = snapRoadEndpoint(doc, net, draft.start, at, view.zoom, roadHeightOffset);
-    draft.samples.push({ at, heightOffset: roadHeightOffset });
+    draft.snap = snapRoadEndpoint(doc, net, draft.start, at, view.zoom, game.roadHeightOffset);
+    draft.samples.push({ at, heightOffset: game.roadHeightOffset });
   }
   if (roadChain && !draft && !curvePending) {
     const at = underPointer ?? chainPreview?.snap.at ?? roadChain.at;
@@ -2986,22 +2992,23 @@ function stepRoadHeight(metres: number): void {
       startHeightOffset: roadChainHeight,
       chained: true,
       pressedAt: at,
-      snap: snapRoadEndpoint(doc, net, roadChain, at, view.zoom, roadHeightOffset),
+      snap: snapRoadEndpoint(doc, net, roadChain, at, view.zoom, game.roadHeightOffset),
       samples: [{ at: roadChain.at, heightOffset: roadChainHeight }],
-      heightOffset: roadHeightOffset,
+      heightOffset: game.roadHeightOffset,
     };
   }
   if (curvePending) {
-    curvePending.end = anchorForHeight(curvePending.end, roadHeightOffset);
-    curvePending.endHeightOffset = roadHeightOffset;
+    curvePending.end = anchorForHeight(curvePending.end, game.roadHeightOffset);
+    curvePending.endHeightOffset = game.roadHeightOffset;
   }
-  updateRoadHeightValue();
   requestDraw();
 }
 
 document.querySelectorAll<HTMLButtonElement>('.road-height-step').forEach((button) => {
   button.onclick = () => stepRoadHeight(Number(button.dataset['heightStep']));
 });
+// The height shown is the game's state, wherever it was changed from.
+gameState.watch(['roadHeightOffset'], updateRoadHeightValue);
 updateRoadHeightValue();
 
 const roadPalette = document.querySelector<HTMLElement>('.road-palette');
@@ -3009,16 +3016,16 @@ const terrainPalette = document.getElementById('terrainPalette') as HTMLElement;
 const zonePalette = document.getElementById('zonePalette') as HTMLElement;
 const zoneRemoveButton = document.getElementById('zoneRemove') as HTMLButtonElement;
 zoneRemoveButton.addEventListener('click', () => {
-  zoneEraser = !zoneEraser;
-  zoneRemoveButton.classList.toggle('active', zoneEraser);
-  zoneRemoveButton.setAttribute('aria-pressed', String(zoneEraser));
+  gameState.set('zoneEraser', !game.zoneEraser, 'borracha de zona');
+  zoneRemoveButton.classList.toggle('active', game.zoneEraser);
+  zoneRemoveButton.setAttribute('aria-pressed', String(game.zoneEraser));
   requestDraw();
 });
 document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button) => {
   button.addEventListener('click', () => {
     const wanted = button.dataset['zoneMode'];
-    zoneMode = wanted === 'fill' || wanted === 'edit' || wanted === 'front' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
-      wanted === 'polygon' || wanted === 'curve' || wanted === 'delete' ? wanted : 'brush';
+    gameState.set('zoneMode', wanted === 'fill' || wanted === 'edit' || wanted === 'front' || wanted === 'split' || wanted === 'join' || wanted === 'add' ||
+      wanted === 'polygon' || wanted === 'curve' || wanted === 'delete' ? wanted : 'brush', 'modo de zona');
     lotJoinFirst = null;
     lotPolygon = [];
     document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((item) => {
@@ -3031,21 +3038,21 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-mode]').forEach((button
 });
 document.querySelectorAll<HTMLButtonElement>('[data-lot-split]').forEach((button) => {
   button.addEventListener('click', () => {
-    lotSplitKind = button.dataset['lotSplit'] === 'horizontal' ? 'horizontal' : button.dataset['lotSplit'] === 'line' ? 'line' : 'vertical';
+    gameState.set('lotSplitKind', button.dataset['lotSplit'] === 'horizontal' ? 'horizontal' : button.dataset['lotSplit'] === 'line' ? 'line' : 'vertical', 'corte de lote');
     document.querySelectorAll<HTMLButtonElement>('[data-lot-split]').forEach((item) => item.classList.toggle('active', item === button));
     requestDraw();
   });
 });
 document.querySelectorAll<HTMLButtonElement>('[data-lot-parts]').forEach((button) => {
   button.addEventListener('click', () => {
-    lotSplitParts = Number(button.dataset['lotParts']) || 2;
+    gameState.set('lotSplitParts', Number(button.dataset['lotParts']) || 2, 'partes do lote');
     document.querySelectorAll<HTMLButtonElement>('[data-lot-parts]').forEach((item) => item.classList.toggle('active', item === button));
     requestDraw();
   });
 });
 document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((button) => {
   button.addEventListener('click', () => {
-    zoneUse = button.dataset['zoneUse'] as ZoneUse;
+    gameState.set('zoneUse', button.dataset['zoneUse'] as ZoneUse, 'uso da zona');
     document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((item) => {
       const active = item === button;
       item.classList.toggle('active', active);
@@ -3056,7 +3063,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-use]').forEach((button)
 });
 document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((button) => {
   button.addEventListener('click', () => {
-    zoneDensity = button.dataset['zoneDensity'] as ZoneDensity;
+    gameState.set('zoneDensity', button.dataset['zoneDensity'] as ZoneDensity, 'densidade da zona');
     document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((item) => {
       const active = item === button;
       item.classList.toggle('active', active);
@@ -3067,12 +3074,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-zone-density]').forEach((but
 });
 
 function setTerrainMode(next: BrushMode): void {
-  terrainMode = next;
+  gameState.set('terrainMode', next, 'pincel de terreno');
   // Each tool its own hardness: a chapada's cliff is not the hill's slope.
   const hardness = hardnessByMode[next];
   const hardnessInput = document.getElementById('terrainHardness') as HTMLInputElement | null;
   if (hardness !== undefined && hardnessInput) {
-    terrainHardness = hardness;
+    gameState.set('terrainHardness', hardness, 'dureza do modo');
     hardnessInput.value = String(hardness);
     text('terrainHardnessValue', String(hardness));
   }
@@ -3329,18 +3336,18 @@ const terrainStrengthInput = document.getElementById('terrainStrength') as HTMLI
 function setTerrainRadius(value: number): void {
   const min = Number(terrainRadiusInput.min);
   const max = Number(terrainRadiusInput.max);
-  terrainRadius = clamp(Math.round(value), min, max);
-  terrainRadiusInput.value = String(terrainRadius);
-  text('terrainRadiusValue', String(terrainRadius));
+  gameState.set('terrainRadius', clamp(Math.round(value), min, max), 'raio do pincel');
+  terrainRadiusInput.value = String(game.terrainRadius);
+  text('terrainRadiusValue', String(game.terrainRadius));
   requestDraw();
 }
 
 function setTerrainStrength(value: number): void {
   const min = Number(terrainStrengthInput.min);
   const max = Number(terrainStrengthInput.max);
-  terrainStrength = clamp(Math.round(value), min, max);
-  terrainStrengthInput.value = String(terrainStrength);
-  text('terrainStrengthValue', String(terrainStrength));
+  gameState.set('terrainStrength', clamp(Math.round(value), min, max), 'força do pincel');
+  terrainStrengthInput.value = String(game.terrainStrength);
+  text('terrainStrengthValue', String(game.terrainStrength));
   requestDraw();
 }
 
@@ -3351,9 +3358,9 @@ terrainStrengthInput.oninput = () => setTerrainStrength(Number(terrainStrengthIn
   const input = document.getElementById('terrainHardness') as HTMLInputElement | null;
   if (input) {
     input.oninput = () => {
-      terrainHardness = clamp(Math.round(Number(input.value)), 0, 95);
-      if (hardnessByMode[terrainMode] !== undefined) hardnessByMode[terrainMode] = terrainHardness;
-      text('terrainHardnessValue', String(terrainHardness));
+      gameState.set('terrainHardness', clamp(Math.round(Number(input.value)), 0, 95), 'dureza do pincel');
+      if (hardnessByMode[game.terrainMode] !== undefined) hardnessByMode[game.terrainMode] = game.terrainHardness;
+      text('terrainHardnessValue', String(game.terrainHardness));
     };
   }
 }
@@ -3503,10 +3510,10 @@ function renderToolHelp(forTool: Tool | null): void {
     for (const kind of BARRIER_KINDS) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'pc-chip' + (kind === barrierKind ? ' active' : '');
+      b.className = 'pc-chip' + (kind === game.barrierKind ? ' active' : '');
       b.dataset['barrier'] = kind;
       b.textContent = t(`barrier.kind.${kind}`);
-      b.addEventListener('click', () => { barrierKind = kind; renderToolHelp('barrier'); requestDraw(); });
+      b.addEventListener('click', () => { gameState.set('barrierKind', kind, 'tipo de cerca'); renderToolHelp('barrier'); });
       kinds.appendChild(b);
     }
     toolHelp.append(what, kinds, list);
@@ -3697,14 +3704,16 @@ document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) =>
 
 const congestionButton = document.getElementById('congestionToggle') as HTMLButtonElement;
 congestionButton.onclick = () => {
-  congestionOverlay = !congestionOverlay;
-  congestionButton.classList.toggle('active', congestionOverlay);
-  congestionButton.setAttribute('aria-pressed', String(congestionOverlay));
+  gameState.set('congestionOverlay', !game.congestionOverlay, 'mapa de congestionamento');
   persistence.saveSettingsSoon(sessionSettings);
-  requestDraw();
 };
-congestionButton.classList.toggle('active', congestionOverlay);
-congestionButton.setAttribute('aria-pressed', String(congestionOverlay));
+/** The congestion button as the game's state has it, wherever it was changed from. */
+function showCongestion(): void {
+  congestionButton.classList.toggle('active', game.congestionOverlay);
+  congestionButton.setAttribute('aria-pressed', String(game.congestionOverlay));
+}
+gameState.watch(['congestionOverlay'], showCongestion);
+showCongestion();
 initChrome(requestDraw);
 onRoadGridChange(requestDraw);
 mountBuildStamp(document.getElementById('buildStamp'));
@@ -3804,9 +3813,8 @@ let cityBuiltIn = 0;
   history.record(doc);
   // A new map is empty.
   applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL, nature: newNature() }, 'import');
-  roadHeightOffset = 0;
+  gameState.set('roadHeightOffset', 0, 'mapa novo');
   roadHeightEdited = false;
-  updateRoadHeightValue();
   fitView();
   flashHint('hint.newMap');
 };
@@ -3873,22 +3881,23 @@ function openImported(result: ImportResult): boolean {
 // 2026-10-06: "a vista isométrica deve ficar desligada por padrão"); a new key,
 // so a choice kept under the old default does not hold the isometric view on.
 const PERSPECTIVE_KEY = 'roadcraft.perspective.v2';
-let perspective = false;
 function setPerspective(on: boolean): void {
-  perspective = on;
-  scene.setPerspective(on);
-  document.getElementById('perspectiveToggle')?.setAttribute('aria-pressed', String(on));
+  gameState.set('perspective', on, 'câmera');
   try { localStorage.setItem(PERSPECTIVE_KEY, on ? '1' : '0'); } catch { /* not kept */ }
-  requestDraw();
 }
+/** The camera and its button as the game's state has it. */
+function showPerspective(): void {
+  scene.setPerspective(game.perspective);
+  document.getElementById('perspectiveToggle')?.setAttribute('aria-pressed', String(game.perspective));
+}
+gameState.watch(['perspective'], showPerspective);
 // At boot, once the whole file has run: switching the camera asks for a
 // frame, and the frame loop is set up further down.
 queueMicrotask(() => {
   let kept: string | null = null;
   try { kept = localStorage.getItem(PERSPECTIVE_KEY); } catch { /* storage blocked: the default */ }
-  perspective = kept !== '0';
-  scene.setPerspective(perspective);
-  document.getElementById('perspectiveToggle')?.setAttribute('aria-pressed', String(perspective));
+  gameState.set('perspective', kept !== '0', 'preferência guardada');
+  showPerspective();
 });
 
 // The camera's own buttons: a step per press, and the needle keeps north.
@@ -3902,7 +3911,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#cameraContro
       case 'tiltUp': view.orbit(0, TILT_STEP); break;
       case 'tiltDown': view.orbit(0, -TILT_STEP); break;
       case 'north': view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION); break;
-      case 'perspective': setPerspective(!perspective); break;
+      case 'perspective': setPerspective(!game.perspective); break;
     }
     persistence.saveSettingsSoon(sessionSettings);
     requestDraw();
@@ -3985,9 +3994,7 @@ function restoreSettings(settings: SavedSettings): void {
   demandLevel.value = String(sim.demandMultiplier);
   text('trafficIntensityValue', trafficIntensity.value);
   text('pedIntensityValue', pedIntensity.value);
-  congestionOverlay = settings.congestionOverlay;
-  congestionButton.classList.toggle('active', congestionOverlay);
-  congestionButton.setAttribute('aria-pressed', String(congestionOverlay));
+  gameState.set('congestionOverlay', settings.congestionOverlay, 'mapa carregado');
   document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
     const active = Number(button.dataset['speed']) === (sim.clock.paused ? 0 : sim.clock.speed);
     button.classList.toggle('active', active);
@@ -4084,11 +4091,11 @@ function flashHint(key: string, params?: Readonly<Record<string, string | number
  * tool is one key in each dictionary.
  */
 function hintKey(prefix: string): string {
-  if (game.tool === 'road' && alignment === 'curve') return `${prefix}.road.curve`;
-  if (game.tool === 'road' && alignment === 'free') return `${prefix}.road.free`;
+  if (game.tool === 'road' && game.alignment === 'curve') return `${prefix}.road.curve`;
+  if (game.tool === 'road' && game.alignment === 'free') return `${prefix}.road.free`;
   // Each sculpting operation gets its own sentence. Four modes behind one hint
   // meant the bar told the player nothing about the one they had selected.
-  if (game.tool === 'terrain') return `${prefix}.terrain.${terrainMode}`;
+  if (game.tool === 'terrain') return `${prefix}.terrain.${game.terrainMode}`;
   if (game.tool === 'building') return buildings.hintKey(prefix);
   return `${prefix}.${game.tool}`;
 }
@@ -4434,7 +4441,7 @@ const BARRIER_PICK_PIXELS = 10;
 /** The run being traced, with the pointer's point added: what would be built. */
 function barrierPlan(): Vec2[] {
   const points = [...(barrierPoints ?? [])];
-  if (barrierPoints && barrierCursor) points.push(snapBarrierPoint(net, barrierKind, barrierCursor));
+  if (barrierPoints && barrierCursor) points.push(snapBarrierPoint(net, game.barrierKind, barrierCursor));
   return points;
 }
 
@@ -4445,25 +4452,25 @@ function finishBarrier(): void {
   // A double click lands two points on one spot: one of them is enough.
   const path = points.filter((p, i) => i === 0 || Math.hypot(p.x - points[i - 1]!.x, p.y - points[i - 1]!.y) > 1e-3);
   if (path.length < 2) { requestDraw(); return; }
-  const problem = barrierProblem(net, barrierKind, path);
+  const problem = barrierProblem(net, game.barrierKind, path);
   if (problem) {
     flashHint(`hint.barrier.${problem}`);
     requestDraw();
     return;
   }
-  mutate(() => doc.addBarrier(barrierKind, path) !== null);
+  mutate(() => doc.addBarrier(game.barrierKind, path) !== null);
   flashHint('hint.barrier.built');
 }
 
 /** The run being traced, as it will stand: red where it cannot be built. */
 function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
   const points = barrierPlan();
-  const cursor = barrierCursor ? snapBarrierPoint(net, barrierKind, barrierCursor) : null;
+  const cursor = barrierCursor ? snapBarrierPoint(net, game.barrierKind, barrierCursor) : null;
   ctx.save();
   if (points.length >= 2) {
-    const bad = barrierProblem(net, barrierKind, points) === 'road';
+    const bad = barrierProblem(net, game.barrierKind, points) === 'road';
     ctx.strokeStyle = bad ? '#ff6f63' : SELECTION;
-    ctx.lineWidth = barrierKind === 'hedge' ? 5 : barrierKind === 'wall' ? 4 : 2.5;
+    ctx.lineWidth = game.barrierKind === 'hedge' ? 5 : game.barrierKind === 'wall' ? 4 : 2.5;
     ctx.lineJoin = 'round';
     ctx.beginPath();
     points.forEach((p, i) => { const s = at(p); if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); });
@@ -4640,8 +4647,8 @@ function drawOverlayScreen(): void {
     ctx.beginPath();
     for (let i = 0; i <= 64; i++) {
       const angle = i * Math.PI / 32;
-      const p = at({ x: hoverAnchor.at.x + Math.cos(angle) * roundaboutRadius,
-        y: hoverAnchor.at.y + Math.sin(angle) * roundaboutRadius });
+      const p = at({ x: hoverAnchor.at.x + Math.cos(angle) * game.roundaboutRadius,
+        y: hoverAnchor.at.y + Math.sin(angle) * game.roundaboutRadius });
       if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
     }
     ctx.stroke();
@@ -4704,15 +4711,15 @@ function drawOverlayScreen(): void {
       const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
       if (!editing && (!l.use || built)) continue;
       const painting = lotStroke?.ids.has(l.id);
-      const brushHover = l === hoverLot && zoneMode === 'brush';
-      const picked = editing && (l.id === lotJoinFirst || (l === hoverLot && !brushHover && zoneMode !== 'edit'));
-      const fill = painting ? (lotStroke!.remove ? 0xe36c60 : colours[zoneUse]) : l.use ? colours[l.use] : brushHover ? (zoneEraser ? 0xe36c60 : colours[zoneUse]) : null;
+      const brushHover = l === hoverLot && game.zoneMode === 'brush';
+      const picked = editing && (l.id === lotJoinFirst || (l === hoverLot && !brushHover && game.zoneMode !== 'edit'));
+      const fill = painting ? (lotStroke!.remove ? 0xe36c60 : colours[game.zoneUse]) : l.use ? colours[l.use] : brushHover ? (game.zoneEraser ? 0xe36c60 : colours[game.zoneUse]) : null;
       const fillAlpha = painting ? 0.6 : l.use ? (editing ? (built ? 0.22 : 0.45) : 0.25) : brushHover ? 0.35 : 0;
       polygons.push({ corners: l.corners.map(dragged), fill, fillAlpha,
-        line: picked ? (zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
+        line: picked ? (game.zoneMode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
         width: picked ? 0.7 : 0.35 });
     }
-    if (editing && zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
+    if (editing && game.zoneMode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
     // Each lot's front, the side its building faces: marked in the Zoning tool.
     if (editing) for (const l of doc.lots) if (l.corners.length > 1) {
       const a = dragged(l.corners[0]!), b = dragged(l.corners[1]!);
@@ -4732,12 +4739,12 @@ function drawOverlayScreen(): void {
       lines.push({ a: tip, b: { x: tip.x - nx * head + tx * head * 0.7, y: tip.y - ny * head + ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
       lines.push({ a: tip, b: { x: tip.x - nx * head - tx * head * 0.7, y: tip.y - ny * head - ty * head * 0.7 }, colour: 0x5ee0ff, dashed: false, width: 1 });
     }
-    if (editing && zoneMode === 'front' && zoneHover) {
+    if (editing && game.zoneMode === 'front' && zoneHover) {
       const side = lotSideAt(zoneHover);
       if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 1 });
     }
-    if (editing && zoneMode === 'split' && lotSplitKind !== 'line' && hoverLot) {
-      for (const [a, b] of cutLines(hoverLot, { kind: lotSplitKind, parts: lotSplitParts })) lines.push({ a, b, colour: 0xffd25e, dashed: true, width: 0.5 });
+    if (editing && game.zoneMode === 'split' && game.lotSplitKind !== 'line' && hoverLot) {
+      for (const [a, b] of cutLines(hoverLot, { kind: game.lotSplitKind, parts: game.lotSplitParts })) lines.push({ a, b, colour: 0xffd25e, dashed: true, width: 0.5 });
     }
     if (lotCutLine) lines.push({ a: lotCutLine.a, b: lotCutLine.b, colour: 0xffd25e, dashed: true, width: 0.5 });
     if (lotCurve) {
@@ -4751,7 +4758,7 @@ function drawOverlayScreen(): void {
         prev = q;
       }
     }
-    if (editing && zoneMode === 'curve' && !lotCurve && zoneHover) {
+    if (editing && game.zoneMode === 'curve' && !lotCurve && zoneHover) {
       const side = lotSideNear(zoneHover);
       if (side) lines.push({ a: side.a, b: side.b, colour: 0xffd25e, dashed: false, width: 0.7 });
     }
@@ -4760,7 +4767,7 @@ function drawOverlayScreen(): void {
       for (let i = 1; i < pts.length; i++) lines.push({ a: pts[i - 1]!, b: pts[i]!, colour: 0xffffff, dashed: false, width: 0.5 });
       for (const q of lotPolygon) points.push({ p: q, colour: 0xffffff, radius: 0.6 });
     }
-    if (editing && (zoneMode === 'polygon' || zoneMode === 'add' || lotCorner) && zoneHover) {
+    if (editing && (game.zoneMode === 'polygon' || game.zoneMode === 'add' || lotCorner) && zoneHover) {
       points.push({ p: lotCorner ? lotCorner.to : lotSnap(zoneHover), colour: 0x5ee0ff, radius: 0.9 });
     }
     if (lotNew) {
@@ -4890,14 +4897,14 @@ function drawOverlayScreen(): void {
   if (game.tool === 'terrain' && hoverAnchor) {
     const brush = terrainStroke ? terrainStroke.at : hoverAnchor.at;
     const centre = at(brush);
-    const xEdge = at({ x: brush.x + terrainRadius, y: brush.y });
-    const yEdge = at({ x: brush.x, y: brush.y + terrainRadius });
+    const xEdge = at({ x: brush.x + game.terrainRadius, y: brush.y });
+    const yEdge = at({ x: brush.x, y: brush.y + game.terrainRadius });
     const rx = Math.max(4, Math.hypot(xEdge.x - centre.x, xEdge.y - centre.y));
     const ry = Math.max(4, Math.hypot(yEdge.x - centre.x, yEdge.y - centre.y));
-    const colour = TERRAIN_BRUSH_COLOUR[terrainMode];
+    const colour = TERRAIN_BRUSH_COLOUR[game.terrainMode];
     ctx.save();
     ctx.strokeStyle = colour;
-    ctx.fillStyle = TERRAIN_BRUSH_FILL[terrainMode];
+    ctx.fillStyle = TERRAIN_BRUSH_FILL[game.terrainMode];
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 5]);
     ctx.beginPath();
@@ -4910,7 +4917,7 @@ function drawOverlayScreen(): void {
     // range, not against a hard-coded 10: a ring drawn past the outer one is
     // not a heavier bite, it is a second radius the brush does not have.
     const strengthMax = Number(terrainStrengthInput.max) || 40;
-    const bite = 0.3 + 0.35 * (terrainStrength / strengthMax);
+    const bite = 0.3 + 0.35 * (game.terrainStrength / strengthMax);
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.65;
     ctx.lineWidth = 1;
@@ -4927,7 +4934,7 @@ function drawOverlayScreen(): void {
     ctx.stroke();
 
     const height = terrainStroke ? terrainStroke.level : sceneHeightAt(brush);
-    const label = terrainMode === 'flatten'
+    const label = game.terrainMode === 'flatten'
       ? `${t('terrain.level')} ${height.toFixed(1)}`
       : height.toFixed(1);
     ctx.font = '600 11px system-ui, sans-serif';
@@ -4986,9 +4993,9 @@ function drawOverlayScreen(): void {
   if (roadPreview) {
     // The profile the road will be laid with: its lanes and its parking.
     const chosenWidth = roadWidth();
-    const plainRt = roadProfile(roadTypeIndex, roadLanePreset);
-    const rt = roadProfile(roadTypeIndex, roadLanePreset,
-      roadType(roadTypeIndex).lanes === 1 ? 'aToB' : 'both',
+    const plainRt = roadProfile(game.roadTypeIndex, game.roadLanePreset);
+    const rt = roadProfile(game.roadTypeIndex, game.roadLanePreset,
+      roadType(game.roadTypeIndex).lanes === 1 ? 'aToB' : 'both',
       chosenWidth === null ? undefined : sectionForWidth(plainRt, chosenWidth, Math.round(plainRt.speedLimit * 3.6 * METERS_PER_UNIT)),
       roadParking());
     const pieces = piecesForDraft(roadPreview);
@@ -5234,7 +5241,7 @@ function curveFromGesture(value: RoadDraft): CurveShape | null {
   const a = value.start.at;
   const b = value.snap.at;
   if (value.curveControl) {
-    return fitRoadCurve(a, b, shapeFromControl(a, b, value.curveControl), roadTypeIndex);
+    return fitRoadCurve(a, b, shapeFromControl(a, b, value.curveControl), game.roadTypeIndex);
   }
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -5252,18 +5259,18 @@ function curveFromGesture(value: RoadDraft): CurveShape | null {
   side = clamp(side, -chord * 0.52, chord * 0.52);
   if (Math.abs(side) < camera.px(6)) return null;
   return fitRoadCurve(a, b, shapeFromControl(a, b,
-    { x: mid.x + nx * side * 1.36, y: mid.y + ny * side * 1.36 }), roadTypeIndex);
+    { x: mid.x + nx * side * 1.36, y: mid.y + ny * side * 1.36 }), game.roadTypeIndex);
 }
 
 function piecesForDraft(value: RoadDraft, endHeightOffset = value.heightOffset): RoadPathPiece[] {
   const start = { at: value.start.at, heightOffset: value.startHeightOffset };
   const end = { at: value.snap.at, heightOffset: endHeightOffset };
-  if (alignment === 'free') return roadPathFromGesture(value.samples, start, end).map((piece) => ({
+  if (game.alignment === 'free') return roadPathFromGesture(value.samples, start, end).map((piece) => ({
     ...piece,
-    curve: fitRoadCurve(piece.start.at, piece.end.at, piece.curve, roadTypeIndex),
+    curve: fitRoadCurve(piece.start.at, piece.end.at, piece.curve, game.roadTypeIndex),
   }));
   if (Math.hypot(start.at.x - end.at.x, start.at.y - end.at.y) < 1e-6) return [];
-  return [{ start, end, curve: alignment === 'curve' ? curveFromGesture(value) : null }];
+  return [{ start, end, curve: game.alignment === 'curve' ? curveFromGesture(value) : null }];
 }
 
 function setNodeHeightMetres(id: NodeId, metres: number): void {
@@ -5661,9 +5668,8 @@ qualitySelect.onchange = () => {
     if (!game.paused !== enabled) trafficButton.click();
   },
   setRoadHeight: (metres: number) => {
-    roadHeightOffset = metres * UNITS_PER_METER;
+    gameState.set('roadHeightOffset', metres * UNITS_PER_METER, 'altura pedida pelo console');
     roadHeightEdited = true;
-    updateRoadHeightValue();
     requestDraw();
   },
   /** A generated city (`editor/cityGenerator.ts`), and how far its building has gone. */

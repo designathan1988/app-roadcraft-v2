@@ -18,12 +18,17 @@
  * `values` is a read-only view, so there is no second copy to drift.
  *
  * Whoever reacts to a change `watch`es its keys. Nobody is called inside
- * `set`: the frame calls `flush` once, and each watcher gets the changes of
- * its keys since the serial it last saw (Nystrom, "Event Queue": decouple
- * when an event is sent from when it is processed; "Observer": a watcher
- * that changes state while being told of a change starts a loop, so what it
- * sets is told in the next flush). `watch` returns the way out, so a panel
- * that goes away stops being told (the lapsed listener).
+ * `set`: `flush` runs once in a microtask after the code that changed the
+ * state (MDN `queueMicrotask`: after the current task, before the browser
+ * renders), so a click's changes are told together, and the frame calls it
+ * too. Each watcher gets the changes of its keys since the serial it last
+ * saw (Nystrom, "Event Queue": decouple when an event is sent from when it
+ * is processed; "Observer": a watcher that changes state while being told of
+ * a change starts a loop, so what it sets is told in the next flush). It is
+ * not tied to frames: a hidden page draws none and its panels still follow.
+ * A watcher that throws does not stop the others: its error is thrown again
+ * on its own, where the page's error handler sees it. `watch` returns the way
+ * out, so a panel that goes away stops being told (the lapsed listener).
  *
  * Pure: no three, no DOM.
  */
@@ -58,6 +63,8 @@ export class GameState<V extends object> {
   private count = 0;
   private readonly watchers: Watcher<V>[] = [];
   private flushing = false;
+  /** A flush is queued as a microtask. */
+  private scheduled = false;
 
   /** `wake` is asked for a frame whenever something changes, so the next `flush` comes. */
   constructor(initial: V, private readonly wake: () => void = () => {}) {
@@ -81,8 +88,19 @@ export class GameState<V extends object> {
     const serial = ++this.serial;
     this.ring[serial % KEPT] = { serial, key, from, to: value, cause, at: performance.now() };
     if (this.count < KEPT) this.count++;
-    if (!this.flushing) this.wake();
+    this.schedule();
     return true;
+  }
+
+  /** Queues one flush after the code running now, and asks for a frame. */
+  private schedule(): void {
+    if (this.scheduled) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      this.flush();
+    });
+    this.wake();
   }
 
   /**
@@ -112,12 +130,18 @@ export class GameState<V extends object> {
         if (watcher.seen >= upTo) continue;
         const changes = this.between(watcher.seen, upTo, watcher.keys);
         watcher.seen = upTo;
-        if (changes === null || changes.length > 0) watcher.fn(changes);
+        if (changes === null || changes.length > 0) {
+          try {
+            watcher.fn(changes);
+          } catch (error) {
+            queueMicrotask(() => { throw error; });
+          }
+        }
       }
     } finally {
       this.flushing = false;
     }
-    if (this.serial > upTo) this.wake();
+    if (this.serial > upTo) this.schedule();
   }
 
   /** The changes after `since` up to `upTo`, of `keys` only when given; `null` if some were forgotten. */
