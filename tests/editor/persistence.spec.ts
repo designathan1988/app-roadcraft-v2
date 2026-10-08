@@ -78,8 +78,8 @@ function memoryStorage(): Storage {
 }
 
 describe('maps set aside', () => {
-  const real = (globalThis as { localStorage?: Storage }).localStorage;
-  afterEach(() => { (globalThis as { localStorage?: Storage }).localStorage = real; });
+  const real = (globalThis as { localStorage?: Storage | undefined }).localStorage;
+  afterEach(() => { (globalThis as { localStorage?: Storage | undefined }).localStorage = real; });
 
   it('never sets a second unreadable map aside over the first', () => {
     const storage = memoryStorage();

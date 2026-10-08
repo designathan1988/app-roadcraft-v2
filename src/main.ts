@@ -912,7 +912,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   chainPreview = null;
   curvePending = null;
   if (source === 'import') {
-    restoreInto(doc, data, net);
+    caused('mapa aberto', () => restoreInto(doc, data, net));
     // A different map: nothing of the old simulation may carry over.
     sim.reset();
     sim.ambient.reset(sim);
@@ -1159,9 +1159,35 @@ function syncGesture(): void {
   if (!booted) return;
   gameState.set('gesture', currentGesture(), `ferramenta ${game.tool}`);
 }
-// After the event's own handlers (a microtask, after the whole dispatch).
+// After the event's own handlers: a task of its own, after the whole dispatch.
+// (A microtask would not do: the browser runs them after each listener, so one
+// queued from this capturing listener ran BEFORE the handlers it was to follow.)
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'keyup'] as const) {
-  window.addEventListener(type, () => queueMicrotask(syncGesture), { capture: true, passive: true });
+  window.addEventListener(type, () => setTimeout(syncGesture, 0), { capture: true, passive: true });
+}
+/**
+ * What the diary says a change came from (`world/changes.ts` `causeNext`):
+ * during a click or a key, the tool in hand and the gesture, set before any
+ * handler runs and put back after the event; between events, the game
+ * itself ("jogo"), unless the work says what it is (`caused`).
+ */
+const NO_CAUSE = 'jogo';
+for (const type of ['pointerdown', 'pointerup', 'click', 'dblclick', 'keydown'] as const) {
+  window.addEventListener(type, () => {
+    if (!booted) return;
+    doc.changes.causeNext(`ferramenta ${game.tool}${game.gesture ? `: ${game.gesture}` : ''}`);
+    setTimeout(() => doc.changes.causeNext(NO_CAUSE), 0);
+  }, { capture: true, passive: true });
+}
+/** Runs `fn` with the diary's cause set to `cause`, then puts the one before back. */
+function caused<T>(cause: string, fn: () => T): T {
+  const was = doc.changes.cause;
+  doc.changes.causeNext(cause);
+  try {
+    return fn();
+  } finally {
+    doc.changes.causeNext(was);
+  }
 }
 
 /**
@@ -3854,7 +3880,7 @@ function growCity(): void {
   }
   const growing = cityGrowth;
   cityGrowth = null;
-  setTimeout(() => {
+  setTimeout(() => caused('cidade gerada', () => {
     for (let guard = 0; guard < growing.total * 3 + 50; guard++) {
       const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
       if (id === null) {
@@ -3871,7 +3897,7 @@ function growCity(): void {
     persistence.saveSessionSoon(doc, sessionSettings);
     updateStatus();
     requestDraw();
-  }, 30);
+  }), 30);
 }
 /** Seconds the last generated city took, from the call to its last building (probes). */
 let cityBuiltIn = 0;
@@ -4331,10 +4357,13 @@ setInterval(() => {
   // A road edit can make room on a lot refused before: try them again.
   if (lotRefusedNet !== net.revision) { lotRefused.clear(); lotRefusedNet = net.revision; }
   if (!moving && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
-    const grown = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
-    if (grown !== null) {
-      const fresh = doc.buildings.get(grown as BuildingId);
+    const grown = caused('crescimento da zona', () => {
+      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
+      const fresh = id === null ? undefined : doc.buildings.get(id as BuildingId);
       if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
+      return id;
+    });
+    if (grown !== null) {
       persistence.saveSessionSoon(doc, sessionSettings);
       updateStatus();
       requestDraw();
@@ -5885,7 +5914,7 @@ setInterval(() => {
   for (const b of [...doc.buildings.all()]) {
     if (b.builtAt === undefined) continue;
     const decay = decayOf(b.builtAt, now);
-    if (decay !== (b.decay ?? 0)) { doc.buildings.put({ ...b, decay }); changed = true; }
+    if (decay !== (b.decay ?? 0)) { caused('desgaste dos prédios', () => doc.buildings.put({ ...b, decay })); changed = true; }
   }
   if (changed) requestDraw();
 }, 3000);
@@ -5980,7 +6009,7 @@ function explodeAt(world: Vec2, z: number, b: Building | null, strength: number,
       const d = Math.hypot(c.x - world.x, c.y - world.y);
       if (d > radius * 2.2) continue;
       const add = 0.35 * (1 - d / (radius * 2.2)) * Math.min(1, strength / 8);
-      if (add > 0.02) { doc.buildings.put({ ...c, decay: Math.min(1, (c.decay ?? 0) + add) }); changed = true; }
+      if (add > 0.02) { caused('fuligem da explosão', () => doc.buildings.put({ ...c, decay: Math.min(1, (c.decay ?? 0) + add) })); changed = true; }
     }
     // Poles: broken whole, snapped or to splinters; the wires torn off them
     // pull the next poles over, or hang from them.
