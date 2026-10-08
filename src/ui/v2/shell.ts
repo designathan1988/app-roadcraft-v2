@@ -393,12 +393,18 @@ export function mountShell(deps: ShellDeps): void {
     } else if (id === 'actions') {
       // One button an action: a click and it is ready.
       body.classList.add('icons');
+      // Both act through the Demolish tool. Its button toggles (`pickTool`):
+      // pressed again it put the tool away, and the pistol followed by the
+      // bomb left neither ready (the click on the map only inspected).
+      const ready = (): void => {
+        if (!q<HTMLButtonElement>('.tool[data-tool="bulldoze"]')?.classList.contains('active')) press('.tool[data-tool="bulldoze"]');
+      };
       // The pistol, as the bomb: clicked on a person in the map, the shot strikes where clicked.
       body.appendChild(button('v2-row', t('actions.pistol'), () => {
         strikeChoice.mode = 'shoot';
         open = true;
         closePop();
-        press('.tool[data-tool="bulldoze"]');
+        ready();
         render();
       }, svg('actions', 18)));
       // The bomb (what Demolish called its Impact): clicked on the map, it strikes with a force.
@@ -406,7 +412,7 @@ export function mountShell(deps: ShellDeps): void {
         strikeChoice.mode = 'strike';
         open = true;
         closePop();
-        press('.tool[data-tool="bulldoze"]');
+        ready();
         render();
       }, svg('bomb', 18)));
     } else if (id === 'sim') {
