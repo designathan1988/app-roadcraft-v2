@@ -320,9 +320,8 @@ function worldBounds() {
 }
 
 // ------------------------------------------------------------------ state
-// The game opens on the map, nothing in hand: no tool panel open over the view
-// until the player picks a tool.
-let tool: Tool = 'inspect';
+// The tool in hand, the pause, the speed and the selection are the game's
+// state (`gameState` below, read as `game.tool`...): there is no copy here.
 let roadTypeIndex = 1;
 let alignment: Alignment = 'straight';
 let roadHeightOffset = 0;
@@ -356,9 +355,8 @@ let terrainStrength = 24;
 /** 0..95: how hard the raise/lower brush's edge is (`TerrainStamp.hardness`); 0 the smooth dome. Each tool keeps its own. */
 let terrainHardness = 0;
 const hardnessByMode: Partial<Record<BrushMode, number>> = { raise: 0, lower: 0, mesa: 85, canyon: 80, escarpment: 75 };
-let traffic = !savedSession?.settings.paused;
 let congestionOverlay = savedSession?.settings.congestionOverlay ?? false;
-sim.clock.paused = !traffic;
+sim.clock.paused = savedSession?.settings.paused === true;
 sim.clock.speed = savedSession?.settings.speed ?? 1;
 sim.trafficIntensity = savedSession?.settings.trafficIntensity ?? 1;
 sim.pedestrianIntensity = savedSession?.settings.pedestrianIntensity ?? 1;
@@ -369,9 +367,10 @@ sim.demandMultiplier = savedSession?.settings.demandMultiplier ?? 1;
 /**
  * The game's state - the tool in hand, the pause and speed, the quality, the
  * selection - owned here and every change written down with why
- * (`core/gameState.ts`, `__state()` in the console). The loose variables of
- * this file that mirror it (`tool`, `traffic`, `selectedSegment`...) are
- * written only where it is (`setTool`, `setPaused`, `setSpeed`, `select`).
+ * (`core/gameState.ts`, `__state()` in the console). It is the only copy:
+ * read through `game` (read-only), written only by `gameState.set` with the
+ * cause, and whoever reacts to a change `watch`es it (told once a frame,
+ * `frame` → `gameState.flush`). The game opens with nothing in hand.
  */
 const gameState = new GameState({
   tool: 'inspect' as Tool,
@@ -381,7 +380,9 @@ const gameState = new GameState({
   selectedSegment: null as SegmentId | null,
   selectedSegmentS: null as number | null,
   selectedNode: null as NodeId | null,
-});
+}, () => { if (booted) requestDraw(); });
+/** The game's state, read-only: `game.tool`, `game.paused`, `game.selectedSegment`... */
+const game = gameState.values;
 
 function sessionSettings(): SavedSettings {
   const centre = view.centre;
@@ -544,17 +545,11 @@ function eraseUnder(world: Vec2): void {
 }
 let zoneHover: Vec2 | null = null;
 let hoverAnchor: Anchor | null = null;
-let selectedSegment: SegmentId | null = null;
-let selectedSegmentS: number | null = null;
-let selectedNode: NodeId | null = null;
 /** What is selected - a road (and where along it) or a junction - written through the game's state with why (`gameState`). */
 function select(segment: SegmentId | null, s: number | null, node: NodeId | null, cause: string): void {
   gameState.set('selectedSegment', segment, cause);
   gameState.set('selectedSegmentS', s, cause);
   gameState.set('selectedNode', node, cause);
-  selectedSegment = segment;
-  selectedSegmentS = s;
-  selectedNode = node;
 }
 
 /**
@@ -619,7 +614,7 @@ let terrainStroke: {
 let terrainRepeat: ReturnType<typeof setInterval> | null = null;
 let pinch: { d0: number; zoom0: number; world: Vec2; angle: number } | null = null;
 const pointers = new Map<number, Vec2>();
-canvas.dataset['tool'] = tool;
+canvas.dataset['tool'] = game.tool;
 
 let view: Viewport = flatViewport(camera);
 
@@ -839,7 +834,7 @@ function mutateBuilt(fn: () => boolean): boolean {
   const before = serializedDoc();
   performance.measure('hitch:mutate/before', { start: mutateAt, end: performance.now() });
   // What the diary says this edit came from (`world/changes.ts`).
-  doc.changes.causeNext(`ferramenta ${tool}`);
+  doc.changes.causeNext(`ferramenta ${game.tool}`);
   const changed = fn();
   doc.changes.causeNext('jogo');
   if (!changed) return false;
@@ -894,7 +889,7 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   syncFogInputs();
   syncGullyInputs();
   syncWeatherInputs();
-  select(null, selectedSegmentS, null, 'outro mapa');
+  select(null, game.selectedSegmentS, null, 'outro mapa');
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
   updateHistoryButtons();
@@ -1028,7 +1023,7 @@ function firstSurfaceAt(px: number, py: number): Vec2 | null {
 /** `rect`: the canvas's box when the caller has already read it for this event (a layout read each). */
 function pointerWorld(e: PointerEvent, rect?: DOMRect): Vec2 {
   const r = rect ?? canvas.getBoundingClientRect();
-  const authoredHeight = tool === 'road' && (draft || roadChain || curvePending)
+  const authoredHeight = game.tool === 'road' && (draft || roadChain || curvePending)
     ? roadHeightOffset
     : undefined;
   return worldAtScreen(e.clientX - r.left, e.clientY - r.top, authoredHeight);
@@ -1085,7 +1080,7 @@ function cancelGestures(): void {
   cancelMove();
   panning = null;
   orbiting = null;
-  if (tool === 'building') buildings.pointerUp(true);
+  if (game.tool === 'building') buildings.pointerUp(true);
   requestDraw();
 }
 
@@ -1651,13 +1646,13 @@ function endTerrainStroke(): void {
 // opens that one instead.
 canvas.addEventListener('dblclick', (e) => {
   // A double click ends a track or a line being laid (`pointerdown` carries no click count).
-  if (tool === 'transit') { transitEditor.key('Enter'); return; }
-  if (tool !== 'inspect') return;
+  if (game.tool === 'transit') { transitEditor.key('Enter'); return; }
+  if (game.tool !== 'inspect') return;
   const r = canvas.getBoundingClientRect();
   buildings.insideClick({ x: e.clientX - r.left, y: e.clientY - r.top }, true);
 });
 canvas.addEventListener('click', (e) => {
-  if (tool !== 'inspect' || e.detail > 1) return;
+  if (game.tool !== 'inspect' || e.detail > 1) return;
   const r = canvas.getBoundingClientRect();
   buildings.insideClick({ x: e.clientX - r.left, y: e.clientY - r.top }, false);
 });
@@ -1691,7 +1686,7 @@ canvas.addEventListener('pointerdown', (e) => {
   // in progress. The middle button dragged pans. Both work mid-gesture, so a
   // road half placed can still be looked round.
   if (e.pointerType === 'mouse' && e.button === 2 && !e.shiftKey) {
-    if (tool === 'building' && buildings.cancelOperation()) {
+    if (game.tool === 'building' && buildings.cancelOperation()) {
       requestDraw();
       return;
     }
@@ -1708,8 +1703,8 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   const world = pointerWorld(e);
-  if (tool === 'road') roadPointerScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
-  if (tool === 'road' && curvePending) {
+  if (game.tool === 'road') roadPointerScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
+  if (game.tool === 'road' && curvePending) {
     const pending = curvePending;
     curvePending = null;
     const curveDraft: RoadDraft = {
@@ -1733,7 +1728,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   const anchor = findAnchor(doc, net, world, view.zoom);
 
-  switch (tool) {
+  switch (game.tool) {
     case 'roundabout':
       if (freeRoadsEnabled()) {
         mutate(() => {
@@ -1994,7 +1989,7 @@ canvas.addEventListener('pointerdown', (e) => {
           return node !== null;
         });
         if (node !== null) {
-          select(null, selectedSegmentS, node, 'via dividida');
+          select(null, game.selectedSegmentS, node, 'via dividida');
           showInspector();
         }
       }
@@ -2078,7 +2073,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (e.pointerType === 'mouse' && e.buttons === 0 && terrainStroke) endTerrainStroke();
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
-  if (tool === 'road') roadPointerScreen = screen;
+  if (game.tool === 'road') roadPointerScreen = screen;
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, screen);
 
   if (pinch && pointers.size >= 2) {
@@ -2140,18 +2135,18 @@ canvas.addEventListener('pointermove', (e) => {
   if (lotNew?.pointer === e.pointerId) { lotNew.b = lotSnap(world); requestDraw(); return; }
   if (lotCutLine?.pointer === e.pointerId) { lotCutLine.b = { ...world }; requestDraw(); return; }
   if (lotCurve?.pointer === e.pointerId) { lotCurve.through = { ...world }; requestDraw(); return; }
-  if (tool === 'zone') {
+  if (game.tool === 'zone') {
     zoneHover = world;
     requestDraw();
   }
 
-  if (tool === 'road' && curvePending) {
+  if (game.tool === 'road' && curvePending) {
     curvePending.control = world;
     requestDraw();
     return;
   }
 
-  if (tool === 'building') {
+  if (game.tool === 'building') {
     buildings.pointerMove(screen, world, e.shiftKey);
     return;
   }
@@ -2164,11 +2159,11 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (tool === 'barrier') {
+  if (game.tool === 'barrier') {
     barrierCursor = world;
     requestDraw();
   }
-  if (tool === 'transit') {
+  if (game.tool === 'transit') {
     transitEditor.move(world);
     requestDraw();
   }
@@ -2179,7 +2174,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (tool === 'pole') {
+  if (game.tool === 'pole') {
     // The bare pointer, not a road anchor: the pole tool snaps to its own
     // line (`snapPole`), and a chained run has no button held, so the preview
     // has to follow the pointer or the next stretch is aimed blind.
@@ -2187,7 +2182,7 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
   }
 
-  if (tool === 'streetscape') {
+  if (game.tool === 'streetscape') {
     streetscapeHover = snapLandscape(net, doc.landscape.values(), streetscapeKind(), world, streetscapeReach());
     requestDraw();
     return;
@@ -2212,8 +2207,8 @@ canvas.addEventListener('pointermove', (e) => {
 
   // The hover preview uses the same height-aware connection rule as the commit.
   const hovered = findAnchor(doc, net, world, view.zoom, undefined,
-    tool === 'road' ? roadHeightOffset : undefined);
-  if (tool === 'road' && roadChain) {
+    game.tool === 'road' ? roadHeightOffset : undefined);
+  if (game.tool === 'road' && roadChain) {
     chainPreview = {
       start: roadChain,
       startHeightOffset: roadChainHeight,
@@ -2224,9 +2219,9 @@ canvas.addEventListener('pointermove', (e) => {
       heightOffset: roadHeightOffset,
     };
   }
-  hoverAnchor = tool === 'terrain'
+  hoverAnchor = game.tool === 'terrain'
     ? { kind: 'free', at: world }
-    : tool === 'road'
+    : game.tool === 'road'
       ? anchorForHeight(hovered, roadHeightOffset)
       : hovered;
   requestDraw();
@@ -2254,7 +2249,7 @@ function currentPolePlan(): PoleRunPlan | null {
     poleDraft = null;
   }
   if (poleDraft) return planPoleRun(doc, net, poleDraft.from, poleDraft.to, poleReach(), undefined, poleLampMode());
-  if (tool === 'pole' && poleToolMode() === 'build' && poleChain && poleHover) {
+  if (game.tool === 'pole' && poleToolMode() === 'build' && poleChain && poleHover) {
     return planPoleRun(doc, net, poleChain, poleHover, poleReach(), undefined, poleLampMode());
   }
   return null;
@@ -2340,7 +2335,7 @@ function endPointer(e: PointerEvent): void {
   }
   if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
   if (cloudDrag?.pointer === e.pointerId) cloudDrag = null;
-  if (tool === 'building') buildings.pointerUp(cancelled || wasPinching);
+  if (game.tool === 'building') buildings.pointerUp(cancelled || wasPinching);
   if (bulldozeBox?.pointer === e.pointerId) {
     const box = bulldozeBox;
     bulldozeBox = null;
@@ -2524,7 +2519,7 @@ canvas.addEventListener(
     // The wheel zooms, whatever tool is in hand (the player, 2026-10-06); with
     // the landscape tool, Shift+wheel sizes the brush and Alt+wheel sets its
     // strength. With Shift held a browser may scroll sideways: either axis.
-    if (tool === 'terrain' && (e.shiftKey || e.altKey)) {
+    if (game.tool === 'terrain' && (e.shiftKey || e.altKey)) {
       const notches = -Math.sign(e.deltaY || e.deltaX);
       if (e.altKey) setTerrainStrength(terrainStrength + notches);
       else setTerrainRadius(terrainRadius + notches * 10);
@@ -2546,15 +2541,15 @@ window.addEventListener('keydown', (e) => {
   const meta = e.ctrlKey || e.metaKey;
 
   // The building tool's own keys (R, +/-, Delete, Ctrl+C/V/D, 1-4) first.
-  if (tool === 'building' && buildings.key(e)) {
+  if (game.tool === 'building' && buildings.key(e)) {
     e.preventDefault();
     return;
   }
 
   // A run being traced: Enter ends it, Backspace takes the last point back,
   // Esc drops it.
-  if (!meta && tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
-  if (!meta && tool === 'barrier' && barrierPoints) {
+  if (!meta && game.tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
+  if (!meta && game.tool === 'barrier' && barrierPoints) {
     if (e.key === 'Enter') { e.preventDefault(); finishBarrier(); return; }
     if (e.key === 'Backspace') {
       e.preventDefault();
@@ -2566,17 +2561,17 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); barrierPoints = null; requestDraw(); return; }
   }
 
-  if (!meta && tool === 'road' && (e.key === 'PageUp' || e.key === 'PageDown')) {
+  if (!meta && game.tool === 'road' && (e.key === 'PageUp' || e.key === 'PageDown')) {
     e.preventDefault();
     stepRoadHeight(e.key === 'PageUp' ? 1 : -1);
     return;
   }
 
-  if (!meta && tool === 'inspect' && selectedNode !== null &&
-    doc.node(selectedNode)?.smooth && (e.key === 'PageUp' || e.key === 'PageDown')) {
+  if (!meta && game.tool === 'inspect' && game.selectedNode !== null &&
+    doc.node(game.selectedNode)?.smooth && (e.key === 'PageUp' || e.key === 'PageDown')) {
     e.preventDefault();
-    const current = doc.requireNode(selectedNode).heightOffset / UNITS_PER_METER;
-    setNodeHeightMetres(selectedNode, current + (e.key === 'PageUp' ? 1 : -1));
+    const current = doc.requireNode(game.selectedNode).heightOffset / UNITS_PER_METER;
+    setNodeHeightMetres(game.selectedNode, current + (e.key === 'PageUp' ? 1 : -1));
     return;
   }
 
@@ -2620,9 +2615,9 @@ window.addEventListener('keydown', (e) => {
   }
 
   // Delete removes what Inspect has picked: the road it shows.
-  if (!meta && (e.key === 'Delete' || e.key === 'Backspace') && tool === 'inspect' && selectedSegment !== null) {
+  if (!meta && (e.key === 'Delete' || e.key === 'Backspace') && game.tool === 'inspect' && game.selectedSegment !== null) {
     e.preventDefault();
-    const id = selectedSegment;
+    const id = game.selectedSegment;
     (document.getElementById('closeInspector') as HTMLButtonElement).click();
     mutate(() => {
       doc.removeSegment(id);
@@ -2647,7 +2642,7 @@ window.addEventListener('keydown', (e) => {
   // While sculpting, the number row picks the OPERATION. The road palette is
   // hidden in that mode, so binding the digits to road classes there was a
   // shortcut to something the player cannot see.
-  if (tool === 'terrain') {
+  if (game.tool === 'terrain') {
     const modes: readonly BrushMode[] = ['raise', 'lower', 'flatten', 'river', 'paint', 'mesa', 'canyon', 'escarpment', 'sugarloaf', 'fog', 'cloud', 'elements', 'gully', 'trees', 'weather'];
     const chosen = modes[Number(e.key) - 1];
     if (chosen) {
@@ -2673,7 +2668,7 @@ window.addEventListener('keydown', (e) => {
   if (digit >= 1 && digit <= ROAD_TYPES.length) {
     // The class palette is shown only with the road tool, so choosing a class
     // from another tool also picks up the tool that draws it.
-    if (tool !== 'road') setTool('road');
+    if (game.tool !== 'road') setTool('road');
     selectRoadType(digit - 1);
     return;
   }
@@ -3371,10 +3366,26 @@ terrainStrengthInput.oninput = () => setTerrainStrength(Number(terrainStrengthIn
   requestDraw();
 };
 
+/**
+ * Puts a tool in hand: what it does to the game (gestures dropped, the
+ * selection let go, the Builder switched on or off). How the interface shows
+ * it is `showTool`, told by the game's state at the next frame.
+ */
 function setTool(next: Tool): void {
   cancelGestures();
   gameState.set('tool', next, 'ferramenta escolhida');
-  tool = next;
+  if (next !== 'inspect') {
+    select(null, game.selectedSegmentS, null, `ferramenta ${next}`);
+    closeInspector();
+  }
+  const buildingActive = next === 'building';
+  if (buildingActive) buildings.activate();
+  else buildings.deactivate();
+  requestDraw();
+}
+
+/** The interface of the tool in hand: buttons lit, its palette, its help, the panel's title. */
+function showTool(next: Tool): void {
   // Improving a road, moving its points, splitting a segment and setting up a
   // junction are things done TO a road, so they are the road's own options and
   // its button stays lit while one of them is in hand.
@@ -3390,10 +3401,6 @@ function setTool(next: Tool): void {
     const on = b.dataset['roadOp'] === next && next !== 'road';
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', String(on));
-  }
-  if (next !== 'inspect') {
-    select(null, selectedSegmentS, null, `ferramenta ${next}`);
-    closeInspector();
   }
   canvas.dataset['tool'] = next;
   // Each palette is shown only with the tools it configures.
@@ -3417,14 +3424,11 @@ function setTool(next: Tool): void {
   renderPanelTitle();
   // Buildings are a tool, not a mode: the game's own HUD stays up, and the
   // band's tray swaps to the Builder's categories while it is the tool in hand.
-  const buildingActive = next === 'building';
-  buildings.workspace.setMode(buildingActive ? 'builder' : 'road');
-  if (buildingActive) buildings.activate();
-  else buildings.deactivate();
+  buildings.workspace.setMode(next === 'building' ? 'builder' : 'road');
   syncToolPanel();
   updateHint();
-  requestDraw();
 }
+gameState.watch(['tool'], () => showTool(game.tool));
 
 /**
  * The tool panel is shown only while it has something to show: with nothing
@@ -3435,7 +3439,7 @@ function syncToolPanel(): void {
   const panel = document.querySelector<HTMLElement>('.bw-dock');
   const inspector = document.getElementById('inspector');
   if (!panel) return;
-  panel.hidden = tool === 'inspect' && (!inspector || inspector.classList.contains('hidden') || inspector.hidden);
+  panel.hidden = game.tool === 'inspect' && (!inspector || inspector.classList.contains('hidden') || inspector.hidden);
 }
 {
   // Picking a road or a junction to inspect opens the panel; closing it shuts it.
@@ -3514,7 +3518,7 @@ function renderToolHelp(forTool: Tool | null): void {
 }
 /** The name over the panel: the tool in hand, or the road's own option. */
 function renderPanelTitle(): void {
-  buildings.workspace.hosts.title.textContent = t(`tool.${tool}`);
+  buildings.workspace.hosts.title.textContent = t(`tool.${game.tool}`);
 }
 
 /**
@@ -3578,7 +3582,7 @@ function mountUnifiedChrome(): void {
   document.getElementById('app')?.classList.add('bw-hide-legacy');
   // The panel starts in the mode of the tool in hand: at boot nothing had set
   // it, and the Builder's chips stood at the foot of the road panel.
-  setTool(tool);
+  showTool(game.tool);
   buildings.workspace.setPanelClose(freeSelection);
   // The redesigned interface: its own HUD, dock, drawer and selection panel.
   if (UI_V2) mountShell({ workspace: buildings.workspace });
@@ -3594,9 +3598,9 @@ document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) => {
 
 /** The button a tool lights: the road's own options light the road. */
 function heldTool(): Tool {
-  const roadFamily = tool === 'road' || tool === 'upgrade' || tool === 'split'
-    || tool === 'control' || tool === 'move' || tool === 'roundabout';
-  return roadFamily ? 'road' : tool;
+  const roadFamily = game.tool === 'road' || game.tool === 'upgrade' || game.tool === 'split'
+    || game.tool === 'control' || game.tool === 'move' || game.tool === 'roundabout';
+  return roadFamily ? 'road' : game.tool;
 }
 
 /**
@@ -3605,10 +3609,10 @@ function heldTool(): Tool {
  * this is the free hand, where a click on the map inspects what it hits.
  */
 function freeSelection(): void {
-  if (selectedSegment !== null || selectedNode !== null) {
+  if (game.selectedSegment !== null || game.selectedNode !== null) {
     (document.getElementById('closeInspector') as HTMLButtonElement | null)?.click();
   }
-  if (tool !== 'inspect') setTool('inspect');
+  if (game.tool !== 'inspect') setTool('inspect');
 }
 
 /** A tool button or key: picks the tool, or puts it down when it is already in hand. */
@@ -3628,17 +3632,12 @@ labelTools();
 const trafficButton = document.getElementById('trafficToggle') as HTMLButtonElement;
 function setPaused(paused: boolean): void {
   gameState.set('paused', paused, paused ? 'pausa' : 'simulação retomada');
-  traffic = !paused;
   sim.clock.paused = paused;
-  trafficButton.classList.toggle('active', traffic);
-  trafficButton.setAttribute('aria-pressed', String(traffic));
   last = performance.now();
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
 }
-// Through `setSpeed`, so the speed buttons show "Pause" pressed as well; going
-// straight to `setPaused` left "1×" lit on a paused simulation.
-trafficButton.onclick = () => setSpeed(traffic ? 0 : sim.clock.speed);
+trafficButton.onclick = () => setSpeed(game.paused ? game.speed : 0);
 
 function setSpeed(speed: number): void {
   if (speed <= 0) setPaused(true);
@@ -3647,12 +3646,20 @@ function setSpeed(speed: number): void {
     sim.clock.speed = speed;
     setPaused(false);
   }
+}
+
+/** The pause button and the speed buttons as the game's state has them ("Pause" lit when paused). */
+function showSpeed(): void {
+  trafficButton.classList.toggle('active', !game.paused);
+  trafficButton.setAttribute('aria-pressed', String(!game.paused));
   document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
-    const active = Number(button.dataset['speed']) === (sim.clock.paused ? 0 : sim.clock.speed);
+    const active = Number(button.dataset['speed']) === (game.paused ? 0 : game.speed);
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
 }
+gameState.watch(['paused', 'speed'], showSpeed);
+showSpeed();
 
 document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
   button.onclick = () => setSpeed(Number(button.dataset['speed']));
@@ -3963,6 +3970,9 @@ function restoreSettings(settings: SavedSettings): void {
   camera.zoom = clamp(settings.camera.zoom, limits.min, limits.max);
   syncViewFromFlatCamera();
   restoreOrbit(settings.camera);
+  // Through the game's state: setting the clock alone left `game.speed` and the
+  // speed buttons showing the speed before the map was loaded.
+  gameState.set('speed', settings.speed, 'mapa carregado');
   sim.clock.speed = settings.speed;
   setPaused(settings.paused);
   sim.trafficIntensity = settings.trafficIntensity;
@@ -3989,7 +3999,7 @@ function restoreSettings(settings: SavedSettings): void {
 updateHistoryButtons();
 
 (document.getElementById('closeInspector') as HTMLButtonElement).onclick = () => {
-  select(null, selectedSegmentS, null, 'inspetor fechado');
+  select(null, game.selectedSegmentS, null, 'inspetor fechado');
   closeInspector();
   requestDraw();
 };
@@ -4034,7 +4044,7 @@ function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
     doc.setNodeControl(id, next);
     return true;
   });
-  select(null, selectedSegmentS, id, `controle ${next}`);
+  select(null, game.selectedSegmentS, id, `controle ${next}`);
   flashHint(`control.${next}`);
 }
 
@@ -4074,13 +4084,13 @@ function flashHint(key: string, params?: Readonly<Record<string, string | number
  * tool is one key in each dictionary.
  */
 function hintKey(prefix: string): string {
-  if (tool === 'road' && alignment === 'curve') return `${prefix}.road.curve`;
-  if (tool === 'road' && alignment === 'free') return `${prefix}.road.free`;
+  if (game.tool === 'road' && alignment === 'curve') return `${prefix}.road.curve`;
+  if (game.tool === 'road' && alignment === 'free') return `${prefix}.road.free`;
   // Each sculpting operation gets its own sentence. Four modes behind one hint
   // meant the bar told the player nothing about the one they had selected.
-  if (tool === 'terrain') return `${prefix}.terrain.${terrainMode}`;
-  if (tool === 'building') return buildings.hintKey(prefix);
-  return `${prefix}.${tool}`;
+  if (game.tool === 'terrain') return `${prefix}.terrain.${terrainMode}`;
+  if (game.tool === 'building') return buildings.hintKey(prefix);
+  return `${prefix}.${game.tool}`;
 }
 
 function updateHint(): void {
@@ -4143,11 +4153,11 @@ const arrowPan = (e: KeyboardEvent): void => {
     if (gestureInProgress()) {
       cancelGestures();
       e.preventDefault();
-    } else if (selectedSegment !== null || selectedNode !== null) {
+    } else if (game.selectedSegment !== null || game.selectedNode !== null) {
       // With nothing being drawn, Escape puts down what Inspect picked up.
       (document.getElementById('closeInspector') as HTMLButtonElement).click();
       e.preventDefault();
-    } else if (tool !== 'inspect') {
+    } else if (game.tool !== 'inspect') {
       // ...and then the tool itself: the free hand.
       freeSelection();
       e.preventDefault();
@@ -4266,6 +4276,8 @@ function frame(now: number): void {
   pending = false;
   if (!booted) return;
   beginFrameWork();
+  // Everyone watching the game's state is told what changed, once, here.
+  gameState.flush();
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   const wall = (now - last) / 1000;
@@ -4329,7 +4341,7 @@ function frame(now: number): void {
   }
   const alpha = holdSim
     ? 1
-    : sim.clock.advance(wall, () => step(sim, { traffic, pedestrians: traffic }));
+    : sim.clock.advance(wall, () => step(sim, { traffic: !game.paused, pedestrians: !game.paused }));
 
   if (net.revision !== doc.revision) {
     // Geometry is still refreshed during a drag, but a 20 Hz preview is more
@@ -4341,7 +4353,7 @@ function frame(now: number): void {
       else if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
     }
   }
-  buildings.beforeDraw(tool === 'building');
+  buildings.beforeDraw(game.tool === 'building');
   // The pole run under the pointer, planned once per frame: the 3D preview
   // shows it as it will stand, the overlay marks only what cannot be built.
   framePolePlan = currentPolePlan();
@@ -4386,7 +4398,7 @@ function frame(now: number): void {
   }
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (traffic || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
   else if (!document.hidden && scene.drifting() && !driftQueued) {
     // Only the clouds moving (they drift, form and fade): twenty frames a
     // second keeps them alive without holding the GPU at full speed.
@@ -4520,9 +4532,9 @@ function drawPolePlan(
     ctx.stroke();
     ctx.restore();
   };
-  if (tool !== 'pole' && !plan) return;
+  if (game.tool !== 'pole' && !plan) return;
   // Removing: the pole under the pointer, in red.
-  if (tool === 'pole' && poleToolMode() === 'remove') {
+  if (game.tool === 'pole' && poleToolMode() === 'remove') {
     const hit = poleHover ? doc.poleNear(poleHover, poleReach()) : null;
     if (hit) ring(at(hit), '#e5534b', 10);
     return;
@@ -4539,7 +4551,7 @@ function drawPolePlan(
     return;
   }
   // Nothing drawn yet: where the first pole would go, or a cross where it cannot.
-  if (tool === 'pole' && poleHover && !poleDraft) {
+  if (game.tool === 'pole' && poleHover && !poleDraft) {
     const snap = snapPole(doc, net, poleHover, poleReach());
     if (snap.kind === 'free') cross(at(snap.at));
     else ring(at(snap.at), snap.kind === 'pole' ? HOVER : SELECTION);
@@ -4620,7 +4632,7 @@ function drawOverlayScreen(): void {
 
   if (showChanges) drawChanges(ctx, at);
 
-  if (tool === 'roundabout' && hoverAnchor) {
+  if (game.tool === 'roundabout' && hoverAnchor) {
     ctx.save();
     ctx.strokeStyle = HOVER;
     ctx.lineWidth = 2;
@@ -4652,7 +4664,7 @@ function drawOverlayScreen(): void {
   // 10 m cells, and their 1 m subdivisions close up - what the grid snap lands on.
   // The grid is drawn in the scene, on the ground, over the whole map (`SceneHandle.setGrid`).
   scene.setGrid(roadGridShown());
-  if (tool === 'road' && blockGridChoice.armed && hoverAnchor) {
+  if (game.tool === 'road' && blockGridChoice.armed && hoverAnchor) {
     // The grid the next click lays, on the ground.
     for (const [a, b] of blockGridLines(hoverAnchor.at, blockGridChoice)) {
       const steps = Math.max(2, Math.ceil(dist(a, b) / m(4)));
@@ -4668,26 +4680,26 @@ function drawOverlayScreen(): void {
       ctx.restore();
     }
   }
-  if (tool === 'streetscape') drawStreetscapeHover(ctx, at);
-  if (tool === 'barrier') drawBarrierPlan(ctx, at);
-  if (tool === 'transit') transitEditor.draw(ctx, at, true);
+  if (game.tool === 'streetscape') drawStreetscapeHover(ctx, at);
+  if (game.tool === 'barrier') drawBarrierPlan(ctx, at);
+  if (game.tool === 'transit') transitEditor.draw(ctx, at, true);
   // The metro seen through the ground and the track being laid, in the scene.
-  scene.setTransitXray(tool === 'transit');
-  scene.setTransitPreview(tool === 'transit' ? transitEditor.preview() : null);
+  scene.setTransitXray(game.tool === 'transit');
+  scene.setTransitPreview(game.tool === 'transit' ? transitEditor.preview() : null);
   // The zoning grid is shown while a road is being drawn too, so a street can
   // be laid out to the blocks it will make.
   // The lots, laid on the ground in the scene (`render/lotOverlay.ts`): in
   // the Zoning tool, and while roads are being built (unless the player
   // turned that off); zoned ones faintly with the other tools.
-  const showLots = tool === 'zone' || (doc.lots.some((l) => l.use) && zoneColoursShown());
+  const showLots = game.tool === 'zone' || (doc.lots.some((l) => l.use) && zoneColoursShown());
   if (showLots) {
     const colours: Record<ZoneUse, number> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
-    const hoverLot = tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
+    const hoverLot = game.tool === 'zone' && zoneHover ? lotAt(zoneHover) : undefined;
     const dragged = (q: Vec2): Vec2 => lotCorner && Math.hypot(q.x - lotCorner.from.x, q.y - lotCorner.from.y) < m(0.8) ? lotCorner.to : q;
     const polygons: LotOverlayInput['polygons'][number][] = [];
     const lines: LotOverlayInput['lines'][number][] = [];
     const points: LotOverlayInput['points'][number][] = [];
-    const editing = tool === 'zone';
+    const editing = game.tool === 'zone';
     for (const l of doc.lots) {
       const built = l.building !== undefined && doc.buildings.has(l.building as BuildingId);
       if (!editing && (!l.use || built)) continue;
@@ -4779,7 +4791,7 @@ function drawOverlayScreen(): void {
     ctx.restore();
   } else scene.setLotOverlay(null);
 
-  if (tool === 'building') buildings.drawOverlay(ctx);
+  if (game.tool === 'building') buildings.drawOverlay(ctx);
   // The bulldozer's box, on the ground: its edges follow the land.
   if (bulldozeBox && Math.hypot(bulldozeBox.b.x - bulldozeBox.a.x, bulldozeBox.b.y - bulldozeBox.a.y) >= 6) {
     const { world: a, to: b } = bulldozeBox;
@@ -4842,9 +4854,9 @@ function drawOverlayScreen(): void {
   // The road's centre line, picked or under the pointer, only with the
   // Information tool in hand (the player's order of 2026-10-05): with any
   // other tool a white line down the middle of the street is noise.
-  const infoTool = tool === 'inspect' && document.body.dataset['infoTool'] === 'on';
-  if (infoTool && selectedSegment !== null) {
-    const ribbon = net.ribbons.get(selectedSegment);
+  const infoTool = game.tool === 'inspect' && document.body.dataset['infoTool'] === 'on';
+  if (infoTool && game.selectedSegment !== null) {
+    const ribbon = net.ribbons.get(game.selectedSegment);
     if (ribbon) strokeScreen(ribbon.full.toPoints(), SELECTION, 3);
   }
 
@@ -4853,8 +4865,8 @@ function drawOverlayScreen(): void {
     if (ribbon) strokeScreen(ribbon.full.toPoints(), HOVER, 2);
   }
 
-  if (selectedNode !== null) {
-    const node = doc.node(selectedNode);
+  if (game.selectedNode !== null) {
+    const node = doc.node(game.selectedNode);
     if (node) ring({ x: node.x, y: node.y }, 12, SELECTION, 2);
   }
 
@@ -4864,7 +4876,7 @@ function drawOverlayScreen(): void {
   // grass, and on a road on its centre line, where a segment anchor sits -
   // with the Road tool up, which is the tool the game starts in. Players
   // reported it, twice, as a debug marker left on screen.
-  if (tool === 'road' && !draft && hoverAnchor?.kind === 'node') {
+  if (game.tool === 'road' && !draft && hoverAnchor?.kind === 'node') {
     ring(hoverAnchor.at, 9, HOVER, 2);
   }
 
@@ -4875,7 +4887,7 @@ function drawOverlayScreen(): void {
   // the player is actually aiming. The height readout is there because
   // levelling needs a number — you cannot match one slope to another by eye in
   // an isometric projection.
-  if (tool === 'terrain' && hoverAnchor) {
+  if (game.tool === 'terrain' && hoverAnchor) {
     const brush = terrainStroke ? terrainStroke.at : hoverAnchor.at;
     const centre = at(brush);
     const xEdge = at({ x: brush.x + terrainRadius, y: brush.y });
@@ -4934,7 +4946,7 @@ function drawOverlayScreen(): void {
   // With the control tool up, every junction states what it is doing. The
   // setting is invisible otherwise, so choosing one meant clicking each node in
   // turn to read it back.
-  if (tool === 'control') {
+  if (game.tool === 'control') {
     ctx.font = '600 10px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -5286,7 +5298,7 @@ function showInspector(): void {
     doc,
     net,
     sim,
-    { segment: selectedSegment, node: selectedNode },
+    { segment: game.selectedSegment, node: game.selectedNode },
     {
       onUpgrade: (id) => {
         const seg = doc.segment(id);
@@ -5352,7 +5364,7 @@ function showInspector(): void {
       onAddCrossing: (id, kind) => {
         if (!doc.segment(id)) return;
         // Where the player clicked on the road, or its middle.
-        const chosen = selectedSegment === id && selectedSegmentS !== null ? selectedSegmentS : undefined;
+        const chosen = game.selectedSegment === id && game.selectedSegmentS !== null ? game.selectedSegmentS : undefined;
         let placed: NodeId | null = null;
         mutate(() => {
           const result = commitPedestrianCrossing(doc, net, id, kind, chosen);
@@ -5379,8 +5391,8 @@ function showInspector(): void {
         if (!doc.segment(id)) return;
         const polyline = net.polylines.get(doc, id);
         if (polyline.length < 20) { flashHint('hint.road.invalid'); return; }
-        const chosen = selectedSegment === id && selectedSegmentS !== null
-          ? selectedSegmentS : polyline.length / 2;
+        const chosen = game.selectedSegment === id && game.selectedSegmentS !== null
+          ? game.selectedSegmentS : polyline.length / 2;
         const s = chosen < 5 || chosen > polyline.length - 5
           ? polyline.length / 2 : chosen;
         let node: NodeId | null = null;
@@ -5426,7 +5438,7 @@ function showInspector(): void {
       },
       onJoin: (node) => {
         mutate(() => joinSegments(doc, node));
-        select(selectedSegment, selectedSegmentS, null, 'vias unidas');
+        select(game.selectedSegment, game.selectedSegmentS, null, 'vias unidas');
         closeInspector();
       },
       onRemoveNode: (node) => {
@@ -5438,7 +5450,7 @@ function showInspector(): void {
           doc.pruneOrphanNodes();
           return true;
         });
-        select(selectedSegment, selectedSegmentS, null, 'ponto removido');
+        select(game.selectedSegment, game.selectedSegmentS, null, 'ponto removido');
         closeInspector();
       },
       onDelete: (id) => {
@@ -5447,7 +5459,7 @@ function showInspector(): void {
           doc.pruneOrphanNodes();
           return true;
         });
-        select(null, selectedSegmentS, selectedNode, 'via apagada');
+        select(null, game.selectedSegmentS, game.selectedNode, 'via apagada');
         closeInspector();
       },
     },
@@ -5455,7 +5467,7 @@ function showInspector(): void {
 }
 
 /** Duplicates the inspected road and keeps the copy selected for immediate editing. */
-function duplicateSelectedSegment(id = selectedSegment): void {
+function duplicateSelectedSegment(id = game.selectedSegment): void {
   if (id === null) return;
   let copy: SegmentId | null = null;
   mutate(() => {
@@ -5463,7 +5475,7 @@ function duplicateSelectedSegment(id = selectedSegment): void {
     return copy !== null;
   });
   if (copy !== null) {
-    select(copy, selectedSegmentS, null, 'via duplicada');
+    select(copy, game.selectedSegmentS, null, 'via duplicada');
     showInspector();
   }
 }
@@ -5646,7 +5658,7 @@ qualitySelect.onchange = () => {
   /** The public transport tool, for the probes (`scripts/transit-shots.mjs`). */
   transit: transitEditor,
   setTraffic: (enabled: boolean) => {
-    if (traffic !== enabled) trafficButton.click();
+    if (!game.paused !== enabled) trafficButton.click();
   },
   setRoadHeight: (metres: number) => {
     roadHeightOffset = metres * UNITS_PER_METER;
@@ -5740,8 +5752,8 @@ function densify(points: readonly Vec2[], step: number): Vec2[] {
 /** Whether the road tool is drawing a road right now (a drag, a chained stretch or a curve). */
 /** Asks the interface to redraw its panels (a state it shows changed in the game). */
 function refreshShell(): void {
-  const game = document.getElementById('game');
-  if (game) { const t = game.dataset['tool'] ?? ''; game.dataset['tool'] = ''; game.dataset['tool'] = t; }
+  const host = document.getElementById('game');
+  if (host) { const t = host.dataset['tool'] ?? ''; host.dataset['tool'] = ''; host.dataset['tool'] = t; }
 }
 
 // Buildings run down without maintenance (\`decayOf\`): checked every few
