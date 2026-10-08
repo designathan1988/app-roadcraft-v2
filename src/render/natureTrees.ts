@@ -153,7 +153,7 @@ function coarser(full: BufferGeometry, triangles: number): BufferGeometry {
   const colour = full.getAttribute('color');
   const positions = new Float32Array(position.array as ArrayLike<number>);
   const index = Uint32Array.from(full.getIndex()!.array as ArrayLike<number>);
-  let kept = index;
+  let kept: Uint32Array = index;
   if (MeshoptSimplifier.supported && index.length / 3 > triangles) {
     const remap = MeshoptSimplifier.generatePositionRemap(positions, 3);
     const welded = index.map((v) => remap[v]!);

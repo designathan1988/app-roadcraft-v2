@@ -166,7 +166,7 @@ describe('the player: a person of the city in the player hands', () => {
     const run = (seconds: number): void => sim.clock.run(Math.round(seconds / DT), () => step(sim));
     run(5);
     const city = sim.city;
-    const player = city.player;
+    const player = city.player ??= new Player();
     const input = player.input;
     const adult = city.population.residents.find((r) => r.ageClass === 'adult' && city.whereIs(r.id) === r.home)!;
     expect(player.take(sim, adult.id)).toBe(true);

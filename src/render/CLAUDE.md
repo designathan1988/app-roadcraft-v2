@@ -47,6 +47,16 @@ folder imports `three`. This file lists what breaks far from where you edit here
 - **People are MakeHuman bodies cooked ahead** (`cooked/people`, gitignored).
   After any change to people code or assets the cook fingerprint changes and
   bodies are built slowly at runtime until `npm run cook:people` runs again.
+  The procedural crowd's cook (`cooked/procedural`) is fingerprinted by the
+  import closure of `people/proceduralBake.ts` only: changing how the crowd
+  is drawn (`proceduralCrowd.ts`, `crowd*.ts`) does not stale it; changing
+  the bake or what it imports does.
+- **The procedural people's skeletons are drawn on the GPU** (`people/
+  crowdAnimation.ts`): `renderPalettes(renderer)` must run after the crowd's
+  `update` and before the scene is drawn (`renderer.ts` before `post.render`,
+  `peopleLab.ts`), or people are drawn in the last pose rendered.
+- **A procedural person's level of detail comes from `person.pixels`**
+  (`agents.ts` from `personPixels`); unset, they are drawn in full.
 - **Main-thread JavaScript, not the GPU, was the frame cost** in the 2026-10-02
   profile. Profile before optimising the GPU side.
 

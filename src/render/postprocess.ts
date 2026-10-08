@@ -825,7 +825,7 @@ const CLOUD_SHADOWS = {
           }
         }
       }
-      // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`).
+      // The clouds' bodies, marched at a quarter of the pixels (CLOUD_BODIES_MAIN).
       if (uCloudsOn > 0.5) {
         vec4 bodies = texture2D(tClouds, vUv);
         colour = colour * bodies.a + bodies.rgb;

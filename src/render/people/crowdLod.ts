@@ -190,7 +190,10 @@ export function cardCentres(geometry: BufferGeometry, cardOf: Int32Array): Float
   for (let v = 0; v < position.count; v++) {
     const c = cardOf[v]!;
     if (c < 0) continue;
-    sum[c * 4] += position.getX(v); sum[c * 4 + 1] += position.getY(v); sum[c * 4 + 2] += position.getZ(v); sum[c * 4 + 3] += 1;
+    sum[c * 4] = sum[c * 4]! + position.getX(v);
+    sum[c * 4 + 1] = sum[c * 4 + 1]! + position.getY(v);
+    sum[c * 4 + 2] = sum[c * 4 + 2]! + position.getZ(v);
+    sum[c * 4 + 3] = sum[c * 4 + 3]! + 1;
   }
   const out = new Float32Array(position.count * 3);
   for (let v = 0; v < position.count; v++) {
