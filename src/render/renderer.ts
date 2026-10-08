@@ -1141,16 +1141,32 @@ export function createSceneRenderer(
   let padsCache: ReturnType<typeof buildingPads> | null = null;
   /** Each building's platform by record, while the roads and the land stand (`buildingPads`). */
   let padsKnown = new WeakMap<Building, Pad | null>();
-  /** The buildings the ground was last graded for, by id: their record then, and the box their bank reaches. */
-  const graded = new Map<number, { ref: Building; box: readonly [number, number, number, number] }>();
+  /** The buildings the ground was last graded for, by id: their record then, its site as text, and the box their bank reaches. */
+  const graded = new Map<number, { ref: Building; site: string; box: readonly [number, number, number, number] }>();
   const bankBox = (b: Building): readonly [number, number, number, number] => {
     const r = buildingBounds(b, TERRAIN_CELL * 1.5 + m(40) + TERRAIN_CELL);
     return [r.minX, r.minY, r.maxX, r.maxY];
   };
   /**
+   * What a building's site is graded from, as text, once per record: the
+   * record less its age, its name and its lot plan's version, which move no
+   * ground. A record is replaced on any change (`put` stores a copy), and the
+   * town's ageing - a record every few seconds - re-graded lots and set off
+   * everything that stands on the ground round them.
+   */
+  const siteText = new WeakMap<Building, string>();
+  const siteTextOf = (b: Building): string => {
+    let text = siteText.get(b);
+    if (text === undefined) {
+      const { decay: _decay, builtAt: _builtAt, name: _name, lotPlan: _lotPlan, ...site } = b;
+      text = JSON.stringify(site);
+      siteText.set(b, text);
+    }
+    return text;
+  };
+  /**
    * What changed among the buildings since the ground was graded: the box
-   * of every site added, removed or changed (a record is replaced on any
-   * change), or null when none did.
+   * of every site added, removed or changed, or null when none did.
    */
   const changedSites = (doc: RoadDoc): [number, number, number, number] | null => {
     let box: [number, number, number, number] | null = null;
@@ -1162,10 +1178,13 @@ export function createSceneRenderer(
       seen.add(b.id);
       const was = graded.get(b.id);
       if (was?.ref === b) continue;
+      const site = siteTextOf(b);
+      // A new record of the same site (aged, renamed): nothing to grade.
+      if (was && was.site === site) { graded.set(b.id, { ref: b, site, box: was.box }); continue; }
       if (was) take(was.box);
       const now = bankBox(b);
       take(now);
-      graded.set(b.id, { ref: b, box: now });
+      graded.set(b.id, { ref: b, site, box: now });
     }
     for (const [id, was] of graded) if (!seen.has(id)) { take(was.box); graded.delete(id); }
     return box;

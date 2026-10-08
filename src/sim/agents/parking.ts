@@ -139,16 +139,32 @@ function lanesNear(w: SimWorld, x: number, y: number, reach: number): Lanelet[] 
  * aisles of every lot in town again; a lot whose surroundings are the same
  * keeps its bays (docs/performance.md #15).
  */
-const LOT_BAYS = new WeakMap<SimWorld, Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>>();
+const LOT_BAYS = new WeakMap<SimWorld, Map<BuildingId, { lot: string; key: number; bays: readonly Bay[] }>>();
 /** How far a lot's bays read lanes and walls (`LANE_REACH`, the exits' reach), with a margin. */
 const LOT_READS = LANE_REACH + m(12);
+/**
+ * What a building's bays are worked out from, as text, once per record: the
+ * record less its age, its name and its lot plan's version. A record is
+ * replaced on any change, and the town's ageing (a record every few seconds)
+ * worked out those lots' exits, grids and aisles again for nothing.
+ */
+const LOT_TEXT = new WeakMap<Building, string>();
+function lotText(b: Building): string {
+  let text = LOT_TEXT.get(b);
+  if (text === undefined) {
+    const { decay: _decay, builtAt: _builtAt, name: _name, lotPlan: _lotPlan, ...lot } = b;
+    text = JSON.stringify(lot);
+    LOT_TEXT.set(b, text);
+  }
+  return text;
+}
 
 function workOutBays(w: SimWorld): Bay[] {
   const out: Bay[] = [];
   const walls = wallsOf(w);
   const navCache = new Map<object, { exits: LotExit[]; grid: LotGrid }>();
-  const known = LOT_BAYS.get(w) ?? new Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>();
-  const kept = new Map<BuildingId, { ref: Building; key: number; bays: readonly Bay[] }>();
+  const known = LOT_BAYS.get(w) ?? new Map<BuildingId, { lot: string; key: number; bays: readonly Bay[] }>();
+  const kept = new Map<BuildingId, { lot: string; key: number; bays: readonly Bay[] }>();
   LOT_BAYS.set(w, kept);
   for (const b of w.doc.buildings.all()) {
     if (!(b.elements ?? []).some((el) => el.kind === 'parking')) continue;
@@ -164,14 +180,15 @@ function workOutBays(w: SimWorld): Bay[] {
     }
     const key = digest.value();
     const was = known.get(b.id);
-    if (was && was.ref === b && was.key === key) {
+    const lot = lotText(b);
+    if (was && was.lot === lot && was.key === key) {
       for (const bay of was.bays) out.push({ ...bay, id: out.length });
       kept.set(b.id, was);
       continue;
     }
     const first = out.length;
     bayRows(b);
-    kept.set(b.id, { ref: b, key, bays: out.slice(first) });
+    kept.set(b.id, { lot, key, bays: out.slice(first) });
   }
   out.push(...kerbBays(w, out.length));
   return out;

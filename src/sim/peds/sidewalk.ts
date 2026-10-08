@@ -422,6 +422,21 @@ export class SidewalkGraph {
         }
       });
       const ringDigest = footprints.map((ring) => { const d = new Digest(); for (const p of ring) d.add(p.x).add(p.y); return d.value(); });
+      // The posts, benches and poles within a door's reach, from a grid: each
+      // filed under every cell its reach and radius cover, in the list's
+      // order, so a door reads its own cell and finds exactly what the filter
+      // over every obstacle of the town found, in the same order. Every door
+      // filtered them all, on every building added.
+      const obstacleCells = new Map<number, number[]>();
+      obstacles.forEach((o, i) => {
+        const grow = REACH + o.radius;
+        for (let x = Math.floor((o.x - grow) / CELL); x <= Math.floor((o.x + grow) / CELL); x++) {
+          for (let y = Math.floor((o.y - grow) / CELL); y <= Math.floor((o.y + grow) / CELL); y++) {
+            const list = obstacleCells.get(cellKey(x, y));
+            if (list) list.push(i); else obstacleCells.set(cellKey(x, y), [i]);
+          }
+        }
+      });
       const previousDoors = this.doorCache;
       const nextDoors = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
       for (const building of doc.buildings.all()) {
@@ -437,7 +452,8 @@ export class SidewalkGraph {
             .addAll(reachable.map(digestOf))
             .add(walkable.digest(door.x - REACH, door.y - REACH, door.x + REACH, door.y + REACH))
             .addAll((finite ? massesNear.get(cell) ?? [] : []).map((i) => ringDigest[i]!))
-            .addAll(obstacles.filter((o) => Math.abs(o.x - door.x) <= REACH + o.radius && Math.abs(o.y - door.y) <= REACH + o.radius)
+            .addAll((finite ? obstacleCells.get(cell) ?? [] : []).map((i) => obstacles[i]!)
+              .filter((o) => Math.abs(o.x - door.x) <= REACH + o.radius && Math.abs(o.y - door.y) <= REACH + o.radius)
               .flatMap((o) => [o.x, o.y, o.radius]))
             .value().toString();
           const known = previousDoors.get(doorId);
