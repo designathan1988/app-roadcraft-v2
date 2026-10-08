@@ -47,6 +47,12 @@ const VARIETIES: readonly { readonly file: string; readonly leaves: 'lush' | 'de
   { file: 'tree_pineRoundA', leaves: 'pine' },
   { file: 'tree_pineDefaultA', leaves: 'pine' },
 ];
+/**
+ * The models' URLs, as Vite serves and builds them: the project serves no
+ * `public/` folder by path (`publicDir: false`), every asset is imported
+ * (`elements.ts` does the same).
+ */
+const TREE_URLS = import.meta.glob('/public/models/nature/*.glb', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 /** Within this distance of the camera a tree is drawn in full, world units. */
 const NEAR_REACH = 350;
 /** Within this distance a tree is drawn at mid detail; beyond, at its lightest. */
@@ -152,14 +158,23 @@ function coarser(full: BufferGeometry, triangles: number): BufferGeometry {
   const position = full.getAttribute('position');
   const colour = full.getAttribute('color');
   const positions = new Float32Array(position.array as ArrayLike<number>);
-  const index = Uint32Array.from(full.getIndex()!.array as ArrayLike<number>);
+  // A coarser level is laid out flat, without an index: each corner its own.
+  const indexed = full.getIndex();
+  const index = indexed ? Uint32Array.from(indexed.array as ArrayLike<number>) : Uint32Array.from({ length: position.count }, (_, i) => i);
   let kept: Uint32Array = index;
   if (MeshoptSimplifier.supported && index.length / 3 > triangles) {
     const remap = MeshoptSimplifier.generatePositionRemap(positions, 3);
     const welded = index.map((v) => remap[v]!);
     const target = Math.max(3, Math.floor(triangles) * 3);
     [kept] = MeshoptSimplifier.simplify(welded, positions, 3, target, 1);
-    if (kept.length > target * 1.5) [kept] = MeshoptSimplifier.simplifySloppy(welded, positions, 3, null, target, 1);
+    // The sloppy one only when the careful one cannot get near the budget,
+    // and only if it keeps a shape: on these small flat-faced models it can
+    // collapse a whole tree to nothing (a far level of 0 triangles: the tree
+    // vanished in the distance).
+    if (kept.length > target * 1.5) {
+      const [sloppy] = MeshoptSimplifier.simplifySloppy(welded, positions, 3, null, target, 1);
+      if (sloppy.length >= target * 0.5) kept = sloppy;
+    }
   }
   const out = new Float32Array(kept.length * 3), colours = new Float32Array(kept.length * 3);
   for (let i = 0; i < kept.length; i++) {
@@ -179,15 +194,22 @@ function coarser(full: BufferGeometry, triangles: number): BufferGeometry {
 export async function loadNatureTrees(_anisotropy: number): Promise<NatureTreeKit> {
   await MeshoptSimplifier.ready;
   const loader = new GLTFLoader();
-  const base = `${import.meta.env.BASE_URL}models/nature/`;
   const variants: Variant[] = [];
   for (const variety of VARIETIES) {
-    const gltf = await loader.loadAsync(`${base}${variety.file}.glb`);
+    const url = TREE_URLS[`/public/models/nature/${variety.file}.glb`];
+    if (!url) continue;
+    const gltf = await loader.loadAsync(url);
     gltf.scene.updateMatrixWorld(true);
     const full = variantGeometry(gltf.scene, leafColour(variety.leaves));
     if (!full) continue;
     const triangles = full.getIndex()!.count / 3;
-    variants.push({ levels: [full, coarser(full, Math.max(FAR_TRIANGLES, triangles * MID_SHARE)), coarser(full, FAR_TRIANGLES)] });
+    // Each level from the one before (meshoptimizer's LOD chain): the far one
+    // never ends up heavier than the mid one when the simplifier stops short.
+    const mid = coarser(full, Math.max(FAR_TRIANGLES, triangles * MID_SHARE));
+    const far = coarser(mid, FAR_TRIANGLES);
+    const keepFar = far.getAttribute('position').count < mid.getAttribute('position').count;
+    if (!keepFar) far.dispose();
+    variants.push({ levels: [full, mid, keepFar ? far : mid] });
   }
   if (!variants.length) throw new Error('No tree of the Nature Kit could be read');
   // Opaque and lit as the land is: matt, a little of the sky's sheen.
