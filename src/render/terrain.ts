@@ -1540,8 +1540,8 @@ function terrainMaterial(
          // variation): fields of yellow, olive and deep green laid over the
          // lawn read as blotches from the map's zoom.
          // Its brightness, baked with the relief (terrainRelief.ts).
-         float macroLight = mix(1.0, terrainMacro, 0.55);
-         blended.rgb *= mix(1.0, macroLight, 1.0 - (rockMix + dirtMix) * 0.7);
+         // (No macro light and dark any more: the player asked for the
+         // terrain's lights and effects to go, 2026-10-08 - "está feio".)
          // THE GRAIN AT EVERY ZOOM (distance tiling, as landscape materials
          // switch a texture to a larger tiling with the camera's distance):
          // the grass read again at the scale where its tufts are a few pixels
@@ -1625,33 +1625,8 @@ function terrainMaterial(
            // canopy (eco.r) darkens it only once its trees stand there.
            blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
          }
-         // THE LAND'S SHAPE IN ITS COLOURS (Gaea's and World Machine's slope
-         // and convexity masks): a slope wears its turf thin, in patches,
-         // showing straw and soil; ridges and tops are drier and paler;
-         // hollows and valley floors keep a deeper, lusher green.
-         {
-           vec4 land = terrainLand();
-           float convex = land.b * 2.0 - 1.0;
-           float vegetated = 1.0 - clamp(rockMix + dirtMix, 0.0, 1.0);
-           float tone = dot(grassColor.rgb, vec3(0.3, 0.6, 0.1));
-           // A paler, drier green, a hint of it: a full straw yellow over every
-           // top and bank capped each hill in a mat of olive hay (the player,
-           // 2026-10-07).
-           vec3 dryGrass = tone * vec3(1.22, 1.2, 0.78);
-           float wornNoise = texture2D(uDirtMap, vTerrainWorld.xz * 0.043 + 0.21).g;
-           float worn = smoothstep(9.0, 24.0, slopeDeg + (wornNoise - 0.5) * 14.0);
-           blended.rgb = mix(blended.rgb, mix(dryGrass, dirtColor.rgb, 0.25 * smoothstep(0.45, 0.7, wornNoise)), worn * 0.15 * vegetated);
-           float ridge = smoothstep(0.05, 0.6, convex + (wornNoise - 0.5) * 0.3);
-           blended.rgb = mix(blended.rgb, dryGrass, ridge * 0.2 * vegetated);
-           // The fine relief's crests worn to pale earth and stone, as the
-           // spurs of an eroded hillside are where the turf thins.
-           // From afar only: up close the pale lines read as scratches.
-           float crest = smoothstep(0.3, 0.85, terrainRidge) * terrainCarved * terrainWide;
-           vec3 bareCrest = mix(dirtColor.rgb, rockColor.rgb, 0.5) * vec3(1.15, 1.08, 0.95);
-           blended.rgb = mix(blended.rgb, bareCrest, crest * 0.55 * vegetated);
-           float hollow = smoothstep(0.05, 0.6, -convex);
-           blended.rgb *= mix(vec3(1.0), vec3(0.88, 0.97, 0.88), hollow * vegetated);
-         }
+         // (No slope wear, dry tops, pale crests or dark hollows in the colours
+         // any more: the player asked for the terrain's effects to go.)
          {
            float flowersW = shoreSample.y * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0));
            if (flowersW > 0.01) {
@@ -1714,20 +1689,9 @@ function terrainMaterial(
            float wet = (1.0 - smoothstep(-0.2, 1.4, above)) * smoothstep(0.03, 0.35, terrainShoreCover);
            blended.rgb *= mix(1.0, 0.6, wet);
          }
-         // Kept gentle: at 0.46 the far side of every hill went navy.
-         blended.rgb *= 1.0 + relief * 0.26 * smoothstep(1.5, 13.0, slopeDeg);
-         // Higher ground dries out, low ground stays lush. Measured in the
-         // units the land can actually reach now (a 560-unit mountain), so a
-         // valley town stays green instead of the whole map turning tan the
-         // moment the ground passes ten metres.
-         float dryness = smoothstep(10.0, 240.0, vTerrainWorld.y);
-         // Gently: strong, it turned every hill a mustard olive that read as
-         // mould (the player, 2026-10-07).
-         blended.rgb = mix(blended.rgb, blended.rgb * vec3(1.08, 1.04, 0.9), dryness * 0.35);
-         // Hollows hold moisture and read darker, which is the cue that tells a
-         // dip from a rise when the sun is behind the slope.
-         float damp = smoothstep(2.0, -40.0, vTerrainWorld.y);
-         blended.rgb *= mix(1.0, 0.78, damp * 0.7);
+         // (No hillshade, dryness by height or damp hollows painted into the
+         // colour any more: the player asked for the terrain's lights and
+         // effects to go. The scene's own light shapes the hills.)
          // Under the grass field the ground is the shade between the blades:
          // darker, so the blades stand in a lawn and not on a bright card.
          float grassDist = distance(vec2(vTerrainWorld.x, -vTerrainWorld.z), uGrassField.xy);
@@ -1776,28 +1740,9 @@ function terrainMaterial(
          #if NUM_DIR_LIGHTS > 0
            reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.3, 0.28, 0.23) * rockMix * (1.0 - clamp(dot(normal, normalize(directionalLights[0].direction)), 0.0, 1.0));
          #endif
-         // The land's own light (terrainLight): the relief's shadow takes the
-         // sun, the hills round a hollow take some of the sky.
-         {
-           vec4 landLight = terrainLand();
-           float skySeen = mix(0.7, 1.0, landLight.g);
-           reflectedLight.directDiffuse *= landLight.r;
-           reflectedLight.directSpecular *= landLight.r;
-           #if NUM_DIR_LIGHTS > 1
-             // The relief's shadow is the SUN's (light 0, the one casting
-             // shadows, sorted first): the fill light (environment.ts) lights
-             // a slope in that shadow all the same, so it is given back here.
-             reflectedLight.directDiffuse += (1.0 - landLight.r) * clamp(dot(normal, directionalLights[1].direction), 0.0, 1.0) * directionalLights[1].color * BRDF_Lambert(diffuseColor.rgb);
-           #endif
-           reflectedLight.indirectDiffuse *= skySeen;
-           reflectedLight.indirectSpecular *= skySeen;
-           // The fine relief's creases see less of the sky and of the sun
-           // that rakes across them: the dark lines that give the land its
-           // carved look.
-           float crease = clamp(terrainCrease * 0.8, 0.0, 1.0);
-           reflectedLight.indirectDiffuse *= 1.0 - mix(0.3, 0.55, terrainWide) * crease;
-           reflectedLight.directDiffuse *= 1.0 - mix(0.12, 0.25, terrainWide) * crease;
-         }`,
+         // (The land's own baked light - the relief's shadow, the sky a hollow
+         // sees, the dark creases - is not applied any more: the player asked
+         // for the terrain's lights to go, 2026-10-08.)`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -1826,23 +1771,13 @@ function terrainMaterial(
            mapN.xy += fineN.xy * 1.2 * terrainDetailW;
          }
          normal = normalize(tbn * mapN);
-         {
-           // The fine relief's slope added to the mesh's, as a heightfield's
-           // normal is (-dh/dx, 1, -dh/dz), and the difference it makes laid
-           // on the normal the maps have already bent. Walls keep their rock.
-           vec3 meshN = normalize(vTerrainNormal);
-           vec2 meshGrad = -meshN.xz / max(meshN.y, 0.25);
-           float reliefOn = 1.0 - smoothstep(48.0, 62.0, slopeDeg);
-           vec3 reliefN = normalize(vec3(-(meshGrad.x + terrainGrad.x * reliefOn), 1.0, -(meshGrad.y + terrainGrad.y * reliefOn)));
-           vec3 viewMesh = normalize((viewMatrix * vec4(meshN, 0.0)).xyz);
-           vec3 viewRelief = normalize((viewMatrix * vec4(reliefN, 0.0)).xyz);
-           normal = normalize(normal + viewRelief - viewMesh);
-         }`,
+         // (The fine relief's bumps are not added to the normal any more: the
+         // player asked for the terrain's effects to go.)`,
       );
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v27';
+  material.customProgramCacheKey = () => 'terrain-splat-v28';
   return material;
 }
 
@@ -2776,7 +2711,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v27-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v28-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
