@@ -39,7 +39,7 @@ export interface LandscapeItem {
   readonly signType?: SignType;
   /** What a sign says, or a street's name. */
   readonly text?: string;
-  /** When a plant was planted, in city minutes (`CityLife.minutes`); absent: fully grown. */
+  /** When a plant was planted, in city minutes (`City.minutes`, `sim/city/city.ts`); absent: fully grown. */
   readonly planted?: number;
 }
 

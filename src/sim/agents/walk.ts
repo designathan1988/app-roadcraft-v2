@@ -43,16 +43,14 @@ import type { FreePose, Vehicle } from '../vehicles/state';
  *   every pedestrian keeps (`crossings/permission.ts`: the signal, or a gap in
  *   the traffic), and while on it is published to the vehicles
  *   (`SimWorld.crossingStates`), which stop for it;
- * - an agent's car off the road is solid; one crossing the footway takes the
- *   ground it is about to cover in turn with the people (`OwnCars.holdWay`):
- *   a walker keeps off it while the car holds it, and walks on out of it if
- *   the car came to them;
+ * - a car parked off the road (the scenery's, `sim/ambient`) is solid;
  * - somebody held still a long while (`JAM_AFTER`) is let through others
  *   slowly, as SUMO's jammed state does, so nobody is ever stuck for good.
  *
- * Only residents walk here (the default; `?agents=0` brings back the People
- * engine): from a door to a door, or to and from their car. Nobody is made up
- * to fill the streets.
+ * Who walks here is the scenery's life (`sim/ambient`): people coming in at
+ * the ends of the roads and walking the footways. The residents, who walked
+ * here from door to door and to and from their own cars, are kept apart in
+ * `src/backup/residents`.
  */
 
 /** Width of one stripe, world units: SUMO's default, a person's room abreast. */
@@ -1102,12 +1100,10 @@ function stepWalkers(w: SimWorld): void {
     p.v = 0;
   }
   const others: { along: number; lat: number; oncoming: boolean; r: number }[] = [];
-  // The agents' own cars off the road: solid to a walker as a person is (the
-  // body three discs along its length, half its width round: a walker's own
-  // body is the margin, so a car in the road by the kerb does not close the
-  // kerb-side stripe); and, for a car holding its way across the footway or
-  // asking for it (`OwnCars.holdWay`), the ground it is about to cover, kept
-  // off with a little room. Somebody already inside one walks on out of it.
+  // The cars off the road: solid to a walker as a person is (the body three
+  // discs along its length, half its width round: a walker's own body is the
+  // margin, so a car in the road by the kerb does not close the kerb-side
+  // stripe). Somebody already inside one walks on out of it.
   const carZones: CarZone[] = [];
   /** The cars standing with no trip: their bodies, the same objects while they stand where they stood. */
   const parkedNow: CarZone[] = [];
