@@ -35,7 +35,7 @@ describe('a convoy through a movement that crosses nothing', () => {
     }
     expect(speed).toBe(0);
   });
-  for (const model of ['v1', 'v2'] as const) {
+  for (const model of ['v2'] as const) {
     it(`does not stop the car behind at the line (${model})`, () => {
       const doc = new RoadDoc();
       const a = doc.addNode({ x: 0, y: 0 });

@@ -28,8 +28,8 @@ const LOOKAHEAD = 5;
  */
 export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
   const body = bodyClassOfArchetype(v.archetype);
-  if (v.destination && w.driveModel === 'v2' && w.lanelet(v.lanelet)?.kind === 'link') {
-    // Drive v2: the trip is planned over the whole carriageway, lane changes
+  if (v.destination && w.lanelet(v.lanelet)?.kind === 'link') {
+    // The trip is planned over the whole carriageway, lane changes
     // included (`drive/tactical.ts`), so the lane the car is in never decides
     // which way it can go.
     const plan = planTrip(w, v.lanelet, v.s, v.destination, body);
@@ -118,7 +118,7 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
 /** Grows a route forward until it reaches the horizon or a dead end. */
 export function extend(w: SimWorld, v: Vehicle): void {
   const body = bodyClassOfArchetype(v.archetype);
-  if (v.destination && w.driveModel === 'v2') {
+  if (v.destination) {
     const tail = v.route[v.route.length - 1];
     if (tail === v.destination) return;
     const lane = tail ? w.lanelet(tail) : undefined;

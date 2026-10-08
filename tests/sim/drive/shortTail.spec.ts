@@ -14,7 +14,7 @@ import { step } from '@sim/pipeline';
  * stop line for ever.
  */
 describe('a route ending on a short link', () => {
-  for (const model of ['v1', 'v2'] as const) {
+  for (const model of ['v2'] as const) {
     it(`is grown past it, and the car goes on (${model})`, () => {
       const doc = new RoadDoc();
       const a = doc.addNode({ x: 0, y: 0 });

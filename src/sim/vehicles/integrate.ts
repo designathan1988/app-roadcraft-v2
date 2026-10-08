@@ -4,7 +4,6 @@ import { positioningSpeedCap } from './laneChange';
 import type { SimWorld } from '../world';
 import type { Vehicle } from './state';
 import { desiredSpeed } from './driver';
-import { resolveSpeed } from './idm';
 import { physicalSpeed } from '../drive/physicalMotion';
 import { planFrom } from '../routing/router';
 import { bodyClassOfArchetype } from './archetypes';
@@ -62,11 +61,9 @@ export function integrateAll(w: SimWorld): void {
     // comfortable braking.
     const positioning = Math.max(positioningSpeedCap(w, v), v.v - v.driver.b * DT);
     const speedCap = Math.min(wanted, here.speedLimit, curveCap, positioning);
-    // Drive v2 drives with the adaptive cruise control model and a driver's
-    // jerk limits (`drive/operational.ts`); v1 with the plain IDM.
-    const next = w.driveModel === 'v2'
-      ? physicalSpeed(v.driver, v.v, speedCap, v.accel, v.constraints.obstacles, DT)
-      : resolveSpeed(v.driver, v.v, speedCap, v.constraints.obstacles, DT);
+    // The adaptive cruise control model with a driver's jerk limits
+    // (`drive/physicalMotion.ts`).
+    const next = physicalSpeed(v.driver, v.v, speedCap, v.accel, v.constraints.obstacles, DT);
     const ds = Math.max(0, 0.5 * (v.v + next) * DT);
     const clearancesAtStart = new Set(v.clearingConnectors);
 

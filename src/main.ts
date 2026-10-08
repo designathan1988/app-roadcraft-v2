@@ -241,9 +241,6 @@ if (saved) {
 }
 
 const sim = new SimWorld(doc, net, 0x2024);
-// Vehicles are driven by Drive v2 where it has replaced a layer of the
-// legacy model; `?drive=v1` runs the legacy model throughout, for comparison.
-if (new URLSearchParams(location.search).get('drive') !== 'v1') sim.driveModel = 'v2';
 sim.auditEnabled = true;
 sim.auditLevel = 'cheap';
 // The status bar's alerts: checked once a second of play, not on every one

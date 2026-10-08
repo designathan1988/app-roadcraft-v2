@@ -85,8 +85,12 @@ export class SimWorld {
    * null engine, Nystrom's "null service").
    */
   pedEngine: PedestrianEngine = NO_PEDESTRIANS;
-  /** Which vehicle model drives: the legacy one, or Drive v2 (`drive/*`) as it replaces it layer by layer. */
-  driveModel: 'v1' | 'v2' = 'v1';
+  /**
+   * The vehicle model: Drive v2 (`drive/*`), the only one (the plain-IDM
+   * legacy model was taken out on 2026-10-08). Kept as a field so the specs
+   * that set it still read as they did.
+   */
+  driveModel: 'v2' = 'v2';
   readonly runtime = new Map<LaneletId, LaneletRuntime>();
   readonly controllers = new Map<NodeId, SignalController>();
 

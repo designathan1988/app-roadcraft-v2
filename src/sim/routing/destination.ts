@@ -63,7 +63,7 @@ function reachableExits(w: SimWorld, start: LaneletId, body: BodyClass): readonl
     cache = { revision: w.net.trafficRevision, exits: new Map() };
     reachable.set(w, cache);
   }
-  const cacheKey = `${start}|${body}|${w.driveModel}`;
+  const cacheKey = `${start}|${body}`;
   const known = cache.exits.get(cacheKey);
   if (known) return known;
   const seen = new Set<LaneletId>([start]);
@@ -80,14 +80,12 @@ function reachableExits(w: SimWorld, start: LaneletId, body: BodyClass): readonl
       seen.add(next);
       queue.push(next);
     }
-    // Drive v2 changes lane on the way (`drive/tactical.ts`): what a sibling
+    // A car changes lane on the way (`drive/tactical.ts`): what a sibling
     // lane reaches, this one reaches too.
-    if (w.driveModel === 'v2') {
-      for (const next of w.graph.siblingLanes(lane)) {
-        if (seen.has(next) || w.rt(next).ghost) continue;
-        seen.add(next);
-        queue.push(next);
-      }
+    for (const next of w.graph.siblingLanes(lane)) {
+      if (seen.has(next) || w.rt(next).ghost) continue;
+      seen.add(next);
+      queue.push(next);
     }
   }
   exits.sort();
