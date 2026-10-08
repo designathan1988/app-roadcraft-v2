@@ -222,7 +222,8 @@ function craterTexture(road: boolean): CanvasTexture | null {
   return t;
 }
 
-export function createBlast(exhaust: Exhaust): Blast {
+/** `light`: the flash, made by the renderer and in the scene since it opened (`PlayEffectsContext.lights`). */
+export function createBlast(exhaust: Exhaust, light: PointLight): Blast {
   const group = new Group();
   group.name = 'blast';
   const debrisMaterial = new MeshStandardMaterial({ roughness: 0.9, metalness: 0.05 });
@@ -299,10 +300,10 @@ export function createBlast(exhaust: Exhaust): Blast {
   ring.visible = false;
   ring.renderOrder = 6;
   group.add(ring);
-  // The flash: one light, reused, and its colour (white-orange for a blast, blue-white for an arc).
-  const light = new PointLight(0xffb060, 0, m(60), 1.6);
+  // The flash: one light, reused, and its colour (white-orange for a blast,
+  // blue-white for an arc). Given, already in the scene: made here, it came
+  // in with the effects on the first shot and recompiled every shader.
   light.castShadow = false;
-  group.add(light);
   const wireGeometry = new BufferGeometry();
   const wirePositions = new Float32Array(MAX_WIRES * (WIRE_POINTS - 1) * 2 * 3);
   wireGeometry.setAttribute('position', new BufferAttribute(wirePositions, 3));

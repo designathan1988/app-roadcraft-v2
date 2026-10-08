@@ -610,6 +610,18 @@ export function createSceneRenderer(
    */
   let fx: PlayEffects | null = null;
   let fxLoading: Promise<void> | null = null;
+  /** The effects asked for in idle time once the world stands (`draw`). */
+  let fxPreload = false;
+  // The effects' two lights - the muzzle's flash and the blast's - in the
+  // scene from the start, dark until used. A point light is part of every lit
+  // material's program (three's `numPointLights`): made with the effects on
+  // the first shot, they recompiled every shader of the scene at once and the
+  // game stopped for over ten seconds (the player, 2026-10-08).
+  const fxLights = {
+    muzzle: new PointLight(0xffc070, 0, m(8), 2),
+    blast: new PointLight(0xffb060, 0, m(60), 1.6),
+  };
+  scene.add(fxLights.muzzle, fxLights.blast);
   const buildingDownListeners: ((id: number) => void)[] = [];
   const loadEffects = (): Promise<void> => fxLoading ??= import('./playEffects').then((mod) => {
     fx = mod.createPlayEffects({
@@ -624,6 +636,7 @@ export function createSceneRenderer(
       pavedHeightAt: (x, y) => pavedHeightAt(x, y),
       camera: () => rig.camera,
       onAssetsReady,
+      lights: fxLights,
     });
     fx.onBuildingDown((id) => { for (const listener of buildingDownListeners) listener(id); });
     onAssetsReady();
@@ -2283,6 +2296,13 @@ export function createSceneRenderer(
       // The countryside's trees are grown once the first world is in, not
       // while the opening builds it (`loadNatureTrees`).
       if (!natureTreesStarted && roads !== null && !worldJob) startNatureTrees();
+      // The Actions' effects (`playEffects.ts`) made in idle time once the
+      // world stands, not on the first shot: then the shot waited for them to
+      // download and be built before it struck.
+      if (!fxPreload && !fxLoading && roads !== null && !worldJob && typeof requestIdleCallback === 'function') {
+        fxPreload = true;
+        requestIdleCallback(() => { void loadEffects(); }, { timeout: 5000 });
+      }
       // The plants under a building's footprints: on the scenery and the
       // ground the buildings take (not their age or their paint).
       const siteKey = String(buildings.coversVersion);

@@ -59,6 +59,14 @@ export interface PlayEffectsContext {
   readonly pavedHeightAt: (x: number, y: number) => number;
   readonly camera: () => Camera;
   readonly onAssetsReady: () => void;
+  /**
+   * The muzzle's flash and the blast's: made by the renderer with the scene,
+   * in it from the start at no intensity. A light is part of every lit
+   * material's program (three's `numPointLights`): added on the first shot,
+   * two lights recompiled every shader in the scene at once - the game
+   * stopped for over ten seconds (the player, 2026-10-08).
+   */
+  readonly lights: { readonly muzzle: PointLight; readonly blast: PointLight };
 }
 
 export interface PlayEffects {
@@ -105,7 +113,7 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
   const casualties = createCasualties();
   scene.add(casualties.group);
   /** Explosions and what they throw (`blast.ts`). */
-  const blast = createBlast(exhaust);
+  const blast = createBlast(exhaust, ctx.lights.blast);
   scene.add(blast.group);
   void compileAhead(blast.group);
   /** The effects' clock against real time, and a step owed (`setEffectsSpeed`, `stepEffects`). */
@@ -234,8 +242,8 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
   const TRACER_LIFE = 0.12;
   const tracerMaterial = new LineBasicMaterial({ color: 0xfff1b0, transparent: true, opacity: 1, depthWrite: false });
   const tracers: { line: Line; life: number }[] = [];
-  const muzzle = new PointLight(0xffc070, 0, m(8), 2);
-  scene.add(muzzle);
+  // In the scene since it opened (`PlayEffectsContext.lights`).
+  const muzzle = ctx.lights.muzzle;
 
   return {
     clock(wallDt) {
