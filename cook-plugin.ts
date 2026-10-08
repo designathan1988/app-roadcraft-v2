@@ -28,11 +28,13 @@ const ENTRY = 'src/render/riggedCitizens.ts';
 /**
  * The cooks: each a folder of `cooked/`, stamped with the fingerprint of its
  * own code. `people`: the cast's bodies (`cookedPerson.ts`). `procedural`: the
- * procedural crowd's classes and hairstyles (`proceduralCook.ts`).
+ * procedural crowd's classes and hairstyles (`proceduralCook.ts`), made by
+ * `proceduralBake.ts` alone - how the crowd is drawn (`proceduralCrowd.ts`)
+ * changes nothing cooked, so it is not in the fingerprint.
  */
 const COOKS = [
   { dir: 'people', entry: ENTRY, define: '__PEOPLE_COOK_HASH__' },
-  { dir: 'procedural', entry: 'src/render/people/proceduralCrowd.ts', define: '__PROCEDURAL_COOK_HASH__' },
+  { dir: 'procedural', entry: 'src/render/people/proceduralBake.ts', define: '__PROCEDURAL_COOK_HASH__' },
 ] as const;
 type CookDir = typeof COOKS[number]['dir'];
 /**

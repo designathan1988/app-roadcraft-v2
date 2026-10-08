@@ -804,6 +804,19 @@ export function createSceneRenderer(
     crowdBounds.center.set(x, height + 3, -y);
     return crowdFrustum.intersectsSphere(crowdBounds);
   };
+  // How tall a person stands on the screen, canvas pixels: feet and head
+  // through the view-projection (either camera); seen from straight above,
+  // never less than a share of their height across, their shoulders.
+  const pixelFoot = new Vector3(), pixelOther = new Vector3(), cameraRight = new Vector3();
+  const personPixels = (x: number, y: number, z: number, height: number): number => {
+    const halfW = renderer.domElement.width * 0.5, halfH = renderer.domElement.height * 0.5;
+    pixelFoot.set(x, z, -y).applyMatrix4(crowdProjection);
+    pixelOther.set(x, z + height, -y).applyMatrix4(crowdProjection);
+    const tall = Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
+    pixelOther.set(x, z, -y).addScaledVector(cameraRight, height).applyMatrix4(crowdProjection);
+    const across = Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
+    return Math.max(tall, across * 0.4);
+  };
   // A vehicle is tested with its own reach, grown by its height towards the
   // sun's side: an off-screen truck near the edge still casts a shadow onto it.
   const vehicleBounds = new Sphere(new Vector3(), 1);
@@ -2601,6 +2614,7 @@ export function createSceneRenderer(
       const cullCamera = planeCamera(rig.camera, rig.target, flatCamera);
       crowdProjection.multiplyMatrices(cullCamera.projectionMatrix, cullCamera.matrixWorldInverse);
       crowdFrustum.setFromProjectionMatrix(crowdProjection);
+      cameraRight.setFromMatrixColumn(cullCamera.matrixWorld, 0).normalize();
       // Plants and street furniture outside the view are not drawn at all.
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
@@ -2609,6 +2623,7 @@ export function createSceneRenderer(
       agents.sync(sim, alpha, detailed, rig.viewport.zoom, {
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,
+        personPixels,
         eye: cullCamera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,
@@ -2875,6 +2890,8 @@ export function createSceneRenderer(
       post.setAtmosphere(air, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
         sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
       const atRender = performance.now();
+      // The people's skeletons on the GPU (`people/crowdAnimation.ts`), before anybody draws them.
+      agents.renderPalettes(renderer);
       post.render(delta);
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
       if (shake > 0) { rig.camera.position.sub(shakeOffset); rig.camera.updateMatrixWorld(); }

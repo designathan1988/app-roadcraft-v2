@@ -185,6 +185,8 @@ function frame(): void {
     w.person.matrix.makeRotationY(p.heading).setPosition(p.x, 0, p.z);
   }
   crowd.update(camera.position);
+  // The skeletons are worked out on the GPU, before the scene is drawn.
+  crowd.renderPalettes(renderer);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

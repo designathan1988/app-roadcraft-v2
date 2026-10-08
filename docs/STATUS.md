@@ -388,6 +388,32 @@ and they have seen it.
   is still generated (and ez-tree imported) at every opening, a variety a
   task, after the first world.
 
+- **People drawn by level of detail (2026-10-08, LIVE, same look):** the
+  procedural crowd (`render/people/proceduralCrowd.ts`) picks a level for each
+  person by how tall they stand on the screen (`renderer.ts` `personPixels`,
+  `people/crowdLod.ts`): level 0 from 1 200 px (the whole model; no hair over
+  the body's 26 756 triangles), level 1 from 400 px (at most 2 000 skin with
+  eyes + 1 200 outfit + 900 other garment + 300 shoes + 1 000 hair + 100 brows
+  + 200 a hat or glasses), level 2 from 150 px (600 / 400 / 300 / 80 / 300 /
+  60), level 3 from 8 px (one mesh a class and outfit: 120 bare skin + 90
+  outfit + 60 a garment, the hair at 120); below 8 px nobody is drawn. These
+  are caps (meshoptimizer for meshes, hair cards kept by area and widened in
+  the shader); the triangles really drawn are in `crowd.stats()` (`levels`,
+  `triangles`, the people lab shows them). Caps: 12 people at level 0, 60 at
+  level 1 (the smallest past them go a level down). Each person's body is one
+  of 16 baked a class (`crowdBodies.ts`, the nearest to their own shape, made
+  as people come in); skeletons blended on the GPU (`crowdAnimation.ts`: the
+  class's clips in one texture, a palette pass before the scene,
+  `renderPalettes`); only somebody held, bent over a wound, jolted or maimed is
+  still worked out in JavaScript. Real shadows at levels 0-1 only (cast with
+  the next level's triangles, `onBeforeShadow`); a soft disc under the rest
+  (`render/blobShadows.ts`). Faces' expressions at level 0, their own features
+  at levels 0-1. The cook of the procedural classes and hairstyles is now the
+  import closure of `people/proceduralBake.ts` (the code moved there
+  unchanged): its manifest was re-stamped `33beacd25827893e` ->
+  `69b2586ab530eef3` without re-cooking, the data being the same; a change to
+  how the crowd is drawn no longer stales it.
+
 ### Actions: pistol and bomb (2026-10-06, LIVE)
 - Actions dock button: Pistola and Bomba, used from the map view (no play mode).
 - Shot people (`sim/agents/walk.ts` `shot`, `woundOf`), 2026-10-07: the hit

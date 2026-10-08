@@ -17,6 +17,7 @@ import {
   SphereGeometry,
   type BufferGeometry,
   type Material,
+  type WebGLRenderer,
 } from 'three';
 
 import { pedPose, vehiclePose } from '@sim/pose';
@@ -154,6 +155,11 @@ export interface AgentRenderOptions {
   readonly hiddenPed?: (id: number) => boolean;
   /** Where the camera is: the people nearest it get their hair's strands (`?bodies=proc`). */
   readonly eye?: Vector3;
+  /**
+   * How tall something `height` high standing at (x, y, z) is on the screen,
+   * pixels: the procedural people's level of detail (`people/crowdLod.ts`).
+   */
+  readonly personPixels?: (x: number, y: number, z: number, height: number) => number;
 }
 
 export interface AgentMeshes {
@@ -194,6 +200,8 @@ export interface AgentMeshes {
   setBleed(fn: (id: number, x: number, y: number, z: number) => void): void;
   /** Lamps burn brighter than white after dark, so headlights and tail lights glow. */
   setNight(dark: number): void;
+  /** The procedural people's skeletons, worked out on the GPU: once a frame, after `sync`, before the scene is drawn. */
+  renderPalettes(renderer: WebGLRenderer): void;
   dispose(): void;
 }
 
@@ -848,6 +856,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     }, () => { procPeople.delete(target); }).finally(() => { procBuilding = false; procBuiltAt = performance.now(); });
   };
   let procFrame = 0;
+  /** This frame's measure of a person on the screen (`AgentRenderOptions.personPixels`). */
+  let procPixels: AgentRenderOptions['personPixels'] | null = null;
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
     lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number },
@@ -874,6 +884,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       .multiply(procTurn.makeRotationY(heading + Math.PI / 2))
       .multiply(procSize.makeScale(m(1), m(1), m(1)));
     person.matrix.copy(procMatrix);
+    // How tall they stand on the screen: the level they are drawn at (`crowdLod.ts`).
+    person.pixels = procPixels ? procPixels(x, y, deck, m(person.height)) : undefined;
     // Where they were last drawn: a ragdoll takes them from there when they
     // drop out of the street (killed, `procRagdoll.capturedPose`).
     (entry.at ??= new Matrix4()).copy(procMatrix);
@@ -1783,6 +1795,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     setNight: (dark) => {
       lampMaterial.color.setScalar(1 + 2.4 * dark);
     },
+    renderPalettes: (renderer) => procedural?.renderPalettes(renderer),
     sync(world, alpha, detailed, zoom = Number.POSITIVE_INFINITY, options = {}) {
       currentWorld = world;
       const now = typeof performance !== 'undefined' ? performance.now() : suspensionClock + 16;
@@ -1797,6 +1810,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         for (const [id, entry] of looks) if (suspensionFrame - entry.seen > 120) looks.delete(id);
       }
       pedestrians.begin(options.pedestrianDetail ?? 2, zoom);
+      procPixels = options.personPixels ?? null;
       for (const part of allParts) part.n = 0;
       const band = !detailed ? 0 : zoom >= NEAR_DETAIL_ZOOM ? 2 : 1;
       // Vehicles have their own bands: the far proxy below FAR_BODY_ZOOM, the
@@ -1929,10 +1943,6 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
               (ped.ground === 'crossing' ? 0 : FOOTWAY_RISE);
           if (options.pedestrianVisible && !options.pedestrianVisible(pose.p.x, pose.p.y, deck)) continue;
           frameAt(pose.p.x, pose.p.y, pose.angle, deck);
-          // The rise is the same on both sides of the difference, so the
-          // gradient is the road's own under the walker.
-          const ground = groundGradient(land,
-            pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
           if (procedural && ped.id !== PLAYER_ID) {
             // What they are doing shows before the fright on their face (a photo held up, a crouch, a fall).
             const doing = ped.gesture?.kind;
@@ -1942,7 +1952,15 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound, ped.ageClass);
           }
-          else pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
+          else {
+            // The rise is the same on both sides of the difference, so the
+            // gradient is the road's own under the walker. (Only the cooked
+            // bodies lean with it: two more height samples a walker, which the
+            // procedural ones never read.)
+            const ground = groundGradient(land,
+              pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
+            pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
+          }
           pedCount++;
         }
         // And the people indoors, on the floors that are cut open.
