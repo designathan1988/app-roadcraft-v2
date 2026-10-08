@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { isSerializedDoc, normalizeSettings } from '@editor/persistence';
+import { Persistence, QUARANTINE_KEY, isSerializedDoc, normalizeSettings } from '@editor/persistence';
 import { RoadDoc } from '@world/doc';
 import { MAP_HALF } from '@world/bounds';
 
@@ -61,6 +61,38 @@ describe('the load boundary', () => {
       expect(Math.abs(node.x)).toBeLessThanOrEqual(MAP_HALF);
       expect(Math.abs(node.y)).toBeLessThanOrEqual(MAP_HALF);
     }
+  });
+});
+
+/** A `Storage` in memory (MDN: `getItem` of a missing key is null). */
+function memoryStorage(): Storage {
+  const items = new Map<string, string>();
+  return {
+    get length() { return items.size; },
+    key: (n: number) => [...items.keys()][n] ?? null,
+    getItem: (k: string) => items.get(k) ?? null,
+    setItem: (k: string, v: string) => { items.set(k, String(v)); },
+    removeItem: (k: string) => { items.delete(k); },
+    clear: () => items.clear(),
+  };
+}
+
+describe('maps set aside', () => {
+  const real = (globalThis as { localStorage?: Storage }).localStorage;
+  afterEach(() => { (globalThis as { localStorage?: Storage }).localStorage = real; });
+
+  it('never sets a second unreadable map aside over the first', () => {
+    const storage = memoryStorage();
+    (globalThis as { localStorage?: Storage }).localStorage = storage;
+    storage.setItem('roadcraft.world.v7', 'first map {broken');
+    new Persistence().loadSession();
+    expect(storage.getItem(QUARANTINE_KEY)).toBe('first map {broken');
+
+    storage.setItem('roadcraft.world.v7', 'second map {broken');
+    new Persistence().loadSession();
+    const kept = [...Array(storage.length).keys()].map((i) => storage.key(i)!).filter((k) => k.startsWith(QUARANTINE_KEY)).map((k) => storage.getItem(k));
+    expect(kept.sort()).toEqual(['first map {broken', 'second map {broken']);
+    expect(storage.getItem('roadcraft.world.v7')).toBeNull();
   });
 });
 

@@ -299,8 +299,20 @@ export class Persistence {
 function quarantine(raw: string | null, sourceKey = KEY, quarantineKey = QUARANTINE_KEY): void {
   if (!raw) return;
 
+  // `setItem` replaces what a key holds (MDN): a second map set aside over
+  // the first lost the first (2026-10-08: a map that failed while the code
+  // was half edited, then an empty one set aside over it). A key already
+  // holding another map gets a sibling stamped with the time instead.
+  let target = quarantineKey;
   try {
-    localStorage.setItem(quarantineKey, raw);
+    const held = localStorage.getItem(quarantineKey);
+    if (held !== null && held !== raw) target = `${quarantineKey}.${Date.now()}`;
+  } catch {
+    // Storage unreadable: the write below fails the same way and keeps the original.
+  }
+
+  try {
+    localStorage.setItem(target, raw);
   } catch {
     // No room for a copy. Leave the original exactly where it is: the session
     // flag above already stops it being re-read, and a later save will replace
