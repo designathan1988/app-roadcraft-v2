@@ -425,6 +425,20 @@ and they have seen it.
   unchanged): its manifest was re-stamped `33beacd25827893e` ->
   `69b2586ab530eef3` without re-cooking, the data being the same; a change to
   how the crowd is drawn no longer stales it.
+- **Vehicles by level (2026-10-08, LIVE):** each vehicle is drawn at the
+  level the screen's scale where it stands gives (`renderer.ts` `screenScale`,
+  the same bands as the zoom: identical in the view from above, coarser far
+  off in perspective; at most 200 whole at once); the middle level's body
+  casts no real shadow and the far proxy none - a soft ellipse under both
+  (`blobShadows.ts`, off with the tier's shadows), as under the far people;
+  the road's slope under a vehicle is worked out every frame whole, every
+  other frame at the middle level and not at all far off; signals, wheels'
+  turn and smoke only where wheels are drawn; a parked car's instances are
+  copied from what it was drawn as while it stands where it stood. In the
+  simulation: admission reads who was admitted to a connector and who holds
+  anything from indices filed once a pass (it read the whole fleet per
+  request), a kerb door the vehicles near it from a grid filed once a step,
+  and the tick's snapshot is written into each vehicle's own `prev`.
 - **Walkers simulated by level (2026-10-08, LIVE):** the agents' walking
   engine (`sim/agents/walk.ts`) now reads `SimWorld.focus` as People did:
   out of the view a walker is stepped one tick in four (four ticks' time;

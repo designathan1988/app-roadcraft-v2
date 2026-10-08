@@ -13,7 +13,7 @@ import { stepDespawn, stepDispatch } from './vehicles/spawn';
 import { stepLaneChange } from './vehicles/laneChange';
 import { stepKerbStops } from './vehicles/kerbStops';
 import { extend, planFrom, reconsiderRoute, repairRoute } from './routing/router';
-import { snapshot, type Vehicle } from './vehicles/state';
+import { snapshotInto, type Vehicle } from './vehicles/state';
 import { runAudit } from './invariants';
 import { signalStateFor } from './signals/query';
 import { bodyClassOfArchetype } from './vehicles/archetypes';
@@ -77,8 +77,8 @@ export function step(w: SimWorld, opts: StepOptions = {}): void {
   }
   lap('0 topology');
 
-  // snapshot for render interpolation
-  for (const v of w.vehicles.values()) v.prev = snapshot(v);
+  // snapshot for render interpolation, into each vehicle's own `prev` (no object a vehicle a tick)
+  for (const v of w.vehicles.values()) snapshotInto(v);
   w.pedEngine.beginTick(w);
 
   // 1. signals: the sole mutator of phase state

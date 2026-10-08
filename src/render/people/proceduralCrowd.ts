@@ -769,8 +769,10 @@ export interface ProceduralCrowd {
    * `matrix`, `clip`, `phase` (and `pixels`). `eye`: where the camera is, so
    * the people nearest it get their hair's strands. `time`: the simulation's
    * seconds, which the faces live by (still while paused); wall time without it.
+   * `shadows`: whether shadows are drawn at all (the quality tier) - the far
+   * people's soft discs follow it.
    */
-  update(eye?: Vector3, time?: number): void;
+  update(eye?: Vector3, time?: number, shadows?: boolean): void;
   /** The skeletons worked out on the GPU (`crowdAnimation.ts`): once a frame, after `update`, before the scene is drawn. */
   renderPalettes(renderer: WebGLRenderer): void;
   /**
@@ -2123,7 +2125,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
         refresh(person);
       },
     },
-    update(eye, simTime) {
+    update(eye, simTime, shadows = true) {
       const time = simTime ?? performance.now() / 1000;
       levelCount.fill(0);
       trianglesDrawn = 0;
@@ -2195,7 +2197,7 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
             faces = true;
           }
           // The far ones' shadow: a soft disc under them.
-          if (st.level >= 2) blobs.add(person.matrix, BLOB_RADIUS * person.scale);
+          if (st.level >= 2 && shadows) blobs.add(person.matrix, BLOB_RADIUS * person.scale);
         }
         if (faces) cls.uniforms.procExprW.value.needsUpdate = true;
         for (const piece of cls.pieces) {

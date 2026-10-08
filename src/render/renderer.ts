@@ -817,6 +817,17 @@ export function createSceneRenderer(
     const across = Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
     return Math.max(tall, across * 0.4);
   };
+  /**
+   * CSS pixels a world unit across the screen at (x, y, z) - the viewport's
+   * zoom, there: a vehicle's level of detail, against the zoom bands it was
+   * drawn by.
+   */
+  const screenScale = (x: number, y: number, z: number): number => {
+    const halfW = renderer.domElement.clientWidth * 0.5, halfH = renderer.domElement.clientHeight * 0.5;
+    pixelFoot.set(x, z, -y).applyMatrix4(crowdProjection);
+    pixelOther.set(x, z, -y).add(cameraRight).applyMatrix4(crowdProjection);
+    return Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
+  };
   // A vehicle is tested with its own reach, grown by its height towards the
   // sun's side: an off-screen truck near the edge still casts a shadow onto it.
   const vehicleBounds = new Sphere(new Vector3(), 1);
@@ -2624,6 +2635,8 @@ export function createSceneRenderer(
         pedestrianDetail: quality.pedestrianDetail,
         pedestrianVisible,
         personPixels,
+        screenScale,
+        shadows: renderer.shadowMap.enabled,
         eye: cullCamera.position,
         vehicleVisible,
         occupantZoom: quality.occupantZoom,

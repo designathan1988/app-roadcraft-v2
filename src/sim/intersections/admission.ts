@@ -75,12 +75,41 @@ const RANK: Record<RowClass, number> = {
 export function stepAdmission(w: SimWorld): void {
   revokeStaleGrants(w);
   holdings = new Map();
+  // Who was admitted to which connector, and who holds anything: read by
+  // every request's tests, which went through the whole fleet each time.
+  admittedBy = new Map();
+  holders = new Set();
+  for (const v of w.vehicles.values()) {
+    if (v.admittedConnector) {
+      const list = admittedBy.get(v.admittedConnector);
+      if (list) list.push(v); else admittedBy.set(v.admittedConnector, [v]);
+    }
+    if (holdingOf(w, v).allocation.size) holders.add(v);
+  }
   try {
     admit(w);
   } finally {
     holdings = null;
     pending = null;
+    admittedBy = null;
+    holders = null;
   }
+}
+
+/** This pass's vehicles by the connector they were admitted to. Null outside `stepAdmission`. */
+let admittedBy: Map<string, Vehicle[]> | null = null;
+/**
+ * This pass's vehicles that hold something (a non-empty allocation), and
+ * those granted something since it began. Null outside `stepAdmission`.
+ */
+let holders: Set<Vehicle> | null = null;
+/** A vehicle granted something in this pass: it holds now, and is admitted to `conn`. */
+function granted(v: Vehicle, conn: string | null): void {
+  holders?.add(v);
+  if (conn === null || !admittedBy) return;
+  const list = admittedBy.get(conn);
+  if (!list) admittedBy.set(conn, [v]);
+  else if (!list.includes(v)) list.push(v);
 }
 
 /** This pass's requests, by node. Null outside `stepAdmission`. */
@@ -204,6 +233,7 @@ function admit(w: SimWorld): void {
       r.v.admittedConnector = r.conn.id;
       w.mergeTurn.set(r.conn.toLane, r.conn.fromLane);
       holdings?.delete(r.v.id);
+      granted(r.v, r.conn.id);
       // Waiting time before admission is ordinary queueing, not time spent
       // holding a reservation.  Start the watchdog clock at the grant.
       r.v.lastMovedTick = w.clock.tick;
@@ -565,12 +595,13 @@ function movementReservedByOther(w: SimWorld, v: Vehicle, conn: Connector): bool
   if (w.conflicts.refs(conn.id).length > 0) return false;
 
   const need = v.archetype.length + Math.max(JAM_GAP, v.driver.s0);
-  for (const other of w.vehicles.values()) {
-    if (other.id === v.id) continue;
-    // Granted, but still on its approach: the movement is theirs.
-    if (other.admittedConnector === conn.id) return true;
-    if (other.lanelet !== conn.id) continue;
-    // Already on it: only room decides.
+  // Granted, but still on its approach: the movement is theirs.
+  const admitted = admittedBy ? admittedBy.get(conn.id) ?? [] : w.vehicles.values();
+  for (const other of admitted) if (other.id !== v.id && other.admittedConnector === conn.id) return true;
+  // Already on it: only room decides (those on the connector, from its occupancy).
+  for (const id of w.runtime.get(conn.id)?.order ?? []) {
+    const other = w.vehicles.get(id);
+    if (!other || other.id === v.id || other.lanelet !== conn.id) continue;
     if (other.s < need) return true;
   }
   return false;
@@ -795,7 +826,16 @@ function bankerSafeAfterGrant(
   for (const intention of proposal) for (const r of connectorResources(w, intention.connector)) mine.add(r);
   for (const r of actualAllocation(w, applicant)) mine.add(r);
 
-  for (const vehicle of w.vehicles.values()) {
+  // The applicant, then those holding anything: a vehicle that holds nothing
+  // is skipped below (it cannot be part of a deadlock), so it is not read at
+  // all. The verdict does not depend on the order (a fixed point, and a
+  // double holding is found whichever holder comes first).
+  const others: Iterable<Vehicle> = holders ?? w.vehicles.values();
+  let first = true;
+  for (const vehicle of [applicant, ...others]) {
+    // The applicant once, first.
+    if (!first && vehicle.id === applicant.id) continue;
+    first = false;
     let allocation: Set<ResourceKey>;
     let maximum: Set<ResourceKey>;
     if (vehicle.id === applicant.id) {

@@ -209,6 +209,8 @@ function doorAlongFromFront(v: Vehicle, door: number): number {
 
 /** One step of every errand. The only writer of `kerbStop` and `doors`. */
 export function stepKerbStops(w: SimWorld): void {
+  // Filed again at the first door that asks this step (`roomToOpen`).
+  middles = null;
   for (const v of w.vehiclesInIdOrder()) {
     const stop = v.kerbStop;
     if (!stop) {
@@ -491,15 +493,41 @@ function roomToOpen(w: SimWorld, v: Vehicle, stop: KerbStop): boolean {
   if (people.anyoneWithin(w, door.x, door.y, DOOR_CLEAR, stop.pedId)) return false;
   if (stop.kind === 'drop' && people.anyoneWithin(w, foot.x, foot.y, m(0.9), stop.pedId)) return false;
   // Nothing in the lane beside the door either: a cyclist or a motorcycle
-  // squeezing past on the kerb side would ride into it.
-  for (const other of w.vehicles.values()) {
-    if (other.id === v.id) continue;
-    const o = w.lanelet(other.lanelet);
-    if (!o) continue;
-    const p = o.centre.sampleAt(Math.min(Math.max(0, other.s - other.archetype.length / 2), o.length)).p;
-    if (Math.hypot(p.x - door.x, p.y - door.y) < DOOR_CLEAR + other.archetype.length / 2) return false;
+  // squeezing past on the kerb side would ride into it. The vehicles' middles
+  // filed by cell once this step (nothing moves while the stops are stepped):
+  // every door asked every vehicle in town before.
+  const grid = middles ??= fileMiddles(w);
+  const reach = DOOR_CLEAR + grid.half;
+  const gx0 = Math.floor((door.x - reach) / MIDDLE_CELL), gx1 = Math.floor((door.x + reach) / MIDDLE_CELL);
+  const gy0 = Math.floor((door.y - reach) / MIDDLE_CELL), gy1 = Math.floor((door.y + reach) / MIDDLE_CELL);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    for (const o of grid.cells.get(gx * 65536 + gy) ?? []) {
+      if (o.id === v.id) continue;
+      if (Math.hypot(o.x - door.x, o.y - door.y) < DOOR_CLEAR + o.half) return false;
+    }
   }
   return true;
+}
+
+/** Cells of the vehicles' middles (`roomToOpen`). */
+const MIDDLE_CELL = m(16);
+/** This step's vehicles' middles by cell, and the longest half-length among them. Null: not filed yet. */
+let middles: { cells: Map<number, { id: number; x: number; y: number; half: number }[]>; half: number } | null = null;
+function fileMiddles(w: SimWorld): NonNullable<typeof middles> {
+  const cells = new Map<number, { id: number; x: number; y: number; half: number }[]>();
+  let longest = 0;
+  for (const other of w.vehicles.values()) {
+    const o = w.lanelet(other.lanelet);
+    if (!o) continue;
+    const half = other.archetype.length / 2;
+    const p = o.centre.sampleAt(Math.min(Math.max(0, other.s - half), o.length)).p;
+    const k = Math.floor(p.x / MIDDLE_CELL) * 65536 + Math.floor(p.y / MIDDLE_CELL);
+    const entry = { id: other.id, x: p.x, y: p.y, half };
+    const list = cells.get(k);
+    if (list) list.push(entry); else cells.set(k, [entry]);
+    if (half > longest) longest = half;
+  }
+  return { cells, half: longest };
 }
 
 function beginTransfer(w: SimWorld, v: Vehicle, stop: KerbStop): void {

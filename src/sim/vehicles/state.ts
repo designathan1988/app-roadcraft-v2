@@ -266,6 +266,22 @@ export function snapshot(v: Vehicle): Kinematics {
   return { lanelet: v.lanelet, s: v.s, v: v.v, lateral: v.lateral, lateralSlope: v.lateralSlope, rearPath: v.rearPath };
 }
 
+/**
+ * `snapshot` written into the vehicle's own `prev`, every field of it: the
+ * tick's snapshot for the renderer's interpolation without a new object a
+ * vehicle a tick. Each vehicle's `prev` is its own (made by `snapshot` or
+ * `createVehicle`), and nobody keeps an old one.
+ */
+export function snapshotInto(v: Vehicle): void {
+  const p = v.prev as { -readonly [K in keyof Kinematics]: Kinematics[K] };
+  p.lanelet = v.lanelet;
+  p.s = v.s;
+  p.v = v.v;
+  p.lateral = v.lateral;
+  p.lateralSlope = v.lateralSlope;
+  p.rearPath = v.rearPath;
+}
+
 export function createVehicle(
   id: VehicleId,
   archetype: Archetype,

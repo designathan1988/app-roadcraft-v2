@@ -54,6 +54,7 @@ import {
 } from './vehicleModels';
 import { HELMET_SEGMENTS, STEER_FULL } from './riderPoses';
 import { DOOR_SWING, createKerbFigure, kerbFigure, occupantPlays, type Play } from './occupants';
+import { createBlobShadows } from './blobShadows';
 
 /**
  * Vehicles and riders use the original instanced batches. Citizens use
@@ -110,6 +111,22 @@ const FAR_BODY_ZOOM = 0.7;
  */
 const OCCUPANT_ZOOM = 1.2;
 
+/**
+ * Each vehicle's own level, by the screen's scale where it stands (`screenScale`,
+ * CSS pixels a world unit: the zoom, there) against the same bands the zoom
+ * draws by - so in the view from above it is drawn as before, and in
+ * perspective the far ones are coarser - as three's `LOD` switches each
+ * object by its own distance, with a tenth of hysteresis (going up a level
+ * needs the edge passed by that much): whole (its cabin, plates and the people
+ * in it) from the occupant zoom, the body, glass, wheels and lamps from
+ * `FAR_BODY_ZOOM`, the far proxy while a car is 2 px long; nothing below.
+ */
+const VEHICLE_HYSTERESIS = 0.1;
+/** A car's length, for the smallest scale anything is drawn at (2 px). */
+const CAR_LENGTH = m(4.5);
+/** At most this many vehicles whole at once: past it, the smallest on the screen are drawn a level down. */
+const VEHICLE_NEAR_CAP = 200;
+
 const SIDES = [1, -1] as const;
 
 /**
@@ -160,6 +177,10 @@ export interface AgentRenderOptions {
    * pixels: the procedural people's level of detail (`people/crowdLod.ts`).
    */
   readonly personPixels?: (x: number, y: number, z: number, height: number) => number;
+  /** Pixels a world unit across the screen at (x, y, z): each vehicle's level of detail. */
+  readonly screenScale?: (x: number, y: number, z: number) => number;
+  /** Whether shadows are drawn at all (the quality tier): the far ones' soft discs follow it. */
+  readonly shadows?: boolean;
 }
 
 export interface AgentMeshes {
@@ -685,6 +706,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     readonly roof: Part | null;
     readonly roofGlass: Part | null;
     readonly accent: Part | null;
+    /** The body, roof and accent of the middle level: the same, casting no shadow (a soft disc instead). */
+    readonly shellLite: Part;
+    readonly roofLite: Part | null;
+    readonly accentLite: Part | null;
     readonly far: Part;
     readonly steering: Part | null;
   }
@@ -729,7 +754,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       roof: model.roof ? instanced(`car-${id}-roof`, model.roof, paint, MAX_VEHICLES) : null,
       roofGlass: model.roof ? instanced(`car-${id}-roofglass`, model.roof, glassMaterial, MAX_VEHICLES, false) : null,
       accent: model.accent ? instanced(`car-${id}-accent`, model.accent, paint, MAX_VEHICLES) : null,
-      far: instanced(`car-${id}-far`, model.far, paint, MAX_VEHICLES),
+      shellLite: instanced(`car-${id}-shell-lite`, model.shell, paint, MAX_VEHICLES, false),
+      roofLite: model.roof ? instanced(`car-${id}-roof-lite`, model.roof, paint, MAX_VEHICLES, false) : null,
+      accentLite: model.accent ? instanced(`car-${id}-accent-lite`, model.accent, paint, MAX_VEHICLES, false) : null,
+      // A car under twelve pixels: its shadow is the soft disc under it.
+      far: instanced(`car-${id}-far`, model.far, paint, MAX_VEHICLES, false),
       steering: model.steering ? instanced(`car-${id}-wheel`, model.steering.geometry, cabinMaterial, MAX_VEHICLES, false) : null,
     });
   }
@@ -745,8 +774,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   }
   const carPartList: Part[] = [...carParts.values()].flatMap((c) => [
     c.shell, c.glass, c.interior, c.openShell, c.openGlass, c.openInterior, ...c.doors, ...c.doorGlass,
-    ...c.doorCards.filter((p): p is Part => p !== null), c.trim, c.far,
-    ...[c.roof, c.roofGlass, c.accent, c.steering].filter((p): p is Part => p !== null),
+    ...c.doorCards.filter((p): p is Part => p !== null), c.trim, c.far, c.shellLite,
+    ...[c.roof, c.roofGlass, c.accent, c.steering, c.roofLite, c.accentLite].filter((p): p is Part => p !== null),
   ]);
 
   interface TwoWheelerParts {
@@ -1128,7 +1157,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       if (person && procedural) procedural.ragdoll.drench(person);
     },
   };
-  const meshes = [...allParts.map((part) => part.mesh), pedestrians.group, ...(procedural ? [procedural.group] : [])];
+  /** The soft shadow under a vehicle below the whole level (`blobShadows.ts`). */
+  const vehicleBlobs = createBlobShadows('vehicle-shadows', MAX_VEHICLES, 0.4);
+  const meshes = [...allParts.map((part) => part.mesh), vehicleBlobs.mesh, pedestrians.group, ...(procedural ? [procedural.group] : [])];
 
   const object = new Object3D();
   // Yaw outermost, so the third Euler component becomes a rotation about the
@@ -1212,8 +1243,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   };
   const partPoint = { x: 0, y: 0, h: 0 };
 
-  /** Per-vehicle suspension state: the frame eases towards the road, never snaps. */
-  const suspension = new Map<number, { deck: number; pitch: number; roll: number; seen: number }>();
+  /** Per-vehicle suspension state: the frame eases towards the road, never snaps. And the level it was drawn at. */
+  const suspension = new Map<number, { deck: number; pitch: number; roll: number; seen: number; lod: number }>();
+  const blobMatrix = new Matrix4();
+  /** This frame's whole-level candidates' lengths on the screen, and the least one may have (last frame's cap). */
+  const nearCandidates: number[] = [];
+  let nearFloor = 0;
   let suspensionClock = typeof performance !== 'undefined' ? performance.now() : 0;
   let suspensionDt = 0;
   /**
@@ -1263,7 +1298,29 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       part.mesh.setColorAt(part.n, colour);
       part.tinted = true;
     }
+    if (recording) recording.push({ part, m: new Float32Array(object.matrix.elements), tint });
     part.n++;
+  };
+  /**
+   * A parked car's instances as written (`place`), kept while it stands where
+   * it stood: written again by copying, with none of the sums (the town's
+   * parked cars were worked out afresh every frame).
+   */
+  interface Written { readonly part: Part; readonly m: Float32Array; readonly tint: number }
+  let recording: Written[] | null = null;
+  const parkedDraws = new Map<number, { x: number; y: number; angle: number; deck: number; band: number; paint: number; writes: Written[]; seen: number }>();
+  const replay = (writes: readonly Written[]): void => {
+    for (const rec of writes) {
+      const part = rec.part;
+      if (part.n >= part.mesh.instanceMatrix.count) continue;
+      (part.mesh.instanceMatrix.array as Float32Array).set(rec.m, part.n * 16);
+      if (rec.tint >= 0) {
+        colour.setHex(rec.tint);
+        part.mesh.setColorAt(part.n, colour);
+        part.tinted = true;
+      }
+      part.n++;
+    }
   };
 
   /** Road wheels, plus their hubs at the closest band. */
@@ -1321,8 +1378,10 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       return;
     }
     const doorsMoving = vehicle.doors.length > 0;
+    // Real shadows from the whole vehicle only; the middle level's is a soft disc (`sync`).
+    const shell = band >= 2 ? car.shell : car.shellLite;
     if (!doorsMoving && look.windowsDown === 0) {
-      place(car.shell, 0, 0, 0, 1, 1, 1, paintHex);
+      place(shell, 0, 0, 0, 1, 1, 1, paintHex);
       place(car.glass, 0, 0, 0, 1, 1, 1, -1);
     } else if (!doorsMoving) {
       // A window down: the fixed glazing, then each door's window, lowered
@@ -1330,7 +1389,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // never seen outside the door, and the person beside it shows through
       // the opening. `windowsDown` was worked out for every car and never
       // read: every window was always shut.
-      place(car.shell, 0, 0, 0, 1, 1, 1, paintHex);
+      place(shell, 0, 0, 0, 1, 1, 1, paintHex);
       place(car.openGlass, 0, 0, 0, 1, 1, 1, -1);
       model.doors.forEach((door, i) => {
         const down = (look.windowsDown & (door.side === -1 ? 1 : 2)) !== 0 && door.kind === 'hinge';
@@ -1357,11 +1416,13 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         place(car.doorGlass[i]!, door.hingeX, -door.hingeZ, 0, 1, 1, 1, -1, 0, door.side * swing);
       });
     }
-    if (car.roof && car.roofGlass) {
+    const roof = band >= 2 ? car.roof : car.roofLite;
+    const accent = band >= 2 ? car.accent : car.accentLite;
+    if (roof && car.roofGlass) {
       if (look.glassRoof) place(car.roofGlass, 0, 0, 0, 1, 1, 1, -1);
-      else place(car.roof, 0, 0, 0, 1, 1, 1, look.blackRoof ? 0x15171a : paintHex);
+      else place(roof, 0, 0, 0, 1, 1, 1, look.blackRoof ? 0x15171a : paintHex);
     }
-    if (car.accent) place(car.accent, 0, 0, 0, 1, 1, 1, look.accent);
+    if (accent) place(accent, 0, 0, 0, 1, 1, 1, look.accent);
     placeWheels(plan, band);
 
     place(car.trim, 0, 0, 0, 1, 1, 1, -1);
@@ -1822,6 +1883,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       rowsDrawn = zoom >= occupantZoom * 1.6 ? Infinity : 0;
 
       let drawn = 0;
+      const screenScale = options.screenScale;
+      const softShadows = options.shadows !== false;
+      let whole = 0;
+      nearCandidates.length = 0;
+      vehicleBlobs.begin();
+      if (suspensionFrame % 600 === 0) for (const [id, entry] of parkedDraws) if (suspensionFrame - entry.seen > 120) parkedDraws.delete(id);
       // The traffic, then the residents' own cars off the road: parked in their
       // bays or manoeuvring in and out (`sim/agents`), on the ground of the lot.
       const offRoad = world.city.cars?.offRoad() ?? NO_VEHICLES;
@@ -1837,8 +1904,43 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // Off screen, and too far from it for its shadow to fall on it:
         // nothing of this vehicle is written this frame.
         if (options.vehicleVisible && !options.vehicleVisible(pose.p.x, pose.p.y, deck, plan.length * 0.5 + plan.height * 2)) continue;
-        // A parked car's engine is off; a bicycle has none.
-        if (options.exhaust && plan.shape !== 'bicycle' && !(free && vehicle.v === 0 && vehicle.seats === 0)) {
+        // Its own level, by the screen's scale where it stands (a tenth of hysteresis going up).
+        let ride = suspension.get(vehicle.id);
+        const pixels = screenScale ? screenScale(pose.p.x, pose.p.y, deck) : Infinity;
+        const was = ride?.lod ?? -1;
+        let own = -1;
+        for (let level = 2; level >= 0; level--) {
+          const edge = level === 2 ? occupantZoom : level === 1 ? FAR_BODY_ZOOM : 2 / CAR_LENGTH;
+          if (pixels >= (level > was ? edge * (1 + VEHICLE_HYSTERESIS) : edge)) { own = level; break; }
+        }
+        if (own < 0) continue;
+        // Whole: at most `VEHICLE_NEAR_CAP`, the biggest on the screen (last frame's floor).
+        if (own === 2) {
+          nearCandidates.push(pixels);
+          if (pixels < nearFloor || whole >= VEHICLE_NEAR_CAP) own = 1;
+          else whole++;
+        }
+        const level = Math.min(vehicleBand, own);
+        const parked = free && vehicle.seats === 0 && vehicle.v === 0;
+        // Standing where it stood, drawn as it was: its instances copied, none of the sums.
+        const still = parked && !twoWheeled && vehicle.doors.length === 0;
+        if (still) {
+          const kept = parkedDraws.get(vehicle.id);
+          if (kept && kept.x === pose.p.x && kept.y === pose.p.y && kept.angle === pose.angle && kept.deck === deck
+            && kept.band === level && kept.paint === hexOf(vehicle.color)) {
+            replay(kept.writes);
+            kept.seen = suspensionFrame;
+            if (ride) { ride.seen = suspensionFrame; ride.lod = own; }
+            if (level < 2 && softShadows) {
+              blobMatrix.makeRotationY(pose.angle).setPosition(pose.p.x, deck, -pose.p.y);
+              vehicleBlobs.add(blobMatrix, plan.length * 0.55, plan.width * 0.62);
+            }
+            drawn++;
+            continue;
+          }
+        }
+        // A parked car's engine is off; a bicycle has none. Far off (the proxy), no smoke drawn.
+        if (options.exhaust && level >= 1 && plan.shape !== 'bicycle' && !parked) {
           // Off the road (a lot, a drive) the wheels raise dust.
           options.exhaust(pose.p.x, pose.p.y, deck, pose.angle, plan.length, vehicle.v, free);
         }
@@ -1854,8 +1956,14 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         const seg = lane?.segment ?? (lane ? world.connector(lane.id)?.inSegment : undefined);
         currentSegment = seg;
         // A car off the road stands level on its lot (lots are laid near flat).
-        const want = free ? { deck, pitch: 0, roll: 0 } : roadFrame(elevationOnCurrent, pose.p.x, pose.p.y, pose.angle, front, rear,
-          twoWheeled ? 0 : plan.axleSide, deck);
+        // The road's slope under it worked out every frame whole, every other
+        // frame at the middle level (the last one held between), and not at
+        // all far off (level, on the one height sampled): five samples a
+        // vehicle were the frame's biggest share of its heights.
+        const slope = !free && (level >= 2 || twoWheeled || !ride || (level === 1 && ((suspensionFrame + vehicle.id) & 1) === 0));
+        const want = free || (level === 0 && !twoWheeled) ? { deck, pitch: 0, roll: 0 }
+          : slope ? roadFrame(elevationOnCurrent, pose.p.x, pose.p.y, pose.angle, front, rear, twoWheeled ? 0 : plan.axleSide, deck)
+            : { deck, pitch: ride!.pitch, roll: ride!.roll };
         const wantDeck = want.deck;
         const wantPitch = want.pitch;
         const wantRoll = want.roll;
@@ -1865,9 +1973,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // by metres at speed and the wheels sank into a climb (the contact
         // test, tests/render/vehicleFrame.spec.ts). Grade breaks themselves
         // are rounded by the road's vertical curves (world/elevation.ts).
-        let ride = suspension.get(vehicle.id);
         if (!ride || Math.abs(ride.pitch - wantPitch) > 0.2) {
-          ride = { deck: wantDeck, pitch: wantPitch, roll: wantRoll, seen: suspensionFrame };
+          ride = { deck: wantDeck, pitch: wantPitch, roll: wantRoll, seen: suspensionFrame, lod: own };
           suspension.set(vehicle.id, ride);
         } else {
           const k = 1 - Math.exp(-suspensionDt / SUSPENSION_TAU);
@@ -1875,6 +1982,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           ride.roll += (wantRoll - ride.roll) * k;
           ride.deck = wantDeck;
           ride.seen = suspensionFrame;
+          ride.lod = own;
         }
         frameAt(pose.p.x, pose.p.y, pose.angle, ride.deck,
           twoWheeled ? leanOf(world, vehicle) + (fit ? fit.stopTilt * (1 - riderMoving(vehicle)) : 0) : 0,
@@ -1886,7 +1994,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           looks.set(vehicle.id, lookEntry);
         } else lookEntry.seen = suspensionFrame;
         const look = lookEntry.look;
-        occupantBand = vehicleBand;
+        occupantBand = twoWheeled ? vehicleBand : level;
         frameClock = vehicle.age;
 
         // Brakes and indicators, straight off the simulation. `prev` is the
@@ -1894,23 +2002,26 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         // acceleration without storing anything new on the vehicle.
         const decel = (vehicle.prev.v - vehicle.v) / DT;
         // A car standing in its bay with nobody in it has its lamps off.
-        const parked = free && vehicle.seats === 0 && vehicle.v === 0;
         lamp.head = parked ? HEADLAMP_OFF : HEADLAMP;
         lamp.tail = parked ? TAILLAMP_OFF : decel >= BRAKE_DECEL ? BRAKELAMP : TAILLAMP;
         // `lateral` is the unfinished part of a lane change, signed towards
         // the lane being left - so the vehicle is heading the other way.
         // Indicators for a turn ahead, a lane change wanted or under way, and
         // flashing (`vehicleSignals.ts`); the front wheels steer along the
-        // path and every wheel rolls with the distance driven.
-        const side = free ? 0 : indicatorSide(world, vehicle);
-        lamp.indicate = side !== 0 && blinkOn(vehicle.age, vehicle.id) ? side : 0;
-        const axles = plan.axleAlong;
-        lamp.steer = free ? 0 : steerAngle(world, vehicle, (axles[0] ?? 0) - (axles[axles.length - 1] ?? 0));
-        const driven = odometer.advance(vehicle);
-        lamp.spin = -driven / Math.max(plan.wheelRadius, 1e-3);
-        // A bicycle's cranks turn a little over half a turn per turn of the
-        // wheel: about 80 rpm at a city cyclist's 18 km/h.
-        lamp.crank = (driven / (2 * Math.PI * Math.max(plan.wheelRadius, 1e-3))) * CRANK_RATIO * 2 * Math.PI;
+        // path and every wheel rolls with the distance driven. Far off (the
+        // proxy: no wheels, no indicators drawn) none of it is worked out.
+        if (level >= 1 || twoWheeled) {
+          const side = free ? 0 : indicatorSide(world, vehicle);
+          lamp.indicate = side !== 0 && blinkOn(vehicle.age, vehicle.id) ? side : 0;
+          const axles = plan.axleAlong;
+          lamp.steer = free ? 0 : steerAngle(world, vehicle, (axles[0] ?? 0) - (axles[axles.length - 1] ?? 0));
+          const driven = odometer.advance(vehicle);
+          lamp.spin = -driven / Math.max(plan.wheelRadius, 1e-3);
+          // A bicycle's cranks turn a little over half a turn per turn of the
+          // wheel: about 80 rpm at a city cyclist's 18 km/h.
+          lamp.crank = (driven / (2 * Math.PI * Math.max(plan.wheelRadius, 1e-3))) * CRANK_RATIO * 2 * Math.PI;
+        } else { lamp.indicate = 0; lamp.steer = 0; }
+        if (still) recording = [];
         switch (plan.shape) {
           case 'motorcycle':
           case 'bicycle':
@@ -1919,11 +2030,26 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           case 'car':
           case 'bus':
           case 'truck':
-            drawCar(vehicle, plan, paintHex, look, vehicleBand);
+            drawCar(vehicle, plan, paintHex, look, level);
             break;
+        }
+        if (still && recording) {
+          parkedDraws.set(vehicle.id, { x: pose.p.x, y: pose.p.y, angle: pose.angle, deck, band: level, paint: paintHex, writes: recording, seen: suspensionFrame });
+          recording = null;
+        }
+        // Below the whole level, its shadow is a soft disc (the body casts none).
+        if (!twoWheeled && level < 2 && softShadows) {
+          blobMatrix.makeRotationY(pose.angle).setPosition(pose.p.x, ride.deck, -pose.p.y);
+          vehicleBlobs.add(blobMatrix, plan.length * 0.55, plan.width * 0.62);
         }
         drawn++;
       }
+      vehicleBlobs.finish();
+      // Next frame's floor for the whole level: the cap's smallest of this frame.
+      if (nearCandidates.length > VEHICLE_NEAR_CAP) {
+        nearCandidates.sort((a, b) => b - a);
+        nearFloor = nearCandidates[VEHICLE_NEAR_CAP - 1]!;
+      } else nearFloor = 0;
 
       // Pedestrians start at band 1: zoomed out past it a whole person is
       // smaller than a car's wing mirror, and drawing the crowd there costs
@@ -1989,7 +2115,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         for (const id of procHeld) if (!procHeldNow.has(id)) { const p = procPeople.get(id)?.person; if (p) procedural.ragdoll.hold(p, null); }
         procHeld.clear();
         for (const id of procHeldNow) procHeld.add(id);
-        procedural.update(options.eye, gaitClock < 0 ? undefined : gaitClock);
+        procedural.update(options.eye, gaitClock < 0 ? undefined : gaitClock, options.shadows !== false);
       }
       pedestrians.finish();
 
