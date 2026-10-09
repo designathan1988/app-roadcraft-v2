@@ -46,6 +46,22 @@ UHD 770, cerca de 5× mais lenta que a RTX 3060 do jogador.
 
 Para não repetir:
 
+- **Pedestres girando nas esquinas (P16, `defects.spec`), 2026-10-08.**
+  Medido em four-way-avenues (90 s): os 101 eventos de inquietação são
+  todos em passos de esquina, na calçada, sem ninguém à frente. 51 deles têm
+  o alvo (0,9 m à frente) já no passo seguinte, na listra; 36 têm o alvo
+  no próprio passo, com o corpo fora da listra; 12 com a listra trocando.
+  Três tentativas, cada uma revertida, todas pioraram outras cidades:
+  (1) segurar o rumo parado abaixo de 20° (Reynolds): narrow-street travou
+  20 s na calçada e os encontros subiram a 2,3/min; (2) manter o mesmo
+  número de listra no passo seguinte: 8 cidades falharam (os eixos dos
+  passos não coincidem); (3) levar a listra pelo ponto onde ela termina em
+  cada passo (pure pursuit, sem realimentação): 7 falharam, player-city com
+  2,4/min. O acoplamento está entre o alvo curto, a freada na curva
+  (`want *= (cos(err) - 0,5) / 0,5`) e o passo de lado; tratar os três
+  juntos, com o diagnóstico de categorias (alvo neste/no próximo passo,
+  na/fora da listra) antes de cada mudança.
+
 - **LOD das pessoas (níveis por pixels na tela, malha longe, sombras em
   mancha).** Está ativo e reduz o custo por quadro. Não resolve a criação
   lenta, porque o custo está no cozimento, no encaixe e no rosto (P4-P6).
