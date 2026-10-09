@@ -297,6 +297,19 @@ function revokeStaleGrants(w: SimWorld): void {
 
     const conn = w.connector(v.admittedConnector);
     if (!conn || conn.fromLane !== lane.id) continue;
+    // The exit filled since the grant (spillback), and the holder stands short
+    // of its line: the box it may not enter without room to leave is given
+    // back, to be asked for again when there is room. Held, the points of the
+    // whole junction stayed reserved by a car that could not move - a
+    // motorcycle behind a car filling a ten-unit exit held them past ten
+    // seconds (fuzz `staleClaim`, seed 12).
+    if (v.v <= CONVOY_ROLLING && !hasDownstreamStorage(w, v, conn)) {
+      w.claims.releaseConnector(v.id, conn.id, w.conflicts);
+      v.claims = [...w.claims.points(v.id)];
+      v.admittedConnector = null;
+      v.reservedConnectors = [];
+      continue;
+    }
     const controller = w.controller(conn.node);
     if (!controller || !w.graph.junctions.get(conn.node)?.signalised) continue;
 
