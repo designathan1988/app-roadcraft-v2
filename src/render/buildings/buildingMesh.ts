@@ -484,6 +484,30 @@ class Emitter {
   }
 }
 
+/** The lantern: width, height and depth out of the wall; its gap from the door's edge. */
+const PORCH_LAMP = { w: m(0.16), h: m(0.26), d: m(0.12), gap: m(0.4) } as const;
+/** How far its light reaches over the wall round it, either way and up or down. */
+const PORCH_WASH = { half: m(1.1), up: m(1.3) } as const;
+
+/**
+ * The lantern beside a front door, a little under the door's head, on the
+ * side where the bay's wall has room for it (none where neither has), and
+ * the light it throws on the wall: a splash centred on it, kept to the bay's
+ * own wall so it never hangs past a corner.
+ */
+function emitPorchLight(e: Emitter, f: BayFace, W: number, am: number, w: number, top: number): void {
+  const right = am + w / 2 + PORCH_LAMP.gap;
+  const left = am - w / 2 - PORCH_LAMP.gap;
+  const room = PORCH_LAMP.w / 2 + m(0.05);
+  const a = right + room <= W ? right : left - room >= 0 ? left : null;
+  if (a === null) return;
+  const h = top - m(0.25);
+  e.put('lamp', f, a, h, -PORCH_LAMP.d / 2, PORCH_LAMP.w, PORCH_LAMP.h, PORCH_LAMP.d);
+  const half = Math.min(PORCH_WASH.half, a, W - a);
+  const up = Math.min(PORCH_WASH.up, h + m(0.3));
+  e.put('wash', f, a, h, -m(0.01), half * 2, up * 2, 1);
+}
+
 /** The light slot of a bay's window: the space on its floor behind it. */
 function slotOfBay(b: Building, v: Volume, bay: FacadeBay, spaces: ReturnType<typeof deriveSpaces>): number {
   if (b.id < 0) return -1;
@@ -936,6 +960,7 @@ function emitBay(
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.45), w + m(0.7), m(0.12), m(0.9));
         e.put('concrete', f, am, o.h1 + m(0.26), -m(0.88), w + m(0.7), m(0.2), m(0.05));
         for (const side of [-1, 1]) e.put('frame', f, am + side * (w / 2 + m(0.2)), o.h1 + m(0.12), -m(0.25), m(0.06), m(0.3), m(0.5));
+        emitPorchLight(e, f, W, am, w, o.h1);
       }
       break;
     case 'shopfront':
@@ -966,6 +991,7 @@ function emitBay(
       if (bay.level === 0) {
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.55), w + m(1), m(0.14), m(1.1));
         e.put('concrete', f, am, o.h1 + m(0.25), -m(1.08), w + m(1), m(0.24), m(0.05));
+        emitPorchLight(e, f, W, am, w, o.h1);
       }
       break;
     }
@@ -2913,6 +2939,8 @@ export function* assembleBuildingMeshesSteps(
   }
 
   for (const kind of selection?.parts ?? PART_KINDS) {
+    // A lantern's light on the wall is light, not a part: no ghost or faded copy of it.
+    if (kind === 'wash' && (ghost || dim)) continue;
     let count = 0;
     for (const chunk of chunks) count += chunk.parts[kind].count;
     if (count === 0) continue;

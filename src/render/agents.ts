@@ -53,6 +53,7 @@ import {
   merge, tyreGeometry, type TwoWheelerModel, type VehicleModel,
 } from './vehicleModels';
 import { HELMET_SEGMENTS, STEER_FULL } from './riderPoses';
+import { NIGHT_LUMINANCE, nightGain } from './lightLevels';
 import { DOOR_SWING, createKerbFigure, kerbFigure, occupantPlays, type Play } from './occupants';
 import { createBlobShadows } from './blobShadows';
 
@@ -317,6 +318,18 @@ const INDICATOR = 0xffa11c;
  * see the nose dip.
  */
 const BRAKE_DECEL = 1.0;
+/**
+ * How much brighter each lit lamp burns after dark (`lightLevels.ts`), by its
+ * colour: the instance's tint times `1 + gain * dark`. An unlit lamp and a
+ * number plate are not here: they do not light up.
+ */
+const LAMP_GAIN: ReadonlyMap<number, number> = new Map([
+  [HEADLAMP, nightGain(HEADLAMP, NIGHT_LUMINANCE.headlamp)],
+  [TAILLAMP, nightGain(TAILLAMP, NIGHT_LUMINANCE.tailLamp)],
+  [BRAKELAMP, nightGain(BRAKELAMP, NIGHT_LUMINANCE.brakeLamp)],
+  [INDICATOR, nightGain(INDICATOR, NIGHT_LUMINANCE.indicator)],
+  [DESTINATION, nightGain(DESTINATION, NIGHT_LUMINANCE.destination)],
+]);
 const BOX_BODY = 0xe6e8ea;
 
 /** Height of a seated head above the middle of its torso. */
@@ -661,8 +674,21 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const rubber = new MeshStandardMaterial({ roughness: 0.92, metalness: 0.05 });
   // Unlit, so a lamp stays bright inside a shadow — the only thing in the scene
   // for which that is correct. One material serves headlights, tail lights,
-  // destination blinds and number plates; the instance colour separates them.
+  // destination blinds and number plates; the instance colour separates them,
+  // and each instance's `glow` (`LAMP_GAIN`) is how much brighter it burns
+  // after dark: a red lamp reaches its own luminance, not a share of white's.
   const lampMaterial = new MeshBasicMaterial({ toneMapped: false });
+  const lampDark = { value: 0 };
+  lampMaterial.onBeforeCompile = (shader) => {
+    shader.uniforms['uDark'] = lampDark;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float glow;\nvarying float vGlow;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGlow = glow;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uDark;\nvarying float vGlow;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb *= 1.0 + uDark * vGlow;');
+  };
+  lampMaterial.customProgramCacheKey = () => 'vehicle-lamp-glow';
   const cloth = new MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
 
   const unitBox = new BoxGeometry(1, 1, 1);
@@ -681,6 +707,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   const thinWheels = instanced('bicycle-wheels', thinTyreGeometry, rubber, MAX_RIDERS * 2);
   const spokes = instanced('bicycle-spokes', spokedGeometry, trim, MAX_RIDERS * 2, false);
   const lamps = instanced('vehicle-lamps', unitBox, lampMaterial, MAX_VEHICLES * 9, false);
+  const lampGlow = new InstancedBufferAttribute(new Float32Array(MAX_VEHICLES * 9), 1);
+  lampGlow.setUsage(DynamicDrawUsage);
+  unitBox.setAttribute('glow', lampGlow);
   // A motorcyclist's helmet: a smooth shell, glossy like paint. Its facets
   // are fine enough that the head it is fitted to stays inside
   // (`riderPoses.HELMET_SEGMENTS`).
@@ -1351,6 +1380,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       part.mesh.setColorAt(part.n, colour);
       part.tinted = true;
     }
+    if (part === lamps) lampGlow.setX(part.n, LAMP_GAIN.get(tint) ?? 0);
     if (recording) recording.push({ part, m: new Float32Array(object.matrix.elements), tint, linear: tint >= 0 ? colour.clone() : null });
     part.n++;
   };
@@ -1376,6 +1406,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
         part.mesh.setColorAt(part.n, rec.linear);
         part.tinted = true;
       }
+      if (part === lamps) lampGlow.setX(part.n, LAMP_GAIN.get(rec.tint) ?? 0);
       part.n++;
     }
   };
@@ -1911,7 +1942,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     },
     setBleed: (fn) => { pedestrians.onBleed = fn; procBleed = fn; },
     setNight: (dark) => {
-      lampMaterial.color.setScalar(1 + 2.4 * dark);
+      lampDark.value = dark;
     },
     renderPalettes: (renderer) => procedural?.renderPalettes(renderer),
     sync(world, alpha, detailed, zoom = Number.POSITIVE_INFINITY, options = {}) {
@@ -2197,6 +2228,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           colour.clearUpdateRanges();
           if (part.n > 0) colour.addUpdateRange(0, part.n * 3);
           colour.needsUpdate = true;
+        }
+        if (part === lamps) {
+          lampGlow.clearUpdateRanges();
+          if (part.n > 0) lampGlow.addUpdateRange(0, part.n);
+          lampGlow.needsUpdate = true;
         }
         part.tinted = false;
       }

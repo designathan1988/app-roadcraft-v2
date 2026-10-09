@@ -20,7 +20,7 @@ import {
 import type { Network } from '@world/network';
 import { kerbward } from '@world/poleLines';
 import { m } from '@world/units';
-import type { SceneryKit } from './scenery';
+import { LAMP_BEAM_RADIUS, LAMP_POOL_RADIUS, type SceneryKit } from './scenery';
 import { GROUND_ONLY, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE } from '@world/roadTypes';
 import {
@@ -153,6 +153,7 @@ export function buildUtilities(
   const lampHeads: Placement[] = [];
   const lenses: Placement[] = [];
   const pools: Placement[] = [];
+  const beams: Placement[] = [];
   const wirePoints: number[] = [];
   /** Per wire vertex: weight along its span (0 at the poles), and the span's phase. */
   const wireSwing: number[] = [];
@@ -277,8 +278,12 @@ export function buildUtilities(
     });
     // The lens under the head and the pool of light on the street, lit with
     // the street lights' own materials, so they come on at dusk with them.
-    lenses.push({ x: headX, y: headY, z: headZ - POLE_LAMP_TALL - 0.01, yaw: reachYaw, sx: POLE_LAMP_LONG * 0.8, sy: 1, sz: POLE_LAMP_WIDE * 0.8 });
-    pools.push({ x: headX, y: headY, z: groundAt(headX, headY) + 0.03, yaw: 0, sx: m(4.6), sy: 1, sz: m(4.6) });
+    const lensZ = headZ - POLE_LAMP_TALL - 0.01;
+    const below = groundAt(headX, headY);
+    lenses.push({ x: headX, y: headY, z: lensZ, yaw: reachYaw, sx: POLE_LAMP_LONG * 0.8, sy: 1, sz: POLE_LAMP_WIDE * 0.8 });
+    pools.push({ x: headX, y: headY, z: below + 0.03, yaw: 0, sx: LAMP_POOL_RADIUS, sy: 1, sz: LAMP_POOL_RADIUS });
+    // And the cone of light between them.
+    beams.push({ x: headX, y: headY, z: lensZ, yaw: 0, sx: LAMP_BEAM_RADIUS, sy: Math.max(0.01, lensZ - below), sz: LAMP_BEAM_RADIUS });
   }
 
   // ------------------------------------------------------------------ wires
@@ -371,11 +376,13 @@ export function buildUtilities(
     instanced('utility-lamp-heads', boxGeometry, housing, lampHeads),
     instanced('utility-lamp-lenses', lensGeometry, kit.glow, lenses),
     instanced('utility-lamp-pools', kit.pool, kit.poolGlow, pools),
+    instanced('utility-lamp-beams', kit.beam, kit.beamGlow, beams),
   ].filter((mesh): mesh is InstancedMesh => mesh !== null);
 
   for (const mesh of meshes) {
-    if (mesh.name === 'utility-lamp-lenses' || mesh.name === 'utility-lamp-pools') mesh.castShadow = false;
+    if (mesh.name === 'utility-lamp-lenses' || mesh.name === 'utility-lamp-pools' || mesh.name === 'utility-lamp-beams') mesh.castShadow = false;
     if (mesh.name === 'utility-lamp-pools') { mesh.receiveShadow = false; mesh.renderOrder = 3; }
+    if (mesh.name === 'utility-lamp-beams') { mesh.receiveShadow = false; mesh.renderOrder = 4; }
   }
   let triangles = 0;
   for (const mesh of meshes) {
