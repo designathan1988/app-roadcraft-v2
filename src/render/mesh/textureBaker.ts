@@ -188,7 +188,13 @@ export function normalTexels(height: Float32Array, size: number, strength: numbe
   }
 }
 
-export function grayscaleCanvas(values: Float32Array, size: number): HTMLCanvasElement {
+/**
+ * Roughness in red and green and, when `metal` is given, metalness in blue:
+ * three reads roughness from G and metalness from B of their maps
+ * (roughnessmap_fragment, metalnessmap_fragment), the glTF 2.0
+ * metallicRoughnessTexture layout, so one texture serves as both.
+ */
+export function grayscaleCanvas(values: Float32Array, size: number, metal?: Float32Array): HTMLCanvasElement {
   const { canvas, ctx } = canvasOf(size);
   if (!ctx) return canvas;
   const image = ctx.createImageData(size, size);
@@ -196,7 +202,7 @@ export function grayscaleCanvas(values: Float32Array, size: number): HTMLCanvasE
     const v = Math.round(Math.min(1, Math.max(0, values[i] as number)) * 255);
     image.data[i * 4] = v;
     image.data[i * 4 + 1] = v;
-    image.data[i * 4 + 2] = v;
+    image.data[i * 4 + 2] = metal ? Math.round(Math.min(1, Math.max(0, metal[i] as number)) * 255) : v;
     image.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(image, 0, 0);
@@ -208,16 +214,23 @@ export interface SurfaceRecipe {
   /** World units covered by one tile of the texture. */
   readonly worldSize: number;
   /**
-   * Fills colour (0..1 rgb), height (0..1) and roughness (0..1) for one texel.
+   * Fills colour (0..1 rgb), height (0..1) and roughness (0..1) for one texel,
+   * and metalness (0..1, reset to 0 for each texel) where `metallic` is set.
    * `u`/`v` are texel coordinates, so a recipe can draw lines as well as noise.
    */
   readonly shade: (
     u: number,
     v: number,
-    out: { r: number; g: number; b: number; h: number; rough: number },
+    out: { r: number; g: number; b: number; h: number; rough: number; metal?: number },
   ) => void;
   /** Relief strength of the derived normal map. */
   readonly relief: number;
+  /**
+   * A surface of metal and non-metal side by side (a curtain wall's aluminium
+   * mullions round its glass): `out.metal` is baked into the blue channel of
+   * the roughness map, to be set as the material's `metalnessMap` too.
+   */
+  readonly metallic?: boolean;
 }
 
 /**
@@ -245,12 +258,14 @@ export function bakeSurface(key: string, recipe: SurfaceRecipe, anisotropy: numb
   const { canvas, ctx } = canvasOf(size);
   const height = new Float32Array(size * size);
   const rough = new Float32Array(size * size);
-  const out = { r: 0, g: 0, b: 0, h: 0, rough: 0.9 };
+  const metal = recipe.metallic ? new Float32Array(size * size) : undefined;
+  const out = { r: 0, g: 0, b: 0, h: 0, rough: 0.9, metal: 0 };
 
   if (ctx) {
     const image = ctx.createImageData(size, size);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
+        out.metal = 0;
         recipe.shade(x, y, out);
         const index = y * size + x;
         image.data[index * 4] = Math.round(Math.min(1, Math.max(0, out.r)) * 255);
@@ -259,6 +274,7 @@ export function bakeSurface(key: string, recipe: SurfaceRecipe, anisotropy: numb
         image.data[index * 4 + 3] = 255;
         height[index] = out.h;
         rough[index] = out.rough;
+        if (metal) metal[index] = out.metal;
       }
     }
     ctx.putImageData(image, 0, 0);
@@ -266,7 +282,7 @@ export function bakeSurface(key: string, recipe: SurfaceRecipe, anisotropy: numb
 
   const map = texture(canvas, true, 1, anisotropy);
   const normalMap = texture(normalMapFrom(height, size, recipe.relief), false, 1, anisotropy);
-  const roughnessMap = texture(grayscaleCanvas(rough, size), false, 1, anisotropy);
+  const roughnessMap = texture(grayscaleCanvas(rough, size, metal), false, 1, anisotropy);
   cache.set(`${key}:map`, map);
   cache.set(`${key}:normal`, normalMap);
   cache.set(`${key}:rough`, roughnessMap);

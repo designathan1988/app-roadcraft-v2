@@ -108,6 +108,11 @@ o jogo a cada edição.
   (máscara pela profundidade, `postprocess.ts` SHARP_MASK), sem grão de filme,
   normal maps com o azul codificado como o three lê, cor e luz de antes do
   `7e4032c6`, caixilhos desenhados também na câmera ortográfica.
+- Vidro dielétrico: vidraças e fachada de vidro com metalness 0 (o reflexo é o
+  Fresnel de 4 %); os montantes da fachada de vidro são alumínio pelo canal
+  azul do mapa de rugosidade (`textureBaker.ts` `metallic`); o quarto atrás da
+  janela é desenhado sem receber a luz da fachada, como no interior mapping
+  (`kit.ts` `roomDaylight`), e o sol já não pinta as vidraças de bege.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

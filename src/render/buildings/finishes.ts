@@ -24,6 +24,8 @@ interface FinishLook {
   readonly worldSize: number;
   readonly relief: number;
   readonly metalness: number;
+  /** Metal and non-metal in one texture (`SurfaceRecipe.metallic`): `metalness` scales the baked map. */
+  readonly metallic?: boolean;
   readonly envMapIntensity: number;
   /** Strength of the normal map on the material, 0..1. */
   readonly normalScale: number;
@@ -337,7 +339,12 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
     size: 256,
     worldSize: m(3),
     relief: 2,
-    metalness: 0.6,
+    // Glass is a dielectric and the mullions are aluminium: metalness is all
+    // but binary (Filament, "Metallic"; three's MeshStandardMaterial), so the
+    // map says which texel is which. One metalness of 0.6 over both made the
+    // panes a grey mirror and the frames as dull as the glass.
+    metalness: 1,
+    metallic: true,
     envMapIntensity: 1.4,
     normalScale: 0.3,
     shade: (size) => {
@@ -351,11 +358,14 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
         if (frame) {
           grey(out, 0.85);
           out.h = 1;
-          out.rough = 0.45;
+          out.rough = 0.4;
+          out.metal = 1;
           return;
         }
-        const tint = cellHash(Math.floor(x / pane), Math.floor(y / pane), 0x12) * 0.08;
-        grey(out, 0.5 + tint + (n((x / size) * 6, (y / size) * 6, 6) - 0.5) * 0.06);
+        // The pane: dark, as the light goes through it into a dim room; what
+        // it shows is its reflection (4 % head on, more towards grazing).
+        const tint = cellHash(Math.floor(x / pane), Math.floor(y / pane), 0x12) * 0.05;
+        grey(out, 0.16 + tint + (n((x / size) * 6, (y / size) * 6, 6) - 0.5) * 0.03);
         out.h = 0.4;
         out.rough = 0.07;
       };
@@ -409,7 +419,7 @@ export function createFinishMaterials(anisotropy = 8): Record<Finish, MeshStanda
     if (canBake) {
       const bake = bakeSurface(
         `building-${finish}`,
-        { size: look.size, worldSize: look.worldSize, relief: look.relief, shade: look.shade(look.size) },
+        { size: look.size, worldSize: look.worldSize, relief: look.relief, shade: look.shade(look.size), ...(look.metallic ? { metallic: true } : {}) },
         anisotropy,
       );
       const repeat = 1 / look.worldSize;
@@ -420,8 +430,11 @@ export function createFinishMaterials(anisotropy = 8): Record<Finish, MeshStanda
       // strong normal map turns render into popcorn and joints into trenches.
       material.normalScale.set(look.normalScale, look.normalScale);
       material.roughnessMap = bake.roughnessMap;
+      if (look.metallic) material.metalnessMap = bake.roughnessMap;
     } else {
       material.roughness = 0.9;
+      // No map to say where the metal is: the larger part, the glass.
+      if (look.metallic) material.metalness = 0;
     }
     material.name = `building-${finish}`;
     applyWeathering(material, finish);

@@ -43,6 +43,15 @@ export function awakeShare(hour: number): number {
 }
 /** The share the glass reads (`setNight`). */
 const roomsAwake = { value: awakeShare(22) };
+/**
+ * How bright a room seen through its window is by day, as light it sends out
+ * (`setNight`): a room is lit by the daylight its window lets in, not by the
+ * sun on the facade, so it is drawn unlit behind the glass, as interior
+ * mapping draws it (van Dongen 2008; SimCity's, rebuilt by Golus) - a quarter
+ * of its colour in full day, none at night (the lamps take over).
+ */
+const ROOM_DAYLIGHT = 0.25;
+const roomDaylight = { value: 0 };
 
 /**
  * Everything the buildings layer draws with, built ONCE per renderer.
@@ -367,9 +376,9 @@ export function createBuildingKit(): BuildingKit {
     // Both sides in the shadow pass: a pane is one-sided, and three draws a
     // front-sided material's BACK faces for shadows, so a pane facing the sun
     // would let it straight through.
-    // Light and glossy enough to carry the sky: a dark flat pane reads as a
-    // hole painted on the wall, not as glass.
-    glass: new MeshStandardMaterial({ color: 0x7c8e98, roughness: 0.06, metalness: 0.35, envMapIntensity: 1.6, shadowSide: DoubleSide }),
+    // Glossy enough to carry the sky. A dielectric (metalness 0, Filament "Metallic"): its sheen is the 4 %
+    // Fresnel reflection that grows towards grazing, never a tinted mirror.
+    glass: new MeshStandardMaterial({ color: 0x7c8e98, roughness: 0.06, metalness: 0, envMapIntensity: 1.6, shadowSide: DoubleSide }),
     // White: each frame takes its building's trim as an instance colour
     // (`buildingMesh.ts` COLOURED_PARTS) - black, bronze, green, wood, white.
     frame: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.05 }),
@@ -385,7 +394,7 @@ export function createBuildingKit(): BuildingKit {
     column: concrete,
     // Window variety: a pane that reflects less (a darker room behind it) and
     // a curtain drawn behind the frame - no two rows of windows alike.
-    glassDark: new MeshStandardMaterial({ color: 0x5d6c74, roughness: 0.08, metalness: 0.35, envMapIntensity: 1.3, shadowSide: DoubleSide }),
+    glassDark: new MeshStandardMaterial({ color: 0x5d6c74, roughness: 0.08, metalness: 0, envMapIntensity: 1.3, shadowSide: DoubleSide }),
     curtain: new MeshStandardMaterial({ color: 0xe9e1d2, roughness: 0.95, metalness: 0 }),
     // Pool water: clear, glossy and a little turquoise, the tiled floor showing
     // through it - not a blue tile texture laid at the rim.
@@ -423,6 +432,7 @@ export function createBuildingKit(): BuildingKit {
       shader.uniforms.litTable = { value: litTexture };
       shader.uniforms.litTableDriven = litTableDriven;
       shader.uniforms.roomsAwake = roomsAwake;
+      shader.uniforms.roomDaylight = roomDaylight;
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;\nattribute float litSlot;\nuniform sampler2D litTable;\nuniform float litTableDriven;\nuniform float roomsAwake;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -446,11 +456,12 @@ export function createBuildingKit(): BuildingKit {
     vLit = step(1.0 - roomsAwake, spaceLot);
   }`);
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;')
+        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;\nuniform float roomDaylight;')
         .replace('#include <color_fragment>', `#include <color_fragment>
   // The room behind the pane, faked (the windows read as black holes): a
   // back wall in the room's colour, a darker floor, a lighter ceiling, in
   // some rooms a curtain at a side or furniture against the wall.
+  vec3 roomSeen;
   {
     float lot = vRoomLot;
     vec3 wallC = mix(vec3(0.78, 0.72, 0.62), vec3(0.62, 0.68, 0.72), step(0.5, fract(lot * 5.3)));
@@ -463,7 +474,7 @@ export function createBuildingKit(): BuildingKit {
     room = mix(room, vec3(0.86, 0.82, 0.74), step(0.62, fract(lot * 13.0)) * step(side, 0.22));
     float furniture = step(0.5, fract(lot * 17.0)) * step(abs(xx - 0.55), 0.22) * step(yy, 0.42);
     room = mix(room, vec3(0.28, 0.22, 0.18), furniture * 0.85);
-    diffuseColor.rgb = mix(diffuseColor.rgb, room, 0.55);
+    roomSeen = mix(diffuseColor.rgb, room, 0.55);
   }
   // A pane a few pixels across or less: its own room, its dark or light
   // glass and its own reflection averaged into one quiet tone. Each pane
@@ -471,7 +482,12 @@ export function createBuildingKit(): BuildingKit {
   // the middle distance out (the player, 2026-10-09). Measured on screen
   // (\`vPane\` spans the pane), so it holds at any zoom and lens.
   float paneTiny = smoothstep(0.12, 0.45, max(fwidth(vPane.x), fwidth(vPane.y)));
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.45, 0.47), paneTiny);`)
+  roomSeen = mix(roomSeen, vec3(0.42, 0.45, 0.47), paneTiny);
+  // The glass itself scatters next to nothing: what a pane shows is the
+  // room through it (sent out below, \`roomDaylight\`) and its Fresnel
+  // reflection. Lit as a wall, the room took the sun on the facade and
+  // every sunny pane read as a painted beige panel.
+  diffuseColor.rgb *= 0.06;`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
   roughnessFactor = mix(roughnessFactor, 0.55, paneTiny);`)
         .replace('#include <envmap_physical_pars_fragment>', `#include <envmap_physical_pars_fragment>`)
@@ -484,9 +500,10 @@ export function createBuildingKit(): BuildingKit {
   float level = 0.3 + 0.85 * fract(vRoomLot * 7.13) * fract(vRoomLot * 2.17 + 0.4);
   float roomLit = shown * (vLit >= 0.0 ? vLit * level : step(0.34, vRoomLot) * level);
   vec3 roomTint = mix(vec3(1.0), vec3(0.62, 0.78, 1.15), step(0.9, fract(vRoomLot * 3.71)));
-  totalEmissiveRadiance *= roomLit * roomTint;`);
+  totalEmissiveRadiance *= roomLit * roomTint;
+  totalEmissiveRadiance += roomSeen * roomDaylight;`);
     };
-    glassy.customProgramCacheKey = () => `room-lights-awake-interior-v3-${kind}`;
+    glassy.customProgramCacheKey = () => `room-lights-awake-interior-v5-${kind}`;
   }
   const shell = createFinishMaterials();
   const ghostShell = new MeshStandardMaterial({
@@ -556,6 +573,7 @@ export function createBuildingKit(): BuildingKit {
         mat.emissive.setHex(ROOM_LIGHT);
         mat.emissiveIntensity = dark * k * room;
       }
+      roomDaylight.value = (1 - dark) * ROOM_DAYLIGHT;
       // The lanterns at the front doors, and their light on the wall.
       (material.lamp as MeshStandardMaterial).emissiveIntensity = dark * NIGHT_LUMINANCE.porchLamp / luminanceOf(PORCH_LIGHT);
       const wash = material.wash as MeshBasicMaterial;
