@@ -94,6 +94,22 @@ UHD 770, cerca de 5× mais lenta que a RTX 3060 do jogador.
 
 Para não repetir:
 
+- **Troca de faixa por vontade a cada 0,25 s em vez de a cada passo (P70), 2026-10-09.**
+  O MOBIL de `discretionary` é ~420 ms em 12 s de 400/400 a 4x; olhar a
+  cada 0,25 s (o "action step length" do SUMO, cujo passo padrão é 1 s)
+  cortaria quase tudo. Revertido. Mudar o ritmo das trocas mudou o tráfego de
+  `fourWay` avenues, e apareceu uma entrada no vermelho que não tem a ver com
+  troca de faixa: carro admitido no verde a 40 u/s, a 92 u da linha quando o
+  amarelo de 3,2 s acendeu (longe demais para parar com conforto), freando
+  para a curva, cruzou a linha 0,05 s depois do vermelho. O amarelo fixo é
+  curto para avenidas pelo ITE (Y = 1 + V/2a, V = limite + 7 mph, a = 3,05
+  m/s², entre 3 e 6 s; ~3,6-4 s numa avenida). Com o amarelo pelo ITE por
+  estágio, a entrada no vermelho some, mas o ciclo mais longo faz falhar a
+  espera na calçada da junção de cinco pernas (4,9 s contra 4) e a mediana
+  das conversões livres à direita (16,99 contra 17 km/h, amostra na borda).
+  Para refazer: o amarelo pelo ITE como mudança própria, medindo pedestres e
+  conversões; só então o passo de ação da troca de faixa.
+
 - **Pedestres girando nas esquinas (P16, `defects.spec`), 2026-10-08.**
   Resolvido em 2026-10-09 (P52) pelas regras do SUMO e pela tangente
   contínua, com rastro tick a tick de cada evento; o histórico abaixo fica
