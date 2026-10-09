@@ -35,7 +35,12 @@ import { applyWind, windDepthMaterial, type WindResponse } from './wind';
  * Pontus Karlsson and Michael Dougall). The cut edge is smoothed by alpha to
  * coverage on the multisampled target (three: "smooth aliasing on
  * alphaTest-clipped edges"). Conifers too, their cards smaller towards the
- * tip; only the palm keeps its geometry, its fronds being the tree.
+ * tip. The palm's fronds are cards of their own kind: long strips laid along
+ * each drooping frond, creased down the middle into a V (a straight centre
+ * edge to fold the card along, edges across it to let it droop - Polycount on
+ * leaf cards), carrying a pinnate frond cut by the same alpha; they lie in
+ * the model, not turned to the eye (the faceted fronds read as the old trees
+ * - the player, 2026-10-09).
  *
  * Proportions from a professional low-poly kit (Kenney's Nature Kit,
  * `public/models/nature/`: a crown 0.35 to 0.6 of the height across, a short
@@ -45,12 +50,14 @@ import { applyWind, windDepthMaterial, type WindResponse } from './wind';
  * Every model is ONE unit tall with its root at the origin (the wind shader,
  * `wind.ts`, reads local y as the fraction of the height). The body is
  * non-indexed with position, normal and colour; the cards carry, besides,
- * a uv and each corner's offset in the view's plane (`aCorner`).
+ * a uv into the foliage atlas (`foliageAtlas`: the leaf cluster on its left
+ * half, the palm frond on its right) and each corner's offset in the view's
+ * plane (`aCorner`, nought on a frond strip).
  */
 
 export type LowPolyKind = 'oak' | 'broadleafTall' | 'cypress' | 'palm' | 'ipeYellow' | 'ipePink' | 'bush' | 'bushFlowering' | 'hedge';
 
-/** A tree's two parts: its body (trunk, inner crown, or the whole of a conifer or palm) and its foliage cards. */
+/** A tree's two parts: its body (trunk, inner crown) and its foliage cards (a palm's: its frond strips). */
 export interface LowPolyParts {
   readonly body: BufferGeometry;
   readonly cards: BufferGeometry | null;
@@ -72,6 +79,7 @@ const NEEDLE = tone(0x22402a, 0x4a7343);
 const FROND = tone(0x3e6026, 0x7fa448);
 const BARK = tone(0x4a3c2f, 0x7d6853);
 const PALM_BARK = tone(0x5a4c3e, 0x948268);
+const NUT = tone(0x4a4a1e, 0x8a7c3a);
 const BLOOM_YELLOW = tone(0xb8892a, 0xe6bd4c);
 const BLOOM_PINK = tone(0x9a5078, 0xd88ab0);
 const SHRUB = tone(0x223d1b, 0x4a6e32);
@@ -143,8 +151,53 @@ class Builder {
   private readonly e = new Vector3();
   private readonly centre = new Vector3();
   readonly leaves: LeafPoint[] = [];
+  /** Frond strips (`frond`), laid flat: each corner's position, normal, colour and atlas uv. */
+  private readonly strip = { pos: [] as number[], nrm: [] as number[], col: [] as number[], uv: [] as number[] };
 
   constructor(readonly rng: () => number) {}
+
+  /**
+   * A palm frond's card: a strip along `spine` (its rachis, base to tip),
+   * `width` to each side along `side`, its edges `fold` times the width
+   * below the rachis - the V of a frond's leaflets hanging from the midrib.
+   * Mapped onto the atlas' frond (u 0.5 at one edge, 0.75 on the rachis, 1 at
+   * the other; v from base to tip); lit with the normal across the strip,
+   * tipped out at each edge; lighter towards the crown's top by `occlusion`.
+   */
+  frond(spine: readonly Vector3[], side: Vector3, width: number, fold: number, t: Tone, occlusion: Occlusion): void {
+    const along = new Vector3(), up = new Vector3(), n = new Vector3();
+    const rows: { p: Vector3[]; n: Vector3[]; c: [number, number, number] }[] = [];
+    for (let i = 0; i < spine.length; i++) {
+      const p = spine[i]!;
+      along.subVectors(spine[Math.min(spine.length - 1, i + 1)]!, spine[Math.max(0, i - 1)]!).normalize();
+      // The strip's own up: across it, out of the frond's top.
+      up.crossVectors(side, along).normalize();
+      if (up.y < 0) up.negate();
+      const drop = new Vector3(0, -width * fold, 0);
+      const left = p.clone().addScaledVector(side, -width).add(drop);
+      const right = p.clone().addScaledVector(side, width).add(drop);
+      const k = Math.min(1, Math.max(0, 0.5 + 0.3 * up.y + (this.rng() - 0.5) * 0.1)) * occlusion(p);
+      const c: [number, number, number] = [
+        (t.dark.r + (t.lit.r - t.dark.r) * k), (t.dark.g + (t.lit.g - t.dark.g) * k), (t.dark.b + (t.lit.b - t.dark.b) * k),
+      ];
+      const tip = (sign: number): Vector3 => n.copy(up).addScaledVector(side, sign * 0.45).normalize().clone();
+      rows.push({ p: [left, p.clone(), right], n: [tip(-1), up.clone(), tip(1)], c });
+    }
+    const corner = (row: number, col: number): void => {
+      const r = rows[row]!;
+      const p = r.p[col]!, q = r.n[col]!;
+      this.strip.pos.push(p.x, p.y, p.z);
+      this.strip.nrm.push(q.x, q.y, q.z);
+      this.strip.col.push(...r.c);
+      this.strip.uv.push(0.5 + col * 0.25, row / (rows.length - 1));
+    };
+    for (let i = 0; i + 1 < rows.length; i++) {
+      for (const col of [0, 1]) {
+        corner(i, col); corner(i, col + 1); corner(i + 1, col + 1);
+        corner(i, col); corner(i + 1, col + 1); corner(i + 1, col);
+      }
+    }
+  }
 
   /** One face: lighter facing the sky, a little shade of its own, times its occlusion. */
   tri(a: Vector3, b: Vector3, c: Vector3, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.15): void {
@@ -159,12 +212,6 @@ class Builder {
       this.pos.push(p.x, p.y, p.z);
       this.col.push(r, g, bl);
     }
-  }
-
-  /** A sheet seen from both sides (a frond): both windings. */
-  sheet(a: Vector3, b: Vector3, c: Vector3, t: Tone, occlusion: Occlusion = OPEN): void {
-    this.tri(a, b, c, t, occlusion);
-    this.tri(a, c, b, t, occlusion);
   }
 
   /** A three primitive, moved by `m`, its faces each their own shade; `pick` may give a face another tone. */
@@ -240,6 +287,8 @@ class Builder {
       top = Math.max(top, c.y + s * 0.45);
       placed.push({ leaf, s, c });
     }
+    const strip = this.strip;
+    for (let i = 1; i < strip.pos.length; i += 3) top = Math.max(top, strip.pos[i]!);
     const lift = -box.min.y;
     const scale = 1 / Math.max(1e-6, top - box.min.y);
     body.translate(0, lift, 0);
@@ -248,9 +297,17 @@ class Builder {
     body.computeVertexNormals();
     body.computeBoundingBox();
     body.computeBoundingSphere();
-    if (placed.length === 0) return { body, cards: null };
+    if (placed.length === 0 && strip.pos.length === 0) return { body, cards: null };
 
     const positions: number[] = [], normals: number[] = [], colours: number[] = [], uvs: number[] = [], corners: number[] = [];
+    // The frond strips as they lie: no offset in the view's plane.
+    for (let i = 0; i < strip.pos.length; i += 3) {
+      positions.push(strip.pos[i]! * scale, (strip.pos[i + 1]! + lift) * scale, strip.pos[i + 2]! * scale);
+      corners.push(0, 0);
+    }
+    normals.push(...strip.nrm);
+    colours.push(...strip.col);
+    uvs.push(...strip.uv);
     for (const { leaf, s, c } of placed) {
       c.y += lift;
       c.multiplyScalar(scale);
@@ -270,7 +327,8 @@ class Builder {
         corners.push(ou * cr - ow * sr, ou * sr + ow * cr);
         normals.push(nx / nl, ny / nl, nz / nl);
         colours.push(r, g, b);
-        uvs.push(u, w);
+        // The leaf cluster: the atlas' left half.
+        uvs.push(u * 0.5, w);
       };
       corner(0, 0); corner(1, 0); corner(1, 1);
       corner(0, 0); corner(1, 1); corner(0, 1);
@@ -369,47 +427,54 @@ function cypress(seed: number): LowPolyParts {
   return b.finish(70, 0.3);
 }
 
-/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. No cards. */
+/**
+ * The palm: a slender, leaning trunk, smooth but for faint rings, a dark
+ * crownshaft with a few nuts under it, and a crown of frond cards - the
+ * coconut's long pinnate leaves, their leaflets about a sixth of the frond
+ * long (Wikipedia, Coconut: fronds 4-6 m, pinnae 60-90 cm) - the old ones
+ * drooping, the young ones standing up out of the middle.
+ */
 function palm(seed: number): LowPolyParts {
   const b = new Builder(random(seed));
   const lean = 0.12 + b.rng() * 0.1, turn = b.rng() * Math.PI * 2;
   const leanDir = new Vector3(Math.cos(turn), 0, Math.sin(turn));
   // The trunk's line: up, bending out with the lean (a quadratic curve).
-  const at = (t: number): Vector3 => new Vector3(0, 0.82 * t, 0).addScaledVector(leanDir, lean * t * t);
-  const rings = 6;
+  const at = (t: number): Vector3 => new Vector3(0, 0.8 * t, 0).addScaledVector(leanDir, lean * t * t);
+  const rings = 5;
   for (let s = 0; s < rings; s++) {
-    const p0 = at(s / rings), p1 = at((s + 1.06) / rings);
-    const r = 0.04 * (1 - 0.35 * (s / rings));
-    // Each ring wider at its foot than its top: the stepped bark of a palm.
-    b.add(new CylinderGeometry(r * 0.86, r * 1.06, 1, 6, 1, true), along(p0, p1), PALM_BARK, OPEN, 0.1);
+    const p0 = at(s / rings), p1 = at((s + 1.02) / rings);
+    const r = 0.036 * (1 - 0.3 * (s / rings));
+    // Barely wider at each foot than its top: the faint rings of the leaf scars.
+    b.add(new CylinderGeometry(r * 0.95, r * 1.02, 1, 8, 1, true), along(p0, p1), PALM_BARK, OPEN, 0.06);
   }
   const crown = at(1);
-  const shade: Occlusion = (p) => 0.72 + 0.28 * Math.min(1, Math.max(0, (p.y - crown.y + 0.25) / 0.35));
-  const fronds = 7;
+  // The crownshaft and the nuts hanging under the fronds, in the crown's shade.
+  b.add(new IcosahedronGeometry(0.024, 1), new Matrix4().makeScale(1, 1.6, 1).premultiply(new Matrix4().makeTranslation(crown.x, crown.y - 0.012, crown.z)), PALM_BARK, () => 0.8, 0.1);
+  for (let k = 0; k < 4; k++) {
+    const a = b.rng() * Math.PI * 2;
+    b.add(new IcosahedronGeometry(0.016, 0), new Matrix4().makeTranslation(crown.x + Math.cos(a) * 0.03, crown.y - 0.035 - b.rng() * 0.012, crown.z + Math.sin(a) * 0.03), NUT, () => 0.7, 0.1);
+  }
+  const shade: Occlusion = (p) => 0.7 + 0.3 * Math.min(1, Math.max(0, (p.y - crown.y + 0.25) / 0.35));
+  const fronds = 10;
   for (let k = 0; k < fronds; k++) {
-    const a = (k / fronds) * Math.PI * 2 + b.rng() * 0.35;
+    // The last two the young ones, standing up out of the middle.
+    const young = k >= fronds - 2;
+    const a = (k / fronds) * Math.PI * 2 * (young ? 2.7 : 1) + b.rng() * 0.4;
     const out = new Vector3(Math.cos(a), 0, Math.sin(a));
     const side = new Vector3(-Math.sin(a), 0, Math.cos(a));
-    const length = 0.4 + b.rng() * 0.08;
-    const lift = 0.45 + b.rng() * 0.25;
-    const steps = 5;
+    const length = (young ? 0.32 : 0.46) + b.rng() * 0.08;
+    // Where it leaves the crown, and how far it bends over to its tip.
+    const lift = young ? 1.05 + b.rng() * 0.2 : 0.35 + b.rng() * 0.35;
+    const bend = young ? 0.7 : 1.5 + b.rng() * 0.4;
+    const steps = 6;
     const spine: Vector3[] = [crown.clone()];
     for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      const angle = lift - t * 1.7;
+      const angle = lift - (i / steps) * bend;
       const step = new Vector3().addScaledVector(out, Math.cos(angle)).setY(Math.sin(angle)).multiplyScalar(length / steps);
       spine.push(spine[i - 1]!.clone().add(step));
     }
-    for (let i = 0; i < steps; i++) {
-      const t = (i + 0.5) / steps;
-      const width = 0.085 * Math.sin(Math.PI * (0.12 + t * 0.85));
-      const p0 = spine[i]!, p1 = spine[i + 1]!;
-      for (const sign of [1, -1]) {
-        // A leaflet: from the spine, out to the side and hanging down, swept towards the tip.
-        const tip = p0.clone().lerp(p1, 0.8).addScaledVector(side, sign * width).add(new Vector3(0, -width * 0.75, 0));
-        b.sheet(p0, p1, tip, FROND, shade);
-      }
-    }
+    // Leaflets a sixth of the frond long, at an angle to the rachis: a narrow strip.
+    b.frond(spine, side, length * 0.14, young ? 0.35 : 0.7, FROND, shade);
   }
   return b.finish(0, 0);
 }
@@ -463,22 +528,26 @@ export function lowPolyTreeParts(kind: LowPolyKind, seed: number): LowPolyParts 
 }
 
 /**
- * A cluster of small leaves on a card: many leaves in a rounded clump with
- * ragged gaps, each leaf its own shade, the alpha cut round them. Grey: the
- * card's vertex colour gives it the species' green. One for the whole game.
+ * The foliage atlas, one for the whole game, grey (the card's vertex colour
+ * gives it the species' green), the alpha cut round every leaf. Its left
+ * half a cluster of small leaves: many in a rounded clump with ragged gaps,
+ * each its own shade. Its right half a palm frond: a rachis up the middle
+ * from base (bottom) to tip (top), its leaflets swept towards the tip,
+ * longest a third of the way up and gaps between them, so the frond is not a
+ * sheet (Polycount on leaf cards).
  */
-let clusterTexture: CanvasTexture | null | undefined;
-function leafClusterTexture(): CanvasTexture | null {
-  if (clusterTexture !== undefined) return clusterTexture;
-  if (typeof document === 'undefined') return (clusterTexture = null);
+let atlasTexture: CanvasTexture | null | undefined;
+function foliageAtlas(): CanvasTexture | null {
+  if (atlasTexture !== undefined) return atlasTexture;
+  if (typeof document === 'undefined') return (atlasTexture = null);
   const size = 256;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
+  canvas.width = size * 2;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return (clusterTexture = null);
+  if (!ctx) return (atlasTexture = null);
   const rng = random(0xc1a5);
-  ctx.clearRect(0, 0, size, size);
+  ctx.clearRect(0, 0, size * 2, size);
   for (let i = 0; i < 300; i++) {
     const a = rng() * Math.PI * 2;
     // Denser at the heart of the clump, ragged at its rim.
@@ -499,9 +568,35 @@ function leafClusterTexture(): CanvasTexture | null {
     ctx.fill();
     ctx.restore();
   }
+  // The frond: base at the canvas' foot (the texture's v = 0), tip at its head.
+  const mid = size * 1.5, base = size - 4, tipY = 4;
+  ctx.lineCap = 'round';
+  for (const sign of [-1, 1]) {
+    for (let j = 0; j < 40; j++) {
+      const t = (j + rng() * 0.4) / 40;
+      const y = base - t * (base - tipY);
+      // Longest a third of the way up, short at the base and the tip.
+      const reach = 120 * Math.sin(Math.PI * Math.min(1, 0.06 + t * 0.95)) ** 0.7 * (0.85 + rng() * 0.15);
+      const shade = 150 + Math.floor(rng() * 105);
+      ctx.strokeStyle = `rgb(${shade}, ${shade}, ${shade})`;
+      // Thin, with clear gaps between them: leaflets, not a blade.
+      ctx.lineWidth = 2.2 + rng() * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(mid, y);
+      // Swept up towards the tip, curving out.
+      ctx.quadraticCurveTo(mid + sign * reach * 0.5, y - reach * 0.15, mid + sign * reach, y - reach * 0.5);
+      ctx.stroke();
+    }
+  }
+  ctx.strokeStyle = 'rgb(210, 205, 170)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(mid, base);
+  ctx.lineTo(mid, tipY);
+  ctx.stroke();
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
-  return (clusterTexture = texture);
+  return (atlasTexture = texture);
 }
 
 /**
@@ -531,7 +626,7 @@ function billboardCards(material: Material, key: string): void {
 
 /** The foliage cards' material (leaf-cluster texture, alpha to coverage, billboards, the wind) and the depth material their shadows would use. */
 export function leafCardMaterials(wind: WindResponse, key: string): { material: MeshStandardMaterial; depth: MeshDepthMaterial } {
-  const map = leafClusterTexture();
+  const map = foliageAtlas();
   const material = new MeshStandardMaterial({
     color: 0xffffff, vertexColors: true, map, alphaTest: 0.5, alphaToCoverage: true, side: DoubleSide,
     roughness: 0.8, metalness: 0, envMapIntensity: 0.3,

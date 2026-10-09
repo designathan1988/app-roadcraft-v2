@@ -47,7 +47,7 @@ const FOREST_WIND: WindResponse = { sway: 0.045, flutter: 0.009 };
 interface Variant {
   /** The model, one unit tall on its origin (the ground); the same at every distance. */
   readonly levels: readonly [BufferGeometry, BufferGeometry, BufferGeometry];
-  /** Its foliage cards (`lowPolyTrees.ts`), drawn with the same instances; none on a cypress or a palm. */
+  /** Its foliage cards (`lowPolyTrees.ts`; a palm's frond strips), drawn with the same instances. */
   readonly cards: BufferGeometry | null;
 }
 
@@ -56,6 +56,8 @@ export interface NatureTreeKit {
   readonly material: MeshStandardMaterial;
   readonly depth: MeshDepthMaterial;
   readonly cardMaterial: MeshStandardMaterial;
+  /** The cards' shadow pass (a palm's fronds only). */
+  readonly cardDepth: MeshDepthMaterial;
   dispose(): void;
 }
 
@@ -65,7 +67,7 @@ export async function loadNatureTrees(_anisotropy: number): Promise<NatureTreeKi
     const { body, cards } = lowPolyTreeParts(kind, 0x7ee5 + i * 7919);
     return { levels: [body, body, body], cards };
   });
-  // Opaque, matt, faceted: the trunk, the crown's shaded heart, a conifer, a palm.
+  // Opaque, matt, faceted: the trunk and the crown's shaded heart.
   const material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, flatShading: true, envMapIntensity: 0.35 });
   applyWind(material, FOREST_WIND, 'nature-trees-lowpoly');
   const depth = windDepthMaterial(FOREST_WIND, 'nature-trees-lowpoly-depth');
@@ -76,6 +78,7 @@ export async function loadNatureTrees(_anisotropy: number): Promise<NatureTreeKi
     material,
     depth,
     cardMaterial: cardKit.material,
+    cardDepth: cardKit.depth,
     dispose() {
       for (const v of variants) { v.levels[0].dispose(); v.cards?.dispose(); }
       material.dispose();
@@ -184,8 +187,11 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       cards = new InstancedMesh(variant.cards, kit.cardMaterial, capacity);
       cards.name = `nature-tree-${TREE_MODELS[k] ?? k}-${k}-cards`;
       // The crown's heart throws the tree's shadow; alpha-cut cards in the
-      // shadow pass cost far more than they add.
-      cards.castShadow = false;
+      // shadow pass cost far more than they add. A palm has no heart: its
+      // few frond strips are its crown, and throw its shadow (wind and the
+      // alpha cut in the depth pass, three: customDepthMaterial).
+      cards.castShadow = TREE_MODELS[k] === 'palm';
+      cards.customDepthMaterial = kit.cardDepth;
       cards.receiveShadow = false;
       cards.frustumCulled = false;
       // The same buffers as the body: one write places both.
