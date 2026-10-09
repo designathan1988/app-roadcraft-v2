@@ -209,14 +209,15 @@ export function createIsoRig(
    * at the end of an elevated road picked open ground thirteen units away and
    * the snap never found the node that was plainly drawn there.
    */
-  const worldAt = (px: number, py: number, atHeight = 0): Vec2 => {
+  const worldAt = (px: number, py: number, atHeight = 0): Vec2 => hitAt(px, py, atHeight) ?? { x: target.x, y: -target.z };
+  /** The same, or null where the pointer's ray does not reach that plane (three's `Ray.intersectPlane`: above its horizon). */
+  const hitAt = (px: number, py: number, atHeight: number): Vec2 | null => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
     raycaster.setFromCamera(ndc, camera);
     ground.constant = -atHeight;
     const ok = raycaster.ray.intersectPlane(ground, hit);
     ground.constant = 0;
-    if (!ok) return { x: target.x, y: -target.z };
-    return { x: hit.x, y: -hit.z };
+    return ok ? { x: hit.x, y: -hit.z } : null;
   };
 
   /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
@@ -246,11 +247,20 @@ export function createIsoRig(
         y: (-projected.y * 0.5 + 0.5) * cssH,
       };
     },
-    panTo(grabbed, px, py) {
-      const now = worldAt(px, py);
-      target.x += grabbed.x - now.x;
-      target.z -= grabbed.y - now.y;
-      apply();
+    panTo(grabbed, px, py, _cssW, _cssH, atHeight = 0) {
+      // The grabbed point is held on its own plane (the height of what was
+      // under the pointer), as zoom and orbit hold theirs (`keeping`): on the
+      // plane at zero, close over a hill a pixel moved the view far, and a
+      // ray above that plane's horizon jumped it to the target. Looking at the
+      // ground, the view's height moves with its centre: a second step takes
+      // up what the first left. A ray that misses the plane moves nothing.
+      for (let pass = camera === persp && groundAt ? 2 : 1; pass > 0; pass--) {
+        const now = hitAt(px, py, atHeight);
+        if (!now) break;
+        target.x += grabbed.x - now.x;
+        target.z -= grabbed.y - now.y;
+        apply();
+      }
     },
     zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0) {
       keeping(px, py, () => {

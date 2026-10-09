@@ -497,6 +497,7 @@ const cameraHand = new CameraGestures({
   size: () => ({ w: surface.cssW, h: surface.cssH }),
   orbited: () => persistence.saveSettingsSoon(sessionSettings),
   redraw: () => requestDraw(),
+  heightUnder: (at) => groundHeightUnder(at),
 });
 /** Camera turn per Q/E press, rad. */
 const KEY_TURN = Math.PI / 12;
@@ -2425,8 +2426,8 @@ toolHelp.hidden = true;
 let toolHelpFor: Tool | null = null;
 /** Every tool's card ends with the camera, which works the same in all of them. */
 const CAMERA_KEYS = [
-  ['help.key.middleDrag', 'help.do.orbit'],
-  ['help.key.rightDrag', 'help.do.pan'],
+  ['help.key.orbitDrag', 'help.do.orbit'],
+  ['help.key.panDrag', 'help.do.pan'],
   ['help.key.wheel', 'help.do.zoom'],
   ['help.key.qe', 'help.do.turn'],
   ['help.key.home', 'help.do.resetView'],

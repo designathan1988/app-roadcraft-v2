@@ -11,6 +11,8 @@ export interface CameraGesturesHost {
   /** The camera turned: its bearing and tilt are kept with the settings. */
   orbited(): void;
   redraw(): void;
+  /** The height of what is drawn under a pointer (CSS px): the plane a pan or pinch holds. */
+  heightUnder(at: Vec2): number;
 }
 
 /** Camera turn and tilt per CSS pixel of an orbit drag, rad: a full turn in ~1000 px. */
@@ -39,10 +41,10 @@ const TWIST_MIN_SPREAD = 40;
  */
 export class CameraGestures {
   private readonly pointers = new Map<number, Vec2>();
-  private pan: { id: number; grabbed: Vec2 } | null = null;
+  private pan: { id: number; grabbed: Vec2; height: number } | null = null;
   /** An orbit: where it was pressed and last was, CSS px; a right click that stays a click cancels the gesture in progress. */
   private orbit: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean; height: number } | null = null;
-  private pinch: { d0: number; zoom0: number; world: Vec2; angle: number } | null = null;
+  private pinch: { d0: number; zoom0: number; world: Vec2; height: number; angle: number } | null = null;
 
   constructor(private readonly host: CameraGesturesHost) {}
 
@@ -77,27 +79,32 @@ export class CameraGestures {
   }
 
   /**
-   * The point a pan or pinch holds under the pointer, on the `y = 0` plane
-   * that `panTo` solves on - deliberately not on the terrain or deck under
-   * the cursor: `panTo` then compared a point on that plane with one on
-   * `y = 0`, and the first move of every drag jerked the map by
-   * `height / tan(48°)` (35 px at 500 %, 139 px at 2000 %). Under an
-   * orthographic camera a horizontal shift moves every plane alike, so
-   * holding the `y = 0` point IS holding what was grabbed.
+   * The point a pan or pinch holds under the pointer: what is drawn there,
+   * on the plane at its own height, which `panTo` then solves on too. On the
+   * plane at zero - as orthographic views allow, every plane moving alike -
+   * the perspective view, which stands at the height of the ground it looks
+   * at, moved too far over a hill and jumped when the pointer's ray passed
+   * that plane's horizon (the player, 2026-10-09: the middle-button drag
+   * failed close up). Grabbed and solved on the same plane, the first move
+   * does not jerk (comparing a deck-plane point with a zero-plane one jerked
+   * every drag by `height / tan(48°)`).
    */
-  private anchor(px: number, py: number): Vec2 {
+  private anchor(px: number, py: number): { world: Vec2; height: number } {
     const { w, h } = this.host.size();
-    return this.host.view().toWorld(px, py, w, h);
+    const height = this.host.heightUnder({ x: px, y: py });
+    return { world: this.host.view().toWorldAt(px, py, height, w, h), height };
   }
 
   /** Two fingers (or more) down: a pinch from where they are. */
   startPinch(): void {
     const [a, b] = [...this.pointers.values()] as [Vec2, Vec2];
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const held = this.anchor(mid.x, mid.y);
     this.pinch = {
       d0: Math.hypot(a.x - b.x, a.y - b.y),
       zoom0: this.host.view().zoom,
-      world: this.anchor(mid.x, mid.y),
+      world: held.world,
+      height: held.height,
       angle: Math.atan2(b.y - a.y, b.x - a.x),
     };
   }
@@ -109,7 +116,8 @@ export class CameraGestures {
 
   /** The ground under `at` grabbed and dragged. */
   startPan(id: number, at: Vec2): void {
-    this.pan = { id, grabbed: this.anchor(at.x, at.y) };
+    const held = this.anchor(at.x, at.y);
+    this.pan = { id, grabbed: held.world, height: held.height };
   }
 
   /** Pointer `id` moved to `screen`: true when the camera took the move. */
@@ -131,8 +139,8 @@ export class CameraGestures {
       const twist = Math.atan2(Math.sin(angle - pinch.angle), Math.cos(angle - pinch.angle));
       pinch.angle = angle;
       if (d > TWIST_MIN_SPREAD) view.orbit(TWIST_SIGN * twist, 0);
-      view.zoomAt(mid.x, mid.y, targetZoom / Math.max(0.001, view.zoom), w, h);
-      view.panTo(pinch.world, mid.x, mid.y, w, h);
+      view.zoomAt(mid.x, mid.y, targetZoom / Math.max(0.001, view.zoom), w, h, pinch.height);
+      view.panTo(pinch.world, mid.x, mid.y, w, h, pinch.height);
       host.redraw();
       return true;
     }
@@ -153,7 +161,7 @@ export class CameraGestures {
       return true;
     }
     if (this.pan?.id === id) {
-      view.panTo(this.pan.grabbed, screen.x, screen.y, w, h);
+      view.panTo(this.pan.grabbed, screen.x, screen.y, w, h, this.pan.height);
       host.redraw();
       return true;
     }
