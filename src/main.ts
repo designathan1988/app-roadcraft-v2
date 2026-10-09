@@ -798,8 +798,13 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   } else {
     restoreSnapshot(doc, data, net);
   }
-  // Only when the road plan the simulation runs on actually changed.
-  if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
+  // A map opened: its traffic built now, the old simulation gone. An undo or a
+  // redo is an edit like any other: its traffic is brought up to date a few
+  // milliseconds a frame (`TopologyCatchUp`, the simulation held meanwhile)
+  // - built here, inside the key press, each Ctrl+Z on a road held the game
+  // 164-244 ms (web.dev, "Optimize long tasks": the input handler does what
+  // is seen, the rest after).
+  if (source === 'import' && sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
   // A different map: the graph the next edit is measured on, built now.
   if (source === 'import') sim.warmTopologyPrep();
   buildings.restored();
