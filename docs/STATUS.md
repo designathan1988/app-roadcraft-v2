@@ -82,7 +82,20 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga
   dos prédios tem orçamento próprio (`8a35d468`, `5d7dd24f`). Cidade de
-  teste (761 prédios): inteira aos 6,0-6,4 s.
+  teste (761 prédios): inteira aos 6,0-6,4 s. Os tiles das superfícies das
+  vias também ficam guardados no navegador (P21, `341cd87c`): da segunda
+  abertura em diante nenhum é refeito.
+- Pincel de terreno: o fim da pincelada refaz só a região suja dela, em
+  fatias, e a água só quando a pincelada chega perto dela (P32, `3e60f67b`).
+- Névoa da chuva e bruma do ar medidas do olho equivalente também na vista
+  ortográfica (a câmera dela fica longe por construção): de perto a chuva
+  não cobre mais metade da imagem (P35).
+
+### Noite
+- Janelas acesas à noite pela fração de pessoas acordadas na hora (ATUS):
+  63% às 22 h, 6% às 2 h (P30, `4b522935`). Sem a vida dos moradores, a
+  tabela de cômodos (`lightSlots.ts`) não é alimentada; se for religada, ela
+  volta a mandar.
 
 ### Prédios e cidade
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;

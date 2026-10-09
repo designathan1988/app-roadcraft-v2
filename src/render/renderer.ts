@@ -3067,8 +3067,13 @@ export function createSceneRenderer(
       // Rain thickens the air: a grey mist over the distance (`world/weather.ts`).
       const rainNow = net.doc.weather.rain;
       const air = rainNow > 0 ? { ...atmosphere, fog: Math.max(atmosphere.fog, rainNow * 0.2), fogHeight: Math.max(atmosphere.fogHeight, m(120)) } : atmosphere;
+      // The orthographic camera stands far back by construction: the air is
+      // measured from where the perspective camera stands at the same scale
+      // (`isoViewport`: halfHeight / tan(fov / 2) from the view's centre).
+      const eyeShift = rig.perspective ? 0
+        : rig.camera.position.distanceTo(rig.target) - halfHeight / Math.tan((PERSPECTIVE_FOV * Math.PI) / 360);
       post.setAtmosphere(air, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
-        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing);
+        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing, eyeShift);
       const atRender = performance.now();
       // The people's skeletons on the GPU (`people/crowdAnimation.ts`), before anybody draws them.
       agents.renderPalettes(renderer);

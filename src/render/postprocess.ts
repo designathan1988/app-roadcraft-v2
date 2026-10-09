@@ -65,7 +65,9 @@ export interface PostChain {
    * whether the map is seen as a model over the void (building it), when
    * the air round it is drawn too: the backdrop and the haze of distance.
    */
-  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color, backdrop: boolean): void;
+  setAtmosphere(atmosphere: Atmosphere, sun: Vector3, skyColor: Color, sunLight: Color, backdrop: boolean,
+    /** How far in front of the camera the view's equivalent eye stands (`uEyeShift`): 0 in perspective. */
+    eyeShift?: number): void;
   /** The clouds the player placed (`world/clouds.ts`). */
   setPlacedClouds(clouds: readonly PlacedCloud[]): void;
   /** How far the wind has carried the clouds, on the map (`world/clouds.ts` driftedCloud). */
@@ -397,10 +399,11 @@ export function createPostChain(
       (u['uGroundFog']!.value as Vector4).set(fog.density, 0, 0, 1);
       (u['uGroundFogSlab']!.value as Vector2).set(fog.low - 2, fog.high);
     },
-    setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop) {
+    setAtmosphere(atmosphere, sun, skyColor, sunLight, backdrop, eyeShift = 0) {
       if (!clouds) return;
       const u = clouds.uniforms as Record<string, { value: unknown }>;
       u['uBackdrop']!.value = backdrop ? 1 : 0;
+      u['uEyeShift']!.value = eyeShift;
       u['uCloudBase']!.value = atmosphere.cloudBase;
       (u['uSunLight']!.value as Color).copy(sunLight);
       u['uFog']!.value = atmosphere.fog;
@@ -552,6 +555,11 @@ const CLOUD_SHADOWS = {
     uGroundFogSlab: { value: new Vector2() },
     uMapHalf: { value: MAP_SIZE / 2 },
     uBackdrop: { value: 0 },
+    // How far in front of the camera the view's equivalent eye stands, units
+    // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera
+    // stands far back by construction, and the air is measured from where the
+    // perspective camera would stand at the same scale.
+    uEyeShift: { value: 0 },
     // The void round the map: its deep blue, the paler air towards the
     // horizon, and the abyss below (sRGB, as the page's own colours).
     uSkyDeep: { value: new Color(0x0c1a2c) },
@@ -610,6 +618,7 @@ const CLOUD_SHADOWS = {
     uniform vec2 uGroundFogSlab;
     uniform float uMapHalf;
     uniform float uBackdrop;
+    uniform float uEyeShift;
     // Height over the ground's base level.
     float altitude(vec3 p) {
       return p.y;
@@ -750,10 +759,16 @@ const CLOUD_SHADOWS = {
         }
         colour *= 1.0 - uStrength * (1.0 - exp(-through * 7.0));
       }
+      // The air between the eye and what the pixel sees: from the view's
+      // equivalent eye (\`uEyeShift\`). Measured from the orthographic camera,
+      // 5 000 units back whatever the zoom, rain mist covered half of every
+      // close view and the haze lay over ground seen from a few metres.
+      float tAir = max(tScene - uEyeShift, 0.0);
+      vec3 eye = ro + rd * uEyeShift;
       // Mist: exponential in height, along the ray to what the pixel sees.
       if (uFog > 0.0) {
-        float dist = min(tScene, 6000.0);
-        float yMid = ro.y + rd.y * dist * 0.5;
+        float dist = min(tAir, 6000.0);
+        float yMid = eye.y + rd.y * dist * 0.5;
         float thickness = exp(-max(0.0, min(yMid, altitude(hit))) / uFogHeight);
         float amount = 1.0 - exp(-uFog * 0.0009 * dist * thickness);
         vec3 mist = mix(uFogColor, uFogColor * 0.18, uDark);
@@ -804,7 +819,7 @@ const CLOUD_SHADOWS = {
           // Held under 0.55: the map's edge never melts into the dark blue
           // round it (the player, 2026-10-08).
           const float HAZE_BETA = 3.912 / 30000.0 * 0.4;
-          float amount = (1.0 - exp(-tScene * HAZE_BETA)) * 0.55;
+          float amount = (1.0 - exp(-tAir * HAZE_BETA)) * 0.55;
           colour = mix(colour, haze * (1.0 + 0.6 * glow), amount);
         }
       }
