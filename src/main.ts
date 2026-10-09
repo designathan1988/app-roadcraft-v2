@@ -53,6 +53,9 @@ import { CanvasSurface } from '@ui/overlay/surface';
 import { INVALID, SELECTION, HOVER } from '@ui/overlay/palette';
 import { createSceneRenderer, type SceneHandle, type SkyMode } from '@render/renderer';
 import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
+import { forgetOtherDerived, readDerivedAll, writeDerivedMany } from '@render/derivedCache';
+
+declare const __CONFLICT_ZONES_HASH__: string | undefined;
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
 import { SimWorld } from '@sim/world';
@@ -170,6 +173,15 @@ surface.observe();
 
 // ------------------------------------------------------------------ boot
 const surfaceBake = startSurfaceBake();
+/**
+ * The conflict zones measured in earlier sessions (`ConflictIndex.seed`),
+ * filed under the fingerprint of the code that measures them: every opening
+ * measured every pair of movements of the town again, 0.6 s of the test
+ * city's opening. Read while the rest of the opening goes on.
+ */
+const ZONES_PREFIX = typeof __CONFLICT_ZONES_HASH__ !== 'undefined' && __CONFLICT_ZONES_HASH__ ? `zones:${__CONFLICT_ZONES_HASH__}:` : null;
+if (ZONES_PREFIX) forgetOtherDerived('zones', ZONES_PREFIX.slice('zones:'.length, -1));
+const keptZones = ZONES_PREFIX ? readDerivedAll<Float64Array | null>(ZONES_PREFIX) : Promise.resolve(new Map<string, Float64Array | null>());
 clearOldMapsOnce();
 const savedSession = persistence.loadSession();
 // The game opens on an empty map - zoning starts from nothing - unless the
@@ -594,6 +606,7 @@ function savedQualityLevel(): QualityLevel {
 // The graphics are what the player chose (High until they choose): the game
 // never lowers them on its own.
 primeSurfaceBake(await surfaceBake);
+sim.conflicts.seed(await keptZones);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
 // The traffic's topology is not built here: it is built a slice a frame while
 // the opening puts the town together (`TopologyCatchUp`, its frames not yet
@@ -3138,6 +3151,8 @@ const frameClock = new FrameClock(frame);
 const minimapDue = new Periodic(0.1);
 /** The status bar, the inspector, the simulation's checks. */
 const panelsDue = new Periodic(0.4);
+/** The conflict zones measured since, kept for the next session (`keptZones`). */
+const zonesDue = new Periodic(5);
 
 /**
  * Set by an edit: draw the new geometry first, rebuild the simulation after.
@@ -3264,6 +3279,7 @@ function frame(now: number): void {
   //
   // A 194-by-124 overview does not need sixty updates a second. The clock alone
   // now decides, so the cost is bounded no matter what the pointer is doing.
+  if (ZONES_PREFIX && zonesDue.due(wall)) writeDerivedMany(ZONES_PREFIX, sim.conflicts.takeMeasured());
   if (minimapDue.due(wall)) {
     syncFlatCameraFromView();
     drawMinimap(minimapCanvas, doc, net, sim, camera, surface, viewFootprint());

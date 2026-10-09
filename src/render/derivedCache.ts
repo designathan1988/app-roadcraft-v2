@@ -135,6 +135,28 @@ export function writeDerived(key: string, value: unknown): void {
   void keepDerived(key, value);
 }
 
+/**
+ * Keeps many values, each under `prefix` and its own key, in one
+ * transaction (MDN, "Using IndexedDB": the example adds every record in one
+ * readwrite transaction), without waiting: hundreds of small entries at once
+ * - a town's conflict zones - would otherwise open as many transactions.
+ */
+export function writeDerivedMany(prefix: string, values: ReadonlyMap<string, unknown>): void {
+  if (!values.size) return;
+  void database().then((db) => {
+    if (!db) return;
+    try {
+      const store = db.transaction(STORE, 'readwrite').objectStore(STORE);
+      for (const [key, value] of values) {
+        const request = store.put(value, `${prefix}${key}`);
+        request.onerror = (event) => event.preventDefault();
+      }
+    } catch {
+      // Not kept (no space, private window): made again next time.
+    }
+  });
+}
+
 /** Forgets the entries of `kind` kept under any other fingerprint (an older build's). */
 export function forgetOtherDerived(kind: string, fingerprint: string): void {
   void database().then((db) => {

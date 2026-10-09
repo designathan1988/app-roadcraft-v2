@@ -157,7 +157,7 @@ export class ConflictIndex {
    * The zones of every pair measured by the previous build, keyed by the two
    * sweeps' sampled geometry.
    *
-   * `pairZones` is two thirds of a topology rebuild, and a topology rebuild ran
+   * `pairTable` is two thirds of a topology rebuild, and a topology rebuild ran
    * it for every pair of movements at EVERY junction on every edit. Measured on
    * a 144-segment grid: 2.0 s per road drawn, of which the one or two junctions
    * the road actually touched were a few per cent. A pair's zones depend on
@@ -181,10 +181,29 @@ export class ConflictIndex {
    */
   private sweepCache = new Map<string, Float64Array>();
 
+  /** Every pair's zones known to this index, kept between sessions by the game (`seed`, `takeMeasured`). */
+  private readonly store: KeptZones = { kept: new Map(), fresh: new Map() };
+
+  /**
+   * Zones measured in an earlier session (the game keeps them in the
+   * browser, `main.ts`): a pair found here is read back, not measured. Every
+   * opening measured every pair of the town again - 0.6 s on the test city.
+   */
+  seed(kept: ReadonlyMap<string, Float64Array | null>): void {
+    for (const [key, table] of kept) if (!this.store.kept.has(key)) this.store.kept.set(key, table);
+  }
+
+  /** The zones measured since the last call, to be kept (`seed` reads them back next session). */
+  takeMeasured(): Map<string, Float64Array | null> {
+    const fresh = new Map(this.store.fresh);
+    this.store.fresh.clear();
+    return fresh;
+  }
+
   /**
    * Measures, a pair at a time, the zones the next `build` of `graph` will
    * need and the caches do not hold yet, and leaves them in the caches; the
-   * index itself is not touched. `pairZones` is about a millisecond a pair
+   * index itself is not touched. `pairTable` is about a millisecond a pair
    * and a new crossroads has a hundred pairs: done here in slices across
    * frames (`main.ts`), the build that follows reads every pair back and
    * costs a frame of its own no more.
@@ -209,7 +228,9 @@ export class ConflictIndex {
           const key = `${a.shape.hash}|${b.shape.hash}`;
           const known = this.pairCache.get(key);
           if (known && sameShape(known.a, a.shape) && sameShape(known.b, b.shape)) continue;
-          this.pairCache.set(key, { a: a.shape, b: b.shape, zones: pairZones(a.sweep, b.sweep) });
+          const wasKept = this.store.kept.has(key);
+          this.pairCache.set(key, measurePair(key, a.sweep, a.shape, b.sweep, b.shape, this.store));
+          if (wasKept) continue;
           this.measured.prepare++;
           yield;
         }
@@ -256,6 +277,7 @@ export class ConflictIndex {
             shapes.get(a.id) as SweepShape,
             sb,
             shapes.get(b.id) as SweepShape,
+            this.store,
           );
           const zones = pair.zones;
           if (!zones) continue;
@@ -294,6 +316,11 @@ export class ConflictIndex {
     this.measured.build = pairsMeasured - measuredBefore;
     this.pairCache = next;
     this.sweepCache = nextSweeps;
+    // The zones kept from other maps and from roads since undone stay in
+    // memory only while they are few next to this map's own.
+    if (this.store.kept.size > 4 * next.size + 4096) {
+      for (const key of this.store.kept.keys()) if (!next.has(key) && !this.store.fresh.has(key)) this.store.kept.delete(key);
+    }
     for (const list of this.byConnector.values()) list.sort((p, q) => p.s - q.s);
   }
 
@@ -481,7 +508,7 @@ function gridOf(s: Sweep): Map<number, number[]> {
 
 const cellKey = (x: number, y: number): number => (x + 32768) * 65536 + (y + 32768);
 
-/** Everything `pairZones` reads from a sweep. Two equal shapes give equal zones. */
+/** Everything `pairTable` reads from a sweep. Two equal shapes give equal zones. */
 interface SweepShape {
   /** Hash of the fields below, for the cache key; equality is still checked in full. */
   readonly hash: string;
@@ -565,6 +592,30 @@ function sameValues(p: Float64Array, q: Float64Array): boolean {
 /** Pairs measured by `cachedPair` since the module loaded (`ConflictIndex.measured`). */
 let pairsMeasured = 0;
 
+/**
+ * The zones kept from earlier sessions and those measured in this one, by
+ * pair key (`kept`), and the ones measured since they were last taken to be
+ * kept (`fresh`): derived data, made once and read back (Unreal's Derived
+ * Data Cache: generated when missing and copied into the cache for next time).
+ * The key holds both sweeps' digests (53 bits each) with their sample count,
+ * start and length.
+ */
+interface KeptZones {
+  readonly kept: Map<string, Float64Array | null>;
+  readonly fresh: Map<string, Float64Array | null>;
+}
+
+/** A pair measured, or read back from an earlier session. */
+function measurePair(key: string, a: Sweep, shapeA: SweepShape, b: Sweep, shapeB: SweepShape, store: KeptZones): CachedPair {
+  const kept = store.kept.get(key);
+  if (kept !== undefined) return { a: shapeA, b: shapeB, zones: kept && zonesOf(kept) };
+  const table = pairTable(a, b);
+  pairsMeasured++;
+  store.kept.set(key, table);
+  store.fresh.set(key, table);
+  return { a: shapeA, b: shapeB, zones: table && zonesOf(table) };
+}
+
 /** A pair's zones, answered from the previous build when neither sweep moved. */
 function cachedPair(
   previous: Map<string, CachedPair>,
@@ -573,6 +624,7 @@ function cachedPair(
   shapeA: SweepShape,
   b: Sweep,
   shapeB: SweepShape,
+  store: KeptZones,
 ): CachedPair {
   const key = `${shapeA.hash}|${shapeB.hash}`;
   const known = next.get(key) ?? previous.get(key);
@@ -580,8 +632,7 @@ function cachedPair(
     next.set(key, known);
     return known;
   }
-  const pair: CachedPair = { a: shapeA, b: shapeB, zones: pairZones(a, b) };
-  pairsMeasured++;
+  const pair = measurePair(key, a, shapeA, b, shapeB, store);
   next.set(key, pair);
   return pair;
 }
@@ -688,7 +739,21 @@ interface PairZones {
  * All nine class-pair zones of two movements, or null when even two heavy
  * bodies never touch.
  */
-function pairZones(a: Sweep, b: Sweep): PairZones | null {
+/** A pair's zones over its table (`pairTable`): what is kept between sessions. */
+function zonesOf(table: Float64Array): PairZones {
+  return {
+    get(mine, theirs, onB) {
+      const at = onB ? (theirs * 3 + mine) * 4 + 2 : (mine * 3 + theirs) * 4;
+      const enter = table[at] as number;
+      if (Number.isNaN(enter)) return null;
+      // Half a step either side covers the motion between two samples.
+      return { enter: enter - SWEEP_STEP / 2, exit: (table[at + 1] as number) + SWEEP_STEP / 2 };
+    },
+  };
+}
+
+/** The 3 x 3 class pairs' [enterA, exitA, enterB, exitB] (NaN: none), or null when even two heavy bodies never touch. */
+function pairTable(a: Sweep, b: Sweep): Float64Array | null {
   const aa = boundsOf(a), bb = boundsOf(b);
   if (aa.maxX < bb.minX || bb.maxX < aa.minX || aa.maxY < bb.minY || bb.maxY < aa.minY) return null;
   // Heavy against heavy, through the grid.
@@ -768,15 +833,7 @@ function pairZones(a: Sweep, b: Sweep): PairZones | null {
     }
   }
 
-  return {
-    get(mine, theirs, onB) {
-      const at = onB ? (theirs * 3 + mine) * 4 + 2 : (mine * 3 + theirs) * 4;
-      const enter = table[at] as number;
-      if (Number.isNaN(enter)) return null;
-      // Half a step either side covers the motion between two samples.
-      return { enter: enter - SWEEP_STEP / 2, exit: (table[at + 1] as number) + SWEEP_STEP / 2 };
-    },
-  };
+  return table;
 }
 
 function widen(table: Float64Array, at: number, c: number): void {

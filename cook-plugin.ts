@@ -49,6 +49,8 @@ const DERIVED = [
   { entry: 'src/render/surfaceBake.worker.ts', also: [] as string[], define: '__SURFACE_BAKE_HASH__' },
   // The procedural crowd's levels of each piece (`proceduralCrowd.ts` lodPlan).
   { entry: 'src/render/people/crowdLod.ts', also: [] as string[], define: '__CROWD_LOD_HASH__' },
+  // The conflict zones of each pair of movements (`world/conflictPoints.ts`, kept by `main.ts`).
+  { entry: 'src/world/conflictPoints.ts', also: [] as string[], define: '__CONFLICT_ZONES_HASH__' },
 ] as const;
 const ASSETS = ['public/models/people'];
 /** The path aliases of `tsconfig.json`. */
