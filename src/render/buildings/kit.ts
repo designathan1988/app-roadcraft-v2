@@ -19,6 +19,7 @@ import { createFurnitureGeometries, createFurnitureMaterial } from './furnitureK
 import type { FurnitureKind } from '@world/buildings/interior';
 import { SLOT_WIDTH, litTableDriven, litTexture } from './lightSlots';
 import { NIGHT_LUMINANCE, lightPoolTexture, luminanceOf } from '../lightLevels';
+import { m } from '@world/units';
 
 /**
  * Share of people awake, by hour from midnight: 100 % less the share asleep in
@@ -95,6 +96,46 @@ const PORCH_LIGHT = 0xffd49a;
  * average), so the mean lit pane sits at `NIGHT_LUMINANCE.window`.
  */
 const ROOM_LIT_MEAN = 0.9;
+
+/** The lantern beside a front door: width, height and depth out of the wall; its gap from the door's edge. */
+export const PORCH_LAMP = { w: m(0.16), h: m(0.26), d: m(0.12), gap: m(0.4) } as const;
+/** How far the wash of its light (the `wash` part, placed at the lantern's centre) stands out of the wall. */
+const WASH_OUT = m(0.01);
+/**
+ * Outside lights after dark. 43 % of homes leave one on all night (EIA,
+ * Residential Energy Consumption Survey 2024, table HC5.9: 57.5 of 132.5
+ * million); the others light theirs while somebody is up (LRC/NYSERDA
+ * assume about 4 hours a night), so with the share awake (`awakeShare`).
+ * Each lamp draws its own lot by where it stands, in cells of about 4 m, so
+ * a lantern, the light it throws on the wall and the lamps of one gate draw
+ * the same.
+ */
+const ALL_NIGHT = 0.43;
+/** The share of outside lights lit at a clock time (hours). */
+function outsideLit(hour: number): number {
+  return ALL_NIGHT + (1 - ALL_NIGHT) * awakeShare(hour);
+}
+const outsideOn = { value: outsideLit(22) };
+/** The lot a lamp draws, from its instance's position (`outsideOn`), for both the lantern and its wash. */
+const LAMP_LOT_VERTEX = `
+#ifdef USE_INSTANCING
+  vLampLot = fract(sin(dot(floor(instanceMatrix[3].xyz * 0.1), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+#else
+  vLampLot = 0.0;
+#endif`;
+/** Switches an outside light by its lot. */
+function scheduleOutsideLight(material: Material, key: string, after: string, apply: string): void {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms['outsideOn'] = outsideOn;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vLampLot;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>${LAMP_LOT_VERTEX}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float outsideOn;\nvarying float vLampLot;')
+      .replace(after, `${after}\n  ${apply}`);
+  };
+  material.customProgramCacheKey = () => key;
+}
 
 export interface BuildingKit {
   readonly geometry: Readonly<Record<PartKind, BufferGeometry>>;
@@ -272,7 +313,8 @@ export function createBuildingKit(): BuildingKit {
     curtain: unitBox,
     water: unitBox,
     lamp: unitBox,
-    wash: glassPlane,
+    // Placed at the lantern's centre (the same lot), the plane drawn back on the wall.
+    wash: new PlaneGeometry(1, 1).translate(0, 0, -(PORCH_LAMP.d / 2 - WASH_OUT)),
   };
 
   const concrete = new MeshStandardMaterial({ color: 0xcfc9bd, roughness: 0.82, metalness: 0 });
@@ -314,6 +356,8 @@ export function createBuildingKit(): BuildingKit {
     }),
   };
   for (const [kind, m] of Object.entries(material)) m.name = `building-part-${kind}`;
+  scheduleOutsideLight(material.lamp, 'outside-lamp-lot', '#include <emissivemap_fragment>', 'totalEmissiveRadiance *= step(vLampLot, outsideOn);');
+  scheduleOutsideLight(material.wash, 'outside-wash-lot', '#include <color_fragment>', 'diffuseColor.a *= step(vLampLot, outsideOn);');
   // At night not every window is lit, nor all alike: each pane draws its own
   // lot from where it stands - a third dark, the rest from dim to bright,
   // some cooler (a television) - so a block reads as rooms, not a lamp.
@@ -429,7 +473,10 @@ export function createBuildingKit(): BuildingKit {
       return furniture;
     },
     setNight(dark, hour) {
-      if (hour !== undefined) roomsAwake.value = awakeShare(hour);
+      if (hour !== undefined) {
+        roomsAwake.value = awakeShare(hour);
+        outsideOn.value = outsideLit(hour);
+      }
       // Rooms lit behind the glass: a warm glow, brighter than any lit wall
       // (`lightLevels.ts`), less behind the darker glass.
       const room = NIGHT_LUMINANCE.window / (luminanceOf(ROOM_LIGHT) * ROOM_LIT_MEAN);

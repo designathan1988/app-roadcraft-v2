@@ -83,7 +83,7 @@ import {
   volumeTop,
   type LotSurface,
 } from '@world/buildings/types';
-import { type BuildingKit, PART_KINDS, type PartKind } from './kit';
+import { type BuildingKit, PART_KINDS, PORCH_LAMP, type PartKind } from './kit';
 import type { FlagInstance } from './flagLayer';
 import { type FlagDesign, legacyFlag } from '@world/buildings/flags';
 
@@ -482,10 +482,15 @@ class Emitter {
     if (kind === 'glass' || kind === 'glassDark') placement.slot = this.slot;
     this.parts[kind].push(placement);
   }
+
+  /** An instance at a point of the building's plan (`L`), square to the building, its centre at height `z`. */
+  putAt(kind: PartKind, lx: number, ly: number, z: number, sx: number, sy: number, sz: number): void {
+    const p = this.L(lx, ly, z);
+    const n = this.N(0, 1);
+    this.parts[kind].push({ x: p[0], y: p[1], z: p[2], yaw: Math.atan2(n[0], -n[1]), sx, sy, sz });
+  }
 }
 
-/** The lantern: width, height and depth out of the wall; its gap from the door's edge. */
-const PORCH_LAMP = { w: m(0.16), h: m(0.26), d: m(0.12), gap: m(0.4) } as const;
 /** How far its light reaches over the wall round it, either way and up or down. */
 const PORCH_WASH = { half: m(1.1), up: m(1.3) } as const;
 
@@ -505,7 +510,8 @@ function emitPorchLight(e: Emitter, f: BayFace, W: number, am: number, w: number
   e.put('lamp', f, a, h, -PORCH_LAMP.d / 2, PORCH_LAMP.w, PORCH_LAMP.h, PORCH_LAMP.d);
   const half = Math.min(PORCH_WASH.half, a, W - a);
   const up = Math.min(PORCH_WASH.up, h + m(0.3));
-  e.put('wash', f, a, h, -m(0.01), half * 2, up * 2, 1);
+  // At the lantern's own centre, so it is switched with it (`kit.ts`, the wash plane is drawn back on the wall).
+  e.put('wash', f, a, h, -PORCH_LAMP.d / 2, half * 2, up * 2, 1);
 }
 
 /** The light slot of a bay's window: the space on its floor behind it. */
@@ -2133,7 +2139,8 @@ const CAR_GATE_OPEN = m(2.2);
 const BIN_BODY: Paint = paint({ finish: 'metal', colour: 0x3d5a43 });
 const BIN_LID: Paint = paint({ finish: 'metal', colour: 0x2b3a2e });
 const LAMP_POST: Paint = paint({ finish: 'metal', colour: 0x40464a });
-const LAMP_GLASS: Paint = paint({ finish: 'glass', colour: 0xf3e7c4 });
+/** The lantern on a person's gate post: width and height, standing on the post's cap. */
+const GATE_LANTERN = { w: m(0.16), h: m(0.24) } as const;
 const BOLLARD_BAND: Paint = paint({ finish: 'plaster', colour: 0xe8e2cf });
 const DRAIN_GRATE: Paint = paint({ finish: 'metal', colour: 0x26292b });
 
@@ -2160,6 +2167,15 @@ function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1
       const post = Math.min(0.2, m(0.14) / length);
       part(0, post, -0.4, 1.4, zb, z1 + m(0.1), look);
       part(1 - post, 1, -0.4, 1.4, zb, z1 + m(0.1), look);
+      if (el.w < CAR_GATE_OPEN) {
+        // A person's gate: a lantern on each post's cap, lit after dark.
+        for (const u of [post / 2, 1 - post / 2]) {
+          const v = 0.5;
+          const lx = alongX ? x0 + (x1 - x0) * u : x0 + (x1 - x0) * v;
+          const ly = alongX ? y0 + (y1 - y0) * v : y0 + (y1 - y0) * u;
+          e.putAt('lamp', lx, ly, z1 + m(0.1) + GATE_LANTERN.h / 2, GATE_LANTERN.w, GATE_LANTERN.h, GATE_LANTERN.w);
+        }
+      }
       if (el.w >= CAR_GATE_OPEN) {
         // A car's gate: its two leaves swung open into the lot on their
         // hinges at the posts, so the cars that use it (`sim/agents/
@@ -2213,7 +2229,8 @@ function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1
       const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, r = m(0.06);
       e.box(cx - r, cy - r, cx + r, cy + r, zb, z1, LAMP_POST);
       e.box(cx - m(0.22), cy - m(0.22), cx + m(0.22), cy + m(0.22), z1, z1 + m(0.12), LAMP_POST);
-      e.box(cx - m(0.18), cy - m(0.18), cx + m(0.18), cy + m(0.18), z1 - m(0.08), z1, LAMP_GLASS);
+      // The glass under the head: a lamp, lit after dark (`kit.ts`), not a pale box.
+      e.putAt('lamp', cx, cy, z1 - m(0.04), m(0.36), m(0.08), m(0.36));
       return;
     }
     case 'bollard': {
