@@ -2100,6 +2100,21 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let lastRegion: TerrainRegion | null = null;
   /** The water waits for the end of a stroke (see `settle`). */
   let waterStale = false;
+  /**
+   * Where the land moved while the water waited, corners (`'all'`: anywhere,
+   * or a river dab): `settle` rebuilds the water only when this reaches it
+   * (a dirty region, Unity's `DirtyHeightmapRegion`; Nystrom's "Dirty Flag",
+   * fine-grained). Every stroke anywhere rebuilt every pool and river of the
+   * map, some 100 ms at its end.
+   */
+  let waterDirty: TerrainRegion | 'all' | null = null;
+  const markWaterDirty = (box: TerrainRegion | null): void => {
+    if (box === null || waterDirty === 'all') { waterDirty = 'all'; return; }
+    waterDirty = waterDirty === null ? box : [
+      Math.min(waterDirty[0], box[0]), Math.max(waterDirty[1], box[1]),
+      Math.min(waterDirty[2], box[2]), Math.max(waterDirty[3], box[3]),
+    ];
+  };
   let lastStamps: readonly TerrainStamp[] = [];
 
   const heightAt = naturalHeightAt;
@@ -2753,6 +2768,26 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
    * mesh every time (about 90 ms on a town with a river); away from the water
    * the mesh is the same, as the rivers' levels read the unshaped land.
    */
+  /**
+   * Whether land moved in `box` (corners) can change the water: it reaches
+   * the water's mesh, or a river's banks (each river dab reads the land round
+   * it out to its radius, `rebuildWater`), or the flood's way out past the
+   * mesh (`WATER_REACH`). A basin can only flood across cells next to the
+   * water it floods from, so land moved farther off leaves every pool as it is.
+   */
+  const waterReaches = (box: TerrainRegion): boolean => {
+    const minX = box[0] * TERRAIN_CELL - TERRAIN_HALF, maxX = box[1] * TERRAIN_CELL - TERRAIN_HALF;
+    const maxY = TERRAIN_HALF - box[2] * TERRAIN_CELL, minY = TERRAIN_HALF - box[3] * TERRAIN_CELL;
+    const near = (x0: number, y0: number, x1: number, y1: number, reach: number): boolean =>
+      minX <= x1 + reach && maxX >= x0 - reach && minY <= y1 + reach && maxY >= y0 - reach;
+    if (waterBox && near(waterBox.minX, waterBox.minY, waterBox.maxX, waterBox.maxY, WATER_REACH)) return true;
+    for (const stamp of lastStamps) {
+      if (stamp.mode !== 'river') continue;
+      const reach = stamp.radius * WATER_SPREAD + WATER_REACH;
+      if (near(stamp.x, stamp.y, stamp.x, stamp.y, reach)) return true;
+    }
+    return false;
+  };
   const touchesWater = (): boolean => {
     if (!waterBox) return wetDiscs.length > 0;
     for (const i of lastChanged) {
@@ -3029,6 +3064,16 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     settle() {
       if (!waterStale) return;
       waterStale = false;
+      const dirty = waterDirty;
+      waterDirty = null;
+      if (dirty !== null && dirty !== 'all' && !waterReaches(dirty)) {
+        // The water stands as it was; what it reads of the ground is copied,
+        // and the ecosystem, which reads the land's heights, is read again.
+        (groundTexture.image.data as Float32Array).set(grid);
+        groundTexture.needsUpdate = true;
+        ecologyStale = true;
+        return;
+      }
       rebuildWater(lastStamps);
     },
     shapeToRoads(shape, region = null) {
@@ -3038,8 +3083,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       // A road that cut through a valley changes where the water's shore is:
       // at once, or once the stroke is over when one is held (`settle`).
       if (moved && touchesWater()) {
-        if (region) waterStale = true;
-        else { waterStale = false; rebuildWater(lastStamps); }
+        if (region) { waterStale = true; markWaterDirty(null); }
+        else { waterStale = false; waterDirty = null; rebuildWater(lastStamps); }
       }
       return moved;
     },
@@ -3105,8 +3150,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       // The water - every pool and river on the map - is the deferred part of
       // a stroke (Unity's SetHeightsDelayLOD then SyncHeightmap on release):
       // rebuilt on every dab, it was the largest single cost of painting.
-      if (stroking) waterStale = true;
-      else { waterStale = false; rebuildWater(lastStamps); }
+      if (stroking) {
+        waterStale = true;
+        // A river dab makes water; any other dab is its box.
+        markWaterDirty(added && added.mode !== 'river' ? box : null);
+      } else { waterStale = false; waterDirty = null; rebuildWater(lastStamps); }
       markLand(box ? { x0: box[0], x1: box[1], y0: box[2], y1: box[3] } : 'all');
       relief.markDirty();
       return true;

@@ -1355,6 +1355,25 @@ export function createSceneRenderer(
 
   /** Blocks whose ground a dropped rebuild had not shaped yet (`null`: the whole map). */
   let pendingBlocks: [number, number, number, number][] | null = [];
+  /**
+   * The land a brush moved since the world was last built (`'all'`: anywhere -
+   * an undo, a map loaded, several stamps at once): the dirty region of the
+   * heightmap (Unity `TerrainData.DirtyHeightmapRegion`, synced once at the
+   * edit's end). A stroke's end rebuilt the whole map's ground and every road
+   * tile in one frame (479-520 ms); its own box is all that moved.
+   */
+  let landDirty: Rect | 'all' | null = null;
+  /** The shaping blocks a world box reaches, on the grid `changedBlocks` uses. */
+  const blocksOver = (box: Rect): [number, number, number, number][] => {
+    const half = MAP_SIZE / 2;
+    const out: [number, number, number, number][] = [];
+    const x0 = Math.max(-half, Math.floor((box[0] + half) / SHAPE_BLOCK) * SHAPE_BLOCK - half);
+    const y0 = Math.max(-half, Math.floor((box[1] + half) / SHAPE_BLOCK) * SHAPE_BLOCK - half);
+    for (let x = x0; x < Math.min(half, box[2]); x += SHAPE_BLOCK) {
+      for (let y = y0; y < Math.min(half, box[3]); y += SHAPE_BLOCK) out.push([x, y, x + SHAPE_BLOCK, y + SHAPE_BLOCK]);
+    }
+    return out;
+  };
   /** The diary entry the world being built follows from (`world/changes.ts`). */
   let worldCause = 0;
   /** Writes what the world derived in the document's diary, after `parent`; its serial (0: nothing written). */
@@ -1395,7 +1414,21 @@ export function createSceneRenderer(
     // Only the blocks its solve changed, with those a dropped rebuild left.
     // (`padsCache` used to be required here too: on a map with no buildings
     // it is always null, so every street drawn there re-shaped the whole map.)
-    const changed = landStill && previousElevation ? changedBlocks(previousElevation, elevation) : null;
+    // A brush stroke: the blocks of the land it moved, with those where the
+    // roads' solve differs (a road over that land rose or fell with it). Out
+    // of the stroke's box the natural ground is the same, so the comparison
+    // of the two solves there still holds.
+    const land = landDirty;
+    landDirty = null;
+    const landBlocks = !landStill && land !== null && land !== 'all' ? blocksOver(land) : null;
+    let changed: [number, number, number, number][] | null = null;
+    if (previousElevation && (landStill || landBlocks)) {
+      changed = changedBlocks(previousElevation, elevation);
+      if (landBlocks) {
+        const seen = new Set(changed.map((b) => `${b[0]},${b[1]}`));
+        for (const b of landBlocks) if (!seen.has(`${b[0]},${b[1]}`)) changed.push(b);
+      }
+    }
     // In the diary: the roads' heights solved again where they differ, after the edit that moved them.
     worldCause = derived(net, 'elevation', changed, 'alturas das vias resolvidas', net.doc.changes.version,
       { ms: performance.now() - started, detail: changed ? `${changed.length} blocos de ${SHAPE_BLOCK} u` : 'mapa inteiro' }) || net.doc.changes.version;
@@ -2310,7 +2343,12 @@ export function createSceneRenderer(
       const terrainStarted = performance.now();
       const stroking = !!options?.holdRoads && !!elevation && networkRevision === net.revision;
       const groundMoved = terrain.update(net.doc, stroking);
-      if (groundMoved) landVersion++;
+      if (groundMoved) {
+        landVersion++;
+        // The stroke's dirty region, dab by dab (`landDirty`).
+        const moved = terrain.lastRegion;
+        landDirty = moved === null || landDirty === 'all' ? 'all' : unionRect(landDirty, regionRect(moved));
+      }
       terrain.updatePaint(net.doc);
       // A brush stroke in progress: every dab used to re-solve the whole road
       // network and re-mesh every road, tree and tuft of grass near it - 450 ms

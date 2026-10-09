@@ -107,6 +107,8 @@ const CELL = 64;
  * some 50 ms of `JSON.stringify` over the 761 buildings of the test city.
  */
 const RECORD_TEXT = new WeakMap<Building, string>();
+/** Each record's footprints for the plants (`index`), kept the same way. */
+const RECORD_FOOTPRINTS = new WeakMap<Building, Vec2[][]>();
 const recordText = (b: Building): string => {
   let text = RECORD_TEXT.get(b);
   if (text === undefined) {
@@ -242,8 +244,15 @@ export function createBuildingLayer(): BuildingLayer {
     for (const b of buildings) {
       // The built parts with a margin for the crowns, and the open lots as
       // they are: grown round the lots too, every street tree on a pavement a
-      // facade stands on was taken away and left its pit empty.
-      for (const rect of [...solidFootprints(b, PLANT_MARGIN), ...footprintRects(b)]) {
+      // facade stands on was taken away and left its pit empty. Worked out
+      // once per record (`RECORD_FOOTPRINTS`), not for the whole town at
+      // every change of one building.
+      let rects = RECORD_FOOTPRINTS.get(b);
+      if (!rects) {
+        rects = [...solidFootprints(b, PLANT_MARGIN), ...footprintRects(b)];
+        RECORD_FOOTPRINTS.set(b, rects);
+      }
+      for (const rect of rects) {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const p of rect) {
           minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
