@@ -1,6 +1,12 @@
+/**
+ * A sheet to pad: its pixels, or - `pixels` absent - the file the worker
+ * fetches and decodes itself (`createImageBitmap` and an OffscreenCanvas, both
+ * there in a worker), so no pixel of it passes through the page.
+ */
 export interface GarmentPadRequest {
   readonly id: number;
-  readonly pixels: Uint8ClampedArray;
+  readonly pixels?: Uint8ClampedArray;
+  readonly url?: string;
   readonly width: number;
   readonly height: number;
   readonly uvs: Float32Array;
@@ -11,6 +17,9 @@ export interface GarmentPadRequest {
 export interface GarmentPadResponse {
   readonly id: number;
   readonly pixels?: Uint8ClampedArray;
+  /** The sheet's size (what the worker decoded, for a request by file). */
+  readonly width?: number;
+  readonly height?: number;
   readonly error?: string;
 }
 

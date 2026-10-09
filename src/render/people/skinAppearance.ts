@@ -1,11 +1,13 @@
-import { CanvasTexture, Color, DataTexture, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, type BufferGeometry, type MeshStandardMaterial } from 'three';
+import { CanvasTexture, Color, DataTexture, LinearFilter, LinearMipmapLinearFilter, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, type BufferGeometry, type MeshStandardMaterial } from 'three';
 import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
-import { padGarmentInWorker } from './garmentPaddingPool';
+import { padGarmentFileInWorker, padGarmentInWorker } from './garmentPaddingPool';
 import { cancelUploads, queueUpload } from '../uploads';
 import index from '../../../public/models/people/skins/index.json';
-const urls = import.meta.glob('../../../public/models/people/skins/*.webp', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
+// The skin textures' URLs by file name, one module for the folder
+// (`model-urls-plugin.ts`): an eager glob made each file a module of its own.
+import urls from 'virtual:model-urls/people/skins?ext=webp';
 
 export interface SkinAppearance { texture: Texture; eyeTexture: Texture; tint: Color; hair: Color; hairTexture?: Texture; browTexture?: Texture; lashTexture?: Texture; beardTexture?: Texture; garments: (Texture | null)[]; outfitTint: Color | null; beard: number; makeup: number }
 
@@ -44,7 +46,7 @@ export function skinChoice(person: PersonSpec): { name: string; url: string; eye
   const candidates = pool.length ? pool : skins.filter(fits).length ? skins.filter(fits)
     : skins.filter(s => s.origin === origin && s.sex === sex && !s.makeup);
   const skin = candidates[Math.abs(person.id * 2654435761 >>> 0) % candidates.length] ?? index.skins[0]!;
-  const url = urls[`../../../public/models/people/skins/${skin.name}.webp`];
+  const url = urls[`${skin.name}.webp`];
   if (!url) throw new Error(`Missing skin texture: ${skin.name}`);
   const average = new Color().setRGB(skin.average[0]! / 255, skin.average[1]! / 255, skin.average[2]! / 255, SRGBColorSpace);
   const desired = new Color(person.look.skin);
@@ -523,6 +525,24 @@ function paddedGarment(name: string, item: ProxyItem): TextureLease {
       };
       const uvs = item.pack.uvs;
       if (!uvs || typeof createImageBitmap !== 'function' || typeof document === 'undefined') return plain();
+      // Fetched, decoded, read and padded in the worker, the pixels moved back
+      // and handed to the GPU as they are (a DataTexture: no canvas). Read here
+      // - drawn into a canvas, read back, padded, written back - a 2048-pixel
+      // sheet was a 100-220 ms task as the first person wearing it came close.
+      const sheet = await padGarmentFileInWorker({ url: new URL(url, location.href).href, uvs, index: item.pack.index, padding: GARMENT_PAD });
+      if (sheet) {
+        // DataTexture's own defaults are nearest and no mipmaps (three r186):
+        // set back to what an image texture gets.
+        const map = new DataTexture(sheet.pixels, sheet.width, sheet.height);
+        map.magFilter = LinearFilter;
+        map.minFilter = LinearMipmapLinearFilter;
+        map.generateMipmaps = true;
+        map.unpackAlignment = 4;
+        map.colorSpace = SRGBColorSpace;
+        map.flipY = false;
+        map.needsUpdate = true;
+        return map;
+      }
       const bitmap = await createImageBitmap(await (await fetch(url)).blob());
       const W = bitmap.width, H = bitmap.height;
       const canvas = document.createElement('canvas');
