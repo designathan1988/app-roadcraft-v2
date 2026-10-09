@@ -18,7 +18,7 @@ import { impactCasualties } from '@sim/people/casualties';
 import { vehiclePose } from '@sim/pose';
 import { solidsOf } from '@world/solids';
 import { floorHeight } from '@world/buildings/foundation';
-import { levelElevation, roofHeightAt, roofRise, volumeCorners, worldToLocal } from '@world/buildings/geometry';
+import { elementRect, levelElevation, localToWorld, roofHeightAt, roofRise, volumeCorners, worldToLocal } from '@world/buildings/geometry';
 import { elementRing } from '@world/buildings/elements';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { POLE_ARM_DROP, POLE_ARM_HALF, POLE_HEIGHT, POLE_LAMP_REACH } from '@world/utilities';
@@ -130,19 +130,56 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
   (globalThis as Record<string, unknown>)['__ragdolls'] = ragdolls;
   /** Who is down (a `fall` pause) this frame. */
   const ragdollDown = new Set<number>();
-  /** The lots near the bodies (their raised yards are ground too), and the ground found, by small cells. */
-  const ragdollLots = new Set<BuildingId>();
+  /** The ground found under the bodies (the lots' raised yards are ground too), by small cells. */
   const ragdollGround = new Map<number, number>();
   /** The document's serial of what the ground found is read from (`wallsNear`). */
-  let ragdollGroundSerial = -1;
+  let ragdollGroundSerial = '';
+  /**
+   * The buildings by grid cell, by the box of their volumes (lots included)
+   * and elements (parking bays) grown a little: a uniform grid as a broad
+   * phase, each candidate then asked exactly (`lotHeightAt`). Made when first
+   * asked after the ground changed (`wallsNear`).
+   */
+  let lotGrid: Map<number, BuildingId[]> | null = null;
+  const LOT_CELL = m(40);
+  const lotCell = (gx: number, gy: number): number => (gx + 32768) * 65536 + (gy + 32768);
+  const lotsAt = (x: number, y: number): readonly BuildingId[] => {
+    if (!lotGrid) {
+      lotGrid = new Map();
+      for (const b of ragdollSim?.doc.buildings.all() ?? []) {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        const take = (p: { x: number; y: number }): void => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); };
+        // Every volume, the open ones (the lots) too.
+        for (const v of b.volumes) for (const p of volumeCorners(b, v)) take(p);
+        for (const e of b.elements ?? []) {
+          const [ex0, ey0, ex1, ey1] = elementRect(e);
+          for (const [lx, ly] of [[ex0, ey0], [ex1, ey0], [ex1, ey1], [ex0, ey1]] as const) take(localToWorld(b, lx, ly));
+        }
+        if (!Number.isFinite(x0)) continue;
+        const grow = m(2);
+        for (let gx = Math.floor((x0 - grow) / LOT_CELL); gx <= Math.floor((x1 + grow) / LOT_CELL); gx++) {
+          for (let gy = Math.floor((y0 - grow) / LOT_CELL); gy <= Math.floor((y1 + grow) / LOT_CELL); gy++) {
+            const key = lotCell(gx, gy);
+            const list = lotGrid.get(key);
+            if (list) list.push(b.id); else lotGrid.set(key, [b.id]);
+          }
+        }
+      }
+    }
+    return lotGrid.get(lotCell(Math.floor(x / LOT_CELL), Math.floor(y / LOT_CELL))) ?? [];
+  };
   /** The ground at a corner of the bodies' ground grid (0.2 units a cell): a lot's yard as drawn, else the paving (a footway stands over the terrain), else the terrain. */
   const ragdollCorner = (ix: number, iy: number): number => {
     const key = ix * 100003 + iy;
     const known = ragdollGround.get(key);
     if (known !== undefined) return known;
     const cx = ix / 5, cy = iy / 5;
+    // Only the lots whose box covers this cell of the grid (`lotsAt`): a cell
+    // no longer depends on which lots came near the bodies, so a lot coming
+    // near does not throw away every height found, and a miss is not a walk
+    // over every lot of the town.
     let h = NaN;
-    for (const id of ragdollLots) {
+    for (const id of lotsAt(cx, cy)) {
       h = buildings.lotHeightAt(id, cx, cy);
       if (Number.isFinite(h)) break;
     }
@@ -169,19 +206,20 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
       const out: RagdollWall[] = [];
       // The heights found stand until the ground under them changes (as a
       // physics engine's heightfield is made once and modified in place,
-      // PhysX): a lot more among the bodies' lots, or a road, the terrain, a
-      // building or a lot edited. Forgotten at every call, every body asking
-      // every frame, they were found again and again - the dead after a bomb
-      // cost milliseconds a frame.
-      const serial = ragdollSim?.doc.changes.serialOf('roads', 'terrain', 'buildings', 'lots') ?? -1;
-      if (ragdollLots.size > 400 || serial !== ragdollGroundSerial) {
-        if (ragdollLots.size > 400) ragdollLots.clear();
+      // PhysX): a road, the terrain or a lot edited, a building gone or
+      // broken. Forgotten at every call, every body asking every frame, they
+      // were found again and again - the dead after a bomb cost milliseconds a
+      // frame. Not every building edit: the city's ageing replaces records
+      // every few seconds without moving any ground.
+      const land = ragdollSim?.doc;
+      const serial = land ? `${land.changes.serialOf('roads', 'terrain', 'lots')}:${land.buildings.size}:${destruction.ruined.size}` : '';
+      if (serial !== ragdollGroundSerial) {
         ragdollGround.clear();
+        lotGrid = null;
         ragdollGroundSerial = serial;
       }
       for (const b of ragdollSim?.doc.buildings.all() ?? []) {
         if (destruction.ruined.has(b.id) || Math.hypot(b.x - x, b.y - y) > reach + m(40)) continue;
-        if (!ragdollLots.has(b.id)) { ragdollLots.add(b.id); ragdollGround.clear(); }
         const floor = floorHeight(b, ctx.naturalRenderedHeightAt, ctx.pavedHeightAt);
         for (const v of b.volumes) {
           if (v.base !== 0 || v.mode === 'void' || v.mode === 'intersect' || v.open) continue;
