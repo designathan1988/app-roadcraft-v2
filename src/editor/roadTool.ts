@@ -1,3 +1,4 @@
+import { layPowerLines } from './roads/powerLine';
 import { type FurnitureSet, furnitureFor } from '@world/roads/furnitureSets';
 import type { Vec2 } from '@core/vec2';
 import { dist } from '@core/vec2';
@@ -492,7 +493,9 @@ export class RoadTool {
       if (result.committed && settings.furniture && settings.furniture !== 'none') {
         if (net.revision !== doc.revision) net.rebuild();
         const laid = [...doc.segments.keys()].filter((id) => !before.has(id));
-        for (const piece of furnitureFor(net, laid, settings.furniture, doc.landscape.values())) doc.addLandscape(piece.kind, piece.at);
+        // The complete set: a power line down the left, its poles lit (V7).
+        const power = settings.furniture === 'complete' && layPowerLines(doc, net, laid) > 0;
+        for (const piece of furnitureFor(net, laid, settings.furniture, doc.landscape.values(), power)) doc.addLandscape(piece.kind, piece.at);
       }
       return result.committed;
     });

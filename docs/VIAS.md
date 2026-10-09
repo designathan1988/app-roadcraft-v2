@@ -363,7 +363,12 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   geração; quadro mediano 23 ms no Chrome sem tela (iGPU), sem número de antes.
 - Detector: `tests/world/cityGreen.spec.ts`. `crossingAccesses` memorizado por revisão e `furnitureFor` com grade de
   vizinhança (antes, quadrático no número de peças).
-- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f.
+- Rede elétrica (`editor/roads/powerLine.ts`): com o conjunto Completo, cada via nova (e cada rua da cidade gerada) ganha
+  a linha de distribuição no lado esquerdo pelo planejador da ferramenta de postes (`planPoleRun`: postes na calçada junto
+  à guia, fora das travessias, contornando esquinas), cada poste com luminária (a rua iluminada pelo poste, como no Brasil);
+  as pontas encaixam em postes já existentes, então as ruas viram uma rede. O lado direito fica com os postes de luz do
+  conjunto; o mobiliário não cai sobre um poste. Cidade pequena: >50 postes ligados (`cityGreen.spec`).
+- Falta: registro no catálogo da 5f (ainda não existe no master).
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

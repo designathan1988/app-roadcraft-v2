@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { greenCity, layCity, widenCityFootways } from '@editor/cityGenerator';
 import { DEFAULT_CITY, planCity } from '@world/cityGen/plan';
 import { NEIGHBOURHOOD } from '@world/cityGen/squares';
-import { footwayAt, medianAt } from '@world/landscape';
+import { footwayAt, LANDSCAPE_RADIUS, medianAt } from '@world/landscape';
 import { applyLots, insideLot, planLots, type Lot } from '@world/lots';
 import { Network } from '@world/network';
 
@@ -48,5 +48,12 @@ describe('a generated city is planted', () => {
       cells.set(key, (cells.get(key) ?? 0) + 1);
     }
     expect(cells.size).toBeLessThanOrEqual(green.squares * 4);
+    // The power lines: poles down the streets, joined by spans, every one lit, nothing of the furniture on a pole.
+    expect(doc.poles.size).toBeGreaterThan(50);
+    expect(doc.poleSpans.size).toBeGreaterThan(doc.poles.size / 2);
+    expect([...doc.poles.values()].every((p) => p.lamp)).toBe(true);
+    for (const pole of doc.poles.values()) {
+      for (const item of doc.landscape.values()) expect(Math.hypot(item.x - pole.x, item.y - pole.y)).toBeGreaterThan(LANDSCAPE_RADIUS.lamp);
+    }
   });
 });
