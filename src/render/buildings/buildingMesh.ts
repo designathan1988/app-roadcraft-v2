@@ -27,6 +27,7 @@ import {
   type Foundation,
   type GroundAt,
   type PavedAt,
+  PLINTH_BURY,
   STEP_RUN,
   flightRun,
   foundationOf,
@@ -42,6 +43,7 @@ import {
   facadeBays,
   levelElevation,
   levelHeight,
+  liftAt,
   projectionRect,
   ridgeAlongX,
   roofRise,
@@ -51,7 +53,9 @@ import {
   shedFall,
   sideLength,
   sideStart,
+  volumeElevation,
   volumeHeight,
+  volumeLift,
 } from '@world/buildings/geometry';
 import {
   type Finish,
@@ -527,10 +531,13 @@ function emitBuilding(
   const plinth = paint(plinthMaterial(b));
   const awning = new Color().setHex(paletteOf(b).awning);
 
-  // ---- plinth: from below the lowest ground up to the floor, notched where
-  // a flight of steps is set into the building
+  // ---- plinth: from below the lowest ground up to the floor - each block's
+  // own, on a split level, so a block a half storey up stands on its own
+  // foundation wall and one a storey down shows its lower floor whole -
+  // notched where a flight of steps is set into the building
   for (const v of b.volumes) {
     if (v.base !== 0) continue;
+    const top = floor + volumeLift(v);
     const notches = new Map<FaceId, { a0: number; a1: number; recess: number }[]>();
     for (const x of f.entrances) {
       if (x.volume !== v.id || x.recess <= 0) continue;
@@ -541,7 +548,7 @@ function emitBuilding(
       list.push({ a0: start + o.a0, a1: start + o.a1, recess: x.recess });
       notches.set(x.side, list);
     }
-    emitPlinth(e, v, f.bottom, floor, plinth, notches);
+    emitPlinth(e, v, Math.min(f.bottom, top - PLINTH_BURY), top, plinth, notches);
     // A projection standing on the ground stands on the plinth too.
     for (const r of v.reliefs ?? []) {
       const rect = r.storey0 === 0 ? projectionRect(b, v, r) : null;
@@ -552,10 +559,10 @@ function emitBuilding(
         const a0 = r.bay0 * width - g, a1 = (r.bay1 + 1) * width + g;
         const at = (a: number, depth: number, z: number): V3 =>
           e.L(frame.x + frame.tx * a + frame.nx * depth, frame.y + frame.ty * a + frame.ny * depth, z);
-        e.shell.face([at(a0, r.depth + g, f.bottom), at(a1, r.depth + g, f.bottom), at(a1, r.depth + g, floor), at(a0, r.depth + g, floor)], e.N(frame.nx, frame.ny), plinth);
-        e.shell.face([at(a0, -g, floor), at(a1, -g, floor), at(a1, r.depth + g, floor), at(a0, r.depth + g, floor)], [0, 0, 1], plinth);
+        e.shell.face([at(a0, r.depth + g, f.bottom), at(a1, r.depth + g, f.bottom), at(a1, r.depth + g, top), at(a0, r.depth + g, top)], e.N(frame.nx, frame.ny), plinth);
+        e.shell.face([at(a0, -g, top), at(a1, -g, top), at(a1, r.depth + g, top), at(a0, r.depth + g, top)], [0, 0, 1], plinth);
       } else {
-        e.box(rect[0] - g, rect[1] - g, rect[2] + g, rect[3] + g, f.bottom, floor, plinth);
+        e.box(rect[0] - g, rect[1] - g, rect[2] + g, rect[3] + g, f.bottom, top, plinth);
       }
     }
   }
@@ -603,7 +610,10 @@ function emitBuilding(
       e.rect(face, 0, face.W, 0, face.H, m(0.25), e.N(-face.nx, -face.ny), inner);
     }
     e.slot = slotOfBay(b, v, bay, spacesOf);
+    // The base weathered at the block's own foot (a split level stands at its own floor).
+    shell.ground = floor + volumeLift(v);
     emitBay(e, face, bay, wallOf(v, bay.side, bay.storey), trim, awning, left === 'pillar', right === 'pillar', recess, controls);
+    shell.ground = floor;
     e.slot = -1;
     const ribDepth = controls?.pierDepth ?? (grammar === 'artDecoCrown' ? m(.65) : grammar === 'artDeco' ? m(.3) : 0);
     if (ribDepth > 0 && bay.index % (controls?.pierEvery ?? 1) === 0) {
@@ -629,7 +639,7 @@ function emitBuilding(
     for (let k = 1; k < v.storeys.length; k++) {
       const level = v.base + k;
       if (level === 0) continue;
-      band(e, v, floor + levelElevation(b, level), BAND_OUT, BAND_H, trim);
+      band(e, v, floor + volumeElevation(b, v, level), BAND_OUT, BAND_H, trim);
     }
   }
 
@@ -647,29 +657,31 @@ function emitBuilding(
     if (entrance.steps <= 0) continue;
     const v = volumes.get(entrance.volume) as Volume;
     const frame = sideFrame(v, entrance.side, entranceStart(entrance, v), entrance.push);
-    const face: BayFace = { ...frame, z0: floor, W: entrance.width, H: 1 };
+    // The floor the door opens from: its own block's, on a split level.
+    const level = entrance.floor;
+    const face: BayFace = { ...frame, z0: level, W: entrance.width, H: 1 };
     const opening = entranceOpening(entrance);
     const n = e.N(face.nx, face.ny);
-    const bottom = Math.min(entrance.ground, floor) - m(0.4);
+    const bottom = Math.min(entrance.ground, level) - m(0.4);
     // Every riser the same: the flight spans exactly ground to floor.
-    const riser = (floor - entrance.ground) / entrance.steps;
+    const riser = (level - entrance.ground) / entrance.steps;
     if (entrance.recess > 0) {
-      emitRecessedFlight(e, face, opening.a0, opening.a1, entrance, floor, bottom, riser, plinth);
+      emitRecessedFlight(e, face, opening.a0, opening.a1, entrance, level, bottom, riser, plinth);
       continue;
     }
     const halfW = (opening.a1 - opening.a0 + m(0.5)) / 2;
     for (let j = 0; j < entrance.steps; j++) {
-      const top = floor - j * riser;
+      const top = level - j * riser;
       const d0 = -(j === 0 ? 0 : STEP_RUN * (j + 1));
       const d1 = -STEP_RUN * (j + 2);
       const a0 = entrance.width / 2 - halfW;
       const a1 = entrance.width / 2 + halfW;
       // Front, top and the two cheeks of this step's block.
-      e.rect(face, a0, a1, bottom - floor, top - floor, d1, n, plinth);
-      shell.face([e.P(face, a0, top - floor, d0), e.P(face, a1, top - floor, d0), e.P(face, a1, top - floor, d1), e.P(face, a0, top - floor, d1)], [0, 0, 1], plinth);
+      e.rect(face, a0, a1, bottom - level, top - level, d1, n, plinth);
+      shell.face([e.P(face, a0, top - level, d0), e.P(face, a1, top - level, d0), e.P(face, a1, top - level, d1), e.P(face, a0, top - level, d1)], [0, 0, 1], plinth);
       const tv = e.N(face.tx, face.ty);
-      shell.face([e.P(face, a1, bottom - floor, d0), e.P(face, a1, bottom - floor, d1), e.P(face, a1, top - floor, d1), e.P(face, a1, top - floor, d0)], tv, plinth);
-      shell.face([e.P(face, a0, bottom - floor, d1), e.P(face, a0, bottom - floor, d0), e.P(face, a0, top - floor, d0), e.P(face, a0, top - floor, d1)], [-tv[0], -tv[1], 0], plinth);
+      shell.face([e.P(face, a1, bottom - level, d0), e.P(face, a1, bottom - level, d1), e.P(face, a1, top - level, d1), e.P(face, a1, top - level, d0)], tv, plinth);
+      shell.face([e.P(face, a0, bottom - level, d1), e.P(face, a0, bottom - level, d0), e.P(face, a0, top - level, d0), e.P(face, a0, top - level, d1)], [-tv[0], -tv[1], 0], plinth);
     }
   }
 
@@ -727,7 +739,9 @@ const STEP = paint({ finish: 'stone', colour: 0xc9c2b3 });
  * lobby, core, floor.
  */
 function emitInterior(e: Emitter, b: Building, floor: number, cut: number): void {
-  const z = floor + levelElevation(b, cut);
+  // The cut floor's height where a point of the plan is: each block's own,
+  // on a split level (`Volume.lift`).
+  const zAt = (x: number, y: number): number => floor + liftAt(b, cut, x, y) + levelElevation(b, cut);
   // Homes and hotels have wooden floors; everywhere else, stone.
   const homely = b.function === 'house' || b.function === 'townhouse' || b.function === 'apartments' ||
     b.function === 'residentialTower' || b.function === 'hotel' || (!b.function && b.use === 'residential');
@@ -735,6 +749,7 @@ function emitInterior(e: Emitter, b: Building, floor: number, cut: number): void
   for (const v of b.volumes) {
     if (v.mode === 'void' || v.mode === 'intersect' || v.open) continue;
     if (!(v.base <= cut && volumeTop(v) > cut)) continue;
+    const z = floor + volumeElevation(b, v, cut);
     const flat = localFootprint(v).flatMap((p) => [p.x, p.y]);
     const triangles = earcut(flat);
     for (let i = 0; i < triangles.length; i += 3) {
@@ -744,12 +759,14 @@ function emitInterior(e: Emitter, b: Building, floor: number, cut: number): void
   }
   const u = b.module;
   const wall = m(0.2);
-  const top = floor + levelElevation(b, cut + 1) - m(0.3);
   for (const core of b.cores) {
     if (core.from > cut || core.to < cut) continue;
     const w = core.kind === 'stair' ? u * 2 : u;
     const x0 = core.x, y0 = core.y, x1 = core.x + w, y1 = core.y + u;
-    const z0 = floor + levelElevation(b, core.from);
+    const lift = liftAt(b, cut, x0 + w / 2, y0 + u / 2);
+    const z = floor + lift + levelElevation(b, cut);
+    const top = floor + lift + levelElevation(b, cut + 1) - m(0.3);
+    const z0 = floor + lift + levelElevation(b, core.from);
     // The shaft: four walls, the front one with a doorway at this floor.
     e.box(x0, y1 - wall, x1, y1, z0, top, SHAFT);
     e.box(x0, y0, x0 + wall, y1, z0, top, SHAFT);
@@ -776,7 +793,7 @@ function emitInterior(e: Emitter, b: Building, floor: number, cut: number): void
   }
   // The rooms: their walls, with doorways, and what is in them.
   const inside = interiorAt(b, cut);
-  const wallTop = z + Math.min(levelHeight(b, cut) - m(0.4), m(2.7));
+  const wallRise = Math.min(levelHeight(b, cut) - m(0.4), m(2.7));
   // Walls across the camera's line of sight come down to a skirting, as in
   // The Sims; walls running along it stay up and divide the rooms.
   const view = b.cutView;
@@ -786,12 +803,15 @@ function emitInterior(e: Emitter, b: Building, floor: number, cut: number): void
     const len = Math.hypot(p.x1 - p.x0, p.y1 - p.y0) || 1;
     // The wall's normal against the view: near 1 means it faces the camera.
     const facing = viewLocal ? Math.abs((-(p.y1 - p.y0) / len) * viewLocal.x + ((p.x1 - p.x0) / len) * viewLocal.y) : 0;
-    const top = facing > 0.6 ? z + m(0.9) : wallTop;
+    const z = zAt((p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2);
+    const top = facing > 0.6 ? z + m(0.9) : z + wallRise;
     e.box(Math.min(p.x0, p.x1) - t, Math.min(p.y0, p.y1) - t, Math.max(p.x0, p.x1) + t, Math.max(p.y0, p.y1) + t, z, top, PARTITION);
   }
   // A ceiling light hangs from the ceiling; everything else stands on the floor.
-  const ceiling = z + levelHeight(b, cut) - m(0.06);
-  for (const f of inside.furniture) placeFurniture(e, f, f.kind === 'ceilingLamp' ? ceiling - f.h : z);
+  for (const f of inside.furniture) {
+    const z = zAt(f.x, f.y);
+    placeFurniture(e, f, f.kind === 'ceilingLamp' ? z + levelHeight(b, cut) - m(0.06) - f.h : z);
+  }
 }
 
 /**
@@ -1090,8 +1110,8 @@ function emitRelief(e: Emitter, b: Building, v: Volume, r: Relief, floor: number
   const w = bayWidth(b, v, r.side);
   const a0 = Math.max(0, r.bay0) * w;
   const a1 = (Math.min(count - 1, r.bay1) + 1) * w;
-  const z0 = floor + levelElevation(b, v.base + Math.max(0, r.storey0));
-  const z1 = floor + levelElevation(b, v.base + Math.min(top, r.storey1) + 1);
+  const z0 = floor + volumeElevation(b, v, v.base + Math.max(0, r.storey0));
+  const z1 = floor + volumeElevation(b, v, v.base + Math.min(top, r.storey1) + 1);
   const s = sideStart(v, r.side);
   const f = edgeFrame(v, r.side);
   const n = { x: f.nx, y: f.ny };
@@ -2054,7 +2074,7 @@ function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1
       if (el.w >= CAR_GATE_OPEN) {
         // A car's gate: its two leaves swung open into the lot on their
         // hinges at the posts, so the cars that use it (`sim/agents/
-        // lotTraffic.ts`) are not drawn through its bars. A person's stays shut.
+        // lotTraffic.ts`) are not drawn through its bars.
         const depth = el.d || m(0.12);
         const leaf = ((1 - 2 * post) * length) / 2 / depth;
         const inward = el.facing === 0 || el.facing === 3 ? 1 : -1;
@@ -2072,13 +2092,24 @@ function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1
         }
         return;
       }
-      part(post, 1 - post, 0, 1, z0 + m(0.08), z0 + m(0.16), look);
-      part(post, 1 - post, 0, 1, z1 - m(0.1), z1, look);
-      const bars = Math.max(2, Math.round(length / m(0.14)));
-      const bar = m(0.035) / length;
-      for (let k = 1; k < bars; k++) {
-        const u = post + ((1 - 2 * post) * k) / bars;
-        part(u - bar / 2, u + bar / 2, 0.2, 0.8, z0 + m(0.16), z1 - m(0.1), look);
+      {
+        // A person's gate: its one leaf, hung on one post like a door, stands
+        // swung open into the lot - people walk through it to their doors
+        // (`sim/agents/lotDoors.ts`), never through a shut leaf.
+        const depth = el.d || m(0.12);
+        const leaf = ((1 - 2 * post) * length) / depth;
+        const inward = el.facing === 0 || el.facing === 3 ? 1 : -1;
+        const v0 = inward > 0 ? 1 : -leaf, v1 = inward > 0 ? 1 + leaf : 0;
+        const thin = m(0.05) / length;
+        const u = post;
+        part(u, u + thin, v0, v1, z0 + m(0.08), z0 + m(0.16), look);
+        part(u, u + thin, v0, v1, z1 - m(0.1), z1, look);
+        const bars = Math.max(2, Math.round((leaf * depth) / m(0.14)));
+        for (let k = 0; k <= bars; k++) {
+          const v = v0 + ((v1 - v0) * k) / bars;
+          const bw = m(0.035) / depth;
+          part(u, u + thin, v - bw / 2, v + bw / 2, z0 + m(0.08), z1, look);
+        }
       }
       return;
     }
@@ -2936,9 +2967,11 @@ export function interiorFurniture(b: Building, floor: number): Partial<Record<Fu
   let top = 0;
   for (const v of b.volumes) if (!v.open && v.mode !== 'void') top = Math.max(top, volumeTop(v));
   for (let level = 0; level < top; level++) {
-    const z = floor + levelElevation(b, level);
-    const ceiling = z + levelHeight(b, level) - m(0.06);
-    for (const f of interiorAt(b, level).furniture) placeFurniture(e, f, f.kind === 'ceilingLamp' ? ceiling - f.h : z);
+    for (const f of interiorAt(b, level).furniture) {
+      // Each piece on its own block's floor (a split level, `Volume.lift`).
+      const z = floor + liftAt(b, level, f.x, f.y) + levelElevation(b, level);
+      placeFurniture(e, f, f.kind === 'ceilingLamp' ? z + levelHeight(b, level) - m(0.06) - f.h : z);
+    }
     // Enough to fill the air when it breaks; a tower's every chair cost a second.
     if (Object.values(placed).reduce((n, l) => n + (l?.length ?? 0), 0) > 140) break;
   }

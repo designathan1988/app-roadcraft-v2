@@ -215,10 +215,23 @@ export interface Volume {
    * street it opens onto). At most `MAX_TERRACE` either way.
    */
   terrace?: number;
+  /**
+   * A block standing at a floor of its own on a hillside: this far above (or,
+   * negative, below) the building's ground floor, world units, the whole
+   * block - its storeys, its roof, its plinth - moved with it. A split-level
+   * or a back-split house steps half a storey; a block with a lower ground
+   * floor exposed on the downhill side steps a whole one (`splitLevel.ts`).
+   * The levels stay the building's: storey k of the block is still level
+   * `base + k`, at `lift + levelElevation(base + k)`. Absent: 0. A block
+   * standing on another carries the lift of the block under it.
+   */
+  lift?: number;
 }
 
 /** The farthest a terrace of a lot stands above or below its building's floor. */
 export const MAX_TERRACE = m(5.5);
+/** The farthest a block's own floor stands above or below the building's ground floor. */
+export const MAX_LIFT = m(6);
 
 /**
  * What an open block is laid with. Each area of a lot has its own: a lawn, a

@@ -1,6 +1,6 @@
 import type { SimWorld } from '@sim/world';
 import { floorHeight, type GroundAt, type PavedAt } from '@world/buildings/foundation';
-import { levelElevation, levelHeight, localToWorld } from '@world/buildings/geometry';
+import { levelElevation, levelHeight, liftAt, localToWorld } from '@world/buildings/geometry';
 import { LAMP_KINDS, interiorAt } from '@world/buildings/interior';
 import { m } from '@world/units';
 import type { CutawaySpec } from './buildings/layer';
@@ -40,7 +40,8 @@ export class RoomLamps {
         if (out.length >= max) return out;
         const p = localToWorld(b, f.x, f.y);
         const up = f.kind === 'ceilingLamp' ? levelHeight(b, spec.level) - m(0.6) : f.h * 0.9;
-        out.push({ x: p.x, y: p.y, z: floor + up });
+        // On its own block's floor (a split level stands at its own, `Volume.lift`).
+        out.push({ x: p.x, y: p.y, z: floor + liftAt(b, spec.level, f.x, f.y) + up });
       }
     }
     return out;

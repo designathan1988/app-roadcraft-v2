@@ -72,6 +72,12 @@ export interface Entrance {
   readonly push: number;
   /** Absolute height of the ground at the foot of the steps. */
   readonly ground: number;
+  /**
+   * Absolute height of the floor it opens from: the ground floor, or the
+   * floor of its own block where that block stands at a level of its own
+   * (`Volume.lift`). The steps rise from `ground` to here.
+   */
+  readonly floor: number;
   /** Number of steps from the ground up to the floor; 0 = level access. */
   readonly steps: number;
   /**
@@ -164,7 +170,9 @@ function entrancePaving(bays: readonly FacadeBay[], pavedAt: PavedAt): number {
     for (const d of [m(0.25), ENTRANCE_REACH * 0.5, ENTRANCE_REACH]) {
       const h = pavedAt(bay.x + bay.nx * d, bay.y + bay.ny * d);
       if (Number.isFinite(h)) {
-        best = Math.max(best, h);
+        // A door of a block at a floor of its own puts the ground floor that
+        // far from its paving (`bay.z` of a ground-level bay is its block's lift).
+        best = Math.max(best, h - bay.z);
         break;
       }
     }
@@ -206,11 +214,13 @@ export function foundationOf(
   const all = bays ?? facadeBays(b);
   const { lowest, highest } = sampleFootprint(b, groundAt);
   const pavedAt = atLevel(anyPaving, highest, lowest);
-  const floor = designedFloor ?? floorOver(highest, all, pavedAt, lotFront(b, pavedAt));
+  const groundFloor = designedFloor ?? floorOver(highest, all, pavedAt, lotFront(b, pavedAt));
   const volumes = new Map(b.volumes.map((v) => [v.id, v]));
   const entrances: Entrance[] = [];
   for (const bay of all) {
     if (!isAccess(bay)) continue;
+    // The floor this door opens from: its block's own, on a split level.
+    const floor = groundFloor + bay.z;
     // What a person stands on at `d` in front of the facade: the paving where
     // there is some, the land elsewhere.
     const surface = (d: number): number => {
@@ -266,13 +276,14 @@ export function foundationOf(
       width: bay.width,
       push: bay.push,
       ground,
+      floor,
       steps,
       recess,
       threshold,
     });
   }
   return {
-    floor,
+    floor: groundFloor,
     lowest,
     highest,
     bottom: lowest - PLINTH_BURY,
@@ -305,7 +316,7 @@ function mergeEntrances(list: readonly Entrance[]): Entrance[] {
 
 function adjacentEntrance(a: Entrance, b: Entrance): boolean {
   if (a.volume !== b.volume || a.side !== b.side || a.component !== b.component) return false;
-  if (Math.abs(a.ground - b.ground) > 1e-6 || a.steps !== b.steps || a.recess !== b.recess || a.threshold !== b.threshold) return false;
+  if (Math.abs(a.ground - b.ground) > 1e-6 || Math.abs(a.floor - b.floor) > 1e-6 || a.steps !== b.steps || a.recess !== b.recess || a.threshold !== b.threshold) return false;
   // One bay further along the same side: the two runs touch.
   const bays = a.width > 1e-6 ? Math.round(a.width / Math.max(1e-6, b.width)) : 1;
   return b.index === a.index + Math.max(1, bays);
@@ -393,7 +404,7 @@ function floorOver(highest: number, bays: readonly FacadeBay[], pavedAt: PavedAt
   for (const bay of bays) {
     if (bay.level !== 0) continue;
     const h = pavedAt(bay.x + bay.nx * m(0.5), bay.y + bay.ny * m(0.5));
-    if (Number.isFinite(h)) front = Math.max(front, h);
+    if (Number.isFinite(h)) front = Math.max(front, h - bay.z);
   }
   return Number.isFinite(front) ? front + THRESHOLD : highest + PLINTH_MIN;
 }

@@ -8,10 +8,11 @@ import {
   GRID,
   bayWidth,
   elementRect,
-  levelElevation,
   localToWorld,
   sideStart,
+  volumeElevation,
   volumeHeight,
+  volumeLift,
 } from './geometry';
 import {
   type Building,
@@ -165,8 +166,11 @@ export function elementClash(b: Building, e: BuildingElement): Volume | null {
   for (const v of b.volumes) {
     // A lot is ground to stand things on, and a cut or a clip is no mass.
     if (v.open || v.mode === 'void' || v.mode === 'intersect') continue;
-    const vz0 = levelElevation(b, v.base);
-    const vz1 = levelElevation(b, volumeTop(v));
+    // Its own heights (a block at a floor of its own, `Volume.lift`); a block
+    // on the ground is solid from the ground floor's level down - a raised
+    // block's foundation wall retains the earth under it.
+    const vz0 = v.base === 0 ? Math.min(0, volumeLift(v)) : volumeElevation(b, v, v.base);
+    const vz1 = volumeElevation(b, v, volumeTop(v));
     // A canopy, an awning or a unit hangs ON the wall: its back meets the
     // face, and on a face that is not square to the frame its box cuts a
     // corner of the wall. What matters is that it hangs outside - its centre
@@ -233,11 +237,11 @@ function elementsAgainstBayAxis(b: Building, v: Volume, bay: BayRef, kind: Eleme
   const along = (bay.index + 0.5) * width;
   // A point on the face line, `out` in front of it and `a` along it.
   const at = (a: number, out: number): Vec2 => ({ x: s.x + s.tx * a + n.x * out, y: s.y + s.ty * a + n.y * out });
-  const floorZ = levelElevation(b, v.base + bay.storey);
+  const floorZ = volumeElevation(b, v, v.base + bay.storey);
   switch (kind) {
     case 'canopy': {
       // Over the bay's opening, a little below the next floor.
-      const z = Math.max(floorZ + m(2.5), levelElevation(b, v.base + bay.storey + 1) - m(0.6));
+      const z = Math.max(floorZ + m(2.5), volumeElevation(b, v, v.base + bay.storey + 1) - m(0.6));
       const c = at(along, dd / 2);
       return [{ kind, x: c.x, y: c.y, facing, w: Math.max(width, dw), d: dd, z, h: dh }];
     }
@@ -261,7 +265,7 @@ function elementsAgainstBayAxis(b: Building, v: Volume, bay: BayRef, kind: Eleme
       // On the nearest bay line, just in front of the face, as tall as the storey.
       const line = Math.round(along / width) * width;
       const c = at(line, dd / 2 + m(0.6));
-      return [{ kind, x: c.x, y: c.y, facing, w: dw, d: dd, z: floorZ, h: levelElevation(b, v.base + bay.storey + 1) - floorZ }];
+      return [{ kind, x: c.x, y: c.y, facing, w: dw, d: dd, z: floorZ, h: volumeElevation(b, v, v.base + bay.storey + 1) - floorZ }];
     }
     case 'wall':
     case 'hedge': {
@@ -282,7 +286,7 @@ function elementsAgainstBayAxis(b: Building, v: Volume, bay: BayRef, kind: Eleme
     }
     case 'awning': {
       // A canvas over the bay's opening, projecting out from above it.
-      const z = Math.max(floorZ + m(2.4), levelElevation(b, v.base + bay.storey + 1) - m(0.5));
+      const z = Math.max(floorZ + m(2.4), volumeElevation(b, v, v.base + bay.storey + 1) - m(0.5));
       const c = at(along, dd / 2);
       return [{ kind, x: c.x, y: c.y, facing, w: Math.max(width, dw), d: dd, z, h: dh }];
     }
@@ -336,14 +340,14 @@ function elementsAgainstBayAxis(b: Building, v: Volume, bay: BayRef, kind: Eleme
     case 'clock': {
       // A dial on the wall, centred on the bay, in the middle of the storey.
       const c = at(along, dd / 2 + m(0.02));
-      const storeyH = levelElevation(b, v.base + bay.storey + 1) - floorZ;
+      const storeyH = volumeElevation(b, v, v.base + bay.storey + 1) - floorZ;
       const size = Math.min(dw, width * 0.9, storeyH * 0.9);
       return [{ kind, x: c.x, y: c.y, facing, w: size, d: dd, z: floorZ + (storeyH - size) / 2, h: size }];
     }
     case 'ac': {
       // Hung on the facade, a metre above the storey's floor.
       const c = at(along, dd / 2 + m(0.05));
-      const z = floorZ + Math.min(m(1.1), Math.max(0, (levelElevation(b, v.base + bay.storey + 1) - floorZ) / 2));
+      const z = floorZ + Math.min(m(1.1), Math.max(0, (volumeElevation(b, v, v.base + bay.storey + 1) - floorZ) / 2));
       return [{ kind, x: c.x, y: c.y, facing, w: dw, d: dd, z, h: dh }];
     }
   }

@@ -4,7 +4,7 @@ import { mat } from '@world/buildings/cityBuildings';
 import { FOLLOWS_GROUND, elementClash } from '@world/buildings/elements';
 import type { MaterialSpec } from '@world/buildings/materials';
 import type { MadeBuilding, Rect } from '@world/buildings/procedural';
-import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, type Side, type Volume } from '@world/buildings/types';
+import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, MAX_TERRACE, type Side, type Volume } from '@world/buildings/types';
 import { m } from '@world/units';
 import type { ZoneDensity, ZoneUse } from '@world/zones';
 
@@ -187,6 +187,8 @@ const PAVERS = mat('brick', 0x9a958c);
 const PAVERS_WARM = mat('brick', 0xb08a6e);
 const CONCRETE_PATH = mat('concrete', 0xc8c4bb);
 const STONE_PATH = mat('stone', 0xd2cbbd);
+/** A retaining wall's stone, and the flights cut through one. */
+const RETAINING = mat('stone', 0x9a948a);
 
 interface Lot {
   surface(r: Rect, s: LotSurface): void;
@@ -207,8 +209,19 @@ interface Lot {
  * the lot could not be laid.
  */
 export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuilding, rng: Rng,
-  /** The lot's slope: the natural ground in the middle of the back yard less at the street front, metres. */
-  hill?: { readonly yard: number }): boolean {
+  /**
+   * The lot's slope: the natural ground in the middle of the back yard less
+   * at the street front, metres; and, when the building steps with the slope
+   * (`world/buildings/splitLevel.ts`), where its back level starts (metres
+   * back from the street) and how far above (below) the street floor it is.
+   * Everything laid behind that line on the building's side - the back
+   * terrace, the yard, the courts left in the envelope, the rear of a side
+   * garden or passage - is laid at that level, as each tier of a split-level
+   * house opens onto its own part of the garden.
+   */
+  hill?: { readonly yard: number; readonly split?: { readonly y: number; readonly lift: number } }): boolean {
+  const split = hill?.split && Math.abs(hill.split.lift) > 0.05 ? hill.split : null;
+  const backLevel = split?.lift ?? 0;
   const { W, D, front, left, right, back } = plan;
   const env = plan.building;
   const F = front.depth, Bk = D - back.depth;
@@ -225,6 +238,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   const keepClear: Rect[] = [];
   /** A boundary run is being laid (`runX`, `runY`): its pieces may stand along the drive. */
   let laying = false;
+  /** The x spans kept clear in front of the people's gates (`put`), filled once the door is known. */
+  const gateWays: { x0: number; x1: number }[] = [];
   const probe = (): Building => ({ ...body, id: 0, x: 0, y: 0, rotation: 0 } as Building);
 
   const lot: Lot = {
@@ -258,6 +273,11 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       if (!(laying || kind === 'gate') && z < 2 && !FLAT_KINDS.has(kind)) {
         const [hw, hd] = facing === 1 || facing === 3 ? [d / 2, w / 2] : [w / 2, d / 2];
         if (keepClear.some((r) => x + hw > r.x0 && x - hw < r.x1 && y + hd > r.y0 && y - hd < r.y1)) return false;
+        // The way from a people's gate to the door: nothing in the opening
+        // and half a metre either side, across the front (a bollard in a
+        // tower's gate left it no way in; a walking surface is 915 mm clear
+        // at the least, ADA 403.5.1).
+        if (y - hd < Math.max(F, 1) && gateWays.some((g) => x + hw > g.x0 && x - hw < g.x1)) return false;
       }
       const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h),
         ...(material ? { material } : {}) };
@@ -312,6 +332,47 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     },
   };
 
+  const maxTerrace = MAX_TERRACE / m(1) - 0.1;
+  /**
+   * Everything laid since (`fromVolume`, `fromElement`) raised (negative:
+   * lowered) `rise` metres - its open blocks as terraces (`Volume.terrace`),
+   * the parts that do not follow the ground with them - or, with `behind`,
+   * only what lies that far back from the street or further.
+   */
+  const lift = (fromVolume: number, fromElement: number, rise: number, behind = -Infinity): void => {
+    if (Math.abs(rise) < 1e-6) return;
+    for (const v of body.volumes) {
+      if (!v.open || v.id < fromVolume || v.y < Y(behind) - 1e-6) continue;
+      v.terrace = m(Math.max(-maxTerrace, Math.min(maxTerrace, rise + (v.terrace ?? 0) / m(1))));
+    }
+    for (const el of elements) if (el.id >= fromElement && !FOLLOWS_GROUND.has(el.kind) && el.y >= Y(behind) - 1e-6) el.z += m(rise);
+  };
+  /**
+   * A retaining wall in stone from (x0, y0) to (x1, y1) (along x or along y)
+   * between the street floor's level and the back level: up to a hand's
+   * breadth over the back when the back is higher, a parapet's height over
+   * the drop when it is lower (as `stepYard`'s walls).
+   */
+  const retain = (x0: number, y0: number, x1: number, y1: number): void => {
+    const h = backLevel > 0 ? backLevel + 0.15 : 0.95;
+    const alongY = Math.abs(x1 - x0) < Math.abs(y1 - y0);
+    const length = alongY ? y1 - y0 : x1 - x0;
+    const n = Math.ceil(length / 20);
+    for (let k = 0; k < n && length > 0.4; k++) {
+      const a = k / n, b = (k + 1) / n;
+      if (alongY) lot.put('slab', x0, y0 + (y1 - y0) * (a + b) / 2, 1, (y1 - y0) / n, 0.3, h, 0, RETAINING);
+      else lot.put('slab', x0 + (x1 - x0) * (a + b) / 2, y0, 0, (x1 - x0) / n, 0.3, h, 0, RETAINING);
+    }
+  };
+  /** A flight `width` wide from the street floor's level at `y` to the back level beyond it, at `x`. */
+  const flightBack = (x: number, y: number, width: number): void => {
+    const risers = Math.max(2, Math.round(Math.abs(backLevel) / STEP_RISE_M));
+    const run = (risers + 1) * STEP_RUN_M;
+    taken.push({ x0: x - width / 2, y0: y, x1: x + width / 2, y1: y + run });
+    if (backLevel > 0) lot.put('stair', x, y + run / 2, 0, width, run, backLevel, 0, RETAINING);
+    else lot.put('stair', x, y + run / 2, 2, width, run, -backLevel, backLevel, RETAINING);
+  };
+
   /**
    * The yard from `y0` back to `y1` laid as a terrace `fall` metres above (or
    * below) the floor, rounded to whole risers: its open blocks raised or
@@ -319,10 +380,13 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
    * ground lifted with it, a retaining wall in stone along its edge with a
    * parapet on the high side, and a flight of steps at `stairX` between the
    * two levels (risers of 17 cm, treads of 30 cm: twice the rise and the
-   * going, 64 cm, within the 55-70 cm of the stair rule).
+   * going, 64 cm, within the 55-70 cm of the stair rule). `base`: the level
+   * the yard starts from (the back level of a split-level house), which the
+   * terrace may not take past `MAX_TERRACE`.
    */
-  const stepYard = (y0: number, y1: number, fall: number, fromVolume: number, fromElement: number, stairX: number): void => {
-    const risers = Math.min(TERRACE_MAX_RISERS, Math.round(Math.abs(fall) * 0.85 / STEP_RISE_M));
+  const stepYard = (y0: number, y1: number, fall: number, fromVolume: number, fromElement: number, stairX: number, base = 0): void => {
+    const room = maxTerrace - Math.max(0, Math.sign(fall) * base);
+    const risers = Math.min(TERRACE_MAX_RISERS, Math.round(Math.abs(fall) * 0.85 / STEP_RISE_M), Math.floor(room / STEP_RISE_M));
     if (risers < 4) return;
     const rise = risers * STEP_RISE_M * Math.sign(fall);
     const run = (risers + 1) * STEP_RUN_M;
@@ -386,12 +450,29 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   }
   const door = env.x0 + made.entrance;
   const backDoor = made.backDoor !== undefined ? env.x0 + made.backDoor : null;
+  // The people's gates as the boundary will place them: on the path to the
+  // door when there is a front, at each passage when there is none.
+  const peopleGate = plan.kind === 'shop' || plan.kind === 'office' ? 2 : plan.kind === 'house' ? 1.2 : 1.6;
+  if (F > 0) gateWays.push({ x0: door - peopleGate / 2 - 0.5, x1: door + peopleGate / 2 + 0.5 });
+  else for (const w of walks) gateWays.push({ x0: w.x0 - 0.5, x1: w.x1 + 0.5 });
   const isHouse = plan.kind === 'house';
   const driveSurface: LotSurface = isHouse ? 'concrete' : plan.kind === 'industry' ? 'concrete' : 'asphalt';
 
   // ---- what the building leaves of its envelope: a terrace, a court garden
   for (const f of made.free) {
     const r = { x0: env.x0 + f.x0, y0: env.y0 + f.y0, x1: env.x0 + f.x1, y1: env.y0 + f.y1 };
+    // A court behind the step of a split-level building is at its back level,
+    // walled where it meets a side strip at the street floor's.
+    const raised = split !== null && r.y0 >= split.y - 1e-6;
+    const fromVolume = nextVolume, fromElement = nextElement;
+    furnishFree(r);
+    if (raised) {
+      lift(fromVolume, fromElement, backLevel);
+      if (r.x0 <= env.x0 + 1e-6 && left.width > 0) retain(env.x0 + 0.15, r.y0, env.x0 + 0.15, r.y1);
+      if (r.x1 >= env.x1 - 1e-6 && right.width > 0) retain(env.x1 - 0.15, r.y0, env.x1 - 0.15, r.y1);
+    }
+  }
+  function furnishFree(r: Rect): void {
     if (plan.kind === 'industry') {
       lot.surface(r, 'asphalt');
       for (let x = r.x0 + 0.3; x + 2.5 <= r.x1 - 0.2; x += 2.5) lot.put('parking', x + 1.25, r.y0 + Math.min(2.5, (r.y1 - r.y0) / 2), 0, 2.5, Math.min(5, r.y1 - r.y0 - 0.2), 0.12);
@@ -479,7 +560,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     }
   }
 
-  // ---- side strips
+  // ---- side strips: the drives at the street floor's level all the way back
+  // (a car drives in off the street); a passage and a side garden behind the
+  // step of a split-level building at its back level, a flight and a
+  // retaining wall where they change level.
   for (const s of [L, R]) {
     if (s.drive) {
       const r = { ...s.drive, y0: Math.max(F, s.drive.y0) };
@@ -493,6 +577,9 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       }
       lot.put('drain', (r.x0 + r.x1) / 2, Math.min(Bk - 0.6, F + 7), 0, 0.5, 0.5, 0.1);
     }
+  }
+  const stripVolumes = nextVolume, stripElements = nextElement;
+  for (const s of [L, R]) {
     if (s.walk) {
       lot.path(s.walk, isHouse ? CONCRETE_PATH : PAVERS);
       if (!isHouse && s.walk.y1 - s.walk.y0 > 12) lot.put('lamp', s.walk.x0 + 0.3, (s.walk.y0 + s.walk.y1) / 2, 0, 0.3, 0.3, 3.5);
@@ -513,13 +600,31 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     }
     if (s.garden) {
       const g = s.garden;
-      lot.surface(g, 'grass');
+      // In two lawns where the building steps: the front one at the street
+      // floor's level, the back one at the back level.
+      const cut = split && split.y > g.y0 + 2 && split.y < g.y1 - 2 ? split.y : null;
+      if (cut !== null) { lot.surface({ ...g, y1: cut }, 'grass'); lot.surface({ ...g, y0: cut }, 'grass'); }
+      else lot.surface(g, 'grass');
       for (let py = g.y0 + 2; py < g.y1 - 1.5; py += 5) lot.put(py % 10 < 5 ? 'tree' : 'shrub', (g.x0 + g.x1) / 2, py, 0, 2.4, 2.4, 4);
     }
   }
+  if (split) {
+    lift(stripVolumes, stripElements, backLevel, split.y);
+    for (const s of [L, R]) {
+      // The passage: a flight down (up) at the step.
+      if (s.walk && split.y > s.walk.y0 + 1 && split.y < s.walk.y1 - 1) flightBack((s.walk.x0 + s.walk.x1) / 2, split.y, Math.max(0.8, s.walk.x1 - s.walk.x0 - 0.1));
+      // The side garden: a retaining wall across it at the step.
+      if (s.garden && split.y > s.garden.y0 + 2 && split.y < s.garden.y1 - 2) retain(s.garden.x0 + 0.1, split.y, s.garden.x1 - 0.1, split.y);
+      // The drive, at the street floor to its end: a wall across its end where
+      // the back of the lot is at its own level (the way down or up to the
+      // garden is the passage's flight, or through the house).
+      if (s.drive && D - Bk > 0) retain(s.drive.x0 + 0.1, Bk + 0.15, s.drive.x1 - 0.1, Bk + 0.15);
+    }
+  }
 
-  // ---- back zone
+  // ---- back zone (behind a split-level building, at its back level)
   const by0 = Bk, by1 = D;
+  const backVolumes = nextVolume, backElements = nextElement;
   switch (back.use) {
     case 'yard': {
       const yardVolumes = nextVolume, yardElements = nextElement;
@@ -678,7 +783,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       // by a retaining wall, a flight of steps between), instead of the whole
       // yard cut down or filled up to the floor with banks spilling over the
       // boundary.
-      if (hill && Math.abs(hill.yard) >= TERRACE_MIN) stepYard(lawnY0, by1, hill.yard, yardVolumes, yardElements, (env.x0 + env.x1) / 2);
+      // From the back level, on a split-level house (raised with the rest of the back below).
+      if (hill && Math.abs(hill.yard - backLevel) >= TERRACE_MIN) stepYard(lawnY0, by1, hill.yard - backLevel, yardVolumes, yardElements, (env.x0 + env.x1) / 2, backLevel);
       break;
     }
     case 'parking': {
@@ -785,6 +891,9 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     }
     default: break;
   }
+  // Cars and lorries come in at the street floor's level: a car park or a
+  // loading yard is never stepped (`zoning.ts` steps no building with one).
+  if (split && back.use !== 'parking' && back.use !== 'loading') lift(backVolumes, backElements, backLevel);
 
   // ---- boundaries and gates
   // The boundary walls stand right on the lot's edge: the neighbour's wall
@@ -820,7 +929,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   // The people's gate on the path to the door, whatever is in front of it; a
   // shop's and an office's as wide as a shop door.
   // (under 2.2 m: wider is a car's gate, `sim/agents/parking.ts` `CAR_GATE`).
-  if (F > 0) gates.push({ x: door, w: plan.kind === 'shop' || plan.kind === 'office' ? 2 : plan.kind === 'house' ? 1.2 : 1.6 });
+  if (F > 0) gates.push({ x: door, w: peopleGate });
   // A works' apron has its visitors' stalls: a wide car gate onto it, beside
   // the people's (closed in by the fence, the stalls could not be reached).
   if (front.use === 'apron') gates.push({ x: door > W / 2 ? Math.max(3.4, door - 4.6) : Math.min(W - 3.4, door + 4.6), w: 6 });

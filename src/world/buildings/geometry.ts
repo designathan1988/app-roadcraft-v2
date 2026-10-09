@@ -85,6 +85,50 @@ export function topLevel(b: Building): number {
 /** Whether a volume has a storey on `level`. */
 export const occupiesLevel = (v: Volume, level: number): boolean => v.base <= level && level < volumeTop(v);
 
+/** How far a block's own floor stands from the building's ground floor (`Volume.lift`). */
+export const volumeLift = (v: Volume): number => v.lift ?? 0;
+
+/** Height of the floor of a block's level `level` above the building's ground floor, its lift included. */
+export const volumeElevation = (b: Building, v: Volume, level: number): number => volumeLift(v) + levelElevation(b, level);
+
+/**
+ * The lift of the block a point of the plan is in, on `level`: where a
+ * floor's furniture, partitions and cores stand (0 where no block has it).
+ */
+export function liftAt(b: Building, level: number, x: number, y: number): number {
+  let best: Volume | null = null;
+  for (const v of b.volumes) {
+    if (v.open || !isMass(v) || !occupiesLevel(v, level)) continue;
+    if (x < v.x - EPS || x > v.x + v.w + EPS || y < v.y - EPS || y > v.y + v.d + EPS) continue;
+    if (!best || v.w * v.d < best.w * best.d) best = v;
+  }
+  return best ? volumeLift(best) : 0;
+}
+
+/**
+ * The heights a block stands against, above the building's ground floor:
+ * from its floor to its eaves - and, for a block on the ground, from below:
+ * its plinth and the earth under it are as solid as its walls.
+ */
+function solidSpan(b: Building, o: Volume): [number, number] {
+  const top = volumeElevation(b, o, volumeTop(o));
+  return [o.base === 0 ? -Infinity : volumeElevation(b, o, o.base), top];
+}
+
+/**
+ * How much of storey `level` of block `v` another block `o` stands against,
+ * by height: 2 the whole storey, 1 part of it, 0 none. Blocks on one lift
+ * compare by level as they always did; blocks at floors of their own (a
+ * split-level) by the heights they span.
+ */
+function standsAgainst(b: Building, o: Volume, v: Volume, level: number): 0 | 1 | 2 {
+  if (Math.abs(volumeLift(o) - volumeLift(v)) < EPS) return occupiesLevel(o, level) ? 2 : 0;
+  const z0 = volumeElevation(b, v, level), z1 = z0 + levelHeight(b, level);
+  const [o0, o1] = solidSpan(b, o);
+  if (o0 <= z0 + EPS && o1 >= z1 - EPS) return 2;
+  return o1 > z0 + EPS && o0 < z1 - EPS ? 1 : 0;
+}
+
 // ------------------------------------------------------------------ plan
 
 /** Local rectangle of a volume, world units: [x0, y0, x1, y1]. */
@@ -205,7 +249,13 @@ export function clashes(b: Building): [number, number][] {
     const a = b.volumes[i] as Volume;
     for (let j = i + 1; j < b.volumes.length; j++) {
       const c = b.volumes[j] as Volume;
-      if (a.base < volumeTop(c) && c.base < volumeTop(a) && planOverlap(a, c)) out.push([a.id, c.id]);
+      // By height: two blocks on the same levels at floors of their own (a
+      // block under another's lifted floor) do not meet.
+      const meet = Math.abs(volumeLift(a) - volumeLift(c)) < EPS
+        ? a.base < volumeTop(c) && c.base < volumeTop(a)
+        : volumeElevation(b, a, a.base) < volumeElevation(b, c, volumeTop(c)) - EPS &&
+          volumeElevation(b, c, c.base) < volumeElevation(b, a, volumeTop(a)) - EPS;
+      if (meet && planOverlap(a, c)) out.push([a.id, c.id]);
     }
   }
   return out;
@@ -221,7 +271,13 @@ export function isSupported(b: Building, v: Volume): boolean {
   if (v.base === 0 || !isMass(v)) return true;
   // A block may overhang - a cantilever, a balcony block, a brick set half
   // over the edge - as long as a good part of it bears on what is under it.
-  const supports = b.volumes.filter((o) => o.id !== v.id && isMass(o) && occupiesLevel(o, v.base - 1)).map(localFootprint);
+  // What it bears on: a block whose height spans the floor it stands at (on
+  // one lift, a block with a storey on the level below).
+  const floor = volumeElevation(b, v, v.base);
+  const bears = (o: Volume): boolean => Math.abs(volumeLift(o) - volumeLift(v)) < EPS
+    ? occupiesLevel(o, v.base - 1)
+    : volumeElevation(b, o, o.base) < floor - EPS && volumeElevation(b, o, volumeTop(o)) >= floor - EPS;
+  const supports = b.volumes.filter((o) => o.id !== v.id && isMass(o) && bears(o)).map(localFootprint);
   return supportShare(localFootprint(v), supports) >= MIN_BEARING;
 }
 
@@ -256,12 +312,28 @@ export function sideStart(v: Volume, side: FaceId): { x: number; y: number; tx: 
  * against on `level`: shared walls, where no facade is built.
  */
 export function coveredSpans(b: Building, v: Volume, side: FaceId, level: number): [number, number][] {
+  return spansAgainst(b, v, side, level, 2);
+}
+
+/**
+ * Stretches of a side another block stands against over PART of storey
+ * `level`'s height (a split-level: the lower block's wall half against the
+ * upper block's floor). Built, but as plain wall: a window there would open
+ * into the neighbour (CityEngine's `touches` occlusion makes such a tile a
+ * wall; `inside` drops it, as `coveredSpans` does).
+ */
+export function partlyCoveredSpans(b: Building, v: Volume, side: FaceId, level: number): [number, number][] {
+  if (!b.volumes.some((o) => Math.abs(volumeLift(o) - volumeLift(v)) > EPS)) return [];
+  return spansAgainst(b, v, side, level, 1);
+}
+
+function spansAgainst(b: Building, v: Volume, side: FaceId, level: number, want: 1 | 2): [number, number][] {
   const out: [number, number][] = [];
   if (b.volumes.some((o) => o.outline)) {
     const a = edgeFrame(v, side);
     for (const o of b.volumes) {
       // An open lot (a garden, a car park) or a cut stands against no wall.
-      if (o.id === v.id || !occupiesLevel(o, level) || o.open || !isMass(o)) continue;
+      if (o.id === v.id || o.open || !isMass(o) || standsAgainst(b, o, v, level) !== want) continue;
       for (const edge of volumeSides(o)) {
         const c = edgeFrame(o, edge);
         if (a.nx * c.nx + a.ny * c.ny > -.9999) continue;
@@ -275,7 +347,7 @@ export function coveredSpans(b: Building, v: Volume, side: FaceId, level: number
     return out.sort((p, q) => p[0] - q[0]);
   }
   for (const o of b.volumes) {
-    if (o.id === v.id || !occupiesLevel(o, level) || o.open || !isMass(o)) continue;
+    if (o.id === v.id || o.open || !isMass(o) || standsAgainst(b, o, v, level) !== want) continue;
     let touches: boolean;
     let from: number;
     let to: number;
@@ -445,7 +517,7 @@ function workOutFacadeBays(b: Building): FacadeBay[] {
       const storey = v.storeys[k];
       if (!storey) continue;
       const level = v.base + k;
-      const z = elevations[level] ?? levelElevation(b, level);
+      const z = volumeLift(v) + (elevations[level] ?? levelElevation(b, level));
       const height = levelHeight(b, level);
       for (const side of volumeSides(v)) {
         const frame = edgeFrame(v, side);
@@ -454,13 +526,16 @@ function workOutFacadeBays(b: Building): FacadeBay[] {
         const count = baysOn(b, v, side);
         const width = bayWidth(b, v, side);
         const spans = coveredSpans(b, v, side, level);
+        // Against a block at another floor for part of the storey: plain wall there.
+        const partly = partlyCoveredSpans(b, v, side, level);
         const s = sideStart(v, side);
         for (let index = 0; index < count; index++) {
           const a0 = index * width;
           const a1 = a0 + width;
           const parts = spans.length === 0 ? [[a0, a1] as [number, number]] : exposedParts(spans, a0, a1);
           const first = parts[0];
-          const whole = parts.length === 1 && first !== undefined && Math.abs(first[0] - a0) < EPS && Math.abs(first[1] - a1) < EPS;
+          const whole = parts.length === 1 && first !== undefined && Math.abs(first[0] - a0) < EPS && Math.abs(first[1] - a1) < EPS &&
+            !partly.some(([s0, s1]) => s1 > a0 + EPS && s0 < a1 - EPS);
           const push = reliefAt(v, side, index, k)?.depth ?? 0;
           for (const [p0, p1] of parts) {
             const mid = (p0 + p1) / 2;
@@ -548,8 +623,8 @@ export function roofHeightAt(b: Building, v: Volume, p: Vec2): number {
   }
 }
 
-/** Height of a volume's top (eaves), above the building's ground floor. */
-export const volumeHeight = (b: Building, v: Volume): number => levelElevation(b, volumeTop(v));
+/** Height of a volume's top (eaves), above the building's ground floor, its lift included. */
+export const volumeHeight = (b: Building, v: Volume): number => volumeElevation(b, v, volumeTop(v));
 
 /** The highest point of the building above its ground floor. */
 export function buildingHeight(b: Building): number {

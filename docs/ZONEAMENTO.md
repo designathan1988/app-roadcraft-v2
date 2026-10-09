@@ -26,7 +26,10 @@ fundos, prédios acompanhando o terreno.
    (`editor/lotPlan.ts`); `madeToMeasure` faz 4 candidatos para o envelope
    (`world/buildings/procedural.ts`) e fica o menos parecido com os prédios a
    90 m; `furnishLot` mobilia o lote, fecha a divisa e terraceia o quintal em
-   encosta; `addPlaced` grava (tirando trecho de muro que encosta no vizinho).
+   encosta; antes dele, na encosta, `stepToSlope`
+   (`world/buildings/splitLevel.ts`) põe o fundo do prédio meio andar ou um
+   andar acima ou abaixo da rua; `addPlaced` grava (tirando trecho de muro
+   que encosta no vizinho).
 5. **Carros** (`sim/agents/parking.ts`, `lotTraffic.ts`, `manoeuvre.ts`):
    as vagas do lote são alcançadas só pelos portões de carro; carros do
    trânsito são chamados às vagas livres perto da vista, param antes do
@@ -43,7 +46,9 @@ fundos, prédios acompanhando o terreno.
    quando também é um lote, pelo modelo gravitacional (e^(−d/470 m)).
 7. **Desenho** (`render/buildings/buildingMesh.ts`): o lote segue
    `lotSurfaces` (terraços inclusos), muros e cercas descem em degraus de
-   2 m, o portão de carro aparece aberto.
+   2 m, os portões de carro e de pedestre aparecem abertos; cada bloco é
+   desenhado da sua cota (`Volume.lift`): embasamento, paredes, telhado,
+   escadas de entrada, pisos no corte, lajes da explosão.
 
 ## Por que cada coisa
 
@@ -87,16 +92,41 @@ fundos, prédios acompanhando o terreno.
   piso. O quintal agora é uma plataforma perto do terreno natural, com muro de
   arrimo e escada (17 cm de espelho, 30 cm de piso). Medido em 30 casas numa
   encosta de 18%: corte e aterro no meio dos jardins 209 m → 95 m.
+- **Meio-nível.** Com só o quintal em terraço, o prédio ficava num piso só e
+  o chão sob ele era cortado ou aterrado: no morro feito com o pincel (11-22%
+  de declive) aterro médio de 2,35 m sob os blocos e terra encostada até
+  3,9 m acima do piso nas quinas. Na vida real a casa na encosta se divide
+  em platôs a meio andar um do outro, ligados por lances curtos (McCarthy
+  Homes; split-level na Wikipedia), ou ganha um andar de baixo aberto para o
+  jardim (daylight basement, 10-20% de declive: studiomatrx); corte e aterro
+  ficam perto de 1 m (Camden DCP 4.2.2) e corte é preferido a aterro. Aqui:
+  o bloco da porta e os blocos ao lado dele ficam na cota da rua; atrás de
+  uma linha (o fundo do bloco da porta, ou o meio dele, partido em dois) os
+  blocos vão juntos para a cota de meio andar ou de um andar que deixa menos
+  terra cortada e aterrada sob eles (aterro pesa 1,3×), se isso poupar ao
+  menos 0,45 m em média. Um andar abaixo: o bloco ganha um andar de baixo
+  com a porta dos fundos no jardim; um andar acima: perde o andar de baixo
+  para o morro. Cada bloco tem seu platô (como o "Align terrain to shapes"
+  do CityEngine, forma por forma); onde dois se encontram, a escavação do
+  mais baixo segue sob a borda do mais alto (a célula do terreno tem 6,4 m;
+  sem isso a rampa de terra subia dentro do cômodo de baixo). Parede contra
+  bloco de outra cota fica sem janela (o `touches` do CityEngine faz da
+  janela parede). O terraço dos fundos, o quintal, os pátios atrás da linha
+  e o fundo do jardim lateral ficam na cota dos fundos, com muro de arrimo e
+  escada na passagem; a garagem e a entrada de carro ficam na cota da rua.
+  Medido: 16 de 30 casas numa encosta de 18% no teste, terra sob os fundos
+  72 m → 25 m; no navegador 6 de 22 casas, terra encostada nas quinas média
+  0,53 → 0,16 m (máx. 3,9 → 1,4 m), aterro médio 2,35 → 1,82 m.
 
 ## O que ainda falta
 
-- O prédio em si não tem meio-nível: o corpo fica na cota da rua e o terreno
-  sob ele é nivelado; uma ala dos fundos numa cota própria exigiria cota por
-  volume no desenho.
-- O portão de pedestre é desenhado fechado (`render/buildings/buildingMesh.ts`,
-  "A person's stays shut"): as pessoas que entram e saem pelos portões (P84)
-  passam pela folha fechada. Falta desenhá-lo aberto, ou abri-lo quando
-  alguém passa (arquivo da sessão dos prédios).
+- Meio-nível só no crescimento: o construtor não tem controle da cota de um
+  bloco (`Volume.lift`) e as alças de `editor/buildingTool.ts` (arquivo do
+  editor) não a somam. Garagem no andar de baixo, do lado da descida, não é
+  feita: o carro entra pela rua, na cota da frente. Lojas, prédios e
+  fábricas com estacionamento ou pátio de carga atrás não são escalonados.
+  Dentro do prédio cortado não há lance de escada entre os meios-níveis (o
+  degrau aparece como o embasamento do bloco mais alto).
 - Lote de frente sem recuo (loja colada na calçada) não tem portão de
   pedestre; a porta dele não é usada pelas pessoas (só portões).
 - O primeiro traço do pincel numa sessão tem um quadro de cerca de 360 ms de

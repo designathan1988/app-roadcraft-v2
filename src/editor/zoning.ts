@@ -17,6 +17,8 @@ import { Level, halfWidth } from '@world/roadTypes';
 import { rectAround, type ChangeRect } from '@world/changes';
 import { groundElements } from '@world/buildings/elements';
 import { overlapArea } from '@world/buildings/footprints';
+import { THRESHOLD } from '@world/buildings/foundation';
+import { stepToSlope } from '@world/buildings/splitLevel';
 
 const BOUNDARY_PARTS = new Set(['wall', 'fence', 'hedge', 'railing']);
 
@@ -373,7 +375,27 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
  * facades of grown buildings), stamped on each building grown (`main.ts`).
  * Bumped when it changes.
  */
-export const LOT_PLAN_VERSION = 11;
+export const LOT_PLAN_VERSION = 12;
+
+/**
+ * The ground floor a grown building on a lot will have: its street's paving
+ * along the lot's front, and a threshold over it (`foundation.ts`
+ * `floorOver`). With no paving to read, the land at the front less the drop
+ * the roads shape it by.
+ */
+function streetFloor(ctx: SiteContext, local: (lx: number, ly: number) => Vec2, width: number, ground: (x: number, y: number) => number): number {
+  let best = -Infinity;
+  if (ctx.pavedAt) {
+    for (const k of [-0.3, 0, 0.3]) {
+      const p = local(width * k, -m(0.6));
+      const h = ctx.pavedAt(p.x, p.y);
+      if (Number.isFinite(h)) best = Math.max(best, h);
+    }
+  }
+  if (Number.isFinite(best)) return best + THRESHOLD;
+  const p = local(0, m(0.5));
+  return ground(p.x, p.y) + m(0.6);
+}
 
 /**
  * Grows one building on a zoned lot without one (`world/lots.ts`): the lot is
@@ -543,9 +565,24 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     // yard, metres: a yard on a hillside is terraced (`furnishLot`).
     const ground = ctx.groundAt;
     const yardY = m(D - plan.back.depth / 2);
+    const local = (lx: number, ly: number): Vec2 => ({ x: anchor.x + u.x * lx + n.x * ly, y: anchor.y + u.y * lx + n.y * ly });
+    // The building follows its hillside (`splitLevel.ts`): its back a half or
+    // a whole storey from the street floor where the ground under it calls
+    // for it, as CityEngine moves each footprint to the terrain before the
+    // ground is graded round it. Never with a car park or a loading yard
+    // behind: cars come in at the street's level.
+    let split: { y: number; lift: number } | undefined;
+    if (ground && plan.back.use !== 'parking' && plan.back.use !== 'loading') {
+      const floor = streetFloor(ctx, local, lotW, ground);
+      const step = stepToSlope(body, {
+        groundAt: (lx, ly) => { const p = local(lx, ly); return ground(p.x, p.y); },
+        floor, x0: m(env.x0 - W / 2), x1: m(env.x1 - W / 2),
+      });
+      if (step) split = { y: step.y / m(1), lift: step.lift / m(1) };
+    }
     const hill = ground && plan.back.depth > 0
-      ? { yard: (ground(anchor.x + n.x * yardY, anchor.y + n.y * yardY) - ground(anchor.x + n.x * m(0.5), anchor.y + n.y * m(0.5))) * METERS_PER_UNIT }
-      : undefined;
+      ? { yard: (ground(anchor.x + n.x * yardY, anchor.y + n.y * yardY) - ground(anchor.x + n.x * m(0.5), anchor.y + n.y * m(0.5))) * METERS_PER_UNIT, ...(split ? { split } : {}) }
+      : split ? { yard: split.lift, split } : undefined;
     if (!furnishLot(body, plan, made, rng, hill)) continue;
     // The lot in the building's frame: x along the front, y back into it.
     const ring = lot.corners.map((c) => ({ x: (c.x - anchor.x) * u.x + (c.y - anchor.y) * u.y, y: (c.x - anchor.x) * n.x + (c.y - anchor.y) * n.y }));

@@ -122,11 +122,14 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
     (`procedural.ts`); altura perto da dos vizinhos baixos; lote de esquina
     olha para as duas ruas;
   - divisa completa (muro, cerca, gradil) com portão de pedestre e de carro;
-    portão de carro desenhado aberto;
+    os dois desenhados abertos; vão do portão de pedestre livre de mobiliário;
   - carros entram pelo portão até o estacionamento dos fundos e saem por ele
     (`sim/agents/lotTraffic.ts`, `parking.ts`); nenhuma vaga de rua na frente
     de portão;
-  - quintal em terraço na encosta, com muro de arrimo e escada.
+  - quintal em terraço na encosta, com muro de arrimo e escada;
+  - prédio em meio-nível na encosta (`world/buildings/splitLevel.ts`,
+    `Volume.lift`): o fundo meio andar ou um andar acima ou abaixo da rua,
+    cada bloco no seu platô, o quintal na cota dos fundos (P74).
 
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas
@@ -180,10 +183,11 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 ## Aberto
 
 - Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70, P82, P83).
-- Zoneamento: o prédio não tem meio-nível na encosta (só o quintal é
-  terraceado); o portão de pedestre é desenhado fechado e as pessoas que
-  passam por ele (P84) atravessam a folha; um balizador dentro do portão de
-  uma torre fecha o caminho dela (P74; em andamento em 2026-10-09).
+- Zoneamento: o meio-nível só é escolhido no crescimento (o construtor não
+  tem controle de `lift` e as alças de `editor/buildingTool.ts` ainda contam
+  as alturas sem ele); andar de baixo com garagem no lado da descida não é
+  feito (o carro entra pela rua, na cota da frente); lojas e prédios com
+  estacionamento ou pátio de carga atrás não são escalonados.
 - Prédios: um prédio feito de referência não fica selecionado depois de
   construído; subir a altura de um prédio leva cerca de 10 s (relato do
   jogador, não investigado).

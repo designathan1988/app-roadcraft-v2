@@ -13,7 +13,7 @@ import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import type { PoleId } from '@world/ids';
 import { type Building, type BuildingId } from '@world/buildings/types';
-import { levelElevation, solidFootprints, worldToLocal } from '@world/buildings/geometry';
+import { levelElevation, solidFootprints, volumeElevation, worldToLocal } from '@world/buildings/geometry';
 import { resolveBlocks } from '@world/buildings/blocks';
 import { signalPosts } from '@world/signalPosts';
 import { m } from '@world/units';
@@ -443,14 +443,15 @@ export function createActions(deps: ActionsDeps): Actions {
     const { w, h: height } = deps.size();
     const view = deps.view();
     const volumes = resolveBlocks(b).volumes.filter((v) => !v.open);
-    let top = 0;
-    for (const v of volumes) top = Math.max(top, levelElevation(b, v.base + v.storeys.length));
-    for (let h = top + m(1); h >= 0; h -= m(0.5)) {
+    // Each block at its own heights (a split level, `Volume.lift`).
+    let top = 0, low = 0;
+    for (const v of volumes) { top = Math.max(top, volumeElevation(b, v, v.base + v.storeys.length)); low = Math.min(low, volumeElevation(b, v, v.base)); }
+    for (let h = top + m(1); h >= low; h -= m(0.5)) {
       const p = view.toWorldAt(sx, sy, base + h, w, height);
       const l = worldToLocal(b, p);
       for (const v of volumes) {
         if (l.x < v.x || l.x > v.x + v.w || l.y < v.y || l.y > v.y + v.d) continue;
-        if (h <= levelElevation(b, v.base + v.storeys.length) && h >= levelElevation(b, v.base)) return { x: p.x, y: p.y, z: base + h };
+        if (h <= volumeElevation(b, v, v.base + v.storeys.length) && h >= volumeElevation(b, v, v.base)) return { x: p.x, y: p.y, z: base + h };
       }
     }
     return null;

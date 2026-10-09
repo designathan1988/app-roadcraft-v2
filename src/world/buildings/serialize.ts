@@ -27,6 +27,7 @@ import {
   MIN_PITCH,
   MAX_STOREYS,
   MAX_TERRACE,
+  MAX_LIFT,
   MAX_STOREY_HEIGHT,
   MAX_GROUND_HEIGHT,
   MIN_MODULE,
@@ -174,6 +175,9 @@ function migrateVolume(raw: unknown, scale: Scale): Volume | null {
   // A hillside lot's terrace: on an open block only, within reach of the floor.
   if (volume.open && finite(raw.terrace)) volume.terrace = Math.max(-MAX_TERRACE, Math.min(MAX_TERRACE, raw.terrace * scale.unit));
   else delete volume.terrace;
+  // A block at a floor of its own (a split level): a built block only, within reach of the ground floor.
+  if (!volume.open && finite(raw.lift) && raw.lift !== 0) volume.lift = Math.max(-MAX_LIFT, Math.min(MAX_LIFT, raw.lift * scale.unit));
+  else delete volume.lift;
   if (isFacadePattern(raw.facadePattern)) volume.facadePattern = raw.facadePattern;
   else delete volume.facadePattern;
   if (Array.isArray(raw.roofDetails)) {

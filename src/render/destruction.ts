@@ -1,7 +1,7 @@
 import { BufferAttribute, BufferGeometry, Group, Matrix3, Mesh, Sphere, Vector3, type Material } from 'three';
 
 import type { Building } from '@world/buildings/types';
-import { levelElevation, localToWorld } from '@world/buildings/geometry';
+import { localToWorld, volumeElevation } from '@world/buildings/geometry';
 import { resolveBlocks } from '@world/buildings/blocks';
 import { m } from '@world/units';
 import type { Exhaust } from './exhaust';
@@ -228,7 +228,8 @@ export function createDestruction(
         const p = localToWorld(b, lx!, ly!);
         return new Vector3(p.x, 0, -p.y);
       });
-      for (let level = v.base + 1; level < v.base + v.storeys.length; level++) slabs.push({ corners, y: floor + levelElevation(b, level) });
+      // At each block's own floors (a split level stands at its own, `Volume.lift`).
+      for (let level = v.base + 1; level < v.base + v.storeys.length; level++) slabs.push({ corners, y: floor + volumeElevation(b, v, level) });
     }
     const { input, materials } = prepareFracture(source.chunk, source.kit, slabs, b.id * 2654435761, interiorFurniture(b, floor));
     const id = nextJob++;

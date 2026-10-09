@@ -21,6 +21,7 @@ import {
   type BuildingId,
   MAX_ELEMENTS,
   MAX_TERRACE,
+  MAX_LIFT,
   MAX_MODULE,
   MAX_PITCH,
   MAX_PROJECTION,
@@ -56,6 +57,8 @@ export interface SiteContext {
   readonly net: Network | null;
   /** Null skips the slope test. */
   readonly groundAt: GroundAt | null;
+  /** The paving's height (footways, carriageways), NaN off it: the street floor a grown building takes. */
+  readonly pavedAt?: (x: number, y: number) => number;
 }
 
 /** Nothing the player builds may come closer than this to the map's rim. */
@@ -98,6 +101,8 @@ export function structuralProblem(b: Building): BuildingProblem | null {
     if (!Number.isInteger(v.base) || v.base < 0) return 'size';
     if (v.storeys.length < 1 || v.base + v.storeys.length > MAX_STOREYS) return 'size';
     if (v.pitch !== undefined && !(v.pitch >= MIN_PITCH && v.pitch <= MAX_PITCH)) return 'size';
+    // A block at a floor of its own (a split level): a built block, a storey or so either way.
+    if (v.lift !== undefined && (v.open || !Number.isFinite(v.lift) || Math.abs(v.lift) > MAX_LIFT + 1e-6)) return 'size';
     for (const r of v.reliefs ?? []) {
       if (r.side < 0 || r.side >= (v.outline?.length ?? 4)) return 'size';
       if (!Number.isFinite(r.depth) || r.depth > MAX_PROJECTION + 1e-6 || r.depth < -MAX_RECESS - 1e-6) return 'size';

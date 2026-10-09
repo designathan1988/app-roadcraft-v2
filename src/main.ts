@@ -2773,7 +2773,7 @@ function growCity(): void {
   cityGrowth = null;
   setTimeout(() => caused('cidade gerada', () => {
     for (let guard = 0; guard < growing.total * 3 + 50; guard++) {
-      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotTool.refused, 0x5eed);
+      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y), pavedAt: (x, y) => scene.pavedHeightAt(x, y) }, lotTool.refused, 0x5eed);
       if (id === null) {
         // A lot refused (nothing fits it) is set aside; done when none is left open.
         const open = doc.lots.some((l) => l.use && (l.building === undefined || !doc.buildings.has(l.building as BuildingId)) && !lotTool.refused.has(l.id));
@@ -3230,7 +3230,7 @@ setInterval(() => {
   if (sim.clock.paused || document.hidden) return;
   if (!mover.dragging && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
     const grown = caused('crescimento da zona', () => {
-      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
+      const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y), pavedAt: (x, y) => scene.pavedHeightAt(x, y) }, lotRefused, 0x5eed);
       const fresh = id === null ? undefined : doc.buildings.get(id as BuildingId);
       if (fresh) doc.buildings.put({ ...fresh, builtAt: sim.city.minutes(sim), decay: 0, lotPlan: LOT_PLAN_VERSION });
       return id;
@@ -4500,7 +4500,7 @@ mountHealthPanel({
   /** A generated city (`editor/cityGenerator.ts`), and how far its building has gone. */
   generateCity: (options: Partial<CityOptions> = {}) => generateCity({ ...DEFAULT_CITY, ...options }),
   /** Probe: one building grown on a zoned lot, and what it cost (ms). */
-  growTimed: () => { const t = performance.now(); const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotTool.refused, 0x5eed); return { id, ms: performance.now() - t }; },
+  growTimed: () => { const t = performance.now(); const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y), pavedAt: (x, y) => scene.pavedHeightAt(x, y) }, lotTool.refused, 0x5eed); return { id, ms: performance.now() - t }; },
   cityGrowth: () => (cityGrowth || cityProgress.style.display === 'block' ? { pending: true } : null),
   cityBuiltIn: () => cityBuiltIn,
   /** Replaces the map as loading a file does: document, network and simulation topology. */

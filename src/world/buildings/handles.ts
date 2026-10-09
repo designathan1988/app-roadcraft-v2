@@ -10,6 +10,7 @@ import {
   roofRise,
   sideStart,
   topLevel,
+  volumeElevation,
   volumeHeight,
 } from './geometry';
 import { type Building, type FaceId, volumeById } from './types';
@@ -77,7 +78,8 @@ export function buildingHandles(
     dx: 0,
     dy: 0,
   });
-  const baseZ = floor + levelElevation(b, v.base) + m(0.3);
+  // At the block's own floor (a split level stands at its own, `Volume.lift`).
+  const baseZ = floor + volumeElevation(b, v, v.base) + m(0.3);
   for (const side of volumeSides(v)) {
     const f = edgeFrame(v, side);
     const n = { x: f.nx, y: f.ny };
@@ -128,8 +130,8 @@ export function buildingHandles(
     const off = depth + HANDLE_OUT * 0.7;
     const p = localToWorld(b, s.x + s.tx * a + n.x * off, s.y + s.ty * a + n.y * off);
     const d = localDirToWorld(b, n.x, n.y);
-    const z0 = levelElevation(b, v.base + region.storey0);
-    const z1 = levelElevation(b, v.base + region.storey1 + 1);
+    const z0 = volumeElevation(b, v, v.base + region.storey0);
+    const z1 = volumeElevation(b, v, v.base + region.storey1 + 1);
     out.push({ kind: 'relief', side: region.side, x: p.x, y: p.y, z: floor + (z0 + z1) / 2, dx: d.x, dy: d.y });
   }
   return out;

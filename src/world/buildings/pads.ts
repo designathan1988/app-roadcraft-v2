@@ -2,7 +2,7 @@ import type { Aabb } from '@core/aabb';
 import type { Vec2 } from '@core/vec2';
 import { m } from '../units';
 import { type GroundAt, type PavedAt, PLINTH_MIN, floorHeight } from './foundation';
-import { solidFootprints } from './geometry';
+import { groundVolumes, solidFootprints, volumeLift } from './geometry';
 import { lotSurfaces } from './lots';
 import type { Building } from './types';
 
@@ -42,6 +42,8 @@ export interface Pad {
   /** Whether each ring is a paved lot (anything but grass and water). */
   readonly paved: readonly boolean[];
   readonly solidCount: number;
+  /** Whether its blocks stand at floors of their own (a split level). */
+  readonly stepped: boolean;
   readonly box: Aabb;
 }
 
@@ -95,6 +97,10 @@ export function buildingPads(
   }
   function padOf(b: Building): void {
     const built = solidFootprints(b);
+    // Each block's own platform: a block at a floor of its own (a split
+    // level, `Volume.lift`) has its own, as CityEngine aligns the terrain to
+    // each shape at that shape's height.
+    const lifts = groundVolumes(b).filter((v) => !v.open).map(volumeLift);
     const floor = floorHeight(b, naturalGround, pavedAt);
     // Under the building, level at the floor less the plinth; under its open
     // lots, the lot's own surface (`lots.ts`), which falls with the street.
@@ -106,7 +112,7 @@ export function buildingPads(
     // A lawn IS the ground, graded to the lot's surface (it is drawn as the
     // terrain's own grass, and people walk on it at that height); paving,
     // gravel, sand and water are laid as a thin plate just over it.
-    const levels = [...built.map(() => () => flat), ...lots.map((l) => {
+    const levels = [...built.map((_, i) => { const level = flat + (lifts[i] ?? 0); return () => level; }), ...lots.map((l) => {
       const open = l.volume.open ?? 'grass';
       // A lawn is graded a little under the paving beside it, so a terrain
       // triangle reaching from the lawn into a car park never pokes up
@@ -124,7 +130,8 @@ export function buildingPads(
     }
     const grow = apron + PAD_REACH;
     const paved = [...built.map(() => false), ...lots.map((l) => (l.volume.open ?? 'grass') !== 'grass' && l.volume.open !== 'water')];
-    pads.push({ rings, levels, water, paved, solidCount: built.length,
+    const stepped = lifts.some((l) => Math.abs(l) > 1e-6);
+    pads.push({ rings, levels, water, paved, solidCount: built.length, stepped,
       box: { minX: minX - grow, minY: minY - grow, maxX: maxX + grow, maxY: maxY + grow } });
   }
   // The platforms filed under every grid cell their box reaches: a corner of
@@ -155,6 +162,13 @@ export function buildingPads(
       let waterDistance = Infinity;
       let waterLevel = 0;
       let waterOwner: Pad | null = null;
+      // A split-level building's lowest block platform within an apron of the
+      // point: where two of its blocks meet at different floors, the lower
+      // one's excavation runs on under the edge of the upper one (hidden
+      // under its floor, behind its plinth). Each on its own, the terrain
+      // cell across the line rose as a bank of earth inside the lower room.
+      let stepLow = Infinity;
+      let stepPad: Pad | null = null;
       for (const pad of cells.get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL))) ?? []) {
         if (x < pad.box.minX || x > pad.box.maxX || y < pad.box.minY || y > pad.box.maxY) continue;
         pad.rings.forEach((ring, i) => {
@@ -164,13 +178,20 @@ export function buildingPads(
           const paved = i >= pad.solidCount && !pad.water[i] && pad.paved[i];
           if (d < nearest || (d === 0 && paved && nearest === 0)) { nearest = d; level = pad.levels[i]!(x, y); owner = pad; solid = i < pad.solidCount; }
           if (pad.water[i] && d < waterDistance) { waterDistance = d; waterLevel = pad.levels[i]!(x, y); waterOwner = pad; }
+          if (pad.stepped && i < pad.solidCount && d <= apron) {
+            const l = pad.levels[i]!(x, y);
+            if (l < stepLow) { stepLow = l; stepPad = pad; }
+          }
         });
       }
       if (nearest === Infinity) return { height: ground, weight: 0 };
+      if (solid && nearest === 0 && stepPad === owner && stepLow < level) level = stepLow;
       // A water basin is cut into the ground under its surrounding deck too.
       // Otherwise a terrain triangle whose outer corner reads the higher deck
       // crosses the lower water plane and leaves only a triangular fragment.
-      if ((waterOwner === owner || !solid) && apron > 0 && waterDistance < 2 * apron) {
+      // Cut, never filled: a pool on a terrace up the slope (a split-level's
+      // raised garden) raised the ground under the house beside it.
+      if ((waterOwner === owner || !solid) && apron > 0 && waterDistance < 2 * apron && waterLevel < level) {
         // A neighbouring open garden can own a terrain grid corner beside the
         // pool; its high corner would interpolate through the water. A solid
         // building's own platform remains protected from this excavation.

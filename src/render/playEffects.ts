@@ -18,7 +18,7 @@ import { impactCasualties } from '@sim/people/casualties';
 import { vehiclePose } from '@sim/pose';
 import { solidsOf } from '@world/solids';
 import { floorHeight } from '@world/buildings/foundation';
-import { elementRect, levelElevation, localToWorld, roofHeightAt, roofRise, volumeCorners, worldToLocal } from '@world/buildings/geometry';
+import { elementRect, localToWorld, roofHeightAt, roofRise, volumeCorners, volumeElevation, worldToLocal } from '@world/buildings/geometry';
 import { elementRing } from '@world/buildings/elements';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { POLE_ARM_DROP, POLE_ARM_HALF, POLE_HEIGHT, POLE_LAMP_REACH } from '@world/utilities';
@@ -224,7 +224,7 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
         for (const v of b.volumes) {
           if (v.base !== 0 || v.mode === 'void' || v.mode === 'intersect' || v.open) continue;
           // The walls up to the eaves, the roof over them: a body lands on it and slides down a pitch.
-          const eaves = floor + levelElevation(b, v.base + v.storeys.length);
+          const eaves = floor + volumeElevation(b, v, v.base + v.storeys.length);
           out.push({ ring: volumeCorners(b, v), top: eaves + roofRise(b, v), roof: (wx, wy) => eaves + Math.max(0, roofHeightAt(b, v, worldToLocal(b, { x: wx, y: wy }))) });
         }
         for (const e of b.elements ?? []) {

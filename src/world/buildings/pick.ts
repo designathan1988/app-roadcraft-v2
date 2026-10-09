@@ -1,4 +1,4 @@
-import { bayWidth, baysOn, buildingBounds, elementRect, levelElevation, roofHeightAt, roofRise, volumeHeight, volumeRectLocal, worldToLocal } from './geometry';
+import { bayWidth, baysOn, buildingBounds, elementRect, roofHeightAt, roofRise, volumeElevation, volumeHeight, volumeRectLocal, worldToLocal } from './geometry';
 import { containsPoint, edgeFrame, volumeSides } from './footprints';
 import type { Building, BuildingId, FaceId } from './types';
 
@@ -65,13 +65,13 @@ export function pickBuilding(
     const dy = -ray.dx * s + ray.dy * c;
     for (const v of b.volumes) {
       if (v.outline) {
-        const z0 = floor + levelElevation(b, v.base);
+        const z0 = floor + volumeElevation(b, v, v.base);
         const z1 = floor + volumeHeight(b, v) + roofRise(b, v);
         const makeHit = (t: number, face: FaceId | 'top', along: number): BuildingHit => {
           const lx = o.x + dx * t, ly = o.y + dy * t;
           const z = ray.oz + ray.dz * t;
           let level = v.base;
-          for (let k = 0; k < v.storeys.length; k++) if (z - floor >= levelElevation(b, v.base + k) - 1e-6) level = v.base + k;
+          for (let k = 0; k < v.storeys.length; k++) if (z - floor >= volumeElevation(b, v, v.base + k) - 1e-6) level = v.base + k;
           const side = face === 'top' ? 0 : face;
           return {
             building: b.id, volume: v.id, face, level, storey: level - v.base,
@@ -101,7 +101,8 @@ export function pickBuilding(
         continue;
       }
       const [x0, y0, x1, y1] = volumeRectLocal(b, v);
-      const z0 = floor + levelElevation(b, v.base);
+      // The block's own heights: a block at a floor of its own (`Volume.lift`) is picked where it is drawn.
+      const z0 = floor + volumeElevation(b, v, v.base);
       const z1 = floor + volumeHeight(b, v) + roofRise(b, v) * 0.5;
       const hit = slab([o.x, o.y, ray.oz], [dx, dy, ray.dz], [x0, y0, z0], [x1, y1, z1]);
       if (!hit || (best && hit.t >= best.t)) continue;
@@ -124,7 +125,7 @@ export function pickBuilding(
       let level = v.base;
       const zr = z - floor;
       for (let k = 0; k < v.storeys.length; k++) {
-        if (zr >= levelElevation(b, v.base + k) - 1e-6) level = v.base + k;
+        if (zr >= volumeElevation(b, v, v.base + k) - 1e-6) level = v.base + k;
       }
       const side = face === 'top' ? 0 : face;
       const along = (face === 0 || face === 2 ? lx - v.x : ly - v.y) / bayWidth(b, v, side);
