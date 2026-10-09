@@ -58,7 +58,7 @@ import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, storedKey, ty
 import { forgetDerivedKeys, forgetOtherDerived, readDerivedAll, writeDerivedMany } from './derivedCache';
 import { disposeMesh } from './mesh/surfaceMesh';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, plantSamples, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
-import { buildingBounds, localToWorld, solidFootprints } from '@world/buildings/geometry';
+import { localToWorld, solidFootprints, storedBounds } from '@world/buildings/geometry';
 import { followPieces } from '@world/buildings/elements';
 import { RoadDoc } from '@world/doc';
 import { compileAhead, drainCompiles, drainUploads, drainWarm } from './uploads';
@@ -1164,9 +1164,20 @@ export function createSceneRenderer(
   let padsKnown = new WeakMap<Building, Pad | null>();
   /** The buildings the ground was last graded for, by id: their record then, its site as text, and the box their bank reaches. */
   const graded = new Map<number, { ref: Building; site: string; box: readonly [number, number, number, number] }>();
+  /**
+   * The box a building's bank reaches, once per record (records are never
+   * changed in place): asked for every building in town by the layer's
+   * ground test, the banks' area and the gardens on every building grown -
+   * 1 300 boxes per building (audit M3a).
+   */
+  const bankBoxes = new WeakMap<Building, readonly [number, number, number, number]>();
   const bankBox = (b: Building): readonly [number, number, number, number] => {
-    const r = buildingBounds(b, TERRAIN_CELL * 1.5 + m(40) + TERRAIN_CELL);
-    return [r.minX, r.minY, r.maxX, r.maxY];
+    let box = bankBoxes.get(b);
+    if (!box) {
+      const r = storedBounds(b, TERRAIN_CELL * 1.5 + m(40) + TERRAIN_CELL);
+      bankBoxes.set(b, box = [r.minX, r.minY, r.maxX, r.maxY]);
+    }
+    return box;
   };
   /**
    * What a building's site is graded from, as text, once per record: the
@@ -2579,7 +2590,9 @@ export function createSceneRenderer(
         }
         // Each building's plants sampled on the ground again only when they
         // changed or a change of the ground reached its bank.
-        const plants: GardenPlant[] = [];
+        // Each building's list kept as it is: the gardens are packed per list
+        // (`scenery.ts` `gardenPack`), a list unchanged is not placed again.
+        const plants: (readonly GardenPlant[])[] = [];
         const seen = new Set<number>();
         for (const b of net.doc.buildings.all()) {
           const text = plantTextOf(b);
@@ -2587,12 +2600,12 @@ export function createSceneRenderer(
           seen.add(b.id);
           const was = gardenCache.get(b.id);
           if (was && was.text === text && !groundChanges.touches(was.seen, bankBox(b))) {
-            plants.push(...was.plants);
+            plants.push(was.plants);
             continue;
           }
           const own = gardenPlants([b], terrain.renderedHeightAt);
           gardenCache.set(b.id, { text, seen: groundChanges.version, plants: own });
-          plants.push(...own);
+          plants.push(own);
         }
         for (const id of [...gardenCache.keys()]) if (!seen.has(id)) gardenCache.delete(id);
         gardens = buildGardens(plants, sceneryKit);

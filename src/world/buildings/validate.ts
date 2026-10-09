@@ -10,6 +10,7 @@ import { MAX_PLINTH, type GroundAt, sampleFootprint } from './foundation';
 import {
   MIN_SIZE,
   buildingBounds,
+  storedBounds,
   footprintRects,
   groundProjections,
   groundVolumes,
@@ -165,7 +166,7 @@ export function validateBuilding(
 
   for (const other of ctx.doc.buildings.all()) {
     if (other.id === b.id || ignored?.has(other.id)) continue;
-    const ob = buildingBounds(other);
+    const ob = storedBounds(other);
     if (ob.minX > box.maxX || ob.maxX < box.minX || ob.minY > box.maxY || ob.maxY < box.minY) continue;
     const others = [...footprintRects(other), ...groundProjections(other), ...groundElements(other)];
     // Two buildings may share a party wall: their volumes meet, and may run a

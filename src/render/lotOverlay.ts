@@ -1,5 +1,5 @@
 import {
-  BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, ShapeUtils, Vector2, type Scene,
+  BufferAttribute, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, ShapeUtils, Vector2, type Scene,
 } from 'three';
 import type { Vec2 } from '@core/vec2';
 import { m } from '@world/units';
@@ -205,8 +205,10 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
     for (const [pos, col, mat, order] of [[fills[0], fills[1], fillMat, 10], [outlines[0], outlines[1], lineMat, 11]] as const) {
       if (!pos.length) continue;
       const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
-      geometry.setAttribute('color', new Float32BufferAttribute(col, 4));
+      // The joined arrays as they are: `Float32BufferAttribute` copied each
+      // again (15 ms a building grown in a town of 1 200 lots, audit M3a).
+      geometry.setAttribute('position', new BufferAttribute(pos, 3));
+      geometry.setAttribute('color', new BufferAttribute(col, 4));
       const mesh = new Mesh(geometry, mat);
       mesh.renderOrder = order;
       mesh.frustumCulled = false;

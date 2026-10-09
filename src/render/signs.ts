@@ -1,4 +1,6 @@
 import {
+  BufferAttribute,
+  BufferGeometry,
   CanvasTexture,
   CylinderGeometry,
   DoubleSide,
@@ -7,8 +9,8 @@ import {
   Matrix4,
   Mesh,
   MeshStandardMaterial,
-  PlaneGeometry,
   SRGBColorSpace,
+  Vector3,
 } from 'three';
 
 import type { Vec2 } from '@core/vec2';
@@ -180,27 +182,85 @@ function streetChain(net: Network, at: Vec2): SegmentId[] {
 }
 
 /**
- * Each plate's picture and material, by type and words, kept from one build
- * of the signs to the next: a street drawn anywhere painted every plate of
- * the town again (a canvas each, sent to the graphics card). A plate no build
- * uses any more is let go (`buildSigns`).
+ * The plates' pictures, all on one sheet (a texture atlas: the three.js
+ * manual's "Optimize Lots of Objects" merges what shares a material), each
+ * plate in a cell of its own, painted once and kept from one build of the
+ * signs to the next. Every plate was its own mesh and material, transparent
+ * and two-sided: two draws for the picture and one for the shadow, about 2
+ * draws a plate (audit S1: +237 draws for 113 plates). The plates are now one
+ * mesh: opaque, cut by `alphaTest` as before (a two-sided transparent
+ * material is drawn twice by three, back faces then front; an opaque one
+ * once: `Material.forceSinglePass`, `WebGLRenderer.renderObject`).
  */
-const plates = new Map<string, { texture: CanvasTexture; material: MeshStandardMaterial; build: number }>();
-let builds = 0;
-function plateMaterial(type: SignType, text: string): MeshStandardMaterial {
-  const key = `${type}|${text}`;
-  let kept = plates.get(key);
-  if (!kept) {
-    const texture = new CanvasTexture(plateCanvas(type, text));
-    texture.colorSpace = SRGBColorSpace;
-    texture.anisotropy = 4;
-    const material = new MeshStandardMaterial({ map: texture, transparent: true, alphaTest: 0.5, side: DoubleSide, roughness: 0.5, metalness: 0.1 });
-    kept = { texture, material, build: builds };
-    plates.set(key, kept);
-  }
-  kept.build = builds;
-  return kept.material;
+/** A cell of the sheet: a plate canvas is 256 wide and up to 256 tall, with a gutter so the mipmaps do not bleed into the neighbours. */
+const CELL = 256;
+const GUTTER = 8;
+const PITCH = CELL + 2 * GUTTER;
+const COLUMNS = 8;
+interface Atlas {
+  readonly canvas: HTMLCanvasElement;
+  readonly texture: CanvasTexture;
+  readonly material: MeshStandardMaterial;
+  /** Each plate's cell and the height its picture takes in it, by type and words. */
+  readonly cells: Map<string, { cell: number; h: number; build: number }>;
+  readonly free: number[];
+  rows: number;
 }
+let atlas: Atlas | null = null;
+let builds = 0;
+function newAtlas(rows: number, from: Atlas | null): Atlas {
+  const canvas = document.createElement('canvas');
+  canvas.width = COLUMNS * PITCH;
+  canvas.height = rows * PITCH;
+  if (from) canvas.getContext('2d')!.drawImage(from.canvas, 0, 0);
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 4;
+  if (from) {
+    // Grown: the same material on the larger sheet (no new program).
+    from.texture.dispose();
+    from.material.map = texture;
+    from.material.needsUpdate = true;
+    return { canvas, texture, material: from.material, cells: from.cells, free: [...from.free, ...range(from.rows * COLUMNS, rows * COLUMNS)], rows };
+  }
+  const material = new MeshStandardMaterial({ map: texture, alphaTest: 0.5, side: DoubleSide, roughness: 0.5, metalness: 0.1 });
+  return { canvas, texture, material, cells: new Map(), free: range(0, rows * COLUMNS), rows };
+}
+const range = (a: number, b: number): number[] => Array.from({ length: Math.max(0, b - a) }, (_, i) => a + i);
+/** The cell of a plate on the sheet (painted there the first time), and the height its picture takes. */
+function plateCell(type: SignType, text: string): { readonly cell: number; readonly h: number } {
+  atlas ??= newAtlas(4, null);
+  const key = `${type}|${text}`;
+  let known = atlas.cells.get(key);
+  if (!known) {
+    if (!atlas.free.length) atlas = newAtlas(atlas.rows * 2, atlas);
+    const cell = atlas.free.shift()!;
+    const picture = plateCanvas(type, text);
+    const g = atlas.canvas.getContext('2d')!;
+    const x = (cell % COLUMNS) * PITCH + GUTTER, y = Math.floor(cell / COLUMNS) * PITCH + GUTTER;
+    g.clearRect(x - GUTTER, y - GUTTER, PITCH, PITCH);
+    g.drawImage(picture, x, y);
+    atlas.texture.needsUpdate = true;
+    known = { cell, h: picture.height, build: builds };
+    atlas.cells.set(key, known);
+  }
+  known.build = builds;
+  return known;
+}
+/**
+ * A cell's corners on the sheet as it stands, uv. Read once every plate of a
+ * build is on it: the sheet may grow while they are painted.
+ */
+function cellUv(cell: number, h: number): { u0: number; v0: number; u1: number; v1: number } {
+  const W = atlas!.canvas.width, H = atlas!.canvas.height;
+  const x = (cell % COLUMNS) * PITCH + GUTTER, y = Math.floor(cell / COLUMNS) * PITCH + GUTTER;
+  // A canvas texture is flipped (`flipY`): v runs up from the sheet's bottom.
+  return { u0: x / W, u1: (x + CELL) / W, v0: 1 - (y + h) / H, v1: 1 - y / H };
+}
+
+/** The corners of three's plane of 1 x 1 (`PlaneGeometry`), and its two triangles. */
+const QUAD = [[-0.5, 0.5], [0.5, 0.5], [-0.5, -0.5], [0.5, -0.5]] as const;
+const QUAD_ORDER = [0, 2, 1, 2, 3, 1] as const;
 
 export function buildSigns(net: Network, elevation: RoadElevation, items: Iterable<LandscapeItem>): SignLayer {
   const group = new Group();
@@ -209,22 +269,29 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
   builds++;
   const post = new CylinderGeometry(m(0.04), m(0.045), 1, 8);
   const postMaterial = new MeshStandardMaterial({ color: 0x8e979b, roughness: 0.45, metalness: 0.6 });
-  const plate = new PlaneGeometry(1, 1);
-  const owned: { dispose(): void }[] = [post, postMaterial, plate];
+  const owned: { dispose(): void }[] = [post, postMaterial];
   /** The posts, one instance each (`setPosts` at the end): a mesh and a draw each before. */
   const posts: Matrix4[] = [];
-  // `yaw` turns the plate (a plane facing three's +Z) so its face looks along world (sin yaw, -cos yaw).
+  /** The plates' quads, merged into one mesh at the end. */
+  const position: number[] = [], normal: number[] = [];
+  /** Each quad's cell on the sheet, its uv filled in at the end (`cellUv`). */
+  const quads: { readonly cell: number; readonly h: number }[] = [];
+  const corner = new Vector3();
+  const matrix = new Matrix4();
+  // `yaw` turns the plate (a quad facing three's +Z) so its face looks along world (sin yaw, -cos yaw).
   const stand = (x: number, y: number, ground: number, type: SignType, text: string, yaw: number): void => {
     const size = PLATE[type];
     const top = m(size.z + size.h / 2);
     posts.push(new Matrix4().makeScale(1, top, 1).setPosition(x, ground + top / 2, -y));
-    const material = plateMaterial(type, text);
-    const face = new Mesh(plate, material);
-    face.position.set(x, ground + m(size.z), -y);
-    face.rotation.set(0, yaw, 0);
-    face.scale.set(m(size.w), m(size.h), 1);
-    face.castShadow = true;
-    group.add(face);
+    const cell = plateCell(type, text);
+    // The quad of the plane of 1 x 1 it was drawn with, turned and sized as that mesh was.
+    matrix.makeRotationY(yaw).scale(corner.set(m(size.w), m(size.h), 1)).setPosition(x, ground + m(size.z), -y);
+    quads.push(cell);
+    for (const i of QUAD_ORDER) {
+      corner.set(QUAD[i]![0], QUAD[i]![1], 0).applyMatrix4(matrix);
+      position.push(corner.x, corner.y, corner.z);
+      normal.push(Math.sin(yaw), 0, Math.cos(yaw));
+    }
   };
   for (const item of items) {
     if (item.kind === 'sign') {
@@ -270,17 +337,38 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
     poles.computeBoundingSphere();
     group.add(poles);
   }
-  // The plates no sign of this build reads: let go.
-  for (const [key, kept] of plates) {
-    if (kept.build === builds) continue;
-    kept.texture.dispose();
-    kept.material.dispose();
-    plates.delete(key);
+  if (position.length && atlas) {
+    const uv = new Float32Array(quads.length * 12);
+    quads.forEach(({ cell, h }, q) => {
+      const c = cellUv(cell, h);
+      QUAD_ORDER.forEach((i, k) => {
+        uv[q * 12 + k * 2] = QUAD[i]![0] < 0 ? c.u0 : c.u1;
+        uv[q * 12 + k * 2 + 1] = QUAD[i]![1] < 0 ? c.v0 : c.v1;
+      });
+    });
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(new Float32Array(position), 3));
+    geometry.setAttribute('normal', new BufferAttribute(new Float32Array(normal), 3));
+    geometry.setAttribute('uv', new BufferAttribute(uv, 2));
+    geometry.computeBoundingSphere();
+    owned.push(geometry);
+    const faces = new Mesh(geometry, atlas.material);
+    faces.name = 'sign-plates';
+    faces.castShadow = true;
+    group.add(faces);
+  }
+  // The cells no sign of this build reads: free for the next plate.
+  if (atlas) {
+    for (const [key, kept] of atlas.cells) {
+      if (kept.build === builds) continue;
+      atlas.cells.delete(key);
+      atlas.free.push(kept.cell);
+    }
   }
   return {
     group,
     dispose() {
-      // The plates' pictures stay for the next build (`plates`).
+      // The plates' sheet stays for the next build (`atlas`).
       for (const o of owned) o.dispose();
       group.clear();
     },

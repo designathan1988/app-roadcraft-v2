@@ -235,6 +235,25 @@ export function buildingBounds(b: Building, grow = 0): { minX: number; minY: num
   return { minX, minY, maxX, maxY };
 }
 
+type Bounds = { readonly minX: number; readonly minY: number; readonly maxX: number; readonly maxY: number };
+const STORED_BOUNDS = new WeakMap<Building, Map<number, Bounds>>();
+/**
+ * `buildingBounds` of a record held by the store, worked out once per record
+ * and margin. The store never changes a record in place (`put` keeps a copy,
+ * the same promise `recordText` and the layer's footprints stand on), so a
+ * record's box is its box for good. Each grown building asked for the box of
+ * every building in town a few times over - its validation, the renderer's
+ * banks (`bankBox`), the bays - 2 460 boxes per building grown (audit M3a).
+ * Never for a draft being edited in place: those call `buildingBounds`.
+ */
+export function storedBounds(b: Building, grow = 0): Bounds {
+  let byGrow = STORED_BOUNDS.get(b);
+  if (!byGrow) STORED_BOUNDS.set(b, byGrow = new Map());
+  let box = byGrow.get(grow);
+  if (!box) byGrow.set(grow, box = buildingBounds(b, grow));
+  return box;
+}
+
 // ------------------------------------------------------------------ solids
 
 

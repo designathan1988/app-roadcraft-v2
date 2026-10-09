@@ -1,6 +1,6 @@
 import { IdAllocator } from '../ids';
 import { ChangeJournal, type ChangeRect } from '../changes';
-import { buildingBounds } from './geometry';
+import { storedBounds } from './geometry';
 import { migrateBuilding, type SerializedBuilding } from './serialize';
 import { type Building, type BuildingId, asBuildingId, cloneBuilding } from './types';
 
@@ -9,7 +9,7 @@ const RECORD_TEXT = new WeakMap<Building, string>();
 
 /** Where a building stands, for the diary. */
 function rectOf(b: Building): ChangeRect | null {
-  const box = buildingBounds(b);
+  const box = storedBounds(b);
   return Number.isFinite(box.minX) ? [box.minX, box.minY, box.maxX, box.maxY] : null;
 }
 
