@@ -251,6 +251,10 @@ const PIER_ABUTMENT_GAP = 26;
 const PORTAL_WING = 14;
 /** Depth of the portal face along the road. Thick enough to cover a grid cell. */
 const PORTAL_THICKNESS = 4;
+/** Width of each slice of a portal's wing walls, which step down with the ground beside it. */
+const PORTAL_SLICE = 3;
+/** How far a portal's wing wall stands over the ground at its own place. */
+export const PORTAL_COPING = 0.6;
 
 interface Placement {
   readonly x: number;
@@ -756,22 +760,34 @@ export function buildStructureDetails(
         // rather than at the depth the bore closes.
         const top = Math.max(crown + 1.5, terrainAt(frame.p.x, frame.p.y) + 2);
 
-        // Two piers either side of the opening, carried to the full height of
-        // the face, and a lintel across the top of it: a rectangular hole in a
-        // slab, rather than a slab with pillars in front of it.
+        // Either side of the opening, the face as WING WALLS stepping down with
+        // the hillside: slices across its width, each from under the ground to
+        // just over the ground at its own place (`PORTAL_COPING`), and never
+        // lower than the arch beside the opening. One slab of one height stood
+        // up out of the slope wherever the hill fell away beside the portal -
+        // grey plates over the ground (the coordinator's review of V3).
         for (const side of [-1, 1] as const) {
-          const inner = half + jambWidth / 2;
-          const width = faceHalf - inner + jambWidth / 2;
-          const centre = inner + (width - jambWidth) / 2;
-          jambs.push({
-            x: frame.p.x + frame.n.x * centre * side,
-            y: frame.p.y + frame.n.y * centre * side,
-            yaw,
-            sx: PORTAL_THICKNESS,
-            sy: top - road,
-            sz: width,
-            cy: road + (top - road) / 2,
-          });
+          const inner = half;
+          const width = faceHalf - inner;
+          const slices = Math.max(2, Math.ceil(width / PORTAL_SLICE));
+          const w = width / slices;
+          for (let k = 0; k < slices; k++) {
+            const centre = inner + w * (k + 0.5);
+            const x = frame.p.x + frame.n.x * centre * side;
+            const y = frame.p.y + frame.n.y * centre * side;
+            // The higher ground either side of the face: the hill closing over
+            // the bore behind it, so the step the cutting leaves there is covered.
+            const reach = PORTAL_THICKNESS / 2 + 2;
+            const ground = Math.max(terrainAt(x, y), terrainAt(x + frame.t.x * reach, y + frame.t.y * reach), terrainAt(x - frame.t.x * reach, y - frame.t.y * reach));
+            const low = Math.min(terrainAt(x + frame.t.x * reach, y + frame.t.y * reach), terrainAt(x - frame.t.x * reach, y - frame.t.y * reach));
+            const jamb = centre - inner < jambWidth;
+            // A wing over ground lower than the road holds nothing back: none there.
+            if (!jamb && ground < road + 1) continue;
+            const sliceTop = jamb ? Math.max(crown + 1.5, Math.min(top, ground + PORTAL_COPING)) : Math.min(top, ground + PORTAL_COPING);
+            const foot = Math.min(road, low) - 1;
+            if (sliceTop - foot < 0.5) continue;
+            jambs.push({ x, y, yaw, sx: PORTAL_THICKNESS, sy: sliceTop - foot, sz: w + 0.02, cy: foot + (sliceTop - foot) / 2 });
+          }
         }
         lintels.push({
           x: frame.p.x,
@@ -782,15 +798,15 @@ export function buildStructureDetails(
           sz: (half + jambWidth) * 2,
           cy: crown + Math.max(0.8, top - crown) / 2,
         });
-        // A coping course along the top, which is what gives the portal a lit
-        // edge against the hillside instead of a flat grey rectangle.
+        // A coping course along the top of the opening, which gives the portal
+        // a lit edge against the hillside instead of a flat grey rectangle.
         headwalls.push({
           x: frame.p.x,
           y: frame.p.y,
           yaw,
           sx: PORTAL_THICKNESS + 1.6,
           sy: 0.9,
-          sz: faceHalf * 2 + 1.6,
+          sz: (half + jambWidth) * 2 + 1.6,
           cy: top + 0.45,
         });
       }

@@ -20,9 +20,10 @@ export const BUILD_MODES: readonly BuildMode[] = ['ground', 'embankment', 'cutti
 
 /** The way of building at one point: `lift` is the deck over the natural ground (world units). */
 export function buildModeAt(structure: RoadStructure, lift: number): BuildMode {
-  if (structure === 'tunnel') return lift < -TUNNEL_BORE ? 'tunnel' : 'cutting';
-  if (isRaised(structure) || lift > RAISED_LIFT) return 'bridge';
+  // A tunnel's segment is bored only where it is buried; its approaches are
+  // built as any road is (a cutting, at grade, even on fill).
   if (lift < -TUNNEL_BORE) return 'tunnel';
+  if (isRaised(structure) || lift > RAISED_LIFT) return 'bridge';
   const fill = ROAD_TUNING.economy.fillFrom;
   if (lift >= fill) return 'embankment';
   if (lift <= -fill) return 'cutting';

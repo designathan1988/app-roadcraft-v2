@@ -87,5 +87,8 @@ describe('the way of building at a point', () => {
     expect(buildModeAt('ground', -fill)).toBe('cutting');
     expect(buildModeAt('elevated', 0)).toBe('bridge');
     expect(buildModeAt('tunnel', -40)).toBe('tunnel');
+    // A tunnel's approach on fill is not a cutting (no wall stands on an embankment).
+    expect(buildModeAt('tunnel', 0)).toBe('ground');
+    expect(buildModeAt('tunnel', -ROAD_TUNING.economy.fillFrom)).toBe('cutting');
   });
 });

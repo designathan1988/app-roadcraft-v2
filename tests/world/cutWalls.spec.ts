@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { MeshBasicMaterial, type Mesh } from 'three';
+import { InstancedMesh, Matrix4, MeshBasicMaterial, Quaternion, Vector3, type Mesh } from 'three';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { CUT_WALL_REACH, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { casingHalf } from '@world/roadTypes';
 import { ROAD_TUNING } from '@world/roads/tuning';
-import { buildStructureDetails } from '@render/structures';
-import { TUNNEL_BORE } from '@world/structures';
+import { PORTAL_COPING, buildStructureDetails } from '@render/structures';
+import { TUNNEL_ARCH, TUNNEL_BORE, TUNNEL_HEADROOM } from '@world/structures';
 import type { SceneMaterials } from '@render/materials';
 
 /**
@@ -17,13 +17,15 @@ import type { SceneMaterials } from '@render/materials';
  * under the road to just over the natural ground, and the backfill meets the
  * ground at its edge - nothing floats, nothing is buried, no step shows.
  */
-function hillRoad(walls: boolean, strength = 30) {
+function hillRoad(walls: boolean, strength = 30, tunnel = false) {
   const doc = new RoadDoc();
   doc.addTerrainStamp({ x: 0, y: 0, radius: 150, strength, mode: 'raise' });
   const a = doc.addNode({ x: -500, y: 0 }), b = doc.addNode({ x: 500, y: 0 });
   const seg = doc.addSegment(a.id, b.id, 1)!;
   // At grade through a hill sharper than the grade line smooths: a cutting about 5 m deep in the middle.
   if (walls) doc.setSegmentCutWalls(seg.id, true);
+  // As the road tool bores a road this deep (`commit.ts` `boreDeepCuts`).
+  if (tunnel) doc.setSegmentStructure(seg.id, 'tunnel');
   const net = new Network(doc);
   net.rebuild();
   const index = new TerrainIndex(doc.terrainStamps, 0, doc.terrainRelief);
@@ -115,5 +117,40 @@ describe('retaining walls in a cutting', () => {
       }
     }
     details.dispose();
+  });
+
+  it('nothing stands up out of the ground: wall tops and portal wing walls end at the ground beside them', () => {
+    for (const strength of [30, 120]) {
+      const { net, seg, elevation, shaped } = hillRoad(true, strength, strength === 120);
+      const details = buildStructureDetails(net, elevation, shaped, fakeMaterials(), new MeshBasicMaterial());
+      // The highest ground across the road at x, out to the backfill's end and a little past.
+      const highest = (x: number, y: number, along = 0): number => {
+        let top = -Infinity;
+        for (let d = -along; d <= along; d += 1) for (let k = 0; k <= 60; k += 1) top = Math.max(top, shaped(x + d, Math.sign(y || 1) * k));
+        return top;
+      };
+      const face = details.group.getObjectByName('retaining-walls') as Mesh | undefined;
+      if (face) {
+        const p = face.geometry.getAttribute('position');
+        for (let i = 0; i < p.count; i++) {
+          const x = p.getX(i), y = -p.getZ(i);
+          expect(p.getY(i), `wall at ${x.toFixed(0)},${y.toFixed(0)}`).toBeLessThanOrEqual(highest(x, y) + 0.5);
+        }
+      }
+      const jambs = details.group.getObjectByName('tunnel-jambs') as InstancedMesh | undefined;
+      if (strength === 120) expect(jambs).toBeDefined();
+      if (jambs) {
+        const m4 = new Matrix4(), pos = new Vector3(), q = new Quaternion(), sc = new Vector3();
+        for (let i = 0; i < jambs.count; i++) {
+          jambs.getMatrixAt(i, m4);
+          m4.decompose(pos, q, sc);
+          const x = pos.x, y = -pos.z, top = pos.y + sc.y / 2;
+          const arch = elevation.onSegment(seg.id, x, 0) + TUNNEL_HEADROOM + TUNNEL_ARCH + 1.5;
+          const ground = Math.max(shaped(x, y), shaped(x + 4, y), shaped(x - 4, y));
+          expect(top, `wing at ${x.toFixed(0)},${y.toFixed(0)}`).toBeLessThanOrEqual(Math.max(arch, ground + PORTAL_COPING) + 0.05);
+        }
+      }
+      details.dispose();
+    }
   });
 });
