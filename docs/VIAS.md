@@ -95,7 +95,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V2 | Editor visual do perfil com validação e modelos | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V2") |
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | feito no ramo, aguardando o jogador (ver "Andamento da V3") |
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | feito no ramo, aguardando o jogador (ver "Andamento da V4") |
-| V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | |
+| V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V5") |
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | |
 | V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | |
 | V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | |
@@ -267,6 +267,47 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 - Editor secundário: "Personalizar…" abre o editor ancorado entre a barra de cima e a galeria, compacto, recolhível, sem os
   cartões de modelo; "Salvar modelo" leva para "Meus modelos". Teste `tests/ui/roadCatalogPanel.spec.ts`.
 - Modelos salvos agora guardam também o uso e a linha de cada faixa (V4).
+
+## Andamento da V5
+- Pesquisa (lida): CTB art. 29, III (texto reproduzido pelo Portal do Trânsito,
+  https://www.portaldotransito.com.br/noticias/de-quem-e-a-preferencia-de-passagem-em-local-nao-sinalizado-2/; o Planalto
+  recusou a conexão): sem sinalização, rodovia antes da via que cruza, quem circula na rotatória antes de quem entra, e nos
+  demais casos quem vem pela direita. MUTCD 2009 sec. 2B.05-2B.07 (https://mutcd.fhwa.dot.gov/htm/2009/part2/part2b.htm: Pare
+  só onde a parada é sempre necessária, Dê a preferência primeiro; Pare em todas com 300 veíc./h na principal e 200 na
+  secundária) e sec. 4C.02, Warrant 1 (https://mutcd.fhwa.dot.gov/htm/2009/part4/part4c.htm: 500/150 ou 750/75 veíc./h).
+  Minirrotatória (https://en.wikipedia.org/wiki/Mini-roundabout): ilha pintada ou domo transponível, quem entra cede a quem
+  circula. Prioridade ao ônibus (https://en.wikipedia.org/wiki/Bus_priority_signal): extensão do verde até um máximo, verde
+  antecipado encurtando as fases em conflito. Onda verde (https://en.wikipedia.org/wiki/Green_wave): ciclo comum, defasagem =
+  distância / velocidade do pelotão.
+- Regras (`world/roads/rules.ts`, a fonte; as placas derivam dela na V6): `RoadNode.approachRules` (regra de cada via sob
+  controle "Placas": Preferencial, Dê a preferência, Pare; padrão: a via principal preferencial, as outras dão a
+  preferência), `mainRoadLegs` (o par de pernas de maior classe, o mais reto no empate), `JunctionControl` ganhou `mini`.
+  Simulação (`intersections/admission.ts`): Placas pela regra da perna; "Sem sinalização" pela CTB (rodovia primeiro, senão
+  cada um cede só a quem vem da direita, `yieldSide`/`comesFrom`); minirrotatória: todos cedem, só a quem vem da esquerda.
+- Fluxo e escolha automática (`sim/roads/flowStats.ts`, `sim/roads/controlAdvisor.ts`): veículos por hora entrando por cada
+  perna, média móvel (janela de tendência 900 s); um cruzamento em "Automático" sobe e desce de preferência para Pare em todas
+  para semáforo pelos limiares do MUTCD (agora LIVE em `roads/tuning.ts` `flow`), só depois de uma janela inteira medida,
+  desce só abaixo de 80 % e muda no máximo uma vez por janela: pela tendência, nunca por pico. A escolha manual trava;
+  "Destravar (automático)" volta.
+- Semáforo (`signals/fsm.ts`): adaptativo (o atuado de sempre) ou tempo fixo com o verde de cada fase, defasagem pelo relógio
+  comum (`seekFixed`); prioridade ao ônibus (verde estendido até 10 s para ônibus a até 90 u da linha; verde cortado após o
+  mínimo para ônibus esperando em outra fase); onda verde (`sim/roads/greenWave.ts`): os semáforos da via principal num ciclo
+  comum (a fase principal esticada) e defasagem pelo tempo de percurso.
+- Painel do cruzamento no inspetor (`ui/roads/junctionPanel.ts`), só controles do tema (a pedido do coordenador e do
+  jogador): altura em stepper; controle em botões (Automático, Semáforo, Placas, Pare em todas, Minirrotatória, Sem
+  sinalização); escolha automática e fluxo por perna; trava; regra de cada via; tempos do semáforo, defasagem, onda verde,
+  prioridade ao ônibus; movimentos por perna como chips por conversão. As alturas das pontas no inspetor da via viraram
+  steppers. Minirrotatória com a ilha pintada no centro (`world/markings.ts`, recortada pela placa da junção).
+- Defeitos achados ao usar: o painel não mostrava o bloco do semáforo até reabrir (a escolha chega com o grafo refeito):
+  a chave de reconstrução do inspetor inclui agora o estado do semáforo e a revisão da topologia; a ilha da minirrotatória
+  era recortada pela pintura das pernas.
+- Detectores: `tests/sim/junctionRules.spec.ts` (regra por via, CTB direita e rodovia, minirrotatória à esquerda, nenhum
+  travamento em 300 s de tráfego pesado em sem sinalização, minirrotatória e placas; limiares e histerese; cruzamento
+  automático vira semáforo com controlador; fases do tempo fixo; corte do verde para ônibus; onda verde com ciclo comum).
+- Limite conhecido: os conectores da minirrotatória continuam os da junção (uma conversão à esquerda passa sobre a ilha
+  pintada, transponível); o contorno da ilha fica para a V8.
+- Fechamento no ramo: lint limpo; suíte inteira 1158 verdes; falhas: `occupantFit` (antiga) e
+  `tests/world/lotPhysics.spec.ts` (lotes, vinda do master em 4223ce23, fora do sistema de vias).
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

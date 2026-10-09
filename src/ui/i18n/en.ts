@@ -844,6 +844,7 @@ export const EN: Dictionary = {
   'junction.greenWaveNone': 'The main road has no other signal to coordinate.',
   'junction.busPriority': 'Bus priority',
   'junction.movements': 'Movements allowed',
+  'junction.from': 'From {leg}',
   'junction.moveBlocked': 'Banned: click to allow',
   'junction.moveAllowed': 'Allowed: click to ban',
   'control.disconnected': 'Disconnected',

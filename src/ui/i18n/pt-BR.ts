@@ -835,6 +835,7 @@ export const PT_BR: Dictionary = {
   'junction.greenWaveNone': 'A via principal não tem outro semáforo para coordenar.',
   'junction.busPriority': 'Prioridade ao ônibus',
   'junction.movements': 'Movimentos permitidos',
+  'junction.from': 'De {leg}',
   'junction.moveBlocked': 'Proibido: clique para permitir',
   'junction.moveAllowed': 'Permitido: clique para proibir',
   'control.disconnected': 'Desconectado',

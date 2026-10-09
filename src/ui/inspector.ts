@@ -119,7 +119,11 @@ function renderCurrent(): void {
   if (!panel || !body || !current) return;
 
   const { doc, net, sim, selection, actions } = current;
-  const key = `${selection.segment}|${selection.node}|${doc.revision}|${language()}`;
+  // A junction's panel also follows the traffic's view of it: its signal comes
+  // or goes when the lane graph is rebuilt (after the edit) or the flows choose (V5).
+  const junctionState = selection.node !== null
+    ? `|${sim.topologyRevision}|${sim.graph.junctions.get(selection.node)?.signalised ? 1 : 0}|${sim.advisor.choice(selection.node) ?? ''}` : '';
+  const key = `${selection.segment}|${selection.node}|${doc.revision}|${language()}${junctionState}`;
   const stats = document.getElementById('inspectStats');
 
   if (key === builtFor && stats && body.contains(stats)) {
@@ -251,8 +255,9 @@ function renderSegment(
     (profiled ? '<div id="inspectProfile"></div>' : '') +
     (profiled ? '' : `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
     `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>`) +
-    `<label class="inspect-select">${t('inspector.heightStart')} <input id="inspectHeightStart" type="number" step="0.1" value="${((doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
-    `<label class="inspect-select">${t('inspector.heightEnd')} <input id="inspectHeightEnd" type="number" step="0.1" value="${((doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
+    // The heights of its two ends as steppers of the interface (V5): no number box.
+    `<div class="rp-junction">${heightStepper('A', t('inspector.heightStart'), (doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER)}` +
+    `${heightStepper('B', t('inspector.heightEnd'), (doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER)}</div>` +
     (profiled ? '' : `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
       parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
       parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt)) +
@@ -281,8 +286,6 @@ function renderSegment(
   const remove = document.getElementById('inspectDelete') as HTMLButtonElement | null;
   const type = document.getElementById('inspectClass') as HTMLSelectElement | null;
   const direction = document.getElementById('inspectDirection') as HTMLSelectElement | null;
-  const heightStart = document.getElementById('inspectHeightStart') as HTMLInputElement | null;
-  const heightEnd = document.getElementById('inspectHeightEnd') as HTMLInputElement | null;
   const lanes = document.getElementById('inspectLanes') as HTMLSelectElement | null;
   const reverse = document.getElementById('inspectReverse') as HTMLButtonElement | null;
   const duplicate = document.getElementById('inspectDuplicate') as HTMLButtonElement | null;
@@ -295,8 +298,13 @@ function renderSegment(
   if (upgrade) upgrade.onclick = () => actions.onUpgrade(id);
   if (type) type.onchange = () => actions.onSetType(id, Number(type.value));
   if (direction) direction.onchange = () => actions.onSetDirection?.(id, direction.value as SegmentDirection);
-  if (heightStart) heightStart.onchange = () => actions.onSetNodeHeight?.(seg.a, Number(heightStart.value));
-  if (heightEnd) heightEnd.onchange = () => actions.onSetNodeHeight?.(seg.b, Number(heightEnd.value));
+  body.querySelectorAll<HTMLButtonElement>('[data-height-end]').forEach((b) => {
+    b.onclick = () => {
+      const end = b.dataset['heightEnd'] === 'A' ? seg.a : seg.b;
+      const now = (doc.node(end)?.heightOffset ?? 0) / UNITS_PER_METER;
+      actions.onSetNodeHeight?.(end, Math.round((now + Number(b.dataset['step'])) * 2) / 2);
+    };
+  });
   if (lanes) lanes.onchange = () => actions.onSetLanes?.(id, lanes.value === 'default' ? null : Number(lanes.value));
   const parkingLeft = document.getElementById('inspectParkingLeft') as HTMLSelectElement | null;
   const parkingRight = document.getElementById('inspectParkingRight') as HTMLSelectElement | null;
@@ -538,3 +546,11 @@ const card = (label: string, value: string): string =>
 
 const grid = (rows: readonly [string, string][]): string =>
   `<div class="inspect-grid">${rows.map(([k, v]) => card(k, v)).join('')}</div>`;
+
+/** A height as a stepper of the interface, half a metre a step (V5). */
+function heightStepper(end: 'A' | 'B', label: string, metres: number): string {
+  const v = Math.abs(metres - Math.round(metres)) < 1e-6 ? String(Math.round(metres)) : metres.toFixed(1).replace('.', ',');
+  return `<div class="rp-row"><div class="rp-label">${label}</div><div class="rp-ctrls"><div class="rp-step">` +
+    `<button type="button" data-height-end="${end}" data-step="-0.5" aria-label="${t('junction.lower')}">−</button><output>${v} m</output>` +
+    `<button type="button" data-height-end="${end}" data-step="0.5" aria-label="${t('junction.raise')}">+</button></div></div></div>`;
+}

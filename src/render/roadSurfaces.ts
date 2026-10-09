@@ -701,6 +701,14 @@ export function* roadSurfaceSteps(
       const input = inputOf([junction.ring.flatten().map((point) => [point.x, point.y])]);
       if (input) ribbonAsphalt.push(input);
     }
+    // ...and to a mini-roundabout's plate, where its island is painted (docs/VIAS.md V5).
+    for (const node of net.doc.nodes.values()) {
+      if (node.control !== 'mini' || node.incident.length < 3) continue;
+      const junction = net.junctions.get(node.id)?.get(Level.Asphalt as SurfaceLevel);
+      if (!junction || !node.incident.some((seg) => include(seg))) continue;
+      const input = inputOf([junction.ring.flatten().map((point) => [point.x, point.y])]);
+      if (input) ribbonAsphalt.push(input);
+    }
     yield;
     net.crossingSurface();
     yield;

@@ -164,10 +164,11 @@ export function mountJunctionPanel(container: HTMLElement, host: JunctionPanelHo
     root.append(block2);
   }
 
-  // The movements allowed through it.
+  // The movements allowed through it, a row per road they come from, each turn a chip.
   const moves = div('rp-block');
   moves.append(head(t('junction.movements')));
   const list = div('rp-moves');
+  const byLeg = new Map<SegmentId, { to: SegmentId; turn: string | null; blocked: boolean }[]>();
   const seen = new Set<string>();
   const junctionTopo = sim.graph.junctions.get(node);
   for (const id of junctionTopo?.connectors ?? []) {
@@ -176,13 +177,23 @@ export function mountJunctionPanel(container: HTMLElement, host: JunctionPanelHo
     const key = movementKey(c.inSegment, c.outSegment);
     if (seen.has(key)) continue;
     seen.add(key);
-    list.append(moveChip(host, c.inSegment, c.outSegment, false));
+    const row = byLeg.get(c.inSegment) ?? [];
+    row.push({ to: c.outSegment, turn: c.turn, blocked: false });
+    byLeg.set(c.inSegment, row);
   }
   for (const key of n.blockedMovements) {
     if (seen.has(key)) continue;
     const [from, to] = key.split('>').map(Number) as [number, number];
     if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
-    list.append(moveChip(host, from as SegmentId, to as SegmentId, true));
+    const row = byLeg.get(from as SegmentId) ?? [];
+    row.push({ to: to as SegmentId, turn: null, blocked: true });
+    byLeg.set(from as SegmentId, row);
+  }
+  for (const [from, row] of byLeg) {
+    const segment = doc.segment(from);
+    const chips = div('rp-ctrls');
+    for (const m of row) chips.append(moveChip(host, from, m.to, m.blocked, m.turn));
+    list.append(rowOf(segment ? t('junction.from', { leg: compassOf(doc, node, segment) }) : String(from), chips));
   }
   moves.append(list);
   root.append(moves);
@@ -201,9 +212,10 @@ export function refreshJunctionFlows(sim: SimWorld, doc: RoadDoc, node: NodeId):
   });
 }
 
-function moveChip(host: JunctionPanelHost, from: SegmentId, to: SegmentId, blocked: boolean): HTMLButtonElement {
-  const a = host.doc.segment(from), b = host.doc.segment(to);
-  const label = a && b ? `${compassOf(host.doc, host.node, a)} → ${compassOf(host.doc, host.node, b)}` : `${from} → ${to}`;
+function moveChip(host: JunctionPanelHost, from: SegmentId, to: SegmentId, blocked: boolean, turn: string | null): HTMLButtonElement {
+  const b = host.doc.segment(to);
+  // By the turn when the movement exists; a banned one has no turn left to name, so by where it goes.
+  const label = turn ? t(`turn.${turn}`) : b ? `→ ${compassOf(host.doc, host.node, b)}` : `→ ${to}`;
   const chip = document.createElement('button');
   chip.type = 'button';
   chip.className = `rp-move${blocked ? '' : ' on'}`;
@@ -234,6 +246,8 @@ function head(text: string): HTMLDivElement {
   h.textContent = text;
   return h;
 }
+
+const rowOf = (label: string, controls: HTMLElement): HTMLDivElement => row(label, controls);
 
 function row(label: string, ...controls: HTMLElement[]): HTMLDivElement {
   const r = div('rp-row');
