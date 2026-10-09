@@ -607,6 +607,8 @@ export function mountShell(deps: ShellDeps): void {
 
   // ================================================================ dock
   const dock = el('nav', 'v2-dock');
+  // Each tool named under its icon (a short word; the full name and the key
+  // in the tooltip): icons alone made the player hover each one to find a tool.
   const CATS: readonly { id: Category; tool: string; key: string; label: () => string }[] = [
     { id: 'roads', tool: 'road', key: '1', label: () => t('tool.road') },
     { id: 'zones', tool: 'zone', key: 'Z', label: () => t('tool.zone') },
@@ -616,6 +618,7 @@ export function mountShell(deps: ShellDeps): void {
     { id: 'demolish', tool: 'bulldoze', key: 'B', label: () => t('tool.bulldoze') },
     { id: 'info', tool: 'inspect', key: 'I', label: () => t('v2.cat.info') },
   ];
+  const dockName = (id: Category): string => t(`v2.dock.${id}`);
   const catButtons = new Map<Category, HTMLButtonElement>();
   for (const c of CATS) {
     const b = el('button', 'v2-cat' + (c.id === 'demolish' ? ' danger' : ''));
@@ -783,7 +786,9 @@ export function mountShell(deps: ShellDeps): void {
     b.title = label;
     const art = picture ? `<img class="v2-card-art" src="${picture}" alt="" />` : `<span class="v2-card-art glyph">${iconHtml ?? ''}</span>`;
     b.innerHTML = `${art}<span class="v2-card-name"></span>`;
-    (b.querySelector('.v2-card-name') as HTMLElement).textContent = label;
+    // The name under the picture, its aside in brackets left to the tooltip.
+    (b.querySelector('.v2-card-name') as HTMLElement).textContent = label.replace(/\s*\([^)]*\)\s*$/, '');
+    b.setAttribute('aria-label', label);
     b.onclick = run;
     return b;
   };
@@ -1541,7 +1546,7 @@ export function mountShell(deps: ShellDeps): void {
     for (const [id, b] of catButtons) {
       b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info'));
       const c = CATS.find((x) => x.id === id);
-      (b.querySelector('.v2-cat-name') as HTMLElement).textContent = c?.label() ?? '';
+      (b.querySelector('.v2-cat-name') as HTMLElement).textContent = dockName(id);
       // Only the icon shows: the name and the key are in the tooltip.
       b.dataset['tip'] = c ? `${c.label()}  ${c.key}` : '';
       b.setAttribute('aria-label', c?.label() ?? '');
@@ -1608,6 +1613,10 @@ export function mountShell(deps: ShellDeps): void {
     }
     const half = Math.max(160, Math.min(vw / 2 - left, right - vw / 2));
     drawer.style.maxWidth = `${Math.floor(Math.min(1100, half * 2))}px`;
+    // The modes keep their names while they fit; when they do not, only the
+    // one in use keeps its name (the others show the icon, the name in the tooltip).
+    tabs.classList.remove('compact');
+    if (!tabs.hidden && tabs.scrollWidth > head.clientWidth - 8) tabs.classList.add('compact');
   }
   window.addEventListener('resize', () => fitDrawer());
 
