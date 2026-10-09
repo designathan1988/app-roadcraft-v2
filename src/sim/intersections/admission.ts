@@ -17,6 +17,7 @@ import { slowestBend } from '../vehicles/curvature';
 import { type Claim, type HolderState, zoneShareable } from './claims';
 import type { ConflictPoint, ConflictRef } from '@world/conflictPoints';
 import { PED_BODY, PED_CROSSING_STOP_BUFFER, PED_MIN_PACE, PED_REACH_TIME, pedestrianInSpan } from './crossingSpans';
+import { isHighwayClass, legRule } from '@world/roads/rules';
 
 export type RowClass = 'signalGreen' | 'priority' | 'stop' | 'yield' | 'none';
 
@@ -1059,6 +1060,27 @@ export function rightOfWay(
   // ranking `auto` uses, which is what breaks the tie and keeps the node alive.
   if (policy === 'stop') return 'stop';
   if (policy === 'yield') return 'yield';
+  // A junction on "automatic" its flows put under a stop on every leg (V5).
+  if (policy === 'auto' && w.advisor.choice(node) === 'stop') return 'stop';
+  // Signs on each leg (docs/VIAS.md V5, `world/roads/rules.ts`): the leg's rule.
+  if (policy === 'priority') {
+    const n = w.doc.node(node);
+    const rule = n ? legRule(w.doc, n, conn.inSegment) : 'yield';
+    return rule === 'priority' ? 'priority' : rule;
+  }
+  // A mini-roundabout: every entry gives way (to whoever circulates, from the left: `yieldSide`).
+  if (policy === 'mini') return 'yield';
+  // Nothing signed (CTB art. 29, III): a "rodovia" goes before the road it
+  // meets; otherwise everyone gives way to the one coming from the right
+  // (`yieldSide`), the claim table and the wait ceiling breaking a full tie.
+  if (policy === 'none') {
+    const n = w.doc.node(node);
+    const highwayHere = isHighwayClass(w.doc, conn.inSegment);
+    const highwayElsewhere = (n?.incident ?? []).some((s) => s !== conn.inSegment && isHighwayClass(w.doc, s));
+    if (highwayHere && !(n?.incident ?? []).every((s) => isHighwayClass(w.doc, s))) return 'priority';
+    if (highwayElsewhere && !highwayHere) return 'yield';
+    return 'yield';
+  }
 
   // Unsignalised: the road the junction is ON goes first, everything joining
   // it gives way.
@@ -1134,9 +1156,13 @@ export function hasAcceptableGap(w: SimWorld, r: Request): boolean {
   );
 
   const mine = bodyClassOfArchetype(r.v.archetype);
+  const side = yieldSide(w, r.conn);
   for (const ref of w.conflicts.refs(r.conn.id)) {
     const other = w.connector(ref.other);
     if (!other) continue;
+    // Giving way only to one side (V5): to the right where nothing is signed,
+    // to the left (the circulating stream) at a mini-roundabout.
+    if (side !== null && !comesFrom(w, r.conn, other, side)) continue;
     // A movement from the same approach is not a stream this one gives way
     // to: the two leave side by side, and whether their bodies can touch is
     // the claim table's question, not a gap to wait for. Counting it made a
@@ -1386,4 +1412,40 @@ export function nextConnector(w: SimWorld, v: Vehicle): Connector | undefined {
     if (c && c.maxBodyClass >= bodyClassOfArchetype(v.archetype) && c.fromLane === v.lanelet) return c;
   }
   return undefined;
+}
+
+/**
+ * The side a movement gives way to at a junction whose rule is a side
+ * (docs/VIAS.md V5): the right where nothing is signed and no "rodovia"
+ * decides (CTB art. 29, III, c), the left at a mini-roundabout (the stream
+ * already circulating, counter-clockwise where traffic keeps right); null
+ * where it gives way to every conflicting stream.
+ */
+export function yieldSide(w: SimWorld, conn: Connector): 'right' | 'left' | null {
+  const n = w.doc.node(conn.node);
+  if (!n) return null;
+  if (n.control === 'mini') return 'left';
+  if (n.control !== 'none') return null;
+  if (n.incident.some((s) => isHighwayClass(w.doc, s))) return null;
+  return 'right';
+}
+
+/** Whether `other` arrives from `side` of `conn`'s driver: by the directions the two lanes come in on. */
+export function comesFrom(w: SimWorld, conn: Connector, other: Connector, side: 'right' | 'left'): boolean {
+  const mine = arrivalDirection(w, conn.fromLane);
+  const theirs = arrivalDirection(w, other.fromLane);
+  if (!mine || !theirs) return true;
+  // Where the other comes FROM is behind its direction of travel; y is up, so
+  // a negative cross product is to the right.
+  const cross = mine.x * -theirs.y - mine.y * -theirs.x;
+  return side === 'right' ? cross < -1e-3 : cross > 1e-3;
+}
+
+function arrivalDirection(w: SimWorld, lane: string): { x: number; y: number } | null {
+  const l = w.lanelet(lane);
+  if (!l || l.centre.length < 0.5) return null;
+  const end = l.centre.sampleAt(l.centre.length).p;
+  const before = l.centre.sampleAt(Math.max(0, l.centre.length - 6)).p;
+  const len = Math.hypot(end.x - before.x, end.y - before.y) || 1;
+  return { x: (end.x - before.x) / len, y: (end.y - before.y) / len };
 }

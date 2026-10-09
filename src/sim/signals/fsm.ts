@@ -2,6 +2,7 @@ import type { NodeId } from '@world/ids';
 import type { Connector, JunctionTopology } from '@world/lanelets';
 import { DT, SIGNAL } from '../params';
 import { EPS } from '@core/scalar';
+import type { SignalSettings } from '@world/roads/rules';
 import {
   type CrossingId,
   type GroupId,
@@ -76,7 +77,20 @@ export interface SignalDeps {
   readonly pedestrianDemandOn: (node: NodeId, crossings: readonly CrossingId[]) => boolean;
   /** Whether a physical compact-box holder needs this group next. */
   readonly reservationDemandOn: (node: NodeId, groups: readonly GroupId[]) => boolean;
+  /** The player's settings of a junction's signal (docs/VIAS.md V5): fixed time, greens, offset, bus priority. */
+  readonly settings?: (node: NodeId) => SignalSettings | undefined;
+  /** Whether a bus is coming to the line of one of these groups, close enough to be served (V5). */
+  readonly busNear?: (node: NodeId, groups: readonly GroupId[]) => boolean;
 }
+
+/**
+ * How long a green is held past its maximum for a bus about to reach the
+ * line (green extension), seconds; and the least green a stage keeps before
+ * it is cut short for a bus waiting on another (early green, red truncation).
+ * Transit signal priority as described for active systems (green extension up
+ * to a preset maximum; conflicting phases shortened by a set amount, not ended).
+ */
+const BUS_EXTENSION = 10;
 
 export function createController(
   junction: JunctionTopology,
@@ -192,6 +206,29 @@ export function stepController(c: SignalController, deps: SignalDeps): void {
       const pedestriansInside = c.elapsed < st.maxGreen + PED_HOLD_LIMIT &&
         deps.pedestriansCrossing(c.node, st.pedWalk);
       const mayEnd = c.elapsed >= st.minGreen && !pedestriansInside;
+      const settings = deps.settings?.(c.node);
+      // A fixed-time signal (V5): each stage its own green, every cycle, in order.
+      if (settings?.mode === 'fixed') {
+        const target = settings.greens?.[c.stageIndex] ?? st.targetGreen;
+        if (c.elapsed >= target && (!pedestriansInside || c.elapsed >= target + PED_HOLD_LIMIT)) {
+          for (const g of st.greenGroups) c.lastServed.set(g, deps.tick());
+          c.stageServed.set(c.stageIndex, deps.tick());
+          c.sub = 'AMBER';
+          c.elapsed = 0;
+        }
+        break;
+      }
+      // Bus priority (V5): the green held for a bus about to reach the line...
+      if (settings?.busPriority && deps.busNear?.(c.node, st.greenGroups) && c.elapsed < st.maxGreen + BUS_EXTENSION) break;
+      // ...and cut short, after its minimum, for a bus waiting on another stage.
+      if (settings?.busPriority && mayEnd && c.plan.stages.some((other, i) => i !== c.stageIndex && other.greenGroups.length &&
+        deps.busNear?.(c.node, other.greenGroups))) {
+        for (const g of st.greenGroups) c.lastServed.set(g, deps.tick());
+        c.stageServed.set(c.stageIndex, deps.tick());
+        c.sub = 'AMBER';
+        c.elapsed = 0;
+        break;
+      }
       // Before its minimum and short of its maximum a green cannot end
       // whatever the demand: nothing below is asked (every deciding term
       // needs `mayEnd`, or the maximum), and the answer is the same. Asked
@@ -254,7 +291,12 @@ export function stepController(c: SignalController, deps: SignalDeps): void {
       // forever; the box is instead guaranteed to drain because vehicles inside
       // are never held and never enter without room to leave.
       if (c.elapsed >= st.allRed) {
-        c.stageIndex = pickNextStage(c, deps);
+        const settings = deps.settings?.(c.node);
+        const bus = settings?.busPriority
+          ? c.plan.stages.findIndex((other, i) => i !== c.stageIndex && other.greenGroups.length > 0 && !!deps.busNear?.(c.node, other.greenGroups))
+          : -1;
+        c.stageIndex = settings?.mode === 'fixed' ? (c.stageIndex + 1) % Math.max(1, c.plan.stages.length)
+          : bus >= 0 ? bus : pickNextStage(c, deps);
         c.sub = 'GREEN';
         c.elapsed = 0;
       }
@@ -418,4 +460,31 @@ export function rebuildController(
 export function currentGreenGroups(c: SignalController): readonly GroupId[] {
   if (c.sub !== 'GREEN') return [];
   return c.plan.stages[c.stageIndex]?.greenGroups ?? [];
+}
+
+/** A fixed-time plan's cycle with the player's greens, seconds (V5). */
+export function fixedCycle(plan: SignalPlan, settings: SignalSettings | undefined): number {
+  return plan.stages.reduce((sum, s, i) => sum + (settings?.greens?.[i] ?? s.targetGreen) + s.amber + s.allRed, 0);
+}
+
+/**
+ * Puts a fixed-time signal where its cycle stands at `seconds` of the common
+ * clock plus its offset (V5), so signals on one corridor keep the green wave
+ * they were given: each starts its first stage `offset` seconds after time 0.
+ */
+export function seekFixed(c: SignalController, settings: SignalSettings, seconds: number): void {
+  const total = fixedCycle(c.plan, settings);
+  if (!(total > 0)) return;
+  let left = (((seconds - (settings.offset ?? 0)) % total) + total) % total;
+  for (let index = 0; index < c.plan.stages.length; index++) {
+    const stage = c.plan.stages[index]!;
+    for (const [sub, span] of [
+      ['GREEN', settings.greens?.[index] ?? stage.targetGreen],
+      ['AMBER', stage.amber],
+      ['ALL_RED', stage.allRed],
+    ] as const) {
+      if (left < span) { c.stageIndex = index; c.sub = sub; c.elapsed = left; return; }
+      left -= span;
+    }
+  }
 }

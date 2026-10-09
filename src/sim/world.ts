@@ -7,19 +7,26 @@ import { ConflictIndex, type BodyClass } from '@world/conflictPoints';
 import { SimClock } from './clock';
 import { ClaimTable } from './intersections/claims';
 import type { Vehicle, VehicleId } from './vehicles/state';
-import { type SignalController, type SignalDeps, createController, rebuildController } from './signals/fsm';
+import { type SignalController, type SignalDeps, createController, rebuildController, seekFixed } from './signals/fsm';
 import { type CrossingId, makeCrossingId } from './signals/plan';
 import type { AuditIssue } from './audit';
 import { SidewalkGraph } from './peds/sidewalk';
 import { hasDownstreamStorage } from './intersections/spillback';
 import { CrossingSpans } from './intersections/crossingSpans';
 import { m } from '@world/units';
+import { DT } from './params';
+
+/** How far before its line a bus asks for priority, world units (V5). */
+const BUS_REACH = m(90);
 import type { CrossingStates } from './crossings/state';
 import type { PedView } from './people/view';
 import type { PedestrianEngine } from './people/engine';
 import { City } from './city/city';
 import { AmbientWorld } from './ambient/ambient';
 import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
+import { mainRoadLegs } from '@world/roads/rules';
+import { FlowStats } from './roads/flowStats';
+import { type AutoControl, ControlAdvisor } from './roads/controlAdvisor';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** Nobody walks until an engine is installed (`SimWorld.usePedestrianEngine`). */
@@ -120,6 +127,10 @@ export class SimWorld {
   readonly mergeTurn = new Map<LaneletId, LaneletId>();
   /** Cumulative link entries since the current simulation session began. */
   readonly segmentVolume = new Map<number, number>();
+  /** Vehicles an hour into each junction from each leg, as a trend (docs/VIAS.md V5). */
+  readonly flow = new FlowStats();
+  /** The control each junction left on "automatic" gets from its flows (docs/VIAS.md V5). */
+  readonly advisor = new ControlAdvisor();
 
   readonly rng: {
     readonly spawnVehicles: Rng;
@@ -403,6 +414,55 @@ export class SimWorld {
       if (!this.doc.segment(segment as SegmentId)) this.segmentVolume.delete(segment);
     }
     this.vehicleTopologyRevision = this.net.trafficRevision;
+    // The controls the flows chose stay chosen across an edit (V5).
+    const nodes = new Set(this.graph.junctions.keys());
+    this.flow.keepOnly(nodes);
+    this.advisor.forget(nodes);
+    if (this.applyAutoControl()) this.syncControllers();
+  }
+
+  /**
+   * The control a junction on "automatic" runs (docs/VIAS.md V5): the
+   * advisor's choice once it has spoken, else the game's geometric default
+   * (`lanelets.ts` `shouldSignalise`). True when a junction's signal came or went.
+   */
+  private applyAutoControl(): boolean {
+    let changed = false;
+    for (const [node, junction] of this.graph.junctions) {
+      if (this.doc.node(node)?.control !== 'auto') continue;
+      const choice = this.advisor.choice(node);
+      if (!choice) continue;
+      const signalised = choice === 'signal';
+      if (junction.signalised === signalised) continue;
+      this.graph.junctions.set(node, { ...junction, signalised });
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Stage 0's measuring of the junctions (docs/VIAS.md V5): the flows aged,
+   * and every so often each junction on "automatic" given the control its
+   * trend warrants. A change of signal rebuilds that junction's controller.
+   */
+  stepControlAdvisor(dt: number): void {
+    this.flow.step(dt);
+    if (!this.advisor.tick(dt)) return;
+    let changed = false;
+    for (const [node, junction] of this.graph.junctions) {
+      const n = this.doc.node(node);
+      if (!n || n.control !== 'auto' || n.incident.length < 3) continue;
+      const main = mainRoadLegs(this.doc, node);
+      let major = 0, minorMax = 0, minorTotal = 0;
+      for (const seg of n.incident) {
+        const rate = this.flow.rate(node, seg);
+        if (main?.includes(seg)) major += rate;
+        else { minorMax = Math.max(minorMax, rate); minorTotal += rate; }
+      }
+      const initial: AutoControl = junction.signalised ? 'signal' : 'priority';
+      changed = this.advisor.evaluate(node, major, minorMax, minorTotal, initial, this.flow.measured) || changed;
+    }
+    if (changed && this.applyAutoControl()) this.syncControllers();
   }
 
   /**
@@ -521,6 +581,8 @@ export class SimWorld {
         return longest;
       },
       pedestrianDemandOn: (_node, crossings) => crossings.some((x) => this.crossingStates.get(x)?.demand ?? false),
+      settings: (node) => this.doc.node(node)?.signal,
+      busNear: (node, groups) => this.busNear(node, groups),
       reservationDemandOn: (node, groups) => {
         const here = reservedGroups().get(node);
         return !!here && groups.some((group) => here.has(group));
@@ -578,19 +640,45 @@ export class SimWorld {
     return { active, score };
   }
 
+  /**
+   * Whether a bus is on an approach of `node`, within reach of its line,
+   * bound for a movement of one of these signal groups (V5, bus priority).
+   */
+  busNear(node: NodeId, groups: readonly number[]): boolean {
+    for (const v of this.vehicles.values()) {
+      if (v.archetype.shape !== 'bus') continue;
+      const lane = this.lanelet(v.lanelet);
+      if (!lane || lane.kind !== 'link' || lane.to !== node || lane.length - v.s > BUS_REACH) continue;
+      const next = v.route[v.route.indexOf(v.lanelet) + 1];
+      const conn = next ? this.connector(next) : undefined;
+      if (conn && conn.node === node && groups.includes(conn.group)) return true;
+    }
+    return false;
+  }
+
+  /** Ticks since the world began, the common clock of fixed-time signals (V5). */
+  private tickCount(): number {
+    return this.clock.tick;
+  }
+
   private syncControllers(): void {
     const deps = this.signalDeps();
 
     for (const [node, junction] of this.graph.junctions) {
       const crossings = this.crossingsAt(node);
       const existing = this.controllers.get(node);
+      const settings = this.doc.node(node)?.signal;
       if (existing) {
         rebuildController(existing, junction, crossings, deps);
+        // A fixed-time signal back where the common clock says, with its offset (V5).
+        if (settings?.mode === 'fixed') seekFixed(existing, settings, this.tickCount() * DT);
       } else {
         // A deterministic per-node offset so neighbouring junctions do not all
         // switch together.
         const offset = (node * 7.317) % 60;
-        this.controllers.set(node, createController(junction, crossings, deps, offset));
+        const created = createController(junction, crossings, deps, offset);
+        if (settings?.mode === 'fixed') seekFixed(created, settings, this.tickCount() * DT);
+        this.controllers.set(node, created);
       }
     }
 
@@ -610,6 +698,11 @@ export class SimWorld {
     this.sortLane(rt);
     v.lanelet = id;
     const lane = this.lanelet(id);
+    // A vehicle entering a junction's movement: the flow from its leg (V5).
+    if (recordVolume && lane?.kind === 'connector' && lane.node !== undefined) {
+      const from = this.lanelet(lane.fromLane ?? '')?.segment;
+      if (from !== undefined) this.flow.record(lane.node, from);
+    }
     if (recordVolume && lane?.kind === 'link' && lane.segment !== undefined) {
       this.segmentVolume.set(lane.segment, (this.segmentVolume.get(lane.segment) ?? 0) + 1);
     }

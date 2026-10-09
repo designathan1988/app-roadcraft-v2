@@ -68,6 +68,8 @@ export function step(w: SimWorld, opts: StepOptions = {}): void {
     w.rebuildTopology();
     rebindAgents(w);
   }
+  // The junctions' flows, and the control those on "automatic" get from them (V5).
+  w.stepControlAdvisor(DT);
   lap('0 topology');
 
   // snapshot for render interpolation, into each vehicle's own `prev` (no object a vehicle a tick)

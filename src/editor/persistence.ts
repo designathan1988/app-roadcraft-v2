@@ -572,7 +572,7 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
 }
 
 function isJunctionControl(value: unknown): value is JunctionControl {
-  return value === 'auto' || value === 'signal' || value === 'stop' || value === 'yield' || value === 'priority' || value === 'none';
+  return value === 'auto' || value === 'signal' || value === 'stop' || value === 'yield' || value === 'priority' || value === 'none' || value === 'mini';
 }
 
 function isSegmentDirection(value: unknown): value is SegmentDirection {

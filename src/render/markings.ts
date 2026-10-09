@@ -9,6 +9,7 @@ import {
   type Bar,
   type StrokeSpec,
   junctionDetail,
+  miniRoundaboutMarkings,
   segmentMarkings,
   transitionMarkings,
 } from '@world/markings';
@@ -222,6 +223,8 @@ export function markingQuads(
     const detail = junctionDetail(net);
     for (const value of detail.stops) addBar(at('#ece9d9'), value);
     for (const value of detail.zebras) addBar(at('#f4f1e3'), value);
+    // Mini-roundabouts' painted islands (V5).
+    for (const spec of miniRoundaboutMarkings(net)) stroke(at(spec.color), spec);
   }
   const out = new Map<string, number[][][]>();
   for (const [color, batch] of batches) if (batch.rings.length > 0) out.set(color, batch.rings);
