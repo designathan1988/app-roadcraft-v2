@@ -1,7 +1,7 @@
 import { kmh, m } from './units';
 import { PARKING_DEPTH, parkingAllowed, type ParkingKind, type SegmentParking } from './parking';
 import type { SegmentDirection } from './doc';
-import type { RoadSection, LaneTurnRule, SectionMaterials } from './roadSection';
+import type { RoadSection, LaneLine, LaneTurnRule, LaneUse, SectionMaterials } from './roadSection';
 
 /**
  * Surface levels, in painting order.
@@ -91,6 +91,11 @@ export interface RoadType {
   readonly priorityRank: number;
   readonly turnsForward?: readonly LaneTurnRule[];
   readonly turnsBackward?: readonly LaneTurnRule[];
+  /** Lane uses and lines from the section (docs/VIAS.md V4, `RoadSection.useForward`). */
+  readonly useForward?: readonly LaneUse[];
+  readonly useBackward?: readonly LaneUse[];
+  readonly linesForward?: readonly LaneLine[];
+  readonly linesBackward?: readonly LaneLine[];
   readonly markings: MarkingStyle;
   readonly color: string;
   readonly edge: string;
@@ -345,6 +350,10 @@ function travelProfile(
       priorityRank: section.priority,
       ...(section.turnsForward ? { turnsForward: section.turnsForward } : {}),
       ...(section.turnsBackward ? { turnsBackward: section.turnsBackward } : {}),
+      ...(section.useForward ? { useForward: section.useForward } : {}),
+      ...(section.useBackward ? { useBackward: section.useBackward } : {}),
+      ...(section.linesForward ? { linesForward: section.linesForward } : {}),
+      ...(section.linesBackward ? { linesBackward: section.linesBackward } : {}),
     };
   }
   if ((configuredLanes === undefined || configuredLanes === null) &&
@@ -458,7 +467,11 @@ export function sectionFromProfile(rt: RoadType): RoadSection {
   return { laneWidth: laneWidth(rt), sidewalk: rt.sidewalk, median: rt.median,
     speedKmh: rt.speedLimit / kmh(1), priority: rt.priorityRank,
     ...(rt.turnsForward ? { turnsForward: [...rt.turnsForward] } : {}),
-    ...(rt.turnsBackward ? { turnsBackward: [...rt.turnsBackward] } : {}) };
+    ...(rt.turnsBackward ? { turnsBackward: [...rt.turnsBackward] } : {}),
+    ...(rt.useForward ? { useForward: [...rt.useForward] } : {}),
+    ...(rt.useBackward ? { useBackward: [...rt.useBackward] } : {}),
+    ...(rt.linesForward ? { linesForward: [...rt.linesForward] } : {}),
+    ...(rt.linesBackward ? { linesBackward: [...rt.linesBackward] } : {}) };
 }
 
 /**

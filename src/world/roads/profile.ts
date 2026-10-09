@@ -2,7 +2,7 @@ import type { SegmentDirection } from '../doc';
 import { PARKING_DEPTH, type ParkingKind, type SegmentParking } from '../parking';
 import {
   type CarriagewayMaterial, type FootwayMaterial, type MedianMaterial, type RoadSection,
-  ROAD_SECTION_LIMITS, normalizeRoadSection, sectionSidewalk,
+  ROAD_SECTION_LIMITS, laneUse as laneUseOf, normalizeRoadSection, sectionSidewalk,
 } from '../roadSection';
 import { type RoadType, laneWidth, roadProfile, roadType } from '../roadTypes';
 import { kmh } from '../units';
@@ -29,7 +29,13 @@ import { kmh } from '../units';
 export type ProfileElement =
   | { readonly kind: 'footway'; readonly width: number; readonly material?: FootwayMaterial; readonly flush?: boolean }
   | { readonly kind: 'parking' | 'cycle'; readonly width: number }
-  | { readonly kind: 'lane'; readonly width: number; readonly dir: 'forward' | 'backward' }
+  | {
+    readonly kind: 'lane'; readonly width: number; readonly dir: 'forward' | 'backward';
+    /** Buses only (docs/VIAS.md V4, `RoadSection.useForward`). */
+    readonly use?: 'bus';
+    /** The line on its right, to the next lane of its direction: solid (no lane change) instead of dashed. */
+    readonly line?: 'solid';
+  }
   | { readonly kind: 'median'; readonly width: number; readonly material?: MedianMaterial; readonly flush?: boolean };
 
 export interface RoadProfileSpec {
@@ -68,18 +74,29 @@ export function profileOf(source: ProfileSource): RoadProfileSpec {
   elements.push(footway('left'));
   band(rt.parkingLeftKind);
   const lanes = rt.lanes;
+  // A lane as the section has it (V4): who drives it, and the line on its
+  // right in the A-to-B view, which is the line to the lane `laneIndex + 1`
+  // forward and to `laneIndex - 1` backward (lane 0 is the innermost).
+  const lane = (dir: 'forward' | 'backward', index: number, count: number): ProfileElement => {
+    const forward = dir === 'forward';
+    const use = laneUseOf(section, forward, index);
+    const boundary = forward ? index : index - 1;
+    const line = boundary >= 0 && boundary < count - 1 &&
+      ((forward ? section?.linesForward : section?.linesBackward)?.[boundary] ?? 'dashed') === 'solid';
+    return { kind: 'lane', width, dir, ...(use === 'bus' ? { use: 'bus' as const } : {}), ...(line ? { line: 'solid' as const } : {}) };
+  };
   if (source.direction === 'both') {
     const perSide = Math.max(1, Math.floor(lanes / 2));
-    for (let i = 0; i < perSide; i++) elements.push({ kind: 'lane', width, dir: 'backward' });
+    for (let i = 0; i < perSide; i++) elements.push(lane('backward', perSide - 1 - i, perSide));
     if (rt.median > 0) {
       elements.push({ kind: 'median', width: rt.median,
         ...(section?.materials?.median ? { material: section.materials.median } : {}),
         ...(section?.medianFlush ? { flush: true } : {}) });
     }
-    for (let i = 0; i < perSide; i++) elements.push({ kind: 'lane', width, dir: 'forward' });
+    for (let i = 0; i < perSide; i++) elements.push(lane('forward', i, perSide));
   } else {
     const dir = source.direction === 'aToB' ? 'forward' : 'backward';
-    for (let i = 0; i < lanes; i++) elements.push({ kind: 'lane', width, dir });
+    for (let i = 0; i < lanes; i++) elements.push(lane(dir, dir === 'forward' ? i : lanes - 1 - i, lanes));
   }
   band(rt.parkingRightKind);
   elements.push(footway('right'));
@@ -93,7 +110,7 @@ export function profileOf(source: ProfileSource): RoadProfileSpec {
 
 /** Why a profile cannot be built as it stands; a translation key under `profile.problem.`. */
 export type ProfileProblem =
-  | 'footways' | 'noLanes' | 'laneWidths' | 'laneBalance' | 'order' | 'median' | 'parkingSide' | 'width' | 'class';
+  | 'footways' | 'noLanes' | 'laneWidths' | 'laneBalance' | 'order' | 'median' | 'parkingSide' | 'width' | 'class' | 'busOnly';
 
 /**
  * What stops a profile from being built, empty when nothing does. The order
@@ -135,6 +152,11 @@ export function profileIssues(profile: RoadProfileSpec, typeIndex: number): Prof
   const backward = lanes.filter((l) => l.dir === 'backward').length;
   const forward = lanes.length - backward;
   if (backward > 0 && forward > 0 && backward !== forward) add('laneBalance', laneIndex);
+  // A direction of bus lanes only leaves every other vehicle without a way (V4).
+  for (const dir of ['forward', 'backward'] as const) {
+    const own = laneIndex.filter((i) => (e[i] as Extract<ProfileElement, { kind: 'lane' }>).dir === dir);
+    if (own.length && own.every((i) => (e[i] as Extract<ProfileElement, { kind: 'lane' }>).use === 'bus')) add('busOnly', own);
+  }
   // Parking and cycle lanes only by the kerb.
   innerIndex.forEach((i, k) => {
     const x = e[i]!;
@@ -223,7 +245,21 @@ function authoredFields(profile: RoadProfileSpec): AppliedProfile & { readonly l
     ...(median?.flush ? { medianFlush: true } : {}),
     ...(Object.keys(materials).length ? { materials } : {}),
   };
-  const section = normalizeRoadSection(raw) as RoadSection;
+  // Lane uses and lines by laneIndex (V4): forward lanes left to right are
+  // laneIndex 0, 1, ...; backward lanes left to right are the outermost first.
+  const fwd = lanes.filter((l) => l.dir === 'forward');
+  const bwd = lanes.filter((l) => l.dir === 'backward').reverse();
+  const uses = (list: typeof lanes): string[] => list.map((l) => l.use ?? 'all');
+  // A forward lane's own `line` is the line to the next one; a backward lane's is the line to the previous index.
+  const linesFwd = fwd.slice(0, -1).map((l) => l.line ?? 'dashed');
+  const linesBwd = bwd.slice(1).map((l) => l.line ?? 'dashed');
+  const laneLists = {
+    ...(uses(fwd).some((u) => u !== 'all') ? { useForward: uses(fwd) } : {}),
+    ...(uses(bwd).some((u) => u !== 'all') ? { useBackward: uses(bwd) } : {}),
+    ...(linesFwd.some((x) => x !== 'dashed') ? { linesForward: linesFwd } : {}),
+    ...(linesBwd.some((x) => x !== 'dashed') ? { linesBackward: linesBwd } : {}),
+  };
+  const section = normalizeRoadSection({ ...raw, ...laneLists }) as RoadSection;
   return {
     lanes: lanes.length,
     direction,

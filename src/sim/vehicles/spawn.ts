@@ -170,6 +170,8 @@ function spawnAt(w: SimWorld, id: string): boolean {
   const lane = w.lanelet(id);
   if (!lane) return false;
   const arch = w.rng.spawnVehicles.weighted(archetypeWeights()) as Archetype;
+  // A bus lane is buses only (docs/VIAS.md V4).
+  if (!w.graph.laneUsable(id, arch.shape)) return false;
   // Do not materialise a bus on an entry whose junction has no movement its
   // body can physically take. A later weighted draw may choose a smaller car.
   if (lane.to !== undefined && w.doc.degree(lane.to) > 1 &&
@@ -244,7 +246,7 @@ function spawnAt(w: SimWorld, id: string): boolean {
  */
 export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archetype): number | null {
   const lane = w.lanelet(id);
-  if (!lane || lane.kind !== 'link') return null;
+  if (!lane || lane.kind !== 'link' || !w.graph.laneUsable(id, arch.shape)) return null;
   if (s < arch.length + 1 || s > lane.length - 1) return null;
   const rear = s - arch.length;
   let leaderGap = Infinity;

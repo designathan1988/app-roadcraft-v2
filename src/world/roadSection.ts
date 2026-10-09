@@ -50,7 +50,29 @@ export interface RoadSection {
   readonly turnsForward?: readonly LaneTurnRule[];
   /** Lane order in the stored b -> a direction. Missing indexes retain default movements. */
   readonly turnsBackward?: readonly LaneTurnRule[];
+  /**
+   * Who may drive each lane, by laneIndex (inner to outer) in each direction
+   * (docs/VIAS.md V4): every vehicle, or buses only (a "faixa exclusiva",
+   * MBST vol. IV, MFE). Absent or short: every vehicle.
+   */
+  readonly useForward?: readonly LaneUse[];
+  readonly useBackward?: readonly LaneUse[];
+  /**
+   * The line between lane k and lane k + 1 of each direction: dashed (a lane
+   * change allowed, LMS-2) or solid (forbidden, LMS-1). Absent or short:
+   * dashed. The line beside a bus lane is solid whatever this says (MFE).
+   */
+  readonly linesForward?: readonly LaneLine[];
+  readonly linesBackward?: readonly LaneLine[];
 }
+
+/** Who may drive a lane (`RoadSection.useForward`). */
+export type LaneUse = 'all' | 'bus';
+export const LANE_USES: readonly LaneUse[] = ['all', 'bus'];
+/** The line between two lanes of one direction (`RoadSection.linesForward`). */
+export type LaneLine = 'dashed' | 'solid';
+export const LANE_LINES: readonly LaneLine[] = ['dashed', 'solid'];
+const LANE_LIST_KEYS = ['useForward', 'useBackward', 'linesForward', 'linesBackward'] as const;
 
 /** Physical edit bounds, shared by persistence and the section editor. */
 export const ROAD_SECTION_LIMITS = {
@@ -112,6 +134,18 @@ export function normalizeRoadSection(raw: unknown): RoadSection | undefined {
       rules.some((rule) => !LANE_TURN_RULES.includes(rule as LaneTurnRule))) return undefined;
     result[key] = [...rules] as LaneTurnRule[];
   }
+  // Lane uses and lines: a list of at most eight known values, dropped when
+  // it says nothing a missing one would not (all lanes open, every line dashed).
+  for (const key of LANE_LIST_KEYS) {
+    const list = value[key];
+    if (list === undefined) continue;
+    const allowed: readonly string[] = key.startsWith('use') ? LANE_USES : LANE_LINES;
+    if (!Array.isArray(list) || list.length > 8 || list.some((x) => !allowed.includes(x as string))) return undefined;
+    const fallback = allowed[0];
+    let end = list.length;
+    while (end > 0 && list[end - 1] === fallback) end--;
+    if (end > 0) (result as Record<string, unknown>)[key] = list.slice(0, end);
+  }
   return result;
 }
 
@@ -142,7 +176,8 @@ export const sectionSidewalk = (s: RoadSection, side: 'left' | 'right'): number 
  */
 export function flipSection(s: RoadSection | undefined): RoadSection | undefined {
   if (!s) return undefined;
-  const { sidewalkLeft, sidewalkRight, flushLeft, flushRight, materials, turnsForward, turnsBackward, ...rest } = s;
+  const { sidewalkLeft, sidewalkRight, flushLeft, flushRight, materials, turnsForward, turnsBackward,
+    useForward, useBackward, linesForward, linesBackward, ...rest } = s;
   const flippedMaterials = materials ? {
     ...(materials.carriageway ? { carriageway: materials.carriageway } : {}),
     ...(materials.median ? { median: materials.median } : {}),
@@ -158,6 +193,10 @@ export function flipSection(s: RoadSection | undefined): RoadSection | undefined
     ...(flippedMaterials ? { materials: flippedMaterials } : {}),
     ...(turnsBackward ? { turnsForward: [...turnsBackward] } : {}),
     ...(turnsForward ? { turnsBackward: [...turnsForward] } : {}),
+    ...(useBackward ? { useForward: [...useBackward] } : {}),
+    ...(useForward ? { useBackward: [...useForward] } : {}),
+    ...(linesBackward ? { linesForward: [...linesBackward] } : {}),
+    ...(linesForward ? { linesBackward: [...linesForward] } : {}),
   };
 }
 
@@ -167,8 +206,8 @@ export function sameRoadSection(a: RoadSection | undefined, b: RoadSection | und
     a.sidewalkLeft === b.sidewalkLeft && a.sidewalkRight === b.sidewalkRight && !a.flushLeft === !b.flushLeft &&
     !a.flushRight === !b.flushRight && !a.medianFlush === !b.medianFlush &&
     JSON.stringify(a.materials ?? null) === JSON.stringify(b.materials ?? null) &&
-    (['turnsForward', 'turnsBackward'] as const).every((key) => {
-      const left = a[key] ?? [], right = b[key] ?? [];
+    (['turnsForward', 'turnsBackward', ...LANE_LIST_KEYS] as const).every((key) => {
+      const left: readonly string[] = a[key] ?? [], right: readonly string[] = b[key] ?? [];
       return left.length === right.length && left.every((rule, index) => rule === right[index]);
     });
 }
@@ -200,7 +239,11 @@ export function cloneRoadSection(section: RoadSection): RoadSection {
   return { ...section,
     ...(section.materials ? { materials: { ...section.materials } } : {}),
     ...(section.turnsForward ? { turnsForward: [...section.turnsForward] } : {}),
-    ...(section.turnsBackward ? { turnsBackward: [...section.turnsBackward] } : {}) };
+    ...(section.turnsBackward ? { turnsBackward: [...section.turnsBackward] } : {}),
+    ...(section.useForward ? { useForward: [...section.useForward] } : {}),
+    ...(section.useBackward ? { useBackward: [...section.useBackward] } : {}),
+    ...(section.linesForward ? { linesForward: [...section.linesForward] } : {}),
+    ...(section.linesBackward ? { linesBackward: [...section.linesBackward] } : {}) };
 }
 
 /** Explicit arrows restrict every connector, including merge and U-turn fallbacks. */
@@ -230,4 +273,20 @@ export function sectionForWidth(rt: { readonly lanes: number; readonly median: n
     sidewalk = Math.max(minWalk, Math.min(maxWalk, (total - rt.median - lanes * laneWidth) / 2));
   }
   return { laneWidth, sidewalk, median: rt.median, speedKmh, priority: rt.priorityRank };
+}
+
+/** Who may drive lane `index` of one direction of a section. */
+export function laneUse(section: RoadSection | undefined, forward: boolean, index: number): LaneUse {
+  return (forward ? section?.useForward : section?.useBackward)?.[index] ?? 'all';
+}
+
+/**
+ * Whether a lane change across the line between lane `index` and lane
+ * `index + 1` of one direction is allowed: a dashed line between two lanes
+ * open to the same vehicles (MBST vol. IV: LMS-2 allows it, LMS-1 and the
+ * line of an exclusive lane do not).
+ */
+export function laneLineCrossable(section: RoadSection | undefined, forward: boolean, index: number): boolean {
+  const line = (forward ? section?.linesForward : section?.linesBackward)?.[index] ?? 'dashed';
+  return line === 'dashed' && laneUse(section, forward, index) === laneUse(section, forward, index + 1);
 }

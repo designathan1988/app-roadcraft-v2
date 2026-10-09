@@ -194,7 +194,8 @@ function mandatory(w: SimWorld, v: Vehicle, target: LaneletId): LaneletId | null
   const steps = Math.abs(to.laneIndex - lane.laneIndex);
   const adjacent = laneletId(lane.segment!, lane.from!, lane.to!,
     lane.laneIndex + Math.sign(to.laneIndex - lane.laneIndex));
-  if (steps === 0 || !w.lanelet(adjacent) || w.rt(adjacent).ghost) {
+  // Across a solid line, or into a bus lane it may not drive: no (docs/VIAS.md V4).
+  if (steps === 0 || !w.lanelet(adjacent) || w.rt(adjacent).ghost || !w.graph.changeTargets(lane.id, v.archetype.shape).includes(adjacent)) {
     v.desiredLane = null;
     v.movementIntent = null;
     return null;
@@ -287,7 +288,8 @@ function discretionary(
   // MOBIL weighs the accelerations round a change into a neighbouring lane:
   // a carriageway of one lane has none, and its leader and follower were
   // looked up for every car on it every tick for nothing.
-  if (!w.graph.siblingLanes(laneId).length) return null;
+  const targets = w.graph.changeTargets(laneId, v.archetype.shape);
+  if (!targets.length) return null;
   // The street the route turns into next. A lane that cannot reach it is no
   // overtaking lane: moving there only earns a mandatory change straight back,
   // which is the lane-to-lane oscillation measured before this at 38 % of all
@@ -312,7 +314,7 @@ function discretionary(
   let bestGain = 0;
   let best: LaneletId | null = null;
 
-  for (const candidate of w.graph.siblingLanes(laneId)) {
+  for (const candidate of targets) {
     const to = w.lanelet(candidate);
     if (!to || to.kind !== 'link' || w.rt(candidate).ghost) continue;
     if (Math.abs((to.laneIndex ?? 0) - index) !== 1) continue;

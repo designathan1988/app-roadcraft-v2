@@ -8,7 +8,8 @@ import { movementKey, type JunctionControl, type RoadDoc } from './doc';
 import type { Network } from './network';
 import { laneOffset, laneWidth, roadProfile, travelLanes } from './roadTypes';
 import { PARKING_DEPTH } from './parking';
-import { laneTurnAllowed } from './roadSection';
+import { laneLineCrossable, laneTurnAllowed, laneUse } from './roadSection';
+import { linksDigest, linksOf } from './roads/connectors';
 import { orientedPolyline } from './geometry';
 import { type ApproachGroup, computeApproachGroups } from './approachGroups';
 import { TUNNELS_DRAWN } from './structures';
@@ -64,6 +65,11 @@ export interface Lanelet {
   readonly cycleShift?: number;
   /** True when the far end of this link is a junction with a stop line. */
   readonly controlled: boolean;
+  /** Buses only (`RoadSection.useForward`, docs/VIAS.md V4); absent: every vehicle. */
+  readonly use?: 'bus';
+  /** No lane change across the line to lane `laneIndex - 1` / `laneIndex + 1` (solid, or a bus lane's). */
+  readonly solidInner?: true;
+  readonly solidOuter?: true;
 
   // connector fields
   readonly node?: NodeId;
@@ -211,6 +217,7 @@ export class LaneletGraph {
   /** `build` in steps, a segment's links or a junction's connectors at a time. */
   *buildSteps(doc: RoadDoc, net: Network): Generator<void, void, void> {
     this.siblings.clear();
+    this.changes.clear();
     this.lanelets.clear();
     this.connectors.clear();
     this.junctions.clear();
@@ -230,6 +237,7 @@ export class LaneletGraph {
     this.revision = net.revision;
     // Anything asked while the graph was half built is forgotten.
     this.siblings.clear();
+    this.changes.clear();
   }
 
   private *buildLinks(doc: RoadDoc, net: Network, previous: Map<string, Lanelet[]>, next: Map<string, Lanelet[]>): Generator<void, void, void> {
@@ -321,6 +329,8 @@ export class LaneletGraph {
           + `|${seg.structure ?? '-'}`
           + `|${section ? `${section.laneWidth},${section.sidewalk},${section.median},${section.speedKmh},${section.priority}` : '-'}`
           + `|${section?.turnsForward?.join(',') ?? '-'}|${section?.turnsBackward?.join(',') ?? '-'}`
+          + (section?.useForward || section?.useBackward || section?.linesForward || section?.linesBackward
+            ? `|u${section.useForward?.join(',') ?? ''}/${section.useBackward?.join(',') ?? ''}|l${section.linesForward?.join(',') ?? ''}/${section.linesBackward?.join(',') ?? ''}` : '')
           + `|${lpd}|${laneWidth(rt)}|${rt.median}|${rt.speedLimit}|${rt.sidewalk}|${rt.parkingLeft},${rt.parkingRight},${rt.parkingLeftKind},${rt.parkingRightKind}`
           + `|${doc.degree(to)}|${crossing ? `${crossing.kind},${crossing.segment}` : '-'}`
           + `|${s0}|${s1}|${new Digest().addAll(full.xy).value()}`;
@@ -346,6 +356,9 @@ export class LaneletGraph {
               ...((forward ? rt.parkingRightKind : rt.parkingLeftKind) === 'cycle' && lane === lpd - 1
                 ? { cycleShift: -(laneWidth(rt) / 2 + PARKING_DEPTH.cycle / 2) } : {}),
               controlled: doc.degree(to) >= 3 || crossing !== undefined,
+              ...(laneUse(section, forward, lane) === 'bus' ? { use: 'bus' as const } : {}),
+              ...(lane > 0 && !laneLineCrossable(section, forward, lane - 1) ? { solidInner: true as const } : {}),
+              ...(lane < lpd - 1 && !laneLineCrossable(section, forward, lane) ? { solidOuter: true as const } : {}),
             });
           }
         }
@@ -395,7 +408,7 @@ export class LaneletGraph {
       const surfaceKey = surfaceOf()?.key ?? '';
       const key = `${nodeId}|${new Digest().addText(String(surfaceKey)).addText(node.control)
         .addText(node.crossing ? `${node.crossing.kind},${node.crossing.segment}` : '-')
-        .addText(node.incident.join(',')).addText(node.blockedMovements.join(','))
+        .addText(node.incident.join(',')).addText(node.blockedMovements.join(',')).addText(linksDigest(node.laneLinks))
         .addText(inbound.map((id) => this.laneletKeys.get(id) ?? id).join('|'))
         .addText(outbound.map((id) => this.laneletKeys.get(id) ?? id).join('|')).value()}`;
       const known = key ? previous.get(key) : undefined;
@@ -493,6 +506,28 @@ export class LaneletGraph {
         const rules = inLane.from === incomingSegment.a ? incomingSegment.section?.turnsForward : incomingSegment.section?.turnsBackward;
         const rule = rules?.[inLane.laneIndex ?? 0];
         const authored = rule !== undefined && rule !== 'all';
+        // The player's own connections for this lane (docs/VIAS.md V4,
+        // `roads/connectors.ts`): exactly those, when any is still valid;
+        // a movement the node bans stays banned.
+        const manual = linksOf(node.laneLinks, inLane.segment, inLane.laneIndex ?? 0);
+        if (manual.length) {
+          let made = 0;
+          for (const link of manual) {
+            const outId = outbound.find((id) => {
+              const l = this.lanelets.get(id);
+              return l?.segment === link.to && (l.laneIndex ?? 0) === link.toLane;
+            });
+            const outLane = outId === undefined ? undefined : this.lanelets.get(outId);
+            if (!outId || !outLane) continue;
+            if (node.blockedMovements.includes(movementKey(inLane.segment, link.to))) continue;
+            const isReverse = outLane.segment === inLane.segment;
+            const turn = isReverse ? 'uturn' : classifyTurn(inDir, tangentAtStart(outLane.centre));
+            const carried = !isReverse && road !== null && road.includes(inLane.segment) && road.includes(link.to);
+            addConnector(inId, inLane, outId, outLane, turn, carried);
+            made++;
+          }
+          if (made > 0) continue;
+        }
         const legal: { outId: LaneletId; outLane: Lanelet; turn: TurnKind; carried: boolean }[] = [];
         // U-turns the lane-count rule above set aside. They come back only for
         // a lane that has nothing else: where two roads both run back to the
@@ -604,6 +639,45 @@ export class LaneletGraph {
     return known;
   }
   private readonly siblings = new Map<LaneletId, LaneletId[]>();
+
+  /** Whether a vehicle of this shape may drive a lane (a bus lane is buses only, docs/VIAS.md V4). */
+  laneUsable(id: LaneletId, shape: string): boolean {
+    const lane = this.lanelets.get(id);
+    return !!lane && (lane.use !== 'bus' || shape === 'bus');
+  }
+
+  /**
+   * The lanes of the same carriageway a vehicle of this shape may change
+   * into from `id`: across dashed lines only (MBST vol. IV, LMS-1/LMS-2), and
+   * into lanes it may drive. Nearest first, as `siblingLanes`.
+   */
+  changeTargets(id: LaneletId, shape: string): readonly LaneletId[] {
+    const key = shape === 'bus' ? `${id}|b` : id;
+    let known = this.changes.get(key);
+    if (!known) this.changes.set(key, known = this.findChangeTargets(id, shape));
+    return known;
+  }
+  private readonly changes = new Map<string, readonly LaneletId[]>();
+
+  private findChangeTargets(id: LaneletId, shape: string): LaneletId[] {
+    const lane = this.lanelets.get(id);
+    if (!lane || lane.kind !== 'link' || lane.segment === undefined || lane.from === undefined || lane.to === undefined) return [];
+    const here = lane.laneIndex ?? 0;
+    const out: LaneletId[] = [];
+    for (const step of [-1, 1]) {
+      let at = lane;
+      for (let k = here + step; k >= 0; k += step) {
+        // The line between `at` and the next lane out.
+        if (step < 0 ? at.solidInner : at.solidOuter) break;
+        const next = this.lanelets.get(laneletId(lane.segment, lane.from, lane.to, k));
+        if (!next) break;
+        at = next;
+        if (next.use === 'bus' && shape !== 'bus') break;
+        out.push(next.id);
+      }
+    }
+    return out;
+  }
 
   private findSiblings(id: LaneletId): LaneletId[] {
     const lane = this.lanelets.get(id);

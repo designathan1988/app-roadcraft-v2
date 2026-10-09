@@ -522,6 +522,30 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
         block.append(row(t('profileEditor.direction'), segmented(['backward', 'forward'] as const, element.dir,
           (d) => t(d === 'forward' ? 'profileEditor.dirForward' : 'profileEditor.dirBackward'),
           (dir) => replace({ ...element, dir }))));
+        // Who drives it (V4): every vehicle, or buses only.
+        block.append(row(t('profileEditor.use'), segmented(['all', 'bus'] as const, element.use ?? 'all',
+          (u) => t(u === 'bus' ? 'profileEditor.useBus' : 'profileEditor.useAll'), (u) => {
+            const { use: _u, ...rest } = element; void _u;
+            replace(u === 'bus' ? { ...rest, use: 'bus' } : rest);
+          })));
+        // The line to the next lane of its direction (V4): dashed or solid.
+        const next = profile.elements[selected + 1];
+        if (next?.kind === 'lane' && next.dir === element.dir) {
+          const busLine = (element.use === 'bus') !== (next.use === 'bus');
+          const lineRow = row(t('profileEditor.lineRight'), segmented(['dashed', 'solid'] as const, busLine ? 'solid' : element.line ?? 'dashed',
+            (l) => t(l === 'solid' ? 'profileEditor.lineSolid' : 'profileEditor.lineDashed'), (l) => {
+              if (busLine) return;
+              const { line: _l, ...rest } = element; void _l;
+              replace(l === 'solid' ? { ...rest, line: 'solid' } : rest);
+            }));
+          if (busLine) {
+            const note = div('rp-note');
+            note.textContent = t('profileEditor.lineBus');
+            lineRow.querySelector('.rp-ctrls')?.append(note);
+            lineRow.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+          }
+          block.append(lineRow);
+        }
       }
       if (element.kind === 'footway') {
         block.append(row(t('profileEditor.paving'), segmented(FOOTWAY_MATERIALS, element.material ?? 'pavers',

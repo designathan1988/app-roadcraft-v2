@@ -14,6 +14,8 @@ import { surfaceMode } from '@world/junction/build';
 import type { RoadSection } from '@world/roadSection';
 import { freeRoadsEnabled, mountRoadSectionEditor } from './roadSectionEditor';
 import { mountProfilePanel } from './roads/profilePanel';
+import { mountConnectorPanel, refreshConnectorPanel } from './roads/connectorPanel';
+import type { LaneLink } from '@world/roads/connectors';
 import type { RoadProfileSpec } from '@world/roads/profile';
 
 export interface InspectorSelection {
@@ -41,6 +43,10 @@ export interface InspectorActions {
   readonly onDuplicate?: (id: SegmentId) => void;
   readonly onSetControl?: (id: NodeId, control: JunctionControl) => void;
   readonly onSetMovementBlocked?: (node: NodeId, from: SegmentId, to: SegmentId, blocked: boolean) => void;
+  /** The player's lane connections at a node (docs/VIAS.md V4); undefined: all derived. */
+  readonly onSetLaneLinks?: (node: NodeId, links: LaneLink[] | undefined) => void;
+  /** World to screen, for plans drawn as the player sees the map (the lane connectors). */
+  readonly project?: (x: number, y: number) => { readonly x: number; readonly y: number };
   readonly onSetCurve?: (id: SegmentId, curve: CurveShape | null) => void;
   readonly onJoin?: (node: NodeId) => void;
   /** Removes a node and the roads that meet at it. Offered only for a node the editor could not have created. */
@@ -119,6 +125,8 @@ function renderCurrent(): void {
           : null;
     if (html === null) closeInspector();
     else if (stats.innerHTML !== html) stats.innerHTML = html;
+    // The lane graph is rebuilt a moment after an edit: the connector editor follows it.
+    if (selection.node !== null) refreshConnectorPanel();
     return;
   }
 
@@ -444,8 +452,17 @@ function renderNode(
     (node.smooth ? `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`
       : `<label class="inspect-select">${t('inspector.controlSelect')} <select id="inspectControl">${controlOptions(node.control)}</select></label>`) +
     joinOffer +
-    (node.smooth ? '' : movementControls(doc, junction, node.blockedMovements) +
+    (node.smooth ? '' : '<div id="inspectConnectors"></div>' + movementControls(doc, junction, node.blockedMovements) +
       `<p class="inspect-note">${t('inspector.mouths')}: ${mouths || '—'}</p>`);
+  const connectors = body.querySelector<HTMLElement>('#inspectConnectors');
+  if (connectors && actionsForNode().onSetLaneLinks) {
+    mountConnectorPanel(connectors, id, {
+      graph: () => sim.graph,
+      links: () => doc.node(id)?.laneLinks,
+      set: (links) => actionsForNode().onSetLaneLinks?.(id, links),
+      ...(actionsForNode().project ? { project: actionsForNode().project! } : {}),
+    });
+  }
 
   const policy = document.getElementById('inspectControl') as HTMLSelectElement | null;
   const heightNode = document.getElementById('inspectHeightNode') as HTMLInputElement | null;

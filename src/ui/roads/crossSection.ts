@@ -51,7 +51,7 @@ const COLOUR = {
   asphalt: '#3a3f44', concrete: '#8d8c86', cobble: '#6b5f52',
   pavers: '#a39f95', footConcrete: '#b8b6ae', stone: '#b59b77',
   kerb: '#dedbd3', grass: '#4f7d43', earth: '#2a2420', earthLine: '#3a322c',
-  white: '#f2efe6', yellow: '#e5c14c', cycle: '#3f8f57', accent: '#4fe0bf', danger: '#ff6f61',
+  white: '#f2efe6', yellow: '#e5c14c', cycle: '#3f8f57', bus: '#7a3a34', accent: '#4fe0bf', danger: '#ff6f61',
 } as const;
 
 /** The row of signs (a lane's arrow, the P, the bicycle), clear of the end labels. */
@@ -124,6 +124,9 @@ export function drawSection(profile: RoadProfileSpec, options: SectionOptions): 
     const y = base - (compact ? 0.5 : 1.5);
     if (line === 'centre') {
       parts.push(`<rect x="${r1(xb - 3.5)}" y="${y}" width="2.5" height="${lineH}" fill="${COLOUR.yellow}"/><rect x="${r1(xb + 1)}" y="${y}" width="2.5" height="${lineH}" fill="${COLOUR.yellow}"/>`);
+    } else if (line === 'solid') {
+      // A solid line (no lane change, or a bus lane's): wider, full white.
+      parts.push(`<rect x="${r1(xb - 2.5)}" y="${y - (compact ? 0 : 1)}" width="5" height="${lineH + (compact ? 0 : 1)}" fill="${COLOUR.white}" class="xs-solid"/>`);
     } else {
       parts.push(`<rect x="${r1(xb - 1.5)}" y="${y}" width="3" height="${lineH}" fill="${COLOUR.white}"${line === 'lane' ? ' opacity="0.6"' : ''}/>`);
     }
@@ -179,6 +182,7 @@ function surface(e: ProfileElement, profile: RoadProfileSpec): string {
       if (e.flush) return carriageway(profile);
       return e.material === 'concrete' ? COLOUR.footConcrete : e.material === 'pavers' ? COLOUR.pavers : COLOUR.grass;
     case 'cycle': return COLOUR.cycle;
+    case 'lane': return e.use === 'bus' ? COLOUR.bus : carriageway(profile);
     default: return carriageway(profile);
   }
 }
@@ -190,9 +194,12 @@ const carriageway = (profile: RoadProfileSpec): string =>
 export const elementColour = (e: ProfileElement, profile: RoadProfileSpec): string => surface(e, profile);
 
 /** The line painted between two neighbours: between directions, between lanes of one, at the carriageway's edge. */
-function laneLine(a: ProfileElement, b: ProfileElement): 'centre' | 'lane' | 'edge' | null {
+function laneLine(a: ProfileElement, b: ProfileElement): 'centre' | 'lane' | 'solid' | 'edge' | null {
   const road = (e: ProfileElement): boolean => e.kind === 'lane' || e.kind === 'parking' || e.kind === 'cycle' || (e.kind === 'median' && !!e.flush);
-  if (a.kind === 'lane' && b.kind === 'lane') return a.dir === b.dir ? 'lane' : 'centre';
+  if (a.kind === 'lane' && b.kind === 'lane') {
+    if (a.dir !== b.dir) return 'centre';
+    return a.line === 'solid' || (a.use === 'bus') !== (b.use === 'bus') ? 'solid' : 'lane';
+  }
   if (road(a) && road(b)) return 'edge';
   return null;
 }
@@ -213,7 +220,8 @@ function decoration(e: ProfileElement, x0: number, x1: number, top: number, base
     }
     case 'lane': {
       // Seen from A towards B: a lane towards B shows a car's back, a lane towards A its front.
-      if (w >= 14) out.push(carRear(cx, base, car(0.78), '#c9d2d6', e.dir === 'backward'));
+      if (w >= 14 && e.use === 'bus') out.push(busRear(cx, base, Math.min(2.5 * ppm, w * 0.86, (headroom * 0.95) / 1.25), e.dir === 'backward'));
+      else if (w >= 14) out.push(carRear(cx, base, car(0.78), '#c9d2d6', e.dir === 'backward'));
       out.push(arrow(cx, ICON_Y, Math.min(26, w * 0.55), e.dir));
       if (profile.carriageway === 'cobble') {
         for (let x = x0 + 3; x < x1 - 2; x += Math.max(4, 0.2 * ppm)) out.push(`<rect x="${r1(x)}" y="${base}" width="1" height="${depth}" fill="#00000040"/>`);
@@ -309,4 +317,16 @@ function bicycleGlyph(cx: number, cy: number): string {
   return `<g fill="none" stroke="#f2efe6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">` +
     `<circle cx="${v(cx - 4.2)}" cy="${v(cy + 2.5)}" r="3"/><circle cx="${v(cx + 4.2)}" cy="${v(cy + 2.5)}" r="3"/>` +
     `<path d="M${v(cx - 4.2)} ${v(cy + 2.5)}L${v(cx - 1)} ${v(cy - 2.5)}H${v(cx + 2.5)}L${v(cx + 4.2)} ${v(cy + 2.5)}M${v(cx - 1)} ${v(cy - 2.5)}L${v(cx + 0.6)} ${v(cy + 2.5)}M${v(cx + 1.6)} ${v(cy - 4.5)}h2"/></g>`;
+}
+
+/** A bus seen from behind (or the front), `w` pixels wide, standing on `base`: what a bus lane carries. */
+function busRear(cx: number, base: number, w: number, front: boolean): string {
+  const h = w * 1.25, x = r1(cx - w / 2), y = base - h, v = r1;
+  const lamp = front ? '#fff4c8' : '#d9483b';
+  return `<g class="xs-bus"><rect x="${x}" y="${v(y)}" width="${v(w)}" height="${v(h * 0.9)}" rx="${v(w * 0.1)}" fill="#e6b53c"/>` +
+    `<rect x="${v(x + w * 0.1)}" y="${v(y + h * 0.08)}" width="${v(w * 0.8)}" height="${v(h * 0.34)}" rx="${v(w * 0.05)}" fill="#2a3a44"/>` +
+    `<rect x="${v(x + w * 0.08)}" y="${v(y + h * 0.66)}" width="${v(w * 0.16)}" height="${v(h * 0.07)}" fill="${lamp}"/>` +
+    `<rect x="${v(x + w * 0.76)}" y="${v(y + h * 0.66)}" width="${v(w * 0.16)}" height="${v(h * 0.07)}" fill="${lamp}"/>` +
+    `<rect x="${v(x + w * 0.06)}" y="${v(base - h * 0.12)}" width="${v(w * 0.18)}" height="${v(h * 0.12)}" rx="2" fill="#15191c"/>` +
+    `<rect x="${v(x + w * 0.76)}" y="${v(base - h * 0.12)}" width="${v(w * 0.18)}" height="${v(h * 0.12)}" rx="2" fill="#15191c"/></g>`;
 }

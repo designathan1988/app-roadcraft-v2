@@ -85,15 +85,23 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
     });
   }
 
+  // The line between lane k and k + 1 of one direction (docs/VIAS.md V4):
+  // dashed where a lane change is allowed (MBST vol. IV, LMS-2), solid where
+  // it is not (LMS-1), wide and solid beside a bus lane (MFE, 0.20-0.30 m).
+  const divider = (forward: boolean, k: number): Pick<StrokeSpec, 'width' | 'dash' | 'dashOffset'> => {
+    const uses = forward ? rt.useForward : rt.useBackward;
+    const bus = (uses?.[k] ?? 'all') !== (uses?.[k + 1] ?? 'all');
+    const solid = bus || ((forward ? rt.linesForward : rt.linesBackward)?.[k] ?? 'dashed') === 'solid';
+    return { width: bus ? 0.62 : 0.32, dash: solid ? null : DASH, dashOffset: solid ? 0 : phase };
+  };
   if (ribbon.direction !== 'both') {
     const lw = laneWidth(rt);
+    const forward = ribbon.direction === 'aToB';
     for (let i = 1; i < rt.lanes; i++) {
       out.push({
         points: offsetPolyline(pts, -rt.width / 2 + rt.parkingRight + lw * i),
-        width: 0.32,
         color: LANE_LINE,
-        dash: DASH,
-        dashOffset: phase,
+        ...divider(forward, forward ? rt.lanes - 1 - i : i - 1),
       });
     }
   } else if (rt.markings === 'lanes') {
@@ -113,20 +121,9 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
     const lw = laneWidth(rt);
     for (let i = 1; i < lpd; i++) {
       const off = rt.median / 2 + lw * i;
-      out.push({
-        points: offsetPolyline(pts, shift + off),
-        width: 0.32,
-        color: LANE_LINE,
-        dash: DASH,
-        dashOffset: phase,
-      });
-      out.push({
-        points: offsetPolyline(pts, shift - off),
-        width: 0.32,
-        color: LANE_LINE,
-        dash: DASH,
-        dashOffset: phase,
-      });
+      // Left of a -> b: the backward lanes; right: the forward ones (lane 0 by the middle).
+      out.push({ points: offsetPolyline(pts, shift + off), color: LANE_LINE, ...divider(false, i - 1) });
+      out.push({ points: offsetPolyline(pts, shift - off), color: LANE_LINE, ...divider(true, i - 1) });
     }
   }
 

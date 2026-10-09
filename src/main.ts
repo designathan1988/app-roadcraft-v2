@@ -4367,6 +4367,15 @@ function showInspector(): void {
           return true;
         });
       },
+      project: (x, y) => view.toScreen({ x, y }, surface.cssW, surface.cssH),
+      // The player's lane connections at a junction (docs/VIAS.md V4).
+      onSetLaneLinks: (node, links) => {
+        if (!doc.node(node)) return;
+        mutate(() => {
+          doc.setNodeLaneLinks(node, links);
+          return true;
+        });
+      },
       onSetCurve: (id, curve) => {
         const seg = doc.segment(id);
         if (!seg) return;

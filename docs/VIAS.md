@@ -94,7 +94,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V1") |
 | V2 | Editor visual do perfil com validação e modelos | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V2") |
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | feito no ramo, aguardando o jogador (ver "Andamento da V3") |
-| V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | |
+| V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | feito no ramo, aguardando o jogador (ver "Andamento da V4") |
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | |
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | |
 | V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | |
@@ -221,6 +221,36 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   estações 0,19 ms (a solução do teste de túnel é reaproveitada); commit 6,0 ms, igual. Arraste na sonda headless: quadro
   mediano 2,5 ms. Muros: uma malha só (faces) e uma de reaterro por reconstrução dos detalhes, só para vias com muro.
 - Fechamento no ramo: lint limpo, suíte inteira 1123 verdes (a falha antiga de `occupantFit` à parte), fuzz smoke verde.
+
+## Andamento da V4
+- Pesquisa (lida): Traffic Manager: President Edition, código do conector de faixas
+  (https://github.com/CitiesSkylinesMods/TMPE, `TLM/Manager/Impl/LaneConnection/LaneConnectionSubManager.cs`): uma faixa com
+  conexões próprias usa só elas, as outras ficam com as do jogo; faixa inválida perde as conexões; as setas são recalculadas
+  das conexões. Manual Brasileiro de Sinalização de Trânsito, vol. IV, Sinalização Horizontal (CONTRAN, PDF no site do DNIT,
+  https://www.gov.br/dnit/pt-br/rodovias/operacoes-rodoviarias/faixa-de-dominio/regulamentacao-atual/microsoft-word-04-mbst-vol-iv-sinaliza_347_343o-horizontal_f.pdf,
+  lido em texto): LMS-1 (linha simples contínua, branca, 0,10-0,15 m) proíbe ultrapassagem e transposição entre faixas de
+  mesmo sentido; LMS-2 (seccionada) permite; MFE (faixa exclusiva no fluxo) é uma linha contínua de 0,20-0,30 m, contínua em
+  toda a extensão exceto onde a entrada ou saída é permitida.
+- Conectores à mão: `RoadNode.laneLinks` (opcional, ausente em todo mapa antigo; `world/roads/connectors.ts`). Para cada faixa
+  que chega listada, `lanelets.ts` `buildJunctions` constrói exatamente essas conexões (movimento proibido no nó continua
+  proibido); as outras faixas ficam com as derivadas; link para faixa que sumiu fica fora (e uma faixa cujos links sumiram
+  todos volta às derivadas). Editor no inspetor do cruzamento ("Conexões de faixa"): planta do nó virada como a câmera vê,
+  faixas que chegam em azul e que saem em verde, conexões construídas em curvas; clicar numa que chega acende as dela,
+  clicar numa que sai liga ou desliga; a primeira edição parte das conexões que o jogo construiu; tirar a última saída de
+  uma faixa é recusado com o motivo; "Restaurar automáticas".
+- Classes por faixa e tipo de linha: `RoadSection.useForward/useBackward` ("all" | "bus") e `linesForward/linesBackward`
+  ("dashed" | "solid") por laneIndex, no perfil como `use` e `line` do elemento faixa (editor: "Uso: Todos | Ônibus",
+  "Linha à direita: Tracejada | Contínua", travada em contínua ao lado de faixa de ônibus); problema `busOnly` quando um
+  sentido fica só com faixas de ônibus. Grafo: `Lanelet.use`, `solidInner/solidOuter`; `LaneletGraph.laneUsable` e
+  `changeTargets` (só através de linha tracejada, nunca para faixa que o veículo não pode usar). Simulação: o planejador de
+  viagem (`drive/tactical.ts`), o roteador, a troca de faixa (obrigatória e discricionária) e o nascimento dos veículos usam
+  essas regras. Pintura: linha contínua onde é contínua, linha larga contínua ao lado de faixa de ônibus.
+- Detectores: `tests/sim/laneConnectors.spec.ts` (os veículos que saem da faixa com conexão à mão vão só por ela; link
+  inválido; alternância parte do construído e nunca deixa faixa sem saída; seção salva e invertida; nenhum carro em faixa de
+  ônibus e nenhuma troca através da linha dela em 200 s de tráfego; alvos de troca por linha e uso).
+- Desempenho (cidade de teste, intensidade 3, 1200 passos): passo da simulação 0,150 ms antes e 0,149 ms depois; montagem do
+  grafo de faixas na mesma ordem (7-12 ms, ruído de primeira execução). Alvos de troca guardados por faixa até o próximo grafo.
+- Fechamento no ramo: lint limpo, suíte inteira 1130 verdes (a falha antiga de `occupantFit` à parte), fuzz smoke verde.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

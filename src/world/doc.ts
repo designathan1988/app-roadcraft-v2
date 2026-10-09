@@ -1,3 +1,4 @@
+import { type LaneLink, linksDigest, normalizeLaneLinks } from './roads/connectors';
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
 import { isLot, type Lot } from './lots';
 import type { Vec2 } from '@core/vec2';
@@ -90,6 +91,13 @@ export interface RoadNode {
    * segment leaves it: a real junction draws its own crossings.
    */
   crossing?: NodeCrossing;
+  /**
+   * The player's own lane connections at this node (docs/VIAS.md V4,
+   * `roads/connectors.ts`): for each arriving lane listed, exactly these.
+   * Absent: every connection derived. A link to a lane that is gone is left
+   * out of the build.
+   */
+  laneLinks?: readonly LaneLink[];
 }
 
 export type NodeCrossingKind = 'zebra' | 'signal';
@@ -768,6 +776,17 @@ export class RoadDoc {
     this.markSegment(id);
   }
 
+  /** The player's lane connections at a node; undefined or empty: all derived (`RoadNode.laneLinks`). */
+  setNodeLaneLinks(id: NodeId, links: readonly LaneLink[] | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    const next = normalizeLaneLinks(links);
+    if (linksDigest(node.laneLinks) === linksDigest(next)) return;
+    if (next) node.laneLinks = next;
+    else delete node.laneLinks;
+    this.markNode(id);
+  }
+
   setSegmentStructure(id: SegmentId, structure: RoadStructure): void {
     const segment = this.segments.get(id);
     if (!segment || segment.structure === structure) return;
@@ -1351,6 +1370,7 @@ export class RoadDoc {
         id: n.id, x: n.x, y: n.y, heightOffset: n.heightOffset, smooth: n.smooth,
         control: n.control, blockedMovements: [...n.blockedMovements],
         ...(n.crossing ? { crossing: { kind: n.crossing.kind, segment: n.crossing.segment } } : {}),
+        ...(n.laneLinks ? { laneLinks: n.laneLinks.map((l) => ({ ...l })) } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -1492,6 +1512,14 @@ export class RoadDoc {
       if (crossing.kind !== 'zebra' && crossing.kind !== 'signal') continue;
       node.crossing = { kind: crossing.kind, segment: asSegmentId(crossing.segment) };
       dropStaleCrossing(node);
+    }
+    // The player's lane connections: kept as stored (a link to a lane that
+    // is gone is left out of the build, `lanelets.ts`).
+    for (const n of data.nodes) {
+      const node = doc.nodes.get(asNodeId(n.id));
+      if (!node || canonicalNode.get(n.id) !== node.id) continue;
+      const links = normalizeLaneLinks(n.laneLinks);
+      if (links) node.laneLinks = links;
     }
     for (const dab of data.paint ?? []) {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
@@ -1648,6 +1676,8 @@ export interface SerializedDoc {
     id: number; x: number; y: number; heightOffset?: number; smooth?: boolean;
     control?: JunctionControl; blockedMovements?: readonly string[];
     crossing?: { kind: NodeCrossingKind; segment: number };
+    /** The player's lane connections (docs/VIAS.md V4); absent on every older map. */
+    laneLinks?: readonly { from: number; fromLane: number; to: number; toLane: number }[];
   }[];
   readonly segments: readonly {
     id: number;
