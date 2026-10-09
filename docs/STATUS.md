@@ -144,6 +144,13 @@ o jogo a cada edição.
   Light Beam). Conferido no jogo (build da porta 4180), à noite e de dia.
 
 ### Prédios e cidade
+- Lotes sem vazio nas esquinas: a faixa de uma rua entre duas transversais,
+  e a fileira de um quarteirão com lote gravado, são cortadas no que sobra
+  ao lado dos lotes que já estão lá (`world/lots.ts` `freeSpans`,
+  `tests/world/lotCorners.spec.ts`). No modo Lotes os lotes da rua não
+  somem: ficam desenhados e viram lotes de verdade no primeiro clique de
+  edição (frente, cantos, dividir, juntar, apagar). Tirar zona tira também
+  o prédio (`zoneLots`, `tests/world/unzone.spec.ts`). Conferido no jogo.
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;
   construir a partir de um modelo 3D de referência (`editor/fromReference.ts`).
 - Zoneamento com crescimento de prédios nos lotes (`world/lots.ts`), planejador

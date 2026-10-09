@@ -9,6 +9,7 @@ import { m } from './units';
 import { pavedTester, quadsOverlap } from './zoneGrid';
 import type { ZoneDensity, ZoneUse } from './zones';
 import { rectAround, type ChangeRect } from './changes';
+import type { BuildingId } from './buildings/types';
 
 /**
  * Where these lots lie, for the diary (`RoadDoc.lotsChanged`): only that
@@ -247,8 +248,30 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
     const columns = Math.max(1, Math.round(L / Math.max(MIN_LOT, Math.min(depth, LOT_FRONTAGE))));
     const width = L / columns;
     const at = (s: number, t: number): Vec2 => ({ x: box.c.x + box.u.x * s + box.v.x * t, y: box.c.y + box.u.y * s + box.v.y * t });
-    for (let r = 0; r < rows; r++) for (let k = 0; k < columns; k++) {
-      const s0 = -L / 2 + k * width, s1 = s0 + width;
+    /**
+     * A row's lots, as spans along the block: the row cut in equal columns,
+     * except where stored lots already stand in it - then what is left either
+     * side of them is cut instead. A proposed lot touching a stored one was
+     * dropped whole, and a gap up to a lot wide was left beside it.
+     */
+    const rowSpans = (r: number): [number, number][] => {
+      const t0 = -D / 2 + r * depth, t1 = t0 + depth;
+      const taken: [number, number][] = [];
+      for (const l of kept) {
+        const q = l.corners.map(frame);
+        const lt0 = Math.min(...q.map((p) => p.t)), lt1 = Math.max(...q.map((p) => p.t));
+        if (Math.min(lt1, t1) - Math.max(lt0, t0) < depth * 0.25) continue;
+        const ls0 = Math.min(...q.map((p) => p.s)), ls1 = Math.max(...q.map((p) => p.s));
+        if (ls1 > -L / 2 && ls0 < L / 2) taken.push([ls0, ls1]);
+      }
+      return cutSpans(freeSpans(-L / 2, L / 2, taken, MIN_LOT), width);
+    };
+    // The block's frame for a point: along its length (s) and across it (t).
+    const frame = (q: Vec2): { s: number; t: number } => {
+      const dx = q.x - box.c.x, dy = q.y - box.c.y;
+      return { s: dx * box.u.x + dy * box.u.y, t: dx * box.v.x + dy * box.v.y };
+    };
+    for (let r = 0; r < rows; r++) for (const [s0, s1] of rowSpans(r)) {
       const t0 = -D / 2 + r * depth, t1 = t0 + depth;
       // The front faces the street: the row's outer long edge (one row: the
       // side nearer a street).
@@ -298,10 +321,26 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
         const key = `s:${Math.round(mid.x / m(4))},${Math.round(mid.y / m(4))},${Math.round(len / m(4))}`;
         keys.push(key);
         if (known.has(key)) continue;
-        const n = Math.max(1, Math.round(len / LOT_FRONTAGE));
-        const w = len / n;
-        for (let k = 0; k < n; k++) {
-          const a = s0 + k * w, b = a + w;
+        // Cut in equal lots, round the lots already there: a corner lot of a
+        // cross street's strip, or a stored lot. Each proposed lot touching
+        // one was dropped whole, and a gap up to a lot wide was left at every
+        // corner of a street between two others (the player's empty spaces).
+        const taken: [number, number][] = [];
+        for (const l of [...kept, ...add]) {
+          let near = false, ls0 = Infinity, ls1 = -Infinity;
+          for (const q of l.corners) {
+            const c = line.closestPoint(q);
+            const f = line.sampleAt(c.s);
+            // Across the street, on this side: positive on the side's left.
+            const across = ((q.x - f.p.x) * -f.t.y + (q.y - f.p.y) * f.t.x) * side;
+            if (across > face - m(1) && across < face + LOT_DEPTH + m(1)) near = true;
+            ls0 = Math.min(ls0, c.s); ls1 = Math.max(ls1, c.s);
+          }
+          // Inside the strip: a corner in its band, and not a lot merely
+          // touching its far end.
+          if (near && ls1 > s0 + m(0.5) && ls0 < s1 - m(0.5)) taken.push([ls0, ls1]);
+        }
+        for (const [a, b] of cutSpans(freeSpans(s0, s1, taken, MIN_LOT), LOT_FRONTAGE)) {
           // Facing the street: front-start, front-end along the street's
           // direction on its left, against it on its right.
           const corners: [Vec2, Vec2, Vec2, Vec2] = side === 1
@@ -318,6 +357,30 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
   // lot and its street.
   snapLotsToStreets(doc, net, add.map((c) => c.corners));
   return { add, keys, drop };
+}
+
+/** The parts of `from..to` not under any of `taken`, each at least `min` long. */
+function freeSpans(from: number, to: number, taken: readonly (readonly [number, number])[], min: number): [number, number][] {
+  const out: [number, number][] = [];
+  let at = from;
+  for (const [a, b] of [...taken].sort((p, q) => p[0] - q[0])) {
+    if (a - at >= min) out.push([at, Math.min(a, to)]);
+    at = Math.max(at, b);
+    if (at >= to) break;
+  }
+  if (to - at >= min) out.push([at, to]);
+  return out;
+}
+
+/** Each span cut into equal parts as near `target` long as a whole number of them allows. */
+function cutSpans(spans: readonly (readonly [number, number])[], target: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [a, b] of spans) {
+    const n = Math.max(1, Math.round((b - a) / target));
+    const w = (b - a) / n;
+    for (let k = 0; k < n; k++) out.push([a + k * w, a + (k + 1) * w]);
+  }
+  return out;
 }
 
 /** Stores a plan: the covered lots removed, the new ones added, the land's keys kept. */
@@ -665,8 +728,14 @@ export function zoneLots(doc: RoadDoc, ids: readonly number[], zone: { use: Zone
     const l = doc.lots[i]!;
     if (!ids.includes(l.id)) continue;
     if (zone ? l.use === zone.use && l.density === zone.density : !l.use) continue;
-    const { use: _u, density: _d, ...rest } = l;
-    doc.lots[i] = zone ? { ...rest, use: zone.use, density: zone.density } : rest;
+    const { use: _u, density: _d, building, ...rest } = l;
+    if (zone) doc.lots[i] = { ...rest, use: zone.use, density: zone.density, ...(building !== undefined ? { building } : {}) };
+    else {
+      // Taking the zone off takes what grew on it (the player, 2026-10-09):
+      // the land goes back to unzoned, empty.
+      if (building !== undefined && doc.buildings.has(building as BuildingId)) doc.buildings.remove(building as BuildingId);
+      doc.lots[i] = rest;
+    }
     zoned.push(l);
   }
   if (zoned.length) doc.lotsChanged(lotRects(zoned), zone ? 'lotes zoneados' : 'zona tirada dos lotes');

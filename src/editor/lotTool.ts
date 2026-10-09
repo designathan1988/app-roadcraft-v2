@@ -265,9 +265,25 @@ export class LotTool {
 
   // ------------------------------------------------------------ pointer
 
+  /**
+   * The street land's proposed lots made real, to be edited as lots: a corner
+   * dragged, a front set, a cut, a join or a delete acts on stored lots, and
+   * the proposed ones vanished from under the Lots modes - the player's lots
+   * that "disappear" when Lots is picked, whose front could not be set. Their
+   * land's keys are kept, so they are not proposed again. One undo step.
+   */
+  private adoptProposal(): void {
+    const prop = this.proposal;
+    if (!prop || prop.steps || prop.key !== this.proposalKey() || !prop.lots.length) return;
+    const add = prop.lots.map((corners) => ({ key: '', corners: [...corners] }));
+    this.host.mutate(() => applyLots(this.doc, { add, keys: [...prop.keys], drop: [] }));
+  }
+
   down(pointer: number, world: Vec2, shift: boolean, detail: number): void {
     const { doc, host } = this;
     const settings = host.settings();
+    if (settings.mode === 'edit' || settings.mode === 'front' || settings.mode === 'split' || settings.mode === 'join' ||
+      settings.mode === 'curve' || settings.mode === 'delete') this.adoptProposal();
     const lot = this.lotAt(world);
     const zoom = Math.max(0.05, host.zoom());
     if (settings.mode === 'edit') {
@@ -460,13 +476,14 @@ export class LotTool {
         line: picked ? (settings.mode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
         width: picked ? 0.7 : 0.35 });
     }
-    // The street land proposed as lots, in the brush: faint outlines; painted
-    // in the stroke, in the zone's colour; under the pointer, lit.
-    if (editing && settings.mode === 'brush') {
+    // The street land proposed as lots, in every mode of the tool (they
+    // vanished from the Lots modes): faint outlines; painted in the stroke, in
+    // the zone's colour; under the pointer, lit (the brush).
+    if (editing) {
       if (this.advanceProposal()) this.host.redraw();
       const prop = this.proposal;
       if (prop && !prop.steps && prop.key === this.proposalKey()) {
-        const hoverAt = this.hover && !hoverLot ? this.proposedAt(this.hover) : -1;
+        const hoverAt = this.hover && !hoverLot && settings.mode === 'brush' ? this.proposedAt(this.hover) : -1;
         prop.lots.forEach((corners, k) => {
           const painting = this.stroke?.fresh.has(k);
           const lit = k === hoverAt;
