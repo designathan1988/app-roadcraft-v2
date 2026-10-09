@@ -24,6 +24,20 @@ const MAX_WAIT_MS = 3000;
  * writes only this small key: each one used to serialise the whole map.
  */
 const SETTINGS_KEY = 'roadcraft.settings.v1';
+/**
+ * The largest session text written to `localStorage`, characters. Web
+ * Storage holds 5 MiB an origin (MDN, "Storage quotas and eviction
+ * criteria"; Chrome counts UTF-16, two bytes a character) and throws
+ * `QuotaExceededError` past it: a generated city of 1 530 buildings is
+ * 12.7 MB of text, and its autosave failed on every write - a reload opened
+ * an old map or none. A larger session goes to IndexedDB (in Chromium up to
+ * 60 % of the disk an origin, same page), and the small key keeps only a
+ * pointer to it.
+ */
+const LOCAL_LIMIT_CHARS = 2_400_000;
+/** The IndexedDB database and store of the large autosaves. */
+const SAVES_DB = 'roadcraft-saves';
+const SAVES_STORE = 'sessions';
 
 export interface SavedSettings {
   readonly camera: {
@@ -78,7 +92,7 @@ export class Persistence {
    */
   onSaveFailed: (() => void) | null = null;
 
-  constructor(private readonly storageKey = KEY) {}
+  constructor(private readonly storageKey = KEY, private readonly store: LargeStore = indexedDbStore) {}
 
   /**
    * Set once this instance has rejected the stored entry.
@@ -124,15 +138,57 @@ export class Persistence {
   documentText: ((doc: RoadDoc) => string | null) | null = null;
 
   saveSession(doc: RoadDoc, settings: SavedSettings): boolean {
+    let session: string;
     try {
       const text = this.documentText?.(doc) ?? JSON.stringify(doc.toJSON());
-      localStorage.setItem(this.storageKey, `{"version":2,"document":${text},"settings":${JSON.stringify(settings)}}`);
-      this.writeSettings(settings);
-      return true;
+      session = `{"version":2,"savedAt":${Date.now()},"document":${text},"settings":${JSON.stringify(settings)}}`;
     } catch {
       this.onSaveFailed?.();
       return false;
     }
+    if (session.length <= LOCAL_LIMIT_CHARS) {
+      try {
+        localStorage.setItem(this.storageKey, session);
+        this.writeSettings(settings);
+        return true;
+      } catch {
+        // Full: the large store below.
+      }
+    }
+    // Too large for Web Storage: IndexedDB, and once it is written the small
+    // key points there (`loadSessionAsync` takes the newer of the two).
+    this.writeSettings(settings);
+    const key = this.storageKey;
+    const savedAt = Date.now();
+    void this.store.put(key, session).then((ok) => {
+      if (!ok) { this.onSaveFailed?.(); return; }
+      try { localStorage.setItem(key, `{"version":2,"stored":"indexeddb","savedAt":${savedAt}}`); } catch { /* the stored copy stands */ }
+    });
+    return true;
+  }
+
+  /**
+   * Reads the autosave from wherever it is: the small key, or IndexedDB for
+   * a session too large for it - the newer of the two. Never throws.
+   */
+  async loadSessionAsync(): Promise<SavedSession | null> {
+    const local = this.loadSession();
+    let localAt = local ? -1 : -Infinity;
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      const at = raw ? /"savedAt":(\d+)/.exec(raw.slice(0, 64)) : null;
+      if (at && local) localAt = Number(at[1]);
+    } catch { /* storage blocked */ }
+    const stored = await this.store.get(this.storageKey);
+    if (!stored) return local;
+    try {
+      const parsed: unknown = JSON.parse(stored);
+      if (isRecord(parsed) && isSavedSession(parsed)) {
+        const storedAt = isFiniteNumber(parsed.savedAt) ? parsed.savedAt : 0;
+        if (storedAt > localAt) return { document: parsed.document, settings: this.readSettings() ?? normalizeSettings(parsed.settings) };
+      }
+    } catch { /* unreadable: the small key's map */ }
+    return local;
   }
 
   saveSessionSoon(doc: RoadDoc, settings: () => SavedSettings): void {
@@ -253,6 +309,8 @@ export class Persistence {
 
     try {
       const parsed: unknown = JSON.parse(raw);
+      // A pointer to the large store (`saveSession`): read by `loadSessionAsync`.
+      if (isRecord(parsed) && parsed.stored === 'indexeddb') return null;
       if (isSerializedDoc(parsed)) return { document: parsed, settings: defaultSettings() };
       if (isSavedSession(parsed)) {
         return { document: parsed.document, settings: this.readSettings() ?? normalizeSettings(parsed.settings) };
@@ -277,6 +335,11 @@ export class Persistence {
    */
   quarantineStored(): void {
     this.rejected = true;
+    // A large session that crashed the loader is moved aside in its store too (never deleted).
+    const key = this.storageKey;
+    void this.store.get(key).then(async (text) => {
+      if (text !== null && await this.store.put(`${key}.unreadable.${Date.now()}`, text)) await this.store.delete(key);
+    });
     let raw: string | null;
     try {
       raw = localStorage.getItem(this.storageKey);
@@ -605,3 +668,52 @@ function isId(value: unknown): value is number {
 }
 
 export { RoadDoc };
+
+/** Where a session too large for Web Storage is kept (`LOCAL_LIMIT_CHARS`). */
+export interface LargeStore {
+  get(key: string): Promise<string | null>;
+  put(key: string, text: string): Promise<boolean>;
+  delete(key: string): Promise<boolean>;
+}
+const indexedDbStore: LargeStore = { get: (key) => storeGet(key), put: (key, text) => storePut(key, text), delete: (key) => storeDelete(key) };
+/** The large autosaves' database (`LOCAL_LIMIT_CHARS`); null where IndexedDB is missing or refused. */
+let savesDb: Promise<IDBDatabase | null> | null = null;
+function openSaves(): Promise<IDBDatabase | null> {
+  savesDb ??= new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') { resolve(null); return; }
+      const request = indexedDB.open(SAVES_DB, 1);
+      request.onupgradeneeded = () => { request.result.createObjectStore(SAVES_STORE); };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+      request.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return savesDb;
+}
+async function storeRequest<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest): Promise<T | null> {
+  const db = await openSaves();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(SAVES_STORE, mode);
+      const request = run(tx.objectStore(SAVES_STORE));
+      tx.oncomplete = () => resolve((request.result as T) ?? null);
+      tx.onerror = () => resolve(null);
+      tx.onabort = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+function storeGet(key: string): Promise<string | null> {
+  return storeRequest<unknown>('readonly', (store) => store.get(key)).then((v) => (typeof v === 'string' ? v : null));
+}
+function storePut(key: string, text: string): Promise<boolean> {
+  return storeRequest<unknown>('readwrite', (store) => store.put(text, key)).then((v) => v !== null);
+}
+function storeDelete(key: string): Promise<boolean> {
+  return storeRequest<unknown>('readwrite', (store) => store.delete(key)).then(() => true);
+}

@@ -2375,6 +2375,7 @@ export const PT_BR: Dictionary = {
   'agent.carKind.suv': 'SUV',
   'play.start': 'Jogar no cenário (J)',
   'city.building': 'Construindo a cidade: {done} de {total} lotes',
+  'map.loading': 'Carregando o mapa…',
   'play.button': 'Jogar',
   'play.onFoot': 'A pé',
   'play.driving': 'Dirigindo · {speed} km/h',

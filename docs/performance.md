@@ -368,6 +368,7 @@ cidade a cada 3 s) presa à mesma chave de uma reconstrução cara do mapa intei
 - **Cache derivado** (`render/derivedCache.ts`, IndexedDB): miniaturas do
   Construir e texels das superfícies, sob a impressão digital do código que os
   faz (`cook-plugin.ts` `DERIVED`). Sempre regenerável: o navegador pode despejar.
+- **Abertura inteira** (pedido do jogador de 2026-10-09, substitui "em partes"): a página e todo mapa aberto ficam atrás da cortina "Carregando o mapa…" até vias, prédios, árvores e mobiliário estarem prontos (PA-U1). Antes:
 - **Abertura em partes** (escolha do jogador): terreno primeiro; o primeiro mundo
   pelo job fatiado das edições, trocado só com os shaders compilados; prédios
   depois, em fatias; árvores por último.
