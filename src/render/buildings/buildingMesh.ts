@@ -271,20 +271,27 @@ class ShellPart {
  * brick or rows of tiles run level on every wall and every roof. Each finish's
  * material scales them to its tile (`kit.ts`).
  */
-/** Smooth 3D value noise, 0..1, for tone that drifts over a whole facade. */
+/** The lattice value of `macroNoise` at (i, j, k), 0..1. */
+function noiseHash(i: number, j: number, k: number): number {
+  let h = Math.imul(i | 0, 0x27d4eb2d) ^ Math.imul(j | 0, 0x165667b1) ^ Math.imul(k | 0, 0x3c6ef372);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  return ((h ^ (h >>> 13)) >>> 0) / 4_294_967_296;
+}
+/**
+ * Smooth 3D value noise, 0..1, for tone that drifts over a whole facade.
+ * Called for every vertex of every shell (a town's opening: 0.8 s of the
+ * 6 s its buildings took): no closure made per call.
+ */
 function macroNoise(x: number, y: number, z: number): number {
-  const hash = (i: number, j: number, k: number): number => {
-    let h = Math.imul(i | 0, 0x27d4eb2d) ^ Math.imul(j | 0, 0x165667b1) ^ Math.imul(k | 0, 0x3c6ef372);
-    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
-    return ((h ^ (h >>> 13)) >>> 0) / 4_294_967_296;
-  };
   const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z);
-  const s = (t: number): number => t * t * (3 - 2 * t);
-  const fx = s(x - x0), fy = s(y - y0), fz = s(z - z0);
-  const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-  const plane = (k: number): number =>
-    lerp(lerp(hash(x0, y0, k), hash(x0 + 1, y0, k), fx), lerp(hash(x0, y0 + 1, k), hash(x0 + 1, y0 + 1, k), fx), fy);
-  return lerp(plane(z0), plane(z0 + 1), fz);
+  let fx = x - x0, fy = y - y0, fz = z - z0;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); fz = fz * fz * (3 - 2 * fz);
+  const p0a = noiseHash(x0, y0, z0), p0b = noiseHash(x0 + 1, y0, z0), p0c = noiseHash(x0, y0 + 1, z0), p0d = noiseHash(x0 + 1, y0 + 1, z0);
+  const p1a = noiseHash(x0, y0, z0 + 1), p1b = noiseHash(x0 + 1, y0, z0 + 1), p1c = noiseHash(x0, y0 + 1, z0 + 1), p1d = noiseHash(x0 + 1, y0 + 1, z0 + 1);
+  const ab0 = p0a + (p0b - p0a) * fx, cd0 = p0c + (p0d - p0c) * fx;
+  const ab1 = p1a + (p1b - p1a) * fx, cd1 = p1c + (p1d - p1c) * fx;
+  const plane0 = ab0 + (cd0 - ab0) * fy, plane1 = ab1 + (cd1 - ab1) * fy;
+  return plane0 + (plane1 - plane0) * fz;
 }
 
 /** World units over which a facade's tone drifts. */
@@ -327,40 +334,46 @@ class Shell {
     const bx = -wz * ty;
     const by = wz * tx;
     const bz = wx * ty - wy * tx;
-    const three = points.map(([x, y, z]) => [x, z, -y] as const);
     const nx = wx;
     const ny = wz;
     const nz = -wy;
     const wall = Math.abs(wz) < 0.5;
-    points.forEach(([x, y, z], i) => {
-      const q = three[i] as readonly [number, number, number];
-      part.position.push(q[0], q[1], q[2]);
-      part.normal.push(nx, ny, nz);
+    const grime = wall && Number.isFinite(this.ground);
+    // Every vertex of every shell passes here (a town's opening: 2.5-3 s of
+    // its 6 s of buildings): written straight into the part, no array or
+    // closure made per vertex.
+    const { position, normal, colour, decay, uv } = part;
+    const rgb = c.rgb;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i]!;
+      const x = p[0], y = p[1], z = p[2];
+      position.push(x, z, -y);
+      normal.push(nx, ny, nz);
       // No two stretches of wall quite the same tone, and the base weathered.
       let tone = 0.97 + macroNoise(x / MACRO_SCALE, y / MACRO_SCALE, z / MACRO_SCALE) * 0.06;
-      if (wall && Number.isFinite(this.ground)) {
+      if (grime) {
         const t = Math.min(1, Math.max(0, (z - this.ground) / GRIME_REACH));
         tone *= 0.8 + 0.2 * t * t * (3 - 2 * t);
       }
-      part.colour.push(c.rgb[0] * tone, c.rgb[1] * tone, c.rgb[2] * tone);
-      part.decay.push(this.decay);
-      part.uv.push(x * tx + y * ty, x * bx + y * by + z * bz);
-    });
-    const a = three[0] as readonly [number, number, number];
-    const b = three[1] as readonly [number, number, number];
-    const d = three[2] as readonly [number, number, number];
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-    const vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
+      colour.push(rgb[0] * tone, rgb[1] * tone, rgb[2] * tone);
+      decay.push(this.decay);
+      uv.push(x * tx + y * ty, x * bx + y * by + z * bz);
+    }
+    // In three's axes (x, z, -y): the winding measured against the normal.
+    const p0 = points[0]!, p1 = points[1]!, p2 = points[2]!;
+    const ux = p1[0] - p0[0], uy = p1[2] - p0[2], uz = p0[1] - p1[1];
+    const vx = p2[0] - p0[0], vy = p2[2] - p0[2], vz = p0[1] - p2[1];
     const cx = uy * vz - uz * vy;
     const cy = uz * vx - ux * vz;
     const cz = ux * vy - uy * vx;
     const forward = cx * nx + cy * ny + cz * nz >= 0;
-    const tri = (i: number, j: number, k: number): void => {
-      if (forward) part.index.push(base + i, base + j, base + k);
-      else part.index.push(base + i, base + k, base + j);
-    };
-    tri(0, 1, 2);
-    if (points.length === 4) tri(0, 2, 3);
+    const index = part.index;
+    if (forward) index.push(base, base + 1, base + 2);
+    else index.push(base, base + 2, base + 1);
+    if (points.length === 4) {
+      if (forward) index.push(base, base + 2, base + 3);
+      else index.push(base, base + 3, base + 2);
+    }
   }
 
   get triangles(): number {

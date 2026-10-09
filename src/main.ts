@@ -192,7 +192,10 @@ const ZONES_PREFIX = typeof __CONFLICT_ZONES_HASH__ !== 'undefined' && __CONFLIC
 if (ZONES_PREFIX) forgetOtherDerived('zones', ZONES_PREFIX.slice('zones:'.length, -1));
 const keptZones = ZONES_PREFIX ? readDerivedAll<Float64Array | null>(ZONES_PREFIX) : Promise.resolve(new Map<string, Float64Array | null>());
 clearOldMapsOnce();
-const savedSession = persistence.loadSession();
+// The autosave: the small key, or IndexedDB for a map too large for it
+// (`Persistence.loadSessionAsync`); the opening waits for it (a module's
+// top-level await, ES2022).
+const savedSession = await persistence.loadSessionAsync();
 // The game opens on an empty map - zoning starts from nothing - unless the
 // player has a map of their own. An autosave that is still an earlier build's
 // untouched starter scenario is dropped too.
@@ -854,9 +857,12 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   // - built here, inside the key press, each Ctrl+Z on a road held the game
   // 164-244 ms (web.dev, "Optimize long tasks": the input handler does what
   // is seen, the rest after).
-  if (source === 'import' && sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
-  // A different map: the graph the next edit is measured on, built now.
-  if (source === 'import') sim.warmTopologyPrep();
+  // A map opened is put together behind the loading curtain, whole, and
+  // shown at once (`SceneHandle.beginLoad`): its traffic too, a slice a frame
+  // with the load's time (`TopologyCatchUp`). Built here, inside the click,
+  // the city of 1 530 buildings held it 3 s, and its roads, zones, plants and
+  // buildings then came on frames of their own over 24 s (2026-10-09).
+  if (source === 'import') scene.beginLoad();
   buildings.restored();
   syncFogInputs();
   syncGullyInputs();
@@ -3271,6 +3277,22 @@ setInterval(() => {
   }
 }, 500);
 
+/**
+ * The loading curtain: over the page while a town is put together unseen
+ * (`scene.opening`, the opening and every map opened), so a load is a
+ * loading screen and not a frozen picture or a town arriving in pieces.
+ */
+const loadingCurtain = document.createElement('div');
+loadingCurtain.className = 'loading-curtain';
+loadingCurtain.setAttribute('role', 'status');
+loadingCurtain.style.cssText = 'position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;'
+  + 'background:rgba(10,16,18,.92);color:#fff;font:600 16px system-ui,sans-serif;letter-spacing:.02em';
+loadingCurtain.textContent = t('map.loading');
+document.body.appendChild(loadingCurtain);
+function syncLoadingCurtain(): void {
+  const show = scene.opening;
+  if ((loadingCurtain.style.display !== 'none') !== show) loadingCurtain.style.display = show ? 'flex' : 'none';
+}
 /** A frame has been drawn, and the first world has been put in place (the opening builds it in parts). */
 let drawnOnce = false;
 let worldShown = false;
@@ -3371,6 +3393,7 @@ function frame(now: number): void {
     refreshInspector();
     noteSimulationIssues();
   }
+  syncLoadingCurtain();
   frameTimer.mark('painéis');
   const timed = frameTimer.end();
   healthWatch.frameEnded(timed.start, timed.end);

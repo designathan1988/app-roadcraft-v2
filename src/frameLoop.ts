@@ -96,7 +96,7 @@ const TOPOLOGY_SLICE_MS = 6;
  * held the opening 423 ms; at 25 ms a frame, on a GPU drawing the loading
  * town in 350 ms frames, the traffic stood still for 7 s after it appeared.
  */
-const LOADING_SLICE_MS = 120;
+const LOADING_SLICE_MS = 250;
 
 /**
  * The traffic's topology brought up to an edit's road plan, a few

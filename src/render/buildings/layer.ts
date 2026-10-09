@@ -41,6 +41,11 @@ export interface BuildingLayer {
   /** A change is still being emitted (`update` keeps the town as it was until it is done). */
   readonly pending: boolean;
   /**
+   * Nothing is being shown (a map loading behind its curtain, `SceneHandle.opening`):
+   * a load then takes `HIDDEN_SLICE_MS` a frame, there being no frame to keep smooth.
+   */
+  hidden: boolean;
+  /**
    * Rebuilds what is stale. Returns true if the stored buildings were rebuilt.
    * `pavedAt` is the paving (footways, carriageways) entrances open onto.
    */
@@ -290,6 +295,7 @@ export function createBuildingLayer(): BuildingLayer {
     get pending() {
       return warming !== null;
     },
+    hidden: false,
     kit,
     chunkOf(b) {
       if (!lastGround) return null;
@@ -329,7 +335,7 @@ export function createBuildingLayer(): BuildingLayer {
         // frame), not what the frame's other work left: shared, it got
         // nothing while the traffic's topology took every frame's allowance,
         // and the town stood without buildings for over 20 s.
-        const until = warming.loading ? performance.now() + LOADING_SLICE_MS : workUntil(WARM_SLICE_MS);
+        const until = warming.loading ? performance.now() + (this.hidden ? HIDDEN_SLICE_MS : LOADING_SLICE_MS) : workUntil(WARM_SLICE_MS);
         if (!until) return false;
         while (warming.at < warming.queue.length && performance.now() < until) {
           drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);
@@ -500,6 +506,12 @@ function groundDigest(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): strin
 const WARM_SLICE_MS = 6;
 /** Milliseconds a frame while a whole town is loaded (Unity, backgroundLoadingPriority High). */
 const LOADING_SLICE_MS = 50;
+/**
+ * Milliseconds a frame while a town loads behind the loading curtain: nothing
+ * is presented, so the frame is the load's (Unity's
+ * `allowSceneActivation = false`: loaded whole in the background, then shown).
+ */
+const HIDDEN_SLICE_MS = 250;
 /** More buildings than this not made yet: a load, not an edit. */
 const LOADING_COUNT = 100;
 /** Side of the cells the buildings are batched in, world units. */
