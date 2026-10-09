@@ -128,7 +128,9 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas
   das vias, com o motor de caminhada `sim/agents/walk.ts` (o único motor de
-  pedestre).
+  pedestre). As calçadas de toda junção se ligam em ordem angular, também
+  nas junções rasas (P50); listras pelas regras do SUMO, sem girar nas
+  esquinas (P52). Os carros escolhidos entram no ritmo da faixa (P51).
 - Desenho: a multidão procedural (`render/people/proceduralCrowd.ts`) por
   nível de detalhe, com faixas pela altura na tela (P15). Quem está em
   veículos ainda usa os corpos cozidos (`riggedCitizens.ts`).
@@ -178,12 +180,16 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   jogador, não investigado).
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
-- Pessoas na pista: `tests/sim/kerb.spec.ts` "keeps pedestrians off the
-  carriageway", que antes percorria o mapa vazio do motor legado e passava
-  sem medir, agora mede o motor de caminhada e falha: 4 amostras em 200 s de
-  alguém andando com chão `footway` sobre o asfalto (pedestre 95 em
-  -25,0/-11,1, na esquina da cruz da cidade do teste). Causa em
-  `world/walkways.ts` / `sim/agents/walk.ts`, não investigada.
+- Simulação com 400 carros e 400 pessoas a 4x: 4,0-6,0 ms por quadro no
+  headless conforme o estado da máquina (antes 7,7-8,4 com metade das
+  pessoas); o orçamento de 4 ms ainda não é garantido (P70).
+- Fuzz da via (`tests/fuzz`): os defeitos que restam são de geometria do
+  mundo, não do trânsito: `elevationStep` (perfil de altura de uma via
+  curva elevada junto a uma via no chão do mesmo nó) e corpos sobrepostos
+  onde duas vias se cruzam sem junção a 1-2 m de altura (rampa sobre vias
+  rebaixadas, semente 4) ou onde as pernas de uma junção de 5 vias são
+  curtas demais para separar as faixas (semente 6, o cruzamento que o
+  jogo já marca como impossível).
 
 ## Decisões do jogador
 
