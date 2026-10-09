@@ -19,6 +19,11 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 `C:/Codex-Shared/Roadcraft`, com push a cada commit para o remoto `v3`
 (github.com/designathan1988/app-roadcraft-v3, pedido do jogador de
 2026-10-09) e para `origin` (github.com/designathan1988/app-roadcraft-v2).
+Em 2026-10-09 a sessão "Análise de organização do jogo" foi encerrada e
+arquivada (último commit `b30f8d2f`); a sessão de trabalho é a "ROADCRAFT",
+na Etapa 5 do plano. Para jogar enquanto uma sessão edita, use a build de
+produção (`roadcraft-play`, porta 4180): o servidor de desenvolvimento recarrega
+o jogo a cada edição.
 
 ## Controlador de estado e eventos, e o monitor
 
@@ -108,7 +113,7 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   A pré-visualização pinta o rascunho de inválido com o motivo ao lado do
   comprimento antes de soltar.
 - Pincel de terreno: o fim da pincelada refaz só a região suja dela, em
-  fatias, e a água só quando a pincelada chega perto dela (P93, `3e60f67b`).
+  fatias, e a água só quando a pincelada chega perto dela (P98, `3e60f67b`).
 - Névoa da chuva e bruma do ar medidas do olho equivalente também na vista
   ortográfica (a câmera dela fica longe por construção): de perto a chuva
   não cobre mais metade da imagem (P96).
