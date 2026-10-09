@@ -86,7 +86,7 @@ export function refuseRoadEdit(before: RoadState, after: RoadState): RoadEditRef
   }
   const changed = changedSegments(before.doc, after.doc);
   if (!changed.length) return null;
-  if (changed.some((id) => tooSteep(after, id))) return 'steep';
+  if (tooSteep(before, after, changed)) return 'steep';
   // The decks as the game solves them, over flat land (two roads at one map
   // point stand on the same ground, so it cancels): a tunnel is at its full
   // depth only between its portals, and a road crossing it near one passed
@@ -156,17 +156,40 @@ function deckAt(doc: RoadDoc, seg: RoadSegment, s: number, length: number): numb
 }
 
 /** The grade a segment needs over the run its junction plates leave free (`elevation.ts` plate rule). */
-function tooSteep(state: RoadState, id: SegmentId): boolean {
+function grade(state: RoadState, id: SegmentId): number {
   const { doc, net } = state;
   const seg = doc.segment(id);
-  if (!seg) return false;
+  if (!seg) return 0;
   const length = net.polylines.get(doc, id).length;
   const rise = Math.abs(deckAt(doc, seg, length, length) - deckAt(doc, seg, 0, length));
-  if (rise < SAME_LEVEL) return false;
+  if (rise < SAME_LEVEL) return 0;
   const plateA = Math.min(length * 0.45, net.plateReach.get(`${seg.a}:${id}`) ?? 0);
   const plateB = Math.min(length * 0.45, net.plateReach.get(`${seg.b}:${id}`) ?? 0);
-  const free = Math.max(1e-6, length - plateA - plateB);
-  return rise / free > MAX_BUILT_GRADE;
+  return rise / Math.max(1e-6, length - plateA - plateB);
+}
+
+/**
+ * Whether the edit leaves a ramp steeper than any street, on a road it laid
+ * or on one meeting it: a junction made at a ramp's end grows the plate the
+ * ramp loses its run to (fuzz seed 3: a road set 17 units up, a new road at
+ * its foot, 10 units left to come down in). A ramp already that steep is
+ * refused only when the edit made it steeper.
+ */
+function tooSteep(before: RoadState, after: RoadState, changed: readonly SegmentId[]): boolean {
+  const touched = new Set<SegmentId>(changed);
+  for (const id of changed) {
+    const seg = after.doc.segment(id);
+    for (const node of seg ? [seg.a, seg.b] : []) {
+      for (const other of after.doc.node(node)?.incident ?? []) touched.add(other);
+    }
+  }
+  for (const id of touched) {
+    const now = grade(after, id);
+    if (now <= MAX_BUILT_GRADE) continue;
+    if (!changed.includes(id) && before.doc.segment(id) && grade(before, id) >= now - 1e-6) continue;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -187,23 +210,21 @@ function overlapsAnother(before: RoadState, after: RoadState, id: SegmentId,
   if (!seg || !ribbon) return false;
   const line = ribbon.full;
   const length = line.length;
-  const asphalt = halfWidth(ribbon.road, Level.Asphalt);
-  const footway = halfWidth(ribbon.road, Level.Sidewalk);
   const trims = net.trims.get(id);
   const from = (trims?.a[Level.Casing] ?? 0) + SAMPLE_STEP / 2;
   const to = length - (trims?.b[Level.Casing] ?? 0) - SAMPLE_STEP / 2;
   if (to <= from) return false;
 
   // Candidate roads: any whose box comes within reach of this one's.
-  const reach = footway + 60;
   const box = line.bbox;
-  const others: { id: SegmentId; seg: RoadSegment }[] = [];
+  const others: { id: SegmentId; seg: RoadSegment; limit: number }[] = [];
   for (const [otherId, other] of doc.segments) {
     if (otherId === id) continue;
     const ob = net.ribbons.get(otherId)?.full.bbox;
-    if (!ob || ob.minX > box.maxX + reach || ob.maxX < box.minX - reach ||
-      ob.minY > box.maxY + reach || ob.maxY < box.minY - reach) continue;
-    others.push({ id: otherId, seg: other });
+    const limit = overlapReach(net, id, otherId);
+    if (!ob || ob.minX > box.maxX + limit || ob.maxX < box.minX - limit ||
+      ob.minY > box.maxY + limit || ob.maxY < box.minY - limit) continue;
+    others.push({ id: otherId, seg: other, limit });
   }
   if (!others.length) return false;
 
@@ -212,13 +233,10 @@ function overlapsAnother(before: RoadState, after: RoadState, id: SegmentId,
     const s = from + ((to - from) * k) / steps;
     const p = line.sampleAt(s).p;
     const height = deckAt(doc, seg, s, length);
-    for (const { id: otherId, seg: other } of others) {
-      const otherRibbon = net.ribbons.get(otherId);
-      if (!otherRibbon) continue;
-      const otherLine = otherRibbon.full;
+    for (const { id: otherId, seg: other, limit } of others) {
+      const otherLine = net.ribbons.get(otherId)?.full;
+      if (!otherLine) continue;
       const ob = otherLine.bbox;
-      const limit = Math.max(asphalt + halfWidth(otherRibbon.road, Level.Sidewalk),
-        footway + halfWidth(otherRibbon.road, Level.Asphalt)) - OVERLAP_SLACK;
       if (p.x < ob.minX - limit || p.x > ob.maxX + limit || p.y < ob.minY - limit || p.y > ob.maxY + limit) continue;
       const hit = otherLine.closestPoint(p);
       if (hit.distance >= limit) continue;
@@ -241,14 +259,35 @@ function withinSharedPlate(after: RoadState, seg: RoadSegment, other: RoadSegmen
 }
 
 /**
- * Both places of an overlap were already road before the edit, on two
- * different segments at those heights: the overlap is old (a split or a
- * retype elsewhere on those roads re-identifies them), not this edit's.
+ * The same two places already overlapped before the edit: both were road, on
+ * two different segments at those heights, whose widths then already reached
+ * across the gap between them. The overlap is old (a split elsewhere on those
+ * roads re-identifies them), not this edit's. Only being road before is not
+ * enough: a lane added that widens a road onto its neighbour leaves both
+ * centrelines where they were.
  */
 function overlappedBefore(before: RoadState, p: Vec2, ph: number, q: Vec2, qh: number): boolean {
   const onP = segmentsThrough(before, p, ph);
   if (!onP.length) return false;
-  return segmentsThrough(before, q, qh).some((id) => !onP.includes(id) || onP.length > 1);
+  const gap = Math.hypot(q.x - p.x, q.y - p.y);
+  for (const y of segmentsThrough(before, q, qh)) {
+    for (const x of onP) {
+      if (x !== y && gap < overlapReach(before.net, x, y)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * How close two roads' centrelines may come before one's carriageway lies on
+ * the other's carriageway or footway.
+ */
+function overlapReach(net: Network, a: SegmentId, b: SegmentId): number {
+  const ra = net.ribbons.get(a)?.road;
+  const rb = net.ribbons.get(b)?.road;
+  if (!ra || !rb) return 0;
+  return Math.max(halfWidth(ra, Level.Asphalt) + halfWidth(rb, Level.Sidewalk),
+    halfWidth(ra, Level.Sidewalk) + halfWidth(rb, Level.Asphalt)) - OVERLAP_SLACK;
 }
 
 function segmentsThrough(state: RoadState, p: Vec2, height: number): SegmentId[] {
