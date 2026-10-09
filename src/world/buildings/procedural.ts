@@ -4,7 +4,7 @@ import type { BlueprintBody } from './blueprints';
 import { Model, mat } from './cityBuildings';
 import { elementClash } from './elements';
 import type { MaterialSpec } from './materials';
-import type { BayComponent, Building, BuildingElement, BuildingFunction, FacadePattern, RoofKind, Volume } from './types';
+import { type BayComponent, type Building, type BuildingElement, type BuildingFunction, type FacadePattern, type RoofKind, type Volume, MIN_PITCH } from './types';
 
 /**
  * Buildings made to measure for a lot, never the same twice.
@@ -369,6 +369,9 @@ function signatureOf(form: string, body: BlueprintBody): Signature {
 function finish(fn: BuildingFunction, form: string, body: BlueprintBody, env: Envelope, rng: Rng, style: Style, base: MaterialSpec | null,
   free: Rect[], doorKind: BayComponent = 'door', doorBlock?: Volume): MadeBuilding {
   body.function = fn;
+  // Every pitched roof given its pitch (a wing's lean-to left at the default
+  // 12 degrees rose a storey over a deep kitchen).
+  for (const v of body.volumes) if (v.pitch === undefined) roofShape(v, rng);
   const solid = body.volumes.filter((v) => !v.open && v.base === 0);
   const front = doorBlock ?? solid.sort((p, q) => p.y - q.y || q.w - p.w)[0]!;
   const want = m(env.door ?? env.W / 2);
@@ -379,11 +382,41 @@ function finish(fn: BuildingFunction, form: string, body: BlueprintBody, env: En
   return { signature: signatureOf(form, body), fn, body, entrance: entrance / m(1), ...(back !== undefined ? { backDoor: back / m(1) } : {}), free };
 }
 
-/** Pitch and ridge of a pitched roof, drawn: a gable end to the street one time in three. */
+/**
+ * The most a roof rises over its eaves, metres: a gable or a hip about a
+ * storey (a house's attic), a lean-to and a sawtooth tooth a couple of
+ * metres. A pitch drawn for a small house on a deep block or a hall made a
+ * lean-to rise 10 m from the gutter - a wedge "from the ground to the top"
+ * (the player, 2026-10-09).
+ */
+export const MAX_ROOF_RISE: Partial<Record<RoofKind, number>> = { gable: 3.2, hip: 3.2, shed: 1.2, sawtooth: 2 };
+/**
+ * Pitches drawn, degrees, as built: clay tiles 20-35 (a tile roof needs about
+ * 17 degrees or more to shed rain), a lean-to's metal or fibre-cement sheet
+ * 5-14 (sheet roofs are laid at 3-15 degrees).
+ */
+const PITCH: Partial<Record<RoofKind, readonly [number, number]>> = { gable: [20, 35], hip: [20, 32], shed: [5, 14], sawtooth: [22, 30] };
+
+/**
+ * Pitch and ridge of a pitched roof, drawn: a gable end to the street one
+ * time in three; the pitch then lowered until the roof rises no more than a
+ * real one over its span (`MAX_ROOF_RISE`): a hall's wide roof is low, a
+ * house's steep. A span too wide for even the lowest pitch is roofed flat
+ * behind a parapet, as a deep block is.
+ */
 function roofShape(v: Volume, rng: Rng, ridgeToStreet = rng.float() < 0.33): void {
-  if (v.roof === 'flat' || v.roof === 'terrace' || v.roof === 'sawtooth') return;
-  v.pitch = Math.round(between(rng, 18, 38));
+  if (v.roof === 'flat' || v.roof === 'terrace') return;
   if (v.roof === 'gable' || v.roof === 'hip') v.ridge = ridgeToStreet ? 'y' : 'x';
+  // A lean-to falls across the short way, as one is built: falling the long
+  // way, its rise over the span was a storey or more.
+  if (v.roof === 'shed' && v.fall === undefined && v.w < v.d) v.fall = 1;
+  const [lo, hi] = PITCH[v.roof] ?? [20, 30];
+  const run = v.roof === 'shed' ? ((v.fall ?? 0) % 2 === 0 ? v.d : v.w)
+    : v.roof === 'sawtooth' ? Math.min(m(6), v.d) / 2
+    : ((v.ridge ? v.ridge === 'x' : v.w >= v.d) ? v.d : v.w) / 2;
+  const cap = (Math.atan(m(MAX_ROOF_RISE[v.roof] ?? 3) / Math.max(run, 1e-6)) * 180) / Math.PI;
+  if (cap < MIN_PITCH * 0.66) { v.roof = 'flat'; delete v.pitch; delete v.ridge; delete v.fall; return; }
+  v.pitch = Math.max(MIN_PITCH, Math.floor(Math.min(between(rng, lo, hi), cap)));
 }
 
 // ---------------------------------------------------------------- the kinds
@@ -678,7 +711,10 @@ function works(rng: Rng, env: Envelope, density: 'low' | 'medium' | 'high'): Mad
   const { W, D } = env;
   const fn: BuildingFunction = density === 'low' ? 'warehouse' : rng.float() < 0.5 ? 'factory' : 'warehouse';
   const shed = pickOf(rng, SHEDS);
-  const model = new Model(fn, 'industrial', rng.int(0, 7)).heights(between(rng, 6, 9), 3.6)
+  // A hall's one tall storey, 6-10 m to the eaves (racking and a lorry's
+  // door), taller the denser the district.
+  const hallH = density === 'high' ? between(rng, 8, 10) : density === 'medium' ? between(rng, 7, 9) : between(rng, 6, 7.5);
+  const model = new Model(fn, 'industrial', rng.int(0, 7)).heights(hallH, 3.4)
     .look({ ...shed, colour: nudge(shed.colour, rng, 0.8) }, mat('panel', pickOf(rng, [0x6d7378, 0x8a8f86, 0x5d6870, 0x9a9890, 0x7a4a3a, 0x4f6b55])), pickOf(rng, HARD));
   const w = half(W), d = half(D);
   const roof = pickOf(rng, ['sawtooth', 'shed', 'flat', 'gable', 'sawtooth'] as const satisfies readonly RoofKind[]);
@@ -687,7 +723,8 @@ function works(rng: Rng, env: Envelope, density: 'low' | 'medium' | 'high'): Mad
   const aw = annex ? half(Math.min(w - 4, between(rng, 6, 9))) : 0;
   const ad = annex ? half(between(rng, 5, 7)) : 0;
   const left = rng.float() < 0.5;
-  model.block({ x: 0, y: ad, w, d: d - ad, storeys: density === 'high' ? 2 : 1, ground: 'wall', fill: 'ribbon', roof, pattern: 'industrial' });
+  // One tall storey: a hall of two storeys at 6-9 m each was a box 18 m high.
+  model.block({ x: 0, y: ad, w, d: d - ad, storeys: 1, ground: 'wall', fill: 'ribbon', roof, pattern: 'industrial' });
   if (annex) {
     model.block({ x: left ? 0 : w - aw, y: 0, w: aw, d: ad, storeys: rng.int(1, 2), ground: 'window', fill: 'window', roof: 'flat',
       wall: pickOf(rng, [...HARD, ...BRICKS]) });
