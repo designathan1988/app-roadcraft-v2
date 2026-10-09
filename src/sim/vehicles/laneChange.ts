@@ -325,9 +325,6 @@ function discretionary(
     if (onward && w.graph.exitsOf(candidate).length === 0) continue;
     if (turnInto !== null && !w.graph.exitsOf(candidate)
       .some((id) => w.connector(id)?.outSegment === turnInto)) continue;
-    // Deciding needs only a gap that could open; the move itself waits for the
-    // indicator and then checks the gap again (`stepLaneChange`).
-    if (candidate !== signalling && !gapIsSafe(w, v, candidate)) continue;
 
     const theirLeader = leaderIn(w, candidate, v.s, v.id);
     const theirFollower = followerIn(w, candidate, v.s - v.archetype.length, v.id);
@@ -377,10 +374,16 @@ function discretionary(
     // Once signalling, the driver carries on while it is still worth it at
     // all; a fresh decision needs the full threshold.
     const threshold = candidate === signalling ? v.driver.laneThreshold * 0.35 : v.driver.laneThreshold;
-    if (gain > threshold && gain > bestGain) {
-      bestGain = gain;
-      best = candidate;
-    }
+    if (!(gain > threshold && gain > bestGain)) continue;
+    // Deciding needs only a gap that could open; the move itself waits for the
+    // indicator and then checks the gap again (`stepLaneChange`). MOBIL's two
+    // criteria must both hold (Kesting, Treiber and Helbing 2007), so the
+    // order is free: the geometric gap check - curves sampled, the queue
+    // walked - only for a candidate the incentive would take, not for every
+    // lane beside every car (it was most of the cost of this stage).
+    if (candidate !== signalling && !gapIsSafe(w, v, candidate)) continue;
+    bestGain = gain;
+    best = candidate;
   }
 
   return best;
