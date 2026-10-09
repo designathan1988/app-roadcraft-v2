@@ -540,7 +540,10 @@ let atlasTexture: CanvasTexture | null | undefined;
 function foliageAtlas(): CanvasTexture | null {
   if (atlasTexture !== undefined) return atlasTexture;
   if (typeof document === 'undefined') return (atlasTexture = null);
-  const size = 256;
+  // 512 texels a clump (was 256): the leaves, 14-24 texels long, were
+  // magnified over cards several metres wide and read as a blur even up close.
+  const size = 512;
+  const k = size / 256;
   const canvas = document.createElement('canvas');
   canvas.width = size * 2;
   canvas.height = size;
@@ -551,36 +554,49 @@ function foliageAtlas(): CanvasTexture | null {
   for (let i = 0; i < 300; i++) {
     const a = rng() * Math.PI * 2;
     // Denser at the heart of the clump, ragged at its rim.
-    const r = Math.pow(rng(), 0.7) * 112;
+    const r = Math.pow(rng(), 0.7) * 112 * k;
     const x = size / 2 + Math.cos(a) * r;
     const y = size / 2 + Math.sin(a) * r * 0.92;
-    const len = 14 + rng() * 10;
-    const wid = 6 + rng() * 4;
+    const len = (14 + rng() * 10) * k;
+    const wid = (6 + rng() * 4) * k;
     const shade = 150 + Math.floor(rng() * 105);
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(rng() * Math.PI * 2);
+    // Each leaf in two tones (its lit half paler) and a darker rim, so it
+    // reads as a leaf and not as a smudge.
+    const leaf = new Path2D();
+    leaf.moveTo(-len / 2, 0);
+    leaf.quadraticCurveTo(0, -wid, len / 2, 0);
+    leaf.quadraticCurveTo(0, wid, -len / 2, 0);
     ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+    ctx.fill(leaf);
+    const lit = Math.min(255, shade + 30);
+    ctx.fillStyle = `rgb(${lit}, ${lit}, ${lit})`;
     ctx.beginPath();
     ctx.moveTo(-len / 2, 0);
     ctx.quadraticCurveTo(0, -wid, len / 2, 0);
-    ctx.quadraticCurveTo(0, wid, -len / 2, 0);
+    ctx.closePath();
     ctx.fill();
+    const rim = Math.max(0, shade - 70);
+    ctx.strokeStyle = `rgb(${rim}, ${rim}, ${rim})`;
+    ctx.lineWidth = 1.2 * k;
+    ctx.stroke(leaf);
     ctx.restore();
   }
   // The frond: base at the canvas' foot (the texture's v = 0), tip at its head.
-  const mid = size * 1.5, base = size - 4, tipY = 4;
+  const mid = size * 1.5, base = size - 4 * k, tipY = 4 * k;
   ctx.lineCap = 'round';
   for (const sign of [-1, 1]) {
     for (let j = 0; j < 40; j++) {
       const t = (j + rng() * 0.4) / 40;
       const y = base - t * (base - tipY);
       // Longest a third of the way up, short at the base and the tip.
-      const reach = 120 * Math.sin(Math.PI * Math.min(1, 0.06 + t * 0.95)) ** 0.7 * (0.85 + rng() * 0.15);
+      const reach = 120 * k * Math.sin(Math.PI * Math.min(1, 0.06 + t * 0.95)) ** 0.7 * (0.85 + rng() * 0.15);
       const shade = 150 + Math.floor(rng() * 105);
       ctx.strokeStyle = `rgb(${shade}, ${shade}, ${shade})`;
       // Thin, with clear gaps between them: leaflets, not a blade.
-      ctx.lineWidth = 2.2 + rng() * 1.4;
+      ctx.lineWidth = (2.2 + rng() * 1.4) * k;
       ctx.beginPath();
       ctx.moveTo(mid, y);
       // Swept up towards the tip, curving out.
@@ -589,13 +605,16 @@ function foliageAtlas(): CanvasTexture | null {
     }
   }
   ctx.strokeStyle = 'rgb(210, 205, 170)';
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 4 * k;
   ctx.beginPath();
   ctx.moveTo(mid, base);
   ctx.lineTo(mid, tipY);
   ctx.stroke();
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
+  // Sharp at the grazing angles the camera looks at a crown from (three
+  // clamps it to what the GPU allows).
+  texture.anisotropy = 8;
   return (atlasTexture = texture);
 }
 
@@ -624,6 +643,30 @@ function billboardCards(material: Material, key: string): void {
   material.customProgramCacheKey = () => `${cacheKey()}-billboard-${key}`;
 }
 
+/**
+ * Keeps the leaves as covered at a distance as up close: a mip averages the
+ * leaves' alpha with the gaps between them, so it falls under the cut-off and
+ * the clump thins into a haze. The alpha is raised by the mip level the
+ * texture is read at (the mip-level alpha scale Ben Golus describes for alpha
+ * to coverage); three's alpha-to-coverage then keeps each edge one pixel sharp.
+ */
+function keepLeafCoverage(material: Material, key: string): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      #ifdef USE_MAP
+      {
+        vec2 texel = vMapUv * vec2(textureSize(map, 0));
+        float lod = max(0.0, 0.5 * log2(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel)))));
+        diffuseColor.a *= 1.0 + lod * 0.25;
+      }
+      #endif`);
+  };
+  const cacheKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${cacheKey()}-coverage-${key}`;
+}
+
 /** The foliage cards' material (leaf-cluster texture, alpha to coverage, billboards, the wind) and the depth material their shadows would use. */
 export function leafCardMaterials(wind: WindResponse, key: string): { material: MeshStandardMaterial; depth: MeshDepthMaterial } {
   const map = foliageAtlas();
@@ -633,6 +676,7 @@ export function leafCardMaterials(wind: WindResponse, key: string): { material: 
   });
   applyWind(material, wind, `${key}-cards`);
   billboardCards(material, key);
+  keepLeafCoverage(material, key);
   const depth = windDepthMaterial(wind, `${key}-cards`);
   billboardCards(depth, `${key}-depth`);
   depth.map = map;
