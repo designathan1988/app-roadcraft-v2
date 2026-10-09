@@ -379,7 +379,13 @@ export function createEnvironment(
         const fillAzimuth = Math.atan2(sunDirection.z, sunDirection.x) + (100 * Math.PI) / 180;
         const fillElevation = (32 * Math.PI) / 180;
         fill.position.set(Math.cos(fillAzimuth) * Math.cos(fillElevation), Math.sin(fillElevation), Math.sin(fillAzimuth) * Math.cos(fillElevation)).multiplyScalar(1000);
-        fill.intensity = 1.0 * light;
+        // Never more than half the key on level ground (three-point
+        // lighting: the fill "up to half" the key). With the sun a few
+        // degrees up at the morning the game opens on, a fixed 1.0 at 32
+        // degrees out-lit the sun and drew every hill from the side: dark
+        // blotches over the whole map from afar (the player, 2026-10-08).
+        const keyOnGround = sun.intensity * Math.max(0, sunDirection.y);
+        fill.intensity = Math.min(1.0 * light, (0.5 * keyOnGround) / Math.sin(fillElevation));
       }
       ambient.intensity = 0.07 * light + 0.05 * dark;
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
