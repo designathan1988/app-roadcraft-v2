@@ -1,6 +1,7 @@
 import { type Vec2, dist, sub } from '@core/vec2';
 import type { PoleId, SpanId } from './ids';
 import { m } from './units';
+import { ROAD_TUNING } from './roads/tuning';
 
 /**
  * The overhead utility network: poles, the wires strung between them, and the
@@ -47,9 +48,9 @@ export const POLE_LAMP_WIDE = m(0.26);
  * to 112; the middle of that range keeps the sag readable without turning a
  * short run into a single span.
  */
-export const DEFAULT_POLE_SPACING = m(38);
-export const MIN_POLE_SPACING = m(18);
-export const MAX_POLE_SPACING = m(80);
+export const DEFAULT_POLE_SPACING = ROAD_TUNING.poles.spacing;
+export const MIN_POLE_SPACING = ROAD_TUNING.poles.minSpacing;
+export const MAX_POLE_SPACING = ROAD_TUNING.poles.maxSpacing;
 
 /**
  * Sag of a span, as a fraction of its length.

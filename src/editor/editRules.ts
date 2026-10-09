@@ -6,6 +6,7 @@ import { Network } from '@world/network';
 import { type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { Level, halfWidth } from '@world/roadTypes';
 import { roadStructure } from '@world/structures';
+import { ROAD_TUNING } from '@world/roads/tuning';
 
 /**
  * What a road edit may not leave behind, judged on the network it builds.
@@ -53,13 +54,13 @@ const SQUEEZE_SLACK = 1;
  * there is no street to model, and on the free run the plates leave the ramp
  * becomes a cliff (fuzz seed 3: 17 units down in about 10).
  */
-const MAX_BUILT_GRADE = 0.35;
+const MAX_BUILT_GRADE = ROAD_TUNING.grade.refuse;
 /**
  * Vertical room for one road to pass over another: the elevated deck's
  * clearance, the same figure the road tool uses for its crossings
  * (`commit.ts` `CROSSING_CLEARANCE`).
  */
-const PASS_CLEARANCE = roadStructure('elevated').clearance;
+const PASS_CLEARANCE = ROAD_TUNING.clearance.elevated;
 /** Two decks within this height of each other are at one level (`commit.ts` `HEIGHT_JOIN_EPS`). */
 const SAME_LEVEL = 0.75;
 /** Spacing of the samples along a changed road, units (0.8 m). */

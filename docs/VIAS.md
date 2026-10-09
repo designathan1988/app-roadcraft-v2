@@ -90,7 +90,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 ## Etapas (uma por vez, com aceite do jogador)
 | Etapa | O quê | Aceite | Estado |
 |---|---|---|---|
-| V0 | Base: worktree, `tuning.ts`, contrato de dados, rede e elevação incrementais, economia mínima | mapas antigos idênticos; sem regressão no `probe-baseline`; fuzz verde; custo no preview, debitado e devolvido | a fazer |
+| V0 | Base: worktree, `tuning.ts`, contrato de dados, rede e elevação incrementais, economia mínima | mapas antigos idênticos; sem regressão no `probe-baseline`; fuzz verde; custo no preview, debitado e devolvido | em andamento (ver "Andamento da V0") |
 | V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | |
 | V2 | Editor visual do perfil com validação e modelos | uso no jogo | |
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | |
@@ -99,6 +99,14 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | |
 | V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | |
 | V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | |
+
+## Andamento da V0
+- `world/roads/tuning.ts`: feito. Os valores que já valiam no jogo continuam iguais (travados por
+  `tests/world/roadTuning.spec.ts`); onde a referência real diverge, ela fica ao lado, para decisão
+  do jogador: inclinação de via em nível 12% no jogo contra 8% de referência (TxDOT); altura do
+  viaduto 5,6 m na superfície (4,4 m livres sob a laje) contra 5,5 m livres sobre via e 4,5 m sob
+  viaduto urbano; túnel automático a 18 m de cobertura contra 7 m de cobertura mínima; vão dos
+  pilares 29,6 m (elevado) e 38,4 m (ponte) contra 25-35 m; postes 38 m contra 30-38 m.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

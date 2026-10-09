@@ -5,6 +5,7 @@ import type { NodeId, SegmentId } from './ids';
 import type { Network } from './network';
 import { CASING_BAND, FOOTWAY_RISE, Level, casingHalf } from './roadTypes';
 import { m } from './units';
+import { ROAD_TUNING } from './roads/tuning';
 import {
   ROAD_GROUND_CLEARANCE,
   TUNNEL_BORE,
@@ -82,8 +83,8 @@ const PLATE_MARGIN = STATION + 1;
 const LATERAL = [-1, -0.62, -0.28, 0, 0.28, 0.62, 1] as const;
 /** Stations either side of one that must also be cleared (chord protection). */
 const DILATE = 2;
-/** Steepest gradient of a road at grade (rise / run). */
-const GROUND_GRADE = 0.12;
+/** Steepest gradient of a road at grade (rise / run), from `roads/tuning.ts`. */
+const GROUND_GRADE = ROAD_TUNING.grade.ground;
 /**
  * How far along a road its grade line is averaged, in world units.
  *
@@ -125,8 +126,8 @@ const PLATE_BLEND = 40;
  */
 const RAMP_RELAX = 0.8;
 /** Lift above the ground at which a structure stops shaping it: piers, not fill. */
-const LIFT_ON = 1.5;
-const LIFT_OFF = 7;
+const LIFT_ON = ROAD_TUNING.structure.liftOn;
+const LIFT_OFF = ROAD_TUNING.structure.pierFrom;
 /**
  * Grade of the straight part of a ramp between a raised deck and a road at
  * grade: sixteen per cent.
@@ -148,9 +149,9 @@ const LIFT_OFF = 7;
  * full climb, curves included, inside 100 units - forty metres - so the ramp is
  * a distinct piece of road at each end and the deck between is level.
  */
-const RAMP_GRADE = 0.16;
+const RAMP_GRADE = ROAD_TUNING.grade.ramp;
 /** Maximum authored height change per unit of alignment before a ramp needs more run. */
-export const MAX_AUTHORED_GRADE = 0.12;
+export const MAX_AUTHORED_GRADE = ROAD_TUNING.grade.authored;
 /**
  * Length of the vertical curve at the foot of a ramp, where the grade builds up
  * from level, in world units (8 m). The crest at the top is rounded by
@@ -174,13 +175,13 @@ const PLATE_TANGENT_SHARE = 0.55;
 /** Softness of the crest where a ramp meets its deck: a curve 16 units long. */
 const RAMP_CREST = 8 * RAMP_GRADE;
 /** Steepest gradient with which a deck is carried up to a higher deck it meets in the air. */
-const DECK_TIE = 0.05;
+const DECK_TIE = ROAD_TUNING.grade.deckTie;
 /**
  * Steepest grade a deck may take to clear a rise under it. The deck is a
  * straight line between its two ends; only a hill poking up into it bends it,
  * and then no faster than this.
  */
-const DECK_GRADE = 0.05;
+const DECK_GRADE = ROAD_TUNING.grade.deck;
 /**
  * Peak-to-mean slope ratio of the smoothstep used for vertical curves.
  *

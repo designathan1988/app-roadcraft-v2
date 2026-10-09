@@ -16,6 +16,7 @@ import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
+import { ROAD_TUNING } from '@world/roads/tuning';
 import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
@@ -31,7 +32,7 @@ const MERGE_EPS = 2.6;
 /** Distinct decks at the same map point remain separate networks. */
 const HEIGHT_JOIN_EPS = 0.75;
 /** Vertical room required before two crossing carriageways can pass independently. */
-const CROSSING_CLEARANCE = roadStructure('elevated').clearance;
+const CROSSING_CLEARANCE = ROAD_TUNING.clearance.elevated;
 /**
  * Cover over a road at grade past which it is bored as a tunnel instead of
  * cut: eighteen metres, the sixty feet past which railway and road builders
@@ -40,7 +41,7 @@ const CROSSING_CLEARANCE = roadStructure('elevated').clearance;
  * its grade and dug a slot eighty metres deep, and from the game's camera the
  * road simply disappeared into it.
  */
-const AUTO_TUNNEL_COVER = m(18);
+const AUTO_TUNNEL_COVER = ROAD_TUNING.tunnel.autoCover;
 
 export interface DraftResult {
   readonly committed: boolean;
