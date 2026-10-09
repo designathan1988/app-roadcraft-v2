@@ -23,10 +23,11 @@
   --v-r: 12px;
   --v-r-s: 8px;
   --v-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  --v-dock-h: 54px;
+  --v-dock-h: 62px;
   --v-hud-h: 46px;
   --v-opts-w: 300px;
-  --v-card: 60px;
+  --v-card: 46px;
+  --v-card-w: 74px;
 }
 
 /* ---------------------------------------------------------------- the old chrome steps out */
@@ -54,8 +55,8 @@
   -webkit-backdrop-filter: blur(18px) saturate(130%);
 }
 /* A name kept for screen readers and the tooltip, not drawn. */
-.v2-icon > span, .v2-pill > span, .v2-seg-b > span, .v2-tab.icon > span, .v2-choice.icon > span,
-.v2-verb > span, .v2-act > span, .v2-card-name, .v2-cat-name {
+.v2-icon > span, .v2-pill > span, .v2-seg-b > span, .v2-tabs.compact .v2-tab.icon:not(.on) > span, .v2-choice.icon > span,
+.v2-verb > span, .v2-act > span {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
 
@@ -123,7 +124,7 @@
 .v2-keys dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 4px 0 0; padding: 0 8px; align-items: baseline; }
 .v2-keys dt { margin: 0; }
 .v2-keys dd { margin: 0; color: var(--v-muted); font-size: 12.5px; }
-.v2-keys kbd { display: inline-block; padding: 2px 6px; border: 1px solid var(--v-line); border-bottom-width: 2px; border-radius: 6px; background: var(--v-raise); font: 600 11.5px/1.3 inherit; white-space: nowrap; }
+.v2-keys kbd { display: inline-block; padding: 2px 6px; border: 1px solid var(--v-line); border-bottom-width: 2px; border-radius: 6px; background: var(--v-raise); font-family: inherit; font-size: 11.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
 .v2-more { padding: 0 8px; }
 .v2-more summary { cursor: pointer; color: var(--v-accent); font-size: 12.5px; padding: 4px 0; }
 .v2-help { padding: 4px 0; }
@@ -135,10 +136,12 @@
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
   display: flex; gap: 2px; padding: 4px; border-radius: 14px; max-width: calc(100vw - 24px); overflow-x: auto; scrollbar-width: none;
 }
+/* A tool: its icon and, under it, its short name (recognised, not recalled). */
 .v2-cat {
-  position: relative; display: grid; place-items: center;
-  width: 46px; height: 44px; padding: 0; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--v-muted);
+  position: relative; display: grid; grid-template-rows: 24px auto; justify-items: center; align-content: center; gap: 3px;
+  min-width: 66px; height: 52px; padding: 0 6px; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--v-muted);
 }
+.v2-cat-name { font-size: 11px; font-weight: 600; line-height: 1.1; white-space: nowrap; letter-spacing: 0.01em; }
 .v2-cat:hover { background: var(--v-raise); color: var(--v-text); }
 .v2-cat.on { background: var(--v-accent-soft); border-color: var(--v-accent); color: var(--v-accent); }
 .v2-cat.danger.on { background: rgba(255, 111, 97, 0.14); border-color: var(--v-danger); color: var(--v-danger); }
@@ -161,7 +164,10 @@
 .v2-title { display: none; }
 .v2-tabs { display: flex; gap: 2px; align-items: center; }
 .v2-tab { height: 30px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--v-muted); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
-.v2-tab.icon { display: grid; place-items: center; position: relative; width: 34px; padding: 0; }
+/* A mode: its icon and its name; squeezed, only the mode in use keeps the name. */
+.v2-tab.icon { display: inline-flex; align-items: center; gap: 6px; position: relative; padding: 0 10px 0 8px; }
+.v2-tab.icon > svg { flex: none; }
+.v2-tabs.compact .v2-tab.icon:not(.on) { width: 34px; padding: 0; justify-content: center; }
 .v2-tab:hover:not(:disabled) { color: var(--v-text); background: var(--v-raise-2); }
 .v2-tab.on { color: var(--v-accent-ink); background: var(--v-accent); border-color: var(--v-accent); }
 .v2-hint { display: none !important; }
@@ -182,14 +188,20 @@
 .v2-section-title { display: none; }
 .v2-section-items { display: grid; grid-auto-flow: column; grid-template-rows: auto; gap: 4px; }
 /* Two rows of smaller cards when the things are many: all of them in view. */
-.v2-strip.two-rows { --v-card: 52px; }
+.v2-strip.two-rows { --v-card: 40px; }
 .v2-strip.two-rows .v2-section-items { grid-template-rows: repeat(2, auto); }
 .v2-strip.two-rows .v2-card-art.glyph svg { width: 24px; height: 24px; }
 .v2-strip.two-rows .v2-ground, .v2-strip.two-rows .v2-zone-swatch { width: 28px; height: 28px; }
 .v2-card {
-  position: relative; display: grid; grid-template-rows: var(--v-card); width: var(--v-card); padding: 0; overflow: hidden;
+  position: relative; display: grid; grid-template-rows: var(--v-card) auto; width: var(--v-card-w); padding: 0; overflow: hidden;
   border: 1px solid var(--v-line); border-radius: 8px; background: var(--v-raise); text-align: center;
 }
+/* The thing's name under its picture: two lines at most, the rest in the tooltip. */
+.v2-card-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  height: 2.4em; margin: 3px 4px; font-size: 10.5px; line-height: 1.2; font-weight: 600; color: var(--v-muted); overflow-wrap: anywhere;
+}
+.v2-card:hover:not(:disabled) .v2-card-name, .v2-card.on .v2-card-name { color: var(--v-text); }
 .v2-card:hover:not(:disabled) { border-color: rgba(79, 224, 191, 0.6); background: var(--v-raise-2); }
 .v2-card.on { border-color: var(--v-accent); box-shadow: 0 0 0 2px var(--v-accent) inset; }
 .v2-card.danger .v2-card-art { color: var(--v-danger-ink); }
@@ -197,6 +209,9 @@
 .v2-card-art.glyph { display: grid; place-items: center; color: #cfe3de; }
 .v2-card-art.glyph svg { width: 28px; height: 28px; }
 .v2-card.on .v2-card-art.glyph { color: var(--v-accent); }
+/* A building's picture whole, not cropped, and big enough to tell one from the next. */
+.v2-strip .v2-card.model { --v-card: 54px; --v-card-w: 80px; }
+.v2-card.model .v2-card-art { object-fit: contain; }
 .v2-zone-swatch { display: block; width: 32px; height: 32px; border-radius: 10px; background: var(--zone); box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.25); }
 /* A ground's colour, on a card or in a row of map biomes. */
 .v2-ground { display: block; width: 32px; height: 32px; border-radius: 9px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
