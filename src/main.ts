@@ -1468,8 +1468,14 @@ canvas.addEventListener('pointermove', (e) => {
     : game.tool === 'road'
       ? anchorForHeight(doc, net, hovered, game.roadHeightOffset)
       : hovered;
-  requestDraw();
+  // A frame only where the hover is drawn (`drawOverlayScreen`: the road's
+  // node ring and block grid, the roundabout, the brush, the junction badges,
+  // the info ribbon): paused, every move of the mouse drew the whole town,
+  // its shadows and its post-processing again for nothing.
+  if (HOVER_DRAWN.has(game.tool)) requestDraw();
 });
+/** The tools whose overlay follows the hover. */
+const HOVER_DRAWN: ReadonlySet<string> = new Set(['road', 'roundabout', 'terrain', 'control', 'inspect']);
 
 /** Pick radius for a pole, in world units at the current zoom (`PoleTool.reach`: one definition). */
 function poleReach(): number {
@@ -4255,19 +4261,16 @@ function updateStatus(): void {
   if (!el) return;
 
   const counts = summarize(sim.issues);
-  if (counts.size === 0) {
-    el.textContent = t('status.clear');
-    el.className = 'good';
-  } else {
-    const parts = [...counts].map(([code, n]) => `${code}×${n}`);
-    el.textContent = parts.slice(0, 2).join(' · ');
-    el.className = 'bad';
-  }
+  const audit = counts.size === 0 ? t('status.clear') : [...counts].map(([code, n]) => `${code}×${n}`).slice(0, 2).join(' · ');
+  const tone = counts.size === 0 ? 'good' : 'bad';
+  if (el.textContent !== audit) el.textContent = audit;
+  if (el.className !== tone) el.className = tone;
 }
 
+/** Writes a readout only when it changed: `updateStatus` runs every few frames, and each write was a DOM mutation the interface then had to read back. */
 function text(id: string, value: string): void {
   const el = document.getElementById(id);
-  if (el) el.textContent = value;
+  if (el && el.textContent !== value) el.textContent = value;
 }
 
 document.addEventListener('visibilitychange', () => {
