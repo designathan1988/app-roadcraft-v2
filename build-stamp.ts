@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { promisify } from 'node:util';
 import type { Plugin } from 'vite';
 
 /**
@@ -80,15 +81,58 @@ export function readBuildStamp(): BuildStamp {
   };
 }
 
+/** `git` without waiting for it (Node: the `*Sync` calls block the event loop until the child exits). */
+const gitLater = promisify(execFile);
+async function gitAsync(args: string[]): Promise<string> {
+  for (const binary of GIT_CANDIDATES) {
+    try {
+      return (await gitLater(binary, args, { encoding: 'utf8' })).stdout.trim();
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return '';
+}
+
+/** `readBuildStamp`, its four git runs side by side and none of them blocking. */
+async function readBuildStampLater(): Promise<BuildStamp> {
+  const [branch, hash, date, status] = await Promise.all([
+    gitAsync(['rev-parse', '--abbrev-ref', 'HEAD']),
+    gitAsync(['rev-parse', '--short', 'HEAD']),
+    gitAsync(['log', '-1', '--format=%cI']),
+    gitAsync(['status', '--porcelain', '--untracked-files=no']),
+  ]);
+  const files = branch && hash ? null : readGitFiles();
+  return { branch: branch || files?.branch || 'unknown', hash: hash || files?.hash || 'unknown', date, dirty: status.length > 0 };
+}
+
+/** How old an answered stamp may be before it is read again, ms. */
+const STAMP_FRESH_MS = 3000;
+
 export function buildStampPlugin(): Plugin {
   return {
     name: 'roadcraft-build-stamp',
     config: () => ({ define: { __BUILD_STAMP__: JSON.stringify(readBuildStamp()) } }),
     configureServer(server) {
+      // Answered from the last stamp read, read again behind the answer when
+      // it is a few seconds old: four synchronous git runs per request held
+      // the server 0.4 s every five seconds for every open tab, the game's
+      // own modules waiting behind them.
+      let stamp: BuildStamp | null = null;
+      let readAt = 0;
+      let reading: Promise<void> | null = null;
+      const refresh = (): Promise<void> => (reading ??= readBuildStampLater()
+        .then((next) => { stamp = next; readAt = Date.now(); })
+        .finally(() => { reading = null; }));
       server.middlewares.use('/__build', (_req, res) => {
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Cache-Control', 'no-store');
-        res.end(JSON.stringify(readBuildStamp()));
+        const answer = (): void => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify(stamp));
+        };
+        if (!stamp) { void refresh().then(answer); return; }
+        if (Date.now() - readAt > STAMP_FRESH_MS) void refresh();
+        answer();
       });
     },
   };
