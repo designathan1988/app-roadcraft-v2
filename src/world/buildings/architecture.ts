@@ -65,7 +65,7 @@ export interface ArchStyle {
   readonly top: BayComponent | null;
   readonly dress: Required<VolumeDress>;
   /** The window's share of its bay's width and storey's height, and its sill (metres). */
-  readonly window: { readonly width: readonly [number, number]; readonly height: readonly [number, number]; readonly sill: number };
+  readonly opening: { readonly width: readonly [number, number]; readonly height: readonly [number, number]; readonly sill: number };
   /** Projecting piers between columns, metres: width, depth, every how many columns. */
   readonly piers?: { readonly width: number; readonly depth: number; readonly every: number };
   /** The ground floor wears a harder version of the skin (stone of the same tone). */
@@ -86,7 +86,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['shutteredWindow'], ['shutteredWindow', 'frenchWindow', 'shutteredWindow']],
     sideFill: 'shutteredWindow', groundFill: 'shutteredWindow', top: null,
     dress: { lines: 'base', crown: 'cornice' },
-    window: { width: [0.36, 0.42], height: [0.6, 0.66], sill: 0.9 },
+    opening: { width: [0.36, 0.42], height: [0.6, 0.66], sill: 0.9 },
     module: 3,
   },
   // Stone and cream render, bronze frames, vertical piers rising the whole
@@ -98,7 +98,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['sashWindow'], ['sashWindow', 'sashWindow', 'bayWindow']],
     sideFill: 'sashWindow', groundFill: 'window', top: 'window',
     dress: { lines: 'none', crown: 'deco' },
-    window: { width: [0.36, 0.42], height: [0.62, 0.7], sill: 0.85 },
+    opening: { width: [0.36, 0.42], height: [0.62, 0.7], sill: 0.85 },
     piers: { width: 0.55, depth: 0.32, every: 1 },
     stoneBase: true,
     module: 2.8,
@@ -112,7 +112,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['brise'], ['ribbon', 'brise', 'brise'], ['brise', 'ribbon']],
     sideFill: 'ribbon', groundFill: 'wideWindow', top: 'ribbon',
     dress: { lines: 'slab', crown: 'slab' },
-    window: { width: [0.7, 0.85], height: [0.5, 0.58], sill: 0.9 },
+    opening: { width: [0.7, 0.85], height: [0.5, 0.58], sill: 0.9 },
     module: 3,
   },
   // Today's residential block: light render or pale pastilha, graphite
@@ -125,7 +125,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['gourmet', 'window', 'gourmet'], ['window', 'gourmet', 'gourmet'], ['loggia', 'window'], ['gourmet', 'gourmet', 'window', 'window']],
     sideFill: 'window', groundFill: 'wideWindow', top: 'wideWindow',
     dress: { lines: 'none', crown: 'attic' },
-    window: { width: [0.6, 0.75], height: [0.52, 0.6], sill: 0.8 },
+    opening: { width: [0.6, 0.75], height: [0.52, 0.6], sill: 0.8 },
     module: 3.2,
   },
   // Exposed brick, white or black frames, concrete lintels at every floor, a cornice.
@@ -136,7 +136,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['window'], ['window', 'frenchWindow', 'window'], ['balcony', 'window', 'window']],
     sideFill: 'window', groundFill: 'window', top: null,
     dress: { lines: 'every', crown: 'cornice' },
-    window: { width: [0.45, 0.55], height: [0.6, 0.64], sill: 0.85 },
+    opening: { width: [0.45, 0.55], height: [0.6, 0.64], sill: 0.85 },
     piers: { width: 0.35, depth: 0.12, every: 1 },
     module: 3,
   },
@@ -149,7 +149,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['ribbon'], ['balcony', 'ribbon', 'balcony'], ['ribbon', 'balcony']],
     sideFill: 'window', groundFill: 'window', top: null,
     dress: { lines: 'slab', crown: 'slab' },
-    window: { width: [0.7, 0.85], height: [0.46, 0.54], sill: 0.9 },
+    opening: { width: [0.7, 0.85], height: [0.46, 0.54], sill: 0.9 },
     module: 3,
   },
   // A curtain wall: tinted glass from floor to floor, slim black or silver mullions.
@@ -160,7 +160,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['wideWindow']],
     sideFill: 'wideWindow', groundFill: 'wideWindow', top: null,
     dress: { lines: 'none', crown: 'attic' },
-    window: { width: [0.92, 0.94], height: [0.78, 0.82], sill: 0.25 },
+    opening: { width: [0.92, 0.94], height: [0.78, 0.82], sill: 0.25 },
     module: 3,
   },
   // Sheds: metal or fibre-cement panels, a parapet hiding the roof edge.
@@ -171,7 +171,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['ribbon']],
     sideFill: 'wall', groundFill: 'wall', top: null,
     dress: { lines: 'none', crown: 'attic' },
-    window: { width: [0.9, 0.9], height: [0.4, 0.4], sill: 1.2 },
+    opening: { width: [0.9, 0.9], height: [0.4, 0.4], sill: 1.2 },
     module: 3,
   },
   // Houses.
@@ -182,7 +182,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['shutteredWindow']],
     sideFill: 'window', groundFill: 'shutteredWindow', top: null,
     dress: { lines: 'none', crown: 'cornice' },
-    window: { width: [0.38, 0.42], height: [0.58, 0.62], sill: 0.95 },
+    opening: { width: [0.38, 0.42], height: [0.58, 0.62], sill: 0.95 },
     module: 2.6,
   },
   bungalow: {
@@ -192,7 +192,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['window'], ['window', 'frenchWindow', 'window']],
     sideFill: 'window', groundFill: 'window', top: null,
     dress: { lines: 'none', crown: 'none' },
-    window: { width: [0.4, 0.55], height: [0.5, 0.58], sill: 1 },
+    opening: { width: [0.4, 0.55], height: [0.5, 0.58], sill: 1 },
     module: 3,
   },
   modernHouse: {
@@ -202,7 +202,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['wideWindow'], ['wideWindow', 'loggia'], ['frenchWindow', 'wideWindow']],
     sideFill: 'window', groundFill: 'wideWindow', top: null,
     dress: { lines: 'none', crown: 'slab' },
-    window: { width: [0.7, 0.85], height: [0.55, 0.65], sill: 0.6 },
+    opening: { width: [0.7, 0.85], height: [0.55, 0.65], sill: 0.6 },
     module: 3,
   },
   sobrado: {
@@ -212,7 +212,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     rhythms: [['sashWindow'], ['frenchWindow', 'sashWindow'], ['balcony', 'sashWindow']],
     sideFill: 'window', groundFill: 'window', top: null,
     dress: { lines: 'base', crown: 'cornice' },
-    window: { width: [0.4, 0.48], height: [0.6, 0.66], sill: 0.9 },
+    opening: { width: [0.4, 0.48], height: [0.6, 0.66], sill: 0.9 },
     module: 2.8,
   },
 };
@@ -321,9 +321,9 @@ export interface Composition {
  */
 export function composeFacades(volumes: readonly Volume[], style: ArchStyle, rng: Rng, ground: GroundRole, rhythm = pick(rng, style.rhythms)): Composition {
   const geometry: FacadeGeometry = {
-    windowWidth: between(rng, style.window.width),
-    windowHeight: between(rng, style.window.height),
-    sill: m(style.window.sill),
+    windowWidth: between(rng, style.opening.width),
+    windowHeight: between(rng, style.opening.height),
+    sill: m(style.opening.sill),
     ...(style.piers ? { pierWidth: m(style.piers.width), pierDepth: m(style.piers.depth), pierEvery: style.piers.every } : {}),
   };
   const tallest = Math.max(0, ...volumes.filter((v) => !v.open).map((v) => v.base + v.storeys.length));
