@@ -3,8 +3,8 @@ import { onLanguageChange, t } from './i18n';
 /**
  * The build stamp: branch, short commit and date of what is running
  * (`build-stamp.ts` at the project root). In development it sits in the
- * corner of the status bar and is re-read from the server every few seconds,
- * so a fast-forward shows up without a reload of the server; in production
+ * corner of the status bar and is re-read from the server when the player
+ * comes back to the game, so a fast-forward shows up without a reload; in production
  * it is only in the About dialog.
  */
 export interface BuildStamp {
@@ -66,5 +66,9 @@ export function mountBuildStamp(element: HTMLElement | null): void {
   onBuildStamp(paint);
   onLanguageChange(paint);
   void refresh();
-  window.setInterval(() => void refresh(), 5000);
+  // Re-read when the player comes back to the game (the tab shown again, the
+  // window focused) rather than every five seconds whatever they do: a
+  // fast-forward happens while they are elsewhere.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+  window.addEventListener('focus', () => void refresh());
 }

@@ -45,10 +45,11 @@ const PAINT_SWATCH: Readonly<Record<PaintKind, string>> = {
 /** The biomes, painted or chosen for the whole map (`world/ecology.ts`). */
 const BIOME_SWATCHES = ['cerrado', 'atlantic', 'amazon', 'caatinga', 'pampa', 'pantanal'] as const;
 import { LANDSCAPE_KINDS } from '@world/landscape';
+import { BARRIER_KINDS } from '@world/barriers';
 import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
-import { t, onLanguageChange } from '../i18n';
+import { t, plural, onLanguageChange } from '../i18n';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
@@ -195,6 +196,53 @@ const ICON: Record<string, string> = {
   pl_none: '<path d="M8 21V4"/><path d="M4 7h8"/><path d="M15 9l5 5M20 9l-5 5"/>',
   pl_alternate: '<path d="M6 21V5h4M18 21V5"/><path d="M9 5l1 2H8Z"/><path d="M9 9l-.5 2" stroke-dasharray="1.5 1.5"/>',
   pl_all: '<path d="M6 21V5h4M18 21V5h-4"/><path d="M9 5l1 2H8ZM15 5l-1 2h2Z"/><path d="M9 9l-.5 2M15 9l.5 2" stroke-dasharray="1.5 1.5"/>',
+  // Gullies: channels running down a slope (the canyon icon is the landform's).
+  gully: '<path d="M3 4h18"/><path d="M6 4c1 4-2 7 0 11s0 4 1 5M12 4c2 5-1 8 1 12M18 4c1 3-2 6 0 10"/>',
+  warn: '<path d="M12 3 2 20h20Z"/><path d="M12 10v4"/><path d="M12 17v.5"/>',
+  // A grid of blocks in one click: streets crossing.
+  blocks: '<path d="M2 8.5h20M2 15.5h20M8.5 2v20M15.5 2v20" stroke-width="2.6"/>',
+  // The map's layers (grid, zone colours, congestion, inside the buildings).
+  layers: '<path d="m12 3 9 5-9 5-9-5Z"/><path d="m3 13 9 5 9-5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
+  cycle: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  // How a lot is cut: across its front, front from back, along a line.
+  split_vertical: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16" stroke-dasharray="2 2"/><path d="M4 20h16" stroke-width="3"/>',
+  split_horizontal: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h16" stroke-dasharray="2 2"/><path d="M4 20h16" stroke-width="3"/>',
+  split_line: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M6 18 18 6" stroke-dasharray="2 2"/><circle cx="6" cy="18" r="1.4"/><circle cx="18" cy="6" r="1.4"/>',
+  // What the element brush lays: ground, plants, effects.
+  el_stones: '<path d="M3 18c0-3 2.5-5.5 5.5-5.5S14 15 14 18Z"/><path d="M12.5 18c0-2.4 1.8-4.2 4.2-4.2S21 15.6 21 18Z"/><path d="M2 18h20"/>',
+  el_pebbles: '<ellipse cx="7" cy="16" rx="3" ry="2"/><ellipse cx="15" cy="17" rx="2.5" ry="1.6"/><ellipse cx="12" cy="11.5" rx="2" ry="1.4"/><ellipse cx="18" cy="11.5" rx="1.6" ry="1.1"/>',
+  el_gravel: '<circle cx="6" cy="16" r="1"/><circle cx="10" cy="18" r="1"/><circle cx="14" cy="15" r="1"/><circle cx="18" cy="18" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="11" r="1"/><circle cx="12" cy="9" r="1"/><path d="M3 21h18"/>',
+  el_leaves: '<path d="M5 19C5 10 11 5 19 5c0 8-5 14-14 14Z"/><path d="M5 19 14 10"/>',
+  el_grass: '<path d="M4 20c1-4 2-7 1-10M8 20c0-5 1-8 3-11M12 20c0-4-1-8-3-12M16 20c0-5 2-8 4-10M20 20c-1-3-1-6 0-8"/>',
+  el_tallGrass: '<path d="M6 21c0-7-1-12-3-17M10 21c0-8 1-13 3-18M14 21c0-6 2-11 6-15M18 21c0-5-1-9-3-12"/>',
+  el_scrub: '<path d="M4 19c0-4 3-7 8-7s8 3 8 7Z"/><path d="M8 13c0-3 2-5 4-5s4 2 4 5"/><path d="M3 21h18"/>',
+  el_fern: '<path d="M12 21V5"/><path d="M12 7 7 5M12 7l5-2M12 11 6 9M12 11l6-2M12 15l-5-2M12 15l5-2"/>',
+  el_clover: '<circle cx="9" cy="9" r="3"/><circle cx="15" cy="9" r="3"/><circle cx="12" cy="14" r="3"/><path d="M12 17v4"/>',
+  el_flowers: '<circle cx="12" cy="7" r="3"/><circle cx="12" cy="7" r="1" fill="currentColor"/><path d="M12 10v11M12 15c-2-2-4-2-6-1M12 17c2-2 4-2 6-1"/>',
+  el_mushrooms: '<path d="M4 12a8 6 0 0 1 16 0Z"/><path d="M10 12v7a2 2 0 0 0 4 0v-7"/>',
+  el_smoke: '<path d="M7 19a4 4 0 0 1 1-7 5 5 0 0 1 9 1 3 3 0 0 1 0 6Z"/><path d="M11 9c0-2 1-3 3-4"/>',
+  el_fire: '<path d="M12 21c-4 0-6-3-6-6 0-4 4-6 4-10 3 2 4 5 4 7 1-1 2-2 2-4 2 2 2 4 2 7 0 3-2 6-6 6Z"/>',
+  el_steam: '<path d="M8 20c-2-2 0-4-1-6s-2-3 0-5M12 20c-2-2 0-4-1-6s-2-3 0-5M16 20c-2-2 0-4-1-6s-2-3 0-5"/>',
+  el_dust: '<path d="M3 17c4 0 5-4 9-4s5 4 9 4"/><circle cx="7" cy="9" r="1"/><circle cx="12" cy="7" r="1"/><circle cx="17" cy="9" r="1"/><circle cx="10" cy="4" r=".8"/>',
+  el_soot: '<circle cx="8" cy="10" r="2.5" fill="currentColor" fill-opacity=".5"/><circle cx="15" cy="8" r="2" fill="currentColor" fill-opacity=".5"/><circle cx="14" cy="15" r="3" fill="currentColor" fill-opacity=".5"/><path d="M3 21h18"/>',
+  el_sparks: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
+  el_spray: '<path d="M12 21v-4"/><path d="M12 17c-3 0-5-2-5-5M12 17c3 0 5-2 5-5"/><circle cx="7" cy="7" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="17" cy="7" r="1"/>',
+  // The trees the tree brush plants.
+  tk_mixed: '<circle cx="8" cy="10" r="4"/><path d="M8 14v6"/><path d="M16 4l4 10h-8Z"/><path d="M16 14v6"/><path d="M3 21h18"/>',
+  tk_oak: '<circle cx="12" cy="10" r="6"/><path d="M12 16v5M9 13l3 3 3-3"/>',
+  tk_cypress: '<path d="M12 2c3 4 4 9 3 15H9C8 11 9 6 12 2Z"/><path d="M12 17v4"/>',
+  tk_palm: '<path d="M12 21c0-5 1-9 0-12"/><path d="M12 9C9 6 5 6 3 8M12 9c3-3 7-3 9-1M12 9c-1-3-4-5-7-5M12 9c1-3 4-5 7-5"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"/><path d="M10 10v7M14 10v7"/>',
+  scatter: '<path d="M5 12h7a3 3 0 0 0 0-6 4 4 0 0 0-7.5 1.2A2.4 2.4 0 0 0 5 12Z"/><path d="M13 19h6a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.4 1A2 2 0 0 0 13 19Z"/>',
+  // The menu's rows.
+  m_new: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M12 11v6m-3-3h6"/>',
+  m_open: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  m_save: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
+  m_about: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.5v.5"/>',
+  m_quality: '<path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7a5 5 0 1 0 5 5"/><path d="M12 12h9"/>',
+  m_language: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/>',
 };
 const svg = (name: string, size = 22): string =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
@@ -250,6 +298,9 @@ export interface ShellDeps {
   roadParkingPreset(): string;
   setRoadParkingPreset(preset: string): void;
   transitTool(): ShellTransitTool | null;
+  /** How many junctions cannot be built (`Network.impossible`), and taking the camera and the inspector to the first. */
+  impossibleCount(): number;
+  showImpossible(): void;
 }
 
 export function mountShell(deps: ShellDeps): void {
@@ -263,12 +314,55 @@ export function mountShell(deps: ShellDeps): void {
   // ================================================================ HUD
   const hud = el('header', 'v2-hud');
   const city = el('div', 'v2-city');
-  const sky = el('button', 'v2-sky');
-  sky.type = 'button';
-  sky.onclick = () => press('#skyMode');
+  // The sky: always day, always night, or the residents' clock - the three
+  // side by side, the one in use lit (it was one button naming the current
+  // sky, the others unseen until clicked through).
+  const SKY_MODES_HUD = [['day', 'sun'], ['night', 'moon'], ['cycle', 'cycle']] as const;
+  const sky = el('div', 'v2-seg v2-sky');
+  sky.setAttribute('role', 'group');
+  const skyButtons = SKY_MODES_HUD.map(([mode, icon]) => {
+    const b = button('v2-seg-b', t(`sky.${mode}`), () => {
+      // The game's own button steps day → night → cycle: stepped until it shows this one.
+      for (let i = 0; i < 3 && q('#skyMode')?.textContent !== t(`sky.${mode}`); i++) press('#skyMode');
+      syncSky();
+    }, svg(icon, 16));
+    b.dataset['sky'] = mode;
+    sky.appendChild(b);
+    return b;
+  });
+  const syncSky = (): void => {
+    const now = q('#skyMode')?.textContent ?? '';
+    for (const b of skyButtons) {
+      const on = now === t(`sky.${b.dataset['sky'] ?? ''}`);
+      if (b.classList.contains('on') !== on) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+    }
+  };
+  // The clock and the counts change every second: their text nodes are
+  // rewritten in place, not replaced (no node churn under the HUD).
   const clock = el('strong', 'v2-clock');
+  const clockText = clock.appendChild(document.createTextNode(''));
   const stats = el('div', 'v2-stats');
-  city.append(sky, clock, stats);
+  const statsText = stats.appendChild(document.createTextNode(''));
+  // Junctions that cannot be built (legs meeting under 25°): a warning with
+  // their count, a click away from the first one. It was computed and never shown.
+  const impossibleB = button('v2-warn', '', () => {
+    open = true;
+    deps.showImpossible();
+    render();
+  }, svg('warn', 16));
+  const impossibleN = el('b');
+  impossibleB.appendChild(impossibleN);
+  impossibleB.hidden = true;
+  let impossibleShown = -1;
+  const syncImpossible = (): void => {
+    const n = deps.impossibleCount();
+    if (n === impossibleShown) return;
+    impossibleShown = n;
+    impossibleB.hidden = n === 0;
+    impossibleN.textContent = String(n);
+    impossibleB.title = plural('status.impossible', n);
+  };
+  city.append(sky, clock, impossibleB, stats);
 
   const speed = el('div', 'v2-speed');
   speed.setAttribute('role', 'group');
@@ -278,6 +372,7 @@ export function mountShell(deps: ShellDeps): void {
     b.type = 'button';
     b.dataset['speed'] = s;
     b.innerHTML = s === '0' ? svg('pause', 16) : `${s}×`;
+    b.title = s === '0' ? t('sim.pause') : `${t('sim.speed')} ${s}×`;
     b.onclick = () => press(`.simulation-controls [data-speed="${s}"]`);
     speedButtons.push(b);
     speed.appendChild(b);
@@ -287,35 +382,47 @@ export function mountShell(deps: ShellDeps): void {
   const undo = button('v2-icon', t('action.undo'), () => press('#undoAction'), svg('undo', 18));
   const redo = button('v2-icon', t('action.redo'), () => press('#redoAction'), svg('redo', 18));
   const menuB = button('v2-pill', t('builder.menu.app'), () => toggle('menu', menuB), svg('menu', 18));
-  const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('sim', 18));
+  // Sliders, not the mountain-like chart line, which read as the Landscape icon.
+  const simB = button('v2-pill', t('builder.menu.simulation'), () => toggle('sim', simB), svg('advanced', 18));
   const camB = button('v2-pill', t('camera.label'), () => toggle('camera', camB), svg('camera', 18));
   const helpB = button('v2-icon', t('builder.help'), () => toggle('help', helpB), svg('help', 18));
-  // The grid over the whole map, on and off.
-  const gridB = button('v2-icon', t('v2.grid.toggle'), () => { setRoadGridShown(!roadGridShown()); syncGrid(); render(); }, svg('grid', 18));
-  const syncGrid = (): void => { gridB.classList.toggle('on', roadGridShown()); gridB.setAttribute('aria-pressed', String(roadGridShown())); };
-  syncGrid();
-  onRoadGridChange(syncGrid);
+  // What the map shows over itself - the grid, the zones' colours, the
+  // congestion, the inside of the buildings - in one menu of switches, as
+  // Cities: Skylines II gathers its info views. They were a grid button
+  // here, a show/hide pair in the zoning panel and a switch in the
+  // simulation menu.
+  const layersB = button('v2-pill', t('v2.layers'), () => toggle('layers', layersB), svg('layers', 18));
   // Into the scenery on foot (`play.ts`): the way in, in plain sight, not only the J key.
   const playB = button('v2-pill v2-play', t('play.button'), () => press('#playButton'), svg('player', 18));
   playB.title = t('play.start');
-  // See inside the buildings (the Builder's own toggle, `workspace.ts`): on,
-  // with the floor shown and a step down and up beside it.
+  // See inside the buildings (the Builder's own toggle, `workspace.ts`): its
+  // switch is a layer; while it is on, the floor and a step down and up stay in the bar.
   const insideButtons = (): HTMLButtonElement[] => [...document.querySelectorAll<HTMLButtonElement>('.bw-inside .bw-icon-button')];
+  const insideOn = (): boolean => insideButtons()[0]?.classList.contains('active') ?? false;
   const insideLevel = (): string => document.querySelector('.bw-inside .bw-inside-level')?.textContent ?? '';
-  const insideB = button('v2-icon', t('inside.toggle'), () => { insideButtons()[0]?.click(); syncInside(); }, builderIconSvg('interiorView', 18));
   const insideDownB = button('v2-icon', t('inside.down'), () => { insideButtons()[1]?.click(); syncInside(); }, builderIconSvg('floorDown', 16));
   const insideUpB = button('v2-icon', t('inside.up'), () => { insideButtons()[2]?.click(); syncInside(); }, builderIconSvg('floorUp', 16));
   const insideLevelEl = el('span', 'v2-inside-level');
+  const insideOff = button('v2-icon on', t('inside.toggle'), () => { insideButtons()[0]?.click(); syncInside(); }, builderIconSvg('interiorView', 18));
+  const insideBar = el('div', 'v2-inside');
+  insideBar.append(insideOff, insideDownB, insideLevelEl, insideUpB);
+  /** The layers and whether each is on. */
+  const LAYERS: readonly { key: string; tip: string; icon: string; on: () => boolean; flip: () => void }[] = [
+    { key: 'v2.layer.grid', tip: 'v2.grid.toggle', icon: svg('grid', 18), on: roadGridShown, flip: () => setRoadGridShown(!roadGridShown()) },
+    { key: 'zone.colours', tip: 'zone.colours', icon: svg('zones', 18), on: zoneColoursShown, flip: () => setZoneColoursShown(!zoneColoursShown()) },
+    { key: 'sim.congestionLabel', tip: 'sim.congestion', icon: svg('heat', 18), on: () => q('#congestionToggle')?.getAttribute('aria-pressed') === 'true', flip: () => press('#congestionToggle') },
+    { key: 'v2.layer.inside', tip: 'inside.toggle', icon: builderIconSvg('interiorView', 18), on: insideOn, flip: () => insideButtons()[0]?.click() },
+  ];
   const syncInside = (): void => {
-    const on = insideButtons()[0]?.classList.contains('active') ?? false;
-    insideB.classList.toggle('on', on);
-    insideB.setAttribute('aria-pressed', String(on));
-    insideDownB.hidden = insideUpB.hidden = insideLevelEl.hidden = !on;
-    insideLevelEl.textContent = insideLevel();
+    const on = insideOn();
+    if (insideBar.hidden === on) insideBar.hidden = !on;
+    const level = insideLevel();
+    if (insideLevelEl.textContent !== level) insideLevelEl.textContent = level;
   };
   syncInside();
+  onRoadGridChange(syncInside);
   // "Play" only with walking the city on (`__PLAY_MODE__`, vite.config.ts).
-  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), insideB, insideDownB, insideLevelEl, insideUpB, gridB, simB, camB, undo, redo, helpB, menuB);
+  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), insideBar, layersB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers
@@ -358,104 +465,84 @@ export function mountShell(deps: ShellDeps): void {
     const b = button('v2-row', label, () => { run(); closePop(); }, icon);
     return b;
   };
-  const slider = (label: string, selector: string, outSelector: string, icon?: string): HTMLElement => {
-    const source = q<HTMLInputElement>(selector);
-    const wrap = el('label', 'v2-slider' + (icon ? ' iconic' : ''));
-    wrap.title = label;
-    const name = el('span', 'v2-slider-name', label);
-    if (icon) name.innerHTML = icon;
-    const out = el('output', 'v2-slider-out', q(outSelector)?.textContent ?? '');
-    const input = el('input');
-    input.type = 'range';
-    if (source) {
-      input.min = source.min;
-      input.max = source.max;
-      input.step = source.step;
-      input.value = source.value;
-    }
-    input.oninput = () => {
-      setInput(selector, input.value);
-      out.textContent = q(outSelector)?.textContent ?? input.value;
-    };
-    wrap.append(name, input, out);
-    return wrap;
-  };
-  const selectProxy = (label: string, selector: string, icon?: string): HTMLElement => {
+  /** A select of the game's own, as a row of segments (a few choices, all in view). */
+  const segProxy = (label: string, selector: string): HTMLElement => {
     const source = q<HTMLSelectElement>(selector);
-    const wrap = el('label', 'v2-select' + (icon ? ' iconic' : ''));
-    const name = el('span', '', label);
-    if (icon) {
-      name.innerHTML = icon;
-      wrap.title = label;
+    return orow(label, choices([...(source?.options ?? [])].map((o) => ({
+      label: o.textContent ?? o.value,
+      on: o.value === source?.value,
+      run: () => { setInput(selector, o.value); if (popId) { pop.replaceChildren(popBody(popId)); } },
+    }))));
+  };
+  /** The simulation's numbers, kept current while its menu is open. */
+  let metricsBox: HTMLElement | null = null;
+  const syncMetrics = (): void => {
+    const source = q('.sim-metrics');
+    if (!metricsBox || !source) return;
+    const dds = source.querySelectorAll('dd');
+    metricsBox.querySelectorAll('dd').forEach((dd, i) => { const v = dds[i]?.textContent ?? ''; if (dd.textContent !== v) dd.textContent = v; });
+  };
+  /** The keys of each tool, as `main.ts` lists them for its help card. */
+  const TOOL_KEYS: Readonly<Record<string, readonly (readonly [string, string])[]>> = {
+    bulldoze: [['help.key.click', 'help.do.remove'], ['help.key.undo', 'help.do.undo']],
+    pole: [['help.key.click', 'help.do.pole'], ['help.key.shiftClick', 'help.do.removePole'], ['help.key.esc', 'help.do.endLine']],
+    streetscape: [['help.key.click', 'help.do.streetscape'], ['help.key.shiftClick', 'help.do.streetscapeRemove']],
+    barrier: [['help.key.click', 'help.do.barrierPoint'], ['help.key.doubleClickEnter', 'help.do.barrierEnd'], ['help.key.backspace', 'help.do.barrierBack'], ['help.key.shiftClick', 'help.do.barrierRemove'], ['help.key.esc', 'help.do.barrierCancel']],
+    inspect: [['help.key.click', 'help.do.pick'], ['help.key.pageUpDown', 'help.do.nodeHeight'], ['help.key.esc', 'help.do.close']],
+    road: [['v2.key.drag', 'v2.do.road'], ['help.key.pageUpDown', 'palette.height'], ['v2.key.digits', 'palette.kind']],
+  };
+  const CAMERA_KEYS = [['help.key.middleDrag', 'help.do.orbit'], ['help.key.rightDrag', 'help.do.pan'], ['help.key.wheel', 'help.do.zoom'], ['help.key.qe', 'help.do.turn'], ['help.key.home', 'help.do.resetView']] as const;
+  const GLOBAL_KEYS = [['v2.key.tools', 'v2.do.tools'], ['help.key.undo', 'v2.do.undo'], ['v2.key.redo', 'v2.do.redo'], ['v2.key.space', 'v2.do.pause'], ['v2.key.f9', 'v2.do.health']] as const;
+  const keyList = (title: string, rows: readonly (readonly [string, string])[]): HTMLElement => {
+    const box = el('div', 'v2-keys');
+    box.appendChild(el('div', 'v2-subhead', title));
+    const dl = el('dl');
+    for (const [k, d] of rows) {
+      const dt = el('dt');
+      dt.appendChild(el('kbd', '', t(k)));
+      dl.append(dt, el('dd', '', t(d)));
     }
-    const select = el('select');
-    for (const o of source?.options ?? []) {
-      const option = el('option', '', o.textContent ?? o.value);
-      option.value = o.value;
-      option.selected = o.value === source?.value;
-      select.appendChild(option);
-    }
-    select.onchange = () => setInput(selector, select.value);
-    wrap.append(name, select);
-    return wrap;
+    box.appendChild(dl);
+    return box;
   };
   function popBody(id: string): HTMLElement {
     const body = el('div', 'v2-pop-body');
+    metricsBox = null;
     if (id === 'menu') {
       body.append(
-        row(t('action.newMap'), () => press('#newMap')),
-        row(t('action.openMap'), () => press('#openMap')),
-        row(t('action.saveMap'), () => press('#saveMap')),
+        row(t('action.newMap'), () => press('#newMap'), svg('m_new', 18)),
+        row(t('action.openMap'), () => press('#openMap'), svg('m_open', 18)),
+        row(t('action.saveMap'), () => press('#saveMap'), svg('m_save', 18)),
         el('hr'),
-        selectProxy(t('menu.quality'), '#qualitySelect'),
-        selectProxy(t('menu.language'), '#languageSelect'),
+        segProxy(t('menu.quality'), '#qualitySelect'),
+        segProxy(t('menu.language'), '#languageSelect'),
         el('hr'),
-        row(t('action.about'), () => press('#aboutButton')),
+        row(t('action.about'), () => press('#aboutButton'), svg('m_about', 18)),
       );
-    } else if (id === 'actions') {
-      // One button an action: a click and it is ready.
-      body.classList.add('icons');
-      // Both act through the Demolish tool. Its button toggles (`pickTool`):
-      // pressed again it put the tool away, and the pistol followed by the
-      // bomb left neither ready (the click on the map only inspected).
-      const ready = (): void => {
-        if (!q<HTMLButtonElement>('.tool[data-tool="bulldoze"]')?.classList.contains('active')) press('.tool[data-tool="bulldoze"]');
-      };
-      // The pistol, as the bomb: clicked on a person in the map, the shot strikes where clicked.
-      body.appendChild(button('v2-row', t('actions.pistol'), () => {
-        strikeChoice.mode = 'shoot';
-        open = true;
-        closePop();
-        ready();
-        render();
-      }, svg('actions', 18)));
-      // The bomb (what Demolish called its Impact): clicked on the map, it strikes with a force.
-      body.appendChild(button('v2-row', t('actions.bomb'), () => {
-        strikeChoice.mode = 'strike';
-        open = true;
-        closePop();
-        ready();
-        render();
-      }, svg('bomb', 18)));
+    } else if (id === 'layers') {
+      // Each layer a row: its icon, its name, a switch.
+      for (const layer of LAYERS) {
+        const on = layer.on();
+        const b = button(`v2-row v2-switch${on ? ' on' : ''}`, t(layer.key), () => {
+          layer.flip();
+          syncInside();
+          const now = layer.on();
+          b.classList.toggle('on', now);
+          b.setAttribute('aria-checked', String(now));
+          requestAnimationFrame(render);
+        }, layer.icon);
+        b.setAttribute('role', 'switch');
+        b.setAttribute('aria-checked', String(on));
+        b.title = t(layer.tip);
+        body.appendChild(b);
+      }
     } else if (id === 'sim') {
-      body.append(
-        slider(t('sim.traffic'), '#trafficIntensity', '#trafficIntensityValue', svg('car', 18)),
-        slider(t('sim.people'), '#pedIntensity', '#pedIntensityValue', svg('crowd', 18)),
-      );
-      // Demand and the congestion map side by side, as icons.
-      const line = el('div', 'v2-pop-line');
-      const congestion = q<HTMLButtonElement>('#congestionToggle');
-      const c = button('v2-icon' + (congestion?.getAttribute('aria-pressed') === 'true' ? ' on' : ''), t('sim.congestionLabel'), () => {
-        congestion?.click();
-        c.classList.toggle('on', congestion?.getAttribute('aria-pressed') === 'true');
-      }, svg('heat', 18));
-      line.append(selectProxy(t('sim.demand'), '#demandLevel', svg('demand', 18)), c);
-      body.appendChild(line);
+      body.append(range('sim.traffic', '#trafficIntensity'), range('sim.people', '#pedIntensity'), segProxy(t('sim.demand'), '#demandLevel'));
       const metrics = q('.sim-metrics');
       if (metrics) {
-        const copy = el('dl', 'v2-metrics');
-        copy.innerHTML = metrics.innerHTML;
-        body.appendChild(copy);
+        metricsBox = el('dl', 'v2-metrics');
+        metricsBox.innerHTML = metrics.innerHTML;
+        body.appendChild(metricsBox);
       }
     } else if (id === 'camera') {
       for (const b of document.querySelectorAll<HTMLButtonElement>('#cameraControls [data-camera], #resetView')) {
@@ -466,17 +553,30 @@ export function mountShell(deps: ShellDeps): void {
         body.appendChild(button('v2-icon', label, () => b.click(), icon));
       }
     } else if (id === 'help') {
-      for (const [title, text] of [
-        ['builder.help.select', 'builder.help.select.text'],
-        ['builder.help.gizmo', 'builder.help.gizmo.text'],
-        ['builder.help.numeric', 'builder.help.numeric.text'],
-        ['builder.help.keys', 'builder.help.keys.text'],
-        ['builder.help.cancel', 'builder.help.cancel.text'],
-      ] as const) {
-        const block = el('div', 'v2-help');
-        block.append(el('strong', '', t(title)), el('p', '', t(text)));
-        body.appendChild(block);
+      // The keys of the tool in hand, the camera's and the game's: keys and
+      // what they do, in two columns. It held only the Builder's paragraphs.
+      body.classList.add('help');
+      const current = tool();
+      const own = TOOL_KEYS[categoryOf(current) === 'roads' ? 'road' : current];
+      if (own) body.appendChild(keyList(t('help.section.tool'), own));
+      if (current === 'building') {
+        // The Builder's own help, one line a subject; the full text on demand.
+        const more = el('details', 'v2-more');
+        more.appendChild(el('summary', '', t('v2.help.builder')));
+        for (const [title, text] of [
+          ['builder.help.select', 'builder.help.select.text'],
+          ['builder.help.gizmo', 'builder.help.gizmo.text'],
+          ['builder.help.numeric', 'builder.help.numeric.text'],
+          ['builder.help.keys', 'builder.help.keys.text'],
+          ['builder.help.cancel', 'builder.help.cancel.text'],
+        ] as const) {
+          const block = el('div', 'v2-help');
+          block.append(el('strong', '', t(title)), el('p', '', t(text)));
+          more.appendChild(block);
+        }
+        body.appendChild(more);
       }
+      body.append(keyList(t('help.section.camera'), CAMERA_KEYS), keyList(t('v2.help.global'), GLOBAL_KEYS));
     }
     return body;
   }
@@ -493,13 +593,6 @@ export function mountShell(deps: ShellDeps): void {
     { id: 'info', tool: 'inspect', key: 'I', label: () => t('v2.cat.info') },
   ];
   const catButtons = new Map<Category, HTMLButtonElement>();
-  // The Actions: not a tool, a panel of what the player may do in play.
-  const actionsB = el('button', 'v2-cat');
-  actionsB.type = 'button';
-  actionsB.title = t('v2.cat.actions');
-  actionsB.setAttribute('aria-label', t('v2.cat.actions'));
-  actionsB.innerHTML = `${svg('actions', 26)}<span class="v2-cat-name"></span>`;
-  actionsB.onclick = () => toggle('actions', actionsB);
   for (const c of CATS) {
     const b = el('button', 'v2-cat' + (c.id === 'demolish' ? ' danger' : ''));
     b.type = 'button';
@@ -514,14 +607,12 @@ export function mountShell(deps: ShellDeps): void {
         return;
       }
       open = true;
-      // Demolish knocks down; the bomb is chosen from the Actions.
-      if (c.id === 'demolish') strikeChoice.mode = 'demolish';
-      press(`.tool[data-tool="${c.tool}"]`);
+      // The tool in hand is not put away by its own button pressed again.
+      if (categoryOf(tool()) !== c.id || c.id === 'info') press(`.tool[data-tool="${c.tool}"]`);
       render();
     };
     catButtons.set(c.id, b);
     dock.appendChild(b);
-    if (c.id === 'demolish') dock.appendChild(actionsB);
   }
 
   // ================================================================ drawer
@@ -600,17 +691,19 @@ export function mountShell(deps: ShellDeps): void {
   });
   root.addEventListener('pointerdown', () => { tip.hidden = true; });
   // A control rebuilt or removed under the pointer takes its tooltip with it.
+  // Checked only while a tooltip is up (no timer otherwise).
+  let tipTimer: ReturnType<typeof setInterval> | null = null;
   const tipCheck = (): void => {
     if (tipFor && (!tipFor.isConnected || tipFor.getBoundingClientRect().width === 0)) {
       tipFor = null;
       tip.hidden = true;
     }
+    if (!tipFor && tipTimer !== null) { clearInterval(tipTimer); tipTimer = null; }
   };
-  setInterval(tipCheck, 200);
+  root.addEventListener('pointerover', () => { if (tipFor && tipTimer === null) tipTimer = setInterval(tipCheck, 200); });
 
   // ================================================================ state
   let open = false;
-  let landTab: 'terrain' | 'trees' | 'barrier' | 'pole' | 'streetscape' = 'terrain';
   let builder: BuilderState | null = null;
 
   let modelQuery = '';
@@ -646,12 +739,6 @@ export function mountShell(deps: ShellDeps): void {
     g.title = label;
     g.setAttribute('role', 'group');
     g.setAttribute('aria-label', label);
-    return g;
-  };
-  /** A group laid as a column with its name on top: a panel of rows, each named. */
-  const titled = (g: HTMLElement, label: string): HTMLElement => {
-    g.classList.add('stack', 'titled');
-    g.prepend(el('span', 'v2-group-title', label));
     return g;
   };
   const choices = (items: readonly { label: string; on: boolean; run: () => void; disabled?: boolean; icon?: string }[], cols = 3): HTMLElement => {
@@ -693,6 +780,68 @@ export function mountShell(deps: ShellDeps): void {
   const note = (text: string): void => {
     drawer.setAttribute('aria-description', text);
   };
+  /**
+   * One row of the tool options: a short name at the left, its controls at the
+   * right - the name beside what it names (proximity), never a heading over a
+   * column, so a tool's options fit the screen without scrolling.
+   */
+  const orow = (label: string, ...controls: (HTMLElement | null | undefined)[]): HTMLElement => {
+    const r = el('div', 'v2-orow');
+    r.setAttribute('role', 'group');
+    r.setAttribute('aria-label', label);
+    const name = el('span', 'v2-orow-name', label);
+    name.title = label;
+    const box = el('div', 'v2-orow-ctrls');
+    for (const c of controls) if (c) box.appendChild(c);
+    r.append(name, box);
+    return r;
+  };
+  /** A divider naming what follows: the settings of the whole map, after the brush's. */
+  const subhead = (label: string): HTMLElement => el('div', 'v2-subhead', label);
+  /** A stepper: less, the value, more. */
+  const stepper = (label: string, value: string, run: (d: number) => void): HTMLElement => {
+    const s = el('div', 'v2-stepper');
+    s.title = label;
+    s.append(
+      button('v2-icon', `${label} −`, () => { run(-1); render(); }, svg('minus', 14)),
+      el('output', 'v2-stepper-value', value),
+      button('v2-icon', `${label} +`, () => { run(1); render(); }, svg('plus', 14)),
+    );
+    return s;
+  };
+  /**
+   * A slider row driving one of the game's own inputs: its name (the unit in
+   * the dictionary's brackets moves to the number), the bar, the value.
+   */
+  const range = (labelKey: string, selector: string, shortKey?: string): HTMLElement => {
+    const full = t(labelKey);
+    const unitMatch = /\(([^)]{1,4})\)\s*$/.exec(full);
+    const unit = unitMatch ? ` ${unitMatch[1]}` : '';
+    // One word at the left; the full name (with its unit) in the tooltip.
+    const name = shortKey ? t(shortKey) : full.replace(/\s*\([^)]*\)\s*$/, '');
+    const source = q<HTMLInputElement>(selector);
+    const input = el('input', 'v2-range');
+    input.type = 'range';
+    input.setAttribute('aria-label', full);
+    if (source) {
+      input.min = source.min;
+      input.max = source.max;
+      input.step = source.step;
+      input.value = source.value;
+    }
+    const out = el('output', 'v2-range-out', `${input.value}${unit}`);
+    input.oninput = () => {
+      setInput(selector, input.value);
+      out.textContent = `${source?.value ?? input.value}${unit}`;
+    };
+    const r = orow(name, input, out);
+    r.title = full;
+    r.classList.add('range');
+    return r;
+  };
+  /** An action on the whole map (clear every stroke of a brush), asking first as the game does. */
+  const mapAction = (label: string, selector: string, icon: string, danger = true): HTMLButtonElement =>
+    button(`v2-act${danger ? ' danger' : ''}`, label, () => { press(selector); render(); }, svg(icon, 16));
 
   // ------------------------------------------------------------ roads
   function renderRoads(current: string): void {
@@ -701,98 +850,71 @@ export function mountShell(deps: ShellDeps): void {
     if (q('[data-road-op="roundabout"]')) modes.push(['roundabout', t('tool.roundabout'), 'roundabout']);
     for (const [id, label, icon] of modes) {
       tabs.appendChild(tab(label, current === id, () => {
-        if (id === 'road') press('.tool[data-tool="road"]');
+        // The road tool's own button toggles it (`pickTool`): pressed while
+        // drawing, it put the tool away and closed the panel.
+        if (id === 'road') { if (current !== 'road') press('.tool[data-tool="road"]'); }
         else press(`[data-road-op="${id}"]`);
         render();
       }, false, svg(icon, 18)));
     }
     if (current === 'road') {
-      const trace = group(t('palette.trace'));
-      trace.appendChild(choices([...document.querySelectorAll<HTMLButtonElement>('.alignment-mode')].map((b) => ({
+      const g = blockGridChoice;
+      // How the road is traced - straight, curved, free - or a whole grid of
+      // blocks in one click, as Cities: Skylines II lists Grid among its
+      // drawing modes (`editor/blocks.ts`). Picking a trace puts the grid down.
+      const traces = [...document.querySelectorAll<HTMLButtonElement>('.alignment-mode')].map((b) => ({
         label: b.textContent?.trim() ?? '',
-        on: b.classList.contains('active'),
-        run: () => { b.click(); render(); },
+        on: !g.armed && b.classList.contains('active'),
+        run: () => { g.armed = false; b.click(); render(); },
         icon: svg(b.dataset['alignment'] ?? 'straight', 18),
-      }))));
+      }));
+      traces.push({ label: t('palette.blocks'), on: g.armed, run: () => { g.armed = !g.armed; render(); }, icon: svg('blocks', 18) });
+      options.appendChild(orow(t('palette.trace'), choices(traces)));
+      // The grid's own numbers only while it is the trace in hand.
+      if (g.armed) {
+        options.appendChild(orow(t('v2.blocks.count'),
+          stepper(t('palette.blocks.cols'), `${g.cols}`, (d) => { g.cols = Math.max(1, Math.min(12, g.cols + d)); }),
+          stepper(t('palette.blocks.rows'), `${g.rows}`, (d) => { g.rows = Math.max(1, Math.min(12, g.rows + d)); })));
+        options.appendChild(orow(t('v2.blocks.measure'),
+          stepper(t('palette.blocks.size'), `${g.blockMetres} m`, (d) => { g.blockMetres = Math.max(30, Math.min(300, g.blockMetres + d * 10)); }),
+          stepper(t('palette.blocks.angle'), `${Math.round((g.angle * 180) / Math.PI)}°`, (d) => { g.angle += (d * 15 * Math.PI) / 180; })));
+      }
       // Snapping, as Cities: Skylines II offers it: all of it, then each kind.
+      // The grid drawn on the ground is the top bar's (one switch, one place).
       const snap = roadSnap();
-      const snapping = group(t('v2.snap.title'));
-      snapping.appendChild(choices([
+      options.appendChild(orow(t('v2.snap.title'), choices([
         { label: t('v2.snap.on'), on: snap.on, run: () => { setRoadSnap({ on: !snap.on }); render(); }, icon: svg('magnet', 18) },
         { label: t('v2.snap.angles'), on: snap.on && snap.angles, run: () => { setRoadSnap({ angles: !snap.angles }); render(); }, disabled: !snap.on, icon: svg('angle', 18) },
-        { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('grid', 18) },
-      ]));
-      // The grid itself, drawn on the ground while the road is laid.
-      const gridGroup = titled(group(t('v2.roadGrid')), t('v2.roadGrid'));
-      gridGroup.appendChild(choices([
-        { label: t('v2.roadGrid.show'), on: roadGridShown(), run: () => { setRoadGridShown(true); if (!snap.on || !snap.grid) setRoadSnap({ on: true, grid: true }); render(); } },
-        { label: t('v2.roadGrid.hide'), on: !roadGridShown(), run: () => { setRoadGridShown(false); render(); } },
-      ], 2));
-      // Parking the new road is drawn with (`editor/roadParking.ts`).
-      const parking = group(t('palette.parking'));
-      const parkingNow = roadParkingPreset();
-      parking.appendChild(choices(ROAD_PARKING_PRESETS.map((preset) => ({
-        label: t(`parking.preset.${preset}`),
-        on: parkingNow === preset,
-        run: () => { setRoadParkingPreset(preset); render(); },
-        icon: svg(`park-${preset}`, 18),
-      }))));
-      const height = group(`${t('palette.height')} - ${q('#roadHeightContext')?.textContent ?? ''}`);
-      const stepper = el('div', 'v2-stepper');
-      stepper.append(
-        button('v2-icon', t('palette.height.lower'), () => { press('[data-height-step="-1"]'); render(); }, svg('minus', 14)),
-        el('output', 'v2-stepper-value', q('#roadHeightValue')?.textContent ?? ''),
-        button('v2-icon', t('palette.height.raise'), () => { press('[data-height-step="1"]'); render(); }, svg('plus', 14)),
-      );
-      height.append(stepper);
-      const lanes = group(t('palette.lanes'));
-      lanes.appendChild(choices([...document.querySelectorAll<HTMLButtonElement>('[data-lane-choice]')].filter((b) => !b.hidden).map((b) => {
+        { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('cells', 18) },
+      ])));
+      // Lanes: the count the next road is laid with.
+      options.appendChild(orow(t('v2.row.lanes'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-lane-choice]')].filter((b) => !b.hidden).map((b) => {
         const id = b.dataset['laneChoice'] ?? '2';
         return {
-          label: b.getAttribute('aria-label') ?? b.title ?? b.textContent?.trim() ?? '',
+          label: b.title || b.getAttribute('aria-label') || b.textContent?.trim() || '',
           on: b.classList.contains('active'),
           run: () => { b.click(); render(); },
           disabled: b.disabled,
           icon: svg(id === 'median' ? 'median' : `lanes${id}`, 18),
         };
-      })));
-      // Total width, on the 1 m subgrid of the 10 m zoning grid.
-      const widthGroup = group(t('palette.width'));
+      }))));
+      // Total width, on the 1 m subgrid of the 10 m zoning grid; the class's own until stepped.
       const w = roadWidth();
-      const widthStepper = el('div', 'v2-stepper');
-      const stepWidth = (d: number): void => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); render(); };
-      widthStepper.append(
-        button('v2-icon', t('palette.width.narrower'), () => stepWidth(-1), svg('minus', 14)),
-        el('output', 'v2-stepper-value', `${t('palette.width.short')}: ${w === null ? t('palette.width.auto') : `${w} m`}`),
-        button('v2-icon', t('palette.width.wider'), () => stepWidth(1), svg('plus', 14)),
-      );
-      widthGroup.append(widthStepper);
-      if (w !== null) widthGroup.appendChild(button('v2-choice', t('palette.width.auto'), () => { setRoadWidth(null); render(); }));
-      // Several blocks at once (`editor/blocks.ts`): columns, rows, spacing.
-      const blocks = group(t('palette.blocks'));
-      blocks.classList.add('stack');
-      const g = blockGridChoice;
-      const stepRow = (label: string, value: string, run: (d: number) => void): HTMLElement => {
-        const row = el('div', 'v2-stepper');
-        row.title = label;
-        row.append(
-          button('v2-icon', `${label} -`, () => { run(-1); render(); }, svg('minus', 14)),
-          el('output', 'v2-stepper-value', value),
-          button('v2-icon', `${label} +`, () => { run(1); render(); }, svg('plus', 14)),
-        );
-        return row;
-      };
-      blocks.append(
-        el('span', 'v2-group-title', t('palette.blocks')),
-        stepRow(t('palette.blocks.cols'), `${g.cols} ${t('palette.blocks.colsShort')}`, (d) => { g.cols = Math.max(1, Math.min(12, g.cols + d)); }),
-        stepRow(t('palette.blocks.rows'), `${g.rows} ${t('palette.blocks.rowsShort')}`, (d) => { g.rows = Math.max(1, Math.min(12, g.rows + d)); }),
-        stepRow(t('palette.blocks.size'), `${t('palette.blocks.size')}: ${g.blockMetres} m`, (d) => { g.blockMetres = Math.max(30, Math.min(300, g.blockMetres + d * 10)); }),
-        stepRow(t('palette.blocks.angle'), `${t('palette.blocks.angle')}: ${Math.round((g.angle * 180) / Math.PI)}°`, (d) => { g.angle += (d * 15 * Math.PI) / 180; }),
-        button('v2-choice' + (g.armed ? ' on' : ''), g.armed ? t('palette.blocks.armed') : t('palette.blocks.place'), () => { g.armed = !g.armed; render(); }),
-      );
-      titled(trace, t('palette.trace')); titled(snapping, t('v2.snap.title')); titled(parking, t('palette.parking'));
-      titled(height, t('palette.height')); titled(lanes, t('palette.lanes')); titled(widthGroup, t('palette.width'));
-      options.append(trace, snapping, gridGroup, lanes, widthGroup, height, parking, blocks);
+      options.appendChild(orow(t('v2.row.width'),
+        stepper(t('palette.width'), w === null ? t('palette.width.auto') : `${w} m`, (d) => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); }),
+        w === null ? null : button('v2-icon', t('palette.width.auto'), () => { setRoadWidth(null); render(); }, svg('undo', 14))));
+      // Height over the ground: a bridge above, a cutting or tunnel below.
+      const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), q('#roadHeightValue')?.textContent ?? '', (d) => press(`[data-height-step="${d}"]`)));
+      heightRow.title = `${t('palette.height')}: ${q('#roadHeightContext')?.textContent ?? ''}`;
+      options.appendChild(heightRow);
+      // Parking the new road is drawn with (`editor/roadParking.ts`).
+      const parkingNow = roadParkingPreset();
+      options.appendChild(orow(t('v2.row.parking'), choices(ROAD_PARKING_PRESETS.map((preset) => ({
+        label: t(`parking.preset.${preset}`),
+        on: parkingNow === preset,
+        run: () => { setRoadParkingPreset(preset); render(); },
+        icon: svg(`park-${preset}`, 18),
+      })))));
     }
     if (current === 'road' || current === 'upgrade') {
       const { items } = section(t('palette.kind'));
@@ -801,22 +923,7 @@ export function mountShell(deps: ShellDeps): void {
         items.appendChild(card(b.querySelector('.road-type-name')?.textContent ?? '', b.classList.contains('active'), () => { b.click(); render(); }, img, undefined, 'wide'));
       }
     } else if (current === 'roundabout') {
-      const source = q<HTMLInputElement>('.road-palette .inspect-range input');
-      if (source) {
-        const g = group(t('road.roundabout.radius'));
-        const input = el('input');
-        input.type = 'range';
-        input.min = source.min;
-        input.max = source.max;
-        input.step = source.step;
-        input.value = source.value;
-        const out = el('output', 'v2-slider-out', `${source.value} m`);
-        input.oninput = () => { setInput('.road-palette .inspect-range input', input.value); out.textContent = `${input.value} m`; };
-        const wrap = el('div', 'v2-slider');
-        wrap.append(input, out);
-        g.appendChild(wrap);
-        options.appendChild(g);
-      }
+      if (q('.road-palette .inspect-range input')) options.appendChild(range('v2.roundabout.radius', '.road-palette .inspect-range input'));
       note(t('hint.roundabout'));
     } else {
       note(t(`hint.${current}`));
@@ -824,400 +931,289 @@ export function mountShell(deps: ShellDeps): void {
   }
 
   // ------------------------------------------------------------ zones
-  /** The shape the Create lot tool draws (`data-zone-mode`): a dragged rectangle or a polygon point by point. */
-  let lotShape: 'add' | 'polygon' = 'add';
+  /**
+   * Zoning in two tabs, one per job: paint a use on the lots, or make and
+   * shape the lots (`world/lots.ts`). Each lot verb is a card of its own, so
+   * the rectangle and the polygon are two cards, not a tool and a shape option.
+   */
+  let lastLotMode = 'add';
   function renderZones(): void {
     title.textContent = t('tool.zone');
     const active = (selector: string): boolean => q<HTMLButtonElement>(selector)?.classList.contains('active') ?? false;
     const pick = (selector: string): void => { q<HTMLButtonElement>(selector)?.click(); };
-    // The lots first: made, then shaped, then given a front, cut, joined or
-    // deleted (`world/lots.ts`). Creating one is one tool whatever its shape.
-    const lots = section(t('zone.lots'), 'verbs');
-    const creating = active('[data-zone-mode="add"]') || active('[data-zone-mode="polygon"]');
-    lots.items.appendChild(verb(t('zone.lot.create'), creating, () => { pick(`[data-zone-mode="${lotShape}"]`); render(); }, svg(lotShape === 'add' ? 'plus' : 'lotPolygon', 20)));
-    for (const [mode, icon] of [['edit', 'lotEdit'], ['curve', 'lotCurve'], ['front', 'lotFront'], ['split', 'split'], ['join', 'join'], ['delete', 'lotDelete']] as const) {
-      lots.items.appendChild(verb(t(`zone.lot.${mode}`), active(`[data-zone-mode="${mode}"]`), () => { pick(`[data-zone-mode="${mode}"]`); render(); }, svg(icon, 20), mode === 'delete'));
+    const modeNow = q('[data-zone-mode].active')?.dataset['zoneMode'] ?? 'brush';
+    const painting = modeNow === 'brush';
+    if (!painting) lastLotMode = modeNow;
+    tabs.append(
+      tab(t('v2.zone.paint'), painting, () => { pick('[data-zone-mode="brush"]'); render(); }, false, svg('brush', 18)),
+      tab(t('zone.lots'), !painting, () => { pick(`[data-zone-mode="${lastLotMode}"]`); render(); }, false, svg('lotEdit', 18)),
+    );
+    if (painting) {
+      // The use painted on the lots, or the eraser that takes it off.
+      const erasing = active('#zoneRemove');
+      const use = section(t('v2.zone.use')).items;
+      for (const [key, colour] of [['residential', '#58c26f'], ['commercial', '#4aa3e8'], ['industrial', '#e6b84a']] as const) {
+        const b = q<HTMLButtonElement>(`[data-zone-use="${key}"]`);
+        use.appendChild(card(t(`zone.${key}`), !erasing && (b?.classList.contains('active') ?? false), () => { if (erasing) pick('#zoneRemove'); b?.click(); render(); }, undefined, `<i class="v2-zone-swatch" style="--zone:${colour}"></i>`));
+      }
+      use.appendChild(card(t('zone.remove'), erasing, () => { if (!erasing) pick('#zoneRemove'); render(); }, undefined, svg('eraser', 30), 'danger'));
+      options.appendChild(orow(t('v2.zone.density'), choices((['low', 'medium', 'high'] as const).map((key) => {
+        const b = q<HTMLButtonElement>(`[data-zone-density="${key}"]`);
+        return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
+      }))));
+      note(t('hint.zone'));
+      return;
     }
-    // The shape of the lot being created - shown while creating.
-    if (creating) {
-      const shape = titled(group(t('zone.lot.shape')), t('zone.lot.shape'));
-      shape.appendChild(choices((['add', 'polygon'] as const).map((kind) => ({
-        label: t(kind === 'add' ? 'zone.lot.shape.rect' : 'zone.lot.shape.polygon'),
-        on: active(`[data-zone-mode="${kind}"]`),
-        run: () => { lotShape = kind; pick(`[data-zone-mode="${kind}"]`); render(); },
-        icon: svg(kind === 'add' ? 'plus' : 'lotPolygon', 18),
-      })), 2));
-      options.appendChild(shape);
+    const lots = section(t('zone.lots')).items;
+    for (const [mode, key, icon] of [['add', 'zone.lot.shape.rect', 'plus'], ['polygon', 'zone.lot.shape.polygon', 'lotPolygon'], ['edit', 'zone.lot.edit', 'lotEdit'], ['curve', 'zone.lot.curve', 'lotCurve'],
+      ['front', 'zone.lot.front', 'lotFront'], ['split', 'zone.lot.split', 'split'], ['join', 'zone.lot.join', 'join'], ['delete', 'zone.lot.delete', 'lotDelete']] as const) {
+      lots.appendChild(card(t(key), modeNow === mode, () => { pick(`[data-zone-mode="${mode}"]`); render(); }, undefined, svg(icon, 30), mode === 'delete' ? 'danger' : ''));
     }
     // How the split tool cuts, and into how many - shown while it is chosen.
-    if (q<HTMLButtonElement>('[data-zone-mode="split"]')?.classList.contains('active')) {
-      const how = titled(group(t('zone.split.how')), t('zone.split.how'));
-      how.appendChild(choices((['vertical', 'horizontal', 'line'] as const).map((kind) => {
+    if (modeNow === 'split') {
+      options.appendChild(orow(t('v2.row.cut'), choices((['vertical', 'horizontal', 'line'] as const).map((kind) => {
         const b = q<HTMLButtonElement>(`[data-lot-split="${kind}"]`);
-        return { label: t(`zone.split.${kind}`), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
-      }), 3));
-      options.appendChild(how);
-      if (!q<HTMLButtonElement>('[data-lot-split="line"]')?.classList.contains('active')) {
-        const parts = titled(group(t('zone.split.into')), t('zone.split.into'));
-        parts.appendChild(choices([2, 3, 4, 5, 6].map((n) => {
+        return { label: t(`zone.split.${kind}`), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(`split_${kind}`, 18) };
+      }))));
+      if (!active('[data-lot-split="line"]')) {
+        options.appendChild(orow(t('v2.row.parts'), choices([2, 3, 4, 5, 6].map((n) => {
           const b = q<HTMLButtonElement>(`[data-lot-parts="${n}"]`);
-          return { label: String(n), on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); } };
-        }), 5));
-        options.appendChild(parts);
+          return { label: `${t('zone.split.into')} ${n}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: `<b class="v2-num">${n}</b>` };
+        }))));
       }
     }
-    // Then the zoning of the lots: painted on, or taken off.
-    const paint = section(t('v2.zone.paint'), 'verbs');
-    const brush = active('[data-zone-mode="brush"]'), erasing = active('#zoneRemove');
-    paint.items.appendChild(verb(t('zone.brush'), brush && !erasing, () => { pick('[data-zone-mode="brush"]'); if (erasing) pick('#zoneRemove'); render(); }, svg('brush', 20)));
-    paint.items.appendChild(verb(t('zone.remove'), brush && erasing, () => { pick('[data-zone-mode="brush"]'); if (!erasing) pick('#zoneRemove'); render(); }, svg('eraser', 20), true));
     note(t('zone.lots.help'));
-    const use = section(t('v2.zone.use'));
-    for (const [key, colour] of [['residential', '#58c26f'], ['commercial', '#4aa3e8'], ['industrial', '#e6b84a']] as const) {
-      const b = q<HTMLButtonElement>(`[data-zone-use="${key}"]`);
-      const c = card(t(`zone.${key}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, `<i class="v2-zone-swatch" style="--zone:${colour}"></i>`);
-      use.items.appendChild(c);
-    }
-    const density = titled(group(t('v2.zone.density')), t('v2.zone.density'));
-    density.appendChild(choices((['low', 'medium', 'high'] as const).map((key) => {
-      const b = q<HTMLButtonElement>(`[data-zone-density="${key}"]`);
-      return { label: `${t('v2.zone.density')}: ${t(`zone.${key}`)}`, on: b?.classList.contains('active') ?? false, run: () => { b?.click(); render(); }, icon: svg(key, 18) };
-    })));
-    options.appendChild(density);
-    // The colours of zoned land outside this tool: shown or hidden.
-    const colours = titled(group(t('zone.colours')), t('zone.colours'));
-    colours.appendChild(choices([
-      { label: t('zone.colours.show'), on: zoneColoursShown(), run: () => { setZoneColoursShown(true); render(); } },
-      { label: t('zone.colours.hide'), on: !zoneColoursShown(), run: () => { setZoneColoursShown(false); render(); } },
-    ], 2));
-    options.appendChild(colours);
   }
 
   // ------------------------------------------------------------ landscape
+  /**
+   * Landscape, by what the player is making - as Cities: Skylines II splits
+   * its Landscaping into terraforming, vegetation and paths: the land's shape,
+   * its ground, what grows on it, the sky, and what stands along the street.
+   * Each tab's things are cards (a picture each, the name in the tooltip); the
+   * brush of the one in hand is at the bottom left, and the whole map's
+   * settings under it. The game's tools are unchanged: terrain modes, the
+   * landscaping, wall and pole tools, driven through their own controls.
+   */
+  type LandTab = 'relief' | 'ground' | 'nature' | 'sky' | 'street';
+  const RELIEF_MODES = [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['gully', 'gully']] as const;
+  const LANDFORMS = ['mesa', 'canyon', 'escarpment', 'sugarloaf'] as const;
+  const SKY_MODES = [['cloud', 'cloud'], ['fog', 'fog'], ['weather', 'storm']] as const;
+  const PROPS: readonly ElementKind[] = ['grass', 'tallGrass', 'scrub', 'fern', 'clover', 'flowers', 'mushrooms', 'stones', 'pebbles', 'gravel', 'leaves'];
+  const BARRIER_ICON = (kind: string, size: number): string =>
+    kind === 'guardrail' || kind === 'railing' ? svg(kind, size) : builderIconSvg(kind === 'hedge' ? 'hedge' : kind === 'wall' ? 'wallRun' : 'fenceRun', size);
+  /** What each tab last had in hand, so going back to it picks that again. */
+  const landLast: Record<LandTab, string> = { relief: 'raise', ground: 'paint', nature: 'trees', sky: 'cloud', street: 'streetscape' };
+  const terrainModeNow = (): string => q('[data-terrain-mode].active')?.dataset['terrainMode'] ?? 'raise';
+  const isEffect = (kind: string): boolean => (EFFECT_KINDS as readonly string[]).includes(kind);
+  const landTabOf = (current: string): LandTab => {
+    if (current === 'streetscape' || current === 'barrier' || current === 'pole') return 'street';
+    const mode = terrainModeNow();
+    if (mode === 'paint') return 'ground';
+    if (mode === 'trees') return 'nature';
+    if (mode === 'elements') return isEffect(elementKind()) ? 'sky' : 'nature';
+    if (SKY_MODES.some(([m]) => m === mode)) return 'sky';
+    return 'relief';
+  };
+  /** The terrain tool in hand (pressed only when it is not: pressed again it is put away), then its mode. */
+  const useTerrain = (mode: string): void => {
+    if (tool() !== 'terrain') press('.tool[data-tool="terrain"]');
+    q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`)?.click();
+  };
+  const useTool = (id: string): void => {
+    if (tool() !== id) press(`.tool[data-tool="${id}"]`);
+  };
+  const useElement = (kind: ElementKind): void => {
+    setElementKind(kind);
+    useTerrain('elements');
+  };
+  /** The wall tool's kinds are drawn by the game when the tool is taken up: pressed once they exist. */
+  const useBarrier = (kind: string): void => {
+    useTool('barrier');
+    let tries = 0;
+    const pick = (): void => {
+      const b = q<HTMLButtonElement>(`.tool-help-kinds [data-barrier="${kind}"]`);
+      if (b) { b.click(); render(); } else if (tries++ < 6) requestAnimationFrame(pick);
+    };
+    pick();
+  };
+  const openLandTab = (id: LandTab): void => {
+    const last = landLast[id];
+    if (id === 'street') return useTool(last);
+    if (last.startsWith('el:')) return useElement(last.slice(3) as ElementKind);
+    useTerrain(last);
+  };
+  const swatchArt = (colour: string): string => `<i class="v2-ground" style="--c:${colour}"></i>`;
+
   function renderLandscape(current: string): void {
     title.textContent = t('v2.cat.landscape');
-    // The trees have a tab of their own (the player, 2026-10-08: "a ferramenta
-    // para adicionar árvores que hoje não tem" - it was a card among the
-    // terrain's brushes): the terrain tool with its tree brush.
-    const treesButton = q<HTMLButtonElement>('[data-terrain-mode="trees"]');
-    const treesOn = current === 'terrain' && (treesButton?.classList.contains('active') ?? false);
-    landTab = current === 'barrier' ? 'barrier' : current === 'pole' ? 'pole' : current === 'streetscape' ? 'streetscape' : treesOn ? 'trees' : 'terrain';
-    for (const [id, label, icon] of [['terrain', t('tool.terrain'), 'terrain'], ['trees', t('terrain.trees'), 'ls_tree'], ['streetscape', t('tool.streetscape'), 'streetscape'], ['barrier', t('v2.land.walls'), 'walls'], ['pole', t('tool.pole'), 'poles']] as const) {
-      tabs.appendChild(tab(label, landTab === id, () => {
-        if (id === 'trees') {
-          // The terrain tool pressed only when not in hand (pressed again it is put away).
-          if (current !== 'terrain') press('.tool[data-tool="terrain"]');
-          treesButton?.click();
-        } else if (id === 'terrain' && treesOn) {
-          q<HTMLButtonElement>('[data-terrain-mode="raise"]')?.click();
-        } else {
-          press(`.tool[data-tool="${id}"]`);
-        }
-        render();
-      }, false, svg(icon, 18)));
+    const now = landTabOf(current);
+    const inTerrain = current === 'terrain';
+    const mode = terrainModeNow();
+    // Remember what this tab has in hand.
+    landLast[now] = now === 'street' ? current : mode === 'elements' ? `el:${elementKind()}` : mode;
+    for (const [id, key, icon] of [['relief', 'v2.land.relief', 'terrain'], ['ground', 'v2.land.ground', 'paint'], ['nature', 'v2.land.nature', 'ls_tree'], ['sky', 'v2.land.sky', 'cloud'], ['street', 'v2.land.street', 'ls_bench']] as const) {
+      tabs.appendChild(tab(t(key), now === id, () => { openLandTab(id); render(); }, false, svg(icon, 18)));
     }
-    if (landTab === 'terrain' || landTab === 'trees') {
-      const { items } = landTab === 'terrain' ? section(t('v2.terrain.brush')) : { items: document.createElement('div') };
-      for (const [mode, icon] of [['raise', 'raise'], ['lower', 'lower'], ['flatten', 'flatten'], ['river', 'river'], ['paint', 'paint'], ['fog', 'fog'], ['cloud', 'cloud'], ['elements', 'ls_meadow'], ['gully', 'canyon'], ['trees', 'ls_tree'], ['weather', 'storm']] as const) {
-        const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
-        items.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(icon, 34)));
-      }
-      // Landforms: each a shape with its own rock (`main.ts` LANDFORMS).
-      if (landTab === 'terrain') {
-        const forms = section(t('v2.terrain.landforms')).items;
-        for (const mode of ['mesa', 'canyon', 'escarpment', 'sugarloaf'] as const) {
-          const b = q<HTMLButtonElement>(`[data-terrain-mode="${mode}"]`);
-          forms.appendChild(card(t(`terrain.${mode}`), b?.classList.contains('active') ?? false, () => { b?.click(); render(); }, undefined, svg(mode, 34)));
-        }
-      }
-      // Painting: which ground the brush lays (`world/terrainPaint.ts`).
-      if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
-        // Named, so its nine swatches wrap under the name instead of running off the panel.
-        const grounds = titled(group(t('paint.kind')), t('paint.kind'));
-        const now = paintKind();
-        const swatchOf = (kind: PaintKind): string => `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[kind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`;
-        // The biomes on a row of their own: each one is a whole country.
-        const biomes = titled(group(t('paint.biome')), t('paint.biome'));
-        biomes.appendChild(choices(BIOME_SWATCHES.map((kind) => ({
-          label: t(`paint.kind.${kind}`), on: now === kind, run: () => { setPaintKind(kind); render(); }, icon: swatchOf(kind),
-        })), 6));
-        grounds.appendChild(choices(PAINT_KINDS.filter((kind) => !(BIOME_SWATCHES as readonly string[]).includes(kind)).map((kind) => ({
-          label: t(`paint.kind.${kind}`),
-          on: now === kind,
-          run: () => { setPaintKind(kind); render(); },
-          icon: `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[kind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`,
-        })), 8));
-        options.appendChild(grounds);
-        options.appendChild(biomes);
-      }
-      // The fog brush: lay mist or take it away, and how the map's fog
-      // looks - how thick, how high, how fast it drifts (`world/fogPaint.ts`).
-      if (q<HTMLButtonElement>('[data-terrain-mode="fog"]')?.classList.contains('active')) {
-        // The brush: what the next strokes lay, each bank keeping its own.
-        const fog = titled(group(t('fog.brush')), t('fog.brush'));
-        fog.classList.add('stack');
-        fog.appendChild(choices([
-          { label: t('fog.lay'), on: !fogErase(), run: () => { setFogErase(false); render(); }, icon: svg('brush', 18) },
-          { label: t('fog.erase'), on: fogErase(), run: () => { setFogErase(true); render(); }, icon: svg('eraser', 18) },
-        ], 2));
-        fog.append(
-          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
-          slider(t('fog.strength'), '#fogStrength', '#fogStrengthValue'),
-          slider(t('fog.height'), '#fogHeight', '#fogHeightValue'),
-          slider(t('fog.speed'), '#fogSpeed', '#fogSpeedValue'),
-        );
-        options.appendChild(fog);
-        // The map's: over every bank at once.
-        const all = titled(group(t('fog.map')), t('fog.map'));
-        all.classList.add('stack');
-        all.appendChild(slider(t('fog.mapDensity'), '#fogMapDensity', '#fogMapDensityValue'));
-        all.appendChild(button('v2-icon danger', t('fog.clear'), () => press('#clearFog'), svg('eraser', 16)));
-        options.appendChild(all);
-      }
-      // The water under the river brush (`world/weather.ts`, `render/water.ts`):
-      // how rough its waves, how much foam, how fast the rivers run.
-      if (q<HTMLButtonElement>('[data-terrain-mode="river"]')?.classList.contains('active')) {
-        const water = titled(group(t('water.title')), t('water.title'));
-        water.classList.add('stack');
-        water.append(
-          slider(t('water.waves'), '#waterWaves', '#waterWavesValue'),
-          slider(t('water.foam'), '#waterFoam', '#waterFoamValue'),
-          slider(t('water.current'), '#waterCurrent', '#waterCurrentValue'),
-        );
-        options.appendChild(water);
-      }
-      // The weather (`world/weather.ts`): rain, wind, lightning and thunder
-      // over the whole map; a click on the map calls a bolt down there.
-      if (q<HTMLButtonElement>('[data-terrain-mode="weather"]')?.classList.contains('active')) {
-        const rainAndWind = titled(group(t('weather.title')), t('weather.title'));
-        rainAndWind.classList.add('stack');
-        rainAndWind.append(
-          slider(t('weather.rain'), '#weatherRain', '#weatherRainValue'),
-          slider(t('weather.wind'), '#weatherWind', '#weatherWindValue'),
-          slider(t('weather.windDirection'), '#weatherWindDir', '#weatherWindDirValue'),
-        );
-        options.appendChild(rainAndWind);
-        const storm = titled(group(t('weather.storm')), t('weather.storm'));
-        storm.classList.add('stack');
-        storm.append(
-          slider(t('weather.lightning'), '#weatherLightning', '#weatherLightningValue'),
-          slider(t('weather.thunder'), '#weatherThunder', '#weatherThunderValue'),
-        );
-        options.appendChild(storm);
-        return;
-      }
-      // The tree brush (`world/trees.ts`): which trees, whether it plants a
-      // stand, one tree a click or cuts trees away (the woods' own too), and
-      // how dense, tall, varied and far apart.
-      if (q<HTMLButtonElement>('[data-terrain-mode="trees"]')?.classList.contains('active')) {
-        const kinds = titled(group(t('tree.kind')), t('tree.kind'));
-        kinds.appendChild(choices(TREE_KINDS.map((kind) => ({
-          label: t(`tree.kind.${kind}`), on: treeKind() === kind, run: () => { setTreeKind(kind); render(); },
-        })), 4));
-        options.appendChild(kinds);
-        const brush = titled(group(t('tree.brush')), t('tree.brush'));
-        brush.classList.add('stack');
-        const icons: Record<(typeof TREE_MODES)[number], string> = { plant: 'brush', one: 'plus', cut: 'eraser' };
-        brush.appendChild(choices(TREE_MODES.map((mode) => ({
-          label: t(`tree.mode.${mode}`), on: treeMode() === mode, run: () => { setTreeMode(mode); render(); }, icon: svg(icons[mode], 18),
-        })), 3));
-        brush.append(
-          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
-          slider(t('tree.density'), '#treeDensity', '#treeDensityValue'),
-          slider(t('tree.height'), '#treeHeight', '#treeHeightValue'),
-          slider(t('tree.variation'), '#treeVariation', '#treeVariationValue'),
-          slider(t('tree.spacing'), '#treeSpacing', '#treeSpacingValue'),
-        );
-        brush.appendChild(button('v2-icon danger', t('tree.clear'), () => press('#clearTrees'), svg('eraser', 16)));
-        options.appendChild(brush);
-        return;
-      }
-      // The gully brush (`world/gullies.ts`): cut gullies where the player
-      // wants them, or wipe them away (the land's own too), and how much of
-      // the steep land carries them of itself.
-      if (q<HTMLButtonElement>('[data-terrain-mode="gully"]')?.classList.contains('active')) {
-        const brush = titled(group(t('gully.brush')), t('gully.brush'));
-        brush.classList.add('stack');
-        brush.appendChild(choices([
+    const terrainCard = (m: string, icon: string): HTMLButtonElement =>
+      card(t(`terrain.${m}`), inTerrain && mode === m, () => { useTerrain(m); render(); }, undefined, svg(icon, 30));
+    const brushRows = (...extra: HTMLElement[]): void => { options.append(range('terrain.radius', '#terrainRadius'), ...extra); };
+    if (now === 'relief') {
+      const shape = section(t('v2.terrain.brush')).items;
+      for (const [m, icon] of RELIEF_MODES) shape.appendChild(terrainCard(m, icon));
+      const forms = section(t('v2.terrain.landforms')).items;
+      for (const m of LANDFORMS) forms.appendChild(terrainCard(m, m));
+      if (mode === 'gully') {
+        // Cut gullies where wanted, or wipe them (the land's own too); and how much of the steep land carries them of itself.
+        options.appendChild(orow(t('v2.row.brush'), choices([
           { label: t('gully.cut'), on: !gullyErase(), run: () => { setGullyErase(false); render(); }, icon: svg('brush', 18) },
           { label: t('gully.erase'), on: gullyErase(), run: () => { setGullyErase(true); render(); }, icon: svg('eraser', 18) },
-        ], 2));
-        brush.append(
-          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
-          slider(t('gully.strength'), '#gullyStrength', '#gullyStrengthValue'),
-        );
-        options.appendChild(brush);
-        const all = titled(group(t('gully.map')), t('gully.map'));
-        all.classList.add('stack');
-        all.appendChild(slider(t('gully.auto'), '#gullyAuto', '#gullyAutoValue'));
-        all.appendChild(button('v2-icon danger', t('gully.clear'), () => press('#clearGullies'), svg('eraser', 16)));
-        options.appendChild(all);
+        ])));
+        brushRows(range('gully.strength', '#gullyStrength', 'terrain.strength'));
+        options.append(subhead(t('v2.map')), range('gully.auto', '#gullyAuto', 'v2.s.gullyAuto'), orow(t('v2.row.clear'), mapAction(t('gully.clear'), '#clearGullies', 'trash')));
         return;
       }
-      // The element brush (`world/elements.ts`): what it lays - ground,
-      // plants or effects - whether it lays or erases, and that kind's settings.
-      const elementsActive = q<HTMLButtonElement>('[data-terrain-mode="elements"]')?.classList.contains('active') ?? false;
-      if (elementsActive) {
-        const now = elementKind();
-        const kinds = (title: string, list: readonly ElementKind[]): void => {
-          const g = titled(group(title), title);
-          g.appendChild(choices(list.map((kind) => ({ label: t(`el.kind.${kind}`), on: now === kind, run: () => { setElementKind(kind); render(); } })), 3));
-          options.appendChild(g);
+      brushRows(range('terrain.strength', '#terrainStrength'), range('terrain.hardness', '#terrainHardness'));
+      if (mode === 'river') {
+        // The water of every river and lake: how rough, how much foam, how fast.
+        options.append(subhead(t('water.title')), range('water.waves', '#waterWaves'), range('water.foam', '#waterFoam'), range('water.current', '#waterCurrent'));
+      }
+      options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('terrain.clear'), '#clearTerrain', 'flatten')));
+    } else if (now === 'ground') {
+      // The grounds, then the biomes - one swatch each (`world/terrainPaint.ts`).
+      const painting = inTerrain && mode === 'paint';
+      const ground = section(t('paint.kind')).items;
+      const biomes = section(t('paint.biome')).items;
+      for (const kind of PAINT_KINDS) {
+        const isBiome = (BIOME_SWATCHES as readonly string[]).includes(kind);
+        (isBiome ? biomes : ground).appendChild(card(t(`paint.kind.${kind}`), painting && paintKind() === kind, () => { setPaintKind(kind); useTerrain('paint'); render(); }, undefined, swatchArt(PAINT_SWATCH[kind])));
+      }
+      brushRows(range('terrain.strength', '#terrainStrength'), range('terrain.hardness', '#terrainHardness'));
+      // The map's own biome - the ecosystem wherever nothing else is painted.
+      options.append(subhead(t('v2.map')), orow(t('v2.row.biome'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-map-biome]')].map((b) => {
+        const key = b.dataset['mapBiome'] as string;
+        return {
+          label: `${t('terrain.mapBiome')}: ${key === 'none' ? t('terrain.mapBiome.none') : t(`paint.kind.${key}`)}`,
+          on: b.getAttribute('aria-pressed') === 'true',
+          run: () => { b.click(); render(); },
+          icon: key === 'none' ? '<i class="v2-ground none"></i>' : `<i class="v2-ground" style="--c:${PAINT_SWATCH[key as PaintKind]}"></i>`,
         };
-        kinds(t('el.ground'), ['stones', 'pebbles', 'gravel', 'leaves']);
-        kinds(t('el.plants'), ['grass', 'tallGrass', 'scrub', 'fern', 'clover', 'flowers', 'mushrooms']);
-        kinds(t('el.effects'), [...EFFECT_KINDS]);
-        const brush = titled(group(t('el.brush')), t('el.brush'));
-        brush.classList.add('stack');
-        brush.appendChild(choices((['lay', 'eraseKind', 'eraseAll'] as const).map((mode) => ({
-          label: t(`el.mode.${mode}`), on: elementMode() === mode, run: () => { setElementMode(mode); render(); },
-        })), 3));
-        brush.append(
-          slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue'),
-          slider(t('el.density'), '#elDensity', '#elDensityValue'),
-          slider(t('el.size'), '#elSize', '#elSizeValue'),
-          slider(t('el.variation'), '#elVariation', '#elVariationValue'),
-          slider(t('el.spacing'), '#elSpacing', '#elSpacingValue'),
-          slider(t('el.strength'), '#elStrength', '#elStrengthValue'),
-        );
-        if ((EFFECT_KINDS as readonly string[]).includes(now)) brush.appendChild(slider(t('el.intensity'), '#elIntensity', '#elIntensityValue'));
-        brush.appendChild(button('v2-icon danger', t('el.clear'), () => press('#clearElements'), svg('eraser', 16)));
-        options.appendChild(brush);
-        return;
-      }
-      // The cloud tool: put clouds in the sky, move them, set them to the
-      // tool's size, height and density, or take them away (`world/clouds.ts`).
-      const cloudActive = q<HTMLButtonElement>('[data-terrain-mode="cloud"]')?.classList.contains('active') ?? false;
-      if (cloudActive) {
-        const tool = titled(group(t('cloud.title')), t('cloud.title'));
-        tool.classList.add('stack');
-        const icons: Record<(typeof CLOUD_MODES)[number], string> = { add: 'plus', move: 'move', edit: 'draw', remove: 'eraser' };
-        tool.appendChild(choices(CLOUD_MODES.map((mode) => ({
-          label: t(`cloud.${mode}`), on: cloudMode() === mode, run: () => { setCloudMode(mode); render(); }, icon: svg(icons[mode], 18),
-        })), 4));
-        tool.append(
-          slider(t('cloud.size'), '#cloudSize', '#cloudSizeValue'),
-          slider(t('cloud.height'), '#cloudHeight', '#cloudHeightValue'),
-          slider(t('cloud.density'), '#cloudDensity', '#cloudDensityValue'),
-        );
-        options.appendChild(tool);
-        // Many at once, over the whole sky: each one then the tool's to move,
-        // set or take away (the sky makes none of its own).
-        const spread = titled(group(t('cloud.spread')), t('cloud.spread'));
-        spread.classList.add('stack');
-        spread.append(
-          slider(t('cloud.count'), '#cloudCount', '#cloudCountValue'),
-          slider(t('cloud.variation'), '#cloudVariation', '#cloudVariationValue'),
-        );
-        spread.appendChild(button('v2-icon', t('cloud.scatter'), () => press('#scatterClouds'), svg('cloud', 16)));
-        spread.appendChild(button('v2-icon danger', t('cloud.clear'), () => press('#clearClouds'), svg('eraser', 16)));
-        options.appendChild(spread);
-      }
-      // The sky - clouds and the haze over the whole map - with the weather
-      // tools only, named: shown under every terrain brush it was clutter
-      // (the player, 2026-10-07). No planet radius: the planet is off.
-      const fogActive = q<HTMLButtonElement>('[data-terrain-mode="fog"]')?.classList.contains('active') ?? false;
-      if (fogActive || cloudActive) {
-        const sky = titled(group(t('atmo.title')), t('atmo.title'));
-        sky.classList.add('stack');
-        // No cloud cover here: every cloud is the map's, laid with the tool.
-        sky.append(
-          slider(t('atmo.fog'), '#atmoFog', '#atmoFogValue'),
-          slider(t('atmo.fogHeight'), '#atmoFogHeight', '#atmoFogHeightValue'),
-        );
-        options.appendChild(sky);
-      }
-      // The map's own biome - the ecosystem everywhere nothing else is
-      // painted - with the paint brush only.
-      if (q<HTMLButtonElement>('[data-terrain-mode="paint"]')?.classList.contains('active')) {
-        const mapBiome = titled(group(t('terrain.mapBiome')), t('terrain.mapBiome'));
-        mapBiome.appendChild(choices([...document.querySelectorAll<HTMLButtonElement>('[data-map-biome]')].map((b) => {
-          const key = b.dataset['mapBiome'] as string;
-          return {
-            label: key === 'none' ? t('terrain.mapBiome.none') : t(`paint.kind.${key}`),
-            on: b.getAttribute('aria-pressed') === 'true',
-            run: () => { b.click(); render(); },
-            icon: key === 'none'
-              ? '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/><path d="M4 12 12 4" stroke="currentColor" stroke-opacity="0.6"/></svg>'
-              : `<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${PAINT_SWATCH[key as PaintKind]}" stroke="currentColor" stroke-opacity="0.45"/></svg>`,
-          };
-        }), 7));
-        options.appendChild(mapBiome);
-      }
-      // Named too: the two sliders and the clear button ran off the panel's edge.
-      // Not under the fog brush or the cloud tool, which have their own.
-      if (fogActive || cloudActive) return;
-      const brush = titled(group(t('v2.options')), t('v2.options'));
-      brush.append(slider(t('terrain.radius'), '#terrainRadius', '#terrainRadiusValue', svg('radius', 16)), slider(t('terrain.strength'), '#terrainStrength', '#terrainStrengthValue', svg('strength', 16)),
-        slider(t('terrain.hardness'), '#terrainHardness', '#terrainHardnessValue', svg('flatten', 16)));
-      brush.appendChild(button('v2-icon danger', t('terrain.clear'), () => press('#clearTerrain'), svg('flatten', 16)));
-      options.append(brush);
-    } else if (landTab === 'barrier') {
-      const { items } = section(t('v2.land.walls'));
-      for (const b of document.querySelectorAll<HTMLButtonElement>('.tool-help-kinds [data-barrier]')) {
-        items.appendChild(card(b.textContent ?? '', b.classList.contains('active'), () => { b.click(); render(); }, undefined, (b.dataset['barrier'] === 'guardrail' || b.dataset['barrier'] === 'railing' ? svg(b.dataset['barrier'], 34) : builderIconSvg(b.dataset['barrier'] === 'hedge' ? 'hedge' : b.dataset['barrier'] === 'wall' ? 'wallRun' : 'fenceRun', 34))));
-      }
-      note(t('help.tool.barrier'));
-    } else if (landTab === 'streetscape') {
-      // What the next click puts on the footway (`world/landscape.ts`).
-      const { items } = section(t('tool.streetscape'));
-      const now = streetscapeKind();
-      for (const kind of LANDSCAPE_KINDS) {
-        items.appendChild(card(t(`streetscape.${kind}`), now === kind, () => { setStreetscapeKind(kind); render(); }, undefined, svg(`ls_${kind}`, 34)));
-      }
-      // The sign tool: which sign, and the words on those that carry them.
-      if (now === 'sign') {
-        const kinds = group(t('sign.type'));
-        kinds.classList.add('stack');
-        kinds.appendChild(choices(SIGN_TYPES.map((type) => ({
-          label: t(`sign.type.${type}`), on: signChoice.type === type, run: () => { signChoice.type = type; render(); },
-        })), 2));
-        if (SIGN_HAS_TEXT.has(signChoice.type)) {
-          const input = el('input', 'v2-search');
-          input.type = 'text';
-          input.maxLength = SIGN_TEXT_MAX;
-          input.placeholder = t(signChoice.type === 'speed' ? 'sign.text.speed' : 'sign.text');
-          input.value = signChoice.text;
-          input.oninput = () => { signChoice.text = input.value; };
-          kinds.appendChild(input);
-        }
-        options.appendChild(kinds);
-      } else if (now === 'streetname') {
-        const named = group(t('streetscape.streetname'));
-        named.classList.add('stack');
-        const input = el('input', 'v2-search');
-        input.type = 'text';
-        input.maxLength = SIGN_TEXT_MAX;
-        input.placeholder = t('sign.street.placeholder');
-        input.value = signChoice.streetName;
-        input.oninput = () => { signChoice.streetName = input.value; };
-        named.appendChild(input);
-        options.appendChild(named);
-      }
-      note(t('help.tool.streetscape'));
-    } else {
-      // What a click does: string a line, or take a pole down (with its wires).
-      const { items } = section(t('tool.pole'));
-      const mode = poleToolMode();
-      for (const next of POLE_TOOL_MODES) {
-        items.appendChild(card(t(`pole.mode.${next}`), mode === next, () => { setPoleToolMode(next); render(); }, undefined, svg(`pole_${next}`, 34)));
-      }
-      if (mode === 'remove') {
-        note(t('help.tool.poleRemove'));
-        return;
-      }
-      // Street lights on the poles of the next run.
-      const lamps = group(t('pole.lamps'));
-      const now = poleLampMode();
-      lamps.appendChild(choices(POLE_LAMP_MODES.map((mode) => ({
-        label: t(`pole.lamps.${mode}`),
-        on: now === mode,
-        run: () => { setPoleLampMode(mode); render(); },
-        icon: svg(`pl_${mode}`, 18),
       }))));
-      options.appendChild(lamps);
-      note(t('help.tool.pole'));
+    } else if (now === 'nature') {
+      // Trees (`world/trees.ts`), then the plants and ground the element brush lays (`world/elements.ts`).
+      const trees = section(t('tree.kind')).items;
+      for (const kind of TREE_KINDS) {
+        trees.appendChild(card(t(`tree.kind.${kind}`), inTerrain && mode === 'trees' && treeKind() === kind, () => { setTreeKind(kind); useTerrain('trees'); render(); }, undefined, svg(`tk_${kind}`, 30)));
+      }
+      const plants = section(t('el.plants')).items;
+      for (const kind of PROPS) {
+        plants.appendChild(card(t(`el.kind.${kind}`), inTerrain && mode === 'elements' && elementKind() === kind, () => { useElement(kind); render(); }, undefined, svg(`el_${kind}`, 30)));
+      }
+      if (inTerrain && mode === 'trees') {
+        const icons: Record<(typeof TREE_MODES)[number], string> = { plant: 'brush', one: 'plus', cut: 'eraser' };
+        options.appendChild(orow(t('v2.row.brush'), choices(TREE_MODES.map((m) => ({
+          label: t(`tree.mode.${m}`), on: treeMode() === m, run: () => { setTreeMode(m); render(); }, icon: svg(icons[m], 18),
+        })))));
+        brushRows(range('tree.density', '#treeDensity', 'v2.zone.density'), range('tree.height', '#treeHeight'), range('tree.variation', '#treeVariation', 'v2.s.variation'), range('tree.spacing', '#treeSpacing', 'v2.s.spacing'));
+        options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('tree.clear'), '#clearTrees', 'trash')));
+      } else if (inTerrain && mode === 'elements') {
+        elementRows();
+      }
+    } else if (now === 'sky') {
+      const weather = section(t('atmo.title')).items;
+      for (const [m, icon] of SKY_MODES) weather.appendChild(terrainCard(m, icon));
+      const effects = section(t('el.effects')).items;
+      for (const kind of EFFECT_KINDS) {
+        effects.appendChild(card(t(`el.kind.${kind}`), inTerrain && mode === 'elements' && elementKind() === kind, () => { useElement(kind); render(); }, undefined, svg(`el_${kind}`, 30)));
+      }
+      if (mode === 'cloud') {
+        // Put clouds in the sky, move them, set them to the tool's size, height and density, or take them away (`world/clouds.ts`).
+        const icons: Record<(typeof CLOUD_MODES)[number], string> = { add: 'plus', move: 'move', edit: 'draw', remove: 'eraser' };
+        options.appendChild(orow(t('v2.row.brush'), choices(CLOUD_MODES.map((m) => ({
+          label: t(`cloud.${m}`), on: cloudMode() === m, run: () => { setCloudMode(m); render(); }, icon: svg(icons[m], 18),
+        })))));
+        options.append(range('cloud.size', '#cloudSize'), range('cloud.height', '#cloudHeight', 'v2.s.base'), range('cloud.density', '#cloudDensity'));
+        // Many at once over the whole sky, each then the tool's to move or take away.
+        options.append(subhead(t('cloud.spread')), range('cloud.count', '#cloudCount'), range('cloud.variation', '#cloudVariation', 'v2.s.variation'),
+          orow(t('v2.row.sky'), mapAction(t('cloud.scatter'), '#scatterClouds', 'scatter', false), mapAction(t('cloud.clear'), '#clearClouds', 'trash')));
+      } else if (mode === 'fog') {
+        // The fog brush lays or wipes banks, each keeping its own height and drift (`world/fogPaint.ts`).
+        options.appendChild(orow(t('v2.row.brush'), choices([
+          { label: t('fog.lay'), on: !fogErase(), run: () => { setFogErase(false); render(); }, icon: svg('brush', 18) },
+          { label: t('fog.erase'), on: fogErase(), run: () => { setFogErase(true); render(); }, icon: svg('eraser', 18) },
+        ])));
+        brushRows(range('fog.strength', '#fogStrength', 'terrain.strength'), range('fog.height', '#fogHeight'), range('fog.speed', '#fogSpeed', 'v2.s.wind'));
+        // The whole map's: every bank's thickness at once, and the haze over everything.
+        options.append(subhead(t('v2.map')), range('fog.mapDensity', '#fogMapDensity', 'v2.s.fogAll'), range('atmo.fog', '#atmoFog'), range('atmo.fogHeight', '#atmoFogHeight', 'v2.s.mistHeight'),
+          orow(t('v2.row.clear'), mapAction(t('fog.clear'), '#clearFog', 'trash')));
+      } else if (mode === 'weather') {
+        // Rain, wind, lightning and thunder over the whole map; a click calls a bolt down there (`world/weather.ts`).
+        options.append(range('weather.rain', '#weatherRain'), range('weather.wind', '#weatherWind'), range('weather.windDirection', '#weatherWindDir', 'v2.s.direction'),
+          subhead(t('weather.storm')), range('weather.lightning', '#weatherLightning', 'v2.s.lightning'), range('weather.thunder', '#weatherThunder', 'v2.s.thunder'));
+      } else if (mode === 'elements') {
+        elementRows();
+      }
+    } else {
+      // What stands on the footway: the landscaping items, walls and fences, wire poles.
+      const furniture = section(t('tool.streetscape')).items;
+      const kindNow = streetscapeKind();
+      for (const kind of LANDSCAPE_KINDS) {
+        furniture.appendChild(card(t(`streetscape.${kind}`), current === 'streetscape' && kindNow === kind, () => { setStreetscapeKind(kind); useTool('streetscape'); render(); }, undefined, svg(`ls_${kind}`, 30)));
+      }
+      const walls = section(t('v2.land.walls')).items;
+      const barrierNow = q('.tool-help-kinds [data-barrier].active')?.dataset['barrier'] ?? '';
+      for (const kind of BARRIER_KINDS) {
+        walls.appendChild(card(t(`barrier.kind.${kind}`), current === 'barrier' && barrierNow === kind, () => useBarrier(kind), undefined, BARRIER_ICON(kind, 30)));
+      }
+      const poles = section(t('tool.pole')).items;
+      for (const next of POLE_TOOL_MODES) {
+        poles.appendChild(card(t(`pole.mode.${next}`), current === 'pole' && poleToolMode() === next, () => { setPoleToolMode(next); useTool('pole'); render(); }, undefined, svg(`pole_${next}`, 30)));
+      }
+      if (current === 'streetscape' && kindNow === 'sign') {
+        // Which sign, and the words on those that carry them.
+        const type = el('select', 'v2-mini');
+        type.setAttribute('aria-label', t('sign.type'));
+        for (const s of SIGN_TYPES) {
+          const o = el('option', '', t(`sign.type.${s}`));
+          o.value = s;
+          o.selected = signChoice.type === s;
+          type.appendChild(o);
+        }
+        type.onchange = () => { signChoice.type = type.value as typeof signChoice.type; render(); };
+        options.appendChild(orow(t('v2.row.sign'), type));
+        if (SIGN_HAS_TEXT.has(signChoice.type)) options.appendChild(orow(t('v2.row.text'), textInput(t(signChoice.type === 'speed' ? 'sign.text.speed' : 'sign.text'), signChoice.text, (v) => { signChoice.text = v; })));
+      } else if (current === 'streetscape' && kindNow === 'streetname') {
+        options.appendChild(orow(t('v2.row.text'), textInput(t('sign.street.placeholder'), signChoice.streetName, (v) => { signChoice.streetName = v; })));
+      } else if (current === 'pole' && poleToolMode() === 'build') {
+        // Street lights on the poles of the next run.
+        options.appendChild(orow(t('v2.row.lights'), choices(POLE_LAMP_MODES.map((m) => ({
+          label: `${t('pole.lamps')}: ${t(`pole.lamps.${m}`)}`, on: poleLampMode() === m, run: () => { setPoleLampMode(m); render(); }, icon: svg(`pl_${m}`, 18),
+        })))));
+      }
+      note(t(current === 'barrier' ? 'help.tool.barrier' : current === 'pole' ? (poleToolMode() === 'remove' ? 'help.tool.poleRemove' : 'help.tool.pole') : 'help.tool.streetscape'));
     }
+  }
+  /** The element brush's rows: lay or erase, its settings for the kind in hand, and clearing them all. */
+  function elementRows(): void {
+    const icons = { lay: 'brush', eraseKind: 'eraser', eraseAll: 'trash' } as const;
+    options.appendChild(orow(t('v2.row.brush'), choices((['lay', 'eraseKind', 'eraseAll'] as const).map((m) => ({
+      label: t(`el.mode.${m}`), on: elementMode() === m, run: () => { setElementMode(m); render(); }, icon: svg(icons[m], 18),
+    })))));
+    options.append(range('terrain.radius', '#terrainRadius'), range('el.density', '#elDensity'), range('el.size', '#elSize'),
+      range('el.variation', '#elVariation', 'v2.s.variation'), range('el.spacing', '#elSpacing', 'v2.s.spacing'), range('el.strength', '#elStrength', 'terrain.strength'));
+    if (isEffect(elementKind())) options.appendChild(range('el.intensity', '#elIntensity', 'v2.s.effect'));
+    options.append(subhead(t('v2.map')), orow(t('v2.row.clear'), mapAction(t('el.clear'), '#clearElements', 'trash')));
+  }
+  /** A text box in the options; the keys typed stay in it (the game's shortcuts do not see them). */
+  function textInput(placeholder: string, value: string, set: (v: string) => void): HTMLInputElement {
+    const input = el('input', 'v2-search');
+    input.type = 'text';
+    input.maxLength = SIGN_TEXT_MAX;
+    input.placeholder = placeholder;
+    input.value = value;
+    input.oninput = () => set(input.value);
+    input.onkeydown = (e) => e.stopPropagation();
+    return input;
   }
 
   // ------------------------------------------------------------ public transport
@@ -1261,20 +1257,17 @@ export function mountShell(deps: ShellDeps): void {
   function renderSimple(current: string): void {
     title.textContent = t(`tool.${current}`);
     if (current === 'bulldoze') {
-      // Demolish knocks down at once; the bomb (from the Actions) strikes
-      // with a force, things breaking piece by piece.
-      if (strikeChoice.mode === 'shoot') title.textContent = t('actions.pistol');
+      // One tool, three ways to bring things down: demolish at once, the
+      // pistol, the bomb with a force (things breaking piece by piece). They
+      // were a dock button and a menu of their own beside Demolish.
+      for (const [mode, key, icon] of [['demolish', 'tool.bulldoze', 'demolish'], ['shoot', 'actions.pistol', 'actions'], ['strike', 'actions.bomb', 'bomb']] as const) {
+        tabs.appendChild(tab(t(key), strikeChoice.mode === mode, () => { strikeChoice.mode = mode; render(); }, false, svg(icon, 18)));
+      }
       if (strikeChoice.mode === 'strike') {
-        title.textContent = t('actions.bomb');
-        const force = group(t('strike.force'));
-        const row = el('div', 'v2-stepper');
-        row.append(
-          button('v2-icon', t('strike.force.less'), () => { strikeChoice.strength = Math.max(1, strikeChoice.strength - (strikeChoice.strength > 10 ? 5 : 1)); render(); }, svg('minus', 14)),
-          el('output', 'v2-stepper-value', `${t('strike.force')}: ${strikeChoice.strength}`),
-          button('v2-icon', t('strike.force.more'), () => { strikeChoice.strength = Math.min(50, strikeChoice.strength + (strikeChoice.strength >= 10 ? 5 : 1)); render(); }, svg('plus', 14)),
-        );
-        force.appendChild(row);
-        options.appendChild(force);
+        const s = strikeChoice;
+        options.appendChild(orow(t('strike.force'), stepper(t('strike.force'), `${s.strength}`, (d) => {
+          s.strength = d < 0 ? Math.max(1, s.strength - (s.strength > 10 ? 5 : 1)) : Math.min(50, s.strength + (s.strength >= 10 ? 5 : 1));
+        })));
       }
     }
     note(t(`help.tool.${current}`));
@@ -1513,11 +1506,8 @@ plan.appendChild(choices([
   function render(): void {
     const current = tool();
     const cat = categoryOf(current);
-    // The bomb is an Action: its button is lit, not Demolish's.
-    const bombing = current === 'bulldoze' && strikeChoice.mode !== 'demolish' && open;
-    actionsB.classList.toggle('on', bombing);
     for (const [id, b] of catButtons) {
-      b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info') && !(bombing && id === 'demolish'));
+      b.classList.toggle('on', id === cat && open && (current !== 'inspect' || id === 'info'));
       const c = CATS.find((x) => x.id === id);
       (b.querySelector('.v2-cat-name') as HTMLElement).textContent = c?.label() ?? '';
       // Only the icon shows: the name and the key are in the tooltip.
@@ -1554,6 +1544,9 @@ plan.appendChild(choices([
     // icon is lit in the dock and its help is in the tooltip.
     drawer.hidden = tabs.hidden && strip.childElementCount === 0;
     toolOptions.hidden = options.hidden && tools.childElementCount === 0;
+    // Many things: two rows of cards, more of them in view, rather than one
+    // row whose end (the weather, the landforms) hid past the panel's edge.
+    strip.classList.toggle('two-rows', strip.querySelectorAll('.v2-card').length > 10);
     if (lastSignature === `${cat}|${current}|${builder?.category ?? ''}`) strip.scrollLeft = scroll;
     lastSignature = `${cat}|${current}|${builder?.category ?? ''}`;
     if (focused) {
@@ -1585,8 +1578,6 @@ plan.appendChild(choices([
     drawer.style.maxWidth = `${Math.floor(Math.min(1100, half * 2))}px`;
   }
   window.addEventListener('resize', () => fitDrawer());
-  const wantInfo = true;
-  void wantInfo;
 
   function updateHint(): void {
     const current = tool();
@@ -1597,18 +1588,53 @@ plan.appendChild(choices([
 
   // The HUD follows the game's numbers.
   const tick = (): void => {
-    clock.textContent = q('#cityClock')?.textContent ?? '';
-    sky.textContent = q('#skyMode')?.textContent ?? '';
+    // Nothing to show in a hidden tab (Page Visibility API): no reads, no writes.
+    if (document.hidden) return;
+    const time = q('#cityClock')?.textContent ?? '';
+    if (clockText.data !== time) clockText.data = time;
     const parts = ['#residentCount', '#vehicleCount', '#pedCount'].map((s) => q(s)?.textContent ?? '').filter(Boolean);
     const line = parts.join('  ·  ');
-    if (stats.textContent !== line) stats.textContent = line;
+    if (statsText.data !== line) statsText.data = line;
+    syncSky();
+    syncImpossible();
     const active = q('.simulation-controls [data-speed].active')?.dataset['speed'] ?? '1';
-    for (const b of speedButtons) b.classList.toggle('on', b.dataset['speed'] === active);
-    undo.disabled = q<HTMLButtonElement>('#undoAction')?.disabled ?? false;
-    redo.disabled = q<HTMLButtonElement>('#redoAction')?.disabled ?? false;
+    for (const b of speedButtons) {
+      const on = b.dataset['speed'] === active;
+      if (b.classList.contains('on') !== on) b.classList.toggle('on', on);
+    }
+    // Written only when they change: every write is a mutation.
+    const canUndo = !(q<HTMLButtonElement>('#undoAction')?.disabled ?? false);
+    const canRedo = !(q<HTMLButtonElement>('#redoAction')?.disabled ?? false);
+    if (undo.disabled === canUndo) undo.disabled = !canUndo;
+    if (redo.disabled === canRedo) redo.disabled = !canRedo;
+    syncInside();
+    if (popId === 'sim') syncMetrics();
     updateHint();
     syncSide();
   };
+  // The game's answers - saved, refused, undone, a road that cannot be laid -
+  // flash in its hint bar, which this interface does not show: they appear
+  // here a moment, above the dock, and a one-shot choice they end (the block
+  // grid laid) is redrawn.
+  const toast = el('div', 'v2-toast');
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+  toast.hidden = true;
+  root.appendChild(toast);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  const gameHint = q('#hint');
+  if (gameHint) {
+    new MutationObserver(() => {
+      if (!gameHint.classList.contains('flash')) return;
+      const text = gameHint.textContent ?? '';
+      if (!text) return;
+      toast.textContent = text;
+      toast.hidden = false;
+      if (toastTimer !== null) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.hidden = true; toastTimer = null; }, 2400);
+      later();
+    }).observe(gameHint, { attributes: true, attributeFilter: ['class'], childList: true, characterData: true, subtree: true });
+  }
   function syncSide(): void {
     const roadSide = !(q('#inspector')?.classList.contains('hidden') ?? true);
     if (side.hidden === roadSide) side.hidden = !roadSide;
@@ -1639,9 +1665,22 @@ plan.appendChild(choices([
   if (game) watch.observe(game, { attributes: true, attributeOldValue: true, attributeFilter: ['data-tool'] });
   const builderRoot = document.getElementById('builder');
   if (builderRoot) watch.observe(builderRoot, { attributes: true, attributeOldValue: true, subtree: true, attributeFilter: ['class', 'aria-pressed'] });
+  // The Builder reports its state every frame while it is in hand
+  // (`buildingsWiring.ts` refresh): the panel is rebuilt only when what it
+  // shows has changed - it was rebuilt, fifty cards and all, every frame. The
+  // same state handed again means its pictures arrived.
+  let builderSig = '';
+  const sigOf = (s: BuilderState): string => JSON.stringify([s.category, s.tool, s.armed, [...s.ready].sort().join(','), s.floor, s.snap, s.grid, s.hideOthers,
+    s.selection, s.planning, s.planPoints, s.userBlueprints.map((b) => b.key), s.pattern, s.scope, s.roof, s.material, s.drawAction]);
   workspace.subscribe((state) => {
+    const same = state === builder;
     builder = state;
-    if (tool() === 'building') later();
+    if (tool() !== 'building') return;
+    const sig = sigOf(state);
+    if (same || sig !== builderSig) {
+      builderSig = sig;
+      later();
+    }
   });
   window.addEventListener('keydown', (e) => {
     // A tool picked from the keyboard opens its drawer.
@@ -1651,8 +1690,13 @@ plan.appendChild(choices([
       later();
     }
   });
+  // The lane buttons are lit by the game only when a class is chosen: at the
+  // start none was lit. Choosing the class in hand again lights its count.
+  q<HTMLButtonElement>('.road-type.active')?.click();
   onLanguageChange(() => {
-    for (const [b, key] of [[undo, 'action.undo'], [redo, 'action.redo'], [menuB, 'builder.menu.app'], [simB, 'builder.menu.simulation'], [camB, 'camera.label'], [helpB, 'builder.help']] as const) {
+    impossibleShown = -1;
+    for (const [b, key] of [[undo, 'action.undo'], [redo, 'action.redo'], [menuB, 'builder.menu.app'], [simB, 'builder.menu.simulation'], [camB, 'camera.label'], [helpB, 'builder.help'], [layersB, 'v2.layers'],
+      ...skyButtons.map((s) => [s, `sky.${s.dataset['sky'] ?? 'day'}`] as const)] as const) {
       const s = b.querySelector('span');
       if (s) s.textContent = t(key);
       b.title = t(key);

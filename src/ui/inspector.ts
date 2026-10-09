@@ -422,7 +422,12 @@ function renderNode(
     ? `<p class="inspect-note">${t(node.crossing.kind === 'signal' ? 'inspector.crossingSignal' : 'inspector.crossingZebra')}</p>` +
       `<div class="inspect-actions"><button type="button" id="inspectRemoveCrossing" class="danger">${t('inspector.removeCrossing')}</button></div>`
     : '';
-  body.innerHTML = `<div id="inspectStats">${stats}</div>` + crossingOffer +
+  // Legs meeting too sharply (`world/legAngles.ts`, `Network.impossible`):
+  // the junction is drawn degraded; it was computed and shown nowhere.
+  const gap = net.impossible.get(id);
+  const impossible = gap === undefined ? ''
+    : `<div class="inspect-warning" role="alert"><strong>${t('inspector.impossible')}</strong> · ${t('inspector.impossibleGap', { angle: Math.round((gap * 180) / Math.PI) })}<br>${t('inspector.impossibleBody')}</div>`;
+  body.innerHTML = impossible + `<div id="inspectStats">${stats}</div>` + crossingOffer +
     `<label class="inspect-select">${t('inspector.heightNode')} <input id="inspectHeightNode" type="number" step="0.1" value="${(node.heightOffset / UNITS_PER_METER).toFixed(1)}" /></label>` +
     (node.smooth ? `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`
       : `<label class="inspect-select">${t('inspector.controlSelect')} <select id="inspectControl">${controlOptions(node.control)}</select></label>`) +
@@ -438,6 +443,8 @@ function renderNode(
   if (join) join.onclick = () => actionsForNode().onJoin?.(id);
   const removeCrossing = document.getElementById('inspectRemoveCrossing') as HTMLButtonElement | null;
   if (removeCrossing) removeCrossing.onclick = () => actionsForNode().onRemoveCrossing?.(id);
+  const movementList = body.querySelector<HTMLDetailsElement>('details.movement-controls');
+  movementList?.addEventListener('toggle', () => { movementsOpen = movementList.open; });
   document.querySelectorAll<HTMLInputElement>('[data-movement-from]').forEach((input) => {
     input.onchange = () => actionsForNode().onSetMovementBlocked?.(
       id,
@@ -510,10 +517,17 @@ function movementControls(
   }
 
   if (!movements.size) return '';
-  return `<fieldset class="movement-controls"><legend>${t('inspector.allowedMovements')}</legend>${[...movements.entries()].map(([key, movement]) =>
+  // Folded by default, the count of what is allowed in its summary: a
+  // crossroads has a dozen rows and they pushed the junction's other settings
+  // out of the panel (progressive disclosure). The panel is rebuilt after
+  // every change, so whether it is open is kept here.
+  const allowed = [...movements.keys()].filter((key) => !blocked.includes(key)).length;
+  return `<details class="movement-controls"${movementsOpen ? ' open' : ''}><summary>${t('inspector.allowedMovements')} (${allowed}/${movements.size})</summary>${[...movements.entries()].map(([key, movement]) =>
     `<label><input type="checkbox" data-movement-from="${movement.from}" data-movement-to="${movement.to}"${blocked.includes(key) ? '' : ' checked'} />${movement.label}</label>`,
-  ).join('')}</fieldset>`;
+  ).join('')}</details>`;
 }
+/** Whether the junction's list of movements is unfolded (kept across the panel's rebuilds). */
+let movementsOpen = false;
 
 function actionsForNode(): InspectorActions {
   return current?.actions ?? { onUpgrade: () => {}, onSetType: () => {}, onDelete: () => {} };

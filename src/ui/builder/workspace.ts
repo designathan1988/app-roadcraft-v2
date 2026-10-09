@@ -279,12 +279,17 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
   const syncSpeed = (): void => {
     const active = document.querySelector<HTMLElement>('.simulation-controls [data-speed].active')?.dataset['speed'] ?? '1';
     for (const b of speedGroup.querySelectorAll<HTMLElement>('[data-speed-proxy]')) {
-      b.classList.toggle('active', b.dataset['speedProxy'] === active);
-      b.setAttribute('aria-pressed', String(b.dataset['speedProxy'] === active));
-      b.title = b.dataset['speedProxy'] === '0' ? t('sim.pause') : `${t('sim.speed')} ${b.dataset['speedProxy']}×`;
+      const on = b.dataset['speedProxy'] === active;
+      if (b.classList.contains('active') !== on) b.classList.toggle('active', on);
+      if (b.getAttribute('aria-pressed') !== String(on)) b.setAttribute('aria-pressed', String(on));
+      const title = b.dataset['speedProxy'] === '0' ? t('sim.pause') : `${t('sim.speed')} ${b.dataset['speedProxy']}×`;
+      if (b.title !== title) b.title = title;
     }
   };
-  new MutationObserver(syncSpeed).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  // Only the game's own speed buttons: watching every class change in the
+  // page ran this on each rebuild of any panel.
+  const speedSource = document.querySelector('.simulation-controls .speed-controls');
+  if (speedSource) new MutationObserver(syncSpeed).observe(speedSource, { subtree: true, attributeFilter: ['class'] });
   syncSpeed();
   const cameraMenu = el('button', 'bw-chip bw-camera-chip');
   cameraMenu.type = 'button';

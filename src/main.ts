@@ -2549,6 +2549,18 @@ function mountUnifiedChrome(): void {
       if ((ROAD_PARKING_PRESETS as readonly string[]).includes(preset)) setRoadParkingPreset(preset as RoadParkingPreset);
     },
     transitTool,
+    // Junctions that cannot be built (`Network.impossible`): counted in the
+    // top bar, and the first one shown in the inspector on a click.
+    impossibleCount: () => net.impossible.size,
+    showImpossible: () => {
+      const id = net.impossible.keys().next().value;
+      const node = id === undefined ? undefined : doc.node(id);
+      if (id === undefined || !node) return;
+      setTool('inspect');
+      select(null, null, id, 'nó impossível mostrado');
+      view.moveTo(node);
+      requestDraw();
+    },
   });
 }
 // Mounted after this module has finished evaluating: moving the toolbar and
