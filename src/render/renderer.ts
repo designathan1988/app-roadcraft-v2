@@ -1140,17 +1140,30 @@ export function createSceneRenderer(
   };
   /**
    * What a building's site is graded from, as text, once per record: the
-   * record less its age, its name and its lot plan's version, which move no
-   * ground. A record is replaced on any change (`put` stores a copy), and the
-   * town's ageing - a record every few seconds - re-graded lots and set off
-   * everything that stands on the ground round them.
+   * platform the grading reads (`buildingPads`, kept in `padsKnown` for the
+   * grading itself) - each ring's corners, the platform's height at each,
+   * water, paving, its solid blocks and split levels - and nothing else of
+   * the record. A result is reused while the inputs its build reads are the
+   * same (Bazel's action cache). The whole record (less its age and name)
+   * was compared before: a storey added, a facade or a roof changed, the
+   * town's ageing - a record every few seconds - re-graded the lot and set
+   * off everything that stands on the ground round it.
    */
   const siteText = new WeakMap<Building, string>();
   const siteTextOf = (b: Building): string => {
     let text = siteText.get(b);
     if (text === undefined) {
-      const { decay: _decay, builtAt: _builtAt, name: _name, lotPlan: _lotPlan, ...site } = b;
-      text = JSON.stringify(site);
+      if (!padsKnown.has(b)) buildingPads([b], terrain.naturalRenderedHeightAt, pavedHeightAt, TERRAIN_CELL * 1.5, padsKnown);
+      const pad = padsKnown.get(b);
+      text = '';
+      if (pad) {
+        text = `${pad.solidCount}|${pad.stepped ? 1 : 0}`;
+        pad.rings.forEach((ring, i) => {
+          const level = pad.levels[i]!;
+          text += `|${pad.water[i] ? 'w' : ''}${pad.paved[i] ? 'p' : ''}`;
+          for (const p of ring) text += `;${p.x.toFixed(3)},${p.y.toFixed(3)},${level(p.x, p.y).toFixed(3)}`;
+        });
+      }
       siteText.set(b, text);
     }
     return text;

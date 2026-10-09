@@ -197,8 +197,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   feito (o carro entra pela rua, na cota da frente); lojas e prédios com
   estacionamento ou pátio de carga atrás não são escalonados.
 - Prédios: um prédio feito de referência não fica selecionado depois de
-  construído; subir a altura de um prédio leva cerca de 10 s (relato do
-  jogador, não investigado).
+  construído. Subir a altura de um prédio (relato: cerca de 10 s): na
+  cidade de teste, 83 ms até o prédio redesenhado, e andar, fachada e
+  telhado não renivelam mais o chão em volta (P87); em relevo, conferir no
+  mapa do jogador.
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
 - Simulação com 400 carros e 400 pessoas a 4x: 4,0-10 ms por quadro no
