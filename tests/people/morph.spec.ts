@@ -83,6 +83,24 @@ describe('person model: bodies', () => {
     expect(highest / 10).toBeGreaterThan(0.6);
   });
 
+  it('measures the height from the heights alone as the whole shape does', () => {
+    // `Morpher.height` measures only the vertices that can be the highest or
+    // the lowest; it must agree with every vertex measured (MakeHuman's
+    // getHeightCm: max Y - min Y of the body).
+    const cases: MacroParams[] = [];
+    for (let i = 0; i < 12; i++) {
+      const r = (k: number): number => ((i * 7919 + k * 104729) % 1000) / 999;
+      cases.push({ ...DEFAULT_MACRO, gender: r(1), age: r(2), muscle: r(3), weight: r(4), height: r(5), proportions: r(6), cupsize: r(7) });
+    }
+    cases.push({ ...DEFAULT_MACRO, gender: 0, age: ageFromYears(1), height: 0 }, { ...DEFAULT_MACRO, gender: 1, height: 1, weight: 1 });
+    for (const params of cases) {
+      expect(morpher.height(params, body)).toBeCloseTo(bodyHeight(morpher.shape(params), body), 3);
+    }
+    const t0 = performance.now();
+    for (const params of cases) morpher.height(params, body);
+    console.log(`height ${((performance.now() - t0) / cases.length).toFixed(2)} ms per body`);
+  });
+
   it('morphs a whole body in a few milliseconds', () => {
     const out = new Float32Array(morpher.vertexCount * 3);
     morpher.shape(DEFAULT_MACRO, {}, out);

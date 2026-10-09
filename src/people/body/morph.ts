@@ -220,12 +220,8 @@ export class Morpher {
    * third of the work of the whole shape, for a body's standing height.
    */
   height(params: MacroParams, bodyRange: readonly (readonly [number, number])[]): number {
-    const n = this.vertexCount;
-    const D = n * 3;
-    const y = new Float32Array(n);
-    for (let v = 0; v < n; v++) y[v] = this.base[v * 3 + 1]!;
     const K = this.packs.macro.components;
-    const scales = this.packs.macro.layout.basis.scales;
+    const table = this.heightTable(bodyRange);
     const weights = macroTargetWeights(this.packs.modifiers.macro, this.macroNames, params);
     const c = new Float64Array(K);
     for (const [name, w] of weights) {
@@ -233,37 +229,202 @@ export class Morpher {
       if (!t) continue;
       for (let k = 0; k < K; k++) c[k] = (c[k] ?? 0) + w * (this.coeff[t.row * K + k] ?? 0);
     }
-    for (let k = 0; k < K; k++) {
-      const ck = (c[k] ?? 0) * (scales[k] ?? 0);
-      if (ck === 0) continue;
-      const offset = k * D + 1;
-      for (let v = 0; v < n; v++) y[v] = y[v]! + ck * (this.basis[offset + v * 3] ?? 0);
-    }
+    // The sparse moves - each macro target's residual, the breast targets -
+    // as one weight a source (`sources`); their entries are read per vertex,
+    // only for the vertices measured.
+    const { baseY, yBasis, starts, top, bottom, lead, reach, sources, entryStart, entrySource, entryDy, sourceReach } = table;
+    const S = sources.length;
+    const sourceWeight = new Float64Array(S);
+    const active: number[] = [];
     for (const [name, w] of weights) {
+      const s = this.residualSource.get(name);
       const t = this.macroRow.get(name);
-      if (!t) continue;
-      const s = w * t.residualScale;
-      for (let e = t.residualStart; e < t.residualStart + t.residualCount; e++) {
-        const v = this.rIdx[e] ?? 0;
-        y[v] = y[v]! + s * (this.rDelta[e * 3 + 1] ?? 0);
-      }
+      if (s === undefined || !t || w === 0) continue;
+      sourceWeight[s] = w * t.residualScale;
+      active.push(s);
     }
     for (const [name, w] of macroTargetWeights(this.packs.modifiers.macro, this.breastNames(), params)) {
+      const s = this.breastSource.get(name);
       const t = this.localByName.get(name);
-      if (!t || w === 0) continue;
-      const s = w * t.scale;
-      for (let e = t.start; e < t.start + t.count; e++) {
-        const v = this.lIdx[e] ?? 0;
-        y[v] = y[v]! + s * (this.lDelta[e * 3 + 1] ?? 0);
+      if (s === undefined || !t || w === 0) continue;
+      sourceWeight[s] = w * t.scale;
+      active.push(s);
+    }
+    const yOf = (i: number): number => {
+      let y = baseY[i]!;
+      const at = i * K;
+      for (let k = 0; k < K; k++) y += (c[k] ?? 0) * yBasis[at + k]!;
+      for (let e = entryStart[i]!; e < entryStart[i + 1]!; e++) y += sourceWeight[entrySource[e]!]! * entryDy[e]!;
+      return y;
+    };
+    // Branch and bound over small clusters of neighbouring vertices: the
+    // basis shapes and the sparse targets move no vertex of a cluster farther
+    // up or down than the cluster's bound (each one's largest move there, by
+    // its weight), so a cluster whose highest base plus its bound stays under
+    // the highest point found holds no higher one - and likewise for the
+    // lowest. The same max and min as every vertex measured (`bodyHeight` of
+    // the whole shape).
+    // A cluster moves as its first vertex does (`lead`), give or take how far
+    // any of its vertices strays from that under each shape (`reach`).
+    const clusters = starts.length - 1;
+    const upper = new Float64Array(clusters);
+    const lower = new Float64Array(clusters);
+    for (let g = 0; g < clusters; g++) {
+      let move = 0, b = 0;
+      const at = g * K;
+      for (let k = 0; k < K; k++) {
+        const ck = c[k] ?? 0;
+        move += ck * lead[at + k]!;
+        b += Math.abs(ck) * reach[at + k]!;
       }
+      for (const s of active) b += Math.abs(sourceWeight[s]!) * sourceReach[g * S + s]!;
+      // (A hair over the bound, for the rounding of the sums.)
+      upper[g] = top[g]! + move + b + 1e-9;
+      lower[g] = bottom[g]! + move - b - 1e-9;
     }
     let lo = Infinity, hi = -Infinity;
-    for (const [a, b] of bodyRange) for (let v = a; v <= b; v++) {
-      const h = y[v]!;
-      if (h < lo) lo = h;
-      if (h > hi) hi = h;
+    const ids = Array.from({ length: clusters }, (_, g) => g);
+    ids.sort((p, q) => upper[q]! - upper[p]!);
+    for (const g of ids) {
+      if (upper[g]! < hi) break;
+      for (let i = starts[g]!; i < starts[g + 1]!; i++) { const y = yOf(i); if (y > hi) hi = y; }
+    }
+    ids.sort((p, q) => lower[p]! - lower[q]!);
+    for (const g of ids) {
+      if (lower[g]! > lo) break;
+      for (let i = starts[g]!; i < starts[g + 1]!; i++) { const y = yOf(i); if (y < lo) lo = y; }
     }
     return hi - lo;
+  }
+
+  /** `height`'s tables for one body range, built once. */
+  private heightTables = new WeakMap<object, {
+    /** The range's vertices, cluster by cluster. */
+    readonly order: Int32Array;
+    /** A vertex's place in `order` (only in range). */
+    readonly rank: Int32Array;
+    readonly inRange: Uint8Array;
+    /** Base heights in `order`. */
+    readonly baseY: Float64Array;
+    /** Each basis shape's Y move per unit coefficient, `K` a vertex, in `order`. */
+    readonly yBasis: Float32Array;
+    /** Where each cluster starts in `order` (one more entry: the end). */
+    readonly starts: Int32Array;
+    /** Each cluster's highest and lowest base height. */
+    readonly top: Float64Array;
+    readonly bottom: Float64Array;
+    /** Each cluster's first vertex's Y move of each basis shape, per unit coefficient, `K` a cluster. */
+    readonly lead: Float64Array;
+    /** How far any vertex of a cluster strays from `lead` under each basis shape, `K` a cluster. */
+    readonly reach: Float64Array;
+    /** The sparse sources: each macro target's residual, then each breast target. */
+    readonly sources: readonly string[];
+    /** Each vertex's sparse entries (in `order`): where they start (one more: the end), their source and raw Y move. */
+    readonly entryStart: Int32Array;
+    readonly entrySource: Uint16Array;
+    readonly entryDy: Float32Array;
+    /** Each cluster's largest raw Y move of each source, `sources.length` a cluster. */
+    readonly sourceReach: Float32Array;
+  }>();
+  /** A macro target's (a breast target's) place among the sparse sources (`heightTable`). */
+  private readonly residualSource = new Map<string, number>();
+  private readonly breastSource = new Map<string, number>();
+
+  private heightTable(bodyRange: readonly (readonly [number, number])[]) {
+    const known = this.heightTables.get(bodyRange);
+    if (known) return known;
+    const n = this.vertexCount;
+    const D = n * 3;
+    const K = this.packs.macro.components;
+    const scales = this.packs.macro.layout.basis.scales;
+    const inRange = new Uint8Array(n);
+    for (const [a, b] of bodyRange) for (let v = a; v <= b; v++) inRange[v] = 1;
+    // Clusters: the base mesh's vertices by a grid of 0.4 dm cells, so the
+    // vertices of a cluster move alike under every basis shape.
+    const CELL = 0.4;
+    const byCell = new Map<string, number[]>();
+    for (let v = 0; v < n; v++) {
+      if (!inRange[v]) continue;
+      const key = `${Math.floor(this.base[v * 3]! / CELL)}:${Math.floor(this.base[v * 3 + 1]! / CELL)}:${Math.floor(this.base[v * 3 + 2]! / CELL)}`;
+      const list = byCell.get(key);
+      if (list) list.push(v); else byCell.set(key, [v]);
+    }
+    const groups = [...byCell.values()];
+    const count = groups.reduce((s, g) => s + g.length, 0);
+    const order = new Int32Array(count);
+    const rank = new Int32Array(n).fill(-1);
+    const baseY = new Float64Array(count);
+    const yBasis = new Float32Array(count * K);
+    const starts = new Int32Array(groups.length + 1);
+    const top = new Float64Array(groups.length).fill(-Infinity);
+    const bottom = new Float64Array(groups.length).fill(Infinity);
+    const lead = new Float64Array(groups.length * K);
+    const reach = new Float64Array(groups.length * K);
+    let i = 0;
+    groups.forEach((list, g) => {
+      starts[g] = i;
+      for (const v of list) {
+        order[i] = v;
+        rank[v] = i;
+        const y = this.base[v * 3 + 1]!;
+        baseY[i] = y;
+        if (y > top[g]!) top[g] = y;
+        if (y < bottom[g]!) bottom[g] = y;
+        for (let k = 0; k < K; k++) {
+          const dy = Math.fround((scales[k] ?? 0) * (this.basis[k * D + v * 3 + 1] ?? 0));
+          yBasis[i * K + k] = dy;
+          if (i === starts[g]) lead[g * K + k] = dy;
+          const stray = Math.abs(dy - lead[g * K + k]!);
+          if (stray > reach[g * K + k]!) reach[g * K + k] = stray;
+        }
+        i++;
+      }
+    });
+    starts[groups.length] = i;
+    // The sparse sources, transposed to the vertices: each vertex's entries
+    // of every macro target's residual and every breast target.
+    const sources: string[] = [];
+    // Each source's entries as (index list, delta list), visited twice: once
+    // to count each vertex's entries, once to file them.
+    const lists: { readonly source: number; readonly idx: Uint16Array; readonly delta: Int16Array; readonly from: number; readonly to: number }[] = [];
+    for (const t of this.packs.macro.targets) {
+      this.residualSource.set(t.name, sources.length);
+      lists.push({ source: sources.length, idx: this.rIdx, delta: this.rDelta, from: t.residualStart, to: t.residualStart + t.residualCount });
+      sources.push(t.name);
+    }
+    for (const t of this.packs.local.targets) {
+      if (t.group !== 'breast') continue;
+      this.breastSource.set(t.name, sources.length);
+      lists.push({ source: sources.length, idx: this.lIdx, delta: this.lDelta, from: t.start, to: t.start + t.count });
+      sources.push(t.name);
+    }
+    const S = sources.length;
+    const entryStart = new Int32Array(count + 1);
+    for (const l of lists) for (let e = l.from; e < l.to; e++) { const v = l.idx[e] ?? 0; if (inRange[v]) entryStart[rank[v]! + 1]!++; }
+    for (let j = 0; j < count; j++) entryStart[j + 1] = entryStart[j + 1]! + entryStart[j]!;
+    const fill = entryStart.slice();
+    const total = entryStart[count]!;
+    const entrySource = new Uint16Array(total);
+    const entryDy = new Float32Array(total);
+    const clusterOf = new Int32Array(count);
+    for (let g = 0; g < groups.length; g++) for (let j = starts[g]!; j < starts[g + 1]!; j++) clusterOf[j] = g;
+    const sourceReach = new Float32Array(groups.length * S);
+    for (const l of lists) {
+      for (let e = l.from; e < l.to; e++) {
+        const v = l.idx[e] ?? 0;
+        if (!inRange[v]) continue;
+        const j = rank[v]!;
+        const at = fill[j]!++;
+        const dy = l.delta[e * 3 + 1] ?? 0;
+        entrySource[at] = l.source;
+        entryDy[at] = dy;
+        const slot = clusterOf[j]! * S + l.source;
+        if (Math.abs(dy) > sourceReach[slot]!) sourceReach[slot] = Math.abs(dy);
+      }
+    }
+    const table = { order, rank, inRange, baseY, yBasis, starts, top, bottom, lead, reach, sources, entryStart, entrySource, entryDy, sourceReach };
+    this.heightTables.set(bodyRange, table);
+    return table;
   }
 
   private addLocal(into: Float32Array, name: string, w: number): void {
