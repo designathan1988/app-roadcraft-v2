@@ -144,6 +144,18 @@ o jogo a cada edição.
   Light Beam). Conferido no jogo (build da porta 4180), à noite e de dia.
 
 ### Prédios e cidade
+- Cidade gerada auditada inteira (`tests/world/generatedCity.spec.ts`,
+  `tests/world/cityAudit.ts`, sementes 20261009, 77 e 4242): nenhum lote
+  sobre o pavimento nem sobre outro, nenhum maior que 2400 m2, todo lote
+  zoneado construído, nenhum prédio entrando no vizinho nem saindo do lote,
+  telhado de uma água subindo no máximo ~1,2 m e de duas águas ~3,2 m
+  (`procedural.ts` `MAX_ROOF_RISE`; vão largo demais vira laje), galpão de um
+  pavimento de 6-10 m. Lotes cortados à terra com folga de 8 cm do pavimento
+  (`lots.ts` `landLot`, sem o snap de volta à calçada), prédio no maior
+  retângulo dentro do lote (`lotBuildFrame`), recorte booleano no lote em
+  `zoning.ts` `fitToLot`. Código antigo reprovado: 85-98 telhados-cunha por
+  cidade. Visto no jogo (build, 3 sementes): 554/554 lotes com prédio.
+  Aguardando o jogador.
 - Lotes sem vazio nas esquinas: a faixa de uma rua entre duas transversais,
   e a fileira de um quarteirão com lote gravado, são cortadas no que sobra
   ao lado dos lotes que já estão lá (`world/lots.ts` `freeSpans`,

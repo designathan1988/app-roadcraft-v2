@@ -68,6 +68,7 @@ import {
   wallMaterial,
 } from '@world/buildings/materials';
 import { FOLLOWS_GROUND, elementRect, followPieces, onGround, partGroups, stairSteps, unsupportedElements } from '@world/buildings/elements';
+import { planRoofPlant } from '@world/buildings/roofPlant';
 import { isRetainingStone } from '@world/buildings/cityBuildings';
 import {
   type BayComponent,
@@ -140,6 +141,22 @@ const TERRACE: Paint = paint({ finish: 'stone', colour: 0xb0a595 });
 const ARCADE_FLOOR: Paint = paint({ finish: 'stone', colour: 0x9d968a });
 const SAW_GLASS: Paint = paint({ finish: 'glass', colour: 0x3c5360 });
 const ROOF_PLANT: Paint = paint({ finish: 'concrete', colour: 0x6c6a64 });
+
+/**
+ * Parts drawn with a colour per instance: awnings, and the window frames and
+ * balcony railings in their building's trim (the materials are white). A
+ * part placed with no colour takes the old fixed one.
+ */
+const COLOURED_PARTS: ReadonlySet<PartKind> = new Set<PartKind>(['awning', 'frame', 'railing']);
+const WHITE_RGB: Rgb = [1, 1, 1];
+const PART_DEFAULT_COLOUR: Partial<Record<PartKind, Rgb>> = { frame: linear(0xe8e6df), railing: linear(0x33373a) };
+/** The trim's colour as a three Color, one per paint. */
+const trimColours = new WeakMap<Paint, Color>();
+const trimColour = (p: Paint): Color => {
+  let c = trimColours.get(p);
+  if (!c) { c = new Color(p.rgb[0], p.rgb[1], p.rgb[2]); trimColours.set(p, c); }
+  return c;
+};
 
 // ------------------------------------------------------------------ dimensions
 const REVEAL = m(0.2);
@@ -916,6 +933,7 @@ function emitBay(
     return;
   }
 
+  const tc = trimColour(trim);
   const found = openingOf(bay.component, W, H, geometry);
   if (!found) {
     e.rect(f, 0, W, 0, H, 0, out, wall);
@@ -956,20 +974,20 @@ function emitBay(
         const down = h * (0.25 + (pick - 9) * 0.15);
         e.put('shutter', f, am, o.h1 - down / 2, o.depth - m(0.05), w, down, m(0.04));
       }
-      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06));
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
       // The sill: out past the wall, with a drip.
       e.put('concrete', f, am, o.h0 - m(0.03), (o.depth - m(0.07)) / 2, w + m(0.14), m(0.06), o.depth + m(0.07));
       break;
     }
     case 'wideWindow':
       e.put('glass', f, am, hm, o.depth, w, h, 1);
-      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05));
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
       break;
     case 'balcony':
       e.put('glass', f, am, hm, o.depth, w, h, 1);
-      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06));
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
       e.put('concrete', f, W / 2, -m(0.09), -m(0.65), W - m(0.3), m(0.18), m(1.3));
-      e.put('railing', f, W / 2, 0, 0, W - m(0.3), m(1.05), m(1.3));
+      e.put('railing', f, W / 2, 0, 0, W - m(0.3), m(1.05), m(1.3), tc);
       break;
     case 'door':
       e.put('door', f, am, hm, o.depth + m(0.03), w, h, m(0.06));
@@ -978,13 +996,13 @@ function emitBay(
         // and two brackets under it into the wall.
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.45), w + m(0.7), m(0.12), m(0.9));
         e.put('concrete', f, am, o.h1 + m(0.26), -m(0.88), w + m(0.7), m(0.2), m(0.05));
-        for (const side of [-1, 1]) e.put('frame', f, am + side * (w / 2 + m(0.2)), o.h1 + m(0.12), -m(0.25), m(0.06), m(0.3), m(0.5));
+        for (const side of [-1, 1]) e.put('frame', f, am + side * (w / 2 + m(0.2)), o.h1 + m(0.12), -m(0.25), m(0.06), m(0.3), m(0.5), tc);
         emitPorchLight(e, f, W, am, w, o.h1);
       }
       break;
     case 'shopfront':
       e.put('glass', f, am, hm, o.depth, w, h, 1);
-      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05));
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
       e.put('awning', f, W / 2, o.h1 + m(0.45), 0, W - m(0.2), m(0.75), m(1.3), awning);
       break;
     case 'loadingDoor':
@@ -1004,8 +1022,8 @@ function emitBay(
       if (h > leafTop + m(0.4)) {
         const fan = h - leafTop - m(0.12);
         e.put('glass', f, am, o.h0 + leafTop + m(0.12) + fan / 2, o.depth, w, fan, 1);
-        e.put('frame', f, am, o.h0 + leafTop + m(0.12) + fan / 2, o.depth - m(0.03), w, fan, m(0.05));
-        e.put('frame', f, am, o.h0 + leafTop + m(0.06), o.depth - m(0.03), w, m(0.12), m(0.08));
+        e.put('frame', f, am, o.h0 + leafTop + m(0.12) + fan / 2, o.depth - m(0.03), w, fan, m(0.05), tc);
+        e.put('frame', f, am, o.h0 + leafTop + m(0.06), o.depth - m(0.03), w, m(0.12), m(0.08), tc);
       }
       if (bay.level === 0) {
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.55), w + m(1), m(0.14), m(1.1));
@@ -1018,9 +1036,9 @@ function emitBay(
     case 'bayWindow':
     case 'ribbon': {
       e.put(bayHash(bay) % 5 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth, w, h, 1);
-      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06));
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
       // A transom across a tall pane, and a sill under the raised ones.
-      if (h > m(2.2)) e.put('frame', f, am, o.h0 + h * 0.72, o.depth - m(0.03), w, m(0.08), m(0.07));
+      if (h > m(2.2)) e.put('frame', f, am, o.h0 + h * 0.72, o.depth - m(0.03), w, m(0.08), m(0.07), tc);
       if (o.h0 > m(0.3)) e.put('concrete', f, am, o.h0 - m(0.03), (o.depth - m(0.07)) / 2, w + m(0.14), m(0.06), o.depth + m(0.07));
       break;
     }
@@ -1175,9 +1193,9 @@ function emitRelief(e: Emitter, b: Building, v: Volume, r: Relief, floor: number
 }
 
 /**
- * What stands on a flat roof: a water tank on a plinth and a roof hatch, in a
- * corner picked from the building's id (so a street is not a row of copies),
- * on roofs big enough to walk on.
+ * What stands on a flat roof: drains in two opposite corners, then the plant
+ * the building's own catalogue draw packed on it (`world/buildings/roofPlant.ts`
+ * - by use, size and age, seeded per building, never two pieces crossing).
  */
 function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Paint): void {
   if (v.roofDetails?.length) return;
@@ -1188,74 +1206,98 @@ function emitRoofPlant(e: Emitter, b: Building, v: Volume, z: number, trim: Pain
     const y = v.y + dy;
     e.box(x - m(0.18), y - m(0.18), x + m(0.18), y + m(0.18), z, z + 0.02, DRAIN);
   }
-  if (v.outline || v.w < m(6) || v.d < m(6)) return;
-  const pick = ((b.id * 2654435761 + v.id * 40503) >>> 0) % 4;
-  const inset = m(1.4);
-  const tank = m(2.2);
-  const cx = pick % 2 === 0 ? v.x + inset + tank / 2 : v.x + v.w - inset - tank / 2;
-  const cy = pick < 2 ? v.y + v.d - inset - tank / 2 : v.y + inset + tank / 2;
-  // The water tank on its plinth, with a lid proud of it and a hatch in the lid.
-  // The caixa d'agua: a round fibreglass tank, tapering in at the top, with
-  // its lid, on a concrete plinth - recognisable as what it is.
-  e.box(cx - tank / 2 - m(0.15), cy - tank / 2 - m(0.15), cx + tank / 2 + m(0.15), cy + tank / 2 + m(0.15), z, z + m(0.3), ROOF_PLANT);
-  e.cylinder(cx, cy, tank * 0.42, z + m(0.3), z + m(1.2), WATER_TANK);
-  e.cylinder(cx, cy, tank * 0.47, z + m(1.2), z + m(1.45), WATER_TANK, shaded(WATER_TANK, 0.82));
-  e.cylinder(cx, cy, tank * 0.2, z + m(1.45), z + m(1.55), shaded(WATER_TANK, 0.75));
-  // The roof hatch, diagonally across from the tank.
-  const hx = pick % 2 === 0 ? v.x + v.w - m(2.4) : v.x + m(1.6);
-  const hy = pick < 2 ? v.y + m(1.6) : v.y + v.d - m(2.4);
-  e.box(hx, hy, hx + m(0.8), hy + m(0.8), z, z + m(0.45), ROOF_PLANT);
-  // Two air-conditioning condensers on a rail, with their fan grilles, on
-  // roofs with room for them.
-  if (v.w >= m(9) && v.d >= m(7)) {
-    const ux = pick % 2 === 0 ? v.x + v.w - m(1.4) : v.x + m(1.4);
-    const uy = v.y + v.d / 2;
-    for (const k of [-1, 1]) {
-      const y = uy + k * m(0.65);
-      e.box(ux - m(0.45), y - m(0.4), ux + m(0.45), y + m(0.4), z + m(0.15), z + m(0.85), CONDENSER);
-      e.box(ux - m(0.28), y - m(0.28), ux + m(0.28), y + m(0.28), z + m(0.85), z + m(0.87), DRAIN);
-    }
-  }
-  // More of what a flat roof carries (the player's order of 2026-10-05):
-  // a blue fibreglass water tank on legs (the caixa d'água of every Brazilian
-  // roof), solar panels in rows tilted to the sun, an antenna mast, a
-  // satellite dish and skylights.
-  const rnd = (k: number): number => (((b.id * 2654435761 + v.id * 40503 + k * 97) >>> 0) % 1000) / 1000;
-  if (v.w >= m(8) && v.d >= m(8)) {
-    // Solar panels: rows of tilted sheets on frames.
-    const rows = Math.min(4, Math.floor((v.d - m(4)) / m(2.2)));
-    const px0 = v.x + m(1.5), px1 = v.x + Math.min(v.w - m(1.5), m(1.5) + m(8));
-    for (let r = 0; r < rows; r++) {
-      const py = v.y + m(1.6) + r * m(2.2);
-      for (let px = px0; px + m(1.1) <= px1; px += m(1.15)) {
-        e.box(px, py, px + m(1.05), py + m(1.6), z + m(0.25), z + m(0.32), SOLAR, SOLAR);
-        e.box(px + m(0.45), py + m(1.3), px + m(0.6), py + m(1.45), z, z + m(0.25), DRAIN);
+  const age = b.decay ?? 0;
+  const items = planRoofPlant({
+    building: b.id, volume: v.id, use: b.use, storeys: v.base + v.storeys.length,
+    x0: v.x, y0: v.y, x1: v.x + v.w, y1: v.y + v.d,
+    // A new town's buildings are of every vintage: the seed stands in for the years.
+    age: age > 0 ? age : (((b.id * 2_246_822_519) >>> 0) % 1000) / 1000,
+    hasCore: b.cores.length > 0,
+  });
+  for (const it of items) {
+    const cx = (it.x0 + it.x1) / 2, cy = (it.y0 + it.y1) / 2, w = it.x1 - it.x0, d = it.y1 - it.y0;
+    switch (it.kind) {
+      case 'tank': {
+        // The caixa d'água: a round fibreglass tank on a plinth, tapering in at the top, its lid.
+        const paint = TANK_PAINTS[it.variant % TANK_PAINTS.length]!;
+        const r = Math.min(w, d) / 2;
+        e.box(it.x0, it.y0, it.x1, it.y1, z, z + m(0.3), ROOF_PLANT);
+        e.cylinder(cx, cy, r * 0.84, z + m(0.3), z + it.h - m(0.3), paint);
+        e.cylinder(cx, cy, r * 0.94, z + it.h - m(0.3), z + it.h - m(0.05), paint, shaded(paint, 0.82));
+        e.cylinder(cx, cy, r * 0.4, z + it.h - m(0.05), z + it.h + m(0.05), shaded(paint, 0.75));
+        break;
       }
+      case 'tankBox':
+        // A concrete water tank on a tall block, its lid and a ladder up its side.
+        e.box(it.x0, it.y0, it.x1, it.y1, z, z + it.h, trim, ROOF_PLANT);
+        e.box(it.x0 + m(0.3), it.y0 + m(0.3), it.x0 + m(1.1), it.y0 + m(1.1), z + it.h, z + it.h + m(0.12), DRAIN);
+        e.box(it.x1 - m(0.05), cy - m(0.25), it.x1 + m(0.05), cy + m(0.25), z, z + it.h + m(0.9), DRAIN);
+        break;
+      case 'hatch':
+        e.box(it.x0, it.y0, it.x1, it.y1, z, z + it.h, ROOF_PLANT);
+        break;
+      case 'condenser':
+        e.box(it.x0, it.y0, it.x1, it.y1, z + m(0.15), z + it.h, CONDENSER);
+        e.box(cx - m(0.28), cy - m(0.28), cx + m(0.28), cy + m(0.28), z + it.h, z + it.h + m(0.02), DRAIN);
+        break;
+      case 'airHandler': {
+        // A rooftop air handler: a long metal casing, its fans on top.
+        e.box(it.x0, it.y0, it.x1, it.y1, z + m(0.2), z + it.h, CONDENSER);
+        const along = w >= d;
+        for (const k of [0.25, 0.75]) {
+          const fx = along ? it.x0 + w * k : cx, fy = along ? cy : it.y0 + d * k;
+          e.cylinder(fx, fy, Math.min(w, d) * 0.32, z + it.h, z + it.h + m(0.12), DRAIN);
+        }
+        break;
+      }
+      case 'solar': {
+        // Rows of panels tilted to the sun on their frames, filling the array's ground.
+        const rows = Math.max(1, Math.floor(d / m(1.7)));
+        for (let r = 0; r < rows; r++) {
+          const py = it.y0 + r * (d / rows);
+          for (let px = it.x0; px + m(1.05) <= it.x1 + 1e-6; px += m(1.15)) {
+            e.box(px, py, px + m(1.05), py + Math.min(m(1.6), d / rows - m(0.1)), z + m(0.25), z + m(0.32), SOLAR, SOLAR);
+            e.box(px + m(0.45), py + m(1.2), px + m(0.6), py + m(1.35), z, z + m(0.25), DRAIN);
+          }
+        }
+        break;
+      }
+      case 'mast':
+        e.box(cx - m(0.04), cy - m(0.04), cx + m(0.04), cy + m(0.04), z, z + it.h, DRAIN);
+        e.box(cx - m(0.6), cy - m(0.02), cx + m(0.6), cy + m(0.02), z + it.h - m(0.4), z + it.h - m(0.36), DRAIN);
+        if (it.variant % 2 === 1) e.box(cx - m(0.02), cy - m(0.45), cx + m(0.02), cy + m(0.45), z + it.h - m(0.9), z + it.h - m(0.86), DRAIN);
+        break;
+      case 'dish':
+        e.box(cx - m(0.05), cy - m(0.05), cx + m(0.05), cy + m(0.05), z, z + m(0.7), DRAIN);
+        e.box(cx - m(0.4), cy - m(0.05), cx + m(0.4), cy + m(0.05), z + m(0.5), z + it.h, it.variant % 2 ? DRAIN : CONDENSER);
+        break;
+      case 'skylight':
+        e.box(it.x0, it.y0, it.x1, it.y1, z, z + it.h, ROOF_PLANT, SKYLIGHT);
+        break;
+      case 'vent':
+        e.cylinder(cx, cy, Math.min(w, d) * 0.4, z, z + it.h - m(0.15), CONDENSER);
+        e.cylinder(cx, cy, Math.min(w, d) * 0.5, z + it.h - m(0.15), z + it.h, DRAIN);
+        break;
+      case 'liftRoom':
+        // A lift's machine room, with its door.
+        e.box(it.x0, it.y0, it.x1, it.y1, z, z + it.h, trim, ROOF_PLANT);
+        e.box(cx - m(0.45), it.y0 - m(0.04), cx + m(0.45), it.y0, z + m(0.05), z + m(2.1), DOOR_PAINT);
+        break;
+      case 'chimney':
+        e.cylinder(cx, cy, Math.min(w, d) * 0.45, z, z + it.h, CHIMNEY, DRAIN);
+        break;
     }
-    // An antenna mast and a dish.
-    const ax = v.x + v.w * (0.25 + 0.5 * rnd(1)), ay = v.y + v.d - m(1);
-    e.box(ax - m(0.04), ay - m(0.04), ax + m(0.04), ay + m(0.04), z, z + m(3.5), DRAIN);
-    e.box(ax - m(0.6), ay - m(0.02), ax + m(0.6), ay + m(0.02), z + m(3.1), z + m(3.14), DRAIN);
-    const dx = v.x + m(1.2), dy = v.y + v.d * (0.3 + 0.4 * rnd(2));
-    e.box(dx - m(0.05), dy - m(0.05), dx + m(0.05), dy + m(0.05), z, z + m(0.7), DRAIN);
-    e.box(dx - m(0.4), dy - m(0.05), dx + m(0.4), dy + m(0.05), z + m(0.5), z + m(1.2), CONDENSER);
-    // Skylights over the stair and the halls.
-    for (let k = 0; k < 2; k++) {
-      const sx = v.x + v.w * (0.35 + 0.3 * k), sy = v.y + v.d * 0.55;
-      e.box(sx - m(0.6), sy - m(0.6), sx + m(0.6), sy + m(0.6), z, z + m(0.25), ROOF_PLANT, SKYLIGHT);
-    }
-  }
-  // A lift's machine room, with its door, on a building tall enough for one.
-  if (v.storeys.length + v.base >= 4 && b.cores.length === 0) {
-    const mx = v.x + v.w / 2;
-    const my = v.y + v.d / 2;
-    e.box(mx - m(1.3), my - m(1.3), mx + m(1.3), my + m(1.3), z, z + m(2.5), trim, ROOF_PLANT);
-    e.box(mx - m(0.45), my - m(1.34), mx + m(0.45), my - m(1.3), z + m(0.05), z + m(2.1), DOOR_PAINT);
   }
 }
 
+/** Water tanks: the blue fibreglass of most roofs, the grey and the white of others, a sand-coloured one. */
+const TANK_PAINTS: readonly Paint[] = [
+  paint({ finish: 'plaster', colour: 0x4a7fb8 }), paint({ finish: 'plaster', colour: 0x8d9399 }),
+  paint({ finish: 'plaster', colour: 0xdcdedb }), paint({ finish: 'plaster', colour: 0xc9b48a }),
+];
+const CHIMNEY: Paint = paint({ finish: 'brick', colour: 0x8c4a35 });
+
 const DRAIN: Paint = paint({ finish: 'metal', colour: 0x2d3033 });
-const WATER_TANK: Paint = paint({ finish: 'plaster', colour: 0x4a7fb8 });
 const SOLAR: Paint = paint({ finish: 'glass', colour: 0x1d2b45 });
 const SKYLIGHT: Paint = paint({ finish: 'glass', colour: 0x8fb4c6 });
 const DECK: Paint = paint({ finish: 'wood', colour: 0x9a7650 });
@@ -1266,7 +1308,9 @@ const PARASOL: Paint = paint({ finish: 'plaster', colour: 0xe7dcc4 });
 /**
  * A roof terrace that is used (the player's order of 2026-10-05): a timber
  * deck, planters of green round the edge, tables under parasols, loungers, a
- * pergola, and the water tank every roof carries.
+ * pergola, a water tank - each drawn or not by the building's seed, so no
+ * two terraces of a street carry the same set (2026-10-09: the same set on
+ * every roof).
  */
 function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint): void {
   if (v.outline || v.w < m(4) || v.d < m(4)) return;
@@ -1274,14 +1318,15 @@ function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint)
   // The deck, a part of the terrace.
   const dx0 = v.x + m(0.8), dx1 = v.x + v.w * (0.55 + 0.2 * rnd(1)), dy0 = v.y + m(0.8), dy1 = v.y + v.d - m(0.8);
   e.box(dx0, dy0, dx1, dy1, z, z + m(0.06), DECK);
-  // Terracotta pots along the edges, dark soil in them.
-  for (let x = v.x + m(0.7); x < v.x + v.w - m(0.6); x += m(2.4)) {
+  // Terracotta pots along the edges, dark soil in them, at a spacing of its own.
+  const potStep = m(1.8 + 1.6 * rnd(5));
+  for (let x = v.x + m(0.7); rnd(6) < 0.8 && x < v.x + v.w - m(0.6); x += potStep) {
     for (const y of [v.y + m(0.7), v.y + v.d - m(0.7)]) {
       e.cylinder(x, y, m(0.28), z, z + m(0.5), POT, POT_SOIL, 10);
     }
   }
   // Tables under parasols.
-  const tables = Math.max(1, Math.floor((dx1 - dx0) / m(3.5)));
+  const tables = Math.floor(Math.floor((dx1 - dx0) / m(3.5)) * (0.3 + 0.7 * rnd(7)));
   for (let k = 0; k < tables; k++) {
     const tx = dx0 + (k + 0.5) * ((dx1 - dx0) / tables), ty = (dy0 + dy1) / 2;
     e.box(tx - m(0.4), ty - m(0.4), tx + m(0.4), ty + m(0.4), z + m(0.7), z + m(0.75), trim);
@@ -1291,23 +1336,27 @@ function emitTerrace(e: Emitter, b: Building, v: Volume, z: number, trim: Paint)
   }
   // Loungers on the far side, a pergola of beams over them.
   const lx = Math.min(v.x + v.w - m(1.5), dx1 + m(1.2));
-  for (let y = dy0 + m(0.4); y + m(0.7) < dy1; y += m(1.2)) e.box(lx - m(0.9), y, lx + m(0.9), y + m(0.65), z, z + m(0.35), PARASOL);
+  if (rnd(8) < 0.6) for (let y = dy0 + m(0.4); y + m(0.7) < dy1; y += m(1.2)) e.box(lx - m(0.9), y, lx + m(0.9), y + m(0.65), z, z + m(0.35), PARASOL);
   // The pergola: posts every 2.4 m on two lines, a beam along each line on
   // the posts, and the rafters resting across the two beams - nothing floats.
   const span = dy1 - dy0;
   const bays = Math.max(1, Math.round(span / m(2.4)));
-  for (const px of [lx - m(1.2), lx + m(1.2)]) {
+  const pergola = rnd(9) < 0.45;
+  for (const px of pergola ? [lx - m(1.2), lx + m(1.2)] : []) {
     for (let k = 0; k <= bays; k++) {
       const py = dy0 + (span * k) / bays;
       e.box(px - m(0.07), py - m(0.07), px + m(0.07), py + m(0.07), z, z + m(2.4), DECK);
     }
     e.box(px - m(0.06), dy0 - m(0.1), px + m(0.06), dy1 + m(0.1), z + m(2.25), z + m(2.4), DECK);
   }
-  for (let y = dy0; y <= dy1; y += m(0.6)) e.box(lx - m(1.45), y - m(0.04), lx + m(1.45), y + m(0.04), z + m(2.4), z + m(2.5), DECK);
-  // The caixa d'agua.
-  const tx = v.x + v.w - m(1.4), ty = v.y + m(1.4);
-  e.cylinder(tx, ty, m(0.7), z, z + m(0.95), WATER_TANK);
-  e.cylinder(tx, ty, m(0.78), z + m(0.95), z + m(1.15), WATER_TANK, shaded(WATER_TANK, 0.82));
+  if (pergola) for (let y = dy0; y <= dy1; y += m(0.6)) e.box(lx - m(1.45), y - m(0.04), lx + m(1.45), y + m(0.04), z + m(2.4), z + m(2.5), DECK);
+  // The caixa d'agua, of one of the colours they come in, on most terraces.
+  if (rnd(10) < 0.65) {
+    const tank = TANK_PAINTS[Math.floor(rnd(11) * TANK_PAINTS.length)]!;
+    const tx = v.x + v.w - m(1.4), ty = v.y + m(1.4);
+    e.cylinder(tx, ty, m(0.7), z, z + m(0.95), tank);
+    e.cylinder(tx, ty, m(0.78), z + m(0.95), z + m(1.15), tank, shaded(tank, 0.82));
+  }
 }
 const CONDENSER: Paint = paint({ finish: 'metal', colour: 0xc9ccc9 });
 const DOOR_PAINT: Paint = paint({ finish: 'metal', colour: 0x5c6468 });
@@ -2574,8 +2623,12 @@ function emitRoof(
   if (v.roof === 'flat' || v.roof === 'terrace') {
     const terrace = v.roof === 'terrace';
     sh.face([e.L(x0, y0, z), e.L(x1, y0, z), e.L(x1, y1, z), e.L(x0, y1, z)], up, terrace ? TERRACE : roofColour);
+    // A terrace with a block standing on it (a setback, a tower's podium) is
+    // left plain: its furniture and tank were drawn through the block above,
+    // and every step of a stepped tower carried a set of its own.
+    const built = b.volumes.some((o) => o !== v && !o.open && o.base === top);
     if (!terrace) emitRoofPlant(e, b, v, z, trim);
-    else emitTerrace(e, b, v, z, trim);
+    else if (!built) emitTerrace(e, b, v, z, trim);
     // Its top stays just under the roof: a face shared with the roof cap
     // z-fights into stripes.
     emitCornice(e, v, z, trim);
@@ -2840,14 +2893,15 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
   for (const kind of PART_KINDS) {
     const list = parts[kind];
     const matrices = new Float32Array(list.length * 16);
-    const coloured = kind === 'awning';
+    const coloured = COLOURED_PARTS.has(kind);
     const colours = coloured ? new Float32Array(list.length * 3) : null;
+    const fallback = PART_DEFAULT_COLOUR[kind] ?? WHITE_RGB;
     list.forEach((p, i) => {
       writeMatrix(matrices, i * 16, p);
-      if (colours && p.colour) {
-        colours[i * 3] = p.colour.r;
-        colours[i * 3 + 1] = p.colour.g;
-        colours[i * 3 + 2] = p.colour.b;
+      if (colours) {
+        colours[i * 3] = p.colour ? p.colour.r : fallback[0];
+        colours[i * 3 + 1] = p.colour ? p.colour.g : fallback[1];
+        colours[i * 3 + 2] = p.colour ? p.colour.b : fallback[2];
       }
     });
     const glassy = kind === 'glass' || kind === 'glassDark';
@@ -2995,7 +3049,7 @@ export function* assembleBuildingMeshesSteps(
     mesh.castShadow = !ghost && kit.castsShadow.has(kind);
     mesh.receiveShadow = !ghost;
     const matrices = mesh.instanceMatrix.array as Float32Array;
-    const coloured = !ghost && kind === 'awning';
+    const coloured = !ghost && COLOURED_PARTS.has(kind);
     if (coloured) mesh.setColorAt(0, new Color(1, 1, 1));
     const colours = coloured && mesh.instanceColor ? (mesh.instanceColor.array as Float32Array) : null;
     let at = 0;

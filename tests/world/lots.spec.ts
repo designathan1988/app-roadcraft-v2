@@ -17,11 +17,8 @@ function town(): { doc: RoadDoc; net: Network } {
   return { doc, net };
 }
 
-const area = (l: { corners: readonly { x: number; y: number }[] }): number => {
-  let s = 0;
-  for (let i = 0; i < 4; i++) { const p = l.corners[i]!, q = l.corners[(i + 1) % 4]!; s += p.x * q.y - q.x * p.y; }
-  return Math.abs(s / 2);
-};
+// Any polygon: a lot cut to the land rounds the block's corner with its footway's curve.
+const area = (l: { corners: readonly { x: number; y: number }[] }): number => Math.abs(lotArea(l));
 
 describe('lots', () => {
   it('cuts a closed block into equal lots and open land along a street into a strip of lots', () => {
@@ -29,8 +26,8 @@ describe('lots', () => {
     applyLots(doc, planLots(doc, net));
     const inBlock = doc.lots.filter((l) => Math.abs(lotCentre(l).x) < m(45) && Math.abs(lotCentre(l).y) < m(35));
     expect(inBlock.length).toBeGreaterThanOrEqual(2);
-    // Equal but for the snap onto the footways: the corner lots reach the
-    // block's corner, and each row reaches its own street's footway edge.
+    // Equal but for the cut to the land: the corner lots lose the footway's
+    // curve at the block's corner, and each row reaches its own street.
     const areas = inBlock.map(area).sort((a, b) => a - b);
     const median = areas[Math.floor(areas.length / 2)]!;
     for (const x of areas) expect(Math.abs(x - median) / median).toBeLessThan(0.15);

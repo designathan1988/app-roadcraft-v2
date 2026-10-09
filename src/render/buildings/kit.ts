@@ -326,13 +326,17 @@ export function createBuildingKit(): BuildingKit {
     // Light and glossy enough to carry the sky: a dark flat pane reads as a
     // hole painted on the wall, not as glass.
     glass: new MeshStandardMaterial({ color: 0x7c8e98, roughness: 0.06, metalness: 0.35, envMapIntensity: 1.6, shadowSide: DoubleSide }),
-    frame: new MeshStandardMaterial({ color: 0xe8e6df, roughness: 0.55, metalness: 0.05 }),
+    // White: each frame takes its building's trim as an instance colour
+    // (`buildingMesh.ts` COLOURED_PARTS) - black, bronze, green, wood, white.
+    frame: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.05 }),
     concrete,
     door: new MeshStandardMaterial({ color: 0x6b4a33, roughness: 0.55, metalness: 0 }),
     shutter: new MeshStandardMaterial({ color: 0x9aa1a4, roughness: 0.5, metalness: 0.45 }),
-    railing: metal,
+    // Its own material, white, coloured per instance like the frames: a
+    // material shared with uncoloured batches would switch program variants.
+    railing: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.55 }),
     roofRailing: metal,
-    // The one batch with per-instance colours, and it alone uses this material.
+    // Per-instance colours (with the frames and railings), and it alone uses this material.
     awning: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0 }),
     column: concrete,
     // Window variety: a pane that reflects less (a darker room behind it) and

@@ -252,6 +252,22 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   grafo de faixas na mesma ordem (7-12 ms, ruído de primeira execução). Alvos de troca guardados por faixa até o próximo grafo.
 - Fechamento no ramo: lint limpo, suíte inteira 1130 verdes (a falha antiga de `occupantFit` à parte), fuzz smoke verde.
 
+## Catálogo de estradas (pedido urgente do jogador, 2026-10-09)
+- Pesquisa (lida): menu de vias do Cities: Skylines (https://skylines.paradoxwikis.com/Roads: abas Small, Medium, Large
+  Roads, Highways, Intersections; variantes com árvores, ciclovia, faixa de ônibus, mão única; custo por célula, manutenção,
+  velocidade, faixas) e do Cities: Skylines II (https://cs2.paradoxwikis.com/Roads: Small, Medium, Large, Highways; rua de
+  duas faixas, mão única de 1 a 3, cascalho, viela, estacionamento perpendicular e angular, dividida; custo por km).
+- `world/roads/catalog.ts`: 31 vias prontas em quatro categorias (Ruas, Avenidas, Rodovias, Especiais), todas no perfil livre
+  (V1) sobre uma das classes, as seis classes entre elas como sempre foram; "Meus modelos" são os salvos do editor.
+  Teste `tests/world/roadCatalog.spec.ts`: mais de 25 vias, todas construíveis como estão, as classes iguais.
+- Galeria da ferramenta de vias (`ui/roads/catalogPanel.ts`): abas por categoria com a contagem, cartões grandes com o corte
+  desenhado, o nome, a largura total e o preço por metro, dica com faixas, sentido e velocidade; clicar escolhe e a ferramenta
+  já desenha com ela (a prévia usa o perfil escolhido); o escolhido com contorno e o botão "Personalizar…". As linhas
+  Faixas, Largura e Vagas das opções só aparecem com uma classe pura; a linha "Perfil" da V2 saiu (o catálogo a substitui).
+- Editor secundário: "Personalizar…" abre o editor ancorado entre a barra de cima e a galeria, compacto, recolhível, sem os
+  cartões de modelo; "Salvar modelo" leva para "Meus modelos". Teste `tests/ui/roadCatalogPanel.spec.ts`.
+- Modelos salvos agora guardam também o uso e a linha de cada faixa (V4).
+
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e
   instância. Fluxo em anéis fixos a 1 Hz. Editor de conectores refaz só o nó.

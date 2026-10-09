@@ -51,12 +51,11 @@ import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
 import { t, plural, onLanguageChange } from '../i18n';
 import { balanceTip, formatMoney } from '../roads/money';
-import { openProfileEditor } from '../roads/profileEditor';
-import { drawProfile, setDrawProfile } from '../roads/drawProfile';
+import { drawProfile } from '../roads/drawProfile';
+import { catalogStrip } from '../roads/catalogPanel';
 import { closeRoadKeys, openRoadKeys, roadKeysOpen } from '../roads/keysPanel';
 import { cutWallsChosen, setCutWalls } from '../roads/cutWalls';
 import { keyLabel, onRoadKeysChange, roadKey } from '../roads/keys';
-import { classTemplates } from '@world/roads/templates';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
@@ -912,8 +911,11 @@ export function mountShell(deps: ShellDeps): void {
         { label: t('v2.snap.angles'), on: snap.on && snap.angles, run: () => { setRoadSnap({ angles: !snap.angles }); render(); }, disabled: !snap.on, icon: svg('angle', 18) },
         { label: t('v2.snap.grid'), on: snap.on && snap.grid, run: () => { setRoadSnap({ grid: !snap.grid }); render(); }, disabled: !snap.on, icon: svg('cells', 18) },
       ])));
+      // Lanes, width and parking tune a class's own road; a road picked from
+      // the catalogue carries its own (its card's "Customise..." changes them).
+      const fromCatalog = drawProfile() !== null;
       // Lanes: the count the next road is laid with.
-      options.appendChild(orow(t('v2.row.lanes'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-lane-choice]')].filter((b) => !b.hidden).map((b) => {
+      if (!fromCatalog) options.appendChild(orow(t('v2.row.lanes'), choices([...document.querySelectorAll<HTMLButtonElement>('[data-lane-choice]')].filter((b) => !b.hidden).map((b) => {
         const id = b.dataset['laneChoice'] ?? '2';
         return {
           label: b.title || b.getAttribute('aria-label') || b.textContent?.trim() || '',
@@ -925,20 +927,9 @@ export function mountShell(deps: ShellDeps): void {
       }))));
       // Total width, on the 1 m subgrid of the 10 m zoning grid; the class's own until stepped.
       const w = roadWidth();
-      options.appendChild(orow(t('v2.row.width'),
+      if (!fromCatalog) options.appendChild(orow(t('v2.row.width'),
         stepper(t('palette.width'), w === null ? t('palette.width.auto') : `${w} m`, (d) => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); }),
         w === null ? null : button('v2-icon', t('palette.width.auto'), () => { setRoadWidth(null); render(); }, svg('undo', 14))));
-      // The profile new roads are drawn with (docs/VIAS.md V2): the class's own,
-      // or one made in the profile editor, which then sets lanes, width and parking.
-      const chosenProfile = drawProfile();
-      options.appendChild(orow(t('v2.row.profile'),
-        button(chosenProfile ? 'v2-pill rp-open on' : 'v2-pill rp-open', chosenProfile ? chosenProfile.name : t('profileEditor.fromClass'), () => openProfileEditor({
-          title: t('profileEditor.newRoads'),
-          profile: chosenProfile?.profile ?? classTemplates()[roadTypeIndex()]!.profile,
-          type: chosenProfile?.type ?? roadTypeIndex(),
-          drawWith: (name, profile, type) => { setDrawProfile({ name, profile, type }); render(); },
-        }), svg('profile', 16)),
-        chosenProfile ? button('v2-icon', t('profileEditor.clearDraw'), () => { setDrawProfile(null); render(); }, svg('undo', 14)) : null));
       // Height over the ground: a bridge above, a cutting or tunnel below.
       const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), q('#roadHeightValue')?.textContent ?? '', (d) => press(`[data-height-step="${d}"]`)));
       heightRow.title = `${t('palette.height')}: ${q('#roadHeightContext')?.textContent ?? ''}`;
@@ -959,14 +950,22 @@ export function mountShell(deps: ShellDeps): void {
       options.appendChild(orow(t('roadKeys.row'), keysB));
       // Parking the new road is drawn with (`editor/roadParking.ts`).
       const parkingNow = roadParkingPreset();
-      options.appendChild(orow(t('v2.row.parking'), choices(ROAD_PARKING_PRESETS.map((preset) => ({
+      if (!fromCatalog) options.appendChild(orow(t('v2.row.parking'), choices(ROAD_PARKING_PRESETS.map((preset) => ({
         label: t(`parking.preset.${preset}`),
         on: parkingNow === preset,
         run: () => { setRoadParkingPreset(preset); render(); },
         icon: svg(`park-${preset}`, 18),
       })))));
     }
-    if (current === 'road' || current === 'upgrade') {
+    if (current === 'road') {
+      // The road catalogue (the player's order of 2026-10-09): tabs by
+      // category, a large card for each ready road; the main way to choose.
+      strip.appendChild(catalogStrip({
+        classIndex: roadTypeIndex,
+        pickClass: (index) => q<HTMLButtonElement>(`.road-type[data-type-index="${index}"]`)?.click(),
+        refresh: () => render(),
+      }));
+    } else if (current === 'upgrade') {
       const { items } = section(t('palette.kind'));
       for (const b of document.querySelectorAll<HTMLButtonElement>('.road-type[data-type-index]')) {
         const img = b.querySelector('img')?.getAttribute('src') ?? undefined;

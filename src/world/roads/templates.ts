@@ -56,7 +56,7 @@ function readElement(raw: unknown): ProfileElement | null {
     case 'lane': {
       const dir = v['dir'];
       if (dir !== 'forward' && dir !== 'backward') return null;
-      return { kind, width, dir };
+      return { kind, width, dir, ...(v['use'] === 'bus' ? { use: 'bus' as const } : {}), ...(v['line'] === 'solid' ? { line: 'solid' as const } : {}) };
     }
     default:
       return { kind: kind as 'parking' | 'cycle', width };
