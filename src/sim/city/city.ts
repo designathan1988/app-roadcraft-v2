@@ -1,6 +1,7 @@
 import { DT } from '../params';
 import type { SimWorld } from '../world';
 import { TransitSim } from '../transit/transit';
+import { LotTraffic } from '../agents/lotTraffic';
 
 /** Game seconds per simulated second: a day lasts 72 minutes of play. */
 export const TIME_SCALE = 20;
@@ -22,6 +23,8 @@ export const DAY_START = 6 * 60 + 30;
 export class City {
   /** Buses and trains on the drawn lines (`transit/transit.ts`). */
   readonly transit = new TransitSim();
+  /** Cars driving in and out of the lots through their car gates (`agents/lotTraffic.ts`). */
+  readonly lots = new LotTraffic();
   /** Minutes the clock was moved on by hand (`skip`). */
   private skipped = 0;
 
@@ -46,5 +49,10 @@ export class City {
   step(w: SimWorld): void {
     w.edgeTraffic = !(w.ambient.enabled && w.ambient.source === 'view');
     this.transit.step(w);
+    // Cars in and out of the lots' car parks by their car gates. Stepped
+    // before the scenery (`pipeline.ts`), whose list of parked cars it adds
+    // its own to again each tick: the scenery makes that list anew when the
+    // bays change (the Update Method's order, Nystrom).
+    this.lots.step(w);
   }
 }

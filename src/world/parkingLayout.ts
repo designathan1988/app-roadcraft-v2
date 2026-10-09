@@ -68,6 +68,8 @@ const MER_DASH: readonly number[] = [m(1), m(1)];
 const YELLOW = '#e1c45a';
 /** The red of a ciclofaixa's paving. */
 const CYCLE_RED = '#a8473e';
+/** The narrowest gate a car goes through (a person's is 1.2 m); `sim/agents/parking.ts` `CAR_GATE`. */
+const CAR_GATE_WIDTH = m(2.2);
 /** Kept clear either side of a lot's frontage for its entrance. */
 const ENTRANCE_MARGIN = m(1);
 /** Step of the paint along a run, so a line follows a curve. */
@@ -77,6 +79,18 @@ const RUN_STEP = m(1);
 export function lotEntrances(doc: RoadDoc): [Vec2, Vec2][] {
   const out: [Vec2, Vec2][] = [];
   for (const b of doc.buildings.all()) {
+    // Every car gate is a lowered kerb (CTB art. 181 IX: no parking where the
+    // kerb is lowered for vehicles to go in or out): its span stays clear,
+    // whatever is behind it. Read off the back car park alone, the frontage
+    // was 20 m and more from the street, and bays were painted - and cars
+    // parked - across the drive's gate.
+    for (const el of b.elements ?? []) {
+      if (el.kind !== 'gate' || el.w < CAR_GATE_WIDTH) continue;
+      const alongY = el.facing === 1 || el.facing === 3;
+      const c = Math.cos(el.angle ?? 0), s = Math.sin(el.angle ?? 0);
+      const ux = alongY ? -s : c, uy = alongY ? c : s;
+      out.push([localToWorld(b, el.x - ux * el.w / 2, el.y - uy * el.w / 2), localToWorld(b, el.x + ux * el.w / 2, el.y + uy * el.w / 2)]);
+    }
     for (const el of b.elements ?? []) {
       if (el.kind !== 'parking') continue;
       const lot = b.volumes.find((v) => v.open && el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);

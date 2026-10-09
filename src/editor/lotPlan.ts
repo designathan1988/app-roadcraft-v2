@@ -162,6 +162,9 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
 
 /** Elements kept free for a lot's boundary, which is laid after everything else. */
 const BOUNDARY_RESERVE = 30;
+/** Parts a car drives over: laid in a drive as anywhere. */
+const FLAT_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>(['pavement', 'drain', 'parking']);
+const BOUNDARY_SET: ReadonlySet<ElementKind> = new Set<ElementKind>(['wall', 'fence', 'hedge', 'railing', 'gate']);
 const PAVERS = mat('brick', 0x9a958c);
 const PAVERS_WARM = mat('brick', 0xb08a6e);
 const CONCRETE_PATH = mat('concrete', 0xc8c4bb);
@@ -194,6 +197,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   const elements: BuildingElement[] = (body.elements ??= []);
   let nextElement = Math.max(0, ...elements.map((e) => e.id)) + 1;
   const taken: Rect[] = [];
+  /**
+   * The car's way: each drive from its gate to the back, and its mouth into
+   * the car park's aisle. Nothing solid stands in it (a lamp, a bin, a crate
+   * left in the drive kept every stall of 13 lots in 30 out of reach).
+   */
+  const keepClear: Rect[] = [];
   const probe = (): Building => ({ ...body, id: 0, x: 0, y: 0, rotation: 0 } as Building);
 
   const lot: Lot = {
@@ -222,6 +231,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       // front wall (the player's order of 2026-10-05).
       const boundary = kind === 'wall' || kind === 'fence' || kind === 'hedge' || kind === 'gate' || kind === 'railing';
       if (elements.length >= MAX_ELEMENTS - (boundary ? 2 : BOUNDARY_RESERVE) || w < 0.1 || d < 0.1 || h < 0.1) return false;
+      if (!boundary && z < 2 && !FLAT_KINDS.has(kind)) {
+        const [hw, hd] = facing === 1 || facing === 3 ? [d / 2, w / 2] : [w / 2, d / 2];
+        if (keepClear.some((r) => x + hw > r.x0 && x - hw < r.x1 && y + hd > r.y0 && y - hd < r.y1)) return false;
+      }
       const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h),
         ...(material ? { material } : {}) };
       if (elementClash(probe(), el)) return false;
@@ -286,6 +299,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   const L = strip('left'), R = strip('right');
   const drives = [L.drive, R.drive].filter((r): r is Rect => r !== null);
   const walks = [L.walk, R.walk].filter((r): r is Rect => r !== null);
+  for (const r of drives) {
+    // The drive less a hand's width each side (a carport's posts stand there),
+    // then its mouth into the car park, through the aisle.
+    keepClear.push({ x0: r.x0 + 0.35, y0: 0, x1: r.x1 - 0.35, y1: Bk });
+    if (back.use === 'parking') keepClear.push({ x0: r.x0, y0: Bk - 0.5, x1: r.x1 + 0.5, y1: Math.min(D, Bk + (back.rows === 2 ? STALL + AISLE : AISLE)) });
+  }
   const door = env.x0 + made.entrance;
   const backDoor = made.backDoor !== undefined ? env.x0 + made.backDoor : null;
   const isHouse = plan.kind === 'house';
@@ -383,7 +402,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       lot.surface(r, driveSurface);
       if (isHouse && Bk - F >= 6) {
         // A carport: a roof on four posts over the car, beside the house.
-        const y0 = F + 0.3, y1 = F + 5.8, x0 = r.x0 + 0.25, x1 = r.x1 - 0.25;
+        // Its posts at the drive's very edges, clear of the car's way.
+        const y0 = F + 0.3, y1 = F + 5.8, x0 = r.x0 + 0.05, x1 = r.x1 - 0.05;
         lot.put('slab', (x0 + x1) / 2, (y0 + y1) / 2, 0, x1 - x0, y1 - y0, 0.15, 2.4, mat('concrete', 0xd0ccc4));
         for (const [px, py] of [[x0 + 0.15, y0 + 0.15], [x1 - 0.15, y0 + 0.15], [x0 + 0.15, y1 - 0.15], [x1 - 0.15, y1 - 0.15]] as const) lot.put('pillar', px, py, 0, 0.18, 0.18, 2.4);
       }
@@ -604,11 +624,13 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       const aisleY = back.rows === 2 ? by0 + STALL + AISLE / 2 : by0 + AISLE / 2;
       lot.put('drain', W / 2, aisleY, 0, 0.5, 0.5, 0.1);
       for (const px of [0.6, W - 0.6]) lot.put('lamp', px, aisleY, 0, 0.3, 0.3, 5);
-      if (mouth) lot.put('bin', mouth.x0 < W / 2 ? mouth.x1 + 1.2 : mouth.x0 - 1.2, by0 + 0.6, 0, 1.4, 0.7, 1.1);
       // What the back of a car park holds, a little of it on each lot: a
       // skip, a bicycle rack, a cart bay, a covered smoking corner, an
-      // electrical cabinet, a stack of pallets - chosen per lot.
-      {
+      // electrical cabinet, a stack of pallets - chosen per lot. Along the
+      // building's back wall, so only where no row of stalls stands there,
+      // and never in the drive's mouth (`keepClear`). A bin beside the mouth
+      // stood in the first stall and across the turn into the aisle.
+      if (back.rows === 1) {
         const spots: [number, number][] = [[1.2, by0 + 0.8], [W - 1.4, by0 + 0.8], [W / 2, by0 + 0.6]];
         const props: ((x: number, y: number) => void)[] = [
           (x, y) => { lot.put('bin', x, y, 0, 2.2, 1.4, 1.3, undefined, mat('metal', 0x2f5a3c)); },
@@ -693,13 +715,21 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       case 'flats':
       case 'tower': return { front: 'fence', frontH: 1.6, frontBase: 0.45, sides: 'wall', sidesH: 2.2 };
       case 'industry': return { front: 'fence', frontH: 2.4, frontBase: 0, sides: 'fence', sidesH: 2.4 };
-      default: return { front: null, frontH: 0, frontBase: 0, sides: 'wall', sidesH: 2.2 };
+      // A shop's forecourt behind a low railing, an office's plaza behind a
+      // railing on a low wall: closed as every lot is (the player, 2026-10-09:
+      // "COMPLETE walls or fences, with an entrance gate for residents and
+      // one for cars"), wide open at the door.
+      case 'shop': return { front: 'railing', frontH: 1, frontBase: 0, sides: 'wall', sidesH: 2.2 };
+      default: return { front: 'fence', frontH: 1.4, frontBase: 0.45, sides: 'wall', sidesH: 2.2 };
     }
   })();
   // Front: across the whole frontage where nothing is built on it; gates at the path and the drives.
   const frontGaps: [number, number][] = [];
   const gates: { x: number; w: number }[] = [];
-  if (front.use === 'garden' || front.use === 'carpad' || front.use === 'apron') gates.push({ x: door, w: 1.2 });
+  // The people's gate on the path to the door, whatever is in front of it; a
+  // shop's and an office's as wide as a shop door.
+  // (under 2.2 m: wider is a car's gate, `sim/agents/parking.ts` `CAR_GATE`).
+  if (F > 0) gates.push({ x: door, w: plan.kind === 'shop' || plan.kind === 'office' ? 2 : plan.kind === 'house' ? 1.2 : 1.6 });
   for (const r of drives) gates.push({ x: (r.x0 + r.x1) / 2, w: r.x1 - r.x0 - 0.4 });
   if (front.use === 'carpad') gates.push({ x: door > W / 2 ? 1.8 : W - 1.8, w: 2.8 });
   for (const w of walks) if (F === 0) gates.push({ x: (w.x0 + w.x1) / 2, w: w.x1 - w.x0 - 0.2 });
@@ -739,6 +769,55 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   }
   // Back.
   if (D - Bk > 0) lot.runX(boundary.sides, D - sideHalf, sideHalf, W - sideHalf, boundary.sidesH);
+  // ---- the boundary made whole: every stretch of the lot's edge that no
+  // wall, fence, hedge, railing, gate or the building itself closes gets the
+  // side's boundary. A piece refused where it met a porch, a wing set back
+  // from an attached side, a corner between two runs: each left a gap to the
+  // street or to the neighbour (measured on the grown town before this).
+  {
+    const U = m(1);
+    const covered = (px: number, py: number): boolean => {
+      for (const e of elements) {
+        if (!BOUNDARY_SET.has(e.kind)) continue;
+        const across = e.facing === 1 || e.facing === 3;
+        const hw = (across ? e.d : e.w) / U / 2 + 0.3, hd = (across ? e.w : e.d) / U / 2 + 0.3;
+        if (Math.abs(px - (e.x / U + W / 2)) <= hw && Math.abs(py - e.y / U) <= hd) return true;
+      }
+      for (const v of body.volumes) {
+        if (v.open || v.base !== 0) continue;
+        const x0 = v.x / U + W / 2, y0 = v.y / U;
+        if (px >= x0 - 0.45 && px <= x0 + v.w / U + 0.45 && py >= y0 - 0.45 && py <= y0 + v.d / U + 0.45) return true;
+      }
+      return false;
+    };
+    /** The open stretches along an edge from 0 to `len`, `at(t)` the point on it. */
+    const openRuns = (len: number, at: (t: number) => [number, number]): [number, number][] => {
+      const runs: [number, number][] = [];
+      let from = -1;
+      for (let t = 0.3; t <= len - 0.3 + 1e-6; t += 0.25) {
+        const open = !covered(...at(t));
+        if (open && from < 0) from = t;
+        if ((!open || t + 0.25 > len - 0.3) && from >= 0) { const to = open ? t : t - 0.25; if (to - from >= 0.4) runs.push([Math.max(0, from - 0.25), Math.min(len, to + 0.25)]); from = -1; }
+      }
+      return runs;
+    };
+    const frontKind = boundary.front ?? 'wall';
+    for (const [a, b] of openRuns(W, (t) => [t, 0.15])) {
+      if (boundary.front && boundary.frontBase > 0) lot.runX('wall', frontAt('wall'), a, b, boundary.frontBase);
+      lot.runX(frontKind, boundary.front && boundary.frontBase > 0 ? frontAt('wall') : frontAt(frontKind), a, b,
+        boundary.front ? boundary.frontH : 1.6, [], boundary.front ? boundary.frontBase : 0);
+    }
+    for (const [a, b] of openRuns(W, (t) => [t, D - 0.15])) lot.runX(boundary.sides, D - sideHalf, a, b, boundary.sidesH);
+    const lowFront = plan.kind === 'house' || plan.kind === 'flats' ? Math.min(boundary.sidesH, 1.3) : boundary.sidesH;
+    for (const x of [0.15, W - 0.15]) {
+      for (const [a, b] of openRuns(D, (t) => [x, t])) {
+        const at = x < W / 2 ? sideHalf : W - sideHalf;
+        // Low beside the front garden, full height behind it.
+        if (a < F) lot.runY(boundary.sides, at, Math.max(a, inset), Math.min(b, F), lowFront);
+        if (b > F) lot.runY(boundary.sides, at, Math.max(a, F), Math.min(b, D - inset), boundary.sidesH);
+      }
+    }
+  }
   (body as { nextVolumeId?: number }).nextVolumeId = nextVolume;
   (body as { nextElementId?: number }).nextElementId = nextElement;
   return true;

@@ -47,6 +47,27 @@ function elementCorners(el: BuildingElement): { x: number; y: number }[] {
   return [[-sx, -sy], [sx, -sy], [sx, sy], [-sx, sy]].map(([a, b]) => ({ x: el.x + a! * c - b! * s, y: el.y + a! * s + b! * c }));
 }
 
+/**
+ * Whether a convex ring (an element's turned box) overlaps the cell square
+ * from (`cx`, `cy`) one `CELL` across: separating axes of the square and of
+ * the ring's sides.
+ */
+function rectTouchesCell(ring: readonly { x: number; y: number }[], cx: number, cy: number): boolean {
+  const sq = [{ x: cx, y: cy }, { x: cx + CELL, y: cy }, { x: cx + CELL, y: cy + CELL }, { x: cx, y: cy + CELL }];
+  for (const poly of [sq, ring]) {
+    for (let k = 0; k < poly.length; k++) {
+      const p = poly[k]!, q = poly[(k + 1) % poly.length]!;
+      const ax = -(q.y - p.y), ay = q.x - p.x;
+      if (ax === 0 && ay === 0) continue;
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const v of sq) { const d = v.x * ax + v.y * ay; a0 = Math.min(a0, d); a1 = Math.max(a1, d); }
+      for (const v of ring) { const d = v.x * ax + v.y * ay; b0 = Math.min(b0, d); b1 = Math.max(b1, d); }
+      if (a1 <= b0 || b1 <= a0) return false;
+    }
+  }
+  return true;
+}
+
 function inside(ring: readonly { x: number; y: number }[], x: number, y: number): boolean {
   let hit = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -69,18 +90,35 @@ export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonl
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const x = x0 + (i + 0.5) * CELL, y = y0 + (j + 0.5) * CELL;
-      if (solids.some((ring) => inside(ring, x, y)) || walls.some((ring) => inside(ring, x, y))) solid[j * nx + i] = 1;
+      if (walls.some((ring) => inside(ring, x, y))) solid[j * nx + i] = 1;
     }
   }
-  // Grown by the clearance: a free cell is one a car's centre can stand on.
+  // The parts are marked in every cell they touch (a supercover, Red Blob
+  // Games "Line drawing on a grid"): a fence 12 cm thick lies between the
+  // centres of cells 75 cm apart, and marked by the centres it covered it was
+  // not in the grid at all - cars drove through the boundary, not its gate.
+  for (const ring of solids) {
+    let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+    for (const p of ring) { rx0 = Math.min(rx0, p.x); ry0 = Math.min(ry0, p.y); rx1 = Math.max(rx1, p.x); ry1 = Math.max(ry1, p.y); }
+    const i0 = Math.max(0, Math.floor((rx0 - x0) / CELL)), i1 = Math.min(nx - 1, Math.floor((rx1 - x0) / CELL));
+    const j0 = Math.max(0, Math.floor((ry0 - y0) / CELL)), j1 = Math.min(ny - 1, Math.floor((ry1 - y0) / CELL));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        if (!solid[j * nx + i] && rectTouchesCell(ring, x0 + i * CELL, y0 + j * CELL)) solid[j * nx + i] = 1;
+      }
+    }
+  }
+  // Grown by the clearance: a free cell is one a car's centre can stand on,
+  // `CLEARANCE` from the nearest solid cell's EDGE (its centre is half a cell in).
   const blocked = new Uint8Array(nx * ny);
-  const r = Math.ceil(CLEARANCE / CELL);
+  const reach = (CLEARANCE + CELL / 2) / CELL;
+  const r = Math.ceil(reach);
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       if (!solid[j * nx + i]) continue;
       for (let dj = -r; dj <= r; dj++) {
         for (let di = -r; di <= r; di++) {
-          if (di * di + dj * dj > r * r) continue;
+          if (di * di + dj * dj >= reach * reach) continue;
           const a = i + di, c = j + dj;
           if (a >= 0 && a < nx && c >= 0 && c < ny) blocked[c * nx + a] = 1;
         }

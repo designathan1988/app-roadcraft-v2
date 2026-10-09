@@ -2,7 +2,7 @@ import { pointInPolygon } from '@core/polygon';
 import { buildingBounds, localDirToWorld, localToWorld, solidFootprints, worldToLocal } from '@world/buildings/geometry';
 import { Digest } from '@core/digest';
 import { type LotGrid, buildLotGrid, wayOut } from './lotNav';
-import type { Building, BuildingId } from '@world/buildings/types';
+import type { Building, BuildingElement, BuildingId } from '@world/buildings/types';
 import type { Lanelet, LaneletId } from '@world/lanelets';
 import { m } from '@world/units';
 import type { SimWorld } from '../world';
@@ -40,6 +40,14 @@ export interface BayLane {
   /** Unit direction of travel there. */
   readonly tx: number;
   readonly ty: number;
+  /**
+   * For a lot entered by a car gate: the arc position (body centre) an
+   * arriving car stops at, a few metres BEFORE the gate, to turn in through
+   * it; `at` is then a few metres past the gate, where a car leaving joins.
+   * As SUMO binds a parking area to the lane its access is on, the gate's
+   * lane is the one a lot is driven to and left by.
+   */
+  readonly entryAt?: number;
 }
 
 export interface Bay {
@@ -194,6 +202,9 @@ function workOutBays(w: SimWorld): Bay[] {
   return out;
 
   function bayRows(b: Building): void {
+    // A lot closed by a boundary with car gates (`editor/lotPlan.ts`): the
+    // whole property is driven, and its only ways out are its car gates.
+    const property = gatedProperty(b);
     for (const el of b.elements ?? []) {
       if (el.kind !== 'parking') continue;
       const stalls = Math.max(1, Math.floor(el.w / STALL));
@@ -206,10 +217,10 @@ function workOutBays(w: SimWorld): Bay[] {
         [ax, ay] = [ax * c - ay * s, ax * s + ay * c];
         [cx, cy] = [cx * c - cy * s, cx * s + cy * c];
       }
-      const lot = b.volumes.find((v) => v.open && el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);
+      const lot = property ?? b.volumes.find((v) => v.open && el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);
       let nav = lot ? navCache.get(lot) : undefined;
       if (lot && !nav) {
-        const exits = exitsOf(w, b, lot, walls);
+        const exits = property ? gateExits(w, b, property, walls) : exitsOf(w, b, lot, walls);
         const local = wallsNear(walls, b, lot).map((wl) => wl.ring.map((q) => worldToLocal(b, q)));
         nav = { exits, grid: buildLotGrid(b, lot, local, exits) };
         navCache.set(lot, nav);
@@ -238,7 +249,8 @@ function workOutBays(w: SimWorld): Bay[] {
             out.push({ id: out.length, building: b.id, x: p.x, y: p.y, ox: axis.x, oy: axis.y, depth: el.d, lane: null, via: [], car: null });
             continue;
           }
-          const local = [...pick.points, exit.inner];
+          // Through a gate, the way runs on out of it to the footway's back.
+          const local = [...pick.points, exit.inner, ...(exit.outer ? [exit.outer] : [])];
           const via = local.filter((q, i) => i === 0 || Math.hypot(q.x - local[i - 1]!.x, q.y - local[i - 1]!.y) > m(1))
             .map((q) => localToWorld(b, q.x, q.y));
           out.push({
@@ -309,6 +321,100 @@ interface LotExit {
   readonly lane: BayLane;
   /** Distance from the edge to the lane's joining point. */
   readonly out: number;
+  /** Local frame, just outside a gate: where a car is once through it. */
+  readonly outer?: { readonly x: number; readonly y: number };
+}
+
+/** The narrowest gate a car is driven through (a person's gate is 1.2 m). */
+const CAR_GATE = m(2.2);
+/** Where a car leaving through a gate joins its lane, past the gate; where one arriving stops, before it. */
+const JOIN_PAST_GATE = m(6);
+const STOP_BEFORE_GATE = m(5);
+/** Kept clear of a lane's ends for a gate's stop and join points (a junction's mouth). */
+const GATE_LANE_END = m(6);
+
+/** A building's car gates: the `gate` elements a car fits through. */
+export function carGates(b: Building): BuildingElement[] {
+  return (b.elements ?? []).filter((el) => el.kind === 'gate' && el.w >= CAR_GATE);
+}
+
+/**
+ * The property of a lot closed by a boundary with car gates: the box of all
+ * its open blocks (front, drive, yard, car park), in the local frame. Null
+ * for a lot with no car gate, whose stalls are reached as before.
+ */
+export function gatedProperty(b: Building): { x: number; y: number; w: number; d: number } | null {
+  if (!carGates(b).length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const v of b.volumes) {
+    if (!v.open) continue;
+    x0 = Math.min(x0, v.x); y0 = Math.min(y0, v.y); x1 = Math.max(x1, v.x + v.w); y1 = Math.max(y1, v.y + v.d);
+  }
+  if (!Number.isFinite(x0)) return null;
+  // A little past the boundary, so the gate's own line lies inside the grid.
+  const pad = m(1);
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, d: y1 - y0 + 2 * pad };
+}
+
+/**
+ * The ways out of a gated lot: one per car gate, its inner point a few metres
+ * inside, its outer point just outside, and the lane of the street in front
+ * of it - joined a few metres past the gate and stopped at a few metres
+ * before it, so a car crosses the footway square to the kerb and turns on
+ * the carriageway (`manoeuvre.ts`).
+ */
+export function gateExits(w: SimWorld, b: Building, property: { x: number; y: number; w: number; d: number }, walls: readonly Wall[]): LotExit[] {
+  const out: LotExit[] = [];
+  const cx = property.x + property.w / 2, cy = property.y + property.d / 2;
+  for (const g of carGates(b)) {
+    const alongY = g.facing === 1 || g.facing === 3;
+    let ux = alongY ? 0 : 1, uy = alongY ? 1 : 0;
+    if (g.angle) {
+      const c = Math.cos(g.angle), s = Math.sin(g.angle);
+      [ux, uy] = [ux * c - uy * s, ux * s + uy * c];
+    }
+    // The gate's normal, into the lot.
+    let nx = -uy, ny = ux;
+    if ((cx - g.x) * nx + (cy - g.y) * ny < 0) { nx = -nx; ny = -ny; }
+    const inner = { x: g.x + nx * EDGE_INSET, y: g.y + ny * EDGE_INSET };
+    const edge = { x: g.x + nx * m(0.4), y: g.y + ny * m(0.4) };
+    const outer = { x: g.x - nx * m(1.2), y: g.y - ny * m(1.2) };
+    const wOuter = localToWorld(b, outer.x, outer.y);
+    const lane = gateLane(w, wOuter.x, wOuter.y);
+    if (!lane) continue;
+    const reach = Math.hypot(lane.x - wOuter.x, lane.y - wOuter.y);
+    if (reach > EDGE_REACH + JOIN_PAST_GATE) continue;
+    if (!clearOfWalls(walls, localToWorld(b, g.x, g.y), wOuter, m(1.1), b.id)) continue;
+    out.push({ inner, edge, outer, lane, out: reach });
+  }
+  return out;
+}
+
+/**
+ * The lane in front of a gate, on the kerb side: its join point `JOIN_PAST_GATE`
+ * along the travel from the gate's foot, its stop point `STOP_BEFORE_GATE`
+ * before it, both kept `GATE_LANE_END` clear of the lane's ends.
+ */
+function gateLane(w: SimWorld, x: number, y: number): BayLane | null {
+  let best: BayLane | null = null;
+  let bestD = LANE_REACH;
+  for (const lane of lanesNear(w, x, y, LANE_REACH)) {
+    if (lane.kind !== 'link' || lane.length < 2 * GATE_LANE_END + JOIN_PAST_GATE + STOP_BEFORE_GATE) continue;
+    if (w.rt(lane.id).ghost) continue;
+    const hit = lane.centre.closestPoint({ x, y });
+    if (hit.distance >= bestD) continue;
+    const foot = lane.centre.sampleAt(hit.s);
+    // Right-hand traffic: the lot on the right of the direction of travel.
+    if ((x - foot.p.x) * foot.t.y - (y - foot.p.y) * foot.t.x <= 0) continue;
+    const at = Math.max(GATE_LANE_END, Math.min(lane.length - GATE_LANE_END, hit.s + JOIN_PAST_GATE));
+    const entryAt = Math.max(GATE_LANE_END, Math.min(lane.length - GATE_LANE_END, hit.s - STOP_BEFORE_GATE));
+    // The gate must lie between where a car stops and where one joins.
+    if (at - entryAt < m(4)) continue;
+    const f = lane.centre.sampleAt(at);
+    bestD = hit.distance;
+    best = { lanelet: lane.id, at, x: f.p.x, y: f.p.y, tx: f.t.x, ty: f.t.y, entryAt };
+  }
+  return best;
 }
 
 /** Spacing of the points tried along a lot's sides. */
