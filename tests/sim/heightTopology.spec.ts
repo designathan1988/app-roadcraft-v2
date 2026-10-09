@@ -34,6 +34,9 @@ describe('height-only edits', () => {
     expect(net.trafficRevision).toBeGreaterThan(trafficRevision);
     step(sim, { traffic: false, pedestrians: false });
     expect(sim.topologyRevision).toBe(net.trafficRevision);
-    expect(sim.graph.lanelets.get(link.id)).not.toBe(link);
+    // Brought up to date, and still the same lanelet: the graph keeps a
+    // lanelet whose inputs are unchanged (`lanelets.ts`, the link key lists
+    // everything a lanelet reads), and a node's height is none of them.
+    expect(sim.graph.lanelets.get(link.id)).toBe(link);
   });
 });
