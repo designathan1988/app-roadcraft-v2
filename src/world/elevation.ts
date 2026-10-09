@@ -232,6 +232,8 @@ interface Profile {
   readonly structure: RoadStructure;
   /** A player-authored vertical alignment, independent of legacy structure modes. */
   readonly manualVertical: boolean;
+  /** Its cutting held by retaining walls (`RoadSegment.cutWalls`): cut back no wider than a portal's. */
+  readonly walls: boolean;
   /** The class index the road was drawn with, for per-class surface tinting. */
   readonly type: number;
   /** Half the casing width — how far this road's surface reaches sideways. */
@@ -432,6 +434,13 @@ const SHAPE_SHOULDER_MAX = 90;
  */
 const CUT_SHOULDER = 16;
 /**
+ * How far past a road's casing a cutting held by retaining walls is dug
+ * (`RoadSegment.cutWalls`): the ground held at road level beside it, then
+ * the portal's narrow batter. The renderer covers that band with the wall's
+ * backfill and reads the natural ground just past it (`render/structures.ts`).
+ */
+export const CUT_WALL_REACH = SHAPE_INNER + CUT_SHOULDER;
+/**
  * How far below the road SURFACE the ground beside it is pulled.
  *
  * It was `ROAD_GROUND_CLEARANCE` — three tenths of a unit — and that is not
@@ -537,6 +546,7 @@ export function buildRoadElevation(
       structure: segment.structure,
       manualVertical: Math.abs(net.doc.node(segment.a)?.heightOffset ?? 0) > 1e-6 ||
         Math.abs(net.doc.node(segment.b)?.heightOffset ?? 0) > 1e-6,
+      walls: segment.cutWalls === true,
       type: segment.type,
       half,
       median: ribbon.road.median,
@@ -1136,7 +1146,10 @@ export function buildRoadElevation(
         const height = beside ? surface - BESIDE_DROP : surface - SHAPE_DROP;
         // The batter is sized from the earthwork it has to carry away, so a
         // shallow fill blends out quickly and a deep cut opens out properly.
-        const shoulder = sunken
+        // A cutting held by retaining walls is dug no wider than a portal's:
+        // the wall at the road's edge stands in front of the step
+        // (`render/structures.ts` `retainingWalls`).
+        const shoulder = sunken || (profile.walls && naturalGround > height)
           ? CUT_SHOULDER
           : Math.min(SHAPE_SHOULDER_MAX, Math.max(SHAPE_SHOULDER, Math.abs(naturalGround - height) * BATTER));
         if (distance >= inner + shoulder) continue;

@@ -64,7 +64,7 @@ function segmentSourceKey(doc: RoadDoc, s: RoadSegment): string {
   const a = doc.node(s.a), b = doc.node(s.b);
   return `${s.a}>${s.b}|${s.type}|${s.curve ? `${s.curve.t},${s.curve.h}` : '-'}|${s.dashOrigin}|${s.direction}|${s.lanes}|` +
     `${s.structure}|${s.section ? JSON.stringify(s.section) : '-'}|${s.parking ? JSON.stringify(s.parking) : '-'}|` +
-    `${a ? `${a.x},${a.y}` : '-'}|${b ? `${b.x},${b.y}` : '-'}`;
+    `${a ? `${a.x},${a.y}` : '-'}|${b ? `${b.x},${b.y}` : '-'}${s.cutWalls ? '|walls' : ''}`;
 }
 
 /** Everything of a node a junction there is built from: the whole record, its roads by id. */

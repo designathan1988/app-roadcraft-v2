@@ -122,6 +122,14 @@ export interface RoadSegment {
   parking?: SegmentParking;
   /** Vertical construction mode. Ground is the legacy/default value. */
   structure: RoadStructure;
+  /**
+   * The sides of its cutting held by retaining walls instead of a batter
+   * (docs/VIAS.md V3): the ground is cut back only as far as a portal's
+   * cutting (`elevation.ts` `CUT_SHOULDER`) and a concrete wall stands at
+   * each edge up to the natural ground (`render/structures.ts`). Absent: the
+   * batter, as every road before it.
+   */
+  cutWalls?: true;
 }
 
 /**
@@ -751,6 +759,15 @@ export class RoadDoc {
     this.markSegment(id);
   }
 
+  /** Retaining walls on the sides of the road's cutting (`RoadSegment.cutWalls`). */
+  setSegmentCutWalls(id: SegmentId, on: boolean): void {
+    const segment = this.segments.get(id);
+    if (!segment || (segment.cutWalls === true) === on) return;
+    if (on) segment.cutWalls = true;
+    else delete segment.cutWalls;
+    this.markSegment(id);
+  }
+
   setSegmentStructure(id: SegmentId, structure: RoadStructure): void {
     const segment = this.segments.get(id);
     if (!segment || segment.structure === structure) return;
@@ -1347,6 +1364,7 @@ export class RoadDoc {
         structure: s.structure,
         ...(s.section ? { section: cloneRoadSection(s.section) } : {}),
         ...(s.parking ? { parking: { ...s.parking } } : {}),
+        ...(s.cutWalls ? { cutWalls: true as const } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       // Only for the natural land: a legacy map serialises as before.
@@ -1459,6 +1477,7 @@ export class RoadDoc {
         // Through the migration, so a level that has since been merged into
         // another (`viaduct`) loads as the one it became.
         structure: migrateStructure(s.structure) ?? 'ground',
+        ...(s.cutWalls === true ? { cutWalls: true as const } : {}),
       });
       doc.requireNode(a).incident.push(id);
       doc.requireNode(b).incident.push(id);
@@ -1643,6 +1662,8 @@ export interface SerializedDoc {
     parking?: SegmentParking;
     /** A current structure id, or a legacy one `migrateStructure` maps. */
     structure?: RoadStructure | 'viaduct';
+    /** Retaining walls in its cutting (docs/VIAS.md V3); absent on every older map. */
+    cutWalls?: boolean;
   }[];
   readonly terrain?: readonly TerrainStamp[];
   /** `ReliefVersion`; absent on maps made before the natural landform. */

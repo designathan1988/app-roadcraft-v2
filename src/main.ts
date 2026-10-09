@@ -75,6 +75,7 @@ import { CameraGestures } from '@view/cameraGestures';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { applyProfileTo } from '@editor/roads/profile';
 import { drawProfile } from '@ui/roads/drawProfile';
+import { cutWallsChosen } from '@ui/roads/cutWalls';
 import { ROAD_PARKING_PRESETS, type RoadParkingPreset, roadParking, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
@@ -424,6 +425,7 @@ const roadTool = new RoadTool({
     heightOffset: game.roadHeightOffset, parking: roadParking(), width: roadWidth(), grid: roadGridShown(),
     // The profile chosen in the profile editor for new roads (docs/VIAS.md V2).
     profile: drawProfile(),
+    cutWalls: cutWallsChosen(),
   }),
   setHeight: (value, cause) => gameState.set('roadHeightOffset', value, cause),
   worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),
@@ -4129,7 +4131,7 @@ function buildSummary(stations: Parameters<typeof buildRuns>[0]): string {
   return [...totals]
     .filter(([mode, length]) => mode !== 'ground' && length * METERS_PER_UNIT >= 5)
     .sort((x, y) => y[1] - x[1])
-    .map(([mode, length]) => `${t(`buildMode.${mode}`)} ${Math.max(10, Math.round((length * METERS_PER_UNIT) / 10) * 10)} m`)
+    .map(([mode, length]) => `${t(mode === 'cutting' && cutWallsChosen() ? 'buildMode.cuttingWalls' : `buildMode.${mode}`)} ${Math.max(10, Math.round((length * METERS_PER_UNIT) / 10) * 10)} m`)
     .join(' · ');
 }
 

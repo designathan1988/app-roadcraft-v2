@@ -93,7 +93,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V0 | Base: worktree, `tuning.ts`, contrato de dados, rede e elevação incrementais, economia mínima | mapas antigos idênticos; sem regressão no `probe-baseline`; fuzz verde; custo no preview, debitado e devolvido | em andamento (ver "Andamento da V0") |
 | V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V1") |
 | V2 | Editor visual do perfil com validação e modelos | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V2") |
-| V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | |
+| V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | feito no ramo, aguardando o jogador (ver "Andamento da V3") |
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | |
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | |
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | |
@@ -209,9 +209,18 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   (`setGlobalParams` em `ui/i18n`). Teste `tests/ui/roadKeys.spec.ts`.
 - Defeito achado ao usar (classe): a altura nas opções da ferramenta mostrava o passo anterior quando mudada pelo teclado;
   agora o painel observa o texto que o jogo escreve (`shell.ts`, `mirrored`).
+- Trincheira com muro (`RoadSegment.cutWalls`, opcional no documento, ausente em todo mapa antigo): linha "Corte: Talude |
+  Muro" na ferramenta de vias. Com muro, o modelador do terreno corta só a faixa de um emboque de túnel
+  (`CUT_WALL_REACH` = `SHAPE_INNER` + `CUT_SHOULDER`, `world/elevation.ts`) e o renderizador ergue em cada borda da pista um
+  muro de concreto do pé sob a via até um coroamento sobre o chão natural, com o reaterro no material do próprio terreno por
+  cima da faixa cortada (nunca uma "manta verde"), só onde a via está em trincheira aberta (`buildModeAt`, nunca sobre um
+  túnel), com tampa nas pontas. Copiado ao dividir, duplicar e juntar vias. Detector `tests/world/cutWalls.spec.ts`: salvo e
+  ausente nos mapas antigos, corte não passa do reaterro, muro do pé sob a via ao topo, reaterro assentado no chão (sem
+  flutuar nem enterrar), nenhum muro sobre um túnel. O preço continua o da trincheira.
 - Desempenho (`tests/bench/roadRebuild.spec.ts`, BENCH=1, cidade de teste, mediana de 5): dry run 5,9 ms, dos quais as
   estações 0,19 ms (a solução do teste de túnel é reaproveitada); commit 6,0 ms, igual. Arraste na sonda headless: quadro
-  mediano 2,5 ms.
+  mediano 2,5 ms. Muros: uma malha só (faces) e uma de reaterro por reconstrução dos detalhes, só para vias com muro.
+- Fechamento no ramo: lint limpo, suíte inteira 1123 verdes (a falha antiga de `occupantFit` à parte), fuzz smoke verde.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

@@ -1591,8 +1591,8 @@ export function createSceneRenderer(
     // (docs/performance.md #13).
     const atdetails = performance.now();
     const keepDetails = details !== null && !blocksReach(blocks, details.spans)
-      && (() => { const near = structureRibbons(net, solve, terrain.renderedHeightAt, blocks!); return near.raised.length + near.tunnels.length === 0; })();
-    const freshDetails = keepDetails ? details! : buildStructureDetails(net, solve, terrain.renderedHeightAt, materials);
+      && (() => { const near = structureRibbons(net, solve, terrain.renderedHeightAt, blocks!); return near.raised.length + near.tunnels.length + near.walled.length === 0; })();
+    const freshDetails = keepDetails ? details! : buildStructureDetails(net, solve, terrain.renderedHeightAt, materials, terrain.vergeMaterial);
     performance.measure('hitch:road-edit/details', { start: atdetails, end: performance.now() });
     yield;
     const atscenery = performance.now();

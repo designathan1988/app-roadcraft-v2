@@ -14,7 +14,9 @@ import { angleOf } from '@core/vec2';
 import type { Frame, Polyline } from '@core/polyline';
 import type { Network, SegmentRibbon } from '@world/network';
 import type { SegmentId } from '@world/ids';
-import type { RoadElevation } from '@world/elevation';
+import { CUT_WALL_REACH, type RoadElevation } from '@world/elevation';
+import { buildModeAt } from '@world/roads/buildMode';
+import { TERRAIN_UV } from './roadSurfaces';
 import { ROAD_TUNING } from '@world/roads/tuning';
 import { Level, casingHalf, roadProfile, sidewalkHalf } from '@world/roadTypes';
 import {
@@ -66,7 +68,7 @@ export function structureRibbons(
   elevation: RoadElevation,
   terrainAt: (x: number, y: number) => number,
   within?: readonly (readonly [number, number, number, number])[],
-): { raised: SegmentRibbon[]; tunnels: SegmentRibbon[] } {
+): { raised: SegmentRibbon[]; tunnels: SegmentRibbon[]; walled: SegmentRibbon[] } {
   const samples = (ribbon: SegmentRibbon,
     predicate: (cover: number) => boolean): boolean => {
     for (let s = 0; s <= ribbon.full.length; s += Math.max(4, ribbon.full.length / 32)) {
@@ -88,7 +90,87 @@ export function structureRibbons(
       ribbon.full.length > 0 &&
       (net.doc.segment(ribbon.id)?.structure === 'tunnel' || samples(ribbon, (lift) => lift < -TUNNEL_BORE)))
     : [];
-  return { raised, tunnels };
+  // Roads whose cutting is held by retaining walls (docs/VIAS.md V3).
+  const walled = asked.filter((ribbon) => net.doc.segment(ribbon.id)?.cutWalls === true && ribbon.full.length > 0);
+  return { raised, tunnels, walled };
+}
+
+/** A retaining wall's thickness, its coping over the ground it holds, its footing under the road. */
+const WALL_THICK = 0.8;
+const WALL_COPING = 0.45;
+const WALL_FOOT = 0.6;
+/** Spacing of a wall's sections along the road. */
+const WALL_STEP = 2;
+
+/**
+ * THE RETAINING WALLS of a cutting (docs/VIAS.md V3, `RoadSegment.cutWalls`):
+ * along each edge of the casing, wherever the natural ground stands more than
+ * `fillFrom` over the deck, a concrete face from under the road to a coping
+ * just over the ground, and on top of the band the shaper cut back behind it
+ * (`CUT_WALL_REACH`) the backfill at the natural ground's height, in the
+ * terrain's own material. The natural ground is read where the backfill ends, where
+ * the shaper no longer reaches. A heightfield cannot stand vertical, so the wall
+ * is the face and the backfill the lid over the step behind it, as a portal's
+ * headwall is over a tunnel's.
+ */
+function retainingWalls(
+  net: Network, walled: readonly SegmentRibbon[], elevation: RoadElevation, terrainAt: (x: number, y: number) => number,
+  faces: Extrusion, lids: Extrusion, faceTile: number, lidTile: number,
+): void {
+  for (const ribbon of walled) {
+    const structure = net.doc.requireSegment(ribbon.id).structure;
+    const centre = ribbon.centre[Level.Casing] ?? ribbon.full;
+    const edge = casingHalf(ribbon.road);
+    const length = centre.length;
+    const steps = Math.max(1, Math.ceil(length / WALL_STEP));
+    for (const side of [1, -1] as const) {
+      type Section = { x: number; y: number; ox: number; oy: number; deck: number; top: number; s: number };
+      let prev: Section | null = null;
+      for (let i = 0; i <= steps; i++) {
+        const s = (i / steps) * length;
+        const f = centre.sampleAt(s);
+        const ox = f.n.x * side, oy = f.n.y * side;
+        const deck = elevation.onSegment(ribbon.id, f.p.x, f.p.y);
+        // The ground where the backfill ends: past the shaper's reach, the natural ground.
+        const out = edge + CUT_WALL_REACH - 0.5;
+        const top = terrainAt(f.p.x + ox * out, f.p.y + oy * out);
+        // Only where the road is in an open cutting (`world/roads/buildMode.ts`):
+        // not at grade, not where it has gone into a bore.
+        const here: Section | null = buildModeAt(structure, deck - top) === 'cutting'
+          ? { x: f.p.x + ox * edge, y: f.p.y + oy * edge, ox, oy, deck, top, s }
+          : null;
+        // The end of a run of wall: the backfill closed down to the road.
+        const end = here && !prev ? here : prev && !here ? prev : null;
+        if (end) {
+          const tx = f.t.x, ty = f.t.y, sign = here ? -1 : 1;
+          const at = (out: number, h: number): [number, number, number] => [end.x + end.ox * out, end.y + end.oy * out, h];
+          faces.quad(at(0, end.deck - WALL_FOOT), at(CUT_WALL_REACH - 0.5, end.deck - WALL_FOOT), at(CUT_WALL_REACH - 0.5, end.top + 0.04), at(0, end.top + WALL_COPING),
+            [tx * sign, ty * sign, 0], [0, (end.deck - WALL_FOOT) / faceTile, CUT_WALL_REACH / faceTile, (end.top + WALL_COPING) / faceTile]);
+        }
+        if (prev && here) {
+          const a = prev, b = here;
+          const at = (q: Section, out: number, h: number): [number, number, number] => [q.x + q.ox * out, q.y + q.oy * out, h];
+          const u0 = a.s / faceTile, u1 = b.s / faceTile;
+          // The face towards the road.
+          faces.quad(at(a, 0, a.deck - WALL_FOOT), at(b, 0, b.deck - WALL_FOOT), at(b, 0, b.top + WALL_COPING), at(a, 0, a.top + WALL_COPING),
+            [-(a.ox + b.ox) / 2, -(a.oy + b.oy) / 2, 0], [u0, (a.deck - WALL_FOOT) / faceTile, u1, (a.top + WALL_COPING) / faceTile]);
+          // The coping.
+          faces.quad(at(a, 0, a.top + WALL_COPING), at(b, 0, b.top + WALL_COPING), at(b, WALL_THICK, b.top + WALL_COPING), at(a, WALL_THICK, a.top + WALL_COPING),
+            [0, 0, 1], [u0, 0, u1, WALL_THICK / faceTile]);
+          // The back of the coping, down to the backfill.
+          faces.quad(at(a, WALL_THICK, a.top + WALL_COPING), at(b, WALL_THICK, b.top + WALL_COPING), at(b, WALL_THICK, b.top), at(a, WALL_THICK, a.top),
+            [(a.ox + b.ox) / 2, (a.oy + b.oy) / 2, 0], [u0, 0, u1, WALL_COPING / faceTile]);
+          // The backfill over the band the cutting was dug back.
+          const back = CUT_WALL_REACH - 0.5;
+          // Flat from the coping to where it meets the ground.
+          const pa = at(a, WALL_THICK, a.top + 0.04), pb = at(b, WALL_THICK, b.top + 0.04);
+          const qa = at(a, back, a.top + 0.04), qb = at(b, back, b.top + 0.04);
+          lids.quadWorld(pa, pb, qb, qa, [0, 0, 1], lidTile);
+        }
+        prev = here;
+      }
+    }
+  }
 }
 
 /** Bearing inset: the deck rests ON the pier, so its top stops just under it. */
@@ -312,9 +394,41 @@ class Extrusion {
       [pb, pd] = [pd, pb];
       [uvB, uvD] = [uvD, uvB];
     }
+    this.push(pa, pb, pc, pd, uvA, uvB, uvC, uvD, n3);
+  }
+
+  /**
+   * A quad textured by world position (`uv = (x, y) / scale` at each corner),
+   * as the terrain's own material reads it (`roadSurfaces.ts` `TERRAIN_UV`).
+   */
+  quadWorld(
+    a: readonly [number, number, number],
+    b: readonly [number, number, number],
+    c: readonly [number, number, number],
+    d: readonly [number, number, number],
+    normal: readonly [number, number, number],
+    scale: number,
+  ): void {
+    const to3 = (p: readonly [number, number, number]): [number, number, number] => [p[0], p[2], -p[1]];
+    const n3: [number, number, number] = [normal[0], normal[2], -normal[1]];
+    const uv = (p: readonly [number, number, number]): number[] => [p[0] / scale, p[1] / scale];
+    const pa = to3(a), pc = to3(c);
+    let pb = to3(b), pd = to3(d);
+    let ub = uv(b), ud = uv(d);
+    const ux = pb[0] - pa[0], uy = pb[1] - pa[1], uz = pb[2] - pa[2];
+    const vx = pc[0] - pa[0], vy = pc[1] - pa[1], vz = pc[2] - pa[2];
+    if ((uy * vz - uz * vy) * n3[0] + (uz * vx - ux * vz) * n3[1] + (ux * vy - uy * vx) * n3[2] < 0) {
+      [pb, pd] = [pd, pb];
+      [ub, ud] = [ud, ub];
+    }
+    this.push(pa, pb, pc, pd, uv(a), ub, uv(c), ud, n3);
+  }
+
+  private push(pa: readonly number[], pb: readonly number[], pc: readonly number[], pd: readonly number[],
+    uvA: readonly number[], uvB: readonly number[], uvC: readonly number[], uvD: readonly number[], n3: readonly number[]): void {
     for (const [p, t] of [[pa, uvA], [pb, uvB], [pc, uvC], [pa, uvA], [pc, uvC], [pd, uvD]] as const) {
-      this.positions.push(p[0], p[1], p[2]);
-      this.normals.push(n3[0], n3[1], n3[2]);
+      this.positions.push(p[0] as number, p[1] as number, p[2] as number);
+      this.normals.push(n3[0] as number, n3[1] as number, n3[2] as number);
       this.uvs.push(t[0] as number, t[1] as number);
     }
   }
@@ -412,12 +526,19 @@ export function buildStructureDetails(
   elevation: RoadElevation,
   terrainAt: (x: number, y: number) => number,
   materials: SceneMaterials,
+  /**
+   * The terrain's own material, for a retaining wall's backfill: the lawn
+   * itself carried to the wall's top, textured by world position, never a
+   * second green (the player's order of 2026-10-05, as the road verge,
+   * `roadSurfaces.ts`). Without it (a warm-up, a test) the backfill is not drawn.
+   */
+  groundMaterial?: Material,
 ): StructureDetails {
   const group = new Group();
   group.name = 'road-structure-details';
 
-  const { raised, tunnels } = structureRibbons(net, elevation, terrainAt);
-  const spans = [...raised, ...tunnels].map((ribbon) => {
+  const { raised, tunnels, walled } = structureRibbons(net, elevation, terrainAt);
+  const spans = [...raised, ...tunnels, ...walled].map((ribbon) => {
     const bb = ribbon.full.bbox;
     return [bb.minX - SPAN_REACH, bb.minY - SPAN_REACH, bb.maxX + SPAN_REACH, bb.maxY + SPAN_REACH] as const;
   });
@@ -554,6 +675,20 @@ export function buildStructureDetails(
 
   const owned: BufferGeometry[] = [pierGeometry, capGeometry];
   if (parapetMesh) owned.push(parapetMesh.geometry);
+
+  // ------------------------------------------------------- retaining walls
+  if (walled.length > 0) {
+    const faces = new Extrusion();
+    const lids = new Extrusion();
+    retainingWalls(net, walled, elevation, terrainAt, faces, lids, materials.scale.deck, TERRAIN_UV);
+    const faceMesh = faces.mesh('retaining-walls', materials.parapet);
+    const lidMesh = groundMaterial ? lids.mesh('retaining-wall-backfill', groundMaterial) : null;
+    if (lidMesh) lidMesh.castShadow = false;
+    attach(faceMesh);
+    attach(lidMesh);
+    if (faceMesh) owned.push(faceMesh.geometry);
+    if (lidMesh) owned.push(lidMesh.geometry);
+  }
 
   // ---------------------------------------------------------------- portals
   //

@@ -866,6 +866,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   };
   const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, section, parkingFirst);
   if (!joined) return false;
+  if (first.cutWalls && second.cutWalls) doc.setSegmentCutWalls(joined.id, true);
   doc.carryMovements(a, bansAtA, first.id, joined.id);
   doc.carryMovements(b, bansAtB, second.id, joined.id);
   doc.carryCrossing(a, crossingAtA, first.id, joined.id);
@@ -911,6 +912,7 @@ export function duplicateSegment(doc: RoadDoc, net: Network, id: SegmentId): Seg
     segment.section,
     segment.parking,
   );
+  if (copy && segment.cutWalls) doc.setSegmentCutWalls(copy.id, true);
   if (copy) return copy.id;
 
   // Source validation above makes this defensive branch unlikely, but keep
@@ -1025,6 +1027,7 @@ function splitSegmentAtCuts<Tag>(
       sectionForPiece(seg.section, i === 0, i + 2 === nodeIds.length),
       seg.parking,
     );
+    if (piece && seg.cutWalls) doc.setSegmentCutWalls(piece.id, true);
     if (piece) pieces.push(piece.id);
   }
   const first = pieces[0];

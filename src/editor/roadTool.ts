@@ -68,6 +68,8 @@ export interface RoadToolHost {
     readonly heightOffset: number; readonly parking: SegmentParking | undefined; readonly width: number | null; readonly grid: boolean;
     /** A profile new roads are laid with (docs/VIAS.md V2), over the class, lanes, width and parking; null for those. */
     readonly profile?: { readonly profile: RoadProfileSpec; readonly type: number } | null;
+    /** Retaining walls in the cuttings of new roads instead of a batter (docs/VIAS.md V3). */
+    readonly cutWalls?: boolean;
   };
   /** Sets the height the road is drawn at (the game's state, with the cause). */
   setHeight(value: number, cause: string): void;
@@ -477,6 +479,10 @@ export class RoadTool {
           }
           host.hint('hint.rule.funds');
         }
+      }
+      // Retaining walls in the cuttings of the roads just laid (V3).
+      if (result.committed && settings.cutWalls) {
+        for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentCutWalls(id, true);
       }
       return result.committed;
     });

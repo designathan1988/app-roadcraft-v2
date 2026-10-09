@@ -54,6 +54,7 @@ import { balanceTip, formatMoney } from '../roads/money';
 import { openProfileEditor } from '../roads/profileEditor';
 import { drawProfile, setDrawProfile } from '../roads/drawProfile';
 import { closeRoadKeys, openRoadKeys, roadKeysOpen } from '../roads/keysPanel';
+import { cutWallsChosen, setCutWalls } from '../roads/cutWalls';
 import { keyLabel, onRoadKeysChange, roadKey } from '../roads/keys';
 import { classTemplates } from '@world/roads/templates';
 import { materialSwatch } from '../materialSwatch';
@@ -942,6 +943,16 @@ export function mountShell(deps: ShellDeps): void {
       const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), q('#roadHeightValue')?.textContent ?? '', (d) => press(`[data-height-step="${d}"]`)));
       heightRow.title = `${t('palette.height')}: ${q('#roadHeightContext')?.textContent ?? ''}`;
       options.appendChild(heightRow);
+      // The sides of a cutting: a batter, or retaining walls (docs/VIAS.md V3).
+      const walls = cutWallsChosen();
+      const cutRow = el('div', 'v2-seg');
+      for (const on of [false, true]) {
+        const b = button(`v2-seg-b rp-seg-text${walls === on ? ' on' : ''}`, t(on ? 'cutSides.walls' : 'cutSides.batter'), () => { setCutWalls(on); render(); });
+        b.setAttribute('aria-pressed', String(walls === on));
+        b.dataset['cutWalls'] = String(on);
+        cutRow.appendChild(b);
+      }
+      options.appendChild(orow(t('cutSides.row'), cutRow));
       // The tool's keys, rebindable (docs/VIAS.md V3).
       const keysB = button('v2-pill rp-open', `${keyLabel(roadKey('heightUp'), true)} · ${keyLabel(roadKey('heightDown'), true)} · ${keyLabel(roadKey('alignment'), true)}`,
         () => (roadKeysOpen() ? closeRoadKeys() : openRoadKeys(keysB)), svg('keyboard', 16));

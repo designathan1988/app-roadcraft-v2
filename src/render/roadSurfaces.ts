@@ -99,8 +99,8 @@ const VERGE_SKIRT = 0.5;
  * skirt) shows where the two meet. Both wear the terrain's material.
  */
 const VERGE_LIFT = -m(0.08);
-/** World size of one UV unit on the ground verge when it wears the terrain's material. */
-const TERRAIN_UV = 64;
+/** World size of one UV unit on the ground verge when it wears the terrain's material (and a retaining wall's backfill, `structures.ts`). */
+export const TERRAIN_UV = 64;
 
 /**
  * Longest triangle edge on a road at grade.
