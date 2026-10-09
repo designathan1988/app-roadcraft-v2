@@ -11,23 +11,55 @@ import type { Building, BuildingElement, ElementKind } from '@world/buildings/ty
  * the path is then pulled taut and driven as smooth curves (`manoeuvre.ts`).
  *
  * All coordinates here are the building's local frame (the lot's own axes).
+ *
+ * The same grid serves a person walking from a lot's gate to its door
+ * (`agents/lotDoors.ts`), built for that walker as clearance-based
+ * pathfinding builds one per kind of agent (Harabor, "Clearance-based
+ * pathfinding", 2009: an agent may use a tile only where the clearance is at
+ * least its size, for the terrain it can cross): finer cells, a body's
+ * clearance instead of a car's, and stairs and ramps walkable. Built with the
+ * car's clearance, a 1.2 m person's gate was shut.
  */
 
-/** Cell size of the grid. */
-const CELL = m(0.75);
+/** Cell size of a car's grid. */
+const DEFAULT_CELL = m(0.75);
 /** Kept between a car's centreline and anything solid: half a car's width and a little. */
-const CLEARANCE = m(1.1);
+const DEFAULT_CLEARANCE = m(1.1);
 /** What a car cannot drive through on a lot. */
 const SOLID: ReadonlySet<ElementKind> = new Set<ElementKind>([
   'stair', 'ramp', 'pillar', 'wall', 'fence', 'tree', 'bench', 'planter', 'railing', 'rocks', 'clock', 'hedge',
   'shrub', 'bin', 'lamp', 'bollard', 'parking',
 ]);
+/** What a person cannot walk through on a lot: a car's list less the stairs and ramps, and the flower beds. */
+export const PEOPLE_SOLID: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  'pillar', 'wall', 'fence', 'tree', 'bench', 'planter', 'railing', 'rocks', 'clock', 'hedge',
+  'shrub', 'bin', 'lamp', 'bollard', 'parking', 'flowers',
+]);
+/** Parts this high off the ground or more stand over a walker's head (a canopy's wall, a sign). */
+const OVERHEAD = m(2.1);
+
+/** The grid's make for one kind of agent: its cell, the clearance its centre keeps, what is solid to it. */
+export interface LotGridOptions {
+  readonly cell?: number;
+  readonly clearance?: number;
+  readonly solid?: ReadonlySet<ElementKind>;
+}
+/**
+ * A person's grid: 20 cm cells, so a gate's opening (1.3 m between the fence
+ * ends at the narrowest, `editor/lotPlan.ts`) keeps free cells after the
+ * supercover rounds each fence end out by up to a cell; grown by 0.25 m, the
+ * nearest free cell's centre is a cell and a half (0.3 m) from the edge of
+ * the solid cell, more than a body's radius (0.27 m, `agents/walk.ts` BODY).
+ */
+export const PEOPLE_GRID: LotGridOptions = { cell: m(0.2), clearance: m(0.25), solid: PEOPLE_SOLID };
 
 export interface LotRect { readonly x: number; readonly y: number; readonly w: number; readonly d: number }
 
 export interface LotGrid {
   readonly x0: number;
   readonly y0: number;
+  /** Cell size. */
+  readonly cell: number;
   readonly nx: number;
   readonly ny: number;
   /** 1 where a car's centre may not be. */
@@ -52,8 +84,8 @@ function elementCorners(el: BuildingElement): { x: number; y: number }[] {
  * from (`cx`, `cy`) one `CELL` across: separating axes of the square and of
  * the ring's sides.
  */
-function rectTouchesCell(ring: readonly { x: number; y: number }[], cx: number, cy: number): boolean {
-  const sq = [{ x: cx, y: cy }, { x: cx + CELL, y: cy }, { x: cx + CELL, y: cy + CELL }, { x: cx, y: cy + CELL }];
+function rectTouchesCell(ring: readonly { x: number; y: number }[], cx: number, cy: number, size: number): boolean {
+  const sq = [{ x: cx, y: cy }, { x: cx + size, y: cy }, { x: cx + size, y: cy + size }, { x: cx, y: cy + size }];
   for (const poly of [sq, ring]) {
     for (let k = 0; k < poly.length; k++) {
       const p = poly[k]!, q = poly[(k + 1) % poly.length]!;
@@ -80,13 +112,20 @@ function inside(ring: readonly { x: number; y: number }[], x: number, y: number)
 /**
  * The lot's grid: `walls` are the buildings' footprints already in this
  * building's local frame; `exits` the points (local) cars leave the lot by.
+ * `options`: a car's grid when absent; a person's is `PEOPLE_GRID`.
  */
 export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonly { x: number; y: number }[])[],
-  exits: readonly { readonly inner: { x: number; y: number }; readonly edge: { x: number; y: number } }[]): LotGrid {
+  exits: readonly { readonly inner: { x: number; y: number }; readonly edge: { x: number; y: number } }[],
+  options: LotGridOptions = {}): LotGrid {
+  const CELL = options.cell ?? DEFAULT_CELL;
+  const CLEARANCE = options.clearance ?? DEFAULT_CLEARANCE;
+  const kinds = options.solid ?? SOLID;
+  // A person walks under what stands overhead; a car's grid keeps everything of its kinds.
+  const overhead = options.solid ? OVERHEAD : Infinity;
   const x0 = lot.x, y0 = lot.y;
   const nx = Math.max(1, Math.ceil(lot.w / CELL)), ny = Math.max(1, Math.ceil(lot.d / CELL));
   const solid = new Uint8Array(nx * ny);
-  const solids = (b.elements ?? []).filter((el) => SOLID.has(el.kind)).map(elementCorners);
+  const solids = (b.elements ?? []).filter((el) => kinds.has(el.kind) && el.z < overhead).map(elementCorners);
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const x = x0 + (i + 0.5) * CELL, y = y0 + (j + 0.5) * CELL;
@@ -104,7 +143,7 @@ export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonl
     const j0 = Math.max(0, Math.floor((ry0 - y0) / CELL)), j1 = Math.min(ny - 1, Math.floor((ry1 - y0) / CELL));
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
-        if (!solid[j * nx + i] && rectTouchesCell(ring, x0 + i * CELL, y0 + j * CELL)) solid[j * nx + i] = 1;
+        if (!solid[j * nx + i] && rectTouchesCell(ring, x0 + i * CELL, y0 + j * CELL, CELL)) solid[j * nx + i] = 1;
       }
     }
   }
@@ -157,7 +196,7 @@ export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonl
     }
     return top;
   };
-  const grid0 = { x0, y0, nx, ny, blocked };
+  const grid0 = { x0, y0, cell: CELL, nx, ny, blocked };
   exits.forEach((ex, n) => {
     // A way out only where the line to the lot's edge is free: through a gate, not a fence.
     if (!sees(grid0, ex.inner, ex.edge)) return;
@@ -190,12 +229,12 @@ export function buildLotGrid(b: Building, lot: LotRect, walls: readonly (readonl
       }
     }
   }
-  return { x0, y0, nx, ny, blocked, dist, exitOf };
+  return { x0, y0, cell: CELL, nx, ny, blocked, dist, exitOf };
 }
 
 /** The free cell nearest a local point within a few cells, or -1. */
 function freeCellNear(g: LotGrid, x: number, y: number): number {
-  const i0 = Math.floor((x - g.x0) / CELL), j0 = Math.floor((y - g.y0) / CELL);
+  const i0 = Math.floor((x - g.x0) / g.cell), j0 = Math.floor((y - g.y0) / g.cell);
   let best = -1, bestD = Infinity;
   for (let dj = -3; dj <= 3; dj++) {
     for (let di = -3; di <= 3; di++) {
@@ -212,16 +251,16 @@ function freeCellNear(g: LotGrid, x: number, y: number): number {
 
 const centre = (g: LotGrid, cell: number): { x: number; y: number } => {
   const i = cell % g.nx;
-  return { x: g.x0 + (i + 0.5) * CELL, y: g.y0 + ((cell - i) / g.nx + 0.5) * CELL };
+  return { x: g.x0 + (i + 0.5) * g.cell, y: g.y0 + ((cell - i) / g.nx + 0.5) * g.cell };
 };
 
 /** Whether the straight line between two local points crosses only free cells. */
-function sees(g: Pick<LotGrid, "x0" | "y0" | "nx" | "ny" | "blocked">, a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+export function sees(g: Pick<LotGrid, "x0" | "y0" | "cell" | "nx" | "ny" | "blocked">, a: { x: number; y: number }, b: { x: number; y: number }): boolean {
   const len = Math.hypot(b.x - a.x, b.y - a.y);
-  const steps = Math.max(1, Math.ceil(len / (CELL * 0.5)));
+  const steps = Math.max(1, Math.ceil(len / (g.cell * 0.5)));
   for (let k = 0; k <= steps; k++) {
     const x = a.x + ((b.x - a.x) * k) / steps, y = a.y + ((b.y - a.y) * k) / steps;
-    const i = Math.floor((x - g.x0) / CELL), j = Math.floor((y - g.y0) / CELL);
+    const i = Math.floor((x - g.x0) / g.cell), j = Math.floor((y - g.y0) / g.cell);
     if (i < 0 || i >= g.nx || j < 0 || j >= g.ny || g.blocked[j * g.nx + i]) return false;
   }
   return true;

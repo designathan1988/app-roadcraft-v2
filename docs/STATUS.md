@@ -131,6 +131,12 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   pedestre). As calçadas de toda junção se ligam em ordem angular, também
   nas junções rasas (P50); listras pelas regras do SUMO, sem girar nas
   esquinas (P52). Os carros escolhidos entram no ritmo da faixa (P51).
+- Pessoas saem de casa, chegam, entram em lojas pelo portão de pedestre dos
+  lotes (P84, `sim/agents/lotDoors.ts`): da porta pelo caminho do lote, pelo
+  meio do portão, até a calçada, ou o contrário, e somem na porta. Quantas:
+  a densidade do cenário por uso e hora contra o número escolhido; saindo ou
+  entrando pela presença por hora do ATUS; a outra ponta pelo modelo
+  gravitacional. O resto continua de ponta de via a ponta de via.
 - Desenho: a multidão procedural (`render/people/proceduralCrowd.ts`) por
   nível de detalhe, com faixas pela altura na tela (P15). Quem está em
   veículos ainda usa os corpos cozidos (`riggedCitizens.ts`).
@@ -172,9 +178,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 
 - Desempenho e defeitos: `docs/PROBLEMAS.md` (P3, P4, P7a, P16, P17-P19).
 - Zoneamento: o prédio não tem meio-nível na encosta (só o quintal é
-  terraceado); pedestres não entram nos lotes (o portão de pedestre é só
-  desenho); primeiro traço do pincel numa sessão com ~360 ms de compilação de
-  shader (P74, P75).
+  terraceado); o portão de pedestre é desenhado fechado e as pessoas que
+  passam por ele (P84) atravessam a folha; um balizador dentro do portão de
+  uma torre fecha o caminho dela; primeiro traço do pincel numa sessão com
+  ~360 ms de compilação de shader (P74, P75).
 - Prédios: um prédio feito de referência não fica selecionado depois de
   construído; subir a altura de um prédio leva cerca de 10 s (relato do
   jogador, não investigado).

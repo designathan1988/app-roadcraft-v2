@@ -11,8 +11,9 @@ import { makeDriver } from '../vehicles/driver';
 import { createVehicle, type Vehicle } from '../vehicles/state';
 import { spawnVehicleAt } from '../vehicles/spawn';
 import { vehiclePose } from '../pose';
-import { removeWalker, walkerOf, walkOn } from '../agents/walk';
+import { removeWalker, walkerOf, walkOn, walkThrough } from '../agents/walk';
 import { collectBays, type Bay } from '../agents/parking';
+import { type DoorWay, doorWay, personGates } from '../agents/lotDoors';
 import type { PersonAgeClass } from '../people/view';
 
 
@@ -77,6 +78,45 @@ function busy(kind: keyof Mix, hour: number): number {
     case 'work': return Math.min(1, day + 0.6 * bump(7.5, 1) + 0.3 * bump(12.5, 1.5) + 0.6 * bump(17.5, 1.2));
     case 'civic': return Math.min(1, day + 0.5 * bump(11, 3) + 0.4 * bump(16, 2));
   }
+}
+/**
+ * Percent of people (15 and over) working, and purchasing goods and services,
+ * at each hour of the day from midnight: the American Time Use Survey, table
+ * A-3, 2009-13 averages (bls.gov/tus/tables/a3_0913.htm).
+ */
+const WORKING = [2.3, 1.8, 1.5, 1.5, 2.2, 3.6, 7.5, 15.7, 24.8, 28.8, 29.9, 30.3, 23.8, 27.5, 29.6, 28.7, 25.8, 19.2, 12.0, 8.4, 6.8, 5.8, 4.7, 3.4];
+const PURCHASING = [0.2, 0.1, 0.1, 0.1, 0.1, 0.2, 0.4, 0.9, 2.0, 3.8, 5.8, 7.1, 7.8, 7.6, 7.3, 7.1, 6.9, 6.5, 5.2, 4.1, 2.9, 1.7, 0.8, 0.4];
+/** How long a stay lasts, hours: a working day, an errand. */
+const WORK_STAY = 8;
+const ERRAND_STAY = 0.5;
+/** A table of the hours at `hour` (fractional, wrapping round midnight). */
+function atHour(table: readonly number[], hour: number): number {
+  const h = ((hour % 24) + 24) % 24, i = Math.floor(h), u = h - i;
+  return table[i]! * (1 - u) + table[(i + 1) % 24]! * u;
+}
+/**
+ * People going in at and coming out of a kind of place at an hour (shares of
+ * everybody, an hour): from how many are there (`WORKING`, `PURCHASING`),
+ * the arrivals are its rise and the departures its fall, and each also the
+ * stays ending and begun (as many as are there over how long a stay lasts).
+ * The home's are the others' the other way round: out to work and errands,
+ * back from them. A shop's errands come and go all day; a works fills in the
+ * morning and empties in the evening; a home empties in the morning.
+ */
+function flows(kind: keyof Mix, hour: number): { in: number; out: number } {
+  if (kind === 'home') {
+    const work = flows('work', hour), shop = flows('shop', hour);
+    return { in: work.out + shop.out, out: work.in + shop.in };
+  }
+  const table = kind === 'work' ? WORKING : PURCHASING;
+  const stay = kind === 'work' ? WORK_STAY : ERRAND_STAY;
+  const there = atHour(table, hour), rise = atHour(table, hour + 0.5) - atHour(table, hour - 0.5);
+  return { in: Math.max(0, rise) + there / stay, out: Math.max(0, -rise) + there / stay };
+}
+/** Share of the walks at a kind of place, at an hour, that come out of it (the rest go in). */
+function outShare(kind: keyof Mix, hour: number): number {
+  const f = flows(kind, hour);
+  return f.in + f.out > 0 ? f.out / (f.in + f.out) : 0.5;
 }
 /**
  * People per 100 m of street at full bustle, and cars: a shopping street as a
@@ -151,6 +191,8 @@ export class AmbientWorld {
     for (const id of this.drivers) { const v = w.vehicles.get(id); if (v) w.removeVehicle(v); }
     this.walkers.clear();
     this.roaming.clear();
+    this.places = [];
+    this.placesFor = -1;
     this.drivers.clear();
     this.sighted.clear();
     this.bays.clear();
@@ -302,6 +344,17 @@ export class AmbientWorld {
   /** Walkers whose walk does not end at a road end (a map with one): sent on to one when they can be. */
   private readonly roaming = new Set<number>();
   private nextEdgeLook = 0;
+  /**
+   * The lots with a people's gate (`agents/lotDoors.ts`), with what kind of
+   * place each is and its way from the door to the footway: undefined until
+   * worked out (a few a look), null when it has none that can be walked.
+   */
+  private places: { b: Building; kind: keyof Mix; way: DoorWay | null | undefined }[] = [];
+  private placesFor = -1;
+  /** Walks made from the road ends, and how many of them came out of a lot's gate or went in at one. */
+  readonly gateWalks = { made: 0, fromGate: 0, toGate: 0 };
+  /** People come out of and go in at the lots' gates (off: everybody passes from road end to road end, for a measure). */
+  gates = true;
 
   /** Where people come in and leave: the footways round every road end (a node with one road). */
   private roadEnds(w: SimWorld): { node: number; x: number; y: number }[] {
@@ -343,6 +396,7 @@ export class AmbientWorld {
       const end = this.pickEnd(w, null);
       if (end && walkOn(w, id, end.x, end.y, m(30))) this.roaming.delete(id);
     }
+    this.refreshPlaces(w);
     // The number chosen; past one person per 8 m of street they would only
     // stand in each other's way, so not more than that.
     const want = Math.min(Math.max(0, Math.round(w.pedestrianCount ?? 0)), Math.floor(this.roadAround(w, 0, 0, Infinity) / m(8)));
@@ -357,32 +411,131 @@ export class AmbientWorld {
     // is built without a stall (`render/agents.ts` builds one at a time).
     const batch = Math.min(want - onFoot, 2);
     this.nextEdgeLook = 1;
+    // The lots' own people: how many the land use puts on its street at this
+    // hour (the density of the view's model, `PEOPLE` x `busy`, over each
+    // lot's frontage); that share of the walkers comes out of a lot's gate or
+    // goes in at one, the rest pass through from road end to road end.
+    const hour = (w.city.minutes(w) % 1440) / 60;
+    let outW = 0, inW = 0;
+    for (const p of this.places) {
+      if (!p.way) continue;
+      const people = PEOPLE[p.kind] * busy(p.kind, hour) * (p.way.frontage / m(100));
+      const out = outShare(p.kind, hour);
+      outW += people * out;
+      inW += people * (1 - out);
+    }
+    const local = Math.min(1, (outW + inW) / Math.max(1, want));
     for (let made = 0, tries = 0; made < batch && tries < batch * 4; tries++) {
-      const from = ends[Math.floor(this.rng.float() * ends.length)]!;
-      // Not onto somebody standing there.
-      if (engine.bridge.anyoneWithin(w, from.x, from.y, m(1.5), null)) continue;
-      let to = this.pickEnd(w, from.node);
+      // Out of a lot, into one, both (the other end in town as often as any end is), or neither.
+      let fromLot: DoorWay | null = null, toLot: DoorWay | null = null;
+      if (this.gates && outW + inW > 0 && this.rng.float() < local) {
+        const out = this.rng.float() * (outW + inW) < outW;
+        const first = this.pickPlace(hour, out, null);
+        const second = first && this.rng.float() < local ? this.pickPlace(hour, !out, first) : null;
+        if (out) { fromLot = first; toLot = second; } else { toLot = first; fromLot = second; }
+      }
+      let from: { node: number; x: number; y: number };
+      if (fromLot) {
+        const door = fromLot.out[0]!;
+        from = { node: -1, x: door.x, y: door.y };
+      } else {
+        from = ends[Math.floor(this.rng.float() * ends.length)]!;
+        // Not onto somebody standing there (out of a door, they wait inside until it is clear).
+        if (engine.bridge.anyoneWithin(w, from.x, from.y, m(1.5), null)) continue;
+      }
+      let to: { node: number; x: number; y: number };
       let roams = false;
-      if (!to) {
-        // One road end only: across the map and back.
-        const a = this.rng.float() * Math.PI * 2, d = m(60) + this.rng.float() * m(200);
-        const p = engine.walkableNear?.call(engine, w, from.x + Math.cos(a) * d, from.y + Math.sin(a) * d, m(30));
-        if (!p) continue;
-        to = { node: -1, x: p.x, y: p.y };
-        roams = true;
+      if (toLot) {
+        const door = toLot.out[0]!;
+        to = { node: -1, x: door.x, y: door.y };
+      } else {
+        const end = this.pickEnd(w, from.node);
+        if (end) to = end;
+        else {
+          // One road end only: across the map and back.
+          const a = this.rng.float() * Math.PI * 2, d = m(60) + this.rng.float() * m(200);
+          const p = engine.walkableNear?.call(engine, w, from.x + Math.cos(a) * d, from.y + Math.sin(a) * d, m(30));
+          if (!p) continue;
+          to = { node: -1, x: p.x, y: p.y };
+          roams = true;
+        }
       }
       const roll = this.rng.float();
       const ageClass: PersonAgeClass = roll < 0.12 ? 'child' : roll < 0.28 ? 'elder' : 'adult';
-      const id = engine.walkTrip.call(engine, w, {
+      const head = fromLot ? fromLot.out : NO_WAY;
+      const tail = toLot ? reversed(toLot) : NO_WAY;
+      const trip = {
         trip: this.nextTrip++, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
         seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30),
-      });
+      };
+      const id = fromLot || toLot ? walkThrough(w, trip, head, tail) : engine.walkTrip.call(engine, w, trip);
       if (id === null) continue;
       this.walkers.add(id);
       if (roams) this.roaming.add(id);
-      this.company(w, id, ageClass, from, to, roams);
+      this.gateWalks.made++;
+      if (fromLot) this.gateWalks.fromGate++;
+      if (toLot) this.gateWalks.toGate++;
+      this.company(w, id, ageClass, from, to, roams, head, tail);
       made++;
     }
+  }
+
+  /**
+   * The lots with a people's gate, kept with the buildings: a lot whose record
+   * is the same keeps its way; a few new ones are worked out each look
+   * (`lotDoors.ts`: a person's grid round the gate and the door, a
+   * millisecond or so each), so a town grown at once never costs a frame.
+   */
+  private refreshPlaces(w: SimWorld): void {
+    const rev = w.doc.buildings.revision;
+    if (rev !== this.placesFor) {
+      this.placesFor = rev;
+      const known = new Map(this.places.map((p) => [p.b, p.way] as const));
+      this.places = [];
+      for (const b of w.doc.buildings.all()) {
+        if (!(b.elements ?? []).some((el) => el.kind === 'gate')) continue;
+        if (!known.has(b) && !personGates(b).length) continue;
+        this.places.push({ b, kind: kindOf(b), way: known.get(b) });
+      }
+    }
+    const start = performance.now();
+    for (const p of this.places) {
+      if (p.way !== undefined) continue;
+      p.way = doorWay(p.b);
+      if (performance.now() - start >= WAYS_MS) break;
+    }
+  }
+
+  /**
+   * A lot with a way to its door, at random by the people it has on its
+   * street now coming out (`out`) or going in: `PEOPLE` x `busy` x frontage x
+   * the share that way at this hour (`outShare`). Not `not`, nor one too near
+   * it to be worth the walk.
+   */
+  private pickPlace(hour: number, out: boolean, not: DoorWay | null): DoorWay | null {
+    let total = 0;
+    const weight = (p: AmbientWorld['places'][number]): number => {
+      if (!p.way || p.way === not) return 0;
+      // The other end of a walk from `not`: nearer is likelier, by the
+      // gravity model's negative exponential (`WALK_DECAY`).
+      let near = 1;
+      if (not) {
+        const a = p.way.out[p.way.out.length - 1]!, b = not.out[not.out.length - 1]!;
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < m(40)) return 0;
+        near = Math.exp(-d / WALK_DECAY);
+      }
+      const share = outShare(p.kind, hour);
+      return PEOPLE[p.kind] * busy(p.kind, hour) * p.way.frontage * (out ? share : 1 - share) * near;
+    };
+    for (const p of this.places) total += weight(p);
+    if (total <= 0) return null;
+    let roll = this.rng.float() * total;
+    for (const p of this.places) {
+      roll -= weight(p);
+      if (roll < 0 && p.way) return p.way;
+    }
+    return null;
   }
 
   /**
@@ -392,16 +545,19 @@ export class AmbientWorld {
    * (`sim/agents/walk.ts` mourn). Everybody walked alone, and nobody near a
    * shot person was theirs (the player, 2026-10-06).
    */
-  private company(w: SimWorld, leader: number, age: PersonAgeClass, from: { x: number; y: number }, to: { x: number; y: number }, roams: boolean): void {
+  private company(w: SimWorld, leader: number, age: PersonAgeClass, from: { x: number; y: number }, to: { x: number; y: number }, roams: boolean,
+    head: readonly { x: number; y: number }[] = NO_WAY, tail: readonly { x: number; y: number }[] = NO_WAY): void {
     const engine = w.pedEngine;
     if (!engine.walkTrip) return;
     const roll = this.rng.float();
     if (roll >= 0.4) return;
     const ageClass: PersonAgeClass = age === 'child' ? 'adult' : roll < 0.1 && age === 'adult' ? 'child' : age;
-    const id = engine.walkTrip.call(engine, w, {
-      trip: this.nextTrip++, fromX: from.x + m(0.6), fromY: from.y, toX: to.x, toY: to.y,
+    // Out of the same door: after the first, when the spot is clear (`walk.ts` inside); on the footway, beside them.
+    const trip = {
+      trip: this.nextTrip++, fromX: from.x + (head.length ? 0 : m(0.6)), fromY: from.y, toX: to.x, toY: to.y,
       seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30), with: leader,
-    });
+    };
+    const id = head.length || tail.length ? walkThrough(w, trip, head, tail) : engine.walkTrip.call(engine, w, trip);
     if (id === null) return;
     this.walkers.add(id);
     if (roams) this.roaming.add(id);
@@ -549,6 +705,30 @@ export class AmbientWorld {
     this.road = total;
     return total;
   }
+}
+
+/**
+ * Distance decay of a walk from one lot to another, u: the gravity model's
+ * negative exponential, e^(-d/L) (Wikipedia "Trip distribution": "a negative
+ * exponential tends to be the preferred form"). With places spread evenly,
+ * walks then run 2L on average; L = 470 m makes that the 12 minutes of the
+ * average walk in São Paulo's origin-destination survey of 2017 (about
+ * 940 m at 1.3 m/s).
+ */
+const WALK_DECAY = m(470);
+/**
+ * Time given to working out lots' ways in one look of the budget, ms
+ * (`refreshPlaces`): one way cost 0.65 ms on average and 4 ms at most over
+ * 32 lots in `lotDoors.spec` (node), so a look works out one to three.
+ */
+const WAYS_MS = 1.5;
+const NO_WAY: readonly { x: number; y: number }[] = [];
+const REVERSED = new WeakMap<DoorWay, readonly { x: number; y: number }[]>();
+/** A lot's way the other way round: from the gate's foot on the footway in to the door. */
+function reversed(way: DoorWay): readonly { x: number; y: number }[] {
+  let back = REVERSED.get(way);
+  if (!back) REVERSED.set(way, back = [...way.out].reverse());
+  return back;
 }
 
 /** Whether segment a-b crosses segment c-d (proper crossing). */

@@ -31,7 +31,17 @@ fundos, prédios acompanhando o terreno.
    as vagas do lote são alcançadas só pelos portões de carro; carros do
    trânsito são chamados às vagas livres perto da vista, param antes do
    portão, entram, ficam 40-150 s e saem pelo mesmo portão.
-6. **Desenho** (`render/buildings/buildingMesh.ts`): o lote segue
+6. **Pessoas** (`sim/agents/lotDoors.ts`, `sim/ambient/ambient.ts`,
+   `sim/agents/walk.ts`, P84): de cada lote com portão de pedestre sai o
+   caminho da porta até o pé do portão na calçada, achado numa grade de
+   pessoa de 20 cm (prédio, muros, cercas, canteiros, bancos e vagas
+   sólidos; escada e rampa não) e passando reto pelo meio do portão. Uma
+   parte das pessoas sai por uma porta ou entra por uma: a densidade do
+   próprio cenário (`PEOPLE` × `busy` × frente do lote) diz quantas pessoas
+   cada lote põe na rua àquela hora; a direção (saindo ou entrando) vem das
+   curvas de presença do ATUS (trabalho e compras por hora); a outra ponta,
+   quando também é um lote, pelo modelo gravitacional (e^(−d/470 m)).
+7. **Desenho** (`render/buildings/buildingMesh.ts`): o lote segue
    `lotSurfaces` (terraços inclusos), muros e cercas descem em degraus de
    2 m, o portão de carro aparece aberto.
 
@@ -83,10 +93,12 @@ fundos, prédios acompanhando o terreno.
 - O prédio em si não tem meio-nível: o corpo fica na cota da rua e o terreno
   sob ele é nivelado; uma ala dos fundos numa cota própria exigiria cota por
   volume no desenho.
-- Pedestres não entram nos lotes hoje (só andam entre pontas de via): o portão
-  de pedestre existe em toda frente com recuo, mas ninguém passa por ele. Fazer
-  os pedestres usarem a porta é trabalho em `sim/agents/walk.ts` e
-  `sim/ambient/ambient.ts`.
+- O portão de pedestre é desenhado fechado (`render/buildings/buildingMesh.ts`,
+  "A person's stays shut"): as pessoas que entram e saem pelos portões (P84)
+  passam pela folha fechada. Falta desenhá-lo aberto, ou abri-lo quando
+  alguém passa (arquivo da sessão dos prédios).
+- Lote de frente sem recuo (loja colada na calçada) não tem portão de
+  pedestre; a porta dele não é usada pelas pessoas (só portões).
 - O primeiro traço do pincel numa sessão tem um quadro de cerca de 360 ms de
   compilação de shader (P75); pré-compilar fica em `render/renderer.ts`.
 - Docas de caminhão das fábricas não são vagas de carro e não recebem carro.

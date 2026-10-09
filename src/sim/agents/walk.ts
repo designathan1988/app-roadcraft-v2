@@ -78,10 +78,18 @@ const LATERAL_PENALTY = m(1) / STRIPE;
 /** Held still this long, a walker is let through others slowly (SUMO's jamtime: 10 s on a crossing). */
 const JAM_AFTER = 20;
 const JAM_AFTER_CROSSING = 10;
+/**
+ * Where only one person fits abreast - a lot's path and its gate - SUMO's
+ * `pedestrian.striping.jamtime.narrow`, 1 s: two people meeting there pass
+ * each other slowly at once instead of standing nose to nose.
+ */
+const JAM_AFTER_NARROW = 1;
 /** Speed of a jammed walker, as a share of their own. */
 const JAM_SHARE = 0.25;
 /** How far ahead on the route the body walks towards, u. */
 const AHEAD = m(0.9);
+/** How far ahead, at most, inside a lot and through its gate (`target`). */
+const LOT_AHEAD = m(0.35);
 /** Most a walker moves across towards its stripe, as a share of its forward speed (SUMO's LATERAL_SPEED_FACTOR). */
 const LATERAL_SHARE = 0.4;
 /** Fastest a body turns walking, and standing (on the spot), rad/s. */
@@ -120,6 +128,7 @@ interface CarZone {
   crossingOnly: boolean;
 }
 const NO_ZONES: readonly CarZone[] = [];
+const NO_POINTS: readonly Vec2[] = [];
 
 /**
  * A car's body as a zone: three discs along its length, half its width round.
@@ -152,6 +161,13 @@ interface Step {
   /** Off the walkways: the straight line walked. */
   readonly a?: Vec2;
   readonly b?: Vec2;
+  /**
+   * A stretch inside a lot, between its door and its people's gate
+   * (`agents/lotDoors.ts`): found round the walls, fences and parts of the
+   * lot, so never planned again from where the body is (a straight line from
+   * there would cross the fence); one walker abreast.
+   */
+  readonly lot?: true;
 }
 
 interface Walker {
@@ -815,16 +831,8 @@ export function createAgentWalkEngine(): PedestrianEngine {
           }
           continue;
         }
-        const last = p.steps[p.steps.length - 1]!;
-        const end = frame(last, stepLength(last));
-        const steps = plan(w, s, { x: p.x, y: p.y }, { x: end.x, y: end.y }, REACH);
-        if (!steps) { finish(s, p); continue; }
-        p.steps.length = 0;
-        p.steps.push(...steps);
-        p.leg = 0;
-        p.granted = null;
-        const pr = project(steps[0]!, p.x, p.y);
-        p.s = pr.s; p.d = pr.d; p.aim = clamp(pr.d, room(steps[0]!));
+        // Found again from where they are, through a lot's gate when the walk runs through one (`reroute`).
+        if (!reroute(w, s, p, lastOf(p))) finish(s, p);
       }
       prune(s);
     },
@@ -1058,10 +1066,56 @@ function plan(w: SimWorld, s: State, from: Vec2, to: Vec2, reach: number): Step[
   return steps.length ? steps : [{ way: null, dir: 1, from: 0, to: 0, a: from, b: to }];
 }
 
-function startWalk(w: SimWorld, trip: ResidentWalk): number | null {
+/** The straight stretches through a lot along `points` (a door to a gate's foot, or back). */
+function lotSteps(points: readonly Vec2[]): Step[] {
+  const out: Step[] = [];
+  for (let i = 1; i < points.length; i++) out.push({ way: null, dir: 1, from: 0, to: 0, a: points[i - 1]!, b: points[i]!, lot: true });
+  return out;
+}
+
+/**
+ * A walk that begins by coming out through a lot (`head`: from its door to
+ * its gate's foot on the footway) or ends by going in through one (`tail`:
+ * from a gate's foot to the door), or both; the walkways between. The walker
+ * waits inside the door until the spot is clear, as anybody made does, and
+ * goes in (is done) at the door. `trip.from`/`to` are the door's points.
+ */
+export function walkThrough(w: SimWorld, trip: ResidentWalk, head: readonly Vec2[], tail: readonly Vec2[]): number | null {
+  return startWalk(w, trip, head, tail);
+}
+
+/** Farthest a gate's foot may be from the walkway it is joined to. */
+const GATE_JOIN = m(4);
+
+/**
+ * A lot's way (door ... gate, foot) joined to the footway: its foot moved to
+ * the walkway point nearest it, so the walk turns off the walkway and goes
+ * straight on through the gate (the foot lies square out from the gate, and
+ * so does the nearest point of the footway along the lot). Kept at the foot,
+ * a walkway nearer the lot than the foot (measured: 0.26 m from the boundary,
+ * the foot 0.5 m out) made the walk step out past the walkway and back.
+ */
+function joinFootway(s: State, way: readonly Vec2[], footFirst: boolean): readonly Vec2[] {
+  if (way.length < 2) return way;
+  const foot = footFirst ? way[0]! : way[way.length - 1]!;
+  const hit = nearestWay(s, foot, GATE_JOIN);
+  if (!hit) return way;
+  const q = hit.way.path.sampleAt(hit.s).p;
+  return footFirst ? [{ x: q.x, y: q.y }, ...way.slice(1)] : [...way.slice(0, -1), { x: q.x, y: q.y }];
+}
+
+function startWalk(w: SimWorld, trip: ResidentWalk, head: readonly Vec2[] = NO_POINTS, tail: readonly Vec2[] = NO_POINTS): number | null {
   const s = stateOf(w);
-  const steps = plan(w, s, { x: trip.fromX, y: trip.fromY }, { x: trip.toX, y: trip.toY }, Math.max(trip.reach ?? 0, REACH));
-  if (!steps) return null;
+  if (head.length || tail.length) {
+    ensureGraph(w, s);
+    head = joinFootway(s, head, false);
+    tail = joinFootway(s, tail, true);
+  }
+  const from = head.length ? head[head.length - 1]! : { x: trip.fromX, y: trip.fromY };
+  const to = tail.length ? tail[0]! : { x: trip.toX, y: trip.toY };
+  const mid = plan(w, s, from, to, Math.max(trip.reach ?? 0, REACH));
+  if (!mid) return null;
+  const steps = head.length || tail.length ? [...lotSteps(head), ...mid, ...lotSteps(tail)] : mid;
   const id = trip.person ?? s.nextId++;
   const old = s.byId.get(id);
   if (old) finish(s, old, false);
@@ -1118,11 +1172,18 @@ function prune(s: State): void {
 function target(p: Walker): { x: number; y: number } {
   let leg = p.leg;
   let st = p.steps[leg]!;
-  let s = p.s + AHEAD;
+  // Through a lot and its gate, a short look ahead (Reynolds, as The Nature
+  // of Code puts it: the distance ahead "should be dynamic"): the gate's
+  // foot is 0.6 m out on the footway, and a point 0.9 m ahead cut the turn
+  // from the footway into the gate across the fence beside it (10 cm from it,
+  // measured). With it the body slows at the turn and turns there, as a
+  // person turns in at a gate.
+  let s = p.s + (st.lot ? LOT_AHEAD : AHEAD);
   while (s > stepLength(st) && leg + 1 < p.steps.length) {
     s -= stepLength(st);
     leg++;
     st = p.steps[leg]!;
+    if (st.lot) s = Math.min(s, LOT_AHEAD);
   }
   if (leg === p.steps.length - 1) s = Math.min(s, stepLength(st));
   // In this step, towards its stripe, but no more across than SUMO lets a
@@ -1538,7 +1599,7 @@ function stepWalkers(w: SimWorld): void {
     const crossing = crossingOf(w, st.way) !== null;
     // Jammed from the moment it has been held too long, until it is off this
     // step or the way ahead is clear (`Walker.jammedOn`).
-    if (p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER)) p.jammedOn = p.leg;
+    if (p.held > (st.lot ? JAM_AFTER_NARROW : crossing ? JAM_AFTER_CROSSING : JAM_AFTER)) p.jammedOn = p.leg;
     else if (p.jammedOn !== undefined && (p.jammedOn !== p.leg || free(p.d) > KEEP)) p.jammedOn = undefined;
     const jammed = p.jammedOn === p.leg;
     // A leg lost: a hobble; both: no walking at all.
@@ -1598,7 +1659,9 @@ function stepWalkers(w: SimWorld): void {
         break;
       }
       const next = p.steps[p.leg + 1]!;
-      const ahead = p.s >= len - m(0.02) || (p.s > len - AHEAD && project(next, p.x, p.y).s >= 0);
+      // Onto or off a lot's way only at the turn itself: let on early, the
+      // body went for the gate from a step to the side of it.
+      const ahead = p.s >= len - m(0.02) || (!st.lot && !next.lot && p.s > len - AHEAD && project(next, p.x, p.y).s >= 0);
       if (!ahead) break;
       p.leg++;
       pr = project(next, p.x, p.y);
@@ -1683,12 +1746,17 @@ export function inspectAgentWalkers(w: SimWorld): readonly {
   id: number; x: number; y: number; v: number; s: number; d: number; len: number;
   leg: number; legs: number; held: number; waited: number; kind: string;
   aim: number; heading: number; span: [number, number]; waiting: boolean; nextKind: string;
+  /** Not out of the door yet. */
+  inside: boolean;
+  /** The walk comes out through a lot's gate (`fromLot`), goes in through one (`toLot`). */
+  fromLot: boolean; toLot: boolean;
 }[] {
   return stateOf(w).walkers.map((p) => ({
     id: p.id, x: p.x, y: p.y, v: p.v, s: p.s, d: p.d, len: stepLength(p.steps[p.leg]!),
-    leg: p.leg, legs: p.steps.length, held: p.held, waited: p.waited, kind: p.steps[p.leg]!.way?.kind ?? 'off',
+    inside: p.inside, fromLot: p.steps[0]?.lot === true, toLot: p.steps[p.steps.length - 1]?.lot === true,
+    leg: p.leg, legs: p.steps.length, held: p.held, waited: p.waited, kind: p.steps[p.leg]!.way?.kind ?? (p.steps[p.leg]!.lot ? 'lot' : 'off'),
     aim: p.aim, heading: p.heading, span: room(p.steps[p.leg]!), waiting: p.waiting !== null,
-    nextKind: p.steps[p.leg + 1]?.way?.kind ?? 'end',
+    nextKind: (() => { const n = p.steps[p.leg + 1]; return !n ? 'end' : n.way?.kind ?? (n.lot ? 'lot' : 'off'); })(),
   }));
 }
 
@@ -1773,6 +1841,8 @@ export function walkOn(w: SimWorld, id: number, toX: number, toY: number, reach:
   const p = s.byId.get(id);
   if (!p || p.done || p.player || p.inside || p.leg !== p.steps.length - 1) return false;
   const last = p.steps[p.leg]!;
+  // Going in at a door: in they go (on from the door, the way would cross the lot's fence).
+  if (last.lot) return false;
   const end = frame(last, stepLength(last));
   const more = plan(w, s, { x: end.x, y: end.y }, { x: toX, y: toY }, Math.max(reach, REACH));
   if (!more?.length) return false;
@@ -1926,14 +1996,38 @@ function lastOf(p: Walker): Vec2 {
 
 /** A walker's route made again from where they are to `to`. */
 function replan(w: SimWorld, s: State, p: Walker, to: Vec2): void {
-  const steps = plan(w, s, { x: p.x, y: p.y }, to, REACH);
-  if (!steps) return;
-  p.steps.length = 0;
-  p.steps.push(...steps);
+  reroute(w, s, p, to);
+}
+
+/**
+ * A walker's route found again to `to`, keeping what runs through a lot
+ * (`Step.lot`): the rest of the way out of the lot they are walking out of
+ * is walked first and the way is found from its gate; going to the walk's own
+ * end, the way into the lot there is kept and the way is found to its gate;
+ * already on that way in, nothing changes (they are nearly indoors). Found
+ * from the body, a straight line out of a lot crossed its fence. False when
+ * no way leads there.
+ */
+function reroute(w: SimWorld, s: State, p: Walker, to: Vec2): boolean {
+  const steps = p.steps;
+  let tailFrom = steps.length;
+  while (tailFrom > 0 && steps[tailFrom - 1]!.lot) tailFrom--;
+  if (tailFrom < steps.length && p.leg >= tailFrom) return true;
+  const end = lastOf(p);
+  const keepTail = tailFrom < steps.length && hypot(to.x - end.x, to.y - end.y) < m(0.05);
+  let headTo = p.leg;
+  while (headTo < tailFrom && steps[headTo]!.lot) headTo++;
+  const start = headTo > p.leg ? steps[headTo - 1]!.b! : { x: p.x, y: p.y };
+  const mid = plan(w, s, start, keepTail ? steps[tailFrom]!.a! : to, REACH);
+  if (!mid) return false;
+  const next = [...steps.slice(p.leg, headTo), ...mid, ...(keepTail ? steps.slice(tailFrom) : [])];
+  steps.length = 0;
+  steps.push(...next);
   p.leg = 0;
   p.granted = null;
   const pr = project(steps[0]!, p.x, p.y);
   p.s = pr.s; p.d = pr.d; p.aim = clamp(pr.d, room(steps[0]!));
+  return true;
 }
 
 /** Gives a body back from the player's hand, walking on to `to` (their home, say); null: off the street. */
