@@ -290,6 +290,15 @@ const CHROME = 0xb9bec4;
 const PLATE = 0xf0efe6;
 /** A bus's destination blind: amber on black, read as lit amber. */
 const DESTINATION = 0xffb13b;
+
+/**
+ * Seconds a change of a person's clip cross-fades over: about half a step at
+ * a walk (a gait cycle of 1-1.2 s), the time setting off or stopping takes a
+ * foot.
+ */
+const CLIP_FADE = 0.3;
+/** The gaits, whose phase is the ground covered (one stride a cycle) and runs on from one into another. */
+const gaitClip = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk' || c === 'hurtRun';
 const HEADLAMP = 0xfff3c4;
 const TAILLAMP = 0xff3b2f;
 /** A parked car's lamps, switched off: clear and red lenses, unlit. */
@@ -901,7 +910,39 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   /** This frame's measure of a person on the screen (`AgentRenderOptions.personPixels`). */
   let procPixels: AgentRenderOptions['personPixels'] | null = null;
   const procMatrix = new Matrix4(), procTurn = new Matrix4(), procSize = new Matrix4();
+  /**
+   * A person drawn this frame: their pose picked (`procPose`), and a change of
+   * clip made a cross-fade. The clip they leave plays on under the new one,
+   * its weight falling to nothing over `CLIP_FADE` and its phase still going
+   * as it went (by the ground covered, for a gait), so stopping at a kerb or
+   * setting off from it is a step into the new clip, not a pose popping in
+   * one frame (measured on 2026-10-09: 22 such pops a minute with ten people,
+   * nearly all at the kerbs).
+   */
   const procDraw = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
+    lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number },
+    wound?: { readonly part: BodyPart; readonly grave: boolean }, age?: PersonAgeClass): void => {
+    const before = procPeople.get(id)?.person ?? null;
+    const was = before?.clip;
+    const wasPhase = before?.phase ?? 0;
+    procPose(id, x, y, heading, deck, speed, walking, dt, activity, lost, act, wound, age);
+    const person = procPeople.get(id)?.person ?? null;
+    // Somebody new in this body this frame starts as they are: nothing to fade from.
+    if (!person || person !== before || was === undefined) return;
+    const metres = speed / m(1);
+    const out = person.fade;
+    if (out) {
+      out.phase += gaitClip(out.clip) ? dt * metres / Math.max(0.1, procedural!.stride(person, out.clip))
+        : dt / procedural!.clipDuration(person, out.clip);
+      out.weight -= dt / CLIP_FADE;
+      if (out.weight <= 0) person.fade = undefined;
+    }
+    // One gait into another goes on through the same stride (`procPose`): no fade.
+    if (person.clip !== was && !(gaitClip(was) && gaitClip(person.clip))) {
+      person.fade = { clip: was, phase: wasPhase, weight: 1 };
+    }
+  };
+  const procPose = (id: number, x: number, y: number, heading: number, deck: number, speed: number, walking: boolean, dt: number, activity?: string,
     lost?: readonly Severable[], act?: { readonly t: number; readonly hold: number },
     wound?: { readonly part: BodyPart; readonly grave: boolean }, age?: PersonAgeClass): void => {
     let entry = procPeople.get(id);
@@ -1045,12 +1086,11 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
     const clip: ProcClip = activity === 'photo' && !moving ? 'photo'
       : moving ? (wound ? (hurtRun ? 'hurtRun' : 'hurtWalk') : sprint ? 'sprint' : run ? 'run' : 'walk') : 'idle';
     // Walk, run and sprint all start on the same foot: the stride goes on through a change of pace.
-    const gait = (c: ProcClip): boolean => c === 'walk' || c === 'run' || c === 'sprint' || c === 'hurtWalk' || c === 'hurtRun';
     if (person.clip !== clip) {
-      if (!(gait(was) && gait(clip))) person.phase = 0;
+      if (!(gaitClip(was) && gaitClip(clip))) person.phase = 0;
       person.clip = clip;
     }
-    if (gait(clip)) person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
+    if (gaitClip(clip)) person.phase += dt * metres / Math.max(0.1, procedural!.stride(person));
     else person.phase += dt / procedural!.clipDuration(person);
   };
   /** The cooked bodies as the ragdolls ask for them: no captured getting-up off the ground (the key poses then). */

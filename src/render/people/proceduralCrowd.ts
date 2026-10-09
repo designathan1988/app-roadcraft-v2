@@ -247,6 +247,12 @@ export interface ProceduralPerson {
   readonly matrix: Matrix4;
   clip: ProcClip;
   phase: number;
+  /**
+   * The clip they are leaving, still playing under the new one at `weight`
+   * (1 down to 0), so a change of clip is a cross-fade and not a pose that
+   * pops in one frame (three.js `AnimationAction.crossFadeFrom`). Set by the caller.
+   */
+  fade?: { clip: ProcClip; phase: number; weight: number } | undefined;
   /** What they are doing, as the face shows it (`faceAt`): 'talk', 'panic'... */
   activity?: string | undefined;
   /** Limbs (or the head) lost to shots: their bones closed at the joint they were torn from. Set by the caller. */
@@ -835,9 +841,9 @@ export interface ProceduralCrowd {
     char(person: ProceduralPerson, on: boolean): void;
   };
   clear(): void;
-  clipDuration(person: ProceduralPerson): number;
-  /** Ground one walk cycle covers at the person's scale, metres. */
-  stride(person: ProceduralPerson): number;
+  clipDuration(person: ProceduralPerson, clip?: ProcClip): number;
+  /** Ground one walk cycle covers at the person's scale, metres (of `clip`, their own by default). */
+  stride(person: ProceduralPerson, clip?: ProcClip): number;
   stats(): ProceduralStats;
   /** Diagnosis: the shape the GPU sums for a person at base vertices, against the rig's exact one, metres. */
   probe(person: ProceduralPerson, vertices: readonly number[]): { v: number; linear: number[]; exact: number[] }[];
@@ -1942,6 +1948,9 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
 
   const play = { row: 0, t: 0, weight: 1 };
   const plays = [play];
+  /** The clip being left in a cross-fade (`ProceduralPerson.fade`), played under `play`. */
+  const leaving = { row: 0, t: 0, weight: 0 };
+  const fading = [play, leaving];
   const close: ProceduralPerson[] = [];
 
   return {
@@ -2249,7 +2258,22 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
             const whole = Math.min(clip.frames, Math.floor(f));
             play.row = cls.anim.rowOf(person.clip) + whole;
             play.t = f - whole;
-            cls.pass.setPlays(person.row, plays, st.variant);
+            // A cross-fade: the clip being left under the new one, the two
+            // weights summing to one (the palette pass adds them as given).
+            const out = person.fade;
+            const left = out && out.weight > 0 ? cls.clips[out.clip] : undefined;
+            if (out && left) {
+              const g = (out.phase - Math.floor(out.phase)) * left.frames;
+              const at = Math.min(left.frames, Math.floor(g));
+              leaving.row = cls.anim.rowOf(out.clip) + at;
+              leaving.t = g - at;
+              leaving.weight = Math.min(1, out.weight);
+              play.weight = 1 - leaving.weight;
+              cls.pass.setPlays(person.row, fading, st.variant);
+            } else {
+              play.weight = 1;
+              cls.pass.setPlays(person.row, plays, st.variant);
+            }
           }
           // The face of the moment - blinking, mood, talk, fright (`faceAt`) -
           // only where a face is big enough to show it.
@@ -2305,15 +2329,15 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
       jolts.clear();
       people.length = 0;
     },
-    clipDuration(person) {
+    clipDuration(person, of = person.clip) {
       const cls = classOf(person) ?? ready.find((c) => c.sex === person.sex && c.band === person.band);
-      return cls?.clips[person.clip].duration ?? 1;
+      return cls?.clips[of].duration ?? 1;
     },
-    stride(person) {
+    stride(person, of = person.clip) {
       const cls = classOf(person) ?? ready.find((c) => c.sex === person.sex && c.band === person.band);
-      const clip = person.clip === 'run' ? cls?.clips.run : person.clip === 'sprint' ? cls?.clips.sprint
-        : person.clip === 'hurtWalk' ? cls?.clips.hurtWalk : person.clip === 'hurtRun' ? cls?.clips.hurtRun
-          : person.clip === 'crawl' ? cls?.clips.crawl : cls?.clips.walk;
+      const clip = of === 'run' ? cls?.clips.run : of === 'sprint' ? cls?.clips.sprint
+        : of === 'hurtWalk' ? cls?.clips.hurtWalk : of === 'hurtRun' ? cls?.clips.hurtRun
+          : of === 'crawl' ? cls?.clips.crawl : cls?.clips.walk;
       return (clip?.stride || 1.4) * person.scale;
     },
     cook() {
