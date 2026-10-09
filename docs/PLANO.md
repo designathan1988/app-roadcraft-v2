@@ -31,6 +31,7 @@ máximo duas vezes, documentação no mesmo commit) ficam no `CLAUDE.md`, seçã
 | 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
 | 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. 2026-10-09: P4, P7a, P22 e P23 medidos e fechados (400/400 a 4x por 80 s sem quadro longo); P70 com mais dois passos (MOBIL, curvas, motorista). Falta: P3 (medida com o painel visível), P70 (orçamento de 4 ms na iGPU) e a conferência única do jogador na RTX (ver "Metas") |
 | 4 | Todos os defeitos abertos | a fazer |
+| 5 | Física e realismo visual: detectores de invariantes, objeto composto do lote, pedestres sem salto, câmera, luzes, variedade (pedidos de 2026-10-09) | a fazer; ordem frente às etapas 3 e 4 a decidir pelo jogador |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
 mudança mais arriscada do plano. Com o monitor ligado, um erro ou um quadro
@@ -235,3 +236,68 @@ fecha a etapa.
 
 **Pronto quando:** a suíte da simulação passar sem afrouxar limite, e o passeio
 pelo jogo terminar sem quebra no monitor.
+
+## Etapa 5 — Física e realismo visual
+
+Defeitos que o jogador viu no jogo em 2026-10-09 e que a sessão confirmou
+jogando (build de produção, painel do navegador à vista). Cada um é uma
+classe de defeito: a correção é onde ele nasce, e um detector impede que
+volte.
+
+**5a. Detectores de invariantes físicos** (antes de qualquer correção, para
+medir o tamanho de cada classe na cidade inteira, e depois como guarda em
+`tests/` e no monitor F9):
+- peça sem apoio (`unsupportedElements`, `c09a4b2c`): nenhuma peça no ar;
+- peça no chão a mais de 5 cm do terreno desenhado (`renderedHeightAt`) sob
+  ela: nem flutuando nem enterrada;
+- interpenetração: banco ou passageiro contra sólidos do interior de todo
+  veículo (ônibus, carro, caminhão), peças do lote entre si e contra o prédio;
+- corpo desenhado do pedestre (`PedView`) por tique: deslocamento acima do que
+  a velocidade de caminhada permite ou giro brusco é salto. Medir nas
+  travessias dos cruzamentos.
+
+**5b. Objeto composto do lote.** Hoje garagem, pergolado, balanço, mesa e
+trampolim são peças soltas (laje + postes) postas uma a uma
+(`editor/lotPlan.ts`); o gerador pode recusar ou apagar um poste
+(`stepYard`, `lift`) e deixar o teto. No desenho, as peças que não seguem o
+terreno ficam numa cota única do lote (`render/buildings/buildingMesh.ts`
+`emitLots`, `level`) e as que seguem ficam no chão, por isso caixas e
+jardineiras saem enterradas ou altas numa encosta. Solução: um elemento
+`prop` (do catálogo) posto inteiro ou recusado inteiro, com a base no
+terreno sob a sua pegada (cada poste até o chão; acima do limite de
+inclinação, um pódio ou a recusa) e validado pelo apoio (5a). O filtro de
+desenho dos lotes já salvos (`looseParts`, `c09a4b2c`) sai quando os lotes
+forem migrados para `prop`. O Construtor recusa, com o motivo, peça sem apoio.
+
+**5c. Pedestres nos cruzamentos** (pedido repetido do jogador): deslizam e
+"pulam como peça de xadrez". Medir com 5a antes; ler "Já tentado" (P52 e o
+registro de 2026-10-08, três tentativas revertidas). A causa no código ainda
+não foi lida nesta etapa.
+
+**5d. Câmera:** arrastar com o botão do meio falha de perto
+(`main.ts:1237-1250`, `view/cameraGestures.ts`). Os textos de ajuda trocam
+os nomes `middleDrag`/`rightDrag` (`ui/i18n/pt-BR.ts:383-384`).
+
+**5e. Luzes:** janelas acesas com listras (provável briga de profundidade
+entre o plano aceso e o vidro); janelas sem brilho (o bloom existe,
+`postprocess.ts:231`, só à noite); casas sem luz externa; lanterna traseira
+sem brilho (a dianteira tem).
+
+**5f. Variedade:** os detalhes do telhado e do lote se repetem em todos os
+prédios (caixa d'água, placas, aparelhos, claraboias no mesmo arranjo).
+
+**5g. Achados da avaliação jogando:**
+- pincelada de zona perdida enquanto a proposta de lotes se refaz
+  (`editor/lotTool.ts:135-169`);
+- pincel de terreno faz brotar árvores (a confirmar com o jogador contra a
+  ordem de 2026-10-05) e fecha em 210 ms de script (`ecology` 82 ms);
+- monitor F9 conta como quadro longo o tempo em que o navegador ficou parado
+  (entradas de 57 s sem trabalho do jogo);
+- interface v2 lê e clica a interface antiga escondida a cada 250 ms
+  (`ui/v2/shell.ts:1589`, botões em triplicata);
+- o servidor de desenvolvimento recarrega o `main.ts` quando outra sessão
+  edita, o que zera o desfazer e o relógio: jogue na build
+  (`roadcraft-play`).
+
+**Pronto quando:** os detectores de 5a passarem na cidade de teste e numa
+cidade crescida em encosta, e o jogador conferir no jogo cada item de 5b a 5f.

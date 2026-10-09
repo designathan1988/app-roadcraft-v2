@@ -75,6 +75,19 @@ times, and visible defects (old trees) were closed by the session's own numbers.
 - **Similar defects in one batch:** one cycle of reading, fixing, testing and
   committing for several defects of the same area.
 - **Never idle:** while a test or probe runs, read the code of the next item.
+- **Look at the game yourself before saying anything works.** In the in-app
+  browser with the pane displayed (hidden, it draws 0 frames a second and every
+  number is false), on the production build (`roadcraft-play`) whenever another
+  session may be editing (the dev server reloads `main.ts` under you). Walk it
+  as the player does, with the camera low and close where a defect would show.
+  Measurements and green tests come in addition, never instead.
+- **A visual defect the player reports is a class, not an instance.** Find
+  where it is generated, fix it there, and add a detector (a test, or a check
+  in the F9 monitor) so the class cannot come back. Hiding it in the renderer,
+  or closing it "by method", is not a fix.
+- **Physical plausibility is an invariant:** nothing floats, nothing passes
+  through anything, nothing jumps from place to place. Check it like the
+  layer rules (docs/PLANO.md, Etapa 5a).
 
 ## Layers (enforced by `eslint.config.js` and `tests/arch`)
 
