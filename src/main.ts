@@ -2558,6 +2558,7 @@ function mountUnifiedChrome(): void {
       if (id === undefined || !node) return;
       setTool('inspect');
       select(null, null, id, 'nó impossível mostrado');
+      showInspector();
       view.moveTo(node);
       requestDraw();
     },
