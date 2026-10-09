@@ -797,8 +797,14 @@ const CLOUD_SHADOWS = {
         } else {
           // By the real distance, as air is: the whole map seen from afar
           // takes it on, ground seen close up none (the player, 2026-10-07).
-          float far = max(0.0, tScene - 2200.0);
-          float amount = (1.0 - exp(-far / 9000.0)) * 0.55;
+          // Koschmieder: contrast falls as exp(-beta d) from the eye, beta =
+          // 3.912 / visibility; a clear day of 30 km (0.4 m a unit). It began
+          // only past 880 m, so ground at mid distance kept the foreground's
+          // full colour and the town read as a model on a table (2026-10-08).
+          // Held under 0.55: the map's edge never melts into the dark blue
+          // round it (the player, 2026-10-08).
+          const float HAZE_BETA = 3.912 / 30000.0 * 0.4;
+          float amount = (1.0 - exp(-tScene * HAZE_BETA)) * 0.55;
           colour = mix(colour, haze * (1.0 + 0.6 * glow), amount);
         }
       }
