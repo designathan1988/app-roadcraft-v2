@@ -142,3 +142,26 @@ describe('buildings from a file', () => {
     expect(building.volumes[0]!.base).toBeLessThan(60);
   });
 });
+
+describe('the autosave under a stream of edits', () => {
+  it('saves within 5 s however often edits keep coming (a growing zone)', async () => {
+    const { vi } = await import('vitest');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const saves: number[] = [];
+      const store = new Persistence();
+      store.saveSession = () => { saves.push(performance.now()); return true; };
+      const doc = new RoadDoc();
+      const settings = () => ({ camera: { x: 0, y: 0, zoom: 1 }, paused: false }) as never;
+      // A building grown every half second for 15 s, each one an edit.
+      for (let t = 0; t < 15000; t += 500) {
+        store.saveSessionSoon(doc, settings);
+        vi.advanceTimersByTime(500);
+      }
+      expect(saves.length).toBeGreaterThan(0);
+      expect(saves[0]!).toBeLessThanOrEqual(5000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

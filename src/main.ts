@@ -13,7 +13,7 @@ import { type Vec2, dist } from '@core/vec2';
 import { clamp } from '@core/scalar';
 import { flattenSegment } from '@core/bezier';
 import { RoadDoc, type JunctionControl } from '@world/doc';
-import type { Change, ChangeKind } from '@world/changes';
+import { DOC_CHANGE_KINDS, type Change, type ChangeKind } from '@world/changes';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
@@ -21,7 +21,7 @@ import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
 import { layCity, zoneCity } from '@editor/cityGenerator';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
-import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
+import { MAX_TERRAIN_STAMPS, RELIEF_FLAT, type TerrainMode } from '@world/terrain';
 import type { GeologyKind } from '@world/terrainPaint';
 import { DEFAULT_REGION, isRegionId, type NatureSettings } from '@world/ecology';
 import type { NodeId, SegmentId } from '@world/ids';
@@ -155,8 +155,8 @@ const healthWatch = watchHealth({
 });
 
 const doc = new RoadDoc();
-// A new map is made on the natural land; a saved one keeps its own (restored below).
-doc.terrainRelief = RELIEF_NATURAL;
+// A new map is a level plain (the player, 2026-10-09); a saved one keeps its own (restored below).
+doc.terrainRelief = RELIEF_FLAT;
 /** A new map's ecosystem: the default biome, its patches laid by a seed of its own. */
 const newNature = (region = DEFAULT_REGION): NatureSettings => ({ region, seed: Math.floor(Math.random() * 1_000_000_000) });
 doc.nature = newNature();
@@ -226,8 +226,8 @@ if (saved) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
     const fresh = new RoadDoc();
-    fresh.terrainRelief = RELIEF_NATURAL;
-    fresh.nature = newNature();
+    fresh.terrainRelief = RELIEF_FLAT;
+    fresh.nature = null;
     doc.replaceWith(fresh);
     net.rebuild();
     bootFailed = true;
@@ -776,9 +776,11 @@ setTransitTool(transitEditor);
  */
 let docText: { key: string; text: string } | null = null;
 function serializedDoc(): string {
-  const key = [doc.revision, doc.trafficRevision, doc.terrainRevision, doc.paintRevision, doc.utilityRevision,
-    doc.barrierRevision, doc.transitRevision, doc.zoneRevision, doc.lotRevision, doc.peopleRevision, doc.buildings.revision,
-    doc.buildings.size, doc.zoneMarks.length, doc.landscape.size, doc.poles.size, doc.nodes.size, doc.segments.size].join(':');
+  // Keyed by the diary, every kind of change to the document (`DOC_CHANGE_KINDS`).
+  // A hand-kept list of revisions missed the weather, fog, nature, gullies,
+  // clouds, trees, clearings and elements: the rain and fog sliders were left
+  // out of the autosave, and an undo after them put them back as they were.
+  const key = `${doc.changes.serialOf(...DOC_CHANGE_KINDS)}:${doc.buildings.revision}:${doc.buildings.size}`;
   if (docText?.key === key) return docText.text;
   const text = serialize(doc);
   docText = { key, text };
@@ -2810,7 +2812,7 @@ let cityBuiltIn = 0;
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty.
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL, nature: newNature() }, 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT }, 'import');
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');
@@ -3624,7 +3626,7 @@ function drawOverlayScreen(): void {
     // What the Zoning tool draws (`editor/lotTool.ts`), in the scene; its labels on the 2D layer.
     const { polygons, lines, points, labels } = lotTool.overlay(game.tool === 'zone');
     const input: LotOverlayInput = { key: JSON.stringify([polygons, lines, points]), polygons, lines, points };
-    scene.setLotOverlay(input);
+    scene.setLotOverlay(input, doc.changes);
     // Labels stay on the 2D layer, projected at the ground's real height.
     const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.surfaceHeightAt(p.x, p.y));
     ctx.save();

@@ -1833,77 +1833,84 @@ const SLAB_DEPTH = 320;
 const TOPSOIL = 4;
 
 /**
- * The soil layers of the map's cut sides: horizontal bands of earth, clay and
- * stone, wavy rather than ruled, with a fine grain over them. Periodic noise,
- * so it tiles along the rim and down the wall with no seam.
+ * The grain of the map's cut sides: a neutral fine texture (about 1 on
+ * average) the beds' colours are multiplied by - earth crumb, faint rain
+ * streaks down the face. The beds themselves are worked out in the shader
+ * from the depth (`wallMaterial`): drawn into this texture, as wavy bands
+ * read back twice at offsets to hide its 320 m repeat, their contacts came
+ * out jagged and doubled, the same two colours striping the whole cut.
  */
 function strataTexture(anisotropy: number): DataTexture {
-  // 1.25 m a texel over the 320 m the texture spans along a wall: finer than
-  // the wall is ever seen, and four times cheaper at load than 512.
   const res = 256;
-  const noise = makeNoise(4_177);
   const grit = makeNoise(0x77a1);
-  // One repeat of the section, top to bottom: a THICKNESS (share of the
-  // repeat) and an sRGB colour per bed. Real beds are anything but even - a
-  // thick sandstone, a thin dark shale, a lens of gravel - and a repeat of
-  // equal wavy bands read as striped paper.
-  const beds: readonly (readonly [number, number, number, number, number])[] = [
-    // thickness, r, g, b, texture (0 fine, 1 gravel)
-    [0.16, 168, 134, 94, 0],
-    [0.035, 92, 74, 60, 0],
-    [0.09, 140, 102, 70, 0],
-    [0.05, 150, 140, 124, 1],
-    [0.21, 178, 146, 104, 0],
-    [0.03, 104, 82, 64, 0],
-    [0.12, 126, 90, 64, 0],
-    [0.065, 160, 128, 92, 1],
-    [0.2, 148, 112, 78, 0],
-    [0.04, 98, 80, 66, 0],
-  ];
-  const total = beds.reduce((sum, bed) => sum + bed[0], 0);
   const data = new Uint8Array(res * res * 4);
   for (let y = 0; y < res; y++) {
     for (let x = 0; x < res; x++) {
-      const u = x / res;
-      const v = y / res;
-      // Nearly level, with a long gentle undulation, not a wave every metre.
-      const sway = (fbm(noise, u * 3, v * 3, 3, 2) - 0.5) * 0.035;
-      const t = (((v + sway) % 1) + 1) % 1;
-      // Each bed pinches and swells along the cut on its own noise.
-      let top = 0;
-      let bed = beds.length - 1;
-      let depthIn = 0;
-      for (let i = 0; i < beds.length; i++) {
-        const swell = 1 + (fbm(noise, u * 5 + i * 3, i * 7.3, 5, 2) - 0.5) * 0.9;
-        const thick = (beds[i]![0] / total) * swell;
-        if (t < top + thick || i === beds.length - 1) { bed = i; depthIn = (t - top) / Math.max(thick, 1e-4); break; }
-        top += thick;
-      }
-      const [, r, g, b, kind] = beds[bed]!;
+      const u = x / res, v = y / res;
       const fine = 0.9 + 0.2 * fbm(grit, u * 128, v * 128, 128, 2);
-      const pebble = kind === 1 ? (fbm(grit, u * 256 + 9, v * 256 + 4, 256, 1) > 0.62 ? 1.22 : 0.92) : 1;
-      // Rain wash: faint vertical streaks down the face.
       let wash = 0;
       for (let k = 0; k < 3; k++) wash += fbm(grit, u * 90, v * 90 + k, 90, 1);
-      wash = 0.94 + 0.12 * (wash / 3);
-      // The top of each bed a touch darker, where the one above weathers into it.
-      const seam = 0.9 + 0.1 * Math.min(1, depthIn * 6);
-      const shade = fine * pebble * wash * seam;
+      wash = 0.95 + 0.1 * (wash / 3);
+      const g = Math.min(255, 128 * fine * wash);
       const i = (y * res + x) * 4;
-      data[i] = Math.min(255, r * shade);
-      data[i + 1] = Math.min(255, g * shade);
-      data[i + 2] = Math.min(255, b * shade);
+      data[i] = data[i + 1] = data[i + 2] = g;
       data[i + 3] = 255;
     }
   }
   const texture = new DataTexture(data, res, res, RGBAFormat, UnsignedByteType);
-  texture.colorSpace = SRGBColorSpace;
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.magFilter = LinearFilter;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
   texture.anisotropy = anisotropy;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** Metres of rock beds the column texture holds, from the top of the rock down past the bedrock. */
+const BEDS_SPAN = 256;
+/** Texels down the column: a quarter metre each, so a contact is filtered over a hand's breadth. */
+const BEDS_TEXELS = 1024;
+/** One repeat of the rock beds, top down: thickness (m), sRGB colour, gravel (1) or fine (0). */
+const BEDS: readonly (readonly [number, number, number, number, number])[] = [
+  [22, 178, 149, 108, 0], [5, 97, 84, 74, 0], [14, 149, 112, 79, 0], [8, 156, 151, 141, 1],
+  [26, 191, 165, 124, 0], [4, 101, 89, 79, 0], [18, 140, 115, 89, 0], [9, 162, 152, 138, 1],
+  [24, 174, 147, 110, 0], [10, 108, 93, 79, 0],
+];
+
+/**
+ * The rock beds of the cut sides as a column texture, worked out once: the
+ * shader reads one texel for the depth instead of walking the beds per
+ * pixel (two taps over ten beds). Each repeat of the sequence in tones of its
+ * own. Alpha marks the gravel beds (pebbles drawn in the shader).
+ */
+function bedsTexture(): DataTexture {
+  const repeat = BEDS.reduce((sum, bed) => sum + bed[0], 0);
+  const data = new Uint8Array(BEDS_TEXELS * 4);
+  for (let y = 0; y < BEDS_TEXELS; y++) {
+    const depth = ((y + 0.5) / BEDS_TEXELS) * BEDS_SPAN;
+    const cycle = Math.floor(depth / repeat);
+    let d = depth - cycle * repeat;
+    let bed = BEDS[BEDS.length - 1]!;
+    let k = BEDS.length - 1;
+    for (let i = 0; i < BEDS.length; i++) {
+      if (d < BEDS[i]![0]) { bed = BEDS[i]!; k = i; break; }
+      d -= BEDS[i]![0];
+    }
+    const h = Math.sin(cycle * 3.1 + k) * 43758.5453;
+    const tone = 0.9 + 0.18 * (h - Math.floor(h));
+    const i = y * 4;
+    data[i] = Math.min(255, bed[1] * tone);
+    data[i + 1] = Math.min(255, bed[2] * tone);
+    data[i + 2] = Math.min(255, bed[3] * tone);
+    data[i + 3] = bed[4] * 255;
+  }
+  const texture = new DataTexture(data, 1, BEDS_TEXELS, RGBAFormat, UnsignedByteType);
+  texture.colorSpace = SRGBColorSpace;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
   texture.needsUpdate = true;
   return texture;
 }
@@ -1923,7 +1930,9 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
     metalness: 0,
     envMapIntensity: 0.1,
   });
+  const beds = bedsTexture();
   material.onBeforeCompile = (shader) => {
+    shader.uniforms['uBeds'] = { value: beds };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
          attribute float aBelow;
@@ -1933,6 +1942,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
          varying float vBelow;
+         uniform sampler2D uBeds;
          float wallHash(float n) { return fract(sin(n) * 43758.5453); }
          // 1-D value noise along the rim, in metres.
          float wallNoise(float x) {
@@ -1946,62 +1956,60 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          float lip = 5.0 + 5.0 * wallNoise(along * 0.12) + 2.5 * wallNoise(along * 0.6 + 11.0);
          // The topsoil under it, darker and redder, with a wavy bottom.
          float soil = lip + 10.0 + 8.0 * wallNoise(along * 0.04 + 5.0);
-         // The strata without their 320 m repeat (Quilez, "Texture
-         // Repetition", technique 3), shifted ALONG the rim only so the beds
-         // stay level: two reads at offsets a slow noise picks, the mips from
-         // the unmoved coordinates. Read plainly, the same wavy beds came
-         // round again and again down every side of the map.
-         vec3 strata;
+         // The profile below the topsoil, as a soil and the rock under it are
+         // (en.wikipedia.org/wiki/Soil_horizon): the B subsoil, brown to
+         // red with iron, fading into the pale C substratum; then the beds of
+         // rock, each of its own thickness and colour, their contacts sharp
+         // and level, bending only slowly along the rim. A function of the
+         // depth, not a texture read: no repeat, no jagged or doubled bands.
+         float grain = texture2D(map, vMapUv).r * 2.0;
+         float bend = 7.0 * wallNoise(along * 0.008 + 3.0) + 2.5 * wallNoise(along * 0.031 + 9.0);
+         // The rock's depth from a LEVEL datum (the land's base), not from the
+         // rim: measured from the rim, every contact copied the turf's ragged
+         // tufts and climbed every hill. The soil above still follows the rim.
+         float level = (${TERRAIN_BASE.toFixed(3)} - vMapUv.y * ${STRATA_SPAN_Y.toFixed(1)});
+         float dd = max(level, vBelow - 30.0) + bend;
+         float subTop = soil, cTop = 34.0, rockTop = 52.0;
+         vec3 subsoil = mix(vec3(0.30, 0.135, 0.06), vec3(0.42, 0.31, 0.19), smoothstep(subTop, cTop + 6.0, max(dd, vBelow)));
+         vec3 strata = subsoil;
          {
-           float idx = wallNoise(vMapUv.x * 3.0 + 17.0) * 8.0;
-           float i0 = floor(idx);
-           vec2 sdx = dFdx(vMapUv), sdy = dFdy(vMapUv);
-           vec3 sa = textureGrad(map, vMapUv + vec2(wallHash(i0 * 7.13 + 1.0), 0.0), sdx, sdy).rgb;
-           vec3 sb = textureGrad(map, vMapUv + vec2(wallHash(i0 * 7.13 + 8.13), 0.0), sdx, sdy).rgb;
-           strata = mix(sa, sb, smoothstep(0.2, 0.8, idx - i0));
+           // The rock beds: one read of their column (bedsTexture), filtered
+           // over a quarter metre, so a contact is sharp and never stair-stepped.
+           vec4 bed = texture2D(uBeds, vec2(0.5, clamp((dd - rockTop) / ${BEDS_SPAN.toFixed(1)}, 0.0, 1.0)));
+           vec3 rock = bed.rgb;
+           // A gravel bed: pebbles, each a cell of its own shade.
+           vec2 pc = floor(vec2(along, vBelow) / 1.6);
+           rock *= mix(1.0, 0.8 + 0.45 * wallHash(dot(pc, vec2(12.9, 78.2))), bed.a);
+           strata = mix(subsoil, rock, smoothstep(rockTop - 1.5, rockTop + 1.5, dd));
+           // The C substratum: weathered stones scattered through it.
+           vec2 sc = floor(vec2(along, vBelow) / 2.2);
+           float scatter = step(0.86, wallHash(dot(sc, vec2(41.3, 17.7)))) * smoothstep(cTop - 4.0, cTop + 4.0, dd) * (1.0 - smoothstep(rockTop - 2.0, rockTop, dd));
+           strata = mix(strata, vec3(0.30, 0.28, 0.24), scatter * 0.7);
+           strata *= grain;
          }
-         vec3 topsoil = vec3(0.2, 0.13, 0.085) * (0.85 + 0.3 * wallNoise(along * 2.3 + vBelow * 1.7));
-         // Roots: thin pale streaks hanging into the topsoil.
+         // The A topsoil: dark with humus, roots hanging into it.
+         vec3 topsoil = vec3(0.13, 0.085, 0.055) * (0.85 + 0.3 * wallNoise(along * 2.3 + vBelow * 1.7));
          float root = step(0.9, wallNoise(along * 0.9)) * smoothstep(soil, lip, vBelow);
          topsoil = mix(topsoil, vec3(0.42, 0.33, 0.22), root * 0.6);
          vec3 turf = mix(vec3(0.24, 0.34, 0.13), vec3(0.15, 0.22, 0.09), smoothstep(0.0, lip, vBelow));
          vec3 wall = mix(topsoil, strata, smoothstep(soil - 0.6, soil + 0.6, vBelow));
-         // Bedrock: the deepest third of the cut is dark stones packed
-         // together, mortar-dark gaps between them (a Voronoi cell per
-         // stone, flattened as bedded cobbles are), under a thin pale line of
-         // gravel - the base of the cross-sections the player showed.
-         float bedTop = 200.0 + 16.0 * wallNoise(along * 0.025) + 5.0 * wallNoise(along * 0.11 + 3.0);
-         vec2 cp = vec2(along / 7.0, vBelow / 5.0);
-         vec2 ci = floor(cp);
-         vec2 cf = fract(cp);
-         float f1 = 9.0;
-         float f2 = 9.0;
-         float stoneId = 0.0;
-         for (int j = -1; j <= 1; j++) {
-           for (int i = -1; i <= 1; i++) {
-             vec2 g = vec2(float(i), float(j));
-             float id = dot(ci + g, vec2(127.1, 311.7));
-             vec2 r = g + 0.15 + 0.7 * vec2(wallHash(id), wallHash(id + 57.3)) - cf;
-             float d = dot(r, r);
-             if (d < f1) { f2 = f1; f1 = d; stoneId = id; } else if (d < f2) { f2 = d; }
-           }
-         }
-         float joint = smoothstep(0.03, 0.16, sqrt(f2) - sqrt(f1));
-         vec3 stone = mix(vec3(0.055, 0.058, 0.064), vec3(0.13, 0.125, 0.12), wallHash(stoneId + 9.1));
-         stone *= 0.75 + 0.35 * sqrt(f1 + 0.1) * (1.0 - sqrt(f1));
-         stone = mix(vec3(0.018, 0.017, 0.016), stone, joint);
-         // Filtered over the pixel (Quilez, "Filterable procedurals"): as a
-         // pixel comes to cover a whole stone the box filter of the pattern
-         // is its mean. Unfiltered, the bedrock seen from afar was pixel noise.
-         float stoneW = max(fwidth(cp.x), fwidth(cp.y));
-         stone = mix(stone, vec3(0.07, 0.07, 0.072), smoothstep(0.3, 1.0, stoneW));
-         float gravel = smoothstep(bedTop - 6.0, bedTop - 4.5, vBelow) * (1.0 - smoothstep(bedTop - 1.0, bedTop, vBelow));
-         wall = mix(wall, vec3(0.34, 0.33, 0.3) * (0.8 + 0.4 * wallNoise(along * 1.7 + vBelow * 2.3)), gravel * 0.85);
-         wall = mix(wall, stone, smoothstep(bedTop - 0.5, bedTop + 0.5, vBelow));
+         // Bedrock: a thin base of massive grey-brown rock under the beds
+         // (the R horizon: continuous hard rock), mottled, with a few fine
+         // cracks - not a third of the cut in cobbles.
+         float bedTop = 288.0 + 5.0 * wallNoise(along * 0.025) + 2.0 * wallNoise(along * 0.11 + 3.0);
+         vec2 rp = vec2(along / 9.0, vBelow / 6.0);
+         vec2 ri = floor(rp), rf = fract(rp);
+         vec2 ru = rf * rf * (3.0 - 2.0 * rf);
+         float mottle = mix(mix(wallHash(dot(ri, vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 0.0), vec2(127.1, 311.7))), ru.x),
+           mix(wallHash(dot(ri + vec2(0.0, 1.0), vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 1.0), vec2(127.1, 311.7))), ru.x), ru.y);
+         vec3 bedrock = mix(vec3(0.16, 0.15, 0.135), vec3(0.25, 0.235, 0.21), mottle) * grain;
+         float crack = 1.0 - smoothstep(0.0, 0.03, abs(wallNoise(along * 0.07 + vBelow * 0.15) - 0.5));
+         bedrock = mix(bedrock, vec3(0.08, 0.075, 0.07), crack * 0.6);
+         wall = mix(wall, bedrock, smoothstep(bedTop - 0.8, bedTop + 0.8, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v3';
+  material.customProgramCacheKey = () => 'terrain-walls-v7';
   return material;
 }
 

@@ -16,7 +16,9 @@ import { planarize, traceStreets, type StreetGraph, type StreetLevel } from './s
  *   bid-rent curve of every city: towers where land is dearest, houses at
  *   the edge).
  * - Commerce lines the main streets and fills the centres; industry takes a
- *   sector of the edge, away from the centres; a few whole blocks are parks.
+ *   sector of the edge, away from the centres. No block is left a park by
+ *   default (the player, 2026-10-09: no parks in the middle of the blocks);
+ *   `parks` above 0 brings them back.
  * - Style: the basis fields the grain is made of.
  *   - grid: one grid for the whole city, a couple of districts turned to
  *     their own angle (as a city annexes its neighbours);
@@ -44,7 +46,7 @@ export interface CityOptions {
   readonly industry: boolean;
 }
 
-export const DEFAULT_CITY: CityOptions = { seed: 1, size: 'medium', style: 'mixed', centres: 2, density: 0.6, parks: 0.06, industry: true };
+export const DEFAULT_CITY: CityOptions = { seed: 1, size: 'medium', style: 'mixed', centres: 2, density: 0.6, parks: 0, industry: true };
 
 /** Road classes the levels are laid as (`roadTypes.ts` ids). */
 export const LEVEL_ROAD = ['avenue', 'urban', 'local'] as const;
@@ -122,7 +124,7 @@ export function planCity(options: CityOptions): CityPlan {
     const k = near / R; // 0 at a centre, ~1 at the edge
     // Parks: whole patches, by a coarse noise, never in the very centre.
     const parkNoise = valueNoise(p.x / m(140) + parkSalt % 97, p.y / m(140) - parkSalt % 89);
-    if (k > 0.15 && parkNoise > 1 - options.parks * 9) return 'park';
+    if (options.parks > 0 && k > 0.15 && parkNoise > 1 - options.parks * 9) return 'park';
     // Industry: a sector of the edge, away from the centres.
     if (options.industry && k > 0.62) {
       let d = Math.abs(Math.atan2(p.y, p.x) - industryAngle) % (Math.PI * 2);
