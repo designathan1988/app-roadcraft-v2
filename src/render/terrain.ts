@@ -1926,7 +1926,20 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          float lip = 5.0 + 5.0 * wallNoise(along * 0.12) + 2.5 * wallNoise(along * 0.6 + 11.0);
          // The topsoil under it, darker and redder, with a wavy bottom.
          float soil = lip + 10.0 + 8.0 * wallNoise(along * 0.04 + 5.0);
-         vec3 strata = diffuseColor.rgb;
+         // The strata without their 320 m repeat (Quilez, "Texture
+         // Repetition", technique 3), shifted ALONG the rim only so the beds
+         // stay level: two reads at offsets a slow noise picks, the mips from
+         // the unmoved coordinates. Read plainly, the same wavy beds came
+         // round again and again down every side of the map.
+         vec3 strata;
+         {
+           float idx = wallNoise(vMapUv.x * 3.0 + 17.0) * 8.0;
+           float i0 = floor(idx);
+           vec2 sdx = dFdx(vMapUv), sdy = dFdy(vMapUv);
+           vec3 sa = textureGrad(map, vMapUv + vec2(wallHash(i0 * 7.13 + 1.0), 0.0), sdx, sdy).rgb;
+           vec3 sb = textureGrad(map, vMapUv + vec2(wallHash(i0 * 7.13 + 8.13), 0.0), sdx, sdy).rgb;
+           strata = mix(sa, sb, smoothstep(0.2, 0.8, idx - i0));
+         }
          vec3 topsoil = vec3(0.2, 0.13, 0.085) * (0.85 + 0.3 * wallNoise(along * 2.3 + vBelow * 1.7));
          // Roots: thin pale streaks hanging into the topsoil.
          float root = step(0.9, wallNoise(along * 0.9)) * smoothstep(soil, lip, vBelow);

@@ -331,7 +331,7 @@ export function createPostChain(
         cloudClock += delta;
         (clouds.uniforms['uTime'] as { value: number }).value = cloudClock;
         const u = clouds.uniforms as Record<string, { value: unknown }>;
-        const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], placedClouds, cloudDrift);
+        const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], u['uShow']!.value as number[], placedClouds, cloudDrift);
         u['uCloudCount']!.value = count;
         const plane = cloudShadowFrame(u['uCloud']!.value as Vector4[], u['uBase']!.value as number[], count,
           u['uSunDir']!.value as Vector3, u['uShadowRect']!.value as Vector4);
@@ -449,13 +449,18 @@ function cloudHash(i: number, salt: number): number {
  * 2026-10-07). Writes each cloud's bounding sphere (centre, size), its puffs
  * (world centre, radius) and how grown it is (1).
  */
-function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: number[], placed: readonly PlacedCloud[], drift: { x: number; y: number }): number {
+function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: number[], shows: number[], placed: readonly PlacedCloud[], drift: { x: number; y: number }): number {
   let slot = 0;
   for (const cloud of placed) {
     if (slot >= MAX_CLOUDS) break;
     // Where the wind has carried it, thinning away near the edge it wraps round.
+    // The thinning scales its DENSITY (`uShow`: Beer-Lambert, the optical
+    // depth goes with the concentration, so the whole cloud fades evenly).
+    // Fed to `life` it eroded the shape instead, and a cloud near the edge
+    // broke into loose white flecks, one lying over the land (2026-10-08).
     const at = driftedCloud(cloud, drift);
-    layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, cloud.height, cloud.size, cloud.yaw, cloud.density * at.show, 1, bounds, puffs, lives);
+    layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
+    shows[slot] = at.show;
     // Each its own flat base, at its own height (one height for the whole
     // sky cut away every cloud set lower than it, and its shadow with it).
     bases[slot] = cloud.height;
@@ -510,6 +515,8 @@ const CLOUD_SHADOWS = {
     uPuff: { value: Array.from({ length: MAX_CLOUDS * CLOUD_PUFFS }, () => new Vector4()) },
     uLife: { value: Array.from({ length: MAX_CLOUDS }, () => 0) },
     uBase: { value: Array.from({ length: MAX_CLOUDS }, () => 0) },
+    // How much of each cloud shows (1, down to 0 near the edge it wraps round): a factor on its density.
+    uShow: { value: Array.from({ length: MAX_CLOUDS }, () => 1) },
     uCloudBase: { value: DEFAULT_ATMOSPHERE.cloudBase },
     uFog: { value: DEFAULT_ATMOSPHERE.fog },
     uFogHeight: { value: DEFAULT_ATMOSPHERE.fogHeight },
@@ -569,6 +576,7 @@ const CLOUD_SHADOWS = {
     uniform vec4 uPuff[MAX_CLOUDS * PUFFS];
     uniform float uLife[MAX_CLOUDS];
     uniform float uBase[MAX_CLOUDS];
+    uniform float uShow[MAX_CLOUDS];
     uniform float uCloudBase;
     uniform float uFog;
     uniform float uFogHeight;
@@ -666,7 +674,7 @@ const CLOUD_SHADOWS = {
       // remap(base, detail * 0.35, 1, 0, 1): the heart (1) stays whole, the
       // thin edge is worn into wisps.
       float erode = detail * (0.55 + 0.3 * (1.0 - life));
-      return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0);
+      return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0) * uShow[c];
     }
     uniform sampler2D tClouds;
     uniform float uCloudsOn;
@@ -691,7 +699,7 @@ const CLOUD_SHADOWS = {
         float a = max(span.x, 0.0);
         float len = (span.y - a) / 5.0;
         for (int i = 0; i < 5; i++) {
-          through += clamp(heap(c, from + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * len / uCloud[c].w;
+          through += clamp(heap(c, from + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * uShow[c] * len / uCloud[c].w;
         }
       }
       return through;

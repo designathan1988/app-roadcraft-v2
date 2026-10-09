@@ -18,18 +18,20 @@ import {
  * wood beside it are one family (the player, 2026-10-08: three kits side by
  * side, "não tem padronização alguma").
  *
- * Low-poly as low-poly trees are modelled: the crown a few low-polygon
- * spheres, each pushed in and out by noise and scaled on its own, over a
- * tapering trunk with a few branches (the classic recipe: polygon-reduced
- * spheres under a noise displacer, a tapered extruded trunk - tuts+, "How to
- * Create a Low Poly Tree"). Flat faces, each its own shade.
+ * Shaped as a professional low-poly kit shapes them (Kenney's Nature Kit,
+ * measured in `public/models/nature/`: a crown 0.35 to 0.6 of the tree's
+ * height across, 50 to 230 triangles, the crown ONE faceted mass on a short
+ * clear trunk). The first version here built each crown of five or six
+ * separate balls, wider than the tree was tall: from above it read as bunches
+ * of grapes and balloons, an ipê as yellow balls stuck on green ones, and the
+ * crowns of a garden ran together into one blob on many trunks (the player,
+ * 2026-10-08: "esse lixo"). Now one sphere of 80 faces pushed in and out by a
+ * slow noise (the low-poly recipe: a polygon-reduced sphere under a noise
+ * displacer, tuts+), at most one smaller lump grown into it.
  *
  * Colour: sober greens and grey-brown bark, sRGB hex read ONCE into the
- * linear working space (three's colour management since r152: hex is sRGB,
- * converted on input; a second `convertSRGBToLinear` - what the old
- * countryside trees did - crushed the blue to nothing and made every leaf
- * neon). An occlusion is baked into each face's colour: darker low in a crown
- * and deep inside it, where the leaves above shade it.
+ * linear working space (three's colour management since r152). An occlusion
+ * is baked into each face's colour: darker low in a crown and deep inside it.
  *
  * Every model is ONE unit tall with its root at the origin (the wind shader,
  * `wind.ts`, reads local y as the fraction of the height), non-indexed, with
@@ -44,16 +46,16 @@ interface Tone {
 }
 /** Two sRGB hex colours, converted once into the linear working space by `Color`. */
 const tone = (dark: number, lit: number): Tone => ({ dark: new Color(dark), lit: new Color(lit) });
-const LEAF = tone(0x2b4420, 0x5c7a36);
-const LEAF_TALL = tone(0x253e20, 0x4f6e3a);
-const NEEDLE = tone(0x1d3320, 0x3e5d3a);
-const FROND = tone(0x33501f, 0x6a8a3c);
-const BARK = tone(0x2b221b, 0x584737);
-const PALM_BARK = tone(0x463b30, 0x7a6955);
-const BLOOM_YELLOW = tone(0x96701f, 0xd1a63b);
-const BLOOM_PINK = tone(0x7a3c5f, 0xbb6c95);
-const SHRUB = tone(0x26401d, 0x527034);
-const HEDGE = tone(0x213819, 0x45602e);
+const LEAF = tone(0x2f4a22, 0x67883d);
+const LEAF_TALL = tone(0x2a4424, 0x5a7a40);
+const NEEDLE = tone(0x203a24, 0x46663f);
+const FROND = tone(0x34521f, 0x6e8f3e);
+const BARK = tone(0x3b3026, 0x6e5a47);
+const PALM_BARK = tone(0x4d4135, 0x84735f);
+const BLOOM_YELLOW = tone(0xa27a22, 0xd8ae40);
+const BLOOM_PINK = tone(0x864468, 0xc47a9f);
+const SHRUB = tone(0x2a4520, 0x5a7a38);
+const HEDGE = tone(0x243b1b, 0x4b6630);
 const FLOWERS: readonly Tone[] = [tone(0xb9b2a4, 0xe8e2d6), tone(0x9c4a68, 0xd0759a), tone(0x8e2f2f, 0xc4524c)];
 
 /** A small seeded random (mulberry32): a model is the same every time it is made. */
@@ -96,7 +98,7 @@ function crownShade(bottom: number, top: number, radius: number): Occlusion {
   return (p) => {
     const h = Math.min(1, Math.max(0, (p.y - bottom) / Math.max(1e-6, top - bottom)));
     const out = Math.min(1, Math.hypot(p.x, p.z) / Math.max(1e-6, radius));
-    return (0.58 + 0.42 * h) * (0.8 + 0.2 * out);
+    return (0.62 + 0.38 * h) * (0.85 + 0.15 * out);
   };
 }
 
@@ -114,10 +116,10 @@ class Builder {
   constructor(private readonly rng: () => number) {}
 
   /** One face: lighter facing the sky, a little shade of its own, times its occlusion. */
-  tri(a: Vector3, b: Vector3, c: Vector3, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.3): void {
+  tri(a: Vector3, b: Vector3, c: Vector3, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.15): void {
     this.n.subVectors(b, a).cross(this.e.subVectors(c, a)).normalize();
     this.centre.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-    const k = Math.min(1, Math.max(0, 0.4 + 0.45 * this.n.y + (this.rng() - 0.5) * jitter));
+    const k = Math.min(1, Math.max(0, 0.42 + 0.45 * this.n.y + (this.rng() - 0.5) * jitter));
     const light = occlusion(this.centre);
     const r = (t.dark.r + (t.lit.r - t.dark.r) * k) * light;
     const g = (t.dark.g + (t.lit.g - t.dark.g) * k) * light;
@@ -135,7 +137,7 @@ class Builder {
   }
 
   /** A three primitive, moved by `m`, its faces each their own shade; `pick` may give a face another tone. */
-  add(geometry: BufferGeometry, m: Matrix4, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.3, pick?: (centre: Vector3) => Tone): void {
+  add(geometry: BufferGeometry, m: Matrix4, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.15, pick?: (centre: Vector3) => Tone): void {
     const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
     g.applyMatrix4(m);
     const p = g.getAttribute('position');
@@ -152,24 +154,25 @@ class Builder {
   }
 
   /**
-   * A lump of leaves: an 80-face sphere pushed in and out by two octaves of
-   * noise (the large form, then detail at a third of it), squashed by
-   * `squash`, at `at`. Below `floor` it is pressed flat (a bush on the ground).
+   * A crown mass: an 80-face sphere (non-indexed: three's IcosahedronGeometry)
+   * pushed in and out by a slow noise - the large form - and a little detail,
+   * squashed by `squash`, at `at`. Below `floor` it is pressed flat (a bush on
+   * the ground).
    */
-  blob(at: Vector3, radius: number, squash: Vector3, t: Tone, seed: number, roughness: number, occlusion: Occlusion,
+  mass(at: Vector3, radius: number, squash: Vector3, t: Tone, seed: number, roughness: number, occlusion: Occlusion,
     pick?: (centre: Vector3) => Tone, floor = -Infinity): void {
     const solid = new IcosahedronGeometry(1, 1);
     const position = solid.getAttribute('position');
     const p = new Vector3();
     for (let i = 0; i < position.count; i++) {
       p.fromBufferAttribute(position, i);
-      const big = noise3(p.x * 1.3 + seed * 3.1, p.y * 1.3, p.z * 1.3, seed);
-      const small = noise3(p.x * 3.1, p.y * 3.1 + seed * 1.7, p.z * 3.1, seed + 17);
-      p.multiplyScalar(radius * (1 + big * roughness + small * roughness * 0.35)).multiply(squash).add(at);
+      const big = noise3(p.x * 1.1 + seed * 3.1, p.y * 1.1, p.z * 1.1, seed);
+      const small = noise3(p.x * 2.6, p.y * 2.6 + seed * 1.7, p.z * 2.6, seed + 17);
+      p.multiplyScalar(radius * (1 + big * roughness + small * roughness * 0.3)).multiply(squash).add(at);
       if (p.y < floor) p.y = floor + (p.y - floor) * 0.2;
       position.setXYZ(i, p.x, p.y, p.z);
     }
-    this.add(solid, new Matrix4(), t, occlusion, 0.3, pick);
+    this.add(solid, new Matrix4(), t, occlusion, 0.15, pick);
   }
 
   /** The model, standing on its origin, one unit tall, each face its own normal. */
@@ -201,101 +204,67 @@ function along(from: Vector3, to: Vector3): Matrix4 {
 }
 
 /**
- * A trunk from the ground to `top`: a short foot a third wider than the stem
- * - the root swell, in the bark's colour, not a pedestal - and the stem
- * tapering to `r1`. Open at the ends, which are in the ground and the crown.
+ * A trunk from the ground to `top`, six-sided, tapering from `r0` to `r1`,
+ * the foot a little wider (the root swell, not a pedestal). Open at the ends,
+ * which are in the ground and in the crown.
  */
 function trunk(b: Builder, top: Vector3, r0: number, r1: number, bark: Tone): void {
-  const footTop = new Vector3(top.x * 0.06, top.y * 0.08, top.z * 0.06);
-  b.add(new CylinderGeometry(r0, r0 * 1.35, 1, 6, 1, true), along(new Vector3(0, 0, 0), footTop), bark, OPEN, 0.2);
-  b.add(new CylinderGeometry(r1, r0, 1, 6, 1, true), along(footTop, top), bark, OPEN, 0.2);
+  b.add(new CylinderGeometry(r1, r0, 1, 6, 1, true), along(new Vector3(0, 0, 0), top), bark, OPEN, 0.1);
 }
 
-/** Limbs from near the top of the trunk out into the crown, each `r0` thick at the trunk. */
-function limbs(b: Builder, rng: () => number, from: Vector3, count: number, reach: number, rise: number, r0: number, bark: Tone): void {
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + rng() * 0.7;
-    const to = new Vector3(from.x + Math.cos(a) * reach * (0.8 + rng() * 0.3), from.y + rise * (0.8 + rng() * 0.4), from.z + Math.sin(a) * reach * (0.8 + rng() * 0.3));
-    b.add(new CylinderGeometry(r0 * 0.45, r0, 1, 5, 1, true), along(from, to), bark, OPEN, 0.2);
-  }
-}
-
-/** A broad, rounded crown of five or six lumps over a stout trunk: the shade tree. */
+/** The shade tree: one broad, lumpy crown, a smaller lump grown into it, on a short stout trunk. 184 triangles. */
 function oak(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.05, 0.46, (rng() - 0.5) * 0.05);
-  trunk(b, top, 0.042, 0.028, BARK);
-  limbs(b, rng, new Vector3(top.x, top.y - 0.08, top.z), 3, 0.15, 0.16, 0.02, BARK);
-  const shade = crownShade(0.44, 1.02, 0.42);
-  const crown = new Vector3(top.x, 0.68, top.z);
-  b.blob(crown, 0.25, new Vector3(1, 0.8, 1), LEAF, seed, 0.22, shade);
-  const lumps = 4 + Math.floor(rng() * 2);
-  const start = rng() * Math.PI * 2;
-  for (let i = 0; i < lumps; i++) {
-    const a = start + (i / lumps) * Math.PI * 2 + (rng() - 0.5) * 0.6;
-    const reach = 0.17 + rng() * 0.05;
-    const at = new Vector3(crown.x + Math.cos(a) * reach, 0.6 + rng() * 0.1, crown.z + Math.sin(a) * reach);
-    b.blob(at, 0.15 + rng() * 0.05, new Vector3(1, 0.85, 1), LEAF, seed + i + 1, 0.22, shade);
-  }
-  b.blob(new Vector3(crown.x + (rng() - 0.5) * 0.06, 0.86, crown.z + (rng() - 0.5) * 0.06), 0.15, new Vector3(1, 0.85, 1), LEAF, seed + 9, 0.22, shade);
+  const top = new Vector3((rng() - 0.5) * 0.04, 0.5, (rng() - 0.5) * 0.04);
+  trunk(b, top, 0.05, 0.032, BARK);
+  const shade = crownShade(0.36, 0.98, 0.3);
+  b.mass(new Vector3(top.x, 0.64, top.z), 0.28, new Vector3(1, 0.92, 1), LEAF, seed, 0.28, shade);
+  const a = rng() * Math.PI * 2;
+  b.mass(new Vector3(top.x + Math.cos(a) * 0.1, 0.8, top.z + Math.sin(a) * 0.1), 0.17, new Vector3(1, 0.9, 1), LEAF, seed + 5, 0.24, shade);
   return b.geometry();
 }
 
-/** A taller, narrower crown in three tiers on a longer clear stem. */
+/** A tall, narrow crown - one long mass - on a longer clear stem. 172 triangles. */
 function broadleafTall(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.04, 0.56, (rng() - 0.5) * 0.04);
-  trunk(b, top, 0.036, 0.022, BARK);
-  limbs(b, rng, new Vector3(top.x, top.y - 0.08, top.z), 2, 0.1, 0.14, 0.017, BARK);
-  const shade = crownShade(0.5, 1.02, 0.3);
-  b.blob(new Vector3(top.x, 0.74, top.z), 0.15, new Vector3(1, 1.35, 1), LEAF_TALL, seed, 0.2, shade);
-  const tiers: readonly (readonly [number, number, number, number])[] = [[3, 0.62, 0.12, 0.14], [2, 0.78, 0.09, 0.13], [1, 0.92, 0.0, 0.11]];
-  let k = 1;
-  for (const [count, y, reach, r] of tiers) {
-    const start = rng() * Math.PI * 2;
-    for (let i = 0; i < count; i++) {
-      const a = start + (i / count) * Math.PI * 2;
-      b.blob(new Vector3(top.x + Math.cos(a) * reach, y + (rng() - 0.5) * 0.04, top.z + Math.sin(a) * reach), r * (0.9 + rng() * 0.2),
-        new Vector3(1, 1.05, 1), LEAF_TALL, seed + k++, 0.2, shade);
-    }
-  }
+  const top = new Vector3((rng() - 0.5) * 0.03, 0.5, (rng() - 0.5) * 0.03);
+  trunk(b, top, 0.04, 0.026, BARK);
+  const shade = crownShade(0.32, 1.0, 0.22);
+  b.mass(new Vector3(top.x, 0.66, top.z), 0.2, new Vector3(1, 1.65, 1), LEAF_TALL, seed, 0.24, shade);
   return b.geometry();
 }
 
-/** A conifer: a short trunk under five tiers of seven-sided cones, their rims ragged and drooping. */
+/** The cypress: a narrow column of four seven-sided tiers over a short trunk, their rims ragged and hanging. 68 triangles. */
 function cypress(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  trunk(b, new Vector3(0, 0.16, 0), 0.03, 0.022, BARK);
+  trunk(b, new Vector3(0, 0.18, 0), 0.034, 0.024, BARK);
   const slim = 0.92 + rng() * 0.16;
-  const shade: Occlusion = (p) => 0.62 + 0.38 * Math.min(1, Math.max(0, (p.y - 0.08) / 0.92));
-  for (let k = 0; k < 5; k++) {
-    const base = 0.1 + k * 0.155;
-    const height = 0.34 - k * 0.03;
-    const radius = (0.25 - k * 0.045) * slim;
+  const shade: Occlusion = (p) => 0.66 + 0.34 * Math.min(1, Math.max(0, (p.y - 0.14) / 0.86));
+  const tiers: readonly (readonly [number, number, number])[] = [[0.14, 0.36, 0.17], [0.33, 0.32, 0.14], [0.51, 0.29, 0.105], [0.68, 0.32, 0.07]];
+  tiers.forEach(([base, height, r], k) => {
+    const radius = r * slim;
     const cone = new ConeGeometry(radius, height, 7, 1, false);
     const position = cone.getAttribute('position');
     const p = new Vector3();
     for (let i = 0; i < position.count; i++) {
       p.fromBufferAttribute(position, i);
-      const rim = p.y < 0 && Math.hypot(p.x, p.z) > radius * 0.5;
-      if (!rim) continue;
+      if (!(p.y < 0 && Math.hypot(p.x, p.z) > radius * 0.5)) continue;
       // A ragged rim of boughs, each corner its own reach, hanging a little.
       const n = noise3(p.x * 9 + k * 5.3, k * 1.7, p.z * 9, seed + k);
-      const reach = 1 + n * 0.2;
-      p.x *= reach;
-      p.z *= reach;
-      p.y -= height * (0.08 + 0.06 * (n + 1));
+      p.x *= 1 + n * 0.16;
+      p.z *= 1 + n * 0.16;
+      p.y -= height * (0.06 + 0.05 * (n + 1));
       position.setXYZ(i, p.x, p.y, p.z);
     }
-    b.add(cone, new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.25);
-  }
+    b.add(cone, new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
+  });
   return b.geometry();
 }
 
-/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. */
+/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. About 230 triangles. */
 function palm(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
@@ -303,26 +272,23 @@ function palm(seed: number): BufferGeometry {
   const leanDir = new Vector3(Math.cos(turn), 0, Math.sin(turn));
   // The trunk's line: up, bending out with the lean (a quadratic curve).
   const at = (t: number): Vector3 => new Vector3(0, 0.82 * t, 0).addScaledVector(leanDir, lean * t * t);
-  b.add(new CylinderGeometry(0.045, 0.058, 1, 6, 1, true), along(new Vector3(0, 0, 0), new Vector3(0, 0.05, 0)), PALM_BARK, OPEN, 0.2);
-  const rings = 12;
+  const rings = 6;
   for (let s = 0; s < rings; s++) {
-    const p0 = at(s / rings), p1 = at((s + 1.08) / rings);
-    const r = 0.042 * (1 - 0.35 * (s / rings));
+    const p0 = at(s / rings), p1 = at((s + 1.06) / rings);
+    const r = 0.04 * (1 - 0.35 * (s / rings));
     // Each ring wider at its foot than its top: the stepped bark of a palm.
-    b.add(new CylinderGeometry(r * 0.86, r * 1.06, 1, 6, 1, true), along(p0, p1), PALM_BARK, OPEN, 0.25);
+    b.add(new CylinderGeometry(r * 0.86, r * 1.06, 1, 6, 1, true), along(p0, p1), PALM_BARK, OPEN, 0.1);
   }
   const crown = at(1);
-  // Where the fronds spring from: a dark knot of old leaf bases.
-  b.add(new IcosahedronGeometry(1, 0), new Matrix4().compose(crown, new Quaternion(), new Vector3(0.05, 0.045, 0.05)), BARK);
-  const shade: Occlusion = (p) => 0.7 + 0.3 * Math.min(1, Math.max(0, (p.y - crown.y + 0.25) / 0.35));
-  const fronds = 8;
+  const shade: Occlusion = (p) => 0.72 + 0.28 * Math.min(1, Math.max(0, (p.y - crown.y + 0.25) / 0.35));
+  const fronds = 7;
   for (let k = 0; k < fronds; k++) {
     const a = (k / fronds) * Math.PI * 2 + rng() * 0.35;
     const out = new Vector3(Math.cos(a), 0, Math.sin(a));
     const side = new Vector3(-Math.sin(a), 0, Math.cos(a));
     const length = 0.4 + rng() * 0.08;
     const lift = 0.45 + rng() * 0.25;
-    const steps = 7;
+    const steps = 5;
     const spine: Vector3[] = [crown.clone()];
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
@@ -332,7 +298,7 @@ function palm(seed: number): BufferGeometry {
     }
     for (let i = 0; i < steps; i++) {
       const t = (i + 0.5) / steps;
-      const width = 0.08 * Math.sin(Math.PI * (0.12 + t * 0.85));
+      const width = 0.085 * Math.sin(Math.PI * (0.12 + t * 0.85));
       const p0 = spine[i]!, p1 = spine[i + 1]!;
       for (const sign of [1, -1]) {
         // A leaflet: from the spine, out to the side and hanging down, swept towards the tip.
@@ -344,52 +310,41 @@ function palm(seed: number): BufferGeometry {
   return b.geometry();
 }
 
-/** The flowering ipê: a wide, open, flat-topped crown that in the dry season is nearly all flower. */
+/**
+ * The flowering ipê: one wide, flat crown, flower over the top and the green
+ * of the last leaves showing underneath - one mass, not flower balls stuck
+ * on green ones. 172 triangles.
+ */
 function ipe(seed: number, bloom: Tone): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
   const top = new Vector3((rng() - 0.5) * 0.05, 0.5, (rng() - 0.5) * 0.05);
-  trunk(b, top, 0.04, 0.024, BARK);
-  limbs(b, rng, new Vector3(top.x, top.y - 0.06, top.z), 4, 0.2, 0.14, 0.018, BARK);
-  const shade = crownShade(0.52, 0.95, 0.46);
-  b.blob(new Vector3(top.x, 0.76, top.z), 0.19, new Vector3(1, 0.7, 1), bloom, seed, 0.24, shade);
-  const lumps = 5;
-  const start = rng() * Math.PI * 2;
-  // One lump of the ring still in leaf: the tree is flower over a little green.
-  const green = Math.floor(rng() * lumps);
-  for (let i = 0; i < lumps; i++) {
-    const a = start + (i / lumps) * Math.PI * 2 + (rng() - 0.5) * 0.5;
-    const reach = 0.22 + rng() * 0.05;
-    b.blob(new Vector3(top.x + Math.cos(a) * reach, 0.7 + rng() * 0.06, top.z + Math.sin(a) * reach), 0.14 + rng() * 0.04,
-      new Vector3(1, 0.72, 1), i === green ? LEAF : bloom, seed + i + 1, 0.24, shade);
-  }
+  trunk(b, top, 0.045, 0.028, BARK);
+  const shade = crownShade(0.42, 0.92, 0.36);
+  const centre = 0.68;
+  const pick = (c: Vector3): Tone => (c.y < centre - 0.08 ? LEAF : bloom);
+  b.mass(new Vector3(top.x, centre, top.z), 0.3, new Vector3(1.1, 0.62, 1.1), bloom, seed, 0.26, shade, pick);
   return b.geometry();
 }
 
-/** A bush: three lumps of leaves pressed onto the ground, about one and a half times as wide as tall. */
+/** A bush: one lump of leaves pressed onto the ground, about one and a half times as wide as tall. 80 triangles. */
 function bush(seed: number, flowering: boolean): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const shade = crownShade(0, 0.85, 0.75);
+  const shade = crownShade(0, 0.95, 0.7);
   // A flowering bush: a scatter of blossoms over the sunlit upper faces.
   const pick = flowering
-    ? (c: Vector3): Tone => (c.y > 0.45 && rng() < 0.2 ? FLOWERS[Math.floor(rng() * FLOWERS.length)]! : SHRUB)
+    ? (c: Vector3): Tone => (c.y > 0.5 && rng() < 0.3 ? FLOWERS[Math.floor(rng() * FLOWERS.length)]! : SHRUB)
     : undefined;
-  b.blob(new Vector3(0, 0.42, 0), 0.5, new Vector3(1, 0.8, 1), SHRUB, seed, 0.2, shade, pick, 0);
-  b.blob(new Vector3(0.42, 0.3, 0.12 + (rng() - 0.5) * 0.2), 0.36, new Vector3(1, 0.85, 1), SHRUB, seed + 1, 0.2, shade, pick, 0);
-  b.blob(new Vector3(-0.38, 0.28, -0.16 + (rng() - 0.5) * 0.2), 0.34, new Vector3(1, 0.85, 1), SHRUB, seed + 2, 0.2, shade, pick, 0);
+  b.mass(new Vector3(0, 0.45, 0), 0.5, new Vector3(1.5, 1, 1.3), SHRUB, seed, 0.24, shade, pick, 0);
   return b.geometry();
 }
 
-/** A clipped hedge: five lumps in a row, little noise (it is trimmed), darker and denser. */
+/** A clipped hedge: one long, trimmed block of leaves, a little noise only. 80 triangles. */
 function hedge(seed: number): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
-  const shade = crownShade(0, 0.95, 0.8);
-  for (let i = 0; i < 5; i++) {
-    b.blob(new Vector3((i - 2) * 0.28, 0.48 + rng() * 0.04, (rng() - 0.5) * 0.08), 0.36 + rng() * 0.05, new Vector3(1, 0.92, 0.78),
-      HEDGE, seed + i, 0.1, shade, undefined, 0);
-  }
+  const b = new Builder(random(seed));
+  const shade = crownShade(0, 0.95, 0.9);
+  b.mass(new Vector3(0, 0.5, 0), 0.5, new Vector3(2, 1, 0.8), HEDGE, seed, 0.08, shade, undefined, 0);
   return b.geometry();
 }
 
