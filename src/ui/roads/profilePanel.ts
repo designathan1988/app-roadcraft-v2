@@ -18,6 +18,12 @@ export function mountProfilePanel(
   host: HTMLElement,
   segment: RoadSegment,
   apply: (profile: RoadProfileSpec, type?: number) => void,
+  /**
+   * V8: this road's profile copied to the whole street it runs in (`chain`
+   * segments, itself included), and the road tool given it to draw with
+   * (the eyedropper).
+   */
+  more: { readonly chain?: number; readonly toStreet?: () => void; readonly drawWith?: () => void } = {},
 ): void {
   const profile = profileOf(segment);
   const panel = document.createElement('section');
@@ -58,6 +64,32 @@ export function mountProfilePanel(
     drawWith: (name, next, type) => setDrawProfile({ name, profile: next, type }),
   });
 
-  panel.append(head, art, facts, edit);
+  const row = document.createElement('div');
+  row.className = 'rp-summary-actions';
+  row.append(edit);
+  if (more.drawWith) {
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'rp-btn';
+    pick.textContent = t('profile.drawWith');
+    pick.title = t('profile.drawWithTip');
+    pick.dataset['action'] = 'eyedropper';
+    pick.onclick = () => {
+      setDrawProfile({ name: t('profile.copied'), profile, type: segment.type });
+      more.drawWith?.();
+    };
+    row.append(pick);
+  }
+  if (more.toStreet && (more.chain ?? 0) > 1) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'rp-btn';
+    all.textContent = t('profile.toStreet', { count: more.chain ?? 0 });
+    all.title = t('profile.toStreetTip');
+    all.dataset['action'] = 'toStreet';
+    all.onclick = () => more.toStreet?.();
+    row.append(all);
+  }
+  panel.append(head, art, facts, row);
   host.append(panel);
 }

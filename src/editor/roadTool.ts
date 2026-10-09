@@ -1,3 +1,4 @@
+import { nameFor } from '@world/roads/streetNames';
 import { layPowerLines } from './roads/powerLine';
 import { type FurnitureSet, furnitureFor } from '@world/roads/furnitureSets';
 import type { Vec2 } from '@core/vec2';
@@ -496,6 +497,8 @@ export class RoadTool {
         // The complete set: a power line down the left, its poles lit (V7).
         const power = settings.furniture === 'complete' && layPowerLines(doc, net, laid) > 0;
         for (const piece of furnitureFor(net, laid, settings.furniture, doc.landscape.values(), power)) doc.addLandscape(piece.kind, piece.at);
+        // A new street is given a name (V8), its plates at the corners; renamed or removed as any item.
+        for (const name of nameFor(net, laid)) doc.addLandscape('streetname', name.at, { text: name.text });
       }
       return result.committed;
     });

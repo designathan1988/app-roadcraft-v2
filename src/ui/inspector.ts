@@ -1,3 +1,4 @@
+import { streetNameOf, streetNumbers } from '@world/roads/streetNames';
 import { PARKING_KINDS, parkingAllowed, type ParkingKind, type SegmentParking } from '@world/parking';
 import type { NodeId, SegmentId } from '@world/ids';
 import { type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
@@ -31,6 +32,11 @@ export interface InspectorActions {
   readonly onSetSection?: (id: SegmentId, section: RoadSection | undefined) => void;
   /** A whole cross-section applied to the road, with its class when it comes from a template (docs/VIAS.md V1). */
   readonly onApplyProfile?: (id: SegmentId, profile: RoadProfileSpec, type?: number) => void;
+  /** V8: this road's profile copied to the whole street (`world/roads/streetChain.ts`); how many segments that is. */
+  readonly onProfileToStreet?: (id: SegmentId) => void;
+  readonly streetLength?: (id: SegmentId) => number;
+  /** V8: the road tool taken up with this road's profile (the eyedropper). */
+  readonly onDrawWithProfile?: () => void;
   readonly onSetParking?: (id: SegmentId, parking: SegmentParking) => void;
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
@@ -236,7 +242,10 @@ function renderSegment(
   }
   const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
   const length = net.polylines.get(doc, id).length;
-  setTitle(`${t('inspector.road')} · ${roadTypeName(rt)}`);
+  // Its street's name and numbers (V8): "Rua das Flores · Via urbana", "Nº 120 a 204".
+  const streetName = streetNameOf(net, id);
+  setTitle(`${streetName ?? t('inspector.road')} · ${roadTypeName(rt)}`);
+  const numbers = streetNumbers(doc, net, id);
 
   const maxCurve = Math.max(20, Math.min(280, length * 0.65));
   const curveValue = seg.curve?.h ?? 0;
@@ -252,6 +261,7 @@ function renderSegment(
   const profiled = actions.onApplyProfile !== undefined;
   body.innerHTML =
     `<div id="inspectStats">${stats}</div>` +
+    (numbers ? `<div class="rp-sub inspect-numbers">${t('inspector.numbers', { from: numbers.from, to: numbers.to })}</div>` : '') +
     (profiled ? '<div id="inspectProfile"></div>' : '') +
     (profiled ? '' : `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
     `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>`) +
@@ -276,7 +286,11 @@ function renderSegment(
     `</div>`;
 
   if (actions.onApplyProfile) {
-    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type));
+    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type), {
+      chain: actions.streetLength?.(id) ?? 0,
+      ...(actions.onProfileToStreet ? { toStreet: () => actions.onProfileToStreet?.(id) } : {}),
+      ...(actions.onDrawWithProfile ? { drawWith: () => actions.onDrawWithProfile?.() } : {}),
+    });
   }
   if (freeRoadsEnabled() && actions.onSetSection) {
     mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, seg.direction, seg.section,

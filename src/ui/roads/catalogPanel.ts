@@ -87,6 +87,12 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
   const grid = document.createElement('div');
   grid.className = 'rc-cards';
   const shown = roads.filter((r) => r.category === category);
+  // A profile in hand that no card is (an edited one, or one picked from a
+  // road with the eyedropper, V8): its own card first, picked, on every tab.
+  const loose = drawProfile();
+  const looseRoad: CatalogRoad | null = loose && !picked
+    ? { id: 'drawProfile', name: loose.name, category, type: loose.type, profile: loose.profile } : null;
+  if (looseRoad) shown.unshift(looseRoad);
   // One scale for every tile: the widest road offered.
   const span = Math.max(...roads.map((r) => r.profile.elements.reduce((sum, e) => sum + e.width, 0)));
   if (!shown.length) {
@@ -96,7 +102,7 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
     grid.append(empty);
   }
   for (const road of shown) {
-    const on = picked?.id === road.id;
+    const on = picked?.id === road.id || road === looseRoad;
     const rt = profileRoad(road.profile, road.type);
     const card = document.createElement('div');
     card.className = `rc-card${on ? ' on' : ''}`;

@@ -1,3 +1,4 @@
+import { nameFor } from '@world/roads/streetNames';
 import { layPowerLines } from './roads/powerLine';
 import type { Vec2 } from '@core/vec2';
 import { RoadDoc } from '@world/doc';
@@ -71,6 +72,8 @@ export function greenCity(doc: RoadDoc, net: Network, seed: number): { squares: 
   const power = layPowerLines(doc, net, doc.segments.keys()) > 0;
   const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values(), power);
   for (const piece of pieces) doc.addLandscape(piece.kind, piece.at);
+  // Every street named (V8).
+  for (const name of nameFor(net, doc.segments.keys())) doc.addLandscape('streetname', name.at, { text: name.text });
   return { squares: squares.length, pieces: pieces.length };
 }
 
