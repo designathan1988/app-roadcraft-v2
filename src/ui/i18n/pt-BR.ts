@@ -442,6 +442,7 @@ export const PT_BR: Dictionary = {
   'profile.toStreetTip': 'Este perfil em todos os trechos da rua, atravessando os cruzamentos',
   'hint.profile.toStreet': 'Perfil copiado para a rua inteira',
   'hint.profile.picked': 'Desenhando com o perfil escolhido',
+  'inspector.numbers': 'Nº {from} a {to} · pares à direita no sentido da numeração',
   'menu.paint': 'Pintura',
   'paint.br': 'Brasil',
   'paint.us': 'EUA',

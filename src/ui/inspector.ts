@@ -1,3 +1,4 @@
+import { streetNameOf, streetNumbers } from '@world/roads/streetNames';
 import { PARKING_KINDS, parkingAllowed, type ParkingKind, type SegmentParking } from '@world/parking';
 import type { NodeId, SegmentId } from '@world/ids';
 import { type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
@@ -241,7 +242,10 @@ function renderSegment(
   }
   const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
   const length = net.polylines.get(doc, id).length;
-  setTitle(`${t('inspector.road')} · ${roadTypeName(rt)}`);
+  // Its street's name and numbers (V8): "Rua das Flores · Via urbana", "Nº 120 a 204".
+  const streetName = streetNameOf(net, id);
+  setTitle(`${streetName ?? t('inspector.road')} · ${roadTypeName(rt)}`);
+  const numbers = streetNumbers(doc, net, id);
 
   const maxCurve = Math.max(20, Math.min(280, length * 0.65));
   const curveValue = seg.curve?.h ?? 0;
@@ -257,6 +261,7 @@ function renderSegment(
   const profiled = actions.onApplyProfile !== undefined;
   body.innerHTML =
     `<div id="inspectStats">${stats}</div>` +
+    (numbers ? `<div class="rp-sub inspect-numbers">${t('inspector.numbers', { from: numbers.from, to: numbers.to })}</div>` : '') +
     (profiled ? '<div id="inspectProfile"></div>' : '') +
     (profiled ? '' : `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
     `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>`) +

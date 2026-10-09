@@ -379,6 +379,10 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   espelhado (`flipProfile`), então estacionamento e calçadas ficam do mesmo lado no mundo. Detector
   `tests/world/streetChain.spec.ts`.
 - Inverter mão única: já existia no inspetor.
+- Nomes e numeração (`world/roads/streetNames.ts`): toda rua nova (com mobiliário Básico ou Completo) e toda rua da cidade
+  gerada recebe um nome ("Rua"/"Avenida" + nomes comuns no Brasil, sem repetir), como item `streetname` (placas azuis nas
+  esquinas, editável/removível); o inspetor mostra o nome no título e a numeração métrica do trecho (metros desde a ponta
+  da rua mais perto do marco zero, o centro do mapa; pares à direita). Detector `tests/world/streetNames.spec.ts`.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

@@ -446,6 +446,7 @@ export const EN: Dictionary = {
   'profile.toStreetTip': 'This profile on every stretch of the street it runs in, through its junctions',
   'hint.profile.toStreet': 'Profile copied to the whole street',
   'hint.profile.picked': 'Drawing with the picked profile',
+  'inspector.numbers': 'Numbers {from} to {to} · even on the right going up',
   'menu.paint': 'Paint',
   'paint.br': 'Brazil',
   'paint.us': 'USA',
