@@ -37,7 +37,8 @@ import {
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { TERRAIN_MIN_MS, TerrainBrush, type DabSettings } from '@editor/terrainBrush';
-import { cloudUnder, driftedCloud, scatterClouds } from '@world/clouds';
+import { scatterClouds } from '@world/clouds';
+import { CloudTool } from '@editor/cloudTool';
 import { playThunder } from '@ui/thunder';
 import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
@@ -1058,7 +1059,8 @@ function currentGesture(): string | null {
   const barrier = barrierTool.gesture();
   if (barrier) return barrier;
   if (bulldozeBox) return 'demolir: retângulo';
-  if (cloudDrag) return 'nuvem: arrastando';
+  const cloud = cloudTool.gesture();
+  if (cloud) return cloud;
   return lotTool.gesture();
 }
 function syncGesture(): void {
@@ -1363,54 +1365,20 @@ function anchorForHeight(anchor: Anchor, heightOffset: number): Anchor {
 // sky right under the pointer, drags one to move it, sets one to the tool's
 // size, height and density, or takes one away (`world/clouds.ts`). Each is
 // one undo step. A cloud is found where the pointer's ray crosses its body.
-let cloudDrag: { pointer: number; id: number; dx: number; dy: number } | null = null;
-/** Where the pointer's ray meets the plane at `height`, on the map. */
-function pointerAtHeight(px: number, py: number, height: number): Vec2 {
-  return view.toWorldAt(px, py, height, surface.cssW, surface.cssH);
-}
-function cloudPointerDown(pointer: number, px: number, py: number): void {
-  const mode = cloudMode();
-  const brush = cloudBrush();
-  const size = brush.size * UNITS_PER_METER;
-  const height = brush.height * UNITS_PER_METER;
-  // Where the wind has carried them (`world/clouds.ts` driftedCloud): picked
-  // where they are seen, and a new or moved one kept where it is put.
-  const drift = scene.cloudDrift();
-  const seen = doc.clouds.map((c) => ({ ...c, ...driftedCloud(c, drift) }));
-  const picked = cloudUnder(seen, (h) => pointerAtHeight(px, py, h));
-  const done = (): void => {
+const cloudTool = new CloudTool({
+  doc,
+  mode: () => cloudMode(),
+  brush: () => cloudBrush(),
+  drift: () => scene.cloudDrift(),
+  rayAt: (px, py, height) => view.toWorldAt(px, py, height, surface.cssW, surface.cssH),
+  record: () => history.record(doc),
+  changed: () => {
     updateHistoryButtons();
     persistence.saveSessionSoon(doc, sessionSettings);
     requestDraw();
-  };
-  if (mode === 'add') {
-    const at = pointerAtHeight(px, py, height + size * 0.3);
-    history.record(doc);
-    const cloud = doc.addCloud({ x: at.x - drift.x, y: at.y - drift.y, height, size, density: brush.density / 100, yaw: ((at.x * 0.013 + at.y * 0.007) % 1) * Math.PI * 2 });
-    if (!cloud) flashHint('hint.cloud.full');
-    done();
-    return;
-  }
-  if (!picked) return;
-  history.record(doc);
-  if (mode === 'remove') doc.removeCloud(picked.id);
-  else if (mode === 'edit') doc.updateCloud(picked.id, { size, height, density: brush.density / 100 });
-  else {
-    const at = pointerAtHeight(px, py, picked.height + picked.size * 0.3);
-    cloudDrag = { pointer, id: picked.id, dx: picked.x - at.x, dy: picked.y - at.y };
-  }
-  done();
-}
-function cloudDragTo(px: number, py: number): void {
-  const drag = cloudDrag;
-  const cloud = drag ? doc.clouds.find((c) => c.id === drag.id) : undefined;
-  if (!drag || !cloud) return;
-  const at = pointerAtHeight(px, py, cloud.height + cloud.size * 0.3);
-  const drift = scene.cloudDrift();
-  doc.updateCloud(cloud.id, { x: at.x + drag.dx - drift.x, y: at.y + drag.dy - drift.y });
-  persistence.saveSessionSoon(doc, sessionSettings);
-  requestDraw();
-}
+  },
+  hint: (key) => flashHint(key),
+});
 {
   const bind = (id: string, read: () => number, write: (v: number) => void): void => {
     const input = document.getElementById(id) as HTMLInputElement | null;
@@ -1626,7 +1594,7 @@ canvas.addEventListener('pointerdown', (e) => {
       }
 
     case 'terrain':
-      if (game.terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
+      if (game.terrainMode === 'cloud') cloudTool.down(e.pointerId, e.clientX - r.left, e.clientY - r.top);
       // The weather tool: a click calls a lightning bolt down there.
       else if (game.terrainMode === 'weather') scene.strikeAt(world.x, world.y);
       else terrainBrush.begin(e.pointerId, world);
@@ -1869,9 +1837,9 @@ canvas.addEventListener('pointermove', (e) => {
     terrainBrush.paint(world);
     return;
   }
-  if (cloudDrag?.pointer === e.pointerId) {
+  if (cloudTool.pointer === e.pointerId) {
     const rect = canvas.getBoundingClientRect();
-    cloudDragTo(e.clientX - rect.left, e.clientY - rect.top);
+    cloudTool.move(e.clientX - rect.left, e.clientY - rect.top);
     return;
   }
 
@@ -1980,7 +1948,7 @@ function endPointer(e: PointerEvent): void {
     }
   }
   if (terrainBrush.pointer === e.pointerId) endTerrainStroke();
-  if (cloudDrag?.pointer === e.pointerId) cloudDrag = null;
+  cloudTool.up(e.pointerId);
   if (game.tool === 'building') buildings.pointerUp(cancelled || wasPinching);
   if (bulldozeBox?.pointer === e.pointerId) {
     const box = bulldozeBox;
