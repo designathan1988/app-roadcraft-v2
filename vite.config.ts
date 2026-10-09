@@ -2,12 +2,15 @@ import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 import { buildStampPlugin } from './build-stamp';
 import { cookPlugin } from './cook-plugin';
+import { modelUrlsPlugin } from './model-urls-plugin';
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
   root: '.',
-  plugins: [buildStampPlugin(), cookPlugin()],
+  // `modelUrlsPlugin`: the model files' URLs, a module per folder, never
+  // inlined (`model-urls-plugin.ts`).
+  plugins: [buildStampPlugin(), cookPlugin(), modelUrlsPlugin()],
   // Compile-time keys (declared in `src/globals.d.ts`), replaced by literals in
   // the build so a branch behind `false` is dead code and its imports never
   // reach a chunk. `__PLAY_MODE__`: walking the city as a person - weapons,

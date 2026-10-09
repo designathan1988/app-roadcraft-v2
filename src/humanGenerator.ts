@@ -17,6 +17,7 @@ import {
 import { CreatorStage, loadBase } from '@render/people/generator/stage';
 import { Creator } from '@ui/creator/creator';
 import { applyTranslations, initLanguage } from '@ui/i18n';
+import URLS from 'virtual:model-urls/humans?ext=json,bin,jpg';
 
 /**
  * The person creator's page (`human-generator.html`): composition root.
@@ -26,9 +27,9 @@ import { applyTranslations, initLanguage } from '@ui/i18n';
  * (`people/gen/person.ts` turns the settings into a body).
  */
 
-const URLS = import.meta.glob('/public/models/humans/*/*.{json,bin,jpg}', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
+// One module for the folder (`model-urls-plugin.ts`): an eager glob made each file a module of its own.
 const urlOf = (base: string) => (file: string): string => {
-  const url = URLS[`/public/models/humans/${base}/${file}`];
+  const url = URLS[`${base}/${file}`];
   if (!url) throw new Error(`missing human asset ${base}/${file}`);
   return url;
 };

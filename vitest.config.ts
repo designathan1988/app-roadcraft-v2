@@ -1,9 +1,12 @@
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath, URL } from 'node:url';
+import { modelUrlsPlugin } from './model-urls-plugin';
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
+  // The model files' URLs (`model-urls-plugin.ts`), as the game imports them.
+  plugins: [modelUrlsPlugin()],
   // The game's compile-time keys (`vite.config.ts`).
   define: {
     __PLAY_MODE__: 'false',

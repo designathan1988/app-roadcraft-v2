@@ -19,6 +19,7 @@ import {
 import { isEffectKind, type EffectKind, type ElementItem, type ElementKind } from '@world/elements';
 import { m } from '@world/units';
 import type { Exhaust, PuffKind } from './exhaust';
+import URLS from 'virtual:model-urls/elements?ext=gltf,bin,png';
 
 /**
  * The ELEMENTS the player lays with the brush (`world/elements.ts`), drawn:
@@ -43,10 +44,14 @@ const MODELS: Readonly<Record<Exclude<ElementKind, EffectKind | 'leaves'>, reado
   mushrooms: ['Mushroom_Common', 'Mushroom_Laetiporus'],
 };
 
-/** The files' served URLs (the game serves no public folder; Vite hands each its own). */
-const URLS = import.meta.glob('/public/models/elements/*.{gltf,bin,png}', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
+/**
+ * The files' served URLs (the game serves no public folder): one module for
+ * the folder (`model-urls-plugin.ts`); an eager `import.meta.glob` made each
+ * file a module of its own. Each buffer and image a `.gltf` names is looked
+ * up here by its file name, not resolved against the `.gltf`'s own URL.
+ */
 const url = (file: string): string => {
-  const found = URLS[`/public/models/elements/${file}`];
+  const found = URLS[file];
   if (!found) throw new Error(`element model file missing: ${file}`);
   return found;
 };

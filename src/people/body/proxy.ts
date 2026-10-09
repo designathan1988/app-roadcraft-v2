@@ -209,14 +209,15 @@ export function loadProxyItem(name: string): Promise<ProxyItem> {
 }
 
 /**
- * Every proxy file's URL, by file name: imported, as the other people packs
- * are (`assets.ts`), so the dev server serves them and a build carries them -
- * the project serves no public folder.
+ * Every proxy file's URL, by file name, so the dev server serves them and a
+ * build carries them - the project serves no public folder. One module for
+ * the folder (`model-urls-plugin.ts`): an eager `import.meta.glob` made each
+ * file a static import of its own.
  */
-const URLS = import.meta.glob('../../../public/models/people/proxies/*.{json,bin,webp}', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
+import URLS from 'virtual:model-urls/people/proxies?ext=json,bin,webp';
 
 export function proxyUrl(file: string): string {
-  const url = URLS[`../../../public/models/people/proxies/${file}`];
+  const url = URLS[file];
   if (!url) throw new Error(`No MakeHuman proxy file ${file}`);
   return url;
 }
