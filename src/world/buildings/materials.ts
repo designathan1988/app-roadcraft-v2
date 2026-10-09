@@ -125,8 +125,13 @@ const FLAT_ROOFS: readonly MaterialSpec[] = [
 ];
 
 export function roofMaterial(b: Building, v: Volume): MaterialSpec {
-  if (v.materials?.roof ?? b.materials?.roof) return (v.materials?.roof ?? b.materials?.roof)!;
-  if (isPitched(v.roof)) return paletteOf(b).roof;
+  const own = v.materials?.roof ?? b.materials?.roof;
+  if (isPitched(v.roof)) return own ?? paletteOf(b).roof;
+  // A flat roof or a terrace is a slab: a membrane, gravel or concrete, never
+  // the clay tile or slate a style keeps for its pitched roofs. Given the
+  // building's tile, every tower top read as a dark striped lid, and the
+  // tile's courses shimmered from above (the player, 2026-10-09: "noise").
+  if (own && own.finish !== 'tile' && own.finish !== 'slate') return own;
   const pick = (Math.imul((b.id | 0) + 7, 2654435761) >>> 0) % FLAT_ROOFS.length;
   return FLAT_ROOFS[pick]!;
 }

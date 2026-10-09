@@ -64,7 +64,7 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
   roofing: {
     size: 256,
     worldSize: m(4),
-    relief: 1.5,
+    relief: 0.6,
     metalness: 0,
     envMapIntensity: 0.4,
     normalScale: 0.35,
@@ -76,11 +76,13 @@ const LOOKS: Readonly<Record<Finish, FinishLook>> = {
         // granules too fine to see from above, and slow weathering.
         const sheet = size / 4;
         const fv = y % sheet;
-        const seam = fv < 2.2 ? 0.9 + fv * 0.05 : 1;
+        // Seams faint and granules quiet: a dark line every metre and a
+        // strong relief turned into stripes and sparkle from above (moiré).
+        const seam = fv < 2.2 ? 0.975 + fv * 0.01 : 1;
         const g = granules((x / size) * 128, (y / size) * 128, 128);
         const b = fbm(blotch, (x / size) * 3, (y / size) * 3, 3, 3);
-        grey(out, (0.86 + (g - 0.5) * 0.05 + (b - 0.5) * 0.08) * seam);
-        out.h = fv < 2.2 ? 0.8 : 0.5 + g * 0.1;
+        grey(out, (0.8 + (g - 0.5) * 0.025 + (b - 0.5) * 0.08) * seam);
+        out.h = fv < 2.2 ? 0.58 : 0.5 + g * 0.04;
         out.rough = 0.93;
       };
     },

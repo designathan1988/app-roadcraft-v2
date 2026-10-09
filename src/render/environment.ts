@@ -242,7 +242,7 @@ export function createEnvironment(
   // which slid every shadow off its caster - a car's shadow drawn apart from
   // the car, a pole's apart from the pole. The range now follows the frustum
   // (`fitDepth`) and the bias is stated in world units, `SHADOW_BIAS_WORLD`.
-  sun.shadow.normalBias = 0.05;
+  sun.shadow.normalBias = 0.05; // then scaled to the texel in `fitDepth`
   /** Height above the view's ground that the depth range last made room for. */
   let depthRise = 0;
   /** How far back along the sun the light stands (`fitDepth`). */
@@ -258,7 +258,17 @@ export function createEnvironment(
     sunDistance = Math.max(SUN_DISTANCE, reach + 50);
     sun.shadow.camera.near = Math.max(1, sunDistance - reach);
     sun.shadow.camera.far = sunDistance + reach;
-    sun.shadow.bias = -SHADOW_BIAS_WORLD / (sun.shadow.camera.far - sun.shadow.camera.near);
+    // Bias in proportion to one shadow texel (world units across): a fixed
+    // 0.1 / 0.05 unit held at close zoom, but from the middle distance a
+    // texel is 0.4-1 unit, far more than the bias, and every wall and roof
+    // shadowed itself in diagonal stripes - the "noise" over the whole town
+    // (the player, 2026-10-09; gone on the shadowless low tier). Microsoft,
+    // "Common Techniques to Improve Shadow Depth Maps": the slope/normal
+    // offset must cover the texel footprint. Close up the texel is small and
+    // so is the bias, so shadows stay on their casters.
+    const texel = (2 * halfSpan) / Math.max(1, sun.shadow.mapSize.x);
+    sun.shadow.normalBias = Math.max(0.05, texel * 1.5);
+    sun.shadow.bias = -Math.max(SHADOW_BIAS_WORLD, texel * 1.2) / (sun.shadow.camera.far - sun.shadow.camera.near);
   };
   fitDepth(SHADOW_SPAN_MIN);
   scene.add(sun, sun.target);
