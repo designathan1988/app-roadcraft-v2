@@ -3216,7 +3216,7 @@ window.addEventListener('keydown', arrowPan);
 
 // ------------------------------------------------------------- run loop
 /** The frame asked for, and the time between frames (`frameLoop.ts`). */
-const frameClock = new FrameClock(frame);
+const frameClock = new FrameClock(frame, () => booted && scene.opening);
 // Due on the first frame: the loop stops once nothing moves, and a paused map
 // kept the page's initial readout ("0 roads · 0 nodes") and a blank minimap.
 /** The minimap: ten times a second, never every frame, panning included. */

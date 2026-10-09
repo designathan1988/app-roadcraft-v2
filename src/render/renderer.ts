@@ -74,6 +74,7 @@ import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
 import { MAP_SIZE } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
+import { RevealGate } from './revealGate';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
@@ -791,19 +792,16 @@ export function createSceneRenderer(
   let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
   let worldJobFresh = false;
-  /** The opening's town has been shown (`draw`): it is held until its roads and buildings are in. */
-  let opened = false;
+  /** The opening's town (or a map opened) is held until it is whole (`revealGate.ts`). */
+  const reveal = new RevealGate();
   let openingSince: number | null = null;
-  /** The opening is shown however far it got after this long, never a page left blank. */
-  const OPENING_LIMIT_MS = 60_000;
   /**
    * While nothing is shown (`opened` false) the world is built this much a
    * frame: no frame is presented, so none needs to stay smooth, and the load
    * takes the frame (Unity's `allowSceneActivation = false`).
    */
   const HIDDEN_SLICE_MS = 250;
-  /** The whole world is in and the frame that uploads it to the GPU, unseen, has been drawn (`draw`). */
-  let warmedForReveal = false;
+
   /**
    * The world of an edit is built up to this much a frame: at 10 ms the old
    * road stayed on screen for up to a second after it was deleted or drawn,
@@ -827,7 +825,7 @@ export function createSceneRenderer(
     // Not in the frame of the edit itself, which has already paid for the
     // edit and the roads' heights: its first slice made that frame 10 ms longer.
     if (worldJobFresh) { worldJobFresh = false; onAssetsReady(); return; }
-    const until = opened ? workUntil(WORLD_SLICE_MS, WORLD_SLICE_MS) : performance.now() + HIDDEN_SLICE_MS;
+    const until = reveal.opened ? workUntil(WORLD_SLICE_MS, WORLD_SLICE_MS) : performance.now() + HIDDEN_SLICE_MS;
     if (!until) { onAssetsReady(); return; }
     // At least one step a frame, whatever it is expected to cost: the job always moves on.
     let at = performance.now();
@@ -1578,7 +1576,7 @@ export function createSceneRenderer(
     // new one is complete. A job an edit overtakes is dropped.
     // A map being opened is built behind its curtain, in slices too: the
     // old world is not drawn meanwhile, nothing is (`beginLoad`).
-    const sliced = !roads || local || !opened;
+    const sliced = !roads || local || !reveal.opened;
     const steps = worldSteps(net, local ? blocks : null, started, sliced);
     if (!sliced) {
       let step = steps.next();
@@ -2362,12 +2360,11 @@ export function createSceneRenderer(
       return worldJob !== null;
     },
     get opening() {
-      return !opened;
+      return !reveal.opened;
     },
     beginLoad() {
-      opened = false;
+      reveal.begin();
       openingSince = null;
-      warmedForReveal = false;
       onAssetsReady();
     },
     offerElevation(solved, revision) {
@@ -2555,8 +2552,8 @@ export function createSceneRenderer(
       // A map opened behind the curtain: not on the old map's ground while
       // its own world is still being built - they were emitted twice, on
       // the ground going and then on the one coming.
-      if (!buildingsHeld && roads !== null && (opened || !worldJob)) {
-        buildings.hidden = !opened;
+      if (!buildingsHeld && roads !== null && (reveal.opened || !worldJob)) {
+        buildings.hidden = !reveal.opened;
         buildings.update(net.doc, terrain.renderedHeightAt, buildingGround, pavedHeightAt, terrain.naturalRenderedHeightAt,
           (b, since) => groundChanges.touches(Number(since), bankBox(b)));
         if (buildings.pending) onAssetsReady();
@@ -3188,25 +3185,24 @@ export function createSceneRenderer(
       // roads came, then the zones, then the plants, then the buildings, each
       // on a frame of its own (the player, 2026-10-09).
       openingSince ??= performance.now();
-      if (!opened) {
+      if (!reveal.opened) {
         const whole = roads !== null && !worldJob && !buildings.pending && natureTreesStarted && !natureTreesPending;
-        if (whole && !warmedForReveal) {
+        const next = reveal.step(whole, performance.now());
+        if (next === 'warm') {
           // One frame drawn unseen first: the new meshes go to the GPU
           // (three uploads a geometry when it is first drawn) behind the
           // curtain, not in the first frame the player sees.
-          warmedForReveal = true;
           if (post.target) {
             renderer.setRenderTarget(post.target);
             renderer.render(scene, rig.camera);
             renderer.setRenderTarget(null);
           }
           onAssetsReady();
-        } else if (whole || performance.now() - openingSince > OPENING_LIMIT_MS) {
-          opened = true;
-          performance.mark('opening:shown', { detail: { waitedMs: performance.now() - openingSince, whole } });
+        } else if (next === 'show') {
+          performance.mark('opening:shown', { detail: { waitedMs: performance.now() - openingSince, workedMs: reveal.worked, whole } });
         }
       }
-      if (opened) post.render(delta);
+      if (reveal.opened) post.render(delta);
       else onAssetsReady();
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
       if (shake > 0) { rig.camera.position.sub(shakeOffset); rig.camera.updateMatrixWorld(); }
