@@ -1,7 +1,7 @@
 import type { Rng } from '@core/rng';
 import type { BlueprintBody } from '@world/buildings/blueprints';
 import { mat } from '@world/buildings/cityBuildings';
-import { FOLLOWS_GROUND, elementClash } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementClash, unsupportedElements } from '@world/buildings/elements';
 import type { MaterialSpec } from '@world/buildings/materials';
 import type { MadeBuilding, Rect } from '@world/buildings/procedural';
 import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, MAX_TERRACE, type Side, type Volume } from '@world/buildings/types';
@@ -743,6 +743,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
           if (!put('pillar', x - 1.1, y, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e))) return;
           lot.put('pillar', fx(x + 1.1), y, 0, 0.1, 0.1, 2.2, undefined, mat('metal', 0x2f6e9e));
           lot.put('slab', fx(x), y, 0, 2.3, 0.08, 0.08, 2.2, mat('metal', 0x2f6e9e));
+          // The seat hangs from the bar on two ropes.
+          for (const k of [-1, 1]) lot.put('pillar', fx(x) + k * 0.22, y, 0, 0.02, 0.02, 1.7, 0.5, mat('metal', 0x8a8f94));
           lot.put('slab', fx(x), y, 0, 0.5, 0.25, 0.05, 0.45, mat('wood', 0x8a6040));
         };
         const table = (x: number, y: number): void => {
@@ -757,7 +759,11 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
           if (put('fence', x, y, 0, 2.4, 1.6, 1.2, undefined, mat('metal', 0x8a9094))) lot.put('wall', fx(x + 0.7), y, 0, 0.9, 1.2, 1.0, undefined, mat('wood', 0x8c6a48));
         };
         const firewood = (x: number, y: number): void => { put('slab', x, y, 2, 1.6, 0.5, 0.9, 0, mat('wood', 0x6e4c2c)); };
-        const bigTrampoline = (x: number, y: number): void => { put('slab', x, y, 0, 2.6, 2.6, 0.08, 0.6, mat('panel', 0x24303a)); };
+        const bigTrampoline = (x: number, y: number): void => {
+          if (!put('slab', x, y, 0, 2.6, 2.6, 0.08, 0.6, mat('panel', 0x24303a))) return;
+          // On four legs at its rim.
+          for (const [dx, dy] of [[-1.15, -1.15], [1.15, -1.15], [-1.15, 1.15], [1.15, 1.15]] as const) lot.put('pillar', fx(x) + dx, y + dy, 0, 0.06, 0.06, 0.6, 0, mat('metal', 0x3a3d40));
+        };
         switch (pick) {
           case 0: // An orchard: rows of fruit trees, a bench under them.
             trees(3, far - 1.8); trees(2, lawnY0 + depth * 0.55); put('bench', jit(W / 2), lawnY0 + depth * 0.35, 2, 1.4, 0.45, 0.45);
@@ -1032,6 +1038,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       }
     }
   }
+  // Nothing left in the air: a part whose posts were refused or cleared above
+  // (a carport roof, a pergola, a swing's bar) goes with them.
+  const loose = unsupportedElements(probe());
+  if (loose.size) elements.splice(0, elements.length, ...elements.filter((el) => !loose.has(el.id)));
   (body as { nextVolumeId?: number }).nextVolumeId = nextVolume;
   (body as { nextElementId?: number }).nextElementId = nextElement;
   return true;

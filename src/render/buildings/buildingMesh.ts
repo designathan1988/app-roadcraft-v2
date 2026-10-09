@@ -67,7 +67,7 @@ import {
   trimMaterial,
   wallMaterial,
 } from '@world/buildings/materials';
-import { FOLLOWS_GROUND, elementRect, followPieces, onGround, stairSteps } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementRect, followPieces, onGround, stairSteps, unsupportedElements } from '@world/buildings/elements';
 import {
   type BayComponent,
   type Building,
@@ -689,9 +689,10 @@ function emitBuilding(
   emitLot(e, b, f, groundAt, pavedAt);
 
   // ---- free elements: stairs, ramps, pillars, canopies, walls, slabs
+  const loose = looseParts(b);
   for (const el of b.elements ?? []) {
     // Whatever stands on the building's open lot is laid with the lot.
-    if (onLot?.(el)) continue;
+    if (onLot?.(el) || loose?.has(el.id)) continue;
     // Cut open, what hangs above the cut floor (a clock, a canopy) goes with the floors above.
     if (b.cutaway !== undefined && el.z >= levelElevation(b, b.cutaway + 1) - 1e-6) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
@@ -1396,8 +1397,9 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
       }
     }
   }
+  const loose = looseParts(b);
   for (const el of b.elements ?? []) {
-    if (!withParts && !onLot?.(el)) continue;
+    if ((!withParts && !onLot?.(el)) || loose?.has(el.id)) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
     // A run on the land in steps, each on the lot's surface under it, or on
     // the ground where no lot is laid: nothing floats over a slope.
@@ -1512,6 +1514,18 @@ function emitClock(e: Emitter, el: BuildingElement, x0: number, y0: number, x1: 
   const w = size * 0.03;
   layer(ca - w, ca + w, cz, cz + r * 0.55, m(0.07), m(0.1), CLOCK_INK);
   layer(ca, ca + r * 0.78, cz - w, cz + w, m(0.1), m(0.12), CLOCK_INK);
+}
+
+/**
+ * The parts of a grown lot nothing holds up (`unsupportedElements`): lots
+ * furnished before that rule kept a carport roof or a pergola whose posts
+ * were refused, and drew it in the air. Only grown lots (`lotPlan`): what the
+ * player builds in the builder is theirs to see.
+ */
+function looseParts(b: Building): Set<number> | null {
+  if (b.lotPlan === undefined || !b.elements?.length) return null;
+  const loose = unsupportedElements(b);
+  return loose.size ? loose : null;
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { Vec2 } from '@core/vec2';
-import { pointInPolygon } from '@core/polygon';
+import { convexHull, pointInPolygon } from '@core/polygon';
 import { m } from '../units';
 import { edgeFrame, localFootprint, overlapArea } from './footprints';
 import { STEP_RISE, STEP_RUN } from './foundation';
@@ -184,6 +184,76 @@ export function elementClash(b: Building, e: BuildingElement): Volume | null {
         : x0 < v.x + v.w - EPS && v.x < x1 - EPS && y0 < v.y + v.d - EPS && v.y < y1 - EPS)) return v;
   }
   return null;
+}
+
+/**
+ * The parts nothing holds up: a carport roof whose posts were refused, a
+ * pergola whose posts a retaining wall cleared, a trampoline drawn without
+ * legs. A part stands when it is on the land (at the floor's level, laid on
+ * the ground as it goes, or on the terrace under it), when it is held by the
+ * building itself (hung on a wall, laid on a roof), or when it rests on,
+ * hangs from or is tied to parts that stand, with its centre over what
+ * touches it: the horizontal member is held up by the vertical ones (post and
+ * lintel), and a body is still only while its centre of mass lies over the
+ * convex hull of its contacts (its support polygon). Worked up from the
+ * ground until nothing more is held; whatever is left is the answer, by id.
+ */
+export function unsupportedElements(b: Building): Set<number> {
+  const els = b.elements ?? [];
+  const out = new Set<number>();
+  if (els.length === 0) return out;
+  const tol = m(0.05);
+  const masses = b.volumes.filter((v) => !v.open && v.mode !== 'void' && v.mode !== 'intersect');
+  const rects = new Map(els.map((e) => [e.id, elementRect(e)] as const));
+  const square = ([x0, y0, x1, y1]: readonly number[], grow: number): Vec2[] =>
+    [{ x: x0! - grow, y: y0! - grow }, { x: x1! + grow, y: y0! - grow }, { x: x1! + grow, y: y1! + grow }, { x: x0! - grow, y: y1! + grow }];
+  const onLand = (e: BuildingElement): boolean => {
+    if (onGround(e) || FOLLOWS_GROUND.has(e.kind)) return true;
+    // On a terrace (an open block raised or lowered with the slope).
+    for (const v of b.volumes) {
+      if (!v.open || v.terrace === undefined) continue;
+      if (Math.abs(e.z - v.terrace) <= tol && pointInPolygon({ x: e.x, y: e.y }, localFootprint(v))) return true;
+    }
+    return false;
+  };
+  // Hung on the building's wall, or laid on one of its roofs or floors: its
+  // box, a hand's breadth larger, meets a mass across the height it stands at.
+  const heldByMass = (e: BuildingElement): boolean => {
+    const box = square(rects.get(e.id)!, m(0.3));
+    for (const v of masses) {
+      const vz0 = v.base === 0 ? Math.min(0, volumeLift(v)) : volumeElevation(b, v, v.base);
+      const vz1 = volumeElevation(b, v, volumeTop(v));
+      if (e.z > vz1 + tol || e.z + e.h < vz0 - tol) continue;
+      if (overlapArea(localFootprint(v), box) > EPS) return true;
+    }
+    return false;
+  };
+  const held = new Set<number>();
+  for (const e of els) if (onLand(e) || heldByMass(e)) held.add(e.id);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const e of els) {
+      if (held.has(e.id)) continue;
+      const [ex0, ey0, ex1, ey1] = rects.get(e.id)!;
+      const contacts: Vec2[] = [];
+      for (const s of els) {
+        if (s === e || !held.has(s.id)) continue;
+        // Touching across a height they share: under it (its top at e's
+        // underside), over it (e hangs from it) or beside it (a line tied to
+        // the side of a post).
+        if (s.z > e.z + e.h + tol || e.z > s.z + s.h + tol) continue;
+        const [sx0, sy0, sx1, sy1] = rects.get(s.id)!;
+        const ix0 = Math.max(ex0, sx0), iy0 = Math.max(ey0, sy0), ix1 = Math.min(ex1, sx1), iy1 = Math.min(ey1, sy1);
+        if (ix1 < ix0 - tol || iy1 < iy0 - tol) continue;
+        contacts.push(...square([ix0, iy0, Math.max(ix0, ix1), Math.max(iy0, iy1)], tol));
+      }
+      if (contacts.length === 0 || !pointInPolygon({ x: e.x, y: e.y }, convexHull(contacts))) continue;
+      held.add(e.id);
+      changed = true;
+    }
+  }
+  for (const e of els) if (!held.has(e.id)) out.add(e.id);
+  return out;
 }
 
 /** A new element's id, and the building's counter moved past it. */

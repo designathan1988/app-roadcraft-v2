@@ -962,10 +962,13 @@ export function buildBusModel(a: Archetype): VehicleModel {
   for (const side of [-1, 1] as const) {
     cabin.push(tint(box(L - M(0.4), sillY - floor, M(0.03), 0, (sillY + floor) / 2, side * (halfW - wall - M(0.015))), BUS_SHELL));
   }
-  // Wheel-arch boxes inside, over the rear tandem.
+  // Wheel-arch boxes inside, over the rear tandem: on a low-floor bus the
+  // wheels stand in the cabin in pockets of waist height.
+  const pocketHalf = archR * 0.95;
+  const pocketDepth = M(0.45);
   for (const ax of axles.slice(1)) {
     for (const side of [-1, 1] as const) {
-      cabin.push(tint(box(archR * 1.9, archR + r - floor + M(0.04), M(0.45), ax, (archR + r + floor) / 2, side * (halfW - wall - M(0.23))), BUS_SHELL));
+      cabin.push(tint(box(pocketHalf * 2, archR + r - floor + M(0.04), pocketDepth, ax, (archR + r + floor) / 2, side * (halfW - wall - pocketDepth / 2 - M(0.005))), BUS_SHELL));
     }
   }
   // Driver's cab: dashboard, seat, wheel column and a partition behind.
@@ -993,10 +996,18 @@ export function buildBusModel(a: Archetype): VehicleModel {
   const firstRow = front - M(2.1);
   const lastRow = back + M(1.25);
   const inDoorway = (x: number): boolean => doorSpans.some(([x0, x1]) => x > x0 - M(0.45) && x < x1 + M(0.6));
+  // A seat, with the legs of whoever sits in it, from the back of its shell
+  // to the feet: none stands in a wheel pocket. Only the window seat reaches
+  // the pocket (it is 0.45 m deep from the wall, the aisle seat starts past it).
+  const inPocket = (x: number, z: number): boolean => Math.abs(z) + seatWidth / 2 > halfW - wall - pocketDepth
+    && axles.slice(1).some((ax) => x + M(0.55) > ax - pocketHalf && x - M(0.35) < ax + pocketHalf);
   for (let x = firstRow; x >= lastRow; x -= pitch) {
     for (const side of [-1, 1] as const) {
       if (side === 1 && inDoorway(x)) continue;
-      for (const k of [0, 1]) passenger.push({ x, z: side * (halfW - wall - M(0.04) - seatWidth * (k + 0.5)) });
+      for (const k of [0, 1]) {
+        const z = side * (halfW - wall - M(0.04) - seatWidth * (k + 0.5));
+        if (!inPocket(x, z)) passenger.push({ x, z });
+      }
     }
   }
   const backRow = back + M(0.55);
