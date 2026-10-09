@@ -1029,7 +1029,11 @@ function terrainMaterial(
     uDirtMap: { value: bakes.dirt.map as Texture },
     uEcology: { value: ecologyTexture as Texture },
     uSeasonDry: SEASON_DRY,
-    uGrassScale: { value: 1 / 96 },
+    // One repeat of the grass texture over 32 units (13 m): its tufts some
+    // 40 cm, its dry patches 1.3 m. Over 96 units the tufts were 1.2 m and
+    // the patches 4 m - blotches the size of a car beside the houses (the
+    // player, 2026-10-08: "muito grande a textura"); read without repeats.
+    uGrassScale: { value: 1 / 32 },
     uRockScale: { value: 1 / 58 },
     uDirtScale: { value: 1 / 34 },
     // The close-zoom layer (see `mesh/detailLayer.ts`): blades over grass,
@@ -1580,10 +1584,13 @@ function terrainMaterial(
          // felt, and the lawn read as paint, not grass.
          {
            vec2 grainFp = fwidth(vTerrainWorld.xz);
-           // Tufts two to four pixels across: at * 0.9 they were half a pixel
-           // to one, under the Nyquist limit, and the lawn shimmered as pixel
-           // noise ("chiado"). And read without the texture's repeat.
-           float grainLod = max(0.0, log2(max(grainFp.x, grainFp.y) * 3.6));
+           // Tufts half a pixel to one: the mip chain has already averaged
+           // what is finer than a pixel (mipmaps are pre-filtered), so it
+           // does not shimmer. Set four times coarser (* 3.6) the patches grew
+           // to the size of a house (the player, 2026-10-08: "muito grande a
+           // textura"); the shimmer was the sharpening pass, now off. Read
+           // without the texture's repeat.
+           float grainLod = max(0.0, log2(max(grainFp.x, grainFp.y) * 0.9));
            float grainLevel = floor(grainLod);
            float grainBlend = grainLod - grainLevel;
            vec2 grainUv = vTerrainWorld.xz * uGrassScale * 2.7;
