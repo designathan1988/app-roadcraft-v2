@@ -5,7 +5,8 @@ import { travelShift } from '../roadTypes';
 import type { Network } from '../network';
 import { carriesPedestrians } from '../pedestrianAccess';
 import type { RoadSide } from '../roadTypes';
-import { BENCH_ZONE, LAMP_ZONE, TREE_KERB_SETBACK, TREE_PIT, sectionOf, zonesOn } from '../section';
+import { BENCH_ZONE, sectionOf, zonesOn } from '../section';
+import { FURNITURE_CATALOG, furnitureEntry } from './furnitureCatalog';
 import { m } from '../units';
 
 /**
@@ -47,24 +48,16 @@ interface Pattern {
   readonly rightOnly?: true;
 }
 
-/** The depth a kind takes from the kerb face (`section.ts`), for the clear walk left beside it. */
-const DEPTH_OF: Partial<Record<LandscapeKind, number>> = {
-  lamp: LAMP_ZONE, hydrant: LAMP_ZONE, bin: BENCH_ZONE, bench: BENCH_ZONE, tree: TREE_KERB_SETBACK + TREE_PIT,
-};
 
+/** Each set's patterns, from the catalogue (`furnitureCatalog.ts`), in its order. */
 const SETS: Readonly<Record<Exclude<FurnitureSet, 'none'>, readonly Pattern[]>> = {
-  complete: [
-    { kind: 'lamp', every: m(30), first: m(6) },
-    { kind: 'bin', every: m(60), first: m(9) },
-    { kind: 'hydrant', every: m(100), first: m(20), rightOnly: true },
-    { kind: 'bench', every: m(60), first: m(24) },
-    { kind: 'tree', every: m(10), first: m(12) },
-  ],
-  basic: [
-    { kind: 'lamp', every: m(30), first: m(6) },
-    { kind: 'bin', every: m(60), first: m(9) },
-  ],
+  complete: patternsOf('complete'),
+  basic: patternsOf('basic'),
 };
+function patternsOf(set: 'complete' | 'basic'): Pattern[] {
+  return FURNITURE_CATALOG.filter((e) => e.sets.includes(set))
+    .map((e) => ({ kind: e.kind, every: e.every, first: e.first, ...(e.rightOnly ? { rightOnly: true as const } : {}) }));
+}
 
 /** The cell of the nearby-items grid, world units. */
 const CELL = m(40);
@@ -139,7 +132,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
         if (pattern.kind === 'lamp' && powerLeft && side === 'left') continue;
         if (pattern.kind === 'tree' && medianTrees) continue;
         // NBR 9050: the piece leaves a clear walk of 1,20 m beside it, or it is not put.
-        if (footway - (DEPTH_OF[pattern.kind] ?? BENCH_ZONE) < NBR9050_CLEAR_WALK - 1e-6) continue;
+        if (footway - (furnitureEntry(pattern.kind)?.depth ?? BENCH_ZONE) < NBR9050_CLEAR_WALK - 1e-6) continue;
         for (let s = startS + pattern.first + (pattern.kind === 'lamp' ? stagger : 0); s <= endS - m(4); s += pattern.every) {
           const f = line.sampleAt(s);
           const at = { x: f.p.x + f.n.x * depth * sign, y: f.p.y + f.n.y * depth * sign };
