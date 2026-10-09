@@ -1,3 +1,4 @@
+import { type FurnitureSet, furnitureFor } from '@world/roads/furnitureSets';
 import type { Vec2 } from '@core/vec2';
 import { dist } from '@core/vec2';
 import { clamp } from '@core/scalar';
@@ -70,6 +71,8 @@ export interface RoadToolHost {
     readonly profile?: { readonly profile: RoadProfileSpec; readonly type: number } | null;
     /** Retaining walls in the cuttings of new roads instead of a batter (docs/VIAS.md V3). */
     readonly cutWalls?: boolean;
+    /** The furniture the new roads are built with (V7, `world/roads/furnitureSets.ts`); absent: none. */
+    readonly furniture?: FurnitureSet;
   };
   /** Sets the height the road is drawn at (the game's state, with the cause). */
   setHeight(value: number, cause: string): void;
@@ -483,6 +486,13 @@ export class RoadTool {
       // Retaining walls in the cuttings of the roads just laid (V3).
       if (result.committed && settings.cutWalls) {
         for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentCutWalls(id, true);
+      }
+      // The furniture of the roads just laid, in the same undo step (V7):
+      // ordinary placed items, edited or removed one by one like any other.
+      if (result.committed && settings.furniture && settings.furniture !== 'none') {
+        if (net.revision !== doc.revision) net.rebuild();
+        const laid = [...doc.segments.keys()].filter((id) => !before.has(id));
+        for (const piece of furnitureFor(net, laid, settings.furniture, doc.landscape.values())) doc.addLandscape(piece.kind, piece.at);
       }
       return result.committed;
     });

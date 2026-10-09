@@ -1,3 +1,4 @@
+import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
 import { createActions } from './actionsWiring';
 import { FrameClock, Periodic, TopologyCatchUp } from './frameLoop';
@@ -431,6 +432,7 @@ const roadTool = new RoadTool({
     // The profile chosen in the profile editor for new roads (docs/VIAS.md V2).
     profile: drawProfile(),
     cutWalls: cutWallsChosen(),
+    furniture: furnitureChosen(),
   }),
   setHeight: (value, cause) => gameState.set('roadHeightOffset', value, cause),
   worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),
