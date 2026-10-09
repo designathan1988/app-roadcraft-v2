@@ -333,6 +333,25 @@ equipamentos com probabilidade por uso, porte e idade do prédio, postos por
 empacotamento na área livre do telhado (grade de ocupação, com folgas), com
 semente por prédio; o mesmo princípio no quintal (5b).
 
+**5f2. Arquitetura reconhecível** (relatório visual de 2026-10-09, frente a
+Cities: Skylines II; a parte de imagem do relatório já foi feita: `fef881e5`
+normais, descarte na ortográfica, grão; `bf65609f` vidro dielétrico):
+- famílias de prédio com identidade (torre residencial, escritório, hotel)
+  por proporção, embasamento, corpo e coroamento, não só altura, cor e janelas;
+  diversidade entre famílias, coerência dentro de cada uma, bairros com
+  linguagem comum;
+- materiais em três escalas (detalhe, painel/junta, envelhecimento por área)
+  em vez de ruído genérico;
+- janelas com profundidade aparente (interior mapping, van Dongen 2008:
+  raio contra os planos do cômodo), já desenhadas sem a luz da fachada
+  (`kit.ts` `roomDaylight`);
+- térreo que diz o uso (portaria, loja, garagem, marquise) composto com
+  calçada e lote;
+- `editor/fromReference.ts`: abertura decidida por geometria e profundidade,
+  não só pela proporção de amostras escuras, e revisão do resultado.
+Pronto quando: algumas famílias representativas reconhecíveis no jogo, numa
+quadra e isoladas, com as fotos conferidas pelo jogador.
+
 **5g. Achados da avaliação jogando:**
 - pincelada de zona perdida: a proposta de lotes recomeça a cada lote novo
   (`editor/lotTool.ts:135-169`) e, até terminar, `proposedAt` devolve -1 e a
