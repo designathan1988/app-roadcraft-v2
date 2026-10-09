@@ -1,3 +1,4 @@
+import { layPowerLines } from './roads/powerLine';
 import type { Vec2 } from '@core/vec2';
 import { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
@@ -66,7 +67,9 @@ export function greenCity(doc: RoadDoc, net: Network, seed: number): { squares: 
     doc.plantTrees(square.trees);
   }
   if (net.revision !== doc.revision) net.rebuild();
-  const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values());
+  // The power lines first (their poles lit), the furniture round them.
+  const power = layPowerLines(doc, net, doc.segments.keys()) > 0;
+  const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values(), power);
   for (const piece of pieces) doc.addLandscape(piece.kind, piece.at);
   return { squares: squares.length, pieces: pieces.length };
 }

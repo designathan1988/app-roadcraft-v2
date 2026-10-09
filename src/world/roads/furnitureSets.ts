@@ -79,7 +79,9 @@ export interface FurniturePlacement {
  * tool would accept it among `existing` (and the pieces already chosen).
  * Deterministic: the same roads give the same pieces.
  */
-export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: FurnitureSet, existing: Iterable<LandscapeItem>): FurniturePlacement[] {
+export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: FurnitureSet, existing: Iterable<LandscapeItem>,
+  /** The left side carries a power line whose poles hold the street lights (`editor/roads/powerLine.ts`): no lamp columns there. */
+  powerLeft = false): FurniturePlacement[] {
   if (set === 'none') return [];
   const out: FurniturePlacement[] = [];
   // The items already standing, in cells: each street asks only those near it
@@ -93,6 +95,9 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
     list.push(item);
   };
   for (const item of existing) file(item);
+  // The utility poles standing count as lamp columns: nothing is put on them.
+  let poleId = -1_000_000;
+  for (const pole of net.doc.poles.values()) file({ id: poleId--, kind: 'lamp', x: pole.x, y: pole.y });
   let nextId = -1;
   for (const id of [...segments].sort((a, b) => a - b)) {
     const segment = net.doc.segment(id), ribbon = net.ribbons.get(id);
@@ -131,6 +136,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
       const stagger = side === 'left' ? m(15) : 0;
       for (const pattern of SETS[set]) {
         if (pattern.rightOnly && side !== 'right') continue;
+        if (pattern.kind === 'lamp' && powerLeft && side === 'left') continue;
         if (pattern.kind === 'tree' && medianTrees) continue;
         // NBR 9050: the piece leaves a clear walk of 1,20 m beside it, or it is not put.
         if (footway - (DEPTH_OF[pattern.kind] ?? BENCH_ZONE) < NBR9050_CLEAR_WALK - 1e-6) continue;
