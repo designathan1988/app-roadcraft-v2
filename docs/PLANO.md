@@ -24,7 +24,7 @@ de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
 | 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
-| 3 | Otimização completa, guiada pelo monitor | **ATUAL** |
+| 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. Falta: P4 (corpos dos ocupantes), P17, P22, P23 medidos na RTX do jogador |
 | 4 | Todos os defeitos abertos | a fazer |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
@@ -49,7 +49,8 @@ jogador veria.
 3. O envelhecimento da cidade troca prédios a cada 3 s e cada troca move
    `buildings.revision` (visto no diário em 2026-10-08): medir na Etapa 3 o
    que isso refaz. (P23)
-4. `npm run check` vermelho desde antes de 2026-10-08: o lint varre
+4. ~~Lint vermelho~~: verde desde `74bc314c` (camadas, `release/`, escapes).
+   Restam os testes (item 5). Antes: `npm run check` vermelho desde antes de 2026-10-08: o lint varre
    `release/` (o executável do Electron, 9 000 erros de código compilado) e
    `src/ui/v2/shell.ts` tem 244 escapes inúteis, 3 importações de `editor`
    na camada `ui` (proibidas) e um `prefer-const`. Etapa 4, primeiro item:
