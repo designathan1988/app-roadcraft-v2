@@ -16,8 +16,9 @@ versão longa anterior está em `557c5384`).
 
 Uma sessão por vez (decisão do jogador de 2026-10-04, repetida em 2026-10-08,
 depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
-`C:/Codex-Shared/Roadcraft`, com push para `origin`
-(github.com/designathan1988/app-roadcraft-v2).
+`C:/Codex-Shared/Roadcraft`, com push a cada commit para o remoto `v3`
+(github.com/designathan1988/app-roadcraft-v3, pedido do jogador de
+2026-10-09) e para `origin` (github.com/designathan1988/app-roadcraft-v2).
 
 ## Controlador de estado e eventos, e o monitor
 
