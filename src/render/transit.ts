@@ -325,9 +325,20 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
           n++;
         }
       }
+      // The cars there are, uploaded and drawn: with no train running the mesh
+      // went through both render lists every frame and its whole buffer
+      // (16 KiB) was uploaded again.
       cars.count = n;
+      cars.visible = n > 0;
+      if (!n) return;
+      cars.instanceMatrix.clearUpdateRanges();
+      cars.instanceMatrix.addUpdateRange(0, n * 16);
       cars.instanceMatrix.needsUpdate = true;
-      if (cars.instanceColor) cars.instanceColor.needsUpdate = true;
+      if (cars.instanceColor) {
+        cars.instanceColor.clearUpdateRanges();
+        cars.instanceColor.addUpdateRange(0, n * 3);
+        cars.instanceColor.needsUpdate = true;
+      }
     },
     dispose() {
       unit.dispose();

@@ -218,9 +218,21 @@ export function createGore(): Gore {
       }
       bones.count = b;
       cuffs.count = b;
+      // Only what is drawn, uploaded and drawn: three uploads a whole buffer
+      // whose `needsUpdate` has no ranges (`WebGLAttributes.updateBuffer`),
+      // and an empty mesh still goes through both render lists - 100 KiB a
+      // frame for the guts alone, with nobody hurt.
       for (const mesh of [segments, organs, bones, cuffs]) {
+        mesh.visible = mesh.count > 0;
+        if (!mesh.visible) continue;
+        mesh.instanceMatrix.clearUpdateRanges();
+        mesh.instanceMatrix.addUpdateRange(0, mesh.count * 16);
         mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        if (mesh.instanceColor) {
+          mesh.instanceColor.clearUpdateRanges();
+          mesh.instanceColor.addUpdateRange(0, mesh.count * 3);
+          mesh.instanceColor.needsUpdate = true;
+        }
       }
     },
     clear() {

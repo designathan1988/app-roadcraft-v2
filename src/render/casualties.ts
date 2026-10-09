@@ -145,7 +145,18 @@ export function createCasualties(): CasualtyLayer {
         o.updateMatrix();
         stamps[k]!.mesh.setMatrixAt(n[k]!++, o.matrix);
       }
-      stamps.forEach((s, k) => { s.mesh.count = n[k]!; s.mesh.instanceMatrix.needsUpdate = true; });
+      // Only the stains there are: an empty mesh is not drawn (three's
+      // `projectObject` skips what is not visible) and a buffer is uploaded up
+      // to its last stain, not whole every frame (75 KiB with no blood at all).
+      stamps.forEach((s, k) => {
+        const count = n[k]!;
+        s.mesh.count = count;
+        s.mesh.visible = count > 0;
+        if (!count) return;
+        s.mesh.instanceMatrix.clearUpdateRanges();
+        s.mesh.instanceMatrix.addUpdateRange(0, count * 16);
+        s.mesh.instanceMatrix.needsUpdate = true;
+      });
     },
     dispose() {
       geometry.dispose();

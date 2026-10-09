@@ -126,10 +126,25 @@ export function createHeldProps(): HeldProps {
   }
   const position = new Vector3(), turn = new Quaternion(), size = new Vector3(), out = new Matrix4();
   const grip = new Vector3(), thumb = new Vector3(), upright = new Quaternion();
+  /** One more instance, drawn, its matrix the only part of the buffer sent. */
+  const put = (mesh: InstancedMesh, matrix: Matrix4): void => {
+    mesh.instanceMatrix.addUpdateRange(mesh.count * 16, 16);
+    mesh.setMatrixAt(mesh.count++, matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.visible = true;
+  };
   return {
     group,
     begin() {
-      for (const mesh of meshes.values()) mesh.count = 0;
+      // Empty until something is placed: not drawn (an empty mesh still went
+      // through both render lists every frame), and only the instances placed
+      // uploaded (`place`: a range each, which three merges when adjacent;
+      // with none, `needsUpdate` sent the whole buffer).
+      for (const mesh of meshes.values()) {
+        mesh.count = 0;
+        mesh.visible = false;
+        mesh.instanceMatrix.clearUpdateRanges();
+      }
     },
     place(kind, hand, scale) {
       const mesh = meshes.get(kind)!;
@@ -144,14 +159,12 @@ export function createHeldProps(): HeldProps {
         upright.setFromAxisAngle(UP, Math.atan2(-thumb.z, thumb.x));
         out.compose(position, upright, size.set(scale, scale, scale));
       } else out.compose(position, turn, size.set(scale, scale, scale));
-      mesh.setMatrixAt(mesh.count++, out);
-      mesh.instanceMatrix.needsUpdate = true;
+      put(mesh, out);
     },
     placeMatrix(kind, matrix) {
       const mesh = meshes.get(kind)!;
       if (mesh.count >= CAPACITY) return;
-      mesh.setMatrixAt(mesh.count++, matrix);
-      mesh.instanceMatrix.needsUpdate = true;
+      put(mesh, matrix);
     },
     dispose() {
       for (const mesh of meshes.values()) { mesh.geometry.dispose(); mesh.dispose(); }
