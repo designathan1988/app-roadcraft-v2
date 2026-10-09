@@ -2825,8 +2825,21 @@ export function createSceneRenderer(
       // Keep the full facade at street zoom: the planar far mesh loses frames
       // on side-facing windows. Only its thin shadows can disappear earlier.
       buildings.setFar(rig.viewport.zoom < 3);
-      // Facade detail only within ~500 m of the eye (`cullDetails`).
-      buildings.cullDetails(rig.camera.position.x, -rig.camera.position.z, rig.camera.position.y, m(500));
+      // Facade detail only within ~500 m of the eye (`cullDetails`). The
+      // orthographic camera stands 5000 units back by construction, so from
+      // its own place no cell was ever near and the frames and railings were
+      // never drawn: measured from the eye a perspective lens would need for
+      // the same scale (as the air is, `eyeShift`).
+      {
+        const eye = rig.camera.position;
+        let k = 1;
+        if (!rig.perspective) {
+          const halfH = canvas.clientHeight / Math.max(1e-3, 2 * rig.viewport.zoom);
+          k = halfH / Math.tan((PERSPECTIVE_FOV * Math.PI) / 360) / Math.max(1e-3, eye.distanceTo(rig.target));
+        }
+        const t = rig.target;
+        buildings.cullDetails(t.x + (eye.x - t.x) * k, -(t.z + (eye.z - t.z) * k), t.y + (eye.y - t.y) * k, m(500));
+      }
       buildings.setShadowFar(rig.viewport.zoom < FACADE_SHADOW_ZOOM);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;

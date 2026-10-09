@@ -383,10 +383,9 @@ export function createEnvironment(
       const warm = Math.max(0, 1 - height * 1.6);
       sun.color.setRGB(1, 0.96 - warm * 0.12, 0.9 - warm * 0.28).lerp(MOON, dark);
       sun.intensity = 4.2 * (0.25 + 0.75 * Math.min(1, height * 2.5 + 0.2)) * light + 0.85 * dark;
-      // Less sky and fill under the sun (2026-10-09, the player's reference of
-      // Cities: Skylines II): shade a clear step darker than light, so the town
-      // reads in volumes instead of flat; the AO pass deepens the corners.
-      hemisphere.intensity = 0.58 * light + 0.2 * dark;
+      // 0.58 (a darker shade for "volume") left the whole town dark and
+      // grey (the player, 2026-10-09): the sky light as it was.
+      hemisphere.intensity = 0.8 * light + 0.2 * dark;
       {
         // A right angle and a little more round from the sun, lower than it.
         const fillAzimuth = Math.atan2(sunDirection.z, sunDirection.x) + (100 * Math.PI) / 180;
@@ -398,7 +397,7 @@ export function createEnvironment(
         // degrees out-lit the sun and drew every hill from the side: dark
         // blotches over the whole map from afar (the player, 2026-10-08).
         const keyOnGround = sun.intensity * Math.max(0, sunDirection.y);
-        fill.intensity = Math.min(0.7 * light, (0.32 * keyOnGround) / Math.sin(fillElevation));
+        fill.intensity = Math.min(1.0 * light, (0.5 * keyOnGround) / Math.sin(fillElevation));
       }
       ambient.intensity = 0.07 * light + 0.05 * dark;
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);

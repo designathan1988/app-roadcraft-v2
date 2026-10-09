@@ -155,6 +155,13 @@ export function normalMapFrom(height: Float32Array, size: number, strength: numb
   const { canvas, ctx } = canvasOf(size);
   if (!ctx) return canvas;
   const image = ctx.createImageData(size, size);
+  normalTexels(height, size, strength, image.data);
+  ctx.putImageData(image, 0, 0);
+  return canvas;
+}
+
+/** The RGBA texels of `normalMapFrom`, written into `out` (size * size * 4). */
+export function normalTexels(height: Float32Array, size: number, strength: number, out: Uint8ClampedArray): void {
   for (let y = 0; y < size; y++) {
     const row = y * size;
     const above = (y === 0 ? size - 1 : y - 1) * size;
@@ -169,14 +176,16 @@ export function normalMapFrom(height: Float32Array, size: number, strength: numb
       // the general-purpose hypot scaling was repeated for every texel.
       const length = Math.sqrt(dx * dx + dy * dy + 1);
       const index = (y * size + x) * 4;
-      image.data[index] = Math.round(((-dx / length) * 0.5 + 0.5) * 255);
-      image.data[index + 1] = Math.round(((-dy / length) * 0.5 + 0.5) * 255);
-      image.data[index + 2] = Math.round((1 / length) * 255);
-      image.data[index + 3] = 255;
+      // Every channel in [-1, 1] as [0, 1]: three decodes all three with
+      // `* 2.0 - 1.0` (normal_fragment_maps; glTF 2.0 normalTexture). Z was
+      // written as 1/length, so a tilted texel decoded flatter than meant,
+      // and past length 2 turned inward - black specks on brick and stone.
+      out[index] = Math.round(((-dx / length) * 0.5 + 0.5) * 255);
+      out[index + 1] = Math.round(((-dy / length) * 0.5 + 0.5) * 255);
+      out[index + 2] = Math.round(((1 / length) * 0.5 + 0.5) * 255);
+      out[index + 3] = 255;
     }
   }
-  ctx.putImageData(image, 0, 0);
-  return canvas;
 }
 
 export function grayscaleCanvas(values: Float32Array, size: number): HTMLCanvasElement {

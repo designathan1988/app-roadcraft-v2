@@ -135,19 +135,8 @@ const linear = (hex: number, shade = 1): Rgb => {
   return [c.r * shade, c.g * shade, c.b * shade];
 };
 
-/**
- * A building paint, its chroma held to 70 % (towards its own luminance) and
- * a touch warm: real render, brick and stone are muted, and full-chroma
- * paints read as a toy town (the player, 2026-10-09, against Cities:
- * Skylines II). Done here, once per paint when a mesh is built, so saved
- * buildings take it too and nothing is paid per pixel.
- */
-const paint = (m: MaterialSpec, shade = 1): Paint => {
-  const [r, g, b] = linear(m.colour, shade);
-  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const k = 0.7;
-  return { rgb: [(l + (r - l) * k) * 1.01, l + (g - l) * k, (l + (b - l) * k) * 0.98], finish: m.finish };
-};
+/** A building paint in its own colour: held to 70 % chroma the town read grey (the player, 2026-10-09). */
+const paint = (m: MaterialSpec, shade = 1): Paint => ({ rgb: linear(m.colour, shade), finish: m.finish });
 
 const TERRACE: Paint = paint({ finish: 'stone', colour: 0xb0a595 });
 const ARCADE_FLOOR: Paint = paint({ finish: 'stone', colour: 0x9d968a });

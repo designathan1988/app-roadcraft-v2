@@ -104,6 +104,10 @@ o jogo a cada edição.
   nuvem tiram só a parte direta da luz do sol e as manchas do chão visto de
   longe são mais suaves (`7fb7fa98`, `b454120d`, `76a43fad`, sessão
   "Problemas visuais na otimização").
+- Imagem limpa de longe (P102): a nitidez só onde um pixel vê detalhe real
+  (máscara pela profundidade, `postprocess.ts` SHARP_MASK), sem grão de filme,
+  normal maps com o azul codificado como o three lê, cor e luz de antes do
+  `7e4032c6`, caixilhos desenhados também na câmera ortográfica.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

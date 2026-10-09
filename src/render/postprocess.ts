@@ -1,9 +1,10 @@
 import {
   BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh, NoBlending,
-  PlaneGeometry, Scene, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
+  PlaneGeometry, RedFormat, Scene, ShaderMaterial, UnsignedByteType, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { MAP_SIZE } from '@world/bounds';
+import { m } from '@world/units';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -164,11 +165,35 @@ export function createPostChain(
    * empty buffer every other frame - the cloud shadows flickered on and off.
    */
   let sceneDepth: DepthTexture | null = target.depthTexture;
+  /**
+   * How much each pixel may be sharpened (`SHARP_MASK`), worked out from the
+   * scene's depth right after the scene is drawn: the full-screen passes after
+   * it draw into the same targets and overwrite that depth, so the grade at
+   * the end of the chain could not read it.
+   */
+  const sharpMask = quality.sharpen > 0
+    ? new WebGLRenderTarget(Math.max(1, size.x * ratio), Math.max(1, size.y * ratio), { type: UnsignedByteType, format: RedFormat, depthBuffer: false })
+    : null;
+  const sharpMaskQuad = sharpMask ? new FullScreenQuad(new ShaderMaterial({
+    uniforms: { tDepth: { value: null }, uProjectionInverse: { value: new Matrix4() }, uSharpSpan: { value: new Vector2(m(0.1), m(0.3)) } },
+    vertexShader: SHARP_MASK.vertexShader, fragmentShader: SHARP_MASK.fragmentShader,
+    blending: NoBlending, depthTest: false, depthWrite: false,
+  })) : null;
   {
     const draw = scenePass.render.bind(scenePass);
     scenePass.render = (...args: Parameters<RenderPass['render']>) => {
       sceneDepth = args[2].depthTexture;
       draw(...args);
+      if (sharpMask && sharpMaskQuad) {
+        const u = (sharpMaskQuad.material as ShaderMaterial).uniforms;
+        u['tDepth']!.value = sceneDepth;
+        (u['uProjectionInverse']!.value as Matrix4).copy(camera.projectionMatrixInverse);
+        const gl = args[0];
+        const previous = gl.getRenderTarget();
+        gl.setRenderTarget(sharpMask);
+        sharpMaskQuad.render(gl);
+        gl.setRenderTarget(previous);
+      }
     };
   }
 
@@ -332,6 +357,7 @@ export function createPostChain(
   // The grade, on the finished image: a film's contrast and colour.
   const grade = new ShaderPass(GRADE);
   (grade.uniforms['uSharpen'] as { value: number }).value = quality.sharpen;
+  grade.uniforms['tSharpMask']!.value = sharpMask?.texture ?? null;
   composer.addPass(grade);
 
   // A cloud's shadow takes the sun's direct light and leaves the sky's
@@ -347,7 +373,6 @@ export function createPostChain(
     enabled: true,
     target,
     render(delta) {
-      (grade.uniforms['uTime'] as { value: number }).value += delta;
       if (clouds) {
         camera.updateMatrixWorld();
         cloudClock += delta;
@@ -419,6 +444,7 @@ export function createPostChain(
       composer.setSize(width, height);
       bloom.setSize(width, height);
       for (const t of bodiesTargets) t.setSize(bodiesSize(width * pixelRatio), bodiesSize(height * pixelRatio));
+      sharpMask?.setSize(Math.max(1, width * pixelRatio), Math.max(1, height * pixelRatio));
       historyValid = false;
     },
     dispose() {
@@ -427,6 +453,9 @@ export function createPostChain(
       gtao?.dispose();
       bloom.dispose();
       smaa?.dispose();
+      sharpMask?.dispose();
+      sharpMaskQuad?.dispose();
+      sharpMaskQuad?.material.dispose();
       output.dispose();
       grade.dispose();
       clouds?.dispose();
@@ -1096,17 +1125,51 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
 `;
 
 /**
+ * Where the final image may be sharpened, 1 to 0, from the scene's depth.
+ * CAS "enhances ... local high-frequency contrast" (AMD, ffx_cas.h); where a
+ * pixel spans more than a few decimetres of the world (the town from afar)
+ * the high frequencies left are windows and frames smaller than a pixel - the
+ * aliasing of them, which it turned into a speckle over every facade (the
+ * player, 2026-10-09). The pixel's span is measured in the world, from the
+ * depth and the lens, so it holds in either camera at any zoom; the sky, at
+ * the far plane, is never sharpened.
+ */
+const SHARP_MASK = {
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDepth;
+    uniform mat4 uProjectionInverse;
+    uniform vec2 uSharpSpan;
+    varying vec2 vUv;
+    vec3 viewAt(vec2 uv, float depth) {
+      vec4 v = uProjectionInverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+      return v.xyz / v.w;
+    }
+    void main() {
+      float depth = texture2D(tDepth, vUv).r;
+      float across = 1.0 / float(textureSize(tDepth, 0).x);
+      float span = length(viewAt(vUv + vec2(across, 0.0), depth) - viewAt(vUv, depth));
+      gl_FragColor = vec4(depth < 1.0 ? 1.0 - smoothstep(uSharpSpan.x, uSharpSpan.y, span) : 0.0, 0.0, 0.0, 1.0);
+    }
+  `,
+};
+
+/**
  * A film grade on the display image: a gentle S-curve of contrast, colour
  * kept rich without neon (vibrance lifts the dull colours more than the
  * strong), warm light and cool shade (split toning), a vignette that holds
- * the eye in the frame, and a grain too fine to see as noise, which keeps
- * large flat areas of road and roof from looking like plastic.
+ * the eye in the frame. No film grain: noise added to every pixel is noise
+ * in the picture (the player, 2026-10-09: "ruído na imagem").
  */
 const GRADE = {
   uniforms: {
     tDiffuse: { value: null },
-    uTime: { value: 0 },
     uSharpen: { value: 0 },
+    /** How much each pixel may be sharpened, 0..1 (`SHARP_MASK`). */
+    tSharpMask: { value: null as Texture | null },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -1114,10 +1177,9 @@ const GRADE = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTime;
     uniform float uSharpen;
+    uniform sampler2D tSharpMask;
     varying vec2 vUv;
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
       vec3 c = src.rgb;
@@ -1131,7 +1193,9 @@ const GRADE = {
       // taken to linear (gamma 2.2) and the result back. Run on the sRGB
       // values it over-sharpened the dark side of every edge - the jaggies
       // and the brick moire it was switched off for (2026-10-08).
-      if (uSharpen > 0.0) {
+      // Only where a pixel sees real detail (SHARP_MASK).
+      float sharpen = uSharpen > 0.0 ? uSharpen * texture2D(tSharpMask, vUv).r : 0.0;
+      if (sharpen > 0.0) {
         vec2 texel = 1.0 / vec2(textureSize(tDiffuse, 0));
         vec3 cl = pow(c, vec3(2.2));
         vec3 b = pow(texture2D(tDiffuse, vUv + vec2(0.0, -texel.y)).rgb, vec3(2.2));
@@ -1143,17 +1207,16 @@ const GRADE = {
         vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
         float w = amp.g * (-1.0 / mix(8.0, 5.0, uSharpen));
         cl = clamp(((b + d + f + h) * w + cl) / (1.0 + 4.0 * w), 0.0, 1.0);
-        c = pow(cl, vec3(1.0 / 2.2));
+        c = mix(c, pow(cl, vec3(1.0 / 2.2)), sharpen / max(uSharpen, 1e-4));
       }
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
       c = mix(c, smoothstep(0.0, 1.0, c), 0.25);
-      // Colour held back, not pushed: the vivid a little calmer, the dull as
-      // they are. A +30 % vibrance read as a toy town of candy colours (the
-      // player, 2026-10-09, against Cities: Skylines II's restrained palette).
+      // Vibrance: the dull colours gain more than the vivid. Held back to
+      // 0.93 it left the town grey and dark (the player, 2026-10-09).
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float sat = mx - mn;
-      c = mix(vec3(l), c, 0.93 - 0.12 * sat);
+      c = mix(vec3(l), c, 1.0 + 0.3 * (1.0 - sat));
       // Split toning: warm highlights, cool shadows.
       // Warm light, shadows left neutral: a blue push in them read as a
       // teal cast over every shaded slope.
@@ -1161,8 +1224,6 @@ const GRADE = {
       // Vignette.
       vec2 d = vUv - 0.5;
       c *= mix(1.0, 0.78, smoothstep(0.3, 0.85, dot(d, d) * 2.4));
-      // Film grain.
-      c += (hash(vUv * 1024.0 + fract(uTime) * 61.0) - 0.5) * 0.018;
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), src.a);
     }
   `,
