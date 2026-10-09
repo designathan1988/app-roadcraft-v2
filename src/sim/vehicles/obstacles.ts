@@ -9,9 +9,14 @@ import { mergeRemaining, nextConnector } from '../intersections/admission';
 import { kerbStopObstacle } from './kerbStops';
 import { m } from '@world/units';
 import { CROSSING_STOP } from '../transit/transit';
+import { type CrossingId, makeCrossingId } from '../signals/plan';
+import type { NodeId } from '@world/ids';
 
 /** Stop short of a zebra span somebody is on; null when the path is clear. */
 function pedestrianAhead(w: SimWorld, v: Vehicle): Obstacle | null {
+  // Nobody on or at any zebra: nothing to stop for (the commonest case, and
+  // the crossing ids below were spelt out and hashed for every vehicle).
+  if (w.crossingStates.size === 0) return null;
   const lane = w.lanelet(v.lanelet);
   if (!lane) return null;
   let connectorId: string | undefined;
@@ -34,8 +39,8 @@ function pedestrianAhead(w: SimWorld, v: Vehicle): Obstacle | null {
   const conn = w.connector(connectorId);
   if (!conn) return null;
   let best: Obstacle | null = null;
-  for (const segment of w.doc.node(conn.node)?.incident ?? []) {
-    const span = pedestrianInSpan(w, conn.id, `${conn.node}:${segment}`);
+  for (const crossing of crossingIdsAt(w, conn.node)) {
+    const span = pedestrianInSpan(w, conn.id, crossing);
     if (!span) continue;
     // While still on a link, keep the whole vehicle behind the near edge of
     // any zebra on the planned turn. The connector span begins later, inside
@@ -55,6 +60,20 @@ function pedestrianAhead(w: SimWorld, v: Vehicle): Obstacle | null {
     if (!best || gap < best.gap) best = { gap: Math.max(0, gap), speed: 0, kind: 'pedestrian' };
   }
   return best;
+}
+
+/**
+ * The crossing id of every road at a node (`makeCrossingId`), spelt once per
+ * topology: a fresh string per vehicle per road per tick was hashed again at
+ * every look-up of the crossing states.
+ */
+const CROSSING_IDS = new WeakMap<SimWorld, { revision: number; byNode: Map<NodeId, CrossingId[]> }>();
+function crossingIdsAt(w: SimWorld, node: NodeId): readonly CrossingId[] {
+  let memo = CROSSING_IDS.get(w);
+  if (!memo || memo.revision !== w.topologyRevision) CROSSING_IDS.set(w, memo = { revision: w.topologyRevision, byNode: new Map() });
+  let ids = memo.byNode.get(node);
+  if (!ids) memo.byNode.set(node, ids = (w.doc.node(node)?.incident ?? []).map((segment) => makeCrossingId(node, segment)));
+  return ids;
 }
 
 /**
@@ -153,17 +172,22 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
   // A level crossing with a train coming (`sim/transit`): stopped short of it.
   // Seen along the route ahead, a few lanes on, as a driver sees the barrier
   // down before the turn onto its street: the nearest one closed.
-  {
+  // The lanes' lengths are summed only where a crossing is closed: with no
+  // train about, three look-ups a vehicle a tick for nothing.
+  for (let k = 0; k < Math.min(3, v.route.length); k++) {
+    const closed = w.city.transit.closedOn(v.route[k]!);
+    if (!closed.length) continue;
     let offset = -v.s;
-    for (let k = 0; k < Math.min(3, v.route.length); k++) {
-      const id = v.route[k]!;
-      for (const at of w.city.transit.closedOn(id)) {
-        // Already over the line (its front past the track): it goes on across.
-        if (offset + at <= 0) continue;
-        constraints.obstacles.push({ gap: Math.max(0, offset + at - CROSSING_STOP), speed: 0, kind: 'signal' });
-      }
-      offset += w.lanelet(id)?.length ?? 0;
-      if (offset > m(120)) break;
+    let reached = true;
+    for (let j = 0; j < k; j++) {
+      offset += w.lanelet(v.route[j]!)?.length ?? 0;
+      if (offset > m(120)) { reached = false; break; }
+    }
+    if (!reached) break;
+    for (const at of closed) {
+      // Already over the line (its front past the track): it goes on across.
+      if (offset + at <= 0) continue;
+      constraints.obstacles.push({ gap: Math.max(0, offset + at - CROSSING_STOP), speed: 0, kind: 'signal' });
     }
   }
   // A resident's car pulling in at the door it is going to (`sim/city`).

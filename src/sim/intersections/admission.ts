@@ -741,25 +741,45 @@ function convoyCanEnter(w: SimWorld, r: Request, conn: Connector): boolean {
   });
 }
 
-type ResourceKey = string;
+/**
+ * A resource of the Banker's test as a number: a conflict point is its own
+ * index (0 and up), a movement that crosses nothing is a token below zero,
+ * one per connector id (`movementToken`). The strings `point:7` and
+ * `movement:…` were built afresh for every resource of every vehicle in every
+ * test, and hashed again at every set operation.
+ */
+type ResourceKey = number;
+
+const MOVEMENT_TOKENS = new Map<string, number>();
+function movementToken(connector: string): ResourceKey {
+  let token = MOVEMENT_TOKENS.get(connector);
+  if (token === undefined) MOVEMENT_TOKENS.set(connector, token = -1 - MOVEMENT_TOKENS.size);
+  return token;
+}
 
 interface BankerProcess {
   readonly allocation: Set<ResourceKey>;
   readonly maximum: Set<ResourceKey>;
 }
 
-/** Conflict points plus a connector token for zero-point movements. */
+/** Conflict points plus a connector token for zero-point movements; one list per connector object. */
+const CONNECTOR_RESOURCES = new WeakMap<Connector, readonly ResourceKey[]>();
 function connectorResources(
   w: SimWorld,
   connector: Connector,
-): ResourceKey[] {
-  const points = w.conflicts.refs(connector.id).map((ref) => `point:${ref.point}`);
-  return points.length ? points : [`movement:${connector.id}`];
+): readonly ResourceKey[] {
+  let known = CONNECTOR_RESOURCES.get(connector);
+  if (!known) {
+    const points = w.conflicts.refs(connector.id).map((ref) => ref.point);
+    known = points.length ? points : [movementToken(connector.id)];
+    CONNECTOR_RESOURCES.set(connector, known);
+  }
+  return known;
 }
 
 function actualAllocation(w: SimWorld, v: Vehicle): Set<ResourceKey> {
   const resources = new Set<ResourceKey>();
-  for (const point of w.claims.points(v.id)) resources.add(`point:${point}`);
+  for (const point of w.claims.points(v.id)) resources.add(point);
 
   const movements = new Set<string>();
   if (v.admittedConnector) movements.add(v.admittedConnector);
@@ -767,7 +787,7 @@ function actualAllocation(w: SimWorld, v: Vehicle): Set<ResourceKey> {
   const lane = w.lanelet(v.lanelet);
   if (lane?.kind === 'connector') movements.add(lane.id);
   for (const connector of movements) {
-    if (w.conflicts.refs(connector).length === 0) resources.add(`movement:${connector}`);
+    if (w.conflicts.refs(connector).length === 0) resources.add(movementToken(connector));
   }
   return resources;
 }
@@ -924,9 +944,8 @@ function sharedConvoyResource(w: SimWorld, resource: ResourceKey): boolean {
   // only be cars on that one path, one behind the other, kept apart by
   // following: counting them as rival owners let the queue through one car
   // at a time (audit P1-21).
-  if (resource.startsWith('movement:')) return true;
-  if (!resource.startsWith('point:')) return false;
-  const id = Number(resource.slice('point:'.length));
+  if (resource < 0) return true;
+  const id = resource;
   const point = w.conflicts.points[id];
   const claims = w.claims.holdersAt(id);
   if (!point || claims.length === 0) return false;

@@ -102,7 +102,11 @@ const DOOR_CLEAR = m(0.8);
 /** The end of a walk is reached this near it. */
 const THERE = m(0.25);
 /** Spatial cells for the walkers and for the walkways. */
-const CELL = m(6);
+/**
+ * As wide as a walker looks ahead (`LOOK`): everybody it can see is in its
+ * own cell or the next ones round, 9 cells read where 6 m cells needed 25.
+ */
+const CELL = LOOK;
 const WAY_CELL = m(20);
 /** Cells for the cars' zones (`zonesNear`). */
 const ZONE_CELL = m(16);
@@ -1424,10 +1428,10 @@ function stepWalkers(w: SimWorld): void {
         others.push({ along, lat, oncoming, r: SHOULDERS - BODY });
         return false;
       };
-      grid.someNear(p.x, p.y, 2, see);
+      grid.someNear(p.x, p.y, 1, see);
       // Out of a door or a car this pass: within the same cells.
       const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
-      for (const q of late) if (Math.abs(Math.floor(q.x / CELL) - cx) <= 2 && Math.abs(Math.floor(q.y / CELL) - cy) <= 2) see(q);
+      for (const q of late) if (Math.abs(Math.floor(q.x / CELL) - cx) <= 1 && Math.abs(Math.floor(q.y / CELL) - cy) <= 1) see(q);
     }
     // The cars and trains: kept off wherever anybody can see it.
     if (seen) for (const z of zonesNear(p)) {
@@ -1483,7 +1487,9 @@ function stepWalkers(w: SimWorld): void {
       // stepping towards the side the other was taking.
       const leftmost = span[1] - STRIPE;
       let oncomingLeft = false;
-      for (const o of others) if (o.oncoming && o.lat + o.r > leftmost) { oncomingLeft = true; break; }
+      // In that stripe: overlapping it, not anywhere to the left (somebody on
+      // the far side of the street is in nobody's stripe here).
+      for (const o of others) if (o.oncoming && o.lat + o.r + BODY > leftmost && o.lat - o.r - BODY < span[1]) { oncomingLeft = true; break; }
       const inReserve = (c: number): number => (c > leftEdge + 1e-6 ? INAPPROPRIATE : 0)
         + (oncomingLeft && c > leftmost + 1e-6 && span[1] - span[0] > STRIPE ? ONCOMING_CONFLICT : 0);
       let best = p.aim, bestScore = free(p.aim) - (p.aim - right) * 0.15 - Math.abs(p.aim - p.d) * lateral + SWITCH_GAIN - inReserve(p.aim) / 2;

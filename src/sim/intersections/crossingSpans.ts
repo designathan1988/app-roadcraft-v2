@@ -40,7 +40,12 @@ const PERSON_CLEAR = m(0.6);
  * recorded here, once per topology version.
  */
 export class CrossingSpans {
-  private readonly spans = new Map<string, CrossingSpan | null>();
+  /**
+   * By connector, then by crossing: the two ids as they are, never a key
+   * string joined from them on every ask (a new string for each vehicle at
+   * each occupied zebra each tick, hashed again at the look-up).
+   */
+  private readonly spans = new Map<ConnectorId, Map<CrossingId, CrossingSpan | null>>();
   /** Earliest safe front stop on an incoming lane near another leg's zebra. */
   private readonly approachStops = new Map<string, number>();
   /**
@@ -73,7 +78,9 @@ export class CrossingSpans {
           ? known.span
           : measure(path, edge.path, edge.length);
         this.measured.set(id, { path: path.xy, edge: edge.path.xy, length: edge.length, span });
-        this.spans.set(id, span);
+        let byCrossing = this.spans.get(connector.id);
+        if (!byCrossing) this.spans.set(connector.id, byCrossing = new Map());
+        byCrossing.set(crossing, span);
       }
     }
     // A long body stopped at a red signal can project across the zebra of an
@@ -110,7 +117,7 @@ export class CrossingSpans {
 
   /** Undefined: never measured (treat conservatively). Null: never crossed. */
   span(connector: ConnectorId, crossing: CrossingId): CrossingSpan | null | undefined {
-    return this.spans.get(key(connector, crossing));
+    return this.spans.get(connector)?.get(crossing);
   }
 }
 
