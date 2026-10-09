@@ -570,7 +570,10 @@ const CLOUD_SHADOWS = {
     // the horizon, a deep clear blue above.
     uSkyHorizon: { value: new Color(0x86bdf0) },
     uSkyHigh: { value: new Color(0x2a66c8) },
-    uAbyss: { value: new Color(0x1e160f) },
+    // Below the map: a deep navy, never black (the player, 2026-10-09: "não
+    // quero que fique preto, é azul escuro"); the earth-brown went black
+    // looking straight down.
+    uAbyss: { value: new Color(0x0b1a33) },
     // The clouds' bodies, marched at a quarter of the pixels (`CLOUD_BODIES_MAIN`): light, and what of the scene shows through.
     tClouds: { value: null as Texture | null },
     uCloudsOn: { value: 0 },
@@ -795,7 +798,10 @@ const CLOUD_SHADOWS = {
         // horizon deepening upwards (the player, 2026-10-07: "azul mais
         // clarinho com transição para o mais escuro, só quando der zoom");
         // from high over the map it stays the dark blue round the model.
-        float low = 1.0 - smoothstep(600.0, 1800.0, ro.y);
+        // Dark blue down to the zoom of the whole map filling the view
+        // (about 700 units up), pale sky only closer than that (the player,
+        // 2026-10-09).
+        float low = 1.0 - smoothstep(250.0, 650.0, ro.y);
         vec3 horizon = mix(uSkyHorizon, uSkyHorizon * vec3(1.12, 1.04, 0.92), sunSide * 0.5) * (1.0 - 0.85 * uDark);
         vec3 overhead = uSkyHigh * (1.0 - 0.7 * uDark);
         haze = mix(haze, horizon, low);
