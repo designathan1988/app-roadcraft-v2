@@ -147,7 +147,7 @@ export function neutralWalkFor(rig: Object3D, mesh: SkinnedMesh, sex: WalkSex,
   return transferOnto(rig, mesh, SOURCES[sex], amplitude);
 }
 
-/** The same transfer, for a clip of the Rocketbox library (`loadRocketboxLibrary`). */
+/** The same transfer, for a clip of the Rocketbox library (`loadRocketboxClips`). */
 export function clipTransferFor(rig: Object3D, mesh: SkinnedMesh, clip: LibraryClip,
   amplitude: WalkAmplitude = FULL): NeutralWalk {
   return transferOnto(rig, mesh, clip.source, amplitude);
@@ -410,7 +410,7 @@ function bytes(base64: string): ArrayBuffer {
   return out.buffer;
 }
 
-/** Decodes both libraries, as fetched (`loadRocketboxLibrary`) or read from disk (tests). */
+/** Decodes both libraries, as fetched (`loadRocketboxClips`) or read from disk (tests). */
 export function decodeRocketboxLibrary(male: unknown, female: unknown): RocketboxLibrary {
   return { male: decode(male as LibraryFile, WALKS.male), female: decode(female as LibraryFile, WALKS.female) };
 }
@@ -471,9 +471,4 @@ export function loadRocketboxClips(sex: WalkSex): Promise<RocketboxClips> {
   const clear = (): void => { if (loadingLibraries[sex] === work) delete loadingLibraries[sex]; };
   void work.then(clear, clear);
   return work;
-}
-
-export function loadRocketboxLibrary(): Promise<RocketboxLibrary> {
-  return Promise.all([loadRocketboxClips('male'), loadRocketboxClips('female')])
-    .then(([male, female]) => ({ male, female }));
 }

@@ -13,6 +13,7 @@ import {
   lampLensGeometry,
   postboxGeometry,
   treeGeometry,
+  treeParts,
   treePitGeometry,
   wildflowerGeometry,
   LAMP_HEIGHT,
@@ -43,10 +44,31 @@ function check(geometry: BufferGeometry): { minY: number; maxY: number } {
   return { minY, maxY };
 }
 
+/**
+ * The top of a plant as drawn: its body, and its foliage cards, whose corners
+ * the shader spreads round each card's centre (`aCorner`, invisible to the
+ * position attribute). `lowPolyTrees.ts` `finish` sizes a plant "crown and
+ * all": a card reaches 0.45 of its size above its centre, and a corner's
+ * offset is half the size turned by the card's roll (length size / sqrt 2).
+ */
+function plantTop(parts: { body: BufferGeometry; cards: BufferGeometry | null }): number {
+  let top = check(parts.body).maxY;
+  if (parts.cards) {
+    const position = parts.cards.getAttribute('position');
+    const corner = parts.cards.getAttribute('aCorner');
+    for (let i = 0; i < position.count; i++) {
+      const size = Math.SQRT2 * Math.hypot(corner.getX(i), corner.getY(i));
+      top = Math.max(top, position.getY(i) + 0.45 * size);
+    }
+  }
+  return top;
+}
+
 describe('vegetation models', () => {
   it('are one unit tall with the root at the origin', () => {
     for (const species of TREE_SPECIES) {
-      const { minY, maxY } = check(treeGeometry(species));
+      const { minY } = check(treeGeometry(species));
+      const maxY = plantTop(treeParts(species));
       expect(minY, species).toBeGreaterThanOrEqual(-0.01);
       expect(maxY, species).toBeGreaterThan(0.85);
       expect(maxY, species).toBeLessThan(1.15);

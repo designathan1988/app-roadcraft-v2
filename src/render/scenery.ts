@@ -79,9 +79,6 @@ export { LAMP_HEIGHT, LAMP_OUTREACH } from './propGeometry';
  * writes instance matrices.
  */
 
-export const TREE_MIN_HEIGHT = m(6);
-export const TREE_HEIGHT_RANGE = m(8);
-
 /** Street trees are pollarded smaller than a tree in open ground. */
 const STREET_TREE_MIN = m(6.5);
 const STREET_TREE_RANGE = m(3);

@@ -521,8 +521,6 @@ export function createSceneRenderer(
   let lastWall = -1;
   applyWear(materials.asphalt, wear, MAP_SIZE, 0, 'asphalt');
   applyWear(materials.footway, wear, MAP_SIZE, 1, 'footway');
-  // For browser-driven checks: the field, to age a street on demand.
-  if (typeof window !== 'undefined') (window as unknown as { __wear?: unknown }).__wear = wear;
   materials.setDetail(quality.surfaceDetail);
   // Every prop model and material, built once. A rebuild writes only the
   // instance matrices.

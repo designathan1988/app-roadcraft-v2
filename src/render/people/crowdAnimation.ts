@@ -16,7 +16,7 @@ import {
   type WebGLRenderer,
 } from 'three';
 import type { ClipFrames } from '../citizenBake';
-import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS } from '../citizenPalette';
+import { PACKED_BONE_FLOATS } from '../citizenPalette';
 
 /**
  * A crowd's animation on the GPU, as GPU Gems 3, chapter 2 ("Animated Crowd
@@ -24,15 +24,12 @@ import { PACKED_BONE_FLOATS, SKIN_BONE_FLOATS } from '../citizenPalette';
  * once into one texture, three texels a bone (the affine rows, the
  * translation in their last components), read with exact fetches.
  *
- * Two readers:
- * - the palette pass (`PalettePass`): for the people drawn close, each bone of
- *   each person blended from up to four clips between two frames and moved
- *   to that person's own joints (`proceduralCrowd.ts` `refit`, the same sums,
- *   walking up the bone's parents) - written to a float render target the
- *   skinning reads. Nothing of it is worked out in JavaScript, nothing of it
- *   is uploaded a frame but four numbers a play;
- * - the far levels' skinning (`atlasSkinning`), straight from the clip's two
- *   frames, with the class's own joints.
+ * Its reader is the palette pass (`PalettePass`): each bone of each person
+ * blended from up to four clips between two frames and moved to that
+ * person's own joints (`proceduralCrowd.ts` `refit`, the same sums, walking
+ * up the bone's parents) - written to a float render target the skinning
+ * reads. Nothing of it is worked out in JavaScript, nothing of it is uploaded
+ * a frame but four numbers a play.
  */
 
 /** Texels a bone takes in the animation texture (twelve floats). */
@@ -75,23 +72,6 @@ mat4 ${name}(int row, int bone) {
   vec4 b = texelFetch(${atlas}, ivec2(bone * ${ATLAS_TEXELS} + 1, row), 0);
   vec4 c = texelFetch(${atlas}, ivec2(bone * ${ATLAS_TEXELS} + 2, row), 0);
   return mat4(vec4(a.xyz, 0.0), vec4(a.w, b.xy, 0.0), vec4(b.zw, c.x, 0.0), vec4(c.yzw, 1.0));
-}`;
-}
-
-/**
- * A person's skinning straight from the atlas (the far levels): the clip's
- * frame row and the fraction to the next in `aAnim.xy`. The class's own
- * joints - the person's are only for the close ones (the palette pass).
- */
-export function atlasSkinning(): string {
-  return `
-uniform sampler2D procAtlas;
-attribute vec4 aAnim;
-${atlasBoneGlsl('procAtlasBone', 'procAtlas')}
-mat4 getBoneMatrix(const in float i) {
-  int r = int(aAnim.x + 0.5);
-  int b = int(i + 0.5);
-  return (1.0 - aAnim.y) * procAtlasBone(r, b) + aAnim.y * procAtlasBone(r + 1, b);
 }`;
 }
 
@@ -313,6 +293,3 @@ function makeTarget(width: number, rows: number): WebGLRenderTarget {
     depthBuffer: false, stencilBuffer: false, generateMipmaps: false,
   });
 }
-
-/** Floats of a person's palette row (`SKIN_BONE_FLOATS` a bone). */
-export const paletteFloats = (bones: number): number => bones * SKIN_BONE_FLOATS;

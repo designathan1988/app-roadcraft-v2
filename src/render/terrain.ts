@@ -862,19 +862,18 @@ function macroTexture(anisotropy: number): DataTexture {
 /**
  * The painted ground's layers, as ONE texture array (one texture unit for all:
  * the terrain material is at the sixteen a fragment shader may bind): 0 and 1
- * the eight paint weights (`rasterPaint`), 2 the ecology's ground classes
- * (`ECOLOGY_LAYER`), each updated alone (`addLayerUpdate`).
+ * the eight paint weights (`rasterPaint`), each updated alone
+ * (`addLayerUpdate`). (The ecology's ground has its own texture,
+ * `userData.ecology`: the layer it once had here was sent to the GPU empty.)
  */
-const PAINT_LAYERS = 4;
+const PAINT_LAYERS = 3;
 /**
  * The array layer holding the land's own light and shape (`terrainLight`):
  * R the sun it sees past the relief, G the sky it sees past the hills round
  * it, B its convexity, A its steepness over 90 degrees; one texel a terrain
  * corner in the layer's first GRID x GRID texels.
  */
-const LIGHT_LAYER = 3;
-/** The array layer the ecosystem's ground is written into. */
-export const ECOLOGY_LAYER = 2;
+const LIGHT_LAYER = 2;
 function paintLayers(): DataArrayTexture {
   const texture = new DataArrayTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4 * PAINT_LAYERS), PAINT_RES, PAINT_RES, PAINT_LAYERS);
   texture.format = RGBAFormat;
