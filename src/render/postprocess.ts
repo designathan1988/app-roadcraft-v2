@@ -1125,17 +1125,25 @@ const GRADE = {
       // each pixel against the cross of its neighbours, weighted down where
       // the local contrast is already high, so detail comes out crisp
       // without halos or noise.
+      // On LINEAR colour, as CAS requires ("needs linear input color to
+      // perform correctly", AMD FidelityFX SDK, Contrast Adaptive
+      // Sharpening): the image here is display sRGB, so the five taps are
+      // taken to linear (gamma 2.2) and the result back. Run on the sRGB
+      // values it over-sharpened the dark side of every edge - the jaggies
+      // and the brick moire it was switched off for (2026-10-08).
       if (uSharpen > 0.0) {
         vec2 texel = 1.0 / vec2(textureSize(tDiffuse, 0));
-        vec3 b = texture2D(tDiffuse, vUv + vec2(0.0, -texel.y)).rgb;
-        vec3 d = texture2D(tDiffuse, vUv + vec2(-texel.x, 0.0)).rgb;
-        vec3 f = texture2D(tDiffuse, vUv + vec2(texel.x, 0.0)).rgb;
-        vec3 h = texture2D(tDiffuse, vUv + vec2(0.0, texel.y)).rgb;
-        vec3 mn = min(min(min(d, c), min(f, b)), h);
-        vec3 mx = max(max(max(d, c), max(f, b)), h);
+        vec3 cl = pow(c, vec3(2.2));
+        vec3 b = pow(texture2D(tDiffuse, vUv + vec2(0.0, -texel.y)).rgb, vec3(2.2));
+        vec3 d = pow(texture2D(tDiffuse, vUv + vec2(-texel.x, 0.0)).rgb, vec3(2.2));
+        vec3 f = pow(texture2D(tDiffuse, vUv + vec2(texel.x, 0.0)).rgb, vec3(2.2));
+        vec3 h = pow(texture2D(tDiffuse, vUv + vec2(0.0, texel.y)).rgb, vec3(2.2));
+        vec3 mn = min(min(min(d, cl), min(f, b)), h);
+        vec3 mx = max(max(max(d, cl), max(f, b)), h);
         vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
         float w = amp.g * (-1.0 / mix(8.0, 5.0, uSharpen));
-        c = clamp(((b + d + f + h) * w + c) / (1.0 + 4.0 * w), 0.0, 1.0);
+        cl = clamp(((b + d + f + h) * w + cl) / (1.0 + 4.0 * w), 0.0, 1.0);
+        c = pow(cl, vec3(1.0 / 2.2));
       }
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
