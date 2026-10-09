@@ -40,9 +40,11 @@ jogador veria.
    `43860dde`). Conferência visual com o jogador.
 1a. URGENTE de 2026-10-08, atendido: a cidade abria com as vias primeiro e
    os prédios de 2 a 20 s depois. Ver P20 (`8a35d468`, `5d7dd24f`).
-2. Quarentena de mapa ilegível com um lugar só (`editor/persistence.ts`
-   `quarantine`): uma segunda falha de carregamento grava por cima da
-   primeira e o mapa posto de lado se perde (aconteceu com o mapa de teste em
+2. ~~Quarentena de mapa ilegível com um lugar só~~: feita
+   (`editor/persistence.ts` `quarantine`: um segundo mapa posto de lado vai
+   para uma chave irmã com a hora, o primeiro fica). Antes: uma segunda
+   falha de carregamento gravava por cima da
+   primeira e o mapa posto de lado se perdia (aconteceu com o mapa de teste em
    localhost em 2026-10-08, durante uma edição em vários passos com o jogo
    aberto). Etapa 2 (uma quarentena é uma quebra que o monitor mostra) e
    correção na Etapa 4.
