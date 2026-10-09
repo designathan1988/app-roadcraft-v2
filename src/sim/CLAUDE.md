@@ -6,8 +6,9 @@ breaks far from where you edit in `sim/`.
 ## Which pedestrian engine runs
 
 - ONE: the agents' walking engine, `sim/agents/walk.ts`, installed by
-  `main.ts`; the people are the scenery's life (`sim/ambient`), coming in at
-  the road ends. `SimWorld` starts with a null engine (nobody walks) until one
+  `main.ts`; the people are the scenery's life (`sim/ambient`): a map opened
+  is filled at once, then they come and go at the road ends and the lots'
+  gates. `SimWorld` starts with a null engine (nobody walks) until one
   is installed - the specs install it themselves.
 - The People (navmesh/ORCA), Detour crowd and sidewalk-graph engines were
   deleted on 2026-10-08 (the player's decision). What is left in `sim/peds/`
@@ -24,8 +25,16 @@ breaks far from where you edit in `sim/`.
 - `agents/parking.ts`: the bays (stalls of `parking` elements), the way out of
   each lot onto a street, the lane each bay is reached from; `agents/lotNav.ts`
   the grid inside a lot.
-- `ambient/ambient.ts`: the scenery's life - people and cars coming in at the
-  road ends (or round the view, `?ambient=view`), the cars parked in the bays.
+- `ambient/ambient.ts`: the scenery's life. A map opened (saved, a file, a
+  generated city) gets the panel's cars and people at once, on lanes and
+  footways all over it (`open`, a slice a tick); then people come and go at
+  the road ends and the lots' gates, by the hour's tables in
+  `ambient/demand.ts` (or round the view, `?ambient=view`). The cars parked
+  in the bays.
+- `agents/lotTraffic.ts`: cars end trips in the lots' car parks (at
+  `TRIP_SECONDS`) and drive out of them (the scenery's parked cars handed
+  over by `AmbientWorld.release`) while fewer drive than the panel asks:
+  a town with no road end keeps its traffic this way.
 - `city/city.ts` (`City`, `SimWorld.city`): the time of day, the public
   transport (`transit/transit.ts`), the edge traffic flag. Nobody lives in the
   city: the residents' days (homes, jobs, minds, their own cars) and walking
@@ -33,7 +42,8 @@ breaks far from where you edit in `sim/`.
   player's decision of 2026-10-08; its README says how to bring them back).
   The Actions (pistol and bomb) are not part of that and stay live.
 - `defects.spec.ts` runs the game's setup: the walking engine with the
-  scenery's life coming in at the road ends.
+  scenery's life, the map filled at once when it opens.
+  `tests/sim/agents/population.spec.ts` holds the opening and the closed town.
 
 ## Couplings
 

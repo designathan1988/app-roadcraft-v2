@@ -14,7 +14,8 @@ import { fixtureDoc, LAYOUTS, layoutDoc } from './bodies';
 /**
  * WHAT THE PLAYER SEES GO WRONG WITH THE AGENTS, measured on the drawn bodies
  * and the vehicles, in the engines the game runs (the agents' walking engine
- * with the scenery's life coming in at the road ends, Drive v2):
+ * with the scenery's life - the map filled when it opens, then people and
+ * cars coming and going at the road ends and the lots - Drive v2):
  *
  * - `zebraStand`: longest anybody stood still on a zebra (the cars wait for
  *   them: a frozen junction);
@@ -84,13 +85,16 @@ function people(sim: SimWorld, peds: number, traffic: number): SimWorld {
   sim.trafficIntensity = traffic;
   sim.demandMultiplier = traffic || 1;
   // How many people and cars the panel asks for (`main.ts` from the settings):
-  // the scenery brings that many in at the road ends (`sim/ambient`,
-  // `vehicles/spawn.ts`). Left unset, nobody came in at all.
+  // the scenery puts that many on the map as it opens and keeps them coming
+  // and going (`sim/ambient`, `vehicles/spawn.ts`). Left unset, nobody came.
+  // The whole crowd is there from the first second now, so the 90 s window
+  // sees what used to show only after a few minutes (people meeting at
+  // corners, `docs/PROBLEMAS.md` P101).
   sim.pedestrianCount = peds * 50;
   sim.trafficCount = traffic * 50;
   sim.clock.paused = false;
   // As the game runs (`main.ts`): the agents' walking engine, nobody living
-  // here, people and cars coming in at the road ends.
+  // here, people and cars from the opening, the road ends and the lots.
   sim.usePedestrianEngine(createAgentWalkEngine());
   sim.driveModel = 'v2';
   sim.ambient.enabled = true;

@@ -9,12 +9,14 @@ import { chooseVehicleDestination } from '../routing/destination';
 import { planFrom } from '../routing/router';
 import { makeDriver } from '../vehicles/driver';
 import { createVehicle, type Vehicle } from '../vehicles/state';
-import { spawnVehicleAt } from '../vehicles/spawn';
+import { spawnVehicleAt, trafficTarget } from '../vehicles/spawn';
 import { vehiclePose } from '../pose';
-import { removeWalker, walkerOf, walkOn, walkThrough } from '../agents/walk';
+import { onLastStretch, removeWalker, walkerAlive, walkerOf, walkOn, walkThrough } from '../agents/walk';
+import type { Walkway } from '@world/walkways';
 import { collectBays, type Bay } from '../agents/parking';
 import { type DoorWay, doorWay, personGates } from '../agents/lotDoors';
 import type { PersonAgeClass } from '../people/view';
+import { busy, CARS, kindOf, outShare, PEOPLE, type Mix } from './demand';
 
 
 /**
@@ -43,13 +45,20 @@ import type { PersonAgeClass } from '../people/view';
  * SET BY THE COMPOSITION ROOT (`enabled`) and fed by the renderer
  * (`SimWorld.focus`): with no focus (tests, harnesses) nothing is made.
  *
- * FED FROM THE ENDS OF THE ROADS (`source: 'edges'`, the game's way since the
- * player's order of 2026-10-06): none of the above is made round the view.
- * Cars come in at the road ends (`vehicles/spawn.ts` stepDispatch) and
- * people on the footways there (`edgePeople`), as many as the panel says
- * (`SimWorld.trafficCount`, `pedestrianCount`); each crosses the map to
- * another road end and leaves there - never anywhere else. The parked cars
- * and the player stay as they are.
+ * FED FROM THE ROAD ENDS AND THE LOTS (`source: 'edges'`, the game's way):
+ * none of the above is made round the view.
+ * - A map opened (a saved one, a file, a generated city) is lived in at once
+ *   (the player, 2026-10-09: "sempre que abrir a cidade tem que já ter carros
+ *   e pessoas", revoking "only at the road ends" for the opening): the
+ *   panel's numbers (`SimWorld.trafficCount`, `pedestrianCount`) put on its
+ *   lanes and footways in the first ticks (`open`), as a game fills its world
+ *   behind the loading screen.
+ * - From then on cars come in at the road ends (`vehicles/spawn.ts`
+ *   stepDispatch) and out of the lots' bays (`agents/lotTraffic.ts`), and
+ *   leave at a road end or into a lot; people come in on the footways at the
+ *   road ends and out of the lots' gates, and leave at a road end or in at a
+ *   gate (`edgePeople`, `keepWalking`) - never anywhere else, so a town with
+ *   no road end keeps its numbers on its lots alone.
  */
 
 /** Most people on foot at once, and cars driving, and the cars driving when zoomed out. */
@@ -60,81 +69,22 @@ const MAX_DRIVERS_FAR = 110;
 const LOOK_EVERY = 0.25;
 /** Most made in one look: the population fills over a second or two. */
 const MAKE_PER_LOOK = 8;
+/**
+ * A map just opened is filled this many cars and people a tick, for at most
+ * this many ticks: 400 of each in 200 ticks, under four seconds of the
+ * simulation, 40 of each in a third of a second. Each car costs a route and
+ * each person a walk, about a millisecond apiece in node on a generated town
+ * of 1 500 buildings and two to three in the browser: 8 of each a tick made
+ * opening frames of 100 to 460 ms in the browser (the clock runs up to
+ * `MAX_SUBSTEPS` ticks a frame); 2 of each keep a tick to a few milliseconds.
+ * A count, not a time budget, so the same map fills the same way everywhere.
+ */
+const OPEN_CARS = 2;
+const OPEN_PEOPLE = 2;
+const OPEN_TICKS = 600;
 
-/** What kind of place the view is on: shares of each, from the buildings round it. */
-interface Mix { readonly home: number; readonly shop: number; readonly work: number; readonly civic: number }
-
-/** How busy each kind of place is at an hour (0..1): bumps at the hours people go out (GTA's day of the popcycle). */
-function busy(kind: keyof Mix, hour: number): number {
-  const bump = (at: number, width: number): number => {
-    const d = ((hour - at + 36) % 24) - 12;
-    return Math.exp(-(d * d) / (2 * width * width));
-  };
-  // A street is never empty by day: the peaks on a floor of half (a quarter by night).
-  const day = 0.25 + 0.25 * bump(13, 4.5);
-  switch (kind) {
-    case 'home': return Math.min(1, day + 0.5 * bump(8, 1.3) + 0.3 * bump(13, 3) + 0.6 * bump(18.5, 2));
-    case 'shop': return Math.min(1, day + 0.35 * bump(9, 1.5) + 0.6 * bump(13, 2.5) + 0.6 * bump(18, 2.5));
-    case 'work': return Math.min(1, day + 0.6 * bump(7.5, 1) + 0.3 * bump(12.5, 1.5) + 0.6 * bump(17.5, 1.2));
-    case 'civic': return Math.min(1, day + 0.5 * bump(11, 3) + 0.4 * bump(16, 2));
-  }
-}
-/**
- * Percent of people (15 and over) working, and purchasing goods and services,
- * at each hour of the day from midnight: the American Time Use Survey, table
- * A-3, 2009-13 averages (bls.gov/tus/tables/a3_0913.htm).
- */
-const WORKING = [2.3, 1.8, 1.5, 1.5, 2.2, 3.6, 7.5, 15.7, 24.8, 28.8, 29.9, 30.3, 23.8, 27.5, 29.6, 28.7, 25.8, 19.2, 12.0, 8.4, 6.8, 5.8, 4.7, 3.4];
-const PURCHASING = [0.2, 0.1, 0.1, 0.1, 0.1, 0.2, 0.4, 0.9, 2.0, 3.8, 5.8, 7.1, 7.8, 7.6, 7.3, 7.1, 6.9, 6.5, 5.2, 4.1, 2.9, 1.7, 0.8, 0.4];
-/** How long a stay lasts, hours: a working day, an errand. */
-const WORK_STAY = 8;
-const ERRAND_STAY = 0.5;
-/** A table of the hours at `hour` (fractional, wrapping round midnight). */
-function atHour(table: readonly number[], hour: number): number {
-  const h = ((hour % 24) + 24) % 24, i = Math.floor(h), u = h - i;
-  return table[i]! * (1 - u) + table[(i + 1) % 24]! * u;
-}
-/**
- * People going in at and coming out of a kind of place at an hour (shares of
- * everybody, an hour): from how many are there (`WORKING`, `PURCHASING`),
- * the arrivals are its rise and the departures its fall, and each also the
- * stays ending and begun (as many as are there over how long a stay lasts).
- * The home's are the others' the other way round: out to work and errands,
- * back from them. A shop's errands come and go all day; a works fills in the
- * morning and empties in the evening; a home empties in the morning.
- */
-function flows(kind: keyof Mix, hour: number): { in: number; out: number } {
-  if (kind === 'home') {
-    const work = flows('work', hour), shop = flows('shop', hour);
-    return { in: work.out + shop.out, out: work.in + shop.in };
-  }
-  const table = kind === 'work' ? WORKING : PURCHASING;
-  const stay = kind === 'work' ? WORK_STAY : ERRAND_STAY;
-  const there = atHour(table, hour), rise = atHour(table, hour + 0.5) - atHour(table, hour - 0.5);
-  return { in: Math.max(0, rise) + there / stay, out: Math.max(0, -rise) + there / stay };
-}
-/** Share of the walks at a kind of place, at an hour, that come out of it (the rest go in). */
-function outShare(kind: keyof Mix, hour: number): number {
-  const f = flows(kind, hour);
-  return f.in + f.out > 0 ? f.out / (f.in + f.out) : 0.5;
-}
-/**
- * People per 100 m of street at full bustle, and cars: a shopping street as a
- * GTA street is, a body every few metres of pavement; a residential one quieter.
- */
-const PEOPLE: Mix = { home: 7, shop: 24, work: 9, civic: 15 };
-const CARS: Mix = { home: 2.6, shop: 6, work: 4.8, civic: 3.6 };
 /** Share of the bays with a car in them. */
 const PARKED = 0.62;
-
-function kindOf(b: Building): keyof Mix {
-  const fn = b.function ?? '';
-  if (/house|apartment|residential|townhouse|flat/i.test(fn)) return 'home';
-  if (/shop|market|mall|restaurant|cafe|bar|bakery|pharmacy|bank|hotel|cinema/i.test(fn)) return 'shop';
-  if (/factory|warehouse|industrial|works|office/i.test(fn)) return 'work';
-  if (fn) return 'civic';
-  return b.use === 'commercial' ? 'shop' : b.use === 'industrial' ? 'work' : b.use === 'residential' ? 'home' : 'civic';
-}
 
 /** The kinds of car that stand in bays and join the traffic (buses run their lines, `sim/transit`). */
 const TRAFFIC: readonly (readonly [Archetype, number])[] = ARCHETYPES
@@ -198,8 +148,14 @@ export class AmbientWorld {
     this.bays.clear();
     this.parked.length = 0;
     this.baysFor = '';
+    this.vacated.clear();
+    // The lots' cars of the old map with it (`agents/lotTraffic.ts`).
+    w.city.lots.reset();
     this.fresh = true;
     this.freshFor = 4;
+    this.opening = true;
+    this.openTicks = OPEN_TICKS;
+    this.openSpots.length = 0;
   }
 
   step(w: SimWorld): void {
@@ -207,8 +163,15 @@ export class AmbientWorld {
     // The walks that ended: in through a door.
     const engine = w.pedEngine;
     engine.takeArrivals?.(w);
-    for (const id of this.walkers) if (!walkerOf(w, id)) this.walkers.delete(id);
+    // Still walking, out on the street or waiting inside to step out (`walkerOf` sees only those out).
+    for (const id of this.walkers) if (!walkerAlive(w, id)) this.walkers.delete(id);
     for (const id of this.drivers) if (!w.vehicles.has(id)) { this.drivers.delete(id); this.sighted.delete(id); }
+    if (this.source === 'edges') {
+      // A map just opened is filled at once, the panel's numbers on its
+      // streets, as a game fills its world behind the loading screen.
+      if (this.opening) this.open(w);
+      this.keepWalking(w);
+    }
     this.clock += DT;
     if (this.clock < LOOK_EVERY) return;
     this.clock = 0;
@@ -382,54 +345,59 @@ export class AmbientWorld {
     return this.ends;
   }
 
+  /** How many people on foot the panel asks for; past one per 8 m of street they would only stand in each other's way. */
+  private peopleTarget(w: SimWorld): number {
+    return Math.min(Math.max(0, Math.round(w.pedestrianCount ?? 0)), Math.floor(this.roadAround(w, 0, 0, Infinity) / m(8)));
+  }
+
   /**
-   * People on foot from the road ends, up to the number chosen: each comes in
-   * on the footway at one road end, walks to another road end and leaves
-   * there (`walk.ts` ends the walk on arrival). A map with a single road end
-   * sends them somewhere across the map and back to it.
+   * People on foot, up to the number chosen, from where people come from: a
+   * road end (from off the map) or a lot's gate (out of a building). Each
+   * walks to another road end and leaves there, or to a lot and goes in
+   * (`walk.ts` ends the walk on arrival), by the lots' tables of the hour. A
+   * town with no road end lives on its lots alone; one with a single road end
+   * sends them somewhere across the map and on (`keepWalking`).
    */
   private edgePeople(w: SimWorld): void {
     const engine = w.pedEngine;
     if (!engine.walkTrip) return;
-    for (const id of this.roaming) {
-      if (!this.walkers.has(id)) { this.roaming.delete(id); continue; }
-      const end = this.pickEnd(w, null);
-      if (end && walkOn(w, id, end.x, end.y, m(30))) this.roaming.delete(id);
-    }
     this.refreshPlaces(w);
-    // The number chosen; past one person per 8 m of street they would only
-    // stand in each other's way, so not more than that.
-    const want = Math.min(Math.max(0, Math.round(w.pedestrianCount ?? 0)), Math.floor(this.roadAround(w, 0, 0, Infinity) / m(8)));
+    const want = this.peopleTarget(w);
     // Everybody on foot counts (riders getting off a bus, the player too), not only those made here.
     const onFoot = Math.max(this.walkers.size, w.pedViews.length);
     if (onFoot >= want) return;
     const ends = this.roadEnds(w);
-    if (!ends.length) return;
+    const hour = (w.city.minutes(w) % 1440) / 60;
+    // The lots' own people: how many the land use puts on its street at this
+    // hour (the density of the view's model, `PEOPLE` x `busy`, over each
+    // lot's frontage); that share of the walkers comes out of a lot's gate or
+    // goes in at one, the rest pass through from road end to road end.
+    let outW = 0, inW = 0;
+    // Only once most lots' ways are worked out: the first few would take everybody.
+    if (this.gates && (this.placesReady() || !ends.length)) {
+      for (const p of this.places) {
+        if (!p.way) continue;
+        const people = PEOPLE[p.kind] * busy(p.kind, hour) * (p.way.frontage / m(100));
+        const out = outShare(p.kind, hour);
+        outW += people * out;
+        inW += people * (1 - out);
+      }
+    }
+    if (!ends.length && outW <= 0) return;
     this.nextEdgeLook -= LOOK_EVERY;
     if (this.nextEdgeLook > 0) return;
     // Two a second at most: the street fills over a while, and each new body
     // is built without a stall (`render/agents.ts` builds one at a time).
     const batch = Math.min(want - onFoot, 2);
     this.nextEdgeLook = 1;
-    // The lots' own people: how many the land use puts on its street at this
-    // hour (the density of the view's model, `PEOPLE` x `busy`, over each
-    // lot's frontage); that share of the walkers comes out of a lot's gate or
-    // goes in at one, the rest pass through from road end to road end.
-    const hour = (w.city.minutes(w) % 1440) / 60;
-    let outW = 0, inW = 0;
-    for (const p of this.places) {
-      if (!p.way) continue;
-      const people = PEOPLE[p.kind] * busy(p.kind, hour) * (p.way.frontage / m(100));
-      const out = outShare(p.kind, hour);
-      outW += people * out;
-      inW += people * (1 - out);
-    }
-    const local = Math.min(1, (outW + inW) / Math.max(1, want));
+    // With no road end, everybody comes out of a lot.
+    const local = ends.length ? Math.min(1, (outW + inW) / Math.max(1, want)) : 1;
     for (let made = 0, tries = 0; made < batch && tries < batch * 4; tries++) {
       // Out of a lot, into one, both (the other end in town as often as any end is), or neither.
-      let fromLot: DoorWay | null = null, toLot: DoorWay | null = null;
-      if (this.gates && outW + inW > 0 && this.rng.float() < local) {
-        const out = this.rng.float() * (outW + inW) < outW;
+      let fromLot: DoorWay | null = null;
+      let toLot: DoorWay | null = null;
+      if (outW + inW > 0 && this.rng.float() < local) {
+        const out = !ends.length || this.rng.float() * (outW + inW) < outW;
         const first = this.pickPlace(hour, out, null);
         const second = first && this.rng.float() < local ? this.pickPlace(hour, !out, first) : null;
         if (out) { fromLot = first; toLot = second; } else { toLot = first; fromLot = second; }
@@ -439,43 +407,192 @@ export class AmbientWorld {
         const door = fromLot.out[0]!;
         from = { node: -1, x: door.x, y: door.y };
       } else {
+        if (!ends.length) continue;
         from = ends[Math.floor(this.rng.float() * ends.length)]!;
         // Not onto somebody standing there (out of a door, they wait inside until it is clear).
         if (engine.bridge.anyoneWithin(w, from.x, from.y, m(1.5), null)) continue;
       }
-      let to: { node: number; x: number; y: number };
-      let roams = false;
-      if (toLot) {
-        const door = toLot.out[0]!;
-        to = { node: -1, x: door.x, y: door.y };
-      } else {
-        const end = this.pickEnd(w, from.node);
-        if (end) to = end;
-        else {
-          // One road end only: across the map and back.
-          const a = this.rng.float() * Math.PI * 2, d = m(60) + this.rng.float() * m(200);
-          const p = engine.walkableNear?.call(engine, w, from.x + Math.cos(a) * d, from.y + Math.sin(a) * d, m(30));
-          if (!p) continue;
-          to = { node: -1, x: p.x, y: p.y };
-          roams = true;
-        }
+      if (this.walkFrom(w, from, fromLot, toLot) !== null) made++;
+    }
+  }
+
+  /**
+   * A walk from `from` (a road end, a lot's door with `fromLot`, a point on a
+   * footway): into `toLot` when given, else to another road end, else
+   * somewhere across the map, sent on from there (`roaming`). Its id, or null.
+   */
+  private walkFrom(w: SimWorld, from: { node: number; x: number; y: number }, fromLot: DoorWay | null, toLot: DoorWay | null): number | null {
+    const engine = w.pedEngine;
+    if (!engine.walkTrip) return null;
+    let to: { node: number; x: number; y: number };
+    let roams = false;
+    if (toLot) {
+      const door = toLot.out[0]!;
+      to = { node: -1, x: door.x, y: door.y };
+    } else {
+      const end = this.pickEnd(w, from.node);
+      if (end) to = end;
+      else {
+        const p = this.across(w, from);
+        if (!p) return null;
+        to = { node: -1, x: p.x, y: p.y };
+        roams = true;
       }
-      const roll = this.rng.float();
-      const ageClass: PersonAgeClass = roll < 0.12 ? 'child' : roll < 0.28 ? 'elder' : 'adult';
-      const head = fromLot ? fromLot.out : NO_WAY;
-      const tail = toLot ? reversed(toLot) : NO_WAY;
-      const trip = {
-        trip: this.nextTrip++, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
-        seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30),
-      };
-      const id = fromLot || toLot ? walkThrough(w, trip, head, tail) : engine.walkTrip.call(engine, w, trip);
+    }
+    const roll = this.rng.float();
+    const ageClass: PersonAgeClass = roll < 0.12 ? 'child' : roll < 0.28 ? 'elder' : 'adult';
+    const head = fromLot ? fromLot.out : NO_WAY;
+    const tail = toLot ? reversed(toLot) : NO_WAY;
+    const trip = {
+      trip: this.nextTrip++, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
+      seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30),
+    };
+    const id = fromLot || toLot ? walkThrough(w, trip, head, tail) : engine.walkTrip.call(engine, w, trip);
+    if (id === null) return null;
+    this.walkers.add(id);
+    if (roams) this.roaming.add(id);
+    this.gateWalks.made++;
+    if (fromLot) this.gateWalks.fromGate++;
+    if (toLot) this.gateWalks.toGate++;
+    this.company(w, id, ageClass, from, to, roams, head, tail);
+    return id;
+  }
+
+  /** A footway point somewhere across the map from `from`: 60 to 260 m off. */
+  private across(w: SimWorld, from: { x: number; y: number }): { x: number; y: number } | null {
+    const engine = w.pedEngine;
+    for (let k = 0; k < 4; k++) {
+      const a = this.rng.float() * Math.PI * 2, d = m(60) + this.rng.float() * m(200);
+      const p = engine.walkableNear?.call(engine, w, from.x + Math.cos(a) * d, from.y + Math.sin(a) * d, m(30));
+      if (p) return p;
+    }
+    return null;
+  }
+
+  /**
+   * The walkers whose walk does not end at a road end or at a lot's door,
+   * sent on before they get to its end - nobody vanishes in the street: to a
+   * lot, by the lots' tables of the hour, or a road end, or across the map
+   * again. Every tick, so nobody reaches the end between two looks.
+   */
+  private keepWalking(w: SimWorld): void {
+    if (!this.roaming.size) return;
+    const hour = (w.city.minutes(w) % 1440) / 60;
+    for (const id of [...this.roaming]) {
+      if (!this.walkers.has(id)) { this.roaming.delete(id); continue; }
+      if (!onLastStretch(w, id)) continue;
+      const at = walkerOf(w, id);
+      if (!at) continue;
+      const lot = this.gates && this.placesReady() && this.rng.float() < 0.6 ? this.pickPlace(hour, false, null) : null;
+      if (lot && walkOn(w, id, lot.out[0]!.x, lot.out[0]!.y, m(30), reversed(lot))) {
+        this.roaming.delete(id);
+        this.gateWalks.toGate++;
+        continue;
+      }
+      const end = this.pickEnd(w, null);
+      if (end && walkOn(w, id, end.x, end.y, m(30))) { this.roaming.delete(id); continue; }
+      const p = this.across(w, at);
+      if (p) walkOn(w, id, p.x, p.y, m(30));
+    }
+  }
+
+  // ------------------------------------------------------------ a map just opened
+
+  /** Filling a map just opened (`reset`), ticks of it left, and where people were put meanwhile. */
+  private opening = true;
+  private openTicks = OPEN_TICKS;
+  private readonly openSpots: { x: number; y: number }[] = [];
+  private footFor = '';
+  private foot: { way: Walkway; at: number }[] = [];
+  private footLength = 0;
+
+  /**
+   * The panel's numbers put on the streets of a map just opened, a slice a
+   * tick (`OPEN_CARS`, `OPEN_PEOPLE`): cars on the lanes of the whole map,
+   * people on its footways, each on a trip. After this, cars and people
+   * come and go only at the road ends and the lots' gates.
+   */
+  private open(w: SimWorld): void {
+    // A map with no road (a new map): nothing to fill, and nothing filled later
+    // in sight - the first road drawn is not filled in the middle of a street.
+    if (!this.lanesNear(w).length) { this.endOpening(); return; }
+    const cars = w.edgeTraffic ? trafficTarget(w) - w.vehicles.size : 0;
+    const people = this.peopleTarget(w) - this.walkers.size;
+    if (cars > 0) this.openCars(w, Math.min(cars, OPEN_CARS));
+    if (people > 0) this.openPeople(w, Math.min(people, OPEN_PEOPLE));
+    if (--this.openTicks <= 0 || (cars <= 0 && people <= 0)) this.endOpening();
+  }
+
+  private endOpening(): void {
+    this.opening = false;
+    this.openSpots.length = 0;
+  }
+
+  /**
+   * Cars on link lanes of the whole map, each lane drawn by its length (SUMO's
+   * randomTrips weighted by edge length, sumo.dlr.de/docs/Tools/Trip.html),
+   * at a random free place on it (its departPos "random_free": a few random
+   * tries), a safe distance from the cars ahead and behind and born at a
+   * speed they allow (`spawnVehicleAt`), bound for a road end, or driving
+   * round until a lot calls them in (`agents/lotTraffic.ts`).
+   */
+  private openCars(w: SimWorld, n: number): void {
+    const lanes = this.lanesNear(w);
+    let total = 0;
+    for (const l of lanes) total += l.length;
+    const rng = w.rng.spawnVehicles;
+    for (let made = 0, tries = 0; made < n && tries < n * 6; tries++) {
+      let roll = rng.float() * total;
+      let pick = lanes[lanes.length - 1]!;
+      for (const l of lanes) { roll -= l.length; if (roll < 0) { pick = l; break; } }
+      const arch = rng.weighted(TRAFFIC);
+      if (pick.length < arch.length + m(3)) continue;
+      const s = arch.length + 1 + rng.float() * (pick.length - arch.length - 2);
+      if (spawnVehicleAt(w, pick.id, s, arch) !== null) made++;
+    }
+  }
+
+  /**
+   * People on the footways of the whole map, each footway drawn by its length,
+   * never within 1.5 m of anybody (nor of anybody put there this opening and
+   * still waiting to step out), each walking to a lot, a road end, or across
+   * the map (`walkFrom`).
+   */
+  private openPeople(w: SimWorld, n: number): void {
+    const engine = w.pedEngine;
+    if (!engine.walkTrip) return;
+    this.refreshPlaces(w);
+    const key = `${w.net.revision}:${w.topologyRevision}`;
+    if (key !== this.footFor) {
+      this.footFor = key;
+      this.foot = [];
+      this.footLength = 0;
+      for (const way of w.walkwaysFor(w.net.revision).ways) {
+        if (way.kind !== 'footway' || way.path.length < m(4)) continue;
+        this.foot.push({ way, at: this.footLength });
+        this.footLength += way.path.length;
+      }
+    }
+    if (!this.foot.length) return;
+    const rng = w.rng.spawnPeds;
+    const hour = (w.city.minutes(w) % 1440) / 60;
+    const SPACE = m(1.5);
+    for (let made = 0, tries = 0; made < n && tries < n * 6; tries++) {
+      const roll = rng.float() * this.footLength;
+      let lo = 0, hi = this.foot.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (this.foot[mid]!.at <= roll) lo = mid; else hi = mid - 1; }
+      const way = this.foot[lo]!.way;
+      const f = way.path.sampleAt(Math.min(way.path.length, roll - this.foot[lo]!.at));
+      // Across the footway, in its through zone, away from the kerb's edge.
+      const across = way.lo + (way.hi - way.lo) * (0.3 + 0.4 * rng.float());
+      const x = f.p.x - f.t.y * across, y = f.p.y + f.t.x * across;
+      if (this.openSpots.some((q) => Math.hypot(q.x - x, q.y - y) < SPACE)) continue;
+      if (engine.bridge.anyoneWithin(w, x, y, SPACE, null)) continue;
+      // Into a lot by the hour's tables, as the walkers from the road ends.
+      const toLot = this.gates && this.placesReady() && rng.float() < 0.6 ? this.pickPlace(hour, false, null) : null;
+      const id = this.walkFrom(w, { node: -1, x, y }, null, toLot);
       if (id === null) continue;
-      this.walkers.add(id);
-      if (roams) this.roaming.add(id);
-      this.gateWalks.made++;
-      if (fromLot) this.gateWalks.fromGate++;
-      if (toLot) this.gateWalks.toGate++;
-      this.company(w, id, ageClass, from, to, roams, head, tail);
+      this.openSpots.push({ x, y });
       made++;
     }
   }
@@ -504,6 +621,17 @@ export class AmbientWorld {
       p.way = doorWay(p.b);
       if (performance.now() - start >= WAYS_MS) break;
     }
+  }
+
+  /**
+   * Whether most lots' ways to their doors are worked out (`refreshPlaces`
+   * does a few a look): before, the few known would draw every walk sent to
+   * a lot, and a town grown at once sent its walks to the first lots done.
+   */
+  private placesReady(): boolean {
+    let known = 0;
+    for (const p of this.places) if (p.way !== undefined) known++;
+    return known > 0 && known >= this.places.length / 2;
   }
 
   /**
@@ -552,9 +680,12 @@ export class AmbientWorld {
     const roll = this.rng.float();
     if (roll >= 0.4) return;
     const ageClass: PersonAgeClass = age === 'child' ? 'adult' : roll < 0.1 && age === 'adult' ? 'child' : age;
-    // Out of the same door: after the first, when the spot is clear (`walk.ts` inside); on the footway, beside them.
+    // Out of the same door: after the first, when the spot is clear (`walk.ts`
+    // inside); on the footway, beside them, just past the 0.8 m a walker made
+    // waits to have clear (`walk.ts` DOOR_CLEAR): at 0.6 m they stood inside
+    // until the first had walked off, and a group was seen to step out apart.
     const trip = {
-      trip: this.nextTrip++, fromX: from.x + (head.length ? 0 : m(0.6)), fromY: from.y, toX: to.x, toY: to.y,
+      trip: this.nextTrip++, fromX: from.x + (head.length ? 0 : m(0.9)), fromY: from.y, toX: to.x, toY: to.y,
       seed: Math.floor(this.rng.float() * 0x7fffffff), ageClass, reach: m(30), with: leader,
     };
     const id = head.length || tail.length ? walkThrough(w, trip, head, tail) : engine.walkTrip.call(engine, w, trip);
@@ -633,6 +764,21 @@ export class AmbientWorld {
 
   // ------------------------------------------------------------ parked cars
 
+  /** Bays whose scenery car the lots drove out: left empty when the bays are made again. */
+  private readonly vacated = new Set<string>();
+
+  /**
+   * A parked car handed to the lots' traffic (`agents/lotTraffic.ts`), which
+   * drives it out of its bay: no longer the scenery's, and its bay is not
+   * filled again when the bays are made again (a car would appear in it).
+   */
+  release(car: Vehicle): void {
+    for (const [id, c] of this.bays) if (c === car) { this.bays.delete(id); break; }
+    if (car.free) this.vacated.add(spotKey(car.free));
+    const at = this.parked.indexOf(car);
+    if (at >= 0) this.parked.splice(at, 1);
+  }
+
   /**
    * The cars standing in the bays of the whole map, made again only when the
    * bays change (a building, a road): the same car in the same bay each time.
@@ -652,6 +798,9 @@ export class AmbientWorld {
     this.parked.length = 0;
     this.parked.push(...others);
     for (const bay of this.bayList) {
+      // Left empty by a car the lots drove out (`release`), or held by one of theirs.
+      if (this.vacated.has(spotKey(bay))) continue;
+      if (others.some((car) => car.free && Math.hypot(car.free.x - bay.x, car.free.y - bay.y) < m(1.5))) continue;
       const r = new Rng(0x9e3779b9 ^ Math.imul(Math.round(bay.x * 7) + Math.round(bay.y * 13) * 4099, 2654435761));
       if (r.float() >= PARKED) continue;
       const arch = PARKED_KINDS[Math.floor(r.float() * PARKED_KINDS.length)]!;
@@ -722,6 +871,8 @@ const WALK_DECAY = m(470);
  * 32 lots in `lotDoors.spec` (node), so a look works out one to three.
  */
 const WAYS_MS = 1.5;
+/** A bay's place as a key (a quarter of a unit), as the lots' traffic keys its bays. */
+const spotKey = (p: { x: number; y: number }): string => `${Math.round(p.x * 4)},${Math.round(p.y * 4)}`;
 const NO_WAY: readonly { x: number; y: number }[] = [];
 const REVERSED = new WeakMap<DoorWay, readonly { x: number; y: number }[]>();
 /** A lot's way the other way round: from the gate's foot on the footway in to the door. */
