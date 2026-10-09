@@ -419,11 +419,14 @@ ${shader.fragmentShader}`.replace('#include <color_fragment>', `#include <color_
     if (angle > 1e-6) b.q.premultiply(new Quaternion().setFromAxisAngle(tmp1.copy(b.w).normalize(), angle)).normalize();
     let touching = false;
     let deepest = 0;
+    /** How far the lowest corner is above the ground (negative: into it). */
+    let lowest = Infinity;
     for (const c of b.corners) {
       const r = tmp2.copy(c).applyQuaternion(b.q);
       const wp = tmp3.copy(b.p).add(r);
       const ground = world.groundAt(wp.x, -wp.z);
       const pen = ground - wp.y;
+      lowest = Math.min(lowest, -pen);
       if (pen <= 0) continue;
       touching = true;
       deepest = Math.max(deepest, pen);
@@ -452,8 +455,16 @@ ${shader.fragmentShader}`.replace('#include <color_fragment>', `#include <color_
     }
     if (deepest > 0) b.p.y += deepest;
     if (touching) { b.w.multiplyScalar(0.985); b.v.x *= 0.995; b.v.z *= 0.995; }
-    const slow = b.v.lengthSq() < m(0.15) ** 2 && b.w.lengthSq() < 0.3;
-    b.rest = touching && slow ? b.rest + dt : 0;
+    // At rest as Box2D judges it: the speed of the body's farthest point
+    // (linear, plus the turn times its reach) under the threshold, on the
+    // ground or within a hair of it. Required to be in the ground at every
+    // step, a piece settling bounced a millimetre clear every other step, its
+    // rest went back to zero, and it never slept: ten bombs left their debris
+    // stepping and asking for the ground every frame (1 s of every 8).
+    const reach = Math.sqrt(b.corners.reduce((most, c) => Math.max(most, c.lengthSq()), 0));
+    const slow = b.v.length() + b.w.length() * reach < m(0.15) + 0.55 * reach;
+    const resting = touching || lowest < m(0.05);
+    b.rest = resting && slow ? b.rest + dt : 0;
     if (b.rest > 0.6) { b.asleep = true; b.v.set(0, 0, 0); b.w.set(0, 0, 0); }
   };
 
