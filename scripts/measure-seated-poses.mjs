@@ -17,18 +17,22 @@ await page.goto(process.argv[2] ?? 'http://localhost:5173/');
 await page.waitForFunction('Boolean(window.__roadcraft)', null, { timeout: 60000 });
 const out = await page.evaluate(async () => {
   const THREE = await import('/node_modules/.vite/deps/three.js');
-  const { GLTFLoader } = await import('/node_modules/.vite/deps/three_addons_loaders_GLTFLoader__js.js');
-  const { clone } = await import('/node_modules/.vite/deps/three_addons_utils_SkeletonUtils__js.js');
-  const { CITIZEN_ASSET_URLS } = await import('/src/render/citizenAssets.ts');
-  const { CROWD_IDS } = await import('/src/render/citizenCasting.ts');
+  // The bodies the occupants are drawn with: the roster's MakeHuman people,
+  // cooked ahead (`npm run cook:people`; `riggedCitizens.ts` reads them back
+  // the same way). The glTF crowd this used to load is no longer in the game.
+  const { loadCookedPerson } = await import('/src/render/people/cookedPerson.ts');
+  const { CROWD } = await import('/src/render/citizenCasting.ts');
   const { RIDER_CLIPS } = await import('/src/render/riderPoses.ts');
   const res = {};
-  const ids = CROWD_IDS.filter(id => !id.includes('child'));
+  const ids = CROWD.filter((model) => model.ageBand !== 'child').map((model) => model.id);
+  const missing = [];
   for (const id of ids) {
-    const gltf = await new GLTFLoader().loadAsync(CITIZEN_ASSET_URLS[id]);
     for (const clip of RIDER_CLIPS) {
       if (!clip.key.startsWith('car')) continue;
-      const rig = clone(gltf.scene); rig.updateMatrixWorld(true);
+      // A fresh body for each pose: every clip starts from the rest pose.
+      const rig = await loadCookedPerson(id);
+      if (!rig) { missing.push(id); break; }
+      rig.updateMatrixWorld(true);
       clip.pose(rig, 0); rig.updateMatrixWorld(true);
       const pelvis = rig.getObjectByName('Bip01_Pelvis').getWorldPosition(new THREE.Vector3());
       const box = new THREE.Box3(); const v = new THREE.Vector3();
@@ -40,6 +44,7 @@ const out = await page.evaluate(async () => {
       res[clip.key] = prev;
     }
   }
+  if (missing.length) throw new Error(`not cooked: ${missing.join(', ')} - run npm run cook:people`);
   res.bodies = ids.length;
   return res;
 });
