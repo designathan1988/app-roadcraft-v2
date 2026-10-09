@@ -110,8 +110,9 @@ export function warmAhead(mesh: Mesh, geometries: readonly BufferGeometry[]): Pr
  * drawn first in the frame of the swap, a bomb's cells of buildings uploaded
  * 1.8-2.5 s of buffers in one frame (2026-10-09).
  */
-export function warmLooseAhead(meshes: readonly Mesh[]): Promise<void> {
-  if (!warmer || meshes.length === 0) return Promise.resolve();
+export function warmLooseAhead(meshes: readonly Mesh[]): Promise<void> | null {
+  // Nothing to wait for where no frame warms (tests, before the first frame).
+  if (!warmer || meshes.length === 0) return null;
   return Promise.all(meshes.map((mesh) => new Promise<void>((done) => toWarm.push({ mesh, geometries: [mesh.geometry], done, loose: true })))).then(() => {});
 }
 /** Sends one waiting mesh's geometry to the GPU, after the frame (`renderer.ts`). */

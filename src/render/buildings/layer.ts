@@ -373,8 +373,11 @@ export function createBuildingLayer(): BuildingLayer {
             const meshes: Mesh[] = [];
             step.value.group.traverse((o) => { if ((o as Mesh).isMesh) meshes.push(o as Mesh); });
             const w = warming;
-            w.uploads = (w.uploads ?? 0) + 1;
-            void warmLooseAhead(meshes).then(() => { w.uploads = (w.uploads ?? 1) - 1; });
+            const sent = warmLooseAhead(meshes);
+            if (sent) {
+              w.uploads = (w.uploads ?? 0) + 1;
+              void sent.then(() => { w.uploads = (w.uploads ?? 1) - 1; });
+            }
           }
         }
         if (warming.cells.length || warming.assembling || (warming.uploads ?? 0) > 0) return false;
