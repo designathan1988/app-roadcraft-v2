@@ -123,6 +123,12 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   `isSerializedDoc`), por isso o desfazer devolve; saldo na barra de cima. Saldo inicial 20 milhões
   (a cidade de teste vale 16,5 milhões). A cidade gerada (`generateCity`) não é cobrada.
 - Contrato de dados da V0: só `SerializedDoc.economy?: { balance }`.
+- Fechamento da V0 no ramo (2026-10-09): lint e typecheck limpos; suíte inteira 1068 testes verdes, fuzz
+  smoke verde; 2 falhas que já falham em `e10aab08` (antes da V0): `tests/world/terrace.spec.ts`
+  (degraus do quintal, lotes da sessão principal) e `tests/render/occupantFit.spec.ts` (falta
+  `docs/audit/seated-pose-extents.json`, arquivo não versionado). Fotografado na build de
+  desenvolvimento do ramo: saldo na barra, custo no rótulo do preview, débito, desfazer devolvendo,
+  preview vermelho "dinheiro insuficiente". Aguardando a conferência no jogo e a aprovação do jogador.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e
