@@ -126,6 +126,12 @@ o jogo a cada edição.
   63% às 22 h, 6% às 2 h (P30, `4b522935`). Sem a vida dos moradores, a
   tabela de cômodos (`lightSlots.ts`) não é alimentada; se for religada, ela
   volta a mandar.
+- Luz por classe num lugar só (`render/lightLevels.ts`, `117534eb`): janela
+  acesa 1,25 de luminância em média, lanterna 1,34, freio 2,04, seta 2,11,
+  farol 3,0 (UN R7/R6), acima do limiar do bloom (0,92); lâmpada apagada e
+  placa sem ganho. Luminária com luz na parede ao lado de cada porta do
+  térreo. Cone de luz em cada poste (cone aditivo, técnica do Volumetric
+  Light Beam). Conferido no jogo (build da porta 4180), à noite e de dia.
 
 ### Prédios e cidade
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;
@@ -211,6 +217,9 @@ o jogo a cada edição.
   mapa do jogador.
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
+- Pessoas articuladas com morph targets: o programa delas usa 17 unidades de
+  textura e a GPU do teste tem 16 (aviso do three a cada quadro); uma das
+  texturas fica sem ligar (achado em 2026-10-09, a corrigir).
 - Simulação com 400 carros e 400 pessoas a 4x: 4,0-10 ms por quadro no
   headless conforme o estado da máquina (antes 7,7-8,4 com metade das
   pessoas); nenhum quadro longo em 80 s; o orçamento de 4 ms ainda não é
