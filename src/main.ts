@@ -3193,6 +3193,10 @@ setInterval(() => {
   // Buildings on zoned lots (`world/lots.ts`).
   // A road edit can make room on a lot refused before: try them again.
   const lotRefused = lotTool.refusedFor(net.revision);
+  // The city grows with its time: not while paused, nor with the tab hidden
+  // (the simulation stands still then too). It grew on regardless, each
+  // building bringing its grading, access and save work to a stopped game.
+  if (sim.clock.paused || document.hidden) return;
   if (!mover.dragging && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
     const grown = caused('crescimento da zona', () => {
       const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
