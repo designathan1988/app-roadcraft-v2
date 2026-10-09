@@ -226,7 +226,7 @@ if (saved) {
     persistence.quarantineStored();
     const fresh = new RoadDoc();
     fresh.terrainRelief = RELIEF_FLAT;
-    fresh.nature = newNature();
+    fresh.nature = null;
     doc.replaceWith(fresh);
     net.rebuild();
     bootFailed = true;
@@ -2811,7 +2811,7 @@ let cityBuiltIn = 0;
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty.
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT, nature: newNature() }, 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT }, 'import');
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');
