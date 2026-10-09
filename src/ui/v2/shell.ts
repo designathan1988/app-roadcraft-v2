@@ -30,9 +30,7 @@ import {
   type BuilderSection,
   type BuilderToolSpec,
 } from '../builder/catalog';
-import { roadSnap, setRoadSnap } from '@editor/snap';
-import { type TransitToolKind, transitTool } from '@editor/transitTools';
-import { ROAD_PARKING_PRESETS, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
+import type { TransitLine } from '@world/transit';
 import { blockGridChoice, onRoadGridChange, roadGridShown, roadWidth, setRoadGridShown, setRoadWidth, setZoneColoursShown, signChoice, strikeChoice, zoneColoursShown } from '../toolChoices';
 import { SIGN_HAS_TEXT, SIGN_TEXT_MAX, SIGN_TYPES } from '@world/landscape';
 import { CLOUD_MODES, POLE_TOOL_MODES, cloudMode, setCloudMode, gullyErase, setGullyErase, TREE_MODES, treeMode, setTreeMode, treeKind, setTreeKind, elementKind, elementMode, setElementKind, setElementMode, fogErase, paintKind, poleLampMode, poleToolMode, setFogErase, setPaintKind, setPoleLampMode, setPoleToolMode, setStreetscapeKind, streetscapeKind } from '../toolChoices';
@@ -158,21 +156,21 @@ const ICON: Record<string, string> = {
   radius: '<circle cx="12" cy="12" r="8"/><path d="M12 12h8"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>',
   strength: '<path d="M4 20h16"/><path d="M6 20v-4M10 20v-7M14 20v-10M18 20v-14"/>',
   // Where a facade change applies: a facade of 3 x 3 bays, the part lit.
-  scope_bay: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"9.3\" y=\"9.3\" width=\"5.4\" height=\"5.4\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
-  scope_zone: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"9.3\" y=\"4\" width=\"10.7\" height=\"10.7\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/><rect x=\"9.3\" y=\"4\" width=\"10.7\" height=\"10.7\" stroke-dasharray=\"2 1.5\"/>',
-  scope_row: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"4.8\" y=\"10.1\" width=\"3.7\" height=\"3.8\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/><rect x=\"10.1\" y=\"10.1\" width=\"3.8\" height=\"3.8\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/><rect x=\"15.5\" y=\"10.1\" width=\"3.7\" height=\"3.8\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
-  scope_column: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"9.3\" y=\"4\" width=\"5.4\" height=\"16\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
-  scope_storey: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"2\" y=\"9.3\" width=\"20\" height=\"5.4\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
-  scope_side: '<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"1\"/><path d=\"M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16\"/><rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
-  scope_volume: '<path d=\"M12 3 20 7.5v9L12 21l-8-4.5v-9Z\"/><path d=\"M4 7.5 12 12l8-4.5M12 12v9\"/><path d=\"M12 3 20 7.5 12 12 4 7.5Z\" fill=\"currentColor\" fill-opacity=\".55\" stroke=\"none\"/>',
+  scope_bay: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="9.3" y="9.3" width="5.4" height="5.4" fill="currentColor" fill-opacity=".55" stroke="none"/>',
+  scope_zone: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="9.3" y="4" width="10.7" height="10.7" fill="currentColor" fill-opacity=".55" stroke="none"/><rect x="9.3" y="4" width="10.7" height="10.7" stroke-dasharray="2 1.5"/>',
+  scope_row: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="4.8" y="10.1" width="3.7" height="3.8" fill="currentColor" fill-opacity=".55" stroke="none"/><rect x="10.1" y="10.1" width="3.8" height="3.8" fill="currentColor" fill-opacity=".55" stroke="none"/><rect x="15.5" y="10.1" width="3.7" height="3.8" fill="currentColor" fill-opacity=".55" stroke="none"/>',
+  scope_column: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="9.3" y="4" width="5.4" height="16" fill="currentColor" fill-opacity=".55" stroke="none"/>',
+  scope_storey: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="2" y="9.3" width="20" height="5.4" fill="currentColor" fill-opacity=".55" stroke="none"/>',
+  scope_side: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/><rect x="4" y="4" width="16" height="16" fill="currentColor" fill-opacity=".55" stroke="none"/>',
+  scope_volume: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/><path d="M12 3 20 7.5 12 12 4 7.5Z" fill="currentColor" fill-opacity=".55" stroke="none"/>',
   // Roofs: which way the ridge runs, which side the slope falls to
-  ridge_x: '<path d=\"M3 12h18\"/><path d=\"m7 8-4 4 4 4M17 8l4 4-4 4\"/>',
-  ridge_y: '<path d=\"M12 3v18\"/><path d=\"m8 7 4-4 4 4M8 17l4 4 4-4\"/>',
-  fall_front: '<path d=\"M12 4v15\"/><path d=\"m6 13 6 6 6-6\"/>',
-  fall_right: '<path d=\"M4 12h15\"/><path d=\"m13 6 6 6-6 6\"/>',
-  fall_back: '<path d=\"M12 20V5\"/><path d=\"m6 11 6-6 6 6\"/>',
-  fall_left: '<path d=\"M20 12H5\"/><path d=\"m11 6-6 6 6 6\"/>',
-  advanced: '<path d=\"M4 7h10M18 7h2M4 17h4M12 17h8\"/><circle cx=\"16\" cy=\"7\" r=\"2\"/><circle cx=\"10\" cy=\"17\" r=\"2\"/>',
+  ridge_x: '<path d="M3 12h18"/><path d="m7 8-4 4 4 4M17 8l4 4-4 4"/>',
+  ridge_y: '<path d="M12 3v18"/><path d="m8 7 4-4 4 4M8 17l4 4 4-4"/>',
+  fall_front: '<path d="M12 4v15"/><path d="m6 13 6 6 6-6"/>',
+  fall_right: '<path d="M4 12h15"/><path d="m13 6 6 6-6 6"/>',
+  fall_back: '<path d="M12 20V5"/><path d="m6 11 6-6 6 6"/>',
+  fall_left: '<path d="M20 12H5"/><path d="m11 6-6 6 6 6"/>',
+  advanced: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   poles: '<path d="M12 22V3"/><path d="M6 6h12"/><path d="M7 6v2M17 6v2"/><path d="M6 6c3 3 9 3 12 0" stroke-dasharray="2 2"/>',
   // Landscaping: what goes on a footway
   streetscape: '<path d="M12 21v-6"/><circle cx="12" cy="9" r="5"/><path d="M4 21h16"/>',
@@ -227,12 +225,36 @@ const setInput = (selector: string, value: string): void => {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+/** What the public transport tool is set to and does, as the panel shows it (`editor/transitTools.ts`). */
+type TransitToolKind = 'stop' | 'terminal' | 'track' | 'station' | 'line';
+interface ShellTransitTool {
+  readonly kind: TransitToolKind;
+  readonly rail: 'train' | 'metro';
+  setKind(kind: TransitToolKind, rail?: 'train' | 'metro'): void;
+  lines(): readonly TransitLine[];
+  setVehicles(line: number, n: number): void;
+  removeLine(line: number): void;
+}
+
+/**
+ * What the shell needs from the rest of the game. The tools' own settings -
+ * the road snaps, the parking a road is laid with, the transit tool - are
+ * the editor's, which the interface layer may not import (CLAUDE.md, Layers):
+ * `main.ts`, which wires the layers together, hands them over here.
+ */
 export interface ShellDeps {
   readonly workspace: BuilderWorkspace;
+  roadSnap(): { readonly on: boolean; readonly angles: boolean; readonly grid: boolean };
+  setRoadSnap(patch: Partial<{ on: boolean; angles: boolean; grid: boolean }>): void;
+  readonly parkingPresets: readonly string[];
+  roadParkingPreset(): string;
+  setRoadParkingPreset(preset: string): void;
+  transitTool(): ShellTransitTool | null;
 }
 
 export function mountShell(deps: ShellDeps): void {
-  const { workspace } = deps;
+  const { workspace, roadSnap, setRoadSnap, roadParkingPreset, setRoadParkingPreset, transitTool } = deps;
+  const ROAD_PARKING_PRESETS = deps.parkingPresets;
   const actions = workspace.actions;
   document.documentElement.classList.add('v2-shell');
   const root = el('div', 'v2');
@@ -1563,7 +1585,7 @@ plan.appendChild(choices([
     drawer.style.maxWidth = `${Math.floor(Math.min(1100, half * 2))}px`;
   }
   window.addEventListener('resize', () => fitDrawer());
-  let wantInfo = true;
+  const wantInfo = true;
   void wantInfo;
 
   function updateHint(): void {

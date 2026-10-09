@@ -1,7 +1,7 @@
 import { Box3, DoubleSide, Group, type Material, type Mesh, MeshBasicMaterial, type Object3D, OrthographicCamera, Scene, ShaderMaterial, Vector3, WebGLRenderTarget, WebGLRenderer } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { UNITS_PER_METER } from '@world/units';
-import type { Point3, ReferenceSampler, Triangle } from '@editor/fromReference';
+import type { Point3, ReferenceSampler, Triangle } from '@world/buildings/reference';
 
 /**
  * A reference model in the Builder: a real building's 3D model (glTF/GLB),

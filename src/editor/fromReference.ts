@@ -4,6 +4,7 @@ import { edgeFrame } from '@world/buildings/footprints';
 import { baysOn } from '@world/buildings/geometry';
 import { type BayComponent, type Building, type Volume, bayKey } from '@world/buildings/types';
 import { m } from '@world/units';
+import type { Point3, ReferenceSampler, Triangle } from '@world/buildings/reference';
 
 /**
  * Builds a building from a reference model: the real building's 3D model,
@@ -25,8 +26,8 @@ import { m } from '@world/units';
  * front, z up; the plan centred on the origin.
  */
 
-export type Point3 = readonly [number, number, number];
-export type Triangle = readonly [Point3, Point3, Point3];
+// The model's geometry types live below both readers (`world/buildings/reference.ts`).
+export type { Point3, ReferenceSampler, Triangle };
 
 export interface ReferenceBlock {
   x0: number; x1: number; y0: number; y1: number;
@@ -35,9 +36,6 @@ export interface ReferenceBlock {
   /** Counter-clockwise convex hull of the roof, metres. */
   hull: [number, number][];
 }
-
-/** A colour the model shows at a point of its surface, seen along the normal, or null (nothing there). */
-export type ReferenceSampler = (x: number, y: number, z: number, nx: number, ny: number) => readonly [number, number, number] | null;
 
 export interface ReferenceOptions {
   /** Ground floor and upper storey heights, metres. */

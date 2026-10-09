@@ -60,7 +60,7 @@ import { rebindAgents, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
-import { type Anchor, anchorForHeight, findAnchor } from '@editor/snap';
+import { type Anchor, anchorForHeight, findAnchor, roadSnap, setRoadSnap } from '@editor/snap';
 import { duplicateSegment, joinSegments, splitSegment } from '@editor/commit';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
@@ -69,12 +69,12 @@ import { Bulldozer } from '@editor/bulldozer';
 import { NodeMover } from '@editor/nodeMover';
 import { CameraGestures } from '@view/cameraGestures';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
-import { roadParking } from '@editor/roadParking';
+import { ROAD_PARKING_PRESETS, type RoadParkingPreset, roadParking, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
 import { drawMinimap, minimapToWorld } from '@ui/minimap';
 import { openInspector, closeInspector, refreshInspector } from '@ui/inspector';
-import { TransitTool, setTransitTool } from '@editor/transitTools';
+import { TransitTool, setTransitTool, transitTool } from '@editor/transitTools';
 import { type BuildingId, decayOf } from '@world/buildings/types';
 import { focusCameFromKeyboard, initChrome } from '@ui/chrome';
 import { roadSwatch } from '@ui/roadSwatch';
@@ -2513,7 +2513,19 @@ function mountUnifiedChrome(): void {
   showTool(game.tool);
   buildings.workspace.setPanelClose(freeSelection);
   // The redesigned interface: its own HUD, dock, drawer and selection panel.
-  if (UI_V2) mountShell({ workspace: buildings.workspace });
+  // The tools' own settings are the editor's: handed to the interface here,
+  // the one place that may wire the two layers.
+  if (UI_V2) mountShell({
+    workspace: buildings.workspace,
+    roadSnap,
+    setRoadSnap,
+    parkingPresets: ROAD_PARKING_PRESETS,
+    roadParkingPreset,
+    setRoadParkingPreset: (preset) => {
+      if ((ROAD_PARKING_PRESETS as readonly string[]).includes(preset)) setRoadParkingPreset(preset as RoadParkingPreset);
+    },
+    transitTool,
+  });
 }
 // Mounted after this module has finished evaluating: moving the toolbar and
 // the panels is a layout change, and a pointer already over the canvas can fire

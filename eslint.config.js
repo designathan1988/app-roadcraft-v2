@@ -66,6 +66,9 @@ export default tseslint.config(
       'incoming/**',
       'exports/**',
       'cooked/**',
+      // The desktop build (`npm run desktop:pack`): Electron and the game,
+      // compiled and packed - output, not this repository's source.
+      'release/**',
       // Systems taken out of the game, kept for reference only (`src/backup/README.md`).
       'src/backup/**',
       // Agent worktrees are full checkouts of the repository; they are linted
@@ -110,6 +113,8 @@ export default tseslint.config(
     files: [
       'scripts/probe-*.mjs',
       'scripts/perf-probe.mjs',
+      'scripts/transit-shots.mjs',
+      'scripts/walk-shots.mjs',
       'scripts/cook-people.mjs',
       'scripts/verify-visual.mjs',
       'scripts/agents-shots.mjs',
@@ -132,6 +137,30 @@ export default tseslint.config(
         Event: 'readonly',
         Image: 'readonly',
       },
+    },
+  },
+  {
+    // The desktop window's main process (`desktop/main.cjs`): CommonJS run
+    // by Electron's Node, where `require` is how modules load.
+    files: ['desktop/**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        exports: 'writable',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        Buffer: 'readonly',
+        // Node's fetch API, which Electron's `protocol.handle` answers with.
+        Response: 'readonly',
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
   {
