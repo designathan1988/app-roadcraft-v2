@@ -41,7 +41,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   jogador fazia. Botão de pulso na barra de cima (ponto verde, amarelo ou
   vermelho) e F9: abas Saúde, Mudanças e Estado; "copiar registro" para um
   relato. O registro sobrevive a recarregar a página. `__health()`.
-- **Ainda não:** o `main.ts` dividido por ferramenta (Etapa 1d).
+- **Ferramentas em módulos próprios** (`src/editor/`): via (`roadTool.ts`),
+  lote e zona, cercas, postes, paisagismo, pincel de terreno, nuvens; as
+  ações em `actionsWiring.ts`. O `main.ts` só liga e delega.
+- **Ainda não:** o laço do quadro fora do `main.ts` (`frameLoop.ts`, Etapa 1d).
 
 ## Ativo no jogo
 
@@ -66,16 +69,17 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   basalto) e relevos (mesa, cânion, escarpa, pão de açúcar); mapas novos
   nascem num relevo natural.
 - Terreno sem as luzes e efeitos que o jogador mandou tirar (`557c5384`).
-- Árvores: um só estilo low poly (`render/lowPolyTrees.ts`, com
-  `natureTrees.ts`, `propGeometry.ts` e `scenery.ts`), sem cartões de folha;
-  gráfico com exposição de referência, grama com brilho medido, terreno sem
-  repetição nem chiado (`7fb7fa98`, sessão "Problemas visuais na
-  otimização"). Ainda no estilo antigo: as árvores de reserva da mata pintada
-  em `groundCover.ts`, que só aparecem se o kit novo falhar.
+- Árvores: todas as árvores e arbustos do jogo vêm de um só módulo low poly
+  (`render/lowPolyTrees.ts`, de 70 a 190 triângulos), sem cartões de folha,
+  inclusive a reserva da mata pintada (`groundCover.ts`). Gráfico com
+  exposição de referência, grama com brilho medido, terreno e camadas do
+  corte sem repetição nem chiado, nuvens sem flocos soltos (`7fb7fa98`,
+  `b454120d`, sessão "Problemas visuais na otimização").
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
-  guardados no navegador e não são assados de novo a cada abertura
-  (`8a35d468`).
+  guardados no navegador e não são assados de novo a cada abertura; a carga
+  dos prédios tem orçamento próprio (`8a35d468`, `5d7dd24f`). Cidade de
+  teste (761 prédios): inteira aos 6,0-6,4 s.
 
 ### Prédios e cidade
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;

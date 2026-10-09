@@ -23,7 +23,7 @@ de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 | 1a | Estado do jogo: ferramenta, pausa, velocidade, seleção, opções das ferramentas, gesto; interface por `watch` | feita (`de0ecfe6`, `46ca5873`, `4c535183`) |
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
-| 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | **ATUAL** |
+| 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | **ATUAL**. Feitos: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações (`actionsWiring.ts`) e via (`roadTool.ts`, `5d7dd24f`). Falta: o laço do quadro (`frameLoop.ts`) |
 | 3 | Otimização completa, guiada pelo monitor | a fazer |
 | 4 | Todos os defeitos abertos | a fazer |
 
@@ -34,9 +34,12 @@ jogador veria.
 
 ## Fila (pedidos do jogador ainda não atendidos)
 
-1. Árvores low-poly bonitas, "nada de losangos pendurados" (pedido de
-   2026-10-08 na sessão anterior, que foi interrompida antes de fazê-lo).
-   Entra na Etapa 4, com pesquisa de como se fazem árvores low-poly.
+1. ~~Árvores low-poly bonitas~~: feitas pela sessão "Problemas visuais na
+   otimização" (`7fb7fa98`, `b454120d`): um só módulo low poly para todas as
+   árvores e arbustos, de 70 a 190 triângulos, sem cartões de folha.
+   Conferência visual com o jogador.
+1a. URGENTE de 2026-10-08, atendido: a cidade abria com as vias primeiro e
+   os prédios de 2 a 20 s depois. Ver P20 (`8a35d468`, `5d7dd24f`).
 2. Quarentena de mapa ilegível com um lugar só (`editor/persistence.ts`
    `quarantine`): uma segunda falha de carregamento grava por cima da
    primeira e o mapa posto de lado se perde (aconteceu com o mapa de teste em
