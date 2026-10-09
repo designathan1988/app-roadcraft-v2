@@ -1,3 +1,4 @@
+import { isMarkingStyle } from '@world/roads/markingStyle';
 import { createActions } from './actionsWiring';
 import { FrameClock, Periodic, TopologyCatchUp } from './frameLoop';
 import { beginFrameWork } from '@core/frameWork';
@@ -862,6 +863,9 @@ function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snap
   syncFogInputs();
   syncGullyInputs();
   syncWeatherInputs();
+  // The map's road paint in its menu (declared further down: read by id, the first map opens before it).
+  const paintSelect = document.getElementById('paintStyleSelect') as HTMLSelectElement | null;
+  if (paintSelect) paintSelect.value = doc.markingStyle;
   select(null, game.selectedSegmentS, null, 'outro mapa');
   closeInspector();
   persistence.saveSessionSoon(doc, sessionSettings);
@@ -2828,8 +2832,8 @@ let cityBuiltIn = 0;
   // the one that most needs to be undoable. Opening a file already records;
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
-  // A new map is empty.
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT }, 'import');
+  // A new map is empty, painted to the Brazilian standard (docs/VIAS.md V6).
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT, markingStyle: 'br' }, 'import');
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');
@@ -4558,6 +4562,22 @@ onLanguageChange(() => {
   refreshInspector();
   requestDraw();
 });
+
+/**
+ * The map's road paint (docs/VIAS.md V6, `world/roads/markingStyle.ts`): a
+ * property of the map, saved with it and undone like any edit.
+ */
+const paintStyleSelect = document.getElementById('paintStyleSelect') as HTMLSelectElement;
+paintStyleSelect.value = doc.markingStyle;
+paintStyleSelect.onchange = () => {
+  const value = paintStyleSelect.value;
+  if (!isMarkingStyle(value) || value === doc.markingStyle) return;
+  history.record(doc);
+  doc.setMarkingStyle(value);
+  persistence.saveSessionSoon(doc, sessionSettings);
+  updateHistoryButtons();
+  requestDraw();
+};
 
 const qualitySelect = document.getElementById('qualitySelect') as HTMLSelectElement;
 const QUALITY_STORAGE_KEY = 'roadcraft.quality';

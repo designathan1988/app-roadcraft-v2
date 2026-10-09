@@ -1,3 +1,4 @@
+import { type MarkingStyleId, isMarkingStyle } from './roads/markingStyle';
 import { type ApproachRuleEntry, type SignalSettings, normalizeApproachRules, normalizeSignalSettings, rulesDigest, signalDigest } from './roads/rules';
 import { type LaneLink, linksDigest, normalizeLaneLinks } from './roads/connectors';
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
@@ -215,6 +216,12 @@ export class RoadDoc {
    * key loads on the old field, so its roads stay where they were.
    */
   terrainRelief: ReliefVersion = RELIEF_LEGACY;
+  /**
+   * The regional standard of the map's road paint (docs/VIAS.md V6,
+   * `roads/markingStyle.ts`). 'classic' for every map saved before the
+   * regions, so it opens identical; a new map from the game is Brazilian.
+   */
+  markingStyle: MarkingStyleId = 'classic';
   /**
    * The map's ecosystem (`world/ecology.ts`): its biome and seed. Null on a
    * map made before it, which keeps its ground as it was; the game gives a
@@ -793,6 +800,13 @@ export class RoadDoc {
     this.markNode(id);
   }
 
+  /** The regional standard of the road paint (docs/VIAS.md V6): every road painted again. */
+  setMarkingStyle(style: MarkingStyleId): void {
+    if (this.markingStyle === style) return;
+    this.markingStyle = style;
+    this.roadsChanged(null, false, { detail: 'paint style' });
+  }
+
   /** Each leg's rule at a junction (`RoadNode.approachRules`); undefined: all derived. */
   setNodeApproachRules(id: NodeId, rules: readonly ApproachRuleEntry[] | undefined): void {
     const node = this.nodes.get(id);
@@ -1161,6 +1175,7 @@ export class RoadDoc {
     copy.terrainStamps.length = 0;
     copy.terrainStamps.push(...this.terrainStamps.map((stamp) => ({ ...stamp })));
     copy.terrainRelief = this.terrainRelief;
+    copy.markingStyle = this.markingStyle;
     copy.nature = this.nature ? { ...this.nature } : null;
     copy.buildings.copyAllocator(this.buildings);
     copy.nextZoneId = this.nextZoneId;
@@ -1340,6 +1355,10 @@ export class RoadDoc {
       others.push('paint');
     }
 
+    if (this.markingStyle !== source.markingStyle) {
+      this.markingStyle = source.markingStyle;
+      this.roadsChanged(null, false, { detail: 'paint style' });
+    }
     if (landMoved) {
       this.terrainStamps.length = 0;
       this.terrainStamps.push(...source.terrainStamps.map((stamp) => ({ ...stamp })));
@@ -1419,6 +1438,7 @@ export class RoadDoc {
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       // Only for the natural land: a legacy map serialises as before.
       ...(this.terrainRelief !== RELIEF_LEGACY ? { relief: this.terrainRelief } : {}),
+      ...(this.markingStyle !== 'classic' ? { markingStyle: this.markingStyle } : {}),
       ...(this.nature ? { nature: { ...this.nature } } : {}),
       ...(this.terrainPaint.length > 0 ? { paint: this.terrainPaint.map((dab) => ({ ...dab })) } : {}),
       ...(this.fogDabs.length > 0 || JSON.stringify(this.fogSettings) !== JSON.stringify(DEFAULT_FOG)
@@ -1607,6 +1627,7 @@ export class RoadDoc {
     }
     // Absent: a map from before the natural land, which stays on the old one.
     doc.terrainRelief = isReliefVersion(data.relief) ? data.relief : RELIEF_LEGACY;
+    doc.markingStyle = isMarkingStyle(data.markingStyle) ? data.markingStyle : 'classic';
     // Absent: a map from before the ecosystem, which keeps its ground.
     doc.nature = isNatureSettings(data.nature) ? { region: data.nature.region, seed: data.nature.seed } : null;
     for (const stamp of data.terrain ?? []) {
@@ -1736,6 +1757,8 @@ export interface SerializedDoc {
   readonly terrain?: readonly TerrainStamp[];
   /** `ReliefVersion`; absent on maps made before the natural landform. */
   readonly relief?: number;
+  /** The regional standard of the road paint (docs/VIAS.md V6); absent: 'classic'. */
+  readonly markingStyle?: string;
   /** The ecosystem (`NatureSettings`); absent on maps made before it. */
   readonly nature?: { readonly region: string; readonly seed: number };
   /**

@@ -64,7 +64,17 @@ export interface RoadSection {
    */
   readonly linesForward?: readonly LaneLine[];
   readonly linesBackward?: readonly LaneLine[];
+  /**
+   * The line between the two directions (docs/VIAS.md V6, MBST vol. IV):
+   * dashed (LFO-2, overtaking allowed), solid (LFO-1) or double solid
+   * (LFO-3). Absent: the road's own rule (dashed on a street, solid between
+   * lanes of a wider road).
+   */
+  readonly centreLine?: CentreLine;
 }
+
+export type CentreLine = 'dashed' | 'solid' | 'double';
+export const CENTRE_LINES: readonly CentreLine[] = ['dashed', 'solid', 'double'];
 
 /** Who may drive a lane (`RoadSection.useForward`). */
 export type LaneUse = 'all' | 'bus';
@@ -133,6 +143,11 @@ export function normalizeRoadSection(raw: unknown): RoadSection | undefined {
     if (!Array.isArray(rules) || rules.length > 8 ||
       rules.some((rule) => !LANE_TURN_RULES.includes(rule as LaneTurnRule))) return undefined;
     result[key] = [...rules] as LaneTurnRule[];
+  }
+  const centreLine = value['centreLine'];
+  if (centreLine !== undefined) {
+    if (!CENTRE_LINES.includes(centreLine as CentreLine)) return undefined;
+    result.centreLine = centreLine as CentreLine;
   }
   // Lane uses and lines: a list of at most eight known values, dropped when
   // it says nothing a missing one would not (all lanes open, every line dashed).
@@ -205,7 +220,7 @@ export function sameRoadSection(a: RoadSection | undefined, b: RoadSection | und
   return (Object.keys(ROAD_SECTION_LIMITS) as (keyof typeof ROAD_SECTION_LIMITS)[]).every((key) => a[key] === b[key]) &&
     a.sidewalkLeft === b.sidewalkLeft && a.sidewalkRight === b.sidewalkRight && !a.flushLeft === !b.flushLeft &&
     !a.flushRight === !b.flushRight && !a.medianFlush === !b.medianFlush &&
-    JSON.stringify(a.materials ?? null) === JSON.stringify(b.materials ?? null) &&
+    JSON.stringify(a.materials ?? null) === JSON.stringify(b.materials ?? null) && a.centreLine === b.centreLine &&
     (['turnsForward', 'turnsBackward', ...LANE_LIST_KEYS] as const).every((key) => {
       const left: readonly string[] = a[key] ?? [], right: readonly string[] = b[key] ?? [];
       return left.length === right.length && left.every((rule, index) => rule === right[index]);
