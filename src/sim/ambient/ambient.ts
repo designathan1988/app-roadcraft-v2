@@ -487,8 +487,14 @@ export class AmbientWorld {
     this.baysFor = key;
     this.bayList = collectBays(w);
     const kept = new Map(this.bays);
+    // The list is shared: the lots' own cars (`agents/lotTraffic.ts`, stepped
+    // before the scenery) are in it too. Only the scenery's are made again;
+    // the others stay, or a car driving into a lot went undrawn for the tick.
+    const mine = new Set(kept.values());
+    const others = this.parked.filter((car) => !mine.has(car));
     this.bays.clear();
     this.parked.length = 0;
+    this.parked.push(...others);
     for (const bay of this.bayList) {
       const r = new Rng(0x9e3779b9 ^ Math.imul(Math.round(bay.x * 7) + Math.round(bay.y * 13) * 4099, 2654435761));
       if (r.float() >= PARKED) continue;
