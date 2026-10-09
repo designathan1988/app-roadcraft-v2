@@ -28,16 +28,33 @@ export interface JunctionPanelHost {
   setSignal(settings: SignalSettings | undefined): void;
   setSignals(settings: ReadonlyMap<NodeId, SignalSettings>): void;
   setMovementBlocked(from: SegmentId, to: SegmentId, blocked: boolean): void;
+  /** World to screen, so legs are named as the player sees them. */
+  readonly project?: (x: number, y: number) => { readonly x: number; readonly y: number };
 }
 
 const CONTROLS: readonly JunctionControl[] = ['auto', 'signal', 'priority', 'stop', 'mini', 'none'];
 const RULES: readonly ApproachRule[] = ['priority', 'yield', 'stop'];
 
-/** The way a leg points from its junction - north, south-east... - by the map's north. */
+/**
+ * The way a leg points from its junction AS THE PLAYER SEES IT (up, down,
+ * left, right on the screen), through the camera when the host gives it;
+ * by the map's north otherwise. By the map's north, a road running across
+ * the screen read "south-west" whenever the camera was turned (seen on V5's
+ * photos).
+ */
+let screenOf: ((x: number, y: number) => { readonly x: number; readonly y: number }) | undefined;
 export function compassOf(doc: RoadDoc, nodeId: NodeId, seg: { a: NodeId; b: NodeId }): string {
   const here = doc.node(nodeId);
   const there = doc.node(seg.a === nodeId ? seg.b : seg.a);
   if (!here || !there) return '?';
+  if (screenOf) {
+    const a = screenOf(here.x, here.y), b = screenOf(there.x, there.y);
+    // Screen y grows down: 0 is up, clockwise.
+    const angle = Math.atan2(b.x - a.x, -(b.y - a.y));
+    const names = ['up', 'upRight', 'right', 'downRight', 'down', 'downLeft', 'left', 'upLeft'] as const;
+    const i = ((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8;
+    return t(`screenDir.${names[i]}`);
+  }
   const angle = Math.atan2(there.x - here.x, there.y - here.y);
   const points = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'] as const;
   const i = ((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8;
@@ -48,6 +65,7 @@ let flowsShown: HTMLElement | null = null;
 
 export function mountJunctionPanel(container: HTMLElement, host: JunctionPanelHost): void {
   const { doc, sim, node } = host;
+  screenOf = host.project;
   const n = doc.node(node);
   if (!n) return;
   const root = document.createElement('section');

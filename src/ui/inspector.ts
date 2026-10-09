@@ -491,6 +491,7 @@ function junctionHost(doc: RoadDoc, sim: SimWorld, id: NodeId): Parameters<typeo
     setSignal: (settings) => actionsForNode().onSetSignal?.(id, settings),
     setSignals: (settings) => actionsForNode().onSetSignals?.(settings),
     setMovementBlocked: (from, to, blocked) => actionsForNode().onSetMovementBlocked?.(id, from, to, blocked),
+    ...(actionsForNode().project ? { project: actionsForNode().project! } : {}),
   };
 }
 
