@@ -1868,6 +1868,53 @@ function strataTexture(anisotropy: number): DataTexture {
   return texture;
 }
 
+/** Metres of rock beds the column texture holds, from the top of the rock down past the bedrock. */
+const BEDS_SPAN = 256;
+/** Texels down the column: a quarter metre each, so a contact is filtered over a hand's breadth. */
+const BEDS_TEXELS = 1024;
+/** One repeat of the rock beds, top down: thickness (m), sRGB colour, gravel (1) or fine (0). */
+const BEDS: readonly (readonly [number, number, number, number, number])[] = [
+  [22, 178, 149, 108, 0], [5, 97, 84, 74, 0], [14, 149, 112, 79, 0], [8, 156, 151, 141, 1],
+  [26, 191, 165, 124, 0], [4, 101, 89, 79, 0], [18, 140, 115, 89, 0], [9, 162, 152, 138, 1],
+  [24, 174, 147, 110, 0], [10, 108, 93, 79, 0],
+];
+
+/**
+ * The rock beds of the cut sides as a column texture, worked out once: the
+ * shader reads one texel for the depth instead of walking the beds per
+ * pixel (two taps over ten beds). Each repeat of the sequence in tones of its
+ * own. Alpha marks the gravel beds (pebbles drawn in the shader).
+ */
+function bedsTexture(): DataTexture {
+  const repeat = BEDS.reduce((sum, bed) => sum + bed[0], 0);
+  const data = new Uint8Array(BEDS_TEXELS * 4);
+  for (let y = 0; y < BEDS_TEXELS; y++) {
+    const depth = ((y + 0.5) / BEDS_TEXELS) * BEDS_SPAN;
+    const cycle = Math.floor(depth / repeat);
+    let d = depth - cycle * repeat;
+    let bed = BEDS[BEDS.length - 1]!;
+    let k = BEDS.length - 1;
+    for (let i = 0; i < BEDS.length; i++) {
+      if (d < BEDS[i]![0]) { bed = BEDS[i]!; k = i; break; }
+      d -= BEDS[i]![0];
+    }
+    const h = Math.sin(cycle * 3.1 + k) * 43758.5453;
+    const tone = 0.9 + 0.18 * (h - Math.floor(h));
+    const i = y * 4;
+    data[i] = Math.min(255, bed[1] * tone);
+    data[i + 1] = Math.min(255, bed[2] * tone);
+    data[i + 2] = Math.min(255, bed[3] * tone);
+    data[i + 3] = bed[4] * 255;
+  }
+  const texture = new DataTexture(data, 1, BEDS_TEXELS, RGBAFormat, UnsignedByteType);
+  texture.colorSpace = SRGBColorSpace;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 /**
  * The cut sides' material: the strata texture, and over it what a painted
  * cross-section shows at its top - a ragged lip of turf hanging over the
@@ -1883,7 +1930,9 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
     metalness: 0,
     envMapIntensity: 0.1,
   });
+  const beds = bedsTexture();
   material.onBeforeCompile = (shader) => {
+    shader.uniforms['uBeds'] = { value: beds };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
          attribute float aBelow;
@@ -1893,6 +1942,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
          varying float vBelow;
+         uniform sampler2D uBeds;
          float wallHash(float n) { return fract(sin(n) * 43758.5453); }
          // 1-D value noise along the rim, in metres.
          float wallNoise(float x) {
@@ -1923,32 +1973,13 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          vec3 subsoil = mix(vec3(0.30, 0.135, 0.06), vec3(0.42, 0.31, 0.19), smoothstep(subTop, cTop + 6.0, max(dd, vBelow)));
          vec3 strata = subsoil;
          {
-           const float T[10] = float[10](22.0, 5.0, 14.0, 8.0, 26.0, 4.0, 18.0, 9.0, 24.0, 10.0);
-           const vec3 C[10] = vec3[10](
-             vec3(0.45, 0.30, 0.15), vec3(0.12, 0.09, 0.07), vec3(0.30, 0.16, 0.08), vec3(0.33, 0.31, 0.27),
-             vec3(0.52, 0.38, 0.20), vec3(0.13, 0.10, 0.08), vec3(0.26, 0.17, 0.10), vec3(0.36, 0.32, 0.26),
-             vec3(0.42, 0.29, 0.16), vec3(0.15, 0.11, 0.08));
-           const float G[10] = float[10](0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
-           // Two taps half a pixel apart: a contact antialiased, still sharp.
-           float fw = max(fwidth(dd), 1e-3) * 0.5;
-           vec3 rock = vec3(0.0);
-           for (int tap = 0; tap < 2; tap++) {
-             float d = dd - rockTop + (tap == 0 ? -fw : fw);
-             // The sequence goes on down to the bedrock, each repeat in tones of its own.
-             float cycle = floor(d / 140.0);
-             d -= cycle * 140.0;
-             float acc = 0.0;
-             vec3 c = C[9];
-             float g = 0.0;
-             for (int k = 0; k < 10; k++) {
-               if (d < acc + T[k]) { c = C[k] * (0.9 + 0.18 * wallHash(cycle * 3.1 + float(k))); g = G[k]; break; }
-               acc += T[k];
-             }
-             // A gravel bed: pebbles, each a cell of its own shade.
-             vec2 pc = floor(vec2(along, vBelow) / 1.6);
-             c *= mix(1.0, 0.8 + 0.45 * wallHash(dot(pc, vec2(12.9, 78.2))), g);
-             rock += c * 0.5;
-           }
+           // The rock beds: one read of their column (bedsTexture), filtered
+           // over a quarter metre, so a contact is sharp and never stair-stepped.
+           vec4 bed = texture2D(uBeds, vec2(0.5, clamp((dd - rockTop) / ${BEDS_SPAN.toFixed(1)}, 0.0, 1.0)));
+           vec3 rock = bed.rgb;
+           // A gravel bed: pebbles, each a cell of its own shade.
+           vec2 pc = floor(vec2(along, vBelow) / 1.6);
+           rock *= mix(1.0, 0.8 + 0.45 * wallHash(dot(pc, vec2(12.9, 78.2))), bed.a);
            strata = mix(subsoil, rock, smoothstep(rockTop - 1.5, rockTop + 1.5, dd));
            // The C substratum: weathered stones scattered through it.
            vec2 sc = floor(vec2(along, vBelow) / 2.2);
@@ -1978,7 +2009,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v6';
+  material.customProgramCacheKey = () => 'terrain-walls-v7';
   return material;
 }
 
