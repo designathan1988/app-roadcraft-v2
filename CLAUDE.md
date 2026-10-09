@@ -42,6 +42,14 @@ A technique already cited in the code or docs is not researched again.
   `node scripts/run-limited.mjs node node_modules/vite/bin/vite.js build --outDir C:/Codex-Shared/road-play-dist`,
   then preview `roadcraft-play` (port 4180); otherwise `roadcraft-dev`.
   Nothing visible changed: say `SEM VERIFICAÇÃO VISUAL: <motivo>`.
+- Two servers, two versions. 5173 (`roadcraft-dev`) runs the code as it is
+  now; 4180 (`roadcraft-play`) serves the last build in
+  `C:/Codex-Shared/road-play-dist`. After every build, tell the player in the
+  reply to press Ctrl+F5 on any 4180 tab opened before it: an open tab keeps
+  the old bundle and shows the old defects (2026-10-09: the noise "came back"
+  on 4180 while 5173 had the fix). Check which bundle 4180 serves with
+  `curl -s http://127.0.0.1:4180/ | grep -o 'assets/index-[^"]*\.js'`, and
+  always say which server and which build a picture or a number came from.
 - Tests: only the specs of files touched (`npx vitest run <path>`), in the
   foreground. `npm run check` and a fuzz hunt (`tests/fuzz/`) once, before a
   stage closes. A probe at most twice per item.
