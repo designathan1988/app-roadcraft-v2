@@ -164,6 +164,40 @@ describe('walkways', () => {
       for (const [i, set] of onIsland) expect(set.size, `island ${i} (area ${area([union[i]!]).toFixed(0)})`).toBe(1);
     });
   }
+
+  // A shallow merge (two legs under 25 degrees apart) has no carriageway
+  // corners (`junction/build.ts`); its footways still join round the node in
+  // angular order, as SUMO's walking areas do (`NBNode::buildWalkingAreas`).
+  // The test city has one: with the footways read off the carriageway
+  // corners, everything past it was an island and nobody came in on foot
+  // between its two road ends.
+  for (const [name, make] of [
+    ['shallow fork', () => {
+      const doc = new RoadDoc();
+      const c = doc.addNode({ x: 0, y: 0 });
+      doc.addSegment(doc.addNode({ x: -300, y: 0 }).id, c.id, 0);
+      doc.addSegment(doc.addNode({ x: 0, y: 260 }).id, c.id, 0);
+      doc.addSegment(c.id, doc.addNode({ x: 540, y: 0 }).id, 0);
+      doc.addSegment(c.id, doc.addNode({ x: 280, y: -10 }).id, 0);
+      return doc;
+    }],
+    ['test city', () => RoadDoc.fromJSON(JSON.parse(readFileSync(join(process.cwd(), 'maps', 'cidade-com-estacionamento.json'), 'utf8')) as never)],
+  ] as const) {
+    it(`${name}: every road end is walked to from every other`, () => {
+      const doc = make();
+      const net = new Network(doc);
+      net.rebuild();
+      const g = buildWalkways(net);
+      const reached = new Set<number>([0]);
+      const stack = [0];
+      while (stack.length) {
+        const n = stack.pop()!;
+        for (const wi of g.at.get(n) ?? []) for (const o of [g.ways[wi]!.a, g.ways[wi]!.b]) if (!reached.has(o)) { reached.add(o); stack.push(o); }
+      }
+      expect(reached.size).toBe(g.nodes.length);
+      expect(g.nodes.filter((n) => (g.at.get(n.id) ?? []).length === 1)).toEqual([]);
+    });
+  }
 });
 
 /** Footway and kerb bands of one island are one polygon: the union of the bands. */

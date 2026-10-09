@@ -629,7 +629,16 @@ export function* walkwaySteps(net: Network): Generator<void, WalkGraph, void> {
     const byLevel = net.junctions.get(nodeId);
     const junction = byLevel?.get(Level.Sidewalk);
     if (junction && junction.legs.length >= 2 && !junction.transition) {
-      for (const corner of junction.corners) {
+      // Each leg's footway joins the next leg's round the node, in angular
+      // order, whatever the angle between them (SUMO's netconvert,
+      // `NBNode::buildWalkingAreas`: sidewalks are grouped by their order
+      // round the junction, never by the angle). A shallow merge has no
+      // carriageway corners (`junction/build.ts`, legs under 25 degrees
+      // apart): read off them, none of its footways joined any other, and
+      // everything beyond it was an island nobody could walk to.
+      const pairs = junction.corners.length ? junction.corners
+        : junction.legs.map((_, i) => ({ i, j: (i + 1) % junction.legs.length }));
+      for (const corner of pairs) {
         const li = junction.legs[corner.i]!, lj = junction.legs[corner.j]!;
         // Leg i's LEFT boundary feeds the corner, leg j's RIGHT boundary leaves it.
         const from = sideOf(here, li.seg, node, li.nrm, 1);
