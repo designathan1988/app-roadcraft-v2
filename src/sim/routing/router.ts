@@ -216,10 +216,16 @@ function routeCost(
   const connectorTravel = connector.length / Math.max(0.5, out.speedLimit * 0.65);
   const turnPenalty = connector.turn === 'uturn' ? 4 : connector.turn === 'through' ? 0 : 0.35;
   const here = connectorTravel + travel * (1 + density * 2.6) + turnPenalty;
-  if (remaining <= 1) return here;
-
   const next = w.graph.exitsOf(out.id);
+  // The road ends: the vehicle leaves the map there.
   if (!next.length) return here;
+  // A lane it could enter and never leave: every way on is too tight for this
+  // body (SUMO's "disconnected" for its vehicle class, a gridlock it can only
+  // teleport out of). Priced as the lane it ends on, a truck took a ring of
+  // short one-way streets whose bends only cars fit, stood at the end of its
+  // route for good, and every vehicle on the ring stood behind it.
+  if (!next.some((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body)) return Infinity;
+  if (remaining <= 1) return here;
 
   // One set for the whole search, the lane added on the way down and taken
   // out on the way back (it was not in it: checked above): a copy of the set

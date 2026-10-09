@@ -212,7 +212,14 @@ function spawnAt(w: SimWorld, id: string): boolean {
   w.vehicles.set(vehicle.id, vehicle);
   w.enterLanelet(vehicle, id);
   vehicle.destination = chooseVehicleDestination(w, id, bodyClassOfArchetype(vehicle.archetype));
-  planFrom(w, vehicle);
+  // The check above sees only the first movement; this one, the way beyond
+  // it (`routeCost`): a truck whose arm turns onto a ring only cars fit has a
+  // first movement and nowhere after it. Not inserted, as SUMO discards what
+  // it cannot insert; a later draw may choose a smaller vehicle.
+  if (planFrom(w, vehicle) === null && w.graph.exitsOf(id).length > 0) {
+    w.removeVehicle(vehicle);
+    return false;
+  }
   return true;
 }
 
@@ -250,7 +257,14 @@ export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archety
   w.vehicles.set(vehicle.id, vehicle);
   w.enterLanelet(vehicle, id);
   vehicle.destination = chooseVehicleDestination(w, id, bodyClassOfArchetype(vehicle.archetype));
-  planFrom(w, vehicle);
+  // Nowhere this body can go from here - every way on too tight for it - and
+  // it is not at a road's end: not inserted (SUMO discards what it cannot
+  // insert). Born anyway, a truck at the arm of a ring only cars fit stood at
+  // the end of its road for good, the arm queued behind it.
+  if (planFrom(w, vehicle) === null && w.graph.exitsOf(id).length > 0) {
+    w.removeVehicle(vehicle);
+    return null;
+  }
   return vehicle.id;
 }
 
