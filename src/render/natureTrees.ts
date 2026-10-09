@@ -6,7 +6,7 @@ import {
   type MeshDepthMaterial,
 } from 'three';
 import type { TreePlacement } from './groundCover';
-import { lowPolyTree } from './lowPolyTrees';
+import { leafCardMaterials, lowPolyTreeParts } from './lowPolyTrees';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 
 /**
@@ -47,34 +47,41 @@ const FOREST_WIND: WindResponse = { sway: 0.045, flutter: 0.009 };
 interface Variant {
   /** The model, one unit tall on its origin (the ground); the same at every distance. */
   readonly levels: readonly [BufferGeometry, BufferGeometry, BufferGeometry];
+  /** Its foliage cards (`lowPolyTrees.ts`), drawn with the same instances; none on a cypress or a palm. */
+  readonly cards: BufferGeometry | null;
 }
 
 export interface NatureTreeKit {
   readonly variants: readonly Variant[];
   readonly material: MeshStandardMaterial;
   readonly depth: MeshDepthMaterial;
+  readonly cardMaterial: MeshStandardMaterial;
   dispose(): void;
 }
 
-/** Makes the trees; their material shares the forest's wind. */
+/** Makes the trees; their materials share the forest's wind. */
 export async function loadNatureTrees(_anisotropy: number): Promise<NatureTreeKit> {
   const variants: Variant[] = TREE_MODELS.map((kind, i) => {
-    const g = lowPolyTree(kind, 0x7ee5 + i * 7919);
-    return { levels: [g, g, g] };
+    const { body, cards } = lowPolyTreeParts(kind, 0x7ee5 + i * 7919);
+    return { levels: [body, body, body], cards };
   });
-  // Opaque, matt, faceted: each face lit flat, as the drawings are.
+  // Opaque, matt, faceted: the trunk, the crown's shaded heart, a conifer, a palm.
   const material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, flatShading: true, envMapIntensity: 0.35 });
   applyWind(material, FOREST_WIND, 'nature-trees-lowpoly');
   const depth = windDepthMaterial(FOREST_WIND, 'nature-trees-lowpoly-depth');
-  console.info('[nature] low-poly trees (triangles):', variants.map((v, i) => `${TREE_MODELS[i]} ${v.levels[0].getAttribute('position').count / 3}`).join(', '));
+  const cardKit = leafCardMaterials(FOREST_WIND, 'nature-trees');
+  console.info('[nature] trees (triangles, body + cards):', variants.map((v, i) => `${TREE_MODELS[i]} ${v.levels[0].getAttribute('position').count / 3} + ${(v.cards?.getAttribute('position').count ?? 0) / 3}`).join(', '));
   return {
     variants,
     material,
     depth,
+    cardMaterial: cardKit.material,
     dispose() {
-      for (const v of variants) v.levels[0].dispose();
+      for (const v of variants) { v.levels[0].dispose(); v.cards?.dispose(); }
       material.dispose();
       depth.dispose();
+      cardKit.material.dispose();
+      cardKit.depth.dispose();
     },
   };
 }
@@ -153,6 +160,8 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
   const meshes: InstancedMesh[] = [];
   interface Group {
     readonly mesh: InstancedMesh;
+    /** The variety's foliage cards: the same instances, written with the body's. */
+    readonly cards: InstancedMesh | null;
     readonly capacity: number;
     count: number;
   }
@@ -170,7 +179,22 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
     mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
     mesh.count = 0;
     meshes.push(mesh);
-    return { mesh, capacity, count: 0 };
+    let cards: InstancedMesh | null = null;
+    if (variant.cards) {
+      cards = new InstancedMesh(variant.cards, kit.cardMaterial, capacity);
+      cards.name = `nature-tree-${TREE_MODELS[k] ?? k}-${k}-cards`;
+      // The crown's heart throws the tree's shadow; alpha-cut cards in the
+      // shadow pass cost far more than they add.
+      cards.castShadow = false;
+      cards.receiveShadow = false;
+      cards.frustumCulled = false;
+      // The same buffers as the body: one write places both.
+      cards.instanceMatrix = mesh.instanceMatrix;
+      cards.instanceColor = mesh.instanceColor;
+      cards.count = 0;
+      meshes.push(cards);
+    }
+    return { mesh, cards, capacity, count: 0 };
   });
 
   const place = (list: readonly TreePlacement[]): boolean => {
@@ -211,6 +235,7 @@ export function buildNatureForest(trees: readonly TreePlacement[], kit: NatureTr
       });
       g.count = indices.length;
       g.mesh.count = g.count;
+      if (g.cards) g.cards.count = g.count;
       // Only the instances drawn go to the GPU (`addUpdateRange`).
       if (g.count === 0) return;
       g.mesh.instanceMatrix.clearUpdateRanges();

@@ -13,7 +13,7 @@ import {
 } from 'three';
 
 import type { GeologyKind } from '@world/terrainPaint';
-import { lowPolyTree, type LowPolyKind } from './lowPolyTrees';
+import { leafCardMaterials, lowPolyTreeParts, type LowPolyKind } from './lowPolyTrees';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 
 /**
@@ -58,7 +58,7 @@ export interface TreePlacement extends CoverPlacement {
   readonly species: ForestSpecies;
 }
 
-/** One tree model, and its foliage cards (none: every tree of the game is one faceted model now). */
+/** One tree model: its body and its foliage cards (none on a conifer). */
 export interface TreeModel {
   readonly body: BufferGeometry;
   readonly cards: BufferGeometry | null;
@@ -73,6 +73,8 @@ export interface GroundCoverKit {
   readonly scrubMaterial: MeshStandardMaterial;
   readonly treeMaterial: MeshStandardMaterial;
   readonly treeDepth: MeshDepthMaterial;
+  /** The foliage cards' material (`lowPolyTrees.ts` leafCardMaterials). */
+  readonly cardMaterial: MeshStandardMaterial;
   dispose(): void;
 }
 
@@ -194,13 +196,13 @@ const FOREST_KIND: Readonly<Record<ForestSpecies, LowPolyKind>> = {
 };
 
 /**
- * A tree one unit tall, in the game's one low-poly style (`lowPolyTrees.ts`):
- * the painted woods' stand-ins, drawn only when the countryside's kit cannot
- * be grown, must not be a second kind of tree (the player, 2026-10-08). One
- * faceted model, no foliage cards.
+ * A tree one unit tall, in the game's one style (`lowPolyTrees.ts`): the
+ * painted woods' stand-ins, drawn only when the countryside's kit cannot be
+ * grown, must not be a second kind of tree (the player, 2026-10-08). Its body
+ * and its foliage cards (none on a conifer).
  */
 export function treeModel(species: ForestSpecies, seed: number): TreeModel {
-  return { body: lowPolyTree(FOREST_KIND[species], 0x5f0e + seed * 7919 + species.length * 131), cards: null };
+  return lowPolyTreeParts(FOREST_KIND[species], 0x5f0e + seed * 7919 + species.length * 131);
 }
 
 export function createGroundCoverKit(): GroundCoverKit {
@@ -217,6 +219,7 @@ export function createGroundCoverKit(): GroundCoverKit {
   const treeMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.85, metalness: 0, envMapIntensity: 0.35, flatShading: true });
   applyWind(treeMaterial, FOREST_WIND, 'forest-crown');
   const treeDepth = windDepthMaterial(FOREST_WIND, 'forest-crown-depth');
+  const cardKit = leafCardMaterials(FOREST_WIND, 'forest');
   // Weathered stone and leaves: rough, no sheen of the sky on them.
   const rockMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.94, metalness: 0, envMapIntensity: 0.25 });
   const scrubMaterial = new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.92, metalness: 0, envMapIntensity: 0.2 });
@@ -228,6 +231,7 @@ export function createGroundCoverKit(): GroundCoverKit {
     scrubMaterial,
     treeMaterial,
     treeDepth,
+    cardMaterial: cardKit.material,
     dispose() {
       for (const geometry of [...rocks, ...scrub]) geometry.dispose();
       for (const model of FOREST_SPECIES.flatMap((s) => trees[s])) {
@@ -238,6 +242,8 @@ export function createGroundCoverKit(): GroundCoverKit {
       scrubMaterial.dispose();
       treeMaterial.dispose();
       treeDepth.dispose();
+      cardKit.material.dispose();
+      cardKit.depth.dispose();
     },
   };
 }
@@ -344,6 +350,12 @@ export function buildGroundCover(
     // Its shadow sways with it (the forest's wind in the depth pass too).
     for (const mesh of bodies) mesh.customDepthMaterial = kit.treeDepth;
     forest.push(...bodies);
+    if (models.every((model) => model.cards)) {
+      // The foliage cards, on the same placements; the crown's heart throws the shadow.
+      const cards = instanced(ofSpecies, models.map((model) => model.cards!), kit.cardMaterial, 'forest-cards', treeTint, 0, 0.05, true);
+      for (const mesh of cards) { mesh.castShadow = false; mesh.receiveShadow = false; }
+      forest.push(...cards);
+    }
   }
   const meshes = [
     // A stone sunk by a fifth of its height, so it grows out of the ground.

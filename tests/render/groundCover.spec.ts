@@ -14,14 +14,16 @@ describe('ground cover', () => {
     }
   });
 
-  it('grows every tree as one faceted model of a light kit\'s size, no foliage cards', () => {
-    // The game's one tree style (`lowPolyTrees.ts`): Kenney's Nature Kit
-    // trees are 50 to 230 triangles; a crown and its trunk stay under 200.
+  it('grows every tree light: body and foliage cards together under 300 triangles, cards on the broadleaves only', () => {
+    // The game's one tree style (`lowPolyTrees.ts`): a low-poly trunk and
+    // inner crown under alpha-cut foliage cards; conifers keep their facets.
     for (const species of FOREST_SPECIES) {
       for (let seed = 0; seed < 4; seed++) {
         const model = treeModel(species, seed);
-        expect(model.cards).toBeNull();
-        expect(triangles(model.body)).toBeLessThanOrEqual(200);
+        if (species === 'conifer') expect(model.cards).toBeNull();
+        else expect(model.cards).not.toBeNull();
+        const total = triangles(model.body) + (model.cards ? triangles(model.cards) : 0);
+        expect(total).toBeLessThanOrEqual(300);
       }
     }
   });

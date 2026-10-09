@@ -30,12 +30,13 @@ import { FOOTWAY_RISE } from '@world/roadTypes';
 import { m } from '@world/units';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
+import { leafCardMaterials } from './lowPolyTrees';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
   benchGeometry,
   binGeometry,
-  bushGeometry,
+  bushParts,
   grassTuftGeometry,
   hydrantGeometry,
   lampGeometry,
@@ -44,7 +45,7 @@ import {
   postboxGeometry,
   phoneGeometry,
   drainGeometry,
-  treeGeometry,
+  treeParts,
   treePitGeometry,
   trianglesOf,
   wildflowerGeometry,
@@ -93,6 +94,12 @@ const GRASS_WIND: WindResponse = { sway: 0.22, flutter: 0.04 };
 export interface SceneryKit {
   readonly trees: Record<TreeSpecies, BufferGeometry>;
   readonly bushes: Record<BushKind, BufferGeometry>;
+  /** Each plant's foliage cards (`lowPolyTrees.ts`), drawn with the same instances; none on a conifer. */
+  readonly cards: Partial<Record<TreeSpecies | BushKind, BufferGeometry>>;
+  readonly treeCards: MeshStandardMaterial;
+  readonly treeCardsDepth: MeshDepthMaterial;
+  readonly shrubCards: MeshStandardMaterial;
+  readonly shrubCardsDepth: MeshDepthMaterial;
   readonly furniture: Record<Exclude<FurnitureKind, 'streetTree' | 'shrub'>, BufferGeometry>;
   readonly lampLens: BufferGeometry;
   readonly treePit: BufferGeometry;
@@ -116,8 +123,14 @@ export interface SceneryKit {
 
 /** Builds every model and material once, at renderer start. */
 export function createSceneryKit(): SceneryKit {
-  const trees = Object.fromEntries(TREE_SPECIES.map((s) => [s, treeGeometry(s)])) as Record<TreeSpecies, BufferGeometry>;
-  const bushes = Object.fromEntries(BUSH_KINDS.map((k) => [k, bushGeometry(k)])) as Record<BushKind, BufferGeometry>;
+  const treeModels = TREE_SPECIES.map((s) => [s, treeParts(s)] as const);
+  const bushModels = BUSH_KINDS.map((k) => [k, bushParts(k)] as const);
+  const trees = Object.fromEntries(treeModels.map(([s, p]) => [s, p.body])) as Record<TreeSpecies, BufferGeometry>;
+  const bushes = Object.fromEntries(bushModels.map(([k, p]) => [k, p.body])) as Record<BushKind, BufferGeometry>;
+  const cards: Partial<Record<TreeSpecies | BushKind, BufferGeometry>> = {};
+  for (const [kind, parts] of [...treeModels, ...bushModels]) if (parts.cards) cards[kind] = parts.cards;
+  const treeCardKit = leafCardMaterials(TREE_WIND, 'tree');
+  const shrubCardKit = leafCardMaterials(BUSH_WIND, 'bush');
   const furniture = {
     lamp: lampGeometry(),
     bin: binGeometry(),
@@ -132,8 +145,8 @@ export function createSceneryKit(): SceneryKit {
   const tuft = grassTuftGeometry();
   const flower = wildflowerGeometry();
 
-  // Faceted, as the countryside's trees (`lowPolyTrees.ts`): one tree style
-  // in the whole game, no leaf cards, no leaf noise over the crown.
+  // The trunk and the crown's shaded heart, faceted, under the foliage cards:
+  // the countryside's trees exactly (`lowPolyTrees.ts`), one style in the game.
   const foliage = new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, flatShading: true, envMapIntensity: 0.35 });
   applyWind(foliage, TREE_WIND, 'tree');
   const shrubs = new MeshStandardMaterial({ vertexColors: true, roughness: 0.86, metalness: 0, flatShading: true, envMapIntensity: 0.35 });
@@ -155,6 +168,7 @@ export function createSceneryKit(): SceneryKit {
   const geometries: BufferGeometry[] = [
     ...Object.values(trees),
     ...Object.values(bushes),
+    ...Object.values(cards) as BufferGeometry[],
     ...Object.values(furniture),
     lampLens,
     treePit,
@@ -162,10 +176,16 @@ export function createSceneryKit(): SceneryKit {
     flower,
     pool,
   ];
-  const materials: Material[] = [foliage, shrubs, grass, flowers, props, glow, foliageDepth, shrubsDepth, poolGlow];
+  const materials: Material[] = [foliage, shrubs, grass, flowers, props, glow, foliageDepth, shrubsDepth, poolGlow,
+    treeCardKit.material, treeCardKit.depth, shrubCardKit.material, shrubCardKit.depth];
   return {
     trees,
     bushes,
+    cards,
+    treeCards: treeCardKit.material,
+    treeCardsDepth: treeCardKit.depth,
+    shrubCards: shrubCardKit.material,
+    shrubCardsDepth: shrubCardKit.depth,
     furniture,
     lampLens,
     treePit,
@@ -195,23 +215,31 @@ export function createSceneryKit(): SceneryKit {
 }
 
 /**
- * The instanced meshes of trees and bushes, one low-poly model per kind at
- * every zoom, added to `meshes` and to `plants`.
+ * The instanced meshes of trees and bushes - each kind's body and its foliage
+ * cards on the same placements, one model at every zoom - added to `meshes`
+ * and to `plants`.
  */
 function plantMeshes(prefix: string, trees: Map<TreeSpecies, Placement[]>, bushes: Map<BushKind, Placement[]>, kit: SceneryKit,
   meshes: InstancedMesh[], plants: [InstancedMesh, BufferGeometry, BufferGeometry][]): void {
-  const add = (mesh: InstancedMesh | null, model: BufferGeometry): void => {
+  const add = (mesh: InstancedMesh | null, model: BufferGeometry, cards = false): void => {
     if (!mesh) return;
+    // The crown's heart throws the plant's shadow; alpha-cut cards in the
+    // shadow pass cost 70 ms a frame.
+    if (cards) mesh.castShadow = false;
     meshes.push(mesh);
     plants.push([mesh, model, model]);
   };
   for (const species of TREE_SPECIES) {
     const placed = trees.get(species) ?? [];
     add(build(`${prefix}trees-${species}`, kit.trees[species], kit.foliage, placed, kit.foliageDepth, kit.trees[species]), kit.trees[species]);
+    const cards = kit.cards[species];
+    if (cards) add(build(`${prefix}trees-${species}-cards`, cards, kit.treeCards, placed, kit.treeCardsDepth, cards), cards, true);
   }
   for (const kind of BUSH_KINDS) {
     const placed = bushes.get(kind) ?? [];
     add(build(`${prefix}bushes-${kind}`, kit.bushes[kind], kit.shrubs, placed, kit.shrubsDepth, kit.bushes[kind]), kit.bushes[kind]);
+    const cards = kit.cards[kind];
+    if (cards) add(build(`${prefix}bushes-${kind}-cards`, cards, kit.shrubCards, placed, kit.shrubCardsDepth, cards), cards, true);
   }
 }
 

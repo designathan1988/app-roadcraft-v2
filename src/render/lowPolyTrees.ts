@@ -1,14 +1,21 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   Color,
   ConeGeometry,
   CylinderGeometry,
+  DoubleSide,
   IcosahedronGeometry,
   Matrix4,
+  MeshStandardMaterial,
   Quaternion,
+  SRGBColorSpace,
   Vector3,
+  type Material,
+  type MeshDepthMaterial,
 } from 'three';
+import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 
 /**
  * THE ONE TREE STYLE of the game: every tree and bush on the map - the
@@ -18,27 +25,36 @@ import {
  * wood beside it are one family (the player, 2026-10-08: three kits side by
  * side, "não tem padronização alguma").
  *
- * Shaped as a professional low-poly kit shapes them (Kenney's Nature Kit,
- * measured in `public/models/nature/`: a crown 0.35 to 0.6 of the tree's
- * height across, 50 to 230 triangles, the crown ONE faceted mass on a short
- * clear trunk). The first version here built each crown of five or six
- * separate balls, wider than the tree was tall: from above it read as bunches
- * of grapes and balloons, an ipê as yellow balls stuck on green ones, and the
- * crowns of a garden ran together into one blob on many trunks (the player,
- * 2026-10-08: "esse lixo"). Now one sphere of 80 faces pushed in and out by a
- * slow noise (the low-poly recipe: a polygon-reduced sphere under a noise
- * displacer, tuts+), at most one smaller lump grown into it.
+ * Built as games build light stylized trees (the player, 2026-10-08: "a
+ * técnica de alpha, que faz ficar bem leve e bonita"): a low-poly trunk and a
+ * small, dark inner crown - the shaded heart - covered by FOLIAGE CARDS:
+ * quads of a leaf-cluster texture, alpha-cut, turned to face the eye
+ * (billboards, so no card is ever seen edge-on), all lit with normals
+ * pointing out from the crown's centre, so the canopy shades as one soft mass
+ * (Polycount and SideFX on stylized foliage; the fluffy-tree write-ups of
+ * Pontus Karlsson and Michael Dougall). The cut edge is smoothed by alpha to
+ * coverage on the multisampled target (three: "smooth aliasing on
+ * alphaTest-clipped edges"). Conifers and palms keep their geometry: needles
+ * and fronds read better as facets than as clusters.
  *
- * Colour: sober greens and grey-brown bark, sRGB hex read ONCE into the
- * linear working space (three's colour management since r152). An occlusion
- * is baked into each face's colour: darker low in a crown and deep inside it.
+ * Proportions from a professional low-poly kit (Kenney's Nature Kit,
+ * `public/models/nature/`: a crown 0.35 to 0.6 of the height across, a short
+ * clear trunk). Colour: sRGB hex read ONCE into the linear working space
+ * (three's colour management since r152).
  *
  * Every model is ONE unit tall with its root at the origin (the wind shader,
- * `wind.ts`, reads local y as the fraction of the height), non-indexed, with
- * position, normal and colour.
+ * `wind.ts`, reads local y as the fraction of the height). The body is
+ * non-indexed with position, normal and colour; the cards carry, besides,
+ * a uv and each corner's offset in the view's plane (`aCorner`).
  */
 
 export type LowPolyKind = 'oak' | 'broadleafTall' | 'cypress' | 'palm' | 'ipeYellow' | 'ipePink' | 'bush' | 'bushFlowering' | 'hedge';
+
+/** A tree's two parts: its body (trunk, inner crown, or the whole of a conifer or palm) and its foliage cards. */
+export interface LowPolyParts {
+  readonly body: BufferGeometry;
+  readonly cards: BufferGeometry | null;
+}
 
 interface Tone {
   readonly dark: Color;
@@ -46,8 +62,7 @@ interface Tone {
 }
 /** Two sRGB hex colours, converted once into the linear working space by `Color`. */
 const tone = (dark: number, lit: number): Tone => ({ dark: new Color(dark), lit: new Color(lit) });
-// Seen in the game's own light (ACES at exposure 1): the first greens, a
-// lit 0x67883d, left every face turned from the sky near black.
+// Seen in the game's own light (ACES at exposure 1).
 const LEAF = tone(0x3d5e2a, 0x7fa34b);
 const LEAF_TALL = tone(0x36552d, 0x6f9452);
 const NEEDLE = tone(0x2b4b2d, 0x587c49);
@@ -104,9 +119,17 @@ function crownShade(bottom: number, top: number, radius: number): Occlusion {
   };
 }
 
+/** A point of a crown's surface the foliage cards stand on: where, which way is out, its leaf colour, its height in the crown (0..1). */
+interface LeafPoint {
+  readonly p: Vector3;
+  readonly n: Vector3;
+  readonly tone: Tone;
+  readonly height: number;
+}
+
 /**
  * Triangles laid out flat - each its own three corners, so each face takes
- * its own normal and colour: the faceted look of a low-poly model.
+ * its own normal and colour - and the crown's leaf points, for its cards.
  */
 class Builder {
   private readonly pos: number[] = [];
@@ -114,8 +137,9 @@ class Builder {
   private readonly n = new Vector3();
   private readonly e = new Vector3();
   private readonly centre = new Vector3();
+  readonly leaves: LeafPoint[] = [];
 
-  constructor(private readonly rng: () => number) {}
+  constructor(readonly rng: () => number) {}
 
   /** One face: lighter facing the sky, a little shade of its own, times its occlusion. */
   tri(a: Vector3, b: Vector3, c: Vector3, t: Tone, occlusion: Occlusion = OPEN, jitter = 0.15): void {
@@ -157,15 +181,17 @@ class Builder {
 
   /**
    * A crown mass: an 80-face sphere (non-indexed: three's IcosahedronGeometry)
-   * pushed in and out by a slow noise - the large form - and a little detail,
-   * squashed by `squash`, at `at`. Below `floor` it is pressed flat (a bush on
-   * the ground).
+   * pushed in and out by a slow noise and a little detail, squashed by
+   * `squash`, at `at`. Below `floor` it is pressed flat (a bush). `leafy`: it
+   * is the shaded heart under foliage cards - drawn darker, its surface
+   * recorded as the cards' leaf points.
    */
   mass(at: Vector3, radius: number, squash: Vector3, t: Tone, seed: number, roughness: number, occlusion: Occlusion,
-    pick?: (centre: Vector3) => Tone, floor = -Infinity): void {
+    leafy: boolean, pick?: (centre: Vector3) => Tone, floor = -Infinity): void {
     const solid = new IcosahedronGeometry(1, 1);
     const position = solid.getAttribute('position');
     const p = new Vector3();
+    const top = radius * squash.y;
     for (let i = 0; i < position.count; i++) {
       p.fromBufferAttribute(position, i);
       const big = noise3(p.x * 1.1 + seed * 3.1, p.y * 1.1, p.z * 1.1, seed);
@@ -173,25 +199,88 @@ class Builder {
       p.multiplyScalar(radius * (1 + big * roughness + small * roughness * 0.3)).multiply(squash).add(at);
       if (p.y < floor) p.y = floor + (p.y - floor) * 0.2;
       position.setXYZ(i, p.x, p.y, p.z);
+      if (leafy && i % 3 === 0) {
+        const n = p.clone().sub(at).normalize();
+        const height = Math.min(1, Math.max(0, (p.y - (at.y - top)) / Math.max(1e-6, 2 * top)));
+        this.leaves.push({ p: p.clone(), n, tone: pick ? pick(p) : t, height });
+      }
     }
-    this.add(solid, new Matrix4(), t, occlusion, 0.15, pick);
+    // The heart under the cards is their shade: what shows of it between
+    // them reads as depth in the canopy, not as a solid.
+    const heart: Occlusion = leafy ? (c) => occlusion(c) * 0.5 : occlusion;
+    this.add(solid, new Matrix4(), t, heart, 0.15, pick);
   }
 
-  /** The model, standing on its origin, one unit tall, each face its own normal. */
-  geometry(): BufferGeometry {
-    const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(new Float32Array(this.pos), 3));
-    g.setAttribute('color', new BufferAttribute(new Float32Array(this.col), 3));
-    g.computeBoundingBox();
-    const box = g.boundingBox!;
-    const height = Math.max(1e-6, box.max.y - box.min.y);
-    g.translate(0, -box.min.y, 0);
-    g.scale(1 / height, 1 / height, 1 / height);
+  /**
+   * The body and `count` cards of `size` on the leaf points, both stood on
+   * the origin and scaled to one unit tall. Each card faces out of the crown
+   * and is lit with the crown's normal there; lighter towards the top, each
+   * its own shade.
+   */
+  finish(count: number, size: number): LowPolyParts {
+    const body = new BufferGeometry();
+    body.setAttribute('position', new BufferAttribute(new Float32Array(this.pos), 3));
+    body.setAttribute('color', new BufferAttribute(new Float32Array(this.col), 3));
+    body.computeBoundingBox();
+    const box = body.boundingBox!;
+    // Where each card goes, before the model is scaled: a little out from
+    // the heart's surface. The tree's height counts the cards' reach above
+    // the heart, so a tree of a given size is that tall, crown and all.
+    const placed: { leaf: LeafPoint; s: number; c: Vector3 }[] = [];
+    let top = box.max.y;
+    for (let k = 0; k < (this.leaves.length > 0 ? count : 0); k++) {
+      const leaf = this.leaves[Math.floor(this.rng() * this.leaves.length)]!;
+      const s = size * (0.75 + this.rng() * 0.5);
+      const c = leaf.p.clone().addScaledVector(leaf.n, s * (0.1 + this.rng() * 0.2));
+      top = Math.max(top, c.y + s * 0.45);
+      placed.push({ leaf, s, c });
+    }
+    const lift = -box.min.y;
+    const scale = 1 / Math.max(1e-6, top - box.min.y);
+    body.translate(0, lift, 0);
+    body.scale(scale, scale, scale);
     // Non-indexed: each face its own corners, so its own normal.
-    g.computeVertexNormals();
-    g.computeBoundingBox();
-    g.computeBoundingSphere();
-    return g;
+    body.computeVertexNormals();
+    body.computeBoundingBox();
+    body.computeBoundingSphere();
+    if (placed.length === 0) return { body, cards: null };
+
+    const positions: number[] = [], normals: number[] = [], colours: number[] = [], uvs: number[] = [], corners: number[] = [];
+    for (const { leaf, s, c } of placed) {
+      c.y += lift;
+      c.multiplyScalar(scale);
+      const roll = this.rng() * Math.PI * 2;
+      const cr = Math.cos(roll), sr = Math.sin(roll);
+      const k0 = Math.min(1, 0.45 + 0.55 * leaf.height) * (0.88 + this.rng() * 0.24);
+      const t = leaf.tone;
+      const r = t.dark.r + (t.lit.r - t.dark.r) * k0, g = t.dark.g + (t.lit.g - t.dark.g) * k0, b = t.dark.b + (t.lit.b - t.dark.b) * k0;
+      // The normal out of the crown, lifted a little: the canopy's top takes the sky.
+      const nx = leaf.n.x, ny = leaf.n.y * 0.8 + 0.2, nz = leaf.n.z;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      const corner = (u: number, w: number): void => {
+        // Every corner at the card's centre; the shader spreads it in the
+        // view's plane by its own offset, turned by the card's roll.
+        positions.push(c.x, c.y, c.z);
+        const ou = (u - 0.5) * s * scale, ow = (w - 0.5) * s * scale;
+        corners.push(ou * cr - ow * sr, ou * sr + ow * cr);
+        normals.push(nx / nl, ny / nl, nz / nl);
+        colours.push(r, g, b);
+        uvs.push(u, w);
+      };
+      corner(0, 0); corner(1, 0); corner(1, 1);
+      corner(0, 0); corner(1, 1); corner(0, 1);
+    }
+    const cards = new BufferGeometry();
+    cards.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+    cards.setAttribute('normal', new BufferAttribute(new Float32Array(normals), 3));
+    cards.setAttribute('color', new BufferAttribute(new Float32Array(colours), 3));
+    cards.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
+    cards.setAttribute('aCorner', new BufferAttribute(new Float32Array(corners), 2));
+    cards.computeBoundingBox();
+    cards.computeBoundingSphere();
+    // The cards reach past their centres by up to their size.
+    if (cards.boundingSphere) cards.boundingSphere.radius += size * scale;
+    return { body, cards };
   }
 }
 
@@ -205,49 +294,53 @@ function along(from: Vector3, to: Vector3): Matrix4 {
   return new Matrix4().compose(mid, q, new Vector3(1, 1, 1)).multiply(new Matrix4().makeScale(1, length, 1));
 }
 
-/**
- * A trunk from the ground to `top`, six-sided, tapering from `r0` to `r1`,
- * the foot a little wider (the root swell, not a pedestal). Open at the ends,
- * which are in the ground and in the crown.
- */
+/** A six-sided trunk from the ground to `top`, tapering from `r0` to `r1`, open at its ends (in the ground and the crown). */
 function trunk(b: Builder, top: Vector3, r0: number, r1: number, bark: Tone): void {
   b.add(new CylinderGeometry(r1, r0, 1, 6, 1, true), along(new Vector3(0, 0, 0), top), bark, OPEN, 0.1);
 }
 
-/** The shade tree: one broad, lumpy crown, a smaller lump grown out of its side, on a short stout trunk. 172 triangles. */
-function oak(seed: number): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
-  // Crown from a third of the height up: a clear trunk of a third, as a
-  // shade tree stands (a half had them read as lollipops).
-  const top = new Vector3((rng() - 0.5) * 0.04, 0.42, (rng() - 0.5) * 0.04);
-  trunk(b, top, 0.066, 0.042, BARK);
+/** Limbs from near the top of the trunk out into the crown, each `r0` thick at the trunk: seen between the cards. */
+function limbs(b: Builder, from: Vector3, count: number, reach: number, rise: number, r0: number, bark: Tone): void {
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + b.rng() * 0.7;
+    const to = new Vector3(from.x + Math.cos(a) * reach * (0.8 + b.rng() * 0.3), from.y + rise * (0.8 + b.rng() * 0.4), from.z + Math.sin(a) * reach * (0.8 + b.rng() * 0.3));
+    b.add(new CylinderGeometry(r0 * 0.45, r0, 1, 5, 1, true), along(from, to), bark, OPEN, 0.1);
+  }
+}
+
+/** The shade tree: a broad crown of cards over a lumpy heart, on a short stout trunk. */
+function oak(seed: number): LowPolyParts {
+  const b = new Builder(random(seed));
+  const top = new Vector3((b.rng() - 0.5) * 0.04, 0.42, (b.rng() - 0.5) * 0.04);
+  trunk(b, top, 0.062, 0.04, BARK);
+  limbs(b, new Vector3(top.x, top.y - 0.06, top.z), 3, 0.16, 0.16, 0.024, BARK);
+  // A small heart under large cards (the forest's old card trees: 36 cards
+  // of 0.48 over a heart of 0.19): with the heart as wide as the crown, its
+  // facets showed between the cards and the tree still read as faceted balls
+  // (the player, 2026-10-08: "ainda tá com as árvores antigas").
   const shade = crownShade(0.3, 0.98, 0.34);
-  b.mass(new Vector3(top.x, 0.58, top.z), 0.31, new Vector3(1.05, 0.9, 1.05), LEAF, seed, 0.28, shade);
-  const a = rng() * Math.PI * 2;
-  // The second lump grown out of the crown's SIDE, so the outline is uneven;
-  // set on top it read as a cap.
-  b.mass(new Vector3(top.x + Math.cos(a) * 0.2, 0.6, top.z + Math.sin(a) * 0.2), 0.21, new Vector3(1, 0.88, 1), LEAF, seed + 5, 0.24, shade);
-  return b.geometry();
+  b.mass(new Vector3(top.x, 0.62, top.z), 0.19, new Vector3(1.05, 0.9, 1.05), LEAF, seed, 0.22, shade, true);
+  const a = b.rng() * Math.PI * 2;
+  b.mass(new Vector3(top.x + Math.cos(a) * 0.13, 0.64, top.z + Math.sin(a) * 0.13), 0.13, new Vector3(1, 0.88, 1), LEAF, seed + 5, 0.2, shade, true);
+  return b.finish(40, 0.44);
 }
 
-/** A tall, narrow crown - one long mass - on a longer clear stem. 92 triangles. */
-function broadleafTall(seed: number): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.03, 0.4, (rng() - 0.5) * 0.03);
-  trunk(b, top, 0.052, 0.034, BARK);
+/** A tall, narrow crown of cards on a longer clear stem. */
+function broadleafTall(seed: number): LowPolyParts {
+  const b = new Builder(random(seed));
+  const top = new Vector3((b.rng() - 0.5) * 0.03, 0.4, (b.rng() - 0.5) * 0.03);
+  trunk(b, top, 0.05, 0.032, BARK);
+  limbs(b, new Vector3(top.x, top.y - 0.05, top.z), 2, 0.1, 0.16, 0.02, BARK);
   const shade = crownShade(0.26, 1.0, 0.24);
-  b.mass(new Vector3(top.x, 0.62, top.z), 0.22, new Vector3(1, 1.65, 1), LEAF_TALL, seed, 0.24, shade);
-  return b.geometry();
+  b.mass(new Vector3(top.x, 0.66, top.z), 0.14, new Vector3(1, 1.7, 1), LEAF_TALL, seed, 0.2, shade, true);
+  return b.finish(34, 0.34);
 }
 
-/** The cypress: a narrow column of four seven-sided tiers over a short trunk, their rims ragged and hanging. 68 triangles. */
-function cypress(seed: number): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
+/** The cypress: a narrow column of four seven-sided tiers over a short trunk, their rims ragged and hanging. Needles read as facets: no cards. */
+function cypress(seed: number): LowPolyParts {
+  const b = new Builder(random(seed));
   trunk(b, new Vector3(0, 0.18, 0), 0.034, 0.024, BARK);
-  const slim = 0.92 + rng() * 0.16;
+  const slim = 0.92 + b.rng() * 0.16;
   const shade: Occlusion = (p) => 0.66 + 0.34 * Math.min(1, Math.max(0, (p.y - 0.14) / 0.86));
   const tiers: readonly (readonly [number, number, number])[] = [[0.14, 0.36, 0.17], [0.33, 0.32, 0.14], [0.51, 0.29, 0.105], [0.68, 0.32, 0.07]];
   tiers.forEach(([base, height, r], k) => {
@@ -267,14 +360,13 @@ function cypress(seed: number): BufferGeometry {
     }
     b.add(cone, new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
   });
-  return b.geometry();
+  return b.finish(0, 0);
 }
 
-/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. 212 triangles. */
-function palm(seed: number): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
-  const lean = 0.12 + rng() * 0.1, turn = rng() * Math.PI * 2;
+/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. No cards. */
+function palm(seed: number): LowPolyParts {
+  const b = new Builder(random(seed));
+  const lean = 0.12 + b.rng() * 0.1, turn = b.rng() * Math.PI * 2;
   const leanDir = new Vector3(Math.cos(turn), 0, Math.sin(turn));
   // The trunk's line: up, bending out with the lean (a quadratic curve).
   const at = (t: number): Vector3 => new Vector3(0, 0.82 * t, 0).addScaledVector(leanDir, lean * t * t);
@@ -289,11 +381,11 @@ function palm(seed: number): BufferGeometry {
   const shade: Occlusion = (p) => 0.72 + 0.28 * Math.min(1, Math.max(0, (p.y - crown.y + 0.25) / 0.35));
   const fronds = 7;
   for (let k = 0; k < fronds; k++) {
-    const a = (k / fronds) * Math.PI * 2 + rng() * 0.35;
+    const a = (k / fronds) * Math.PI * 2 + b.rng() * 0.35;
     const out = new Vector3(Math.cos(a), 0, Math.sin(a));
     const side = new Vector3(-Math.sin(a), 0, Math.cos(a));
-    const length = 0.4 + rng() * 0.08;
-    const lift = 0.45 + rng() * 0.25;
+    const length = 0.4 + b.rng() * 0.08;
+    const lift = 0.45 + b.rng() * 0.25;
     const steps = 5;
     const spine: Vector3[] = [crown.clone()];
     for (let i = 1; i <= steps; i++) {
@@ -313,51 +405,44 @@ function palm(seed: number): BufferGeometry {
       }
     }
   }
-  return b.geometry();
+  return b.finish(0, 0);
 }
 
-/**
- * The flowering ipê: one wide, flat crown, flower over the top and the green
- * of the last leaves showing underneath - one mass, not flower balls stuck
- * on green ones. 172 triangles.
- */
-function ipe(seed: number, bloom: Tone): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.05, 0.44, (rng() - 0.5) * 0.05);
-  trunk(b, top, 0.06, 0.038, BARK);
+/** The flowering ipê: one wide, flat crown of cards, flower over the top and the last leaves' green underneath. */
+function ipe(seed: number, bloom: Tone): LowPolyParts {
+  const b = new Builder(random(seed));
+  const top = new Vector3((b.rng() - 0.5) * 0.05, 0.44, (b.rng() - 0.5) * 0.05);
+  trunk(b, top, 0.058, 0.036, BARK);
+  limbs(b, new Vector3(top.x, top.y - 0.05, top.z), 4, 0.2, 0.14, 0.022, BARK);
   const shade = crownShade(0.34, 0.95, 0.42);
   const centre = 0.62;
   const pick = (c: Vector3): Tone => (c.y < centre - 0.1 ? LEAF : bloom);
-  b.mass(new Vector3(top.x, centre, top.z), 0.34, new Vector3(1.2, 0.72, 1.2), bloom, seed, 0.26, shade, pick);
-  const a = rng() * Math.PI * 2;
-  b.mass(new Vector3(top.x + Math.cos(a) * 0.26, 0.6, top.z + Math.sin(a) * 0.26), 0.2, new Vector3(1.1, 0.72, 1.1), bloom, seed + 5, 0.24, shade, pick);
-  return b.geometry();
+  b.mass(new Vector3(top.x, centre, top.z), 0.23, new Vector3(1.25, 0.65, 1.25), bloom, seed, 0.22, shade, true, pick);
+  return b.finish(40, 0.42);
 }
 
-/** A bush: one lump of leaves pressed onto the ground, about one and a half times as wide as tall. 80 triangles. */
-function bush(seed: number, flowering: boolean): BufferGeometry {
-  const rng = random(seed);
-  const b = new Builder(rng);
+/** A bush: one lump of leaves pressed onto the ground under a coat of cards, about one and a half times as wide as tall. */
+function bush(seed: number, flowering: boolean): LowPolyParts {
+  const b = new Builder(random(seed));
   const shade = crownShade(0, 0.95, 0.7);
-  // A flowering bush: a scatter of blossoms over the sunlit upper faces.
+  // A flowering bush: a scatter of blossoms over the sunlit upper side.
   const pick = flowering
-    ? (c: Vector3): Tone => (c.y > 0.5 && rng() < 0.3 ? FLOWERS[Math.floor(rng() * FLOWERS.length)]! : SHRUB)
+    ? (c: Vector3): Tone => (c.y > 0.5 && b.rng() < 0.3 ? FLOWERS[Math.floor(b.rng() * FLOWERS.length)]! : SHRUB)
     : undefined;
-  b.mass(new Vector3(0, 0.45, 0), 0.5, new Vector3(1.5, 1, 1.3), SHRUB, seed, 0.24, shade, pick, 0);
-  return b.geometry();
+  b.mass(new Vector3(0, 0.42, 0), 0.36, new Vector3(1.5, 1, 1.3), SHRUB, seed, 0.2, shade, true, pick, 0);
+  return b.finish(16, 0.62);
 }
 
-/** A clipped hedge: one long, trimmed block of leaves, a little noise only. 80 triangles. */
-function hedge(seed: number): BufferGeometry {
+/** A clipped hedge: one long, trimmed block of leaves under a coat of cards. */
+function hedge(seed: number): LowPolyParts {
   const b = new Builder(random(seed));
   const shade = crownShade(0, 0.95, 0.9);
-  b.mass(new Vector3(0, 0.5, 0), 0.5, new Vector3(2, 1, 0.8), HEDGE, seed, 0.08, shade, undefined, 0);
-  return b.geometry();
+  b.mass(new Vector3(0, 0.46, 0), 0.4, new Vector3(2, 1, 0.8), HEDGE, seed, 0.08, shade, true, undefined, 0);
+  return b.finish(20, 0.56);
 }
 
-/** A tree or bush of this kind, grown from `seed` (the same seed, the same model). */
-export function lowPolyTree(kind: LowPolyKind, seed: number): BufferGeometry {
+/** A tree or bush of this kind, grown from `seed` (the same seed, the same model): its body and its foliage cards. */
+export function lowPolyTreeParts(kind: LowPolyKind, seed: number): LowPolyParts {
   switch (kind) {
     case 'oak': return oak(seed);
     case 'broadleafTall': return broadleafTall(seed);
@@ -369,4 +454,87 @@ export function lowPolyTree(kind: LowPolyKind, seed: number): BufferGeometry {
     case 'bushFlowering': return bush(seed, true);
     case 'hedge': return hedge(seed);
   }
+}
+
+/**
+ * A cluster of small leaves on a card: many leaves in a rounded clump with
+ * ragged gaps, each leaf its own shade, the alpha cut round them. Grey: the
+ * card's vertex colour gives it the species' green. One for the whole game.
+ */
+let clusterTexture: CanvasTexture | null | undefined;
+function leafClusterTexture(): CanvasTexture | null {
+  if (clusterTexture !== undefined) return clusterTexture;
+  if (typeof document === 'undefined') return (clusterTexture = null);
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return (clusterTexture = null);
+  const rng = random(0xc1a5);
+  ctx.clearRect(0, 0, size, size);
+  for (let i = 0; i < 300; i++) {
+    const a = rng() * Math.PI * 2;
+    // Denser at the heart of the clump, ragged at its rim.
+    const r = Math.pow(rng(), 0.7) * 112;
+    const x = size / 2 + Math.cos(a) * r;
+    const y = size / 2 + Math.sin(a) * r * 0.92;
+    const len = 14 + rng() * 10;
+    const wid = 6 + rng() * 4;
+    const shade = 150 + Math.floor(rng() * 105);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rng() * Math.PI * 2);
+    ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.quadraticCurveTo(0, -wid, len / 2, 0);
+    ctx.quadraticCurveTo(0, wid, -len / 2, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  return (clusterTexture = texture);
+}
+
+/**
+ * Turns a material's foliage cards to face the camera - or the light, in a
+ * shadow pass: each corner spread from its card's centre in the view's plane
+ * by its offset (`aCorner`), scaled by the instance's size.
+ */
+function billboardCards(material: Material, key: string): void {
+  const previous = material.onBeforeCompile.bind(material);
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec2 aCorner;`)
+      .replace('mvPosition = modelViewMatrix * mvPosition;', `mvPosition = modelViewMatrix * mvPosition;
+        {
+          float cardScale = 1.0;
+          #ifdef USE_INSTANCING
+            cardScale = 0.5 * (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz));
+          #endif
+          mvPosition.xy += aCorner * cardScale;
+        }`);
+  };
+  const cacheKey = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${cacheKey()}-billboard-${key}`;
+}
+
+/** The foliage cards' material (leaf-cluster texture, alpha to coverage, billboards, the wind) and the depth material their shadows would use. */
+export function leafCardMaterials(wind: WindResponse, key: string): { material: MeshStandardMaterial; depth: MeshDepthMaterial } {
+  const map = leafClusterTexture();
+  const material = new MeshStandardMaterial({
+    color: 0xffffff, vertexColors: true, map, alphaTest: 0.5, alphaToCoverage: true, side: DoubleSide,
+    roughness: 0.8, metalness: 0, envMapIntensity: 0.3,
+  });
+  applyWind(material, wind, `${key}-cards`);
+  billboardCards(material, key);
+  const depth = windDepthMaterial(wind, `${key}-cards`);
+  billboardCards(depth, `${key}-depth`);
+  depth.map = map;
+  depth.alphaTest = 0.5;
+  return { material, depth };
 }

@@ -15,7 +15,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import { Rng } from '@core/rng';
-import { lowPolyTree, type LowPolyKind } from './lowPolyTrees';
+import { lowPolyTreeParts, type LowPolyKind, type LowPolyParts } from './lowPolyTrees';
 import { m } from '@world/units';
 import { TREE_PIT } from '@world/streetFurniture';
 import { CURB_BAND, FOOTWAY_RISE } from '@world/roadTypes';
@@ -132,7 +132,12 @@ const TREE_KIND: Readonly<Record<TreeSpecies, LowPolyKind>> = {
  * a few hundred triangles it is cheaper than the old crown's close model.
  */
 export function treeGeometry(species: TreeSpecies): BufferGeometry {
-  return lowPolyTree(TREE_KIND[species], 0x7ee + species.length * 131 + species.charCodeAt(3));
+  return treeParts(species).body;
+}
+
+/** A street or garden tree's body and its foliage cards (`lowPolyTrees.ts`). */
+export function treeParts(species: TreeSpecies): LowPolyParts {
+  return lowPolyTreeParts(TREE_KIND[species], 0x7ee + species.length * 131 + species.charCodeAt(3));
 }
 
 export type BushKind = 'bush' | 'bushFlowering' | 'hedge';
@@ -140,7 +145,12 @@ export const BUSH_KINDS: readonly BushKind[] = ['bush', 'bushFlowering', 'hedge'
 
 /** One unit tall, root at the origin; about 1.5 units across: the game's one low-poly style (`lowPolyTrees.ts`). */
 export function bushGeometry(kind: BushKind): BufferGeometry {
-  return lowPolyTree(kind, 0xb05 + kind.length * 17);
+  return bushParts(kind).body;
+}
+
+/** A bush's or hedge's body and its foliage cards (`lowPolyTrees.ts`). */
+export function bushParts(kind: BushKind): LowPolyParts {
+  return lowPolyTreeParts(kind, 0xb05 + kind.length * 17);
 }
 
 /**
