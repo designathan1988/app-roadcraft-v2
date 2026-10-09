@@ -149,9 +149,14 @@ function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB
   switch (kind) {
     case 'lamp':
     case 'hydrant':
-    case 'phone':
     case 'sign':
       return zone.inner + Math.min(LAMP_ZONE, depth) / 2;
+    // A telephone booth is no column: placed as one, half a lamp's depth off
+    // the kerb, its box stood 0.27 m over it. Its own radius off the kerb,
+    // where the furnishing zone is deep enough to hold it.
+    case 'phone':
+      if (depth < 2 * LANDSCAPE_RADIUS.phone - 1e-9) return null;
+      return zone.inner + LANDSCAPE_RADIUS.phone;
     // A kerb inlet ("boca de lobo"): its mouth is IN the kerb, its grate in
     // the gutter in front; the item stands on the kerb's back edge.
     case 'drain':

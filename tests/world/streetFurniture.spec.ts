@@ -45,21 +45,31 @@ describe('street furniture', () => {
 
   it('places every kind on a footway, in the furnishing zone beside the kerb', () => {
     const { doc, net } = crossroads();
+    // Long grass is planted on open ground, never on a street (`snapLandscape`);
+    // everything else is the street's furniture.
+    const onFootway = LANDSCAPE_KINDS.filter((kind) => kind !== 'meadow');
+    expect(snapLandscape(net, [], 'meadow', onEastFootway(net, 100), 4)).toMatchObject({ ok: false, reason: 'offFootway' });
+    expect(snapLandscape(net, [], 'meadow', { x: 300, y: 300 }, 4).ok).toBe(true);
     let x = 120;
-    for (const kind of LANDSCAPE_KINDS) {
+    for (const kind of onFootway) {
       const snap = snapLandscape(net, doc.landscape.values(), kind, onEastFootway(net, x), 4);
       expect(snap.ok, `${kind}: ${snap.ok ? '' : snap.reason}`).toBe(true);
       if (snap.ok) doc.addLandscape(kind, snap.at);
       x += 30;
     }
     const items = streetFurniture(net);
-    expect(items).toHaveLength(LANDSCAPE_KINDS.length);
+    // Signs and street names stand on the footway too, but are drawn as signs
+    // (`render/signs.ts`), not as furniture the walkers go round.
+    expect(items).toHaveLength(onFootway.filter((kind) => kind !== 'sign' && kind !== 'streetname').length);
     for (const item of items) {
       const seg = net.doc.requireSegment(item.segment);
       const zone = sectionOf(roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking), seg.direction).side.furnishing;
       const across = net.ribbons.get(item.segment)!.full.distanceTo({ x: item.x, y: item.y });
       const half = item.halfWidth ?? item.radius;
-      expect(across - half, item.kind).toBeGreaterThanOrEqual(zone.inner - 1e-6);
+      // A kerb inlet's mouth is in the kerb and its grate in the gutter in
+      // front: it stands at the kerb, not inside the furnishing zone.
+      if (item.kind === 'drain') expect(Math.abs(across - zone.inner), item.kind).toBeLessThan(half);
+      else expect(across - half, item.kind).toBeGreaterThanOrEqual(zone.inner - 1e-6);
       if (item.kind !== 'streetTree') expect(across + half, item.kind).toBeLessThanOrEqual(zone.outer + 1e-6);
       expect(Math.hypot(item.outward.x, item.outward.y)).toBeCloseTo(1, 6);
     }
