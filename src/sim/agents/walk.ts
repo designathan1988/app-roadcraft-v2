@@ -163,6 +163,13 @@ interface Walker {
   age: number;
   /** Seconds held still while meaning to walk. */
   held: number;
+  /**
+   * The step it got jammed on (held past JAM_AFTER): it goes on at
+   * JAM_SHARE through what blocks it until it leaves that step or the way
+   * ahead clears (SUMO's jammed state). Ended as soon as it moved, it crept
+   * 2 cm every 10 s and a car waiting for it waited for good.
+   */
+  jammedOn?: number | undefined;
   /** Waiting for a zebra: seconds waited, and the time to the next ask. */
   waited: number;
   asked: number;
@@ -1323,7 +1330,11 @@ function stepWalkers(w: SimWorld): void {
 
     // --- the speed: the room ahead in its own stripe, the wait, and the turn still to make.
     const crossing = crossingOf(w, st.way) !== null;
-    const jammed = p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER);
+    // Jammed from the moment it has been held too long, until it is off this
+    // step or the way ahead is clear (`Walker.jammedOn`).
+    if (p.held > (crossing ? JAM_AFTER_CROSSING : JAM_AFTER)) p.jammedOn = p.leg;
+    else if (p.jammedOn !== undefined && (p.jammedOn !== p.leg || free(p.d) > KEEP)) p.jammedOn = undefined;
+    const jammed = p.jammedOn === p.leg;
     // A leg lost: a hobble; both: no walking at all.
     const legsLost = (p.lost ?? (p.maimed ? [p.maimed] : [])).filter((l) => l === 'legL' || l === 'legR').length;
     let want = p.pace * (crossing ? 1.15 : 1) * (p.rush?.by ?? 1) * (legsLost >= 2 ? 0 : legsLost === 1 ? 0.22 : 1);
