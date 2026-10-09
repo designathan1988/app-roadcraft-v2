@@ -98,7 +98,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V5") |
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V6") |
 | V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | primeira fatia no ramo (ver "Andamento da V7") |
-| V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | |
+| V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | em andamento (ver "Andamento da V8") |
 
 ## Andamento da V0
 - `world/roads/tuning.ts`: feito. Os valores que já valiam no jogo continuam iguais (travados por
@@ -369,6 +369,16 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   as pontas encaixam em postes já existentes, então as ruas viram uma rede. O lado direito fica com os postes de luz do
   conjunto; o mobiliário não cai sobre um poste. Cidade pequena: >50 postes ligados (`cityGreen.spec`).
 - Falta: registro no catálogo da 5f (ainda não existe no master).
+
+## Andamento da V8
+- Conta-gotas: no inspetor da via, "Desenhar com este perfil" passa a via como ela está para a ferramenta de vias (abre o
+  painel de vias com o cartão "Via copiada" escolhido; um perfil em mãos que não é nenhum cartão aparece sempre como
+  primeiro cartão, `catalogPanel.ts`).
+- Edição em massa: "Rua inteira (n)" copia o perfil da via para todos os trechos da rua, atravessando os cruzamentos em
+  linha reta (`world/roads/streetChain.ts`), um desfazer, cobrado; trecho desenhado ao contrário recebe o perfil
+  espelhado (`flipProfile`), então estacionamento e calçadas ficam do mesmo lado no mundo. Detector
+  `tests/world/streetChain.spec.ts`.
+- Inverter mão única: já existia no inspetor.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

@@ -1,3 +1,5 @@
+import { profileOf } from '@world/roads/profile';
+import { flipProfile, streetChain } from '@world/roads/streetChain';
 import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
 import { createActions } from './actionsWiring';
@@ -4337,6 +4339,32 @@ function showInspector(): void {
           return result.changed;
         });
         if (problem) flashHint(`profile.problem.${problem}`);
+      },
+      // V8: the road's profile on the whole street it runs in, one edit, paid for.
+      streetLength: (id) => streetChain(doc, id).length,
+      onProfileToStreet: (id) => {
+        const seg = doc.segment(id);
+        if (!seg) return;
+        const profile = profileOf(seg);
+        let problem: string | undefined;
+        mutateRoads(() => {
+          let changed = false;
+          for (const piece of streetChain(doc, id)) {
+            if (piece.id === id) continue;
+            const result = applyProfileTo(doc, [piece.id], piece.flipped ? flipProfile(profile) : profile, seg.type);
+            problem ??= result.problems[0];
+            changed = result.changed || changed;
+          }
+          return changed;
+        });
+        flashHint(problem ? `profile.problem.${problem}` : 'hint.profile.toStreet');
+      },
+      // The eyedropper: the road tool in hand, drawing with the profile just picked.
+      onDrawWithProfile: () => {
+        // Through the interface's own Roads button, so its panel opens showing the profile picked.
+        const roads = document.querySelector<HTMLButtonElement>('[data-cat="roads"]') ?? document.querySelector<HTMLButtonElement>('.tool[data-tool="road"]');
+        roads?.click();
+        flashHint('hint.profile.picked');
       },
       onSetSection: (id, section) => {
         if (!freeRoadsEnabled() || !doc.segment(id)) return;

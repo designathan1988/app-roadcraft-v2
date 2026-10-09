@@ -31,6 +31,11 @@ export interface InspectorActions {
   readonly onSetSection?: (id: SegmentId, section: RoadSection | undefined) => void;
   /** A whole cross-section applied to the road, with its class when it comes from a template (docs/VIAS.md V1). */
   readonly onApplyProfile?: (id: SegmentId, profile: RoadProfileSpec, type?: number) => void;
+  /** V8: this road's profile copied to the whole street (`world/roads/streetChain.ts`); how many segments that is. */
+  readonly onProfileToStreet?: (id: SegmentId) => void;
+  readonly streetLength?: (id: SegmentId) => number;
+  /** V8: the road tool taken up with this road's profile (the eyedropper). */
+  readonly onDrawWithProfile?: () => void;
   readonly onSetParking?: (id: SegmentId, parking: SegmentParking) => void;
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
@@ -276,7 +281,11 @@ function renderSegment(
     `</div>`;
 
   if (actions.onApplyProfile) {
-    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type));
+    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type), {
+      chain: actions.streetLength?.(id) ?? 0,
+      ...(actions.onProfileToStreet ? { toStreet: () => actions.onProfileToStreet?.(id) } : {}),
+      ...(actions.onDrawWithProfile ? { drawWith: () => actions.onDrawWithProfile?.() } : {}),
+    });
   }
   if (freeRoadsEnabled() && actions.onSetSection) {
     mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, seg.direction, seg.section,

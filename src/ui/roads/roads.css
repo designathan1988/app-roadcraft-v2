@@ -240,3 +240,6 @@ button.rp-issue:hover { background: rgba(255, 111, 97, 0.2); }
 
 /* The road tool's furniture row (V7): three words in the options' width (300 px) without touching its edge. */
 .v2-seg.rp-seg-tight .v2-seg-b { padding: 0 7px; font-size: 13px; }
+
+/* The profile summary's actions (V8): edit, draw with it, copy to the whole street; wrapping, never cut. */
+.rp-summary-actions { display: flex; flex-wrap: wrap; gap: 6px; }
