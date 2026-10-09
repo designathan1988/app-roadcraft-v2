@@ -103,6 +103,15 @@ const KERB_BACK = m(0.35);
 const ASK_FROM = m(1.5);
 /** How often a waiting walker asks whether they may cross, seconds. */
 const ASK_EVERY = 0.25;
+/**
+ * Seconds a leave to cross holds for one standing still who has not yet
+ * stepped onto the carriageway. Entering is a condition met when entering (SUMO: a pedestrian
+ * crosses only if its time on the crossing does not meet an approaching
+ * vehicle's), not once for good: a walker let on, then held still at the kerb
+ * for seconds, stepped off later in front of a car admitted meanwhile, which
+ * stood in the junction for it (`priorityBox.spec`, seed 3).
+ */
+const GRANT_LIFE = 1;
 /** Farthest a door or a car may be from the walkways, by default. */
 const REACH = m(30);
 /** Somebody this near the spot a walker steps out onto keeps them inside a moment, u. */
@@ -201,6 +210,8 @@ interface Walker {
   asked: number;
   /** The zebra it has been let onto. */
   granted: CrossingId | null;
+  /** When (its `age`) it was let onto it: a leave to step off now, not for good (`GRANT_LIFE`). */
+  grantedAt?: number;
   /**
    * Not out yet: waiting inside the door (or the car) until the spot it steps
    * out onto is clear. As SUMO inserts a person only where there is room, a
@@ -1563,6 +1574,9 @@ function stepWalkers(w: SimWorld): void {
     p.aim = clamp(p.aim, span);
 
     // --- a zebra ahead: wait a step back from the kerb until it is theirs.
+    // A leave not used in its time - held still short of the carriageway -
+    // is asked for again; one walking on to the kerb keeps it.
+    if (p.granted !== null && p.v < MOVING && p.age - (p.grantedAt ?? p.age) > GRANT_LIFE && !onZebra(w, p)) p.granted = null;
     const zebra = zebraAhead(w, p);
     p.zebra = zebra?.zebra ?? null;
     p.waiting = null;
@@ -1573,7 +1587,7 @@ function stepWalkers(w: SimWorld): void {
       if (p.asked <= 0) {
         p.asked = ASK_EVERY;
         const open = zebra.zebra.edge ? mayEnterCrossing(w, zebra.zebra.edge, p.waited) : gapOpen(w, s, zebra.zebra, p.pace, p.waited);
-        if (open || (p.fright ?? 0) > p.age) { p.granted = zebra.zebra.id; p.waited = 0; p.waiting = null; }
+        if (open || (p.fright ?? 0) > p.age) { p.granted = zebra.zebra.id; p.grantedAt = p.age; p.waited = 0; p.waiting = null; }
       }
     }
     const stop = p.waiting ? Math.max(0, zebra!.stop) : Infinity;

@@ -15,7 +15,7 @@ import { CROSSING_STOP } from '../transit/transit';
 import { bodyClassOfArchetype } from '../vehicles/archetypes';
 import { slowestBend } from '../vehicles/curvature';
 import { type Claim, type HolderState, zoneShareable } from './claims';
-import type { ConflictPoint } from '@world/conflictPoints';
+import type { ConflictPoint, ConflictRef } from '@world/conflictPoints';
 import { PED_BODY, PED_CROSSING_STOP_BUFFER, PED_MIN_PACE, PED_REACH_TIME, pedestrianInSpan } from './crossingSpans';
 
 export type RowClass = 'signalGreen' | 'priority' | 'stop' | 'yield' | 'none';
@@ -762,17 +762,25 @@ interface BankerProcess {
   readonly maximum: Set<ResourceKey>;
 }
 
-/** Conflict points plus a connector token for zero-point movements; one list per connector object. */
-const CONNECTOR_RESOURCES = new WeakMap<Connector, readonly ResourceKey[]>();
+/**
+ * Conflict points plus a connector token for zero-point movements. The point
+ * numbers are kept per list of the conflict index (`ConflictIndex.refs`),
+ * which every build of it makes afresh as it numbers its points again: kept
+ * per connector object, a connector that outlived a rebuild of the topology
+ * read the numbers of the build before, and the Banker's test reserved the
+ * wrong points (a car left standing in a junction, `priorityBox.spec` seed 3).
+ */
+const CONNECTOR_RESOURCES = new WeakMap<readonly ConflictRef[], readonly ResourceKey[]>();
 function connectorResources(
   w: SimWorld,
   connector: Connector,
 ): readonly ResourceKey[] {
-  let known = CONNECTOR_RESOURCES.get(connector);
+  const refs = w.conflicts.refs(connector.id);
+  if (refs.length === 0) return [movementToken(connector.id)];
+  let known = CONNECTOR_RESOURCES.get(refs);
   if (!known) {
-    const points = w.conflicts.refs(connector.id).map((ref) => ref.point);
-    known = points.length ? points : [movementToken(connector.id)];
-    CONNECTOR_RESOURCES.set(connector, known);
+    known = refs.map((ref) => ref.point);
+    CONNECTOR_RESOURCES.set(refs, known);
   }
   return known;
 }
@@ -1247,7 +1255,14 @@ function crossingReachedFirst(w: SimWorld, r: Request): boolean {
     // `pedestrianAhead` stops a vehicle for anybody within `PED_REACH_TIME`
     // of the stretch until its front is over it; admit only a vehicle that
     // gets its front there before that can happen.
-    const front = CLEAR_MARGIN * travelTime(Math.max(0, r.d) + span.along, r.v.v, top, r.v.driver.a);
+    let front = CLEAR_MARGIN * travelTime(Math.max(0, r.d) + span.along, r.v.v, top, r.v.driver.a);
+    // Nor before the vehicles already on this movement ahead of it: following
+    // one that will stop for the walker at the exit, it would stand in the
+    // box behind it - and nobody enters a junction whose exit is not clear
+    // (box junction rule). Measured: a car let in behind a motorcycle that
+    // then gave way at the exit zebra stood in the junction for 3 s and more
+    // (`priorityBox.spec`, seed 3).
+    front = Math.max(front, aheadOnMovement(w, r, span.along, top));
     for (const p of occupants) {
       // Somebody held still on the zebra is waiting for something - very
       // often for this very car - and is not arriving. Holding the car for
@@ -1264,6 +1279,33 @@ function crossingReachedFirst(w: SimWorld, r: Request): boolean {
     }
   }
   return false;
+}
+
+/**
+ * The latest time, with `CLEAR_MARGIN`, at which a vehicle already admitted
+ * onto this movement - in the junction on it, or still on the approach ahead
+ * of the requester - gets its front `along` units into the movement; 0 when
+ * none is short of it.
+ */
+function aheadOnMovement(w: SimWorld, r: Request, along: number, top: number): number {
+  let latest = 0;
+  const approach = w.lanelet(r.conn.fromLane);
+  const consider = (o: Vehicle, distance: number): void => {
+    if (o.id === r.v.id || distance <= 0) return;
+    latest = Math.max(latest, CLEAR_MARGIN * travelTime(distance, o.v, top, o.driver.a));
+  };
+  for (const id of w.rt(r.conn.lanelet).order) {
+    const o = w.veh(id);
+    if (o) consider(o, along - o.s);
+  }
+  if (approach) {
+    for (const id of w.rt(approach.id).order) {
+      const o = w.veh(id);
+      if (!o || o.admittedConnector !== r.conn.id || o.s <= r.v.s) continue;
+      consider(o, approach.length - o.s + along);
+    }
+  }
+  return latest;
 }
 
 /**
