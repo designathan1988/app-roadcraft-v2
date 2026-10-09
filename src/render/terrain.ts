@@ -508,15 +508,19 @@ function streakNoise(noise: (x: number, y: number, period: number) => number, u:
 // The dark tone close to the lit one: at 0.22 0.32 0.12 the lawn's dark
 // patches were the very green of the tree crowns, and a park's trees vanished
 // into blotches of their own colour (the player, 2026-10-08: "olha o verde").
+// Olive, not lime: the film grade's vibrance and warm highlights
+// (postprocess.ts GRADE) push a yellow-green further, and at 0.40 0.49 0.20
+// the lawn read as neon from the map's zoom (the player, 2026-10-09: "verde
+// muito neon"). Lower chroma (lit green over blue 1.9x, was 2.45x), a touch darker.
 export const GRASS_TONES = {
-  dark: [0.32, 0.42, 0.17],
-  lit: [0.4, 0.49, 0.2],
-  dry: [0.46, 0.44, 0.26],
+  dark: [0.27, 0.34, 0.19],
+  lit: [0.33, 0.4, 0.21],
+  dry: [0.41, 0.4, 0.28],
   soil: [0.36, 0.3, 0.2],
 } as const;
 /** The fields' tint factors (`macroTexture`): lush, yellowing meadow, deep green, olive. */
 export const FIELD_TINTS = {
-  lush: [0.84, 1.08, 0.84],
+  lush: [0.9, 1.0, 0.9],
   meadow: [1.24, 1.1, 0.7],
   deep: [0.7, 0.86, 0.84],
   olive: [1.1, 0.96, 0.76],
