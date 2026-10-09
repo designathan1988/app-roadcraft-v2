@@ -2,7 +2,7 @@ import { paletteOf, roofMaterial } from '@world/buildings/materials';
 import type { Vec2 } from '@core/vec2';
 import clipping from 'polygon-clipping';
 import { signedArea } from '@core/polygon';
-import { asPolygon, edgeFrame, localFootprint, offsetRing, supportedBy, overlapArea, roofDetailRing, roofPartFits } from '@world/buildings/footprints';
+import { asPolygon, edgeFrame, localFootprint, offsetRing, supportedBy, overlapArea, roofDetailRing } from '@world/buildings/footprints';
 import { setVolumePlan } from './buildingPlans';
 
 import { clamp } from '@core/scalar';
@@ -491,13 +491,6 @@ export function opSetComponent(
   return JSON.stringify(v.storeys) !== before;
 }
 
-export function opMove(b: Building, x: number, y: number): boolean {
-  if (b.x === x && b.y === y) return false;
-  b.x = x;
-  b.y = y;
-  return true;
-}
-
 /** Turns the building by `angle` about a world pivot (default: its footprint centre). */
 export function opRotate(b: Building, angle: number, pivot?: Vec2): boolean {
   if (angle === 0) return false;
@@ -846,19 +839,6 @@ export function blockSnap(b: Building, volumeId: number, reach: number): { dx: n
   return { dx, dy };
 }
 
-/** Moves one volume of a building in its own plan: the block, not the building. */
-export function opMoveVolume(b: Building, volumeId: number, dx: number, dy: number, snap = true): boolean {
-  const v = volumeById(b, volumeId);
-  if (!v) return false;
-  const step = snap ? GRID : 0.025;
-  const nx = Math.round((v.x + dx) / step) * step;
-  const ny = Math.round((v.y + dy) / step) * step;
-  if (Math.abs(nx - v.x) < 1e-9 && Math.abs(ny - v.y) < 1e-9) return false;
-  v.x = nx;
-  v.y = ny;
-  return true;
-}
-
 /**
  * Fuses a volume with a neighbour it is flush against, when the two make one
  * rectangle on the same levels. Returns false when there is no such neighbour
@@ -1021,13 +1001,6 @@ export function clipRing(ring: readonly Vec2[], within: readonly Vec2[]): Vec2[]
   return best && Math.abs(signedArea(best)) > MIN_SIZE * MIN_SIZE ? best : null;
 }
 
-/** Flush neighbours that make one rectangle and look alike become one mass. */
-export function fuseFlush(b: Building): void {
-  for (let guard = 0; guard < 24; guard++) {
-    if (!b.volumes.some((v) => opUnionVolumes(b, v.id, true))) break;
-  }
-}
-
 function polygonBounds(ring: readonly Vec2[]): { minX: number; minY: number; maxX: number; maxY: number } {
   let minX = Infinity;
   let minY = Infinity;
@@ -1041,9 +1014,6 @@ function polygonBounds(ring: readonly Vec2[]): { minX: number; minY: number; max
   }
   return { minX, minY, maxX, maxY };
 }
-
-const levelsWithin = (inner: Volume, outer: Volume): boolean =>
-  inner.base >= outer.base && inner.base + inner.storeys.length <= outer.base + outer.storeys.length;
 
 /**
  * The pieces of a plan polygon (one outer ring, maybe holes) as simple rings
@@ -1068,79 +1038,6 @@ function simplePieces(poly: clipping.Polygon, depth = 0): Vec2[][] {
   return [...clipping.intersection(poly, left), ...clipping.intersection(poly, right)].flatMap((p) => simplePieces(p, depth + 1));
 }
 
-/** A volume shaped as `ring` (local units), carrying `template`'s storeys, roof and look. */
-function volumeFromRing(b: Building, template: Volume, ring: readonly Vec2[]): Volume | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of ring) {
-    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-  }
-  const w = maxX - minX, d = maxY - minY;
-  if (w < MIN_SIZE || d < MIN_SIZE || Math.abs(signedArea(ring)) < MIN_SIZE * MIN_SIZE || ring.length > 64) return null;
-  const volume = JSON.parse(JSON.stringify(template)) as Volume;
-  volume.id = b.nextVolumeId++;
-  volume.x = minX; volume.y = minY; volume.w = w; volume.d = d;
-  delete volume.reliefs;
-  delete volume.facadeGeometry;
-  const box = ring.length === 4 && ring.every((p) =>
-    (Math.abs(p.x - minX) < 1e-6 || Math.abs(p.x - maxX) < 1e-6) && (Math.abs(p.y - minY) < 1e-6 || Math.abs(p.y - maxY) < 1e-6));
-  if (box) delete volume.outline;
-  else if (!setVolumePlan(volume, ring)) return null;
-  if (volume.roofDetails) volume.roofDetails = volume.roofDetails.filter((part) => roofPartFits(volume, part));
-  return volume;
-}
-
-/**
- * Makes a building's masses stop standing in the same space, keeping the old
- * ones whole: wherever a NEW mass (`fresh`) shares floor area and levels with
- * another, the shared part is cut out of the new one - a wing drawn over the
- * house becomes the part of it that sticks out, and the two read as one
- * building. When the new mass is the taller of the two and the old one fits
- * inside its levels, the old one gives way instead (a tower placed over a
- * shed). Works on any outline, by polygon difference.
- *
- * Returns the ids that are fresh after the cut (a cut mass may come out in
- * pieces). Refusing the drop with "two volumes would overlap" was the old
- * answer, and it left the player with a green ghost that would not build.
- */
-export function cutOverlaps(b: Building, fresh: ReadonlySet<number>): Set<number> {
-  const live = new Set(fresh);
-  for (let guard = 0; guard < 48; guard++) {
-    let pair: [Volume, Volume] | null = null;
-    for (const n of b.volumes) {
-      if (!live.has(n.id)) continue;
-      for (const o of b.volumes) {
-        if (o.id === n.id || live.has(o.id)) continue;
-        if (!(n.base < o.base + o.storeys.length && o.base < n.base + n.storeys.length)) continue;
-        if (overlapArea(localFootprint(n), localFootprint(o)) < MIN_SIZE * MIN_SIZE * 0.05) continue;
-        pair = [n, o];
-        break;
-      }
-      if (pair) break;
-    }
-    if (!pair) break;
-    const [n, o] = pair;
-    // The one that gives way: the new mass, unless the old one sits inside
-    // its levels and does not carry anything.
-    const carries = (v: Volume): boolean => b.volumes.some((x) => x.base === v.base + v.storeys.length && planOverlap(x, v));
-    const doomed = !levelsWithin(n, o) && levelsWithin(o, n) && !carries(o) && o.base === n.base ? o : n;
-    const keeper = doomed === n ? o : n;
-    const rest = clipping.difference(asPolygon(localFootprint(doomed)), asPolygon(localFootprint(keeper)));
-    const made: Volume[] = [];
-    for (const poly of rest) {
-      for (const ring of simplePieces(poly)) {
-        const v = volumeFromRing(b, doomed, ring);
-        if (v) made.push(v);
-      }
-    }
-    b.volumes = b.volumes.filter((v) => v.id !== doomed.id).concat(made);
-    if (live.has(doomed.id)) {
-      live.delete(doomed.id);
-      for (const v of made) live.add(v.id);
-    }
-  }
-  return live;
-}
 
 /** Makes the masses of one building disjoint, then fuses what makes a block. */
 export function fuseVolumes(b: Building): void {

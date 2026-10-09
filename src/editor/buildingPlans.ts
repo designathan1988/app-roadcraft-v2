@@ -11,7 +11,6 @@ export type PlanShape = 'rectangle' | 'l' | 'u' | 'circle' | 'hexagon' | 'octago
 
 /** The basic shapes thrown at a building: a plan and a roof. */
 export type Primitive = 'box' | 'cylinder' | 'octagonal' | 'prism' | 'wedge' | 'pyramid' | 'cone' | 'crossBlock';
-export const PRIMITIVE_IDS: readonly Primitive[] = ['box', 'cylinder', 'octagonal', 'prism', 'wedge', 'pyramid', 'cone', 'crossBlock'];
 export const PRIMITIVES: Readonly<Record<Primitive, { readonly shape: PlanShape; readonly roof: RoofKind; readonly pitch: number }>> = {
   box: { shape: 'rectangle', roof: 'flat', pitch: 0 },
   cylinder: { shape: 'circle', roof: 'flat', pitch: 0 },
@@ -41,16 +40,6 @@ export function shapePoints(shape: PlanShape): Vec2[] {
     const a = i * Math.PI * 2 / count - Math.PI / 2;
     return { x: .5 + .5 * Math.cos(a), y: .5 + .5 * Math.sin(a) };
   });
-}
-
-export function detectPlanShape(volume: Volume): PlanShape | null {
-  if (!volume.outline) return 'rectangle';
-  for (const shape of ['rectangle', 'chamfered', 'octagon', 'circle', 'hexagon', 'l', 'u', 'cross', 'stepped'] as const) {
-    const expected = shapePoints(shape);
-    if (volume.outline.length === expected.length && volume.outline.every((p, i) =>
-      Math.hypot(p.x - expected[i]!.x, p.y - expected[i]!.y) < 1e-4)) return shape;
-  }
-  return null;
 }
 
 /** Store a ring in a volume's bounding frame. Existing edge overrides stay indexed. */

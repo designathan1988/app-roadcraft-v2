@@ -129,17 +129,6 @@ function sideReach(
 const JOINT = 0;
 const MATCH = ZONE_CELL / 2;
 
-/** The mark standing on a cell, with its index in `doc.zoneMarks`. */
-export function markOf(doc: RoadDoc, cell: ZoneCell): { mark: ZoneMark; index: number } | null {
-  let best: { mark: ZoneMark; index: number } | null = null;
-  let bestD = MATCH;
-  doc.zoneMarks.forEach((mark, index) => {
-    const d = Math.hypot(mark.x - cell.centre.x, mark.y - cell.centre.y);
-    if (d < bestD) { bestD = d; best = { mark, index }; }
-  });
-  return best;
-}
-
 /** Every cell's mark at once (one pass over the marks, not one per cell). */
 export function marksByCell(doc: RoadDoc, grid: ZoneGrid): Map<string, { mark: ZoneMark; index: number }> {
   const out = new Map<string, { mark: ZoneMark; index: number }>();
@@ -381,42 +370,10 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
 
 /**
  * The version of the lot generator (`lotPlan.ts`, the yards, walls and
- * facades of grown buildings). Bumped when it changes; a zoned building grown
- * with an older one is regrown (`regrowStale`), so what the player sees is
- * always the current generator, not the records of an older one.
+ * facades of grown buildings), stamped on each building grown (`main.ts`).
+ * Bumped when it changes.
  */
 export const LOT_PLAN_VERSION = 11;
-
-/**
- * Takes down the zoned buildings grown by an older generator and frees their
- * cells, so growth builds them again. At most `limit` at a time, so a city
- * renews over a few seconds instead of all at once. Returns how many went.
- */
-export function regrowStale(doc: RoadDoc, limit = 6): number {
-  let gone = 0;
-  const stale = new Set<number>();
-  for (const mark of doc.zoneMarks) {
-    if (mark.building === undefined || stale.has(mark.building)) continue;
-    const b = doc.buildings.get(mark.building as Parameters<typeof doc.buildings.get>[0]);
-    if (b && b.lotPlan !== LOT_PLAN_VERSION) {
-      stale.add(mark.building);
-      if (stale.size >= limit) break;
-    }
-  }
-  for (const id of stale) {
-    if (doc.buildings.remove(id as Parameters<typeof doc.buildings.remove>[0])) gone++;
-  }
-  const freed: Vec2[] = [];
-  doc.zoneMarks.forEach((mark, i) => {
-    if (mark.building !== undefined && stale.has(mark.building)) {
-      const { building: _b, ...rest } = mark;
-      doc.zoneMarks[i] = rest as typeof mark;
-      freed.push(mark);
-    }
-  });
-  if (gone) doc.zonesChanged(cellRects(freed), 'prédios antigos refeitos');
-  return gone;
-}
 
 /**
  * Grows one building on a zoned lot without one (`world/lots.ts`): the lot is

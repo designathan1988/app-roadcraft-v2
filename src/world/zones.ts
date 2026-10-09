@@ -19,14 +19,6 @@ export interface Zone {
 export const isZoneUse = (value: unknown): value is ZoneUse => ZONE_USES.includes(value as ZoneUse);
 export const isZoneDensity = (value: unknown): value is ZoneDensity => ZONE_DENSITIES.includes(value as ZoneDensity);
 
-export function zoneBounds(a: { x: number; y: number }, b: { x: number; y: number }): Pick<Zone, 'x0' | 'y0' | 'x1' | 'y1'> {
-  return { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
-}
-
-export function zonesOverlap(a: Pick<Zone, 'x0' | 'y0' | 'x1' | 'y1'>, b: Pick<Zone, 'x0' | 'y0' | 'x1' | 'y1'>): boolean {
-  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
-}
-
 /**
  * One zoned cell of the street grid (`world/zoneGrid.ts`), stored by where it
  * stands so it survives the road being split or its ids changing: the cell

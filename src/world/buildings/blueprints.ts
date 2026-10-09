@@ -335,8 +335,6 @@ export const BLUEPRINTS: readonly Blueprint[] = [
 ];
 
 /** The use each preset is filed under in the palette. */
-export const blueprintUse = (bp: Blueprint): BuildingUse => bp.body.use;
-
 export function blueprintByKey(key: string): Blueprint | undefined {
   return BLUEPRINTS.find((bp) => bp.key === key);
 }

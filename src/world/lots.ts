@@ -834,36 +834,3 @@ export function snapLotsToStreets(doc: RoadDoc, net: Network, corners: Vec2[][],
   }
 }
 
-/** How far a lot's front may be from the middle of a road and still be on it. */
-const ON_STREET = m(26);
-
-/**
- * Removes the empty lots no road serves any more - the road beside them
- * deleted - and the empty lots a road now runs across (the player,
- * 2026-10-06: deleting a road left its lots on the grass). A lot with a
- * building standing keeps it. Only lots are looked at, never land planned
- * again: cheap enough for every road edit.
- */
-export function pruneOrphanLots(doc: RoadDoc, net: Network): boolean {
-  if (!doc.lots.length) return false;
-  const { onRoad, onPlate } = pavedTester(doc, net);
-  const ribbons = [...net.ribbons.values()];
-  const kept = doc.lots.filter((l) => {
-    if (l.building !== undefined && doc.buildings.has(l.building as never)) return true;
-    const a = l.corners[0]!, b = l.corners[1] ?? a;
-    const front = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const served = ribbons.some((r) => {
-      const bb = r.full.bbox;
-      if (front.x < bb.minX - ON_STREET || front.x > bb.maxX + ON_STREET || front.y < bb.minY - ON_STREET || front.y > bb.maxY + ON_STREET) return false;
-      return r.full.distanceTo(front) < ON_STREET;
-    });
-    if (!served) return false;
-    const c = lotCentre(l);
-    return !(onRoad(c) || onPlate(c));
-  });
-  if (kept.length === doc.lots.length) return false;
-  const gone = doc.lots.filter((l) => !kept.includes(l));
-  doc.lots.splice(0, doc.lots.length, ...kept);
-  doc.lotsChanged(lotRects(gone), 'lotes sem rua tirados');
-  return true;
-}
