@@ -36,9 +36,8 @@ import {
   type PoleRunPlan,
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
-import { scatter } from '@world/elements';
+import { TERRAIN_MIN_MS, TerrainBrush, type DabSettings } from '@editor/terrainBrush';
 import { cloudUnder, driftedCloud, scatterClouds } from '@world/clouds';
-import { oneTree, plantTrees } from '@world/trees';
 import { playThunder } from '@ui/thunder';
 import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
@@ -538,26 +537,40 @@ let orbiting: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnC
  */
 let moving: { node: NodeId; origin: Vec2; before: ReturnType<RoadDoc['toJSON']> } | null = null;
 /**
- * A terrain stroke in progress.
- *
- * `level` is captured ONCE, when the stroke starts, and reused for every dab in
- * it. That is what makes levelling predictable: a player drags across a slope
- * and the whole swept area comes to the height they started from, instead of
- * each dab chasing the ground under itself and leaving the slope exactly as it
- * was. `at` is kept so a held pointer keeps working the same spot.
+ * The terrain brush (`editor/terrainBrush.ts`): the stroke in progress and
+ * what each dab does. The flatten's level is captured ONCE, when the stroke
+ * starts, so a drag across a slope brings the whole swept area to the height
+ * it started from instead of each dab chasing the ground under itself.
  */
-let terrainStroke: {
-  pointer: number;
-  last: Vec2;
-  at: Vec2;
-  level: number;
-  /** Wall time of the last dab, for the rate limit. */
-  applied: number;
-  /** The id its dabs carry, so they move the ground as one stroke (`TerrainStamp.stroke`). */
-  id: number;
-} | null = null;
-/** Drives the held-still repeat of a flatten, so holding the button keeps levelling. */
-let terrainRepeat: ReturnType<typeof setInterval> | null = null;
+const terrainBrush = new TerrainBrush({
+  doc,
+  settings: () => dabSettings(),
+  heightAt: (at) => sceneHeightAt(at),
+  // The cost-aware rate limit: every dab that moves the land re-solves the
+  // roads on it, and dabbing on every pointer sample queued rebuilds until the
+  // player let go. During a stroke only the ground is rebuilt (`holdRoads`),
+  // so it is the ground's own cost that paces the brush.
+  interval: (stroking) => Math.max(TERRAIN_MIN_MS, (stroking ? scene.stats.terrainMs : scene.stats.rebuildMs) * 1.4),
+  record: () => { history.record(doc); updateHistoryButtons(); },
+  redraw: () => requestDraw(),
+});
+/** The brush in hand, as one dab reads it (`editor/terrainBrush.ts` `DabSettings`). */
+function dabSettings(): DabSettings {
+  const fog = fogBrush();
+  return {
+    mode: game.terrainMode,
+    radius: game.terrainRadius,
+    strength: game.terrainStrength,
+    hardness: game.terrainHardness,
+    landform: landformOf(game.terrainMode),
+    element: { mode: elementMode(), kind: elementKind(), brush: elementBrush(elementKind()) },
+    tree: { mode: treeMode(), kind: treeKind(), brush: treeBrush() },
+    gully: { strength: Number((document.getElementById('gullyStrength') as HTMLInputElement | null)?.value ?? 60), erase: gullyErase() },
+    fog: { strength: fog.strength, height: fog.height, speed: fog.speed, erase: fogErase() },
+    paint: paintKind(),
+    random: Math.random,
+  };
+}
 let pinch: { d0: number; zoom0: number; world: Vec2; angle: number } | null = null;
 const pointers = new Map<number, Vec2>();
 canvas.dataset['tool'] = game.tool;
@@ -1039,7 +1052,7 @@ function currentGesture(): string | null {
   if (curvePending) return 'via: curvando';
   if (roadChain) return 'via: encadeando';
   if (settlingRoad) return 'via: assentando';
-  if (terrainStroke) return 'terreno: pincelando';
+  if (terrainBrush.stroking) return 'terreno: pincelando';
   const pole = poleTool.gesture();
   if (pole) return pole;
   const barrier = barrierTool.gesture();
@@ -1287,7 +1300,7 @@ function bulldozeBoxed(a: Vec2, b: Vec2): void {
 
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
-  return draft !== null || roadChain !== null || curvePending !== null || poleTool.inProgress() || terrainStroke !== null || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
+  return draft !== null || roadChain !== null || curvePending !== null || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
 }
 
 /**
@@ -1321,161 +1334,6 @@ function anchorHeightOffset(anchor: Anchor): number {
 /** A nearby road at another height is a crossing, not an accidental junction. */
 function anchorForHeight(anchor: Anchor, heightOffset: number): Anchor {
   return anchorAtHeight(doc, net, anchor, heightOffset);
-}
-
-/**
- * Spacing between dabs along a drag, as a fraction of the brush radius.
- *
- * It was 0.28 and the dabs read as a string of craters rather than as a stroke.
- * A fifth of the radius overlaps enough for the smoothstep falloffs to sum into
- * one smooth channel, which is what carving a river needs.
- */
-const TERRAIN_SPACING = 0.2;
-/** Floor on the interval between dabs, so a fast drag cannot outrun a rebuild. */
-const TERRAIN_MIN_MS = 45;
-/** How often a held, stationary brush reapplies itself. */
-const TERRAIN_REPEAT_MS = 110;
-
-/**
- * The cost-aware rate limit, the same argument as `movePreviewInterval`.
- *
- * Every dab moves `terrainRevision`, which re-solves the whole road elevation
- * field and re-triangulates every band laid on the ground. On a big network
- * that is far more than a frame, and dabbing on every pointer sample simply
- * queued rebuilds until the player let go — which is exactly what "the terrain
- * tool is uncomfortable" describes. Asking the last rebuild what it cost keeps
- * the brush live on an empty map and merely coarser on a full one.
- */
-function terrainPaintInterval(): number {
-  // During a stroke only the ground is rebuilt (see `DrawOptions.holdRoads`),
-  // so it is the ground's own cost that paces the brush.
-  const cost = terrainStroke ? scene.stats.terrainMs : scene.stats.rebuildMs;
-  return Math.max(TERRAIN_MIN_MS, cost * 1.4);
-}
-
-/** One dab, with no spacing or rate checks of its own. */
-function stampTerrain(at: Vec2, level: number): void {
-  if (game.terrainMode === 'elements') {
-    // Elements move no height: a dab lays instances (or takes them away).
-    const mode = elementMode();
-    if (mode !== 'lay') {
-      doc.removeElements(at.x, at.y, game.terrainRadius, mode === 'eraseKind' ? elementKind() : null);
-      return;
-    }
-    const kind = elementKind();
-    const brush = elementBrush(kind);
-    const reach = game.terrainRadius + brush.spacing * UNITS_PER_METER;
-    const nearby = doc.elements.filter((e) => e.kind === kind && Math.abs(e.x - at.x) < reach && Math.abs(e.y - at.y) < reach);
-    doc.addElements(scatter(kind, brush, at.x, at.y, game.terrainRadius, UNITS_PER_METER, Math.random, nearby));
-    return;
-  }
-  if (game.terrainMode === 'trees') {
-    // Trees move no height: a dab plants a stand (or one tree), or cuts the
-    // trees away there - the woods' own too (`world/trees.ts`).
-    const mode = treeMode();
-    if (mode === 'cut') {
-      doc.cutTrees(at.x, at.y, game.terrainRadius);
-      return;
-    }
-    const brush = treeBrush();
-    const reach = game.terrainRadius + brush.spacing * UNITS_PER_METER;
-    const nearby = doc.trees.filter((t) => Math.abs(t.x - at.x) < reach && Math.abs(t.y - at.y) < reach);
-    if (mode === 'one') {
-      const spacing = brush.spacing * UNITS_PER_METER;
-      if (nearby.every((t) => Math.hypot(t.x - at.x, t.y - at.y) >= spacing)) doc.plantTrees([oneTree(treeKind(), brush, at.x, at.y, UNITS_PER_METER, Math.random)]);
-      return;
-    }
-    doc.plantTrees(plantTrees(treeKind(), brush, at.x, at.y, game.terrainRadius, UNITS_PER_METER, Math.random, nearby));
-    return;
-  }
-  if (game.terrainMode === 'gully') {
-    // Gullies move no height the roads read: the relief the light reads is
-    // cut there (or wiped), `render/terrainRelief.ts`.
-    const strength = Number((document.getElementById('gullyStrength') as HTMLInputElement | null)?.value ?? 60);
-    doc.addGullyDab({
-      x: at.x, y: at.y, radius: game.terrainRadius,
-      strength: Math.max(0.05, Math.min(1, strength / 100)),
-      ...(gullyErase() ? { erase: true } : {}),
-    });
-    return;
-  }
-  if (game.terrainMode === 'fog') {
-    // Fog moves no height either: a dab of mist laid, or taken away.
-    // The brush's own settings go with the dab.
-    const brush = fogBrush();
-    doc.addFogDab({
-      x: at.x, y: at.y, radius: game.terrainRadius,
-      strength: Math.max(0.02, Math.min(1, brush.strength / 100)),
-      height: brush.height * UNITS_PER_METER,
-      speed: brush.speed * UNITS_PER_METER,
-      ...(fogErase() ? { erase: true } : {}),
-    });
-    return;
-  }
-  if (game.terrainMode === 'paint') {
-    // Painting moves no height: a dab of the chosen ground, nothing re-solved.
-    doc.addPaintDab({
-      kind: paintKind(), x: at.x, y: at.y, radius: game.terrainRadius,
-      strength: Math.max(0.05, Math.min(1, game.terrainStrength / 80)),
-    });
-    return;
-  }
-  const landform = landformOf(game.terrainMode);
-  const mode: TerrainMode = landform ? landform.mode : game.terrainMode as TerrainMode;
-  doc.addTerrainStamp({
-    x: at.x,
-    y: at.y,
-    radius: game.terrainRadius,
-    strength: game.terrainStrength,
-    mode,
-    ...(mode === 'flatten' ? { level } : {}),
-    ...(terrainStroke && mode !== 'flatten' ? { stroke: terrainStroke.id } : {}),
-    ...(mode === 'raise' || mode === 'lower' || mode === 'river' ? { rough: true } : {}),
-    ...(game.terrainHardness > 0 && !landform?.profile && (mode === 'raise' || mode === 'lower') ? { hardness: game.terrainHardness / 100 } : {}),
-    ...(landform?.profile ? { profile: landform.profile } : {}),
-  });
-  // The landform's rock, under the whole dab.
-  // A little wider than the dab, so the rock reaches the foot of its cliff.
-  if (landform) doc.addPaintDab({ kind: landform.rock, x: at.x, y: at.y, radius: game.terrainRadius * 1.15, strength: 1 });
-}
-
-/**
- * Paints from the last dab to `at`, laying dabs along the way.
- *
- * Interpolating is the other half of a stroke feeling like a stroke: a pointer
- * sample can jump a hundred units at speed, and dabbing only where the samples
- * landed left gaps a river ran straight through.
- */
-function paintTerrain(at: Vec2, force = false): void {
-  const stroke = terrainStroke;
-  if (!stroke) {
-    stampTerrain(at, sceneHeightAt(at));
-    requestDraw();
-    return;
-  }
-
-  stroke.at = at;
-  const now = performance.now();
-  if (!force) {
-    if (now - stroke.applied < terrainPaintInterval()) return;
-    const moved = Math.hypot(at.x - stroke.last.x, at.y - stroke.last.y);
-    if (moved < game.terrainRadius * TERRAIN_SPACING) return;
-  }
-
-  const spacing = Math.max(4, game.terrainRadius * TERRAIN_SPACING);
-  const dx = at.x - stroke.last.x;
-  const dy = at.y - stroke.last.y;
-  const distance = Math.hypot(dx, dy);
-  // Bounded, because a pointer that re-enters the canvas from far away must not
-  // lay two hundred dabs in one event.
-  const steps = force ? 1 : Math.min(12, Math.max(1, Math.round(distance / spacing)));
-  for (let i = 1; i <= steps; i++) {
-    const t = steps === 1 && force ? 1 : i / steps;
-    stampTerrain({ x: stroke.last.x + dx * t, y: stroke.last.y + dy * t }, stroke.level);
-  }
-  stroke.last = at;
-  stroke.applied = now;
-  requestDraw();
 }
 
 // The element brush's settings (Paisagem > Terreno > Elementos), each kind its
@@ -1598,33 +1456,9 @@ function cloudDragTo(px: number, py: number): void {
   });
 }
 
-/** Starts a stroke, capturing the level target and arming the held repeat. */
-function beginTerrainStroke(pointer: number, at: Vec2): void {
-  history.record(doc);
-  let id = 1;
-  for (const stamp of doc.terrainStamps) if (stamp.stroke !== undefined && stamp.stroke >= id) id = stamp.stroke + 1;
-  terrainStroke = { pointer, last: at, at, level: sceneHeightAt(at), applied: 0, id };
-  paintTerrain(at, true);
-  if (terrainRepeat !== null) clearInterval(terrainRepeat);
-  terrainRepeat = null;
-  // Only a flatten works on by being held: it levels a little further with
-  // every dab. A raise, a lower or a river stroke moves the ground by its
-  // strength and no more however long it is held (its dabs are one stroke),
-  // so repeating them would only spend the map's dab budget.
-  if (game.terrainMode === 'flatten') terrainRepeat = setInterval(() => {
-    const stroke = terrainStroke;
-    if (!stroke) return;
-    if (performance.now() - stroke.applied < terrainPaintInterval()) return;
-    stampTerrain(stroke.at, stroke.level);
-    stroke.applied = performance.now();
-    requestDraw();
-  }, TERRAIN_REPEAT_MS);
-  updateHistoryButtons();
-}
-
+/** Ends the brush stroke (`TerrainBrush.end`), warning when the land's stamps near their cap. */
 function endTerrainStroke(): void {
-  const wasPainting = terrainStroke !== null;
-  terrainStroke = null;
+  const wasPainting = terrainBrush.end();
   // Past the cap the oldest sculpting is dropped to make room. Say so before
   // it happens rather than erase the player's first hills in silence.
   if (wasPainting && doc.terrainStamps.length >= MAX_TERRAIN_STAMPS * 0.9) {
@@ -1632,10 +1466,6 @@ function endTerrainStroke(): void {
   }
   // The roads were held for the stroke; this frame re-solves them.
   requestDraw();
-  if (terrainRepeat !== null) {
-    clearInterval(terrainRepeat);
-    terrainRepeat = null;
-  }
 }
 
 // See inside a building by clicking it, with nothing in hand: two clicks open
@@ -1799,7 +1629,7 @@ canvas.addEventListener('pointerdown', (e) => {
       if (game.terrainMode === 'cloud') cloudPointerDown(e.pointerId, e.clientX - r.left, e.clientY - r.top);
       // The weather tool: a click calls a lightning bolt down there.
       else if (game.terrainMode === 'weather') scene.strikeAt(world.x, world.y);
-      else beginTerrainStroke(e.pointerId, world);
+      else terrainBrush.begin(e.pointerId, world);
       break;
 
     case 'building':
@@ -1931,7 +1761,7 @@ canvas.addEventListener('lostpointercapture', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   // A mouse whose button is no longer down has ended its stroke, whether or
   // not the release reached us.
-  if (e.pointerType === 'mouse' && e.buttons === 0 && terrainStroke) endTerrainStroke();
+  if (e.pointerType === 'mouse' && e.buttons === 0 && terrainBrush.stroking) endTerrainStroke();
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
   if (game.tool === 'road') roadPointerScreen = screen;
@@ -2035,8 +1865,8 @@ canvas.addEventListener('pointermove', (e) => {
   }
 
 
-  if (terrainStroke?.pointer === e.pointerId) {
-    paintTerrain(world);
+  if (terrainBrush.pointer === e.pointerId) {
+    terrainBrush.paint(world);
     return;
   }
   if (cloudDrag?.pointer === e.pointerId) {
@@ -2149,7 +1979,7 @@ function endPointer(e: PointerEvent): void {
       return;
     }
   }
-  if (terrainStroke?.pointer === e.pointerId) endTerrainStroke();
+  if (terrainBrush.pointer === e.pointerId) endTerrainStroke();
   if (cloudDrag?.pointer === e.pointerId) cloudDrag = null;
   if (game.tool === 'building') buildings.pointerUp(cancelled || wasPinching);
   if (bulldozeBox?.pointer === e.pointerId) {
@@ -4093,7 +3923,7 @@ function frame(now: number): void {
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
   frameTimer.mark('postes');
-  scene.draw(net, sim, alpha, wall, { holdRoads: terrainStroke !== null });
+  scene.draw(net, sim, alpha, wall, { holdRoads: terrainBrush.stroking });
   frameTimer.mark('desenho');
   drawnOnce = true;
   drawOverlayScreen();
@@ -4527,7 +4357,7 @@ function drawOverlayScreen(): void {
   // levelling needs a number — you cannot match one slope to another by eye in
   // an isometric projection.
   if (game.tool === 'terrain' && hoverAnchor) {
-    const brush = terrainStroke ? terrainStroke.at : hoverAnchor.at;
+    const brush = terrainBrush.at ?? hoverAnchor.at;
     const centre = at(brush);
     const xEdge = at({ x: brush.x + game.terrainRadius, y: brush.y });
     const yEdge = at({ x: brush.x, y: brush.y + game.terrainRadius });
@@ -4565,7 +4395,7 @@ function drawOverlayScreen(): void {
     ctx.lineTo(centre.x, centre.y + 5);
     ctx.stroke();
 
-    const height = terrainStroke ? terrainStroke.level : sceneHeightAt(brush);
+    const height = terrainBrush.level ?? sceneHeightAt(brush);
     const label = game.terrainMode === 'flatten'
       ? `${t('terrain.level')} ${height.toFixed(1)}`
       : height.toFixed(1);
