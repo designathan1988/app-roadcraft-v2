@@ -306,6 +306,13 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   automático vira semáforo com controlador; fases do tempo fixo; corte do verde para ônibus; onda verde com ciclo comum).
 - Limite conhecido: os conectores da minirrotatória continuam os da junção (uma conversão à esquerda passa sobre a ilha
   pintada, transponível); o contorno da ilha fica para a V8.
+- Impasse do player-city (defects.spec, cruzamento parado 75 s com a cidade povoada ao abrir): não era admissão; um carro
+  sem destino entrava numa rua cuja única saída, duas faixas adiante, é uma curva em que nenhum carro cabe (conector com
+  `maxBodyClass` -1), e o roteador só olhava 5 faixas à frente; parava no fim da rota para sempre, a perna enfileirada.
+  `sim/routing/router.ts` `trapLanes`: as faixas de onde um corpo nunca sai (descascadas de trás para frente, como as
+  arestas "desconectadas" do SUMO), custo infinito no roteador. Antes/depois: cruzamento 75 → 19 s, carro parado 76 → 43 s.
+  Detector `tests/sim/trapLanes.spec.ts`. Seguem falhando, da caminhada (não das vias): pedestre parado na calçada 5,9 s
+  (player-city) e 10,3 s (mixed-lanes), iguais antes e depois.
 - Fechamento no ramo: lint limpo; suíte inteira 1158 verdes; falhas: `occupantFit` (antiga) e
   `tests/world/lotPhysics.spec.ts` (lotes, vinda do master em 4223ce23, fora do sistema de vias).
 
