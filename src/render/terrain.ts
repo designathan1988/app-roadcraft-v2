@@ -1833,7 +1833,7 @@ const SLAB_DEPTH = 320;
 const TOPSOIL = 4;
 
 /** Metres of wall one rock-detail texture spans, both ways (`rockDetailTexture`). */
-const ROCK_DETAIL_SPAN = 24;
+const ROCK_DETAIL_SPAN = 14;
 
 /**
  * The rock's own surface for the map's cut sides, worked out once at start
@@ -1913,10 +1913,9 @@ const HARDNESS = [0.75, 0.15, 0.85, 0.3, 1] as const;
  * plywood from afar (fifteen even stripes down the whole cut).
  */
 const BEDS: readonly (readonly [number, number, number, number, number])[] = [
-  [30, 184, 152, 108, ROCK_KINDS.sandstone], [6, 92, 84, 78, ROCK_KINDS.shale], [18, 158, 98, 66, ROCK_KINDS.clay],
-  [10, 150, 144, 132, ROCK_KINDS.conglomerate], [36, 202, 176, 132, ROCK_KINDS.sandstone], [5, 86, 80, 76, ROCK_KINDS.shale],
-  [24, 136, 108, 82, ROCK_KINDS.clay], [12, 160, 150, 134, ROCK_KINDS.conglomerate], [34, 176, 140, 100, ROCK_KINDS.sandstone],
-  [8, 98, 88, 80, ROCK_KINDS.shale], [26, 168, 112, 78, ROCK_KINDS.sandstone], [47, 172, 168, 156, ROCK_KINDS.limestone],
+  [34, 186, 160, 122, ROCK_KINDS.sandstone], [12, 128, 118, 108, ROCK_KINDS.shale], [22, 160, 122, 94, ROCK_KINDS.clay],
+  [14, 150, 144, 132, ROCK_KINDS.conglomerate], [40, 200, 180, 144, ROCK_KINDS.sandstone], [10, 122, 112, 104, ROCK_KINDS.shale],
+  [28, 146, 118, 92, ROCK_KINDS.clay], [16, 156, 148, 134, ROCK_KINDS.conglomerate], [60, 176, 170, 156, ROCK_KINDS.limestone],
 ];
 
 /**
@@ -2003,19 +2002,18 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          float reliefUp = texture2D(map, ruv + vec2(0.0, -0.012)).a;
          float emboss = 1.0 + (det.a - reliefUp) * 1.6;
          float grain = (0.75 + 0.5 * det.r) * (0.85 + 0.3 * det2.r) * emboss;
-         // Beds pinch and swell along the rim (each depth bent on its own),
-         // and a few faults throw them up or down a few metres, slanting.
+         // Beds pinch and swell along the rim, each depth bent on its own.
+         // (No faults: a bed thrown up a few metres read as the wall cut and
+         // broken in steps, the soil band with it.)
          float bend = 7.0 * wallNoise(along * 0.008 + 3.0) + 2.5 * wallNoise(along * 0.031 + 9.0);
          // The rock's depth from a LEVEL datum (the land's base), not from the
          // rim: measured from the rim, every contact copied the turf's ragged
          // tufts and climbed every hill. The soil above still follows the rim.
          float level = (${TERRAIN_BASE.toFixed(3)} - vMapUv.y * ${STRATA_SPAN_Y.toFixed(1)});
-         float slant = along + level * 0.35;
-         float fault = (wallHash(floor(slant / 610.0) * 3.7) - 0.5) * 14.0;
          float pinch = 6.0 * (wallNoise(along * 0.012 + level * 0.02) - 0.5);
-         float dd = max(level, vBelow - 30.0) + bend + fault + pinch;
+         float dd = max(level, vBelow - 30.0) + bend + pinch;
          float subTop = soil, cTop = 34.0, rockTop = 52.0;
-         vec3 subsoil = mix(vec3(0.30, 0.135, 0.06), vec3(0.42, 0.31, 0.19), smoothstep(subTop, cTop + 6.0, max(dd, vBelow)));
+         vec3 subsoil = mix(vec3(0.24, 0.14, 0.075), vec3(0.40, 0.31, 0.21), smoothstep(subTop, cTop + 6.0, max(dd, vBelow)));
          vec3 strata = subsoil * grain;
          {
            // The rock beds: their column (bedsTexture), filtered over a
@@ -2031,13 +2029,18 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
            float shale = 1.0 - clamp(abs(kind - 1.0), 0.0, 1.0);
            float pebbly = 1.0 - clamp(abs(kind - 2.0), 0.0, 1.0);
            float jointed = hard;
-           rock *= mix(1.0, 0.7 + 0.6 * det.r, shale);
+           rock *= mix(1.0, 0.78 + 0.44 * det.r, shale);
            rock = mix(rock, rock * (0.75 + 0.6 * wallHash(floor(det.b * 7.0))) * 1.15, pebbly * smoothstep(0.15, 0.4, det.b));
-           rock *= 1.0 - 0.55 * jointed * det.g;
-           // Differential erosion: a hard bed stands out, its top lit; the
-           // soft bed under it sits back, in its shadow.
-           rock *= 1.0 + 0.22 * hard * (1.0 - smoothstep(0.0, 0.12, into));
-           rock *= 1.0 - 0.35 * (1.0 - hard) * (1.0 - smoothstep(0.0, 0.18, into));
+           rock *= 1.0 - 0.3 * jointed * det.g;
+           // Within a bed the colour shades from its top down, as a bed
+           // weathers - not a flat field with a dark outline at its contact.
+           rock *= 1.1 - 0.2 * into;
+           // A hard bed's top catches the light a little (differential erosion, softly).
+           rock *= 1.0 + 0.1 * hard * (1.0 - smoothstep(0.0, 0.25, into));
+           // Stones set in the sand and clay: rounded, paler, lit on top.
+           float stone = smoothstep(0.55, 0.75, det2.b) * (1.0 - shale) * (1.0 - pebbly);
+           vec3 stoneCol = vec3(0.34, 0.32, 0.29) * (0.8 + 0.4 * det2.a);
+           rock = mix(rock, stoneCol, stone * 0.85);
            strata = mix(subsoil, rock, smoothstep(rockTop - 1.5, rockTop + 1.5, dd)) * grain;
            // The C substratum: weathered stones scattered through it.
            float scatter = smoothstep(0.2, 0.45, det2.b) * smoothstep(cTop - 4.0, cTop + 4.0, dd) * (1.0 - smoothstep(rockTop - 2.0, rockTop, dd));
@@ -2058,13 +2061,16 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          vec2 ru = rf * rf * (3.0 - 2.0 * rf);
          float mottle = mix(mix(wallHash(dot(ri, vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 0.0), vec2(127.1, 311.7))), ru.x),
            mix(wallHash(dot(ri + vec2(0.0, 1.0), vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 1.0), vec2(127.1, 311.7))), ru.x), ru.y);
-         vec3 bedrock = mix(vec3(0.16, 0.15, 0.135), vec3(0.25, 0.235, 0.21), mottle) * grain;
-         bedrock *= 1.0 - 0.6 * det.g;
+         vec3 bedrock = mix(vec3(0.17, 0.15, 0.13), vec3(0.26, 0.23, 0.2), mottle) * grain;
+         bedrock *= 1.0 - 0.45 * det.g;
          wall = mix(wall, bedrock, smoothstep(bedTop - 0.8, bedTop + 0.8, vBelow));
+         // Deeper is darker: the light falls off down the cut, and its foot
+         // goes into the dark round the map, as a model's base in shadow.
+         wall *= mix(1.0, 0.5, smoothstep(60.0, 320.0, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v8';
+  material.customProgramCacheKey = () => 'terrain-walls-v10';
   return material;
 }
 
