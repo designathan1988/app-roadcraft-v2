@@ -206,7 +206,19 @@ export interface Volume {
    * a schoolyard, a cemetery, a court). Edited like any block.
    */
   open?: LotSurface;
+  /**
+   * An open block laid as a TERRACE of a hillside lot: this far above (or,
+   * negative, below) the building's ground floor, world units, level, held
+   * by a retaining wall where it meets the next platform (a yard stepped up
+   * or down the slope behind a house, `editor/lotPlan.ts`). Absent: the
+   * lot's own rule (`lots.ts`: level with the floor, or falling with the
+   * street it opens onto). At most `MAX_TERRACE` either way.
+   */
+  terrace?: number;
 }
+
+/** The farthest a terrace of a lot stands above or below its building's floor. */
+export const MAX_TERRACE = m(5.5);
 
 /**
  * What an open block is laid with. Each area of a lot has its own: a lawn, a

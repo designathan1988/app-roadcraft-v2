@@ -15,6 +15,38 @@ import { buildingBounds, footprintRects } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
 import { Level, halfWidth } from '@world/roadTypes';
 import { rectAround, type ChangeRect } from '@world/changes';
+import { groundElements } from '@world/buildings/elements';
+import { overlapArea } from '@world/buildings/footprints';
+
+const BOUNDARY_PARTS = new Set(['wall', 'fence', 'hedge', 'railing']);
+
+/**
+ * A grown building added, its boundary meeting the neighbours': where a
+ * piece of its wall or fence stands against a neighbour's own building or
+ * boundary - the neighbour's wall already closes that stretch, as on any
+ * party line - the piece is left out and the building added again. The
+ * boundary is closed whole on the lot's own side (`lotPlan.ts`), and a
+ * neighbour standing on the line was refused the whole building for it.
+ */
+function addPlaced(ctx: SiteContext, record: Omit<Building, 'id'>): ReturnType<typeof placeBuilding> {
+  const first = addBuildingRecord(ctx, record);
+  if (first.ok || first.problem !== 'building') return first;
+  const probe = { ...record, id: -1 } as unknown as Building;
+  const box = buildingBounds(probe, m(2));
+  const theirs: Vec2[][] = [];
+  for (const o of ctx.doc.buildings.all()) {
+    const ob = buildingBounds(o);
+    if (ob.minX > box.maxX || ob.maxX < box.minX || ob.minY > box.maxY || ob.maxY < box.minY) continue;
+    theirs.push(...footprintRects(o), ...groundElements(o));
+  }
+  const elements = (record.elements ?? []).filter((e) => {
+    if (!BOUNDARY_PARTS.has(e.kind)) return true;
+    const ring = groundElements({ ...probe, elements: [e] }, -m(0.05))[0];
+    return !ring || !theirs.some((c) => overlapArea(ring, c) > 1e-5);
+  });
+  if (elements.length === (record.elements ?? []).length) return first;
+  return addBuildingRecord(ctx, { ...record, elements });
+}
 
 /**
  * Where these zone cells lie, for the diary (`RoadDoc.zonesChanged`): only
@@ -332,7 +364,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
       // along the street by half of what one side gained over the other.
       const shift = (reach.right - reach.left) / 2;
       const anchor = { x: gridAnchor.x + Math.cos(rotation) * shift, y: gridAnchor.y + Math.sin(rotation) * shift };
-      result = addBuildingRecord(ctx, { ...body, x: anchor.x, y: anchor.y, rotation } as Omit<Building, 'id'>);
+      result = addPlaced(ctx, { ...body, x: anchor.x, y: anchor.y, rotation } as Omit<Building, 'id'>);
       if (result.ok) break;
     }
     if (!result.ok || result.id === undefined) { refused.add(start.id); continue; }
@@ -523,13 +555,20 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
       const x0 = Math.max(v.x, -lotW / 2), x1 = Math.min(v.x + v.w, lotW / 2);
       if (x1 - x0 > m(1)) { v.x = x0; v.w = x1 - x0; }
     }
-    if (!furnishLot(body, plan, made, rng)) continue;
     // The lot's front middle, set back by the try's front margin.
     const anchor = { x: frame.anchor.x + n.x * t.front, y: frame.anchor.y + n.y * t.front };
+    // How the land falls or rises from the street to the middle of the back
+    // yard, metres: a yard on a hillside is terraced (`furnishLot`).
+    const ground = ctx.groundAt;
+    const yardY = m(D - plan.back.depth / 2);
+    const hill = ground && plan.back.depth > 0
+      ? { yard: (ground(anchor.x + n.x * yardY, anchor.y + n.y * yardY) - ground(anchor.x + n.x * m(0.5), anchor.y + n.y * m(0.5))) * METERS_PER_UNIT }
+      : undefined;
+    if (!furnishLot(body, plan, made, rng, hill)) continue;
     // The lot in the building's frame: x along the front, y back into it.
     const ring = lot.corners.map((c) => ({ x: (c.x - anchor.x) * u.x + (c.y - anchor.y) * u.y, y: (c.x - anchor.x) * n.x + (c.y - anchor.y) * n.y }));
     fitToLot(body, ring);
-    const result = addBuildingRecord(ctx, { ...body, x: anchor.x, y: anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
+    const result = addPlaced(ctx, { ...body, x: anchor.x, y: anchor.y, rotation: frame.rotation } as Omit<Building, 'id'>);
     if (!result.ok || result.id === undefined) continue;
     const at = doc.lots.findIndex((l) => l.id === lot.id);
     doc.lots[at] = { ...lot, building: result.id as number };

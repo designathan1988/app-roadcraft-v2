@@ -26,6 +26,7 @@ import {
   MAX_SIZE,
   MIN_PITCH,
   MAX_STOREYS,
+  MAX_TERRACE,
   MAX_STOREY_HEIGHT,
   MAX_GROUND_HEIGHT,
   MIN_MODULE,
@@ -170,6 +171,9 @@ function migrateVolume(raw: unknown, scale: Scale): Volume | null {
   }
   if (raw.mode !== 'void' && raw.mode !== 'intersect' && raw.mode !== 'xor') delete volume.mode;
   if (!(LOT_SURFACES as readonly unknown[]).includes(raw.open)) delete volume.open;
+  // A hillside lot's terrace: on an open block only, within reach of the floor.
+  if (volume.open && finite(raw.terrace)) volume.terrace = Math.max(-MAX_TERRACE, Math.min(MAX_TERRACE, raw.terrace * scale.unit));
+  else delete volume.terrace;
   if (isFacadePattern(raw.facadePattern)) volume.facadePattern = raw.facadePattern;
   else delete volume.facadePattern;
   if (Array.isArray(raw.roofDetails)) {

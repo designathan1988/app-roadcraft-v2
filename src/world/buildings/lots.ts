@@ -48,8 +48,12 @@ export function lotSurfaces(b: Building, floor: number, pavedAt?: PavingAt): Lot
     ];
     const street = sides.findIndex((s) => Number.isFinite(s.a) && Number.isFinite(s.b));
     const local = (x: number, y: number): Vec2 => worldToLocal(b, { x, y });
-    let heightAt: (x: number, y: number) => number = () => floor;
-    if (street >= 0) {
+    // A terrace of a hillside lot is laid at its own level (cut and fill kept
+    // near the natural ground), held by the retaining wall the lot planner
+    // stands at its edge; one on a street still meets the street.
+    const level = floor + (v.terrace ?? 0);
+    let heightAt: (x: number, y: number) => number = () => level;
+    if (street >= 0 && v.terrace === undefined) {
       const ha = sides[street]!.a + KERB_RISE, hb = sides[street]!.b + KERB_RISE;
       const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
       heightAt = (x, y) => {

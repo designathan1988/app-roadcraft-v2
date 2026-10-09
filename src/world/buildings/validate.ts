@@ -20,6 +20,7 @@ import {
   type Building,
   type BuildingId,
   MAX_ELEMENTS,
+  MAX_TERRACE,
   MAX_MODULE,
   MAX_PITCH,
   MAX_PROJECTION,
@@ -125,7 +126,8 @@ export function structuralProblem(b: Building): BuildingProblem | null {
   const elements = b.elements ?? [];
   if (elements.length > MAX_ELEMENTS) return 'size';
   for (const e of elements) {
-    if (![e.x, e.y, e.w, e.d, e.z, e.h].every(Number.isFinite) || e.z < -1e-6) return 'size';
+    // Below the floor only as far as a terrace of the lot goes (a flight down to a lower yard).
+    if (![e.x, e.y, e.w, e.d, e.z, e.h].every(Number.isFinite) || e.z < -MAX_TERRACE - 1e-6) return 'size';
     if (Math.min(e.w, e.d, e.h) < MIN_ELEMENT - 1e-6 || Math.max(e.w, e.d, e.h) > MAX_ELEMENT + 1e-6) return 'size';
     // Parts meet the volumes; they never stand inside them.
     if (elementClash(b, e)) return 'overlap';

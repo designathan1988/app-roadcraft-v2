@@ -1,7 +1,7 @@
 import type { Rng } from '@core/rng';
 import type { BlueprintBody } from '@world/buildings/blueprints';
 import { mat } from '@world/buildings/cityBuildings';
-import { elementClash } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementClash } from '@world/buildings/elements';
 import type { MaterialSpec } from '@world/buildings/materials';
 import type { MadeBuilding, Rect } from '@world/buildings/procedural';
 import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, type Side, type Volume } from '@world/buildings/types';
@@ -162,6 +162,11 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
 
 /** Elements kept free for a lot's boundary, which is laid after everything else. */
 const BOUNDARY_RESERVE = 30;
+/** A yard falls or rises at least this much (m) before it is terraced; risers and treads of its steps; the most risers. */
+const TERRACE_MIN = 0.8;
+const STEP_RISE_M = 0.17;
+const STEP_RUN_M = 0.3;
+const TERRACE_MAX_RISERS = 20;
 /** Parts a car drives over: laid in a drive as anywhere. */
 const FLAT_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>(['pavement', 'drain', 'parking']);
 const BOUNDARY_SET: ReadonlySet<ElementKind> = new Set<ElementKind>(['wall', 'fence', 'hedge', 'railing', 'gate']);
@@ -188,7 +193,9 @@ interface Lot {
  * body's local frame: x = m(lot x - W/2), y = m(lot y)). Returns false when
  * the lot could not be laid.
  */
-export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuilding, rng: Rng): boolean {
+export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuilding, rng: Rng,
+  /** The lot's slope: the natural ground in the middle of the back yard less at the street front, metres. */
+  hill?: { readonly yard: number }): boolean {
   const { W, D, front, left, right, back } = plan;
   const env = plan.building;
   const F = front.depth, Bk = D - back.depth;
@@ -290,6 +297,55 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     busy(x, y, r = 0.8) {
       return taken.some((t) => x + r > t.x0 && x - r < t.x1 && y + r > t.y0 && y - r < t.y1);
     },
+  };
+
+  /**
+   * The yard from `y0` back to `y1` laid as a terrace `fall` metres above (or
+   * below) the floor, rounded to whole risers: its open blocks raised or
+   * lowered (`Volume.terrace`), the parts on it that do not follow the
+   * ground lifted with it, a retaining wall in stone along its edge with a
+   * parapet on the high side, and a flight of steps at `stairX` between the
+   * two levels (risers of 17 cm, treads of 30 cm: twice the rise and the
+   * going, 64 cm, within the 55-70 cm of the stair rule).
+   */
+  const stepYard = (y0: number, y1: number, fall: number, fromVolume: number, fromElement: number, stairX: number): void => {
+    const risers = Math.min(TERRACE_MAX_RISERS, Math.round(Math.abs(fall) * 0.85 / STEP_RISE_M));
+    if (risers < 4) return;
+    const rise = risers * STEP_RISE_M * Math.sign(fall);
+    const run = (risers + 1) * STEP_RUN_M;
+    if (y1 - y0 < run + 2 || W < 6) return;
+    const inYard = (yy: number): boolean => yy >= Y(y0) - 1e-6;
+    for (const v of body.volumes) if (v.open && v.id >= fromVolume && inYard(v.y)) v.terrace = m(rise);
+    // What stands on the platform and is not laid on the ground as it goes
+    // (a table, a slab roof, a post) goes up or down with it.
+    for (const el of elements) if (el.id >= fromElement && inYard(el.y) && !FOLLOWS_GROUND.has(el.kind)) el.z += m(rise);
+    // The steps' place and the wall's line cleared of the garden's parts.
+    const sx = Math.max(1.2, Math.min(W - 1.2, stairX));
+    const clear = (el: BuildingElement): boolean => {
+      if (el.id < fromElement || BOUNDARY_SET.has(el.kind)) return false;
+      const ex = el.x / m(1) + W / 2, ey = el.y / m(1);
+      const half = Math.max(el.w, el.d) / m(1) / 2;
+      const onWall = Math.abs(ey - y0) < half + 0.4;
+      const onStair = Math.abs(ex - sx) < half + 1 && ey > y0 - 0.5 && ey < y0 + run + 0.5;
+      return onWall || onStair;
+    };
+    elements.splice(0, elements.length, ...elements.filter((el) => !clear(el)));
+    const stone = mat('stone', 0x9a948a);
+    // The wall: from the lower platform up to the higher one and a hand's
+    // breadth over it; a guard rail's height over a drop.
+    const wallH = rise > 0 ? rise + 0.15 : 0.95;
+    for (const [a, b] of [[0.15, sx - 0.75], [sx + 0.75, W - 0.15]] as const) {
+      if (b - a < 0.4) continue;
+      const n = Math.ceil((b - a) / 20);
+      for (let k = 0; k < n; k++) {
+        const pa = a + ((b - a) * k) / n, pb = a + ((b - a) * (k + 1)) / n;
+        lot.put('slab', (pa + pb) / 2, y0 - 0.15, 0, pb - pa, 0.3, wallH, 0, stone);
+      }
+    }
+    // The flight, into the higher platform: up the slope (it goes down to the
+    // front, `facing` 0), or down it (to the back, from the floor's level).
+    if (rise > 0) lot.put('stair', sx, y0 + run / 2, 0, 1.3, run, rise, 0, stone);
+    else lot.put('stair', sx, y0 + run / 2, 2, 1.3, run, -rise, rise, stone);
   };
 
   // ---- the strips beside the building: what part of each is drive, and what path
@@ -448,6 +504,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   const by0 = Bk, by1 = D;
   switch (back.use) {
     case 'yard': {
+      const yardVolumes = nextVolume, yardElements = nextElement;
       // The terrace on the back door, the lawn, a service corner, a pool or beds, a shed.
       const terrace = { x0: env.x0, y0: by0, x1: env.x1, y1: Math.min(by1, by0 + 3) };
       const lawnY0 = terrace.y1, depth = by1 - lawnY0;
@@ -598,6 +655,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       }
       // Potted plants along the terrace edge.
       for (let px = terrace.x0 + 0.6; px < terrace.x1 - 0.5; px += 1.6) if (!lot.busy(px, terrace.y1 - 0.4, 0.3)) lot.put('planter', px, terrace.y1 - 0.4, 0, 0.5, 0.5, 0.55);
+      // On a hillside, the garden beyond the terrace is a platform of its
+      // own, stepped up or down the slope (terracing: level platforms held
+      // by a retaining wall, a flight of steps between), instead of the whole
+      // yard cut down or filled up to the floor with banks spilling over the
+      // boundary.
+      if (hill && Math.abs(hill.yard) >= TERRACE_MIN) stepYard(lawnY0, by1, hill.yard, yardVolumes, yardElements, (env.x0 + env.x1) / 2);
       break;
     }
     case 'parking': {

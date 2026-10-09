@@ -2,8 +2,8 @@ import type { Vec2 } from '@core/vec2';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import {
-  addPolygonLot, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper,
-  moveLotCorner, onLand, setLotFront, splitLot, zoneLots, type Lot,
+  addPolygonLot, applyLots, curveLotSide, cutLines, deleteLot, insideLot, joinLots, lotCentre, lotFrame, lotRect, lotSnapper,
+  moveLotCorner, onLand, planLotsSteps, setLotFront, splitLot, zoneLots, type Lot, type LotPlan,
 } from '@world/lots';
 import { solidFootprints } from '@world/buildings/geometry';
 import type { BuildingId } from '@world/buildings/types';
@@ -52,6 +52,8 @@ export interface LotOverlay {
 }
 
 const ZONE_COLOURS: Readonly<Record<ZoneUse, number>> = { residential: 0x56bb73, commercial: 0x5da9e9, industrial: 0xd9b254 };
+/** Milliseconds a frame the proposed lots are worked out in (the budget of an edit's background work). */
+const PROPOSAL_BUDGET_MS = 4;
 
 export class LotTool {
   /** The pointer over the map while the tool is in hand. */
@@ -65,8 +67,20 @@ export class LotTool {
   /** A drawn cut line, and a side being curved. */
   private cutLine: { pointer: number; a: Vec2; b: Vec2 } | null = null;
   private curve: { pointer: number; a: Vec2; b: Vec2; through: Vec2 } | null = null;
-  /** A stroke of the brush, a corner being dragged, a lot being drawn, the first lot of a join. */
-  private stroke: { pointer: number; remove: boolean; ids: Set<number> } | null = null;
+  /**
+   * A stroke of the brush, a corner being dragged, a lot being drawn, the
+   * first lot of a join. A stroke takes stored lots (`ids`) and proposed
+   * ones (`fresh`, by their index in the proposal), made on release.
+   */
+  private stroke: { pointer: number; remove: boolean; ids: Set<number>; fresh: Set<number> } | null = null;
+  /**
+   * The land along the streets cut into lots while the Zoning tool is in
+   * hand, as Cities: Skylines shows its zonable land along every road: the
+   * brush paints these, and they are made on release. Worked out a few
+   * milliseconds a frame (`planLotsSteps`), again when the roads or the lots
+   * change; nothing is stored until the player paints.
+   */
+  private proposal: { key: string; steps: Generator<void, LotPlan> | null; lots: readonly Vec2[][]; keys: readonly string[] } | null = null;
   private corner: { pointer: number; from: Vec2; to: Vec2 } | null = null;
   private drawn: { pointer: number; a: Vec2; b: Vec2; angle: number } | null = null;
   private joinFirst: number | null = null;
@@ -113,6 +127,51 @@ export class LotTool {
   modeChanged(): void {
     this.joinFirst = null;
     this.polygon = [];
+  }
+
+  // ------------------------------------------------------------ the proposed lots
+
+  /** What the proposal was worked out from: the roads and the stored lots. */
+  private proposalKey(): string {
+    return `${this.net.revision}:${this.doc.lots.length}:${this.doc.nextLotId}`;
+  }
+
+  /**
+   * Moves the proposal on by up to `budget` milliseconds, starting it again
+   * when what it was worked out from changed. True while it is still being
+   * worked out (the caller draws another frame).
+   */
+  advanceProposal(budget = PROPOSAL_BUDGET_MS): boolean {
+    const key = this.proposalKey();
+    if (!this.proposal || this.proposal.key !== key) {
+      this.proposal = { key, steps: planLotsSteps(this.doc, this.net), lots: this.proposal?.lots ?? [], keys: [] };
+    }
+    const p = this.proposal;
+    if (!p.steps) return false;
+    const until = performance.now() + budget;
+    for (;;) {
+      const r = p.steps.next();
+      if (r.done) {
+        p.steps = null;
+        p.lots = r.value.add.map((c) => c.corners);
+        p.keys = r.value.keys;
+        return false;
+      }
+      if (performance.now() >= until) return true;
+    }
+  }
+
+  /** The proposed lot under a point (its index), or -1; only once worked out for the land as it is now. */
+  private proposedAt(p: Vec2): number {
+    const prop = this.proposal;
+    if (!prop || prop.steps || prop.key !== this.proposalKey()) return -1;
+    return prop.lots.findIndex((corners) => insideLot(p, { corners }));
+  }
+
+  /** Whether the proposal for the land as it is now is ready (probes). */
+  proposalReady(): number {
+    const prop = this.proposal;
+    return prop && !prop.steps && prop.key === this.proposalKey() ? prop.lots.length : -1;
   }
 
   // ------------------------------------------------------------ geometry
@@ -267,8 +326,11 @@ export class LotTool {
       this.erase = { pointer, lots: new Set(), buildings: new Set() };
       this.eraseUnder(world);
     } else {
-      // The brush zones the lots it passes over; land with no lot is not zoned.
-      this.stroke = { pointer, remove: shift || settings.eraser, ids: new Set(lot ? [lot.id] : []) };
+      // The brush zones the lots it passes over, and the proposed lots of the
+      // street land (`proposal`), made when it is let go.
+      const remove = shift || settings.eraser;
+      this.stroke = { pointer, remove, ids: new Set(lot ? [lot.id] : []), fresh: new Set() };
+      if (!lot && !remove) { const k = this.proposedAt(world); if (k >= 0) this.stroke.fresh.add(k); }
     }
     host.redraw();
   }
@@ -276,7 +338,13 @@ export class LotTool {
   /** The pointer moved; true when one of this tool's gestures took it. */
   move(pointer: number, world: Vec2): boolean {
     const { host } = this;
-    if (this.stroke?.pointer === pointer) { const lot = this.lotAt(world); if (lot) this.stroke.ids.add(lot.id); host.redraw(); return true; }
+    if (this.stroke?.pointer === pointer) {
+      const lot = this.lotAt(world);
+      if (lot) this.stroke.ids.add(lot.id);
+      else if (!this.stroke.remove) { const k = this.proposedAt(world); if (k >= 0) this.stroke.fresh.add(k); }
+      host.redraw();
+      return true;
+    }
     if (this.erase?.pointer === pointer) { this.eraseUnder(world); host.redraw(); return true; }
     if (this.corner?.pointer === pointer) { this.corner.to = this.snapExcept(world, this.corner.from); host.redraw(); return true; }
     if (this.drawn?.pointer === pointer) { this.drawn.b = this.snap(world); host.redraw(); return true; }
@@ -292,9 +360,16 @@ export class LotTool {
     if (this.stroke?.pointer === pointer) {
       const stroke = this.stroke;
       this.stroke = null;
-      if (commit && !stroke.ids.size) host.hint('hint.zone.empty');
+      if (commit && !stroke.ids.size && !stroke.fresh.size) host.hint('hint.zone.empty');
       else if (commit) {
-        host.mutate(() => zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: settings.use, density: settings.density }));
+        const fresh = [...stroke.fresh].map((k) => this.proposal?.lots[k]).filter((c): c is Vec2[] => !!c);
+        host.mutate(() => {
+          // The proposed lots painted are made, and zoned with the stored ones, in one undo step.
+          const first = doc.nextLotId;
+          if (fresh.length) applyLots(doc, { add: fresh.map((corners) => ({ key: '', corners })), keys: [], drop: [] });
+          for (let id = first; id < doc.nextLotId; id++) stroke.ids.add(id);
+          return zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: settings.use, density: settings.density }) || fresh.length > 0;
+        });
         this.refused.clear();
         host.hint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
       }
@@ -384,6 +459,21 @@ export class LotTool {
       polygons.push({ corners: l.corners.map(dragged), fill, fillAlpha,
         line: picked ? (settings.mode === 'delete' ? 0xff6b5e : 0xffd25e) : 0xffffff, lineAlpha: editing ? (picked ? 1 : 0.85) : 0,
         width: picked ? 0.7 : 0.35 });
+    }
+    // The street land proposed as lots, in the brush: faint outlines; painted
+    // in the stroke, in the zone's colour; under the pointer, lit.
+    if (editing && settings.mode === 'brush') {
+      if (this.advanceProposal()) this.host.redraw();
+      const prop = this.proposal;
+      if (prop && !prop.steps && prop.key === this.proposalKey()) {
+        const hoverAt = this.hover && !hoverLot ? this.proposedAt(this.hover) : -1;
+        prop.lots.forEach((corners, k) => {
+          const painting = this.stroke?.fresh.has(k);
+          const lit = k === hoverAt;
+          polygons.push({ corners, fill: painting || lit ? (settings.eraser ? null : ZONE_COLOURS[settings.use]) : null,
+            fillAlpha: painting ? 0.6 : lit ? 0.35 : 0, line: 0xffffff, lineAlpha: lit || painting ? 0.85 : 0.35, width: 0.25 });
+        });
+      }
     }
     if (editing && settings.mode === 'edit') for (const l of doc.lots) for (const q of l.corners) points.push({ p: dragged(q), colour: 0xffffff, radius: 0.6 });
     // Each lot's front, the side its building faces: marked in the Zoning tool.
