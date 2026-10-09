@@ -44,7 +44,7 @@ import { PLAYER_ID } from '@sim/ambient/playerId';
 import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';
-import { FOOTWAY_RISE } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import { walkingRise } from '@world/curbRamps';
 import { groundGradient } from './groundShear';
 import { WheelOdometer, blinkOn, indicatorSide, pathCurvature, steerAngle } from './vehicleSignals';
@@ -2160,7 +2160,8 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           // footway's height, the carriageway's, or a dropped kerb's slope
           // between them - where both read the same, so stepping onto a zebra
           // is a walk down the ramp, not a 15 cm drop in one frame.
-          const rise = open ? m(0.04) : FOOTWAY_RISE * walkingRise(world.net, pose.p.x, pose.p.y, ped.ground !== 'crossing',
+          // A footway laid flush (docs/VIAS.md V1) has no rise at all (`footwayRiseAt`).
+          const rise = open ? m(0.04) : footwayRiseAt(world.net, pose.p.x, pose.p.y) * walkingRise(world.net, pose.p.x, pose.p.y, ped.ground !== 'crossing',
             segment === undefined ? 'ground' : world.net.doc.segment(segment)?.structure ?? 'ground');
           const deck = open ? land(pose.p.x, pose.p.y) + rise : elevationAt(world, pose.p.x, pose.p.y, segment) + rise;
           if (options.pedestrianVisible && !options.pedestrianVisible(pose.p.x, pose.p.y, deck)) continue;

@@ -91,7 +91,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | Etapa | O quê | Aceite | Estado |
 |---|---|---|---|
 | V0 | Base: worktree, `tuning.ts`, contrato de dados, rede e elevação incrementais, economia mínima | mapas antigos idênticos; sem regressão no `probe-baseline`; fuzz verde; custo no preview, debitado e devolvido | em andamento (ver "Andamento da V0") |
-| V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | |
+| V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V1") |
 | V2 | Editor visual do perfil com validação e modelos | uso no jogo | |
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | |
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | |
@@ -129,6 +129,29 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   `docs/audit/seated-pose-extents.json`, arquivo não versionado). Fotografado na build de
   desenvolvimento do ramo: saldo na barra, custo no rótulo do preview, débito, desfazer devolvendo,
   preview vermelho "dinheiro insuficiente". Aguardando a conferência no jogo e a aprovação do jogador.
+
+## Andamento da V1
+- Perfil livre (`world/roads/profile.ts`): elementos ordenados da borda esquerda à direita (de A para B);
+  o adaptador grava os campos que o trecho já tinha (faixas, sentido, seção, estacionamento), então todo
+  consumidor lê o perfil sem migração. Em vez de um campo `RoadSegment.profile` novo, a `RoadSection`
+  ganhou campos opcionais (calçada de cada lado, calçada no nível da rua, canteiro pintado, materiais):
+  uma fonte só por trecho.
+- Assimetria: calçadas de larguras diferentes em cada lado, de verdade na fita, nas pernas e quinas da
+  junção, na transição, no encadeamento, nas zonas da calçada, nos caminhos de pedestre, no grafo de
+  calçada, no mobiliário, nas placas e nas travessias. Faixas com larguras diferentes e quantidades
+  diferentes por sentido ficam para a V4 (conectores e classes por faixa), recusadas com o motivo.
+- Material: pista (asfalto, concreto, paralelepípedo), calçada de cada lado (bloquete, concreto, pedra),
+  canteiro (grama, concreto, bloquete). Hoje é o tom sobre a textura que já existia (a pista muda na boca
+  da junção); texturas próprias por material ficam pendentes.
+- Meio-fio pela diferença de altura: calçada no nível da rua não tem meio-fio nem degrau; pessoas,
+  postes, placas e mobiliário ficam no nível dela (`world/roads/footwayRise.ts`); não há rebaixamento de
+  meio-fio onde não há meio-fio. Canteiro pintado não tem ilha.
+- UV sem esticar: a calçada é texturizada no comprimento real de cada linha paralela à via, em painéis
+  (`surfaceFrameAt`, `panel`), com junta a cada painel.
+- Modelos: as classes viram modelos; o jogador salva os seus (no navegador) e aplica num trecho
+  existente sem demolir, pelo inspetor (bloco "Perfil da via"), pago e julgado como qualquer edição.
+- Detectores: `tests/world/oldMapsIdentical.spec.ts` (mapas antigos idênticos), operação `profile` no
+  fuzz (calçadas assimétricas e no nível da rua), `tests/world/roadProfile.spec.ts`.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

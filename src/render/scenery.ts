@@ -28,6 +28,7 @@ import type { Network } from '@world/network';
 import type { RoadElevation } from '@world/elevation';
 import { streetFurniture, type FurnitureItem, type FurnitureKind } from '@world/streetFurniture';
 import { FOOTWAY_RISE } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import { m } from '@world/units';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
@@ -596,7 +597,7 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
   // On the item's OWN road. The unfiltered field answers for whichever road is
   // nearest, and a lamp on a street passing under a viaduct was lifted onto the
   // deck above it.
-  const deckAt = (item: FurnitureItem): number => elevation.onSegment(item.segment, item.x, item.y) + FOOTWAY_RISE;
+  const deckAt = (item: FurnitureItem): number => elevation.onSegment(item.segment, item.x, item.y) + footwayRiseAt(net, item.x, item.y);
   for (const item of streetFurniture(net)) {
     const base = deckAt(item);
     // Local +X of a lamp reaches over the road; local -Z of a bench, a post

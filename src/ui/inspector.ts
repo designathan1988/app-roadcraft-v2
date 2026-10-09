@@ -13,6 +13,8 @@ import { roadTypeName } from './labels';
 import { surfaceMode } from '@world/junction/build';
 import type { RoadSection } from '@world/roadSection';
 import { freeRoadsEnabled, mountRoadSectionEditor } from './roadSectionEditor';
+import { mountProfilePanel } from './roads/profilePanel';
+import type { RoadProfileSpec } from '@world/roads/profile';
 
 export interface InspectorSelection {
   readonly segment: SegmentId | null;
@@ -24,6 +26,8 @@ export interface InspectorActions {
   readonly onSetType: (id: SegmentId, type: number) => void;
   readonly onSetLanes?: (id: SegmentId, lanes: number | null) => void;
   readonly onSetSection?: (id: SegmentId, section: RoadSection | undefined) => void;
+  /** A whole cross-section applied to the road, with its class when it comes from a template (docs/VIAS.md V1). */
+  readonly onApplyProfile?: (id: SegmentId, profile: RoadProfileSpec, type?: number) => void;
   readonly onSetParking?: (id: SegmentId, parking: SegmentParking) => void;
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
@@ -233,6 +237,7 @@ function renderSegment(
     `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
     parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
     parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt) +
+    `<div id="inspectProfile"></div>` +
     `<div id="inspectSection"></div>` +
     `<label class="inspect-range"><span>${t('inspector.curvature')}</span><output id="inspectCurveValue">${curveText(curveValue)}</output><input id="inspectCurve" type="range" min="${-maxCurve}" max="${maxCurve}" step="1" value="${Math.max(-maxCurve, Math.min(maxCurve, curveValue))}" /></label>` +
     `<label class="inspect-range"${seg.curve ? '' : ' data-disabled'}><span>${t('inspector.curvePosition')}</span><output id="inspectCurvePositionValue">${percent(curvePosition)}</output><input id="inspectCurvePosition" type="range" min="0.15" max="0.85" step="0.01" value="${curvePosition}"${seg.curve ? '' : ' disabled'} /></label>` +
@@ -247,6 +252,9 @@ function renderSegment(
     `<button type="button" id="inspectDelete" class="danger">${t('inspector.demolish')}</button>` +
     `</div>`;
 
+  if (actions.onApplyProfile) {
+    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type));
+  }
   if (freeRoadsEnabled() && actions.onSetSection) {
     mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, seg.direction, seg.section,
       (section) => actions.onSetSection?.(id, section));

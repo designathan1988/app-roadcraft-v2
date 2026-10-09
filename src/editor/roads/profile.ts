@@ -3,7 +3,6 @@ import type { SegmentId } from '@world/ids';
 import { sameParking } from '@world/parking';
 import { sameRoadSection } from '@world/roadSection';
 import { type ProfileProblem, type RoadProfileSpec, applyProfile, profileProblems } from '@world/roads/profile';
-import { type RoadTemplate, normalizeTemplate } from '@world/roads/templates';
 
 /**
  * Applying a profile to roads already built (docs/VIAS.md V1: "aplicar sem
@@ -39,40 +38,4 @@ export function applyProfileTo(doc: RoadDoc, ids: readonly SegmentId[], profile:
       !sameRoadSection(before.section, after.section) || !sameParking(before.parking, after.parking);
   }
   return { changed, problems: [] };
-}
-
-/** Where the player's own templates are kept: in this browser, for every map. */
-const STORE = 'roadcraft.roadTemplates';
-
-/** The player's saved templates (malformed ones dropped). */
-export function savedTemplates(): RoadTemplate[] {
-  try {
-    const raw = JSON.parse(globalThis.localStorage?.getItem(STORE) ?? '[]') as unknown;
-    if (!Array.isArray(raw)) return [];
-    return raw.map(normalizeTemplate).filter((t): t is RoadTemplate => t !== null);
-  } catch {
-    return [];
-  }
-}
-
-/** Saves a template under a name (replacing one of the same name); false when it cannot be built or stored. */
-export function saveTemplate(name: string, type: number, profile: RoadProfileSpec): RoadTemplate | null {
-  const template = normalizeTemplate({ id: `user:${Date.now().toString(36)}`, name, type, profile });
-  if (!template) return null;
-  const list = savedTemplates().filter((t) => t.name !== template.name);
-  list.push(template);
-  try {
-    globalThis.localStorage?.setItem(STORE, JSON.stringify(list));
-  } catch {
-    return null;
-  }
-  return template;
-}
-
-export function deleteTemplate(id: string): void {
-  try {
-    globalThis.localStorage?.setItem(STORE, JSON.stringify(savedTemplates().filter((t) => t.id !== id)));
-  } catch {
-    // Storage refused (private window): nothing was saved to remove.
-  }
 }

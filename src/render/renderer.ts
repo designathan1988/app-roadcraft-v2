@@ -43,6 +43,7 @@ import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
 import { GROUND_ONLY, SURFACE_READ_REACH, buildRoadElevation, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE, ROAD_TYPES, casingHalf, sidewalkHalf } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import type { RoadStructure } from '@world/structures';
 import type { SimWorld } from '@sim/world';
 import type { Viewport } from '@view/viewport';
@@ -854,11 +855,13 @@ export function createSceneRenderer(
     if (!rt) return NaN;
     // `half` is this road's own casing (its lanes may be set individually):
     // the footway ends a casing band inside it and starts a footway further in.
-    const footway = road.half - (casingHalf(rt) - sidewalkHalf(rt));
+    // Each side its own footway (docs/VIAS.md V1): `half` reaches the wider one.
+    const walk = (road.across >= 0 ? road.sidewalkLeft : road.sidewalkRight) ?? road.sidewalk ?? rt.sidewalk;
+    const footway = road.half - (casingHalf(rt) - sidewalkHalf(rt)) - ((road.sidewalk ?? rt.sidewalk) - walk);
     const across = Math.abs(road.across);
     if (across > footway) return NaN;
     const deck = elevation.at(x, y, GROUND_ONLY);
-    return across > footway - (road.sidewalk ?? rt.sidewalk) ? deck + FOOTWAY_RISE : deck;
+    return across > footway - walk ? deck + (worldNet ? footwayRiseAt(worldNet, x, y) : FOOTWAY_RISE) : deck;
   };
 
   const agents: AgentMeshes = createAgentMeshes(deckHeight, onAssetsReady,
@@ -1406,7 +1409,7 @@ export function createSceneRenderer(
       world.remove(utilities.group);
       utilities.dispose();
     }
-    utilities = buildUtilities(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit);
+    utilities = buildUtilities(net, poleGroundAt(elevation, terrain.renderedHeightAt, net), sceneryKit);
     world.add(utilities.group);
     builtTriangles += utilities.triangles;
     rebuildFurniture(net);
@@ -1473,7 +1476,10 @@ export function createSceneRenderer(
   const derived = (net: Network, kind: DerivedChangeKind, rects: readonly ChangeRect[] | null, cause: string, parent: number,
     extra: { readonly ms?: number; readonly detail?: string } = {}): number =>
     net.doc.changes.record(kind, rects, { cause, ...(parent ? { parent } : {}), ...extra });
+  /** The network the world was last built for: what stands on a footway reads it (`footwayRiseAt`). */
+  let worldNet: Network | null = null;
   const rebuildWorld = (net: Network): void => {
+    worldNet = net;
     if (networkRevision === net.revision && terrainRevision === net.doc.terrainRevision) {
       if (utilityRevision !== net.doc.utilityRevision) rebuildUtilities(net);
       return;
@@ -1605,7 +1611,7 @@ export function createSceneRenderer(
     const atutilities = performance.now();
     const keepUtilities = utilities !== null && utilityRevision === net.doc.utilityRevision
       && !blocksReach(blocks, [...net.doc.poles.values()].map((pole) => around(pole.x, pole.y, m(12))));
-    const freshUtilities = keepUtilities ? utilities! : buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt), sceneryKit);
+    const freshUtilities = keepUtilities ? utilities! : buildUtilities(net, poleGroundAt(solve, terrain.renderedHeightAt, net), sceneryKit);
     performance.measure('hitch:road-edit/utilities', { start: atutilities, end: performance.now() });
     // The placed things (benches, lamps, street trees) on the footways they stand on.
     const keepFurniture = furniture !== null && utilityRevision === net.doc.utilityRevision
@@ -2408,7 +2414,7 @@ export function createSceneRenderer(
         polePreview = null;
       }
       if (!preview || !elevation || preview.poles.length === 0) return;
-      polePreview = buildPolePreview(net, poleGroundAt(elevation, terrain.renderedHeightAt), sceneryKit, preview);
+      polePreview = buildPolePreview(net, poleGroundAt(elevation, terrain.renderedHeightAt, net), sceneryKit, preview);
       world.add(polePreview.group);
     },
     setPerspective(on) {

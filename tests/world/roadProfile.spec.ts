@@ -10,6 +10,8 @@ import { sectionOf } from '@world/section';
 import { buildWalkways } from '@world/walkways';
 import { m } from '@world/units';
 import { applyProfileTo } from '@editor/roads/profile';
+import { footwayRiseShare } from '@world/roads/footwayRise';
+import { FLAT_GROUND, buildRoadElevation } from '@world/elevation';
 import { checkWorld } from '../fuzz/support/invariants';
 import { openCategories } from '../fuzz/support/runner';
 
@@ -143,6 +145,21 @@ describe('an asymmetric road in the world', () => {
     expect(checkWorld(doc, net).filter((d) => !open.has(d.category))).toEqual([]);
   });
 
+  it('stands a flush footway level with the carriageway, and a kerbed one at its rise', () => {
+    const { doc, net, id } = cross();
+    const half = net.ribbons.get(id)!.road.width / 2;
+    // Nothing flush yet: the rise everywhere.
+    expect(footwayRiseShare(net, 150, half + m(1))).toBe(1);
+    applyProfileTo(doc, [id], { ...profileOf(doc.requireSegment(id)), elements: profileOf(doc.requireSegment(id)).elements
+      .map((e, i) => (i === 0 && e.kind === 'footway' ? { ...e, flush: true } : e)) });
+    net.rebuild();
+    expect(footwayRiseShare(net, 150, half + m(1))).toBe(0);
+    expect(footwayRiseShare(net, 150, -(half + m(1)))).toBe(1);
+    // A flush side has no kerb stone: its kerb level is the carriageway's edge.
+    const curb = net.ribbons.get(id)!.rings[Level.Curb]!.flatten().map((p) => p.y);
+    expect(Math.max(...curb)).toBeCloseTo(half, 6);
+  });
+
   it('walks each footway down its own through zone', () => {
     const { net, id } = cross();
     const section = sectionOf(net.ribbons.get(id)!.road, 'both');
@@ -152,5 +169,38 @@ describe('an asymmetric road in the world', () => {
     const ys = ways.map((w) => w.path.sampleAt(w.path.length / 2).p.y);
     expect(Math.max(...ys)).toBeCloseTo((section.left.through.inner + section.left.through.outer) / 2, 6);
     expect(Math.min(...ys)).toBeCloseTo(-(section.right.through.inner + section.right.through.outer) / 2, 6);
+  });
+});
+
+describe('paving round a bend', () => {
+  it('keeps its size on the inside and the outside of a curve (no stretch)', () => {
+    const doc = new RoadDoc();
+    const a = doc.addNode({ x: 0, y: 0 }), b = doc.addNode({ x: 200, y: 200 });
+    const id = doc.addSegment(a.id, b.id, 1, { t: 0.5, h: 60 })!.id;
+    const net = new Network(doc);
+    net.rebuild();
+    const elevation = buildRoadElevation(net, FLAT_GROUND);
+    const line = net.ribbons.get(id)!.full;
+    const offset = 15;
+    const at = (s: number): { x: number; y: number } => {
+      const f = line.sampleAt(s);
+      return { x: f.p.x + f.n.x * offset, y: f.p.y + f.n.y * offset };
+    };
+    const ratio = (panel?: number): number => {
+      // Inside one panel (a joint lies at every multiple of 40).
+      // Over several of the centreline's vertices, where the bend is, and
+      // measured along the offset line itself.
+      const s0 = Math.floor((line.length * 0.4) / 40) * 40 + 5, s1 = s0 + 30;
+      let length = 0;
+      for (let s = s0; s < s1; s += 0.5) { const p = at(s), q = at(s + 0.5); length += Math.hypot(q.x - p.x, q.y - p.y); }
+      const p = at(s0), q = at(s1);
+      const fp = elevation.surfaceFrameAt(p.x, p.y, undefined, p.x, p.y, true, undefined, panel);
+      const fq = elevation.surfaceFrameAt(q.x, q.y, undefined, q.x, q.y, true, undefined, panel);
+      return Math.abs(fq.along - fp.along) / length;
+    };
+    // Laid along the centreline the texture is stretched by the curvature...
+    expect(Math.abs(ratio() - 1)).toBeGreaterThan(0.03);
+    // ...laid at the true length of the line it is on, it is not.
+    expect(ratio(40)).toBeCloseTo(1, 2);
   });
 });

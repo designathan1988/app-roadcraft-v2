@@ -73,6 +73,7 @@ import { Bulldozer } from '@editor/bulldozer';
 import { NodeMover } from '@editor/nodeMover';
 import { CameraGestures } from '@view/cameraGestures';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
+import { applyProfileTo } from '@editor/roads/profile';
 import { ROAD_PARKING_PRESETS, type RoadParkingPreset, roadParking, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
@@ -4141,6 +4142,18 @@ function showInspector(): void {
           doc.setSegmentParking(id, parking);
           return true;
         });
+      },
+      // A profile or template applied to the road in place (docs/VIAS.md V1):
+      // judged and paid for as every road edit (`mutateRoads`).
+      onApplyProfile: (id, profile, type) => {
+        if (!doc.segment(id)) return;
+        let problem: string | undefined;
+        mutateRoads(() => {
+          const result = applyProfileTo(doc, [id], profile, type);
+          problem = result.problems[0];
+          return result.changed;
+        });
+        if (problem) flashHint(`profile.problem.${problem}`);
       },
       onSetSection: (id, section) => {
         if (!freeRoadsEnabled() || !doc.segment(id)) return;

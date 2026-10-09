@@ -16,7 +16,7 @@ import type { NodeId, SegmentId } from '@world/ids';
 import { footwayAt, type LandscapeItem, type SignType } from '@world/landscape';
 import type { Network } from '@world/network';
 import { type RoadElevation } from '@world/elevation';
-import { FOOTWAY_RISE } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import { sectionOf, LAMP_ZONE } from '@world/section';
 import { m } from '@world/units';
 
@@ -230,7 +230,7 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
     if (item.kind === 'sign') {
       const hit = footwayAt(net, item, m(0.6));
       if (!hit) continue;
-      const ground = elevation.onSegment(hit.segment, item.x, item.y) + FOOTWAY_RISE;
+      const ground = elevation.onSegment(hit.segment, item.x, item.y) + footwayRiseAt(net, item.x, item.y);
       // A traffic sign faces the traffic coming towards it on its side of the street.
       const facing = { x: -hit.frame.t.x * hit.side, y: -hit.frame.t.y * hit.side };
       const type = item.signType ?? 'stop';
@@ -256,7 +256,7 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
           const f = ribbon.full.sampleAt(s);
           const side = sign > 0 ? -1 : 1;
           const x = f.p.x + f.n.x * out * side, y = f.p.y + f.n.y * out * side;
-          const ground = elevation.onSegment(id, x, y) + FOOTWAY_RISE;
+          const ground = elevation.onSegment(id, x, y) + footwayRiseAt(net, x, y);
           // Parallel to the street, readable from both sides.
           stand(x, y, ground, 'street', item.text, Math.atan2(f.n.x, -f.n.y));
         }
