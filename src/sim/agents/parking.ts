@@ -1,10 +1,11 @@
 import { pointInPolygon } from '@core/polygon';
-import { buildingBounds, localDirToWorld, localToWorld, solidFootprints, worldToLocal } from '@world/buildings/geometry';
+import { localDirToWorld, storedBounds, localToWorld, solidFootprints, worldToLocal } from '@world/buildings/geometry';
 import { Digest } from '@core/digest';
 import { type LotGrid, buildLotGrid, wayOut } from './lotNav';
 import type { Building, BuildingElement, BuildingId } from '@world/buildings/types';
 import type { Lanelet, LaneletId } from '@world/lanelets';
 import { m } from '@world/units';
+import type { ChangeRect } from '@world/changes';
 import type { SimWorld } from '../world';
 import type { VehicleId } from '../vehicles/state';
 import type { SegmentId } from '@world/ids';
@@ -98,12 +99,15 @@ const EDGE_REACH = m(22);
  */
 const BAYS = new WeakMap<SimWorld, { key: string; first: unknown; bays: readonly Bay[] }>();
 export function collectBays(w: SimWorld): Bay[] {
-  const key = `${w.doc.buildings.revision}:${w.topologyRevision}:${w.graph.revision}:${w.graph.lanelets.size}`;
+  const roads = roadsKey(w);
+  const key = `${w.doc.buildings.revision}:${roads}`;
   const first = w.graph.lanelets.values().next().value;
   let known = BAYS.get(w);
-  if (!known || known.key !== key || known.first !== first) BAYS.set(w, known = { key, first, bays: workOutBays(w) });
+  if (!known || known.key !== key || known.first !== first) BAYS.set(w, known = { key, first, bays: workOutBays(w, roads, first) });
   return known.bays.map((bay) => ({ ...bay, car: null }));
 }
+/** What the bays read of the roads: the traffic's topology and the lanes. */
+const roadsKey = (w: SimWorld): string => `${w.topologyRevision}:${w.graph.revision}:${w.graph.lanelets.size}`;
 
 /** Cell of the lanes' grid, world units. */
 const LANE_CELL = m(30);
@@ -169,28 +173,65 @@ function lotText(b: Building): string {
   return text;
 }
 
-function workOutBays(w: SimWorld): Bay[] {
+/**
+ * Where the bays were last worked out from: the roads (`roadsKey`, the first
+ * lane object) and the diary's serial. With the roads the same, only the lots
+ * whose reach a building change since then touched can see anything new.
+ */
+const LAST_PASS = new WeakMap<SimWorld, { roads: string; first: unknown; serial: number }>();
+/**
+ * The building changes since the last pass, as rectangles, when the roads are
+ * the same; null when the lots must be digested again (the roads changed, or
+ * the diary forgot, or a change covered the whole map).
+ */
+function buildingChangesSince(w: SimWorld, roads: string, first: unknown): ChangeRect[] | null {
+  const last = LAST_PASS.get(w);
+  LAST_PASS.set(w, { roads, first, serial: w.doc.changes.version });
+  if (!last || last.roads !== roads || last.first !== first) return null;
+  const entries = w.doc.changes.since(last.serial, ['buildings']);
+  if (!entries) return null;
+  const rects: ChangeRect[] = [];
+  for (const entry of entries) {
+    if (!entry.rects) return null;
+    rects.push(...entry.rects);
+  }
+  return rects;
+}
+
+function workOutBays(w: SimWorld, roads: string, first: unknown): Bay[] {
   const out: Bay[] = [];
-  const walls = wallsOf(w);
+  // A building grown in a town of a thousand: every parking lot's lanes and
+  // walls digested again, 60 ms a building (audit M3a). With the roads as
+  // they were, a lot whose reach no building change touched keeps its bays
+  // without reading anything (the diary's rectangles: `world/changes.ts`).
+  const changed = buildingChangesSince(w, roads, first);
+  let walls: Wall[] | null = null;
+  const wallsNow = (): Wall[] => (walls ??= wallsOf(w));
   const navCache = new Map<object, { exits: LotExit[]; grid: LotGrid }>();
   const known = LOT_BAYS.get(w) ?? new Map<BuildingId, { lot: string; key: number; bays: readonly Bay[] }>();
   const kept = new Map<BuildingId, { lot: string; key: number; bays: readonly Bay[] }>();
   LOT_BAYS.set(w, kept);
   for (const b of w.doc.buildings.all()) {
     if (!(b.elements ?? []).some((el) => el.kind === 'parking')) continue;
-    const box = buildingBounds(b, LOT_READS);
+    const box = storedBounds(b, LOT_READS);
+    const was = known.get(b.id);
+    const lot = lotText(b);
+    if (changed && was && was.lot === lot
+      && !changed.some((r) => r[0] <= box.maxX && r[2] >= box.minX && r[1] <= box.maxY && r[3] >= box.minY)) {
+      for (const bay of was.bays) out.push({ ...bay, id: out.length });
+      kept.set(b.id, was);
+      continue;
+    }
     const cx = (box.minX + box.maxX) / 2, cy = (box.minY + box.maxY) / 2;
     const digest = new Digest();
     for (const lane of lanesNear(w, cx, cy, Math.hypot(box.maxX - box.minX, box.maxY - box.minY) / 2)) {
       digest.addText(lane.id).add(lane.length).add(w.rt(lane.id).ghost ? 1 : 0).addAll(lane.centre.xy);
     }
-    for (const wall of wallsInBox(walls, box.minX, box.minY, box.maxX, box.maxY)) {
+    for (const wall of wallsInBox(wallsNow(), box.minX, box.minY, box.maxX, box.maxY)) {
       digest.add(wall.building);
       for (const q of wall.ring) digest.add(q.x).add(q.y);
     }
     const key = digest.value();
-    const was = known.get(b.id);
-    const lot = lotText(b);
     if (was && was.lot === lot && was.key === key) {
       for (const bay of was.bays) out.push({ ...bay, id: out.length });
       kept.set(b.id, was);
@@ -224,8 +265,8 @@ function workOutBays(w: SimWorld): Bay[] {
       const lot = property ?? b.volumes.find((v) => v.open && el.x >= v.x && el.x <= v.x + v.w && el.y >= v.y && el.y <= v.y + v.d);
       let nav = lot ? navCache.get(lot) : undefined;
       if (lot && !nav) {
-        const exits = property ? gateExits(w, b, property, walls) : exitsOf(w, b, lot, walls);
-        const local = wallsNear(walls, b, lot).map((wl) => wl.ring.map((q) => worldToLocal(b, q)));
+        const exits = property ? gateExits(w, b, property, wallsNow()) : exitsOf(w, b, lot, wallsNow());
+        const local = wallsNear(wallsNow(), b, lot).map((wl) => wl.ring.map((q) => worldToLocal(b, q)));
         nav = { exits, grid: buildLotGrid(b, lot, local, exits) };
         navCache.set(lot, nav);
       }
