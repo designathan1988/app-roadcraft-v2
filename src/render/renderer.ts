@@ -2750,6 +2750,8 @@ export function createSceneRenderer(
         weatherActive = weather.rain > 0 || weather.lightning > 0 || flash > 0 || (weather.wind > 0 && placedCloudsShown);
       }
       const dark = environment.setTimeOfDay(clock);
+      // What a cloud's shadow can take: the sun's share of the light now.
+      post.setDirectShare(environment.directShare());
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
         post.setNight(dark);

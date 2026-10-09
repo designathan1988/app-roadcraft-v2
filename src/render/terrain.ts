@@ -1215,8 +1215,18 @@ function terrainMaterial(
            vec4 b = textureGrad(tex, uv + noTileOffset(i0 + 1.0), dx, dy);
            return mix(a, b, smoothstep(0.2, 0.8, idx - i0));
          }
+         // The wide octave as a MACRO variation only (landscape materials
+         // pass from the detail texture to a macro one with distance, Unreal):
+         // its brightness against the texture's mean, at a third of its
+         // strength. Mixed in whole (0.42), it carried the tufts' full
+         // contrast up to hundreds of metres, and from the map's zoom the
+         // land was dark camouflage blotches.
          vec4 dualScaleNoTile(sampler2D tex, vec2 uv) {
-           return mix(textureNoTile(tex, uv), textureNoTile(tex, terrainWideUv(uv)), 0.42);
+           vec4 near = textureNoTile(tex, uv);
+           vec3 far = textureNoTile(tex, terrainWideUv(uv)).rgb;
+           float mean = max(dot(texture2D(tex, uv, 14.0).rgb, vec3(0.3, 0.6, 0.1)), 0.02);
+           float macro = clamp(dot(far, vec3(0.3, 0.6, 0.1)) / mean, 0.7, 1.3);
+           return vec4(near.rgb * mix(1.0, macro, 0.35), near.a);
          }
          vec3 dualScaleNormal(sampler2D tex, vec2 uv) {
            vec3 near = texture2D(tex, uv).xyz * 2.0 - 1.0;
@@ -1799,7 +1809,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v29';
+  material.customProgramCacheKey = () => 'terrain-splat-v30';
   return material;
 }
 
@@ -2751,7 +2761,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v29-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v30-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];

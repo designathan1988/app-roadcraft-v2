@@ -101,6 +101,12 @@ export interface SceneEnvironment {
    * is this moment (0 none .. 1).
    */
   setWeather(overcast: number, flash: number): void;
+  /**
+   * How much of the light on level ground comes straight from the sun, 0..1
+   * (global = diffuse + direct * cos(zenith); a shadow takes the direct part
+   * only, the sky's light still arrives): what a cloud's shadow can take away.
+   */
+  directShare(): number;
   dispose(): void;
 }
 
@@ -399,6 +405,15 @@ export function createEnvironment(
       void smog; void SMOG;
       scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);
       return dark;
+    },
+    directShare() {
+      // On level ground: the sun by the sine of its height, the sky fill
+      // whole (its sky side faces up), the fill light by its own height, the
+      // ambient floor.
+      const direct = sun.intensity * Math.max(0, sunDirection.y);
+      const fillUp = fill.intensity * Math.max(0, fill.position.y / Math.max(1e-6, fill.position.length()));
+      const diffuse = hemisphere.intensity + fillUp + ambient.intensity;
+      return direct / Math.max(1e-6, direct + diffuse);
     },
     setSmog(k) { smog = Math.max(0, Math.min(1, k)); },
     setWeather(k, f) { overcast = Math.max(0, Math.min(1, k)); flash = Math.max(0, Math.min(1.5, f)); },

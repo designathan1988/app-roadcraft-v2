@@ -56,6 +56,11 @@ export interface PostChain {
    */
   setNight(dark: number): void;
   /**
+   * How much of the light on the ground comes straight from the sun
+   * (`SceneEnvironment.directShare`): all a cloud's shadow can take away.
+   */
+  setDirectShare(share: number): void;
+  /**
    * The sky the player set (`Atmosphere`), the light it is lit by, and
    * whether the map is seen as a model over the void (building it), when
    * the air round it is drawn too: the backdrop and the haze of distance.
@@ -112,6 +117,9 @@ export function createPostChain(
       },
       setNight() {
         /* no bloom without the chain */
+      },
+      setDirectShare() {
+        /* no cloud shadows without the chain */
       },
       setAtmosphere() {
         /* no clouds or mist without the chain */
@@ -321,6 +329,15 @@ export function createPostChain(
   (grade.uniforms['uSharpen'] as { value: number }).value = quality.sharpen;
   composer.addPass(grade);
 
+  // A cloud's shadow takes the sun's direct light and leaves the sky's
+  // (global = diffuse + direct * cos(zenith)): its strength is the direct
+  // share, none by night. A fixed 0.62 took more than the whole sun gives in
+  // the morning (some a fifth of the light at 06:30), and from the map's
+  // zoom the land was covered in near-black blotches (2026-10-08).
+  let night = 0;
+  let directShare = CLOUD_SHADOW_STRENGTH;
+  const shadowStrength = (): number => directShare * Math.max(0, 1 - night * 1.5);
+
   return {
     enabled: true,
     target,
@@ -356,9 +373,14 @@ export function createPostChain(
     setNight(dark) {
       bloom.enabled = dark > 0.05;
       bloom.strength = bloomStrength * Math.min(1, dark);
-      // No sun, no cloud shadow.
-      if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = CLOUD_SHADOW_STRENGTH * Math.max(0, 1 - dark * 1.5);
+      night = dark;
+      if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = shadowStrength();
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
+    },
+    setDirectShare(share) {
+      if (Math.abs(share - directShare) < 0.005) return;
+      directShare = share;
+      if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = shadowStrength();
     },
     setPlacedClouds(clouds) {
       placedClouds = clouds;
@@ -410,7 +432,7 @@ export function createPostChain(
   };
 }
 
-/** How much a cloud's shadow takes from the light under it at its heart. */
+/** How much a cloud's shadow takes from the light under it at its heart, until the light's direct share is known (`setDirectShare`). */
 const CLOUD_SHADOW_STRENGTH = 0.62;
 
 
