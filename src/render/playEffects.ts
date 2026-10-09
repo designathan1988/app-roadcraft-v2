@@ -133,6 +133,8 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
   /** The lots near the bodies (their raised yards are ground too), and the ground found, by small cells. */
   const ragdollLots = new Set<BuildingId>();
   const ragdollGround = new Map<number, number>();
+  /** The document's serial of what the ground found is read from (`wallsNear`). */
+  let ragdollGroundSerial = -1;
   /** The ground at a corner of the bodies' ground grid (0.2 units a cell): a lot's yard as drawn, else the paving (a footway stands over the terrain), else the terrain. */
   const ragdollCorner = (ix: number, iy: number): number => {
     const key = ix * 100003 + iy;
@@ -165,11 +167,21 @@ export function createPlayEffects(ctx: PlayEffectsContext): PlayEffects {
     wallsNear(x, y, reach) {
       // The buildings standing (not a ruin) and the walls, fences and hedges of their lots.
       const out: RagdollWall[] = [];
-      if (ragdollLots.size > 400) ragdollLots.clear();
-      ragdollGround.clear();
+      // The heights found stand until the ground under them changes (as a
+      // physics engine's heightfield is made once and modified in place,
+      // PhysX): a lot more among the bodies' lots, or a road, the terrain, a
+      // building or a lot edited. Forgotten at every call, every body asking
+      // every frame, they were found again and again - the dead after a bomb
+      // cost milliseconds a frame.
+      const serial = ragdollSim?.doc.changes.serialOf('roads', 'terrain', 'buildings', 'lots') ?? -1;
+      if (ragdollLots.size > 400 || serial !== ragdollGroundSerial) {
+        if (ragdollLots.size > 400) ragdollLots.clear();
+        ragdollGround.clear();
+        ragdollGroundSerial = serial;
+      }
       for (const b of ragdollSim?.doc.buildings.all() ?? []) {
         if (destruction.ruined.has(b.id) || Math.hypot(b.x - x, b.y - y) > reach + m(40)) continue;
-        ragdollLots.add(b.id);
+        if (!ragdollLots.has(b.id)) { ragdollLots.add(b.id); ragdollGround.clear(); }
         const floor = floorHeight(b, ctx.naturalRenderedHeightAt, ctx.pavedHeightAt);
         for (const v of b.volumes) {
           if (v.base !== 0 || v.mode === 'void' || v.mode === 'intersect' || v.open) continue;

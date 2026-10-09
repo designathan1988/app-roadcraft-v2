@@ -1,8 +1,9 @@
 import {
+  BufferAttribute,
   BufferGeometry,
-  Float32BufferAttribute,
   Matrix3,
   Matrix4,
+  Sphere,
   Vector3,
   type Material,
 } from 'three';
@@ -169,19 +170,69 @@ export function prepareFracture(
   };
 }
 
-/** The fragments as meshes' geometry, drawn with `materials`. */
+/**
+ * The fragments as meshes' geometry, drawn with `materials`. The arrays came
+ * from the worker and are used as they are (`BufferAttribute`; three's
+ * `Float32BufferAttribute` copies its array - a big building's hundreds of
+ * megabytes, over a second); the bounds are the fragment's measured radius
+ * round its centre, not a pass over its vertices.
+ */
 export function buildFragments(data: readonly FragmentData[], materials: Material[]): Fragment[] {
   return data.map((d) => {
     const g = new BufferGeometry();
-    g.setAttribute('position', new Float32BufferAttribute(d.position, 3));
-    g.setAttribute('normal', new Float32BufferAttribute(d.normal, 3));
-    g.setAttribute('color', new Float32BufferAttribute(d.colour, 3));
-    g.setAttribute('uv', new Float32BufferAttribute(d.uv, 2));
-    g.setAttribute('aDecay', new Float32BufferAttribute(d.decay, 1));
+    g.setAttribute('position', new BufferAttribute(d.position, 3));
+    g.setAttribute('normal', new BufferAttribute(d.normal, 3));
+    g.setAttribute('color', new BufferAttribute(d.colour, 3));
+    g.setAttribute('uv', new BufferAttribute(d.uv, 2));
+    g.setAttribute('aDecay', new BufferAttribute(d.decay, 1));
     for (const gr of d.groups) g.addGroup(gr.start, gr.count, gr.material);
-    g.computeBoundingSphere();
+    g.boundingSphere = new Sphere(new Vector3(), d.radius);
     return { centre: new Vector3(...d.centre), geometry: g, materials, radius: d.radius, low: d.low, neighbours: d.neighbours };
   });
+}
+
+/**
+ * Every fragment of a building in one buffer, in world space (three's, y up),
+ * one draw group per material: the ruin's still mesh (`destruction.ts`), static
+ * batching as Unity's manual "Draw call batching" describes it. `slots` holds,
+ * per fragment, triples (start in the buffer, vertex count, start in the
+ * fragment), so a piece knocked loose can be blanked and a piece landed
+ * written back in place, uploading only its own range (three's
+ * `BufferAttribute.addUpdateRange`). Pure arrays: made in the worker.
+ */
+export interface StillData {
+  readonly position: Float32Array; readonly normal: Float32Array; readonly colour: Float32Array; readonly uv: Float32Array; readonly decay: Float32Array;
+  readonly groups: readonly { material: number; start: number; count: number }[];
+  readonly slots: readonly Int32Array[];
+}
+
+export function mergeFragments(data: readonly FragmentData[]): StillData {
+  let total = 0, materials = 0;
+  for (const f of data) for (const g of f.groups) { total += g.count; materials = Math.max(materials, g.material + 1); }
+  const position = new Float32Array(total * 3), normal = new Float32Array(total * 3), colour = new Float32Array(total * 3);
+  const uv = new Float32Array(total * 2), decay = new Float32Array(total);
+  const slots = data.map(() => [] as number[]);
+  const groups: { material: number; start: number; count: number }[] = [];
+  let at = 0;
+  for (let material = 0; material < materials; material++) {
+    const first = at;
+    data.forEach((f, fi) => {
+      const [cx, cy, cz] = f.centre;
+      for (const g of f.groups) {
+        if (g.material !== material) continue;
+        slots[fi]!.push(at, g.count, g.start);
+        for (let i = g.start; i < g.start + g.count; i++, at++) {
+          position[at * 3] = f.position[i * 3]! + cx; position[at * 3 + 1] = f.position[i * 3 + 1]! + cy; position[at * 3 + 2] = f.position[i * 3 + 2]! + cz;
+          normal[at * 3] = f.normal[i * 3]!; normal[at * 3 + 1] = f.normal[i * 3 + 1]!; normal[at * 3 + 2] = f.normal[i * 3 + 2]!;
+          colour[at * 3] = f.colour[i * 3]!; colour[at * 3 + 1] = f.colour[i * 3 + 1]!; colour[at * 3 + 2] = f.colour[i * 3 + 2]!;
+          uv[at * 2] = f.uv[i * 2]!; uv[at * 2 + 1] = f.uv[i * 2 + 1]!;
+          decay[at] = f.decay[i]!;
+        }
+      }
+    });
+    if (at > first) groups.push({ material, start: first, count: at - first });
+  }
+  return { position, normal, colour, uv, decay, groups, slots: slots.map((s) => Int32Array.from(s)) };
 }
 
 /** The fracture itself, pure arrays in and out: run in a worker. */

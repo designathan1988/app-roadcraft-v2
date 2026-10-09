@@ -1,4 +1,4 @@
-import { Group, Mesh, Vector3, type Material } from 'three';
+import { BufferAttribute, BufferGeometry, Group, Matrix3, Mesh, Sphere, Vector3, type Material } from 'three';
 
 import type { Building } from '@world/buildings/types';
 import { levelElevation, localToWorld } from '@world/buildings/geometry';
@@ -7,7 +7,7 @@ import { m } from '@world/units';
 import type { Exhaust } from './exhaust';
 import type { BuildingChunk } from './buildings/buildingMesh';
 import type { BuildingKit } from './buildings/kit';
-import { buildFragments, prepareFracture, type Fragment, type FragmentData } from './buildings/fracture';
+import { buildFragments, prepareFracture, type Fragment, type FragmentData, type StillData } from './buildings/fracture';
 import { interiorFurniture } from './buildings/buildingMesh';
 
 /**
@@ -28,11 +28,14 @@ const COLLAPSE_BELOW = 0.35;
 
 interface Piece {
   readonly fragment: Fragment;
+  /** Its own mesh, in the scene only while it moves (else drawn in its ruin's `still`). */
   readonly mesh: Mesh;
   readonly floor: number;
   falling: boolean;
   settled: boolean;
   gone: boolean;
+  /** Its ranges in the ruin's `still` mesh: (start, vertex count, start in the fragment) triples. */
+  readonly slots: Int32Array;
   v: Vector3;
   w: Vector3;
   age: number;
@@ -41,6 +44,8 @@ interface Piece {
 interface Ruin {
   readonly pieces: Piece[];
   readonly floor: number;
+  /** Every piece that does not move (standing, or landed), in one mesh; a piece in the air is blanked in it. */
+  readonly still: Mesh;
   standing: number;
 }
 
@@ -70,6 +75,7 @@ export function createDestruction(
   const ruins = new Map<number, Ruin>();
   const ruined = new Set<number>();
   const loose: Piece[] = [];
+  const owner = new WeakMap<Piece, Ruin>();
 
   // The fracture runs in a worker (`buildings/fracture.worker.ts`): a building
   // is struck at once and broken when its pieces are ready, a frame or a few
@@ -87,12 +93,12 @@ export function createDestruction(
     if (workers.length < size) {
       const worker = new Worker(new URL('./buildings/fracture.worker.ts', import.meta.url), { type: 'module' });
       workers.push(worker);
-      worker.onmessage = (e: MessageEvent<{ id: number; data: FragmentData[] }>) => {
+      worker.onmessage = (e: MessageEvent<{ id: number; data: FragmentData[]; still: StillData }>) => {
         const job = jobs.get(e.data.id);
         jobs.delete(e.data.id);
         if (!job) return;
         pending.delete(job.b.id);
-        const ruin = place(buildFragments(e.data.data, job.materials), job.floor);
+        const ruin = place(buildFragments(e.data.data, job.materials), e.data.still, job.materials, job.floor);
         ruins.set(job.b.id, ruin);
         ruined.add(job.b.id);
         api.onRuined?.();
@@ -104,17 +110,94 @@ export function createDestruction(
     }
     return workers[nextWorker++ % workers.length]!;
   };
-  const place = (fragments: Fragment[], floor: number): Ruin => {
-    const pieces: Piece[] = fragments.map((fragment) => {
+
+  /**
+   * Static batching (Unity's manual, "Draw call batching": meshes that do not
+   * move and share a material, combined into one buffer in world space): the
+   * pieces of a ruin standing or landed are drawn in one mesh, a group per
+   * material - a draw call per material, not one per piece and material. A
+   * building broken into a few hundred pieces cost as many draws, every frame,
+   * for good (the rubble stays), and each bomb made the game slower. The
+   * buffer is made in the worker (`fracture.ts` `mergeFragments`); a piece
+   * knocked loose is blanked in it and drawn on its own while it flies, and
+   * written back where it landed: only its own ranges are uploaded (three's
+   * `BufferAttribute.addUpdateRange`).
+   */
+  const place = (fragments: Fragment[], data: StillData, materials: Material[], floor: number): Ruin => {
+    // The worker's arrays as they are (`Float32BufferAttribute` would copy
+    // them), bounded by the fragments' own spheres, not a pass over them all.
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(data.position, 3));
+    geometry.setAttribute('normal', new BufferAttribute(data.normal, 3));
+    geometry.setAttribute('color', new BufferAttribute(data.colour, 3));
+    geometry.setAttribute('uv', new BufferAttribute(data.uv, 2));
+    geometry.setAttribute('aDecay', new BufferAttribute(data.decay, 1));
+    for (const g of data.groups) geometry.addGroup(g.start, g.count, g.material);
+    const bounds = new Sphere();
+    for (const f of fragments) {
+      const own = reach.set(f.centre, f.radius);
+      if (bounds.isEmpty()) bounds.copy(own); else bounds.union(own);
+    }
+    geometry.boundingSphere = bounds;
+    const still = new Mesh(geometry, materials);
+    still.castShadow = true;
+    still.receiveShadow = true;
+    still.matrixAutoUpdate = false;
+    group.add(still);
+    const pieces: Piece[] = fragments.map((fragment, i) => {
       const mesh = new Mesh(fragment.geometry, fragment.materials);
       mesh.position.copy(fragment.centre);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      group.add(mesh);
-      return { fragment, mesh, floor, falling: false, settled: false, gone: false, v: new Vector3(), w: new Vector3(), age: 0 };
+      return { fragment, mesh, floor, falling: false, settled: false, gone: false, slots: data.slots[i] ?? new Int32Array(0), v: new Vector3(), w: new Vector3(), age: 0 };
     });
-    return { pieces, floor, standing: pieces.length };
+    const ruin: Ruin = { pieces, floor, still, standing: pieces.length };
+    for (const piece of pieces) owner.set(piece, ruin);
+    return ruin;
   };
+
+  /** A piece out of its ruin's still mesh: its triangles collapsed to a point, drawing nothing. */
+  const blank = (ruin: Ruin, piece: Piece): void => {
+    const position = ruin.still.geometry.getAttribute('position') as BufferAttribute;
+    const array = position.array as Float32Array;
+    const { x, y, z } = piece.mesh.position;
+    for (let s = 0; s < piece.slots.length; s += 3) {
+      const start = piece.slots[s]!, count = piece.slots[s + 1]!;
+      for (let i = start; i < start + count; i++) { array[i * 3] = x; array[i * 3 + 1] = y; array[i * 3 + 2] = z; }
+      position.addUpdateRange(start * 3, count * 3);
+    }
+    position.needsUpdate = true;
+  };
+
+  /** A piece landed, written into its ruin's still mesh where it lies. */
+  const land = (ruin: Ruin, piece: Piece): void => {
+    const geometry = ruin.still.geometry;
+    const position = geometry.getAttribute('position') as BufferAttribute, normal = geometry.getAttribute('normal') as BufferAttribute;
+    const pa = position.array as Float32Array, na = normal.array as Float32Array;
+    const source = piece.fragment.geometry;
+    const sp = source.getAttribute('position').array, sn = source.getAttribute('normal').array;
+    const mesh = piece.mesh;
+    mesh.updateMatrix();
+    normalMatrix.getNormalMatrix(mesh.matrix);
+    for (let s = 0; s < piece.slots.length; s += 3) {
+      const start = piece.slots[s]!, count = piece.slots[s + 1]!, from = piece.slots[s + 2]!;
+      for (let k = 0; k < count; k++) {
+        const i = from + k, o = start + k;
+        scratch.set(sp[i * 3]!, sp[i * 3 + 1]!, sp[i * 3 + 2]!).applyMatrix4(mesh.matrix);
+        pa[o * 3] = scratch.x; pa[o * 3 + 1] = scratch.y; pa[o * 3 + 2] = scratch.z;
+        scratch.set(sn[i * 3]!, sn[i * 3 + 1]!, sn[i * 3 + 2]!).applyMatrix3(normalMatrix).normalize();
+        na[o * 3] = scratch.x; na[o * 3 + 1] = scratch.y; na[o * 3 + 2] = scratch.z;
+      }
+      position.addUpdateRange(start * 3, count * 3);
+      normal.addUpdateRange(start * 3, count * 3);
+    }
+    position.needsUpdate = true;
+    normal.needsUpdate = true;
+    // It may have landed outside the building's bounds: the ruin is culled by them.
+    geometry.boundingSphere?.union(reach.set(mesh.position, piece.fragment.radius));
+    group.remove(mesh);
+  };
+  const scratch = new Vector3(), normalMatrix = new Matrix3(), reach = new Sphere();
 
   const make = (b: Building, floor: number): number | null => {
     const source = chunkOf(b);
@@ -140,6 +223,9 @@ export function createDestruction(
     if (piece.falling) return;
     piece.falling = true;
     ruin.standing--;
+    // Out of the ruin's still mesh, drawn on its own while it flies.
+    blank(ruin, piece);
+    group.add(piece.mesh);
     const away = piece.mesh.position.clone().sub(from);
     const d = away.length() || 1;
     away.divideScalar(d);
@@ -201,9 +287,9 @@ export function createDestruction(
       if (upper.filter((p) => !p.falling).length < upper.length * COLLAPSE_BELOW) {
         for (const piece of ruin.pieces) {
           // What lies on the ground (the lot's paving, the plinth) stays as it
-          // is, and goes with the rubble later.
+          // is in the still mesh, and goes with the rubble later.
           if (piece.fragment.centre.y < floor + m(0.6)) {
-            if (!piece.falling) { piece.falling = true; piece.settled = true; ruin.standing--; loose.push(piece); }
+            if (!piece.falling) { piece.falling = true; piece.settled = true; ruin.standing--; }
           } else release(ruin, piece, impact, m(0.6));
         }
         exhaust.burst(x, y, floor, 60, 3, m(10), m(5), 6);
@@ -272,11 +358,13 @@ export function createDestruction(
             } else {
               // Settled: it stays where it fell, a heap of the building, for
               // good (the player: "não faça os escombros sumirem"); no longer
-              // stepped.
+              // stepped, and drawn with its ruin again.
               p.settled = true;
               p.v.set(0, 0, 0);
               p.age = 0;
               loose.splice(i, 1);
+              const ruin = owner.get(p);
+              if (ruin) land(ruin, p);
             }
           }
         }
@@ -285,12 +373,16 @@ export function createDestruction(
       for (const [id, ruin] of ruins) {
         if (!ruin.pieces.every((p) => p.gone)) continue;
         for (const p of ruin.pieces) p.fragment.geometry.dispose();
+        ruin.still.geometry.dispose();
         ruins.delete(id);
         ruined.delete(id);
       }
     },
     dispose() {
-      for (const ruin of ruins.values()) for (const p of ruin.pieces) p.fragment.geometry.dispose();
+      for (const ruin of ruins.values()) {
+        for (const p of ruin.pieces) p.fragment.geometry.dispose();
+        ruin.still.geometry.dispose();
+      }
       group.clear();
     },
   };
