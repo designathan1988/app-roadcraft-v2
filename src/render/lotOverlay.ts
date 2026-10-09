@@ -3,6 +3,13 @@ import {
 } from 'three';
 import type { Vec2 } from '@core/vec2';
 import { m } from '@world/units';
+import type { ChangeJournal, ChangeKind, ChangeRect } from '@world/changes';
+
+/** What moves the ground a lot is laid on (`surfaceHeightAt`): its laid pieces there are made again. */
+const GROUND_KINDS: readonly ChangeKind[] = ['terrain', 'roads', 'buildings', 'ground', 'elevation', 'surfaces'];
+
+/** One polygon laid on the ground: its fill and outline triangles, and where it is. */
+interface Piece { readonly fillPos: Float32Array; readonly fillCol: Float32Array; readonly linePos: Float32Array; readonly lineCol: Float32Array; readonly box: ChangeRect }
 
 /**
  * The lots drawn in the scene (`world/lots.ts`, the Zoning tool): fills and
@@ -14,7 +21,9 @@ import { m } from '@world/units';
  * Outlines are ribbons of a constant width on the ground, subdivided so they
  * follow its relief; fills are the polygons triangulated with their edges
  * subdivided, each vertex at the ground's height. Rebuilt only when the
- * input's key changes.
+ * input's key changes, and then only the polygons that changed or whose
+ * ground did (the diary's rectangles): each building grown laid all 468 lots
+ * of a town on the ground again, 1.7 s a building.
  */
 export interface LotOverlayInput {
   /** Changes whenever anything drawn changes. */
@@ -46,6 +55,28 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
   lineMat.forceSinglePass = true;
   let key = '';
   let meshes: Mesh[] = [];
+  /** Each polygon as last laid, by what it is (`pieceKey`). */
+  let pieces = new Map<string, Piece>();
+  /** The diary's serial the pieces' ground was read at. */
+  let groundSeen = -1;
+  const pieceKey = (poly: LotOverlayInput['polygons'][number]): string =>
+    `${poly.fill}|${poly.fillAlpha}|${poly.line}|${poly.lineAlpha}|${poly.width}|${poly.corners.map((q) => `${q.x.toFixed(2)},${q.y.toFixed(2)}`).join(';')}`;
+  /** The pieces whose ground moved since they were laid are forgotten. */
+  /** True when a piece still drawn was forgotten. */
+  const forgetMovedGround = (changes: ChangeJournal | undefined): boolean => {
+    if (!changes || changes.version === groundSeen) return false;
+    const entries = groundSeen < 0 ? null : changes.since(groundSeen, GROUND_KINDS);
+    groundSeen = changes.version;
+    const before = pieces.size;
+    if (entries === null) { pieces.clear(); return before > 0; }
+    for (const entry of entries) {
+      if (entry.rects === null) { pieces.clear(); break; }
+      for (const [k, piece] of pieces) {
+        if (entry.rects.some((r) => r[0] <= piece.box[2] && r[2] >= piece.box[0] && r[1] <= piece.box[3] && r[3] >= piece.box[1])) pieces.delete(k);
+      }
+    }
+    return pieces.size < before;
+  };
   const LIFT = m(0.12);
   /** The longest side of a fill triangle: about the terrain's own cell, so the fill bends with it. */
   const FILL_EDGE = m(3);
@@ -56,8 +87,8 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
   function build(input: LotOverlayInput): void {
     for (const mesh of meshes) { group.remove(mesh); mesh.geometry.dispose(); }
     meshes = [];
-    const fillPos: number[] = [], fillCol: number[] = [];
-    const linePos: number[] = [], lineCol: number[] = [];
+    let fillPos: number[] = [], fillCol: number[] = [];
+    let linePos: number[] = [], lineCol: number[] = [];
     const colour = new Color();
     const pushColour = (into: number[], c: number, alpha: number, n: number): void => {
       colour.set(c);
@@ -80,9 +111,17 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
         r0 = r1; l0 = l1;
       }
     };
+    const laid: Piece[] = [];
+    const kept = new Map<string, Piece>();
     for (const poly of input.polygons) {
       const ring = poly.corners;
       if (ring.length < 3) continue;
+      const k = pieceKey(poly);
+      const known = pieces.get(k) ?? kept.get(k);
+      if (known) { laid.push(known); kept.set(k, known); continue; }
+      // Laid into its own lists, kept for the next build.
+      const outer = { fillPos, fillCol, linePos, lineCol };
+      fillPos = []; fillCol = []; linePos = []; lineCol = [];
       if (poly.fill !== null && poly.fillAlpha > 0) {
         // Edges subdivided every 3 m so the fill bends with the ground.
         const pts: Vec2[] = [];
@@ -97,10 +136,18 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
         // few large flat triangles, and wherever the land rose inside it the
         // ground showed through the colour in holes (the player, 2026-10-06).
         const fill = poly.fill;
+        // A vertex is shared by up to six triangles: its ground asked once.
+        const heights = new Map<string, [number, number, number]>();
+        const ground = (p: Vec2): [number, number, number] => {
+          const k = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+          let v = heights.get(k);
+          if (!v) { v = at(p.x, p.y); heights.set(k, v); }
+          return v;
+        };
         const emit = (a: Vec2, b: Vec2, cc: Vec2, depth: number): void => {
           const ab = Math.hypot(b.x - a.x, b.y - a.y), bc = Math.hypot(cc.x - b.x, cc.y - b.y), ca = Math.hypot(a.x - cc.x, a.y - cc.y);
           if (Math.max(ab, bc, ca) <= FILL_EDGE || depth > 12) {
-            fillPos.push(...at(a.x, a.y), ...at(b.x, b.y), ...at(cc.x, cc.y));
+            fillPos.push(...ground(a), ...ground(b), ...ground(cc));
             pushColour(fillCol, fill, poly.fillAlpha, 3);
             return;
           }
@@ -112,7 +159,17 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
         for (const tri of tris) emit(pts[tri[0]!]!, pts[tri[1]!]!, pts[tri[2]!]!, 0);
       }
       for (let i = 0; i < ring.length; i++) ribbon(ring[i]!, ring[(i + 1) % ring.length]!, m(poly.width), poly.line, poly.lineAlpha, LIFT * 1.5);
+      const xs = ring.map((q) => q.x), ys = ring.map((q) => q.y);
+      const pad = m(poly.width);
+      const piece: Piece = { fillPos: Float32Array.from(fillPos), fillCol: Float32Array.from(fillCol),
+        linePos: Float32Array.from(linePos), lineCol: Float32Array.from(lineCol),
+        box: [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad] };
+      ({ fillPos, fillCol, linePos, lineCol } = outer);
+      laid.push(piece);
+      kept.set(k, piece);
     }
+    // Only the polygons drawn now are kept: the others are gone.
+    pieces = kept;
     for (const line of input.lines) {
       if (!line.dashed) { ribbon(line.a, line.b, m(line.width), line.colour, 1, LIFT * 2); continue; }
       const len = Math.hypot(line.b.x - line.a.x, line.b.y - line.a.y);
@@ -132,7 +189,20 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
         pushColour(lineCol, point.colour, 1, 3);
       }
     }
-    for (const [pos, col, mat, order] of [[fillPos, fillCol, fillMat, 10], [linePos, lineCol, lineMat, 11]] as const) {
+    // The pieces and the loose lines and points, copied into one buffer each
+    // (a copy per piece, not a push per number: 146 ms for a town's lots).
+    const joined = (parts: readonly Float32Array[], extra: readonly number[]): Float32Array => {
+      let n = extra.length;
+      for (const p of parts) n += p.length;
+      const out = new Float32Array(n);
+      let at = 0;
+      for (const p of parts) { out.set(p, at); at += p.length; }
+      out.set(extra, at);
+      return out;
+    };
+    const fills = [joined(laid.map((p) => p.fillPos), fillPos), joined(laid.map((p) => p.fillCol), fillCol)] as const;
+    const outlines = [joined(laid.map((p) => p.linePos), linePos), joined(laid.map((p) => p.lineCol), lineCol)] as const;
+    for (const [pos, col, mat, order] of [[fills[0], fills[1], fillMat, 10], [outlines[0], outlines[1], lineMat, 11]] as const) {
       if (!pos.length) continue;
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new Float32BufferAttribute(pos, 3));
@@ -146,9 +216,11 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
   }
 
   return {
-    set(input: LotOverlayInput | null): void {
+    set(input: LotOverlayInput | null, changes?: ChangeJournal): void {
+      // The ground moved under pieces still drawn: laid again even with the same input.
+      const moved = forgetMovedGround(changes);
       const next = input?.key ?? '';
-      if (next === key) return;
+      if (next === key && !moved) return;
       key = next;
       if (input) build(input);
       else { for (const mesh of meshes) { group.remove(mesh); mesh.geometry.dispose(); } meshes = []; }

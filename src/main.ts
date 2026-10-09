@@ -3625,7 +3625,7 @@ function drawOverlayScreen(): void {
     // What the Zoning tool draws (`editor/lotTool.ts`), in the scene; its labels on the 2D layer.
     const { polygons, lines, points, labels } = lotTool.overlay(game.tool === 'zone');
     const input: LotOverlayInput = { key: JSON.stringify([polygons, lines, points]), polygons, lines, points };
-    scene.setLotOverlay(input);
+    scene.setLotOverlay(input, doc.changes);
     // Labels stay on the 2D layer, projected at the ground's real height.
     const ground = (p: Vec2): Vec2 => view.toScreen(p, w, h, scene.surfaceHeightAt(p.x, p.y));
     ctx.save();
