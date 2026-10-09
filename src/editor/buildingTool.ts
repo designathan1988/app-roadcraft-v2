@@ -16,7 +16,7 @@ import { FloorCache, type PavedAt, floorHeight } from '@world/buildings/foundati
 import { edgeFrame, localFootprint, overlapArea } from '@world/buildings/footprints';
 import { GRID } from '@world/buildings/geometry';
 import { METERS_PER_UNIT, m } from '@world/units';
-import { MIN_SIZE, topLevel, baysOn, footprintBox, levelElevation, levelHeight, localDirToWorld, localToWorld, reliefAt, worldToLocal } from '@world/buildings/geometry';
+import { MIN_SIZE, topLevel, baysOn, footprintBox, levelElevation, levelHeight, liftAt, localDirToWorld, localToWorld, reliefAt, volumeElevation, worldToLocal } from '@world/buildings/geometry';
 import { type Handle, buildingHandles } from '@world/buildings/handles';
 import { type BuildingHit, type Ray3, pickBuilding } from '@world/buildings/pick';
 import { FINISH_COLOUR, type MaterialSpec, type MaterialTarget, applyMaterial, applyStyle, materialAt } from '@world/buildings/materials';
@@ -270,6 +270,19 @@ export class BuildingTool {
     this.stage = 'shape';
   }
 
+  /**
+   * The point of the plan under the pointer on a floor of the building cut
+   * open: on the floor of the block it falls in, which in a split level
+   * stands at its own height (`liftAt`) - found on the level's floor first,
+   * then read again at that block's.
+   */
+  private onCutFloor(b: Building, screen: Vec2, level: number): Vec2 {
+    const z = this.floorOf(b) + levelElevation(b, level);
+    const first = worldToLocal(b, this.view.planeAt(screen, z));
+    const lift = liftAt(b, level, first.x, first.y);
+    return lift === 0 ? first : worldToLocal(b, this.view.planeAt(screen, z + lift));
+  }
+
   /** Drops a selection whose building or volume no longer exists (after an undo). */
   sync(): void {
     if (!this.selection) return;
@@ -439,7 +452,7 @@ export class BuildingTool {
     const b = this.selected();
     const source = b && this.selection ? volumeById(b, this.selection.volume) : undefined;
     if (action === 'top' && b && source) {
-      this.shapeDragZ = this.floorOf(b) + levelElevation(b, source.base + source.storeys.length);
+      this.shapeDragZ = this.floorOf(b) + volumeElevation(b, source, source.base + source.storeys.length);
     }
     this.shapeDragStart = screen ? this.view.planeAt(screen, this.shapeDragZ) : at;
     at = this.shapeDragStart;
@@ -956,7 +969,7 @@ export class BuildingTool {
     const kind = this.coreKind;
     if (!b || !kind) return;
     const level = this.cutLevel ?? 0;
-    const p = worldToLocal(b, this.view.planeAt(screen, this.floorOf(b) + levelElevation(b, level)));
+    const p = this.onCutFloor(b, screen, level);
     const u = b.module;
     this.onSelected((draft) => {
       if (kind === 'remove') {
@@ -1020,8 +1033,8 @@ export class BuildingTool {
     const kind = this.furnitureKind;
     if (!b || !kind) return;
     const level = this.cutLevel ?? 0;
-    const p = worldToLocal(b, this.view.planeAt(screen, this.floorOf(b) + levelElevation(b, level)));
-    const snap = (v: number): number => Math.round(v / (GRID / 2)) * (GRID / 2);
+    const p = this.onCutFloor(b, screen, level);
+    const snap =(v: number): number => Math.round(v / (GRID / 2)) * (GRID / 2);
     // The piece under the pointer: the nearest whose footprint holds it.
     const under = (list: readonly { kind: string; x: number; y: number }[]): number => {
       let best = -1;
@@ -1369,7 +1382,8 @@ export class BuildingTool {
     const volume = building && this.selection ? volumeById(building, this.selection.volume) : undefined;
     if (!building || !volume) return null;
     const level = this.planAction === 'top' ? volume.base + volume.storeys.length : volume.base;
-    return this.floorOf(building) + levelElevation(building, level);
+    // At the block's own floors (a split level, `Volume.lift`).
+    return this.floorOf(building) + volumeElevation(building, volume, level);
   }
 
   private pointOnPlan(screen: Vec2, world: Vec2, free: boolean): Vec2 {
@@ -1744,8 +1758,8 @@ export class BuildingTool {
     const selection = this.selection;
     const volume = volumeById(building, selection?.volume ?? 0) ?? building.volumes[0];
     const level = volume ? volume.base + (selection?.bay?.storey ?? 0) : 0;
-    const startZ = levelElevation(building, level);
-    const rise = Math.max(m(0.5), levelElevation(building, level + 1) - startZ);
+    const startZ = volume ? volumeElevation(building, volume, level) : levelElevation(building, level);
+    const rise = Math.max(m(0.5), levelElevation(building, level + 1) - levelElevation(building, level));
     const lengths: number[] = [];
     let total = 0;
     for (let i = 1; i < local.length; i++) {
@@ -2063,7 +2077,7 @@ export class BuildingTool {
       const building = this.selected();
       const volume = building && volumeById(building, this.selection.volume);
       if (building && volume) {
-        const z = this.floorOf(building) + levelElevation(building, volume.base) + m(0.1);
+        const z = this.floorOf(building) + volumeElevation(building, volume, volume.base) + m(0.1);
         this.drag = {
           kind: 'massMove',
           origin: cloneBuilding(building),
@@ -2233,7 +2247,7 @@ export class BuildingTool {
       if (drag.moved && held && hit && hit.building === held.id && this.mode === 'edit' && this.freeHand()) {
         const block = volumeById(held, hit.volume);
         if (held.volumes.length > 1 && block) {
-          const z = this.floorOf(held) + levelElevation(held, block.base);
+          const z = this.floorOf(held) + volumeElevation(held, block, block.base);
           this.selection = { building: held.id, volume: block.id, bay: null };
           this.drag = { kind: 'massMove', origin: cloneBuilding(held), volume: block.id, start: this.view.planeAt(drag.start, z), z };
         } else {

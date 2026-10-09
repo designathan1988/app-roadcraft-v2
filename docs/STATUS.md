@@ -192,8 +192,8 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 
 - Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70).
 - Zoneamento: o meio-nível só é escolhido no crescimento (o construtor não
-  tem controle de `lift` e as alças de `editor/buildingTool.ts` ainda contam
-  as alturas sem ele); andar de baixo com garagem no lado da descida não é
+  tem controle para mudar `lift`; as alças e os arrastes já seguem a cota de
+  cada bloco, P89); andar de baixo com garagem no lado da descida não é
   feito (o carro entra pela rua, na cota da frente); lojas e prédios com
   estacionamento ou pátio de carga atrás não são escalonados.
 - Prédios: subir a altura de um prédio (relato: cerca de 10 s): na
