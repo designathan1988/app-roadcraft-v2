@@ -8,7 +8,7 @@ import { watchHealth } from '@ui/healthWatch';
 import { mountHealthPanel } from '@ui/healthPanel';
 import { METERS_PER_UNIT } from '@world/units';
 import type { LotOverlayInput } from '@render/lotOverlay';
-import { applyLots, deleteLot, lotCentre, planLots } from '@world/lots';
+import { applyLots, planLots } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
 import { flattenSegment } from '@core/bezier';
@@ -44,7 +44,7 @@ import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
-import { LANDSCAPE_RADIUS, landscapeNear } from '@world/landscape';
+import { LANDSCAPE_RADIUS } from '@world/landscape';
 import { StreetscapeTool } from '@editor/streetscapeTool';
 
 import { Camera } from '@view/camera';
@@ -65,6 +65,7 @@ import { type DraftResult, duplicateSegment, joinSegments, reconcileMovedNode, s
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
+import { Bulldozer } from '@editor/bulldozer';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
@@ -998,7 +999,7 @@ function cancelGestures(): void {
   barrierTool.cancel();
   // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
   lotTool.cancel();
-  bulldozeBox = null;
+  bulldozer.cancel();
   endTerrainStroke();
   cancelMove();
   panning = null;
@@ -1027,7 +1028,8 @@ function currentGesture(): string | null {
   if (pole) return pole;
   const barrier = barrierTool.gesture();
   if (barrier) return barrier;
-  if (bulldozeBox) return 'demolir: retângulo';
+  const bulldozing = bulldozer.gesture();
+  if (bulldozing) return bulldozing;
   const cloud = cloudTool.gesture();
   if (cloud) return cloud;
   return lotTool.gesture();
@@ -1068,78 +1070,21 @@ function caused<T>(cause: string, fn: () => T): T {
   }
 }
 
-/** The bulldozer's box being dragged (screen pixels in the canvas), or its press when it stays a click. */
-let bulldozeBox: { pointer: number; a: Vec2; b: Vec2; world: Vec2; to: Vec2; anchor: Anchor } | null = null;
-/** The bulldozer's click: the one thing under the pointer. */
-function bulldozeClick(screen: Vec2, world: Vec2, anchor: Anchor): void {
-  // A building stands over whatever is under it, so it is tried first.
-  if (buildings.bulldozeAt(screen)) return;
-  // A pole is a thing standing in the world, so the tool whose job is
-  // removing things has to be able to remove it. It is tried first: a
-  // pole stands ON the footway of a road, so the road under it would
-  // otherwise always win the click and the pole could never be hit.
-  {
-    const pole = doc.poleNear(world, poleReach());
-    if (pole) {
-      mutate(() => {
-        doc.removePole(pole.id);
-        return true;
-      });
-      flashHint('hint.pole.removed');
-      return;
-    }
-    // Likewise a bench, a tree or a street light on the footway.
-    const item = landscapeNear(doc.landscape.values(), world, streetscapeTool.reach());
-    if (item) {
-      mutate(() => doc.removeLandscape(item.id));
-      flashHint('hint.streetscape.removed');
-      return;
-    }
-  }
-  if (anchor.kind === 'segment' && anchor.segment !== undefined) {
-    const id = anchor.segment;
-    mutate(() => {
-      doc.removeSegment(id);
-      doc.pruneOrphanNodes();
-      return true;
-    });
-  }
-}
-/**
- * Everything inside the bulldozer's box removed in one undo step: roads
- * (their middle inside), buildings, lots, poles, trees and benches, walls.
- * The box is on the map, its corners the ground pressed and released, square
- * to the map's axes (the player, 2026-10-06: "o espaço do mapa e não 2D").
- */
-function bulldozeBoxed(a: Vec2, b: Vec2): void {
-  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-  const inside = (p: Vec2): boolean => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
-  const segments = [...doc.segments.keys()].filter((id) => {
-    const line = net.ribbons.get(id)?.full;
-    return line ? inside(line.sampleAt(line.length / 2).p) : false;
-  });
-  const builtIds = [...doc.buildings.all()].filter((bd) => inside({ x: bd.x, y: bd.y })).map((bd) => bd.id);
-  const lots = doc.lots.filter((l) => inside(lotCentre(l))).map((l) => l.id);
-  const poles = [...doc.poles.values()].filter((p) => inside(p)).map((p) => p.id);
-  const items = [...doc.landscape.values()].filter((it) => inside(it)).map((it) => it.id);
-  const walls = [...doc.barriers.values()].filter((bar) => bar.points.some(inside)).map((bar) => bar.id);
-  if (!segments.length && !builtIds.length && !lots.length && !poles.length && !items.length && !walls.length) return;
-  mutate(() => {
-    for (const id of segments) doc.removeSegment(id);
-    if (segments.length) doc.pruneOrphanNodes();
-    for (const id of lots) deleteLot(doc, id);
-    for (const id of builtIds) doc.buildings.remove(id);
-    for (const id of poles) doc.removePole(id);
-    for (const id of items) doc.removeLandscape(id);
-    for (const id of walls) doc.removeBarrier(id);
-    return true;
-  });
-  flashHint('hint.lot.deleted');
-}
+/** The bulldozer (`editor/bulldozer.ts`): a click removes what is under it, a box everything inside. */
+const bulldozer = new Bulldozer({
+  doc,
+  net,
+  bulldozeBuildingAt: (at) => buildings.bulldozeAt(at),
+  poleReach: () => poleReach(),
+  itemReach: () => streetscapeTool.reach(),
+  mutate: (fn) => mutate(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
-  return roadTool.inProgress() || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
+  return roadTool.inProgress() || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozer.inProgress();
 }
 
 /**
@@ -1435,7 +1380,7 @@ canvas.addEventListener('pointerdown', (e) => {
       }
       // A click removes what is under it; a drag draws a box and removes
       // everything inside it, as SimCity's bulldozer does (on release).
-      bulldozeBox = { pointer: e.pointerId, a: { x: e.clientX - r.left, y: e.clientY - r.top }, b: { x: e.clientX - r.left, y: e.clientY - r.top }, world: { ...world }, to: { ...world }, anchor };
+      bulldozer.down(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }, world, anchor);
       break;
 
     case 'upgrade':
@@ -1547,13 +1492,7 @@ canvas.addEventListener('pointermove', (e) => {
   const world = pointerWorld(e, r);
 
   if (lotTool.move(e.pointerId, world)) return;
-  if (bulldozeBox?.pointer === e.pointerId) {
-    const r = canvas.getBoundingClientRect();
-    bulldozeBox.b = { x: e.clientX - r.left, y: e.clientY - r.top };
-    bulldozeBox.to = { ...world };
-    requestDraw();
-    return;
-  }
+  if (bulldozer.move(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top }, world)) return;
   if (game.tool === 'zone') {
     lotTool.hover = world;
     requestDraw();
@@ -1644,15 +1583,7 @@ function endPointer(e: PointerEvent): void {
   if (terrainBrush.pointer === e.pointerId) endTerrainStroke();
   cloudTool.up(e.pointerId);
   if (game.tool === 'building') buildings.pointerUp(cancelled || wasPinching);
-  if (bulldozeBox?.pointer === e.pointerId) {
-    const box = bulldozeBox;
-    bulldozeBox = null;
-    if (!cancelled && !wasPinching) {
-      if (Math.hypot(box.b.x - box.a.x, box.b.y - box.a.y) < 6) bulldozeClick(box.a, box.world, box.anchor);
-      else bulldozeBoxed(box.world, box.to);
-    }
-    requestDraw();
-  }
+  bulldozer.up(e.pointerId, !cancelled && !wasPinching);
   lotTool.up(e.pointerId, !cancelled && !wasPinching);
   // The stroke let go: a click starts a chain, a curve waits for its bend, a drag is laid.
   roadTool.up(() => pointerWorld(e), !cancelled && !wasPinching);
@@ -3783,8 +3714,9 @@ function drawOverlayScreen(): void {
 
   if (game.tool === 'building') buildings.drawOverlay(ctx);
   // The bulldozer's box, on the ground: its edges follow the land.
-  if (bulldozeBox && Math.hypot(bulldozeBox.b.x - bulldozeBox.a.x, bulldozeBox.b.y - bulldozeBox.a.y) >= 6) {
-    const { world: a, to: b } = bulldozeBox;
+  const bulldozeBox = bulldozer.box();
+  if (bulldozeBox) {
+    const { a, b } = bulldozeBox;
     const corners = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }];
     ctx.save();
     ctx.beginPath();
