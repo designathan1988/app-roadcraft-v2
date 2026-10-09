@@ -1,5 +1,6 @@
 import { createActions } from './actionsWiring';
-import { beginFrameWork, workUntil } from '@core/frameWork';
+import { FrameClock, Periodic, TopologyCatchUp } from './frameLoop';
+import { beginFrameWork } from '@core/frameWork';
 import { GameState } from '@core/gameState';
 import { FrameTimer, HealthLog } from '@core/health';
 import { LotTool, type LotSplitKind, type ZoneMode } from '@editor/lotTool';
@@ -55,7 +56,7 @@ import { primeSurfaceBake, startSurfaceBake } from '@render/surfaceBakeClient';
 import { DEFAULT_AZIMUTH, DEFAULT_ELEVATION, isoZoomBounds } from '@render/isoViewport';
 
 import { SimWorld } from '@sim/world';
-import { rebindAgents, rebindPeds, rebindVehicles, step } from '@sim/pipeline';
+import { rebindAgents, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
@@ -2771,7 +2772,7 @@ const trafficButton = document.getElementById('trafficToggle') as HTMLButtonElem
 function setPaused(paused: boolean): void {
   gameState.set('paused', paused, paused ? 'pausa' : 'simulação retomada');
   sim.clock.paused = paused;
-  last = performance.now();
+  frameClock.restart();
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
 }
@@ -3323,17 +3324,14 @@ const arrowPan = (e: KeyboardEvent): void => {
 window.addEventListener('keydown', arrowPan);
 
 // ------------------------------------------------------------- run loop
-let last = performance.now();
-let pending = false;
-// Seeded ABOVE their thresholds so the first frame refreshes both. The loop
-// stops once nothing is moving — a paused map with no traffic ends it after one
-// or two frames — and the status bar and minimap are only refreshed from inside
-// that loop. Starting at zero meant a paused map kept the initial HTML readout
-// for ever: measured on an all-combinations test map of 32 roads and 47 nodes,
-// the status bar read "0 roads · 0 nodes" while the roads were plainly drawn,
-// the minimap stayed blank.
-let uiClock = 0.4;
-let minimapClock = 0.1;
+/** The frame asked for, and the time between frames (`frameLoop.ts`). */
+const frameClock = new FrameClock(frame);
+// Due on the first frame: the loop stops once nothing moves, and a paused map
+// kept the page's initial readout ("0 roads · 0 nodes") and a blank minimap.
+/** The minimap: ten times a second, never every frame, panning included. */
+const minimapDue = new Periodic(0.1);
+/** The status bar, the inspector, the simulation's checks. */
+const panelsDue = new Periodic(0.4);
 let lastMovePreviewRebuild = -Infinity;
 /**
  * Shortest interval between geometry rebuilds while a node is being dragged.
@@ -3367,15 +3365,11 @@ function movePreviewInterval(): number {
  * mesh rebuild alone, and the traffic pauses for the topology afterwards.
  */
 let topologyAfterDraw = false;
-/** The conflict zones of an edit being measured ahead of the swap (`SimWorld.prepareVehicleTopology`). */
-let topologyPrep: { revision: number; steps: Generator<void, void> } | null = null;
-/** Milliseconds a frame spends measuring them. */
-const TOPOLOGY_SLICE_MS = 6;
+/** The traffic's topology catching up with an edit, a slice a frame (`frameLoop.ts`). */
+const topology = new TopologyCatchUp();
 
 function requestDraw(): void {
-  if (pending) return;
-  pending = true;
-  requestAnimationFrame(frame);
+  frameClock.request();
 }
 
 /**
@@ -3404,16 +3398,10 @@ setInterval(() => {
   }
 }, 500);
 
-/** The footways were rebuilt (`rebuildWalkTopology`) and the walkers are rebound onto them next frame. */
-let pedsToRebind = false;
-/** The footways of the last edit being rebuilt, a few milliseconds a frame (`SimWorld.walkTopologySteps`). */
-let walkPrep: { revision: number; steps: Generator<void, void, void> } | null = null;
-
 /** A frame has been drawn, and the first world has been put in place (the opening builds it in parts). */
 let drawnOnce = false;
 let worldShown = false;
 function frame(now: number): void {
-  pending = false;
   if (!booted) return;
   // Each system's time in this frame (`core/health.ts`): a long frame is told with the systems that took it.
   frameTimer.begin();
@@ -3423,8 +3411,7 @@ function frame(now: number): void {
   // The map's biome shown as it is after an undo, a load or a new map.
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   frameTimer.mark('painéis');
-  const wall = (now - last) / 1000;
-  last = now;
+  const wall = frameClock.tick(now);
 
   // The opening puts the town together in parts (`SceneHandle.worldBusy`):
   // the traffic waits for the roads it drives on to be drawn.
@@ -3435,52 +3422,11 @@ function frame(now: number): void {
   let holdSim = moving || topologyAfterDraw || !worldShown;
   // A generated city being built (`generateCity`).
   growCity();
-  if (!holdSim && sim.topologyRevision !== net.trafficRevision && scene.worldBusy) {
-    // The road being built first: the traffic and the footways wait for it,
-    // the simulation held meanwhile, so the frame's allowance goes to the road.
+  // The traffic's topology catching up with an edit, a slice a frame, the
+  // simulation held until it has (`TopologyCatchUp`).
+  if (!holdSim && topology.step(sim, net.trafficRevision, scene.worldBusy)) {
     holdSim = true;
     requestDraw();
-  } else if (!holdSim && sim.topologyRevision !== net.trafficRevision) {
-    // In two frames, vehicles then footways, each drawn in between: the two
-    // together were one stall of up to 240 ms after every edit. The world is
-    // held until both are done.
-    if (sim.vehicleTopologyRevision !== net.trafficRevision) {
-      // The conflict zones of the new junctions measured first, a few
-      // milliseconds a frame on a graph of their own (`prepareVehicleTopology`);
-      // then the swap, which finds every pair measured.
-      if (!topologyPrep || topologyPrep.revision !== net.trafficRevision) {
-        topologyPrep = { revision: net.trafficRevision, steps: sim.prepareVehicleTopology() };
-      }
-      const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
-      let prep = topologyPrep.steps.next();
-      while (!prep.done && performance.now() < until) prep = topologyPrep.steps.next();
-      if (prep.done) {
-        topologyPrep = null;
-        sim.rebuildVehicleTopology();
-        rebindVehicles(sim);
-      }
-      holdSim = true;
-      requestDraw();
-    } else {
-      // The footways now, the walkers rebound onto them in the next frame,
-      // the world held until then: the two in one frame were a stall of
-      // 130-180 ms after every road in the default town (docs/performance.md #11).
-      if (!walkPrep || walkPrep.revision !== net.trafficRevision) {
-        walkPrep = { revision: net.trafficRevision, steps: sim.walkTopologySteps() };
-      }
-      const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
-      let step = walkPrep.steps.next();
-      while (!step.done && performance.now() < until) step = walkPrep.steps.next();
-      if (step.done) {
-        walkPrep = null;
-        pedsToRebind = true;
-      }
-      holdSim = true;
-      requestDraw();
-    }
-  } else if (!holdSim && pedsToRebind) {
-    pedsToRebind = false;
-    rebindPeds(sim);
   }
   frameTimer.mark('topologia');
   const alpha = holdSim
@@ -3531,17 +3477,13 @@ function frame(now: number): void {
   //
   // A 194-by-124 overview does not need sixty updates a second. The clock alone
   // now decides, so the cost is bounded no matter what the pointer is doing.
-  minimapClock += wall;
-  if (minimapClock >= 0.1) {
-    minimapClock = 0;
+  if (minimapDue.due(wall)) {
     syncFlatCameraFromView();
     drawMinimap(minimapCanvas, doc, net, sim, camera, surface, viewFootprint());
   }
   frameTimer.mark('minimapa');
 
-  uiClock += wall;
-  if (uiClock > 0.4) {
-    uiClock = 0;
+  if (panelsDue.due(wall)) {
     updateStatus();
     // Safe while the player is using the panel: an unchanged selection only
     // rewrites the statistics block, never the control under the pointer.
@@ -3554,15 +3496,9 @@ function frame(now: number): void {
 
   // Keep animating while anything is moving; otherwise settle.
   if (!document.hidden && (!game.paused || roadTool.draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
-  else if (!document.hidden && scene.drifting() && !driftQueued) {
-    // Only the clouds moving (they drift, form and fade): twenty frames a
-    // second keeps them alive without holding the GPU at full speed.
-    driftQueued = true;
-    setTimeout(() => { driftQueued = false; requestDraw(); }, 50);
-  }
+  // Only the clouds moving (they drift, form and fade): a slower frame.
+  else if (!document.hidden && scene.drifting()) frameClock.drift();
 }
-/** A frame for the drifting clouds is already on its way. */
-let driftQueued = false;
 
 /**
  * The same hints as `drawOverlay`, projected instead of transformed.
@@ -4533,7 +4469,7 @@ function text(id: string, value: string): void {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     // Do not let a hidden tab's elapsed wall time flood the accumulator.
-    last = performance.now();
+    frameClock.restart();
     requestDraw();
   }
 });
