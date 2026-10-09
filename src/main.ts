@@ -10,7 +10,7 @@ import { METERS_PER_UNIT } from '@world/units';
 import type { LotOverlayInput } from '@render/lotOverlay';
 import { applyLots, planLots } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
-import { COARSE_EPS, clamp } from '@core/scalar';
+import { clamp } from '@core/scalar';
 import { flattenSegment } from '@core/bezier';
 import { RoadDoc, type JunctionControl } from '@world/doc';
 import type { Change, ChangeKind } from '@world/changes';
@@ -61,11 +61,12 @@ import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
 import { type Anchor, anchorForHeight, findAnchor } from '@editor/snap';
-import { type DraftResult, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
+import { duplicateSegment, joinSegments, splitSegment } from '@editor/commit';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { Bulldozer } from '@editor/bulldozer';
+import { NodeMover } from '@editor/nodeMover';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
@@ -508,13 +509,17 @@ const CLICK_SLOP = 5;
 const KEY_TURN = Math.PI / 12;
 /** A camera orbit in progress: the pointer and where it last was, CSS px. */
 let orbiting: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean; height: number } | null = null;
-/**
- * A node being dragged, with the document as it was when the drag began. The
- * live preview edits the document, and each step through a spot where an
- * incident curve would be too tight flattened it for good (`fitCurve`); the
- * snapshot is what cancel restores and what the undo step records.
- */
-let moving: { node: NodeId; origin: Vec2; before: ReturnType<RoadDoc['toJSON']> } | null = null;
+/** The Move tool's node drag (`editor/nodeMover.ts`), previewed live and dropped as one undo step. */
+const mover = new NodeMover({
+  doc,
+  net,
+  settleTopology: () => {
+    if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
+  },
+  mutate: (fn) => mutate(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 /**
  * The terrain brush (`editor/terrainBrush.ts`): the stroke in progress and
  * what each dab does. The flatten's level is captured ONCE, when the stroke
@@ -1020,7 +1025,8 @@ function currentGesture(): string | null {
   if (pinch) return 'câmera: pinça';
   if (orbiting) return 'câmera: girando';
   if (panning) return 'câmera: arrastando';
-  if (moving) return 'via: movendo um nó';
+  const movingNode = mover.gesture();
+  if (movingNode) return movingNode;
   const road = roadTool.gesture();
   if (road) return road;
   if (terrainBrush.stroking) return 'terreno: pincelando';
@@ -1084,7 +1090,7 @@ const bulldozer = new Bulldozer({
 
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
-  return roadTool.inProgress() || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozer.inProgress();
+  return roadTool.inProgress() || poleTool.inProgress() || terrainBrush.stroking || mover.dragging || lotTool.gesture() !== null || bulldozer.inProgress();
 }
 
 /**
@@ -1103,11 +1109,7 @@ function releaseHeld(): void {
 
 /** Cancels a node drag without leaving its live preview in the document. */
 function cancelMove(): void {
-  if (!moving) return;
-  const before = moving.before;
-  moving = null;
-  restoreSnapshot(doc, before, net);
-  if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
+  mover.cancel();
 }
 
 
@@ -1339,8 +1341,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
     case 'move':
       if (anchor.kind === 'node' && anchor.node !== undefined) {
-        const node = doc.node(anchor.node);
-        if (node) moving = { node: anchor.node, origin: { x: node.x, y: node.y }, before: doc.toJSON() };
+        mover.grab(anchor.node);
       } else {
         panning = { id: e.pointerId, grabbed: panAnchorOf(e) };
       }
@@ -1525,11 +1526,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (moving) {
-    doc.moveNode(moving.node, world);
-    requestDraw();
-    return;
-  }
+  if (mover.move(world)) return;
 
 
   if (terrainBrush.pointer === e.pointerId) {
@@ -1590,36 +1587,8 @@ function endPointer(e: PointerEvent): void {
 
   poleTool.up(!cancelled && !wasPinching);
 
-  if (moving) {
-    const m = moving;
-    moving = null;
-    // Record the move as one undo step, using the position it started from.
-    const node = doc.node(m.node);
-    if (node) {
-      const now = { x: node.x, y: node.y };
-      const changed = Math.hypot(now.x - m.origin.x, now.y - m.origin.y) > COARSE_EPS;
-      // Back to the document as it was - curves included - then, if the drag
-      // counts, one move from there to the drop point as one undo step.
-      restoreSnapshot(doc, m.before, net);
-      if (changed && !cancelled && !wasPinching) {
-        // The drop is reconciled like a drawn road: onto a node it joins it,
-        // across a road it makes a junction, and a drop that would leave a
-        // stub or cross a road at the wrong height is refused.
-        let refused: DraftResult['reason'] | undefined;
-        mutate(() => {
-          doc.moveNode(m.node, now);
-          const result = reconcileMovedNode(doc, net, m.node);
-          if (result.committed) return true;
-          refused = result.reason;
-          restoreSnapshot(doc, m.before, net);
-          return false;
-        });
-        if (refused) flashHint(refused === 'clearance' ? 'hint.move.clearance' : 'hint.move.tooShort');
-      } else if (sim.topologyRevision !== net.trafficRevision) {
-        rebuildSimulationTopology();
-      }
-    }
-  }
+  // The node dropped: one undo step from where it started.
+  mover.drop(!cancelled && !wasPinching);
   persistence.saveSettingsSoon(sessionSettings);
   requestDraw();
 }
@@ -3263,25 +3232,6 @@ const frameClock = new FrameClock(frame);
 const minimapDue = new Periodic(0.1);
 /** The status bar, the inspector, the simulation's checks. */
 const panelsDue = new Periodic(0.4);
-let lastMovePreviewRebuild = -Infinity;
-/**
- * Shortest interval between geometry rebuilds while a node is being dragged.
- *
- * A preview at 20 Hz is far smoother than the eye needs for a drag, and it
- * avoids rebuilding routes, signals and spatial indexes for pointer samples that
- * will be superseded immediately.
- */
-const MOVE_PREVIEW_MIN_MS = 50;
-/**
- * The cap is a floor, not the whole rule: on a large network one rebuild costs
- * far more than 50 ms, and asking for another one every 50 ms simply queues
- * them until the pointer stops. The interval is therefore taken from what the
- * last rebuild ACTUALLY cost, so the preview stays responsive on a small map
- * and degrades to a slower preview on a big one instead of locking up.
- */
-function movePreviewInterval(): number {
-  return Math.max(MOVE_PREVIEW_MIN_MS, scene.stats.rebuildMs * 1.6);
-}
 
 /**
  * Set by an edit: draw the new geometry first, rebuild the simulation after.
@@ -3314,7 +3264,7 @@ setInterval(() => {
   // Buildings on zoned lots (`world/lots.ts`).
   // A road edit can make room on a lot refused before: try them again.
   const lotRefused = lotTool.refusedFor(net.revision);
-  if (!moving && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
+  if (!mover.dragging && performance.now() >= zoneGrowthHold && doc.lots.some((l) => l.use)) {
     const grown = caused('crescimento da zona', () => {
       const id = growOnLot({ doc, net, groundAt: (x, y) => scene.terrainHeightAt(x, y) }, lotRefused, 0x5eed);
       const fresh = id === null ? undefined : doc.buildings.get(id as BuildingId);
@@ -3350,7 +3300,7 @@ function frame(now: number): void {
   // Moving a node is an authoring preview. Freeze simulation time until the
   // gesture finishes so agents never rebuild against every intermediate shape.
   // The frame that first draws an edit is held the same way.
-  let holdSim = moving || topologyAfterDraw || !worldShown;
+  let holdSim = mover.dragging || topologyAfterDraw || !worldShown;
   // A generated city being built (`generateCity`).
   growCity();
   // The traffic's topology catching up with an edit, a slice a frame, the
@@ -3369,10 +3319,9 @@ function frame(now: number): void {
     // Geometry is still refreshed during a drag, but a 20 Hz preview is more
     // than smooth enough and avoids repeatedly rebuilding routes, signals and
     // spatial indexes for pointer samples that will be superseded immediately.
-    if (!moving || now - lastMovePreviewRebuild >= movePreviewInterval()) {
+    if (!mover.dragging || mover.previewDue(now, scene.stats.rebuildMs)) {
       net.rebuild();
-      if (moving) lastMovePreviewRebuild = now;
-      else if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
+      if (!mover.dragging && sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
     }
   }
   frameTimer.mark('rede viária');
@@ -3426,7 +3375,7 @@ function frame(now: number): void {
   healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || roadTool.draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || panning || orbiting || pinch || scene.busy())) requestDraw();
   // Only the clouds moving (they drift, form and fade): a slower frame.
   else if (!document.hidden && scene.drifting()) frameClock.drift();
 }
