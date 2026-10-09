@@ -273,6 +273,8 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       return made;
     });
     if (!result.ok) { deps.flash(`building.problem.${result.problem}`); return; }
+    // The building made is the one selected now (the one it replaced is gone).
+    if (result.id !== undefined) tool.selectBuilding(result.id);
     deps.flash('hint.reference.built', { volumes: String(body.volumes.length) });
     host.changed();
   };

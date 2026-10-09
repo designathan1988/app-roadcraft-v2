@@ -196,8 +196,7 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   as alturas sem ele); andar de baixo com garagem no lado da descida não é
   feito (o carro entra pela rua, na cota da frente); lojas e prédios com
   estacionamento ou pátio de carga atrás não são escalonados.
-- Prédios: um prédio feito de referência não fica selecionado depois de
-  construído. Subir a altura de um prédio (relato: cerca de 10 s): na
+- Prédios: subir a altura de um prédio (relato: cerca de 10 s): na
   cidade de teste, 83 ms até o prédio redesenhado, e andar, fachada e
   telhado não renivelam mais o chão em volta (P87); em relevo, conferir no
   mapa do jogador.

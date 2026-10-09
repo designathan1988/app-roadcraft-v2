@@ -257,6 +257,19 @@ export class BuildingTool {
     return this.host.context().doc.buildings.get(this.selection.building) ?? null;
   }
 
+  /**
+   * Selects a building just made elsewhere (built from a 3D reference): its
+   * first block, in edit mode, as a building drawn here is (`finishPlan`) -
+   * what the player works on next is the one made last.
+   */
+  selectBuilding(id: BuildingId): void {
+    const b = this.host.context().doc.buildings.get(id);
+    if (!b) return;
+    this.selection = { building: b.id, volume: (b.volumes[0] as { id: number }).id, bay: null };
+    this.mode = 'edit';
+    this.stage = 'shape';
+  }
+
   /** Drops a selection whose building or volume no longer exists (after an undo). */
   sync(): void {
     if (!this.selection) return;
