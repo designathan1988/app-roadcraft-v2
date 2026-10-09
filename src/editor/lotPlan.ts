@@ -203,6 +203,8 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
    * left in the drive kept every stall of 13 lots in 30 out of reach).
    */
   const keepClear: Rect[] = [];
+  /** A boundary run is being laid (`runX`, `runY`): its pieces may stand along the drive. */
+  let laying = false;
   const probe = (): Building => ({ ...body, id: 0, x: 0, y: 0, rotation: 0 } as Building);
 
   const lot: Lot = {
@@ -231,7 +233,9 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       // front wall (the player's order of 2026-10-05).
       const boundary = kind === 'wall' || kind === 'fence' || kind === 'hedge' || kind === 'gate' || kind === 'railing';
       if (elements.length >= MAX_ELEMENTS - (boundary ? 2 : BOUNDARY_RESERVE) || w < 0.1 || d < 0.1 || h < 0.1) return false;
-      if (!boundary && z < 2 && !FLAT_KINDS.has(kind)) {
+      // Only the boundary's own runs and the gates may stand at the drive's
+      // edge: a cabinet or a shed is a `wall` too, and one stood in the drive.
+      if (!(laying || kind === 'gate') && z < 2 && !FLAT_KINDS.has(kind)) {
         const [hw, hd] = facing === 1 || facing === 3 ? [d / 2, w / 2] : [w / 2, d / 2];
         if (keepClear.some((r) => x + hw > r.x0 && x - hw < r.x1 && y + hd > r.y0 && y - hd < r.y1)) return false;
       }
@@ -252,7 +256,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         // A piece that meets something (a porch, a step) is split, and only
         // the part that really meets it is left out - not the whole length.
         const piece = (a: number, b: number): void => {
-          if (lot.put(kind, (a + b) / 2, y, 0, b - a, thick, h, z) || b - a < 1) return;
+          laying = true;
+          const ok = lot.put(kind, (a + b) / 2, y, 0, b - a, thick, h, z);
+          laying = false;
+          if (ok || b - a < 1) return;
           piece(a, (a + b) / 2);
           piece((a + b) / 2, b);
         };
@@ -266,7 +273,10 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       const n = Math.ceil((y1 - y0) / 20);
       const thick = kind === 'fence' ? 0.12 : kind === 'hedge' ? 0.7 : 0.2;
       const piece = (a: number, b: number): void => {
-        if (lot.put(kind, x, (a + b) / 2, 1, b - a, thick, h, z) || b - a < 1) return;
+        laying = true;
+        const ok = lot.put(kind, x, (a + b) / 2, 1, b - a, thick, h, z);
+        laying = false;
+        if (ok || b - a < 1) return;
         piece(a, (a + b) / 2);
         piece((a + b) / 2, b);
       };

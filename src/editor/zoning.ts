@@ -1,6 +1,6 @@
 import { Rng } from '@core/rng';
 import type { Vec2 } from '@core/vec2';
-import { madeToMeasure } from '@world/buildings/procedural';
+import { type Signature, bodySignature, madeToMeasure, signatureDistance } from '@world/buildings/procedural';
 import { METERS_PER_UNIT } from '@world/units';
 import { furnishLot, lotKind, planLot } from './lotPlan';
 import { MAX_ELEMENTS, type Building, type BuildingElement, type Volume } from '@world/buildings/types';
@@ -9,7 +9,7 @@ import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
-import { lotFrame } from '@world/lots';
+import { lotCentre, lotFrame } from '@world/lots';
 import { addBuildingRecord, type placeBuilding } from './buildings';
 import { buildingBounds, footprintRects } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
@@ -353,7 +353,7 @@ function growOnce(ctx: SiteContext, grid: ZoneGrid, refused: Set<string>, seed: 
  * with an older one is regrown (`regrowStale`), so what the player sees is
  * always the current generator, not the records of an older one.
  */
-export const LOT_PLAN_VERSION = 10;
+export const LOT_PLAN_VERSION = 11;
 
 /**
  * Takes down the zoned buildings grown by an older generator and frees their
@@ -392,13 +392,84 @@ export function regrowStale(doc: RoadDoc, limit = 6): number {
  * the plan leaves, as on a grid lot (`growOnce`), but on the lot the player
  * drew: its front middle, its facing, its width and depth.
  */
+/** Candidates made for a lot, the least like its neighbours kept (Mitchell's best candidate). */
+const CANDIDATES = 4;
+/** How far round a lot the buildings it should not look like are read. */
+const LIKE_REACH = m(90);
+/** How near the last building grown an open lot must be to grow next (the street filling along). */
+const GROW_ON_REACH = m(70);
+
+/** Each record's signature, worked out once (a record is replaced when its building changes). */
+const SIGNATURES = new WeakMap<Building, Signature>();
+const signatureOfRecord = (b: Building): Signature => {
+  let s = SIGNATURES.get(b);
+  if (!s) SIGNATURES.set(b, s = bodySignature(b));
+  return s;
+};
+
+/** The buildings round a point: each one's signature and how far it stands. */
+function nearSignatures(doc: RoadDoc, at: Vec2): { signature: Signature; distance: number }[] {
+  const out: { signature: Signature; distance: number }[] = [];
+  for (const b of doc.buildings.all()) {
+    const d = Math.hypot(b.x - at.x, b.y - at.y);
+    if (d < LIKE_REACH) out.push({ signature: signatureOfRecord(b), distance: d });
+  }
+  return out;
+}
+
+/**
+ * How unlike its surroundings a building would be: its least distance in
+ * looks to any of them, a building farther away counting as more unlike
+ * (a twin across the town is no twin).
+ */
+function unlikeness(body: Building | Omit<Building, 'id' | 'x' | 'y' | 'rotation'>, near: readonly { signature: Signature; distance: number }[]): number {
+  const mine = bodySignature(body);
+  let least = Infinity;
+  for (const n of near) least = Math.min(least, signatureDistance(mine, n.signature) + 2.5 * (n.distance / LIKE_REACH));
+  return least;
+}
+
+/** Storeys of the buildings beside a lot's front (within its width and a little), tallest block each. */
+function neighbourStoreys(doc: RoadDoc, anchor: Vec2, width: number): number[] {
+  const out: number[] = [];
+  for (const b of doc.buildings.all()) {
+    if (Math.hypot(b.x - anchor.x, b.y - anchor.y) > width + m(12)) continue;
+    const top = Math.max(0, ...b.volumes.filter((v) => !v.open).map((v) => v.base + v.storeys.length));
+    if (top > 0) out.push(top);
+  }
+  return out;
+}
+
+/** Where the building grown last stands (the highest id grown on a lot), or null. */
+function lastGrown(doc: RoadDoc): Vec2 | null {
+  let best: Building | null = null;
+  for (const l of doc.lots) {
+    if (l.building === undefined) continue;
+    const b = doc.buildings.get(l.building as Parameters<typeof doc.buildings.get>[0]);
+    if (b && (!best || b.id > best.id)) best = b;
+  }
+  return best ? { x: best.x, y: best.y } : null;
+}
+
 export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number): number | null {
   const { doc } = ctx;
   const standing = (b: number | undefined): boolean => b !== undefined && doc.buildings.has(b as Parameters<typeof doc.buildings.has>[0]);
   const open = doc.lots.filter((l) => l.use && !standing(l.building) && !refused.has(l.id));
   if (!open.length) return null;
   const rng = new Rng((seed ^ Math.imul(doc.buildings.nextId, 0x9e3779b1)) >>> 0);
-  const lot = open[rng.int(0, open.length - 1)]!;
+  // The street fills along: the open lot nearest the last building grown,
+  // when one is near (the player sees the street they zoned fill in, one
+  // house after the next); anywhere else, a lot at random.
+  let lot = open[rng.int(0, open.length - 1)]!;
+  const last = lastGrown(doc);
+  if (last) {
+    let best = GROW_ON_REACH;
+    for (const l of open) {
+      const c = lotCentre(l);
+      const d = Math.hypot(c.x - last.x, c.y - last.y);
+      if (d < best) { best = d; lot = l; }
+    }
+  }
   const use = lot.use!;
   const frame = lotFrame(lot);
   // Every zoned lot gets a building, whatever its size or shape (the player,
@@ -420,11 +491,28 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     if (W < 4 || D < 4) continue;
     const plan = planLot(lotKind(use, density), W, D, rng);
     const env = plan.building;
-    const made = madeToMeasure(use, density, {
+    const driveSide = plan.left.use === 'drive' || plan.left.use === 'drivePath' ? 'left' as const
+      : plan.right.use === 'drive' || plan.right.use === 'drivePath' ? 'right' as const : undefined;
+    const envelope = {
       W: env.x1 - env.x0, D: env.y1 - env.y0,
       backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
       character: (lot.id * 31) >>> 0,
-    }, rng);
+      ...(driveSide ? { driveSide } : {}),
+      neighbours: neighbourStoreys(doc, frame.anchor, frame.width),
+    };
+    // Of a few candidates, the one least like the buildings round it
+    // (Mitchell's best candidate, in the space of what a building looks
+    // like): drawn at random, a street still came out with twins side by side.
+    const near = nearSignatures(doc, frame.anchor);
+    let made = madeToMeasure(use, density, envelope, rng);
+    if (near.length) {
+      let score = unlikeness(made.body, near);
+      for (let k = 1; k < CANDIDATES; k++) {
+        const other = madeToMeasure(use, density, envelope, rng);
+        const s = unlikeness(other.body, near);
+        if (s > score) { score = s; made = other; }
+      }
+    }
     const body = made.body;
     const dx = m(env.x0 - W / 2), dy = m(env.y0);
     for (const v of body.volumes) { v.x += dx; v.y += dy; }
