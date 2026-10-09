@@ -1148,10 +1148,12 @@ const GRADE = {
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // Contrast, an S round the middle grey.
       c = mix(c, smoothstep(0.0, 1.0, c), 0.25);
-      // Vibrance: the dull colours gain more than the vivid.
+      // Colour held back, not pushed: the vivid a little calmer, the dull as
+      // they are. A +30 % vibrance read as a toy town of candy colours (the
+      // player, 2026-10-09, against Cities: Skylines II's restrained palette).
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float sat = mx - mn;
-      c = mix(vec3(l), c, 1.0 + 0.3 * (1.0 - sat));
+      c = mix(vec3(l), c, 0.93 - 0.12 * sat);
       // Split toning: warm highlights, cool shadows.
       // Warm light, shadows left neutral: a blue push in them read as a
       // teal cast over every shaded slope.

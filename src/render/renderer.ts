@@ -2825,6 +2825,8 @@ export function createSceneRenderer(
       // Keep the full facade at street zoom: the planar far mesh loses frames
       // on side-facing windows. Only its thin shadows can disappear earlier.
       buildings.setFar(rig.viewport.zoom < 3);
+      // Facade detail only within ~500 m of the eye (`cullDetails`).
+      buildings.cullDetails(rig.camera.position.x, -rig.camera.position.z, rig.camera.position.y, m(500));
       buildings.setShadowFar(rig.viewport.zoom < FACADE_SHADOW_ZOOM);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;

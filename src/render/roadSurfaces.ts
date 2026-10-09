@@ -112,8 +112,13 @@ export const TERRAIN_UV = 64;
  * between them. The tessellation only has to be fine enough to SHADE well.
  */
 const GROUND_MAX_EDGE = TERRAIN_CELL / 2;
-/** A dropped kerb's triangles: its slope is 1.8 m long, its flares 1.5 m. */
-const RAMP_MAX_EDGE = m(0.3);
+/**
+ * A dropped kerb's triangles: its slope is 1.8 m long, its flares 1.5 m. The
+ * slope is a plane (rise linear along it), which a few triangles carry
+ * exactly: at 0.3 m the ramps of a large city were 2.4 million triangles,
+ * more than every window frame in it (measured 2026-10-09).
+ */
+const RAMP_MAX_EDGE = m(0.75);
 /** A raised deck follows nothing, so it needs vertices only for its shading. */
 const RAISED_MAX_EDGE = TERRAIN_CELL;
 

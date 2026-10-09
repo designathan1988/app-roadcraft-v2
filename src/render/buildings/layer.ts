@@ -64,6 +64,13 @@ export interface BuildingLayer {
   /** Thin facade parts stop casting shadows when their shadow width is subpixel. */
   setShadowFar(far: boolean): void;
   /**
+   * The frames, railings and louvres of the cells farther than `reach` from
+   * the eye (world units, map x/y and height) are not drawn: there a 6 cm
+   * frame is far under a pixel, and they were the bulk of a large city's
+   * triangles drawn in every frame of the overview.
+   */
+  cullDetails(eyeX: number, eyeY: number, eyeZ: number, reach: number): void;
+  /**
    * "Ocultar outros": undefined draws every building solid, null fades them
    * all, and an id fades every building but that one.
    */
@@ -439,6 +446,15 @@ export function createBuildingLayer(): BuildingLayer {
       if (next === far) return;
       far = next;
       applyFacadeDetail();
+    },
+    cullDetails(eyeX, eyeY, eyeZ, reach) {
+      const r2 = reach * reach;
+      for (const [key, cell] of detailCells) {
+        const comma = key.indexOf(',');
+        const cx = (Number(key.slice(0, comma)) + 0.5) * DETAIL_CELL - eyeX;
+        const cy = (Number(key.slice(comma + 1)) + 0.5) * DETAIL_CELL - eyeY;
+        cell.part.group.visible = cx * cx + cy * cy + eyeZ * eyeZ < r2;
+      }
     },
     setShadowFar(next) {
       if (next === shadowFar) return;
