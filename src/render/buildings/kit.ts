@@ -67,7 +67,10 @@ export type PartKind =
   | 'curtain'
   | 'water'
   | 'lamp'
-  | 'wash';
+  | 'wash'
+  | 'fin'
+  | 'louvre'
+  | 'glassRail';
 
 export const PART_KINDS: readonly PartKind[] = [
   'glass',
@@ -84,6 +87,9 @@ export const PART_KINDS: readonly PartKind[] = [
   'water',
   'lamp',
   'wash',
+  'fin',
+  'louvre',
+  'glassRail',
 ];
 
 /** Warm light of the rooms behind the glass. */
@@ -285,6 +291,41 @@ function doorGeometry(): BufferGeometry {
 }
 
 /** A shop awning: a sloped canvas from the wall (y 0, z 0) down and out, with a valance. */
+/**
+ * A louvred shutter leaf: a stile-and-rail frame round slats tilted to shed
+ * rain, the persiana of a Brazilian sash or casement window. Unit size, X
+ * across, Y up, Z out of the wall.
+ */
+function louvreGeometry(): BufferGeometry {
+  const t = 0.09;
+  const parts: BufferGeometry[] = [
+    box(1, t, 1, 0, 0.5 - t / 2, 0), box(1, t, 1, 0, -0.5 + t / 2, 0),
+    box(t, 1, 1, 0.5 - t / 2, 0, 0), box(t, 1, 1, -0.5 + t / 2, 0, 0),
+    box(1, 0.6 * t, 0.6, 0, 0, -0.2),
+  ];
+  for (let k = 0; k < 9; k++) {
+    const slat = new BoxGeometry(1 - 2 * t, 0.07, 0.7);
+    slat.rotateX(-0.6);
+    slat.translate(0, -0.42 + k * 0.105, -0.1);
+    parts.push(slat);
+  }
+  const merged = mergeGeometries(parts) as BufferGeometry;
+  for (const p of parts) p.dispose();
+  return merged;
+}
+
+/**
+ * A glass parapet: a clear pane the full width standing on the slab, a slim
+ * metal cap along its top. Unit width, unit height from Y 0 (the floor) up,
+ * centred on Z 0.
+ */
+function glassRailGeometry(): BufferGeometry {
+  const pane = box(1, 0.92, 0.02, 0, 0.48, 0);
+  const merged = mergeGeometries([pane]) as BufferGeometry;
+  pane.dispose();
+  return merged;
+}
+
 function awningGeometry(): BufferGeometry {
   const canvas = new BoxGeometry(1, 0.04, 1.08);
   canvas.rotateX(Math.atan2(0.75, 1));
@@ -315,6 +356,9 @@ export function createBuildingKit(): BuildingKit {
     lamp: unitBox,
     // Placed at the lantern's centre (the same lot), the plane drawn back on the wall.
     wash: new PlaneGeometry(1, 1).translate(0, 0, -(PORCH_LAMP.d / 2 - WASH_OUT)),
+    fin: unitBox,
+    louvre: louvreGeometry(),
+    glassRail: glassRailGeometry(),
   };
 
   const concrete = new MeshStandardMaterial({ color: 0xcfc9bd, roughness: 0.82, metalness: 0 });
@@ -354,6 +398,14 @@ export function createBuildingKit(): BuildingKit {
     // The light the lantern throws on the wall round it: laid on the wall
     // additively, as a decal (pulled towards the eye so it never fights the
     // wall for depth), seen only after dark.
+    // Sun fins and window surrounds, in the trim's colour per instance (`COLOURED_PARTS`).
+    fin: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 }),
+    // Louvred shutters, painted wood, coloured per instance.
+    louvre: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, metalness: 0 }),
+    // A balcony's glass parapet: pale green-grey laminated glass, half seen through.
+    glassRail: new MeshStandardMaterial({
+      color: 0xa9c4c4, roughness: 0.05, metalness: 0.2, envMapIntensity: 1.4, transparent: true, opacity: 0.42, depthWrite: false,
+    }),
     wash: new MeshBasicMaterial({
       map: lightPoolTexture(), color: PORCH_LIGHT, transparent: true, opacity: 0, blending: AdditiveBlending,
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4, visible: false,
@@ -472,7 +524,7 @@ export function createBuildingKit(): BuildingKit {
     dimParts,
     // Glass, doors and shutters close the openings for the sun: without them
     // the shadow of every building is a lattice of lit windows.
-    castsShadow: new Set<PartKind>(['glass', 'glassDark', 'frame', 'door', 'shutter', 'concrete', 'railing', 'awning', 'column', 'roofRailing']),
+    castsShadow: new Set<PartKind>(['glass', 'glassDark', 'frame', 'door', 'shutter', 'concrete', 'railing', 'awning', 'column', 'roofRailing', 'fin', 'louvre']),
     furniture() {
       if (!furniture) {
         furniture = { geometry: createFurnitureGeometries(), material: createFurnitureMaterial() };

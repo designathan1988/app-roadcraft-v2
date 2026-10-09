@@ -1,6 +1,7 @@
 import { Rng } from '@core/rng';
 import type { Vec2 } from '@core/vec2';
 import { type Signature, bodySignature, madeToMeasure, signatureDistance } from '@world/buildings/procedural';
+import type { Era } from '@world/buildings/architecture';
 import { METERS_PER_UNIT } from '@world/units';
 import { furnishLot, lotKind, planLot } from './lotPlan';
 import { MAX_ELEMENTS, type Building, type BuildingElement, type Volume } from '@world/buildings/types';
@@ -474,6 +475,27 @@ function cornerOf(ctx: SiteContext, anchor: Vec2, u: Vec2, n: Vec2, width: numbe
   return undefined;
 }
 
+/**
+ * The street side and the quarter a lot belongs to, for its building's
+ * style (`world/buildings/architecture.ts`): `character` the same for the
+ * lots of one side of a street within some 60 m (one frontage reads as one),
+ * `era` the same over a quarter of about 220 m - its period, old towards the
+ * middle of the map more often, new towards the edges.
+ */
+function quarterOf(anchor: Vec2, n: Vec2): { character: number; era: Era } {
+  const hash = (a: number, b: number, c: number): number => {
+    let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(c | 0, 0x3c6ef372);
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    return (h ^ (h >>> 13)) >>> 0;
+  };
+  const facing = Math.round(Math.atan2(n.y, n.x) / (Math.PI / 2));
+  const character = hash(Math.floor(anchor.x / m(60)), Math.floor(anchor.y / m(60)), facing + 11);
+  const q = hash(Math.floor(anchor.x / m(220)), Math.floor(anchor.y / m(220)), 5) / 4_294_967_296;
+  const central = Math.hypot(anchor.x, anchor.y) < m(450);
+  const era: Era = central ? (q < 0.5 ? 0 : q < 0.8 ? 1 : 2) : (q < 0.15 ? 0 : q < 0.5 ? 1 : 2);
+  return { character, era };
+}
+
 /** Where the building grown last stands (the highest id grown on a lot), or null. */
 function lastGrown(doc: RoadDoc): Vec2 | null {
   let best: Building | null = null;
@@ -533,7 +555,7 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     const envelope = {
       W: env.x1 - env.x0, D: env.y1 - env.y0,
       backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
-      character: (lot.id * 31) >>> 0,
+      ...quarterOf(frame.anchor, n),
       ...(driveSide ? { driveSide } : {}),
       neighbours: neighbourStoreys(doc, frame.anchor, frame.width),
     };

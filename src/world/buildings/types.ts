@@ -41,6 +41,14 @@ export const BAY_COMPONENTS = [
   'shopfront',
   'loadingDoor',
   'pillar',
+  // The facade library of the procedural buildings (`architecture.ts`): a
+  // loggia let into the wall behind a glass parapet, a window behind
+  // vertical sun fins (brise-soleil), a window with louvred shutters folded
+  // back beside it, a deep balcony across the whole bay (varanda gourmet).
+  'loggia',
+  'brise',
+  'shutteredWindow',
+  'gourmet',
 ] as const;
 export type BayComponent = (typeof BAY_COMPONENTS)[number];
 
@@ -160,6 +168,24 @@ export interface FacadeGeometry {
   pierEvery?: number;
 }
 
+/**
+ * The horizontal articulation of a block, as an architectural style draws
+ * it (base, body and crown - Sullivan's base, shaft and cornice; the
+ * embasamento, corpo and coroamento of a Brazilian facade):
+ * - lines: 'every' a moulding at every floor; 'base' one string course over
+ *   the ground floor only; 'slab' the floor slabs shown as thin flush
+ *   bands; 'none' an unbroken body;
+ * - crown: 'cornice' a moulded cornice; 'deco' a stepped double cornice;
+ *   'slab' a thin projecting roof slab; 'attic' a deep plain parapet band;
+ *   'none' the wall runs to the coping.
+ */
+export const DRESS_LINES = ['every', 'base', 'slab', 'none'] as const;
+export const DRESS_CROWNS = ['cornice', 'deco', 'slab', 'attic', 'none'] as const;
+export interface VolumeDress {
+  lines?: (typeof DRESS_LINES)[number];
+  crown?: (typeof DRESS_CROWNS)[number];
+}
+
 /** A rectangular block, standing on level `base`: a rectangle of the local frame, world units. */
 export interface Volume {
   id: number;
@@ -182,6 +208,8 @@ export interface Volume {
   materials?: VolumeMaterials;
   /** Faces pushed in or out (see `Relief`). */
   reliefs?: Relief[];
+  /** How its storeys are marked and its top finished (see `VolumeDress`); absent, a line at every floor and a plain cornice. */
+  dress?: VolumeDress;
   /** Roof pitch in degrees, for pitched roofs; absent = the roof kind's default. */
   pitch?: number;
   /**

@@ -517,7 +517,7 @@ const LOADING_COUNT = 100;
 /** Side of the cells the buildings are batched in, world units. */
 const BATCH_CELL = m(240);
 const DETAIL_CELL = m(120);
-const DETAIL_PARTS: ReadonlySet<PartKind> = new Set(['frame', 'railing', 'roofRailing']);
+const DETAIL_PARTS: ReadonlySet<PartKind> = new Set(['frame', 'railing', 'roofRailing', 'louvre']);
 const COARSE_PARTS: ReadonlySet<PartKind> = new Set(PART_KINDS.filter((kind) => !DETAIL_PARTS.has(kind)));
 
 /**
