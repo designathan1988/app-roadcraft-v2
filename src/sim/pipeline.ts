@@ -53,7 +53,10 @@ export interface StepOptions {
  */
 export function step(w: SimWorld, opts: StepOptions = {}): void {
   const traffic = opts.traffic ?? true;
-  const pedestrians = opts.pedestrians ?? true;
+  // The walkers stand still while their door links are half rebuilt
+  // (`SimWorld.stepBuildingAccess`, a slice a frame): they would walk a
+  // graph being rewired.
+  const pedestrians = (opts.pedestrians ?? true) && !w.accessRefreshing;
   const timings = opts.timings;
   let mark = timings ? performance.now() : 0;
   const lap = timings
@@ -71,8 +74,10 @@ export function step(w: SimWorld, opts: StepOptions = {}): void {
   if (w.topologyRevision !== w.net.trafficRevision) {
     w.rebuildTopology();
     rebindAgents(w);
-  } else if (w.buildingAccessRevision !== w.doc.buildings.revision ||
-    w.accessUtilityRevision !== w.doc.utilityRevision) {
+  } else if (!w.accessSliced && w.accessStale) {
+    // In the game the frame loop brings the door links up to date a slice a
+    // frame (`TopologyCatchUp`); here, for a world stepped on its own (the
+    // specs), in one go.
     if (w.refreshBuildingAccess()) w.pedEngine.rebind(w);
   }
   lap('0 topology');

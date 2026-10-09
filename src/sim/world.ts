@@ -230,6 +230,57 @@ export class SimWorld {
   /** Utility revision and actual ground-access geometry of the current links. */
   accessUtilityRevision = -1;
   private accessSignature = '';
+  /**
+   * The door links being brought up to date a slice a frame by the game's
+   * frame loop (`TopologyCatchUp`), as a coroutine spreads a task over frames
+   * (Unity manual, "Coroutines"): done in one go inside a tick, a pole or a
+   * building grown held the frame 37-112 ms. Set, the pipeline leaves the
+   * links to it (`accessSliced`) and the walkers wait while it runs.
+   */
+  private accessWork: Generator<void, boolean, void> | null = null;
+  /** The frame loop brings the door links up to date (`stepBuildingAccess`); the pipeline does not. */
+  accessSliced = false;
+
+  /** The door links are behind the buildings or the poles. */
+  get accessStale(): boolean {
+    return this.buildingAccessRevision !== this.doc.buildings.revision || this.accessUtilityRevision !== this.doc.utilityRevision;
+  }
+
+  /** Door links half rebuilt: the walkers must not move on them. */
+  get accessRefreshing(): boolean {
+    return this.accessWork !== null;
+  }
+
+  /**
+   * One slice of `refreshBuildingAccess`, until `until` (ms): true when it
+   * finished and the links changed, so the walkers are rebound.
+   */
+  stepBuildingAccess(until: number): boolean {
+    if (!this.accessWork) {
+      if (!this.accessStale) return false;
+      this.accessWork = this.buildingAccessSteps();
+    }
+    let step = this.accessWork.next();
+    while (!step.done && performance.now() < until) step = this.accessWork.next();
+    if (!step.done) return false;
+    this.accessWork = null;
+    return step.value;
+  }
+
+  private *buildingAccessSteps(): Generator<void, boolean, void> {
+    const buildings = this.doc.buildings.revision, utility = this.doc.utilityRevision;
+    const signature = buildingAccessSignature(this.doc);
+    let changed = false;
+    if (signature !== this.accessSignature) {
+      yield* this.sidewalks.refreshBuildingAccessSteps(this.doc);
+      this.accessSignature = signature;
+      changed = true;
+    }
+    // The revisions it was started at: an edit while it ran is caught by the next.
+    this.buildingAccessRevision = buildings;
+    this.accessUtilityRevision = utility;
+    return changed;
+  }
 
   constructor(
     readonly doc: RoadDoc,
@@ -301,6 +352,7 @@ export class SimWorld {
     this.buildingAccessRevision = -1;
     this.accessUtilityRevision = -1;
     this.accessSignature = '';
+    this.accessWork = null;
     this.pedEngine.reset(this);
   }
 
@@ -455,6 +507,9 @@ export class SimWorld {
   /** `rebuildWalkTopology` in steps (`SidewalkGraph.buildSteps`); the world is held until the last. */
   *walkTopologySteps(): Generator<void, void, void> {
     if (this.vehicleTopologyRevision !== this.net.trafficRevision) this.rebuildVehicleTopology();
+    // The footways are built again with their door links: a refresh of the
+    // links under way would go on over the graph being replaced.
+    this.accessWork = null;
     yield* this.sidewalks.buildSteps(this.doc, this.net, this.graph);
     yield;
     this.crossingSpans.build(this);
