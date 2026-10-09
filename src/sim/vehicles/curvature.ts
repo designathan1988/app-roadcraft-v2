@@ -37,6 +37,10 @@ const LOOK_TIME = 1.5;
 const LOOK_MARGIN = m(10);
 
 const profiles = new WeakMap<Lanelet, Float32Array>();
+/** Each profile's sharpest sample: below `STRAIGHT` the whole lanelet is straight. */
+const peaks = new WeakMap<Lanelet, number>();
+/** Curvature taken as none at all. */
+const STRAIGHT = 1e-6;
 
 /** Curvature, per world unit, at each `SAMPLE` along the lanelet. */
 function profileOf(lane: Lanelet): Float32Array {
@@ -45,16 +49,25 @@ function profileOf(lane: Lanelet): Float32Array {
   const n = Math.max(1, Math.ceil(lane.length / SAMPLE) + 1);
   const out = new Float32Array(n);
   const h = Math.min(CHORD, lane.length / 2);
+  let peak = 0;
   if (h > 1e-3) {
     for (let i = 0; i < n; i++) {
       const s = Math.min(Math.max(i * SAMPLE, h), lane.length - h);
       const a = lane.centre.sampleAt(s - h).t;
       const b = lane.centre.sampleAt(s + h).t;
       out[i] = Math.abs(Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y)) / (2 * h);
+      peak = Math.max(peak, out[i]!);
     }
   }
   profiles.set(lane, out);
+  peaks.set(lane, peak);
   return out;
+}
+
+/** Whether a lanelet has no bend anywhere (its profile made first if need be). */
+function straight(lane: Lanelet): boolean {
+  profileOf(lane);
+  return peaks.get(lane)! < STRAIGHT;
 }
 
 /** Share of the fleet-wide figure this driver accepts: personality and vehicle. */
@@ -135,15 +148,20 @@ export function curveSpeedCap(w: SimWorld, v: Vehicle): number {
   let ahead = -v.s; // distance from the front to the start of `lane`
   let next = 0;
   while (lane && ahead < horizon) {
-    const profile = profileOf(lane);
-    const start = Math.max(0, Math.floor(Math.max(0, from) / SAMPLE));
-    for (let i = start; i < profile.length; i++) {
-      const s = i * SAMPLE;
-      const d = Math.max(0, ahead + s);
-      if (d > horizon) break;
-      const k = profile[i]!;
-      if (k < 1e-6) continue;
-      cap = Math.min(cap, before(bendSpeed(share, k), d));
+    // A straight lanelet - most of a town's - has no sample that could lower
+    // the cap: passed over whole instead of sample by sample (a branch that
+    // cannot improve the best found is not explored: branch and bound).
+    if (!straight(lane)) {
+      const profile = profileOf(lane);
+      const start = Math.max(0, Math.floor(Math.max(0, from) / SAMPLE));
+      for (let i = start; i < profile.length; i++) {
+        const s = i * SAMPLE;
+        const d = Math.max(0, ahead + s);
+        if (d > horizon) break;
+        const k = profile[i]!;
+        if (k < STRAIGHT) continue;
+        cap = Math.min(cap, before(bendSpeed(share, k), d));
+      }
     }
     ahead += lane.length;
     from = 0;
