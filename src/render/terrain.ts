@@ -505,9 +505,12 @@ function streakNoise(noise: (x: number, y: number, period: number) => number, u:
  * green was 0.32 linear and nearly blue-free, a neon lawn brighter than the
  * buildings (the player, 2026-10-08: "extremamente brilhante").
  */
+// The dark tone close to the lit one: at 0.22 0.32 0.12 the lawn's dark
+// patches were the very green of the tree crowns, and a park's trees vanished
+// into blotches of their own colour (the player, 2026-10-08: "olha o verde").
 export const GRASS_TONES = {
-  dark: [0.22, 0.32, 0.12],
-  lit: [0.38, 0.47, 0.2],
+  dark: [0.32, 0.42, 0.17],
+  lit: [0.4, 0.49, 0.2],
   dry: [0.46, 0.44, 0.26],
   soil: [0.36, 0.3, 0.2],
 } as const;
@@ -1599,7 +1602,8 @@ function terrainMaterial(
            float gAvg = dot(texture2D(map, grainUv, 14.0).rgb, vec3(0.3, 0.6, 0.1));
            float grain = mix(g0, g1, grainBlend) / max(gAvg, 0.02);
            float grainW = smoothstep(0.15, 0.6, grainLod) * grassW * (1.0 - clamp(rockMix + dirtMix, 0.0, 1.0));
-           blended.rgb *= mix(1.0, clamp(grain, 0.55, 1.5), grainW * 0.75);
+           // Gently: at 0.55 to 1.5 the grain drew dark blotches as deep as the trees' green.
+           blended.rgb *= mix(1.0, clamp(grain, 0.8, 1.25), grainW * 0.5);
          }
          // A hillshade written into the ALBEDO, on top of the light the surface
          // actually receives. Direct sun alone moves a 10-degree slope by about
