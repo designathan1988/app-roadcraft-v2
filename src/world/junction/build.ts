@@ -195,9 +195,16 @@ export function buildJunction(
       const next = i + 1 === angles.length ? angles[0]! + Math.PI * 2 : angles[i + 1]!;
       gap = Math.min(gap, next - angles[i]!);
     }
+    // A merge or diverge of a limited-access road: every leg a highway or a
+    // ramp (the gore where a ramp joins or leaves the carriageway). An ordinary
+    // road meeting a highway and a ramp at one node is a junction, and needs
+    // its plate: built as a merge, the avenue's mouth was a hole in the asphalt
+    // and a straight movement across it fitted no vehicle (fuzz
+    // `turnOffSurface`, seed 16).
     const highwayMerge = legs.length === 3 &&
       legs.some((leg) => leg.road.id === 'highway') &&
-      legs.some((leg) => leg.road.id === 'ramp');
+      legs.some((leg) => leg.road.id === 'ramp') &&
+      legs.every((leg) => leg.road.id === 'highway' || leg.road.id === 'ramp');
     if (gap < (25 * Math.PI) / 180 || highwayMerge) {
       // A shallow merge has no central crossroads slab. The ribbons overlap
       // over a long, narrow gore; unioning them directly keeps asphalt within

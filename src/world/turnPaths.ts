@@ -71,6 +71,16 @@ export class JunctionSurface {
       for (const segment of net.doc.node(node)?.incident ?? []) {
         const ring = net.ribbons.get(segment)?.rings[level];
         if (ring && !ring.isEmpty) add(ring.flatten());
+        // And the plate at the leg's far end: a body sweeps on past the
+        // start of its exit lane, and where the leg is shorter than that it is
+        // already crossing the next junction - drivable ground the sweep must
+        // see (a swept path is checked over the whole manoeuvre). Left out,
+        // a movement onto a short leg fitted no vehicle (fuzz
+        // `turnOffSurface`, a 0.5-unit leg between two junctions).
+        const seg = net.doc.segments.get(segment);
+        const far = seg ? (seg.a === node ? seg.b : seg.a) : undefined;
+        if (far === undefined || far === node) continue;
+        for (const farRing of net.junctions.get(far)?.get(level)?.rings ?? []) if (!farRing.isEmpty) add(farRing.flatten());
       }
     }
     const digest = new Digest();
