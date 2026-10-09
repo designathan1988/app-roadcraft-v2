@@ -13,7 +13,7 @@ import { type Vec2, dist } from '@core/vec2';
 import { clamp } from '@core/scalar';
 import { flattenSegment } from '@core/bezier';
 import { RoadDoc, type JunctionControl } from '@world/doc';
-import type { Change, ChangeKind } from '@world/changes';
+import { DOC_CHANGE_KINDS, type Change, type ChangeKind } from '@world/changes';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
@@ -775,9 +775,11 @@ setTransitTool(transitEditor);
  */
 let docText: { key: string; text: string } | null = null;
 function serializedDoc(): string {
-  const key = [doc.revision, doc.trafficRevision, doc.terrainRevision, doc.paintRevision, doc.utilityRevision,
-    doc.barrierRevision, doc.transitRevision, doc.zoneRevision, doc.lotRevision, doc.peopleRevision, doc.buildings.revision,
-    doc.buildings.size, doc.zoneMarks.length, doc.landscape.size, doc.poles.size, doc.nodes.size, doc.segments.size].join(':');
+  // Keyed by the diary, every kind of change to the document (`DOC_CHANGE_KINDS`).
+  // A hand-kept list of revisions missed the weather, fog, nature, gullies,
+  // clouds, trees, clearings and elements: the rain and fog sliders were left
+  // out of the autosave, and an undo after them put them back as they were.
+  const key = `${doc.changes.serialOf(...DOC_CHANGE_KINDS)}:${doc.buildings.revision}:${doc.buildings.size}`;
   if (docText?.key === key) return docText.text;
   const text = serialize(doc);
   docText = { key, text };

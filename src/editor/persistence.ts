@@ -12,6 +12,13 @@ const KEY = 'roadcraft.world.v7';
 export const QUARANTINE_KEY = 'roadcraft.world.v7.unreadable';
 const DEBOUNCE_MS = 700;
 /**
+ * The longest an edit waits to be saved, however many follow it (lodash
+ * `debounce`'s `maxWait`): a zone growing a building every half second reset
+ * the 700 ms wait for good, and 13-15 s went by with nothing saved. With the
+ * idle callback's own 2 s, an edit is on disk within 5 s.
+ */
+const MAX_WAIT_MS = 3000;
+/**
  * The camera and simulation settings, on their own. They share the map's
  * entry too (older builds read them there), but a pan, a zoom or a speed change
  * writes only this small key: each one used to serialise the whole map.
@@ -61,6 +68,8 @@ interface SerializedSession extends SavedSession {
 export class Persistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pending: (() => void) | null = null;
+  /** When the oldest unsaved edit asked to be saved (`MAX_WAIT_MS`). */
+  private firstPending: number | null = null;
 
   /**
    * Called when a write fails (storage full or refused). The autosave used to
@@ -129,7 +138,10 @@ export class Persistence {
   saveSessionSoon(doc: RoadDoc, settings: () => SavedSettings): void {
     if (this.timer) clearTimeout(this.timer);
     this.pending = () => this.saveSession(doc, settings());
-    this.timer = setTimeout(() => this.flushWhenIdle(), DEBOUNCE_MS);
+    const now = performance.now();
+    this.firstPending ??= now;
+    const wait = Math.max(0, Math.min(DEBOUNCE_MS, MAX_WAIT_MS - (now - this.firstPending)));
+    this.timer = setTimeout(() => this.flushWhenIdle(), wait);
   }
 
   /** The idle callback a debounced save waits in (`flushWhenIdle`). */
@@ -206,6 +218,7 @@ export class Persistence {
     }
     const pending = this.pending;
     this.pending = null;
+    this.firstPending = null;
     pending?.();
     this.flushSettings();
   }
