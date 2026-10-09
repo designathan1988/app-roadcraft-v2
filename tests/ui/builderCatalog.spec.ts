@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+// The Builder's modules belong to the interface and touch the page when they load.
 import { describe, expect, it } from 'vitest';
 
 import { BUILDER_CATALOG, BUILDER_GALLERIES } from '@ui/builder/catalog';

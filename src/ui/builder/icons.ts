@@ -207,6 +207,13 @@ const P = {
   pillarBay: '<path d="M10 6h4v12h-4Z"/><path d="M4 6h3v12H4Z" stroke-dasharray="2 2"/><path d="M7 20h10"/>',
   wallBay: '<path d="M4 6h16v12H4Z"/><path d="M12 6v12" stroke-dasharray="2 2"/><path d="M4 10h8M4 14h8"/>',
   fence: '<path d="M5 20.4V7.6m4.6 12.8V7.6m4.8 12.8V7.6m4.6 12.8V7.6"/><path d="M3.4 12h17.2M3.4 16h17.2"/>',
+  // Lot furniture: a gate between its two posts, a wheelie bin, a lamp post,
+  // a bollard with its reflective band, a drain grate.
+  gate: '<path d="M4 20.5V5.5h2.6v15M17.4 20.5V5.5H20v15"/><path d="M6.6 9h10.8M6.6 17h10.8"/><path d="M9.6 9v8m2.4-8v8m2.4-8v8"/>',
+  bin: '<path d="M6.4 7.6h11.2l-1.2 11.2H7.6Z"/><path d="M5.4 7.6h13.2V5.4H5.4Z"/><path d="M10.4 11v4.6m3.2-4.6v4.6"/><circle cx="9" cy="20.4" r="1"/><circle cx="15" cy="20.4" r="1"/>',
+  lamp: '<path d="M8 21h4"/><path d="M10 21V5.6c0-1.2 1-2.2 2.2-2.2h4"/><path d="M14.4 3.4h4.4l1 2.6h-6.4Z"/>',
+  bollard: '<path d="M9 20.6V7.2a3 3 0 0 1 6 0v13.4"/><path d="M7.4 20.6h9.2"/><path d="M9 10.6h6"/>',
+  drain: '<path d="M4 6h16v12H4Z"/><path d="M8 6v12m4-12v12m4-12v12"/>',
 
   // --- the three groups the categories live in
   create: '<path d="M4 20V7l8-3 8 3v13Z"/><path d="M4 11h16"/><path d="M10 20v-5h4v5"/>',

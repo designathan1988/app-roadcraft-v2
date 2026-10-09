@@ -11,6 +11,7 @@ import { type BuildingChunk, assembleBuildingMeshes, emitChunk } from '@render/b
 import { PART_KINDS, createBuildingKit } from '@render/buildings/kit';
 import { FINISHES } from '@world/buildings/materials';
 import { createBuildingLayer } from '@render/buildings/layer';
+import { beginFrameWork } from '@core/frameWork';
 import { shapeBody } from '@editor/buildingPlans';
 import { addRoofDetail, updateRoofDetail } from '@editor/buildingRoofs';
 import { applyFacadePattern } from '@editor/buildingFacade';
@@ -182,12 +183,24 @@ describe('buildings layer', () => {
     const doc = new RoadDoc();
     for (let i = 0; i < 4; i++) doc.buildings.add(placed(i, 0));
     const layer = createBuildingLayer();
-    expect(layer.update(doc, slope, 'g1')).toBe(true);
-    expect(layer.update(doc, slope, 'g1')).toBe(false);
+    // The layer makes an edit's buildings a few milliseconds a frame
+    // (docs/performance.md #16): frames are run until it is done, and the
+    // question is whether any of them rebuilt it.
+    const settle = (ground: string): boolean => {
+      let rebuilt = false;
+      for (let frame = 0; frame < 200; frame++) {
+        beginFrameWork();
+        rebuilt = layer.update(doc, slope, ground) || rebuilt;
+        if (!layer.pending) break;
+      }
+      return rebuilt;
+    };
+    expect(settle('g1')).toBe(true);
+    expect(settle('g1')).toBe(false);
     const first = [...doc.buildings.all()][0]!;
     doc.buildings.put({ ...first, rotation: 0.3 });
-    expect(layer.update(doc, slope, 'g1')).toBe(true);
-    expect(layer.update(doc, slope, 'g2')).toBe(true);
+    expect(settle('g1')).toBe(true);
+    expect(settle('g2')).toBe(true);
     expect(layer.covers(first.x + 1, first.y + 1)).toBe(true);
     expect(layer.covers(-900, -900)).toBe(false);
     layer.dispose();
