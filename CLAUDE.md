@@ -21,10 +21,8 @@ its own `CLAUDE.md` with its couplings and traps.
   `node scripts/run-limited.mjs node node_modules/vite/bin/vite.js build --outDir C:/Codex-Shared/road-play-dist`,
   then preview `roadcraft-play` (port 4180); otherwise `roadcraft-dev`.
   Looking at the game is not a probe and has no limit. Measurements and green
-  tests come in addition, never instead. `.claude/hooks/verify-gate.mjs` blocks
-  the final reply when game code changed and its current state was not
-  screenshotted; a change with nothing visible says so in the reply with the
-  line `SEM VERIFICAÇÃO VISUAL: <motivo>`.
+  tests come in addition, never instead. A change with nothing visible says so
+  in the reply with the line `SEM VERIFICAÇÃO VISUAL: <motivo>`.
 - **Research first.** Before anything non-trivial (performance, loading,
   rendering, simulation, agents, tools, UI systems), read the official docs
   (three.js docs and source, MDN, Khronos) and how shipped games solve it (GDC
