@@ -112,7 +112,7 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
       name: nameOf(road), lanes, way: t(oneWay ? 'catalog.oneWay' : 'catalog.twoWay'), speed: road.profile.speedKmh,
     });
     main.innerHTML = '<img class="rc-art" alt="" draggable="false"><span class="rc-name"></span><span class="rc-meta"></span>';
-    (main.querySelector('.rc-art') as HTMLImageElement).src = profileSwatch(road.profile, span);
+    (main.querySelector('.rc-art') as HTMLImageElement).src = profileSwatch(road.profile, span, 124, 64);
     main.querySelector('.rc-name')!.textContent = nameOf(road);
     main.querySelector('.rc-meta')!.textContent = t('catalog.meta', {
       width: metresText(profileWidth(road.profile)),
