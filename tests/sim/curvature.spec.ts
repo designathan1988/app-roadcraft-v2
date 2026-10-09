@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
+import { m } from '@world/units';
 import { step } from '@sim/pipeline';
 import { DT, MAX_LATERAL_ACCEL } from '@sim/params';
 import { comfortableLateral, curveSpeedCap } from '@sim/vehicles/curvature';
@@ -71,21 +72,26 @@ describe('curvature speed', () => {
 
   it('brakes for a bend before it, never all at once at its entry', () => {
     const sim = simOf(bendDoc(), 5, 2);
-    let worstDemand = 0;
+    let worstBraking = 0;
+    let worstOverCap = 0;
     let braked = 0;
     sim.clock.run(Math.round(150 / DT), () => {
       step(sim, { traffic: true, pedestrians: false });
       for (const v of sim.vehicles.values()) {
         const cap = curveSpeedCap(sim, v);
-        if (cap < v.v) braked++;
-        // The deceleration the bend demands in the next step. A cap far above
-        // the vehicle's speed may move by any amount; one below it must never
-        // ask for more than comfortable braking, or the bend was seen late.
-        worstDemand = Math.max(worstDemand, (v.v - cap) / DT - v.driver.b);
+        if (cap >= v.v) continue;
+        braked++;
+        // Braking for the bend, a driver never brakes harder than comfortably
+        // (IDM's b): the bend was seen in time. The speed follows the cap
+        // through the jerk-limited controller (`drive/physicalMotion.ts`), a
+        // step or two behind - so the gap to the cap is small, not zero.
+        worstBraking = Math.max(worstBraking, -v.accel - v.driver.b);
+        worstOverCap = Math.max(worstOverCap, (v.v - cap) / m(1));
       }
     });
     expect(braked).toBeGreaterThan(0);
-    expect(worstDemand).toBeLessThan(0.5);
+    expect(worstBraking).toBeLessThan(0.5);
+    expect(worstOverCap).toBeLessThan(0.25);
   });
 
   it('leaves a straight road alone and gives heavy vehicles a gentler limit', () => {
