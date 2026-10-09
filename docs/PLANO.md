@@ -15,16 +15,57 @@ Nenhuma etapa começa com a anterior aberta. Uma etapa só fecha com o critério
 de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 `docs/PROBLEMAS.md` atualizada.
 
+## Regras de andamento (2026-10-09, depois da avaliação do trabalho)
+
+- **Dois estados de entrega.** "Feito, aguardando o jogador" é o que a sessão
+  mediu e fotografou. "Fechado" é só o que o jogador conferiu no jogo, ou o
+  que não tem nada visível (código morto, teste, medida de CPU). Defeito
+  visível (árvores, interface, cores, movimento) nunca fecha por medida da
+  sessão.
+- **Um item por vez.** Um item novo só começa quando o anterior tem commit.
+  Nenhuma mudança fica sem commit no fim de um passo: ou entra (atrás de
+  bandeira, se não estiver adotada), ou é desfeita e registrada em "Já
+  tentado".
+- **Só a etapa ATUAL.** O que a sessão achar fora dela (fuzz, regra de
+  trânsito, construtor) entra na fila como item, não é feito na hora, a não
+  ser que o jogador marque URGENTE ou PRIORIDADE.
+- **Uma sessão por vez neste repositório.** Uma segunda sessão só lê. Para
+  passar o trabalho de uma sessão a outra, use o `docs/STATUS.md` e este plano.
+- **Sessões curtas.** Uma sessão por etapa ou por pedido. Com o contexto
+  compactado duas vezes, a sessão atualiza o STATUS e este plano e encerra,
+  porque cada resumo perde detalhes do que faltava.
+
+## Ritmo (pedido do jogador de 2026-10-09: o trabalho está lento demais)
+
+Medido na sessão de 2026-10-08/09: 35 de 179 commits só de documentação, a
+mesma sonda (`probe-bomb`) rodada 26 vezes, a suíte inteira rodada dezenas de
+vezes, 17 edições barradas pela trava de pesquisa, contexto compactado 3 vezes.
+
+- **Pesquisa uma vez por técnica,** não por arquivo. Técnica já registrada no
+  código ou neste repositório não se pesquisa de novo.
+- **Testes do que foi tocado.** Durante o trabalho, rode só os specs dos
+  arquivos alterados. A suíte inteira e o fuzz rodam uma vez, antes de fechar
+  a etapa, e não a cada item.
+- **Sonda no máximo duas vezes por item:** uma antes e uma depois. Se uma
+  terceira parecer necessária, a hipótese está errada: volte ao código.
+- **Documentação no mesmo commit do código.** A linha do `PROBLEMAS.md` e o
+  `STATUS.md` entram junto com a correção. Commit só de documentação, só no
+  fim da sessão.
+- **Defeitos parecidos em lote:** vários defeitos da mesma área num ciclo só
+  de leitura, correção, teste e commit.
+- **Sem esperar parado:** enquanto um teste ou uma sonda roda, leia o código
+  do próximo item.
+
 ## Estado
 
 | Etapa | O quê | Estado |
 |---|---|---|
-| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | feita (`e169da0a`); falta o jogador restaurar o `CLAUDE.md` |
+| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | feita (`e169da0a`); `CLAUDE.md` do Roadcraft restaurado pelo jogador em 2026-10-09 e `.claude/launch.json` também. Falta o jogador decidir a trava `.claude/settings.json` + `.claude/hooks/research-gate.mjs` (sem commit, protegida): o lembrete dela ainda cita as regras do criador de personagens |
 | 1a | Estado do jogo: ferramenta, pausa, velocidade, seleção, opções das ferramentas, gesto; interface por `watch` | feita (`de0ecfe6`, `46ca5873`, `4c535183`) |
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
 | 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
-| 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. 2026-10-09: P4, P7a, P22 e P23 medidos e fechados (400/400 a 4x por 80 s sem quadro longo); P70 com mais dois passos (MOBIL, curvas, motorista). Falta: P17, P20 (tarefa longa da abertura), P70 (orçamento de 4 ms) medidos na RTX do jogador |
+| 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. 2026-10-09: P4, P7a, P22 e P23 medidos e fechados (400/400 a 4x por 80 s sem quadro longo); P70 com mais dois passos (MOBIL, curvas, motorista). Falta: P3 (medida com o painel visível), P70 (orçamento de 4 ms na iGPU) e a conferência única do jogador na RTX (ver "Metas") |
 | 4 | Todos os defeitos abertos | a fazer |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
@@ -96,10 +137,10 @@ jogador veria.
 
 ## Etapa 0 — Arrumar a casa
 
-- O `CLAUDE.md` do Roadcraft de volta. Ele foi trocado, sem commit, pelo do
-  criador de personagens 3D, que importa um `docs/PROJETO.md` inexistente.
-  Só o jogador pode restaurá-lo, porque a trava `.claude/hooks/research-gate.mjs`
-  protege o arquivo: `git checkout HEAD -- CLAUDE.md`.
+- O `CLAUDE.md` do Roadcraft de volta: feito pelo jogador em 2026-10-09. De
+  2026-10-08 07:11 até então, as sessões trabalharam com o `CLAUDE.md` do
+  criador de personagens 3D, que proibia rodar o jogo e os testes. Os ~190
+  commits desse período foram conferidos só pela sessão.
 - `AGENTS.md` e `maps/cidade-com-estacionamento.json` (usado por
   `roadTiles.spec` e `conflictCache.spec`) restaurados.
 - Um registro de desempenho só: `docs/PROBLEMAS.md`. O que ainda estava aberto
@@ -203,6 +244,13 @@ desenhada na vila aparecem no painel com o sistema certo.
 - nenhum quadro acima de 50 ms;
 - mediana até 16,6 ms em 400/400 na RTX 3060;
 - edição de via até 100 ms no total.
+
+**Como fechar:** as sessões só medem na iGPU Intel desta máquina, cerca de 5×
+mais lenta na GPU. A CPU é comparada com a meta direto, e a GPU contra a
+linha de base de 2026-10-08 na própria iGPU (`docs/PROBLEMAS.md`, "Linha de
+base"). Com isso cumprido, o item fica "feito, aguardando o jogador", e o
+jogador confere uma vez na RTX, pelo F9 com 400/400. Só essa conferência
+fecha a etapa.
 
 ## Etapa 4 — Todos os defeitos abertos
 

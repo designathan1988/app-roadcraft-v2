@@ -108,10 +108,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   A pré-visualização pinta o rascunho de inválido com o motivo ao lado do
   comprimento antes de soltar.
 - Pincel de terreno: o fim da pincelada refaz só a região suja dela, em
-  fatias, e a água só quando a pincelada chega perto dela (P32, `3e60f67b`).
+  fatias, e a água só quando a pincelada chega perto dela (P93, `3e60f67b`).
 - Névoa da chuva e bruma do ar medidas do olho equivalente também na vista
   ortográfica (a câmera dela fica longe por construção): de perto a chuva
-  não cobre mais metade da imagem (P35).
+  não cobre mais metade da imagem (P96).
 
 ### Noite
 - Janelas acesas à noite pela fração de pessoas acordadas na hora (ATUS):
