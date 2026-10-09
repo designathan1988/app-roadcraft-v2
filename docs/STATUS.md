@@ -111,7 +111,19 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;
   construir a partir de um modelo 3D de referência (`editor/fromReference.ts`).
 - Zoneamento com crescimento de prédios nos lotes (`world/lots.ts`), planejador
-  de lote (`editor/lotPlan.ts`).
+  de lote (`editor/lotPlan.ts`). Estratégia e medidas em `docs/ZONEAMENTO.md`:
+  - com a ferramenta de zona na mão, lotes propostos ao longo das vias
+    (contorno fraco); o pincel cria e zoneia os que pinta (`lotTool.ts`);
+  - prédio escolhido entre 4 candidatos, o menos parecido com os vizinhos a
+    90 m; 6 formas de casa, 5 de prédio, esquemas de cor como dados
+    (`procedural.ts`); altura perto da dos vizinhos baixos; lote de esquina
+    olha para as duas ruas;
+  - divisa completa (muro, cerca, gradil) com portão de pedestre e de carro;
+    portão de carro desenhado aberto;
+  - carros entram pelo portão até o estacionamento dos fundos e saem por ele
+    (`sim/agents/lotTraffic.ts`, `parking.ts`); nenhuma vaga de rua na frente
+    de portão;
+  - quintal em terraço na encosta, com muro de arrimo e escada.
 
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas
@@ -157,8 +169,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 ## Aberto
 
 - Desempenho e defeitos: `docs/PROBLEMAS.md` (P3, P4, P7a, P16, P17-P19).
-- Zoneamento: células não são tiradas sob prédios postos pelo jogador; o
-  crescimento às vezes põe um prédio na esquina de uma junção.
+- Zoneamento: o prédio não tem meio-nível na encosta (só o quintal é
+  terraceado); pedestres não entram nos lotes (o portão de pedestre é só
+  desenho); primeiro traço do pincel numa sessão com ~360 ms de compilação de
+  shader (P74, P75).
 - Prédios: um prédio feito de referência não fica selecionado depois de
   construído; subir a altura de um prédio leva cerca de 10 s (relato do
   jogador, não investigado).
