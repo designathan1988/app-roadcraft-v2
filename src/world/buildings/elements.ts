@@ -209,10 +209,15 @@ export function unsupportedElements(b: Building): Set<number> {
     [{ x: x0! - grow, y: y0! - grow }, { x: x1! + grow, y: y0! - grow }, { x: x1! + grow, y: y1! + grow }, { x: x0! - grow, y: y1! + grow }];
   const onLand = (e: BuildingElement): boolean => {
     if (onGround(e) || FOLLOWS_GROUND.has(e.kind)) return true;
-    // On a terrace (an open block raised or lowered with the slope).
+    // On a terrace (an open block raised or lowered with the slope) it
+    // touches at its own base: a flight between two platforms stands on the
+    // lower one by its foot while its middle is over the higher one (asked
+    // under its centre alone, every flight of a split-level yard was taken
+    // for a part in the air and removed).
+    const box = square(rects.get(e.id)!, tol);
     for (const v of b.volumes) {
       if (!v.open || v.terrace === undefined) continue;
-      if (Math.abs(e.z - v.terrace) <= tol && pointInPolygon({ x: e.x, y: e.y }, localFootprint(v))) return true;
+      if (Math.abs(e.z - v.terrace) <= tol && overlapArea(localFootprint(v), box) > EPS) return true;
     }
     return false;
   };

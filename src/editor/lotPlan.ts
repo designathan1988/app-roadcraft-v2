@@ -195,6 +195,8 @@ interface Lot {
   /** `region` laid with `s` round its `holes` (each laid on its own), in rects that do not overlap. */
   tile(region: Rect, holes: readonly Rect[], s: LotSurface): void;
   put(kind: ElementKind, x: number, y: number, facing: Side, w: number, d: number, h: number, z?: number, material?: MaterialSpec): boolean;
+  /** Whether `put` would take that part now (the same rules), without laying it. */
+  fits(kind: ElementKind, x: number, y: number, facing: Side, w: number, d: number, h: number, z?: number): boolean;
   /** A run of `kind` along x at `y` from `x0` to `x1`, with gaps [middle, width]. */
   runX(kind: ElementKind, y: number, x0: number, x1: number, h: number, gaps?: readonly (readonly [number, number])[], z?: number): void;
   runY(kind: ElementKind, x: number, y0: number, y1: number, h: number, z?: number): void;
@@ -262,7 +264,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         }
       }
     },
-    put(kind, x, y, facing, w, d, h, z = 0, material) {
+    fits(kind, x, y, facing, w, d, h, z = 0) {
       // The boundary - walls, fences, hedges, gates - is laid last, so the
       // budget keeps room for it: dressing that used it up left holes in the
       // front wall (the player's order of 2026-10-05).
@@ -279,9 +281,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         // at the least, ADA 403.5.1).
         if (y - hd < Math.max(F, 1) && gateWays.some((g) => x + hw > g.x0 && x - hw < g.x1)) return false;
       }
+      return !elementClash(probe(), { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h) });
+    },
+    put(kind, x, y, facing, w, d, h, z = 0, material) {
+      if (!lot.fits(kind, x, y, facing, w, d, h, z)) return false;
       const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h),
         ...(material ? { material } : {}) };
-      if (elementClash(probe(), el)) return false;
       elements.push(el);
       nextElement++;
       return true;
@@ -391,13 +396,29 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     const rise = risers * STEP_RISE_M * Math.sign(fall);
     const run = (risers + 1) * STEP_RUN_M;
     if (y1 - y0 < run + 2 || W < 6) return;
+    // The flight lands on open lawn, as near the building's middle as it can:
+    // never in the pool, on a path or a paved corner (`taken`), and where the
+    // lot takes it (the drive's way, the gates, the building: `fits`). Put at
+    // the middle whatever lay there, it ran into the pool (the player,
+    // 2026-10-09). With nowhere clear, the yard is not stepped: a platform
+    // with no way up to it is no better.
+    const flightClear = (x: number): boolean => {
+      const fx0 = x - 1.05, fx1 = x + 1.05, fy0 = y0 + 0.05, fy1 = y0 + run + 0.5;
+      if (taken.some((t) => fx0 < t.x1 && t.x0 < fx1 && fy0 < t.y1 && t.y0 < fy1)) return false;
+      return fall > 0 ? lot.fits('stair', x, y0 + run / 2, 0, 1.3, run, risers * STEP_RISE_M, 0)
+        : lot.fits('stair', x, y0 + run / 2, 2, 1.3, run, risers * STEP_RISE_M, -risers * STEP_RISE_M);
+    };
+    let sx: number | null = null;
+    for (let d = 0; d <= W && sx === null; d += 0.5) {
+      for (const x of [stairX + d, stairX - d]) if (x >= 1.2 && x <= W - 1.2 && flightClear(x)) { sx = x; break; }
+    }
+    if (sx === null) return;
     const inYard = (yy: number): boolean => yy >= Y(y0) - 1e-6;
     for (const v of body.volumes) if (v.open && v.id >= fromVolume && inYard(v.y)) v.terrace = m(rise);
     // What stands on the platform and is not laid on the ground as it goes
     // (a table, a slab roof, a post) goes up or down with it.
     for (const el of elements) if (el.id >= fromElement && inYard(el.y) && !FOLLOWS_GROUND.has(el.kind)) el.z += m(rise);
     // The steps' place and the wall's line cleared of the garden's parts.
-    const sx = Math.max(1.2, Math.min(W - 1.2, stairX));
     const clear = (el: BuildingElement): boolean => {
       if (el.id < fromElement || BOUNDARY_SET.has(el.kind)) return false;
       const ex = el.x / m(1) + W / 2, ey = el.y / m(1);
@@ -408,6 +429,12 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     };
     elements.splice(0, elements.length, ...elements.filter((el) => !clear(el)));
     const stone = mat('stone', 0x9a948a);
+    // The flight first, into the higher platform: up the slope (it goes down
+    // to the front, `facing` 0), or down it (to the back, from the floor's
+    // level). Laid after the wall, the wall's pieces used up the lot's part
+    // budget and the flight was refused: a platform with no way up to it.
+    if (rise > 0) lot.put('stair', sx, y0 + run / 2, 0, 1.3, run, rise, 0, stone);
+    else lot.put('stair', sx, y0 + run / 2, 2, 1.3, run, -rise, rise, stone);
     // The wall: from the lower platform up to the higher one and a hand's
     // breadth over it; a guard rail's height over a drop.
     const wallH = rise > 0 ? rise + 0.15 : 0.95;
@@ -419,10 +446,6 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         lot.put('slab', (pa + pb) / 2, y0 - 0.15, 0, pb - pa, 0.3, wallH, 0, stone);
       }
     }
-    // The flight, into the higher platform: up the slope (it goes down to the
-    // front, `facing` 0), or down it (to the back, from the floor's level).
-    if (rise > 0) lot.put('stair', sx, y0 + run / 2, 0, 1.3, run, rise, 0, stone);
-    else lot.put('stair', sx, y0 + run / 2, 2, 1.3, run, -rise, rise, stone);
   };
 
   // ---- the strips beside the building: what part of each is drive, and what path
@@ -631,8 +654,18 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       // The terrace on the back door, the lawn, a service corner, a pool or beds, a shed.
       const terrace = { x0: env.x0, y0: by0, x1: env.x1, y1: Math.min(by1, by0 + 3) };
       const lawnY0 = terrace.y1, depth = by1 - lawnY0;
-      const pool = depth >= 6 && W >= 11 && rng.float() < 0.45
-        ? { x0: (W - Math.min(8, W - 5)) / 2, y0: lawnY0 + 1, x1: (W + Math.min(8, W - 5)) / 2, y1: lawnY0 + 4.5 } : null;
+      // On a hillside the lawn is stepped below (`stepYard`) with its flight
+      // at the building's middle: a pool there sat under the steps and the
+      // retaining wall (the player, 2026-10-09). It goes to one side of the
+      // flight's way then, or the stepped yard has none.
+      const stepped = !!hill && Math.abs(hill.yard - backLevel) >= TERRACE_MIN;
+      const poolW = Math.min(8, W - 5);
+      const stairMid = (env.x0 + env.x1) / 2;
+      const poolX0 = !stepped ? (W - poolW) / 2
+        : stairMid + 1.2 + poolW <= W - 0.5 ? stairMid + 1.2
+          : stairMid - 1.2 - poolW >= 0.5 ? stairMid - 1.2 - poolW : null;
+      const pool = depth >= 6 && W >= 11 && poolX0 !== null && rng.float() < 0.45
+        ? { x0: poolX0, y0: lawnY0 + 1, x1: poolX0 + poolW, y1: lawnY0 + 4.5 } : null;
       lot.tile({ x0: 0, y0: by0, x1: W, y1: by1 }, pool ? [terrace, pool] : [terrace], 'grass');
       lot.surface(terrace, 'tiles');
       if (pool) {
