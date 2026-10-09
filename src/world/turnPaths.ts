@@ -200,6 +200,17 @@ function sweep(surface: JunctionSurface, inCentre: Polyline, path: Polyline, out
   // itself: two of this size following one another on it, a car length and
   // a gap apart along it, would stand inside each other (an acute hairpin).
   const behind: { c: number; body: Rect }[] = [];
+  // And the one following still on the approach, a body and a gap behind the
+  // line: a path that hooks back towards its own approach puts the turning
+  // body on top of the next car in that lane (a right turn passing 1.3 units
+  // from its approach, fuzz `bodyOverlap`, seed 16). The swept path is the
+  // whole manoeuvre, the queue behind it included.
+  // Only where the approach really is: on one shorter than that, a position
+  // clamped to its start is not a body a length behind.
+  for (let c = Math.max(-half - length - FOLLOW_GAP, -inCentre.length); c < -half; c += SWEEP_STEP) {
+    const at = frameAt(c);
+    behind.push({ c, body: rect(at.p, at.t, length, width) });
+  }
   for (let c = -half; c <= path.length + half; c += SWEEP_STEP) {
     const at = frameAt(c);
     const f = { p: at.p, t: chordHeading(frameAt(c - HEADING_CHORD).p, frameAt(c + HEADING_CHORD).p, at.t) };
@@ -214,8 +225,11 @@ function sweep(surface: JunctionSurface, inCentre: Polyline, path: Polyline, out
     }
     // Only once the body has started to turn: behind its own line it is in its
     // own lane, and a car beside it in the next lane is lane discipline.
-    if (c < 0) continue;
     const body = rect(f.p, f.t, length, width);
+    if (c < 0) {
+      if (c >= -inCentre.length) behind.push({ c, body });
+      continue;
+    }
     for (const earlier of behind) {
       if (c - earlier.c >= length + FOLLOW_GAP && overlap(body, earlier.body)) return null;
     }
