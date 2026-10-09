@@ -1,12 +1,12 @@
 import { plantGrowth } from '@world/landscape';
 import {
   AdditiveBlending,
-  CanvasTexture,
   CircleGeometry,
   Color,
+  CylinderGeometry,
   DoubleSide,
-  SRGBColorSpace,
   DynamicDrawUsage,
+  FrontSide,
   Frustum,
   InstancedMesh,
   Matrix4,
@@ -15,6 +15,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
+  ShaderMaterial,
   type BufferGeometry,
   Group,
   type Material,
@@ -31,6 +32,7 @@ import { m } from '@world/units';
 import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { leafCardMaterials } from './lowPolyTrees';
+import { lightPoolTexture } from './lightLevels';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -88,6 +90,81 @@ const TREE_WIND: WindResponse = { sway: 0.045, flutter: 0.009 };
 const BUSH_WIND: WindResponse = { sway: 0.05, flutter: 0.014 };
 const GRASS_WIND: WindResponse = { sway: 0.22, flutter: 0.04 };
 
+/** Radius of the pool of light under a street lamp. */
+export const LAMP_POOL_RADIUS = m(4.6);
+/**
+ * A lamp's visible cone of light, drawn as Volumetric Light Beam draws one
+ * (saladgamer.com/vlb-doc/comp-lightbeam-sd/): an open cone, additive, its
+ * light falling off down its length and softened at its edges by the angle
+ * it is seen at, its apex cut at the size of the source.
+ */
+/** The cone's radius at the ground: the bright core of the pool. */
+export const LAMP_BEAM_RADIUS = LAMP_POOL_RADIUS * 0.8;
+/** Radius of the cut apex, over the radius at the ground: the lens (about 0.28 m of 3.7). */
+const BEAM_SOURCE = 0.075;
+/** Sides and segments of the cone (VLB: 18 sides; 3 segments at least, for a smooth falloff). */
+const BEAM_SIDES = 18;
+const BEAM_SEGMENTS = 4;
+/**
+ * Brightness of the air lit at the lens, at full dark: well below a lit
+ * surface, as light scattered by clear night air is, so the road reads
+ * through it; its brightest (0.26 at the lens) stays under the bloom threshold.
+ */
+const BEAM_INTENSITY = 0.4;
+/** How hard the cone's edges are seen from the side (VLB's Side Thickness): higher, softer. */
+const BEAM_SIDE_SOFTNESS = 1.6;
+
+/**
+ * The cone's material. Front faces only: the far side of an open cone added
+ * again doubled the light down its middle. The light along it is VLB's
+ * "Blend" of linear and quadratic falloff, from the lens (1) to the ground
+ * (0); across it, the cosine between the surface and the eye, so the
+ * silhouette fades out instead of ending in a line.
+ */
+function beamMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    name: 'street-light-beam',
+    uniforms: {
+      uColor: { value: new Color(0xffc98a) },
+      uIntensity: { value: 0 },
+    },
+    vertexShader: `
+      varying float vAlong;
+      varying vec3 vNormalW;
+      varying vec3 vToEye;
+      void main() {
+        vAlong = -position.y;
+        mat4 model = modelMatrix;
+      #ifdef USE_INSTANCING
+        model = modelMatrix * instanceMatrix;
+      #endif
+        vec4 world = model * vec4(position, 1.0);
+        // A scaled cone's normals: through the inverse transpose of its scale.
+        vec3 s = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+        vNormalW = normalize(mat3(model) * (normal / (s * s)));
+        vToEye = isOrthographic ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) : cameraPosition - world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor;
+      uniform float uIntensity;
+      varying float vAlong;
+      varying vec3 vNormalW;
+      varying vec3 vToEye;
+      void main() {
+        float t = clamp(vAlong, 0.0, 1.0);
+        float fall = mix(1.0 - t, (1.0 - t) * (1.0 - t), 0.5);
+        float facing = abs(dot(normalize(vNormalW), normalize(vToEye)));
+        gl_FragColor = vec4(uColor * (uIntensity * fall * pow(facing, ${BEAM_SIDE_SOFTNESS.toFixed(2)})), 1.0);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: FrontSide,
+    visible: false,
+  });
+}
+
 export interface SceneryKit {
   readonly trees: Record<TreeSpecies, BufferGeometry>;
   readonly bushes: Record<BushKind, BufferGeometry>;
@@ -113,6 +190,16 @@ export interface SceneryKit {
   /** The warm pool of light under a street lamp, seen only after dark. */
   readonly pool: BufferGeometry;
   readonly poolGlow: MeshBasicMaterial;
+  /**
+   * The cone of light from a street lamp's lens down to its pool, seen only
+   * after dark: a unit cone, apex (cut at the lens's size) at the origin,
+   * base of radius 1 at y = -1; scaled by the radius at the ground (x, z)
+   * and the drop (y).
+   */
+  readonly beam: BufferGeometry;
+  readonly beamGlow: ShaderMaterial;
+  /** Where a street lamp's lens is, from its column's foot: out over the road and up. */
+  readonly lens: { readonly reach: number; readonly height: number };
   /** Lamps lit as night falls: 0 by day, 1 at night. */
   setNight(dark: number): void;
   dispose(): void;
@@ -138,6 +225,9 @@ export function createSceneryKit(): SceneryKit {
     drain: drainGeometry(),
   };
   const lampLens = lampLensGeometry();
+  lampLens.computeBoundingBox();
+  const lensBox = lampLens.boundingBox!;
+  const lens = { reach: (lensBox.min.x + lensBox.max.x) / 2, height: (lensBox.min.y + lensBox.max.y) / 2 };
   const treePit = treePitGeometry();
   const tuft = grassTuftGeometry();
   const flower = wildflowerGeometry();
@@ -160,6 +250,9 @@ export function createSceneryKit(): SceneryKit {
     map: lightPoolTexture(), color: 0xffc98a, transparent: true, opacity: 0, blending: AdditiveBlending,
     depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   });
+  const beam = new CylinderGeometry(BEAM_SOURCE, 1, 1, BEAM_SIDES, BEAM_SEGMENTS, true);
+  beam.translate(0, -0.5, 0);
+  const beamGlow = beamMaterial();
   const foliageDepth = windDepthMaterial(TREE_WIND, 'tree');
   const shrubsDepth = windDepthMaterial(BUSH_WIND, 'bush');
   const geometries: BufferGeometry[] = [
@@ -172,8 +265,9 @@ export function createSceneryKit(): SceneryKit {
     tuft,
     flower,
     pool,
+    beam,
   ];
-  const materials: Material[] = [foliage, shrubs, grass, flowers, props, glow, foliageDepth, shrubsDepth, poolGlow,
+  const materials: Material[] = [foliage, shrubs, grass, flowers, props, glow, foliageDepth, shrubsDepth, poolGlow, beamGlow,
     treeCardKit.material, treeCardKit.depth, shrubCardKit.material, shrubCardKit.depth];
   return {
     trees,
@@ -198,11 +292,16 @@ export function createSceneryKit(): SceneryKit {
     glow,
     pool,
     poolGlow,
+    beam,
+    beamGlow,
+    lens,
     setNight(dark) {
       // The lens burns brighter than white at night, so it blooms.
       glow.color.setHex(0xffeec0).multiplyScalar(1 + 2.6 * dark);
       poolGlow.opacity = 0.5 * dark;
       poolGlow.visible = dark > 0.02;
+      (beamGlow.uniforms['uIntensity'] as { value: number }).value = BEAM_INTENSITY * dark;
+      beamGlow.visible = dark > 0.02;
     },
     dispose() {
       for (const geometry of geometries) geometry.dispose();
@@ -492,6 +591,7 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
   };
   const trees = new Map<TreeSpecies, Placement[]>(TREE_SPECIES.map((s) => [s, []]));
   const bushes = new Map<BushKind, Placement[]>(BUSH_KINDS.map((k) => [k, []]));
+  const lens = kit.lens;
 
   // On the item's OWN road. The unfiltered field answers for whichever road is
   // nearest, and a lamp on a street passing under a viaduct was lifted onto the
@@ -510,7 +610,10 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
         // The light falls under the head, over the kerb and the road.
         const reach = LAMP_OUTREACH * 0.85;
         put('pool', { x: item.x - item.outward.x * reach, y: item.y - item.outward.y * reach, z: base + 0.03,
-          yaw: 0, sx: m(4.6), sy: 1, sz: m(4.6) });
+          yaw: 0, sx: LAMP_POOL_RADIUS, sy: 1, sz: LAMP_POOL_RADIUS });
+        // And the cone it is lit by, from the lens down to the road under it.
+        put('beam', { x: item.x - item.outward.x * lens.reach, y: item.y - item.outward.y * lens.reach, z: base + lens.height,
+          yaw: 0, sx: LAMP_BEAM_RADIUS, sy: lens.height + FOOTWAY_RISE, sz: LAMP_BEAM_RADIUS });
         break;
       }
       case 'bin':
@@ -569,6 +672,7 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
     build('street-lights', kit.furniture.lamp, kit.props, furniture.get('lamp') ?? []),
     build('street-light-lamps', kit.lampLens, kit.glow, furniture.get('lamp') ?? []),
     build('street-light-pools', kit.pool, kit.poolGlow, furniture.get('pool') ?? []),
+    build('street-light-beams', kit.beam, kit.beamGlow, furniture.get('beam') ?? []),
     build('street-bins', kit.furniture.bin, kit.props, furniture.get('bin') ?? []),
     build('benches', kit.furniture.bench, kit.props, furniture.get('bench') ?? []),
     build('hydrants', kit.furniture.hydrant, kit.props, furniture.get('hydrant') ?? []),
@@ -584,8 +688,9 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
   const leafMeshes = meshes.filter((mesh) => mesh.name.endsWith('-leaves'));
   // The lens is lit from inside; it neither casts nor takes a shadow.
   for (const mesh of meshes) {
-    if (mesh.name === 'street-light-lamps' || mesh.name === 'tree-pits' || mesh.name === 'street-light-pools') mesh.castShadow = false;
+    if (mesh.name === 'street-light-lamps' || mesh.name === 'tree-pits' || mesh.name === 'street-light-pools' || mesh.name === 'street-light-beams') mesh.castShadow = false;
     if (mesh.name === 'street-light-pools') { mesh.receiveShadow = false; mesh.renderOrder = 3; }
+    if (mesh.name === 'street-light-beams') { mesh.receiveShadow = false; mesh.renderOrder = 4; }
   }
 
   let triangles = 0;
@@ -626,24 +731,6 @@ export function buildStreetFurniture(net: Network, elevation: RoadElevation, kit
       meadow.dispose();
     },
   };
-}
-
-/** A soft round falloff, white in the middle, for a pool of lamplight. */
-function lightPoolTexture(): CanvasTexture {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const g = canvas.getContext('2d')!;
-  const r = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  r.addColorStop(0, 'rgba(255,255,255,1)');
-  r.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-  r.addColorStop(0.7, 'rgba(255,255,255,0.15)');
-  r.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = r;
-  g.fillRect(0, 0, size, size);
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  return texture;
 }
 
 /** A plant of a building's garden, in the world: a tree, a shrub, a run of hedge or a flower bed. */

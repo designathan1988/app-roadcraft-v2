@@ -209,10 +209,15 @@ export function unsupportedElements(b: Building): Set<number> {
     [{ x: x0! - grow, y: y0! - grow }, { x: x1! + grow, y: y0! - grow }, { x: x1! + grow, y: y1! + grow }, { x: x0! - grow, y: y1! + grow }];
   const onLand = (e: BuildingElement): boolean => {
     if (onGround(e) || FOLLOWS_GROUND.has(e.kind)) return true;
-    // On a terrace (an open block raised or lowered with the slope).
+    // On a terrace (an open block raised or lowered with the slope) it
+    // touches at its own base: a flight between two platforms stands on the
+    // lower one by its foot while its middle is over the higher one (asked
+    // under its centre alone, every flight of a split-level yard was taken
+    // for a part in the air and removed).
+    const box = square(rects.get(e.id)!, tol);
     for (const v of b.volumes) {
       if (!v.open || v.terrace === undefined) continue;
-      if (Math.abs(e.z - v.terrace) <= tol && pointInPolygon({ x: e.x, y: e.y }, localFootprint(v))) return true;
+      if (Math.abs(e.z - v.terrace) <= tol && overlapArea(localFootprint(v), box) > EPS) return true;
     }
     return false;
   };
@@ -253,6 +258,34 @@ export function unsupportedElements(b: Building): Set<number> {
     }
   }
   for (const e of els) if (!held.has(e.id)) out.add(e.id);
+  return out;
+}
+
+/**
+ * The objects a lot's parts make: parts that touch (by the same contact
+ * `unsupportedElements` reads) are one thing - a table and its post, a
+ * carport's roof and its four posts, two crates stacked - and are laid on
+ * the land as one (`render/buildings/buildingMesh.ts` `emitLots`). Parts laid
+ * on the ground as they go (`FOLLOWS_GROUND`) are each their own. Returns a
+ * group number by element id.
+ */
+export function partGroups(b: Building): Map<number, number> {
+  const els = (b.elements ?? []).filter((e) => !FOLLOWS_GROUND.has(e.kind));
+  const tol = m(0.05);
+  const rects = els.map((e) => elementRect(e));
+  const parent = els.map((_, i) => i);
+  const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]!]!; i = parent[i]!; } return i; };
+  for (let i = 0; i < els.length; i++) {
+    const a = els[i]!, [ax0, ay0, ax1, ay1] = rects[i]!;
+    for (let j = i + 1; j < els.length; j++) {
+      const c = els[j]!, [cx0, cy0, cx1, cy1] = rects[j]!;
+      if (c.z > a.z + a.h + tol || a.z > c.z + c.h + tol) continue;
+      if (cx0 > ax1 + tol || ax0 > cx1 + tol || cy0 > ay1 + tol || ay0 > cy1 + tol) continue;
+      parent[find(i)] = find(j);
+    }
+  }
+  const out = new Map<number, number>();
+  els.forEach((e, i) => out.set(e.id, find(i)));
   return out;
 }
 

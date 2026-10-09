@@ -94,3 +94,37 @@ describe('free-orbit camera', () => {
     expect(s.x).toBeGreaterThan(W / 2 + 5);
   });
 });
+
+describe('dragging the view in perspective, close over high ground (docs/PLANO.md, 5d)', () => {
+  /** A plateau 80 units up: the perspective camera stands at the height of the ground it looks at. */
+  const HIGH = 80;
+  function close(elevation = MIN_ELEVATION) {
+    const r = createIsoRig({ x: 100, y: -40 }, 20, { azimuth: DEFAULT_AZIMUTH, elevation });
+    r.resize(W, H);
+    r.setGround(() => HIGH);
+    r.setPerspective(true);
+    return r.viewport;
+  }
+
+  it('keeps what was grabbed under the pointer, move after move', () => {
+    const v = close();
+    const press = { x: 600, y: 500 };
+    const grabbed = v.toWorldAt(press.x, press.y, HIGH, W, H);
+    for (const to of [{ x: 640, y: 520 }, { x: 700, y: 480 }, { x: 560, y: 560 }, { x: 610, y: 430 }]) {
+      v.panTo(grabbed, to.x, to.y, W, H, HIGH);
+      const s = v.toScreen(grabbed, W, H, HIGH);
+      expect(Math.hypot(s.x - to.x, s.y - to.y)).toBeLessThan(1);
+    }
+  });
+
+  it('does not jump when the pointer passes the horizon of the grabbed plane', () => {
+    const v = close();
+    const grabbed = v.toWorldAt(600, 500, HIGH, W, H);
+    v.panTo(grabbed, 610, 505, W, H, HIGH);
+    const before = v.centre;
+    // Above the horizon (the top of a low view): no point of that plane under it.
+    v.panTo(grabbed, 600, -400, W, H, HIGH);
+    const after = v.centre;
+    expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(1e-9);
+  });
+});

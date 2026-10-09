@@ -4,6 +4,7 @@ import { Network } from '@world/network';
 import { m } from '@world/units';
 import { applyLots, planLots, zoneLots } from '@world/lots';
 import { unsupportedElements } from '@world/buildings/elements';
+import { elementRect } from '@world/buildings/geometry';
 import type { Building } from '@world/buildings/types';
 import type { ZoneUse } from '@world/zones';
 import { growOnLot } from '@editor/zoning';
@@ -38,6 +39,39 @@ function grow(groundAt: (x: number, y: number) => number, use: ZoneUse, seed: nu
   }
   return [...doc.buildings.all()] as Building[];
 }
+
+/** Solid parts that may not stand in a pool's water. */
+const SOLID = new Set(['stair', 'ramp', 'wall', 'slab', 'pillar', 'fence', 'railing', 'planter', 'bench', 'bin', 'pavement']);
+
+describe('lot physics: nothing in the pool', () => {
+  it('keeps a hillside yard\'s steps and retaining wall out of the pool', () => {
+    let pools = 0, stepped = 0;
+    const wet: string[] = [];
+    for (const seed of [0x5eed, 0xbeef, 0xc0de, 0x1234, 0x9876]) {
+      for (const b of grow(hill, 'residential', seed)) {
+        const water = b.volumes.filter((v) => v.open === 'water');
+        if (!water.length) continue;
+        pools++;
+        if ((b.elements ?? []).some((e) => e.kind === 'stair')) stepped++;
+        for (const el of b.elements ?? []) {
+          if (!SOLID.has(el.kind)) continue;
+          const [x0, y0, x1, y1] = elementRect(el);
+          for (const v of water) {
+            // A touch at the coping is fine; a part inside the water is not.
+            const inset = m(0.05);
+            if (x0 < v.x + v.w - inset && v.x + inset < x1 && y0 < v.y + v.d - inset && v.y + inset < y1) {
+              wet.push(`seed ${seed.toString(16)} building ${b.id}: ${el.kind} in the pool`);
+            }
+          }
+        }
+      }
+    }
+    // Pools on terraced hillside yards were grown, or nothing was tested.
+    expect(pools).toBeGreaterThan(0);
+    expect(stepped).toBeGreaterThan(0);
+    expect(wet).toEqual([]);
+  });
+});
 
 describe('lot physics: nothing in the air', () => {
   for (const [name, ground] of [['flat', flat], ['hillside', hill]] as const) {

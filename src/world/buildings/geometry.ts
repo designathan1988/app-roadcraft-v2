@@ -1,4 +1,5 @@
 import type { Vec2 } from '@core/vec2';
+import { pointInPolygon } from '@core/polygon';
 import { m } from '../units';
 import { localFootprint, edgeFrame, volumeSides, offsetRing, overlapArea, supportShare } from './footprints';
 import {
@@ -336,13 +337,20 @@ function spansAgainst(b: Building, v: Volume, side: FaceId, level: number, want:
       if (o.id === v.id || o.open || !isMass(o) || standsAgainst(b, o, v, level) !== want) continue;
       for (const edge of volumeSides(o)) {
         const c = edgeFrame(o, edge);
-        if (a.nx * c.nx + a.ny * c.ny > -.9999) continue;
+        const facing = a.nx * c.nx + a.ny * c.ny;
+        // Back to back (a shared wall), or - fully covered only - the same
+        // wall face of a block of a lower id, which builds it once.
+        const against = facing <= -.9999;
+        const same = want === 2 && facing >= .9999 && o.id < v.id;
+        if (!against && !same) continue;
         if (Math.abs((c.x - a.x) * a.nx + (c.y - a.y) * a.ny) > EPS * 10) continue;
         const start = (c.x - a.x) * a.tx + (c.y - a.y) * a.ty;
         const end = start + c.length * (c.tx * a.tx + c.ty * a.ty);
         const from = Math.max(0, Math.min(start, end)), to = Math.min(a.length, Math.max(start, end));
         if (to - from > EPS) out.push([from, to]);
       }
+      // Inside the other block: a wall in the middle of its mass.
+      if (want === 2) out.push(...insideSpans(a, localFootprint(o)));
     }
     return out.sort((p, q) => p[0] - q[0]);
   }
@@ -352,17 +360,55 @@ function spansAgainst(b: Building, v: Volume, side: FaceId, level: number, want:
     let from: number;
     let to: number;
     if (side === 0 || side === 2) {
+      const line = side === 0 ? v.y : v.y + v.d;
       touches = side === 0 ? Math.abs(o.y + o.d - v.y) < EPS * 10 : Math.abs(o.y - (v.y + v.d)) < EPS * 10;
+      // Fully covered only (CityEngine's `inside`, which drops what lies
+      // completely inside or on the surface of another mass): the face in the
+      // middle of the other block, or the same wall face of a block of a lower
+      // id, which builds it once - two blocks building one wall stacked two
+      // facades and two panes in each window, fighting in the depth buffer
+      // (the player's striped windows, 2026-10-09).
+      if (want === 2) {
+        const inside = line > o.y + EPS * 10 && line < o.y + o.d - EPS * 10;
+        const same = o.id < v.id && (side === 0 ? Math.abs(o.y - v.y) < EPS * 10 : Math.abs(o.y + o.d - (v.y + v.d)) < EPS * 10);
+        touches ||= inside || same;
+      }
       from = Math.max(o.x, v.x) - v.x;
       to = Math.min(o.x + o.w, v.x + v.w) - v.x;
     } else {
+      const line = side === 3 ? v.x : v.x + v.w;
       touches = side === 3 ? Math.abs(o.x + o.w - v.x) < EPS * 10 : Math.abs(o.x - (v.x + v.w)) < EPS * 10;
+      if (want === 2) {
+        const inside = line > o.x + EPS * 10 && line < o.x + o.w - EPS * 10;
+        const same = o.id < v.id && (side === 3 ? Math.abs(o.x - v.x) < EPS * 10 : Math.abs(o.x + o.w - (v.x + v.w)) < EPS * 10);
+        touches ||= inside || same;
+      }
       from = Math.max(o.y, v.y) - v.y;
       to = Math.min(o.y + o.d, v.y + v.d) - v.y;
     }
     if (touches && to - from > EPS) out.push([from, to]);
   }
   return out.sort((p, q) => p[0] - q[0]);
+}
+
+/**
+ * The stretches of an edge (its along coordinate) that run strictly inside a
+ * polygon: sampled a few centimetres out from the edge, so a point on the
+ * polygon's own boundary does not count.
+ */
+function insideSpans(a: { x: number; y: number; tx: number; ty: number; nx: number; ny: number; length: number }, poly: readonly Vec2[]): [number, number][] {
+  const out: [number, number][] = [];
+  const step = Math.max(EPS * 20, a.length / 64);
+  const nudge = EPS * 20;
+  let from = -1;
+  for (let s = 0; s <= a.length + 1e-9; s += step) {
+    const t = Math.min(s, a.length);
+    const p = { x: a.x + a.tx * t + a.nx * nudge, y: a.y + a.ty * t + a.ny * nudge };
+    const inside = pointInPolygon(p, poly);
+    if (inside && from < 0) from = Math.max(0, t - step / 2);
+    if ((!inside || t >= a.length) && from >= 0) { const to = inside ? a.length : Math.min(a.length, t - step / 2); if (to - from > EPS) out.push([from, to]); from = -1; }
+  }
+  return out;
 }
 
 /** The parts of [a0, a1] no span covers. */

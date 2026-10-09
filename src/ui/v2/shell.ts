@@ -507,7 +507,7 @@ export function mountShell(deps: ShellDeps): void {
     inspect: [['help.key.click', 'help.do.pick'], ['help.key.pageUpDown', 'help.do.nodeHeight'], ['help.key.esc', 'help.do.close']],
     road: [['v2.key.drag', 'v2.do.road'], ['help.key.pageUpDown', 'palette.height'], ['v2.key.digits', 'palette.kind']],
   };
-  const CAMERA_KEYS = [['help.key.middleDrag', 'help.do.orbit'], ['help.key.rightDrag', 'help.do.pan'], ['help.key.wheel', 'help.do.zoom'], ['help.key.qe', 'help.do.turn'], ['help.key.home', 'help.do.resetView']] as const;
+  const CAMERA_KEYS = [['help.key.orbitDrag', 'help.do.orbit'], ['help.key.panDrag', 'help.do.pan'], ['help.key.wheel', 'help.do.zoom'], ['help.key.qe', 'help.do.turn'], ['help.key.home', 'help.do.resetView']] as const;
   const GLOBAL_KEYS = [['v2.key.tools', 'v2.do.tools'], ['help.key.undo', 'v2.do.undo'], ['v2.key.redo', 'v2.do.redo'], ['v2.key.space', 'v2.do.pause'], ['v2.key.f9', 'v2.do.health']] as const;
   const keyList = (title: string, rows: readonly (readonly [string, string])[]): HTMLElement => {
     const box = el('div', 'v2-keys');

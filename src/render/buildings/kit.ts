@@ -4,8 +4,10 @@ import {
   Color,
   CylinderGeometry,
   DoubleSide,
+  AdditiveBlending,
   FrontSide,
   type Material,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
 } from 'three';
@@ -16,6 +18,7 @@ import { createFinishMaterials } from './finishes';
 import { createFurnitureGeometries, createFurnitureMaterial } from './furnitureKit';
 import type { FurnitureKind } from '@world/buildings/interior';
 import { SLOT_WIDTH, litTableDriven, litTexture } from './lightSlots';
+import { NIGHT_LUMINANCE, lightPoolTexture, luminanceOf } from '../lightLevels';
 
 /**
  * Share of people awake, by hour from midnight: 100 % less the share asleep in
@@ -61,7 +64,9 @@ export type PartKind =
   | 'column'
   | 'glassDark'
   | 'curtain'
-  | 'water';
+  | 'water'
+  | 'lamp'
+  | 'wash';
 
 export const PART_KINDS: readonly PartKind[] = [
   'glass',
@@ -76,7 +81,20 @@ export const PART_KINDS: readonly PartKind[] = [
   'glassDark',
   'curtain',
   'water',
+  'lamp',
+  'wash',
 ];
+
+/** Warm light of the rooms behind the glass. */
+const ROOM_LIGHT = 0xffc27a;
+/** The lantern beside a front door: a warm lamp behind frosted glass. */
+const PORCH_LIGHT = 0xffd49a;
+/**
+ * A lit room's mean brightness over the glass (`roomLit` in the pane's
+ * shader: 0.55-1.25 for a lit room, 0.45-1.35 drawn by lot, both 0.9 on
+ * average), so the mean lit pane sits at `NIGHT_LUMINANCE.window`.
+ */
+const ROOM_LIT_MEAN = 0.9;
 
 export interface BuildingKit {
   readonly geometry: Readonly<Record<PartKind, BufferGeometry>>;
@@ -253,6 +271,8 @@ export function createBuildingKit(): BuildingKit {
     glassDark: glassPlane,
     curtain: unitBox,
     water: unitBox,
+    lamp: unitBox,
+    wash: glassPlane,
   };
 
   const concrete = new MeshStandardMaterial({ color: 0xcfc9bd, roughness: 0.82, metalness: 0 });
@@ -282,6 +302,15 @@ export function createBuildingKit(): BuildingKit {
     water: new MeshStandardMaterial({
       color: 0x58c4dd, roughness: 0.03, metalness: 0.15, envMapIntensity: 1.8,
       transparent: true, opacity: 0.62, depthWrite: false,
+    }),
+    // The lantern beside a front door: frosted glass by day, a lamp after dark.
+    lamp: new MeshStandardMaterial({ color: 0xf1ebdd, roughness: 0.35, metalness: 0, emissive: PORCH_LIGHT, emissiveIntensity: 0 }),
+    // The light the lantern throws on the wall round it: laid on the wall
+    // additively, as a decal (pulled towards the eye so it never fights the
+    // wall for depth), seen only after dark.
+    wash: new MeshBasicMaterial({
+      map: lightPoolTexture(), color: PORCH_LIGHT, transparent: true, opacity: 0, blending: AdditiveBlending,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4, visible: false,
     }),
   };
   for (const [kind, m] of Object.entries(material)) m.name = `building-part-${kind}`;
@@ -401,12 +430,19 @@ export function createBuildingKit(): BuildingKit {
     },
     setNight(dark, hour) {
       if (hour !== undefined) roomsAwake.value = awakeShare(hour);
-      // Rooms lit behind the glass: a warm glow, more in the clear glass.
-      for (const [kind, k] of [['glass', 0.55], ['glassDark', 0.35]] as const) {
+      // Rooms lit behind the glass: a warm glow, brighter than any lit wall
+      // (`lightLevels.ts`), less behind the darker glass.
+      const room = NIGHT_LUMINANCE.window / (luminanceOf(ROOM_LIGHT) * ROOM_LIT_MEAN);
+      for (const [kind, k] of [['glass', 1], ['glassDark', 0.64]] as const) {
         const mat = material[kind] as MeshStandardMaterial;
-        mat.emissive.setHex(0xffc27a);
-        mat.emissiveIntensity = dark * k;
+        mat.emissive.setHex(ROOM_LIGHT);
+        mat.emissiveIntensity = dark * k * room;
       }
+      // The lanterns at the front doors, and their light on the wall.
+      (material.lamp as MeshStandardMaterial).emissiveIntensity = dark * NIGHT_LUMINANCE.porchLamp / luminanceOf(PORCH_LIGHT);
+      const wash = material.wash as MeshBasicMaterial;
+      wash.opacity = 0.55 * dark;
+      wash.visible = dark > 0.02;
     },
     setGhostValid(valid) {
       for (const m of [ghostShell, ghostParts]) {

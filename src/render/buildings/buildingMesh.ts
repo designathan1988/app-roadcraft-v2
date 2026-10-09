@@ -67,7 +67,8 @@ import {
   trimMaterial,
   wallMaterial,
 } from '@world/buildings/materials';
-import { FOLLOWS_GROUND, elementRect, followPieces, onGround, stairSteps, unsupportedElements } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementRect, followPieces, onGround, partGroups, stairSteps, unsupportedElements } from '@world/buildings/elements';
+import { isRetainingStone } from '@world/buildings/cityBuildings';
 import {
   type BayComponent,
   type Building,
@@ -481,6 +482,30 @@ class Emitter {
     if (kind === 'glass' || kind === 'glassDark') placement.slot = this.slot;
     this.parts[kind].push(placement);
   }
+}
+
+/** The lantern: width, height and depth out of the wall; its gap from the door's edge. */
+const PORCH_LAMP = { w: m(0.16), h: m(0.26), d: m(0.12), gap: m(0.4) } as const;
+/** How far its light reaches over the wall round it, either way and up or down. */
+const PORCH_WASH = { half: m(1.1), up: m(1.3) } as const;
+
+/**
+ * The lantern beside a front door, a little under the door's head, on the
+ * side where the bay's wall has room for it (none where neither has), and
+ * the light it throws on the wall: a splash centred on it, kept to the bay's
+ * own wall so it never hangs past a corner.
+ */
+function emitPorchLight(e: Emitter, f: BayFace, W: number, am: number, w: number, top: number): void {
+  const right = am + w / 2 + PORCH_LAMP.gap;
+  const left = am - w / 2 - PORCH_LAMP.gap;
+  const room = PORCH_LAMP.w / 2 + m(0.05);
+  const a = right + room <= W ? right : left - room >= 0 ? left : null;
+  if (a === null) return;
+  const h = top - m(0.25);
+  e.put('lamp', f, a, h, -PORCH_LAMP.d / 2, PORCH_LAMP.w, PORCH_LAMP.h, PORCH_LAMP.d);
+  const half = Math.min(PORCH_WASH.half, a, W - a);
+  const up = Math.min(PORCH_WASH.up, h + m(0.3));
+  e.put('wash', f, a, h, -m(0.01), half * 2, up * 2, 1);
 }
 
 /** The light slot of a bay's window: the space on its floor behind it. */
@@ -935,6 +960,7 @@ function emitBay(
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.45), w + m(0.7), m(0.12), m(0.9));
         e.put('concrete', f, am, o.h1 + m(0.26), -m(0.88), w + m(0.7), m(0.2), m(0.05));
         for (const side of [-1, 1]) e.put('frame', f, am + side * (w / 2 + m(0.2)), o.h1 + m(0.12), -m(0.25), m(0.06), m(0.3), m(0.5));
+        emitPorchLight(e, f, W, am, w, o.h1);
       }
       break;
     case 'shopfront':
@@ -965,6 +991,7 @@ function emitBay(
       if (bay.level === 0) {
         e.put('concrete', f, am, o.h1 + m(0.3), -m(0.55), w + m(1), m(0.14), m(1.1));
         e.put('concrete', f, am, o.h1 + m(0.25), -m(1.08), w + m(1), m(0.24), m(0.05));
+        emitPorchLight(e, f, W, am, w, o.h1);
       }
       break;
     }
@@ -1398,9 +1425,57 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
     }
   }
   const loose = looseParts(b);
+  // The objects on the lawn (`partGroups`: a table and its post, a carport
+  // and its posts, crates stacked), each set on the land under it as one: its
+  // lowest parts on the highest ground under them, so nothing sinks into a
+  // slope, and run down to the ground below them as footings, so nothing is
+  // left in the air on the low side. At the lot's one level - what they stood
+  // at before - a slope buried them on its high side and left them standing
+  // tall on its low side (the player, 2026-10-09).
+  // Only on a natural lawn: a terrace is a level platform (`Volume.terrace`),
+  // and a flight, a ramp or a retaining wall between two platforms is an
+  // earthwork held at the lot's levels, not a thing set down on the grass.
+  const onLawn = (x: number, y: number): boolean => {
+    const host = lots.find((v) => x >= v.x && x <= v.x + v.w && y >= v.y && y <= v.y + v.d);
+    return !host || ((host.open ?? 'grass') === 'grass' && host.terrace === undefined);
+  };
+  const groups = partGroups(b);
+  const earthworks = new Set<number>();
+  for (const el of b.elements ?? []) {
+    const g = groups.get(el.id);
+    if (g !== undefined && (el.kind === 'stair' || el.kind === 'ramp' || isRetainingStone(el.material))) earthworks.add(g);
+  }
+  const seats = new Map<number, { base: number; lowest: number }>();
+  {
+    const lowest = new Map<number, number>();
+    for (const el of b.elements ?? []) {
+      const g = groups.get(el.id);
+      if (g !== undefined) lowest.set(g, Math.min(lowest.get(g) ?? Infinity, el.z));
+    }
+    for (const el of b.elements ?? []) {
+      const g = groups.get(el.id);
+      if (g === undefined || earthworks.has(g) || el.z > lowest.get(g)! + m(0.05)) continue;
+      const [x0, y0, x1, y1] = elementRect(el);
+      for (const [px, py] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1], [(x0 + x1) / 2, (y0 + y1) / 2]] as const) {
+        if (!onLawn(px, py)) continue;
+        const ground = at(px, py);
+        const seat = seats.get(g);
+        if (!seat) seats.set(g, { base: ground, lowest: lowest.get(g)! });
+        else seat.base = Math.max(seat.base, ground);
+      }
+    }
+  }
   for (const el of b.elements ?? []) {
     if ((!withParts && !onLot?.(el)) || loose?.has(el.id)) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
+    const group = groups.get(el.id);
+    const seat = group === undefined ? undefined : seats.get(group);
+    if (seat && onLawn(el.x, el.y)) {
+      // Its height within the object kept; its lowest parts at the seat.
+      const placed = { ...el, z: el.z - seat.lowest };
+      emitElement(e, placed, seat.base, Math.min(low, seat.base) - m(0.3), look);
+      continue;
+    }
     // A run on the land in steps, each on the lot's surface under it, or on
     // the ground where no lot is laid: nothing floats over a slope.
     for (const piece of followPieces(el)) {
@@ -2864,6 +2939,8 @@ export function* assembleBuildingMeshesSteps(
   }
 
   for (const kind of selection?.parts ?? PART_KINDS) {
+    // A lantern's light on the wall is light, not a part: no ghost or faded copy of it.
+    if (kind === 'wash' && (ghost || dim)) continue;
     let count = 0;
     for (const chunk of chunks) count += chunk.parts[kind].count;
     if (count === 0) continue;
