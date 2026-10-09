@@ -237,3 +237,6 @@ button.rp-issue:hover { background: rgba(255, 111, 97, 0.2); }
 .v2-strip:has(> .rc-catalog) { overflow: hidden; }
 .v2-strip > .rc-catalog { flex: 1 1 auto; min-width: 0; }
 .v2-drawer:has(.rc-catalog) { width: min(860px, calc(100vw - 24px)); }
+
+/* The road tool's furniture row (V7): three words in the options' width (300 px) without touching its edge. */
+.v2-seg.rp-seg-tight .v2-seg-b { padding: 0 7px; font-size: 13px; }

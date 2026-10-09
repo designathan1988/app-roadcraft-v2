@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { RoadDoc } from '@world/doc';
 import type { SegmentId } from '@world/ids';
-import { footwayAt, LANDSCAPE_RADIUS } from '@world/landscape';
+import { footwayAt, LANDSCAPE_RADIUS, medianAt } from '@world/landscape';
+import { streetFurniture } from '@world/streetFurniture';
 import { Network } from '@world/network';
 import { furnitureFor, NBR9050_CLEAR_WALK } from '@world/roads/furnitureSets';
 import { sectionOf, zonesOn } from '@world/section';
@@ -58,5 +59,20 @@ describe('the furniture of a new road', () => {
     expect(new Set(furnitureFor(net, [seg], 'complete', []).map((p) => p.kind))).toEqual(new Set(['lamp', 'hydrant']));
     const wide = street(3);
     expect(furnitureFor(wide.net, [wide.seg], 'complete', []).some((p) => p.kind === 'bench' || p.kind === 'bin')).toBe(true);
+  });
+
+  it('a boulevard plants its trees in the median, on its centre line, and drawn there; its footways keep clear of trees', () => {
+    const { doc, net, seg } = street(3);
+    const pieces = furnitureFor(net, [seg], 'complete', []);
+    const trees = pieces.filter((p) => p.kind === 'tree');
+    expect(trees.length).toBeGreaterThan(10);
+    for (const t of trees) {
+      expect(footwayAt(net, t.at)).toBeNull();
+      expect(medianAt(net, t.at)).not.toBeNull();
+    }
+    for (const p of pieces) doc.addLandscape(p.kind, p.at);
+    const drawn = streetFurniture(net).filter((i) => i.kind === 'streetTree');
+    expect(drawn.length).toBe(trees.length);
+    expect(drawn.every((i) => i.on === 'median')).toBe(true);
   });
 });

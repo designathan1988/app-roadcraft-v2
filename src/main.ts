@@ -1486,7 +1486,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (poleTool.move(world)) return;
 
   if (game.tool === 'streetscape') {
-    streetscapeTool.move(world);
+    streetscapeTool.move(world, (e.buttons & 1) === 1);
     return;
   }
 
@@ -1543,6 +1543,11 @@ function endPointer(e: PointerEvent): void {
   roadTool.up(() => pointerWorld(e), !cancelled && !wasPinching);
 
   poleTool.up(!cancelled && !wasPinching);
+  // A row of landscaping dragged out is laid (V7).
+  if (game.tool === 'streetscape') {
+    if (cancelled || wasPinching) streetscapeTool.row = null;
+    else streetscapeTool.up();
+  }
 
   // The node dropped: one undo step from where it started.
   mover.drop(!cancelled && !wasPinching);
@@ -3435,6 +3440,21 @@ function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): 
 
 /** Where the landscaping tool would put its item: a ring on the footway, red where it cannot go. */
 function drawStreetscapeHover(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
+  // The row being dragged out: a ring at each piece that would be laid.
+  const row = streetscapeTool.row;
+  for (const piece of row?.pieces ?? []) {
+    const c = at(piece.at);
+    const e = at({ x: piece.at.x + LANDSCAPE_RADIUS[row!.kind] + m(0.3), y: piece.at.y });
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = SELECTION;
+    ctx.fillStyle = 'rgba(120, 200, 255, 0.18)';
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, Math.max(6, Math.hypot(e.x - c.x, e.y - c.y)), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
   const hover = streetscapeTool.hover;
   if (!hover) return;
   const centre = at(hover.at);
@@ -3735,14 +3755,20 @@ function drawOverlayScreen(): void {
   // Information tool in hand (the player's order of 2026-10-05): with any
   // other tool a white line down the middle of the street is noise.
   const infoTool = game.tool === 'inspect' && document.body.dataset['infoTool'] === 'on';
-  if (infoTool && game.selectedSegment !== null) {
-    const ribbon = net.ribbons.get(game.selectedSegment);
-    if (ribbon) strokeScreen(ribbon.full.toPoints(), SELECTION, 3);
-  }
-
-  if (infoTool && hoverAnchor?.kind === 'segment' && hoverAnchor.segment !== undefined) {
-    const ribbon = net.ribbons.get(hoverAnchor.segment);
-    if (ribbon) strokeScreen(ribbon.full.toPoints(), HOVER, 2);
+  // Drawn as a translucent band the width of the carriageway, not a line
+  // down its middle: seen close, a thin white line over the median read as a
+  // wire across the screen (the coordinator, 2026-10-09).
+  const roadBand = (id: SegmentId, colour: string): void => {
+    const ribbon = net.ribbons.get(id);
+    if (!ribbon) return;
+    const mid = ribbon.full.sampleAt(ribbon.full.length / 2);
+    const a = at(mid.p);
+    const b = at({ x: mid.p.x + mid.n.x * ribbon.road.width / 2, y: mid.p.y + mid.n.y * ribbon.road.width / 2 });
+    strokeScreen(ribbon.full.toPoints(), colour, Math.max(3, 2 * Math.hypot(b.x - a.x, b.y - a.y)));
+  };
+  if (infoTool && game.selectedSegment !== null) roadBand(game.selectedSegment, 'rgba(120, 200, 255, 0.28)');
+  if (infoTool && hoverAnchor?.kind === 'segment' && hoverAnchor.segment !== undefined && hoverAnchor.segment !== game.selectedSegment) {
+    roadBand(hoverAnchor.segment, 'rgba(255, 255, 255, 0.14)');
   }
 
   if (game.selectedNode !== null) {

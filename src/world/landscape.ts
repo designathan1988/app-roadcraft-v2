@@ -3,7 +3,7 @@ import type { Network } from './network';
 import type { SegmentId } from './ids';
 import type { RoadSide, RoadType } from './roadTypes';
 import { m } from './units';
-import { roadProfile } from './roadTypes';
+import { roadProfile, travelShift } from './roadTypes';
 import { orientedPolyline } from './geometry';
 import { CROSSWALK_DEPTH } from './approach';
 import { carriesPedestrians } from './pedestrianAccess';
@@ -143,6 +143,49 @@ export function footwayAt(net: Network, at: Vec2, reach = 0): FootwayHit | null 
   return best;
 }
 
+/** A planted median a point stands on (docs/VIAS.md V7): trees and shrubs go there too. */
+export interface MedianHit {
+  readonly segment: SegmentId;
+  readonly s: number;
+  /** The median's centre at the station. */
+  readonly centre: Vec2;
+  readonly frame: { readonly p: Vec2; readonly t: Vec2; readonly n: Vec2 };
+}
+
+/** Narrowest median a tree is planted in: its pit and a kerb's width each side. */
+export const MEDIAN_TREE_MIN = m(1.5);
+
+/** Whether a road's median takes plants: wide enough, kerbed (not painted flush), not paved. */
+export function plantedMedian(road: RoadType): boolean {
+  const material = road.materials?.median;
+  return road.median >= MEDIAN_TREE_MIN - 1e-6 && !road.medianFlush && (material === undefined || material === 'grass');
+}
+
+/** The planted median under a point (within `reach` of its band), or null. */
+export function medianAt(net: Network, at: Vec2, reach = 0): MedianHit | null {
+  const hit = { s: 0, distance: 0 };
+  for (const ribbon of net.ribbons.values()) {
+    const road = ribbon.road;
+    if (!plantedMedian(road)) continue;
+    const segment = net.doc.segment(ribbon.id);
+    if (!segment || segment.direction !== 'both') continue;
+    const box = ribbon.full.bbox;
+    const pad = road.width / 2 + reach;
+    if (at.x < box.minX - pad || at.x > box.maxX + pad || at.y < box.minY - pad || at.y > box.maxY + pad) continue;
+    ribbon.full.closestInto(at.x, at.y, hit);
+    const lo = net.mouthDistance(ribbon.id, segment.a), hi = ribbon.full.length - net.mouthDistance(ribbon.id, segment.b);
+    if (hit.s < lo || hit.s > hi) continue;
+    const frame = ribbon.full.sampleAt(hit.s);
+    // The median is centred on the travel way's own centre (`travelShift`).
+    const shift = travelShift(road);
+    const centre = { x: frame.p.x + frame.n.x * shift, y: frame.p.y + frame.n.y * shift };
+    const off = Math.abs((at.x - centre.x) * frame.n.x + (at.y - centre.y) * frame.n.y);
+    if (off > road.median / 2 + reach) continue;
+    return { segment: ribbon.id, s: hit.s, centre, frame };
+  }
+  return null;
+}
+
 /** How far out from the centreline each kind stands, inside the furnishing zone. */
 function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB' | 'bToA', side: RoadSide = 'right'): number | null {
   const zones = zonesOn(sectionOf(road, direction), side);
@@ -235,7 +278,7 @@ export function onCrossingAccess(
 }
 
 export type LandscapeSnap =
-  | { readonly ok: true; readonly at: Vec2; readonly hit: FootwayHit | null }
+  | { readonly ok: true; readonly at: Vec2; readonly hit: FootwayHit | null; readonly median?: MedianHit }
   | { readonly ok: false; readonly at: Vec2; readonly reason: LandscapeRefusal };
 
 /**
@@ -267,6 +310,16 @@ export function snapLandscape(
     return { ok: true, at, hit: null };
   }
   const hit = footwayAt(net, at, reach);
+  // A tree or a shrub in a planted median, on its centre line (V7).
+  const median = !hit && (kind === 'tree' || kind === 'shrub') ? medianAt(net, at, Math.min(reach, m(1))) : null;
+  if (median) {
+    const radius = LANDSCAPE_RADIUS[kind];
+    for (const other of items) {
+      const clear = radius + LANDSCAPE_RADIUS[other.kind] + ITEM_GAP;
+      if (Math.hypot(other.x - median.centre.x, other.y - median.centre.y) < clear) return { ok: false, at: median.centre, reason: 'occupied' };
+    }
+    return { ok: true, at: median.centre, hit: null, median };
+  }
   if (!hit) return { ok: false, at, reason: 'offFootway' };
   const segment = net.doc.requireSegment(hit.segment);
   const depth = depthFor(kind, hit.road, segment.direction, hit.side > 0 ? 'left' : 'right');
