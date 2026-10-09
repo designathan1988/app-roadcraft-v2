@@ -55,7 +55,12 @@ jogador veria.
    `src/ui/v2/shell.ts` tem 244 escapes inúteis, 3 importações de `editor`
    na camada `ui` (proibidas) e um `prefer-const`. Etapa 4, primeiro item:
    sem o check verde nenhuma etapa pode fechar com ele.
-5. **Atualização de 2026-10-08, noite:** resolvidas `curvature` (critério
+5. **Atualização de 2026-10-09:** `defects.spec` passa nas 10 cidades
+   (P52, `2d466521`) e `fourWay` passa inteiro; `kerb.spec` (pedestre no
+   asfalto da esquina) passa. No fuzz restam defeitos de geometria do mundo
+   (`elevationStep`, vias que se cruzam sem junção, junção de pernas curtas),
+   descritos no `STATUS.md`.
+   **Atualização de 2026-10-08, noite:** resolvidas `curvature` (critério
    do v1), `fourWay` velocidade de curva (frenagem em rampa, 0e743d08),
    `shortTail` (geometria válida), `roundabout` ×3 (veículo pesado sem
    saída, 9fc1f050), `buildingMesh`, `heightTopology`, `citizenLocomotion`
