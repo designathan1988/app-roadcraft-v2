@@ -24,7 +24,7 @@ de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
 | 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
-| 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. Falta: P4 (corpos dos ocupantes), P17, P22, P23 medidos na RTX do jogador |
+| 3 | Otimização completa, guiada pelo monitor | **ATUAL**. Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. 2026-10-09: P4, P7a, P22 e P23 medidos e fechados (400/400 a 4x por 80 s sem quadro longo); P70 com mais dois passos (MOBIL, curvas, motorista). Falta: P17, P20 (tarefa longa da abertura), P70 (orçamento de 4 ms) medidos na RTX do jogador |
 | 4 | Todos os defeitos abertos | a fazer |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
@@ -34,10 +34,10 @@ jogador veria.
 
 ## Fila (pedidos do jogador ainda não atendidos)
 
-1. ~~Árvores low-poly bonitas~~: feitas pela sessão "Problemas visuais na
-   otimização" (`7fb7fa98`, `b454120d`): um só módulo low poly para todas as
-   árvores e arbustos, de 70 a 190 triângulos, sem cartões de folha.
-   Conferência visual com o jogador.
+1. ~~Árvores low-poly bonitas~~: um só módulo para todas as árvores e
+   arbustos (`7fb7fa98`, `b454120d`), depois com cartões de folhagem; a
+   palmeira, a última no estilo antigo, com folhas pinadas em V (P85,
+   `43860dde`). Conferência visual com o jogador.
 1a. URGENTE de 2026-10-08, atendido: a cidade abria com as vias primeiro e
    os prédios de 2 a 20 s depois. Ver P20 (`8a35d468`, `5d7dd24f`).
 2. Quarentena de mapa ilegível com um lugar só (`editor/persistence.ts`
@@ -46,16 +46,20 @@ jogador veria.
    localhost em 2026-10-08, durante uma edição em vários passos com o jogo
    aberto). Etapa 2 (uma quarentena é uma quebra que o monitor mostra) e
    correção na Etapa 4.
-3. O envelhecimento da cidade troca prédios a cada 3 s e cada troca move
-   `buildings.revision` (visto no diário em 2026-10-08): medir na Etapa 3 o
-   que isso refaz. (P23)
+3. ~~O envelhecimento da cidade troca prédios a cada 3 s~~: medido, um
+   prédio troca a cada ~54 min reais e sem quadro longo (P23).
 4. ~~Lint vermelho~~: verde desde `74bc314c` (camadas, `release/`, escapes).
    Restam os testes (item 5). Antes: `npm run check` vermelho desde antes de 2026-10-08: o lint varre
    `release/` (o executável do Electron, 9 000 erros de código compilado) e
    `src/ui/v2/shell.ts` tem 244 escapes inúteis, 3 importações de `editor`
    na camada `ui` (proibidas) e um `prefer-const`. Etapa 4, primeiro item:
    sem o check verde nenhuma etapa pode fechar com ele.
-5. **Atualização de 2026-10-09:** `defects.spec` passa nas 10 cidades
+5. **Atualização de 2026-10-09, manhã:** a suíte inteira passa. O que
+   restava: `priorityBox` semente 3 (regressão de 77dea566, P86) e os testes
+   dos ganchos `guard` e `research`, que testavam arquivos apagados em
+   d0caae39 e saíram (bd52d19c; `git revert` os traz de volta se os ganchos
+   voltarem). Fuzz: portão e regressões verdes (P82, P83).
+   **Atualização de 2026-10-09:** `defects.spec` passa nas 10 cidades
    (P52, `2d466521`) e `fourWay` passa inteiro; `kerb.spec` (pedestre no
    asfalto da esquina) passa. No fuzz restam defeitos de geometria do mundo
    (`elevationStep`, vias que se cruzam sem junção, junção de pernas curtas),
