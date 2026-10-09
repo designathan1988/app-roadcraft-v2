@@ -106,7 +106,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 
 ### Ações
 - Pistola e bomba em pessoas, carros e prédios (`render/playEffects.ts`,
-  `render/ragdollJolt.ts`). Laboratório de armas em `?lab=armas`.
+  `render/ragdollJolt.ts`). O laboratório de armas (`?lab=armas`,
+  `src/weaponsLab.ts`, `scripts/weapons-lab.mjs`) NÃO abre: `main.ts` só o
+  carrega com `__PLAY_MODE__`, que `vite.config.ts` define como `false`
+  (o modo de andar como pessoa foi para o backup).
 
 ### Outras páginas
 - `human-generator.html` (criador de pessoas) e `people-lab.html`.
@@ -119,7 +122,14 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 - `src/backup/crime`: crime e polícia, fora do jogo por decisão do jogador
   (2026-10-06). Não rodar, citar nem relatar.
 - Removidos: o mundo planeta e os motores de pedestre People, Crowd e de
-  calçada legado; o Drive v1.
+  calçada legado; o Drive v1. Em 2026-10-09, o que ainda restava deles: a
+  navmesh (`world/nav/navmesh.ts`), o publicador legado das faixas
+  (`sim/peds/publish.ts`), e no `SidewalkGraph` as esquinas, os corredores,
+  a ligação de cada porta, os destinos e a ocupação (`corridor.ts`,
+  `behaviour.ts`); o grafo ficou só com meio-fios, faixas e calçadas, que os
+  veículos e sinais leem. Também `scripts/verify-citizens.mjs` (e
+  `npm run verify:citizens`) e `scripts/ped-sequence.mjs`, que liam o mapa
+  `sim.peds` do motor legado, vazio desde 2026-10-08.
 
 ## Aberto
 
@@ -131,6 +141,12 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   jogador, não investigado).
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
+- Pessoas na pista: `tests/sim/kerb.spec.ts` "keeps pedestrians off the
+  carriageway", que antes percorria o mapa vazio do motor legado e passava
+  sem medir, agora mede o motor de caminhada e falha: 4 amostras em 200 s de
+  alguém andando com chão `footway` sobre o asfalto (pedestre 95 em
+  -25,0/-11,1, na esquina da cruz da cidade do teste). Causa em
+  `world/walkways.ts` / `sim/agents/walk.ts`, não investigada.
 
 ## Decisões do jogador
 
