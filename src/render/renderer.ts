@@ -29,6 +29,7 @@ import {
   RGBADepthPacking,
   Sphere,
   PCFShadowMap,
+  PerspectiveCamera,
   Scene,
   SRGBColorSpace,
   Vector2,
@@ -2879,11 +2880,18 @@ export function createSceneRenderer(
       // Building the city, the map stands on a plain dark blue: no sky and no
       // land past its edge; in play, the sky and the land round it (the player,
       // 2026-10-06).
+      // The orbit camera brought down to the street sees the horizon too
+      // (`view/cameraProfile.ts`): the sky and the land round the map then,
+      // as in play. The switch happens only with the horizon in the frame
+      // (tilt under half the lens plus a margin), where the plain blue would
+      // show; higher up neither is seen, so it never shows as a change.
       {
+        const fov = rig.camera instanceof PerspectiveCamera ? rig.camera.fov : 0;
+        const open = rig.chasing || (rig.perspective && rig.viewport.elevation < ((fov / 2 + 4) * Math.PI) / 180);
         const sky = scene.getObjectByName('sky');
-        if (sky) sky.visible = rig.chasing;
-        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = rig.chasing;
-        scene.background = rig.chasing ? null : MAP_BACKGROUND;
+        if (sky) sky.visible = open;
+        for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = open;
+        scene.background = open ? null : MAP_BACKGROUND;
       }
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
@@ -3073,7 +3081,8 @@ export function createSceneRenderer(
           const flat = Math.hypot(coneDirection.x, coneDirection.z);
           if (flat > 0.05) {
             const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
-            const halfAcross = Math.atan(Math.tan((PERSPECTIVE_FOV * Math.PI) / 360) * aspect);
+            const fov = rig.camera instanceof PerspectiveCamera ? rig.camera.fov : PERSPECTIVE_FOV;
+            const halfAcross = Math.atan(Math.tan((fov * Math.PI) / 360) * aspect);
             view = {
               ex: rig.camera.position.x, ey: -rig.camera.position.z,
               dx: coneDirection.x / flat, dy: -coneDirection.z / flat,
