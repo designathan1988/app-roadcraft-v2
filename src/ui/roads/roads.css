@@ -200,3 +200,48 @@ button.rp-issue:hover { background: rgba(255, 111, 97, 0.2); }
 .rp-moves { display: flex; flex-wrap: wrap; gap: 6px; }
 .rp-move { min-height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.18); color: var(--v-muted, #a3b4b0); text-decoration: line-through; font-size: 12px; }
 .rp-move.on { background: rgba(79, 224, 191, 0.14); border-color: rgba(79, 224, 191, 0.45); color: var(--v-text, #eef4f2); text-decoration: none; }
+
+
+/* ---- the profile editor docked above the road tool's drawer (the catalogue's "Customise...") */
+.rp-panel.docked { top: calc(var(--v-hud-h, 46px) + 22px); bottom: 160px; max-width: 920px; gap: 6px; padding: 10px 12px 12px; }
+.rp-panel.docked .rp-cards { display: none; }
+.rp-panel.docked.folded > :not(.rp-head) { display: none; }
+.rp-panel.docked.folded { bottom: auto !important; }
+.rp-panel.docked.folded [data-action="fold"] svg { transform: rotate(180deg); }
+
+/* ---- the road catalogue in the road tool's drawer (the player's order of 2026-10-09) */
+.rc-catalog { display: grid; gap: 8px; min-width: 0; font: 13px/1.3 Inter, ui-sans-serif, "Segoe UI", Roboto, sans-serif; color: var(--v-text, #eef4f2); }
+.rc-catalog * { box-sizing: border-box; }
+.rc-catalog button { font: inherit; color: inherit; cursor: pointer; }
+.rc-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.rc-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--v-line, rgba(255,255,255,.1)); background: var(--v-raise, rgba(255,255,255,.05)); font-weight: 600; font-size: 12.5px; }
+.rc-tab em { font-style: normal; font-size: 11px; color: var(--v-muted, #a3b4b0); }
+.rc-tab:hover { border-color: var(--v-accent-line, rgba(79,224,191,.5)); }
+.rc-tab.on { background: var(--v-accent, #4fe0bf); border-color: var(--v-accent, #4fe0bf); color: var(--v-accent-ink, #062520); }
+.rc-tab.on em { color: var(--v-accent-ink, #062520); opacity: 0.7; }
+.rc-cards { display: grid; grid-auto-flow: column; grid-auto-columns: 184px; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+.rc-card { position: relative; display: grid; border: 1px solid var(--v-line, rgba(255,255,255,.1)); border-radius: 10px; background: var(--v-raise, rgba(255,255,255,.05)); overflow: hidden; }
+.rc-card:hover { border-color: var(--v-accent-line, rgba(79,224,191,.5)); background: var(--v-raise-2, rgba(255,255,255,.09)); }
+.rc-card.on { border-color: var(--v-accent, #4fe0bf); box-shadow: 0 0 0 2px var(--v-accent, #4fe0bf) inset; }
+.rc-card-main { display: grid; gap: 3px; padding: 4px 4px 7px; border: 0; background: none; text-align: left; }
+.rc-art { display: block; height: 70px; border-radius: 7px; overflow: hidden; background: linear-gradient(180deg, #2b4448 0%, #1d2f32 70%); }
+.rc-art svg { display: block; width: 100%; height: 100%; }
+.rc-name { padding: 0 4px; font-weight: 650; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-meta { padding: 0 4px; font-size: 11.5px; color: var(--v-muted, #a3b4b0); font-variant-numeric: tabular-nums; }
+.rc-custom { margin: 0 6px 7px; min-height: 28px; border-radius: 999px; border: 1px solid var(--v-accent, #4fe0bf); background: rgba(79, 224, 191, 0.14); font-weight: 650; font-size: 12px; }
+.rc-custom:hover { background: rgba(79, 224, 191, 0.24); }
+.rc-empty { padding: 16px; color: var(--v-muted, #a3b4b0); max-width: 360px; }
+/* The catalogue fills the drawer and scrolls its own cards; its tabs stay in view. */
+.v2-drawer:has(.rc-catalog) { width: min(1100px, calc(100vw - 24px)); }
+.v2-strip:has(> .rc-catalog) { overflow: hidden; }
+.v2-strip > .rc-catalog { flex: 1 1 auto; min-width: 0; }
+/* Two rows of cards: more of the catalogue in view at once (the drawer sits between the tool options and the selection). */
+.rc-cards { grid-template-rows: repeat(2, auto); grid-auto-columns: 172px; }
+.rc-art { height: 52px; }
+.rc-card-main { gap: 2px; padding: 4px 4px 6px; }
+.rc-custom { position: absolute; top: 6px; right: 6px; margin: 0; min-height: 24px; padding: 0 10px; background: rgba(6, 37, 32, 0.88); font-size: 11.5px; }
+/* The docked editor keeps its rows at their own height and scrolls, never squeezing the section to nothing. */
+.rp-panel.docked { grid-auto-rows: max-content; align-content: start; }
+/* The fold beside the close, not under it. */
+.rp-panel.docked .rp-head { padding-right: 72px; }
+.rp-panel.docked .rp-head > [data-action="fold"] { right: 36px; }
