@@ -206,7 +206,12 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 - Simulação com 400 carros e 400 pessoas a 4x: 4,0-10 ms por quadro no
   headless conforme o estado da máquina (antes 7,7-8,4 com metade das
   pessoas); nenhum quadro longo em 80 s; o orçamento de 4 ms ainda não é
-  garantido (P70).
+  garantido (P70). Último passo: o conjunto de obstáculos de cada carro não
+  é mais refeito a cada passo (6,7 % do passo, antes 9,2 %); o próximo
+  custo é o passo das pessoas (`stepWalkers`).
+- Edição de via na cidade de teste com o F9 aberto (P3): a moldagem do chão
+  em quartos de no máximo 2,3 ms; o maior passo das fatias caiu de 51,6 para
+  33,4 ms. Feito, aguardando o jogador.
 - Fuzz da via (`tests/fuzz`): as 6 sementes do portão e as 29 regressões
   passam, sem fixture aberta para corpos sobrepostos. Fora do portão
   (sementes 7-30) restam 4 defeitos: `poseJump` (semente 19) e

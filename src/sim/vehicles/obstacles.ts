@@ -137,38 +137,44 @@ const PED_STOP_MARGIN = 0.5;
  * can be expressed here.
  */
 export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet {
-  // The set the vehicle already carries, emptied: every reader of it works
+  // The set the vehicle already carries, refilled: every reader of it works
   // inside the tick that fills it, and a fresh object and array per vehicle
-  // per tick was the fleet's own steady drip of garbage.
+  // per tick was the fleet's own steady drip of garbage. Written slot by slot
+  // and cut to its count at the end, never emptied first: V8 drops the
+  // storage of an array whose length is set to 0 (`elements.cc`
+  // `SetLengthImpl`, `initialize_elements`), so `length = 0` made every
+  // vehicle grow a new one each tick (P70). Nothing called here reads this
+  // vehicle's own set.
   const constraints: ConstraintSet = v.constraints ??= { obstacles: [] };
-  constraints.obstacles.length = 0;
+  const obstacles = constraints.obstacles;
+  let n = 0;
 
   const leader = findLeader(w, v);
-  if (leader) constraints.obstacles.push(leader);
+  if (leader) obstacles[n++] = leader;
 
   // A body that left the same stop line on another movement and is still
   // sweeping the start both movements share.
   const diverging = divergeObstacle(w, v);
-  if (diverging) constraints.obstacles.push(diverging);
+  if (diverging) obstacles[n++] = diverging;
 
   // A vehicle ahead on another movement into the same lane.
   const merging = mergeObstacle(w, v);
-  if (merging) constraints.obstacles.push(merging);
+  if (merging) obstacles[n++] = merging;
 
   // A body still overlapping the lane it is sliding out of must not be driven
   // into whatever is still there.
   const shadowLeader = shadowLeaderObstacle(w, v);
-  if (shadowLeader) constraints.obstacles.push(shadowLeader);
+  if (shadowLeader) obstacles[n++] = shadowLeader;
 
   // A person on the stretch of a zebra this movement is about to drive over.
   // Admission only asks at the stop line; a walker who reaches the vehicle's
   // path afterwards used to be driven through at full speed.
   const walker = pedestrianAhead(w, v);
-  if (walker) constraints.obstacles.push(walker);
+  if (walker) obstacles[n++] = walker;
 
   // Pulling in to the kerb to let somebody out or in (`kerbStops.ts`).
   const kerb = kerbStopObstacle(v);
-  if (kerb) constraints.obstacles.push(kerb);
+  if (kerb) obstacles[n++] = kerb;
   // A level crossing with a train coming (`sim/transit`): stopped short of it.
   // Seen along the route ahead, a few lanes on, as a driver sees the barrier
   // down before the turn onto its street: the nearest one closed.
@@ -187,16 +193,16 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
     for (const at of closed) {
       // Already over the line (its front past the track): it goes on across.
       if (offset + at <= 0) continue;
-      constraints.obstacles.push({ gap: Math.max(0, offset + at - CROSSING_STOP), speed: 0, kind: 'signal' });
+      obstacles[n++] = { gap: Math.max(0, offset + at - CROSSING_STOP), speed: 0, kind: 'signal' };
     }
   }
   // A resident's car pulling in at the door it is going to (`sim/city`).
   if (v.commute && v.lanelet === v.commute.lanelet) {
-    constraints.obstacles.push({ gap: Math.max(0, v.commute.at - v.s + v.driver.s0), speed: 0, kind: 'kerbStop' });
+    obstacles[n++] = { gap: Math.max(0, v.commute.at - v.s + v.driver.s0), speed: 0, kind: 'kerbStop' };
   }
 
   const lane = w.lanelet(v.lanelet);
-  if (!lane) return constraints;
+  if (!lane) { obstacles.length = n; return constraints; }
 
   // Distance to the end of the current lanelet. Always non-negative, because
   // the integrator keeps `s <= length`.
@@ -207,7 +213,7 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
     // them, never on the track (`TransitSim.crossingNearEnd`).
     const track = w.city.transit.crossingNearEnd(lane.id, lane.length);
     if (track !== null && v.s < track) {
-      constraints.obstacles.push({ gap: Math.max(0, track - CROSSING_STOP - v.s), speed: 0, kind: 'signal' });
+      obstacles[n++] = { gap: Math.max(0, track - CROSSING_STOP - v.s), speed: 0, kind: 'signal' };
     }
   }
 
@@ -237,7 +243,7 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
         // vehicle decided to stop for, and vice versa.
         const mustStop = signalHolds(v, conn.id, state, conn.turn, signalGap);
         if (mustStop) {
-          constraints.obstacles.push({ gap: signalGap, speed: 0, kind: 'signal' });
+          obstacles[n++] = { gap: signalGap, speed: 0, kind: 'signal' };
         }
       }
     }
@@ -257,8 +263,9 @@ export function longitudinalConstraints(w: SimWorld, v: Vehicle): ConstraintSet 
   // about. Whether the link happens to carry a signal has no bearing on the
   // fact that the road ends here.
   if (v.route.length <= 1 && lane.kind === 'link') {
-    constraints.obstacles.push({ gap: dStop, speed: 0, kind: 'endOfRoute' });
+    obstacles[n++] = { gap: dStop, speed: 0, kind: 'endOfRoute' };
   }
 
+  obstacles.length = n;
   return constraints;
 }
