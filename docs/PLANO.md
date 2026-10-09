@@ -269,35 +269,104 @@ inclinação, um pódio ou a recusa) e validado pelo apoio (5a). O filtro de
 desenho dos lotes já salvos (`looseParts`, `c09a4b2c`) sai quando os lotes
 forem migrados para `prop`. O Construtor recusa, com o motivo, peça sem apoio.
 
-**5c. Pedestres nos cruzamentos** (pedido repetido do jogador): deslizam e
-"pulam como peça de xadrez". Medir com 5a antes; ler "Já tentado" (P52 e o
-registro de 2026-10-08, três tentativas revertidas). A causa no código ainda
-não foi lida nesta etapa.
+**5c. Pedestres nos cruzamentos** (pedido repetido do jogador: deslizam e
+"pulam como peça de xadrez"). Medido em 2026-10-09: 3 600 tiques, 36 050
+amostras, 2 026 sobre a faixa - a posição da simulação não salta (zero saltos,
+zero giros bruscos, `prev` sempre certo) e a freada é suave (até ~1,8 m/s²).
+O salto nasce no desenho:
+- altura por rótulo (`render/agents.ts:2087-2089`): via + `FOOTWAY_RISE` na
+  calçada, via + 0 na faixa, terreno + 4 cm em `open`; a troca é instantânea
+  (17 trocas calçada/faixa e 14 calçada/terreno em 60 s) e o `segment` que dá
+  a cota muda nas esquinas (20 trocas). Não há rebaixamento de calçada: o
+  meio-fio de 15 cm vai até a beira da faixa;
+- pose (`render/agents.ts:1040-1053`): sem mistura entre clipes; abaixo de
+  0,15 m/s vira `idle` com fase 0 e corpo ainda andando (desliza), e na saída
+  volta a `walk` em fase 0 (salta) - 22 paradas e saídas por minuto com 10
+  pessoas, quase todas no meio-fio.
+Solução: (1) rebaixamento de calçada em cada faixa (rampa até 1:12, largura
+mínima 1 m - curb cut/NBR 9050), desenhado e na altura; (2) a altura do corpo
+pela superfície de caminhada sob os pés, uma função contínua do mundo
+(calçada, rampa, faixa, terreno), lida pelo desenho - nunca por rótulo;
+(3) locomoção com mistura idle/andar/correr pela velocidade (blend tree 1D,
+como Unity) e transição com peso cruzado (three.js `crossFadeFrom`), fase por
+distância mantida; (4) detector de 5a sobre o corpo desenhado (altura e pose
+por quadro). Fontes: en.wikipedia.org/wiki/Curb_cut,
+docs.unity3d.com/Manual/BlendTree-1DBlending.html,
+`node_modules/three/src/animation/AnimationAction.js` `crossFadeFrom`.
 
-**5d. Câmera:** arrastar com o botão do meio falha de perto
-(`main.ts:1237-1250`, `view/cameraGestures.ts`). Os textos de ajuda trocam
-os nomes `middleDrag`/`rightDrag` (`ui/i18n/pt-BR.ts:383-384`).
+**5d. Câmera: arrastar com o botão do meio falha de perto.** Em perspectiva o
+alvo fica na altura do terreno (`render/isoViewport.ts:175`) e a câmera é
+erguida sobre o chão (`:192`), mas o arraste prende o ponto do plano y = 0
+(`view/cameraGestures.ts:79-91`, `isoViewport.ts` `worldAt`/`panTo`): sobre
+terreno alto cada pixel move demais; com o raio acima do horizonte do plano o
+three.js devolve `null` (`Ray.distanceToPlane`, t < 0) e `worldAt` devolve o
+próprio alvo, e a câmera pula; `panTo` corrige em um passo, o zoom em dois.
+Solução: agarrar o ponto 3D realmente sob o cursor (altura do que está
+desenhado ali), resolver o arraste no plano dessa altura, iterar como
+`keeping`, e manter o último ponto válido quando o raio não corta o plano.
+Os textos de ajuda trocam `middleDrag`/`rightDrag` (`ui/i18n/pt-BR.ts:383-384`).
 
-**5e. Luzes:** janelas acesas com listras (provável briga de profundidade
-entre o plano aceso e o vidro); janelas sem brilho (o bloom existe,
-`postprocess.ts:231`, só à noite); casas sem luz externa; lanterna traseira
-sem brilho (a dianteira tem).
+**5e. Luzes.**
+- Janelas listradas: o vidro é uma placa sem espessura que projeta e recebe
+  sombra pelos dois lados (`render/buildings/kit.ts:266, 278`, `shadowSide:
+  DoubleSide`) com `normalBias` 0,05 (`environment.ts:245`): acne de sombra.
+  Solução: o vidro não projeta sombra (a janela fecha a luz pelo caixilho e
+  pela parede), ou recebe sombra só pela face da frente; conferir de noite e
+  de dia.
+- Sem brilho: o bloom (`postprocess.ts:231`) passa só o que tem luminância
+  acima de 0,92 (`LuminosityHighPassShader`, pesos 0,21/0,72/0,07). Janela:
+  ~0,42 (`kit.ts:402-409`); lanterna traseira `0xff3b2f` ~0,25 × 3,4
+  (`agents.ts:1873`) = 0,84; farol ~3,0 - por isso só o farol brilha. Solução:
+  cada luz com a intensidade física da sua classe (farol, lanterna, freio,
+  janela, poste) em vez de um fator único, e o limiar acima de qualquer
+  superfície só iluminada.
+- Casas sem luz externa: não existe peça para isso (o lote só põe `lamp` em
+  passagem de prédio não residencial, `editor/lotPlan.ts:590`). Solução: luz
+  de fachada e de portão por tipo de lote, com os horários do `roomsAwake`.
 
-**5f. Variedade:** os detalhes do telhado e do lote se repetem em todos os
-prédios (caixa d'água, placas, aparelhos, claraboias no mesmo arranjo).
+**5f. Variedade.** Todo telhado plano com 8 m × 8 m ou mais recebe o mesmo
+conjunto (caixa, alçapão, 2 condensadores, placas, mastro, antena, 2
+claraboias), só o canto muda entre 4 (`render/buildings/buildingMesh.ts:1136-1209`),
+e nada impede uma peça de atravessar outra. Solução: catálogo de
+equipamentos com probabilidade por uso, porte e idade do prédio, postos por
+empacotamento na área livre do telhado (grade de ocupação, com folgas), com
+semente por prédio; o mesmo princípio no quintal (5b).
 
 **5g. Achados da avaliação jogando:**
-- pincelada de zona perdida enquanto a proposta de lotes se refaz
-  (`editor/lotTool.ts:135-169`);
-- pincel de terreno faz brotar árvores (a confirmar com o jogador contra a
-  ordem de 2026-10-05) e fecha em 210 ms de script (`ecology` 82 ms);
-- monitor F9 conta como quadro longo o tempo em que o navegador ficou parado
-  (entradas de 57 s sem trabalho do jogo);
+- pincelada de zona perdida: a proposta de lotes recomeça a cada lote novo
+  (`editor/lotTool.ts:135-169`) e, até terminar, `proposedAt` devolve -1 e a
+  pincelada é descartada. Solução: manter a proposta anterior válida fora da
+  área mudada (ou guardar a pincelada e aplicá-la quando a proposta ficar
+  pronta), nunca descartar em silêncio;
+- pincel de terreno: o ecossistema relê o mapa inteiro (`render/terrain.ts`
+  `refreshEcology`, 82 ms) e as árvores naturais são refeitas com chave no
+  `terrainRevision` (`render/renderer.ts:2641-2646`): por isso brotam árvores
+  onde se pinta. Solução: região suja só e árvores estáveis fora dela; se o
+  pincel pode mudar a vegetação é decisão do jogador;
+- monitor F9: conta como quadro longo o tempo em que o navegador ficou parado
+  (entradas de 57 s sem trabalho do jogo) e culpa medidas `hitch:` que só se
+  cruzam no tempo, mesmo assíncronas (`ui/healthWatch.ts:138`; o
+  `person/fit` de ~1 s inclui um `await`, `proceduralCrowd.ts:1450-1465`).
+  Solução: descartar quadro sem trabalho (`blockingDuration`, scripts e
+  desenho), e só culpar medidas síncronas;
 - interface v2 lê e clica a interface antiga escondida a cada 250 ms
-  (`ui/v2/shell.ts:1589`, botões em triplicata);
+  (`ui/v2/shell.ts:1589`, botões em triplicata). Solução: a v2 lê o estado do
+  jogo (`gameState.watch`) e a interface antiga sai;
 - o servidor de desenvolvimento recarrega o `main.ts` quando outra sessão
   edita, o que zera o desfazer e o relógio: jogue na build
   (`roadcraft-play`).
+
+**5h. Postes que cruzam ruas** (relato do jogador de 2026-10-09). Numa rede
+sem quarteirão fechado o contorno do meio-fio é um só (vila de teste: 1
+contorno de 1 647 unidades), e `route` (`editor/poles.ts:163-176`) só faz o
+vão atravessando a rua quando as pontas estão em contornos diferentes; no
+mesmo contorno segue "o caminho curto em volta" - desce uma calçada, contorna
+a ponta da rua ou entra na rua paralela e volta. Reproduzido: calçadas a 21,6
+unidades uma da outra, plano de 176 unidades com poste na ponta da rua.
+Solução: rota de menor caminho (Dijkstra) num grafo com os trechos do
+contorno e os vãos de travessia (entre pontos frente a frente sobre a pista,
+até `MAX_POLE_SPACING`, quase perpendiculares à rua, fora da caixa do
+cruzamento).
 
 **Pronto quando:** os detectores de 5a passarem na cidade de teste e numa
 cidade crescida em encosta, e o jogador conferir no jogo cada item de 5b a 5f.
