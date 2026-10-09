@@ -107,6 +107,12 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   viaduto 5,6 m na superfície (4,4 m livres sob a laje) contra 5,5 m livres sobre via e 4,5 m sob
   viaduto urbano; túnel automático a 18 m de cobertura contra 7 m de cobertura mínima; vão dos
   pilares 29,6 m (elevado) e 38,4 m (ponte) contra 25-35 m; postes 38 m contra 30-38 m.
+- Rede e alturas incrementais: feito (`docs/PROBLEMAS.md` PV1). `Network.rebuild()` compara de que
+  cada trecho e nó foi feito com o que a última reconstrução registrou e só refaz o que mudou;
+  `rebuild({ full: true })` ao abrir mapa (`editor/history.ts` `restoreInto`).
+  `buildRoadElevation(net, chão, anterior)` reaproveita as estações e os pedaços conexos iguais; o
+  renderizador passa a solução anterior enquanto o chão não muda, as regras de edição usam
+  `FLAT_GROUND`. Oráculo `tests/world/incrementalRebuild.spec.ts`; medida `tests/bench/roadRebuild.spec.ts`.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

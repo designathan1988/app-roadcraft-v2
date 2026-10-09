@@ -3,7 +3,7 @@ import { COARSE_EPS } from '@core/scalar';
 import type { RoadDoc, RoadSegment } from '@world/doc';
 import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
-import { type RoadElevation, buildRoadElevation } from '@world/elevation';
+import { FLAT_GROUND, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { Level, halfWidth } from '@world/roadTypes';
 import { roadStructure } from '@world/structures';
 import { ROAD_TUNING } from '@world/roads/tuning';
@@ -96,7 +96,7 @@ export function refuseRoadEdit(before: RoadState, after: RoadState): RoadEditRef
   // Solved only when two roads lie on each other in plan.
   let solved: RoadElevation | null = null;
   const deck = (id: SegmentId, p: Vec2): number =>
-    (solved ??= buildRoadElevation(after.net, () => 0)).onSegment(id, p.x, p.y);
+    (solved ??= buildRoadElevation(after.net, FLAT_GROUND)).onSegment(id, p.x, p.y);
   if (changed.some((id) => overlapsAnother(before, after, id, deck))) return 'overlap';
   return null;
 }
@@ -211,8 +211,8 @@ function tooSteep(before: RoadState, after: RoadState, changed: readonly Segment
   // (two roads at one point stand on the same ground, so it cancels).
   let solvedAfter: RoadElevation | null = null;
   let solvedBefore: RoadElevation | null = null;
-  const afterElevation = (): RoadElevation => (solvedAfter ??= buildRoadElevation(after.net, () => 0));
-  const beforeElevation = (): RoadElevation => (solvedBefore ??= buildRoadElevation(before.net, () => 0));
+  const afterElevation = (): RoadElevation => (solvedAfter ??= buildRoadElevation(after.net, FLAT_GROUND));
+  const beforeElevation = (): RoadElevation => (solvedBefore ??= buildRoadElevation(before.net, FLAT_GROUND));
   for (const id of touched) {
     const now = grade(after, id, afterElevation);
     if (now <= MAX_BUILT_GRADE) continue;

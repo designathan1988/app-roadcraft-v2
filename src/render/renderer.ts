@@ -1493,7 +1493,10 @@ export function createSceneRenderer(
     offeredElevation = null;
     elevation = offered && offered.revision === net.revision && offered.terrain === terrainRevision
       ? offered.elevation
-      : buildRoadElevation(net, terrain.naturalRenderedHeightAt);
+      // On land that has not moved, from the last solve: only the connected
+      // pieces of the network the edit changed are solved again
+      // (`buildRoadElevation`, docs/VIAS.md V0).
+      : buildRoadElevation(net, terrain.naturalRenderedHeightAt, landStill ? previousElevation : null);
     performance.measure('hitch:road-edit/elevation', { start: started, end: performance.now() });
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
