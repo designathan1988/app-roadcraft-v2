@@ -3,9 +3,11 @@ import { COARSE_EPS } from '@core/scalar';
 import type { RoadDoc, RoadSegment } from '@world/doc';
 import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
-import { type RoadElevation, buildRoadElevation } from '@world/elevation';
+import { FLAT_GROUND, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { Level, halfWidth } from '@world/roadTypes';
 import { roadStructure } from '@world/structures';
+import { ROAD_TUNING } from '@world/roads/tuning';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
 
 /**
  * What a road edit may not leave behind, judged on the network it builds.
@@ -23,6 +25,8 @@ import { roadStructure } from '@world/structures';
  *    without the vertical room to pass over it;
  *  - `steep`: a road whose height change, over what the junction plates at its
  *    ends leave free, needs a grade no street is built at.
+ * And `funds`, which is not geometry: an edit the balance cannot pay for
+ * (`editor/roads/economy.ts`), judged after the rules above.
  *
  * Every rule is DIFFERENTIAL: an edit is refused for what IT created or made
  * worse, never for damage already on the map. Loading never refuses, so any
@@ -30,7 +34,7 @@ import { roadStructure } from '@world/structures';
  * road drawn anywhere afterwards (measured on the old sharp-node refusal: a
  * 7-degree node 5000 units away blocked a road at the origin).
  */
-export type RoadEditRefusal = 'sharp' | 'squeezed' | 'overlap' | 'steep';
+export type RoadEditRefusal = 'sharp' | 'squeezed' | 'overlap' | 'steep' | 'funds';
 
 export interface RoadState {
   readonly doc: RoadDoc;
@@ -53,13 +57,13 @@ const SQUEEZE_SLACK = 1;
  * there is no street to model, and on the free run the plates leave the ramp
  * becomes a cliff (fuzz seed 3: 17 units down in about 10).
  */
-const MAX_BUILT_GRADE = 0.35;
+const MAX_BUILT_GRADE = ROAD_TUNING.grade.refuse;
 /**
  * Vertical room for one road to pass over another: the elevated deck's
  * clearance, the same figure the road tool uses for its crossings
  * (`commit.ts` `CROSSING_CLEARANCE`).
  */
-const PASS_CLEARANCE = roadStructure('elevated').clearance;
+const PASS_CLEARANCE = ROAD_TUNING.clearance.elevated;
 /** Two decks within this height of each other are at one level (`commit.ts` `HEIGHT_JOIN_EPS`). */
 const SAME_LEVEL = 0.75;
 /** Spacing of the samples along a changed road, units (0.8 m). */
@@ -95,7 +99,7 @@ export function refuseRoadEdit(before: RoadState, after: RoadState): RoadEditRef
   // Solved only when two roads lie on each other in plan.
   let solved: RoadElevation | null = null;
   const deck = (id: SegmentId, p: Vec2): number =>
-    (solved ??= buildRoadElevation(after.net, () => 0)).onSegment(id, p.x, p.y);
+    (solved ??= buildRoadElevation(after.net, FLAT_GROUND)).onSegment(id, p.x, p.y);
   if (changed.some((id) => overlapsAnother(before, after, id, deck))) return 'overlap';
   return null;
 }
@@ -121,9 +125,12 @@ export function snapshotRoads(doc: RoadDoc, net: Network): RoadState {
 export function guardRoadEdit(doc: RoadDoc, net: Network, edit: () => boolean):
   { readonly changed: boolean; readonly refused: RoadEditRefusal | null } {
   const before = snapshotRoads(doc, net);
+  const money = roadsBefore(doc);
   if (!edit()) return { changed: false, refused: null };
   if (net.revision !== doc.revision) net.rebuild();
-  const refused = refuseRoadEdit(before, { doc, net });
+  // Judged, then paid for (`editor/roads/economy.ts`): an edit the balance
+  // cannot cover is refused like any other.
+  const refused = refuseRoadEdit(before, { doc, net }) ?? (settleRoadEdit(money, doc).affordable ? null : 'funds');
   if (!refused) return { changed: true, refused: null };
   doc.replaceWith(before.doc);
   net.adopt(before.net);
@@ -210,8 +217,8 @@ function tooSteep(before: RoadState, after: RoadState, changed: readonly Segment
   // (two roads at one point stand on the same ground, so it cancels).
   let solvedAfter: RoadElevation | null = null;
   let solvedBefore: RoadElevation | null = null;
-  const afterElevation = (): RoadElevation => (solvedAfter ??= buildRoadElevation(after.net, () => 0));
-  const beforeElevation = (): RoadElevation => (solvedBefore ??= buildRoadElevation(before.net, () => 0));
+  const afterElevation = (): RoadElevation => (solvedAfter ??= buildRoadElevation(after.net, FLAT_GROUND));
+  const beforeElevation = (): RoadElevation => (solvedBefore ??= buildRoadElevation(before.net, FLAT_GROUND));
   for (const id of touched) {
     const now = grade(after, id, afterElevation);
     if (now <= MAX_BUILT_GRADE) continue;

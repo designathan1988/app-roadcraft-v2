@@ -16,12 +16,14 @@ import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
+import { ROAD_TUNING } from '@world/roads/tuning';
 import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
 import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
 import { COARSE_EPS, EPS } from '@core/scalar';
 
 /** Shortest road the editor will create. */
@@ -31,7 +33,7 @@ const MERGE_EPS = 2.6;
 /** Distinct decks at the same map point remain separate networks. */
 const HEIGHT_JOIN_EPS = 0.75;
 /** Vertical room required before two crossing carriageways can pass independently. */
-const CROSSING_CLEARANCE = roadStructure('elevated').clearance;
+const CROSSING_CLEARANCE = ROAD_TUNING.clearance.elevated;
 /**
  * Cover over a road at grade past which it is bored as a tunnel instead of
  * cut: eighteen metres, the sixty feet past which railway and road builders
@@ -40,7 +42,7 @@ const CROSSING_CLEARANCE = roadStructure('elevated').clearance;
  * its grade and dug a slot eighty metres deep, and from the game's camera the
  * road simply disappeared into it.
  */
-const AUTO_TUNNEL_COVER = m(18);
+const AUTO_TUNNEL_COVER = ROAD_TUNING.tunnel.autoCover;
 
 export interface DraftResult {
   readonly committed: boolean;
@@ -53,6 +55,12 @@ export interface DraftResult {
    * renderer takes it instead of solving it again (`SceneHandle.offerElevation`).
    */
   readonly elevation?: RoadElevation;
+  /**
+   * What the edit costs (`world/economy.ts`): money taken, negative when
+   * money comes back. Set once the edit has been judged, and on a refusal
+   * for `funds` (what it would have cost).
+   */
+  readonly cost?: number;
 }
 
 /**
@@ -81,7 +89,15 @@ export function commitRoadPath(
    * map is left alone - what the road tool's preview asks of a draft before
    * it is let go (`roadTool.ts` `verdict`).
    */
-  options: { readonly dryRun?: boolean } = {},
+  options: {
+    readonly dryRun?: boolean;
+    /**
+     * The roads' heights the game last solved on this same natural ground
+     * (`ground`): the tunnel test solves only what the gesture changed
+     * (`buildRoadElevation` with `previous`, docs/VIAS.md V0).
+     */
+    readonly groundSolve?: RoadElevation | null;
+  } = {},
 ): DraftResult {
   if (!pieces.length || !Number.isInteger(type) || type < 0 || type >= ROAD_TYPES.length) {
     return { committed: false, reason: 'degenerate' };
@@ -137,7 +153,7 @@ export function commitRoadPath(
   }
   timed('pieces');
   if (!committed) return { committed: false, reason: 'duplicate' };
-  const bore = boreDeepCuts(doc, work, workNet, ground);
+  const bore = boreDeepCuts(doc, work, workNet, ground, options.groundSolve ?? null);
   if (bore.bored) workNet.rebuild();
   timed('tunnels');
   // Judged on what it built, against the map as it was (`editRules.ts`).
@@ -145,11 +161,16 @@ export function commitRoadPath(
   const refused = refuseRoadEdit(before, { doc: work, net: workNet });
   timed('rules');
   if (refused) return { committed: false, reason: refused };
-  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight };
+  // Paid for on the copy, so the live map takes the balance with the roads
+  // and undo gives it back (`editor/roads/economy.ts`); refused when it
+  // cannot be paid, the preview naming why.
+  const charge = settleRoadEdit(roadsBefore(doc), work, !options.dryRun);
+  if (!charge.affordable) return { committed: false, reason: 'funds', cost: charge.amount };
+  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount };
   doc.replaceWith(work);
   net.adopt(workNet);
   timed('replace');
-  return { committed: true, heightLimited, finalHeightOffset: currentHeight,
+  return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount,
     ...(!bore.bored && ground && bore.elevation ? { elevation: bore.elevation } : {}) };
 }
 
@@ -171,7 +192,8 @@ function terrainIndexOf(doc: RoadDoc): TerrainIndex {
   return terrainIndex;
 }
 
-function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number): { bored: boolean; elevation: RoadElevation | null } {
+function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number,
+  previous: RoadElevation | null = null): { bored: boolean; elevation: RoadElevation | null } {
   const fresh = [...work.segments.values()].filter((seg) => !before.segments.has(seg.id) && seg.structure === 'ground');
   if (!fresh.length || !work.terrainStamps.length) return { bored: false, elevation: null };
   // A cut that deep needs relief under the new roads, and the land is flat
@@ -191,7 +213,9 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
   if (!reached) return { bored: false, elevation: null };
   const index = sampled ? null : terrainIndexOf(work);
   const ground = sampled ?? ((x: number, y: number): number => sampleTerrainHeight(index!, x, y));
-  const elevation = buildRoadElevation(workNet, ground);
+  // From the game's last solve on the same ground, when there is one: only
+  // the analytic field is another ground than the one that solve read.
+  const elevation = buildRoadElevation(workNet, ground, sampled ? previous : null);
   let changed = false;
   for (const seg of fresh) {
     const ribbon = workNet.ribbons.get(seg.id);
@@ -309,10 +333,12 @@ export function commitDraft(
   workNet.rebuild();
   const refused = refuseRoadEdit(before, { doc: work, net: workNet });
   if (refused) return { committed: false, reason: refused };
+  const charge = settleRoadEdit(roadsBefore(doc), work);
+  if (!charge.affordable) return { committed: false, reason: 'funds', cost: charge.amount };
 
   doc.replaceWith(work);
   net.adopt(workNet);
-  return result;
+  return { ...result, cost: charge.amount };
 }
 
 function commitDraftInPlace(
@@ -682,12 +708,16 @@ export function reconcileMovedNode(doc: RoadDoc, net: Network, id: NodeId, depth
  */
 export function moveNodeChecked(doc: RoadDoc, net: Network, id: NodeId, to: Vec2): DraftResult {
   const before = snapshotRoads(doc, net);
+  const money = roadsBefore(doc);
   if (!doc.moveNode(id, to)) return { committed: false, reason: 'duplicate' };
   const result = reconcileMovedNode(doc, net, id);
   if (!result.committed) return result;
   net.rebuild();
   const refused = refuseRoadEdit(before, { doc, net });
-  return refused ? { committed: false, reason: refused } : result;
+  if (refused) return { committed: false, reason: refused };
+  // The roads made longer are paid for, shorter partly paid back (`editor/roads/economy.ts`).
+  const charge = settleRoadEdit(money, doc);
+  return charge.affordable ? { ...result, cost: charge.amount } : { committed: false, reason: 'funds', cost: charge.amount };
 }
 
 /** Joins two compatible straight segments meeting at an otherwise unused node. */

@@ -12,7 +12,12 @@ owner in docs/STATUS.md before changing them.
    road plan changes); a building edit moves `doc.buildings.revision`, never
    `doc.revision`; utilities move `utilityRevision`. The wrong one rebuilds
    everything or nothing.
-3. **Road snapping** (`snap.ts` `roadSnap`/`setRoadSnap`, stored in localStorage
+3. **Every road edit is paid for in one place** (`roads/economy.ts`,
+   docs/VIAS.md V0): take `roadsBefore(doc)` before the edit and
+   `settleRoadEdit` after it; refuse with `funds` when it is not affordable.
+   `commitRoadPath`, `commitDraft`, `guardRoadEdit`, `moveNodeChecked` and the
+   bulldozer do; a new tool that changes roads without them builds for free.
+4. **Road snapping** (`snap.ts` `roadSnap`/`setRoadSnap`, stored in localStorage
    `roadcraft.roadSnap`) works on the universal grid (`world/grid.ts`): points on
    the 1 m subdivision, lengths in whole 10 m cells (`ZONE_CELL`).
 

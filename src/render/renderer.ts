@@ -336,6 +336,12 @@ export interface SceneHandle {
    */
   offerElevation(elevation: RoadElevation, networkRevision: number): void;
   /**
+   * The roads' heights last solved on the natural terrain, with the terrain
+   * revision they were solved on (null before the first): an edit's tunnel
+   * test starts from them while the land is the same (`commitRoadPath`).
+   */
+  roadsSolve(): { readonly elevation: RoadElevation; readonly terrainRevision: number } | null;
+  /**
    * The top of what is drawn at a point: a deck where a road's casing covers
    * it, the terrain elsewhere. (`elevationAt` is the NEAREST road's height
    * wherever the point is, a field for previews, not a surface.)
@@ -1493,7 +1499,10 @@ export function createSceneRenderer(
     offeredElevation = null;
     elevation = offered && offered.revision === net.revision && offered.terrain === terrainRevision
       ? offered.elevation
-      : buildRoadElevation(net, terrain.naturalRenderedHeightAt);
+      // On land that has not moved, from the last solve: only the connected
+      // pieces of the network the edit changed are solved again
+      // (`buildRoadElevation`, docs/VIAS.md V0).
+      : buildRoadElevation(net, terrain.naturalRenderedHeightAt, landStill ? previousElevation : null);
     performance.measure('hitch:road-edit/elevation', { start: started, end: performance.now() });
     // Now the ground comes to meet the roads: embankments and cuttings instead
     // of the vertical face the verge skirt used to hang off its own edge, and —
@@ -2323,6 +2332,9 @@ export function createSceneRenderer(
     },
     offerElevation(solved, revision) {
       offeredElevation = { elevation: solved, revision, terrain: terrainRevision };
+    },
+    roadsSolve() {
+      return elevation ? { elevation, terrainRevision } : null;
     },
     surfaceHeightAt(x, y) {
       const ground = terrain.renderedHeightAt(x, y);

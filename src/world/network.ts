@@ -3,7 +3,7 @@ import { Ring } from '@core/ring';
 import { offsetPolyline } from '@core/offset';
 import { Polyline } from '@core/polyline';
 import { type Vec2, dot } from '@core/vec2';
-import type { RoadDoc } from './doc';
+import type { RoadDoc, RoadNode, RoadSegment } from './doc';
 import type { NodeCrossing, SegmentDirection } from './doc';
 import type { NodeId, SegmentId } from './ids';
 import { PolylineCache, segmentStartsAt } from './geometry';
@@ -38,6 +38,45 @@ import {
  * 0.4 m, a tenth of a lane.
  */
 const SQUEEZE_NOISE = 1;
+
+/** A junction solved for one pass of `rebuild`, with what the pass handed it (`junctionKey`). */
+interface JunctionMemoEntry {
+  readonly key: string;
+  readonly byLevel: Map<SurfaceLevel, Junction>;
+  readonly plate: [SegmentId, number][];
+}
+
+function remember(memo: Map<NodeId, JunctionMemoEntry[]>, node: NodeId, entry: JunctionMemoEntry): void {
+  const list = memo.get(node);
+  if (!list) memo.set(node, [entry]);
+  else if (!list.includes(entry)) list.push(entry);
+}
+
+/**
+ * Everything a segment's polyline, ribbon and junction legs are built from:
+ * its record and where its two ends stand. Spelled out field by field, so
+ * the same road copied by `replaceWith` (its keys in another order) reads
+ * the same.
+ */
+function segmentSourceKey(doc: RoadDoc, s: RoadSegment): string {
+  const a = doc.node(s.a), b = doc.node(s.b);
+  return `${s.a}>${s.b}|${s.type}|${s.curve ? `${s.curve.t},${s.curve.h}` : '-'}|${s.dashOrigin}|${s.direction}|${s.lanes}|` +
+    `${s.structure}|${s.section ? JSON.stringify(s.section) : '-'}|${s.parking ? JSON.stringify(s.parking) : '-'}|` +
+    `${a ? `${a.x},${a.y}` : '-'}|${b ? `${b.x},${b.y}` : '-'}`;
+}
+
+/** Everything of a node a junction there is built from: the whole record, its roads by id. */
+function nodeSourceKey(n: RoadNode): string {
+  return `${n.x},${n.y}|${n.heightOffset}|${n.smooth ? 1 : 0}|${n.incident.join(',')}|${n.control}|` +
+    `${n.blockedMovements.join(',')}|${n.crossing ? `${n.crossing.kind}:${n.crossing.segment}` : '-'}`;
+}
+
+/** A `hitch:` entry for the frame monitor and `scripts/probe-hitches.mjs`, where the platform measures. */
+function measureHitch(name: string, start: number): void {
+  if (typeof performance !== 'undefined' && typeof performance.measure === 'function') {
+    performance.measure(name, { start, end: performance.now() });
+  }
+}
 
 /** Per-level trim distances at both ends of a segment. */
 export interface SegmentTrims {
@@ -142,13 +181,33 @@ export class Network {
    * radii scaled by that factor, because a smaller radius needs a shorter run
    * and therefore a shorter trim. A final clamp guarantees the invariant even
    * where the second pass did not fully converge.
+   *
+   * INCREMENTAL by default (docs/VIAS.md V0): the geometry of a segment or a
+   * junction whose inputs are the same as at the last rebuild is taken as it
+   * was. What each was built from is recorded (`sources`) and compared, as a
+   * build system with verifying traces decides a target is up to date
+   * (Mokhov, Mitchell and Peyton Jones, "Build systems à la carte"), and a
+   * result rebuilt to the same value stops the change there (early cutoff,
+   * as Salsa's "backdating"): a junction is solved again only when its node,
+   * one of its roads or the radius scale and trim caps its pass hands it
+   * differ, a ribbon only when its road, its trims or the bends at its ends
+   * do. The document's `dirtyNodes`/`dirtySegments` are not used for it: any
+   * other network built on the same document clears them (`clearDirty`), and
+   * they are written whenever something is touched, not when it changed (the
+   * caveat of write-based change filters, Unity Entities docs). The cheap
+   * whole-network steps (`reconcile`, the clamps, the marks) still run over
+   * everything, so the result is the full rebuild's by construction;
+   * `tests/world/incrementalRebuild.spec.ts` holds the two equal. `full`
+   * forgets everything first: loading a map (`editor/history.ts`).
    */
-  rebuild(): void {
+  rebuild(options: { readonly full?: boolean } = {}): void {
+    if (options.full) this.forget();
+    const started = performance.now();
     this.junctionMemo = this.nextJunctionMemo.size ? this.nextJunctionMemo : this.junctionMemo;
     this.nextJunctionMemo = new Map();
     this.crossingWalkable = null;
     this.crossingDistances.clear();
-    this.polylines.clear();
+    this.refreshSources();
     this.junctions.clear();
     this.ribbons.clear();
     this.trims.clear();
@@ -242,6 +301,56 @@ export class Network {
     // A full rebuild has consumed every authoring invalidation.  Leaving ids
     // in these sets made subsequent edits to the same node look unchanged.
     this.doc.clearDirty();
+    measureHitch(options.full ? 'hitch:network/full' : 'hitch:network/rebuild', started);
+  }
+
+  /** Drops everything remembered from earlier rebuilds: the next one builds every piece. */
+  private forget(): void {
+    this.junctionMemo = new Map();
+    this.nextJunctionMemo = new Map();
+    this.ribbonMemo = new Map();
+    this.segmentSource = new Map();
+    this.nodeSource = new Map();
+    this.polylines.clear();
+  }
+
+  /**
+   * What each segment and node is built from, as text, compared with what
+   * the last rebuild recorded: a segment whose record or end positions moved
+   * loses its polyline and its ribbon, a node whose record moved or one of
+   * whose roads did loses its solved junctions. Everything else keeps what
+   * was built for it.
+   */
+  private refreshSources(): void {
+    const segments = new Map<SegmentId, string>();
+    for (const [id, segment] of this.doc.segments) {
+      const key = segmentSourceKey(this.doc, segment);
+      segments.set(id, key);
+      if (this.segmentSource.get(id) !== key) {
+        this.polylines.invalidate(id);
+        this.ribbonMemo.delete(id);
+      }
+    }
+    for (const id of this.segmentSource.keys()) {
+      if (!segments.has(id)) {
+        this.polylines.invalidate(id);
+        this.ribbonMemo.delete(id);
+      }
+    }
+    const nodes = new Map<NodeId, string>();
+    for (const [id, node] of this.doc.nodes) {
+      const key = nodeSourceKey(node);
+      nodes.set(id, key);
+      let changed = this.nodeSource.get(id) !== key;
+      for (const seg of node.incident) {
+        if (changed) break;
+        changed = this.segmentSource.get(seg) !== segments.get(seg);
+      }
+      if (changed) this.junctionMemo.delete(id);
+    }
+    for (const id of this.nodeSource.keys()) if (!nodes.has(id)) this.junctionMemo.delete(id);
+    this.segmentSource = segments;
+    this.nodeSource = nodes;
   }
 
   /**
@@ -267,12 +376,24 @@ export class Network {
    * of the network it was copied from, not from nothing.
    */
   seedJunctions(from: Network): void {
+    // Everything the other network remembers, with the sources it was built
+    // from: the next rebuild compares this document against them and builds
+    // again only what differs (`refreshSources`), whatever document the other
+    // one was built for.
     this.junctionMemo = new Map([...from.junctionMemo, ...from.nextJunctionMemo]);
+    this.nextJunctionMemo = new Map();
+    this.ribbonMemo = new Map(from.ribbonMemo);
+    this.segmentSource = new Map(from.segmentSource);
+    this.nodeSource = new Map(from.nodeSource);
+    this.polylines.adopt(from.polylines);
   }
 
   adopt(other: Network): void {
     this.junctionMemo = new Map();
     this.nextJunctionMemo = new Map([...other.junctionMemo, ...other.nextJunctionMemo]);
+    this.ribbonMemo = new Map(other.ribbonMemo);
+    this.segmentSource = new Map(other.segmentSource);
+    this.nodeSource = new Map(other.nodeSource);
     this.junctions.clear();
     for (const [node, byLevel] of other.junctions) this.junctions.set(node, byLevel);
     this.ribbons.clear();
@@ -313,10 +434,14 @@ export class Network {
       // last rebuild takes the junction solved then. Every junction of the
       // map was solved again, two or three times, for every road drawn
       // (docs/performance.md #17).
+      // The node and its roads are the same as when an entry was made (an
+      // entry of a node whose sources changed is dropped, `refreshSources`):
+      // what is left to compare is what this pass hands it.
       const key = this.junctionKey(node, radiusScaleBySegment, useReconciledTrimCaps);
-      const known = this.junctionMemo.get(key) ?? this.nextJunctionMemo.get(key);
+      const known = this.junctionMemo.get(node)?.find((entry) => entry.key === key) ??
+        this.nextJunctionMemo.get(node)?.find((entry) => entry.key === key);
       if (known) {
-        this.nextJunctionMemo.set(key, known);
+        remember(this.nextJunctionMemo, node, known);
         for (const [seg, reach] of known.plate) this.plateReach.set(`${node}:${seg}`, reach);
         if (known.byLevel.size) out.set(node, known.byLevel);
         continue;
@@ -348,26 +473,37 @@ export class Network {
         if (j) byLevel.set(level, j);
       }
       if (byLevel.size) out.set(node, byLevel);
-      this.nextJunctionMemo.set(key, { byLevel, plate });
+      remember(this.nextJunctionMemo, node, { key, byLevel, plate });
     }
     return out;
   }
 
-  /** Junctions as solved at the last rebuild, and at this one, by `junctionKey`. */
-  private junctionMemo = new Map<string, { byLevel: Map<SurfaceLevel, Junction>; plate: [SegmentId, number][] }>();
-  private nextJunctionMemo = new Map<string, { byLevel: Map<SurfaceLevel, Junction>; plate: [SegmentId, number][] }>();
+  /**
+   * Junctions as solved at the last rebuild, and at this one, per node and
+   * per pass (`junctionKey`). Only entries of nodes whose sources are as
+   * recorded (`refreshSources`) are ever looked up.
+   */
+  private junctionMemo = new Map<NodeId, JunctionMemoEntry[]>();
+  private nextJunctionMemo = new Map<NodeId, JunctionMemoEntry[]>();
+  /** Each segment's ribbon as last built, with what it was built from (`buildRibbons`). */
+  private ribbonMemo = new Map<SegmentId, { readonly ribbon: SegmentRibbon; readonly trims: string; readonly bendA: number; readonly bendB: number }>();
+  /** Each segment's and node's sources at the last rebuild (`refreshSources`). */
+  private segmentSource = new Map<SegmentId, string>();
+  private nodeSource = new Map<NodeId, string>();
 
-  /** Everything `solve` builds a node's junction from, as a key. */
+  /**
+   * What a pass hands a node's junction beyond the node and its roads (which
+   * `refreshSources` vouches for): the radius scale of each road and, on the
+   * capped pass, the trim each road was reconciled to at this end.
+   */
   private junctionKey(node: NodeId, scales: ReadonlyMap<number, number>, capped: boolean): string {
     const source = this.doc.node(node);
-    if (!source) return `${node}|gone`;
-    const parts: string[] = [JSON.stringify(source), capped ? 'capped' : 'free'];
+    if (!source) return 'gone';
+    const parts: string[] = [capped ? 'capped' : 'free'];
     for (const id of source.incident) {
       const segment = this.doc.segment(id);
-      if (!segment) { parts.push(`${id}:gone`); continue; }
-      parts.push(JSON.stringify(segment), String(scales.get(id) ?? 1));
-      const line = this.polylines.get(this.doc, id);
-      parts.push(Array.from(line.xy).join(','));
+      if (!segment) { parts.push('gone'); continue; }
+      parts.push(String(scales.get(id) ?? 1));
       if (capped) {
         const trims = this.trims.get(id);
         parts.push(JSON.stringify(trims ? (segment.a === node ? trims.a : trims.b) : null));
@@ -560,10 +696,22 @@ export class Network {
   }
 
   private buildRibbons(): void {
+    const memo = new Map<SegmentId, { readonly ribbon: SegmentRibbon; readonly trims: string; readonly bendA: number; readonly bendB: number }>();
     for (const [id, seg] of this.doc.segments) {
+      const t = this.trims.get(id) ?? { a: {}, b: {} };
+      // A ribbon is its road (as recorded, `refreshSources`), its trims and
+      // the bends at its two ends: the same three, the same ribbon.
+      const trimsKey = JSON.stringify(t);
+      const bendA = this.bendAt(seg.a, id);
+      const bendB = this.bendAt(seg.b, id);
+      const known = this.ribbonMemo.get(id);
+      if (known && known.trims === trimsKey && known.bendA === bendA && known.bendB === bendB) {
+        this.ribbons.set(id, known.ribbon);
+        memo.set(id, known);
+        continue;
+      }
       const full = this.polylines.get(this.doc, id);
       const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
-      const t = this.trims.get(id) ?? { a: {}, b: {} };
       const length = full.length;
 
       const centre: Record<number, Polyline> = {};
@@ -607,14 +755,14 @@ export class Network {
             trimmed,
             s0 <= 0,
             s1 >= length,
-            base + hw * Math.tan(this.bendAt(seg.a, id) / 2),
-            base + hw * Math.tan(this.bendAt(seg.b, id) / 2),
+            base + hw * Math.tan(bendA / 2),
+            base + hw * Math.tan(bendB / 2),
           ),
           hw,
         );
       }
 
-      this.ribbons.set(id, {
+      const ribbon: SegmentRibbon = {
         id,
         typeIndex: seg.type,
         direction: seg.direction,
@@ -623,8 +771,11 @@ export class Network {
         rings,
         dashOrigin: seg.dashOrigin,
         full,
-      });
+      };
+      this.ribbons.set(id, ribbon);
+      memo.set(id, { ribbon, trims: trimsKey, bendA, bendB });
     }
+    this.ribbonMemo = memo;
   }
 
   /**

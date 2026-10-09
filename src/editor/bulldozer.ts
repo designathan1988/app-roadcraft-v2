@@ -4,6 +4,7 @@ import type { Network } from '@world/network';
 import { deleteLot, lotCentre } from '@world/lots';
 import { landscapeNear } from '@world/landscape';
 import type { Anchor } from './snap';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
 
 /** What the bulldozer reads of the game and does to it. */
 export interface BulldozerHost {
@@ -107,8 +108,11 @@ export class Bulldozer {
     if (anchor.kind === 'segment' && anchor.segment !== undefined) {
       const id = anchor.segment;
       host.mutate(() => {
+        // A share of the road's price comes back (`editor/roads/economy.ts`).
+        const money = roadsBefore(doc);
         doc.removeSegment(id);
         doc.pruneOrphanNodes();
+        settleRoadEdit(money, doc);
         return true;
       });
     }
@@ -135,8 +139,10 @@ export class Bulldozer {
     const walls = [...doc.barriers.values()].filter((bar) => bar.points.some(inside)).map((bar) => bar.id);
     if (!segments.length && !builtIds.length && !lots.length && !poles.length && !items.length && !walls.length) return;
     this.host.mutate(() => {
+      const money = roadsBefore(doc);
       for (const id of segments) doc.removeSegment(id);
       if (segments.length) doc.pruneOrphanNodes();
+      if (segments.length) settleRoadEdit(money, doc);
       for (const id of lots) deleteLot(doc, id);
       for (const id of builtIds) doc.buildings.remove(id);
       for (const id of poles) doc.removePole(id);

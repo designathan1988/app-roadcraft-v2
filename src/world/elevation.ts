@@ -5,6 +5,7 @@ import type { NodeId, SegmentId } from './ids';
 import type { Network } from './network';
 import { CASING_BAND, FOOTWAY_RISE, Level, casingHalf } from './roadTypes';
 import { m } from './units';
+import { ROAD_TUNING } from './roads/tuning';
 import {
   ROAD_GROUND_CLEARANCE,
   TUNNEL_BORE,
@@ -82,8 +83,8 @@ const PLATE_MARGIN = STATION + 1;
 const LATERAL = [-1, -0.62, -0.28, 0, 0.28, 0.62, 1] as const;
 /** Stations either side of one that must also be cleared (chord protection). */
 const DILATE = 2;
-/** Steepest gradient of a road at grade (rise / run). */
-const GROUND_GRADE = 0.12;
+/** Steepest gradient of a road at grade (rise / run), from `roads/tuning.ts`. */
+const GROUND_GRADE = ROAD_TUNING.grade.ground;
 /**
  * How far along a road its grade line is averaged, in world units.
  *
@@ -125,8 +126,8 @@ const PLATE_BLEND = 40;
  */
 const RAMP_RELAX = 0.8;
 /** Lift above the ground at which a structure stops shaping it: piers, not fill. */
-const LIFT_ON = 1.5;
-const LIFT_OFF = 7;
+const LIFT_ON = ROAD_TUNING.structure.liftOn;
+const LIFT_OFF = ROAD_TUNING.structure.pierFrom;
 /**
  * Grade of the straight part of a ramp between a raised deck and a road at
  * grade: sixteen per cent.
@@ -148,9 +149,9 @@ const LIFT_OFF = 7;
  * full climb, curves included, inside 100 units - forty metres - so the ramp is
  * a distinct piece of road at each end and the deck between is level.
  */
-const RAMP_GRADE = 0.16;
+const RAMP_GRADE = ROAD_TUNING.grade.ramp;
 /** Maximum authored height change per unit of alignment before a ramp needs more run. */
-export const MAX_AUTHORED_GRADE = 0.12;
+export const MAX_AUTHORED_GRADE = ROAD_TUNING.grade.authored;
 /**
  * Length of the vertical curve at the foot of a ramp, where the grade builds up
  * from level, in world units (8 m). The crest at the top is rounded by
@@ -174,13 +175,13 @@ const PLATE_TANGENT_SHARE = 0.55;
 /** Softness of the crest where a ramp meets its deck: a curve 16 units long. */
 const RAMP_CREST = 8 * RAMP_GRADE;
 /** Steepest gradient with which a deck is carried up to a higher deck it meets in the air. */
-const DECK_TIE = 0.05;
+const DECK_TIE = ROAD_TUNING.grade.deckTie;
 /**
  * Steepest grade a deck may take to clear a rise under it. The deck is a
  * straight line between its two ends; only a hill poking up into it bends it,
  * and then no faster than this.
  */
-const DECK_GRADE = 0.05;
+const DECK_GRADE = ROAD_TUNING.grade.deck;
 /**
  * Peak-to-mean slope ratio of the smoothstep used for vertical curves.
  *
@@ -443,9 +444,26 @@ const BESIDE_DROP = m(0.1);
 export function buildRoadElevation(
   net: Network,
   terrainAt: (x: number, y: number) => number,
+  /**
+   * A solve of this network on the SAME ground (`terrainAt` answering the
+   * same heights, through whatever function): what did not change is taken
+   * from it instead of solved again (see `SolveMemo`). The caller vouches for
+   * the ground: the renderer passes its last solve only while the land has not
+   * moved, and the road tool hands the renderer's to the tunnel test of a
+   * commit on the same natural ground. A solve on `FLAT_GROUND` finds the last
+   * flat solve by itself.
+   */
+  previous?: RoadElevation | null,
 ): RoadElevation {
+  const started = performance.now();
   const profiles: Profile[] = [];
   const byId = new Map<SegmentId, Profile>();
+  const prior = previous ? memos.get(previous) : terrainAt === FLAT_GROUND && lastFlat ? memos.get(lastFlat) : undefined;
+  // Never level ground for real ground or the other way round, whatever the caller says.
+  const reuse = prior && (prior.terrainAt === FLAT_GROUND) === (terrainAt === FLAT_GROUND) ? prior : null;
+  const stationsById = new Map<SegmentId, Stations>();
+  /** Profiles whose stations were taken from `reuse` (the line, the width and the ground the same). */
+  const keptStations = new Set<SegmentId>();
 
   // ---------------------------------------------------------------- stations
   for (const [id, ribbon] of net.ribbons) {
@@ -456,39 +474,14 @@ export function buildRoadElevation(
     const count = Math.max(2, Math.min(MAX_STATIONS, Math.ceil(length / STATION) + 1));
     const step = length / (count - 1);
     const half = casingHalf(ribbon.road);
-    const ceil: number[] = [];
-
-    /** Mean ground across the casing: the line that balances cut against fill. */
-    const mid: number[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const frame = line.sampleAt(step * i);
-      let ground = -Infinity;
-      let sum = 0;
-      for (const unit of LATERAL) {
-        const value = terrainAt(frame.p.x + frame.n.x * half * unit, frame.p.y + frame.n.y * half * unit);
-        if (value > ground) ground = value;
-        sum += value;
-      }
-      ceil.push(ground + ROAD_GROUND_CLEARANCE);
-      // The MEAN, not the maximum. Taking the maximum across the casing is
-      // right for a deck that has to fly over the ground and wrong for a road
-      // built into it: on any side slope it perches the carriageway on the high
-      // kerb and leaves the low one hanging, which reads as a road tilted for
-      // no reason. The mean is the level at which the cut on one side pays for
-      // the fill on the other.
-      mid.push(sum / LATERAL.length + ROAD_GROUND_CLEARANCE);
-    }
-    // A chord between two stations must clear the ground at BOTH of its ends or
-    // it dives under the terrain in between. Raising every station to the
-    // highest within its neighbourhood is what makes the clearance a guarantee.
-    dilate(ceil, DILATE);
-
-    // The designed grade line, solved once and independently of any junction:
-    // smooth the balanced ground, then limit its gradient in both directions.
-    const base = mid.slice();
-    smoothProfile(base, step, SMOOTH_REACH);
-    slopeLimit(base, step, GROUND_GRADE);
+    // The ground under a road is read at 7 points across every 4 units of
+    // it, and its grade line smoothed: most of a solve. The same line, as
+    // wide, on the same ground reads the same - taken as it was.
+    const known = reuse?.stations.get(id);
+    const kept = known !== undefined && known.half === half && sameLine(known.line, line);
+    const { ceil, base } = kept ? known : readStations(line, half, count, step, terrainAt);
+    if (kept) keptStations.add(id);
+    stationsById.set(id, { line, half, ceil, base });
 
     const trims = net.trims.get(id);
     // A taper where one road carries on at another width is not a junction
@@ -555,9 +548,46 @@ export function buildRoadElevation(
     }
   }
 
+  // ------------------------------------------------- what is solved again
+  // Each node's inputs, as text: where it stands, its authored height, its roads.
+  const nodeKeys = new Map<NodeId, string>();
+  for (const [node, list] of incident) {
+    const point = net.doc.node(node);
+    nodeKeys.set(node, `${point?.x},${point?.y}|${point?.heightOffset}|${list.map((p) => p.id).join(',')}`);
+  }
+  // The connected pieces whose every road and node is as solved before keep
+  // their heights (`SolveMemo`); the rest is solved below, and only the rest.
+  const solvedNodes = new Set<NodeId>(incident.keys());
+  const solvedProfiles = new Set<Profile>(profiles);
+  if (reuse) {
+    const parent = new Map<NodeId, NodeId>();
+    const find = (n: NodeId): NodeId => {
+      let root = n;
+      while (parent.get(root) !== root) root = parent.get(root) as NodeId;
+      for (let at = n; at !== root;) { const next = parent.get(at) as NodeId; parent.set(at, root); at = next; }
+      return root;
+    };
+    for (const node of incident.keys()) parent.set(node, node);
+    for (const profile of profiles) parent.set(find(profile.a), find(profile.b));
+    const changed = new Set<NodeId>();
+    for (const profile of profiles) {
+      const before = reuse.profiles.get(profile.id);
+      if (!before || !keptStations.has(profile.id) || !sameProfile(before, profile)) changed.add(find(profile.a));
+    }
+    for (const [node, key] of nodeKeys) if (reuse.nodes.get(node)?.key !== key) changed.add(find(node));
+    for (const node of incident.keys()) if (!changed.has(find(node))) solvedNodes.delete(node);
+    for (const profile of profiles) {
+      if (solvedNodes.has(profile.a)) continue;
+      solvedProfiles.delete(profile);
+      const before = (reuse.profiles.get(profile.id) as Profile).h;
+      for (let i = 0; i < profile.h.length; i++) profile.h[i] = before[i] as number;
+    }
+  }
+
   /** The mean ground over a junction's own disc, for a node no road at grade reaches. */
   const balancedAtNode = new Map<NodeId, number>();
   for (const [node, list] of incident) {
+    if (!solvedNodes.has(node)) continue;
     const point = net.doc.node(node);
     if (!point) continue;
     let sum = terrainAt(point.x, point.y);
@@ -591,6 +621,7 @@ export function buildRoadElevation(
    */
   const gradeHeight = new Map<NodeId, number>();
   for (const [node, list] of incident) {
+    if (!solvedNodes.has(node)) continue;
     let sum = 0;
     let count = 0;
     for (const profile of list) {
@@ -626,6 +657,7 @@ export function buildRoadElevation(
   // landing like any other, and the ramp brings it there.
   const aloft = new Set<NodeId>();
   for (const [node, list] of incident) {
+    if (!solvedNodes.has(node)) continue;
     if (list.length > 1 && list.every((profile) => isRaised(profile.structure))) aloft.add(node);
   }
 
@@ -635,7 +667,7 @@ export function buildRoadElevation(
   /** The deck a raised span wants at its `a` and at its `b` end. */
   const wantedA = new Map<SegmentId, number>();
   const wantedB = new Map<SegmentId, number>();
-  for (const profile of profiles) {
+  for (const profile of solvedProfiles) {
     const clearance = roadStructure(profile.structure).clearance;
     if (isRaised(profile.structure)) {
       // What a raised span wants at each of its ends: its clearance over the
@@ -666,6 +698,10 @@ export function buildRoadElevation(
   const nodeHeight = new Map<NodeId, number>();
   const upperReach = new Map<NodeId, number>();
   for (const [node] of incident) {
+    if (!solvedNodes.has(node)) {
+      nodeHeight.set(node, (reuse as SolveMemo).nodes.get(node)?.height as number);
+      continue;
+    }
     if (!aloft.has(node)) {
       nodeHeight.set(node, gradeHeight.get(node) ?? 0);
       continue;
@@ -717,11 +753,12 @@ export function buildRoadElevation(
     else if (profile.manualVertical) solveVariable(profile, nodeHeight);
     else solveGround(profile, nodeHeight);
   };
-  let dirty: Iterable<Profile> = profiles;
+  let dirty: Iterable<Profile> = solvedProfiles;
   for (let pass = 0; pass < MAX_SOLVE_PASSES; pass++) {
     for (const profile of dirty) solve(profile);
     const next = new Set<Profile>();
     for (const [node, list] of incident) {
+      if (!solvedNodes.has(node)) continue;
       const previous = nodeHeight.get(node) ?? 0;
       let height = previous;
       for (const profile of list) {
@@ -936,7 +973,7 @@ export function buildRoadElevation(
     return authority >= 1 ? road : road * authority + ground * (1 - authority);
   };
 
-  return {
+  const result: RoadElevation = {
     at: query,
     differences(other) {
       const mine = profileSummaries;
@@ -1095,6 +1132,109 @@ export function buildRoadElevation(
       return profiles.some((profile) => structures.has(profile.structure));
     },
   };
+  const settled = new Map<NodeId, { key: string; height: number }>();
+  for (const [node, key] of nodeKeys) settled.set(node, { key, height: nodeHeight.get(node) ?? 0 });
+  memos.set(result, { terrainAt, stations: stationsById, profiles: byId, nodes: settled });
+  if (terrainAt === FLAT_GROUND) lastFlat = result;
+  if (typeof performance.measure === 'function') {
+    performance.measure(reuse ? 'hitch:elevation/incremental' : 'hitch:elevation/full', { start: started, end: performance.now() });
+  }
+  return result;
+}
+
+// ------------------------------------------------------------ incremental
+
+/** What a road's stations read from the ground: its ceiling and its designed grade line. Never written after. */
+interface Stations {
+  readonly line: Polyline;
+  readonly half: number;
+  readonly ceil: number[];
+  readonly base: number[];
+}
+
+/**
+ * What a solve keeps for the next one on the same ground (`previous`).
+ *
+ * The solve splits exactly along the network's connected pieces: a profile
+ * reads only its own stations and the heights of its two nodes, a node only
+ * the profiles meeting there, and the rounds raise each piece until IT stops
+ * moving (Jacobi rounds, so the order is irrelevant). A piece whose every
+ * road has the same line, width, plates, ends, class and structure, and
+ * whose every node stands where it stood at the same authored height with
+ * the same roads, settles where it settled: its heights are taken whole.
+ * Any other piece is solved from scratch as before. That is a verifying
+ * trace with early cutoff (Mokhov, Mitchell and Peyton Jones, "Build
+ * systems à la carte"), and `tests/world/incrementalRebuild.spec.ts` holds
+ * it equal to a solve from nothing.
+ */
+interface SolveMemo {
+  readonly terrainAt: (x: number, y: number) => number;
+  readonly stations: ReadonlyMap<SegmentId, Stations>;
+  readonly profiles: ReadonlyMap<SegmentId, Profile>;
+  /** Each node's inputs as text, and the height it settled at. */
+  readonly nodes: ReadonlyMap<NodeId, { readonly key: string; readonly height: number }>;
+}
+
+const memos = new WeakMap<RoadElevation, SolveMemo>();
+
+/**
+ * Level ground everywhere: the editing rules solve on it, where two roads at
+ * one point stand on the same ground and it cancels (`editor/editRules.ts`).
+ * It never changes, so every solve on it starts from the last one.
+ */
+export const FLAT_GROUND = (): number => 0;
+let lastFlat: RoadElevation | null = null;
+
+function sameLine(a: Polyline, b: Polyline): boolean {
+  if (a === b) return true;
+  const x = a.xy, y = b.xy;
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
+}
+
+/** Whether a profile is built from the same inputs as the one solved before it. */
+function sameProfile(a: Profile, b: Profile): boolean {
+  return a.structure === b.structure && a.manualVertical === b.manualVertical && a.type === b.type &&
+    a.half === b.half && a.median === b.median && a.sidewalk === b.sidewalk && a.length === b.length &&
+    a.step === b.step && a.plateA === b.plateA && a.plateB === b.plateB && a.a === b.a && a.b === b.b &&
+    a.ceil === b.ceil && a.base === b.base;
+}
+
+/** The ground under a road: the dilated ceiling and the designed grade line (see the stations step). */
+function readStations(line: Polyline, half: number, count: number, step: number,
+  terrainAt: (x: number, y: number) => number): { ceil: number[]; base: number[] } {
+  const ceil: number[] = [];
+  /** Mean ground across the casing: the line that balances cut against fill. */
+  const mid: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const frame = line.sampleAt(step * i);
+    let ground = -Infinity;
+    let sum = 0;
+    for (const unit of LATERAL) {
+      const value = terrainAt(frame.p.x + frame.n.x * half * unit, frame.p.y + frame.n.y * half * unit);
+      if (value > ground) ground = value;
+      sum += value;
+    }
+    ceil.push(ground + ROAD_GROUND_CLEARANCE);
+    // The MEAN, not the maximum. Taking the maximum across the casing is
+    // right for a deck that has to fly over the ground and wrong for a road
+    // built into it: on any side slope it perches the carriageway on the high
+    // kerb and leaves the low one hanging, which reads as a road tilted for
+    // no reason. The mean is the level at which the cut on one side pays for
+    // the fill on the other.
+    mid.push(sum / LATERAL.length + ROAD_GROUND_CLEARANCE);
+  }
+  // A chord between two stations must clear the ground at BOTH of its ends or
+  // it dives under the terrain in between. Raising every station to the
+  // highest within its neighbourhood is what makes the clearance a guarantee.
+  dilate(ceil, DILATE);
+  // The designed grade line, solved once and independently of any junction:
+  // smooth the balanced ground, then limit its gradient in both directions.
+  const base = mid.slice();
+  smoothProfile(base, step, SMOOTH_REACH);
+  slopeLimit(base, step, GROUND_GRADE);
+  return { ceil, base };
 }
 
 // ---------------------------------------------------------------- solvers

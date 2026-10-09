@@ -1,3 +1,5 @@
+import { ROAD_TUNING } from './roads/tuning';
+
 /**
  * The structural levels a road can be built at.
  *
@@ -102,7 +104,7 @@ export const TUNNEL_PORTAL_COVER = 1.5;
  * difference between "draw a road across this hill and it becomes a tunnel" and
  * "draw a road eight hundred units long or get an open trench".
  */
-export const TUNNEL_GRADE = 0.13;
+export const TUNNEL_GRADE = ROAD_TUNING.grade.tunnel;
 
 export const ROAD_STRUCTURES: readonly RoadStructureSpec[] = [
   { id: 'ground', key: 'structure.ground', clearance: 0, deck: 0.55, supports: false },
@@ -112,8 +114,8 @@ export const ROAD_STRUCTURES: readonly RoadStructureSpec[] = [
   // to it is over inside 100 units at 16 %. The deck is a metre deep, what a
   // girder spanning 30 m between piers is; at 0.64 m it read as a sheet of
   // card on stilts.
-  { id: 'elevated', key: 'structure.elevated', clearance: 14, deck: 2.6, supports: true },
-  { id: 'bridge', key: 'structure.bridge', clearance: 7.5, deck: 2.4, supports: true },
+  { id: 'elevated', key: 'structure.elevated', clearance: ROAD_TUNING.clearance.elevated, deck: 2.6, supports: true },
+  { id: 'bridge', key: 'structure.bridge', clearance: ROAD_TUNING.clearance.bridge, deck: 2.4, supports: true },
   { id: 'tunnel', key: 'structure.tunnel', clearance: -TUNNEL_DEPTH, deck: 0.6, supports: false },
 ] as const;
 

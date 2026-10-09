@@ -37,7 +37,9 @@ export type ChangeRect = readonly [number, number, number, number];
  */
 export type DocChangeKind =
   | 'roads' | 'traffic' | 'terrain' | 'paint' | 'buildings' | 'zones' | 'lots' | 'utilities' | 'barriers' | 'landscape'
-  | 'transit' | 'people' | 'trees' | 'clearings' | 'elements' | 'fog' | 'clouds' | 'weather' | 'nature' | 'gullies';
+  | 'transit' | 'people' | 'trees' | 'clearings' | 'elements' | 'fog' | 'clouds' | 'weather' | 'nature' | 'gullies'
+  /** The balance (`economy.ts`): an edit paid for, or a demolition paid back. */
+  | 'economy';
 /** What the game works out from it. */
 export type DerivedChangeKind = 'elevation' | 'ground' | 'light' | 'surfaces';
 export type ChangeKind = DocChangeKind | DerivedChangeKind;

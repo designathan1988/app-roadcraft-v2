@@ -15,6 +15,7 @@ import type { Frame, Polyline } from '@core/polyline';
 import type { Network, SegmentRibbon } from '@world/network';
 import type { SegmentId } from '@world/ids';
 import type { RoadElevation } from '@world/elevation';
+import { ROAD_TUNING } from '@world/roads/tuning';
 import { Level, casingHalf, roadProfile, sidewalkHalf } from '@world/roadTypes';
 import {
   TUNNELS_DRAWN,
@@ -431,7 +432,7 @@ export function buildStructureDetails(
     const structure = segment.structure as RoadStructure;
     const deckAt = (x: number, y: number): number => elevation.onSegment(segment.id, x, y);
     const spec = roadStructure(isRaised(structure) ? structure : 'elevated');
-    const spacing = structure === 'bridge' ? 96 : 74;
+    const spacing = structure === 'bridge' ? ROAD_TUNING.piers.spacingBridge : ROAD_TUNING.piers.spacingElevated;
     const radius = structure === 'bridge' ? 3.2 : 2.6;
     const length = ribbon.full.length;
     const casing = casingHalf(ribbon.road);

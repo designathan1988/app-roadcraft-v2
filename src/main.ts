@@ -85,6 +85,7 @@ import { roadSwatch } from '@ui/roadSwatch';
 import { mountBuildStamp } from '@ui/buildStamp';
 import { UI_V2 } from '@ui/shell/flag';
 import { mountShell } from '@ui/v2/shell';
+import { formatCost } from '@ui/roads/money';
 import { mountAbout } from '@ui/about';
 import { LANGUAGES, hasKey, initLanguage, language, onLanguageChange, setLanguage, t } from '@ui/i18n';
 import {
@@ -420,6 +421,11 @@ const roadTool = new RoadTool({
   worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),
   naturalHeightAt: (x, y) => scene.naturalTerrainHeightAt(x, y),
   offerElevation: (solution, revision) => scene.offerElevation(solution, revision),
+  // The renderer's last solve while the land is the one it was solved on: the tunnel test starts from it.
+  groundSolve: () => {
+    const solved = scene.roadsSolve();
+    return solved && solved.terrainRevision === doc.terrainRevision ? solved.elevation : null;
+  },
   flash: (ids) => scene.flashRoads(ids),
   mutate: (fn) => mutate(fn),
   hint: (key) => flashHint(key),
@@ -2571,6 +2577,8 @@ function mountUnifiedChrome(): void {
     // Junctions that cannot be built (`Network.impossible`): counted in the
     // top bar, and the first one shown in the inspector on a click.
     impossibleCount: () => net.impossible.size,
+    // The money in hand (`world/economy.ts`), in the top bar.
+    balance: () => doc.economy.balance,
     showImpossible: () => {
       const id = net.impossible.keys().next().value;
       const node = id === undefined ? undefined : doc.node(id);
@@ -3485,7 +3493,7 @@ const CHANGE_COLOURS: Record<ChangeKind, string> = {
   roads: '#ffd23f', traffic: '#fca311', clearings: '#95d5b2', terrain: '#c8823c', paint: '#9be564', buildings: '#ff8fab', zones: '#7bdff2', lots: '#b2f7ef',
   utilities: '#f7aef8', barriers: '#d0d0d0', landscape: '#6bd425', transit: '#4cc9f0', people: '#ffffff',
   trees: '#2d6a4f', elements: '#e0aaff', fog: '#e9ecef', clouds: '#f8f9fa', weather: '#adb5bd', nature: '#52b788',
-  gullies: '#8d5524', elevation: '#ff6b6b', ground: '#f4a261', light: '#ffe066', surfaces: '#4361ee',
+  gullies: '#8d5524', economy: '#2a9d8f', elevation: '#ff6b6b', ground: '#f4a261', light: '#ffe066', surfaces: '#4361ee',
 };
 
 /**
@@ -3936,7 +3944,10 @@ function drawOverlayScreen(): void {
       {
         const tens = Math.round((pathLength * METERS_PER_UNIT) / 10) * 10;
         // With the reason a refused draft would be refused, beside its length.
-        const text = refusal ? `${tens} m · ${t(`rule.short.${refusal}`)}` : `${tens} m`;
+        // And what it costs (`world/economy.ts`), once the draft has been judged.
+        const cost = settling ? null : roadTool.cost();
+        const priced = cost === null ? `${tens} m` : `${tens} m · ${formatCost(cost)}`;
+        const text = refusal ? `${priced} · ${t(`rule.short.${refusal}`)}` : priced;
         ctx.save();
         ctx.font = '700 13px system-ui, sans-serif';
         const tw = ctx.measureText(text).width;

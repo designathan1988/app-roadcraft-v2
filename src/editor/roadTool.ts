@@ -25,7 +25,7 @@ const VERDICT_DELAY = 120;
 /** A refusal the preview names: the editing rules', or a crossing at the wrong height. */
 export type RefusalReason = RoadEditRefusal | 'clearance';
 
-const REFUSALS: ReadonlySet<string> = new Set<RefusalReason>(['sharp', 'squeezed', 'overlap', 'steep', 'clearance']);
+const REFUSALS: ReadonlySet<string> = new Set<RefusalReason>(['sharp', 'squeezed', 'overlap', 'steep', 'clearance', 'funds']);
 function isRefusal(reason: string): reason is RefusalReason {
   return REFUSALS.has(reason);
 }
@@ -71,6 +71,11 @@ export interface RoadToolHost {
   naturalHeightAt(x: number, y: number): number;
   /** The elevation solved by the commit's tunnel test, offered to the renderer. */
   offerElevation(solution: RoadElevation, revision: number): void;
+  /**
+   * The roads' heights the game last solved on the natural ground as it
+   * stands, or null (the land moved since): the tunnel test starts from them.
+   */
+  groundSolve?(): RoadElevation | null;
   /** The roads just laid blink. */
   flash(ids: readonly SegmentId[]): void;
   /** An edit of the document, one undo step. */
@@ -372,7 +377,7 @@ export class RoadTool {
     const road = this.curvePending ? null : this.draft ?? this.chainPreview;
     const key = road ? this.draftKey(road) : null;
     if (key !== this.judged.key) {
-      this.judged = { key, reason: null };
+      this.judged = { key, reason: null, cost: null };
       if (this.judgeTimer !== null) clearTimeout(this.judgeTimer);
       this.judgeTimer = null;
       if (key !== null) this.judgeTimer = setTimeout(() => this.judge(key), VERDICT_DELAY);
@@ -380,7 +385,18 @@ export class RoadTool {
     return this.judged.reason;
   }
 
-  private judged: { key: string | null; reason: RefusalReason | null } = { key: null, reason: null };
+  private judged: { key: string | null; reason: RefusalReason | null; cost: number | null } = { key: null, reason: null, cost: null };
+
+  /**
+   * What the road in hand would cost (`world/economy.ts`), judged with the
+   * verdict on the same dry run, or null until it is: shown in the preview
+   * beside its length, and when it is more than the balance the verdict is
+   * `funds`.
+   */
+  cost(): number | null {
+    this.verdict();
+    return this.judged.cost;
+  }
   private judgeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private draftKey(d: RoadDraft): string {
@@ -399,10 +415,10 @@ export class RoadTool {
     const { end, pieces } = this.ending(road);
     if (!pieces.length) return;
     const result = commitRoadPath(host.doc, host.net, road.start, end, settings.typeIndex, pieces, settings.lanes,
-      settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true });
+      settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true, groundSolve: host.groundSolve?.() ?? null });
     const reason = !result.committed && result.reason && isRefusal(result.reason) ? result.reason : null;
-    this.judged = { key, reason };
-    if (reason) host.redraw();
+    this.judged = { key, reason, cost: result.cost ?? null };
+    host.redraw();
   }
 
   /** Lays the road `d` ends at (`chosenEnd`, or what is under its end), one undo step; false when refused. */
@@ -416,7 +432,7 @@ export class RoadTool {
     host.mutate(() => {
       before = new Set(doc.segments.keys());
       result = commitRoadPath(doc, net, d.start, end, settings.typeIndex, pieces, settings.lanes, settings.parking,
-        (x, y) => host.naturalHeightAt(x, y));
+        (x, y) => host.naturalHeightAt(x, y), { groundSolve: host.groundSolve?.() ?? null });
       if (result.elevation) host.offerElevation(result.elevation, net.revision);
       // Drawn as it was previewed until the new world is in place.
       if (result.committed) this.settling = { ...d, snap: { ...d.snap, at: end.at } };

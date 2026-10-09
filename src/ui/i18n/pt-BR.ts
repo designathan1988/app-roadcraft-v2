@@ -811,6 +811,11 @@ export const PT_BR: Dictionary = {
   'rule.short.overlap': 'sobre outra via',
   'rule.short.steep': 'íngreme demais',
   'rule.short.clearance': 'altura sem vão',
+  'rule.short.funds': 'dinheiro insuficiente',
+  'hint.rule.funds': 'Recusado: não há dinheiro para construir isto. Demolir vias devolve parte do preço delas.',
+  'economy.money': 'R$ {value}',
+  'economy.balance': 'Dinheiro em caixa. Vias custam pela largura e pelo comprimento; pontes e túneis custam mais. Demolir uma via devolve {share}% do preço dela.',
+  'economy.refund': 'devolve {value}',
   'hint.road.clearance': 'Não construída: cruzaria uma via com diferença de altura pequena demais para se unir a ela ou passar por cima. Suba ou desça a via (Page Up/Down).',
   'hint.road.tunnel':
     'Arraste atravessando o morro · a via desce, o terreno fecha em cima e surgem os portais',

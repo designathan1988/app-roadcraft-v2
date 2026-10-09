@@ -23,6 +23,12 @@ breaks far from where you edit in `world/`, and how to add the common things.
    `conflictPoints.ts`): a new conflict rule changes the phasing.
 7. **The footway height** is `roadTypes.ts` `FOOTWAY_RISE`, declared once;
    `tests/arch` checks it.
+8. **Road tuning figures** (grades, clearances, tunnel cover, pier and pole
+   spacing, flow thresholds, prices) live in `roads/tuning.ts`, each with its
+   source; `elevation.ts`, `structures.ts`, `utilities.ts`, `editor/commit.ts`,
+   `editor/editRules.ts` and `render/structures.ts` read them
+   (`tests/arch/roads.spec.ts`). A LIVE figure changes only by the player's
+   decision (`tests/world/roadTuning.spec.ts` locks them).
 
 ## Traps that have already caught someone
 

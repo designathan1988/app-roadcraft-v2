@@ -25,6 +25,7 @@ import { type LandscapeItem, type LandscapeKind, type SignType, SIGN_TEXT_MAX, i
 import { MAX_PAINT_DABS, type PaintDab, isPaintKind } from './terrainPaint';
 import { MAX_PLACED_CLOUDS, readCloud, type PlacedCloud } from './clouds';
 import { DEFAULT_WEATHER, readWeather, type Weather } from './weather';
+import { DEFAULT_ECONOMY, readEconomy, type Economy } from './economy';
 import { MAX_PLANTED_TREES, MAX_TREE_CLEARINGS, readPlantedTree, readTreeClearing, type PlantedTree, type TreeClearing } from './trees';
 import { MAX_ELEMENTS, readElement, type ElementItem, type ElementKind } from './elements';
 import { DEFAULT_GULLY_AUTO, MAX_GULLY_DABS, readGullyDab, type GullyDab } from './gullies';
@@ -127,8 +128,8 @@ export interface RoadSegment {
  * The authoring document: what the user drew, before any derived geometry.
  *
  * Mutations are applied here, mark entities dirty and move a revision;
- * `Network.rebuild()` then rebuilds everything derived (the dirty sets are a
- * hook for an incremental rebuild that does not exist yet - see `markNode`). Nothing in this file knows about lanes,
+ * `Network.rebuild()` then rebuilds what is derived from what changed (see
+ * `markNode` for why not from the dirty sets). Nothing in this file knows about lanes,
  * vehicles or rendering.
  */
 export class RoadDoc {
@@ -210,6 +211,12 @@ export class RoadDoc {
   readonly clouds: PlacedCloud[] = [];
   /** The map's weather (`weather.ts`). */
   weather: Weather = DEFAULT_WEATHER;
+  /**
+   * The money the roads are paid from (`economy.ts`, docs/VIAS.md V0). Part
+   * of the document, so undo gives back what an edit took; saved only when it
+   * is not the starting balance, so a map from before it reads the same.
+   */
+  economy: Economy = DEFAULT_ECONOMY;
   /** Trees the player planted (`trees.ts`), oldest first. */
   readonly trees: PlantedTree[] = [];
   /** Where trees were cut away, the woods' own too (`trees.ts`), oldest first. */
@@ -322,6 +329,7 @@ export class RoadDoc {
   get zoneRevision(): number { return this.changes.serialOf('zones'); }
   get lotRevision(): number { return this.changes.serialOf('lots'); }
   get peopleRevision(): number { return this.changes.serialOf('people'); }
+  get economyRevision(): number { return this.changes.serialOf('economy'); }
 
   /** A road segment's rectangle as drawn: its ends, its bulge and its width. */
   segmentRect(id: SegmentId): ChangeRect | null {
@@ -795,6 +803,13 @@ export class RoadDoc {
     this.gullyAuto = next;    this.changes.record('gullies', null);
   }
 
+  /** The balance after an edit was paid for (`economy.ts` `chargeFor`); `cause` says which. */
+  setBalance(balance: number, cause?: string): void {
+    if (!Number.isFinite(balance) || balance === this.economy.balance) return;
+    this.economy = { balance };
+    this.changes.record('economy', null, cause ? { cause } : {});
+  }
+
   setWeather(change: Partial<Weather>): void {
     const next = readWeather({ ...this.weather, ...change }, this.weather);
     if (JSON.stringify(next) === JSON.stringify(this.weather)) return;
@@ -993,17 +1008,16 @@ export class RoadDoc {
    *
    * The load-bearing effect of these methods today is `revision++`. Every
    * consumer — `Network`, `LaneletGraph`, `SimWorld`, the renderer's path cache,
-   * the minimap — gates on a revision number, and `Network.rebuild()` then
-   * rebuilds EVERYTHING unconditionally: it clears the polyline cache outright
-   * and never consults `dirtyNodes` or `dirtySegments`. `PolylineCache.invalidate`
-   * exists and is never called.
+   * the minimap — gates on a revision number. `Network.rebuild()` is
+   * incremental, but it does NOT read `dirtyNodes` or `dirtySegments`: it
+   * compares each segment's and node's sources with what its last rebuild
+   * recorded (docs/VIAS.md V0), because any other network built on this
+   * document clears these sets, and a set says "touched", not "changed".
    *
-   * So the dirty sets are a correctly-maintained hook for an incremental
-   * rebuild that does not exist yet, not a live optimisation. They are kept
-   * because getting this closure right is the hard part and it is already done;
-   * do not assume they are making anything faster, and do not delete a
-   * `markNode`/`markSegment` call on the grounds that "nothing reads it" — the
-   * revision bump is what keeps every cache in the engine honest.
+   * So the dirty sets are a correctly-maintained record nothing depends on
+   * for correctness; do not delete a `markNode`/`markSegment` call on the
+   * grounds that "nothing reads it" — the revision bump is what keeps every
+   * cache in the engine honest.
    */
   markNode(id: NodeId, traffic = true): void {
     // A node may already be dirty when it is edited again before a rebuild.
@@ -1211,6 +1225,10 @@ export class RoadDoc {
       others.push('nature');
     }
 
+    if (this.economy.balance !== source.economy.balance) {
+      this.economy = { ...source.economy };
+      others.push('economy');
+    }
     if (JSON.stringify(this.weather) !== JSON.stringify(source.weather)) {
       this.weather = { ...source.weather };
       others.push('weather');
@@ -1368,6 +1386,8 @@ export class RoadDoc {
       ...(this.people.length > 0 ? { people: this.people.map((p) => JSON.parse(JSON.stringify(p)) as PersonSpec) } : {}),
       // And the public transport.
       ...(hasTransit(this.transit) ? { transit: JSON.parse(JSON.stringify(this.transit)) as TransitData } : {}),
+      // Only off the starting balance: a map that never paid for a road serialises as before.
+      ...(this.economy.balance !== DEFAULT_ECONOMY.balance ? { economy: { balance: this.economy.balance } } : {}),
     };
   }
 
@@ -1533,6 +1553,9 @@ export class RoadDoc {
     }
     // Public transport, if the map has any; anything malformed is dropped.
     if (data.transit) doc.transit = normalizeTransit(data.transit);
+    // The balance, if the map has paid for anything (absent: the starting balance).
+    const economy = data.economy === undefined ? null : readEconomy(data.economy);
+    if (economy) { doc.economy = economy; doc.changes.record('economy', null, { cause: 'mapa carregado' }); }
     // The player's landscaping, if the map has any; anything malformed is dropped.
     for (const raw of data.landscape ?? []) {
       if (!isLandscapeKind(raw?.kind) || !Number.isFinite(raw.x) || !Number.isFinite(raw.y) || !Number.isInteger(raw.id)) continue;
@@ -1661,6 +1684,8 @@ export interface SerializedDoc {
   readonly lotKeys?: readonly string[];
   /** People from the Person Creator; OPTIONAL like the buildings. Normalised on load. */
   readonly people?: readonly unknown[];
+  /** The balance (`economy.ts`); absent at the starting balance. */
+  readonly economy?: { readonly balance: number };
 }
 
 function detach(n: RoadNode | undefined, id: SegmentId): void {
@@ -1834,7 +1859,7 @@ function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
 }
 
 /** `toJSON`'s keys written after the buildings (`RoadDoc.toText`). */
-const AFTER_BUILDINGS = new Set(['zones', 'zoneMarks', 'lots', 'lotKeys', 'people', 'transit']);
+const AFTER_BUILDINGS = new Set(['zones', 'zoneMarks', 'lots', 'lotKeys', 'people', 'transit', 'economy']);
 
 /** Two stamp lists that shape the same land (stamp by stamp, field by field). */
 export function sameStamps(a: readonly TerrainStamp[], b: readonly TerrainStamp[]): boolean {

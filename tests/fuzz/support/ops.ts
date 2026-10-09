@@ -53,6 +53,9 @@ export interface FuzzState {
 
 export function freshState(): FuzzState {
   const doc = new RoadDoc();
+  // The fuzzer hunts geometry: money is never why a gesture fails here (the
+  // economy's own refusals are tested in tests/editor/economy.spec.ts).
+  doc.setBalance(Number.MAX_SAFE_INTEGER, 'fuzz');
   const net = new Network(doc);
   net.rebuild();
   return { doc, net, notes: [] };

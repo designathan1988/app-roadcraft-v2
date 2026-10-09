@@ -4,6 +4,7 @@ import { normalizeRoadSection } from '@world/roadSection';
 import { migrateStructure } from '@world/structures';
 import { isTerrainMode, isTerrainProfile } from '@world/terrain';
 import { isNatureSettings } from '@world/ecology';
+import { readEconomy } from '@world/economy';
 import { isSerializedBuildings } from '@world/buildings/serialize';
 
 const KEY = 'roadcraft.world.v7';
@@ -551,6 +552,8 @@ export function isSerializedDoc(value: unknown): value is SerializedDoc {
   if (!isSerializedBuildings(value.buildings)) return false;
   // People are normalised one by one on load; the key only has to be a list.
   if (value.people !== undefined && !Array.isArray(value.people)) return false;
+  // The balance (`world/economy.ts`), when the map carries one: a finite number.
+  if (value.economy !== undefined && readEconomy(value.economy) === null) return false;
 
   return true;
 }

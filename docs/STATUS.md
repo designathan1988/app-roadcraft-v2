@@ -115,6 +115,12 @@ o jogo a cada edição.
   edição cria ou piora, nunca o que o mapa já tinha (abrir mapa não recusa).
   A pré-visualização pinta o rascunho de inválido com o motivo ao lado do
   comprimento antes de soltar.
+- Sistema de vias, etapa V0 (ramo `vias`, ativo só depois do merge;
+  `docs/VIAS.md`): valores de ajuste em `world/roads/tuning.ts`; rede e
+  alturas refeitas só onde a edição mudou algo (PV1 no `PROBLEMAS.md`);
+  economia mínima: saldo na barra de cima, custo da via no rótulo do preview,
+  débito ao construir, recusa sem saldo, devolução de 25% ao demolir, desfazer
+  devolve o dinheiro.
 - Pincel de terreno: o fim da pincelada refaz só a região suja dela, em
   fatias, e a água só quando a pincelada chega perto dela (P98, `3e60f67b`).
 - Névoa da chuva e bruma do ar medidas do olho equivalente também na vista

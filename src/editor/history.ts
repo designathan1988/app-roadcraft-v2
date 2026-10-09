@@ -118,7 +118,9 @@ function sum(values: readonly number[]): number {
  */
 export function restoreInto(target: RoadDoc, data: SerializedDoc, net: Network): void {
   target.replaceFromJSON(data);
-  net.rebuild();
+  // A map opened is built whole, nothing taken from the map before it
+  // (`Network.rebuild`, docs/VIAS.md V0); edits after it are incremental.
+  net.rebuild({ full: true });
   repairNearConnections(target, net);
 }
 
