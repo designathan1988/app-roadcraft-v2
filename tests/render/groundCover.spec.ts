@@ -14,14 +14,13 @@ describe('ground cover', () => {
     }
   });
 
-  it('grows every tree light: body and foliage cards together under 300 triangles, cards on the broadleaves only', () => {
+  it('grows every tree light: body and foliage cards together under 300 triangles', () => {
     // The game's one tree style (`lowPolyTrees.ts`): a low-poly trunk and
-    // inner crown under alpha-cut foliage cards; conifers keep their facets.
+    // inner crown under alpha-cut foliage cards, conifers included.
     for (const species of FOREST_SPECIES) {
       for (let seed = 0; seed < 4; seed++) {
         const model = treeModel(species, seed);
-        if (species === 'conifer') expect(model.cards).toBeNull();
-        else expect(model.cards).not.toBeNull();
+        expect(model.cards).not.toBeNull();
         const total = triangles(model.body) + (model.cards ? triangles(model.cards) : 0);
         expect(total).toBeLessThanOrEqual(300);
       }

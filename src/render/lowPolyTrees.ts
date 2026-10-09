@@ -34,8 +34,8 @@ import { applyWind, windDepthMaterial, type WindResponse } from './wind';
  * (Polycount and SideFX on stylized foliage; the fluffy-tree write-ups of
  * Pontus Karlsson and Michael Dougall). The cut edge is smoothed by alpha to
  * coverage on the multisampled target (three: "smooth aliasing on
- * alphaTest-clipped edges"). Conifers and palms keep their geometry: needles
- * and fronds read better as facets than as clusters.
+ * alphaTest-clipped edges"). Conifers too, their cards smaller towards the
+ * tip; only the palm keeps its geometry, its fronds being the tree.
  *
  * Proportions from a professional low-poly kit (Kenney's Nature Kit,
  * `public/models/nature/`: a crown 0.35 to 0.6 of the height across, a short
@@ -62,17 +62,20 @@ interface Tone {
 }
 /** Two sRGB hex colours, converted once into the linear working space by `Color`. */
 const tone = (dark: number, lit: number): Tone => ({ dark: new Color(dark), lit: new Color(lit) });
-// Seen in the game's own light (ACES at exposure 1).
-const LEAF = tone(0x3d5e2a, 0x7fa34b);
-const LEAF_TALL = tone(0x36552d, 0x6f9452);
-const NEEDLE = tone(0x2b4b2d, 0x587c49);
+// Seen in the game's own light (ACES at exposure 1), and DARKER and a touch
+// bluer than the lawn they stand on: at a lit 0x7fa34b the crowns were as
+// light as the grass and melted into it (the player, 2026-10-08: "um tom de
+// verde mais escuro para poder aparecer melhor").
+const LEAF = tone(0x24401c, 0x4f7a34);
+const LEAF_TALL = tone(0x203a1e, 0x46703a);
+const NEEDLE = tone(0x1a3320, 0x3a5e3a);
 const FROND = tone(0x3e6026, 0x7fa448);
 const BARK = tone(0x4a3c2f, 0x7d6853);
 const PALM_BARK = tone(0x5a4c3e, 0x948268);
 const BLOOM_YELLOW = tone(0xb8892a, 0xe6bd4c);
 const BLOOM_PINK = tone(0x9a5078, 0xd88ab0);
-const SHRUB = tone(0x365a28, 0x6b9145);
-const HEDGE = tone(0x2e4c24, 0x5c7d3a);
+const SHRUB = tone(0x223d1b, 0x4a6e32);
+const HEDGE = tone(0x1f3618, 0x42602c);
 const FLOWERS: readonly Tone[] = [tone(0xb9b2a4, 0xe8e2d6), tone(0x9c4a68, 0xd0759a), tone(0x8e2f2f, 0xc4524c)];
 
 /** A small seeded random (mulberry32): a model is the same every time it is made. */
@@ -125,6 +128,8 @@ interface LeafPoint {
   readonly n: Vector3;
   readonly tone: Tone;
   readonly height: number;
+  /** Its cards' size against the tree's (a conifer's narrow towards the tip); 1 when absent. */
+  readonly size?: number;
 }
 
 /**
@@ -230,7 +235,7 @@ class Builder {
     let top = box.max.y;
     for (let k = 0; k < (this.leaves.length > 0 ? count : 0); k++) {
       const leaf = this.leaves[Math.floor(this.rng() * this.leaves.length)]!;
-      const s = size * (0.75 + this.rng() * 0.5);
+      const s = size * (leaf.size ?? 1) * (0.75 + this.rng() * 0.5);
       const c = leaf.p.clone().addScaledVector(leaf.n, s * (0.1 + this.rng() * 0.2));
       top = Math.max(top, c.y + s * 0.45);
       placed.push({ leaf, s, c });
@@ -336,31 +341,29 @@ function broadleafTall(seed: number): LowPolyParts {
   return b.finish(34, 0.34);
 }
 
-/** The cypress: a narrow column of four seven-sided tiers over a short trunk, their rims ragged and hanging. Needles read as facets: no cards. */
+/**
+ * The cypress: a narrow, dark cone of a heart over a short trunk under
+ * needle-green foliage cards, smaller towards the tip so the column still
+ * narrows to a point (the faceted tiers it had read as the old trees beside
+ * the card trees - the player, 2026-10-08).
+ */
 function cypress(seed: number): LowPolyParts {
   const b = new Builder(random(seed));
-  trunk(b, new Vector3(0, 0.18, 0), 0.034, 0.024, BARK);
+  trunk(b, new Vector3(0, 0.2, 0), 0.034, 0.024, BARK);
   const slim = 0.92 + b.rng() * 0.16;
-  const shade: Occlusion = (p) => 0.66 + 0.34 * Math.min(1, Math.max(0, (p.y - 0.14) / 0.86));
-  const tiers: readonly (readonly [number, number, number])[] = [[0.14, 0.36, 0.17], [0.33, 0.32, 0.14], [0.51, 0.29, 0.105], [0.68, 0.32, 0.07]];
-  tiers.forEach(([base, height, r], k) => {
-    const radius = r * slim;
-    const cone = new ConeGeometry(radius, height, 7, 1, false);
-    const position = cone.getAttribute('position');
-    const p = new Vector3();
-    for (let i = 0; i < position.count; i++) {
-      p.fromBufferAttribute(position, i);
-      if (!(p.y < 0 && Math.hypot(p.x, p.z) > radius * 0.5)) continue;
-      // A ragged rim of boughs, each corner its own reach, hanging a little.
-      const n = noise3(p.x * 9 + k * 5.3, k * 1.7, p.z * 9, seed + k);
-      p.x *= 1 + n * 0.16;
-      p.z *= 1 + n * 0.16;
-      p.y -= height * (0.06 + 0.05 * (n + 1));
-      position.setXYZ(i, p.x, p.y, p.z);
-    }
-    b.add(cone, new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
-  });
-  return b.finish(0, 0);
+  const base = 0.16, height = 0.8, radius = 0.12 * slim;
+  const shade: Occlusion = (p) => (0.66 + 0.34 * Math.min(1, Math.max(0, (p.y - base) / height))) * 0.5;
+  b.add(new ConeGeometry(radius, height, 7, 1, false), new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
+  // The cards' points over the cone, each facing out and a little up.
+  for (let i = 0; i < 90; i++) {
+    const t = b.rng();
+    const y = base + t * height * 0.92;
+    const r = radius * (1 - t) * 1.05;
+    const a = b.rng() * Math.PI * 2;
+    const n = new Vector3(Math.cos(a), 0.35, Math.sin(a)).normalize();
+    b.leaves.push({ p: new Vector3(Math.cos(a) * r, y, Math.sin(a) * r), n, tone: NEEDLE, height: t, size: 1 - 0.65 * t });
+  }
+  return b.finish(36, 0.26);
 }
 
 /** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. No cards. */
