@@ -227,8 +227,11 @@ export function createPostChain(
   // Light that is brighter than white spills a little round itself: the sun
   // on glass, lit windows and lamps at night. Only what is really bright
   // blooms; the day scene keeps its edges.
-  const bloomStrength = level === 'ultra' ? 0.42 : 0.32;
-  const bloom = new UnrealBloomPass(new Vector2(size.x, size.y), bloomStrength, 0.55, 0.92);
+  // Gentle and tight, and only for real lights (lamps, headlamps, lanterns
+  // over 1.05): stronger and wider, with every lit window over the threshold,
+  // the night town was washed out in halos (the player, 2026-10-09).
+  const bloomStrength = level === 'ultra' ? 0.22 : 0.18;
+  const bloom = new UnrealBloomPass(new Vector2(size.x, size.y), bloomStrength, 0.32, 1.05);
   bloom.enabled = false;
   composer.addPass(bloom);
   // Its shaders built now, in parallel (KHR_parallel_shader_compile), not at

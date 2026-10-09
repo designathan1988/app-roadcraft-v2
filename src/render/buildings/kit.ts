@@ -414,12 +414,17 @@ export function createBuildingKit(): BuildingKit {
     diffuseColor.rgb = mix(diffuseColor.rgb, room, 0.55);
   }`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  float roomLit = vLit >= 0.0 ? vLit * (0.55 + 0.7 * fract(vRoomLot * 7.13))
-    : step(0.34, vRoomLot) * (0.45 + 0.9 * fract(vRoomLot * 7.13));
+  // Not every occupied room shows its light (blinds, a lamp in the next
+  // room): about a third stay dark, and the lit ones range from a dim lamp
+  // to a bright ceiling light - so a night tower reads as windows, not as a
+  // sheet of cream (the player, 2026-10-09: "incandescente").
+  float shown = step(fract(vRoomLot * 5.31), 0.64);
+  float level = 0.3 + 0.85 * fract(vRoomLot * 7.13) * fract(vRoomLot * 2.17 + 0.4);
+  float roomLit = shown * (vLit >= 0.0 ? vLit * level : step(0.34, vRoomLot) * level);
   vec3 roomTint = mix(vec3(1.0), vec3(0.62, 0.78, 1.15), step(0.9, fract(vRoomLot * 3.71)));
   totalEmissiveRadiance *= roomLit * roomTint;`);
     };
-    glassy.customProgramCacheKey = () => `room-lights-awake-interior-${kind}`;
+    glassy.customProgramCacheKey = () => `room-lights-awake-interior-v2-${kind}`;
   }
   const shell = createFinishMaterials();
   const ghostShell = new MeshStandardMaterial({
