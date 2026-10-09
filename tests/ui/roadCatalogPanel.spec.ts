@@ -16,7 +16,7 @@ function mount(classIndex = 0): { root: HTMLElement; picked: number[] } {
 }
 
 describe('the road catalogue', () => {
-  it('shows five tabs and large named cards with width and price, no native control', () => {
+  it('shows five tabs and a plan-view tile per road with its whole name, width and price, no native control', () => {
     const { root } = mount();
     expect([...root.querySelectorAll('.rc-tab')].map((b) => (b as HTMLElement).dataset['category'])).toEqual(['streets', 'avenues', 'highways', 'special', 'mine']);
     const cards = root.querySelectorAll('.rc-card');
@@ -24,7 +24,7 @@ describe('the road catalogue', () => {
     for (const card of cards) {
       expect(card.querySelector('.rc-name')?.textContent).toBeTruthy();
       expect(card.querySelector('.rc-meta')?.textContent).toMatch(/m · .*\/m/);
-      expect(card.querySelector('svg.xs')).not.toBeNull();
+      expect(card.querySelector('img.rc-art')).not.toBeNull();
     }
     expect(root.querySelectorAll('select, input').length).toBe(0);
   });

@@ -4,7 +4,8 @@ import { profileRoad, profileWidth } from '@world/roads/profile';
 import type { RoadTemplate } from '@world/roads/templates';
 import { UNITS_PER_METER } from '@world/units';
 import { t } from '../i18n';
-import { drawSection, metresText } from './crossSection';
+import { metresText } from './crossSection';
+import { profileSwatch } from './profileSwatch';
 import { type DrawProfile, drawProfile, setDrawProfile } from './drawProfile';
 import { formatMoney } from './money';
 import { openProfileEditor, profileEditorOpen, closeProfileEditor } from './profileEditor';
@@ -86,6 +87,8 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
   const grid = document.createElement('div');
   grid.className = 'rc-cards';
   const shown = roads.filter((r) => r.category === category);
+  // One scale for every tile: the widest road offered.
+  const span = Math.max(...roads.map((r) => r.profile.elements.reduce((sum, e) => sum + e.width, 0)));
   if (!shown.length) {
     const empty = document.createElement('div');
     empty.className = 'rc-empty';
@@ -108,8 +111,8 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
     main.title = t('catalog.tip', {
       name: nameOf(road), lanes, way: t(oneWay ? 'catalog.oneWay' : 'catalog.twoWay'), speed: road.profile.speedKmh,
     });
-    const art = drawSection(road.profile, { width: 176, height: 70, labels: false, handles: false, title: nameOf(road) }).svg;
-    main.innerHTML = `<span class="rc-art">${art}</span><span class="rc-name"></span><span class="rc-meta"></span>`;
+    main.innerHTML = '<img class="rc-art" alt="" draggable="false"><span class="rc-name"></span><span class="rc-meta"></span>';
+    (main.querySelector('.rc-art') as HTMLImageElement).src = profileSwatch(road.profile, span);
     main.querySelector('.rc-name')!.textContent = nameOf(road);
     main.querySelector('.rc-meta')!.textContent = t('catalog.meta', {
       width: metresText(profileWidth(road.profile)),
@@ -126,7 +129,9 @@ export function catalogStrip(host: CatalogHost): HTMLElement {
       custom.type = 'button';
       custom.className = 'rc-custom';
       custom.dataset['action'] = 'customise';
-      custom.textContent = t('catalog.customise');
+      custom.title = t('catalog.customise');
+      custom.setAttribute('aria-label', t('catalog.customise'));
+      custom.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 11.5V13h1.5l6.9-6.9-1.5-1.5L3 11.5zm9.7-6.2a.8.8 0 000-1.1l-.9-.9a.8.8 0 00-1.1 0l-.8.8 1.5 1.5.8-.8z" fill="currentColor"/></svg>';
       custom.onclick = () => {
         openProfileEditor({
           title: t('profileEditor.newRoads'),
