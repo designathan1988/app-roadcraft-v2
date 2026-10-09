@@ -182,13 +182,15 @@ export function valueNoise(x: number, y: number): number {
 /**
  * Which land a map starts from (`RoadDoc.terrainRelief`): 1 the gentle
  * four-octave field every map saved before this existed was built on, 2 the
- * natural landform (`naturalRelief`). A map keeps the one it was made on, so
- * its roads never find the ground moved under them.
+ * natural landform (`naturalRelief`), 3 a level plain (height 0 everywhere,
+ * the player's flat map). A map keeps the one it was made on, so its roads
+ * never find the ground moved under them.
  */
-export type ReliefVersion = 1 | 2;
+export type ReliefVersion = 1 | 2 | 3;
 export const RELIEF_LEGACY: ReliefVersion = 1;
 export const RELIEF_NATURAL: ReliefVersion = 2;
-export const isReliefVersion = (value: unknown): value is ReliefVersion => value === 1 || value === 2;
+export const RELIEF_FLAT: ReliefVersion = 3;
+export const isReliefVersion = (value: unknown): value is ReliefVersion => value === 1 || value === 2 || value === 3;
 
 /** 0..1 smoothstep of `t`, clamped. */
 const smooth01 = (t: number): number => {
@@ -318,7 +320,8 @@ export function sampleTerrainHeight(
   y: number,
 ): number {
   const list = stamps instanceof TerrainIndex ? stamps.near(x, y) : stamps;
-  let height = stamps instanceof TerrainIndex && stamps.relief === RELIEF_NATURAL ? naturalRelief(x, y) : baseRelief(x, y);
+  const relief = stamps instanceof TerrainIndex ? stamps.relief : RELIEF_LEGACY;
+  let height = relief === RELIEF_FLAT ? 0 : relief === RELIEF_NATURAL ? naturalRelief(x, y) : baseRelief(x, y);
   // The stroke being gathered (see `TerrainStamp.stroke`): its id, its mode,
   // and the strongest signed move any of its dabs makes here so far.
   let stroke: number | undefined;

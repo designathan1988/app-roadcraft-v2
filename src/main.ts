@@ -21,7 +21,7 @@ import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
 import { layCity, zoneCity } from '@editor/cityGenerator';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
-import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
+import { MAX_TERRAIN_STAMPS, RELIEF_FLAT, type TerrainMode } from '@world/terrain';
 import type { GeologyKind } from '@world/terrainPaint';
 import { DEFAULT_REGION, isRegionId, type NatureSettings } from '@world/ecology';
 import type { NodeId, SegmentId } from '@world/ids';
@@ -154,8 +154,8 @@ const healthWatch = watchHealth({
 });
 
 const doc = new RoadDoc();
-// A new map is made on the natural land; a saved one keeps its own (restored below).
-doc.terrainRelief = RELIEF_NATURAL;
+// A new map is a level plain (the player, 2026-10-09); a saved one keeps its own (restored below).
+doc.terrainRelief = RELIEF_FLAT;
 /** A new map's ecosystem: the default biome, its patches laid by a seed of its own. */
 const newNature = (region = DEFAULT_REGION): NatureSettings => ({ region, seed: Math.floor(Math.random() * 1_000_000_000) });
 doc.nature = newNature();
@@ -225,7 +225,7 @@ if (saved) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
     const fresh = new RoadDoc();
-    fresh.terrainRelief = RELIEF_NATURAL;
+    fresh.terrainRelief = RELIEF_FLAT;
     fresh.nature = newNature();
     doc.replaceWith(fresh);
     net.rebuild();
@@ -2811,7 +2811,7 @@ let cityBuiltIn = 0;
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty.
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL, nature: newNature() }, 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT, nature: newNature() }, 'import');
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');
