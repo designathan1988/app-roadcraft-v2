@@ -363,6 +363,36 @@ export function planPoleRun(
   spacing = DEFAULT_POLE_SPACING,
   lamps: PoleLampMode = 'alternate',
 ): PoleRunPlan {
+  // The preview asks for the plan every frame (`main.ts`), and the same plan
+  // while the pointer stands still: kept until something it reads changes -
+  // its ends, its settings, the network or the poles standing (1.3 ms a frame
+  // on a 6 x 6 block town, redone for nothing).
+  const poles = doc.changes.serialOf('utilities');
+  const k = lastPlan;
+  if (k && k.doc === doc && k.net === net && k.revision === net.revision && k.poles === poles &&
+      k.fx === rawFrom.x && k.fy === rawFrom.y && k.tx === rawTo.x && k.ty === rawTo.y &&
+      k.reach === reach && k.spacing === spacing && k.lamps === lamps) return k.plan;
+  const plan = computePoleRun(doc, net, rawFrom, rawTo, reach, spacing, lamps);
+  lastPlan = { doc, net, revision: net.revision, poles, fx: rawFrom.x, fy: rawFrom.y, tx: rawTo.x, ty: rawTo.y, reach, spacing, lamps, plan };
+  return plan;
+}
+
+/** The last plan made, and what it was made from (`planPoleRun`). */
+let lastPlan: {
+  readonly doc: RoadDoc; readonly net: Network; readonly revision: number; readonly poles: number;
+  readonly fx: number; readonly fy: number; readonly tx: number; readonly ty: number;
+  readonly reach: number; readonly spacing: number; readonly lamps: PoleLampMode; readonly plan: PoleRunPlan;
+} | null = null;
+
+function computePoleRun(
+  doc: RoadDoc,
+  net: Network,
+  rawFrom: Vec2,
+  rawTo: Vec2,
+  reach: number,
+  spacing: number,
+  lamps: PoleLampMode,
+): PoleRunPlan {
   const from = snapPole(doc, net, rawFrom, reach);
   const to = snapPole(doc, net, rawTo, reach);
   const refuse = (refused: PoleRunRefusal): PoleRunPlan => ({ from, to, poles: [], refused });

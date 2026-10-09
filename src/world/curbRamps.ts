@@ -53,11 +53,16 @@ const UNMARKED_WIDTH = m(2);
 const ROAD_REACH = m(0.6);
 /** Bucket size of the lookup grid. */
 const CELL = m(20);
+/**
+ * A grid cell's key as a number: `walkingRise` is asked for every walker drawn
+ * every frame, and a string key there was a string per person per frame.
+ */
+const cellKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
 
 interface RampSet {
   readonly revision: number;
   readonly ramps: readonly CurbRamp[];
-  readonly grid: ReadonlyMap<string, readonly CurbRamp[]>;
+  readonly grid: ReadonlyMap<number, readonly CurbRamp[]>;
 }
 
 const cache = new WeakMap<Network, RampSet>();
@@ -102,12 +107,12 @@ function rampSet(net: Network): RampSet {
       if (crossing > 0) pair(nodeId, segmentId, crossing, CROSSWALK_DEPTH / 2);
     }
   }
-  const grid = new Map<string, CurbRamp[]>();
+  const grid = new Map<number, CurbRamp[]>();
   for (const r of ramps) {
     const reach = r.half + r.flare + r.run;
     for (let cx = Math.floor((r.x - reach) / CELL); cx <= Math.floor((r.x + reach) / CELL); cx++) {
       for (let cy = Math.floor((r.y - reach) / CELL); cy <= Math.floor((r.y + reach) / CELL); cy++) {
-        const key = `${cx}:${cy}`;
+        const key = cellKey(cx, cy);
         const list = grid.get(key);
         if (list) list.push(r); else grid.set(key, [r]);
       }
@@ -128,7 +133,7 @@ function rampSet(net: Network): RampSet {
  */
 export function walkingRise(net: Network, x: number, y: number, onFootway: boolean, structure = 'ground'): number {
   const { grid } = rampSet(net);
-  const list = grid.get(`${Math.floor(x / CELL)}:${Math.floor(y / CELL)}`);
+  const list = grid.get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL)));
   let share = onFootway ? 1 : 0;
   if (!list) return share;
   let inside = false;
