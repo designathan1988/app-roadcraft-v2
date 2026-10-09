@@ -78,6 +78,8 @@ const LEAF_TALL = tone(0x203a1e, 0x46703a);
 const NEEDLE = tone(0x22402a, 0x4a7343);
 const FROND = tone(0x3e6026, 0x7fa448);
 const BARK = tone(0x4a3c2f, 0x7d6853);
+/** How far the shaded heart under a crown's foliage cards is drawn, of its full size: hidden behind the cards, seen only as shade between them. */
+const HEART_SHRINK = 0.62;
 const PALM_BARK = tone(0x5a4c3e, 0x948268);
 const NUT = tone(0x4a4a1e, 0x8a7c3a);
 const BLOOM_YELLOW = tone(0xb8892a, 0xe6bd4c);
@@ -260,7 +262,14 @@ class Builder {
     // The heart under the cards is their shade: what shows of it between
     // them reads as depth in the canopy, not as a solid.
     const heart: Occlusion = leafy ? (c) => occlusion(c) * 0.5 : occlusion;
-    this.add(solid, new Matrix4(), t, heart, 0.15, pick);
+    // Under foliage the heart is drawn shrunk towards the crown's middle
+    // (the cards stay on the full surface): at full size, seen close, it
+    // stood out between the cards as a flat-faced dark solid in the tree.
+    const shrink = leafy
+      ? new Matrix4().makeTranslation(at.x, at.y, at.z).multiply(new Matrix4().makeScale(HEART_SHRINK, HEART_SHRINK, HEART_SHRINK))
+        .multiply(new Matrix4().makeTranslation(-at.x, -at.y, -at.z))
+      : new Matrix4();
+    this.add(solid, shrink, t, heart, 0.15, pick);
   }
 
   /**
