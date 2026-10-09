@@ -1,6 +1,5 @@
 import { DT, JAM_GAP, STUCK_SECONDS } from './params';
 import type { SimWorld } from './world';
-import { refillPathWork } from '@world/nav/path';
 import { stepController } from './signals/fsm';
 import { longitudinalConstraints } from './vehicles/obstacles';
 import {
@@ -53,10 +52,7 @@ export interface StepOptions {
  */
 export function step(w: SimWorld, opts: StepOptions = {}): void {
   const traffic = opts.traffic ?? true;
-  // The walkers stand still while their door links are half rebuilt
-  // (`SimWorld.stepBuildingAccess`, a slice a frame): they would walk a
-  // graph being rewired.
-  const pedestrians = (opts.pedestrians ?? true) && !w.accessRefreshing;
+  const pedestrians = opts.pedestrians ?? true;
   const timings = opts.timings;
   let mark = timings ? performance.now() : 0;
   const lap = timings
@@ -67,18 +63,10 @@ export function step(w: SimWorld, opts: StepOptions = {}): void {
     }
     : (): void => {};
 
-  // Route searching has its allowance for this tick again (`findPath`).
-  refillPathWork();
-
   // 0. topology: the only place derived structure may change
   if (w.topologyRevision !== w.net.trafficRevision) {
     w.rebuildTopology();
     rebindAgents(w);
-  } else if (!w.accessSliced && w.accessStale) {
-    // In the game the frame loop brings the door links up to date a slice a
-    // frame (`TopologyCatchUp`); here, for a world stepped on its own (the
-    // specs), in one go.
-    if (w.refreshBuildingAccess()) w.pedEngine.rebind(w);
   }
   lap('0 topology');
 

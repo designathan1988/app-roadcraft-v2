@@ -125,13 +125,6 @@ export class TopologyCatchUp {
         rebindPeds(sim);
         return false;
       }
-      // A building or a pole changed: the door links, a few milliseconds a
-      // frame (web.dev, "Optimize JavaScript execution": chunks of a few ms
-      // in requestAnimationFrame), the cars driving on and the walkers
-      // waiting until the last chunk; done inside a tick it held a frame
-      // 37-112 ms after every pole, bomb or building grown.
-      sim.accessSliced = true;
-      if ((sim.accessStale || sim.accessRefreshing) && sim.stepBuildingAccess(slice())) rebindPeds(sim);
       return false;
     }
     // The road of an edit being built first: the frame's allowance goes to

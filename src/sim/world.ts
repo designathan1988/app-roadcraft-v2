@@ -7,7 +7,6 @@ import { ConflictIndex, type BodyClass } from '@world/conflictPoints';
 import { SimClock } from './clock';
 import { ClaimTable } from './intersections/claims';
 import type { Vehicle, VehicleId } from './vehicles/state';
-import type { Ped, PedId } from './peds/state';
 import { type SignalController, type SignalDeps, createController, rebuildController } from './signals/fsm';
 import { type CrossingId, makeCrossingId } from './signals/plan';
 import type { AuditIssue } from './audit';
@@ -15,15 +14,12 @@ import { SidewalkGraph } from './peds/sidewalk';
 import { hasDownstreamStorage } from './intersections/spillback';
 import { CrossingSpans } from './intersections/crossingSpans';
 import { m } from '@world/units';
-import { facadeBays } from '@world/buildings/geometry';
-import { ACCESS_COMPONENTS } from '@world/buildings/foundation';
 import type { CrossingStates } from './crossings/state';
 import type { PedView } from './people/view';
 import type { PedestrianEngine } from './people/engine';
 import { City } from './city/city';
 import { AmbientWorld } from './ambient/ambient';
 import { buildWalkways, walkwaySteps, type WalkGraph } from '@world/walkways';
-import type { Building } from '@world/buildings/types';
 /** The body class a signal plan is protected for: an ordinary car. */const CAR_CLASS: BodyClass = 1;
 
 /** Nobody walks until an engine is installed (`SimWorld.usePedestrianEngine`). */
@@ -76,7 +72,6 @@ export class SimWorld {
   readonly claims = new ClaimTable();
 
   readonly vehicles = new VersionedMap<VehicleId, Vehicle>();
-  readonly peds = new VersionedMap<PedId, Ped>();
   /**
    * What moves the people (`people/engine.ts`); everything else reaches them
    * through it. The game installs the agents' walking engine as it opens
@@ -93,13 +88,6 @@ export class SimWorld {
   readonly runtime = new Map<LaneletId, LaneletRuntime>();
   readonly controllers = new Map<NodeId, SignalController>();
 
-  /** Pedestrians currently inside each crossing. */
-  readonly pedOccupancy = new Map<CrossingId, PedId[]>();
-  /**
-   * Pedestrians waiting at a kerb for each crossing, by the kerb they stand
-   * at (`from` or `to` end of the crossing edge). Rebuilt every tick.
-   */
-  readonly pedWaiting = new Map<CrossingId, { from: number; to: number }>();
   /**
    * What vehicles, signals and the audit may know about the people at each
    * crossing (`crossings/state.ts`). Published by the pedestrian engine at the
@@ -148,10 +136,8 @@ export class SimWorld {
   };
 
   nextVehicleId = 1;
-  nextPedId = 1;
-  /** Per-world population timers; simulations must never influence each other. */
+  /** Per-world population timer; simulations must never influence each other. */
   vehicleSpawnClock = 0;
-  pedSpawnClock = 0;
   /**
    * Traffic waiting to come in at each boundary entry lane: when its next
    * arrival is due, and the arrival times of vehicles held outside the map
@@ -225,63 +211,6 @@ export class SimWorld {
   topologyRevision = -1;
   /** Revision the vehicle half was last built from (`rebuildVehicleTopology`). */
   vehicleTopologyRevision = -1;
-  /** Building revision whose walkable door links are currently attached. */
-  buildingAccessRevision = -1;
-  /** Utility revision and actual ground-access geometry of the current links. */
-  accessUtilityRevision = -1;
-  private accessSignature = '';
-  /**
-   * The door links being brought up to date a slice a frame by the game's
-   * frame loop (`TopologyCatchUp`), as a coroutine spreads a task over frames
-   * (Unity manual, "Coroutines"): done in one go inside a tick, a pole or a
-   * building grown held the frame 37-112 ms. Set, the pipeline leaves the
-   * links to it (`accessSliced`) and the walkers wait while it runs.
-   */
-  private accessWork: Generator<void, boolean, void> | null = null;
-  /** The frame loop brings the door links up to date (`stepBuildingAccess`); the pipeline does not. */
-  accessSliced = false;
-
-  /** The door links are behind the buildings or the poles. */
-  get accessStale(): boolean {
-    return this.buildingAccessRevision !== this.doc.buildings.revision || this.accessUtilityRevision !== this.doc.utilityRevision;
-  }
-
-  /** Door links half rebuilt: the walkers must not move on them. */
-  get accessRefreshing(): boolean {
-    return this.accessWork !== null;
-  }
-
-  /**
-   * One slice of `refreshBuildingAccess`, until `until` (ms): true when it
-   * finished and the links changed, so the walkers are rebound.
-   */
-  stepBuildingAccess(until: number): boolean {
-    if (!this.accessWork) {
-      if (!this.accessStale) return false;
-      this.accessWork = this.buildingAccessSteps();
-    }
-    let step = this.accessWork.next();
-    while (!step.done && performance.now() < until) step = this.accessWork.next();
-    if (!step.done) return false;
-    this.accessWork = null;
-    return step.value;
-  }
-
-  private *buildingAccessSteps(): Generator<void, boolean, void> {
-    const buildings = this.doc.buildings.revision, utility = this.doc.utilityRevision;
-    const signature = buildingAccessSignature(this.doc);
-    let changed = false;
-    if (signature !== this.accessSignature) {
-      yield* this.sidewalks.refreshBuildingAccessSteps(this.doc);
-      this.accessSignature = signature;
-      changed = true;
-    }
-    // The revisions it was started at: an edit while it ran is caught by the next.
-    this.buildingAccessRevision = buildings;
-    this.accessUtilityRevision = utility;
-    return changed;
-  }
-
   constructor(
     readonly doc: RoadDoc,
     readonly net: Network,
@@ -317,9 +246,6 @@ export class SimWorld {
    * the two engines share no state, only what they publish.
    */
   usePedestrianEngine(engine: PedestrianEngine): void {
-    this.peds.clear();
-    this.pedOccupancy.clear();
-    this.pedWaiting.clear();
     this.crossingStates.clear();
     this.pedViews.length = 0;
     this.pedViewById.clear();
@@ -329,12 +255,9 @@ export class SimWorld {
 
   reset(): void {
     this.vehicles.clear();
-    this.peds.clear();
     this.runtime.clear();
     this.claims.clear();
     this.controllers.clear();
-    this.pedOccupancy.clear();
-    this.pedWaiting.clear();
     this.crossingStates.clear();
     this.pedViews.length = 0;
     this.pedViewById.clear();
@@ -345,14 +268,9 @@ export class SimWorld {
     this.entryDemandLost = 0;
     this.completedTrips = 0;
     this.vehicleSpawnClock = 0;
-    this.pedSpawnClock = 0;
     this.issues.length = 0;
     this.topologyRevision = -1;
     this.vehicleTopologyRevision = -1;
-    this.buildingAccessRevision = -1;
-    this.accessUtilityRevision = -1;
-    this.accessSignature = '';
-    this.accessWork = null;
     this.pedEngine.reset(this);
   }
 
@@ -402,14 +320,6 @@ export class SimWorld {
     return this.vehicleOrder.list;
   }
   private vehicleOrder: { version: number; list: readonly Vehicle[] } = { version: -1, list: [] };
-
-  pedsInIdOrder(): readonly Ped[] {
-    if (this.pedOrder.version !== this.peds.version) {
-      this.pedOrder = { version: this.peds.version, list: [...this.peds.values()].sort((a, b) => a.id - b.id) };
-    }
-    return this.pedOrder.list;
-  }
-  private pedOrder: { version: number; list: readonly Ped[] } = { version: -1, list: [] };
 
   junctionNodesInOrder(): NodeId[] {
     return [...this.graph.junctions.keys()].sort((a, b) => a - b);
@@ -507,37 +417,11 @@ export class SimWorld {
   /** `rebuildWalkTopology` in steps (`SidewalkGraph.buildSteps`); the world is held until the last. */
   *walkTopologySteps(): Generator<void, void, void> {
     if (this.vehicleTopologyRevision !== this.net.trafficRevision) this.rebuildVehicleTopology();
-    // The footways are built again with their door links: a refresh of the
-    // links under way would go on over the graph being replaced.
-    this.accessWork = null;
     yield* this.sidewalks.buildSteps(this.doc, this.net, this.graph);
     yield;
     this.crossingSpans.build(this);
     this.syncControllers();
     this.topologyRevision = this.net.trafficRevision;
-    this.buildingAccessRevision = this.doc.buildings.revision;
-    this.accessUtilityRevision = this.doc.utilityRevision;
-    this.accessSignature = buildingAccessSignature(this.doc);
-  }
-
-  /** A building edit changes only door links, leaving road corridors and cars intact. */
-  refreshBuildingAccess(): boolean {
-    const signature = buildingAccessSignature(this.doc);
-    if (signature === this.accessSignature) {
-      this.buildingAccessRevision = this.doc.buildings.revision;
-      this.accessUtilityRevision = this.doc.utilityRevision;
-      return false;
-    }
-    this.sidewalks.refreshBuildingAccess(this.doc);
-    this.buildingAccessRevision = this.doc.buildings.revision;
-    this.accessUtilityRevision = this.doc.utilityRevision;
-    this.accessSignature = signature;
-    // The walkers are rebound by their engine (`pedEngine.rebind`, `pipeline.ts`),
-    // which alone publishes the views and the crossings. The legacy model's
-    // walkers were relocated and published here: with no such walkers, that
-    // only emptied what the engine had published, the signals reading crossings
-    // with nobody on them until it published again.
-    return true;
   }
 
   /** Crossing ids at a node, one per incident segment. */
@@ -803,34 +687,6 @@ export class SimWorld {
     this.issues.push(issue);
     if (this.issues.length > 512) this.issues.shift();
   }
-}
-
-/** Only ground footprints, doors and poles can change a building's walking links. */
-/**
- * Each building's share of the signature, by its record (records are replaced,
- * never changed): every topology change worked out the facades of every
- * building in town again for it (docs/performance.md #11).
- */
-const ACCESS_PARTS = new WeakMap<Building, string>();
-function buildingAccessSignature(doc: RoadDoc): string {
-  if (doc.buildings.size === 0) return '';
-  const parts = [String(doc.utilityRevision)];
-  for (const building of doc.buildings.all()) {
-    let part = ACCESS_PARTS.get(building);
-    if (part === undefined) {
-      const mine = [`${building.id}:${building.x}:${building.y}:${building.rotation}`];
-      for (const volume of building.volumes) if (volume.base === 0)
-        mine.push(`${volume.id}:${volume.x}:${volume.y}:${volume.w}:${volume.d}:${JSON.stringify(volume.outline ?? null)}`);
-      for (const bay of facadeBays(building)) {
-        if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
-        mine.push(`D:${bay.volume}:${bay.side}:${bay.index}:${bay.component}:${bay.x}:${bay.y}:${bay.nx}:${bay.ny}`);
-      }
-      part = mine.join('|');
-      ACCESS_PARTS.set(building, part);
-    }
-    parts.push(part);
-  }
-  return parts.join('|');
 }
 
 /** A Map that counts its changes of membership, for caches over it (`vehiclesInIdOrder`). */

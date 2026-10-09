@@ -96,7 +96,6 @@ describe('benchmark', () => {
       } as unknown as T[K];
     };
     wrap(sim, 'vehiclesInIdOrder', 'vehiclesInIdOrder');
-    wrap(sim, 'pedsInIdOrder', 'pedsInIdOrder');
     const deps = sim.signalDeps.bind(sim);
     sim.signalDeps = () => {
       const d = deps();
@@ -156,13 +155,13 @@ describe('benchmark', () => {
       record('pole', parts);
     }
     {
-      const parts = { addBuilding: [] as number[], accessTopology: [] as number[],
-        networkRebuildNeeded: [] as number[] };
+      // A building changes nothing the simulation walks or drives on (the
+      // door links went with the footway-graph engine).
+      const parts = { addBuilding: [] as number[], networkRebuildNeeded: [] as number[] };
       const blueprint = BLUEPRINTS[0]!;
       for (let i = 0; i < EDIT_REPEATS; i++) {
         const revision = doc.revision;
         parts.addBuilding.push(time(() => doc.buildings.add(instantiate(blueprint.body, { x: -635 + i * 40, y: 640 }, 0, blueprint.key))));
-        parts.accessTopology.push(time(() => { sim.refreshBuildingAccess(); rebindPeds(sim); }));
         parts.networkRebuildNeeded.push(doc.revision !== revision ? 1 : 0);
       }
       record('building', parts);

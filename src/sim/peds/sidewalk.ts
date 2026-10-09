@@ -195,15 +195,6 @@ export class SidewalkGraph {
     }
   }
 
-  /**
-   * Door links went with the footway-graph engine: a building edit has
-   * nothing to refresh here. Kept only while `sim/world.ts` still calls it.
-   */
-  refreshBuildingAccess(_doc: RoadDoc): void {}
-
-  /** `refreshBuildingAccess` in steps: none. Kept only while `sim/world.ts` still calls it. */
-  *refreshBuildingAccessSteps(_doc: RoadDoc): Generator<void, void, void> {}
-
   crossingEdge(id: CrossingId): SidewalkEdge | undefined {
     const eid = this.crossings.get(id);
     return eid ? this.edges.get(eid) : undefined;
