@@ -152,8 +152,12 @@ export const ROAD_TUNING = {
     trendWindow: 900,
   },
   economy: {
-    /** Money a new map, and a map saved before the economy, starts with. */
-    startingFunds: 3_000_000,
+    /**
+     * Money a new map, and a map saved before the economy, starts with: a
+     * little more than the roads of the test town are worth at the prices
+     * below (16.5 million, `maps/cidade-com-estacionamento.json`).
+     */
+    startingFunds: 20_000_000,
     /**
      * Price of one square metre of each element of the cross-section
      * (`world/economy.ts`): the carriageway (lanes and parking), the central

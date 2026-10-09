@@ -7,6 +7,7 @@ import { FLAT_GROUND, type RoadElevation, buildRoadElevation } from '@world/elev
 import { Level, halfWidth } from '@world/roadTypes';
 import { roadStructure } from '@world/structures';
 import { ROAD_TUNING } from '@world/roads/tuning';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
 
 /**
  * What a road edit may not leave behind, judged on the network it builds.
@@ -24,6 +25,8 @@ import { ROAD_TUNING } from '@world/roads/tuning';
  *    without the vertical room to pass over it;
  *  - `steep`: a road whose height change, over what the junction plates at its
  *    ends leave free, needs a grade no street is built at.
+ * And `funds`, which is not geometry: an edit the balance cannot pay for
+ * (`editor/roads/economy.ts`), judged after the rules above.
  *
  * Every rule is DIFFERENTIAL: an edit is refused for what IT created or made
  * worse, never for damage already on the map. Loading never refuses, so any
@@ -31,7 +34,7 @@ import { ROAD_TUNING } from '@world/roads/tuning';
  * road drawn anywhere afterwards (measured on the old sharp-node refusal: a
  * 7-degree node 5000 units away blocked a road at the origin).
  */
-export type RoadEditRefusal = 'sharp' | 'squeezed' | 'overlap' | 'steep';
+export type RoadEditRefusal = 'sharp' | 'squeezed' | 'overlap' | 'steep' | 'funds';
 
 export interface RoadState {
   readonly doc: RoadDoc;
@@ -122,9 +125,12 @@ export function snapshotRoads(doc: RoadDoc, net: Network): RoadState {
 export function guardRoadEdit(doc: RoadDoc, net: Network, edit: () => boolean):
   { readonly changed: boolean; readonly refused: RoadEditRefusal | null } {
   const before = snapshotRoads(doc, net);
+  const money = roadsBefore(doc);
   if (!edit()) return { changed: false, refused: null };
   if (net.revision !== doc.revision) net.rebuild();
-  const refused = refuseRoadEdit(before, { doc, net });
+  // Judged, then paid for (`editor/roads/economy.ts`): an edit the balance
+  // cannot cover is refused like any other.
+  const refused = refuseRoadEdit(before, { doc, net }) ?? (settleRoadEdit(money, doc).affordable ? null : 'funds');
   if (!refused) return { changed: true, refused: null };
   doc.replaceWith(before.doc);
   net.adopt(before.net);

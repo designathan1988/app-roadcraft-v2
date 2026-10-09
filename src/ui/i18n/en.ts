@@ -821,6 +821,11 @@ export const EN: Dictionary = {
   'rule.short.overlap': 'on another road',
   'rule.short.steep': 'too steep',
   'rule.short.clearance': 'no clearance',
+  'rule.short.funds': 'not enough money',
+  'hint.rule.funds': 'Refused: not enough money to build this. Demolishing roads gives back part of their price.',
+  'economy.money': '$ {value}',
+  'economy.balance': 'Money in hand. Roads cost by width and length; bridges and tunnels more. Demolishing a road gives back {share}% of its price.',
+  'economy.refund': 'refund {value}',
   'hint.road.clearance': 'Not built: it would cross a road too close in height to join it or to pass over it. Raise or lower it (Page Up/Down).',
   'hint.road.tunnel':
     'Drag right through the hill · it dives, the ground closes over it, portals appear',

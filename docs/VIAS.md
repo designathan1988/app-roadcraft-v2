@@ -113,6 +113,16 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   `buildRoadElevation(net, chão, anterior)` reaproveita as estações e os pedaços conexos iguais; o
   renderizador passa a solução anterior enquanto o chão não muda, as regras de edição usam
   `FLAT_GROUND`. Oráculo `tests/world/incrementalRebuild.spec.ts`; medida `tests/bench/roadRebuild.spec.ts`.
+- Economia mínima: feito. `world/economy.ts` (preço por metro quadrado de pista, canteiro e calçada,
+  vezes o comprimento em cada modo de construção: chão 1, aterro 1,4, trincheira 1,8, ponte/viaduto 2,5,
+  túnel 6; o modo vem da estrutura ou da altura definida sobre o chão projetado) e
+  `editor/roads/economy.ts` (cobrança única: o que as vias valem depois menos antes; devolução de 25% do
+  que sai). Cobrado em `commitRoadPath`, `commitDraft`, `guardRoadEdit` (todas as edições no lugar),
+  `moveNodeChecked` e no Demolir; recusa `funds` com o motivo no preview; custo no rótulo do preview;
+  saldo no documento (`RoadDoc.economy`, gravado só fora do saldo inicial, validado em
+  `isSerializedDoc`), por isso o desfazer devolve; saldo na barra de cima. Saldo inicial 20 milhões
+  (a cidade de teste vale 16,5 milhões). A cidade gerada (`generateCity`) não é cobrada.
+- Contrato de dados da V0: só `SerializedDoc.economy?: { balance }`.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

@@ -23,6 +23,7 @@ import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
 import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
 import { COARSE_EPS, EPS } from '@core/scalar';
 
 /** Shortest road the editor will create. */
@@ -54,6 +55,12 @@ export interface DraftResult {
    * renderer takes it instead of solving it again (`SceneHandle.offerElevation`).
    */
   readonly elevation?: RoadElevation;
+  /**
+   * What the edit costs (`world/economy.ts`): money taken, negative when
+   * money comes back. Set once the edit has been judged, and on a refusal
+   * for `funds` (what it would have cost).
+   */
+  readonly cost?: number;
 }
 
 /**
@@ -154,11 +161,16 @@ export function commitRoadPath(
   const refused = refuseRoadEdit(before, { doc: work, net: workNet });
   timed('rules');
   if (refused) return { committed: false, reason: refused };
-  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight };
+  // Paid for on the copy, so the live map takes the balance with the roads
+  // and undo gives it back (`editor/roads/economy.ts`); refused when it
+  // cannot be paid, the preview naming why.
+  const charge = settleRoadEdit(roadsBefore(doc), work, !options.dryRun);
+  if (!charge.affordable) return { committed: false, reason: 'funds', cost: charge.amount };
+  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount };
   doc.replaceWith(work);
   net.adopt(workNet);
   timed('replace');
-  return { committed: true, heightLimited, finalHeightOffset: currentHeight,
+  return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount,
     ...(!bore.bored && ground && bore.elevation ? { elevation: bore.elevation } : {}) };
 }
 
@@ -321,10 +333,12 @@ export function commitDraft(
   workNet.rebuild();
   const refused = refuseRoadEdit(before, { doc: work, net: workNet });
   if (refused) return { committed: false, reason: refused };
+  const charge = settleRoadEdit(roadsBefore(doc), work);
+  if (!charge.affordable) return { committed: false, reason: 'funds', cost: charge.amount };
 
   doc.replaceWith(work);
   net.adopt(workNet);
-  return result;
+  return { ...result, cost: charge.amount };
 }
 
 function commitDraftInPlace(
@@ -694,12 +708,16 @@ export function reconcileMovedNode(doc: RoadDoc, net: Network, id: NodeId, depth
  */
 export function moveNodeChecked(doc: RoadDoc, net: Network, id: NodeId, to: Vec2): DraftResult {
   const before = snapshotRoads(doc, net);
+  const money = roadsBefore(doc);
   if (!doc.moveNode(id, to)) return { committed: false, reason: 'duplicate' };
   const result = reconcileMovedNode(doc, net, id);
   if (!result.committed) return result;
   net.rebuild();
   const refused = refuseRoadEdit(before, { doc, net });
-  return refused ? { committed: false, reason: refused } : result;
+  if (refused) return { committed: false, reason: refused };
+  // The roads made longer are paid for, shorter partly paid back (`editor/roads/economy.ts`).
+  const charge = settleRoadEdit(money, doc);
+  return charge.affordable ? { ...result, cost: charge.amount } : { committed: false, reason: 'funds', cost: charge.amount };
 }
 
 /** Joins two compatible straight segments meeting at an otherwise unused node. */

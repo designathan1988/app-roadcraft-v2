@@ -50,6 +50,7 @@ import { POLE_LAMP_MODES } from '@world/utilities';
 import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
 import { t, plural, onLanguageChange } from '../i18n';
+import { balanceTip, formatMoney } from '../roads/money';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
@@ -301,6 +302,8 @@ export interface ShellDeps {
   /** How many junctions cannot be built (`Network.impossible`), and taking the camera and the inspector to the first. */
   impossibleCount(): number;
   showImpossible(): void;
+  /** The money in hand (`world/economy.ts`), shown in the top bar. */
+  balance?(): number;
 }
 
 export function mountShell(deps: ShellDeps): void {
@@ -362,7 +365,20 @@ export function mountShell(deps: ShellDeps): void {
     impossibleN.textContent = String(n);
     impossibleB.title = plural('status.impossible', n);
   };
-  city.append(sky, clock, impossibleB, stats);
+  // The money in hand (docs/VIAS.md V0): roads are paid from it.
+  const money = el('strong', 'v2-money');
+  const moneyText = money.appendChild(document.createTextNode(''));
+  money.hidden = !deps.balance;
+  let moneyShown = NaN;
+  const syncMoney = (): void => {
+    const value = deps.balance?.();
+    if (value === undefined || value === moneyShown) return;
+    moneyShown = value;
+    moneyText.data = formatMoney(value);
+    money.title = balanceTip();
+  };
+  onLanguageChange(() => { moneyShown = NaN; syncMoney(); });
+  city.append(sky, clock, money, impossibleB, stats);
 
   const speed = el('div', 'v2-speed');
   speed.setAttribute('role', 'group');
@@ -1580,6 +1596,7 @@ export function mountShell(deps: ShellDeps): void {
     if (statsText.data !== line) statsText.data = line;
     syncSky();
     syncImpossible();
+    syncMoney();
     const active = q('.simulation-controls [data-speed].active')?.dataset['speed'] ?? '1';
     for (const b of speedButtons) {
       const on = b.dataset['speed'] === active;
