@@ -417,8 +417,8 @@ function ipe(seed: number, bloom: Tone): LowPolyParts {
   const shade = crownShade(0.34, 0.95, 0.42);
   const centre = 0.62;
   const pick = (c: Vector3): Tone => (c.y < centre - 0.1 ? LEAF : bloom);
-  b.mass(new Vector3(top.x, centre, top.z), 0.23, new Vector3(1.25, 0.65, 1.25), bloom, seed, 0.22, shade, true, pick);
-  return b.finish(40, 0.42);
+  b.mass(new Vector3(top.x, centre, top.z), 0.2, new Vector3(1.25, 0.65, 1.25), bloom, seed, 0.2, shade, true, pick);
+  return b.finish(54, 0.46);
 }
 
 /** A bush: one lump of leaves pressed onto the ground under a coat of cards, about one and a half times as wide as tall. */
