@@ -19,8 +19,13 @@ describe('a route ending on a short link', () => {
       const doc = new RoadDoc();
       const a = doc.addNode({ x: 0, y: 0 });
       const b = doc.addNode({ x: 300, y: 0 });
-      const c = doc.addNode({ x: 300, y: 12 });
-      const d = doc.addNode({ x: 600, y: 12 });
+      // 40 u across: a car's swept body fits both turns (`maxBodyClass`), and
+      // the link between them, after both junctions' trims, is still shorter
+      // than the car - asserted below. At 12 u only the smallest bodies fit
+      // the first turn, the route was one no planner makes, and admission
+      // refused it for good before route growth was ever tried.
+      const c = doc.addNode({ x: 300, y: 40 });
+      const d = doc.addNode({ x: 600, y: 40 });
       const first = doc.addSegment(a.id, b.id, 2)!;
       const short = doc.addSegment(b.id, c.id, 2)!;
       const last = doc.addSegment(c.id, d.id, 2)!;
