@@ -55,7 +55,20 @@ jogador veria.
    `src/ui/v2/shell.ts` tem 244 escapes inúteis, 3 importações de `editor`
    na camada `ui` (proibidas) e um `prefer-const`. Etapa 4, primeiro item:
    sem o check verde nenhuma etapa pode fechar com ele.
-5. As 29 falhas da suíte em 2026-10-08 (todas anteriores a esta sessão,
+5. **Atualização de 2026-10-08, noite:** resolvidas `curvature` (critério
+   do v1), `fourWay` velocidade de curva (frenagem em rampa, 0e743d08),
+   `shortTail` (geometria válida), `roundabout` ×3 (veículo pesado sem
+   saída, 9fc1f050), `buildingMesh`, `heightTopology`, `citizenLocomotion`
+   ×2 (limiar em m/s, a7a387cc), `streetFurniture` (achou a cabine no
+   meio-fio, 2931820f), `builderCatalog` (achou 5 ícones faltando).
+   Restam: `fourWay` locals (pedestre preso na faixa dentro do caminho de
+   um carro admitido; o tempo segurado dele volta a zero a cada ~3 s e a
+   regra de destravar do SUMO nunca vale), `defects.spec` ×4 (pedestres nas
+   esquinas, ver PROBLEMAS), fuzz ×2 (degrau de altura e corpos sobrepostos
+   em saídas de cruzamento), `pads` (contrato do piso a decidir),
+   `occupantFit` (o script de medida mede corpos glTF que saíram do jogo:
+   refazer para os corpos MakeHuman), ganchos ×9 (do jogador).
+   Lista original: as 29 falhas da suíte em 2026-10-08 (todas anteriores a esta sessão,
    conferidas): fuzz (6 sequências e `open-road-drawn-over-road`), motor de
    caminhada em 4 cidades (`defects.spec`), Drive v2 (`curvature`,
    `shortTail`, `fourWay` ×2, `roundabout` ×3), `buildingMesh` (camada de
