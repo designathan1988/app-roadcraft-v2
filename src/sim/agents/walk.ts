@@ -71,6 +71,8 @@ const ACCEL = m(1.2);
 const BRAKE = m(2.5);
 /** A new stripe must be this much better to be taken: no dithering between two. */
 const SWITCH_GAIN = m(1.2);
+/** Room given up for each unit across from where the body is: SUMO's LATERAL_PENALTY, a metre a stripe. */
+const LATERAL_PENALTY = m(1) / STRIPE;
 /** Held still this long, a walker is let through others slowly (SUMO's jamtime: 10 s on a crossing). */
 const JAM_AFTER = 20;
 const JAM_AFTER_CROSSING = 10;
@@ -78,6 +80,8 @@ const JAM_AFTER_CROSSING = 10;
 const JAM_SHARE = 0.25;
 /** How far ahead on the route the body walks towards, u. */
 const AHEAD = m(0.9);
+/** Most a walker moves across towards its stripe, as a share of its forward speed (SUMO's LATERAL_SPEED_FACTOR). */
+const LATERAL_SHARE = 0.4;
 /** Fastest a body turns walking, and standing (on the spot), rad/s. */
 const TURN_RATE = 3.5;
 const TURN_STANDING = 6;
@@ -509,8 +513,23 @@ function frame(st: Step, s: number): { x: number; y: number; tx: number; ty: num
   }
   const len = stepLength(st);
   const k = Math.max(0, Math.min(len, s));
-  const f = st.way.path.sampleAt(st.from + st.dir * k);
-  const tx = f.t.x * st.dir, ty = f.t.y * st.dir;
+  const path = st.way.path;
+  const f = path.sampleAt(st.from + st.dir * k);
+  // The tangent blended along each piece from the tangent at its one end to
+  // the tangent at the other (each the mean of the two pieces meeting there),
+  // then made unit again - as Phong shading interpolates vertex normals - so
+  // it turns smoothly through a corner's points. The piece's own tangent
+  // jumped at every point of the line: a body standing on one stepped from
+  // one frame to the other and back each tick, and the people in front of it
+  // swung a step across - its stripe and its shoulders with them.
+  const tan = path.tan, last = path.n - 2, i = f.i;
+  const ax = i > 0 ? tan[i * 2 - 2]! + tan[i * 2]! : tan[i * 2]!, ay = i > 0 ? tan[i * 2 - 1]! + tan[i * 2 + 1]! : tan[i * 2 + 1]!;
+  const bx = i < last ? tan[i * 2]! + tan[i * 2 + 2]! : tan[i * 2]!, by = i < last ? tan[i * 2 + 1]! + tan[i * 2 + 3]! : tan[i * 2 + 1]!;
+  const al = Math.hypot(ax, ay) || 1, bl = Math.hypot(bx, by) || 1;
+  let sx = (ax / al) * (1 - f.u) + (bx / bl) * f.u, sy = (ay / al) * (1 - f.u) + (by / bl) * f.u;
+  const sl = Math.hypot(sx, sy);
+  if (sl > 1e-9) { sx /= sl; sy /= sl; } else { sx = f.t.x; sy = f.t.y; }
+  const tx = sx * st.dir, ty = sy * st.dir;
   const over = s - k;
   return { x: f.p.x + tx * over, y: f.p.y + ty * over, tx, ty };
 }
@@ -536,18 +555,71 @@ function project(st: Step, x: number, y: number): { s: number; d: number } {
 function room(st: Step): [number, number] {
   if (!st.way) return [0, 0];
   let lo = st.way.lo + BODY, hi = st.way.hi - BODY;
-  if (st.dir === -1) [lo, hi] = [-hi, -lo];
   if (st.way.kind === 'corner') {
-    const len = stepLength(st);
-    const a = frame(st, 0), b = frame(st, len);
-    const turn = Math.atan2(a.tx * b.ty - a.ty * b.tx, a.tx * b.tx + a.ty * b.ty);
-    if (Math.abs(turn) > 0.2) {
-      const r = len / Math.abs(turn);
-      if (turn > 0) hi = Math.min(hi, r * 0.5); else lo = Math.max(lo, -r * 0.5);
-    }
+    // By the tightest bend of the line, not its average: a corner eases off
+    // each footway straight and turns in a tighter arc between, and a body
+    // kept within half the average radius stood past the arc's centre - its
+    // nearest point on the line jumped to and fro between the two ends of the
+    // arc, and so did where it was going (a parallel curve folds into a cusp
+    // where the offset reaches the radius of curvature).
+    // Only round the inside of the corner's own turn: outwards the line
+    // never folds, and the small counter-bends where a corner eases off its
+    // footways narrowed it to single file both ways.
+    const r = bendRadii(st.way);
+    if (r.turn > 0.2) hi = Math.min(hi, r.left * 0.5);
+    else if (r.turn < -0.2) lo = Math.max(lo, -r.right * 0.5);
   }
+  if (st.dir === -1) [lo, hi] = [-hi, -lo];
   if (lo > hi) lo = hi = (lo + hi) / 2;
   return [lo, hi];
+}
+
+/** Share of a corner's stripes, and most width, left to those coming the other way (SUMO's defaults). */
+const RESERVE_ONCOMING = 0.34;
+const RESERVE_MAX = m(1.28);
+/** Penalty of a stripe a walker must not take (SUMO's INAPPROPRIATE_PENALTY, as room ahead). */
+const INAPPROPRIATE = m(1000);
+/** Penalty of the leftmost stripe while somebody comes the other way in it (SUMO's ONCOMING_CONFLICT_PENALTY, -1000). */
+const ONCOMING_CONFLICT = m(50);
+/** The width at the left of a step, in the way walked, left to those coming the other way: corners only. */
+function reservedFor(st: Step): number {
+  if (st.way?.kind !== 'corner') return 0;
+  const stripes = Math.floor(st.way.width / STRIPE);
+  return Math.min(Math.floor(stripes * RESERVE_ONCOMING), Math.floor(RESERVE_MAX / STRIPE)) * STRIPE;
+}
+
+/** Arc over which a line's bend is measured, u. */
+const BEND_WINDOW = m(1);
+const BENDS = new WeakMap<Walkway, { left: number; right: number; turn: number }>();
+/**
+ * The tightest radius of a walkway's line turning left and turning right
+ * (along it from `a` to `b`): the turn over every stretch of `BEND_WINDOW`.
+ * Infinity for a side it never turns to (by more than 0.2 rad a stretch).
+ * `turn`: its whole turn, end to end, left positive.
+ */
+function bendRadii(way: Walkway): { left: number; right: number; turn: number } {
+  let r = BENDS.get(way);
+  if (r) return r;
+  const xy = way.path.xy, cum = way.path.cum, n = way.path.n;
+  const heading = (i: number): number => Math.atan2(xy[i * 2 + 3]! - xy[i * 2 + 1]!, xy[i * 2 + 2]! - xy[i * 2]!);
+  const whole = n >= 2 ? heading(n - 2) - heading(0) : 0;
+  r = { left: Infinity, right: Infinity, turn: Math.atan2(Math.sin(whole), Math.cos(whole)) };
+  for (let i = 0, j = 0; i < n - 1; i++) {
+    if (j < i) j = i;
+    while (j < n - 2 && cum[j + 1]! - cum[i]! < BEND_WINDOW) j++;
+    const arc = cum[j + 1]! - cum[i]!;
+    if (j === i || arc < 1e-6) continue;
+    let turn = 0;
+    for (let k = i; k < j; k++) {
+      const d = heading(k + 1) - heading(k);
+      turn += Math.atan2(Math.sin(d), Math.cos(d));
+    }
+    if (Math.abs(turn) < 0.2 * (arc / BEND_WINDOW)) continue;
+    const radius = arc / Math.abs(turn);
+    if (turn > 0) r.left = Math.min(r.left, radius); else r.right = Math.min(r.right, radius);
+  }
+  BENDS.set(way, r);
+  return r;
 }
 
 const clamp = (v: number, [lo, hi]: [number, number]): number => Math.max(lo, Math.min(hi, v));
@@ -1030,8 +1102,17 @@ function target(p: Walker): { x: number; y: number } {
     st = p.steps[leg]!;
   }
   if (leg === p.steps.length - 1) s = Math.min(s, stepLength(st));
-  // In this step, its stripe; in the next, where it is now across that one.
-  const d = leg === p.leg ? p.aim : clamp(project(st, p.x, p.y).d, room(st));
+  // In this step, towards its stripe, but no more across than SUMO lets a
+  // walker move sideways for its forward speed (`MSPModel_Striping`
+  // `PState::walk`: the lateral speed is capped at LATERAL_SPEED_FACTOR, 0.4,
+  // of the walking speed, and the forward speed is never cut for it). The
+  // point set on the stripe itself, 1.4 m across and 0.9 m ahead, was 57
+  // degrees off: the speed fell to nothing (`want *= cos(err)...`), the body
+  // stood turning towards it, and turned back as the stripe was set again on
+  // the next step - the to and fro at the corners (`defects.spec`). In the
+  // next step, where it is now across that one.
+  const d = leg === p.leg ? p.d + Math.max(-LATERAL_SHARE * AHEAD, Math.min(LATERAL_SHARE * AHEAD, p.aim - p.d))
+    : clamp(project(st, p.x, p.y).d, room(st));
   const f = frame(st, s);
   return { x: f.x - f.ty * d, y: f.y + f.tx * d };
 }
@@ -1286,9 +1367,34 @@ function stepWalkers(w: SimWorld): void {
     // --- the stripe: the most room ahead, keeping to the right (SUMO's striping).
     if (span[1] > span[0]) {
       const right = span[0] + Math.min(span[1] - span[0], STRIPE * 0.5);
-      let best = p.aim, bestScore = free(p.aim) - (p.aim - right) * 0.15 + SWITCH_GAIN;
+      // A metre less room for every stripe away from where the body is, unless
+      // its own stripe is shut or it is held (SUMO's LATERAL_PENALTY, applied
+      // while `distance[current] > 0` and the walker is not waiting,
+      // `MSPModel_Striping`). A fifth of a unit a unit - an eighth of SUMO's -
+      // let a standing walker swap between stripes a metre apart every tick,
+      // turning its shoulders to each (`defects.spec`, four-way-avenues).
+      const lateral = p.held === 0 && free(p.d) > m(0.05) ? LATERAL_PENALTY : 0;
+      // Round a corner the leftmost stripes, in the way walked, are left to
+      // those coming the other way (SUMO reserves 0.34 of a walking area's
+      // stripes, at most 1.28 m: `getReserved`,
+      // `pedestrian.striping.reserve-oncoming.junctions`): never taken, and
+      // left by one standing in them (half the penalty, as SUMO's current
+      // stripe). Two people meeting on a corner each kept to whichever side
+      // the other was not, and swapped sides every tick, face to face.
+      const leftEdge = span[1] - reservedFor(st);
+      // Somebody coming the other way in the leftmost stripe: that stripe is
+      // theirs, and both keep right of each other (SUMO's
+      // ONCOMING_CONFLICT_PENALTY on the leftmost stripe, `walk`). Without it
+      // two people meeting on a narrow footway stood nose to nose, each
+      // stepping towards the side the other was taking.
+      const leftmost = span[1] - STRIPE;
+      let oncomingLeft = false;
+      for (const o of others) if (o.oncoming && o.lat + o.r > leftmost) { oncomingLeft = true; break; }
+      const inReserve = (c: number): number => (c > leftEdge + 1e-6 ? INAPPROPRIATE : 0)
+        + (oncomingLeft && c > leftmost + 1e-6 && span[1] - span[0] > STRIPE ? ONCOMING_CONFLICT : 0);
+      let best = p.aim, bestScore = free(p.aim) - (p.aim - right) * 0.15 - Math.abs(p.aim - p.d) * lateral + SWITCH_GAIN - inReserve(p.aim) / 2;
       for (let c = span[0]; c <= span[1] + 1e-6; c += STRIPE / 2) {
-        const score = free(c) - (c - right) * 0.15 - Math.abs(c - p.d) * 0.2;
+        const score = free(c) - (c - right) * 0.15 - Math.abs(c - p.d) * Math.max(lateral, 0.2) - inReserve(c);
         if (score > bestScore) { bestScore = score; best = c; }
       }
       p.aim = clamp(best, span);
