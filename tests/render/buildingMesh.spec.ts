@@ -219,7 +219,7 @@ describe('building materials', () => {
       // instance, and so are the window frames and railings (in their
       // building's trim); the shell by its vertex colours.
       const white = m.color.getHex() === 0xffffff;
-      if (white && !m.map) expect(['awning', 'frame', 'railing', 'fin', 'louvre'].includes(kind) || m.vertexColors, kind).toBe(true);
+      if (white && !m.map) expect(['awning', 'frame', 'railing', 'fin', 'louvre', 'brise'].includes(kind) || m.vertexColors, kind).toBe(true);
     }
     // Every finish the shell can be drawn in has its material.
     for (const finish of FINISHES) expect(kit.shell[finish], finish).toBeDefined();

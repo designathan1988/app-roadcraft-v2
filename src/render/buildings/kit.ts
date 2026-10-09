@@ -70,7 +70,8 @@ export type PartKind =
   | 'wash'
   | 'fin'
   | 'louvre'
-  | 'glassRail';
+  | 'glassRail'
+  | 'brise';
 
 export const PART_KINDS: readonly PartKind[] = [
   'glass',
@@ -90,6 +91,7 @@ export const PART_KINDS: readonly PartKind[] = [
   'fin',
   'louvre',
   'glassRail',
+  'brise',
 ];
 
 /** Warm light of the rooms behind the glass. */
@@ -326,6 +328,22 @@ function glassRailGeometry(): BufferGeometry {
   return merged;
 }
 
+/**
+ * A bay's rack of sun fins: six vertical blades across the unit width, the
+ * storey's height, standing out of the wall (Z, unit depth centred on 0).
+ * One instance a bay, scaled to it: the fins drawn one by one were thirty
+ * thousand instances in a city.
+ */
+export const BRISE_FINS = 6;
+function briseGeometry(): BufferGeometry {
+  const t = 0.035;
+  const parts: BufferGeometry[] = [];
+  for (let k = 0; k < BRISE_FINS; k++) parts.push(box(t, 1, 1, -0.5 + t / 2 + (k * (1 - t)) / (BRISE_FINS - 1), 0, 0));
+  const merged = mergeGeometries(parts) as BufferGeometry;
+  for (const p of parts) p.dispose();
+  return merged;
+}
+
 function awningGeometry(): BufferGeometry {
   const canvas = new BoxGeometry(1, 0.04, 1.08);
   canvas.rotateX(Math.atan2(0.75, 1));
@@ -359,6 +377,7 @@ export function createBuildingKit(): BuildingKit {
     fin: unitBox,
     louvre: louvreGeometry(),
     glassRail: glassRailGeometry(),
+    brise: briseGeometry(),
   };
 
   const concrete = new MeshStandardMaterial({ color: 0xcfc9bd, roughness: 0.82, metalness: 0 });
@@ -400,6 +419,8 @@ export function createBuildingKit(): BuildingKit {
     // wall for depth), seen only after dark.
     // Sun fins and window surrounds, in the trim's colour per instance (`COLOURED_PARTS`).
     fin: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 }),
+    // Brise-soleil racks, concrete or painted metal in the trim's colour per instance.
+    brise: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, metalness: 0 }),
     // Louvred shutters, painted wood, coloured per instance.
     louvre: new MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, metalness: 0 }),
     // A balcony's glass parapet: pale green-grey laminated glass, half seen through.
@@ -519,7 +540,7 @@ export function createBuildingKit(): BuildingKit {
     dimParts,
     // Glass, doors and shutters close the openings for the sun: without them
     // the shadow of every building is a lattice of lit windows.
-    castsShadow: new Set<PartKind>(['glass', 'glassDark', 'frame', 'door', 'shutter', 'concrete', 'railing', 'awning', 'column', 'roofRailing', 'fin', 'louvre']),
+    castsShadow: new Set<PartKind>(['glass', 'glassDark', 'frame', 'door', 'shutter', 'concrete', 'railing', 'awning', 'column', 'roofRailing', 'fin', 'louvre', 'brise']),
     furniture() {
       if (!furniture) {
         furniture = { geometry: createFurnitureGeometries(), material: createFurnitureMaterial() };

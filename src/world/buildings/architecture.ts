@@ -83,8 +83,8 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
     key: 'colonial',
     skins: tones('plaster', [0xe9c46a, 0xd98c5f, 0x7fa8c9, 0xe8a7a0, 0x9cc5a1, 0xf1e3c6, 0xc96f53, 0xe0b54b, 0x88a9b5, 0xd7b9d5]),
     trims: [mat('plaster', 0xf7f4ec), mat('plaster', 0xf1ead9)],
-    rhythms: [['shutteredWindow'], ['shutteredWindow', 'frenchWindow', 'shutteredWindow']],
-    sideFill: 'shutteredWindow', groundFill: 'shutteredWindow', top: null,
+    rhythms: [['shutteredWindow'], ['shutteredWindow', 'frenchWindow', 'shutteredWindow'], ['frenchWindow', 'balcony', 'frenchWindow'], ['frenchWindow']],
+    sideFill: 'window', groundFill: 'shutteredWindow', top: null,
     dress: { lines: 'base', crown: 'cornice' },
     window: { width: [0.36, 0.42], height: [0.6, 0.66], sill: 0.9 },
     module: 3,
@@ -107,7 +107,7 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
   // ribbon windows, the slabs shown, a thin roof slab over all.
   modernist: {
     key: 'modernist',
-    skins: [...tones('ceramic', [0xe9ecea, 0xcfdcdc, 0xd9e2d4, 0xf0e6c8, 0xb9cbd6, 0xe4d2bf]), ...tones('plaster', [0xf2f0ea, 0xe6e4dc])],
+    skins: [...tones('ceramic', [0xe9ecea, 0x9fbfcf, 0xa9cbb4, 0xe8d38f, 0x7fa0bf, 0xd9a07a, 0x8fb5a8]), ...tones('plaster', [0xf2f0ea, 0xe6e4dc])],
     trims: [mat('plaster', 0xf4f3ee), mat('metal', 0xb9bcbd), mat('concrete', 0xd6d2c8)],
     rhythms: [['brise'], ['ribbon', 'brise', 'brise'], ['brise', 'ribbon']],
     sideFill: 'ribbon', groundFill: 'wideWindow', top: 'ribbon',
@@ -120,7 +120,11 @@ export const STYLES: Readonly<Record<StyleKey, ArchStyle>> = {
   // columns, loggias, a deep plain attic for a crown.
   contemporary: {
     key: 'contemporary',
-    skins: [...tones('plaster', [0xf1f0ec, 0xe7e3dc, 0xd9d6cf, 0xcfc8bd, 0xe8ddd0]), ...tones('ceramic', [0xbfc4c6, 0x8e959a, 0xd2c3b0, 0xa7b3b8]), mat('concrete', 0xbab7b0)],
+    // Light renders, and the colours of today's Brazilian blocks kept to
+    // earth and mineral tones (terracotta, sand, sage, slate, graphite, a
+    // deep teal) - never a candy colour, never all beige.
+    skins: [...tones('plaster', [0xf1f0ec, 0xe7e3dc, 0xcfc8bd, 0xd8b99a, 0xb7c2b0]),
+      ...tones('ceramic', [0x8e959a, 0xb4673f, 0xc9a27a, 0x7d8b78, 0x4a5258, 0x3f6b72, 0xa65f45, 0x6f7f91]), mat('concrete', 0xbab7b0)],
     trims: [mat('metal', 0x2e3134), mat('metal', 0x4a4f53), mat('metal', 0x8e9396)],
     rhythms: [['gourmet', 'window', 'gourmet'], ['window', 'gourmet', 'gourmet'], ['loggia', 'window'], ['gourmet', 'gourmet', 'window', 'window']],
     sideFill: 'window', groundFill: 'wideWindow', top: 'wideWindow',
@@ -329,7 +333,12 @@ export function composeFacades(volumes: readonly Volume[], style: ArchStyle, rng
   const tallest = Math.max(0, ...volumes.filter((v) => !v.open).map((v) => v.base + v.storeys.length));
   for (const v of volumes) {
     if (v.open) continue;
-    v.dress = { ...style.dress };
+    // A block with another standing on it (a setback, a base under its
+    // tower) carries no cornice of its own: a moulding at every step read
+    // as stacked buildings. Only the top of the building is crowned.
+    const carries = volumes.some((o) => o !== v && !o.open && o.base === v.base + v.storeys.length
+      && o.x < v.x + v.w && o.x + o.w > v.x && o.y < v.y + v.d && o.y + o.d > v.y);
+    v.dress = { ...style.dress, ...(carries ? { crown: 'none' as const } : {}) };
     const faces = volumeSides(v);
     const counts = new Map<FaceId, number>();
     v.facadeGeometry = {};
@@ -355,7 +364,8 @@ export function composeFacades(volumes: readonly Volume[], style: ArchStyle, rng
         fill = style.sideFill;
         // The street and the back: the rhythm, column by column.
         for (const side of faces) {
-          if (v.outline ? false : side === 1 || side === 3) continue;
+          // The street and the back of a block; on a shaped plan, its long faces only.
+          if (v.outline ? counts.get(side)! < 3 : side === 1 || side === 3) continue;
           const n = counts.get(side)!;
           for (let i = 0; i < n; i++) {
             const c = columnComponent(rhythm, i, n);
