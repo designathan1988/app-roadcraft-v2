@@ -18,7 +18,7 @@ const map = JSON.parse(fs.readFileSync(new URL('../maps/cidade-com-estacionament
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] });
 const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
 // The pointer lock would trap the real mouse of whoever is at this machine.
-await context.addInitScript(() => { Element.prototype.requestPointerLock = function () { return Promise.resolve(); }; });
+await context.addInitScript(() => { window.Element.prototype.requestPointerLock = function () { return Promise.resolve(); }; });
 const page = await context.newPage();
 
 const opened = () => page.waitForFunction(() => performance.getEntriesByName('opening:shown').length > 0, null, { timeout: 180_000, polling: 250 });
