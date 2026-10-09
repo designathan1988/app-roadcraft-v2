@@ -761,11 +761,28 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
   // the whole surface there was some 12,000 triangles a car, and every one of
   // them cast a shadow. Simplified once the simplifier is ready (off the frame).
   for (const c of carParts.values()) {
-    void simplified(c.far.mesh.geometry, 0.12, 0.02).then((coarse) => {
+    // At most nine pixels long: an error of 5% of the car is under half a
+    // pixel there. At 12% of the triangles the town seen from afar drew some
+    // 1,400 a car, 1.3 million for 943 cars of one to three pixels.
+    void simplified(c.far.mesh.geometry, 0.03, 0.05).then((coarse) => {
       if (coarse === c.far.mesh.geometry) return;
       modelGeometries.push(coarse);
       c.far.mesh.geometry = coarse;
     });
+    // The body without its cabin (the middle band, from the far proxy's nine
+    // pixels up to the occupants' zoom, a hundred or so): it was the whole
+    // shell, 8,500-11,000 triangles a car - 1.9 million a frame in a 3/4
+    // view of the town. A quarter of them within half a percent of the car's
+    // size (meshoptimizer's error is relative to the mesh): under half a
+    // pixel at the largest it is drawn.
+    for (const part of [c.shellLite, c.roofLite, c.accentLite]) {
+      if (!part) continue;
+      void simplified(part.mesh.geometry, 0.25, 0.005).then((lighter) => {
+        if (lighter === part.mesh.geometry) return;
+        modelGeometries.push(lighter);
+        part.mesh.geometry = lighter;
+      });
+    }
   }
   const carPartList: Part[] = [...carParts.values()].flatMap((c) => [
     c.shell, c.glass, c.interior, c.openShell, c.openGlass, c.openInterior, ...c.doors, ...c.doorGlass,
