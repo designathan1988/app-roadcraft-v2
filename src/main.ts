@@ -45,7 +45,8 @@ import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
 import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
-import { LANDSCAPE_RADIUS, landscapeNear, snapLandscape, type LandscapeSnap } from '@world/landscape';
+import { LANDSCAPE_RADIUS, landscapeNear } from '@world/landscape';
+import { StreetscapeTool } from '@editor/streetscapeTool';
 
 import { Camera } from '@view/camera';
 import { type Viewport, flatViewport } from '@view/viewport';
@@ -445,10 +446,19 @@ const poleTool = new PoleTool({
 });
 /** The pole run planned for this frame (`PoleTool.plan`), shared by the 3D preview and the overlay. */
 let framePolePlan: PoleRunPlan | null = null;
-/** Where the landscaping tool would put its item, under the pointer. */
-let streetscapeHover: LandscapeSnap | null = null;
-/** Pick radius for a placed item and the reach of the footway snap, world units. */
-const streetscapeReach = (): number => Math.max(m(1.5), 26 / view.zoom);
+/** The landscaping tool (`editor/streetscapeTool.ts`): items on the footways. */
+const streetscapeTool = new StreetscapeTool({
+  doc,
+  net,
+  zoom: () => view.zoom,
+  kind: () => streetscapeKind(),
+  extra: (kind) => kind === 'sign' ? { signType: signChoice.type, text: signChoice.text }
+    : kind === 'streetname' ? { text: signChoice.streetName }
+    : kind === 'tree' || kind === 'shrub' ? { planted: sim.city.minutes(sim) } : {},
+  mutate: (fn) => mutate(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 /** The walls tool (`editor/barriers.ts`): the wall, fence or hedge being traced. */
 const barrierTool = new BarrierTool({
   net: () => net,
@@ -1227,7 +1237,7 @@ function bulldozeClick(screen: Vec2, world: Vec2, anchor: Anchor): void {
       return;
     }
     // Likewise a bench, a tree or a street light on the footway.
-    const item = landscapeNear(doc.landscape.values(), world, streetscapeReach());
+    const item = landscapeNear(doc.landscape.values(), world, streetscapeTool.reach());
     if (item) {
       mutate(() => doc.removeLandscape(item.id));
       flashHint('hint.streetscape.removed');
@@ -1809,33 +1819,9 @@ canvas.addEventListener('pointerdown', (e) => {
       barrierTool.down(world, e.shiftKey, e.clientX, e.clientY, e.detail);
       break;
 
-    case 'streetscape': {
-      // Shift-click removes an item; a click places the chosen one on the
-      // footway under the pointer, where `snapLandscape` puts it.
-      if (e.shiftKey) {
-        const hit = landscapeNear(doc.landscape.values(), world, streetscapeReach());
-        if (hit) {
-          mutate(() => doc.removeLandscape(hit.id));
-          flashHint('hint.streetscape.removed');
-        }
-        break;
-      }
-      const kind = streetscapeKind();
-      const placed = snapLandscape(net, doc.landscape.values(), kind, world, streetscapeReach());
-      if (placed.ok) {
-        mutate(() => {
-          doc.addLandscape(kind, placed.at, kind === 'sign' ? { signType: signChoice.type, text: signChoice.text }
-          : kind === 'streetname' ? { text: signChoice.streetName }
-          : kind === 'tree' || kind === 'shrub' ? { planted: sim.city.minutes(sim) } : {});
-          return true;
-        });
-      } else {
-        flashHint(`hint.streetscape.${placed.reason}`);
-      }
-      streetscapeHover = null;
-      requestDraw();
+    case 'streetscape':
+      streetscapeTool.down(world, e.shiftKey);
       break;
-    }
 
     case 'pole':
       // A stretch starts (at the line's last pole, if there is one); Shift-click
@@ -2038,8 +2024,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (poleTool.move(world)) return;
 
   if (game.tool === 'streetscape') {
-    streetscapeHover = snapLandscape(net, doc.landscape.values(), streetscapeKind(), world, streetscapeReach());
-    requestDraw();
+    streetscapeTool.move(world);
     return;
   }
 
@@ -4210,7 +4195,7 @@ function drawBarrierPlan(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): 
 
 /** Where the landscaping tool would put its item: a ring on the footway, red where it cannot go. */
 function drawStreetscapeHover(ctx: CanvasRenderingContext2D, at: (p: Vec2) => Vec2): void {
-  const hover = streetscapeHover;
+  const hover = streetscapeTool.hover;
   if (!hover) return;
   const centre = at(hover.at);
   const edge = at({ x: hover.at.x + LANDSCAPE_RADIUS[streetscapeKind()] + m(0.3), y: hover.at.y });
