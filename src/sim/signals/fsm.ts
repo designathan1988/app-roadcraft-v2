@@ -60,6 +60,8 @@ export interface SignalController {
 export interface SignalDeps {
   readonly tick: () => number;
   readonly connectorsOf: (id: string) => Connector | undefined;
+  /** The speed limit of an approach lane, u/s: what each stage's yellow is timed for (`plan.ts` `withAmbers`). */
+  readonly approachSpeed?: (lane: string) => number;
   /** Movements that physically conflict with a connector (swept zones). */
   readonly conflictsOf?: (id: string) => readonly string[];
   /** Pedestrians still inside a crossing that this stage released. */
@@ -140,7 +142,7 @@ function safePlan(
   deps: SignalDeps,
 ): { plan: SignalPlan; degraded: boolean } {
   try {
-    return { plan: buildSignalPlan(junction, crossings, deps.connectorsOf, deps.conflictsOf), degraded: false };
+    return { plan: buildSignalPlan(junction, crossings, deps.connectorsOf, deps.conflictsOf, deps.approachSpeed), degraded: false };
   } catch (err) {
     if (!(err instanceof PlanValidationError)) throw err;
     if (isStrict()) throw err;

@@ -499,6 +499,9 @@ export class SimWorld {
     return {
       tick: () => this.clock.tick,
       connectorsOf: (id: string) => this.graph.connectors.get(id),
+      // Each stage's yellow is timed for the fastest approach it releases
+      // (ITE kinematic equation, `plan.ts` `withAmbers`).
+      approachSpeed: (lane: string) => this.graph.lanelets.get(lane)?.speedLimit ?? 0,
       // Conflicts between two CARS. A tail swing only a bus or a truck can
       // make is serialised by the claim table as the bus arrives; letting it
       // split two approaches into separate stages would halve their green for

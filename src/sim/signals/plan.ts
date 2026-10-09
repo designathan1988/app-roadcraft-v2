@@ -1,6 +1,7 @@
 import { clamp } from '@core/scalar';
 import type { NodeId } from '@world/ids';
 import type { Connector, JunctionTopology } from '@world/lanelets';
+import { METERS_PER_UNIT } from '@world/units';
 import { PED, SIGNAL } from '../params';
 
 export type GroupId = number;
@@ -54,9 +55,48 @@ export function buildSignalPlan(
   crossings: readonly CrossingId[],
   connectorsOf: (id: string) => Connector | undefined,
   conflictsOf?: (id: string) => readonly string[],
+  approachSpeed?: (lane: string) => number,
 ): SignalPlan {
   const raw = buildStages(junction, crossings, connectorsOf, conflictsOf);
-  return validate(annotate(raw, junction, connectorsOf, conflictsOf));
+  const plan = annotate(raw, junction, connectorsOf, conflictsOf);
+  return validate(approachSpeed && junction.signalised ? withAmbers(plan, junction, connectorsOf, approachSpeed) : plan);
+}
+
+/** Perception-reaction time of the yellow interval, s (ITE). */
+const AMBER_REACTION = 1;
+/** Comfortable deceleration of the yellow interval, m/s² (ITE: 10 ft/s²). */
+const AMBER_DECELERATION = 3.05;
+/** Longest yellow change interval, s (MUTCD: 3 to 6 s). */
+const AMBER_MAX = 6;
+/** The 85th-percentile approach speed over the limit, m/s, where it is not measured (ITE RP-040B: limit + 7 mph). */
+const APPROACH_OVER_LIMIT = 3.13;
+
+/**
+ * Each stage's yellow from the fastest approach it releases, by the ITE
+ * kinematic formula Y = t + V / 2a (level ground): long enough for a driver
+ * too near the line to stop in comfort when it shows to go on through before
+ * red. A fixed 3.2 s was short for an avenue: a car admitted on green, 92
+ * units out at 40 u/s when the yellow came, slowing for its turn, crossed the
+ * line 0.05 s into red (`fourWay.spec`). Never shorter than `SIGNAL.amber`
+ * nor longer than the MUTCD's six seconds.
+ */
+function withAmbers(plan: SignalPlan, junction: JunctionTopology, connectorsOf: (id: string) => Connector | undefined,
+  approachSpeed: (lane: string) => number): SignalPlan {
+  const fastest = new Map<GroupId, number>();
+  for (const id of junction.connectors) {
+    const c = connectorsOf(id);
+    if (!c) continue;
+    fastest.set(c.group, Math.max(fastest.get(c.group) ?? 0, approachSpeed(c.fromLane)));
+  }
+  const stages = plan.stages.map((s) => {
+    const limit = s.greenGroups.reduce((most, g) => Math.max(most, fastest.get(g) ?? 0), 0) * METERS_PER_UNIT;
+    if (limit <= 0) return s;
+    const speed = limit + APPROACH_OVER_LIMIT;
+    const amber = clamp(AMBER_REACTION + speed / (2 * AMBER_DECELERATION), SIGNAL.amber, AMBER_MAX);
+    return amber === s.amber ? s : { ...s, amber };
+  });
+  const cycle = stages.reduce((sum, s) => sum + s.targetGreen + s.amber + s.allRed, 0);
+  return { ...plan, stages, cycle };
 }
 
 /**

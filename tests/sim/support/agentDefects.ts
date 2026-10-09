@@ -19,7 +19,8 @@ import { fixtureDoc, LAYOUTS, layoutDoc } from './bodies';
  * - `zebraStand`: longest anybody stood still on a zebra (the cars wait for
  *   them: a frozen junction);
  * - `pavementStand`: longest anybody stood still elsewhere, neither waiting at
- *   a kerb, nor queueing for one, nor sitting or talking;
+ *   a kerb, nor queueing for one or behind somebody walking the same way
+ *   (`queuedBehind`), nor sitting or talking;
  * - `fidgets`: a standing body turning its head and shoulders to and fro -
  *   over 20 degrees swung back and forth within a second - per person-minute;
  * - `back`, `side`, `jump`, `flip`: steps against the heading (any faster
@@ -146,6 +147,26 @@ export const CITIES: readonly City[] = [
   ...LAYOUTS.map((layout) => ({ name: layout.name, build: () => people(worldOf(layoutDoc(layout, 300).doc, 0x1a70), 6, 2) })),
 ];
 
+/**
+ * Somebody standing in a queue: another person walking the same way (headings
+ * within 60 degrees) less than 1.2 m ahead, in front of their body. A
+ * pedestrian following another stands while the gap is under the one it keeps
+ * (SUMO's striping: speed from the distance less the preferred gap), which is
+ * queueing, not standing frozen. Two people face to face are not a queue, and
+ * the head of a queue still counts, so a frozen queue is still seen.
+ */
+function queuedBehind(v: SimWorld['pedViews'][number], views: SimWorld['pedViews']): boolean {
+  const hx = Math.cos(v.heading), hy = Math.sin(v.heading);
+  for (const q of views) {
+    if (q.id === v.id) continue;
+    const dx = q.x - v.x, dy = q.y - v.y;
+    const ahead = dx * hx + dy * hy;
+    if (ahead <= 0 || ahead > m(1.2) || Math.abs(-dx * hy + dy * hx) > m(0.6)) continue;
+    if (Math.cos(q.heading - v.heading) >= 0.5) return true;
+  }
+  return false;
+}
+
 export function measureDefects(city: City, seconds: number): AgentDefects {
   const sim = city.build();
   const vehicleMotion = new VehicleMotionMetrics();
@@ -180,7 +201,7 @@ export function measureDefects(city: City, seconds: number): AgentDefects {
     for (const v of views) {
       personSeconds += DT;
       const busy = v.gesture !== null;
-      if (v.v < m(0.1) && v.kerbWait === 0 && !busy && v.ground !== 'crossing') {
+      if (v.v < m(0.1) && v.kerbWait === 0 && !busy && v.ground !== 'crossing' && !queuedBehind(v, views)) {
         const s = (still.get(v.id) ?? 0) + DT;
         still.set(v.id, s);
         r.pavementStand = Math.max(r.pavementStand, s);

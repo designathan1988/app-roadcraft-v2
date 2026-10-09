@@ -33,7 +33,10 @@ export function runAudit(w: SimWorld, level: 'cheap' | 'full'): AuditIssue[] {
     if (!anyGreen(c) && c.sub === 'GREEN' && !currentStage?.exclusivePed) {
       out.push(issue('planCoverageGap', tick, c.node, 'green stage serves no group'));
     }
-    if (c.sub !== 'GREEN' && c.elapsed > maxDark) {
+    // Against the stage's own yellow and all-red: a stage releasing a fast
+    // approach has a longer yellow (`plan.ts` `withAmbers`, ITE).
+    const stageDark = currentStage ? currentStage.amber + currentStage.allRed + 0.5 : maxDark;
+    if (c.sub !== 'GREEN' && c.elapsed > Math.max(maxDark, stageDark)) {
       out.push(
         issue('allRedTooLong', tick, c.node, `${c.sub} for ${c.elapsed.toFixed(1)}s`),
       );
