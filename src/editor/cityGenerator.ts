@@ -1,5 +1,10 @@
 import type { Vec2 } from '@core/vec2';
 import { RoadDoc } from '@world/doc';
+import type { Network } from '@world/network';
+import { deleteLot } from '@world/lots';
+import { planSquares } from '@world/cityGen/squares';
+import { furnitureFor } from '@world/roads/furnitureSets';
+import { roadProfile, sectionFromProfile } from '@world/roadTypes';
 import { lotFrame, zoneLots, type Lot } from '@world/lots';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { m } from '@world/units';
@@ -23,6 +28,47 @@ export function layCity(plan: CityPlan): RoadDoc {
     for (let i = 0; i + 1 < chain.length; i++) doc.addSegment(chain[i]!, chain[i + 1]!, types[Math.min(e.level, types.length - 1)]!);
   }
   return doc;
+}
+
+/**
+ * The generated city's footways, 3 m (docs/VIAS.md V7): wide enough for a
+ * street tree's pit beside the kerb with the 1,20 m clear walk of NBR 9050
+ * behind it (a 2 m footway takes no tree under that rule), and the avenues a
+ * 2 m planted median. Before the lots
+ * are cut, so they are cut against the wider street.
+ */
+export const CITY_FOOTWAY = m(3);
+/** The generated avenues' median, planted (a canteiro of 2 m: a tree pit with a kerb each side). */
+export const CITY_MEDIAN = m(2);
+export function widenCityFootways(doc: RoadDoc): void {
+  for (const s of [...doc.segments.values()]) {
+    const rt = roadProfile(s.type, s.lanes, s.direction, s.section, s.parking);
+    if (rt.id === 'highway' || rt.id === 'ramp') continue;
+    // An avenue of four lanes gets a planted median between its directions.
+    const median = rt.id === 'avenue' && s.direction === 'both' && rt.median < CITY_MEDIAN ? CITY_MEDIAN : rt.median;
+    if (rt.sidewalk >= CITY_FOOTWAY && median === rt.median) continue;
+    doc.setSegmentSection(s.id, { ...sectionFromProfile(rt), sidewalk: Math.max(rt.sidewalk, CITY_FOOTWAY), median });
+  }
+}
+
+/**
+ * The generated city's green (V7): a square in each neighbourhood
+ * (`world/cityGen/squares.ts`, its lots taken away, its ground painted, its
+ * trees planted) and every street's furniture, the complete set: street
+ * trees, avenue medians planted, lamps, bins, benches, hydrants. Returns how
+ * many squares and pieces were laid.
+ */
+export function greenCity(doc: RoadDoc, net: Network, seed: number): { squares: number; pieces: number } {
+  const squares = planSquares(doc, seed);
+  for (const square of squares) {
+    for (const id of square.lots) deleteLot(doc, id);
+    for (const dab of square.dabs) doc.addPaintDab(dab);
+    doc.plantTrees(square.trees);
+  }
+  if (net.revision !== doc.revision) net.rebuild();
+  const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values());
+  for (const piece of pieces) doc.addLandscape(piece.kind, piece.at);
+  return { squares: squares.length, pieces: pieces.length };
 }
 
 /**

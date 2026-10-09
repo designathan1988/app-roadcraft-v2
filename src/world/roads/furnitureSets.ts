@@ -66,6 +66,9 @@ const SETS: Readonly<Record<Exclude<FurnitureSet, 'none'>, readonly Pattern[]>> 
   ],
 };
 
+/** The cell of the nearby-items grid, world units. */
+const CELL = m(40);
+
 export interface FurniturePlacement {
   readonly kind: LandscapeKind;
   readonly at: Vec2;
@@ -79,11 +82,27 @@ export interface FurniturePlacement {
 export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: FurnitureSet, existing: Iterable<LandscapeItem>): FurniturePlacement[] {
   if (set === 'none') return [];
   const out: FurniturePlacement[] = [];
-  const items: LandscapeItem[] = [...existing];
+  // The items already standing, in cells: each street asks only those near it
+  // (a generated city lays thousands of pieces at once).
+  const grid = new Map<string, LandscapeItem[]>();
+  const cellOf = (x: number, y: number): string => `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+  const file = (item: LandscapeItem): void => {
+    const key = cellOf(item.x, item.y);
+    let list = grid.get(key);
+    if (!list) grid.set(key, list = []);
+    list.push(item);
+  };
+  for (const item of existing) file(item);
   let nextId = -1;
   for (const id of [...segments].sort((a, b) => a - b)) {
     const segment = net.doc.segment(id), ribbon = net.ribbons.get(id);
     if (!segment || !ribbon || !carriesPedestrians(ribbon.road) || ribbon.road.sidewalk <= 0) continue;
+    const box = ribbon.full.bbox, pad = ribbon.road.width / 2 + ribbon.road.sidewalk + m(4);
+    const items: LandscapeItem[] = [];
+    for (let cx = Math.floor((box.minX - pad) / CELL); cx <= Math.floor((box.maxX + pad) / CELL); cx++) {
+      for (let cy = Math.floor((box.minY - pad) / CELL); cy <= Math.floor((box.maxY + pad) / CELL); cy++) items.push(...(grid.get(`${cx},${cy}`) ?? []));
+    }
+    const keep = (item: LandscapeItem): void => { items.push(item); file(item); };
     const line = ribbon.full;
     const section = sectionOf(ribbon.road, segment.direction);
     const startS = net.mouthDistance(id, segment.a);
@@ -98,7 +117,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
         const snap = snapLandscape(net, items, 'tree', { x: f.p.x + f.n.x * shift, y: f.p.y + f.n.y * shift }, m(0.6));
         if (!snap.ok || !snap.median || snap.median.segment !== id) continue;
         out.push({ kind: 'tree', at: snap.at });
-        items.push({ id: nextId--, kind: 'tree', x: snap.at.x, y: snap.at.y });
+        keep({ id: nextId--, kind: 'tree', x: snap.at.x, y: snap.at.y });
       }
     }
     for (const side of ['right', 'left'] as const satisfies readonly RoadSide[]) {
@@ -121,7 +140,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
           const snap = snapLandscape(net, items, pattern.kind, at, m(0.6));
           if (!snap.ok || snap.hit?.segment !== id) continue;
           out.push({ kind: pattern.kind, at: snap.at });
-          items.push({ id: nextId--, kind: pattern.kind, x: snap.at.x, y: snap.at.y });
+          keep({ id: nextId--, kind: pattern.kind, x: snap.at.x, y: snap.at.y });
         }
       }
     }

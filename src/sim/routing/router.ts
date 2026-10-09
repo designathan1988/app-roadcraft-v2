@@ -11,6 +11,57 @@ const HORIZON = 24;
 const LOOKAHEAD = 5;
 
 /**
+ * THE LANES A BODY CAN NEVER LEAVE (a trap): every way on from them, however
+ * far, ends at a movement too tight for it, never at a road off the map nor
+ * in a loop it can keep driving. SUMO calls such edges "disconnected" for the
+ * vehicle class and its router never routes over them; here the search looked
+ * only five lanes ahead, so a car took a street whose way out lay six lanes
+ * on through a bend no car fits, and stood at the end of its route for good,
+ * the street queued behind it (defects.spec, player-city, 75 s at a junction).
+ *
+ * Per graph and body class, worked out once.
+ */
+const trapMemo = new WeakMap<object, Map<number, ReadonlySet<LaneletId>>>();
+export function trapLanes(w: SimWorld, body: number): ReadonlySet<LaneletId> {
+  let byBody = trapMemo.get(w.graph);
+  if (!byBody) trapMemo.set(w.graph, byBody = new Map());
+  const known = byBody.get(body);
+  if (known) return known;
+  // Reverse edges over the movements this body fits.
+  const into = new Map<LaneletId, LaneletId[]>();
+  const links: LaneletId[] = [];
+  for (const lane of w.graph.lanelets.values()) {
+    if (lane.kind !== 'link') continue;
+    links.push(lane.id);
+    for (const cid of w.graph.exitsOf(lane.id)) {
+      const c = w.connector(cid);
+      if (!c || c.maxBodyClass < body) continue;
+      let list = into.get(c.toLane);
+      if (!list) into.set(c.toLane, list = []);
+      list.push(lane.id);
+    }
+  }
+  // Peeled off, again and again: a lane with exits whose movements this body
+  // fits lead only to lanes already peeled (or it fits none). A road off the map
+  // (no exits) is never peeled; what stays reaches one, or a cycle it can
+  // keep driving round (SUMO's "disconnected" edges, by their complement).
+  const outDegree = new Map<LaneletId, number>();
+  for (const id of links) outDegree.set(id, (w.graph.exitsOf(id).map((cid) => w.connector(cid)).filter((c) => !!c && c.maxBodyClass >= body)).length);
+  const peel: LaneletId[] = links.filter((id) => outDegree.get(id) === 0 && w.graph.exitsOf(id).length > 0);
+  const traps = new Set<LaneletId>(peel);
+  while (peel.length) {
+    const id = peel.pop()!;
+    for (const from of into.get(id) ?? []) {
+      const d = (outDegree.get(from) ?? 0) - 1;
+      outDegree.set(from, d);
+      if (d === 0 && !traps.has(from)) { traps.add(from); peel.push(from); }
+    }
+  }
+  byBody.set(body, traps);
+  return traps;
+}
+
+/**
  * Route planning over the lanelet graph. Spawned vehicles normally follow a
  * reachable boundary destination (`destination.ts`); the local planner below
  * is the fallback for a disconnected map or a destination invalidated by an
@@ -215,6 +266,8 @@ function routeCost(
   if (!connector || connector.maxBodyClass < body) return Infinity;
   const out = w.lanelet(connector.toLane);
   if (!out || out.kind !== 'link' || visited.has(out.id) || w.rt(out.id).ghost) return Infinity;
+  // A lane it could never leave, however far its way out is (`trapLanes`).
+  if (trapLanes(w, body).has(out.id)) return Infinity;
 
   const runtime = w.rt(out.id);
   const density = runtime.order.length / Math.max(1, out.length / 12);

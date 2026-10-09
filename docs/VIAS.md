@@ -306,6 +306,13 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   automático vira semáforo com controlador; fases do tempo fixo; corte do verde para ônibus; onda verde com ciclo comum).
 - Limite conhecido: os conectores da minirrotatória continuam os da junção (uma conversão à esquerda passa sobre a ilha
   pintada, transponível); o contorno da ilha fica para a V8.
+- Impasse do player-city (defects.spec, cruzamento parado 75 s com a cidade povoada ao abrir): não era admissão; um carro
+  sem destino entrava numa rua cuja única saída, duas faixas adiante, é uma curva em que nenhum carro cabe (conector com
+  `maxBodyClass` -1), e o roteador só olhava 5 faixas à frente; parava no fim da rota para sempre, a perna enfileirada.
+  `sim/routing/router.ts` `trapLanes`: as faixas de onde um corpo nunca sai (descascadas de trás para frente, como as
+  arestas "desconectadas" do SUMO), custo infinito no roteador. Antes/depois: cruzamento 75 → 19 s, carro parado 76 → 43 s.
+  Detector `tests/sim/trapLanes.spec.ts`. Seguem falhando, da caminhada (não das vias): pedestre parado na calçada 5,9 s
+  (player-city) e 10,3 s (mixed-lanes), iguais antes e depois.
 - Fechamento no ramo: lint limpo; suíte inteira 1158 verdes; falhas: `occupantFit` (antiga) e
   `tests/world/lotPhysics.spec.ts` (lotes, vinda do master em 4223ce23, fora do sistema de vias).
 
@@ -347,7 +354,16 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   das opções: botões dessa linha mais justos (cabe com 16 px de folga em 1280x720).
 - Detectores: `tests/world/roadFurniture.spec.ts` (árvores no canteiro e desenhadas lá), `tests/editor/signRule.spec.ts`
   (placa = regra, fileira a cada 30 m).
-- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f, arborização e praças na cidade gerada.
+- Cidade gerada arborizada (`editor/cityGenerator.ts` `widenCityFootways`, `greenCity`; `world/cityGen/squares.ts`):
+  calçadas de 3 m (cabe a cova da árvore com 1,20 m livres, NBR 9050) e canteiro de 2 m gramado nas avenidas, antes de
+  cortar os lotes; o conjunto Completo em todas as ruas (árvores na calçada, no canteiro das avenidas, postes, lixeiras,
+  bancos, hidrantes); uma praça por bairro (célula de 420 m): o quarteirão inteiro (os lotes que se tocam) de 1.500 a
+  14.000 m², de frente para avenida ou coletora, o mais perto do meio do bairro; caminhos em cruz pavimentados, árvores em
+  grade de 9 m nos gramados (árvores plantadas, desenhadas em instância). Cidade pequena: 4 praças, 2.414 peças, 1,4 s na
+  geração; quadro mediano 23 ms no Chrome sem tela (iGPU), sem número de antes.
+- Detector: `tests/world/cityGreen.spec.ts`. `crossingAccesses` memorizado por revisão e `furnitureFor` com grade de
+  vizinhança (antes, quadrático no número de peças).
+- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

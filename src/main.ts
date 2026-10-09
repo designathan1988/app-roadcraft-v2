@@ -20,7 +20,7 @@ import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
 import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
-import { layCity, zoneCity } from '@editor/cityGenerator';
+import { greenCity, layCity, widenCityFootways, zoneCity } from '@editor/cityGenerator';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, RELIEF_FLAT, type TerrainMode } from '@world/terrain';
@@ -2777,20 +2777,24 @@ if (__PLAY_MODE__ && ['armas', 'weapons'].includes(new URLSearchParams(location.
  * zoned, then every lot built on, a slice of each frame until all stand.
  */
 let cityGrowth: { left: number; total: number; started: number } | null = null;
-function generateCity(options: CityOptions): { roads: number; lots: number; zoned: number } {
+function generateCity(options: CityOptions): { roads: number; lots: number; zoned: number; squares: number; pieces: number } {
   const plan = planCity(options);
   const cityDoc = layCity(plan);
   history.record(doc);
+  // The footways wide enough for street trees before the lots are cut (V7).
+  widenCityFootways(cityDoc);
   applySnapshot(cityDoc.toJSON(), 'import');
   if (net.revision !== doc.revision) net.rebuild();
   applyLots(doc, planLots(doc, net));
+  // A square in each neighbourhood and the streets' trees and furniture (V7).
+  const green = greenCity(doc, net, options.seed);
   const zoned = zoneCity(doc, plan);
   lotTool.refused.clear();
   lotTool.refusedFor(net.revision);
   cityGrowth = { left: zoned, total: zoned, started: performance.now() };
   fitView();
   requestDraw();
-  return { roads: doc.segments.size, lots: doc.lots.length, zoned };
+  return { roads: doc.segments.size, lots: doc.lots.length, zoned, ...green };
 }
 /**
  * Builds on the generated city's lots, forty milliseconds a frame, the
