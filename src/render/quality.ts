@@ -20,10 +20,11 @@ export interface QualitySettings {
   readonly smaa: boolean;
   /**
    * AMD FidelityFX Contrast Adaptive Sharpening on the final image, 0 (off)
-   * to 1 (strongest). Off on every tier: CAS is made to restore what TAA
-   * blurs and wants linear colour (AMD); here there is no TAA and it ran on
-   * the display image, so it only sharpened the jaggies and the moiré of
-   * brick, tile and grass (the player, 2026-10-08).
+   * to 1 (strongest). Switched off on 2026-10-08 because, run on the display
+   * image's sRGB values, it sharpened the jaggies and the moiré of brick,
+   * tile and grass; the town lost its definition with it (the player,
+   * 2026-10-09: "piorou a nitidez"). Back, on linear colour as AMD requires
+   * (`postprocess.ts` GRADE), and gentler than the 0.55 it had.
    */
   readonly sharpen: number;
   /** Maximum anisotropic filtering taps requested for ground textures. */
@@ -130,7 +131,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
-    sharpen: 0,
+    sharpen: 0.35,
     anisotropy: 8,
     detailProps: true,
     vegetation: 1_400,
@@ -156,7 +157,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
-    sharpen: 0,
+    sharpen: 0.45,
     anisotropy: 16,
     detailProps: true,
     vegetation: 2_600,
