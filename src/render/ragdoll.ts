@@ -190,6 +190,11 @@ const CRAWL_UP = 1.1;
  * it for every body).
  */
 const JOLT = typeof location !== 'undefined' && new URLSearchParams(location.search).get('ragdoll') !== 'verlet';
+
+/** Starts loading the physics the bodies fall with (Jolt): when the Actions are chosen, or the first time a body falls. */
+export function warmPhysics(): void {
+  if (JOLT) startJolt();
+}
 /** World units in a metre (Jolt works in metres). */
 const METRE = m(1);
 /** Jolt's parts: the trunk, the head (with the neck), and each limb's bones. */
@@ -421,8 +426,10 @@ export interface Ragdolls {
 
 export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null = null): Ragdolls {
   const bodies: Body[] = [];
-  // Jolt loaded a few seconds in, not at the start (some 3 MB of WebAssembly).
-  if (JOLT) setTimeout(startJolt, 3000);
+  // Jolt (some 3.5 MB of WebAssembly) is loaded when the Actions are taken up
+  // (`warmPhysics`), not in every session: the effects are made ahead at idle
+  // for the first shot, and loading Jolt with them downloaded and compiled it
+  // for every player who never shoots (web.dev: load code on interaction).
   let separated = false;
   const decals: BloodDecal[] = [];
   /** The casualty records already turned into bodies (`absorb`). */
@@ -1073,6 +1080,9 @@ export function createRagdolls(exhaust: Exhaust, getUp: GetUp, gore: Gore | null
     update(dt, world) {
       const wall = Math.min(0.1, Math.max(0, dt));
       clock += wall;
+      // A body down without the Actions chosen (a probe, the weapons lab): the
+      // physics asked for now; meanwhile it falls by the stick figure.
+      if (bodies.length) warmPhysics();
       for (const d of decals) d.age += wall;
       while (clock >= STEP) {
         clock -= STEP;

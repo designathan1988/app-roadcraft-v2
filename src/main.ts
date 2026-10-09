@@ -3159,6 +3159,8 @@ const minimapDue = new Periodic(0.1);
 const panelsDue = new Periodic(0.4);
 /** The conflict zones measured since, kept for the next session (`keptZones`). */
 const zonesDue = new Periodic(5);
+/** The Actions' physics asked for (`frame`). */
+let actionsWarm = false;
 
 /**
  * Set by an edit: draw the new geometry first, rebuild the simulation after.
@@ -3230,6 +3232,13 @@ function frame(now: number): void {
   let holdSim = mover.dragging || topologyAfterDraw || !worldShown;
   // A generated city being built (`generateCity`).
   growCity();
+  // The pistol or the bomb chosen: their effects and the physics the bodies
+  // fall with loaded now, while the player aims (`SceneHandle.effects`), not
+  // in every session.
+  if (!actionsWarm && game.tool === 'bulldoze' && strikeChoice.mode !== 'demolish') {
+    actionsWarm = true;
+    void scene.effects();
+  }
   // The traffic's topology catching up with an edit, a slice a frame, the
   // simulation held until it has (`TopologyCatchUp`); with a load's time
   // while the opening's town is put together, nothing of it shown yet.

@@ -2073,7 +2073,10 @@ export function createSceneRenderer(
   let hiddenPerson: number | null = null;
 
   const handle: SceneHandle = {
-    effects: () => loadEffects(),
+    // Asked for by the Actions (a shot, a bomb) and the weapons lab: the
+    // effects, and now the physics the bodies fall with (`warmPhysics`). The
+    // idle preload below makes the effects only.
+    effects: () => loadEffects().then(() => import('./ragdoll')).then((mod) => mod.warmPhysics()),
     setChase(chase) {
       if (chase && orbitPerspective === null) {
         orbitPerspective = rig.perspective;
