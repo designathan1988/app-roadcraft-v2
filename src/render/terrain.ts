@@ -1976,52 +1976,60 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          topsoil = mix(topsoil, vec3(0.42, 0.33, 0.22), root * 0.6);
          vec3 turf = mix(vec3(0.24, 0.34, 0.13), vec3(0.15, 0.22, 0.09), smoothstep(0.0, lip, vBelow));
          vec3 wall = mix(topsoil, strata, smoothstep(soil - 0.6, soil + 0.6, vBelow));
-         // Bedrock as a road cut shows it (soil horizons C and R): over the
-         // solid rock a weathered zone of broken, angular rock fragments in
-         // the soil, more of them deeper; under it massive grey rock, cut by
-         // a few planar joints - gently wavy sheeting joints roughly level,
-         // and short upright joints offset from one sheet to the next - into
-         // big blocks. No pale line and no packed cobbles.
+         // The base of the section, as the player's reference draws it: under
+         // the beds a band of FRACTURED ROCK - angular stones packed together,
+         // each a different grey, faceted (lit on the side facing the sun),
+         // thin dark cracks between them - and under that the dark BEDROCK,
+         // foliated: long wavy streaks flowing along the cut. Both boundaries
+         // wavy; the bedrock swells up into the broken rock in humps.
          float bedTop = 200.0 + 16.0 * wallNoise(along * 0.025) + 5.0 * wallNoise(along * 0.11 + 3.0);
-         float weathered = 48.0;
-         // Fragments: one jittered angular chip per 14 x 9 unit cell, one read.
-         float zone = smoothstep(bedTop - weathered, bedTop, vBelow);
-         vec2 fp = vec2(along / 14.0, vBelow / 9.0);
-         fp.x += wallHash(floor(fp.y) * 3.7 + 1.3);
-         vec2 fi = floor(fp);
-         vec2 ff = fract(fp) - 0.5;
-         float fid = dot(fi, vec2(127.1, 311.7));
-         vec2 fc = (vec2(wallHash(fid), wallHash(fid + 57.3)) - 0.5) * 0.4;
-         float fa = wallHash(fid + 21.7) * 3.14159;
-         vec2 fd = ff - fc;
-         fd = vec2(fd.x * cos(fa) - fd.y * sin(fa), fd.x * sin(fa) + fd.y * cos(fa));
-         float fsize = (0.1 + 0.22 * wallHash(fid + 4.4)) * (0.6 + 0.4 * zone);
-         float chip = 1.0 - smoothstep(fsize - 0.03, fsize, max(abs(fd.x) * 0.8, abs(fd.y) * 1.3) + abs(fd.x * fd.y) * 0.6);
-         float chipOn = step(wallHash(fid + 13.1), zone * zone * 0.6);
-         vec3 rockTone = mix(vec3(0.055, 0.056, 0.058), vec3(0.1, 0.096, 0.09), wallNoise(along * 0.03 + vBelow * 0.02));
-         vec3 fragment = mix(rockTone * 1.9, vec3(0.2, 0.14, 0.09), 0.35 * wallHash(fid + 2.2)) * (0.8 + 0.4 * smoothstep(0.0, -0.3, fd.y));
-         // The weathered rock (saprolite) takes over the beds as it nears the rock.
-         vec3 saprolite = vec3(0.13, 0.1, 0.075) * (0.85 + 0.3 * wallNoise(along * 0.4 + vBelow * 0.3));
-         wall = mix(wall, saprolite, smoothstep(0.05, 0.5, zone));
-         wall = mix(wall, fragment, chip * chipOn);
-         // Massive rock: no drawn blocks. What a fresh cut through granite
-         // shows is the stone itself - broad patches of tone, a fine grain,
-         // and here and there a thin sinuous fissure (ridged noise, faded
-         // where it would alias), low in contrast.
-         vec2 rp = vec2(along, vBelow);
-         float patches = wallNoise2(rp * 0.025) * 0.6 + wallNoise2(rp * 0.07 + 31.0) * 0.4;
-         float grain = wallNoise2(rp * 0.6) * 0.5 + wallNoise2(rp * 1.7 + 9.0) * 0.5;
-         vec3 rock = rockTone * (0.78 + 0.44 * patches) * (0.9 + 0.2 * grain);
-         float ridge = 1.0 - abs(wallNoise2(rp * vec2(0.02, 0.035) + 5.0) * 2.0 - 1.0);
-         float rw = max(fwidth(ridge), 1e-4);
-         float fissure = smoothstep(1.0 - rw * 2.5, 1.0 - rw * 0.5, ridge) * smoothstep(0.45, 0.7, wallNoise2(rp * 0.012 + 70.0));
-         fissure *= 1.0 - smoothstep(0.02, 0.08, rw);
-         rock *= 1.0 - 0.3 * fissure;
-         wall = mix(wall, rock, smoothstep(bedTop - 1.5, bedTop + 1.5, vBelow + 3.0 * (wallNoise(along * 0.3) - 0.5)));
+         // The bed right above the rock is a pale pinkish tan, plain (the strata's
+         // own beds there carried a thin pale gravel line the player disliked).
+         vec3 paleBed = vec3(0.5, 0.33, 0.22) * (0.88 + 0.24 * wallNoise2(vec2(along, vBelow) * 0.35));
+         wall = mix(wall, paleBed, smoothstep(bedTop - 34.0, bedTop - 31.0, vBelow + 6.0 * (wallNoise(along * 0.04 + 2.0) - 0.5)));
+         float rockBase = bedTop + 62.0 + 30.0 * (wallNoise(along * 0.012 + 40.0) - 0.5) + 10.0 * (wallNoise(along * 0.05 + 9.0) - 0.5);
+         // Fractured rock: Voronoi stones, 3x3 search, ~20 x 13 units each.
+         vec2 cp = vec2(along / 20.0, vBelow / 13.0);
+         vec2 ci = floor(cp);
+         vec2 cf = fract(cp);
+         float f1 = 9.0;
+         float f2 = 9.0;
+         float stoneId = 0.0;
+         vec2 toCentre = vec2(0.0);
+         for (int j = -1; j <= 1; j++) {
+           for (int i = -1; i <= 1; i++) {
+             vec2 g = vec2(float(i), float(j));
+             float id = dot(mod(ci + g, 289.0), vec2(12.9898, 78.233));
+             vec2 r = g + 0.1 + 0.8 * vec2(wallHash(id), wallHash(id + 57.3)) - cf;
+             float d = dot(r, r);
+             if (d < f1) { f2 = f1; f1 = d; stoneId = id; toCentre = r; } else if (d < f2) { f2 = d; }
+           }
+         }
+         float edge = sqrt(f2) - sqrt(f1);
+         float cw = max(fwidth(edge), 1e-4);
+         float crack = 1.0 - smoothstep(0.02, 0.02 + cw * 1.5, edge);
+         // A facet: the stone's surface tilts away from its centre, so the
+         // side facing the light (up-left) is brighter - an angular, chipped look.
+         float facet = clamp(dot(normalize(-toCentre + 1e-4), normalize(vec2(-0.6, -0.8))), -1.0, 1.0) * smoothstep(0.0, 0.25, sqrt(f1));
+         vec3 stone = mix(vec3(0.075, 0.075, 0.078), vec3(0.17, 0.165, 0.16), wallHash(stoneId + 9.1));
+         stone *= 0.85 + 0.3 * wallNoise2(vec2(along, vBelow) * 0.8);
+         stone *= 1.0 + 0.35 * facet;
+         stone = mix(stone, vec3(0.02, 0.02, 0.022), crack * 0.85);
+         // Filtered over the pixel: as a pixel covers whole stones, their mean.
+         float stoneW = max(fwidth(cp.x), fwidth(cp.y));
+         stone = mix(stone, vec3(0.09, 0.09, 0.092), smoothstep(0.35, 1.0, stoneW));
+         // Bedrock: near-black, streaked along the cut by warped noise.
+         float warp = 18.0 * wallNoise2(vec2(along * 0.01, vBelow * 0.01) + 3.0) + 8.0 * wallNoise2(vec2(along * 0.035, vBelow * 0.03) + 11.0);
+         float streak = wallNoise2(vec2(along * 0.015, (vBelow + warp) * 0.22));
+         float streak2 = wallNoise2(vec2(along * 0.04, (vBelow + warp * 1.3) * 0.6) + 21.0);
+         vec3 bedrock = mix(vec3(0.016, 0.017, 0.021), vec3(0.085, 0.088, 0.1), smoothstep(0.3, 0.9, streak) * 0.75 + streak2 * 0.25);
+         float br = smoothstep(rockBase - 1.0, rockBase + 1.0, vBelow);
+         vec3 rock = mix(stone, bedrock, br);
+         wall = mix(wall, rock, smoothstep(bedTop - 0.8, bedTop + 0.8, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v5';
+  material.customProgramCacheKey = () => 'terrain-walls-v7';
   return material;
 }
 
