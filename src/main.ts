@@ -4438,7 +4438,8 @@ function duplicateSelectedSegment(id = game.selectedSegment): void {
 function updateStatus(): void {
   text('roadCount', roadCountLabel(doc.segments.size));
   text('nodeCount', nodeCountLabel(doc.nodes.size));
-  text('vehicleCount', vehicleCountLabel(sim.vehicles.size));
+  // The cars driving into and out of the lots' bays are cars driving too (`sim/agents/lotTraffic.ts`).
+  text('vehicleCount', vehicleCountLabel(sim.vehicles.size + sim.city.lots.moving()));
   text('pedCount', peopleCountLabel(sim.pedViews.length));
   // The time of day and the residents' day (`sim/city`).
   const minutes = sim.city.minutes(sim) % 1440;

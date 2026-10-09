@@ -10,7 +10,7 @@ import type { SimWorld } from '../world';
 import { ARCHETYPES, type Archetype, archetypeWeights, bodyClassOfArchetype } from './archetypes';
 import { makeDriver } from './driver';
 import { idmAccel } from './idm';
-import { createVehicle, snapshot } from './state';
+import { createVehicle, snapshot, type Vehicle } from './state';
 import { planFrom } from '../routing/router';
 import { chooseVehicleDestination } from '../routing/destination';
 import { assignOccupancy } from './kerbStops';
@@ -240,9 +240,11 @@ function spawnAt(w: SimWorld, id: string): boolean {
 /**
  * Puts one vehicle of `arch` on lane `id` with its front at arc `s`, if
  * nothing on the lane is within a standstill gap of its body and nobody is
- * standing there: the ambient traffic's way in (`sim/ambient`), which brings
- * cars in where the camera does not look, as GTA does, instead of at the
- * edges of the map. Born at a cruise the car ahead allows. Returns its id.
+ * standing there, nor where the car behind could not keep its distance: the
+ * scenery's way in (`sim/ambient`) - the cars of a map just opened, put on
+ * its lanes at once (`AmbientWorld.open`), and with `?ambient=view` the cars
+ * made where the camera does not look, as GTA does. Born at a cruise the car
+ * ahead allows and slow enough to stop by its lane's end. Returns its id.
  */
 export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archetype): number | null {
   const lane = w.lanelet(id);
@@ -251,10 +253,13 @@ export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archety
   const rear = s - arch.length;
   let leaderGap = Infinity;
   let leaderSpeed = Infinity;
+  let follower: Vehicle | null = null;
+  let followerGap = Infinity;
   for (const body of w.bodiesIn(id)) {
     const front = body.s, back = body.s - body.vehicle.archetype.length;
     if (back - JAM_GAP < s && front + JAM_GAP > rear) return null;
     if (back >= s && back - s < leaderGap) { leaderGap = back - s; leaderSpeed = body.vehicle.v; }
+    if (front <= rear && rear - front < followerGap) { followerGap = rear - front; follower = body.vehicle; }
   }
   for (const at of [rear, (rear + s) / 2, s]) {
     const f = lane.centre.sampleAt(Math.min(lane.length, Math.max(0, at)));
@@ -263,9 +268,21 @@ export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archety
   const driver = makeDriver(arch, () => w.rng.driver.float());
   const v0 = lane.speedLimit * arch.speedFactor * w.rng.driver.range(DRIVER_NOISE.lo, DRIVER_NOISE.hi) * (1 + driver.aggression * 0.07);
   const color = arch.palette[Math.floor(w.rng.spawnVehicles.float() * arch.palette.length)] as string;
+  // Born at a cruise the car ahead allows (SUMO's departSpeed "max", lowered
+  // for a leader), and slow enough to stop in comfort by the end of its lane,
+  // where a red or a give-way may be waiting (SUMO inserts a vehicle only if
+  // "it can brake for upcoming non-prioritized intersections",
+  // sumo.dlr.de/docs/Simulation/VehicleInsertion.html).
+  const toEnd = Math.max(0, lane.length - s - driver.s0);
+  const speed = Math.min(birthSpeed(driver, v0, v0 * w.rng.driver.range(0.6, 0.9), leaderGap, leaderSpeed),
+    Math.sqrt(2 * driver.b * toEnd));
+  // Nor in front of a car behind that could not keep its distance braking
+  // in comfort ("followers are at a safe distance from it", ibid.).
+  if (follower && idmAccel(follower.driver, follower.v, follower.v0,
+    { gap: Math.max(0.01, followerGap), speed, kind: 'vehicle' as const }) < -follower.driver.b) return null;
   const vehicle = createVehicle(w.nextVehicleId++, arch, driver, color, id, v0, w.clock.tick);
   vehicle.s = s;
-  vehicle.v = birthSpeed(driver, v0, v0 * 0.7, leaderGap, leaderSpeed);
+  vehicle.v = speed;
   vehicle.prev = snapshot(vehicle);
   assignOccupancy(w, vehicle);
   w.vehicles.set(vehicle.id, vehicle);
@@ -306,7 +323,8 @@ function birthSpeed(driver: ReturnType<typeof makeDriver>, v0: number, usual: nu
 /**
  * Removes the vehicles that reached the end of a road and stopped there: the
  * only place a car leaves the map (the player's rule, 2026-10-06 - once made,
- * a car is never taken away anywhere else).
+ * a car is never taken away anywhere else). It may also end its trip in a
+ * lot, parked there (`agents/lotTraffic.ts`), and drive out again later.
  */
 export function stepDespawn(w: SimWorld): void {
   for (const v of w.vehiclesInIdOrder()) {

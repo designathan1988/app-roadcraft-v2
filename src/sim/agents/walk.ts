@@ -1850,18 +1850,34 @@ export function movePlayerWalker(w: SimWorld, id: number, x: number, y: number, 
  * on): the route from where it would end to `to`, joined on. False when they
  * are not on their last stretch, or no way leads there.
  */
-export function walkOn(w: SimWorld, id: number, toX: number, toY: number, reach: number): boolean {
+export function walkOn(w: SimWorld, id: number, toX: number, toY: number, reach: number,
+  tail: readonly Vec2[] = NO_POINTS): boolean {
   const s = stateOf(w);
   const p = s.byId.get(id);
   if (!p || p.done || p.player || p.inside || p.leg !== p.steps.length - 1) return false;
   const last = p.steps[p.leg]!;
   // Going in at a door: in they go (on from the door, the way would cross the lot's fence).
   if (last.lot) return false;
+  // On to a lot and in through its gate (`tail`: from the gate's foot to the door), as `walkThrough` ends.
+  if (tail.length) { ensureGraph(w, s); tail = joinFootway(s, tail, true); }
+  const goal = tail.length ? tail[0]! : { x: toX, y: toY };
   const end = frame(last, stepLength(last));
-  const more = plan(w, s, { x: end.x, y: end.y }, { x: toX, y: toY }, Math.max(reach, REACH));
+  const more = plan(w, s, { x: end.x, y: end.y }, goal, Math.max(reach, REACH));
   if (!more?.length) return false;
-  p.steps.push(...more);
+  p.steps.push(...more, ...lotSteps(tail));
   return true;
+}
+
+/** Whether a walker is still walking (out on the street, or waiting inside to step out). */
+export function walkerAlive(w: SimWorld, id: number): boolean {
+  const p = stateOf(w).byId.get(id);
+  return !!p && !p.done;
+}
+
+/** Whether somebody out on the street is on the last stretch of their walk, where `walkOn` takes them on. */
+export function onLastStretch(w: SimWorld, id: number): boolean {
+  const p = stateOf(w).byId.get(id);
+  return !!p && !p.done && !p.player && !p.inside && p.leg === p.steps.length - 1 && !p.steps[p.leg]!.lot;
 }
 
 /** Takes somebody off the street altogether (into a car, into a building): no arrival is told. */
