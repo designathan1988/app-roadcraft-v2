@@ -110,7 +110,13 @@ Para não repetir:
   das conversões livres à direita (16,99 contra 17 km/h, amostra na borda).
   Para refazer: o amarelo pelo ITE como mudança própria, medindo pedestres e
   conversões; só então o passo de ação da troca de faixa. O amarelo pelo
-  ITE entrou depois (P90); o passo de ação ainda não.
+  ITE entrou depois (P90); o passo de ação ainda não. Refeito sobre o P90
+  (com a intenção mantida só enquanto é faixa vizinha e fora da aproximação):
+  só falha a mediana das conversões livres à direita, 16,99 contra 17 km/h,
+  numa amostra de 7 (16,0-17,4 km/h; sem o passo de ação, 16,0-18,2, mediana
+  17,28; o mínimo, a curva, é o mesmo). A diferença é de quais motoristas
+  (conforto lateral de cada um) entram na amostra. Não adotado, para não
+  mexer no limite do teste.
 
 - **Pedestres girando nas esquinas (P16, `defects.spec`), 2026-10-08.**
   Resolvido em 2026-10-09 (P52) pelas regras do SUMO e pela tangente
