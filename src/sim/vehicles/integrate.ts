@@ -212,7 +212,17 @@ function applyLaneChange(w: SimWorld, v: Vehicle): ReturnType<SimWorld['lanelet'
   if (!from || from.segment !== lane.segment || from.from !== lane.from || from.to !== lane.to ||
       Math.abs((from.laneIndex ?? 0) - (lane.laneIndex ?? 0)) !== 1) return undefined;
   if (from) {
-    const frame = from.centre.sampleAt(Math.min(v.s, from.length));
+    // Anchored at the body's CENTRE, the point the drawing places
+    // (`vehiclePose`: half a length back along the lane, the slide applied
+    // there). The front was anchored before: on a curve the inner and outer
+    // lanes differ in arc length by their offset over the radius (a parallel
+    // curve's radius is R + d), so half a length back on the new lane was
+    // another place than on the old one, and the drawn body jumped along the
+    // road - 1.25 units in one tick for a long body on a tight bend (fuzz
+    // `poseJump`, seed 19). Behind the lane's start the front still anchors.
+    const half = v.archetype.length / 2;
+    const byCentre = v.s - half >= 0 && v.s - half <= from.length;
+    const frame = from.centre.sampleAt(byCentre ? v.s - half : Math.min(v.s, from.length));
     // Where the vehicle is actually DRAWN, which is the centreline plus
     // whatever is left of a previous change. Anchoring to the bare centreline
     // instead means a vehicle that changes lane twice in quick succession
@@ -236,8 +246,11 @@ function applyLaneChange(w: SimWorld, v: Vehicle): ReturnType<SimWorld['lanelet'
     // physically where it already was, and leaves only the sideways part -
     // which is what `lateral` then slides out.
     const anchor = lane.centre.closestPoint(was.p);
+    const front = byCentre ? anchor.s + half : anchor.s;
+    // The front past the new lane's end: no room to make the change here.
+    if (front > lane.length) return undefined;
     const sOnOld = v.s;
-    v.s = anchor.s;
+    v.s = front;
     const now = lane.centre.sampleAt(anchor.s);
     v.lateral = dot(sub(was.p, now.p), perp(now.t));
     v.lateralStart = v.lateral;
