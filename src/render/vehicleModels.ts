@@ -126,10 +126,10 @@ export interface SeatedExtents {
  * that seat and every idle variation of it. `tests/render/occupantFit.spec.ts`
  * measures them again on every body and fails if any is larger.
  */
-export const SEATED_EXTENTS: SeatedExtents = { top: 0.94, bottom: 0.28, forward: 0.88, back: 0.33, half: 0.29 };
+export const SEATED_EXTENTS: SeatedExtents = { top: 0.94, bottom: 0.28, forward: 0.88, back: 0.34, half: 0.3 };
 
 /** Rear car passengers fold their legs into the shorter footwell. */
-export const REAR_SEATED_EXTENTS: SeatedExtents = { top: 0.97, bottom: 0.26, forward: 0.69, back: 0.25, half: 0.28 };
+export const REAR_SEATED_EXTENTS: SeatedExtents = { top: 0.97, bottom: 0.26, forward: 0.69, back: 0.3, half: 0.29 };
 
 /** The same for a bus or truck driver's upright seat. */
 export const CAB_EXTENTS: SeatedExtents = { top: 0.96, bottom: 0.46, forward: 0.72, back: 0.3, half: 0.3 };

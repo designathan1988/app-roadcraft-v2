@@ -317,9 +317,15 @@ const CHAIR_SIT: Targets = {
  */
 const dead = (t: Targets, lean: number): Targets => ({
   ...t, lean, twist: 0.12, turn: 0.55, look: 0.75,
-  leftHand: [0.24, -0.2, 0.16],
+  // Fallen into the lap, as the other: hanging 0.2 m down beside the seat,
+  // the hand (some 0.14 m past the wrist on these bodies) went through the
+  // floor of the cabin, 0.27 m under the hip, and out of the door; drawn up
+  // beside the thigh, the folded arm put its elbow out of the door instead.
+  leftHand: [0.08, 0.02, 0.3],
   rightHand: [-0.06, 0.02, 0.3],
-  elbowPole: [0.4, -1, -0.3],
+  // The elbows hang down at the sides (mirrored per arm, as the driving
+  // poses' are): pulled out, they stood out of the doors.
+  elbowPole: [0, -1, -0.3],
 });
 
 /** A head turned, and the shoulders a little with it. */
