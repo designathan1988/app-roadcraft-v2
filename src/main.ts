@@ -67,6 +67,7 @@ import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { Bulldozer } from '@editor/bulldozer';
 import { NodeMover } from '@editor/nodeMover';
+import { CameraGestures } from '@view/cameraGestures';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
@@ -477,38 +478,15 @@ function select(segment: SegmentId | null, s: number | null, node: NodeId | null
   gameState.set('selectedNode', node, cause);
 }
 
-/**
- * Panning is stored as the GROUND POINT that was grabbed, not as a screen
- * origin and a camera origin.
- *
- * "Keep what I grabbed under the pointer" is the same rule in both renderers;
- * "shift the camera by the screen delta over the zoom" is only true looking
- * straight down. Storing the grabbed point means one rule, tested once, and no
- * branch here at all.
- */
-let panning: {
-  id: number;
-  grabbed: Vec2;
-  /** Where a right press began, CSS px, and whether it has since become a drag. */
-  pressed?: Vec2;
-  moved?: boolean;
-  /** A right click that stays a click cancels the gesture in progress. */
-  cancelOnClick?: boolean;
-} | null = null;
-/** Camera turn and tilt per CSS pixel of an orbit drag, rad: a full turn in ~1000 px. */
-const ORBIT_PER_PX = 0.0063;
-/**
- * Which way a twist of two fingers turns the camera, so the map turns with
- * them: a positive orbit turns the map anticlockwise on screen, and a
- * clockwise twist grows the angle between the fingers.
- */
-const TWIST_SIGN = -1;
-/** How far a right press may travel, CSS px, and still be a click rather than a pan. */
-const CLICK_SLOP = 5;
+/** The camera moved by hand: the pointers, a pan, an orbit, a pinch (`view/cameraGestures.ts`). */
+const cameraHand = new CameraGestures({
+  view: () => view,
+  size: () => ({ w: surface.cssW, h: surface.cssH }),
+  orbited: () => persistence.saveSettingsSoon(sessionSettings),
+  redraw: () => requestDraw(),
+});
 /** Camera turn per Q/E press, rad. */
 const KEY_TURN = Math.PI / 12;
-/** A camera orbit in progress: the pointer and where it last was, CSS px. */
-let orbiting: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean; height: number } | null = null;
 /** The Move tool's node drag (`editor/nodeMover.ts`), previewed live and dropped as one undo step. */
 const mover = new NodeMover({
   doc,
@@ -555,8 +533,6 @@ function dabSettings(): DabSettings {
     random: Math.random,
   };
 }
-let pinch: { d0: number; zoom0: number; world: Vec2; angle: number } | null = null;
-const pointers = new Map<number, Vec2>();
 canvas.dataset['tool'] = game.tool;
 
 let view: Viewport = flatViewport(camera);
@@ -969,26 +945,6 @@ function pointerWorld(e: PointerEvent, rect?: DOMRect): Vec2 {
   return worldAtScreen(e.clientX - r.left, e.clientY - r.top, authoredHeight);
 }
 
-/**
- * The point a pan or pinch holds under the pointer.
- *
- * Solved on the SAME plane `view.panTo` solves on, which is the `y = 0` plane,
- * and deliberately not with `worldAtScreen`. That one lifts the point onto the
- * terrain or deck under the cursor, and `panTo` then compared a point on that
- * plane with one on `y = 0`: the two differ by `height / tan(48°)` along the
- * view, so the first move of every drag jerked the map that far — 35 px at
- * 500 %, 139 px at 2000 % on the default terrain. Under an orthographic camera
- * a horizontal shift moves every plane identically, so holding the `y = 0`
- * point under the pointer IS holding what was grabbed.
- */
-function panAnchor(px: number, py: number): Vec2 {
-  return view.toWorld(px, py, surface.cssW, surface.cssH);
-}
-
-function panAnchorOf(e: PointerEvent): Vec2 {
-  const r = canvas.getBoundingClientRect();
-  return panAnchor(e.clientX - r.left, e.clientY - r.top);
-}
 
 /**
  * Ends every gesture in progress without committing it: a road being drawn or
@@ -1007,8 +963,7 @@ function cancelGestures(): void {
   bulldozer.cancel();
   endTerrainStroke();
   cancelMove();
-  panning = null;
-  orbiting = null;
+  cameraHand.cancel();
   if (game.tool === 'building') buildings.pointerUp(true);
   requestDraw();
 }
@@ -1022,9 +977,8 @@ function cancelGestures(): void {
  * traced back to what the player was doing when it happened.
  */
 function currentGesture(): string | null {
-  if (pinch) return 'câmera: pinça';
-  if (orbiting) return 'câmera: girando';
-  if (panning) return 'câmera: arrastando';
+  const camera = cameraHand.gesture();
+  if (camera) return camera;
   const movingNode = mover.gesture();
   if (movingNode) return movingNode;
   const road = roadTool.gesture();
@@ -1101,10 +1055,7 @@ function gestureInProgress(): boolean {
 function releaseHeld(): void {
   endTerrainStroke();
   cancelMove();
-  panning = null;
-  orbiting = null;
-  pointers.clear();
-  pinch = null;
+  cameraHand.releaseAll();
 }
 
 /** Cancels a node drag without leaving its live preview in the document. */
@@ -1232,21 +1183,14 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button > 2) return;
   canvas.setPointerCapture(e.pointerId);
   const r = canvas.getBoundingClientRect();
-  pointers.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
+  cameraHand.press(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
 
   // A second finger promotes the gesture to pinch and cancels any draft. A
   // third finger is part of the pinch too: at size 3 it used to fall through to
   // the tool, and Bulldoze demolished the road under it.
-  if (pointers.size >= 2) {
+  if (cameraHand.touches >= 2) {
     cancelGestures();
-    const [a, b] = [...pointers.values()] as [Vec2, Vec2];
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    pinch = {
-      d0: Math.hypot(a.x - b.x, a.y - b.y),
-      zoom0: view.zoom,
-      world: panAnchor(mid.x, mid.y),
-      angle: Math.atan2(b.y - a.y, b.x - a.x),
-    };
+    cameraHand.startPinch();
     return;
   }
 
@@ -1262,13 +1206,13 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
     // The camera turns about the ground under the pointer, at its own height.
-    orbiting = { id: e.pointerId, last: at, pressed: at, moved: false, cancelOnClick: gestureInProgress(), height: groundHeightUnder(at) };
+    cameraHand.startOrbit(e.pointerId, at, gestureInProgress(), groundHeightUnder(at));
     return;
   }
 
   if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2)) {
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
-    panning = { id: e.pointerId, grabbed: panAnchor(at.x, at.y) };
+    cameraHand.startPan(e.pointerId, at);
     return;
   }
 
@@ -1343,7 +1287,7 @@ canvas.addEventListener('pointerdown', (e) => {
       if (anchor.kind === 'node' && anchor.node !== undefined) {
         mover.grab(anchor.node);
       } else {
-        panning = { id: e.pointerId, grabbed: panAnchorOf(e) };
+        cameraHand.startPan(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top });
       }
       break;
 
@@ -1434,7 +1378,7 @@ canvas.addEventListener('pointerdown', (e) => {
 window.addEventListener('blur', releaseHeld);
 canvas.addEventListener('lostpointercapture', (e) => {
   // After an ordinary release the pointer is already gone from the map.
-  if (pointers.has(e.pointerId)) releaseHeld();
+  if (cameraHand.has(e.pointerId)) releaseHeld();
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -1444,51 +1388,8 @@ canvas.addEventListener('pointermove', (e) => {
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
   if (game.tool === 'road') roadTool.pointerAt(screen);
-  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, screen);
-
-  if (pinch && pointers.size >= 2) {
-    const [a, b] = [...pointers.values()] as [Vec2, Vec2];
-    const d = Math.hypot(a.x - b.x, a.y - b.y);
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const limits = view.zoomBounds;
-    const targetZoom = clamp((pinch.zoom0 * d) / Math.max(1, pinch.d0), limits.min, limits.max);
-    // A twist of the two fingers turns the camera with them; the pan below
-    // then keeps the ground between the fingers where it was.
-    const angle = Math.atan2(b.y - a.y, b.x - a.x);
-    const twist = Math.atan2(Math.sin(angle - pinch.angle), Math.cos(angle - pinch.angle));
-    pinch.angle = angle;
-    if (d > 40) view.orbit(TWIST_SIGN * twist, 0);
-    view.zoomAt(mid.x, mid.y, targetZoom / Math.max(0.001, view.zoom), surface.cssW, surface.cssH);
-    view.panTo(pinch.world, mid.x, mid.y, surface.cssW, surface.cssH);
-    requestDraw();
-    return;
-  }
-
-  if (orbiting && orbiting.id === e.pointerId) {
-    if (!orbiting.moved) {
-      if (Math.hypot(screen.x - orbiting.pressed.x, screen.y - orbiting.pressed.y) < CLICK_SLOP) return;
-      orbiting.moved = true;
-    }
-    const dx = screen.x - orbiting.last.x;
-    const dy = screen.y - orbiting.last.y;
-    orbiting.last = screen;
-    // A turntable: the near side of the map follows the hand; dragging down
-    // lifts the camera towards a plan view.
-    view.orbit(dx * ORBIT_PER_PX, dy * ORBIT_PER_PX, { px: orbiting.pressed.x, py: orbiting.pressed.y, height: orbiting.height });
-    persistence.saveSettingsSoon(sessionSettings);
-    requestDraw();
-    return;
-  }
-
-  if (panning && panning.id === e.pointerId) {
-    if (panning.pressed && !panning.moved) {
-      if (Math.hypot(screen.x - panning.pressed.x, screen.y - panning.pressed.y) < CLICK_SLOP) return;
-      panning.moved = true;
-    }
-    view.panTo(panning.grabbed, screen.x, screen.y, surface.cssW, surface.cssH);
-    requestDraw();
-    return;
-  }
+  // A pinch, an orbit or a pan takes the move first.
+  if (cameraHand.move(e.pointerId, screen)) return;
 
   const world = pointerWorld(e, r);
 
@@ -1558,24 +1459,11 @@ function poleReach(): number {
 
 function endPointer(e: PointerEvent): void {
   const cancelled = e.type === 'pointercancel';
-  const wasPinching = pinch !== null;
-  pointers.delete(e.pointerId);
-  if (pointers.size < 2) pinch = null;
-  if (panning?.id === e.pointerId) {
-    const click = panning.cancelOnClick && !panning.moved;
-    panning = null;
-    if (click && !cancelled) {
-      cancelGestures();
-      return;
-    }
-  }
-  if (orbiting?.id === e.pointerId) {
-    const click = orbiting.cancelOnClick && !orbiting.moved;
-    orbiting = null;
-    if (click && !cancelled) {
-      cancelGestures();
-      return;
-    }
+  const { wasPinching, clickCancels } = cameraHand.release(e.pointerId);
+  // A right click that stayed a click cancels whatever is in progress.
+  if (clickCancels && !cancelled) {
+    cancelGestures();
+    return;
   }
   if (terrainBrush.pointer === e.pointerId) endTerrainStroke();
   cloudTool.up(e.pointerId);
@@ -3375,7 +3263,7 @@ function frame(now: number): void {
   healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || panning || orbiting || pinch || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || scene.busy())) requestDraw();
   // Only the clouds moving (they drift, form and fade): a slower frame.
   else if (!document.hidden && scene.drifting()) frameClock.drift();
 }
