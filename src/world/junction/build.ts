@@ -1,19 +1,23 @@
 import { dot } from '@core/vec2';
 import { Ring } from '@core/ring';
-import type { RoadDoc } from '../doc';
+import type { RoadDoc, RoadSegment } from '../doc';
 import type { NodeId, SegmentId } from '../ids';
 import type { PolylineCache } from '../geometry';
 import {
   Level,
+  type RoadSide,
+  type RoadType,
   SURFACE_LEVELS,
   type SurfaceLevel,
   halfWidth,
   roadProfile,
+  sideHalfWidth,
+  symmetric,
 } from '../roadTypes';
 import { type Leg, buildLegs } from './legs';
 import { type Corner, computeCorners } from './corners';
 import { computeTrims } from './trim';
-import { isTransition, transitionRing, transitionRun, widthStep } from './transition';
+import { isTransition, legWidthStep, transitionRing, transitionRunFor } from './transition';
 import { buildJunctionRing, findSlabViolations } from './polygon';
 import { COARSE_EPS, FINE_EPS } from '@core/scalar';
 import { TUNNEL_HEADROOM } from '../structures';
@@ -93,9 +97,7 @@ export function surfaceMode(doc: RoadDoc, cache: PolylineCache, nodeId: NodeId):
   // for exactly this shape and could never be reached.
   const wp = roadProfile(sp.type, sp.lanes, sp.direction, sp.section, sp.parking);
   const wq = roadProfile(sq.type, sq.lanes, sq.direction, sq.section, sq.parking);
-  for (const level of SURFACE_LEVELS) {
-    if (Math.abs(halfWidth(wp, level) - halfWidth(wq, level)) >= COARSE_EPS) return 'junction';
-  }
+  if (!outlinesMeet(nodeId, sp, wp, sq, wq)) return 'junction';
 
   // A bend deep inside a bore is concealed by terrain. Sweeping an open-air
   // junction ring across it makes a crescent of pavement emerge beside the
@@ -122,8 +124,28 @@ function structureSeam(doc: RoadDoc, nodeId: NodeId): boolean {
   if (!sp || !sq || (sp.structure ?? 'ground') === (sq.structure ?? 'ground')) return false;
   const wp = roadProfile(sp.type, sp.lanes, sp.direction, sp.section, sp.parking);
   const wq = roadProfile(sq.type, sq.lanes, sq.direction, sq.section, sq.parking);
-  for (const level of SURFACE_LEVELS) if (Math.abs(halfWidth(wp, level) - halfWidth(wq, level)) >= COARSE_EPS) return false;
+  if (!outlinesMeet(nodeId, sp, wp, sq, wq)) return false;
   return wp.median === wq.median;
+}
+
+/**
+ * Whether two roads meeting at a node run on into each other at every level
+ * with the same outline: each side of one along the matching side of the
+ * other (one's left is the other's right when they are drawn the same way
+ * through the node, docs/VIAS.md V1).
+ */
+function outlinesMeet(nodeId: NodeId, sp: RoadSegment, wp: RoadType, sq: RoadSegment, wq: RoadType): boolean {
+  if (symmetric(wp) && symmetric(wq)) {
+    for (const level of SURFACE_LEVELS) if (Math.abs(halfWidth(wp, level) - halfWidth(wq, level)) >= COARSE_EPS) return false;
+    return true;
+  }
+  const plus = (s: RoadSegment): RoadSide => (s.a === nodeId ? 'left' : 'right');
+  const minus = (s: RoadSegment): RoadSide => (s.a === nodeId ? 'right' : 'left');
+  for (const level of SURFACE_LEVELS) {
+    if (Math.abs(sideHalfWidth(wp, level, plus(sp)) - sideHalfWidth(wq, level, minus(sq))) >= COARSE_EPS) return false;
+    if (Math.abs(sideHalfWidth(wp, level, minus(sp)) - sideHalfWidth(wq, level, plus(sq))) >= COARSE_EPS) return false;
+  }
+  return true;
 }
 
 export interface BuildOptions {
@@ -240,9 +262,8 @@ export function buildJunction(
     const radius = Math.max(a.hw, b.hw) * 2;
     const bendRun = Math.min(radius * 10,
       radius * Math.tan(Math.min(turn, (170 * Math.PI) / 180) / 2));
-    const taperRun = widthStep(a.road, b.road) >= COARSE_EPS
-      ? transitionRun(a.road, b.road)
-      : 0;
+    const step = legWidthStep(a, b);
+    const taperRun = step >= COARSE_EPS ? transitionRunFor(step) : 0;
     const run = Math.max(taperRun, bendRun, seam ? SEAM_RUN : 0);
     let trims = capTrims(legs.map(() => run), legs);
     for (let pass = 0; pass < passes; pass++) {

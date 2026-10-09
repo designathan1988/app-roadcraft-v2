@@ -2,7 +2,7 @@ import { type Vec2, addScaled, angleOf } from '@core/vec2';
 import { LEG_TRIM_CAP } from '../approach';
 import type { RoadDoc, SegmentDirection } from '../doc';
 import type { NodeId, SegmentId } from '../ids';
-import { type RoadType, type SurfaceLevel, halfWidth, roadProfile, sidewalkHalf, travelShift } from '../roadTypes';
+import { type RoadSide, type RoadType, type SurfaceLevel, halfWidth, roadProfile, sideHalfWidth, sidewalkHalf, symmetric, travelShift } from '../roadTypes';
 import { type PolylineCache, frameFromNode, farNode, segmentStartsAt } from '../geometry';
 
 /**
@@ -22,8 +22,16 @@ export interface Leg {
   readonly dir: Vec2;
   readonly nrm: Vec2;
   readonly ang: number;
-  /** Half-width of this leg at the level being built. */
+  /** Half-width of this leg at the level being built: the wider of its two sides. */
   readonly hw: number;
+  /**
+   * Half-width on the `+nrm` side and on the `-nrm` side of the leg (docs/VIAS.md
+   * V1): the two sides of an asymmetric road. Both `hw` on every other road.
+   */
+  readonly hwLeft: number;
+  readonly hwRight: number;
+  /** Which side of its road the leg's `+nrm` side is: the left from `a`, the right from `b`. */
+  readonly plusSide: RoadSide;
   /** Half-width at the sidewalk level, used to size curb radii consistently. */
   readonly hwSidewalk: number;
   /** Total arc length of the segment carrying this leg. */
@@ -95,7 +103,11 @@ export function buildLegs(
     const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
     const pl = cache.get(doc, segId);
     const startsHere = segmentStartsAt(seg, nodeId);
-    const hw = halfWidth(rt, level);
+    // The leg points away from the node: from `a` it looks along a -> b and
+    // its `+nrm` side is the road's left; from `b` it is the road's right.
+    const hwLeft = sideHalfWidth(rt, level, startsHere ? 'left' : 'right');
+    const hwRight = sideHalfWidth(rt, level, startsHere ? 'right' : 'left');
+    const hw = symmetric(rt) ? halfWidth(rt, level) : Math.max(hwLeft, hwRight);
 
     // Initial guess: the leg's own half-width. Two refinement passes converge
     // for a single quadratic, which is all a segment can carry.
@@ -120,6 +132,9 @@ export function buildLegs(
       nrm: f.nrm,
       ang: angleOf(f.dir),
       hw,
+      hwLeft,
+      hwRight,
+      plusSide: startsHere ? 'left' : 'right',
       hwSidewalk: sidewalkHalf(rt),
       length: f.length,
       typeIndex: seg.type,
@@ -138,8 +153,8 @@ export function buildLegs(
 
 /** The mouth corner on the `-nrm` side of a leg, at distance `t`. */
 export const mouthRight = (leg: Leg, t: number): Vec2 =>
-  addScaled(addScaled(leg.origin, leg.dir, t), leg.nrm, -leg.hw);
+  addScaled(addScaled(leg.origin, leg.dir, t), leg.nrm, -leg.hwRight);
 
 /** The mouth corner on the `+nrm` side of a leg, at distance `t`. */
 export const mouthLeft = (leg: Leg, t: number): Vec2 =>
-  addScaled(addScaled(leg.origin, leg.dir, t), leg.nrm, leg.hw);
+  addScaled(addScaled(leg.origin, leg.dir, t), leg.nrm, leg.hwLeft);

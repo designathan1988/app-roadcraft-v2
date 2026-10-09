@@ -116,13 +116,14 @@ export function legTongue(leg: Leg, trim: number): Ring | null {
   if (trim <= COARSE_EPS) return null;
   const base = leg.origin;
   const tip = { x: base.x + leg.dir.x * trim, y: base.y + leg.dir.y * trim };
-  const nx = leg.nrm.x * leg.hw;
-  const ny = leg.nrm.y * leg.hw;
+  // Each side to its own width (an asymmetric road, docs/VIAS.md V1).
+  const lx = leg.nrm.x * leg.hwLeft, ly = leg.nrm.y * leg.hwLeft;
+  const rx = leg.nrm.x * leg.hwRight, ry = leg.nrm.y * leg.hwRight;
   return Ring.fromPolygon([
-    { x: base.x - nx, y: base.y - ny },
-    { x: tip.x - nx, y: tip.y - ny },
-    { x: tip.x + nx, y: tip.y + ny },
-    { x: base.x + nx, y: base.y + ny },
+    { x: base.x - rx, y: base.y - ry },
+    { x: tip.x - rx, y: tip.y - ry },
+    { x: tip.x + lx, y: tip.y + ly },
+    { x: base.x + lx, y: base.y + ly },
   ]).ensurePositive();
 }
 

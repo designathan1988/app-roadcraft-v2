@@ -60,12 +60,14 @@ function resolveCorner(
   const a = legs[i] as Leg;
   const b = legs[j] as Leg;
 
-  // Leg `a`'s left boundary and leg `b`'s right boundary.
-  const a0 = addScaled(a.origin, a.nrm, a.hw);
-  const b0 = addScaled(b.origin, b.nrm, -b.hw);
+  // Leg `a`'s left boundary and leg `b`'s right boundary, each at its own
+  // side's width (an asymmetric road, docs/VIAS.md V1).
+  const aw = a.hwLeft, bw = b.hwRight;
+  const a0 = addScaled(a.origin, a.nrm, aw);
+  const b0 = addScaled(b.origin, b.nrm, -bw);
 
   const psi = Math.acos(clamp(dot(a.dir, b.dir), -1, 1));
-  const step = Math.abs(a.hw - b.hw);
+  const step = Math.abs(aw - bw);
 
   // --- A width step across a near-straight pair is a TAPER, not a corner. ---
   //
@@ -128,12 +130,12 @@ function resolveCorner(
     }
     // Same direction: a hairpin fork. There is no miter point to fillet
     // around, so the setback is taken exactly, as the acute branch does.
-    return collinear(i, j, psi, acuteSetback(psi, a.hw, b.hw));
+    return collinear(i, j, psi, acuteSetback(psi, aw, bw));
   }
 
   const x = hit.point;
   const reach = Math.max(dist(x, a.origin), dist(x, b.origin));
-  const maxHw = Math.max(a.hw, b.hw);
+  const maxHw = Math.max(aw, bw);
 
   // --- Very acute wedge: rounding would run away, so bevel it. -------------
   //
@@ -148,7 +150,7 @@ function resolveCorner(
   const scaled = curbRadius(a.hwSidewalk, b.hwSidewalk) * scale;
 
   if (psi < ACUTE_EPS || reach > CORNER_MITER * maxHw) {
-    const t = acuteSetback(psi, a.hw, b.hw);
+    const t = acuteSetback(psi, aw, bw);
 
     // Round the setback instead of chording it.
     //

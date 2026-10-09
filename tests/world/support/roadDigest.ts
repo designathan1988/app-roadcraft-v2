@@ -83,7 +83,10 @@ export function derivedLines(net: Network): string[] {
     const d = new Digest();
     for (const m of marks) { d.addAll(m.points.flatMap((p) => [p.x, p.y])).add(m.width).addText(m.color); }
     out.push(`marks ${id} ${d.value()}`);
-    out.push(`section ${id} ${JSON.stringify(sectionOf(ribbon.road, ribbon.direction))}`);
+    // The fields every map had before the road system: an old map's two sides are `side`.
+    const s = sectionOf(ribbon.road, ribbon.direction);
+    out.push(`section ${id} ${JSON.stringify({ carriageway: s.carriageway, median: s.median, lanes: s.lanes, side: s.side, walkable: s.walkable })}`);
+    if (JSON.stringify(s.left) !== JSON.stringify(s.side)) out.push(`section-left ${id} ${JSON.stringify(s.left)}`);
   }
   const detail = junctionDetail(net);
   out.push(`detail ${detail.stops.length} ${detail.zebras.length} ${new Digest().addText(JSON.stringify(detail)).value()}`);

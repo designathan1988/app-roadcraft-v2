@@ -1,7 +1,7 @@
 import { kmh, m } from './units';
 import { PARKING_DEPTH, parkingAllowed, type ParkingKind, type SegmentParking } from './parking';
 import type { SegmentDirection } from './doc';
-import type { RoadSection, LaneTurnRule } from './roadSection';
+import type { RoadSection, LaneTurnRule, SectionMaterials } from './roadSection';
 
 /**
  * Surface levels, in painting order.
@@ -59,8 +59,21 @@ export interface RoadType {
   readonly width: number;
   /** Total lane count, both directions. */
   readonly lanes: number;
-  /** Footway width on each side, in world units. */
+  /**
+   * Footway width, in world units: on each side, or the wider one when the
+   * sides differ (`sidewalkLeft`/`sidewalkRight`, read through `footwayOn`).
+   */
   readonly sidewalk: number;
+  /** The footways left and right of a -> b when they differ (docs/VIAS.md V1); absent: `sidewalk` both. */
+  readonly sidewalkLeft?: number;
+  readonly sidewalkRight?: number;
+  /** A footway level with the carriageway, without a kerb (a shared surface). */
+  readonly flushLeft?: boolean;
+  readonly flushRight?: boolean;
+  /** A central reservation painted on the carriageway, not kerbed. */
+  readonly medianFlush?: boolean;
+  /** What its elements are paved with; the class's own look when absent. */
+  readonly materials?: SectionMaterials;
   /** Central reservation width, in world units. Zero when absent. */
   readonly median: number;
   /**
@@ -322,6 +335,11 @@ function travelProfile(
       ...standard,
       width: standard.lanes * section.laneWidth + median,
       sidewalk: section.sidewalk,
+      ...(section.sidewalkLeft !== undefined ? { sidewalkLeft: section.sidewalkLeft, sidewalkRight: section.sidewalkRight } : {}),
+      ...(section.flushLeft ? { flushLeft: true } : {}),
+      ...(section.flushRight ? { flushRight: true } : {}),
+      ...(section.medianFlush && median > 0 ? { medianFlush: true } : {}),
+      ...(section.materials ? { materials: section.materials } : {}),
       median,
       speedLimit: kmh(section.speedKmh),
       priorityRank: section.priority,
@@ -366,6 +384,45 @@ export function halfWidth(rt: RoadType, level: SurfaceLevel): number {
       return rt.width / 2 + rt.sidewalk;
     case Level.Casing:
       return rt.width / 2 + rt.sidewalk + CASING_BAND;
+  }
+}
+
+/** One side of a road, left or right of a -> b. */
+export type RoadSide = 'left' | 'right';
+
+/** The footway on one side of a -> b, kerb included. */
+export const footwayOn = (rt: RoadType, side: RoadSide): number =>
+  (side === 'left' ? rt.sidewalkLeft : rt.sidewalkRight) ?? rt.sidewalk;
+
+/** Whether the footway on one side is level with the carriageway (no kerb). */
+export const flushOn = (rt: RoadType, side: RoadSide): boolean =>
+  (side === 'left' ? rt.flushLeft : rt.flushRight) === true;
+
+/**
+ * Whether the road's outline is the plain one: the same footway both sides,
+ * each kerbed (every road before docs/VIAS.md V1).
+ */
+export const symmetric = (rt: RoadType): boolean =>
+  rt.sidewalkLeft === undefined && !rt.flushLeft && !rt.flushRight;
+
+/**
+ * Half-width of one side of a road at a surface level, left or right of
+ * a -> b: the outline a ribbon and a junction leg are cut to. `halfWidth` is
+ * the wider side, for whatever only needs the road's reach. A flush footway
+ * has no kerb stone: its kerb level is the carriageway's edge.
+ */
+export function sideHalfWidth(rt: RoadType, level: SurfaceLevel, side: RoadSide): number {
+  if (symmetric(rt)) return halfWidth(rt, level);
+  const half = rt.width / 2;
+  switch (level) {
+    case Level.Asphalt:
+      return half;
+    case Level.Curb:
+      return half + (flushOn(rt, side) ? 0 : CURB_BAND);
+    case Level.Sidewalk:
+      return half + footwayOn(rt, side);
+    case Level.Casing:
+      return half + footwayOn(rt, side) + CASING_BAND;
   }
 }
 

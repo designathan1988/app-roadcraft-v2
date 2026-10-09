@@ -244,9 +244,12 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
       for (const id of streetChain(net, item)) {
         const seg = net.doc.segment(id), ribbon = net.ribbons.get(id);
         if (!seg || !ribbon) continue;
-        const zone = sectionOf(ribbon.road, seg.direction).side.furnishing;
-        const out = zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, m(0.2))) / 2;
+        const section = sectionOf(ribbon.road, seg.direction);
         for (const [node, sign] of [[seg.a, 1], [seg.b, -1]] as const) {
+          // On the right-hand footway seen from the corner: the road's right
+          // from `a`, its left from `b` (each side its own width, docs/VIAS.md V1).
+          const zone = (sign > 0 ? section.right : section.left).furnishing;
+          const out = zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, m(0.2))) / 2;
           if ((net.doc.node(node)?.incident.length ?? 0) < 2) continue;
           const s = sign > 0 ? net.mouthDistance(id, node) + m(1.5) : ribbon.full.length - net.mouthDistance(id, node) - m(1.5);
           if (s <= 0 || s >= ribbon.full.length) continue;

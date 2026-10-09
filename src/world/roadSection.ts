@@ -3,10 +3,46 @@ import { m } from './units';
 export const LANE_TURN_RULES = ['all', 'left', 'through', 'right', 'leftThrough', 'throughRight'] as const;
 export type LaneTurnRule = (typeof LANE_TURN_RULES)[number];
 
-/** Authored symmetric road section. Widths use world units, whole metres; sidewalk includes the kerb. */
+/**
+ * What an element of the cross-section is paved with (docs/VIAS.md V1). The
+ * class's own look when absent.
+ */
+export const CARRIAGEWAY_MATERIALS = ['asphalt', 'concrete', 'cobble'] as const;
+export const FOOTWAY_MATERIALS = ['pavers', 'concrete', 'stone'] as const;
+export const MEDIAN_MATERIALS = ['grass', 'concrete', 'pavers'] as const;
+export type CarriagewayMaterial = (typeof CARRIAGEWAY_MATERIALS)[number];
+export type FootwayMaterial = (typeof FOOTWAY_MATERIALS)[number];
+export type MedianMaterial = (typeof MEDIAN_MATERIALS)[number];
+
+export interface SectionMaterials {
+  readonly carriageway?: CarriagewayMaterial;
+  /** Left and right of a -> b. */
+  readonly footwayLeft?: FootwayMaterial;
+  readonly footwayRight?: FootwayMaterial;
+  readonly median?: MedianMaterial;
+}
+
+/**
+ * Authored road section. Widths use world units, whole metres; a footway
+ * includes its kerb. Symmetric unless a side is given (`sidewalkLeft`,
+ * `sidewalkRight`, left and right of a -> b): `sidewalk` is then the wider
+ * of the two, what every consumer that only needs the road's reach reads.
+ */
 export interface RoadSection {
   readonly laneWidth: number;
   readonly sidewalk: number;
+  /** The footway left of a -> b, when it differs from the right one (docs/VIAS.md V1). */
+  readonly sidewalkLeft?: number;
+  readonly sidewalkRight?: number;
+  /**
+   * A footway laid level with the carriageway (a shared surface): no kerb
+   * stone, no rise. The kerb is where the heights differ.
+   */
+  readonly flushLeft?: boolean;
+  readonly flushRight?: boolean;
+  /** A central reservation painted on the carriageway instead of kerbed and raised. */
+  readonly medianFlush?: boolean;
+  readonly materials?: SectionMaterials;
   readonly median: number;
   readonly speedKmh: number;
   readonly priority: number;
@@ -40,6 +76,35 @@ export function normalizeRoadSection(raw: unknown): RoadSection | undefined {
       ? Math.max(min, Math.min(max, onGridLength(clamped)))
       : clamped;
   }
+  // The two footways, when they differ: each on the grid and within the
+  // limits, and `sidewalk` the wider; equal sides are the symmetric section.
+  const left = value['sidewalkLeft'], right = value['sidewalkRight'];
+  if (left !== undefined || right !== undefined) {
+    const side = (raw: unknown): number | null => {
+      if (raw === undefined) return result.sidewalk;
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+      const [min, max] = ROAD_SECTION_LIMITS.sidewalk;
+      return Math.max(min, Math.min(max, onGridLength(Math.max(min, Math.min(max, raw)))));
+    };
+    const l = side(left), r = side(right);
+    if (l === null || r === null) return undefined;
+    if (l !== r) {
+      result.sidewalkLeft = l;
+      result.sidewalkRight = r;
+      result.sidewalk = Math.max(l, r);
+    } else result.sidewalk = l;
+  }
+  for (const key of ['flushLeft', 'flushRight', 'medianFlush'] as const) {
+    const flag = value[key];
+    if (flag === undefined || flag === false) continue;
+    if (flag !== true) return undefined;
+    result[key] = true;
+  }
+  if (value['materials'] !== undefined) {
+    const materials = normalizeMaterials(value['materials']);
+    if (materials === null) return undefined;
+    if (materials) result.materials = materials;
+  }
   for (const key of ['turnsForward', 'turnsBackward'] as const) {
     const rules = value[key];
     if (rules === undefined) continue;
@@ -50,9 +115,58 @@ export function normalizeRoadSection(raw: unknown): RoadSection | undefined {
   return result;
 }
 
+/** Stored materials: undefined when none are set, null when one is not a material. */
+function normalizeMaterials(raw: unknown): SectionMaterials | undefined | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  const pick = (key: keyof SectionMaterials, allowed: readonly string[]): boolean => {
+    const v = value[key];
+    if (v === undefined) return true;
+    if (typeof v !== 'string' || !allowed.includes(v)) return false;
+    out[key] = v;
+    return true;
+  };
+  if (!pick('carriageway', CARRIAGEWAY_MATERIALS) || !pick('footwayLeft', FOOTWAY_MATERIALS) ||
+    !pick('footwayRight', FOOTWAY_MATERIALS) || !pick('median', MEDIAN_MATERIALS)) return null;
+  return Object.keys(out).length ? out as SectionMaterials : undefined;
+}
+
+/** The section's footway on one side of a -> b. */
+export const sectionSidewalk = (s: RoadSection, side: 'left' | 'right'): number =>
+  (side === 'left' ? s.sidewalkLeft : s.sidewalkRight) ?? s.sidewalk;
+
+/**
+ * The same section seen from the other end of its road: left and right
+ * change places, and so do the lane arrows of the two directions.
+ */
+export function flipSection(s: RoadSection | undefined): RoadSection | undefined {
+  if (!s) return undefined;
+  const { sidewalkLeft, sidewalkRight, flushLeft, flushRight, materials, turnsForward, turnsBackward, ...rest } = s;
+  const flippedMaterials = materials ? {
+    ...(materials.carriageway ? { carriageway: materials.carriageway } : {}),
+    ...(materials.median ? { median: materials.median } : {}),
+    ...(materials.footwayRight ? { footwayLeft: materials.footwayRight } : {}),
+    ...(materials.footwayLeft ? { footwayRight: materials.footwayLeft } : {}),
+  } : undefined;
+  return {
+    ...rest,
+    ...(sidewalkRight !== undefined ? { sidewalkLeft: sidewalkRight } : {}),
+    ...(sidewalkLeft !== undefined ? { sidewalkRight: sidewalkLeft } : {}),
+    ...(flushRight ? { flushLeft: true } : {}),
+    ...(flushLeft ? { flushRight: true } : {}),
+    ...(flippedMaterials ? { materials: flippedMaterials } : {}),
+    ...(turnsBackward ? { turnsForward: [...turnsBackward] } : {}),
+    ...(turnsForward ? { turnsBackward: [...turnsForward] } : {}),
+  };
+}
+
 export function sameRoadSection(a: RoadSection | undefined, b: RoadSection | undefined): boolean {
   if (!a || !b) return a === b;
   return (Object.keys(ROAD_SECTION_LIMITS) as (keyof typeof ROAD_SECTION_LIMITS)[]).every((key) => a[key] === b[key]) &&
+    a.sidewalkLeft === b.sidewalkLeft && a.sidewalkRight === b.sidewalkRight && !a.flushLeft === !b.flushLeft &&
+    !a.flushRight === !b.flushRight && !a.medianFlush === !b.medianFlush &&
+    JSON.stringify(a.materials ?? null) === JSON.stringify(b.materials ?? null) &&
     (['turnsForward', 'turnsBackward'] as const).every((key) => {
       const left = a[key] ?? [], right = b[key] ?? [];
       return left.length === right.length && left.every((rule, index) => rule === right[index]);
@@ -84,6 +198,7 @@ export function sameRoadSectionIgnoringArrows(a: RoadSection | undefined, b: Roa
 /** A snapshot must never share editable turn arrays with its document. */
 export function cloneRoadSection(section: RoadSection): RoadSection {
   return { ...section,
+    ...(section.materials ? { materials: { ...section.materials } } : {}),
     ...(section.turnsForward ? { turnsForward: [...section.turnsForward] } : {}),
     ...(section.turnsBackward ? { turnsBackward: [...section.turnsBackward] } : {}) };
 }

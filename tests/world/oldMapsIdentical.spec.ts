@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
-import { applyOp, freshState } from '../fuzz/support/ops';
+import { applyOp, freshState, type FuzzOp } from '../fuzz/support/ops';
 import { generate } from '../fuzz/support/runner';
 import { derivedLines, laneletLines, networkLines } from './support/roadDigest';
 
@@ -13,27 +13,32 @@ import { derivedLines, laneletLines, networkLines } from './support/roadDigest';
  * before: the same ribbons, junctions, lanelets, surface bands, walkways,
  * furniture, markings and cross-sections. Recorded once from the code before
  * the road system (`ROAD_BASELINE_RECORD=1` rewrites it, only on purpose).
+ * The fuzz maps are stored as their operations, so a fuzzer that learns new
+ * gestures still replays the same maps.
  */
 const FIXTURE = 'tests/fixtures/roadBaseline.json';
 
-function scenarios(): [string, () => RoadDoc][] {
+interface Baseline {
+  readonly ops: Record<string, FuzzOp[]>;
+  readonly lines: Record<string, Record<string, string[]>>;
+}
+
+function maps(): [string, () => RoadDoc][] {
   const map = (path: string) => (): RoadDoc => {
     const data = JSON.parse(readFileSync(path, 'utf8'));
     return RoadDoc.fromJSON(data.document ?? data);
   };
-  const out: [string, () => RoadDoc][] = [
+  return [
     ['test town', map('maps/cidade-com-estacionamento.json')],
     ['grid and bends', map('tests/fixtures/grid-and-bends.json')],
     ['player city', map('tests/fixtures/player-city.json')],
   ];
-  for (const seed of [1, 2, 3, 4]) {
-    out.push([`fuzz seed ${seed}`, () => {
-      const state = freshState();
-      for (const op of generate(seed, 24)) { try { applyOp(state, op); } catch { break; } }
-      return state.doc;
-    }]);
-  }
-  return out;
+}
+
+function replayed(ops: readonly FuzzOp[]): RoadDoc {
+  const state = freshState();
+  for (const op of ops) { try { applyOp(state, op); } catch { break; } }
+  return state.doc;
 }
 
 function linesOf(doc: RoadDoc): Record<string, string[]> {
@@ -44,16 +49,20 @@ function linesOf(doc: RoadDoc): Record<string, string[]> {
 
 describe('old maps', () => {
   it('derive exactly what they derived before the road system', () => {
+    const record = process.env['ROAD_BASELINE_RECORD'] === '1' || !existsSync(FIXTURE);
+    const before: Baseline | null = record ? null : JSON.parse(readFileSync(FIXTURE, 'utf8')) as Baseline;
+    const ops: Record<string, FuzzOp[]> = before?.ops ?? {};
+    if (!before) for (const seed of [1, 2, 3, 4]) ops[`fuzz seed ${seed}`] = generate(seed, 24);
     const now: Record<string, Record<string, string[]>> = {};
-    for (const [name, build] of scenarios()) now[name] = linesOf(build());
-    if (process.env['ROAD_BASELINE_RECORD'] === '1' || !existsSync(FIXTURE)) {
-      writeFileSync(FIXTURE, JSON.stringify(now));
+    for (const [name, build] of maps()) now[name] = linesOf(build());
+    for (const [name, list] of Object.entries(ops)) now[name] = linesOf(replayed(list));
+    if (!before) {
+      writeFileSync(FIXTURE, JSON.stringify({ ops, lines: now } satisfies Baseline));
       return;
     }
-    const before = JSON.parse(readFileSync(FIXTURE, 'utf8')) as typeof now;
-    for (const name of Object.keys(before)) {
-      for (const part of Object.keys(before[name]!)) {
-        expect(now[name]?.[part], `${name}: ${part}`).toEqual(before[name]![part]);
+    for (const name of Object.keys(before.lines)) {
+      for (const part of Object.keys(before.lines[name]!)) {
+        expect(now[name]?.[part], `${name}: ${part}`).toEqual(before.lines[name]![part]);
       }
     }
   });

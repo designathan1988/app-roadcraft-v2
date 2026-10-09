@@ -17,7 +17,7 @@ import { MAX_AUTHORED_GRADE, type RoadElevation, buildRoadElevation } from '@wor
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
 import { ROAD_TUNING } from '@world/roads/tuning';
-import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
+import { flipSection, sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
@@ -785,9 +785,14 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   const first = doc.segment(firstId);
   const second = doc.segment(secondId);
   if (!first || !second || first.curve || second.curve || first.type !== second.type || first.lanes !== second.lanes ||
-    !sameRoadSectionIgnoringArrows(first.section, second.section) || first.direction !== 'both' || second.direction !== 'both') return false;
+    first.direction !== 'both' || second.direction !== 'both') return false;
   const a = first.a === nodeId ? first.b : first.a;
   const b = second.a === nodeId ? second.b : second.a;
+  // Sections read along a -> b on both pieces, as the parking below: a piece
+  // stored the other way round has its two sides swapped (docs/VIAS.md V1).
+  const sectionFirst = first.a === a ? first.section : flipSection(first.section);
+  const sectionSecond = second.b === b ? second.section : flipSection(second.section);
+  if (!sameRoadSectionIgnoringArrows(sectionFirst, sectionSecond)) return false;
   // Parking read along a -> b on both pieces: a piece stored the other way
   // round has its sides swapped.
   const parkingFirst = first.a === a ? first.parking : flipParking(first.parking);
@@ -806,7 +811,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   // came along `second`, what arrives at `a` along `first`.
   const towardB = second.b === b ? second.section?.turnsForward : second.section?.turnsBackward;
   const towardA = first.a === a ? first.section?.turnsBackward : first.section?.turnsForward;
-  const base = sectionForPiece(first.section, false, false);
+  const base = sectionForPiece(sectionFirst, false, false);
   const section = base && {
     ...base,
     ...(towardB ? { turnsForward: [...towardB] } : {}),
