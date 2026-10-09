@@ -51,6 +51,12 @@ import { builderIconSvg } from '../builder/icons';
 import { SNAP_MODES, type BuilderState, type BuilderWorkspace } from '../builder/workspace';
 import { t, plural, onLanguageChange } from '../i18n';
 import { balanceTip, formatMoney } from '../roads/money';
+import { openProfileEditor } from '../roads/profileEditor';
+import { drawProfile, setDrawProfile } from '../roads/drawProfile';
+import { closeRoadKeys, openRoadKeys, roadKeysOpen } from '../roads/keysPanel';
+import { cutWallsChosen, setCutWalls } from '../roads/cutWalls';
+import { keyLabel, onRoadKeysChange, roadKey } from '../roads/keys';
+import { classTemplates } from '@world/roads/templates';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
 import './shell.css';
@@ -244,6 +250,9 @@ const ICON: Record<string, string> = {
   m_about: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.5v.5"/>',
   m_quality: '<path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7a5 5 0 1 0 5 5"/><path d="M12 12h9"/>',
   m_language: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/>',
+  // A road's cross-section: the bands across it (the profile editor, docs/VIAS.md V2).
+  profile: '<path d="M3 7h18M3 17h18"/><path d="M7 7v10M12 9v2m0 2v2M17 7v10"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h1M9.5 10h1M13 10h1M16.5 10h1M7 14h10"/>',
 };
 const svg = (name: string, size = 22): string =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
@@ -919,10 +928,35 @@ export function mountShell(deps: ShellDeps): void {
       options.appendChild(orow(t('v2.row.width'),
         stepper(t('palette.width'), w === null ? t('palette.width.auto') : `${w} m`, (d) => { setRoadWidth((roadWidth() ?? defaultRoadWidth()) + d); }),
         w === null ? null : button('v2-icon', t('palette.width.auto'), () => { setRoadWidth(null); render(); }, svg('undo', 14))));
+      // The profile new roads are drawn with (docs/VIAS.md V2): the class's own,
+      // or one made in the profile editor, which then sets lanes, width and parking.
+      const chosenProfile = drawProfile();
+      options.appendChild(orow(t('v2.row.profile'),
+        button(chosenProfile ? 'v2-pill rp-open on' : 'v2-pill rp-open', chosenProfile ? chosenProfile.name : t('profileEditor.fromClass'), () => openProfileEditor({
+          title: t('profileEditor.newRoads'),
+          profile: chosenProfile?.profile ?? classTemplates()[roadTypeIndex()]!.profile,
+          type: chosenProfile?.type ?? roadTypeIndex(),
+          drawWith: (name, profile, type) => { setDrawProfile({ name, profile, type }); render(); },
+        }), svg('profile', 16)),
+        chosenProfile ? button('v2-icon', t('profileEditor.clearDraw'), () => { setDrawProfile(null); render(); }, svg('undo', 14)) : null));
       // Height over the ground: a bridge above, a cutting or tunnel below.
       const heightRow = orow(t('v2.row.height'), stepper(t('palette.height'), q('#roadHeightValue')?.textContent ?? '', (d) => press(`[data-height-step="${d}"]`)));
       heightRow.title = `${t('palette.height')}: ${q('#roadHeightContext')?.textContent ?? ''}`;
       options.appendChild(heightRow);
+      // The sides of a cutting: a batter, or retaining walls (docs/VIAS.md V3).
+      const walls = cutWallsChosen();
+      const cutRow = el('div', 'v2-seg');
+      for (const on of [false, true]) {
+        const b = button(`v2-seg-b rp-seg-text${walls === on ? ' on' : ''}`, t(on ? 'cutSides.walls' : 'cutSides.batter'), () => { setCutWalls(on); render(); });
+        b.setAttribute('aria-pressed', String(walls === on));
+        b.dataset['cutWalls'] = String(on);
+        cutRow.appendChild(b);
+      }
+      options.appendChild(orow(t('cutSides.row'), cutRow));
+      // The tool's keys, rebindable (docs/VIAS.md V3).
+      const keysB = button('v2-pill rp-open', `${keyLabel(roadKey('heightUp'), true)} · ${keyLabel(roadKey('heightDown'), true)} · ${keyLabel(roadKey('alignment'), true)}`,
+        () => (roadKeysOpen() ? closeRoadKeys() : openRoadKeys(keysB)), svg('keyboard', 16));
+      options.appendChild(orow(t('roadKeys.row'), keysB));
       // Parking the new road is drawn with (`editor/roadParking.ts`).
       const parkingNow = roadParkingPreset();
       options.appendChild(orow(t('v2.row.parking'), choices(ROAD_PARKING_PRESETS.map((preset) => ({
@@ -1663,6 +1697,13 @@ export function mountShell(deps: ShellDeps): void {
   });
   const game = q('#game');
   if (game) watch.observe(game, { attributes: true, attributeOldValue: true, attributeFilter: ['data-tool'] });
+  // Values the game writes as text that the options mirror (the road's height,
+  // stepped from the keyboard): the panel showed the step before the last one.
+  const mirrored = new MutationObserver(() => later());
+  for (const id of ['roadHeightValue']) {
+    const node = document.getElementById(id);
+    if (node) mirrored.observe(node, { childList: true, characterData: true, subtree: true });
+  }
   const builderRoot = document.getElementById('builder');
   if (builderRoot) watch.observe(builderRoot, { attributes: true, attributeOldValue: true, subtree: true, attributeFilter: ['class', 'aria-pressed'] });
   // The Builder reports its state every frame while it is in hand
@@ -1703,10 +1744,18 @@ export function mountShell(deps: ShellDeps): void {
     }
     later();
   });
+  // A road key rebound: the tool's options name it again.
+  onRoadKeysChange(() => render());
   render();
 }
 
 /** The width the road tool starts from when stepped: the selected class's own, in whole metres. */
+/** The class the road tool lays now (the active class button, `main.ts`). */
+function roadTypeIndex(): number {
+  const raw = document.querySelector<HTMLElement>('.road-type.active')?.dataset['typeIndex'];
+  return raw ? Number(raw) : 0;
+}
+
 function defaultRoadWidth(): number {
   const raw = document.querySelector<HTMLElement>('.road-type.active')?.dataset['widthM'];
   return raw ? Math.round(Number(raw)) : 10;

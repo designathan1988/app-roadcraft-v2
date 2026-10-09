@@ -4,7 +4,7 @@ import { addScaled, dist, perp, type Vec2 } from '@core/vec2';
 import type { NodeId, SegmentId } from '@world/ids';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
-import { Level, roadProfile } from '@world/roadTypes';
+import { Level, footwayOn, roadProfile } from '@world/roadTypes';
 import { carriesPedestrians } from '@world/pedestrianAccess';
 import { orientedPolyline } from '@world/geometry';
 import type { LaneletGraph, LaneletId } from '@world/lanelets';
@@ -99,9 +99,12 @@ export class SidewalkGraph {
 
         for (const side of [-1, 1] as const) {
           const id = kerbId(nodeId, segId, side);
+          // Each side's own footway (docs/VIAS.md V1): looking away from the
+          // node, `+nrm` is the road's left from `a` and its right from `b`.
+          const roadSide = (side > 0) === (seg.a === nodeId) ? 'left' : 'right';
           this.nodes.set(id, {
             id,
-            at: addScaled(frame.p, nrm, lateral * side),
+            at: addScaled(frame.p, nrm, (rt.width / 2 + footwayOn(rt, roadSide) * 0.5) * side),
             node: nodeId,
             segment: segId,
             side,
@@ -150,7 +153,6 @@ export class SidewalkGraph {
       if (!carriesPedestrians(rt)) continue;
       const pl = orientedPolyline(doc, seg, seg.a);
       if (pl.length < 1) continue;
-      const lateral = rt.width / 2 + rt.sidewalk * 0.5;
 
       const s0 = kerbDistance(
         net.crosswalkDistanceAt(segId, seg.a),
@@ -173,9 +175,10 @@ export class SidewalkGraph {
         const to = this.nodes.get(kerbId(seg.b, segId, (-side) as Side));
         if (!from || !to) continue;
 
+        const sideLateral = rt.width / 2 + footwayOn(rt, side > 0 ? 'left' : 'right') * 0.5;
         const offsetPts = middle.map((p, i) => {
           const t = pl.sampleAt(s0 + ((s1 - s0) * i) / Math.max(1, middle.length - 1)).t;
-          return addScaled(p, perp(t), lateral * side);
+          return addScaled(p, perp(t), sideLateral * side);
         });
         const points: Vec2[] = [];
         for (const point of [from.at, ...offsetPts, to.at]) {

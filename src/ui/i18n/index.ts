@@ -73,10 +73,22 @@ export function language(): LanguageCode {
 export function t(key: string, params?: Readonly<Record<string, string | number>>): string {
   const table = DICTIONARIES[current];
   const template = table[key] ?? EN[key] ?? key;
-  if (!params) return template;
+  if (!params && !template.includes('{')) return template;
+  // Placeholders every sentence may use (the road tool's keys), under the call's own.
+  params = { ...globalParams(), ...params };
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match,
   );
+}
+
+let globalParams: () => Readonly<Record<string, string | number>> = () => ({});
+/**
+ * Placeholders any sentence may use without its caller passing them: the
+ * road tool's rebindable keys (`{heightUp}`, `editor/roads/keys.ts`), so a
+ * hint re-translated on a change of language still names the right key.
+ */
+export function setGlobalParams(provider: () => Readonly<Record<string, string | number>>): void {
+  globalParams = provider;
 }
 
 /** Whether the reference dictionary defines `key` (every language has the same keys). */

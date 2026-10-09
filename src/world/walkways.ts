@@ -485,11 +485,13 @@ export function* walkwaySteps(net: Network): Generator<void, WalkGraph, void> {
     const centre = ribbon.centre[Level.Sidewalk];
     if (!centre || centre.n < 2 || centre.length < 1e-6) continue;
     const pts = centre.toPoints();
-    const mid = bandMid(section.side.through);
-    const width = bandWidth(section.side.through);
-    const inset = mid - section.side.curb.outer;
-    const outer = section.side.frontage.outer - mid;
     for (const side of [1, -1] as const) {
+      // Each side's own footway (an asymmetric road, docs/VIAS.md V1).
+      const zones = side > 0 ? section.left : section.right;
+      const mid = bandMid(zones.through);
+      const width = bandWidth(zones.through);
+      const inset = mid - zones.curb.outer;
+      const outer = zones.frontage.outer - mid;
       // `offsetPolyline` offsets to the LEFT for a positive distance.
       const path = Polyline.fromPoints(offsetPolyline(pts, side * mid));
       const first = path.sampleAt(0), last = path.sampleAt(path.length);
@@ -676,9 +678,12 @@ export function* walkwaySteps(net: Network): Generator<void, WalkGraph, void> {
       const section = sectionOf(ribbon.road, seg.direction);
       if (!section.walkable) continue;
       const f = orientedPolyline(doc, seg, nodeId).sampleAt(d);
-      const mid = bandMid(section.side.through);
-      const left = { x: f.p.x + f.n.x * mid, y: f.p.y + f.n.y * mid };
-      const right = { x: f.p.x - f.n.x * mid, y: f.p.y - f.n.y * mid };
+      // Looking away from the node: from `a` its left is the road's left, from `b` its right.
+      const fromA = seg.a === nodeId;
+      const midLeft = bandMid((fromA ? section.left : section.right).through);
+      const midRight = bandMid((fromA ? section.right : section.left).through);
+      const left = { x: f.p.x + f.n.x * midLeft, y: f.p.y + f.n.y * midLeft };
+      const right = { x: f.p.x - f.n.x * midRight, y: f.p.y - f.n.y * midRight };
       // Each end lands on the walkway nearest it on its own side - this
       // road's footway or the corner beside it - split there.
       const a = landOn(g, left, segId, nodeId);

@@ -18,7 +18,7 @@ import type { NodeId, SegmentId } from '@world/ids';
 import { footwayAt, type LandscapeItem, type SignType } from '@world/landscape';
 import type { Network } from '@world/network';
 import { type RoadElevation } from '@world/elevation';
-import { FOOTWAY_RISE } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import { sectionOf, LAMP_ZONE } from '@world/section';
 import { m } from '@world/units';
 
@@ -297,7 +297,7 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
     if (item.kind === 'sign') {
       const hit = footwayAt(net, item, m(0.6));
       if (!hit) continue;
-      const ground = elevation.onSegment(hit.segment, item.x, item.y) + FOOTWAY_RISE;
+      const ground = elevation.onSegment(hit.segment, item.x, item.y) + footwayRiseAt(net, item.x, item.y);
       // A traffic sign faces the traffic coming towards it on its side of the street.
       const facing = { x: -hit.frame.t.x * hit.side, y: -hit.frame.t.y * hit.side };
       const type = item.signType ?? 'stop';
@@ -311,16 +311,19 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
       for (const id of streetChain(net, item)) {
         const seg = net.doc.segment(id), ribbon = net.ribbons.get(id);
         if (!seg || !ribbon) continue;
-        const zone = sectionOf(ribbon.road, seg.direction).side.furnishing;
-        const out = zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, m(0.2))) / 2;
+        const section = sectionOf(ribbon.road, seg.direction);
         for (const [node, sign] of [[seg.a, 1], [seg.b, -1]] as const) {
+          // On the right-hand footway seen from the corner: the road's right
+          // from `a`, its left from `b` (each side its own width, docs/VIAS.md V1).
+          const zone = (sign > 0 ? section.right : section.left).furnishing;
+          const out = zone.inner + Math.min(LAMP_ZONE, Math.max(zone.outer - zone.inner, m(0.2))) / 2;
           if ((net.doc.node(node)?.incident.length ?? 0) < 2) continue;
           const s = sign > 0 ? net.mouthDistance(id, node) + m(1.5) : ribbon.full.length - net.mouthDistance(id, node) - m(1.5);
           if (s <= 0 || s >= ribbon.full.length) continue;
           const f = ribbon.full.sampleAt(s);
           const side = sign > 0 ? -1 : 1;
           const x = f.p.x + f.n.x * out * side, y = f.p.y + f.n.y * out * side;
-          const ground = elevation.onSegment(id, x, y) + FOOTWAY_RISE;
+          const ground = elevation.onSegment(id, x, y) + footwayRiseAt(net, x, y);
           // Parallel to the street, readable from both sides.
           stand(x, y, ground, 'street', item.text, Math.atan2(f.n.x, -f.n.y));
         }

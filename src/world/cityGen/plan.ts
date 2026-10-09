@@ -4,7 +4,7 @@ import { MAP_HALF } from '../bounds';
 import { m } from '../units';
 import type { ZoneDensity, ZoneUse } from '../zones';
 import { TensorField, valueNoise, type BasisField } from './field';
-import { planarize, traceStreets, type StreetGraph, type StreetLevel } from './streets';
+import { planarize, traceStreets, type StreetEdge, type StreetGraph, type StreetLevel } from './streets';
 
 /**
  * A GENERATED CITY'S PLAN: what the player asks for (`CityOptions`) made into
@@ -30,7 +30,39 @@ import { planarize, traceStreets, type StreetGraph, type StreetLevel } from './s
  * Everything follows from the seed: the same options give the same city.
  */
 
-export type CityStyle = 'grid' | 'organic' | 'radial' | 'mixed';
+export type CityStyle = 'grid' | 'organic' | 'radial' | 'mixed' | 'blocks';
+
+/**
+ * Block sizes of the 'blocks' style, in metres: a rectangular grid laid
+ * straight, no field traced (Chicago's and Melbourne's 100 x 200 m blocks,
+ * Manhattan's 80 x 274 m - en.wikipedia.org/wiki/City_block - shortened so
+ * a block holds two rows of lots back to back, 22 m frontage, ~30 m deep).
+ */
+const BLOCK_LONG = 120;
+const BLOCK_SHORT = 72;
+/** Every this many blocks an avenue, every other one between a collector. */
+const AVENUE_EVERY = 4;
+
+/** A rectangular street grid over the city's square, axis-aligned, avenues every few blocks. */
+function blockGrid(R: number): StreetGraph {
+  const along = m(BLOCK_LONG), across = m(BLOCK_SHORT);
+  const nx = Math.max(2, Math.floor((R * 1.7) / along)), ny = Math.max(2, Math.floor((R * 1.7) / across));
+  const x0 = -(nx * along) / 2, y0 = -(ny * across) / 2;
+  const nodes: Vec2[] = [];
+  const id = (i: number, j: number): number => j * (nx + 1) + i;
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) nodes.push({ x: x0 + i * along, y: y0 + j * across });
+  // A line's class from its index: the edges and every AVENUE_EVERY-th line
+  // avenues, halfway between them collectors, the rest local streets.
+  const levelOf = (k: number, n: number): number => {
+    const avenueEvery = n >= AVENUE_EVERY * 2 ? AVENUE_EVERY : n;
+    if (k % avenueEvery === 0 || k === n) return 0;
+    return k % (avenueEvery / 2) === 0 ? 1 : 2;
+  };
+  const edges: StreetEdge[] = [];
+  for (let j = 0; j <= ny; j++) for (let i = 0; i < nx; i++) edges.push({ a: id(i, j), b: id(i + 1, j), points: [], level: levelOf(j, ny) });
+  for (let i = 0; i <= nx; i++) for (let j = 0; j < ny; j++) edges.push({ a: id(i, j), b: id(i, j + 1), points: [], level: levelOf(i, nx) });
+  return { nodes, edges };
+}
 export type CitySize = 'small' | 'medium' | 'large';
 
 export interface CityOptions {
@@ -46,7 +78,7 @@ export interface CityOptions {
   readonly industry: boolean;
 }
 
-export const DEFAULT_CITY: CityOptions = { seed: 1, size: 'medium', style: 'mixed', centres: 2, density: 0.6, parks: 0, industry: true };
+export const DEFAULT_CITY: CityOptions = { seed: 1, size: 'medium', style: 'blocks', centres: 2, density: 0.6, parks: 0, industry: true };
 
 /** Road classes the levels are laid as (`roadTypes.ts` ids). */
 export const LEVEL_ROAD = ['avenue', 'urban', 'local'] as const;
@@ -93,6 +125,10 @@ export function planCity(options: CityOptions): CityPlan {
       for (const c of centres) radial(c.x, c.y, R * (c === centres[0] ? 0.55 : 0.3), 1.2);
       noise = { amount: 0.1, scale: m(400), seed: options.seed };
       break;
+    case 'blocks':
+      grid(0, 0, R * 4, 0, 1);
+      noise = { amount: 0, scale: m(500), seed: options.seed };
+      break;
     case 'mixed':
       grid(0, 0, R * 4, base, 0.45);
       radial(centres[0]!.x, centres[0]!.y, R * 0.32, 1.1);
@@ -113,8 +149,10 @@ export function planCity(options: CityOptions): CityPlan {
     { dsepMajor: m(160), dsepMinor: m(200), testFraction: 0.5, dstep: m(7), dlookahead: m(120), minLength: m(110), maxLength: R * 1.6, seedTries: 80 },
     { dsepMajor: m(68), dsepMinor: m(112), testFraction: 0.55, dstep: m(6), dlookahead: m(70), minLength: m(60), maxLength: m(520), seedTries: 160 },
   ];
-  const lines = traceStreets(field, inside, { x0: -R * 1.2, y0: -R * 1.2, x1: R * 1.2, y1: R * 1.2 }, levels, rng);
-  const graph = planarize(lines, { merge: m(14), prune: m(45), minAngle: 0.5, simplify: m(1.2), spacing: m(16) });
+  const graph = options.style === 'blocks'
+    ? blockGrid(R)
+    : planarize(traceStreets(field, inside, { x0: -R * 1.2, y0: -R * 1.2, x1: R * 1.2, y1: R * 1.2 }, levels, rng),
+      { merge: m(14), prune: m(45), minAngle: 0.5, simplify: m(1.2), spacing: m(16) });
 
   // ---- the districts
   const industryAngle = rng.range(0, Math.PI * 2);

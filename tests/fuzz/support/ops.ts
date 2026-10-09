@@ -10,6 +10,9 @@ import { commitDraft, commitRoadPath, joinSegments, moveNodeChecked, splitSegmen
 import { guardRoadEdit } from '@editor/editRules';
 import { anchorForHeight, anchorHeightOffset, findAnchor, snapEndpoint, snapRoadEndpoint, type Anchor } from '@editor/snap';
 import { fitRoadCurve } from '@world/doc';
+import { profileOf } from '@world/roads/profile';
+import { m } from '@world/units';
+import { applyProfileTo } from '@editor/roads/profile';
 
 /**
  * One editor gesture, as plain JSON.
@@ -42,7 +45,13 @@ export type FuzzOp =
   | { readonly op: 'curve'; readonly pick: number; readonly t: number; readonly h: number }
   | { readonly op: 'delete'; readonly pick: number }
   | { readonly op: 'removeNode'; readonly pick: number }
-  | { readonly op: 'control'; readonly pick: number; readonly control: JunctionControl };
+  | { readonly op: 'control'; readonly pick: number; readonly control: JunctionControl }
+  /**
+   * A new cross-section on a road already built (docs/VIAS.md V1): each
+   * footway its own width in whole metres, either laid flush (no kerb).
+   */
+  | { readonly op: 'profile'; readonly pick: number; readonly left: number; readonly right: number;
+    readonly flushLeft: boolean; readonly flushRight: boolean };
 
 export interface FuzzState {
   readonly doc: RoadDoc;
@@ -217,6 +226,16 @@ export function applyOp(state: FuzzState, op: FuzzOp): boolean {
       changed = true;
       break;
     }
+    case 'profile': {
+      const id = pickFrom(segmentIds(doc), op.pick);
+      const seg = id === undefined ? undefined : doc.segment(id);
+      if (!seg || id === undefined) return false;
+      const base = profileOf(seg);
+      const elements = base.elements.map((e, i) => e.kind !== 'footway' ? e
+        : { ...e, width: m(i === 0 ? op.left : op.right), ...((i === 0 ? op.flushLeft : op.flushRight) ? { flush: true } : {}) });
+      changed = guardRoadEdit(doc, net, () => applyProfileTo(doc, [id], { ...base, elements }).changed).changed;
+      break;
+    }
     case 'control': {
       const id = pickFrom(nodeIds(doc).filter((n) => doc.degree(n) >= 3), op.pick);
       if (id === undefined || doc.node(id)?.control === op.control) return false;
@@ -307,7 +326,7 @@ export function randomOp(rng: Rng, state: FuzzState): FuzzOp {
   if (roll < 0.5 || state.doc.segments.size < 2) return drawOp(rng, state);
   const pick = round(rng.float());
   const kinds = ['split', 'join', 'move', 'type', 'upgrade', 'lanes', 'direction', 'structure', 'curve',
-    'delete', 'removeNode', 'control'] as const;
+    'delete', 'removeNode', 'control', 'profile'] as const;
   const kind = pickFrom(kinds, rng.float()) as (typeof kinds)[number];
   switch (kind) {
     case 'split': return { op: 'split', pick, at: round(rng.range(0.2, 0.8)) };
@@ -322,5 +341,7 @@ export function randomOp(rng: Rng, state: FuzzState): FuzzOp {
     case 'delete': return { op: 'delete', pick };
     case 'removeNode': return { op: 'removeNode', pick };
     case 'control': return { op: 'control', pick, control: pickFrom(CONTROLS, rng.float()) as JunctionControl };
+    case 'profile': return { op: 'profile', pick, left: rng.int(1, 6), right: rng.int(1, 6),
+      flushLeft: rng.float() < 0.2, flushRight: rng.float() < 0.2 };
   }
 }

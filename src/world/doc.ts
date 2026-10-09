@@ -1,3 +1,4 @@
+import { type LaneLink, linksDigest, normalizeLaneLinks } from './roads/connectors';
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
 import { isLot, type Lot } from './lots';
 import type { Vec2 } from '@core/vec2';
@@ -90,6 +91,13 @@ export interface RoadNode {
    * segment leaves it: a real junction draws its own crossings.
    */
   crossing?: NodeCrossing;
+  /**
+   * The player's own lane connections at this node (docs/VIAS.md V4,
+   * `roads/connectors.ts`): for each arriving lane listed, exactly these.
+   * Absent: every connection derived. A link to a lane that is gone is left
+   * out of the build.
+   */
+  laneLinks?: readonly LaneLink[];
 }
 
 export type NodeCrossingKind = 'zebra' | 'signal';
@@ -122,6 +130,14 @@ export interface RoadSegment {
   parking?: SegmentParking;
   /** Vertical construction mode. Ground is the legacy/default value. */
   structure: RoadStructure;
+  /**
+   * The sides of its cutting held by retaining walls instead of a batter
+   * (docs/VIAS.md V3): the ground is cut back only as far as a portal's
+   * cutting (`elevation.ts` `CUT_SHOULDER`) and a concrete wall stands at
+   * each edge up to the natural ground (`render/structures.ts`). Absent: the
+   * batter, as every road before it.
+   */
+  cutWalls?: true;
 }
 
 /**
@@ -751,6 +767,26 @@ export class RoadDoc {
     this.markSegment(id);
   }
 
+  /** Retaining walls on the sides of the road's cutting (`RoadSegment.cutWalls`). */
+  setSegmentCutWalls(id: SegmentId, on: boolean): void {
+    const segment = this.segments.get(id);
+    if (!segment || (segment.cutWalls === true) === on) return;
+    if (on) segment.cutWalls = true;
+    else delete segment.cutWalls;
+    this.markSegment(id);
+  }
+
+  /** The player's lane connections at a node; undefined or empty: all derived (`RoadNode.laneLinks`). */
+  setNodeLaneLinks(id: NodeId, links: readonly LaneLink[] | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    const next = normalizeLaneLinks(links);
+    if (linksDigest(node.laneLinks) === linksDigest(next)) return;
+    if (next) node.laneLinks = next;
+    else delete node.laneLinks;
+    this.markNode(id);
+  }
+
   setSegmentStructure(id: SegmentId, structure: RoadStructure): void {
     const segment = this.segments.get(id);
     if (!segment || segment.structure === structure) return;
@@ -1334,6 +1370,7 @@ export class RoadDoc {
         id: n.id, x: n.x, y: n.y, heightOffset: n.heightOffset, smooth: n.smooth,
         control: n.control, blockedMovements: [...n.blockedMovements],
         ...(n.crossing ? { crossing: { kind: n.crossing.kind, segment: n.crossing.segment } } : {}),
+        ...(n.laneLinks ? { laneLinks: n.laneLinks.map((l) => ({ ...l })) } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -1347,6 +1384,7 @@ export class RoadDoc {
         structure: s.structure,
         ...(s.section ? { section: cloneRoadSection(s.section) } : {}),
         ...(s.parking ? { parking: { ...s.parking } } : {}),
+        ...(s.cutWalls ? { cutWalls: true as const } : {}),
       })),
       terrain: this.terrainStamps.map((stamp) => ({ ...stamp })),
       // Only for the natural land: a legacy map serialises as before.
@@ -1459,6 +1497,7 @@ export class RoadDoc {
         // Through the migration, so a level that has since been merged into
         // another (`viaduct`) loads as the one it became.
         structure: migrateStructure(s.structure) ?? 'ground',
+        ...(s.cutWalls === true ? { cutWalls: true as const } : {}),
       });
       doc.requireNode(a).incident.push(id);
       doc.requireNode(b).incident.push(id);
@@ -1473,6 +1512,14 @@ export class RoadDoc {
       if (crossing.kind !== 'zebra' && crossing.kind !== 'signal') continue;
       node.crossing = { kind: crossing.kind, segment: asSegmentId(crossing.segment) };
       dropStaleCrossing(node);
+    }
+    // The player's lane connections: kept as stored (a link to a lane that
+    // is gone is left out of the build, `lanelets.ts`).
+    for (const n of data.nodes) {
+      const node = doc.nodes.get(asNodeId(n.id));
+      if (!node || canonicalNode.get(n.id) !== node.id) continue;
+      const links = normalizeLaneLinks(n.laneLinks);
+      if (links) node.laneLinks = links;
     }
     for (const dab of data.paint ?? []) {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
@@ -1629,6 +1676,8 @@ export interface SerializedDoc {
     id: number; x: number; y: number; heightOffset?: number; smooth?: boolean;
     control?: JunctionControl; blockedMovements?: readonly string[];
     crossing?: { kind: NodeCrossingKind; segment: number };
+    /** The player's lane connections (docs/VIAS.md V4); absent on every older map. */
+    laneLinks?: readonly { from: number; fromLane: number; to: number; toLane: number }[];
   }[];
   readonly segments: readonly {
     id: number;
@@ -1643,6 +1692,8 @@ export interface SerializedDoc {
     parking?: SegmentParking;
     /** A current structure id, or a legacy one `migrateStructure` maps. */
     structure?: RoadStructure | 'viaduct';
+    /** Retaining walls in its cutting (docs/VIAS.md V3); absent on every older map. */
+    cutWalls?: boolean;
   }[];
   readonly terrain?: readonly TerrainStamp[];
   /** `ReliefVersion`; absent on maps made before the natural landform. */

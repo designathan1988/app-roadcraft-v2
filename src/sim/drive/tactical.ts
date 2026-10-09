@@ -99,10 +99,12 @@ function pop(heap: Node[]): Node | undefined {
 }
 
 /** Seconds to drive on through a connector and the link it leads to, with its congestion. */
-function connectorCost(w: SimWorld, connectorId: LaneletId, body: BodyClass): number {
+function connectorCost(w: SimWorld, connectorId: LaneletId, body: BodyClass, shape: string): number {
   const connector = w.connector(connectorId);
   const out = connector && w.lanelet(connector.toLane);
   if (!connector || connector.maxBodyClass < body || !out || out.kind !== 'link' || w.rt(out.id).ghost) return Infinity;
+  // A bus lane is buses only (docs/VIAS.md V4).
+  if (!w.graph.laneUsable(out.id, shape)) return Infinity;
   const density = w.rt(out.id).order.length / Math.max(1, out.length / 12);
   const travel = out.length / Math.max(0.5, out.speedLimit) * (1 + density * 2.6);
   const turn = connector.turn === 'uturn' ? 4 : connector.turn === 'through' ? 0 : 0.35;
@@ -122,6 +124,8 @@ export function planTrip(
   goal: LaneletId,
   body: BodyClass,
   startChange = true,
+  /** The vehicle's shape (`VehicleShape`): who may drive a bus lane, docs/VIAS.md V4. */
+  shape = 'car',
 ): TripPlan | null {
   const startLane = w.lanelet(start);
   if (!startLane || startLane.kind !== 'link' || !w.lanelet(goal) || w.rt(goal).ghost) return null;
@@ -144,7 +148,7 @@ export function planTrip(
     if (!lane || lane.kind !== 'link') continue;
 
     for (const id of w.graph.exitsOf(node.lane)) {
-      const step = connectorCost(w, id, body);
+      const step = connectorCost(w, id, body, shape);
       if (!Number.isFinite(step)) continue;
       const out = w.connector(id)!.toLane;
       relax(heap, best, parent, { key: out, lane: out, changed: false, cost: node.cost + step }, { from: node.key, connector: id });
@@ -152,7 +156,8 @@ export function planTrip(
 
     if (node.changed || lane.laneIndex === undefined) continue;
     const room = node.lane === start ? lane.length - startS : lane.length;
-    for (const sibling of w.graph.siblingLanes(node.lane)) {
+    // Only across dashed lines, into lanes this vehicle may drive (docs/VIAS.md V4).
+    for (const sibling of w.graph.changeTargets(node.lane, shape)) {
       const other = w.lanelet(sibling);
       if (!other || other.kind !== 'link' || other.laneIndex === undefined || w.rt(sibling).ghost) continue;
       const lanes = Math.abs(other.laneIndex - lane.laneIndex);
@@ -177,7 +182,7 @@ export function planTrip(
   if (first && first.connector === null) {
     // Change lanes here first. The route is the trip as driven without it.
     const next = steps[1];
-    const fallback = planTrip(w, start, startS, goal, body, false);
+    const fallback = planTrip(w, start, startS, goal, body, false, shape);
     return {
       route: fallback?.route ?? [start],
       changeTo: first.lane,

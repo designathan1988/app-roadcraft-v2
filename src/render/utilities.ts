@@ -23,6 +23,7 @@ import { m } from '@world/units';
 import { LAMP_BEAM_RADIUS, LAMP_POOL_RADIUS, type SceneryKit } from './scenery';
 import { GROUND_ONLY, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE } from '@world/roadTypes';
+import { footwayRiseAt } from '@world/roads/footwayRise';
 import {
   POLE_ARM_DROP,
   POLE_ARM_HALF,
@@ -471,6 +472,8 @@ export function buildUtilities(
 export function poleGroundAt(
   elevation: RoadElevation,
   terrainAt: (x: number, y: number) => number,
+  /** The network, to stand a pole level with a footway laid flush (`footwayRiseAt`). */
+  net?: Network,
 ): (x: number, y: number) => number {
   return (x, y) => {
     const road = elevation.roadAt(x, y, GROUND_ONLY);
@@ -478,7 +481,7 @@ export function poleGroundAt(
     // A pole out on the casing margin is on the verge, not the pavement.
     const onFootway = road.type >= 0 && Math.abs(road.across) <= road.half;
     if (!onFootway) return terrainAt(x, y);
-    return elevation.at(x, y, GROUND_ONLY) + FOOTWAY_RISE;
+    return elevation.at(x, y, GROUND_ONLY) + (net ? footwayRiseAt(net, x, y) : FOOTWAY_RISE);
   };
 }
 

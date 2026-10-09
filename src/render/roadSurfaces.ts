@@ -6,10 +6,13 @@ import { offsetPolyline } from '@core/offset';
 import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
+import type { CarriagewayMaterial, FootwayMaterial } from '@world/roadSection';
+import { footwayRiseAt, footwayRiseShare } from '@world/roads/footwayRise';
 import { levelPolygons, levelRings } from '@world/surfaces';
 import { curbRamps, rampOutline, walkingRise } from '@world/curbRamps';
 import { Polyline } from '@core/polyline';
 import {
+  RAISED_LIFT,
   ROAD_STRUCTURES,
   isRaised,
   roadStructure,
@@ -96,8 +99,8 @@ const VERGE_SKIRT = 0.5;
  * skirt) shows where the two meet. Both wear the terrain's material.
  */
 const VERGE_LIFT = -m(0.08);
-/** World size of one UV unit on the ground verge when it wears the terrain's material. */
-const TERRAIN_UV = 64;
+/** World size of one UV unit on the ground verge when it wears the terrain's material (and a retaining wall's backfill, `structures.ts`). */
+export const TERRAIN_UV = 64;
 
 /**
  * Longest triangle edge on a road at grade.
@@ -256,11 +259,24 @@ const CLASS_TINT: readonly Color[] = ROAD_TYPES.map((type) =>
 );
 /** The tint the asphalt material is authored against, so 1.0 means "as baked". */
 const TINT_REFERENCE = new Color(0x3a3d3f);
+/** A carriageway's tone by what it is paved with (docs/VIAS.md V1); asphalt keeps its class's. */
+const CARRIAGEWAY_TINT: Readonly<Record<Exclude<CarriagewayMaterial, 'asphalt'>, Color>> = {
+  concrete: new Color(0x8f8d88),
+  cobble: new Color(0x6a5f52),
+};
+/** A footway's tone over the baked pavers, by material, linear multipliers. */
+const FOOTWAY_TINT: Readonly<Record<FootwayMaterial, readonly [number, number, number]>> = {
+  pavers: [1, 1, 1],
+  concrete: [1.08, 1.08, 1.1],
+  stone: [1, 0.84, 0.66],
+};
+/** Slabs in a footway panel along a bend: a joint every this many tiles (`surfaceFrameAt`). */
+const FOOTWAY_PANEL_TILES = 2;
 
 /** What each surface of a tile is made from. */
 type Source =
   | { readonly kind: 'band'; readonly band: 'verge' | 'footway' | 'kerb' | 'asphalt' | 'curbRamp' }
-  | { readonly kind: 'median'; readonly part: 'kerb' | 'planting' }
+  | { readonly kind: 'median'; readonly part: 'kerb' | 'planting' | 'paved' }
   | { readonly kind: 'paint'; readonly color: string };
 
 /** One surface of a structural level: how it is meshed, and from what. */
@@ -403,7 +419,7 @@ export function* roadSurfaceSteps(
         if (!line) return false;
         for (let s = 0; s <= line.length; s += Math.max(4, line.length / 24)) {
           const p = line.sampleAt(s).p;
-          if (elevation.onSegment(id, p.x, p.y) - terrainAt(p.x, p.y) > 5) return true;
+          if (elevation.onSegment(id, p.x, p.y) - terrainAt(p.x, p.y) > RAISED_LIFT) return true;
         }
         return false;
       })
@@ -419,15 +435,15 @@ export function* roadSurfaceSteps(
       ? (x, y) => deck(x, y) - roadStructure(pass.segment === undefined ? structure.id : 'elevated').deck - FOOTWAY_RISE
       : (x, y) => Math.min(deck(x, y) - VERGE_SKIRT, terrainAt(x, y) - 0.2);
 
-    const frameFor = (tile: number): UvFrameFn => (x, y, pickX, pickY, out) => {
+    const frameFor = (tile: number, panel?: number): UvFrameFn => (x, y, pickX, pickY, out) => {
       const frame = elevation.surfaceFrameAt(x, y, only, pickX, pickY,
-        pass.segment !== undefined, pass.segment === undefined ? undefined : segmentAt(pickX, pickY));
+        pass.segment !== undefined, pass.segment === undefined ? undefined : segmentAt(pickX, pickY), panel);
       out[0] = frame.across / tile;
       out[1] = frame.along / tile;
     };
     /** Road-framed UVs, with every triangle kept inside one road's frame. */
-    const uvFor = (tile: number): { uv: UvFn; uvFrame: UvFrameFn; uvWorld: number } => {
-      const uvFrame = frameFor(tile);
+    const uvFor = (tile: number, panel?: number): { uv: UvFn; uvFrame: UvFrameFn; uvWorld: number } => {
+      const uvFrame = frameFor(tile, panel);
       return { uv: (x, y, out) => uvFrame(x, y, x, y, out), uvFrame, uvWorld: tile };
     };
 
@@ -438,16 +454,39 @@ export function* roadSurfaceSteps(
      * it rather than being multiplied twice.
      */
     const asphaltTint: TintFn = (x, y, out) => {
-      const type = pass.segment === undefined
-        ? elevation.roadAt(x, y, only, false).type
-        : net.doc.segment(pass.segment)?.type ?? 0;
-      const tint = CLASS_TINT[type] ?? TINT_REFERENCE;
+      const sample = pass.segment === undefined ? elevation.roadAt(x, y, only, false) : null;
+      const type = sample ? sample.type : net.doc.segment(pass.segment!)?.type ?? 0;
+      // A carriageway paved with something else than the class's asphalt
+      // (docs/VIAS.md V1) takes that material's tone.
+      const segment = sample ? sample.segment : segmentAt(x, y);
+      let material = segment === undefined ? undefined : net.ribbons.get(segment)?.road.materials?.carriageway;
+      // Between its junction mouths only: the junction plate keeps the class's
+      // asphalt, and the paving changes at the mouth line, as it is laid.
+      if (material && sample && segment !== undefined) {
+        const ribbon = net.ribbons.get(segment)!;
+        const trims = net.trims.get(segment);
+        const from = trims?.a[Level.Asphalt] ?? 0, to = ribbon.full.length - (trims?.b[Level.Asphalt] ?? 0);
+        if (sample.along < from || sample.along > to) material = undefined;
+      }
+      const tint = material && material !== 'asphalt' ? CARRIAGEWAY_TINT[material] : CLASS_TINT[type] ?? TINT_REFERENCE;
       out[0] = tint.r / TINT_REFERENCE.r;
       out[1] = tint.g / TINT_REFERENCE.g;
       out[2] = tint.b / TINT_REFERENCE.b;
     };
 
     const suffix = pass.id === 'ground' ? '' : `-${pass.id}`;
+
+    /** The footway's tone: its side's material on the road nearest the point (docs/VIAS.md V1). */
+    const footwayTint: TintFn = (x, y, out) => {
+      const sample = elevation.roadAt(x, y, only, pass.segment !== undefined);
+      const road = sample.segment === undefined ? undefined : net.ribbons.get(sample.segment)?.road;
+      const materials = road?.materials;
+      const material = materials ? (sample.across >= 0 ? materials.footwayLeft : materials.footwayRight) : undefined;
+      const tint = FOOTWAY_TINT[material ?? 'pavers'];
+      out[0] = tint[0]; out[1] = tint[1]; out[2] = tint[2];
+    };
+    /** Where the footway stands: a kerb's rise over the carriageway, or level with it where it is laid flush. */
+    const footwayTop: HeightFn = (x, y) => deck(x, y) + footwayRiseAt(net, x, y);
 
     /**
      * The verge on the ground: from the footway's edge, at the footway's
@@ -522,13 +561,16 @@ export function* roadSurfaceSteps(
         source: { kind: 'band', band: 'footway' },
         options: {
           name: `footway${suffix}`,
-          top: offset(deck, FOOTWAY_RISE),
+          top: footwayTop,
           // On the ground the footway's own edge goes down into the terrain:
           // there is no verge band outside it (see `specs` below).
           bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
           material: materials.footway,
           maxEdge,
-          ...uvFor(materials.scale.footway),
+          // Laid at its true length on each line along a bend, a joint every
+          // few slabs (`surfaceFrameAt`, panels), so pavers keep their size.
+          ...uvFor(materials.scale.footway, materials.scale.footway * FOOTWAY_PANEL_TILES),
+          tint: footwayTint,
           castShadow: raised,
           receiveShadow: true,
           skirtUvScale: materials.scale.footway,
@@ -542,7 +584,7 @@ export function* roadSurfaceSteps(
         source: { kind: 'band', band: 'curbRamp' },
         options: {
           name: `curb-ramp${suffix}`,
-          top: (x, y) => deck(x, y) + FOOTWAY_RISE * walkingRise(net, x, y, true, structure.id),
+          top: (x, y) => deck(x, y) + footwayRiseAt(net, x, y) * walkingRise(net, x, y, true, structure.id),
           bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
           material: materials.footway,
           maxEdge: RAMP_MAX_EDGE,
@@ -606,6 +648,21 @@ export function* roadSurfaceSteps(
           skirtUvScale: materials.scale.kerb,
         },
       },
+      {
+        // A median paved instead of planted (docs/VIAS.md V1): the footway's
+        // paving at the planting's height.
+        source: { kind: 'median', part: 'paved' },
+        options: {
+          name: `median-paved${suffix}`,
+          top: offset(deck, MEDIAN_PLANTING),
+          bottom: offset(deck, MEDIAN_KERB),
+          material: materials.footway,
+          maxEdge,
+          ...uvFor(materials.scale.footway),
+          receiveShadow: true,
+          skirtUvScale: materials.scale.kerb,
+        },
+      },
     ];
     const specs = allSpecs;
 
@@ -617,8 +674,10 @@ export function* roadSurfaceSteps(
       asphalt: inputsOf(levelRings(net, Level.Asphalt as SurfaceLevel, include)),
     };
     const strips = medianStrips(net, include);
-    const medians = { kerb: inputsOf(strips.kerb), planting: inputsOf(strips.planting) };
-    const ramps = inputsOf(curbRamps(net).filter((r) => include(r.segment)).map((r) => [rampOutline(r)]));
+    const medians = { kerb: inputsOf(strips.kerb), planting: inputsOf(strips.planting), paved: inputsOf(strips.paved) };
+    // No dropped kerb on a footway laid flush: there is no kerb to drop.
+    const ramps = inputsOf(curbRamps(net).filter((r) => include(r.segment) && footwayRiseShare(net, r.x + r.nx * r.run, r.y + r.ny * r.run) > 0)
+      .map((r) => [rampOutline(r)]));
     // The pass's inputs, the crossings' footway and the markings in steps of
     // their own: together they were one step of ~20 ms after a road edit in the
     // test city, past the slice (`renderer.ts` `pumpWorld`, P3).
@@ -682,7 +741,7 @@ export function* roadSurfaceSteps(
       if (!value) {
         value = {
           levels: { casing: [], sidewalk: [], curb: [], asphalt: [] },
-          medians: { kerb: [], planting: [] },
+          medians: { kerb: [], planting: [], paved: [] },
           ramps: [],
           ribbons: [],
           quads: new Map(),
@@ -704,7 +763,7 @@ export function* roadSurfaceSteps(
     for (const name of ['casing', 'sidewalk', 'curb', 'asphalt'] as const) {
       for (const input of levels[name]) file(input, (into) => into.levels[name].push(input));
     }
-    for (const name of ['kerb', 'planting'] as const) {
+    for (const name of ['kerb', 'planting', 'paved'] as const) {
       for (const input of medians[name]) file(input, (into) => into.medians[name].push(input));
     }
     for (const input of ramps) file(input, (into) => into.ramps.push(input));
@@ -760,6 +819,8 @@ export function* roadSurfaceSteps(
       addAll(into.levels.asphalt);
       addAll(into.medians.kerb);
       addAll(into.medians.planting);
+      // Only when there is any, so the keys of maps without a paved median are as before.
+      if (into.medians.paved.length) addAll(into.medians.paved);
       addAll(into.ramps);
       addAll(into.ribbons);
       // In a fixed order: the colours come in the order the network first
@@ -863,7 +924,7 @@ function inputsOf(polys: readonly Poly[]): Input[] {
 function buildTile(
   into: {
     readonly levels: Record<'casing' | 'sidewalk' | 'curb' | 'asphalt', readonly Input[]>;
-    readonly medians: Record<'kerb' | 'planting', readonly Input[]>;
+    readonly medians: Record<'kerb' | 'planting' | 'paved', readonly Input[]>;
     readonly ramps: readonly Input[];
     readonly ribbons: readonly Input[];
     readonly quads: ReadonlyMap<string, readonly Input[]>;
@@ -928,20 +989,24 @@ function buildTile(
 function medianStrips(
   net: Network,
   include: (segment: SegmentId) => boolean,
-): { kerb: Poly[]; planting: Poly[] } {
+): { kerb: Poly[]; planting: Poly[]; paved: Poly[] } {
   const kerb: Poly[] = [];
   const planting: Poly[] = [];
+  const paved: Poly[] = [];
   for (const ribbon of net.ribbons.values()) {
     if (!include(ribbon.id)) continue;
     const median = ribbon.road.median;
-    if (median <= 0) continue;
+    // A median painted on the carriageway has no kerb and no island (docs/VIAS.md V1).
+    if (median <= 0 || ribbon.road.medianFlush) continue;
     const centre = ribbon.centre[Level.Asphalt];
     if (!centre || centre.n < 2) continue;
     const points = centre.toPoints();
     kerb.push(strip(points, (median + 1.4) / 2));
-    planting.push(strip(points, median / 2));
+    // Grass by default; paved in concrete or pavers when the profile says so.
+    const material = ribbon.road.materials?.median;
+    (material && material !== 'grass' ? paved : planting).push(strip(points, median / 2));
   }
-  return { kerb, planting };
+  return { kerb, planting, paved };
 }
 
 /** A closed ribbon `half` wide either side of a centreline. */
