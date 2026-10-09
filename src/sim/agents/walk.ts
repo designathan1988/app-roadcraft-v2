@@ -73,6 +73,10 @@ const ACCEL = m(1.2);
 const BRAKE = m(2.5);
 /** A new stripe must be this much better to be taken: no dithering between two. */
 const SWITCH_GAIN = m(1.2);
+/** Seconds a stripe just taken is kept, unless it shuts. */
+const AIM_HOLD = 0.6;
+/** Held still this long, a quarter of that will do. */
+const HELD_SWITCH = 0.5;
 /** Room given up for each unit across from where the body is: SUMO's LATERAL_PENALTY, a metre a stripe. */
 const LATERAL_PENALTY = m(1) / STRIPE;
 /** Held still this long, a walker is let through others slowly (SUMO's jamtime: 10 s on a crossing). */
@@ -92,6 +96,14 @@ const AHEAD = m(0.9);
 const LOT_AHEAD = m(0.35);
 /** Most a walker moves across towards its stripe, as a share of its forward speed (SUMO's LATERAL_SPEED_FACTOR). */
 const LATERAL_SHARE = 0.4;
+/**
+ * Slower than this a walker faces the way its walk goes and steps aside
+ * sideways, unless the point it walks to is more than `SHUFFLE_COS` round
+ * (45 degrees): a corner. The defect counted standing or at a shuffle
+ * (0.15 m/s, `defects.spec` fidgets); 0.25 m/s covers it.
+ */
+const SHUFFLE = m(0.25);
+const SHUFFLE_COS = Math.SQRT1_2;
 /** Fastest a body turns walking, and standing (on the spot), rad/s. */
 const TURN_RATE = 3.5;
 const TURN_STANDING = 6;
@@ -101,6 +113,20 @@ const CROSSING_COST = m(12);
 const KERB_BACK = m(0.35);
 /** A walker this far from the waiting place starts asking whether they may cross. */
 const ASK_FROM = m(1.5);
+/**
+ * Behind somebody waiting for the zebra it is going to, this near its
+ * waiting place, a walker is in the queue: waiting too (`queuedFor`), never
+ * jammed through the crowd. Within this gap of the body ahead past `KEEP`.
+ */
+const QUEUE_REACH = m(6);
+/**
+ * Half the length of kerb people wait along at a zebra, u: past the zebra's
+ * own width, as a crowd at a corner lines the kerb rather than standing
+ * deep across the footway (SUMO's "wide queue").
+ */
+const WAIT_HALF = m(2.2);
+
+const QUEUE_GAP = m(0.6);
 /** How often a waiting walker asks whether they may cross, seconds. */
 const ASK_EVERY = 0.25;
 /**
@@ -205,6 +231,8 @@ interface Walker {
    * 2 cm every 10 s and a car waiting for it waited for good.
    */
   jammedOn?: number | undefined;
+  /** Age at which its stripe (`aim`) last changed (`AIM_HOLD`). */
+  aimAt?: number;
   /** Waiting for a zebra: seconds waited, and the time to the next ask. */
   waited: number;
   asked: number;
@@ -611,12 +639,21 @@ function room(st: Step): [number, number] {
     const r = bendRadii(st.way);
     if (r.turn > 0.2) hi = Math.min(hi, r.left * 0.5);
     else if (r.turn < -0.2) lo = Math.max(lo, -r.right * 0.5);
+    // Never past the fold itself on either side, counter-bends and corners
+    // that barely turn end to end included (an S across the top of a T): a
+    // walker put 1.9 m inside a bend of 1.5 m radius spun round on the spot
+    // for 13 s, its nearest point on the line jumping across the cusp
+    // (`defects.spec` mixed-T milling, P101).
+    hi = Math.min(hi, r.left * FOLD_SHARE);
+    lo = Math.max(lo, -r.right * FOLD_SHARE);
   }
   if (st.dir === -1) [lo, hi] = [-hi, -lo];
   if (lo > hi) lo = hi = (lo + hi) / 2;
   return [lo, hi];
 }
 
+/** Share of a bend's radius a walker may be inside it on a counter-bend: short of the fold. */
+const FOLD_SHARE = 0.8;
 /** Share of a corner's stripes, and most width, left to those coming the other way (SUMO's defaults). */
 const RESERVE_ONCOMING = 0.34;
 const RESERVE_MAX = m(1.28);
@@ -1352,7 +1389,7 @@ function stepWalkers(w: SimWorld): void {
     p.act = { kind: 'fall', from: p.age, until: p.age + 3 + ((personHash(p.id) >> 3) & 3), faceX: p.x - Math.cos(p.heading), faceY: p.y - Math.sin(p.heading) };
     p.v = 0;
   }
-  const others: { along: number; lat: number; oncoming: boolean; r: number }[] = [];
+  const others: { along: number; lat: number; oncoming: boolean; r: number; waitFor?: Zebra | null }[] = [];
   // The cars off the road: solid to a walker as a person is (the body three
   // discs along its length, half its width round: a walker's own body is the
   // margin, so a car in the road by the kerb does not close the kerb-side
@@ -1483,9 +1520,24 @@ function stepWalkers(w: SimWorld): void {
     let st = p.steps[p.leg]!;
     const f = frame(st, p.s);
     const span = room(st);
-    // On a zebra, and waiting at one, everybody keeps to their right half:
-    // those coming the other way, and those waiting, are on the other half.
-    if (crossingOf(w, st.way)) span[1] = Math.max(span[0], Math.min(span[1], BODY / 2));
+    // On a zebra everybody keeps to their right half: those coming the other
+    // way are on the other half. Waiting at its kerb, the whole width: SUMO's
+    // people "wait in front of crossings in a wide queue"
+    // (sumo.dlr.de/docs/Simulation/Pedestrians.html). Kept to half, the
+    // crowd of a long red stood three and four deep, back across the
+    // footway's through zone, and held up everybody walking past the corner
+    // (`defects.spec`, P101).
+    const atKerb = crossingOf(w, st.way) !== null && p.waiting !== null && p.s < kerbInset(p.steps[p.leg - 1]?.way);
+    if (crossingOf(w, st.way) && !atKerb) span[1] = Math.max(span[0], Math.min(span[1], BODY / 2));
+    // And wider than the zebra, along the kerb (`WAIT_HALF`): on a narrow
+    // footway the second and third rows of a crowd filled its whole width.
+    // Let on, one standing past the zebra's edge steps along the kerb into it
+    // before stepping off (`offZebra` below): beside the dropped kerb they
+    // stepped down its 15 cm in one frame (`walkHeight.spec`).
+    if (atKerb) { span[0] = Math.min(span[0], -WAIT_HALF); span[1] = Math.max(span[1], WAIT_HALF); }
+    const zebraRoom = room(st);
+    const offZebra = !atKerb && crossingOf(w, st.way) !== null && p.s < kerbInset(p.steps[p.leg - 1]?.way)
+      && (p.d < zebraRoom[0] - m(0.05) || p.d > zebraRoom[1] + m(0.05));
 
     // --- the others, in this walker's own frame: how far ahead, how far across, which way they go.
     others.length = 0;
@@ -1497,7 +1549,7 @@ function stepWalkers(w: SimWorld): void {
         if (along <= 0 || along > LOOK) return false;
         const lat = p.d - rx * f.ty + ry * f.tx;
         const oncoming = q.v > MOVING && Math.cos(q.heading) * f.tx + Math.sin(q.heading) * f.ty < -0.3;
-        others.push({ along, lat, oncoming, r: SHOULDERS - BODY });
+        others.push({ along, lat, oncoming, r: SHOULDERS - BODY, waitFor: q.v < MOVING ? q.waiting : null });
         return false;
       };
       grid.someNear(p.x, p.y, 1, see);
@@ -1523,6 +1575,15 @@ function stepWalkers(w: SimWorld): void {
         others.push({ along: Math.max(0.01, along), lat: p.d - rx * f.ty + ry * f.tx, oncoming: false, r: c.r });
       }
     }
+    /** Whether the nearest body ahead in its own stripe, near, stands waiting for `z`. */
+    const queuedFor = (z: Zebra): boolean => {
+      let gap = KEEP + QUEUE_GAP, at: Zebra | null | undefined = null;
+      for (const o of others) {
+        if (Math.abs(o.lat - p.d) >= BODY + o.r || o.oncoming) continue;
+        if (o.along < gap) { gap = o.along; at = o.waitFor; }
+      }
+      return at === z;
+    };
     /** Free distance ahead in a stripe centred `c` across the step. */
     const free = (c: number): number => {
       let gap = LOOK;
@@ -1564,12 +1625,20 @@ function stepWalkers(w: SimWorld): void {
       for (const o of others) if (o.oncoming && o.lat + o.r + BODY > leftmost && o.lat - o.r - BODY < span[1]) { oncomingLeft = true; break; }
       const inReserve = (c: number): number => (c > leftEdge + 1e-6 ? INAPPROPRIATE : 0)
         + (oncomingLeft && c > leftmost + 1e-6 && span[1] - span[0] > STRIPE ? ONCOMING_CONFLICT : 0);
-      let best = p.aim, bestScore = free(p.aim) - (p.aim - right) * 0.15 - Math.abs(p.aim - p.d) * lateral + SWITCH_GAIN - inReserve(p.aim) / 2;
+      // Held up, the stripe it holds is worth less than a free one: SWITCH_GAIN
+      // keeps a walker from dithering between two, not standing behind a crowd
+      // with a stripe a metre freer beside it (P101).
+      const gain = p.held > HELD_SWITCH ? SWITCH_GAIN / 4 : SWITCH_GAIN;
+      let best = p.aim, bestScore = free(p.aim) - (p.aim - right) * 0.15 - Math.abs(p.aim - p.d) * lateral + gain - inReserve(p.aim) / 2;
       for (let c = span[0]; c <= span[1] + 1e-6; c += STRIPE / 2) {
         const score = free(c) - (c - right) * 0.15 - Math.abs(c - p.d) * Math.max(lateral, 0.2) - inReserve(c);
         if (score > bestScore) { bestScore = score; best = c; }
       }
-      p.aim = clamp(best, span);
+      // A stripe just taken is kept a moment unless it shuts (`AIM_HOLD`): a
+      // couple's second walker swapped between two stripes five times a
+      // second, stepping left and right (`defects.spec` flips, P101).
+      const next = clamp(best, span);
+      if (Math.abs(next - p.aim) > 1e-6 && (p.age - (p.aimAt ?? -Infinity) >= AIM_HOLD || free(p.aim) < KEEP || p.held > HELD_SWITCH)) { p.aim = next; p.aimAt = p.age; }
     }
     p.aim = clamp(p.aim, span);
 
@@ -1580,7 +1649,11 @@ function stepWalkers(w: SimWorld): void {
     const zebra = zebraAhead(w, p);
     p.zebra = zebra?.zebra ?? null;
     p.waiting = null;
-    if (zebra && zebra.stop < ASK_FROM) {
+    // Held behind somebody waiting for the same zebra, within a few metres of
+    // it: in the queue, waiting too (SUMO's "wide queue" in front of a
+    // crossing) - asking, standing, never pushing through the crowd.
+    const queued = zebra !== null && zebra.stop < QUEUE_REACH && queuedFor(zebra.zebra);
+    if (zebra && (zebra.stop < ASK_FROM || queued)) {
       p.waiting = zebra.zebra;
       p.waited += dt;
       p.asked -= dt;
@@ -1590,7 +1663,8 @@ function stepWalkers(w: SimWorld): void {
         if (open || (p.fright ?? 0) > p.age) { p.granted = zebra.zebra.id; p.grantedAt = p.age; p.waited = 0; p.waiting = null; }
       }
     }
-    const stop = p.waiting ? Math.max(0, zebra!.stop) : Infinity;
+    const kerbStop = Math.max(0, kerbInset(p.steps[p.leg - 1]?.way) - KERB_BACK - p.s);
+    const stop = p.waiting ? Math.max(0, zebra!.stop) : offZebra ? kerbStop : Infinity;
 
     // --- where it is going, and the turn towards it.
     const t = target(p);
@@ -1600,7 +1674,14 @@ function stepWalkers(w: SimWorld): void {
     const crawling = p.act?.kind === 'crawl';
     if (crawling) p.turnV = 0;
     else if (hypot(tx, ty) > m(0.05)) {
-      const want = Math.atan2(ty, tx);
+      // Standing or at a shuffle (a crowd at a kerb, a queue, somebody slow
+      // ahead): facing the way the walk goes, the step aside taken sideways
+      // (`SIDESTEP` below) - as a person in a crowd steps aside without
+      // turning round. Turned to the point ahead, each shuffle across swung
+      // the head to and fro (`defects.spec` fidgets, P101). Not where the
+      // point ahead is well round a turn: that is a corner to turn.
+      const along = Math.atan2(f.ty, f.tx), ahead = Math.atan2(ty, tx);
+      const want = p.v < SHUFFLE && Math.cos(ahead - along) > SHUFFLE_COS ? along : ahead;
       err = Math.atan2(Math.sin(want - p.heading), Math.cos(want - p.heading));
       const rate = (p.v < m(0.3) ? TURN_STANDING : TURN_RATE) * dt;
       const turn = Math.max(-rate, Math.min(rate, err));
@@ -1639,7 +1720,7 @@ function stepWalkers(w: SimWorld): void {
     if (stop < Infinity) want = Math.min(want, Math.sqrt(2 * BRAKE * stop));
     want *= Math.max(0, (Math.cos(err) - 0.5) / 0.5);
     p.v = want > p.v ? Math.min(want, p.v + ACCEL * dt) : Math.max(want, p.v - BRAKE * dt);
-    const meansToGo = !(stop < m(0.1));
+    const meansToGo = !(stop < m(0.1)) && !(queued && p.waiting);
     p.held = meansToGo && p.v < m(0.1) ? p.held + dt : 0;
     p.x += Math.cos(p.heading) * p.v * dt;
     p.y += Math.sin(p.heading) * p.v * dt;
