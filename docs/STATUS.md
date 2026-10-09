@@ -98,6 +98,14 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   teste (761 prédios): inteira aos 6,0-6,4 s. Os tiles das superfícies das
   vias também ficam guardados no navegador (P21, `341cd87c`): da segunda
   abertura em diante nenhum é refeito.
+- O editor recusa, com o motivo, a geometria que o trânsito não suporta
+  (`editor/editRules.ts`, P83/P82): ângulo fechado (< 25°), trecho curto
+  demais para as faixas se separarem na junção, via sobre via sem junção nem
+  vão de 14 u (5,6 m), rampa acima de 35% entre as placas. Vale ao desenhar,
+  ao soltar um nó e nas edições do inspetor e das ferramentas; só o que a
+  edição cria ou piora, nunca o que o mapa já tinha (abrir mapa não recusa).
+  A pré-visualização pinta o rascunho de inválido com o motivo ao lado do
+  comprimento antes de soltar.
 - Pincel de terreno: o fim da pincelada refaz só a região suja dela, em
   fatias, e a água só quando a pincelada chega perto dela (P32, `3e60f67b`).
 - Névoa da chuva e bruma do ar medidas do olho equivalente também na vista
@@ -182,7 +190,7 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 
 ## Aberto
 
-- Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70, P82, P83).
+- Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70).
 - Zoneamento: o meio-nível só é escolhido no crescimento (o construtor não
   tem controle de `lift` e as alças de `editor/buildingTool.ts` ainda contam
   as alturas sem ele); andar de baixo com garagem no lado da descida não é
@@ -197,13 +205,12 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   headless conforme o estado da máquina (antes 7,7-8,4 com metade das
   pessoas); nenhum quadro longo em 80 s; o orçamento de 4 ms ainda não é
   garantido (P70).
-- Fuzz da via (`tests/fuzz`): os defeitos que restam são de geometria do
-  mundo, não do trânsito: `elevationStep` (perfil de altura de uma via
-  curva elevada junto a uma via no chão do mesmo nó) e corpos sobrepostos
-  onde duas vias se cruzam sem junção a 1-2 m de altura (rampa sobre vias
-  rebaixadas, semente 4) ou onde as pernas de uma junção de 5 vias são
-  curtas demais para separar as faixas (semente 6, o cruzamento que o
-  jogo já marca como impossível).
+- Fuzz da via (`tests/fuzz`): as 6 sementes do portão e as 29 regressões
+  passam, sem fixture aberta para corpos sobrepostos. Fora do portão
+  (sementes 7-30) restam 4 defeitos: `poseJump` (semente 19) e
+  `elevationStep` em via mudada para túnel pela operação `structure`, que o
+  jogo não oferece (sementes 26 e 28), e um degrau de 0,25 u no limite
+  (semente 24).
 
 ## Decisões do jogador
 
