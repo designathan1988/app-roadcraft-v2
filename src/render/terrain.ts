@@ -1914,9 +1914,13 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          // depth, not a texture read: no repeat, no jagged or doubled bands.
          float grain = texture2D(map, vMapUv).r * 2.0;
          float bend = 7.0 * wallNoise(along * 0.008 + 3.0) + 2.5 * wallNoise(along * 0.031 + 9.0);
-         float dd = vBelow + bend;
-         float subTop = soil, cTop = soil + 22.0, rockTop = soil + 40.0;
-         vec3 subsoil = mix(vec3(0.30, 0.135, 0.06), vec3(0.42, 0.31, 0.19), smoothstep(subTop, cTop + 6.0, dd));
+         // The rock's depth from a LEVEL datum (the land's base), not from the
+         // rim: measured from the rim, every contact copied the turf's ragged
+         // tufts and climbed every hill. The soil above still follows the rim.
+         float level = (${TERRAIN_BASE.toFixed(3)} - vMapUv.y * ${STRATA_SPAN_Y.toFixed(1)});
+         float dd = max(level, vBelow - 30.0) + bend;
+         float subTop = soil, cTop = 34.0, rockTop = 52.0;
+         vec3 subsoil = mix(vec3(0.30, 0.135, 0.06), vec3(0.42, 0.31, 0.19), smoothstep(subTop, cTop + 6.0, max(dd, vBelow)));
          vec3 strata = subsoil;
          {
            const float T[10] = float[10](22.0, 5.0, 14.0, 8.0, 26.0, 4.0, 18.0, 9.0, 24.0, 10.0);
@@ -1930,11 +1934,14 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
            vec3 rock = vec3(0.0);
            for (int tap = 0; tap < 2; tap++) {
              float d = dd - rockTop + (tap == 0 ? -fw : fw);
+             // The sequence goes on down to the bedrock, each repeat in tones of its own.
+             float cycle = floor(d / 140.0);
+             d -= cycle * 140.0;
              float acc = 0.0;
              vec3 c = C[9];
              float g = 0.0;
              for (int k = 0; k < 10; k++) {
-               if (d < acc + T[k]) { c = C[k]; g = G[k]; break; }
+               if (d < acc + T[k]) { c = C[k] * (0.9 + 0.18 * wallHash(cycle * 3.1 + float(k))); g = G[k]; break; }
                acc += T[k];
              }
              // A gravel bed: pebbles, each a cell of its own shade.
@@ -1955,43 +1962,23 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          topsoil = mix(topsoil, vec3(0.42, 0.33, 0.22), root * 0.6);
          vec3 turf = mix(vec3(0.24, 0.34, 0.13), vec3(0.15, 0.22, 0.09), smoothstep(0.0, lip, vBelow));
          vec3 wall = mix(topsoil, strata, smoothstep(soil - 0.6, soil + 0.6, vBelow));
-         // Bedrock: the deepest third of the cut is dark stones packed
-         // together, mortar-dark gaps between them (a Voronoi cell per
-         // stone, flattened as bedded cobbles are), under a thin pale line of
-         // gravel - the base of the cross-sections the player showed.
-         float bedTop = 200.0 + 16.0 * wallNoise(along * 0.025) + 5.0 * wallNoise(along * 0.11 + 3.0);
-         vec2 cp = vec2(along / 7.0, vBelow / 5.0);
-         vec2 ci = floor(cp);
-         vec2 cf = fract(cp);
-         float f1 = 9.0;
-         float f2 = 9.0;
-         float stoneId = 0.0;
-         for (int j = -1; j <= 1; j++) {
-           for (int i = -1; i <= 1; i++) {
-             vec2 g = vec2(float(i), float(j));
-             float id = dot(ci + g, vec2(127.1, 311.7));
-             vec2 r = g + 0.15 + 0.7 * vec2(wallHash(id), wallHash(id + 57.3)) - cf;
-             float d = dot(r, r);
-             if (d < f1) { f2 = f1; f1 = d; stoneId = id; } else if (d < f2) { f2 = d; }
-           }
-         }
-         float joint = smoothstep(0.03, 0.16, sqrt(f2) - sqrt(f1));
-         // Grey-brown rock: near-black stones read as a flat blue under the sky's light.
-         vec3 stone = mix(vec3(0.15, 0.14, 0.125), vec3(0.27, 0.255, 0.23), wallHash(stoneId + 9.1));
-         stone *= 0.75 + 0.35 * sqrt(f1 + 0.1) * (1.0 - sqrt(f1));
-         stone = mix(vec3(0.06, 0.055, 0.05), stone, joint);
-         // Filtered over the pixel (Quilez, "Filterable procedurals"): as a
-         // pixel comes to cover a whole stone the box filter of the pattern
-         // is its mean. Unfiltered, the bedrock seen from afar was pixel noise.
-         float stoneW = max(fwidth(cp.x), fwidth(cp.y));
-         stone = mix(stone, vec3(0.19, 0.18, 0.16), smoothstep(0.3, 1.0, stoneW));
-         float gravel = smoothstep(bedTop - 6.0, bedTop - 4.5, vBelow) * (1.0 - smoothstep(bedTop - 1.0, bedTop, vBelow));
-         wall = mix(wall, vec3(0.34, 0.33, 0.3) * (0.8 + 0.4 * wallNoise(along * 1.7 + vBelow * 2.3)), gravel * 0.85);
-         wall = mix(wall, stone, smoothstep(bedTop - 0.5, bedTop + 0.5, vBelow));
+         // Bedrock: a thin base of massive grey-brown rock under the beds
+         // (the R horizon: continuous hard rock), mottled, with a few fine
+         // cracks - not a third of the cut in cobbles.
+         float bedTop = 288.0 + 5.0 * wallNoise(along * 0.025) + 2.0 * wallNoise(along * 0.11 + 3.0);
+         vec2 rp = vec2(along / 9.0, vBelow / 6.0);
+         vec2 ri = floor(rp), rf = fract(rp);
+         vec2 ru = rf * rf * (3.0 - 2.0 * rf);
+         float mottle = mix(mix(wallHash(dot(ri, vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 0.0), vec2(127.1, 311.7))), ru.x),
+           mix(wallHash(dot(ri + vec2(0.0, 1.0), vec2(127.1, 311.7))), wallHash(dot(ri + vec2(1.0, 1.0), vec2(127.1, 311.7))), ru.x), ru.y);
+         vec3 bedrock = mix(vec3(0.16, 0.15, 0.135), vec3(0.25, 0.235, 0.21), mottle) * grain;
+         float crack = 1.0 - smoothstep(0.0, 0.03, abs(wallNoise(along * 0.07 + vBelow * 0.15) - 0.5));
+         bedrock = mix(bedrock, vec3(0.08, 0.075, 0.07), crack * 0.6);
+         wall = mix(wall, bedrock, smoothstep(bedTop - 0.8, bedTop + 0.8, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v4';
+  material.customProgramCacheKey = () => 'terrain-walls-v6';
   return material;
 }
 
