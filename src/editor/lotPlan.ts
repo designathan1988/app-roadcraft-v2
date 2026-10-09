@@ -1,6 +1,6 @@
 import type { Rng } from '@core/rng';
 import type { BlueprintBody } from '@world/buildings/blueprints';
-import { mat } from '@world/buildings/cityBuildings';
+import { RETAINING_STONE, mat } from '@world/buildings/cityBuildings';
 import { FOLLOWS_GROUND, elementClash, unsupportedElements } from '@world/buildings/elements';
 import type { MaterialSpec } from '@world/buildings/materials';
 import type { MadeBuilding, Rect } from '@world/buildings/procedural';
@@ -188,7 +188,7 @@ const PAVERS_WARM = mat('brick', 0xb08a6e);
 const CONCRETE_PATH = mat('concrete', 0xc8c4bb);
 const STONE_PATH = mat('stone', 0xd2cbbd);
 /** A retaining wall's stone, and the flights cut through one. */
-const RETAINING = mat('stone', 0x9a948a);
+const RETAINING = RETAINING_STONE;
 
 interface Lot {
   surface(r: Rect, s: LotSurface): void;
@@ -428,7 +428,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
       return onWall || onStair;
     };
     elements.splice(0, elements.length, ...elements.filter((el) => !clear(el)));
-    const stone = mat('stone', 0x9a948a);
+    const stone = RETAINING;
     // The flight first, into the higher platform: up the slope (it goes down
     // to the front, `facing` 0), or down it (to the back, from the floor's
     // level). Laid after the wall, the wall's pieces used up the lot's part

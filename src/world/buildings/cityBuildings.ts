@@ -177,6 +177,15 @@ export class Model {
 }
 
 export const mat = (finish: MaterialSpec['finish'], colour: number): MaterialSpec => ({ finish, colour });
+/**
+ * A retaining wall's stone, and the flights cut through one (`editor/lotPlan.ts`
+ * terraces): an earthwork held at the lot's levels, which the lot's drawing
+ * does not set down on the grass like a thing (`render/buildings/buildingMesh.ts`).
+ */
+export const RETAINING_STONE = mat('stone', 0x9a948a);
+/** Whether a material is the retaining wall's stone. */
+export const isRetainingStone = (spec: MaterialSpec | undefined): boolean =>
+  spec !== undefined && spec.finish === RETAINING_STONE.finish && spec.colour === RETAINING_STONE.colour;
 const PLASTER = mat('plaster', 0xeae3d6);
 const CREAM = mat('stucco', 0xe8dcc2);
 const STONE = mat('stone', 0xcfc7b6);

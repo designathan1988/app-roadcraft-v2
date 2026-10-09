@@ -67,7 +67,8 @@ import {
   trimMaterial,
   wallMaterial,
 } from '@world/buildings/materials';
-import { FOLLOWS_GROUND, elementRect, followPieces, onGround, stairSteps, unsupportedElements } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementRect, followPieces, onGround, partGroups, stairSteps, unsupportedElements } from '@world/buildings/elements';
+import { isRetainingStone } from '@world/buildings/cityBuildings';
 import {
   type BayComponent,
   type Building,
@@ -1398,9 +1399,57 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
     }
   }
   const loose = looseParts(b);
+  // The objects on the lawn (`partGroups`: a table and its post, a carport
+  // and its posts, crates stacked), each set on the land under it as one: its
+  // lowest parts on the highest ground under them, so nothing sinks into a
+  // slope, and run down to the ground below them as footings, so nothing is
+  // left in the air on the low side. At the lot's one level - what they stood
+  // at before - a slope buried them on its high side and left them standing
+  // tall on its low side (the player, 2026-10-09).
+  // Only on a natural lawn: a terrace is a level platform (`Volume.terrace`),
+  // and a flight, a ramp or a retaining wall between two platforms is an
+  // earthwork held at the lot's levels, not a thing set down on the grass.
+  const onLawn = (x: number, y: number): boolean => {
+    const host = lots.find((v) => x >= v.x && x <= v.x + v.w && y >= v.y && y <= v.y + v.d);
+    return !host || ((host.open ?? 'grass') === 'grass' && host.terrace === undefined);
+  };
+  const groups = partGroups(b);
+  const earthworks = new Set<number>();
+  for (const el of b.elements ?? []) {
+    const g = groups.get(el.id);
+    if (g !== undefined && (el.kind === 'stair' || el.kind === 'ramp' || isRetainingStone(el.material))) earthworks.add(g);
+  }
+  const seats = new Map<number, { base: number; lowest: number }>();
+  {
+    const lowest = new Map<number, number>();
+    for (const el of b.elements ?? []) {
+      const g = groups.get(el.id);
+      if (g !== undefined) lowest.set(g, Math.min(lowest.get(g) ?? Infinity, el.z));
+    }
+    for (const el of b.elements ?? []) {
+      const g = groups.get(el.id);
+      if (g === undefined || earthworks.has(g) || el.z > lowest.get(g)! + m(0.05)) continue;
+      const [x0, y0, x1, y1] = elementRect(el);
+      for (const [px, py] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1], [(x0 + x1) / 2, (y0 + y1) / 2]] as const) {
+        if (!onLawn(px, py)) continue;
+        const ground = at(px, py);
+        const seat = seats.get(g);
+        if (!seat) seats.set(g, { base: ground, lowest: lowest.get(g)! });
+        else seat.base = Math.max(seat.base, ground);
+      }
+    }
+  }
   for (const el of b.elements ?? []) {
     if ((!withParts && !onLot?.(el)) || loose?.has(el.id)) continue;
     const look = el.material ? paint(el.material) : elementPaint(b, el.kind);
+    const group = groups.get(el.id);
+    const seat = group === undefined ? undefined : seats.get(group);
+    if (seat && onLawn(el.x, el.y)) {
+      // Its height within the object kept; its lowest parts at the seat.
+      const placed = { ...el, z: el.z - seat.lowest };
+      emitElement(e, placed, seat.base, Math.min(low, seat.base) - m(0.3), look);
+      continue;
+    }
     // A run on the land in steps, each on the lot's surface under it, or on
     // the ground where no lot is laid: nothing floats over a slope.
     for (const piece of followPieces(el)) {
