@@ -19,6 +19,7 @@ import { footwayAt, type LandscapeItem, type SignType } from '@world/landscape';
 import type { Network } from '@world/network';
 import { type RoadElevation } from '@world/elevation';
 import { footwayRiseAt } from '@world/roads/footwayRise';
+import { derivedSigns } from '@world/roads/derivedSigns';
 import { sectionOf, LAMP_ZONE } from '@world/section';
 import { m } from '@world/units';
 
@@ -329,6 +330,11 @@ export function buildSigns(net: Network, elevation: RoadElevation, items: Iterab
         }
       }
     }
+  }
+  // The signs the junction rules and the speed limits put up (docs/VIAS.md V6, `world/roads/derivedSigns.ts`).
+  for (const sign of derivedSigns(net)) {
+    const ground = elevation.onSegment(sign.segment, sign.x, sign.y) + footwayRiseAt(net, sign.x, sign.y);
+    stand(sign.x, sign.y, ground, sign.type, sign.text, Math.atan2(sign.facing.x, -sign.facing.y));
   }
   if (posts.length) {
     const poles = new InstancedMesh(post, postMaterial, posts.length);

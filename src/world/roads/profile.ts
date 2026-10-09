@@ -1,7 +1,7 @@
 import type { SegmentDirection } from '../doc';
 import { PARKING_DEPTH, type ParkingKind, type SegmentParking } from '../parking';
 import {
-  type CarriagewayMaterial, type FootwayMaterial, type MedianMaterial, type RoadSection,
+  type CarriagewayMaterial, type CentreLine, type FootwayMaterial, type MedianMaterial, type RoadSection,
   ROAD_SECTION_LIMITS, laneUse as laneUseOf, normalizeRoadSection, sectionSidewalk,
 } from '../roadSection';
 import { type RoadType, laneWidth, roadProfile, roadType } from '../roadTypes';
@@ -44,6 +44,8 @@ export interface RoadProfileSpec {
   readonly speedKmh: number;
   readonly priority: number;
   readonly carriageway?: CarriagewayMaterial;
+  /** The line between the two directions (V6); absent: the road's own. */
+  readonly centreLine?: CentreLine;
 }
 
 /** What a segment is made of, as the profile reads it. */
@@ -105,6 +107,7 @@ export function profileOf(source: ProfileSource): RoadProfileSpec {
     speedKmh: Math.round(rt.speedLimit / kmh(1)),
     priority: rt.priorityRank,
     ...(section?.materials?.carriageway ? { carriageway: section.materials.carriageway } : {}),
+    ...(section?.centreLine ? { centreLine: section.centreLine } : {}),
   };
 }
 
@@ -244,6 +247,7 @@ function authoredFields(profile: RoadProfileSpec): AppliedProfile & { readonly l
     ...(right.flush ? { flushRight: true } : {}),
     ...(median?.flush ? { medianFlush: true } : {}),
     ...(Object.keys(materials).length ? { materials } : {}),
+    ...(profile.centreLine ? { centreLine: profile.centreLine } : {}),
   };
   // Lane uses and lines by laneIndex (V4): forward lanes left to right are
   // laneIndex 0, 1, ...; backward lanes left to right are the outermost first.

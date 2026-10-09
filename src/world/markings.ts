@@ -27,7 +27,10 @@ import {
   crosswalkDistance,
   stopLineDistance,
 } from '@world/approach';
-import { m } from './units';
+import { kmh, m } from './units';
+import { type MarkingStyleId, YIELD_SYMBOL, markingStyle, wordStrokes } from './roads/markingStyle';
+import { approachSign, arrivesAt } from './roads/rules';
+import type { Polyline } from '@core/polyline';
 
 export interface StrokeSpec {
   readonly points: readonly Vec2[];
@@ -51,8 +54,14 @@ const DASH_PERIOD = 16;
  * the pattern at each render chain, so building a crossing — which splits the
  * road automatically — visibly reflowed every dash on it (defect 1.10).
  */
-export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0, cutB = 0): StrokeSpec[] {
+export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0, cutB = 0, styleId: MarkingStyleId = 'classic'): StrokeSpec[] {
   const rt = ribbon.road;
+  // The map's regional standard (docs/VIAS.md V6): colours, dash and gap by the speed.
+  const style = markingStyle(styleId);
+  const speedKmh = rt.speedLimit / kmh(1);
+  const dashPattern = style.id === 'classic' ? DASH : style.dash(speedKmh);
+  const period = style.id === 'classic' ? DASH_PERIOD : dashPattern[0]! + dashPattern[1]!;
+  const centreColour = style.centre ?? markingColor(rt);
   const full = ribbon.centre[Level.Asphalt];
   if (!full || full.n < 2) return [];
   // Lines along the road stop at the stop line: nothing is painted along the
@@ -64,7 +73,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
 
   const pts = centre.toPoints();
   const out: StrokeSpec[] = [];
-  const phase = -((ribbon.dashOrigin + startS) % DASH_PERIOD);
+  const phase = -((ribbon.dashOrigin + startS) % period);
   // The travel way's own centre: off the road centreline when only one side parks.
   const shift = travelShift(rt);
   const middle = Math.abs(shift) > 1e-6 ? offsetPolyline(pts, shift) : pts;
@@ -75,15 +84,18 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
   // edge is the concrete gutter now, drawn by the asphalt itself
   // (`ROAD_SPACE_FRAGMENT` in render/materials.ts).
 
-  if (ribbon.direction === 'both' && rt.markings === 'center') {
-    out.push({
-      points: middle,
-      width: 0.4,
-      color: markingColor(rt),
-      dash: DASH,
-      dashOffset: phase,
-    });
-  }
+  // The line between the two directions: dashed (LFO-2), solid (LFO-1) or
+  // double solid (LFO-3), as the road's section says (V6); a road without one
+  // keeps the old rule (dashed on a street, solid on a road of lanes).
+  const centreLine = (fallback: 'dashed' | 'solid'): void => {
+    const kind = rt.centreLine ?? fallback;
+    if (kind === 'double') {
+      for (const side of [-1, 1]) out.push({ points: offsetPolyline(middle, side * m(0.18)), width: 0.3, color: centreColour, dash: null, dashOffset: 0 });
+    } else {
+      out.push({ points: middle, width: 0.4, color: centreColour, dash: kind === 'dashed' ? dashPattern : null, dashOffset: kind === 'dashed' ? phase : 0 });
+    }
+  };
+  if (ribbon.direction === 'both' && rt.markings === 'center') centreLine('dashed');
 
   // The line between lane k and k + 1 of one direction (docs/VIAS.md V4):
   // dashed where a lane change is allowed (MBST vol. IV, LMS-2), solid where
@@ -92,7 +104,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
     const uses = forward ? rt.useForward : rt.useBackward;
     const bus = (uses?.[k] ?? 'all') !== (uses?.[k + 1] ?? 'all');
     const solid = bus || ((forward ? rt.linesForward : rt.linesBackward)?.[k] ?? 'dashed') === 'solid';
-    return { width: bus ? 0.62 : 0.32, dash: solid ? null : DASH, dashOffset: solid ? 0 : phase };
+    return { width: bus ? 0.62 : 0.32, dash: solid ? null : dashPattern, dashOffset: solid ? 0 : phase };
   };
   if (ribbon.direction !== 'both') {
     const lw = laneWidth(rt);
@@ -108,15 +120,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
     // A four-lane road without a median still needs a centreline separating the
     // two directions. The V6 monolith drew only the two lane dividers, so an
     // avenue had no centre line at all.
-    if (rt.median === 0) {
-      out.push({
-        points: middle,
-        width: 0.4,
-        color: markingColor(rt),
-        dash: null,
-        dashOffset: 0,
-      });
-    }
+    if (rt.median === 0) centreLine('solid');
     const lpd = lanesPerDirection(rt);
     const lw = laneWidth(rt);
     for (let i = 1; i < lpd; i++) {
@@ -128,6 +132,104 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
   }
 
   out.push(...laneArrowMarkings(ribbon));
+  out.push(...busLegends(ribbon, centre, style.busText, style.legendHeight(speedKmh)));
+  return out;
+}
+
+/** How far from each end of a stretch a bus lane's legend is first painted, and then every so far. */
+const LEGEND_FIRST = m(12);
+const LEGEND_EVERY = m(70);
+
+/**
+ * The legend along a bus lane (docs/VIAS.md V6; MBST vol. IV, 4.5.1 and 8.3:
+ * a legend may be painted along the whole exclusive lane, white, letters
+ * 1,60 m tall along the road where it runs at 80 km/h or less): the word,
+ * read by the driver coming along the lane, a little after the start of the
+ * stretch and then every so often.
+ */
+function busLegends(ribbon: SegmentRibbon, centre: Polyline, text: string, height: number): StrokeSpec[] {
+  const rt = ribbon.road;
+  const out: StrokeSpec[] = [];
+  const word = wordStrokes(text);
+  if (!word.strokes.length || centre.length < LEGEND_FIRST * 2 + height) return out;
+  const letter = Math.min((laneWidth(rt) * 0.78) / Math.max(1, word.width), height * 0.5);
+  for (const forward of [true, false]) {
+    if (ribbon.direction === (forward ? 'bToA' : 'aToB')) continue;
+    const uses = forward ? rt.useForward : rt.useBackward;
+    if (!uses) continue;
+    for (let lane = 0; lane < travelLanes(rt, ribbon.direction); lane++) {
+      if (uses[lane] !== 'bus') continue;
+      for (let k = LEGEND_FIRST; k + height < centre.length - LEGEND_FIRST; k += LEGEND_EVERY) {
+        paintInLane(out, ribbon, centre, forward, lane, k, word, letter, height, m(0.2));
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * A word or symbol painted in one lane (`strokes` in a box `width` wide and
+ * one long), read by the driver coming along it: its foot `along` from where
+ * the lane starts in its own direction, `height` long, letters `letter` wide.
+ */
+function paintInLane(
+  out: StrokeSpec[], ribbon: SegmentRibbon, centre: Polyline, forward: boolean, lane: number, along: number,
+  word: { readonly strokes: readonly (readonly (readonly [number, number])[])[]; readonly width: number },
+  letter: number, height: number, width: number,
+): void {
+  const sign = forward ? 1 : -1;
+  const offset = laneOffset(ribbon.road, lane, ribbon.direction, forward) * sign;
+  const across = word.width * letter;
+  const at = (x: number, y: number): Vec2 => {
+    const s = along + y * height;
+    const f = centre.sampleAt(forward ? s : centre.length - s);
+    // The driver's right is -n going a to b, +n going back.
+    const d = offset + (x * letter - across / 2) * -sign;
+    return { x: f.p.x + f.n.x * d, y: f.p.y + f.n.y * d };
+  };
+  for (const line of word.strokes) out.push({ points: line.map(([x, y]) => at(x, y)), width, color: LANE_LINE, dash: null, dashOffset: 0 });
+}
+
+/** Clear floor between a stop line and the legend before it. */
+const LEGEND_GAP = m(1.5);
+
+/**
+ * What a junction's rule paints on each leg before its stop line (docs/VIAS.md
+ * V6, MBST vol. IV): "PARE" (the region's word) in every lane of a leg that
+ * must stop, the give-way triangle ("SIP") in every lane of a leg that gives
+ * way. From the same rule the posts' signs come from (`roads/rules.ts`).
+ */
+export function approachLegends(net: Network, styleId: MarkingStyleId): StrokeSpec[] {
+  const style = markingStyle(styleId);
+  const out: StrokeSpec[] = [];
+  for (const node of net.doc.nodes.values()) {
+    if (node.incident.length < 3) continue;
+    for (const segId of node.incident) {
+      const kind = approachSign(net.doc, node, segId);
+      if (!kind || !arrivesAt(net.doc, node.id, segId)) continue;
+      const segment = net.doc.segment(segId), ribbon = net.ribbons.get(segId);
+      const centre = ribbon?.centre[Level.Asphalt];
+      if (!segment || !ribbon || !centre) continue;
+      const rt = ribbon.road;
+      if (rt.id === 'highway' || rt.id === 'ramp') continue;
+      // Traffic arriving at b runs a to b (forward).
+      const forward = segment.b === node.id;
+      const trims = net.trims.get(segId);
+      const trim = (forward ? trims?.b[Level.Asphalt] : trims?.a[Level.Asphalt]) ?? 0;
+      // The stop line, as the distance from where the lane starts in its direction.
+      const stopAt = centre.length - Math.max(0, net.stopLineDistance(segId, node.id) - trim);
+      const speedKmh = rt.speedLimit / kmh(1);
+      const height = kind === 'stop' ? style.legendHeight(speedKmh) : m(3);
+      const foot = stopAt - LEGEND_GAP - height;
+      if (foot < m(2)) continue;
+      const lw = laneWidth(rt);
+      const word = kind === 'stop' ? wordStrokes(style.stopText) : YIELD_SYMBOL;
+      const letter = kind === 'stop' ? Math.min((lw * 0.78) / Math.max(1, word.width), height * 0.5) : Math.min(lw * 0.55, m(1.5));
+      for (let lane = 0; lane < travelLanes(rt, ribbon.direction); lane++) {
+        paintInLane(out, ribbon, centre, forward, lane, foot, word, letter, height, m(kind === 'stop' ? 0.2 : 0.16));
+      }
+    }
+  }
   return out;
 }
 

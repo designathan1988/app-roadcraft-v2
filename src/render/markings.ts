@@ -10,6 +10,7 @@ import {
   type StrokeSpec,
   junctionDetail,
   miniRoundaboutMarkings,
+  approachLegends,
   segmentMarkings,
   transitionMarkings,
 } from '@world/markings';
@@ -207,7 +208,7 @@ export function markingQuads(
     };
     const cutA = cut(segment?.a, start);
     const cutB = cut(segment?.b, trims?.b[Level.Asphalt] ?? 0);
-    for (const spec of segmentMarkings(ribbon, start, cutA, cutB)) stroke(at(spec.color), spec);
+    for (const spec of segmentMarkings(ribbon, start, cutA, cutB, net.doc.markingStyle)) stroke(at(spec.color), spec);
   }
   // Parking bays and the no-parking lines beside them (`world/parkingLayout.ts`).
   for (const line of parkingLayout(net).lines) {
@@ -225,6 +226,8 @@ export function markingQuads(
     for (const value of detail.zebras) addBar(at('#f4f1e3'), value);
     // Mini-roundabouts' painted islands (V5).
     for (const spec of miniRoundaboutMarkings(net)) stroke(at(spec.color), spec);
+    // The junction rule's words and symbols before the stop lines (V6).
+    for (const spec of approachLegends(net, net.doc.markingStyle)) stroke(at(spec.color), spec);
   }
   const out = new Map<string, number[][][]>();
   for (const [color, batch] of batches) if (batch.rings.length > 0) out.set(color, batch.rings);

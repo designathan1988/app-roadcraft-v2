@@ -131,3 +131,34 @@ export const isHighwayClass = (doc: RoadDoc, segment: SegmentId): boolean => {
   const id = s ? roadType(s.type).id : '';
   return id === 'highway' || id === 'ramp';
 };
+
+/**
+ * The sign a leg's driver meets at a junction (docs/VIAS.md V6), derived from
+ * the junction's control as the simulation reads it (`admission.ts`
+ * `rightOfWay`): "Pare em todas" a stop on every leg; "Dê a preferência" and
+ * a mini-roundabout a give-way on every leg (R-2 at each entry); "Placas"
+ * each leg's rule, the main road unsigned. Automatic, signal and nothing
+ * signed put up no sign (the game decides, a signal head, CTB art. 29).
+ */
+export type ApproachSign = 'stop' | 'yield';
+export function approachSign(doc: RoadDoc, node: RoadNode, segment: SegmentId): ApproachSign | null {
+  if (node.incident.length < 3) return null;
+  switch (node.control) {
+    case 'stop': return 'stop';
+    case 'yield':
+    case 'mini': return 'yield';
+    case 'priority': {
+      const rule = legRule(doc, node, segment);
+      return rule === 'priority' ? null : rule;
+    }
+    default: return null;
+  }
+}
+
+/** Whether traffic on a segment arrives at the node (not a one-way leaving it). */
+export function arrivesAt(doc: RoadDoc, node: NodeId, segment: SegmentId): boolean {
+  const s = doc.segment(segment);
+  if (!s || s.a === s.b) return false;
+  if (s.direction === 'both') return true;
+  return (s.direction === 'aToB') === (s.b === node);
+}

@@ -1,3 +1,4 @@
+import { CENTRE_LINES, type CentreLine } from '@world/roadSection';
 import { PARKING_DEPTH } from '@world/parking';
 import {
   CARRIAGEWAY_MATERIALS, type CarriagewayMaterial, FOOTWAY_MATERIALS, type FootwayMaterial, MEDIAN_MATERIALS,
@@ -595,6 +596,16 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
       profile.speedKmh - 10 >= minSpeed ? () => { profile = { ...profile, speedKmh: profile.speedKmh - 10 }; renderAll(); } : null,
       profile.speedKmh + 10 <= maxSpeed ? () => { profile = { ...profile, speedKmh: profile.speedKmh + 10 }; renderAll(); } : null,
       t('profileEditor.slower'), t('profileEditor.faster'))));
+    // The line between the two directions (V6, MBST LFO-1/2/3), where the two meet with no median.
+    const lanesBoth = new Set(profile.elements.flatMap((x) => (x.kind === 'lane' ? [x.dir] : [])));
+    if (lanesBoth.size === 2 && !profile.elements.some((x) => x.kind === 'median')) {
+      road.append(row(t('profileEditor.centreLine'), segmented(['auto', ...CENTRE_LINES], profile.centreLine ?? 'auto',
+        (k) => t(`profileEditor.centreLineName.${k}`), (k) => {
+          const { centreLine: _c, ...rest } = profile; void _c;
+          profile = k === 'auto' ? rest : { ...rest, centreLine: k as CentreLine };
+          renderAll();
+        })));
+    }
     // A blank road is not a list of faults: the picture says how to start.
     const elsewhere = profile.elements.length ? found.filter((x) => !x.elements.includes(selected)) : [];
     for (const issue of elsewhere) road.append(issueLine(issue, issue.elements.length > 0));

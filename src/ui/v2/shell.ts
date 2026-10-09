@@ -540,6 +540,7 @@ export function mountShell(deps: ShellDeps): void {
         el('hr'),
         segProxy(t('menu.quality'), '#qualitySelect'),
         segProxy(t('menu.language'), '#languageSelect'),
+        segProxy(t('menu.paint'), '#paintStyleSelect'),
         el('hr'),
         row(t('action.about'), () => press('#aboutButton'), svg('m_about', 18)),
       );

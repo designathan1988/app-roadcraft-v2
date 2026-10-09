@@ -1,7 +1,7 @@
 import { kmh, m } from './units';
 import { PARKING_DEPTH, parkingAllowed, type ParkingKind, type SegmentParking } from './parking';
 import type { SegmentDirection } from './doc';
-import type { RoadSection, LaneLine, LaneTurnRule, LaneUse, SectionMaterials } from './roadSection';
+import type { CentreLine, RoadSection, LaneLine, LaneTurnRule, LaneUse, SectionMaterials } from './roadSection';
 
 /**
  * Surface levels, in painting order.
@@ -96,6 +96,8 @@ export interface RoadType {
   readonly useBackward?: readonly LaneUse[];
   readonly linesForward?: readonly LaneLine[];
   readonly linesBackward?: readonly LaneLine[];
+  /** The line between the directions (V6, `RoadSection.centreLine`). */
+  readonly centreLine?: CentreLine;
   readonly markings: MarkingStyle;
   readonly color: string;
   readonly edge: string;
@@ -354,6 +356,7 @@ function travelProfile(
       ...(section.useBackward ? { useBackward: section.useBackward } : {}),
       ...(section.linesForward ? { linesForward: section.linesForward } : {}),
       ...(section.linesBackward ? { linesBackward: section.linesBackward } : {}),
+      ...(section.centreLine ? { centreLine: section.centreLine } : {}),
     };
   }
   if ((configuredLanes === undefined || configuredLanes === null) &&
@@ -471,7 +474,8 @@ export function sectionFromProfile(rt: RoadType): RoadSection {
     ...(rt.useForward ? { useForward: [...rt.useForward] } : {}),
     ...(rt.useBackward ? { useBackward: [...rt.useBackward] } : {}),
     ...(rt.linesForward ? { linesForward: [...rt.linesForward] } : {}),
-    ...(rt.linesBackward ? { linesBackward: [...rt.linesBackward] } : {}) };
+    ...(rt.linesBackward ? { linesBackward: [...rt.linesBackward] } : {}),
+    ...(rt.centreLine ? { centreLine: rt.centreLine } : {}) };
 }
 
 /**

@@ -96,7 +96,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | feito no ramo, aguardando o jogador (ver "Andamento da V3") |
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | feito no ramo, aguardando o jogador (ver "Andamento da V4") |
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V5") |
-| V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | |
+| V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V6") |
 | V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | |
 | V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | |
 
@@ -308,6 +308,24 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   pintada, transponível); o contorno da ilha fica para a V8.
 - Fechamento no ramo: lint limpo; suíte inteira 1158 verdes; falhas: `occupantFit` (antiga) e
   `tests/world/lotPhysics.spec.ts` (lotes, vinda do master em 4223ce23, fora do sistema de vias).
+
+## Andamento da V6
+- Padrão regional do mapa (`world/roads/markingStyle.ts`, `RoadDoc.markingStyle`): Brasil (MBST vol. IV: amarelo entre
+  sentidos, branco no mesmo sentido; tracejado 1:2 abaixo de 60 km/h, 1:3 acima, 4/12 m a partir de 80), EUA (MUTCD 3/9 m),
+  Europa (branco entre sentidos) e Clássica (a pintura de antes). Mapa salvo antes abre Clássica e grava sem o campo;
+  mapa novo nasce Brasil. Escolha no Menu, linha "Pintura" (desfaz como edição).
+- Linha central por via (`RoadSection.centreLine`: tracejada LFO-2, contínua LFO-1, dupla LFO-3; ausente: a regra antiga),
+  no editor de perfil ("Linha central", só com os dois sentidos sem canteiro).
+- Legenda "ÔNIBUS" (BUS nos EUA/Europa) ao longo da faixa de ônibus, 12 m após o início e a cada 70 m, 1,6 m (2,4 m acima
+  de 80 km/h), lida por quem vem pela faixa.
+- A regra do cruzamento pintada e sinalizada (fonte única `rules.ts` `approachSign`): "PARE" antes da linha de retenção em
+  cada faixa que para, triângulo (SIP) em cada faixa que dá a preferência; placa R-1/R-2 à direita de cada perna
+  (`world/roads/derivedSigns.ts`), no atlas e instâncias das placas. Automático, semáforo e sem sinalização não põem placa.
+  Placa de velocidade (R-19) após cada cruzamento em trechos de 60 m ou mais, só em mapa com padrão regional.
+- Detector: `tests/world/roadPaint.spec.ts` (Clássica idêntica ao de antes, cores e tracejado por velocidade, linha dupla,
+  ÔNIBUS dentro da faixa externa, PARE antes da linha e na metade de quem chega, placas fora da pista, à direita e voltadas
+  ao motorista, velocidade só com padrão).
+- Fica para depois: tracejado da linha de retenção de "dê a preferência" (LDP); placa "PARE" com "TODAS AS DIREÇÕES".
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e
