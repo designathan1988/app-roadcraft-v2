@@ -72,6 +72,10 @@ o jogo a cada edição.
 - O jogo abre num mapa vazio. Textos em `ui/i18n/en.ts` e `pt-BR.ts`.
 
 ### Vias e terreno
+- Rua transversal reta perto da emenda de um prolongamento ou do fim de uma
+  via: o nó vem para a linha desenhada (desliza na própria via), em vez de
+  a rua nova virar um V pelo nó (`editor/commit.ts` `slideOntoCrossing`,
+  `tests/editor/crossStraight.spec.ts`). Conferido no jogo.
 - Grade universal de 10 × 10 m com subdivisão de 1 m (`world/grid.ts`); perfis
   de via em metros inteiros; encaixe ligado por padrão (`editor/snap.ts`).
 - Junções resolvidas uma vez, na linha do meio-fio

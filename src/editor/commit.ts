@@ -369,6 +369,8 @@ function commitDraftInPlace(
   const draft = Polyline.fromPoints(flattenSegment(a, b, curve));
   const splitBySegment = new Map<SegmentId, ExistingCut[]>();
   const draftCuts: DraftStop[] = [];
+  /** Existing nodes the draft crossed near, which may come onto it (`slideOntoCrossing`). */
+  const slides: { node: NodeId; segment: SegmentId; at: Vec2 }[] = [];
 
   for (const [id, seg] of [...doc.segments]) {
     if (!heights && seg.structure !== structure) continue;
@@ -423,12 +425,18 @@ function commitDraftInPlace(
         // visible, and it is the right trade: the alternative is a junction
         // that cannot be built. This is what every city builder does with a
         // near-miss connection, and for this reason.
+        //
+        // Unless the node can come to the line instead (`slideOntoCrossing`):
+        // the joint left by lengthening a road, or a road's dead end, bent a
+        // straight cross street drawn over it into a V through the node.
         if (existingS <= MIN_LINK_LENGTH) {
           draftCuts.push({ node: seg.a, q: draftQ, s: draftS });
+          slides.push({ node: seg.a, segment: id, at: hit.point });
           continue;
         }
         if (existingS >= existing.length - MIN_LINK_LENGTH) {
           draftCuts.push({ node: seg.b, q: draftQ, s: draftS });
+          slides.push({ node: seg.b, segment: id, at: hit.point });
           continue;
         }
 
@@ -444,6 +452,15 @@ function commitDraftInPlace(
         }
       }
     }
+  }
+
+  // The near nodes the draft is joined through, brought onto it where they
+  // can be, before any segment is split (the cuts on other segments are not
+  // touched: a node is slid only when neither of its roads is cut).
+  const slid = new Set<NodeId>();
+  for (const slide of slides) {
+    if (slid.has(slide.node)) continue;
+    if (slideOntoCrossing(doc, slide.node, slide.segment, slide.at, splitBySegment)) slid.add(slide.node);
   }
 
   // One existing segment can be crossed more than once. Reconstruct it in a
@@ -487,6 +504,43 @@ function commitDraftInPlace(
   if (!made) return { committed: false, reason: 'duplicate' };
   doc.pruneOrphanNodes();
   return { committed: true };
+}
+
+/** How far a node may stand off the straight line of its two roads and still be a joint of one straight road. */
+const JOINT_STRAIGHT = 0.5;
+
+/**
+ * Brings an existing node the draft crossed near onto the crossing, along its
+ * own road, so the drawn road stays straight through it instead of being bent
+ * into a V through the node.
+ *
+ * Only where the existing road keeps its shape: the node is the dead end of a
+ * straight road (the stub past the crossing goes, a T is left), or the joint
+ * of two straight roads in one line (the joint lengthening a road leaves: it
+ * slides along that line). A real junction, a bend, a curve or a node with a
+ * crossing painted at it stays put and the draft is joined through it, as
+ * before; so does a slide that would leave either road shorter than a link.
+ */
+function slideOntoCrossing(doc: RoadDoc, id: NodeId, segment: SegmentId, at: Vec2,
+  cut: ReadonlyMap<SegmentId, readonly ExistingCut[]>): boolean {
+  const node = doc.node(id);
+  const seg = doc.segment(segment);
+  if (!node || !seg || node.crossing) return false;
+  const straight = (s: NonNullable<ReturnType<RoadDoc['segment']>>): boolean => !s.curve || Math.abs(s.curve.h) < COARSE_EPS;
+  if (!straight(seg) || cut.has(seg.id)) return false;
+  const far = doc.node(seg.a === id ? seg.b : seg.a);
+  if (!far || dist(far, at) < MIN_LINK_LENGTH) return false;
+  if (node.incident.length === 2) {
+    const other = doc.segment(node.incident.find((s) => s !== seg.id) ?? seg.id);
+    if (!other || other.id === seg.id || !straight(other) || cut.has(other.id)) return false;
+    const beyond = doc.node(other.a === id ? other.b : other.a);
+    if (!beyond || dist(beyond, at) < MIN_LINK_LENGTH) return false;
+    const length = dist(far, beyond);
+    if (length < EPS) return false;
+    const off = Math.abs((node.x - far.x) * (beyond.y - far.y) - (node.y - far.y) * (beyond.x - far.x)) / length;
+    if (off > JOINT_STRAIGHT) return false;
+  } else if (node.incident.length !== 1) return false;
+  return doc.moveNode(id, at);
 }
 
 function normalizeDraftStops(stops: readonly DraftStop[]): DraftStop[] {
