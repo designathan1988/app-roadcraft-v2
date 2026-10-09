@@ -26,6 +26,8 @@ import { PARKING_PITCH } from '@world/parking';
 
 /** Width of one stall, as the lot planner lays them (2.5 x 5 m). */
 const STALL = m(2.5);
+/** A stall wider than this is a lorry's dock, not a car's bay. */
+const LORRY_DOCK = m(3.2);
 /** Farthest a bay may be from the lane it is reached from. */
 const LANE_REACH = m(45);
 /** Kept clear of the ends of a lane where a car joins or leaves it. */
@@ -208,6 +210,8 @@ function workOutBays(w: SimWorld): Bay[] {
     for (const el of b.elements ?? []) {
       if (el.kind !== 'parking') continue;
       const stalls = Math.max(1, Math.floor(el.w / STALL));
+      // A lorry's dock at a works' loading doors (3.6 m), not a car's bay.
+      if (el.w / stalls > LORRY_DOCK) continue;
       const alongY = el.facing === 0 || el.facing === 2;
       // `w` runs across the facing (the row of stalls), `d` along it (a stall's depth).
       let ax = alongY ? 0 : 1, ay = alongY ? 1 : 0;
@@ -330,8 +334,13 @@ const CAR_GATE = m(2.2);
 /** Where a car leaving through a gate joins its lane, past the gate; where one arriving stops, before it. */
 const JOIN_PAST_GATE = m(6);
 const STOP_BEFORE_GATE = m(5);
-/** Kept clear of a lane's ends for a gate's stop and join points (a junction's mouth). */
-const GATE_LANE_END = m(6);
+/**
+ * Kept clear of a lane's ends for a gate's stop and join points. Small: a
+ * gate beside a block's corner opens onto the very end of its street's lane
+ * (a town's streets are a few tens of metres between junctions), and a lane
+ * end kept six metres clear left one car park in five with no way out.
+ */
+const GATE_LANE_END = m(1.5);
 
 /** A building's car gates: the `gate` elements a car fits through. */
 export function carGates(b: Building): BuildingElement[] {
@@ -380,7 +389,8 @@ export function gateExits(w: SimWorld, b: Building, property: { x: number; y: nu
     const edge = { x: g.x + nx * m(0.4), y: g.y + ny * m(0.4) };
     const outer = { x: g.x - nx * m(1.2), y: g.y - ny * m(1.2) };
     const wOuter = localToWorld(b, outer.x, outer.y);
-    const lane = gateLane(w, wOuter.x, wOuter.y);
+    // A one-way street past the gate runs with the lot on its left as often as on its right.
+    const lane = gateLane(w, wOuter.x, wOuter.y) ?? gateLane(w, wOuter.x, wOuter.y, true);
     if (!lane) continue;
     const reach = Math.hypot(lane.x - wOuter.x, lane.y - wOuter.y);
     if (reach > EDGE_REACH + JOIN_PAST_GATE) continue;
@@ -395,21 +405,23 @@ export function gateExits(w: SimWorld, b: Building, property: { x: number; y: nu
  * along the travel from the gate's foot, its stop point `STOP_BEFORE_GATE`
  * before it, both kept `GATE_LANE_END` clear of the lane's ends.
  */
-function gateLane(w: SimWorld, x: number, y: number): BayLane | null {
+function gateLane(w: SimWorld, x: number, y: number, eitherSide = false): BayLane | null {
   let best: BayLane | null = null;
   let bestD = LANE_REACH;
   for (const lane of lanesNear(w, x, y, LANE_REACH)) {
-    if (lane.kind !== 'link' || lane.length < 2 * GATE_LANE_END + JOIN_PAST_GATE + STOP_BEFORE_GATE) continue;
+    if (lane.kind !== 'link' || lane.length < m(10)) continue;
     if (w.rt(lane.id).ghost) continue;
     const hit = lane.centre.closestPoint({ x, y });
     if (hit.distance >= bestD) continue;
     const foot = lane.centre.sampleAt(hit.s);
-    // Right-hand traffic: the lot on the right of the direction of travel.
-    if ((x - foot.p.x) * foot.t.y - (y - foot.p.y) * foot.t.x <= 0) continue;
+    // Right-hand traffic: the lot on the right of the direction of travel;
+    // on a one-way street, whichever kerb the lot is on (`gateExits`).
+    if (!eitherSide && (x - foot.p.x) * foot.t.y - (y - foot.p.y) * foot.t.x <= 0) continue;
+    if (eitherSide && w.doc.segment(lane.segment!)?.direction === 'both') continue;
     const at = Math.max(GATE_LANE_END, Math.min(lane.length - GATE_LANE_END, hit.s + JOIN_PAST_GATE));
     const entryAt = Math.max(GATE_LANE_END, Math.min(lane.length - GATE_LANE_END, hit.s - STOP_BEFORE_GATE));
     // The gate must lie between where a car stops and where one joins.
-    if (at - entryAt < m(4)) continue;
+    if (at - entryAt < m(3)) continue;
     const f = lane.centre.sampleAt(at);
     bestD = hit.distance;
     best = { lanelet: lane.id, at, x: f.p.x, y: f.p.y, tx: f.t.x, ty: f.t.y, entryAt };

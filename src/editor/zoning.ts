@@ -472,6 +472,28 @@ function neighbourStoreys(doc: RoadDoc, anchor: Vec2, width: number): number[] {
   return out;
 }
 
+/**
+ * The side of a lot (`left`: along -u from the front's middle) with a street
+ * just beyond it over most of its depth: a corner lot. Undefined for none,
+ * or with no network to read.
+ */
+function cornerOf(ctx: SiteContext, anchor: Vec2, u: Vec2, n: Vec2, width: number, depth: number): 'left' | 'right' | undefined {
+  const net = ctx.net;
+  if (!net) return undefined;
+  const ribbons = [...net.ribbons.values()].filter((r) => ctx.doc.segment(r.id)?.structure === 'ground');
+  const onStreet = (p: Vec2): boolean => ribbons.some((r) => {
+    const bb = r.full.bbox, reach = halfWidth(r.road, Level.Sidewalk) + m(0.6);
+    if (p.x < bb.minX - reach || p.x > bb.maxX + reach || p.y < bb.minY - reach || p.y > bb.maxY + reach) return false;
+    return r.full.distanceTo(p) < reach;
+  });
+  for (const [side, sign] of [['left', -1], ['right', 1]] as const) {
+    const along = sign * (width / 2 + m(2));
+    const hits = [0.35, 0.65].filter((k) => onStreet({ x: anchor.x + u.x * along + n.x * depth * k, y: anchor.y + u.y * along + n.y * depth * k })).length;
+    if (hits === 2) return side;
+  }
+  return undefined;
+}
+
 /** Where the building grown last stands (the highest id grown on a lot), or null. */
 function lastGrown(doc: RoadDoc): Vec2 | null {
   let best: Building | null = null;
@@ -510,6 +532,9 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
   // a neighbour, a slope), it is made again set back from the front and the
   // sides, then narrower and shallower, then a density lower - until one fits.
   const u = { x: Math.cos(frame.rotation), y: Math.sin(frame.rotation) }, n = { x: -u.y, y: u.x };
+  // A corner lot: a street along one of its sides too (the building then
+  // looks onto it, `planLot`).
+  const corner = cornerOf(ctx, frame.anchor, u, n, frame.width, frame.depth);
   const densities: ZoneDensity[] = lot.density === 'high' ? ['high', 'medium', 'low'] : lot.density === 'medium' ? ['medium', 'low'] : ['low'];
   // A handful of tries, each a building made: a few milliseconds apiece.
   const tries = [
@@ -521,7 +546,7 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     const lotD = (frame.depth - m(0.3) - t.front) * t.shrink;
     const W = lotW * METERS_PER_UNIT, D = lotD * METERS_PER_UNIT;
     if (W < 4 || D < 4) continue;
-    const plan = planLot(lotKind(use, density), W, D, rng);
+    const plan = planLot(lotKind(use, density), W, D, rng, corner);
     const env = plan.building;
     const driveSide = plan.left.use === 'drive' || plan.left.use === 'drivePath' ? 'left' as const
       : plan.right.use === 'drive' || plan.right.use === 'drivePath' ? 'right' as const : undefined;

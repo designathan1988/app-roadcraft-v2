@@ -61,6 +61,8 @@ export interface LotPlan {
   readonly back: { readonly use: BackUse; readonly depth: number; readonly rows: number };
   /** The building's envelope. */
   readonly building: Rect;
+  /** A corner lot: the side on a second street, which is a front too (a low boundary, never a blank party wall). */
+  readonly corner?: 'left' | 'right';
 }
 
 const DRIVE = 3.5, HOUSE_DRIVE = 3, FOOTPATH = 1.2, TRUCK_LANE = 6;
@@ -70,7 +72,7 @@ const between = (rng: Rng, a: number, b: number): number => a + (b - a) * rng.fl
 const half = (x: number): number => Math.floor(x * 2) / 2;
 
 /** The plan of a lot `W` x `D` metres for a kind of building. */
-export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan {
+export function planLot(kind: LotKind, W: number, D: number, rng: Rng, corner?: 'left' | 'right'): LotPlan {
   const attached: SidePlan = { use: 'attached', width: 0 };
   let front: LotPlan['front'] = { use: 'street', depth: 0 };
   let left: SidePlan = attached, right: SidePlan = attached;
@@ -137,7 +139,9 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
       break;
     }
     case 'industry': {
-      front = D >= 22 ? { use: 'apron', depth: 6 } : { use: 'street', depth: 0 };
+      // Deep enough for a row of visitors' stalls and the aisle before them
+      // (5 + 6 m) behind the gate, else a paved forecourt.
+      front = D >= 22 ? { use: 'apron', depth: D >= 40 ? STALL + AISLE : 6 } : { use: 'street', depth: 0 };
       if (W >= 20 && D >= 30) {
         sides({ use: 'drive', width: TRUCK_LANE }, W >= 26 ? { use: 'path', width: 1.5 } : attached);
         back = { use: 'loading', depth: half(Math.min(16, Math.max(12, (D - front.depth) * 0.35))), rows: 0 };
@@ -154,8 +158,17 @@ export function planLot(kind: LotKind, W: number, D: number, rng: Rng): LotPlan 
   // The building keeps a usable width: what it cannot keep, the sides give up.
   if (W - left.width - right.width < 6 && kind === 'house' && W >= 8.5) { left = { use: 'path', width: 1 }; right = { use: 'path', width: 1 }; }
   else if (W - left.width - right.width < 6) { left = attached; right = attached; if (back.use === 'parking') back = { use: 'service', depth: Math.min(6, back.depth), rows: 0 }; }
+  // A corner lot's side on the second street is a garden strip, not a party
+  // wall: a building on a corner looks onto both streets.
+  if (corner) {
+    const side = corner === 'left' ? left : right;
+    const other = corner === 'left' ? right : left;
+    if (side.use === 'attached' && W - other.width - 2 >= 6) {
+      if (corner === 'left') left = { use: 'garden', width: 2 }; else right = { use: 'garden', width: 2 };
+    }
+  }
   const building = { x0: left.width, y0: front.depth, x1: W - right.width, y1: D - back.depth };
-  return { kind, W, D, front, left, right, back, building };
+  return { kind, W, D, front, left, right, back, building, ...(corner ? { corner } : {}) };
 }
 
 // ---------------------------------------------------------------- furnishing
@@ -453,9 +466,14 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     } else if (front.use === 'apron') {
       // A works' front: visitors' stalls off the apron, the walk to the office painted across it.
       lot.path({ x0: door - 0.8, y0: 0, x1: door + 0.8, y1: F }, CONCRETE_PATH);
-      for (let px = env.x0 + 0.3; px + 2.5 <= env.x1; px += 2.5) {
-        if (Math.abs(px + 1.25 - door) < 2.2) continue;
-        lot.put('parking', px + 1.25, F - 2.6, 2, 2.5, 5, 0.12);
+      // The stalls along the building, the aisle between them and the gate:
+      // only on an apron deep enough for both (stalls with no aisle could
+      // not be driven into from behind the fence).
+      if (F >= STALL + AISLE - 1e-6) {
+        for (let px = env.x0 + 0.3; px + 2.5 <= env.x1; px += 2.5) {
+          if (Math.abs(px + 1.25 - door) < 2.2) continue;
+          lot.put('parking', px + 1.25, F - 2.6, 2, 2.5, 5, 0.12);
+        }
       }
       lot.put('lamp', door + 1.6, F - 0.6, 0, 0.3, 0.3, 5);
     }
@@ -803,6 +821,9 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   // shop's and an office's as wide as a shop door.
   // (under 2.2 m: wider is a car's gate, `sim/agents/parking.ts` `CAR_GATE`).
   if (F > 0) gates.push({ x: door, w: plan.kind === 'shop' || plan.kind === 'office' ? 2 : plan.kind === 'house' ? 1.2 : 1.6 });
+  // A works' apron has its visitors' stalls: a wide car gate onto it, beside
+  // the people's (closed in by the fence, the stalls could not be reached).
+  if (front.use === 'apron') gates.push({ x: door > W / 2 ? Math.max(3.4, door - 4.6) : Math.min(W - 3.4, door + 4.6), w: 6 });
   for (const r of drives) gates.push({ x: (r.x0 + r.x1) / 2, w: r.x1 - r.x0 - 0.4 });
   if (front.use === 'carpad') gates.push({ x: door > W / 2 ? 1.8 : W - 1.8, w: 2.8 });
   for (const w of walks) if (F === 0) gates.push({ x: (w.x0 + w.x1) / 2, w: w.x1 - w.x0 - 0.2 });
@@ -830,9 +851,19 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   // The side walls' outer face on the boundary itself: the neighbour's wall
   // stands against it, face to face, with nothing between.
   const sideHalf = (boundary.sides === 'hedge' ? 0.7 : boundary.sides === 'fence' ? 0.12 : 0.2) / 2;
+  /** A side on a second street (a corner lot) is closed as the front is: a low wall, a fence on it, a railing. */
+  const streetSide = (x: number, y0: number, y1: number): void => {
+    const kind = boundary.front ?? 'wall';
+    if (boundary.front && boundary.frontBase > 0) lot.runY('wall', x, y0, y1, boundary.frontBase);
+    lot.runY(kind, x, y0, y1, boundary.front ? boundary.frontH : 1.6, boundary.front ? boundary.frontBase : 0);
+  };
+  const isCorner = (x: number): boolean => plan.corner !== undefined && (plan.corner === 'left') === (x < W / 2);
   for (const [s, x] of [[left, sideHalf], [right, W - sideHalf]] as const) {
     const lowFront = plan.kind === 'house' || plan.kind === 'flats' ? Math.min(boundary.sidesH, 1.3) : boundary.sidesH;
-    if (s.use === 'attached') {
+    if (isCorner(x)) {
+      if (s.use === 'attached') { if (F > 0) streetSide(x, inset, F); if (D - Bk > 0) streetSide(x, Bk, D - inset); }
+      else streetSide(x, inset, D - inset);
+    } else if (s.use === 'attached') {
       if (F > 0) lot.runY(boundary.sides, x, inset, F, lowFront);
       if (D - Bk > 0) lot.runY(boundary.sides, x, Bk, D - inset, boundary.sidesH);
     } else {
@@ -885,6 +916,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
     for (const x of [0.15, W - 0.15]) {
       for (const [a, b] of openRuns(D, (t) => [x, t])) {
         const at = x < W / 2 ? sideHalf : W - sideHalf;
+        if (isCorner(x)) { streetSide(at, Math.max(a, inset), Math.min(b, D - inset)); continue; }
         // Low beside the front garden, full height behind it.
         if (a < F) lot.runY(boundary.sides, at, Math.max(a, inset), Math.min(b, F), lowFront);
         if (b > F) lot.runY(boundary.sides, at, Math.max(a, F), Math.min(b, D - inset), boundary.sidesH);
