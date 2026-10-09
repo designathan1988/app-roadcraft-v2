@@ -16,6 +16,9 @@ import {
   snapRoadStart, type SnapResult,
 } from './snap';
 import { commitRoadPath } from './commit';
+import { applyProfileTo } from './roads/profile';
+import { roadsBefore, settleRoadEdit } from './roads/economy';
+import type { RoadProfileSpec } from '@world/roads/profile';
 import type { RoadEditRefusal } from './editRules';
 import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from './roadPath';
 
@@ -62,6 +65,8 @@ export interface RoadToolHost {
   settings(): {
     readonly typeIndex: number; readonly lanes: number | null; readonly alignment: 'straight' | 'curve' | 'free';
     readonly heightOffset: number; readonly parking: SegmentParking | undefined; readonly width: number | null; readonly grid: boolean;
+    /** A profile new roads are laid with (docs/VIAS.md V2), over the class, lanes, width and parking; null for those. */
+    readonly profile?: { readonly profile: RoadProfileSpec; readonly type: number } | null;
   };
   /** Sets the height the road is drawn at (the game's state, with the cause). */
   setHeight(value: number, cause: string): void;
@@ -437,10 +442,29 @@ export class RoadTool {
       // Drawn as it was previewed until the new world is in place.
       if (result.committed) this.settling = { ...d, snap: { ...d.snap, at: end.at } };
       // A chosen total width (Roads > Width): the segments just laid take it.
-      if (result.committed && settings.width !== null) {
-        const rt = roadProfile(settings.typeIndex, settings.lanes);
-        const section = sectionForWidth(rt, settings.width, Math.round(rt.speedLimit * 3.6 * METERS_PER_UNIT));
-        for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentSection(id, section);
+      // A profile chosen in the profile editor (V2), or a chosen width: the
+      // segments just laid take it, paid for as the road was (`roads/economy.ts`);
+      // what the balance cannot cover is not laid, and the road keeps its class.
+      if (result.committed && (settings.profile || settings.width !== null)) {
+        const laid = [...doc.segments.keys()].filter((id) => !before.has(id));
+        const kept = laid.map((id) => ({ ...doc.requireSegment(id) }));
+        const money = roadsBefore(doc);
+        if (settings.profile) applyProfileTo(doc, laid, settings.profile.profile, settings.profile.type);
+        else {
+          const rt = roadProfile(settings.typeIndex, settings.lanes);
+          const section = sectionForWidth(rt, settings.width!, Math.round(rt.speedLimit * 3.6 * METERS_PER_UNIT));
+          for (const id of laid) doc.setSegmentSection(id, section);
+        }
+        if (!settleRoadEdit(money, doc).affordable) {
+          for (const s of kept) {
+            doc.setSegmentType(s.id, s.type);
+            doc.setSegmentDirection(s.id, s.direction);
+            doc.setSegmentLanes(s.id, s.lanes);
+            doc.setSegmentSection(s.id, s.section);
+            doc.setSegmentParking(s.id, s.parking);
+          }
+          host.hint('hint.rule.funds');
+        }
       }
       return result.committed;
     });

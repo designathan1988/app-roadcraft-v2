@@ -228,16 +228,20 @@ function renderSegment(
   // is for and not what "reverse" says.
   const oneWay = seg.direction !== 'both';
 
+  // With the profile editor (docs/VIAS.md V2) the class, direction, lanes and
+  // parking are the profile's, edited there; the inspector shows the profile
+  // in miniature instead of a select for each.
+  const profiled = actions.onApplyProfile !== undefined;
   body.innerHTML =
     `<div id="inspectStats">${stats}</div>` +
-    `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
-    `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>` +
+    (profiled ? '<div id="inspectProfile"></div>' : '') +
+    (profiled ? '' : `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
+    `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>`) +
     `<label class="inspect-select">${t('inspector.heightStart')} <input id="inspectHeightStart" type="number" step="0.1" value="${((doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
     `<label class="inspect-select">${t('inspector.heightEnd')} <input id="inspectHeightEnd" type="number" step="0.1" value="${((doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
-    `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
-    parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
-    parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt) +
-    `<div id="inspectProfile"></div>` +
+    (profiled ? '' : `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
+      parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
+      parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt)) +
     `<div id="inspectSection"></div>` +
     `<label class="inspect-range"><span>${t('inspector.curvature')}</span><output id="inspectCurveValue">${curveText(curveValue)}</output><input id="inspectCurve" type="range" min="${-maxCurve}" max="${maxCurve}" step="1" value="${Math.max(-maxCurve, Math.min(maxCurve, curveValue))}" /></label>` +
     `<label class="inspect-range"${seg.curve ? '' : ' data-disabled'}><span>${t('inspector.curvePosition')}</span><output id="inspectCurvePositionValue">${percent(curvePosition)}</output><input id="inspectCurvePosition" type="range" min="0.15" max="0.85" step="0.01" value="${curvePosition}"${seg.curve ? '' : ' disabled'} /></label>` +

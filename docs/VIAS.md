@@ -92,7 +92,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 |---|---|---|---|
 | V0 | Base: worktree, `tuning.ts`, contrato de dados, rede e elevação incrementais, economia mínima | mapas antigos idênticos; sem regressão no `probe-baseline`; fuzz verde; custo no preview, debitado e devolvido | em andamento (ver "Andamento da V0") |
 | V1 | Perfil livre: adaptador, assimetria, material, meio-fio pela diferença de altura, UV sem esticar, modelos, aplicar sem demolir | testes de perfil; mapas antigos idênticos; perfis novos no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V1") |
-| V2 | Editor visual do perfil com validação e modelos | uso no jogo | |
+| V2 | Editor visual do perfil com validação e modelos | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V2") |
 | V3 | Construção com elevação: preview pelo mesmo código, chão/aterro/ponte/trincheira com muro/túnel, feedback, teclas configuráveis | preview = resultado (teste); sem quadro longo no arraste | |
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | |
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | |
@@ -152,6 +152,36 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   existente sem demolir, pelo inspetor (bloco "Perfil da via"), pago e julgado como qualquer edição.
 - Detectores: `tests/world/oldMapsIdentical.spec.ts` (mapas antigos idênticos), operação `profile` no
   fuzz (calçadas assimétricas e no nível da rua), `tests/world/roadProfile.spec.ts`.
+
+## Andamento da V2
+- Pesquisa (lida): Streetmix, especificação de segmentos (https://docs.streetmix.net/contributing/code/reference/segments:
+  o corte é uma sequência de segmentos sem sobreposição, cada um com uma faixa, objetos e marcas, altura relativa ao
+  nível da rua) e o código de redimensionar (https://github.com/streetmix/streetmix/blob/main/client/src/segments/resizing.ts,
+  `constants.ts`: largura arredondada à resolução, presa entre mínimo e máximo, 0,1 m por clique e por arrasto). Aqui a
+  resolução é 1 m porque a seção grava larguras inteiras da grade (`roadSection.ts` `onGridLength`). Road Builder para
+  Cities: Skylines II (https://github.com/JadHajjar/RoadBuilder-CSII): faixas arrastadas de uma lista para o corte no
+  centro, reordenadas arrastando, opções de cada faixa sobre ela, propriedades da via num painel à parte, miniatura gerada
+  de cada via. Cities: Skylines II, ferramenta de vias (https://cs2.paradoxwikis.com/Roads): modos de traçado, elevação
+  em passos, substituir. Network Multitool (https://github.com/MacSergey/NetworkMultitool) é edição de geometria de nós e
+  trechos (CS1; a página de descrição não abriu): entra na V3/V8, não no editor de perfil.
+- Editor (`ui/roads/profileEditor.ts`, `ui/roads/crossSection.ts`, `ui/roads/roads.css`): corte desenhado em SVG à escala
+  do metro (asfalto com linha pintada e seta, carro de costas na faixa para B e de frente na faixa para A, calçada com piso
+  e pessoa, ciclofaixa verde com ciclista e placa de bicicleta, vaga com carro e placa P, canteiro com árvore), cotas em
+  metros por baixo, borda arrastada muda a largura, elemento arrastado muda a ordem (a coluna inteira acima do elemento o
+  pega), selecionado com contorno; modelos em cartões com a miniatura do corte (classes, os do jogador, em branco);
+  "Adicionar" em paleta de ícones que põe cada elemento onde a via o aceita; propriedades num bloco com stepper, botões
+  segmentados e interruptor (nenhum select, checkbox ou caixa de número); problema com ícone no bloco do elemento e selo no
+  desenho, aplicar e salvar presos enquanto houver problema; "Desenhar vias novas com ele" (linha "Perfil" da ferramenta
+  de vias, cobrado como a via).
+- Inspetor: só o resumo (corte em miniatura com cotas, faixas, piso, velocidade) e "Editar perfil"; os selects de classe,
+  sentido, faixas e vagas saem quando o editor existe.
+- Detectores: `tests/ui/roadProfileEditor.spec.ts` (nenhum controle nativo no editor e no inspetor, problema no bloco do
+  elemento, coluna inteira clicável, carro de frente e de costas, modelo salvo vira cartão escolhido, desenho em menos de
+  2 ms por chamada).
+- Desempenho: durante o arrasto só o SVG do corte é refeito (um `innerHTML`); medido no Chrome headless da iGPU durante um
+  arrasto de largura de 40 passos: 1,3-2,4 ms por redesenho (máximo 2,4 ms), contra 16,7 ms de um quadro. Nada muda no
+  quadro do jogo com o editor fechado.
+- Fotos (1280x720): pasta de rascunho da sessão, `fotos-v2b/01..17`.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

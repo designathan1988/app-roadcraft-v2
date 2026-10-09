@@ -74,6 +74,7 @@ import { NodeMover } from '@editor/nodeMover';
 import { CameraGestures } from '@view/cameraGestures';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { applyProfileTo } from '@editor/roads/profile';
+import { drawProfile } from '@ui/roads/drawProfile';
 import { ROAD_PARKING_PRESETS, type RoadParkingPreset, roadParking, roadParkingPreset, setRoadParkingPreset } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
 import { type ImportResult, Persistence, exportToFile, importFromFile, type SavedSettings, DEFAULT_TRAFFIC_COUNT, DEFAULT_PEDESTRIAN_COUNT, MAX_TRAFFIC_COUNT, MAX_PEDESTRIAN_COUNT } from '@editor/persistence';
@@ -417,6 +418,8 @@ const roadTool = new RoadTool({
   settings: () => ({
     typeIndex: game.roadTypeIndex, lanes: game.roadLanePreset, alignment: game.alignment,
     heightOffset: game.roadHeightOffset, parking: roadParking(), width: roadWidth(), grid: roadGridShown(),
+    // The profile chosen in the profile editor for new roads (docs/VIAS.md V2).
+    profile: drawProfile(),
   }),
   setHeight: (value, cause) => gameState.set('roadHeightOffset', value, cause),
   worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),

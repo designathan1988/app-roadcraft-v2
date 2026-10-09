@@ -101,43 +101,69 @@ export type ProfileProblem =
  * the median, the forward lanes, parking or cycle lane, footway.
  */
 export function profileProblems(profile: RoadProfileSpec, typeIndex: number): ProfileProblem[] {
-  const out = new Set<ProfileProblem>();
+  return [...new Set(profileIssues(profile, typeIndex).map((issue) => issue.problem))];
+}
+
+/** A problem and the elements it is about (by index; empty: the road as a whole). */
+export interface ProfileIssue {
+  readonly problem: ProfileProblem;
+  readonly elements: readonly number[];
+}
+
+/**
+ * `profileProblems` with the elements each problem is about, so an editor can
+ * name the problem on the element that has it (docs/VIAS.md V2).
+ */
+export function profileIssues(profile: RoadProfileSpec, typeIndex: number): ProfileIssue[] {
+  const out: ProfileIssue[] = [];
+  const add = (problem: ProfileProblem, elements: readonly number[]): void => {
+    const known = out.find((issue) => issue.problem === problem);
+    if (known) (known.elements as number[]).push(...elements.filter((i) => !known.elements.includes(i)));
+    else out.push({ problem, elements: [...elements] });
+  };
   const e = profile.elements;
-  const first = e[0], last = e[e.length - 1];
-  if (!first || !last || first.kind !== 'footway' || last.kind !== 'footway' || e.length < 3) out.add('footways');
-  const inner = e.slice(1, -1);
-  if (inner.some((x) => x.kind === 'footway')) out.add('footways');
-  const lanes = inner.filter((x): x is Extract<ProfileElement, { kind: 'lane' }> => x.kind === 'lane');
-  if (!lanes.length) out.add('noLanes');
-  if (lanes.some((l) => l.width !== lanes[0]!.width)) out.add('laneWidths');
+  const lastIndex = e.length - 1;
+  const first = e[0], last = e[lastIndex];
+  if (!first || first.kind !== 'footway') add('footways', first ? [0] : []);
+  if (!last || last.kind !== 'footway' || e.length < 3) add('footways', last && e.length > 1 ? [lastIndex] : []);
+  const innerIndex = e.map((_, i) => i).slice(1, -1);
+  for (const i of innerIndex) if (e[i]!.kind === 'footway') add('footways', [i]);
+  const laneIndex = innerIndex.filter((i) => e[i]!.kind === 'lane');
+  const lanes = laneIndex.map((i) => e[i] as Extract<ProfileElement, { kind: 'lane' }>);
+  if (!lanes.length) add('noLanes', []);
+  if (lanes.some((l) => l.width !== lanes[0]!.width)) add('laneWidths', laneIndex.filter((i) => e[i]!.width !== lanes[0]!.width));
   const backward = lanes.filter((l) => l.dir === 'backward').length;
   const forward = lanes.length - backward;
-  if (backward > 0 && forward > 0 && backward !== forward) out.add('laneBalance');
+  if (backward > 0 && forward > 0 && backward !== forward) add('laneBalance', laneIndex);
   // Parking and cycle lanes only by the kerb.
-  inner.forEach((x, i) => {
-    if ((x.kind === 'parking' || x.kind === 'cycle') && i !== 0 && i !== inner.length - 1) out.add('parkingSide');
+  innerIndex.forEach((i, k) => {
+    const x = e[i]!;
+    if ((x.kind === 'parking' || x.kind === 'cycle') && k !== 0 && k !== innerIndex.length - 1) add('parkingSide', [i]);
   });
   // The carriageway in order: backward lanes, then the median, then forward lanes.
-  const core = inner.filter((x) => x.kind === 'lane' || x.kind === 'median');
   let seenForward = false, seenMedian = false;
-  for (const x of core) {
+  for (const i of innerIndex) {
+    const x = e[i]!;
     if (x.kind === 'median') {
-      if (seenMedian || seenForward || backward === 0 || forward === 0) out.add('median');
+      if (seenMedian || seenForward || backward === 0 || forward === 0) add('median', [i]);
       seenMedian = true;
-    } else if (x.dir === 'forward') seenForward = true;
-    else if (seenForward || seenMedian && x.dir === 'backward') out.add('order');
+    } else if (x.kind === 'lane') {
+      if (x.dir === 'forward') seenForward = true;
+      else if (seenForward || seenMedian) add('order', [i]);
+    }
   }
   const [minLane, maxLane] = ROAD_SECTION_LIMITS.laneWidth;
   const [minWalk, maxWalk] = ROAD_SECTION_LIMITS.sidewalk;
-  for (const x of e) {
-    if (x.kind === 'lane' && (x.width < minLane || x.width > maxLane)) out.add('width');
-    if (x.kind === 'footway' && (x.width < minWalk || x.width > maxWalk)) out.add('width');
-    if (x.kind === 'median' && (x.width <= 0 || x.width > ROAD_SECTION_LIMITS.median[1])) out.add('width');
-  }
+  e.forEach((x, i) => {
+    if (x.kind === 'lane' && (x.width < minLane || x.width > maxLane)) add('width', [i]);
+    if (x.kind === 'footway' && (x.width < minWalk || x.width > maxWalk)) add('width', [i]);
+    if (x.kind === 'median' && (x.width <= 0 || x.width > ROAD_SECTION_LIMITS.median[1])) add('width', [i]);
+  });
   // Highways and ramps park nothing (`parkingAllowed`).
   const id = roadType(typeIndex).id;
-  if ((id === 'highway' || id === 'ramp') && inner.some((x) => x.kind === 'parking' || x.kind === 'cycle')) out.add('class');
-  return [...out];
+  const parked = innerIndex.filter((i) => e[i]!.kind === 'parking' || e[i]!.kind === 'cycle');
+  if ((id === 'highway' || id === 'ramp') && parked.length) add('class', parked);
+  return out;
 }
 
 /** The segment's own fields for a profile (`profileProblems` must be empty). */
