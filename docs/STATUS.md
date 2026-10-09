@@ -66,8 +66,16 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   basalto) e relevos (mesa, cânion, escarpa, pão de açúcar); mapas novos
   nascem num relevo natural.
 - Terreno sem as luzes e efeitos que o jogador mandou tirar (`557c5384`).
-- Árvores low-poly feitas no código, poucas, com aba própria para plantar
-  (`040624a9`). **O jogador pediu para refazê-las** (fila do plano).
+- Árvores: um só estilo low poly (`render/lowPolyTrees.ts`, com
+  `natureTrees.ts`, `propGeometry.ts` e `scenery.ts`), sem cartões de folha;
+  gráfico com exposição de referência, grama com brilho medido, terreno sem
+  repetição nem chiado (`7fb7fa98`, sessão "Problemas visuais na
+  otimização"). Ainda no estilo antigo: as árvores de reserva da mata pintada
+  em `groundCover.ts`, que só aparecem se o kit novo falhar.
+- Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
+  (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
+  guardados no navegador e não são assados de novo a cada abertura
+  (`8a35d468`).
 
 ### Prédios e cidade
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;
