@@ -41,6 +41,14 @@ export interface ProfileEditorOptions {
   readonly apply?: (profile: RoadProfileSpec, type: number) => void;
   /** Makes the profile the one new roads are drawn with. */
   readonly drawWith?: (name: string, profile: RoadProfileSpec, type: number) => void;
+  /**
+   * Docked above the road tool's drawer (the catalogue's "Customise..."),
+   * never over it: compact, and folding to its head (the player's order of
+   * 2026-10-09).
+   */
+  readonly docked?: boolean;
+  /** Told when a template was saved (the catalogue shows it under "My roads"). */
+  readonly onSaved?: () => void;
 }
 
 type PaletteKind = 'footway' | 'laneBackward' | 'laneForward' | 'median' | 'parking' | 'cycle';
@@ -73,6 +81,7 @@ const ICON: Record<string, string> = {
   parking: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M10 16V8h3a2.5 2.5 0 010 5h-3"/>',
   cycle: '<circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16l4-7h5l3 7M10 9l3 7h-3M13 6h3"/>',
   blank: '<rect x="4" y="5" width="16" height="14" rx="2" stroke-dasharray="3 3"/>',
+  fold: '<path d="M6 15l6-6 6 6"/>',
 };
 const icon = (name: string): string =>
   `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
@@ -213,7 +222,7 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
   let redrawMax = 0;
 
   const root = document.createElement('section');
-  root.className = 'rp-panel';
+  root.className = options.docked ? 'rp-panel docked' : 'rp-panel';
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-label', t('profileEditor.title'));
 
@@ -225,6 +234,13 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
   titleBox.querySelector('.rp-sub')!.textContent = t('profileEditor.sub', { target: options.title });
   const chip = div('rp-chip');
   const close = iconButton('close', t('profileEditor.close'), closeProfileEditor);
+  // Docked: it folds to its head, so the map and the drawer stay in view.
+  const fold = iconButton('fold', t('profileEditor.fold'), () => {
+    root.classList.toggle('folded');
+    fold.setAttribute('aria-expanded', String(!root.classList.contains('folded')));
+    place();
+  });
+  fold.dataset['action'] = 'fold';
 
   const cards = div('rp-cards');
   cards.setAttribute('aria-label', t('profileEditor.templates'));
@@ -275,7 +291,7 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
   });
 
   // The actions sit in the head, beside the total: the panel stays short enough for a 720-pixel screen.
-  head.append(titleBox, chip, foot, close);
+  head.append(titleBox, chip, foot, ...(options.docked ? [fold] : []), close);
   root.append(head, cards, stage, palette, props);
   // Keys typed here are the editor's, not the game's shortcuts.
   root.addEventListener('keydown', (event) => {
@@ -293,7 +309,7 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
   // ---- the picture: the only thing redrawn while dragging
   const stageSize = (): { width: number; height: number } => ({
     width: Math.max(320, Math.round(picture.clientWidth || stage.clientWidth || 900)),
-    height: window.innerHeight < 820 ? 160 : 200,
+    height: options.docked ? 128 : window.innerHeight < 820 ? 160 : 200,
   });
   const drawStage = (extra?: { scale?: number; anchor?: 'left' | 'right'; dragging?: number }): void => {
     const started = performance.now();
@@ -602,6 +618,7 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
       saving = false;
       nameField.value = '';
       renderCards();
+      options.onSaved?.();
       [...cards.querySelectorAll<HTMLElement>('[data-template]')].find((b) => b.dataset['template'] === saved.id)
         ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     }
@@ -652,10 +669,19 @@ export function openProfileEditor(options: ProfileEditorOptions): void {
     renderFoot();
   };
 
+  // Docked: between the top bar and the drawer, whatever the drawer's height.
+  function place(): void {
+    if (!options.docked) return;
+    const drawer = document.querySelector<HTMLElement>('.v2-drawer:not([hidden])');
+    const top = drawer ? drawer.getBoundingClientRect().top : window.innerHeight;
+    root.style.bottom = `${Math.max(12, Math.round(window.innerHeight - top + 10))}px`;
+  }
+  place();
+  window.addEventListener('resize', place);
   // The picture follows the panel's width (a resized window, a narrower screen).
-  const resize = new ResizeObserver(() => { if (!drag) drawStage(); });
+  const resize = new ResizeObserver(() => { if (!drag) drawStage(); place(); });
   resize.observe(picture);
-  openEditor = { root, dispose: () => resize.disconnect() };
+  openEditor = { root, dispose: () => { resize.disconnect(); window.removeEventListener('resize', place); } };
   renderAll();
   close.focus();
 }

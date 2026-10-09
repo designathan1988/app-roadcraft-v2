@@ -90,6 +90,7 @@ import { UI_V2 } from '@ui/shell/flag';
 import { mountShell } from '@ui/v2/shell';
 import { formatCost } from '@ui/roads/money';
 import { type BuildMode, buildRuns } from '@world/roads/buildMode';
+import { profileRoad } from '@world/roads/profile';
 import { mountAbout } from '@ui/about';
 import { LANGUAGES, applyTranslations, hasKey, initLanguage, language, onLanguageChange, setGlobalParams, setLanguage, t } from '@ui/i18n';
 import { onRoadKeysChange, roadKeyAction, roadKeyParams } from '@ui/roads/keys';
@@ -3847,7 +3848,9 @@ function drawOverlayScreen(): void {
     // The profile the road will be laid with: its lanes and its parking.
     const chosenWidth = roadWidth();
     const plainRt = roadProfile(game.roadTypeIndex, game.roadLanePreset);
-    const rt = roadProfile(game.roadTypeIndex, game.roadLanePreset,
+    // A road picked from the catalogue (or customised) is previewed as it will be laid.
+    const picked = drawProfile();
+    const rt = picked ? profileRoad(picked.profile, picked.type) : roadProfile(game.roadTypeIndex, game.roadLanePreset,
       roadType(game.roadTypeIndex).lanes === 1 ? 'aToB' : 'both',
       chosenWidth === null ? undefined : sectionForWidth(plainRt, chosenWidth, Math.round(plainRt.speedLimit * 3.6 * METERS_PER_UNIT)),
       roadParking());
