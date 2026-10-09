@@ -53,7 +53,8 @@ import { createMaterials, type SceneMaterials } from './materials';
 import { PERSPECTIVE_FOV, type Chase, createIsoRig } from './isoViewport';
 import { DEFAULT_ATMOSPHERE, createPostChain, type Atmosphere, type PostChain } from './postprocess';
 import { createInspector, type Inspector } from './inspector';
-import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, type RoadSurfaces, type SurfaceReuse } from './roadSurfaces';
+import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, storedKey, type RoadSurfaces, type SurfaceReuse, type TileBundle } from './roadSurfaces';
+import { forgetDerivedKeys, forgetOtherDerived, readDerivedAll, writeDerivedMany } from './derivedCache';
 import { disposeMesh } from './mesh/surfaceMesh';
 import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { buildingBounds, localToWorld, solidFootprints } from '@world/buildings/geometry';
@@ -83,6 +84,11 @@ import { RoomLamps } from './roomLamps';
 import { m } from '@world/units';
 /** Room lights kept in the scene for the floors cut open (`roomLamps.ts`). */
 const ROOM_LIGHTS = 6;
+declare const __ROAD_TILES_HASH__: string | undefined;
+/** The fingerprint of the road tiles' code (`cook-plugin.ts`): their tiles are kept under it between sessions. */
+const ROAD_TILES_HASH = typeof __ROAD_TILES_HASH__ !== 'undefined' && __ROAD_TILES_HASH__ ? __ROAD_TILES_HASH__ : null;
+/** How long the opening's roads wait for the kept tiles to be read, ms: past it they are built. */
+const KEPT_TILES_WAIT_MS = 3000;
 /** The thinnest frame bars are 0.045 u wide: their shadows are subpixel below this zoom. */
 const FACADE_SHADOW_ZOOM = 11;
 import { type BuildingPreviewInput, type CutawaySpec, createBuildingLayer } from './buildings/layer';
@@ -702,6 +708,17 @@ export function createSceneRenderer(
   // the roads a road surface can read (`SURFACE_READ_REACH`): keyed by every
   // road the index could hand a query at any distance, a street drawn
   // rebuilt tiles hundreds of units away.
+  // And from one session to the next (P21): the tiles of the network last
+  // built are kept in the browser (`derivedCache.ts`, under the fingerprint of
+  // the code that makes them) and read back at the opening - every tile of the
+  // town was built again on every opening, some 1.3 s of the test city's.
+  const tilesPrefix = ROAD_TILES_HASH ? `roadtiles:${ROAD_TILES_HASH}:` : null;
+  /** The kept tiles have been read (or there are none to read). */
+  let storedRead = tilesPrefix === null;
+  /** What the store holds now, by `storedKey`. */
+  const storedKeys = new Set<string>();
+  /** Tiles built since the last build was kept, to be written. */
+  const toKeep = new Map<string, TileBundle>();
   const surfaceReuse: SurfaceReuse = {
     tiles: new Map(),
     dependsOn: (minX, minY, maxX, maxY) => new Digest()
@@ -711,6 +728,45 @@ export function createSceneRenderer(
     paint: new Map(),
     chunks: new Map(),
     retired: [],
+    stored: new Map(),
+    keep: (key, bundle) => { if (tilesPrefix) toKeep.set(key, bundle); },
+  };
+  if (tilesPrefix && ROAD_TILES_HASH) {
+    forgetOtherDerived('roadtiles', ROAD_TILES_HASH);
+    void readDerivedAll<TileBundle>(tilesPrefix).then((kept) => {
+      for (const [key, bundle] of kept) {
+        surfaceReuse.stored!.set(key, bundle);
+        storedKeys.add(key);
+      }
+    }).finally(() => { storedRead = true; });
+  }
+  /**
+   * After a build: the store made to hold the network just built - its new
+   * tiles written, the tiles no network uses any more forgotten - in idle
+   * time, a few tiles a transaction (MDN, IndexedDB: values are copied by the
+   * structured clone, on this thread).
+   */
+  const keepTiles = (): void => {
+    surfaceReuse.stored!.clear();
+    if (!tilesPrefix) return;
+    const current = new Set<string>();
+    for (const [pass, tiles] of surfaceReuse.tiles) for (const digest of tiles.keys()) current.add(storedKey(pass, digest));
+    const gone = [...storedKeys].filter((key) => !current.has(key));
+    for (const key of gone) storedKeys.delete(key);
+    forgetDerivedKeys(tilesPrefix, gone);
+    const fresh = [...toKeep].filter(([key]) => current.has(key) && !storedKeys.has(key));
+    toKeep.clear();
+    for (const [key] of fresh) storedKeys.add(key);
+    const write = (): void => {
+      const batch = new Map(fresh.splice(0, 8));
+      if (batch.size) writeDerivedMany(tilesPrefix, batch);
+      if (fresh.length) idle(write);
+    };
+    if (fresh.length) idle(write);
+  };
+  const idle = (fn: () => void): void => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 4000 });
+    else setTimeout(fn, 50);
   };
 
   /**
@@ -1470,7 +1526,14 @@ export function createSceneRenderer(
     else if (blocks.length || gradedFor !== net.doc.buildings.revision) yield* shapeBlocksSteps(net, blocks);
     pendingBlocks = [];
     yield;
+    // The tiles kept from the last session, read while the game started: a
+    // sliced build waits for them a little (never an edit's frame spinning).
+    if (sliced && !storedRead) {
+      const since = performance.now();
+      while (!storedRead && performance.now() - since < KEPT_TILES_WAIT_MS) yield 'wait';
+    }
     const freshRoads = yield* roadSurfaceSteps(net, solve, materials, terrain.renderedHeightAt, surfaceReuse, terrain.vergeMaterial);
+    keepTiles();
     derived(net, 'surfaces', freshRoads.rebuilt, 'superfícies das vias refeitas', worldCause,
       { ms: freshRoads.workMs, detail: `${freshRoads.built} tiles feitos, ${freshRoads.reused} aproveitados` });
     // The structures' details, the poles and the street furniture are each

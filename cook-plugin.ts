@@ -51,6 +51,8 @@ const DERIVED = [
   { entry: 'src/render/people/crowdLod.ts', also: [] as string[], define: '__CROWD_LOD_HASH__' },
   // The conflict zones of each pair of movements (`world/conflictPoints.ts`, kept by `main.ts`).
   { entry: 'src/world/conflictPoints.ts', also: [] as string[], define: '__CONFLICT_ZONES_HASH__' },
+  // The road surfaces' tiles (`render/roadSurfaces.ts`, kept by `renderer.ts`).
+  { entry: 'src/render/roadSurfaces.ts', also: [] as string[], define: '__ROAD_TILES_HASH__' },
 ] as const;
 const ASSETS = ['public/models/people'];
 /** The path aliases of `tsconfig.json`. */

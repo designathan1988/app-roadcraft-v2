@@ -141,7 +141,20 @@ export interface SurfaceReuse {
   readonly chunks?: Map<string, { readonly parts: readonly Tile[]; readonly mesh: Mesh }>;
   /** Block meshes replaced but maybe still drawn: freed by the owner once the new roads are in. */
   readonly retired?: Mesh[];
+  /**
+   * Tiles kept from an earlier session (`derivedCache.ts`), by `storedKey`:
+   * a tile whose key comes round again is taken from here instead of built
+   * (Unreal's Derived Data Cache: derived data made once, kept locally, and
+   * made again whenever it is missing). Its key is everything the tile is
+   * built from, so a kept tile is the tile a build would make.
+   */
+  readonly stored?: Map<string, TileBundle>;
+  /** Each tile built afresh, to be kept for a later session. */
+  readonly keep?: (key: string, bundle: TileBundle) => void;
 }
+
+/** The name a tile is kept under between sessions: its pass and its digest. */
+export const storedKey = (pass: string, digest: number): string => `${pass}|${digest}`;
 
 /** Frees what a `SurfaceReuse` holds on the GPU. */
 export function disposeSurfaceReuse(reuse: SurfaceReuse): void {
@@ -724,7 +737,7 @@ export function* roadSurfaceSteps(
       }
       if (reuse) digest.add(reuse.dependsOn(rect[0] - 1, rect[1] - 1, rect[2] + 1, rect[3] + 1));
       const value = digest.value();
-      let bundle = previous?.get(value);
+      let bundle = previous?.get(value) ?? reuse?.stored?.get(storedKey(pass.id, value));
       if (bundle) {
         reused++;
         // A step too: the digests of every tile kept, back to back, were a
@@ -736,6 +749,7 @@ export function* roadSurfaceSteps(
         tilesMs += performance.now() - tileAt;
         built++;
         rebuilt.push(rect);
+        reuse?.keep?.(storedKey(pass.id, value), bundle);
         yield;
       }
       kept.set(value, bundle);

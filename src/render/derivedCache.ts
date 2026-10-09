@@ -157,6 +157,27 @@ export function writeDerivedMany(prefix: string, values: ReadonlyMap<string, unk
   });
 }
 
+/**
+ * Forgets these entries (each `prefix` + key), without waiting: one readwrite
+ * transaction, a `delete` per key (MDN, `IDBObjectStore.delete`).
+ */
+export function forgetDerivedKeys(prefix: string, keys: Iterable<string>): void {
+  const list = [...keys];
+  if (!list.length) return;
+  void database().then((db) => {
+    if (!db) return;
+    try {
+      const store = db.transaction(STORE, 'readwrite').objectStore(STORE);
+      for (const key of list) {
+        const request = store.delete(`${prefix}${key}`);
+        request.onerror = (event) => event.preventDefault();
+      }
+    } catch {
+      // Left for another time.
+    }
+  });
+}
+
 /** Forgets the entries of `kind` kept under any other fingerprint (an older build's). */
 export function forgetOtherDerived(kind: string, fingerprint: string): void {
   void database().then((db) => {
