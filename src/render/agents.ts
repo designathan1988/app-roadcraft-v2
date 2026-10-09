@@ -45,6 +45,7 @@ import type { RagdollCitizens } from './ragdoll';
 import type { Company } from './citizenCasting';
 import { kerbTransfer, seatPerson, type KerbStop } from '@sim/vehicles/kerbStops';
 import { FOOTWAY_RISE } from '@world/roadTypes';
+import { walkingRise } from '@world/curbRamps';
 import { groundGradient } from './groundShear';
 import { WheelOdometer, blinkOn, indicatorSide, pathCurvature, steerAngle } from './vehicleSignals';
 import {
@@ -2084,9 +2085,13 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
           const segment = ped.segment;
           currentSegment = segment;
           const land = open && groundAt ? groundAt : elevationOnCurrent;
-          const deck = open ? land(pose.p.x, pose.p.y) + m(0.04)
-            : elevationAt(world, pose.p.x, pose.p.y, segment) +
-              (ped.ground === 'crossing' ? 0 : FOOTWAY_RISE);
+          // On the paving drawn under the feet (`world/curbRamps.ts`): the
+          // footway's height, the carriageway's, or a dropped kerb's slope
+          // between them - where both read the same, so stepping onto a zebra
+          // is a walk down the ramp, not a 15 cm drop in one frame.
+          const rise = open ? m(0.04) : FOOTWAY_RISE * walkingRise(world.net, pose.p.x, pose.p.y, ped.ground !== 'crossing',
+            segment === undefined ? 'ground' : world.net.doc.segment(segment)?.structure ?? 'ground');
+          const deck = open ? land(pose.p.x, pose.p.y) + rise : elevationAt(world, pose.p.x, pose.p.y, segment) + rise;
           if (options.pedestrianVisible && !options.pedestrianVisible(pose.p.x, pose.p.y, deck)) continue;
           frameAt(pose.p.x, pose.p.y, pose.angle, deck);
           if (procedural && ped.id !== PLAYER_ID) {
@@ -2104,7 +2109,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // bodies lean with it: two more height samples a walker, which the
             // procedural ones never read.)
             const ground = groundGradient(land,
-              pose.p.x, pose.p.y, deck - (open ? m(0.04) : ped.ground === 'crossing' ? 0 : FOOTWAY_RISE));
+              pose.p.x, pose.p.y, deck - rise);
             pedestrians.draw(ped, pose.p.x, pose.p.y, pose.angle, deck, alpha, ground);
           }
           pedCount++;

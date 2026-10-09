@@ -7,6 +7,7 @@ import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
 import { levelPolygons, levelRings } from '@world/surfaces';
+import { curbRamps, rampOutline, walkingRise } from '@world/curbRamps';
 import { Polyline } from '@core/polyline';
 import {
   ROAD_STRUCTURES,
@@ -108,6 +109,8 @@ const TERRAIN_UV = 64;
  * between them. The tessellation only has to be fine enough to SHADE well.
  */
 const GROUND_MAX_EDGE = TERRAIN_CELL / 2;
+/** A dropped kerb's triangles: its slope is 1.8 m long, its flares 1.5 m. */
+const RAMP_MAX_EDGE = m(0.3);
 /** A raised deck follows nothing, so it needs vertices only for its shading. */
 const RAISED_MAX_EDGE = TERRAIN_CELL;
 
@@ -256,7 +259,7 @@ const TINT_REFERENCE = new Color(0x3a3d3f);
 
 /** What each surface of a tile is made from. */
 type Source =
-  | { readonly kind: 'band'; readonly band: 'verge' | 'footway' | 'kerb' | 'asphalt' }
+  | { readonly kind: 'band'; readonly band: 'verge' | 'footway' | 'kerb' | 'asphalt' | 'curbRamp' }
   | { readonly kind: 'median'; readonly part: 'kerb' | 'planting' }
   | { readonly kind: 'paint'; readonly color: string };
 
@@ -532,6 +535,24 @@ export function* roadSurfaceSteps(
         },
       },
       {
+        // The dropped kerbs at the zebras (`world/curbRamps.ts`): the footway
+        // and its kerb sloping down to the carriageway, at the height the
+        // walkers on it read (`walkingRise`). Fine triangles, as the slope is
+        // a metre and a half long.
+        source: { kind: 'band', band: 'curbRamp' },
+        options: {
+          name: `curb-ramp${suffix}`,
+          top: (x, y) => deck(x, y) + FOOTWAY_RISE * walkingRise(net, x, y, true, structure.id),
+          bottom: raised ? offset(deck, -VERGE_DROP) : offset(deck, -VERGE_SKIRT),
+          material: materials.footway,
+          maxEdge: RAMP_MAX_EDGE,
+          ...uvFor(materials.scale.footway),
+          castShadow: raised,
+          receiveShadow: true,
+          skirtUvScale: materials.scale.footway,
+        },
+      },
+      {
         source: { kind: 'band', band: 'kerb' },
         options: {
           name: `kerb${suffix}`,
@@ -597,6 +618,7 @@ export function* roadSurfaceSteps(
     };
     const strips = medianStrips(net, include);
     const medians = { kerb: inputsOf(strips.kerb), planting: inputsOf(strips.planting) };
+    const ramps = inputsOf(curbRamps(net).filter((r) => include(r.segment)).map((r) => [rampOutline(r)]));
     // The pass's inputs, the crossings' footway and the markings in steps of
     // their own: together they were one step of ~20 ms after a road edit in the
     // test city, past the slice (`renderer.ts` `pumpWorld`, P3).
@@ -650,6 +672,7 @@ export function* roadSurfaceSteps(
     interface Reach {
       readonly levels: Record<keyof typeof levels, Input[]>;
       readonly medians: Record<keyof typeof medians, Input[]>;
+      readonly ramps: Input[];
       readonly ribbons: Input[];
       readonly quads: Map<string, Input[]>;
     }
@@ -660,6 +683,7 @@ export function* roadSurfaceSteps(
         value = {
           levels: { casing: [], sidewalk: [], curb: [], asphalt: [] },
           medians: { kerb: [], planting: [] },
+          ramps: [],
           ribbons: [],
           quads: new Map(),
         };
@@ -683,6 +707,7 @@ export function* roadSurfaceSteps(
     for (const name of ['kerb', 'planting'] as const) {
       for (const input of medians[name]) file(input, (into) => into.medians[name].push(input));
     }
+    for (const input of ramps) file(input, (into) => into.ramps.push(input));
     for (const input of ribbonAsphalt) file(input, (into) => into.ribbons.push(input));
     for (const [color, list] of quads) {
       for (const input of list) {
@@ -735,6 +760,7 @@ export function* roadSurfaceSteps(
       addAll(into.levels.asphalt);
       addAll(into.medians.kerb);
       addAll(into.medians.planting);
+      addAll(into.ramps);
       addAll(into.ribbons);
       // In a fixed order: the colours come in the order the network first
       // paints them, which a street drawn elsewhere can change, and what a
@@ -838,6 +864,7 @@ function buildTile(
   into: {
     readonly levels: Record<'casing' | 'sidewalk' | 'curb' | 'asphalt', readonly Input[]>;
     readonly medians: Record<'kerb' | 'planting', readonly Input[]>;
+    readonly ramps: readonly Input[];
     readonly ribbons: readonly Input[];
     readonly quads: ReadonlyMap<string, readonly Input[]>;
   },
@@ -849,11 +876,17 @@ function buildTile(
   const sidewalk = merged(into.levels.sidewalk);
   const curb = merged(into.levels.curb);
   const asphalt = merged(into.levels.asphalt);
-  const bands: Record<'verge' | 'footway' | 'kerb' | 'asphalt', MultiPoly> = {
+  const footway = difference(sidewalk, curb);
+  const kerb = difference(curb, asphalt);
+  // The dropped kerbs take their piece out of the footway and the kerb and
+  // are a surface of their own, sloping (`world/curbRamps.ts`).
+  const ramps = merged(into.ramps);
+  const bands: Record<'verge' | 'footway' | 'kerb' | 'asphalt' | 'curbRamp', MultiPoly> = {
     verge: difference(casing, sidewalk),
-    footway: difference(sidewalk, curb),
-    kerb: difference(curb, asphalt),
+    footway: ramps.length > 0 ? difference(footway, ramps) : footway,
+    kerb: ramps.length > 0 ? difference(kerb, ramps) : kerb,
     asphalt,
+    curbRamp: ramps.length > 0 ? intersection(difference(sidewalk, asphalt), ramps) : [],
   };
   let ribbonsOnly: MultiPoly | null = null;
   const bundle = new Map<string, Tile>();
