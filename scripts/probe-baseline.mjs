@@ -105,7 +105,7 @@ if (only.has('crowd')) {
   await page.waitForTimeout(4000);
   const counts = await page.evaluate(() => {
     const { sim } = window.__roadcraft;
-    return { cars: sim.vehicles?.length ?? null, people: sim.peds?.length ?? sim.pedestrians?.length ?? null };
+    return { cars: sim.vehicles.size, people: sim.pedViews.length };
   });
   report('400/400 rodando', await frames(since), counts);
 }
@@ -126,13 +126,19 @@ if (only.has('camera')) {
 
 if (only.has('blast')) {
   const since = await now();
-  await page.evaluate(() => {
-    const { doc } = window.__roadcraft;
-    const b = [...doc.buildings.all()][0];
-    if (b) window.__roadcraft.explode({ x: b.x, y: b.y }, 0, 1);
+  // `__roadcraft.explode` is not part of the game's probe surface (`main.ts`
+  // hands `explode` only to the weapons lab, `?lab=armas`): without it the
+  // scenario says so instead of stopping the whole probe on a TypeError.
+  const blasted = await page.evaluate(() => {
+    const R = window.__roadcraft;
+    const b = [...R.doc.buildings.all()][0];
+    if (!b || typeof R.explode !== 'function') return false;
+    R.explode({ x: b.x, y: b.y }, 0, 1);
+    return true;
   });
   await page.waitForTimeout(4000);
-  report('bomba num prédio', await frames(since));
+  if (blasted) report('bomba num prédio', await frames(since));
+  else console.log('bomba num prédio: sem prédio ou sem o gancho __roadcraft.explode, cenário não medido');
 }
 
 console.log(JSON.stringify({ broken: await broken() }));

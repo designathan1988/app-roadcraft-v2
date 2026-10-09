@@ -92,31 +92,6 @@ export function safeSpeed(p: DriverParams, o: Obstacle, dt: number): number {
   return Math.max(0, -b * dt + Math.sqrt(b * b * dt * dt + 2 * b * room));
 }
 
-/**
- * Resolves every constraint into the next speed.
- *
- * Comfort comes from IDM; safety comes from the cap. Overlap is prevented
- * BEFORE it happens rather than repaired afterwards.
- */
-export function resolveSpeed(
-  p: DriverParams,
-  v: number,
-  v0: number,
-  obstacles: readonly Obstacle[],
-  dt: number,
-): number {
-  let a = p.a * (1 - Math.pow(v / Math.max(v0, 0.01), 4));
-  let cap = v0;
-
-  for (const o of obstacles) {
-    a = Math.min(a, idmAccel(p, v, v0, o));
-    if (o.hard !== false) cap = Math.min(cap, safeSpeed(p, o, dt));
-  }
-
-  a = clamp(a, -p.bEmergency, p.a);
-  return clamp(v + a * dt, 0, Math.max(0, cap));
-}
-
 /** True when the vehicle can still stop before `d` without harsh braking. */
 export const canStopComfortably = (p: DriverParams, v: number, d: number): boolean =>
   (v * v) / (2 * p.b) <= d;

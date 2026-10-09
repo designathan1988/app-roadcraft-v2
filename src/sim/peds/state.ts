@@ -141,7 +141,7 @@ export interface Ped {
   readonly speed: number;
   /** Preferred file across the footway; the seed of the lateral habit. */
   readonly file: number;
-  /** Drawn once at spawn from the population shares in `PED_BEHAVIOUR`. */
+  /** Drawn once at spawn. */
   readonly ageClass: PedAgeClass;
   readonly gender: PedGender;
   readonly party: PedParty;
@@ -259,64 +259,3 @@ export interface Ped {
 
   prev: PedKinematics;
 }
-
-export interface PedSpec {
-  readonly id: PedId;
-  readonly color: string;
-  readonly speed: number;
-  readonly file: number;
-  readonly ageClass: PedAgeClass;
-  readonly gender: PedGender;
-  readonly party: PedParty;
-  readonly rank: number;
-  readonly edge: SidewalkEdgeId;
-  readonly entry: SidewalkNodeId;
-  readonly s: number;
-  readonly lat: number;
-  readonly tick: number;
-}
-
-export function createPed(spec: PedSpec): Ped {
-  return {
-    id: spec.id,
-    color: spec.color,
-    speed: spec.speed,
-    file: spec.file,
-    ageClass: spec.ageClass,
-    gender: spec.gender,
-    party: spec.party,
-    rank: spec.rank,
-    trailing: null,
-    state: 'Walking',
-    edge: spec.edge,
-    entry: spec.entry,
-    s: spec.s,
-    v: Math.min(spec.speed, spec.party.pace),
-    lat: spec.lat,
-    route: [],
-    goal: null,
-    trip: 0,
-    occupying: null,
-    waited: 0,
-    stuck: 0,
-    lastMovedTick: spec.tick,
-    age: 0,
-    x: 0,
-    y: 0,
-    heading: 0,
-    latV: 0,
-    latSmooth: 0,
-    offX: 0,
-    offY: 0,
-    dodge: 0,
-    passSide: 0,
-    pause: 0,
-    activity: null,
-    turnV: 0,
-    lockedFacing: null,
-    prev: { edge: spec.edge, s: spec.s, lat: spec.lat, x: 0, y: 0, heading: 0 },
-  };
-}
-
-export const pedSnapshot = (p: Ped): PedKinematics =>
-  ({ edge: p.edge, s: p.s, lat: p.lat, x: p.x, y: p.y, heading: p.heading });

@@ -370,11 +370,10 @@ export function buildJunction(
   // Both would have needed an existing test weakened to land, and a test that
   // says "no hole in the surface a car drives on" is not one to weaken.
   //
-  // What actually removes the defect is upstream, and is in place:
-  // `MIN_LEG_ANGLE` now governs drawing (`editor/commit.ts`), dragging
-  // (`RoadDoc.moveNode`) and loading (`Network.impossible`, surfaced in the
-  // status bar and the inspector). No new hairpin can be made; an old one is
-  // named and offered a repair.
+  // What answers it is upstream: a node below `MIN_LEG_ANGLE` is found on
+  // every rebuild (`Network.impossible`), and the roundabout and street-object
+  // tools refuse to build on one. Drawing and dragging used to refuse such a
+  // node too; that refusal went with the freeform roads (e77538b7).
 
   // A bump moved a mouth after the legs were framed for it. On a curved leg
   // the mouth was then cut square to the tangent at the OLD distance - a wedge

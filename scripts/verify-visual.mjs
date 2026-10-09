@@ -590,7 +590,7 @@ if (afterEdit.belowTerrain > 0) {
       await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 250)));
       last = count();
     }
-    return { ...last, parked: true, peds: R.sim.peds.size };
+    return { ...last, parked: true };
   });
   if (WRITE_SHOTS) {
     await page.screenshot({ path: path.join('docs', 'audit', 'vehicles-occupants-production.jpg'), quality: 88 });
@@ -599,7 +599,7 @@ if (afterEdit.belowTerrain > 0) {
     nonFinite: 0, belowTerrain: 0, worstSink: 0, heaviest: `${target?.archetype ?? 'none'}`,
     buried: 0, portalMeshes: 0, signalLamps: 0, litLamps: 0, rebuildMs: 0, fps: 0 });
   if (!target) fail('vehicle-occupants: no car to look at');
-  else if (seated.peds === 0 && seated.batches === 0) fail('vehicle-occupants: nobody is seated in any vehicle');
+  else if (seated.batches === 0) fail('vehicle-occupants: nobody is seated in any vehicle');
 }
 
 if (pageErrors.length > 0) {

@@ -43,7 +43,7 @@ const AUTO_TUNNEL_COVER = m(18);
 
 export interface DraftResult {
   readonly committed: boolean;
-  readonly reason?: 'tooShort' | 'duplicate' | 'degenerate' | 'tooSharp' | 'clearance';
+  readonly reason?: 'tooShort' | 'duplicate' | 'degenerate' | 'clearance';
   readonly heightLimited?: boolean;
   readonly finalHeightOffset?: number;
   /**

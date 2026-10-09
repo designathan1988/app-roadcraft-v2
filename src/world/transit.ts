@@ -20,7 +20,6 @@ import { m } from './units';
  */
 
 export type TransitMode = 'bus' | 'train' | 'metro';
-export const TRANSIT_MODES: readonly TransitMode[] = ['bus', 'train', 'metro'];
 
 export interface TransitStop {
   readonly id: number;

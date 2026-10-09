@@ -201,7 +201,7 @@ async function fps(level) {
       medianDrawCpuMs: +(draws[Math.floor(draws.length / 2)] ?? 0).toFixed(2),
       p95DrawCpuMs: +(draws[Math.floor(draws.length * 0.95)] ?? 0).toFixed(2),
       drawCalls: stats.drawCalls, triangles: stats.triangles,
-      vehicles: R.sim.vehicles.size, pedestrians: R.sim.peds.size };
+      vehicles: R.sim.vehicles.size, pedestrians: R.sim.pedViews.length };
   });
 }
 const result = { high: await fps('high'), low: await fps('low'), errors };

@@ -162,7 +162,6 @@ export const PED = {
 
 /** Vehicle population target, per unit of total road length. */
 export const TRAFFIC_DENSITY = 1 / m(45);
-export const PED_DENSITY = 1 / m(90);
 
 /**
  * Safety ceilings on the agent population. Runaway guards, not design targets.

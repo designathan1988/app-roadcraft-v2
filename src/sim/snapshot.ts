@@ -32,11 +32,13 @@ export function hashSim(w: SimWorld): number {
     mix(q(v.v));
   }
 
-  for (const p of w.pedsInIdOrder()) {
+  // The people as the walking engine publishes them (`sim/agents/walk.ts`).
+  for (const p of [...w.pedViews].sort((a, b) => a.id - b.id)) {
     mix(p.id);
-    mixText(p.edge);
-    mix(q(p.s));
-    mixText(p.state);
+    mixText(p.ground);
+    mix(q(p.x));
+    mix(q(p.y));
+    mix(q(p.heading));
   }
 
   for (const node of w.junctionNodesInOrder()) {

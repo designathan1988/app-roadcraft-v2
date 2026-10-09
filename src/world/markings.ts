@@ -228,7 +228,7 @@ export function stopBar(
  * bar crosses the carriageway from kerb to kerb. A central reservation splits
  * every bar into two strokes, leaving the refuge island clear.
  */
-export function crosswalkBars(
+function crosswalkBars(
   origin: Vec2,
   dir: Vec2,
   nrm: Vec2,

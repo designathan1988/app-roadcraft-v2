@@ -24,7 +24,8 @@ const CLEARANCE_EPSILON = COARSE_EPS;
  * `enforceVehicleSeparation`, which ran AFTER integration and teleported
  * followers back to fix overlaps — sometimes yanking a car that had just
  * completed a turn thirty units backwards (defect 5.5). Overlap is prevented
- * before it happens by the safe-speed cap in `resolveSpeed`, not repaired
+ * before it happens by the safe-speed cap (`idm.ts` `safeSpeed`, applied in
+ * `drive/physicalMotion.ts`, a Gipps-style braking bound), not repaired
  * afterwards.
  */
 export function integrateAll(w: SimWorld): void {

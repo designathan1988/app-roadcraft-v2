@@ -76,7 +76,6 @@ let gridSnapStep = GRID_STEP;
  */
 let gridSnapOffset = 0;
 export function setGridSnapStep(step: number, offset = 0): void { gridSnapStep = step; gridSnapOffset = offset; }
-const roadSnapListeners = new Set<() => void>();
 export function roadSnap(): RoadSnap {
   return roadSnapState;
 }
@@ -87,11 +86,6 @@ export function setRoadSnap(patch: Partial<RoadSnap>): void {
   } catch {
     // Not kept between sessions; it still applies now.
   }
-  for (const f of roadSnapListeners) f();
-}
-export function onRoadSnapChange(f: () => void): () => void {
-  roadSnapListeners.add(f);
-  return () => roadSnapListeners.delete(f);
 }
 
 /**

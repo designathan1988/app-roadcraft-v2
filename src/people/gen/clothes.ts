@@ -62,7 +62,6 @@ export const GARMENT_TYPES: Readonly<Record<GarmentSlot, readonly string[]>> = {
 };
 
 export const PATTERNS = ['solid', 'stripes', 'pinstripe', 'check', 'dots', 'denim', 'knit', 'camo'] as const;
-export const FABRICS = ['cotton', 'denim', 'knit', 'silk', 'leather'] as const;
 
 /** Sensible starting settings for each kind of piece. */
 export function garmentDefaults(type: string): Omit<GarmentParams, 'colour' | 'colour2' | 'pattern' | 'patternScale'> {

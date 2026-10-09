@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Box3, Object3D, SkinnedMesh, Vector3 } from 'three';
+import { Object3D, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { CROWD } from '@render/citizenCasting';
@@ -124,41 +124,9 @@ export async function citizenRig(name: string): Promise<Object3D> {
   return rig;
 }
 
-/**
- * Every vertex of a posed rig, in the rig's frame (metres; +Z forward, +Y up,
- * +X to the body's left), with the bone that moves it most. `stride` samples
- * one vertex in so many.
- */
-export function posedVertices(rig: Object3D, stride = 1): { points: Vector3[]; bones: string[] } {
-  rig.updateMatrixWorld(true);
-  const points: Vector3[] = [];
-  const bones: string[] = [];
-  rig.traverse((o) => {
-    if (!(o instanceof SkinnedMesh)) return;
-    o.skeleton.update();
-    const position = o.geometry.getAttribute('position');
-    const index = o.geometry.getAttribute('skinIndex');
-    const weight = o.geometry.getAttribute('skinWeight');
-    for (let i = 0; i < position.count; i += stride) {
-      const v = new Vector3();
-      o.getVertexPosition(i, v);
-      o.localToWorld(v);
-      points.push(v);
-      let best = 0;
-      for (let k = 1; k < 4; k++) if (weight.getComponent(i, k) > weight.getComponent(i, best)) best = k;
-      bones.push(o.skeleton.bones[index.getComponent(i, best)]?.name ?? '');
-    }
-  });
-  return { points, bones };
-}
-
 /** World position of a named bone of a posed rig. */
 export function bonePosition(rig: Object3D, name: string): Vector3 {
   const bone = rig.getObjectByName(name);
   if (!bone) throw new Error(`no bone ${name}`);
   return bone.getWorldPosition(new Vector3());
-}
-
-export function boundsOf(points: readonly Vector3[]): Box3 {
-  return new Box3().setFromPoints(points as Vector3[]);
 }

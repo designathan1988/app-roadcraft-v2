@@ -35,8 +35,6 @@ export interface SegmentParking {
   readonly right: ParkingKind;
 }
 
-export const NO_PARKING: SegmentParking = { left: 'none', right: 'none' };
-
 /** Depth of a parking lane from the kerb face, world units. */
 export const PARKING_DEPTH: Readonly<Record<ParkingKind, number>> = {
   none: 0,

@@ -17,8 +17,6 @@ import { m } from './units';
 export const GRID_CELL = m(10);
 /** One subdivision of a cell, 1 m. */
 export const GRID_STEP = m(1);
-/** Subdivisions per cell. */
-export const GRID_DIVISIONS = 10;
 
 /** The nearest whole number of subdivisions to a length, never below `min` of them. */
 export function onGridLength(length: number, min = 0): number {
@@ -28,10 +26,4 @@ export function onGridLength(length: number, min = 0): number {
 /** The nearest grid point (a whole number of subdivisions on both axes). */
 export function snapToGrid(p: { readonly x: number; readonly y: number }, step = GRID_STEP, offset = 0): { x: number; y: number } {
   return { x: Math.round((p.x - offset) / step) * step + offset, y: Math.round((p.y - offset) / step) * step + offset };
-}
-
-/** Whether a length is a whole number of subdivisions. */
-export function isOnGrid(length: number, tolerance = 1e-6): boolean {
-  const steps = length / GRID_STEP;
-  return Math.abs(steps - Math.round(steps)) <= tolerance;
 }

@@ -78,17 +78,6 @@ export const WARDROBE = {
   hats: ['fedora01', 'fedora_cocked'],
 } as const;
 
-/** Imported outfits were authored for adults; no child fit has been reviewed. */
-export type ClothingAudience = 'adult' | 'child' | 'any';
-export const OUTFIT_AUDIENCE: Readonly<Record<string, ClothingAudience>> = Object.fromEntries(
-  [...WARDROBE.outfits.male, ...WARDROBE.outfits.female].map((name) => [name, 'adult' as const]),
-);
-
-export function outfitsForAge(years: number, outfits: readonly string[]): readonly string[] {
-  return outfits.filter((name) => OUTFIT_AUDIENCE[name] === 'any'
-    || OUTFIT_AUDIENCE[name] === (years < 16 ? 'child' : 'adult'));
-}
-
 /** Reviewed silhouettes from the shipped eyebrow textures; all remain in the creator. */
 const BROW_PROFILES = {
   arched: ['eyebrow001', 'eyebrow003', 'eyebrow008', 'eyebrow010'],
