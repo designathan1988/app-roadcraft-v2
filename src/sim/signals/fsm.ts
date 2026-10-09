@@ -192,14 +192,18 @@ export function stepController(c: SignalController, deps: SignalDeps): void {
       const pedestriansInside = c.elapsed < st.maxGreen + PED_HOLD_LIMIT &&
         deps.pedestriansCrossing(c.node, st.pedWalk);
       const mayEnd = c.elapsed >= st.minGreen && !pedestriansInside;
-      const reservedHere = deps.reservationDemandOn(c.node, st.greenGroups);
-      const reservedElsewhere = c.plan.groups.some(
+      // Before its minimum and short of its maximum a green cannot end
+      // whatever the demand: nothing below is asked (every deciding term
+      // needs `mayEnd`, or the maximum), and the answer is the same. Asked
+      // every tick, the demand of every other stage was most of this stage.
+      if (!mayEnd && c.elapsed < st.maxGreen) break;
+      const competingDemand = c.plan.stages.some(
+        (candidate, index) => index !== c.stageIndex && stageHasDemand(c, candidate, deps),
+      );
+      const reservedElsewhere = mayEnd && c.plan.groups.some(
         (group) =>
           !st.greenGroups.includes(group) &&
           deps.reservationDemandOn(c.node, [group]),
-      );
-      const competingDemand = c.plan.stages.some(
-        (candidate, index) => index !== c.stageIndex && stageHasDemand(c, candidate, deps),
       );
       // A physical compact-box holder can depend on the next signal to release
       // its rear from the previous junction. Cut a conflicting green after its
@@ -209,13 +213,14 @@ export function stepController(c: SignalController, deps: SignalDeps): void {
       // With a conflicting call, the green stays alive while somebody can
       // USE it: a head at the line or arriving within the passage time, with
       // room to leave. An empty junction rests in its current green.
-      const currentDemand = reservedHere || (deps.demand
+      // Asked only where it decides: a gap-out needs a competing call.
+      const currentDemand = (): boolean => deps.reservationDemandOn(c.node, st.greenGroups) || (deps.demand
         ? deps.demand(c.node, st.greenGroups, st.demandMovements).active > 0
         : deps.demandOn(c.node, st.greenGroups));
       // An actuated junction rests in green when nobody else asks for the
       // right of way. A gap or maximum is relevant only after a conflicting
       // call; otherwise cycling through empty stages stops an arriving car.
-      const gapOut = mayEnd && !currentDemand && competingDemand;
+      const gapOut = mayEnd && competingDemand && !currentDemand();
       const yieldAtTarget = mayEnd && competingDemand && c.elapsed >= st.targetGreen;
       if (gapOut || (mayEnd && reservedElsewhere) || yieldAtTarget) {
         for (const g of st.greenGroups) c.lastServed.set(g, deps.tick());
