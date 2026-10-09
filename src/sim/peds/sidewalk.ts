@@ -1,30 +1,19 @@
 import { Polyline } from '@core/polyline';
 import { pointInPolygon } from '@core/polygon';
-import { type Vec2, addScaled, angleOf, dist, normalize, perp, sub } from '@core/vec2';
+import { addScaled, dist, perp, type Vec2 } from '@core/vec2';
 import type { NodeId, SegmentId } from '@world/ids';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import { Level, roadProfile } from '@world/roadTypes';
-import { CROSSWALK_DEPTH } from '@world/approach';
 import { carriesPedestrians } from '@world/pedestrianAccess';
-import { m } from '@world/units';
 import { orientedPolyline } from '@world/geometry';
 import type { LaneletGraph, LaneletId } from '@world/lanelets';
 import { makeCrossingId, type CrossingId } from '../signals/plan';
-import { Digest } from '@core/digest';
-import { COARSE_EPS, hypot2 } from '@core/scalar';
-import { WalkableSurface } from '@world/walkable';
-import { Corridor, type CorridorFrame } from './corridor';
-import { PED_BEHAVIOUR } from './behaviour';
-import { facadeBays, solidFootprints, type FacadeBay } from '@world/buildings/geometry';
-import { ACCESS_COMPONENTS } from '@world/buildings/foundation';
-import type { Building } from '@world/buildings/types';
-import { blocksPedestrians, streetFurniture } from '@world/streetFurniture';
-import { SIGNAL_POST_RADIUS, signalPosts } from '@world/signalPosts';
+import { COARSE_EPS } from '@core/scalar';
 
 export type SidewalkNodeId = string;
 export type SidewalkEdgeId = string;
-export type Side = -1 | 1;
+type Side = -1 | 1;
 
 export interface SidewalkNode {
   readonly id: SidewalkNodeId;
@@ -34,16 +23,7 @@ export interface SidewalkNode {
   readonly side: Side;
 }
 
-export type SidewalkEdgeKind = 'walk' | 'corner' | 'crossing' | 'access';
-
-/** A corridor's walls, kept between builds (`fitCorridors`). */
-interface CachedCorridor {
-  readonly lo: Float64Array;
-  readonly hi: Float64Array;
-  /** Stations that found no footway, to keep the diagnostic exact. */
-  readonly unfitted: number;
-}
-
+type SidewalkEdgeKind = 'walk' | 'crossing';
 
 export interface SidewalkEdge {
   readonly id: SidewalkEdgeId;
@@ -52,98 +32,38 @@ export interface SidewalkEdge {
   readonly to: SidewalkNodeId;
   readonly path: Polyline;
   readonly length: number;
-  /**
-   * Half the walkable width either side of the path, in world units.
-   *
-   * People do not walk on a centreline, and the width they have to spread
-   * across is a property of the footway, not of the pedestrian. Carrying it on
-   * the edge is what lets the same steering rule put four abreast on a
-   * boulevard and single file down a lane, with no branch naming either.
-   */
-  readonly halfWidth: number;
-  /** Crossings only: the junction and leg being crossed. */
+  /** Crossings only: the junction being crossed at. */
   readonly node?: NodeId;
+  /** The leg: the road a crossing goes over, or the road a footway line runs beside. */
   readonly segment?: SegmentId;
   readonly crossing?: CrossingId;
   /** Crossings only: the vehicle lanelets this edge passes over. */
   readonly lanes?: readonly LaneletId[];
-  /**
-   * The walking corridor: a continuous frame along `path` and the walls
-   * either side of it, fitted to the footway that is really drawn. Where a
-   * pedestrian may stand on this edge is exactly what it allows.
-   */
-  readonly corridor: Corridor;
 }
 
-/** An edge as it is declared, before its corridor is built. */
-type EdgeSpec = Omit<SidewalkEdge, 'corridor'>;
-
 /**
- * The pedestrian network, derived from the SAME junction geometry that trims
- * the vehicle lanelets.
+ * The kerbs, zebras and footway lines the vehicles and signals read, derived
+ * from the SAME junction geometry that trims the vehicle lanelets.
  *
- * Two structural facts here fix the pedestrian defects outright.
+ * - A zebra (`crossings`, `crossingEdge`) runs between the two kerb nodes of
+ *   a leg, where `Network.crosswalkDistanceAt` paints it: admission, the
+ *   crossing spans, the signal plans and the walking engine's published
+ *   crossing states all measure along it. As in SUMO, a vehicle learns about
+ *   people only through the state of the crossing it is about to drive over.
+ * - A footway line (`kind: 'walk'`) runs along each side of a road between
+ *   its kerbs: a bus at a stop finds the pavement beside its doors on it
+ *   (`vehicles/kerbStops.ts`).
  *
- * A pedestrian's waiting position is a graph node whose world coordinate is an
- * outward offset of the carriageway — not a fraction of a road edge. The V6
- * monolith computed it as `clamp((L - reach) / L, 0.7, 0.985)`, and that 0.7
- * FLOOR parked pedestrians at 70% of a short edge, physically inside the
- * junction (defect 4.1). There is no fraction and no clamp here, so that
- * position cannot be expressed.
- *
- * And crossings are real, routable edges. In the V6 monolith a pedestrian's
- * "turn" was a bezier rounding a corner between two sidewalks on the SAME side;
- * the painted zebras were pure decoration and nobody ever crossed a road
- * (defect 4.9). The edges built here ARE the zebras.
+ * People walk on `world/walkways.ts` (`sim/agents/walk.ts`). This graph was
+ * also the footway-graph pedestrian engine's network - corner paths, walking
+ * corridors, a link to every door, destinations, an occupancy index - which
+ * went with that engine on 2026-10-08; nothing read any of it, and every road
+ * edit rebuilt it (the door links alone were P17 in docs/PROBLEMAS.md).
  */
 export class SidewalkGraph {
   readonly nodes = new Map<SidewalkNodeId, SidewalkNode>();
   readonly edges = new Map<SidewalkEdgeId, SidewalkEdge>();
-  readonly adjacency = new Map<SidewalkNodeId, SidewalkEdgeId[]>();
   readonly crossings = new Map<CrossingId, SidewalkEdgeId>();
-
-  /**
-   * Node ids in a stable order, as the pool pedestrians draw destinations from.
-   *
-   * Held here rather than materialised per choice because a destination is
-   * picked every time somebody reaches a junction, and building a sorted array
-   * of every node each time is a per-pedestrian allocation on a hot path.
-   */
-  readonly goalNodes: SidewalkNodeId[] = [];
-  readonly buildingGoalNodes: SidewalkNodeId[] = [];
-  private readonly components = new Map<SidewalkNodeId, number>();
-  private readonly goalsByComponent = new Map<number, SidewalkNodeId[]>();
-  private readonly buildingsByComponent = new Map<number, SidewalkNodeId[]>();
-
-  /** Who is on which edge, rebuilt once a tick by the pedestrian step. */
-  readonly occupancy = new PedEdgeIndex();
-
-  /** The footway as drawn, which the corridors are fitted to. Null before the first build. */
-  walkable: WalkableSurface | null = null;
-  /** Corridor stations with no footway anywhere near them, from the last build: a diagnostic. */
-  unfitted = 0;
-
-  /**
-   * Corner paths by the footway patch they were built from, from the last
-   * build: a corner whose junction the edit did not touch is reused as it is.
-   */
-  private cornerCache = new Map<string, Vec2[]>();
-  /**
-   * Each door's link as last chosen (edge id and arc), with what it was chosen
-   * from: the footways within reach, the footway and carriageway there, the
-   * masses and obstacles there. A road edit relinked every door in town; a
-   * door whose surroundings are the same keeps its link (docs/performance.md #11).
-   */
-  private doorCache = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
-  /** Corridor walls by the path and footway patch they were fitted to (`fitCorridors`). */
-  private corridorCache = new Map<string, CachedCorridor>();
-  private readonly reversedPaths = new Map<SidewalkEdgeId, Polyline>();
-  private readonly baseWalkEdges = new Map<SidewalkEdgeId, SidewalkEdge>();
-  private readonly accessNodes = new Set<SidewalkNodeId>();
-  private readonly accessEdges = new Set<SidewalkEdgeId>();
-  private net: Network | null = null;
-  private vehicleGraph: LaneletGraph | null = null;
-  private accessFootprints: Vec2[][] = [];
 
   build(doc: RoadDoc, net: Network, graph: LaneletGraph): void {
     const steps = this.buildSteps(doc, net, graph);
@@ -151,32 +71,11 @@ export class SidewalkGraph {
     while (!step.done) step = steps.next();
   }
 
-  /**
-   * `build` in steps, a junction's corners or a building's doors at a time:
-   * the frame that rebuilt the footways after an edit was a stall of about
-   * 80 ms in the default town (docs/performance.md #11). The simulation is
-   * held until the last step (`main.ts`).
-   */
+  /** `build` in steps, a road at a time; the simulation is held until the last (`sim/world.ts`). */
   *buildSteps(doc: RoadDoc, net: Network, graph: LaneletGraph): Generator<void, void, void> {
     this.nodes.clear();
     this.edges.clear();
-    this.adjacency.clear();
     this.crossings.clear();
-    this.goalNodes.length = 0;
-    this.buildingGoalNodes.length = 0;
-    this.components.clear();
-    this.goalsByComponent.clear();
-    this.buildingsByComponent.clear();
-    this.occupancy.reset();
-    this.reversedPaths.clear();
-    this.baseWalkEdges.clear();
-    this.accessNodes.clear();
-    this.accessEdges.clear();
-    const walkable = new WalkableSurface(net);
-    this.walkable = walkable;
-    this.net = net;
-    this.vehicleGraph = graph;
-    this.accessFootprints = [];
 
     // ---- kerb nodes, two per (junction node, leg) -------------------------
     for (const [nodeId, node] of doc.nodes) {
@@ -235,9 +134,6 @@ export class SidewalkGraph {
           to: left.id,
           path,
           length: path.length,
-          // The painted zebra is the whole of the width a pedestrian may use
-          // here: spreading wider than the bars puts somebody on bare asphalt.
-          halfWidth: CROSSWALK_DEPTH / 2,
           node: nodeId,
           segment: segId,
           crossing,
@@ -247,52 +143,7 @@ export class SidewalkGraph {
       }
     }
 
-    // ---- corner links, around each junction island ------------------------
-    const previousCorners = this.cornerCache;
-    const nextCorners = new Map<string, Vec2[]>();
-    for (const [nodeId, node] of doc.nodes) {
-      yield;
-      if (node.incident.length < 2) continue;
-
-      const legs = node.incident
-        .slice()
-        .map((segId) => {
-          const seg = doc.requireSegment(segId);
-          const pl = orientedPolyline(doc, seg, nodeId);
-          const look = Math.min(10, Math.max(0.5, pl.length * 0.2));
-          const dir = normalize(sub(pl.sampleAt(look).p, pl.point(0)));
-          const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
-          return { segId, ang: angleOf(dir), footway: rt.sidewalk };
-        })
-        .sort((a, b) => a.ang - b.ang);
-
-      for (let i = 0; i < legs.length; i++) {
-        const a = legs[i] as { segId: SegmentId; footway: number };
-        const b = legs[(i + 1) % legs.length] as { segId: SegmentId; footway: number };
-        // Leg `a`'s left kerb joins leg `b`'s right kerb, matching the
-        // counter-clockwise corner convention used by the junction builder.
-        const from = this.nodes.get(kerbId(nodeId, a.segId, 1));
-        const to = this.nodes.get(kerbId(nodeId, b.segId, -1));
-        if (!from || !to || from.id === to.id) continue;
-        const points = this.cornerPoints(nodeId, from, to, { x: node.x, y: node.y }, walkable, previousCorners, nextCorners);
-        const path = Polyline.fromPoints(points);
-        this.addEdge({
-          id: `C:${from.id}|${to.id}`,
-          kind: 'corner',
-          from: from.id,
-          to: to.id,
-          path,
-          length: path.length,
-          // A corner joins two footways of possibly different widths, so it
-          // gets the narrower of the two. Its walls are the footway itself
-          // (`fitCorridors`), so the whole of that width is real footway.
-          halfWidth: Math.min(a.footway, b.footway) / 2,
-        });
-      }
-    }
-    this.cornerCache = nextCorners;
-
-    // ---- sidewalk edges along each segment --------------------------------
+    // ---- footway lines along each segment ---------------------------------
     for (const [segId, seg] of doc.segments) {
       yield;
       const rt = roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking);
@@ -338,625 +189,29 @@ export class SidewalkGraph {
           to: to.id,
           path,
           length: path.length,
-          halfWidth: rt.sidewalk / 2,
           segment: segId,
         });
       }
     }
-
-    this.fitCorridors(walkable);
-    for (const edge of this.edges.values()) if (edge.kind === 'walk') this.baseWalkEdges.set(edge.id, edge);
-    yield* this.refreshBuildingAccessSteps(doc);
-  }
-
-  /** Refreshes door links without rebuilding the road's expensive footway corridors. */
-  refreshBuildingAccess(doc: RoadDoc): void {
-    const steps = this.refreshBuildingAccessSteps(doc);
-    let step = steps.next();
-    while (!step.done) step = steps.next();
-  }
-
-  /** `refreshBuildingAccess` in steps, a building's doors at a time. */
-  *refreshBuildingAccessSteps(doc: RoadDoc): Generator<void, void, void> {
-    for (const id of this.accessEdges) this.removeEdge(id);
-    for (const id of this.accessNodes) {
-      this.nodes.delete(id);
-      this.adjacency.delete(id);
-    }
-    this.accessEdges.clear();
-    this.accessNodes.clear();
-    this.occupancy.reset();
-    for (const edge of this.baseWalkEdges.values()) if (!this.edges.has(edge.id)) {
-      this.edges.set(edge.id, edge);
-      pushAdj(this.adjacency, edge.from, edge.id);
-      pushAdj(this.adjacency, edge.to, edge.id);
-    }
-
-    const walkable = this.walkable;
-    this.accessFootprints = [...doc.buildings.all()].flatMap((building) => solidFootprints(building));
-    const walks = [...this.baseWalkEdges.values()].filter((edge) =>
-      edge.segment !== undefined && doc.segment(edge.segment)?.structure === 'ground');
-    if (walkable && walks.length) {
-      const footprints = this.accessFootprints;
-      const obstacles = this.net && this.vehicleGraph
-        ? [
-          ...streetFurniture(this.net).filter(blocksPedestrians).map((item) =>
-            ({ x: item.x, y: item.y, radius: item.radius })),
-          ...signalPosts(this.net, this.vehicleGraph).map((post) =>
-            ({ x: post.x, y: post.y, radius: SIGNAL_POST_RADIUS })),
-          ...[...doc.poles.values()].map((pole) => ({ x: pole.x, y: pole.y, radius: m(0.18) })),
-        ] : [];
-      const spurs = new Map<SidewalkEdgeId, { s: number; id: SidewalkNodeId }[]>();
-      // The footways within a door's reach, from a grid of their boxes grown
-      // by that reach: every door measured every footway of the town, a
-      // million measurements and 60 ms of each road edit in the default town
-      // (docs/performance.md #11). A footway outside the grown box is farther
-      // than the reach, which the door would have dropped anyway.
-      const REACH = m(30), CELL = REACH;
-      const near = new Map<number, SidewalkEdge[]>();
-      const cellKey = (x: number, y: number): number => (x + 32768) * 65536 + (y + 32768);
-      for (const edge of walks) {
-        const box = edge.path.bbox;
-        for (let x = Math.floor((box.minX - REACH) / CELL); x <= Math.floor((box.maxX + REACH) / CELL); x++) {
-          for (let y = Math.floor((box.minY - REACH) / CELL); y <= Math.floor((box.maxY + REACH) / CELL); y++) {
-            const list = near.get(cellKey(x, y));
-            if (list) list.push(edge); else near.set(cellKey(x, y), [edge]);
-          }
-        }
-      }
-      // What a door's choice reads, digested per piece once per build.
-      const edgeDigest = new Map<SidewalkEdge, number>();
-      const digestOf = (edge: SidewalkEdge): number => {
-        let d = edgeDigest.get(edge);
-        if (d === undefined) edgeDigest.set(edge, d = new Digest().addText(edge.id).add(edge.length).addAll(edge.path.xy).value());
-        return d;
-      };
-      const massesNear = new Map<number, number[]>();
-      footprints.forEach((ring, i) => {
-        const box = ringBox(ring);
-        for (let x = Math.floor((box.minX - REACH) / CELL); x <= Math.floor((box.maxX + REACH) / CELL); x++) {
-          for (let y = Math.floor((box.minY - REACH) / CELL); y <= Math.floor((box.maxY + REACH) / CELL); y++) {
-            const list = massesNear.get(cellKey(x, y));
-            if (list) list.push(i); else massesNear.set(cellKey(x, y), [i]);
-          }
-        }
-      });
-      const ringDigest = footprints.map((ring) => { const d = new Digest(); for (const p of ring) d.add(p.x).add(p.y); return d.value(); });
-      // The posts, benches and poles within a door's reach, from a grid: each
-      // filed under every cell its reach and radius cover, in the list's
-      // order, so a door reads its own cell and finds exactly what the filter
-      // over every obstacle of the town found, in the same order. Every door
-      // filtered them all, on every building added.
-      const obstacleCells = new Map<number, number[]>();
-      obstacles.forEach((o, i) => {
-        const grow = REACH + o.radius;
-        for (let x = Math.floor((o.x - grow) / CELL); x <= Math.floor((o.x + grow) / CELL); x++) {
-          for (let y = Math.floor((o.y - grow) / CELL); y <= Math.floor((o.y + grow) / CELL); y++) {
-            const list = obstacleCells.get(cellKey(x, y));
-            if (list) list.push(i); else obstacleCells.set(cellKey(x, y), [i]);
-          }
-        }
-      });
-      const previousDoors = this.doorCache;
-      const nextDoors = new Map<string, { key: string; edge: SidewalkEdgeId | null; s: number }>();
-      for (const building of doc.buildings.all()) {
-        yield;
-        for (const bay of doorBays(building)) {
-          if (bay.level !== 0 || !ACCESS_COMPONENTS.has(bay.component)) continue;
-          const door = { x: bay.x + bay.nx * m(0.75), y: bay.y + bay.ny * m(0.75) };
-          const finite = Number.isFinite(door.x) && Number.isFinite(door.y);
-          const cell = finite ? cellKey(Math.floor(door.x / CELL), Math.floor(door.y / CELL)) : 0;
-          const reachable = finite ? near.get(cell) ?? [] : walks;
-          const doorId = `B:${building.id}:${bay.volume}:${bay.side}:${bay.index}`;
-          const key = new Digest().add(door.x).add(door.y)
-            .addAll(reachable.map(digestOf))
-            .add(walkable.digest(door.x - REACH, door.y - REACH, door.x + REACH, door.y + REACH))
-            .addAll((finite ? massesNear.get(cell) ?? [] : []).map((i) => ringDigest[i]!))
-            .addAll((finite ? obstacleCells.get(cell) ?? [] : []).map((i) => obstacles[i]!)
-              .filter((o) => Math.abs(o.x - door.x) <= REACH + o.radius && Math.abs(o.y - door.y) <= REACH + o.radius)
-              .flatMap((o) => [o.x, o.y, o.radius]))
-            .value().toString();
-          const known = previousDoors.get(doorId);
-          let chosen: { edge: SidewalkEdge; nearest: { s: number; point: Vec2 } } | undefined;
-          if (known && known.key === key) {
-            const edge = known.edge === null ? undefined : this.baseWalkEdges.get(known.edge);
-            chosen = edge ? { edge, nearest: { s: known.s, point: edge.path.sampleAt(known.s).p } } : undefined;
-            nextDoors.set(doorId, known);
-          } else {
-          const candidates = reachable.flatMap((edge) => {
-            const closest = edge.path.closestPoint(door);
-            if (closest.distance > m(30)) return [];
-            return [0, 2, -2, 4, -4, 7, -7, 10, -10].map((metres) => {
-              const s = Math.max(0, Math.min(edge.length, closest.s + m(metres)));
-              const point = edge.path.sampleAt(s).p;
-              return { edge, nearest: { s, point, distance: dist(door, point) } };
-            }).filter(({ nearest }) => nearest.distance <= m(30));
-          }).sort((a, b) => a.nearest.distance - b.nearest.distance ||
-            a.edge.id.localeCompare(b.edge.id) || a.nearest.s - b.nearest.s);
-          chosen = candidates.find(({ nearest }) =>
-            accessLineClear(door, nearest.point, walkable, footprints, obstacles));
-          nextDoors.set(doorId, { key, edge: chosen?.edge.id ?? null, s: chosen?.nearest.s ?? 0 });
-          }
-          if (!chosen) continue;
-          const { edge, nearest } = chosen;
-          const id = `B:${building.id}:${bay.volume}:${bay.side}:${bay.index}`;
-          let spur = edge.from;
-          if (nearest.s > m(0.7) && nearest.s < edge.length - m(0.7)) {
-            const list = spurs.get(edge.id) ?? [];
-            const shared = list.find((item) => Math.abs(item.s - nearest.s) < m(0.25));
-            if (shared) spur = shared.id;
-            else {
-              spur = `S:${id}`;
-              this.nodes.set(spur, { ...this.nodes.get(edge.from)!, id: spur, at: nearest.point });
-              this.accessNodes.add(spur);
-              list.push({ s: nearest.s, id: spur });
-              spurs.set(edge.id, list);
-            }
-          } else if (nearest.s >= edge.length - m(0.7)) {
-            spur = edge.to;
-          }
-          this.nodes.set(id, { ...this.nodes.get(spur)!, id, at: door });
-          this.accessNodes.add(id);
-          const path = Polyline.fromPoints([this.nodes.get(spur)!.at, door]);
-          const link = `A:${id}`;
-          this.addEdge({ id: link, kind: 'access', from: spur, to: id,
-            path, length: path.length, halfWidth: Math.min(m(0.7), bay.width / 2), segment: edge.segment! });
-          this.accessEdges.add(link);
-        }
-      }
-      this.doorCache = nextDoors;
-      for (const [edgeId, list] of spurs) {
-        const edge = this.baseWalkEdges.get(edgeId)!;
-        this.removeEdge(edgeId);
-        const stations = [{ s: 0, id: edge.from }, ...list.sort((a, b) => a.s - b.s),
-          { s: edge.length, id: edge.to }];
-        for (let i = 1; i < stations.length; i++) {
-          const from = stations[i - 1]!, to = stations[i]!;
-          if (to.s - from.s < COARSE_EPS) continue;
-          const path = edge.path.sub(from.s, to.s);
-          const id = `${edgeId}:part:${i}`;
-          this.addEdge({ id, kind: 'walk', from: from.id, to: to.id,
-            path, length: path.length, halfWidth: edge.halfWidth, segment: edge.segment! });
-          const piece = this.edges.get(id)!;
-          const bounds = { lo: 0, hi: 0 };
-          for (let k = 0; k < piece.corridor.stations; k++) {
-            edge.corridor.bounds(from.s + piece.corridor.stationS(k), false, bounds);
-            piece.corridor.lo[k] = bounds.lo;
-            piece.corridor.hi[k] = bounds.hi;
-          }
-          this.accessEdges.add(id);
-        }
-      }
-    }
-    // Stable ordering keeps seeded destination choices independent of edits.
-    this.goalNodes.length = 0;
-    this.buildingGoalNodes.length = 0;
-    this.components.clear();
-    this.goalsByComponent.clear();
-    this.buildingsByComponent.clear();
-    const ordered = [...this.nodes.keys()].sort();
-    this.goalNodes.push(...ordered.filter((id) => !id.startsWith('S:')));
-    this.buildingGoalNodes.push(...ordered.filter((id) => id.startsWith('B:')));
-    let component = 0;
-    for (const origin of ordered) {
-      if (this.components.has(origin)) continue;
-      const queue = [origin];
-      this.components.set(origin, component);
-      for (let i = 0; i < queue.length; i++) {
-        const node = queue[i]!;
-        for (const edgeId of this.edgesAt(node)) {
-          const edge = this.edges.get(edgeId);
-          if (!edge) continue;
-          const other = this.other(edge, node);
-          if (this.components.has(other)) continue;
-          this.components.set(other, component);
-          queue.push(other);
-        }
-      }
-      component++;
-    }
-    for (const id of this.goalNodes) {
-      const c = this.components.get(id)!;
-      const goals = this.goalsByComponent.get(c) ?? [];
-      goals.push(id);
-      this.goalsByComponent.set(c, goals);
-      if (id.startsWith('B:')) {
-        const buildings = this.buildingsByComponent.get(c) ?? [];
-        buildings.push(id);
-        this.buildingsByComponent.set(c, buildings);
-      }
-    }
-  }
-
-  goalsFrom(node: SidewalkNodeId): readonly SidewalkNodeId[] {
-    const component = this.components.get(node);
-    return component === undefined ? [] : this.goalsByComponent.get(component) ?? [];
-  }
-
-  buildingsFrom(node: SidewalkNodeId): readonly SidewalkNodeId[] {
-    const component = this.components.get(node);
-    return component === undefined ? [] : this.buildingsByComponent.get(component) ?? [];
-  }
-
-  /** Open land beside an entrance is walkable unless it is road or a building. */
-  openGround(x: number, y: number): boolean {
-    return !this.walkable?.carriageway(x, y) &&
-      !this.accessFootprints.some((ring) => pointInPolygon({ x, y }, ring));
-  }
-
-  private removeEdge(id: SidewalkEdgeId): void {
-    const edge = this.edges.get(id);
-    if (!edge) return;
-    for (const node of [edge.from, edge.to]) {
-      const adjacent = this.adjacency.get(node);
-      if (adjacent) this.adjacency.set(node, adjacent.filter((value) => value !== id));
-    }
-    this.edges.delete(id);
-    this.reversedPaths.delete(id);
-  }
-
-  private addEdge(spec: EdgeSpec): void {
-    if (spec.length < COARSE_EPS) return;
-    const edge: SidewalkEdge = { ...spec, corridor: new Corridor(spec.path) };
-    if (spec.kind === 'access') {
-      const usable = Math.max(0, spec.halfWidth - PED_BEHAVIOUR.lateralMargin);
-      edge.corridor.lo.fill(-usable);
-      edge.corridor.hi.fill(usable);
-    }
-    this.edges.set(edge.id, edge);
-    pushAdj(this.adjacency, edge.from, edge.id);
-    pushAdj(this.adjacency, edge.to, edge.id);
   }
 
   /**
-   * Sets every corridor's walls from the footway that is drawn.
-   *
-   * At each station along a footway or corner edge the footway is measured
-   * across the path, and the walls are its edges less `lateralMargin`, never
-   * wider than the edge's own half-width. A zebra's walls are its painted
-   * width: the carriageway either side of it is not somewhere to walk.
-   *
-   * A station with no footway anywhere across it (the graph runs where the
-   * surface builder drew none, as over a viaduct join) keeps the edge's own
-   * width, and is counted in `unfitted`.
+   * Door links went with the footway-graph engine: a building edit has
+   * nothing to refresh here. Kept only while `sim/world.ts` still calls it.
    */
-  private fitCorridors(walkable: WalkableSurface): void {
-    this.unfitted = 0;
-    const frame: CorridorFrame = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    const span = { lo: 0, hi: 0 };
-    const margin = PED_BEHAVIOUR.lateralMargin;
-    const previous = this.corridorCache;
-    const next = new Map<string, CachedCorridor>();
-    for (const edge of this.edges.values()) {
-      const c = edge.corridor;
-      const usable = Math.max(0, edge.halfWidth - margin);
-      const fitted = new Uint8Array(c.stations);
-      // A footway edge's walls are read off the drawn footway within `reach`
-      // of its own path, so they depend on nothing but that path and that
-      // patch: where the same numbers come round, the walls are the same and
-      // the stations are not walked again. A crossing or an access line is
-      // set from the edge's own width and is not worth a key.
-      const key = edge.kind === 'crossing' || edge.kind === 'access' ? '' : this.corridorKey(edge, walkable, margin);
-      const known = key ? previous.get(key) : undefined;
-      if (known) {
-        c.lo.set(known.lo);
-        c.hi.set(known.hi);
-        this.unfitted += known.unfitted;
-        next.set(key, known);
-        continue;
-      }
-      let missed = 0;
-      for (let k = 0; k < c.stations; k++) {
-        c.lo[k] = -usable;
-        c.hi[k] = usable;
-        if (edge.kind === 'crossing' || edge.kind === 'access') continue;
-        c.frame(c.stationS(k), false, frame);
-        const reach = edge.halfWidth + m(2.5);
-        let found = walkable.footwaySpan(frame.x, frame.y, frame.nx, frame.ny, reach, span);
-        let offset = 0;
-        // The path itself is off the footway: find the footway beside it.
-        for (let step = 1; !found && step * 0.25 <= reach; step++) {
-          for (const side of [1, -1]) {
-            offset = side * step * 0.25;
-            if (walkable.footwaySpan(frame.x + frame.nx * offset, frame.y + frame.ny * offset,
-              frame.nx, frame.ny, reach, span)) { found = true; break; }
-          }
-        }
-        if (!found) { this.unfitted++; missed++; continue; }
-        let lo = offset + span.lo + margin;
-        let hi = offset + span.hi - margin;
-        const cap = offset === 0 ? usable : edge.halfWidth + m(1);
-        lo = Math.max(lo, -cap);
-        hi = Math.min(hi, cap);
-        if (lo > hi) { const mid = (lo + hi) / 2; lo = mid; hi = mid; }
-        c.lo[k] = lo;
-        c.hi[k] = hi;
-        fitted[k] = 1;
-      }
-      // A station with no footway across it takes the walls of the nearest
-      // one that has: the edge's own width there could reach into the road.
-      if (edge.kind === 'crossing' || edge.kind === 'access' || !fitted.includes(1)) continue;
-      for (let k = 0; k < c.stations; k++) {
-        if (fitted[k]) continue;
-        let near = -1;
-        for (let d = 1; near < 0 && d < c.stations; d++) {
-          if (k - d >= 0 && fitted[k - d]) near = k - d;
-          else if (k + d < c.stations && fitted[k + d]) near = k + d;
-        }
-        c.lo[k] = c.lo[near]!;
-        c.hi[k] = c.hi[near]!;
-      }
-      if (key) next.set(key, { lo: c.lo.slice(), hi: c.hi.slice(), unfitted: missed });
-    }
-    this.corridorCache = next;
-  }
+  refreshBuildingAccess(_doc: RoadDoc): void {}
 
-  /** The key a corridor's walls are kept under: its path, its width, and the footway it reads. */
-  private corridorKey(edge: SidewalkEdge, walkable: WalkableSurface, margin: number): string {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const xy = edge.path.xy;
-    for (let i = 0; i < xy.length; i += 2) {
-      const x = xy[i]!, y = xy[i + 1]!;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-    // Each station asks across `reach` and reads that far again from where it
-    // asked, and the search steps that far off the path first.
-    const pad = 3 * (edge.halfWidth + m(2.5)) + m(1);
-    return `${new Digest().addAll(xy).add(edge.halfWidth).add(margin)
-      .add(walkable.digest(minX - pad, minY - pad, maxX + pad, maxY + pad)).value()}`;
-  }
-
-  edgesAt(node: SidewalkNodeId): readonly SidewalkEdgeId[] {
-    return this.adjacency.get(node) ?? [];
-  }
-
-  /** The far endpoint of `edge` when entered from `from`. */
-  other(edge: SidewalkEdge, from: SidewalkNodeId): SidewalkNodeId {
-    return edge.from === from ? edge.to : edge.from;
-  }
-
-  /**
-   * Path oriented so it starts at `from`. The reversed copy is built once per
-   * edge and kept; the hot loop reads the corridor instead.
-   */
-  orientedPath(edge: SidewalkEdge, from: SidewalkNodeId): Polyline {
-    if (edge.from === from) return edge.path;
-    let reversed = this.reversedPaths.get(edge.id);
-    if (!reversed) {
-      reversed = edge.path.reversed();
-      this.reversedPaths.set(edge.id, reversed);
-    }
-    return reversed;
-  }
+  /** `refreshBuildingAccess` in steps: none. Kept only while `sim/world.ts` still calls it. */
+  *refreshBuildingAccessSteps(_doc: RoadDoc): Generator<void, void, void> {}
 
   crossingEdge(id: CrossingId): SidewalkEdge | undefined {
     const eid = this.crossings.get(id);
     return eid ? this.edges.get(eid) : undefined;
   }
 
-  /** True when the two kerb nodes lie on opposite sides of their road. */
-  isOppositeSide(a: SidewalkNodeId, b: SidewalkNodeId): boolean {
-    const na = this.nodes.get(a);
-    const nb = this.nodes.get(b);
-    return !!na && !!nb && na.segment === nb.segment && na.side !== nb.side;
-  }
-
-  /**
-   * A corner's path, taken from the previous build when the footway it could
-   * have read has not moved.
-   *
-   * `cornerPath` casts a ray at every step of the sweep and asks the walkable
-   * surface about each one, hundreds to a thousand queries a corner; on the
-   * bench grid one build makes 382 111 of them, none repeating, and they were
-   * half of a road edit's cost. A corner reads the footway only within its own
-   * `reach` of the junction, and on that patch a road drawn elsewhere changes
-   * nothing — measured: after a street inside one block, 319 of 324 corners
-   * come out with the same patch and the same kerbs. Those are reused as they
-   * are, and `tests/sim/sidewalkCornerCache.spec.ts` holds the reuse to the
-   * points a build from nothing would make.
-   */
-  private cornerPoints(
-    nodeId: NodeId,
-    from: SidewalkNode,
-    to: SidewalkNode,
-    centre: Vec2,
-    walkable: WalkableSurface,
-    previous: Map<string, Vec2[]>,
-    next: Map<string, Vec2[]>,
-  ): Vec2[] {
-    // `cornerPath`'s own reach about the centre, plus the widest reach it asks
-    // the surface about around each point it places, plus a margin.
-    const reach = Math.max(hypot2(from.at.x - centre.x, from.at.y - centre.y),
-      hypot2(to.at.x - centre.x, to.at.y - centre.y)) * 1.6 + 12 + m(4) + 8;
-    const digest = walkable.digest(centre.x - reach, centre.y - reach, centre.x + reach, centre.y + reach);
-    // The centre is in the key as well as in the box it sets: the path is
-    // swept about it, so a node moved while its kerbs stay put (the two kerb
-    // points are in the key, the centre was not) has to miss.
-    const key = `${nodeId}|${from.id}|${to.id}|${centre.x},${centre.y}`
-      + `|${from.at.x},${from.at.y}|${to.at.x},${to.at.y}|${digest}`;
-    let points = previous.get(key) ?? next.get(key);
-    if (!points) points = cornerPath(walkable, from.at, to.at, centre);
-    next.set(key, points);
-    return points;
-  }
-}
-
-/**
- * A building's street-level door bays, worked out once per building record
- * (records are replaced, never changed, on an edit): every road edit worked
- * out the facades of every building in town again (docs/performance.md #11).
- */
-const DOOR_BAYS = new WeakMap<Building, readonly FacadeBay[]>();
-function doorBays(building: Building): readonly FacadeBay[] {
-  let bays = DOOR_BAYS.get(building);
-  if (!bays) {
-    bays = facadeBays(building).filter((bay) => bay.level === 0 && ACCESS_COMPONENTS.has(bay.component));
-    DOOR_BAYS.set(building, bays);
-  }
-  return bays;
-}
-
-/** The box of a footprint ring, kept with the ring (`accessLineClear`). */
-const RING_BOXES = new WeakMap<readonly Vec2[], { minX: number; minY: number; maxX: number; maxY: number }>();
-function ringBox(ring: readonly Vec2[]): { minX: number; minY: number; maxX: number; maxY: number } {
-  let box = RING_BOXES.get(ring);
-  if (!box) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of ring) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
-    box = { minX, minY, maxX, maxY };
-    RING_BOXES.set(ring, box);
-  }
-  return box;
-}
-
-/** A door link may cross open land, but never a carriageway or another mass. */
-function accessLineClear(a: Vec2, b: Vec2, walkable: WalkableSurface,
-  allFootprints: readonly (readonly Vec2[])[],
-  obstacles: readonly { x: number; y: number; radius: number }[]): boolean {
-  const length = dist(a, b);
-  const steps = Math.max(1, Math.ceil(length / m(0.4)));
-  const margin = m(0.4);
-  // Only the masses whose box the link's box meets: every point of every link
-  // was tested against every building in town, a fifth of each road edit.
-  const lx0 = Math.min(a.x, b.x), lx1 = Math.max(a.x, b.x), ly0 = Math.min(a.y, b.y), ly1 = Math.max(a.y, b.y);
-  const footprints = allFootprints.filter((ring) => {
-    const box = ringBox(ring);
-    return box.maxX >= lx0 && box.minX <= lx1 && box.maxY >= ly0 && box.minY <= ly1;
-  });
-  const near = obstacles.filter((item) => item.x >= Math.min(a.x, b.x) - item.radius - margin &&
-    item.x <= Math.max(a.x, b.x) + item.radius + margin &&
-    item.y >= Math.min(a.y, b.y) - item.radius - margin &&
-    item.y <= Math.max(a.y, b.y) + item.radius + margin);
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
-    if (walkable.carriageway(x, y) || footprints.some((ring) => pointInPolygon({ x, y }, ring)) ||
-      near.some((item) => hypot2(x - item.x, y - item.y) < item.radius + margin)) return false;
-  }
-  return true;
-}
-
-/**
- * What the occupancy index needs to know about a pedestrian.
- *
- * Structural rather than an import of `Ped`, so the graph stays a description
- * of the ground and never a dependency of agent state.
- */
-export interface EdgeOccupant {
-  readonly id: number;
-  readonly edge: SidewalkEdgeId;
-  readonly entry: SidewalkNodeId;
-  readonly s: number;
-}
-
-/**
- * Who is on each sidewalk edge, ordered along the edge.
- *
- * The model it replaces asked "who is ahead of me?" by scanning every
- * pedestrian in the world, once per pedestrian per tick. At the population
- * ceiling that is over two million comparisons a tick to answer fifteen
- * hundred questions whose answers were all within a metre or two.
- *
- * Ordering is by distance from the edge's `from` end, NOT by the walker's own
- * `s`: two people on one footway walking opposite ways measure `s` from
- * opposite ends, so their raw values are not comparable and sorting by them
- * interleaves nonsense. With one canonical axis, the person ahead and the
- * person coming the other way are both a short walk along the same array.
- *
- * Rebuilding is per tick and allocation-free after the first few: the arrays
- * are kept and truncated rather than replaced. The sort is an insertion sort,
- * which is quadratic in the occupants of ONE edge — bounded in practice
- * because the population is set by total road length (`PED_DENSITY`), so a
- * crowd large enough to matter comes with the edges to spread it over.
- */
-export class PedEdgeIndex {
-  private readonly ids = new Map<SidewalkEdgeId, number[]>();
-  private readonly keys = new Map<SidewalkEdgeId, number[]>();
-  private readonly slots = new Map<number, number>();
-  private readonly active: SidewalkEdgeId[] = [];
-  private static readonly EMPTY: readonly number[] = [];
-
-  reset(): void {
-    this.ids.clear();
-    this.keys.clear();
-    this.slots.clear();
-    this.active.length = 0;
-  }
-
-  rebuild(graph: SidewalkGraph, occupants: readonly EdgeOccupant[]): void {
-    for (const edge of this.active) {
-      const ids = this.ids.get(edge);
-      const keys = this.keys.get(edge);
-      if (ids) ids.length = 0;
-      if (keys) keys.length = 0;
-    }
-    this.active.length = 0;
-    this.slots.clear();
-
-    for (const o of occupants) {
-      const edge = graph.edges.get(o.edge);
-      if (!edge) continue;
-      let ids = this.ids.get(o.edge);
-      let keys = this.keys.get(o.edge);
-      if (!ids || !keys) {
-        ids = [];
-        keys = [];
-        this.ids.set(o.edge, ids);
-        this.keys.set(o.edge, keys);
-      }
-      if (!ids.length) this.active.push(o.edge);
-      ids.push(o.id);
-      keys.push(o.entry === edge.from ? o.s : edge.length - o.s);
-    }
-
-    for (const edge of this.active) {
-      const ids = this.ids.get(edge);
-      const keys = this.keys.get(edge);
-      if (!ids || !keys) continue;
-      for (let i = 1; i < ids.length; i++) {
-        const id = ids[i] as number;
-        const key = keys[i] as number;
-        let j = i - 1;
-        while (j >= 0 && (keys[j] as number) > key) {
-          keys[j + 1] = keys[j] as number;
-          ids[j + 1] = ids[j] as number;
-          j--;
-        }
-        keys[j + 1] = key;
-        ids[j + 1] = id;
-      }
-      for (let i = 0; i < ids.length; i++) this.slots.set(ids[i] as number, i);
-    }
-  }
-
-  /** Occupant ids of an edge, ordered from its `from` end. */
-  occupants(edge: SidewalkEdgeId): readonly number[] {
-    return this.ids.get(edge) ?? PedEdgeIndex.EMPTY;
-  }
-
-  /** Distance from the edge's `from` end, index-aligned with `occupants`. */
-  positions(edge: SidewalkEdgeId): readonly number[] {
-    return this.keys.get(edge) ?? PedEdgeIndex.EMPTY;
-  }
-
-  /** Index of an occupant within its own edge, or -1 when it is not indexed. */
-  slotOf(id: number): number {
-    return this.slots.get(id) ?? -1;
-  }
-
-  /** Distance to the nearest occupant of `edge` from a point on it. */
-  nearestTo(edge: SidewalkEdge, position: number): number {
-    const keys = this.keys.get(edge.id);
-    if (!keys || !keys.length) return Infinity;
-    let best = Infinity;
-    for (const key of keys) {
-      const d = Math.abs(key - position);
-      if (d < best) best = d;
-    }
-    return best;
+  private addEdge(edge: SidewalkEdge): void {
+    if (edge.length < COARSE_EPS) return;
+    this.edges.set(edge.id, edge);
   }
 }
 
@@ -967,12 +222,8 @@ export class PedEdgeIndex {
  * it from the SAME asphalt trim the junction mouth and the stop line use — so
  * the crossing always sits between the two, and vehicles halt behind waiting
  * pedestrians by construction.
- *
- * The V6 monolith drew its zebra at `junctionReach + 5.4` while walking
- * pedestrians at `junctionReach - 1.5`, about seven units apart, so pedestrians
- * never touched the painted crossing at all (defect 4.8).
  */
-export function kerbDistance(
+function kerbDistance(
   crossingDistance: number,
   segmentLength: number,
   mouthDistance = 0,
@@ -980,9 +231,8 @@ export function kerbDistance(
   // A zero crossing distance is the network's sentinel for "no crossing fits on
   // this approach", NOT a crossing standing at the node. Reading it as a
   // distance put the kerb at the 2-unit floor below — inside the junction
-  // surface — which is defect 4.1 arriving through the sentinel.
-  //
-  // With no crossing to stand beside, the kerb belongs at the junction mouth.
+  // surface. With no crossing to stand beside, the kerb belongs at the
+  // junction mouth.
   const from = crossingDistance > 0 ? crossingDistance : mouthDistance;
 
   // No second cap on the crossing itself. `Network.crosswalkDistanceAt` has
@@ -1000,12 +250,8 @@ export function kerbDistance(
  * trims — a narrow street meeting a boulevard on a short block — the corner
  * boundary sweeps between one leg's distant mouth and another's near one, and
  * can cover ground that is well past the SHORT leg's own mouth. A kerb placed
- * by distance would then still land on the carriageway.
- *
- * So the containment is tested rather than assumed, and the crossing steps
- * outward until it clears. The alternative — pushing every crossing out by the
- * junction's largest trim — would shove crossings absurdly far down narrow
- * legs for no benefit.
+ * by distance would then still land on the carriageway, so the containment is
+ * tested rather than assumed, and the crossing steps outward until it clears.
  */
 function clearOfJunction(
   net: Network,
@@ -1034,197 +280,5 @@ function clearOfJunction(
   return Math.min(s, cap);
 }
 
-/**
- * The path a corner takes round a junction, from kerb `a` to kerb `b`,
- * sweeping counter-clockwise about the junction's centre.
- *
- * Rays are cast from the centre at every step of the sweep, and each one
- * finds the stretches of footway it crosses; the path takes the middle of
- * the stretch nearest the radius it had on the ray before. So it follows the
- * footway band round whatever shape it has — a square outer corner, a rounded
- * kerb, the tip of a hairpin — continuously, from one kerb to the other.
- *
- * It used to be an arc about the centre at the kerbs' own radius, with a
- * bulge. The kerbs stand well back from the junction, at the crossings, so
- * that arc swung wide over the verge: 4.9 % of all pedestrian time on the
- * saved player map was spent on the grass beside a corner.
- */
-function cornerPath(walkable: WalkableSurface, a: Vec2, b: Vec2, centre: Vec2): Vec2[] {
-  const fromAngle = Math.atan2(a.y - centre.y, a.x - centre.x);
-  const toAngle = Math.atan2(b.y - centre.y, b.x - centre.x);
-  const sweep = ((toAngle - fromAngle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-  const fromRadius = dist(a, centre);
-  const toRadius = dist(b, centre);
-  const reach = Math.max(fromRadius, toRadius) * 1.6 + 12;
-  const count = Math.max(2, Math.ceil(sweep * reach / 0.75));
-  const span = { lo: 0, hi: 0 };
-  const points: Vec2[] = [a];
-  let prev = fromRadius;
-  for (let j = 1; j < count; j++) {
-    const t = j / count;
-    const angle = fromAngle + sweep * t;
-    const dx = Math.cos(angle), dy = Math.sin(angle);
-    // Where this ray would be if nothing were drawn: between the kerbs' radii.
-    const guess = fromRadius + (toRadius - fromRadius) * t;
-    let best = NaN;
-    let bestCost = Infinity;
-    const scan = (from: number, to: number): void => {
-      for (let r = from; r <= to; r += 0.5) {
-        const x = centre.x + dx * r, y = centre.y + dy * r;
-        // A ray almost parallel to a footway may stay inside it for a long
-        // stretch. Sample each stretch once, at its midpoint.
-        if (!walkable.footwaySpan(x, y, dx, dy, 3, span)) continue;
-        const mid = r + (span.lo + span.hi) / 2;
-        const cost = Math.abs(mid - prev) + 0.25 * Math.abs(mid - guess);
-        if (cost < bestCost) { bestCost = cost; best = mid; }
-        r += Math.max(0, span.hi);
-      }
-    };
-    // Adjacent rays are less than a unit apart. Search near the previous
-    // answer and the interpolated kerb radius first; use the full ray only
-    // when a corner has no paving there. This avoids testing empty ground
-    // from the junction centre outward at every one of hundreds of stations.
-    const band = m(4);
-    scan(Math.max(0.25, Math.min(prev, guess) - band),
-      Math.min(reach, Math.max(prev, guess) + band));
-    if (Number.isNaN(best)) scan(0.25, reach);
-    const radius = Number.isNaN(best) ? guess : best;
-    prev = radius;
-    points.push({ x: centre.x + dx * radius, y: centre.y + dy * radius });
-  }
-  points.push(b);
-  // Then across the path: each point to the middle of the footway there.
-  const laid = points.map((p, k) => {
-    if (k === 0 || k === points.length - 1) return p;
-    const before = points[Math.max(0, k - 2)]!, after = points[Math.min(points.length - 1, k + 2)]!;
-    const tx = after.x - before.x, ty = after.y - before.y;
-    const l = hypot2(tx, ty);
-    if (l < 1e-9) return p;
-    const nx = -ty / l, ny = tx / l;
-    for (let step = 0; step <= 10; step++) {
-      for (const side of step === 0 ? [0] : [1, -1]) {
-        const o = side * step * 0.25;
-        if (!walkable.footwaySpan(p.x + nx * o, p.y + ny * o, nx, ny, m(4), span)) continue;
-        const mid = o + (span.lo + span.hi) / 2;
-        return { x: p.x + nx * mid, y: p.y + ny * mid };
-      }
-    }
-    return p;
-  });
-  points.splice(0, points.length, ...laid);
-  // Two passes of a three-point average: the footway's own outline is a
-  // polygon, and its middle steps at every vertex of it.
-  for (let pass = 0; pass < 2; pass++) {
-    const copy = points.map((p) => ({ ...p }));
-    for (let k = 1; k < points.length - 1; k++) {
-      points[k] = {
-        x: (copy[k - 1]!.x + 2 * copy[k]!.x + copy[k + 1]!.x) / 4,
-        y: (copy[k - 1]!.y + 2 * copy[k]!.y + copy[k + 1]!.y) / 4,
-      };
-    }
-  }
-  return simplifyCorner(dedupeClose(points), walkable);
-}
-
-/**
- * Removes the footway polygon's short zigzags without cutting across grass.
- * A kink only a few tenths of a unit wide used to turn the offset corridor's
- * normal by almost a third of a radian over 10 cm. A walker at the outer wall
- * then had to brake to a crawl despite having open pavement ahead.
- */
-function simplifyCorner(points: readonly Vec2[], walkable: WalkableSurface): Vec2[] {
-  if (points.length <= 2) return [...points];
-  const keep = new Uint8Array(points.length);
-  keep[0] = 1;
-  keep[points.length - 1] = 1;
-  const pending: [number, number][] = [[0, points.length - 1]];
-  const tolerance = m(0.24);
-  const maxChord = m(4);
-  while (pending.length) {
-    const [from, to] = pending.pop()!;
-    if (to - from <= 1) continue;
-    const a = points[from]!, b = points[to]!;
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const length = hypot2(dx, dy);
-    let split = -1, deviation = 0;
-    for (let i = from + 1; i < to; i++) {
-      const p = points[i]!;
-      const t = length > 1e-9 ? Math.max(0, Math.min(1,
-        ((p.x - a.x) * dx + (p.y - a.y) * dy) / (length * length))) : 0;
-      const away = hypot2(p.x - a.x - dx * t, p.y - a.y - dy * t);
-      if (away > deviation) { deviation = away; split = i; }
-    }
-    if (length > maxChord || deviation > tolerance || !chordOnFootway(a, b, walkable)) {
-      // Split at the largest geometric error when there is one; a long but
-      // almost straight run is divided in the middle to bound rebuild work.
-      if (split < 0 || deviation <= tolerance) split = (from + to) >> 1;
-      keep[split] = 1;
-      pending.push([from, split], [split, to]);
-    }
-  }
-  const out = points.filter((_, index) => keep[index] === 1);
-  // The radial sweep can briefly double back near a kerb. Remove the spur
-  // when its direct chord remains on the drawn footway.
-  for (let i = 1; i < out.length - 1; i++) {
-    const a = out[i - 1]!, b = out[i]!, c = out[i + 1]!;
-    const ax = b.x - a.x, ay = b.y - a.y;
-    const bx = c.x - b.x, by = c.y - b.y;
-    const first = hypot2(ax, ay), second = hypot2(bx, by);
-    if (first < 1e-9 || second < 1e-9 ||
-      (ax * bx + ay * by) / (first * second) >= -0.5 ||
-      !chordOnFootway(a, c, walkable)) continue;
-    out.splice(i, 1);
-    i = Math.max(0, i - 2);
-  }
-  return dedupeClose(out);
-}
-
-function chordOnFootway(a: Vec2, b: Vec2, walkable: WalkableSurface): boolean {
-  const length = dist(a, b);
-  const count = Math.max(1, Math.ceil(length / m(0.25)));
-  for (let i = 1; i < count; i++) {
-    const t = i / count;
-    if (!walkable.footway(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return false;
-  }
-  return true;
-}
-
-function dedupeClose(points: readonly Vec2[]): Vec2[] {
-  const out: Vec2[] = [];
-  // The radial footway samples can briefly step backwards by a few
-  // centimetres at a polygon seam. A tiny reversed segment flips the
-  // corridor's normal, moving an offset walker across the path in one tick
-  // and leaving them unable to advance through that apparent wall.
-  const minStep = m(0.1);
-  for (const p of points) if (!out.length || dist(out[out.length - 1]!, p) > minStep) out.push(p);
-  // Keep the kerb endpoint even when it falls within the final sample's
-  // spacing; every adjoining edge uses that exact graph node.
-  const end = points[points.length - 1]!;
-  if (out.length > 1 && dist(out[out.length - 1]!, end) > 1e-9) {
-    if (dist(out[out.length - 1]!, end) <= minStep) out[out.length - 1] = end;
-    else out.push(end);
-  }
-  // A short outward spike can survive spacing alone and make the tangent
-  // reverse at the kerb. Remove its turning vertex before the corridor is
-  // built; otherwise the normal flips and a lateral offset jumps across it.
-  for (let i = 1; i < out.length - 1; i++) {
-    const a = out[i - 1]!, b = out[i]!, c = out[i + 1]!;
-    const ax = b.x - a.x, ay = b.y - a.y;
-    const bx = c.x - b.x, by = c.y - b.y;
-    const first = hypot2(ax, ay), second = hypot2(bx, by);
-    if (Math.min(first, second) > m(0.5) || ax * bx + ay * by >= -0.5 * first * second) continue;
-    out.splice(i, 1);
-    i = Math.max(0, i - 2);
-  }
-  if (out.length === 1) out.push({ x: out[0]!.x + 0.1, y: out[0]!.y });
-  return out;
-}
-
-export const kerbId = (node: NodeId, segment: SegmentId, side: Side): SidewalkNodeId =>
+const kerbId = (node: NodeId, segment: SegmentId, side: Side): SidewalkNodeId =>
   `${node}:${segment}:${side}`;
-
-function pushAdj(map: Map<string, string[]>, key: string, value: string): void {
-  const list = map.get(key);
-  if (list) list.push(value);
-  else map.set(key, [value]);
-}

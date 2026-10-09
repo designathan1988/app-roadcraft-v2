@@ -16,7 +16,8 @@ import { levelPolygons } from '@world/surfaces';
 import { pointInPolygon } from '@core/polygon';
 import type { MultiPoly } from '@core/clipper';
 import type { Vec2 } from '@core/vec2';
-import { pedPoseOf } from './support/bodies';
+import { pedPose } from '@sim/pose';
+import { createAgentWalkEngine } from '@sim/agents/walk';
 
 /**
  * NOBODY DRIVES ON THE PAVEMENT.
@@ -234,34 +235,42 @@ describe('the kerb', () => {
 
   it('keeps pedestrians off the carriageway except where they may cross', () => {
     // The mirror of the same rule. A pedestrian on the asphalt is either on a
-    // crossing or is a defect, and `crossingFsm` is what decides which — so
-    // this asserts only that one who is NOT crossing stays off it.
+    // crossing or is a defect, so this asserts only that one walking along a
+    // footway stays off it. The people are the game's: the agents' walking
+    // engine with the scenery's life coming in at the road ends (`main.ts`,
+    // `support/bodies.ts` `simOf`), read through the views it publishes.
     const sim = city();
+    sim.usePedestrianEngine(createAgentWalkEngine());
+    sim.ambient.enabled = true;
+    sim.ambient.source = 'edges';
+    sim.pedestrianCount = 100;
     const asphalt = levelPolygons(sim.net, Level.Asphalt);
 
     let offences = 0;
+    let walked = 0;
     let detail = '';
 
     sim.clock.run(Math.round(200 / DT), () => {
       step(sim, { traffic: true, pedestrians: true });
 
-      for (const ped of sim.pedsInIdOrder()) {
-        // Only somebody walking along a footway. Crossing, approaching a kerb
-        // and clearing one are all states in which being on the asphalt is
-        // the correct thing to be doing.
-        if (ped.state !== 'Walking') continue;
-        const pose = pedPoseOf(sim, ped);
-        if (!pose) continue;
+      for (const view of sim.pedViews) {
+        // Only somebody under way along a footway. Crossing, and the open
+        // ground off the road network, are other grounds.
+        if (!view.walking || view.ground !== 'footway') continue;
+        walked++;
+        const pose = pedPose(view, 1);
         if (!onSurface(asphalt, pose.p)) continue;
         offences++;
         if (!detail) {
           detail =
-            `pedestrian ${ped.id} walked onto the carriageway at ` +
+            `pedestrian ${view.id} walked onto the carriageway at ` +
             `${pose.p.x.toFixed(1)},${pose.p.y.toFixed(1)}`;
         }
       }
     });
 
+    // Somebody walked, or the rule was never put to the test.
+    expect(walked).toBeGreaterThan(0);
     expect(offences, detail).toBe(0);
   });
 });

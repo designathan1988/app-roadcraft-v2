@@ -6,9 +6,8 @@ import type { NodeId } from '@world/ids';
 import { Network } from '@world/network';
 import { SimWorld } from '@sim/world';
 import { createAgentWalkEngine } from '@sim/agents/walk';
-import { pedPose, vehiclePose, type Pose } from '@sim/pose';
+import { vehiclePose } from '@sim/pose';
 import type { Vehicle } from '@sim/vehicles/state';
-import type { Ped } from '@sim/peds/state';
 import type { Vec2 } from '@core/vec2';
 
 /**
@@ -52,13 +51,6 @@ export function bodyOf(w: SimWorld, v: Vehicle): Body | null {
 }
 
 /** Separating-axis test between two oriented rectangles. */
-/** Where the renderer would draw this person at the end of the last tick, or null if it draws them nowhere. */
-export function pedPoseOf(w: SimWorld, p: Ped): Pose | null {
-  if (!w.sidewalks.edges.has(p.edge)) return null;
-  const view = w.pedViewById.get(p.id);
-  return view ? pedPose(view, 1) : null;
-}
-
 export function bodiesOverlap(a: Body, b: Body): boolean {
   const dx = b.c.x - a.c.x;
   const dy = b.c.y - a.c.y;

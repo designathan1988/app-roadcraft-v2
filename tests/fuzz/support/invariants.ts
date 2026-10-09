@@ -30,7 +30,7 @@ export type WorldCategory =
   | 'trimOrder'
   | 'deadLanelet'
   | 'turnOffSurface'
-  | 'sidewalkSplit';
+  | 'crossingMismatch';
 
 export interface Defect {
   readonly category: string;
@@ -252,20 +252,20 @@ export function checkWorld(doc: RoadDoc, net: Network): Defect[] {
     }
   }
 
-  // ---- the footway graph holds together at every junction -----------------
+  // ---- a zebra the vehicles can read wherever one is painted --------------
   const sidewalks = new SidewalkGraph();
   sidewalks.build(doc, net, graph);
   for (const [nodeId, node] of doc.nodes) {
     if (node.incident.length < 2) continue;
     // Limited-access shoulders are not public footways. A junction containing
-    // one is intentionally absent from the pedestrian graph, so connectivity
-    // across that road is not a sidewalk invariant.
+    // one is intentionally absent from the pedestrian graph, so its crossings
+    // are not a sidewalk invariant.
     if (node.incident.some((id) => {
       const segment = doc.segment(id);
       return segment && !carriesPedestrians(roadProfile(segment.type, segment.lanes, segment.direction));
     })) continue;
-    const split = footwaySplit(sidewalks, net, nodeId);
-    if (split) out.push(defect('sidewalkSplit', `node ${nodeId}`, split));
+    const mismatch = crossingMismatch(sidewalks, net, nodeId);
+    if (mismatch) out.push(defect('crossingMismatch', `node ${nodeId}`, mismatch));
   }
 
   return out;
@@ -317,17 +317,21 @@ function worstOffSurface(
   return worst;
 }
 
-/** Every kerb must connect to its neighbouring footway, and only to a painted crossing. */
-function footwaySplit(graph: SidewalkGraph, net: Network, node: NodeId): string | null {
+/**
+ * Every kerb of a leg with a painted zebra is one end of exactly one crossing
+ * the vehicles read, and a kerb of a leg with none is the end of no crossing.
+ */
+function crossingMismatch(graph: SidewalkGraph, net: Network, node: NodeId): string | null {
+  const ends = new Map<string, number>();
+  for (const edge of graph.edges.values()) {
+    if (edge.kind !== 'crossing' || edge.node !== node) continue;
+    for (const kerb of [edge.from, edge.to]) ends.set(kerb, (ends.get(kerb) ?? 0) + 1);
+  }
   for (const kerb of graph.nodes.values()) {
     if (kerb.node !== node) continue;
-    const edges = graph.edgesAt(kerb.id).map((id) => graph.edges.get(id));
-    const corners = edges.filter((edge) => edge?.kind === 'corner');
-    const crossings = edges.filter((edge) => edge?.kind === 'crossing');
+    const crossings = ends.get(kerb.id) ?? 0;
     const painted = net.crosswalkDistanceAt(kerb.segment, node) > 0;
-    if (corners.length !== 1 || crossings.length !== Number(painted)) {
-      return `${kerb.id}: ${corners.length} corner links, ${crossings.length} crossings, painted=${painted}`;
-    }
+    if (crossings !== Number(painted)) return `${kerb.id}: ${crossings} crossings, painted=${painted}`;
   }
   return null;
 }
