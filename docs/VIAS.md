@@ -336,8 +336,18 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   nada as recria. Vias já construídas não mudam. NBR 9050 6.12.3: a peça só vai se deixar 1,20 m livres ao lado (na
   calçada de 2 m vão postes e hidrantes; lixeiras e bancos, não). O poste acende à noite pelo sistema de luzes existente.
 - Detector: `tests/world/roadFurniture.spec.ts` (faixa livre, sem sobreposição, determinismo, conjuntos).
-- Falta: colocação em linha (arrastar), placa = regra (pôr uma placa de Pare muda a regra da perna), rede elétrica sobre
-  `planPoleRun`, registro no catálogo da 5f (ainda não existe no master).
+- Segunda fatia: canteiro arborizado (`landscape.ts` `medianAt`/`plantedMedian`: canteiro de 1,5 m ou mais, com meio-fio, de
+  grama) recebe as árvores do conjunto Completo na linha do centro, e as calçadas ficam sem árvore; o paisagismo também planta
+  árvore e arbusto no canteiro (`streetFurniture` com `on: 'median'`, ninguém anda ali). Colocação em linha: com o
+  paisagismo, clicar e arrastar ao longo da calçada põe uma fileira no espaçamento do tipo (poste 30 m, árvore 10 m,
+  banco 20 m...), anéis de prévia, um desfazer. Placa = regra: uma placa de Pare ou Dê a preferência posta na aproximação de
+  um cruzamento muda a regra daquela perna (controle "Placas"), e a placa desenhada é a da regra (`signApproach`).
+- Defeitos das fotos corrigidos: a linha branca sobre o canteiro era o destaque da via sob o ponteiro da ferramenta
+  Informação, uma linha de 2 px no eixo; agora é uma faixa translúcida da largura da pista. "Nenhum" estourava a borda
+  das opções: botões dessa linha mais justos (cabe com 16 px de folga em 1280x720).
+- Detectores: `tests/world/roadFurniture.spec.ts` (árvores no canteiro e desenhadas lá), `tests/editor/signRule.spec.ts`
+  (placa = regra, fileira a cada 30 m).
+- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f, arborização e praças na cidade gerada.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

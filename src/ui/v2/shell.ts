@@ -954,7 +954,7 @@ export function mountShell(deps: ShellDeps): void {
       options.appendChild(orow(t('cutSides.row'), cutRow));
       // The furniture the new road is built with (docs/VIAS.md V7).
       const furnitureNow = furnitureChosen();
-      const furnitureRow = el('div', 'v2-seg');
+      const furnitureRow = el('div', 'v2-seg rp-seg-tight');
       for (const set of FURNITURE_SETS) {
         const b = button(`v2-seg-b rp-seg-text${furnitureNow === set ? ' on' : ''}`, t(`roadFurniture.${set}`), () => { setFurnitureChosen(set); render(); });
         b.setAttribute('aria-pressed', String(furnitureNow === set));

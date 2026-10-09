@@ -2,7 +2,7 @@ import type { Vec2 } from '@core/vec2';
 import type { Network } from './network';
 import type { SegmentId } from './ids';
 import { m } from './units';
-import { LANDSCAPE_RADIUS, type LandscapeKind, crossingAccesses, footwayAt, onCrossingAccess } from './landscape';
+import { LANDSCAPE_RADIUS, type LandscapeKind, crossingAccesses, footwayAt, medianAt, onCrossingAccess } from './landscape';
 
 export { TREE_PIT } from './section';
 
@@ -41,8 +41,8 @@ export interface FurnitureItem {
   readonly along: Vec2;
   /** Unit normal pointing AWAY from the carriageway, towards the buildings. */
   readonly outward: Vec2;
-  /** The surface the item stands on; the renderer adds the footway's rise. */
-  readonly on: 'footway';
+  /** The surface the item stands on; the renderer adds the kerb's rise (a kerbed median stands as high as a footway). */
+  readonly on: 'footway' | 'median';
   /** Plan footprint, for anything that must walk around it. */
   readonly radius: number;
   /** Set for a long thing (a bench): its half extent along `along`. */
@@ -97,7 +97,16 @@ export function streetFurniture(net: Network): FurnitureItem[] {
     const kind = FURNITURE_OF[placed.kind];
     if (!kind) continue;
     const hit = footwayAt(net, placed, STAND_REACH);
-    if (!hit) continue;
+    if (!hit) {
+      // A tree or shrub in a planted median (docs/VIAS.md V7): nobody walks there.
+      const median = kind === 'streetTree' || kind === 'shrub' ? medianAt(net, placed, m(0.3)) : null;
+      if (median) {
+        items.push({ kind, x: placed.x, y: placed.y, segment: median.segment, along: median.frame.t, outward: median.frame.n,
+          on: 'median', radius: LANDSCAPE_RADIUS[placed.kind], seed: hash01(placed.id, 0x5eed),
+          ...(placed.planted !== undefined ? { planted: placed.planted } : {}) });
+      }
+      continue;
+    }
     const outward = { x: hit.frame.n.x * hit.side, y: hit.frame.n.y * hit.side };
     const base = {
       kind,

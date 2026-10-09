@@ -1,6 +1,7 @@
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '../ids';
-import { type LandscapeItem, type LandscapeKind, snapLandscape } from '../landscape';
+import { type LandscapeItem, type LandscapeKind, plantedMedian, snapLandscape } from '../landscape';
+import { travelShift } from '../roadTypes';
 import type { Network } from '../network';
 import { carriesPedestrians } from '../pedestrianAccess';
 import type { RoadSide } from '../roadTypes';
@@ -87,6 +88,19 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
     const section = sectionOf(ribbon.road, segment.direction);
     const startS = net.mouthDistance(id, segment.a);
     const endS = line.length - net.mouthDistance(id, segment.b);
+    // A planted median takes the street's trees (a boulevard's row down the
+    // middle); the footways then keep theirs clear for the walkers.
+    const medianTrees = set === 'complete' && segment.direction === 'both' && plantedMedian(ribbon.road);
+    if (medianTrees) {
+      const shift = travelShift(ribbon.road);
+      for (let s = startS + m(8); s <= endS - m(6); s += m(10)) {
+        const f = line.sampleAt(s);
+        const snap = snapLandscape(net, items, 'tree', { x: f.p.x + f.n.x * shift, y: f.p.y + f.n.y * shift }, m(0.6));
+        if (!snap.ok || !snap.median || snap.median.segment !== id) continue;
+        out.push({ kind: 'tree', at: snap.at });
+        items.push({ id: nextId--, kind: 'tree', x: snap.at.x, y: snap.at.y });
+      }
+    }
     for (const side of ['right', 'left'] as const satisfies readonly RoadSide[]) {
       const zones = zonesOn(section, side);
       // The footway from the kerb face to its outer edge.
@@ -98,6 +112,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
       const stagger = side === 'left' ? m(15) : 0;
       for (const pattern of SETS[set]) {
         if (pattern.rightOnly && side !== 'right') continue;
+        if (pattern.kind === 'tree' && medianTrees) continue;
         // NBR 9050: the piece leaves a clear walk of 1,20 m beside it, or it is not put.
         if (footway - (DEPTH_OF[pattern.kind] ?? BENCH_ZONE) < NBR9050_CLEAR_WALK - 1e-6) continue;
         for (let s = startS + pattern.first + (pattern.kind === 'lamp' ? stagger : 0); s <= endS - m(4); s += pattern.every) {
