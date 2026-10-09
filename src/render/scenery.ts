@@ -240,6 +240,32 @@ function plantMeshes(prefix: string, trees: Map<TreeSpecies, Placement[]>, bushe
   }
 }
 
+/**
+ * One of every plant as the gardens draw them, with and without a tint of
+ * their own (an instance colour is a program variant), and each as its shadow
+ * pass draws it (its depth material), for compiling their programs ahead
+ * (three's `compileAsync`: objects to be added later are precompiled before
+ * they are drawn). The first lots painted grew gardens whose programs were
+ * built in that frame: some 600 ms on the first stroke of the zone brush.
+ */
+export function plantSamples(kit: SceneryKit): { readonly group: Group; readonly depth: Group; dispose(): void } {
+  const meshes: InstancedMesh[] = [];
+  for (const tint of [undefined, new Color(1, 1, 1)]) {
+    const one: Placement[] = [{ x: 0, y: 0, z: 0, yaw: 0, sx: 1, sy: 1, sz: 1, ...(tint ? { tint } : {}) }];
+    plantMeshes('sample-', new Map(TREE_SPECIES.map((s) => [s, one])), new Map(BUSH_KINDS.map((k) => [k, one])), kit, meshes, []);
+  }
+  const group = new Group(), depth = new Group();
+  for (const mesh of meshes) {
+    group.add(mesh);
+    if (!mesh.customDepthMaterial) continue;
+    const shadow = new InstancedMesh(mesh.geometry, mesh.customDepthMaterial, 1);
+    shadow.instanceMatrix.copy(mesh.instanceMatrix);
+    if (mesh.instanceColor) shadow.instanceColor = mesh.instanceColor;
+    depth.add(shadow);
+  }
+  return { group, depth, dispose() { for (const mesh of meshes) mesh.dispose(); } };
+}
+
 export interface Scenery {
   readonly meshes: readonly InstancedMesh[];
   /** Grass tufts and wildflowers, shown only at close zoom. */

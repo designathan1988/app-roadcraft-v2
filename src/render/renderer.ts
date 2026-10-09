@@ -56,7 +56,7 @@ import { createInspector, type Inspector } from './inspector';
 import { buildRoadSurfaces, disposeSurfaceReuse, roadSurfaceSteps, storedKey, type RoadSurfaces, type SurfaceReuse, type TileBundle } from './roadSurfaces';
 import { forgetDerivedKeys, forgetOtherDerived, readDerivedAll, writeDerivedMany } from './derivedCache';
 import { disposeMesh } from './mesh/surfaceMesh';
-import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
+import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStreetFurniture, createSceneryKit, plantSamples, type GardenPlant, type Scenery, type SceneryKit } from './scenery';
 import { buildingBounds, localToWorld, solidFootprints } from '@world/buildings/geometry';
 import { followPieces } from '@world/buildings/elements';
 import { RoadDoc } from '@world/doc';
@@ -1724,7 +1724,19 @@ export function createSceneRenderer(
         const ghost = buildBuildingMeshes([sample], () => 0, buildings.kit, true);
         group.add(ghost.group);
         done.push(() => ghost.dispose());
+        // And as a building grown on a lot draws it: its window panes carry
+        // their rooms' light slots (an attribute of their own), a program
+        // the preview never builds - compiled in the frame of the first
+        // building grown on a painted lot.
+        const real = buildBuildingMeshes([sample], () => 0, buildings.kit, false);
+        group.add(real.group);
+        done.push(() => real.dispose());
       }
+      // The gardens' plants and their shadows, the first lots painted grow them.
+      const plants = plantSamples(sceneryKit);
+      group.add(plants.group);
+      void compileAhead(plants.depth, true);
+      done.push(() => plants.dispose());
       for (const mode of ['train', 'metro'] as const) {
         const track = buildTrackPreview([{ x: 0, y: 0 }, { x: m(60), y: 0 }], mode, () => 0);
         group.add(track.group);
