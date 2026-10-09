@@ -183,6 +183,8 @@ export interface SceneHandle {
   effects(): Promise<void>;
   /** The world of the last edit is still being built (`worldSteps`); the old one is drawn meanwhile. */
   readonly worldBusy: boolean;
+  /** The opening's town is still being put together, nothing of it shown yet (`opened` in `draw`). */
+  readonly opening: boolean;
   readonly backend: 'three-webgl';
   readonly viewport: Viewport;
   readonly scene: Scene;
@@ -2171,6 +2173,9 @@ export function createSceneRenderer(
     },
     get worldBusy() {
       return worldJob !== null;
+    },
+    get opening() {
+      return !opened;
     },
     offerElevation(solved, revision) {
       offeredElevation = { elevation: solved, revision, terrain: terrainRevision };

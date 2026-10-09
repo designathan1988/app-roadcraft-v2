@@ -595,9 +595,10 @@ function savedQualityLevel(): QualityLevel {
 // never lowers them on its own.
 primeSurfaceBake(await surfaceBake);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
-// The renderer starts its asynchronous shader preparation while topology and
-// pedestrian navigation still build. Both finish before the first game frame.
-sim.rebuildTopology();
+// The traffic's topology is not built here: it is built a slice a frame while
+// the opening puts the town together (`TopologyCatchUp`, its frames not yet
+// shown), the traffic held until it is in. Built here, its conflict zones
+// held the first frame 423 ms.
 // The people walk with the agents' engine (`sim/agents/walk.ts`), on lanes of
 // the footways - the only pedestrian engine the game has (the People, Detour
 // crowd and sidewalk-graph engines were taken out, the player's decision of
@@ -3192,8 +3193,9 @@ function frame(now: number): void {
   // A generated city being built (`generateCity`).
   growCity();
   // The traffic's topology catching up with an edit, a slice a frame, the
-  // simulation held until it has (`TopologyCatchUp`).
-  if (!holdSim && topology.step(sim, net.trafficRevision, scene.worldBusy)) {
+  // simulation held until it has (`TopologyCatchUp`); with a load's time
+  // while the opening's town is put together, nothing of it shown yet.
+  if ((!holdSim || scene.opening) && topology.step(sim, net.trafficRevision, scene.worldBusy, scene.opening)) {
     holdSim = true;
     requestDraw();
   }

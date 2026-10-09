@@ -2753,7 +2753,16 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     return false;
   };
 
+  // Cloned without the userData: `Material.copy` copies it through
+  // JSON.stringify (three r186), and the land's textures and fields kept
+  // there were serialised image by image - 283 ms of the opening for a copy
+  // nothing reads. The verge reads the land's own (its uniforms come from
+  // `material.onBeforeCompile`), so both share the one object.
+  const landData = material.userData;
+  material.userData = {};
   const vergeMaterial = material.clone();
+  material.userData = landData;
+  vergeMaterial.userData = landData;
   vergeMaterial.onBeforeCompile = (shader, renderer) => {
     material.onBeforeCompile(shader, renderer);
     shader.fragmentShader = shader.fragmentShader.replace(

@@ -87,6 +87,16 @@ export class Periodic {
 
 /** Milliseconds a frame spends bringing the traffic's topology up to date. */
 const TOPOLOGY_SLICE_MS = 6;
+/**
+ * The same while the town is being opened, its frames not yet shown: a load
+ * has its own time each frame (Unity's background loading priority), not what
+ * an edit may take - and since none of these frames is seen, a long one costs
+ * nothing a short one would not, while every extra frame pays its own drawing
+ * again. Built in one go before the first frame, the conflict zones alone
+ * held the opening 423 ms; at 25 ms a frame, on a GPU drawing the loading
+ * town in 350 ms frames, the traffic stood still for 7 s after it appeared.
+ */
+const LOADING_SLICE_MS = 120;
 
 /**
  * The traffic's topology brought up to an edit's road plan, a few
@@ -104,22 +114,25 @@ export class TopologyCatchUp {
   /**
    * One frame's share of the work towards `revision` (the network's
    * `trafficRevision`). True when the simulation must stay still this frame;
-   * `worldBusy`: the road itself is still being built, and goes first.
+   * `worldBusy`: the road itself is still being built, and goes first;
+   * `loading`: the town is being opened (`LOADING_SLICE_MS`).
    */
-  step(sim: SimWorld, revision: number, worldBusy: boolean): boolean {
+  step(sim: SimWorld, revision: number, worldBusy: boolean, loading = false): boolean {
+    const slice = (): number => (loading ? performance.now() + LOADING_SLICE_MS : workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1);
     if (sim.topologyRevision === revision) {
       if (!this.pedsToRebind) return false;
       this.pedsToRebind = false;
       rebindPeds(sim);
       return false;
     }
-    // The road being built first: the frame's allowance goes to it.
-    if (worldBusy) return true;
+    // The road of an edit being built first: the frame's allowance goes to
+    // it. A load has its own time, and works alongside.
+    if (worldBusy && !loading) return true;
     if (sim.vehicleTopologyRevision !== revision) {
       if (!this.vehicles || this.vehicles.revision !== revision) {
         this.vehicles = { revision, steps: sim.prepareVehicleTopology() };
       }
-      const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
+      const until = slice();
       let prep = this.vehicles.steps.next();
       while (!prep.done && performance.now() < until) prep = this.vehicles.steps.next();
       if (prep.done) {
@@ -132,7 +145,7 @@ export class TopologyCatchUp {
     if (!this.walks || this.walks.revision !== revision) {
       this.walks = { revision, steps: sim.walkTopologySteps() };
     }
-    const until = workUntil(TOPOLOGY_SLICE_MS) || performance.now() + 1;
+    const until = slice();
     let step = this.walks.steps.next();
     while (!step.done && performance.now() < until) step = this.walks.steps.next();
     if (step.done) {
