@@ -30,9 +30,9 @@ import { BARRIER_KINDS, type BarrierKind } from '@world/barriers';
 import { BarrierTool } from '@editor/barriers';
 import {
   POLE_PICK_PIXELS,
+  PoleTool,
   commitPoleRun,
   planPoleRun,
-  snapPole,
   type PoleRunPlan,
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
@@ -139,24 +139,6 @@ interface CurvePending {
   end: Anchor;
   endHeightOffset: number;
   control: Vec2;
-}
-
-/**
- * A pole run being drawn.
- *
- * `from` is where the gesture started and `to` is the pointer. Neither is
- * where anything is BUILT: `planPoleRun` snaps both and decides the poles,
- * and the preview draws that plan rather than the raw drag, so what is under
- * the pointer is what appears on release.
- *
- * `chained` marks a run whose start came from the previous run's last pole
- * rather than from a fresh press, which is how a line is traced across a map
- * in several straight stretches without restarting the tool at every corner.
- */
-interface PoleDraft {
-  readonly from: Vec2;
-  to: Vec2;
-  readonly chained: boolean;
 }
 
 // The interface language is resolved and applied BEFORE anything reads a label,
@@ -449,20 +431,20 @@ let roadChainHeight = 0;
 let chainPreview: RoadDraft | null = null;
 let curvePending: CurvePending | null = null;
 let roadPointerScreen: Vec2 | null = null;
-let poleDraft: PoleDraft | null = null;
-/**
- * The end of the last committed pole run, while the tool is still on it.
- *
- * A distribution line is drawn as a sequence of straight stretches, and
- * finishing one is almost never finishing the line. Holding the last pole
- * means the next press continues from it instead of starting a disconnected
- * run a few units away. Escape, a different tool or an undo drops it.
- */
-let poleChain: Vec2 | null = null;
-/** The pole run planned for this frame (`currentPolePlan`), shared by the 3D preview and the overlay. */
+/** The pole tool (`editor/poles.ts`): the stretch being dragged and the line's last pole. */
+const poleTool = new PoleTool({
+  doc,
+  net,
+  zoom: () => view.zoom,
+  mode: () => poleToolMode(),
+  lamps: () => poleLampMode(),
+  inHand: () => game.tool === 'pole',
+  mutate: (fn) => mutateBuilt(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
+/** The pole run planned for this frame (`PoleTool.plan`), shared by the 3D preview and the overlay. */
 let framePolePlan: PoleRunPlan | null = null;
-/** The pointer over the map while the pole tool is in hand, unsnapped. */
-let poleHover: Vec2 | null = null;
 /** Where the landscaping tool would put its item, under the pointer. */
 let streetscapeHover: LandscapeSnap | null = null;
 /** Pick radius for a placed item and the reach of the footway snap, world units. */
@@ -1017,8 +999,7 @@ function cancelGestures(): void {
   roadChain = null;
   chainPreview = null;
   curvePending = null;
-  poleDraft = null;
-  poleChain = null;
+  poleTool.cancel();
   barrierTool.cancel();
   // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
   lotTool.cancel();
@@ -1049,7 +1030,8 @@ function currentGesture(): string | null {
   if (roadChain) return 'via: encadeando';
   if (settlingRoad) return 'via: assentando';
   if (terrainStroke) return 'terreno: pincelando';
-  if (poleDraft || poleChain) return 'poste: traçando a linha';
+  const pole = poleTool.gesture();
+  if (pole) return pole;
   const barrier = barrierTool.gesture();
   if (barrier) return barrier;
   if (bulldozeBox) return 'demolir: retângulo';
@@ -1295,8 +1277,7 @@ function bulldozeBoxed(a: Vec2, b: Vec2): void {
 
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
-  return draft !== null || roadChain !== null || curvePending !== null || poleDraft !== null ||
-    poleChain !== null || terrainStroke !== null || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
+  return draft !== null || roadChain !== null || curvePending !== null || poleTool.inProgress() || terrainStroke !== null || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
 }
 
 /**
@@ -1857,37 +1838,9 @@ canvas.addEventListener('pointerdown', (e) => {
     }
 
     case 'pole':
-      // Shift-click removes, the way the bulldoze tool does on a road.
-      //
-      // Removal used to be what a plain click on a pole did, which made the
-      // commonest gesture in the tool - starting a run AT an existing pole -
-      // impossible: the press that should have begun the run deleted the pole
-      // it was aimed at. The radius is also the same one the snap uses, so
-      // anything the preview highlights can be hit.
-      {
-        const hit = doc.poleNear(world, poleReach());
-        if (poleToolMode() === 'remove') {
-          // The Remove choice of the tool: a click takes the pole under it, and its wires.
-          if (hit) {
-            mutate(() => {
-              doc.removePole(hit.id);
-              return true;
-            });
-            flashHint('hint.pole.removed');
-          }
-          poleChain = null;
-        } else if (hit && e.shiftKey) {
-          mutate(() => {
-            doc.removePole(hit.id);
-            return true;
-          });
-          poleChain = null;
-          flashHint('hint.pole.removed');
-        } else {
-          const start = poleChain ?? world;
-          poleDraft = { from: start, to: world, chained: poleChain !== null };
-        }
-      }
+      // A stretch starts (at the line's last pole, if there is one); Shift-click
+      // or the Remove verb takes a pole away (`editor/poles.ts` `PoleTool`).
+      poleTool.down(world, e.shiftKey);
       break;
 
     case 'move':
@@ -2082,19 +2035,7 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
   }
 
-  if (poleDraft) {
-    poleDraft.to = world;
-    requestDraw();
-    return;
-  }
-
-  if (game.tool === 'pole') {
-    // The bare pointer, not a road anchor: the pole tool snaps to its own
-    // line (`snapPole`), and a chained run has no button held, so the preview
-    // has to follow the pointer or the next stretch is aimed blind.
-    poleHover = world;
-    requestDraw();
-  }
+  if (poleTool.move(world)) return;
 
   if (game.tool === 'streetscape') {
     streetscapeHover = snapLandscape(net, doc.landscape.values(), streetscapeKind(), world, streetscapeReach());
@@ -2141,32 +2082,9 @@ canvas.addEventListener('pointermove', (e) => {
   requestDraw();
 });
 
-/**
- * Pick radius for a pole, in WORLD units at the current zoom.
- *
- * One definition, used by the snap, by the preview, by removal and by
- * bulldoze. When these were separate numbers the preview highlighted a pole
- * the commit then missed, which is the "does not attach to an existing line"
- * complaint: the run looked joined and was built disconnected.
- */
+/** Pick radius for a pole, in world units at the current zoom (`PoleTool.reach`: one definition). */
 function poleReach(): number {
-  return POLE_PICK_PIXELS / view.zoom;
-}
-
-/** What the current gesture would build, snapped. Drawn and committed alike. */
-let lastPoleMode = poleToolMode();
-function currentPolePlan(): PoleRunPlan | null {
-  // A change of the tool's verb ends the line being traced.
-  if (poleToolMode() !== lastPoleMode) {
-    lastPoleMode = poleToolMode();
-    poleChain = null;
-    poleDraft = null;
-  }
-  if (poleDraft) return planPoleRun(doc, net, poleDraft.from, poleDraft.to, poleReach(), undefined, poleLampMode());
-  if (game.tool === 'pole' && poleToolMode() === 'build' && poleChain && poleHover) {
-    return planPoleRun(doc, net, poleChain, poleHover, poleReach(), undefined, poleLampMode());
-  }
-  return null;
+  return poleTool.reach();
 }
 
 /** The segments there were before the road being committed (`commitRoadGesture`), for the grid's blink. */
@@ -2295,25 +2213,7 @@ function endPointer(e: PointerEvent): void {
     }
   }
 
-  if (poleDraft) {
-    const run = poleDraft;
-    const plan = planPoleRun(doc, net, run.from, run.to, poleReach(), undefined, poleLampMode());
-    poleDraft = null;
-    if (!cancelled && !wasPinching) {
-      const last = plan.poles[plan.poles.length - 1];
-      // A run with an end off the footways builds nothing, and says why.
-      if (plan.refused) flashHint(`hint.pole.${plan.refused}`);
-      const built = mutateBuilt(() => commitPoleRun(doc, plan));
-      // The line goes on from where it ended. A press that built nothing -
-      // a click in place - starts the chain instead, so tracing a line is
-      // click, click, click rather than a drag per stretch.
-      if (built && last) poleChain = { x: last.at.x, y: last.at.y };
-      else if (!run.chained) poleChain = { x: plan.from.at.x, y: plan.from.at.y };
-      else poleChain = null;
-    } else {
-      poleChain = null;
-    }
-  }
+  poleTool.up(!cancelled && !wasPinching);
 
   if (moving) {
     const m = moving;
@@ -4203,7 +4103,7 @@ function frame(now: number): void {
   frameTimer.mark('prédios');
   // The pole run under the pointer, planned once per frame: the 3D preview
   // shows it as it will stand, the overlay marks only what cannot be built.
-  framePolePlan = currentPolePlan();
+  framePolePlan = poleTool.plan();
   scene.setPolePreview(net, framePolePlan && !framePolePlan.refused && framePolePlan.poles.length >= 2
     ? { poles: framePolePlan.poles.map((pole) => ({ x: pole.at.x, y: pole.at.y, lamp: pole.lamp, standing: pole.existing !== null })) }
     : null);
@@ -4362,10 +4262,10 @@ function drawPolePlan(
     ctx.restore();
   };
   if (game.tool !== 'pole' && !plan) return;
+  const marks = poleTool.marks();
   // Removing: the pole under the pointer, in red.
   if (game.tool === 'pole' && poleToolMode() === 'remove') {
-    const hit = poleHover ? doc.poleNear(poleHover, poleReach()) : null;
-    if (hit) ring(at(hit), '#e5534b', 10);
+    if (marks.removing) ring(at(marks.removing), '#e5534b', 10);
     return;
   }
   if (plan?.refused) {
@@ -4380,8 +4280,8 @@ function drawPolePlan(
     return;
   }
   // Nothing drawn yet: where the first pole would go, or a cross where it cannot.
-  if (game.tool === 'pole' && poleHover && !poleDraft) {
-    const snap = snapPole(doc, net, poleHover, poleReach());
+  if (marks.first) {
+    const snap = marks.first;
     if (snap.kind === 'free') cross(at(snap.at));
     else ring(at(snap.at), snap.kind === 'pole' ? HOVER : SELECTION);
   }

@@ -331,3 +331,153 @@ export function commitPoleRun(doc: RoadDoc, plan: PoleRunPlan): boolean {
   }
   return built;
 }
+
+/** What the pole tool reads of the game and does to it. */
+export interface PoleToolHost {
+  readonly doc: RoadDoc;
+  readonly net: Network;
+  zoom(): number;
+  /** The tool's verb ('build' or 'remove', `ui/toolChoices.ts`) and its lamps. */
+  mode(): string;
+  lamps(): PoleLampMode;
+  /** Whether the pole tool is the tool in hand. */
+  inHand(): boolean;
+  /** An edit of the document, one undo step; whether it changed it. */
+  mutate(fn: () => boolean): boolean;
+  hint(key: string): void;
+  redraw(): void;
+}
+
+/**
+ * THE POLE TOOL: a distribution line traced as straight stretches, each a
+ * drag (or a click, click, click: a press that builds nothing starts the
+ * chain), from the last pole while the tool stays on it; Shift-click, or the
+ * Remove verb, takes a pole and its wires away. The stretch being dragged,
+ * the chain's last pole and the pointer live here (Nystrom, "State").
+ */
+export class PoleTool {
+  /** The stretch being dragged. */
+  private draft: { readonly from: Vec2; to: Vec2; readonly chained: boolean } | null = null;
+  /**
+   * The end of the last committed run, while the tool is still on it: a
+   * line is drawn as a sequence of stretches, and finishing one is almost
+   * never finishing the line. Escape, a different tool or an undo drops it.
+   */
+  private chain: Vec2 | null = null;
+  /** The pointer over the map while the tool is in hand, unsnapped. */
+  private hover: Vec2 | null = null;
+  private lastMode = '';
+
+  constructor(private readonly host: PoleToolHost) {}
+
+  /**
+   * Pick radius for a pole, in WORLD units at the current zoom: one
+   * definition for the snap, the preview, removal and bulldoze (when they
+   * were separate numbers the preview highlighted a pole the commit then
+   * missed, and the run was built disconnected).
+   */
+  reach(): number {
+    return POLE_PICK_PIXELS / this.host.zoom();
+  }
+
+  gesture(): string | null {
+    return this.draft || this.chain ? 'poste: traçando a linha' : null;
+  }
+
+  inProgress(): boolean {
+    return this.draft !== null || this.chain !== null;
+  }
+
+  cancel(): void {
+    this.draft = null;
+    this.chain = null;
+  }
+
+  /** What the current gesture would build, snapped: drawn and committed alike. */
+  plan(): PoleRunPlan | null {
+    const { host } = this;
+    // A change of the tool's verb ends the line being traced.
+    if (host.mode() !== this.lastMode) {
+      this.lastMode = host.mode();
+      this.cancel();
+    }
+    if (this.draft) return planPoleRun(host.doc, host.net, this.draft.from, this.draft.to, this.reach(), undefined, host.lamps());
+    if (host.inHand() && host.mode() === 'build' && this.chain && this.hover) {
+      return planPoleRun(host.doc, host.net, this.chain, this.hover, this.reach(), undefined, host.lamps());
+    }
+    return null;
+  }
+
+  down(world: Vec2, shift: boolean): void {
+    const { host } = this;
+    const hit = host.doc.poleNear(world, this.reach());
+    const remove = (): void => {
+      if (!hit) return;
+      host.mutate(() => { host.doc.removePole(hit.id); return true; });
+      host.hint('hint.pole.removed');
+    };
+    if (host.mode() === 'remove') {
+      // The Remove verb: a click takes the pole under it, and its wires.
+      remove();
+      this.chain = null;
+    } else if (hit && shift) {
+      // Shift-click removes. A plain click on a pole starts a run AT it: the
+      // commonest gesture of the tool.
+      remove();
+      this.chain = null;
+    } else {
+      this.draft = { from: this.chain ?? world, to: world, chained: this.chain !== null };
+    }
+  }
+
+  /** The pointer moved; true when a stretch being dragged took it. */
+  move(world: Vec2): boolean {
+    if (this.draft) {
+      this.draft.to = world;
+      this.host.redraw();
+      return true;
+    }
+    if (this.host.inHand()) {
+      // The bare pointer, not a road anchor: the tool snaps to its own line,
+      // and a chained run has no button held, so the preview follows it.
+      this.hover = world;
+      this.host.redraw();
+    }
+    return false;
+  }
+
+  /** The pointer let go: the stretch is built (`commit`), or dropped. */
+  up(commit: boolean): void {
+    const { host } = this;
+    const run = this.draft;
+    if (!run) return;
+    const plan = planPoleRun(host.doc, host.net, run.from, run.to, this.reach(), undefined, host.lamps());
+    this.draft = null;
+    if (!commit) { this.chain = null; return; }
+    const last = plan.poles[plan.poles.length - 1];
+    // A run with an end off the footways builds nothing, and says why.
+    if (plan.refused) host.hint(`hint.pole.${plan.refused}`);
+    const built = host.mutate(() => commitPoleRun(host.doc, plan));
+    // The line goes on from where it ended. A press that built nothing - a
+    // click in place - starts the chain instead, so tracing a line is
+    // click, click, click rather than a drag per stretch.
+    if (built && last) this.chain = { x: last.at.x, y: last.at.y };
+    else if (!run.chained) this.chain = { x: plan.from.at.x, y: plan.from.at.y };
+    else this.chain = null;
+  }
+
+  /**
+   * What the overlay marks besides the run drawn in 3D: with the Remove
+   * verb, the pole under the pointer; before a run, where its first pole
+   * would go.
+   */
+  marks(): { removing: Vec2 | null; first: PoleSnap | null } {
+    const { host } = this;
+    if (!host.inHand() || !this.hover) return { removing: null, first: null };
+    if (host.mode() === 'remove') {
+      const hit = host.doc.poleNear(this.hover, this.reach());
+      return { removing: hit ? { x: hit.x, y: hit.y } : null, first: null };
+    }
+    return { removing: null, first: this.draft ? null : snapPole(host.doc, host.net, this.hover, this.reach()) };
+  }
+}
