@@ -6,6 +6,8 @@ import { DT, WAIT_CEILING } from '@sim/params';
 import { vehiclePose } from '@sim/pose';
 import type { Vehicle } from '@sim/vehicles/state';
 import { collisions } from '../../sim/support/bodies';
+import { type RoadElevation, buildRoadElevation } from '@world/elevation';
+import { roadStructure } from '@world/structures';
 import type { Defect } from './invariants';
 
 /**
@@ -34,6 +36,21 @@ export const STALL_LIMIT = 10 * WAIT_CEILING;
 const DIAGNOSTIC = new Set(['shortLink']);
 
 /** The structural levels and road nodes a vehicle's body spans. */
+/**
+ * The solved deck height under a body: a road's height is authored on its
+ * nodes and its piers derived from it (src/world/CLAUDE.md), so a road labelled
+ * `ground` can stand on an overpass - the label alone told two levels for one.
+ */
+function deckOf(sim: SimWorld, v: Vehicle, elevation: RoadElevation): number {
+  const lane = sim.lanelet(v.lanelet);
+  const segment = lane?.kind === 'link' ? lane.segment : lane ? sim.connector(v.lanelet)?.inSegment : undefined;
+  const pose = vehiclePose(sim, v, 1);
+  if (segment === undefined || !pose) return Number.NaN;
+  return elevation.onSegment(segment, pose.p.x, pose.p.y);
+}
+/** Vertical room for one road over another: the game's elevated deck clearance (`editRules.ts` PASS_CLEARANCE). */
+const PASS_CLEARANCE = roadStructure('elevated').clearance;
+
 function placeOf(sim: SimWorld, v: Vehicle): { structures: Set<string>; nodes: Set<number> } {
   const structures = new Set<string>();
   const nodes = new Set<number>();
@@ -56,6 +73,8 @@ export function checkSim(doc: RoadDoc, run: SimRun): Defect[] {
   net.rebuild();
   const sim = new SimWorld(doc, net, run.seed);
   sim.rebuildTopology();
+  // The decks over flat land: two roads at one map point stand on the same ground.
+  const elevation = buildRoadElevation(net, () => 0);
   sim.trafficIntensity = run.intensity;
   sim.demandMultiplier = run.intensity;
   sim.auditEnabled = true;
@@ -111,8 +130,11 @@ export function checkSim(doc: RoadDoc, run: SimRun): Defect[] {
       for (const hit of collisions(sim)) {
         const a = placeOf(sim, hit.a);
         const b = placeOf(sim, hit.b);
-        // A deck over a road: two levels, no contact.
+        // A deck over a road: two levels, no contact - by the label, or by the
+        // solved heights a clearance apart.
         if (![...a.structures].some((s) => b.structures.has(s))) continue;
+        const ha = deckOf(sim, hit.a, elevation), hb = deckOf(sim, hit.b, elevation);
+        if (Number.isFinite(ha) && Number.isFinite(hb) && Math.abs(ha - hb) >= PASS_CLEARANCE) continue;
         // Two roads that share no node, bodies touching: the roads overlap.
         const related = [...a.nodes].some((n) => b.nodes.has(n));
         add(related ? 'bodyOverlap' : 'unrelatedBodyOverlap', `veh ${hit.a.id}/${hit.b.id}`,
