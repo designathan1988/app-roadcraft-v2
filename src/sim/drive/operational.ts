@@ -28,7 +28,7 @@ const DELTA = 4;
 /** Share of the heuristic in the blend (Treiber & Kesting use 0.99). */
 const COOLNESS = 0.99;
 /** Fastest a driver's acceleration rises (easing on), and falls (braking harder), u/s³. */
-const JERK_UP = m(2.5);
+export const JERK_UP = m(2.5);
 const JERK_DOWN = m(8);
 /**
  * Below this a driver lifts off at once. Held to the jerk limit, a car

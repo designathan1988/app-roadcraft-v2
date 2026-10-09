@@ -2,6 +2,7 @@ import { m } from '@world/units';
 import type { Lanelet } from '@world/lanelets';
 import { HEAVY, bodyClassOf } from '@world/conflictPoints';
 import { LATERAL_ACCEL_FALL, MAX_LATERAL_ACCEL, MIN_LATERAL_ACCEL } from '../params';
+import { JERK_UP } from '../drive/operational';
 import type { SimWorld } from '../world';
 import type { Vehicle } from './state';
 
@@ -108,6 +109,21 @@ export function curveSpeedCap(w: SimWorld, v: Vehicle): number {
   const brake = Math.max(v.driver.b, 1e-3);
   const horizon = (v.v * v.v) / (2 * brake) + v.v * LOOK_TIME + LOOK_MARGIN;
   let cap = Infinity;
+  // The brake comes off as a ramp, not at once: the pedal changes at a
+  // driver's jerk (`drive/operational.ts` JERK_UP), so easing off from
+  // comfortable braking takes b / J and sheds b² / 2J more (an S-curve's
+  // closing ramp). Planned to end at the bend's speed - braked for as if the
+  // brake came off at once, a car reached the bend still braking and left it
+  // 3-7 km/h under the speed the bend allows (measured at a crossroads of
+  // avenues: 13 km/h round a 7.6 m right turn that allows 18.5).
+  const easeTime = brake / JERK_UP;
+  const eased = (brake * brake) / (2 * JERK_UP);
+  /** Highest speed `d` ahead of a bend taken at `safe`: braking, then the ramp easing off. */
+  const before = (safe: number, d: number): number => {
+    const top = safe + eased;
+    const ramp = Math.max(1e-6, top * easeTime - (brake * brake * brake) / (3 * JERK_UP * JERK_UP));
+    return d <= ramp ? safe + eased * (d / ramp) : Math.sqrt(top * top + 2 * brake * (d - ramp));
+  };
 
   // The body itself, from its middle to its front at distance 0, then ahead of
   // the front along the planned route. From the middle rather than the rear:
@@ -127,8 +143,7 @@ export function curveSpeedCap(w: SimWorld, v: Vehicle): number {
       if (d > horizon) break;
       const k = profile[i]!;
       if (k < 1e-6) continue;
-      const safe = bendSpeed(share, k);
-      cap = Math.min(cap, Math.sqrt(safe * safe + 2 * brake * d));
+      cap = Math.min(cap, before(bendSpeed(share, k), d));
     }
     ahead += lane.length;
     from = 0;
