@@ -210,6 +210,7 @@ export class LaneletGraph {
 
   /** `build` in steps, a segment's links or a junction's connectors at a time. */
   *buildSteps(doc: RoadDoc, net: Network): Generator<void, void, void> {
+    this.siblings.clear();
     this.lanelets.clear();
     this.connectors.clear();
     this.junctions.clear();
@@ -227,6 +228,8 @@ export class LaneletGraph {
     yield* this.buildJunctions(doc, net, previousJunctions, nextJunctions);
     this.junctionCache = nextJunctions;
     this.revision = net.revision;
+    // Anything asked while the graph was half built is forgotten.
+    this.siblings.clear();
   }
 
   private *buildLinks(doc: RoadDoc, net: Network, previous: Map<string, Lanelet[]>, next: Map<string, Lanelet[]>): Generator<void, void, void> {
@@ -593,6 +596,16 @@ export class LaneletGraph {
    * its width here.
    */
   siblingLanes(id: LaneletId): LaneletId[] {
+    // The same lanes until the graph is built again (`buildSteps` clears it):
+    // asked for every vehicle on every tick, making the ids as strings each
+    // time cost 3 s in 3.5 minutes of 400 cars at 4x.
+    let known = this.siblings.get(id);
+    if (!known) this.siblings.set(id, known = this.findSiblings(id));
+    return known;
+  }
+  private readonly siblings = new Map<LaneletId, LaneletId[]>();
+
+  private findSiblings(id: LaneletId): LaneletId[] {
     const lane = this.lanelets.get(id);
     if (
       !lane ||

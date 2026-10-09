@@ -1225,6 +1225,11 @@ export function createProceduralCrowd(options: { hair?: boolean; /** World units
     mesh.count = 0;
     mesh.visible = false;
     mesh.frustumCulled = false;
+    // Never moved (the people are placed by their instances): not recomposed
+    // every frame. three's `updateMatrixWorld` visits every piece, hidden or
+    // not, and recomposes each one whose `matrixAutoUpdate` is on - up to
+    // 1 900 pieces, 0.6 ms a frame.
+    mesh.matrixAutoUpdate = false;
     mesh.receiveShadow = true;
     mesh.castShadow = !!(proxy && depth);
     if (proxy && depth) {

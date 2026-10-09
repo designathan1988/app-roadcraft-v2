@@ -437,6 +437,7 @@ export function createSceneRenderer(
     // displacement, coverage) keeps three's own choice.
     return !(m.alphaTest > 0 && (m.map || m.alphaMap)) && !m.displacementMap && !m.alphaToCoverage;
   };
+  let shadowDepthFrame = 0;
   const assignShadowDepth = (root: Object3D): void => {
     root.traverse((object) => {
       const mesh = object as Mesh & { isInstancedMesh?: boolean; instanceColor?: unknown };
@@ -820,11 +821,12 @@ export function createSceneRenderer(
    * drawn by.
    */
   const screenScale = (x: number, y: number, z: number): number => {
-    const halfW = renderer.domElement.clientWidth * 0.5, halfH = renderer.domElement.clientHeight * 0.5;
     pixelFoot.set(x, z, -y).applyMatrix4(crowdProjection);
     pixelOther.set(x, z, -y).add(cameraRight).applyMatrix4(crowdProjection);
-    return Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
+    return Math.hypot((pixelOther.x - pixelFoot.x) * cssHalfW, (pixelOther.y - pixelFoot.y) * cssHalfH);
   };
+  /** Half the canvas's CSS size, read once a frame (`draw`). */
+  let cssHalfW = 1, cssHalfH = 1;
   // A vehicle is tested with its own reach, grown by its height towards the
   // sun's side: an off-screen truck near the edge still casts a shadow onto it.
   const vehicleBounds = new Sphere(new Vector3(), 1);
@@ -2693,6 +2695,11 @@ export function createSceneRenderer(
       crowdProjection.multiplyMatrices(cullCamera.projectionMatrix, cullCamera.matrixWorldInverse);
       crowdFrustum.setFromProjectionMatrix(crowdProjection);
       cameraRight.setFromMatrixColumn(cullCamera.matrixWorld, 0).normalize();
+      // The canvas's CSS size read once a frame, before the vehicles ask
+      // `screenScale` (a box metric read forces layout - Paul Irish, "What
+      // forces layout"; read per vehicle it cost 0.35 ms a frame).
+      cssHalfW = renderer.domElement.clientWidth * 0.5;
+      cssHalfH = renderer.domElement.clientHeight * 0.5;
       // Plants and street furniture outside the view are not drawn at all.
       scenery?.cull(crowdFrustum, crowdProjection);
       furniture?.cull(crowdFrustum, crowdProjection);
@@ -2879,9 +2886,12 @@ export function createSceneRenderer(
       }
 
       renderer.shadowMap.needsUpdate = true;
-      // Cheap (a few hundred objects), and it follows meshes a rebuild or an
-      // asset load adds, and instance colours created on first use.
-      if (renderer.shadowMap.enabled) assignShadowDepth(scene);
+      // It follows meshes a rebuild or an asset load adds, and instance
+      // colours created on first use - twice a second: the scene is some
+      // 1 900 objects with the crowd's pieces (0.2-0.3 ms a frame walked every
+      // frame), and until a new mesh is reached three's own depth material
+      // casts the same shadow.
+      if (renderer.shadowMap.enabled && ++shadowDepthFrame % 30 === 1) assignShadowDepth(scene);
       // An explosion shakes the camera for a moment.
       const shake = fx?.shake() ?? 0;
       if (shake > 0) {

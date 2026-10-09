@@ -114,8 +114,17 @@ export function watchHealth(options: {
 
   // The code's own measured steps (`performance.measure('hitch:...')`), kept to explain a long frame.
   const hitches: { name: string; start: number; end: number }[] = [];
+  // The browser's buffer of measures has no limit (Performance Timeline:
+  // `measure` buffer size infinite) and the game measures four steps a frame:
+  // 57 000 entries after 4.5 minutes, an hour's worth 14 MB and 133 ms to
+  // read. Each entry reaches this observer when it is queued, before the
+  // buffer (User Timing), so the buffer is emptied every few thousand; the
+  // probes reading it (`scripts/probe-hitches.mjs`) still find the recent ones.
+  let buffered = 0;
   try {
     new PerformanceObserver((list) => {
+      buffered += list.getEntries().length;
+      if (buffered > 4000) { performance.clearMeasures(); buffered = 0; }
       for (const m of list.getEntries()) {
         if (!m.name.startsWith('hitch:')) continue;
         hitches.push({ name: m.name.slice(6), start: m.startTime, end: m.startTime + m.duration });
