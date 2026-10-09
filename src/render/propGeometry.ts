@@ -2,16 +2,13 @@ import {
   BoxGeometry,
   BufferGeometry,
   Color,
-  ConeGeometry,
   CylinderGeometry,
   Euler,
   Float32BufferAttribute,
   IcosahedronGeometry,
-  LatheGeometry,
   Matrix4,
   PlaneGeometry,
   SphereGeometry,
-  Vector2,
   Quaternion,
   Vector3,
   type Material,
@@ -19,6 +16,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import { Rng } from '@core/rng';
+import { lowPolyTree, type LowPolyKind } from './lowPolyTrees';
 import { m } from '@world/units';
 import { TREE_PIT } from '@world/streetFurniture';
 import { CURB_BAND, FOOTWAY_RISE } from '@world/roadTypes';
@@ -112,178 +110,10 @@ function merge(parts: BufferGeometry[]): BufferGeometry {
   return merged;
 }
 
-/** A smooth, deterministic 3D wobble, for lumpy foliage. */
-function wobble(x: number, y: number, z: number, seed: number): number {
-  return (
-    Math.sin(x * 11.3 + seed * 1.7 + Math.cos(z * 7.1 + seed)) * 0.5 +
-    Math.sin(z * 13.7 - seed * 2.3 + Math.cos(y * 9.3)) * 0.35 +
-    Math.sin(y * 17.9 + x * 5.1 + seed * 0.7) * 0.25
-  );
-}
-
 /** Per-face hash, so a crown is speckled leaf by leaf rather than smooth. */
 function faceNoise(p: Vector3, seed: number): number {
   const h = Math.sin(p.x * 91.7 + p.y * 47.3 + p.z * 63.1 + seed * 12.9) * 43758.5453;
   return h - Math.floor(h);
-}
-
-/**
- * Level of detail. 1 is the model seen close up; 0 is the same silhouette at a
- * quarter of the triangles, for the map zoom, where a whole city's trees are on
- * screen at once and each is a few pixels across. The renderer swaps between
- * them by zoom (`Scenery.setNear`).
- */
-export type Detail = 0 | 1;
-
-interface Blob {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-  readonly r: number;
-}
-
-/**
- * A crown of foliage: overlapping lumpy blobs, lit as ONE volume.
- *
- * Each blob's normals are bent towards the direction from the crown's centre,
- * so the crown shades like a single soft mass instead of a pile of balls; and
- * each face gets a small random tone, which reads as leaves.
- */
-function crown(
-  blobs: readonly Blob[],
-  centre: Vector3,
-  palette: (face: number, height: number) => Rgb,
-  seed: number,
-  lumpiness = 0.22,
-  detail: Detail = 1,
-): BufferGeometry[] {
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const blob of blobs) {
-    minY = Math.min(minY, blob.y - blob.r);
-    maxY = Math.max(maxY, blob.y + blob.r);
-  }
-  let spread = 0;
-  for (const blob of blobs) spread = Math.max(spread, Math.hypot(blob.x - centre.x, blob.z - centre.z) + blob.r);
-
-  return blobs.map((blob, index) => {
-    // The facets were never the subdivision: they were a palette picked per
-    // face (below). Smooth per-vertex colour makes 80 faces a soft mass, and
-    // keeps a crown inside the thousand-tree budget (propGeometry.spec.ts).
-    const g = new IcosahedronGeometry(blob.r, detail);
-    // Each cluster its own shade and warmth, so a crown is many masses of
-    // leaves catching the light differently, not one plastic ball.
-    const clusterTone = 0.86 + faceNoise(new Vector3(blob.x, blob.y, blob.z), seed + index) * 0.26;
-    const clusterWarm = (faceNoise(new Vector3(blob.z, blob.x, blob.y), seed * 3 + index) - 0.5) * 0.12;
-    const position = g.getAttribute('position');
-    const normal = g.getAttribute('normal');
-    const p = new Vector3();
-    const radial = new Vector3();
-    const own = new Vector3();
-    for (let i = 0; i < position.count; i++) {
-      p.fromBufferAttribute(position, i);
-      own.copy(p).normalize();
-      const w = 1 + wobble(p.x / blob.r, p.y / blob.r, p.z / blob.r, seed + index * 3.1) * lumpiness;
-      p.multiplyScalar(w).add(new Vector3(blob.x, blob.y, blob.z));
-      position.setXYZ(i, p.x, p.y, p.z);
-      radial.copy(p).sub(centre).normalize();
-      own.lerp(radial, 0.65).normalize();
-      // A crown's underside faces the ground, but it is lit by the sky
-      // bounced off it; bending the lowest normals out keeps it from going
-      // black under the sun.
-      own.y = Math.max(own.y, -0.35);
-      own.normalize();
-      normal.setXYZ(i, own.x, own.y, own.z);
-    }
-    return part(g, (q) => {
-      const height = (q.y - minY) / Math.max(1e-6, maxY - minY);
-      const depth = Math.hypot(q.x - centre.x, q.z - centre.z) / Math.max(1e-6, spread);
-      // Baked occlusion: dark low and deep inside the crown.
-      const ao = 0.5 + 0.35 * height + 0.25 * Math.min(1, depth * 1.3);
-      // Tone and palette per VERTEX, from a smooth noise, never per face.
-      // Picking the palette per face made one triangle in five the deep
-      // leaf colour at random: the dark triangles scattered over every crown.
-      const smooth = 0.5 + 0.5 * wobble(q.x * 7, q.y * 7, q.z * 7, seed + 7);
-      const tone = clusterTone * (0.96 + wobble(q.x * 13, q.y * 13, q.z * 13, seed) * 0.05);
-      const base = palette(smooth, height);
-      return [base[0] * ao * tone * (1 + clusterWarm), base[1] * ao * tone, base[2] * ao * tone * (1 - clusterWarm)];
-    });
-  });
-}
-
-function trunk(
-  top: number,
-  baseRadius: number,
-  topRadius: number,
-  bark: Rgb,
-  branches: number,
-  rng: Rng,
-): BufferGeometry[] {
-  // One turned profile from the roots to the crown: the root flare swells
-  // smoothly out of the stem (a separate cone left a step and a seam), and
-  // the stem tapers the way wood does, fast low down and slowly above.
-  const profile: Vector2[] = [];
-  const rings = 5;
-  for (let i = 0; i <= rings; i++) {
-    const t = i / rings;
-    const taper = baseRadius + (topRadius * 0.8 - baseRadius) * Math.pow(t, 0.7);
-    const flare = 1 + 1.05 * Math.exp(-t * 9);
-    profile.push(new Vector2(taper * flare, t * top));
-  }
-  const stem = new LatheGeometry(profile, 8);
-  // A lean and a slight bow, so no two species stand like turned dowels, and
-  // a knobbly section where the bark ridges run.
-  const leanX = (rng.float() - 0.5) * top * 0.08;
-  const leanZ = (rng.float() - 0.5) * top * 0.08;
-  const position = stem.getAttribute('position');
-  const v = new Vector3();
-  for (let i = 0; i < position.count; i++) {
-    v.fromBufferAttribute(position, i);
-    const t = v.y / top;
-    const angle = Math.atan2(v.z, v.x);
-    const ridge = 1 + 0.07 * Math.sin(angle * 9 + t * 3) + 0.04 * Math.sin(angle * 4 - t * 7);
-    v.x = v.x * ridge + leanX * t * t;
-    v.z = v.z * ridge + leanZ * t * t;
-    position.setXYZ(i, v.x, v.y, v.z);
-  }
-  stem.computeVertexNormals();
-  const parts = [
-    part(stem, (q) => {
-      const t = q.y / top;
-      // Bark: darker in the furrows between the ridges, darker at the foot
-      // where it is damp, a touch of moss low on one side.
-      const angle = Math.atan2(q.z, q.x);
-      const furrow = 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(angle * 9 + t * 3));
-      const s = (0.58 + t * 0.42) * furrow;
-      const moss = Math.max(0, Math.cos(angle - 1.2)) * Math.max(0, 0.25 - t) * 1.6;
-      return [bark[0] * s * (1 - moss * 0.4), bark[1] * s * (1 + moss * 0.25), bark[2] * s * (1 - moss * 0.3)];
-    }),
-  ];
-  const limb = (from: Vector3, dir: Vector3, length: number, r0: number, r1: number): void => {
-    const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir);
-    const e = new Euler().setFromQuaternion(q);
-    const mid = from.clone().addScaledVector(dir, length / 2);
-    parts.push(part(new CylinderGeometry(r1, r0, length, 5, 1, true), (pt) => {
-      const k = 0.7 + 0.3 * (pt.y - from.y) / Math.max(1e-6, length);
-      return [bark[0] * k, bark[1] * k, bark[2] * k];
-    }, { at: [mid.x, mid.y, mid.z], rotate: [e.x, e.y, e.z] }));
-  };
-  for (let i = 0; i < branches; i++) {
-    const yaw = (i / branches) * Math.PI * 2 + rng.float() * 0.8;
-    const length = top * (0.38 + rng.float() * 0.2);
-    const tilt = 0.6 + rng.float() * 0.35;
-    const fromT = 0.72 + rng.float() * 0.2;
-    const from = new Vector3(leanX * fromT * fromT, top * fromT, leanZ * fromT * fromT);
-    const dir = new Vector3(Math.sin(tilt) * Math.cos(yaw), Math.cos(tilt), Math.sin(tilt) * Math.sin(yaw)).normalize();
-    limb(from, dir, length, topRadius * 0.75, topRadius * 0.32);
-    // A fork two thirds out: the limb splits instead of ending in a stub.
-    const fork = from.clone().addScaledVector(dir, length * 0.62);
-    for (const turn of i % 2 === 0 ? [0.5] : []) {
-      const d2 = new Vector3(Math.sin(tilt * 0.8) * Math.cos(yaw + turn), Math.cos(tilt * 0.8), Math.sin(tilt * 0.8) * Math.sin(yaw + turn)).normalize();
-      limb(fork, d2, length * 0.45, topRadius * 0.38, topRadius * 0.16);
-    }
-  }
-  return parts;
 }
 
 // ------------------------------------------------------------------ species
@@ -291,167 +121,27 @@ function trunk(
 export type TreeSpecies = 'broadleaf' | 'broadleafTall' | 'conifer' | 'ipeYellow' | 'ipePink';
 export const TREE_SPECIES: readonly TreeSpecies[] = ['broadleaf', 'broadleafTall', 'conifer', 'ipeYellow', 'ipePink'];
 
-const BARK = rgb(0x5b4633);
-const BARK_PALE = rgb(0x7a6a58);
-const LEAF = rgb(0x4d7939);
-const LEAF_DEEP = rgb(0x33572c);
-const LEAF_YOUNG = rgb(0x789a4b);
-const NEEDLE = rgb(0x3c6747);
+/** Each street and garden species as the game's one tree style grows it (`lowPolyTrees.ts`). */
+const TREE_KIND: Readonly<Record<TreeSpecies, LowPolyKind>> = {
+  broadleaf: 'oak', broadleafTall: 'broadleafTall', conifer: 'cypress', ipeYellow: 'ipeYellow', ipePink: 'ipePink',
+};
 
-function scatterBlobs(rng: Rng, count: number, cx: number, cy: number, spreadX: number, spreadY: number, r0: number, r1: number): Blob[] {
-  // A small inner crown leaves negative space between the outward branches.
-  // One large central ball hid the limbs and made every species a lollipop.
-  const blobs: Blob[] = [{ x: cx, y: cy, z: 0, r: r1 * 0.7 }];
-  for (let i = 1; i < count; i++) {
-    const a = ((i - 1 + rng.float() * 0.65) / (count - 1)) * Math.PI * 2;
-    const d = 0.7 + rng.float() * 0.35;
-    blobs.push({
-      x: cx + Math.cos(a) * spreadX * d,
-      y: cy + (rng.float() - 0.4) * spreadY,
-      z: Math.sin(a) * spreadX * d,
-      r: r0 + rng.float() * (r1 - r0),
-    });
-  }
-  return blobs;
-}
-
-/** One unit tall, root at the origin. */
-export function treeGeometry(species: TreeSpecies, detail: Detail = 1): BufferGeometry {
-  const rng = new Rng(0x7ee + species.length * 131 + species.charCodeAt(3));
-  /** Branches are hidden inside the crown from far away. */
-  const limbs = (count: number): number => (detail === 1 ? count : 0);
-  switch (species) {
-    case 'broadleaf': {
-      // Many smaller clusters over a wider spread: a ragged, broken outline
-      // instead of two balls, gaps where the limbs show.
-      const blobs = scatterBlobs(rng, 8, 0, 0.68, 0.21, 0.23, 0.1, 0.17);
-      blobs.push({ x: 0.02, y: 0.87, z: -0.03, r: 0.13 });
-      const green = (f: number, h: number): Rgb => (f < 0.18 ? LEAF_DEEP : h > 0.75 && f > 0.7 ? LEAF_YOUNG : LEAF);
-      return merge([...trunk(0.58, 0.032, 0.016, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.68, 0), green, 1.3, 0.26, detail)]);
-    }
-    case 'broadleafTall': {
-      // Three uneven branch tiers on a longer clear stem: the crown stays tall
-      // without reading as a stack of balls around the trunk.
-      const blobs: Blob[] = [];
-      const spread = [0.14, 0.17, 0.1] as const;
-      for (let i = 0; i < 9; i++) {
-        const tier = Math.floor(i / 3);
-        const a = ((i % 3) / 3) * Math.PI * 2 + tier * 0.7 + (rng.float() - 0.5) * 0.5;
-        const out = spread[tier]! * (0.75 + rng.float() * 0.35);
-        blobs.push({
-          x: Math.cos(a) * out,
-          y: 0.58 + tier * 0.14 + (rng.float() - 0.5) * 0.06,
-          z: Math.sin(a) * out,
-          r: 0.095 + rng.float() * 0.035 - tier * 0.005,
-        });
-      }
-      const green = (f: number, h: number): Rgb => (f < 0.22 ? LEAF_DEEP : h > 0.7 && f > 0.75 ? LEAF_YOUNG : LEAF);
-      return merge([...trunk(0.62, 0.026, 0.012, BARK_PALE, limbs(5), rng), ...crown(blobs, new Vector3(0, 0.72, 0), green, 4.2, 0.26, detail)]);
-    }
-    case 'conifer': {
-      const parts = trunk(detail === 1 ? 0.88 : 0.28, 0.022, 0.012, BARK, 0, rng);
-      if (detail === 1) {
-        // Raised, drooping needle sprays break the outline into individual
-        // boughs without adding draw calls or a texture to every tree.
-        const vertices: number[] = [];
-        for (let tier = 0; tier < 6; tier++) {
-          const count = tier < 3 ? 7 : 6;
-          const rootY = 0.22 + tier * 0.125;
-          for (let arm = 0; arm < count; arm++) {
-            const angle = ((arm + tier * 0.38) / count) * Math.PI * 2 + (rng.float() - 0.5) * 0.18;
-            const radialX = Math.cos(angle);
-            const radialZ = Math.sin(angle);
-            const sideX = -radialZ;
-            const sideZ = radialX;
-            const length = (0.245 - tier * 0.029) * (0.83 + rng.float() * 0.34);
-            const width = (0.064 - tier * 0.006) * (0.85 + rng.float() * 0.3);
-            const middle = length * 0.54;
-            const root = [radialX * 0.018, rootY, radialZ * 0.018];
-            const left = [radialX * middle + sideX * width, rootY - 0.018, radialZ * middle + sideZ * width];
-            const tip = [radialX * length, rootY - 0.074, radialZ * length];
-            const right = [radialX * middle - sideX * width, rootY - 0.018, radialZ * middle - sideZ * width];
-            const ridge = [radialX * middle, rootY + 0.042, radialZ * middle];
-            vertices.push(...root, ...left, ...ridge, ...left, ...tip, ...ridge,
-              ...tip, ...right, ...ridge, ...right, ...root, ...ridge);
-          }
-        }
-        const boughs = new BufferGeometry();
-        boughs.setAttribute('position', new Float32BufferAttribute(vertices, 3));
-        boughs.computeVertexNormals();
-        parts.push(part(boughs, (q, n) => {
-          const height = Math.max(0, Math.min(1, (q.y - 0.16) / 0.8));
-          const ao = (0.72 + height * 0.28) * (0.82 + Math.max(0, n.y) * 0.18);
-          const tone = 0.92 + wobble(q.x * 13, q.y * 13, q.z * 13, 5.5) * 0.08;
-          return [NEEDLE[0] * ao * tone, NEEDLE[1] * ao * tone, NEEDLE[2] * ao * tone];
-        }));
-        // The core fills small gaps between sprays and carries the pointed top.
-        parts.push(part(new ConeGeometry(0.088, 0.78, 10, 3, true), (q) => {
-          const tone = 0.68 + Math.max(0, q.y) * 0.22;
-          return [NEEDLE[0] * tone, NEEDLE[1] * tone, NEEDLE[2] * tone];
-        }, { at: [0, 0.59, 0] }));
-        return merge(parts);
-      }
-      for (let i = 0; i < 5; i++) {
-        const y0 = 0.16 + i * 0.16;
-        const height = 0.3 - i * 0.02;
-        const radius = 0.21 * (1 - i * 0.17);
-        const cone = new ConeGeometry(radius, height, 9, 1, true);
-        const position = cone.getAttribute('position');
-        for (let v = 0; v < position.count; v++) {
-          const x = position.getX(v);
-          const z = position.getZ(v);
-          const k = 1 + wobble(x * 6, i, z * 6, 5.5) * 0.18;
-          position.setX(v, x * k);
-          position.setZ(v, z * k);
-        }
-        cone.computeVertexNormals();
-        parts.push(
-          part(cone, (q, n) => {
-            const t = (q.y - y0) / height + 0.5;
-            const ao = 0.72 + 0.28 * Math.max(0, Math.min(1, t)) * (0.7 + 0.3 * n.y);
-            // Per vertex and smooth: a per-face tone speckled the tiers dark.
-            const tone = 0.88 + (0.5 + 0.5 * wobble(q.x * 11, q.y * 11, q.z * 11, i)) * 0.22;
-            return [NEEDLE[0] * ao * tone, NEEDLE[1] * ao * tone, NEEDLE[2] * ao * tone];
-          }, { at: [0, y0 + height / 2, 0] }),
-        );
-      }
-      return merge(parts);
-    }
-    case 'ipeYellow':
-    case 'ipePink': {
-      // Brazil's flowering ipê: a wide, open, flat-topped crown that in the
-      // dry season is all flower and hardly any leaf.
-      const bloom = species === 'ipeYellow' ? rgb(0xe5ba36) : rgb(0xc66f9d);
-      const bloomDeep = species === 'ipeYellow' ? rgb(0xb88d27) : rgb(0x9d4d7b);
-      const blobs = scatterBlobs(rng, 9, 0, 0.74, 0.27, 0.12, 0.085, 0.15);
-      const palette = (f: number, h: number): Rgb => (f < 0.14 ? LEAF_DEEP : h < 0.35 && f < 0.4 ? bloomDeep : bloom);
-      return merge([...trunk(0.64, 0.028, 0.014, BARK, limbs(6), rng), ...crown(blobs, new Vector3(0, 0.74, 0), palette, 8.1, 0.3, detail)]);
-    }
-  }
+/**
+ * One unit tall, root at the origin: the game's one low-poly tree style
+ * (`lowPolyTrees.ts`), the same the countryside's trees are, so a street
+ * tree and the wood behind it are one family. One model at every zoom: at
+ * a few hundred triangles it is cheaper than the old crown's close model.
+ */
+export function treeGeometry(species: TreeSpecies): BufferGeometry {
+  return lowPolyTree(TREE_KIND[species], 0x7ee + species.length * 131 + species.charCodeAt(3));
 }
 
 export type BushKind = 'bush' | 'bushFlowering' | 'hedge';
 export const BUSH_KINDS: readonly BushKind[] = ['bush', 'bushFlowering', 'hedge'];
 
-/** One unit tall, root at the origin; about 1.5 units across. */
-export function bushGeometry(kind: BushKind, detail: Detail = 1): BufferGeometry {
-  const rng = new Rng(0xb05 + kind.length * 17);
-  if (kind === 'hedge') {
-    // A clipped shrub for a median: squarer, denser, darker.
-    const blobs: Blob[] = [];
-    for (let i = 0; i < 5; i++) {
-      blobs.push({ x: (i - 2) * 0.28, y: 0.5 + rng.float() * 0.06, z: (rng.float() - 0.5) * 0.15, r: 0.36 + rng.float() * 0.08 });
-    }
-    const palette = (f: number): Rgb => (f < 0.3 ? LEAF_DEEP : LEAF);
-    return merge(crown(blobs, new Vector3(0, 0.45, 0), palette, 2.2, 0.12, detail));
-  }
-  const blobs = scatterBlobs(rng, 5, 0, 0.5, 0.36, 0.16, 0.3, 0.46);
-  const flowers = [rgb(0xf4f1ea), rgb(0xe56b9a), rgb(0xd83b3b)];
-  const palette = (f: number, h: number): Rgb => {
-    if (kind === 'bushFlowering' && h > 0.35 && f > 0.72) return flowers[Math.floor((f - 0.72) * 10.7) % 3] as Rgb;
-    return f < 0.25 ? LEAF_DEEP : LEAF;
-  };
-  return merge(crown(blobs, new Vector3(0, 0.42, 0), palette, kind === 'bush' ? 3.3 : 6.6, 0.26, detail));
+/** One unit tall, root at the origin; about 1.5 units across: the game's one low-poly style (`lowPolyTrees.ts`). */
+export function bushGeometry(kind: BushKind): BufferGeometry {
+  return lowPolyTree(kind, 0xb05 + kind.length * 17);
 }
 
 /**

@@ -397,7 +397,12 @@ export function createSceneRenderer(
   // land flat and washed out. The colours are set for this curve: ACES pulls
   // bright colours towards white, so the albedos carry the chroma.
   renderer.toneMapping = ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.3;
+  // Three's ACES already scales its input by 1 / 0.6 (tonemapping_pars:
+  // `color *= toneMappingExposure / 0.6`, Narkowicz's pre-exposure), so 1 is
+  // the reference. At 1.3 the scene went in at 2.17 times and every white
+  // wall and the grass blew out (the player, 2026-10-08: "extremamente
+  // brilhante").
+  renderer.toneMappingExposure = 1;
   renderer.shadowMap.enabled = true;
   // PCFSoftShadowMap was REMOVED in three r186. Asking for it logged
   // "PCFSoftShadowMap has been removed. Using PCFShadowMap instead." on every

@@ -500,13 +500,14 @@ function streakNoise(noise: (x: number, y: number, period: number) => number, u:
 
 /**
  * The grass's tones, sRGB: deep clump green, sunlit green, dry straw, bare
- * soil. Grass keeps about half as much blue as green; with a third it was an
- * acid yellow olive on screen (the player, 2026-10-07). The countryside's
- * trees take their greens and bark from these (`natureTrees.ts`).
+ * soil. Their mean has the brightness of measured grass (Physically Based's
+ * grass, linear 0.105 0.133 0.041: green about 0.13 linear); the old sunlit
+ * green was 0.32 linear and nearly blue-free, a neon lawn brighter than the
+ * buildings (the player, 2026-10-08: "extremamente brilhante").
  */
 export const GRASS_TONES = {
-  dark: [0.25, 0.4, 0.1],
-  lit: [0.44, 0.6, 0.15],
+  dark: [0.22, 0.32, 0.12],
+  lit: [0.38, 0.47, 0.2],
   dry: [0.46, 0.44, 0.26],
   soil: [0.36, 0.3, 0.2],
 } as const;
@@ -1199,6 +1200,24 @@ function terrainMaterial(
            vec4 far = texture2D(tex, terrainWideUv(uv));
            return mix(near, far, 0.42);
          }
+         // THE TEXTURE WITHOUT ITS REPEAT (Quilez, "Texture Repetition",
+         // technique 3): two reads of it at offsets picked by a slow noise,
+         // eight versions blended where the noise steps, derivatives from the
+         // unmoved coordinates (textureGrad), so the mips stay right across
+         // the offsets. From the map's zoom the lawn's 96 m tile and its 700 m
+         // octave read as a grid printed over the land.
+         vec2 noTileOffset(float i) { return fract(sin(vec2(i * 127.1 + 1.3, i * 311.7 + 4.7)) * 43758.5453); }
+         vec4 textureNoTile(sampler2D tex, vec2 uv) {
+           float idx = ecoNoise(uv * 0.35) * 8.0;
+           float i0 = floor(idx);
+           vec2 dx = dFdx(uv), dy = dFdy(uv);
+           vec4 a = textureGrad(tex, uv + noTileOffset(i0), dx, dy);
+           vec4 b = textureGrad(tex, uv + noTileOffset(i0 + 1.0), dx, dy);
+           return mix(a, b, smoothstep(0.2, 0.8, idx - i0));
+         }
+         vec4 dualScaleNoTile(sampler2D tex, vec2 uv) {
+           return mix(textureNoTile(tex, uv), textureNoTile(tex, terrainWideUv(uv)), 0.42);
+         }
          vec3 dualScaleNormal(sampler2D tex, vec2 uv) {
            vec3 near = texture2D(tex, uv).xyz * 2.0 - 1.0;
            vec3 far = texture2D(tex, terrainWideUv(uv)).xyz * 2.0 - 1.0;
@@ -1459,7 +1478,7 @@ function terrainMaterial(
          // 2026-10-07).
          float dirtW = smoothstep(27.0, 42.0, slopeDeg + wander * 1.0) * (1.0 - rockW) * (1.0 - 0.6 * smoothstep(36.0, 48.0, slopeDeg + wander * 1.0));
          float grassW = max(0.0, 1.0 - rockW - dirtW);
-         vec4 grassColor = dualScale(map, tGrass);
+         vec4 grassColor = dualScaleNoTile(map, tGrass);
          // Which rock breaks out here: the painted geology, granite where none
          // was painted. Each kind is its own pair of layers (face, top) and is
          // read only where it is and only where rock shows.
@@ -1551,12 +1570,15 @@ function terrainMaterial(
          // felt, and the lawn read as paint, not grass.
          {
            vec2 grainFp = fwidth(vTerrainWorld.xz);
-           float grainLod = max(0.0, log2(max(grainFp.x, grainFp.y) * 0.9));
+           // Tufts two to four pixels across: at * 0.9 they were half a pixel
+           // to one, under the Nyquist limit, and the lawn shimmered as pixel
+           // noise ("chiado"). And read without the texture's repeat.
+           float grainLod = max(0.0, log2(max(grainFp.x, grainFp.y) * 3.6));
            float grainLevel = floor(grainLod);
            float grainBlend = grainLod - grainLevel;
            vec2 grainUv = vTerrainWorld.xz * uGrassScale * 2.7;
-           float g0 = dot(texture2D(map, grainUv / exp2(grainLevel)).rgb, vec3(0.3, 0.6, 0.1));
-           float g1 = dot(texture2D(map, grainUv / exp2(grainLevel + 1.0) + 0.37).rgb, vec3(0.3, 0.6, 0.1));
+           float g0 = dot(textureNoTile(map, grainUv / exp2(grainLevel)).rgb, vec3(0.3, 0.6, 0.1));
+           float g1 = dot(textureNoTile(map, grainUv / exp2(grainLevel + 1.0) + 0.37).rgb, vec3(0.3, 0.6, 0.1));
            float gAvg = dot(texture2D(map, grainUv, 14.0).rgb, vec3(0.3, 0.6, 0.1));
            float grain = mix(g0, g1, grainBlend) / max(gAvg, 0.02);
            float grainW = smoothstep(0.15, 0.6, grainLod) * grassW * (1.0 - clamp(rockMix + dirtMix, 0.0, 1.0));
@@ -1777,7 +1799,7 @@ function terrainMaterial(
   };
   // A changed program key forces three to compile this variant separately from
   // any other standard material in the scene.
-  material.customProgramCacheKey = () => 'terrain-splat-v28';
+  material.customProgramCacheKey = () => 'terrain-splat-v29';
   return material;
 }
 
@@ -1935,13 +1957,18 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          vec3 stone = mix(vec3(0.055, 0.058, 0.064), vec3(0.13, 0.125, 0.12), wallHash(stoneId + 9.1));
          stone *= 0.75 + 0.35 * sqrt(f1 + 0.1) * (1.0 - sqrt(f1));
          stone = mix(vec3(0.018, 0.017, 0.016), stone, joint);
+         // Filtered over the pixel (Quilez, "Filterable procedurals"): as a
+         // pixel comes to cover a whole stone the box filter of the pattern
+         // is its mean. Unfiltered, the bedrock seen from afar was pixel noise.
+         float stoneW = max(fwidth(cp.x), fwidth(cp.y));
+         stone = mix(stone, vec3(0.07, 0.07, 0.072), smoothstep(0.3, 1.0, stoneW));
          float gravel = smoothstep(bedTop - 6.0, bedTop - 4.5, vBelow) * (1.0 - smoothstep(bedTop - 1.0, bedTop, vBelow));
          wall = mix(wall, vec3(0.34, 0.33, 0.3) * (0.8 + 0.4 * wallNoise(along * 1.7 + vBelow * 2.3)), gravel * 0.85);
          wall = mix(wall, stone, smoothstep(bedTop - 0.5, bedTop + 0.5, vBelow));
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v2';
+  material.customProgramCacheKey = () => 'terrain-walls-v3';
   return material;
 }
 
@@ -2711,7 +2738,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       'float slopeDeg = 0.0;',
     );
   };
-  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v28-verge';
+  vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v29-verge';
 
   const paintArray = material.userData['paint'] as DataArrayTexture;
   const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];

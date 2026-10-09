@@ -20,7 +20,10 @@ export interface QualitySettings {
   readonly smaa: boolean;
   /**
    * AMD FidelityFX Contrast Adaptive Sharpening on the final image, 0 (off)
-   * to 1 (strongest): the texture's detail kept crisp to the distance.
+   * to 1 (strongest). Off on every tier: CAS is made to restore what TAA
+   * blurs and wants linear colour (AMD); here there is no TAA and it ran on
+   * the display image, so it only sharpened the jaggies and the moiré of
+   * brick, tile and grass (the player, 2026-10-08).
    */
   readonly sharpen: number;
   /** Maximum anisotropic filtering taps requested for ground textures. */
@@ -101,7 +104,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: false,
     ambientOcclusion: false,
     smaa: false,
-    sharpen: 0.35,
+    sharpen: 0,
     anisotropy: 4,
     detailProps: true,
     vegetation: 600,
@@ -127,7 +130,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
-    sharpen: 0.55,
+    sharpen: 0,
     anisotropy: 8,
     detailProps: true,
     vegetation: 1_400,
@@ -153,7 +156,7 @@ export const QUALITY: Readonly<Record<QualityLevel, QualitySettings>> = {
     postProcessing: true,
     ambientOcclusion: true,
     smaa: true,
-    sharpen: 0.6,
+    sharpen: 0,
     anisotropy: 16,
     detailProps: true,
     vegetation: 2_600,
