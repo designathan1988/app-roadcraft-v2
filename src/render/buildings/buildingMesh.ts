@@ -2019,6 +2019,8 @@ function emitParking(e: Emitter, el: BuildingElement, z0: number, surface?: (lx:
 }
 const PARKING_ASPHALT: Paint = paint({ finish: 'concrete', colour: 0x4a4d4f });
 const GATE_PAINT: Paint = paint({ finish: 'metal', colour: 0x2f3437 });
+/** The narrowest gate drawn standing open: a car's (`sim/agents/parking.ts` `CAR_GATE`); a person's is 1.2-2 m. */
+const CAR_GATE_OPEN = m(2.2);
 const BIN_BODY: Paint = paint({ finish: 'metal', colour: 0x3d5a43 });
 const BIN_LID: Paint = paint({ finish: 'metal', colour: 0x2b3a2e });
 const LAMP_POST: Paint = paint({ finish: 'metal', colour: 0x40464a });
@@ -2028,7 +2030,8 @@ const DRAIN_GRATE: Paint = paint({ finish: 'metal', colour: 0x26292b });
 
 /**
  * The furniture of a lot. A gate is a frame of posts and rails filled with
- * close bars (a car's gate or a person's, by its width); bins are a pair of
+ * close bars, a person's shut, a car's (by its width) with its leaves swung
+ * open into the lot; bins are a pair of
  * wheelie bins with their lids; a lamp a post with its head over the path; a
  * bollard a post with a pale band; a drain a dark grate flush with the paving.
  */
@@ -2048,6 +2051,27 @@ function emitLotPart(e: Emitter, el: BuildingElement, x0: number, y0: number, x1
       const post = Math.min(0.2, m(0.14) / length);
       part(0, post, -0.4, 1.4, zb, z1 + m(0.1), look);
       part(1 - post, 1, -0.4, 1.4, zb, z1 + m(0.1), look);
+      if (el.w >= CAR_GATE_OPEN) {
+        // A car's gate: its two leaves swung open into the lot on their
+        // hinges at the posts, so the cars that use it (`sim/agents/
+        // lotTraffic.ts`) are not drawn through its bars. A person's stays shut.
+        const depth = el.d || m(0.12);
+        const leaf = ((1 - 2 * post) * length) / 2 / depth;
+        const inward = el.facing === 0 || el.facing === 3 ? 1 : -1;
+        const v0 = inward > 0 ? 1 : -leaf, v1 = inward > 0 ? 1 + leaf : 0;
+        const thin = m(0.05) / length;
+        for (const u of [post, 1 - post - thin]) {
+          part(u, u + thin, v0, v1, z0 + m(0.08), z0 + m(0.16), look);
+          part(u, u + thin, v0, v1, z1 - m(0.1), z1, look);
+          const bars = Math.max(2, Math.round((leaf * depth) / m(0.14)));
+          for (let k = 0; k <= bars; k++) {
+            const v = v0 + ((v1 - v0) * k) / bars;
+            const bw = m(0.035) / depth;
+            part(u, u + thin, v - bw / 2, v + bw / 2, z0 + m(0.08), z1, look);
+          }
+        }
+        return;
+      }
       part(post, 1 - post, 0, 1, z0 + m(0.08), z0 + m(0.16), look);
       part(post, 1 - post, 0, 1, z1 - m(0.1), z1, look);
       const bars = Math.max(2, Math.round(length / m(0.14)));
