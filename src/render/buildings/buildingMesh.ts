@@ -1410,8 +1410,17 @@ function lotGroundOf(b: Building, surfaces: readonly LotPlane[], level: number |
     return [localToWorld(b, x0, y0), localToWorld(b, x1, y0), localToWorld(b, x1, y1), localToWorld(b, x0, y1)];
   });
   if (surfaces.length === 0 && bays.length === 0) return undefined;
+  // The box of every lot and bay: a point outside it is off them all, found
+  // without a ring test each (a bounding volume's trivial rejection). Bodies
+  // and debris ask hundreds of lots for every cell of ground they touch
+  // (`playEffects.ts` ragdollCorner), nearly all of them far away.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const ring of [...surfaces.map((s) => s.ring), ...bays]) {
+    for (const p of ring) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  }
   return {
     heightAt(x, y) {
+      if (x < x0 || x > x1 || y < y0 || y > y1) return NaN;
       for (const s of surfaces) if (insideRing(s.ring, x, y)) return s.heightAt(x, y);
       if (level !== undefined) for (const ring of bays) if (insideRing(ring, x, y)) return level;
       return NaN;
