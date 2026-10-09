@@ -717,6 +717,11 @@ export function createSceneRenderer(
   let offeredElevation: { elevation: RoadElevation; revision: number; terrain: number } | null = null;
   /** The job was started in this frame (`pumpWorld` waits for the next). */
   let worldJobFresh = false;
+  /** The opening's town has been shown (`draw`): it is held until its roads and buildings are in. */
+  let opened = false;
+  let openingSince: number | null = null;
+  /** The opening is shown however far it got after this long, never a page left blank. */
+  const OPENING_LIMIT_MS = 20_000;
   /**
    * The world of an edit is built up to this much a frame: at 10 ms the old
    * road stayed on screen for up to a second after it was deleted or drawn,
@@ -2906,7 +2911,18 @@ export function createSceneRenderer(
       const atRender = performance.now();
       // The people's skeletons on the GPU (`people/crowdAnimation.ts`), before anybody draws them.
       agents.renderPalettes(renderer);
-      post.render(delta);
+      // The opening's town is shown whole (Unity's `allowSceneActivation`: a
+      // scene loaded in the background is activated once it is ready): until
+      // its roads and its buildings are both in, nothing is presented and the
+      // page stays as it is. Shown as it came, the roads stood alone for
+      // seconds before the buildings arrived (the player, 2026-10-08).
+      openingSince ??= performance.now();
+      if (!opened) {
+        opened = (roads !== null && !worldJob && !buildings.pending) || performance.now() - openingSince > OPENING_LIMIT_MS;
+        if (opened) performance.mark('opening:shown', { detail: { waitedMs: performance.now() - openingSince, whole: !worldJob && !buildings.pending } });
+      }
+      if (opened) post.render(delta);
+      else onAssetsReady();
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
       if (shake > 0) { rig.camera.position.sub(shakeOffset); rig.camera.updateMatrixWorld(); }
       // One waiting texture a frame to the GPU, before anybody draws it.

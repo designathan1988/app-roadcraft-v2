@@ -120,6 +120,8 @@ export function createBuildingLayer(): BuildingLayer {
   let storedKey = '';
   /** The buildings of a change being emitted ahead of the cells, a slice a frame. */
   let warming: { key: string; queue: Building[]; at: number;
+    /** A whole town to put together (the opening, a map opened): worked at the loading priority. */
+    loading: boolean;
     cells?: { stage: CellCache; cell: string; list: BuildingChunk[]; kinds: ReadonlySet<PartKind> }[];
     /** The cell being put together, a part kind a step. */
     assembling?: { stage: CellCache; cell: string; list: BuildingChunk[]; steps: Generator<void, BuildingMeshes, void> } | null } | null = null;
@@ -284,9 +286,16 @@ export function createBuildingLayer(): BuildingLayer {
       // was the longest task of the opening.
       if (key !== storedKey && dimmed === undefined && !cutaway) {
         if (!warming || warming.key !== key) {
-          warming = { key, queue: [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id)), at: 0 };
+          const queue = [...doc.buildings.all()].filter((b) => b.id !== hides && !ruined.has(b.id));
+          // A town none of whose buildings is made yet - the opening, a map
+          // opened - is a load, not an edit of a running game: it takes the
+          // loading budget (Unity's backgroundLoadingPriority High, 50 ms a
+          // frame) instead of the 6 ms an edit may take. At 6 ms a frame the
+          // 761 buildings of the default town came 10-20 s after its roads.
+          const unmade = stored === null ? queue.length : queue.reduce((n, b) => n + (chunks.has(b.id) ? 0 : 1), 0);
+          warming = { key, queue, at: 0, loading: unmade > LOADING_COUNT };
         }
-        const until = workUntil(WARM_SLICE_MS);
+        const until = warming.loading ? workUntil(LOADING_SLICE_MS, LOADING_SLICE_MS) : workUntil(WARM_SLICE_MS);
         if (!until) return false;
         while (warming.at < warming.queue.length && performance.now() < until) {
           drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);
@@ -455,6 +464,10 @@ function groundDigest(b: Building, groundAt: GroundAt, pavedAt?: PavedAt): strin
 }
 /** Milliseconds a frame spent emitting the buildings of a change (`update`). */
 const WARM_SLICE_MS = 6;
+/** Milliseconds a frame while a whole town is loaded (Unity, backgroundLoadingPriority High). */
+const LOADING_SLICE_MS = 50;
+/** More buildings than this not made yet: a load, not an edit. */
+const LOADING_COUNT = 100;
 /** Side of the cells the buildings are batched in, world units. */
 const BATCH_CELL = m(240);
 const DETAIL_CELL = m(120);

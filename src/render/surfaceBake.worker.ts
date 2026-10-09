@@ -3,7 +3,7 @@ import { terrainBakes } from './terrain';
 import { createFinishMaterials } from './buildings/finishes';
 import { detailTextures, takeDetailPixels, type DetailBakePixels } from './mesh/detailLayer';
 import { takeBakedSurfacePixels, type BakedPixels } from './mesh/textureBaker';
-import { forgetOtherDerived, keepDerived, readDerived } from './derivedCache';
+import { forgetOtherDerived, keepDerivedDurably, readDerived } from './derivedCache';
 
 // The recipes use only the two-dimensional canvas API. Give them OffscreenCanvas
 // here so the same source computes every texel without touching the DOM thread.
@@ -40,6 +40,7 @@ self.onmessage = (event: MessageEvent<{ hash: string | null }>) => {
     const kept = key ? await readDerived<SurfaceBakeResult>(key) : undefined;
     if (kept && Array.isArray(kept.surfaces) && Array.isArray(kept.details)) {
       post(kept);
+      self.close();
       return;
     }
     let result: SurfaceBakeResult;
@@ -53,8 +54,14 @@ self.onmessage = (event: MessageEvent<{ hash: string | null }>) => {
       self.postMessage({ error: String(error) });
       return;
     }
-    // Kept before its buffers are handed over (`put` copies them, here).
-    if (key) await keepDerived(key, result);
+    // Copied into the store before its buffers are handed over (`put` copies
+    // them, here); the page has them at once. This worker closes itself only
+    // once the write has committed: stopped from the page as soon as it
+    // posted (`terminate()` stops it at once), the write was lost and every
+    // opening baked them all again, three seconds before the first frame.
+    const write = key ? await keepDerivedDurably(key, result) : null;
     post(result);
+    await write?.committed;
+    self.close();
   })();
 };

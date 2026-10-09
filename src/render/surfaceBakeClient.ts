@@ -27,11 +27,15 @@ export function startSurfaceBake(): Promise<SurfaceBakeResult | null> {
       return;
     }
     worker.onmessage = (event: MessageEvent<SurfaceBakeResult | { error: string }>) => {
-      worker.terminate();
       if ('error' in event.data) {
+        worker.terminate();
         console.warn('Surface bake worker failed; using the canvas recipes on the main thread.', event.data.error);
         resolve(null);
-      } else resolve(event.data);
+      } else {
+        // Not stopped here: it is still keeping the texels it just sent
+        // (`derivedCache.ts`), and closes itself once they are kept.
+        resolve(event.data);
+      }
     };
     worker.onerror = (event) => {
       worker.terminate();

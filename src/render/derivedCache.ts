@@ -106,6 +106,30 @@ export async function keepDerived(key: string, value: unknown): Promise<void> {
   }
 }
 
+/**
+ * As `keepDerived`, and also tells when the write has committed (the
+ * transaction's `complete`, MDN) or failed: a worker stopped before then -
+ * `terminate()` stops it at once - loses the write. Resolves once the store
+ * has taken its copy; `committed` resolves either way, never rejects.
+ */
+export async function keepDerivedDurably(key: string, value: unknown): Promise<{ committed: Promise<void> }> {
+  const db = await database();
+  if (!db) return { committed: Promise.resolve() };
+  try {
+    const tx = db.transaction(STORE, 'readwrite');
+    const committed = new Promise<void>((resolve) => {
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => resolve();
+      tx.onerror = () => resolve();
+    });
+    const request = tx.objectStore(STORE).put(value, key);
+    request.onerror = (event) => event.preventDefault();
+    return { committed };
+  } catch {
+    return { committed: Promise.resolve() };
+  }
+}
+
 /** Keeps a value under `key`, without waiting. */
 export function writeDerived(key: string, value: unknown): void {
   void keepDerived(key, value);
