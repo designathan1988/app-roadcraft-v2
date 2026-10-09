@@ -74,7 +74,9 @@ export function openRoadKeys(anchor?: HTMLElement): void {
 
   // While a chip waits, the next key is its, before the game sees it.
   const onKey = (event: KeyboardEvent): void => {
-    if (!open) { window.removeEventListener('keydown', onKey, true); return; }
+    // This panel closed (or replaced by a new one, which has its own listener):
+    // let go, before a stale chip still waiting takes the key.
+    if (open !== root) { window.removeEventListener('keydown', onKey, true); return; }
     if (!waiting) {
       if (event.key === 'Escape') { closeRoadKeys(); event.stopPropagation(); }
       return;
