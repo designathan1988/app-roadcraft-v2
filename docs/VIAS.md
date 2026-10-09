@@ -347,7 +347,16 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   das opções: botões dessa linha mais justos (cabe com 16 px de folga em 1280x720).
 - Detectores: `tests/world/roadFurniture.spec.ts` (árvores no canteiro e desenhadas lá), `tests/editor/signRule.spec.ts`
   (placa = regra, fileira a cada 30 m).
-- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f, arborização e praças na cidade gerada.
+- Cidade gerada arborizada (`editor/cityGenerator.ts` `widenCityFootways`, `greenCity`; `world/cityGen/squares.ts`):
+  calçadas de 3 m (cabe a cova da árvore com 1,20 m livres, NBR 9050) e canteiro de 2 m gramado nas avenidas, antes de
+  cortar os lotes; o conjunto Completo em todas as ruas (árvores na calçada, no canteiro das avenidas, postes, lixeiras,
+  bancos, hidrantes); uma praça por bairro (célula de 420 m): o quarteirão inteiro (os lotes que se tocam) de 1.500 a
+  14.000 m², de frente para avenida ou coletora, o mais perto do meio do bairro; caminhos em cruz pavimentados, árvores em
+  grade de 9 m nos gramados (árvores plantadas, desenhadas em instância). Cidade pequena: 4 praças, 2.414 peças, 1,4 s na
+  geração; quadro mediano 23 ms no Chrome sem tela (iGPU), sem número de antes.
+- Detector: `tests/world/cityGreen.spec.ts`. `crossingAccesses` memorizado por revisão e `furnitureFor` com grade de
+  vizinhança (antes, quadrático no número de peças).
+- Falta: rede elétrica sobre `planPoleRun`, registro no catálogo da 5f.
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

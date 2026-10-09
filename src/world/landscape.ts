@@ -247,7 +247,16 @@ export interface CrossingAccess {
  * in a zebra's exit leaves a walker neither able to pass it nor to stay in the
  * road.
  */
+const accessMemo = new WeakMap<Network, { revision: number; trafficRevision: number; list: CrossingAccess[] }>();
 export function crossingAccesses(net: Network): CrossingAccess[] {
+  // Asked once per item placed: the city generator places thousands (V7).
+  const known = accessMemo.get(net);
+  if (known && known.revision === net.revision && known.trafficRevision === net.trafficRevision) return known.list;
+  const list = crossingAccessesNow(net);
+  accessMemo.set(net, { revision: net.revision, trafficRevision: net.trafficRevision, list });
+  return list;
+}
+function crossingAccessesNow(net: Network): CrossingAccess[] {
   const out: CrossingAccess[] = [];
   for (const [nodeId, node] of net.doc.nodes) {
     if (node.incident.length < 2) continue;
