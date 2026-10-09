@@ -597,6 +597,10 @@ export function* roadSurfaceSteps(
     };
     const strips = medianStrips(net, include);
     const medians = { kerb: inputsOf(strips.kerb), planting: inputsOf(strips.planting) };
+    // The pass's inputs, the crossings' footway and the markings in steps of
+    // their own: together they were one step of ~20 ms after a road edit in the
+    // test city, past the slice (`renderer.ts` `pumpWorld`, P3).
+    yield;
     // Paint belongs to the road legs, not to the shared intersection interior,
     // so it is clipped to the ribbons' carriageway alone.
     const ribbonAsphalt: Input[] = [];
@@ -616,6 +620,9 @@ export function* roadSurfaceSteps(
       const input = inputOf([junction.ring.flatten().map((point) => [point.x, point.y])]);
       if (input) ribbonAsphalt.push(input);
     }
+    yield;
+    net.crossingSurface();
+    yield;
     const quads = new Map<string, Input[]>();
     for (const [color, rings] of markingQuads(net, include, structure.id === 'ground')) {
       quads.set(color, inputsOf(rings.map((ring) => [ring])));
@@ -669,6 +676,7 @@ export function* roadSurfaceSteps(
         for (let iy = y0; iy <= y1; iy++) add(reachOf((ix + TILE_BIAS) * 0x1_0000 + (iy + TILE_BIAS)));
       }
     };
+    yield;
     for (const name of ['casing', 'sidewalk', 'curb', 'asphalt'] as const) {
       for (const input of levels[name]) file(input, (into) => into.levels[name].push(input));
     }

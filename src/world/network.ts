@@ -749,6 +749,15 @@ export class Network {
    * make impossible. The crossing may end up closer to the segment's midpoint
    * than is ideal; it may never end up inside the road.
    */
+  /**
+   * The footway the crossings are fitted to, built once per network: a build
+   * spread over frames asks for it in a step of its own
+   * (`render/roadSurfaces.ts`), not inside the step that paints the markings.
+   */
+  crossingSurface(): WalkableSurface {
+    return this.crossingWalkable ??= new WalkableSurface(this);
+  }
+
   crosswalkDistanceAt(seg: SegmentId, node: NodeId): number {
     const cacheKey = `${seg}:${node}`;
     const cached = this.crossingDistances.get(cacheKey);
@@ -795,7 +804,7 @@ export class Network {
     const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking);
     const lateral = profile.width / 2 + profile.sidewalk / 2;
     const line = this.polylines.get(this.doc, seg);
-    const walkable = this.crossingWalkable ??= new WalkableSurface(this);
+    const walkable = this.crossingSurface();
     const fits = (distance: number): boolean => {
       const frame = line.sampleAt(segment.a === node ? distance : length - distance);
       const nx = -frame.t.y, ny = frame.t.x;

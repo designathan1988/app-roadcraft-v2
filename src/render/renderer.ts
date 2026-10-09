@@ -790,6 +790,15 @@ export function createSceneRenderer(
    * place in a few frames, each still well under a stall.
    */
   const WORLD_SLICE_MS = 28;
+  /**
+   * The last steps' costs, ms: the next step is started only if the dearest of
+   * them still fits in the slice - the estimate Chromium's deadline scheduler
+   * uses for a draw (`proxy_timing_history.cc`: the 100th percentile of a
+   * rolling window). Checked only after a step, a 20 ms surface tile started
+   * at 27 ms made a frame of 60 ms after a road edit in the test city (P3).
+   */
+  const stepCosts = new Float64Array(8);
+  let stepCursor = 0;
   /** Builds the world of the last edit for a few milliseconds; it puts itself in place once complete. */
   const pumpWorld = (): void => {
     if (!worldJob) return;
@@ -798,9 +807,20 @@ export function createSceneRenderer(
     if (worldJobFresh) { worldJobFresh = false; onAssetsReady(); return; }
     const until = workUntil(WORLD_SLICE_MS, WORLD_SLICE_MS);
     if (!until) { onAssetsReady(); return; }
+    // At least one step a frame, whatever it is expected to cost: the job always moves on.
+    let at = performance.now();
     let step = worldJob.next();
-    while (!step.done && step.value !== 'wait' && performance.now() < until) step = worldJob.next();
-    if (step.done) worldJob = null;
+    for (;;) {
+      const now = performance.now();
+      stepCosts[stepCursor++ % stepCosts.length] = now - at;
+      if (step.done || step.value === 'wait') break;
+      let estimate = 0;
+      for (const cost of stepCosts) if (cost > estimate) estimate = cost;
+      if (now + estimate > until) break;
+      at = now;
+      step = worldJob.next();
+    }
+    if (step.done) { worldJob = null; stepCosts.fill(0); }
     else onAssetsReady();
   };
   let networkRevision = -1;
