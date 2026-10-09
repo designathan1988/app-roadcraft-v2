@@ -68,7 +68,7 @@ const tone = (dark: number, lit: number): Tone => ({ dark: new Color(dark), lit:
 // verde mais escuro para poder aparecer melhor").
 const LEAF = tone(0x24401c, 0x4f7a34);
 const LEAF_TALL = tone(0x203a1e, 0x46703a);
-const NEEDLE = tone(0x1a3320, 0x3a5e3a);
+const NEEDLE = tone(0x22402a, 0x4a7343);
 const FROND = tone(0x3e6026, 0x7fa448);
 const BARK = tone(0x4a3c2f, 0x7d6853);
 const PALM_BARK = tone(0x5a4c3e, 0x948268);
@@ -351,19 +351,22 @@ function cypress(seed: number): LowPolyParts {
   const b = new Builder(random(seed));
   trunk(b, new Vector3(0, 0.2, 0), 0.034, 0.024, BARK);
   const slim = 0.92 + b.rng() * 0.16;
-  const base = 0.16, height = 0.8, radius = 0.12 * slim;
+  // Only a thin core: a cone as wide as the crown showed through the cards
+  // as a smooth black spike (the player, 2026-10-08).
+  const base = 0.16, height = 0.8, core = 0.045 * slim, crown = 0.16 * slim;
   const shade: Occlusion = (p) => (0.66 + 0.34 * Math.min(1, Math.max(0, (p.y - base) / height))) * 0.5;
-  b.add(new ConeGeometry(radius, height, 7, 1, false), new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
-  // The cards' points over the cone, each facing out and a little up.
-  for (let i = 0; i < 90; i++) {
-    const t = b.rng();
-    const y = base + t * height * 0.92;
-    const r = radius * (1 - t) * 1.05;
+  b.add(new ConeGeometry(core, height, 6, 1, true), new Matrix4().makeTranslation(0, base + height / 2, 0), NEEDLE, shade, 0.12);
+  // The cards' points through a cone round the core, each facing out and a
+  // little up, smaller towards the tip so the column narrows to a point.
+  for (let i = 0; i < 120; i++) {
+    const t = Math.pow(b.rng(), 1.3);
+    const y = base + 0.03 + t * height * 0.9;
+    const r = (crown * (1 - t) + 0.02) * (0.55 + 0.45 * b.rng());
     const a = b.rng() * Math.PI * 2;
     const n = new Vector3(Math.cos(a), 0.35, Math.sin(a)).normalize();
-    b.leaves.push({ p: new Vector3(Math.cos(a) * r, y, Math.sin(a) * r), n, tone: NEEDLE, height: t, size: 1 - 0.65 * t });
+    b.leaves.push({ p: new Vector3(Math.cos(a) * r, y, Math.sin(a) * r), n, tone: NEEDLE, height: t, size: 1 - 0.6 * t });
   }
-  return b.finish(36, 0.26);
+  return b.finish(70, 0.3);
 }
 
 /** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. No cards. */
