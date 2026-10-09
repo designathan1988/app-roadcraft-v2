@@ -10,6 +10,21 @@ its own `CLAUDE.md` with its couplings and traps.
 
 ## How work is done
 
+- **Look at the game yourself before saying anything works.** This rule comes
+  before every other one, including pace. After any change to game code: open
+  the game in the in-app browser with the pane displayed (hidden, it draws 0
+  frames a second and every number is false; if `tabs_context` says hidden, ask
+  the player for Ctrl+Shift+B), use the change as the player does, with the
+  camera low and close where a defect would show ("Baixar a câmera" in the
+  camera menu), take a screenshot and read it. Use the production build when
+  another session may be editing (the dev server reloads `main.ts` under you):
+  `node scripts/run-limited.mjs node node_modules/vite/bin/vite.js build --outDir C:/Codex-Shared/road-play-dist`,
+  then preview `roadcraft-play` (port 4180); otherwise `roadcraft-dev`.
+  Looking at the game is not a probe and has no limit. Measurements and green
+  tests come in addition, never instead. `.claude/hooks/verify-gate.mjs` blocks
+  the final reply when game code changed and its current state was not
+  screenshotted; a change with nothing visible says so in the reply with the
+  line `SEM VERIFICAÇÃO VISUAL: <motivo>`.
 - **Research first.** Before anything non-trivial (performance, loading,
   rendering, simulation, agents, tools, UI systems), read the official docs
   (three.js docs and source, MDN, Khronos) and how shipped games solve it (GDC
@@ -78,18 +93,15 @@ times, and visible defects (old trees) were closed by the session's own numbers.
   changed. The full suite (`npm run check`) and a fuzz hunt run once, before
   a stage closes, not per item.
 - **A probe at most twice per item,** before and after. Needing a third means
-  the hypothesis is wrong: go back to the code.
+  the hypothesis is wrong: go back to the code. A probe is a measuring script;
+  looking at the game in the in-app browser is not one and is never rationed.
 - **Docs in the same commit as the code** (the `PROBLEMAS.md` line, STATUS).
   A docs-only commit only at the end of a session.
 - **Similar defects in one batch:** one cycle of reading, fixing, testing and
   committing for several defects of the same area.
 - **Never idle:** while a test or probe runs, read the code of the next item.
-- **Look at the game yourself before saying anything works.** In the in-app
-  browser with the pane displayed (hidden, it draws 0 frames a second and every
-  number is false), on the production build (`roadcraft-play`) whenever another
-  session may be editing (the dev server reloads `main.ts` under you). Walk it
-  as the player does, with the camera low and close where a defect would show.
-  Measurements and green tests come in addition, never instead.
+- **Faster never means unverified.** The pace rules cut repeated suites, probes
+  and docs commits; they never cut looking at the game (first rule above).
 - **A visual defect the player reports is a class, not an instance.** Find
   where it is generated, fix it there, and add a detector (a test, or a check
   in the F9 monitor) so the class cannot come back. Hiding it in the renderer,
