@@ -22,7 +22,11 @@ import { assignOccupancy } from './kerbStops';
 export const ENTRY_RATE = 0.05;
 /** Vehicles an entry holds outside the map before further arrivals are lost. */
 export const ENTRY_QUEUE = 6;
-/** Arrivals a second at one entry while the map has fewer cars than chosen (`SimWorld.trafficCount`). */
+/**
+ * Arrivals a second at one entry with a number of cars chosen
+ * (`SimWorld.trafficCount`) once the map holds it: a car that leaves is soon
+ * replaced. Below the number every entry is saturated (`stepDispatch`).
+ */
 const FILL_RATE = 0.25;
 /** Most vehicles admitted onto the map in one tick, city-wide. */
 const ADMIT_PER_TICK = 4;
@@ -82,9 +86,16 @@ export function stepDispatch(w: SimWorld, enabled: boolean): void {
   if (!enabled) return;
   w.vehicleSpawnClock += DT;
   const now = w.vehicleSpawnClock;
-  // A number of cars chosen (`SimWorld.trafficCount`): each entry brings one
-  // in about every four seconds while the map has fewer, so the count is
-  // reached in a minute or so and a car that leaves is soon replaced.
+  // A number of cars chosen (`SimWorld.trafficCount`): while the map has
+  // fewer, every entry has a car waiting to come in, let in as soon as its
+  // lane has room behind the last one (`spawnAt`) - SUMO's insertion
+  // backlog, so the entry carries what its lane takes (sumo.dlr.de
+  // "RoadCapacity": about 1 200 cars an hour a lane at the default insertion,
+  // up to 2 500). A stream of one car every four seconds an entry (900 an
+  // hour) never reached the number on a map with few roads in: the test
+  // city's three entry lanes held about 160 cars at 400 chosen, as many as
+  // left.
+  const saturated = w.trafficCount !== null && w.trafficCount > 0 && w.vehicles.size < trafficTarget(w);
   const rate = w.trafficCount !== null ? (w.trafficCount > 0 ? FILL_RATE : 0)
     : ENTRY_RATE * w.trafficIntensity * w.demandMultiplier;
   const entries = entryLanes(w);
@@ -109,6 +120,7 @@ export function stepDispatch(w: SimWorld, enabled: boolean): void {
       demand.rate = rate;
     }
     if (rate <= 0) continue;
+    if (saturated && demand.waiting.length === 0) demand.waiting.push(now);
     while (demand.next <= now) {
       if (demand.waiting.length < ENTRY_QUEUE) demand.waiting.push(demand.next);
       else w.entryDemandLost++;
