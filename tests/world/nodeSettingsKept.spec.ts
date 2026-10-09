@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SegmentId } from '@world/ids';
+import type { NodeId, SegmentId } from '@world/ids';
 import { RoadDoc } from '@world/doc';
 import { layoutDoc } from '../sim/support/bodies';
 
@@ -11,10 +11,10 @@ import { layoutDoc } from '../sim/support/bodies';
  * signal settings, and a road's retaining walls, must come through it, and
  * an undo of one of them alone must count as a change of the roads.
  */
-function junction(): { doc: RoadDoc; centre: number; legs: SegmentId[] } {
+function junction(): { doc: RoadDoc; centre: NodeId; legs: SegmentId[] } {
   const { doc, centre } = layoutDoc({ name: 'av', bearings: [0, 90, 180, 270], types: [3, 1, 3, 1] });
   const legs = [...doc.segments.keys()].sort((a, b) => a - b) as SegmentId[];
-  return { doc, centre, legs };
+  return { doc, centre: centre as NodeId, legs };
 }
 
 describe('junction settings through replaceWith', () => {
