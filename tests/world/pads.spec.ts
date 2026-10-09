@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { cityBuilding } from '@world/buildings/cityBuildings';
 import { Model } from '@world/buildings/cityBuildings';
 import { instantiate } from '@world/buildings/blueprints';
-import { floorHeight } from '@world/buildings/foundation';
-import { footprintRects, localToWorld } from '@world/buildings/geometry';
+import { PLINTH_MIN, floorHeight } from '@world/buildings/foundation';
+import { footprintRects, localToWorld, solidFootprints } from '@world/buildings/geometry';
 import { lotSurfaces } from '@world/buildings/lots';
 import { LOT_PLATE, PAD_BATTER, POOL_SINK, POOL_TERRAIN_CLEARANCE, buildingPads } from '@world/buildings/pads';
 import { type Building, asBuildingId } from '@world/buildings/types';
@@ -30,8 +30,18 @@ describe('building pads', () => {
     }
   });
 
-  it('gives the same floor on the graded ground as on the land', () => {
-    expect(floorHeight(b, graded)).toBeCloseTo(floorHeight(b, slope), 6);
+  it('grades the ground under the building to its designed level, the floor less the plinth', () => {
+    // The floor is designed on the land (every reader passes the natural
+    // ground: the mesh, the effects, the room lights, the pads themselves),
+    // and the ground under the building is cut and filled to it. Recomputed
+    // on the graded ground the floor would read the lots' paving beside it,
+    // which no reader does.
+    const level = floorHeight(b, slope) - PLINTH_MIN;
+    for (const ring of solidFootprints(b)) {
+      const cx = ring.reduce((sum, p) => sum + p.x, 0) / ring.length;
+      const cy = ring.reduce((sum, p) => sum + p.y, 0) / ring.length;
+      expect(graded(cx, cy)).toBeCloseTo(level, 6);
+    }
   });
 
   it('banks back to the land at the batter, never steeper', () => {
