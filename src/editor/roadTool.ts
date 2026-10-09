@@ -19,6 +19,7 @@ import { commitRoadPath } from './commit';
 import { applyProfileTo } from './roads/profile';
 import { roadsBefore, settleRoadEdit } from './roads/economy';
 import type { RoadProfileSpec } from '@world/roads/profile';
+import type { RoadStation } from '@world/roads/buildMode';
 import type { RoadEditRefusal } from './editRules';
 import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from './roadPath';
 
@@ -382,7 +383,7 @@ export class RoadTool {
     const road = this.curvePending ? null : this.draft ?? this.chainPreview;
     const key = road ? this.draftKey(road) : null;
     if (key !== this.judged.key) {
-      this.judged = { key, reason: null, cost: null };
+      this.judged = { key, reason: null, cost: null, stations: null };
       if (this.judgeTimer !== null) clearTimeout(this.judgeTimer);
       this.judgeTimer = null;
       if (key !== null) this.judgeTimer = setTimeout(() => this.judge(key), VERDICT_DELAY);
@@ -390,7 +391,18 @@ export class RoadTool {
     return this.judged.reason;
   }
 
-  private judged: { key: string | null; reason: RefusalReason | null; cost: number | null } = { key: null, reason: null, cost: null };
+  private judged: { key: string | null; reason: RefusalReason | null; cost: number | null; stations: readonly RoadStation[] | null } =
+    { key: null, reason: null, cost: null, stations: null };
+
+  /**
+   * The road in hand as it would be built (docs/VIAS.md V3): the dry run's
+   * stations - solved deck, natural ground, way of building - once the draft
+   * is judged, or null until then (the preview estimates meanwhile).
+   */
+  stations(): readonly RoadStation[] | null {
+    this.verdict();
+    return this.judged.stations;
+  }
 
   /**
    * What the road in hand would cost (`world/economy.ts`), judged with the
@@ -422,7 +434,7 @@ export class RoadTool {
     const result = commitRoadPath(host.doc, host.net, road.start, end, settings.typeIndex, pieces, settings.lanes,
       settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true, groundSolve: host.groundSolve?.() ?? null });
     const reason = !result.committed && result.reason && isRefusal(result.reason) ? result.reason : null;
-    this.judged = { key, reason, cost: result.cost ?? null };
+    this.judged = { key, reason, cost: result.cost ?? null, stations: result.stations ?? null };
     host.redraw();
   }
 

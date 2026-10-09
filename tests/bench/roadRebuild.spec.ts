@@ -51,6 +51,14 @@ describe('road rebuild benchmark', () => {
         const end = { x: frame.p.x + frame.n.x * 150, y: frame.p.y + frame.n.y * 150 };
         const snapshot = doc.toJSON();
         let committed = false;
+        // The preview's dry run (`roadTool.ts` `judge`), with its stations (docs/VIAS.md V3).
+        performance.clearMeasures();
+        note('road: dry run', time(() => {
+          commitRoadPath(doc, net, start, { kind: 'free', at: end }, 1,
+            [{ start: { at: start.at, heightOffset: 0 }, end: { at: end, heightOffset: 0 }, curve: null }], null, undefined, ground,
+            { groundSolve: elevation, dryRun: true });
+        }));
+        note('  dry run: stations', performance.getEntriesByName('hitch:commit/stations').reduce((sum, e) => sum + e.duration, 0));
         performance.clearMeasures();
         note('road: commit', time(() => {
           committed = commitRoadPath(doc, net, start, { kind: 'free', at: end }, 1,

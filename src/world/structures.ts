@@ -131,6 +131,13 @@ export const isRoadStructure = (value: unknown): value is RoadStructure =>
   value === 'bridge' ||
   value === 'tunnel';
 
+/**
+ * Deck over the ground past which a road at grade stands on piers (2 m): the
+ * renderer builds them past it (`render/structures.ts`, `render/roadSurfaces.ts`)
+ * and the road tool's preview names it a bridge (`roads/buildMode.ts`).
+ */
+export const RAISED_LIFT = 5;
+
 /** True for the structures that stand clear of the ground on piers. */
 export const isRaised = (id: RoadStructure): boolean =>
   id === 'elevated' || id === 'bridge';

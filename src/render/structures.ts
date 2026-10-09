@@ -18,6 +18,7 @@ import type { RoadElevation } from '@world/elevation';
 import { ROAD_TUNING } from '@world/roads/tuning';
 import { Level, casingHalf, roadProfile, sidewalkHalf } from '@world/roadTypes';
 import {
+  RAISED_LIFT,
   TUNNELS_DRAWN,
   TUNNEL_ARCH,
   TUNNEL_BORE,
@@ -80,7 +81,7 @@ export function structureRibbons(
     return within.some((r) => r[0] <= bb.maxX + SPAN_REACH && r[2] >= bb.minX - SPAN_REACH && r[1] <= bb.maxY + SPAN_REACH && r[3] >= bb.minY - SPAN_REACH);
   });
   const raised = asked.filter((ribbon) =>
-    isRaised(net.doc.segment(ribbon.id)?.structure ?? 'ground') || samples(ribbon, (lift) => lift > 5),
+    isRaised(net.doc.segment(ribbon.id)?.structure ?? 'ground') || samples(ribbon, (lift) => lift > RAISED_LIFT),
   );
   const tunnels = TUNNELS_DRAWN
     ? asked.filter((ribbon) =>

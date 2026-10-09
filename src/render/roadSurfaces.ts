@@ -12,6 +12,7 @@ import { levelPolygons, levelRings } from '@world/surfaces';
 import { curbRamps, rampOutline, walkingRise } from '@world/curbRamps';
 import { Polyline } from '@core/polyline';
 import {
+  RAISED_LIFT,
   ROAD_STRUCTURES,
   isRaised,
   roadStructure,
@@ -418,7 +419,7 @@ export function* roadSurfaceSteps(
         if (!line) return false;
         for (let s = 0; s <= line.length; s += Math.max(4, line.length / 24)) {
           const p = line.sampleAt(s).p;
-          if (elevation.onSegment(id, p.x, p.y) - terrainAt(p.x, p.y) > 5) return true;
+          if (elevation.onSegment(id, p.x, p.y) - terrainAt(p.x, p.y) > RAISED_LIFT) return true;
         }
         return false;
       })

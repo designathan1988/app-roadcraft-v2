@@ -183,6 +183,36 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   quadro do jogo com o editor fechado.
 - Fotos (1280x720): pasta de rascunho da sessão, `fotos-v2b/01..17`.
 
+## Andamento da V3
+- Pesquisa (lida): Network Multitool, código das ferramentas de criação
+  (https://github.com/MacSergey/NetworkMultitool, `ToolModes/ConnectionModes/BaseCreate.cs`): calcula os pontos uma vez
+  quando a entrada muda (`Calculate`, `CalcState`), tira o custo desses mesmos pontos, desenha a prévia deles
+  (`RenderOverlay`) e constrói com eles (`Create(points, ..., cost)`); atalhos de cada modo nas configurações. WSDOT Design
+  Manual M 22-01, cap. 730 "Retaining Walls and Steep Reinforced Slopes"
+  (https://wsdot.wa.gov/publications/manuals/fulltext/M22-01/730.pdf, lido em texto): muro onde falta faixa de domínio para
+  o talude; em corte, muros ancorados, grampeados (soil nail) e em balanço, de base estreita; MSE pede base de 70% da altura
+  e não serve em corte.
+- Prévia = construção: o dry run da prévia (`commitRoadPath` com `dryRun`) devolve as estações da via (`DraftResult.stations`,
+  a cada 2 m: deck resolvido pelo mesmo `buildRoadElevation`, chão natural, modo de construção), da mesma rede de trabalho e
+  da mesma solução de alturas que o commit; o desenho da prévia passa a usar essas estações quando o rascunho é julgado
+  (120 ms parado); antes disso, a estimativa de sempre. `world/roads/buildMode.ts`: chão, aterro, trincheira, ponte, túnel,
+  pelos limiares com que o jogo constrói (`RAISED_LIFT`, agora declarado uma vez em `world/structures.ts` e lido por
+  `render/structures.ts` e `render/roadSurfaces.ts`; `TUNNEL_BORE`; `fillFrom`). Teste `tests/editor/buildPreview.spec.ts`:
+  via erguida em pilares e via atravessando um morro, dry run contra a via construída e resolvida do zero, deck e modo iguais
+  em cada estação.
+- Feedback: a prévia pinta entre o deck e o chão o aterro (terra), a trincheira (cinza com a crista), os pilares da ponte e
+  escurece o trecho em túnel; o rótulo diz o comprimento, o custo e os trechos ("ponte 170 m", "túnel 100 m · trincheira
+  80 m").
+- Teclas configuráveis (`ui/roads/keys.ts`, `ui/roads/keysPanel.ts`): subir e descer a via e trocar o traçado (padrão
+  Page Up, Page Down, V); linha "Teclas" na ferramenta de vias abre o painel; uma tecla dada a uma ação sai da outra; teclas
+  do jogo (ferramentas, câmera, números, Esc) recusadas com o motivo; as frases que citam as teclas usam as escolhidas
+  (`setGlobalParams` em `ui/i18n`). Teste `tests/ui/roadKeys.spec.ts`.
+- Defeito achado ao usar (classe): a altura nas opções da ferramenta mostrava o passo anterior quando mudada pelo teclado;
+  agora o painel observa o texto que o jogo escreve (`shell.ts`, `mirrored`).
+- Desempenho (`tests/bench/roadRebuild.spec.ts`, BENCH=1, cidade de teste, mediana de 5): dry run 5,9 ms, dos quais as
+  estações 0,19 ms (a solução do teste de túnel é reaproveitada); commit 6,0 ms, igual. Arraste na sonda headless: quadro
+  mediano 2,5 ms.
+
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e
   instância. Fluxo em anéis fixos a 1 Hz. Editor de conectores refaz só o nó.

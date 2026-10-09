@@ -88,8 +88,10 @@ import { mountBuildStamp } from '@ui/buildStamp';
 import { UI_V2 } from '@ui/shell/flag';
 import { mountShell } from '@ui/v2/shell';
 import { formatCost } from '@ui/roads/money';
+import { type BuildMode, buildRuns } from '@world/roads/buildMode';
 import { mountAbout } from '@ui/about';
-import { LANGUAGES, hasKey, initLanguage, language, onLanguageChange, setLanguage, t } from '@ui/i18n';
+import { LANGUAGES, applyTranslations, hasKey, initLanguage, language, onLanguageChange, setGlobalParams, setLanguage, t } from '@ui/i18n';
+import { onRoadKeysChange, roadKeyAction, roadKeyParams } from '@ui/roads/keys';
 import {
   nodeCountLabel,
   peopleCountLabel,
@@ -126,6 +128,8 @@ type Alignment = 'straight' | 'curve' | 'free';
 
 // The interface language is resolved and applied BEFORE anything reads a label,
 // so no frame is ever painted in the wrong language.
+// The road tool's rebindable keys, named in every sentence that mentions them (docs/VIAS.md V3).
+setGlobalParams(roadKeyParams);
 initLanguage();
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -1587,9 +1591,14 @@ window.addEventListener('keydown', (e) => {
   if (!meta && game.tool === 'transit' && transitEditor.key(e.key)) { e.preventDefault(); return; }
   if (!meta && game.tool === 'barrier' && barrierTool.key(e.key)) { e.preventDefault(); return; }
 
-  if (!meta && game.tool === 'road' && (e.key === 'PageUp' || e.key === 'PageDown')) {
+  // The road tool's keys, as the player bound them (`editor/roads/keys.ts`).
+  const roadAction = !meta && !e.altKey && game.tool === 'road' ? roadKeyAction(e.key) : null;
+  if (roadAction) {
     e.preventDefault();
-    roadTool.stepHeight(e.key === 'PageUp' ? 1 : -1);
+    if (roadAction === 'alignment') {
+      const order: readonly Alignment[] = ['straight', 'curve', 'free'];
+      setAlignment(order[(order.indexOf(game.alignment) + 1) % order.length]!);
+    } else roadTool.stepHeight(roadAction === 'heightUp' ? 1 : -1);
     return;
   }
 
@@ -1959,6 +1968,8 @@ function setAlignment(next: Alignment): void {
 document.querySelectorAll<HTMLButtonElement>('.alignment-mode').forEach((button) => {
   button.onclick = () => setAlignment((button.dataset['alignment'] as Alignment) ?? 'straight');
 });
+// A key rebound: every sentence that names it is written again.
+onRoadKeysChange(() => { applyTranslations(document); updateHint(); });
 
 // The road's own operations, beside its classes: each one takes the pointer.
 document.querySelectorAll<HTMLButtonElement>('.road-op').forEach((button) => {
@@ -3869,6 +3880,22 @@ function drawOverlayScreen(): void {
       }
       previewHeight = nextHeight;
     }
+    // Once the draft is judged, the road as it will be built (docs/VIAS.md V3):
+    // the dry run's stations, solved by the same code as the commit, in place
+    // of the estimate above - deck, ground and the way each stretch is built.
+    const exact = settling ? null : roadTool.stations();
+    const modes: BuildMode[] = [];
+    if (exact && exact.length > 1) {
+      points.length = projected.length = groundProjected.length = offsets.length = 0;
+      for (const st of exact) {
+        const p = { x: st.x, y: st.y };
+        points.push(p);
+        offsets.push(st.deck - scene.terrainHeightAt(st.x, st.y));
+        projected.push(view.toScreen(p, w, h, st.deck));
+        groundProjected.push(view.toScreen(p, w, h, st.ground));
+        modes.push(st.mode);
+      }
+    }
     const pathLength = points.reduce((sum, point, i) =>
       i === 0 ? 0 : sum + Math.hypot(point.x - (points[i - 1] as Vec2).x, point.y - (points[i - 1] as Vec2).y), 0);
     // A draft the editing rules would refuse, named before it is let go
@@ -3896,7 +3923,8 @@ function drawOverlayScreen(): void {
     // road even though the committed mesh was sound. Draw the same visual stack
     // as the 3D road and keep validity as a slim outer halo instead.
     ctx.save();
-    if (points.length > 1 && offsets.some((offset) => Math.abs(offset) > UNITS_PER_METER * 0.5)) {
+    if (modes.length > 1) drawBuildModes(ctx, projected, groundProjected, modes);
+    else if (points.length > 1 && offsets.some((offset) => Math.abs(offset) > UNITS_PER_METER * 0.5)) {
       strokeScreen(points, 'rgba(6, 19, 21, 0.52)', casingWidth + 5, [7, 7], groundProjected);
       ctx.beginPath();
       ctx.moveTo(projected[0]!.x, projected[0]!.y);
@@ -3936,6 +3964,8 @@ function drawOverlayScreen(): void {
     band(footwayHalf, '#a7a498');
     band(kerbHalf, '#87877f');
     band(asphaltHalf, asphaltPreviewPattern(ctx));
+    // A tunnel's stretch is under the land: the road drawn through it, dimmed and dashed.
+    if (modes.includes('tunnel')) drawTunnelStretches(ctx, projected, modes, asphaltWidth);
     if (rt.markings !== 'none') {
       const dash = [Math.max(4, 10 * pixelsPerUnit), Math.max(3, 8 * pixelsPerUnit)];
       strokeScreen(points, rt.line, Math.max(1, 1.1 * pixelsPerUnit), dash, projected);
@@ -3952,7 +3982,8 @@ function drawOverlayScreen(): void {
         // With the reason a refused draft would be refused, beside its length.
         // And what it costs (`world/economy.ts`), once the draft has been judged.
         const cost = settling ? null : roadTool.cost();
-        const priced = cost === null ? `${tens} m` : `${tens} m · ${formatCost(cost)}`;
+        const built = exact && exact.length > 1 ? buildSummary(exact) : '';
+        const priced = (cost === null ? `${tens} m` : `${tens} m · ${formatCost(cost)}`) + (built ? ` · ${built}` : '');
         const text = refusal ? `${priced} · ${t(`rule.short.${refusal}`)}` : priced;
         ctx.save();
         ctx.font = '700 13px system-ui, sans-serif';
@@ -4020,6 +4051,86 @@ function drawOverlayScreen(): void {
       }
     }
   }
+}
+
+/**
+ * How each stretch of the road in hand will be built (docs/VIAS.md V3), drawn
+ * between its deck and the natural ground: an embankment's earth, a cutting's
+ * held sides, a bridge's piers. Behind the road bands.
+ */
+const BUILD_FILL: Readonly<Record<BuildMode, string | null>> = {
+  ground: null,
+  embankment: 'rgba(164, 120, 74, 0.62)',
+  cutting: 'rgba(132, 128, 120, 0.62)',
+  bridge: null,
+  tunnel: 'rgba(40, 34, 30, 0.55)',
+};
+const PIER_EVERY = 14;
+function drawBuildModes(ctx: CanvasRenderingContext2D, deck: readonly Vec2[], ground: readonly Vec2[], modes: readonly BuildMode[]): void {
+  let i = 0;
+  while (i < modes.length) {
+    const mode = modes[i]!;
+    let j = i;
+    while (j + 1 < modes.length && modes[j + 1] === mode) j++;
+    const a = Math.max(0, i - 1), b = Math.min(modes.length - 1, j + 1);
+    const fill = BUILD_FILL[mode];
+    if (fill) {
+      ctx.beginPath();
+      ctx.moveTo(deck[a]!.x, deck[a]!.y);
+      for (let k = a + 1; k <= b; k++) ctx.lineTo(deck[k]!.x, deck[k]!.y);
+      for (let k = b; k >= a; k--) ctx.lineTo(ground[k]!.x, ground[k]!.y);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (mode === 'cutting') {
+        // The held side of the cut: its top line on the ground.
+        ctx.strokeStyle = 'rgba(214, 208, 196, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(ground[a]!.x, ground[a]!.y);
+        for (let k = a + 1; k <= b; k++) ctx.lineTo(ground[k]!.x, ground[k]!.y);
+        ctx.stroke();
+      }
+    }
+    if (mode === 'bridge') {
+      ctx.strokeStyle = 'rgba(206, 200, 188, 0.95)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let k = i; k <= j; k += PIER_EVERY) {
+        ctx.moveTo(deck[k]!.x, deck[k]!.y);
+        ctx.lineTo(ground[k]!.x, ground[k]!.y);
+      }
+      ctx.stroke();
+    }
+    i = j + 1;
+  }
+}
+
+function drawTunnelStretches(ctx: CanvasRenderingContext2D, deck: readonly Vec2[], modes: readonly BuildMode[], width: number): void {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(16, 14, 12, 0.6)';
+  ctx.lineWidth = width;
+  ctx.lineCap = 'butt';
+  ctx.beginPath();
+  for (let k = 0; k < modes.length; k++) {
+    if (modes[k] !== 'tunnel') continue;
+    const start = modes[k - 1] !== 'tunnel';
+    if (start) ctx.moveTo(deck[k]!.x, deck[k]!.y);
+    else ctx.lineTo(deck[k]!.x, deck[k]!.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** The ways the road in hand is built, beside its length: "ponte 120 m · aterro 40 m". */
+function buildSummary(stations: Parameters<typeof buildRuns>[0]): string {
+  const totals = new Map<BuildMode, number>();
+  for (const run of buildRuns(stations)) totals.set(run.mode, (totals.get(run.mode) ?? 0) + run.to - run.from);
+  return [...totals]
+    .filter(([mode, length]) => mode !== 'ground' && length * METERS_PER_UNIT >= 5)
+    .sort((x, y) => y[1] - x[1])
+    .map(([mode, length]) => `${t(`buildMode.${mode}`)} ${Math.max(10, Math.round((length * METERS_PER_UNIT) / 10) * 10)} m`)
+    .join(' · ');
 }
 
 /** The brush's colour, by what it does to the ground. */
