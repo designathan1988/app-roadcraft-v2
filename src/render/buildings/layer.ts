@@ -295,7 +295,11 @@ export function createBuildingLayer(): BuildingLayer {
           const unmade = stored === null ? queue.length : queue.reduce((n, b) => n + (chunks.has(b.id) ? 0 : 1), 0);
           warming = { key, queue, at: 0, loading: unmade > LOADING_COUNT };
         }
-        const until = warming.loading ? workUntil(LOADING_SLICE_MS, LOADING_SLICE_MS) : workUntil(WARM_SLICE_MS);
+        // A load's time is its own (Unity: the most loading may take in a
+        // frame), not what the frame's other work left: shared, it got
+        // nothing while the traffic's topology took every frame's allowance,
+        // and the town stood without buildings for over 20 s.
+        const until = warming.loading ? performance.now() + LOADING_SLICE_MS : workUntil(WARM_SLICE_MS);
         if (!until) return false;
         while (warming.at < warming.queue.length && performance.now() < until) {
           drawn(warming.queue[warming.at++]!, groundAt, groundKey, pavedAt, naturalAt);

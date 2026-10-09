@@ -10,15 +10,15 @@ import type { LotOverlayInput } from '@render/lotOverlay';
 import { applyLots, deleteLot, lotCentre, planLots } from '@world/lots';
 import { type Vec2, dist } from '@core/vec2';
 import { COARSE_EPS, clamp } from '@core/scalar';
-import { flattenSegment, shapeFromControl, type CurveShape } from '@core/bezier';
-import { RoadDoc, fitRoadCurve, type JunctionControl } from '@world/doc';
+import { flattenSegment } from '@core/bezier';
+import { RoadDoc, type JunctionControl } from '@world/doc';
 import type { Change, ChangeKind } from '@world/changes';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { MAX_AUTHORED_GRADE } from '@world/elevation';
 import { Network } from '@world/network';
 import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
 import { layCity, zoneCity } from '@editor/cityGenerator';
-import { LAST_UPGRADE_CLASS, Level, ROAD_TYPES, halfWidth, roadProfile, roadType } from '@world/roadTypes';
+import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
 import { MAX_TERRAIN_STAMPS, RELIEF_NATURAL, type TerrainMode } from '@world/terrain';
 import type { GeologyKind } from '@world/terrainPaint';
@@ -41,7 +41,7 @@ import { playThunder } from '@ui/thunder';
 import { MAP_SIZE } from '@world/bounds';
 import { blockGridLines, commitBlockGrid } from '@editor/blocks';
 import { m } from '@world/units';
-import { GRID_CELL, GRID_STEP, snapToGrid } from '@world/grid';
+import { GRID_CELL } from '@world/grid';
 import { sectionForWidth } from '@world/roadSection';
 import { LANDSCAPE_RADIUS, landscapeNear } from '@world/landscape';
 import { StreetscapeTool } from '@editor/streetscapeTool';
@@ -59,13 +59,11 @@ import { rebindAgents, rebindPeds, rebindVehicles, step } from '@sim/pipeline';
 import { DT, NARROW_SCREEN_SHARE, NARROW_SCREEN_WIDTH } from '@sim/params';
 import { summarize } from '@sim/audit';
 
-import {
-  type Anchor, anchorForHeight as anchorAtHeight, anchorHeightOffset as anchorHeightAt, findAnchor, setGridSnapStep, snapRoadEndpoint, snapRoadStart, type SnapResult,
-} from '@editor/snap';
-import { type DraftResult, commitRoadPath, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
+import { type Anchor, anchorForHeight, findAnchor } from '@editor/snap';
+import { type DraftResult, duplicateSegment, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
-import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from '@editor/roadPath';
 import { commitRoundabout } from '@editor/roundabout';
+import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { roadParking } from '@editor/roadParking';
 import { History, restoreInto, restoreSnapshot, serialize } from '@editor/history';
@@ -114,24 +112,6 @@ type Tool =
   | 'transit'
   | 'person';
 type Alignment = 'straight' | 'curve' | 'free';
-interface RoadDraft {
-  readonly start: Anchor;
-  readonly startHeightOffset: number;
-  readonly chained: boolean;
-  readonly pressedAt: Vec2;
-  snap: SnapResult;
-  readonly samples: RoadPathPoint[];
-  heightOffset: number;
-  curveControl?: Vec2;
-}
-
-interface CurvePending {
-  readonly start: Anchor;
-  readonly startHeightOffset: number;
-  end: Anchor;
-  endHeightOffset: number;
-  control: Vec2;
-}
 
 // The interface language is resolved and applied BEFORE anything reads a label,
 // so no frame is ever painted in the wrong language.
@@ -324,14 +304,6 @@ function worldBounds() {
 // The tool in hand, the pause, the speed and the selection are the game's
 // state (`gameState` below, read as `game.tool`...), and so is what each tool
 // is set to (road class, brush, zone, lot cut...): there is no copy here.
-/**
- * How far a drag's stroke is carried, in plan, by the heights changed during
- * it. The cursor is read on the plane at the road's height; raising the road
- * mid-drag moved that plane up, the point under a still cursor jumped towards
- * the camera, and the stroke doubled back on itself into a loop.
- */
-let draftShift = { x: 0, y: 0 };
-let roadHeightEdited = false;
 /** The terrain brush: a land stamp (`TerrainMode`), or painting the ground (`terrainPaint.ts`). */
 type BrushMode = TerrainMode | 'paint' | 'fog' | 'cloud' | 'elements' | 'gully' | 'trees' | 'weather' | Landform;
 /**
@@ -417,12 +389,25 @@ function sessionSettings(): SavedSettings {
   };
 }
 
-let draft: RoadDraft | null = null;
-let roadChain: Anchor | null = null;
-let roadChainHeight = 0;
-let chainPreview: RoadDraft | null = null;
-let curvePending: CurvePending | null = null;
-let roadPointerScreen: Vec2 | null = null;
+/** The road tool (`editor/roadTool.ts`): the stroke, the chain, the curve waiting for its bend, the road settling. */
+const roadTool = new RoadTool({
+  doc,
+  net,
+  zoom: () => view.zoom,
+  px: (n) => camera.px(n),
+  settings: () => ({
+    typeIndex: game.roadTypeIndex, lanes: game.roadLanePreset, alignment: game.alignment,
+    heightOffset: game.roadHeightOffset, parking: roadParking(), width: roadWidth(), grid: roadGridShown(),
+  }),
+  setHeight: (value, cause) => gameState.set('roadHeightOffset', value, cause),
+  worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),
+  naturalHeightAt: (x, y) => scene.naturalTerrainHeightAt(x, y),
+  offerElevation: (solution, revision) => scene.offerElevation(solution, revision),
+  flash: (ids) => scene.flashRoads(ids),
+  mutate: (fn) => mutate(fn),
+  hint: (key) => flashHint(key),
+  redraw: () => requestDraw(),
+});
 /** The pole tool (`editor/poles.ts`): the stretch being dragged and the line's last pole. */
 const poleTool = new PoleTool({
   doc,
@@ -820,10 +805,7 @@ function mutateBuilt(fn: () => boolean): boolean {
  */
 function applySnapshot(data: ReturnType<RoadDoc['toJSON']> | null, source: 'snapshot' | 'import' = 'snapshot'): void {
   if (!data) return;
-  draft = null;
-  roadChain = null;
-  chainPreview = null;
-  curvePending = null;
+  roadTool.cancel();
   if (source === 'import') {
     caused('mapa aberto', () => restoreInto(doc, data, net));
     // A different map: nothing of the old simulation may carry over.
@@ -974,7 +956,7 @@ function firstSurfaceAt(px: number, py: number): Vec2 | null {
 /** `rect`: the canvas's box when the caller has already read it for this event (a layout read each). */
 function pointerWorld(e: PointerEvent, rect?: DOMRect): Vec2 {
   const r = rect ?? canvas.getBoundingClientRect();
-  const authoredHeight = game.tool === 'road' && (draft || roadChain || curvePending)
+  const authoredHeight = game.tool === 'road' && roadTool.inProgress()
     ? game.roadHeightOffset
     : undefined;
   return worldAtScreen(e.clientX - r.left, e.clientY - r.top, authoredHeight);
@@ -1010,10 +992,7 @@ function panAnchorOf(e: PointerEvent): Vec2 {
  * map; Escape left a terrain stroke stamping).
  */
 function cancelGestures(): void {
-  draft = null;
-  roadChain = null;
-  chainPreview = null;
-  curvePending = null;
+  roadTool.cancel();
   poleTool.cancel();
   barrierTool.cancel();
   // A lot being drawn, dragged, cut or bent, or the first lot of a join: dropped.
@@ -1040,10 +1019,8 @@ function currentGesture(): string | null {
   if (orbiting) return 'câmera: girando';
   if (panning) return 'câmera: arrastando';
   if (moving) return 'via: movendo um nó';
-  if (draft) return 'via: desenhando';
-  if (curvePending) return 'via: curvando';
-  if (roadChain) return 'via: encadeando';
-  if (settlingRoad) return 'via: assentando';
+  const road = roadTool.gesture();
+  if (road) return road;
   if (terrainBrush.stroking) return 'terreno: pincelando';
   const pole = poleTool.gesture();
   if (pole) return pole;
@@ -1161,7 +1138,7 @@ function bulldozeBoxed(a: Vec2, b: Vec2): void {
 
 /** Whether anything is being drawn or dragged right now. */
 function gestureInProgress(): boolean {
-  return draft !== null || roadChain !== null || curvePending !== null || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
+  return roadTool.inProgress() || poleTool.inProgress() || terrainBrush.stroking || moving !== null || lotTool.gesture() !== null || bulldozeBox !== null;
 }
 
 /**
@@ -1187,15 +1164,6 @@ function cancelMove(): void {
   if (sim.topologyRevision !== net.trafficRevision) rebuildSimulationTopology();
 }
 
-/** Height of an authored connection; open ground takes the height being drawn at. */
-function anchorHeightOffset(anchor: Anchor): number {
-  return anchorHeightAt(doc, net, anchor, game.roadHeightOffset);
-}
-
-/** A nearby road at another height is a crossing, not an accidental junction. */
-function anchorForHeight(anchor: Anchor, heightOffset: number): Anchor {
-  return anchorAtHeight(doc, net, anchor, heightOffset);
-}
 
 // The element brush's settings (Paisagem > Terreno > Elementos), each kind its
 // own (`ui/toolChoices.ts`); the sliders show the chosen kind's.
@@ -1357,29 +1325,9 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   const world = pointerWorld(e);
-  if (game.tool === 'road') roadPointerScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
-  if (game.tool === 'road' && curvePending) {
-    const pending = curvePending;
-    curvePending = null;
-    const curveDraft: RoadDraft = {
-      start: pending.start,
-      startHeightOffset: pending.startHeightOffset,
-      chained: true,
-      pressedAt: world,
-      snap: {
-        at: pending.end.at,
-        guide: pending.end.kind === 'free' ? null : 'network',
-        angleDeg: 0,
-        length: dist(pending.start.at, pending.end.at),
-      },
-      samples: [{ at: pending.start.at, heightOffset: pending.startHeightOffset }],
-      heightOffset: pending.endHeightOffset,
-      curveControl: world,
-    };
-    commitRoadGesture(curveDraft, pending.end);
-    requestDraw();
-    return;
-  }
+  if (game.tool === 'road') roadTool.pointerAt({ x: e.clientX - r.left, y: e.clientY - r.top });
+  // A curve waiting for its bend: this press sets it.
+  if (game.tool === 'road' && roadTool.bend(world)) return;
   const anchor = findAnchor(doc, net, world, view.zoom);
 
   switch (game.tool) {
@@ -1406,51 +1354,8 @@ canvas.addEventListener('pointerdown', (e) => {
         requestDraw();
         break;
       }
-      {
-      const chained = roadChain !== null;
-      let gridOffset = 0;
-      if (roadGridShown()) {
-        // The road fills whole cells: an odd number of them wide, its middle in a cell's middle.
-        const cells = Math.max(1, Math.round((2 * halfWidth(roadProfile(game.roadTypeIndex, game.roadLanePreset), Level.Sidewalk)) / GRID_CELL));
-        gridOffset = cells % 2 === 1 ? GRID_CELL / 2 : 0;
-        setGridSnapStep(GRID_CELL, gridOffset);
-      } else setGridSnapStep(GRID_STEP);
-      let start = roadChain ?? snapRoadStart(anchor);
-      // Drawn from a road with the grid on: from the grid point on that road,
-      // not from wherever the press fell on it - the new road came out askew
-      // and off the grid (the player, 2026-10-06).
-      if (!roadChain && roadGridShown() && start.kind === 'segment' && start.segment !== undefined) {
-        const line = net.polylines.get(doc, start.segment);
-        const q = snapToGrid(start.at, GRID_CELL, gridOffset);
-        let best: { at: Vec2; s: number; d: number } | null = null;
-        for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
-          const hit = line.closestPoint({ x: q.x + dx * GRID_CELL, y: q.y + dy * GRID_CELL });
-          if (hit.distance < m(0.6) && (!best || Math.hypot(hit.point.x - start.at.x, hit.point.y - start.at.y) < best.d)) {
-            best = { at: hit.point, s: hit.s, d: Math.hypot(hit.point.x - start.at.x, hit.point.y - start.at.y) };
-          }
-        }
-        if (best) start = { ...start, at: best.at, s: best.s };
-      }
-      const startHeightOffset = chained
-        ? roadChainHeight
-        : start.kind === 'free' ? game.roadHeightOffset : anchorHeightOffset(start);
-      if (!chained && start.kind !== 'free' && !roadHeightEdited) {
-        gameState.set('roadHeightOffset', startHeightOffset, 'via começa num ponto existente');
-      }
-      roadHeightEdited = false;
-      chainPreview = null;
-      draftShift = { x: 0, y: 0 };
-      draft = {
-        start,
-        startHeightOffset,
-        chained,
-        pressedAt: world,
-        snap: snapRoadEndpoint(doc, net, start, world, view.zoom, game.roadHeightOffset),
-        samples: [{ at: start.at, heightOffset: startHeightOffset }],
-        heightOffset: game.roadHeightOffset,
-      };
+      roadTool.down(world, anchor);
       break;
-      }
 
     case 'terrain':
       if (game.terrainMode === 'cloud') cloudTool.down(e.pointerId, e.clientX - r.left, e.clientY - r.top);
@@ -1591,7 +1496,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (e.pointerType === 'mouse' && e.buttons === 0 && terrainBrush.stroking) endTerrainStroke();
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
-  if (game.tool === 'road') roadPointerScreen = screen;
+  if (game.tool === 'road') roadTool.pointerAt(screen);
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, screen);
 
   if (pinch && pointers.size >= 2) {
@@ -1653,9 +1558,9 @@ canvas.addEventListener('pointermove', (e) => {
     requestDraw();
   }
 
-  if (game.tool === 'road' && curvePending) {
-    curvePending.control = world;
-    requestDraw();
+  // The curve's bend follows the pointer.
+  if (game.tool === 'road' && roadTool.bending()) {
+    roadTool.move(world);
     return;
   }
 
@@ -1664,13 +1569,8 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (draft) {
-    const at = { x: world.x + draftShift.x, y: world.y + draftShift.y };
-    draft.snap = snapRoadEndpoint(doc, net, draft.start, at, view.zoom, draft.heightOffset);
-    if (draft.samples.length < 256) draft.samples.push({ at, heightOffset: draft.heightOffset });
-    requestDraw();
-    return;
-  }
+  // The stroke being drawn.
+  if (roadTool.move(world)) return;
 
   if (game.tool === 'barrier') barrierTool.move(world);
   if (game.tool === 'transit') {
@@ -1705,21 +1605,11 @@ canvas.addEventListener('pointermove', (e) => {
   // The hover preview uses the same height-aware connection rule as the commit.
   const hovered = findAnchor(doc, net, world, view.zoom, undefined,
     game.tool === 'road' ? game.roadHeightOffset : undefined);
-  if (game.tool === 'road' && roadChain) {
-    chainPreview = {
-      start: roadChain,
-      startHeightOffset: roadChainHeight,
-      chained: true,
-      pressedAt: world,
-      snap: snapRoadEndpoint(doc, net, roadChain, world, view.zoom, game.roadHeightOffset),
-      samples: [{ at: roadChain.at, heightOffset: roadChainHeight }],
-      heightOffset: game.roadHeightOffset,
-    };
-  }
+  if (game.tool === 'road') roadTool.hover(world);
   hoverAnchor = game.tool === 'terrain'
     ? { kind: 'free', at: world }
     : game.tool === 'road'
-      ? anchorForHeight(hovered, game.roadHeightOffset)
+      ? anchorForHeight(doc, net, hovered, game.roadHeightOffset)
       : hovered;
   requestDraw();
 });
@@ -1727,62 +1617,6 @@ canvas.addEventListener('pointermove', (e) => {
 /** Pick radius for a pole, in world units at the current zoom (`PoleTool.reach`: one definition). */
 function poleReach(): number {
   return poleTool.reach();
-}
-
-/** The segments there were before the road being committed (`commitRoadGesture`), for the grid's blink. */
-let laidNow: ReadonlySet<SegmentId> = new Set();
-/** The roads just laid blink (`SceneHandle.flashRoads`): the new road itself lights up and fades back. */
-function flashLaidCells(before: ReadonlySet<SegmentId>): void {
-  const laid = [...doc.segments.keys()].filter((id) => !before.has(id));
-  if (laid.length) scene.flashRoads(laid);
-}
-/**
- * The road just committed, drawn as its preview was until the world with it
- * is built (a few frames, `SceneHandle.worldBusy`): the world is built in
- * slices and swapped whole, and the road used to appear only then, up to a
- * second after the click.
- */
-let settlingRoad: RoadDraft | null = null;
-function commitRoadGesture(d: RoadDraft, chosenEnd?: Anchor): boolean {
-  const endAnchor = chosenEnd ?? anchorForHeight(
-    findAnchor(doc, net, d.snap.at, view.zoom, undefined, d.heightOffset), d.heightOffset);
-  const end: Anchor = endAnchor.kind === 'free' ? { kind: 'free', at: d.snap.at } : endAnchor;
-  const endHeightOffset = end.kind === 'free' ? d.heightOffset : anchorHeightOffset(end);
-  const pieces = piecesForDraft(d, endHeightOffset);
-  let result: ReturnType<typeof commitRoadPath> = { committed: false };
-  mutate(() => {
-    const before = new Set(doc.segments.keys());
-    laidNow = before;
-    result = commitRoadPath(doc, net, d.start, end, game.roadTypeIndex, pieces, game.roadLanePreset, roadParking(),
-      (x, y) => scene.naturalTerrainHeightAt(x, y));
-    if (result.elevation) scene.offerElevation(result.elevation, net.revision);
-    // Drawn as it was previewed until the new world is in place (`settlingRoad`).
-    if (result.committed) settlingRoad = { ...d, snap: { ...d.snap, at: end.at } };
-    // A chosen total width (Vias > Largura): the segments just laid take it.
-    const roadWidthMetres = roadWidth();
-    if (result.committed && roadWidthMetres !== null) {
-      const rt = roadProfile(game.roadTypeIndex, game.roadLanePreset);
-      const section = sectionForWidth(rt, roadWidthMetres, Math.round(rt.speedLimit * 3.6 * METERS_PER_UNIT));
-      for (const id of doc.segments.keys()) if (!before.has(id)) doc.setSegmentSection(id, section);
-    }
-    return result.committed;
-  });
-  if (!result.committed) {
-    flashHint(result.reason === 'clearance' ? 'hint.road.clearance' : 'hint.road.invalid');
-    return false;
-  }
-  const finalHeight = result.finalHeightOffset ?? endHeightOffset;
-  // Each completed placement ends the gesture. A new road begins only after
-  // the player clicks a start again, including when that start is this node.
-  roadChain = null;
-  chainPreview = null;
-  curvePending = null;
-  roadChainHeight = finalHeight;
-  gameState.set('roadHeightOffset', finalHeight, 'via terminada');
-  roadHeightEdited = false;
-  if (result.heightLimited) flashHint('hint.road.gradeLimited');
-  flashLaidCells(laidNow);
-  return true;
 }
 
 function endPointer(e: PointerEvent): void {
@@ -1819,41 +1653,8 @@ function endPointer(e: PointerEvent): void {
     requestDraw();
   }
   lotTool.up(e.pointerId, !cancelled && !wasPinching);
-  if (draft) {
-    const d = draft;
-    draft = null;
-    if (!cancelled && !wasPinching) {
-      const traveled = d.samples.reduce((sum, sample, i) =>
-        i === 0 ? 0 : sum + dist(sample.at, d.samples[i - 1]!.at), 0) +
-        dist(d.samples[d.samples.length - 1]!.at, d.snap.at);
-      const dragged = d.samples.slice(1).some((sample) =>
-        dist(sample.at, d.pressedAt) > camera.px(7));
-      // A click, by where the pointer itself went: with the snaps on, the
-      // start and the snapped end both jump onto the grid, and a click read
-      // as a short drag that laid nothing.
-      const clicked = !dragged && dist(pointerWorld(e), d.pressedAt) < camera.px(7);
-      if (!d.chained && (traveled < camera.px(7) || clicked)) {
-        roadChain = d.start;
-        roadChainHeight = d.startHeightOffset;
-        requestDraw();
-      } else if (d.chained && game.alignment === 'curve' && !dragged) {
-        // A curve uses endpoint, then bend point. A drag still draws it at once.
-        const anchor = anchorForHeight(
-          findAnchor(doc, net, d.snap.at, view.zoom, undefined, d.heightOffset), d.heightOffset);
-        const end = anchor.kind === 'free' ? { kind: 'free' as const, at: d.snap.at } : anchor;
-        curvePending = {
-          start: d.start,
-          startHeightOffset: d.startHeightOffset,
-          end,
-          endHeightOffset: end.kind === 'free' ? d.heightOffset : anchorHeightOffset(end),
-          control: { x: (d.start.at.x + end.at.x) / 2, y: (d.start.at.y + end.at.y) / 2 },
-        };
-        requestDraw();
-      } else if (dist(d.start.at, d.snap.at) >= 1 || traveled >= 24) {
-        commitRoadGesture(d);
-      }
-    }
-  }
+  // The stroke let go: a click starts a chain, a curve waits for its bend, a drag is laid.
+  roadTool.up(() => pointerWorld(e), !cancelled && !wasPinching);
 
   poleTool.up(!cancelled && !wasPinching);
 
@@ -1943,7 +1744,7 @@ window.addEventListener('keydown', (e) => {
 
   if (!meta && game.tool === 'road' && (e.key === 'PageUp' || e.key === 'PageDown')) {
     e.preventDefault();
-    stepRoadHeight(e.key === 'PageUp' ? 1 : -1);
+    roadTool.stepHeight(e.key === 'PageUp' ? 1 : -1);
     return;
   }
 
@@ -2300,7 +2101,7 @@ function selectRoadType(i: number): void {
 
 function setAlignment(next: Alignment): void {
   gameState.set('alignment', next, 'traçado escolhido');
-  if (next !== 'curve') curvePending = null;
+  if (next !== 'curve') roadTool.dropCurve();
   document.querySelectorAll<HTMLButtonElement>('.alignment-mode').forEach((button) => {
     const active = button.dataset['alignment'] === next;
     button.classList.toggle('active', active);
@@ -2335,50 +2136,8 @@ function updateRoadHeightValue(): void {
   }
 }
 
-function stepRoadHeight(metres: number): void {
-  const before = game.roadHeightOffset;
-  // Steps land on whole metres. A road cut short by the safe grade leaves the
-  // height at a fraction (1.1 m), and stepping by a metre from there never
-  // came back to the terrain's own level.
-  const now = game.roadHeightOffset / UNITS_PER_METER;
-  const next = metres > 0 ? Math.floor(now + 1e-6) + metres : Math.ceil(now - 1e-6) + metres;
-  gameState.set('roadHeightOffset', next * UNITS_PER_METER, 'altura da via');
-  roadHeightEdited = true;
-  const underPointer = roadPointerScreen
-    ? worldAtScreen(roadPointerScreen.x, roadPointerScreen.y, game.roadHeightOffset)
-    : null;
-  if (draft) {
-    draft.heightOffset = game.roadHeightOffset;
-    if (roadPointerScreen) {
-      // The stroke goes on from where it is: the jump of the plane is carried.
-      const was = worldAtScreen(roadPointerScreen.x, roadPointerScreen.y, before);
-      draftShift = { x: draftShift.x + was.x - underPointer!.x, y: draftShift.y + was.y - underPointer!.y };
-    }
-    const at = underPointer ? { x: underPointer.x + draftShift.x, y: underPointer.y + draftShift.y } : draft.snap.at;
-    draft.snap = snapRoadEndpoint(doc, net, draft.start, at, view.zoom, game.roadHeightOffset);
-    draft.samples.push({ at, heightOffset: game.roadHeightOffset });
-  }
-  if (roadChain && !draft && !curvePending) {
-    const at = underPointer ?? chainPreview?.snap.at ?? roadChain.at;
-    chainPreview = {
-      start: roadChain,
-      startHeightOffset: roadChainHeight,
-      chained: true,
-      pressedAt: at,
-      snap: snapRoadEndpoint(doc, net, roadChain, at, view.zoom, game.roadHeightOffset),
-      samples: [{ at: roadChain.at, heightOffset: roadChainHeight }],
-      heightOffset: game.roadHeightOffset,
-    };
-  }
-  if (curvePending) {
-    curvePending.end = anchorForHeight(curvePending.end, game.roadHeightOffset);
-    curvePending.endHeightOffset = game.roadHeightOffset;
-  }
-  requestDraw();
-}
-
 document.querySelectorAll<HTMLButtonElement>('.road-height-step').forEach((button) => {
-  button.onclick = () => stepRoadHeight(Number(button.dataset['heightStep']));
+  button.onclick = () => roadTool.stepHeight(Number(button.dataset['heightStep']));
 });
 // The height shown is the game's state, wherever it was changed from.
 gameState.watch(['roadHeightOffset'], updateRoadHeightValue);
@@ -3185,8 +2944,7 @@ let cityBuiltIn = 0;
   history.record(doc);
   // A new map is empty.
   applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_NATURAL, nature: newNature() }, 'import');
-  gameState.set('roadHeightOffset', 0, 'mapa novo');
-  roadHeightEdited = false;
+  roadTool.reset();
   fitView();
   flashHint('hint.newMap');
 };
@@ -3795,7 +3553,7 @@ function frame(now: number): void {
   healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || roadTool.draft || moving || panning || orbiting || pinch || scene.busy())) requestDraw();
   else if (!document.hidden && scene.drifting() && !driftQueued) {
     // Only the clouds moving (they drift, form and fade): twenty frames a
     // second keeps them alive without holding the GPU at full speed.
@@ -4172,7 +3930,7 @@ function drawOverlayScreen(): void {
   // grass, and on a road on its centre line, where a segment anchor sits -
   // with the Road tool up, which is the tool the game starts in. Players
   // reported it, twice, as a debug marker left on screen.
-  if (game.tool === 'road' && !draft && hoverAnchor?.kind === 'node') {
+  if (game.tool === 'road' && !roadTool.draft && hoverAnchor?.kind === 'node') {
     ring(hoverAnchor.at, 9, HOVER, 2);
   }
 
@@ -4264,21 +4022,9 @@ function drawOverlayScreen(): void {
   }
 
   // The road just laid, as previewed, while the world with it is still being built.
-  if (settlingRoad && !scene.worldBusy && !topologyAfterDraw) settlingRoad = null;
-  const settling = !curvePending && !draft && !chainPreview && settlingRoad !== null;
-  const roadPreview: RoadDraft | null = curvePending
-    ? {
-      start: curvePending.start,
-      startHeightOffset: curvePending.startHeightOffset,
-      chained: true,
-      pressedAt: curvePending.control,
-      snap: { at: curvePending.end.at, guide: null, angleDeg: 0,
-        length: dist(curvePending.start.at, curvePending.end.at) },
-      samples: [{ at: curvePending.start.at, heightOffset: curvePending.startHeightOffset }],
-      heightOffset: curvePending.endHeightOffset,
-      curveControl: curvePending.control,
-    }
-    : draft ?? chainPreview ?? settlingRoad;
+  const shownRoad = roadTool.preview(!scene.worldBusy && !topologyAfterDraw);
+  const settling = shownRoad?.settling ?? false;
+  const roadPreview: RoadDraft | null = shownRoad?.road ?? null;
   if (roadPreview) {
     // The profile the road will be laid with: its lanes and its parking.
     const chosenWidth = roadWidth();
@@ -4287,7 +4033,7 @@ function drawOverlayScreen(): void {
       roadType(game.roadTypeIndex).lanes === 1 ? 'aToB' : 'both',
       chosenWidth === null ? undefined : sectionForWidth(plainRt, chosenWidth, Math.round(plainRt.speedLimit * 3.6 * METERS_PER_UNIT)),
       roadParking());
-    const pieces = piecesForDraft(roadPreview);
+    const pieces = roadTool.pieces(roadPreview);
     const points: Vec2[] = [];
     const projected: Vec2[] = [];
     const groundProjected: Vec2[] = [];
@@ -4525,42 +4271,6 @@ const CONTROL_COLOUR: Readonly<Record<JunctionControl, string>> = {
   yield: '#ffb057',
   none: '#9aa3a0',
 };
-
-function curveFromGesture(value: RoadDraft): CurveShape | null {
-  const a = value.start.at;
-  const b = value.snap.at;
-  if (value.curveControl) {
-    return fitRoadCurve(a, b, shapeFromControl(a, b, value.curveControl), game.roadTypeIndex);
-  }
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const chord = Math.hypot(dx, dy);
-  if (chord < 1) return null;
-  const nx = -dy / chord;
-  const ny = dx / chord;
-  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  let side = 0;
-  for (const sample of value.samples) {
-    const p = sample.at;
-    const candidate = (p.x - mid.x) * nx + (p.y - mid.y) * ny;
-    if (Math.abs(candidate) > Math.abs(side)) side = candidate;
-  }
-  side = clamp(side, -chord * 0.52, chord * 0.52);
-  if (Math.abs(side) < camera.px(6)) return null;
-  return fitRoadCurve(a, b, shapeFromControl(a, b,
-    { x: mid.x + nx * side * 1.36, y: mid.y + ny * side * 1.36 }), game.roadTypeIndex);
-}
-
-function piecesForDraft(value: RoadDraft, endHeightOffset = value.heightOffset): RoadPathPiece[] {
-  const start = { at: value.start.at, heightOffset: value.startHeightOffset };
-  const end = { at: value.snap.at, heightOffset: endHeightOffset };
-  if (game.alignment === 'free') return roadPathFromGesture(value.samples, start, end).map((piece) => ({
-    ...piece,
-    curve: fitRoadCurve(piece.start.at, piece.end.at, piece.curve, game.roadTypeIndex),
-  }));
-  if (Math.hypot(start.at.x - end.at.x, start.at.y - end.at.y) < 1e-6) return [];
-  return [{ start, end, curve: game.alignment === 'curve' ? curveFromGesture(value) : null }];
-}
 
 function setNodeHeightMetres(id: NodeId, metres: number): void {
   const node = doc.node(id);
@@ -4986,8 +4696,7 @@ mountHealthPanel({
     if (!game.paused !== enabled) trafficButton.click();
   },
   setRoadHeight: (metres: number) => {
-    gameState.set('roadHeightOffset', metres * UNITS_PER_METER, 'altura pedida pelo console');
-    roadHeightEdited = true;
+    roadTool.heightChosen(metres * UNITS_PER_METER);
     requestDraw();
   },
   /** A generated city (`editor/cityGenerator.ts`), and how far its building has gone. */
