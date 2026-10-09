@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { publishCrossingStates } from '@sim/peds/publish';
+import { emptyCrossingState } from '@sim/crossings/state';
 import { writeFileSync } from 'node:fs';
 
 import { step } from '@sim/pipeline';
@@ -8,7 +8,6 @@ import { spawnVehicle } from '@sim/vehicles/spawn';
 import { stepLaneChange } from '@sim/vehicles/laneChange';
 import { integrateAll } from '@sim/vehicles/integrate';
 import { snapshot } from '@sim/vehicles/state';
-import { createPed } from '@sim/peds/state';
 import { vehiclePose } from '@sim/pose';
 import { findLeader } from '@sim/vehicles/leaderIndex';
 import { BODY_CLASSES, BODY_ENVELOPE, bodyClassOf } from '@world/conflictPoints';
@@ -233,15 +232,12 @@ describe('zones reaching back over a stop line', () => {
     const zebra = sim.sidewalks.edges.get(sim.sidewalks.crossings.get(crossingId)!)!;
     const span = sim.crossingSpans.span(waiting.id, crossingId)!;
     expect(span).toBeTruthy();
-    const walker = createPed({ id: 999, color: '#fff', speed: 0, file: 0,
-      ageClass: 'adult', gender: 'f',
-      party: { id: 999, size: 1, archetype: 'solo', pace: 0, hasChild: false, goal: null, trip: 0 }, rank: 0, edge: zebra.id, entry: zebra.from,
-      s: (span.s0 + span.s1) / 2, lat: 0, tick: 0 });
-    walker.state = 'Crossing';
-    sim.peds.set(walker.id, walker);
-    sim.pedOccupancy.set(crossingId, [walker.id]);
-    // Vehicles read the crossing through its published state, not the model.
-    publishCrossingStates(sim);
+    // Vehicles read the crossing only through its published state
+    // (`sim/crossings/state.ts`), as the walking engine writes it: one person
+    // standing in the middle of the car's span, walking from the `from` kerb.
+    const crossing = emptyCrossingState(zebra.length);
+    crossing.occupants.push({ id: 999, s: (span.s0 + span.s1) / 2, forward: true, v: 0, held: false });
+    sim.crossingStates.set(crossingId, crossing);
 
     step(sim, { traffic: true, pedestrians: false });
     expect(car.admittedConnector).toBeNull();

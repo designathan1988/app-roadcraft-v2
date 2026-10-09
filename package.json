@@ -41,7 +41,6 @@
     "@electron/packager": "^20.3.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
-    "@types/earcut": "^3.0.0",
     "@types/node": "^24.13.3",
     "@types/three": "^0.186.0",
     "@vitest/coverage-v8": "^4.1.11",
@@ -55,7 +54,6 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@dgreenheck/ez-tree": "^1.1.0",
     "clipper2-ts": "^2.0.1-18",
     "earcut": "^3.2.3",
     "jolt-physics": "^1.1.0",
