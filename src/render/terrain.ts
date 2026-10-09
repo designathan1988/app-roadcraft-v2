@@ -1831,6 +1831,10 @@ const STRATA_SPAN_Y = 260;
 const SLAB_DEPTH = 320;
 /** The darker topsoil band under the rim, in metres. */
 const TOPSOIL = 4;
+/** Rows of the cut sides under the topsoil: room for the rock's relief (about 8 units a row). */
+const WALL_ROWS = 40;
+/** Over how much of a side, from each corner, the rock's relief fades out, so the four sides meet with no gap. */
+const WALL_CORNER_FADE = 40;
 
 /** Metres of wall one rock-detail texture spans, both ways (`rockDetailTexture`). */
 const ROCK_DETAIL_SPAN = 14;
@@ -1967,9 +1971,60 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
          attribute float aBelow;
-         varying float vBelow;`)
+         attribute float aFade;
+         varying float vBelow;
+         uniform sampler2D uBeds;
+         float wallHash(float n) { return fract(sin(n) * 43758.5453); }
+         float wallNoise(float x) {
+           float i = floor(x);
+           float f = fract(x);
+           return mix(wallHash(i), wallHash(i + 1.0), f * f * (3.0 - 2.0 * f));
+         }
+         float wallNoise2(vec2 p) {
+           vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+           float a = wallHash(dot(i, vec2(127.1, 311.7))), b = wallHash(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7)));
+           float c = wallHash(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))), d = wallHash(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7)));
+           return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+         }
+         // How far the rock stands out (+) or sits back (-) at a point of
+         // the cut, before the fades: by the bed at its depth (the same depth
+         // and beds the colours read) - a hard bed bulges, rounded, a soft one
+         // is worn back - and lumpy.
+         float wallDisp(float along, float level, float below) {
+           float bend = 7.0 * wallNoise(along * 0.008 + 3.0) + 2.5 * wallNoise(along * 0.031 + 9.0);
+           float pinch = 6.0 * (wallNoise(along * 0.012 + level * 0.02) - 0.5);
+           float dd = max(level, below - 30.0) + bend + pinch;
+           float bv = clamp((dd - 52.0) / ${BEDS_SPAN.toFixed(1)}, 0.0, 1.0);
+           vec4 info = texture2D(uBeds, vec2(0.75, bv));
+           float hard = mix(0.5, info.g, smoothstep(40.0, 56.0, dd));
+           float bulge = pow(max(sin(info.r * 3.14159), 0.0), 0.6);
+           float lumps = wallNoise2(vec2(along / 14.0, level / 9.0)) + 0.5 * wallNoise2(vec2(along / 5.0, level / 4.0));
+           return mix(-2.5, 5.5 * bulge, hard) + (lumps - 0.75) * 3.0;
+         }`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+         // The relief's own normal, from its slope along the rim and down the
+         // cut (finite differences of wallDisp): smooth bulges, not the
+         // mesh's facets.
+         float wallFade = aFade * smoothstep(6.0, 26.0, aBelow);
+         {
+           float along0 = uv.x * ${STRATA_SPAN_X.toFixed(1)};
+           float level0 = ${TERRAIN_BASE.toFixed(3)} - position.y;
+           float d0 = wallDisp(along0, level0, aBelow);
+           float da = (wallDisp(along0 + 1.5, level0, aBelow) - d0) / 1.5 * wallFade;
+           float dl = (wallDisp(along0, level0 + 1.5, aBelow + 1.5) - d0) / 1.5 * wallFade;
+           vec3 sideN = normalize(objectNormal);
+           vec3 alongDir = vec3(-sideN.z, 0.0, sideN.x);
+           vec3 tAlong = alongDir + sideN * da;
+           vec3 tUp = vec3(0.0, 1.0, 0.0) - sideN * dl;
+           objectNormal = normalize(cross(tUp, tAlong));
+         }`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-         vBelow = aBelow;`);
+         vBelow = aBelow;
+         // THE ROCK'S RELIEF: the cut is not a flat plane. Each point stands
+         // out or sits back along the side's normal (wallDisp). Faded to
+         // nothing under the turf (the rim meets the lawn) and at the box's
+         // corners (the sides meet with no gap).
+         transformed += normalize(normal) * wallDisp(uv.x * ${STRATA_SPAN_X.toFixed(1)}, ${TERRAIN_BASE.toFixed(3)} - position.y, aBelow) * wallFade;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
          varying float vBelow;
@@ -2070,7 +2125,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
          wall = mix(wall, turf, 1.0 - smoothstep(lip - 0.6, lip + 0.6, vBelow));
          diffuseColor.rgb = wall;`);
   };
-  material.customProgramCacheKey = () => 'terrain-walls-v10';
+  material.customProgramCacheKey = () => 'terrain-walls-v12';
   return material;
 }
 
@@ -2399,44 +2454,45 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const colours: number[] = [];
     /** Metres under the rim, for the shader's grass lip and topsoil (`wallMaterial`). */
     const below: number[] = [];
+    /** 0 at the box's corners, 1 from `WALL_CORNER_FADE` in: the relief fades there so the sides meet. */
+    const fade: number[] = [];
+    const indices: number[] = [];
     // Row shades: full under the rim (the shader draws the lip), shaded to the bottom.
-    const LIP = 1;
     const BODY = 1;
     const BOTTOM = 0.42;
+    // One grid a side, shared corners (indexed): the rim, the topsoil's foot,
+    // then WALL_ROWS rows down to the floor, so the rock can stand out and
+    // sit back (the shader's relief) - three rows a column could only be flat.
+    const rows = WALL_ROWS + 2;
     sides.forEach(([x0, z0, x1, z1, nx, nz], s) => {
       const top = tops[s]!;
       const length = Math.hypot(x1 - x0, z1 - z0);
-      const vertex = (k: number, y: number, shade: number): void => {
+      const base = positions.length / 3;
+      for (let k = 0; k <= n; k++) {
         const x = x0 + ((x1 - x0) * k) / n;
         const z = z0 + ((z1 - z0) * k) / n;
-        positions.push(x, y, z);
-        normals.push(nx, 0, nz);
-        uvs.push(((s * length + (length * k) / n) / STRATA_SPAN_X), y / STRATA_SPAN_Y);
-        colours.push(shade, shade, shade);
-        below.push(top[k]! - y);
-      };
+        const rim = top[k]!;
+        const corner = Math.min(k, n - k) * (length / n);
+        for (let r = 0; r < rows; r++) {
+          const y = r === 0 ? rim : rim - TOPSOIL + (floor - (rim - TOPSOIL)) * ((r - 1) / WALL_ROWS);
+          const shade = r <= 1 ? BODY : BODY + (BOTTOM - BODY) * ((r - 1) / WALL_ROWS);
+          positions.push(x, y, z);
+          normals.push(nx, 0, nz);
+          uvs.push(((s * length + (length * k) / n) / STRATA_SPAN_X), y / STRATA_SPAN_Y);
+          colours.push(shade, shade, shade);
+          below.push(rim - y);
+          fade.push(Math.min(1, corner / WALL_CORNER_FADE));
+        }
+      }
+      // Wound so the face points OUT, measured rather than assumed:
+      // (b - a) x (c - a) for a = upper k, b = lower k, c = upper k+1.
+      const ax = x0, az = z0, cx = x0 + (x1 - x0) / n, cz = z0 + (z1 - z0) / n;
+      const outward = -1 * (cz - az) * nx + (cx - ax) * nz;
       for (let k = 0; k < n; k++) {
-        const ya = top[k]!;
-        const yb = top[k + 1]!;
-        const bands: readonly (readonly [number, number, number, number])[] = [
-          [ya, yb, LIP, LIP],
-          [ya - TOPSOIL, yb - TOPSOIL, BODY, BODY],
-          [floor, floor, BOTTOM, BOTTOM],
-        ];
-        for (let b = 0; b + 1 < bands.length; b++) {
-          const [ua, ub, sa] = bands[b]!;
-          const [la, lb, sl] = bands[b + 1]!;
-          // Wound so the face points OUT, measured rather than assumed:
-          // (b - a) x (c - a) for a = upper k, b = lower k, c = upper k+1.
-          const ax = x0 + ((x1 - x0) * k) / n;
-          const az = z0 + ((z1 - z0) * k) / n;
-          const cx = x0 + ((x1 - x0) * (k + 1)) / n;
-          const cz = z0 + ((z1 - z0) * (k + 1)) / n;
-          // b - a = (0, la - ua, 0); c - a = (cx - ax, ., cz - az).
-          const outward = (la - ua) * (cz - az) * nx - (la - ua) * (cx - ax) * nz;
-          const quad: [number, number, number][] = [[k, ua, sa], [k, la, sl], [k + 1, ub, sa], [k + 1, lb, sl]];
-          const order = outward > 0 ? [0, 1, 2, 2, 1, 3] : [0, 2, 1, 2, 3, 1];
-          for (const o of order) vertex(...quad[o]!);
+        for (let r = 0; r + 1 < rows; r++) {
+          const a0 = base + k * rows + r, b0 = a0 + 1, c0 = a0 + rows, d0 = c0 + 1;
+          if (outward > 0) indices.push(a0, b0, c0, c0, b0, d0);
+          else indices.push(a0, c0, b0, c0, d0, b0);
         }
       }
     });
@@ -2446,6 +2502,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     next.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
     next.setAttribute('color', new Float32BufferAttribute(colours, 3));
     next.setAttribute('aBelow', new Float32BufferAttribute(below, 1));
+    next.setAttribute('aFade', new Float32BufferAttribute(fade, 1));
+    next.setIndex(indices);
     next.computeBoundingSphere();
     const previous = walls.geometry;
     walls.geometry = next;
