@@ -147,9 +147,9 @@ const ROOF_PLANT: Paint = paint({ finish: 'concrete', colour: 0x6c6a64 });
  * balcony railings in their building's trim (the materials are white). A
  * part placed with no colour takes the old fixed one.
  */
-const COLOURED_PARTS: ReadonlySet<PartKind> = new Set<PartKind>(['awning', 'frame', 'railing']);
+const COLOURED_PARTS: ReadonlySet<PartKind> = new Set<PartKind>(['awning', 'frame', 'railing', 'fin', 'louvre']);
 const WHITE_RGB: Rgb = [1, 1, 1];
-const PART_DEFAULT_COLOUR: Partial<Record<PartKind, Rgb>> = { frame: linear(0xe8e6df), railing: linear(0x33373a) };
+const PART_DEFAULT_COLOUR: Partial<Record<PartKind, Rgb>> = { frame: linear(0xe8e6df), railing: linear(0x33373a), fin: linear(0xe8e6df), louvre: linear(0x3d6b45) };
 /** The trim's colour as a three Color, one per paint. */
 const trimColours = new WeakMap<Paint, Color>();
 const trimColour = (p: Paint): Color => {
@@ -165,11 +165,17 @@ const BAND_H = m(0.22);
 const CORNICE_OUT = m(0.16);
 const PARAPET_H = m(0.85);
 const PARAPET_T = m(0.25);
+/** A deep plain parapet: the attic band that crowns a block of the 'attic' dress. */
+const ATTIC_H = m(1.5);
 const EAVES = m(0.45);
 /** Depth of a pitched roof's edge: rafter, battens and tiles, read at the fascia (18 cm). */
 const ROOF_THICK = m(0.18);
 const ARCADE = m(1.8);
 const PLINTH_GROW = m(0.12);
+/** How deep a loggia is let into the wall. */
+const LOGGIA_DEPTH = m(1.4);
+/** How far a varanda gourmet's slab stands out of the wall. */
+const GOURMET_OUT = m(1.6);
 
 interface Opening {
   a0: number;
@@ -253,6 +259,32 @@ function openingOf(component: BayComponent, W: number, H: number, geometry?: Fac
       h1 = Math.min(H - m(0.5), m(2.6));
       depth = m(0.2);
       break;
+    // The facade library (`world/buildings/architecture.ts`).
+    case 'loggia':
+      // Let into the wall the depth of a room's edge: its floor, its ceiling,
+      // its cheeks and the glazed wall at the back are the reveals.
+      w = W - m(0.5);
+      h0 = m(0.02);
+      h1 = H - m(0.3);
+      depth = LOGGIA_DEPTH;
+      break;
+    case 'brise':
+      w = W - m(0.5);
+      h0 = m(0.75);
+      h1 = H - m(0.4);
+      depth = m(0.15);
+      break;
+    case 'shutteredWindow':
+      w = Math.min(W - m(1.6), m(1.2));
+      h0 = m(0.85);
+      h1 = H - m(0.45);
+      break;
+    case 'gourmet':
+      w = W - m(0.4);
+      h0 = m(0.02);
+      h1 = H - m(0.35);
+      depth = m(0.15);
+      break;
     default:
       return null;
   }
@@ -325,7 +357,7 @@ class Shell {
    * `n`. The winding is measured, never assumed: world y is mirrored into
    * three's z, which flips handedness (CLAUDE.md trap: winding).
    */
-  face(points: readonly (readonly [number, number, number])[], n: readonly [number, number, number], c: Paint): void {
+  face(points: readonly (readonly [number, number, number])[], n: readonly [number, number, number], c: Paint, shades?: readonly number[]): void {
     let part = this.parts.get(c.finish);
     if (!part) {
       part = new ShellPart();
@@ -354,7 +386,7 @@ class Shell {
       part.position.push(q[0], q[1], q[2]);
       part.normal.push(nx, ny, nz);
       // No two stretches of wall quite the same tone, and the base weathered.
-      let tone = 0.97 + macroNoise(x / MACRO_SCALE, y / MACRO_SCALE, z / MACRO_SCALE) * 0.06;
+      let tone = (0.97 + macroNoise(x / MACRO_SCALE, y / MACRO_SCALE, z / MACRO_SCALE) * 0.06) * (shades?.[i] ?? 1);
       if (wall && Number.isFinite(this.ground)) {
         const t = Math.min(1, Math.max(0, (z - this.ground) / GRIME_REACH));
         tone *= 0.8 + 0.2 * t * t * (3 - 2 * t);
@@ -670,7 +702,9 @@ function emitBuilding(
       const width = Math.min(controls?.pierWidth ?? (grammar === 'artDecoCrown' ? m(.65) : m(.36)), face.W * .3);
       const a0 = width * 0.35, a1 = a0 + width;
       const depth = -ribDepth;
-      const stone = paint({ finish: 'plaster', colour: 0xd9d4c5 });
+      // The building's own skin, a little lighter (catching the light): a
+      // stone-coloured pier on a brick or a painted wall read as a second building.
+      const stone = shaded(wallOf(v, bay.side, bay.storey), 1.08);
       e.rect(face, a0, a1, 0, face.H, depth, e.N(face.nx, face.ny), stone);
       e.jamb(face, a0, 0, face.H, 0, depth, e.N(-face.tx, -face.ty), stone);
       e.jamb(face, a1, 0, face.H, depth, 0, e.N(face.tx, face.ty), stone);
@@ -684,10 +718,17 @@ function emitBuilding(
 
   // ---- storey bands and cornices, per volume
   for (const v of b.volumes) {
+    const lines = v.dress?.lines ?? 'every';
+    if (lines === 'none') continue;
     for (let k = 1; k < v.storeys.length; k++) {
       const level = v.base + k;
       if (level === 0) continue;
-      band(e, v, floor + volumeElevation(b, v, level), BAND_OUT, BAND_H, trim);
+      const z = floor + volumeElevation(b, v, level);
+      if (lines === 'every') band(e, v, z, BAND_OUT, BAND_H, trim);
+      // One string course over the ground floor: the base read from the body.
+      else if (lines === 'base') { if (level === 1) band(e, v, z, m(0.12), m(0.32), trim); }
+      // The floor slabs shown flush, a thin line of the wall's own render, darker.
+      else flushBand(e, v, z, m(0.03), m(0.24), shaded(wallOf(v, 0), 0.86));
     }
   }
 
@@ -769,7 +810,9 @@ function emitBuilding(
     }
     if (!best || (best.roof !== 'flat' && best.roof !== 'terrace')) continue;
     const z = floor + volumeHeight(b, best);
-    e.box(core.x, core.y, core.x + u, core.y + u, z, z + m(3), trim, ROOF_PLANT);
+    // The machine room clad in the building's own skin: a white box on
+    // every tower top read as a separate thing set on it.
+    e.box(core.x, core.y, core.x + u, core.y + u, z, z + m(3), best.dress ? wallOf(best, 0) : trim, ROOF_PLANT);
   }
   return floor;
 }
@@ -882,6 +925,27 @@ const REVEAL_SHADE = 0.68;
 
 const shaded = (c: Paint, k: number): Paint => ({ rgb: [c.rgb[0] * k, c.rgb[1] * k, c.rgb[2] * k], finish: c.finish });
 
+/** Walls that take a rain streak: render, stucco, concrete and stone (not glass, tile, brick or metal). */
+const STREAKED: ReadonlySet<Finish> = new Set<Finish>(['plaster', 'stucco', 'concrete', 'stone']);
+/**
+ * The rain streak under a sill: water off the sill runs down the wall and
+ * leaves a darker wash fading downwards (the dirt map of CityEngine's facade
+ * tutorial, drawn per window instead of as a texture). Two triangles a
+ * window, darker under the sill and gone a metre below it; stronger on an
+ * older building. Laid a hair proud of the wall, so it never fights it.
+ */
+function emitStreak(e: Emitter, f: BayFace, bay: FacadeBay, am: number, w: number, sill: number, wall: Paint): void {
+  if (!STREAKED.has(wall.finish) || sill < m(0.5)) return;
+  const h = bayHash(bay);
+  if (h % 3 === 0) return;
+  const reach = Math.min(sill - m(0.05), m(0.7 + (h % 7) * 0.12));
+  const half = w * (0.32 + (h % 5) * 0.03);
+  const dark = 1 - (0.07 + 0.12 * e.shell.decay);
+  const out = -m(0.012);
+  e.shell.face([e.P(f, am - half, sill - reach, out), e.P(f, am + half, sill - reach, out), e.P(f, am + half, sill - m(0.02), out), e.P(f, am - half, sill - m(0.02), out)],
+    e.N(f.nx, f.ny), wall, [1, 1, dark, dark]);
+}
+
 /** A stable number per bay, for choosing among window variants. */
 function bayHash(bay: FacadeBay): number {
   let h = Math.imul(bay.volume + 1, 0x27d4eb2d) ^ Math.imul(bay.level + 7, 0x165667b1) ^ Math.imul(bay.side + 3, 0x3c6ef372) ^ Math.imul(bay.index + 11, 0x85ebca6b);
@@ -964,6 +1028,7 @@ function emitBay(
       e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
       // The sill: out past the wall, with a drip.
       e.put('concrete', f, am, o.h0 - m(0.03), (o.depth - m(0.07)) / 2, w + m(0.14), m(0.06), o.depth + m(0.07));
+      emitStreak(e, f, bay, am, w, o.h0 - m(0.06), wall);
       break;
     }
     case 'wideWindow':
@@ -1019,6 +1084,45 @@ function emitBay(
       }
       break;
     }
+    case 'loggia': {
+      // The glazed wall at the back of the loggia, and a glass parapet on the facade line.
+      e.put(bayHash(bay) % 4 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth - m(0.02), w, h, 1);
+      e.put('frame', f, am, hm, o.depth - m(0.05), w, h, m(0.06), tc);
+      e.put('glassRail', f, am, o.h0, -m(0.02), w, m(1.05), 1);
+      break;
+    }
+    case 'brise': {
+      e.put(bayHash(bay) % 5 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth, w, h, 1);
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
+      // Vertical fins the storey's height, standing out of the wall: the
+      // brise-soleil of the Brazilian modern block (Capanema, Pedregulho).
+      const fins = Math.max(3, Math.round(W / m(0.7)));
+      const fw = m(0.09), fd = m(0.6);
+      for (let k = 0; k <= fins; k++) e.put('fin', f, Math.min(W - fw / 2, Math.max(fw / 2, (W * k) / fins)), H / 2, -fd / 2, fw, H, fd, tc);
+      break;
+    }
+    case 'shutteredWindow': {
+      e.put(bayHash(bay) % 4 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth, w, h, 1);
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
+      // A moulded surround in the trim, then the louvred leaves folded back
+      // on the wall either side, in the shutter paint (`louvre`).
+      const band = m(0.14);
+      e.put('fin', f, am, o.h1 + band / 2, -m(0.03), w + band * 2, band, m(0.06), tc);
+      for (const side of [-1, 1]) e.put('fin', f, am + side * (w / 2 + band / 2), hm, -m(0.03), band, h, m(0.06), tc);
+      if (o.a0 >= w / 2 + band) for (const side of [-1, 1]) e.put('louvre', f, am + side * (w * 0.75 + band), hm, -m(0.05), w / 2, h, m(0.04), shutterColour(wall, trim));
+      e.put('concrete', f, am, o.h0 - m(0.04), (o.depth - m(0.1)) / 2, w + band * 2 + m(0.1), m(0.08), o.depth + m(0.1));
+      emitStreak(e, f, bay, am, w, o.h0 - m(0.08), wall);
+      break;
+    }
+    case 'gourmet': {
+      // Sliding glass the bay's width, and the deep balcony: its slab, a
+      // glass parapet along its front edge.
+      e.put(bayHash(bay) % 4 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth, w, h, 1);
+      e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
+      e.put('concrete', f, W / 2, -m(0.11), -GOURMET_OUT / 2, W, m(0.22), GOURMET_OUT);
+      e.put('glassRail', f, W / 2, 0, -GOURMET_OUT + m(0.04), W, m(1.05), 1);
+      break;
+    }
     case 'frenchWindow':
     case 'bayWindow':
     case 'ribbon': {
@@ -1026,7 +1130,10 @@ function emitBay(
       e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.06), tc);
       // A transom across a tall pane, and a sill under the raised ones.
       if (h > m(2.2)) e.put('frame', f, am, o.h0 + h * 0.72, o.depth - m(0.03), w, m(0.08), m(0.07), tc);
-      if (o.h0 > m(0.3)) e.put('concrete', f, am, o.h0 - m(0.03), (o.depth - m(0.07)) / 2, w + m(0.14), m(0.06), o.depth + m(0.07));
+      if (o.h0 > m(0.3)) {
+        e.put('concrete', f, am, o.h0 - m(0.03), (o.depth - m(0.07)) / 2, w + m(0.14), m(0.06), o.depth + m(0.07));
+        emitStreak(e, f, bay, am, w, o.h0 - m(0.06), wall);
+      }
       break;
     }
     default:
@@ -2330,8 +2437,36 @@ function band(e: Emitter, v: Volume, z: number, out: number, height: number, c: 
   tier(out, z - height * 0.1, z + height / 2, c);
 }
 
+/** A band flush with the wall, standing out only `out`: a slab edge, not a moulding. */
+function flushBand(e: Emitter, v: Volume, z: number, out: number, height: number, c: Paint): void {
+  if (!v.outline) { e.box(v.x - out, v.y - out, v.x + v.w + out, v.y + v.d + out, z - height / 2, z + height / 2, c); return; }
+  for (const side of volumeSides(v)) {
+    const f = edgeFrame(v, side), n = e.N(f.nx, f.ny);
+    const P = (a: number, h: number): V3 => e.L(f.x + f.tx * a + f.nx * out, f.y + f.ty * a + f.ny * out, h);
+    e.shell.face([P(0, z - height / 2), P(f.length, z - height / 2), P(f.length, z + height / 2), P(0, z + height / 2)], n, c);
+  }
+}
+
+/**
+ * The shutters' paint: a colour of their own against the wall, as Brazilian
+ * houses paint them - the trim's when the trim is a colour (green, blue,
+ * wine, wood), else a green or a blue chosen by the wall's tone.
+ */
+const SHUTTER_PAINTS = [new Color().setHex(0x2f5a3a), new Color().setHex(0x2f4f72), new Color().setHex(0x6b3b2a)];
+function shutterColour(wall: Paint, trim: Paint): Color {
+  const [r, g, b] = trim.rgb;
+  const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+  if (chroma > 0.06 && Math.max(r, g, b) < 0.75) return trimColour(trim);
+  const [wr, wg, wb] = wall.rgb;
+  return SHUTTER_PAINTS[wb > wr ? 2 : wg > wb ? 1 : 0]!;
+}
+
 function emitCornice(e: Emitter, v: Volume, z: number, trim: Paint): void {
-  const deco = v.facadePattern === 'artDeco' || v.facadePattern === 'artDecoCrown';
+  const crown = v.dress?.crown;
+  if (crown === 'none' || crown === 'attic') return;
+  // A thin roof slab standing well out: the crown of a modern block.
+  if (crown === 'slab') { flushBand(e, v, z + PARAPET_H - m(0.12), m(0.45), m(0.26), trim); return; }
+  const deco = crown === 'deco' || (!crown && (v.facadePattern === 'artDeco' || v.facadePattern === 'artDecoCrown'));
   band(e, v, z - m(.2), deco ? m(.55) : CORNICE_OUT, deco ? m(.55) : m(.36), trim);
   if (deco) band(e, v, z - m(1.05), m(.28), m(.32), trim);
 }
@@ -2630,16 +2765,17 @@ function emitRoof(
         const pieces = Math.max(1, Math.round((p1 - p0) / step));
         const W = (p1 - p0) / pieces;
         for (let k = 0; k < pieces; k++) {
-          const face: BayFace = { ...sideFrame(v, side, p0 + k * W), z0: z, W, H: PARAPET_H };
+          const ph = v.dress?.crown === 'attic' ? ATTIC_H : PARAPET_H;
+          const face: BayFace = { ...sideFrame(v, side, p0 + k * W), z0: z, W, H: ph };
           if (terrace) {
             e.put('roofRailing', face, W / 2, 0, m(0.12), W, m(1.0), 1);
           } else {
             const out = e.N(face.nx, face.ny);
-            e.rect(face, 0, W, 0, PARAPET_H, 0, out, wallOf(side));
-            e.rect(face, 0, W, 0, PARAPET_H, PARAPET_T, [-out[0], -out[1], 0], shaded(wallOf(side), 0.82));
+            e.rect(face, 0, W, 0, ph, 0, out, wallOf(side));
+            e.rect(face, 0, W, 0, ph, PARAPET_T, [-out[0], -out[1], 0], shaded(wallOf(side), 0.82));
             // The coping: proud of both faces, so the rain drips clear of them.
-            e.strip(face, 0, W, PARAPET_H, -m(0.05), PARAPET_T + m(0.05), up, trim);
-            e.rect(face, 0, W, PARAPET_H - m(0.06), PARAPET_H, -m(0.05), out, shaded(trim, 0.9));
+            e.strip(face, 0, W, ph, -m(0.05), PARAPET_T + m(0.05), up, trim);
+            e.rect(face, 0, W, ph - m(0.06), ph, -m(0.05), out, shaded(trim, 0.9));
           }
         }
       }
