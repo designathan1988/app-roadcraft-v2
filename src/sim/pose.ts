@@ -121,6 +121,23 @@ export function vehiclePose(w: SimWorld, v: Vehicle, alpha: number): Pose | null
 }
 
 /**
+ * Where a vehicle is now, for the simulation itself: `vehiclePose` at the end
+ * of the tick (alpha 1), without the previous step's frame that only the
+ * drawing's blend between two steps needs (Glenn Fiedler, "Fix Your
+ * Timestep!": the blended state is for rendering, the simulation works from
+ * its current state). Half the work of `vehiclePose(w, v, 1)`, which the
+ * walkers' gap check paid for every vehicle in town every tick.
+ */
+export function vehiclePoseNow(w: SimWorld, v: Vehicle): Pose | null {
+  const free = v.free;
+  if (free) return { p: { x: free.x, y: free.y }, angle: free.angle };
+  const frame = axleFrame(w, v, v, v.archetype.length);
+  if (!frame) return null;
+  const at = addScaled(frame.p, perp(frame.t), bodyOffset(v, v.archetype.length) + cycleShift(v, w.lanelet(v.lanelet), v.s));
+  return { p: at, angle: angleOf(frame.t) + laneChangeYaw(v.lateralSlope) };
+}
+
+/**
  * The body centre on the path, pointing along a short chord centred on it.
  *
  * The heading used to be the tangent of the path under the centre. Paths are

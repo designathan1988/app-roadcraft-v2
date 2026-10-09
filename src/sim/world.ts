@@ -449,13 +449,21 @@ export class SimWorld {
    * which does not advance when a test drives `step` directly.
    */
   signalDeps(): SignalDeps {
-    const demands = new Map<string, { active: number; score: number }>();
+    // Kept by the node and the very arrays asked about (a plan's stages hand
+    // the same `greenGroups` and `demandMovements` every time): a key string
+    // joined from them on every ask was most of the controllers' time on a
+    // quiet map (audit, 2026-10-09). An array made afresh by a caller only
+    // misses the memo; the answer is the same.
+    const demands = new Map<NodeId, Map<readonly number[], Map<readonly string[] | undefined, { active: number; score: number }>>>();
     const demandOf = (node: NodeId, groups: readonly number[], movements?: readonly string[]) => {
-      const key = `${node}|${groups.join(',')}|${movements?.join(',') ?? '*'}`;
-      let value = demands.get(key);
+      let byGroups = demands.get(node);
+      if (!byGroups) demands.set(node, byGroups = new Map());
+      let byMovements = byGroups.get(groups);
+      if (!byMovements) byGroups.set(groups, byMovements = new Map());
+      let value = byMovements.get(movements);
       if (!value) {
         value = this.signalDemand(node, groups, movements);
-        demands.set(key, value);
+        byMovements.set(movements, value);
       }
       return value;
     };
@@ -538,12 +546,14 @@ export class SimWorld {
     let active = 0;
     let score = 0;
     for (const laneId of junction?.inbound ?? []) {
+      // An empty approach serves nobody: read before its group is looked up.
+      const order = this.runtime.get(laneId)?.order;
+      if (!order?.length) continue;
       const lane = this.graph.lanelets.get(laneId);
       const segment = lane?.segment;
       if (!lane || segment === undefined) continue;
       const group = junction?.groups.find((g) => g.segments.includes(segment));
       if (!group || !groups.includes(group.id)) continue;
-      const order = this.rt(laneId).order;
       for (let i = order.length - 1; i >= 0; i--) {
         const v = this.vehicles.get(order[i] as number);
         if (!v) continue;

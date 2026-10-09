@@ -284,6 +284,10 @@ function discretionary(
 ): LaneletId | null {
   if (v.age - v.lastLaneChangeAge < LANE_CHANGE_COOLDOWN) return null;
   if (laneLength - v.s < Math.max(OVERTAKE_MIN_ROOM, v.v * OVERTAKE_TIME)) return null;
+  // MOBIL weighs the accelerations round a change into a neighbouring lane:
+  // a carriageway of one lane has none, and its leader and follower were
+  // looked up for every car on it every tick for nothing.
+  if (!w.graph.siblingLanes(laneId).length) return null;
   // The street the route turns into next. A lane that cannot reach it is no
   // overtaking lane: moving there only earns a mandatory change straight back,
   // which is the lane-to-lane oscillation measured before this at 38 % of all

@@ -28,6 +28,8 @@ const CLEARANCE_EPSILON = COARSE_EPS;
  * `drive/physicalMotion.ts`, a Gipps-style braking bound), not repaired
  * afterwards.
  */
+const NO_CLEARANCES: ReadonlySet<Vehicle['clearingConnectors'][number]> = new Set();
+
 export function integrateAll(w: SimWorld): void {
   const removed: Vehicle[] = [];
 
@@ -66,7 +68,9 @@ export function integrateAll(w: SimWorld): void {
     // (`drive/physicalMotion.ts`).
     const next = physicalSpeed(v.driver, v.v, speedCap, v.accel, v.constraints.obstacles, DT);
     const ds = Math.max(0, 0.5 * (v.v + next) * DT);
-    const clearancesAtStart = new Set(v.clearingConnectors);
+    // Only read (`has`): a car clearing no junction - nearly all of them -
+    // shares one empty set instead of copying an empty list every tick.
+    const clearancesAtStart = v.clearingConnectors.length ? new Set(v.clearingConnectors) : NO_CLEARANCES;
 
     v.accel = (next - v.v) / DT;
     v.v = next;
@@ -154,7 +158,9 @@ export function integrateAll(w: SimWorld): void {
       v.rorStopped = 0;
       v.rorCredit = false;
     }
-    v.claims = [...w.claims.points(v.id)];
+    // A copy of what it holds; nothing held and nothing kept, the empty list stays.
+    const held = w.claims.points(v.id);
+    if (held.length || v.claims.length) v.claims = [...held];
   }
 
   for (const v of removed) w.removeVehicle(v);

@@ -3,6 +3,7 @@ import { m } from '@world/units';
 import { DT } from '../params';
 import type { SimWorld } from '../world';
 import type { Vehicle } from './state';
+import { ARCHETYPES } from './archetypes';
 import type { Boarder } from '../people/engine';
 import { personHash, type PersonAgeClass, type PersonGender } from '../people/view';
 
@@ -443,13 +444,27 @@ function newStop(kind: TaskKind, lanelet: LaneletId, at: number, seat: number, d
 
 /** Somebody standing still or queued in front of the stop would make it a queue, not a stop. */
 function queuedAhead(w: SimWorld, v: Vehicle, at: number): boolean {
-  for (const id of w.rt(v.lanelet).order) {
-    const other = w.veh(id);
+  // The lane's order is sorted by `s`: from the first car past this one, by a
+  // binary search, up to where no body can reach back to the stop. Every car
+  // with an errand scanned its whole lane every tick - a queue of seventy on
+  // one street was 4 900 looks a tick.
+  const order = w.rt(v.lanelet).order;
+  let lo = 0, hi = order.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((w.veh(order[mid]!)?.s ?? -Infinity) <= v.s) lo = mid + 1; else hi = mid;
+  }
+  const reach = at + m(6);
+  for (let i = lo; i < order.length; i++) {
+    const other = w.veh(order[i]!);
     if (!other || other.id === v.id || other.s <= v.s) continue;
-    if (other.s - other.archetype.length < at + m(6)) return true;
+    if (other.s - other.archetype.length < reach) return true;
+    if (other.s - LONGEST_BODY >= reach) break;
   }
   return false;
 }
+/** The longest body of any vehicle: past `reach + LONGEST_BODY` ahead nobody's rear reaches back to `reach`. */
+const LONGEST_BODY = Math.max(...ARCHETYPES.map((a) => a.length));
 
 /** Right of a lane: the side a footway must be on, as a unit normal. */
 function kerbSide(w: SimWorld, lanelet: LaneletId, s: number): { p: { x: number; y: number }; t: { x: number; y: number }; right: { x: number; y: number } } | null {

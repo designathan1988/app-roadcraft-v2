@@ -327,6 +327,18 @@ function ensureVehicleRoutes(w: SimWorld): void {
       v.admittedConnector = null;
     }
 
+    // Arrived: on the lane it is going to, at the end of a road that leads
+    // off the map, nothing left to plan (`planFrom` from here only sets the
+    // route to this lane and clears the intent and the lane wanted, as they
+    // already are). Planned again every tick, every car on its last stretch
+    // searched its trip each frame (`repairRoute` in the browser's profile).
+    // With no destination, the same holds while no lane beside it leads on
+    // either (`planFrom` would look for a movement among theirs).
+    if (v.route.length === 1 && v.route[0] === lane.id && lane.kind === 'link' &&
+        v.movementIntent === null && v.desiredLane === null && w.graph.exitsOf(lane.id).length === 0 &&
+        (v.destination === lane.id ||
+          (v.destination === null && w.graph.siblingLanes(lane.id).every((id) => w.graph.exitsOf(id).length === 0)))) continue;
+
     const next = v.route[1];
     const connected =
       v.route[0] === lane.id &&
