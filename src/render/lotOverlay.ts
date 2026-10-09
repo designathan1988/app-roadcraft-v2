@@ -137,9 +137,11 @@ export function createLotOverlay(scene: Scene, groundAt: (x: number, y: number) 
         // ground showed through the colour in holes (the player, 2026-10-06).
         const fill = poly.fill;
         // A vertex is shared by up to six triangles: its ground asked once.
-        const heights = new Map<string, [number, number, number]>();
+        // Keyed by a number, not a string: building the keys was 2.5 s of the
+        // 7 s a generated city's 1 530 lots took to lay (2026-10-09).
+        const heights = new Map<number, [number, number, number]>();
         const ground = (p: Vec2): [number, number, number] => {
-          const k = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+          const k = (Math.round(p.x * 1000) + 4_194_304) * 8_388_608 + (Math.round(p.y * 1000) + 4_194_304);
           let v = heights.get(k);
           if (!v) { v = at(p.x, p.y); heights.set(k, v); }
           return v;

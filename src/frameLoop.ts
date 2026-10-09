@@ -22,12 +22,36 @@ export class FrameClock {
   private last = performance.now();
   private driftQueued = false;
 
-  constructor(private readonly frame: (now: number) => void) {}
+  /**
+   * `loading`: a town is being put together unseen (`SceneHandle.opening`).
+   * Its frames are then not asked of `requestAnimationFrame`, which waits
+   * for the page to be visible (Chrome, "Timer throttling in Chrome 88":
+   * rAF "will wait for the page to be visible") and keeps to the display's
+   * rate - nothing is presented, so neither is needed - but run as tasks
+   * through a `MessageChannel`, which neither clamps to 4 ms as `setTimeout`
+   * does nor waits for a vsync (React's scheduler posts its work the same
+   * way). A load in a hidden or covered pane went on drawing nothing at
+   * 0 frames a second until the curtain's time limit lifted it unfinished.
+   */
+  constructor(private readonly frame: (now: number) => void, private readonly loading: () => boolean = () => false) {}
+
+  private channel: MessageChannel | null = null;
 
   /** A frame is wanted: one is asked of the browser unless one already is. */
   request(): void {
     if (this.pending) return;
     this.pending = true;
+    if (this.loading() && typeof MessageChannel !== 'undefined') {
+      if (!this.channel) {
+        this.channel = new MessageChannel();
+        this.channel.port1.onmessage = () => {
+          this.pending = false;
+          this.frame(performance.now());
+        };
+      }
+      this.channel.port2.postMessage(null);
+      return;
+    }
     requestAnimationFrame((now) => {
       this.pending = false;
       this.frame(now);
@@ -96,7 +120,7 @@ const TOPOLOGY_SLICE_MS = 6;
  * held the opening 423 ms; at 25 ms a frame, on a GPU drawing the loading
  * town in 350 ms frames, the traffic stood still for 7 s after it appeared.
  */
-const LOADING_SLICE_MS = 120;
+const LOADING_SLICE_MS = 250;
 
 /**
  * The traffic's topology brought up to an edit's road plan, a few

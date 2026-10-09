@@ -144,6 +144,22 @@ o jogo a cada edição.
   Light Beam). Conferido no jogo (build da porta 4180), à noite e de dia.
 
 ### Prédios e cidade
+- Prédios gerados por ESTILO ARQUITETÔNICO (`world/buildings/architecture.ts`,
+  ramo `predios`): 12 estilos (colonial, art déco, modernista com brises,
+  contemporâneo com varandas gourmet e ático, tijolo, tropical de pastilha,
+  vidro, industrial; casas colonial, bangalô, moderna, sobrado), cada um com
+  família de pele e caixilho, ritmo de colunas simétrico (aberturas
+  alinhadas andar a andar), térreo pelo uso (loja, portaria, casa), andar de
+  coroamento, frisos e coroamento próprios (`Volume.dress`: nenhum, só
+  embasamento, laje aparente ou todo andar; cornija, déco, laje, ático).
+  Era do bairro (antigo, moderno, novo) e rua decidem o estilo
+  (`zoning.ts` `quarterOf`). Peças novas instanciadas: loggia, brise,
+  janela com venezianas, varanda gourmet com guarda-corpo de vidro
+  (`kit.ts` `fin`, `louvre`, `glassRail`); laje plana nunca com telha;
+  marquise na portaria moderna; casa de máquinas na pele do prédio;
+  manchas de chuva sob peitoris (2 triângulos por janela). Detector:
+  `tests/world/architecture.spec.ts`. Visto no jogo (build, sementes 11,
+  23, 47). Aguardando o jogador.
 - Cidade gerada auditada inteira (`tests/world/generatedCity.spec.ts`,
   `tests/world/cityAudit.ts`, sementes 20261009, 77 e 4242): nenhum lote
   sobre o pavimento nem sobre outro, nenhum maior que 2400 m2, todo lote

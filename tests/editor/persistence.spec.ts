@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { Persistence, QUARANTINE_KEY, isSerializedDoc, normalizeSettings } from '@editor/persistence';
+import { type LargeStore, Persistence, QUARANTINE_KEY, isSerializedDoc, normalizeSettings } from '@editor/persistence';
 import { RoadDoc } from '@world/doc';
 import { MAP_HALF } from '@world/bounds';
 
@@ -64,14 +64,18 @@ describe('the load boundary', () => {
   });
 });
 
-/** A `Storage` in memory (MDN: `getItem` of a missing key is null). */
-function memoryStorage(): Storage {
+/** A `Storage` in memory (MDN: `getItem` of a missing key is null), throwing past `quota` characters as a browser does. */
+function memoryStorage(quota = Infinity): Storage {
   const items = new Map<string, string>();
   return {
     get length() { return items.size; },
     key: (n: number) => [...items.keys()][n] ?? null,
     getItem: (k: string) => items.get(k) ?? null,
-    setItem: (k: string, v: string) => { items.set(k, String(v)); },
+    setItem: (k: string, v: string) => {
+      const used = [...items].reduce((n, [key, value]) => (key === k ? n : n + key.length + value.length), 0);
+      if (used + k.length + String(v).length > quota) throw new DOMException('quota', 'QuotaExceededError');
+      items.set(k, String(v));
+    },
     removeItem: (k: string) => { items.delete(k); },
     clear: () => items.clear(),
   };
@@ -113,6 +117,54 @@ describe('the model\'s own copies', () => {
     expect(copy.nodes.size).toBe(3);
     expect(copy.segments.size).toBe(2);
     expect(copy.toJSON()).toEqual(doc.toJSON());
+  });
+});
+
+describe('a map too large for Web Storage', () => {
+  const real = (globalThis as { localStorage?: Storage | undefined }).localStorage;
+  afterEach(() => { (globalThis as { localStorage?: Storage | undefined }).localStorage = real; });
+  const settings = normalizeSettings({ camera: { x: 0, y: 0, zoom: 1 }, paused: true, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false });
+  /** A town whose text is past the 5 MiB of `localStorage` (a generated city of 1 530 buildings is 12.7 MB). */
+  const bigDoc = (): RoadDoc => {
+    const doc = RoadDoc.fromJSON(base() as never);
+    const json = doc.toJSON();
+    return Object.assign(doc, { toJSON: () => ({ ...json, padding: 'x'.repeat(3_000_000) }) as never });
+  };
+  const memoryStore = (): LargeStore & { items: Map<string, string> } => {
+    const items = new Map<string, string>();
+    return { items, get: async (k) => items.get(k) ?? null, put: async (k, v) => { items.set(k, v); return true; }, delete: async (k) => items.delete(k) };
+  };
+
+  it('is kept in the large store and read back on the next opening', async () => {
+    // The autosave wrote it to `localStorage` alone, which threw: every reload opened an old map or none.
+    const storage = memoryStorage(2_600_000);
+    (globalThis as { localStorage?: Storage }).localStorage = storage;
+    const store = memoryStore();
+    let failed = false;
+    const saver = new Persistence(undefined, store);
+    saver.onSaveFailed = () => { failed = true; };
+    saver.saveSession(bigDoc(), settings);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(failed).toBe(false);
+    expect(store.items.get('roadcraft.world.v7')?.length).toBeGreaterThan(3_000_000);
+    expect(storage.getItem('roadcraft.world.v7')).toContain('"stored":"indexeddb"');
+    const back = await new Persistence(undefined, store).loadSessionAsync();
+    expect(back?.document.nodes?.length).toBe(2);
+    // The pointer is not an unreadable map: nothing set aside.
+    expect(storage.getItem(QUARANTINE_KEY)).toBeNull();
+  });
+
+  it('gives way to a newer small map written after it', async () => {
+    const storage = memoryStorage(2_600_000);
+    (globalThis as { localStorage?: Storage }).localStorage = storage;
+    const store = memoryStore();
+    const saver = new Persistence(undefined, store);
+    saver.saveSession(bigDoc(), settings);
+    await new Promise((r) => setTimeout(r, 5));
+    const small = RoadDoc.fromJSON({ ...base(), nodes: [{ id: 1, x: 0, y: 0 }, { id: 2, x: 100, y: 0 }, { id: 3, x: 200, y: 0 }] } as never);
+    saver.saveSession(small, settings);
+    const back = await new Persistence(undefined, store).loadSessionAsync();
+    expect(back?.document.nodes?.length).toBe(3);
   });
 });
 

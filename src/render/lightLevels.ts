@@ -28,8 +28,13 @@ export const BLOOM_THRESHOLD = 0.92;
 const fromCandela = (cd: number): number => BLOOM_THRESHOLD + 0.7 * Math.log10(cd / 3);
 
 export const NIGHT_LUMINANCE = {
-  /** A lit room seen through its glass, on average: brighter than any lit wall, so it glows a little. */
-  window: 1.25,
+  /**
+   * A lit room seen through its glass, on average: brighter than a lit wall,
+   * but UNDER the bloom's threshold (postprocess.ts, 1.05): at 1.25 every lit
+   * window bloomed and a night town read as incandescent, its facades lost
+   * under the glow (the player, 2026-10-09). Lamps and headlights still bloom.
+   */
+  window: 0.72,
   /** The lantern beside a front door. */
   porchLamp: 2.4,
   headlamp: 3.0,

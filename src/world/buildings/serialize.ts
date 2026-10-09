@@ -47,6 +47,8 @@ import {
   type BuildingFunction,
   type PlacedFurniture,
   LOT_SURFACES,
+  DRESS_LINES,
+  DRESS_CROWNS,
 } from './types';
 import { DEFAULT_GROUND_HEIGHT, DEFAULT_STOREY_HEIGHT } from './blueprints';
 import { MIN_SIZE } from './geometry';
@@ -180,6 +182,13 @@ function migrateVolume(raw: unknown, scale: Scale): Volume | null {
   else delete volume.lift;
   if (isFacadePattern(raw.facadePattern)) volume.facadePattern = raw.facadePattern;
   else delete volume.facadePattern;
+  if (isRecord(raw.dress)) {
+    const dress: NonNullable<Volume['dress']> = {};
+    if ((DRESS_LINES as readonly unknown[]).includes(raw.dress.lines)) dress.lines = raw.dress.lines as NonNullable<typeof dress.lines>;
+    if ((DRESS_CROWNS as readonly unknown[]).includes(raw.dress.crown)) dress.crown = raw.dress.crown as NonNullable<typeof dress.crown>;
+    if (Object.keys(dress).length > 0) volume.dress = dress;
+    else delete volume.dress;
+  } else delete volume.dress;
   if (Array.isArray(raw.roofDetails)) {
     const details = raw.roofDetails.slice(0, 32).flatMap((item) => {
       if (!isRecord(item) || !isRoofDetailKind(item.kind) || !finite(item.x) || !finite(item.y) ||

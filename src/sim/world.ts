@@ -165,9 +165,11 @@ export class SimWorld {
   pedestrianIntensity = 1;
   /**
    * How many cars and how many people on foot the player wants on the map
-   * (the panel's Traffic and People, `main.ts`). Set, they come in at the
-   * ends of the roads until there are that many and leave only at a road's
-   * end (`vehicles/spawn.ts` stepDispatch, `ambient/ambient.ts` edgePeople);
+   * (the panel's Traffic and People, `main.ts`). Set, a map opened is filled
+   * with them at once (`ambient/ambient.ts` open); then they come in at the
+   * ends of the roads and out of the lots, and leave at a road's end or into
+   * a lot (`vehicles/spawn.ts` stepDispatch, `agents/lotTraffic.ts`,
+   * `ambient/ambient.ts` edgePeople);
    * null (tests, harnesses), the arrival rates of `trafficIntensity` and the
    * density ceiling rule as before.
    */

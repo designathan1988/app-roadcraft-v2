@@ -1247,6 +1247,11 @@ export class RoadDoc {
         incident: [...node.incident], control: node.control,
         blockedMovements: [...node.blockedMovements],
         ...(node.crossing ? { crossing: { ...node.crossing } } : {}),
+        // The player's settings at the junction (V4, V5): dropped here, every
+        // road drawn anywhere wiped them all (`replaceWith` of the edited clone).
+        ...(node.laneLinks ? { laneLinks: node.laneLinks.map((l) => ({ ...l })) } : {}),
+        ...(node.approachRules ? { approachRules: node.approachRules.map((e) => ({ ...e })) } : {}),
+        ...(node.signal ? { signal: { ...node.signal, ...(node.signal.greens ? { greens: [...node.signal.greens] } : {}) } } : {}),
       });
     }
     for (const [id, segment] of source.segments) {
@@ -1817,13 +1822,15 @@ function normaliseLaneCount(lanes: number | null, direction: SegmentDirection): 
 function sameNode(p: RoadNode, q: RoadNode): boolean {
   return p.x === q.x && p.y === q.y && p.heightOffset === q.heightOffset && p.smooth === q.smooth &&
     p.control === q.control && sameList(p.incident, q.incident) && sameList(p.blockedMovements, q.blockedMovements) &&
-    p.crossing?.kind === q.crossing?.kind && p.crossing?.segment === q.crossing?.segment;
+    p.crossing?.kind === q.crossing?.kind && p.crossing?.segment === q.crossing?.segment &&
+    linksDigest(p.laneLinks) === linksDigest(q.laneLinks) && rulesDigest(p.approachRules) === rulesDigest(q.approachRules) &&
+    signalDigest(p.signal) === signalDigest(q.signal);
 }
 
 /** Whether two versions of a segment are the same, field for field (its ends' positions aside). */
 function sameSegment(p: RoadSegment, q: RoadSegment): boolean {
   return p.a === q.a && p.b === q.b && p.type === q.type && p.dashOrigin === q.dashOrigin &&
-    p.direction === q.direction && p.lanes === q.lanes && p.structure === q.structure &&
+    p.direction === q.direction && p.lanes === q.lanes && p.structure === q.structure && p.cutWalls === q.cutWalls &&
     sameRoadSection(p.section, q.section) && sameParking(p.parking, q.parking) &&
     (p.curve?.t ?? null) === (q.curve?.t ?? null) && (p.curve?.h ?? null) === (q.curve?.h ?? null);
 }

@@ -8,6 +8,8 @@ import { createVehicle, snapshot, type Vehicle, type VehicleId } from '../vehicl
 import { planFrom } from '../routing/router';
 import { chooseVehicleDestination } from '../routing/destination';
 import { collectBays, type Bay } from './parking';
+import { trafficTarget } from '../vehicles/spawn';
+import { flows, kindOf } from '../ambient/demand';
 import { arrival, departure, type Manoeuvre } from './manoeuvre';
 
 /**
@@ -27,15 +29,32 @@ import { arrival, departure, type Manoeuvre } from './manoeuvre';
  * the kerb for a gap and joins the traffic again, bound for a road end like
  * any other car.
  *
- * Only bays the scenery left empty are used, and a handful of cars at a
- * time, chosen near the view, so the player sees them.
+ * THE LOTS MAKE THE TRIPS, as the buildings of Cities: Skylines send their
+ * cars out and take them in: a car of the traffic ends its trip in a lot at
+ * the rate a trip ends (`TRIP_SECONDS`), to a lot drawn by how many go in
+ * at its kind of place at this hour (`ambient/demand.ts` flows); and while
+ * fewer cars drive than the panel asks for (`trafficTarget`), cars standing
+ * in the lots' bays - the scenery's, handed over (`AmbientWorld.release`),
+ * or those parked here - drive out, drawn by how many come out of each kind
+ * of place now. A town with no road leading off the map keeps its traffic
+ * this way; the road ends bring theirs in and take it away as before.
+ * Half the lots called are near the view, so the player sees them.
  */
 
 /** Seconds between two looks for a car to send in. */
 const LOOK = 1;
-/** Most cars on their way in at once, and most of these cars in lots at all. */
-const MAX_COMING = 4;
-const MAX_IN_LOTS = 24;
+/** Fewest cars on their way in at once, and the seconds a car called takes to reach its lot, about (more traffic, more on their way). */
+const MAX_COMING = 6;
+const COMING_SECONDS = 60;
+/**
+ * Mean seconds a car drives between two lots: one trip in this many ends in
+ * a lot each second. Three minutes of play is an hour of the city's day
+ * (`city.ts` TIME_SCALE 20): long enough that a car is seen driving a
+ * while, short enough that the lots are seen working within a minute.
+ */
+const TRIP_SECONDS = 180;
+/** Most cars sent out of the lots in one look. */
+const DEPART_PER_LOOK = 3;
 /** Seconds a car stays parked: the stop's `duration`. */
 const STAY_MIN = 40;
 const STAY_MAX = 150;
@@ -64,8 +83,10 @@ interface LotCar {
   path: Manoeuvre | null;
   /** Seconds in the phase. */
   t: number;
-  /** Seconds left parked. */
+  /** Seconds it stays parked at least. */
   stay: number;
+  /** Sent out (`depart`): it leaves once its stay is over. */
+  go: boolean;
   /** Seconds waited for people on the way. */
   waited: number;
   /** Holding the ground of the rest of its way: it drives on without stopping for anybody. */
@@ -86,9 +107,34 @@ export class LotTraffic {
   parkedIn = 0;
   leftBy = 0;
 
+  /**
+   * Cars driving off the road, into a bay or out of one: off the lanes (not
+   * in `SimWorld.vehicles`) but moving in sight, so the panel counts them
+   * among the cars driving (`main.ts` updateStatus).
+   */
+  moving(): number {
+    let n = 0;
+    for (const car of this.cars.values()) if (car.phase === 'parking' || car.phase === 'leaving') n++;
+    return n;
+  }
+
   /** The cars of the lots, for probes: id, phase, the bay's building, where the body stands. */
   view(): { id: number; phase: Phase; building: number; x: number; y: number }[] {
     return [...this.cars.values()].map((c) => ({ id: c.id, phase: c.phase, building: c.bay.building, x: c.body?.free?.x ?? NaN, y: c.body?.free?.y ?? NaN }));
+  }
+
+  /**
+   * A different map (`AmbientWorld.reset`): the cars of the old one's lots
+   * are forgotten. Kept, those parking or driving out of a lot were drawn on
+   * the new map where the old lot had been.
+   */
+  reset(): void {
+    this.cars.clear();
+    this.owed = 0;
+    this.clock = 0;
+    this.baysFor = '';
+    this.seenFor = '';
+    this.bays = [];
   }
 
   /** Stage 2 (`sim/city/city.ts`): with the scenery on, cars go in and out of the lots. */
@@ -111,7 +157,71 @@ export class LotTraffic {
     if (this.clock < LOOK) return;
     this.clock = 0;
     this.readBays(w);
-    this.call(w);
+    if (!this.bays.length) return;
+    const target = trafficTarget(w);
+    this.depart(w, target);
+    // Trips ending in a lot, at the rate a trip ends; never more owed than can be on their way at once.
+    let coming = 0;
+    for (const car of this.cars.values()) if (car.phase === 'coming') coming++;
+    // As many on their way as the rate brings in over the minute or so a car takes to reach its lot.
+    const most = Math.max(MAX_COMING, Math.ceil((target * COMING_SECONDS) / TRIP_SECONDS));
+    this.owed = Math.min(most, this.owed + (target / TRIP_SECONDS) * LOOK);
+    while (this.owed >= 1 && coming < most && this.call(w)) { this.owed--; coming++; }
+  }
+
+  /** Trips owed to the lots (`TRIP_SECONDS`), fractions carried from look to look. */
+  private owed = 0;
+
+  /** The hour of the city's day, for the lots' tables (`ambient/demand.ts`). */
+  private hour(w: SimWorld): number {
+    return (w.city.minutes(w) % 1440) / 60;
+  }
+
+  /**
+   * While fewer cars drive than the panel asks for, cars standing in the lots'
+   * bays drive out (a few a look): a lot drawn by how many come out of its
+   * kind of place at this hour. Those parked here go once their stay is over;
+   * one of the scenery's standing in a gated bay is handed over and goes now.
+   */
+  private depart(w: SimWorld, target: number): void {
+    // The cars driving in and out of the bays are driving too (`moving`), and
+    // those sent out will be: the panel's number is the lanes' and theirs.
+    let leaving = 0;
+    for (const car of this.cars.values()) if (car.phase === 'parking' || car.phase === 'leaving' || car.go) leaving++;
+    const short = Math.min(DEPART_PER_LOOK, target - w.vehicles.size - leaving);
+    if (short <= 0) return;
+    const hour = this.hour(w);
+    const byKey = new Map(this.bays.map((b) => [bayKey(b), b] as const));
+    const outOf = new Map<number, number>();
+    const weight = (bay: Bay): number => {
+      let f = outOf.get(bay.building);
+      if (f === undefined) {
+        const b = w.doc.buildings.get(bay.building);
+        outOf.set(bay.building, f = b ? flows(kindOf(b), hour).out : 0);
+      }
+      return f;
+    };
+    const pool: { bay: Bay; car: LotCar | null; body: Vehicle; weight: number }[] = [];
+    for (const car of this.cars.values()) {
+      if (car.phase === 'parked' && !car.go && car.stay <= 0 && car.body) pool.push({ bay: car.bay, car, body: car.body, weight: weight(car.bay) });
+    }
+    for (const body of w.ambient.parked) {
+      if (!body.free || this.cars.has(body.id)) continue;
+      const bay = byKey.get(bayKey(body.free));
+      if (bay) pool.push({ bay, car: null, body, weight: weight(bay) });
+    }
+    for (let k = 0; k < short && pool.length; k++) {
+      let total = 0;
+      for (const p of pool) total += p.weight;
+      if (total <= 0) return;
+      let roll = this.rng.float() * total, at = pool.length - 1;
+      for (let i = 0; i < pool.length; i++) { roll -= pool[i]!.weight; if (roll < 0) { at = i; break; } }
+      const pick = pool.splice(at, 1)[0]!;
+      if (pick.car) { pick.car.go = true; continue; }
+      // The scenery's car: the lots' from now on, its bay left empty when the scenery makes its bays again.
+      w.ambient.release(pick.body);
+      this.cars.set(pick.body.id, { id: pick.body.id, bay: pick.bay, phase: 'parked', body: pick.body, path: null, t: 0, stay: 0, go: true, waited: 0, reserved: false });
+    }
   }
 
   /** The gated lots' bays, read again a look after the buildings or the roads changed (the scenery fills them first). */
@@ -131,22 +241,37 @@ export class LotTraffic {
     }
   }
 
-  /** A free bay near the view, and the nearest passing car sent to it. */
-  private call(w: SimWorld): void {
-    if (!this.bays.length || this.cars.size >= MAX_IN_LOTS) return;
-    let coming = 0;
-    for (const car of this.cars.values()) if (car.phase === 'coming') coming++;
-    if (coming >= MAX_COMING) return;
+  /**
+   * A free bay, drawn by how many go in at its kind of place at this hour
+   * (half the time among those near the view, so the player sees them come
+   * and go), and the nearest passing car sent to it. False when none was.
+   */
+  private call(w: SimWorld): boolean {
     const taken = new Set<string>();
     for (const car of w.ambient.parked) if (car.free) taken.add(bayKey(car.free));
     for (const car of this.cars.values()) taken.add(bayKey(car.bay));
     const free = this.bays.filter((b) => !taken.has(bayKey(b)));
-    if (!free.length) return;
-    // Near the middle of the view first: the player sees them come and go.
+    if (!free.length) return false;
     const focus = w.focus;
-    const near = focus ? free.filter((b) => Math.hypot(b.x - focus.x, b.y - focus.y) < Math.max(focus.r * 1.2, m(120))) : free;
+    const near = focus && this.rng.float() < 0.5
+      ? free.filter((b) => Math.hypot(b.x - focus.x, b.y - focus.y) < Math.max(focus.r * 1.2, m(120))) : free;
     const pool = near.length ? near : free;
-    const bay = pool[Math.floor(this.rng.float() * pool.length)]!;
+    const hour = this.hour(w);
+    const into = new Map<number, number>();
+    const weights = pool.map((bay) => {
+      let f = into.get(bay.building);
+      if (f === undefined) {
+        const b = w.doc.buildings.get(bay.building);
+        into.set(bay.building, f = b ? flows(kindOf(b), hour).in : 0);
+      }
+      return f;
+    });
+    let total = 0;
+    for (const x of weights) total += x;
+    let roll = this.rng.float() * total, at = pool.length - 1;
+    if (total > 0) for (let i = 0; i < pool.length; i++) { roll -= weights[i]!; if (roll < 0) { at = i; break; } }
+    else at = Math.floor(this.rng.float() * pool.length);
+    const bay = pool[at]!;
     const lane = bay.lane!;
     const stopAt = lane.entryAt ?? lane.at;
     let best: Vehicle | null = null, bestD = CALL_REACH;
@@ -159,7 +284,7 @@ export class LotTraffic {
       const d = Math.hypot(pose.p.x - lane.x, pose.p.y - lane.y);
       if (d < bestD) { bestD = d; best = v; }
     }
-    if (!best) return;
+    if (!best) return false;
     const v = best;
     const was = v.destination;
     v.commute = { trip: -2, lanelet: lane.lanelet, at: stopAt + v.archetype.length / 2 };
@@ -170,10 +295,11 @@ export class LotTraffic {
       v.commute = null;
       v.destination = was;
       planFrom(w, v);
-      return;
+      return false;
     }
-    this.cars.set(v.id, { id: v.id, bay, phase: 'coming', body: null, path: null, t: 0, stay: 0, waited: 0, reserved: false });
+    this.cars.set(v.id, { id: v.id, bay, phase: 'coming', body: null, path: null, t: 0, stay: 0, go: false, waited: 0, reserved: false });
     this.called++;
+    return true;
   }
 
   // ------------------------------------------------------------ the phases
@@ -217,7 +343,8 @@ export class LotTraffic {
     body.v = 0;
     setFree(body, { x: f.x, y: f.y, angle: f.angle });
     car.stay -= DT;
-    if (car.stay > 0 || !car.bay.lane) return;
+    // Out only when sent (`depart`: fewer cars drive than the panel asks for), its least stay over.
+    if (car.stay > 0 || !car.go || !car.bay.lane) return;
     body.seats = 1;
     car.path = departure(car.bay, car.bay.lane);
     this.enter(car, 'leaving');
