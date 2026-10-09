@@ -1119,7 +1119,17 @@ function solveVariable(profile: Profile, nodeHeight: Map<NodeId, number>): void 
       h[i] = (base[i] as number) + liftA * (1 - eased) + liftB * eased;
     }
   }
-  slopeLimit(h, step, RAMP_GRADE);
+  // The ramp's grade unless the heights set at its two ends ask for more (as
+  // `solveGround`): held to it, the limiter left the difference as a cliff
+  // against the pinned plate - a road set 17 units up at one end and at
+  // grade 100 units on dropped 2.5 units a unit in its last few (fuzz seed 3).
+  // The least grade that joins the plates, and a tenth more, makes one ramp;
+  // pinned and limited by turns, so no step is left against either plate.
+  const grade = Math.max(RAMP_GRADE, (Math.abs(hB - hA) / run) * 1.1);
+  for (let round = 0; round < 3; round++) {
+    slopeLimit(h, step, grade);
+    pinPlates(profile, hA, hB);
+  }
   roundGradeBreaks(profile, 'both');
   pinPlates(profile, hA, hB);
 }
@@ -1196,9 +1206,21 @@ function solveGround(profile: Profile, nodeHeight: Map<NodeId, number>): void {
   // pin puts it back. Three rounds settle it, and they only have anything to
   // argue about when the junction and its legs disagree — which, with the node
   // height now read at the plate edge, they barely do.
+  //
+  // The limit is the class's grade unless the two pinned plates ask for more:
+  // heights the player set at both ends of a short road may need a steeper
+  // ramp than the class allows. Held to the class's grade then, the limiter
+  // flattened the road from one end, the pin put the plate back, and the
+  // whole difference was left as a cliff against it (108 % and 250 % in the
+  // fuzzer, seeds 1 and 3). The least grade that joins the two plates, with a
+  // tenth more for the vertical curves rounded in below, makes it one
+  // continuous ramp instead - as steep as real short streets are (Grade
+  // (slope): 23-37 % on short urban stretches), never a step.
+  const free = Math.max(step, length - profile.plateA - profile.plateB);
+  const grade = Math.max(GROUND_GRADE, (Math.abs(hB - hA) / free) * 1.1);
   for (let round = 0; round < 3; round++) {
     pinPlates(profile, hA, hB);
-    slopeLimit(h, step, GROUND_GRADE);
+    slopeLimit(h, step, grade);
   }
   pinPlates(profile, hA, hB);
   roundGradeBreaks(profile, 'both');
