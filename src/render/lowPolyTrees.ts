@@ -46,16 +46,18 @@ interface Tone {
 }
 /** Two sRGB hex colours, converted once into the linear working space by `Color`. */
 const tone = (dark: number, lit: number): Tone => ({ dark: new Color(dark), lit: new Color(lit) });
-const LEAF = tone(0x2f4a22, 0x67883d);
-const LEAF_TALL = tone(0x2a4424, 0x5a7a40);
-const NEEDLE = tone(0x203a24, 0x46663f);
-const FROND = tone(0x34521f, 0x6e8f3e);
-const BARK = tone(0x3b3026, 0x6e5a47);
-const PALM_BARK = tone(0x4d4135, 0x84735f);
-const BLOOM_YELLOW = tone(0xa27a22, 0xd8ae40);
-const BLOOM_PINK = tone(0x864468, 0xc47a9f);
-const SHRUB = tone(0x2a4520, 0x5a7a38);
-const HEDGE = tone(0x243b1b, 0x4b6630);
+// Seen in the game's own light (ACES at exposure 1): the first greens, a
+// lit 0x67883d, left every face turned from the sky near black.
+const LEAF = tone(0x3d5e2a, 0x7fa34b);
+const LEAF_TALL = tone(0x36552d, 0x6f9452);
+const NEEDLE = tone(0x2b4b2d, 0x587c49);
+const FROND = tone(0x3e6026, 0x7fa448);
+const BARK = tone(0x4a3c2f, 0x7d6853);
+const PALM_BARK = tone(0x5a4c3e, 0x948268);
+const BLOOM_YELLOW = tone(0xb8892a, 0xe6bd4c);
+const BLOOM_PINK = tone(0x9a5078, 0xd88ab0);
+const SHRUB = tone(0x365a28, 0x6b9145);
+const HEDGE = tone(0x2e4c24, 0x5c7d3a);
 const FLOWERS: readonly Tone[] = [tone(0xb9b2a4, 0xe8e2d6), tone(0x9c4a68, 0xd0759a), tone(0x8e2f2f, 0xc4524c)];
 
 /** A small seeded random (mulberry32): a model is the same every time it is made. */
@@ -212,27 +214,31 @@ function trunk(b: Builder, top: Vector3, r0: number, r1: number, bark: Tone): vo
   b.add(new CylinderGeometry(r1, r0, 1, 6, 1, true), along(new Vector3(0, 0, 0), top), bark, OPEN, 0.1);
 }
 
-/** The shade tree: one broad, lumpy crown, a smaller lump grown into it, on a short stout trunk. 184 triangles. */
+/** The shade tree: one broad, lumpy crown, a smaller lump grown out of its side, on a short stout trunk. 172 triangles. */
 function oak(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.04, 0.5, (rng() - 0.5) * 0.04);
-  trunk(b, top, 0.05, 0.032, BARK);
-  const shade = crownShade(0.36, 0.98, 0.3);
-  b.mass(new Vector3(top.x, 0.64, top.z), 0.28, new Vector3(1, 0.92, 1), LEAF, seed, 0.28, shade);
+  // Crown from a third of the height up: a clear trunk of a third, as a
+  // shade tree stands (a half had them read as lollipops).
+  const top = new Vector3((rng() - 0.5) * 0.04, 0.42, (rng() - 0.5) * 0.04);
+  trunk(b, top, 0.066, 0.042, BARK);
+  const shade = crownShade(0.3, 0.98, 0.34);
+  b.mass(new Vector3(top.x, 0.58, top.z), 0.31, new Vector3(1.05, 0.9, 1.05), LEAF, seed, 0.28, shade);
   const a = rng() * Math.PI * 2;
-  b.mass(new Vector3(top.x + Math.cos(a) * 0.1, 0.8, top.z + Math.sin(a) * 0.1), 0.17, new Vector3(1, 0.9, 1), LEAF, seed + 5, 0.24, shade);
+  // The second lump grown out of the crown's SIDE, so the outline is uneven;
+  // set on top it read as a cap.
+  b.mass(new Vector3(top.x + Math.cos(a) * 0.2, 0.6, top.z + Math.sin(a) * 0.2), 0.21, new Vector3(1, 0.88, 1), LEAF, seed + 5, 0.24, shade);
   return b.geometry();
 }
 
-/** A tall, narrow crown - one long mass - on a longer clear stem. 172 triangles. */
+/** A tall, narrow crown - one long mass - on a longer clear stem. 92 triangles. */
 function broadleafTall(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.03, 0.5, (rng() - 0.5) * 0.03);
-  trunk(b, top, 0.04, 0.026, BARK);
-  const shade = crownShade(0.32, 1.0, 0.22);
-  b.mass(new Vector3(top.x, 0.66, top.z), 0.2, new Vector3(1, 1.65, 1), LEAF_TALL, seed, 0.24, shade);
+  const top = new Vector3((rng() - 0.5) * 0.03, 0.4, (rng() - 0.5) * 0.03);
+  trunk(b, top, 0.052, 0.034, BARK);
+  const shade = crownShade(0.26, 1.0, 0.24);
+  b.mass(new Vector3(top.x, 0.62, top.z), 0.22, new Vector3(1, 1.65, 1), LEAF_TALL, seed, 0.24, shade);
   return b.geometry();
 }
 
@@ -264,7 +270,7 @@ function cypress(seed: number): BufferGeometry {
   return b.geometry();
 }
 
-/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. About 230 triangles. */
+/** The palm: a curved, ringed trunk under a crown of drooping, toothed fronds. 212 triangles. */
 function palm(seed: number): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
@@ -318,12 +324,14 @@ function palm(seed: number): BufferGeometry {
 function ipe(seed: number, bloom: Tone): BufferGeometry {
   const rng = random(seed);
   const b = new Builder(rng);
-  const top = new Vector3((rng() - 0.5) * 0.05, 0.5, (rng() - 0.5) * 0.05);
-  trunk(b, top, 0.045, 0.028, BARK);
-  const shade = crownShade(0.42, 0.92, 0.36);
-  const centre = 0.68;
-  const pick = (c: Vector3): Tone => (c.y < centre - 0.08 ? LEAF : bloom);
-  b.mass(new Vector3(top.x, centre, top.z), 0.3, new Vector3(1.1, 0.62, 1.1), bloom, seed, 0.26, shade, pick);
+  const top = new Vector3((rng() - 0.5) * 0.05, 0.44, (rng() - 0.5) * 0.05);
+  trunk(b, top, 0.06, 0.038, BARK);
+  const shade = crownShade(0.34, 0.95, 0.42);
+  const centre = 0.62;
+  const pick = (c: Vector3): Tone => (c.y < centre - 0.1 ? LEAF : bloom);
+  b.mass(new Vector3(top.x, centre, top.z), 0.34, new Vector3(1.2, 0.72, 1.2), bloom, seed, 0.26, shade, pick);
+  const a = rng() * Math.PI * 2;
+  b.mass(new Vector3(top.x + Math.cos(a) * 0.26, 0.6, top.z + Math.sin(a) * 0.26), 0.2, new Vector3(1.1, 0.72, 1.1), bloom, seed + 5, 0.24, shade, pick);
   return b.geometry();
 }
 
