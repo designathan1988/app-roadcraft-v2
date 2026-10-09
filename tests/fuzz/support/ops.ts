@@ -6,7 +6,8 @@ import type { NodeId, SegmentId } from '@world/ids';
 import { MIN_LINK_LENGTH } from '@world/approach';
 import { ROAD_TYPES } from '@world/roadTypes';
 import type { RoadStructure } from '@world/structures';
-import { commitDraft, commitRoadPath, joinSegments, reconcileMovedNode, splitSegment } from '@editor/commit';
+import { commitDraft, commitRoadPath, joinSegments, moveNodeChecked, splitSegment } from '@editor/commit';
+import { guardRoadEdit } from '@editor/editRules';
 import { anchorForHeight, anchorHeightOffset, findAnchor, snapEndpoint, snapRoadEndpoint, type Anchor } from '@editor/snap';
 import { fitRoadCurve } from '@world/doc';
 
@@ -129,30 +130,30 @@ export function applyOp(state: FuzzState, op: FuzzOp): boolean {
       }]).committed;
       break;
     }
+    // Edits made in place are judged like a drawn road and undone when
+    // refused, as main.ts's `mutateRoads` does (`editRules.ts` `guardRoadEdit`).
     case 'split': {
       const id = pickFrom(segmentIds(doc), op.pick);
       if (id === undefined) return false;
       const line = net.polylines.get(doc, id);
       const s = line.length * op.at;
-      changed = splitSegment(doc, net, id, s, line.sampleAt(s).p) !== null;
+      changed = guardRoadEdit(doc, net, () => splitSegment(doc, net, id, s, line.sampleAt(s).p) !== null).changed;
       break;
     }
     case 'join': {
       const id = pickFrom(nodeIds(doc).filter((n) => doc.degree(n) === 2), op.pick);
-      changed = id !== undefined && joinSegments(doc, id);
+      changed = id !== undefined && guardRoadEdit(doc, net, () => joinSegments(doc, id)).changed;
       break;
     }
     case 'move': {
       const id = pickFrom(nodeIds(doc), op.pick);
       const node = id === undefined ? undefined : doc.node(id);
       if (!node || id === undefined) return false;
-      // As main.ts's drop: move, then reconcile; a refused drop is undone.
+      // As main.ts's drop (`NodeMover.drop`): move, reconcile and judge; a
+      // refused drop is undone.
       const before = doc.toJSON();
-      changed = doc.moveNode(id, { x: node.x + op.dx, y: node.y + op.dy });
-      if (changed && !reconcileMovedNode(doc, net, id).committed) {
-        doc.replaceFromJSON(before, { repair: false });
-        changed = false;
-      }
+      changed = moveNodeChecked(doc, net, id, { x: node.x + op.dx, y: node.y + op.dy }).committed;
+      if (!changed) doc.replaceFromJSON(before, { repair: false });
       break;
     }
     case 'type': case 'upgrade': {
@@ -161,37 +162,38 @@ export function applyOp(state: FuzzState, op: FuzzOp): boolean {
       if (!seg || id === undefined) return false;
       const type = op.op === 'upgrade' ? seg.type + 1 : op.type;
       if (type >= ROAD_TYPES.length || type === seg.type) return false;
-      doc.setSegmentType(id, type);
-      changed = true;
+      changed = guardRoadEdit(doc, net, () => { doc.setSegmentType(id, type); return true; }).changed;
       break;
     }
     case 'lanes': {
       const id = pickFrom(segmentIds(doc), op.pick);
       if (id === undefined) return false;
       const before = doc.segment(id)?.lanes;
-      doc.setSegmentLanes(id, op.lanes);
-      changed = doc.segment(id)?.lanes !== before;
+      changed = guardRoadEdit(doc, net, () => {
+        doc.setSegmentLanes(id, op.lanes);
+        return doc.segment(id)?.lanes !== before;
+      }).changed;
       break;
     }
     case 'direction': {
       const id = pickFrom(segmentIds(doc), op.pick);
       if (id === undefined || doc.segment(id)?.direction === op.direction) return false;
-      doc.setSegmentDirection(id, op.direction);
-      changed = true;
+      changed = guardRoadEdit(doc, net, () => { doc.setSegmentDirection(id, op.direction); return true; }).changed;
       break;
     }
     case 'structure': {
       const id = pickFrom(segmentIds(doc), op.pick);
       if (id === undefined || doc.segment(id)?.structure === op.structure) return false;
-      doc.setSegmentStructure(id, op.structure);
-      changed = true;
+      changed = guardRoadEdit(doc, net, () => { doc.setSegmentStructure(id, op.structure); return true; }).changed;
       break;
     }
     case 'curve': {
       const id = pickFrom(segmentIds(doc), op.pick);
       if (id === undefined) return false;
-      doc.setSegmentCurve(id, Math.abs(op.h) < 1e-6 ? null : { t: op.t, h: op.h });
-      changed = true;
+      changed = guardRoadEdit(doc, net, () => {
+        doc.setSegmentCurve(id, Math.abs(op.h) < 1e-6 ? null : { t: op.t, h: op.h });
+        return true;
+      }).changed;
       break;
     }
     case 'delete': {

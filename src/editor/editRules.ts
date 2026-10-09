@@ -1,0 +1,266 @@
+import type { Vec2 } from '@core/vec2';
+import { COARSE_EPS } from '@core/scalar';
+import type { RoadDoc, RoadSegment } from '@world/doc';
+import type { SegmentId } from '@world/ids';
+import { Network } from '@world/network';
+import { type RoadElevation, buildRoadElevation } from '@world/elevation';
+import { Level, halfWidth } from '@world/roadTypes';
+import { roadStructure } from '@world/structures';
+
+/**
+ * What a road edit may not leave behind, judged on the network it builds.
+ *
+ * City builders refuse a placement the game cannot carry and say why, before
+ * the mouse is let go: Cities: Skylines will not lay a road steeper than its
+ * limit, nor a segment too short ("distance too short": intersections too
+ * close together, a curve too sharp), nor a piece over something already
+ * there. These are the same refusals for this game's geometry:
+ *  - `sharp`: a node whose legs meet under `MIN_LEG_ANGLE` - the mark the game
+ *    already shows as "cannot be built" (`Network.impossible`);
+ *  - `squeezed`: a junction whose legs are too short to separate their lanes
+ *    (`Network.squeezed`);
+ *  - `overlap`: a road lying on another one with no junction between them and
+ *    without the vertical room to pass over it;
+ *  - `steep`: a road whose height change, over what the junction plates at its
+ *    ends leave free, needs a grade no street is built at.
+ *
+ * Every rule is DIFFERENTIAL: an edit is refused for what IT created or made
+ * worse, never for damage already on the map. Loading never refuses, so any
+ * map may hold such places; judged absolutely, one of them would refuse every
+ * road drawn anywhere afterwards (measured on the old sharp-node refusal: a
+ * 7-degree node 5000 units away blocked a road at the origin).
+ */
+export type RoadEditRefusal = 'sharp' | 'squeezed' | 'overlap' | 'steep';
+
+export interface RoadState {
+  readonly doc: RoadDoc;
+  /** Built for `doc` (`revision` current). */
+  readonly net: Network;
+}
+
+/**
+ * A node's smallest leg gap may shrink this much before it counts as made
+ * sharper: re-flattening a split curve moves an untouched gap by ulps.
+ */
+const GAP_NOISE = COARSE_EPS;
+/** A squeeze may deepen this much (units) before it counts as made worse. */
+const SQUEEZE_SLACK = 1;
+/**
+ * The steepest grade a road is refused beyond: Baldwin Street, Dunedin, the
+ * steepest street in the world at 34.8 % (Guinness; Wikipedia, "Grade
+ * (slope)"). The height solver lays any grade the two ends ask for as one
+ * continuous ramp (`elevation.ts` `solveGround`/`solveVariable`); past this
+ * there is no street to model, and on the free run the plates leave the ramp
+ * becomes a cliff (fuzz seed 3: 17 units down in about 10).
+ */
+const MAX_BUILT_GRADE = 0.35;
+/**
+ * Vertical room for one road to pass over another: the elevated deck's
+ * clearance, the same figure the road tool uses for its crossings
+ * (`commit.ts` `CROSSING_CLEARANCE`).
+ */
+const PASS_CLEARANCE = roadStructure('elevated').clearance;
+/** Two decks within this height of each other are at one level (`commit.ts` `HEIGHT_JOIN_EPS`). */
+const SAME_LEVEL = 0.75;
+/** Spacing of the samples along a changed road, units (0.8 m). */
+const SAMPLE_STEP = 2;
+/** Overlap shallower than this is a kerb grazing a kerb, not a road on a road (0.2 m). */
+const OVERLAP_SLACK = 0.5;
+/** A point within this of an old centreline lay on that road before the edit. */
+const SAME_PLACE = 1;
+
+/**
+ * The reason to refuse turning `before` into `after`, or null when the edit
+ * may stand. `after.net` must be rebuilt for `after.doc`; node and segment ids
+ * of `before` keep their meaning in `after` (a working clone, or the same
+ * document edited in place).
+ */
+export function refuseRoadEdit(before: RoadState, after: RoadState): RoadEditRefusal | null {
+  for (const [node, gap] of after.net.impossible) {
+    const was = before.doc.node(node) ? before.net.impossible.get(node) : undefined;
+    if (was === undefined || gap < was - GAP_NOISE) return 'sharp';
+  }
+  for (const [node, short] of after.net.squeezed) {
+    const was = before.doc.node(node) ? before.net.squeezed.get(node) : undefined;
+    if (was === undefined || short > was + SQUEEZE_SLACK) return 'squeezed';
+  }
+  const changed = changedSegments(before.doc, after.doc);
+  if (!changed.length) return null;
+  if (changed.some((id) => tooSteep(after, id))) return 'steep';
+  // The decks as the game solves them, over flat land (two roads at one map
+  // point stand on the same ground, so it cancels): a tunnel is at its full
+  // depth only between its portals, and a road crossing it near one passed
+  // over it with 3 m to spare by the authored figures - 13 units under at
+  // mid-length, 8 near the portal (fuzz fixture `open-road-drawn-over-road`).
+  // Solved only when two roads lie on each other in plan.
+  let solved: RoadElevation | null = null;
+  const deck = (id: SegmentId, p: Vec2): number =>
+    (solved ??= buildRoadElevation(after.net, () => 0)).onSegment(id, p.x, p.y);
+  if (changed.some((id) => overlapsAnother(before, after, id, deck))) return 'overlap';
+  return null;
+}
+
+/**
+ * A copy of the roads as they stand, to judge an edit made in place against
+ * (`refuseRoadEdit`). The network's geometry is taken over, not rebuilt.
+ */
+export function snapshotRoads(doc: RoadDoc, net: Network): RoadState {
+  const copy = doc.clone();
+  const copyNet = new Network(copy);
+  if (net.revision === doc.revision) copyNet.adopt(net);
+  else copyNet.rebuild();
+  return { doc: copy, net: copyNet };
+}
+
+/**
+ * Runs an edit made in place on the live roads (a split, a retype, more lanes,
+ * a bend, a join, a copy) and judges it by the same rules as a drawn road. A
+ * refused edit is undone: the document and its network are put back exactly
+ * as they were, so the caller records nothing.
+ */
+export function guardRoadEdit(doc: RoadDoc, net: Network, edit: () => boolean):
+  { readonly changed: boolean; readonly refused: RoadEditRefusal | null } {
+  const before = snapshotRoads(doc, net);
+  if (!edit()) return { changed: false, refused: null };
+  if (net.revision !== doc.revision) net.rebuild();
+  const refused = refuseRoadEdit(before, { doc, net });
+  if (!refused) return { changed: true, refused: null };
+  doc.replaceWith(before.doc);
+  net.adopt(before.net);
+  return { changed: false, refused };
+}
+
+/** Segments of `after` that are new, or whose shape, class, structure or end points changed. */
+function changedSegments(before: RoadDoc, after: RoadDoc): SegmentId[] {
+  const out: SegmentId[] = [];
+  for (const [id, seg] of after.segments) {
+    const old = before.segment(id);
+    if (!old || segmentKey(before, old) !== segmentKey(after, seg)) out.push(id);
+  }
+  return out;
+}
+
+function segmentKey(doc: RoadDoc, seg: RoadSegment): string {
+  const a = doc.node(seg.a);
+  const b = doc.node(seg.b);
+  return JSON.stringify([seg.a, seg.b, seg.type, seg.lanes, seg.direction, seg.structure, seg.curve, seg.section ?? null,
+    seg.parking ?? null, a?.x, a?.y, a?.heightOffset, b?.x, b?.y, b?.heightOffset]);
+}
+
+/** The deck's authored height along a segment at arc length `s` (as `commit.ts` `segmentOffsetAt`). */
+function deckAt(doc: RoadDoc, seg: RoadSegment, s: number, length: number): number {
+  const t = Math.max(0, Math.min(1, s / Math.max(1e-6, length)));
+  const a = doc.node(seg.a)?.heightOffset ?? 0;
+  const b = doc.node(seg.b)?.heightOffset ?? 0;
+  return a + (b - a) * t + roadStructure(seg.structure).clearance;
+}
+
+/** The grade a segment needs over the run its junction plates leave free (`elevation.ts` plate rule). */
+function tooSteep(state: RoadState, id: SegmentId): boolean {
+  const { doc, net } = state;
+  const seg = doc.segment(id);
+  if (!seg) return false;
+  const length = net.polylines.get(doc, id).length;
+  const rise = Math.abs(deckAt(doc, seg, length, length) - deckAt(doc, seg, 0, length));
+  if (rise < SAME_LEVEL) return false;
+  const plateA = Math.min(length * 0.45, net.plateReach.get(`${seg.a}:${id}`) ?? 0);
+  const plateB = Math.min(length * 0.45, net.plateReach.get(`${seg.b}:${id}`) ?? 0);
+  const free = Math.max(1e-6, length - plateA - plateB);
+  return rise / free > MAX_BUILT_GRADE;
+}
+
+/**
+ * Whether a changed segment's roadway lies on another road's carriageway
+ * (or that road's on its own), away from any junction they share, at one level.
+ *
+ * Sampled along the centreline beyond the junction plates at both ends. A
+ * sample is in conflict with another segment when the gap between the two
+ * centrelines is less than one road's carriageway half-width plus the other's
+ * footway half-width: the lanes, or a footway and the lanes, lie on each other.
+ * Near a node the two share, the other road's own plate is junction, not overlap.
+ */
+function overlapsAnother(before: RoadState, after: RoadState, id: SegmentId,
+  deck: (id: SegmentId, p: Vec2) => number): boolean {
+  const { doc, net } = after;
+  const seg = doc.segment(id);
+  const ribbon = net.ribbons.get(id);
+  if (!seg || !ribbon) return false;
+  const line = ribbon.full;
+  const length = line.length;
+  const asphalt = halfWidth(ribbon.road, Level.Asphalt);
+  const footway = halfWidth(ribbon.road, Level.Sidewalk);
+  const trims = net.trims.get(id);
+  const from = (trims?.a[Level.Casing] ?? 0) + SAMPLE_STEP / 2;
+  const to = length - (trims?.b[Level.Casing] ?? 0) - SAMPLE_STEP / 2;
+  if (to <= from) return false;
+
+  // Candidate roads: any whose box comes within reach of this one's.
+  const reach = footway + 60;
+  const box = line.bbox;
+  const others: { id: SegmentId; seg: RoadSegment }[] = [];
+  for (const [otherId, other] of doc.segments) {
+    if (otherId === id) continue;
+    const ob = net.ribbons.get(otherId)?.full.bbox;
+    if (!ob || ob.minX > box.maxX + reach || ob.maxX < box.minX - reach ||
+      ob.minY > box.maxY + reach || ob.maxY < box.minY - reach) continue;
+    others.push({ id: otherId, seg: other });
+  }
+  if (!others.length) return false;
+
+  const steps = Math.max(1, Math.ceil((to - from) / SAMPLE_STEP));
+  for (let k = 0; k <= steps; k++) {
+    const s = from + ((to - from) * k) / steps;
+    const p = line.sampleAt(s).p;
+    const height = deckAt(doc, seg, s, length);
+    for (const { id: otherId, seg: other } of others) {
+      const otherRibbon = net.ribbons.get(otherId);
+      if (!otherRibbon) continue;
+      const otherLine = otherRibbon.full;
+      const ob = otherLine.bbox;
+      const limit = Math.max(asphalt + halfWidth(otherRibbon.road, Level.Sidewalk),
+        footway + halfWidth(otherRibbon.road, Level.Asphalt)) - OVERLAP_SLACK;
+      if (p.x < ob.minX - limit || p.x > ob.maxX + limit || p.y < ob.minY - limit || p.y > ob.maxY + limit) continue;
+      const hit = otherLine.closestPoint(p);
+      if (hit.distance >= limit) continue;
+      if (withinSharedPlate(after, seg, other, otherId, hit.s, otherLine.length)) continue;
+      if (Math.abs(deck(id, p) - deck(otherId, hit.point)) >= PASS_CLEARANCE) continue;
+      if (overlappedBefore(before, p, height, hit.point, deckAt(doc, other, hit.s, otherLine.length))) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The other road's closest point lies on its own junction plate at a node the two share. */
+function withinSharedPlate(after: RoadState, seg: RoadSegment, other: RoadSegment, otherId: SegmentId, s: number, length: number): boolean {
+  const trims = after.net.trims.get(otherId);
+  const shares = (node: number): boolean => node === seg.a || node === seg.b;
+  if (shares(other.a) && s <= (trims?.a[Level.Casing] ?? 0) + SAMPLE_STEP) return true;
+  if (shares(other.b) && s >= length - (trims?.b[Level.Casing] ?? 0) - SAMPLE_STEP) return true;
+  return false;
+}
+
+/**
+ * Both places of an overlap were already road before the edit, on two
+ * different segments at those heights: the overlap is old (a split or a
+ * retype elsewhere on those roads re-identifies them), not this edit's.
+ */
+function overlappedBefore(before: RoadState, p: Vec2, ph: number, q: Vec2, qh: number): boolean {
+  const onP = segmentsThrough(before, p, ph);
+  if (!onP.length) return false;
+  return segmentsThrough(before, q, qh).some((id) => !onP.includes(id) || onP.length > 1);
+}
+
+function segmentsThrough(state: RoadState, p: Vec2, height: number): SegmentId[] {
+  const out: SegmentId[] = [];
+  for (const [id, seg] of state.doc.segments) {
+    const line = state.net.polylines.get(state.doc, id);
+    const box = line.bbox;
+    if (p.x < box.minX - SAME_PLACE || p.x > box.maxX + SAME_PLACE || p.y < box.minY - SAME_PLACE || p.y > box.maxY + SAME_PLACE) continue;
+    const hit = line.closestPoint(p);
+    if (hit.distance > SAME_PLACE) continue;
+    if (Math.abs(deckAt(state.doc, seg, hit.s, line.length) - height) > SAME_LEVEL) continue;
+    out.push(id);
+  }
+  return out;
+}

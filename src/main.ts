@@ -65,6 +65,7 @@ import { summarize } from '@sim/audit';
 
 import { type Anchor, anchorForHeight, findAnchor, roadSnap, setRoadSnap } from '@editor/snap';
 import { duplicateSegment, joinSegments, splitSegment } from '@editor/commit';
+import { type RoadEditRefusal, guardRoadEdit } from '@editor/editRules';
 import { commitPedestrianCrossing } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
@@ -731,6 +732,23 @@ function mutate(fn: () => boolean): void {
   mutateBuilt(fn);
 }
 
+/**
+ * A road edit made in place (a split, a class, lanes, parking, a section, a
+ * direction, a bend, a join, a copy, a node's height), judged by the editing
+ * rules as a drawn road is (`editor/editRules.ts`): a refused edit is undone
+ * and its reason shown.
+ */
+function mutateRoads(fn: () => boolean): boolean {
+  let refused = null as RoadEditRefusal | null;
+  const changed = mutateBuilt(() => {
+    const result = guardRoadEdit(doc, net, fn);
+    refused = result.refused;
+    return result.changed;
+  });
+  if (refused) flashHint(`hint.rule.${refused}`);
+  return changed;
+}
+
 /** The public transport tool (`editor/transitTools.ts`): each edit one undo step. */
 const transitEditor = new TransitTool({
   doc: () => doc,
@@ -1317,10 +1335,10 @@ canvas.addEventListener('pointerdown', (e) => {
         anchor.s !== undefined
       ) {
         let node: NodeId | null = null;
-        mutate(() => {
+        if (!mutateRoads(() => {
           node = splitSegment(doc, net, anchor.segment as SegmentId, anchor.s as number, anchor.at);
           return node !== null;
-        });
+        })) node = null;
         if (node !== null) {
           select(null, game.selectedSegmentS, node, 'via dividida');
           showInspector();
@@ -1352,7 +1370,7 @@ canvas.addEventListener('pointerdown', (e) => {
         const id = anchor.segment;
         const seg = doc.segment(id);
         if (seg && seg.type < LAST_UPGRADE_CLASS) {
-          mutate(() => {
+          mutateRoads(() => {
             doc.setSegmentType(id, seg.type + 1);
             return true;
           });
@@ -3838,8 +3856,11 @@ function drawOverlayScreen(): void {
     }
     const pathLength = points.reduce((sum, point, i) =>
       i === 0 ? 0 : sum + Math.hypot(point.x - (points[i - 1] as Vec2).x, point.y - (points[i - 1] as Vec2).y), 0);
+    // A draft the editing rules would refuse, named before it is let go
+    // (`RoadTool.verdict`, judged once the pointer rests).
+    const refusal = settling ? null : roadTool.verdict();
     const ok = pathLength >= MIN_LINK_LENGTH * 0.25 &&
-      !(limited && roadPreview.snap.guide === 'network');
+      !(limited && roadPreview.snap.guide === 'network') && refusal === null;
     // Use the length of both projected world axes. Reading only the horizontal
     // component made the preview several pixels thinner than the committed 3D
     // road in an isometric view, especially at the far zoom.
@@ -3913,7 +3934,8 @@ function drawOverlayScreen(): void {
       // The road's length beside the pointer, in steps of 10 m, as SimCity shows it.
       {
         const tens = Math.round((pathLength * METERS_PER_UNIT) / 10) * 10;
-        const text = `${tens} m`;
+        // With the reason a refused draft would be refused, beside its length.
+        const text = refusal ? `${tens} m · ${t(`rule.short.${refusal}`)}` : `${tens} m`;
         ctx.save();
         ctx.font = '700 13px system-ui, sans-serif';
         const tw = ctx.measureText(text).width;
@@ -4064,7 +4086,7 @@ function setNodeHeightMetres(id: NodeId, metres: number): void {
     if (Math.abs(height - requested) > 1e-6) flashHint('hint.road.gradeLimited');
     return;
   }
-  mutate(() => {
+  mutateRoads(() => {
     doc.setNodeHeightOffset(id, height);
     return true;
   });
@@ -4081,7 +4103,7 @@ function showInspector(): void {
       onUpgrade: (id) => {
         const seg = doc.segment(id);
         if (!seg || seg.type >= LAST_UPGRADE_CLASS) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentType(id, seg.type + 1);
           return true;
         });
@@ -4089,35 +4111,35 @@ function showInspector(): void {
       onSetType: (id, type) => {
         const seg = doc.segment(id);
         if (!seg || seg.type === type) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentType(id, type);
           return true;
         });
       },
       onSetLanes: (id, lanes) => {
         if (!doc.segment(id)) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentLanes(id, lanes);
           return true;
         });
       },
       onSetParking: (id, parking) => {
         if (!doc.segment(id)) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentParking(id, parking);
           return true;
         });
       },
       onSetSection: (id, section) => {
         if (!freeRoadsEnabled() || !doc.segment(id)) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentSection(id, section);
           return true;
         });
       },
       onSetDirection: (id, direction) => {
         if (!doc.segment(id)) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentDirection(id, direction);
           return true;
         });
@@ -4127,7 +4149,7 @@ function showInspector(): void {
         const seg = doc.segment(id);
         if (!seg) return;
         const direction = seg.direction === 'aToB' ? 'bToA' : 'aToB';
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentDirection(id, direction);
           return true;
         });
@@ -4137,7 +4159,7 @@ function showInspector(): void {
         if (!seg) return;
         const polyline = net.polylines.get(doc, id);
         const at = polyline.sampleAt(polyline.length / 2).p;
-        mutate(() => splitSegment(doc, net, id, polyline.length / 2, at) !== null);
+        mutateRoads(() => splitSegment(doc, net, id, polyline.length / 2, at) !== null);
       },
       onAddCrossing: (id, kind) => {
         if (!doc.segment(id)) return;
@@ -4174,12 +4196,12 @@ function showInspector(): void {
         const s = chosen < 5 || chosen > polyline.length - 5
           ? polyline.length / 2 : chosen;
         let node: NodeId | null = null;
-        mutate(() => {
+        if (!mutateRoads(() => {
           node = splitSegment(doc, net, id, s, polyline.sampleAt(s).p);
           if (node === null) return false;
           doc.requireNode(node).smooth = true;
           return true;
-        });
+        })) node = null;
         if (node !== null) {
           select(null, null, node, 'ponto suave inserido');
           showInspector();
@@ -4209,13 +4231,13 @@ function showInspector(): void {
           seg.curve === curve ||
           (seg.curve !== null && curve !== null && seg.curve.t === curve.t && seg.curve.h === curve.h);
         if (unchanged) return;
-        mutate(() => {
+        mutateRoads(() => {
           doc.setSegmentCurve(id, curve);
           return true;
         });
       },
       onJoin: (node) => {
-        mutate(() => joinSegments(doc, node));
+        mutateRoads(() => joinSegments(doc, node));
         select(game.selectedSegment, game.selectedSegmentS, null, 'vias unidas');
         closeInspector();
       },
@@ -4248,10 +4270,10 @@ function showInspector(): void {
 function duplicateSelectedSegment(id = game.selectedSegment): void {
   if (id === null) return;
   let copy: SegmentId | null = null;
-  mutate(() => {
+  if (!mutateRoads(() => {
     copy = duplicateSegment(doc, net, id);
     return copy !== null;
-  });
+  })) copy = null;
   if (copy !== null) {
     select(copy, game.selectedSegmentS, null, 'via duplicada');
     showInspector();

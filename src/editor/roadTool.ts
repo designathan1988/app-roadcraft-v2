@@ -16,7 +16,19 @@ import {
   snapRoadStart, type SnapResult,
 } from './snap';
 import { commitRoadPath } from './commit';
+import type { RoadEditRefusal } from './editRules';
 import { roadPathFromGesture, type RoadPathPiece, type RoadPathPoint } from './roadPath';
+
+/** How long a draft rests before the preview judges it (`RoadTool.verdict`), ms. */
+const VERDICT_DELAY = 120;
+
+/** A refusal the preview names: the editing rules', or a crossing at the wrong height. */
+export type RefusalReason = RoadEditRefusal | 'clearance';
+
+const REFUSALS: ReadonlySet<string> = new Set<RefusalReason>(['sharp', 'squeezed', 'overlap', 'steep', 'clearance']);
+function isRefusal(reason: string): reason is RefusalReason {
+  return REFUSALS.has(reason);
+}
 
 /** A road being drawn: a drag, or a stretch chained from the last road's end. */
 export interface RoadDraft {
@@ -339,15 +351,66 @@ export class RoadTool {
     host.redraw();
   }
 
+  /** The end a draft is laid to (`chosenEnd`, or what is under its end), its height and its pieces. */
+  private ending(d: RoadDraft, chosenEnd?: Anchor): { end: Anchor; endHeightOffset: number; pieces: RoadPathPiece[] } {
+    const { host } = this;
+    const endAnchor = chosenEnd ?? this.atHeight(findAnchor(host.doc, host.net, d.snap.at, host.zoom(), undefined, d.heightOffset), d.heightOffset);
+    const end: Anchor = endAnchor.kind === 'free' ? { kind: 'free', at: d.snap.at } : endAnchor;
+    const endHeightOffset = end.kind === 'free' ? d.heightOffset : this.anchorHeight(end);
+    return { end, endHeightOffset, pieces: this.pieces(d, endHeightOffset) };
+  }
+
+  /**
+   * Why the road in hand would be refused (`editRules.ts`, or a crossing at
+   * the wrong height), or null: the draft judged as laid, on a copy
+   * (`commitRoadPath` dry run), once it has rested `VERDICT_DELAY` ms - a
+   * whole commit per pointer sample would cost a road's worth of work per
+   * frame. The preview paints a refused draft as invalid with its reason,
+   * before the button is let go, as Cities: Skylines does.
+   */
+  verdict(): RefusalReason | null {
+    const road = this.curvePending ? null : this.draft ?? this.chainPreview;
+    const key = road ? this.draftKey(road) : null;
+    if (key !== this.judged.key) {
+      this.judged = { key, reason: null };
+      if (this.judgeTimer !== null) clearTimeout(this.judgeTimer);
+      this.judgeTimer = null;
+      if (key !== null) this.judgeTimer = setTimeout(() => this.judge(key), VERDICT_DELAY);
+    }
+    return this.judged.reason;
+  }
+
+  private judged: { key: string | null; reason: RefusalReason | null } = { key: null, reason: null };
+  private judgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private draftKey(d: RoadDraft): string {
+    const s = this.host.settings();
+    const last = d.samples[d.samples.length - 1]?.at;
+    return JSON.stringify([d.start, d.startHeightOffset, d.snap.at, d.heightOffset, d.curveControl ?? null, d.samples.length,
+      last ?? null, s.typeIndex, s.lanes, s.alignment, this.host.doc.revision]);
+  }
+
+  private judge(key: string): void {
+    this.judgeTimer = null;
+    const road = this.draft ?? this.chainPreview;
+    if (!road || this.draftKey(road) !== key) return;
+    const { host } = this;
+    const settings = host.settings();
+    const { end, pieces } = this.ending(road);
+    if (!pieces.length) return;
+    const result = commitRoadPath(host.doc, host.net, road.start, end, settings.typeIndex, pieces, settings.lanes,
+      settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true });
+    const reason = !result.committed && result.reason && isRefusal(result.reason) ? result.reason : null;
+    this.judged = { key, reason };
+    if (reason) host.redraw();
+  }
+
   /** Lays the road `d` ends at (`chosenEnd`, or what is under its end), one undo step; false when refused. */
   private commit(d: RoadDraft, chosenEnd?: Anchor): boolean {
     const { host } = this;
     const { doc, net } = host;
     const settings = host.settings();
-    const endAnchor = chosenEnd ?? this.atHeight(findAnchor(doc, net, d.snap.at, host.zoom(), undefined, d.heightOffset), d.heightOffset);
-    const end: Anchor = endAnchor.kind === 'free' ? { kind: 'free', at: d.snap.at } : endAnchor;
-    const endHeightOffset = end.kind === 'free' ? d.heightOffset : this.anchorHeight(end);
-    const pieces = this.pieces(d, endHeightOffset);
+    const { end, endHeightOffset, pieces } = this.ending(d, chosenEnd);
     let result: ReturnType<typeof commitRoadPath> = { committed: false };
     let before = new Set<SegmentId>();
     host.mutate(() => {
@@ -366,7 +429,9 @@ export class RoadTool {
       return result.committed;
     });
     if (!result.committed) {
-      host.hint(result.reason === 'clearance' ? 'hint.road.clearance' : 'hint.road.invalid');
+      const reason = result.reason;
+      host.hint(reason === 'clearance' ? 'hint.road.clearance'
+        : reason && isRefusal(reason) ? `hint.rule.${reason}` : 'hint.road.invalid');
       return false;
     }
     const finalHeight = result.finalHeightOffset ?? endHeightOffset;

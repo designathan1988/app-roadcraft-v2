@@ -21,6 +21,7 @@ import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
+import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
 import { COARSE_EPS, EPS } from '@core/scalar';
 
 /** Shortest road the editor will create. */
@@ -43,7 +44,7 @@ const AUTO_TUNNEL_COVER = m(18);
 
 export interface DraftResult {
   readonly committed: boolean;
-  readonly reason?: 'tooShort' | 'duplicate' | 'degenerate' | 'clearance';
+  readonly reason?: 'tooShort' | 'duplicate' | 'degenerate' | 'clearance' | RoadEditRefusal;
   readonly heightLimited?: boolean;
   readonly finalHeightOffset?: number;
   /**
@@ -75,6 +76,12 @@ export function commitRoadPath(
    * cost 20 ms per road drawn in the default town (docs/performance.md #21).
    */
   ground?: (x: number, y: number) => number,
+  /**
+   * `dryRun`: everything is worked out and judged on the copy, and the live
+   * map is left alone - what the road tool's preview asks of a draft before
+   * it is let go (`roadTool.ts` `verdict`).
+   */
+  options: { readonly dryRun?: boolean } = {},
 ): DraftResult {
   if (!pieces.length || !Number.isInteger(type) || type < 0 || type >= ROAD_TYPES.length) {
     return { committed: false, reason: 'degenerate' };
@@ -133,6 +140,12 @@ export function commitRoadPath(
   const bore = boreDeepCuts(doc, work, workNet, ground);
   if (bore.bored) workNet.rebuild();
   timed('tunnels');
+  // Judged on what it built, against the map as it was (`editRules.ts`).
+  const before = net.revision === doc.revision ? { doc, net } : snapshotRoads(doc, net);
+  const refused = refuseRoadEdit(before, { doc: work, net: workNet });
+  timed('rules');
+  if (refused) return { committed: false, reason: refused };
+  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight };
   doc.replaceWith(work);
   net.adopt(workNet);
   timed('replace');
@@ -283,18 +296,21 @@ export function commitDraft(
   const workNet = new Network(work);
   workNet.seedJunctions(net);
   workNet.rebuild();
+  const before = net.revision === doc.revision ? { doc, net } : snapshotRoads(doc, net);
   const result = commitDraftInPlace(work, workNet, start, end, type, shape, structure);
   if (!result.committed) return result;
-
-  doc.replaceWith(work);
   // `workNet` was last built BEFORE the draft's segments were added
   // (`commitDraftInPlace` rebuilds after materialising the endpoints, then only
   // adds segments). Adopting it as it stood handed back a network stamped with
   // the new revision but without the new road - no ribbon, no trim, no
   // junction - which only the caller's own later rebuild hid. The fuzzer's
-  // `staleNetwork` check found it on every draw. Rebuilt once here, after the
-  // draft has been accepted, and then adopted.
+  // `staleNetwork` check found it on every draw. Rebuilt once here, judged by
+  // the editing rules as it will stand, and then adopted.
   workNet.rebuild();
+  const refused = refuseRoadEdit(before, { doc: work, net: workNet });
+  if (refused) return { committed: false, reason: refused };
+
+  doc.replaceWith(work);
   net.adopt(workNet);
   return result;
 }
@@ -655,6 +671,23 @@ export function reconcileMovedNode(doc: RoadDoc, net: Network, id: NodeId, depth
     }
   }
   return { committed: true };
+}
+
+/**
+ * A node dropped by the Move tool at `to`, reconciled with the network
+ * (`reconcileMovedNode`) and judged by the editing rules against the map as
+ * it was before the drop (`editRules.ts`), as a drawn road is. Not committed:
+ * nothing moved (`duplicate`) or refused with a reason - the document is then
+ * left as the drop made it, and the caller restores it.
+ */
+export function moveNodeChecked(doc: RoadDoc, net: Network, id: NodeId, to: Vec2): DraftResult {
+  const before = snapshotRoads(doc, net);
+  if (!doc.moveNode(id, to)) return { committed: false, reason: 'duplicate' };
+  const result = reconcileMovedNode(doc, net, id);
+  if (!result.committed) return result;
+  net.rebuild();
+  const refused = refuseRoadEdit(before, { doc, net });
+  return refused ? { committed: false, reason: refused } : result;
 }
 
 /** Joins two compatible straight segments meeting at an otherwise unused node. */

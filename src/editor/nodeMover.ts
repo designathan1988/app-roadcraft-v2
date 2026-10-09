@@ -3,7 +3,7 @@ import { COARSE_EPS } from '@core/scalar';
 import type { RoadDoc } from '@world/doc';
 import type { NodeId } from '@world/ids';
 import type { Network } from '@world/network';
-import { type DraftResult, reconcileMovedNode } from './commit';
+import { type DraftResult, moveNodeChecked } from './commit';
 import { restoreSnapshot } from './history';
 
 /** What the node mover reads of the game and does to it. */
@@ -105,15 +105,19 @@ export class NodeMover {
     // The drop is reconciled like a drawn road: onto a node it joins it,
     // across a road it makes a junction, and a drop that would leave a stub
     // or cross a road at the wrong height is refused.
+    // Judged by the editing rules too (`editRules.ts`): a drop that makes a
+    // junction too sharp or too tight, or lays a road on another, is refused.
     let refused: DraftResult['reason'] | undefined;
     host.mutate(() => {
-      doc.moveNode(drag.node, now);
-      const result = reconcileMovedNode(doc, net, drag.node);
+      const result = moveNodeChecked(doc, net, drag.node, now);
       if (result.committed) return true;
-      refused = result.reason;
+      refused = result.reason === 'duplicate' ? undefined : result.reason;
       restoreSnapshot(doc, drag.before, net);
       return false;
     });
-    if (refused) host.hint(refused === 'clearance' ? 'hint.move.clearance' : 'hint.move.tooShort');
+    if (refused) {
+      host.hint(refused === 'clearance' ? 'hint.move.clearance'
+        : refused === 'tooShort' || refused === 'degenerate' ? 'hint.move.tooShort' : `hint.rule.${refused}`);
+    }
   }
 }

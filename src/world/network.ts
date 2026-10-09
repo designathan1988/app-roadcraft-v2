@@ -31,6 +31,14 @@ import {
   stopLineDistance as stopLine,
 } from './approach';
 
+/**
+ * A mouth cut this little short of where its carriageway separates from the
+ * neighbouring leg's is the solver's own rounding (the legs of the last pass
+ * are framed at the capped trims), not a junction that cannot hold its lanes:
+ * 0.4 m, a tenth of a lane.
+ */
+const SQUEEZE_NOISE = 1;
+
 /** Per-level trim distances at both ends of a segment. */
 export interface SegmentTrims {
   /** Trim at the `a` endpoint, indexed by surface level. */
@@ -81,6 +89,18 @@ export class Network {
    * needs no migration for maps saved before the rule existed.
    */
   readonly impossible = new Map<NodeId, number>();
+  /**
+   * Junctions whose legs are too short to separate their lanes, with how far
+   * (units) the worst mouth is cut short of the point where two neighbouring
+   * carriageways stop overlapping (`Corner.x`). `reconcile` lets a link too
+   * short for both of its junctions squeeze them below that point; the lanes
+   * of the two legs then run into each other outside any conflict zone and
+   * the cars collide (fuzz fixture `open-body-overlap-on-impossible-short-leg`:
+   * mouths cut at 3 units with the carriageways overlapping to 30-52). SUMO
+   * warns of the same thing for clusters of junctions joined by short edges:
+   * "low throughput, jams and even deadlocks". Derived like `impossible`.
+   */
+  readonly squeezed = new Map<NodeId, number>();
   readonly trims = new Map<SegmentId, SegmentTrims>();
   /**
    * How far along each leg a junction's flat plate reaches, keyed
@@ -215,6 +235,7 @@ export class Network {
     for (const [node, gap] of impossibleNodes(this.doc, this.polylines)) {
       this.impossible.set(node, gap);
     }
+    this.findSqueezed();
 
     this.revision = this.doc.revision;
     this.trafficRevision = this.doc.trafficRevision;
@@ -264,6 +285,8 @@ export class Network {
     for (const node of other.transitions) this.transitions.add(node);
     this.impossible.clear();
     for (const [node, gap] of other.impossible) this.impossible.set(node, gap);
+    this.squeezed.clear();
+    for (const [node, short] of other.squeezed) this.squeezed.set(node, short);
     this.polylines.adopt(other.polylines);
     // The crossing caches belong to the geometry just replaced. `rebuild` clears
     // them; this second way in did not, and after every road drawn the zebras,
@@ -478,6 +501,35 @@ export class Network {
           side[level] = Math.min(side[level] ?? Infinity, junction.trims[i] as number);
         });
       }
+    }
+  }
+
+  /**
+   * Fills `squeezed` from the junctions as built and the trims as stored: for
+   * every corner whose two carriageway edges still cross (`Corner.x`, an
+   * acute wedge as in `reconcile`), how far along each leg that crossing lies,
+   * against the trim the leg's mouth was finally cut at.
+   */
+  private findSqueezed(): void {
+    this.squeezed.clear();
+    for (const [node, byLevel] of this.junctions) {
+      const junction = byLevel.get(Level.Asphalt);
+      if (!junction || junction.transition) continue;
+      let worst = 0;
+      for (const corner of junction.corners) {
+        const x = corner.x;
+        if (!x || corner.psi >= Math.PI / 2) continue;
+        for (const index of [corner.i, corner.j]) {
+          const leg = junction.legs[index];
+          const seg = leg ? this.doc.segment(leg.seg) : undefined;
+          const trims = leg ? this.trims.get(leg.seg) : undefined;
+          if (!leg || !seg || !trims) continue;
+          const along = (x.x - leg.origin.x) * leg.dir.x + (x.y - leg.origin.y) * leg.dir.y;
+          const trim = (seg.a === node ? trims.a : trims.b)[Level.Asphalt] ?? 0;
+          worst = Math.max(worst, along - trim);
+        }
+      }
+      if (worst > SQUEEZE_NOISE) this.squeezed.set(node, worst);
     }
   }
 
