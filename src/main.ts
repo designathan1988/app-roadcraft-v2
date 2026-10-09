@@ -420,6 +420,11 @@ const roadTool = new RoadTool({
   worldAtScreen: (px, py, height) => worldAtScreen(px, py, height),
   naturalHeightAt: (x, y) => scene.naturalTerrainHeightAt(x, y),
   offerElevation: (solution, revision) => scene.offerElevation(solution, revision),
+  // The renderer's last solve while the land is the one it was solved on: the tunnel test starts from it.
+  groundSolve: () => {
+    const solved = scene.roadsSolve();
+    return solved && solved.terrainRevision === doc.terrainRevision ? solved.elevation : null;
+  },
   flash: (ids) => scene.flashRoads(ids),
   mutate: (fn) => mutate(fn),
   hint: (key) => flashHint(key),

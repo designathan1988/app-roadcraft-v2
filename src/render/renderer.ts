@@ -336,6 +336,12 @@ export interface SceneHandle {
    */
   offerElevation(elevation: RoadElevation, networkRevision: number): void;
   /**
+   * The roads' heights last solved on the natural terrain, with the terrain
+   * revision they were solved on (null before the first): an edit's tunnel
+   * test starts from them while the land is the same (`commitRoadPath`).
+   */
+  roadsSolve(): { readonly elevation: RoadElevation; readonly terrainRevision: number } | null;
+  /**
    * The top of what is drawn at a point: a deck where a road's casing covers
    * it, the terrain elsewhere. (`elevationAt` is the NEAREST road's height
    * wherever the point is, a field for previews, not a surface.)
@@ -2326,6 +2332,9 @@ export function createSceneRenderer(
     },
     offerElevation(solved, revision) {
       offeredElevation = { elevation: solved, revision, terrain: terrainRevision };
+    },
+    roadsSolve() {
+      return elevation ? { elevation, terrainRevision } : null;
     },
     surfaceHeightAt(x, y) {
       const ground = terrain.renderedHeightAt(x, y);

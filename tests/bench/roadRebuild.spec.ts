@@ -54,7 +54,8 @@ describe('road rebuild benchmark', () => {
         performance.clearMeasures();
         note('road: commit', time(() => {
           committed = commitRoadPath(doc, net, start, { kind: 'free', at: end }, 1,
-            [{ start: { at: start.at, heightOffset: 0 }, end: { at: end, heightOffset: 0 }, curve: null }], null, undefined, ground).committed;
+            [{ start: { at: start.at, heightOffset: 0 }, end: { at: end, heightOffset: 0 }, curve: null }], null, undefined, ground,
+            { groundSolve: elevation }).committed;
         }));
         // The commit's own `hitch:` steps (commit.ts, network.ts, elevation.ts), summed per name.
         const steps = new Map<string, number>();

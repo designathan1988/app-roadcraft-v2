@@ -71,6 +71,11 @@ export interface RoadToolHost {
   naturalHeightAt(x: number, y: number): number;
   /** The elevation solved by the commit's tunnel test, offered to the renderer. */
   offerElevation(solution: RoadElevation, revision: number): void;
+  /**
+   * The roads' heights the game last solved on the natural ground as it
+   * stands, or null (the land moved since): the tunnel test starts from them.
+   */
+  groundSolve?(): RoadElevation | null;
   /** The roads just laid blink. */
   flash(ids: readonly SegmentId[]): void;
   /** An edit of the document, one undo step. */
@@ -399,7 +404,7 @@ export class RoadTool {
     const { end, pieces } = this.ending(road);
     if (!pieces.length) return;
     const result = commitRoadPath(host.doc, host.net, road.start, end, settings.typeIndex, pieces, settings.lanes,
-      settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true });
+      settings.parking, (x, y) => host.naturalHeightAt(x, y), { dryRun: true, groundSolve: host.groundSolve?.() ?? null });
     const reason = !result.committed && result.reason && isRefusal(result.reason) ? result.reason : null;
     this.judged = { key, reason };
     if (reason) host.redraw();
@@ -416,7 +421,7 @@ export class RoadTool {
     host.mutate(() => {
       before = new Set(doc.segments.keys());
       result = commitRoadPath(doc, net, d.start, end, settings.typeIndex, pieces, settings.lanes, settings.parking,
-        (x, y) => host.naturalHeightAt(x, y));
+        (x, y) => host.naturalHeightAt(x, y), { groundSolve: host.groundSolve?.() ?? null });
       if (result.elevation) host.offerElevation(result.elevation, net.revision);
       // Drawn as it was previewed until the new world is in place.
       if (result.committed) this.settling = { ...d, snap: { ...d.snap, at: end.at } };

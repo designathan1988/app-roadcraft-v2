@@ -140,8 +140,18 @@ describe('incremental network and height rebuild', () => {
       const start = findAnchor(doc, net, frame.p, 1);
       const end = { x: frame.p.x + frame.n.x * 150, y: frame.p.y + frame.n.y * 150 };
       const before = doc.toJSON();
-      const done = commitRoadPath(doc, net, start, { kind: 'free', at: end }, 1,
-        [{ start: { at: start.at, heightOffset: 0 }, end: { at: end, heightOffset: 0 }, curve: null }], null, undefined, ground).committed;
+      const result = commitRoadPath(doc, net, start, { kind: 'free', at: end }, 1,
+        [{ start: { at: start.at, heightOffset: 0 }, end: { at: end, heightOffset: 0 }, curve: null }], null, undefined, ground,
+        { groundSolve: elevation });
+      const done = result.committed;
+      // The tunnel test's solve, started from the game's, offered to the renderer: the full solve's.
+      if (result.elevation) {
+        const fresh = new Network(doc.clone());
+        fresh.rebuild({ full: true });
+        expect(elevationLines(doc, result.elevation), `offered heights after the road out of ${id}`)
+          .toEqual(elevationLines(doc, buildRoadElevation(fresh, ground)));
+        elevation = result.elevation;
+      }
       settle(`road out of ${id}`);
       if (done) {
         restoreSnapshot(doc, before, net);

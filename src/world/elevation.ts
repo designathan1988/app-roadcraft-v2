@@ -445,11 +445,13 @@ export function buildRoadElevation(
   net: Network,
   terrainAt: (x: number, y: number) => number,
   /**
-   * A solve of this network on the SAME ground (`terrainAt` the same function,
-   * answering the same heights): what did not change is taken from it instead
-   * of solved again (see `SolveMemo`). The caller vouches for the ground: the
-   * renderer passes its last solve only while the land has not moved. A solve
-   * on `FLAT_GROUND` finds the last flat solve by itself.
+   * A solve of this network on the SAME ground (`terrainAt` answering the
+   * same heights, through whatever function): what did not change is taken
+   * from it instead of solved again (see `SolveMemo`). The caller vouches for
+   * the ground: the renderer passes its last solve only while the land has not
+   * moved, and the road tool hands the renderer's to the tunnel test of a
+   * commit on the same natural ground. A solve on `FLAT_GROUND` finds the last
+   * flat solve by itself.
    */
   previous?: RoadElevation | null,
 ): RoadElevation {
@@ -457,7 +459,8 @@ export function buildRoadElevation(
   const profiles: Profile[] = [];
   const byId = new Map<SegmentId, Profile>();
   const prior = previous ? memos.get(previous) : terrainAt === FLAT_GROUND && lastFlat ? memos.get(lastFlat) : undefined;
-  const reuse = prior && prior.terrainAt === terrainAt ? prior : null;
+  // Never level ground for real ground or the other way round, whatever the caller says.
+  const reuse = prior && (prior.terrainAt === FLAT_GROUND) === (terrainAt === FLAT_GROUND) ? prior : null;
   const stationsById = new Map<SegmentId, Stations>();
   /** Profiles whose stations were taken from `reuse` (the line, the width and the ground the same). */
   const keptStations = new Set<SegmentId>();

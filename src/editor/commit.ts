@@ -82,7 +82,15 @@ export function commitRoadPath(
    * map is left alone - what the road tool's preview asks of a draft before
    * it is let go (`roadTool.ts` `verdict`).
    */
-  options: { readonly dryRun?: boolean } = {},
+  options: {
+    readonly dryRun?: boolean;
+    /**
+     * The roads' heights the game last solved on this same natural ground
+     * (`ground`): the tunnel test solves only what the gesture changed
+     * (`buildRoadElevation` with `previous`, docs/VIAS.md V0).
+     */
+    readonly groundSolve?: RoadElevation | null;
+  } = {},
 ): DraftResult {
   if (!pieces.length || !Number.isInteger(type) || type < 0 || type >= ROAD_TYPES.length) {
     return { committed: false, reason: 'degenerate' };
@@ -138,7 +146,7 @@ export function commitRoadPath(
   }
   timed('pieces');
   if (!committed) return { committed: false, reason: 'duplicate' };
-  const bore = boreDeepCuts(doc, work, workNet, ground);
+  const bore = boreDeepCuts(doc, work, workNet, ground, options.groundSolve ?? null);
   if (bore.bored) workNet.rebuild();
   timed('tunnels');
   // Judged on what it built, against the map as it was (`editRules.ts`).
@@ -172,7 +180,8 @@ function terrainIndexOf(doc: RoadDoc): TerrainIndex {
   return terrainIndex;
 }
 
-function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number): { bored: boolean; elevation: RoadElevation | null } {
+function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?: (x: number, y: number) => number,
+  previous: RoadElevation | null = null): { bored: boolean; elevation: RoadElevation | null } {
   const fresh = [...work.segments.values()].filter((seg) => !before.segments.has(seg.id) && seg.structure === 'ground');
   if (!fresh.length || !work.terrainStamps.length) return { bored: false, elevation: null };
   // A cut that deep needs relief under the new roads, and the land is flat
@@ -192,7 +201,9 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
   if (!reached) return { bored: false, elevation: null };
   const index = sampled ? null : terrainIndexOf(work);
   const ground = sampled ?? ((x: number, y: number): number => sampleTerrainHeight(index!, x, y));
-  const elevation = buildRoadElevation(workNet, ground);
+  // From the game's last solve on the same ground, when there is one: only
+  // the analytic field is another ground than the one that solve read.
+  const elevation = buildRoadElevation(workNet, ground, sampled ? previous : null);
   let changed = false;
   for (const seg of fresh) {
     const ribbon = workNet.ribbons.get(seg.id);
