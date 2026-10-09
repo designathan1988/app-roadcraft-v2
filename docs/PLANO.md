@@ -15,52 +15,16 @@ Nenhuma etapa começa com a anterior aberta. Uma etapa só fecha com o critério
 de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 `docs/PROBLEMAS.md` atualizada.
 
-## Regras de andamento (2026-10-09, depois da avaliação do trabalho)
-
-- **Dois estados de entrega.** "Feito, aguardando o jogador" é o que a sessão
-  mediu e fotografou. "Fechado" é só o que o jogador conferiu no jogo, ou o
-  que não tem nada visível (código morto, teste, medida de CPU). Defeito
-  visível (árvores, interface, cores, movimento) nunca fecha por medida da
-  sessão.
-- **Um item por vez.** Um item novo só começa quando o anterior tem commit.
-  Nenhuma mudança fica sem commit no fim de um passo: ou entra (atrás de
-  bandeira, se não estiver adotada), ou é desfeita e registrada em "Já
-  tentado".
-- **Só a etapa ATUAL.** O que a sessão achar fora dela (fuzz, regra de
-  trânsito, construtor) entra na fila como item, não é feito na hora, a não
-  ser que o jogador marque URGENTE ou PRIORIDADE.
-- **Uma sessão por vez neste repositório.** Uma segunda sessão só lê. Para
-  passar o trabalho de uma sessão a outra, use o `docs/STATUS.md` e este plano.
-- **Sessões curtas.** Uma sessão por etapa ou por pedido. Com o contexto
-  compactado duas vezes, a sessão atualiza o STATUS e este plano e encerra,
-  porque cada resumo perde detalhes do que faltava.
-
-## Ritmo (pedido do jogador de 2026-10-09: o trabalho está lento demais)
-
-Medido na sessão de 2026-10-08/09: 35 de 179 commits só de documentação, a
-mesma sonda (`probe-bomb`) rodada 26 vezes, a suíte inteira rodada dezenas de
-vezes, 17 edições barradas pela trava de pesquisa, contexto compactado 3 vezes.
-
-- **Pesquisa uma vez por técnica,** não por arquivo. Técnica já registrada no
-  código ou neste repositório não se pesquisa de novo.
-- **Testes do que foi tocado.** Durante o trabalho, rode só os specs dos
-  arquivos alterados. A suíte inteira e o fuzz rodam uma vez, antes de fechar
-  a etapa, e não a cada item.
-- **Sonda no máximo duas vezes por item:** uma antes e uma depois. Se uma
-  terceira parecer necessária, a hipótese está errada: volte ao código.
-- **Documentação no mesmo commit do código.** A linha do `PROBLEMAS.md` e o
-  `STATUS.md` entram junto com a correção. Commit só de documentação, só no
-  fim da sessão.
-- **Defeitos parecidos em lote:** vários defeitos da mesma área num ciclo só
-  de leitura, correção, teste e commit.
-- **Sem esperar parado:** enquanto um teste ou uma sonda roda, leia o código
-  do próximo item.
+As regras de andamento e de ritmo (dois estados de entrega, um item por vez,
+só a etapa ATUAL, uma sessão por vez, testes só do que foi tocado, sonda no
+máximo duas vezes, documentação no mesmo commit) ficam no `CLAUDE.md`, seção
+"Pace and done", que toda sessão carrega.
 
 ## Estado
 
 | Etapa | O quê | Estado |
 |---|---|---|
-| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | feita (`e169da0a`); `CLAUDE.md` do Roadcraft restaurado pelo jogador em 2026-10-09 e `.claude/launch.json` também. Falta o jogador decidir a trava `.claude/settings.json` + `.claude/hooks/research-gate.mjs` (sem commit, protegida): o lembrete dela ainda cita as regras do criador de personagens |
+| 0 | Arrumar a casa: instruções do Roadcraft, um plano, um registro | feita (`e169da0a`); em 2026-10-09 o jogador restaurou o `CLAUDE.md`, o `.claude/settings.json` e o `.claude/launch.json` do Roadcraft, e a trava de pesquisa por arquivo saiu; o `CLAUDE.md` ganhou "Pace and done" |
 | 1a | Estado do jogo: ferramenta, pausa, velocidade, seleção, opções das ferramentas, gesto; interface por `watch` | feita (`de0ecfe6`, `46ca5873`, `4c535183`) |
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |

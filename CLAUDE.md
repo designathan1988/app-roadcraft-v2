@@ -17,6 +17,8 @@ its own `CLAUDE.md` with its couplings and traps.
   the player what was found, with links, and the approach chosen; then code.
   Never improvise a technique or "try and measure" in the dark. (2026-10-02: a
   16 s loading screen was built before checking that engines cook assets offline.)
+  Research once per technique, not once per file; a technique already cited in
+  the code or the docs is not researched again.
 - **Interface work is done only when photographed.** Open the app, drive the real
   interface, screenshot every option the change touches (each group, tool,
   gallery, parameter row, the starting state and the way back), check each
@@ -34,13 +36,45 @@ its own `CLAUDE.md` with its couplings and traps.
   unless the player asks.
 - **Git:** work on `master` in `C:/Codex-Shared/Roadcraft`, no worktrees. Stage
   explicit paths, never someone else's changes; commit after every verified
-  step. Publish with `git push origin master`
-  (github.com/designathan1988/app-roadcraft-v2); never force-push.
+  step. Publish to both remotes, `git push v3 master`
+  (github.com/designathan1988/app-roadcraft-v3) and `git push origin master`
+  (app-roadcraft-v2); never force-push.
 - **After a compaction** read the memory index
-  (`C:/Users/jonathanrodriguesti/.claude/projects/C--Codex-Shared-Roadcraft/memory/MEMORY.md`)
-  and `docs/STATUS.md` before anything else. Standing rules go in this file,
-  project state in `docs/STATUS.md`, memory keeps only the player's
-  preferences and machine facts.
+  (`C:/Users/jonathanrodriguesti/.claude/projects/C--Codex-Shared-Roadcraft/memory/MEMORY.md`),
+  `docs/PLANO.md` and `docs/STATUS.md` before anything else. Standing rules go
+  in this file, the plan in `docs/PLANO.md`, project state in
+  `docs/STATUS.md`, memory keeps only the player's preferences and machine
+  facts.
+
+## Pace and done (player's orders of 2026-10-09)
+
+The work was too slow and too often "done" when the player still saw the
+defect. Measured on 2026-10-08/09: 35 of 179 commits were docs only, one probe
+ran 26 times, the full suite ran dozens of times, the context was compacted 3
+times, and visible defects (old trees) were closed by the session's own numbers.
+
+- **Two states.** "Done, waiting for the player" is what the session measured
+  and photographed. "Closed" is only what the player checked in the game, or
+  what has nothing visible (dead code, a test, a CPU number). A visible defect
+  (trees, interface, colours, motion) never closes on the session's numbers.
+- **One item at a time, nothing left uncommitted.** A change either goes in
+  (behind a flag if not adopted) or is undone and logged under "Já tentado" in
+  `docs/PROBLEMAS.md`.
+- **Only the CURRENT stage of `docs/PLANO.md`.** Anything found outside it
+  (fuzz, traffic rules, builder) goes into the plan's queue unless the player
+  marks it URGENTE or PRIORIDADE.
+- **One session at a time in this repo;** a second session only reads. Short
+  sessions: after two compactions, update STATUS and the plan and stop.
+- **Tests of what you touched.** While working, only the specs of the files
+  changed. The full suite (`npm run check`) and a fuzz hunt run once, before
+  a stage closes, not per item.
+- **A probe at most twice per item,** before and after. Needing a third means
+  the hypothesis is wrong: go back to the code.
+- **Docs in the same commit as the code** (the `PROBLEMAS.md` line, STATUS).
+  A docs-only commit only at the end of a session.
+- **Similar defects in one batch:** one cycle of reading, fixing, testing and
+  committing for several defects of the same area.
+- **Never idle:** while a test or probe runs, read the code of the next item.
 
 ## Layers (enforced by `eslint.config.js` and `tests/arch`)
 
@@ -107,7 +141,8 @@ npm run check          # lint + typecheck + tests with coverage + build
 npm run verify:visual  # boots the real app in Chrome and measures the scene
 npm run cook:people    # after any change to people code or assets (dev server up)
 ```
-The defect detector is `tests/fuzz/` (docs/fuzzing.md): before touching `world/`
-or `sim/`, run a hunt and compare the tally. Headless Chrome here renders on the
+The defect detector is `tests/fuzz/`: in a stage that touches `world/` or
+`sim/`, run a hunt at its start and again before it closes, and compare the
+tally (not before every change). Headless Chrome here renders on the
 Intel iGPU, not the player's RTX 3060: compare GPU numbers only with each other.
 Probe scripts are scratch: keep them in the session's scratch directory.
