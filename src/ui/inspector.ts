@@ -1,8 +1,7 @@
 import { PARKING_KINDS, parkingAllowed, type ParkingKind, type SegmentParking } from '@world/parking';
 import type { NodeId, SegmentId } from '@world/ids';
-import { movementKey, type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
+import { type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
 import type { Network } from '@world/network';
-import type { JunctionTopology } from '@world/lanelets';
 import type { CurveShape } from '@core/bezier';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, travelLanes, type RoadType } from '@world/roadTypes';
 import { METERS_PER_UNIT, UNITS_PER_METER } from '@world/units';
@@ -15,6 +14,8 @@ import type { RoadSection } from '@world/roadSection';
 import { freeRoadsEnabled, mountRoadSectionEditor } from './roadSectionEditor';
 import { mountProfilePanel } from './roads/profilePanel';
 import { mountConnectorPanel, refreshConnectorPanel } from './roads/connectorPanel';
+import { mountJunctionPanel, refreshJunctionFlows } from './roads/junctionPanel';
+import type { ApproachRuleEntry, SignalSettings } from '@world/roads/rules';
 import type { LaneLink } from '@world/roads/connectors';
 import type { RoadProfileSpec } from '@world/roads/profile';
 
@@ -45,6 +46,11 @@ export interface InspectorActions {
   readonly onSetMovementBlocked?: (node: NodeId, from: SegmentId, to: SegmentId, blocked: boolean) => void;
   /** The player's lane connections at a node (docs/VIAS.md V4); undefined: all derived. */
   readonly onSetLaneLinks?: (node: NodeId, links: LaneLink[] | undefined) => void;
+  /** Each leg's rule at a junction (docs/VIAS.md V5); undefined: derived. */
+  readonly onSetApproachRules?: (node: NodeId, rules: ApproachRuleEntry[] | undefined) => void;
+  /** A junction's signal settings (V5); and several at once (a green wave). */
+  readonly onSetSignal?: (node: NodeId, settings: SignalSettings | undefined) => void;
+  readonly onSetSignals?: (settings: ReadonlyMap<NodeId, SignalSettings>) => void;
   /** World to screen, for plans drawn as the player sees the map (the lane connectors). */
   readonly project?: (x: number, y: number) => { readonly x: number; readonly y: number };
   readonly onSetCurve?: (id: SegmentId, curve: CurveShape | null) => void;
@@ -126,7 +132,7 @@ function renderCurrent(): void {
     if (html === null) closeInspector();
     else if (stats.innerHTML !== html) stats.innerHTML = html;
     // The lane graph is rebuilt a moment after an edit: the connector editor follows it.
-    if (selection.node !== null) refreshConnectorPanel();
+    if (selection.node !== null) { refreshConnectorPanel(); refreshJunctionFlows(sim, doc, selection.node); }
     return;
   }
 
@@ -409,11 +415,8 @@ function renderNode(
   setTitle(node.smooth ? t('inspector.heightPoint')
     : node.incident.length >= 3 ? t('inspector.junction') : t('inspector.node'));
   if (node.smooth) {
-    body.innerHTML =
-      `<label class="inspect-select">${t('inspector.heightNode')} <input id="inspectHeightNode" type="number" step="0.1" value="${(node.heightOffset / UNITS_PER_METER).toFixed(1)}" /></label>` +
-      `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`;
-    const heightNode = document.getElementById('inspectHeightNode') as HTMLInputElement;
-    heightNode.onchange = () => actionsForNode().onSetNodeHeight?.(id, Number(heightNode.value));
+    body.innerHTML = `<div id="inspectJunction"></div><p class="inspect-note">${t('inspector.heightPointHelp')}</p>`;
+    mountJunctionPanel(body.querySelector<HTMLElement>('#inspectJunction')!, junctionHost(doc, sim, id));
     return;
   }
   const junction = sim.graph.junctions.get(id);
@@ -447,13 +450,13 @@ function renderNode(
   const gap = net.impossible.get(id);
   const impossible = gap === undefined ? ''
     : `<div class="inspect-warning" role="alert"><strong>${t('inspector.impossible')}</strong> · ${t('inspector.impossibleGap', { angle: Math.round((gap * 180) / Math.PI) })}<br>${t('inspector.impossibleBody')}</div>`;
+  // Height, control, flows, legs, signal and movements in the junction panel
+  // (docs/VIAS.md V5): the interface's own controls, no select or number box.
   body.innerHTML = impossible + `<div id="inspectStats">${stats}</div>` + crossingOffer +
-    `<label class="inspect-select">${t('inspector.heightNode')} <input id="inspectHeightNode" type="number" step="0.1" value="${(node.heightOffset / UNITS_PER_METER).toFixed(1)}" /></label>` +
-    (node.smooth ? `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`
-      : `<label class="inspect-select">${t('inspector.controlSelect')} <select id="inspectControl">${controlOptions(node.control)}</select></label>`) +
-    joinOffer +
-    (node.smooth ? '' : '<div id="inspectConnectors"></div>' + movementControls(doc, junction, node.blockedMovements) +
-      `<p class="inspect-note">${t('inspector.mouths')}: ${mouths || '—'}</p>`);
+    '<div id="inspectJunction"></div>' + joinOffer +
+    '<div id="inspectConnectors"></div>' + `<p class="inspect-note">${t('inspector.mouths')}: ${mouths || '—'}</p>`;
+  mountJunctionPanel(body.querySelector<HTMLElement>('#inspectJunction')!, junctionHost(doc, sim, id));
+  void junction;
   const connectors = body.querySelector<HTMLElement>('#inspectConnectors');
   if (connectors && actionsForNode().onSetLaneLinks) {
     mountConnectorPanel(connectors, id, {
@@ -464,99 +467,27 @@ function renderNode(
     });
   }
 
-  const policy = document.getElementById('inspectControl') as HTMLSelectElement | null;
-  const heightNode = document.getElementById('inspectHeightNode') as HTMLInputElement | null;
-  if (heightNode) heightNode.onchange = () => actionsForNode().onSetNodeHeight?.(id, Number(heightNode.value));
-  if (policy) policy.onchange = () => actionsForNode().onSetControl?.(id, policy.value as JunctionControl);
   const join = document.getElementById('inspectJoin') as HTMLButtonElement | null;
   if (join) join.onclick = () => actionsForNode().onJoin?.(id);
   const removeCrossing = document.getElementById('inspectRemoveCrossing') as HTMLButtonElement | null;
   if (removeCrossing) removeCrossing.onclick = () => actionsForNode().onRemoveCrossing?.(id);
-  const movementList = body.querySelector<HTMLDetailsElement>('details.movement-controls');
-  movementList?.addEventListener('toggle', () => { movementsOpen = movementList.open; });
-  document.querySelectorAll<HTMLInputElement>('[data-movement-from]').forEach((input) => {
-    input.onchange = () => actionsForNode().onSetMovementBlocked?.(
-      id,
-      Number(input.dataset['movementFrom']) as SegmentId,
-      Number(input.dataset['movementTo']) as SegmentId,
-      !input.checked,
-    );
-  });
 }
 
-/** The compass point a leg runs towards from its junction (north is up the map). */
-function compassOf(doc: RoadDoc, nodeId: NodeId, seg: { a: NodeId; b: NodeId }): string {
-  const here = doc.node(nodeId);
-  const there = doc.node(seg.a === nodeId ? seg.b : seg.a);
-  if (!here || !there) return '?';
-  // North is +Y, up the map (`world/lanelets.ts`); 0 north, clockwise.
-  const angle = Math.atan2(there.x - here.x, there.y - here.y);
-  const points = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'] as const;
-  const i = ((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8;
-  return t(`compass.${points[i]}`);
+/** What the junction panel changes, through the inspector's actions. */
+function junctionHost(doc: RoadDoc, sim: SimWorld, id: NodeId): Parameters<typeof mountJunctionPanel>[1] {
+  return {
+    doc, sim, node: id,
+    setHeight: (metres) => actionsForNode().onSetNodeHeight?.(id, metres),
+    setControl: (control: JunctionControl) => actionsForNode().onSetControl?.(id, control),
+    setRules: (rules) => actionsForNode().onSetApproachRules?.(id, rules),
+    setSignal: (settings) => actionsForNode().onSetSignal?.(id, settings),
+    setSignals: (settings) => actionsForNode().onSetSignals?.(settings),
+    setMovementBlocked: (from, to, blocked) => actionsForNode().onSetMovementBlocked?.(id, from, to, blocked),
+  };
 }
 
-function movementControls(
-  doc: RoadDoc,
-  junction: JunctionTopology | undefined,
-  blocked: readonly string[],
-): string {
-  const movements = new Map<string, { from: SegmentId; to: SegmentId; label: string }>();
-  for (const id of junction?.connectors ?? []) {
-    const connector = current?.sim.connector(id);
-    if (!connector) continue;
-    const key = movementKey(connector.inSegment, connector.outSegment);
-    if (movements.has(key)) continue;
-    const from = doc.segment(connector.inSegment);
-    const to = doc.segment(connector.outSegment);
-    if (!from || !to) continue;
-    movements.set(key, {
-      from: connector.inSegment,
-      to: connector.outSegment,
-      // By the way each leg points from the junction - north, south-east... -
-      // not by class: at a crossroads of two avenues every row read
-      // "Avenue -> Avenue (left)" and could not be told apart (P2-42).
-      label: t('inspector.movementBy', {
-        from: compassOf(doc, connector.node, from),
-        to: compassOf(doc, connector.node, to),
-        turn: turnLabel(connector.turn),
-      }),
-    });
-  }
 
-  // A blocked movement has no connector left to describe it: the junction
-  // builder skips blocked pairs outright (see `world/lanelets.ts`), so
-  // `junction.connectors` cannot list them and the row used to vanish the
-  // instant it was unchecked — leaving undo as the only way back, and no hint
-  // that anything was there. The node's own key list is the surviving record,
-  // so it is what gets rendered: the leg numbers the key already encodes, with
-  // no turn or class name invented for a connector that no longer exists.
-  for (const key of blocked) {
-    if (movements.has(key)) continue;
-    const [from, to] = key.split('>');
-    if (from === undefined || to === undefined) continue;
-    const fromId = Number(from);
-    const toId = Number(to);
-    if (!Number.isFinite(fromId) || !Number.isFinite(toId)) continue;
-    movements.set(key, {
-      from: fromId as SegmentId,
-      to: toId as SegmentId,
-      label: t('inspector.blockedMovement', { from, to }),
-    });
-  }
-
-  if (!movements.size) return '';
-  // Folded by default, the count of what is allowed in its summary: a
-  // crossroads has a dozen rows and they pushed the junction's other settings
-  // out of the panel (progressive disclosure). The panel is rebuilt after
-  // every change, so whether it is open is kept here.
-  const allowed = [...movements.keys()].filter((key) => !blocked.includes(key)).length;
-  return `<details class="movement-controls"${movementsOpen ? ' open' : ''}><summary>${t('inspector.allowedMovements')} (${allowed}/${movements.size})</summary>${[...movements.entries()].map(([key, movement]) =>
-    `<label><input type="checkbox" data-movement-from="${movement.from}" data-movement-to="${movement.to}"${blocked.includes(key) ? '' : ' checked'} />${movement.label}</label>`,
-  ).join('')}</details>`;
-}
 /** Whether the junction's list of movements is unfolded (kept across the panel's rebuilds). */
-let movementsOpen = false;
 
 function actionsForNode(): InspectorActions {
   return current?.actions ?? { onUpgrade: () => {}, onSetType: () => {}, onDelete: () => {} };
@@ -582,18 +513,11 @@ function laneOptions(direction: SegmentDirection, configured: number | null, res
   return options.join('');
 }
 
-function controlOptions(value: JunctionControl): string {
-  const entries: readonly JunctionControl[] = ['auto', 'signal', 'priority', 'stop', 'yield', 'none'];
-  return entries
-    .map((id) => `<option value="${id}"${id === value ? ' selected' : ''}>${t(`control.${id}`)}</option>`)
-    .join('');
-}
 
 const signalLabel = (value: string): string => t(`signal.${value}`);
 
 const phaseLabel = (value: string): string => t(`phase.${value}`);
 
-const turnLabel = (value: string): string => t(`turn.${value}`);
 
 const meters = (units: number): string => (units * METERS_PER_UNIT).toFixed(1);
 

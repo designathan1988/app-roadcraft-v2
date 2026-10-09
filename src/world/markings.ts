@@ -477,3 +477,26 @@ export function transitionMarkings(net: Network, node: NodeId): StrokeSpec[] {
   }
   return out;
 }
+
+/**
+ * A mini-roundabout's painted island (docs/VIAS.md V5): a white ring and its
+ * filled middle at the junction's centre, traversable (a mini-roundabout's
+ * island is painted or a low dome a lorry may drive over). Sized from the
+ * junction's nearest mouth, so it sits inside the box.
+ */
+export function miniRoundaboutMarkings(net: Network): StrokeSpec[] {
+  const out: StrokeSpec[] = [];
+  for (const node of net.doc.nodes.values()) {
+    if (node.control !== 'mini' || node.incident.length < 3) continue;
+    const mouth = Math.min(...node.incident.map((seg) => net.mouthDistance(seg, node.id)));
+    const r = Math.max(m(2), Math.min(m(4), mouth * 0.4));
+    const ring = (radius: number): Vec2[] => Array.from({ length: 41 }, (_, i) => {
+      const a = (i / 40) * Math.PI * 2;
+      return { x: node.x + Math.cos(a) * radius, y: node.y + Math.sin(a) * radius };
+    });
+    out.push({ points: ring(r), width: 0.5, color: LANE_LINE, dash: null, dashOffset: 0 });
+    // The middle filled with paint: rings close enough to read as one disc.
+    for (let k = r - 0.55; k > 0.3; k -= 0.55) out.push({ points: ring(k), width: 0.62, color: LANE_LINE, dash: null, dashOffset: 0 });
+  }
+  return out;
+}

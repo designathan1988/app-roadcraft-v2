@@ -3046,6 +3046,7 @@ const CONTROL_CYCLE: readonly JunctionControl[] = [
   'stop',
   'yield',
   'none',
+  'mini',
 ];
 
 function cycleNodeControl(id: NodeId, direction: 1 | -1): void {
@@ -4186,6 +4187,7 @@ const CONTROL_GLYPH: Readonly<Record<JunctionControl, string>> = {
   stop: '\u25A0',
   yield: '\u25BC',
   none: '\u2013',
+  mini: '○',
 };
 
 const CONTROL_COLOUR: Readonly<Record<JunctionControl, string>> = {
@@ -4195,6 +4197,7 @@ const CONTROL_COLOUR: Readonly<Record<JunctionControl, string>> = {
   stop: '#ff7a6a',
   yield: '#ffb057',
   none: '#9aa3a0',
+  mini: '#c9b6ff',
 };
 
 function setNodeHeightMetres(id: NodeId, metres: number): void {
@@ -4368,6 +4371,18 @@ function showInspector(): void {
         });
       },
       project: (x, y) => view.toScreen({ x, y }, surface.cssW, surface.cssH),
+      // Each leg's rule and the signal's settings (docs/VIAS.md V5).
+      onSetApproachRules: (node, rules) => {
+        if (!doc.node(node)) return;
+        mutate(() => { doc.setNodeApproachRules(node, rules); return true; });
+      },
+      onSetSignal: (node, settings) => {
+        if (!doc.node(node)) return;
+        mutate(() => { doc.setNodeSignal(node, settings); return true; });
+      },
+      onSetSignals: (settings) => {
+        mutate(() => { for (const [node, s] of settings) doc.setNodeSignal(node, s); return true; });
+      },
       // The player's lane connections at a junction (docs/VIAS.md V4).
       onSetLaneLinks: (node, links) => {
         if (!doc.node(node)) return;

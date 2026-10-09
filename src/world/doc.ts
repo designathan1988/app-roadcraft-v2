@@ -1,3 +1,4 @@
+import { type ApproachRuleEntry, type SignalSettings, normalizeApproachRules, normalizeSignalSettings, rulesDigest, signalDigest } from './roads/rules';
 import { type LaneLink, linksDigest, normalizeLaneLinks } from './roads/connectors';
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
 import { isLot, type Lot } from './lots';
@@ -53,7 +54,8 @@ export function fitRoadCurve(
 export type SegmentDirection = 'both' | 'aToB' | 'bToA';
 
 /** Explicit junction policy. `auto` retains the class-based default policy. */
-export type JunctionControl = 'auto' | 'signal' | 'stop' | 'yield' | 'priority' | 'none';
+/** 'mini': a mini-roundabout (docs/VIAS.md V5): every entry gives way to whoever is in it or comes from the left. */
+export type JunctionControl = 'auto' | 'signal' | 'stop' | 'yield' | 'priority' | 'none' | 'mini';
 
 /** Stable segment-pair key for a movement through a junction. */
 export const movementKey = (from: SegmentId, to: SegmentId): string => `${from}>${to}`;
@@ -98,6 +100,10 @@ export interface RoadNode {
    * out of the build.
    */
   laneLinks?: readonly LaneLink[];
+  /** Each leg's rule under 'priority' control (docs/VIAS.md V5, `roads/rules.ts`); absent legs: derived. */
+  approachRules?: readonly ApproachRuleEntry[];
+  /** A signal's settings (V5): fixed time, greens, offset, bus priority; absent: adaptive. */
+  signal?: SignalSettings;
 }
 
 export type NodeCrossingKind = 'zebra' | 'signal';
@@ -787,6 +793,28 @@ export class RoadDoc {
     this.markNode(id);
   }
 
+  /** Each leg's rule at a junction (`RoadNode.approachRules`); undefined: all derived. */
+  setNodeApproachRules(id: NodeId, rules: readonly ApproachRuleEntry[] | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    const next = normalizeApproachRules(rules);
+    if (rulesDigest(node.approachRules) === rulesDigest(next)) return;
+    if (next) node.approachRules = next;
+    else delete node.approachRules;
+    this.markNode(id);
+  }
+
+  /** A signal's settings (`RoadNode.signal`); undefined: adaptive with the game's timings. */
+  setNodeSignal(id: NodeId, signal: SignalSettings | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    const next = normalizeSignalSettings(signal);
+    if (signalDigest(node.signal) === signalDigest(next)) return;
+    if (next) node.signal = next;
+    else delete node.signal;
+    this.markNode(id);
+  }
+
   setSegmentStructure(id: SegmentId, structure: RoadStructure): void {
     const segment = this.segments.get(id);
     if (!segment || segment.structure === structure) return;
@@ -1371,6 +1399,8 @@ export class RoadDoc {
         control: n.control, blockedMovements: [...n.blockedMovements],
         ...(n.crossing ? { crossing: { kind: n.crossing.kind, segment: n.crossing.segment } } : {}),
         ...(n.laneLinks ? { laneLinks: n.laneLinks.map((l) => ({ ...l })) } : {}),
+        ...(n.approachRules ? { approachRules: n.approachRules.map((e) => ({ ...e })) } : {}),
+        ...(n.signal ? { signal: { ...n.signal, ...(n.signal.greens ? { greens: [...n.signal.greens] } : {}) } } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -1520,6 +1550,10 @@ export class RoadDoc {
       if (!node || canonicalNode.get(n.id) !== node.id) continue;
       const links = normalizeLaneLinks(n.laneLinks);
       if (links) node.laneLinks = links;
+      const rules = normalizeApproachRules(n.approachRules);
+      if (rules) node.approachRules = rules;
+      const signal = normalizeSignalSettings(n.signal);
+      if (signal) node.signal = signal;
     }
     for (const dab of data.paint ?? []) {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
@@ -1678,6 +1712,10 @@ export interface SerializedDoc {
     crossing?: { kind: NodeCrossingKind; segment: number };
     /** The player's lane connections (docs/VIAS.md V4); absent on every older map. */
     laneLinks?: readonly { from: number; fromLane: number; to: number; toLane: number }[];
+    /** Each leg's rule (docs/VIAS.md V5); absent on every older map. */
+    approachRules?: readonly { segment: number; rule: string }[];
+    /** A signal's settings (V5); absent on every older map. */
+    signal?: unknown;
   }[];
   readonly segments: readonly {
     id: number;

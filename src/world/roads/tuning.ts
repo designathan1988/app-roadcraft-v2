@@ -141,14 +141,22 @@ export const ROAD_TUNING = {
     reference: { min: m(30), max: m(38) },
   },
   /**
-   * NOT LIVE YET (V5): approach flows, in vehicles an hour, past which a
-   * junction's control steps up. Placeholders, to be sourced in V5 against a
-   * signal warrant before anything reads them.
+   * LIVE (V5, `sim/roads/controlAdvisor.ts`): approach flows, vehicles an hour
+   * entering the junction, past which a junction left on "automatic" steps up
+   * its control, from the MUTCD (2009): sec. 2B.07 multi-way stop, 300 an hour
+   * on the major road (both approaches) and 200 on the minor road; sec. 4C.02
+   * Warrant 1, one lane each way, condition A 500 and 150 (the higher minor
+   * approach), condition B 750 and 75. Stepped down under 80 % of a threshold.
    */
   flow: {
-    yieldToStop: 300,
-    stopToSignal: 600,
-    /** How long a trend is measured before the control may change, s. */
+    stopMajor: 300,
+    stopMinor: 200,
+    signalMajor: 500,
+    signalMinor: 150,
+    signalMajorB: 750,
+    signalMinorB: 75,
+    stepDown: 0.8,
+    /** How long a trend is measured before the control may change, and the least time between two changes, s. */
     trendWindow: 900,
   },
   economy: {
