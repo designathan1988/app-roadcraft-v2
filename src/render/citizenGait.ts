@@ -592,11 +592,13 @@ export function stepGait(g: Gait, ped: PedView, clips: GaitClips, time: number, 
 }
 
 /**
- * Below this drawn speed a body is standing (u/s, about 5 cm/s): the
- * avoidance's nudges of a few centimetres a second used to keep the walk
- * cycle playing, legs stepping on a body that was not going anywhere.
+ * Below this drawn speed a body is standing (m/s, as everything in the gait
+ * is - `drawnVelocity`): the avoidance's nudges of a few centimetres a second
+ * used to keep the walk cycle playing, legs stepping on a body that was not
+ * going anywhere. It was 0.12, written as units (5 cm/s) but read as metres
+ * (12 cm/s): a body walking at 7 cm/s slid along on legs standing still.
  */
-const STILL_BELOW = 0.12;
+const STILL_BELOW = 0.05;
 
 /** The branch of `stepGait` for a body not going anywhere: turning, settling, or standing. */
 function standing(g: Gait, ped: PedView, clips: GaitClips, dt: number, turned: number, spin: boolean,
