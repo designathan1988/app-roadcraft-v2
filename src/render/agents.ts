@@ -1293,7 +1293,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       part.mesh.setColorAt(part.n, colour);
       part.tinted = true;
     }
-    if (recording) recording.push({ part, m: new Float32Array(object.matrix.elements), tint });
+    if (recording) recording.push({ part, m: new Float32Array(object.matrix.elements), tint, linear: tint >= 0 ? colour.clone() : null });
     part.n++;
   };
   /**
@@ -1301,17 +1301,21 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
    * it stood: written again by copying, with none of the sums (the town's
    * parked cars were worked out afresh every frame).
    */
-  interface Written { readonly part: Part; readonly m: Float32Array; readonly tint: number }
+  /**
+   * `linear`: the tint as the working colour space holds it, worked out once
+   * (three's `Color.setHex` converts from sRGB on every call: for the town's
+   * parked cars, every frame, 164 ms in 8 s).
+   */
+  interface Written { readonly part: Part; readonly m: Float32Array; readonly tint: number; readonly linear: Color | null }
   let recording: Written[] | null = null;
-  const parkedDraws = new Map<number, { x: number; y: number; angle: number; deck: number; band: number; paint: number; writes: Written[]; seen: number }>();
+  const parkedDraws = new Map<number, { x: number; y: number; angle: number; deck: number; band: number; paint: number; writes: Written[]; seen: number; blob: Matrix4 | null }>();
   const replay = (writes: readonly Written[]): void => {
     for (const rec of writes) {
       const part = rec.part;
       if (part.n >= part.mesh.instanceMatrix.count) continue;
       (part.mesh.instanceMatrix.array as Float32Array).set(rec.m, part.n * 16);
-      if (rec.tint >= 0) {
-        colour.setHex(rec.tint);
-        part.mesh.setColorAt(part.n, colour);
+      if (rec.linear) {
+        part.mesh.setColorAt(part.n, rec.linear);
         part.tinted = true;
       }
       part.n++;
@@ -1887,7 +1891,12 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
       // The traffic, then the scenery's cars parked in their bays, on the ground of the lot.
       for (const list of [world.vehiclesInIdOrder(), world.ambient.parked]) for (const vehicle of list) {
         if (drawn >= MAX_VEHICLES) break;
-        const pose = vehiclePose(world, vehicle, alpha);
+        // Off the road and not moving (the town's parked cars): where it is,
+        // with none of the interpolation's sums.
+        const at = vehicle.free;
+        const pose = at && at.px === at.x && at.py === at.y && at.pangle === at.angle
+          ? { p: { x: at.x, y: at.y }, angle: at.angle }
+          : vehiclePose(world, vehicle, alpha);
         if (!pose) continue;
         const free = vehicle.free !== null;
         const lane = free ? undefined : world.lanelet(vehicle.lanelet);
@@ -1925,8 +1934,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             kept.seen = suspensionFrame;
             if (ride) { ride.seen = suspensionFrame; ride.lod = own; }
             if (level < 2 && softShadows) {
-              blobMatrix.makeRotationY(pose.angle).setPosition(pose.p.x, deck, -pose.p.y);
-              vehicleBlobs.add(blobMatrix, plan.length * 0.55, plan.width * 0.62);
+              // Its shadow where it stands, worked out once.
+              kept.blob ??= new Matrix4().makeRotationY(pose.angle).setPosition(pose.p.x, deck, -pose.p.y);
+              vehicleBlobs.add(kept.blob, plan.length * 0.55, plan.width * 0.62);
             }
             drawn++;
             continue;
@@ -2027,7 +2037,7 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             break;
         }
         if (still && recording) {
-          parkedDraws.set(vehicle.id, { x: pose.p.x, y: pose.p.y, angle: pose.angle, deck, band: level, paint: paintHex, writes: recording, seen: suspensionFrame });
+          parkedDraws.set(vehicle.id, { x: pose.p.x, y: pose.p.y, angle: pose.angle, deck, band: level, paint: paintHex, writes: recording, seen: suspensionFrame, blob: null });
           recording = null;
         }
         // Below the whole level, its shadow is a soft disc (the body casts none).
