@@ -80,9 +80,12 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   basalto) e relevos (mesa, cânion, escarpa, pão de açúcar); mapas novos
   nascem num relevo natural.
 - Terreno sem as luzes e efeitos que o jogador mandou tirar (`557c5384`).
-- Árvores: todas as árvores e arbustos do jogo vêm de um só módulo low poly
-  (`render/lowPolyTrees.ts`, de 70 a 190 triângulos), sem cartões de folha,
-  inclusive a reserva da mata pintada (`groundCover.ts`). Gráfico com
+- Árvores: todas as árvores e arbustos do jogo vêm de um só módulo
+  (`render/lowPolyTrees.ts`), inclusive a reserva da mata pintada
+  (`groundCover.ts`): tronco low poly e miolo escuro sob cartões de folhagem
+  com recorte alpha virados para o olho. A palmeira tem folhas próprias:
+  faixas dobradas em V ao longo da nervura, com textura de folha pinada, que
+  lançam sombra (P85, `43860dde`). Gráfico com
   exposição de referência, grama com brilho medido, terreno e camadas do
   corte sem repetição nem chiado, nuvens sem flocos soltos; as sombras de
   nuvem tiram só a parte direta da luz do sol e as manchas do chão visto de
@@ -176,20 +179,20 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 
 ## Aberto
 
-- Desempenho e defeitos: `docs/PROBLEMAS.md` (P3, P4, P7a, P16, P17-P19).
+- Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70, P82, P83).
 - Zoneamento: o prédio não tem meio-nível na encosta (só o quintal é
   terraceado); o portão de pedestre é desenhado fechado e as pessoas que
   passam por ele (P84) atravessam a folha; um balizador dentro do portão de
-  uma torre fecha o caminho dela; primeiro traço do pincel numa sessão com
-  ~360 ms de compilação de shader (P74, P75).
+  uma torre fecha o caminho dela (P74; em andamento em 2026-10-09).
 - Prédios: um prédio feito de referência não fica selecionado depois de
   construído; subir a altura de um prédio leva cerca de 10 s (relato do
   jogador, não investigado).
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
-- Simulação com 400 carros e 400 pessoas a 4x: 4,0-6,0 ms por quadro no
+- Simulação com 400 carros e 400 pessoas a 4x: 4,0-10 ms por quadro no
   headless conforme o estado da máquina (antes 7,7-8,4 com metade das
-  pessoas); o orçamento de 4 ms ainda não é garantido (P70).
+  pessoas); nenhum quadro longo em 80 s; o orçamento de 4 ms ainda não é
+  garantido (P70).
 - Fuzz da via (`tests/fuzz`): os defeitos que restam são de geometria do
   mundo, não do trânsito: `elevationStep` (perfil de altura de uma via
   curva elevada junto a uma via no chão do mesmo nó) e corpos sobrepostos
