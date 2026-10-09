@@ -962,13 +962,33 @@ export function buildBusModel(a: Archetype): VehicleModel {
   for (const side of [-1, 1] as const) {
     cabin.push(tint(box(L - M(0.4), sillY - floor, M(0.03), 0, (sillY + floor) / 2, side * (halfW - wall - M(0.015))), BUS_SHELL));
   }
-  // Wheel-arch boxes inside, over the rear tandem: on a low-floor bus the
-  // wheels stand in the cabin in pockets of waist height.
+  // The rear tandem's wheels stand in the cabin of a low-floor bus, their
+  // housings waist high. The seats over them are mounted ON the housing, on a
+  // podium from the wall to the aisle, as on a real low-floor bus - the
+  // housing was left as a bare grey box and the seats over it taken away.
   const pocketHalf = archR * 0.95;
-  const pocketDepth = M(0.45);
+  const podiumTop = archR + r + M(0.04);
+  const pitch = M(0.78);
+  const seatWidth = M(0.44);
+  const firstRow = front - M(2.1);
+  const lastRow = back + M(1.25);
+  const inDoorway = (x: number): boolean => doorSpans.some(([x0, x1]) => x > x0 - M(0.45) && x < x1 + M(0.6));
+  /** The rear wheel a row of seats (shell back to the sitter's feet) stands over, if any. */
+  const overWheel = (x: number): number | undefined =>
+    axles.slice(1).find((ax) => x + M(0.55) > ax - pocketHalf && x - M(0.35) < ax + pocketHalf);
+  const rows: number[] = [];
+  for (let x = firstRow; x >= lastRow; x -= pitch) rows.push(x);
+  const podiumDepth = seatWidth * 2 + M(0.07);
   for (const ax of axles.slice(1)) {
     for (const side of [-1, 1] as const) {
-      cabin.push(tint(box(pocketHalf * 2, archR + r - floor + M(0.04), pocketDepth, ax, (archR + r + floor) / 2, side * (halfW - wall - pocketDepth / 2 - M(0.005))), BUS_SHELL));
+      // The housing itself, and the seats' rows standing over it, end to end.
+      let x0 = ax - pocketHalf, x1 = ax + pocketHalf;
+      for (const x of rows) {
+        if (overWheel(x) !== ax || (side === 1 && inDoorway(x))) continue;
+        x0 = Math.min(x0, x - M(0.35)); x1 = Math.max(x1, x + M(0.55));
+      }
+      cabin.push(tint(box(x1 - x0, podiumTop - floor, podiumDepth, (x0 + x1) / 2, (podiumTop + floor) / 2,
+        side * (halfW - wall - podiumDepth / 2 - M(0.005))), BUS_SHELL));
     }
   }
   // Driver's cab: dashboard, seat, wheel column and a partition behind.
@@ -989,31 +1009,24 @@ export function buildBusModel(a: Archetype): VehicleModel {
     floor, sideRoom: Math.min(M(0.45), halfW - wall - Math.abs(driverZ)), driver: true, row: 0, pose: 'cab' });
 
   // Passenger seats: pairs either side of the aisle, a row of five at the back.
-  const pitch = M(0.78);
-  const seatWidth = M(0.44);
   const seatHip = floor + M(0.55);
-  const passenger: { x: number; z: number }[] = [];
-  const firstRow = front - M(2.1);
-  const lastRow = back + M(1.25);
-  const inDoorway = (x: number): boolean => doorSpans.some(([x0, x1]) => x > x0 - M(0.45) && x < x1 + M(0.6));
-  // A seat, with the legs of whoever sits in it, from the back of its shell
-  // to the feet: none stands in a wheel pocket. Only the window seat reaches
-  // the pocket (it is 0.45 m deep from the wall, the aisle seat starts past it).
-  const inPocket = (x: number, z: number): boolean => Math.abs(z) + seatWidth / 2 > halfW - wall - pocketDepth
-    && axles.slice(1).some((ax) => x + M(0.55) > ax - pocketHalf && x - M(0.35) < ax + pocketHalf);
-  for (let x = firstRow; x >= lastRow; x -= pitch) {
+  /** Over a wheel, the seat stands on the podium, at the same height over it as the others over the floor. */
+  const podiumHip = podiumTop + (seatHip - floor);
+  const passenger: { x: number; z: number; floor: number; hip: number }[] = [];
+  for (const x of rows) {
+    const raised = overWheel(x) !== undefined;
     for (const side of [-1, 1] as const) {
       if (side === 1 && inDoorway(x)) continue;
       for (const k of [0, 1]) {
         const z = side * (halfW - wall - M(0.04) - seatWidth * (k + 0.5));
-        if (!inPocket(x, z)) passenger.push({ x, z });
+        passenger.push({ x, z, floor: raised ? podiumTop : floor, hip: raised ? podiumHip : seatHip });
       }
     }
   }
   const backRow = back + M(0.55);
-  for (let k = -2; k <= 2; k++) passenger.push({ x: backRow, z: k * (seatWidth + M(0.02)) });
+  for (let k = -2; k <= 2; k++) passenger.push({ x: backRow, z: k * (seatWidth + M(0.02)), floor, hip: seatHip });
   for (const s of passenger) {
-    cabin.push(...busSeat(s.x, seatHip, floor, seatWidth, s.z));
+    cabin.push(...busSeat(s.x, s.hip, s.floor, seatWidth, s.z));
   }
   // The six seats the simulation fills (seats 1..6) are spread over the bus;
   // the rest are empty.
@@ -1021,8 +1034,8 @@ export function buildBusModel(a: Archetype): VehicleModel {
   for (const i of order) {
     const s = passenger[i]!;
     const ahead = passenger.some((q) => Math.abs(q.z - s.z) < 1e-3 && q.x > s.x && q.x - s.x < pitch * 1.5);
-    seats.push({ x: s.x, z: s.z, hipY: seatHip, headroom: cant - M(0.05) - seatHip,
-      legroom: ahead ? pitch - M(0.12) : M(0.9), floor, sideRoom: seatWidth / 2 + M(0.04), driver: false, row: 1, pose: 'chair' });
+    seats.push({ x: s.x, z: s.z, hipY: s.hip, headroom: cant - M(0.05) - s.hip,
+      legroom: ahead ? pitch - M(0.12) : M(0.9), floor: s.floor, sideRoom: seatWidth / 2 + M(0.04), driver: false, row: 1, pose: 'chair' });
   }
   // Stanchions by the aisle and at the doors, and the ceiling rails.
   const aisle = halfW - wall - M(0.04) - seatWidth * 2 - M(0.03);
