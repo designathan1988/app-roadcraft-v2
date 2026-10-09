@@ -5,7 +5,8 @@ import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import type { CrossingAccess } from '@world/landscape';
 import { CROSSWALK_DEPTH } from '@world/approach';
-import { onFootway, poleLines } from '@world/poleLines';
+import { POLE_KERB_INSET, onFootway, poleLines } from '@world/poleLines';
+import { CURB_BAND, Level } from '@world/roadTypes';
 import { DEFAULT_POLE_SPACING, MAX_POLE_SPACING, MIN_POLE_SPACING, poleCarriesLamp, type PoleLampMode } from '@world/utilities';
 import { m } from '@world/units';
 
@@ -61,9 +62,6 @@ const MIN_POLE_GAP = m(10);
 
 /** A planned pole this close to a pole already standing is that pole. */
 const REUSE_RADIUS = m(6);
-
-/** Step along the contour when a stretch of it is turned into points. */
-const SAMPLE_STEP = m(0.5);
 
 export { onFootway };
 
@@ -134,45 +132,183 @@ export interface PoleRunPlan {
   readonly refused?: PoleRunRefusal;
 }
 
-/** Points along a closed contour from station `sa` to `sb`, the shorter way round. */
-function alongContour(line: Polyline, sa: number, sb: number): Vec2[] {
-  const total = line.length;
-  const forward = (sb - sa + total) % total;
-  const backward = (sa - sb + total) % total;
-  const span = Math.min(forward, backward);
-  const sign = forward <= backward ? 1 : -1;
-  const steps = Math.max(1, Math.ceil(span / SAMPLE_STEP));
-  const out: Vec2[] = [];
-  for (let k = 0; k <= steps; k++) {
-    const s = sa + (sign * span * k) / steps;
-    out.push(line.sampleAt(((s % total) + total) % total).p);
-  }
-  return out;
-}
-
 /** Where a snapped end lies on the contours, or null when no contour is near it. */
 function placeOf(net: Network, snap: PoleSnap): OnContour | null {
   return nearestOnContour(net, snap.at, snap.kind === 'pole' ? POLE_TO_LINE : m(0.5));
 }
 
 /**
- * The route of a run, as a dense list of points: along the contour of the
- * start's block, then (when the end is on another block) one span across the
- * street. Null when the street is too wide to span.
+ * THE ROUTE GRAPH of a network's pole lines: stations a few metres apart
+ * along every kerb-line contour, joined in order round it, and the spans
+ * that cross a street - from a station straight over the carriageway to the
+ * station facing it. An overhead crossing is laid on a line perpendicular to
+ * the street (Virginia 24VAC30-151-330 A: "Overhead utility crossings shall
+ * be located on a line that is perpendicular to the highway alignment"), so
+ * the spans are cast square off each street's centreline where it runs
+ * between its junctions - never on a diagonal through a junction.
+ *
+ * The run is the shortest way through it (Dijkstra, as the traffic routes,
+ * `sim/drive/tactical.ts`). The contour alone - the first version - followed
+ * one kerb the short way round: in a network of open-ended streets the whole
+ * kerb line is ONE contour, and a run to the footway across the road went down
+ * the street, round its end or into the next street and back (the player's
+ * report of 2026-10-09: 176 units of line for 21.6 straight across).
+ */
+interface RouteGraph {
+  readonly stations: readonly { readonly contour: number; readonly s: number; readonly at: Vec2 }[];
+  /** Each contour's first station index and count; its stations run in order of `s`. */
+  readonly runs: readonly { readonly first: number; readonly count: number }[];
+  /** Spans over a street, by station: the station across and the length. */
+  readonly spans: ReadonlyMap<number, readonly { readonly to: number; readonly length: number }[]>;
+}
+
+/** Station spacing along a contour. */
+const STATION_STEP = m(2);
+/** A span over the street costs this much more than its length: the line keeps to one side unless crossing saves it. */
+const CROSSING_COST = m(8);
+/** A cast across the street must land this close to a contour to make a span there. */
+const SPAN_LANDING = m(1);
+
+const graphs = new WeakMap<Network, { revision: number; graph: RouteGraph }>();
+
+function routeGraph(net: Network): RouteGraph {
+  const known = graphs.get(net);
+  if (known && known.revision === net.revision) return known.graph;
+  const { contours } = poleLines(net);
+  const stations: { contour: number; s: number; at: Vec2 }[] = [];
+  const runs: { first: number; count: number }[] = [];
+  contours.forEach((line, contour) => {
+    const count = Math.max(3, Math.ceil(line.length / STATION_STEP));
+    runs.push({ first: stations.length, count });
+    for (let i = 0; i < count; i++) {
+      const s = (line.length * i) / count;
+      stations.push({ contour, s, at: line.sampleAt(s).p });
+    }
+  });
+  const stationAt = (hit: OnContour): number => {
+    const run = runs[hit.contour]!;
+    const line = contours[hit.contour]!;
+    return run.first + (Math.round((hit.s / line.length) * run.count) % run.count);
+  };
+  const spans = new Map<number, { to: number; length: number }[]>();
+  const seen = new Set<string>();
+  for (const ribbon of net.ribbons.values()) {
+    if (ribbon.road.sidewalk <= 0) continue;
+    const centre = ribbon.centre[Level.Asphalt];
+    if (!centre || centre.length <= 0) continue;
+    // The kerb line stands a kerb stone and the inset off the carriageway's edge.
+    const reach = ribbon.road.width / 2 + CURB_BAND + POLE_KERB_INSET;
+    for (let s = STATION_STEP / 2; s < centre.length; s += STATION_STEP) {
+      const f = centre.sampleAt(s);
+      const nx = -f.t.y, ny = f.t.x;
+      const left = nearestOnContour(net, { x: f.p.x + nx * reach, y: f.p.y + ny * reach }, SPAN_LANDING);
+      const right = nearestOnContour(net, { x: f.p.x - nx * reach, y: f.p.y - ny * reach }, SPAN_LANDING);
+      if (!left || !right || !onFootway(net, left.at) || !onFootway(net, right.at)) continue;
+      const a = stationAt(left), b = stationAt(right);
+      if (a === b) continue;
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const length = dist(stations[a]!.at, stations[b]!.at);
+      if (length > MAX_POLE_SPACING) continue;
+      for (const [from, to] of [[a, b], [b, a]] as const) {
+        const list = spans.get(from);
+        if (list) list.push({ to, length }); else spans.set(from, [{ to, length }]);
+      }
+    }
+  }
+  const graph = { stations, runs, spans };
+  graphs.set(net, { revision: net.revision, graph });
+  return graph;
+}
+
+/**
+ * The route of a run, as a list of points: the shortest way through the route
+ * graph from where the run starts on a contour to where it ends - round the
+ * kerb line, and over a street by a square span where that is shorter. Null
+ * when no way joins them.
  */
 function route(net: Network, from: PoleSnap, a: OnContour, to: PoleSnap, b: OnContour): Vec2[] | null {
   const { contours } = poleLines(net);
-  const lineA = contours[a.contour]!;
-  const head: Vec2[] = from.kind === 'pole' && a.distance > 1e-3 ? [from.at] : [];
-  if (a.contour === b.contour) {
-    const body = alongContour(lineA, a.s, b.s);
-    const tail = to.kind === 'pole' && b.distance > 1e-3 ? [to.at] : [];
-    return [...head, ...body, ...tail];
+  const g = routeGraph(net);
+  const n = g.stations.length;
+  // Two extra nodes, the run's ends, each joined to the stations either side of it on its contour.
+  const START = n, END = n + 1;
+  const neighbours = (hit: OnContour): [number, number] => {
+    const run = g.runs[hit.contour]!;
+    const line = contours[hit.contour]!;
+    const i = Math.floor((hit.s / line.length) * run.count) % run.count;
+    return [run.first + i, run.first + ((i + 1) % run.count)];
+  };
+  const [a0, a1] = neighbours(a);
+  const [b0, b1] = neighbours(b);
+  const distTo = new Float64Array(n + 2).fill(Infinity);
+  const prev = new Int32Array(n + 2).fill(-1);
+  const done = new Uint8Array(n + 2);
+  distTo[START] = 0;
+  // A binary heap of (cost, node).
+  const heap: number[] = [];
+  const push = (cost: number, node: number): void => {
+    heap.push(cost, node);
+    let i = heap.length / 2 - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (heap[p * 2]! <= heap[i * 2]!) break;
+      [heap[p * 2], heap[i * 2]] = [heap[i * 2]!, heap[p * 2]!];
+      [heap[p * 2 + 1], heap[i * 2 + 1]] = [heap[i * 2 + 1]!, heap[p * 2 + 1]!];
+      i = p;
+    }
+  };
+  const pop = (): number => {
+    const node = heap[1]!;
+    const lastNode = heap.pop()!, lastCost = heap.pop()!;
+    if (heap.length) {
+      heap[0] = lastCost; heap[1] = lastNode;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1, r = l + 1;
+        let m0 = i;
+        if (l < heap.length / 2 && heap[l * 2]! < heap[m0 * 2]!) m0 = l;
+        if (r < heap.length / 2 && heap[r * 2]! < heap[m0 * 2]!) m0 = r;
+        if (m0 === i) break;
+        [heap[m0 * 2], heap[i * 2]] = [heap[i * 2]!, heap[m0 * 2]!];
+        [heap[m0 * 2 + 1], heap[i * 2 + 1]] = [heap[i * 2 + 1]!, heap[m0 * 2 + 1]!];
+        i = m0;
+      }
+    }
+    return node;
+  };
+  const at = (node: number): Vec2 => (node === START ? a.at : node === END ? b.at : g.stations[node]!.at);
+  const relax = (from: number, to: number, cost: number): void => {
+    const next = distTo[from]! + cost;
+    if (next < distTo[to]!) { distTo[to] = next; prev[to] = from; push(next, to); }
+  };
+  push(0, START);
+  while (heap.length) {
+    const node = pop();
+    if (done[node]) continue;
+    done[node] = 1;
+    if (node === END) break;
+    const here = at(node);
+    if (node === START) {
+      for (const s of [a0, a1]) relax(START, s, dist(here, at(s)));
+      if (a.contour === b.contour && a0 === b0) relax(START, END, dist(here, b.at));
+      continue;
+    }
+    const st = g.stations[node]!;
+    const run = g.runs[st.contour]!;
+    const i = node - run.first;
+    for (const j of [run.first + ((i + 1) % run.count), run.first + ((i - 1 + run.count) % run.count)]) relax(node, j, dist(here, at(j)));
+    for (const span of g.spans.get(node) ?? []) relax(node, span.to, span.length + CROSSING_COST);
+    if (node === b0 || node === b1) relax(node, END, dist(here, b.at));
   }
-  // Across the street: along this block to the point nearest the far end, then one span.
-  const turn = lineA.closestPoint(to.at);
-  if (dist(turn.point, to.at) > MAX_POLE_SPACING) return null;
-  return [...head, ...alongContour(lineA, a.s, turn.s), to.at];
+  if (!done[END]) return null;
+  const nodes: number[] = [];
+  for (let k = END; k !== -1; k = prev[k]!) nodes.push(k);
+  nodes.reverse();
+  const head: Vec2[] = from.kind === 'pole' && a.distance > 1e-3 ? [from.at] : [];
+  const tail: Vec2[] = to.kind === 'pole' && b.distance > 1e-3 ? [to.at] : [];
+  return [...head, ...nodes.map(at), ...tail];
 }
 
 /** Indices of the points Ramer-Douglas-Peucker keeps at `tolerance`. */
