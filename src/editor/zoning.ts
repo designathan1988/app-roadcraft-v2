@@ -9,14 +9,15 @@ import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
 import { ZONE_CELL, ZONE_DEPTH, type ZoneCell, type ZoneGrid } from '@world/zoneGrid';
 import type { ZoneDensity, ZoneMark, ZoneUse } from '@world/zones';
-import { lotCentre, lotFrame } from '@world/lots';
+import { lotBuildFrame, lotCentre } from '@world/lots';
 import { addBuildingRecord, type placeBuilding } from './buildings';
-import { buildingBounds, footprintRects } from '@world/buildings/geometry';
+import { MIN_SIZE, buildingBounds, footprintRects } from '@world/buildings/geometry';
+import { intersection } from '@core/clipper';
 import { pointInPolygon } from '@core/polygon';
 import { Level, halfWidth } from '@world/roadTypes';
 import { rectAround, type ChangeRect } from '@world/changes';
 import { groundElements } from '@world/buildings/elements';
-import { overlapArea } from '@world/buildings/footprints';
+import { overlapArea, validOutline } from '@world/buildings/footprints';
 import { THRESHOLD } from '@world/buildings/foundation';
 import { stepToSlope } from '@world/buildings/splitLevel';
 
@@ -504,7 +505,7 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     }
   }
   const use = lot.use!;
-  const frame = lotFrame(lot);
+  const frame = lotBuildFrame(lot);
   // Every zoned lot gets a building, whatever its size or shape (the player,
   // 2026-10-05: "tem que aparecer sempre"). The building first made for the
   // whole lot; refused (its front over a corner's curved footway, a side over
@@ -635,36 +636,39 @@ function fitToLot(body: { volumes: Volume[]; elements?: BuildingElement[] }, rin
   // The new boundary along every side but the front (side 0), in pieces of 20 m at most.
   for (let i = 1; i < ring.length; i++) {
     const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    if (len < m(0.5)) continue;
+    const full = Math.hypot(b.x - a.x, b.y - a.y);
+    if (full < m(0.5) + thick) continue;
+    // Short of each corner by half its thickness: a square-ended piece met a
+    // corner not quite square (a lot cut to a street a degree off its block)
+    // a few millimetres over the line, into the neighbour's yard, and the
+    // neighbour - or this lot - was refused (the bare corner lots).
+    const ux = (b.x - a.x) / full, uy = (b.y - a.y) / full;
+    const len = full - thick;
+    const sx = a.x + ux * thick / 2, sy = a.y + uy * thick / 2;
     const pieces = Math.ceil(len / m(20));
-    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    const angle = Math.atan2(uy, ux);
     // Set in by half its thickness, so it stands on the lot's side of the line.
-    const nx = -(b.y - a.y) / len * thick / 2, ny = (b.x - a.x) / len * thick / 2;
+    const nx = -uy * thick / 2, ny = ux * thick / 2;
     for (let k = 0; k < pieces; k++) {
-      const t = (k + 0.5) / pieces;
-      kept.push({ id: nextId++, kind, x: a.x + (b.x - a.x) * t + nx, y: a.y + (b.y - a.y) * t + ny, facing: 0, w: len / pieces, d: thick, z: 0, h: height, angle });
+      const t = ((k + 0.5) / pieces) * len;
+      kept.push({ id: nextId++, kind, x: sx + ux * t + nx, y: sy + uy * t + ny, facing: 0, w: len / pieces, d: thick, z: 0, h: height, angle });
     }
   }
   elements.splice(0, elements.length, ...kept.slice(0, MAX_ELEMENTS));
   // Surfaces clipped to the lot; volumes of the building itself kept where
   // they stand on it.
   const clip = (poly: Vec2[]): Vec2[] => {
-    let out = poly;
-    // Each side of the lot (counter-clockwise) keeps what is on its left.
-    for (let i = 0; i < ring.length && out.length; i++) {
-      const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
-      const side = (p: Vec2): number => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-      const input = out;
-      out = [];
-      for (let j = 0; j < input.length; j++) {
-        const p = input[j]!, q = input[(j + 1) % input.length]!;
-        const sp = side(p), sq = side(q);
-        if (sp >= 0) out.push(p);
-        if ((sp >= 0) !== (sq >= 0)) { const k = sp / (sp - sq); out.push({ x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k }); }
-      }
+    // The lot may be any simple polygon (cut back to a bent street, round a
+    // corner): a boolean intersection, the largest piece kept. Clipping by
+    // each side's half-plane is right only for a convex lot.
+    let best: Vec2[] = [], bestArea = 0;
+    for (const piece of intersection([[poly.map((p) => [p.x, p.y])]], [[ring.map((p) => [p.x, p.y])]])) {
+      const r = (piece[0] ?? []).map(([x, y]) => ({ x: x!, y: y! }));
+      let a = 0;
+      for (let i = 0; i < r.length; i++) { const p = r[i]!, q = r[(i + 1) % r.length]!; a += p.x * q.y - q.x * p.y; }
+      if (Math.abs(a) > bestArea) { bestArea = Math.abs(a); best = a < 0 ? r.reverse() : r; }
     }
-    return out;
+    return best;
   };
   const asOutline = (v: Volume, poly: readonly Vec2[]): void => {
     const px = poly.map((p) => p.x), py = poly.map((p) => p.y);
@@ -675,10 +679,14 @@ function fitToLot(body: { volumes: Volume[]; elements?: BuildingElement[] }, rin
   const nextVolume = Math.max(0, ...body.volumes.map((v) => v.id)) + 1;
   // The lawn under everything, the lot's own shape - laid first, drawn under the rest.
   const lawnTemplate = body.volumes.find((v) => v.open);
+  // A surface cut to a sliver (under 2 m across, or an outline the model
+  // cannot hold) is left out: kept, it made the whole building invalid and
+  // the lot was left bare.
+  const sound = (v: Volume): boolean => v.w >= MIN_SIZE && v.d >= MIN_SIZE && (!v.outline || validOutline(v.outline));
   if (lawnTemplate) {
     const lawn: Volume = { ...JSON.parse(JSON.stringify(lawnTemplate)) as Volume, id: nextVolume, open: 'grass' };
     asOutline(lawn, [...ring]);
-    volumes.push(lawn);
+    if (sound(lawn)) volumes.push(lawn);
   }
   for (const v of body.volumes) {
     const ringOf = v.outline ? v.outline.map((p) => ({ x: v.x + p.x * v.w, y: v.y + p.y * v.d }))
@@ -687,7 +695,7 @@ function fitToLot(body: { volumes: Volume[]; elements?: BuildingElement[] }, rin
       const cut = clip(ringOf);
       if (cut.length < 3) continue;
       if (cut.length !== 4 || !ringOf.every((p) => inside({ x: p.x * 0.999 + (v.x + v.w / 2) * 0.001, y: p.y * 0.999 + (v.y + v.d / 2) * 0.001 }))) asOutline(v, cut);
-      volumes.push(v);
+      if (sound(v)) volumes.push(v);
     } else if (ringOf.some((p) => inside(p)) || inside({ x: v.x + v.w / 2, y: v.y + v.d / 2 })) volumes.push(v);
   }
   body.volumes.splice(0, body.volumes.length, ...volumes);

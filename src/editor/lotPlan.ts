@@ -1000,10 +1000,16 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
   // stands against it, face to face, with nothing between.
   const sideHalf = (boundary.sides === 'hedge' ? 0.7 : boundary.sides === 'fence' ? 0.12 : 0.2) / 2;
   /** A side on a second street (a corner lot) is closed as the front is: a low wall, a fence on it, a railing. */
+  // Set in from the edge by its own thickness, as the front is (`frontAt`):
+  // laid at the side walls' line, a hedge or a railing of the front's kind
+  // stood half over the cross street's footway and the corner lot was refused
+  // - the bare corner lots of the generated city (2026-10-09).
   const streetSide = (x: number, y0: number, y1: number): void => {
     const kind = boundary.front ?? 'wall';
-    if (boundary.front && boundary.frontBase > 0) lot.runY('wall', x, y0, y1, boundary.frontBase);
-    lot.runY(kind, x, y0, y1, boundary.front ? boundary.frontH : 1.6, boundary.front ? boundary.frontBase : 0);
+    const at = (k: ElementKind): number => (x < W / 2 ? frontAt(k) : W - frontAt(k));
+    const onBase = boundary.front !== null && boundary.frontBase > 0;
+    if (onBase) lot.runY('wall', at('wall'), y0, y1, boundary.frontBase);
+    lot.runY(kind, onBase ? at('wall') : at(kind), y0, y1, boundary.front ? boundary.frontH : 1.6, boundary.front ? boundary.frontBase : 0);
   };
   const isCorner = (x: number): boolean => plan.corner !== undefined && (plan.corner === 'left') === (x < W / 2);
   for (const [s, x] of [[left, sideHalf], [right, W - sideHalf]] as const) {
