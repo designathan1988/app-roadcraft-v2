@@ -97,7 +97,7 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
 | V4 | Conectores de faixa, classes por faixa, troca de faixa por tipo de linha | veículos seguem as conexões; testes | feito no ramo, aguardando o jogador (ver "Andamento da V4") |
 | V5 | Cruzamentos inteligentes: CTB, Pare/Dê a preferência, minirrotatória, fluxo, escolha automática com trava, painel; semáforo editável, adaptativo, onda verde, prioridade de ônibus | testes de simulação; uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V5") |
 | V6 | Sinalização no chão regional e editável; placas instanciadas | uso no jogo | feito no ramo, aguardando o jogador (ver "Andamento da V6") |
-| V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | |
+| V7 | Mobiliário no catálogo da 5f, NBR 9050, conjuntos, automático, em linha, placa = regra, poste ilumina, rede elétrica | uso no jogo; detectores | primeira fatia no ramo (ver "Andamento da V7") |
 | V8 | Complementares (ônibus com baia, retornos, balão, inverter mão, conta-gotas, edição em massa, nomes e numeração, casos de borda) | uso no jogo | |
 
 ## Andamento da V0
@@ -326,6 +326,18 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   ÔNIBUS dentro da faixa externa, PARE antes da linha e na metade de quem chega, placas fora da pista, à direita e voltadas
   ao motorista, velocidade só com padrão).
 - Fica para depois: tracejado da linha de retenção de "dê a preferência" (LDP); placa "PARE" com "TODAS AS DIREÇÕES".
+
+## Andamento da V7
+- Feito: mobiliário automático nas vias novas (`world/roads/furnitureSets.ts`), conjunto escolhido na ferramenta de vias
+  ("Mobiliário": Completo, padrão; Básico; Nenhum; guardado no navegador). Completo: poste a cada 30 m em cada lado
+  (alternados), lixeira junto às esquinas e a cada 60 m, hidrante a cada 100 m (lado direito), banco a cada 60 m, árvore a
+  cada 10 m; Básico: postes e lixeiras. As peças são itens comuns do paisagismo (`RoadDoc.landscape`), postas onde a
+  ferramenta de paisagismo as poria (`snapLandscape`), no mesmo passo de desfazer da via; editadas ou removidas uma a uma,
+  nada as recria. Vias já construídas não mudam. NBR 9050 6.12.3: a peça só vai se deixar 1,20 m livres ao lado (na
+  calçada de 2 m vão postes e hidrantes; lixeiras e bancos, não). O poste acende à noite pelo sistema de luzes existente.
+- Detector: `tests/world/roadFurniture.spec.ts` (faixa livre, sem sobreposição, determinismo, conjuntos).
+- Falta: colocação em linha (arrastar), placa = regra (pôr uma placa de Pare muda a regra da perna), rede elétrica sobre
+  `planPoleRun`, registro no catálogo da 5f (ainda não existe no master).
 
 ## Desempenho
 - Rede e elevação incrementais (V0). Preview em fatias, sem alocar por quadro. Placas em atlas e

@@ -15,6 +15,8 @@
  * through its actions, the map tools through the game's own (now invisible)
  * controls - so nothing the player does here can disagree with the rules.
  */
+import { furnitureChosen, setFurnitureChosen } from '../roads/furnitureChoice';
+import { FURNITURE_SETS } from '@world/roads/furnitureSets';
 import { EFFECT_KINDS, type ElementKind } from '@world/elements';
 import { BLUEPRINTS } from '@world/buildings/blueprints';
 import { CITY_BUILDINGS } from '@world/buildings/cityBuildings';
@@ -945,6 +947,18 @@ export function mountShell(deps: ShellDeps): void {
         cutRow.appendChild(b);
       }
       options.appendChild(orow(t('cutSides.row'), cutRow));
+      // The furniture the new road is built with (docs/VIAS.md V7).
+      const furnitureNow = furnitureChosen();
+      const furnitureRow = el('div', 'v2-seg');
+      for (const set of FURNITURE_SETS) {
+        const b = button(`v2-seg-b rp-seg-text${furnitureNow === set ? ' on' : ''}`, t(`roadFurniture.${set}`), () => { setFurnitureChosen(set); render(); });
+        b.setAttribute('aria-pressed', String(furnitureNow === set));
+        b.dataset['furniture'] = set;
+        furnitureRow.appendChild(b);
+      }
+      const furnitureLine = orow(t('roadFurniture.row'), furnitureRow);
+      furnitureLine.title = t('roadFurniture.tip');
+      options.appendChild(furnitureLine);
       // The tool's keys, rebindable (docs/VIAS.md V3).
       const keysB = button('v2-pill rp-open', `${keyLabel(roadKey('heightUp'), true)} · ${keyLabel(roadKey('heightDown'), true)} · ${keyLabel(roadKey('alignment'), true)}`,
         () => (roadKeysOpen() ? closeRoadKeys() : openRoadKeys(keysB)), svg('keyboard', 16));
