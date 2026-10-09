@@ -1,7 +1,7 @@
 import { COARSE_EPS } from '@core/scalar';
 import { Ring } from '@core/ring';
 import { type Vec2, addScaled, dot } from '@core/vec2';
-import { type RoadType, SURFACE_LEVELS, halfWidth } from '../roadTypes';
+import { type RoadSide, type RoadType, SURFACE_LEVELS, halfWidth, sideHalfWidth, symmetric } from '../roadTypes';
 import type { Leg } from './legs';
 
 /**
@@ -54,7 +54,26 @@ export function isTransition(legs: readonly Leg[]): boolean {
   const a = legs[0] as Leg;
   const b = legs[1] as Leg;
   if (dot(a.dir, b.dir) > -Math.cos(TRANSITION_BEND)) return false;
-  return widthStep(a.road, b.road) >= COARSE_EPS;
+  return legWidthStep(a, b) >= COARSE_EPS;
+}
+
+/**
+ * The largest change of half-width from one leg into the other, SIDE BY
+ * SIDE: a road running on keeps its left side along the other's right side
+ * (`+nrm` of one leg is `-nrm` of the other). The same as `widthStep` for
+ * two symmetric roads; an asymmetric road turned round is a step on both
+ * sides though its widest half-width is unchanged (docs/VIAS.md V1).
+ */
+export function legWidthStep(a: Leg, b: Leg): number {
+  if (symmetric(a.road) && symmetric(b.road)) return widthStep(a.road, b.road);
+  const other = (side: RoadSide): RoadSide => (side === 'left' ? 'right' : 'left');
+  let step = Math.abs(a.road.median - b.road.median) / 2;
+  for (const level of SURFACE_LEVELS) {
+    step = Math.max(step,
+      Math.abs(sideHalfWidth(a.road, level, a.plusSide) - sideHalfWidth(b.road, level, other(b.plusSide))),
+      Math.abs(sideHalfWidth(a.road, level, other(a.plusSide)) - sideHalfWidth(b.road, level, b.plusSide)));
+  }
+  return step;
 }
 
 /** The largest change of half-width between two profiles, over every level and the median. */
@@ -71,7 +90,12 @@ export function widthStep(a: RoadType, b: RoadType): number {
  * footway grows smoothly: levels tapered over different lengths would cross.
  */
 export function transitionRun(a: RoadType, b: RoadType): number {
-  return Math.max(TAPER_MIN, widthStep(a, b) * TAPER_RATIO) / 2;
+  return transitionRunFor(widthStep(a, b));
+}
+
+/** `transitionRun` for a width step already measured (`legWidthStep`). */
+export function transitionRunFor(step: number): number {
+  return Math.max(TAPER_MIN, step * TAPER_RATIO) / 2;
 }
 
 /** Ease of the cross-section from the first leg's to the second's. */
@@ -142,8 +166,12 @@ export function transitionRing(legs: readonly Leg[], trims: readonly number[]): 
   const a = legs[0] as Leg;
   const b = legs[1] as Leg;
   const axis = new TransitionAxis(a, trims[0] as number, b, trims[1] as number);
-  const half = (u: number): number => a.hw + (b.hw - a.hw) * taperEase(u);
-  const left = axis.offset(half);
-  const right = axis.offset((u) => -half(u)).reverse();
+  // The axis runs from leg a into leg b: its left is a's `-nrm` side and
+  // b's `+nrm` side, its right a's `+nrm` side and b's `-nrm` side. Each
+  // side tapers from its own width to its own width (docs/VIAS.md V1).
+  const halfLeft = (u: number): number => a.hwRight + (b.hwLeft - a.hwRight) * taperEase(u);
+  const halfRight = (u: number): number => a.hwLeft + (b.hwRight - a.hwLeft) * taperEase(u);
+  const left = axis.offset(halfLeft);
+  const right = axis.offset((u) => -halfRight(u)).reverse();
   return Ring.fromPolygon([...left, ...right]).ensurePositive();
 }

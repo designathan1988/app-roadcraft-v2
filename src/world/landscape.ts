@@ -1,13 +1,13 @@
 import type { Vec2 } from '@core/vec2';
 import type { Network } from './network';
 import type { SegmentId } from './ids';
-import type { RoadType } from './roadTypes';
+import type { RoadSide, RoadType } from './roadTypes';
 import { m } from './units';
 import { roadProfile } from './roadTypes';
 import { orientedPolyline } from './geometry';
 import { CROSSWALK_DEPTH } from './approach';
 import { carriesPedestrians } from './pedestrianAccess';
-import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectionOf } from './section';
+import { BENCH_ZONE, LAMP_ZONE, MIN_THROUGH, TREE_KERB_SETBACK, TREE_PIT, sectionOf, zonesOn } from './section';
 
 /**
  * Street landscaping the PLAYER places: trees, shrubs, benches, bins, street
@@ -119,13 +119,17 @@ export function footwayAt(net: Network, at: Vec2, reach = 0): FootwayHit | null 
     if (!carriesPedestrians(road) || road.sidewalk <= 0) continue;
     const segment = net.doc.segment(ribbon.id);
     if (!segment) continue;
-    const zones = sectionOf(road, segment.direction).side;
-    const inner = zones.curb.outer;
-    const outer = road.width / 2 + road.sidewalk;
     const box = ribbon.full.bbox;
-    const pad = outer + reach;
+    const pad = road.width / 2 + road.sidewalk + reach;
     if (at.x < box.minX - pad || at.x > box.maxX + pad || at.y < box.minY - pad || at.y > box.maxY + pad) continue;
     ribbon.full.closestInto(at.x, at.y, hit);
+    // The side the point is on, and that side's own footway (an asymmetric
+    // road, docs/VIAS.md V1).
+    const atFrame = ribbon.full.sampleAt(hit.s);
+    const onLeft = (at.x - atFrame.p.x) * atFrame.n.x + (at.y - atFrame.p.y) * atFrame.n.y >= 0;
+    const zones = zonesOn(sectionOf(road, segment.direction), onLeft ? 'left' : 'right');
+    const inner = zones.curb.outer;
+    const outer = zones.frontage.outer;
     const length = ribbon.full.length;
     // Not past the mouths: the corner of a junction belongs to no one leg.
     const lo = net.mouthDistance(ribbon.id, segment.a);
@@ -133,17 +137,16 @@ export function footwayAt(net: Network, at: Vec2, reach = 0): FootwayHit | null 
     if (hit.s < lo - 1e-6 || hit.s > hi + 1e-6) continue;
     const miss = hit.distance < inner ? inner - hit.distance : hit.distance > outer ? hit.distance - outer : 0;
     if (miss > reach || miss >= bestMiss) continue;
-    const frame = ribbon.full.sampleAt(hit.s);
-    const side = (at.x - frame.p.x) * frame.n.x + (at.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
     bestMiss = miss;
-    best = { segment: ribbon.id, road, s: hit.s, side, across: hit.distance, frame };
+    best = { segment: ribbon.id, road, s: hit.s, side: onLeft ? 1 : -1, across: hit.distance, frame: atFrame };
   }
   return best;
 }
 
 /** How far out from the centreline each kind stands, inside the furnishing zone. */
-function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB' | 'bToA'): number | null {
-  const zone = sectionOf(road, direction).side.furnishing;
+function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB' | 'bToA', side: RoadSide = 'right'): number | null {
+  const zones = zonesOn(sectionOf(road, direction), side);
+  const zone = zones.furnishing;
   const depth = zone.outer - zone.inner;
   if (depth <= 0) return null;
   switch (kind) {
@@ -170,7 +173,7 @@ function depthFor(kind: LandscapeKind, road: RoadType, direction: 'both' | 'aToB
       // A pit beside the kerb, so long as the walkers keep their through
       // width behind it: a 2 m footway takes one (0.95 m pit and setback,
       // 0.9 m clear), as Brazilian streets plant them.
-      const footway = road.width / 2 + road.sidewalk - zone.inner;
+      const footway = zones.frontage.outer - zone.inner;
       if (footway - TREE_KERB_SETBACK - TREE_PIT < MIN_THROUGH - 1e-6) return null;
       return zone.inner + TREE_KERB_SETBACK + TREE_PIT / 2;
     }
@@ -266,7 +269,7 @@ export function snapLandscape(
   const hit = footwayAt(net, at, reach);
   if (!hit) return { ok: false, at, reason: 'offFootway' };
   const segment = net.doc.requireSegment(hit.segment);
-  const depth = depthFor(kind, hit.road, segment.direction);
+  const depth = depthFor(kind, hit.road, segment.direction, hit.side > 0 ? 'left' : 'right');
   if (depth === null) return { ok: false, at, reason: 'narrow' };
   const placed = {
     x: hit.frame.p.x + hit.frame.n.x * depth * hit.side,

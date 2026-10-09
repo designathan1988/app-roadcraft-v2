@@ -13,6 +13,10 @@ import { roadTypeName } from './labels';
 import { surfaceMode } from '@world/junction/build';
 import type { RoadSection } from '@world/roadSection';
 import { freeRoadsEnabled, mountRoadSectionEditor } from './roadSectionEditor';
+import { mountProfilePanel } from './roads/profilePanel';
+import { mountConnectorPanel, refreshConnectorPanel } from './roads/connectorPanel';
+import type { LaneLink } from '@world/roads/connectors';
+import type { RoadProfileSpec } from '@world/roads/profile';
 
 export interface InspectorSelection {
   readonly segment: SegmentId | null;
@@ -24,6 +28,8 @@ export interface InspectorActions {
   readonly onSetType: (id: SegmentId, type: number) => void;
   readonly onSetLanes?: (id: SegmentId, lanes: number | null) => void;
   readonly onSetSection?: (id: SegmentId, section: RoadSection | undefined) => void;
+  /** A whole cross-section applied to the road, with its class when it comes from a template (docs/VIAS.md V1). */
+  readonly onApplyProfile?: (id: SegmentId, profile: RoadProfileSpec, type?: number) => void;
   readonly onSetParking?: (id: SegmentId, parking: SegmentParking) => void;
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
@@ -37,6 +43,10 @@ export interface InspectorActions {
   readonly onDuplicate?: (id: SegmentId) => void;
   readonly onSetControl?: (id: NodeId, control: JunctionControl) => void;
   readonly onSetMovementBlocked?: (node: NodeId, from: SegmentId, to: SegmentId, blocked: boolean) => void;
+  /** The player's lane connections at a node (docs/VIAS.md V4); undefined: all derived. */
+  readonly onSetLaneLinks?: (node: NodeId, links: LaneLink[] | undefined) => void;
+  /** World to screen, for plans drawn as the player sees the map (the lane connectors). */
+  readonly project?: (x: number, y: number) => { readonly x: number; readonly y: number };
   readonly onSetCurve?: (id: SegmentId, curve: CurveShape | null) => void;
   readonly onJoin?: (node: NodeId) => void;
   /** Removes a node and the roads that meet at it. Offered only for a node the editor could not have created. */
@@ -115,6 +125,8 @@ function renderCurrent(): void {
           : null;
     if (html === null) closeInspector();
     else if (stats.innerHTML !== html) stats.innerHTML = html;
+    // The lane graph is rebuilt a moment after an edit: the connector editor follows it.
+    if (selection.node !== null) refreshConnectorPanel();
     return;
   }
 
@@ -224,15 +236,20 @@ function renderSegment(
   // is for and not what "reverse" says.
   const oneWay = seg.direction !== 'both';
 
+  // With the profile editor (docs/VIAS.md V2) the class, direction, lanes and
+  // parking are the profile's, edited there; the inspector shows the profile
+  // in miniature instead of a select for each.
+  const profiled = actions.onApplyProfile !== undefined;
   body.innerHTML =
     `<div id="inspectStats">${stats}</div>` +
-    `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
-    `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>` +
+    (profiled ? '<div id="inspectProfile"></div>' : '') +
+    (profiled ? '' : `<label class="inspect-select">${t('inspector.roadClass')} <select id="inspectClass">${ROAD_TYPES.map((type, index) => `<option value="${index}"${index === seg.type ? ' selected' : ''}>${roadTypeName(type)}</option>`).join('')}</select></label>` +
+    `<label class="inspect-select">${t('inspector.direction')} <select id="inspectDirection">${directionOptions(seg.direction)}</select></label>`) +
     `<label class="inspect-select">${t('inspector.heightStart')} <input id="inspectHeightStart" type="number" step="0.1" value="${((doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
     `<label class="inspect-select">${t('inspector.heightEnd')} <input id="inspectHeightEnd" type="number" step="0.1" value="${((doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER).toFixed(1)}" /></label>` +
-    `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
-    parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
-    parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt) +
+    (profiled ? '' : `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
+      parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
+      parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt)) +
     `<div id="inspectSection"></div>` +
     `<label class="inspect-range"><span>${t('inspector.curvature')}</span><output id="inspectCurveValue">${curveText(curveValue)}</output><input id="inspectCurve" type="range" min="${-maxCurve}" max="${maxCurve}" step="1" value="${Math.max(-maxCurve, Math.min(maxCurve, curveValue))}" /></label>` +
     `<label class="inspect-range"${seg.curve ? '' : ' data-disabled'}><span>${t('inspector.curvePosition')}</span><output id="inspectCurvePositionValue">${percent(curvePosition)}</output><input id="inspectCurvePosition" type="range" min="0.15" max="0.85" step="0.01" value="${curvePosition}"${seg.curve ? '' : ' disabled'} /></label>` +
@@ -247,6 +264,9 @@ function renderSegment(
     `<button type="button" id="inspectDelete" class="danger">${t('inspector.demolish')}</button>` +
     `</div>`;
 
+  if (actions.onApplyProfile) {
+    mountProfilePanel(body.querySelector<HTMLElement>('#inspectProfile')!, seg, (profile, type) => actions.onApplyProfile?.(id, profile, type));
+  }
   if (freeRoadsEnabled() && actions.onSetSection) {
     mountRoadSectionEditor(body.querySelector<HTMLElement>('#inspectSection')!, rt, seg.direction, seg.section,
       (section) => actions.onSetSection?.(id, section));
@@ -432,8 +452,17 @@ function renderNode(
     (node.smooth ? `<p class="inspect-note">${t('inspector.heightPointHelp')}</p>`
       : `<label class="inspect-select">${t('inspector.controlSelect')} <select id="inspectControl">${controlOptions(node.control)}</select></label>`) +
     joinOffer +
-    (node.smooth ? '' : movementControls(doc, junction, node.blockedMovements) +
+    (node.smooth ? '' : '<div id="inspectConnectors"></div>' + movementControls(doc, junction, node.blockedMovements) +
       `<p class="inspect-note">${t('inspector.mouths')}: ${mouths || '—'}</p>`);
+  const connectors = body.querySelector<HTMLElement>('#inspectConnectors');
+  if (connectors && actionsForNode().onSetLaneLinks) {
+    mountConnectorPanel(connectors, id, {
+      graph: () => sim.graph,
+      links: () => doc.node(id)?.laneLinks,
+      set: (links) => actionsForNode().onSetLaneLinks?.(id, links),
+      ...(actionsForNode().project ? { project: actionsForNode().project! } : {}),
+    });
+  }
 
   const policy = document.getElementById('inspectControl') as HTMLSelectElement | null;
   const heightNode = document.getElementById('inspectHeightNode') as HTMLInputElement | null;

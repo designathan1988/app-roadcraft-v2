@@ -17,7 +17,8 @@ import { MAX_AUTHORED_GRADE, type RoadElevation, buildRoadElevation } from '@wor
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { m } from '@world/units';
 import { ROAD_TUNING } from '@world/roads/tuning';
-import { sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
+import { type RoadStation, orderAlong, stationsAlong } from '@world/roads/buildMode';
+import { flipSection, sameRoadSectionIgnoringArrows, sectionForPiece } from '@world/roadSection';
 import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
@@ -61,7 +62,17 @@ export interface DraftResult {
    * for `funds` (what it would have cost).
    */
   readonly cost?: number;
+  /**
+   * A dry run's road as it would be built (docs/VIAS.md V3): a station every
+   * couple of metres with the solved deck, the natural ground and the way it
+   * is built, from the same network and the same height solve as the commit.
+   * What the road tool's preview draws once the draft is judged.
+   */
+  readonly stations?: readonly RoadStation[];
 }
+
+/** Spacing of a dry run's stations (`DraftResult.stations`). */
+export const STATION_STEP = m(2);
 
 /**
  * Commits one freehand gesture as one undoable, atomic road. The gesture may
@@ -166,7 +177,11 @@ export function commitRoadPath(
   // cannot be paid, the preview naming why.
   const charge = settleRoadEdit(roadsBefore(doc), work, !options.dryRun);
   if (!charge.affordable) return { committed: false, reason: 'funds', cost: charge.amount };
-  if (options.dryRun) return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount };
+  if (options.dryRun) {
+    const stations = draftStations(doc, work, workNet, pieces, type, start.at, ground, bore, options.groundSolve ?? null);
+    timed('stations');
+    return { committed: true, heightLimited, finalHeightOffset: currentHeight, cost: charge.amount, stations };
+  }
   doc.replaceWith(work);
   net.adopt(workNet);
   timed('replace');
@@ -232,6 +247,38 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
     }
   }
   return { bored: changed, elevation };
+}
+
+/**
+ * The stations of the road a gesture laid, on the copy it was laid on: the
+ * new segments that lie on the drawn pieces (not the halves of a road it
+ * split), walked from its start, at the heights solved for the copy - the
+ * tunnel test's solve when it found no tunnel, else solved again from it.
+ */
+function draftStations(
+  before: RoadDoc, work: RoadDoc, workNet: Network, pieces: readonly RoadPathPiece[], type: number, startAt: Vec2,
+  sampled: ((x: number, y: number) => number) | undefined,
+  bore: { bored: boolean; elevation: RoadElevation | null }, previous: RoadElevation | null,
+): RoadStation[] {
+  const path = Polyline.fromPoints(pieces.flatMap((piece, i) => {
+    const pts = flattenSegment(piece.start.at, piece.end.at, fitRoadCurve(piece.start.at, piece.end.at, piece.curve, type));
+    return i === 0 ? pts : pts.slice(1);
+  }));
+  const laid = new Set<SegmentId>();
+  for (const seg of work.segments.values()) {
+    if (before.segments.has(seg.id)) continue;
+    const line = workNet.ribbons.get(seg.id)?.full;
+    if (!line) continue;
+    const mid = line.sampleAt(line.length / 2).p;
+    if (path.closestPoint(mid).distance < 1) laid.add(seg.id);
+  }
+  if (!laid.size) return [];
+  const index = sampled ? null : terrainIndexOf(work);
+  const ground = sampled ?? ((x: number, y: number): number => sampleTerrainHeight(index!, x, y));
+  const elevation = bore.elevation && !bore.bored
+    ? bore.elevation
+    : buildRoadElevation(workNet, ground, sampled ? (bore.elevation ?? previous) : null);
+  return stationsAlong(workNet, elevation, ground, orderAlong(work, laid, startAt), STATION_STEP);
 }
 
 /**
@@ -785,9 +832,14 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   const first = doc.segment(firstId);
   const second = doc.segment(secondId);
   if (!first || !second || first.curve || second.curve || first.type !== second.type || first.lanes !== second.lanes ||
-    !sameRoadSectionIgnoringArrows(first.section, second.section) || first.direction !== 'both' || second.direction !== 'both') return false;
+    first.direction !== 'both' || second.direction !== 'both') return false;
   const a = first.a === nodeId ? first.b : first.a;
   const b = second.a === nodeId ? second.b : second.a;
+  // Sections read along a -> b on both pieces, as the parking below: a piece
+  // stored the other way round has its two sides swapped (docs/VIAS.md V1).
+  const sectionFirst = first.a === a ? first.section : flipSection(first.section);
+  const sectionSecond = second.b === b ? second.section : flipSection(second.section);
+  if (!sameRoadSectionIgnoringArrows(sectionFirst, sectionSecond)) return false;
   // Parking read along a -> b on both pieces: a piece stored the other way
   // round has its sides swapped.
   const parkingFirst = first.a === a ? first.parking : flipParking(first.parking);
@@ -806,7 +858,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   // came along `second`, what arrives at `a` along `first`.
   const towardB = second.b === b ? second.section?.turnsForward : second.section?.turnsBackward;
   const towardA = first.a === a ? first.section?.turnsBackward : first.section?.turnsForward;
-  const base = sectionForPiece(first.section, false, false);
+  const base = sectionForPiece(sectionFirst, false, false);
   const section = base && {
     ...base,
     ...(towardB ? { turnsForward: [...towardB] } : {}),
@@ -814,6 +866,7 @@ export function joinSegments(doc: RoadDoc, nodeId: NodeId): boolean {
   };
   const joined = doc.addSegment(a, b, first.type, null, dashOrigin, 'both', first.lanes, first.structure, section, parkingFirst);
   if (!joined) return false;
+  if (first.cutWalls && second.cutWalls) doc.setSegmentCutWalls(joined.id, true);
   doc.carryMovements(a, bansAtA, first.id, joined.id);
   doc.carryMovements(b, bansAtB, second.id, joined.id);
   doc.carryCrossing(a, crossingAtA, first.id, joined.id);
@@ -859,6 +912,7 @@ export function duplicateSegment(doc: RoadDoc, net: Network, id: SegmentId): Seg
     segment.section,
     segment.parking,
   );
+  if (copy && segment.cutWalls) doc.setSegmentCutWalls(copy.id, true);
   if (copy) return copy.id;
 
   // Source validation above makes this defensive branch unlikely, but keep
@@ -973,6 +1027,7 @@ function splitSegmentAtCuts<Tag>(
       sectionForPiece(seg.section, i === 0, i + 2 === nodeIds.length),
       seg.parking,
     );
+    if (piece && seg.cutWalls) doc.setSegmentCutWalls(piece.id, true);
     if (piece) pieces.push(piece.id);
   }
   const first = pieces[0];

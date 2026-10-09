@@ -11,9 +11,11 @@ import {
   Level,
   SURFACE_LEVELS,
   type SurfaceLevel,
+  footwayOn,
   halfWidth,
   roadProfile,
   roadType,
+  sideHalfWidth,
 } from './roadTypes';
 import { type Junction, buildJunction, surfaceMode } from './junction/build';
 import { deriveJunctionLevel } from './junction/derive';
@@ -62,7 +64,7 @@ function segmentSourceKey(doc: RoadDoc, s: RoadSegment): string {
   const a = doc.node(s.a), b = doc.node(s.b);
   return `${s.a}>${s.b}|${s.type}|${s.curve ? `${s.curve.t},${s.curve.h}` : '-'}|${s.dashOrigin}|${s.direction}|${s.lanes}|` +
     `${s.structure}|${s.section ? JSON.stringify(s.section) : '-'}|${s.parking ? JSON.stringify(s.parking) : '-'}|` +
-    `${a ? `${a.x},${a.y}` : '-'}|${b ? `${b.x},${b.y}` : '-'}`;
+    `${a ? `${a.x},${a.y}` : '-'}|${b ? `${b.x},${b.y}` : '-'}${s.cutWalls ? '|walls' : ''}`;
 }
 
 /** Everything of a node a junction there is built from: the whole record, its roads by id. */
@@ -749,6 +751,8 @@ export class Network {
         // overlap covered it only on dead-straight joins; 3 to 5 degree bends
         // showed holes in the asphalt (audit P2-26).
         const base = SEAM_OVERLAP + (level - Level.Casing) * SURFACE_END_STEP;
+        // Each side to its own width (docs/VIAS.md V1): a footway wider on
+        // one side is an outline offset further on that side.
         const hw = halfWidth(rt, level);
         rings[level] = ribbonRing(
           overlapUntrimmedEnds(
@@ -758,7 +762,8 @@ export class Network {
             base + hw * Math.tan(bendA / 2),
             base + hw * Math.tan(bendB / 2),
           ),
-          hw,
+          sideHalfWidth(rt, level, 'left'),
+          sideHalfWidth(rt, level, 'right'),
         );
       }
 
@@ -953,14 +958,16 @@ export class Network {
     const proposed = Math.min(Math.max(crosswalkAt(mouth), clear), length * CROSSWALK_CAP, orderingCap);
     const limit = Math.min(length * CROSSWALK_CAP, orderingCap);
     const profile = roadProfile(segment.type, segment.lanes, segment.direction, segment.section, segment.parking);
-    const lateral = profile.width / 2 + profile.sidewalk / 2;
+    // The middle of each side's own footway (an asymmetric road, docs/VIAS.md V1).
+    const lateralLeft = profile.width / 2 + footwayOn(profile, 'left') / 2;
+    const lateralRight = profile.width / 2 + footwayOn(profile, 'right') / 2;
     const line = this.polylines.get(this.doc, seg);
     const walkable = this.crossingSurface();
     const fits = (distance: number): boolean => {
       const frame = line.sampleAt(segment.a === node ? distance : length - distance);
       const nx = -frame.t.y, ny = frame.t.x;
-      return walkable.footway(frame.p.x + nx * lateral, frame.p.y + ny * lateral) &&
-        walkable.footway(frame.p.x - nx * lateral, frame.p.y - ny * lateral);
+      return walkable.footway(frame.p.x + nx * lateralLeft, frame.p.y + ny * lateralLeft) &&
+        walkable.footway(frame.p.x - nx * lateralRight, frame.p.y - ny * lateralRight);
     };
     for (let distance = proposed; distance <= limit; distance += 0.5) {
       if (fits(distance)) {
@@ -1045,13 +1052,13 @@ function overlapUntrimmedEnds(
   return Polyline.fromPoints(out);
 }
 
-export function ribbonRing(centre: Polyline, hw: number): Ring {
+export function ribbonRing(centre: Polyline, hw: number, hwRight = hw): Ring {
   if (centre.n < 2 || centre.length <= 0) {
     return new Ring({ x: 0, y: 0 }, []);
   }
   const pts = centre.toPoints();
   const left = offsetPolyline(pts, hw);
-  const right = offsetPolyline(pts, -hw);
+  const right = offsetPolyline(pts, -hwRight);
   const loop: Vec2[] = [...left, ...right.slice().reverse()];
   return Ring.fromPolygon(loop).ensurePositive();
 }

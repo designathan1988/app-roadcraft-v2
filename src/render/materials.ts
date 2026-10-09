@@ -419,7 +419,8 @@ export function createMaterials(anisotropy: number): SceneMaterials {
 
   const asphalt = keep(surface(road, 0xffffff, 1, 0.02, 1, true));
   const asphaltRaised = keep(surface(raised, 0xffffff, 1, 0.02, 0.9, true));
-  const footwayMaterial = keep(surface(footway, 0xffffff, 1, 0, 1));
+  // Per-vertex tone: a footway's material (`roadSurfaces.ts` `footwayTint`, docs/VIAS.md V1).
+  const footwayMaterial = keep(surface(footway, 0xffffff, 1, 0, 1, true));
   const kerbMaterial = keep(surface(kerb, 0xffffff, 1, 0, 0.85));
   const vergeMaterial = keep(surface(verge, 0xffffff, 1, 0, 0.9));
   const deckMaterial = keep(surface(deck, 0xffffff, 1, 0.02, 1));

@@ -1,5 +1,5 @@
 import { m } from './units';
-import { CURB_BAND, laneOffset, laneWidth, travelLanes, type RoadType } from './roadTypes';
+import { CURB_BAND, type RoadSide, flushOn, footwayOn, laneOffset, laneWidth, symmetric, travelLanes, type RoadType } from './roadTypes';
 import type { SegmentDirection } from './doc';
 import { carriesPedestrians } from './pedestrianAccess';
 
@@ -62,8 +62,14 @@ export interface CrossSection {
   readonly median: number;
   /** Lanes of the forward (a to b) direction; a two-way road mirrors them for the other. */
   readonly lanes: readonly TravelLane[];
-  /** Both sides (the section is symmetric). Null for a road without a footway to walk. */
+  /**
+   * The zones of a side when both sides are the same; on an asymmetric road
+   * (docs/VIAS.md V1) the right one. Read `left`/`right`, or `zonesOn`.
+   */
   readonly side: SideZones;
+  /** The footway zones left and right of a -> b. */
+  readonly left: SideZones;
+  readonly right: SideZones;
   /** Whether people walk along this road at all. */
   readonly walkable: boolean;
 }
@@ -89,22 +95,37 @@ export const MIN_FRONTAGE = m(0.6);
 /** The cross-section of a resolved road profile (`roadProfile`). */
 export function sectionOf(rt: RoadType, direction: SegmentDirection = 'both'): CrossSection {
   const half = rt.width / 2;
-  const edge = half + rt.sidewalk;
-  const curb: Band = { inner: half, outer: half + CURB_BAND };
+  // Highways and ramps have a verge, not a footway (`pedestrianAccess.ts`).
+  const walkable = carriesPedestrians(rt);
+  const right = sideZones(rt, footwayOn(rt, 'right'), flushOn(rt, 'right'), walkable);
+  const left = symmetric(rt) ? right : sideZones(rt, footwayOn(rt, 'left'), flushOn(rt, 'left'), walkable);
+  const count = travelLanes(rt, direction);
+  const lanes: TravelLane[] = [];
+  for (let i = 0; i < count; i++) lanes.push({ offset: laneOffset(rt, i, direction), width: laneWidth(rt), index: i });
+  return { carriageway: half, median: rt.median, lanes, side: right, left, right, walkable };
+}
+
+/** The zones of one side, left or right of a -> b. */
+export const zonesOn = (section: CrossSection, side: RoadSide): SideZones => (side === 'left' ? section.left : section.right);
+
+/** One side's footway, `sidewalk` wide (kerb included), cut into zones. */
+function sideZones(rt: RoadType, sidewalk: number, flush: boolean, walkable: boolean): SideZones {
+  const half = rt.width / 2;
+  const edge = half + sidewalk;
+  // A flush footway has no kerb stone: the edge zone starts at the carriageway's edge.
+  const curb: Band = { inner: half, outer: half + (flush ? 0 : CURB_BAND) };
   // The edge zone: kerb stone and clearance together, measured from the kerb
   // FACE whatever the stone's width, so nothing stands where an opening car
   // door or a passing mirror reaches (NACTO "Sidewalks": the edge zone).
   const edgeZone = Math.max(curb.outer, half + EDGE_ZONE);
   const footway = Math.max(0, edge - edgeZone);
-  // Highways and ramps have a verge, not a footway (`pedestrianAccess.ts`).
-  const walkable = carriesPedestrians(rt);
   // Street furniture stands in ONE zone beside the kerb, as on a real street:
   // lamp columns always, street trees where the footway is wide enough for
   // them, benches and bins where they still leave the through zone its
   // minimum. Lamps, bins and benches used to stand along the OUTER edge, the
   // bins and benches set a further 0.9-1.1 m out - beyond the footway, inside
   // the buildings (audit P1-16).
-  const trees = rt.sidewalk >= TREE_MIN_FOOTWAY ? TREE_KERB_SETBACK + TREE_PIT : 0;
+  const trees = sidewalk >= TREE_MIN_FOOTWAY ? TREE_KERB_SETBACK + TREE_PIT : 0;
   const seats = footway - BENCH_ZONE >= MIN_THROUGH ? BENCH_ZONE : 0;
   const furnishingDepth = walkable ? Math.min(Math.max(LAMP_ZONE, trees, seats), Math.max(0, footway - MIN_THROUGH)) : 0;
   // The edge zone is part of the furnishing (curb) zone, as NACTO draws it.
@@ -114,16 +135,7 @@ export function sectionOf(rt: RoadType, direction: SegmentDirection = 'both'): C
   const spare = footway - furnishingDepth - THROUGH_GOAL;
   const frontage = spare >= MIN_FRONTAGE ? spare : 0;
   const through: Band = { inner: furnishing.outer, outer: edge - frontage };
-  const count = travelLanes(rt, direction);
-  const lanes: TravelLane[] = [];
-  for (let i = 0; i < count; i++) lanes.push({ offset: laneOffset(rt, i, direction), width: laneWidth(rt), index: i });
-  return {
-    carriageway: half,
-    median: rt.median,
-    lanes,
-    side: { curb, furnishing, through, frontage: { inner: edge - frontage, outer: edge } },
-    walkable,
-  };
+  return { curb, furnishing, through, frontage: { inner: edge - frontage, outer: edge } };
 }
 
 /** Centre of a band, and its width. */

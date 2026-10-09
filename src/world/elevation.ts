@@ -3,7 +3,7 @@ import { type Aabb, expand as expandBox } from '@core/aabb';
 import type { Polyline } from '@core/polyline';
 import type { NodeId, SegmentId } from './ids';
 import type { Network } from './network';
-import { CASING_BAND, FOOTWAY_RISE, Level, casingHalf } from './roadTypes';
+import { CASING_BAND, FOOTWAY_RISE, Level, type RoadType, casingHalf, footwayOn } from './roadTypes';
 import { m } from './units';
 import { ROAD_TUNING } from './roads/tuning';
 import {
@@ -232,14 +232,25 @@ interface Profile {
   readonly structure: RoadStructure;
   /** A player-authored vertical alignment, independent of legacy structure modes. */
   readonly manualVertical: boolean;
+  /** Its cutting held by retaining walls (`RoadSegment.cutWalls`): cut back no wider than a portal's. */
+  readonly walls: boolean;
   /** The class index the road was drawn with, for per-class surface tinting. */
   readonly type: number;
   /** Half the casing width — how far this road's surface reaches sideways. */
   readonly half: number;
   /** Central reservation width, zero when the class has none. */
   readonly median: number;
-  /** Authored footway width, including the kerb. */
+  /** Authored footway width, including the kerb: the wider side's. */
   readonly sidewalk: number;
+  /** Each side's footway, left and right of a -> b (docs/VIAS.md V1). */
+  readonly sidewalkLeft: number;
+  readonly sidewalkRight: number;
+  /**
+   * A digest of the road's look - its materials, which footway is flush -
+   * or 0 for the class's own: a road query answers for it (`roadAt` names
+   * the segment), so a tile drawn with it must be drawn again when it changes.
+   */
+  readonly look: number;
   readonly line: Polyline;
   readonly length: number;
   readonly step: number;
@@ -316,6 +327,13 @@ export interface RoadElevation {
     pickY: number,
     includeManual?: boolean,
     segment?: SegmentId,
+    /**
+     * Lay `along` at the true length of each line parallel to the road
+     * (docs/VIAS.md V1, no stretch on a curve), restarting every `panel`
+     * units of road: a pattern keeps its size on the inside and the outside
+     * of a bend, with a joint at each panel's edge, as paving is laid.
+     */
+    panel?: number,
   ): { along: number; across: number };
   /**
    * How far the ground should be pulled towards the road at a point, and to
@@ -366,6 +384,11 @@ export interface RoadSample {
   readonly median: number;
   /** Its actual footway width, including the kerb. Optional for older query adapters. */
   readonly sidewalk?: number;
+  /** Each side's footway, left and right of a -> b, when they differ. */
+  readonly sidewalkLeft?: number;
+  readonly sidewalkRight?: number;
+  /** The segment the point was read off. */
+  readonly segment?: SegmentId;
 }
 
 export const GROUND_ONLY: ReadonlySet<RoadStructure> = new Set<RoadStructure>(['ground']);
@@ -410,6 +433,13 @@ const SHAPE_SHOULDER_MAX = 90;
  * to hide it. Sixteen units is a cutting the portal can close.
  */
 const CUT_SHOULDER = 16;
+/**
+ * How far past a road's casing a cutting held by retaining walls is dug
+ * (`RoadSegment.cutWalls`): the ground held at road level beside it, then
+ * the portal's narrow batter. The renderer covers that band with the wall's
+ * backfill and reads the natural ground just past it (`render/structures.ts`).
+ */
+export const CUT_WALL_REACH = SHAPE_INNER + CUT_SHOULDER;
 /**
  * How far below the road SURFACE the ground beside it is pulled.
  *
@@ -516,10 +546,14 @@ export function buildRoadElevation(
       structure: segment.structure,
       manualVertical: Math.abs(net.doc.node(segment.a)?.heightOffset ?? 0) > 1e-6 ||
         Math.abs(net.doc.node(segment.b)?.heightOffset ?? 0) > 1e-6,
+      walls: segment.cutWalls === true,
       type: segment.type,
       half,
       median: ribbon.road.median,
       sidewalk: ribbon.road.sidewalk,
+      sidewalkLeft: footwayOn(ribbon.road, 'left'),
+      sidewalkRight: footwayOn(ribbon.road, 'right'),
+      look: lookDigest(ribbon.road),
       line,
       length,
       step,
@@ -787,6 +821,7 @@ export function buildRoadElevation(
   for (const profile of profiles) {
     const d = new Digest().add(profile.id).addText(profile.structure).add(profile.manualVertical ? 1 : 0).add(profile.type)
       .add(profile.half).add(profile.median).add(profile.sidewalk).add(profile.step).addAll(profile.h).addAll(profile.line.xy);
+    if (profile.sidewalkLeft !== profile.sidewalkRight || profile.look) d.add(profile.sidewalkLeft).add(profile.sidewalkRight).add(profile.look);
     profileSummaries.set(profile.id, { digest: d.value(), box: profile.bbox, oversized: index.isOversized(profile) });
   }
 
@@ -829,6 +864,7 @@ export function buildRoadElevation(
     const reach2 = reach * reach;
     const digest = new Digest().add(profile.id).addText(profile.structure).add(profile.manualVertical ? 1 : 0)
       .add(profile.type).add(profile.half).add(profile.median).add(profile.sidewalk).add(profile.step).add(profile.h.length);
+    if (profile.sidewalkLeft !== profile.sidewalkRight || profile.look) digest.add(profile.sidewalkLeft).add(profile.sidewalkRight).add(profile.look);
     const at = stations(profile);
     for (let i = 0; i < profile.h.length; i++) {
       const dx = at[i * 2]! - cx, dy = at[i * 2 + 1]! - cy;
@@ -1032,9 +1068,11 @@ export function buildRoadElevation(
         half: best.half,
         median: best.median,
         sidewalk: best.sidewalk,
+        ...(best.sidewalkLeft !== best.sidewalkRight ? { sidewalkLeft: best.sidewalkLeft, sidewalkRight: best.sidewalkRight } : {}),
+        segment: best.id,
       };
     },
-    surfaceFrameAt(x, y, structures, pickX, pickY, includeManual = true, segment) {
+    surfaceFrameAt(x, y, structures, pickX, pickY, includeManual = true, segment, panel) {
       const best = segment === undefined
         ? nearest(pickX, pickY, structures, includeManual)
         : byId.get(segment);
@@ -1051,10 +1089,21 @@ export function buildRoadElevation(
       const frame = best.line.sampleAt(s);
       const dx = x - frame.p.x;
       const dy = y - frame.p.y;
-      return {
-        along: s + dx * frame.t.x + dy * frame.t.y,
-        across: dx * frame.n.x + dy * frame.n.y,
-      };
+      const across = dx * frame.n.x + dy * frame.n.y;
+      let along = s + dx * frame.t.x + dy * frame.t.y;
+      if (panel !== undefined && panel > 0) {
+        // A line `across` to the left of a curve is shorter than the
+        // centreline by `across` times the turn: d(along) = (1 - across k) ds.
+        // Integrated from the panel's start, the turn since then times the
+        // offset comes off (a centreline U stretches the inside of a bend and
+        // squeezes the outside; GameDev.net, "spline based road geometry UV
+        // mapping"). Within a panel only, so the shear it brings never builds up.
+        const start = Math.floor(Math.max(0, Math.min(best.length, s)) / panel) * panel;
+        const t0 = best.line.sampleAt(start).t;
+        const turn = Math.atan2(t0.x * frame.t.y - t0.y * frame.t.x, t0.x * frame.t.x + t0.y * frame.t.y);
+        along -= across * turn;
+      }
+      return { along, across };
     },
     shapeBounds: () => profiles.map((profile) => profile.bbox),
     shapeAt(x, y, naturalGround) {
@@ -1097,7 +1146,10 @@ export function buildRoadElevation(
         const height = beside ? surface - BESIDE_DROP : surface - SHAPE_DROP;
         // The batter is sized from the earthwork it has to carry away, so a
         // shallow fill blends out quickly and a deep cut opens out properly.
-        const shoulder = sunken
+        // A cutting held by retaining walls is dug no wider than a portal's:
+        // the wall at the road's edge stands in front of the step
+        // (`render/structures.ts` `retainingWalls`).
+        const shoulder = sunken || (profile.walls && naturalGround > height)
           ? CUT_SHOULDER
           : Math.min(SHAPE_SHOULDER_MAX, Math.max(SHAPE_SHOULDER, Math.abs(naturalGround - height) * BATTER));
         if (distance >= inner + shoulder) continue;
@@ -1198,7 +1250,15 @@ function sameProfile(a: Profile, b: Profile): boolean {
   return a.structure === b.structure && a.manualVertical === b.manualVertical && a.type === b.type &&
     a.half === b.half && a.median === b.median && a.sidewalk === b.sidewalk && a.length === b.length &&
     a.step === b.step && a.plateA === b.plateA && a.plateB === b.plateB && a.a === b.a && a.b === b.b &&
-    a.ceil === b.ceil && a.base === b.base;
+    a.ceil === b.ceil && a.base === b.base && a.sidewalkLeft === b.sidewalkLeft && a.sidewalkRight === b.sidewalkRight &&
+    a.look === b.look;
+}
+
+/** A digest of what a road looks like beyond its widths (materials, flush footways); 0 for the class's own. */
+function lookDigest(rt: RoadType): number {
+  if (!rt.materials && !rt.flushLeft && !rt.flushRight && !rt.medianFlush) return 0;
+  return new Digest().addText(JSON.stringify(rt.materials ?? null)).add(rt.flushLeft ? 1 : 0).add(rt.flushRight ? 1 : 0)
+    .add(rt.medianFlush ? 1 : 0).value() || 1;
 }
 
 /** The ground under a road: the dilated ceiling and the designed grade line (see the stations step). */

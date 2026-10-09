@@ -28,11 +28,12 @@ const LOOKAHEAD = 5;
  */
 export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
   const body = bodyClassOfArchetype(v.archetype);
+  const shape = v.archetype.shape;
   if (v.destination && w.lanelet(v.lanelet)?.kind === 'link') {
     // The trip is planned over the whole carriageway, lane changes
     // included (`drive/tactical.ts`), so the lane the car is in never decides
     // which way it can go.
-    const plan = planTrip(w, v.lanelet, v.s, v.destination, body);
+    const plan = planTrip(w, v.lanelet, v.s, v.destination, body, true, shape);
     if (plan) {
       v.desiredLane = plan.changeTo;
       if (plan.changeTo) v.movementIntent = plan.intent;
@@ -45,7 +46,7 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
         // No way on from this lane towards the goal: whatever exit it has is
         // the route until the change lands, and the change stays wanted.
         const own = w.graph.exitsOf(v.lanelet).filter((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body);
-        const pick = own.length ? chooseExit(w, own, body, new Set([v.lanelet])) : null;
+        const pick = own.length ? chooseExit(w, own, body, new Set([v.lanelet]), shape) : null;
         const conn = pick ? w.connector(pick) : undefined;
         if (!pick || !conn) return null;
         v.route = [v.lanelet, pick, conn.toLane];
@@ -68,7 +69,8 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
     // moving on legal roads until a reachable trip can be assigned again.
     if (!trip) v.destination = null;
   }
-  const own = w.graph.exitsOf(v.lanelet).filter((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body);
+  const own = w.graph.exitsOf(v.lanelet).filter((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body &&
+    w.graph.laneUsable(w.connector(id)!.toLane, shape));
 
   // Lane discipline makes each turn legal from exactly one lane, so the choice
   // of MOVEMENT has to be made over the whole carriageway and the choice of
@@ -79,10 +81,11 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
   // is already settled never acquires one, so nothing re-decides underneath a
   // driver who has a plan — that oscillation is what makes discretionary lane
   // changing unshippable.
-  const siblings = w.graph.siblingLanes(v.lanelet);
+  // Only lanes it may change into: across dashed lines, not into a bus lane (docs/VIAS.md V4).
+  const siblings = w.graph.changeTargets(v.lanelet, shape);
   const union = siblings.length
     ? [...own, ...siblings.flatMap((id: LaneletId) => w.graph.exitsOf(id))]
-      .filter((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body)
+      .filter((id) => (w.connector(id)?.maxBodyClass ?? -1) >= body && w.graph.laneUsable(w.connector(id)!.toLane, shape))
     : own;
 
   const existingIntent = v.movementIntent ? w.connector(v.movementIntent) : undefined;
@@ -90,7 +93,7 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
       existingIntent.maxBodyClass >= body &&
       (existingIntent.fromLane === v.lanelet || siblings.includes(existingIntent.fromLane))
     ? existingIntent.id
-    : union.length ? chooseExit(w, union, body, new Set([v.lanelet])) : null;
+    : union.length ? chooseExit(w, union, body, new Set([v.lanelet]), shape) : null;
   const wantedConnector = wanted === null ? null : w.connector(wanted);
   v.movementIntent = wantedConnector?.id ?? null;
   if (wantedConnector && wantedConnector.fromLane !== v.lanelet) {
@@ -104,7 +107,7 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
   // movement then; if it never lands, this fallback is what the vehicle drives.
   if (!own.length) return null;
   const best = wantedConnector?.fromLane === v.lanelet
-    ? wantedConnector.id : chooseExit(w, own, body, new Set([v.lanelet]));
+    ? wantedConnector.id : chooseExit(w, own, body, new Set([v.lanelet]), shape);
   if (!best) return null;
 
   const conn = w.connector(best);
@@ -118,12 +121,13 @@ export function planFrom(w: SimWorld, v: Vehicle): LaneletId | null {
 /** Grows a route forward until it reaches the horizon or a dead end. */
 export function extend(w: SimWorld, v: Vehicle): void {
   const body = bodyClassOfArchetype(v.archetype);
+  const shape = v.archetype.shape;
   if (v.destination) {
     const tail = v.route[v.route.length - 1];
     if (tail === v.destination) return;
     const lane = tail ? w.lanelet(tail) : undefined;
     if (lane?.kind === 'link') {
-      const plan = planTrip(w, tail!, 0, v.destination, body);
+      const plan = planTrip(w, tail!, 0, v.destination, body, true, shape);
       // A change due on the tail lane is planned when the car gets there: the
       // route ends at that lane, runs out, and `planFrom` is asked again.
       if (plan) {
@@ -150,7 +154,7 @@ export function extend(w: SimWorld, v: Vehicle): void {
     const exits = w.graph.exitsOf(tail);
     if (!exits.length) break;
 
-    const pick = chooseExit(w, exits, body);
+    const pick = chooseExit(w, exits, body, undefined, shape);
     if (!pick) break;
     const conn = w.connector(pick);
     if (!conn) break;
@@ -167,12 +171,14 @@ function chooseExit(
   exits: readonly string[],
   body: ReturnType<typeof bodyClassOfArchetype>,
   visited = new Set<LaneletId>(),
+  /** The vehicle's shape: a bus lane is buses only (docs/VIAS.md V4). */
+  shape = 'car',
 ): string | null {
   const scored: { id: string; cost: number }[] = [];
 
   for (const cid of exits) {
     const conn = w.connector(cid);
-    if (!conn || conn.maxBodyClass < body) continue;
+    if (!conn || conn.maxBodyClass < body || !w.graph.laneUsable(conn.toLane, shape)) continue;
     const out = w.lanelet(conn.toLane);
     if (!out || w.rt(conn.toLane).ghost || visited.has(out.id)) continue;
     const cost = routeCost(w, cid, body, visited, LOOKAHEAD);

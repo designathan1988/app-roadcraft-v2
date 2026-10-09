@@ -1,11 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Digest } from '@core/digest';
-import type { Ring } from '@core/ring';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import type { SegmentId } from '@world/ids';
-import { LaneletGraph } from '@world/lanelets';
+import { laneletLines, networkLines } from './support/roadDigest';
 import { FLAT_GROUND, type RoadElevation, buildRoadElevation } from '@world/elevation';
 import { TerrainIndex, sampleTerrainHeight } from '@world/terrain';
 import { commitRoadPath, moveNodeChecked } from '@editor/commit';
@@ -25,51 +23,6 @@ import { generate, loadFixtures } from '../fuzz/support/runner';
  * op sequences (the editor's own commands), every recorded fuzz fixture, and
  * the test town with the edits a player makes there.
  */
-
-const ringText = (ring: Ring): number => {
-  const d = new Digest();
-  for (const p of ring.flatten()) d.add(p.x).add(p.y);
-  return d.value();
-};
-
-/** Everything the network derived, one line per piece, so a difference names the piece. */
-function networkLines(net: Network): string[] {
-  const out: string[] = [];
-  const segs = [...net.ribbons.keys()].sort((a, b) => a - b);
-  for (const id of segs) {
-    const r = net.ribbons.get(id)!;
-    const d = new Digest().add(r.typeIndex).addText(r.direction).add(r.dashOrigin).addAll(r.full.xy)
-      .addText(JSON.stringify(r.road));
-    for (const level of Object.keys(r.centre).map(Number).sort((a, b) => a - b)) {
-      d.add(level).addAll(r.centre[level]!.xy).add(ringText(r.rings[level]!));
-    }
-    out.push(`ribbon ${id} ${d.value()}`);
-    out.push(`trims ${id} ${JSON.stringify(net.trims.get(id) ?? null)}`);
-  }
-  for (const node of [...net.junctions.keys()].sort((a, b) => a - b)) {
-    for (const [level, j] of [...net.junctions.get(node)!].sort((a, b) => a[0] - b[0])) {
-      const d = new Digest().add(ringText(j.ring)).addAll(j.trims).add(j.transition ? 1 : 0);
-      for (const t of j.tongues) d.add(ringText(t));
-      for (const r of j.rings) d.add(ringText(r));
-      for (const leg of j.legs) d.add(leg.seg).add(leg.hw).add(leg.origin.x).add(leg.origin.y).add(leg.dir.x).add(leg.dir.y);
-      out.push(`junction ${node}/${level} ${d.value()}`);
-    }
-  }
-  out.push(`plates ${JSON.stringify([...net.plateReach].sort())}`);
-  out.push(`transitions ${[...net.transitions].sort((a, b) => a - b).join(',')}`);
-  out.push(`impossible ${JSON.stringify([...net.impossible].sort((a, b) => a[0] - b[0]))}`);
-  out.push(`squeezed ${JSON.stringify([...net.squeezed].sort((a, b) => a[0] - b[0]))}`);
-  return out;
-}
-
-function laneletLines(doc: RoadDoc, net: Network): string[] {
-  const graph = new LaneletGraph();
-  graph.build(doc, net);
-  return [...graph.lanelets.values()].map((l) => {
-    const d = new Digest().addText(l.kind).addAll(l.centre.xy).add(l.length).add(l.speedLimit).add(l.controlled ? 1 : 0);
-    return `lanelet ${l.id} ${l.segment ?? '-'} ${l.node ?? '-'} ${d.value()}`;
-  }).sort();
-}
 
 function elevationLines(doc: RoadDoc, elevation: RoadElevation): string[] {
   const out: string[] = [];

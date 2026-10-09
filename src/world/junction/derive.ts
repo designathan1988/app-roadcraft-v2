@@ -80,11 +80,12 @@ export function deriveJunctionLevel(
     const i = index.get(bi.seg), j = index.get(bj.seg);
     if (i === undefined || j === undefined) return null;
     const li = legs[i] as Leg, lj = legs[j] as Leg;
-    const di = li.hw - (baseLeg.get(li.seg) as Leg).hw;
-    const dj = lj.hw - (baseLeg.get(lj.seg) as Leg).hw;
+    // Leg i's left side and leg j's right side, each at its own width.
+    const di = li.hwLeft - (baseLeg.get(li.seg) as Leg).hwLeft;
+    const dj = lj.hwRight - (baseLeg.get(lj.seg) as Leg).hwRight;
     // The two boundary lines at this level, and where they meet.
-    const ai = addScaled(li.origin, li.nrm, li.hw);
-    const aj = addScaled(lj.origin, lj.nrm, -lj.hw);
+    const ai = addScaled(li.origin, li.nrm, li.hwLeft);
+    const aj = addScaled(lj.origin, lj.nrm, -lj.hwRight);
     const hit = lineLine(ai, li.dir, aj, lj.dir, SIN_EPS);
     const x = hit?.point ?? null;
 
