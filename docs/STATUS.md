@@ -81,7 +81,10 @@ o jogo a cada edição.
   (`world/parking.ts`), e ciclofaixas.
 - Nada é gerado sozinho nas ruas nem no terreno (ordem do jogador de
   2026-10-05). Mobiliário, árvores de rua e postes só pela ferramenta de
-  paisagismo e pela de postes, que ficam só nas calçadas.
+  paisagismo e pela de postes, que ficam só nas calçadas. **Revogada para
+  vias novas em 2026-10-09** (sistema de vias, `docs/VIAS.md`): quando a
+  etapa V7 entrar, via nova sai com o conjunto de mobiliário escolhido
+  (padrão "completo"); vias existentes não mudam sozinhas.
 - Pincel de terreno com rios e túneis; geologia por região (granito, arenito,
   basalto) e relevos (mesa, cânion, escarpa, pão de açúcar); mapas novos
   nascem num relevo natural.

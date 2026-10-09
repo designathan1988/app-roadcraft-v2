@@ -39,6 +39,15 @@ its own `CLAUDE.md` with its couplings and traps.
   step. Publish to both remotes, `git push v3 master`
   (github.com/designathan1988/app-roadcraft-v3) and `git push origin master`
   (app-roadcraft-v2); never force-push.
+  **Exception (the player, 2026-10-09):** the road system (docs/VIAS.md) is built
+  by a background agent in a worktree on branch `vias`. It never commits to
+  `master` nor pushes; the main session merges each stage after checking it in
+  the game and the player's approval. The hot files (`main.ts`, `world/doc.ts`,
+  `render/roadSurfaces.ts`, `world/markings.ts`, `world/lanelets.ts`,
+  `render/agents.ts`) are edited by the agent only in integration commits it
+  declares, and by the main session meanwhile only to fix a defect, announced.
+  A heavy job (full suite, fuzz, build, probe) waits while `docs/.heavy-lock`
+  exists and creates it while it runs.
 - **After a compaction** read the memory index
   (`C:/Users/jonathanrodriguesti/.claude/projects/C--Codex-Shared-Roadcraft/memory/MEMORY.md`),
   `docs/PLANO.md` and `docs/STATUS.md` before anything else. Standing rules go
