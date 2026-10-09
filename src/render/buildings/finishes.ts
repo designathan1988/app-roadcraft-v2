@@ -474,7 +474,17 @@ function applyWeathering(material: MeshStandardMaterial, finish: Finish): void {
           // Paint gone in a few small patches, the darker render showing.
           float peel = smoothstep(0.8 - d * 0.12, 0.83 - d * 0.12, dNoise(w * 1.3 + 7.0));
           if (wall) diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.68, 0.62), peel * d);`}
+        }`)
+      // The relief faded as a texel shrinks under a pixel: a normal map does
+      // not average down its mips like colour does, so from the middle
+      // distance each pixel caught a random bump and the walls sparkled
+      // (specular aliasing; Toksvig, "Mipmapping Normal Maps"). Full relief
+      // up close, none once a texel is a third of a pixel.
+      .replace('mapN.xy *= normalScale;', `mapN.xy *= normalScale;
+        {
+          vec2 texelsPerPixel = fwidth(vNormalMapUv) * vec2(textureSize(normalMap, 0));
+          mapN.xy *= 1.0 - smoothstep(0.6, 3.0, max(texelsPerPixel.x, texelsPerPixel.y));
         }`);
   };
-  material.customProgramCacheKey = () => `building-weathering-${finish}`;
+  material.customProgramCacheKey = () => `building-weathering-v2-${finish}`;
 }

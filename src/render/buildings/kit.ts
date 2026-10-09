@@ -464,7 +464,17 @@ export function createBuildingKit(): BuildingKit {
     float furniture = step(0.5, fract(lot * 17.0)) * step(abs(xx - 0.55), 0.22) * step(yy, 0.42);
     room = mix(room, vec3(0.28, 0.22, 0.18), furniture * 0.85);
     diffuseColor.rgb = mix(diffuseColor.rgb, room, 0.55);
-  }`)
+  }
+  // A pane a few pixels across or less: its own room, its dark or light
+  // glass and its own reflection averaged into one quiet tone. Each pane
+  // drawn as its own random shade was the "chuvisco" over every facade from
+  // the middle distance out (the player, 2026-10-09). Measured on screen
+  // (\`vPane\` spans the pane), so it holds at any zoom and lens.
+  float paneTiny = smoothstep(0.12, 0.45, max(fwidth(vPane.x), fwidth(vPane.y)));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.45, 0.47), paneTiny);`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+  roughnessFactor = mix(roughnessFactor, 0.55, paneTiny);`)
+        .replace('#include <envmap_physical_pars_fragment>', `#include <envmap_physical_pars_fragment>`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
   // Not every occupied room shows its light (blinds, a lamp in the next
   // room): about a third stay dark, and the lit ones range from a dim lamp
@@ -476,7 +486,7 @@ export function createBuildingKit(): BuildingKit {
   vec3 roomTint = mix(vec3(1.0), vec3(0.62, 0.78, 1.15), step(0.9, fract(vRoomLot * 3.71)));
   totalEmissiveRadiance *= roomLit * roomTint;`);
     };
-    glassy.customProgramCacheKey = () => `room-lights-awake-interior-v2-${kind}`;
+    glassy.customProgramCacheKey = () => `room-lights-awake-interior-v3-${kind}`;
   }
   const shell = createFinishMaterials();
   const ghostShell = new MeshStandardMaterial({
