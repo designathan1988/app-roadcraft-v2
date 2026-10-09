@@ -15,6 +15,9 @@ import { pedestrianAffectsSpan, reservationCoversCrossing } from './intersection
  * sentinels precisely so that a regression announces itself instead of
  * degrading quietly.
  */
+/** When demand was first seen waiting at each group's red, per controller (`groupStarved`). */
+const DEMAND_ONSET = new WeakMap<SignalController, Map<number, number>>();
+
 export function runAudit(w: SimWorld, level: 'cheap' | 'full'): AuditIssue[] {
   const out: AuditIssue[] = [];
   const tick = w.clock.tick;
@@ -39,15 +42,27 @@ export function runAudit(w: SimWorld, level: 'cheap' | 'full'): AuditIssue[] {
     // starvation against that legal worst-case cycle, not the nominal target
     // cycle, otherwise a healthy long platoon falsely starves later demand.
     const limit = SIGNAL.starvationCycles * maxSignalCycle(c) + maxDark;
+    // Starved is demand left waiting, not a group long unused: measured from
+    // when it was last served or, later, from when somebody came to wait at
+    // its red (SUMO's actuated lights count how long a detector's demand
+    // has gone unserved, `inactive-threshold`). Counted from the last
+    // service alone, a group nobody used for five minutes was "starved" the
+    // second its first car arrived (the test city, 300 cars: "red for 324 s",
+    // served a few seconds later).
+    let onsets = DEMAND_ONSET.get(c);
+    if (!onsets) DEMAND_ONSET.set(c, onsets = new Map());
     for (const g of c.plan.groups) {
       const last = c.lastServed.get(g);
       if (last === undefined) continue;
-      const red = (tick - last) * DT;
       const demanded =
         signalDeps.demandOn(c.node, [g]) ||
         signalDeps.reservationDemandOn(c.node, [g]);
-      if (demanded && red > limit && signalStateFor(c, g) === 'red') {
-        out.push(issue('groupStarved', tick, `${c.node}/${g}`, `red for ${red.toFixed(1)}s`));
+      if (!demanded || signalStateFor(c, g) !== 'red') { onsets.delete(g); continue; }
+      let since = onsets.get(g);
+      if (since === undefined) onsets.set(g, since = tick);
+      const red = (tick - Math.max(last, since)) * DT;
+      if (red > limit) {
+        out.push(issue('groupStarved', tick, `${c.node}/${g}`, `red for ${red.toFixed(1)}s with demand waiting`));
       }
     }
   }
