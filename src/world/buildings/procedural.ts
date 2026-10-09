@@ -1,4 +1,5 @@
 import type { Rng } from '@core/rng';
+import type { Vec2 } from '@core/vec2';
 import { m } from '../units';
 import type { BlueprintBody } from './blueprints';
 import { Model, mat } from './cityBuildings';
@@ -144,6 +145,12 @@ const BLOCK_WALLS: readonly MaterialSpec[] = [
   mat('plaster', 0xb9cbd8), mat('stucco', 0xd8b49a), mat('plaster', 0xa9bfa4), mat('plaster', 0xe3b9a0),
   mat('ceramic', 0xe8e4dc), mat('ceramic', 0xb7c4cc), mat('ceramic', 0x9aa6a0), mat('ceramic', 0xd8c8a8),
   mat('ceramic', 0xc4b29c), mat('ceramic', 0x8e9aa4), mat('concrete', 0xbcbab3), mat('concrete', 0xa9aaa5),
+  // Stronger paints and tile claddings (pastilhas) of Brazilian blocks: so a
+  // downtown is not all beige - terracotta, salmon, ochre, sea green, blue,
+  // slate, graphite, wine.
+  mat('ceramic', 0xc8735a), mat('plaster', 0xe39a7a), mat('plaster', 0xd9a84e), mat('ceramic', 0x6f9f8f),
+  mat('ceramic', 0x5f86a8), mat('plaster', 0x7d8c99), mat('ceramic', 0x4a5258), mat('plaster', 0x9c4f4a),
+  mat('ceramic', 0x3f6f7a), mat('plaster', 0xb7a27a), mat('ceramic', 0x8a6f9a), mat('plaster', 0x6b7f5a),
 ];
 const BRICKS: readonly MaterialSpec[] = [
   mat('brick', 0xa4563f), mat('brick', 0x8c4a35), mat('brick', 0xb86a4a), mat('brick', 0x9a6a52), mat('brick', 0xc08060),
@@ -161,6 +168,10 @@ const BASES: readonly MaterialSpec[] = [
 const GLASSY: readonly MaterialSpec[] = [
   mat('glass', 0x8fb0c0), mat('glass', 0x6f8f9f), mat('glass', 0x9fb8b0), mat('panel', 0x8f9ba5), mat('glass', 0x7d97b5),
   mat('panel', 0xb4b8b6), mat('glass', 0x5d7280), mat('glass', 0x88a39a), mat('panel', 0x6b7780), mat('glass', 0xa7b5bd),
+];
+/** Office glass beyond the blue-greys: green, bronze, deep blue, teal, champagne, smoke. */
+const OFFICE_GLASS: readonly MaterialSpec[] = [
+  mat('glass', 0x4f7f6a), mat('glass', 0x8a6f4f), mat('glass', 0x2f4f7f), mat('glass', 0x3f7f86), mat('glass', 0xb8a68a), mat('glass', 0x3a3f45),
 ];
 const SHEDS: readonly MaterialSpec[] = [
   mat('panel', 0x8f9ba5), mat('panel', 0xa3a9a6), mat('panel', 0x9aa49a), mat('metal', 0xb7b2a6), mat('panel', 0x7f8b8f),
@@ -199,7 +210,8 @@ function houseScheme(rng: Rng, character: number | undefined): Scheme {
   const wall = roll < 0.12 ? { ...pickOf(rng, BRICKS), colour: nudge(pickOf(rng, BRICKS).colour, rng, 0.6) }
     : roll < 0.18 ? mat('wood', nudge(0x9c6b43, rng, 1.5)) : roll < 0.24 ? mat('ceramic', colour) : mat(rng.float() < 0.7 ? 'plaster' : 'stucco', colour);
   const light = lightness(wall.colour) > 0.72;
-  const trim = light && rng.float() < 0.35 ? pickOf(rng, [TRIMS[2]!, TRIMS[3]!]) : rng.float() < 0.8 ? TRIMS[0]! : pickOf(rng, TRIMS);
+  // White frames most of the time; else dark, wood, or a coloured frame (blue, green, red) as Brazilian houses paint them.
+  const trim = light && rng.float() < 0.45 ? pickOf(rng, [TRIMS[2]!, TRIMS[3]!, ...STYLE_TRIMS.house.slice(2)]) : rng.float() < 0.7 ? TRIMS[0]! : pickOf(rng, [...TRIMS, ...STYLE_TRIMS.house]);
   const accent = mat('plaster', nudge(pickOf(rng, pickOf(rng, HOUSE_FAMILIES)), rng));
   const roof = { ...pickOf(rng, ROOF_TILES) };
   return { wall, trim, roof: { ...roof, colour: nudge(roof.colour, rng, 0.5) }, base: rng.float() < 0.4 ? pickOf(rng, BASES) : null, accent };
@@ -217,7 +229,54 @@ function blockScheme(rng: Rng, character: number | undefined, brick: boolean): S
   };
 }
 
-type Style = 'classic' | 'modern' | 'deco' | 'brick' | 'house';
+type Style = 'classic' | 'modern' | 'deco' | 'brick' | 'house' | 'tropical' | 'pastel' | 'glass';
+
+/**
+ * A STYLE is a whole look, not a colour: its walls, its window frames and
+ * railings (drawn in the trim's colour), the windows it uses. Seven of them
+ * for blocks, so two neighbours differ in kind, not only in shade:
+ * - classic: rendered walls, white frames, sash and French windows, cornices;
+ * - modern: concrete, render or tile, graphite or aluminium frames, wide
+ *   windows and loggias, slab lines;
+ * - brick: exposed brick, white, green or black frames;
+ * - deco: stone and cream render, bronze, vertical piers;
+ * - tropical: the Brazilian modern block - ceramic tile cladding in blue,
+ *   green, terracotta or ochre, ribbon windows and balconies;
+ * - pastel: strong paints (yellow, pink, sky blue, mint), white frames;
+ * - glass: a dark glass skin, black frames, wide panes.
+ */
+const STYLE_TRIMS: Readonly<Record<Style, readonly MaterialSpec[]>> = {
+  classic: [mat('plaster', 0xf7f5ef), mat('plaster', 0xeee6d2)],
+  modern: [mat('metal', 0x2e3134), mat('metal', 0xb9bcbd), mat('metal', 0x4a4f53)],
+  brick: [mat('plaster', 0xf7f5ef), mat('metal', 0x2f4a3a), mat('metal', 0x26282a)],
+  deco: [mat('metal', 0x6b5233), mat('plaster', 0xeee6d2), mat('metal', 0x3b3d3f)],
+  house: [mat('plaster', 0xf7f5ef), mat('wood', 0x7a5536), mat('plaster', 0x2f5a7a), mat('plaster', 0x3d6b45), mat('plaster', 0x8a2f2f)],
+  tropical: [mat('plaster', 0xf7f5ef), mat('metal', 0x26282a), mat('metal', 0xb9bcbd)],
+  pastel: [mat('plaster', 0xf7f5ef), mat('plaster', 0xffffff)],
+  glass: [mat('metal', 0x1e2022), mat('metal', 0x8e9396)],
+};
+const TROPICAL_TILES: readonly number[] = [0x3f78a8, 0x4f9a86, 0xc0633f, 0xd3a03a, 0x2f6f8f, 0x8fb9a0, 0xb84a3a, 0x6f8fb8, 0xe0c27a, 0x5a8a5a];
+const PASTELS: readonly number[] = [0xf2d56b, 0xf0a8b8, 0x9ccbe8, 0xa8dcb8, 0xf4b98a, 0xc9b3e0, 0xe8e07a, 0x8fd0c8, 0xf28f7a, 0xb8d88a];
+/** The wall a style asks for, or null to keep the block's own scheme. */
+function styleWall(rng: Rng, style: Style): MaterialSpec | null {
+  switch (style) {
+    case 'tropical': return mat('ceramic', nudge(pickOf(rng, TROPICAL_TILES), rng, 0.6));
+    case 'pastel': return mat('plaster', nudge(pickOf(rng, PASTELS), rng, 0.6));
+    case 'glass': { const g = pickOf(rng, GLASSY); return { ...g, colour: nudge(g.colour, rng, 0.5) }; }
+    default: return null;
+  }
+}
+/** The windows a style fills its upper floors with. */
+const STYLE_FILLS: Readonly<Record<Style, readonly BayComponent[]>> = {
+  classic: ['sashWindow', 'window', 'frenchWindow', 'balcony'],
+  modern: ['balcony', 'wideWindow', 'ribbon', 'frenchWindow'],
+  brick: ['window', 'sashWindow', 'balcony', 'frenchWindow'],
+  deco: ['window', 'sashWindow', 'bayWindow'],
+  house: ['window', 'sashWindow', 'frenchWindow'],
+  tropical: ['ribbon', 'balcony', 'wideWindow', 'balcony'],
+  pastel: ['sashWindow', 'frenchWindow', 'balcony', 'window'],
+  glass: ['wideWindow', 'ribbon'],
+};
 
 // ---------------------------------------------------------------- facade dress
 
@@ -266,6 +325,9 @@ function dressFacades(body: BlueprintBody, style: Style, rng: Rng, entrance: num
     deco: { windowWidth: 0.38, windowHeight: 0.7, sill: m(0.8) },
     brick: { windowWidth: between(rng, 0.45, 0.55), windowHeight: 0.6, sill: m(0.85) },
     house: { windowWidth: between(rng, 0.38, 0.6), windowHeight: between(rng, 0.5, 0.6), sill: m(1) },
+    tropical: { windowWidth: between(rng, 0.7, 0.9), windowHeight: between(rng, 0.45, 0.55), sill: m(0.9) },
+    pastel: { windowWidth: between(rng, 0.4, 0.5), windowHeight: between(rng, 0.6, 0.68), sill: m(0.85) },
+    glass: { windowWidth: 0.92, windowHeight: 0.78, sill: m(0.25) },
   };
   const proportion = proportions[style];
   for (const v of solid) {
@@ -298,9 +360,9 @@ function dressFacades(body: BlueprintBody, style: Style, rng: Rng, entrance: num
     const upper = v.storeys.length;
     if (upper < 2 && style === 'house') continue;
     // String course over the ground floor, on the street side.
-    if (v.base === 0 && upper >= 2 && style !== 'modern') band(body, v, 0, levelZ(body, 1) - m(0.2), m(0.25), m(0.22));
+    if (v.base === 0 && upper >= 2 && style !== 'modern' && style !== 'glass') band(body, v, 0, levelZ(body, 1) - m(0.2), m(0.25), m(0.22));
     // Slab edges on a modern front: a line at every floor (a few, the budget is shared).
-    if (style === 'modern' && upper >= 3) {
+    if ((style === 'modern' || style === 'tropical' || style === 'glass') && upper >= 3) {
       for (let s = 1; s < Math.min(upper, 7); s++) band(body, v, 0, levelZ(body, v.base + s) - m(0.15), m(0.3), m(0.2));
     }
     // The cornice: on every face of a flat-roofed block of two floors or more.
@@ -313,7 +375,7 @@ function dressFacades(body: BlueprintBody, style: Style, rng: Rng, entrance: num
     if (upper >= 4 && v.w >= m(9)) {
       const across = bayCount(v.w);
       const lo = v.base === 0 ? 1 : 0;
-      if (style === 'modern' || style === 'brick') {
+      if (style === 'modern' || style === 'brick' || style === 'tropical') {
         // Recessed loggias, every second, third or fourth column.
         const every = rng.int(2, 4);
         const reliefs = [];
@@ -384,6 +446,23 @@ function roofShape(v: Volume, rng: Rng, ridgeToStreet = rng.float() < 0.33): voi
   if (v.roof === 'flat' || v.roof === 'terrace' || v.roof === 'sawtooth') return;
   v.pitch = Math.round(between(rng, 18, 38));
   if (v.roof === 'gable' || v.roof === 'hip') v.ridge = ridgeToStreet ? 'y' : 'x';
+}
+
+/**
+ * A tower's plan, normalized to its block: undefined (a rectangle) half the
+ * time, else a chamfered octagon or a round drum of 16 sides, counter-clockwise.
+ */
+function towerShape(rng: Rng): Vec2[] | undefined {
+  const r = rng.float();
+  if (r < 0.5) return undefined;
+  if (r < 0.85) {
+    const c = between(rng, 0.14, 0.26);
+    return [{ x: c, y: 0 }, { x: 1 - c, y: 0 }, { x: 1, y: c }, { x: 1, y: 1 - c }, { x: 1 - c, y: 1 }, { x: c, y: 1 }, { x: 0, y: 1 - c }, { x: 0, y: c }];
+  }
+  return Array.from({ length: 16 }, (_, k) => {
+    const a = -Math.PI / 2 + (k / 16) * Math.PI * 2;
+    return { x: 0.5 + 0.5 * Math.cos(a), y: 0.5 + 0.5 * Math.sin(a) };
+  });
 }
 
 // ---------------------------------------------------------------- the kinds
@@ -519,12 +598,12 @@ function house(rng: Rng, env: Envelope): MadeBuilding {
  * while it is more than a few floors, each step a block of its own.
  */
 function setbacks(model: Model, rng: Rng, x: number, y: number, w: number, d: number, base: number, floors: number,
-  spec: { fill: BayComponent; pattern?: FacadePattern; roof: RoofKind }): void {
+  spec: { fill: BayComponent; pattern?: FacadePattern; roof: RoofKind; shape?: Vec2[] }): void {
   let left = floors, at = base, bx = x, by = y, bw = w, bd = d;
   const scale = between(rng, 0.75, 0.9);
   for (let step = 0; left > 0; step++) {
     const part = left > 6 && step < 3 ? Math.max(3, Math.round(left * pickOf(rng, [0.4, 0.6]))) : left;
-    model.block({ x: bx, y: by, w: bw, d: bd, base: at, storeys: part, fill: spec.fill, ...pat(spec.pattern), roof: part === left ? spec.roof : 'terrace' });
+    model.block({ x: bx, y: by, w: bw, d: bd, base: at, storeys: part, fill: spec.fill, ...pat(spec.pattern), ...(spec.shape ? { shape: spec.shape } : {}), roof: part === left ? spec.roof : 'terrace' });
     at += part;
     left -= part;
     const nw = half(Math.max(8, bw * scale)), nd = half(Math.max(8, bd * scale));
@@ -536,15 +615,24 @@ function setbacks(model: Model, rng: Rng, x: number, y: number, w: number, d: nu
 function flats(rng: Rng, env: Envelope, high: boolean): MadeBuilding {
   const { W, D } = env;
   const fn: BuildingFunction = high ? 'residentialTower' : 'apartments';
-  const style = pickOf(rng, ['classic', 'modern', 'brick', 'deco', 'modern'] as const satisfies readonly Style[]);
+  const style = pickOf(rng, (high
+    ? ['classic', 'modern', 'brick', 'deco', 'tropical', 'tropical', 'pastel', 'glass', 'modern']
+    : ['classic', 'modern', 'brick', 'deco', 'tropical', 'pastel', 'pastel', 'classic']) as readonly Style[]);
   const s = blockScheme(rng, env.character, style === 'brick');
-  const wall = style === 'modern' && rng.float() < 0.4 ? { ...pickOf(rng, HARD) } : s.wall;
-  const model = new Model(fn, 'residential', rng.int(0, 7)).heights(between(rng, 3.8, 4.5), between(rng, 2.9, 3.1)).look(wall, s.roof, s.trim);
+  // A tower draws its skin from every family (render, tile, brick, stone,
+  // concrete), its own: a downtown of one beige was the complaint. A style
+  // with walls of its own (tile, pastel, glass) wears those.
+  const own = styleWall(rng, style);
+  const towerSkin = high && !own && style !== 'brick' ? pickOf(rng, [...BLOCK_WALLS, ...HARD]) : null;
+  const wall = own ?? (towerSkin ? { ...towerSkin, colour: nudge(towerSkin.colour, rng) } : style === 'modern' && rng.float() < 0.4 ? { ...pickOf(rng, HARD) } : s.wall);
+  const trim = pickOf(rng, STYLE_TRIMS[style]);
+  const model = new Model(fn, 'residential', rng.int(0, 7)).heights(between(rng, 3.8, 4.5), between(rng, 2.9, 3.1)).look(wall, s.roof, trim);
   // Next to low houses a block keeps nearer their height (a step, not a cliff).
   const near = env.neighbours?.length ? Math.max(...env.neighbours) : null;
   const cap = near !== null && !high ? Math.max(3, near + 3) : Infinity;
-  const floors = high ? rng.int(9, 22) : Math.min(cap, rng.int(3, 7));
-  const fill = pickOf(rng, ['balcony', 'window', 'frenchWindow', 'balcony', 'sashWindow', 'wideWindow', 'bayWindow'] as const satisfies readonly BayComponent[]);
+  // One tower in eight a landmark, far above the rest: a skyline has peaks.
+  const floors = high ? (rng.float() < 0.125 ? rng.int(30, 44) : rng.int(8, 24)) : Math.min(cap, rng.int(3, 7));
+  const fill = pickOf(rng, STYLE_FILLS[style]);
   const ground = pickOf(rng, ['window', 'shopfront', 'window', 'wideWindow'] as const satisfies readonly BayComponent[]);
   const pattern = rng.float() < 0.25 ? pickOf(rng, ['residential', 'gallery'] as const satisfies readonly FacadePattern[]) : undefined;
   const roof = pickOf(rng, ['flat', 'terrace', 'flat', 'hip'] as const satisfies readonly RoofKind[]);
@@ -553,12 +641,58 @@ function flats(rng: Rng, env: Envelope, high: boolean): MadeBuilding {
   const barD = half(Math.min(d, between(rng, 12, 15)));
   let form: string;
   if (high) {
+    // Towers in the forms a Brazilian skyline is made of: a slab on a podium,
+    // stepped, an L, two towers on one podium, a tower
+    // with a recessed penthouse crown - so a downtown is not a field of one box.
+    // The base is the tower's own footprint with a narrow ledge, in the
+    // tower's own skin: a wide podium under a narrow tower, or a base in
+    // another paint, read as two buildings (the player, 2026-10-09). What
+    // the tower does not cover of a deep lot is left to the lot (yard, cars).
     const podium = rng.int(1, 2);
-    model.block({ x: 0, y: 0, w, d, storeys: podium, ground, fill: 'window', roof: 'terrace' });
-    const inset = half(between(rng, 1.5, 3));
+    const inset = half(between(rng, 0.5, 1.2));
     const tw = Math.max(8, w - 2 * inset), td = Math.max(8, Math.min(d - 2 * inset, 22));
-    if (rng.float() < 0.5) { form = 'tower:setback'; setbacks(model, rng, inset, inset, tw, td, podium, floors, { fill, ...pat(pattern), roof }); }
-    else { form = 'tower'; model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: floors, fill, ...pat(pattern), roof }); }
+    const pd = Math.min(d, td + 2 * inset);
+    model.block({ x: 0, y: 0, w, d: pd, storeys: podium, ground, fill: pickOf(rng, ['window', 'wideWindow', 'shopfront'] as const), roof: 'terrace' });
+    if (d - pd >= 2) free.push({ x0: 0, y0: pd, x1: w, y1: d });
+    const forms = ['box', 'setback', 'crown', 'crown'] as string[];
+    if (tw >= 14) forms.push('ell');
+    if (tw >= 26) forms.push('twin', 'twin');
+    const kind = pickOf(rng, forms);
+    // The tower's plan: a plain rectangle, a chamfered octagon (the cut
+    // corners of so many Brazilian towers) or a round drum, kept up its height.
+    const shape = kind === 'ell' ? undefined : towerShape(rng);
+    const skin = { ...pat(pattern), ...(shape ? { shape } : {}) };
+    const shapedRoof: RoofKind = shape ? 'flat' : roof;
+    form = `tower:${kind}${shape ? `:${shape.length}` : ''}`;
+    switch (kind) {
+      case 'setback': setbacks(model, rng, inset, inset, tw, td, podium, floors, { fill, ...skin, roof: shapedRoof }); break;
+      case 'ell': {
+        const legW = half(Math.max(8, tw * between(rng, 0.38, 0.5)));
+        const left = rng.float() < 0.5;
+        model.block({ x: inset, y: inset, w: tw, d: half(Math.max(8, td * 0.5)), base: podium, storeys: floors, fill, ...pat(pattern), roof });
+        model.block({ x: left ? inset : inset + tw - legW, y: inset + half(Math.max(8, td * 0.5)), w: legW, d: half(Math.max(4, td * 0.5)), base: podium,
+          storeys: Math.max(4, floors - rng.int(0, 4)), fill, roof });
+        break;
+      }
+      case 'twin': {
+        const gap = half(between(rng, 3, 5));
+        const each = half((tw - gap) / 2);
+        const other = Math.max(6, floors + pickOf(rng, [-5, -3, 3, 5]));
+        model.block({ x: inset, y: inset, w: each, d: td, base: podium, storeys: floors, fill, ...skin, roof: shapedRoof });
+        model.block({ x: inset + each + gap, y: inset, w: each, d: td, base: podium, storeys: other, fill, ...skin, roof: shapedRoof });
+        break;
+      }
+      case 'crown': {
+        // The shaft, then the top floors drawn in as a penthouse, the same skin (a tower reads as ONE building).
+        const top = rng.int(1, 3);
+        model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: floors - top, fill, ...skin, roof: 'terrace' });
+        const cin = half(between(rng, 1.5, 3));
+        model.block({ x: inset + cin, y: inset + cin, w: Math.max(6, tw - 2 * cin), d: Math.max(6, td - 2 * cin), base: podium + floors - top, storeys: top,
+          fill: pickOf(rng, ['frenchWindow', 'wideWindow'] as const), roof: 'flat', ...(shape ? { shape } : {}) });
+        break;
+      }
+      default: model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: floors, fill, ...skin, roof: shapedRoof });
+    }
   } else if (d - barD >= 6 && w >= 20 && rng.float() < 0.5) {
     // A U: the street bar and two wings, the courtyard between them.
     form = 'flats:u';
@@ -592,13 +726,11 @@ function flats(rng: Rng, env: Envelope, high: boolean): MadeBuilding {
   }
   model.core('stairLift', half(w / 2 - 1.5), half(Math.min(d, 10) / 2 - 1.5), floors + (high ? 2 : 0));
   const body = model.build();
-  // A second paint: the top floor in the accent, or a wing - one block in two.
-  if (rng.float() < 0.5) {
-    const solid = body.volumes.filter((v) => !v.open);
-    const top = solid[solid.length - 1]!;
-    if (solid.length > 1) top.materials = { ...(top.materials ?? {}), wall: s.accent };
-    else top.storeys[top.storeys.length - 1]!.materials = Object.fromEntries([0, 1, 2, 3].map((k) => [k, s.accent]));
-  }
+  // A second paint only for the second building of a pair, side by side.
+  // Never on a block stacked on another (a stepped top, a tower's setback):
+  // a building in two paints, one on top of the other, read as two buildings
+  // piled up (the player, 2026-10-09).
+  if (form === 'flats:pair' && rng.float() < 0.6) body.volumes.filter((v) => !v.open)[1]!.materials = { wall: s.accent };
   for (const v of body.volumes) roofShape(v, rng);
   return finish(fn, form, body, env, rng, style, s.base, free, 'doubleDoor');
 }
@@ -609,12 +741,13 @@ function shop(rng: Rng, env: Envelope, density: 'low' | 'medium'): MadeBuilding 
   const fn = pickOf(rng, density === 'low'
     ? ['shop', 'bakery', 'pharmacy', 'snackBar', 'bar', 'shop', 'restaurant', 'supermarket'] as const satisfies readonly BuildingFunction[]
     : ['shop', 'restaurant', 'bank', 'hotel', 'gym', 'office', 'pharmacy', 'supermarket'] as const satisfies readonly BuildingFunction[]);
-  const style = pickOf(rng, ['classic', 'brick', 'modern', 'classic', 'deco'] as const satisfies readonly Style[]);
+  const style = pickOf(rng, ['classic', 'brick', 'modern', 'deco', 'pastel', 'pastel', 'tropical', 'classic'] as readonly Style[]);
   const s = blockScheme(rng, env.character, style === 'brick');
-  const model = new Model(fn, 'commercial', rng.int(0, 7)).heights(between(rng, 4, 4.6), 3.1).look(s.wall, s.roof, s.trim);
+  const shopWall = styleWall(rng, style) ?? s.wall;
+  const model = new Model(fn, 'commercial', rng.int(0, 7)).heights(between(rng, 4, 4.6), 3.1).look(shopWall, s.roof, pickOf(rng, STYLE_TRIMS[style]));
   const near = env.neighbours?.length ? Math.max(...env.neighbours) : null;
   const storeys = density === 'low' ? rng.int(1, 3) : Math.min(near !== null ? Math.max(2, near + 3) : 6, rng.int(2, 6));
-  const upper = pickOf(rng, ['window', 'sashWindow', 'frenchWindow', 'wideWindow', 'balcony', 'bayWindow'] as const satisfies readonly BayComponent[]);
+  const upper = pickOf(rng, STYLE_FILLS[style]);
   const roof = storeys === 1 && rng.float() < 0.4 ? pickOf(rng, ['gable', 'hip'] as const) : pickOf(rng, ['flat', 'flat', 'terrace', 'flat'] as const);
   const pattern = rng.float() < 0.3 ? pickOf(rng, ['storefront', 'arcade'] as const satisfies readonly FacadePattern[]) : undefined;
   const w = half(W), d = half(D);
@@ -649,28 +782,48 @@ function shop(rng: Rng, env: Envelope, density: 'low' | 'medium'): MadeBuilding 
 /** An office building: glass, a podium and a tower stepped back as it rises, or a slab with bands. */
 function office(rng: Rng, env: Envelope): MadeBuilding {
   const { W, D } = env;
-  const style = pickOf(rng, ['modern', 'modern', 'deco', 'classic'] as const satisfies readonly Style[]);
-  const wallBase = style === 'modern' ? pickOf(rng, GLASSY) : pickOf(rng, HARD);
+  // Offices: a glass skin (in tints from green to bronze), a tiled modern
+  // block, a deco stone tower, a classic one - with frames to match.
+  const style = pickOf(rng, ['glass', 'glass', 'modern', 'tropical', 'deco', 'classic'] as readonly Style[]);
+  const wallBase = style === 'glass' ? pickOf(rng, [...GLASSY, ...OFFICE_GLASS]) : styleWall(rng, style) ?? (style === 'modern' ? pickOf(rng, [...HARD, ...BLOCK_WALLS]) : pickOf(rng, HARD));
   const wall = { ...wallBase, colour: nudge(wallBase.colour, rng, 0.6) };
-  const model = new Model('office', 'commercial', rng.int(0, 7)).heights(between(rng, 4.5, 5.5), between(rng, 3.4, 3.9)).look(wall, mat('concrete', 0x8a8a86), pickOf(rng, HARD));
+  const model = new Model('office', 'commercial', rng.int(0, 7)).heights(between(rng, 4.5, 5.5), between(rng, 3.4, 3.9)).look(wall, mat('concrete', 0x8a8a86), pickOf(rng, STYLE_TRIMS[style]));
   const floors = rng.int(8, 24);
   const w = half(W), d = half(D);
-  const fill = style === 'modern' ? pickOf(rng, ['ribbon', 'wideWindow'] as const) : pickOf(rng, ['window', 'sashWindow'] as const);
-  const pattern = style === 'deco' ? 'artDeco' : style === 'modern' ? pickOf(rng, ['office', undefined] as const) : undefined;
+  const fill = style === 'deco' || style === 'classic' ? pickOf(rng, ['window', 'sashWindow'] as const) : pickOf(rng, ['ribbon', 'wideWindow'] as const);
+  const pattern = style === 'deco' ? 'artDeco' : style === 'glass' || style === 'modern' ? pickOf(rng, ['office', undefined] as const) : undefined;
   let form = 'office:slab';
+  const officeFree: Rect[] = [];
   if (rng.float() < 0.6 && w >= 14 && d >= 14) {
-    const podium = rng.int(2, 4);
-    model.block({ x: 0, y: 0, w, d, storeys: podium, ground: 'shopfront', fill: 'wideWindow', wall: pickOf(rng, HARD), roof: 'terrace' });
-    const inset = half(between(rng, 1.5, 3));
+    // The base the tower's footprint with a narrow ledge, the tower's skin (see `flats`).
+    const podium = rng.int(1, 3);
+    const inset = half(between(rng, 0.5, 1.2));
     const tw = w - 2 * inset, td = Math.max(8, Math.min(d - 2 * inset, 24));
-    if (style === 'deco' || rng.float() < 0.4) { form = 'office:setback'; setbacks(model, rng, inset, inset, tw, td, podium, floors - podium, { fill, ...pat(pattern), roof: 'flat' }); }
-    else { form = 'office:podium'; model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: floors - podium, fill, ...pat(pattern), roof: 'flat' }); }
+    const pd = Math.min(d, td + 2 * inset);
+    model.block({ x: 0, y: 0, w, d: pd, storeys: podium, ground: 'shopfront', fill: 'wideWindow', roof: 'terrace' });
+    if (d - pd >= 2) officeFree.push({ x0: 0, y0: pd, x1: w, y1: d });
+    const shaft = floors - podium;
+    const pickForm = style === 'deco' ? 'setback' : pickOf(rng, tw >= 26 ? ['setback', 'podium', 'twin', 'crown'] : ['setback', 'podium', 'crown']);
+    form = `office:${pickForm}`;
+    if (pickForm === 'setback') setbacks(model, rng, inset, inset, tw, td, podium, shaft, { fill, ...pat(pattern), roof: 'flat' });
+    else if (pickForm === 'twin') {
+      const gap = half(between(rng, 3, 5)), each = half((tw - gap) / 2);
+      model.block({ x: inset, y: inset, w: each, d: td, base: podium, storeys: shaft, fill, ...pat(pattern), roof: 'flat' });
+      model.block({ x: inset + each + gap, y: inset, w: each, d: td, base: podium, storeys: Math.max(4, shaft + pickOf(rng, [-6, -3, 4])), fill, ...pat(pattern), roof: 'flat' });
+    } else if (pickForm === 'crown') {
+      // A shaft and a set-in top of two or three floors in ribbon glazing,
+      // the same skin: one building, finished at the top.
+      const top = rng.int(2, 3), cin = half(between(rng, 1, 2.5));
+      model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: shaft - top, fill, ...pat(pattern), roof: 'terrace' });
+      model.block({ x: inset + cin, y: inset + cin, w: Math.max(6, tw - 2 * cin), d: Math.max(6, td - 2 * cin), base: podium + shaft - top, storeys: top,
+        fill: 'ribbon', roof: 'flat' });
+    } else model.block({ x: inset, y: inset, w: tw, d: td, base: podium, storeys: shaft, fill, ...pat(pattern), roof: 'flat' });
   } else {
     model.block({ x: 0, y: 0, w, d, storeys: floors, ground: 'shopfront', fill, ...pat(pattern), roof: 'flat' });
   }
   model.core('stairLift', half(w / 2 - 1.5), half(Math.min(d, 12) / 2 - 1.5), floors);
   const body = model.build();
-  return finish('office', form, body, env, rng, style, pickOf(rng, BASES), [], 'doubleDoor');
+  return finish('office', form, body, env, rng, style, pickOf(rng, BASES), officeFree, 'doubleDoor');
 }
 
 /** A works: an office on the street corner, the hall behind it with its loading doors at the back. */

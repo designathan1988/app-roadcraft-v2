@@ -216,9 +216,10 @@ describe('building materials', () => {
       expect(m.name, kind).toMatch(/^building-/);
       // White, untextured and without vertex or instance colours is three's
       // default: a part that fell through to it. The awning is tinted per
-      // instance; the shell by its vertex colours.
+      // instance, and so are the window frames and railings (in their
+      // building's trim); the shell by its vertex colours.
       const white = m.color.getHex() === 0xffffff;
-      if (white && !m.map) expect(kind === 'awning' || m.vertexColors, kind).toBe(true);
+      if (white && !m.map) expect(['awning', 'frame', 'railing'].includes(kind) || m.vertexColors, kind).toBe(true);
     }
     // Every finish the shell can be drawn in has its material.
     for (const finish of FINISHES) expect(kit.shell[finish], finish).toBeDefined();
