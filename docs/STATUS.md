@@ -42,9 +42,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   vermelho) e F9: abas Saúde, Mudanças e Estado; "copiar registro" para um
   relato. O registro sobrevive a recarregar a página. `__health()`.
 - **Ferramentas em módulos próprios** (`src/editor/`): via (`roadTool.ts`),
-  lote e zona, cercas, postes, paisagismo, pincel de terreno, nuvens; as
-  ações em `actionsWiring.ts`. O `main.ts` só liga e delega.
-- **Ainda não:** o laço do quadro fora do `main.ts` (`frameLoop.ts`, Etapa 1d).
+  demolição (`bulldozer.ts`), mover nó (`nodeMover.ts`), lote e zona,
+  cercas, postes, paisagismo, pincel de terreno, nuvens; a câmera à mão em
+  `view/cameraGestures.ts`; as ações em `actionsWiring.ts`; a contabilidade
+  do quadro em `frameLoop.ts`. O `main.ts` só liga e delega.
 
 ## Ativo no jogo
 
@@ -73,8 +74,10 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
   (`render/lowPolyTrees.ts`, de 70 a 190 triângulos), sem cartões de folha,
   inclusive a reserva da mata pintada (`groundCover.ts`). Gráfico com
   exposição de referência, grama com brilho medido, terreno e camadas do
-  corte sem repetição nem chiado, nuvens sem flocos soltos (`7fb7fa98`,
-  `b454120d`, sessão "Problemas visuais na otimização").
+  corte sem repetição nem chiado, nuvens sem flocos soltos; as sombras de
+  nuvem tiram só a parte direta da luz do sol e as manchas do chão visto de
+  longe são mais suaves (`7fb7fa98`, `b454120d`, `76a43fad`, sessão
+  "Problemas visuais na otimização").
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

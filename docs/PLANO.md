@@ -23,8 +23,8 @@ de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 | 1a | Estado do jogo: ferramenta, pausa, velocidade, seleção, opções das ferramentas, gesto; interface por `watch` | feita (`de0ecfe6`, `46ca5873`, `4c535183`) |
 | 1b | Revisões do documento lidas do diário; zonas, lotes e prédios registrados | feita (`e2092b4e`) |
 | 1c + 2 | Causas certas no diário; monitor de quebra e lentidão; inspetor único (botão de pulso / F9) | feita (`8bb31320`, `db6057fa`, `d5ad6dd1`) |
-| 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | **ATUAL**. Feitos: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações (`actionsWiring.ts`) e via (`roadTool.ts`, `5d7dd24f`). Falta: o laço do quadro (`frameLoop.ts`) |
-| 3 | Otimização completa, guiada pelo monitor | a fazer |
+| 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
+| 3 | Otimização completa, guiada pelo monitor | **ATUAL** |
 | 4 | Todos os defeitos abertos | a fazer |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
