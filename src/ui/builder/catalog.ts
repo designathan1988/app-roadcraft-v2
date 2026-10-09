@@ -136,11 +136,6 @@ export function tabSpec(id: BuilderCategoryId): BuilderTabSpec {
 export const BUILDER_CATALOG: readonly { readonly id: BuilderCategoryId; readonly tools: readonly BuilderToolSpec[] }[] =
   BUILDER_TAB_SPECS.map((tab) => ({ id: tab.id, tools: tab.sections.flatMap((s) => s.tools ?? []) }));
 
-/** Which tab a tool is on. */
-export function tabOfTool(id: string): BuilderCategoryId | null {
-  return BUILDER_CATALOG.find((tab) => tab.tools.some((t) => t.id === id))?.id ?? null;
-}
-
 /** Kept for the thumbnail studio and the icon test: families of pictured parts. */
 export const BUILDER_GALLERIES: Readonly<Record<string, readonly string[]>> = {
   shapes: ['rect', 'shapeL', 'shapeU', 'circle', 'hexagon', 'octagon', 'chamfered'],

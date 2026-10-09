@@ -1,5 +1,4 @@
 import type { RoadType } from '@world/roadTypes';
-import { roadStructure, type RoadStructure } from '@world/structures';
 import { plural, t } from './i18n';
 
 /**
@@ -21,8 +20,6 @@ export function roadTypeDescription(type: RoadType): string {
     way: t(type.subOneWay ? 'road.way.one' : 'road.way.two'),
   });
 }
-
-export const structureName = (structure: RoadStructure): string => t(roadStructure(structure).key);
 
 export const roadCountLabel = (count: number): string => plural('status.roads', count);
 export const nodeCountLabel = (count: number): string => plural('status.nodes', count);
