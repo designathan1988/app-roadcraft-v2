@@ -155,17 +155,40 @@ function deckAt(doc: RoadDoc, seg: RoadSegment, s: number, length: number): numb
   return a + (b - a) * t + roadStructure(seg.structure).clearance;
 }
 
-/** The grade a segment needs over the run its junction plates leave free (`elevation.ts` plate rule). */
-function grade(state: RoadState, id: SegmentId): number {
+/** Spacing of the deck samples a grade is read from, and the run it is measured over (units). */
+const GRADE_STEP = 1;
+const GRADE_RUN = 2;
+
+/**
+ * The steepest grade of a segment's deck as the game solves it (rise over run,
+ * over `GRADE_RUN`): read from the solved profile itself, not estimated. It was
+ * estimated as the rise over the length less `Network.plateReach` at both ends,
+ * and the solver flattens a wider plate (`elevation.ts`: the trim, the footway
+ * and verge, a margin, up to 45 % of the length each); a ramp measured at 14 %
+ * was solved as 4.8 units up in about 4 (fuzz `elevationStep`, seed 21).
+ */
+function grade(state: RoadState, id: SegmentId, solved: () => RoadElevation): number {
   const { doc, net } = state;
   const seg = doc.segment(id);
   if (!seg) return 0;
   const length = net.polylines.get(doc, id).length;
-  const rise = Math.abs(deckAt(doc, seg, length, length) - deckAt(doc, seg, 0, length));
-  if (rise < SAME_LEVEL) return 0;
-  const plateA = Math.min(length * 0.45, net.plateReach.get(`${seg.a}:${id}`) ?? 0);
-  const plateB = Math.min(length * 0.45, net.plateReach.get(`${seg.b}:${id}`) ?? 0);
-  return rise / Math.max(1e-6, length - plateA - plateB);
+  // Level ends: no ramp to measure (and no profile to solve for it).
+  if (Math.abs(deckAt(doc, seg, length, length) - deckAt(doc, seg, 0, length)) < SAME_LEVEL) return 0;
+  const line = net.ribbons.get(id)?.full;
+  if (!line) return 0;
+  const elevation = solved();
+  const heights: number[] = [];
+  for (let s = 0; s <= line.length; s += GRADE_STEP) {
+    const p = line.sampleAt(Math.min(s, line.length)).p;
+    heights.push(elevation.onSegment(id, p.x, p.y));
+  }
+  const span = Math.max(1, Math.round(GRADE_RUN / GRADE_STEP));
+  let steepest = 0;
+  for (let i = span; i < heights.length; i++) {
+    const rise = Math.abs((heights[i] as number) - (heights[i - span] as number));
+    if (Number.isFinite(rise)) steepest = Math.max(steepest, rise / (span * GRADE_STEP));
+  }
+  return steepest;
 }
 
 /**
@@ -183,10 +206,16 @@ function tooSteep(before: RoadState, after: RoadState, changed: readonly Segment
       for (const other of after.doc.node(node)?.incident ?? []) touched.add(other);
     }
   }
+  // Solved over flat land, once per state and only when a ramp asks for it
+  // (two roads at one point stand on the same ground, so it cancels).
+  let solvedAfter: RoadElevation | null = null;
+  let solvedBefore: RoadElevation | null = null;
+  const afterElevation = (): RoadElevation => (solvedAfter ??= buildRoadElevation(after.net, () => 0));
+  const beforeElevation = (): RoadElevation => (solvedBefore ??= buildRoadElevation(before.net, () => 0));
   for (const id of touched) {
-    const now = grade(after, id);
+    const now = grade(after, id, afterElevation);
     if (now <= MAX_BUILT_GRADE) continue;
-    if (!changed.includes(id) && before.doc.segment(id) && grade(before, id) >= now - 1e-6) continue;
+    if (!changed.includes(id) && before.doc.segment(id) && grade(before, id, beforeElevation) >= now - 1e-6) continue;
     return true;
   }
   return false;
