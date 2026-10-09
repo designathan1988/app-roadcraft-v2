@@ -97,19 +97,42 @@ export function drainCompiles(renderer: WebGLRenderer, camera: Camera, scene: Sc
  * the buffers go up, nothing is drawn.
  */
 const WARM_LAYER = 31;
-const toWarm: { mesh: Mesh; geometries: readonly BufferGeometry[]; done: () => void }[] = [];
+const toWarm: { mesh: Mesh; geometries: readonly BufferGeometry[]; done: () => void; loose?: boolean }[] = [];
 let warmer = false;
 const lightsOf = new WeakMap<Scene, Light[]>();
 export function warmAhead(mesh: Mesh, geometries: readonly BufferGeometry[]): Promise<void> {
   if (!warmer) return Promise.resolve();
   return new Promise((done) => toWarm.push({ mesh, geometries, done }));
 }
+/**
+ * Meshes not in the scene yet (a batch of buildings put together to replace
+ * the one drawn), each sent to the GPU one a frame before it is swapped in:
+ * drawn first in the frame of the swap, a bomb's cells of buildings uploaded
+ * 1.8-2.5 s of buffers in one frame (2026-10-09).
+ */
+export function warmLooseAhead(meshes: readonly Mesh[]): Promise<void> {
+  if (!warmer || meshes.length === 0) return Promise.resolve();
+  return Promise.all(meshes.map((mesh) => new Promise<void>((done) => toWarm.push({ mesh, geometries: [mesh.geometry], done, loose: true })))).then(() => {});
+}
 /** Sends one waiting mesh's geometry to the GPU, after the frame (`renderer.ts`). */
 export function drainWarm(renderer: WebGLRenderer, camera: Camera, scene: Scene, target: WebGLRenderTarget | null): void {
   warmer = true;
+  // Loose meshes (a batch of buildings) several a frame within a few
+  // milliseconds; one at least, so the queue always moves.
+  const until = performance.now() + WARM_SLICE_MS;
+  do warmOne(renderer, camera, scene, target);
+  while (toWarm.length > 0 && toWarm[0]!.loose && performance.now() < until);
+}
+/** Milliseconds a frame for loose meshes (`drainWarm`). */
+const WARM_SLICE_MS = 6;
+function warmOne(renderer: WebGLRenderer, camera: Camera, scene: Scene, target: WebGLRenderTarget | null): void {
   const job = toWarm.shift();
   if (!job) return;
-  const { mesh, geometries, done } = job;
+  const { mesh, geometries, done, loose } = job;
+  // A loose mesh is put in the scene for the moment, where it stands, never culled.
+  const parent = mesh.parent;
+  const culled = mesh.frustumCulled;
+  if (loose && !parent) { scene.add(mesh); mesh.updateMatrixWorld(true); mesh.frustumCulled = false; }
   let lights = lightsOf.get(scene);
   if (!lights) {
     lights = [];
@@ -139,6 +162,7 @@ export function drainWarm(renderer: WebGLRenderer, camera: Camera, scene: Scene,
   } finally {
     mesh.geometry = original;
     mesh.visible = visible;
+    if (loose && !parent) { scene.remove(mesh); mesh.frustumCulled = culled; }
     mesh.layers.disable(WARM_LAYER);
     for (const light of lights) light.layers.disable(WARM_LAYER);
     camera.layers.mask = mask;

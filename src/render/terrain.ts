@@ -3124,6 +3124,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       if (revision === doc.terrainRevision) return false;
       const firstBuild = revision < 0;
       const previous = index;
+      const before = revision;
       revision = doc.terrainRevision;
       index = new TerrainIndex(doc.terrainStamps, revision, doc.terrainRelief);
 
@@ -3133,10 +3134,11 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       const added = doc.terrainStamps.length === previous.stamps.length + 1
         ? doc.terrainStamps[doc.terrainStamps.length - 1]
         : undefined;
-      const sameHistory =
-        added !== undefined &&
-        previous.stamps.length > 0 &&
-        previous.stamps[0] === doc.terrainStamps[0];
+      // The first stamp of a map with none (a bomb's crater in a generated
+      // city) is an addition too when the diary says only it moved: taken for
+      // a new map, it rewrote and re-shaped the whole map - 2.7 s in the
+      // click of a bomb on a city of 1 530 buildings (2026-10-09).
+      const sameHistory = added !== undefined && stampAppended(previous.stamps, doc.terrainStamps, doc.changes.since(before, ['terrain']));
 
       let box: readonly [number, number, number, number] | null = null;
       if (firstBuild || !added || !sameHistory) {
@@ -3637,4 +3639,18 @@ function pushWetTriangle(
       pushTriangle(positions, depths, a, b, c);
     }
   }
+}
+
+/**
+ * Whether the land changed by one stamp added to the stamps it had (only its
+ * box is rewritten), rather than by a map replaced. The first stamp of a map
+ * with none - a bomb's crater in a generated city - is an addition when the
+ * diary's terrain entries since (`entries`) all name where they moved:
+ * taken for a new map, it rewrote and re-shaped the whole map, 2.7 s in the
+ * click of a bomb on a city of 1 530 buildings (2026-10-09).
+ */
+export function stampAppended(previous: readonly unknown[], now: readonly unknown[], entries: readonly { readonly rects: unknown }[] | null): boolean {
+  if (now.length !== previous.length + 1) return false;
+  if (previous.length > 0) return previous[0] === now[0];
+  return entries !== null && entries.length > 0 && entries.every((c) => c.rects !== null);
 }
