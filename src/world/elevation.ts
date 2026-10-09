@@ -217,6 +217,14 @@ const PROFILE_REACH = 60;
  * mesh waiting to tear, and the fade costs one smoothstep per query.
  */
 const PROFILE_FADE = 110;
+/**
+ * How far from a point ON a road any profile can still change what a query
+ * there answers: the point is within `PROFILE_REACH` of its own road, and a
+ * profile is blended in only while its weight exp(-(d - best) / BLEND_TAU)
+ * is over 1e-4 (`blend`). A road surface reads nothing farther, so a profile
+ * past this from a tile cannot change the tile (`digest` with a reach).
+ */
+export const SURFACE_READ_REACH = PROFILE_REACH + BLEND_TAU * Math.log(1e4);
 
 interface Profile {
   readonly id: SegmentId;
@@ -328,9 +336,11 @@ export interface RoadElevation {
    * the spatial index could hand such a query, in the order it would. Two
    * builds that agree on it answer every query there identically, which is
    * what lets the renderer keep the meshes of the parts of the map an edit
-   * did not reach.
+   * did not reach. With `reach`, only for queries at points within reach of
+   * their nearest road (`SURFACE_READ_REACH` for a road surface): a road
+   * whose line passes farther from the rectangle is left out.
    */
-  digest(minX: number, minY: number, maxX: number, maxY: number): number;
+  digest(minX: number, minY: number, maxX: number, maxY: number, reach?: number): number;
   /**
    * Where this solve and another can differ: the boxes (as the spatial index
    * files them) of every road whose solved profile is not the same in both,
@@ -947,11 +957,18 @@ export function buildRoadElevation(
       return out;
     },
     summaries: () => profileSummaries,
-    digest: (minX, minY, maxX, maxY) => {
-      const known = new Map<Profile, number>();
+    digest: (minX, minY, maxX, maxY, reach) => {
+      const known = new Map<Profile, number | null>();
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      const r = Math.hypot(maxX - minX, maxY - minY) / 2;
       return index.digest(minX, minY, maxX, maxY, (profile) => {
         let value = known.get(profile);
-        if (value === undefined) known.set(profile, value = localDigest(profile, minX, minY, maxX, maxY));
+        if (value === undefined) {
+          // Out of reach of every point of the rectangle: nothing there reads it.
+          if (reach !== undefined) profile.line.closestInto(cx, cy, near);
+          value = reach !== undefined && near.distance - r > reach ? null : localDigest(profile, minX, minY, maxX, maxY);
+          known.set(profile, value);
+        }
         return value;
       });
     },
@@ -1663,8 +1680,8 @@ class SpatialIndex {
     }
   }
 
-  /** Digest of every profile `near` can return for a point of the rectangle, in its order. */
-  digest(minX: number, minY: number, maxX: number, maxY: number, of: (profile: Profile) => number): number {
+  /** Digest of every profile `near` can return for a point of the rectangle, in its order; a profile `of` gives null for is left out. */
+  digest(minX: number, minY: number, maxX: number, maxY: number, of: (profile: Profile) => number | null): number {
     // The same reading with or without buckets: a network with no bucketed
     // road (empty, or every road oversized) read differently, so its first
     // bucketed road changed every block of the map (docs/performance.md #10).
@@ -1673,11 +1690,17 @@ class SpatialIndex {
       for (let y = Math.floor(minY / this.cell); y <= Math.floor(maxY / this.cell); y++) {
         const key = x * 73_856_093 + y * 19_349_663;
         digest.add(key);
-        for (const profile of this.buckets.get(key) ?? EMPTY) digest.add(of(profile));
+        for (const profile of this.buckets.get(key) ?? EMPTY) {
+          const value = of(profile);
+          if (value !== null) digest.add(value);
+        }
       }
     }
     digest.add(-1);
-    for (const profile of this.oversized) digest.add(of(profile));
+    for (const profile of this.oversized) {
+      const value = of(profile);
+      if (value !== null) digest.add(value);
+    }
     return digest.value();
   }
 

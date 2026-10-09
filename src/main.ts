@@ -2,7 +2,7 @@ import { createActions } from './actionsWiring';
 import { FrameClock, Periodic, TopologyCatchUp } from './frameLoop';
 import { beginFrameWork } from '@core/frameWork';
 import { GameState } from '@core/gameState';
-import { FrameTimer, HealthLog } from '@core/health';
+import { FrameTimer, HealthLog, frameStats } from '@core/health';
 import { LotTool, type LotSplitKind, type ZoneMode } from '@editor/lotTool';
 import { watchHealth } from '@ui/healthWatch';
 import { mountHealthPanel } from '@ui/healthPanel';
@@ -4335,6 +4335,13 @@ qualitySelect.onchange = () => {
 });
 /** The game's health in the console (`core/health.ts`): what broke or was slow, newest first. */
 (window as unknown as { __health: unknown }).__health = (count = 30): unknown => health.latest(count);
+/**
+ * The last frames per system (`core/health.ts` `frameStats`): median, 95th
+ * percentile and largest of each, and how many were long - the numbers the
+ * baseline of each scenario and every "after" are taken from.
+ */
+(window as unknown as { __frames: unknown }).__frames = (since = 0): unknown =>
+  frameStats(frameTimer.recent().filter((f) => f.start >= since));
 
 /**
  * The simulation's own checks (`sim/invariants.ts`, run every 60 ticks) in

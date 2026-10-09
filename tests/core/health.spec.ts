@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FrameTimer, HealthLog, overBudget, systemsOf } from '@core/health';
+import { FrameTimer, HealthLog, frameStats, overBudget, percentile, systemsOf } from '@core/health';
 
 /** Sets what `performance.now()` answers. */
 function clockAt(ms: number): void {
@@ -69,5 +69,36 @@ describe('FrameTimer', () => {
     timer.end(203);
     expect(timer.between(150, 170)).toHaveLength(1);
     expect(systemsOf(timer.between(0, 300))).toEqual([['desenho', 56], ['simulação', 7], ['painéis', 1]]);
+  });
+});
+
+describe('frameStats', () => {
+  it('takes percentiles by nearest rank: always one of the values, the 100th the largest', () => {
+    const values = [15, 20, 35, 40, 50];
+    expect(percentile(values, 50)).toBe(35);
+    expect(percentile(values, 95)).toBe(50);
+    expect(percentile(values, 100)).toBe(50);
+    expect(percentile(values, 1)).toBe(15);
+    expect(percentile([], 50)).toBe(0);
+  });
+
+  it('sums up the frames per system, a system absent from a frame counting as 0 ms there', () => {
+    const timer = new FrameTimer();
+    const frame = (start: number, sim: number, draw: number, minimap?: number): void => {
+      timer.begin(start);
+      timer.mark('simulação', start + sim);
+      timer.mark('desenho', start + sim + draw);
+      if (minimap !== undefined) timer.mark('minimapa', start + sim + draw + minimap);
+      timer.end(start + sim + draw + (minimap ?? 0));
+    };
+    frame(0, 2, 8);
+    frame(100, 3, 10, 1);
+    frame(200, 4, 60);
+    const stats = frameStats(timer.recent());
+    expect(stats.frames).toBe(3);
+    expect(stats.long).toBe(1);
+    expect(stats.total).toEqual({ p50: 14, p95: 64, max: 64 });
+    expect(stats.systems['desenho']).toEqual({ p50: 10, p95: 60, max: 60 });
+    expect(stats.systems['minimapa']).toEqual({ p50: 0, p95: 1, max: 1 });
   });
 });

@@ -41,7 +41,7 @@ import type { ChangeJournal, ChangeRect, DerivedChangeKind } from '@world/change
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from '@world/ids';
 import { Network } from '@world/network';
-import { GROUND_ONLY, buildRoadElevation, type RoadElevation } from '@world/elevation';
+import { GROUND_ONLY, SURFACE_READ_REACH, buildRoadElevation, type RoadElevation } from '@world/elevation';
 import { FOOTWAY_RISE, ROAD_TYPES, casingHalf, sidewalkHalf } from '@world/roadTypes';
 import type { RoadStructure } from '@world/structures';
 import type { SimWorld } from '@sim/world';
@@ -695,11 +695,14 @@ export function createSceneRenderer(
   let landTopValue = 0;
 
   // What each rebuild keeps for the next: the tiles of every surface an edit
-  // does not reach, keyed by the solved roads and the ground they read.
+  // does not reach, keyed by the solved roads and the ground they read - only
+  // the roads a road surface can read (`SURFACE_READ_REACH`): keyed by every
+  // road the index could hand a query at any distance, a street drawn
+  // rebuilt tiles hundreds of units away.
   const surfaceReuse: SurfaceReuse = {
     tiles: new Map(),
     dependsOn: (minX, minY, maxX, maxY) => new Digest()
-      .add(elevation?.digest(minX, minY, maxX, maxY) ?? 0)
+      .add(elevation?.digest(minX, minY, maxX, maxY, SURFACE_READ_REACH) ?? 0)
       .add(terrain.digest(minX, minY, maxX, maxY))
       .value(),
     paint: new Map(),
@@ -1120,13 +1123,47 @@ export function createSceneRenderer(
     return box;
   };
   /**
-   * Where two solves of the roads differ: the blocks of the map whose roads
-   * (their lines, heights, widths) are not the same, from the solve's own
-   * per-area digest. A street drawn changes a few blocks; a road whose reach
-   * spans the whole map changes every block, and the whole ground is cut and
-   * filled again, as before.
+   * Where two solves of the roads differ: the blocks of the map whose ground
+   * the roads shape differently. A street drawn changes a few blocks; a road
+   * whose reach spans the whole map changes every block, and the whole ground
+   * is cut and filled again, as before.
    */
   const SHAPE_BLOCK = 160;
+  /**
+   * What a block of ground reads of a solve, digested: at each corner of the
+   * terrain grid in it - the only points the ground has - the height and
+   * weight the roads pull it to (`shapeAt`, against the natural ground there,
+   * as `shapeToRoads` asks), and on a road the deck's own height and class,
+   * which what stands on a deck reads. A cached result is reused when the
+   * inputs its build reads are the same, and only then (Bazel's action
+   * cache): the solve's per-area digest also read which profiles there were
+   * and how their stations were numbered, so a street splitting an avenue
+   * changed every block along it with no height there changing - 42 blocks
+   * of the test town for a road of 50 m, 6 roads moved by up to 6 cm.
+   * Heights to a thousandth of a unit, as the solve's own digest had them.
+   */
+  const groundRead = new WeakMap<RoadElevation, Map<number, number>>();
+  const blockRead = (solve: RoadElevation, x0: number, y0: number): number => {
+    let known = groundRead.get(solve);
+    if (!known) groundRead.set(solve, known = new Map());
+    const key = x0 * 65_536 + y0;
+    const kept = known.get(key);
+    if (kept !== undefined) return kept;
+    const digest = new Digest();
+    const quantum = (h: number): number => Math.round(h * 1000);
+    for (let x = Math.ceil((x0 + TERRAIN_HALF) / TERRAIN_CELL) * TERRAIN_CELL - TERRAIN_HALF; x <= x0 + SHAPE_BLOCK; x += TERRAIN_CELL) {
+      for (let y = Math.ceil((y0 + TERRAIN_HALF) / TERRAIN_CELL) * TERRAIN_CELL - TERRAIN_HALF; y <= y0 + SHAPE_BLOCK; y += TERRAIN_CELL) {
+        const shaped = solve.shapeAt(x, y, terrain.naturalRenderedHeightAt(x, y));
+        digest.add(quantum(shaped.height)).add(quantum(shaped.weight));
+        const road = solve.roadAt(x, y);
+        if (road.type >= 0 && Math.abs(road.across) <= road.half) digest.add(road.type).add(quantum(solve.at(x, y)));
+        else digest.add(-1);
+      }
+    }
+    const value = digest.value();
+    known.set(key, value);
+    return value;
+  };
   const changedBlocks = (before: RoadElevation, after: RoadElevation): [number, number, number, number][] => {
     const out: [number, number, number, number][] = [];
     const half = MAP_SIZE / 2;
@@ -1138,7 +1175,7 @@ export function createSceneRenderer(
       for (let y = -half; y < half; y += SHAPE_BLOCK) {
         const x1 = x + SHAPE_BLOCK, y1 = y + SHAPE_BLOCK;
         if (where && !where.some((r) => r.minX <= x1 && r.maxX >= x && r.minY <= y1 && r.maxY >= y)) continue;
-        if (before.digest(x, y, x1, y1) !== after.digest(x, y, x1, y1)) out.push([x, y, x1, y1]);
+        if (blockRead(before, x, y) !== blockRead(after, x, y)) out.push([x, y, x1, y1]);
       }
     }
     return out;

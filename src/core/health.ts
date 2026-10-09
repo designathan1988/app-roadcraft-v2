@@ -210,6 +210,41 @@ export class FrameTimer {
   between(from: number, to: number): FrameRecord[] {
     return this.frames.filter((f) => f.end >= from && f.start <= to);
   }
+
+  /** The frames kept (the last `FRAMES_KEPT`), oldest first. */
+  recent(): readonly FrameRecord[] {
+    return this.frames;
+  }
+}
+
+/** The P-th percentile (0 < P <= 100) of `values` by nearest rank: always one of them, the 100th the largest. */
+export function percentile(values: readonly number[], p: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length))) - 1]!;
+}
+
+/** How a set of frames went, the whole frame and each system: median, 95th percentile and largest, ms. */
+export interface FrameStats {
+  readonly frames: number;
+  /** Frames over `LONG_FRAME_MS`. */
+  readonly long: number;
+  readonly total: { readonly p50: number; readonly p95: number; readonly max: number };
+  readonly systems: Readonly<Record<string, { readonly p50: number; readonly p95: number; readonly max: number }>>;
+}
+
+/** The frames summed up per system - the same numbers the monitor's long-frame entries are made of. */
+export function frameStats(frames: readonly FrameRecord[]): FrameStats {
+  const round = (ms: number): number => Math.round(ms * 10) / 10;
+  const spread = (values: number[]): { p50: number; p95: number; max: number } => ({
+    p50: round(percentile(values, 50)), p95: round(percentile(values, 95)), max: round(percentile(values, 100)),
+  });
+  const totals = frames.map((f) => f.end - f.start);
+  const names = new Set<string>();
+  for (const f of frames) for (const name of f.systems.keys()) names.add(name);
+  const systems: Record<string, { p50: number; p95: number; max: number }> = {};
+  for (const name of names) systems[name] = spread(frames.map((f) => f.systems.get(name) ?? 0));
+  return { frames: frames.length, long: totals.filter((t) => t > LONG_FRAME_MS).length, total: spread(totals), systems };
 }
 
 /** The systems of these frames summed, the largest first, those under 0.5 ms left out. */
