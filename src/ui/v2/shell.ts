@@ -1334,13 +1334,11 @@ export function mountShell(deps: ShellDeps): void {
     if (selected) tools.appendChild(button('v2-icon', t('builder.view.frame'), () => actions.view('frame'), svg('frame', 17)));
 
     if (state.planning) {
-      const plan = group(t('v2.build.plan'));
-plan.appendChild(choices([
+      options.appendChild(orow(t('v2.build.plan'), choices([
         { label: t('builder.plan.finish'), on: true, run: () => actions.planFinish(), disabled: state.planPoints < 3, icon: svg('check', 18) },
         { label: t('builder.plan.back'), on: false, run: () => actions.planBack(), icon: svg('undo', 18) },
         { label: t('builder.plan.cancel'), on: false, run: () => actions.planCancel(), icon: svg('close', 18) },
-      ]));
-      options.appendChild(plan);
+      ])));
     }
 
     const spec = BUILDER_TAB_SPECS.find((s) => s.id === state.category);
@@ -1373,36 +1371,23 @@ plan.appendChild(choices([
   function renderSection(s: BuilderSection, state: BuilderState): void {
     const label = s.title ? t(`builder.section.${s.title}`) : '';
     if (s.shelf === 'models') return renderModels(state);
+    // The Builder's settings as the other tools': one named row each.
     if (s.shelf === 'scope') {
-      const g = group(label);
-      g.appendChild(choices(FACADE_SCOPES.map((scope) => ({ label: t(`creator.dock.scope.${scope}`), on: state.scope === scope, run: () => actions.setScope(scope), icon: svg(`scope_${scope}`, 18) }))));
-      options.appendChild(g);
+      options.appendChild(orow(label, choices(FACADE_SCOPES.map((scope) => ({ label: t(`creator.dock.scope.${scope}`), on: state.scope === scope, run: () => actions.setScope(scope), icon: svg(`scope_${scope}`, 18) })))));
       return;
     }
     if (s.shelf === 'drawAction') {
-      const g = group(label);
       const drawIcon = { new: 'addVolume', ground: 'wing', top: 'stack', cut: 'cut' } as const;
-      g.appendChild(choices(DRAW_ACTIONS.map((a) => ({ label: t(`builder.drawAction.${a}`), on: state.drawAction === a, run: () => actions.setDrawAction(a), disabled: a !== 'new' && !state.selection, icon: builderIconSvg(drawIcon[a], 18) }))));
-      options.appendChild(g);
+      options.appendChild(orow(label, choices(DRAW_ACTIONS.map((a) => ({ label: t(`builder.drawAction.${a}`), on: state.drawAction === a, run: () => actions.setDrawAction(a), disabled: a !== 'new' && !state.selection, icon: builderIconSvg(drawIcon[a], 18) })))));
       return;
     }
     if (s.shelf === 'roofParams') {
       const roof = state.roof;
-      const g = group(t('builder.field.pitch'));
-      const stepper = el('div', 'v2-stepper');
-      stepper.append(
-        button('v2-icon', '−5°', () => actions.roofPitch(-5), svg('minus', 16)),
-        el('output', 'v2-stepper-value', `${roof?.pitch ?? 30}°`),
-        button('v2-icon', '+5°', () => actions.roofPitch(5), svg('plus', 16)),
-      );
-      g.appendChild(stepper);
-      options.appendChild(g);
+      // The Builder republishes its state after the change; the panel follows it.
+      options.appendChild(orow(t('builder.field.pitch'), stepper(t('builder.field.pitch'), `${roof?.pitch ?? 30}°`, (d) => actions.roofPitch(d * 5))));
       if (roof?.pitched) {
-        const ridge = group(t('builder.roof.ridge.label'));
-        ridge.appendChild(choices((['x', 'y'] as const).map((r) => ({ label: t(`builder.roof.ridge.${r}`), on: roof.ridge === r, run: () => actions.roofRidge(r), icon: svg(`ridge_${r}`, 18) }))));
-        const fall = group(t('builder.roof.side.label'));
-        fall.appendChild(choices(([[0, 'front'], [1, 'right'], [2, 'back'], [3, 'left']] as const).map(([side, key]) => ({ label: t(`builder.roof.side.${key}`), on: roof.fall === side, run: () => actions.roofFall(side), icon: svg(`fall_${key}`, 18) }))));
-        options.append(ridge, fall);
+        options.appendChild(orow(t('builder.roof.ridge.label'), choices((['x', 'y'] as const).map((r) => ({ label: t(`builder.roof.ridge.${r}`), on: roof.ridge === r, run: () => actions.roofRidge(r), icon: svg(`ridge_${r}`, 18) })))));
+        options.appendChild(orow(t('builder.roof.side.label'), choices(([[0, 'front'], [1, 'right'], [2, 'back'], [3, 'left']] as const).map(([side, key]) => ({ label: t(`builder.roof.side.${key}`), on: roof.fall === side, run: () => actions.roofFall(side), icon: svg(`fall_${key}`, 18) })))));
       }
       return;
     }
@@ -1414,7 +1399,6 @@ plan.appendChild(choices([
     if (s.shelf === 'finishes') {
       const { items } = section(t('v2.build.material'));
       for (const f of FINISHES) items.appendChild(card(t(`building.finish.${f}`), state.material?.finish === f, () => actions.chooseFinish(f), materialSwatch(f), undefined, 'square'));
-      const colours = group(t('v2.build.colour'));
       const sw = el('div', 'v2-swatches');
       for (const c of SWATCHES) {
         const b = el('button', 'v2-swatch' + (state.material?.colour === c ? ' on' : ''));
@@ -1428,8 +1412,7 @@ plan.appendChild(choices([
       custom.type = 'color';
       custom.onchange = () => actions.chooseColour(parseInt(custom.value.slice(1), 16));
       sw.appendChild(custom);
-      colours.appendChild(sw);
-      options.appendChild(colours);
+      options.appendChild(orow(t('v2.build.colour'), sw));
       const st = section(t('builder.section.styles'));
       for (const style of STYLES) {
         const chips = [style.materials.wall.colour, style.materials.trim.colour, style.materials.roof.colour].map((c) => `<i style="background:${hexOf(c)}"></i>`).join('');

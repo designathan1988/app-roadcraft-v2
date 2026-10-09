@@ -77,6 +77,11 @@ jogador veria.
    `builderCatalog` (não carregam fora do navegador), e os testes dos hooks
    de `.claude` (`claudeGuard` ×5, `researchHook` ×4), que só o jogador
    pode resolver, porque os hooks são dele. Etapa 4.
+6. ~~Interface organizada, visual e testada~~ (pedido do jogador de
+   2026-10-09): feita (`722ba4af`, `cb1c6aea`, `e7b08fa0`, `72576787`; P53-P58).
+   Falta a conferência do jogador no jogo aberto, e o que não deu para
+   testar sem dados: as linhas do transporte (a cidade de teste não tem
+   nenhuma) e os painéis internos do Construtor com um prédio selecionado.
 
 ## Etapa 0 — Arrumar a casa
 

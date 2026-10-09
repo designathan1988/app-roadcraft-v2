@@ -52,7 +52,17 @@ depois que duas sessões no mesmo repositório se atropelaram), em `master`, em
 ### Interface
 - Interface v2 (`src/ui/v2/shell.ts`) no estilo Cities: Skylines II: dock de
   ícones embaixo no centro, painel de itens acima dele, opções da ferramenta
-  embaixo à esquerda, nomes só na dica (`.v2-tip`). Conferida em 1280×720.
+  embaixo à esquerda, nomes só na dica (`.v2-tip`). Conferida em 1280×720,
+  1920×1080 e 1024 de largura.
+- Reorganizada em 2026-10-09 (`722ba4af`): opções em linhas "nome | controles"
+  (uma palavra à esquerda, o nome inteiro na dica), o mapa inteiro sob um
+  divisor; Paisagem em Relevo, Solo, Natureza, Céu e clima, Rua, cada coisa um
+  cartão; Zonas em Zonear e Lotes; Demolir, Pistola e Bomba numa ferramenta;
+  Quarteirões é um traçado da via; no topo Camadas do mapa (grade, cores das
+  zonas, congestionamento, interior), céu em três ícones, Ajuda com as teclas,
+  aviso de cruzamentos impossíveis; as respostas do jogo (salvo, desfeito,
+  via inválida) aparecem num aviso no topo. Sonda de função: 44/44 controles
+  mudam o estado do jogo.
 - O jogo abre num mapa vazio. Textos em `ui/i18n/en.ts` e `pt-BR.ts`.
 
 ### Vias e terreno
