@@ -51,9 +51,18 @@ export function floorsWithSlots(): [number, number][] {
 export const litTexture = new DataTexture(new Uint8Array(SLOT_WIDTH * SLOT_ROWS * 4), SLOT_WIDTH, SLOT_ROWS, RGBAFormat, UnsignedByteType);
 litTexture.needsUpdate = true;
 
+/**
+ * Whether anybody drives the table (a uniform the glass shares, by reference:
+ * three keeps the uniform objects set in `onBeforeCompile`). Until `setLit` is
+ * called - the residents are not simulated - each space is lit by lot against
+ * the hour (`kit.ts`), not left dark.
+ */
+export const litTableDriven = { value: 0 };
+
 /** Sets the lit slots, all others dark. */
 export function setLit(lit: ReadonlySet<number>): void {
   const data = litTexture.image.data as Uint8Array;
   for (let i = 0; i < index.size; i++) data[i * 4] = lit.has(i) ? 255 : 0;
   litTexture.needsUpdate = true;
+  litTableDriven.value = 1;
 }

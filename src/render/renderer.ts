@@ -2804,10 +2804,13 @@ export function createSceneRenderer(
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
         post.setNight(dark);
-        buildings.setNight(dark);
         sceneryKit.setNight(dark);
         agents.setNight(dark);
       }
+      // The windows every frame: how many rooms are lit follows the clock
+      // (`kit.ts` `awakeShare`) while the dark stays at 1 all night - one
+      // uniform's value, read at the next upload, no program change.
+      buildings.setNight(lastDark, clock / 60);
       rig.camera.getWorldDirection(viewDirection);
       // The grass blades are off: grown only round the camera, the field ended
       // in a line a little way off and the land beyond was bare (the player,

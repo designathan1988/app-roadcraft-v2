@@ -15,7 +15,30 @@ import type { Finish } from '@world/buildings/materials';
 import { createFinishMaterials } from './finishes';
 import { createFurnitureGeometries, createFurnitureMaterial } from './furnitureKit';
 import type { FurnitureKind } from '@world/buildings/interior';
-import { SLOT_WIDTH, litTexture } from './lightSlots';
+import { SLOT_WIDTH, litTableDriven, litTexture } from './lightSlots';
+
+/**
+ * Share of people awake, by hour from midnight: 100 % less the share asleep in
+ * the American Time Use Survey 2007-11 (BLS table A-3,
+ * https://www.bls.gov/tus/tables/a3_0711.htm). A lit window is a room with
+ * somebody home and awake in it (Richardson et al., "Domestic lighting: a
+ * high-resolution energy demand model", 2009: lights follow active occupancy
+ * once the daylight outside drops), so this is the share of rooms lit after dark.
+ */
+const AWAKE_BY_HOUR = [
+  0.174, 0.095, 0.063, 0.051, 0.082, 0.146, 0.34, 0.579, 0.755, 0.864, 0.924, 0.951,
+  0.964, 0.959, 0.958, 0.961, 0.964, 0.97, 0.975, 0.973, 0.95, 0.855, 0.628, 0.349,
+];
+/** The awake share at a clock time (hours), between the survey's hourly figures. */
+export function awakeShare(hour: number): number {
+  const h = ((hour % 24) + 24) % 24;
+  const i = Math.floor(h);
+  const a = AWAKE_BY_HOUR[i] as number;
+  const b = AWAKE_BY_HOUR[(i + 1) % 24] as number;
+  return a + (b - a) * (h - i);
+}
+/** The share the glass reads (`setNight`). */
+const roomsAwake = { value: awakeShare(22) };
 
 /**
  * Everything the buildings layer draws with, built ONCE per renderer.
@@ -73,8 +96,11 @@ export interface BuildingKit {
   /** The furniture models, built the first time an interior is drawn. */
   furniture(): { readonly geometry: Readonly<Record<FurnitureKind, BufferGeometry>>; readonly material: MeshStandardMaterial };
   setGhostValid(valid: boolean): void;
-  /** Lights the windows from inside as night falls: 0 by day, 1 at night. */
-  setNight(dark: number): void;
+  /**
+   * Lights the windows from inside as night falls: 0 by day, 1 at night;
+   * `hour` (clock hours) decides how many rooms are lit (`awakeShare`).
+   */
+  setNight(dark: number, hour?: number): void;
   dispose(): void;
 }
 
@@ -266,8 +292,10 @@ export function createBuildingKit(): BuildingKit {
     const glassy = material[kind] as MeshStandardMaterial;
     glassy.onBeforeCompile = (shader) => {
       shader.uniforms.litTable = { value: litTexture };
+      shader.uniforms.litTableDriven = litTableDriven;
+      shader.uniforms.roomsAwake = roomsAwake;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;\nattribute float litSlot;\nuniform sampler2D litTable;')
+        .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;\nattribute float litSlot;\nuniform sampler2D litTable;\nuniform float litTableDriven;\nuniform float roomsAwake;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
   vPane = position.xy;
 #ifdef USE_INSTANCING
@@ -277,10 +305,16 @@ export function createBuildingKit(): BuildingKit {
 #endif
   vRoomLot = fract(sin(dot(floor(roomAt * 0.37), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
   // The room behind the pane (lightSlots.ts): lit exactly when somebody is
-  // in it and awake. -1: a pane with no room known, lit by lot.
-  vLit = -1.0;
-  if (litSlot > -0.5) {
+  // in it and awake, when a simulation of the residents drives the table.
+  // Without one (the residents are not simulated) each space draws its own
+  // lot - every window of a flat with the flat - against the share of people
+  // awake at this hour (\`roomsAwake\`, ATUS): lit in the evening, most dark
+  // after midnight. A pane with no room known draws by where it stands.
+  if (litSlot > -0.5 && litTableDriven > 0.5) {
     vLit = texture2D(litTable, vec2((mod(litSlot, ${SLOT_WIDTH}.0) + 0.5) / ${SLOT_WIDTH}.0, (floor(litSlot / ${SLOT_WIDTH}.0) + 0.5) / 64.0)).r;
+  } else {
+    float spaceLot = litSlot > -0.5 ? fract(sin(litSlot * 12.9898 + 4.1414) * 43758.5453) : vRoomLot;
+    vLit = step(1.0 - roomsAwake, spaceLot);
   }`);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying float vRoomLot;\nvarying float vLit;\nvarying vec2 vPane;')
@@ -308,7 +342,7 @@ export function createBuildingKit(): BuildingKit {
   vec3 roomTint = mix(vec3(1.0), vec3(0.62, 0.78, 1.15), step(0.9, fract(vRoomLot * 3.71)));
   totalEmissiveRadiance *= roomLit * roomTint;`);
     };
-    glassy.customProgramCacheKey = () => `room-lights-slots-interior-${kind}`;
+    glassy.customProgramCacheKey = () => `room-lights-awake-interior-${kind}`;
   }
   const shell = createFinishMaterials();
   const ghostShell = new MeshStandardMaterial({
@@ -365,7 +399,8 @@ export function createBuildingKit(): BuildingKit {
       }
       return furniture;
     },
-    setNight(dark) {
+    setNight(dark, hour) {
+      if (hour !== undefined) roomsAwake.value = awakeShare(hour);
       // Rooms lit behind the glass: a warm glow, more in the clear glass.
       for (const [kind, k] of [['glass', 0.55], ['glassDark', 0.35]] as const) {
         const mat = material[kind] as MeshStandardMaterial;

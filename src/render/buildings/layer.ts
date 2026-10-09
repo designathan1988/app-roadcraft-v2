@@ -52,8 +52,8 @@ export interface BuildingLayer {
    * at `level`, its rooms and furniture showing; null draws them whole.
    */
   setCutaway(spec: CutawaySpec | null): void;
-  /** Windows lit from inside at night (see `BuildingKit.setNight`). */
-  setNight(dark: number): void;
+  /** Windows lit from inside at night, as many as are awake at `hour` (see `BuildingKit.setNight`). */
+  setNight(dark: number, hour?: number): void;
   /** From afar (true) the frames and railings are drawn by their street faces only. */
   setFar(far: boolean): void;
   /** Thin facade parts stop casting shadows when their shadow width is subpixel. */
@@ -97,6 +97,24 @@ export interface CutawaySpec {
 /** How far past a wall a plant is still considered under the building. */
 const PLANT_MARGIN = m(1);
 const CELL = 64;
+
+/**
+ * Each record's text, written once per record object (MDN, WeakMap: a result
+ * kept per object while the object lives). The store never changes a record in
+ * place - `put` stores a copy (`BuildingStore.toText` keeps its text the same
+ * way) - so the text of a record seen before is the text it has now. Written
+ * for every building at every chunk lookup, a decay tick or a grown lot cost
+ * some 50 ms of `JSON.stringify` over the 761 buildings of the test city.
+ */
+const RECORD_TEXT = new WeakMap<Building, string>();
+const recordText = (b: Building): string => {
+  let text = RECORD_TEXT.get(b);
+  if (text === undefined) {
+    text = JSON.stringify(b);
+    RECORD_TEXT.set(b, text);
+  }
+  return text;
+};
 
 export function createBuildingLayer(): BuildingLayer {
   const kit: BuildingKit = createBuildingKit();
@@ -149,7 +167,7 @@ export function createBuildingLayer(): BuildingLayer {
     }
   };
   /** The buildings drawn cut open, by id and floor: only those near the camera, kept while they stay. */
-  const cutChunks = new Map<string, { key: string; chunk: BuildingChunk }>();
+  const cutChunks = new Map<string, { record: string; digest: string; chunk: BuildingChunk }>();
   /** An edit to one building must not resample the ground under every other building. */
   const groundDigests = new Map<BuildingId, { record: string; groundKey: string; digest: string }>();
   /** Whether a ground change since a key reached a building; without one, any new key did. */
@@ -170,15 +188,15 @@ export function createBuildingLayer(): BuildingLayer {
     naturalAt: GroundAt = groundAt): BuildingChunk => {
     const dir = cutaway ? Math.round(Math.atan2(cutaway.view.y, cutaway.view.x) / (Math.PI / 4)) : 0;
     const id = `${b.id}|${level}|${dir}`;
-    const record = JSON.stringify(b);
-    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
+    const record = recordText(b);
+    const digest = digestFor(b, record, groundKey, groundAt, pavedAt);
     const known = cutChunks.get(id);
-    if (known && known.key === key) return known.chunk;
+    if (known && known.record === record && known.digest === digest) return known.chunk;
     // The view snapped to eighths of a turn: the walls that come down change
     // only when the camera has really turned.
     const a = dir * (Math.PI / 4);
     const chunk = emitChunk(cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) }), groundAt, pavedAt, naturalAt);
-    cutChunks.set(id, { key, chunk });
+    cutChunks.set(id, { record, digest, chunk });
     return chunk;
   };
   const near = (b: Building): boolean => {
@@ -197,15 +215,18 @@ export function createBuildingLayer(): BuildingLayer {
    * around it: an edit re-emits one building, a terrain dab only the ones
    * whose ground it moved; everything else is concatenated from here.
    */
-  const chunks = new Map<BuildingId, { key: string; chunk: BuildingChunk }>();
+  // The record and the ground digest compared apart: the record text is the
+  // same string object while the record is (`recordText`), compared by
+  // reference; joined into one key, every lookup copied it whole.
+  const chunks = new Map<BuildingId, { record: string; digest: string; chunk: BuildingChunk }>();
   const chunkFor = (b: Building, groundAt: GroundAt, groundKey: string, pavedAt?: PavedAt,
     naturalAt: GroundAt = groundAt): BuildingChunk => {
-    const record = JSON.stringify(b);
-    const key = `${record}|${digestFor(b, record, groundKey, groundAt, pavedAt)}`;
+    const record = recordText(b);
+    const digest = digestFor(b, record, groundKey, groundAt, pavedAt);
     const known = chunks.get(b.id);
-    if (known && known.key === key) return known.chunk;
+    if (known && known.record === record && known.digest === digest) return known.chunk;
     const chunk = emitChunk(b, groundAt, pavedAt, naturalAt);
-    chunks.set(b.id, { key, chunk });
+    chunks.set(b.id, { record, digest, chunk });
     return chunk;
   };
   /** Footprints bucketed on a coarse grid, for `covers` (a cell as one number: a string per query was most of a plant pass). */
@@ -396,8 +417,8 @@ export function createBuildingLayer(): BuildingLayer {
     setPreview(next) {
       preview = next;
     },
-    setNight(dark) {
-      kit.setNight(dark);
+    setNight(dark, hour) {
+      kit.setNight(dark, hour);
     },
     setFar(next) {
       if (next === far) return;
