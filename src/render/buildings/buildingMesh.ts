@@ -86,6 +86,7 @@ import {
 } from '@world/buildings/types';
 import { type BuildingKit, PART_KINDS, PORCH_LAMP, type PartKind } from './kit';
 import type { FlagInstance } from './flagLayer';
+import { drawsSignature } from './signature';
 import { type FlagDesign, legacyFlag } from '@world/buildings/flags';
 
 /** Where the flags of the building being emitted go (`emitChunk` sets it). */
@@ -2978,6 +2979,8 @@ export interface BuildingChunk {
   readonly flags?: readonly FlagInstance[];
   /** The ground of its lots and parking bays as drawn; absent when it has none. */
   readonly lotGround?: LotGround;
+  /** A signature building's ground floor height: its body is drawn by `signature.ts`. */
+  readonly signatureFloor?: number;
 }
 
 /** Column-major T * Ry * S, written straight into `out` at `offset`. */
@@ -3021,7 +3024,9 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
   const designedFloor = closed.length > 0 ? floorHeight(resolved, naturalAt, pavedAt) : undefined;
   const flags: FlagInstance[] = [];
   flagSink = flags;
-  const floor = closed.length > 0
+  // A signature building's body is drawn with its own parts (`signature.ts`).
+  const signature = closed.length > 0 && drawsSignature(b);
+  const floor = signature ? designedFloor : closed.length > 0
     ? emitBuilding({ ...resolved, volumes: closed }, groundAt, shell, parts, pavedAt, furnished, inLot, designedFloor)
     : undefined;
   flagSink = null;
@@ -3068,7 +3073,8 @@ export function emitChunk(b: Building, groundAt: GroundAt, pavedAt?: PavedAt, na
   }
   const out = furniture ? { shells, parts: batches, furniture } : { shells, parts: batches };
   const withGround = lotGround ? { ...out, lotGround } : out;
-  return flags.length ? { ...withGround, flags } : withGround;
+  const withSignature = signature && floor !== undefined ? { ...withGround, signatureFloor: floor } : withGround;
+  return flags.length ? { ...withSignature, flags } : withSignature;
 }
 
 /**

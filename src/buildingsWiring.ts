@@ -3,7 +3,8 @@ import type { Vec2 } from '@core/vec2';
 import { signedArea } from '@core/polygon';
 import { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
-import { bodyOf } from '@world/buildings/blueprints';
+import { type BlueprintBody, bodyOf } from '@world/buildings/blueprints';
+import { loadLot } from '@world/buildings/lotLibrary';
 import { DEFAULT_PITCH, baysOn, footprintBox, ridgeAlongX, topLevel } from '@world/buildings/geometry';
 import { BUILDING_FUNCTIONS, type Building, type BuildingId, volumeById } from '@world/buildings/types';
 import { localFootprint } from '@world/buildings/footprints';
@@ -642,6 +643,16 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       // was the tool, is put down - with it, that click began a plan instead.
       clearArming(null);
       toolId = 'place';
+      // A lot of the lot lab (`lot:<name>`): read when chosen, then in hand
+      // with its own drawing (`world/buildings/lotLibrary.ts`).
+      if (key.startsWith('lot:')) {
+        void loadLot(key.slice(4)).then((lot) => {
+          if (!lot) return;
+          tool.useBody(lot.body as BlueprintBody, lot.body.blueprint ?? key);
+          host.changed();
+        });
+        return;
+      }
       tool.chooseBlueprint(key);
       host.changed();
     },

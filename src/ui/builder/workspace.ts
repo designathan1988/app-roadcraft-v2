@@ -1,4 +1,5 @@
 import { BLUEPRINTS, type Blueprint } from '@world/buildings/blueprints';
+import { LOT_NAMES, lotKey } from '@world/buildings/lotLibrary';
 import { CITY_BUILDINGS } from '@world/buildings/cityBuildings';
 import { FINISHES, type Finish, STYLES } from '@world/buildings/materials';
 import {
@@ -741,11 +742,16 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
       if (names.has(label.toLocaleLowerCase())) continue;
       entries.push({ key: bp.key, label, category: 'generic', run: () => actions.choosePreset(bp.key) });
     }
+    // The lots made in the lot lab, each with its own drawing (`world/buildings/lotLibrary.ts`).
+    for (const name of LOT_NAMES) {
+      const key = lotKey(name);
+      entries.push({ key, label: t(`builder.lot.${name}`), category: 'lots', run: () => actions.choosePreset(key) });
+    }
     for (const bp of state.userBlueprints) {
       entries.push({ key: bp.key, label: bp.name ?? bp.key, category: 'mine', run: () => actions.chooseUserBlueprint(bp.key), user: bp.key });
     }
     const chips = el('div', 'bw-chips');
-    const categories = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', ...(state.userBlueprints.length ? ['mine'] : [])];
+    const categories = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', 'lots', ...(state.userBlueprints.length ? ['mine'] : [])];
     const fill = (): void => {
       grid.innerHTML = '';
       const q = modelQuery.trim().toLocaleLowerCase();

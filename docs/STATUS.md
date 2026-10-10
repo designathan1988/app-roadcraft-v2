@@ -121,6 +121,12 @@ o jogo a cada edição.
   fica entre ele e o ponto olhado (raio a partir do alvo, como o
   camera-controls; `world/buildings/cameraSolids.ts`); de longe isso se apaga
   (`pullWeight`), e a vista geral nunca fica presa entre as torres.
+- Lotes do laboratório de lotes (ramo `lab/lots`, 2026-10-05; só os lotes, sem o
+  laboratório): os 33 prédios com lote completo (`lots/*.json`) no Construtor,
+  Modelos → Lotes (interface v2 e antiga), cada um desenhado com peças próprias
+  (`render/buildings/signature.ts`, `world/buildings/towerKit.ts`), lidos só
+  quando escolhidos (`world/buildings/lotLibrary.ts`). Conferido no jogo com a
+  torre art déco e a igreja.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

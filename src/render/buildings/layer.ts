@@ -12,6 +12,7 @@ import { m } from '@world/units';
 import { cutOpen } from '@world/buildings/interior';
 import { type BuildingChunk, type BuildingMeshes, assembleBuildingMeshes, assembleBuildingMeshesSteps, buildBuildingMeshes, emitChunk } from './buildingMesh';
 import { createFlagLayer } from './flagLayer';
+import { buildSignature, disposeSignature } from './signature';
 import { type BuildingKit, PART_KINDS, type PartKind, createBuildingKit } from './kit';
 
 /**
@@ -137,6 +138,10 @@ export function createBuildingLayer(): BuildingLayer {
   // Every flag in the city, waving: one instanced draw (`flagLayer.ts`).
   const flagLayer = createFlagLayer();
   group.add(flagLayer.group);
+  const signatureRoot = new Group();
+  signatureRoot.name = 'signature-buildings';
+  group.add(signatureRoot);
+  const signatures = new Map<BuildingId, { key: string; group: Group }>();
   group.matrixAutoUpdate = false;
   group.updateMatrix();
   let stored: BuildingMeshes | null = null;
@@ -209,7 +214,9 @@ export function createBuildingLayer(): BuildingLayer {
     // The view snapped to eighths of a turn: the walls that come down change
     // only when the camera has really turned.
     const a = dir * (Math.PI / 4);
-    const chunk = emitChunk(cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) }), groundAt, pavedAt, naturalAt);
+    // Opened, a signature building is drawn by the shared kit with its rooms and furniture.
+    const { blueprint: _sig, ...plain } = cutOpen(b, level, { x: Math.cos(a), y: Math.sin(a) });
+    const chunk = emitChunk(plain as Building, groundAt, pavedAt, naturalAt);
     cutChunks.set(id, { record, digest, chunk });
     return chunk;
   };
@@ -407,6 +414,25 @@ export function createBuildingLayer(): BuildingLayer {
           faded.group.renderOrder = 1;
           group.add(faded.group);
         }
+        // Signature buildings: their bodies, drawn with parts of their own (`signature.ts`).
+        const keep = new Set<BuildingId>();
+        for (const b of solid) {
+          const floor = drawn(b, groundAt, groundKey, pavedAt, naturalAt).signatureFloor;
+          if (floor === undefined) continue;
+          keep.add(b.id);
+          const sigKey = `${JSON.stringify(b)}|${floor}`;
+          const known = signatures.get(b.id);
+          if (known?.key === sigKey) continue;
+          if (known) { signatureRoot.remove(known.group); disposeSignature(known.group); }
+          const built = buildSignature(b, floor);
+          if (built) { signatureRoot.add(built); signatures.set(b.id, { key: sigKey, group: built }); } else signatures.delete(b.id);
+        }
+        for (const [id, known] of signatures) {
+          if (keep.has(id)) continue;
+          signatureRoot.remove(known.group);
+          disposeSignature(known.group);
+          signatures.delete(id);
+        }
         index(doc.buildings.all());
         flagLayer.set(shown.flatMap((b) => drawn(b, groundAt, groundKey, pavedAt, naturalAt).flags ?? []));
         applyFacadeDetail();
@@ -423,7 +449,9 @@ export function createBuildingLayer(): BuildingLayer {
         }
         if (preview) {
           if (!preview.solid) kit.setGhostValid(preview.valid);
-          ghost = buildBuildingMeshes([preview.building], groundAt, kit, !preview.solid, pavedAt, naturalAt);
+          // A signature building being edited shows its floors and rooms in the shared kit (the floor ghost).
+          const { blueprint: _sig, ...edited } = preview.building;
+          ghost = buildBuildingMeshes([edited as Building], groundAt, kit, !preview.solid, pavedAt, naturalAt);
           ghost.group.renderOrder = 2;
           group.add(ghost.group);
         }

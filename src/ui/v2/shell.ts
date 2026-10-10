@@ -19,6 +19,7 @@ import { furnitureChosen, setFurnitureChosen } from '../roads/furnitureChoice';
 import { FURNITURE_SETS } from '@world/roads/furnitureSets';
 import { EFFECT_KINDS, type ElementKind } from '@world/elements';
 import { BLUEPRINTS } from '@world/buildings/blueprints';
+import { LOT_NAMES, lotKey } from '@world/buildings/lotLibrary';
 import { CITY_BUILDINGS } from '@world/buildings/cityBuildings';
 import { FINISHES, STYLES } from '@world/buildings/materials';
 import { FACADE_PATTERNS } from '@world/buildings/types';
@@ -1514,7 +1515,7 @@ export function mountShell(deps: ShellDeps): void {
     search.value = modelQuery;
     search.onkeydown = (e) => e.stopPropagation();
     g.appendChild(search);
-    const cats = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', ...(state.userBlueprints.length ? ['mine'] : [])];
+    const cats = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', 'lots', ...(state.userBlueprints.length ? ['mine'] : [])];
     // The kinds of building in one dropdown, not a row of names.
     const kind = el('select', 'v2-mini');
     kind.title = t('builder.category.models');
@@ -1540,6 +1541,11 @@ export function mountShell(deps: ShellDeps): void {
     for (const bp of BLUEPRINTS) {
       const label = bp.nameKey ? t(bp.nameKey) : bp.key;
       if (!names.has(label.toLocaleLowerCase())) entries.push({ key: bp.key, label, cat: 'generic', run: () => actions.choosePreset(bp.key) });
+    }
+    // The lots made in the lot lab, each with its own drawing (`world/buildings/lotLibrary.ts`).
+    for (const name of LOT_NAMES) {
+      const key = lotKey(name);
+      entries.push({ key, label: t(`builder.lot.${name}`), cat: 'lots', run: () => actions.choosePreset(key) });
     }
     for (const bp of state.userBlueprints) entries.push({ key: bp.key, label: bp.name ?? bp.key, cat: 'mine', run: () => actions.chooseUserBlueprint(bp.key) });
     const fill = (): void => {
