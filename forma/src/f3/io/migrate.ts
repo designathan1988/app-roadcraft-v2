@@ -400,12 +400,19 @@ function checkSolid(e: Errors, where: string, s: Solid, p: Project3, ruleIds: Se
   if (!fin(s.taper) || s.taper < 0) e.add(w, 'afunilamento inválido.');
   if (!fin(s.plinth) || s.plinth < 0) e.add(w, 'embasamento inválido.');
   if (s.hidden !== undefined && typeof s.hidden !== 'boolean') e.add(w, 'visibilidade inválida.');
+  if (s.locked !== undefined && typeof s.locked !== 'boolean') e.add(w, 'trava inválida.');
+  if (s.layer !== undefined && !str(s.layer)) e.add(w, 'camada inválida.');
+  if (s.bevel !== undefined) {
+    const bv = s.bevel;
+    if (!isObj(bv) || !fin(bv.top) || !fin(bv.bottom) || !fin(bv.segments) || !fin(bv.profile) || bv.top < 0 || bv.bottom < 0 || bv.segments < 1 || bv.profile < 0 || bv.profile > 1) e.add(w, 'bisel inválido.');
+  }
   if (!isObj(s.edges)) e.add(w, 'ajustes de lado inválidos.');
   else
     for (const [id, spec] of Object.entries(s.edges)) {
       if (!vids.has(id)) e.add(w, `ajuste num lado inexistente (${id}).`);
       if (!isObj(spec)) continue;
       if (spec.lean !== undefined && !fin(spec.lean)) e.add(w, 'inclinação de lado inválida.');
+      if (spec.bevel !== undefined && (!fin(spec.bevel) || spec.bevel < 0)) e.add(w, 'bisel de lado inválido.');
       for (const k of ['gable', 'blank'] as const) if (spec[k] !== undefined && typeof spec[k] !== 'boolean') e.add(w, `${k} deve ser verdadeiro ou falso.`);
       if (spec.material !== undefined) checkMaterial(e, w, spec.material, 'material do lado');
     }
@@ -560,6 +567,11 @@ export function validateForma3(raw: unknown): string[] {
       else if (lot.polygon.some((q) => Math.abs(q[0]) > LIMITS3.worldExtent || Math.abs(q[1]) > LIMITS3.worldExtent)) e.add(w, `polígono fora do limite de ${LIMITS3.worldExtent} m.`);
       if (!Array.isArray(lot.frontEdges) || lot.frontEdges.some((i) => !Number.isInteger(i) || i < 0 || i >= (lot.polygon?.length ?? 0))) e.add(w, 'testada aponta para aresta inexistente.');
     }
+  if (p.layers !== undefined) {
+    if (!Array.isArray(p.layers) || p.layers.length > 200) e.add('Projeto', 'camadas inválidas.');
+    else for (const l of p.layers) if (!isObj(l) || !str(l.id) || !str(l.name, 60) || typeof l.visible !== 'boolean' || typeof l.locked !== 'boolean' || !str(l.color)) e.add('Projeto', 'camada inválida.');
+  }
+  if (p.view !== undefined && (!isObj(p.view) || !Array.isArray(p.view.hiddenCategories))) e.add('Projeto', 'estado da vista inválido.');
   if (!Array.isArray(p.types)) e.add('Projeto', 'tipos de componente inválidos.');
   else {
     const ids = new Set<string>();

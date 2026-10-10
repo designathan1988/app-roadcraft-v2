@@ -183,7 +183,7 @@ export function gameData(project: Project3): GameProject {
     name: project.name,
     lots: project.lots.map((l) => ({ id: l.id, name: l.name, polygon: l.polygon.map(pt2), frontEdges: [...l.frontEdges] })),
     buildings: project.buildings.map((b) => {
-      const ev = evaluateBuilding(b, {}, project);
+      const ev = evaluateBuilding(b, { hidden: () => false }, project);
       let top = 0;
       for (let i = 1; i < ev.shell.positions.length; i += 3) top = Math.max(top, ev.shell.positions[i]!);
       return {
@@ -195,7 +195,7 @@ export function gameData(project: Project3): GameProject {
         rotation: mm(b.rotation),
         height: mm(top),
         levels: [...b.levels].sort((x, y) => x.elevation - y.elevation).map((l) => ({ id: l.id, name: l.name, elevation: mm(l.elevation), height: mm(l.height) })),
-        solids: b.solids.filter((s) => !s.hidden).map(gameSolid),
+        solids: b.solids.map(gameSolid),
         entrances: entrancesOf(b, ev.placements),
       };
     }),

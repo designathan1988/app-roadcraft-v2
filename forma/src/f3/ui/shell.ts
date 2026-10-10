@@ -28,7 +28,27 @@ export const CSS = `
 .f3-tools hr{width:28px;border:0;border-top:1px solid var(--line);margin:4px 0}
 .f3-view{grid-area:view;position:relative;overflow:hidden;min-height:0}
 .f3-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
-.f3-side{grid-area:side;background:var(--panel);border-left:1px solid var(--line);overflow:auto;min-height:0}
+.f3-aside{grid-area:side;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.f3-tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.f3-tabs button{flex:1;border:0;background:transparent;padding:8px 6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;color:var(--muted);border-bottom:2px solid transparent}
+.f3-tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
+.f3-side,.f3-layers{flex:1;overflow:auto;min-height:0}
+.f3-lrow{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px;min-height:28px}
+.f3-lrow:hover{background:#f4f3ef}
+.f3-lrow[aria-selected=true]{background:#e8f0fc}
+.f3-lrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.f3-lrow input.nm{border:1px solid transparent;border-radius:4px;padding:2px 4px;font:inherit;background:transparent;cursor:text}
+.f3-lrow input.nm:focus{border-color:var(--line);outline:none;background:#fff}
+.f3-lrow .ic{border:0;background:transparent;border-radius:5px;width:24px;height:24px;display:grid;place-items:center;color:var(--muted);padding:0;flex:none}
+.f3-lrow .ic:hover{background:#e9e7e1;color:var(--ink)}
+.f3-lrow .ic[aria-pressed=false]{opacity:.35}
+.f3-lrow .ic svg{width:15px;height:15px}
+.f3-lrow input[type=color]{width:18px;height:18px;border:0;padding:0;background:none;flex:none}
+.f3-lrow select{max-width:92px;border:1px solid var(--line);border-radius:5px;font:inherit;font-size:11px;padding:1px 2px;background:#fbfbf9}
+.f3-lrow .op{width:16px;text-align:center;font-weight:700;color:var(--muted);flex:none}
+.f3-lrow.sub{padding-left:22px}
+.f3-lrow.sub2{padding-left:38px;font-size:12px}
+.f3-lrow.off .nm{color:var(--muted);text-decoration:line-through}
 .f3-cat{grid-area:cat;background:var(--panel);border-top:1px solid var(--line);min-width:0}
 .f3-status{grid-area:status;display:flex;align-items:center;gap:12px;padding:0 10px;background:var(--panel);border-top:1px solid var(--line);color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden}
 .f3-hint{overflow:hidden;text-overflow:ellipsis}
@@ -81,6 +101,8 @@ export const CSS = `
 .f3-sw input[type=color]{width:30px;height:26px;border:1px solid var(--line);border-radius:6px;padding:1px;background:#fff}
 .f3-sw select{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit;background:#fbfbf9}
 .f3-sw>span{width:46px;font-size:11px;color:var(--muted)}
+.f3-op{border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:8px}
+.f3-op h4{margin:0 0 6px;font-size:11px;font-weight:600;color:var(--muted);text-transform:none}
 .f3-rule{display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px;margin-bottom:6px}
 .f3-rule .t{grid-column:1/-1}
 .f3-rule select,.f3-rule input{border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit;background:#fbfbf9;min-width:0}
@@ -124,6 +146,8 @@ export interface Shell3 {
   root: HTMLElement;
   view: HTMLElement;
   side: HTMLElement;
+  layers: HTMLElement;
+  tabs: HTMLElement;
   cat: HTMLElement;
   tools: HTMLElement;
   status: { hint: HTMLElement; vcbLabel: HTMLElement; vcb: HTMLInputElement; stats: HTMLElement };
@@ -170,7 +194,11 @@ export function createShell3(container: HTMLElement): Shell3 {
     <div class="f3-toast" role="status"></div>
     <div class="f3-warn" role="alert"></div>
   </main>
-  <aside class="f3-side" aria-label="Propriedades"></aside>
+  <aside class="f3-aside">
+    <div class="f3-tabs" role="tablist"><button role="tab" data-tab="props" aria-selected="true">${icon('props')}Propriedades</button><button role="tab" data-tab="layers" aria-selected="false">${icon('layers')}Camadas</button></div>
+    <div class="f3-side" role="tabpanel" aria-label="Propriedades"></div>
+    <div class="f3-layers" role="tabpanel" aria-label="Camadas e elementos" hidden></div>
+  </aside>
   <section class="f3-cat" aria-label="Catálogo"></section>
   <footer class="f3-status">
     <span class="f3-hint"></span>
@@ -188,6 +216,8 @@ export function createShell3(container: HTMLElement): Shell3 {
     root,
     view: $('.f3-view'),
     side: $('.f3-side'),
+    layers: $('.f3-layers'),
+    tabs: $('.f3-tabs'),
     cat: $('.f3-cat'),
     tools: $('.f3-tools'),
     status: { hint: $('.f3-hint'), vcbLabel: $('.f3-vcb label'), vcb: $('.f3-vcb input'), stats: $('.f3-stats') },

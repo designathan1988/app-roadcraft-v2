@@ -8,6 +8,8 @@ import type { Building3, ID, Item, Project3, Solid, Vec2, Vec3 } from '../model/
 import { building as newBuilding, circlePlan, levelsFor, planVertices, project as newProject, rectPlan, roofSpec, solid as newSolid, uid } from '../model/defaults';
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
+import { extrudeSide, insetSide, insetTop, offsetCopy, offsetSolid, setSolidSize, splitAtHeight } from '../model/modeling';
+import { activeLayer } from '../model/layers';
 import { Store } from './store';
 import { alignBuildings, alignSolids, type AlignOp } from '../model/align';
 import { BLOCKS, blockSolid, type BlockPlacement } from '../model/blocks';
@@ -35,6 +37,8 @@ export interface Selection {
   elems: string[];
   /** Outros edifícios selecionados junto (Shift+clique). */
   others: ID[];
+  /** Canto (vértice da planta) selecionado no primeiro sólido. */
+  vertex?: ID | null;
 }
 
 interface Measure {
@@ -229,7 +233,11 @@ export class Editor3 {
   change(bid: ID, fn: (b: Building3) => void | boolean, message = '', geometry = true): boolean {
     const b = this.store.building(bid);
     if (!b) return false;
+    const known = new Set([...b.solids.map((x) => x.id), ...b.items.map((x) => x.id)]);
     const r = fn(b);
+    // O que nasceu nesta mudança vai para a camada ativa.
+    const layer = activeLayer(this.project);
+    if (layer && r !== false) for (const x of [...b.solids, ...b.items]) if (!known.has(x.id) && !x.layer) x.layer = layer;
     if (r === false) {
       this.store.revert();
       if (message) this.toast('Não foi possível: a forma ficaria inválida.');
@@ -249,7 +257,7 @@ export class Editor3 {
 
   // ── Seleção ──────────────────────────────────────────────────────────
   select(next: Partial<Selection>): void {
-    this.sel = { building: null, solids: [], face: null, item: null, elems: [], others: [], ...next };
+    this.sel = { building: null, solids: [], face: null, item: null, elems: [], others: [], vertex: null, ...next };
     this.syncSelection();
   }
 
@@ -465,7 +473,7 @@ export class Editor3 {
       for (const ring of [s0.plan.outer, ...s0.plan.holes])
         ring.forEach((v, i) => {
           const n = ring[(i + 1) % ring.length]!;
-          handles.push({ kind: 'vertex', at: W(v.p, yv), solid: s0.id, vertex: v.id, color: HANDLE_COLORS.vertex, label: 'Vértice' });
+          handles.push({ kind: 'vertex', at: W(v.p, yv), solid: s0.id, vertex: v.id, color: v.id === this.sel.vertex ? HANDLE_COLORS.push : HANDLE_COLORS.vertex, label: 'Vértice' });
           const mid = midOf(v, n);
           handles.push({ kind: 'bend', at: W(mid, yv), solid: s0.id, edge: v.id, color: HANDLE_COLORS.bend, label: 'Curvar' });
         });
@@ -642,6 +650,11 @@ export class Editor3 {
   remove(): void {
     const b = this.activeBuilding();
     if (!b) return;
+    if (this.context === b.id && this.sel.vertex) {
+      const vid = this.sel.vertex;
+      if (this.changeSolid((s) => removeVertex(s, vid), 'Vértice apagado.')) this.select({ building: b.id, solids: this.sel.solids });
+      return;
+    }
     if (this.context === b.id && this.sel.item) {
       this.change(b.id, (x) => void (x.items = x.items.filter((i) => i.id !== this.sel.item)), 'Componente excluído.');
       return this.select({ building: b.id });
@@ -660,6 +673,99 @@ export class Editor3 {
     this.store.commit(null, 'Edifício excluído.');
     this.toast('Edifício excluído. Ctrl+Z desfaz.');
     this.select({});
+  }
+
+  /**
+   * Ferramentas de modelagem sobre a seleção (painel, caixa de medidas):
+   * extrudar e inset de face, offset, dividir, medidas, bisel, cantos.
+   */
+  modelOp(op: string, a: Record<string, number | string | boolean> = {}): boolean {
+    const b = this.activeBuilding(),
+      s = this.activeSolid();
+    if (!b || !s) return false;
+    const n = (k: string, d = 0) => (typeof a[k] === 'number' && Number.isFinite(a[k]) ? (a[k] as number) : d);
+    let created: Solid | null = null;
+    const edge = this.sel.face?.kind === 'side' ? this.sel.face.edge : undefined;
+    const msgs: Record<string, string> = {
+      extrude: n('depth') >= 0 ? 'Face extrudada (volume novo).' : 'Reentrância criada (recorte).',
+      'inset-side': n('depth') >= 0 ? 'Saliência criada.' : 'Nicho criado (recorte).',
+      'inset-top': n('depth') >= 0 ? 'Volume sobre o topo criado.' : 'Rebaixo criado (recorte).',
+      offset: a.copy ? 'Cópia com offset criada.' : 'Contorno deslocado.',
+      split: 'Volume dividido em dois.',
+      size: 'Medidas aplicadas.',
+      bevel: 'Bisel aplicado.',
+      'edge-bevel': 'Bisel do lado aplicado.',
+      corner: 'Canto ajustado.',
+    };
+    const layer = activeLayer(this.project);
+    const run = (x: Building3): boolean => {
+        const so = findSolid(x, s.id)!;
+        switch (op) {
+          case 'extrude':
+            if (!edge) return false;
+            created = extrudeSide(x, so, edge, n('depth'));
+            return !!created;
+          case 'inset-side':
+            if (!edge) return false;
+            created = insetSide(x, so, edge, n('margin', 1), n('depth', -1), !!a.keepBottom);
+            return !!created;
+          case 'inset-top':
+            created = insetTop(x, so, n('inset'), n('depth'));
+            return !!created;
+          case 'offset': {
+            const corner = (a.corner as 'sharp' | 'round' | 'chamfer' | undefined) ?? 'sharp';
+            if (a.copy) {
+              created = offsetCopy(x, so, n('d'), corner);
+              return !!created;
+            }
+            return offsetSolid(so, n('d'), corner);
+          }
+          case 'split':
+            created = splitAtHeight(x, so, n('y'));
+            return !!created;
+          case 'size':
+            return setSolidSize(so, n('w'), n('d'));
+          case 'bevel': {
+            const cur = so.bevel ?? { top: 0, bottom: 0, segments: 1, profile: 0 };
+            so.bevel = { top: Math.max(0, n('top', cur.top)), bottom: Math.max(0, n('bottom', cur.bottom)), segments: Math.max(1, Math.round(n('segments', cur.segments))), profile: Math.max(0, Math.min(1, n('profile', cur.profile))) };
+            if (so.bevel.top <= 0 && so.bevel.bottom <= 0) delete so.bevel;
+            return true;
+          }
+          case 'edge-bevel': {
+            if (!edge) return false;
+            // 0 também vale: tira o bisel só deste lado.
+            (so.edges[edge] ??= {}).bevel = Math.max(0, n('w'));
+            return true;
+          }
+          case 'corner': {
+            const vid = this.sel.vertex;
+            const v = vid ? [so.plan.outer, ...so.plan.holes].flat().find((q) => q.id === vid) : undefined;
+            if (!v) return false;
+            if ('round' in a) {
+              if (n('round') > 0) v.round = n('round');
+              else delete v.round;
+            }
+            if ('chamfer' in a) {
+              if (n('chamfer') > 0) v.chamfer = n('chamfer');
+              else delete v.chamfer;
+            }
+            return true;
+          }
+        }
+        return false;
+    };
+    const ok = this.change(
+      b.id,
+      (x) => {
+        const r = run(x);
+        const c = created as Solid | null;
+        if (r && c && layer && !c.layer) c.layer = layer;
+        return r;
+      },
+      msgs[op] ?? '',
+    );
+    if (ok && created) this.select({ building: b.id, solids: [(created as Solid).id] });
+    return ok;
   }
 
   copy(): void {
@@ -846,6 +952,29 @@ export class Editor3 {
 
   /** Tipo de variação em edição (depois de "Editar só estes"). */
   variation: ID | null = null;
+  /** Parâmetros dos elementos selecionados valem para o tipo todo ou só para eles. */
+  elemScope: 'type' | 'sel' = 'type';
+
+  /**
+   * Muda um parâmetro dos elementos selecionados: no tipo (todas as
+   * ocorrências e regras) ou, em "só os selecionados", numa variação do tipo
+   * criada na primeira mudança (como duplicar o tipo no Revit).
+   */
+  editElemsParam(key: string, value: unknown): void {
+    const picked = this.elements().filter((e) => this.sel.elems.includes(e.key));
+    const types = [...new Set(picked.map((e) => e.type))];
+    if (types.length !== 1) return;
+    const tid = types[0]!;
+    if (this.elemScope === 'type') return this.editType(tid, key, value);
+    // A variação já é só destes quando nenhum outro elemento usa o tipo.
+    const others = this.elements().some((e) => e.type === tid && !this.sel.elems.includes(e.key));
+    if (others || this.project.types.every((t) => t.id !== tid)) {
+      this.elemAction('vary');
+      if (!this.variation) return;
+      return this.editType(this.variation, key, value);
+    }
+    this.editType(tid, key, value);
+  }
 
   // ── Ferramentas ──────────────────────────────────────────────────────
   setTool(t: Tool): void {
@@ -1211,6 +1340,21 @@ export class Editor3 {
     }
     if (!s) return;
     const M = this.view.buildingMatrix(b);
+    // Ctrl + seta da face: extrudar (volume novo), como o Ctrl do Empurrar/Puxar do SketchUp.
+    if ((h.kind === 'push' && h.edge) || (h.kind === 'height' && this.sel.face?.kind === 'top')) {
+      if (e.ctrlKey) {
+        const side = h.kind === 'push';
+        this.startDrag(side ? 'extrude-side' : 'extrude-top', b, e, { handle: h.kind, at: h.at.clone(), dir: h.dir!.clone(), edge: h.edge, sid: s.id }, true);
+        this.preview.add(b.id);
+        this.setMeasure(side ? 'Extrudar' : 'Extrudar topo', (t) => {
+          const v = parseLength(t);
+          if (v === null || v === 0) return false;
+          this.modelOp(side ? 'extrude' : 'inset-top', side ? { depth: v } : { inset: 0, depth: v });
+          return true;
+        });
+        return;
+      }
+    }
     if (h.kind === 'height' || h.kind === 'lift') {
       this.startDrag(h.kind, b, e, { handle: h.kind, at: h.at.clone(), h0: s.height, b0: s.base, sid: s.id }, true);
       this.preview.add(b.id);
@@ -1469,6 +1613,19 @@ export class Editor3 {
     const s = findSolid(b, d.data.sid as ID);
     const so = findSolid(orig, d.data.sid as ID);
     if (!s || !so) return;
+    if (d.kind === 'extrude-side' || d.kind === 'extrude-top') {
+      let t = this.dragAlong(d, e, d.data.at as THREE.Vector3, d.data.dir as THREE.Vector3);
+      if (!e.altKey && this.infer.enabled) t = Math.round(t / 0.1) * 0.1;
+      // Refaz a partir do original a cada passo (o volume novo é um só).
+      b.solids = structuredClone(orig.solids);
+      b.levels = structuredClone(orig.levels);
+      const base = findSolid(b, d.data.sid as ID)!;
+      const n = Math.abs(t) < 0.05 ? null : d.kind === 'extrude-side' ? extrudeSide(b, base, d.data.edge as ID, t) : insetTop(b, base, 0, t);
+      d.data.created = n?.id;
+      this.store.touch([b.id]);
+      this.showDim((t >= 0 ? '+' : '') + fmt(t) + ' m' + (t < 0 ? ' (recorte)' : ''), e);
+      return;
+    }
     if (d.kind === 'height' || d.kind === 'lift') {
       const at = d.data.at as THREE.Vector3;
       const t = this.dragAlong(d, e, at, new THREE.Vector3(0, 1, 0));
@@ -1648,6 +1805,11 @@ export class Editor3 {
     this.preview.delete(d.bid);
     this.clearSnap();
     this.shell.dim.hidden = true;
+    if (!d.moved && d.kind === 'vertex') {
+      // Clique num vértice: seleciona o canto (arredondar, chanfrar, apagar).
+      this.store.revert();
+      return this.select({ building: this.sel.building, solids: this.sel.solids, vertex: d.data.vertex as ID });
+    }
     if (!d.moved) {
       this.store.revert();
       // Clique sem arrastar numa alça: vale como clique no modelo (selecionar face, etc.).
@@ -1674,6 +1836,15 @@ export class Editor3 {
         this.lastMove = delta;
         this.lastMoved = { kind: 'solids', bid: b.id, ids: d.data.ids as ID[], delta, copied: !!d.data.copied };
       }
+    }
+    if ((d.kind === 'extrude-side' || d.kind === 'extrude-top') && b) {
+      const id = d.data.created as ID | undefined;
+      this.store.commit([d.bid], id ? 'Volume extrudado.' : '');
+      if (id) {
+        this.toast('Volume extrudado: é um volume novo, editável.');
+        this.select({ building: b.id, solids: [id] });
+      }
+      return;
     }
     if (d.kind === 'rotate' && !d.data.inCtx) {
       this.store.commit([d.bid], 'Girado.', false);
@@ -1783,7 +1954,7 @@ export class Editor3 {
     let created = false;
     if (!b) {
       if (this.drawMode === 'subtract') return this.toast('Para recortar, desenhe sobre um edifício (ou dentro dele em edição).');
-      b = newBuilding({ name: `Edifício ${this.project.buildings.length + 1}`, position: [a.x, a.z], levels: levelsFor(1) });
+      b = newBuilding({ name: `Edifício ${this.project.buildings.length + 1}`, position: [a.x, a.z], levels: levelsFor(1) , ...(activeLayer(this.project) ? { layer: activeLayer(this.project) } : {}) });
       this.store.project.buildings.push(b);
       created = true;
     }
@@ -1936,7 +2107,7 @@ export class Editor3 {
     let b = pl.b;
     if (!b) {
       if (pl.at.op === 'subtract') return this.toast('Para recortar, solte o bloco sobre um edifício.');
-      b = newBuilding({ name: `Edifício ${this.project.buildings.length + 1}`, position: [pl.at.origin[0], pl.at.origin[1] + def.d / 2], levels: levelsFor(Math.max(1, def.levels)) });
+      b = newBuilding({ name: `Edifício ${this.project.buildings.length + 1}`, position: [pl.at.origin[0], pl.at.origin[1] + def.d / 2], levels: levelsFor(Math.max(1, def.levels)) , ...(activeLayer(this.project) ? { layer: activeLayer(this.project) } : {}) });
       const s0 = blockSolid(def, { ...pl.at, origin: [0, -def.d / 2] });
       b.solids.push(s0);
       this.store.project.buildings.push(b);

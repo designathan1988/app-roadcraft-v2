@@ -29,6 +29,11 @@ const EXTRA: Record<string, string> = {
   pyramid: 'M12 3l9 18H3z M12 3v18',
   sawtooth: 'M3 21V12l5-6v6l5-6v6l5-6v15z',
   gambrel: 'M3 21v-7l3-6 6-4 6 4 3 6v7z',
+  lock: 'M6 11h12v10H6z M8 11V7a4 4 0 018 0v4',
+  unlock: 'M6 11h12v10H6z M8 11V7a4 4 0 017.5-2',
+  eyeoff: 'M3 3l18 18 M10.6 5.1A10 10 0 0112 5c6 0 10 7 10 7a17 17 0 01-3 3.6 M6.6 6.6A17 17 0 002 12s4 7 10 7a10 10 0 005.4-1.6',
+  layers: 'M12 3l9 5-9 5-9-5z M3 13l9 5 9-5 M3 17l9 5 9-5',
+  props: 'M4 6h10 M18 6h2 M4 12h4 M12 12h8 M4 18h12 M20 18h0 M16 4v4 M10 10v4 M18 16v4',
 };
 
 export const icon = (name: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${EXTRA[name] ?? ICON_PATHS[name] ?? ICON_PATHS.cube}"/></svg>`;

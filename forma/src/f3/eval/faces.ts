@@ -31,6 +31,8 @@ export type FaceKind =
   | 'roomFloor'
   | 'roomCeil'
   | 'roomWall'
+  /** Faixa do bisel no topo ou na base de um lado (parede, sem componentes). */
+  | 'bevel'
   /** Face interna de um sólido de subtração (vira parede do recorte). */
   | 'cutter';
 

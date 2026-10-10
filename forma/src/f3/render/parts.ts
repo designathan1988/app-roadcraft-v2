@@ -64,7 +64,8 @@ export interface PartsMesh {
 
 const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}`;
 
-export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true): PartsMesh {
+export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true, visible?: (tag: PartTag) => boolean): PartsMesh {
+  const show = visible ? parts.tags.map((t) => visible(t)) : null;
   const group = new THREE.Group();
   group.name = 'componentes';
   const created: THREE.BufferGeometry[] = [];
@@ -72,6 +73,7 @@ export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true
   // Instâncias.
   const batches = new Map<string, { shape: InstPart['shape']; key: MaterialKey; list: InstPart[] }>();
   for (const it of parts.inst) {
+    if (show && !show[it.tag]) continue;
     const key = partMaterial(it.mat, false);
     const id = `${it.shape}|${keyOf(key)}`;
     let b = batches.get(id);
@@ -92,6 +94,7 @@ export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true
   // Perfis: uma malha por material.
   const byMat = new Map<string, { key: MaterialKey; pos: number[]; tags: number[] }>();
   for (const m of parts.meshes) {
+    if (show && !show[m.tag]) continue;
     const key = partMaterial(m.mat);
     const id = keyOf(key);
     let b = byMat.get(id);

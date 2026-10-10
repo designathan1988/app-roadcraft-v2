@@ -15,6 +15,7 @@ import { allFamilies, family, typeById, BUILTIN_TYPES } from '../families/index'
 import { resolveParams, type ParamDef } from '../families/family';
 import { icon } from './icons';
 import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, setbackOn } from '../model/quick';
+import { planBox } from '../model/modeling';
 
 const ROOFS: [RoofKind, string, string][] = [
   ['flat', 'Plano', 'flat'],
@@ -37,6 +38,17 @@ const parse = (s: string) => parseFloat(s.replace(',', '.'));
 function field(key: string, label: string, value: number, step = 0.1, extra = ''): string {
   return `<label class="f3-field"><span>${label}</span><input data-k="${key}" inputmode="decimal" value="${num(value)}" data-step="${step}" ${extra}></label>`;
 }
+
+/** Campo de uma ferramenta (lido pelo botão data-run da mesma caixa). */
+function tf(key: string, label: string, value: number, step = 0.1): string {
+  return `<label class="f3-field"><span>${label}</span><input data-t="${key}" data-step="${step}" inputmode="decimal" value="${num(value)}"></label>`;
+}
+
+function toolBox(title: string, fields: string, buttons: string): string {
+  return `<div class="f3-op"><h4>${title}</h4><div class="f3-grid2">${fields}</div><div class="f3-row" style="margin-top:6px">${buttons}</div></div>`;
+}
+
+const run = (op: string, label: string, extra: Record<string, unknown> = {}, cls = '') => `<button class="f3-btn ${cls}" data-run="${op}" data-extra='${JSON.stringify(extra)}'>${label}</button>`;
 
 function finishSelect(key: string, label: string, ref: { finish: string; color: string }): string {
   return `<div class="f3-sw"><span>${label}</span><input type="color" data-k="${key}.color" value="${ref.color}"><select data-k="${key}.finish">${FINISHES.map((f) => `<option value="${f.id}" ${f.id === ref.finish ? 'selected' : ''}>${f.name}</option>`).join('')}</select></div>`;
@@ -110,6 +122,8 @@ function alignPanel(n: number, what: string): string {
 
 function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   const face = ed.sel.face;
+  const box = planBox(s);
+  const bv = s.bevel;
   const r = s.roof;
   const roofParams =
     r.kind === 'flat' || r.kind === 'terrace'
@@ -127,14 +141,32 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
       <button class="f3-btn" data-act="blank">${e.blank ? 'Recebe componentes' : 'Parede cega'}</button>
       <button class="f3-btn" data-act="split">Dividir lado</button>
     </div>
-    <div style="margin-top:8px">${finishSelect('edgemat', 'Parede', e.material ?? s.materials.wall)}</div></div>`;
+    <div style="margin-top:8px">${finishSelect('edgemat', 'Parede', e.material ?? s.materials.wall)}</div>
+    ${toolBox('Extrudar face', tf('depth', 'Profundidade (m; − afunda)', 3), run('extrude', 'Extrudar'))}
+    ${toolBox('Inset da face', tf('margin', 'Margem (m)', 1) + tf('depth', 'Profundidade (m; − nicho)', -1.2) + `<label class="f3-field"><span>Pé</span><select data-t="keepBottom"><option value="">Com margem</option><option value="1">Até a base</option></select></label>`, run('inset-side', 'Aplicar inset'))}
+    <div class="f3-grid2" style="margin-top:8px">${field('edgebevel', 'Bisel do topo deste lado (m)', e.bevel ?? 0, 0.05)}</div></div>`;
+  } else if (face?.kind === 'top') {
+    facePart = `<div class="f3-sec"><h3>${icon('push')} Topo selecionado</h3>
+    ${toolBox('Inset do topo', tf('inset', 'Recuo da borda (m)', 2) + tf('depth', 'Altura (m; − rebaixa)', 3), run('inset-top', 'Aplicar inset'))}
+    <p class="f3-empty" style="padding:6px 0 0">Ctrl + arrastar a seta verde extruda o topo como volume novo.</p></div>`;
+  }
+  if (ed.sel.vertex) {
+    const v = [...s.plan.outer, ...s.plan.holes.flat()].find((q) => q.id === ed.sel.vertex);
+    if (v) facePart += `<div class="f3-sec"><h3>Canto selecionado</h3><div class="f3-grid2">${field('cround', 'Arredondar (m)', v.round ?? 0, 0.1)}${field('cchamfer', 'Chanfrar (m)', v.chamfer ?? 0, 0.1)}</div>
+    <div class="f3-row" style="margin-top:8px"><button class="f3-btn danger" data-act="delvertex">Apagar vértice</button></div></div>`;
   }
   return `<div class="f3-title"><input data-s="name" value="${esc(s.name)}" aria-label="Nome do volume"><span class="f3-kind">${s.op === 'add' ? 'Volume' : s.op === 'subtract' ? 'Recorte' : 'Interseção'}</span></div>
   ${facePart}
   <div class="f3-sec"><h3>Forma</h3>
     <div class="f3-seg" style="margin-bottom:8px">${(['add', 'subtract', 'intersect'] as const).map((o) => `<button data-op="${o}" aria-pressed="${s.op === o}">${o === 'add' ? 'Somar' : o === 'subtract' ? 'Recortar' : 'Interseção'}</button>`).join('')}</div>
-    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfrar cantos (m)', s.plan.outer[0]?.chamfer ?? 0)}</div>
+    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfrar cantos (m)', s.plan.outer[0]?.chamfer ?? 0)}${field('sizew', 'Largura X (m)', box.x1 - box.x0)}${field('sized', 'Profundidade Z (m)', box.z1 - box.z0)}</div>
     <div class="f3-row" style="margin-top:8px"><button class="f3-btn" data-act="levelsfit">Altura = pavimentos</button><button class="f3-btn" data-act="mirror">${icon('mirror')}Espelhar</button></div>
+  </div>
+  <div class="f3-sec"><h3>Modificar</h3>
+    ${toolBox('Offset do contorno', tf('d', 'Distância (m; − encolhe)', 1) + `<label class="f3-field"><span>Cantos</span><select data-t="corner"><option value="sharp">Vivos</option><option value="round">Redondos</option><option value="chamfer">Chanfrados</option></select></label>`, run('offset', 'Aplicar') + run('offset', 'Como volume novo', { copy: true }))}
+    ${toolBox('Dividir na altura', tf('y', 'Altura do corte acima da base (m)', Math.round(s.height * 5) / 10), run('split', 'Dividir'))}
+    <div class="f3-op"><h4>Bisel das arestas</h4><div class="f3-grid2">${field('bvtop', 'Topo (m)', bv?.top ?? 0, 0.05)}${field('bvbottom', 'Base (m)', bv?.bottom ?? 0, 0.05)}${field('bvseg', 'Segmentos', bv?.segments ?? 1, 1)}
+    <label class="f3-field"><span>Perfil</span><select data-bvprofile><option value="0" ${!bv || bv.profile < 0.25 ? 'selected' : ''}>Reto</option><option value="0.5" ${bv && bv.profile >= 0.25 && bv.profile < 0.75 ? 'selected' : ''}>Misto</option><option value="1" ${bv && bv.profile >= 0.75 ? 'selected' : ''}>Redondo</option></select></label></div></div>
   </div>
   <div class="f3-sec"><h3>Modelar rápido</h3><div class="f3-row">
     <button class="f3-btn" data-quick="lvup" title="Mais um pavimento no edifício">+ Pavimento</button>
@@ -200,11 +232,19 @@ function elementsPanel(ed: Editor3): string {
   const types = [...new Set(picked.map((e) => e.type))];
   const names = types.map((t) => typeById(t, ed.project)?.name ?? t);
   const btn = (op: string, label: string, title: string) => '<button class="f3-btn" data-sel="' + op + '" title="' + title + '">' + label + '</button>';
+  const t = types.length === 1 ? typeById(types[0]!, ed.project) : undefined;
+  const f = t && family(t.family);
+  const users = t ? all.filter((e) => e.type === t.id).length : 0;
   let params = '';
-  const v = ed.variation && types.length === 1 && types[0] === ed.variation ? typeById(ed.variation, ed.project) : undefined;
-  const f = v && family(v.family);
-  if (v && f) params = paramInputs(f.params.filter((d) => d.scope === 'type'), resolveParams(f, v.params), {});
-  return '<div class="f3-title"><span style="flex:1;font-weight:600">' + picked.length + ' elemento(s)</span><span class="f3-kind">Fachada</span></div>' +
+  if (t && f) {
+    const scope = ed.elemScope;
+    params =
+      '<div class="f3-sec"><h3>Parâmetros · ' + esc(t.name) + '</h3><div class="f3-seg" style="margin-bottom:6px">' +
+      '<button data-escope="type" aria-pressed="' + (scope === 'type') + '">Todos do tipo (' + users + ')</button>' +
+      '<button data-escope="sel" aria-pressed="' + (scope === 'sel') + '">Só os selecionados (' + picked.length + ')</button></div></div>' +
+      paramInputs(f.params, resolveParams(f, t.params), {});
+  } else params = '<div class="f3-sec"><p class="f3-empty" style="padding:0">Tipos diferentes na seleção. Use "Mesmo tipo" para editar os parâmetros de um tipo.</p></div>';
+  return '<div class="f3-title"><span style="flex:1;font-weight:600">' + (t ? esc(t.name) : picked.length + ' elemento(s)') + '</span><span class="f3-kind">' + (f ? esc(f.name) : 'Fachada') + ' · ' + picked.length + '</span></div>' +
   '<div class="f3-sec"><p class="f3-empty" style="padding:0 0 8px">' + esc(names.join(', ')) + '</p>' +
   '<h3>Selecionar</h3><div class="f3-row">' +
   btn('row', 'Fileira', 'O mesmo pavimento em todas as faces (duplo clique numa janela)') +
@@ -214,13 +254,12 @@ function elementsPanel(ed: Editor3): string {
   btn('shrink', 'Encolher', 'Tira a borda da seleção') +
   btn('type', 'Mesmo tipo', 'Todos do mesmo tipo no edifício') +
   btn('face', 'Face inteira', 'Todos desta face') +
-  '</div><p class="f3-empty" style="padding:6px 0 0">Setas do teclado deslocam a seleção; Shift+clique acrescenta; Ctrl+Shift+clique pega o trecho entre dois.</p></div>' +
+  '</div></div>' +
+  params +
   '<div class="f3-sec"><h3>Aplicar aos selecionados</h3><div class="f3-row">' +
   '<button class="f3-btn" data-act="swapsel">Trocar por outro tipo…</button>' +
-  '<button class="f3-btn" data-act="vary">Editar só estes</button>' +
   '<button class="f3-btn" data-act="restore">Voltar à regra</button>' +
-  '<button class="f3-btn danger" data-act="removesel">Remover</button></div></div>' +
-  (params ? '<div class="f3-sec"><p class="f3-empty" style="padding:0">Variação <b>' + esc(v!.name) + '</b>: mudanças valem só para os selecionados.</p></div>' + params : '');
+  '<button class="f3-btn danger" data-act="removesel">Remover</button></div></div>';
 }
 
 function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
@@ -310,8 +349,36 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
         if (!Number.isFinite(n)) return;
         v = n;
       }
-      if (ed.sel.elems.length > 1 || (!ed.activeItem() && ed.variation)) ed.editType(ed.variation!, k, v);
+      if (ed.sel.elems.length && !(ed.activeItem() && ed.sel.elems.length <= 1)) ed.editElemsParam(k, v);
       else ed.setItemParam(k, v, el.dataset.scope === 'instance' ? 'instance' : 'type');
+    }),
+  );
+  // Ferramentas de modelagem: o botão lê os campos da sua caixa.
+  $$<HTMLButtonElement>('[data-run]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const box = btn.closest('.f3-op')!;
+      const args: Record<string, number | string | boolean> = {};
+      box.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-t]').forEach((el) => {
+        const k = el.dataset.t!;
+        if (el instanceof HTMLSelectElement) args[k] = k === 'keepBottom' ? el.value === '1' : el.value;
+        else args[k] = parse(el.value);
+      });
+      Object.assign(args, JSON.parse(btn.dataset.extra || '{}'));
+      if (!ed.modelOp(btn.dataset.run!, args)) ed.toast('Não foi possível com essas medidas.');
+    }),
+  );
+  $$<HTMLInputElement>('input[data-t]').forEach((el) =>
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      el.closest('.f3-op')?.querySelector<HTMLButtonElement>('[data-run]')?.click();
+      e.preventDefault();
+    }),
+  );
+  $$<HTMLSelectElement>('[data-bvprofile]').forEach((el) => el.addEventListener('change', () => ed.modelOp('bevel', { profile: parse(el.value) })));
+  $$<HTMLButtonElement>('[data-escope]').forEach((el) =>
+    el.addEventListener('click', () => {
+      ed.elemScope = el.dataset.escope === 'sel' ? 'sel' : 'type';
+      ed.select({ ...ed.sel });
     }),
   );
   $$<HTMLButtonElement>('[data-sel]').forEach((el) => el.addEventListener('click', () => ed.selectElems(el.dataset.sel as 'row')));
@@ -354,6 +421,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
       else if (a === 'gable' && s && ed.sel.face?.edge) ed.changeSolid((x) => void ((x.edges[ed.sel.face!.edge!] ??= {}).gable = !x.edges[ed.sel.face!.edge!]?.gable), 'Empena alterada.');
       else if (a === 'blank' && s && ed.sel.face?.edge) ed.changeSolid((x) => void ((x.edges[ed.sel.face!.edge!] ??= {}).blank = !x.edges[ed.sel.face!.edge!]?.blank));
       else if (a === 'split' && s && ed.sel.face?.edge) ed.changeSolid((x) => void splitEdgeOf(x, ed.sel.face!.edge!), 'Lado dividido: arraste o novo ponto.');
+      else if (a === 'delvertex') ed.remove();
       else if (a === 'addrule') ruleMenu(ed, el);
       else if (a === 'swapsel') swapMenu(ed, el);
       else if (a === 'vary') ed.elemAction('vary');
@@ -409,6 +477,14 @@ function applyNumber(ed: Editor3, b: Building3, s: Solid | undefined, k: string,
     return;
   }
   if (!s) return;
+  if (k === 'bvtop' || k === 'bvbottom' || k === 'bvseg') return void ed.modelOp('bevel', k === 'bvtop' ? { top: v } : k === 'bvbottom' ? { bottom: v } : { segments: v });
+  if (k === 'edgebevel') return void ed.modelOp('edge-bevel', { w: v });
+  if (k === 'cround') return void ed.modelOp('corner', { round: v });
+  if (k === 'cchamfer') return void ed.modelOp('corner', { chamfer: v });
+  if (k === 'sizew' || k === 'sized') {
+    const bx = planBox(s);
+    return void ed.modelOp('size', k === 'sizew' ? { w: v, d: bx.z1 - bx.z0 } : { w: bx.x1 - bx.x0, d: v });
+  }
   ed.changeSolid((x) => {
     if (k === 'height') x.height = Math.max(0.3, v);
     else if (k === 'base') x.base = v;

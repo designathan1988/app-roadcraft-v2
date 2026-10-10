@@ -19,6 +19,7 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
   const edgeMat = f.edge ? s.edges[f.edge.endsWith(':c') ? f.edge.slice(0, -2) : f.edge]?.material : undefined;
   switch (f.kind) {
     case 'side':
+    case 'bevel':
     case 'gable':
     case 'cutter':
       return materialKey(edgeMat ?? s.materials.wall, 'wall');

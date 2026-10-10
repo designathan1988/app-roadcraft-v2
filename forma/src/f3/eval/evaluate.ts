@@ -2,13 +2,15 @@
 // da lista (como a pilha de modificadores do Blender) → vãos recortados →
 // vazios dos pavimentos (modo oco) → malha final com a face de origem de cada
 // triângulo. Puro (sem three); roda no worker ou no Node.
-import type { Building3, Solid } from '../model/schema';
+import type { Building3, Solid, Vec2 } from '../model/schema';
 import { kernel, Scope, type Manifold } from '../kernel/kernel';
-import { bodyMesh, solidRings } from './body';
+import { bodyMesh, coveredEdges, solidRings } from './body';
 import { FaceTable, type FaceInfo } from './faces';
 import { roofMesh } from './roofs';
+import { flatRoof, groupParapet, topKey } from './parapet';
 import { heightPrism, MeshBuilder, prismMesh } from './mesh';
-import { offsetRing, ringValid } from '../model/plan';
+import { offsetRing, oriented, ringValid, sampleRing } from '../model/plan';
+import { inside } from '../model/ops';
 import { edgeRegions, itemPlacements, rulePlacements, typeResolver, type Placement } from './facade';
 import { emptyParts3, FrameSink, type Parts3 } from './parts';
 import { openingProfile } from '../families/shapes';
@@ -22,6 +24,8 @@ export interface EvalOptions {
   /** Só o corpo, sem vãos (durante o arrasto). */
   preview?: boolean;
   wallThickness?: number;
+  /** Volume escondido na vista (camadas, olho). Padrão: `solid.hidden`. */
+  hidden?: (s: Solid) => boolean;
 }
 
 export interface Shell {
@@ -45,33 +49,35 @@ export interface Evaluated {
 }
 
 /** Sólido completo de um volume: corpo unido ao telhado. */
-export function solidManifold(s: Solid, table: FaceTable, scope: Scope): Manifold | null {
+export function solidManifold(s: Solid, table: FaceTable, scope: Scope, noParapet = false, covered?: ReadonlySet<string>): Manifold | null {
   const k = kernel();
-  const rings = solidRings(s);
+  const rings = solidRings(s, covered);
   if (rings.outer.pts.length < 3 || s.height <= 0.01) return null;
   const body = scope.keep(bodyMesh(s, rings, table).toManifold(k));
   if (body.status() !== 'NoError' || body.isEmpty()) return null;
   // Sólido de subtração com telhado curvo vira um recorte em arco (arcadas, pórticos).
-  const roof = s.op === 'subtract' && (s.roof.kind === 'flat' || s.roof.kind === 'terrace') ? null : roofMesh(s, rings, table);
+  // Plano/terraço: a platibanda vem do grupo (contorno da união), não do volume sozinho.
+  const roof = (s.op === 'subtract' || noParapet) && flatRoof(s) ? null : roofMesh(s, rings, table);
   if (!roof) return body;
   const parts = roof.parts.filter((p) => !p.empty).map((p) => scope.keep(p.toManifold(k)));
   const good = parts.filter((p) => p.status() === 'NoError' && !p.isEmpty());
   return good.length ? scope.keep(k.Manifold.union([body, ...good])) : body;
 }
 
-function withPlinths(b: Building3, acc: Manifold, table: FaceTable, scope: Scope): Manifold {
+function withPlinths(b: Building3, acc: Manifold, table: FaceTable, scope: Scope, hidden: (s: Solid) => boolean): Manifold {
   const k = kernel();
-  const ps = b.solids.map((s) => plinthManifold(s, table, scope)).filter((m): m is Manifold => !!m);
+  const ps = b.solids.filter((s) => !hidden(s)).map((s) => plinthManifold(s, table, scope)).filter((m): m is Manifold => !!m);
   if (!ps.length) return acc;
   let band = scope.keep(k.Manifold.union(ps));
-  const cutters = b.solids.filter((s) => s.op === 'subtract' && !s.hidden).map((s) => solidManifold(s, new FaceTable(), scope)).filter((m): m is Manifold => !!m);
+  // Recortes escondidos continuam recortando (são operações, não objetos).
+  const cutters = b.solids.filter((s) => s.op === 'subtract').map((s) => solidManifold(s, new FaceTable(), scope)).filter((m): m is Manifold => !!m);
   if (cutters.length) band = scope.keep(band.subtract(scope.keep(k.Manifold.union(cutters))));
   return scope.keep(acc.add(band));
 }
 
 /** Embasamento: faixa saliente no pé das paredes (volumes que tocam o chão). */
 function plinthManifold(s: Solid, table: FaceTable, scope: Scope): Manifold | null {
-  if (s.op !== 'add' || s.hidden || !(s.plinth > 0.05) || s.base > 0.3) return null;
+  if (s.op !== 'add' || !(s.plinth > 0.05) || s.base > 0.3) return null;
   const k = kernel();
   const rings = solidRings(s);
   const pid = table.add({ kind: 'plinth', solid: s.id });
@@ -89,11 +95,25 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
   const scope = new Scope();
   const table = new FaceTable();
   const warnings: string[] = [];
+  const hidden = opts.hidden ?? ((s: Solid) => !!s.hidden);
   try {
     let acc: Manifold | null = null;
-    for (const s of b.solids) {
-      if (s.hidden) continue;
-      const m = solidManifold(s, table, scope);
+    // Grupos de volumes planos com o mesmo topo: platibanda única, posta logo
+    // depois do último membro (os recortes seguintes também a cortam).
+    const groups = new Map<number, Solid[]>();
+    const groupEnd = new Map<number, Solid[]>();
+    b.solids.forEach((s) => {
+      if (s.op !== 'add' || hidden(s) || !flatRoof(s)) return;
+      const key = topKey(s);
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = []));
+      g.push(s);
+    });
+    for (const g of groups.values()) groupEnd.set(b.solids.indexOf(g[g.length - 1]!), g);
+    const covered = new Map(b.solids.map((s) => [s.id, coveredEdges(s, b.solids, hidden)]));
+    for (const [i, s] of b.solids.entries()) {
+      if (s.op === 'add' && hidden(s)) continue;
+      const m = solidManifold(s, table, scope, true, covered.get(s.id));
       if (!m) {
         warnings.push(`${s.name}: forma inválida, ignorada.`);
         continue;
@@ -102,6 +122,8 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       else if (!acc) warnings.push(`${s.name}: nada para ${s.op === 'subtract' ? 'recortar' : 'intersectar'} antes dele.`);
       else if (s.op === 'subtract') acc = scope.keep(acc.subtract(m));
       else acc = scope.keep(acc.intersect(m));
+      const g = groupEnd.get(i);
+      if (g && acc) for (const p of groupParapet(g, table, scope, (x) => covered.get(x.id))) acc = scope.keep(acc.add(p));
     }
     const parts = emptyParts3();
     let placements: Placement[] = [];
@@ -112,7 +134,7 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       const types = typeResolver(project);
       const roofY = roofHeight(shell0);
       const items = itemPlacements(b, regions, types, roofY, warnings);
-      for (const s of b.solids) if (!s.hidden && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings, [...items]));
+      for (const s of b.solids) if (!hidden(s) && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings, [...items]));
       placements.push(...items);
       // Vãos: um sólido só com todos os recortes.
       const cuts: Manifold[] = [];
@@ -125,24 +147,24 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
         const cm = scope.keep(mb.toManifold(k));
         if (cm.status() === 'NoError' && !cm.isEmpty()) cuts.push(cm);
         // Cômodo atrás do vão: interior de verdade visto pelo vidro (paralaxe exata).
-        if (o.room && o.room > 0.2 && pl.host) {
-          const lv = levelAround(b, pl);
+        const room = o.room && o.room > 0.2 && pl.host ? roomFit(b, pl, o) : null;
+        if (room && pl.host) {
           const rb = new MeshBuilder();
           const ids = { floor: table.add({ kind: 'roomFloor', solid: pl.host.solid }), ceil: table.add({ kind: 'roomCeil', solid: pl.host.solid }), wall: table.add({ kind: 'roomWall', solid: pl.host.solid }) };
-          roomBox(rb, pl.frame, o.w / 2 + 0.9, -lv.below + 0.03, lv.above - 0.12, -o.depth - o.room, -o.depth + 0.002, ids);
+          roomBox(rb, pl.frame, room.hx, -room.below + 0.03, room.above, -room.depth, -o.depth + 0.002, ids);
           const rm = scope.keep(rb.toManifold(k));
           if (rm.status() === 'NoError' && !rm.isEmpty()) cuts.push(rm);
         }
       }
       // Embasamento depois da fachada (não esconde o pé das portas), sem atravessar recortes.
-      acc = withPlinths(b, acc, table, scope);
+      acc = withPlinths(b, acc, table, scope, hidden);
       if (cuts.length) acc = scope.keep(acc.subtract(scope.keep(k.Manifold.union(cuts))));
       for (const pl of placements) {
         const tag = parts.tags.push(pl.tag) - 1;
         pl.family.build(pl.params, new FrameSink(parts, pl.frame, tag), { length: pl.length, reveal: pl.opening?.depth ?? 0, index: 0, ...(pl.path ? { path: pl.path } : {}) });
       }
     }
-    if (acc && opts.preview) acc = withPlinths(b, acc, table, scope);
+    if (acc && opts.preview) acc = withPlinths(b, acc, table, scope, hidden);
     if (acc && opts.cutY !== undefined) acc = scope.keep(acc.trimByPlane([0, -1, 0], -opts.cutY));
     const shell = acc ? toShell(acc) : emptyShell();
     void placements;
@@ -152,10 +174,62 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
   }
 }
 
+/**
+ * Cômodo atrás de um vão, limitado ao interior do volume que o hospeda: não
+ * passa da laje (topo do volume), não fura a parede oposta nem as laterais
+ * perto dos cantos e não entra em recortes (pátios). Sem espaço: sem cômodo.
+ */
+function roomFit(b: Building3, pl: Placement, o: { w: number; depth: number; room?: number }): { hx: number; below: number; above: number; depth: number } | null {
+  const host = b.solids.find((x) => x.id === pl.host!.solid);
+  if (!host) return null;
+  const lv = levelAround(b, pl);
+  const y = pl.frame[13]!;
+  const SLAB = 0.25,
+    WALL = 0.2;
+  const above = Math.min(lv.above - 0.12, host.base + host.height - y - SLAB);
+  const below = Math.min(lv.below, y - host.base - 0.02);
+  if (above < 0.5) return null;
+  const inner = offsetRing(sampleRing(oriented(host.plan.outer, 1)).pts, sampleRing(oriented(host.plan.outer, 1)).pts.map(() => WALL));
+  if (!ringValid(inner, 1)) return null;
+  const y0 = y - below,
+    y1 = y + above;
+  const cutters = b.solids
+    .filter((x) => x.op === 'subtract' && x.base < y1 && x.base + x.height > y0)
+    .map((x) => offsetRing(sampleRing(oriented(x.plan.outer, 1)).pts, sampleRing(oriented(x.plan.outer, 1)).pts.map(() => -WALL)));
+  const holes = host.plan.holes.map((h) => offsetRing(sampleRing(oriented(h, -1)).pts, sampleRing(oriented(h, -1)).pts.map(() => WALL)));
+  const free = (p: Vec2) => inside(p, inner) && !holes.some((h) => inside(p, h)) && !cutters.some((c) => inside(p, c));
+  const m = pl.frame;
+  const c: Vec2 = [m[12]!, m[14]!];
+  const ul = Math.hypot(m[0]!, m[2]!) || 1,
+    nl = Math.hypot(m[8]!, m[10]!) || 1;
+  const u: Vec2 = [m[0]! / ul, m[2]! / ul],
+    n: Vec2 = [m[8]! / nl, m[10]! / nl];
+  const at = (x: number, z: number): Vec2 => [c[0] + u[0] * x + n[0] * z, c[1] + u[1] * x + n[1] * z];
+  const fits = (hx: number, d: number) => {
+    // Cantos e meio de cada borda do retângulo em planta.
+    for (const x of [-hx, 0, hx]) for (const z of [-o.depth - 0.05, -(o.depth + d) / 2 - 0.01, -d]) if (!free(at(x, z))) return false;
+    return true;
+  };
+  const minHx = o.w / 2 + 0.03;
+  const minD = o.depth + 0.4;
+  if (!fits(minHx, minD)) return null;
+  // Maior profundidade e depois maior largura que cabem (busca binária).
+  let lo = minD,
+    hi = o.depth + (o.room ?? 0);
+  if (fits(minHx, hi)) lo = hi;
+  else for (let k = 0; k < 10; k++) (fits(minHx, (lo + hi) / 2) ? (lo = (lo + hi) / 2) : (hi = (lo + hi) / 2));
+  const depth = lo;
+  let a = minHx,
+    z = o.w / 2 + 0.9;
+  if (fits(z, depth)) a = z;
+  else for (let k = 0; k < 10; k++) (fits((a + z) / 2, depth) ? (a = (a + z) / 2) : (z = (a + z) / 2));
+  return { hx: a, below, above, depth };
+}
+
 /** Piso e teto do pavimento em volta de uma peça (distâncias a partir da base da peça). */
 function levelAround(b: Building3, pl: Placement): { below: number; above: number } {
-  const s = b.solids.find((x) => x.id === pl.host!.solid);
-  const y = (s?.base ?? 0) + pl.host!.y;
+  // Cota real da peça (em parede inclinada, host.y anda pela parede, não na vertical).
+  const y = pl.frame[13]!;
   const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation).filter((l) => l.elevation <= y + 0.01).pop();
   if (!lv) return { below: Math.min(1, pl.host!.y), above: 2.6 };
   return { below: y - lv.elevation, above: lv.elevation + lv.height - y };

@@ -19,6 +19,40 @@ export interface Project3 {
   types: ComponentType[];
   styles: StylePack[];
   meta: { createdWith: string; migratedFrom?: 1 | 2 };
+  /** Camadas (como as Tags do SketchUp e as camadas do Rhino); sem camada = "Padrão". */
+  layers?: Layer[];
+  /** Estado da vista: categorias de componente escondidas e camada ativa. */
+  view?: ViewState;
+}
+
+/**
+ * Camada: visível (olho) e travada (cadeado: aparece, mas não se seleciona).
+ * Só afeta a vista; salvar e exportar levam tudo.
+ */
+export interface Layer {
+  id: ID;
+  name: string;
+  color: string;
+  visible: boolean;
+  locked: boolean;
+}
+
+export interface ViewState {
+  /** Categorias de componente escondidas (como Visibilidade/Gráficos do Revit). */
+  hiddenCategories: string[];
+  /** Camada que recebe o que for criado. */
+  activeLayer?: ID;
+}
+
+/** Bisel das arestas horizontais (como o Bevel do Blender, não destrutivo). */
+export interface BevelSpec {
+  /** Largura no topo e na base (m). */
+  top: number;
+  bottom: number;
+  /** Segmentos do perfil (1 = chanfro reto). */
+  segments: number;
+  /** 0 = reto, 1 = arredondado (quarto de círculo). */
+  profile: number;
 }
 
 export type BuildingUse = 'residential' | 'commercial' | 'industrial' | 'public' | 'mixed';
@@ -37,6 +71,9 @@ export interface Building3 {
   items: Item[];
   /** Paredes internas e cômodos por nível. */
   interiors: Record<ID, Interior>;
+  layer?: ID;
+  hidden?: boolean;
+  locked?: boolean;
 }
 
 export interface Level {
@@ -113,6 +150,8 @@ export interface EdgeSpec {
   /** Sem componentes gerados pelas regras de fachada neste lado. */
   blank?: boolean;
   material?: MaterialRef;
+  /** Bisel do topo só neste lado (m); sobrepõe o do volume. */
+  bevel?: number;
 }
 
 export interface MaterialRef {
@@ -144,7 +183,13 @@ export interface Solid {
   materials: SolidMaterials;
   /** Embasamento visível (m) no pé das paredes. */
   plinth: number;
+  /** Bisel das arestas do topo e da base. */
+  bevel?: BevelSpec;
+  /** Escondido na vista (olho da árvore). Recortes escondidos continuam recortando. */
   hidden?: boolean;
+  /** Travado: aparece, mas não se seleciona. */
+  locked?: boolean;
+  layer?: ID;
 }
 
 // ── Componentes ────────────────────────────────────────────────────────
@@ -187,6 +232,9 @@ export interface Item {
   params: Record<string, ParamValue>;
   host: ItemHost;
   array?: ArraySpec;
+  layer?: ID;
+  hidden?: boolean;
+  locked?: boolean;
 }
 
 /** Que níveis do sólido uma regra de fachada ocupa. */

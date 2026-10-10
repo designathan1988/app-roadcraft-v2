@@ -10,9 +10,14 @@ import { buildShellMesh, type ShellMesh } from '../render/shell';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { RenderContext } from '../../render/context';
 import { createLook, createLookContext, type Look } from '../render/look';
+import { buildingHidden, buildingLocked, categoryHidden, itemHidden, itemLocked, solidHidden, solidLocked, visibilityKeys } from '../model/layers';
+import { family } from '../families/index';
 
 export interface Built {
   revision: number;
+  /** Camadas visíveis quando foi avaliado / categorias quando as peças foram montadas. */
+  visSolids: string;
+  visParts: string;
   group: THREE.Group;
   ev: Evaluated;
   shell: ShellMesh;
@@ -147,26 +152,44 @@ export class View {
   sync(p: Project3, revisions: Map<ID, number>, preview = new Set<ID>()): void {
     let changed = false;
     const t0 = performance.now();
+    const vis = visibilityKeys(p);
+    const partVisible = (b: Building3) => (tag: PartTag) => {
+      const f = family(tag.family);
+      if (f && categoryHidden(p, f.category)) return false;
+      const it = tag.item ? b.items.find((x) => x.id === tag.item) : undefined;
+      return !(it && itemHidden(p, it));
+    };
     for (const b of p.buildings) {
       const rev = revisions.get(b.id) ?? 0;
       const cur = this.built.get(b.id);
-      if (cur && cur.revision === rev) {
+      if (cur && cur.revision === rev && cur.visSolids === vis.solids) {
         cur.group.position.set(b.position[0], 0, b.position[1]);
         cur.group.rotation.y = (b.rotation * Math.PI) / 180;
+        cur.group.visible = !buildingHidden(p, b);
+        if (cur.visParts !== vis.parts) {
+          // Só as categorias mudaram: remonta as peças, sem refazer as booleanas.
+          cur.parts.dispose();
+          cur.parts.group.removeFromParent();
+          cur.parts = buildPartsMesh(cur.ev.parts, this.ctx, true, partVisible(b));
+          cur.group.add(cur.parts.group);
+          cur.visParts = vis.parts;
+          changed = true;
+        }
         continue;
       }
       cur && this.drop(cur);
-      const ev = evaluateBuilding(b, { preview: preview.has(b.id) }, p);
+      const ev = evaluateBuilding(b, { preview: preview.has(b.id), hidden: (s) => solidHidden(p, s) }, p);
       const shell = buildShellMesh(b, ev, this.ctx);
-      const parts = buildPartsMesh(ev.parts, this.ctx);
+      const parts = buildPartsMesh(ev.parts, this.ctx, true, partVisible(b));
       const group = new THREE.Group();
       group.name = b.name;
       group.userData = { buildingId: b.id };
       group.position.set(b.position[0], 0, b.position[1]);
       group.rotation.y = (b.rotation * Math.PI) / 180;
       group.add(shell.mesh, parts.group);
+      group.visible = !buildingHidden(p, b);
       this.root.add(group);
-      this.built.set(b.id, { revision: rev, group, ev, shell, parts });
+      this.built.set(b.id, { revision: rev, visSolids: vis.solids, visParts: vis.parts, group, ev, shell, parts });
       changed = true;
     }
     for (const [id, b] of this.built)
@@ -205,7 +228,7 @@ export class View {
   /** Primeiro edifício sob o ponteiro (casca ou componente). */
   pick(p: Project3, e: { clientX: number; clientY: number }, only?: ID | null): Hit | null {
     const ray = this.rayFrom(e);
-    const groups = [...this.built.entries()].filter(([id]) => !only || id === only).map(([, b]) => b.group);
+    const groups = [...this.built.entries()].filter(([id]) => (!only || id === only) && this.built.get(id)!.group.visible).map(([, b]) => b.group);
     const hits = ray.intersectObjects(groups, true);
     for (const h of hits) {
       let o: THREE.Object3D | null = h.object;
@@ -215,12 +238,18 @@ export class View {
       const b = p.buildings.find((x) => x.id === id);
       const built = this.built.get(id);
       if (!b || !built) continue;
+      // Travado (cadeado): aparece, mas o clique passa direto.
+      if (buildingLocked(p, b)) continue;
       const normal = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
       if (h.object === built.shell.mesh && h.faceIndex !== undefined && h.faceIndex !== null) {
         const fi = built.shell.faceOf[h.faceIndex];
+        const fs = fi !== undefined ? b.solids.find((x) => x.id === built.ev.faces[fi]?.solid) : undefined;
+        if (fs && solidLocked(p, fs)) continue;
         return { building: b, point: h.point.clone(), normal, face: fi !== undefined ? built.ev.faces[fi] : undefined };
       }
       const tag = built.parts.pick(h);
+      const ti = tag?.item ? b.items.find((x) => x.id === tag.item) : undefined;
+      if (ti && itemLocked(p, ti)) continue;
       return { building: b, point: h.point.clone(), normal, ...(tag ? { part: tag } : {}) };
     }
     return null;

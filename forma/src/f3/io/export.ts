@@ -125,7 +125,7 @@ export async function buildExportScene(project: Project3, opts: ExportOptions = 
   const scene = new THREE.Scene();
   scene.name = project.name;
   for (const b of project.buildings) {
-    const ev = evaluateBuilding(b, {}, project);
+    const ev = evaluateBuilding(b, { hidden: () => false }, project);
     for (const w of ev.warnings) warnings.push(`${b.name}: ${w}`);
     const group = new THREE.Group();
     group.name = b.name;
