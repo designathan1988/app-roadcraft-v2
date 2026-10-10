@@ -10,6 +10,7 @@ export default defineConfig({
   // The game's compile-time keys (`vite.config.ts`).
   define: {
     __PLAY_MODE__: 'false',
+    __PLANET__: 'false',
   },
   resolve: {
     alias: {

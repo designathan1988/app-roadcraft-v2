@@ -6,7 +6,10 @@ import { modelUrlsPlugin } from './model-urls-plugin';
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
-export default defineConfig({
+// `--mode planet` builds and serves the planet: six flat maps on a cube, drawn
+// as a sphere (`src/core/cubeSphere.ts`). Any other mode is the flat game, and
+// every `if (__PLANET__)` branch is dead code there.
+export default defineConfig(({ mode }) => ({
   root: '.',
   // `modelUrlsPlugin`: the model files' URLs, a module per folder, never
   // inlined (`model-urls-plugin.ts`).
@@ -18,6 +21,7 @@ export default defineConfig({
   // now (docs/STATUS.md says how to turn it back on).
   define: {
     __PLAY_MODE__: 'false',
+    __PLANET__: JSON.stringify(mode === 'planet'),
   },
   publicDir: false,
   resolve: {
@@ -74,4 +78,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

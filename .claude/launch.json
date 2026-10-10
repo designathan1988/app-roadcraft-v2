@@ -28,6 +28,15 @@
       "autoPort": true
     },
     {
+      "name": "roadcraft-planeta",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:planet"
+      ],
+      "port": 5175
+    },
+    {
       "name": "roadcraft-lab",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

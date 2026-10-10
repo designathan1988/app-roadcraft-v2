@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:planet": "vite --mode planet --port 5175 --strictPort",
     "build": "node scripts/run-limited.mjs npm run build:raw",
     "build:raw": "tsc --noEmit && vite build",
     "preview": "vite preview",
