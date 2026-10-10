@@ -11,6 +11,7 @@ import { levelPolygons } from './surfaces';
 import { Level } from './roadTypes';
 import type { SegmentId } from './ids';
 import { deckOf } from './walkways';
+import { withGhostImages } from './planet/charts';
 
 /**
  * The line wire poles stand on, and the kerb they stand behind.
@@ -60,7 +61,9 @@ export function poleLines(net: Network): PoleLines {
     const grown = inflatePathsD(unionD(paths, [], FillRule.NonZero, 3), POLE_KERB_INSET, JoinType.Round, EndType.Polygon, 2, 3, 0.02);
     for (const ring of grown) if (ring.length >= 3) contours.push(Polyline.fromPoints([...ring, ring[0]!]));
   }
-  const lines = { contours, paving: sidewalk, kerbed: curb, accesses: crossingAccesses(net) };
+  // Point tests (`insideMulti`) read them with their ghost images (on the
+  // planet: a point of one piece's chart finds the next piece's paving).
+  const lines = { contours, paving: withGhostImages(sidewalk), kerbed: withGhostImages(curb), accesses: crossingAccesses(net) };
   cache.set(net, { revision: net.revision, lines });
   return lines;
 }

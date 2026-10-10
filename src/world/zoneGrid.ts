@@ -7,6 +7,9 @@ import { Level, halfWidth } from './roadTypes';
 import { m } from './units';
 import { GRID_CELL } from './grid';
 import { insideMulti, onFootway, poleLines, type PoleLines } from './poleLines';
+import type { Polyline } from '@core/polyline';
+import { chartsReaching } from './planet/charts';
+import { carryPolyline } from './geometry';
 
 /** Whether a point is on the kerbed carriageway (inside a kerb). */
 function insidePaving(lines: PoleLines, p: Vec2): boolean {
@@ -117,16 +120,29 @@ export function quadsOverlap(a: readonly Vec2[], b: readonly Vec2[], slack: numb
 export function pavedTester(doc: RoadDoc, net: Network): { onRoad: (p: Vec2) => boolean; onPlate: (p: Vec2) => boolean } {
   // What a cell may not sit on: any road's carriageway and footway, at ground.
   const ribbons = [...net.ribbons.values()].filter((r) => doc.segment(r.id)?.structure === 'ground');
-  const reachOf = new Map(ribbons.map((r) => [r.id, halfWidth(r.road, Level.Sidewalk)]));
-  // The ribbons bucketed by their reach, so a point is measured against the
+  // Each road's line and reach - on the planet with its ghost images on the
+  // charts round it (`world/planet/charts.ts` chartsReaching), so a point of
+  // one piece's chart finds the road of the next piece beside it.
+  interface Road { readonly line: Polyline; readonly reach: number }
+  const roads: Road[] = [];
+  for (const r of ribbons) {
+    const reach = halfWidth(r.road, Level.Sidewalk);
+    roads.push({ line: r.full, reach });
+    if (!__PLANET__) continue;
+    const chart = net.polylines.chart(net.doc, r.id);
+    const bb = r.full.bbox;
+    for (const other of chartsReaching(chart, bb.minX - reach, bb.minY - reach, bb.maxX + reach, bb.maxY + reach)) {
+      if (other !== chart) roads.push({ line: carryPolyline(r.full, chart, other), reach });
+    }
+  }
+  // The roads bucketed by their reach, so a point is measured against the
   // few streets near it, not every street in the town.
   const ROAD_CELL = m(25);
-  const roadBuckets = new Map<string, typeof ribbons>();
-  for (const r of ribbons) {
-    const reach = reachOf.get(r.id) as number;
-    const bb = r.full.bbox;
-    for (let bx = Math.floor((bb.minX - reach) / ROAD_CELL); bx <= Math.floor((bb.maxX + reach) / ROAD_CELL); bx++) {
-      for (let by = Math.floor((bb.minY - reach) / ROAD_CELL); by <= Math.floor((bb.maxY + reach) / ROAD_CELL); by++) {
+  const roadBuckets = new Map<string, Road[]>();
+  for (const r of roads) {
+    const bb = r.line.bbox;
+    for (let bx = Math.floor((bb.minX - r.reach) / ROAD_CELL); bx <= Math.floor((bb.maxX + r.reach) / ROAD_CELL); bx++) {
+      for (let by = Math.floor((bb.minY - r.reach) / ROAD_CELL); by <= Math.floor((bb.maxY + r.reach) / ROAD_CELL); by++) {
         const k = `${bx},${by}`;
         let list = roadBuckets.get(k);
         if (!list) roadBuckets.set(k, list = []);
@@ -136,10 +152,9 @@ export function pavedTester(doc: RoadDoc, net: Network): { onRoad: (p: Vec2) => 
   }
   const onRoad = (p: Vec2): boolean => {
     for (const r of roadBuckets.get(`${Math.floor(p.x / ROAD_CELL)},${Math.floor(p.y / ROAD_CELL)}`) ?? []) {
-      const reach = reachOf.get(r.id) as number;
-      const bb = r.full.bbox;
-      if (p.x < bb.minX - reach || p.x > bb.maxX + reach || p.y < bb.minY - reach || p.y > bb.maxY + reach) continue;
-      if (r.full.distanceTo(p) < reach - m(0.05)) return true;
+      const bb = r.line.bbox;
+      if (p.x < bb.minX - r.reach || p.x > bb.maxX + r.reach || p.y < bb.minY - r.reach || p.y > bb.maxY + r.reach) continue;
+      if (r.line.distanceTo(p) < r.reach - m(0.05)) return true;
     }
     return false;
   };

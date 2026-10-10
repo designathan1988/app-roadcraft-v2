@@ -10,7 +10,7 @@ import { LotTool } from '@editor/lotTool';
  * streets are worked out over frames and start again with every new lot; a
  * stroke made meanwhile found no proposed lot under it and zoned nothing,
  * silently (`lotTool.ts` `proposedAt` -1). Its points now wait for the
- * proposal, and a stroke let go before it is ready is made in the frame it is.
+ * proposal, and a stroke let go before it is ready finishes it there and then.
  */
 describe('the zone brush over street land', () => {
   it('zones what a stroke passed while the proposal was being worked out', () => {
@@ -32,9 +32,10 @@ describe('the zone brush over street land', () => {
     tool.down(1, { x: m(-60), y: m(14) }, false, 1);
     for (let x = -60; x <= 60; x += 4) tool.move(1, { x: m(x), y: m(14) });
     tool.up(1, true);
-    // Let go before the proposal was ready: made in the frame it is, worked out a slice a frame (no 0.6 s frame).
-    expect(hints).toContain('hint.zone.pending');
-    while (tool.advanceProposal()) { /* a frame's slice */ }
+    // Let go before the proposal was ready: the rest of it is worked out at
+    // once (some 0.2 s on the planet at its worst), so the zone shows the
+    // moment the button is let go - no "working it out" wait.
+    expect(hints).not.toContain('hint.zone.pending');
     expect(hints).not.toContain('hint.zone.empty');
     expect(hints).toContain('hint.zone.painted');
     const zoned = doc.lots.filter((l) => l.use === 'residential');

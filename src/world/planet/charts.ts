@@ -308,6 +308,35 @@ export function directionOnChart(from: number, to: number, p: Readonly<Vec2>, d:
   return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
 }
 
+/**
+ * Polygons (clipper's rings of [x, y]) and their ghost images: each one also
+ * carried onto every other chart whose kept ground its box can reach
+ * (`chartsReaching`), as molecular dynamics keeps the atoms near a boundary
+ * on both sides of it, already at their image there (LAMMPS,
+ * "Communication"). A point asked about on any chart then finds the paving
+ * of the next piece too - a lot cut to the land by a border was laid over
+ * the road kept on its neighbour's chart. Each polygon must lie in one
+ * chart's cell (as everything kept does). The polygons themselves on the
+ * flat map.
+ */
+export function withGhostImages<P extends readonly (readonly (readonly number[])[])[]>(polys: readonly P[]): P[] {
+  if (identity()) return polys as P[];
+  const out: P[] = [...polys];
+  const at = { x: 0, y: 0 };
+  for (const poly of polys) {
+    const outer = poly[0];
+    if (!outer || !outer.length) continue;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of outer) { x0 = Math.min(x0, x!); y0 = Math.min(y0, y!); x1 = Math.max(x1, x!); y1 = Math.max(y1, y!); }
+    const chart = chartAt((x0 + x1) / 2, (y0 + y1) / 2);
+    for (const other of chartsReaching(chart, x0, y0, x1, y1)) {
+      if (other === chart) continue;
+      out.push(poly.map((ring) => ring.map(([x, y]) => { chartToChartInto(chart, other, x!, y!, at); return [at.x, at.y]; })) as unknown as P);
+    }
+  }
+  return out;
+}
+
 /** Points of `from`'s map on `to`'s map (the same ground); the points themselves when the charts are one. */
 export function carryPoints(from: number, to: number, points: readonly Vec2[]): Vec2[] {
   if (from === to || identity()) return points as Vec2[];

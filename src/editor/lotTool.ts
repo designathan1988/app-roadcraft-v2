@@ -207,12 +207,21 @@ export class LotTool {
     const { doc, host } = this;
     if (!stroke.ids.size && !stroke.fresh.size) { host.hint('hint.zone.empty'); return; }
     const fresh = [...stroke.fresh].map((k) => this.proposal?.lots[k]).filter((c): c is Vec2[] => !!c);
+    const before = this.proposal && !this.proposal.steps && this.proposal.key === this.proposalKey() ? this.proposal : null;
     host.mutate(() => {
       const first = doc.nextLotId;
       if (fresh.length) applyLots(doc, { add: fresh.map((corners) => ({ key: '', corners })), keys: [], drop: [] });
       for (let id = first; id < doc.nextLotId; id++) stroke.ids.add(id);
       return zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use, density }) || fresh.length > 0;
     });
+    // The proposal holds on: the lots laid were its own, and the rest of it is
+    // as it was - it is kept for the land as it is now, less those, and the
+    // next stroke reads it at once. Worked out again after every stroke, each
+    // waited for the whole street land to be planned anew.
+    if (before && fresh.length) {
+      const laid = new Set(stroke.fresh);
+      this.proposal = { key: this.proposalKey(), steps: null, lots: before.lots.filter((_, k) => !laid.has(k)), keys: before.keys };
+    }
     this.refused.clear();
     host.hint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
     host.redraw();
@@ -454,9 +463,13 @@ export class LotTool {
       this.stroke = null;
       this.readPending(stroke);
       if (commit && stroke.pending.length) {
-        // The street land it passed is still being worked out: made when it is.
+        // The street land it passed is still being worked out: finished now,
+        // at once, and the stroke made - the zone shows the moment the stroke
+        // is let go (the player, 2026-10-10: "tem que aparecer na hora que
+        // clica"). Left to a few milliseconds a frame it took a second or more.
         this.waiting = { stroke, use: settings.use, density: settings.density };
-        host.hint('hint.zone.pending');
+        this.advanceProposal(Infinity);
+        if (this.waiting) host.hint('hint.zone.pending');
       } else if (commit) this.commitStroke(stroke, settings.use, settings.density);
       host.redraw();
     }

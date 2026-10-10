@@ -11,7 +11,7 @@ import { m } from './units';
 import { pavedTester, quadsOverlap } from './zoneGrid';
 import type { ZoneDensity, ZoneUse } from './zones';
 import { rectAround, type ChangeRect } from './changes';
-import { onChartOf } from './planet/charts';
+import { chartAt, chartToChartInto, chartsReaching, onChartOf, onTerritory, withGhostImages } from './planet/charts';
 import type { BuildingId } from './buildings/types';
 
 /**
@@ -253,10 +253,25 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
   const fitFree = (corners: Vec2[]): Vec2[] | null => {
     const box = rectAround(corners);
     if (!box) return null;
-    const near = [...kept.map((l) => l.corners), ...add.map((c) => c.corners)].filter((q) => {
-      const b = rectAround(q);
-      return b && b[0] < box[2] && b[2] > box[0] && b[1] < box[3] && b[3] > box[1];
-    });
+    // The other lots on this one's chart (on the planet, `world/planet/charts.ts`):
+    // a lot kept on the next piece's chart is thousands of units away as it
+    // stands, and two lots either side of a border overlapped. Only the
+    // charts that can reach this box are read.
+    const chart = chartAt(corners[0]!.x, corners[0]!.y);
+    const reaching = __PLANET__ ? chartsReaching(chart, box[0], box[1], box[2], box[3]) : null;
+    const near: Vec2[][] = [];
+    for (const q of [...kept.map((l) => l.corners), ...add.map((c) => c.corners)]) {
+      let ring = q as Vec2[];
+      if (reaching) {
+        const own = chartAt(q[0]!.x, q[0]!.y);
+        if (own !== chart) {
+          if (!reaching.includes(own)) continue;
+          ring = q.map((p) => chartToChartInto(own, chart, p.x, p.y, { x: 0, y: 0 }));
+        }
+      }
+      const b = rectAround(ring);
+      if (b && b[0] < box[2] && b[2] > box[0] && b[1] < box[3] && b[3] > box[1]) near.push(ring);
+    }
     const touching = near;
     if (!touching.length) return corners;
     const whole = Math.abs(lotArea({ corners }));
@@ -271,117 +286,171 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
     return facingCorners(withFront(simplifyRing(best, m(0.01)), [corners[0]!, corners[1]!]));
   };
 
-  // The land as a raster over the streets' reach: paved or not, then labelled
+  // The land as rasters over the streets' reach: paved or not, then labelled
   // into connected pieces; those that do not reach the raster's edge are
-  // closed blocks.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const r of ribbons) {
-    const bb = r.full.bbox;
-    minX = Math.min(minX, bb.minX); minY = Math.min(minY, bb.minY); maxX = Math.max(maxX, bb.maxX); maxY = Math.max(maxY, bb.maxY);
-  }
+  // closed blocks. One raster a GROUP of streets lying near one another in the
+  // atlas: on the planet each piece's streets are kept on its own chart, in
+  // its own cell of the atlas, and one raster round them all spanned the
+  // cells between - 50 000 by 12 000 units, some 23 million cells tested, a
+  // zone stroke's proposal waiting 3.3 s (the player, 2026-10-10: "tem que
+  // aparecer na hora que clica"). The flat map's streets make one group, or
+  // several apart, as before.
   const pad = LOT_DEPTH + m(20);
-  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
-  const W = Math.ceil((maxX - minX) / RASTER), H = Math.ceil((maxY - minY) / RASTER);
-  const label = new Int32Array(W * H).fill(-1);
-  const isPaved = new Uint8Array(W * H);
-  for (let j = 0; j < H; j++) {
-    for (let i = 0; i < W; i++) {
-      if (paved({ x: minX + (i + 0.5) * RASTER, y: minY + (j + 0.5) * RASTER })) isPaved[j * W + i] = 1;
-    }
-    yield;
+  interface Land {
+    readonly minX: number; readonly minY: number; readonly W: number; readonly H: number;
+    readonly label: Int32Array;
+    readonly pieces: { cells: number[]; open: boolean }[];
   }
-  const pieces: { cells: number[]; open: boolean }[] = [];
-  const stack: number[] = [];
-  for (let start = 0; start < W * H; start++) {
-    if (isPaved[start] || label[start]! >= 0) continue;
-    const id = pieces.length;
-    const piece = { cells: [] as number[], open: false };
-    pieces.push(piece);
-    label[start] = id;
-    stack.push(start);
-    while (stack.length) {
-      const c = stack.pop()!;
-      piece.cells.push(c);
-      const i = c % W, j = (c - i) / W;
-      if (i === 0 || j === 0 || i === W - 1 || j === H - 1) piece.open = true;
-      for (const n of [i > 0 ? c - 1 : -1, i < W - 1 ? c + 1 : -1, j > 0 ? c - W : -1, j < H - 1 ? c + W : -1]) {
-        if (n < 0 || isPaved[n] || label[n]! >= 0) continue;
-        label[n] = id;
-        stack.push(n);
-      }
+  const boxes = ribbons.map((r) => {
+    const bb = r.full.bbox;
+    return [bb.minX - pad, bb.minY - pad, bb.maxX + pad, bb.maxY + pad] as [number, number, number, number];
+  });
+  // Groups: boxes overlapping, joined (a union-find over the pairs).
+  const parent = ribbons.map((_, i) => i);
+  const root = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]!]!; i = parent[i]!; } return i; };
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i]!;
+    for (let j = i + 1; j < boxes.length; j++) {
+      const b = boxes[j]!;
+      if (a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1]) parent[root(i)] = root(j);
     }
   }
-  const pieceAt = (p: Vec2): number => {
-    const i = Math.floor((p.x - minX) / RASTER), j = Math.floor((p.y - minY) / RASTER);
-    return i < 0 || j < 0 || i >= W || j >= H ? -2 : label[j * W + i]!;
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < ribbons.length; i++) {
+    const r = root(i);
+    const list = groups.get(r);
+    if (list) list.push(i); else groups.set(r, [i]);
+  }
+  const landOf = new Map<number, Land>();
+  const pieceIn = (land: Land, p: Vec2): number => {
+    const i = Math.floor((p.x - land.minX) / RASTER), j = Math.floor((p.y - land.minY) / RASTER);
+    return i < 0 || j < 0 || i >= land.W || j >= land.H ? -2 : land.label[j * land.W + i]!;
   };
+  for (const members of groups.values()) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const i of members) {
+      const b = boxes[i]!;
+      minX = Math.min(minX, b[0]); minY = Math.min(minY, b[1]); maxX = Math.max(maxX, b[2]); maxY = Math.max(maxY, b[3]);
+    }
+    const W = Math.ceil((maxX - minX) / RASTER), H = Math.ceil((maxY - minY) / RASTER);
+    const label = new Int32Array(W * H).fill(-1);
+    const isPaved = new Uint8Array(W * H);
+    // Only the cells within a street's box (grown by a lot's depth) can be
+    // paved: those are tested, the rest is land. A town's group box is mostly
+    // open country, and every one of its cells was measured against the
+    // streets (most of a proposal's time).
+    const near = new Uint8Array(W * H);
+    for (const k of members) {
+      const b = boxes[k]!;
+      const i0 = Math.max(0, Math.floor((b[0] - minX) / RASTER)), i1 = Math.min(W - 1, Math.floor((b[2] - minX) / RASTER));
+      const j0 = Math.max(0, Math.floor((b[1] - minY) / RASTER)), j1 = Math.min(H - 1, Math.floor((b[3] - minY) / RASTER));
+      for (let j = j0; j <= j1; j++) near.fill(1, j * W + i0, j * W + i1 + 1);
+    }
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        if (near[j * W + i] && paved({ x: minX + (i + 0.5) * RASTER, y: minY + (j + 0.5) * RASTER })) isPaved[j * W + i] = 1;
+      }
+      yield;
+    }
+    const pieces: { cells: number[]; open: boolean }[] = [];
+    const stack: number[] = [];
+    for (let start = 0; start < W * H; start++) {
+      if (isPaved[start] || label[start]! >= 0) continue;
+      const id = pieces.length;
+      const piece = { cells: [] as number[], open: false };
+      pieces.push(piece);
+      label[start] = id;
+      stack.push(start);
+      while (stack.length) {
+        const c = stack.pop()!;
+        piece.cells.push(c);
+        const i = c % W, j = (c - i) / W;
+        if (i === 0 || j === 0 || i === W - 1 || j === H - 1) piece.open = true;
+        for (const n of [i > 0 ? c - 1 : -1, i < W - 1 ? c + 1 : -1, j > 0 ? c - W : -1, j < H - 1 ? c + W : -1]) {
+          if (n < 0 || isPaved[n] || label[n]! >= 0) continue;
+          label[n] = id;
+          stack.push(n);
+        }
+      }
+    }
+    const land: Land = { minX, minY, W, H, label, pieces };
+    for (const i of members) landOf.set(ribbons[i]!.id, land);
+    const pieceAt = (p: Vec2): number => pieceIn(land, p);
 
-  // --- closed blocks
-  for (const [id, piece] of pieces.entries()) {
-    if (piece.open || piece.cells.length * RASTER * RASTER < MIN_LOT * MIN_LOT * 2) continue;
-    yield;
-    const pts = piece.cells.map((c) => ({ x: minX + ((c % W) + 0.5) * RASTER, y: minY + (Math.floor(c / W) + 0.5) * RASTER }));
-    const box = orientedBox(hull(pts));
-    const key = `b:${Math.round(box.c.x / m(4))},${Math.round(box.c.y / m(4))},${Math.round(box.L / m(4))},${Math.round(box.D / m(4))}`;
-    keys.push(key);
-    if (known.has(key)) continue;
-    // Grow the raster box by half a raster cell: its points are cell centres.
-    const L = box.L + RASTER, D = box.D + RASTER;
-    const rows = D >= TWO_ROWS ? 2 : 1;
-    const depth = D / rows;
-    const columns = Math.max(1, Math.round(L / Math.max(MIN_LOT, Math.min(depth, LOT_FRONTAGE))));
-    const width = L / columns;
-    const at = (s: number, t: number): Vec2 => ({ x: box.c.x + box.u.x * s + box.v.x * t, y: box.c.y + box.u.y * s + box.v.y * t });
-    /**
-     * A row's lots, as spans along the block: the row cut in equal columns,
-     * except where stored lots already stand in it - then what is left either
-     * side of them is cut instead. A proposed lot touching a stored one was
-     * dropped whole, and a gap up to a lot wide was left beside it.
-     */
-    const rowSpans = (r: number): [number, number][] => {
-      const t0 = -D / 2 + r * depth, t1 = t0 + depth;
-      const taken: [number, number][] = [];
-      for (const l of kept) {
-        const q = l.corners.map(frame);
-        const lt0 = Math.min(...q.map((p) => p.t)), lt1 = Math.max(...q.map((p) => p.t));
-        if (Math.min(lt1, t1) - Math.max(lt0, t0) < depth * 0.25) continue;
-        const ls0 = Math.min(...q.map((p) => p.s)), ls1 = Math.max(...q.map((p) => p.s));
-        if (ls1 > -L / 2 && ls0 < L / 2) taken.push([ls0, ls1]);
+    // --- closed blocks
+    for (const [id, piece] of pieces.entries()) {
+      if (piece.open || piece.cells.length * RASTER * RASTER < MIN_LOT * MIN_LOT * 2) continue;
+      yield;
+      const pts = piece.cells.map((c) => ({ x: minX + ((c % W) + 0.5) * RASTER, y: minY + (Math.floor(c / W) + 0.5) * RASTER }));
+      const box = orientedBox(hull(pts));
+      // On the planet a block across a border is closed on both charts (each
+      // reads the other's streets, `pavedTester`): the one whose own piece its
+      // middle lies on cuts it, once.
+      if (__PLANET__) {
+        const own = chartAt(box.c.x, box.c.y);
+        if (!onTerritory(own, box.c.x, box.c.y)) continue;
       }
-      return cutSpans(freeSpans(-L / 2, L / 2, taken, MIN_LOT), width);
-    };
-    // The block's frame for a point: along its length (s) and across it (t).
-    const frame = (q: Vec2): { s: number; t: number } => {
-      const dx = q.x - box.c.x, dy = q.y - box.c.y;
-      return { s: dx * box.u.x + dy * box.u.y, t: dx * box.v.x + dy * box.v.y };
-    };
-    for (let r = 0; r < rows; r++) for (const [s0, s1] of rowSpans(r)) {
-      const t0 = -D / 2 + r * depth, t1 = t0 + depth;
-      // The front faces the street: the row's outer long edge (one row: the
-      // side nearer a street).
-      const towardMinus = rows === 2 ? r === 0 : nearerStreet(at, s0, s1, -D / 2, D / 2, paved);
-      // Reaching past the street sides (the front, a single row's back, the
-      // block's two ends) by a little, so the cut to the land below meets the
-      // footway exactly: the raster box stops up to half a cell short of it.
-      const reach = m(2.5), edge = 1e-6;
-      const a0 = s0 <= -L / 2 + edge ? s0 - reach : s0, a1 = s1 >= L / 2 - edge ? s1 + reach : s1;
-      const b0 = towardMinus || rows === 1 ? t0 - reach : t0, b1 = !towardMinus || rows === 1 ? t1 + reach : t1;
-      const corners: [Vec2, Vec2, Vec2, Vec2] = towardMinus
-        ? [at(a1, b0), at(a0, b0), at(a0, b1), at(a1, b1)]
-        : [at(a0, b1), at(a1, b1), at(a1, b0), at(a0, b0)];
-      // Most of it on this block's land, and cut back to it: a block that is
-      // no rectangle (a bent street, a corner's curve) would otherwise have
-      // lots hanging over its streets - the player saw zoned lots over the
-      // roads (2026-10-09). The front stays the side along the street.
-      let inside = 0, total = 0;
-      for (let a = 0.1; a < 1; a += 0.2) for (let b = 0.1; b < 1; b += 0.2) {
-        total++;
-        if (pieceAt(at(s0 + (s1 - s0) * a, t0 + (t1 - t0) * b)) === id) inside++;
+      const key = `b:${Math.round(box.c.x / m(4))},${Math.round(box.c.y / m(4))},${Math.round(box.L / m(4))},${Math.round(box.D / m(4))}`;
+      keys.push(key);
+      if (known.has(key)) continue;
+      // Grow the raster box by half a raster cell: its points are cell centres.
+      const L = box.L + RASTER, D = box.D + RASTER;
+      const rows = D >= TWO_ROWS ? 2 : 1;
+      const depth = D / rows;
+      const columns = Math.max(1, Math.round(L / Math.max(MIN_LOT, Math.min(depth, LOT_FRONTAGE))));
+      const width = L / columns;
+      const at = (s: number, t: number): Vec2 => ({ x: box.c.x + box.u.x * s + box.v.x * t, y: box.c.y + box.u.y * s + box.v.y * t });
+      // The block's frame for a point: along its length (s) and across it (t).
+      const frame = (q: Vec2): { s: number; t: number } => {
+        const dx = q.x - box.c.x, dy = q.y - box.c.y;
+        return { s: dx * box.u.x + dy * box.u.y, t: dx * box.v.x + dy * box.v.y };
+      };
+      /**
+       * A row's lots, as spans along the block: the row cut in equal columns,
+       * except where stored lots already stand in it - then what is left either
+       * side of them is cut instead. A proposed lot touching a stored one was
+       * dropped whole, and a gap up to a lot wide was left beside it.
+       */
+      const rowSpans = (r: number): [number, number][] => {
+        const t0 = -D / 2 + r * depth, t1 = t0 + depth;
+        const taken: [number, number][] = [];
+        for (const l of kept) {
+          const q = l.corners.map((p) => frame(onChartOf(p, box.c)));
+          const lt0 = Math.min(...q.map((p) => p.t)), lt1 = Math.max(...q.map((p) => p.t));
+          if (Math.min(lt1, t1) - Math.max(lt0, t0) < depth * 0.25) continue;
+          const ls0 = Math.min(...q.map((p) => p.s)), ls1 = Math.max(...q.map((p) => p.s));
+          if (ls1 > -L / 2 && ls0 < L / 2) taken.push([ls0, ls1]);
+        }
+        return cutSpans(freeSpans(-L / 2, L / 2, taken, MIN_LOT), width);
+      };
+      for (let r = 0; r < rows; r++) for (const [s0, s1] of rowSpans(r)) {
+        const t0 = -D / 2 + r * depth, t1 = t0 + depth;
+        // The front faces the street: the row's outer long edge (one row: the
+        // side nearer a street).
+        const towardMinus = rows === 2 ? r === 0 : nearerStreet(at, s0, s1, -D / 2, D / 2, paved);
+        // Reaching past the street sides (the front, a single row's back, the
+        // block's two ends) by a little, so the cut to the land below meets the
+        // footway exactly: the raster box stops up to half a cell short of it.
+        const reach = m(2.5), edge = 1e-6;
+        const a0 = s0 <= -L / 2 + edge ? s0 - reach : s0, a1 = s1 >= L / 2 - edge ? s1 + reach : s1;
+        const b0 = towardMinus || rows === 1 ? t0 - reach : t0, b1 = !towardMinus || rows === 1 ? t1 + reach : t1;
+        const corners: [Vec2, Vec2, Vec2, Vec2] = towardMinus
+          ? [at(a1, b0), at(a0, b0), at(a0, b1), at(a1, b1)]
+          : [at(a0, b1), at(a1, b1), at(a1, b0), at(a0, b0)];
+        // Most of it on this block's land, and cut back to it: a block that is
+        // no rectangle (a bent street, a corner's curve) would otherwise have
+        // lots hanging over its streets - the player saw zoned lots over the
+        // roads (2026-10-09). The front stays the side along the street.
+        let inside = 0, total = 0;
+        for (let a = 0.1; a < 1; a += 0.2) for (let b = 0.1; b < 1; b += 0.2) {
+          total++;
+          if (pieceAt(at(s0 + (s1 - s0) * a, t0 + (t1 - t0) * b)) === id) inside++;
+        }
+        if (inside / total < 0.5) continue;
+        const land = landLot(net, corners);
+        const fit = land && fitFree(land);
+        if (fit) add.push({ key, corners: fit });
       }
-      if (inside / total < 0.5) continue;
-      const land = landLot(net, corners);
-      const fit = land && fitFree(land);
-      if (fit) add.push({ key, corners: fit });
     }
   }
 
@@ -403,9 +472,10 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
       const step = m(1);
       const runs: [number, number][] = [];
       let from = -1;
+      const land = landOf.get(segId)!;
       for (let s = 0; s <= length; s += step) {
         const p = point(s, face + m(1.5)), q = point(s, face + LOT_DEPTH - m(1));
-        const ok = !paved(p) && !paved(q) && pieces[pieceAt(p)]?.open === true;
+        const ok = !paved(p) && !paved(q) && land.pieces[pieceIn(land, p)]?.open === true;
         if (ok && from < 0) from = s;
         if ((!ok || s + step > length) && from >= 0) { runs.push([from, ok ? s : s - step]); from = -1; }
       }
@@ -423,7 +493,9 @@ export function* planLotsSteps(doc: RoadDoc, net: Network): Generator<void, LotP
         const taken: [number, number][] = [];
         for (const l of [...kept, ...add]) {
           let near = false, ls0 = Infinity, ls1 = -Infinity;
-          for (const q of l.corners) {
+          for (const corner of l.corners) {
+            // On the street's chart (on the planet).
+            const q = onChartOf(corner, line.sampleAt(0).p);
             const c = line.closestPoint(q);
             const f = line.sampleAt(c.s);
             // Across the street, on this side: positive on the side's left.
@@ -709,7 +781,8 @@ function pavingOf(net: Network, grow = 0): { poly: MultiPoly[number]; box: [numb
   const known = cached.find((c) => c.grow === grow);
   if (known) return known.pieces;
   const ringArea = (r: readonly Vec2[]): number => lotArea({ corners: r });
-  const pieces = (net.doc.segments.size ? levelPolygons(net, Level.Sidewalk) : []).map((raw) => {
+  // With their ghost images: a lot cut by a border is cut by the next piece's paving too.
+  const pieces = (net.doc.segments.size ? withGhostImages(levelPolygons(net, Level.Sidewalk)) : []).map((raw) => {
     const poly = grow === 0 ? raw : raw.map((ring, k) => {
       const pts = ring.map(([x, y]) => ({ x: x!, y: y! }));
       // Outer counter-clockwise, holes clockwise: the right-hand offset then grows the paving.
