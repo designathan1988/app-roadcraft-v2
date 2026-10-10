@@ -5,6 +5,7 @@ import { vehiclePose } from '../pose';
 import type { SimWorld } from '../world';
 import { bodyClassOfArchetype } from '../vehicles/archetypes';
 import { createVehicle, snapshot, type Vehicle, type VehicleId } from '../vehicles/state';
+import { assignOccupancy } from '../vehicles/kerbStops';
 import { planFrom } from '../routing/router';
 import { chooseVehicleDestination } from '../routing/destination';
 import { collectBays, type Bay } from './parking';
@@ -372,8 +373,11 @@ export class LotTraffic {
     road.s = Math.min(l.length, lane.at + a.length / 2);
     road.v = JOIN_SPEED;
     road.prev = snapshot(road);
-    road.seats = 1;
-    road.errand = null;
+    // Who rides with the driver, and whether the trip has somebody to drop or
+    // pick up on the way, as every other car out on the road (`spawn.ts`).
+    // With the driver alone, a town with no road off the map - its cars all
+    // out of the lots - never had a passenger nor a stop at the kerb.
+    assignOccupancy(w, road);
     w.vehicles.set(road.id, road);
     w.enterLanelet(road, l.id);
     road.destination = chooseVehicleDestination(w, l.id, bodyClassOfArchetype(a));

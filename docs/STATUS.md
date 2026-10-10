@@ -168,9 +168,11 @@ o jogo a cada edição.
   `board`, `alight`, vazios desde 5/10; quem desce sai sobre a calçada,
   `kerbStops.spec`). `tests/sim`: 168 de 171; as 3 que restam são o P101
   (pedestre cara a cara numa esquina; ver PROBLEMAS). Visto no jogo (5173):
-  um carro deixou o passageiro e ele saiu andando pela calçada. Também visto:
-  hoje os carros do jogo não levam passageiros, então paradas no meio-fio
-  quase não acontecem.
+  um carro deixou o passageiro e ele saiu andando pela calçada. O carro que
+  sai de um lote recebe passageiros e tarefa como os outros
+  (`lotTraffic.ts`, `assignOccupancy`; antes só o motorista, e numa cidade sem
+  ponta de via ninguém levava passageiro): no jogo, 15 de 52 carros novos com
+  passageiro em 40 s e paradas no meio-fio acontecendo sozinhas.
 - Câmera entre as árvores: as folhas a menos de 5 m da câmera somem em
   pontilhado ordenado (Bayer 4x4, o "Pixel Dither" do distance fade do Godot),
   o material segue opaco e a sombra inteira (`wind.ts` `NEAR_FADE`, em todo
