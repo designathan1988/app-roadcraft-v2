@@ -8,6 +8,7 @@ import { addLayer, activeLayer, buildingHidden, DEFAULT_LAYER, ensureLayers, ite
 import { CATEGORY_NAMES, type Category } from '../families/family';
 import { family, typeById } from '../families/index';
 import { icon } from './icons';
+import { polish } from './kit';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -84,11 +85,11 @@ export function mountLayers(ed: Editor3): void {
         return html;
       })
       .join('');
-    pane.innerHTML = `<div class="f3-sec"><h3>Camadas <span class="r"><button class="f3-btn" data-lact="add">${icon('add')}Camada</button></span></h3>${layers}
-      <p class="f3-empty" style="padding:6px 0 0">Olho esconde na vista; cadeado deixa ver sem selecionar. Salvar e exportar levam tudo.</p></div>
-      <div class="f3-sec"><h3>Elementos <span class="r"><button class="f3-btn" data-tact="showall">Mostrar tudo</button><button class="f3-btn" data-tact="isolate" title="Esconde os outros volumes do edifício">Isolar seleção</button></span></h3>${tree || '<p class="f3-empty" style="padding:0">Nada no projeto ainda.</p>'}</div>
+    pane.innerHTML = `<div class="f3-sec"><h3>Camadas <span class="r"><button class="f3-btn ic" data-lact="add" title="Nova camada">${icon('add')}</button></span></h3>${layers}</div>
+      <div class="f3-sec"><h3>Elementos <span class="r"><button class="f3-btn ic" data-tact="showall" title="Mostrar tudo">${icon('eye')}</button><button class="f3-btn ic" data-tact="isolate" title="Isolar a seleção (esconde o resto)">${icon('focus')}</button></span></h3>${tree || '<p class="f3-empty" style="padding:0">Nada no projeto ainda.</p>'}</div>
       <div class="f3-sec"><h3>Categorias na vista</h3>${cats}</div>`;
     bind();
+    polish(pane);
   }
 
   function solidRow(b: Building3, s: Solid): string {

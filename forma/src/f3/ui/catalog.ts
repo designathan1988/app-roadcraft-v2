@@ -31,24 +31,27 @@ export function mountCatalog(ed: Editor3): { open(): void } {
     const present = new Set(types().map((t) => family(t.family)?.category).filter(Boolean) as string[]);
     return ['blocks', 'fav', ...ORDER.filter((c) => present.has(c)), 'mine'];
   };
-  host.innerHTML = `<div class="f3-cat-head"><span style="display:flex;align-items:center;gap:6px;font-weight:600">${icon('catalog')}Componentes</span>
-    <input type="search" placeholder="Buscar: janela, portão, sacada…" aria-label="Buscar componentes">
-    <div class="f3-cat-tabs" role="tablist"></div>
-    <button class="f3-btn" data-c="toggle" title="Mostrar/ocultar">▾</button></div><div class="f3-cards"></div>`;
+  host.innerHTML = `<div class="f3-cat-head"><b>Biblioteca</b>
+    <input type="search" placeholder="Buscar: janela, portão, sacada…" aria-label="Buscar na biblioteca">
+    <button class="f3-tb" data-c="close" title="Fechar · K">${icon('close')}</button></div>
+    <div class="f3-cat-body"><div class="f3-cat-tabs" role="tablist"></div><div class="f3-cards"></div></div>`;
   const search = host.querySelector<HTMLInputElement>('input')!;
   const tabsEl = host.querySelector<HTMLElement>('.f3-cat-tabs')!;
   const cards = host.querySelector<HTMLElement>('.f3-cards')!;
-  host.querySelector('[data-c="toggle"]')!.addEventListener('click', () => host.classList.toggle('closed'));
+  host.querySelector('[data-c="close"]')!.addEventListener('click', () => ed.toggleLibrary(false));
   search.addEventListener('input', () => {
     query = search.value.trim().toLowerCase();
     renderCards();
   });
-  search.addEventListener('keydown', (e) => e.stopPropagation());
+  search.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') ed.toggleLibrary(false);
+  });
 
-  const label = (c: string) => (c === 'blocks' ? 'Blocos' : c === 'fav' ? '★ Favoritos' : c === 'mine' ? 'Meus' : CATEGORY_NAMES[c as Category]);
+  const label = (c: string) => (c === 'blocks' ? 'Blocos de massa' : c === 'fav' ? 'Favoritos' : c === 'mine' ? 'Meus tipos' : CATEGORY_NAMES[c as Category]);
   const renderTabs = () => {
     tabsEl.innerHTML = cats()
-      .map((c) => `<button data-tab="${c}" aria-pressed="${c === tab && !query}">${label(c)}</button>`)
+      .map((c) => `<button data-tab="${c}" aria-pressed="${c === tab && !query}">${label(c)}</button>${c === 'fav' ? '<hr>' : ''}`)
       .join('');
     tabsEl.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
       b.addEventListener('click', () => {
@@ -83,7 +86,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
       cards.querySelectorAll<HTMLElement>('[data-block]').forEach((c) =>
         c.addEventListener('click', () => {
           ed.startBlock(c.dataset.block!);
-          renderCards();
+          ed.toggleLibrary(false);
         }),
       );
       return;
@@ -116,7 +119,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
       c.addEventListener('click', (e) => {
         if ((e.target as HTMLElement).closest('.fav')) return;
         ed.startPlacing(c.dataset.type!);
-        renderCards();
+        ed.toggleLibrary(false);
       });
       c.addEventListener('dragstart', (e) => {
         e.dataTransfer?.setData('text/forma-type', c.dataset.type!);
@@ -139,6 +142,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
 
   ed.catalogRequested = () => {
     host.classList.remove('closed');
+    renderCards();
     search.focus();
   };
   let lastPlacing: string | null = null;

@@ -204,9 +204,13 @@ export class Editor3 {
 
   private scheduleSave(): void {
     clearTimeout(this.saveTimer);
+    const sv = this.shell.top.querySelector('.f3-saved');
+    if (sv) sv.textContent = 'Salvando…';
     this.saveTimer = window.setTimeout(() => {
       try {
         localStorage.setItem('forma3_project', this.store.json());
+        const sv = this.shell.top.querySelector('.f3-saved');
+        if (sv) sv.textContent = 'Salvo neste navegador';
       } catch {
         this.toast('Não foi possível salvar neste navegador (sem espaço).');
       }
@@ -296,7 +300,7 @@ export class Editor3 {
     if (b && s) parts.push(`<button data-crumb="solid" aria-current="${!this.sel.face}">${esc(s.name)}</button>`);
     if (b && s && this.sel.face) parts.push(`<button data-crumb="face" aria-current="true">${this.sel.face.kind === 'top' ? 'Topo' : 'Face'}</button>`);
     if (this.sel.item) parts.push(`<button aria-current="true">Componente</button>`);
-    c.innerHTML = parts.join('');
+    c.innerHTML = parts.join('<i>›</i>');
     c.querySelectorAll<HTMLButtonElement>('button').forEach((btn) =>
       btn.addEventListener('click', () => {
         const k = btn.dataset.crumb;
@@ -525,9 +529,9 @@ export class Editor3 {
     else if (this.sel.item) html = btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') + btn('del', 'trash', '', undefined, 'Excluir · Delete');
     else if (s)
       html =
-        btn('op-add', 'add', 'Somar', s.op === 'add', 'O volume soma ao edifício') +
-        btn('op-subtract', 'subtract', 'Recortar', s.op === 'subtract', 'O volume recorta o que veio antes (pátios, arcos, nichos)') +
-        btn('op-intersect', 'intersect', 'Interseção', s.op === 'intersect', 'Fica só a parte em comum') +
+        btn('op-add', 'add', '', s.op === 'add', 'Somar ao edifício') +
+        btn('op-subtract', 'subtract', '', s.op === 'subtract', 'Recortar o que veio antes (pátios, arcos, nichos)') +
+        btn('op-intersect', 'intersect', '', s.op === 'intersect', 'Interseção: fica só a parte em comum') +
         '<span class="sep"></span>' +
         btn('dup', 'copy', '', undefined, 'Duplicar · Ctrl+D') +
         btn('mirror', 'mirror', '', undefined, 'Espelhar') +
@@ -595,8 +599,23 @@ export class Editor3 {
       case 'frame':
         this.frameSelection();
         break;
+      case 'snap':
+        this.toggleSnap();
+        break;
+      case 'library':
+        this.toggleLibrary();
+        break;
+      case 'palette':
+        this.paletteRequested?.();
+        break;
+      case 'help':
+        this.helpRequested?.();
+        break;
     }
   }
+
+  /** A busca de comandos (ui/palette.ts) escuta isto. */
+  paletteRequested: (() => void) | null = null;
 
   frameSelection(): void {
     const b = this.activeBuilding();
@@ -998,36 +1017,90 @@ export class Editor3 {
     this.emit();
   }
 
+  /** Último desenho usado (o grupo mostra o ícone dele). */
+  private lastDraw: Tool = 'rect';
+
   private renderTools(): void {
-    const tools: [Tool | string, string, string, string][] = [
-      ['select', 'cursor', 'Selecionar e mover', 'V'],
-      ['push', 'push', 'Empurrar/puxar faces', 'P'],
-      ['|', '', '', ''],
-      ['rect', 'rect', 'Retângulo', 'R'],
-      ['circle', 'circle', 'Círculo', 'C'],
-      ['polygon', 'polygon', 'Polígono (curve os lados depois)', 'L'],
-      ['mode', this.drawMode === 'add' ? 'add' : 'subtract', this.drawMode === 'add' ? 'Desenho soma (troque para recortar)' : 'Desenho recorta (troque para somar)', 'X'],
-      ['|', '', '', ''],
-      ['catalog', 'catalog', 'Componentes', 'K'],
-      ['paint', 'paint', 'Pintar (Alt: conta-gotas)', 'B'],
-      ['tape', 'tape', 'Trena: mede e deixa cotas no modelo (Shift+Delete apaga)', 'T'],
-      ['|', '', '', ''],
-      ['frame', 'focus', 'Enquadrar', 'F'],
-      ['grid', 'magnet', 'Encaixe ligado/desligado', 'G'],
+    type T = { id: string; ic: string; label: string; key: string };
+    const draw: T[] = [
+      { id: 'rect', ic: 'rect', label: 'Retângulo', key: 'R' },
+      { id: 'circle', ic: 'circle', label: 'Círculo', key: 'C' },
+      { id: 'polygon', ic: 'polygon', label: 'Polígono', key: 'L' },
     ];
-    this.shell.tools.innerHTML = tools
-      .map(([id, ic, label, key]) => (id === '|' ? '<hr>' : `<button class="f3-tool" data-tool="${id}" title="${label} · ${key}" aria-label="${label}" aria-pressed="${id === this.tool || (id === 'grid' && this.infer.enabled) || (id === 'mode' && this.drawMode === 'subtract')}">${icon(ic)}<span class="k">${key}</span></button>`))
-      .join('');
+    if (draw.some((d) => d.id === this.tool)) this.lastDraw = this.tool;
+    const cur = draw.find((d) => d.id === this.lastDraw)!;
+    const one = (t: T, pressed: boolean, extra = '') => `<button class="f3-tool${extra}" data-tool="${t.id}" title="${t.label} · ${t.key}" aria-label="${t.label}" aria-pressed="${pressed}">${icon(t.ic)}</button>`;
+    const drawing = draw.some((d) => d.id === this.tool);
+    this.shell.tools.innerHTML = [
+      one({ id: 'select', ic: 'cursor', label: 'Selecionar e mover', key: 'V' }, this.tool === 'select'),
+      one({ id: 'push', ic: 'push', label: 'Empurrar/puxar faces (Ctrl: extrudar)', key: 'P' }, this.tool === 'push'),
+      one({ ...cur, label: `${cur.label} (segure para outros desenhos)` }, drawing, ' grp'),
+      one({ id: 'mode', ic: this.drawMode === 'add' ? 'add' : 'subtract', label: this.drawMode === 'add' ? 'O desenho soma (trocar para recortar)' : 'O desenho recorta (trocar para somar)', key: 'X' }, this.drawMode === 'subtract'),
+      '<hr>',
+      one({ id: 'catalog', ic: 'catalog', label: 'Biblioteca de blocos e componentes', key: 'K' }, !this.shell.cat.classList.contains('closed')),
+      one({ id: 'paint', ic: 'paint', label: 'Pintar (Alt: conta-gotas)', key: 'B' }, this.tool === 'paint'),
+      one({ id: 'tape', ic: 'tape', label: 'Trena e cotas (Shift+Delete apaga)', key: 'T' }, this.tool === 'tape'),
+    ].join('');
+    const snapBtn = this.shell.status.bar.querySelector('[data-cmd="snap"]');
+    snapBtn?.setAttribute('aria-pressed', String(this.infer.enabled));
+    const libBtn = this.shell.status.bar.querySelector('[data-cmd="library"]');
+    libBtn?.setAttribute('aria-pressed', String(!this.shell.cat.classList.contains('closed')));
+    // Submenu do grupo de desenho: segurar (ou clicar no canto) abre a lista.
+    const grp = this.shell.tools.querySelector<HTMLButtonElement>('.f3-tool.grp')!;
+    let hold = 0;
+    const openFly = () => {
+      this.closeFly();
+      const fly = document.createElement('div');
+      fly.className = 'f3-fly f3-island';
+      fly.innerHTML = draw.map((d) => `<button data-fly="${d.id}" aria-pressed="${d.id === this.tool}">${icon(d.ic)}${d.label}<kbd>${d.key}</kbd></button>`).join('');
+      const r = grp.getBoundingClientRect(),
+        rv = this.shell.view.getBoundingClientRect();
+      fly.style.left = `${r.right - rv.left + 8}px`;
+      fly.style.top = `${r.top - rv.top - 4}px`;
+      this.shell.view.appendChild(fly);
+      fly.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.closeFly();
+          this.setTool(b.dataset.fly as Tool);
+        }),
+      );
+      setTimeout(() => document.addEventListener('pointerdown', (e) => !fly.contains(e.target as Node) && this.closeFly(), { once: true }), 0);
+    };
+    grp.addEventListener('pointerdown', () => {
+      hold = window.setTimeout(() => {
+        hold = -1;
+        openFly();
+      }, 320);
+    });
+    grp.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openFly();
+    });
     this.shell.tools.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.dataset.tool!;
+        if (b === grp) {
+          if (hold === -1) return void (hold = 0);
+          clearTimeout(hold);
+        }
         if (id === 'mode') this.toggleDrawMode();
-        else if (id === 'catalog') this.emitCatalog();
-        else if (id === 'frame') this.frameSelection();
-        else if (id === 'grid') this.toggleSnap();
+        else if (id === 'catalog') this.toggleLibrary();
         else this.setTool(id as Tool);
       }),
     );
+  }
+
+  private closeFly(): void {
+    this.shell.view.querySelectorAll('.f3-fly').forEach((f) => f.remove());
+  }
+
+  /** Abre ou fecha a gaveta da biblioteca. */
+  toggleLibrary(open?: boolean): void {
+    const cat = this.shell.cat;
+    const willOpen = open ?? cat.classList.contains('closed');
+    cat.classList.toggle('closed', !willOpen);
+    if (willOpen) this.emitCatalog();
+    this.renderTools();
   }
 
   toggleDrawMode(): void {
@@ -2436,6 +2509,7 @@ export class Editor3 {
         else if (k === 'c') this.copy();
         else if (k === 'v') this.paste();
         else if (k === 's') this.saveRequested?.();
+        else if (k === 'k') this.command('palette');
         else return;
         e.preventDefault();
         return;
@@ -2474,7 +2548,7 @@ export class Editor3 {
       else if (k === 'b') this.setTool('paint');
       else if (k === 't') this.setTool('tape');
       else if (k === 'x') this.toggleDrawMode();
-      else if (k === 'k') this.emitCatalog();
+      else if (k === 'k') this.toggleLibrary();
       else if (k === 'f') this.frameSelection();
       else if (k === 'g') this.toggleSnap();
       else if (k === '?') this.helpRequested?.();
@@ -2487,7 +2561,8 @@ export class Editor3 {
   helpRequested: (() => void) | null = null;
 
   private bindTop(): void {
-    this.shell.top.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => this.topCommand?.(b.dataset.cmd!) ?? this.command(b.dataset.cmd!)));
+    this.shell.top.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => (this.topCommand?.(b.dataset.cmd!) ? undefined : this.command(b.dataset.cmd!))));
+    this.shell.status.bar.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((b) => b.addEventListener('click', () => this.command(b.dataset.cmd!)));
     this.shell.name.addEventListener('change', () => {
       this.store.project.name = this.shell.name.value.trim() || 'Projeto sem título';
       this.store.commit(null, '', false);

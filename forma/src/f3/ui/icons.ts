@@ -34,6 +34,14 @@ const EXTRA: Record<string, string> = {
   eyeoff: 'M3 3l18 18 M10.6 5.1A10 10 0 0112 5c6 0 10 7 10 7a17 17 0 01-3 3.6 M6.6 6.6A17 17 0 002 12s4 7 10 7a10 10 0 005.4-1.6',
   layers: 'M12 3l9 5-9 5-9-5z M3 13l9 5 9-5 M3 17l9 5 9-5',
   props: 'M4 6h10 M18 6h2 M4 12h4 M12 12h8 M4 18h12 M20 18h0 M16 4v4 M10 10v4 M18 16v4',
+  search: 'M11 4a7 7 0 100 14 7 7 0 000-14 M16 16l5 5',
+  minus: 'M5 12h14',
+  draw: 'M4 4h16v16H4z',
+  inset: 'M3 3h18v18H3z M8 8h8v8H8z M3 3l5 5 M21 3l-5 5 M3 21l5-5 M21 21l-5-5',
+  offset: 'M7 7h10v10H7z M3 3h18v18H3z',
+  bevel: 'M4 20V9l5-5h11v16z M9 4v5H4',
+  split: 'M4 4h16v16H4z M4 12h16',
+  extrude: 'M4 13l8-4 8 4v7l-8 3-8-3z M12 9V2 M9 5l3-3 3 3',
 };
 
 export const icon = (name: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${EXTRA[name] ?? ICON_PATHS[name] ?? ICON_PATHS.cube}"/></svg>`;

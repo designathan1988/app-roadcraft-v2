@@ -16,6 +16,7 @@ import { resolveParams, type ParamDef } from '../families/family';
 import { icon } from './icons';
 import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, presetRules, setbackOn } from '../model/quick';
 import { addBands, planBox, type BandPreset } from '../model/modeling';
+import { polish } from './kit';
 
 const ROOFS: [RoofKind, string, string][] = [
   ['flat', 'Plano', 'flat'],
@@ -63,7 +64,10 @@ export function mountInspector(ed: Editor3): void {
     // Não redesenha enquanto o usuário digita num campo.
     if (key === lastKey && side.contains(document.activeElement)) return;
     lastKey = key;
-    if (!b) return void (side.innerHTML = emptyHelp());
+    if (!b) {
+      side.innerHTML = emptyHelp();
+      return;
+    }
     const s = ed.activeSolid();
     const it = ed.activeItem();
     if (ed.context !== b.id && ed.sel.others.length) side.innerHTML = alignPanel(1 + ed.sel.others.length, 'edifícios');
@@ -74,18 +78,16 @@ export function mountInspector(ed: Editor3): void {
     else if (s) side.innerHTML = solidPanel(ed, b, s);
     else side.innerHTML = buildingPanel(b, true);
     bind(ed, b, s);
+    polish(side);
   };
   ed.onChange(render);
   render();
 }
 
 function emptyHelp(): string {
-  return `<div class="f3-empty"><b>Comece a construir</b><br><br>
-  <kbd>R</kbd> retângulo · <kbd>C</kbd> círculo · <kbd>L</kbd> polígono: desenhe no chão; puxe a seta verde para a altura.<br>
-  Desenhe sobre um telhado plano para empilhar. <kbd>X</kbd> troca entre somar e recortar.<br><br>
-  Clique num edifício para mover e girar; duplo clique entra nele para editar volumes, faces e componentes.<br><br>
-  <kbd>K</kbd> abre os componentes: arraste janelas, portas, sacadas para as paredes.<br>
-  Botão direito gira a vista, botão do meio desloca, roda aproxima.</div>`;
+  const k = (keys: string, what: string) => `<span>${keys.split(' ').map((x) => `<kbd>${x}</kbd>`).join(' ')}</span><span>${what}</span>`;
+  return `<div class="f3-empty"><b>Nada selecionado</b>
+  <div class="f3-keys">${k('R C L', 'Desenhar no chão ou sobre laje')}${k('K', 'Biblioteca de blocos e componentes')}${k('V', 'Selecionar; duplo clique entra')}${k('P', 'Empurrar faces (Ctrl extruda)')}${k('Ctrl K', 'Buscar qualquer comando')}${k('?', 'Todos os atalhos')}</div></div>`;
 }
 
 function buildingPanel(b: Building3, inside = false): string {
@@ -109,7 +111,7 @@ function buildingPanel(b: Building3, inside = false): string {
   <div class="f3-sec"><div class="f3-row"><button class="f3-btn" data-quick="lvup">+ Pavimento</button><button class="f3-btn" data-quick="lvdown">− Pavimento</button></div></div>
   <div class="f3-sec"><h3>Posição</h3><div class="f3-grid2">${field('px', 'X (m)', b.position[0])}${field('pz', 'Z (m)', b.position[1])}</div></div>
   <div class="f3-sec"><div class="f3-row">${inside ? '' : `<button class="f3-btn primary" data-act="enter">${icon('enter')}Editar volumes</button>`}<button class="f3-btn" data-act="dup">${icon('copy')}Duplicar</button><button class="f3-btn danger" data-act="del">${icon('trash')}Excluir</button></div>
-  <p class="f3-empty" style="padding:8px 0 0">${b.solids.length} volume(s), ${b.items.length} componente(s) avulso(s).</p></div>`;
+</div>`;
 }
 
 function alignPanel(n: number, what: string): string {
@@ -117,7 +119,7 @@ function alignPanel(n: number, what: string): string {
   return '<div class="f3-title"><span style="flex:1;font-weight:600">' + n + ' ' + what + '</span><span class="f3-kind">Seleção</span></div>' +
     '<div class="f3-sec"><h3>Alinhar (pelo primeiro selecionado)</h3><div class="f3-row">' + b('left', '', 'Esquerda') + b('centerX', '', 'Centro X') + b('right', '', 'Direita') + b('front', '', 'Frente') + b('centerZ', '', 'Centro Z') + b('back', '', 'Fundo') + '</div></div>' +
     (what === 'volumes' ? '<div class="f3-sec"><h3>Altura</h3><div class="f3-row">' + b('base', '', 'Mesma base') + b('top', '', 'Mesmo topo (sobe)') + b('height', '', 'Mesmo topo (estica)') + '</div></div>' : '') +
-    '<div class="f3-sec"><h3>Distribuir com espaços iguais</h3><div class="f3-row">' + b('distX', '', 'Em X') + b('distZ', '', 'Em Z') + '</div><p class="f3-empty" style="padding:6px 0 0">Shift+clique acrescenta à seleção. As pontas ficam; os do meio se espaçam por igual.</p></div>';
+    '<div class="f3-sec"><h3>Distribuir com espaços iguais</h3><div class="f3-row">' + b('distX', '', 'Em X') + b('distZ', '', 'Em Z') + '</div></div>';
 }
 
 function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
@@ -135,7 +137,7 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   if (face?.kind === 'side' && face.edge) {
     const e = s.edges[face.edge] ?? {};
     facePart = `<div class="f3-sec"><h3>${icon('push')} Face selecionada</h3>
-    <div class="f3-grid2">${field('lean', 'Inclinação da parede (°)', e.lean ?? 0, 1)}${field('push', 'Empurrar (m)', 0, 0.1, 'placeholder="0"')}</div>
+    <div class="f3-grid2">${field('lean', 'Inclinação (°)', e.lean ?? 0, 1)}${field('push', 'Empurrar (m)', 0, 0.1, 'placeholder="0"')}</div>
     <div class="f3-row" style="margin-top:8px">
       <button class="f3-btn" data-act="gable" aria-pressed="${!!e.gable}">${e.gable ? 'É empena' : 'Fazer empena'}</button>
       <button class="f3-btn" data-act="blank">${e.blank ? 'Recebe componentes' : 'Parede cega'}</button>
@@ -144,11 +146,11 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
     <div style="margin-top:8px">${finishSelect('edgemat', 'Parede', e.material ?? s.materials.wall)}</div>
     ${toolBox('Extrudar face', tf('depth', 'Profundidade (m; − afunda)', 3), run('extrude', 'Extrudar'))}
     ${toolBox('Inset da face', tf('margin', 'Margem (m)', 1) + tf('depth', 'Profundidade (m; − nicho)', -1.2) + `<label class="f3-field"><span>Pé</span><select data-t="keepBottom"><option value="">Com margem</option><option value="1">Até a base</option></select></label>`, run('inset-side', 'Aplicar inset'))}
-    <div class="f3-grid2" style="margin-top:8px">${field('edgebevel', 'Bisel do topo deste lado (m)', e.bevel ?? 0, 0.05)}</div></div>`;
+    <div class="f3-grid2" style="margin-top:8px">${field('edgebevel', 'Bisel do lado (m)', e.bevel ?? 0, 0.05)}</div></div>`;
   } else if (face?.kind === 'top') {
     facePart = `<div class="f3-sec"><h3>${icon('push')} Topo selecionado</h3>
     ${toolBox('Inset do topo', tf('inset', 'Recuo da borda (m)', 2) + tf('depth', 'Altura (m; − rebaixa)', 3), run('inset-top', 'Aplicar inset'))}
-    <p class="f3-empty" style="padding:6px 0 0">Ctrl + arrastar a seta verde extruda o topo como volume novo.</p></div>`;
+</div>`;
   }
   if (ed.sel.vertex) {
     const v = [...s.plan.outer, ...s.plan.holes.flat()].find((q) => q.id === ed.sel.vertex);
@@ -159,12 +161,12 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   ${facePart}
   <div class="f3-sec"><h3>Forma</h3>
     <div class="f3-seg" style="margin-bottom:8px">${(['add', 'subtract', 'intersect'] as const).map((o) => `<button data-op="${o}" aria-pressed="${s.op === o}">${o === 'add' ? 'Somar' : o === 'subtract' ? 'Recortar' : 'Interseção'}</button>`).join('')}</div>
-    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfrar cantos (m)', s.plan.outer[0]?.chamfer ?? 0)}${field('sizew', 'Largura X (m)', box.x1 - box.x0)}${field('sized', 'Profundidade Z (m)', box.z1 - box.z0)}</div>
+    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('sizew', 'Largura (m)', box.x1 - box.x0)}${field('sized', 'Profund. (m)', box.z1 - box.z0)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar (m)', s.taper)}${field('round', 'Arredondar (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfro (m)', s.plan.outer[0]?.chamfer ?? 0)}</div>
     <div class="f3-row" style="margin-top:8px"><button class="f3-btn" data-act="levelsfit">Altura = pavimentos</button><button class="f3-btn" data-act="mirror">${icon('mirror')}Espelhar</button></div>
   </div>
   <div class="f3-sec"><h3>Modificar</h3>
     ${toolBox('Offset do contorno', tf('d', 'Distância (m; − encolhe)', 1) + `<label class="f3-field"><span>Cantos</span><select data-t="corner"><option value="sharp">Vivos</option><option value="round">Redondos</option><option value="chamfer">Chanfrados</option></select></label>`, run('offset', 'Aplicar') + run('offset', 'Como volume novo', { copy: true }))}
-    ${toolBox('Dividir na altura', tf('y', 'Altura do corte acima da base (m)', Math.round(s.height * 5) / 10), run('split', 'Dividir'))}
+    ${toolBox('Dividir na altura', tf('y', 'Altura do corte (m)', Math.round(s.height * 5) / 10), run('split', 'Dividir'))}
     <div class="f3-op"><h4>Bisel das arestas</h4><div class="f3-grid2">${field('bvtop', 'Topo (m)', bv?.top ?? 0, 0.05)}${field('bvbottom', 'Base (m)', bv?.bottom ?? 0, 0.05)}${field('bvseg', 'Segmentos', bv?.segments ?? 1, 1)}
     <label class="f3-field"><span>Perfil</span><select data-bvprofile><option value="0" ${!bv || bv.profile < 0.25 ? 'selected' : ''}>Reto</option><option value="0.5" ${bv && bv.profile >= 0.25 && bv.profile < 0.75 ? 'selected' : ''}>Misto</option><option value="1" ${bv && bv.profile >= 0.75 ? 'selected' : ''}>Redondo</option></select></label></div></div>
   </div>
@@ -189,10 +191,10 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
     <button class="f3-btn" data-quick="podium" title="Pódio mais largo no térreo, com lojas">Embasamento</button>
     <button class="f3-btn" data-quick="court" title="Recorte no meio (pátio interno)">Pátio</button></div>
     <label class="f3-field" style="margin-top:8px"><span>Fachada pronta</span><select data-quick-facade><option value="">Escolher…</option>${FACADE_PRESETS.map((f) => `<option value="${f.id}">${f.name}</option>`).join('')}</select></label></div>
-  <div class="f3-sec"><h3>Cobertura</h3><div class="f3-chips">${ROOFS.map(([k, l, ic]) => `<button class="f3-chip" data-roof="${k}" aria-pressed="${r.kind === k}">${icon(ic)}${l}</button>`).join('')}</div>
+  <div class="f3-sec"><h3>Cobertura</h3><div class="f3-chips">${ROOFS.map(([k, l, ic]) => `<button class="f3-chip" data-roof="${k}" aria-pressed="${r.kind === k}" title="${l}">${icon(ic)}<span>${l}</span></button>`).join('')}</div>
     <div class="f3-grid2" style="margin-top:8px">${roofParams}</div></div>
   <div class="f3-sec"><h3>Materiais</h3><div style="display:grid;gap:6px">${finishSelect('wall', 'Paredes', s.materials.wall)}${finishSelect('roof', 'Telhado', s.materials.roof)}${finishSelect('trim', 'Detalhes', s.materials.trim)}${finishSelect('base', 'Base', s.materials.base)}</div></div>
-  <div class="f3-sec"><h3>Fachada <span class="r"><button class="f3-btn" data-act="addrule">${icon('add')}Regra</button></span></h3>${s.facade.length ? s.facade.map((f) => ruleRow(ed, f)).join('') : '<p class="f3-empty" style="padding:0">Sem regras. Uma regra espalha janelas ou portas pelos lados e pavimentos e se refaz quando o volume muda.</p>'}</div>`;
+  <div class="f3-sec"><h3>Fachada <span class="r"><button class="f3-btn" data-act="addrule">${icon('add')}Regra</button></span></h3>${s.facade.length ? s.facade.map((f) => ruleRow(ed, f)).join('') : '<p class="f3-empty" style="padding:2px 0">Sem regras de fachada.</p>'}</div>`;
 }
 
 /** Regras abertas para edição completa (sobrevive aos redesenhos do painel). */
@@ -254,8 +256,8 @@ function itemPanel(ed: Editor3, b: Building3, id: string): string {
   const users = ed.project.buildings.reduce((n, x) => n + x.items.filter((q) => q.type === t.id).length + x.solids.reduce((m, s) => m + s.facade.filter((r) => r.type === t.id).length, 0), 0);
   const arr = it.array;
   return `<div class="f3-title"><span style="flex:1;font-weight:600">${esc(t.name)}</span><span class="f3-kind">${esc(f.name)}</span></div>
-  <div class="f3-sec"><div class="f3-row"><span style="color:var(--muted);font-size:12px">Mudanças em campos do tipo valem para <b>${users}</b> uso(s) deste tipo; campos azuis são só desta peça.</span>
-  <button class="f3-btn" data-act="unique">${icon('unique')}Tornar único</button><button class="f3-btn danger" data-act="del">${icon('trash')}Excluir</button></div></div>
+  <div class="f3-sec" style="padding-top:8px"><div class="f3-row"><span class="f3-kind" title="Campos do tipo mudam todas as ocorrências; campos azuis valem só para esta">Tipo em ${users} uso(s)</span><span class="f3-sp"></span>
+  <button class="f3-btn" data-act="unique" title="Cria um tipo próprio para esta ocorrência">${icon('unique')}Tornar único</button><button class="f3-btn ic danger" data-act="del" title="Excluir">${icon('trash')}</button></div></div>
   <div class="f3-sec"><h3>${icon('array')} Repetição</h3><div class="f3-grid2">${field('acount', 'Cópias', arr?.along.count ?? 1, 1)}${field('aspace', 'Distância (m)', arr?.along.value ?? (f.size(values)[0] + 1), 0.1)}${field('rcount', 'Fileiras', arr?.across?.count ?? 1, 1)}${field('rspace', 'Entre fileiras (m)', arr?.across?.spacing ?? 3, 0.1)}</div></div>
   ${paramInputs(f.params, values, it.params)}`;
 }
@@ -277,10 +279,9 @@ function elementsPanel(ed: Editor3): string {
       '<button data-escope="type" aria-pressed="' + (scope === 'type') + '">Todos do tipo (' + users + ')</button>' +
       '<button data-escope="sel" aria-pressed="' + (scope === 'sel') + '">Só os selecionados (' + picked.length + ')</button></div></div>' +
       paramInputs(f.params, resolveParams(f, t.params), {});
-  } else params = '<div class="f3-sec"><p class="f3-empty" style="padding:0">Tipos diferentes na seleção. Use "Mesmo tipo" para editar os parâmetros de um tipo.</p></div>';
+  } else params = '<div class="f3-sec"><p class="f3-empty" style="padding:8px 0 0">Tipos diferentes: use "Mesmo tipo" para editar parâmetros.</p></div>';
   return '<div class="f3-title"><span style="flex:1;font-weight:600">' + (t ? esc(t.name) : picked.length + ' elemento(s)') + '</span><span class="f3-kind">' + (f ? esc(f.name) : 'Fachada') + ' · ' + picked.length + '</span></div>' +
-  '<div class="f3-sec"><p class="f3-empty" style="padding:0 0 8px">' + esc(names.join(', ')) + '</p>' +
-  '<h3>Selecionar</h3><div class="f3-row">' +
+  '<div class="f3-sec"><h3>Selecionar</h3><div class="f3-row">' +
   btn('row', 'Fileira', 'O mesmo pavimento em todas as faces (duplo clique numa janela)') +
   btn('rowFace', 'Fileira na face', 'O mesmo pavimento só nesta face') +
   btn('column', 'Coluna', 'A mesma prumada em todos os pavimentos') +
