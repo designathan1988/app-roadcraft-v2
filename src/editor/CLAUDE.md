@@ -37,6 +37,17 @@ owner in docs/STATUS.md before changing them.
   never on the gesture. Code that measures points against each other outside
   that frame (the pole tool, `layPowerLines`, the furniture) is not ported yet.
   Planet specs: `npx vitest run --config vitest.planet.config.ts`.
+- **A brush stroke covers the whole way between two pointer reports.** The
+  browser coalesces fast moves and a slow frame reports the pointer far apart:
+  `lotTool.ts` walks from the last sample in `STROKE_STEP` (2 m) steps, the
+  previous point carried onto the current one's chart. Testing only the
+  reported point zoned one lot in three along a street.
+  `tests/editor/zoneStroke.spec.ts`.
+- **Heavy commands go through `scripts/run-limited.mjs`** (vitest, tsc, probes,
+  builds): one at a time on the machine (a lock file), started only with CPU
+  ≤ 70% and ≥ 6 GB free, the whole process tree kept on 4 cores below normal
+  priority (Chrome does not inherit it), stopped after 8 minutes. Call node,
+  not npx: `node scripts/run-limited.mjs node node_modules/vitest/vitest.mjs run …`.
 
 ## How to add
 

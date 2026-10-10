@@ -68,6 +68,18 @@ breaks far from where you edit in `world/`, and how to add the common things.
   charts: each is carried onto the node's first. Read as they stand, every turn
   at a node across a border fitted no body (no car came in or through) and its
   footway corners ran 1 to 22 km. `tests/planet/traffic.spec.ts`.
+- **On the planet, a point test against polygons needs their ghost images.**
+  Paving, kerbs and road lines kept on one piece's chart are also carried onto
+  every chart their box reaches (`planet/charts.ts withGhostImages`,
+  `zoneGrid.ts pavedTester`, `poleLines.ts`, `lots.ts pavingOf`): a point of
+  one piece then finds the next piece's street. Without them a lot cut by a
+  border was laid over the neighbour's road. Lot rasters are one per group of
+  near streets, never one over the atlas (3.3 s → 0.2 s).
+- **The planet's grid is the cube faces' own** (equiangular metres,
+  `grid.ts snapToGrid` → `planet/charts.ts snapToFaceGridInto`, drawn by
+  `render/terrain.ts` uGrid): one grid for the sphere, continuous over every
+  piece's border and cube edge; only the 8 cube corners have 120° cells. A
+  grid on each piece's chart broke at every border. `tests/planet/grid.spec.ts`.
 
 ## How to add
 
