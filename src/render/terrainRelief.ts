@@ -278,6 +278,15 @@ export interface ReliefBake {
 /** Texels across the map of the gully brush's mask. */
 const GULLY_RES = 256;
 
+/**
+ * The bake's program, built ahead in parallel (three's compileAsync,
+ * KHR_parallel_shader_compile) the first time a plate would bake, and no
+ * plate baked until it is: built in the frame of the first bake it stopped
+ * the opening for 2.9 s (profile of the play build, 2026-10-10). Every
+ * plate's material builds the same program, so one flag stands for all.
+ */
+let bakeProgram: 'none' | 'building' | 'ready' = 'none';
+
 export function createReliefBake(gridN: number, cell: number, half: number, macro: Texture): ReliefBake {
   /**
    * The gully brush's mask: one texel (none cut, none wiped) until a dab of it
@@ -409,6 +418,16 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
       closeDirty = true;
     },
     bake(renderer, grid, focus) {
+      if (bakeProgram !== 'ready') {
+        if (bakeProgram === 'none') {
+          bakeProgram = 'building';
+          const previous = renderer.getRenderTarget();
+          renderer.setRenderTarget(target, 0);
+          renderer.compileAsync(scene, camera).then(() => { bakeProgram = 'ready'; }, () => { bakeProgram = 'ready'; });
+          renderer.setRenderTarget(previous);
+        }
+        return;
+      }
       retarget(focus !== null);
       if (dirty) {
         dirty = false;

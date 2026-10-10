@@ -678,6 +678,18 @@ export function createSceneRenderer(
     }
   };
   scene.add(...terrain.meshes);
+  // The ground's program (the biggest of the game) built ahead, in parallel,
+  // and the ground drawn once it is: drawn first, the opening stopped 0.6 s
+  // while the driver built it (profile of the play build, 2026-10-10).
+  // Asked at the first frame (`compileAhead` answers only once the renderer
+  // drains it, `drainCompiles`); hidden until then.
+  let groundWarm: 'no' | 'asked' | 'done' = __PLANET__ ? 'no' : 'done';
+  if (__PLANET__) for (const mesh of terrain.meshes) mesh.visible = false;
+  const warmGround = (): void => {
+    if (groundWarm !== 'no') return;
+    groundWarm = 'asked';
+    void compileAhead(terrain.meshes[0]!).then(() => { groundWarm = 'done'; for (const mesh of terrain.meshes) mesh.visible = true; });
+  };
 
   const world = new Group();
   world.name = 'world';
@@ -3532,8 +3544,9 @@ export function createSceneRenderer(
       // One waiting texture a frame to the GPU, before anybody draws it.
       drainUploads(renderer, 1);
       drainCompiles(renderer, rig.camera, scene, post.target);
-      // From the second frame on, the compiler answers: warm the road shaders.
+      // From the second frame on, the compiler answers: warm the road shaders, and the ground's.
       warmRoadShaders();
+      warmGround();
       warmBlastShaders();
       warmPreviewShaders();
       // One waiting body's geometry a frame to the GPU, before anybody draws it.
