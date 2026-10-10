@@ -127,6 +127,11 @@ o jogo a cada edição.
   (`render/buildings/signature.ts`, `world/buildings/towerKit.ts`), lidos só
   quando escolhidos (`world/buildings/lotLibrary.ts`). Conferido no jogo com a
   torre art déco e a igreja.
+- Prédios (ramo `predios`, agente cancelado, terminado): brise em uma instância
+  por vão (`kit.ts` `brise`; antes uma por lâmina), molduras na cor da parede
+  quando o caixilho é metal escuro, cornija só no topo do prédio, faixa central
+  avançada nas torres modernas, paleta de terra e minerais e mais ritmos de
+  fachada (`architecture.ts`, `procedural.ts`).
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

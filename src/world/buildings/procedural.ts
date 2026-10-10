@@ -210,6 +210,20 @@ function dressBuilding(body: BlueprintBody, style: ArchStyle, rng: Rng, entrance
       hang(body, { kind: 'canopy', x: front.x + (bay + 0.5) * bw, y: front.y - m(0.8), facing: 0, w: Math.min(m(4), bw + m(1)), d: m(1.6), z, h: m(0.18) });
     }
   }
+  // A tall modern block: its middle columns brought forward the whole body,
+  // the same skin - one vertical stroke up the facade instead of a plain
+  // extrusion (the projecting central bay of so many Brazilian towers).
+  if (style.key === 'contemporary' || style.key === 'modernist' || style.key === 'tropical' || style.key === 'brick') {
+    for (const v of solid) {
+      const across = baysOf(v), upper = v.storeys.length;
+      if (v.outline || upper < 6 || across < 5 || rng.float() < 0.45) continue;
+      const mid = Math.floor(across / 2), spread = across >= 9 ? 1 : 0;
+      const lo = v.base === 0 ? 1 : 0;
+      for (const side of [0, 2] as const) {
+        v.reliefs = [...(v.reliefs ?? []), { side, bay0: mid - spread, bay1: mid + spread, storey0: lo, storey1: upper - 1, depth: m(0.6) }];
+      }
+    }
+  }
   // A deco or classic block of five columns and four floors: its end columns brought forward, a centre and two wings.
   if (style.key === 'artDeco' || style.key === 'colonial') {
     for (const v of solid) {

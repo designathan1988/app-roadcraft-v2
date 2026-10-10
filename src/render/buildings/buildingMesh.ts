@@ -149,9 +149,9 @@ const ROOF_PLANT: Paint = paint({ finish: 'concrete', colour: 0x6c6a64 });
  * balcony railings in their building's trim (the materials are white). A
  * part placed with no colour takes the old fixed one.
  */
-const COLOURED_PARTS: ReadonlySet<PartKind> = new Set<PartKind>(['awning', 'frame', 'railing', 'fin', 'louvre']);
+const COLOURED_PARTS: ReadonlySet<PartKind> = new Set<PartKind>(['awning', 'frame', 'railing', 'fin', 'louvre', 'brise']);
 const WHITE_RGB: Rgb = [1, 1, 1];
-const PART_DEFAULT_COLOUR: Partial<Record<PartKind, Rgb>> = { frame: linear(0xe8e6df), railing: linear(0x33373a), fin: linear(0xe8e6df), louvre: linear(0x3d6b45) };
+const PART_DEFAULT_COLOUR: Partial<Record<PartKind, Rgb>> = { frame: linear(0xe8e6df), railing: linear(0x33373a), fin: linear(0xe8e6df), brise: linear(0xe8e6df), louvre: linear(0x3d6b45) };
 /** The trim's colour as a three Color, one per paint. */
 const trimColours = new WeakMap<Paint, Color>();
 const trimColour = (p: Paint): Color => {
@@ -622,7 +622,12 @@ function emitBuilding(
   // Mouldings - bands, cornices, copings, reveals - are smooth: a finish with
   // a pattern (formwork ties, courses) repeated along a moulding reads as rivets.
   const trimSpec = trimMaterial(b);
-  const trim = paint({ finish: trimSpec.finish === 'metal' ? 'metal' : 'plaster', colour: trimSpec.colour });
+  const frameTrim = paint({ finish: trimSpec.finish === 'metal' ? 'metal' : 'plaster', colour: trimSpec.colour });
+  // Mouldings - cornices, string courses, copings, the heads of reliefs - are
+  // masonry: on a building whose frames are dark metal (graphite, bronze)
+  // they are the skin a shade lighter, never a black stripe round the block.
+  const trim = trimSpec.finish === 'metal' && b.materials?.wall
+    ? shaded(paint({ finish: 'plaster', colour: b.materials.wall.colour }), 1.1) : frameTrim;
   const plinth = paint(plinthMaterial(b));
   const awning = new Color().setHex(paletteOf(b).awning);
 
@@ -707,7 +712,7 @@ function emitBuilding(
     e.slot = slotOfBay(b, v, bay, spacesOf);
     // The base weathered at the block's own foot (a split level stands at its own floor).
     shell.ground = floor + volumeLift(v);
-    emitBay(e, face, bay, wallOf(v, bay.side, bay.storey), trim, awning, left === 'pillar', right === 'pillar', recess, controls);
+    emitBay(e, face, bay, wallOf(v, bay.side, bay.storey), frameTrim, awning, left === 'pillar', right === 'pillar', recess, controls);
     shell.ground = floor;
     e.slot = -1;
     const ribDepth = controls?.pierDepth ?? (grammar === 'artDecoCrown' ? m(.65) : grammar === 'artDeco' ? m(.3) : 0);
@@ -1104,6 +1109,7 @@ function emitBay(
       e.put(bayHash(bay) % 4 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth - m(0.02), w, h, 1);
       e.put('frame', f, am, hm, o.depth - m(0.05), w, h, m(0.06), tc);
       e.put('glassRail', f, am, o.h0, -m(0.02), w, m(1.05), 1);
+      e.put('fin', f, am, o.h0 + m(1.06), -m(0.02), w, m(0.05), m(0.06), tc);
       break;
     }
     case 'brise': {
@@ -1111,9 +1117,9 @@ function emitBay(
       e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
       // Vertical fins the storey's height, standing out of the wall: the
       // brise-soleil of the Brazilian modern block (Capanema, Pedregulho).
-      const fins = Math.max(3, Math.round(W / m(0.7)));
-      const fw = m(0.09), fd = m(0.6);
-      for (let k = 0; k <= fins; k++) e.put('fin', f, Math.min(W - fw / 2, Math.max(fw / 2, (W * k) / fins)), H / 2, -fd / 2, fw, H, fd, tc);
+      // One rack a bay (`kit.ts` `brise`).
+      const fd = m(0.6);
+      e.put('brise', f, W / 2, H / 2, -fd / 2, W, H, fd, tc);
       break;
     }
     case 'shutteredWindow': {
@@ -1134,8 +1140,10 @@ function emitBay(
       // glass parapet along its front edge.
       e.put(bayHash(bay) % 4 === 0 ? 'glassDark' : 'glass', f, am, hm, o.depth, w, h, 1);
       e.put('frame', f, am, hm, o.depth - m(0.03), w, h, m(0.05), tc);
-      e.put('concrete', f, W / 2, -m(0.11), -GOURMET_OUT / 2, W, m(0.22), GOURMET_OUT);
+      e.put('fin', f, W / 2, -m(0.12), -GOURMET_OUT / 2, W, m(0.24), GOURMET_OUT, slabColour(wall));
       e.put('glassRail', f, W / 2, 0, -GOURMET_OUT + m(0.04), W, m(1.05), 1);
+      // The rail's metal cap along the top of the glass, in the frames' colour.
+      e.put('fin', f, W / 2, m(1.06), -GOURMET_OUT + m(0.04), W, m(0.05), m(0.06), tc);
       break;
     }
     case 'frenchWindow':
@@ -2467,7 +2475,15 @@ function flushBand(e: Emitter, v: Volume, z: number, out: number, height: number
  * houses paint them - the trim's when the trim is a colour (green, blue,
  * wine, wood), else a green or a blue chosen by the wall's tone.
  */
-const SHUTTER_PAINTS = [new Color().setHex(0x2f5a3a), new Color().setHex(0x2f4f72), new Color().setHex(0x6b3b2a)];
+const SHUTTER_PAINTS = [new Color().setHex(0x55785c), new Color().setHex(0x557392), new Color().setHex(0x7a5538)];
+/** A balcony slab's colour: the wall's own, a shade darker underneath the light (a slab of the building, not a white tray). */
+const slabColours = new WeakMap<Paint, Color>();
+function slabColour(wall: Paint): Color {
+  let c = slabColours.get(wall);
+  if (!c) { c = new Color().setRGB(wall.rgb[0] * 0.92, wall.rgb[1] * 0.92, wall.rgb[2] * 0.92); slabColours.set(wall, c); }
+  return c;
+}
+
 function shutterColour(wall: Paint, trim: Paint): Color {
   const [r, g, b] = trim.rgb;
   const chroma = Math.max(r, g, b) - Math.min(r, g, b);
