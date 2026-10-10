@@ -61,6 +61,14 @@ breaks far from where you edit in `world/`, and how to add the common things.
   the simulation. A road edit demolishes any building it now overlaps
   (`clearBuildingsOnRoads`, called from `mutateBuilt`) in the same undo step.
 
+- **On the planet, a junction is worked out on its node's chart.** Its turns
+  (`lanelets.ts` `here`), its surface (`turnPaths.ts JunctionSurface`) and its
+  corners and zebras (`walkways.ts atNode`, `surfaces.ts
+  levelPolygonsOnChart`) read lanes, ribbons and plates kept on other pieces'
+  charts: each is carried onto the node's first. Read as they stand, every turn
+  at a node across a border fitted no body (no car came in or through) and its
+  footway corners ran 1 to 22 km. `tests/planet/traffic.spec.ts`.
+
 ## How to add
 
 - **A road class:** `roadTypes.ts` → `ROAD_TYPES` with `nameKey`/`subKey`, both keys

@@ -6,6 +6,7 @@ import type { Kinematics, Vehicle } from '@sim/vehicles/state';
 import type { PedView } from '@sim/people/view';
 import { HEADING_CHORD, chordHeading } from '@world/heading';
 import { cycleShift } from '@sim/vehicles/cycleLane';
+import { onChartOf } from '@world/planet/charts';
 
 export interface Pose {
   readonly p: Vec2;
@@ -108,7 +109,14 @@ export function vehiclePose(w: SimWorld, v: Vehicle, alpha: number): Pose | null
 
   const before = axleFrame(w, v, v.prev, v.archetype.length);
   if (!before) return here;
-  const beforeAt = addScaled(before.p, perp(before.t), bodyOffset(v.prev, v.archetype.length) + cycleShift(v, w.lanelet(v.prev.lanelet), v.prev.s));
+  const beforeOwn = addScaled(before.p, perp(before.t), bodyOffset(v.prev, v.archetype.length) + cycleShift(v, w.lanelet(v.prev.lanelet), v.prev.s));
+  // On the planet the last step's pose may be written on another piece's
+  // chart (a lane and the junction's turn across a border are kept on two):
+  // carried onto this one, as a floating origin shifts the pose a body is
+  // blended from along with the body, or the blend would cross the atlas.
+  const beforeAt = onChartOf(beforeOwn, at);
+  const beforeAhead = beforeAt === beforeOwn ? before.t
+    : direction(beforeAt, onChartOf(addScaled(beforeOwn, before.t, 1), at), before.t);
   if (dist(beforeAt, at) > POSE_JUMP_LIMIT) return here;
 
   // Point into the change, blended across the tick like everything else.
@@ -116,7 +124,7 @@ export function vehiclePose(w: SimWorld, v: Vehicle, alpha: number): Pose | null
 
   return {
     p: lerpVec(beforeAt, at, t),
-    angle: lerpAngle(angleOf(before.t), heading, t) + yaw,
+    angle: lerpAngle(angleOf(beforeAhead), heading, t) + yaw,
   };
 }
 
@@ -155,7 +163,9 @@ function axleFrame(w: SimWorld, vehicle: Vehicle, kinematics: Kinematics, length
   const ahead = bodyFrame(w, vehicle, kinematics, length / 2 - HEADING_CHORD);
   const behind = bodyFrame(w, vehicle, kinematics, length / 2 + HEADING_CHORD);
   if (!ahead || !behind) return centre;
-  const t = chordHeading(behind.p, ahead.p, centre.t);
+  // The chord's ends on the centre's chart: on the planet they can lie on the
+  // lanes either side of a junction's turn, written on other pieces' charts.
+  const t = chordHeading(onChartOf(behind.p, centre.p), onChartOf(ahead.p, centre.p), centre.t);
   return { ...centre, t, n: { x: -t.y, y: t.x } };
 }
 
@@ -184,6 +194,12 @@ function bodyFrame(w: SimWorld, vehicle: Vehicle, kinematics: Kinematics, behind
     if (s >= 0) return lane.centre.sampleAt(s);
   }
   return null;
+}
+
+/** The unit direction from `a` to `b`, or `fallback` when they meet. */
+function direction(a: Vec2, b: Vec2, fallback: Vec2): Vec2 {
+  const d = Math.hypot(b.x - a.x, b.y - a.y);
+  return d < 1e-9 ? fallback : { x: (b.x - a.x) / d, y: (b.y - a.y) / d };
 }
 
 /** Interpolates two headings the short way round. */

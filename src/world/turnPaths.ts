@@ -8,6 +8,8 @@ import { Level } from './roadTypes';
 import { BODY_ENVELOPE, HEAVY, type BodyClass } from './conflictPoints';
 import { m } from './units';
 import { HEADING_CHORD, chordHeading } from './heading';
+import { nodeChart } from './geometry';
+import { carryPoints } from './planet/charts';
 
 /**
  * The path a vehicle drives through a junction, as open as the kerbs allow.
@@ -56,7 +58,13 @@ export class JunctionSurface {
   constructor(net: Network, node: NodeId) {
     const at = net.doc.node(node);
     this.centre = { x: at?.x ?? 0, y: at?.y ?? 0 };
-    const add = (points: Poly): void => {
+    // On the node's chart (`world/planet/charts.ts`): the plate is laid there,
+    // each leg's surface on its own segment's chart and the far plate on its
+    // node's - written on other pieces' charts across a border, tens of km
+    // away in the atlas, and a body swept over them found no ground.
+    const chart = at ? nodeChart(net.doc, node) : 0;
+    const add = (ring: Poly, from = chart): void => {
+      const points = carryPoints(from, chart, ring);
       if (points.length < 3) return;
       const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
       for (const p of points) {
@@ -70,7 +78,7 @@ export class JunctionSurface {
       for (const ring of junction?.rings ?? []) if (!ring.isEmpty) add(ring.flatten());
       for (const segment of net.doc.node(node)?.incident ?? []) {
         const ring = net.ribbons.get(segment)?.rings[level];
-        if (ring && !ring.isEmpty) add(ring.flatten());
+        if (ring && !ring.isEmpty) add(ring.flatten(), net.polylines.chart(net.doc, segment));
         // And the plate at the leg's far end: a body sweeps on past the
         // start of its exit lane, and where the leg is shorter than that it is
         // already crossing the next junction - drivable ground the sweep must
@@ -80,7 +88,7 @@ export class JunctionSurface {
         const seg = net.doc.segments.get(segment);
         const far = seg ? (seg.a === node ? seg.b : seg.a) : undefined;
         if (far === undefined || far === node) continue;
-        for (const farRing of net.junctions.get(far)?.get(level)?.rings ?? []) if (!farRing.isEmpty) add(farRing.flatten());
+        for (const farRing of net.junctions.get(far)?.get(level)?.rings ?? []) if (!farRing.isEmpty) add(farRing.flatten(), nodeChart(net.doc, far));
       }
     }
     const digest = new Digest();
