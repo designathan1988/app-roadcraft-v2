@@ -76,3 +76,17 @@ describe('the furniture of a new road', () => {
     expect(drawn.every((i) => i.on === 'median')).toBe(true);
   });
 });
+
+describe('the furniture catalogue', () => {
+  it('every piece once, named in both languages, the sets read from it', async () => {
+    const { FURNITURE_CATALOG } = await import('@world/roads/furnitureCatalog');
+    const { PT_BR: pt } = await import('@ui/i18n/pt-BR');
+    const { EN: en } = await import('@ui/i18n/en');
+    expect(new Set(FURNITURE_CATALOG.map((e) => e.kind)).size).toBe(FURNITURE_CATALOG.length);
+    for (const e of FURNITURE_CATALOG) {
+      expect((pt as Record<string, string>)[e.nameKey], e.nameKey).toBeTruthy();
+      expect((en as Record<string, string>)[e.nameKey], e.nameKey).toBeTruthy();
+      expect(e.every).toBeGreaterThan(0);
+    }
+  });
+});

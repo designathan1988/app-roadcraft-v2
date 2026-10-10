@@ -5,6 +5,7 @@ import { footwayAt, landscapeNear, snapLandscape, type LandscapeItem, type Lands
 import type { SignType } from '@world/landscape';
 import { m } from '@world/units';
 import { signApproach } from '@world/roads/derivedSigns';
+import { FURNITURE_CATALOG } from '@world/roads/furnitureCatalog';
 
 /** What the landscaping tool reads of the game and does to it. */
 export interface StreetscapeToolHost {
@@ -117,10 +118,8 @@ export class StreetscapeTool {
   }
 }
 
-/** The spacing a row of each kind is laid at (V7, as `world/roads/furnitureSets.ts` lays a street). */
-const ROW_SPACING: Partial<Record<LandscapeKind, number>> = {
-  lamp: m(30), tree: m(10), shrub: m(3), bench: m(20), bin: m(30), hydrant: m(100), postbox: m(60), drain: m(30),
-};
+/** The spacing a row of each kind is laid at: the catalogue's (`world/roads/furnitureCatalog.ts`). */
+const ROW_SPACING: Partial<Record<LandscapeKind, number>> = Object.fromEntries(FURNITURE_CATALOG.map((e) => [e.kind, e.rowEvery]));
 
 /** The pieces after `from` along its footway, toward the pointer, each where the tool would accept it. */
 function rowPieces(host: StreetscapeToolHost, kind: LandscapeKind, from: LandscapeSnap, world: Vec2, reach: number): LandscapeSnap[] {

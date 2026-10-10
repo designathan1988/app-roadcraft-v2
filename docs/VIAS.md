@@ -368,7 +368,11 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   à guia, fora das travessias, contornando esquinas), cada poste com luminária (a rua iluminada pelo poste, como no Brasil);
   as pontas encaixam em postes já existentes, então as ruas viram uma rede. O lado direito fica com os postes de luz do
   conjunto; o mobiliário não cai sobre um poste. Cidade pequena: >50 postes ligados (`cityGreen.spec`).
-- Falta: registro no catálogo da 5f (ainda não existe no master).
+- Catálogo por dados (`world/roads/furnitureCatalog.ts`, 2026-10-09): cada peça com profundidade, espaçamento
+  na rua, primeira peça, espaçamento da fileira e conjuntos; os conjuntos e a ferramenta de paisagismo leem dele.
+  Quando o catálogo da 5f existir, as entradas passam para ele.
+- Visto em 2026-10-09: desfazer uma via nova não devolve o custo (R$ 20.000.000 → 19.823.680 ficou), contra o
+  aceite da V0 ("debitado e devolvido"). A conferir.
 
 ## Andamento da V8
 - Conta-gotas: no inspetor da via, "Desenhar com este perfil" passa a via como ela está para a ferramenta de vias (abre o
