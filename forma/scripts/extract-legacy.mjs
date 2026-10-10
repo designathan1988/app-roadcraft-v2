@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const html = readFileSync(resolve(root, '../forma-construtor-3d.html'), 'utf8');
+const html = readFileSync(resolve(root, '../forma-construtor-3d-legacy.html'), 'utf8');
 const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 const clipping = scripts.find((s) => s.includes('polygonClipping='));
 const core = scripts.find((s) => s.includes('root.FormaCore=Core'));

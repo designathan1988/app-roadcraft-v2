@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const html = readFileSync(resolve(root, '../forma-construtor-3d.html'), 'utf8');
+const html = readFileSync(resolve(root, '../forma-construtor-3d-legacy.html'), 'utf8');
 const css = html.match(/<style>([\s\S]*?)<\/style>/)[1];
 
 const P = '.forma-app';

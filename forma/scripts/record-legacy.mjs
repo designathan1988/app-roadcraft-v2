@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const legacyUrl = pathToFileURL(resolve(root, '../forma-construtor-3d.html')).href;
+const legacyUrl = pathToFileURL(resolve(root, '../forma-construtor-3d-legacy.html')).href;
 const dir = resolve(root, 'test/fixtures/v1');
 
 // Captura o grupo raiz 'FORMA' quando o app o adiciona à cena.
