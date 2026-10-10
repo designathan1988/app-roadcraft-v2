@@ -13,7 +13,7 @@ import { WORLD_HALF } from '@world/bounds';
 import { m, perM } from '@world/units';
 import { tileCellOf } from '@world/planet/atlas';
 import { setPointerChart } from '@world/planet/charts';
-import { anchorPlanet, inTileChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
+import { anchorPlanet, inTileChart, planetNearest, planetPick, planetWorld, rehomeFrom } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
 
@@ -185,6 +185,7 @@ export function createIsoRig(
       persp.up.set(0, 1, 0);
       persp.position.copy(chase.eye);
       target.copy(chase.focus);
+      home = -1;
       persp.lookAt(chase.look);
       persp.updateProjectionMatrix();
       persp.updateMatrixWorld(true);
@@ -195,10 +196,13 @@ export function createIsoRig(
       // On the planet there is no edge: a centre dragged over a face's border
       // goes on on the face it reached, the view turned by the turn between
       // the two faces' axes there, so nothing on screen moves.
-      const moved = rehome(target.x, -target.z);
+      // Read on the map of the piece it is written on (`home`), never by the
+      // atlas's cell it has drifted into (`bend.ts` rehomeFrom).
+      const moved = rehomeFrom(homeTile(), target.x, -target.z);
       if (moved) {
         target.x = moved.x;
         target.z = -moved.y;
+        home = moved.tile;
         azimuth = wrapAzimuth(azimuth + moved.turn);
       }
       anchorPlanet(target.x, target.z);
@@ -328,6 +332,24 @@ export function createIsoRig(
    */
   /** The piece whose map a gesture is read on (`Viewport.holdChart`), or -1. */
   let heldTile = -1;
+  /**
+   * The piece whose map the view's centre is written on (-1: its own cell's,
+   * read when next asked). The camera's moves are measured on it and the
+   * centre stays on it until `apply` takes it over a border (`rehomeFrom`).
+   */
+  let home = -1;
+  const homeTile = (): number => (home >= 0 ? home : (home = tileCellOf(target.x, -target.z)));
+  /**
+   * The ground under a pointer on the planet as its own piece's map has it
+   * (no gesture's chart): what the camera's moves read, on the view's own
+   * piece's map through the sphere (`chart`).
+   */
+  const ownerAt = (px: number, py: number, atHeight: number): Vec2 | null => {
+    if (!__PLANET__) return hitAt(px, py, atHeight);
+    ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
+    raycaster.setFromCamera(ndc, camera);
+    return planetPick(raycaster.ray, atHeight);
+  };
   const worldAt = (px: number, py: number, atHeight = 0): Vec2 => hitAt(px, py, atHeight) ?? missed(px, py);
   /**
    * The ground for a pointer whose ray meets none: on the flat map the view's
@@ -362,7 +384,7 @@ export function createIsoRig(
    * on different faces are subtracted in the chart of the face the view's
    * centre is on (`inTileChart`); on the flat map, the point itself.
    */
-  const chart = (p: Vec2): Vec2 => (__PLANET__ ? inTileChart(tileCellOf(target.x, -target.z), p.x, p.y) : p);
+  const chart = (p: Vec2): Vec2 => (__PLANET__ ? inTileChart(homeTile(), p.x, p.y) : p);
 
   /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
   /**
@@ -387,7 +409,7 @@ export function createIsoRig(
   const keeping = (px: number, py: number, change: () => void, groundHeight = 0, grabbed?: Vec2): void => {
     // A point grabbed when the gesture began is held on its own plane as it is.
     const atHeight = grabbed ? groundHeight : holdHeight(px, py, groundHeight);
-    const before = grabbed ?? hitAt(px, py, atHeight);
+    const before = grabbed ?? ownerAt(px, py, atHeight);
     change();
     apply();
     // A pointer over the horizon holds no ground: the change is made about
@@ -403,7 +425,7 @@ export function createIsoRig(
     // within a hundredth of a unit (`KEEP_PASSES` at most), as a fixed
     // three left it pixels off there and the place pointed at slid away.
     for (let pass = camera === persp ? KEEP_PASSES : 1; pass > 0; pass--) {
-      const found = hitAt(px, py, atHeight);
+      const found = ownerAt(px, py, atHeight);
       if (!found) break;
       const was = chart(before), after = chart(found);
       const dx = was.x - after.x, dy = was.y - after.y;
@@ -445,7 +467,7 @@ export function createIsoRig(
       // ground, the view's height moves with its centre: a second step takes
       // up what the first left. A ray that misses the plane moves nothing.
       for (let pass = camera === persp && groundAt ? 2 : 1; pass > 0; pass--) {
-        let found = hitAt(px, py, atHeight);
+        let found = ownerAt(px, py, atHeight);
         // Off the globe's limb: the ground nearest the ray, so a drag past
         // the edge still turns the planet.
         if (!found && __PLANET__) {
@@ -462,7 +484,7 @@ export function createIsoRig(
     },
     grab(px, py, atHeight) {
       const held = holdHeight(px, py, atHeight);
-      const world = hitAt(px, py, held);
+      const world = ownerAt(px, py, held);
       return world ? { world, height: held } : null;
     },
     zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0, grabbed) {
@@ -519,6 +541,7 @@ export function createIsoRig(
     },
     moveTo(p) {
       target.set(p.x, 0, -p.y);
+      home = -1;
       apply();
     },
     get zoom() {
@@ -568,7 +591,7 @@ export function createIsoRig(
     },
     setChase(next) {
       if (next && !chase) orbitTarget.copy(target);
-      if (!next && chase) target.copy(orbitTarget);
+      if (!next && chase) { target.copy(orbitTarget); home = -1; }
       chase = next;
       apply();
     },

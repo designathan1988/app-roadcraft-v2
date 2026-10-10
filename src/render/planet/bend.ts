@@ -507,6 +507,30 @@ export function rehome(x: number, y: number): { x: number; y: number; turn: numb
   return { x: c.x + p.x, y: c.y + p.y, turn };
 }
 
+/**
+ * `rehome` for a point written on a KNOWN piece's map (`from`), wherever on
+ * it the point has gone: the view's centre moved across the globe by a drag
+ * lands thousands of units from its piece, in some other piece's cell of
+ * the atlas - an address-book neighbour, not a neighbour on the sphere - and
+ * read by that cell it jumped across the planet (the player, 2026-10-10:
+ * the view would not cross the globe smoothly). A piece's map covers all
+ * but the far pole of the sphere, so it is read on `from`'s own map.
+ */
+export function rehomeFrom(from: number, x: number, y: number): { x: number; y: number; turn: number; tile: number } | null {
+  const c0 = tileCentre(from);
+  const lx = x - c0.x, ly = y - c0.y;
+  if (onTile(from, lx, ly)) return null;
+  tileToSphereInto(from, lx, ly, sTmp);
+  const to = tileOfDirection(sTmp);
+  if (to === from) return null;
+  const p = sphereToTileInto(to, sTmp, fp);
+  eastAt(from, sTmp, eA);
+  eastAt(to, sTmp, eB);
+  const turn = Math.atan2(eA.clone().cross(eB).dot(uS), eA.dot(eB));
+  const c = tileCentre(to);
+  return { x: c.x + p.x, y: c.y + p.y, turn, tile: to };
+}
+
 const sunPlanet: Vec3 = { x: 0, y: 0, z: 0 };
 
 /** The planet's sun (`world/planet/sun.ts`) as drawn (three's space, unit) at a time of day (minutes). */

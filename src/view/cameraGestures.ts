@@ -1,5 +1,6 @@
 import type { Vec2 } from '@core/vec2';
 import { clamp } from '@core/scalar';
+import { PLANET_RADIUS } from '@core/cubeSphere';
 import type { Viewport } from './viewport';
 
 /** What the camera's gestures read of the game and do to it. */
@@ -34,8 +35,6 @@ const TWIST_MIN_SPREAD = 40;
  * time, not per frame, so it coasts alike at any frame rate.
  */
 const COAST_DECAY_S = 0.45;
-/** A hand held still this long before letting go throws nothing, ms. */
-const COAST_STILL_MS = 90;
 /** Below this the coast is over: orbit rad/s, pan CSS px/s. */
 const COAST_MIN_ORBIT = 0.02;
 const COAST_MIN_PAN = 6;
@@ -47,6 +46,24 @@ const COAST_MIN_PAN = 6;
  * lost it at the globe's limb, and the planet jumped.
  */
 const GLOBE_SPIN = 0.12;
+/**
+ * How the hand's speed is read when a drag is let go, as Android's
+ * VelocityTracker reads a fling (AOSP libs/input/VelocityTracker.cpp): a line
+ * fitted to the samples of the last `SPEED_HORIZON_MS` (one event's move over
+ * its own interval read 10 px coalesced into one millisecond as 10 000 px/s),
+ * none if the hand had stopped `SPEED_STOPPED_MS` before letting go, and never
+ * above `MAX_FLING_PX_S` (its maxVelocity).
+ */
+const SPEED_HORIZON_MS = 100;
+const SPEED_STOPPED_MS = 40;
+const MAX_FLING_PX_S = 4000;
+/**
+ * The most ground a coast may carry the view over at the globe (an arc, world
+ * units): an eighth of the way round. At the hand's own speed a flick spun the
+ * planet ten times over in four seconds (the player, 2026-10-10: the view
+ * would not cross the globe smoothly).
+ */
+const GLOBE_COAST_ARC = (PLANET_RADIUS * Math.PI) / 4;
 
 /**
  * THE CAMERA'S GESTURES: the pointers on the canvas, a pan, an orbit, a
@@ -67,6 +84,9 @@ export class CameraGestures {
   private pinch: { d0: number; zoom0: number; world: Vec2; height: number; angle: number } | null = null;
   /** The hand's speed in the drag in progress (orbit rad/s or pan px/s), and when it last moved, ms. */
   private speed = { x: 0, y: 0, at: 0, from: { x: 0, y: 0 } };
+  /** The drag's recent course (`SPEED_HORIZON_MS`): when (ms) and how far it had gone, in its own unit. */
+  private samples: { t: number; x: number; y: number }[] = [];
+  private travelled = { x: 0, y: 0 };
   /** The camera coasting after a drag let go (`step`). */
   private coast: { kind: 'orbit' | 'pan'; vx: number; vy: number } | null = null;
 
@@ -111,19 +131,53 @@ export class CameraGestures {
   /** The hand moved by (dx, dy) - rad of orbit or px of pan - now: its speed, smoothed. */
   private track(dx: number, dy: number): void {
     const now = performance.now();
-    const dt = Math.max(1, now - this.speed.at) / 1000;
-    const k = this.speed.at === 0 || dt > 0.2 ? 1 : 0.5;
-    this.speed.x += (dx / dt - this.speed.x) * k;
-    this.speed.y += (dy / dt - this.speed.y) * k;
+    if (this.speed.at === 0) { this.samples.length = 0; this.travelled = { x: 0, y: 0 }; this.samples.push({ t: now, x: 0, y: 0 }); }
+    this.travelled.x += dx;
+    this.travelled.y += dy;
+    this.samples.push({ t: now, x: this.travelled.x, y: this.travelled.y });
+    while (this.samples.length > 2 && now - this.samples[0]!.t > SPEED_HORIZON_MS) this.samples.shift();
     this.speed.at = now;
+  }
+
+  /**
+   * The hand's speed as it let go (per second, in the drag's own unit): the
+   * slope of a line fitted by least squares to the last samples; zero when
+   * they span too little time to say.
+   */
+  private handSpeed(): { x: number; y: number } {
+    const list = this.samples;
+    if (list.length < 2) return { x: 0, y: 0 };
+    const t0 = list[0]!.t, span = list[list.length - 1]!.t - t0;
+    if (span < 16) return { x: 0, y: 0 };
+    let st = 0, sx = 0, sy = 0, stt = 0, stx = 0, sty = 0;
+    for (const p of list) {
+      const t = (p.t - t0) / 1000;
+      st += t; sx += p.x; sy += p.y; stt += t * t; stx += t * p.x; sty += t * p.y;
+    }
+    const n = list.length, d = n * stt - st * st;
+    if (Math.abs(d) < 1e-12) return { x: 0, y: 0 };
+    return { x: (n * stx - st * sx) / d, y: (n * sty - st * sy) / d };
   }
 
   /** A drag let go: the camera coasts on at the hand's speed, if it was moving. */
   private throwCoast(kind: 'orbit' | 'pan'): void {
-    const moving = performance.now() - this.speed.at < COAST_STILL_MS;
+    const moving = performance.now() - this.speed.at < SPEED_STOPPED_MS;
     const min = kind === 'orbit' ? COAST_MIN_ORBIT : COAST_MIN_PAN;
-    if (moving && Math.hypot(this.speed.x, this.speed.y) > min) this.coast = { kind, vx: this.speed.x, vy: this.speed.y };
+    let { x: vx, y: vy } = this.handSpeed();
+    // The fling's ceiling, in the drag's unit (an orbit's is in radians).
+    let most = kind === 'orbit' ? MAX_FLING_PX_S * ORBIT_PER_PX : MAX_FLING_PX_S;
+    // At the globe a pan's px are thousands of units each: the coast carries
+    // the view no farther than `GLOBE_COAST_ARC` (its distance is speed x decay).
+    const view = this.host.view();
+    if (kind === 'pan' && this.spinning(view)) {
+      const scale = view.scaleAtCentre ?? view.zoom;
+      most = Math.min(most, (GLOBE_COAST_ARC * scale) / COAST_DECAY_S);
+    }
+    const v = Math.hypot(vx, vy);
+    if (v > most) { vx *= most / v; vy *= most / v; }
+    if (moving && Math.hypot(vx, vy) > min) this.coast = { kind, vx, vy };
     this.speed = { x: 0, y: 0, at: 0, from: { x: 0, y: 0 } };
+    this.samples.length = 0;
   }
 
   /** Whether the view is out at the globe, where a drag spins the camera round it. */
