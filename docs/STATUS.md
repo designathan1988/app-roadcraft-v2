@@ -170,8 +170,13 @@ o jogo a cada edição.
   devagar na hora (`noseToNose`, o `jamtime.narrow` do SUMO), e o passo de lado
   só zera o tempo de preso quando é dado de fato. `tests/sim` 171 de 171, suíte
   inteira verde (1221); no jogo, 108 pessoas por 40 s, ninguém parado mais de
-  1,2 s fora da espera da zebra. Visto: a faixa de pedestres atravessa o
-  canteiro central gramado sem passagem rebaixada. Visto no jogo (5173):
+  1,2 s fora da espera da zebra.
+- Canteiro central e faixa de pedestres: a ilha do canteiro termina antes da
+  faixa, meio metro depois dela (`world/landscape.ts` `medianNose`, pela
+  distância da faixa da rede); o desenho (`render/roadSurfaces.ts`) e as
+  árvores do canteiro (`medianAt`) param no mesmo ponto. Antes a ilha, com
+  meio-fio e grama, ia até a boca do cruzamento e os pedestres atravessavam
+  pela grama. Visto no jogo (5173): a faixa passa sobre asfalto. Visto no jogo (5173):
   um carro deixou o passageiro e ele saiu andando pela calçada. O carro que
   sai de um lote recebe passageiros e tarefa como os outros
   (`lotTraffic.ts`, `assignOccupancy`; antes só o motorista, e numa cidade sem

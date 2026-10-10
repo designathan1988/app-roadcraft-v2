@@ -3,7 +3,7 @@ import { Color, Group, type Material, type Mesh } from 'three';
 import { difference, intersection, union, type MultiPoly, type Poly } from '@core/clipper';
 import { Digest } from '@core/digest';
 import { offsetPolyline } from '@core/offset';
-import type { SegmentId } from '@world/ids';
+import type { NodeId, SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { CASING_BAND, FOOTWAY_RISE, Level, ROAD_TYPES, type SurfaceLevel } from '@world/roadTypes';
 import type { CarriagewayMaterial, FootwayMaterial } from '@world/roadSection';
@@ -20,6 +20,7 @@ import {
 } from '@world/structures';
 import type { RoadElevation } from '@world/elevation';
 import { m } from '@world/units';
+import { medianNose } from '@world/landscape';
 import { PAINT_RISE, markingQuads, paintMaterial } from './markings';
 import type { SceneMaterials } from './materials';
 import { TERRAIN_CELL } from './terrain';
@@ -1013,7 +1014,17 @@ function medianStrips(
     if (median <= 0 || ribbon.road.medianFlush) continue;
     const centre = ribbon.centre[Level.Asphalt];
     if (!centre || centre.n < 2) continue;
-    const points = centre.toPoints();
+    // The island's nose stands back of each crossing (`world/landscape.ts`
+    // medianNose): measured from the node, the centre line starting at the mouth.
+    const seg = net.doc.segment(ribbon.id);
+    const back = (node: NodeId | undefined, from: { x: number; y: number }): number => {
+      const at = node === undefined ? null : net.doc.node(node);
+      const nose = node === undefined || !at ? 0 : medianNose(net, ribbon.id, node);
+      return nose > 0 && at ? Math.max(0, nose - Math.hypot(from.x - at.x, from.y - at.y)) : 0;
+    };
+    const s0 = back(seg?.a, centre.point(0)), s1 = centre.length - back(seg?.b, centre.point(centre.n - 1));
+    if (s1 - s0 < m(1)) continue;
+    const points = s0 > 0 || s1 < centre.length ? centre.sub(s0, s1).toPoints() : centre.toPoints();
     kerb.push(strip(points, (median + 1.4) / 2));
     // Grass by default; paved in concrete or pavers when the profile says so.
     const material = ribbon.road.materials?.median;

@@ -1,6 +1,6 @@
 import type { Vec2 } from '@core/vec2';
 import type { Network } from './network';
-import type { SegmentId } from './ids';
+import type { NodeId, SegmentId } from './ids';
 import type { RoadSide, RoadType } from './roadTypes';
 import { m } from './units';
 import { roadProfile, travelShift } from './roadTypes';
@@ -161,6 +161,22 @@ export function plantedMedian(road: RoadType): boolean {
   return road.median >= MEDIAN_TREE_MIN - 1e-6 && !road.medianFlush && (material === undefined || material === 'grass');
 }
 
+/** Room left between a crossing's far edge and a median island's nose, world units. */
+const MEDIAN_NOSE_GAP = m(0.5);
+
+/**
+ * How far from `node` along the segment its median island begins: past the
+ * crossing there (`crosswalkDistanceAt`, where the zebra is painted), or 0
+ * where there is none. Run up to the junction mouth, the island lay kerbed
+ * and planted across the zebra and people crossed over grass (2026-10-09).
+ * The island drawn (`render/roadSurfaces.ts`) and the trees planted on it
+ * (`medianAt`) both stop here.
+ */
+export function medianNose(net: Network, segment: SegmentId, node: NodeId): number {
+  const crossing = net.crosswalkDistanceAt(segment, node);
+  return crossing > 0 ? crossing + CROSSWALK_DEPTH / 2 + MEDIAN_NOSE_GAP : 0;
+}
+
 /** The planted median under a point (within `reach` of its band), or null. */
 export function medianAt(net: Network, at: Vec2, reach = 0): MedianHit | null {
   const hit = { s: 0, distance: 0 };
@@ -173,7 +189,8 @@ export function medianAt(net: Network, at: Vec2, reach = 0): MedianHit | null {
     const pad = road.width / 2 + reach;
     if (at.x < box.minX - pad || at.x > box.maxX + pad || at.y < box.minY - pad || at.y > box.maxY + pad) continue;
     ribbon.full.closestInto(at.x, at.y, hit);
-    const lo = net.mouthDistance(ribbon.id, segment.a), hi = ribbon.full.length - net.mouthDistance(ribbon.id, segment.b);
+    const lo = Math.max(net.mouthDistance(ribbon.id, segment.a), medianNose(net, ribbon.id, segment.a));
+    const hi = ribbon.full.length - Math.max(net.mouthDistance(ribbon.id, segment.b), medianNose(net, ribbon.id, segment.b));
     if (hit.s < lo || hit.s > hi) continue;
     const frame = ribbon.full.sampleAt(hit.s);
     // The median is centred on the travel way's own centre (`travelShift`).
