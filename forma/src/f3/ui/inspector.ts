@@ -48,8 +48,8 @@ export function mountInspector(ed: Editor3): void {
     const s = ed.activeSolid();
     const it = ed.activeItem();
     if (ed.context !== b.id) side.innerHTML = buildingPanel(b);
-    else if (it) side.innerHTML = itemPanel(ed, b, it.id);
-    else if (ed.sel.rule && s) side.innerHTML = rulePanel(ed, s);
+    else if (it && ed.sel.elems.length <= 1) side.innerHTML = itemPanel(ed, b, it.id);
+    else if (ed.sel.elems.length) side.innerHTML = elementsPanel(ed);
     else if (s) side.innerHTML = solidPanel(ed, b, s);
     else side.innerHTML = buildingPanel(b, true);
     bind(ed, b, s);
@@ -169,12 +169,33 @@ function itemPanel(ed: Editor3, b: Building3, id: string): string {
   ${paramInputs(f.params, values, it.params)}`;
 }
 
-function rulePanel(ed: Editor3, s: Solid): string {
-  const r = s.facade.find((f) => f.id === ed.sel.rule!.rule);
-  const t = r && typeById(r.type, ed.project);
-  return `<div class="f3-title"><span style="flex:1;font-weight:600">${esc(t?.name ?? 'Componente')}</span><span class="f3-kind">Regra de fachada</span></div>
-  <div class="f3-sec"><p class="f3-empty" style="padding:0 0 8px">Esta peça vem de uma regra do volume <b>${esc(s.name)}</b> e se redistribui sozinha quando a parede muda.</p>
-  <div class="f3-row"><button class="f3-btn" data-act="detach">Soltar da regra</button><button class="f3-btn danger" data-act="del">${icon('trash')}Tirar desta posição</button><button class="f3-btn" data-act="swap">Trocar por outro tipo…</button></div></div>`;
+function elementsPanel(ed: Editor3): string {
+  const all = ed.elements();
+  const picked = all.filter((e) => ed.sel.elems.includes(e.key));
+  const types = [...new Set(picked.map((e) => e.type))];
+  const names = types.map((t) => typeById(t, ed.project)?.name ?? t);
+  const btn = (op: string, label: string, title: string) => '<button class="f3-btn" data-sel="' + op + '" title="' + title + '">' + label + '</button>';
+  let params = '';
+  const v = ed.variation && types.length === 1 && types[0] === ed.variation ? typeById(ed.variation, ed.project) : undefined;
+  const f = v && family(v.family);
+  if (v && f) params = paramInputs(f.params.filter((d) => d.scope === 'type'), resolveParams(f, v.params), {});
+  return '<div class="f3-title"><span style="flex:1;font-weight:600">' + picked.length + ' elemento(s)</span><span class="f3-kind">Fachada</span></div>' +
+  '<div class="f3-sec"><p class="f3-empty" style="padding:0 0 8px">' + esc(names.join(', ')) + '</p>' +
+  '<h3>Selecionar</h3><div class="f3-row">' +
+  btn('row', 'Fileira', 'O mesmo pavimento em todas as faces (duplo clique numa janela)') +
+  btn('rowFace', 'Fileira na face', 'O mesmo pavimento só nesta face') +
+  btn('column', 'Coluna', 'A mesma prumada em todos os pavimentos') +
+  btn('grow', 'Crescer', 'Acrescenta os vizinhos') +
+  btn('shrink', 'Encolher', 'Tira a borda da seleção') +
+  btn('type', 'Mesmo tipo', 'Todos do mesmo tipo no edifício') +
+  btn('face', 'Face inteira', 'Todos desta face') +
+  '</div><p class="f3-empty" style="padding:6px 0 0">Setas do teclado deslocam a seleção; Shift+clique acrescenta; Ctrl+Shift+clique pega o trecho entre dois.</p></div>' +
+  '<div class="f3-sec"><h3>Aplicar aos selecionados</h3><div class="f3-row">' +
+  '<button class="f3-btn" data-act="swapsel">Trocar por outro tipo…</button>' +
+  '<button class="f3-btn" data-act="vary">Editar só estes</button>' +
+  '<button class="f3-btn" data-act="restore">Voltar à regra</button>' +
+  '<button class="f3-btn danger" data-act="removesel">Remover</button></div></div>' +
+  (params ? '<div class="f3-sec"><p class="f3-empty" style="padding:0">Variação <b>' + esc(v!.name) + '</b>: mudanças valem só para os selecionados.</p></div>' + params : '');
 }
 
 function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
@@ -264,9 +285,11 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
         if (!Number.isFinite(n)) return;
         v = n;
       }
-      ed.setItemParam(k, v, el.dataset.scope === 'instance' ? 'instance' : 'type');
+      if (ed.sel.elems.length > 1 || (!ed.activeItem() && ed.variation)) ed.editType(ed.variation!, k, v);
+      else ed.setItemParam(k, v, el.dataset.scope === 'instance' ? 'instance' : 'type');
     }),
   );
+  $$<HTMLButtonElement>('[data-sel]').forEach((el) => el.addEventListener('click', () => ed.selectElems(el.dataset.sel as 'row')));
   // Ações.
   $$<HTMLButtonElement>('[data-act]').forEach((el) =>
     el.addEventListener('click', () => {
@@ -284,8 +307,10 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
       else if (a === 'blank' && s && ed.sel.face?.edge) ed.changeSolid((x) => void ((x.edges[ed.sel.face!.edge!] ??= {}).blank = !x.edges[ed.sel.face!.edge!]?.blank));
       else if (a === 'split' && s && ed.sel.face?.edge) ed.changeSolid((x) => void splitEdgeOf(x, ed.sel.face!.edge!), 'Lado dividido: arraste o novo ponto.');
       else if (a === 'addrule') ruleMenu(ed, el);
-      else if (a === 'detach') detach(ed);
-      else if (a === 'swap') swapMenu(ed, el);
+      else if (a === 'swapsel') swapMenu(ed, el);
+      else if (a === 'vary') ed.elemAction('vary');
+      else if (a === 'restore') ed.elemAction('restore');
+      else if (a === 'removesel') ed.elemAction('remove');
     }),
   );
 }
@@ -355,33 +380,17 @@ function applyNumber(ed: Editor3, b: Building3, s: Solid | undefined, k: string,
 /** Menu de tipos para uma regra nova (janelas e portas primeiro). */
 function ruleMenu(ed: Editor3, anchor: HTMLElement): void {
   const types = BUILTIN_TYPES.concat(ed.project.types).filter((t) => family(t.family)?.host === 'face');
-  menu(anchor, types.map((t) => [t.name, () => ed.changeSolid((x) => void x.facade.push(facadeRule(t.id, { levels: family(t.family)!.category === 'doors' ? 'ground' : 'all', mode: family(t.family)!.category === 'doors' ? 'count' : 'max', value: family(t.family)!.category === 'doors' ? 1 : 3 })), `Regra: ${t.name}.`)] as [string, () => void]));
+  // Com uma face escolhida, a regra vale só para aquele lado (porta da frente, vitrine).
+  const edge = ed.sel.face?.kind === 'side' ? ed.sel.face.edge : undefined;
+  menu(anchor, types.map((t) => {
+    const door = family(t.family)!.category === 'doors';
+    return [t.name, () => ed.changeSolid((x) => void x.facade.push(facadeRule(t.id, { levels: door ? 'ground' : 'all', mode: door ? 'count' : 'max', value: door ? 1 : 3, edges: edge ? [edge] : [] })), `Regra: ${t.name}${edge ? ' nesta face' : ' em todos os lados'}.`)] as [string, () => void];
+  }));
 }
 
 function swapMenu(ed: Editor3, anchor: HTMLElement): void {
-  const r = ed.sel.rule;
-  if (!r) return;
   const types = BUILTIN_TYPES.concat(ed.project.types).filter((t) => family(t.family)?.host === 'face');
-  menu(anchor, types.map((t) => [t.name, () => ed.changeSolid((x) => void (x.facade.find((f) => f.id === r.rule)!.except[r.key] = t.id), `Esta posição agora tem ${t.name}.`)] as [string, () => void]));
-}
-
-/** Solta um componente da regra: vira uma peça avulsa no mesmo lugar. */
-function detach(ed: Editor3): void {
-  const r = ed.sel.rule;
-  const b = ed.activeBuilding();
-  if (!r || !b) return;
-  const built = ed.view.built.get(b.id);
-  const pl = built?.ev.placements.find((p) => p.tag.rule === r.rule && p.tag.key === r.key);
-  if (!pl?.host) return;
-  const rule = findSolid(b, r.solid)?.facade.find((f) => f.id === r.rule);
-  const id = uid();
-  ed.change(b.id, (x) => {
-    const ru = findSolid(x, r.solid)!.facade.find((f) => f.id === r.rule)!;
-    ru.except[r.key] = 'none';
-    const typeId = rule?.except[r.key] && rule.except[r.key] !== 'none' ? rule.except[r.key]! : ru.type;
-    x.items.push({ id, type: typeId, params: { ...ru.params }, host: { kind: 'face', solid: pl.host!.solid, edge: pl.host!.edge, u: pl.host!.s, y: pl.host!.y } });
-  }, 'Peça solta: agora ela é independente.');
-  ed.select({ building: b.id, item: id });
+  menu(anchor, types.map((t) => [t.name, () => ed.elemAction('swap', t.id)] as [string, () => void]));
 }
 
 function menu(anchor: HTMLElement, items: [string, () => void][]): void {

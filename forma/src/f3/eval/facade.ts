@@ -209,7 +209,9 @@ export function typeResolver(project?: Pick<Project3, 'types'>): TypeResolver {
 export function rulePlacements(b: Building3, s: Solid, regions: Map<string, EdgeRegion>, types: TypeResolver, warnings: string[], taken: Placement[] = []): Placement[] {
   const out: Placement[] = [];
   const levels = solidLevels(b, s);
-  for (const rule of s.facade) {
+  // Regras de um lado específico primeiro; cada regra cede o lugar às anteriores.
+  const ordered = [...s.facade].sort((a, b) => (b.edges.length ? 1 : 0) - (a.edges.length ? 1 : 0));
+  for (const rule of ordered) {
     const base = types(rule.type);
     if (!base) {
       warnings.push(`Regra de fachada com tipo desconhecido (${rule.type}).`);
@@ -253,7 +255,7 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           // Peça avulsa no mesmo lugar tem prioridade: a regra libera a posição.
           if (taken.some((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && Math.abs(q.host.s - c) < (q.length + ww) / 2 + 0.05 && q.host.y < y + hh + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)) return;
           placed++;
-          out.push({
+          const pl: Placement = {
             family: t.family,
             params: p,
             frame: frameAt(r, c, y),
@@ -261,7 +263,9 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
             tag: { family: t.family.id, rule: rule.id, key: k, solid: s.id },
             length: ww,
             host: { solid: s.id, edge: r.edge, s: c, y },
-          });
+          };
+          out.push(pl);
+          taken.push(pl);
         });
         if (!placed && centers.length && r.length > w + 2 * rule.margin) warnings.push(`${base.type.name}: nada coube no nível ${lv.index + 1} do lado de ${r.length.toFixed(1)} m (algo cobre a parede).`);
       }

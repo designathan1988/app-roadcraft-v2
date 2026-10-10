@@ -34,6 +34,12 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
     case 'soffit':
     case 'reveal':
       return materialKey(s.materials.trim, 'frame');
+    case 'roomFloor':
+      return materialKey({ finish: 'wood', color: '#8a6f55' }, 'stone');
+    case 'roomCeil':
+      return materialKey({ finish: 'paint', color: '#f1ece3' }, 'stone');
+    case 'roomWall':
+      return materialKey({ finish: 'paint', color: '#ddd3c4' }, 'stone');
     case 'coping':
       return materialKey(s.materials.trim, 'stone');
     case 'plinth':

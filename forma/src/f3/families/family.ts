@@ -99,6 +99,8 @@ export interface Opening {
   shape: 'rect' | 'arch' | 'segment' | 'round';
   /** Quanto o vão entra na parede (m); ≥ espessura atravessa. */
   depth: number;
+  /** Profundidade do cômodo atrás do vão (m): interior de verdade visto pelo vidro. */
+  room?: number;
 }
 
 export interface Family {

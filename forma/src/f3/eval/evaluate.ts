@@ -112,7 +112,7 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       const types = typeResolver(project);
       const roofY = roofHeight(shell0);
       const items = itemPlacements(b, regions, types, roofY, warnings);
-      for (const s of b.solids) if (!s.hidden && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings, items));
+      for (const s of b.solids) if (!s.hidden && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings, [...items]));
       placements.push(...items);
       // Vãos: um sólido só com todos os recortes.
       const cuts: Manifold[] = [];
@@ -124,6 +124,15 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
         prismMesh(mb, openingProfile(o.shape, o.w, o.h, 12), -o.depth, 0.6, pl.frame, reveal);
         const cm = scope.keep(mb.toManifold(k));
         if (cm.status() === 'NoError' && !cm.isEmpty()) cuts.push(cm);
+        // Cômodo atrás do vão: interior de verdade visto pelo vidro (paralaxe exata).
+        if (o.room && o.room > 0.2 && pl.host) {
+          const lv = levelAround(b, pl);
+          const rb = new MeshBuilder();
+          const ids = { floor: table.add({ kind: 'roomFloor', solid: pl.host.solid }), ceil: table.add({ kind: 'roomCeil', solid: pl.host.solid }), wall: table.add({ kind: 'roomWall', solid: pl.host.solid }) };
+          roomBox(rb, pl.frame, o.w / 2 + 0.9, -lv.below + 0.03, lv.above - 0.12, -o.depth - o.room, -o.depth + 0.002, ids);
+          const rm = scope.keep(rb.toManifold(k));
+          if (rm.status() === 'NoError' && !rm.isEmpty()) cuts.push(rm);
+        }
       }
       // Embasamento depois da fachada (não esconde o pé das portas), sem atravessar recortes.
       acc = withPlinths(b, acc, table, scope);
@@ -141,6 +150,29 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
   } finally {
     scope.dispose();
   }
+}
+
+/** Piso e teto do pavimento em volta de uma peça (distâncias a partir da base da peça). */
+function levelAround(b: Building3, pl: Placement): { below: number; above: number } {
+  const s = b.solids.find((x) => x.id === pl.host!.solid);
+  const y = (s?.base ?? 0) + pl.host!.y;
+  const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation).filter((l) => l.elevation <= y + 0.01).pop();
+  if (!lv) return { below: Math.min(1, pl.host!.y), above: 2.6 };
+  return { below: y - lv.elevation, above: lv.elevation + lv.height - y };
+}
+
+/** Caixa (cômodo) no referencial da peça, com faces de piso, teto e paredes. */
+function roomBox(mb: MeshBuilder, m: number[], hx: number, y0: number, y1: number, z0: number, z1: number, ids: { floor: number; ceil: number; wall: number }): void {
+  if (y1 - y0 < 0.3) return;
+  const P = (x: number, y: number, z: number): [number, number, number] => [m[0]! * x + m[4]! * y + m[8]! * z + m[12]!, m[1]! * x + m[5]! * y + m[9]! * z + m[13]!, m[2]! * x + m[6]! * y + m[10]! * z + m[14]!];
+  const N = (x: number, y: number, z: number): [number, number, number] => [m[0]! * x + m[4]! * y + m[8]! * z, m[1]! * x + m[5]! * y + m[9]! * z, m[2]! * x + m[6]! * y + m[10]! * z];
+  const c = (sx: number, sy: number, sz: number) => P(sx < 0 ? -hx : hx, sy < 0 ? y0 : y1, sz < 0 ? z0 : z1);
+  mb.quad(c(-1, -1, -1), c(1, -1, -1), c(1, -1, 1), c(-1, -1, 1), ids.floor, N(0, -1, 0));
+  mb.quad(c(-1, 1, -1), c(1, 1, -1), c(1, 1, 1), c(-1, 1, 1), ids.ceil, N(0, 1, 0));
+  mb.quad(c(-1, -1, -1), c(1, -1, -1), c(1, 1, -1), c(-1, 1, -1), ids.wall, N(0, 0, -1));
+  mb.quad(c(-1, -1, 1), c(1, -1, 1), c(1, 1, 1), c(-1, 1, 1), ids.wall, N(0, 0, 1));
+  mb.quad(c(-1, -1, -1), c(-1, 1, -1), c(-1, 1, 1), c(-1, -1, 1), ids.wall, N(-1, 0, 0));
+  mb.quad(c(1, -1, -1), c(1, 1, -1), c(1, 1, 1), c(1, -1, 1), ids.wall, N(1, 0, 0));
 }
 
 /** Altura do telhado (maior y entre triângulos voltados para cima sob o ponto). */

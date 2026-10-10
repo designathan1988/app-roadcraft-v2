@@ -19,6 +19,7 @@ import { resolveParams } from '../families/family';
 import { emptyParts3, FrameSink, frameMatrix } from '../eval/parts';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
+import { between, column, elemKey, elementsOf, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem } from './elements';
 
 export type Tool = 'select' | 'push' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint';
 
@@ -28,8 +29,8 @@ export interface Selection {
   /** Face selecionada do primeiro sólido: lado (edge) ou topo. */
   face: { kind: 'side' | 'top'; edge?: ID } | null;
   item: ID | null;
-  /** Componente gerado por regra de fachada (lado:nível:índice). */
-  rule: { solid: ID; rule: ID; key: string } | null;
+  /** Elementos de fachada selecionados (chaves de elements.ts). */
+  elems: string[];
 }
 
 interface Measure {
@@ -73,7 +74,7 @@ export class Editor3 {
   readonly infer: Inference;
   tool: Tool = 'select';
   drawMode: 'add' | 'subtract' = 'add';
-  sel: Selection = { building: null, solids: [], face: null, item: null, rule: null };
+  sel: Selection = { building: null, solids: [], face: null, item: null, elems: [] };
   context: ID | null = null;
   /** Tipo de componente sendo posicionado. */
   placing: ID | null = null;
@@ -152,7 +153,7 @@ export class Editor3 {
     this.view.sync(p, this.store.revision, this.preview);
     // Seleção que sumiu (desfazer, excluir).
     const b = this.store.building(this.sel.building);
-    if (this.sel.building && !b) this.sel = { building: null, solids: [], face: null, item: null, rule: null };
+    if (this.sel.building && !b) this.sel = { building: null, solids: [], face: null, item: null, elems: [] };
     if (b) {
       this.sel.solids = this.sel.solids.filter((id) => b.solids.some((s) => s.id === id));
       if (this.sel.item && !b.items.some((i) => i.id === this.sel.item)) this.sel.item = null;
@@ -228,7 +229,7 @@ export class Editor3 {
 
   // ── Seleção ──────────────────────────────────────────────────────────
   select(next: Partial<Selection>): void {
-    this.sel = { building: null, solids: [], face: null, item: null, rule: null, ...next };
+    this.sel = { building: null, solids: [], face: null, item: null, elems: [], ...next };
     this.syncSelection();
   }
 
@@ -247,7 +248,7 @@ export class Editor3 {
 
   exitContext(): void {
     if (this.drag || this.draft) return this.cancel();
-    if (this.sel.item || this.sel.rule || this.sel.face) return this.select({ building: this.sel.building, solids: this.sel.solids });
+    if (this.sel.item || this.sel.elems.length || this.sel.face) return this.select({ building: this.sel.building, solids: this.sel.solids });
     if (this.sel.solids.length) return this.select({ building: this.sel.building });
     if (this.context) {
       const id = this.context;
@@ -345,6 +346,31 @@ export class Editor3 {
         m.applyMatrix4(M);
         m.renderOrder = 15;
         this.selOverlay.add(m);
+      }
+    }
+    // Elementos selecionados: caixa de contorno em cada um.
+    if (this.sel.elems.length && built) {
+      const set = new Set(this.sel.elems);
+      const pos: number[] = [];
+      const mm = new THREE.Matrix4();
+      for (const pl of built.ev.placements) {
+        const k = elemKey(pl);
+        if (!k || !set.has(k)) continue;
+        const [w, h, dd] = pl.family.size(pl.params);
+        mm.fromArray(pl.frame).premultiply(M);
+        const c = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(mm);
+        const xs = [-w / 2 - 0.05, w / 2 + 0.05],
+          ys = [-0.05, h + 0.05],
+          zs = [-0.05, Math.max(0.12, dd) + 0.05];
+        const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => c(xs[i & 1]!, ys[(i >> 1) & 1]!, zs[(i >> 2) & 1]!));
+        for (const [a, b2] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]] as [number, number][]) pos.push(...corners[a]!.toArray(), ...corners[b2]!.toArray());
+      }
+      if (pos.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#e2702a', depthTest: false, transparent: true }));
+        ls.renderOrder = 21;
+        this.selOverlay.add(ls);
       }
     }
     if (this.drag) {
@@ -568,14 +594,7 @@ export class Editor3 {
       this.change(b.id, (x) => void (x.items = x.items.filter((i) => i.id !== this.sel.item)), 'Componente excluído.');
       return this.select({ building: b.id });
     }
-    if (this.context === b.id && this.sel.rule) {
-      const r = this.sel.rule;
-      this.change(b.id, (x) => {
-        const rule = findSolid(x, r.solid)?.facade.find((f) => f.id === r.rule);
-        if (rule) rule.except[r.key] = 'none';
-      }, 'Componente removido desta posição.');
-      return this.select({ building: b.id, solids: [r.solid] });
-    }
+    if (this.context === b.id && this.sel.elems.length) return this.elemAction('remove');
     if (this.context === b.id && this.sel.solids.length) {
       const del = new Set(this.sel.solids);
       this.change(b.id, (x) => {
@@ -622,6 +641,74 @@ export class Editor3 {
     it.id = uid();
     this.change(target.id, (x) => void x.items.push(it), 'Colado.');
   }
+
+  // ── Elementos de fachada ─────────────────────────────────────────────
+  /** Elementos (janelas, portas…) do edifício em edição. */
+  elements(): Elem[] {
+    const b = this.store.building(this.context ?? this.sel.building);
+    const built = b && this.view.built.get(b.id);
+    if (!b || !built) return [];
+    return elementsOf(built.ev.placements, (pl) => {
+      if (pl.tag.item) return b.items.find((i) => i.id === pl.tag.item)?.type ?? '';
+      const rule = findSolid(b, pl.tag.solid)?.facade.find((f) => f.id === pl.tag.rule);
+      const ex = rule?.except[pl.tag.key!];
+      return ex && ex !== 'none' ? ex : (rule?.type ?? '');
+    });
+  }
+
+  /** Seleção de elementos: fileira, coluna, crescer, encolher, mesmo tipo, face, deslocar. */
+  selectElems(op: 'row' | 'rowFace' | 'column' | 'grow' | 'shrink' | 'type' | 'face' | 'left' | 'right' | 'up' | 'down'): void {
+    const all = this.elements();
+    const cur = new Set(this.sel.elems);
+    if (!cur.size) return;
+    const next =
+      op === 'row' ? row(all, cur) : op === 'rowFace' ? rowOnFace(all, cur) : op === 'column' ? column(all, cur) : op === 'grow' ? grow(all, cur) : op === 'shrink' ? shrink(all, cur) : op === 'type' ? sameType(all, cur) : op === 'face' ? sameFace(all, cur) : shift(all, cur, op);
+    if (!next.size) return this.toast('Nada sobra para encolher.');
+    this.select({ building: this.sel.building ?? this.context, elems: [...next] });
+    this.toast(`${next.size} elemento(s) selecionado(s).`);
+  }
+
+  /** Ações em lote sobre os elementos selecionados. */
+  elemAction(kind: 'remove' | 'restore' | 'swap' | 'vary', typeId?: ID): void {
+    const b = this.activeBuilding();
+    if (!b || !this.sel.elems.length) return;
+    const keys = this.sel.elems;
+    let varied: ID | null = null;
+    if (kind === 'vary') {
+      // Variação do tipo só para estes elementos (os demais seguem o tipo original).
+      const first = this.elements().find((e) => e.key === keys[0]);
+      const base = first && typeById(first.type, this.project);
+      if (!base) return;
+      const v = { id: uid(), family: base.family, name: base.name + ' (variação)', params: structuredClone(base.params), user: true };
+      this.store.project.types.push(v);
+      varied = v.id;
+    }
+    this.change(b.id, (x) => {
+      for (const k of keys) {
+        const parts = k.split('|');
+        if (parts[0] === 'r') {
+          const rule = findSolid(x, parts[1]!)?.facade.find((f) => f.id === parts[2]);
+          if (!rule) continue;
+          const pos = parts[3]!;
+          if (kind === 'remove') rule.except[pos] = 'none';
+          else if (kind === 'restore') delete rule.except[pos];
+          else if (kind === 'swap' && typeId) rule.except[pos] = typeId;
+          else if (kind === 'vary' && varied) rule.except[pos] = varied;
+        } else if (parts[0] === 'i') {
+          if (kind === 'remove') x.items = x.items.filter((i) => i.id !== parts[1]);
+          else if ((kind === 'swap' && typeId) || (kind === 'vary' && varied)) {
+            const it = x.items.find((i) => i.id === parts[1]);
+            if (it) it.type = (typeId ?? varied)!;
+          }
+        }
+      }
+    }, kind === 'remove' ? `${keys.length} elemento(s) removido(s).` : kind === 'restore' ? 'Elementos voltaram à regra.' : kind === 'vary' ? 'Variação criada: edite os campos para mudar só estes.' : 'Tipo trocado.');
+    if (kind === 'remove') this.select({ building: b.id });
+    else if (varied) this.variation = varied;
+  }
+
+  /** Tipo de variação em edição (depois de "Editar só estes"). */
+  variation: ID | null = null;
 
   // ── Ferramentas ──────────────────────────────────────────────────────
   setTool(t: Tool): void {
@@ -700,7 +787,7 @@ export class Editor3 {
       ({
         select: this.context ? 'Clique num volume, face ou componente. Arraste o volume para mover; use as setas e as alças. Duplo clique numa face seleciona só ela.' : 'Clique num edifício para selecionar; arraste para mover. Duplo clique entra para editar.',
         push: 'Arraste uma face para empurrar ou puxar. Digite a distância e Enter.',
-        rect: 'Clique dois cantos (no chão ou sobre um telhado plano). Digite 12;8 e Enter para medidas exatas.',
+        rect: 'Clique dois cantos (no chão ou sobre um telhado plano). Depois digite 10x8 e Enter para largura × profundidade, ou um número para a altura.',
         circle: 'Clique o centro e depois o raio.',
         polygon: 'Clique os pontos; clique no primeiro ou Enter para fechar. Backspace volta um ponto.',
         place: 'Clique para colocar.',
@@ -845,8 +932,15 @@ export class Editor3 {
       return this.select({ building: b.id });
     }
     if (hit.part) {
-      if (hit.part.item) return this.select({ building: b.id, item: hit.part.item });
-      if (hit.part.rule && hit.part.solid) return this.select({ building: b.id, solids: [hit.part.solid], rule: { solid: hit.part.solid, rule: hit.part.rule, key: hit.part.key! } });
+      const key = hit.part.rule ? `r|${hit.part.solid}|${hit.part.rule}|${hit.part.key}` : hit.part.item ? `i|${hit.part.item}|${hit.part.key ?? '0'}` : null;
+      if (key && (e.shiftKey || e.ctrlKey) && this.sel.elems.length) {
+        // Shift: acrescenta/tira; Ctrl+Shift: o trecho entre o último e este.
+        const set = e.ctrlKey && e.shiftKey ? new Set([...this.sel.elems, ...between(this.elements(), this.sel.elems[this.sel.elems.length - 1]!, key)]) : new Set(this.sel.elems);
+        if (!(e.ctrlKey && e.shiftKey)) set.has(key) ? set.delete(key) : set.add(key);
+        return this.select({ building: b.id, elems: [...set], item: set.size === 1 && hit.part.item ? hit.part.item : null });
+      }
+      if (hit.part.item) return this.select({ building: b.id, item: hit.part.item, elems: key ? [key] : [] });
+      if (key) return this.select({ building: b.id, elems: [key] });
     }
     const f = hit.face;
     if (!f) return;
@@ -867,6 +961,11 @@ export class Editor3 {
     if (this.tool !== 'select') return;
     const hit = this.pickAt(e);
     if (!hit) return;
+    if (this.context === hit.building.id && hit.part && (hit.part.rule || hit.part.item)) {
+      // Duplo clique num elemento: a fileira inteira (Loop do 3ds Max).
+      if (!this.sel.elems.length) this.clickSelect(hit, e as PointerEvent);
+      return this.selectElems('row');
+    }
     if (this.context !== hit.building.id) {
       this.enter(hit.building.id);
       const h2 = this.pickAt(e, hit.building.id);
@@ -1419,6 +1518,7 @@ export class Editor3 {
     const a = world[0]!;
     if (this.tool !== 'circle' && polyArea(world) < 0.5) return;
     if (this.tool === 'circle' && a.distanceTo(world[1]!) < 0.3) return;
+    const isRectTool = this.tool === 'rect';
     let b = this.store.building(dr.bid);
     let created = false;
     if (!b) {
@@ -1444,12 +1544,13 @@ export class Editor3 {
     this.store.commit([b.id], created ? 'Volume criado.' : 'Volume acrescentado.');
     if (created || this.context !== b.id) this.context = b.id;
     this.select({ building: b.id, solids: [s.id], face: { kind: 'top' } });
-    this.toast(sub ? 'Recorte criado. Puxe a seta verde para a altura.' : 'Volume criado. Puxe a seta verde para a altura; digite a medida e Enter.');
+    this.toast(sub ? 'Recorte criado. Puxe a seta verde para a altura.' : isRectTool ? 'Volume criado. Digite 10x8 (largura × profundidade) ou 6 (altura) e Enter; ou puxe a seta verde.' : 'Volume criado. Puxe a seta verde ou digite a altura e Enter.');
     const bid = b.id,
       sid = s.id;
-    const isRect = this.tool === 'rect';
+    const isRect = isRectTool;
     this.setMeasure(isRect ? 'Dimensões' : 'Altura', (t) => {
-      const m = /^\s*([\d.,]+)\s*[;x×]\s*([\d.,]+)\s*$/.exec(t);
+      // Largura × profundidade: 10x8, 10;8, 10*8 ou 10 8 (a vírgula é decimal).
+      const m = /^\s*([\d.,]+)\s*(?:[;x×*/]|\s)\s*([\d.,]+)\s*$/i.exec(t);
       if (isRect && m) {
         const w = parseLength(m[1]!),
           dd = parseLength(m[2]!);
@@ -1712,8 +1813,13 @@ export class Editor3 {
         return;
       }
       // Números e separadores vão para a caixa de medidas.
-      if (/^[0-9.,;x*/-]$/.test(e.key) && this.measure && !(k === 'x' && !vcb.value)) {
+      if (/^[0-9.,;*/-]$/.test(e.key) && this.measure) {
         vcb.focus();
+        return;
+      }
+      if (this.sel.elems.length && (k === 'arrowleft' || k === 'arrowright' || k === 'arrowup' || k === 'arrowdown')) {
+        this.selectElems(k.slice(5) as 'left');
+        e.preventDefault();
         return;
       }
       if (k === 'escape') {

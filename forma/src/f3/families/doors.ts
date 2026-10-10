@@ -5,6 +5,7 @@ import type { Family, PartMat, PartSink, Params } from './family';
 import { bool, num, P, str } from './family';
 import { inflate, openingProfile, openingTop, type OpeningShape, type Pt } from './shapes';
 import { frameParams } from './windows';
+import { awning } from './awning';
 
 const LEAVES: [string, string][] = [
   ['panel', 'Almofadada'],
@@ -92,7 +93,7 @@ export const DOOR: Family = {
   ],
   size: (p) => [num(p, 'width') + (bool(p, 'sidelights') ? 0.8 : 0), num(p, 'height') + (bool(p, 'transom') ? 0.45 : 0), 0.2],
   sill: (p) => num(p, 'sillH'),
-  opening: (p) => ({ w: num(p, 'width') + (bool(p, 'sidelights') ? 0.8 : 0), h: num(p, 'height') + (bool(p, 'transom') ? 0.45 : 0), shape: str(p, 'shape') as OpeningShape, depth: 0.32 }),
+  opening: (p) => ({ w: num(p, 'width') + (bool(p, 'sidelights') ? 0.8 : 0), h: num(p, 'height') + (bool(p, 'transom') ? 0.45 : 0), shape: str(p, 'shape') as OpeningShape, depth: 0.32, room: 2.2 }),
   build(p, out) {
     const side = bool(p, 'sidelights') ? 0.4 : 0;
     const transom = bool(p, 'transom') ? 0.45 : 0;
@@ -281,11 +282,12 @@ export const SHOPFRONT: Family = {
     P.color('frameColor', 'Cor dos perfis', '#2c3134'),
     P.color('signColor', 'Cor do letreiro', '#1f4a5a'),
     P.color('awningColor', 'Cor do toldo', '#a8332c'),
+    P.color('awningStripe', 'Listra do toldo', '#f1e9dc'),
     P.color('glassColor', 'Cor do vidro', '#3c535d'),
   ],
   size: (p) => [num(p, 'width'), num(p, 'height') + (bool(p, 'sign') ? 0.7 : 0), 0.3],
   sill: (p) => num(p, 'sillH'),
-  opening: (p) => ({ w: num(p, 'width'), h: num(p, 'height'), shape: 'rect', depth: 0.35 }),
+  opening: (p) => ({ w: num(p, 'width'), h: num(p, 'height'), shape: 'rect', depth: 0.35, room: 3.2 }),
   build(p, out) {
     const w = num(p, 'width'),
       h = num(p, 'height');
@@ -314,12 +316,7 @@ export const SHOPFRONT: Family = {
       out.box({ slot: 'panel', color: str(p, 'signColor'), finish: 'paint' }, [0, h + 0.38, 0.06], [w, 0.6, 0.1]);
       out.box({ slot: 'light', color: '#f4eedc' }, [0, h + 0.38, 0.115], [w * 0.55, 0.22, 0.01]);
     }
-    if (bool(p, 'awning')) {
-      const awn: PartMat = { slot: 'fabric', color: str(p, 'awningColor') };
-      const depth = 1.2;
-      out.box(awn, [0, h + 0.05 - 0.25, depth / 2], [w, 0.03, depth / Math.cos(0.4)], [0, -23, 0]);
-      out.box(awn, [0, h - 0.6, depth], [w, 0.25, 0.02]);
-    }
+    if (bool(p, 'awning')) awning(out, h + 0.02, { width: w + 0.1, depth: 1.25, drop: 0.55, valance: 0.22, color: str(p, 'awningColor'), stripe: str(p, 'awningStripe'), stripeWidth: 0.32, scallop: true });
   },
 };
 

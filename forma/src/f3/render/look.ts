@@ -194,10 +194,14 @@ export function createLookContext(): RenderContext {
       if (m) return m;
       m = base.material(key);
       if (key.role === 'glass') {
-        m.color.set(key.color).multiplyScalar(0.55);
-        m.roughness = 0.04;
-        m.metalness = 0.85;
-        m.envMapIntensity = 1.6;
+        // Vidro de verdade: translúcido (vê-se o cômodo atrás) e refletindo o céu.
+        m.color.set(key.color);
+        m.roughness = 0.03;
+        m.metalness = 0.1;
+        m.envMapIntensity = 1.4;
+        m.transparent = true;
+        m.opacity = 0.38;
+        m.depthWrite = false;
       } else if (key.texture && m.map) {
         m.bumpMap = m.map;
         m.bumpScale = BUMP[key.texture] ?? 0.6;

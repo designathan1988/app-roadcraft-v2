@@ -8,6 +8,7 @@ export const CSS = `
   grid-template-areas:"top top top" "tools view side" "tools cat side" "status status status";
   font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);user-select:none;overflow:hidden}
 .f3 *{box-sizing:border-box}
+.f3 [hidden]{display:none !important}
 .f3 button{font:inherit;color:inherit;cursor:pointer}
 .f3 svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .f3-top{grid-area:top;display:flex;align-items:center;gap:6px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line)}

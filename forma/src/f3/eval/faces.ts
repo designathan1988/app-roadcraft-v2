@@ -27,6 +27,10 @@ export type FaceKind =
   | 'plinth'
   /** Superfície criada por um vão recortado. */
   | 'reveal'
+  /** Cômodo atrás de uma janela: piso, teto e paredes do interior. */
+  | 'roomFloor'
+  | 'roomCeil'
+  | 'roomWall'
   /** Face interna de um sólido de subtração (vira parede do recorte). */
   | 'cutter';
 

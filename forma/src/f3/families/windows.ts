@@ -144,6 +144,15 @@ function buildWindow(p: Params, out: PartSink): void {
       divisions(inner, M.frame, shape, iw, ih, cols * perLeafCols, ys, mb, zm0, zm1);
     }
   }
+  // Cortinas atrás do vidro (dentro do cômodo): dão profundidade e vida à janela.
+  if (bool(p, 'curtains') && op !== 'louvre') {
+    const cw = Math.max(0.12, iw * 0.2);
+    const ct = Math.min(ih, openingSpring(shape, iw, ih) + (shape === 'rect' ? 0 : 0.1));
+    const fabric: PartMat = { slot: 'fabric', color: str(p, 'curtainColor') };
+    const zc = zf0 - 0.12;
+    for (const sgn of [-1, 1]) out.box(fabric, [sgn * (iw / 2 - cw / 2 + 0.05), fw + ct / 2 + 0.05, zc], [cw, ct + 0.1, 0.04]);
+    out.box({ slot: 'metal', color: '#6b6560', finish: 'metal' }, [0, fw + ct + 0.12, zc], [iw + 0.3, 0.025, 0.025]);
+  }
   // Guarnição na face da parede.
   const trim = num(p, 'trim');
   if (trim > 0.005) ring(out, M.trim, shape, w, h, trim, -0.005, 0.035, false);
@@ -209,6 +218,8 @@ export const WINDOW: Family = {
     P.flag('sill', 'Peitoril de pedra', true),
     P.pick('shutters', 'Venezianas', 'none', SHUTTERS, 'detail'),
     P.flag('grille', 'Grade', false),
+    P.flag('curtains', 'Cortinas', true),
+    P.color('curtainColor', 'Cor das cortinas', '#e8dfcf'),
     ...common,
   ],
   // A largura ocupada inclui guarnição e venezianas abertas (a distribuição não as encosta).
@@ -219,7 +230,7 @@ export const WINDOW: Family = {
     return [w + 2 * trim + shutters, num(p, 'height'), 0.2];
   },
   sill: (p) => num(p, 'sillH'),
-  opening: (p) => ({ w: num(p, 'width'), h: num(p, 'height'), shape: str(p, 'shape') as OpeningShape, depth: 0.3 }),
+  opening: (p) => ({ w: num(p, 'width'), h: num(p, 'height'), shape: str(p, 'shape') as OpeningShape, depth: 0.3, room: 1.8 }),
   build: (p, out) => buildWindow(p, out),
 };
 
