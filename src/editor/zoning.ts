@@ -407,8 +407,8 @@ function streetFloor(ctx: SiteContext, local: (lx: number, ly: number) => Vec2, 
  */
 /** Candidates made for a lot, the least like its neighbours kept (Mitchell's best candidate). */
 const CANDIDATES = 4;
-/** How far round a lot the buildings it should not look like are read. */
-const LIKE_REACH = m(90);
+/** How far round a lot the buildings it should not look like are read: the 100 m of the rule it answers (`tests/world/variety.spec.ts`; at 90 m a twin 95 m off went unseen). */
+const LIKE_REACH = m(100);
 /** How near the last building grown an open lot must be to grow next (the street filling along). */
 const GROW_ON_REACH = m(70);
 
