@@ -171,17 +171,25 @@ const smooth = (a: number, b: number, x: number): number => {
   return t * t * (3 - 2 * t);
 };
 
+/**
+ * A community's fields, listed once: read anew for every corner they were an
+ * array made per call, a large part of the planet's opening (864 plates of
+ * 1 849 corners, each blended once or twice) and of its garbage.
+ */
+let communityKeys: readonly (keyof Community)[] | null = null;
+
 /** Mixes communities by weight into `out` (the weights need not sum to one). */
 function blend(out: Community, parts: readonly (readonly [number, Community])[]): void {
   let total = 0;
-  for (const [w] of parts) total += Math.max(0, w);
-  const keys = Object.keys(out) as (keyof Community)[];
-  for (const key of keys) out[key] = 0;
+  for (let i = 0; i < parts.length; i++) total += Math.max(0, parts[i]![0]);
+  const keys = communityKeys ??= Object.keys(out) as (keyof Community)[];
+  for (let j = 0; j < keys.length; j++) out[keys[j]!] = 0;
   if (total <= 1e-6) return;
-  for (const [w, c] of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const [w, c] = parts[i]!;
     if (w <= 0) continue;
     const k = w / total;
-    for (const key of keys) out[key] += c[key] * k;
+    for (let j = 0; j < keys.length; j++) { const key = keys[j]!; out[key] += c[key] * k; }
   }
 }
 

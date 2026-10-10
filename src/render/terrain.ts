@@ -267,8 +267,16 @@ export interface TerrainSurface {
    * be asked to come and meet it.
    */
   update(doc: TerrainSource, stroking?: boolean): boolean;
-  /** Brings the painted ground up to `doc.paintRevision`. */
-  updatePaint(doc: TerrainSource): void;
+  /**
+   * Brings the painted ground up to `doc.paintRevision`. `deferEcology`: the
+   * ecosystem is left to `settleEcology` (the planet's atlas reads its 864
+   * plates' a few at a time, nearest the view first).
+   */
+  updatePaint(doc: TerrainSource, deferEcology?: boolean): void;
+  /** Whether the ecosystem waits to be read again (`settleEcology`). */
+  readonly ecologyPending?: boolean;
+  /** Reads the ecosystem again if it waits to be: true when it did. */
+  settleEcology?(): boolean;
   /** How much forest was painted at a point, 0..1 (`world/terrainPaint.ts` 'forest'). */
   forestAt(x: number, y: number): number;
   /** How much of a cover (forest, scrub, flowers, rocks) was painted at a point, 0..1. */
@@ -3231,7 +3239,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   const sandCorners = material.userData['sandCorners'] as Float32Array;
   const basaltCorners = material.userData['basaltCorners'] as Float32Array;
   const geologyChanges = new GroundChanges();
-  const updatePaint = (doc: TerrainSource): void => {
+  const updatePaint = (doc: TerrainSource, deferEcology = false): void => {
     if (doc.natureRevision !== natureSeen) {
       natureSeen = doc.natureRevision;
       nature = doc.nature;
@@ -3240,7 +3248,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     paintStep(doc);
     // The ecosystem follows the land, the water and the paint, once no stroke
     // is held (a stroke defers the water, and with it this).
-    if (ecologyStale && !waterStale) refreshEcology();
+    if (ecologyStale && !waterStale && !deferEcology) refreshEcology();
   };
   const paintStep = (doc: TerrainSource): void => {
     if (doc.paintRevision === paintRevision) return;
@@ -3340,6 +3348,12 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     },
     vergeMaterial,
     updatePaint,
+    get ecologyPending() { return ecologyStale && !waterStale; },
+    settleEcology() {
+      if (!ecologyStale || waterStale) return false;
+      refreshEcology();
+      return true;
+    },
     forestAt(x, y) {
       return coverAt('forest', x, y);
     },

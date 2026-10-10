@@ -136,6 +136,39 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
   const tileAt = (x: number, y: number): Tile => tiles[tileCellOf(x, y)] as Tile;
 
   /**
+   * THE ECOSYSTEM, A FEW PLATES A FRAME (`settleEcology`): read again for
+   * the plates that wait for it, the nearest the view first, within
+   * `ECOLOGY_BUDGET_MS` a frame - all 864 at once were 1.2 s of one task at
+   * the opening. The trees are swept from all of them together
+   * (`renderer.ts` natureSweep, on `ecologyRevision`), so the revision the
+   * atlas shows moves on only when no plate waits: a sweep a slice was half
+   * a second each.
+   */
+  const ECOLOGY_BUDGET_MS = 8;
+  /** The plate the view looks at (`bakeRelief`), for the order of the reading. */
+  let focusFace = 0;
+  let ecologyShown = 0;
+  let ecologyWaiting = false;
+  const waiting: Tile[] = [];
+  const settleEcology = (): void => {
+    waiting.length = 0;
+    for (const t of tiles) if (t.surface.ecologyPending) waiting.push(t);
+    ecologyWaiting = waiting.length > 0;
+    if (!ecologyWaiting) return;
+    const f = TILES[focusFace]!.centre;
+    const near = (t: Tile): number => { const c = TILES[t.face]!.centre; return c.x * f.x + c.y * f.y + c.z * f.z; };
+    waiting.sort((a, b) => near(b) - near(a));
+    const started = performance.now();
+    let done = 0;
+    for (const t of waiting) {
+      t.surface.settleEcology?.();
+      done++;
+      if (performance.now() - started > ECOLOGY_BUDGET_MS) break;
+    }
+    ecologyWaiting = done < waiting.length;
+  };
+
+  /**
    * The local copies made, by piece (null: it does not reach that piece), so
    * an unchanged stamp keeps its copy - the surface compares them by identity.
    */
@@ -244,6 +277,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     bakeRelief(renderer, focus) {
       // The close window only where the view is; every plate its own map-wide level.
       const at = focus ? tileAt(focus.x, -focus.z) : null;
+      if (at) focusFace = at.face;
       // The plates nearest the view are lit first (terrainLightPool.ts).
       if (at) setLightFocus(at.face);
       for (const t of tiles) t.surface.bakeRelief(renderer, t === at && focus ? { x: focus.x - t.cx, z: focus.z + t.cy } : null);
@@ -288,17 +322,21 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     updatePaint(doc) {
       sync(doc);
       tiles.forEach((t, i) => {
-        t.surface.updatePaint(t.source);
+        t.surface.updatePaint(t.source, true);
         const v = t.surface.geologyChanges.version;
         if (v !== geologySeen[i]) { geologySeen[i] = v; geologyChanges.mark(null); }
       });
+      settleEcology();
     },
     forestAt: (x, y) => ask(x, y, (s, lx, ly) => s.forestAt(lx, ly)),
     coverAt: (kind: CoverKind, x, y) => ask(x, y, (s, lx, ly) => s.coverAt(kind, lx, ly)),
     get forestRevision() { return sum((s) => s.forestRevision); },
     geologyAt: (x, y) => ask(x, y, (s, lx, ly) => s.geologyAt(lx, ly)),
     ecology: () => first.surface.ecology(),
-    get ecologyRevision() { return sum((s) => s.ecologyRevision); },
+    get ecologyRevision() {
+      if (!ecologyWaiting) ecologyShown = sum((s) => s.ecologyRevision);
+      return ecologyShown;
+    },
     ecologyTexture: first.surface.ecologyTexture,
     geologyChanges,
     shoreLevelAt: (x, y) => ask(x, y, (s, lx, ly) => s.shoreLevelAt(lx, ly)),
