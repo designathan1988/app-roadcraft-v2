@@ -7,7 +7,8 @@ import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
 import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
 import { tileGround } from '@world/planet/relief';
-import type { Mesh } from 'three';
+import { Vector3, type Mesh } from 'three';
+import { planetInverse } from './bend';
 import { GroundChanges } from '../groundChanges';
 import {
   createTerrainSurface,
@@ -81,6 +82,10 @@ const placeOn = (tile: Tile, x: number, y: number, radius: number): { x: number;
   sphereToTileInto(tile.face, onSphere, there);
   return { x: there.x, y: there.y };
 };
+
+/** The sun in the planet's own frame, and on one plate's map (\`setSun\`). */
+const sunOnPlanet = new Vector3();
+const sunOnPlate = { x: 0, y: 0, z: 0 };
 
 const sameList = (a: readonly unknown[], b: readonly unknown[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
@@ -179,7 +184,22 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     meshes,
     ground: first.surface.ground,
     parts,
-    setSun(direction) { for (const t of tiles) t.surface.setSun(direction); },
+    // Each plate is its piece's flat map (east x, up y, north -z at its
+    // centre, \`bend.ts\`), and its land's light is baked for the sun ON THAT
+    // MAP: the sun fixed over the planet, it turns only with the hour. Given
+    // three's direction instead - which turns as the planet is set down under
+    // each new view - every pan of a degree or two re-baked the light of all
+    // 864 plates in the workers (140 s of work for one dab of the brush).
+    setSun(direction) {
+      sunOnPlanet.set(direction.x, direction.y, direction.z).transformDirection(planetInverse());
+      for (const t of tiles) {
+        const f = TILES[t.face]!;
+        sunOnPlate.x = sunOnPlanet.x * f.east.x + sunOnPlanet.y * f.east.y + sunOnPlanet.z * f.east.z;
+        sunOnPlate.y = sunOnPlanet.x * f.centre.x + sunOnPlanet.y * f.centre.y + sunOnPlanet.z * f.centre.z;
+        sunOnPlate.z = -(sunOnPlanet.x * f.north.x + sunOnPlanet.y * f.north.y + sunOnPlanet.z * f.north.z);
+        t.surface.setSun(sunOnPlate);
+      }
+    },
     bakeRelief(renderer, focus) {
       // The close window only where the view is; every plate its own map-wide level.
       const at = focus ? tileAt(focus.x, -focus.z) : null;
