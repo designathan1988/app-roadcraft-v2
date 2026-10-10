@@ -1117,6 +1117,45 @@ export function createSceneRenderer(
   };
   /** The buildings' floor for the camera's eye (`world/buildings/cameraSolids.ts`), by building, land and road revision. */
   let cameraSolidsFor = '';
+  /**
+   * The roads watched for vanishing from the picture (seen once, 2026-10-09:
+   * a few seconds after a bomb the streets showed as grass, then came back;
+   * not reproduced since). Once a second: the road meshes in the scene, and
+   * the land drawn under a few road points never above their paving. Either
+   * failing is written to the health log (F9) once, with the state of the
+   * rebuild, so it is caught with its cause if it comes back.
+   */
+  let roadsWatchedAt = 0;
+  let roadsWatchCursor = 0;
+  let roadsReported = false;
+  const watchRoads = (net: Network): void => {
+    const now = performance.now();
+    if (now - roadsWatchedAt < 1000 || !reveal.opened || net.doc.segments.size === 0) return;
+    roadsWatchedAt = now;
+    let vertices = 0;
+    roads?.group.traverse((o) => {
+      const mesh = o as Mesh;
+      if (mesh.isMesh && mesh.visible) vertices += mesh.geometry.getAttribute('position')?.count ?? 0;
+    });
+    let buried: { x: number; y: number; land: number; paved: number } | null = null;
+    const ribbons = [...net.ribbons.values()];
+    for (let k = 0; k < 4 && ribbons.length; k++) {
+      const ribbon = ribbons[(roadsWatchCursor++) % ribbons.length]!;
+      const p = ribbon.full.sampleAt(ribbon.full.length / 2).p;
+      const paved = pavedHeightAt(p.x, p.y), land = terrain.renderedHeightAt(p.x, p.y);
+      // Under the land on purpose in a tunnel.
+      if (net.doc.segment(ribbon.id)?.structure === 'tunnel') continue;
+      if (Number.isFinite(paved) && land > paved + m(0.3)) { buried = { x: p.x, y: p.y, land, paved }; break; }
+    }
+    const missing = !roads || !roads.group.parent || vertices === 0;
+    if ((missing || buried) && !roadsReported) {
+      roadsReported = true;
+      console.error('roads missing from the picture', JSON.stringify({
+        missing, buried, vertices, inWorld: !!roads?.group.parent, worldJob: worldJob !== null,
+        terrainRevision: net.doc.terrainRevision, revision: net.revision,
+      }));
+    } else if (!missing && !buried) roadsReported = false;
+  };
   /** Each building record's ground-floor height, with the ground it was read on. */
   const solidFloors = new WeakMap<Building, { key: string; floor: number }>();
   /** Each building's bank, by building revision: what the buildings stand on, building by building. */
@@ -2878,6 +2917,7 @@ export function createSceneRenderer(
       buildings.setShadowFar(rig.viewport.zoom < FACADE_SHADOW_ZOOM);
       if (roads) roads.group.visible = true;
       if (details) details.group.visible = true;
+      watchRoads(net);
       gardens?.setMap(plantMap);
       scenery?.setMap(plantMap);
       furniture?.setMap(plantMap);

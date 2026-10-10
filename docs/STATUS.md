@@ -147,7 +147,12 @@ o jogo a cada edição.
   em três tentativas (mapa recém-gerado, mapa recarregado do salvamento, bomba
   logo ao sair da cortina de carga; alturas do terreno sob a via medidas a cada
   200 ms: nunca acima do asfalto). A única vez foi logo depois de o servidor de
-  desenvolvimento ser reiniciado por outra sessão. Aberto, sem reprodução. O painel da bomba
+  desenvolvimento ser reiniciado por outra sessão. Aberto, sem reprodução. Quarta tentativa com o cache das vias apagado (cidade montada do zero):
+  também não. Detector no renderer (`watchRoads`): uma vez por segundo confere
+  as malhas das vias na cena e o terreno desenhado sob pontos de via (fora de
+  túnel); falhando, registra no F9 uma vez, com o estado da reconstrução.
+  Conferido tirando o grupo das vias da cena: o aviso saiu na hora; com o mapa
+  normal, nenhum. O painel da bomba
   mostra a ajuda da bomba (antes a do Demolir).
 - Bomba num prédio (resto do PA-U2): as peças soltas de um golpe saem numa fila,
   4 ms por quadro (`destruction.ts` `release`/`loosen`), em vez de todas no
