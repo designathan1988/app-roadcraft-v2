@@ -193,8 +193,8 @@ export function createLookContext(): RenderContext {
       let m = extra.get(id);
       if (m) return m;
       m = base.material(key);
-      if (key.role === 'glass') {
-        // Vidro de verdade: translúcido (vê-se o cômodo atrás) e refletindo o céu.
+      if (key.role === 'glass' && key.roughness < 0.1) {
+        // Vidro de janela: translúcido (vê-se o cômodo atrás) e refletindo o céu.
         m.color.set(key.color);
         m.roughness = 0.03;
         m.metalness = 0.1;
@@ -202,6 +202,12 @@ export function createLookContext(): RenderContext {
         m.transparent = true;
         m.opacity = 0.38;
         m.depthWrite = false;
+      } else if (key.role === 'glass') {
+        // Vidro sem nada atrás (cobertura, pele de vidro): opaco e espelhado.
+        m.color.set(key.color).multiplyScalar(0.6);
+        m.roughness = 0.06;
+        m.metalness = 0.7;
+        m.envMapIntensity = 1.5;
       } else if (key.texture && m.map) {
         m.bumpMap = m.map;
         m.bumpScale = BUMP[key.texture] ?? 0.6;

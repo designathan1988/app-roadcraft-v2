@@ -100,6 +100,8 @@ export const CSS = `
 .f3-card:hover{border-color:#cfccc4;background:#fff}
 .f3-card[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-2)}
 .f3-card img{width:86px;height:70px;object-fit:contain;display:block;margin:0 auto;border-radius:6px;background:linear-gradient(#f3f2ee,#e9e8e3)}
+.f3-blockico{width:86px;height:70px;display:grid;place-items:center;border-radius:6px;background:linear-gradient(#f3f2ee,#e6e4dd);color:#7a4a2a}
+.f3-blockico svg{width:38px;height:38px;stroke-width:1.3}
 .f3-card span{display:block;font-size:11px;line-height:1.2;margin-top:3px;height:2.4em;overflow:hidden}
 .f3-card .fav{position:absolute;top:4px;right:4px;border:0;background:#ffffffd9;border-radius:999px;width:20px;height:20px;display:grid;place-items:center;padding:0;color:#b9b5ab}
 .f3-card .fav svg{width:12px;height:12px}

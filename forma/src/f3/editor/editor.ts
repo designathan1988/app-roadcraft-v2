@@ -9,6 +9,7 @@ import { building as newBuilding, circlePlan, levelsFor, planVertices, project a
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
 import { Store } from './store';
+import { BLOCKS, blockSolid, type BlockPlacement } from '../model/blocks';
 import { View, type Hit } from './view';
 import { Handles, HANDLE_COLORS, type Handle } from './handles';
 import { Inference, SNAP_COLORS, type Snap } from './infer';
@@ -21,7 +22,7 @@ import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
 import { between, column, elemKey, elementsOf, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem } from './elements';
 
-export type Tool = 'select' | 'push' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint';
+export type Tool = 'select' | 'push' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint' | 'block' | 'tape';
 
 export interface Selection {
   building: ID | null;
@@ -78,6 +79,8 @@ export class Editor3 {
   context: ID | null = null;
   /** Tipo de componente sendo posicionado. */
   placing: ID | null = null;
+  /** Bloco de massa sendo posicionado. */
+  blockId: string | null = null;
   paintMat = { finish: 'brick', color: '#a8553a' };
   measure: Measure | null = null;
   warnings: string[] = [];
@@ -104,6 +107,7 @@ export class Editor3 {
     this.view.onCamera = () => {
       this.handles.draw();
       this.placeCtxBar();
+      if (this.dims.length) this.drawDims();
     };
     this.store.on((e) => {
       if (e.kind === 'change') {
@@ -368,9 +372,12 @@ export class Editor3 {
       if (pos.length) {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-        const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#e2702a', depthTest: false, transparent: true }));
-        ls.renderOrder = 21;
-        this.selOverlay.add(ls);
+        // Forte onde o elemento aparece; fraco onde está escondido (pátio, outra face).
+        const front = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#e2702a', depthTest: true }));
+        const behind = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#e2702a', depthTest: false, transparent: true, opacity: 0.22 }));
+        front.renderOrder = 22;
+        behind.renderOrder = 21;
+        this.selOverlay.add(front, behind);
       }
     }
     if (this.drag) {
@@ -653,6 +660,16 @@ export class Editor3 {
       const rule = findSolid(b, pl.tag.solid)?.facade.find((f) => f.id === pl.tag.rule);
       const ex = rule?.except[pl.tag.key!];
       return ex && ex !== 'none' ? ex : (rule?.type ?? '');
+    }, (pl) => {
+      // Pavimento pela cota real (regras e peças avulsas na mesma numeração).
+      const s = findSolid(b, pl.host!.solid);
+      const y = (s?.base ?? 0) + pl.host!.y + 0.05;
+      const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation);
+      let i = 0;
+      lv.forEach((l, k) => {
+        if (l.elevation <= y) i = k;
+      });
+      return i;
     });
   }
 
@@ -744,6 +761,7 @@ export class Editor3 {
       ['|', '', '', ''],
       ['catalog', 'catalog', 'Componentes', 'K'],
       ['paint', 'paint', 'Pintar (Alt: conta-gotas)', 'B'],
+      ['tape', 'tape', 'Trena: mede e deixa cotas no modelo (Shift+Delete apaga)', 'T'],
       ['|', '', '', ''],
       ['frame', 'focus', 'Enquadrar', 'F'],
       ['grid', 'magnet', 'Encaixe ligado/desligado', 'G'],
@@ -913,6 +931,8 @@ export class Editor3 {
     }
     if (this.tool === 'rect' || this.tool === 'circle' || this.tool === 'polygon') return this.drawDown(e);
     if (this.tool === 'place') return this.placeAt(e);
+    if (this.tool === 'block') return this.blockAt(e, true);
+    if (this.tool === 'tape') return this.tapeAt(e, true);
     if (this.tool === 'paint') return this.paintAt(e);
   }
 
@@ -986,6 +1006,8 @@ export class Editor3 {
     }
     if (this.tool === 'rect' || this.tool === 'circle' || this.tool === 'polygon') return this.drawMove(e);
     if (this.tool === 'place') return this.placeHover(e);
+    if (this.tool === 'block') return this.blockAt(e, false);
+    if (this.tool === 'tape') return this.tapeAt(e, false);
   }
 
   private onUp(e: PointerEvent): void {
@@ -1000,8 +1022,13 @@ export class Editor3 {
       this.preview.clear();
     }
     this.draft = null;
+    this.tapeFrom = null;
     this.clearSnap();
     this.removeGhost();
+    for (const n of ['block', 'tape']) {
+      const o = this.snapOverlay.getObjectByName(n);
+      if (o) this.snapOverlay.remove(o);
+    }
     this.shell.dim.hidden = true;
     this.drawSelection();
   }
@@ -1212,6 +1239,15 @@ export class Editor3 {
       if (!snap) return;
       this.showSnap(snap, e);
       const delta = snap.p.clone().sub(p0).setY(0);
+      // Encaixe de blocos: um vértice do que se move gruda num vértice ou numa
+      // aresta de outro volume (faces encostadas com perfeição).
+      if (this.infer.enabled && !e.altKey) {
+        const fix = this.blockSnap(d, delta, this.view.worldPerPixel(p0) * 14);
+        if (fix) {
+          delta.add(fix.v);
+          this.showSnap({ kind: fix.kind, p: fix.at, label: fix.kind === 'vertex' ? 'Encaixe no vértice' : 'Face encostada', color: SNAP_COLORS[fix.kind] }, e);
+        }
+      }
       this.applyMoveDelta(delta, false);
       this.showDim(`${fmt(delta.length())} m`, e);
       return;
@@ -1306,6 +1342,46 @@ export class Editor3 {
       if (ok) this.store.touch([b.id]);
       this.drawSelection();
     }
+  }
+
+  /** Correção do deslocamento para encaixar vértices do que se move em vértices/arestas dos outros. */
+  private blockSnap(d: Drag, delta: THREE.Vector3, tol: number): { v: THREE.Vector3; at: THREE.Vector3; kind: 'vertex' | 'edge' } | null {
+    const ob = d.origBuilding;
+    const moving = new Set(d.kind === 'move-solids' ? (d.data.ids as ID[]) : []);
+    const mine: THREE.Vector3[] = [];
+    const others: [THREE.Vector3, THREE.Vector3][] = [];
+    const ring = (b: Building3, s: Solid) => {
+      const r = solidRings(s);
+      return r.outer.pts.filter((_, i) => !r.outer.segs[i]!.curved).map((p) => {
+        const w = toWorld(b, p);
+        return new THREE.Vector3(w[0], 0, w[1]);
+      });
+    };
+    for (const b of this.project.buildings) {
+      const src = b.id === ob.id ? ob : b;
+      for (const s of src.solids) {
+        if (s.hidden) continue;
+        const pts = ring(src, s);
+        const isMoving = d.kind === 'move-building' ? b.id === ob.id : b.id === ob.id && moving.has(s.id);
+        if (isMoving) mine.push(...pts);
+        else if (s.op === 'add') pts.forEach((p, i) => others.push([p, pts[(i + 1) % pts.length]!]));
+      }
+    }
+    let best: { dist: number; v: THREE.Vector3; at: THREE.Vector3; kind: 'vertex' | 'edge' } | null = null;
+    for (const m of mine) {
+      const q = m.clone().add(delta);
+      for (const [a, b2] of others) {
+        const dv = a.distanceTo(q);
+        if (dv < tol && (!best || dv < best.dist - 1e-6 || best.kind === 'edge')) best = { dist: dv, v: a.clone().sub(q), at: a.clone(), kind: 'vertex' };
+        if (best?.kind === 'vertex') continue;
+        const ab = b2.clone().sub(a);
+        const t = Math.max(0, Math.min(1, q.clone().sub(a).dot(ab) / (ab.lengthSq() || 1)));
+        const proj = a.clone().addScaledVector(ab, t);
+        const de = proj.distanceTo(q);
+        if (de < tol * 0.8 && (!best || de < best.dist)) best = { dist: de, v: proj.clone().sub(q), at: proj, kind: 'edge' };
+      }
+    }
+    return best ? { v: best.v, at: best.at.setY(d.kind === 'move-solids' ? (d.data.y as number) : 0), kind: best.kind } : null;
   }
 
   /** Desloca o que está sendo movido (a partir do estado inicial). */
@@ -1581,6 +1657,203 @@ export class Editor3 {
   }
 
   // ── Componentes ──────────────────────────────────────────────────────
+  // ── Blocos de massa ──────────────────────────────────────────────────
+  startBlock(id: string): void {
+    this.setTool('block');
+    this.blockId = id;
+    const def = BLOCKS.find((b) => b.id === id);
+    this.updateHint(def ? `${def.name}: no chão cria um edifício; sobre um telhado empilha; numa parede encosta alinhado. X alterna somar/recortar. Esc termina.` : undefined);
+    this.emit();
+  }
+
+  /** Onde o bloco cairia: chão, topo (empilha) ou face (encosta alinhado). */
+  private blockPlacement(e: { clientX: number; clientY: number }): { b: Building3 | null; at: BlockPlacement; label: string } | null {
+    const def = BLOCKS.find((x) => x.id === this.blockId);
+    if (!def) return null;
+    const hit = this.pickAt(e);
+    const op: Solid['op'] = this.drawMode === 'subtract' ? 'subtract' : 'add';
+    const lvOf = (b: Building3) => [...b.levels].sort((p, q) => p.elevation - q.elevation)[1]?.height ?? b.levels[0]?.height ?? 3;
+    if (hit?.face && hit.building) {
+      const b = hit.building;
+      const lvH = lvOf(b);
+      const s = findSolid(b, hit.face.solid);
+      const local = hit.point.clone().applyMatrix4(this.view.buildingMatrix(b).invert());
+      if ((hit.face.kind === 'top' || hit.face.kind === 'parapet' || hit.face.kind === 'coping' || hit.face.kind === 'roof') && s && hit.normal.y > 0.5) {
+        const p = this.snapLocal([local.x, local.z]);
+        const top = s.base + s.height;
+        return { b, at: { origin: [p[0], p[1] - def.d / 2], ux: [1, 0], uz: [0, 1], base: op === 'add' ? top : top - def.levels * lvH, levelHeight: lvH, op }, label: op === 'add' ? 'Empilhar sobre o volume' : 'Recortar de cima' };
+      }
+      if (hit.face.kind === 'side' && hit.face.frame && s) {
+        const fr = hit.face.frame;
+        // Costas do bloco no plano da face, largura ao longo dela (encaixe perfeito).
+        let along = fr.s0 + (local.x - fr.o[0]) * fr.u[0] + (local.z - fr.o[2]) * fr.u[2];
+        if (this.infer.enabled) along = Math.round(along / 0.5) * 0.5;
+        const ds = along - fr.s0;
+        const ox = fr.o[0] + fr.u[0] * ds,
+          oz = fr.o[2] + fr.u[2] * ds;
+        const nl = Math.hypot(fr.n[0], fr.n[2]) || 1;
+        const n: Vec2 = [fr.n[0] / nl, fr.n[2] / nl];
+        const inward = op === 'subtract';
+        // Somar: cresce para fora (ala, varanda fechada). Recortar: entra na parede (arco, nicho).
+        const uz: Vec2 = inward ? [-n[0], -n[1]] : n;
+        const ux: Vec2 = inward ? [fr.u[0], fr.u[2]] : [-fr.u[0], -fr.u[2]];
+        const origin: Vec2 = inward ? [ox + n[0] * 0.3, oz + n[1] * 0.3] : [ox, oz];
+        const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation).filter((l) => l.elevation <= local.y + 0.01).pop();
+        const base = def.id === 'arch' ? s.base - 0.3 : (lv?.elevation ?? s.base);
+        return { b, at: { origin, ux, uz, base, levelHeight: lvH, op, attached: true, ...(def.id === 'arch' ? { d: 2.5 } : {}) }, label: inward ? 'Recortar na parede' : 'Encostar na parede' };
+      }
+    }
+    const b = this.store.building(this.context) ?? null;
+    const sn = this.infer.snap(e, 0, null, null);
+    if (!sn) return null;
+    const p: Vec2 = b ? toLocal(b, [sn.p.x, sn.p.z]) : [sn.p.x, sn.p.z];
+    return { b, at: { origin: [p[0], p[1] - def.d / 2], ux: [1, 0], uz: [0, 1], base: 0, levelHeight: b ? lvOf(b) : 3, op }, label: b ? 'No chão do edifício' : 'Novo edifício' };
+  }
+
+  private snapLocal(p: Vec2): Vec2 {
+    if (!this.infer.enabled) return p;
+    const g = this.infer.grid || 0.5;
+    return [Math.round(p[0] / g) * g, Math.round(p[1] / g) * g];
+  }
+
+  private blockAt(e: PointerEvent, commit: boolean): void {
+    const def = BLOCKS.find((x) => x.id === this.blockId);
+    const pl = this.blockPlacement(e);
+    const old = this.snapOverlay.getObjectByName('block') as THREE.LineSegments | undefined;
+    if (old) {
+      this.snapOverlay.remove(old);
+      old.geometry.dispose();
+    }
+    if (!def || !pl) return this.view.mark();
+    const s = blockSolid(def, pl.at);
+    if (!commit) {
+      const r = solidRings(s);
+      const M = pl.b ? this.view.buildingMatrix(pl.b) : new THREE.Matrix4();
+      const W = (p: Vec2, y: number) => new THREE.Vector3(p[0], y, p[1]).applyMatrix4(M);
+      const pos: number[] = [];
+      const n = r.outer.pts.length;
+      for (let i = 0; i < n; i++) {
+        const a = r.outer.pts[i]!,
+          c = r.outer.pts[(i + 1) % n]!;
+        pos.push(...W(a, r.base).toArray(), ...W(c, r.base).toArray());
+        pos.push(...W(r.topOuter[i]!, r.top).toArray(), ...W(r.topOuter[(i + 1) % n]!, r.top).toArray());
+        if (!r.outer.segs[i]!.curved || i % 4 === 0) pos.push(...W(a, r.base).toArray(), ...W(r.topOuter[i]!, r.top).toArray());
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: pl.at.op === 'add' ? '#e2702a' : '#c026d3', depthTest: false }));
+      ls.name = 'block';
+      ls.renderOrder = 25;
+      this.snapOverlay.add(ls);
+      this.showDim(`${pl.label} · ${fmt(def.w)} × ${fmt(pl.at.d ?? def.d)} m`, e);
+      this.view.mark();
+      return;
+    }
+    let b = pl.b;
+    if (!b) {
+      if (pl.at.op === 'subtract') return this.toast('Para recortar, solte o bloco sobre um edifício.');
+      b = newBuilding({ name: `Edifício ${this.project.buildings.length + 1}`, position: [pl.at.origin[0], pl.at.origin[1] + def.d / 2], levels: levelsFor(Math.max(1, def.levels)) });
+      const s0 = blockSolid(def, { ...pl.at, origin: [0, -def.d / 2] });
+      b.solids.push(s0);
+      this.store.project.buildings.push(b);
+      this.store.commit([b.id], `${def.name} criado.`);
+      this.context = b.id;
+      this.select({ building: b.id, solids: [s0.id] });
+      this.toast(`${def.name} criado. Clique de novo para mais um; Esc termina.`);
+      return;
+    }
+    this.change(b.id, (x) => {
+      x.solids.push(s);
+      // Mais pavimentos quando o bloco sobe além dos níveis do edifício.
+      const top = s.base + s.height;
+      const lv = [...x.levels].sort((p, q) => p.elevation - q.elevation);
+      const last = lv[lv.length - 1];
+      const typ = lv[1]?.height ?? last?.height ?? 3;
+      if (s.op === 'add' && last && top > last.elevation + last.height + 0.3) x.levels = levelsFor(Math.round((top - (lv[0]?.height ?? typ)) / typ) + 1, typ, lv[0]?.height ?? typ);
+    }, `${def.name} ${s.op === 'add' ? 'acrescentado' : 'recortado'}.`);
+    this.context = b.id;
+    this.select({ building: b.id, solids: [s.id] });
+  }
+
+  // ── Trena e cotas ────────────────────────────────────────────────────
+  private tapeFrom: THREE.Vector3 | null = null;
+  /** Cotas fixadas no modelo (desta sessão). */
+  dims: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+
+  private tapePoint(e: { clientX: number; clientY: number }): THREE.Vector3 | null {
+    const hit = this.pickAt(e);
+    if (hit) {
+      // Encaixa em vértices próximos no plano do ponto atingido.
+      const sn = this.infer.snap(e, hit.point.y, this.tapeFrom, null, 10);
+      if (sn && sn.kind !== 'grid' && sn.kind !== 'free') return sn.p;
+      return hit.point;
+    }
+    return this.infer.snap(e, this.tapeFrom?.y ?? 0, this.tapeFrom, null)?.p ?? null;
+  }
+
+  private tapeAt(e: PointerEvent, commit: boolean): void {
+    const p = this.tapePoint(e);
+    const old = this.snapOverlay.getObjectByName('tape') as THREE.Line | undefined;
+    if (old) {
+      this.snapOverlay.remove(old);
+      old.geometry.dispose();
+    }
+    if (!p) return;
+    if (commit) {
+      if (!this.tapeFrom) {
+        this.tapeFrom = p.clone();
+        return;
+      }
+      this.dims.push({ a: this.tapeFrom.clone(), b: p.clone() });
+      this.toast(`Cota: ${fmt(this.tapeFrom.distanceTo(p))} m. Ela fica no modelo; Shift+Delete apaga as cotas.`);
+      this.tapeFrom = null;
+      this.drawDims();
+      return;
+    }
+    if (!this.tapeFrom) {
+      this.showDim('Clique o primeiro ponto', e);
+      return;
+    }
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([this.tapeFrom, p]), new THREE.LineBasicMaterial({ color: '#1f2326', depthTest: false }));
+    l.name = 'tape';
+    l.renderOrder = 26;
+    this.snapOverlay.add(l);
+    const d = p.clone().sub(this.tapeFrom);
+    this.showDim(`${fmt(d.length())} m  (Δx ${fmt(Math.abs(d.x))} · Δz ${fmt(Math.abs(d.z))} · Δy ${fmt(Math.abs(d.y))})`, e);
+    this.view.mark();
+  }
+
+  /** Desenha as cotas fixadas (linhas com marcas e rótulos). */
+  drawDims(): void {
+    const old = this.snapOverlay.getObjectByName('dims') as THREE.LineSegments | undefined;
+    if (old) {
+      this.snapOverlay.remove(old);
+      old.geometry.dispose();
+    }
+    this.shell.view.querySelectorAll('.f3-dimlbl').forEach((x) => x.remove());
+    if (!this.dims.length) return this.view.mark();
+    const pos: number[] = [];
+    for (const d of this.dims) pos.push(...d.a.toArray(), ...d.b.toArray());
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const ls = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#1f2326', depthTest: false }));
+    ls.name = 'dims';
+    ls.renderOrder = 26;
+    this.snapOverlay.add(ls);
+    for (const d of this.dims) {
+      const m = d.a.clone().add(d.b).multiplyScalar(0.5);
+      const sp = this.view.toScreen(m);
+      if (sp.behind) continue;
+      const el = document.createElement('div');
+      el.className = 'f3-dim f3-dimlbl';
+      el.textContent = `${fmt(d.a.distanceTo(d.b))} m`;
+      el.style.left = `${sp.x}px`;
+      el.style.top = `${sp.y}px`;
+      this.shell.view.appendChild(el);
+    }
+    this.view.mark();
+  }
+
   private placeHover(e: PointerEvent): void {
     const pl = this.placementAt(e);
     if (!pl) {
@@ -1828,7 +2101,11 @@ export class Editor3 {
           this.setTool('select');
         } else this.exitContext();
       }
-      else if (k === 'delete' || k === 'backspace') {
+      else if (k === 'delete' && e.shiftKey) {
+        this.dims = [];
+        this.drawDims();
+        this.toast('Cotas apagadas.');
+      } else if (k === 'delete' || k === 'backspace') {
         if (this.draft && this.tool === 'polygon' && this.draft.points.length > 1) this.draft.points.pop();
         else if (k === 'delete') this.remove();
       } else if (k === 'enter') {
@@ -1840,6 +2117,7 @@ export class Editor3 {
       else if (k === 'c') this.setTool('circle');
       else if (k === 'l') this.setTool('polygon');
       else if (k === 'b') this.setTool('paint');
+      else if (k === 't') this.setTool('tape');
       else if (k === 'x') this.toggleDrawMode();
       else if (k === 'k') this.emitCatalog();
       else if (k === 'f') this.frameSelection();

@@ -7,6 +7,7 @@ import { BUILTIN_TYPES, family } from '../families/index';
 import { CATEGORY_NAMES, type Category } from '../families/family';
 import { createThumbnailer, type Thumbnailer } from '../render/thumbs';
 import { icon } from './icons';
+import { BLOCKS } from '../model/blocks';
 
 const FAV_KEY = 'forma3_favorites';
 const ORDER: Category[] = ['windows', 'doors', 'balconies', 'railings', 'fences', 'gates', 'structure', 'stairs', 'canopies', 'shading', 'ornament', 'roofgear', 'industrial', 'site', 'walls', 'facade'];
@@ -22,13 +23,13 @@ function loadFavs(): Set<string> {
 export function mountCatalog(ed: Editor3): { open(): void } {
   const host = ed.shell.cat;
   const favs = loadFavs();
-  let tab: string = 'windows';
+  let tab: string = 'blocks';
   let query = '';
   let thumbs: Thumbnailer | null = null;
   const types = (): ComponentType[] => [...BUILTIN_TYPES, ...ed.project.types.filter((t) => !BUILTIN_TYPES.some((b) => b.id === t.id))];
   const cats = (): string[] => {
     const present = new Set(types().map((t) => family(t.family)?.category).filter(Boolean) as string[]);
-    return ['fav', ...ORDER.filter((c) => present.has(c)), 'mine'];
+    return ['blocks', 'fav', ...ORDER.filter((c) => present.has(c)), 'mine'];
   };
   host.innerHTML = `<div class="f3-cat-head"><span style="display:flex;align-items:center;gap:6px;font-weight:600">${icon('catalog')}Componentes</span>
     <input type="search" placeholder="Buscar: janela, portão, sacada…" aria-label="Buscar componentes">
@@ -44,7 +45,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
   });
   search.addEventListener('keydown', (e) => e.stopPropagation());
 
-  const label = (c: string) => (c === 'fav' ? '★ Favoritos' : c === 'mine' ? 'Meus' : CATEGORY_NAMES[c as Category]);
+  const label = (c: string) => (c === 'blocks' ? 'Blocos' : c === 'fav' ? '★ Favoritos' : c === 'mine' ? 'Meus' : CATEGORY_NAMES[c as Category]);
   const renderTabs = () => {
     tabsEl.innerHTML = cats()
       .map((c) => `<button data-tab="${c}" aria-pressed="${c === tab && !query}">${label(c)}</button>`)
@@ -76,6 +77,17 @@ export function mountCatalog(ed: Editor3): { open(): void } {
 
   const renderCards = () => {
     renderTabs();
+    if (tab === 'blocks' && !query) {
+      // Blocos de massa: clique e solte no chão, sobre um telhado ou encostado numa parede.
+      cards.innerHTML = BLOCKS.map((b) => `<div class="f3-card" data-block="${b.id}" title="${b.name}: no chão cria um edifício; sobre um telhado empilha; numa parede encosta alinhado (X recorta)" aria-pressed="${ed.tool === 'block' && ed.blockId === b.id}"><div class="f3-blockico">${icon(b.icon)}</div><span>${b.name}</span></div>`).join('');
+      cards.querySelectorAll<HTMLElement>('[data-block]').forEach((c) =>
+        c.addEventListener('click', () => {
+          ed.startBlock(c.dataset.block!);
+          renderCards();
+        }),
+      );
+      return;
+    }
     const items = list();
     if (!items.length) {
       cards.innerHTML = `<p class="f3-empty" style="padding:6px 4px">${tab === 'fav' && !query ? 'Marque ★ nos componentes que mais usa.' : tab === 'mine' && !query ? 'Tipos criados com "Tornar único" aparecem aqui.' : 'Nada encontrado.'}</p>`;

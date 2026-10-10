@@ -23,12 +23,12 @@ export function elemKey(pl: Placement): string | null {
 }
 
 /** Elementos de fachada de um edifício avaliado (só os presos a faces). */
-export function elementsOf(placements: Placement[], typeOf: (pl: Placement) => string): Elem[] {
+export function elementsOf(placements: Placement[], typeOf: (pl: Placement) => string, levelOf: (pl: Placement) => number): Elem[] {
   const out: Elem[] = [];
   for (const pl of placements) {
     const key = elemKey(pl);
     if (!key || !pl.host) continue;
-    const level = pl.tag.rule && pl.tag.key ? Number(pl.tag.key.split(':')[1]) : Math.round(pl.host.y / 3);
+    const level = levelOf(pl);
     out.push({ key, pl, side: `${pl.host.solid}|${pl.host.edge}`, level, s: pl.host.s, type: typeOf(pl) });
   }
   return out;
