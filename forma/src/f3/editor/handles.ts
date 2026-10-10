@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { ID } from '../model/schema';
 import type { View } from './view';
 
-export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'vertex' | 'bend' | 'taper';
+export type HandleKind = 'move-x' | 'move-z' | 'move-xz' | 'lift' | 'rotate' | 'push' | 'height' | 'vertex' | 'bend' | 'taper' | 'cwidth' | 'cheight' | 'csill';
 
 export interface Handle {
   kind: HandleKind;

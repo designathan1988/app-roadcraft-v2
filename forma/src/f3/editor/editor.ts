@@ -425,6 +425,23 @@ export class Editor3 {
         const c = W([p[0]!, p[2]!], (p[1] ?? 0) + 0.05);
         handles.push(...this.moveHandles(c, ax, az), this.rotateHandle(c, 2.5));
       }
+      // Peça presa à face: alças de largura, altura e peitoril sobre ela.
+      if (it && it.host.kind === 'face' && built) {
+        const pl = built.ev.placements.find((q) => q.tag.item === it.id && (q.tag.key ?? '0') === '0');
+        if (pl) {
+          const F = new THREE.Matrix4().fromArray(pl.frame).premultiply(M);
+          const [w, h] = pl.family.size(pl.params);
+          const op = pl.opening;
+          const ow = op?.w ?? w,
+            oh = op?.h ?? h;
+          const P = (x: number, y: number) => new THREE.Vector3(x, y, 0.15).applyMatrix4(F);
+          const U = new THREE.Vector3(1, 0, 0).transformDirection(F),
+            V = new THREE.Vector3(0, 1, 0).transformDirection(F);
+          handles.push({ kind: 'cwidth', at: P(ow / 2, oh / 2), dir: U, color: '#e2702a', label: 'Largura (arraste; digite a medida)' });
+          handles.push({ kind: 'cheight', at: P(0, oh), dir: V, color: '#e2702a', label: 'Altura' });
+          handles.push({ kind: 'csill', at: P(0, 0), dir: V.clone().negate(), color: '#e2702a', label: 'Peitoril / posição vertical' });
+        }
+      }
     } else if (s0) {
       const r = solidRings(s0);
       const ctr = planCenter(s0);
@@ -1165,6 +1182,30 @@ export class Editor3 {
       });
       return;
     }
+    if (h.kind === 'cwidth' || h.kind === 'cheight' || h.kind === 'csill') {
+      const it = this.activeItem();
+      if (!it || it.host.kind !== 'face') return;
+      const t = typeById(it.type, this.project);
+      const fam = t && family(t.family);
+      if (!t || !fam) return;
+      const p = resolveParams(fam, t.params, it.params);
+      this.startDrag(h.kind, b, e, { handle: h.kind, at: h.at.clone(), dir: h.dir!.clone(), id: it.id, w0: Number(p.width ?? 1), h0: Number(p.height ?? 1), y0: it.host.y }, true);
+      const label = h.kind === 'cwidth' ? 'Largura' : h.kind === 'cheight' ? 'Altura' : 'Peitoril';
+      this.setMeasure(label, (txt) => {
+        const v = parseLength(txt);
+        if (v === null || v <= 0) return false;
+        return this.change(b.id, (x) => {
+          const y = x.items.find((q) => q.id === it.id)!;
+          if (h.kind === 'cwidth') y.params.width = v;
+          else if (h.kind === 'cheight') y.params.height = v;
+          else if (y.host.kind === 'face') {
+            const lv = this.levelBelow(x, y);
+            y.host.y = lv + v;
+          }
+        }, `${label} ${fmt(v)} m.`);
+      });
+      return;
+    }
     if (!s) return;
     const M = this.view.buildingMatrix(b);
     if (h.kind === 'height' || h.kind === 'lift') {
@@ -1404,12 +1445,30 @@ export class Editor3 {
       this.drawSelection();
       return;
     }
+    if (d.kind === 'cwidth' || d.kind === 'cheight' || d.kind === 'csill') {
+      const it = b.items.find((q) => q.id === d.data.id);
+      if (!it || it.host.kind !== 'face') return;
+      let t = this.dragAlong(d, e, d.data.at as THREE.Vector3, d.data.dir as THREE.Vector3);
+      if (!e.altKey && this.infer.enabled) t = Math.round(t / 0.05) * 0.05;
+      if (d.kind === 'cwidth') {
+        it.params.width = Math.max(0.3, (d.data.w0 as number) + 2 * t);
+        this.showDim(`largura ${fmt(it.params.width as number)} m`, e);
+      } else if (d.kind === 'cheight') {
+        it.params.height = Math.max(0.3, (d.data.h0 as number) + t);
+        this.showDim(`altura ${fmt(it.params.height as number)} m`, e);
+      } else {
+        it.host.y = Math.max(0, (d.data.y0 as number) - t);
+        this.showDim(`peitoril ${fmt(it.host.y - this.levelBelow(b, it))} m`, e);
+      }
+      this.store.touch([b.id]);
+      return;
+    }
     const s = findSolid(b, d.data.sid as ID);
     const so = findSolid(orig, d.data.sid as ID);
     if (!s || !so) return;
     if (d.kind === 'height' || d.kind === 'lift') {
       const at = d.data.at as THREE.Vector3;
-      const t = this.alongLine(e, at, new THREE.Vector3(0, 1, 0));
+      const t = this.dragAlong(d, e, at, new THREE.Vector3(0, 1, 0));
       const tops = b.solids.filter((x) => x.id !== s.id).flatMap((x) => [x.base + x.height, x.base]).concat(b.levels.map((l) => l.elevation), b.levels.map((l) => l.elevation + l.height));
       if (d.kind === 'height') {
         const want = so.base + so.height + t;
@@ -1428,7 +1487,7 @@ export class Editor3 {
     if (d.kind === 'push') {
       const at = d.data.at as THREE.Vector3,
         dir = d.data.dir as THREE.Vector3;
-      let t = this.alongLine(e, at, dir);
+      let t = this.dragAlong(d, e, at, dir);
       if (!e.altKey && this.infer.enabled) t = Math.round(t / 0.1) * 0.1;
       s.plan = structuredClone(so.plan);
       if (pushEdge(s, d.data.edge as ID, t)) {
@@ -1448,6 +1507,16 @@ export class Editor3 {
       if (ok) this.store.touch([b.id]);
       this.drawSelection();
     }
+  }
+
+  /** Cota do piso do pavimento sob uma peça de face (relativa à base do sólido). */
+  levelBelow(b: Building3, it: Item): number {
+    if (it.host.kind !== 'face') return 0;
+    const s = findSolid(b, it.host.solid);
+    const base = s?.base ?? 0;
+    const y = base + it.host.y + 0.01;
+    const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation).filter((l) => l.elevation <= y).pop();
+    return (lv?.elevation ?? base) - base;
   }
 
   /** Correção do deslocamento para encaixar vértices do que se move em vértices/arestas dos outros. */
@@ -1547,6 +1616,12 @@ export class Editor3 {
       this.sel.solids = ids;
     }
     d.data.copied = true;
+  }
+
+  /** Deslocamento ao longo da reta desde onde o arrasto começou (pegar a ponta da seta não salta). */
+  private dragAlong(d: Drag, e: { clientX: number; clientY: number }, at: THREE.Vector3, dir: THREE.Vector3): number {
+    if (d.data.t0 === undefined) d.data.t0 = this.alongLine({ clientX: d.start.x, clientY: d.start.y }, at, dir);
+    return this.alongLine(e, at, dir) - (d.data.t0 as number);
   }
 
   /** Distância ao longo de uma reta (no mundo) até o ponto mais próximo do raio do mouse. */
