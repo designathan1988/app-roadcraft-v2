@@ -22,6 +22,7 @@ import { buildJunctionRing, findSlabViolations } from './polygon';
 import { COARSE_EPS, FINE_EPS } from '@core/scalar';
 import { TUNNEL_HEADROOM } from '../structures';
 import { buildBulb } from './bulb';
+import { m } from '../units';
 
 /** How a node behaves geometrically. */
 export type SurfaceMode = 'none' | 'junction';
@@ -117,7 +118,7 @@ export function surfaceMode(doc: RoadDoc, cache: PolylineCache, nodeId: NodeId):
 }
 
 /** How far each leg is given to a change of structure on one road, units. */
-const SEAM_RUN = 6;
+const SEAM_RUN = m(2.4);
 
 /** Whether the two roads at a two-leg node differ only in their structure. */
 function structureSeam(doc: RoadDoc, nodeId: NodeId): boolean {
@@ -353,7 +354,7 @@ export function buildJunction(
     for (const i of bad) {
       const leg = legs[i] as Leg;
       const limit = opts.maxTrimBySegment?.get(leg.seg) ?? Infinity;
-      const bumped = Math.min((next[i] as number) * 1.25 + 0.5, bumpCap, limit);
+      const bumped = Math.min((next[i] as number) * 1.25 + m(0.2), bumpCap, limit);
       // Only ever GROW. This assignment used to be unconditional, so whenever
       // `limit` or `bumpCap` bit, the loop named "bump" pushed the trim BELOW
       // what `computeCorners` demanded and reintroduced the very mouth-inside-

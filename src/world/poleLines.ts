@@ -12,6 +12,7 @@ import { Level } from './roadTypes';
 import type { SegmentId } from './ids';
 import { deckOf } from './walkways';
 import { withGhostImages } from './planet/charts';
+import { m } from './units';
 
 /**
  * The line wire poles stand on, and the kerb they stand behind.
@@ -75,7 +76,7 @@ export function poleLines(net: Network): PoleLines {
  * thousands of edges, and every point test walked all of them.
  */
 interface BandedRing { readonly points: readonly Vec2[]; readonly bands: Map<number, number[]> }
-const BAND = 8;
+const BAND = m(3.2);
 function bandRing(points: readonly Vec2[]): BandedRing {
   const bands = new Map<number, number[]>();
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -110,7 +111,7 @@ interface IndexedPoly { readonly outer: BandedRing; readonly holes: BandedRing[]
 interface MultiIndex { readonly buckets: Map<number, IndexedPoly[]> }
 
 /** Bucket edge of the point index, world units. */
-const INDEX_CELL = 64;
+const INDEX_CELL = m(25.6);
 const bucketOf = (bx: number, by: number): number => (bx + 32768) * 65536 + (by + 32768);
 const indexes = new WeakMap<MultiPoly, MultiIndex>();
 

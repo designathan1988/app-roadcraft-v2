@@ -64,7 +64,7 @@ import {
  */
 
 /** Station spacing along a profile, in world units. */
-const STATION = 4;
+const STATION = m(1.6);
 /** Hard cap on stations per segment, so a 4 km road does not allocate 1000. */
 const MAX_STATIONS = 400;
 /**
@@ -78,7 +78,7 @@ const MAX_STATIONS = 400;
  * elevated crossroads. One station plus a unit keeps the flat part past the
  * junction outline whatever the spacing.
  */
-const PLATE_MARGIN = STATION + 1;
+const PLATE_MARGIN = STATION + m(0.4);
 /** Lateral samples across the casing when reading the ground under a road. */
 const LATERAL = [-1, -0.62, -0.28, 0, 0.28, 0.62, 1] as const;
 /** Stations either side of one that must also be cleared (chord protection). */
@@ -97,7 +97,7 @@ const GROUND_GRADE = ROAD_TUNING.grade.ground;
  * how much earth gets moved. Ninety units is about thirty-six metres, long
  * enough to ignore brush-sized bumps and short enough to follow a real hillside.
  */
-const SMOOTH_REACH = 90;
+const SMOOTH_REACH = m(36);
 /**
  * How far past its junction plate a profile is tied back to the node height.
  *
@@ -106,14 +106,14 @@ const SMOOTH_REACH = 90;
  * — rather than at the plate edge — is what keeps the join from becoming a
  * visible kink in an otherwise level road.
  */
-const TIE_REACH = 70;
+const TIE_REACH = m(28);
 /**
  * How far past a junction plate the ground floor stops constraining a ramp.
  *
  * The junction is a platform cut into whatever it sits on, so the natural
  * ground there is not a floor the structure landing on it has to respect.
  */
-const PLATE_BLEND = 40;
+const PLATE_BLEND = m(16);
 /**
  * The share of a ramp over which the natural ground stops being a floor.
  *
@@ -162,18 +162,18 @@ export const MAX_AUTHORED_GRADE = ROAD_TUNING.grade.authored;
  * Both curves are as long as the player's rule "the whole climb in at most
  * 100 units" leaves room for: 0.09 at the crest, 0.06 at the sag.
  */
-const RAMP_CURVE = 20;
+const RAMP_CURVE = m(8);
 /**
  * Reach of the vertical curves rounded into a road wherever its grade changes
  * (see `roundGradeBreaks`), in world units (5 m each side).
  */
-const VERTICAL_CURVE_REACH = 12;
+const VERTICAL_CURVE_REACH = m(4.8);
 /** Decay length of the grade correction just outside a flat junction plate. */
-const PLATE_TANGENT_REACH = 40;
+const PLATE_TANGENT_REACH = m(16);
 /** Cancels enough of the incoming grade to round the join without bending the whole hill. */
 const PLATE_TANGENT_SHARE = 0.55;
-/** Softness of the crest where a ramp meets its deck: a curve 16 units long. */
-const RAMP_CREST = 8 * RAMP_GRADE;
+/** Softness of the crest where a ramp meets its deck (a height: 3.2 m of run at the ramp's grade). */
+const RAMP_CREST = m(3.2) * RAMP_GRADE;
 /** Steepest gradient with which a deck is carried up to a higher deck it meets in the air. */
 const DECK_TIE = ROAD_TUNING.grade.deckTie;
 /**
@@ -198,7 +198,7 @@ const CURVE_PEAK = 1.5;
  */
 const MAX_SOLVE_PASSES = 64;
 /** Softness of the blend between neighbouring profiles, in world units. */
-const BLEND_TAU = 2.5;
+const BLEND_TAU = m(1);
 /**
  * How far from a road its own profile is the whole answer.
  *
@@ -206,7 +206,7 @@ const BLEND_TAU = 2.5;
  * of any junction ring, so every vertex of every road surface is decided by the
  * road and never by the ground beside it.
  */
-const PROFILE_REACH = 60;
+const PROFILE_REACH = m(24);
 /**
  * How far out the road's influence fades to nothing.
  *
@@ -217,7 +217,7 @@ const PROFILE_REACH = 60;
  * road surface reaches that far today, but a field with a cliff in it is a
  * mesh waiting to tear, and the fade costs one smoothstep per query.
  */
-const PROFILE_FADE = 110;
+const PROFILE_FADE = m(44);
 /**
  * How far from a point ON a road any profile can still change what a query
  * there answers: the point is within `PROFILE_REACH` of its own road, and a
@@ -395,7 +395,7 @@ export const GROUND_ONLY: ReadonlySet<RoadStructure> = new Set<RoadStructure>(['
 const NO_SHAPE = { height: 0, weight: 0 } as const;
 
 /** Extra width past the casing over which the ground is held at road level. */
-const SHAPE_INNER = 3;
+const SHAPE_INNER = m(1.2);
 /**
  * Width of the embankment or cutting that carries the ground back to its
  * natural height.
@@ -407,7 +407,7 @@ const SHAPE_INNER = 3;
  * batter, which is what a real embankment looks like and is also wide enough
  * to read smoothly against a sixteen-unit terrain cell.
  */
-const SHAPE_SHOULDER = 45;
+const SHAPE_SHOULDER = m(18);
 /**
  * Run per unit of rise on a cut or fill batter — a 1:2.5 slope.
  *
@@ -420,7 +420,7 @@ const SHAPE_SHOULDER = 45;
  */
 const BATTER = 2.5;
 /** Cap on the batter, so one deep cut cannot reshape a quarter of the map. */
-const SHAPE_SHOULDER_MAX = 90;
+const SHAPE_SHOULDER_MAX = m(36);
 /**
  * The same batter for a tunnel's approach cutting, and much narrower.
  *
@@ -432,7 +432,7 @@ const SHAPE_SHOULDER_MAX = 90;
  * the wider the step, and the step has to be covered by a headwall wide enough
  * to hide it. Sixteen units is a cutting the portal can close.
  */
-const CUT_SHOULDER = 16;
+const CUT_SHOULDER = m(6.4);
 /**
  * How far past a road's casing a cutting held by retaining walls is dug
  * (`RoadSegment.cutWalls`): the ground held at road level beside it, then
@@ -457,7 +457,7 @@ export const CUT_WALL_REACH = SHAPE_INNER + CUT_SHOULDER;
  * `render/roadSurfaces.ts`), so it simply grows to meet the ground, and what the
  * player sees at the rim is a shoulder rather than a hairline of sky.
  */
-const SHAPE_DROP = 1.5;
+const SHAPE_DROP = m(0.6);
 /**
  * How far under the carriageway the ground beside a road is laid: 10 cm, so
  * no ground interpolated across a terrain cell can stand above the asphalt.
@@ -626,10 +626,10 @@ export function buildRoadElevation(
     if (!point) continue;
     let sum = terrainAt(point.x, point.y);
     let count = 1;
-    let radius = 6;
+    let radius = m(2.4);
     for (const profile of list) {
       const plate = profile.a === node ? profile.plateA : profile.plateB;
-      radius = Math.max(radius, plate, profile.reach - 20);
+      radius = Math.max(radius, plate, profile.reach - m(8));
     }
     for (let ring = 1; ring <= 2; ring++) {
       const r = (radius * ring) / 2;
@@ -1374,7 +1374,7 @@ function solveGround(profile: Profile, nodeHeight: Map<NodeId, number>): void {
   // the sum inside the limit whatever the correction turns out to be.
   const tieFor = (shift: number): number =>
     Math.min(
-      Math.max(1, length * 0.4),
+      Math.max(m(0.4), length * 0.4),
       Math.max(TIE_REACH, (Math.abs(shift) * CURVE_PEAK) / (GROUND_GRADE * 0.5)),
     );
   const tieA = tieFor(shiftA);
@@ -1556,7 +1556,7 @@ function solveRaised(
   const endH = landB ? hB + spec.clearance + RAMP_CREST * 0.25 : hB;
   // Nothing under the deck may come closer than this to its surface: the
   // structure's own depth and a margin of daylight under the soffit.
-  const underside = spec.deck + FOOTWAY_RISE + 1;
+  const underside = spec.deck + FOOTWAY_RISE + m(0.4);
   for (let i = 0; i < h.length; i++) {
     const t = Math.min(1, Math.max(0, (step * i - profile.plateA) / run));
     const line = startH + (endH - startH) * t;
@@ -1867,7 +1867,7 @@ function heightAtArc(profile: Profile, s: number): number {
  * that actually reach the point, which is a handful.
  */
 /** Side of the spatial index's cells, world units. */
-const INDEX_CELL = 64;
+const INDEX_CELL = m(25.6);
 class SpatialIndex {
   private readonly cell = INDEX_CELL;
   private readonly buckets = new Map<number, Profile[]>();

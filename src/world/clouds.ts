@@ -8,6 +8,7 @@
  */
 
 import { MAP_SIZE } from './bounds';
+import { m } from './units';
 import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
 import { tileOfDirection } from '@core/planetTiles';
 import { atlasToSphereInto, onChartOf, sphereToChartInto } from './planet/charts';
@@ -35,8 +36,8 @@ export interface PlacedCloud {
 export const MAX_PLACED_CLOUDS = 24;
 
 export const CLOUD_LIMITS = {
-  height: [80, 2400],
-  size: [60, 1600],
+  height: [m(32), m(960)],
+  size: [m(24), m(640)],
   density: [0.1, 1],
 } as const;
 
@@ -65,8 +66,8 @@ export function readCloud(data: unknown): PlacedCloud | null {
     id: Math.round(d.id),
     x: d.x,
     y: d.y,
-    height: clamp(finite(d.height) ? d.height : 450, CLOUD_LIMITS.height),
-    size: clamp(finite(d.size) ? d.size : 375, CLOUD_LIMITS.size),
+    height: clamp(finite(d.height) ? d.height : m(180), CLOUD_LIMITS.height),
+    size: clamp(finite(d.size) ? d.size : m(150), CLOUD_LIMITS.size),
     density: clamp(finite(d.density) ? d.density : 0.8, CLOUD_LIMITS.density),
     yaw: finite(d.yaw) ? d.yaw : 0,
   };

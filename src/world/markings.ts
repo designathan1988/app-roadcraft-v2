@@ -43,8 +43,8 @@ export interface StrokeSpec {
 }
 
 /** Dash pattern used for every broken line, in world units. */
-export const DASH: readonly number[] = [8, 8];
-const DASH_PERIOD = 16;
+export const DASH: readonly number[] = [m(3.2), m(3.2)];
+const DASH_PERIOD = m(6.4);
 
 /**
  * Lane markings for one segment.
@@ -90,9 +90,9 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
   const centreLine = (fallback: 'dashed' | 'solid'): void => {
     const kind = rt.centreLine ?? fallback;
     if (kind === 'double') {
-      for (const side of [-1, 1]) out.push({ points: offsetPolyline(middle, side * m(0.18)), width: 0.3, color: centreColour, dash: null, dashOffset: 0 });
+      for (const side of [-1, 1]) out.push({ points: offsetPolyline(middle, side * m(0.18)), width: m(0.12), color: centreColour, dash: null, dashOffset: 0 });
     } else {
-      out.push({ points: middle, width: 0.4, color: centreColour, dash: kind === 'dashed' ? dashPattern : null, dashOffset: kind === 'dashed' ? phase : 0 });
+      out.push({ points: middle, width: m(0.16), color: centreColour, dash: kind === 'dashed' ? dashPattern : null, dashOffset: kind === 'dashed' ? phase : 0 });
     }
   };
   if (ribbon.direction === 'both' && rt.markings === 'center') centreLine('dashed');
@@ -104,7 +104,7 @@ export function segmentMarkings(ribbon: SegmentRibbon, startS: number, cutA = 0,
     const uses = forward ? rt.useForward : rt.useBackward;
     const bus = (uses?.[k] ?? 'all') !== (uses?.[k + 1] ?? 'all');
     const solid = bus || ((forward ? rt.linesForward : rt.linesBackward)?.[k] ?? 'dashed') === 'solid';
-    return { width: bus ? 0.62 : 0.32, dash: solid ? null : dashPattern, dashOffset: solid ? 0 : phase };
+    return { width: bus ? m(0.248) : m(0.128), dash: solid ? null : dashPattern, dashOffset: solid ? 0 : phase };
   };
   if (ribbon.direction !== 'both') {
     const lw = laneWidth(rt);
@@ -237,17 +237,17 @@ export function approachLegends(net: Network, styleId: MarkingStyleId): StrokeSp
 export function laneArrowMarkings(ribbon: SegmentRibbon): StrokeSpec[] {
   const centre = ribbon.centre[Level.Asphalt];
   // Keep arrows behind the crossing/stop bar and suppress them on a short approach.
-  if (!centre || centre.length < 48) return [];
+  if (!centre || centre.length < m(19.2)) return [];
   const road = ribbon.road;
   const out: StrokeSpec[] = [];
   const width = laneWidth(road);
-  const lateral = Math.min(2.5, width * 0.32);
+  const lateral = Math.min(m(1), width * 0.32);
   for (const forward of [true, false]) {
     if (ribbon.direction === (forward ? 'bToA' : 'aToB')) continue;
     const rules = forward ? road.turnsForward : road.turnsBackward;
     if (!rules) continue;
     const sign = forward ? 1 : -1;
-    const station = forward ? centre.length - 22 : 22;
+    const station = forward ? centre.length - m(8.8) : m(8.8);
     for (let lane = 0; lane < travelLanes(road, ribbon.direction); lane++) {
       const rule = rules[lane];
       if (!rule || rule === 'all') continue;
@@ -258,19 +258,20 @@ export function laneArrowMarkings(ribbon: SegmentRibbon): StrokeSpec[] {
         const d = (offset + across) * sign;
         return { x: frame.p.x + frame.n.x * d, y: frame.p.y + frame.n.y * d };
       };
+      // `along` in metres, `across` in world units.
       const line = (...vertices: [number, number][]): void => {
-        out.push({ points: vertices.map(([along, across]) => point(along, across)),
-          width: 0.3, color: LANE_LINE, dash: null, dashOffset: 0 });
+        out.push({ points: vertices.map(([along, across]) => point(m(along), across)),
+          width: m(0.12), color: LANE_LINE, dash: null, dashOffset: 0 });
       };
-      line([-5, 0], [0, 0]);
+      line([-2, 0], [0, 0]);
       if (laneTurnAllowed(rule, 'through')) {
-        line([0, 0], [5, 0]);
-        line([3, -lateral * 0.6], [5, 0], [3, lateral * 0.6]);
+        line([0, 0], [2, 0]);
+        line([1.2, -lateral * 0.6], [2, 0], [1.2, lateral * 0.6]);
       }
       for (const side of [1, -1]) {
         if (!laneTurnAllowed(rule, side === 1 ? 'left' : 'right')) continue;
-        line([0, 0], [1.5, 0], [1.5, lateral * side]);
-        line([0, lateral * side * 0.5], [1.5, lateral * side], [3, lateral * side * 0.5]);
+        line([0, 0], [0.6, 0], [0.6, lateral * side]);
+        line([0, lateral * side * 0.5], [0.6, lateral * side], [1.2, lateral * side * 0.5]);
       }
     }
   }
@@ -484,7 +485,7 @@ function midBlockDetail(net: Network, view: Aabb | undefined, stops: Bar[], zebr
   for (const node of doc.nodes.values()) {
     if (!node.crossing || node.incident.length !== 2) continue;
     if (view) {
-      const reach = 40;
+      const reach = m(16);
       if (!intersects({ minX: node.x - reach, minY: node.y - reach, maxX: node.x + reach, maxY: node.y + reach }, view)) continue;
     }
     for (const segId of node.incident) {
@@ -551,16 +552,16 @@ export function transitionMarkings(net: Network, node: NodeId): StrokeSpec[] {
   if (ra.median > 0 || rb.median > 0) {
     // The two directions part to either side of the reservation's nose.
     const colour = markingColor(rb.median > 0 ? rb : ra);
-    solid((u) => median(u), 0.7, colour);
-    solid((u) => -median(u), 0.7, colour);
+    solid((u) => median(u), m(0.28), colour);
+    solid((u) => -median(u), m(0.28), colour);
   } else {
     // One solid line, in each road's own colour on its own half of the taper.
     const line = axis.offset(() => 0);
     const mid = Math.floor(line.length / 2);
     const first = ra.markings === 'none' ? rb : ra;
     const second = rb.markings === 'none' ? ra : rb;
-    out.push({ points: line.slice(0, mid + 1), width: 0.4, color: markingColor(first), dash: null, dashOffset: 0 });
-    out.push({ points: line.slice(mid), width: 0.4, color: markingColor(second), dash: null, dashOffset: 0 });
+    out.push({ points: line.slice(0, mid + 1), width: m(0.16), color: markingColor(first), dash: null, dashOffset: 0 });
+    out.push({ points: line.slice(mid), width: m(0.16), color: markingColor(second), dash: null, dashOffset: 0 });
   }
 
   // The lanes both roads have run straight through.
@@ -570,7 +571,7 @@ export function transitionMarkings(net: Network, node: NodeId): StrokeSpec[] {
     for (const side of [-1, 1]) {
       out.push({
         points: axis.offset((u) => side * (median(u) + lane(u) * k)),
-        width: 0.32,
+        width: m(0.128),
         color: LANE_LINE,
         dash: DASH,
         dashOffset: 0,
@@ -596,9 +597,9 @@ export function miniRoundaboutMarkings(net: Network): StrokeSpec[] {
       const a = (i / 40) * Math.PI * 2;
       return { x: node.x + Math.cos(a) * radius, y: node.y + Math.sin(a) * radius };
     });
-    out.push({ points: ring(r), width: 0.5, color: LANE_LINE, dash: null, dashOffset: 0 });
+    out.push({ points: ring(r), width: m(0.2), color: LANE_LINE, dash: null, dashOffset: 0 });
     // The middle filled with paint: rings close enough to read as one disc.
-    for (let k = r - 0.55; k > 0.3; k -= 0.55) out.push({ points: ring(k), width: 0.62, color: LANE_LINE, dash: null, dashOffset: 0 });
+    for (let k = r - m(0.22); k > m(0.12); k -= m(0.22)) out.push({ points: ring(k), width: m(0.248), color: LANE_LINE, dash: null, dashOffset: 0 });
   }
   return out;
 }

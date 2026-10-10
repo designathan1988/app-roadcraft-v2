@@ -88,7 +88,7 @@ const LANE_LIST_KEYS = ['useForward', 'useBackward', 'linesForward', 'linesBackw
 export const ROAD_SECTION_LIMITS = {
   laneWidth: [m(2), m(6)],
   sidewalk: [m(1), m(12)],
-  median: [0, 20],
+  median: [0, m(8)],
   speedKmh: [10, 130],
   priority: [0, 5],
 } as const;

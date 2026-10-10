@@ -1,4 +1,5 @@
 import { ROAD_TUNING } from './roads/tuning';
+import { m } from './units';
 
 /**
  * The structural levels a road can be built at.
@@ -59,9 +60,9 @@ export interface RoadStructureSpec {
  * closed over the arch. Deriving them is what stops a portal hanging in open air
  * or a bore poking out of the top of its own hill.
  */
-export const TUNNEL_HEADROOM = 11;
+export const TUNNEL_HEADROOM = m(4.4);
 /** Thickness of the arch over the bore. */
-export const TUNNEL_ARCH = 1.5;
+export const TUNNEL_ARCH = m(0.6);
 /**
  * Depth of a tunnel's floor below the lowest ground along its span.
  *
@@ -69,7 +70,7 @@ export const TUNNEL_ARCH = 1.5;
  * margin the hill closes over the bore only just, and the slightest dip in the
  * terrain reopens it halfway along.
  */
-export const TUNNEL_DEPTH = TUNNEL_HEADROOM + TUNNEL_ARCH + 5;
+export const TUNNEL_DEPTH = TUNNEL_HEADROOM + TUNNEL_ARCH + m(2);
 /**
  * Cover at which the ground closes over the road: the mouth of the bore.
  *
@@ -82,9 +83,9 @@ export const TUNNEL_DEPTH = TUNNEL_HEADROOM + TUNNEL_ARCH + 5;
  * a step, and a step is what a portal headwall is built to close. So the ground
  * is held down to the road right up to the mouth and steps up over it there.
  */
-const TUNNEL_CLOSE = TUNNEL_HEADROOM + TUNNEL_ARCH + 1;
-export const TUNNEL_ROOF = TUNNEL_CLOSE - 0.4;
-export const TUNNEL_BORE = TUNNEL_CLOSE + 0.4;
+const TUNNEL_CLOSE = TUNNEL_HEADROOM + TUNNEL_ARCH + m(0.4);
+export const TUNNEL_ROOF = TUNNEL_CLOSE - m(0.16);
+export const TUNNEL_BORE = TUNNEL_CLOSE + m(0.16);
 /**
  * Cover at which the portal stands: where the ground FIRST rises over the road.
  *
@@ -96,7 +97,7 @@ export const TUNNEL_BORE = TUNNEL_CLOSE + 0.4;
  * road is still running level with, and reads from above as what it is: a
  * concrete face with a road going into it and a hill rising behind.
  */
-export const TUNNEL_PORTAL_COVER = 1.5;
+export const TUNNEL_PORTAL_COVER = m(0.6);
 /**
  * Design gradient of a tunnel's approach ramps.
  *
@@ -107,20 +108,20 @@ export const TUNNEL_PORTAL_COVER = 1.5;
 export const TUNNEL_GRADE = ROAD_TUNING.grade.tunnel;
 
 export const ROAD_STRUCTURES: readonly RoadStructureSpec[] = [
-  { id: 'ground', key: 'structure.ground', clearance: 0, deck: 0.55, supports: false },
+  { id: 'ground', key: 'structure.ground', clearance: 0, deck: m(0.22), supports: false },
   // Fourteen units (5.6 m) to the deck SURFACE, of which the structure itself
   // takes 3.0: eleven units, 4.4 m, of headroom under the soffit - what an
   // urban flyover over a street is built to, and low enough that the ramp up
   // to it is over inside 100 units at 16 %. The deck is a metre deep, what a
   // girder spanning 30 m between piers is; at 0.64 m it read as a sheet of
   // card on stilts.
-  { id: 'elevated', key: 'structure.elevated', clearance: ROAD_TUNING.clearance.elevated, deck: 2.6, supports: true },
-  { id: 'bridge', key: 'structure.bridge', clearance: ROAD_TUNING.clearance.bridge, deck: 2.4, supports: true },
-  { id: 'tunnel', key: 'structure.tunnel', clearance: -TUNNEL_DEPTH, deck: 0.6, supports: false },
+  { id: 'elevated', key: 'structure.elevated', clearance: ROAD_TUNING.clearance.elevated, deck: m(1.04), supports: true },
+  { id: 'bridge', key: 'structure.bridge', clearance: ROAD_TUNING.clearance.bridge, deck: m(0.96), supports: true },
+  { id: 'tunnel', key: 'structure.tunnel', clearance: -TUNNEL_DEPTH, deck: m(0.24), supports: false },
 ] as const;
 
 /** Clearance a road at grade keeps over the terrain it is laid on. */
-export const ROAD_GROUND_CLEARANCE = 0.3;
+export const ROAD_GROUND_CLEARANCE = m(0.12);
 
 export const roadStructure = (id: RoadStructure): RoadStructureSpec =>
   ROAD_STRUCTURES.find((value) => value.id === id) ?? (ROAD_STRUCTURES[0] as RoadStructureSpec);
@@ -136,7 +137,7 @@ export const isRoadStructure = (value: unknown): value is RoadStructure =>
  * renderer builds them past it (`render/structures.ts`, `render/roadSurfaces.ts`)
  * and the road tool's preview names it a bridge (`roads/buildMode.ts`).
  */
-export const RAISED_LIFT = 5;
+export const RAISED_LIFT = m(2);
 
 /** True for the structures that stand clear of the ground on piers. */
 export const isRaised = (id: RoadStructure): boolean =>

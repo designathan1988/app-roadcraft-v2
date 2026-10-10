@@ -276,8 +276,8 @@ export function perimeter(rng: Rng, lot: Box, wanted: BuildingFunction[], filler
           const body = varied(rng, fn);
           if (!body) continue;
           const f = facingBody(body, fn, edge, t, FRONT_GAP);
-          if (t + f.width > edge.length + 0.5) continue;
-          if (!inside(f.box, lot) || into.placed.some((o) => overlaps(f.box, o, -0.05))) continue;
+          if (t + f.width > edge.length + m(0.2)) continue;
+          if (!inside(f.box, lot) || into.placed.some((o) => overlaps(f.box, o, -m(0.02)))) continue;
           into.put(f.body, f.box);
           if (pass) pass.shift();
           t += f.width;
@@ -310,7 +310,7 @@ export function houses(rng: Rng, lot: Box, into: Placer): void {
       const body = house(rng, W, depth / m(1) - FRONT_GAP / m(1) - 0.1);
       const f = facingBody(body, 'house', edge, t, FRONT_GAP);
       // Plots are full width (their lawns reach both sides), so the box is the plot.
-      if (inside(f.box, lot) && !into.placed.some((o) => overlaps(f.box, o, -0.05))) into.put({ ...f.body, function: 'house' }, f.box);
+      if (inside(f.box, lot) && !into.placed.some((o) => overlaps(f.box, o, -m(0.02)))) into.put({ ...f.body, function: 'house' }, f.box);
       t += m(W);
     }
   }

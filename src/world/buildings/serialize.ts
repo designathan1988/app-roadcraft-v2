@@ -263,10 +263,10 @@ function migrateElement(raw: unknown): BuildingElement | null {
     x: raw.x as number,
     y: raw.y as number,
     facing: isSide(raw.facing) ? raw.facing : 0,
-    w: Math.max(0.1, raw.w as number),
-    d: Math.max(0.1, raw.d as number),
+    w: Math.max(m(0.04), raw.w as number),
+    d: Math.max(m(0.04), raw.d as number),
     z: Math.max(0, raw.z as number),
-    h: Math.max(0.1, raw.h as number),
+    h: Math.max(m(0.04), raw.h as number),
   };
   // A traced run (wall, fence, paving, stair) lies along its path at `angle`.
   // This migrator listed fields rather than keeping them, dropped it, and

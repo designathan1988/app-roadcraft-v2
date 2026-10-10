@@ -48,22 +48,30 @@ import { m } from './units';
 // ---------------------------------------------------------------- the plan
 
 /**
- * Node lines of the street grid, world units (0.4 m each: 300 units is a 120 m
- * block, which is a town block; 210 units is 84 m of depth, two rows of plots
- * back to back).
- *
- * The avenue is `y = 0`. The streets either side are at ±210 units - the first
- * row of blocks each way - and the outer pair at ±420 units.
+ * The town was laid out in steps of 0.4 m (the world unit until 2026-10-10,
+ * docs/ESCALA.md): every figure of the plan below - the street lines, the
+ * landform's dabs, the hedges - is a number of these steps, and `plan` makes
+ * it world units.
  */
-const XS = [-1200, -900, -600, -300, 0, 300, 600] as const;
-const YS = [-420, -210, 0, 210, 420] as const;
+const PLAN_STEP = m(0.4);
+const plan = (steps: number): number => steps * PLAN_STEP;
+
+/**
+ * Node lines of the street grid (300 steps is a 120 m block, which is a town
+ * block; 210 steps is 84 m of depth, two rows of plots back to back).
+ *
+ * The avenue is `y = 0`. The streets either side are at ±84 m - the first
+ * row of blocks each way - and the outer pair at ±168 m.
+ */
+const XS: readonly number[] = [-1200, -900, -600, -300, 0, 300, 600].map(plan);
+const YS: readonly number[] = [-420, -210, 0, 210, 420].map(plan);
 /** The avenue's own line, and where it runs out at each end. */
 const AVENUE = 0;
-const WEST_END = -1560;
-const EAST_END = 900;
+const WEST_END = plan(-1560);
+const EAST_END = plan(900);
 /** The works: their own lines, east of the last street of the grid. */
-const WORKS = { west: 900, east: 1440, south: -420, north: 210 } as const;
-/** The stream, running north-south along the east of the town. */
+const WORKS = { west: plan(900), east: plan(1440), south: plan(-420), north: plan(210) } as const;
+/** The stream, running north-south along the east of the town, in plan steps. */
 const STREAM_X = 1960;
 
 /** The town generators draw from a plain stream, as the ones in town.ts do. */
@@ -87,15 +95,16 @@ const CYCLE_STREET: SegmentParking = { left: 'parallel', right: 'cycle' };
 const parkingAlong = (type: number, from: Vec2, to: Vec2): SegmentParking | undefined =>
   type === LOCAL && Math.abs(to.x - from.x) > Math.abs(to.y - from.y) ? CYCLE_STREET : parkingOf(type);
 
-/** The ground the town stands on, before the hills: world units above datum. */
+/** The ground the town stands on, before the hills: plan steps above datum. */
 const TOWN_LEVEL = 14;
 
 // ---------------------------------------------------------------- landform
 
+/** A dab of the landform, every figure in plan steps. */
 const stamp = (
   x: number, y: number, radius: number, strength: number, mode: TerrainMode, level?: number,
 ): Omit<TerrainStamp, 'id'> =>
-  ({ x, y, radius, strength, mode, ...(level === undefined ? {} : { level }) });
+  ({ x: plan(x), y: plan(y), radius: plan(radius), strength: plan(strength), mode, ...(level === undefined ? {} : { level: plan(level) }) });
 
 /**
  * A mass of high ground along a line, the way a hill is really shaped.
@@ -277,10 +286,10 @@ function layStreets(doc: RoadDoc): Nodes {
   // works. Its western end carries on off the map - the road IN, which is how
   // a town of this size has always been entered - over the saddle between the
   // hill and the ridge.
-  nodes.run(point(-2_200, AVENUE + 130), point(XS[0] as number, AVENUE), AVENUE_CLASS, [
-    point(-1_800, AVENUE + 70),
-    point(WEST_END, AVENUE + 34),
-    point(-1_360, AVENUE + 14),
+  nodes.run(point(plan(-2_200), AVENUE + plan(130)), point(XS[0] as number, AVENUE), AVENUE_CLASS, [
+    point(plan(-1_800), AVENUE + plan(70)),
+    point(WEST_END, AVENUE + plan(34)),
+    point(plan(-1_360), AVENUE + plan(14)),
   ]);
   for (let i = 0; i + 1 < XS.length; i++) {
     nodes.run(point(XS[i] as number, AVENUE), point(XS[i + 1] as number, AVENUE), AVENUE_CLASS);
@@ -334,13 +343,13 @@ function layStreets(doc: RoadDoc): Nodes {
 
   // Out to the stream and over it: the lane along the works, the town's bridge,
   // and the road beyond it that carries on off the map.
-  nodes.run(point(EAST_END, WORKS.south), point(1_760, WORKS.south), LOCAL, [point(1_180, WORKS.south - 10)]);
-  nodes.run(point(1_760, WORKS.south), point(1_980, WORKS.south), LOCAL, [], 'bridge');
+  nodes.run(point(EAST_END, WORKS.south), point(plan(1_760), WORKS.south), LOCAL, [point(plan(1_180), WORKS.south - plan(10))]);
+  nodes.run(point(plan(1_760), WORKS.south), point(plan(1_980), WORKS.south), LOCAL, [], 'bridge');
   // And off the map on the east bank: the road out, which is why the bridge is
   // there at all.
-  nodes.run(point(1_980, WORKS.south), point(2_320, WORKS.south + 120), LOCAL, [
-    point(2_140, WORKS.south + 20),
-    point(2_260, WORKS.south + 60),
+  nodes.run(point(plan(1_980), WORKS.south), point(plan(2_320), WORKS.south + plan(120)), LOCAL, [
+    point(plan(2_140), WORKS.south + plan(20)),
+    point(plan(2_260), WORKS.south + plan(60)),
   ]);
 
   return nodes;
@@ -722,7 +731,7 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   {
     const lot = lotOf(5, 2);
     const body = varied(rng, 'supermarket') as BlueprintBody;
-    const edge: Edge = { start: { x: lot.x0 + 8, y: lot.y0 + 2 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 - 16 };
+    const edge: Edge = { start: { x: lot.x0 + m(3.2), y: lot.y0 + m(0.8) }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 - m(6.4) };
     const f = facingBody(body, 'supermarket', edge, 0, m(0.4));
     into.put({ ...f.body, function: 'supermarket' }, f.box);
     // Its car park beside it, on the avenue: the shed is nearly the block's
@@ -795,7 +804,7 @@ function occupy(doc: RoadDoc, stream: RngStream): number {
   {
     // The school: its own campus against the avenue's back street.
     const lot = lotOf(2, 3);
-    const edge: Edge = { start: { x: lot.x0 + 2, y: lot.y0 + 4 }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 - 4 };
+    const edge: Edge = { start: { x: lot.x0 + m(0.8), y: lot.y0 + m(1.6) }, along: { x: 1, y: 0 }, inward: { x: 0, y: 1 }, length: lot.x1 - lot.x0 - m(1.6) };
     const f = facingBody(varied(rng, 'school') as BlueprintBody, 'school', edge, 0, m(0.4));
     if (inside(f.box, lot)) into.put({ ...f.body, function: 'school' }, f.box);
     // The rest of the block is the street's terraces round the school's
@@ -892,14 +901,14 @@ function dress(doc: RoadDoc): void {
 
   // The hedgerows along the two edges of the built town, on the far side of
   // the outer streets: what stops a grid of houses from just stopping.
-  const hedgeAlong = (from: Vec2, to: Vec2, step = 30): void => {
+  const hedgeAlong = (from: Vec2, to: Vec2, step = plan(30)): void => {
     const length = Math.hypot(to.x - from.x, to.y - from.y);
     const count = Math.max(2, Math.round(length / step));
     const points: Vec2[] = [];
     for (let i = 0; i <= count; i++) {
       const t = i / count;
       // A hedge is planted, not surveyed: it wanders by a unit or two.
-      const wobble = Math.sin(i * 1.7) * 3;
+      const wobble = Math.sin(i * 1.7) * plan(3);
       points.push({
         x: from.x + (to.x - from.x) * t + wobble,
         y: from.y + (to.y - from.y) * t - wobble,
@@ -907,18 +916,18 @@ function dress(doc: RoadDoc): void {
     }
     doc.addBarrier('hedge', points);
   };
-  hedgeAlong({ x: -1_250, y: YS[0] as number - 34 }, { x: 640, y: (YS[0] as number) - 40 });
-  hedgeAlong({ x: -1_250, y: (YS[4] as number) + 34 }, { x: 640, y: (YS[4] as number) + 40 });
-  hedgeAlong({ x: (XS[0] as number) - 34, y: -400 }, { x: (XS[0] as number) - 40, y: 420 });
+  hedgeAlong({ x: plan(-1_250), y: YS[0] as number - plan(34) }, { x: plan(640), y: (YS[0] as number) - plan(40) });
+  hedgeAlong({ x: plan(-1_250), y: (YS[4] as number) + plan(34) }, { x: plan(640), y: (YS[4] as number) + plan(40) });
+  hedgeAlong({ x: (XS[0] as number) - plan(34), y: plan(-400) }, { x: (XS[0] as number) - plan(40), y: plan(420) });
   // And a wall round the park, which is the one plot in the town that is not
   // somebody's front garden.
   const park = lotOf(4, 3);
   doc.addBarrier('wall', [
-    { x: park.x0 - 2, y: park.y0 - 2 },
-    { x: park.x1 + 2, y: park.y0 - 2 },
-    { x: park.x1 + 2, y: park.y1 + 2 },
-    { x: park.x0 - 2, y: park.y1 + 2 },
-    { x: park.x0 - 2, y: park.y0 - 2 },
+    { x: park.x0 - m(0.8), y: park.y0 - m(0.8) },
+    { x: park.x1 + m(0.8), y: park.y0 - m(0.8) },
+    { x: park.x1 + m(0.8), y: park.y1 + m(0.8) },
+    { x: park.x0 - m(0.8), y: park.y1 + m(0.8) },
+    { x: park.x0 - m(0.8), y: park.y0 - m(0.8) },
   ]);
 }
 

@@ -4,9 +4,10 @@ import type { Network } from './network';
 import { Level, halfWidth } from './roadTypes';
 import { chartsReaching } from './planet/charts';
 import { carryPolyline } from './geometry';
+import { m } from './units';
 
 /** Side of a cell of the carriageway index, world units. */
-const CELL = 64;
+const CELL = m(25.6);
 
 interface Lane {
   readonly centre: Polyline;

@@ -20,6 +20,7 @@
  */
 import { BIOME_KINDS, type BiomeKind } from './terrainPaint';
 import { valueNoise } from './terrain';
+import { m } from './units';
 
 /** The biome a map belongs to (`RoadDoc.nature`); a biome painted overrides it locally. */
 export type RegionId = BiomeKind;
@@ -188,13 +189,13 @@ function blend(out: Community, parts: readonly (readonly [number, Community])[])
 function regionCommunity(region: RegionId, s: Site, out: Community): void {
   const F = FORMATIONS;
   // Along every river and lake a strip of forest, wider where the patch says.
-  const riparian = 1 - smooth(25 + 45 * s.patch, 110 + 70 * s.patch, s.waterDist);
+  const riparian = 1 - smooth(m(10) + m(18) * s.patch, m(44) + m(28) * s.patch, s.waterDist);
   const cliff = s.steep;
   const open = 1 - cliff;
   switch (region) {
     case 'cerrado': {
       // Veredas: wet palm swamps in the level floors of valleys near water.
-      const vereda = s.flat * smooth(0.15, 0.55, s.valley) * (1 - smooth(60, 320, s.waterDist)) * smooth(0.3, 0.6, s.patch);
+      const vereda = s.flat * smooth(0.15, 0.55, s.valley) * (1 - smooth(m(24), m(128), s.waterDist)) * smooth(0.3, 0.6, s.patch);
       // Cerradão where the ground holds water (lower slopes), and in patches.
       const dense = clamp01(smooth(0.1, 0.5, s.valley) * 0.8 + smooth(0.62, 0.85, s.patch) * 0.6);
       // Rocky fields on the ridges and the chapadas' sandstone tops.
@@ -211,7 +212,7 @@ function regionCommunity(region: RegionId, s: Site, out: Community): void {
     }
     case 'atlantic': {
       // The high grasslands over the forest line, on the exposed tops.
-      const high = smooth(170, 260, s.altitude + s.ridge * 60 + (s.patch - 0.5) * 50);
+      const high = smooth(m(68), m(104), s.altitude + s.ridge * m(24) + (s.patch - 0.5) * m(20));
       blend(out, [
         [(1 - high) * open + riparian, F.ombrophilous],
         [high * open * (1 - riparian), F.highGrassland],
@@ -221,7 +222,7 @@ function regionCommunity(region: RegionId, s: Site, out: Community): void {
     }
     case 'amazon': {
       // Várzea and igapó: the flooded forest of the low ground by the rivers.
-      const varzea = (1 - smooth(40, 220, s.waterDist)) * clamp01(0.4 + s.valley);
+      const varzea = (1 - smooth(m(16), m(88), s.waterDist)) * clamp01(0.4 + s.valley);
       blend(out, [
         [(1 - varzea) * open, F.terraFirme],
         [varzea * open, F.varzea],
@@ -252,7 +253,7 @@ function regionCommunity(region: RegionId, s: Site, out: Community): void {
       // The flooded fields on the low flats; cordilheiras, forest on the
       // slightly higher ground the floods leave dry.
       // The floods reach the level ground and everything near the rivers.
-      const low = Math.max(s.flat * clamp01(0.35 + s.valley * 1.2) * (1 - smooth(0.25, 0.6, s.ridge)), 1 - smooth(20, 220, s.waterDist));
+      const low = Math.max(s.flat * clamp01(0.35 + s.valley * 1.2) * (1 - smooth(0.25, 0.6, s.ridge)), 1 - smooth(m(8), m(88), s.waterDist));
       const cordilheira = smooth(0.55, 0.75, s.patch) * (1 - low * 0.7);
       blend(out, [
         [riparian * open * 0.35, F.cordilheira],
@@ -401,15 +402,15 @@ export function computeEcology(input: EcologyInput, update?: EcologyUpdate): Eco
       const slope = Math.atan(Math.hypot(hx, hy)) * (180 / Math.PI);
       const relative = h - (mean[i] as number);
       site.waterDist = distance[i] as number;
-      site.valley = smooth(2, 22, -relative);
-      site.ridge = smooth(2, 22, relative);
+      site.valley = smooth(m(0.8), m(8.8), -relative);
+      site.ridge = smooth(m(0.8), m(8.8), relative);
       site.flat = 1 - smooth(5, 15, slope);
       site.steep = smooth(40, 56, slope);
       site.altitude = h - lowest;
       site.sandstone = input.sandstone[i] as number;
       site.basalt = input.basalt[i] as number;
-      site.patch = 0.5 + 0.5 * valueNoise(x / 230 + seedX, y / 230 + seedY);
-      site.fray = 0.5 + 0.5 * valueNoise(x / 55 + seedY, y / 55 - seedX);
+      site.patch = 0.5 + 0.5 * valueNoise(x / m(92) + seedX, y / m(92) + seedY);
+      site.fray = 0.5 + 0.5 * valueNoise(x / m(22) + seedY, y / m(22) - seedX);
       // The biomes over this corner: the painted ones, the map's own the rest.
       let painted = 0;
       for (let r = 0; r < REGIONS.length; r++) {

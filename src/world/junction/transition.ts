@@ -3,6 +3,7 @@ import { Ring } from '@core/ring';
 import { type Vec2, addScaled, dot } from '@core/vec2';
 import { type RoadSide, type RoadType, SURFACE_LEVELS, halfWidth, sideHalfWidth, symmetric } from '../roadTypes';
 import type { Leg } from './legs';
+import { m } from '../units';
 
 /**
  * A road that simply carries on as a wider or narrower one.
@@ -38,15 +39,15 @@ import type { Leg } from './legs';
  */
 export const TAPER_RATIO = 8;
 /** Shortest taper worth drawing, end to end, in world units. */
-export const TAPER_MIN = 24;
+export const TAPER_MIN = m(9.6);
 /**
  * Largest bend at a node of two legs that is still one road running on: a
  * taper (when the widths differ), no zebra and no stop line. Past it the node
  * is a corner, crossed on foot, and built as a junction.
  */
 export const TRANSITION_BEND = (30 * Math.PI) / 180;
-/** Cross-sections per unit of taper length when the outline is sampled. */
-const SAMPLE_STEP = 4;
+/** Taper length between two cross-sections when the outline is sampled. */
+const SAMPLE_STEP = m(1.6);
 
 /** Whether two legs meeting at a node form a straight-through change of width. */
 export function isTransition(legs: readonly Leg[]): boolean {

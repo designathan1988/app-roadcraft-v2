@@ -47,7 +47,7 @@ import { m } from '../units';
 /** Below this wedge, or above its supplement, the footway's back is rounded, not squared. */
 const SQUARE_MIN = Math.PI / 6;
 /** How far past the kerb return a squared back corner may reach, world units. */
-const SQUARE_REACH = 40;
+const SQUARE_REACH = m(16);
 /** Narrowest footway a squared back corner may leave beside the kerb return. */
 const SQUARE_MIN_WIDTH = m(1.5);
 /** Points along a return whose two sides have different widths. */
@@ -117,7 +117,7 @@ export function deriveJunctionLevel(
       const ta = addScaled(kerb.ta, li.nrm, di);
       const tb = addScaled(kerb.tb, lj.nrm, -dj);
       const ra = dist(kerb.c, ta), rb = dist(kerb.c, tb);
-      if (Math.min(ra, rb) < 0.05) {
+      if (Math.min(ra, rb) < m(0.02)) {
         // The return has shrunk to its centre: this surface turns a point.
         shapes.set(i, (push) => push(lineEdge(ta), ta));
       } else if (Math.abs(ra - rb) < 1e-6) {

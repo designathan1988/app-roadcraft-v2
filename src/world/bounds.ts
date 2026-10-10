@@ -2,6 +2,7 @@ import { TILE_COUNT } from '@core/planetTiles';
 import { clamp } from '@core/scalar';
 import type { Vec2 } from '@core/vec2';
 import { TILE_PLATE_HALF, TILE_REACH, tileCellOf, tileCentre } from './planet/atlas';
+import { m } from './units';
 
 /**
  * How big the world is.
@@ -19,7 +20,7 @@ import { TILE_PLATE_HALF, TILE_REACH, tileCellOf, tileCentre } from './planet/at
  * side by side in one plane (`planet/atlas.ts`): `MAP_SIZE` is then a piece's
  * plate, and `MAP_REGIONS` lists the plates.
  */
-export const MAP_SIZE = __PLANET__ ? TILE_PLATE_HALF * 2 : 4_800;
+export const MAP_SIZE = __PLANET__ ? TILE_PLATE_HALF * 2 : m(1_920);
 export const MAP_HALF = MAP_SIZE / 2;
 
 /** One square plate of ground: its centre and half its side. */
@@ -69,7 +70,7 @@ export const MAP_REACH = __PLANET__ ? TILE_REACH : 0;
  *
  * Zero on the planet: a face's border is no rim, the neighbour's ground goes on.
  */
-export const MAP_MARGIN = __PLANET__ ? 0 : 64;
+export const MAP_MARGIN = __PLANET__ ? 0 : m(25.6);
 
 /** Whether a point is on the plate at all. */
 export const insideMap = (p: Vec2, margin = 0): boolean =>

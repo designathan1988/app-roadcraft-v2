@@ -32,6 +32,7 @@ import {
   crosswalkDistance as crosswalkAt,
   stopLineDistance as stopLine,
 } from './approach';
+import { m } from './units';
 
 /**
  * A mouth cut this little short of where its carriageway separates from the
@@ -39,7 +40,7 @@ import {
  * are framed at the capped trims), not a junction that cannot hold its lanes:
  * 0.4 m, a tenth of a lane.
  */
-const SQUEEZE_NOISE = 1;
+const SQUEEZE_NOISE = m(0.4);
 
 /** A junction solved for one pass of `rebuild`, with what the pass handed it (`junctionKey`). */
 interface JunctionMemoEntry {

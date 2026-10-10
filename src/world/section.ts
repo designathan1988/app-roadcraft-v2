@@ -78,7 +78,7 @@ export interface CrossSection {
 export const TREE_PIT = m(0.8);
 export const TREE_KERB_SETBACK = m(0.15);
 /** A footway at least this wide (`RoadType.sidewalk`, kerb included) has street trees. */
-export const TREE_MIN_FOOTWAY = 6;
+export const TREE_MIN_FOOTWAY = m(2.4);
 /** Depth a lamp column (and a hydrant) takes beside the kerb. */
 export const LAMP_ZONE = m(0.35);
 /** Depth a bench (0.52 m seat) or a bin (0.66 m across) takes beside the kerb. */

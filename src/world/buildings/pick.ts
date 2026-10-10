@@ -2,6 +2,7 @@ import { bayWidth, baysOn, elementRect, storedBounds, roofHeightAt, roofRise, vo
 import { chartAt, chartToChartInto } from '../planet/charts';
 import { containsPoint, edgeFrame, volumeSides } from './footprints';
 import type { Building, BuildingId, FaceId } from './types';
+import { m } from '../units';
 
 /**
  * A ray, in WORLD axes: x and y on the map, z up. The editor gets one from
@@ -53,16 +54,16 @@ export interface BuildingHit {
  */
 function rayOnChartOf(ray: Ray3, b: Building): Ray3 {
   if (!__PLANET__ || ray.dz === 0) return ray;
-  const t0 = -ray.oz / ray.dz, t1 = (100 - ray.oz) / ray.dz;
+  const t0 = -ray.oz / ray.dz, t1 = (m(40) - ray.oz) / ray.dz;
   const gx = ray.ox + ray.dx * t0, gy = ray.oy + ray.dy * t0;
   const from = chartAt(gx, gy), to = chartAt(b.x, b.y);
   if (from === to) return ray;
   const low = chartToChartInto(from, to, gx, gy, { x: 0, y: 0 });
   const high = chartToChartInto(from, to, ray.ox + ray.dx * t1, ray.oy + ray.dy * t1, { x: 0, y: 0 });
-  const dx = low.x - high.x, dy = low.y - high.y, dz = -100;
+  const dx = low.x - high.x, dy = low.y - high.y, dz = -m(40);
   const len = Math.hypot(dx, dy, dz);
   const ux = dx / len, uy = dy / len, uz = dz / len;
-  return { ox: high.x - ux * t1, oy: high.y - uy * t1, oz: 100 - uz * t1, dx: ux, dy: uy, dz: uz };
+  return { ox: high.x - ux * t1, oy: high.y - uy * t1, oz: m(40) - uz * t1, dx: ux, dy: uy, dz: uz };
 }
 
 export function pickBuilding(
@@ -83,7 +84,7 @@ export function pickBuilding(
     if (!rayNearBox(ray, box, -1e6, 1e6)) continue;
     const floor = floorOf(b);
     // The ray's footprint over the building's height span.
-    if (!rayNearBox(ray, box, floor - 2, floor + 400)) continue;
+    if (!rayNearBox(ray, box, floor - m(0.8), floor + m(160))) continue;
     const c = Math.cos(b.rotation);
     const s = Math.sin(b.rotation);
     const o = worldToLocal(b, { x: ray.ox, y: ray.oy });

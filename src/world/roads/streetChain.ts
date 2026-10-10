@@ -2,6 +2,7 @@ import type { NodeId, SegmentId } from '../ids';
 import type { RoadDoc } from '../doc';
 import { orientedPolyline } from '../geometry';
 import type { RoadProfileSpec } from './profile';
+import { m } from '../units';
 
 /**
  * THE WHOLE STREET a segment belongs to (docs/VIAS.md V8, bulk edit): the
@@ -11,7 +12,7 @@ import type { RoadProfileSpec } from './profile';
  * the first (its a -> b the other way), for a profile laid along it.
  */
 const STRAIGHT = Math.cos((25 * Math.PI) / 180);
-const PROBE = 12;
+const PROBE = m(4.8);
 
 export interface ChainPiece {
   readonly id: SegmentId;

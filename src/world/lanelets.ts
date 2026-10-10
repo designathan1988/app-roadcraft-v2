@@ -16,6 +16,7 @@ import { TUNNELS_DRAWN } from './structures';
 import { JunctionSurface, bulbTurnPath, turnPath } from './turnPaths';
 import { BULB_TURN_RADIUS } from './junction/bulb';
 import type { BodyClass } from './conflictPoints';
+import { m } from './units';
 
 /**
  * How far along a leg to look when deciding which approaches share an axis.
@@ -24,7 +25,7 @@ import type { BodyClass } from './conflictPoints';
  * enough that a real curve is not straightened away.
  */
 const GROUPING_LOOKAHEAD_FRACTION = 0.2;
-const GROUPING_LOOKAHEAD_MAX = 12;
+const GROUPING_LOOKAHEAD_MAX = m(4.8);
 
 export type LaneletId = string;
 export type ConnectorId = string;

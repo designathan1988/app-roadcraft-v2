@@ -37,7 +37,7 @@ export interface MarkingStyle {
   legendHeight(speedKmh: number): number;
 }
 
-const CLASSIC_DASH: readonly [number, number] = [8, 8];
+const CLASSIC_DASH: readonly [number, number] = [m(3.2), m(3.2)];
 
 export function markingStyle(id: MarkingStyleId | undefined): MarkingStyle {
   switch (id) {

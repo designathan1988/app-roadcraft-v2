@@ -114,19 +114,19 @@ export function deckOf(doc: RoadDoc, id: SegmentId): RoadStructure {
 const SMOOTH_PASSES = 3;
 
 /** Length over which a corner eases off its footway's straight run onto the walking contour, u. */
-const EASE = 1.5;
+const EASE = m(0.6);
 const smooth = (t: number): number => t * t * (3 - 2 * t);
 
 /** Ends of two footways at one road node closer than this are one point, u. */
-const JOIN = 0.05;
+const JOIN = m(0.02);
 /** A corner's curve leaves each footway along it for this share of the gap between the ends (fallback only). */
 const TANGENT_SHARE = 0.4;
 /** Points per fallback curve. */
 const CURVE_STEPS = 10;
 /** Tightest turn a walking line is given round a corner, u (1 m). */
-const MIN_CORNER_R = 2.5;
+const MIN_CORNER_R = m(1);
 /** A crossing lands on a walkway no further than this beyond its usable width, u. */
-const LAND_REACH = 2;
+const LAND_REACH = m(0.8);
 
 export class WalkGraph {
   readonly nodes: WalkNode[] = [];
@@ -332,7 +332,7 @@ class WalkingLines {
     const kerbs = this.polygons(Level.Curb, (id) => deckOf(this.net.doc, id) === deck);
     const paths: PathsD = [];
     for (const poly of kerbs) for (const ring of poly) paths.push(ring.map(([x, y]) => ({ x: x!, y: y! })));
-    const grown = inflatePathsD(unionD(paths, [], FillRule.NonZero, 3), inset, JoinType.Round, EndType.Polygon, 2, 3, 0.02);
+    const grown = inflatePathsD(unionD(paths, [], FillRule.NonZero, 3), inset, JoinType.Round, EndType.Polygon, 2, 3, m(0.008));
     const lines = grown.filter((r) => r.length >= 3).map((r) => Polyline.fromPoints([...r, r[0]!]));
     this.cache.set(key, lines);
     return lines;
@@ -341,7 +341,7 @@ class WalkingLines {
 
 /** The pieces of some lines on a grid: the nearest point among all of them, reading only the cells near it. */
 class NearestEdge {
-  private static readonly CELL = 24;
+  private static readonly CELL = m(9.6);
   /** Each piece: ax, ay, bx, by, in line then piece order. */
   private readonly pieces: number[] = [];
   private readonly cells = new Map<number, number[]>();

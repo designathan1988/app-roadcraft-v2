@@ -1,6 +1,7 @@
 import type { Vec2 } from '@core/vec2';
 import type { Rng } from '@core/rng';
 import type { TensorField } from './field';
+import { m } from '../units';
 
 /**
  * THE STREETS OF A GENERATED CITY: hyperstreamlines of the city's tensor
@@ -76,7 +77,7 @@ export function traceStreets(
   levels: readonly StreetLevel[],
   rng: Rng,
 ): StreetLine[] {
-  const cell = Math.max(8, Math.min(...levels.map((l) => Math.min(l.dsepMajor, l.dsepMinor))) / 2);
+  const cell = Math.max(m(3.2), Math.min(...levels.map((l) => Math.min(l.dsepMajor, l.dsepMinor))) / 2);
   const grids: [SampleGrid, SampleGrid] = [new SampleGrid(cell), new SampleGrid(cell)];
   const lines: StreetLine[] = [];
   const dirOf = (family: 0 | 1, p: Vec2): Vec2 | null => (family === 0 ? field.major(p.x, p.y) : field.minor(p.x, p.y));
@@ -225,7 +226,7 @@ export function planarize(lines: readonly StreetLine[], o: GraphOptions): Street
   const cuts: { seg: number; t: number; p: Vec2 }[][] = polys.map(() => []);
   const segs: { line: number; seg: number; a: Vec2; b: Vec2 }[] = [];
   polys.forEach((pl, line) => { for (let i = 1; i < pl.points.length; i++) segs.push({ line, seg: i - 1, a: pl.points[i - 1]!, b: pl.points[i]! }); });
-  const cellSize = 200;
+  const cellSize = m(80);
   const hash = new Map<string, number[]>();
   segs.forEach((s, k) => {
     const x0 = Math.floor(Math.min(s.a.x, s.b.x) / cellSize), x1 = Math.floor(Math.max(s.a.x, s.b.x) / cellSize);

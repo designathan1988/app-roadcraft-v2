@@ -6,6 +6,7 @@ import { carryPoints, chartAt, chartsReaching } from '../planet/charts';
 import type { RoadDoc } from '../doc';
 import type { Network } from '../network';
 import { Level, halfWidth } from '../roadTypes';
+import { m } from '../units';
 import { MAX_ELEMENT, MIN_ELEMENT, elementClash, groundElements } from './elements';
 import { MAX_PLINTH, type GroundAt, sampleFootprint } from './foundation';
 import {
@@ -64,16 +65,16 @@ export interface SiteContext {
 }
 
 /** Nothing the player builds may come closer than this to the map's rim. */
-export const BUILDING_MAP_MARGIN = 8;
+export const BUILDING_MAP_MARGIN = m(3.2);
 /**
  * Gap kept between a footprint and the back of a footway: next to nothing.
  * A town's facades stand ON the back of the pavement; at 0.3 (and the snap's
  * own 0.2 on top) every building stood behind a strip of grass, the road's
  * verge, which read as a gap between the pavement and the wall.
  */
-export const ROAD_CLEARANCE = 0.02;
+export const ROAD_CLEARANCE = m(0.008);
 /** How far two buildings' volumes may run into each other at a shared party wall, world units (20 cm). */
-const PARTY_WALL = 0.5;
+const PARTY_WALL = m(0.2);
 /** Only floating-point noise at an exactly touching road edge, never a visible overlap. */
 const ROAD_CONTACT_EPS = 1e-9;
 /**
@@ -81,9 +82,9 @@ const ROAD_CONTACT_EPS = 1e-9;
  * only touch it, square units (0.16 m2): rounding where an edge meets it. The
  * junction's footway plate is not an obstacle any more (`touchesRoad`).
  */
-const JUNCTION_TOUCH = 1;
+const JUNCTION_TOUCH = m(0.4) * m(0.4);
 /** Overlap two footprints may have and still count as touching (terraces). */
-const TOUCH = 0.05;
+const TOUCH = m(0.02);
 
 /** Structural checks: need no world at all. */
 export function structuralProblem(b: Building): BuildingProblem | null {
@@ -236,7 +237,7 @@ type Contact =
   | { kind: 'road'; minX: number; minY: number; maxX: number; maxY: number; line: readonly Vec2[]; reach: number }
   | { kind: 'junction'; minX: number; minY: number; maxX: number; maxY: number; ring: readonly Vec2[] };
 
-const CONTACT_CELL = 64;
+const CONTACT_CELL = m(25.6);
 
 /**
  * The roads and junction carriageways a building must keep off, binned in a

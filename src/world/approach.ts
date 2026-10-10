@@ -20,7 +20,7 @@ import { m } from './units';
  */
 
 /** Clear space between the junction mouth and the near edge of the zebra. */
-export const CROSSWALK_SETBACK = 3.0;
+export const CROSSWALK_SETBACK = m(1.2);
 /**
  * Depth of the zebra along the direction of travel: 3 m, the Brazilian
  * minimum for an urban crossing (CONTRAN Res. 236/2007, MBST vol. IV, FTP-1:
@@ -30,9 +30,9 @@ export const CROSSWALK_SETBACK = 3.0;
  */
 export const CROSSWALK_DEPTH = m(3);
 /** Clear space between the far edge of the zebra and the stop line. */
-export const STOP_BAR_SETBACK = 1.6;
+export const STOP_BAR_SETBACK = m(0.64);
 /** Painted width of the stop bar itself. */
-export const STOP_BAR_WIDTH = 1.0;
+export const STOP_BAR_WIDTH = m(0.4);
 
 /** Distance from the node to the centre of the crossing. */
 export const crosswalkDistance = (trim: number): number =>
@@ -62,7 +62,7 @@ export const APPROACH_DEPTH =
  * A test asserts this stays at or above the simulation's own `L_MIN`, so the
  * two definitions cannot drift apart.
  */
-export const MIN_LINK_LENGTH = 36;
+export const MIN_LINK_LENGTH = m(14.4);
 
 /** Total length a segment must reserve for drivable road plus both approaches. */
 export const MIN_DRIVABLE_RESERVE = MIN_LINK_LENGTH + 2 * APPROACH_DEPTH;

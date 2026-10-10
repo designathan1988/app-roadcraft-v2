@@ -40,7 +40,7 @@ const SQUARER = [0.72, 0.8] as const;
 /** Samples per turn path, cosine-spaced. */
 const STEPS = 48;
 /** Body-centre spacing of the containment sweep, world units. */
-const SWEEP_STEP = 1.5;
+const SWEEP_STEP = m(0.6);
 /** The least gap between two bodies following one another on a turn. */
 const FOLLOW_GAP = m(1);
 
@@ -376,7 +376,7 @@ function twoPieceTurn(inCentre: Polyline, outCentre: Polyline, middle: Vec2, sha
 /** Reach of the sweep along the approach and exit: half the largest body plus the heading chord. */
 const LANE_REACH = BODY_ENVELOPE[HEAVY]!.length / 2 + HEADING_CHORD + SWEEP_STEP * 2;
 /** Spacing of the samples a lane's digest is taken from, world units. */
-const KEY_STEP = 1;
+const KEY_STEP = m(0.4);
 const laneKeys = new WeakMap<Polyline, Map<string, string>>();
 
 /** Digest of a lane near its end (`atEnd`) or its start, over `reach`. */
@@ -443,7 +443,7 @@ function chooseTurn(inCentre: Polyline, outCentre: Polyline, surface: JunctionSu
     // outlet tangents; the same swept-heavy-body test decides if it is safe.
     let alternate: { choice: TurnChoice; depth: number } | null = null;
     const offsets: Vec2[] = [];
-    for (const dx of [-10, -5, 0, 5, 10]) for (const dy of [-10, -5, 0, 5, 10])
+    for (const dx of [-4, -2, 0, 2, 4].map(m)) for (const dy of [-4, -2, 0, 2, 4].map(m))
       offsets.push({ x: dx, y: dy });
     offsets.sort((a, b) => a.x * a.x + a.y * a.y - b.x * b.x - b.y * b.y || a.x - b.x || a.y - b.y);
     for (const offset of offsets) {

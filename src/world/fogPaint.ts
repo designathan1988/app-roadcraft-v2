@@ -1,3 +1,4 @@
+import { m } from './units';
 /**
  * PAINTED FOG: banks of mist the player lays where they want them - over a
  * valley, along a river, round a hill - and takes away again with the
@@ -38,16 +39,16 @@ export interface FogSettings {
 
 export const DEFAULT_FOG: FogSettings = { density: 1 };
 /** A fog dab's height and speed when a saved one carries none. */
-export const DEFAULT_FOG_HEIGHT = 60;
-export const DEFAULT_FOG_SPEED = 15;
+export const DEFAULT_FOG_HEIGHT = m(24);
+export const DEFAULT_FOG_SPEED = m(6);
 
 /** A map keeps at most this many fog dabs; the oldest go first. */
 export const MAX_FOG_DABS = 20_000;
 
 export const FOG_LIMITS = {
   density: [0, 2],
-  height: [5, 400],
-  speed: [0, 60],
+  height: [m(2), m(160)],
+  speed: [0, m(24)],
 } as const;
 
 const clamp = (v: number, [lo, hi]: readonly [number, number]): number => Math.min(hi, Math.max(lo, v));

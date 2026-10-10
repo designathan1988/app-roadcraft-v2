@@ -137,7 +137,7 @@ export function buildingPads(
   // The platforms filed under every grid cell their box reaches: a corner of
   // the ground asks only the ones over it. Every corner asked every platform
   // in the town, which on a town of six hundred buildings was seconds a pass.
-  const CELL = 64;
+  const CELL = m(25.6);
   const cells = new Map<number, Pad[]>();
   const cellKey = (cx: number, cy: number): number => cx * 100_003 + cy;
   for (const pad of pads) {

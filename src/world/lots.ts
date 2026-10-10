@@ -549,7 +549,7 @@ function landLot(net: Network, corners: readonly Vec2[]): Vec2[] | null {
   // Land within a road's reach though off its paving (outside a bend, where
   // the cross street's line runs on to its node) is no lot: nothing could
   // grow on it, and a zoned lot left bare is what the player saw.
-  if (touchesRoad(net, offsetRing(land, -0.04))) return null;
+  if (touchesRoad(net, offsetRing(land, -m(0.016)))) return null;
   return facingCorners(withFront(simplifyRing(land, m(0.01)), [corners[0]!, corners[1]!]));
 }
 

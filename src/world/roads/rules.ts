@@ -2,6 +2,7 @@ import type { NodeId, SegmentId } from '../ids';
 import type { RoadDoc, RoadNode } from '../doc';
 import { orientedPolyline } from '../geometry';
 import { roadType } from '../roadTypes';
+import { m } from '../units';
 
 /**
  * THE RULES OF A JUNCTION (docs/VIAS.md V5): who goes first, as the source;
@@ -89,7 +90,7 @@ export function mainRoadLegs(doc: RoadDoc, nodeId: NodeId): readonly [SegmentId,
     const seg = doc.segment(id);
     if (!seg) continue;
     const line = orientedPolyline(doc, seg, nodeId);
-    const p = line.sampleAt(Math.min(line.length, 12)).p;
+    const p = line.sampleAt(Math.min(line.length, m(4.8))).p;
     const len = Math.hypot(p.x - node.x, p.y - node.y) || 1;
     dirs.set(id, { x: (p.x - node.x) / len, y: (p.y - node.y) / len });
   }

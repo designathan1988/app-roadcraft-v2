@@ -73,13 +73,13 @@ export const ROAD_TUNING = {
   clearance: {
     /**
      * LIVE. Height of an `elevated` deck's SURFACE over the ground under it
-     * (`structures.ts`): 14 u = 5.6 m, 4.4 m of headroom under the soffit.
+     * (`structures.ts`): 5.6 m, 4.4 m of headroom under the soffit.
      * It is also the vertical room two crossing roads need to pass
      * independently (`commit.ts` `CROSSING_CLEARANCE`, `editRules.ts`).
      */
-    elevated: 14,
-    /** LIVE. A `bridge` deck's surface over the ground (`structures.ts`): 7.5 u = 3 m. */
-    bridge: 7.5,
+    elevated: m(5.6),
+    /** LIVE. A `bridge` deck's surface over the ground (`structures.ts`): 3 m. */
+    bridge: m(3),
     /**
      * NOT LIVE YET (V3). Clear height over a road under any structure:
      * 5.5 m, over TxDOT's 5.03 m for vehicle overpasses and close to its
@@ -98,8 +98,8 @@ export const ROAD_TUNING = {
      * piers and stops shaping it (`elevation.ts` `LIFT_ON`/`LIFT_OFF`, 0.6 m to
      * 2.8 m). The economy prices a road over `pierFrom` as a viaduct.
      */
-    liftOn: 1.5,
-    pierFrom: 7,
+    liftOn: m(0.6),
+    pierFrom: m(2.8),
     /**
      * NOT LIVE YET (V3). Height over the terrain past which a construction in the
      * air is a bridge rather than an embankment: 6 m (JICA builds embankments
@@ -122,10 +122,10 @@ export const ROAD_TUNING = {
     minCover: m(7),
   },
   piers: {
-    /** LIVE. Distance between the bents of an `elevated` road (`render/structures.ts`): 74 u = 29.6 m. */
-    spacingElevated: 74,
-    /** LIVE. Distance between the piers of a `bridge` (`render/structures.ts`): 96 u = 38.4 m. */
-    spacingBridge: 96,
+    /** LIVE. Distance between the bents of an `elevated` road (`render/structures.ts`): 29.6 m. */
+    spacingElevated: m(29.6),
+    /** LIVE. Distance between the piers of a `bridge` (`render/structures.ts`): 38.4 m. */
+    spacingBridge: m(38.4),
     /** NOT LIVE YET (V3). Pier spacing range for girder viaducts: 25 to 35 m (JICA: PC T-girders, generally 30 m). */
     reference: { min: m(25), max: m(35) },
   },

@@ -99,17 +99,17 @@ export interface Diverge {
  * rectangle is lengthened by half a step at both ends, so consecutive samples
  * overlap and a thin conflict cannot fall between two of them.
  */
-const SWEEP_STEP = 1;
+const SWEEP_STEP = m(0.4);
 /** Clearance kept around every body, world units (6 cm). */
-const SWEEP_MARGIN = 0.15;
+const SWEEP_MARGIN = m(0.06);
 /**
  * How far behind its stop line the front of a waiting body is swept, world
  * units: vehicles stop a few units short of the line, and a long one turning
  * beside them swings over that much of the lane next to it (see `inRange`).
  */
-const QUEUE_BACK = 8;
+const QUEUE_BACK = m(3.2);
 /** Broad-phase cell size, world units. */
-const CELL = 8;
+const CELL = m(3.2);
 
 /**
  * Where two movements through a junction physically conflict.
