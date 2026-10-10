@@ -180,6 +180,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
 
   const meshes: Mesh[] = tiles.flatMap((t) => [...t.surface.meshes]);
   const first = tiles[0] as Tile;
+  /** The water's look last passed to the plates (`setWaterLook`); NaN: none yet. */
+  const lastLook = { waves: NaN, foam: NaN, current: NaN, windX: NaN, windZ: NaN, windSpeed: NaN };
   return {
     meshes,
     ground: first.surface.ground,
@@ -208,7 +210,15 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       if (at) setLightFocus(at.face);
       for (const t of tiles) t.surface.bakeRelief(renderer, t === at && focus ? { x: focus.x - t.cx, z: focus.z + t.cy } : null);
     },
-    setWaterLook(look) { for (const t of tiles) t.surface.setWaterLook(look); },
+    // Asked every frame; passed to the 864 plates only when the weather
+    // changed it (the loop alone was some 2% of a frame at the globe).
+    setWaterLook(look) {
+      const was = lastLook;
+      if (was.waves === look.waves && was.foam === look.foam && was.current === look.current
+        && was.windX === look.windX && was.windZ === look.windZ && was.windSpeed === look.windSpeed) return;
+      Object.assign(was, look);
+      for (const t of tiles) t.surface.setWaterLook(look);
+    },
     setGullies(dabs: readonly GullyDab[], auto) {
       for (const t of tiles) {
         const mine: GullyDab[] = [];

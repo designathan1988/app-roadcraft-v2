@@ -2934,7 +2934,14 @@ export function createSceneRenderer(
         }
         if (scanStack.length === 0 && compileSamples.length > 0) {
           const warm = new Group();
-          for (const sample of compileSamples) warm.add(sample.clone(false));
+          // Shown in the copy: three's compile walks only what is visible, and
+          // a mesh hidden until it has something to draw (a piece's water) is
+          // compiled here, before it first shows.
+          for (const sample of compileSamples) {
+            const copy = sample.clone(false);
+            copy.visible = true;
+            warm.add(copy);
+          }
           compileSamples.length = 0;
           compiling = true;
           // For the target the scene is drawn into (`drainCompiles`).

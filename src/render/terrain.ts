@@ -2301,6 +2301,11 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   // The river animates itself from here on: nothing in the draw loop has to
   // know that the terrain owns something with a clock in it.
   waterSurface.attach(water);
+  // Hidden while it holds no water (`rebuildWater` shows it): three binds a
+  // mesh's program and every texture of its material before it finds the
+  // geometry empty (r186 `renderBufferDirect`), and on the planet the 864
+  // pieces' empty water sheets were some 500 such binds a frame at the globe.
+  water.visible = false;
 
   let index = new TerrainIndex([], 0);
   let revision = -1;
@@ -3010,6 +3015,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     const box = water.geometry.boundingBox;
     // In world (x, y): the mesh is three's (x, height, -y).
     waterBox = box && !box.isEmpty() ? { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z } : null;
+    water.visible = waterBox !== null;
     waterRevision++;
     // The water moved, and with it the rivers' forests and the veredas.
     ecologyAll();
