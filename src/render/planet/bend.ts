@@ -322,6 +322,44 @@ export function rehome(x: number, y: number): { x: number; y: number; turn: numb
   return { x: c.x + p.x, y: c.y + p.y, turn };
 }
 
+/**
+ * THE PLANET'S SUN: fixed over the planet, turning round its axis (the
+ * planet frame's z, through the faces 2 and 5) once a day; the camera moves
+ * round the planet, the sun does not move with it. At noon (720) it stands
+ * over face 0's centre (+x), in the morning over its east (+y), with a little
+ * tilt so the poles see it too.
+ */
+const SUN_TILT = 0.22;
+const sunPlanet = new Vector3();
+function sunInPlanet(minutes: number, out: Vector3): Vector3 {
+  const sigma = (-(minutes - 720) / 1440) * Math.PI * 2;
+  return out.set(Math.cos(sigma), Math.sin(sigma), SUN_TILT).normalize();
+}
+
+/** The sun's direction as drawn (three's space, unit) at a time of day (minutes). */
+export function planetSun(minutes: number, out: Vector3): Vector3 {
+  return sunInPlanet(minutes, out).transformDirection(motion);
+}
+
+/**
+ * The time the sun makes at the place the view looks at (minutes, 0..1440):
+ * noon where it stands overhead, the morning on the side it is rising over.
+ */
+export function planetLocalMinutes(minutes: number): number {
+  sunInPlanet(minutes, sunPlanet);
+  atlasToFaceInto(anchor.x, -anchor.z, local);
+  faceToSphereInto(local.face, local.x, local.y, dir);
+  const at = Math.atan2(dir.y, dir.x), sun = Math.atan2(sunPlanet.y, sunPlanet.x);
+  let delta = (at - sun) / (Math.PI * 2);
+  delta -= Math.round(delta);
+  return ((720 + delta * 1440) % 1440 + 1440) % 1440;
+}
+
+/** The motion from the drawn world back to the planet's own frame (the clouds' noise is read there). */
+export function planetInverse(): Readonly<Matrix4> {
+  return inverseT;
+}
+
 /** A world point projected through `planetPointInto` (for screen positions). */
 export function planetWorld(x: number, y: number, z: number): Vector3 {
   return planetPointInto(x, y, z, tmp);

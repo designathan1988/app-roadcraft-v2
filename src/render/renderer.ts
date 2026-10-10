@@ -81,7 +81,7 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
-import { installPlanet, planetScene } from './planet/bend';
+import { installPlanet, planetLocalMinutes, planetScene, planetSun } from './planet/bend';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -529,6 +529,8 @@ export function createSceneRenderer(
   const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
   if (__PLANET__) planetScene(scene);
+  /** The planet's sun this frame (`planetSun`). */
+  const planetSunNow = new Vector3();
   // The root never moves. Keep its identity matrix from forcing every static
   // world child to recompute a world matrix on every render pass.
   scene.matrixAutoUpdate = false;
@@ -3128,8 +3130,9 @@ export function createSceneRenderer(
         rain.update(weather.rain, target, span, rainWind, step);
         weatherActive = weather.rain > 0 || weather.lightning > 0 || flash > 0 || (weather.wind > 0 && placedCloudsShown);
       }
-      if (__PLANET__) environment.setTwist(rig.twist);
-      const dark = environment.setTimeOfDay(clock);
+      // On the planet the sun stands over the planet, not over the view: the
+      // time it makes where the view looks, and its true direction there.
+      const dark = __PLANET__ ? environment.setTimeOfDay(planetLocalMinutes(clock), planetSun(clock, planetSunNow)) : environment.setTimeOfDay(clock);
       // What a cloud's shadow can take: the sun's share of the light now.
       post.setDirectShare(environment.directShare());
       if (Math.abs(dark - lastDark) > 0.01) {

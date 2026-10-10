@@ -5,7 +5,7 @@ import {
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
 import { PLANET_RADIUS } from '@core/cubeSphere';
-import { planetCentre, planetPointInto } from './planet/bend';
+import { planetCentre, planetInverse, planetPointInto } from './planet/bend';
 import { m } from '@world/units';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -402,6 +402,7 @@ export function createPostChain(
         if (__PLANET__) {
           planetCentre(onPlanet);
           (u['uPlanet']!.value as Vector4).set(onPlanet.x, onPlanet.y, onPlanet.z, PLANET_RADIUS);
+          (u['uPlanetInverse']!.value as Matrix4).copy(planetInverse());
         }
         u['uShadowMapOn']!.value = plane === null ? 0 : 1;
         if (plane !== null) u['uShadowPlane']!.value = plane;
@@ -619,6 +620,7 @@ const CLOUD_SHADOWS = {
     uGroundFogSlab: { value: new Vector2() },
     uMapHalf: { value: WORLD_HALF },
     uPlanet: { value: new Vector4() },
+    uPlanetInverse: { value: new Matrix4() },
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
     // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera
@@ -689,6 +691,12 @@ const CLOUD_SHADOWS = {
     uniform float uEyeShift;
     // The planet as drawn (\`planet/bend.ts\`): its centre and radius; w 0 on the flat map.
     uniform vec4 uPlanet;
+    // The drawn world back to the planet's own frame: what is fixed on the
+    // planet (a cloud's billows) is read there, or it swims as the view moves.
+    uniform mat4 uPlanetInverse;
+    vec3 planetFixed(vec3 p) {
+      return uPlanet.w > 0.0 ? (uPlanetInverse * vec4(p, 1.0)).xyz : p;
+    }
     // Height over the ground's base level: over the sphere on the planet.
     float altitude(vec3 p) {
       return uPlanet.w > 0.0 ? length(p - uPlanet.xyz) - uPlanet.w : p.y;
@@ -740,7 +748,10 @@ const CLOUD_SHADOWS = {
         // Each puff a little flattened, and joined wide: one heap with a
         // lumpy top, not a bunch of balls.
         vec3 o = p - s.xyz;
-        o.y *= 1.3;
+        // Flattened along its own up: the world's y on the flat map, the
+        // planet's radius over it on the planet.
+        vec3 cloudUp = uPlanet.w > 0.0 ? normalize(s.xyz - uPlanet.xyz) : vec3(0.0, 1.0, 0.0);
+        o += cloudUp * dot(o, cloudUp) * 0.3;
         d = smin(d, length(o) - s.w, size * 0.2);
       }
       // A flat base: the cloud stops at its condensation level.
@@ -760,13 +771,14 @@ const CLOUD_SHADOWS = {
       // The billows boil: they rise and turn over as the cloud lives.
       vec3 drift = vec3(uTime * 0.05, -uTime * 0.04, uTime * 0.02);
       float life = uLife[c];
-      vec3 q = p / (size * 0.3) + drift;
+      vec3 fixedP = planetFixed(p);
+      vec3 q = fixedP / (size * 0.3) + drift;
       float low = noise3(q) * 0.5 + noise3(q * 2.03 + 5.1) * 0.3 + noise3(q * 4.1 + 9.7) * 0.2;
       // The outline broken by that noise, deep enough that no puff keeps a
       // sphere's clean edge.
       float shape = clamp(heap(c, p) * 3.2 - (1.0 - low) * (0.55 + 0.4 * (1.0 - life)) - (1.0 - life) * 0.8, 0.0, 1.0);
       if (shape <= 0.0) return 0.0;
-      vec3 r = p / (size * 0.055) + drift * 2.3;
+      vec3 r = fixedP / (size * 0.055) + drift * 2.3;
       float b1 = 1.0 - abs(noise3(r) * 2.0 - 1.0);
       float b2 = 1.0 - abs(noise3(r * 2.13 + 3.3) * 2.0 - 1.0);
       float detail = b1 * 0.65 + b2 * 0.35;
@@ -1081,7 +1093,10 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
         // Over the map only now (layClouds), so they show from every zoom
         // (the player, 2026-10-07: "quero que as nuvens apareçam"); only
         // past the whole map's width do they give way to their shadows.
-        float bodies = 1.0 - smoothstep(9000.0, 14000.0, spanFocus);
+        // On the planet the clouds show at every zoom, out to the whole globe:
+        // given way to their shadows past a width, they came and went in a
+        // notch of the wheel (the player, 2026-10-10).
+        float bodies = uPlanet.w > 0.0 ? 1.0 : 1.0 - smoothstep(9000.0, 14000.0, spanFocus);
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
           spans[c] = vec2(-1.0);
@@ -1091,7 +1106,11 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
         // step) so the accumulation sees other depths each time (arXiv
         // 1609.05344, 3.2); with the camera moving no history is kept and the
         // start stays put, as before.
-        float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453 + uFrame * 0.6180339887);
+        // Interleaved gradient noise (Jimenez, "Next Generation Post Processing
+        // in Call of Duty: Advanced Warfare", 2014): a start that reads as a
+        // fine even texture in one frame, where a white-noise hash grained the
+        // clouds whenever the view moved and no history smoothed it.
+        float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy + uFrame * 5.588238, vec2(0.06711056, 0.00583715))));
         // Lit by the sun on its sunward side, by the sky elsewhere; dim at night.
         vec3 skyLight = mix(uFogColor * 0.55 + vec3(0.12), vec3(0.03, 0.035, 0.05), uDark);
         vec3 baseShade = mix(vec3(0.22, 0.24, 0.3), vec3(0.02, 0.025, 0.035), uDark);

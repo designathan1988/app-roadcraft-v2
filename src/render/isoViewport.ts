@@ -119,12 +119,6 @@ export interface IsoRig {
    * building without a jump and never blocked.
    */
   setSolids(floorAt: ((x: number, y: number) => number) | null): void;
-  /**
-   * On the planet: the turn of the world's axes the view's centre has taken
-   * crossing faces, rad (each crossing's `rehome` turn, summed). The sun turns
-   * with it (`SceneEnvironment.setTwist`).
-   */
-  readonly twist: number;
 }
 
 /** The pull in front of a building (`apply`): samples along the line of sight. */
@@ -210,7 +204,6 @@ export function createIsoRig(
         target.x = moved.x;
         target.z = -moved.y;
         azimuth = wrapAzimuth(azimuth + moved.turn);
-        twist = wrapAzimuth(twist + moved.turn);
       }
       anchorPlanet(target.x, target.z);
     } else {
@@ -315,7 +308,6 @@ export function createIsoRig(
   const globeLook = new Vector3();
   /** How far out to the globe the view is, and its scale at the centre, as `apply` last set them. */
   let globeNow = 0;
-  let twist = 0;
   let scaleNow = 1;
   /** The drawn ground's height at a map point (`setGround`). */
   let groundAt: ((x: number, y: number) => number) | null = null;
@@ -546,9 +538,6 @@ export function createIsoRig(
     target,
     get chasing() {
       return chase !== null;
-    },
-    get twist() {
-      return twist;
     },
     setGround(next) {
       groundAt = next;
