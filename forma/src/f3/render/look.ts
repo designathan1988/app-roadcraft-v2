@@ -12,6 +12,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { MaterialKey } from '../../geometry/parts';
 import { createRenderContext, type RenderContext } from '../../render/context';
 import { DETAIL_MEAN, disposePbr, pbrFor } from './pbr';
+import { disposeProc, procFor, type ProcTextures } from './procedural';
 
 const SKY_VERTEX = `
   varying vec3 vDir;
@@ -205,6 +206,42 @@ function windowGlass(m: THREE.MeshStandardMaterial, color: string): void {
 }
 
 /**
+ * Material procedural: o detalhe traz luminância (R), máscara da 2ª cor (G)
+ * e rugosidade (B); a cor principal e a 2ª cor são do material.
+ */
+function procMaterial(m: THREE.MeshStandardMaterial, key: MaterialKey, t: ProcTextures): void {
+  m.map = t.detail;
+  m.normalMap = t.normal;
+  m.normalScale.set(1, 1);
+  m.bumpMap = null;
+  m.roughnessMap = null;
+  m.roughness = 1;
+  m.color.set(key.color).multiplyScalar(1 / 0.8);
+  const c2 = { value: new THREE.Color(key.color2 ?? t.def.color2).multiplyScalar(1 / 0.8) };
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uColor2 = c2;
+    sh.fragmentShader =
+      'uniform vec3 uColor2;\n' +
+      sh.fragmentShader
+        .replace(
+          '#include <map_fragment>',
+          `#ifdef USE_MAP
+  vec4 procT = texture2D( map, vMapUv );
+  diffuseColor.rgb = mix( diffuseColor.rgb, uColor2, procT.g ) * procT.r;
+#endif`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `float roughnessFactor = roughness;
+#ifdef USE_MAP
+  roughnessFactor *= texture2D( map, vMapUv ).b;
+#endif`,
+        );
+  };
+  m.customProgramCacheKey = () => 'forma-proc';
+}
+
+/**
  * Contexto de render com materiais ricos: texturas PBR reais (cor, normal,
  * rugosidade) por acabamento, vidro de janela físico, metal com brilho e
  * interiores escuros (de dia, um cômodo visto de fora é bem mais escuro que a
@@ -218,11 +255,12 @@ export function createLookContext(): RenderContext {
     boxGeometry: base.boxGeometry,
     modules: base.modules,
     material(key: MaterialKey) {
-      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}`;
+      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}|${key.color2 ?? ''}|${key.params ?? ''}`;
       let m = extra.get(id);
       if (m) return m;
       m = base.material(key);
       const pbr = key.texture && key.finish ? pbrFor(key.finish) : null;
+      const proc = key.texture && key.finish && !pbr ? procFor(key.finish, key.params ? (Object.fromEntries(JSON.parse(key.params) as [string, number][]) as Record<string, number>) : undefined) : null;
       if (key.role === 'glass' && key.roughness < 0.1) windowGlass(m, key.color);
       else if (key.role === 'glass') {
         // Vidro sem nada atrás (cobertura, pele de vidro): opaco e espelhado.
@@ -233,7 +271,8 @@ export function createLookContext(): RenderContext {
       } else if (key.finish === 'interior') {
         m.roughness = 1;
         m.envMapIntensity = 0.12;
-      } else if (pbr) {
+      } else if (proc) procMaterial(m, key, proc);
+      else if (pbr) {
         m.map = pbr.map;
         m.normalMap = pbr.normalMap;
         m.normalScale.set(pbr.set.normalScale, pbr.set.normalScale);
@@ -253,6 +292,7 @@ export function createLookContext(): RenderContext {
       extra.clear();
       base.dispose();
       disposePbr();
+      disposeProc();
     },
   };
 }

@@ -141,8 +141,8 @@ export const CSS = `
 .f3-grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px}
 .f3-field{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:6px;min-width:0;min-height:26px}
 .f3-field>span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
-.f3-field.w{grid-column:1/-1;grid-template-columns:100px minmax(0,1fr)}
-.f3-field.w>span{max-width:none}
+.f3-field.w{grid-column:1/-1;grid-template-columns:116px minmax(0,1fr)}
+.f3-field.w>span{max-width:none;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.15;overflow-wrap:anywhere}
 .f3-in{position:relative;min-width:0;display:block}
 .f3-in em{position:absolute;right:7px;top:50%;transform:translateY(-50%);font-style:normal;font-size:10.5px;color:var(--faint);pointer-events:none}
 .f3-field input,.f3-field select,.f3-sw select{width:100%;min-width:0;height:24px;border:1px solid transparent;border-radius:5px;padding:0 7px;font:inherit;background:var(--field);color:var(--ink)}
@@ -169,9 +169,13 @@ export const CSS = `
 .f3-btn.danger{color:var(--danger)}
 .f3-btn.primary{background:var(--accent);color:#1b0f06;font-weight:600}
 .f3-btn.ic{width:24px;padding:0;justify-content:center}
-.f3-sw{display:grid;grid-template-columns:100px 24px minmax(0,1fr);gap:6px;align-items:center;min-height:26px}
+.f3-sw{display:grid;grid-template-columns:116px 24px minmax(0,1fr);gap:6px;align-items:center;min-height:26px}
 .f3-sw input[type=color]{width:24px;height:22px;border:0;border-radius:5px;padding:0;background:none;cursor:pointer}
 .f3-sw>span{font-size:11px;color:var(--muted)}
+.f3-pick{width:100%;height:26px;border:1px solid transparent;border-radius:5px;padding:0 6px;font:inherit;background:var(--field);color:var(--ink)}
+.f3-pick:focus{outline:none;border-color:var(--accent)}
+.f3-swatch{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;cursor:pointer}
+.f3-swatch input{width:22px;height:22px;border:0;border-radius:5px;padding:0;background:none;cursor:pointer}
 .f3-op{border-top:1px solid var(--line);margin-top:8px;padding-top:6px}
 .f3-op h4{margin:0 0 4px;font-size:11px;font-weight:600;color:var(--muted)}
 .f3-op .f3-row{justify-content:flex-end;margin-top:4px}

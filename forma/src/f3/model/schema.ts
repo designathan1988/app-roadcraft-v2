@@ -170,6 +170,10 @@ export interface MaterialRef {
   /** Acabamento: plaster, brick, stone, concrete, wood, metal, glass, tile, panel… */
   finish: string;
   color: string;
+  /** 2ª cor do acabamento procedural (junta, argamassa, rejunte). */
+  color2?: string;
+  /** Parâmetros do acabamento procedural (medida do tijolo, junta, aparelho…). */
+  params?: Record<string, number>;
 }
 
 export interface SolidMaterials {
@@ -177,6 +181,8 @@ export interface SolidMaterials {
   roof: MaterialRef;
   trim: MaterialRef;
   base: MaterialRef;
+  /** Piso do topo (terraço, laje); sem ele, terraço usa piso cerâmico e laje usa manta. */
+  floor?: MaterialRef;
 }
 
 export interface Solid {

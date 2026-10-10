@@ -21,8 +21,11 @@ export interface MaterialKey {
   texture?: TextureKind;
   /** Metros por repetição da textura. */
   textureScale?: number;
-  /** Acabamento do FORMA 3 (escolhe o conjunto de texturas PBR). */
+  /** Acabamento do FORMA 3 (escolhe o gerador procedural ou o conjunto PBR). */
   finish?: string;
+  /** 2ª cor e parâmetros do acabamento procedural (JSON estável). */
+  color2?: string;
+  params?: string;
 }
 
 /** Dados de seleção ligados a cada peça. */

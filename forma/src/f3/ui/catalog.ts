@@ -8,6 +8,7 @@ import { CATEGORY_NAMES, type Category } from '../families/family';
 import { createThumbnailer, type Thumbnailer } from '../render/thumbs';
 import { icon } from './icons';
 import { BLOCKS } from '../model/blocks';
+import { MATERIAL_PRESETS, materialThumb } from './materials';
 
 const FAV_KEY = 'forma3_favorites';
 const ORDER: Category[] = ['windows', 'doors', 'balconies', 'railings', 'fences', 'gates', 'structure', 'stairs', 'canopies', 'shading', 'ornament', 'roofgear', 'industrial', 'site', 'walls', 'facade'];
@@ -29,7 +30,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
   const types = (): ComponentType[] => [...BUILTIN_TYPES, ...ed.project.types.filter((t) => !BUILTIN_TYPES.some((b) => b.id === t.id))];
   const cats = (): string[] => {
     const present = new Set(types().map((t) => family(t.family)?.category).filter(Boolean) as string[]);
-    return ['blocks', 'fav', ...ORDER.filter((c) => present.has(c)), 'mine'];
+    return ['blocks', 'materials', 'fav', ...ORDER.filter((c) => present.has(c)), 'mine'];
   };
   host.innerHTML = `<div class="f3-cat-head"><b>Biblioteca</b>
     <input type="search" placeholder="Buscar: janela, portão, sacada…" aria-label="Buscar na biblioteca">
@@ -48,7 +49,7 @@ export function mountCatalog(ed: Editor3): { open(): void } {
     if (e.key === 'Escape') ed.toggleLibrary(false);
   });
 
-  const label = (c: string) => (c === 'blocks' ? 'Blocos de massa' : c === 'fav' ? 'Favoritos' : c === 'mine' ? 'Meus tipos' : CATEGORY_NAMES[c as Category]);
+  const label = (c: string) => (c === 'blocks' ? 'Blocos de massa' : c === 'materials' ? 'Materiais' : c === 'fav' ? 'Favoritos' : c === 'mine' ? 'Meus tipos' : CATEGORY_NAMES[c as Category]);
   const renderTabs = () => {
     tabsEl.innerHTML = cats()
       .map((c) => `<button data-tab="${c}" aria-pressed="${c === tab && !query}">${label(c)}</button>${c === 'fav' ? '<hr>' : ''}`)
@@ -87,6 +88,29 @@ export function mountCatalog(ed: Editor3): { open(): void } {
         c.addEventListener('click', () => {
           ed.startBlock(c.dataset.block!);
           ed.toggleLibrary(false);
+        }),
+      );
+      return;
+    }
+    if (tab === 'materials' && !query) {
+      let html = '';
+      let group = '';
+      for (const m of MATERIAL_PRESETS) {
+        if (m.group !== group) {
+          group = m.group;
+          html += `<div style="grid-column:1/-1;font-size:11px;color:var(--faint);padding:4px 2px 0">${group}</div>`;
+        }
+        const th = materialThumb(m.ref);
+        html += `<div class="f3-card" data-mat="${m.id}" title="${m.name}: clique e pinte as faces (Shift: volume todo)"><img alt="" ${th ? `src="${th}"` : ''} style="object-fit:cover"><span>${m.name}</span></div>`;
+      }
+      cards.innerHTML = html;
+      cards.querySelectorAll<HTMLElement>('[data-mat]').forEach((c) =>
+        c.addEventListener('click', () => {
+          const m = MATERIAL_PRESETS.find((x) => x.id === c.dataset.mat)!;
+          ed.paintMat = structuredClone(m.ref);
+          ed.setTool('paint');
+          ed.toggleLibrary(false);
+          ed.toast(`${m.name}: clique numa face para pintar.`);
         }),
       );
       return;

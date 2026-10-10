@@ -17,6 +17,7 @@ import { icon } from './icons';
 import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, presetRules, setbackOn } from '../model/quick';
 import { addBands, planBox, type BandPreset } from '../model/modeling';
 import { polish } from './kit';
+import { bindPaintPanel, paintPanel } from './materials';
 
 const ROOFS: [RoofKind, string, string][] = [
   ['flat', 'Plano', 'flat'],
@@ -60,10 +61,16 @@ export function mountInspector(ed: Editor3): void {
   let lastKey = '';
   const render = () => {
     const b = ed.activeBuilding();
-    const key = JSON.stringify([ed.sel, ed.context, b && ed.store.revision.get(b.id), ed.project.types.length]);
+    const key = JSON.stringify([ed.sel, ed.context, b && ed.store.revision.get(b.id), ed.project.types.length, ed.tool, ed.tool === 'paint' ? ed.paintMat : 0]);
     // Não redesenha enquanto o usuário digita num campo.
     if (key === lastKey && side.contains(document.activeElement)) return;
     lastKey = key;
+    if (ed.tool === 'paint') {
+      side.innerHTML = paintPanel(ed);
+      bindPaintPanel(ed, side);
+      polish(side);
+      return;
+    }
     if (!b) {
       side.innerHTML = emptyHelp();
       return;
@@ -193,7 +200,7 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
     <label class="f3-field" style="margin-top:8px"><span>Fachada pronta</span><select data-quick-facade><option value="">Escolher…</option>${FACADE_PRESETS.map((f) => `<option value="${f.id}">${f.name}</option>`).join('')}</select></label></div>
   <div class="f3-sec"><h3>Cobertura</h3><div class="f3-chips">${ROOFS.map(([k, l, ic]) => `<button class="f3-chip" data-roof="${k}" aria-pressed="${r.kind === k}" title="${l}">${icon(ic)}<span>${l}</span></button>`).join('')}</div>
     <div class="f3-grid2" style="margin-top:8px">${roofParams}</div></div>
-  <div class="f3-sec"><h3>Materiais</h3><div style="display:grid;gap:6px">${finishSelect('wall', 'Paredes', s.materials.wall)}${finishSelect('roof', 'Telhado', s.materials.roof)}${finishSelect('trim', 'Detalhes', s.materials.trim)}${finishSelect('base', 'Base', s.materials.base)}</div></div>
+  <div class="f3-sec"><h3>Materiais</h3><div style="display:grid;gap:6px">${finishSelect('wall', 'Paredes', s.materials.wall)}${finishSelect('roof', 'Telhado', s.materials.roof)}${finishSelect('trim', 'Detalhes', s.materials.trim)}${finishSelect('base', 'Base', s.materials.base)}${finishSelect('floor', 'Piso do topo', s.materials.floor ?? { finish: s.roof.kind === 'terrace' ? 'floor' : 'membrane', color: s.roof.kind === 'terrace' ? '#d4ccbf' : '#8f9290' })}</div></div>
   <div class="f3-sec"><h3>Fachada <span class="r"><button class="f3-btn" data-act="addrule">${icon('add')}Regra</button></span></h3>${s.facade.length ? s.facade.map((f) => ruleRow(ed, f)).join('') : '<p class="f3-empty" style="padding:2px 0">Sem regras de fachada.</p>'}</div>`;
 }
 
@@ -324,7 +331,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
       if (k.endsWith('.color') || k.endsWith('.finish')) {
         const [slot, prop] = k.split('.') as [string, 'color' | 'finish'];
         if (slot === 'edgemat') return ed.changeSolid((x) => void (((x.edges[ed.sel.face!.edge!] ??= {}).material ??= { ...x.materials.wall })[prop] = el.value));
-        return ed.changeSolid((x) => void (x.materials[slot as keyof Solid['materials']][prop] = el.value));
+        return ed.changeSolid((x) => void ((x.materials[slot as 'wall'] ??= { ...x.materials.base })[prop] = el.value));
       }
       const v = parse(el.value);
       if (!Number.isFinite(v)) return;
@@ -350,7 +357,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
     el.addEventListener('change', () => {
       const [slot, prop] = el.dataset.k!.split('.') as [string, 'finish'];
       if (slot === 'edgemat') return ed.changeSolid((x) => void (((x.edges[ed.sel.face!.edge!] ??= {}).material ??= { ...x.materials.wall })[prop] = el.value));
-      ed.changeSolid((x) => void (x.materials[slot as keyof Solid['materials']][prop] = el.value));
+      ed.changeSolid((x) => void ((x.materials[slot as 'wall'] ??= { ...x.materials.base })[prop] = el.value));
     }),
   );
   // Regras de fachada.

@@ -4,7 +4,7 @@
 // face ou componente. Arrastos partem de uma cópia do estado inicial e só
 // gravam no histórico ao soltar.
 import * as THREE from 'three';
-import type { Building3, ID, Item, Project3, Solid, Vec2, Vec3 } from '../model/schema';
+import type { Building3, ID, Item, MaterialRef, Project3, Solid, Vec2, Vec3 } from '../model/schema';
 import { building as newBuilding, circlePlan, levelsFor, planVertices, project as newProject, rectPlan, roofSpec, solid as newSolid, uid } from '../model/defaults';
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
@@ -88,7 +88,7 @@ export class Editor3 {
   placing: ID | null = null;
   /** Bloco de massa sendo posicionado. */
   blockId: string | null = null;
-  paintMat = { finish: 'brick', color: '#a8553a' };
+  paintMat: MaterialRef = { finish: 'brick', color: '#a8553a', color2: '#d8d2c6' };
   measure: Measure | null = null;
   warnings: string[] = [];
   private drag: Drag | null = null;
@@ -2416,21 +2416,28 @@ export class Editor3 {
     const f = hit.face;
     const s = findSolid(b, f.solid);
     if (!s) return;
+    // Que material do volume cada tipo de face usa (pintar e conta-gotas).
+    const edge = f.edge ? (f.edge.endsWith(':c') ? f.edge.slice(0, -2) : f.edge) : undefined;
+    const slot = (k: string): 'wall' | 'roof' | 'trim' | 'base' | 'floor' | 'edge' =>
+      k === 'roof' ? 'roof' : k === 'top' ? 'floor' : k === 'fascia' || k === 'soffit' || k === 'parapet' || k === 'coping' || k === 'band' || k === 'reveal' ? 'trim' : k === 'plinth' || k === 'bottom' ? 'base' : (k === 'side' || k === 'gable' || k === 'bevel') && edge ? 'edge' : 'wall';
+    const where = slot(f.kind);
     if (e.altKey) {
-      const ref = f.kind === 'roof' ? s.materials.roof : f.kind === 'side' && f.edge ? (s.edges[f.edge]?.material ?? s.materials.wall) : s.materials.wall;
-      this.paintMat = { ...ref };
-      this.toast(`Material copiado: ${ref.finish}.`);
+      const ref = where === 'edge' ? (s.edges[edge!]?.material ?? s.materials.wall) : where === 'floor' ? (s.materials.floor ?? s.materials.base) : s.materials[where];
+      this.paintMat = structuredClone(ref);
+      this.toast('Material copiado para o balde.');
       this.emit();
       return;
     }
     this.change(b.id, (x) => {
       const so = findSolid(x, s.id)!;
-      const m = { ...this.paintMat };
-      if (f.kind === 'roof' || f.kind === 'top') so.materials.roof = m;
-      else if (f.kind === 'fascia' || f.kind === 'soffit') so.materials.trim = m;
-      else if (f.kind === 'side' && f.edge && e.shiftKey) (so.edges[f.edge] ??= {}).material = m;
-      else so.materials.wall = m;
-    }, 'Pintado.');
+      const m = structuredClone(this.paintMat);
+      // Como no SketchUp: o clique pinta a face; Shift pinta as paredes do volume inteiro.
+      if (where === 'edge' && e.shiftKey) {
+        so.materials.wall = m;
+        for (const es of Object.values(so.edges)) delete es.material;
+      } else if (where === 'edge') (so.edges[edge!] ??= {}).material = m;
+      else so.materials[where] = m;
+    }, where === 'edge' && !e.shiftKey ? 'Face pintada (Shift pinta o volume todo).' : 'Pintado.');
   }
 
   // ── Inferência na tela ───────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { metricUVs } from '../../render/build-building';
 import { materialKey } from './finishes';
 
 const FLAT_ROOF = { finish: 'membrane', color: '#8f9290' };
+const TERRACE_FLOOR = { finish: 'floor', color: '#d4ccbf', color2: '#a29a8d' };
 
 /** Material de uma face de origem. */
 export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
@@ -28,7 +29,7 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
     case 'roof':
       return materialKey(s.materials.roof, 'roof');
     case 'top':
-      return materialKey(s.roof.kind === 'terrace' ? s.materials.base : FLAT_ROOF, 'roof');
+      return materialKey(s.materials.floor ?? (s.roof.kind === 'terrace' ? TERRACE_FLOOR : FLAT_ROOF), 'roof');
     case 'glazing':
       return materialKey({ finish: 'glass', color: '#6d8794' }, 'glass');
     case 'fascia':
@@ -59,7 +60,7 @@ export interface ShellMesh {
   dispose(): void;
 }
 
-const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.metalness ?? 0}`;
+const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.metalness ?? 0}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}`;
 
 export function buildShellMesh(b: Building3, ev: Evaluated, ctx: RenderContext, solidOf?: (id: ID) => boolean): ShellMesh {
   const { positions: P, indices: I, faceOf } = ev.shell;

@@ -62,7 +62,7 @@ export interface PartsMesh {
   dispose(): void;
 }
 
-const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}`;
+const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}`;
 
 export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true, visible?: (tag: PartTag) => boolean): PartsMesh {
   const show = visible ? parts.tags.map((t) => visible(t)) : null;

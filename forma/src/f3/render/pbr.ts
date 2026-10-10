@@ -16,17 +16,14 @@ export interface PbrSet {
 
 /** Acabamento → conjunto. */
 export const PBR_SETS: Record<string, PbrSet> = {
-  plaster: { dir: 'Plaster001', width: 2.0, normalScale: 0.9, contrast: 0.55 },
-  paint: { dir: 'Plaster001', width: 3.0, normalScale: 0.18, contrast: 0.12 },
-  brick: { dir: 'Bricks085', width: 2.4, normalScale: 1.0, contrast: 0.9 },
-  stone: { dir: 'Bricks066', width: 2.4, normalScale: 1.0, contrast: 0.7 },
-  concrete: { dir: 'Concrete034', width: 1.1 * 2, normalScale: 0.6, contrast: 0.5 },
-  wood: { dir: 'Wood049', width: 0.8, normalScale: 0.7, contrast: 0.8 },
-  metal: { dir: 'CorrugatedSteel007B', width: 2.0, normalScale: 1.0, contrast: 0.5 },
-  panel: { dir: 'CorrugatedSteel007B', width: 3.0, normalScale: 0.5, contrast: 0.3 },
-  tile: { dir: 'RoofingTiles006', width: 3.2, normalScale: 1.2, contrast: 0.8 },
-  slate: { dir: 'RoofingTiles003', width: 2.0, normalScale: 1.0, contrast: 0.8 },
-  membrane: { dir: 'Concrete034', width: 2.2, normalScale: 0.3, contrast: 0.25 },
+  'plaster-photo': { dir: 'Plaster001', width: 2.0, normalScale: 0.9, contrast: 0.55 },
+  'brick-photo': { dir: 'Bricks085', width: 2.4, normalScale: 1.0, contrast: 0.9 },
+  'stone-photo': { dir: 'Bricks066', width: 2.4, normalScale: 1.0, contrast: 0.7 },
+  'concrete-photo': { dir: 'Concrete034', width: 2.2, normalScale: 0.6, contrast: 0.5 },
+  'wood-photo': { dir: 'Wood049', width: 0.8, normalScale: 0.7, contrast: 0.8 },
+  'metal-photo': { dir: 'CorrugatedSteel007B', width: 2.0, normalScale: 1.0, contrast: 0.5 },
+  'tile-photo': { dir: 'RoofingTiles006', width: 3.2, normalScale: 1.2, contrast: 0.8 },
+  'slate-photo': { dir: 'RoofingTiles003', width: 2.0, normalScale: 1.0, contrast: 0.8 },
 };
 
 /** Média do detalhe guardado (o material compensa multiplicando a cor). */
