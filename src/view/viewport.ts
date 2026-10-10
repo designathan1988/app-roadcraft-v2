@@ -47,6 +47,13 @@ export interface Viewport {
    * drag out a road and see nothing until they let go.
    */
   toScreen(p: Vec2, cssW: number, cssH: number, height?: number): Vec2;
+  /**
+   * Whether the ground under a pointer, on the plane at `height`, can be held
+   * by a pan: false where the pointer's ray misses that plane (over the
+   * horizon) or meets it so far off that a pixel would carry the view far.
+   * A pan that cannot hold its point slides the view by the drag instead.
+   */
+  holds(px: number, py: number, height: number, cssW: number, cssH: number): boolean;
   /** Moves the view so `grabbed` (a point at `height`, what was under the pointer) sits under the pointer again. */
   panTo(grabbed: Vec2, px: number, py: number, cssW: number, cssH: number, height?: number): void;
   /** Zooms about a pointer, keeping the ground under it (at `height`, the ground's own height there). */
@@ -103,6 +110,7 @@ export function flatViewport(camera: Camera): Viewport {
     // A top-down view has no parallax: height moves nothing sideways.
     toWorldAt: (px, py, _height, cssW, cssH) => camera.screenToWorld(px, py, cssW, cssH),
     toScreen: (p, cssW, cssH) => camera.worldToScreen(p, cssW, cssH),
+    holds: () => true,
     panTo(grabbed, px, py, cssW, cssH) {
       const now = camera.screenToWorld(px, py, cssW, cssH);
       camera.x += grabbed.x - now.x;

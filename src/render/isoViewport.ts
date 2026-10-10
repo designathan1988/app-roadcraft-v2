@@ -60,14 +60,6 @@ const DISTANCE = 5000;
  * `fieldOfView`); the camera's own `fov` is the one in use.
  */
 export const PERSPECTIVE_FOV = 35;
-/**
- * How far one notch of the wheel may carry the view forward once the camera
- * is as close as it comes, in units of that closest distance per unit of
- * log zoom: the zoom goes on as a walk towards the pointer (camera-controls'
- * `infinityDolly`: at the distance limit the camera keeps its distance and
- * moves the target).
- */
-const DOLLY_REACH = 2.5;
 const TAU = Math.PI * 2;
 
 export function clampElevation(e: number): number {
@@ -222,11 +214,14 @@ export function createIsoRig(
       (camera === persp ? looked.y : 0) + Math.sin(elevation) * distance,
       looked.z + Math.sin(azimuth) * horizontal,
     );
-    // "Up" on screen is the way the camera faces over the ground. At any tilt
-    // below vertical that is exactly what the world's up gives; looking
-    // straight down the world's up is the view direction itself and `lookAt`
-    // would have no roll to go by, so the plan view would spin at random.
-    camera.up.set(-Math.cos(azimuth), 0, -Math.sin(azimuth));
+    // "Up" on screen: the camera's own up with no roll, the world's up tipped
+    // forward by the tilt - straight up looking level, the way the camera
+    // faces over the ground looking straight down (where the world's up is
+    // the view direction itself and `lookAt` would spin the plan view at
+    // random). The way it faces alone, used at every tilt, turned the picture
+    // upside down once the camera looked up from the street (the player,
+    // 2026-10-10): looking up, that direction falls DOWN the screen.
+    camera.up.set(-Math.cos(azimuth) * Math.sin(elevation), Math.cos(elevation), -Math.sin(azimuth) * Math.sin(elevation));
     const pull = camera === persp && solidsAt ? pullWeight(halfHeight) : 0;
     if (pull > 0 && solidsAt) {
       // Never behind a building from the point looked at: the eye is brought
@@ -341,27 +336,6 @@ export function createIsoRig(
       apply();
     }
   };
-  /**
-   * The walk on past the closest zoom: the view's centre carried towards the
-   * ground under the pointer (straight ahead when the pointer is over the
-   * horizon), by `excess` (> 1, the zoom factor that could not be taken).
-   */
-  const dolly = (px: number, py: number, excess: number, atHeight: number): void => {
-    const step = viewDistance(MIN_HALF_HEIGHT) * DOLLY_REACH * Math.log(excess);
-    const at = hitAt(px, py, atHeight);
-    let dx = -Math.cos(azimuth), dz = -Math.sin(azimuth);
-    let move = step;
-    if (at) {
-      const ax = at.x - target.x, az = -at.y - target.z;
-      const len = Math.hypot(ax, az);
-      if (len < 1e-6) return;
-      dx = ax / len; dz = az / len;
-      move = Math.min(step, len * (1 - 1 / excess));
-    }
-    target.x += dx * move;
-    target.z += dz * move;
-    apply();
-  };
 
   const viewport: Viewport = {
     kind: 'iso',
@@ -374,6 +348,9 @@ export function createIsoRig(
         y: (-projected.y * 0.5 + 0.5) * cssH,
       };
     },
+    // The same test the zoom's hold makes (`holdHeight`): met within three
+    // times the view's distance.
+    holds: (px, py, atHeight) => camera !== persp || holdHeight(px, py, atHeight) === atHeight,
     panTo(grabbed, px, py, _cssW, _cssH, atHeight = 0) {
       // The grabbed point is held on its own plane (the height of what was
       // under the pointer), as zoom and orbit hold theirs (`keeping`): on the
@@ -392,13 +369,10 @@ export function createIsoRig(
     zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0) {
       if (!(factor > 0) || !Number.isFinite(factor)) return;
       const wanted = halfHeight / factor;
-      if (wanted < MIN_HALF_HEIGHT && camera === persp && !chase) {
-        // As close as it comes: what is left of the zoom walks on.
-        const excess = Math.min(halfHeight, MIN_HALF_HEIGHT) / wanted;
-        if (halfHeight > MIN_HALF_HEIGHT) keeping(px, py, () => { halfHeight = MIN_HALF_HEIGHT; }, atHeight);
-        if (excess > 1) dolly(px, py, excess, atHeight);
-        return;
-      }
+      // The closest zoom is a person's eyes on the ground, and the zoom stops
+      // there (the player, 2026-10-10: "zoom máximo até pegar o nível do chão
+      // e encaixar, pronto, aí não vai mais").
+      if (wanted < MIN_HALF_HEIGHT && halfHeight <= MIN_HALF_HEIGHT) return;
       keeping(px, py, () => {
         halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, wanted));
       }, atHeight);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_ELEVATION, MAX_HALF_HEIGHT, MIN_HALF_HEIGHT, createIsoRig } from '@render/isoViewport';
 import { EYE_HEIGHT, FAR_TILT, NEAR_MIN_TILT, minTilt, profileTilt } from '@view/cameraProfile';
+import { CameraGestures } from '@view/cameraGestures';
 
 /**
  * The perspective camera from the overview down to the street (the player,
@@ -76,15 +77,59 @@ describe('camera from the overview to the street', () => {
     }
   });
 
-  it('zooms on past the closest view as a walk towards the pointer', () => {
+  // The player, 2026-10-10: the closest zoom lands on the ground and stops.
+  it('stops at the closest view: more zoom moves nothing', () => {
     const r = perspective(() => 0, MIN_HALF_HEIGHT);
     const v = r.viewport;
     const c = v.centre;
-    v.zoomAt(W / 2, H / 2 + 100, 1.5, W, H, 0);
-    const moved = Math.hypot(v.centre.x - c.x, v.centre.y - c.y);
-    expect(moved).toBeGreaterThan(0.5);
-    expect(moved).toBeLessThan(10);
+    const eye = v.eye!;
+    for (let i = 0; i < 20; i++) v.zoomAt(W / 2, H / 2 + 100, 1.5, W, H, 0);
+    expect(Math.hypot(v.centre.x - c.x, v.centre.y - c.y)).toBe(0);
+    expect(Math.hypot(v.eye!.x - eye.x, v.eye!.y - eye.y, v.eye!.z - eye.z)).toBe(0);
     expect(v.zoom).toBeCloseTo(H / (MIN_HALF_HEIGHT * 2), 9);
+  });
+
+  // The player, 2026-10-10: looking up from the street turned the picture upside down.
+  it('keeps the sky up and the ground down at every tilt', () => {
+    const r = perspective(() => 0, MIN_HALF_HEIGHT);
+    const v = r.viewport;
+    for (const tilt of [-2, -0.3, -0.05, 0, 0.05, 0.5, 1, 5]) {
+      v.setOrbit(v.azimuth, tilt);
+      const c = r.camera;
+      c.updateMatrixWorld(true);
+      // The camera's up (its matrix's second column) never points down, and has no roll.
+      const e = c.matrixWorld.elements;
+      expect(e[5]).toBeGreaterThanOrEqual(-1e-9);
+      const right = { x: e[0]!, y: e[1]!, z: e[2]! };
+      expect(Math.abs(right.y)).toBeLessThan(1e-6);
+    }
+  });
+
+  // The player, 2026-10-10: close over the ground a drag jumped the view backwards.
+  it('a drag in the street never jumps: over the horizon it slides by the drag', () => {
+    const r = perspective(() => 0, MIN_HALF_HEIGHT);
+    const v = r.viewport;
+    const hand = new CameraGestures({
+      view: () => v,
+      size: () => ({ w: W, h: H }),
+      orbited: () => {},
+      redraw: () => {},
+      heightUnder: () => 0,
+    });
+    for (const y of [5, H / 2 - 40, H / 2, H / 2 + 200, H - 5]) {
+      const c = v.centre;
+      hand.press(1, { x: W / 2, y });
+      hand.startPan(1, { x: W / 2, y });
+      let last = c;
+      for (let i = 1; i <= 10; i++) {
+        hand.move(1, { x: W / 2 + i * 4, y: y + i * 3 });
+        const now = v.centre;
+        // Each 5 px of hand moves the view a little, never across the street.
+        expect(Math.hypot(now.x - last.x, now.y - last.y)).toBeLessThan(2);
+        last = now;
+      }
+      hand.release(1);
+    }
   });
 
   it('a pointer over the horizon zooms without throwing the view across the map', () => {

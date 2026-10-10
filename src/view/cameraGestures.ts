@@ -41,7 +41,8 @@ const TWIST_MIN_SPREAD = 40;
  */
 export class CameraGestures {
   private readonly pointers = new Map<number, Vec2>();
-  private pan: { id: number; grabbed: Vec2; height: number } | null = null;
+  /** A pan: the ground point held, or none (`grabbed` null) when it slides by the drag; `last` the pointer, CSS px. */
+  private pan: { id: number; grabbed: Vec2 | null; height: number; last: Vec2 } | null = null;
   /** An orbit: where it was pressed and last was, CSS px; a right click that stays a click cancels the gesture in progress. */
   private orbit: { id: number; last: Vec2; pressed: Vec2; moved: boolean; cancelOnClick: boolean; height: number } | null = null;
   private pinch: { d0: number; zoom0: number; world: Vec2; height: number; angle: number } | null = null;
@@ -117,7 +118,14 @@ export class CameraGestures {
   /** The ground under `at` grabbed and dragged. */
   startPan(id: number, at: Vec2): void {
     const held = this.anchor(at.x, at.y);
-    this.pan = { id, grabbed: held.world, height: held.height };
+    const { w, h } = this.host.size();
+    // Close over the ground, looking along the street, the pointer may be over
+    // the horizon or on ground far down the road: there is no point to hold
+    // (the stand-in the view gave, its own centre, pulled it back at the
+    // first move - the player, 2026-10-10). The view then slides by the drag,
+    // at the scale of the point looked at, as three's MapControls pans.
+    const holds = this.host.view().holds(at.x, at.y, held.height, w, h);
+    this.pan = { id, grabbed: holds ? held.world : null, height: held.height, last: at };
   }
 
   /** Pointer `id` moved to `screen`: true when the camera took the move. */
@@ -161,7 +169,15 @@ export class CameraGestures {
       return true;
     }
     if (this.pan?.id === id) {
-      view.panTo(this.pan.grabbed, screen.x, screen.y, w, h, this.pan.height);
+      const pan = this.pan;
+      if (pan.grabbed) view.panTo(pan.grabbed, screen.x, screen.y, w, h, pan.height);
+      else {
+        // The ground follows the hand: dragged right it goes right, dragged
+        // down it comes nearer. `zoom` is pixels per unit at the point looked at.
+        const unit = 1 / Math.max(1e-6, view.zoom);
+        view.slide(-(screen.x - pan.last.x) * unit, (screen.y - pan.last.y) * unit);
+      }
+      pan.last = screen;
       host.redraw();
       return true;
     }
