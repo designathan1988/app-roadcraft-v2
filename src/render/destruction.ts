@@ -23,6 +23,9 @@ import { interiorFurniture } from './buildings/buildingMesh';
  */
 
 const GRAVITY = m(9.8);
+/** Milliseconds a frame for cutting out and sending off the pieces of a blow (`release`), and the fewest a frame. */
+const RELEASE_SLICE_MS = 4;
+const RELEASE_MIN = 6;
 /** Share of the fragments left standing below which the rest comes down. */
 const COLLAPSE_BELOW = 0.35;
 
@@ -238,10 +241,25 @@ export function createDestruction(
     return id;
   };
 
+  /**
+   * Pieces knocked loose, waiting to be cut out and sent flying. A blow is
+   * decided at once (what falls, what collapses), but each piece costs its own
+   * geometry, a buffer upload and a vertex array on its first draw: a bomb on
+   * a block let a few hundred go in one frame, 465 ms of it on the RTX
+   * (2026-10-09). They go a slice of milliseconds a frame (`update`), the
+   * nearest first, as the game spreads its other uploads (`uploads.ts`
+   * `WARM_SLICE_MS`); the rest stand in the still mesh a frame or two longer,
+   * the blast running through the building.
+   */
+  const queued: { ruin: Ruin; piece: Piece; from: Vector3; power: number }[] = [];
+  let queuedAt = 0;
   const release = (ruin: Ruin, piece: Piece, from: Vector3, power: number): void => {
     if (piece.falling) return;
     piece.falling = true;
     ruin.standing--;
+    queued.push({ ruin, piece, from, power });
+  };
+  const loosen = (ruin: Ruin, piece: Piece, from: Vector3, power: number): void => {
     // Out of the ruin's still mesh, drawn on its own while it flies: its
     // geometry cut from its ranges first, while they still hold it.
     piece.mesh.geometry = fragmentGeometry(ruin.data, piece.index);
@@ -362,6 +380,17 @@ export function createDestruction(
       return strike(ruin, floor, x, y, z, strength, eye);
     },
     update(dt) {
+      // The pieces of the last blows, a few milliseconds a frame (`release`).
+      if (queuedAt < queued.length) {
+        const until = performance.now() + RELEASE_SLICE_MS;
+        let done = 0;
+        while (queuedAt < queued.length && (done < RELEASE_MIN || performance.now() < until)) {
+          const job = queued[queuedAt++]!;
+          loosen(job.ruin, job.piece, job.from, job.power);
+          done++;
+        }
+        if (queuedAt >= queued.length) { queued.length = 0; queuedAt = 0; }
+      }
       for (let i = loose.length - 1; i >= 0; i--) {
         const p = loose[i]!;
         const mesh = p.mesh;

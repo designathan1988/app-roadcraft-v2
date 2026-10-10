@@ -147,6 +147,15 @@ o jogo a cada edição.
   em duas tentativas nas mesmas condições (alturas do terreno sob a via
   medidas a cada 200 ms: nunca acima do asfalto). Aberto. O painel da bomba
   mostra a ajuda da bomba (antes a do Demolir).
+- Bomba num prédio (resto do PA-U2): as peças soltas de um golpe saem numa fila,
+  4 ms por quadro (`destruction.ts` `release`/`loosen`), em vez de todas no
+  quadro do golpe; a camada da câmera (`cameraSolids`) só é refeita quando a
+  câmera a pede, com o piso de cada prédio guardado por registro (refazê-la a
+  cada bomba custava 438 ms); a escolha do prédio no clique usa a caixa
+  guardada (`storedBounds`, 83 ms antes). Painel do app (RTX), força 30, pior
+  tarefa por bomba depois da primeira: 465-494 → 199-238 ms. A primeira bomba
+  da sessão ainda compila os shaders das ruínas (~80-140 ms); o que resta é a
+  rede elétrica e o mobiliário refeitos quando a bomba derruba postes.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

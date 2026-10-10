@@ -83,7 +83,7 @@ import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, crea
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
-import { cameraSolids } from '@world/buildings/cameraSolids';
+import { type CameraSolids, cameraSolids } from '@world/buildings/cameraSolids';
 import { floorHeight } from '@world/buildings/foundation';
 import { RoomLamps } from './roomLamps';
 import { m } from '@world/units';
@@ -1115,8 +1115,10 @@ export function createSceneRenderer(
     transit: new GroundDependant(groundChanges),
     gardens: new GroundDependant(groundChanges),
   };
-  /** The buildings' floor for the camera's eye (`world/buildings/cameraSolids.ts`), by building revision. */
-  let cameraSolidsFor = -1;
+  /** The buildings' floor for the camera's eye (`world/buildings/cameraSolids.ts`), by building, land and road revision. */
+  let cameraSolidsFor = '';
+  /** Each building record's ground-floor height, with the ground it was read on. */
+  const solidFloors = new WeakMap<Building, { key: string; floor: number }>();
   /** Each building's bank, by building revision: what the buildings stand on, building by building. */
   let buildingsAreaFor = -1;
   let buildingsArea: Rect[] = [];
@@ -2827,12 +2829,31 @@ export function createSceneRenderer(
 
       // The perspective camera kept out of the buildings (\`IsoRig.setSolids\`):
       // filed again only when a building changes.
-      if (cameraSolidsFor !== net.doc.buildings.revision) {
-        cameraSolidsFor = net.doc.buildings.revision;
-        const t0 = performance.now();
-        const solids = cameraSolids(net.doc.buildings.all(), (b) => floorHeight(b, (x, y) => terrain.naturalRenderedHeightAt(x, y), pavedHeightAt));
-        rig.setSolids((x, y) => solids.floorAt(x, y));
-        performance.measure('camera:solids', { start: t0 });
+      // Filed again only when a building or the ground changed, and only when
+      // the camera asks (it reads them in the street, never from above): a
+      // bomb moves the buildings' revision, and filing the whole town in the
+      // frame of the blast was 440 ms of it (2026-10-09). Each record's floor
+      // is kept while the record and the ground are the same.
+      const solidsKey = `${net.doc.buildings.revision}:${net.doc.terrainRevision}:${net.revision}`;
+      if (cameraSolidsFor !== solidsKey) {
+        cameraSolidsFor = solidsKey;
+        const groundKey = `${net.doc.terrainRevision}:${net.revision}`;
+        const floorOf = (b: Building): number => {
+          const known = solidFloors.get(b);
+          if (known && known.key === groundKey) return known.floor;
+          const floor = floorHeight(b, (x, y) => terrain.naturalRenderedHeightAt(x, y), pavedHeightAt);
+          solidFloors.set(b, { key: groundKey, floor });
+          return floor;
+        };
+        let solids: CameraSolids | null = null;
+        rig.setSolids((x, y) => {
+          if (!solids) {
+            const t0 = performance.now();
+            solids = cameraSolids(net.doc.buildings.all(), floorOf);
+            performance.measure('camera:solids', { start: t0 });
+          }
+          return solids.floorAt(x, y);
+        });
       }
       const detailed = rig.viewport.zoom >= quality.detailCutoffZoom;
       const plantMap = rig.viewport.zoom < PLANT_MAP_ZOOM;

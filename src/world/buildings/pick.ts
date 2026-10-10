@@ -1,4 +1,4 @@
-import { bayWidth, baysOn, buildingBounds, elementRect, roofHeightAt, roofRise, volumeElevation, volumeHeight, volumeRectLocal, worldToLocal } from './geometry';
+import { bayWidth, baysOn, elementRect, storedBounds, roofHeightAt, roofRise, volumeElevation, volumeHeight, volumeRectLocal, worldToLocal } from './geometry';
 import { containsPoint, edgeFrame, volumeSides } from './footprints';
 import type { Building, BuildingId, FaceId } from './types';
 
@@ -52,7 +52,9 @@ export function pickBuilding(
     // footways): the ray's footprint over any height. Every building in town
     // had its floor worked out for every click - 85 ms a click in the default
     // town (docs/performance.md).
-    const box = buildingBounds(b, 1);
+    // The box kept with the record (`storedBounds`): worked out again for
+    // every building on every click it was 83 ms of a bomb's click (2026-10-09).
+    const box = storedBounds(b, 1);
     if (!rayNearBox(ray, box, -1e6, 1e6)) continue;
     const floor = floorOf(b);
     // The ray's footprint over the building's height span.
