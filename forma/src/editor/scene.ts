@@ -118,6 +118,7 @@ export class EditorScene {
         if (this.dirty) {
           this.renderer.render(this.scene, this.camera);
           this.dirty = false;
+          this.checkLodShadows();
         }
       };
       loop();
@@ -171,6 +172,22 @@ export class EditorScene {
     this.scene.fog?.color.copy(this.scene.background as THREE.Color);
     this.renderer.shadowMap.needsUpdate = true;
     this.mark();
+  }
+
+  private lodSignature = '';
+  /** Algum LOD trocou de nível neste quadro: a sombra precisa ser refeita. */
+  private checkLodShadows(): void {
+    if (!this.lodEnabled) return;
+    let sig = '';
+    for (const b of this.built.values()) sig += (b as BuiltLOD).lod ? (b as BuiltLOD).lod.getCurrentLevel() : '-';
+    if (sig !== this.lodSignature) {
+      const first = !this.lodSignature;
+      this.lodSignature = sig;
+      if (!first) {
+        this.renderer.shadowMap.needsUpdate = true;
+        this.mark();
+      }
+    }
   }
 
   mark(): void {
