@@ -382,6 +382,13 @@ o jogo a cada edição.
   fim (chegada de Reynolds); um caso visto no jogo durante o crescimento da
   cidade, não reproduzido depois em 495 s com 300 pessoas. Conferência visual
   do passo lateral pendente (painel do navegador oculto em 2026-10-10).
+- Sobrancelhas e cílios dos corpos cozidos num só `DataArrayTexture` de
+  256 px, uma camada por item (`render/people/skinAppearance.ts`
+  `faceCardLayer`): o corpo de perto com os morphs do rosto usava 17
+  amostradores dos 16 que o fragment shader tem (limite do ANGLE, na RTX como
+  na Intel) - aviso a cada quadro e a sombra do sol sem ligar. Agora 16 (14
+  sem morphs), nenhum programa da página acima de 16, sem aviso (5173,
+  2026-10-10).
 - Depois de mexer em código de pessoas: `npm run cook:people`, à mão, uma vez.
 
 ### Veículos e transporte
@@ -430,9 +437,6 @@ o jogo a cada edição.
   mapa do jogador.
 - Cidade: parece uma grade rígida; o relevo quase não aparece nela.
 - Pessoas: o jogador ainda relata rostos, animação e pessoas se esbarrando.
-- Pessoas articuladas com morph targets: o programa delas usa 17 unidades de
-  textura e a GPU do teste tem 16 (aviso do three a cada quadro); uma das
-  texturas fica sem ligar (achado em 2026-10-09, a corrigir).
 - Simulação com 400 carros e 400 pessoas a 4x: 4,0-10 ms por quadro no
   headless conforme o estado da máquina (antes 7,7-8,4 com metade das
   pessoas); nenhum quadro longo em 80 s; o orçamento de 4 ms ainda não é

@@ -1,4 +1,4 @@
-import { CanvasTexture, Color, DataTexture, LinearFilter, LinearMipmapLinearFilter, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, type BufferGeometry, type MeshStandardMaterial } from 'three';
+import { CanvasTexture, Color, DataArrayTexture, DataTexture, LinearFilter, LinearMipmapLinearFilter, ShaderChunk, SRGBColorSpace, Texture, TextureLoader, Vector2, type BufferGeometry, type MeshStandardMaterial } from 'three';
 import { EYE_COLOURS, type PersonSpec } from '@people/spec';
 import { loadProxyItem, proxyUrl, type ProxyItem } from '@people/body/proxy';
 import { MAX_TEXTURED, texturedGarments } from './garmentSlots';
@@ -10,6 +10,57 @@ import index from '../../../public/models/people/skins/index.json';
 import urls from 'virtual:model-urls/people/skins?ext=webp';
 
 export interface SkinAppearance { texture: Texture; eyeTexture: Texture; tint: Color; hair: Color; hairTexture?: Texture; browTexture?: Texture; lashTexture?: Texture; beardTexture?: Texture; garments: (Texture | null)[]; outfitTint: Color | null; beard: number; makeup: number }
+
+/**
+ * The face's small cards - brows and lashes, 256 px each - share one array
+ * texture, a layer per item (WebGL2 `sampler2DArray`, three's
+ * `DataArrayTexture` with `addLayerUpdate`). Each had a sampler of its own,
+ * and a close body with its face's morphs used 17 of the 16 a fragment
+ * shader has (ANGLE's limit, on the RTX as on the Intel): three warned every
+ * frame and the 17th - the sun's shadow - was not bound (2026-10-10).
+ */
+const FACE_CARD_SIZE = 256;
+const FACE_CARD_LAYERS = 24;
+let faceCards: DataArrayTexture | null = null;
+const faceCardLayers = new Map<Texture, number>();
+let faceCardCanvas: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D | null = null;
+
+function faceCardArray(): DataArrayTexture {
+  if (!faceCards) {
+    faceCards = new DataArrayTexture(new Uint8Array(FACE_CARD_SIZE * FACE_CARD_SIZE * 4 * FACE_CARD_LAYERS), FACE_CARD_SIZE, FACE_CARD_SIZE, FACE_CARD_LAYERS);
+    faceCards.colorSpace = SRGBColorSpace;
+    faceCards.magFilter = LinearFilter;
+    faceCards.minFilter = LinearMipmapLinearFilter;
+    faceCards.generateMipmaps = true;
+    faceCards.unpackAlignment = 4;
+    faceCards.needsUpdate = true;
+  }
+  return faceCards;
+}
+
+/** The layer a face card's texture is drawn in, copied there the first time it is asked for; -1 without one. */
+function faceCardLayer(texture: Texture | undefined): number {
+  if (!texture) return -1;
+  const known = faceCardLayers.get(texture);
+  if (known !== undefined) return known;
+  const image = texture.image as CanvasImageSource | undefined;
+  if (!image || faceCardLayers.size >= FACE_CARD_LAYERS) return -1;
+  faceCardCanvas ??= typeof OffscreenCanvas === 'function'
+    ? new OffscreenCanvas(FACE_CARD_SIZE, FACE_CARD_SIZE).getContext('2d', { willReadFrequently: true })
+    : document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const ctx = faceCardCanvas;
+  if (!ctx) return -1;
+  if (ctx.canvas.width !== FACE_CARD_SIZE) { ctx.canvas.width = FACE_CARD_SIZE; ctx.canvas.height = FACE_CARD_SIZE; }
+  ctx.clearRect(0, 0, FACE_CARD_SIZE, FACE_CARD_SIZE);
+  ctx.drawImage(image, 0, 0, FACE_CARD_SIZE, FACE_CARD_SIZE);
+  const layer = faceCardLayers.size;
+  const array = faceCardArray();
+  (array.image.data as Uint8Array).set(ctx.getImageData(0, 0, FACE_CARD_SIZE, FACE_CARD_SIZE).data, layer * FACE_CARD_SIZE * FACE_CARD_SIZE * 4);
+  array.addLayerUpdate(layer);
+  array.needsUpdate = true;
+  faceCardLayers.set(texture, layer);
+  return layer;
+}
 
 const EYE_TEXTURES = ['eye-brown.webp', 'eye-brownlight.webp', 'eye-brownlight.webp', 'eye-green.webp', 'eye-blue.webp', 'eye-grey.webp'] as const;
 const EYE_PALETTE = EYE_COLOURS.map((colour) => new Color(colour));
@@ -189,7 +240,8 @@ export async function loadSkinAppearance(person: PersonSpec): Promise<SkinAppear
     if (!texture || !eyeTexture) throw new Error(`Missing loaded skin or eye texture: ${skinName}, ${eyeFile}`);
     const garments = loaded.slice(1, cardStart).map((map) => map ?? null);
     // Sent to the GPU ahead of the first frame this person is drawn in.
-    queueUpload(texture, eyeTexture, ...garments, hairTexture, browTexture, lashTexture, beardTexture);
+    // Brows and lashes are drawn from the face cards' array (`faceCardLayer`), not uploaded on their own.
+    queueUpload(texture, eyeTexture, ...garments, hairTexture, beardTexture);
     const appearance: SkinAppearance = { texture, eyeTexture, tint, hair: new Color(person.look.hair), garments,
       outfitTint: person.look.outfitTint == null ? null : new Color(person.look.outfitTint),
       ...(hairTexture ? { hairTexture } : {}),
@@ -255,8 +307,12 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
       shader.uniforms.garmentTextures = { value: Array.from({ length: GARMENT_SLOTS }, (_, i) => (skin.garments[i] ? 1 : 0)) };
     }
     if (texturedHair) {
-      for (let i = 0; i < cards.length; i++) shader.uniforms[cardNames[i]!] = { value: cards[i] ?? BLANK };
-      shader.uniforms.cardTextures = { value: cards.map((texture) => (texture ? 1 : 0)) };
+      shader.uniforms.personHair = { value: cards[0] ?? BLANK };
+      shader.uniforms.personBeard = { value: cards[3] ?? BLANK };
+      const brow = faceCardLayer(cards[1]), lash = faceCardLayer(cards[2]);
+      shader.uniforms.faceCards = { value: faceCardArray() };
+      shader.uniforms.faceCardLayer = { value: new Vector2(Math.max(0, brow), Math.max(0, lash)) };
+      shader.uniforms.cardTextures = { value: [cards[0] ? 1 : 0, brow >= 0 ? 1 : 0, lash >= 0 ? 1 : 0, cards[3] ? 1 : 0] };
     }
     shader.vertexShader = `attribute float skinMask; uniform vec3 faceOrigin; uniform float faceScale; varying float vSkinMask; varying vec2 vSkinUv; varying vec3 vFace;\n${shader.vertexShader}`
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSkinMask = skinMask; vSkinUv = uv; vFace = (position - faceOrigin) / faceScale;');
@@ -302,10 +358,13 @@ export function applySkinAppearance(material: MeshStandardMaterial, geometry: Bu
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vEyeMask > 0.5) roughnessFactor = 0.08;');
     }
     if (texturedHair) {
-      const declarations = cardNames.map((name) => `uniform sampler2D ${name};`).join(' ');
-      const sample = (i: number): string => `(cardTextures[${i}] > 0.5 ? texture2D(${cardNames[i]}, vSkinUv) : ${
+      // Hair and beard from their own textures; brows (1) and lashes (2) from the face cards' array.
+      const declarations = 'uniform sampler2D personHair; uniform sampler2D personBeard; uniform sampler2DArray faceCards; uniform vec2 faceCardLayer;';
+      const read = (i: number): string => i === 1 ? 'texture(faceCards, vec3(vSkinUv, faceCardLayer.x))'
+        : i === 2 ? 'texture(faceCards, vec3(vSkinUv, faceCardLayer.y))' : `texture2D(${cardNames[i]}, vSkinUv)`;
+      const sample = (i: number): string => `(cardTextures[${i}] > 0.5 ? ${read(i)} : ${
         i === 2 ? 'vec4(0.2, 0.2, 0.2, 1.0)' : 'vec4(0.5, 0.5, 0.5, 1.0)'})`;
-      const size = (i: number): string => `(cardTextures[${i}] > 0.5 ? vec2(textureSize(${cardNames[i]}, 0)) : vec2(1.0))`;
+      const size = (i: number): string => `(cardTextures[${i}] > 0.5 ? vec2(${i === 1 || i === 2 ? 'textureSize(faceCards, 0).xy' : `textureSize(${cardNames[i]}, 0)`}) : vec2(1.0))`;
       // Brows and lashes are cards laid on the skin. Laid exactly on it, the
       // skin won the depth test over most of them - the brows sank into the
       // face in dashes - and the crowd's camera, with its long depth range,
@@ -391,7 +450,7 @@ if (faceCard) {
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (vGarmentSlot > 0.5 && appearanceDetail > 0.5) roughnessFactor = max(roughnessFactor, 0.9);');
     }
   };
-  material.customProgramCacheKey = () => `${key}-textured-skin-v6-hair${texturedHair}-garments${texturedGarments}-eyes${texturedEyes}`;
+  material.customProgramCacheKey = () => `${key}-textured-skin-v7-hair${texturedHair}-garments${texturedGarments}-eyes${texturedEyes}`;
 }
 
 /**
