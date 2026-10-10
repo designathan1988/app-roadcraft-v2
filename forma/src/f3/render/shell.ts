@@ -42,6 +42,7 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
     case 'roomWall':
       return materialKey({ finish: 'paint', color: '#ddd3c4' }, 'stone');
     case 'coping':
+    case 'band':
       return materialKey(s.materials.trim, 'stone');
     case 'plinth':
       return materialKey(s.materials.base, 'stone');

@@ -86,6 +86,36 @@ export function courtyardIn(b: Building3, s: Solid, margin = 6): Solid | null {
   return n;
 }
 
+/**
+ * Lado da frente de um volume: o da porta que já existe (regra de porta com
+ * lado escolhido) ou o lado reto mais comprido voltado para a frente (+z).
+ */
+export function frontEdge(s: Solid): string | undefined {
+  const door = s.facade.find((f) => f.mode === 'count' && f.edges.length);
+  if (door) return door.edges[0];
+  const r = sampleRing(oriented(s.plan.outer, 1));
+  let best: { id: string; score: number } | undefined;
+  r.segs.forEach((seg, i) => {
+    if (seg.edge.endsWith(':c') || seg.curved) return;
+    const a = r.pts[i]!,
+      b = r.pts[(i + 1) % r.pts.length]!;
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    // Normal para fora (anel anti-horário): (dz, −dx)/l; preferir a que olha para +z.
+    const nz = -(b[0] - a[0]) / (l || 1);
+    const score = l * (1.5 + nz);
+    if (!best || score > best.score + 1e-6) best = { id: seg.edge, score };
+  });
+  return best?.id;
+}
+
+/** Regras de uma fachada pronta para o volume (a porta só no lado da frente). */
+export function presetRules(id: string, s: Solid): FacadeRule[] {
+  const pr = FACADE_PRESETS.find((f) => f.id === id);
+  if (!pr) return s.facade;
+  const front = frontEdge(s);
+  return pr.rules().map((r) => (r.mode === 'count' && r.levels === 'ground' && front ? { ...r, edges: [front] } : r));
+}
+
 export const FACADE_PRESETS: { id: string; name: string; rules: () => FacadeRule[] }[] = [
   { id: 'res', name: 'Residencial', rules: () => [facadeRule('door-panel', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-casement', { mode: 'max', value: 3 })] },
   { id: 'com', name: 'Comercial', rules: () => [facadeRule('shopfront', { levels: 'ground', mode: 'max', value: 5, margin: 0.6 }), facadeRule('win-sliding', { levels: 'upper', mode: 'spacing', value: 2.4 })] },

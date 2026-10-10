@@ -14,8 +14,8 @@ import { FINISHES } from '../render/finishes';
 import { allFamilies, family, typeById, BUILTIN_TYPES } from '../families/index';
 import { resolveParams, type ParamDef } from '../families/family';
 import { icon } from './icons';
-import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, setbackOn } from '../model/quick';
-import { planBox } from '../model/modeling';
+import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, presetRules, setbackOn } from '../model/quick';
+import { addBands, planBox, type BandPreset } from '../model/modeling';
 
 const ROOFS: [RoofKind, string, string][] = [
   ['flat', 'Plano', 'flat'],
@@ -168,6 +168,20 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
     <div class="f3-op"><h4>Bisel das arestas</h4><div class="f3-grid2">${field('bvtop', 'Topo (m)', bv?.top ?? 0, 0.05)}${field('bvbottom', 'Base (m)', bv?.bottom ?? 0, 0.05)}${field('bvseg', 'Segmentos', bv?.segments ?? 1, 1)}
     <label class="f3-field"><span>Perfil</span><select data-bvprofile><option value="0" ${!bv || bv.profile < 0.25 ? 'selected' : ''}>Reto</option><option value="0.5" ${bv && bv.profile >= 0.25 && bv.profile < 0.75 ? 'selected' : ''}>Misto</option><option value="1" ${bv && bv.profile >= 0.75 ? 'selected' : ''}>Redondo</option></select></label></div></div>
   </div>
+  <div class="f3-sec"><h3>Frisos e cornija</h3><div class="f3-row">
+    <button class="f3-btn" data-band="floors" title="Uma faixa em cada laje">Friso por laje</button>
+    <button class="f3-btn" data-band="cornice" title="Cornija em degraus no topo">Cornija</button>
+    <button class="f3-btn" data-band="base" title="Faixa no pé das paredes">Rodapé</button></div>
+    ${(s.bands ?? [])
+      .map(
+        (bd) => `<div class="f3-op" data-bandrow="${bd.id}"><div class="f3-grid2">
+      <label class="f3-field"><span>Altura da base (m)</span><input data-bk="y" inputmode="decimal" value="${num(bd.y)}"></label>
+      <label class="f3-field"><span>Espessura (m)</span><input data-bk="height" inputmode="decimal" value="${num(bd.height)}"></label>
+      <label class="f3-field"><span>Saliência (m)</span><input data-bk="depth" inputmode="decimal" value="${num(bd.depth)}"></label>
+      <label class="f3-field"><span>Perfil</span><select data-bk="profile"><option value="flat" ${bd.profile === 'flat' ? 'selected' : ''}>Faixa reta</option><option value="cornice" ${bd.profile === 'cornice' ? 'selected' : ''}>Cornija</option></select></label></div>
+      <div class="f3-row" style="margin-top:6px"><button class="f3-btn danger" data-bk="del">${icon('trash')}Remover</button></div></div>`,
+      )
+      .join('')}</div>
   <div class="f3-sec"><h3>Modelar rápido</h3><div class="f3-row">
     <button class="f3-btn" data-quick="lvup" title="Mais um pavimento no edifício">+ Pavimento</button>
     <button class="f3-btn" data-quick="lvdown" title="Um pavimento a menos">− Pavimento</button>
@@ -181,13 +195,33 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   <div class="f3-sec"><h3>Fachada <span class="r"><button class="f3-btn" data-act="addrule">${icon('add')}Regra</button></span></h3>${s.facade.length ? s.facade.map((f) => ruleRow(ed, f)).join('') : '<p class="f3-empty" style="padding:0">Sem regras. Uma regra espalha janelas ou portas pelos lados e pavimentos e se refaz quando o volume muda.</p>'}</div>`;
 }
 
+/** Regras abertas para edição completa (sobrevive aos redesenhos do painel). */
+const openRules = new Set<string>();
+
 function ruleRow(ed: Editor3, f: FacadeRule): string {
   const t = typeById(f.type, ed.project);
-  const lv = Array.isArray(f.levels) ? f.levels.map((x) => x + 1).join(',') : { all: 'Todos', ground: 'Térreo', upper: 'Acima do térreo', top: 'Último', middle: 'Intermediários' }[f.levels];
-  return `<div class="f3-rule" data-rule="${f.id}"><div class="t"><b>${esc(t?.name ?? f.type)}</b><small>${lv} · ${{ spacing: 'a cada', max: 'até', count: 'quantidade', fit: 'encaixe' }[f.mode]} ${num(f.value)}${f.mode === 'count' ? '' : ' m'}</small></div>
-  <select data-rk="levels" aria-label="Pavimentos"><option value="all">Todos</option><option value="ground">Térreo</option><option value="upper">Acima</option><option value="top">Último</option></select>
-  <span style="color:var(--muted);font-size:11px">${f.mode === 'count' ? 'qtd.' : 'm'}</span><input data-rk="value" value="${num(f.value)}" style="width:52px" aria-label="Valor">
-  <button class="f3-btn danger" data-rk="del" aria-label="Remover regra">${icon('trash')}</button></div>`;
+  const lvName = Array.isArray(f.levels) ? 'Pavimentos ' + f.levels.map((x) => x + 1).join(',') : { all: 'Todos', ground: 'Térreo', upper: 'Acima do térreo', top: 'Último', middle: 'Intermediários' }[f.levels];
+  const mode = { spacing: 'a cada', max: 'até', count: 'quantidade', fit: 'encaixe' }[f.mode];
+  const opt = (v: string, l: string, cur: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`;
+  const isOpen = openRules.has(f.id);
+  const face = ed.sel.face?.kind === 'side' ? ed.sel.face.edge : undefined;
+  const sides = f.edges.length ? `${f.edges.length} lado(s)` : 'Todos os lados';
+  const types = BUILTIN_TYPES.concat(ed.project.types).filter((x) => family(x.family)?.host === 'face');
+  const details = isOpen
+    ? `<div class="f3-grid2" style="grid-column:1/-1;margin-top:4px">
+      <label class="f3-field"><span>Tipo</span><select data-rk="type">${types.map((x) => opt(x.id, esc(x.name), f.type)).join('')}</select></label>
+      <label class="f3-field"><span>Pavimentos</span><select data-rk="levels">${opt('all', 'Todos', String(f.levels))}${opt('ground', 'Térreo', String(f.levels))}${opt('upper', 'Acima do térreo', String(f.levels))}${opt('middle', 'Intermediários', String(f.levels))}${opt('top', 'Último', String(f.levels))}</select></label>
+      <label class="f3-field"><span>Distribuição</span><select data-rk="mode">${opt('max', 'Espaço máximo', f.mode)}${opt('spacing', 'Distância fixa', f.mode)}${opt('count', 'Quantidade', f.mode)}${opt('fit', 'Encaixar quantos cabem', f.mode)}</select></label>
+      <label class="f3-field"><span>${f.mode === 'count' ? 'Quantidade' : f.mode === 'fit' ? 'Folga (m)' : 'Distância (m)'}</span><input data-rk="value" inputmode="decimal" value="${num(f.value)}"></label>
+      <label class="f3-field"><span>Margem nas pontas (m)</span><input data-rk="margin" inputmode="decimal" value="${num(f.margin)}"></label>
+      <label class="f3-field"><span>Peitoril (m; vazio = do tipo)</span><input data-rk="sill" inputmode="decimal" value="${Number.isFinite(f.sill) ? num(f.sill) : ''}"></label>
+      <label class="f3-field"><span>Alinhar</span><select data-rk="justify">${opt('start', 'Início', f.justify)}${opt('center', 'Centro', f.justify)}${opt('end', 'Fim', f.justify)}</select></label>
+      <label class="f3-field"><span>Lados</span><select data-rk="edges"><option value="all" ${f.edges.length ? '' : 'selected'}>Todos os lados</option>${face ? `<option value="face" ${f.edges.length === 1 && f.edges[0] === face ? 'selected' : ''}>Só a face selecionada</option>${f.edges.length && !f.edges.includes(face) ? '' : ''}<option value="addface">Acrescentar a face selecionada</option>` : ''}${f.edges.length && !(face && f.edges.length === 1 && f.edges[0] === face) ? `<option value="keep" selected>${f.edges.length} lado(s) escolhidos</option>` : ''}</select></label>
+    </div>
+    <div class="f3-row" style="grid-column:1/-1;margin-top:6px"><button class="f3-btn" data-rk="pick">Selecionar os elementos (editar parâmetros)</button>${Object.keys(f.except).length ? `<button class="f3-btn" data-rk="clearexc">Desfazer ${Object.keys(f.except).length} exceção(ões)</button>` : ''}<button class="f3-btn danger" data-rk="del">${icon('trash')}Remover regra</button></div>`
+    : '';
+  return `<div class="f3-rule" data-rule="${f.id}"><div class="t" data-rk="open" style="cursor:pointer" title="${isOpen ? 'Fechar' : 'Editar a regra'}"><b>${isOpen ? '▾' : '▸'} ${esc(t?.name ?? f.type)}</b><small>${lvName} · ${mode} ${num(f.value)}${f.mode === 'count' ? '' : ' m'} · ${sides}</small></div>
+  ${isOpen ? details : `<span></span><span style="color:var(--muted);font-size:11px">${f.mode === 'count' ? 'qtd.' : 'm'}</span><input data-rk="value" value="${num(f.value)}" style="width:52px" aria-label="Valor"><button class="f3-btn danger" data-rk="del" aria-label="Remover regra">${icon('trash')}</button>`}</div>`;
 }
 
 function paramInputs(defs: ParamDef[], values: Record<string, unknown>, overrides: Record<string, unknown>): string {
@@ -321,13 +355,59 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
   // Regras de fachada.
   $$<HTMLElement>('.f3-rule').forEach((row) => {
     const id = row.dataset.rule!;
-    const lv = row.querySelector<HTMLSelectElement>('[data-rk="levels"]');
-    const r = s?.facade.find((f) => f.id === id);
-    if (lv && r && !Array.isArray(r.levels)) lv.value = r.levels === 'middle' ? 'upper' : r.levels;
-    lv?.addEventListener('change', () => ed.changeSolid((x) => void (x.facade.find((f) => f.id === id)!.levels = lv.value as FacadeRule['levels'])));
-    row.querySelector<HTMLInputElement>('[data-rk="value"]')?.addEventListener('change', (e) => {
-      const v = parse((e.target as HTMLInputElement).value);
-      if (Number.isFinite(v) && v > 0) ed.changeSolid((x) => void (x.facade.find((f) => f.id === id)!.value = v));
+    const R = (x: Solid) => x.facade.find((f) => f.id === id)!;
+    const set = (fn: (r: FacadeRule) => void, msg = '') => ed.changeSolid((x) => void fn(R(x)), msg);
+    row.querySelector('[data-rk="open"]')?.addEventListener('click', () => {
+      if (openRules.has(id)) openRules.delete(id);
+      else openRules.add(id);
+      ed.select({ ...ed.sel });
+    });
+    const sel = (k: string, fn: (v: string) => void) => row.querySelector<HTMLSelectElement>(`select[data-rk="${k}"]`)?.addEventListener('change', (e) => fn((e.target as HTMLSelectElement).value));
+    const inp = (k: string, fn: (v: string) => void) => {
+      const el = row.querySelector<HTMLInputElement>(`input[data-rk="${k}"]`);
+      el?.addEventListener('change', () => fn(el.value));
+      el?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          el.dispatchEvent(new Event('change'));
+          e.preventDefault();
+        }
+      });
+    };
+    sel('type', (v) => set((r) => void (r.type = v), 'Tipo da regra trocado.'));
+    sel('levels', (v) => set((r) => void (r.levels = v as FacadeRule['levels'])));
+    sel('mode', (v) =>
+      set((r) => {
+        r.mode = v as FacadeRule['mode'];
+        // Valor coerente com o modo novo.
+        if (r.mode === 'count') r.value = Math.max(1, Math.round(r.value > 6 ? 3 : r.value));
+        else if (r.mode === 'fit') r.value = 0.6;
+        else if (r.value < 1.2) r.value = 3;
+      }),
+    );
+    inp('value', (v) => {
+      const n = parse(v);
+      if (Number.isFinite(n) && n > 0) set((r) => void (r.value = n));
+    });
+    inp('margin', (v) => {
+      const n = parse(v);
+      if (Number.isFinite(n) && n >= 0) set((r) => void (r.margin = n));
+    });
+    inp('sill', (v) => {
+      const n = v.trim() === '' ? NaN : parse(v);
+      set((r) => void (r.sill = Number.isFinite(n) && n >= 0 ? n : NaN));
+    });
+    sel('justify', (v) => set((r) => void (r.justify = v as FacadeRule['justify'])));
+    sel('edges', (v) => {
+      const face = ed.sel.face?.kind === 'side' ? ed.sel.face.edge : undefined;
+      if (v === 'all') set((r) => void (r.edges = []), 'Regra em todos os lados.');
+      else if (v === 'face' && face) set((r) => void (r.edges = [face]), 'Regra só nesta face.');
+      else if (v === 'addface' && face) set((r) => void (r.edges = [...new Set([...r.edges, face])]), 'Face acrescentada à regra.');
+    });
+    row.querySelector('[data-rk="clearexc"]')?.addEventListener('click', () => set((r) => void (r.except = {}), 'Exceções desfeitas.'));
+    row.querySelector('[data-rk="pick"]')?.addEventListener('click', () => {
+      const keys = ed.elements().filter((e) => e.key.startsWith(`r|${s?.id}|${id}|`)).map((e) => e.key);
+      if (!keys.length) return ed.toast('Esta regra não colocou nenhum elemento (faces pequenas demais ou cobertas).');
+      ed.select({ building: b.id, solids: s ? [s.id] : [], elems: keys });
     });
     row.querySelector('[data-rk="del"]')?.addEventListener('click', () => ed.changeSolid((x) => void (x.facade = x.facade.filter((f) => f.id !== id)), 'Regra removida.'));
   });
@@ -353,6 +433,36 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
       else ed.setItemParam(k, v, el.dataset.scope === 'instance' ? 'instance' : 'type');
     }),
   );
+  // Frisos e cornija.
+  $$<HTMLButtonElement>('[data-band]').forEach((el) =>
+    el.addEventListener('click', () => {
+      let n = 0;
+      ed.changeSolid((x, bb) => {
+        n = addBands(bb, x, el.dataset.band as BandPreset);
+        return n > 0;
+      }, el.dataset.band === 'floors' ? 'Frisos nas lajes.' : el.dataset.band === 'cornice' ? 'Cornija no topo.' : 'Rodapé criado.');
+      if (!n) ed.toast('Nenhuma laje dentro deste volume para receber friso.');
+    }),
+  );
+  $$<HTMLElement>('[data-bandrow]').forEach((row) => {
+    const id = row.dataset.bandrow!;
+    const B = (x: Solid) => x.bands!.find((q) => q.id === id)!;
+    row.querySelectorAll<HTMLInputElement>('input[data-bk]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const v = parse(el.value);
+        if (!Number.isFinite(v) || v < 0) return;
+        ed.changeSolid((x) => void (B(x)[el.dataset.bk as 'y' | 'height' | 'depth'] = v));
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          el.dispatchEvent(new Event('change'));
+          e.preventDefault();
+        }
+      });
+    });
+    row.querySelector<HTMLSelectElement>('select[data-bk="profile"]')?.addEventListener('change', (e) => ed.changeSolid((x) => void (B(x).profile = (e.target as HTMLSelectElement).value as 'flat' | 'cornice')));
+    row.querySelector('[data-bk="del"]')?.addEventListener('click', () => ed.changeSolid((x) => void (x.bands = x.bands!.filter((q) => q.id !== id)), 'Friso removido.'));
+  });
   // Ferramentas de modelagem: o botão lê os campos da sua caixa.
   $$<HTMLButtonElement>('[data-run]').forEach((btn) =>
     btn.addEventListener('click', () => {
@@ -402,7 +512,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
   $$<HTMLSelectElement>('[data-quick-facade]').forEach((el) =>
     el.addEventListener('change', () => {
       const pr = FACADE_PRESETS.find((f) => f.id === el.value);
-      if (pr) ed.changeSolid((x) => void (x.facade = pr.rules()), `Fachada ${pr.name.toLowerCase()}.`);
+      if (pr) ed.changeSolid((x) => void (x.facade = presetRules(pr.id, x)), `Fachada ${pr.name.toLowerCase()} (porta na frente).`);
     }),
   );
   // Ações.

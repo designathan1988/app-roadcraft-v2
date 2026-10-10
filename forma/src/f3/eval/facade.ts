@@ -193,6 +193,23 @@ export function distribute(rule: Pick<FacadeRule, 'mode' | 'value' | 'justify'>,
   return Array.from({ length: n }, (_, i) => a + ((i + 0.5) * avail) / n);
 }
 
+/** Tira dos trechos [a, b] os intervalos ocupados. */
+export function carve(spans: { a: number; b: number }[], cuts: [number, number][]): { a: number; b: number }[] {
+  let out = spans;
+  for (const [c0, c1] of cuts) {
+    const next: { a: number; b: number }[] = [];
+    for (const q of out) {
+      if (c1 <= q.a || c0 >= q.b) next.push(q);
+      else {
+        if (c0 > q.a) next.push({ a: q.a, b: c0 });
+        if (c1 < q.b) next.push({ a: c1, b: q.b });
+      }
+    }
+    out = next;
+  }
+  return out;
+}
+
 export interface TypeResolver {
   (id: string): { type: ComponentType; family: Family } | null;
 }
@@ -236,12 +253,18 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
         const y = (lv.elevation + sill - s.base) / vy;
         // Distribui dentro dos trechos visíveis nesta fileira (torres que afinam,
         // empenas, parede coberta em parte por outro volume).
-        const spans = rowIntervals(r, y, y + openH / vy).filter(([a, b]) => b - a - 2 * rule.margin >= w);
-        const total = spans.reduce((acc, [a, b]) => acc + (b - a), 0);
+        // Peças já postas nesta fileira (porta, peças avulsas) recortam o trecho:
+        // a regra se redistribui no que sobra ao lado delas, com folga.
+        const GAP = Math.max(0.35, rule.margin * 0.6);
+        const blockers = taken
+          .filter((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && q.host.y < y + openH / vy + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)
+          .map((q) => [q.host!.s - q.length / 2 - GAP, q.host!.s + q.length / 2 + GAP] as [number, number]);
+        const spans = carve(rowIntervals(r, y, y + openH / vy).map(([a, b]) => ({ a: a + rule.margin, b: b - rule.margin })), blockers).filter((q) => q.b - q.a >= w);
+        const total = spans.reduce((acc, q) => acc + (q.b - q.a), 0);
         const centers: number[] = [];
-        for (const [a, b] of spans) {
-          const share = rule.mode === 'count' && spans.length > 1 ? { ...rule, value: Math.max(1, Math.round((rule.value * (b - a)) / total)) } : rule;
-          centers.push(...distribute(share, a + rule.margin, b - rule.margin, w));
+        for (const q of spans) {
+          const share = rule.mode === 'count' && spans.length > 1 ? { ...rule, value: Math.max(1, Math.round((rule.value * (q.b - q.a)) / total)) } : rule;
+          centers.push(...distribute(share, q.a, q.b, w));
         }
         centers.forEach((c, i) => {
           const k = `${r.edge}:${lv.index}:${i}`;

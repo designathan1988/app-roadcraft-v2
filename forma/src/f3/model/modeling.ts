@@ -417,3 +417,21 @@ export function splitAtHeight(b: Building3, s: Solid, y: number): Solid | null {
   }
   return upper;
 }
+
+// ── Frisos, cornija e rodapé (varredura pelo contorno) ─────────────────
+
+export type BandPreset = 'floors' | 'cornice' | 'base';
+
+/** Acrescenta frisos prontos: um em cada laje, cornija no topo ou rodapé. */
+export function addBands(b: Building3, s: Solid, preset: BandPreset): number {
+  const list = (s.bands ??= []);
+  const before = list.length;
+  if (preset === 'floors') {
+    for (const l of b.levels) {
+      const y = l.elevation - s.base;
+      if (y > 0.5 && y < s.height - 0.5) list.push({ id: uid(), y: y - 0.12, height: 0.24, depth: 0.08, profile: 'flat' });
+    }
+  } else if (preset === 'cornice') list.push({ id: uid(), y: Math.max(0, s.height - 0.6), height: 0.6, depth: 0.32, profile: 'cornice' });
+  else list.push({ id: uid(), y: 0, height: Math.min(0.7, s.height / 3), depth: 0.06, profile: 'flat' });
+  return list.length - before;
+}

@@ -44,6 +44,18 @@ export interface ViewState {
   activeLayer?: ID;
 }
 
+/** Perfil varrido em volta do volume numa altura. */
+export interface Band {
+  id: ID;
+  /** Altura da base do perfil acima da base do volume (m). */
+  y: number;
+  height: number;
+  /** Quanto sai da parede (m). */
+  depth: number;
+  /** Reto (faixa) ou em degraus (cornija clássica). */
+  profile: 'flat' | 'cornice';
+}
+
 /** Bisel das arestas horizontais (como o Bevel do Blender, não destrutivo). */
 export interface BevelSpec {
   /** Largura no topo e na base (m). */
@@ -185,6 +197,8 @@ export interface Solid {
   plinth: number;
   /** Bisel das arestas do topo e da base. */
   bevel?: BevelSpec;
+  /** Frisos, cornijas e rodapés varridos pelo contorno (como o Follow Me do SketchUp). */
+  bands?: Band[];
   /** Escondido na vista (olho da árvore). Recortes escondidos continuam recortando. */
   hidden?: boolean;
   /** Travado: aparece, mas não se seleciona. */

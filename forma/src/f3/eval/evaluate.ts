@@ -7,7 +7,7 @@ import { kernel, Scope, type Manifold } from '../kernel/kernel';
 import { bodyMesh, coveredEdges, solidRings } from './body';
 import { FaceTable, type FaceInfo } from './faces';
 import { roofMesh } from './roofs';
-import { flatRoof, groupParapet, topKey } from './parapet';
+import { bandsManifold, flatRoof, groupParapet, topKey } from './parapet';
 import { heightPrism, MeshBuilder, prismMesh } from './mesh';
 import { offsetRing, oriented, ringValid, sampleRing } from '../model/plan';
 import { inside } from '../model/ops';
@@ -53,8 +53,10 @@ export function solidManifold(s: Solid, table: FaceTable, scope: Scope, noParape
   const k = kernel();
   const rings = solidRings(s, covered);
   if (rings.outer.pts.length < 3 || s.height <= 0.01) return null;
-  const body = scope.keep(bodyMesh(s, rings, table).toManifold(k));
+  let body = scope.keep(bodyMesh(s, rings, table).toManifold(k));
   if (body.status() !== 'NoError' || body.isEmpty()) return null;
+  const bands = bandsManifold(s, rings, table, scope);
+  if (bands.length) body = scope.keep(k.Manifold.union([body, ...bands]));
   // Sólido de subtração com telhado curvo vira um recorte em arco (arcadas, pórticos).
   // Plano/terraço: a platibanda vem do grupo (contorno da união), não do volume sozinho.
   const roof = (s.op === 'subtract' || noParapet) && flatRoof(s) ? null : roofMesh(s, rings, table);

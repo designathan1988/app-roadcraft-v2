@@ -402,6 +402,10 @@ function checkSolid(e: Errors, where: string, s: Solid, p: Project3, ruleIds: Se
   if (s.hidden !== undefined && typeof s.hidden !== 'boolean') e.add(w, 'visibilidade inválida.');
   if (s.locked !== undefined && typeof s.locked !== 'boolean') e.add(w, 'trava inválida.');
   if (s.layer !== undefined && !str(s.layer)) e.add(w, 'camada inválida.');
+  if (s.bands !== undefined) {
+    if (!Array.isArray(s.bands) || s.bands.length > 40) e.add(w, 'frisos inválidos.');
+    else for (const bd of s.bands) if (!isObj(bd) || !str(bd.id) || !fin(bd.y) || !fin(bd.height) || !fin(bd.depth) || bd.height < 0 || bd.depth < 0 || (bd.profile !== 'flat' && bd.profile !== 'cornice')) e.add(w, 'friso inválido.');
+  }
   if (s.bevel !== undefined) {
     const bv = s.bevel;
     if (!isObj(bv) || !fin(bv.top) || !fin(bv.bottom) || !fin(bv.segments) || !fin(bv.profile) || bv.top < 0 || bv.bottom < 0 || bv.segments < 1 || bv.profile < 0 || bv.profile > 1) e.add(w, 'bisel inválido.');

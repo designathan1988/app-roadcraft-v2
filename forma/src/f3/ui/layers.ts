@@ -4,7 +4,7 @@
 // Outliner do SketchUp, as camadas do Rhino e a Visibilidade/Gráficos do Revit.
 import type { Editor3 } from '../editor/editor';
 import type { Building3, ID, Item, Solid } from '../model/schema';
-import { addLayer, activeLayer, DEFAULT_LAYER, ensureLayers, layersOf, removeLayer, viewOf } from '../model/layers';
+import { addLayer, activeLayer, buildingHidden, DEFAULT_LAYER, ensureLayers, itemHidden, layersOf, removeLayer, solidHidden, viewOf } from '../model/layers';
 import { CATEGORY_NAMES, type Category } from '../families/family';
 import { family, typeById } from '../families/index';
 import { icon } from './icons';
@@ -72,14 +72,14 @@ export function mountLayers(ed: Editor3): void {
       .map((b) => {
         const isOpen = open.has(b.id) || ed.context === b.id;
         const selB = ed.sel.building === b.id && !ed.sel.solids.length && !ed.sel.item;
-        let html = `<div class="f3-lrow${b.hidden ? ' off' : ''}" data-b="${b.id}" aria-selected="${selB}">
+        let html = `<div class="f3-lrow${buildingHidden(ed.project, b) ? ' off' : ''}" data-b="${b.id}" aria-selected="${selB}">
           <button class="ic" data-tact="fold" title="${isOpen ? 'Recolher' : 'Abrir'}">${isOpen ? '▾' : '▸'}</button>
           <span class="nm" data-tact="pick">${esc(b.name)}</span>${layerSelect(b.layer, 'data-tact="layer"')}${eye(!b.hidden, 'data-tact="eye"')}${lock(!!b.locked, 'data-tact="lock"')}</div>`;
         if (!isOpen) return html;
         for (const s of b.solids) html += solidRow(b, s);
         for (const it of b.items) {
           const sel = ed.sel.item === it.id;
-          html += `<div class="f3-lrow sub${it.hidden ? ' off' : ''}" data-b="${b.id}" data-i="${it.id}" aria-selected="${sel}"><span class="op">◆</span><span class="nm" data-tact="pick">${esc(itemName(it))}</span>${layerSelect(it.layer, 'data-tact="layer"')}${eye(!it.hidden, 'data-tact="eye"')}${lock(!!it.locked, 'data-tact="lock"')}</div>`;
+          html += `<div class="f3-lrow sub${itemHidden(ed.project, it) ? ' off' : ''}" data-b="${b.id}" data-i="${it.id}" aria-selected="${sel}"><span class="op">◆</span><span class="nm" data-tact="pick">${esc(itemName(it))}</span>${layerSelect(it.layer, 'data-tact="layer"')}${eye(!it.hidden, 'data-tact="eye"')}${lock(!!it.locked, 'data-tact="lock"')}</div>`;
         }
         return html;
       })
@@ -94,7 +94,7 @@ export function mountLayers(ed: Editor3): void {
   function solidRow(b: Building3, s: Solid): string {
     const sel = ed.sel.solids.includes(s.id);
     const op = s.op === 'add' ? '+' : s.op === 'subtract' ? '−' : '∩';
-    let html = `<div class="f3-lrow sub${s.hidden ? ' off' : ''}" data-b="${b.id}" data-s="${s.id}" aria-selected="${sel}"><span class="op" title="${s.op === 'add' ? 'Soma' : s.op === 'subtract' ? 'Recorte' : 'Interseção'}">${op}</span><span class="nm" data-tact="pick">${esc(s.name)}</span>${layerSelect(s.layer, 'data-tact="layer"')}${eye(!s.hidden, 'data-tact="eye"')}${lock(!!s.locked, 'data-tact="lock"')}</div>`;
+    let html = `<div class="f3-lrow sub${solidHidden(ed.project, s) ? ' off' : ''}" data-b="${b.id}" data-s="${s.id}" aria-selected="${sel}"><span class="op" title="${s.op === 'add' ? 'Soma' : s.op === 'subtract' ? 'Recorte' : 'Interseção'}">${op}</span><span class="nm" data-tact="pick">${esc(s.name)}</span>${layerSelect(s.layer, 'data-tact="layer"')}${eye(!s.hidden, 'data-tact="eye"')}${lock(!!s.locked, 'data-tact="lock"')}</div>`;
     for (const r of s.facade) {
       const t = typeById(r.type, ed.project);
       const f = t && family(t.family);

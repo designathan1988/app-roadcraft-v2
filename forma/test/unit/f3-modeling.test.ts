@@ -2,8 +2,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { loadKernel } from '../../src/f3/kernel/kernel';
 import { evaluateBuilding } from '../../src/f3/eval/evaluate';
 import { building, circlePlan, facadeRule, planVertices, rectPlan, roofSpec, solid } from '../../src/f3/model/defaults';
-import { extrudeSide, insetSide, insetTop, offsetCopy, offsetPlan, offsetSolid, setSolidSize, splitAtHeight } from '../../src/f3/model/modeling';
+import { addBands, extrudeSide, insetSide, insetTop, offsetCopy, offsetPlan, offsetSolid, setSolidSize, splitAtHeight } from '../../src/f3/model/modeling';
 import { sampleRing, signedArea2, oriented } from '../../src/f3/model/plan';
+import { presetRules } from '../../src/f3/model/quick';
 import type { Solid } from '../../src/f3/model/schema';
 
 beforeAll(async () => {
@@ -142,6 +143,44 @@ describe('extrudar e inset de face lateral', () => {
     expect(n.plan.outer.filter((v) => v.bulge).length).toBe(2);
     // Quarto de anel de 5 a 6 m: π/4·(36 − 25)·6.
     expect(volume(b).vol - before).toBeCloseTo((Math.PI / 4) * 11 * 6, 0);
+  });
+});
+
+describe('frisos varridos pelo contorno', () => {
+  it('faixa reta soma o anel de fora; cornija em degraus soma menos que a faixa cheia', () => {
+    const flat = box({ bands: [{ id: 'f', y: 2, height: 0.5, depth: 0.1, profile: 'flat' }] });
+    expect(volume(building({ solids: [flat] })).vol).toBeCloseTo(480 + (10.2 * 8.2 - 80) * 0.5, 2);
+    const corn = box({ bands: [{ id: 'c', y: 5.4, height: 0.6, depth: 0.3, profile: 'cornice' }] });
+    const v = volume(building({ solids: [corn] })).vol - 480;
+    expect(v).toBeGreaterThan(0);
+    expect(v).toBeLessThan((10.6 * 8.6 - 80) * 0.6);
+  });
+
+  it('frisos prontos: um por laje dentro do volume', () => {
+    const s = box({ height: 9.4 });
+    const b = building({ solids: [s], levels: [] });
+    b.levels = [
+      { id: 'a', name: 'T', elevation: 0, height: 3.4 },
+      { id: 'b', name: '1', elevation: 3.4, height: 3 },
+      { id: 'c', name: '2', elevation: 6.4, height: 3 },
+    ];
+    expect(addBands(b, s, 'floors')).toBe(2);
+  });
+});
+
+describe('fachada pronta', () => {
+  it('porta só na frente e janelas redistribuídas ao lado dela no térreo', () => {
+    const s = box({ plan: { outer: rectPlan(12, 8), holes: [] }, height: 6.4, roof: roofSpec('gable') });
+    const b = building({ solids: [s] });
+    s.facade = presetRules('col', s);
+    const ev = evaluateBuilding(b);
+    const doors = ev.placements.filter((p) => p.family.category === 'doors');
+    expect(doors).toHaveLength(1);
+    const front = doors[0]!.host!.edge;
+    const groundWins = ev.placements.filter((p) => p.family.category === 'windows' && p.host!.edge === front && p.frame[13]! < 3);
+    expect(groundWins.length).toBeGreaterThanOrEqual(2);
+    // Nenhuma janela encosta na porta.
+    for (const w of groundWins) expect(Math.abs(w.host!.s - doors[0]!.host!.s)).toBeGreaterThan((w.length + doors[0]!.length) / 2 + 0.3);
   });
 });
 
