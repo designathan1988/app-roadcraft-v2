@@ -93,6 +93,40 @@ Na interface, a aba **Estilos** aplica com um clique. No modo avançado ela tamb
 - **Tutorial** de 4 passos na primeira visita (`onboarding: false` desliga); reaparece pela Ajuda (`?`).
 - **Toque:** um dedo seleciona e arrasta; dois dedos orbitam e aproximam. As alças têm alvo maior no toque.
 
+### Jogo e desempenho
+
+```ts
+import { buildLOD, buildBatchedCity, createPartsGenerator, enableBVH } from 'forma';
+
+// Três níveis por distância (THREE.LOD):
+// LOD0 completo, LOD1 fundido sem caixilhos, LOD2 caixa com telhado.
+const casa = buildLOD(building, { context });
+scene.add(casa.group);
+
+// Bairro distante inteiro em 2 draw calls (BatchedMesh, cor por instância).
+const bairro = buildBatchedCity(project.buildings);
+scene.add(bairro.group);
+
+// Peças geradas num Web Worker (embutido); depois buildBuilding(b, { parts }).
+const gen = await createPartsGenerator(project);
+const parts = await gen.generate(project.buildings);
+
+// Raycast acelerado opcional: o jogo instala e passa o three-mesh-bvh.
+import * as bvh from 'three-mesh-bvh';
+enableBVH(casa.group, bvh);
+```
+
+Medido no navegador de testes (Chromium + SwiftShader, 1440 × 860), com 120 volumes na vista inteira:
+
+| | Draw calls | Triângulos |
+| --- | --- | --- |
+| LOD0 (sem LOD) | 2.589 | 293 mil |
+| LOD1 | 489 | 51 mil |
+| LOD2 | 129 | 5,9 mil |
+| Editor com LOD (níveis misturados) | 301 | 18,6 mil |
+
+O Playwright confere esse orçamento a cada execução (`e2e/editor.spec.ts`). O app usa `lod: true`. Volumes selecionados ficam sempre no detalhe completo.
+
 ## Formato do projeto (`forma/2`)
 
 Lote → Edifício → Pavimentos → Massas → Aberturas. Unidades em metros, Y para cima, planta em `[x, z]`.

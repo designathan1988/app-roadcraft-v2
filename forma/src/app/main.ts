@@ -1,7 +1,7 @@
 // App separado do FORMA 2 (o mesmo editor que o jogo incorpora).
 import { createEditor } from '../editor/editor';
 
-const editor = createEditor({ container: document.getElementById('app')! });
+const editor = createEditor({ container: document.getElementById('app')!, lod: true });
 
 // API global compatível com o FORMA v1 (usada por testes e integrações).
 (globalThis as Record<string, unknown>).Forma = {

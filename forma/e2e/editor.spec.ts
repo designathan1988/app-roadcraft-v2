@@ -579,3 +579,70 @@ test.describe('toque', () => {
     expect(errors).toEqual([]);
   });
 });
+
+test('desempenho: orçamento de draw calls e triângulos com LOD e geração num worker', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  const stats = () =>
+    page.evaluate(() => {
+      const sc = (globalThis as any).Forma.editor.scene;
+      sc.renderNow();
+      const i = sc.renderer.info.render;
+      return { calls: i.calls as number, triangles: i.triangles as number };
+    });
+  // Exemplo na vista inicial: detalhe completo, dentro do orçamento.
+  await page.evaluate(() => (globalThis as any).Forma.editor.scene.fitView());
+  const ex = await stats();
+  expect(ex.calls).toBeLessThan(200);
+  expect(ex.triangles).toBeLessThan(80_000);
+  // 120 volumes: na vista inteira entram os níveis simplificados.
+  const stress = JSON.parse(readFileSync(fixture('stress-120'), 'utf8'));
+  await page.evaluate((p) => {
+    const ed = (globalThis as any).Forma.editor;
+    ed.load(p);
+    ed.selectIds([]);
+    ed.scene.fitView();
+  }, stress);
+  const near = await stats();
+  expect(near.calls).toBeLessThan(400);
+  expect(near.triangles).toBeLessThan(60_000);
+  await page.evaluate(() => {
+    const sc = (globalThis as any).Forma.editor.scene;
+    sc.distance = 230; // máximo da câmera do editor
+    sc.phi = 0.6;
+    sc.updateCamera();
+  });
+  const far = await stats();
+  expect(far.calls).toBeLessThanOrEqual(near.calls);
+  expect(far.triangles).toBeLessThanOrEqual(near.triangles);
+  // Sem LOD, o mesmo projeto passaria do orçamento (prova de que o LOD atua).
+  const full = await page.evaluate(() => {
+    const ed = (globalThis as any).Forma.editor;
+    ed.scene.lodEnabled = false;
+    ed.scene.rebuild(ed.getProject().buildings);
+    ed.scene.fitView();
+    ed.scene.renderNow();
+    const i = ed.scene.renderer.info.render;
+    ed.scene.lodEnabled = true;
+    ed.scene.rebuild(ed.getProject().buildings);
+    return { calls: i.calls, triangles: i.triangles };
+  });
+  expect(full.calls).toBeGreaterThan(near.calls * 3);
+  // Worker embutido: as peças saem de outra thread, iguais às da thread principal.
+  const root = resolve(import.meta.dirname, '..').split('\\').join('/');
+  const w = await page.evaluate(async (root) => {
+    const m = await import(/* @vite-ignore */ `/@fs/${root}/src/render/worker-client.ts`);
+    const parts = await import(/* @vite-ignore */ `/@fs/${root}/src/geometry/mass-parts.ts`);
+    const ed = (globalThis as any).Forma.editor;
+    const bs = ed.getProject().buildings.slice(0, 20);
+    const g = await m.createPartsGenerator();
+    const t0 = performance.now();
+    const out = await g.generate(bs);
+    const ms = performance.now() - t0;
+    g.dispose();
+    const local = bs.map((b: any) => parts.buildBuildingParts(b));
+    return { threaded: g.threaded, n: out.length, same: JSON.stringify(out) === JSON.stringify(local), ms };
+  }, root);
+  expect(w).toMatchObject({ threaded: true, n: 20, same: true });
+  expect(errors).toEqual([]);
+});

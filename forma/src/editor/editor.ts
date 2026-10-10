@@ -958,6 +958,7 @@ export class Editor {
 
   private updateGizmos(): void {
     const sc = this.scene;
+    sc.setDetailed(this.selected);
     sc.disposeGroup(sc.gizmos);
     const lotSel = this.selectedLot && !this.selected.size ? this.lotById(this.selectedLot) : undefined;
     if (lotSel && this.tool === 'select') lotSel.polygon.forEach((p, i) => sc.handle(new THREE.Vector3(p[0], 0.05, p[1]), { kind: 'lotvertex', id: lotSel.id, index: i }));

@@ -6,6 +6,8 @@ import { buildBuildingParts, type MassPartsOptions } from '../geometry/mass-part
 import { createRenderContext, type RenderContext } from './context';
 
 export interface BuildOptions extends MassPartsOptions {
+  /** Peças já geradas (por exemplo, num worker); sem elas, são geradas aqui. */
+  parts?: BuildingParts;
   /** Contexto compartilhado (materiais). Sem ele, o edifício cria e libera o seu. */
   context?: RenderContext;
   shadows?: boolean;
@@ -20,7 +22,7 @@ export interface BuiltBuilding {
   dispose(): void;
 }
 
-function planShape(outer: Vec2[], holes: Vec2[][]): THREE.Shape {
+export function planShape(outer: Vec2[], holes: Vec2[][]): THREE.Shape {
   // Planta [x, z] vira forma em [x, -z]; a extrusão é girada −90° em X.
   const s = new THREE.Shape();
   outer.forEach((p, i) => (i ? s.lineTo(p[0], -p[1]) : s.moveTo(p[0], -p[1])));
@@ -40,7 +42,7 @@ export function slabGeometry(s: SlabPart): THREE.BufferGeometry {
   return g;
 }
 
-function wallGeometry(w: WallPart): THREE.BufferGeometry {
+export function wallGeometry(w: WallPart): THREE.BufferGeometry {
   const shape = new THREE.Shape();
   shape.moveTo(0, w.bottom);
   shape.lineTo(w.length, w.bottom);
@@ -70,7 +72,7 @@ function wallGeometry(w: WallPart): THREE.BufferGeometry {
  * projetado no próprio plano, com u ao longo da horizontal do plano. Triângulos
  * do mesmo plano usam a mesma base, então a textura continua sem emendas.
  */
-function metricUVs(pos: number[]): number[] {
+export function metricUVs(pos: number[]): number[] {
   const uv: number[] = [];
   const a = new THREE.Vector3(),
     b = new THREE.Vector3(),
@@ -100,7 +102,7 @@ export function buildBuilding(b: Building, opts: BuildOptions = {}): BuiltBuildi
   const ctx = opts.context ?? createRenderContext();
   const ownContext = !opts.context;
   const shadows = opts.shadows ?? true;
-  const parts = buildBuildingParts(b, opts);
+  const parts = opts.parts ?? buildBuildingParts(b, opts);
   const group = new THREE.Group();
   group.name = b.name;
   group.position.set(b.position[0], 0, b.position[1]);

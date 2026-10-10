@@ -1,6 +1,7 @@
 // Cena do editor: renderizador, câmera orbital, iluminação, chão, grade,
 // decoração, raios de seleção e alças. Funciona sozinha (cria tudo) ou
 // hospedada no jogo (usa renderer/scene/camera do jogo e não roda laço próprio).
+import { buildLOD, type BuiltLOD } from '../render/lod';
 import type { MassPartsOptions } from '../geometry/mass-parts';
 import * as THREE from 'three';
 import type { Building, ID, Vec2 } from '../core/schema';
@@ -22,6 +23,8 @@ export interface SceneHost {
   renderer?: THREE.WebGLRenderer;
   scene?: THREE.Scene;
   camera?: THREE.PerspectiveCamera;
+  /** Níveis de detalhe (LOD) por distância da câmera: menos draw calls em projetos grandes. */
+  lod?: boolean;
 }
 
 export interface PickResult {
@@ -53,6 +56,7 @@ export class EditorScene {
   readonly lotsRoot = new THREE.Group();
   readonly ctx = createRenderContext();
   readonly built = new Map<ID, BuiltBuilding>();
+  lodEnabled = false;
   readonly target = new THREE.Vector3(0, 4, 0);
   theta = 0.68;
   phi = 1.04;
@@ -84,6 +88,7 @@ export class EditorScene {
     private withEnvironment = !host.scene,
   ) {
     this.hosted = !!host.renderer;
+    this.lodEnabled = !!host.lod;
     this.scene = host.scene ?? new THREE.Scene();
     this.camera = host.camera ?? new THREE.PerspectiveCamera(38, 1, 0.1, 500);
     if (host.renderer) this.renderer = host.renderer;
@@ -232,12 +237,25 @@ export class EditorScene {
       this.built.delete(id);
       const b = buildings.find((x) => x.id === id);
       if (!b) continue;
-      const built = buildBuilding(b, { context: this.ctx, section: this.section, ...(this.buildOptionsFor?.(b) ?? {}) });
+      const o = { context: this.ctx, section: this.section, ...(this.buildOptionsFor?.(b) ?? {}) };
+      // Cortes (pavimento, seção) sempre com o detalhe completo.
+      const built = this.lodEnabled && !o.section && o.cutY === undefined ? buildLOD(b, { ...o, distanceScale: [2.5, 1.3] }) : buildBuilding(b, o);
       this.modelRoot.add(built.group);
       this.built.set(id, built);
     }
     this.modelRoot.updateMatrixWorld(true);
     this.renderer.shadowMap.needsUpdate = true;
+    this.mark();
+  }
+
+  /** Edifícios selecionados ficam sempre no detalhe completo (faces e alças precisas). */
+  setDetailed(ids: Set<ID>): void {
+    for (const [id, b] of this.built) {
+      const lod = (b as BuiltLOD).lod;
+      if (!lod) continue;
+      lod.autoUpdate = !ids.has(id);
+      if (ids.has(id)) (b as BuiltLOD).levels.forEach((l, i) => (l.visible = i === 0));
+    }
     this.mark();
   }
 
@@ -371,6 +389,10 @@ export class EditorScene {
   pick(e: { clientX: number; clientY: number }): PickResult | null {
     const hits = this.pointerRay(e).intersectObjects(this.modelRoot.children, true);
     for (const hit of hits) {
+      // Níveis de LOD ocultos também são atingidos pelo raio: ignora.
+      let shown = true;
+      for (let v: THREE.Object3D | null = hit.object; v && v !== this.modelRoot; v = v.parent) if (!v.visible) shown = false;
+      if (!shown) continue;
       let o: THREE.Object3D | null = hit.object;
       while (o && !o.userData.buildingId) o = o.parent;
       const built = o ? this.built.get(o.userData.buildingId as ID) : undefined;

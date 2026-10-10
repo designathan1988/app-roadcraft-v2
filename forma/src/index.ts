@@ -20,3 +20,5 @@ export * as lotOps from './editor/lot-ops';
 export { straightSkeleton, SkeletonError, type SkeletonResult } from './geometry/roofs/skeleton';
 export { skeletonRoof, gableEdges, type RoofGeometry, type SkeletonRoofOptions } from './geometry/roofs/skeleton-roof';
 export { TEMPLATES, templateById, type Template } from './editor/templates';
+export { buildLOD, buildBatchedCity, enableBVH, lod1Geometry, lod2Geometry, type BuiltLOD, type LodOptions, type BatchedCity } from './render/lod';
+export { createPartsGenerator, type PartsGenerator } from './render/worker-client';
