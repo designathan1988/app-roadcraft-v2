@@ -257,6 +257,16 @@ medir o tamanho de cada classe na cidade inteira, e depois como guarda em
   a velocidade de caminhada permite ou giro brusco é salto. Medir nas
   travessias dos cruzamentos.
 
+Estado em 2026-10-10: feitos o corpo do pedestre (`walkHeight.spec`,
+`citySpin.spec`), o apoio no chão desenhado (`lawnGround.spec`) e peça contra
+peça do lote (`lotClash.spec`, 2 949 → 0). Falta banco/passageiro contra os
+sólidos do interior do veículo: a geometria do interior é uma só, sem nomes, e
+uma sonda por caixas do corpo sentado acusa 34-1 937 triângulos por modelo
+(pedais e coluna junto às pernas do motorista, peitoril junto ao ombro da
+janela no ônibus) que só a imagem separa entre contato e defeito; o passo é
+dar nome aos sólidos do interior em `render/vehicleModels.ts` e medir cada
+classe com o jogo à vista.
+
 **5b. Objeto composto do lote.** Hoje garagem, pergolado, balanço, mesa e
 trampolim são peças soltas (laje + postes) postas uma a uma
 (`editor/lotPlan.ts`); o gerador pode recusar ou apagar um poste
