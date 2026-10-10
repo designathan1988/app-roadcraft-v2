@@ -331,7 +331,7 @@ export function createIsoRig(
   /**
    * The ground for a pointer whose ray meets none: on the flat map the view's
    * centre; on the planet, past its limb, the ground nearest the ray - the
-   * limb under the pointer, as a drag of the view holds it (\`panTo\`). The
+   * limb under the pointer, as a drag of the view holds it (`panTo`). The
    * view's centre there sent a road drawn off the globe's edge to the middle
    * of the screen, round the back of the planet.
    */

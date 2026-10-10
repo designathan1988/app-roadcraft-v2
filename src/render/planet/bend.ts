@@ -225,7 +225,7 @@ export function installPlanet(): void {
   };
 }
 
-/** The eye the world is drawn from this frame (\`planetEye\`): what lies past its horizon is not drawn. */
+/** The eye the world is drawn from this frame (`planetEye`): what lies past its horizon is not drawn. */
 const eye = new Vector3();
 let eyeKnown = false;
 const occluder = new Vector3();
@@ -246,7 +246,7 @@ export function planetEye(at: Vector3): void {
  * Culling", 2013 - a point is hidden when it is behind the plane of the
  * horizon circle AND inside the cone of the eye's tangents), for the
  * sphere's centre against the planet shrunk by the sphere's radius and by
- * the deepest ground can go (\`HORIZON_SLACK\`), so nothing that shows is
+ * the deepest ground can go (`HORIZON_SLACK`), so nothing that shows is
  * ever left out. At the globe half the planet's plates, and their shadows,
  * were drawn behind it.
  */
@@ -422,6 +422,17 @@ const sunPlanet: Vec3 = { x: 0, y: 0, z: 0 };
 export function planetSun(minutes: number, out: Vector3): Vector3 {
   planetSunInto(minutes, sunPlanet);
   return out.set(sunPlanet.x, sunPlanet.y, sunPlanet.z).transformDirection(motion);
+}
+
+/**
+ * The sun last asked for (`planetSun`) in the planet's own frame: fixed over
+ * the planet, it turns with the hour only - what a plate's baked light reads
+ * (`terrainAtlas.ts`). Carried back from three's space through the motion of
+ * another moment of the frame, it turned by the camera's own motion, and a
+ * fast spin re-baked all 864 plates every frame.
+ */
+export function planetSunOnPlanet(): Readonly<Vec3> {
+  return sunPlanet;
 }
 
 /** The time the sun makes at the place the view looks at (minutes, 0..1440). */

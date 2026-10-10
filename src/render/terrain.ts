@@ -33,6 +33,7 @@ import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type
 import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from '@world/ecology';
 import { GroundChanges } from './groundChanges';
 import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
+import { submitLight } from './terrainLightPool';
 import type { ChangeJournal } from '@world/changes';
 import { MAP_SIZE } from '@world/bounds';
 import {
@@ -3075,7 +3076,9 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     diary?.record('light', [[origin.x - TERRAIN_HALF + rect.x0 * TERRAIN_CELL, origin.y + TERRAIN_HALF - rect.y1 * TERRAIN_CELL, origin.x - TERRAIN_HALF + rect.x1 * TERRAIN_CELL, origin.y + TERRAIN_HALF - rect.y0 * TERRAIN_CELL]],
       { cause: 'luz do terreno refeita', ...(lightCause ? { parent: lightCause } : {}), ms: result.ms, detail: `${width}×${rect.y1 - rect.y0 + 1} cantos, num worker` });
   };
-  if (typeof Worker !== 'undefined') {
+  // A planet plate (`tile` >= 0) shares the planet's few light workers
+  // (`terrainLightPool.ts`): a worker of its own each was 864 threads.
+  if (typeof Worker !== 'undefined' && tile < 0) {
     try {
       lightWorker = new Worker(new URL('./terrainLight.worker.ts', import.meta.url), { type: 'module' });
       lightWorker.postMessage({ grid: lightGrid });
@@ -3110,6 +3113,14 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       lightBusy = true;
       lightWorker.postMessage(request, [request.heights.buffer]);
       return;
+    }
+    if (tile >= 0) {
+      lightBusy = true;
+      const sent = submitLight(lightGrid, tile, request,
+        (result) => { lightBusy = false; applyLight(result); },
+        () => { lightBusy = false; landMoved = 'all'; });
+      if (sent) return;
+      lightBusy = false;
     }
     lightLocal ??= createLandLighter(lightGrid);
     applyLight(lightLocal(request));

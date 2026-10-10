@@ -559,6 +559,10 @@ export function createSceneRenderer(
    * (its anchor): "always day" lit the anchor, near the limb, and left the
    * middle of the view in the dawn.
    */
+  /** The longitude offset (minutes) the fixed sky's sun was last set for, or -1. */
+  let fixedOffset = -1;
+  /** How far the view may go from it before the fixed sky's sun follows, minutes of longitude. */
+  const FIXED_SKY_DRIFT = 120;
   const centreRay = new Ray();
   const lookDirection = new Vector3();
   const lookedMinutes = (minutes: number): number => {
@@ -3124,10 +3128,19 @@ export function createSceneRenderer(
       // On the planet "always day" and "always night" are the hour WHERE THE
       // VIEW LOOKS: a fixed 16:00 of the planet's clock left half the globe,
       // and often the place looked at, in the night. The sun's hour at a place
-      // is the clock plus its longitude (\`world/planet/sun.ts\`), so the clock
+      // is the clock plus its longitude (`world/planet/sun.ts`), so the clock
       // that makes it there is the hour less that offset.
       const fixedHour = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : null;
-      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - lookedMinutes(0) : fixedHour;
+      // The fixed hour's sun is moved on only once the middle of the view has
+      // gone two hours of longitude (30 degrees) from where it was set: each
+      // move of the sun re-bakes the light of every plate, and a sun kept on
+      // the middle of the view moved under every spin of the globe.
+      if (__PLANET__ && fixedHour !== null) {
+        const offset = lookedMinutes(0);
+        const drift = Math.abs(((offset - fixedOffset + 720) % 1440 + 1440) % 1440 - 720);
+        if (fixedOffset < 0 || drift > FIXED_SKY_DRIFT) fixedOffset = offset;
+      } else fixedOffset = -1;
+      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - fixedOffset : fixedHour;
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
         // bends the plants and the smoke; the rain falls through the view;
@@ -3387,7 +3400,7 @@ export function createSceneRenderer(
       }
       // Out at the globe the contact shading is off (`PostChain.setAmbientOcclusion`).
       if (__PLANET__) post.setAmbientOcclusion((rig.viewport.globe ?? 0) < 0.02);
-      // Past the planet's horizon nothing is drawn (\`planet/bend.ts\`).
+      // Past the planet's horizon nothing is drawn (`planet/bend.ts`).
       if (__PLANET__) planetEye(rig.camera.position);
       if (reveal.opened) post.render(delta);
       else onAssetsReady();

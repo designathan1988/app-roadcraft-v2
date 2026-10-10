@@ -7,8 +7,9 @@ import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
 import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
 import { tileGround } from '@world/planet/relief';
-import { Vector3, type Mesh } from 'three';
-import { planetInverse } from './bend';
+import type { Mesh } from 'three';
+import { planetSunOnPlanet } from './bend';
+import { setLightFocus } from '../terrainLightPool';
 import { GroundChanges } from '../groundChanges';
 import {
   createTerrainSurface,
@@ -83,8 +84,7 @@ const placeOn = (tile: Tile, x: number, y: number, radius: number): { x: number;
   return { x: there.x, y: there.y };
 };
 
-/** The sun in the planet's own frame, and on one plate's map (\`setSun\`). */
-const sunOnPlanet = new Vector3();
+/** The sun on one plate's map (`setSun`). */
 const sunOnPlate = { x: 0, y: 0, z: 0 };
 
 const sameList = (a: readonly unknown[], b: readonly unknown[]): boolean =>
@@ -185,13 +185,14 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     ground: first.surface.ground,
     parts,
     // Each plate is its piece's flat map (east x, up y, north -z at its
-    // centre, \`bend.ts\`), and its land's light is baked for the sun ON THAT
+    // centre, `bend.ts`), and its land's light is baked for the sun ON THAT
     // MAP: the sun fixed over the planet, it turns only with the hour. Given
     // three's direction instead - which turns as the planet is set down under
     // each new view - every pan of a degree or two re-baked the light of all
     // 864 plates in the workers (140 s of work for one dab of the brush).
-    setSun(direction) {
-      sunOnPlanet.set(direction.x, direction.y, direction.z).transformDirection(planetInverse());
+    setSun() {
+      // The planet's own sun (bend.ts planetSunOnPlanet), never three's direction carried back.
+      const sunOnPlanet = planetSunOnPlanet();
       for (const t of tiles) {
         const f = TILES[t.face]!;
         sunOnPlate.x = sunOnPlanet.x * f.east.x + sunOnPlanet.y * f.east.y + sunOnPlanet.z * f.east.z;
@@ -203,6 +204,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     bakeRelief(renderer, focus) {
       // The close window only where the view is; every plate its own map-wide level.
       const at = focus ? tileAt(focus.x, -focus.z) : null;
+      // The plates nearest the view are lit first (terrainLightPool.ts).
+      if (at) setLightFocus(at.face);
       for (const t of tiles) t.surface.bakeRelief(renderer, t === at && focus ? { x: focus.x - t.cx, z: focus.z + t.cy } : null);
     },
     setWaterLook(look) { for (const t of tiles) t.surface.setWaterLook(look); },
