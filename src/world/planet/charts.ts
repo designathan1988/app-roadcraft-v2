@@ -80,6 +80,21 @@ export function inChartInto(chart: number, x: number, y: number, out: FacePoint)
 export const inChart = (chart: number, p: Readonly<Vec2>): Vec2 => inChartInto(chart, p.x, p.y, { x: 0, y: 0 });
 
 /**
+ * A point carried onto the chart `ref` is written on, to be compared with
+ * what is stored there: a query point (a pointer, a probe) against a shape
+ * kept on its own piece's chart. Two points written on different charts are
+ * tens of km apart in the atlas when they are neighbours on the sphere, so a
+ * point-in-shape or a distance between them is meaningless until both are on
+ * one chart. The point itself on the flat map, or when both share a chart.
+ */
+export function onChartOf(p: Readonly<Vec2>, ref: Readonly<Vec2>): Vec2 {
+  if (identity()) return p as Vec2;
+  const chart = tileCellOf(ref.x, ref.y);
+  if (tileCellOf(p.x, p.y) === chart) return p as Vec2;
+  return inChartInto(chart, p.x, p.y, { x: 0, y: 0 });
+}
+
+/**
  * A point of `chart`'s map (atlas coordinates about its centre, anywhere on
  * that map, past its cell too) written on the chart of the piece it lies on,
  * into `out`. The inverse of `inChartInto`.
@@ -137,6 +152,33 @@ export function setPointerChart(chart: number): void {
 
 /** The chart a pointer point `p` is written on. */
 export const pointerChartOf = (x: number, y: number): number => (pointer >= 0 && !identity() ? pointer : chartAt(x, y));
+
+/**
+ * A pointer point written on its own piece's chart: what it POINTS AT, to be
+ * compared with what is stored (`onChartOf`). A gesture's points are read on
+ * the chart of the piece it started on (`Viewport.holdChart`), its map going
+ * on past that piece - right for drawing a shape between two far points, and
+ * ambiguous for pointing: three pieces out such a point lies in another
+ * piece's cell of the atlas, and was taken for a point of that piece.
+ */
+export function ownPointer(p: Readonly<Vec2>, chart = pointerChartOf(p.x, p.y)): Vec2 {
+  if (identity()) return { x: p.x, y: p.y };
+  return toOwnerInto(chart, p.x, p.y, { x: 0, y: 0 });
+}
+
+/**
+ * A shape drawn on `chart`'s map (a lot's corners from a gesture) written on
+ * the chart of the piece that owns its middle: every vertex on that one chart,
+ * as a stored shape must be (a shape is compared and drawn on one chart).
+ */
+export function ownShape(chart: number, points: readonly Vec2[]): Vec2[] {
+  if (identity() || !points.length) return points.map((p) => ({ x: p.x, y: p.y }));
+  let cx = 0, cy = 0;
+  for (const p of points) { cx += p.x; cy += p.y; }
+  const middle = toOwnerInto(chart, cx / points.length, cy / points.length, { x: 0, y: 0 });
+  const owner = chartAt(middle.x, middle.y);
+  return points.map((p) => chartToChartInto(chart, owner, p.x, p.y, { x: 0, y: 0 }));
+}
 
 /** Points along each side of a piece's border in its territory's outline. */
 const TERRITORY_STEPS = 16;
