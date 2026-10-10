@@ -1,5 +1,6 @@
 import { profileOf } from '@world/roads/profile';
 import { planetLocalMinutes } from '@world/planet/sun';
+import { hasTransit } from '@world/transit';
 import { gestureChart, ownPoint } from './editor/planetFrame';
 import { chartAt, onChartOf, toOwner } from '@world/planet/charts';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
@@ -3455,10 +3456,21 @@ function frame(now: number): void {
   const timed = frameTimer.end();
   healthWatch.frameEnded(timed.start, timed.end);
 
-  // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || cameraHand.coasting || cameraMotion.moving || scene.busy())) requestDraw();
-  // Only the clouds moving (they drift, form and fade): a slower frame.
-  else if (!document.hidden && scene.drifting()) frameClock.drift();
+  // Keep animating while anything is moving; otherwise settle. The clock
+  // running over a town where nothing the simulation moves can be seen (no
+  // vehicle, person, signal or line) asks only the slower frame the clouds
+  // do: every frame of the display was drawn for a still picture - a fresh
+  // planet, or a map with no streets yet, held the CPU and the GPU at sixty
+  // frames a second (three.js manual, "Rendering on Demand").
+  const simMoving = !game.paused && simShowsMotion();
+  if (!document.hidden && (simMoving || roadTool.draft || mover.dragging || cameraHand.active || cameraHand.coasting || cameraMotion.moving || scene.busy())) requestDraw();
+  // Only the clouds moving (they drift, form and fade), or the clock alone: a slower frame.
+  else if (!document.hidden && (!game.paused || scene.drifting())) frameClock.drift();
+}
+
+/** Whether anything the simulation moves can be seen moving: vehicles, cars parking, people, signals, public transport. */
+function simShowsMotion(): boolean {
+  return sim.vehicles.size > 0 || sim.pedViews.length > 0 || sim.city.lots.moving() > 0 || sim.controllers.size > 0 || hasTransit(doc.transit);
 }
 
 /**
