@@ -49,7 +49,7 @@ import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } fro
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, WATER_FLOW_ATTRIBUTE, createWaterSurface, type WaterLook } from './water';
 import type { GullyDab } from '@world/gullies';
-import { RELIEF_RES, RELIEF_TEXTURE, createReliefBake } from './terrainRelief';
+import { RELIEF_TEXTURE, createReliefBake } from './terrainRelief';
 
 /**
  * Side of the playable, editable terrain plate, in world units.
@@ -1250,7 +1250,8 @@ function terrainMaterial(
          // that scale only undulates.
          float terrainReliefHeight(vec4 t, float wide) { return t.r * wide + t.a * mix(0.5, 1.0, wide); }
          void terrainReliefLevel(vec2 uv, float layer, float span, float wide, out vec2 grad, out float crease, out vec2 rest) {
-           float e = max(1.0 / ${RELIEF_RES.toFixed(1)}, 0.5 * max(fwidth(uv.x), fwidth(uv.y)));
+           // A texel of the level as baked: on the planet a plate off the view has a smaller one (terrainRelief.ts FAR_RES).
+           float e = max(1.0 / float(textureSize(uRelief, 0).x), 0.5 * max(fwidth(uv.x), fwidth(uv.y)));
            vec4 t0 = texture(uRelief, vec3(uv, layer));
            vec3 c0 = vec3(terrainReliefHeight(t0, wide), t0.gb);
            float xp = terrainReliefHeight(texture(uRelief, vec3(uv + vec2(e, 0.0), layer)), wide);

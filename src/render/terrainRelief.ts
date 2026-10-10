@@ -66,6 +66,12 @@ import { DEFAULT_GULLY_AUTO, gulliesAt, type GullyDab } from '@world/gullies';
 // On the planet a plate is 1.9 km, not 4.8: 512 keeps its texel near the
 // flat map's (3.7 units against 2.3), at a sixteenth of the memory, for 96 plates.
 export const RELIEF_RES = __PLANET__ ? 512 : 2048;
+/**
+ * On the planet, the level of a plate the view is not on: 256, a texel of
+ * 2.6 units - the wrinkles still finer than the mesh's 16-unit cells, and the
+ * plates seen beside the one looked at are farther and smaller on screen.
+ */
+const FAR_RES = 256;
 /** The close window's side, world units. */
 const WINDOW_SPAN = 600;
 /** How far the view's ground may wander from the window's centre before it is baked again. */
@@ -288,7 +294,14 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     return mask;
   };
   let gullies = gullyMask(1);
-  const target = new WebGLArrayRenderTarget(RELIEF_RES, RELIEF_RES, 2, {
+  /**
+   * The bake's target: the plate's own level, and the close window's while
+   * the view looks at this plate. On the planet a plate the view is not on
+   * has its level alone, at \`FAR_RES\` (\`targetFor\`): every one of the 864
+   * plates kept two 512 x 512 half-float levels with their mipmaps, 5.6 MB of
+   * video memory a plate - 4.8 GB in all.
+   */
+  const targetFor = (res: number, levels: number): WebGLArrayRenderTarget => new WebGLArrayRenderTarget(res, res, levels, {
     type: HalfFloatType,
     format: RGBAFormat,
     minFilter: LinearMipmapLinearFilter,
@@ -298,6 +311,16 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     generateMipmaps: true,
     depthBuffer: false,
   });
+  let target = __PLANET__ ? targetFor(FAR_RES, 1) : targetFor(RELIEF_RES, 2);
+  /** Gives the bake the target it now needs (with the close window or without), baking its level again when it changes. */
+  const retarget = (close: boolean): void => {
+    const levels = close ? 2 : 1;
+    if (!__PLANET__ || target.depth === levels) return;
+    target.dispose();
+    target = close ? targetFor(RELIEF_RES, 2) : targetFor(FAR_RES, 1);
+    dirty = true;
+    closeDirty = true;
+  };
   const corners = new Float32Array(gridN * gridN);
   const heights = new DataTexture(corners, gridN, gridN, RedFormat, FloatType);
   heights.minFilter = NearestFilter;
@@ -386,6 +409,7 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
       closeDirty = true;
     },
     bake(renderer, grid, focus) {
+      retarget(focus !== null);
       if (dirty) {
         dirty = false;
         const startedAt = performance.now();
