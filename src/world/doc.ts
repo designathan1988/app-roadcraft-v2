@@ -42,6 +42,8 @@ import type { SerializedBuilding } from './buildings/serialize';
 import { isZoneDensity, isZoneMark, isZoneUse, type Zone, type ZoneMark } from './zones';
 import { normalizePerson, type PersonSpec } from '@people/spec';
 import { ChangeJournal, rectAround, type ChangeRect, type DocChangeKind } from './changes';
+import { rescaleSerializedDoc } from './rescale';
+import { METERS_PER_UNIT } from './units';
 
 /** `shape` flattened until no band of a road of this profile folds over (see `RoadDoc.fitCurve`). */
 export function fitRoadCurve(
@@ -1474,6 +1476,7 @@ export class RoadDoc {
   private serialized(withBuildings: boolean): SerializedDoc {
     return {
       version: 1,
+      unit: METERS_PER_UNIT,
       nodes: [...this.nodes.values()].map((n) => ({
         // Copied, never aliased. `setMovementBlocked` mutates this array in
         // place (`push`/`splice`), so handing out the live reference made every
@@ -1556,7 +1559,9 @@ export class RoadDoc {
    * and must come back EXACTLY (`repair: false`): merging there deleted a road
    * the player could see the next time they drew, undid or reloaded.
    */
-  static fromJSON(data: SerializedDoc, options: { readonly repair?: boolean; readonly shareBuildings?: BuildingStore } = {}): RoadDoc {
+  static fromJSON(saved: SerializedDoc, options: { readonly repair?: boolean; readonly shareBuildings?: BuildingStore } = {}): RoadDoc {
+    // A map saved in another world unit (every map before 2026-10-10: 0.4 m) in this build's (docs/ESCALA.md).
+    const data = rescaleSerializedDoc(saved);
     const repair = options.repair ?? true;
     const doc = new RoadDoc();
     const canonicalNode = new Map<number, NodeId>();
@@ -1796,6 +1801,8 @@ function coordinateKey(x: number, y: number): string {
 
 export interface SerializedDoc {
   readonly version: 1;
+  /** Metres per world unit the map was saved in (`world/units.ts`); absent: 0.4, every map before 2026-10-10 (`rescale.ts`). */
+  readonly unit?: number;
   readonly nodes: readonly {
     id: number; x: number; y: number; heightOffset?: number; smooth?: boolean;
     control?: JunctionControl; blockedMovements?: readonly string[];

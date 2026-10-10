@@ -6,6 +6,8 @@ import { isTerrainMode, isTerrainProfile } from '@world/terrain';
 import { isNatureSettings } from '@world/ecology';
 import { readEconomy } from '@world/economy';
 import { isSerializedBuildings } from '@world/buildings/serialize';
+import { unitFactor } from '@world/rescale';
+import { METERS_PER_UNIT } from '@world/units';
 
 /**
  * Where the map is kept. The planet keeps its own: its points are written on
@@ -67,6 +69,8 @@ export interface SavedSettings {
   readonly people?: number;
   readonly demandMultiplier?: number;
   readonly congestionOverlay: boolean;
+  /** Metres per world unit the camera was saved in; absent: 0.4, before 2026-10-10 (docs/ESCALA.md). */
+  readonly unit?: number;
 }
 
 export interface SavedSession {
@@ -147,7 +151,7 @@ export class Persistence {
     let session: string;
     try {
       const text = this.documentText?.(doc) ?? JSON.stringify(doc.toJSON());
-      session = `{"version":2,"savedAt":${Date.now()},"document":${text},"settings":${JSON.stringify(settings)}}`;
+      session = `{"version":2,"savedAt":${Date.now()},"document":${text},"settings":${JSON.stringify(withUnit(settings))}}`;
     } catch {
       this.onSaveFailed?.();
       return false;
@@ -247,7 +251,7 @@ export class Persistence {
   private writeSettings(settings: SavedSettings): void {
     if (this.storageKey !== KEY) return;
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(withUnit(settings)));
     } catch {
       /* Settings are a convenience; the map's own entry still carries them. */
     }
@@ -426,6 +430,8 @@ export function normalizeSettings(settings: SavedSettings): SavedSettings {
   const demand = settings.demandMultiplier;
   return {
     ...settings,
+    camera: cameraInUnit(settings),
+    unit: METERS_PER_UNIT,
     speed: SPEEDS.includes(settings.speed) ? settings.speed : 1,
     trafficIntensity: intensity(settings.trafficIntensity),
     pedestrianIntensity: intensity(settings.pedestrianIntensity),
@@ -441,8 +447,25 @@ export const DEFAULT_PEDESTRIAN_COUNT = 10;
 export const MAX_TRAFFIC_COUNT = 400;
 export const MAX_PEDESTRIAN_COUNT = 400;
 
+/** Settings as stored: with the unit their camera is in. */
+const withUnit = (settings: SavedSettings): SavedSettings => ({ ...settings, unit: METERS_PER_UNIT });
+
+/**
+ * The saved camera in this build's world unit (`world/rescale.ts`): its zoom
+ * is pixels a unit. On the flat map the town shrinks about the origin and the
+ * camera's point with it; on the planet the town shrinks about its own middle,
+ * which the settings do not know, so the point stays where it was on the
+ * sphere, near the town.
+ */
+function cameraInUnit(settings: SavedSettings): SavedSettings['camera'] {
+  const factor = unitFactor(settings.unit);
+  const c = settings.camera;
+  if (factor === 1) return c;
+  return { ...c, zoom: c.zoom / factor, ...(__PLANET__ ? {} : { x: c.x * factor, y: c.y * factor }) };
+}
+
 function defaultSettings(): SavedSettings {
-  return { camera: { x: 0, y: 0, zoom: 1 }, paused: false, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false };
+  return { camera: { x: 0, y: 0, zoom: 1 }, paused: false, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false, unit: METERS_PER_UNIT };
 }
 
 function isSavedSession(value: unknown): value is SavedSession {
