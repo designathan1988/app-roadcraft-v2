@@ -1,4 +1,5 @@
 import type { Polyline } from '@core/polyline';
+import { onChartOf } from '@world/planet/charts';
 import { type Vec2, dist } from '@core/vec2';
 import type { PoleId } from '@world/ids';
 import type { RoadDoc } from '@world/doc';
@@ -107,7 +108,9 @@ export interface PoleSnap {
  */
 export function snapPole(doc: RoadDoc, net: Network, at: Vec2, reach: number): PoleSnap {
   const hit = doc.poleNear(at, reach);
-  if (hit) return { at: { x: hit.x, y: hit.y }, kind: 'pole', pole: hit.id };
+  // Its place on the asker's chart: the run is routed there with the rest of
+  // its points (a pole across a border is kept on its own piece's chart).
+  if (hit) return { at: onChartOf(hit, at), kind: 'pole', pole: hit.id };
   // Anywhere on the pavement takes its line; off it, only just beside the line.
   const footway = onFootway(net, at);
   const on = nearestOnContour(net, at, footway ? m(12) : LINE_CATCH);
@@ -482,7 +485,12 @@ function computePoleRun(
  * A refused plan builds nothing.
  */
 export function commitPoleRun(doc: RoadDoc, plan: PoleRunPlan): boolean {
-  if (plan.refused || plan.poles.length < 2) return false;
+  return commitPoleRunPoles(doc, plan) !== null;
+}
+
+/** `commitPoleRun`, giving the run's poles in order (null when nothing was built). */
+export function commitPoleRunPoles(doc: RoadDoc, plan: PoleRunPlan): PoleId[] | null {
+  if (plan.refused || plan.poles.length < 2) return null;
 
   const ids: PoleId[] = plan.poles.map(
     (pole) => pole.existing ?? doc.addPole(pole.at, pole.lamp).id,
@@ -495,7 +503,7 @@ export function commitPoleRun(doc: RoadDoc, plan: PoleRunPlan): boolean {
     if (a === undefined || b === undefined || a === b) continue;
     if (doc.addPoleSpan(a, b)) built = true;
   }
-  return built;
+  return built ? ids : null;
 }
 
 /** What the pole tool reads of the game and does to it. */

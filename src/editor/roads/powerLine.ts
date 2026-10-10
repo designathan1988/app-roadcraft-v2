@@ -1,9 +1,10 @@
 import type { RoadDoc } from '@world/doc';
-import type { SegmentId } from '@world/ids';
 import type { Network } from '@world/network';
 import { carriesPedestrians } from '@world/pedestrianAccess';
 import { m } from '@world/units';
-import { commitPoleRun, planPoleRun } from '../poles';
+import type { NodeId, PoleId, SegmentId } from '@world/ids';
+import { onChartOf } from '@world/planet/charts';
+import { commitPoleRunPoles, planPoleRun } from '../poles';
 
 /**
  * THE POWER LINE OF A NEW STREET (docs/VIAS.md V7): the distribution line
@@ -23,6 +24,23 @@ const SNAP_REACH = m(8);
 
 export function layPowerLines(doc: RoadDoc, net: Network, segments: Iterable<SegmentId>): number {
   let built = 0;
+  /**
+   * The pole ending a run at a node, and whether the run left from it (its
+   * segment's a) or came to it (its b). A street of several segments - every
+   * one on the planet, cut every 200 m (editor/commit.ts cutLongRoads) - was
+   * strung a line per segment, each held back 4 m from the node: the line
+   * broke at every one of them, a gap of wire between two poles 8 m apart.
+   * Where a run comes to a plain node (two roads) and the next leaves it on
+   * the same side of the street, the two are joined by a span.
+   */
+  const ends = new Map<NodeId, { pole: PoleId; leaving: boolean }>();
+  const join = (node: NodeId, pole: PoleId, leaving: boolean): void => {
+    const other = ends.get(node);
+    if (!other) { ends.set(node, { pole, leaving }); return; }
+    ends.delete(node);
+    // One coming in and one going out: the same side of the street.
+    if (other.leaving !== leaving && other.pole !== pole && doc.node(node)?.incident.length === 2) doc.addPoleSpan(other.pole, pole);
+  };
   for (const id of [...segments].sort((a, b) => a - b)) {
     const segment = doc.segment(id), ribbon = net.ribbons.get(id);
     if (!segment || !ribbon || !carriesPedestrians(ribbon.road) || ribbon.road.sidewalk <= 0) continue;
@@ -36,8 +54,17 @@ export function layPowerLines(doc: RoadDoc, net: Network, segments: Iterable<Seg
       const f = line.sampleAt(s);
       return { x: f.p.x + f.n.x * out, y: f.p.y + f.n.y * out };
     };
-    const plan = planPoleRun(doc, net, at(s0), at(s1), SNAP_REACH, undefined, 'all');
-    if (commitPoleRun(doc, plan)) built++;
+    // The line coming in to this segment's start carries on from its last
+    // pole: one pole at the joint, not two 8 m apart.
+    const coming = ends.get(segment.a);
+    const start = coming && !coming.leaving && doc.node(segment.a)?.incident.length === 2 ? doc.poles.get(coming.pole) : undefined;
+    const from = start ? onChartOf(start, at(s0)) : at(s0);
+    const plan = planPoleRun(doc, net, from, at(s1), SNAP_REACH, undefined, 'all');
+    const poles = commitPoleRunPoles(doc, plan);
+    if (!poles) continue;
+    built++;
+    join(segment.a, poles[0]!, true);
+    join(segment.b, poles[poles.length - 1]!, false);
   }
   return built;
 }

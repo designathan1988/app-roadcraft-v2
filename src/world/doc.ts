@@ -1,4 +1,5 @@
 import { type MarkingStyleId, isMarkingStyle } from './roads/markingStyle';
+import { onChartOf } from './planet/charts';
 import { type ApproachRuleEntry, type SignalSettings, normalizeApproachRules, normalizeSignalSettings, rulesDigest, signalDigest } from './roads/rules';
 import { type LaneLink, linksDigest, normalizeLaneLinks } from './roads/connectors';
 import { cloneRoadSection, normalizeRoadSection, sameRoadSection, type RoadSection } from './roadSection';
@@ -508,8 +509,10 @@ export class RoadDoc {
     let best: UtilityPole | null = null;
     let bestSq = radius * radius;
     for (const pole of this.poles.values()) {
-      const dx = pole.x - at.x;
-      const dy = pole.y - at.y;
+      // On the planet a pole kept on the next piece's chart is met on its chart.
+      const q = onChartOf(at, pole);
+      const dx = pole.x - q.x;
+      const dy = pole.y - q.y;
       const d = dx * dx + dy * dy;
       if (d <= bestSq) {
         bestSq = d;

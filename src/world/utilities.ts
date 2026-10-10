@@ -1,4 +1,5 @@
 import { type Vec2, dist, sub } from '@core/vec2';
+import { onChartOf } from './planet/charts';
 import type { PoleId, SpanId } from './ids';
 import { m } from './units';
 import { ROAD_TUNING } from './roads/tuning';
@@ -225,14 +226,16 @@ export function poleArms(
     const a = poles.get(span.a);
     const b = poles.get(span.b);
     if (!a || !b) continue;
-    const d = unit({ x: b.x - a.x, y: b.y - a.y });
+    // On each pole's own chart (planet/charts.ts onChartOf): the two poles of
+    // a span across a border are kept on two pieces' charts.
+    const bOnA = onChartOf(b, a), aOnB = onChartOf(a, b);
     const at = (id: PoleId, dir: Vec2): void => {
       const list = leaving.get(id);
       if (list) list.push({ span, d: dir });
       else leaving.set(id, [{ span, d: dir }]);
     };
-    at(span.a, d);
-    at(span.b, { x: -d.x, y: -d.y });
+    at(span.a, unit({ x: bOnA.x - a.x, y: bOnA.y - a.y }));
+    at(span.b, unit({ x: aOnB.x - b.x, y: aOnB.y - b.y }));
   }
   const out = new Map<PoleId, PoleArms>();
   for (const pole of poles.values()) {
@@ -242,7 +245,9 @@ export function poleArms(
     const oriented = (arm: Vec2, span: UtilitySpan): Vec2 => {
       const a = poles.get(span.a)!;
       const b = poles.get(span.b)!;
-      const along = { x: b.x - a.x, y: b.y - a.y };
+      // The span's a -> b on this pole's chart.
+      const from = onChartOf(a, pole), to = onChartOf(b, pole);
+      const along = { x: to.x - from.x, y: to.y - from.y };
       return along.x * arm.y - along.y * arm.x >= 0 ? arm : { x: -arm.x, y: -arm.y };
     };
     if (lines.length === 0) {

@@ -1,3 +1,4 @@
+import { onChartOf } from '@world/planet/charts';
 import {
   BufferGeometry,
   CylinderGeometry,
@@ -302,12 +303,17 @@ export function buildUtilities(
     const armA = framing.get(a.id)?.bySpan.get(span.id) ?? { x: 0, y: 1 };
     const armB = framing.get(b.id)?.bySpan.get(span.id) ?? { x: 0, y: 1 };
 
+    // On the first pole's chart: a span across a border joins two pieces'
+    // charts, and drawn between their raw points the wire crossed the atlas.
+    const bAt = onChartOf(b, a);
+    const armTip = onChartOf({ x: b.x + armB.x, y: b.y + armB.y }, a);
+    const armBAt = { x: armTip.x - bAt.x, y: armTip.y - bAt.y };
     for (const course of WIRE_COURSES) {
       for (const offset of WIRE_OFFSETS) {
         const ax = a.x + armA.x * POLE_ARM_HALF * offset;
         const ay = a.y + armA.y * POLE_ARM_HALF * offset;
-        const bx = b.x + armB.x * POLE_ARM_HALF * offset;
-        const by = b.y + armB.y * POLE_ARM_HALF * offset;
+        const bx = bAt.x + armBAt.x * POLE_ARM_HALF * offset;
+        const by = bAt.y + armBAt.y * POLE_ARM_HALF * offset;
         const az = topA - POLE_ARM_DROP + course;
         const bz = topB - POLE_ARM_DROP + course;
 
