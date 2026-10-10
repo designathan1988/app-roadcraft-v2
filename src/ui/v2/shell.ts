@@ -471,8 +471,7 @@ export function mountShell(deps: ShellDeps): void {
     if (popId === id) return closePop();
     popId = id;
     popAnchor = anchor;
-    pop.innerHTML = '';
-    pop.appendChild(popBody(id));
+    fillPop(id);
     pop.hidden = false;
     const r = anchor.getBoundingClientRect();
     if (r.top > window.innerHeight / 2) {
@@ -498,7 +497,7 @@ export function mountShell(deps: ShellDeps): void {
     return orow(label, choices([...(source?.options ?? [])].map((o) => ({
       label: o.textContent ?? o.value,
       on: o.value === source?.value,
-      run: () => { setInput(selector, o.value); if (popId) { pop.replaceChildren(popBody(popId)); } },
+      run: () => { setInput(selector, o.value); if (popId) fillPop(popId); },
     }))));
   };
   /** The simulation's numbers, kept current while its menu is open. */
@@ -532,6 +531,12 @@ export function mountShell(deps: ShellDeps): void {
     box.appendChild(dl);
     return box;
   };
+  /** Each panel says what it is: its name over its rows (the menu's rows name themselves). */
+  const POP_TITLE: Readonly<Record<string, string>> = { layers: 'v2.layers', sim: 'builder.menu.simulation', camera: 'camera.label', help: 'builder.help' };
+  function fillPop(id: string): void {
+    const key = POP_TITLE[id];
+    pop.replaceChildren(...(key ? [el('div', 'v2-pop-title', t(key))] : []), popBody(id));
+  }
   function popBody(id: string): HTMLElement {
     const body = el('div', 'v2-pop-body');
     metricsBox = null;
@@ -736,6 +741,83 @@ export function mountShell(deps: ShellDeps): void {
   // ================================================================ state
   let open = false;
   let builder: BuilderState | null = null;
+
+  /**
+   * A list of choices in the theme, in place of the browser's white `select`:
+   * a button naming the choice, and under it (above it, near the bottom of the
+   * screen) the list. Escape or a click elsewhere closes it.
+   */
+  let ddOpen: { list: HTMLElement; anchor: HTMLElement } | null = null;
+  /** A render asked for while a list was open: done when it closes. */
+  let renderHeld = false;
+  const closeDropdown = (): void => {
+    if (!ddOpen) return;
+    ddOpen.list.remove();
+    ddOpen.anchor.setAttribute('aria-expanded', 'false');
+    ddOpen = null;
+    if (renderHeld) { renderHeld = false; queueMicrotask(render); }
+  };
+  document.addEventListener('pointerdown', (e) => {
+    const target = e.target as Node;
+    if (ddOpen && !ddOpen.list.contains(target) && !ddOpen.anchor.contains(target)) closeDropdown();
+  }, true);
+  // The keys of a select (WAI-ARIA APG, select-only combobox): the arrows,
+  // Home and End move between the choices, Escape closes and gives the focus
+  // back to the button. They stop here: the camera's keys must not move too.
+  window.addEventListener('keydown', (e) => {
+    if (!ddOpen) return;
+    const { list, anchor } = ddOpen;
+    if (e.key === 'Escape') { closeDropdown(); anchor.focus(); e.stopPropagation(); e.preventDefault(); return; }
+    const opts = [...list.querySelectorAll<HTMLButtonElement>('.v2-dd-opt')];
+    const at = opts.indexOf(document.activeElement as HTMLButtonElement);
+    const to = e.key === 'ArrowDown' ? Math.min(opts.length - 1, at + 1) : e.key === 'ArrowUp' ? Math.max(0, at - 1)
+      : e.key === 'Home' ? 0 : e.key === 'End' ? opts.length - 1 : -1;
+    if (to < 0) return;
+    opts[to]?.focus();
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  const dropdown = (label: string, items: readonly { value: string; label: string }[], value: string, pick: (v: string) => void, prefix = ''): HTMLButtonElement => {
+    const b = el('button', 'v2-dd');
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-haspopup', 'listbox');
+    b.setAttribute('aria-expanded', 'false');
+    const name = el('span', 'v2-dd-value', `${prefix}${items.find((i) => i.value === value)?.label ?? ''}`);
+    b.appendChild(name);
+    b.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>');
+    b.onclick = () => {
+      if (ddOpen?.anchor === b) return closeDropdown();
+      closeDropdown();
+      const list = el('div', 'v2-dd-list');
+      list.setAttribute('role', 'listbox');
+      list.setAttribute('aria-label', label);
+      for (const item of items) {
+        const o = el('button', `v2-dd-opt${item.value === value ? ' on' : ''}`, item.label);
+        o.type = 'button';
+        o.setAttribute('role', 'option');
+        o.setAttribute('aria-selected', String(item.value === value));
+        o.onclick = () => { closeDropdown(); b.focus(); pick(item.value); };
+        list.appendChild(o);
+      }
+      root.appendChild(list);
+      const r = b.getBoundingClientRect();
+      list.style.minWidth = `${Math.round(r.width)}px`;
+      list.style.left = `${Math.round(Math.min(r.left, window.innerWidth - list.offsetWidth - 8))}px`;
+      if (r.top > window.innerHeight / 2) list.style.bottom = `${Math.round(window.innerHeight - r.top + 4)}px`;
+      else list.style.top = `${Math.round(r.bottom + 4)}px`;
+      ddOpen = { list, anchor: b };
+      b.setAttribute('aria-expanded', 'true');
+      const chosen = list.querySelector<HTMLElement>('.on') ?? list.querySelector<HTMLElement>('.v2-dd-opt');
+      chosen?.scrollIntoView({ block: 'nearest' });
+      chosen?.focus({ preventScroll: true });
+    };
+    // Down on the closed button opens the list, as a select does.
+    b.onkeydown = (e) => {
+      if (e.key === 'ArrowDown' && !ddOpen) { e.preventDefault(); e.stopPropagation(); b.click(); }
+    };
+    return b;
+  };
 
   let modelQuery = '';
   let modelCat = 'all';
@@ -1241,15 +1323,8 @@ export function mountShell(deps: ShellDeps): void {
       }
       if (current === 'streetscape' && kindNow === 'sign') {
         // Which sign, and the words on those that carry them.
-        const type = el('select', 'v2-mini');
-        type.setAttribute('aria-label', t('sign.type'));
-        for (const s of SIGN_TYPES) {
-          const o = el('option', '', t(`sign.type.${s}`));
-          o.value = s;
-          o.selected = signChoice.type === s;
-          type.appendChild(o);
-        }
-        type.onchange = () => { signChoice.type = type.value as typeof signChoice.type; render(); };
+        const type = dropdown(t('sign.type'), SIGN_TYPES.map((s) => ({ value: s, label: t(`sign.type.${s}`) })), signChoice.type,
+          (v) => { signChoice.type = v as typeof signChoice.type; render(); });
         options.appendChild(orow(t('v2.row.sign'), type));
         if (SIGN_HAS_TEXT.has(signChoice.type)) options.appendChild(orow(t('v2.row.text'), textInput(t(signChoice.type === 'speed' ? 'sign.text.speed' : 'sign.text'), signChoice.text, (v) => { signChoice.text = v; })));
       } else if (current === 'streetscape' && kindNow === 'streetname') {
@@ -1378,26 +1453,11 @@ export function mountShell(deps: ShellDeps): void {
 
     // The pointer's switches, in the head.
     if (selected) {
-      const floor = el('select', 'v2-mini');
-      floor.title = t('builder.floor.title');
-      for (let i = 0; i < Math.max(1, state.floor.total); i++) {
-        const o = el('option', '', `${t('v2.build.floor')} ${i + 1}`);
-        o.value = String(i);
-        o.selected = i === state.floor.active;
-        floor.appendChild(o);
-      }
-      floor.onchange = () => actions.setFloor(Number(floor.value));
-      tools.appendChild(floor);
+      const floors = Array.from({ length: Math.max(1, state.floor.total) }, (_, i) => ({ value: String(i), label: `${t('v2.build.floor')} ${i + 1}` }));
+      tools.appendChild(dropdown(t('builder.floor.title'), floors, String(state.floor.active), (v) => actions.setFloor(Number(v))));
     }
-    const snap = el('select', 'v2-mini');
-    snap.title = t('builder.snap.label');
-    for (const s of SNAP_MODES) {
-      const o = el('option', '', `${t('builder.snap.label')}: ${t(`builder.snap.${s}`)}`);
-      o.value = s;
-      o.selected = s === state.snap;
-      snap.appendChild(o);
-    }
-    snap.onchange = () => actions.setSnap(snap.value);
+    const snap = dropdown(t('builder.snap.label'), SNAP_MODES.map((s) => ({ value: s, label: t(`builder.snap.${s}`) })), state.snap,
+      (v) => actions.setSnap(v), `${t('builder.snap.label')}: `);
     const grid = button('v2-icon' + (state.grid ? ' on' : ''), t('builder.grid'), () => actions.toggleGrid(), svg('grid', 17));
     const hide = button('v2-icon' + (state.hideOthers ? ' on' : ''), t('builder.hideOthers'), () => actions.toggleHideOthers(), svg('hide', 17));
     tools.append(snap, grid, hide);
@@ -1517,15 +1577,9 @@ export function mountShell(deps: ShellDeps): void {
     g.appendChild(search);
     const cats = ['all', 'homes', 'public', 'commerce', 'work', 'leisure', 'generic', 'lots', ...(state.userBlueprints.length ? ['mine'] : [])];
     // The kinds of building in one dropdown, not a row of names.
-    const kind = el('select', 'v2-mini');
-    kind.title = t('builder.category.models');
-    for (const c of cats) {
-      const o = el('option', '', c === 'all' ? t('builder.city.all') : c === 'mine' ? t('builder.city.mine') : t(`builder.city.${c}`));
-      o.value = c;
-      o.selected = modelCat === c;
-      kind.appendChild(o);
-    }
-    kind.onchange = () => { modelCat = kind.value; render(); };
+    const kind = dropdown(t('builder.category.models'), cats.map((c) => ({
+      value: c, label: c === 'all' ? t('builder.city.all') : c === 'mine' ? t('builder.city.mine') : t(`builder.city.${c}`),
+    })), modelCat, (v) => { modelCat = v; render(); });
     g.appendChild(kind);
     options.appendChild(g);
     const { items } = section(t('builder.category.models'));
@@ -1562,6 +1616,10 @@ export function mountShell(deps: ShellDeps): void {
   // ================================================================ render
   let lastSignature = '';
   function render(): void {
+    // Not while a list is open: the panel rebuilt under it (a picture
+    // arriving, the Builder's state) took its button away and closed it
+    // within a quarter of a second. Rendered as soon as it closes.
+    if (ddOpen) { renderHeld = true; return; }
     const current = tool();
     const cat = categoryOf(current);
     for (const [id, b] of catButtons) {
@@ -1601,6 +1659,11 @@ export function mountShell(deps: ShellDeps): void {
     // A tool with nothing to choose (demolish, inspect) opens no drawer: its
     // icon is lit in the dock and its help is in the tooltip.
     drawer.hidden = tabs.hidden && strip.childElementCount === 0;
+    // A mode with nothing to pick (move, split, no transit line yet, a
+    // Builder tab that needs a building): what to do, said in the panel, not
+    // left to a screen reader only.
+    const help = drawer.getAttribute('aria-description');
+    if (!drawer.hidden && strip.childElementCount === 0 && help) strip.appendChild(el('p', 'v2-note', help));
     toolOptions.hidden = options.hidden && tools.childElementCount === 0;
     // Many things: two rows of cards, more of them in view, rather than one
     // row whose end (the weather, the landforms) hid past the panel's edge.

@@ -132,6 +132,11 @@ o jogo a cada edição.
   quando o caixilho é metal escuro, cornija só no topo do prédio, faixa central
   avançada nas torres modernas, paleta de terra e minerais e mais ritmos de
   fachada (`architecture.ts`, `procedural.ts`).
+- Interface v2 (ramo `interface`, agente cancelado, terminado): listas de escolha
+  no tema em vez do `select` branco do navegador (categoria dos modelos, encaixe,
+  andar, placa), com as teclas de um select (setas, Home, End, Escape; WAI-ARIA
+  APG); o painel não se refaz com uma lista aberta (fechava-a em menos de
+  250 ms); título nos painéis e, num modo sem nada a escolher, o que fazer.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga
