@@ -273,12 +273,21 @@ export interface ReliefBake {
 const GULLY_RES = 256;
 
 export function createReliefBake(gridN: number, cell: number, half: number, macro: Texture): ReliefBake {
-  const gullyData = new Uint8Array(GULLY_RES * GULLY_RES * 4);
-  const gullies = new DataTexture(gullyData, GULLY_RES, GULLY_RES, RGBAFormat, UnsignedByteType);
-  gullies.magFilter = LinearFilter;
-  gullies.minFilter = LinearFilter;
-  gullies.generateMipmaps = false;
-  gullies.needsUpdate = true;
+  /**
+   * The gully brush's mask: one texel (none cut, none wiped) until a dab of it
+   * reaches this ground, then \`GULLY_RES\` across (\`gullyMask\`). On the
+   * planet each of the 864 plates kept a 256 x 256 mask (262 KB) though the
+   * brush is seldom used - 226 MB of the page's memory, and as much on the GPU.
+   */
+  const gullyMask = (res: number): DataTexture => {
+    const mask = new DataTexture(new Uint8Array(res * res * 4), res, res, RGBAFormat, UnsignedByteType);
+    mask.magFilter = LinearFilter;
+    mask.minFilter = LinearFilter;
+    mask.generateMipmaps = false;
+    mask.needsUpdate = true;
+    return mask;
+  };
+  let gullies = gullyMask(1);
   const target = new WebGLArrayRenderTarget(RELIEF_RES, RELIEF_RES, 2, {
     type: HalfFloatType,
     format: RGBAFormat,
@@ -342,6 +351,19 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     window: windowUniform,
     markDirty() { dirty = true; closeDirty = true; },
     setGullies(dabs, auto) {
+      // None here and none laid before: the one empty texel stands.
+      if (dabs.length > 0 && gullies.image.width < GULLY_RES) {
+        gullies.dispose();
+        gullies = gullyMask(GULLY_RES);
+        material.uniforms['uGullies']!.value = gullies;
+      }
+      const gullyData = gullies.image.data as Uint8Array;
+      if (gullies.image.width < GULLY_RES) {
+        material.uniforms['uGullyAuto']!.value = auto;
+        dirty = true;
+        closeDirty = true;
+        return;
+      }
       // Rasterised with the dabs culled per row, as the fog's map is.
       const step = (2 * half) / GULLY_RES;
       for (let j = 0; j < GULLY_RES; j++) {

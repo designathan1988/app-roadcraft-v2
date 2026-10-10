@@ -992,8 +992,17 @@ const PAINT_LAYERS = 3;
  * corner in the layer's first GRID x GRID texels.
  */
 const LIGHT_LAYER = 2;
-function paintLayers(): DataArrayTexture {
-  const texture = new DataArrayTexture(new Uint8Array(PAINT_RES * PAINT_RES * 4 * PAINT_LAYERS), PAINT_RES, PAINT_RES, PAINT_LAYERS);
+/**
+ * The side of the painted ground's array before anything is painted on it:
+ * the land's light layer (one texel a terrain corner) fits in it, and the
+ * paint layers are empty. Grown to `PAINT_RES` by the first dab
+ * (`growPaint`): on the planet each of the 864 plates kept a 256 x 256 x 3
+ * array (786 KB) though almost none is ever painted - 680 MB of the page's
+ * memory, and as much again on the GPU.
+ */
+const PAINT_START_RES = Math.min(PAINT_RES, 2 ** Math.ceil(Math.log2(TERRAIN_SEGMENTS + 1)));
+function paintLayers(res = PAINT_START_RES): DataArrayTexture {
+  const texture = new DataArrayTexture(new Uint8Array(res * res * 4 * PAINT_LAYERS), res, res, PAINT_LAYERS);
   texture.format = RGBAFormat;
   texture.type = UnsignedByteType;
   texture.magFilter = LinearFilter;
@@ -1006,7 +1015,8 @@ function paintLayers(): DataArrayTexture {
 }
 /** One layer of the painted ground's array, as a view on its data. */
 function paintLayer(texture: DataArrayTexture, layer: number): Uint8Array {
-  const size = PAINT_RES * PAINT_RES * 4;
+  const res = texture.image.width;
+  const size = res * res * 4;
   return (texture.image.data as Uint8Array).subarray(layer * size, (layer + 1) * size);
 }
 
@@ -1138,6 +1148,7 @@ function terrainMaterial(
   material.userData['macro'] = sharedMacro(anisotropy);
   const uniforms = {
     uPaint: { value: paint as Texture },
+    uPaintRes: { value: paint.image.width },
     uPaintHalf: { value: TERRAIN_HALF },
     uPaintSize: { value: TERRAIN_SIZE },
     uGrassField: GRASS_FIELD,
@@ -1269,6 +1280,7 @@ function terrainMaterial(
          float terrainWide = 1.0;
          uniform sampler2DArray uRockMap;
          uniform sampler2DArray uPaint;
+         uniform float uPaintRes; // the array's side (\`growPaint\`)
          uniform float uPaintHalf;
          uniform float uPaintSize;
          uniform vec4 uGrassField; // world x, y, reach, on
@@ -1424,7 +1436,7 @@ function terrainMaterial(
          // The land's light and shape per corner (terrainLight), bilinear.
          vec4 terrainLand() {
            vec2 cell = vec2((vTerrainWorld.x + uPaintHalf) / ${TERRAIN_CELL.toFixed(6)}, (uPaintHalf + vTerrainWorld.z) / ${TERRAIN_CELL.toFixed(6)});
-           return texture(uPaint, vec3((cell + 0.5) / ${PAINT_RES.toFixed(1)}, ${LIGHT_LAYER.toFixed(1)}));
+           return texture(uPaint, vec3((cell + 0.5) / uPaintRes, ${LIGHT_LAYER.toFixed(1)}));
          }
          // The steepness that decides grass, soil and rock: the smooth
          // normal's, raised to a wall's where the corners say the land is one.
@@ -3080,14 +3092,36 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   };
   vergeMaterial.customProgramCacheKey = () => 'terrain-splat-v30-verge';
 
-  const paintArray = material.userData['paint'] as DataArrayTexture;
-  const paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
+  let paintArray = material.userData['paint'] as DataArrayTexture;
+  let paintRes = paintArray.image.width;
+  let paint = [paintLayer(paintArray, 0), paintLayer(paintArray, 1)];
   // The land's own light (`terrainLight`): lit and open to the sky until it
   // is first worked out.
-  const lightLayer = paintLayer(paintArray, LIGHT_LAYER);
+  let lightLayer = paintLayer(paintArray, LIGHT_LAYER);
   for (let i = 0; i < GRID; i++) {
-    for (let j = 0; j < GRID; j++) lightLayer.set([255, 255, 128, 0], (i * PAINT_RES + j) * 4);
+    for (let j = 0; j < GRID; j++) lightLayer.set([255, 255, 128, 0], (i * paintRes + j) * 4);
   }
+  /**
+   * The painted ground's array at its full size (`PAINT_RES`), made when the
+   * first dab reaches this ground (`PAINT_START_RES`): the land's light
+   * carried over row by row, the shader given the new array and its side.
+   */
+  const growPaint = (): void => {
+    if (paintRes >= PAINT_RES) return;
+    const small = paintArray, was = paintRes;
+    const next = paintLayers(PAINT_RES);
+    const from = paintLayer(small, LIGHT_LAYER), to = paintLayer(next, LIGHT_LAYER);
+    for (let y = 0; y < GRID; y++) to.set(from.subarray(y * was * 4, (y * was + GRID) * 4), y * PAINT_RES * 4);
+    const own = material.userData['terrainUniforms'] as { uPaint: { value: Texture }; uPaintRes: { value: number } };
+    own.uPaint.value = next;
+    own.uPaintRes.value = PAINT_RES;
+    material.userData['paint'] = next;
+    paintArray = next;
+    paintRes = PAINT_RES;
+    paint = [paintLayer(next, 0), paintLayer(next, 1)];
+    lightLayer = paintLayer(next, LIGHT_LAYER);
+    small.dispose();
+  };
   paintArray.addLayerUpdate(LIGHT_LAYER);
   paintArray.needsUpdate = true;
   // The corners whose heights moved since the light was last asked for
@@ -3112,7 +3146,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     const width = rect.x1 - rect.x0 + 1;
     for (let iy = rect.y0; iy <= rect.y1; iy++) {
       const row = (iy - rect.y0) * width * 4;
-      lightLayer.set(rgba.subarray(row, row + width * 4), (iy * PAINT_RES + rect.x0) * 4);
+      lightLayer.set(rgba.subarray(row, row + width * 4), (iy * paintRes + rect.x0) * 4);
     }
     paintArray.addLayerUpdate(LIGHT_LAYER);
     paintArray.needsUpdate = true;
@@ -3209,6 +3243,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     // a dab of geology changes neither.
     let covered = false;
     const geologyRects: (readonly [number, number, number, number])[] = [];
+    // Something to lay: the array at its full size first.
+    if (dabs.length > 0) growPaint();
     const lay = (dab: PaintDab): void => {
       if (isGeologyKind(dab.kind)) {
         geologyRects.push(rasterGeology(sandCorners, basaltCorners, dab));
