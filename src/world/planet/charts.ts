@@ -237,6 +237,29 @@ export function chartsReaching(chart: number, minX: number, minY: number, maxX: 
 }
 const reaching = new Set<number>();
 
+/**
+ * A run of points drawn point by point (a railway, a wall) as it is kept on
+ * the planet: each stretch longer than `piece` cut into equal parts along the
+ * line drawn - on its first point's chart, the second carried there - and
+ * every new point kept on the chart of the piece it lies on, so a stretch
+ * joins two neighbouring pieces at most (a road is cut so too,
+ * `editor/commit.ts` cutLongRoads). The run between two of its points is then
+ * always worked out on the first's chart, the second carried there
+ * (`onChartOf`). The points themselves on the flat map.
+ */
+export function layRun(points: readonly Vec2[], piece: number): Vec2[] {
+  if (identity() || points.length < 2) return points.map((p) => ({ x: p.x, y: p.y }));
+  const out: Vec2[] = [{ x: points[0]!.x, y: points[0]!.y }];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!, b = onChartOf(points[i]!, a);
+    const chart = chartAt(a.x, a.y);
+    const parts = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / piece));
+    for (let k = 1; k < parts; k++) out.push(toOwner(chart, { x: a.x + ((b.x - a.x) * k) / parts, y: a.y + ((b.y - a.y) * k) / parts }));
+    out.push({ x: points[i]!.x, y: points[i]!.y });
+  }
+  return out;
+}
+
 /** Points of `from`'s map on `to`'s map (the same ground); the points themselves when the charts are one. */
 export function carryPoints(from: number, to: number, points: readonly Vec2[]): Vec2[] {
   if (from === to || identity()) return points as Vec2[];

@@ -4,6 +4,19 @@ import { ROAD_CLEARANCE, touchesRoad } from '@world/buildings/validate';
 import type { Network } from '@world/network';
 import { CURB_BAND, Level, halfWidth } from '@world/roadTypes';
 import { m } from '@world/units';
+import { chartAt, inChart, layRun, onChartOf } from '@world/planet/charts';
+import { PLANET_MAX_PIECE } from './planetFrame';
+
+/**
+ * ON THE PLANET a run's points are kept each on the chart of the piece it lies
+ * on (`layRun`), a stretch worked out on its first point's chart, the second
+ * carried there; a road's ribbon is kept on its segment's chart, and a point
+ * is measured against it carried onto that chart (`onRibbon`).
+ */
+const onRibbon = (net: Network, id: number, p: Vec2): Vec2 => {
+  const chart = net.polylines.chart(net.doc, id as never);
+  return chartAt(p.x, p.y) === chart ? p : inChart(chart, p);
+};
 
 /**
  * Drawing walls, fences and hedges along a path (`world/barriers.ts`).
@@ -30,11 +43,12 @@ export function snapBarrierPoint(net: Network | null, kind: BarrierKind, at: Vec
     const back = KERB_BARRIERS.has(kind)
       ? ribbon.road.width / 2 + CURB_BAND + half + m(0.15)
       : halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE + half + m(0.02);
-    const hit = ribbon.full.closestPoint(at);
+    const q = onRibbon(net, ribbon.id, at);
+    const hit = ribbon.full.closestPoint(q);
     const off = Math.abs(hit.distance - back);
     if (off > FOOTWAY_REACH || (best && off >= best.d)) continue;
     const frame = ribbon.full.sampleAt(hit.s);
-    const side = (at.x - frame.p.x) * frame.n.x + (at.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
+    const side = (q.x - frame.p.x) * frame.n.x + (q.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
     best = { d: off, p: { x: frame.p.x + frame.n.x * side * back, y: frame.p.y + frame.n.y * side * back } };
   }
   return best ? best.p : at;
@@ -46,12 +60,16 @@ export function snapBarrierPoint(net: Network | null, kind: BarrierKind, at: Vec
  */
 export function barrierProblem(net: Network | null, kind: BarrierKind, points: readonly Vec2[]): 'road' | 'short' | null {
   let length = 0;
-  for (let i = 1; i < points.length; i++) length += Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y);
+  for (let i = 1; i < points.length; i++) {
+    const b = onChartOf(points[i]!, points[i - 1]!);
+    length += Math.hypot(b.x - points[i - 1]!.x, b.y - points[i - 1]!.y);
+  }
   if (points.length < 2 || length < MIN_BARRIER_RUN) return 'short';
   if (!net) return null;
   const half = Math.max(m(0.02), m(BARRIER_SIZE[kind].thickness) / 2 - m(0.05));
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]!, b = points[i]!;
+    // The stretch's footprint on its first point's chart.
+    const a = points[i - 1]!, b = onChartOf(points[i]!, a);
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 1e-6) continue;
     const nx = -(b.y - a.y) / len * half, ny = (b.x - a.x) / len * half;
@@ -147,8 +165,13 @@ export class BarrierTool {
     const { host } = this;
     const points = this.points ?? [];
     this.points = null;
-    // A double click lands two points on one spot: one of them is enough.
-    const path = points.filter((p, i) => i === 0 || Math.hypot(p.x - points[i - 1]!.x, p.y - points[i - 1]!.y) > 1e-3);
+    // A double click lands two points on one spot: one of them is enough. On
+    // the planet the run is laid in pieces kept on their own charts (`layRun`).
+    const path = layRun(points.filter((p, i) => {
+      if (i === 0) return true;
+      const q = onChartOf(p, points[i - 1]!);
+      return Math.hypot(q.x - points[i - 1]!.x, q.y - points[i - 1]!.y) > 1e-3;
+    }), PLANET_MAX_PIECE);
     if (path.length < 2) { host.redraw(); return; }
     const problem = barrierProblem(host.net(), host.kind(), path);
     if (problem) {
@@ -178,7 +201,7 @@ export class BarrierTool {
 function onCarriageway(net: Network, rect: readonly Vec2[]): boolean {
   for (const ribbon of net.ribbons.values()) {
     const reach = ribbon.road.width / 2 + CURB_BAND - m(0.02);
-    for (const p of rect) if (ribbon.full.closestPoint(p).distance < reach) return true;
+    for (const p of rect) if (ribbon.full.closestPoint(onRibbon(net, ribbon.id, p)).distance < reach) return true;
   }
   return false;
 }

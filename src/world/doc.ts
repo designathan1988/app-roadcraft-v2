@@ -166,6 +166,20 @@ export interface RoadSegment {
  * `markNode` for why not from the dirty sets). Nothing in this file knows about lanes,
  * vehicles or rendering.
  */
+/**
+ * The places a run of points (a wall, a span of wire) covers, for the diary of
+ * changes: on the planet one box a stretch, each on its first point's chart
+ * with the second carried there - one box round points kept on two charts
+ * spanned the atlas between them, and every tile under it was built again.
+ * One box round them all on the flat map.
+ */
+function rectsAlong(points: readonly { readonly x: number; readonly y: number }[], pad: number): ChangeRect[] {
+  if (!__PLANET__ || points.length < 2) { const r = rectAround(points, pad); return r ? [r] : []; }
+  const out: ChangeRect[] = [];
+  for (let i = 1; i < points.length; i++) out.push(rectAround([points[i - 1]!, onChartOf(points[i]!, points[i - 1]!)], pad)!);
+  return out;
+}
+
 export class RoadDoc {
   readonly nodes = new Map<NodeId, RoadNode>();
   readonly segments = new Map<SegmentId, RoadSegment>();
@@ -438,7 +452,7 @@ export class RoadDoc {
     }
     const id = asSpanId(this.spanIds.take());
     const span: UtilitySpan = { id, a, b };
-    this.poleSpans.set(id, span);    this.changes.record('utilities', [rectAround([this.poles.get(a)!, this.poles.get(b)!], ITEM_PAD)!], { ids: [a, b] });
+    this.poleSpans.set(id, span);    this.changes.record('utilities', rectsAlong([this.poles.get(a)!, this.poles.get(b)!], ITEM_PAD), { ids: [a, b] });
     return span;
   }
 
@@ -447,13 +461,13 @@ export class RoadDoc {
     const path = points.map((p) => clampToMap(p));
     if (path.length < 2) return null;
     const barrier: Barrier = { id: this.barrierIds.take(), kind, points: path.map((p) => ({ x: p.x, y: p.y })) };
-    this.barriers.set(barrier.id, barrier);    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [barrier.id] });
+    this.barriers.set(barrier.id, barrier);    this.changes.record('barriers', rectsAlong(barrier.points, ITEM_PAD), { ids: [barrier.id] });
     return barrier;
   }
 
   removeBarrier(id: number): boolean {
     const barrier = this.barriers.get(id);
-    if (!barrier || !this.barriers.delete(id)) return false;    this.changes.record('barriers', [rectAround(barrier.points, ITEM_PAD)!], { ids: [id] });
+    if (!barrier || !this.barriers.delete(id)) return false;    this.changes.record('barriers', rectsAlong(barrier.points, ITEM_PAD), { ids: [id] });
     return true;
   }
 
@@ -463,11 +477,12 @@ export class RoadDoc {
     let bestD = radius;
     for (const barrier of this.barriers.values()) {
       for (let i = 1; i < barrier.points.length; i++) {
-        const a = barrier.points[i - 1]!, b = barrier.points[i]!;
+        // On the stretch's first point's chart (`world/planet/charts.ts` layRun).
+        const a = barrier.points[i - 1]!, b = onChartOf(barrier.points[i]!, a), q = onChartOf(at, a);
         const dx = b.x - a.x, dy = b.y - a.y;
         const len = dx * dx + dy * dy;
-        const t = len > 0 ? Math.max(0, Math.min(1, ((at.x - a.x) * dx + (at.y - a.y) * dy) / len)) : 0;
-        const d = Math.hypot(a.x + dx * t - at.x, a.y + dy * t - at.y);
+        const t = len > 0 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / len)) : 0;
+        const d = Math.hypot(a.x + dx * t - q.x, a.y + dy * t - q.y);
         if (d < bestD) { bestD = d; best = barrier; }
       }
     }

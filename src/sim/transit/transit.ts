@@ -2,6 +2,7 @@ import type { Vec2 } from '@core/vec2';
 import type { BuildingId } from '@world/buildings/types';
 import { type RailGraph, type TransitLine, type TransitStop, railGraph, railPath } from '@world/transit';
 import { m } from '@world/units';
+import { onChartOf } from '@world/planet/charts';
 import { DRIVER_NOISE, DT } from '../params';
 import type { SimWorld } from '../world';
 import { ARCHETYPES, bodyClassOfArchetype } from '../vehicles/archetypes';
@@ -113,8 +114,11 @@ interface RailLine {
   readonly points: Vec2[];
   readonly at: number[];
   readonly length: number;
-  /** Each station on the loop: the stop's id and its distance along it. */
-  readonly stations: { readonly stop: number; readonly s: number }[];
+  /**
+   * Each station on the loop: the stop's id, its distance along it, and
+   * whether the loop turns back there (the line's two ends).
+   */
+  readonly stations: { readonly stop: number; readonly s: number; readonly turn: boolean }[];
   readonly trains: Train[];
 }
 
@@ -178,8 +182,9 @@ export class TransitSim {
       if (!track) continue;
       let yaw = 0, best = Infinity;
       for (let i = 1; i < track.points.length; i++) {
-        const a = track.points[i - 1]!, b = track.points[i]!;
-        const d = Math.hypot((a.x + b.x) / 2 - st.x, (a.y + b.y) / 2 - st.y);
+        // On the stretch's chart (`world/transit.ts`), the station carried there.
+        const a = track.points[i - 1]!, b = onChartOf(track.points[i]!, a), s = onChartOf(st, a);
+        const d = Math.hypot((a.x + b.x) / 2 - s.x, (a.y + b.y) / 2 - s.y);
         if (d < best) { best = d; yaw = Math.atan2(b.y - a.y, b.x - a.x); }
       }
       this.platforms.set(st.id, { x: st.x - Math.sin(yaw) * PLATFORM, y: st.y + Math.cos(yaw) * PLATFORM });
@@ -205,9 +210,12 @@ export class TransitSim {
       }
       if (!ok || points.length < 2) continue;
       const at: number[] = [0];
-      for (let i = 1; i < points.length; i++) at.push(at[i - 1]! + Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y));
-      const length = at[at.length - 1]! + Math.hypot(points[0]!.x - points[points.length - 1]!.x, points[0]!.y - points[points.length - 1]!.y);
-      const stationsOn = marks.map((mk) => ({ stop: mk.stop, s: at[mk.index]! }));
+      // Each stretch on its first point's chart (`world/transit.ts`).
+      const stretch = (a: Vec2, b: Vec2): number => { const q = onChartOf(b, a); return Math.hypot(q.x - a.x, q.y - a.y); };
+      for (let i = 1; i < points.length; i++) at.push(at[i - 1]! + stretch(points[i - 1]!, points[i]!));
+      const length = at[at.length - 1]! + stretch(points[points.length - 1]!, points[0]!);
+      // The loop turns back at the first station and at the last one out.
+      const stationsOn = marks.map((mk, i) => ({ stop: mk.stop, s: at[mk.index]!, turn: i === 0 || i === stations.length - 1 }));
       const trains: Train[] = [];
       for (let k = 0; k < line.vehicles; k++) {
         const s = (length * k) / line.vehicles;
@@ -222,7 +230,8 @@ export class TransitSim {
           for (let j = 1; j < c.n; j++) {
             const p = c.point(j - 1), q = c.point(j);
             for (let i = 0; i < points.length; i++) {
-              const a = points[i]!, b = points[(i + 1) % points.length]!;
+              // The stretch on the lane's chart.
+              const a = onChartOf(points[i]!, p), b = onChartOf(points[(i + 1) % points.length]!, p);
               const hit = crossAt(a, b, p, q);
               if (!hit) continue;
               const laneS = c.closestPoint({ x: p.x + (q.x - p.x) * hit.v, y: p.y + (q.y - p.y) * hit.v }).s;
@@ -337,7 +346,17 @@ export class TransitSim {
     const ahead = (station.s - train.s + rail.length) % rail.length;
     if (train.dwell > 0) {
       train.dwell -= DT;
-      if (train.dwell <= 0) { train.dwell = 0; train.next = (train.next + 1) % rail.stations.length; }
+      if (train.dwell <= 0) {
+        train.dwell = 0;
+        train.next = (train.next + 1) % rail.stations.length;
+        // At an end of the line the train goes back the way it came, as a
+        // real one does: its last car leads. Its place on the loop moves on by
+        // its own length - onto the way back, where the cars stand exactly
+        // where they stood (`pointAt`), last first. Left at the front, the
+        // leading car turned round on the loop and drove back through the
+        // train's own cars.
+        if (station.turn) train.s = (train.s + (rail.line.mode === 'metro' ? METRO_CARS : TRAIN_CARS) * CAR_LENGTH) % rail.length;
+      }
       return;
     }
     if (ahead < m(0.6) && train.v < m(0.5)) {
@@ -351,7 +370,14 @@ export class TransitSim {
     let gap = Infinity;
     for (const o of rail.trains) if (o !== train) gap = Math.min(gap, (o.s - train.s + rail.length) % rail.length || Infinity);
     const top = rail.line.mode === 'metro' ? METRO_TOP : TRAIN_TOP;
-    const room = Math.min(ahead, gap - TRAIN_GAP);
+    // The headway asked for, at most a share of the loop each train has: on a
+    // short line the full block ahead (`TRAIN_GAP`) was longer than the loop
+    // between two trains, and both stood at their first station for good -
+    // the two trains a line starts with, on a track of a few hundred metres.
+    // Never less than the train's own length and a margin.
+    const length = (rail.line.mode === 'metro' ? METRO_CARS : TRAIN_CARS) * CAR_LENGTH;
+    const headway = Math.min(TRAIN_GAP, Math.max(length + m(10), (0.6 * rail.length) / rail.trains.length));
+    const room = Math.min(ahead, gap - headway);
     const want = Math.max(0, Math.min(top, Math.sqrt(2 * TRAIN_BRAKE * Math.max(0, room))));
     train.v = want > train.v ? Math.min(want, train.v + TRAIN_ACCEL * DT) : Math.max(want, train.v - TRAIN_BRAKE * 1.5 * DT);
     if (room > m(0.6) && train.v < m(0.4)) train.v = Math.min(m(0.4), want);
@@ -363,14 +389,15 @@ export class TransitSim {
     const at = rail.at, pts = rail.points;
     const d = ((s % rail.length) + rail.length) % rail.length;
     let lo = 0, hi = at.length - 1;
+    // On the stretch's first point's chart (`world/transit.ts`).
     if (d >= at[hi]!) {
-      const a = pts[hi]!, b = pts[0]!;
+      const a = pts[hi]!, b = onChartOf(pts[0]!, a);
       const span = rail.length - at[hi]!;
       const u = span > 0 ? (d - at[hi]!) / span : 0;
       return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, heading: Math.atan2(b.y - a.y, b.x - a.x) };
     }
     while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (at[mid]! <= d) lo = mid; else hi = mid; }
-    const a = pts[lo]!, b = pts[hi]!;
+    const a = pts[lo]!, b = onChartOf(pts[hi]!, a);
     const span = at[hi]! - at[lo]!;
     const u = span > 0 ? (d - at[lo]!) / span : 0;
     return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, heading: Math.atan2(b.y - a.y, b.x - a.x) };
@@ -486,7 +513,9 @@ export class TransitSim {
    */
   plan(w: SimWorld, from: Vec2, to: Vec2): { line: number; board: number; alight: number } | null {
     const t = w.doc.transit;
-    const direct = Math.hypot(to.x - from.x, to.y - from.y);
+    // Distances on one chart each (on the planet, `world/planet/charts.ts`).
+    const toHere = onChartOf(to, from);
+    const direct = Math.hypot(toHere.x - from.x, toHere.y - from.y);
     let best: { line: number; board: number; alight: number; cost: number } | null = null;
     for (const line of t.lines) {
       // Only lines running now.
@@ -495,7 +524,8 @@ export class TransitSim {
       for (const id of line.stops) {
         const s = this.stops.get(id);
         if (!s) continue;
-        const da = Math.hypot(s.x - from.x, s.y - from.y), db = Math.hypot(s.x - to.x, s.y - to.y);
+        const f = onChartOf(from, s), g = onChartOf(to, s);
+        const da = Math.hypot(s.x - f.x, s.y - f.y), db = Math.hypot(s.x - g.x, s.y - g.y);
         if (da < STOP_REACH && (!a || da < a.d)) a = { id, d: da };
         if (db < STOP_REACH && (!b || db < b.d)) b = { id, d: db };
       }

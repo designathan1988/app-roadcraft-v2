@@ -3,6 +3,7 @@ export type { Box as TransitBox };
 
 import type { RoadDoc } from '@world/doc';
 import { m } from '@world/units';
+import { onChartOf } from '@world/planet/charts';
 import type { TrainView } from '@sim/transit/transit';
 
 /**
@@ -74,7 +75,8 @@ export function trackBoxes(points: readonly { x: number; y: number }[], mode: 't
   groundAt: (x: number, y: number) => number, pavedAt: (x: number, y: number) => number = () => NaN): Record<'ballast' | 'sleepers' | 'rails' | 'tunnel' | 'roof', Box[]> {
   const out = { ballast: [] as Box[], sleepers: [] as Box[], rails: [] as Box[], tunnel: [] as Box[], roof: [] as Box[] };
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]!, b = points[i]!;
+    // On the stretch's first point's chart, the second carried there (`world/transit.ts`).
+    const a = points[i - 1]!, b = onChartOf(points[i]!, a);
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len < 1e-3) continue;
     const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len, yaw = Math.atan2(b.y - a.y, b.x - a.x);
@@ -136,8 +138,8 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
       if (track) {
         let best = Infinity;
         for (let i = 1; i < track.points.length; i++) {
-          const a = track.points[i - 1]!, b = track.points[i]!;
-          const d = Math.hypot((a.x + b.x) / 2 - s.x, (a.y + b.y) / 2 - s.y);
+          const a = track.points[i - 1]!, b = onChartOf(track.points[i]!, a), at = onChartOf(s, a);
+          const d = Math.hypot((a.x + b.x) / 2 - at.x, (a.y + b.y) / 2 - at.y);
           if (d < best) { best = d; yaw = Math.atan2(b.y - a.y, b.x - a.x); }
         }
       }
@@ -178,8 +180,8 @@ export function buildTransit(doc: RoadDoc, groundAt: (x: number, y: number) => n
         if (track) {
           let best = Infinity;
           for (let i = 1; i < track.points.length; i++) {
-            const a = track.points[i - 1]!, b = track.points[i]!;
-            const d = Math.hypot((a.x + b.x) / 2 - s.x, (a.y + b.y) / 2 - s.y);
+            const a = track.points[i - 1]!, b = onChartOf(track.points[i]!, a), at = onChartOf(s, a);
+            const d = Math.hypot((a.x + b.x) / 2 - at.x, (a.y + b.y) / 2 - at.y);
             if (d < best) { best = d; tyaw = Math.atan2(b.y - a.y, b.x - a.x); }
           }
         }

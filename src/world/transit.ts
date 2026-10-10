@@ -1,6 +1,7 @@
 import type { Vec2 } from '@core/vec2';
 import type { SegmentId } from './ids';
 import { m } from './units';
+import { onChartOf } from './planet/charts';
 
 /**
  * Public transport, as the player lays it out (Cities: Skylines II's order:
@@ -172,6 +173,17 @@ export interface RailGraph {
 }
 
 /**
+ * ON THE PLANET a track's points are each kept on the chart of the piece they
+ * lie on (`editor/transitTools.ts` lays a run in pieces no longer than a road
+ * piece), and the run between two of them is laid on the first's chart, the
+ * second carried there (`onChartOf`): two charts' points are tens of km
+ * apart in the atlas, and a stretch measured between them as they stand was
+ * a phantom across the map - trains routed over it, the station tool picked
+ * it far away. Anything compared with a stretch (a point, a station) is
+ * carried onto that chart too. On the flat map every carry is the point.
+ */
+
+/**
  * The tracks of one mode as a graph: every point of every track a node, each
  * run between two a stretch; points of different tracks within `JOIN` are
  * one, so tracks drawn end to end, or a branch started on a track, connect.
@@ -181,14 +193,18 @@ export function railGraph(t: TransitData, mode: 'train' | 'metro'): RailGraph {
   const edges: RailEdge[] = [];
   const at = new Map<number, number[]>();
   const node = (p: Vec2): number => {
-    for (let i = 0; i < points.length; i++) if (Math.hypot(points[i]!.x - p.x, points[i]!.y - p.y) < JOIN) return i;
+    for (let i = 0; i < points.length; i++) {
+      const q = onChartOf(p, points[i]!);
+      if (Math.hypot(points[i]!.x - q.x, points[i]!.y - q.y) < JOIN) return i;
+    }
     points.push({ x: p.x, y: p.y });
     return points.length - 1;
   };
   const link = (a: number, b: number): void => {
     if (a === b) return;
     const e = edges.length;
-    edges.push({ a, b, length: Math.hypot(points[a]!.x - points[b]!.x, points[a]!.y - points[b]!.y) });
+    const pa = points[a]!, pb = onChartOf(points[b]!, pa);
+    edges.push({ a, b, length: Math.hypot(pa.x - pb.x, pa.y - pb.y) });
     at.set(a, [...(at.get(a) ?? []), e]);
     at.set(b, [...(at.get(b) ?? []), e]);
   };
@@ -210,10 +226,11 @@ export function nearestTrack(t: TransitData, p: Vec2, reach: number, mode?: 'tra
   for (const track of t.tracks) {
     if (mode && track.mode !== mode) continue;
     for (let i = 1; i < track.points.length; i++) {
-      const a = track.points[i - 1]!, b = track.points[i]!;
+      // On the stretch's chart, its first point's.
+      const a = track.points[i - 1]!, b = onChartOf(track.points[i]!, a), q = onChartOf(p, a);
       const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
-      const u = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
-      const x = a.x + dx * u, y = a.y + dy * u, d = Math.hypot(p.x - x, p.y - y);
+      const u = len2 > 0 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / len2)) : 0;
+      const x = a.x + dx * u, y = a.y + dy * u, d = Math.hypot(q.x - x, q.y - y);
       if (d < reach && (!best || d < best.d)) best = { track: track.id, x, y, d };
     }
   }
@@ -229,11 +246,11 @@ export function railPath(g: RailGraph, from: Vec2, to: Vec2): Vec2[] | null {
   const onEdge = (p: Vec2): { e: number; u: number; q: Vec2 } | null => {
     let best: { e: number; u: number; q: Vec2; d: number } | null = null;
     g.edges.forEach((e, i) => {
-      const a = g.points[e.a]!, b = g.points[e.b]!;
+      const a = g.points[e.a]!, b = onChartOf(g.points[e.b]!, a), on = onChartOf(p, a);
       const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
-      const u = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+      const u = len2 > 0 ? Math.max(0, Math.min(1, ((on.x - a.x) * dx + (on.y - a.y) * dy) / len2)) : 0;
       const q = { x: a.x + dx * u, y: a.y + dy * u };
-      const d = Math.hypot(p.x - q.x, p.y - q.y);
+      const d = Math.hypot(on.x - q.x, on.y - q.y);
       if (!best || d < best.d) best = { e: i, u, q, d };
     });
     return best;
@@ -282,7 +299,7 @@ export function longestOnRoad(points: readonly Vec2[], onRoad: (p: Vec2) => bool
   const STEP = m(1);
   let run = 0, worst = 0;
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]!, b = points[i]!;
+    const a = points[i - 1]!, b = onChartOf(points[i]!, a);
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     for (let d = 0; d < len; d += STEP) {
       const p = { x: a.x + ((b.x - a.x) * d) / len, y: a.y + ((b.y - a.y) * d) / len };

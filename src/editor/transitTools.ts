@@ -9,6 +9,8 @@ import {
 import { m } from '@world/units';
 import { volumeCorners } from '@world/buildings/geometry';
 import { pointInPolygon } from '@core/polygon';
+import { layRun, onChartOf } from '@world/planet/charts';
+import { PLANET_MAX_PIECE } from './planetFrame';
 
 export { onCarriageway } from '@world/carriageway';
 import { onCarriageway } from '@world/carriageway';
@@ -70,7 +72,11 @@ export class TransitTool {
   /** Whether a point is inside a building (a block built out over its footway). */
   private built(p: Vec2): boolean {
     // Every volume, upper floors too: a block may overhang its footway, and the way down would be under it.
-    for (const b of this.deps.doc().buildings.all()) for (const v of b.volumes) if (!v.open && pointInPolygon(p, volumeCorners(b, v, m(1)))) return true;
+    // Each on its building's chart (on the planet, `world/planet/charts.ts`).
+    for (const b of this.deps.doc().buildings.all()) {
+      const q = onChartOf(p, b);
+      for (const v of b.volumes) if (!v.open && pointInPolygon(q, volumeCorners(b, v, m(1)))) return true;
+    }
     return false;
   }
 
@@ -81,7 +87,8 @@ export class TransitTool {
     let best: { x: number; y: number; segment: number; d: number } | null = null;
     for (const way of this.walkways.ways) {
       if (way.kind !== 'footway' || way.segment === undefined) continue;
-      const hit = way.path.closestPoint(p);
+      // On the footway's chart, its segment's (on the planet).
+      const hit = way.path.closestPoint(onChartOf(p, { x: way.path.xy[0]!, y: way.path.xy[1]! }));
       if (clear && this.built(hit.point)) continue;
       if (hit.distance < reach && (!best || hit.distance < best.d)) best = { x: hit.point.x, y: hit.point.y, segment: way.segment, d: hit.distance };
     }
@@ -96,7 +103,8 @@ export class TransitTool {
     let best: number | null = null, bestD = PICK;
     for (const s of this.data.stops) {
       if (mode && s.mode !== mode) continue;
-      const d = Math.hypot(s.x - p.x, s.y - p.y);
+      const q = onChartOf(p, s);
+      const d = Math.hypot(s.x - q.x, s.y - q.y);
       if (d < bestD) { bestD = d; best = s.id; }
     }
     return best;
@@ -106,7 +114,10 @@ export class TransitTool {
   private snapTrack(p: Vec2): Vec2 {
     for (const t of this.data.tracks) {
       if (t.mode !== this.rail) continue;
-      for (const q of t.points) if (Math.hypot(q.x - p.x, q.y - p.y) < JOIN * 2) return { x: q.x, y: q.y };
+      for (const q of t.points) {
+        const at = onChartOf(p, q);
+        if (Math.hypot(q.x - at.x, q.y - at.y) < JOIN * 2) return { x: q.x, y: q.y };
+      }
     }
     const on = nearestTrack(this.data, p, JOIN * 2, this.rail);
     return on ? { x: on.x, y: on.y } : p;
@@ -178,7 +189,11 @@ export class TransitTool {
   }
 
   private finishTrack(): void {
-    const pts = this.points.filter((p, i, all) => i === 0 || Math.hypot(p.x - all[i - 1]!.x, p.y - all[i - 1]!.y) > m(1));
+    const pts = layTrack(this.points.filter((p, i, all) => {
+      if (i === 0) return true;
+      const q = onChartOf(p, all[i - 1]!);
+      return Math.hypot(q.x - all[i - 1]!.x, q.y - all[i - 1]!.y) > m(1);
+    }));
     this.points = [];
     if (pts.length < 2) { this.deps.hint('hint.transit.trackShort'); this.deps.redraw(); return; }
     // A train track crosses streets; it does not run down one (the metro is under them).
@@ -273,6 +288,9 @@ export class TransitTool {
     ctx.restore();
   }
 }
+
+/** A run of track as it is kept (`world/planet/charts.ts` layRun, `world/transit.ts`). */
+export const layTrack = (points: readonly Vec2[]): Vec2[] => layRun(points, PLANET_MAX_PIECE);
 
 let current: TransitTool | null = null;
 /** The tool, for the game's panel (`ui/v2/shell.ts`). */
