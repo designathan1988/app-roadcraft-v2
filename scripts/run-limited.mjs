@@ -110,7 +110,11 @@ const guard = windows && child.pid
     `$all = Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId; $ids = @($root); $grew = $true; ` +
     `while ($grew) { $grew = $false; foreach ($p in $all) { if ($ids -contains $p.ParentProcessId -and -not ($ids -contains $p.ProcessId)) { $ids += $p.ProcessId; $grew = $true } } }; ` +
     `foreach ($i in $ids) { try { $q = Get-Process -Id $i -ErrorAction Stop; if ($q.ProcessorAffinity -ne ${affinity}) { $q.ProcessorAffinity = ${affinity} }; if ($q.PriorityClass -ne 'BelowNormal' -and $q.PriorityClass -ne 'Idle') { $q.PriorityClass = 'BelowNormal' } } catch {} }; ` +
-    `Start-Sleep -Seconds 2 }`], { stdio: 'ignore', windowsHide: true })
+    // And the memory: below 2 GB free the job and its tree are stopped at
+    // once (a probe's Chrome took the machine to 0.1 GB free, 2026-10-10).
+    `$free = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB; ` +
+    `if ($free -lt ${process.env.RUN_LIMITED_KILL_GB ?? 2}) { [Console]::Error.WriteLine('[run-limited] stopped: free memory ' + [math]::Round($free, 1) + ' GB'); taskkill.exe /PID $root /T /F | Out-Null; break }; ` +
+    `Start-Sleep -Seconds 2 }`], { stdio: ['ignore', 'ignore', 'inherit'], windowsHide: true })
   : null;
 child.on('exit', () => { try { guard?.kill(); } catch { /* gone */ } });
 const runaway = setTimeout(() => {
