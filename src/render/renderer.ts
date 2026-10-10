@@ -559,10 +559,24 @@ export function createSceneRenderer(
    * (its anchor): "always day" lit the anchor, near the limb, and left the
    * middle of the view in the dawn.
    */
-  /** The longitude offset (minutes) the fixed sky's sun was last set for, or -1. */
+  /** The longitude offset (minutes) the fixed sky's sun stands at now, or -1. */
   let fixedOffset = -1;
+  /** The offset it is going to (`fixedOffset` eases there), or -1. */
+  let fixedTarget = -1;
   /** How far the view may go from it before the fixed sky's sun follows, minutes of longitude. */
   const FIXED_SKY_DRIFT = 120;
+  /** How fast the fixed sky's sun goes round to its new place, minutes of longitude a second (30 degrees in 2 s). */
+  const FIXED_SKY_TURN = 60;
+  /**
+   * Out from the ground past this share of the way to the whole globe the
+   * fixed sky's sun follows the view at once (`draw`): kept still and then
+   * moved, the globe turned under the view was lit now from one side, now
+   * from another (the player, 2026-10-10: "a mesma área fica entre escura e
+   * clara ao mover milímetros do globo").
+   */
+  const FIXED_SKY_GLOBE = 0.05;
+  /** Minutes of longitude from `a` to `b` the short way round, -720..720. */
+  const arc = (a: number, b: number): number => ((((b - a + 720) % 1440) + 1440) % 1440) - 720;
   const centreRay = new Ray();
   const lookDirection = new Vector3();
   const lookedMinutes = (minutes: number): number => {
@@ -3134,16 +3148,36 @@ export function createSceneRenderer(
       // and often the place looked at, in the night. The sun's hour at a place
       // is the clock plus its longitude (`world/planet/sun.ts`), so the clock
       // that makes it there is the hour less that offset.
-      const fixedHour = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : null;
+      // On the planet's globe "Dia" comes towards midday as the view goes out
+      // (13:00 at the whole globe): at 16:00 the night began 30 degrees past
+      // the place looked at, a band of it across the side seen.
+      const globeDay = __PLANET__ ? Math.min(1, Math.max(0, ((rig.viewport.globe ?? 0) - 0.05) / 0.25)) : 0;
+      const fixedHour = skyMode === 'day' ? 16 * 60 - 180 * globeDay : skyMode === 'night' ? 22 * 60 : null;
       // The fixed hour's sun is moved on only once the middle of the view has
       // gone two hours of longitude (30 degrees) from where it was set: each
       // move of the sun re-bakes the light of every plate, and a sun kept on
       // the middle of the view moved under every spin of the globe.
+      // Out at the globe the sun follows the place looked at all the time, as
+      // a globe without its own sun is lit from the view (Cesium's
+      // `Globe.enableLighting` off, Google Earth without the sun): the side
+      // turned to the player is always the day, and a turn of the globe only
+      // moves the light a little. Kept still for 30 degrees and then moved
+      // there, the light jumped from side to side as the globe was turned.
+      // Near the ground it follows once the view has gone that far, and goes
+      // round smoothly (`FIXED_SKY_TURN`), never in a jump.
       if (__PLANET__ && fixedHour !== null) {
-        const offset = lookedMinutes(0);
-        const drift = Math.abs(((offset - fixedOffset + 720) % 1440 + 1440) % 1440 - 720);
-        if (fixedOffset < 0 || drift > FIXED_SKY_DRIFT) fixedOffset = offset;
-      } else fixedOffset = -1;
+        const atGlobe = (rig.viewport.globe ?? 0) >= FIXED_SKY_GLOBE;
+        if (fixedTarget < 0 || atGlobe) {
+          fixedTarget = lookedMinutes(0);
+          if (fixedOffset < 0 || atGlobe) fixedOffset = fixedTarget;
+        } else {
+          const offset = lookedMinutes(0);
+          if (Math.abs(arc(fixedTarget, offset)) > FIXED_SKY_DRIFT) fixedTarget = offset;
+        }
+        const left = arc(fixedOffset, fixedTarget);
+        const step = Math.sign(left) * Math.min(Math.abs(left), FIXED_SKY_TURN * Math.min(0.1, Math.max(0, delta)));
+        fixedOffset = (((fixedOffset + step) % 1440) + 1440) % 1440;
+      } else fixedOffset = fixedTarget = -1;
       const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - fixedOffset : fixedHour;
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
@@ -3303,7 +3337,14 @@ export function createSceneRenderer(
         rig.camera.position.add(shakeOffset);
         rig.camera.updateMatrixWorld();
       }
-      terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
+      // The land's own light (its hills' shading, baked a plate at a time) is
+      // left as it is while the view is out at the globe, where it is too fine
+      // to see and the sun follows every turn: worked out again for each, it
+      // kept the light workers busy on all 864 plates. It catches up once the
+      // view comes down.
+      if (!__PLANET__ || (rig.viewport.globe ?? 0) < FIXED_SKY_GLOBE) {
+        terrain.setSun(sunTowards.copy(environment.sun.position).sub(environment.sun.target.position));
+      }
       {
         // The relief's close window (terrainRelief.ts) round the ground the
         // view looks at, drawn a little towards the camera, where the ground

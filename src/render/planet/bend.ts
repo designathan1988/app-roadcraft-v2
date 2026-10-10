@@ -297,6 +297,23 @@ export function planetScene(scene: Scene): void {
 /** GLSL and uniforms for a hand-written vertex shader that must sit on the planet too. */
 export const PLANET_SHADER = { glsl: PLANET_GLSL, on: PLANET_ON, t: PLANET_T };
 
+/**
+ * FOR A MATERIAL THAT WRITES ITS OWN `gl_Position` (a `ShaderMaterial`): three's
+ * chunks carry everything else round the planet (`installPlanet`), and such a
+ * shader never reads them - a street light's beam, the smoke and the sparks,
+ * the rain, a road's blink were drawn where the flat world lies, rows of
+ * lights hanging in space beside the globe. `PLANET_VERTEX` goes into its
+ * vertex shader (`planetPoint`, `planetTurn`), `planetUniforms()` into its
+ * uniforms (the shared ones), and `bendGLSL(world)` is the world point (three's
+ * x, height, z) where the planet draws it. Empty, and the point itself, on
+ * the flat map.
+ */
+export const PLANET_VERTEX = __PLANET__ ? PLANET_GLSL : '';
+export const planetUniforms = (): Record<string, { value: unknown }> => (__PLANET__ ? { planetOn: PLANET_ON, planetT: PLANET_T } : {});
+export const bendGLSL = (world: string): string => (__PLANET__ ? `planetPoint(${world})` : world);
+/** `bendGLSL` for a direction at a world point (`planetTurn`). */
+export const turnGLSL = (dir: string, at: string): string => (__PLANET__ ? `planetTurn(${dir}, ${at})` : dir);
+
 const local: TileLocal = { tile: 0, x: 0, y: 0 };
 const dir: Vec3 = { x: 0, y: 0, z: 0 };
 const tmp = new Vector3();

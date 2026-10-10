@@ -35,7 +35,7 @@ import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { leafCardMaterials } from './lowPolyTrees';
 import { lightPoolTexture } from './lightLevels';
-import { planetSphereInView } from './planet/bend';
+import { PLANET_VERTEX, bendGLSL, planetSphereInView, planetUniforms, turnGLSL } from './planet/bend';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -130,8 +130,10 @@ function beamMaterial(): ShaderMaterial {
     uniforms: {
       uColor: { value: new Color(0xffc98a) },
       uIntensity: { value: 0 },
+      ...planetUniforms(),
     },
     vertexShader: `
+      ${PLANET_VERTEX}
       varying float vAlong;
       varying vec3 vNormalW;
       varying vec3 vToEye;
@@ -141,10 +143,12 @@ function beamMaterial(): ShaderMaterial {
       #ifdef USE_INSTANCING
         model = modelMatrix * instanceMatrix;
       #endif
-        vec4 world = model * vec4(position, 1.0);
+        vec4 flatP = model * vec4(position, 1.0);
+        // Where the planet draws it (\`planet/bend.ts\`; the point itself on the flat map).
+        vec4 world = vec4(${bendGLSL('flatP.xyz')}, 1.0);
         // A scaled cone's normals: through the inverse transpose of its scale.
         vec3 s = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
-        vNormalW = normalize(mat3(model) * (normal / (s * s)));
+        vNormalW = normalize(${turnGLSL('mat3(model) * (normal / (s * s))', 'flatP.xyz')});
         vToEye = isOrthographic ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) : cameraPosition - world.xyz;
         gl_Position = projectionMatrix * viewMatrix * world;
       }`,

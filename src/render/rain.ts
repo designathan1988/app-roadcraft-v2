@@ -11,6 +11,7 @@
 import {
   AdditiveBlending, BufferAttribute, BufferGeometry, Color, LineSegments, ShaderMaterial, Vector2, Vector3,
 } from 'three';
+import { PLANET_VERTEX, bendGLSL, planetUniforms } from './planet/bend';
 
 /** Streaks at a downpour; a lighter rain draws the first part of them. */
 const MAX_DROPS = 10_000;
@@ -55,8 +56,10 @@ export function createRain(): Rain {
       uNear: { value: 10 },
       uOpacity: { value: 0.3 },
       uColour: { value: new Color(0.62, 0.68, 0.76) },
+      ...planetUniforms(),
     },
     vertexShader: `
+      ${PLANET_VERTEX}
       attribute float tip;
       uniform vec3 uCentre;
       uniform vec3 uBox;
@@ -78,7 +81,8 @@ export function createRain(): Rain {
         vFade = (1.0 - smoothstep(0.6, 1.0, max(q.x, q.z))) * (1.0 - smoothstep(0.7, 1.0, q.y)) * (1.0 - tip * 0.7);
         // None right before the lens: a drop there is a scratch across the screen.
         vFade *= smoothstep(uNear, uNear * 2.5, distance(p, cameraPosition));
-        gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+        // Where the planet draws it (planet/bend.ts; the point itself on the flat map).
+        gl_Position = projectionMatrix * viewMatrix * vec4(${bendGLSL('p')}, 1.0);
       }
     `,
     fragmentShader: `
