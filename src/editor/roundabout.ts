@@ -7,10 +7,11 @@ import { Network } from '@world/network';
 import { casingHalf, ROAD_TYPES, roadProfile } from '@world/roadTypes';
 import { chartAt } from '@world/planet/charts';
 import { editOnChart } from './commit';
+import { m } from '@world/units';
 
-export const ROUNDABOUT_MIN_RADIUS = 80;
-export const ROUNDABOUT_MAX_RADIUS = 320;
-export const ROUNDABOUT_APPROACH_LENGTH = 100;
+export const ROUNDABOUT_MIN_RADIUS = m(32);
+export const ROUNDABOUT_MAX_RADIUS = m(128);
+export const ROUNDABOUT_APPROACH_LENGTH = m(40);
 
 export type RoundaboutResult =
   | { readonly committed: true; readonly ring: readonly SegmentId[]; readonly entrances: readonly SegmentId[] }
@@ -27,7 +28,7 @@ export function commitRoundabout(
   doc: RoadDoc,
   net: Network,
   centre: Vec2,
-  radius = 100,
+  radius = m(40),
   type = 0,
 ): RoundaboutResult {
   // On the planet, laid on the chart of its centre with every road there

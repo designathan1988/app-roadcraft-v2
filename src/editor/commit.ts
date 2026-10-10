@@ -30,11 +30,11 @@ import { roadsBefore, settleRoadEdit } from './roads/economy';
 import { COARSE_EPS, EPS } from '@core/scalar';
 
 /** Shortest road the editor will create. */
-const MIN_DRAFT_LENGTH = 24;
+const MIN_DRAFT_LENGTH = m(9.6);
 /** Two nodes closer than this are the same node. */
-const MERGE_EPS = 2.6;
+const MERGE_EPS = m(1.04);
 /** Distinct decks at the same map point remain separate networks. */
-const HEIGHT_JOIN_EPS = 0.75;
+const HEIGHT_JOIN_EPS = m(0.3);
 /** Vertical room required before two crossing carriageways can pass independently. */
 const CROSSING_CLEARANCE = ROAD_TUNING.clearance.elevated;
 /**
@@ -239,7 +239,7 @@ function boreDeepCuts(before: RoadDoc, work: RoadDoc, workNet: Network, sampled?
     const ribbon = workNet.ribbons.get(seg.id);
     if (!ribbon) continue;
     const length = ribbon.full.length;
-    const steps = Math.max(2, Math.ceil(length / 8));
+    const steps = Math.max(2, Math.ceil(length / m(3.2)));
     for (let i = 0; i <= steps; i++) {
       const p = ribbon.full.sampleAt((i / steps) * length).p;
       if (ground(p.x, p.y) - elevation.onSegment(seg.id, p.x, p.y) > AUTO_TUNNEL_COVER) {
@@ -1007,8 +1007,8 @@ export function duplicateSegment(doc: RoadDoc, net: Network, id: SegmentId): Seg
   const dy = b.y - a.y;
   const length = Math.hypot(dx, dy);
   if (length < MERGE_EPS) return null;
-  const sourceWidth = net.ribbons.get(id)?.road.width ?? 12;
-  const offset = Math.max(22, sourceWidth + 12);
+  const sourceWidth = net.ribbons.get(id)?.road.width ?? m(4.8);
+  const offset = Math.max(m(8.8), sourceWidth + m(4.8));
   const nx = (-dy / length) * offset;
   const ny = (dx / length) * offset;
   const copyA = doc.addNode({ x: a.x + nx, y: a.y + ny }, a.heightOffset);

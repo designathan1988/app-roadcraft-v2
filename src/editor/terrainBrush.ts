@@ -4,7 +4,7 @@ import { scatter, type ElementBrush, type ElementKind } from '@world/elements';
 import { oneTree, plantTrees, type TreeBrush, type TreeKind } from '@world/trees';
 import type { TerrainMode } from '@world/terrain';
 import type { GeologyKind, PaintKind } from '@world/terrainPaint';
-import { UNITS_PER_METER } from '@world/units';
+import { UNITS_PER_METER, m } from '@world/units';
 
 /**
  * THE TERRAIN BRUSH: what one dab does, for every brush of the land tool
@@ -229,7 +229,7 @@ export class TerrainBrush {
       const moved = Math.hypot(at.x - stroke.last.x, at.y - stroke.last.y);
       if (moved < settings.radius * TERRAIN_SPACING) return;
     }
-    const spacing = Math.max(4, settings.radius * TERRAIN_SPACING);
+    const spacing = Math.max(m(1.6), settings.radius * TERRAIN_SPACING);
     const dx = at.x - stroke.last.x;
     const dy = at.y - stroke.last.y;
     const distance = Math.hypot(dx, dy);

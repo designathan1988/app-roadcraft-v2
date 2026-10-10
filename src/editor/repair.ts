@@ -4,6 +4,7 @@ import type { Network } from '@world/network';
 import { casingHalf, roadProfile } from '@world/roadTypes';
 import { roadStructure } from '@world/structures';
 import { splitSegment } from './commit';
+import { m } from '@world/units';
 
 interface Candidate {
   readonly node: NodeId;
@@ -59,7 +60,7 @@ function nearestCandidate(doc: RoadDoc, net: Network, rejected: ReadonlySet<stri
         (doc.node(target.b)?.heightOffset ?? 0) * t +
         roadStructure(target.structure).clearance;
       const sourceOffset = node.heightOffset + roadStructure(source.structure).clearance;
-      if (Math.abs(sourceOffset - targetOffset) > 0.75) continue;
+      if (Math.abs(sourceOffset - targetOffset) > m(0.3)) continue;
       const reach = casingHalf(roadProfile(target.type, target.lanes, target.direction, target.section, target.parking));
       if (hit.distance > reach || (best && hit.distance >= best.distance)) continue;
       best = { node: node.id, segment: targetId, s: hit.s, at: hit.point, distance: hit.distance };

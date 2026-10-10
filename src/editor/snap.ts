@@ -12,6 +12,7 @@ import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
 import { GRID_STEP, onGrid, snapToGrid } from '@world/grid';
+import { m } from '@world/units';
 
 export type AnchorKind = 'node' | 'segment' | 'free';
 
@@ -35,8 +36,8 @@ export interface SnapResult {
 /** Angular snap cone, in radians. */
 const CONE = (7.5 * Math.PI) / 180;
 /** Length quantum, in world units. */
-const LENGTH_STEP = 10;
-const LENGTH_TOLERANCE = 4.2;
+const LENGTH_STEP = m(4);
+const LENGTH_TOLERANCE = m(1.68);
 
 /**
  * The road tool's snapping, as Cities: Skylines II lays it out: one switch
@@ -120,7 +121,7 @@ export function findAnchor(
   for (const node of doc.nodes.values()) {
     if (exclude?.has(node.id)) continue;
     if (targetHeightOffset !== undefined &&
-      Math.abs(node.heightOffset - targetHeightOffset) > 0.75) continue;
+      Math.abs(node.heightOffset - targetHeightOffset) > m(0.3)) continue;
     inChartInto(chart, node.x, node.y, on);
     const d = dist(p, on);
     if (d > nodeRadius) continue;
@@ -177,7 +178,7 @@ export function findAnchor(
       const a = doc.node(seg.a)?.heightOffset ?? 0;
       const b = doc.node(seg.b)?.heightOffset ?? 0;
       const height = a + (b - a) * fraction + roadStructure(seg.structure).clearance;
-      if (Math.abs(height - targetHeightOffset) > 0.75) continue;
+      if (Math.abs(height - targetHeightOffset) > m(0.3)) continue;
     }
     if (hit.distance < bestScore) {
       bestScore = hit.distance;
@@ -258,7 +259,7 @@ function snapHeading(
       if (!seg) continue;
       // On the gesture's chart: neighbouring charts can be turned against each other.
       const pl = carryPolyline(orientedPolyline(doc, seg, start.node), nodeChart(doc, start.node), pointerChartOf(start.at.x, start.at.y));
-      const look = Math.min(12, Math.max(1, pl.length * 0.2));
+      const look = Math.min(m(4.8), Math.max(m(0.4), pl.length * 0.2));
       const outgoing = angleOf(normalize(sub(pl.sampleAt(look).p, pl.point(0))));
       candidates.push({ angle: outgoing + Math.PI, guide: 'continue' });
       candidates.push({ angle: outgoing + Math.PI / 2, guide: 'perpendicular' });
@@ -535,7 +536,7 @@ export function anchorHeightOffset(doc: RoadDoc, net: Network, anchor: Anchor, f
 
 /** A nearby road at another height is a crossing, not an accidental junction. */
 export function anchorForHeight(doc: RoadDoc, net: Network, anchor: Anchor, heightOffset: number): Anchor {
-  return anchor.kind !== 'free' && Math.abs(anchorHeightOffset(doc, net, anchor, heightOffset) - heightOffset) > 0.75
+  return anchor.kind !== 'free' && Math.abs(anchorHeightOffset(doc, net, anchor, heightOffset) - heightOffset) > m(0.3)
     ? { kind: 'free', at: anchor.at }
     : anchor;
 }

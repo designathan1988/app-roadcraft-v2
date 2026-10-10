@@ -656,12 +656,12 @@ export function clearBuildingsOnRoads(ctx: BuildingContext): number {
   if (!ctx.net || ctx.doc.buildings.size === 0) return 0;
   const doomed: BuildingId[] = [];
   for (const b of ctx.doc.buildings.all()) {
-    if (footprintRects(b, -0.05).some((rect) => touchesRoad(ctx.net!, rect))) {
+    if (footprintRects(b, -m(0.02)).some((rect) => touchesRoad(ctx.net!, rect))) {
       doomed.push(b.id);
       continue;
     }
     // A stair or a wall the road now crosses goes; the building stays.
-    const hit = (b.elements ?? []).filter((e) => onGround(e) && touchesRoad(ctx.net!, elementRing(b, e, -0.05)));
+    const hit = (b.elements ?? []).filter((e) => onGround(e) && touchesRoad(ctx.net!, elementRing(b, e, -m(0.02))));
     if (hit.length > 0) {
       const draft = cloneBuilding(b);
       for (const e of hit) opRemoveElement(draft, e.id);
@@ -954,7 +954,7 @@ export function weldInto(ctx: BuildingContext, draft: Building, skip: readonly B
     // Everything that stands on the ground counts, free parts too: the same
     // shapes the validator compares, so a weld is tried exactly where the
     // validator would otherwise refuse.
-    const mineRings = [...footprintRects(draft, 0.05), ...groundProjections(draft, 0.05), ...groundElements(draft, 0.05)];
+    const mineRings = [...footprintRects(draft, m(0.02)), ...groundProjections(draft, m(0.02)), ...groundElements(draft, m(0.02))];
     const touches = mineRings.some((a) => otherRings.some((c) => overlapArea(a, c) > 1e-6));
     if (!touches) continue;
     for (const v of other.volumes) {
@@ -1112,7 +1112,7 @@ export interface FaceRegion {
 }
 
 /** Depths a relief snaps to: five centimetres. */
-export const RELIEF_STEP = 0.125;
+export const RELIEF_STEP = m(0.05);
 
 /**
  * What is left of a relief once `region` is cut out of it: up to four
@@ -1141,7 +1141,7 @@ function cutRelief(r: Relief, region: FaceRegion): Relief[] {
 export function opSetRelief(b: Building, volumeId: number, region: FaceRegion, depth: number, snap = true): boolean {
   const v = volumeById(b, volumeId);
   if (!v) return false;
-  const step = snap ? RELIEF_STEP : 0.025;
+  const step = snap ? RELIEF_STEP : m(0.01);
   const d = clamp(Math.round(depth / step) * step, -MAX_RECESS, MAX_PROJECTION);
   const before = JSON.stringify(v.reliefs ?? []);
   const kept = (v.reliefs ?? []).flatMap((r) => cutRelief(r, region));

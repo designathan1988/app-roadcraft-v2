@@ -319,7 +319,7 @@ export class RoadTool {
         control: { x: (d.start.at.x + end.at.x) / 2, y: (d.start.at.y + end.at.y) / 2 },
       };
       host.redraw();
-    } else if (dist(d.start.at, d.snap.at) >= 1 || traveled >= 24) {
+    } else if (dist(d.start.at, d.snap.at) >= m(0.4) || traveled >= m(9.6)) {
       this.commit(d);
     }
   }

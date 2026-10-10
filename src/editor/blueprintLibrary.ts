@@ -1,5 +1,7 @@
 import type { Blueprint, BlueprintBody } from '@world/buildings/blueprints';
 import { migrateBuilding } from '@world/buildings/serialize';
+import { rescaleBuilding, unitFactor } from '@world/rescale';
+import { METERS_PER_UNIT } from '@world/units';
 
 /**
  * The player's own blueprints: a building saved from the map, reusable on any
@@ -17,6 +19,8 @@ interface StoredBlueprint {
   readonly key: string;
   readonly name: string;
   readonly body: unknown;
+  /** Metres per world unit it was saved in; absent: 0.4, before 2026-10-10 (docs/ESCALA.md). */
+  readonly unit?: number;
 }
 
 export class BlueprintLibrary {
@@ -36,7 +40,7 @@ export class BlueprintLibrary {
       const out: Blueprint[] = [];
       for (const entry of parsed as StoredBlueprint[]) {
         if (!entry || typeof entry.key !== 'string' || typeof entry.name !== 'string') continue;
-        const body = readBody(entry.body);
+        const body = readBody(rescaleBuilding(entry.body, unitFactor(entry.unit), null));
         if (body) out.push({ key: entry.key, name: entry.name, body });
       }
       return out;
@@ -54,7 +58,7 @@ export class BlueprintLibrary {
     const entry: Blueprint = { key, name: title, body };
     const next = [entry, ...list.filter((item) => item.key !== key)].slice(0, LIMIT);
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify(next.map((b) => ({ key: b.key, name: b.name, body: b.body }))));
+      localStorage.setItem(this.storageKey, JSON.stringify(next.map((b) => ({ key: b.key, name: b.name, body: b.body, unit: METERS_PER_UNIT }))));
       return entry;
     } catch {
       return null;
@@ -64,7 +68,7 @@ export class BlueprintLibrary {
   remove(key: string): void {
     const next = this.list().filter((b) => b.key !== key);
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify(next.map((b) => ({ key: b.key, name: b.name, body: b.body }))));
+      localStorage.setItem(this.storageKey, JSON.stringify(next.map((b) => ({ key: b.key, name: b.name, body: b.body, unit: METERS_PER_UNIT }))));
     } catch {
       /* read-only storage: nothing to remove from */
     }

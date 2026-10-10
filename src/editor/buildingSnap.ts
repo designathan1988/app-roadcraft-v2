@@ -8,6 +8,7 @@ import type { Network } from '@world/network';
 import { Level, halfWidth } from '@world/roadTypes';
 import { normaliseAngle } from './buildings';
 import { chartAt, chartToChartInto, directionOnChart, onChartOf, pointViews } from '@world/planet/charts';
+import { m } from '@world/units';
 
 /**
  * ON THE PLANET a snap to a road is worked out on that road's own chart and
@@ -57,11 +58,11 @@ export function footprintSize(body: BlueprintBody | Building): FootprintSize {
 }
 
 /** How far from a road a footprint still snaps to it, beyond its own depth. */
-const ROAD_REACH = 24;
+const ROAD_REACH = m(9.6);
 /** How close an edge must come to another to be made flush. */
 const EDGE_SNAP = 0.8;
 /** How far a building still lends its rotation to one being placed. */
-const BUILDING_REACH = 30;
+const BUILDING_REACH = m(12);
 
 export function snapPlacement(
   doc: RoadDoc,
@@ -99,7 +100,7 @@ function frontAnchor(centre: Vec2, size: FootprintSize, rotation: number): Vec2 
 
 function snapToRoad(net: Network, size: FootprintSize, cursor: Vec2): PlacementSnap | null {
   let best: { distance: number; anchor: Vec2; rotation: number; ribbon: number } | null = null;
-  const view = pointViews(cursor, size.depth + ROAD_REACH + 60);
+  const view = pointViews(cursor, size.depth + ROAD_REACH + m(24));
   for (const ribbon of net.ribbons.values()) {
     const segment = net.doc.segment(ribbon.id);
     if (!segment || segment.structure === 'tunnel') continue;
@@ -218,7 +219,7 @@ function flush(doc: RoadDoc, snap: PlacementSnap, size: FootprintSize, both: boo
   let shiftV = 0;
   let bestU = EDGE_SNAP * size.module;
   let bestV = EDGE_SNAP * size.module;
-  const reach = Math.max(size.width, size.depth) * 2 + 20;
+  const reach = Math.max(size.width, size.depth) * 2 + m(8);
   const here = chartAt(snap.anchor.x, snap.anchor.y);
   for (const b of doc.buildings.all()) {
     if (b.id === ignore) continue;
