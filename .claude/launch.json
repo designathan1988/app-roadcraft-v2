@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1"],
       "port": 8765
+    },
+    {
+      "name": "forma2",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "forma", "run", "dev", "--", "--port", "5791", "--strictPort", "--host", "127.0.0.1"],
+      "port": 5791
     }
   ]
 }
