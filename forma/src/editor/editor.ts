@@ -1,7 +1,13 @@
 // Editor FORMA 2: estado, seleção, ferramentas, ações, interface e API pública.
 // Portado da lógica do FORMA v1 e adaptado ao modelo forma/2.
 import * as THREE from 'three';
-import type { Building, FacadePattern, ID, Limits, Lot, LotRules, Project, RoofKind, Vec2 } from '../core/schema';
+import type { Building, FacadePattern, ID, Limits, Lot, LotRules, Project, RoofKind, Storey, Vec2 } from '../core/schema';
+import * as iops from './interior-ops';
+import { WalkController, walkStart } from './walk';
+import { snapToGraph, wallEnds, project as projectOnSegment } from '../geometry/walls';
+import { interiorPoint } from '../geometry/rooms';
+import { sortedStoreys } from '../core/model';
+import { ringPoints } from '../geometry/ring';
 import { computeLotIndices, DEFAULT_LOT_RULES, type LotIndices, type Violation } from '../core/indices';
 import { assignLots, fillLot as fillLotOp, newLot } from './lot-ops';
 import { DEFAULT_LIMITS } from '../core/schema';
@@ -18,11 +24,11 @@ import { EditorScene, type HandleData, type SceneHost } from './scene';
 import { exampleProject } from './example';
 import { createShell, type Shell, type UiLevel } from '../ui/shell';
 import { hydrate } from '../ui/icons';
-import { inspectorHTML, layersHTML, shelfHTML, helpHTML, NEW_HTML, type Defaults, type PanelState, type VolumeView } from '../ui/panels';
+import { inspectorHTML, layersHTML, shelfHTML, helpHTML, NEW_HTML, interiorShelfHTML, storeyBarHTML, wallInspectorHTML, roomInspectorHTML, stairInspectorHTML, type Defaults, type InteriorState, type PanelState, type VolumeView } from '../ui/panels';
 import * as persist from '../io/persistence';
 import { download, exportGLB as glb, exportJSON as json, exportOBJ as obj, filename } from '../io/export';
 
-export type Tool = 'select' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints' | 'lot' | 'lotpolygon' | 'frontage';
+export type Tool = 'select' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints' | 'lot' | 'lotpolygon' | 'frontage' | 'wall' | 'idoor' | 'stair' | 'room';
 
 export interface EditorOptions extends SceneHost {
   /** Contêiner da interface. Obrigatório quando ui ≠ 'none'. */
@@ -69,6 +75,10 @@ const HINTS: Record<string, string> = {
   lot: 'Arraste no chão para desenhar um lote retangular.',
   lotpolygon: 'Clique os vértices do lote. Enter ou duplo clique fecha. Esc cancela.',
   frontage: 'Clique numa divisa do lote selecionado para marcar ou desmarcar a testada (frente para a rua).',
+  wall: 'Clique ponto a ponto para desenhar paredes. Shift trava em ângulo reto. Enter, duplo clique ou Esc termina.',
+  idoor: 'Clique numa parede interna para abrir uma porta.',
+  stair: 'Clique os pontos do caminho da escada (2 = reta, 3 = em L, 4 = em U). Enter ou duplo clique conclui.',
+  room: 'Clique dentro de um cômodo para dar nome a ele.',
 };
 
 export class Editor {
@@ -102,6 +112,16 @@ export class Editor {
   private lotIndices = new Map<ID, LotIndices>();
   /** O que a base livre está desenhando: um volume ou um lote. */
   private polygonTarget: 'building' | 'lot' = 'building';
+  /** Pavimento em edição (interiores): edifício e pavimento. */
+  private activeStorey: { buildingId: ID; storeyId: ID } | null = null;
+  private selectedWall: ID | null = null;
+  private selectedRoom: ID | null = null;
+  private selectedStair: ID | null = null;
+  private chain: Vec2[] = [];
+  private stairPath: Vec2[] = [];
+  private wallThickness = 0.12;
+  private stairWidth = 1.1;
+  private walk: WalkController | null = null;
 
   constructor(opts: EditorOptions = {}) {
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
@@ -133,6 +153,12 @@ export class Editor {
 
     this.bindCanvas();
     if (this.shell) this.bindUI();
+    this.scene.buildOptionsFor = (b) => {
+      if (this.walk || this.activeStorey?.buildingId !== b.id) return {};
+      const s = b.storeys.find((x) => x.id === this.activeStorey!.storeyId);
+      return s ? { cutY: s.elevation + s.height - 0.02 } : {};
+    };
+    this.scene.onViewChange = () => this.renderRoomLabels();
     this.scene.rebuild(this.project.buildings);
     this.scene.buildEnvironment(this.project.buildings, this.project.lots);
     this.refreshLots();
@@ -211,15 +237,242 @@ export class Editor {
     };
   }
 
+  // ── Interiores ──────────────────────────────────────────────────────
+  private activeBuilding(): Building | undefined {
+    return this.activeStorey ? this.byId(this.activeStorey.buildingId) : undefined;
+  }
+
+  private activeStoreyObj(): Storey | undefined {
+    const b = this.activeBuilding();
+    return b?.storeys.find((s) => s.id === this.activeStorey!.storeyId);
+  }
+
+  /** Estado dos interiores para o edifício ativo ou o selecionado. */
+  private interiorState(): InteriorState | null {
+    const b = this.activeBuilding() ?? (this.selected.size === 1 ? this.selectedBuilding() : undefined);
+    if (!b) return null;
+    return {
+      storeys: sortedStoreys(b).map((s) => ({ id: s.id, name: s.name, height: s.height, rooms: s.rooms.map((r) => ({ id: r.id, name: r.name, area: r.area ?? 0 })) })),
+      activeStoreyId: this.activeStorey?.buildingId === b.id ? this.activeStorey.storeyId : null,
+      tool: this.tool,
+      wallThickness: this.wallThickness,
+      stairWidth: this.stairWidth,
+    };
+  }
+
+  private setActiveStorey(buildingId: ID | null, storeyId: ID | null): void {
+    const prev = this.activeStorey?.buildingId;
+    this.activeStorey = buildingId && storeyId ? { buildingId, storeyId } : null;
+    this.selectedWall = this.selectedRoom = this.selectedStair = null;
+    this.chain = [];
+    this.stairPath = [];
+    if (this.activeStorey) {
+      this.selected = new Set([buildingId!]);
+      this.tab = 'interior';
+      // Cômodos são derivados: calcula ao entrar (prédios novos ainda não têm).
+      const ab = this.byId(buildingId!);
+      if (ab) iops.updateRooms(ab, storeyId!);
+    } else if (['wall', 'idoor', 'stair', 'room'].includes(this.tool)) this.setTool('select');
+    this.rebuild([...new Set([prev, buildingId].filter((x): x is ID => !!x))]);
+    this.renderUI();
+  }
+
+  /** Ponto sob o ponteiro no piso do pavimento ativo (coordenadas locais). */
+  private storeyPoint(e: { clientX: number; clientY: number }): Vec2 | null {
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj();
+    if (!b || !s) return null;
+    const p = this.scene.planePoint(e, s.elevation + s.slabThickness);
+    return p ? toLocal(b, [p.x, p.z]) : null;
+  }
+
+  /** Encaixe: nós, paredes e contorno; senão grade. Shift trava em ângulo reto. */
+  private snapInterior(p: Vec2, from: Vec2 | null, ortho: boolean, excludeNode: ID | null = null): Vec2 {
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj();
+    if (!b || !s) return p;
+    if (ortho && from) {
+      const dx = p[0] - from[0],
+        dz = p[1] - from[1];
+      p = Math.abs(dx) >= Math.abs(dz) ? [p[0], from[1]] : [from[0], p[1]];
+    }
+    const g = excludeNode ? { nodes: s.graph.nodes.filter((n) => n.id !== excludeNode), walls: s.graph.walls.filter((w) => w.a !== excludeNode && w.b !== excludeNode) } : s.graph;
+    const { outer, holes } = iops.storeyOutlines(b, s.id);
+    const edges: [Vec2, Vec2][] = [...outer, ...holes].flatMap((r) => r.map((a, i) => [a, r[(i + 1) % r.length]!] as [Vec2, Vec2]));
+    const snapped = snapToGraph(g, p, edges, Math.max(0.2, this.scene.distance * 0.008));
+    if (snapped.seg) {
+      // Sobre uma aresta ou parede: arredonda à grade ao longo dela.
+      const g2: Vec2 = [this.snapN(p[0]), this.snapN(p[1])];
+      const pr = projectOnSegment(g2, snapped.seg[0], snapped.seg[1]);
+      return pr.d < 1e-6 || Math.abs(pr.q[0] - snapped.p[0]) + Math.abs(pr.q[1] - snapped.p[1]) < this.gridSize ? pr.q : snapped.p;
+    }
+    if (snapped.kind !== 'free') return snapped.p;
+    return [this.snapN(p[0]), this.snapN(p[1])];
+  }
+
+  private previewInterior(points: Vec2[], width = 0): void {
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj(),
+      sc = this.scene;
+    sc.disposeGroup(sc.sketch);
+    if (!b || !s || points.length < 2) return sc.mark();
+    const y = s.elevation + s.slabThickness + 0.05;
+    sc.line(points.map((p) => sc.toWorld(b, p, y)), '#c57130', false, sc.sketch);
+    if (width > 0)
+      for (const side of [-1, 1]) {
+        const off = points.map((p, i) => {
+          const q = points[Math.min(i + 1, points.length - 1)]!,
+            o = points[Math.max(i - 1, 0)]!;
+          const dx = q[0] - o[0],
+            dz = q[1] - o[1],
+            l = Math.hypot(dx, dz) || 1;
+          return [p[0] - (dz / l) * (width / 2) * side, p[1] + (dx / l) * (width / 2) * side] as Vec2;
+        });
+        sc.line(off.map((p) => sc.toWorld(b, p, y)), '#e5924d', false, sc.sketch);
+      }
+    sc.mark();
+  }
+
+  private finishStair(): void {
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj();
+    const path = this.stairPath;
+    this.stairPath = [];
+    this.scene.disposeGroup(this.scene.sketch);
+    if (!b || !s || path.length < 2) return this.toast('Marque pelo menos dois pontos para a escada.');
+    const st = iops.addStair(b, s.id, path, this.stairWidth);
+    if (!st) return this.toast('Não há pavimento acima para a escada chegar.');
+    this.rebuild([b.id]);
+    this.commit('Escada criada; a laje de cima ganhou o vão.');
+    this.setTool('select');
+  }
+
+  private renderRoomLabels(): void {
+    if (!this.shell) return;
+    const box = this.$('#room-labels');
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj();
+    if (!b || !s || this.walk) {
+      if (box.innerHTML) box.innerHTML = '';
+      return;
+    }
+    const fmtA = (n: number) => n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const y = s.elevation + s.slabThickness + 0.1;
+    box.innerHTML = s.rooms
+      .filter((r) => r.polygon)
+      .map((r) => {
+        const c = interiorPoint(r.polygon!);
+        const p = this.scene.worldToScreen(this.scene.toWorld(b, c, y));
+        const esc = String(r.name).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
+        return `<div class="room-label" style="left:${p.x.toFixed(0)}px;top:${p.y.toFixed(0)}px">${esc}<small>${fmtA(r.area ?? 0)} m²</small></div>`;
+      })
+      .join('');
+  }
+
+  private startWalk(): void {
+    const b = this.activeBuilding() ?? this.selectedBuilding();
+    if (!b) return this.toast('Selecione um edifício para caminhar dentro dele.');
+    const s = this.activeStoreyObj() ?? sortedStoreys(b)[0]!;
+    iops.updateRooms(b, s.id);
+    const start = walkStart(b, s.id);
+    this.cancelDrag();
+    this.setTool('select');
+    const canvas = this.scene.renderer.domElement;
+    this.walk = new WalkController(b, this.scene.camera, canvas, { p: start, floor: s.elevation + s.slabThickness, yaw: this.scene.theta }, () => this.scene.mark(), () => {
+      this.walk = null;
+      this.scene.gizmos.visible = true;
+      if (this.shell) {
+        this.$('#walk-hint').style.display = 'none';
+        this.$('#walk-crosshair').style.display = 'none';
+        this.$('#hint').style.display = '';
+      }
+      this.renderStoreyBar();
+      this.scene.updateCamera();
+      this.rebuild([b.id]);
+      this.renderRoomLabels();
+    });
+    this.rebuild([b.id]);
+    this.scene.gizmos.visible = false;
+    this.renderStoreyBar();
+    if (this.shell) {
+      this.$('#hint').style.display = 'none';
+      const hint = this.$('#walk-hint');
+      hint.textContent = 'Caminhando: W A S D para andar, mouse para olhar, Shift corre, Esc sai.';
+      hint.style.display = 'block';
+      this.$('#walk-crosshair').style.display = 'block';
+    }
+  }
+
+  private interiorAction(action: string): void {
+    const b = this.activeBuilding(),
+      s = this.activeStoreyObj();
+    if (action === 'walk') return this.startWalk();
+    if (!b || !s) return this.toast('Escolha um pavimento primeiro.');
+    if (action === 'plan') {
+      const pts = ringPoints(ops.mainMass(b).outer).map((p) => this.scene.toWorld(b, p, 0));
+      const cx = pts.reduce((t, p) => t + p.x, 0) / pts.length,
+        cz = pts.reduce((t, p) => t + p.z, 0) / pts.length;
+      const span = Math.max(...pts.map((p) => Math.hypot(p.x - cx, p.z - cz)));
+      this.scene.target.set(cx, s.elevation, cz);
+      this.scene.distance = Math.max(12, span * 3.2);
+      this.scene.phi = 0.025;
+      this.scene.theta = -((b.rotation * Math.PI) / 180);
+      this.scene.updateCamera();
+    } else if (action === 'delete-wall' && this.selectedWall) {
+      iops.removeInteriorWall(b, s.id, this.selectedWall);
+      this.selectedWall = null;
+      this.rebuild([b.id]);
+      this.commit('Parede removida.');
+    } else if (action === 'delete-stair' && this.selectedStair) {
+      iops.removeStair(b, this.selectedStair);
+      this.selectedStair = null;
+      this.rebuild([b.id]);
+      this.commit('Escada removida.');
+    }
+  }
+
+  private renderStoreyBar(): void {
+    if (!this.shell) return;
+    if (this.activeStorey && (!this.activeBuilding() || !this.activeStoreyObj())) this.activeStorey = null;
+    const st = this.interiorState();
+    this.$('#storey-bar').innerHTML = this.walk ? '' : storeyBarHTML(st && st.storeys.length > 0 ? st : null);
+    this.renderRoomLabels();
+  }
+
   private renderInspector(): void {
     if (!this.shell) return;
+    const ab = this.activeBuilding(),
+      as = this.activeStoreyObj();
+    if (ab && as && this.selectedWall) {
+      const w = as.graph.walls.find((x) => x.id === this.selectedWall);
+      const e = w && wallEnds(as.graph, w);
+      if (w && e) {
+        this.$('#inspector-inner').innerHTML = wallInspectorHTML({ length: Math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]), thickness: w.thickness, doors: ab.openings.filter((o) => o.host.kind === 'wall' && o.host.wallId === w.id).length });
+        return hydrate(this.$('#inspector'));
+      }
+    }
+    if (ab && as && this.selectedRoom) {
+      const r = as.rooms.find((x) => x.id === this.selectedRoom);
+      if (r) {
+        this.$('#inspector-inner').innerHTML = roomInspectorHTML({ name: r.name, area: r.area ?? 0, walls: r.wallIds.length });
+        return hydrate(this.$('#inspector'));
+      }
+    }
+    if (ab && this.selectedStair) {
+      const st = ab.stairs.find((x) => x.id === this.selectedStair);
+      if (st) {
+        const nm = (id: ID) => ab.storeys.find((x) => x.id === id)?.name ?? '?';
+        this.$('#inspector-inner').innerHTML = stairInspectorHTML({ width: st.width, from: nm(st.fromStorey), to: nm(st.toStorey) });
+        return hydrate(this.$('#inspector'));
+      }
+    }
     this.$('#inspector-inner').innerHTML = inspectorHTML(this.panelState());
     hydrate(this.$('#inspector'));
   }
 
   private renderShelf(): void {
     if (!this.shell) return;
-    this.$('#shelf-content').innerHTML = shelfHTML(this.panelState());
+    this.$('#shelf-content').innerHTML = this.tab === 'interior' ? interiorShelfHTML(this.interiorState()) : shelfHTML(this.panelState());
     hydrate(this.$('#shelf-content'));
   }
 
@@ -245,6 +498,7 @@ export class Editor {
     this.$<HTMLButtonElement>('#redo').disabled = !this.history.canRedo;
     this.$$('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === this.mode));
     this.$$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === this.tab));
+    this.renderStoreyBar();
   }
 
   private updateHint(): void {
@@ -461,8 +715,14 @@ export class Editor {
   }
 
   setTool(next: Tool): void {
+    if (['wall', 'idoor', 'stair', 'room'].includes(next) && !this.activeStoreyObj()) {
+      this.toast('Escolha um pavimento na barra à esquerda da vista para desenhar o interior.');
+      next = 'select';
+    }
     this.tool = next;
     this.sketch = [];
+    this.chain = [];
+    this.stairPath = [];
     this.scene.disposeGroup(this.scene.sketch);
     if (this.shell) {
       this.$('#context').style.display = 'none';
@@ -481,6 +741,20 @@ export class Editor {
     sc.disposeGroup(sc.gizmos);
     const lotSel = this.selectedLot && !this.selected.size ? this.lotById(this.selectedLot) : undefined;
     if (lotSel && this.tool === 'select') lotSel.polygon.forEach((p, i) => sc.handle(new THREE.Vector3(p[0], 0.05, p[1]), { kind: 'lotvertex', id: lotSel.id, index: i }));
+    // Pontas da parede interna selecionada.
+    const ab = this.activeBuilding(),
+      as = this.activeStoreyObj();
+    if (ab && as && this.selectedWall && this.tool === 'select' && sc.built.has(ab.id)) {
+      const w = as.graph.walls.find((x) => x.id === this.selectedWall);
+      for (const nid of w ? [w.a, w.b] : []) {
+        const n = as.graph.nodes.find((x) => x.id === nid);
+        if (n) sc.handle(sc.toWorld(ab, n.p, as.elevation + as.slabThickness + 0.05), { kind: 'node', id: n.id });
+      }
+      if (w) {
+        const e = wallEnds(as.graph, w);
+        if (e) sc.line([sc.toWorld(ab, e[0], as.elevation + as.height - 0.05), sc.toWorld(ab, e[1], as.elevation + as.height - 0.05)], '#ffb270');
+      }
+    }
     const list = this.selectedList();
     for (const b of list) {
       if (!sc.built.has(b.id)) continue;
@@ -592,6 +866,14 @@ export class Editor {
         this.replaceBuildings(sources, parts, 'Bases unidas em uma geometria contínua.');
       } catch (e) {
         this.toast((e as Error).message);
+      }
+    } else if (action === 'group') {
+      try {
+        const sources = this.selectedList();
+        const g = iops.groupBuildings(sources);
+        this.replaceBuildings(sources, [g], 'Volumes agrupados num só edifício.');
+      } catch (err) {
+        this.toast((err as Error).message);
       }
     } else if (action === 'mirror') {
       this.mutate((n) => ops.mirror(n), 'Base espelhada.');
@@ -759,7 +1041,11 @@ export class Editor {
         if (!sel) return this.toast('Selecione um volume.');
         const v = this.view(sel) as unknown as Record<string, unknown>;
         this.applyProperty(d.toggle, !v[d.toggle]);
-      } else if (d.lotaction) this.lotAction(d.lotaction);
+      } else if (d.storey !== undefined) {
+        const b = this.activeBuilding() ?? this.selectedBuilding();
+        if (b) this.setActiveStorey(d.storey ? b.id : null, d.storey || null);
+      } else if (d.interior) this.interiorAction(d.interior);
+      else if (d.lotaction) this.lotAction(d.lotaction);
       else if (d.lotmode) {
         const lot = this.selectedLot ? this.lotById(this.selectedLot) : undefined;
         if (!lot) return this.toast('Selecione um lote primeiro.');
@@ -796,6 +1082,20 @@ export class Editor {
       else if (el.id === 'repeat-space') this.repeatSpace = clamp(Number(el.value), 0, 30);
       else if (el.id === 'file-input') void this.openFile(el);
       else if (el.dataset.lotprop) this.applyLotProp(el.dataset.lotprop, el.value);
+      else if (el.dataset.interiorprop === 'wallThickness') this.wallThickness = clamp(Number(el.value) || 0.12, 0.05, 1);
+      else if (el.dataset.interiorprop === 'stairWidth') this.stairWidth = clamp(Number(el.value) || 1.1, 0.6, 3);
+      else if (el.dataset.storeyprop || el.dataset.room || el.dataset.roomprop || el.dataset.wallprop) {
+        const b = this.activeBuilding(),
+          s = this.activeStoreyObj();
+        if (!b || !s) return;
+        if (el.dataset.storeyprop === 'name') iops.renameStorey(b, s.id, el.value);
+        else if (el.dataset.storeyprop === 'height') iops.setStoreyHeight(b, s.id, Number(el.value));
+        else if (el.dataset.room) iops.renameRoom(b, s.id, el.dataset.room, el.value);
+        else if (el.dataset.roomprop === 'name' && this.selectedRoom) iops.renameRoom(b, s.id, this.selectedRoom, el.value);
+        else if (el.dataset.wallprop === 'thickness' && this.selectedWall) iops.setWallThickness(b, s.id, this.selectedWall, Number(el.value));
+        this.rebuild([b.id]);
+        this.commit();
+      }
       else if (el.dataset.prop) {
         let val: string | number = el.value;
         if (el.type === 'number') {
@@ -837,6 +1137,7 @@ export class Editor {
   private onKey(e: KeyboardEvent): void {
     if (this.disposed) return;
     const modalOpen = this.shell && this.$('#modal-backdrop').style.display === 'flex';
+    if (this.walk) return;
     if (e.key === 'Escape') {
       if (modalOpen) return this.closeModal();
       this.cancelDrag();
@@ -875,7 +1176,18 @@ export class Editor {
       }
       return;
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !this.selected.size && this.selectedLot) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (this.selectedWall || this.selectedStair) && this.activeStorey) {
+      e.preventDefault();
+      this.interiorAction(this.selectedWall ? 'delete-wall' : 'delete-stair');
+    } else if (e.key === 'Enter' && this.tool === 'wall') {
+      e.preventDefault();
+      this.chain = [];
+      this.scene.disposeGroup(this.scene.sketch);
+      this.hideDimension();
+    } else if (e.key === 'Enter' && this.tool === 'stair') {
+      e.preventDefault();
+      this.finishStair();
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && !this.selected.size && this.selectedLot) {
       e.preventDefault();
       this.lotAction('delete');
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1007,6 +1319,12 @@ export class Editor {
       this.cancelDrag();
     });
     this.listen(el, 'dblclick', () => {
+      if (this.tool === 'wall') {
+        this.chain = [];
+        this.scene.disposeGroup(this.scene.sketch);
+        return this.hideDimension();
+      }
+      if (this.tool === 'stair') return this.finishStair();
       if (this.tool !== 'polygon' && this.tool !== 'lotpolygon') return;
       const s = this.sketch;
       if (s.length > 1 && Math.hypot(s.at(-1)![0] - s.at(-2)![0], s.at(-1)![1] - s.at(-2)![1]) < 0.1) s.pop();
@@ -1017,6 +1335,7 @@ export class Editor {
       'wheel',
       (e: WheelEvent) => {
         e.preventDefault();
+        if (this.walk) return;
         this.scene.distance *= Math.exp(e.deltaY * 0.001);
         this.scene.updateCamera();
       },
@@ -1034,6 +1353,7 @@ export class Editor {
 
   private onPointerDown(e: PointerEvent): void {
     const sc = this.scene;
+    if (this.walk) return;
     if (this.shell) this.$('#context').style.display = 'none';
     if (e.pointerType === 'touch') {
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1054,7 +1374,36 @@ export class Editor {
     const handle = this.tool === 'select' || this.tool === 'editpoints' ? sc.pickHandle(e) : null;
     const picked = handle ? null : sc.pick(e);
     const tool = this.tool;
-    if (handle?.kind === 'lotvertex') {
+    if (handle?.kind === 'node') {
+      const b = this.activeBuilding();
+      if (b) this.drag = { type: 'node', id: handle.id, snapshot: structuredClone(this.project) };
+    } else if (tool === 'wall' || tool === 'stair') {
+      this.drag = { type: 'iclick', clientX: e.clientX, clientY: e.clientY, shift: e.shiftKey };
+    } else if (tool === 'idoor') {
+      const b = this.activeBuilding(),
+        s = this.activeStoreyObj();
+      if (!b || !s || !picked || picked.data.part !== 'iwall' || picked.data.buildingId !== b.id || !picked.data.wallId) return this.toast('Clique numa parede interna deste pavimento.');
+      const w = s.graph.walls.find((x) => x.id === picked.data.wallId);
+      const en = w && wallEnds(s.graph, w);
+      if (!w || !en) return;
+      const local = toLocal(b, [picked.hit.point.x, picked.hit.point.z]);
+      const pr = projectOnSegment(local, en[0], en[1]);
+      const len = Math.hypot(en[1][0] - en[0][0], en[1][1] - en[0][1]);
+      iops.addInteriorDoor(b, s.id, w.id, pr.t * len);
+      this.rebuild([b.id]);
+      this.commit('Porta interna criada.');
+      return;
+    } else if (tool === 'room') {
+      const b = this.activeBuilding(),
+        s = this.activeStoreyObj(),
+        q = this.storeyPoint(e);
+      const r = b && s && q ? iops.roomAt(b, s.id, q) : undefined;
+      this.selectedRoom = r?.id ?? null;
+      this.selectedWall = this.selectedStair = null;
+      if (!r) this.toast('Clique dentro de um cômodo do pavimento.');
+      this.renderUI();
+      return;
+    } else if (handle?.kind === 'lotvertex') {
       const lot = this.lotById(handle.id);
       if (lot) this.drag = { type: 'lotvertex', id: lot.id, index: handle.index, original: structuredClone(lot.polygon), snapshot: structuredClone(this.project) };
     } else if (handle) {
@@ -1096,6 +1445,17 @@ export class Editor {
       if (!p) return;
       this.drag = { type: 'move', id: b.id, start: p, y: ops.baseOf(b), originals: this.selectedList().map((n) => ({ id: n.id, position: [...n.position] })), snapshot: structuredClone(this.project) };
     } else {
+      const ab = this.activeBuilding();
+      if (picked && ab && picked.data.buildingId === ab.id && ['iwall', 'idoor', 'stair'].includes(picked.data.part)) {
+        this.selectedWall = picked.data.wallId ?? null;
+        this.selectedStair = picked.data.part === 'stair' ? (picked.data.stairId ?? null) : null;
+        this.selectedRoom = null;
+        this.updateGizmos();
+        this.renderUI();
+        return;
+      }
+      this.selectedWall = this.selectedStair = this.selectedRoom = null;
+      if (picked && this.activeStorey && picked.data.buildingId !== this.activeStorey.buildingId) this.setActiveStorey(null, null);
       if (picked) this.select(picked.data.buildingId, this.mode === 'face' ? (picked.data.edgeId ?? null) : null, e.ctrlKey || e.metaKey, this.mode === 'face', e);
       else {
         const lotId = sc.pickLot(e);
@@ -1111,6 +1471,7 @@ export class Editor {
 
   private onPointerMove(e: PointerEvent): void {
     const sc = this.scene;
+    if (this.walk) return;
     if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const d = this.drag;
@@ -1136,7 +1497,18 @@ export class Editor {
         });
       return;
     }
-    if (this.tool === 'polygon' && this.sketch.length) {
+    if (this.tool === 'wall' && this.chain.length) {
+      const q = this.storeyPoint(e);
+      if (q) {
+        const last = this.chain.at(-1)!;
+        const s = this.snapInterior(q, last, e.shiftKey);
+        this.previewInterior([last, s]);
+        this.showDimension(`${fmt(Math.hypot(s[0] - last[0], s[1] - last[1]), 2)} m`, e);
+      }
+    } else if (this.tool === 'stair' && this.stairPath.length) {
+      const q = this.storeyPoint(e);
+      if (q) this.previewInterior([...this.stairPath, this.snapInterior(q, this.stairPath.at(-1)!, e.shiftKey)], this.stairWidth);
+    } else if (this.tool === 'polygon' && this.sketch.length) {
       const p = sc.planePoint(e, this.sketchY);
       if (p) this.preview([...this.sketch, [this.snapN(p.x), this.snapN(p.z)]], this.sketchY, false);
     } else if (this.tool === 'select' || this.tool === 'editpoints') {
@@ -1183,6 +1555,19 @@ export class Editor {
       return;
     }
     if (d.type === 'polygon-click') return;
+    if (d.type === 'iclick') return;
+    if (d.type === 'node') {
+      const b = this.activeBuilding(),
+        s = this.activeStoreyObj(),
+        q = this.storeyPoint(e);
+      if (!b || !s || !q) return;
+      const p = this.snapInterior(q, null, false, d.id as ID);
+      iops.moveNode(b, s.id, d.id as ID, p);
+      this.rebuild([b.id]);
+      this.renderRoomLabels();
+      this.showDimension(`x ${fmt(p[0])} · z ${fmt(p[1])} m`, e);
+      return;
+    }
     if (d.type === 'lotvertex') {
       const lot = this.lotById(d.id as ID);
       const p = sc.planePoint(e, 0);
@@ -1321,6 +1706,37 @@ export class Editor {
       if (s.length >= 3 && Math.hypot(q[0] - s[0]![0], q[1] - s[0]![1]) < this.gridSize * 0.55) return this.finishPolygon();
       if (!s.length || Math.hypot(q[0] - s.at(-1)![0], q[1] - s.at(-1)![1]) > 0.1) s.push(q);
       this.preview(s, this.sketchY, false);
+      return;
+    }
+    if (d.type === 'iclick') {
+      if (Math.hypot(e.clientX - (d.clientX as number), e.clientY - (d.clientY as number)) > 5) return;
+      const b = this.activeBuilding(),
+        s = this.activeStoreyObj(),
+        raw = this.storeyPoint(e);
+      if (!b || !s || !raw) return;
+      if (this.tool === 'stair') {
+        const q = this.snapInterior(raw, this.stairPath.at(-1) ?? null, !!d.shift);
+        if (!this.stairPath.length || Math.hypot(q[0] - this.stairPath.at(-1)![0], q[1] - this.stairPath.at(-1)![1]) > 0.2) this.stairPath.push(q);
+        this.previewInterior(this.stairPath, this.stairWidth);
+        return;
+      }
+      const last = this.chain.at(-1) ?? null;
+      const q = this.snapInterior(raw, last, !!d.shift);
+      if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) > 0.05) {
+        const ids = iops.addInteriorWall(b, s.id, last, q, this.wallThickness);
+        if (ids.length) {
+          this.rebuild([b.id]);
+          this.commit('', { allowViolations: true });
+          const n = s.rooms.length;
+          this.toast(`Parede criada · ${n} ${n === 1 ? 'cômodo' : 'cômodos'} no pavimento.`);
+        }
+      }
+      this.chain = [q];
+      this.previewInterior([q, q]);
+      return;
+    }
+    if (d.type === 'node') {
+      this.commit('Parede ajustada.');
       return;
     }
     if (d.type === 'lot') {

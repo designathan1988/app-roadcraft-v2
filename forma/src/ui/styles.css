@@ -78,3 +78,109 @@
 .forma-app[data-ui='none'] > :not(#viewport) {
   display: none !important;
 }
+
+/* Barra de pavimentos e interiores. */
+.forma-app #storey-bar {
+  position: absolute;
+  left: 22px;
+  top: 64px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  background: #25292cd4;
+  border: 1px solid #626970;
+  border-radius: 5px;
+  max-height: calc(100% - 150px);
+  overflow-y: auto;
+}
+.forma-app #storey-bar:empty {
+  display: none;
+}
+.forma-app .storey-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+.forma-app #room-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.forma-app .room-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: #1a2025d9;
+  color: #eceeed;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.35;
+}
+.forma-app .room-label small {
+  display: block;
+  color: #b9c1c5;
+  font-size: 10px;
+}
+.forma-app .room-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, auto));
+  gap: 4px 12px;
+}
+.forma-app .room-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.forma-app .room-row input {
+  width: 110px;
+}
+.forma-app .room-row small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.forma-app .inspector-heading {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.forma-app .inspector-body .row b {
+  font-weight: 500;
+}
+.forma-app #walk-hint {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: #1a2025e6;
+  color: #eceeed;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  display: none;
+}
+.forma-app #walk-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: #ffffffcc;
+  z-index: 6;
+  display: none;
+  pointer-events: none;
+}
+
+.forma-app .field-row input[data-storeyprop="name"] {
+  width: 140px;
+}

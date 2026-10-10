@@ -130,7 +130,11 @@ function checkBuilding(b: Building, lotIds: Set<string>, l: Limits): void {
       const key = o.host.massId + '/' + o.host.edgeId;
       perEdge.set(key, (perEdge.get(key) ?? 0) + 1);
       if (perEdge.get(key)! > l.maxOpeningsPerEdge) c.fail(`Mais de ${l.maxOpeningsPerEdge} aberturas numa parede.`);
-    } else if (o.host?.kind !== 'wall') c.fail('Abertura sem parede.');
+    } else if (o.host?.kind === 'wall') {
+      const host = o.host;
+      const st = storeys.find((s) => s.id === host.storeyId);
+      if (!st || !st.graph.walls.some((w) => w.id === host.wallId)) c.fail('Porta interna em parede inexistente.');
+    } else c.fail('Abertura sem parede.');
     c.num(o.offset, 'Posição da abertura', 0, 1000);
     c.num(o.sill, 'Peitoril', 0, l.maxHeight);
     c.num(o.width, 'Largura da abertura', 0.25, 8);

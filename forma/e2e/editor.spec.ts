@@ -295,3 +295,65 @@ test('lote: desenhar, preencher, bloquear e avisar', async ({ page }) => {
   await expect(page.locator('#inspector .index-bad')).toContainText('Coeficiente de aproveitamento');
   expect(errors).toEqual([]);
 });
+
+test('interiores: pavimento, paredes, cômodos, porta, escada e caminhar', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  for (const [p, v] of [['width', '12'], ['depth', '8'], ['floors', '2']] as const) {
+    await page.locator(`#shelf-content input[data-prop="${p}"]`).fill(v);
+    await page.locator(`#shelf-content input[data-prop="${p}"]`).press('Tab');
+  }
+  await view(page, [0, 0, 0], 30);
+  await page.keyboard.press('b');
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  let p = await project(page);
+  const b = p.buildings[0];
+  await page.locator(`[data-storey="${b.storeys[0].id}"]`).click();
+  await expect(page.locator('[data-tab="interior"]')).toHaveClass(/active/);
+  await page.locator('[data-interior="plan"]').click();
+  await page.locator('#shelf-content [data-tool="wall"]').click();
+  for (const [x, z] of [[0, -4], [0, 4]] as const) {
+    const s = await screen(page, x, 0.16, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  await page.keyboard.press('Enter');
+  p = await project(page);
+  expect(p.buildings[0].storeys[0].rooms.map((r: any) => Math.round(r.area)).sort()).toEqual([48, 48]);
+  await expect(page.locator('.room-label')).toHaveCount(2);
+  // Porta: clique sobre a parede (vista de cima, o topo dela).
+  await page.locator('#shelf-content [data-tool="idoor"]').click();
+  const d = await screen(page, 0, 3.15, 1);
+  await page.mouse.click(d.x, d.y);
+  await expect(page.locator('#toast')).toHaveText('Porta interna criada.');
+  // Escada de dois pontos.
+  await page.locator('#shelf-content [data-tool="stair"]').click();
+  for (const [x, z] of [[2, -3], [5, -3]] as const) {
+    const s = await screen(page, x, 0.16, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toContainText('Escada criada');
+  p = await project(page);
+  expect(p.buildings[0].stairs).toHaveLength(1);
+  // Caminhar: entra, anda e sai com Esc.
+  await page.locator('#shelf-content [data-interior="walk"]').click();
+  await expect(page.locator('#walk-hint')).toBeVisible();
+  const moved = await page.evaluate(() => {
+    const w = (globalThis as any).Forma.editor.walk;
+    const a = w.position.p;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }));
+    for (let i = 0; i < 20; i++) w.update(0.05);
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true }));
+    const q = w.position.p;
+    return Math.hypot(q[0] - a[0], q[1] - a[1]);
+  });
+  expect(moved).toBeGreaterThan(0.5);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#walk-hint')).toBeHidden();
+  expect(errors).toEqual([]);
+});

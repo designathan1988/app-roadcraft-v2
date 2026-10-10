@@ -100,3 +100,45 @@ describe('migração v1 → forma/2', () => {
     expect(() => validateProject(broken2)).toThrow('pavimento inexistente');
   });
 });
+
+import { History, apply, diff } from '../../src/core/history';
+
+describe('histórico por diferenças', () => {
+  it('desfaz e refaz com emendas de lista e remoção de chaves', () => {
+    const h = new History<{ a: number[]; o: Record<string, unknown> }>({ a: [1, 2, 3], o: { x: 1, y: 2 } });
+    h.commit({ a: [1, 2, 3, 4], o: { x: 1, y: 2 } });
+    h.commit({ a: [1, 3, 4], o: { x: 5 } });
+    expect(h.undo()).toEqual({ a: [1, 2, 3, 4], o: { x: 1, y: 2 } });
+    expect(h.undo()).toEqual({ a: [1, 2, 3], o: { x: 1, y: 2 } });
+    expect(h.canUndo).toBe(false);
+    expect(h.redo()).toEqual({ a: [1, 2, 3, 4], o: { x: 1, y: 2 } });
+    expect(h.redo()).toEqual({ a: [1, 3, 4], o: { x: 5 } });
+    expect(h.commit({ a: [1, 3, 4], o: { x: 5 } })).toBe(false);
+  });
+
+  it('em projetos reais guarda só o que mudou', () => {
+    const p = migrateV1(fixtures()['stress-120'], { newId: sequentialIds('h') });
+    const h = new History(p);
+    const q = structuredClone(p);
+    q.buildings[7]!.position = [1, 2];
+    h.commit(q);
+    expect(h.storedBytes).toBeLessThan(500);
+    expect(h.undo()).toEqual(p);
+  });
+
+  it('diff/apply é identidade em 200 mutações aleatórias', () => {
+    let s: unknown = { list: [1, 2, 3], m: { k: 'v' } };
+    for (let i = 0; i < 200; i++) {
+      const n = JSON.parse(JSON.stringify(s));
+      const r = (i * 7919) % 5;
+      if (r === 0) n.list.splice(i % (n.list.length + 1), 0, i);
+      else if (r === 1 && n.list.length) n.list.splice(i % n.list.length, 1);
+      else if (r === 2) n.m['k' + (i % 7)] = { deep: [i] };
+      else if (r === 3) delete n.m['k' + (i % 7)];
+      else n.list = n.list.map((x: number) => x + 1);
+      const out = apply(JSON.parse(JSON.stringify(s)), diff(s, n));
+      expect(out).toEqual(n);
+      s = n;
+    }
+  });
+});

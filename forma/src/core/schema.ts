@@ -96,7 +96,12 @@ export interface Wall {
 export interface Room {
   id: ID;
   name: string;
+  /** Paredes internas que limitam o cômodo. */
   wallIds: ID[];
+  /** Contorno calculado (coordenadas locais do edifício). */
+  polygon?: Vec2[];
+  /** Área calculada (m²). */
+  area?: number;
 }
 
 export interface Slab {

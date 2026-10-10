@@ -132,7 +132,7 @@ export function shelfHTML(s: PanelState): string {
     );
     html += group(
       'Composição',
-      `<div class="field-col"><div class="tool-row"><button data-action="setback" class="action-tool" data-icon="setback">Recuo</button><button data-tool="editpoints" class="action-tool ${s.tool === 'editpoints' ? 'active' : ''}" data-icon="vertices">Vértices</button></div><div class="tool-row"><button data-action="mirror" class="action-tool" data-icon="mirror">Espelhar</button><button data-action="union" class="action-tool" data-icon="union">Unir</button></div></div>`,
+      `<div class="field-col"><div class="tool-row"><button data-action="setback" class="action-tool" data-icon="setback">Recuo</button><button data-tool="editpoints" class="action-tool ${s.tool === 'editpoints' ? 'active' : ''}" data-icon="vertices">Vértices</button></div><div class="tool-row"><button data-action="mirror" class="action-tool" data-icon="mirror">Espelhar</button><button data-action="union" class="action-tool" data-icon="union">Unir</button><button data-action="group" class="action-tool" data-icon="layers" data-advanced title="Junta volumes empilhados num só edifício com vários pavimentos">Agrupar</button></div></div>`,
     );
     html += group(
       'Repetição',
@@ -260,4 +260,74 @@ export const NEW_HTML = `<div class="modal-head"><h2>Novo espaço de criação</
 
 export function helpHTML(): string {
   return `<div class="modal-head"><h2>Construa com as mãos.</h2><button data-modal="close" data-icon="close" aria-label="Fechar"></button></div><div class="help-grid"><div><strong>${icon('rect')} Desenhe a base</strong><kbd>B</kbd> e arraste no chão. Escolha L, U ou circular. <kbd>P</kbd> desenha um contorno livre; Enter fecha.</div><div><strong>${icon('extrude')} Puxe e componha</strong>Arraste a alça vertical. Os pontos nos cantos alteram a base. Desenhe no topo para empilhar volumes.</div><div><strong>${icon('window')} Edite a fachada</strong>Escolha Face, clique na parede e altere ritmo, proporção ou material. Arraste Janela, Porta ou Vão sobre ela.</div><div><strong>${icon('cut')} Abra um pátio</strong>Selecione o volume, pressione <kbd>C</kbd> e desenhe o recorte. A subtração também pode dividir o volume.</div><div><strong>${icon('cursor')} Navegue</strong>Botão direito orbita. Shift + direito desloca. Scroll aproxima. No toque, dois dedos orbitam e aproximam.</div><div><strong>${icon('save')} Continue e exporte</strong>Salvamento local automático. Salvar baixa o projeto JSON. Exportar GLB preserva geometria e materiais.</div></div><p><kbd>V</kbd> selecionar · <kbd>G</kbd> mover · <kbd>E</kbd> puxar · <kbd>F</kbd> enquadrar · Ctrl+clique multisseleciona · Ctrl+D duplica · Ctrl+Z desfaz · Esc cancela. O botão Modo avançado mostra todos os controles.</p><div class="modal-footer"><button class="secondary" data-modal="example">Carregar exemplo</button><button class="primary" data-modal="close">Continuar criando</button></div>`;
+}
+
+// ── Interiores ────────────────────────────────────────────────────────
+export interface InteriorState {
+  /** Pavimentos do edifício selecionado e o ativo. */
+  storeys: { id: string; name: string; height: number; rooms: { id: string; name: string; area: number }[] }[];
+  activeStoreyId: string | null;
+  tool: string;
+  wallThickness: number;
+  stairWidth: number;
+}
+
+/** Barra de pavimentos no canto da vista (só com um edifício selecionado). */
+export function storeyBarHTML(s: InteriorState | null): string {
+  if (!s || !s.storeys.length) return '';
+  const items = [...s.storeys].reverse();
+  return `<button class="storey-btn ${s.activeStoreyId ? '' : 'active'}" data-storey="" title="Mostrar o edifício inteiro">Todos</button>${items
+    .map((st) => `<button class="storey-btn ${st.id === s.activeStoreyId ? 'active' : ''}" data-storey="${st.id}" title="Ver e editar o interior de ${escapeHTML(st.name)}">${escapeHTML(st.name)}</button>`)
+    .join('')}`;
+}
+
+export function interiorShelfHTML(s: InteriorState | null): string {
+  if (!s) return group('Interior', '<div class="help-inline">Selecione um edifício e escolha um pavimento na barra à esquerda da vista para desenhar paredes, portas e escadas.</div>');
+  const active = s.storeys.find((x) => x.id === s.activeStoreyId);
+  const tools = [
+    ['wall', 'wall', 'Parede'],
+    ['idoor', 'door', 'Porta'],
+    ['stair', 'stair', 'Escada'],
+    ['room', 'cube', 'Cômodo'],
+  ];
+  let html = group(
+    'Desenhar',
+    `<div class="tool-row">${tools.map(([id, ic, name]) => `<button class="shape-tool ${s.tool === id ? 'active' : ''}" data-tool="${id}" data-icon="${ic}" ${active ? '' : 'disabled'}>${name}</button>`).join('')}<button class="shape-tool" data-interior="walk" data-icon="walk">Caminhar</button></div>`,
+  );
+  if (!active)
+    return html + group('Pavimento', `<div class="help-inline">Escolha um pavimento na barra à esquerda da vista.</div><div class="tool-row"><button class="action-tool" data-storey="${s.storeys[0]?.id ?? ''}" data-icon="level">Entrar no térreo</button></div>`);
+  html += group(
+    'Pavimento',
+    `<div class="field-col"><div class="field-row"><label>Nome<input data-storeyprop="name" aria-label="Nome do pavimento" value="${escapeHTML(active.name)}" maxlength="40"></label></div><div class="field-row"><label>Pé-direito (m)<input type="number" data-storeyprop="height" aria-label="Pé-direito" value="${active.height.toFixed(2)}" step=".05" min="2" max="12"></label><button class="action-tool" data-interior="plan" data-icon="top">Planta</button></div></div>`,
+  );
+  html += group(
+    'Medidas',
+    `<div class="field-col"><div class="field-row"><label>Parede (m)<input type="number" data-interiorprop="wallThickness" aria-label="Espessura das paredes novas" value="${s.wallThickness.toFixed(2)}" step=".01" min=".05" max="1"></label></div><div class="field-row"><label>Escada (m)<input type="number" data-interiorprop="stairWidth" aria-label="Largura das escadas novas" value="${s.stairWidth.toFixed(2)}" step=".05" min=".6" max="3"></label></div></div>`,
+  );
+  const rooms = active.rooms;
+  html += group(
+    `Cômodos · ${rooms.length}`,
+    rooms.length
+      ? `<div class="room-list">${rooms.map((r) => `<label class="room-row"><input data-room="${r.id}" aria-label="Nome do cômodo" value="${escapeHTML(r.name)}" maxlength="40"><small>${fmt(r.area, 1)} m²</small></label>`).join('')}</div>`
+      : '<div class="help-inline">Desenhe paredes para dividir o pavimento em cômodos.</div>',
+  );
+  return html;
+}
+
+export function wallInspectorHTML(w: { length: number; thickness: number; doors: number }): string {
+  return `<div class="inspector-title"><span class="inspector-heading">Parede interna</span><button data-interior="delete-wall" data-icon="trash" title="Excluir parede" aria-label="Excluir parede"></button></div>
+<div class="inspector-body"><div class="row"><label>Comprimento</label><b>${fmt(w.length, 2)} m</b></div><div class="row"><label for="wall-thickness">Espessura</label><input id="wall-thickness" type="number" data-wallprop="thickness" aria-label="Espessura" value="${w.thickness.toFixed(2)}" step=".01" min=".05" max="1"></div><div class="row"><label>Portas</label><b>${w.doors}</b></div></div>
+<div class="inspector-foot"><span>Arraste as pontas para mover</span><button data-tool="idoor" data-icon="door" title="Desenhar porta" aria-label="Desenhar porta"></button></div>`;
+}
+
+export function roomInspectorHTML(r: { name: string; area: number; walls: number }): string {
+  return `<div class="inspector-title"><input data-roomprop="name" aria-label="Nome do cômodo" value="${escapeHTML(r.name)}" maxlength="40"></div>
+<div class="inspector-body"><div class="row"><label>Área</label><b>${fmt(r.area, 1)} m²</b></div><div class="row"><label>Paredes internas</label><b>${r.walls}</b></div></div>
+<div class="inspector-foot"><span>Cômodo</span></div>`;
+}
+
+export function stairInspectorHTML(st: { width: number; from: string; to: string }): string {
+  return `<div class="inspector-title"><span class="inspector-heading">Escada</span><button data-interior="delete-stair" data-icon="trash" title="Excluir escada" aria-label="Excluir escada"></button></div>
+<div class="inspector-body"><div class="row"><label>Largura</label><b>${fmt(st.width, 2)} m</b></div><div class="row"><label>De</label><b>${escapeHTML(st.from)}</b></div><div class="row"><label>Até</label><b>${escapeHTML(st.to)}</b></div></div>
+<div class="inspector-foot"><span>Escada</span></div>`;
 }

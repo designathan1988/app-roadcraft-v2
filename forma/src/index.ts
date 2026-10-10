@@ -11,3 +11,9 @@ export { createEditor, Editor, type EditorOptions, type EditorEvents, type Tool 
 export * as ops from './editor/ops';
 export { exampleProject } from './editor/example';
 export { exportGLB, exportOBJ, exportJSON } from './io/export';
+export { buildCollision } from './render/collision';
+export { collisionShapes, wallSolids, type Solid } from './geometry/collision';
+export * as interiorOps from './editor/interior-ops';
+export { WalkPhysics, walkStart } from './editor/walk';
+export { buildLotGroup } from './render/lot';
+export * as lotOps from './editor/lot-ops';

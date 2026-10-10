@@ -30,7 +30,7 @@ export interface PickResult {
 
 export interface HandleData {
   handle: true;
-  kind: 'height' | 'resize' | 'vertex' | 'lotvertex';
+  kind: 'height' | 'resize' | 'vertex' | 'lotvertex' | 'node';
   id: ID;
   sx?: number;
   sz?: number;
@@ -72,6 +72,10 @@ export class EditorScene {
   private ground?: THREE.Mesh;
   /** Chamado quando a cena precisa ser desenhada (modo hospedado). */
   onInvalidate: (() => void) | null = null;
+  /** Chamado quando a câmera ou o tamanho mudam (rótulos na tela). */
+  onViewChange: (() => void) | null = null;
+  /** Opções de geração por edifício (corte do pavimento ativo). */
+  buildOptionsFor: ((b: Building) => { cutY?: number }) | null = null;
 
   constructor(
     private viewport: HTMLElement,
@@ -180,6 +184,7 @@ export class EditorScene {
     this.camera.aspect = r.width / r.height;
     this.camera.updateProjectionMatrix();
     this.mark();
+    this.onViewChange?.();
   }
 
   updateCamera(): void {
@@ -190,6 +195,7 @@ export class EditorScene {
     this.camera.lookAt(t);
     this.camera.updateMatrixWorld();
     this.rescaleHandles();
+    this.onViewChange?.();
     if (this.scene.fog instanceof THREE.Fog && this.withEnvironment) {
       this.scene.fog.near = Math.max(100, d * 1.4);
       this.scene.fog.far = Math.max(220, d * 3);
@@ -225,7 +231,7 @@ export class EditorScene {
       this.built.delete(id);
       const b = buildings.find((x) => x.id === id);
       if (!b) continue;
-      const built = buildBuilding(b, { context: this.ctx, section: this.section });
+      const built = buildBuilding(b, { context: this.ctx, section: this.section, ...(this.buildOptionsFor?.(b) ?? {}) });
       this.modelRoot.add(built.group);
       this.built.set(id, built);
     }

@@ -5,7 +5,10 @@ import type { ID, Vec2 } from '../core/schema';
 
 export type Vec3 = [number, number, number];
 
-export type MaterialRole = 'wall' | 'frame' | 'glass' | 'stone' | 'roof' | 'green';
+export type MaterialRole = 'wall' | 'frame' | 'glass' | 'stone' | 'roof' | 'green' | 'cap';
+
+/** Tampa escura das paredes cortadas (convenção de planta). */
+export const CAP: MaterialKey = { role: 'cap', color: '#34393b', roughness: 0.9 };
 
 export interface MaterialKey {
   role: MaterialRole;
@@ -22,6 +25,10 @@ export interface PartData {
   edgeId?: ID;
   part: string;
   storey?: number;
+  storeyId?: ID;
+  wallId?: ID;
+  openingId?: ID;
+  stairId?: ID;
 }
 
 export interface BoxPart {

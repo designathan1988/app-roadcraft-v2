@@ -9,6 +9,9 @@ import { difference, netArea as polyNetArea, union as polyUnion, validHoles, val
 import { massEdges, ringPoints, findEdge } from '../geometry/ring';
 import { ringToWorld, toWorld } from '../geometry/frame';
 import { rebuildMass } from '../geometry/ring-ids';
+import { clipInteriors, reframeInteriors, transformInteriors, updateRooms } from './interior-ops';
+import { transformGraph } from '../geometry/walls';
+import { toLocal } from '../geometry/frame';
 
 export const r2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -113,13 +116,50 @@ export function setStoreys(b: Building, n: number, total: number, newId: () => I
   }
 }
 
-export const setHeight = (b: Building, h: number, newId?: () => ID): void => setStoreys(b, floorsOf(b), h, newId);
+/** Pavimentos todos com a mesma altura (comportamento do v1). */
+export const uniformStoreys = (b: Building): boolean => b.storeys.every((s) => Math.abs(s.height - b.storeys[0]!.height) < 1e-6);
 
-/** Muda o número de andares mantendo o pé-direito médio. */
+/** Altura total: pavimentos iguais são redivididos; diferentes, escalados na proporção. */
+export function setHeight(b: Building, h: number, newId?: () => ID): void {
+  if (uniformStoreys(b)) return setStoreys(b, floorsOf(b), h, newId);
+  const ordered = sortedStoreys(b),
+    base = baseOf(b),
+    k = clamp(h, 0.5, 100) / heightOf(b);
+  let y = base;
+  for (const s of ordered) {
+    const nh = s.height * k;
+    for (const o of b.openings) if (o.storeyId === s.id) o.sill *= k;
+    s.elevation = r2(y);
+    s.height = r2(nh);
+    y += nh;
+  }
+}
+
+/** Muda o número de andares mantendo o pé-direito (o novo copia o último). */
 export function setFloors(b: Building, n: number, newId?: () => ID): void {
-  const fh = heightOf(b) / floorsOf(b);
   n = Math.round(clamp(n, 1, 30));
-  setStoreys(b, n, fh * n, newId);
+  if (uniformStoreys(b)) {
+    const fh = heightOf(b) / floorsOf(b);
+    return setStoreys(b, n, fh * n, newId);
+  }
+  const ordered = sortedStoreys(b);
+  if (n < ordered.length) {
+    const keep = new Set(ordered.slice(0, n).map((s) => s.id));
+    b.openings = b.openings.filter((o) => keep.has(o.storeyId));
+    b.stairs = b.stairs.filter((s) => keep.has(s.fromStorey) && keep.has(s.toStorey));
+    b.storeys = ordered.slice(0, n);
+  } else {
+    const id = newId ?? uid;
+    for (let i = ordered.length; i < n; i++) {
+      const last = b.storeys.at(-1)!;
+      if (last.elevation + 2 * last.height > 100) break;
+      b.storeys.push({ id: id(), name: storeyName(i), elevation: r2(last.elevation + last.height), height: last.height, slabThickness: last.slabThickness, graph: { nodes: [], walls: [] }, rooms: [] });
+    }
+  }
+  for (const m of b.masses) {
+    m.fromStorey = b.storeys[0]!.id;
+    m.toStorey = b.storeys.at(-1)!.id;
+  }
 }
 
 export function setBase(b: Building, base: number): void {
@@ -168,6 +208,11 @@ export function scaleFootprint(b: Building, axis: 'width' | 'depth', size: numbe
     return q;
   });
   setFootprint(b, scale(pts), holesOf(b).map(scale));
+  transformInteriors(b, (p) => {
+    const q: Vec2 = [p[0], p[1]];
+    q[k] = c + (p[k] - c) * ratio;
+    return q;
+  });
 }
 
 /** Move a origem do edifício para o centro da base, sem mudar nada no mundo. */
@@ -192,6 +237,9 @@ export function setRotation(b: Building, deg: number): void {
  * acompanham: a aresta a→b vira b'→a', cujo ID é o do antigo vértice b.
  */
 export function mirror(b: Building): void {
+  const mb = bounds(ringPoints(mainMass(b).outer)),
+    mmx = mb.minX + mb.maxX;
+  transformInteriors(b, (p) => [mmx - p[0], p[1]]);
   for (const m of b.masses) {
     const bd = bounds(ringPoints(m.outer)),
       mx = bd.minX + bd.maxX;
@@ -336,9 +384,40 @@ function partsToBuildings(template: Building, sources: Building[], parts: Polygo
     m.outer = rebuilt.outer;
     m.holes = rebuilt.holes;
     m.edges = rebuilt.edges;
-    b.openings = rebuilt.openings;
+    b.openings = [...rebuilt.openings, ...b.openings.filter((o) => o.host.kind === 'wall')];
+    // Interiores: leva do referencial do modelo para o novo e junta os dos outros edifícios.
+    reframeInteriors(b, template, { position: b.position, rotation: 0 });
+    for (const src of sources) {
+      if (src.id === template.id) continue;
+      mergeInteriors(b, src, newId);
+    }
+    clipInteriors(b);
     return b;
   });
+}
+
+/** Junta paredes, portas e escadas de outro edifício nos pavimentos de mesma altura. */
+function mergeInteriors(dst: Building, src: Building, newId: () => ID): void {
+  const c = cloneBuilding(src, newId);
+  const map = new Map<ID, ID>();
+  for (const s of c.storeys) {
+    const t = dst.storeys.find((x) => Math.abs(x.elevation - s.elevation) < 0.01 && Math.abs(x.height - s.height) < 0.01);
+    if (!t) continue;
+    map.set(s.id, t.id);
+    transformGraph(s.graph, (p) => toLocal({ position: dst.position, rotation: dst.rotation }, toWorld(c, p)));
+    t.graph.nodes.push(...s.graph.nodes);
+    t.graph.walls.push(...s.graph.walls);
+  }
+  for (const o of c.openings) {
+    if (o.host.kind !== 'wall' || !map.has(o.host.storeyId)) continue;
+    const sid = map.get(o.host.storeyId)!;
+    dst.openings.push({ ...o, storeyId: sid, host: { ...o.host, storeyId: sid } });
+  }
+  for (const st of c.stairs) {
+    if (!map.has(st.fromStorey) || !map.has(st.toStorey)) continue;
+    dst.stairs.push({ ...st, fromStorey: map.get(st.fromStorey)!, toStorey: map.get(st.toStorey)!, path: st.path.map((p) => toLocal({ position: dst.position, rotation: dst.rotation }, toWorld(c, p))) });
+  }
+  for (const s of dst.storeys) updateRooms(dst, s.id, newId);
 }
 
 /** Recorta a base pelo polígono `cut` (mundo). Devolve as partes ou null se nada mudou. */

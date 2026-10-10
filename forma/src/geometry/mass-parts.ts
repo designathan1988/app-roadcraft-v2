@@ -8,12 +8,18 @@ import { bounds } from './polygon';
 import { ringPoints, massEdges } from './ring';
 import { clamp } from './polygon';
 import { legacyRoofPositions } from './roofs/legacy';
+import { stairFootprint } from './stairs';
+import { buildInteriorParts } from './interior-parts';
 import type { BoxPart, BuildingParts, MaterialKey, PartData, Vec3, WallHole } from './parts';
-import { emptyParts } from './parts';
+import { CAP, emptyParts } from './parts';
 
 export interface MassPartsOptions {
   /** Corte horizontal: mostra só ~52% da altura, sem telhado. */
   section?: boolean;
+  /** Corta tudo acima desta altura (y do edifício): mostra um pavimento por vez. */
+  cutY?: number;
+  /** Inclui paredes internas, portas e escadas (padrão: sim). */
+  interiors?: boolean;
 }
 
 /** Abertura já resolvida no plano da aresta (u = centro / comprimento). */
@@ -31,6 +37,7 @@ export interface EdgeOpening {
 const STONE = '#c8c3b7';
 const GLASS = '#34454c';
 const GREEN = '#687e59';
+const LINING: MaterialKey = { role: 'wall', color: '#ebe6dc', roughness: 0.9 };
 
 const mat = (role: MaterialKey['role'], color: string, roughness = 0.8, extra: Partial<MaterialKey> = {}): MaterialKey => ({ role, color, roughness, ...extra });
 
@@ -43,9 +50,11 @@ function storeyAt(rel: { y0: number; h: number }[], y: number): number {
 export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}, out: BuildingParts = emptyParts()): BuildingParts {
   const { storeys, base, height } = massExtent(b, m);
   if (!storeys.length || height <= 0) return out;
-  const section = !!opts.section;
+  if (opts.cutY !== undefined && opts.cutY <= base + 0.05) return out;
+  const cutHeight = opts.cutY !== undefined ? opts.cutY - base : Infinity;
+  const section = !!opts.section || cutHeight < height;
   const rel = storeys.map((s: Storey) => ({ y0: s.elevation - base, h: s.height }));
-  const visibleHeight = section ? Math.max(0.5, height * 0.52) : height;
+  const visibleHeight = Math.min(opts.section ? Math.max(0.5, height * 0.52) : height, cutHeight);
   const outer = ringPoints(m.outer),
     holes = m.holes.map(ringPoints);
   const dataOf = (extra: Partial<PartData>): PartData => ({ buildingId: b.id, massId: m.id, part: 'wall', ...extra });
@@ -64,9 +73,14 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
 
   // Lajes em cada nível (base de cada pavimento e topo).
   const levels = [...rel.map((r) => r.y0), height];
+  // No corte por pavimento, nenhuma laje a partir da altura do corte (deixa ver o interior).
+  const slabLimit = opts.cutY !== undefined ? cutHeight - 0.05 : visibleHeight + 0.02;
   levels.forEach((y, f) => {
-    if (y > visibleHeight + 0.02) return;
-    out.slabs.push({ mat: stoneMat, y: base + y, thickness: 0.16, outer, holes, data: dataOf({ part: 'floor', storey: f }) });
+    if (y > slabLimit) return;
+    // Laje do piso de um pavimento recebe o vão das escadas que chegam nele.
+    const arriving = f > 0 && f < storeys.length ? b.stairs.filter((st) => st.toStorey === storeys[f]!.id) : [];
+    const cut = arriving.flatMap((st) => stairFootprint(st.path, st.width).map((p) => p[0]!));
+    out.slabs.push({ mat: stoneMat, y: base + y, thickness: 0.16, outer, holes: [...holes, ...cut], data: dataOf({ part: 'floor', storey: f }) });
   });
 
   const manualByEdge = new Map<string, Opening[]>();
@@ -78,6 +92,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
   }
   const storeyIndex = new Map(storeys.map((s, i) => [s.id, i]));
 
+  const lining = opts.interiors !== false && (opts.cutY !== undefined || b.stairs.length > 0 || b.storeys.some((st) => st.graph.walls.length > 0));
   const edges = massEdges(m);
   const ringLength = (e: (typeof edges)[number]) => (e.ring === 'outer' ? m.outer.vertices.length : m.holes[e.ring]!.vertices.length);
   for (const e of edges) {
@@ -189,6 +204,11 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
       holes: wallHoles,
       data: tag,
     });
+    // Reboco na face interna (só com interior ou corte; a fachada fica com a cor externa).
+    if (lining && isOuter)
+      out.walls.push({ mat: LINING, origin: [a[0] - nx * 0.085, base, a[1] - nz * 0.085], angle: ang, length: len, bottom: Math.max(wallBottom, rel[0]!.y0 + 0.16), top: visibleHeight, depth: 0.012, holes: wallHoles, data: { ...tag, part: 'lining' } });
+    // Parede cortada pelo pavimento ativo: tampa escura no corte.
+    if (opts.cutY !== undefined && visibleHeight < height - 1e-6) out.boxes.push({ mat: CAP, size: [len + 0.19, 0.03, 0.21], pos: [a[0] + tx * (len / 2) - nx * 0.006, base + visibleHeight + 0.016, a[1] + tz * (len / 2) - nz * 0.006], angle: ang, roll: 0, data: tag });
 
     if (m.flags.pilotis && isOuter) {
       addBox(stoneMat, [0.38, wallBottom, 0.38], place(0.15, wallBottom / 2, 0), 0, tag);
@@ -238,6 +258,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
 export function buildBuildingParts(b: Building, opts: MassPartsOptions = {}): BuildingParts {
   const out = emptyParts();
   for (const m of b.masses) buildMassParts(b, m, opts, out);
+  if (opts.interiors !== false) buildInteriorParts(b, opts.cutY !== undefined ? { cutY: opts.cutY } : {}, out);
   return out;
 }
 

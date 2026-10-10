@@ -34,7 +34,7 @@ function planShape(outer: Vec2[], holes: Vec2[][]): THREE.Shape {
   return s;
 }
 
-function slabGeometry(s: SlabPart): THREE.BufferGeometry {
+export function slabGeometry(s: SlabPart): THREE.BufferGeometry {
   const g = new THREE.ExtrudeGeometry(planShape(s.outer, s.holes), { depth: s.thickness, bevelEnabled: false, curveSegments: 1 });
   g.rotateX(-Math.PI / 2);
   return g;
