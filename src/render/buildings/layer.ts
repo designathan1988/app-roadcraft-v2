@@ -1,6 +1,7 @@
 import { workUntil } from '@core/frameWork';
 import { Digest } from '@core/digest';
-import { Group, type InstancedMesh } from 'three';
+import { Group, type InstancedMesh, type Mesh } from 'three';
+import { warmLooseAhead } from '../uploads';
 
 import { pointInPolygon } from '@core/polygon';
 import type { Vec2 } from '@core/vec2';
@@ -156,7 +157,7 @@ export function createBuildingLayer(): BuildingLayer {
   let ghost: BuildingMeshes | null = null;
   let storedKey = '';
   /** The buildings of a change being emitted ahead of the cells, a slice a frame. */
-  let warming: { key: string; queue: Building[]; at: number;
+  let warming: { key: string; queue: Building[]; at: number; uploads?: number;
     /** A whole town to put together (the opening, a map opened): worked at the loading priority. */
     loading: boolean;
     cells?: { stage: CellCache; cell: string; list: BuildingChunk[]; kinds: ReadonlySet<PartKind> }[];
@@ -380,8 +381,20 @@ export function createBuildingLayer(): BuildingLayer {
           job.stage.get(job.cell)?.part.dispose();
           job.stage.set(job.cell, { chunks: job.list, part: step.value });
           warming.assembling = null;
+          // An edit's cell goes to the GPU a mesh a frame before the swap
+          // (`warmLooseAhead`); a load's is sent by the frame drawn unseen.
+          if (!warming.loading) {
+            const meshes: Mesh[] = [];
+            step.value.group.traverse((o) => { if ((o as Mesh).isMesh) meshes.push(o as Mesh); });
+            const w = warming;
+            const sent = warmLooseAhead(meshes);
+            if (sent) {
+              w.uploads = (w.uploads ?? 0) + 1;
+              void sent.then(() => { w.uploads = (w.uploads ?? 1) - 1; });
+            }
+          }
         }
-        if (warming.cells.length || warming.assembling) return false;
+        if (warming.cells.length || warming.assembling || (warming.uploads ?? 0) > 0) return false;
       }
       warming = null;
       if (key !== storedKey) {

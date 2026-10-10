@@ -1415,7 +1415,8 @@ export function mountShell(deps: ShellDeps): void {
         })));
       }
     }
-    note(t(`help.tool.${current}`));
+    // The help of the way chosen: the bomb's panel said how to demolish.
+    note(t(current === 'bulldoze' && strikeChoice.mode !== 'demolish' ? `help.strike.${strikeChoice.mode}` : `help.tool.${current}`));
   }
 
   // ------------------------------------------------------------ construction

@@ -137,6 +137,16 @@ o jogo a cada edição.
   andar, placa), com as teclas de um select (setas, Home, End, Escape; WAI-ARIA
   APG); o painel não se refaz com uma lista aberta (fechava-a em menos de
   250 ms); título nos painéis e, num modo sem nada a escolher, o que fazer.
+- Bomba (ramo do agente de desempenho, PA-U2 parcial, terminado no que estava
+  feito): a cratera, primeiro carimbo de terreno do mapa, refaz só o retângulo
+  dela; as células de prédio de uma edição sobem à GPU em fatias antes da
+  troca. No painel do app (RTX), cidade gerada, bomba força 5 no chão: maior
+  tarefa longa 1 153 ms na build anterior (4180) contra 468 ms com a mudança
+  (5173). Visto uma vez, logo depois de o servidor recarregar: por alguns
+  segundos depois da bomba as ruas sumiram da tela e voltaram; não se repetiu
+  em duas tentativas nas mesmas condições (alturas do terreno sob a via
+  medidas a cada 200 ms: nunca acima do asfalto). Aberto. O painel da bomba
+  mostra a ajuda da bomba (antes a do Demolir).
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

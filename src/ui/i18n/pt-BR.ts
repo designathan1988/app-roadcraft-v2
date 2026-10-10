@@ -379,6 +379,8 @@ export const PT_BR: Dictionary = {
   'person.f.upperlegs-height-decr-incr': 'Comprimento das pernas',
   'person.f.measure-neck-height-decr-incr': 'Comprimento do pescoço',
   'help.tool.bulldoze': 'Remove o que você clicar: uma via, um cruzamento, um poste ou um edifício. Tudo o que for removido volta com Desfazer.',
+  'help.strike.shoot': 'Clique onde quer atirar.',
+  'help.strike.strike': 'Clique onde a bomba cai: no chão ou num prédio. A força muda o tamanho da explosão.',
   'help.tool.pole': 'Coloca postes com fios nas calçadas. Clique numa calçada e siga clicando: os postes acompanham a calçada e viram nas esquinas.',
   'help.tool.inspect': 'Mostra o que é uma via ou um cruzamento e permite mudá-lo: classe, faixas e altura, e os semáforos e movimentos permitidos de um cruzamento.',
   'help.section.tool': 'Esta ferramenta',

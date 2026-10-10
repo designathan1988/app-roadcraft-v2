@@ -383,6 +383,8 @@ export const EN: Dictionary = {
   'person.f.upperlegs-height-decr-incr': 'Leg length',
   'person.f.measure-neck-height-decr-incr': 'Neck length',
   'help.tool.bulldoze': 'Removes what you click: a road, a junction, a pole or a building. Anything removed comes back with Undo.',
+  'help.strike.shoot': 'Click where to shoot.',
+  'help.strike.strike': 'Click where the bomb falls: on the ground or on a building. The force sets the size of the blast.',
   'help.tool.pole': 'Sets wire poles on the footways. Click a footway and keep clicking: the poles follow the footway and turn at the corners.',
   'help.tool.inspect': 'Shows what a road or a junction is and lets you change it: its class, lanes and height, and a junction\'s signals and allowed movements.',
   'help.section.tool': 'This tool',
