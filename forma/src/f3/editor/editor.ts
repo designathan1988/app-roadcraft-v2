@@ -9,6 +9,7 @@ import { building as newBuilding, circlePlan, levelsFor, planVertices, project a
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
 import { Store } from './store';
+import { alignBuildings, alignSolids, type AlignOp } from '../model/align';
 import { BLOCKS, blockSolid, type BlockPlacement } from '../model/blocks';
 import { View, type Hit } from './view';
 import { Handles, HANDLE_COLORS, type Handle } from './handles';
@@ -32,6 +33,8 @@ export interface Selection {
   item: ID | null;
   /** Elementos de fachada selecionados (chaves de elements.ts). */
   elems: string[];
+  /** Outros edifícios selecionados junto (Shift+clique). */
+  others: ID[];
 }
 
 interface Measure {
@@ -75,7 +78,7 @@ export class Editor3 {
   readonly infer: Inference;
   tool: Tool = 'select';
   drawMode: 'add' | 'subtract' = 'add';
-  sel: Selection = { building: null, solids: [], face: null, item: null, elems: [] };
+  sel: Selection = { building: null, solids: [], face: null, item: null, elems: [], others: [] };
   context: ID | null = null;
   /** Tipo de componente sendo posicionado. */
   placing: ID | null = null;
@@ -108,6 +111,7 @@ export class Editor3 {
       this.handles.draw();
       this.placeCtxBar();
       if (this.dims.length) this.drawDims();
+      this.drawSelDims();
     };
     this.store.on((e) => {
       if (e.kind === 'change') {
@@ -118,6 +122,18 @@ export class Editor3 {
     this.bindCanvas();
     this.bindKeys();
     this.bindTop();
+    // Grade e giro (barra de estado).
+    const gridSel = this.shell.root.querySelector<HTMLSelectElement>('[data-grid]')!;
+    const rotSel = this.shell.root.querySelector<HTMLSelectElement>('[data-rot]')!;
+    gridSel.addEventListener('change', () => {
+      this.infer.grid = parseFloat(gridSel.value);
+      this.view.setGrid(Math.max(0.5, this.infer.grid));
+      this.toast(`Grade de ${gridSel.options[gridSel.selectedIndex]!.text}.`);
+    });
+    rotSel.addEventListener('change', () => {
+      this.rotSnap = parseFloat(rotSel.value);
+      this.toast(`Giro de ${this.rotSnap}° em ${this.rotSnap}°.`);
+    });
     this.renderTools();
     this.shell.name.value = this.store.project.name;
     this.sync();
@@ -157,7 +173,7 @@ export class Editor3 {
     this.view.sync(p, this.store.revision, this.preview);
     // Seleção que sumiu (desfazer, excluir).
     const b = this.store.building(this.sel.building);
-    if (this.sel.building && !b) this.sel = { building: null, solids: [], face: null, item: null, elems: [] };
+    if (this.sel.building && !b) this.sel = { building: null, solids: [], face: null, item: null, elems: [], others: [] };
     if (b) {
       this.sel.solids = this.sel.solids.filter((id) => b.solids.some((s) => s.id === id));
       if (this.sel.item && !b.items.some((i) => i.id === this.sel.item)) this.sel.item = null;
@@ -233,7 +249,7 @@ export class Editor3 {
 
   // ── Seleção ──────────────────────────────────────────────────────────
   select(next: Partial<Selection>): void {
-    this.sel = { building: null, solids: [], face: null, item: null, elems: [], ...next };
+    this.sel = { building: null, solids: [], face: null, item: null, elems: [], others: [], ...next };
     this.syncSelection();
   }
 
@@ -299,6 +315,7 @@ export class Editor3 {
     if (!b) {
       this.handles.set([]);
       this.placeCtxBar();
+      this.drawSelDims();
       return;
     }
     const M = this.view.buildingMatrix(b);
@@ -309,6 +326,13 @@ export class Editor3 {
       this.selOverlay.add(l);
     };
     const [ax, az] = [new THREE.Vector3(1, 0, 0).transformDirection(M), new THREE.Vector3(0, 0, 1).transformDirection(M)];
+    // Outros edifícios selecionados junto (Shift+clique): contorno da planta.
+    for (const oid of this.sel.others) {
+      const ob = this.store.building(oid);
+      if (!ob) continue;
+      const OM = this.view.buildingMatrix(ob);
+      for (const s of ob.solids) if (s.op === 'add') line(solidRings(s).outer.pts.map((p) => new THREE.Vector3(p[0], s.base + 0.03, p[1]).applyMatrix4(OM)), '#2f7de1', true, 1);
+    }
     // Contorno de cada sólido do edifício (o selecionado em destaque).
     const inCtx = this.context === b.id;
     for (const s of b.solids) {
@@ -441,6 +465,7 @@ export class Editor3 {
     }
     this.handles.set(handles);
     this.placeCtxBar();
+    this.drawSelDims();
   }
 
   private moveHandles(c: THREE.Vector3, ax: THREE.Vector3, az: THREE.Vector3): Handle[] {
@@ -647,6 +672,81 @@ export class Editor3 {
     const it = JSON.parse(c.json) as Item;
     it.id = uid();
     this.change(target.id, (x) => void x.items.push(it), 'Colado.');
+  }
+
+  /** Passo do giro (graus) com encaixe ligado. */
+  rotSnap = 15;
+
+  // ── Alinhar e distribuir ─────────────────────────────────────────────
+  /** Volumes (dentro de um edifício) ou edifícios (fora): o primeiro selecionado é a referência. */
+  align(op: AlignOp): void {
+    const b = this.activeBuilding();
+    if (!b) return;
+    const label: Record<AlignOp, string> = { left: 'à esquerda', centerX: 'ao centro (x)', right: 'à direita', front: 'à frente', centerZ: 'ao centro (z)', back: 'ao fundo', base: 'na mesma base', top: 'no mesmo topo', height: 'com o mesmo topo (altura)', distX: 'distribuídos em x', distZ: 'distribuídos em z' };
+    if (this.context === b.id && this.sel.solids.length > 1) {
+      this.change(b.id, (x) => alignSolids(this.sel.solids.map((id) => findSolid(x, id)!).filter(Boolean), op), `Volumes ${label[op]}.`);
+      return;
+    }
+    if (this.sel.others.length) {
+      const list = [b, ...this.sel.others.map((id) => this.store.building(id)!).filter(Boolean)];
+      alignBuildings(list, op);
+      this.store.commit(list.map((x) => x.id), `Edifícios ${label[op]}.`, false);
+      this.toast(`Edifícios ${label[op]}.`);
+    }
+  }
+
+  /** Cotas da seleção: cada lado do volume e a altura, sempre visíveis. */
+  private drawSelDims(): void {
+    this.shell.view.querySelectorAll('.f3-sdim').forEach((x) => x.remove());
+    const b = this.activeBuilding();
+    if (!b || this.drag) return;
+    const M = this.view.buildingMatrix(b);
+    const put = (p: THREE.Vector3, text: string) => {
+      const sp = this.view.toScreen(p);
+      if (sp.behind) return;
+      const el = document.createElement('div');
+      el.className = 'f3-dim f3-sdim';
+      el.textContent = text;
+      el.style.left = `${sp.x}px`;
+      el.style.top = `${sp.y}px`;
+      this.shell.view.appendChild(el);
+    };
+    const solids = this.context === b.id ? this.sel.solids.map((id) => findSolid(b, id)).filter((s): s is Solid => !!s) : [];
+    if (solids.length === 1 && !this.sel.elems.length && !this.sel.item) {
+      const s = solids[0]!;
+      const r = solidRings(s);
+      // Comprimento de cada lado (somando os segmentos de um lado curvo).
+      const sides = new Map<string, { len: number; mid: Vec2 }>();
+      r.outer.segs.forEach((g, i) => {
+        if (g.edge.endsWith(':c')) return;
+        const a = r.outer.pts[i]!,
+          c = r.outer.pts[(i + 1) % r.outer.pts.length]!;
+        const cur = sides.get(g.edge) ?? { len: 0, mid: a };
+        cur.len += Math.hypot(c[0] - a[0], c[1] - a[1]);
+        sides.set(g.edge, cur);
+      });
+      for (const [edge, v] of sides) {
+        const ring = s.plan.outer;
+        const k = ring.findIndex((q) => q.id === edge);
+        if (k < 0) continue;
+        const m = midOf(ring[k]!, ring[(k + 1) % ring.length]!);
+        const n = edgeNormal(s, edge) ?? [0, 0];
+        put(new THREE.Vector3(m[0] + n[0] * 0.9, s.base + 0.05, m[1] + n[1] * 0.9).applyMatrix4(M), `${fmt(v.len)} m`);
+      }
+      const c = planCenter(s);
+      put(new THREE.Vector3(c[0], s.base + s.height + 0.9, c[1]).applyMatrix4(M), `↕ ${fmt(s.height)} m`);
+      return;
+    }
+    if (this.context !== b.id) {
+      const pts = b.solids.filter((s) => s.op === 'add').flatMap((s) => solidRings(s).outer.pts);
+      if (!pts.length) return;
+      const xs = pts.map((p) => p[0]),
+        zs = pts.map((p) => p[1]);
+      const top = Math.max(...b.solids.map((s) => s.base + s.height));
+      put(new THREE.Vector3((Math.min(...xs) + Math.max(...xs)) / 2, 0.1, Math.max(...zs) + 1.2).applyMatrix4(M), `${fmt(Math.max(...xs) - Math.min(...xs))} m`);
+      put(new THREE.Vector3(Math.max(...xs) + 1.2, 0.1, (Math.min(...zs) + Math.max(...zs)) / 2).applyMatrix4(M), `${fmt(Math.max(...zs) - Math.min(...zs))} m`);
+      put(new THREE.Vector3((Math.min(...xs) + Math.max(...xs)) / 2, top + 1, (Math.min(...zs) + Math.max(...zs)) / 2).applyMatrix4(M), `↕ ${fmt(top)} m`);
+    }
   }
 
   // ── Elementos de fachada ─────────────────────────────────────────────
@@ -949,6 +1049,12 @@ export class Editor3 {
     const b = hit.building;
     if (this.context !== b.id) {
       if (this.context) this.context = null;
+      // Shift+clique: vários edifícios (para alinhar e distribuir).
+      if (e.shiftKey && this.sel.building && this.sel.building !== b.id) {
+        const others = new Set(this.sel.others);
+        others.has(b.id) ? others.delete(b.id) : others.add(b.id);
+        return this.select({ building: this.sel.building, others: [...others] });
+      }
       return this.select({ building: b.id });
     }
     if (hit.part) {
@@ -1287,7 +1393,7 @@ export class Editor3 {
     if (d.kind === 'rotate') {
       const c = d.data.center as THREE.Vector3;
       let deg = ((this.angleAt(e, c) - (d.data.a0 as number)) * 180) / Math.PI;
-      if (!e.shiftKey && this.infer.enabled) deg = Math.round(deg / 15) * 15;
+      if (!e.shiftKey && this.infer.enabled) deg = Math.round(deg / this.rotSnap) * this.rotSnap;
       this.store.project = structuredClone(this.store.project);
       const idx = this.store.project.buildings.findIndex((x) => x.id === d.bid);
       this.store.project.buildings[idx] = structuredClone(orig);

@@ -32,6 +32,8 @@ export const CSS = `
 .f3-cat{grid-area:cat;background:var(--panel);border-top:1px solid var(--line);min-width:0}
 .f3-status{grid-area:status;display:flex;align-items:center;gap:12px;padding:0 10px;background:var(--panel);border-top:1px solid var(--line);color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden}
 .f3-hint{overflow:hidden;text-overflow:ellipsis}
+.f3-ctl{display:flex;align-items:center;gap:4px}
+.f3-ctl select{border:1px solid var(--line);border-radius:6px;padding:1px 4px;font:inherit;background:#fafaf8;color:var(--ink)}
 .f3-vcb{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:1px 4px 1px 8px;background:#fafaf8}
 .f3-vcb label{color:var(--muted)}
 .f3-vcb input{width:110px;border:0;background:transparent;font:600 12px ui-monospace,monospace;color:var(--ink);outline:none;padding:3px 0}
@@ -173,6 +175,8 @@ export function createShell3(container: HTMLElement): Shell3 {
   <footer class="f3-status">
     <span class="f3-hint"></span>
     <span class="f3-sp"></span>
+    <label class="f3-ctl" title="Passo da grade e do encaixe">Grade <select data-grid><option value="0.05">5 cm</option><option value="0.1">10 cm</option><option value="0.25">25 cm</option><option value="0.5" selected>50 cm</option><option value="1">1 m</option><option value="2">2 m</option><option value="5">5 m</option></select></label>
+    <label class="f3-ctl" title="Passo do giro">Giro <select data-rot><option value="1">1°</option><option value="5">5°</option><option value="15" selected>15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select></label>
     <span class="f3-stats"></span>
     <span class="f3-vcb" title="Digite um valor e Enter durante ou logo depois de uma operação"><label>Medidas</label><input aria-label="Medidas" spellcheck="false" autocomplete="off"></span>
   </footer>

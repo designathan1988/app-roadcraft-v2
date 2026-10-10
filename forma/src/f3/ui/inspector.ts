@@ -2,7 +2,13 @@
 // face, componente ou componente de regra). Cada campo grava ao mudar.
 import type { Editor3 } from '../editor/editor';
 import type { Building3, FacadeRule, RoofKind, Solid } from '../model/schema';
-import { findSolid } from '../model/ops';
+import { findSolid, planCenter, rotateSolid, translateSolid } from '../model/ops';
+
+/** Centro do volume (média dos vértices), arredondado para mostrar. */
+const centerOf = (s: Solid): [number, number] => {
+  const c = planCenter(s);
+  return [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+};
 import { levelsFor, facadeRule, uid } from '../model/defaults';
 import { FINISHES } from '../render/finishes';
 import { allFamilies, family, typeById, BUILTIN_TYPES } from '../families/index';
@@ -47,7 +53,9 @@ export function mountInspector(ed: Editor3): void {
     if (!b) return void (side.innerHTML = emptyHelp());
     const s = ed.activeSolid();
     const it = ed.activeItem();
-    if (ed.context !== b.id) side.innerHTML = buildingPanel(b);
+    if (ed.context !== b.id && ed.sel.others.length) side.innerHTML = alignPanel(1 + ed.sel.others.length, 'edifícios');
+    else if (ed.context !== b.id) side.innerHTML = buildingPanel(b);
+    else if (ed.sel.solids.length > 1) side.innerHTML = alignPanel(ed.sel.solids.length, 'volumes');
     else if (it && ed.sel.elems.length <= 1) side.innerHTML = itemPanel(ed, b, it.id);
     else if (ed.sel.elems.length) side.innerHTML = elementsPanel(ed);
     else if (s) side.innerHTML = solidPanel(ed, b, s);
@@ -90,6 +98,14 @@ function buildingPanel(b: Building3, inside = false): string {
   <p class="f3-empty" style="padding:8px 0 0">${b.solids.length} volume(s), ${b.items.length} componente(s) avulso(s).</p></div>`;
 }
 
+function alignPanel(n: number, what: string): string {
+  const b = (op: string, ic: string, label: string) => '<button class="f3-btn" data-align="' + op + '" title="' + label + '">' + label + '</button>';
+  return '<div class="f3-title"><span style="flex:1;font-weight:600">' + n + ' ' + what + '</span><span class="f3-kind">Seleção</span></div>' +
+    '<div class="f3-sec"><h3>Alinhar (pelo primeiro selecionado)</h3><div class="f3-row">' + b('left', '', 'Esquerda') + b('centerX', '', 'Centro X') + b('right', '', 'Direita') + b('front', '', 'Frente') + b('centerZ', '', 'Centro Z') + b('back', '', 'Fundo') + '</div></div>' +
+    (what === 'volumes' ? '<div class="f3-sec"><h3>Altura</h3><div class="f3-row">' + b('base', '', 'Mesma base') + b('top', '', 'Mesmo topo (sobe)') + b('height', '', 'Mesmo topo (estica)') + '</div></div>' : '') +
+    '<div class="f3-sec"><h3>Distribuir com espaços iguais</h3><div class="f3-row">' + b('distX', '', 'Em X') + b('distZ', '', 'Em Z') + '</div><p class="f3-empty" style="padding:6px 0 0">Shift+clique acrescenta à seleção. As pontas ficam; os do meio se espaçam por igual.</p></div>';
+}
+
 function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   const face = ed.sel.face;
   const r = s.roof;
@@ -115,7 +131,7 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
   ${facePart}
   <div class="f3-sec"><h3>Forma</h3>
     <div class="f3-seg" style="margin-bottom:8px">${(['add', 'subtract', 'intersect'] as const).map((o) => `<button data-op="${o}" aria-pressed="${s.op === o}">${o === 'add' ? 'Somar' : o === 'subtract' ? 'Recortar' : 'Interseção'}</button>`).join('')}</div>
-    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}</div>
+    <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfrar cantos (m)', s.plan.outer[0]?.chamfer ?? 0)}</div>
     <div class="f3-row" style="margin-top:8px"><button class="f3-btn" data-act="levelsfit">Altura = pavimentos</button><button class="f3-btn" data-act="mirror">${icon('mirror')}Espelhar</button></div>
   </div>
   <div class="f3-sec"><h3>Cobertura</h3><div class="f3-chips">${ROOFS.map(([k, l, ic]) => `<button class="f3-chip" data-roof="${k}" aria-pressed="${r.kind === k}">${icon(ic)}${l}</button>`).join('')}</div>
@@ -290,6 +306,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
     }),
   );
   $$<HTMLButtonElement>('[data-sel]').forEach((el) => el.addEventListener('click', () => ed.selectElems(el.dataset.sel as 'row')));
+  $$<HTMLButtonElement>('[data-align]').forEach((el) => el.addEventListener('click', () => ed.align(el.dataset.align as never)));
   // Ações.
   $$<HTMLButtonElement>('[data-act]').forEach((el) =>
     el.addEventListener('click', () => {
@@ -366,6 +383,11 @@ function applyNumber(ed: Editor3, b: Building3, s: Solid | undefined, k: string,
     else if (k === 'base') x.base = v;
     else if (k === 'taper') x.taper = Math.max(0, v);
     else if (k === 'round') for (const q of x.plan.outer) q.round = v > 0 ? v : undefined;
+    else if (k === 'chamfer') for (const q of x.plan.outer) q.chamfer = v > 0 ? v : undefined;
+    else if (k === 'cx' || k === 'cz') {
+      const c = centerOf(x);
+      translateSolid(x, k === 'cx' ? v - c[0] : 0, k === 'cz' ? v - c[1] : 0);
+    } else if (k === 'spin') rotateSolid(x, v);
     else if (k === 'parapet') x.roof.parapet = Math.max(0, v);
     else if (k === 'pitch') x.roof.pitch = Math.max(3, Math.min(75, v));
     else if (k === 'overhang') x.roof.overhang = Math.max(0, v);

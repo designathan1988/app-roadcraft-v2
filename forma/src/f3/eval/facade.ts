@@ -231,7 +231,8 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           warnings.push(`${base.type.name}: não cabe no nível ${lv.index + 1} (${(sill + openH).toFixed(2)} m em ${lv.height.toFixed(2)} m).`);
           continue;
         }
-        let placed = 0;
+        let placed = 0,
+          yielded = 0;
         const y = (lv.elevation + sill - s.base) / vy;
         // Distribui dentro dos trechos visíveis nesta fileira (torres que afinam,
         // empenas, parede coberta em parte por outro volume).
@@ -253,7 +254,10 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           const oh = t.family.opening?.(p)?.h ?? hh;
           if (!fits(r, c - ww / 2, c + ww / 2, y, y + oh / vy)) return;
           // Peça avulsa no mesmo lugar tem prioridade: a regra libera a posição.
-          if (taken.some((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && Math.abs(q.host.s - c) < (q.length + ww) / 2 + 0.05 && q.host.y < y + hh + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)) return;
+          if (taken.some((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && Math.abs(q.host.s - c) < (q.length + ww) / 2 + 0.05 && q.host.y < y + hh + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)) {
+            yielded++;
+            return;
+          }
           placed++;
           const pl: Placement = {
             family: t.family,
@@ -267,7 +271,7 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           out.push(pl);
           taken.push(pl);
         });
-        if (!placed && centers.length && r.length > w + 2 * rule.margin) warnings.push(`${base.type.name}: nada coube no nível ${lv.index + 1} do lado de ${r.length.toFixed(1)} m (algo cobre a parede).`);
+        if (!placed && !yielded && centers.length && r.length > w + 2 * rule.margin) warnings.push(`${base.type.name}: nada coube no nível ${lv.index + 1} do lado de ${r.length.toFixed(1)} m (algo cobre a parede).`);
       }
     }
   }
