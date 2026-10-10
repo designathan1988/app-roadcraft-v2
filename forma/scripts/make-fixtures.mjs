@@ -65,6 +65,12 @@ fixtures.toggles = project('Detalhes', [
   vol({ name: 'Sem cornija', points: C.shape('l', 12, 9), x: 18, rotation: -45, height: 6.4, floors: 2, cornice: false }),
 ]);
 
+fixtures.arches = project('Arcos e vidro', [
+  vol({ name: 'Arcos', points: C.shape('rect', 14, 9), height: 12.8, floors: 4, facade: 'arched', windowWidth: 1.6, windowHeight: 2.2, balconies: true }),
+  vol({ name: 'Arcos curvos', points: C.shape('circle', 9, 9), x: 16, height: 6.4, floors: 2, facade: 'arched', faces: { 3: { facade: 'curtain' } } }),
+  vol({ name: 'Arcos com pátio', points: C.shape('rect', 16, 14), x: -20, holes: [[[-3, -2], [3, -2], [3, 2], [-3, 2]]], height: 6.4, floors: 2, facade: 'arched', roof: 'shed' }),
+]);
+
 fixtures['stress-120'] = project('Carga 120', Array.from({ length: 120 }, (_, i) =>
   vol({ name: 'V' + i, points: C.shape(['rect', 'l', 'u', 'circle'][i % 4], 6, 5), x: (i % 12) * 9 - 50, z: Math.floor(i / 12) * 8 - 40, height: 3.2 * (1 + (i % 5)), floors: 1 + (i % 5) })));
 

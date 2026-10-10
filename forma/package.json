@@ -5,7 +5,9 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/forma.js",
   "exports": {
     ".": "./dist/forma.js",
@@ -26,6 +28,7 @@
     "three": ">=0.170.0"
   },
   "dependencies": {
+    "earcut": "3.2.4",
     "polygon-clipping": "0.15.7"
   },
   "devDependencies": {

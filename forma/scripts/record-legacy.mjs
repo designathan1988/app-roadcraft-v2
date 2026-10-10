@@ -28,19 +28,37 @@ const trap = () => {
 
 const measure = () => {
   const T = globalThis.THREE, r2 = (n) => Math.round(n * 100) / 100, out = {};
+  globalThis.__formaRoot.updateMatrixWorld(true);
   for (const g of globalThis.__formaRoot.children) {
-    const meshes = {}, instances = {};
+    const meshes = {}, instances = {}, sig = {}, verts = {};
+    const m = new T.Matrix4(), p = new T.Vector3(), q = new T.Quaternion(), s = new T.Vector3(), v = new T.Vector3();
     for (const o of g.children) {
       if (o.isInstancedMesh) {
         const key = '#' + o.material.color.getHexString();
         instances[key] = (instances[key] || 0) + o.count;
+        // Impressão digital: posição e escala de cada instância no mundo.
+        for (let i = 0; i < o.count; i++) {
+          o.getMatrixAt(i, m);
+          m.premultiply(o.matrixWorld).decompose(p, q, s);
+          sig[key] = (sig[key] || 0) + p.x + 2 * p.y + 3 * p.z + 5 * s.x + 7 * s.y + 11 * s.z;
+        }
       } else if (o.isMesh) {
         const part = o.userData.part || 'other';
         meshes[part] = (meshes[part] || 0) + 1;
+        const pos = o.geometry.attributes.position;
+        const e = (verts[part] ||= { count: 0, sum: 0 });
+        e.count += pos.count;
+        // Telhados: só a contagem (a triangulação pode variar entre versões do earcut).
+        if (part !== 'roof') for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+          e.sum += v.x + 2 * v.y + 3 * v.z;
+        }
       }
     }
+    for (const k in sig) sig[k] = r2(sig[k]);
+    for (const k in verts) verts[k].sum = r2(verts[k].sum);
     const b = new T.Box3().setFromObject(g);
-    out[g.userData.volumeId] = { meshes, instances, box: [...b.min.toArray(), ...b.max.toArray()].map(r2) };
+    out[g.userData.volumeId] = { meshes, instances, sig, verts, box: [...b.min.toArray(), ...b.max.toArray()].map(r2) };
   }
   return out;
 };
