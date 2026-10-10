@@ -57,15 +57,15 @@ import { buildGlobeGround } from './globeGround';
 /** Grid regions of several plates in one number line: a plate's corners are offset by its index times this. */
 const REGION_STRIDE = 1000;
 /** Pieces kept in full though no longer wanted, before the least recently used is let go. */
-const CACHE = 64;
+const CACHE = 8;
 /**
  * The most pieces kept in full for the view, the nearest first, and how far
  * from what it looks at (an arc, world units): past that the far globe is
  * the ground, as a coarser level takes over from a finer one. Wider, the
  * view's middle altitude brought a hundred pieces in and out at every turn.
  */
-const NEAR_MOST = 40;
-const NEAR_RADIUS = 1600;
+const NEAR_MOST = 24;
+const NEAR_RADIUS = 1100;
 /** Milliseconds a frame for bringing near pieces in full (the ones with something on them come at once). */
 const NEAR_BUDGET_MS = 8;
 /**
@@ -476,7 +476,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       // Proland's split rule on the pieces: in full within some times the
       // ground the view takes in of what it looks at, none from far out.
       const wantNear = reach < NEAR_VIEW;
-      const radius = Math.min(NEAR_RADIUS, Math.max(TILE_HALF * 2, reach * 1.6) + PIECE_REACH);
+      // The pieces whose ground the view takes in, and a piece's half round them.
+      const radius = Math.min(NEAR_RADIUS, Math.max(TILE_HALF * 1.5, reach * 1.6) + TILE_HALF * 1.5);
       atlasToSphereInto(x, y, focusDir);
       const next: number[] = [];
       if (wantNear) {

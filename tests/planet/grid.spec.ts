@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { FACE_HALF, PLANET_RADIUS, faceToSphereInto, type Vec3 } from '@core/cubeSphere';
 import { TILES_PER_SIDE, tileOfDirection } from '@core/planetTiles';
 import { GRID_CELL, onGrid, snapToGrid } from '@world/grid';
-import { atlasToSphereInto, faceGridHeading, sphereToChartInto } from '@world/planet/charts';
-import { faceOfDirection, sphereToFaceInto } from '@core/cubeSphere';
+import { GRID_ORIGIN, atlasToSphereInto, faceGridHeading, sphereToChartInto } from '@world/planet/charts';
+import { sphereToTileInto, tileToSphereInto } from '@core/planetTiles';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { setGridSnapStep, snapRoadEndpoint } from '@editor/snap';
@@ -15,8 +15,10 @@ import { setGridSnapStep, snapRoadEndpoint } from '@editor/snap';
  *
  * Drawn and snapped on every piece's own map, the grid broke at each piece's
  * border: two charts put their lines a few metres apart and turned, and a
- * road snapped on one did not meet the grid of the next. It is now the cube
- * faces' own, one grid for the sphere.
+ * road snapped on one did not meet the grid of the next. Then the cube
+ * faces' own: continuous, but bent at every cube edge and met three ways at
+ * the corners (the player, 2026-10-10). It is now one map about one point of
+ * the planet (`GRID_ORIGIN`): smooth everywhere but at the far side.
  */
 
 const s = (): Vec3 => ({ x: 0, y: 0, z: 0 });
@@ -59,7 +61,8 @@ describe('the grid on the planet', () => {
 
   it('lays a road drawn with the grid shown along its line, near a corner of the cube too', () => {
     // Near a cube corner, dragged some 17 degrees off the grid's line (the player's road).
-    const d = faceToSphereInto(0, 2610, 2560, s());
+    // The cube corner nearest the start of the map (face 3, the grid's origin's).
+    const d = faceToSphereInto(3, 2610, -2560, s());
     const chart = tileOfDirection(d);
     const start = snapToGrid(sphereToChartInto(chart, d, { x: 0, y: 0 }), GRID_CELL);
     const east = faceGridHeading(start.x, start.y, 0);
@@ -70,21 +73,38 @@ describe('the grid on the planet', () => {
     const off = east + 0.3;
     const raw = { x: start.x + Math.cos(off) * 230, y: start.y + Math.sin(off) * 230 };
     const end = snapRoadEndpoint(doc, net, { kind: 'free', at: start }, raw, 1, 0).at;
-    const face = (p: { x: number; y: number }) => {
-      const q = atlasToSphereInto(p.x, p.y, s());
-      return sphereToFaceInto(faceOfDirection(q), q, { x: 0, y: 0 })!;
-    };
-    const a = face(start), b = face(end);
-    // On the grid line it started on, nine cells on.
+    const onGridMap = (p: { x: number; y: number }) => sphereToTileInto(GRID_ORIGIN, atlasToSphereInto(p.x, p.y, s()), { x: 0, y: 0 });
+    const a = onGridMap(start), b = onGridMap(end);
+    // On the grid line it started on, some nine cells on.
     expect(Math.abs(b.y - a.y)).toBeLessThan(1e-6);
-    // Some 9 cells on (cells shrink on the ground towards a cube corner).
-    expect(Math.round((b.x - a.x) / GRID_CELL)).toBeGreaterThanOrEqual(9);
-    expect(Math.round((b.x - a.x) / GRID_CELL)).toBeLessThanOrEqual(10);
+    expect(Math.round(Math.abs(b.x - a.x) / GRID_CELL)).toBeGreaterThanOrEqual(8);
+    expect(Math.round(Math.abs(b.x - a.x) / GRID_CELL)).toBeLessThanOrEqual(11);
+  });
+
+  it('runs its lines straight on over the edges and corners of the cube: no bend anywhere near the town', () => {
+    // Every grid line within 3 000 units of the origin, followed in steps of
+    // a cell: the turn from one step to the next stays a hair (a line of the
+    // map about a point is a smooth curve; the faces' grid turned 30-90
+    // degrees at an edge or a corner).
+    let worst = 0;
+    const p = s(), q = s(), r = s();
+    for (let line = -3000; line <= 3000; line += 250) {
+      for (const axis of [0, 1]) {
+        for (let t = -3000; t < 3000 - 2 * GRID_CELL; t += GRID_CELL) {
+          const at = (u: number, out: Vec3) => (axis === 0 ? tileToSphereInto(GRID_ORIGIN, u, line, out) : tileToSphereInto(GRID_ORIGIN, line, u, out));
+          at(t, p); at(t + GRID_CELL, q); at(t + 2 * GRID_CELL, r);
+          const ux = q.x - p.x, uy = q.y - p.y, uz = q.z - p.z, vx = r.x - q.x, vy = r.y - q.y, vz = r.z - q.z;
+          const turn = Math.acos(Math.min(1, (ux * vx + uy * vy + uz * vz) / Math.hypot(ux, uy, uz) / Math.hypot(vx, vy, vz)));
+          worst = Math.max(worst, turn);
+        }
+      }
+    }
+    expect(worst * 180 / Math.PI).toBeLessThan(1);
   });
 
   it('keeps its cells a cell across and its points on their chart', () => {
-    const chart = 2 * TILES_PER_SIDE * TILES_PER_SIDE + 6 * TILES_PER_SIDE + 6;
-    const p = sphereToChartInto(chart, faceToSphereInto(2, 41, -77, s()), { x: 0, y: 0 });
+    const chart = GRID_ORIGIN;
+    const p = sphereToChartInto(chart, tileToSphereInto(GRID_ORIGIN, 41, -77, s()), { x: 0, y: 0 });
     const q = snapToGrid(p, GRID_CELL);
     expect(onGrid(q, GRID_CELL)).toBe(true);
     expect(onGrid(p, GRID_CELL)).toBe(false);

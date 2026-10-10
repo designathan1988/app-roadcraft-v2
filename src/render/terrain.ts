@@ -28,7 +28,8 @@ import {
   type Texture,
   type WebGLRenderer,
 } from 'three';
-import { TILE_COUNT as PLANET_TILE_COUNT } from '@core/planetTiles';
+import { TILE_COUNT as PLANET_TILE_COUNT, TILES as PLANET_TILES } from '@core/planetTiles';
+import { GRID_ORIGIN } from '@world/planet/charts';
 
 import type { RoadDoc } from '@world/doc';
 import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
@@ -190,6 +191,12 @@ export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0
  * draws the others only. A uniform array, not a texture: the terrain's
  * fragment shader already holds the 16 texture units WebGL guarantees.
  */
+/** The planet grid's origin (`world/planet/charts.ts` GRID_ORIGIN): its centre, east and north on the sphere. */
+const GRID_ORIGIN_GLSL = (() => {
+  const t = PLANET_TILES[GRID_ORIGIN]!;
+  const v = (p: { x: number; y: number; z: number }): string => `vec3(${p.x.toFixed(9)}, ${p.y.toFixed(9)}, ${p.z.toFixed(9)})`;
+  return `const vec3 GRID_C = ${v(t.centre)}; const vec3 GRID_E = ${v(t.east)}; const vec3 GRID_N = ${v(t.north)};`;
+})();
 export const PLANET_ACTIVE_WORDS = Math.ceil(PLANET_TILE_COUNT / 24);
 export const PLANET_ACTIVE_TILES: { value: Float32Array } = { value: new Float32Array(PLANET_ACTIVE_WORDS) };
 /**
@@ -1274,7 +1281,7 @@ function terrainMaterial(
         '#include <common>',
         `#include <common>
          uniform float uPlanetTile;
-         ${__PLANET__ ? `varying vec3 vTerrainDir; uniform float uPlanetActive[${PLANET_ACTIVE_WORDS}];` : ''}
+         ${__PLANET__ ? `varying vec3 vTerrainDir; uniform float uPlanetActive[${PLANET_ACTIVE_WORDS}]; ${GRID_ORIGIN_GLSL}` : ''}
          ${PLANET_BIOME_NOISE}
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
@@ -1971,33 +1978,21 @@ function terrainMaterial(
          // The grid: a line a pixel wide at every cell, on the map only.
          if (uGrid.y > 0.0) {
            ${__PLANET__ ? `
-           // On the planet: the cube face's own grid (\`world/planet/charts.ts\`
-           // snapToFaceGridInto), in the face's equiangular metres, so its lines
-           // run on across every piece's border and every face's edge - one
-           // grid for the sphere, the one the road tool snaps to.
+           // On the planet: one grid for the sphere, the map about the
+           // grid's origin (\`world/planet/charts.ts\` GRID_ORIGIN, the one the
+           // road tool snaps to): smooth everywhere, no cube edge or corner.
            vec2 g;
            float onMap = 1.0;
            {
              vec3 d = normalize(vTerrainDir);
-             // The face the point lies on (its largest component, as
-             // \`core/cubeSphere.ts\` faceOfDirection) - not the piece's: two
-             // pieces' grounds overlap a little over their border, and past a
-             // cube edge one face's chart lays its lines towards the next
-             // face's centre, a second grid beside the true one.
-             vec3 ad = abs(d);
-             int f = ad.x >= ad.y && ad.x >= ad.z ? (d.x >= 0.0 ? 0 : 3)
-               : ad.y >= ad.z ? (d.y >= 0.0 ? 1 : 4) : (d.z >= 0.0 ? 2 : 5);
-             g = atan(vec2(dot(d, PLANET_E[f]), dot(d, PLANET_N[f])) / max(dot(d, PLANET_C[f]), 1e-4)) / PLANET_ANGLE / uGrid.x;
+             vec2 en = vec2(dot(d, GRID_E), dot(d, GRID_N));
+             float across = length(en);
+             float arc = atan(across, dot(d, GRID_C));
+             g = (across > 1e-7 ? en * (arc * PLANET_R / across) : vec2(0.0)) / uGrid.x;
            }` : `
            vec2 g = vec2(vTerrainWorld.x, -vTerrainWorld.z) / uGrid.x;
            float onMap = step(abs(vTerrainWorld.x), uGrid.z) * step(abs(vTerrainWorld.z), uGrid.z);`}
            vec2 gw = fwidth(g);
-           ${__PLANET__ ? `
-           // Where a pixel's neighbours lie on another face (along a cube
-           // edge) the face's metres jump and fwidth with them: the pixel's
-           // own footprint, read on the piece's map (continuous over its
-           // plate), bounds it - the edge's own line stays whole.
-           gw = min(gw, vec2(1.5 * max(fwidth(vTerrainAtlas.x), fwidth(vTerrainAtlas.z)) / uGrid.x));` : ''}
            vec2 toLine = abs(fract(g - 0.5) - 0.5) / max(gw, vec2(1e-4));
            float line = 1.0 - min(min(toLine.x, toLine.y), 1.0);
            // Gone before its cells shrink under a few pixels: a grid finer than

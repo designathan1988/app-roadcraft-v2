@@ -1,4 +1,4 @@
-import { FACE_HALF, PLANET_RADIUS, faceOfDirection, faceToSphereInto, sphereToFaceInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
+import { FACE_HALF, PLANET_RADIUS, faceToSphereInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
 import { TILES, TILES_PER_SIDE, TILE_COUNT, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import type { Vec2 } from '@core/vec2';
 import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
@@ -56,15 +56,25 @@ export function atlasToSphereInto(x: number, y: number, out: Vec3): Vec3 {
 }
 
 /**
+ * THE PLANET'S GRID: one grid for the whole sphere, with no edge and no
+ * corner anywhere - the azimuthal equidistant map about one fixed point of
+ * the planet, the start of the map (`GRID_ORIGIN`, the piece at the atlas's
+ * origin; Snyder, "Map Projections - A Working Manual", USGS PP 1395, pp.
+ * 191-202, as every piece's own map is). Its lines are smooth curves over
+ * the whole sphere: true to the metre along the way from the origin, a cell
+ * stretched across it only by (d/R)/sin(d/R) far away (5% at 2 km). A grid
+ * per cube face (the faces' equiangular metres) bent at every cube edge and
+ * met three ways at the corners (the player, 2026-10-10: "o grid tem que
+ * ficar contínuo"); no square grid covers a sphere without such seams or a
+ * singular point, and this one's single point is the far side of the planet.
+ */
+export const GRID_ORIGIN = tileCellOf(0, 0);
+
+/**
  * The grid point nearest an atlas point, written on the same chart, into
- * `out`. On the planet the grid is the cube faces' own (`core/cubeSphere.ts`):
- * lines at whole steps of a face's equiangular metres, whose angle is linear
- * in them, so two faces measure their shared border alike and the lines run
- * on across it (Ronchi, Iacono and Paolucci, "The Cubed Sphere", 1996) - and
- * across every piece's border, one grid for the whole planet as the ground
- * draws it (`render/terrain.ts` uGrid). `offset` moves the points into the
- * cells' middles. The flat map's grid on the flat map and in an edit on one
- * chart.
+ * `out` (the grid above, drawn by `render/terrain.ts` uGrid). `offset` moves
+ * the points into the cells' middles. The flat map's grid on the flat map and
+ * in an edit on one chart.
  */
 export function snapToFaceGridInto(x: number, y: number, step: number, offset: number, out: FacePoint): FacePoint {
   if (identity()) {
@@ -74,11 +84,10 @@ export function snapToFaceGridInto(x: number, y: number, step: number, offset: n
   }
   const chart = tileCellOf(x, y);
   atlasToSphereInto(x, y, s3);
-  const face = faceOfDirection(s3);
-  sphereToFaceInto(face, s3, fp);
-  const fx = Math.round((fp.x - offset) / step) * step + offset;
-  const fy = Math.round((fp.y - offset) / step) * step + offset;
-  faceToSphereInto(face, fx, fy, s3);
+  sphereToTileInto(GRID_ORIGIN, s3, fp);
+  const gx = Math.round((fp.x - offset) / step) * step + offset;
+  const gy = Math.round((fp.y - offset) / step) * step + offset;
+  tileToSphereInto(GRID_ORIGIN, gx, gy, s3);
   return sphereToChartInto(chart, s3, out);
 }
 
@@ -106,20 +115,18 @@ export function towardsNorthInto(x: number, y: number, step: number, out: FacePo
 
 const gridAt: FacePoint = { x: 0, y: 0 };
 /**
- * The heading, on the chart an atlas point is written on, of the face grid's
- * line through it (`snapToFaceGridInto`): along the face's x (`axis` 0) or
- * its y (1). A piece's map is turned against its face's grid away from the
- * face's middle (tens of degrees near a cube corner): a road snapped to the
- * map's own axes ran across the grid drawn under it. 0 and pi/2 on the flat
- * map.
+ * The heading, on the chart an atlas point is written on, of the grid's line
+ * through it (`snapToFaceGridInto`): along the grid's x (`axis` 0) or its y
+ * (1). A piece's map is turned against the grid away from the origin: a road
+ * snapped to the map's own axes ran across the grid drawn under it. 0 and
+ * pi/2 on the flat map.
  */
 export function faceGridHeading(x: number, y: number, axis: 0 | 1): number {
   if (identity()) return axis === 0 ? 0 : Math.PI / 2;
   const chart = tileCellOf(x, y);
   atlasToSphereInto(x, y, s3);
-  const face = faceOfDirection(s3);
-  sphereToFaceInto(face, s3, gridAt);
-  faceToSphereInto(face, gridAt.x + (axis === 0 ? 1 : 0), gridAt.y + (axis === 1 ? 1 : 0), s3);
+  sphereToTileInto(GRID_ORIGIN, s3, gridAt);
+  tileToSphereInto(GRID_ORIGIN, gridAt.x + (axis === 0 ? 1 : 0), gridAt.y + (axis === 1 ? 1 : 0), s3);
   sphereToChartInto(chart, s3, gridAt);
   return Math.atan2(gridAt.y - y, gridAt.x - x);
 }
