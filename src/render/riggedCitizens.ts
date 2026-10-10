@@ -63,6 +63,54 @@ export function companyOf(party: Pick<PartyView, 'size' | 'archetype'>): Company
   return party.size > 1 ? party.archetype : 'solo';
 }
 
+/**
+ * The error each level of a body is simplified to, as a share of the body's
+ * size: level 0 is the body itself, the rest are `LOD_LEVELS` in
+ * `people/personRig.ts` (kept here, not imported: that folder is the cook's
+ * fingerprint). `tests/render/citizenLod.spec.ts` holds the two together.
+ */
+export const CITIZEN_LEVEL_ERROR = [0, 0.008, 0.03, 0.12] as const;
+/** The tallest a body is drawn (a tall adult, scaled up), world units: the size its error is measured against. */
+const BODY_EXTENT = m(1.9);
+
+/**
+ * The coarsest level of a body whose simplification error stays under one
+ * pixel at `zoom` (pixels per world unit, the same at any depth under the
+ * orthographic camera). meshoptimizer measures a level's error as a share of
+ * the mesh's extents, and converts it to pixels this way to choose a level by
+ * screen size (README, "Simplification"). It used to be chosen by fixed zooms:
+ * the full body (30 to 46 thousand triangles) from zoom 8 on, a person 34
+ * pixels tall, where the next level already deviated by under a third of a
+ * pixel.
+ */
+export function citizenLevelAt(zoom: number): number {
+  for (let level = CITIZEN_LEVEL_ERROR.length - 1; level > 0; level--) {
+    if (CITIZEN_LEVEL_ERROR[level]! * BODY_EXTENT * zoom <= 1) return level;
+  }
+  return 0;
+}
+
+/**
+ * What a body does at `zoom`, apart from its mesh: 0 its face (which needs
+ * level 0's morphs as well), up to 1 its shadow, what it holds, its skin
+ * detail and its clips blended frame by frame; from 2 on the frame of the
+ * clip that weighs most. These are the zooms the levels used to switch at, so
+ * how a person moves and what they cast does not change with the mesh level.
+ */
+export function citizenBandAt(zoom: number): number {
+  return zoom >= 8 ? 0 : zoom >= 2 ? 1 : zoom >= 1.2 ? 2 : 3;
+}
+
+/**
+ * The level a body is drawn at: level 0 wherever its face is shown
+ * (`citizenBandAt` 0, the only level with the face's morphs), elsewhere the
+ * coarsest under a pixel (`citizenLevelAt`). By the error alone the face
+ * would go below zoom ~29 - a person over 100 pixels tall with a blank face.
+ */
+export function citizenLevelFor(zoom: number): number {
+  return citizenBandAt(zoom) === 0 ? 0 : citizenLevelAt(zoom);
+}
+
 /** Frames undrawn after which a person's body is forgotten: about a minute. */
 const CAST_FORGET = 3600;
 
@@ -261,6 +309,8 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
   let morpher: Morpher | null = null;
   let detail = 2;
   let lod = 0;
+  /** What bodies do at this zoom besides their mesh (`citizenBandAt`). */
+  let band = 0;
   let frameNow = performance.now();
   // Keep a recently seen body ready for a return pan, then release its GPU and
   // animation data even when the game has no reason to draw another frame.
@@ -303,7 +353,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     const material = mesh.material;
     for (const m of Array.isArray(material) ? material : [material]) {
       const appearance = m.userData['appearanceDetail'] as { value: number } | undefined;
-      if (appearance) appearance.value = lod <= 1 ? 1 : 0;
+      if (appearance) appearance.value = band <= 1 ? 1 : 0;
     }
   };
   group.userData.availableModels = models.length;
@@ -697,11 +747,11 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
     const offset = batch.count * batch.width;
     const bones = batch.width / SKIN_BONE_FLOATS;
     const packedWidth = bones * PACKED_BONE_FLOATS;
-    // Far off (`lod` 2, a body a few pixels tall), the pose is the frame of
+    // Far off (`band` 2, a body a few pixels tall), the pose is the frame of
     // the clip that weighs most, copied as it is: blending clips and frames
     // bone by bone for every body was a quarter of a frame in a town, for a
     // difference no pixel shows.
-    if (lod >= 2) {
+    if (band >= 2) {
       let best = -1;
       for (let c = 0; c < clips.length; c++) if (best < 0 || weights[c]! > weights[best]!) best = c;
       if (best >= 0) {
@@ -769,10 +819,14 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       held.begin();
       detail = level;
       registry.beginFrame();
-      // 3: a body a few pixels tall (the overview), drawn by its coarsest level.
-      const nextLod = zoom >= 8 ? 0 : zoom >= 2 ? 1 : zoom >= 1.2 ? 2 : 3;
-      const levelChanged = nextLod !== lod;
+      // The mesh by its error on screen; what the body does by the zoom. Up
+      // close (`band` 0) the face is drawn, and only level 0 has its morphs:
+      // the body stays whole there, as it always was from zoom 8 on.
+      const nextBand = citizenBandAt(zoom);
+      const nextLod = citizenLevelFor(zoom);
+      const levelChanged = nextLod !== lod || nextBand !== band;
       lod = nextLod;
+      band = nextBand;
       group.userData.lod = lod;
       for (const batch of batches.values()) {
         batch.count = 0;
@@ -845,7 +899,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
       }
       // In the hand, what the gesture is done with, where the hand is in the
       // clip carrying the most weight this frame.
-      if (carrying && lod < 2) {
+      if (carrying && band < 2) {
         // The box between the two hands, as wide as they are apart.
         let best = -1;
         for (let i = 0; i < mixWeights.length; i++) if (best < 0 || mixWeights[i]! > mixWeights[best]!) best = i;
@@ -863,7 +917,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
         }
       }
       const thing = ped.gesture && !carrying ? HELD[ped.gesture.kind] : undefined;
-      if (thing && lod < 2) {
+      if (thing && band < 2) {
         let best = -1;
         for (let i = 0; i < mixWeights.length; i++) if (best < 0 || mixWeights[i]! > mixWeights[best]!) best = i;
         const clip = best >= 0 ? mixClips[best] : undefined;
@@ -1009,7 +1063,7 @@ export function createRiggedCitizens(models: readonly string[] = CROWD_IDS,
           // An empty batch is still a program bind and its uniforms in every
           // pass: with the whole roster loaded, most bodies are empty most frames.
           mesh.visible = batch.count > 0;
-          mesh.castShadow = detail > 0 && lod < 2;
+          mesh.castShadow = detail > 0 && band < 2;
           if (batch.count > 0) {
             mesh.instanceMatrix.clearUpdateRanges();
             mesh.instanceMatrix.addUpdateRange(0, batch.count * 16);

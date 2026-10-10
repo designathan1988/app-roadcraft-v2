@@ -310,7 +310,15 @@ o jogo a cada edição.
   gravitacional. O resto continua de ponta de via a ponta de via.
 - Desenho: a multidão procedural (`render/people/proceduralCrowd.ts`) por
   nível de detalhe, com faixas pela altura na tela (P15). Quem está em
-  veículos ainda usa os corpos cozidos (`riggedCitizens.ts`).
+  veículos ainda usa os corpos cozidos (`riggedCitizens.ts`). Esses corpos
+  escolhem a malha pelo erro na tela (do ramo `perf/render-lod` de 5/10,
+  `citizenLevelFor`): o nível mais simples cujo desvio fica abaixo de um
+  pixel (README do meshoptimizer, "Simplification"), mas inteiros onde o
+  rosto aparece (zoom 8 em diante; só o nível 0 tem os morphs do rosto).
+  Medido no 5173 com `?bodies=cooked`: em zoom 3 o corpo custa ~6,2 mil
+  triângulos em vez de ~12 mil; em zoom 1,5, ~1,9 mil em vez de ~6,2 mil.
+  Na build de produção a verificação de cada shader fica desligada
+  (`checkShaderErrors`, como a documentação do three.js recomenda).
 - Depois de mexer em código de pessoas: `npm run cook:people`, à mão, uma vez.
 
 ### Veículos e transporte

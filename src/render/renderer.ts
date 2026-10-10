@@ -415,6 +415,11 @@ export function createSceneRenderer(
   // One game frame has the scene, shadows and several postprocess renders.
   // The default reset on each `render()` left stats showing only the last quad.
   renderer.info.autoReset = false;
+  // Checking every program's compile and link log makes each new shader wait
+  // for the driver on the main thread (`getProgramInfoLog`: 0.4 s while the
+  // town loads). three.js recommends turning it off in production and keeping
+  // it on while developing (WebGLRenderer.debug.checkShaderErrors).
+  renderer.debug.checkShaderErrors = import.meta.env.DEV;
   renderer.outputColorSpace = SRGBColorSpace;
   // A film curve (ACES): contrast, deep shade and bright light, the look of
   // the diorama the player holds up as the target (2026-10-07). Khronos PBR
