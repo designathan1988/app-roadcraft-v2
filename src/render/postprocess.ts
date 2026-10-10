@@ -311,6 +311,8 @@ export function createPostChain(
   // depth the scene was drawn with, so the patches lie on the ground, the
   // roads and the roofs alike, and scroll with the wind.
   const clouds = quality.cloudShadows || quality.skyClouds ? new ShaderPass(CLOUD_SHADOWS) : null;
+  /** Whether its program is built (compiled ahead below): until then the pass is not drawn. */
+  let cloudsReady = false;
   let cloudClock = 0;
   let placedClouds: readonly PlacedCloud[] = [];
   const cloudDrift = { x: 0, y: 0 };
@@ -381,6 +383,27 @@ export function createPostChain(
       shade(...args);
     };
     composer.addPass(clouds);
+    // Its program built now, in parallel (KHR_parallel_shader_compile), for
+    // the composer's target it draws into, as the bloom's and GTAO's are: on
+    // the planet it carries the whole air (`planet/air.ts`), and built at its
+    // first frame it stopped the opening for 2.6 s (profile of 2026-10-10).
+    // With its two inner programs, the bodies' and the shadow map's, each for
+    // the target it draws into.
+    {
+      const quad = new PlaneGeometry();
+      const previous = renderer.getRenderTarget();
+      const builds = ([[clouds.material, composer.renderTarget1], [bodiesQuad!.material, bodiesTargets[0]!], [shadowMapQuad!.material, shadowMapTarget]] as const).map(([material, target]) => {
+        const warm = new Scene();
+        warm.add(new Mesh(quad, material));
+        renderer.setRenderTarget(target);
+        return renderer.compileAsync(warm, camera).catch(() => {});
+      });
+      renderer.setRenderTarget(previous);
+      // Not drawn until they are built: drawn while the driver still builds
+      // them, the frame waits all the same (three asks for the program's log,
+      // which blocks until the link is done).
+      void Promise.all(builds).finally(() => { quad.dispose(); cloudsReady = true; console.info('[warm] clouds ready', Math.round(performance.now())); });
+    }
   }
   const smaa = quality.smaa ? new SMAAPass() : null;
   if (smaa) composer.addPass(smaa);
@@ -461,8 +484,8 @@ export function createPostChain(
         lastProjection.copy(camera.projectionMatrix);
         // Nothing of it shows - no cloud, no mist, no painted fog, no air round
         // the map: the pass is skipped, not run over every pixel for nothing.
-        clouds.enabled = count > 0 || (u['uFog']!.value as number) > 0 || (u['uGroundFog']!.value as Vector4).w > 0.5
-          || (u['uBackdrop']!.value as number) > 0.5 || (__PLANET__ && !!planetAir?.inside);
+        clouds.enabled = cloudsReady && (count > 0 || (u['uFog']!.value as number) > 0 || (u['uGroundFog']!.value as Vector4).w > 0.5
+          || (u['uBackdrop']!.value as number) > 0.5 || (__PLANET__ && !!planetAir?.inside));
       }
       composer.render(delta);
     },
@@ -1207,9 +1230,11 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
           // white balls in the middle of the globe, one of them hanging past
           // its limb (the player, 2026-10-10).
           bodies = uGlobeFade;
-          // And never past the limb: only where the view's ray meets the
-          // ground does a cloud stand between the eye and it.
-          if (sphereSpan(ro, rd, uPlanet).y <= 0.0) bodies = 0.0;
+          // And, high enough for them to start giving way, never past the
+          // limb: only where the view's ray meets the ground does a cloud
+          // stand between the eye and it. Lower down a cloud over the
+          // horizon stands against the sky, and is drawn whole.
+          if (uGlobeFade < 1.0 && sphereSpan(ro, rd, uPlanet).y <= 0.0) bodies = 0.0;
         }
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
