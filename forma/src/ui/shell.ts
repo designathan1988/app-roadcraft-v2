@@ -45,9 +45,11 @@ export function createShell(container: HTMLElement, level: UiLevel): Shell {
     'afterend',
     '<div class="separator"></div><button id="ui-level" class="header-button level-toggle" data-icon="detail" aria-pressed="false" title="Mostrar todos os controles"><span>Modo avançado</span></button>',
   );
+  // Aba Lote, logo depois de Volumes.
+  $('[data-tab="volumes"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="lot" data-icon="lot">Lote</button>');
   // Controles que só aparecem no modo avançado.
   for (const tab of ['materials', 'details']) $(`[data-tab="${tab}"]`)?.setAttribute('data-advanced', '');
-  $$('.tabs > .separator').slice(2).forEach((s) => s.setAttribute('data-advanced', ''));
+  $$('.tabs > .separator').slice(3).forEach((s) => s.setAttribute('data-advanced', ''));
   hydrate(app);
 
   const setLevel = (l: UiLevel) => {

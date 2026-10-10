@@ -12,6 +12,8 @@ export { History } from './history';
 export { Emitter } from './events';
 export { uid, sequentialIds } from './ids';
 export { massExtent, massStoreys, sortedStoreys, edgeConfig } from './model';
+export { computeLotIndices, buildingHeight, buildingFootprints, DEFAULT_LOT_RULES, type LotIndices, type Violation, type ViolationKind } from './indices';
+export { buildableArea, edgeKinds, lotArea, lotAt } from '../geometry/lot';
 
 /** Abre um projeto de qualquer versão conhecida, migrando quando necessário. */
 export function loadProject(raw: unknown, limits: Partial<Limits> = {}): Project {

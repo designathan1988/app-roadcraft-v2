@@ -31,6 +31,11 @@ export class History<T> {
     return JSON.parse(this.states[this.index]!) as T;
   }
 
+  /** Estado registrado atual (cópia). */
+  current(): T {
+    return JSON.parse(this.states[this.index]!) as T;
+  }
+
   /** Recomeça o histórico a partir de um estado (ex.: projeto aberto). */
   reset(state: T): void {
     this.states = [JSON.stringify(state)];

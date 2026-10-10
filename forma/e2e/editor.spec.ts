@@ -253,3 +253,45 @@ test('base livre por cliques e vértice pego a 6 px da alça', async ({ page }) 
   expect(world).toContainEqual([-39, 37]);
   expect(errors).toEqual([]);
 });
+
+test('lote: desenhar, preencher, bloquear e avisar', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await view(page, [0, 0, 0], 50);
+  await page.keyboard.press('l');
+  await dragWorld(page, [-7, 0, -12], [8, 0, 17]);
+  await expect(page.locator('[data-tab="lot"]')).toHaveClass(/active/);
+  let p = await project(page);
+  expect(p.lots).toHaveLength(1);
+  await expect(page.locator('#inspector .index-row').first()).toContainText('435 m²');
+  await page.locator('#shelf-content [data-lotaction="fill"]').click();
+  await expect(page.locator('#toast')).toHaveText('Lote preenchido dentro das regras.');
+  p = await project(page);
+  expect(p.buildings[0].lotId).toBe(p.lots[0].id);
+  // Seleciona o lote clicando no recuo frontal e liga o bloqueio.
+  const front = await screen(page, 0.5, 0, 15.5);
+  await page.mouse.click(front.x, front.y);
+  await page.locator('[data-lotmode="block"]').click();
+  await page.locator('#layers-toggle').click();
+  await page.locator(`[data-select="${p.buildings[0].id}"]`).click();
+  await page.locator('#layers-toggle').click();
+  await page.locator('#floors-input').fill('8');
+  await page.locator('#floors-input').press('Tab');
+  await expect(page.locator('#toast')).toContainText('Bloqueado pelo lote');
+  expect((await project(page)).buildings[0].storeys).toHaveLength(4);
+  // Modo avisar: aceita e marca a violação.
+  await page.mouse.click(front.x, front.y);
+  await page.locator('[data-lotmode="warn"]').click();
+  await page.locator('#layers-toggle').click();
+  await page.locator(`[data-select="${p.buildings[0].id}"]`).click();
+  await page.locator('#layers-toggle').click();
+  await page.locator('#floors-input').fill('8');
+  await page.locator('#floors-input').press('Tab');
+  expect((await project(page)).buildings[0].storeys).toHaveLength(8);
+  await page.mouse.click(front.x, front.y);
+  await expect(page.locator('#inspector .index-bad')).toContainText('Coeficiente de aproveitamento');
+  expect(errors).toEqual([]);
+});

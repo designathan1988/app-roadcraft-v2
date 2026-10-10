@@ -1,13 +1,15 @@
 // Editor FORMA 2: estado, seleção, ferramentas, ações, interface e API pública.
 // Portado da lógica do FORMA v1 e adaptado ao modelo forma/2.
 import * as THREE from 'three';
-import type { Building, FacadePattern, ID, Limits, Project, RoofKind, Vec2 } from '../core/schema';
+import type { Building, FacadePattern, ID, Limits, Lot, LotRules, Project, RoofKind, Vec2 } from '../core/schema';
+import { computeLotIndices, DEFAULT_LOT_RULES, type LotIndices, type Violation } from '../core/indices';
+import { assignLots, fillLot as fillLotOp, newLot } from './lot-ops';
 import { DEFAULT_LIMITS } from '../core/schema';
 import { loadProject, emptyProject } from '../core';
 import { History } from '../core/history';
 import { Emitter } from '../core/events';
 import { edgeConfig } from '../core/model';
-import { bounds, clamp, clean, shape, validPolygon } from '../geometry/polygon';
+import { bounds, clamp, clean, distanceToSegment, shape, validPolygon } from '../geometry/polygon';
 import { validHoles } from '../geometry/boolean';
 import { findEdge, massEdges } from '../geometry/ring';
 import { toLocal } from '../geometry/frame';
@@ -20,7 +22,7 @@ import { inspectorHTML, layersHTML, shelfHTML, helpHTML, NEW_HTML, type Defaults
 import * as persist from '../io/persistence';
 import { download, exportGLB as glb, exportJSON as json, exportOBJ as obj, filename } from '../io/export';
 
-export type Tool = 'select' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints';
+export type Tool = 'select' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints' | 'lot' | 'lotpolygon' | 'frontage';
 
 export interface EditorOptions extends SceneHost {
   /** Contêiner da interface. Obrigatório quando ui ≠ 'none'. */
@@ -42,6 +44,7 @@ export interface EditorEvents extends Record<string, unknown> {
   selection: { ids: ID[]; edgeId: ID | null; mode: 'object' | 'face' };
   tool: { tool: Tool };
   error: { message: string };
+  violation: { lotId: ID; violations: Violation[] };
 }
 
 interface Drag {
@@ -63,6 +66,9 @@ const HINTS: Record<string, string> = {
   door: 'Arraste sobre uma parede para desenhar uma porta.',
   opening: 'Arraste sobre uma parede para abrir um vão sem vidro.',
   editpoints: 'Arraste os pontos da base para remodelar o contorno.',
+  lot: 'Arraste no chão para desenhar um lote retangular.',
+  lotpolygon: 'Clique os vértices do lote. Enter ou duplo clique fecha. Esc cancela.',
+  frontage: 'Clique numa divisa do lote selecionado para marcar ou desmarcar a testada (frente para a rua).',
 };
 
 export class Editor {
@@ -92,6 +98,10 @@ export class Editor {
   private touches = new Map<number, { x: number; y: number }>();
   private cleanup: (() => void)[] = [];
   private disposed = false;
+  private selectedLot: ID | null = null;
+  private lotIndices = new Map<ID, LotIndices>();
+  /** O que a base livre está desenhando: um volume ou um lote. */
+  private polygonTarget: 'building' | 'lot' = 'building';
 
   constructor(opts: EditorOptions = {}) {
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
@@ -124,7 +134,8 @@ export class Editor {
     this.bindCanvas();
     if (this.shell) this.bindUI();
     this.scene.rebuild(this.project.buildings);
-    this.scene.buildEnvironment(this.project.buildings);
+    this.scene.buildEnvironment(this.project.buildings, this.project.lots);
+    this.refreshLots();
     this.scene.fitView();
     this.updateGizmos();
     this.renderUI();
@@ -196,6 +207,7 @@ export class Editor {
       section: this.scene.section,
       repeatCount: this.repeatCount,
       repeatSpace: this.repeatSpace,
+      lot: !b && this.selectedLot && this.lotById(this.selectedLot) ? { lot: this.lotById(this.selectedLot)!, indices: this.lotIndices.get(this.selectedLot) ?? null } : null,
     };
   }
 
@@ -268,10 +280,66 @@ export class Editor {
     if (this.shell) this.$('#save-state').textContent = ok ? 'Salvo neste navegador' : 'Use Salvar para baixar';
   }
 
-  private commit(message = ''): void {
+  // ── Lotes ───────────────────────────────────────────────────────────
+  private lotById = (id: ID): Lot | undefined => this.project.lots.find((l) => l.id === id);
+
+  /** Índices de todos os lotes de um projeto; uma falha de geometria nunca derruba o editor. */
+  private evaluateLots(p: Project): Map<ID, LotIndices> {
+    const out = new Map<ID, LotIndices>();
+    for (const lot of p.lots) {
+      try {
+        out.set(lot.id, computeLotIndices(p, lot));
+      } catch (e) {
+        console.error('Índices do lote', lot.name, e);
+      }
+    }
+    return out;
+  }
+
+  /** Recalcula índices, redesenha lotes e avisa o jogo das violações. */
+  private refreshLots(): void {
+    this.lotIndices = this.evaluateLots(this.project);
+    if (this.selectedLot && !this.lotById(this.selectedLot)) this.selectedLot = null;
+    this.scene.rebuildLots(this.project, this.lotIndices, this.selectedLot);
+    for (const [lotId, ix] of this.lotIndices) if (ix.violations.length) this.events.emit('violation', { lotId, violations: ix.violations });
+  }
+
+  /**
+   * Regras em modo “bloquear”: se a alteração cria uma violação que o estado
+   * anterior não tinha, ela é desfeita. Devolve a mensagem do bloqueio.
+   */
+  private blockedBy(): string | null {
+    const key = (v: Violation) => v.kind + '|' + v.buildingIds.join(',');
+    const prevProject = this.history.current();
+    const prev = this.evaluateLots(prevProject);
+    const now = this.evaluateLots(this.project);
+    for (const lot of this.project.lots) {
+      if (lot.rules?.enforcement !== 'block') continue;
+      const before = new Set((prev.get(lot.id)?.violations ?? []).map(key));
+      const fresh = (now.get(lot.id)?.violations ?? []).find((v) => !before.has(key(v)));
+      if (fresh) return `Bloqueado pelo lote “${lot.name}”: ${fresh.message}`;
+    }
+    return null;
+  }
+
+  private commit(message = '', opts: { allowViolations?: boolean } = {}): void {
+    assignLots(this.project);
+    if (!opts.allowViolations) {
+      const blocked = this.blockedBy();
+      if (blocked) {
+        this.project = this.history.current();
+        this.selected = new Set([...this.selected].filter((id) => this.byId(id)));
+        this.rebuild();
+        this.refreshLots();
+        this.renderUI();
+        this.toast(blocked);
+        return;
+      }
+    }
     if (this.history.commit(this.project)) this.events.emit('commit', { message });
     this.saveLocal();
-    this.scene.buildEnvironment(this.project.buildings);
+    this.scene.buildEnvironment(this.project.buildings, this.project.lots);
+    this.refreshLots();
     this.renderUI();
     this.events.emit('change', { reason: message || 'commit' });
     if (message) this.toast(message);
@@ -297,7 +365,8 @@ export class Editor {
     this.selected = new Set([...this.selected].filter((id) => this.byId(id)));
     this.edgeId = null;
     this.rebuild();
-    this.scene.buildEnvironment(this.project.buildings);
+    this.scene.buildEnvironment(this.project.buildings, this.project.lots);
+    this.refreshLots();
     this.saveLocal();
     this.renderUI();
     this.events.emit('change', { reason: which });
@@ -316,7 +385,60 @@ export class Editor {
   }
 
   // ── Seleção e ferramentas ───────────────────────────────────────────
+  private selectLot(id: ID | null): void {
+    this.selectedLot = id;
+    this.selected.clear();
+    this.edgeId = null;
+    if (id) this.tab = 'lot';
+    this.scene.rebuildLots(this.project, this.lotIndices, this.selectedLot);
+    this.updateGizmos();
+    this.renderUI();
+  }
+
+  private applyLotProp(prop: string, raw: string): void {
+    const lot = this.selectedLot ? this.lotById(this.selectedLot) : undefined;
+    if (!lot) return;
+    if (prop === 'name') {
+      lot.name = raw.slice(0, 60) || 'Lote';
+      return this.commit('', { allowViolations: true });
+    }
+    const r: LotRules = (lot.rules ??= structuredClone(DEFAULT_LOT_RULES));
+    if (prop === 'heightTo') r.heightTo = raw === 'eave' ? 'eave' : 'ridge';
+    else if (prop === 'front' || prop === 'side' || prop === 'back') r.setbacks[prop] = clamp(Number(raw) || 0, 0, 50);
+    else {
+      const n = raw === '' ? undefined : Number(raw);
+      const val = n === undefined || !Number.isFinite(n) ? undefined : prop === 'maxOccupancy' || prop === 'minPermeability' ? clamp(n, 0, 100) / 100 : prop === 'maxStoreys' ? Math.round(clamp(n, 1, 100)) : clamp(n, 0, 1000);
+      if (prop === 'maxOccupancy' || prop === 'minPermeability' || prop === 'maxFAR' || prop === 'maxHeight' || prop === 'maxStoreys') {
+        if (val === undefined) delete r[prop];
+        else r[prop] = val;
+      }
+    }
+    this.commit('Regras do lote atualizadas.', { allowViolations: true });
+  }
+
+  private lotAction(action: string): void {
+    const lot = this.selectedLot ? this.lotById(this.selectedLot) : undefined;
+    if (!lot) return this.toast('Selecione um lote primeiro.');
+    if (action === 'delete') {
+      this.project.lots = this.project.lots.filter((l) => l.id !== lot.id);
+      this.selectedLot = null;
+      this.commit('Lote removido. Ctrl+Z desfaz.', { allowViolations: true });
+      this.updateGizmos();
+    } else if (action === 'fill') {
+      const b = fillLotOp(this.project, lot, { color: this.defaults.color });
+      if (!b) return this.toast('Não há espaço edificável suficiente neste lote com as regras atuais.');
+      b.name = 'Volume ' + String(this.project.buildings.length + 1).padStart(2, '0');
+      b.masses[0]!.name = b.name;
+      this.selectedLot = null;
+      this.addBuildings([b], 'Lote preenchido dentro das regras.');
+    }
+  }
+
   private select(id: ID | null, edge: ID | null = null, add = false, showContext = false, e: PointerEvent | null = null): void {
+    if (id && this.selectedLot) {
+      this.selectedLot = null;
+      this.scene.rebuildLots(this.project, this.lotIndices, null);
+    }
     if (!add) this.selected.clear();
     if (id) {
       if (add && this.selected.has(id)) this.selected.delete(id);
@@ -357,6 +479,8 @@ export class Editor {
   private updateGizmos(): void {
     const sc = this.scene;
     sc.disposeGroup(sc.gizmos);
+    const lotSel = this.selectedLot && !this.selected.size ? this.lotById(this.selectedLot) : undefined;
+    if (lotSel && this.tool === 'select') lotSel.polygon.forEach((p, i) => sc.handle(new THREE.Vector3(p[0], 0.05, p[1]), { kind: 'lotvertex', id: lotSel.id, index: i }));
     const list = this.selectedList();
     for (const b of list) {
       if (!sc.built.has(b.id)) continue;
@@ -635,6 +759,12 @@ export class Editor {
         if (!sel) return this.toast('Selecione um volume.');
         const v = this.view(sel) as unknown as Record<string, unknown>;
         this.applyProperty(d.toggle, !v[d.toggle]);
+      } else if (d.lotaction) this.lotAction(d.lotaction);
+      else if (d.lotmode) {
+        const lot = this.selectedLot ? this.lotById(this.selectedLot) : undefined;
+        if (!lot) return this.toast('Selecione um lote primeiro.');
+        (lot.rules ??= structuredClone(DEFAULT_LOT_RULES)).enforcement = d.lotmode === 'block' ? 'block' : 'warn';
+        this.commit(d.lotmode === 'block' ? 'O lote agora bloqueia o que viola as regras.' : 'O lote agora só avisa sobre violações.', { allowViolations: true });
       } else if (d.export) void this.exportFile(d.export as 'json');
       else if (d.modal) {
         if (d.modal === 'close') this.closeModal();
@@ -665,6 +795,7 @@ export class Editor {
       if (el.id === 'repeat-count') this.repeatCount = Math.round(clamp(Number(el.value), 1, 12));
       else if (el.id === 'repeat-space') this.repeatSpace = clamp(Number(el.value), 0, 30);
       else if (el.id === 'file-input') void this.openFile(el);
+      else if (el.dataset.lotprop) this.applyLotProp(el.dataset.lotprop, el.value);
       else if (el.dataset.prop) {
         let val: string | number = el.value;
         if (el.type === 'number') {
@@ -744,16 +875,19 @@ export class Editor {
       }
       return;
     }
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !this.selected.size && this.selectedLot) {
+      e.preventDefault();
+      this.lotAction('delete');
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       this.doAction('delete');
-    } else if (e.key === 'Enter' && this.tool === 'polygon') {
+    } else if (e.key === 'Enter' && (this.tool === 'polygon' || this.tool === 'lotpolygon')) {
       e.preventDefault();
       this.finishPolygon();
     } else if (key === 'f') this.scene.fitView();
     else if (key === '?' && this.shell) this.modal(helpHTML());
     else {
-      const map: Record<string, Tool> = { v: 'select', b: 'draw', p: 'polygon', e: 'extrude', g: 'move', c: 'cut' };
+      const map: Record<string, Tool> = { v: 'select', b: 'draw', p: 'polygon', e: 'extrude', g: 'move', c: 'cut', l: 'lot' };
       if (map[key]) this.setTool(map[key]!);
     }
   }
@@ -810,6 +944,7 @@ export class Editor {
     if (this.sketch.length < 3) return this.toast('Marque pelo menos três vértices.');
     const p = clean(this.sketch);
     if (!validPolygon(p)) return this.toast('O contorno se cruza ou é pequeno demais. Esc reinicia.');
+    if (this.polygonTarget === 'lot') return this.addLot(p);
     const bd = bounds(p),
       cx = (bd.minX + bd.maxX) / 2,
       cz = (bd.minZ + bd.maxZ) / 2;
@@ -872,7 +1007,7 @@ export class Editor {
       this.cancelDrag();
     });
     this.listen(el, 'dblclick', () => {
-      if (this.tool !== 'polygon') return;
+      if (this.tool !== 'polygon' && this.tool !== 'lotpolygon') return;
       const s = this.sketch;
       if (s.length > 1 && Math.hypot(s.at(-1)![0] - s.at(-2)![0], s.at(-1)![1] - s.at(-2)![1]) < 0.1) s.pop();
       this.finishPolygon();
@@ -919,11 +1054,21 @@ export class Editor {
     const handle = this.tool === 'select' || this.tool === 'editpoints' ? sc.pickHandle(e) : null;
     const picked = handle ? null : sc.pick(e);
     const tool = this.tool;
-    if (handle) {
+    if (handle?.kind === 'lotvertex') {
+      const lot = this.lotById(handle.id);
+      if (lot) this.drag = { type: 'lotvertex', id: lot.id, index: handle.index, original: structuredClone(lot.polygon), snapshot: structuredClone(this.project) };
+    } else if (handle) {
       const b = this.byId(handle.id);
       if (!b) return;
       if (handle.kind === 'height') this.beginHeight(b, e);
       else this.drag = { type: handle.kind, id: handle.id, sx: handle.sx, sz: handle.sz, index: handle.index, original: structuredClone(b), snapshot: structuredClone(this.project) };
+    } else if (tool === 'lot') {
+      const p = sc.planePoint(e, 0);
+      if (!p) return;
+      const s: Vec2 = [this.snapN(p.x), this.snapN(p.z)];
+      this.drag = { type: 'lot', start: s, end: s, y: 0 };
+    } else if (tool === 'frontage') {
+      this.toggleFrontage(e);
     } else if (tool === 'draw' || tool === 'cut') {
       const b = this.selectedBuilding();
       if (tool === 'cut' && !b) return this.toast('Selecione o volume que deseja recortar.');
@@ -932,8 +1077,9 @@ export class Editor {
       if (!p) return;
       const s: Vec2 = [this.snapN(p.x), this.snapN(p.z)];
       this.drag = { type: tool, id: b?.id, start: s, end: s, y, snapshot: structuredClone(this.project) };
-    } else if (tool === 'polygon') {
-      if (!this.sketch.length) this.sketchY = picked?.data.part === 'roof' ? picked.hit.point.y : 0;
+    } else if (tool === 'polygon' || tool === 'lotpolygon') {
+      this.polygonTarget = tool === 'lotpolygon' ? 'lot' : 'building';
+      if (!this.sketch.length) this.sketchY = tool === 'polygon' && picked?.data.part === 'roof' ? picked.hit.point.y : 0;
       this.drag = { type: 'polygon-click', clientX: e.clientX, clientY: e.clientY };
     } else if (tool === 'window' || tool === 'door' || tool === 'opening') {
       if (!this.beginOpening(picked)) return;
@@ -951,7 +1097,14 @@ export class Editor {
       this.drag = { type: 'move', id: b.id, start: p, y: ops.baseOf(b), originals: this.selectedList().map((n) => ({ id: n.id, position: [...n.position] })), snapshot: structuredClone(this.project) };
     } else {
       if (picked) this.select(picked.data.buildingId, this.mode === 'face' ? (picked.data.edgeId ?? null) : null, e.ctrlKey || e.metaKey, this.mode === 'face', e);
-      else this.select(null);
+      else {
+        const lotId = sc.pickLot(e);
+        if (lotId) this.selectLot(lotId);
+        else {
+          if (this.selectedLot) this.selectLot(null);
+          this.select(null);
+        }
+      }
     }
     if (this.drag) this.capture(e);
   }
@@ -1030,7 +1183,22 @@ export class Editor {
       return;
     }
     if (d.type === 'polygon-click') return;
-    if (d.type === 'draw' || d.type === 'cut') {
+    if (d.type === 'lotvertex') {
+      const lot = this.lotById(d.id as ID);
+      const p = sc.planePoint(e, 0);
+      if (!lot || !p) return;
+      const poly = (d.original as Vec2[]).map((q) => [q[0], q[1]] as Vec2);
+      poly[d.index as number] = [e.altKey ? p.x : this.snapN(p.x), e.altKey ? p.z : this.snapN(p.z)];
+      if (validPolygon(poly)) {
+        lot.polygon = poly;
+        this.lotIndices = this.evaluateLots(this.project);
+        sc.rebuildLots(this.project, this.lotIndices, lot.id);
+        this.updateGizmos();
+      }
+      this.showDimension(`x ${fmt(p.x)} · z ${fmt(p.z)} m`, e);
+      return;
+    }
+    if (d.type === 'draw' || d.type === 'cut' || d.type === 'lot') {
       const p = sc.planePoint(e, d.y as number);
       if (!p) return;
       d.end = [this.snapN(p.x), this.snapN(p.z)];
@@ -1155,6 +1323,18 @@ export class Editor {
       this.preview(s, this.sketchY, false);
       return;
     }
+    if (d.type === 'lot') {
+      const r = this.rectPoints(d.start as Vec2, d.end as Vec2);
+      const w = r[1]![0] - r[0]![0],
+        dep = r[2]![1] - r[1]![1];
+      if (w < 3 || dep < 3) return this.toast('Desenhe um lote com pelo menos 3 m de cada lado.');
+      this.addLot(r);
+      return;
+    }
+    if (d.type === 'lotvertex') {
+      this.commit('Lote remodelado.', { allowViolations: true });
+      return;
+    }
     if (d.type === 'draw') {
       const s = d.start as Vec2,
         en = d.end as Vec2;
@@ -1221,6 +1401,70 @@ export class Editor {
       return;
     }
     this.commit();
+  }
+
+  private addLot(polygon: Vec2[]): void {
+    const n = this.project.lots.length + 1;
+    const lot = newLot(polygon, 'Lote ' + String(n).padStart(2, '0'));
+    this.project.lots.push(lot);
+    this.selectedLot = lot.id;
+    this.selected.clear();
+    this.tab = 'lot';
+    this.setTool('select');
+    this.commit('Lote criado. A faixa azul marca a testada; ajuste recuos e limites na aba Lote.', { allowViolations: true });
+    this.updateGizmos();
+  }
+
+  /** Marca ou desmarca a testada na divisa mais próxima do clique (até 3 m). */
+  private toggleFrontage(e: PointerEvent): void {
+    const lot = this.selectedLot ? this.lotById(this.selectedLot) : undefined;
+    const p = this.scene.planePoint(e, 0);
+    if (!lot || !p) return this.toast('Selecione um lote e clique numa divisa.');
+    let best = -1,
+      dist = 3;
+    lot.polygon.forEach((a, i) => {
+      const d = distanceToSegment(p.x, p.z, a, lot.polygon[(i + 1) % lot.polygon.length]!);
+      if (d < dist) {
+        dist = d;
+        best = i;
+      }
+    });
+    if (best < 0) return this.toast('Clique mais perto de uma divisa do lote.');
+    const has = lot.frontEdges.includes(best);
+    if (has && lot.frontEdges.length === 1) return this.toast('O lote precisa de pelo menos uma testada.');
+    lot.frontEdges = has ? lot.frontEdges.filter((i) => i !== best) : [...lot.frontEdges, best].sort((a, b) => a - b);
+    this.commit(has ? 'Testada removida desta divisa.' : 'Divisa marcada como testada.', { allowViolations: true });
+  }
+
+  // ── API pública: lotes ──────────────────────────────────────────────
+  /** Cria um lote (coordenadas do mundo) e devolve o seu ID. */
+  addLotPolygon(polygon: Vec2[], rules?: Partial<LotRules>, name?: string): ID {
+    const lot = newLot(polygon, name ?? 'Lote ' + String(this.project.lots.length + 1).padStart(2, '0'), { ...DEFAULT_LOT_RULES, ...rules, setbacks: { ...DEFAULT_LOT_RULES.setbacks, ...(rules?.setbacks ?? {}) } });
+    this.project.lots.push(lot);
+    this.commit('', { allowViolations: true });
+    return lot.id;
+  }
+
+  setLotRules(lotId: ID, rules: Partial<LotRules>): void {
+    const lot = this.lotById(lotId);
+    if (!lot) throw new Error('Lote inexistente: ' + lotId);
+    const cur = lot.rules ?? structuredClone(DEFAULT_LOT_RULES);
+    lot.rules = { ...cur, ...rules, setbacks: { ...cur.setbacks, ...(rules.setbacks ?? {}) } };
+    this.commit('', { allowViolations: true });
+  }
+
+  getIndices(lotId: ID): LotIndices | null {
+    return this.lotIndices.get(lotId) ?? null;
+  }
+
+  /** Preenche o lote com um edifício dentro das regras; devolve o ID ou null. */
+  fillLot(lotId: ID): ID | null {
+    const lot = this.lotById(lotId);
+    if (!lot) return null;
+    const b = fillLotOp(this.project, lot, { color: this.defaults.color });
+    if (!b) return null;
+    this.addBuildings([b], '');
+    return b.id;
   }
 
   // ── API pública ─────────────────────────────────────────────────────

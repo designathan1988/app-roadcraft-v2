@@ -160,6 +160,7 @@ function checkLot(lot: Lot, l: Limits): void {
     if (r.maxFAR !== undefined) c.num(r.maxFAR, 'Coeficiente de aproveitamento', 0, 100);
     if (r.maxHeight !== undefined) c.num(r.maxHeight, 'Gabarito', 0, 1000);
     if (r.maxStoreys !== undefined) c.num(r.maxStoreys, 'Máximo de pavimentos', 1, 1000);
+    if (r.heightTo !== undefined) c.oneOf(r.heightTo, 'Medição do gabarito', ['eave', 'ridge']);
   }
 }
 

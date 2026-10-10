@@ -39,6 +39,8 @@ export interface LotRules {
   /** Taxa de permeabilidade mínima (0..1). */
   minPermeability?: number;
   enforcement: 'block' | 'warn';
+  /** Gabarito medido até a cumeeira (padrão) ou até o beiral. */
+  heightTo?: 'eave' | 'ridge';
 }
 
 // ── Edifício ──────────────────────────────────────────────────────────

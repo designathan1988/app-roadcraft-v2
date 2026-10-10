@@ -8,6 +8,9 @@ import { clamp, distanceToSegment, pointInPolygon } from '../geometry/polygon';
 import { buildBuilding, type BuiltBuilding } from '../render/build-building';
 import { createRenderContext } from '../render/context';
 import { worldPolygon } from './ops';
+import type { Project } from '../core/schema';
+import type { LotIndices } from '../core/indices';
+import { buildLotGroup, disposeLotGroup } from '../render/lot';
 
 /** Raio de captura das alças, em pixels de tela. */
 const HANDLE_PX = 12;
@@ -27,7 +30,7 @@ export interface PickResult {
 
 export interface HandleData {
   handle: true;
-  kind: 'height' | 'resize' | 'vertex';
+  kind: 'height' | 'resize' | 'vertex' | 'lotvertex';
   id: ID;
   sx?: number;
   sz?: number;
@@ -45,6 +48,8 @@ export class EditorScene {
   readonly gizmos = new THREE.Group();
   readonly sketch = new THREE.Group();
   readonly environment = new THREE.Group();
+  /** Lotes e marcas de violação. */
+  readonly lotsRoot = new THREE.Group();
   readonly ctx = createRenderContext();
   readonly built = new Map<ID, BuiltBuilding>();
   readonly target = new THREE.Vector3(0, 4, 0);
@@ -91,7 +96,7 @@ export class EditorScene {
     }
     this.root.name = 'FORMA-editor';
     this.modelRoot.name = 'FORMA';
-    this.root.add(this.modelRoot, this.gizmos, this.sketch, this.environment);
+    this.root.add(this.modelRoot, this.gizmos, this.sketch, this.environment, this.lotsRoot);
     this.scene.add(this.root);
     if (this.withEnvironment) this.setupEnvironment();
     if (!this.hosted) {
@@ -229,14 +234,52 @@ export class EditorScene {
     this.mark();
   }
 
+  /** Redesenha os lotes; prédios em violação ganham contorno vermelho na base. */
+  rebuildLots(project: Project, indices: Map<ID, LotIndices>, selectedLot: ID | null): void {
+    for (const c of [...this.lotsRoot.children]) disposeLotGroup(c as THREE.Group);
+    const bad = new Set<ID>();
+    for (const lot of project.lots) {
+      const ix = indices.get(lot.id);
+      const violated = !!ix?.violations.length;
+      for (const v of ix?.violations ?? []) if (v.kind === 'setback' || v.kind === 'outside') v.buildingIds.forEach((id) => bad.add(id));
+      this.lotsRoot.add(buildLotGroup(lot, ix?.buildable ?? [], { selected: lot.id === selectedLot, violated }));
+    }
+    if (bad.size) {
+      const g = new THREE.Group();
+      for (const b of project.buildings) {
+        if (!bad.has(b.id)) continue;
+        for (const ring of worldPolygon(b)) {
+          const pts = ring.map((p) => new THREE.Vector3(p[0], 0.05, p[1]));
+          pts.push(pts[0]!.clone());
+          const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#d0392b', depthTest: false }));
+          l.renderOrder = 12;
+          g.add(l);
+        }
+      }
+      this.lotsRoot.add(g);
+    }
+    this.mark();
+  }
+
+  /** Lote sob o ponteiro (piso do lote). */
+  pickLot(e: { clientX: number; clientY: number }): ID | null {
+    const fills: THREE.Object3D[] = [];
+    this.lotsRoot.traverse((o) => o.userData.part === 'lot' && fills.push(o));
+    const hit = this.pointerRay(e).intersectObjects(fills, false)[0];
+    return hit ? (hit.object.userData.lotId as ID) : null;
+  }
+
   /** Árvores, piso e escada decorativos, omitidos onde colidem com volumes. */
-  buildEnvironment(buildings: Building[]): void {
+  buildEnvironment(buildings: Building[], lots: { polygon: Vec2[] }[] = []): void {
     this.disposeGroup(this.environment);
     this.renderer.shadowMap.needsUpdate = true;
     this.mark();
     if (!this.withEnvironment || !buildings.length) return;
     const polys = buildings.map((b) => worldPolygon(b)[0]!);
+    const lotPolys = lots.map((l) => l.polygon);
+    const outsideLots = (x: number, z: number, r: number) => lotPolys.every((p) => !pointInPolygon(x, z, p) && p.every((a, i) => distanceToSegment(x, z, a, p[(i + 1) % p.length]!) >= r));
     const free = (x: number, z: number, r: number) =>
+      outsideLots(x, z, r) &&
       polys.every((p) => !pointInPolygon(x, z, p) && p.every((a, i) => distanceToSegment(x, z, a, p[(i + 1) % p.length]!) >= r));
     const mat = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
     const box = (size: [number, number, number], pos: [number, number, number], m: THREE.Material) => {
@@ -247,14 +290,15 @@ export class EditorScene {
       this.environment.add(mesh);
     };
     const pathMat = mat('#bfbfb5');
-    box([34, 0.1, 28], [0, 0.015, 0], pathMat);
+    // O piso do exemplo só aparece sem lotes: com lotes, o terreno é deles.
+    if (!lots.length) box([34, 0.1, 28], [0, 0.015, 0], pathMat);
     for (const [x, z, s] of [[-4, -0.5, 1.8], [3, 2, 1.5], [-2, 5, 1.3], [-16, 9, 1.4], [17, -4, 1.6], [-15, -11, 1.1]] as const) {
       if (!free(x, z, Math.max(1.8, 1.25 * s))) continue;
       box([2.5, 0.28, 2.5], [x, 0.2, z], mat('#8d8f7a'));
       this.tree(x, 0.34, z, s);
     }
-    if (free(-3.45, 13, 1.8)) for (let i = 0; i < 3; i++) box([0.38, 0.15, 3], [-3 - i * 0.45, 0.2 + i * 0.15, 13], pathMat);
-    if (free(0, 14, 3.1)) box([6, 0.12, 0.6], [0, 0.06, 14], pathMat);
+    if (!lots.length && free(-3.45, 13, 1.8)) for (let i = 0; i < 3; i++) box([0.38, 0.15, 3], [-3 - i * 0.45, 0.2 + i * 0.15, 13], pathMat);
+    if (!lots.length && free(0, 14, 3.1)) box([6, 0.12, 0.6], [0, 0.06, 14], pathMat);
   }
 
   private tree(x: number, y: number, z: number, s: number): void {
@@ -387,6 +431,7 @@ export class EditorScene {
     this.disposeGroup(this.gizmos);
     this.disposeGroup(this.sketch);
     this.disposeGroup(this.environment);
+    for (const c of [...this.lotsRoot.children]) disposeLotGroup(c as THREE.Group);
     for (const o of [this.ground, this.grid]) {
       if (!o) continue;
       o.geometry.dispose();

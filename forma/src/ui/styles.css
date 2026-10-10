@@ -30,6 +30,50 @@
   }
 }
 
+/* Lotes e índices. */
+.forma-app .index-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, auto));
+  gap: 4px 18px;
+}
+.forma-app .index-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.forma-app .index-row b {
+  color: var(--text);
+  font-weight: 500;
+}
+.forma-app .index-row small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.forma-app .index-row.bad b {
+  color: #f08a7c;
+}
+.forma-app .lot-body {
+  display: grid;
+  gap: 6px;
+}
+.forma-app .index-ok {
+  color: #8fc58a;
+  font-size: 11px;
+}
+.forma-app .index-bad {
+  margin: 0;
+  padding-left: 16px;
+  color: #f08a7c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.forma-app .field-row select {
+  margin-left: 6px;
+}
+
 /* Modo hospedado (sem interface): o canvas é do jogo. */
 .forma-app[data-ui='none'] > :not(#viewport) {
   display: none !important;

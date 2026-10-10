@@ -1,6 +1,8 @@
 // HTML dos painéis (inspetor, prateleira, camadas, modais). Funções puras que
 // recebem um modelo de visão; o editor cuida dos eventos.
 import { icon } from './icons';
+import type { Lot } from '../core/schema';
+import type { LotIndices } from '../core/indices';
 
 export interface VolumeView {
   id: string;
@@ -52,6 +54,8 @@ export interface PanelState {
   section: boolean;
   repeatCount: number;
   repeatSpace: number;
+  /** Lote selecionado (sem edifício selecionado) e seus índices. */
+  lot: { lot: Lot; indices: LotIndices | null } | null;
 }
 
 export const PALETTES: [string, string][] = [
@@ -93,6 +97,7 @@ function swatches(color: string, large: boolean): string {
 
 export function inspectorHTML(s: PanelState): string {
   const v = s.view;
+  if (!v && s.lot) return lotInspectorHTML(s.lot.lot, s.lot.indices);
   if (!v)
     return `<div class="inspector-title">Espaço de criação</div><div id="empty-inspector">Desenhe uma base no chão.<br>Puxe para criar a altura.<br>Selecione uma face para personalizar.</div><div class="inspector-foot"><span>Seleção direta</span><button data-tool="draw" data-icon="rect" title="Criar volume" aria-label="Criar volume"></button></div>`;
   const info = s.selectedCount > 1 ? `${s.selectedCount} volumes` : s.faceLabel ?? 'Volume completo';
@@ -112,6 +117,7 @@ export function shelfHTML(s: PanelState): string {
   const v = s.view,
     d = s.defaults;
   let html = '';
+  if (s.tab === 'lot') return lotShelfHTML(s);
   if (s.tab === 'volumes') {
     const shapes: [string, string, string][] = [['rect', 'rect', 'Retângulo'], ['l', 'l', 'L'], ['u', 'u', 'U'], ['circle', 'circle', 'Circular'], ['polygon', 'polygon', 'Livre']];
     html += group(
@@ -185,6 +191,69 @@ export function layersHTML(items: { id: string; name: string; floors: number; se
   return `<div class="layer-head">Volumes · ${items.length}</div>${items
     .map((v) => `<button class="layer-row ${v.selected ? 'active' : ''}" data-select="${v.id}">${icon('cube')}<span>${escapeHTML(v.name)}</span><small>${v.floors} and.</small></button>`)
     .join('')}`;
+}
+
+const fmt = (n: number, d = 1) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n: number) => fmt(n * 100, 0) + '%';
+
+/** Linhas de índice: valor atual, limite e situação. */
+function indexRows(lot: Lot, ix: LotIndices | null): string {
+  if (!ix) return '';
+  const r = lot.rules;
+  const bad = new Set(ix.violations.map((v) => v.kind));
+  const row = (label: string, value: string, limit: string | null, kind: string) =>
+    `<div class="index-row ${bad.has(kind as never) ? 'bad' : ''}"><span>${label}</span><b>${value}${limit ? ' <small>/ ' + limit + '</small>' : ''}</b></div>`;
+  return [
+    row('Área do lote', fmt(ix.lotArea, 0) + ' m²', null, ''),
+    row('Ocupação', pct(ix.occupancy), r?.maxOccupancy !== undefined ? pct(r.maxOccupancy) : null, 'occupancy'),
+    row('Coeficiente', fmt(ix.far, 2), r?.maxFAR !== undefined ? fmt(r.maxFAR, 2) : null, 'far'),
+    row('Altura', fmt(ix.height) + ' m', r?.maxHeight !== undefined ? fmt(r.maxHeight) + ' m' : null, 'height'),
+    row('Pavimentos', String(ix.storeys), r?.maxStoreys !== undefined ? String(r.maxStoreys) : null, 'storeys'),
+    row('Permeabilidade', pct(ix.permeability), r?.minPermeability !== undefined ? 'mín. ' + pct(r.minPermeability) : null, 'permeability'),
+  ].join('');
+}
+
+function violationList(ix: LotIndices | null, max = 3): string {
+  if (!ix?.violations.length) return '<div class="index-ok">Dentro das regras do lote.</div>';
+  const items = ix.violations.slice(0, max).map((v) => `<li>${escapeHTML(v.message)}</li>`).join('');
+  const more = ix.violations.length > max ? `<li>+ ${ix.violations.length - max} outra(s)</li>` : '';
+  return `<ul class="index-bad">${items}${more}</ul>`;
+}
+
+export function lotInspectorHTML(lot: Lot, ix: LotIndices | null): string {
+  return `<div class="inspector-title"><input data-lotprop="name" aria-label="Nome do lote" value="${escapeHTML(lot.name)}"><button data-lotaction="delete" data-icon="trash" title="Excluir lote" aria-label="Excluir lote"></button></div>
+<div class="inspector-body lot-body">${indexRows(lot, ix)}<div class="rule"></div>${violationList(ix)}</div>
+<div class="inspector-foot"><span>Lote · ${lot.rules?.enforcement === 'block' ? 'regras bloqueiam' : 'regras avisam'}</span><button data-lotaction="fill" data-icon="fill" title="Preencher lote" aria-label="Preencher lote"></button></div>`;
+}
+
+const lotField = (prop: string, label: string, value: number | undefined, step: number, min: number, max: number, unit = '') =>
+  `<label>${label}${unit ? ' (' + unit + ')' : ''}<input type="number" data-lotprop="${prop}" aria-label="${label}" value="${value === undefined ? '' : Number(value).toFixed(step < 1 ? (step < 0.1 ? 2 : 1) : 0)}" step="${step}" min="${min}" max="${max}" placeholder="—"></label>`;
+
+export function lotShelfHTML(s: PanelState): string {
+  const tools = `<div class="tool-row">${[
+    ['lot', 'lot', 'Retângulo'],
+    ['lotpolygon', 'polygon', 'Livre'],
+    ['frontage', 'front', 'Testada'],
+  ]
+    .map(([id, ic, name]) => `<button class="shape-tool ${s.tool === id ? 'active' : ''}" data-tool="${id}" data-icon="${ic}">${name}</button>`)
+    .join('')}<button class="shape-tool" data-lotaction="fill" data-icon="fill">Preencher</button></div>`;
+  let html = group('Lote', tools);
+  const sel = s.lot;
+  if (!sel) return html + group('Como usar', '<div class="help-inline">Desenhe um lote no chão ou clique num lote existente para ver recuos, limites e índices.</div>');
+  const r = sel.lot.rules;
+  html += group(
+    'Recuos',
+    `<div class="field-col"><div class="field-row">${lotField('front', 'Frontal', r?.setbacks.front, 0.5, 0, 50, 'm')}${lotField('side', 'Lateral', r?.setbacks.side, 0.5, 0, 50, 'm')}</div><div class="field-row">${lotField('back', 'Fundos', r?.setbacks.back, 0.5, 0, 50, 'm')}</div></div>`,
+  );
+  html += group(
+    'Limites',
+    `<div class="field-col"><div class="field-row">${lotField('maxOccupancy', 'Ocupação', r?.maxOccupancy === undefined ? undefined : r.maxOccupancy * 100, 1, 0, 100, '%')}${lotField('maxFAR', 'Coeficiente', r?.maxFAR, 0.1, 0, 20)}${lotField('maxHeight', 'Gabarito', r?.maxHeight, 0.5, 0, 300, 'm')}</div><div class="field-row">${lotField('maxStoreys', 'Pavimentos', r?.maxStoreys, 1, 1, 100)}${lotField('minPermeability', 'Permeável', r?.minPermeability === undefined ? undefined : r.minPermeability * 100, 1, 0, 100, '%')}</div></div>`,
+  );
+  html += group(
+    'Regras',
+    `<div class="field-col"><div class="tool-row"><button class="action-tool ${r?.enforcement !== 'block' ? 'active' : ''}" data-lotmode="warn">Avisar</button><button class="action-tool ${r?.enforcement === 'block' ? 'active' : ''}" data-lotmode="block">Bloquear</button></div><div class="field-row" data-advanced><label>Gabarito até<select data-lotprop="heightTo" aria-label="Gabarito medido até"><option value="ridge" ${r?.heightTo !== 'eave' ? 'selected' : ''}>a cumeeira</option><option value="eave" ${r?.heightTo === 'eave' ? 'selected' : ''}>o beiral</option></select></label></div></div>`,
+  );
+  return html;
 }
 
 export const NEW_HTML = `<div class="modal-head"><h2>Novo espaço de criação</h2><button data-modal="close" data-icon="close" aria-label="Fechar"></button></div><p>Salve o projeto atual se quiser guardá-lo antes de começar outro. Um mapa vazio permite desenhar sua própria construção.</p><div class="modal-footer"><button class="secondary" data-modal="close">Cancelar</button><button class="primary" data-modal="empty">Criar mapa vazio</button></div>`;

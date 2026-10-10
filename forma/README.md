@@ -26,6 +26,25 @@ const project = loadProject(json); // aceita forma/2 e migra projetos v1
 for (const b of project.buildings) scene.add(buildBuilding(b).group);
 ```
 
+### Lotes e índices urbanísticos
+
+```ts
+const lotId = editor.addLotPolygon([[0, 0], [20, 0], [20, 40], [0, 40]], {
+  setbacks: { front: 5, side: 1.5, back: 3 }, // recuos em metros
+  maxOccupancy: 0.6, // taxa de ocupação
+  maxFAR: 2.5, // coeficiente de aproveitamento
+  maxHeight: 30, // gabarito (até a cumeeira; heightTo: 'eave' mede até o beiral)
+  maxStoreys: 10,
+  minPermeability: 0.15,
+  enforcement: 'block', // 'block' impede; 'warn' só avisa
+});
+editor.getIndices(lotId); // ocupação, coeficiente, altura, permeabilidade, área edificável, violações
+editor.fillLot(lotId); // gera um edifício dentro das regras
+editor.on('violation', ({ lotId, violations }) => { /* ... */ });
+```
+
+Os índices também podem ser calculados sem editor (por exemplo, no servidor), com `computeLotIndices(project, lot)` de `forma/core`.
+
 No modo incorporado o editor:
 - adiciona um único grupo (`FORMA-editor`) à cena;
 - não roda laço de renderização próprio;
