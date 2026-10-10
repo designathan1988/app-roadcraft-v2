@@ -79,6 +79,70 @@ const WATER_MARGIN = 0.4;
 const WATER_CELL = 4;
 
 /**
+ * THE PLANET'S CLIMATES in the ground's colour: value noise read at the point
+ * of the sphere, so the biomes' borders wander the same on both sides of every
+ * border between pieces (Catlike Coding, "Seamless Cube Sphere": noise at the
+ * 3-D position, never per face). Empty on the flat map, whose shaders hold no
+ * planet.
+ */
+const PLANET_BIOME_NOISE = __PLANET__ ? `
+  float planetBiomeHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+  float planetBiomeNoise(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(planetBiomeHash(i), planetBiomeHash(i + vec3(1, 0, 0)), f.x), mix(planetBiomeHash(i + vec3(0, 1, 0)), planetBiomeHash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(planetBiomeHash(i + vec3(0, 0, 1)), planetBiomeHash(i + vec3(1, 0, 1)), f.x), mix(planetBiomeHash(i + vec3(0, 1, 1)), planetBiomeHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+  }
+` : '';
+
+/**
+ * The biomes by latitude, as the Earth's (the planet's axis is its frame's z,
+ * world/planet/sun.ts): ice caps over the poles (the polar circles, ~66
+ * degrees), tundra and taiga below them, the dry belt of the subtropics where
+ * the Hadley cells' air comes down (~30 degrees: the Sahara, the Atacama,
+ * Australia's deserts), and the wet green of the tropics. Only the ground's
+ * HUE turns - its own texture, brightness and contrast kept, as the savanna's
+ * straw is - so it is the same land to build on.
+ */
+const PLANET_BIOMES = __PLANET__ ? `
+  {
+    vec3 biomeE, biomeN;
+    vec3 globe = planetDirection(vTerrainAtlas, biomeE, biomeN);
+    // Continents of climate: a broad wander at the planet's scale, a finer one on its edges.
+    float wander = (planetBiomeNoise(globe * 2.3) - 0.5) * 0.26 + (planetBiomeNoise(globe * 8.9 + 4.1) - 0.5) * 0.08
+      + (planetBiomeNoise(globe * 31.0 + 9.3) - 0.5) * 0.025;
+    float lat = clamp(abs(globe.z) + wander, 0.0, 1.0);
+    float luma = dot(blended.rgb, vec3(0.3, 0.6, 0.1));
+    // The texture's own light and shade, about its mean: carried onto every
+    // biome's colour, so sand and snow keep the ground's grain.
+    float grain = clamp(luma / 0.19, 0.55, 1.5);
+    // Taiga and tundra: a cold, browner olive, thinning to lichen.
+    float cold = smoothstep(0.7, 0.86, lat);
+    vec3 tundra = luma * mix(vec3(0.92, 1.0, 0.72), vec3(1.2, 1.1, 0.88), smoothstep(0.8, 0.9, lat));
+    blended.rgb = mix(blended.rgb, tundra, cold * 0.8 * living);
+    // The dry belt: steppe gold over a wide band, the deserts in its heart
+    // where the air is driest - whole regions, not stripes.
+    float belt = exp(-pow((lat - 0.47) / 0.17, 2.0));
+    float arid = planetBiomeNoise(globe * 2.1 + 11.0) * 0.75 + planetBiomeNoise(globe * 7.3 + 3.0) * 0.25;
+    float dryness = belt * (0.35 + 1.1 * arid);
+    float steppe = smoothstep(0.3, 0.6, dryness);
+    float desert = smoothstep(0.55, 0.9, dryness);
+    vec3 straw = luma * vec3(1.32, 1.06, 0.5);
+    // Ochre, as the Earth's deserts seen from orbit (pale sand read as cloud from afar).
+    vec3 sand = vec3(0.58, 0.42, 0.24) * grain * (0.9 + 0.2 * planetBiomeNoise(globe * 140.0));
+    blended.rgb = mix(blended.rgb, straw, steppe * 0.7 * living);
+    blended.rgb = mix(blended.rgb, sand, desert * 0.92 * living);
+    // The ice caps, white with a blue cast, their edge broken into floes.
+    float ice = smoothstep(0.88, 0.95, lat + (planetBiomeNoise(globe * 60.0) - 0.5) * 0.03);
+    vec3 snow = vec3(0.8, 0.84, 0.9) * mix(1.0, grain, 0.45);
+    blended.rgb = mix(blended.rgb, snow, ice);
+    // The tropics' wet green, a little deeper.
+    float tropic = 1.0 - smoothstep(0.12, 0.32, lat);
+    blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.86, 1.04, 0.84), tropic * 0.6 * living);
+  }
+` : '';
+
+/**
  * World size of one terrain quad.
  *
  * The terrain mesh holds one vertex per cell and interpolates linearly between
@@ -1150,6 +1214,7 @@ function terrainMaterial(
         '#include <common>',
         `#include <common>
          uniform float uPlanetTile;
+         ${PLANET_BIOME_NOISE}
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
          varying vec3 vTerrainNormal;
@@ -1744,6 +1809,7 @@ function terrainMaterial(
            // canopy (eco.r) darkens it only once its trees stand there.
            blended.rgb = mix(blended.rgb, blended.rgb * vec3(0.3, 0.36, 0.24), clamp(shoreSample.w * 1.6, 0.0, 0.9));
          }
+         ${PLANET_BIOMES}
          // (No slope wear, dry tops, pale crests or dark hollows in the colours
          // any more: the player asked for the terrain's effects to go.)
          {

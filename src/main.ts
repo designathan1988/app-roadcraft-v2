@@ -4584,8 +4584,11 @@ function updateStatus(): void {
   // The time of day and the residents' day (`sim/city`). On the planet the
   // sun stands over the planet, so the clock reads the time it makes where
   // the view looks (`world/planet/sun.ts`), as the sky there shows it.
-  const minutes = __PLANET__
-    ? planetLocalMinutes(sim.city.minutes(sim), view.centre.x, view.centre.y)
+  // The ground in the middle of the screen: out at the globe the view's
+  // centre (the point the planet is set down about) lies tens of degrees off it.
+  const looked = __PLANET__ ? view.toWorld(surface.cssW / 2, surface.cssH / 2, surface.cssW, surface.cssH) : null;
+  const minutes = looked
+    ? planetLocalMinutes(sim.city.minutes(sim), looked.x, looked.y)
     : sim.city.minutes(sim) % 1440;
   text('cityClock', `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`);
   // The city's numbers, computed all along and shown nowhere (audit P2-02).

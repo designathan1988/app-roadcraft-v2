@@ -11,6 +11,7 @@ import { createLotOverlay, type LotOverlayInput } from './lotOverlay';
 import { onCarriageway } from '@world/carriageway';
 import {
   BufferGeometry,
+  Ray,
   ShaderMaterial,
   AdditiveBlending,
   DoubleSide,
@@ -81,7 +82,8 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
-import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetScene, planetSun } from './planet/bend';
+import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetScene, planetSun } from './planet/bend';
+import { planetLocalMinutes as planetLocalMinutesAt } from '@world/planet/sun';
 import { createSpace } from './planet/space';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
@@ -550,6 +552,21 @@ export function createSceneRenderer(
   const space = __PLANET__ ? createSpace(scene, renderer) : null;
   if (import.meta.env.DEV && space) Object.assign(window, { __space: space, __spaceCamera: () => rig.camera });
   const spaceCentre = new Vector3();
+  /**
+   * The hour the sun makes on the ground in the middle of the screen. Out at
+   * the globe the camera looks at the planet's centre from aslant, and that
+   * ground lies tens of degrees from the point the planet is set down about
+   * (its anchor): "always day" lit the anchor, near the limb, and left the
+   * middle of the view in the dawn.
+   */
+  const centreRay = new Ray();
+  const lookDirection = new Vector3();
+  const lookedMinutes = (minutes: number): number => {
+    rig.camera.getWorldDirection(lookDirection);
+    centreRay.set(rig.camera.position, lookDirection);
+    const ground = planetPick(centreRay, 0);
+    return ground ? planetLocalMinutesAt(minutes, ground.x, ground.y) : planetLocalMinutes(minutes);
+  };
   const spaceUp = new Vector3();
 
   const materials: SceneMaterials = createMaterials(anisotropy);
@@ -3110,7 +3127,7 @@ export function createSceneRenderer(
       // is the clock plus its longitude (\`world/planet/sun.ts\`), so the clock
       // that makes it there is the hour less that offset.
       const fixedHour = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : null;
-      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - planetLocalMinutes(0) : fixedHour;
+      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - lookedMinutes(0) : fixedHour;
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
         // bends the plants and the smoke; the rain falls through the view;
