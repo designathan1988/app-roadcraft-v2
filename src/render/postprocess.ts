@@ -433,6 +433,20 @@ export function createPostChain(
           // quarter of the true air by the ground, all of it at the top.
           const high = Math.min(1, Math.max(0, (camera.position.distanceTo(onPlanet) - PLANET_RADIUS) / (ATMOSPHERE_TOP - PLANET_RADIUS)));
           u['uAirScale']!.value = 0.25 + 0.75 * high * high * (3 - 2 * high);
+          // The clouds and their shadows give way as the view takes in the
+          // globe: by how tall the view is over the ground under the eye,
+          // in planet widths - whole up to 0.2, gone at 0.6 (the whole globe
+          // in view is some 0.8), so from mid altitude down they show whole and out at the globe the clouds
+          // kept round the place looked at are not a clump of white balls
+          // and dark stains in its middle. The eye's height, not the depth
+          // in the middle of the screen: a low view's middle lies far down
+          // the horizon, and the clouds went at mid altitude.
+          const fov = (camera as Camera & { fov?: number }).fov ?? 35;
+          const span = 2 * Math.max(0, camera.position.distanceTo(onPlanet) - PLANET_RADIUS) * Math.tan((fov * Math.PI) / 360);
+          const t = Math.min(1, Math.max(0, (span / (2 * PLANET_RADIUS) - 0.2) / 0.4));
+          const fade = 1 - t * t * (3 - 2 * t);
+          u['uGlobeFade']!.value = fade;
+          u['uStrength']!.value = CLOUD_SHADOW_STRENGTH * fade;
         }
         u['uShadowMapOn']!.value = plane === null ? 0 : 1;
         if (plane !== null) u['uShadowPlane']!.value = plane;
@@ -668,6 +682,8 @@ const CLOUD_SHADOWS = {
     uMapHalf: { value: WORLD_HALF },
     uPlanet: { value: new Vector4() },
     uPlanetInverse: { value: new Matrix4() },
+    // On the planet, how much of the clouds is drawn as the view takes in the globe (1 near the ground .. 0 at the whole globe).
+    uGlobeFade: { value: 1 },
     // The planet's air (`planet/air.ts`, `setAir`): set each frame.
     ...(__PLANET__ ? {
       uAirCentre: { value: new Vector3() }, uAirSun: { value: new Vector3(0, 1, 0) }, uAirIntensity: { value: 1 }, uAirInside: { value: 0 },
@@ -750,6 +766,7 @@ const CLOUD_SHADOWS = {
     ${__PLANET__ ? 'uniform float uAirScale;' : ''}
     // The planet as drawn (\`planet/bend.ts\`): its centre and radius; w 0 on the flat map.
     uniform vec4 uPlanet;
+    uniform float uGlobeFade;
     // The drawn world back to the planet's own frame: what is fixed on the
     // planet (a cloud's billows) is read there, or it swims as the view moves.
     uniform mat4 uPlanetInverse;
@@ -1182,7 +1199,18 @@ const CLOUD_BODIES_MAIN = /* glsl */ `
         // On the planet the clouds show at every zoom, out to the whole globe:
         // given way to their shadows past a width, they came and went in a
         // notch of the wheel (the player, 2026-10-10).
-        float bodies = uPlanet.w > 0.0 ? 1.0 : 1.0 - smoothstep(9000.0, 14000.0, spanFocus);
+        float bodies = 1.0 - smoothstep(9000.0, 14000.0, spanFocus);
+        if (uPlanet.w > 0.0) {
+          // On the planet they give way as the view takes in the globe, over
+          // a wide span of zoom, not a notch (\`uGlobeFade\`): out there the
+          // clouds kept round the place looked at (layClouds) were a clump of
+          // white balls in the middle of the globe, one of them hanging past
+          // its limb (the player, 2026-10-10).
+          bodies = uGlobeFade;
+          // And never past the limb: only where the view's ray meets the
+          // ground does a cloud stand between the eye and it.
+          if (sphereSpan(ro, rd, uPlanet).y <= 0.0) bodies = 0.0;
+        }
         vec2 spans[MAX_CLOUDS];
         for (int c = 0; c < MAX_CLOUDS; c++) {
           spans[c] = vec2(-1.0);
