@@ -35,6 +35,7 @@ import { buildGrass, type GrassField } from './grass';
 import { applyWind, windDepthMaterial, type WindResponse } from './wind';
 import { leafCardMaterials } from './lowPolyTrees';
 import { lightPoolTexture } from './lightLevels';
+import { planetSphereInView } from './planet/bend';
 import {
   BUSH_KINDS,
   TREE_SPECIES,
@@ -1011,7 +1012,10 @@ function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<Instanced
     // and its buffers rewritten to hold nothing. The sphere is the one built
     // over every instance (`build`), grown by the shadow reach the per-instance
     // test allows, so a miss here cannot hide an instance that test would keep.
-    if (all.bounds) {
+    // (On the planet a mesh's instances can be kept on several charts, far
+    // apart in the flat world: only each instance is tested, where the
+    // planet draws it.)
+    if (all.bounds && !__PLANET__) {
       probe.center.set(all.bounds.x, all.bounds.y, all.bounds.z);
       probe.radius = all.bounds.r + SHADOW_REACH;
       if (!frustum.intersectsSphere(probe)) {
@@ -1034,7 +1038,7 @@ function cullInstances(meshes: readonly InstancedMesh[], excluded: Map<Instanced
       const s = all.spheres;
       probe.center.set(s[i * 4] as number, s[i * 4 + 1] as number, s[i * 4 + 2] as number);
       probe.radius = (s[i * 4 + 3] as number) + SHADOW_REACH;
-      if (!frustum.intersectsSphere(probe)) continue;
+      if (!planetSphereInView(frustum, probe)) continue;
       const source = i * 16;
       const target = n * 16;
       for (let j = 0; j < 16; j++) matrices[target + j] = all.matrices[source + j]!;

@@ -82,7 +82,7 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
-import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetScene, planetSun } from './planet/bend';
+import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetPointInto, planetScene, planetSphereInView, planetSun } from './planet/bend';
 import { planetLocalMinutes as planetLocalMinutesAt } from '@world/planet/sun';
 import { createSpace } from './planet/space';
 import { PLANET_RADIUS } from '@core/cubeSphere';
@@ -940,18 +940,21 @@ export function createSceneRenderer(
   const crowdBounds = new Sphere(new Vector3(), 8);
   const pedestrianVisible = (x: number, y: number, height: number): boolean => {
     crowdBounds.center.set(x, height + 3, -y);
-    return crowdFrustum.intersectsSphere(crowdBounds);
+    return planetSphereInView(crowdFrustum, crowdBounds);
   };
   // How tall a person stands on the screen, canvas pixels: feet and head
   // through the view-projection (either camera); seen from straight above,
   // never less than a share of their height across, their shoulders.
-  const pixelFoot = new Vector3(), pixelOther = new Vector3(), cameraRight = new Vector3();
+  const pixelFoot = new Vector3(), pixelOther = new Vector3(), pixelBase = new Vector3(), cameraRight = new Vector3();
   const personPixels = (x: number, y: number, z: number, height: number): number => {
     const halfW = renderer.domElement.width * 0.5, halfH = renderer.domElement.height * 0.5;
-    pixelFoot.set(x, z, -y).applyMatrix4(crowdProjection);
-    pixelOther.set(x, z + height, -y).applyMatrix4(crowdProjection);
+    // Where the planet draws them (`planetPointInto`; the points themselves on the flat map).
+    planetPointInto(x, z, -y, pixelFoot);
+    planetPointInto(x, z + height, -y, pixelOther).applyMatrix4(crowdProjection);
+    pixelBase.copy(pixelFoot).addScaledVector(cameraRight, height).applyMatrix4(crowdProjection);
+    pixelFoot.applyMatrix4(crowdProjection);
     const tall = Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
-    pixelOther.set(x, z, -y).addScaledVector(cameraRight, height).applyMatrix4(crowdProjection);
+    pixelOther.copy(pixelBase);
     const across = Math.hypot((pixelOther.x - pixelFoot.x) * halfW, (pixelOther.y - pixelFoot.y) * halfH);
     return Math.max(tall, across * 0.4);
   };
@@ -961,8 +964,9 @@ export function createSceneRenderer(
    * drawn by.
    */
   const screenScale = (x: number, y: number, z: number): number => {
-    pixelFoot.set(x, z, -y).applyMatrix4(crowdProjection);
-    pixelOther.set(x, z, -y).add(cameraRight).applyMatrix4(crowdProjection);
+    planetPointInto(x, z, -y, pixelFoot);
+    pixelOther.copy(pixelFoot).add(cameraRight).applyMatrix4(crowdProjection);
+    pixelFoot.applyMatrix4(crowdProjection);
     return Math.hypot((pixelOther.x - pixelFoot.x) * cssHalfW, (pixelOther.y - pixelFoot.y) * cssHalfH);
   };
   /** Half the canvas's CSS size, read once a frame (`draw`). */
@@ -973,7 +977,7 @@ export function createSceneRenderer(
   const vehicleVisible = (x: number, y: number, height: number, radius: number): boolean => {
     vehicleBounds.center.set(x, height + radius * 0.3, -y);
     vehicleBounds.radius = radius;
-    return crowdFrustum.intersectsSphere(vehicleBounds);
+    return planetSphereInView(crowdFrustum, vehicleBounds);
   };
   scene.add(...agents.meshes);
   const signals: SignalHeads = createSignalHeads(scene, deckHeight);

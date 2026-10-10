@@ -260,6 +260,43 @@ export function layRun(points: readonly Vec2[], piece: number): Vec2[] {
   return out;
 }
 
+/**
+ * A point as each chart round it reads it, for a search over shapes kept on
+ * many charts (a road's ribbon on its segment's, `PolylineCache.chart`):
+ * `view(chart)` is the point on `chart`'s map when that chart can keep
+ * something within `reach` of it (`chartsReaching`), else null - the shape is
+ * too far to matter, and no transform is paid for it. Each chart's point is
+ * worked out once. The point itself for every chart on the flat map.
+ */
+export function pointViews(p: Readonly<Vec2>, reach: number): (chart: number) => Readonly<Vec2> | null {
+  if (identity()) return () => p;
+  const own = chartAt(p.x, p.y);
+  const near = chartsReaching(own, p.x - reach, p.y - reach, p.x + reach, p.y + reach);
+  const known = new Map<number, Vec2>();
+  return (chart) => {
+    if (chart === own) return p;
+    const seen = known.get(chart);
+    if (seen) return seen;
+    if (!near.includes(chart)) return null;
+    const q = chartToChartInto(own, chart, p.x, p.y, { x: 0, y: 0 });
+    known.set(chart, q);
+    return q;
+  };
+}
+
+/**
+ * A unit direction `d` at point `p` of chart `from`'s map, on chart `to`'s
+ * map: two neighbouring charts are turned against each other (a quarter turn
+ * across an edge of the cube), so a frame read on one is turned on the other.
+ */
+export function directionOnChart(from: number, to: number, p: Readonly<Vec2>, d: Readonly<Vec2>): Vec2 {
+  if (identity() || from === to) return { x: d.x, y: d.y };
+  const a = chartToChartInto(from, to, p.x, p.y, { x: 0, y: 0 });
+  const b = chartToChartInto(from, to, p.x + d.x, p.y + d.y, { x: 0, y: 0 });
+  const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+}
+
 /** Points of `from`'s map on `to`'s map (the same ground); the points themselves when the charts are one. */
 export function carryPoints(from: number, to: number, points: readonly Vec2[]): Vec2[] {
   if (from === to || identity()) return points as Vec2[];

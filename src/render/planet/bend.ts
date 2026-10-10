@@ -263,6 +263,26 @@ function beyondHorizon(s: Sphere): boolean {
   return vtDotVc > vh2 && (vtDotVc * vtDotVc) / vt.lengthSq() > vh2;
 }
 
+const inView = new Sphere();
+
+/**
+ * Whether a sphere of the world as it is built - flat, three's x, height, z -
+ * is in `frustum` where the planet draws it: its centre carried there and the
+ * sphere a little wider, as `intersectsObject` does for whole objects, and not
+ * past the horizon. For what a renderer culls one by one (the plants' and the
+ * street furniture's instances, the grass's cells, each vehicle and person):
+ * tested as they stand, every one kept on a chart other than the one looked
+ * from lay 1 600 units or more away in the flat world, out of every frustum,
+ * and a bench, a tree or a car across a border was not drawn. The plain test
+ * on the flat map.
+ */
+export function planetSphereInView(frustum: Frustum, s: Sphere): boolean {
+  if (PLANET_ON.value < 0.5) return frustum.intersectsSphere(s);
+  planetPointInto(s.center.x, s.center.y, s.center.z, inView.center);
+  inView.radius = s.radius * 1.05 + 4;
+  return frustum.intersectsSphere(inView) && !beyondHorizon(inView);
+}
+
 /** Whether the world's scene is being drawn (its shadows with it): only then is culling done on the planet. */
 let drawingWorld = false;
 
