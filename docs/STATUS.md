@@ -144,8 +144,10 @@ o jogo a cada edição.
   tarefa longa 1 153 ms na build anterior (4180) contra 468 ms com a mudança
   (5173). Visto uma vez, logo depois de o servidor recarregar: por alguns
   segundos depois da bomba as ruas sumiram da tela e voltaram; não se repetiu
-  em duas tentativas nas mesmas condições (alturas do terreno sob a via
-  medidas a cada 200 ms: nunca acima do asfalto). Aberto. O painel da bomba
+  em três tentativas (mapa recém-gerado, mapa recarregado do salvamento, bomba
+  logo ao sair da cortina de carga; alturas do terreno sob a via medidas a cada
+  200 ms: nunca acima do asfalto). A única vez foi logo depois de o servidor de
+  desenvolvimento ser reiniciado por outra sessão. Aberto, sem reprodução. O painel da bomba
   mostra a ajuda da bomba (antes a do Demolir).
 - Bomba num prédio (resto do PA-U2): as peças soltas de um golpe saem numa fila,
   4 ms por quadro (`destruction.ts` `release`/`loosen`), em vez de todas no
