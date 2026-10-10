@@ -1,0 +1,104 @@
+{
+  "schema": "forma-style/1",
+  "id": "meu:ornamentado",
+  "name": "Ornamentado (módulos)",
+  "description": "Molduras em glTF ao redor das janelas.",
+  "materials": {
+    "wall": {
+      "color": "#d9c7a7",
+      "texture": "stone",
+      "scale": 1.2
+    },
+    "trim": {
+      "color": "#4a3b2a"
+    }
+  },
+  "modules": {
+    "moldura": {
+      "url": "data:model/gltf+json;base64,eyJhc3NldCI6eyJ2ZXJzaW9uIjoiMi4wIn0sInNjZW5lIjowLCJzY2VuZXMiOlt7Im5vZGVzIjpbMF19XSwibm9kZXMiOlt7Im1lc2giOjB9XSwibWVzaGVzIjpbeyJwcmltaXRpdmVzIjpbeyJhdHRyaWJ1dGVzIjp7IlBPU0lUSU9OIjowfSwiaW5kaWNlcyI6MSwibWF0ZXJpYWwiOjB9XX1dLCJtYXRlcmlhbHMiOlt7InBick1ldGFsbGljUm91Z2huZXNzIjp7ImJhc2VDb2xvckZhY3RvciI6WzAuODUsMC43NSwwLjMsMV0sIm1ldGFsbGljRmFjdG9yIjowLjIsInJvdWdobmVzc0ZhY3RvciI6MC41fX1dLCJidWZmZXJzIjpbeyJieXRlTGVuZ3RoIjoxNjgsInVyaSI6ImRhdGE6YXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtO2Jhc2U2NCxBQUFBdndBQUFMOEFBQUMvQUFBQVB3QUFBTDhBQUFDL0FBQUFQd0FBQUQ4QUFBQy9BQUFBdndBQUFEOEFBQUMvQUFBQXZ3QUFBTDhBQUFBL0FBQUFQd0FBQUw4QUFBQS9BQUFBUHdBQUFEOEFBQUEvQUFBQXZ3QUFBRDhBQUFBL0FBQUNBQUVBQUFBREFBSUFCQUFGQUFZQUJBQUdBQWNBQUFBQkFBVUFBQUFGQUFRQUFnQURBQWNBQWdBSEFBWUFBUUFDQUFZQUFRQUdBQVVBQUFBRUFBY0FBQUFIQUFNQSJ9XSwiYnVmZmVyVmlld3MiOlt7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MCwiYnl0ZUxlbmd0aCI6OTYsInRhcmdldCI6MzQ5NjJ9LHsiYnVmZmVyIjowLCJieXRlT2Zmc2V0Ijo5NiwiYnl0ZUxlbmd0aCI6NzIsInRhcmdldCI6MzQ5NjN9XSwiYWNjZXNzb3JzIjpbeyJidWZmZXJWaWV3IjowLCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6OCwidHlwZSI6IlZFQzMiLCJtaW4iOlstMC41LC0wLjUsLTAuNV0sIm1heCI6WzAuNSwwLjUsMC41XX0seyJidWZmZXJWaWV3IjoxLCJjb21wb25lbnRUeXBlIjo1MTIzLCJjb3VudCI6MzYsInR5cGUiOiJTQ0FMQVIifV19",
+      "size": [
+        1.4,
+        0.25,
+        0.12
+      ]
+    }
+  },
+  "floors": {
+    "typical": {
+      "split": [
+        {
+          "size": "~0.8",
+          "tile": {
+            "kind": "wall"
+          }
+        },
+        {
+          "repeat": [
+            {
+              "size": 1.4,
+              "tile": {
+                "kind": "window",
+                "width": 1.1,
+                "height": 1.6
+              }
+            },
+            {
+              "size": "~1.2",
+              "tile": {
+                "kind": "wall"
+              }
+            }
+          ]
+        },
+        {
+          "size": "~0.8",
+          "tile": {
+            "kind": "wall"
+          }
+        }
+      ]
+    },
+    "byIndex": {
+      "1": {
+        "split": [
+          {
+            "size": "~0.8",
+            "tile": {
+              "kind": "wall"
+            }
+          },
+          {
+            "repeat": [
+              {
+                "size": 1.4,
+                "tile": {
+                  "kind": "module",
+                  "module": "moldura",
+                  "width": 1.4,
+                  "height": 0.25,
+                  "sill": 2.4
+                }
+              },
+              {
+                "size": "~1.2",
+                "tile": {
+                  "kind": "wall"
+                }
+              }
+            ]
+          },
+          {
+            "size": "~0.8",
+            "tile": {
+              "kind": "wall"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "roof": {
+    "kind": "mansard",
+    "height": 3
+  }
+}

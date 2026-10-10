@@ -49,6 +49,9 @@ export function createShell(container: HTMLElement, level: UiLevel): Shell {
   $('[data-tab="volumes"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="lot" data-icon="lot">Lote</button>');
   // Aba Interior, depois de Lote.
   $('[data-tab="lot"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="interior" data-icon="wall">Interior</button>');
+  // Aba Estilos, depois de Coberturas.
+  $('[data-tab="roofs"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="styles" data-icon="style">Estilos</button>');
+  app.insertAdjacentHTML('beforeend', '<input type="file" id="style-input" accept=".json,application/json" hidden>');
   // Barra de pavimentos, rótulos de cômodos e indicações do modo caminhar.
   $('#viewport').insertAdjacentHTML(
     'beforeend',
@@ -56,7 +59,7 @@ export function createShell(container: HTMLElement, level: UiLevel): Shell {
   );
   // Controles que só aparecem no modo avançado.
   for (const tab of ['materials', 'details']) $(`[data-tab="${tab}"]`)?.setAttribute('data-advanced', '');
-  $$('.tabs > .separator').slice(4).forEach((s) => s.setAttribute('data-advanced', ''));
+  $$('.tabs > .separator').slice(5).forEach((s) => s.setAttribute('data-advanced', ''));
   hydrate(app);
 
   const setLevel = (l: UiLevel) => {

@@ -1,6 +1,7 @@
 // Cena do editor: renderizador, câmera orbital, iluminação, chão, grade,
 // decoração, raios de seleção e alças. Funciona sozinha (cria tudo) ou
 // hospedada no jogo (usa renderer/scene/camera do jogo e não roda laço próprio).
+import type { MassPartsOptions } from '../geometry/mass-parts';
 import * as THREE from 'three';
 import type { Building, ID, Vec2 } from '../core/schema';
 import type { PartData } from '../geometry/parts';
@@ -75,7 +76,7 @@ export class EditorScene {
   /** Chamado quando a câmera ou o tamanho mudam (rótulos na tela). */
   onViewChange: (() => void) | null = null;
   /** Opções de geração por edifício (corte do pavimento ativo). */
-  buildOptionsFor: ((b: Building) => { cutY?: number }) | null = null;
+  buildOptionsFor: ((b: Building) => MassPartsOptions) | null = null;
 
   constructor(
     private viewport: HTMLElement,

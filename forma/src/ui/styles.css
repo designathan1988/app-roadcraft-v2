@@ -208,3 +208,23 @@
 /* Barra de ferramentas rola em janelas baixas, sem esconder iluminação e ajuda. */
 .forma-app .rail{overflow-y:auto;scrollbar-width:none}
 .forma-app .rail>*{flex-shrink:0}
+
+/* Aba Estilos: cartões com as cores do estilo. */
+.forma-app .style-grid{display:flex;gap:8px}
+.forma-app .style-card{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:8px;width:118px;height:68px;padding:8px 9px;border:1px solid var(--line);border-radius:6px;background:#1d2225;text-align:left;flex-shrink:0}
+.forma-app .style-card:hover{border-color:#5a6266}
+.forma-app .style-card.active{border-color:var(--accent,#e8894a);box-shadow:inset 0 0 0 1px var(--accent,#e8894a)}
+.forma-app .style-chips{display:flex;gap:4px}
+.forma-app .style-chips i{width:16px;height:16px;border-radius:50%;border:1px solid #0006;display:block}
+.forma-app .style-name{font-size:11px;line-height:1.2;color:#dfe3e4;white-space:normal}
+@container forma (max-width:420px){
+.forma-app header{gap:3px;padding:0 6px}
+.forma-app .brand{letter-spacing:3px;font-size:15px}
+}
+@container forma (max-width:760px){
+.forma-app .roof-mini{gap:4px 5px}
+.forma-app .roof-mini .roof-pick button{height:27px}
+.forma-app .roof-mini svg{width:20px;height:20px}
+.forma-app .roof-pick{gap:2px}
+.forma-app .inspector-foot{padding:3px 9px}
+}

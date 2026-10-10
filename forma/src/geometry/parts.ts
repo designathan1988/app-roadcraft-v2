@@ -2,6 +2,7 @@
 // converte estas peças em malhas: caixas viram InstancedMesh por material,
 // paredes e lajes viram ExtrudeGeometry, telhados viram BufferGeometry.
 import type { ID, Vec2 } from '../core/schema';
+import type { TextureKind } from '../styles/schema';
 
 export type Vec3 = [number, number, number];
 
@@ -16,6 +17,10 @@ export interface MaterialKey {
   roughness: number;
   metalness?: number;
   doubleSide?: boolean;
+  /** Textura procedural em escala real (só em paredes e malhas com UV em metros). */
+  texture?: TextureKind;
+  /** Metros por repetição da textura. */
+  textureScale?: number;
 }
 
 /** Dados de seleção ligados a cada peça. */
@@ -85,11 +90,23 @@ export interface MeshPart {
   data: PartData;
 }
 
+/** Módulo glTF de um estilo, encaixado numa caixa da fachada. */
+export interface ModulePart {
+  url: string;
+  /** Caixa de destino [largura, altura, profundidade]. */
+  size: Vec3;
+  /** Centro da caixa. */
+  pos: Vec3;
+  angle: number;
+  data: PartData;
+}
+
 export interface BuildingParts {
   boxes: BoxPart[];
   walls: WallPart[];
   slabs: SlabPart[];
   meshes: MeshPart[];
+  modules: ModulePart[];
 }
 
-export const emptyParts = (): BuildingParts => ({ boxes: [], walls: [], slabs: [], meshes: [] });
+export const emptyParts = (): BuildingParts => ({ boxes: [], walls: [], slabs: [], meshes: [], modules: [] });

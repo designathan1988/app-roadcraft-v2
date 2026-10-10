@@ -14,6 +14,9 @@ import { stairFootprint } from './stairs';
 import { buildInteriorParts } from './interior-parts';
 import type { BoxPart, BuildingParts, MaterialKey, PartData, Vec3, WallHole } from './parts';
 import { CAP, emptyParts } from './parts';
+import { sortedStoreys } from '../core/model';
+import { styleFacade, styleResolver, type StyleResolver } from '../styles';
+import type { StyleMaterial } from '../styles/schema';
 
 export interface MassPartsOptions {
   /** Corte horizontal: mostra só ~52% da altura, sem telhado. */
@@ -24,6 +27,8 @@ export interface MassPartsOptions {
   interiors?: boolean;
   /** Usa as coberturas do v1 (retângulo envolvente) em vez do esqueleto reto. */
   legacyRoofs?: boolean;
+  /** Onde procurar os estilos (padrão: só os incluídos). */
+  styles?: StyleResolver;
 }
 
 /** Abertura já resolvida no plano da aresta (u = centro / comprimento). */
@@ -36,12 +41,17 @@ export interface EdgeOpening {
   arch: boolean;
   storey: number;
   openingId?: string;
+  balcony?: boolean;
+  brise?: boolean;
+  shutters?: boolean;
 }
 
 const STONE = '#c8c3b7';
 const GLASS = '#34454c';
 const GREEN = '#687e59';
 const LINING: MaterialKey = { role: 'wall', color: '#ebe6dc', roughness: 0.9 };
+
+const defaultStyles = styleResolver();
 
 const mat = (role: MaterialKey['role'], color: string, roughness = 0.8, extra: Partial<MaterialKey> = {}): MaterialKey => ({ role, color, roughness, ...extra });
 
@@ -63,11 +73,18 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
     holes = m.holes.map(ringPoints);
   const dataOf = (extra: Partial<PartData>): PartData => ({ buildingId: b.id, massId: m.id, part: 'wall', ...extra });
 
-  const wallMat = mat('wall', m.finish.wall, 0.83, { doubleSide: true }),
-    frameMat = mat('frame', m.finish.trim, 0.6),
+  const styleId = m.style ?? b.styleRef;
+  const pack = styleId ? (opts.styles ?? defaultStyles)(styleId) : undefined;
+  const tex = (sm: StyleMaterial | undefined): Partial<MaterialKey> =>
+    sm?.texture ? { texture: sm.texture, textureScale: sm.scale ?? 1, ...(sm.metalness !== undefined ? { metalness: sm.metalness } : {}) } : {};
+  const wallTex = tex(pack?.materials.wall);
+  const wallMat = mat('wall', m.finish.wall, pack?.materials.wall.roughness ?? 0.83, { doubleSide: true, ...wallTex }),
+    // Caixas (platibanda) não recebem textura: as UVs delas não estão em metros.
+    wallBoxMat = mat('wall', m.finish.wall, 0.83, { doubleSide: true }),
+    frameMat = mat('frame', m.finish.trim, pack?.materials.trim.roughness ?? 0.6, pack?.materials.trim.metalness ? { metalness: pack.materials.trim.metalness } : {}),
     glassMat = mat('glass', GLASS, 0.22, { metalness: 0.28 }),
-    stoneMat = mat('stone', STONE),
-    roofMat = mat('roof', m.roof.color, 0.8, { doubleSide: true }),
+    stoneMat = mat('stone', pack?.materials.stone?.color ?? STONE),
+    roofMat = mat('roof', m.roof.color, pack?.materials.roof?.roughness ?? 0.8, { doubleSide: true, ...tex(pack?.materials.roof) }),
     greenMat = mat('green', GREEN);
 
   const addBox = (material: MaterialKey, size: Vec3, pos: Vec3, angle = 0, data: PartData, roll = 0) => {
@@ -96,6 +113,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
   }
   const storeyIndex = new Map(storeys.map((s, i) => [s.id, i]));
 
+  const groundFloor = sortedStoreys(b)[0]?.id === m.fromStorey;
   const lining = opts.interiors !== false && (opts.cutY !== undefined || b.stairs.length > 0 || b.storeys.some((st) => st.graph.walls.length > 0));
   const edges = massEdges(m);
   const ringLength = (e: (typeof edges)[number]) => (e.ring === 'outer' ? m.outer.vertices.length : m.holes[e.ring]!.vertices.length);
@@ -114,9 +132,39 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
     const place = (s: number, y: number, outward = 0): Vec3 => [a[0] + tx * s + nx * outward, y, a[1] + tz * s + nz * outward];
     const tag = dataOf({ edgeId: e.id, part: 'wall' });
 
-    // Aberturas: desenhadas (manual) ou ritmo automático.
+    // Aberturas: desenhadas (manual), pelo estilo ou ritmo automático.
     let openings: EdgeOpening[] = [];
-    if (cfg.manual) {
+    const styled = pack && !cfg.manual && m.edges[e.id]?.pattern === undefined ? styleFacade(pack, len, rel, visibleHeight, { groundFloor, pitchedRoof: m.roof.kind !== 'flat' }) : null;
+    if (styled) {
+      openings = styled.openings.map((o) => ({ u: o.s / len, y: o.y, w: o.w, h: o.h, kind: o.kind, arch: o.arch, storey: o.storey, balcony: o.balcony, brise: o.brise, shutters: o.shutters }));
+      const ornMat = (k: 'trim' | 'stone' | 'wall') => (k === 'trim' ? frameMat : k === 'stone' ? stoneMat : wallBoxMat);
+      for (const or of styled.ornaments) {
+        const d = or.depth,
+          h = or.y1 - or.y0;
+        if (h <= 0.01) continue;
+        if (or.kind === 'module') {
+          const mod = pack!.modules?.[or.module!];
+          if (mod) out.modules.push({ url: mod.url, size: [or.s1 - or.s0, h, mod.size[2]], pos: place((or.s0 + or.s1) / 2, base + (or.y0 + or.y1) / 2, 0.085 + mod.size[2] / 2), angle: ang, data: dataOf({ edgeId: e.id, part: 'module', storey: or.storey }) });
+          continue;
+        }
+        const segs: [number, number][] = [[or.s0, or.s1]];
+        if (or.kind === 'plinth') {
+          // O embasamento contorna portas e vitrines do térreo.
+          for (const o of openings) {
+            if (o.y > or.y1) continue;
+            const l = o.u * len - o.w / 2 - 0.05,
+              r = o.u * len + o.w / 2 + 0.05;
+            for (let i = segs.length - 1; i >= 0; i--) {
+              const [a0, a1] = segs[i]!;
+              if (r <= a0 || l >= a1) continue;
+              segs.splice(i, 1, ...([[a0, l], [r, a1]] as [number, number][]).filter(([x, y]) => y - x > 0.05));
+            }
+          }
+        }
+        const ext = or.kind === 'band' ? 0.02 : 0;
+        for (const [s0, s1] of segs) addBox(ornMat(or.material), [s1 - s0 + ext * 2, h, d + 0.02], place((s0 + s1) / 2, or.y0 + h / 2, 0.085 + d / 2 - 0.01), ang, tag);
+      }
+    } else if (cfg.manual) {
       openings = (manualByEdge.get(e.id) ?? []).map((o) => {
         const si = storeyIndex.get(o.storeyId) ?? 0;
         return { u: o.offset / len, y: rel[si]!.y0 + o.sill, w: o.width, h: o.height, kind: o.fill.type, arch: !!o.fill.arch, storey: si, openingId: o.id };
@@ -150,7 +198,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
 
     const firstHeight = rel[0]!.h;
     const wallBottom = m.flags.pilotis ? Math.min(firstHeight, visibleHeight) : 0;
-    const faceWallMat = cfg.wall !== m.finish.wall ? mat('wall', cfg.wall, 0.83, { doubleSide: true }) : wallMat;
+    const faceWallMat = cfg.wall !== m.finish.wall ? mat('wall', cfg.wall, wallMat.roughness, { doubleSide: true, ...wallTex }) : wallMat;
     const faceFrameMat = cfg.trim !== m.finish.trim ? mat('frame', cfg.trim, 0.6) : frameMat;
     const wallHoles: WallHole[] = [];
     const occupied: [number, number, number, number][] = [];
@@ -186,7 +234,16 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
         addBox(faceFrameMat, [frame, h, 0.14], place(right, y + h / 2, 0.01), ang, data);
       }
       if (w > 1.1 && o.kind !== 'void') addBox(faceFrameMat, [0.045, h, 0.095], place(sx, y + h / 2, 0.055), ang, data);
-      if (cfg.balconies && y > firstHeight * 0.85 && isOuter) {
+      if (o.shutters && o.kind === 'window' && isOuter) {
+        const sw = Math.min(w / 2, 0.6);
+        for (const side of [-1, 1]) {
+          const cx = sx + side * (w / 2 + 0.07 + sw / 2);
+          if (cx - sw / 2 < 0.05 || cx + sw / 2 > len - 0.05) continue;
+          addBox(faceFrameMat, [sw, h, 0.04], place(cx, y + h / 2, 0.11), ang, data);
+          for (let k = 1; k < 6; k++) addBox(faceFrameMat, [sw - 0.06, 0.025, 0.05], place(cx, y + (h * k) / 6, 0.12), ang, data);
+        }
+      }
+      if ((cfg.balconies || o.balcony) && y > firstHeight * 0.85 && isOuter) {
         const by = rel[storeyAt(rel, y)]!.y0 + 0.17;
         addBox(stoneMat, [Math.min(w + 0.5, len - 0.1), 0.15, 1.05], place(sx, by, 0.5), ang, tag);
         addBox(frameMat, [w + 0.4, 0.04, 0.035], place(sx, by + 0.95, 1), ang, tag);
@@ -194,7 +251,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
         addBox(frameMat, [0.025, 0.95, 1.05], place(sx - w / 2 - 0.18, by + 0.48, 0.5), ang, tag);
         addBox(frameMat, [0.025, 0.95, 1.05], place(sx + w / 2 + 0.18, by + 0.48, 0.5), ang, tag);
       }
-      if (cfg.brise) for (let k = 0; k < 4; k++) addBox(stoneMat, [w + 0.2, 0.06, 0.38], place(sx, top - 0.16 - k * 0.22, 0.24), ang, tag);
+      if (cfg.brise || o.brise) for (let k = 0; k < 4; k++) addBox(stoneMat, [w + 0.2, 0.06, 0.38], place(sx, top - 0.16 - k * 0.22, 0.24), ang, tag);
     }
 
     out.walls.push({
@@ -226,7 +283,7 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
         addBox(stoneMat, [len + 0.04, 0.12, 0.25], place(len / 2, y - 0.1, 0.08), ang, tag);
       }
     if (!section && m.roof.kind === 'flat') {
-      addBox(wallMat, [len, 0.45, 0.19], place(len / 2, height + 0.31, 0), ang, tag);
+      addBox(wallBoxMat, [len, 0.45, 0.19], place(len / 2, height + 0.31, 0), ang, tag);
       addBox(stoneMat, [len + 0.02, 0.08, 0.28], place(len / 2, height + 0.58, 0), ang, tag);
     }
   }

@@ -65,6 +65,26 @@ import { skeletonRoof, straightSkeleton } from 'forma';
 const { roof, gables } = skeletonRoof(outer, holes, { kind: 'gable', top: 9.6, height: 2.5, overhang: 0.5 });
 ```
 
+### Estilos
+
+Um estilo é um arquivo JSON (`forma-style/1`) com:
+- **materiais** (cor, aspereza, textura procedural em escala real: tijolo, reboco, pedra, concreto, telha, madeira, metal);
+- **regras de fachada por pavimento** (térreo, tipo, último e exceções por índice);
+- embasamento, cobertura e detalhes;
+- **módulos glTF** opcionais.
+
+A fachada de cada pavimento é dividida como no `split` do CityEngine: tamanho absoluto (`2.5`), relativo (`"'0.2"`), flutuante (`"~1.4"`) e um grupo `repeat`. Cada pedaço vira parede, janela, porta, vitrine, pilastra ou módulo.
+
+São seis estilos incluídos: Colonial brasileiro, Moderno, Art déco, Galpão industrial, Comercial com lojas e Torre envidraçada. Um exemplo de estilo próprio com módulo glTF está em `test/fixtures/styles/ornamentado.json`.
+
+```ts
+editor.addStyle(meuEstilo); // valida e guarda no projeto (project.styles)
+editor.applyStyle('builtin:colonial'); // na seleção; sem seleção, vale para os próximos volumes
+validateStylePack(json); // lista de erros em português (vazia = válido)
+```
+
+Na interface, a aba **Estilos** aplica com um clique. No modo avançado ela também importa e exporta arquivos de estilo. Faces com ajuste próprio e aberturas desenhadas à mão continuam valendo por cima do estilo.
+
 ## Formato do projeto (`forma/2`)
 
 Lote → Edifício → Pavimentos → Massas → Aberturas. Unidades em metros, Y para cima, planta em `[x, z]`.

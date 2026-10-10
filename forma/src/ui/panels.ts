@@ -29,6 +29,8 @@ export interface VolumeView {
   roofColor: string;
   roofHeight: number;
   roofOverhang: number;
+  /** ID do estilo aplicado (ou indefinido). */
+  style?: string;
   /** Direção da cumeeira (graus) ou indefinida (automática). */
   roofDirection?: number;
 }
@@ -39,6 +41,8 @@ export interface Defaults {
   floors: number;
   color: string;
   roof: string;
+  /** Estilo dos próximos volumes. */
+  style?: string;
   width?: number;
   depth?: number;
 }
@@ -59,6 +63,16 @@ export interface PanelState {
   repeatSpace: number;
   /** Lote selecionado (sem edifício selecionado) e seus índices. */
   lot: { lot: Lot; indices: LotIndices | null } | null;
+  /** Estilos disponíveis (incluídos + do projeto). */
+  styles: StyleCard[];
+}
+
+export interface StyleCard {
+  id: string;
+  name: string;
+  description: string;
+  colors: string[];
+  own: boolean;
 }
 
 export const PALETTES: [string, string][] = [
@@ -122,6 +136,7 @@ export function shelfHTML(s: PanelState): string {
     d = s.defaults;
   let html = '';
   if (s.tab === 'lot') return lotShelfHTML(s);
+  if (s.tab === 'styles') return stylesShelfHTML(s);
   if (s.tab === 'volumes') {
     const shapes: [string, string, string][] = [['rect', 'rect', 'Retângulo'], ['l', 'l', 'L'], ['u', 'u', 'U'], ['circle', 'circle', 'Circular'], ['polygon', 'polygon', 'Livre']];
     html += group(
@@ -340,4 +355,21 @@ export function stairInspectorHTML(st: { width: number; from: string; to: string
   return `<div class="inspector-title"><span class="inspector-heading">Escada</span><button data-interior="delete-stair" data-icon="trash" title="Excluir escada" aria-label="Excluir escada"></button></div>
 <div class="inspector-body"><div class="row"><label>Largura</label><b>${fmt(st.width, 2)} m</b></div><div class="row"><label>De</label><b>${escapeHTML(st.from)}</b></div><div class="row"><label>Até</label><b>${escapeHTML(st.to)}</b></div></div>
 <div class="inspector-foot"><span>Escada</span></div>`;
+}
+
+export function stylesShelfHTML(s: PanelState): string {
+  const current = s.view ? (s.view.style ?? '') : (s.defaults.style ?? '');
+  const card = (id: string, name: string, desc: string, colors: string[]) =>
+    `<button class="style-card ${current === id ? 'active' : ''}" data-style="${escapeHTML(id) || 'none'}" title="${escapeHTML(desc)}"><span class="style-chips">${colors.map((c) => `<i style="background:${escapeHTML(c)}"></i>`).join('')}</span><span class="style-name">${escapeHTML(name)}</span></button>`;
+  const target = s.view ? (s.selectedCount > 1 ? `${s.selectedCount} volumes selecionados` : 'Volume selecionado') : 'Próximos volumes';
+  let html = group(
+    `Estilo · ${target}`,
+    `<div class="style-grid">${card('', 'Sem estilo', 'Fachada pelo ritmo automático e cores livres.', ['#8a8f91'])}${s.styles.map((st) => card(st.id, st.name, st.description, st.colors)).join('')}</div>`,
+  );
+  html += group(
+    'Arquivo de estilo',
+    `<div class="field-col"><button data-action="style-import" class="action-tool" data-icon="open">Importar estilo</button><button data-action="style-export" class="action-tool" data-icon="export" ${current ? '' : 'disabled'}>Exportar estilo</button></div>`,
+    true,
+  );
+  return html;
 }

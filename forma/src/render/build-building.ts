@@ -65,6 +65,34 @@ function wallGeometry(w: WallPart): THREE.BufferGeometry {
   return new THREE.ExtrudeGeometry(shape, { depth: w.depth, bevelEnabled: false, curveSegments: 10 });
 }
 
+/**
+ * UVs em metros para malhas livres (telhados, empenas): cada triângulo é
+ * projetado no próprio plano, com u ao longo da horizontal do plano. Triângulos
+ * do mesmo plano usam a mesma base, então a textura continua sem emendas.
+ */
+function metricUVs(pos: number[]): number[] {
+  const uv: number[] = [];
+  const a = new THREE.Vector3(),
+    b = new THREE.Vector3(),
+    c = new THREE.Vector3(),
+    n = new THREE.Vector3(),
+    t = new THREE.Vector3(),
+    s = new THREE.Vector3();
+  for (let i = 0; i + 8 < pos.length; i += 9) {
+    a.fromArray(pos, i);
+    b.fromArray(pos, i + 3);
+    c.fromArray(pos, i + 6);
+    n.subVectors(b, a).cross(s.subVectors(c, a)).normalize();
+    if (n.y < 0) n.negate();
+    t.crossVectors(Y, n);
+    if (t.lengthSq() < 1e-8) t.set(1, 0, 0);
+    t.normalize();
+    s.crossVectors(n, t).normalize();
+    for (const p of [a, b, c]) uv.push(p.dot(t), p.dot(s));
+  }
+  return uv;
+}
+
 const Y = new THREE.Vector3(0, 1, 0),
   Z = new THREE.Vector3(0, 0, 1);
 
@@ -113,9 +141,29 @@ export function buildBuilding(b: Building, opts: BuildOptions = {}): BuiltBuildi
   for (const r of parts.meshes) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(r.positions, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(metricUVs(r.positions), 2));
     g.computeVertexNormals();
     created.push(g);
     add(new THREE.Mesh(g, ctx.material(r.mat)), r.data);
+  }
+
+  // Módulos glTF: uma InstancedMesh por malha do módulo; caixa provisória enquanto carrega.
+  const byUrl = new Map<string, typeof parts.modules>();
+  for (const p of parts.modules) byUrl.set(p.url, [...(byUrl.get(p.url) ?? []), p]);
+  const mq = new THREE.Quaternion();
+  for (const [url, list] of byUrl) {
+    const meshes = ctx.modules.get(url);
+    const place = list.map((p) => new THREE.Matrix4().compose(new THREE.Vector3(...p.pos), mq.setFromAxisAngle(Y, p.angle), new THREE.Vector3(...p.size)));
+    const sources = meshes ?? [{ geometry: ctx.boxGeometry, material: ctx.material({ role: 'frame', color: '#8a8f91', roughness: 0.7 }), matrix: new THREE.Matrix4() }];
+    for (const src of sources) {
+      const mesh = new THREE.InstancedMesh(src.geometry, src.material, list.length);
+      place.forEach((m, i) => mesh.setMatrixAt(i, m.clone().multiply(src.matrix)));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = shadows;
+      mesh.receiveShadow = shadows;
+      mesh.userData = { buildingId: b.id, instances: list.map((p) => p.data), module: url, placeholder: !meshes };
+      group.add(mesh);
+    }
   }
 
   // Caixas repetidas: uma InstancedMesh por material.

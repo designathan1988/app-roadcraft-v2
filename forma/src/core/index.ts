@@ -26,3 +26,4 @@ export function loadProject(raw: unknown, limits: Partial<Limits> = {}): Project
 export function emptyProject(name = 'Projeto sem título'): Project {
   return { schema: SCHEMA, name, lots: [], buildings: [], styles: [], meta: { createdWith: 'forma 2' } };
 }
+export * from '../styles';

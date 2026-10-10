@@ -1,5 +1,6 @@
 // Validação do esquema forma/2: tipos, faixas e integridade das referências.
 // Lança Error com mensagem em português na primeira inconsistência.
+import { validateStylePack, type StylePack } from '../styles/schema';
 import type { Building, Limits, Lot, Mass, Project, Ring } from './schema';
 import { DEFAULT_LIMITS, SCHEMA } from './schema';
 import { validPolygon, type PolygonLimits } from '../geometry/polygon';
@@ -61,6 +62,7 @@ function checkRing(c: Check, r: unknown, name: string, ids: Set<string>, l: Limi
 function checkMass(c: Check, m: Mass, storeyIds: Set<string>, l: Limits): void {
   c.str(m.id, 'ID da massa');
   c.str(m.name, 'Nome da massa', 60);
+  if (m.style !== undefined) c.str(m.style, 'Estilo da massa', 60);
   const vids = new Set<string>();
   checkRing(c, m.outer, 'Base', vids, l);
   c.arr(m.holes, 'Pátios', l.maxHoles).forEach((h, i) => checkRing(c, h, `Pátio ${i + 1}`, vids, l));
@@ -99,6 +101,7 @@ function checkBuilding(b: Building, lotIds: Set<string>, l: Limits): void {
   c.num(b.position[0], 'Posição x', -l.worldExtent, l.worldExtent);
   c.num(b.position[1], 'Posição z', -l.worldExtent, l.worldExtent);
   c.num(b.rotation, 'Rotação', -3600, 3600);
+  if (b.styleRef !== undefined) c.str(b.styleRef, 'Estilo', 60);
   const storeys = c.arr(b.storeys, 'Pavimentos', l.maxStoreys) as Building['storeys'];
   if (!storeys.length) c.fail('Edifício sem pavimentos.');
   const storeyIds = new Set<string>();
@@ -191,6 +194,7 @@ export function validateProject(raw: unknown, limits: Partial<Limits> = {}): Pro
     if (ids.has(b.id)) c.fail('ID de edifício repetido.');
     ids.add(b.id);
   }
-  c.arr(p.styles, 'Estilos', 200);
+  const styles = c.arr(p.styles, 'Estilos', 200) as StylePack[];
+  for (const st of styles) for (const e of validateStylePack(st).slice(0, 3)) c.fail(`Estilo "${String(st?.name ?? st?.id)}": ${e}`);
   return structuredClone(p);
 }

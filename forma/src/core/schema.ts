@@ -2,6 +2,8 @@
 // Unidades: metros; Y para cima; planta em [x, z]; ângulos em graus.
 // Todos os IDs são strings estáveis (UUID); nunca derivados de coordenadas.
 
+import type { StylePack } from '../styles/schema';
+
 export const SCHEMA = 'forma/2' as const;
 
 export type ID = string;
@@ -12,7 +14,8 @@ export interface Project {
   name: string;
   lots: Lot[];
   buildings: Building[];
-  styles: StyleRef[];
+  /** Estilos próprios do projeto (os incluídos não precisam estar aqui). */
+  styles: StylePack[];
   meta: { createdWith: string; migratedFrom?: 1 };
 }
 
@@ -182,6 +185,8 @@ export interface EdgeOverride {
 export interface Mass {
   id: ID;
   name: string;
+  /** Estilo desta massa (vence o estilo do edifício). */
+  style?: ID;
   /** Coordenadas locais do edifício. Anel externo anti-horário. */
   outer: Ring;
   holes: Ring[];

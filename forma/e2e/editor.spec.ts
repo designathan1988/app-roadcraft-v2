@@ -401,3 +401,63 @@ test('coberturas pelo esqueleto: quatro águas, duas águas com empena, mansarda
   expect((await project(page)).buildings[0].masses[0].roof.direction).toBeUndefined();
   expect(errors).toEqual([]);
 });
+
+test('estilos: aplicar pela aba, próximos volumes, importar com módulo glTF, exportar e desfazer', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  const target = await page.evaluate(() => (globalThis as any).Forma.getProject().buildings.find((b: any) => b.name === 'Ala norte').id);
+  await page.evaluate((id) => (globalThis as any).Forma.editor.selectIds([id]), target);
+  await page.locator('[data-tab="styles"]').click();
+  await expect(page.locator('.style-card')).toHaveCount(7);
+  await page.locator('.style-card[data-style="builtin:colonial"]').click();
+  await expect(page.locator('#toast')).toHaveText('Estilo Colonial brasileiro aplicado.');
+  let b = (await project(page)).buildings.find((x: any) => x.id === target);
+  expect(b.styleRef).toBe('builtin:colonial');
+  expect(b.masses[0].roof.kind).toBe('hip');
+  await page.locator('#undo').click();
+  b = (await project(page)).buildings.find((x: any) => x.id === target);
+  expect(b.styleRef).toBeUndefined();
+  // Sem seleção: estilo dos próximos volumes.
+  await page.evaluate(() => (globalThis as any).Forma.editor.selectIds([]));
+  await page.locator('.style-card[data-style="builtin:industrial"]').click();
+  await expect(page.locator('#toast')).toHaveText('Próximos volumes no estilo Galpão industrial.');
+  await page.locator('[data-tab="volumes"]').click();
+  await view(page, [40, 0, 40], 40);
+  await page.keyboard.press('b');
+  const c = await screen(page, 40, 0, 40);
+  await page.mouse.click(c.x, c.y);
+  const p = await project(page);
+  expect(p.buildings.at(-1).styleRef).toBe('builtin:industrial');
+  // Importar estilo próprio com módulo glTF (data URI) e aplicar ao novo volume.
+  await page.locator('[data-tab="styles"]').click();
+  await page.locator('#style-input').setInputFiles(fixture('../styles/ornamentado'));
+  await expect(page.locator('#toast')).toHaveText('Estilo Ornamentado (módulos) importado.');
+  await expect(page.locator('.style-card')).toHaveCount(8);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const ed = (globalThis as any).Forma.editor;
+        const nb = ed.getProject().buildings.at(-1);
+        let n = 0;
+        ed.scene.built.get(nb.id).group.traverse((o: any) => {
+          if (o.userData.module && !o.userData.placeholder) n += o.count;
+        });
+        return n;
+      }),
+    )
+    .toBeGreaterThan(0);
+  // Estilo inválido: mensagem clara, nada muda.
+  await page.locator('#style-input').setInputFiles({ name: 'ruim.json', mimeType: 'application/json', buffer: Buffer.from('{"schema":"forma-style/1","id":"x","name":"X","materials":{"wall":{"color":"azul"}}}') });
+  await expect(page.locator('#toast')).toContainText('Não foi possível importar o estilo');
+  // Exportar o estilo do volume selecionado.
+  await page.locator('#ui-level').click();
+  await page.locator('[data-tab="styles"]').click();
+  const dl = page.waitForEvent('download');
+  await page.locator('[data-action="style-export"]').click();
+  expect((await dl).suggestedFilename()).toBe('meu-ornamentado.json');
+  // O projeto salvo com estilo próprio reabre válido.
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  expect((await project(page)).styles.map((s: any) => s.id)).toEqual(['meu:ornamentado']);
+  expect(errors).toEqual([]);
+});

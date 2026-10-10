@@ -1,5 +1,6 @@
 // Operações de edição sobre o modelo forma/2 (sem DOM nem three.js).
 // Cada função altera o edifício recebido ou devolve novos edifícios.
+import type { StylePack } from '../styles/schema';
 import type { Building, EdgeOverride, FacadePattern, ID, Mass, Opening, OpeningFillType, Project, RoofKind, Storey, Vec2 } from '../core/schema';
 import { uid } from '../core/ids';
 import { massExtent, sortedStoreys } from '../core/model';
@@ -543,3 +544,26 @@ export function projectStats(p: Project): { buildings: number; builtArea: number
 }
 
 export { edgeLengths };
+
+/** Aplica um pacote de estilo (ou remove, com null) a todas as massas do edifício. */
+export function applyStyle(b: Building, pack: StylePack | null): void {
+  for (const m of b.masses) delete m.style;
+  if (!pack) {
+    delete b.styleRef;
+    return;
+  }
+  b.styleRef = pack.id;
+  for (const m of b.masses) {
+    m.finish.wall = pack.materials.wall.color;
+    m.finish.trim = pack.materials.trim.color;
+    if (pack.materials.roof) m.roof.color = pack.materials.roof.color;
+    if (pack.roof?.kind) m.roof.kind = pack.roof.kind;
+    if (pack.roof?.height !== undefined) m.roof.height = pack.roof.height;
+    if (pack.roof?.overhang !== undefined) m.roof.overhang = pack.roof.overhang;
+    if (pack.flags) Object.assign(m.flags, pack.flags);
+    // Ajustes de fachada por face dão lugar ao estilo (aberturas desenhadas ficam).
+    for (const o of Object.values(m.edges)) {
+      for (const k of ['pattern', 'windowWidth', 'windowHeight', 'spacing', 'wall', 'trim', 'balconies', 'brise'] as const) delete o[k];
+    }
+  }
+}

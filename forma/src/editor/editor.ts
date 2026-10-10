@@ -1,5 +1,6 @@
 // Editor FORMA 2: estado, seleção, ferramentas, ações, interface e API pública.
 // Portado da lógica do FORMA v1 e adaptado ao modelo forma/2.
+import { allStyles, styleResolver, validateStylePack, type StylePack } from '../styles';
 import * as THREE from 'three';
 import type { Building, FacadePattern, ID, Limits, Lot, LotRules, Project, RoofKind, Storey, Vec2 } from '../core/schema';
 import * as iops from './interior-ops';
@@ -154,10 +155,13 @@ export class Editor {
     this.bindCanvas();
     if (this.shell) this.bindUI();
     this.scene.buildOptionsFor = (b) => {
-      if (this.walk || this.activeStorey?.buildingId !== b.id) return {};
+      const styles = styleResolver(this.project);
+      if (this.walk || this.activeStorey?.buildingId !== b.id) return { styles };
       const s = b.storeys.find((x) => x.id === this.activeStorey!.storeyId);
-      return s ? { cutY: s.elevation + s.height - 0.02 } : {};
+      return s ? { styles, cutY: s.elevation + s.height - 0.02 } : { styles };
     };
+    // Módulo glTF de estilo terminou de carregar: refaz quem o usa.
+    this.cleanup.push(this.scene.ctx.modules.onReady((url) => this.scene.rebuild(this.project.buildings, this.project.buildings.filter((b) => this.scene.built.get(b.id)?.parts.modules.some((p) => p.url === url)).map((b) => b.id))));
     this.scene.onViewChange = () => this.renderRoomLabels();
     this.scene.rebuild(this.project.buildings);
     this.scene.buildEnvironment(this.project.buildings, this.project.lots);
@@ -211,6 +215,7 @@ export class Editor {
       roofColor: m.roof.color,
       roofHeight: m.roof.height,
       roofOverhang: m.roof.overhang ?? 0.4,
+      style: m.style ?? b.styleRef,
       roofDirection: m.roof.direction,
     };
   }
@@ -236,6 +241,13 @@ export class Editor {
       repeatCount: this.repeatCount,
       repeatSpace: this.repeatSpace,
       lot: !b && this.selectedLot && this.lotById(this.selectedLot) ? { lot: this.lotById(this.selectedLot)!, indices: this.lotIndices.get(this.selectedLot) ?? null } : null,
+      styles: allStyles(this.project).map((st) => ({
+        id: st.id,
+        name: st.name,
+        description: st.description ?? '',
+        colors: [st.materials.wall.color, st.materials.trim.color, st.materials.roof?.color ?? st.materials.stone?.color ?? st.materials.wall.color],
+        own: !st.id.startsWith('builtin:'),
+      })),
     };
   }
 
@@ -500,6 +512,15 @@ export class Editor {
     this.$<HTMLButtonElement>('#redo').disabled = !this.history.canRedo;
     this.$$('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === this.mode));
     this.$$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === this.tab));
+    // Em telas estreitas a faixa de abas rola: mantém a aba ativa à vista.
+    const activeTab = this.$$('[data-tab]').find((b) => b.dataset.tab === this.tab);
+    const strip = activeTab?.parentElement;
+    if (activeTab && strip && strip.scrollWidth > strip.clientWidth) {
+      const l = activeTab.offsetLeft - strip.offsetLeft,
+        r = l + activeTab.offsetWidth;
+      if (l < strip.scrollLeft) strip.scrollLeft = l - 8;
+      else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth + 8;
+    }
     this.renderStoreyBar();
   }
 
@@ -831,6 +852,8 @@ export class Editor {
 
   private doAction(action: string): void {
     const b = this.selectedBuilding();
+    if (action === 'style-import') return this.$<HTMLInputElement>('#style-input').click();
+    if (action === 'style-export') return this.exportStyle();
     if (action === 'section') {
       this.scene.section = !this.scene.section;
       if (this.shell) this.$('#section-toggle').classList.toggle('active', this.scene.section);
@@ -925,7 +948,14 @@ export class Editor {
     const pts = clean(input.points);
     if (!validPolygon(pts)) return this.toast('A base se cruza ou é pequena demais.');
     const name = 'Volume ' + String(this.project.buildings.length + 1).padStart(2, '0');
-    this.addBuildings([ops.newBuilding({ ...input, name })], 'Volume criado. Puxe a alça superior para ajustar a altura.');
+    const nb = ops.newBuilding({ ...input, name });
+    const pack = this.defaults.style ? styleResolver(this.project)(this.defaults.style) : undefined;
+    if (pack) {
+      ops.applyStyle(nb, pack);
+      // A cobertura escolhida para os próximos volumes vence a do estilo, se o usuário mudou.
+      if (input.roof && input.roof !== 'flat') for (const m of nb.masses) m.roof.kind = input.roof;
+    }
+    this.addBuildings([nb], 'Volume criado. Puxe a alça superior para ajustar a altura.');
   }
 
   // ── Exportação ──────────────────────────────────────────────────────
@@ -1035,6 +1065,7 @@ export class Editor {
       } else if (d.action) this.doAction(d.action);
       else if (d.select) this.select(d.select, null, e.ctrlKey || e.metaKey);
       else if (d.color) this.applyProperty('color', d.color);
+      else if (d.style) this.applyStyle(d.style === 'none' ? '' : d.style);
       else if (d.roof) {
         this.defaults.roof = d.roof;
         this.applyProperty('roof', d.roof);
@@ -1088,6 +1119,7 @@ export class Editor {
       if (el.id === 'repeat-count') this.repeatCount = Math.round(clamp(Number(el.value), 1, 12));
       else if (el.id === 'repeat-space') this.repeatSpace = clamp(Number(el.value), 0, 30);
       else if (el.id === 'file-input') void this.openFile(el);
+      else if (el.id === 'style-input') void this.importStyle(el);
       else if (el.dataset.lotprop) this.applyLotProp(el.dataset.lotprop, el.value);
       else if (el.dataset.interiorprop === 'wallThickness') this.wallThickness = clamp(Number(el.value) || 0.12, 0.05, 1);
       else if (el.dataset.interiorprop === 'stairWidth') this.stairWidth = clamp(Number(el.value) || 1.1, 0.6, 3);
@@ -1120,6 +1152,65 @@ export class Editor {
       if (e.target === this.$('#modal-backdrop')) this.closeModal();
     });
     this.listen(app.ownerDocument, 'keydown', (e: KeyboardEvent) => this.onKey(e));
+  }
+
+  // ── Estilos ─────────────────────────────────────────────────────────
+  /** Aplica o estilo à seleção; sem seleção, vale para os próximos volumes. */
+  applyStyle(id: string): void {
+    const pack = id ? (styleResolver(this.project)(id) ?? null) : null;
+    if (id && !pack) return this.toast('Estilo não encontrado.');
+    if (!this.selected.size) {
+      this.defaults.style = id || undefined;
+      this.renderShelf();
+      return this.toast(pack ? `Próximos volumes no estilo ${pack.name}.` : 'Próximos volumes sem estilo.');
+    }
+    this.mutate((n) => ops.applyStyle(n, pack), pack ? `Estilo ${pack.name} aplicado.` : 'Estilo removido.');
+  }
+
+  /** Registra (ou substitui) um estilo próprio no projeto. Devolve os erros de validação. */
+  addStyle(pack: StylePack): string[] {
+    const errors = validateStylePack(pack);
+    if (!errors.length && pack.id.startsWith('builtin:')) errors.push('O ID "builtin:" é reservado aos estilos incluídos.');
+    if (errors.length) return errors;
+    this.project.styles = [...this.project.styles.filter((s) => s.id !== pack.id), structuredClone(pack)];
+    this.rebuild();
+    this.commit();
+    return [];
+  }
+
+  private async importStyle(input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      if (file.size > 1e6) throw new Error('estilo maior que 1 MB.');
+      let raw: unknown;
+      try {
+        raw = JSON.parse(await file.text());
+      } catch {
+        throw new Error('o arquivo não é um JSON válido.');
+      }
+      const errors = validateStylePack(raw);
+      if (errors.length) throw new Error(errors.slice(0, 2).join(' '));
+      const pack = raw as StylePack;
+      if (pack.id.startsWith('builtin:')) throw new Error('o ID "builtin:" é reservado aos estilos incluídos.');
+      this.project.styles = [...this.project.styles.filter((s) => s.id !== pack.id), pack];
+      if (this.selected.size) for (const b of this.selectedList()) ops.applyStyle(b, pack);
+      else this.defaults.style = pack.id;
+      this.rebuild();
+      this.commit(`Estilo ${pack.name} importado.`);
+    } catch (err) {
+      this.toast('Não foi possível importar o estilo: ' + (err as Error).message);
+    }
+  }
+
+  private exportStyle(): void {
+    const b = this.selectedBuilding();
+    const id = b ? (ops.mainMass(b).style ?? b.styleRef) : this.defaults.style;
+    const pack = id ? styleResolver(this.project)(id) : undefined;
+    if (!pack) return this.toast('Escolha um estilo para exportar.');
+    download(JSON.stringify(pack, null, 2), pack.id.replace(/[^\w.-]+/g, '-') + '.json', 'application/json');
+    this.toast(`Estilo ${pack.name} baixado.`);
   }
 
   private async openFile(input: HTMLInputElement): Promise<void> {
