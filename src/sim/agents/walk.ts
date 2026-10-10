@@ -1449,7 +1449,7 @@ function stepWalkers(w: SimWorld): void {
     p.act = { kind: 'fall', from: p.age, until: p.age + 3 + ((personHash(p.id) >> 3) & 3), faceX: p.x - Math.cos(p.heading), faceY: p.y - Math.sin(p.heading) };
     p.v = 0;
   }
-  const others: { along: number; lat: number; oncoming: boolean; r: number; waitFor?: Zebra | null }[] = [];
+  const others: { along: number; lat: number; oncoming: boolean; r: number; waitFor?: Zebra | null; facing?: boolean }[] = [];
   // The cars off the road: solid to a walker as a person is (the body three
   // discs along its length, half its width round: a walker's own body is the
   // margin, so a car in the road by the kerb does not close the kerb-side
@@ -1608,8 +1608,9 @@ function stepWalkers(w: SimWorld): void {
         const along = rx * f.tx + ry * f.ty;
         if (along <= 0 || along > LOOK) return false;
         const lat = p.d - rx * f.ty + ry * f.tx;
-        const oncoming = q.v > MOVING && Math.cos(q.heading) * f.tx + Math.sin(q.heading) * f.ty < -0.3;
-        others.push({ along, lat, oncoming, r: SHOULDERS - BODY, waitFor: q.v < MOVING ? q.waiting : null });
+        const facing = Math.cos(q.heading) * f.tx + Math.sin(q.heading) * f.ty < -0.3;
+        const oncoming = q.v > MOVING && facing;
+        others.push({ along, lat, oncoming, r: SHOULDERS - BODY, waitFor: q.v < MOVING ? q.waiting : null, facing });
         return false;
       };
       grid.someNear(p.x, p.y, 1, see);
@@ -1754,7 +1755,23 @@ function stepWalkers(w: SimWorld): void {
     const crossing = crossingOf(w, st.way) !== null;
     // Jammed from the moment it has been held too long, until it is off this
     // step or the way ahead is clear (`Walker.jammedOn`).
-    if (p.held > (st.lot ? JAM_AFTER_NARROW : crossing ? JAM_AFTER_CROSSING : JAM_AFTER)) p.jammedOn = p.leg;
+    // Nose to nose: the nearest body in its own stripe faces it, standing as
+    // it stands (a moving one is `oncoming` and the stripes sort them out).
+    // Two people meeting so stood until the jam rule's 20 s - each the other's
+    // only way - at a busy corner, between the queue for a zebra and the
+    // stripe kept for those coming the other way (busy-crossroads, P101).
+    // They squeeze past each other slowly at once, as SUMO has two people
+    // do where only one fits abreast (`jamtime.narrow`, JAM_AFTER_NARROW).
+    const noseToNose = ((): boolean => {
+      // As far ahead as a queue is read (`queuedFor`): the one it stops for.
+      let gap = KEEP + QUEUE_GAP, near: (typeof others)[number] | null = null;
+      for (const o of others) {
+        if (Math.abs(o.lat - p.d) >= BODY + o.r) continue;
+        if (o.along < gap) { gap = o.along; near = o; }
+      }
+      return !!near?.facing && !near.oncoming && near.waitFor == null;
+    })();
+    if (p.held > (st.lot || noseToNose ? JAM_AFTER_NARROW : crossing ? JAM_AFTER_CROSSING : JAM_AFTER)) p.jammedOn = p.leg;
     else if (p.jammedOn !== undefined && (p.jammedOn !== p.leg || free(p.d) > KEEP)) p.jammedOn = undefined;
     const jammed = p.jammedOn === p.leg;
     // A leg lost: a hobble; both: no walking at all.
@@ -1800,7 +1817,11 @@ function stepWalkers(w: SimWorld): void {
       if (back < 0) { mx -= hx * back; my -= hy * back; }
       p.x += mx;
       p.y += my;
-      if (Math.abs(ls) > m(0.05)) p.held = 0;
+      // Stepping aside is moving: but by the step really taken. With all of
+      // it against the body (a turn across a corner), none was taken and
+      // the walker stood, yet was never counted as held - so never let
+      // through as jammed: 10 s on the end of a zebra (mixed-lanes, P101).
+      if (hypot(mx, my) > m(0.05) * dt) p.held = 0;
     }
 
     // --- where that left it on its route; on to the next step past the end of this one.

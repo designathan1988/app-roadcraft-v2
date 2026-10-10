@@ -166,8 +166,12 @@ o jogo a cada edição.
   `stoppedForWalker`, `shortLinkBox.spec`); o motor de caminhada passou a
   embarcar e desembarcar gente nas paradas no meio-fio (`walk.ts` `hailable`,
   `board`, `alight`, vazios desde 5/10; quem desce sai sobre a calçada,
-  `kerbStops.spec`). `tests/sim`: 168 de 171; as 3 que restam são o P101
-  (pedestre cara a cara numa esquina; ver PROBLEMAS). Visto no jogo (5173):
+  `kerbStops.spec`). Pedestres (P101): cara a cara na mesma faixa passam
+  devagar na hora (`noseToNose`, o `jamtime.narrow` do SUMO), e o passo de lado
+  só zera o tempo de preso quando é dado de fato. `tests/sim` 171 de 171, suíte
+  inteira verde (1221); no jogo, 108 pessoas por 40 s, ninguém parado mais de
+  1,2 s fora da espera da zebra. Visto: a faixa de pedestres atravessa o
+  canteiro central gramado sem passagem rebaixada. Visto no jogo (5173):
   um carro deixou o passageiro e ele saiu andando pela calçada. O carro que
   sai de um lote recebe passageiros e tarefa como os outros
   (`lotTraffic.ts`, `assignOccupancy`; antes só o motorista, e numa cidade sem
