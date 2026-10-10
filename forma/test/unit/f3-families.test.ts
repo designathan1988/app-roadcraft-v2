@@ -49,6 +49,18 @@ describe('famílias de componentes', () => {
     }
   });
 
+  it('todo vão com vidro tem cômodo atrás (senão o vidro mostra o fundo do recorte)', () => {
+    for (const f of allFamilies()) {
+      const o = f.opening?.(resolveParams(f));
+      if (!o) continue;
+      const parts = emptyParts3();
+      const p = resolveParams(f);
+      f.build(p, new FrameSink(parts, identity(), 0), { length: f.size(p)[0], reveal: o.depth, index: 0 });
+      const glass = parts.inst.some((i) => i.mat.slot === 'glass') || parts.meshes.some((m) => m.mat.slot === 'glass');
+      if (glass) expect(o.room ?? 0, f.id).toBeGreaterThan(0.5);
+    }
+  });
+
   it('todo tipo incluído aponta para uma família registrada', () => {
     for (const t of BUILTIN_TYPES) expect(family(t.family), t.id).toBeDefined();
   });

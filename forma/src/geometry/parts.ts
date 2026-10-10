@@ -21,6 +21,8 @@ export interface MaterialKey {
   texture?: TextureKind;
   /** Metros por repetição da textura. */
   textureScale?: number;
+  /** Acabamento do FORMA 3 (escolhe o conjunto de texturas PBR). */
+  finish?: string;
 }
 
 /** Dados de seleção ligados a cada peça. */

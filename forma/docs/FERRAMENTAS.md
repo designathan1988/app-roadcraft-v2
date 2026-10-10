@@ -89,3 +89,13 @@ mudança. Nada vira malha solta.
 - SketchUp Tags: https://help.sketchup.com/en/sketchup/controlling-visibility-tags
 - Rhino Layer: https://docs.mcneel.com/rhino/8/help/en-us/commands/layer.htm
 - Revit Visibility/Graphics: https://help.autodesk.com/cloudhelp/2023/ENU/Revit-GetStarted/files/GUID-FB8D0ABE-8521-4EA0-A47E-FF3DEBC403A5.htm
+
+## Fila de pedidos (2026-10-10, nesta ordem)
+
+1. Texturas reais (PBR) e vidro/portas de qualidade sem perder desempenho. (em andamento)
+2. Painel de Materiais: cores e texturas com miniaturas, busca e cor livre; aplicar com o balde em face, área, volume ou peça; pintar sobre os prédios e aplicar imagens (decalques); piso próprio para terraços.
+3. Noite: modo noturno, janelas acesas (por pavimento, aleatórias ou escolhidas), luzes de fachada e postes.
+4. Interiores fáceis: corte de vista por pavimento, paredes internas, portas e janelas internas, lajes, escadas; replicar pavimentos. Modo caminhar dentro (primeira pessoa, abrir portas e janelas, subir escadas).
+5. Objetos de dentro e de fora (móveis, árvores, vegetação, mobiliário urbano) de bibliotecas prontas.
+6. Validações 2 a 5 (prédio com varandas, indústria, curva, irregular com pátio), salvar/abrir/exportar.
+7. Redesenho completo da interface (menos texto, ícones na medida, espaço bem usado).

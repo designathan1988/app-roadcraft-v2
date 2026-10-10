@@ -86,12 +86,19 @@ function inTri(p: Vec2, t: Vec2[]): boolean {
 
 /** O retângulo [s0,s1]×[y0,y1] está todo na parte visível? (amostras em grade). */
 export function fits(r: EdgeRegion, s0: number, s1: number, y0: number, y1: number): boolean {
-  if (s0 < r.bbox.s0 - 1e-6 || s1 > r.bbox.s1 + 1e-6 || y0 < r.bbox.y0 - 1e-6 || y1 > r.bbox.y1 + 1e-6) return false;
-  const nx = Math.max(2, Math.ceil((s1 - s0) / 0.4)),
-    ny = Math.max(2, Math.ceil((y1 - y0) / 0.4));
+  // A casca vem em float32 (3,4 vira 3,4000001): bordas com folga de 2 mm,
+  // senão uma peça que nasce exatamente no topo de outro volume é recusada.
+  const E = 2e-3;
+  if (s0 < r.bbox.s0 - E || s1 > r.bbox.s1 + E || y0 < r.bbox.y0 - E || y1 > r.bbox.y1 + E) return false;
+  const a0 = Math.max(s0, r.bbox.s0) + E,
+    a1 = Math.min(s1, r.bbox.s1) - E,
+    b0 = Math.max(y0, r.bbox.y0) + E,
+    b1 = Math.min(y1, r.bbox.y1) - E;
+  const nx = Math.max(2, Math.ceil((a1 - a0) / 0.4)),
+    ny = Math.max(2, Math.ceil((b1 - b0) / 0.4));
   for (let i = 0; i <= nx; i++)
     for (let j = 0; j <= ny; j++) {
-      const p: Vec2 = [s0 + ((s1 - s0) * i) / nx, y0 + ((y1 - y0) * j) / ny];
+      const p: Vec2 = [a0 + ((a1 - a0) * i) / nx, b0 + ((b1 - b0) * j) / ny];
       if (!r.tris.some((t) => inTri(p, t))) return false;
     }
   return true;
@@ -259,7 +266,10 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
         const blockers = taken
           .filter((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && q.host.y < y + openH / vy + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)
           .map((q) => [q.host!.s - q.length / 2 - GAP, q.host!.s + q.length / 2 + GAP] as [number, number]);
-        const spans = carve(rowIntervals(r, y, y + openH / vy).map(([a, b]) => ({ a: a + rule.margin, b: b - rule.margin })), blockers).filter((q) => q.b - q.a >= w);
+        const raw = rowIntervals(r, y, y + openH / vy);
+        // Fileira coberta por outro volume (embasamento, anexo): nada a fazer, sem aviso.
+        const open = raw.reduce((acc, [a, b]) => acc + (b - a), 0);
+        const spans = carve(raw.map(([a, b]) => ({ a: a + rule.margin, b: b - rule.margin })), blockers).filter((q) => q.b - q.a >= w);
         const total = spans.reduce((acc, q) => acc + (q.b - q.a), 0);
         const centers: number[] = [];
         for (const q of spans) {
@@ -294,7 +304,7 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           out.push(pl);
           taken.push(pl);
         });
-        if (!placed && !yielded && centers.length && r.length > w + 2 * rule.margin) warnings.push(`${base.type.name}: nada coube no nível ${lv.index + 1} do lado de ${r.length.toFixed(1)} m (algo cobre a parede).`);
+        if (!placed && !yielded && centers.length && open >= w + 2 * rule.margin && r.length > w + 2 * rule.margin) warnings.push(`${base.type.name}: nada coube no nível ${lv.index + 1} do lado de ${r.length.toFixed(1)} m (algo cobre a parede).`);
       }
     }
   }

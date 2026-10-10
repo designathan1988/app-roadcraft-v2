@@ -255,7 +255,7 @@ export const BAY_WINDOW: Family = {
   ],
   size: (p) => [num(p, 'width'), num(p, 'height'), num(p, 'depth')],
   sill: (p) => num(p, 'sillH'),
-  opening: (p) => ({ w: num(p, 'width') - 0.1, h: num(p, 'height'), shape: 'rect', depth: 0.3 }),
+  opening: (p) => ({ w: num(p, 'width') - 0.1, h: num(p, 'height'), shape: 'rect', depth: 0.3, room: 1.8 }),
   build(p, out) {
     const w = num(p, 'width'),
       h = num(p, 'height'),

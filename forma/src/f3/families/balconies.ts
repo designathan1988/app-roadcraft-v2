@@ -69,7 +69,7 @@ export const BALCONY: Family = {
   ],
   size: (p) => [Math.max(num(p, 'width'), bool(p, 'withDoor') ? num(p, 'doorWidth') + 0.3 : 0), Math.max(num(p, 'railH'), bool(p, 'withDoor') ? num(p, 'doorHeight') : 0), num(p, 'depth')],
   sill: (p) => num(p, 'sillH'),
-  opening: (p) => (bool(p, 'withDoor') ? { w: Math.min(num(p, 'doorWidth'), num(p, 'width') - 0.2), h: num(p, 'doorHeight'), shape: 'rect', depth: 0.35 } : null),
+  opening: (p) => (bool(p, 'withDoor') ? { w: Math.min(num(p, 'doorWidth'), num(p, 'width') - 0.2), h: num(p, 'doorHeight'), shape: 'rect', depth: 0.35, room: 2.4 } : null),
   build(p, out, ctx) {
     const w = num(p, 'width'),
       d = num(p, 'depth'),

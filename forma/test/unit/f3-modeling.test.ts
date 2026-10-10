@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadKernel } from '../../src/f3/kernel/kernel';
 import { evaluateBuilding } from '../../src/f3/eval/evaluate';
-import { building, circlePlan, facadeRule, planVertices, rectPlan, roofSpec, solid } from '../../src/f3/model/defaults';
+import { building, circlePlan, facadeRule, levelsFor, planVertices, rectPlan, roofSpec, solid } from '../../src/f3/model/defaults';
 import { addBands, extrudeSide, insetSide, insetTop, offsetCopy, offsetPlan, offsetSolid, setSolidSize, splitAtHeight } from '../../src/f3/model/modeling';
 import { sampleRing, signedArea2, oriented } from '../../src/f3/model/plan';
-import { presetRules } from '../../src/f3/model/quick';
+import { podiumUnder, presetRules, setbackOn } from '../../src/f3/model/quick';
 import type { Solid } from '../../src/f3/model/schema';
 
 beforeAll(async () => {
@@ -165,6 +165,31 @@ describe('frisos varridos pelo contorno', () => {
       { id: 'c', name: '2', elevation: 6.4, height: 3 },
     ];
     expect(addBands(b, s, 'floors')).toBe(2);
+  });
+});
+
+describe('recuo no topo', () => {
+  it('não estica o volume de baixo e o recuo nasce no topo dele', () => {
+    const s = box({ height: 18 });
+    const b = building({ solids: [s], levels: levelsFor(6, 3, 3.4) });
+    const n = setbackOn(b, s)!;
+    expect(s.height).toBe(18);
+    expect(n.base).toBe(18);
+    const top = Math.max(...b.levels.map((l) => l.elevation + l.height));
+    expect(top).toBeGreaterThanOrEqual(n.base + n.height - 0.5);
+  });
+});
+
+describe('peça que nasce no topo de outro volume', () => {
+  it('sacada do 2º pavimento logo acima do embasamento cabe (precisão float32)', () => {
+    const s = box({ plan: { outer: rectPlan(8, 8), holes: [] }, height: 9.4 });
+    const b = building({ solids: [s], levels: levelsFor(3, 3, 3.4) });
+    podiumUnder(b, s);
+    s.facade = [facadeRule('balcony-glass', { levels: 'upper', mode: 'max', value: 3.6 })];
+    const ev = evaluateBuilding(b);
+    const lv2 = ev.placements.filter((p) => p.family.category === 'balconies' && Math.abs(p.frame[13]! - 3.4) < 0.01);
+    expect(lv2.length).toBeGreaterThan(0);
+    expect(ev.warnings.filter((w) => w.includes('nada coube'))).toEqual([]);
   });
 });
 

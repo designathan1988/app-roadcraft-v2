@@ -3,6 +3,7 @@
 import type { Building3, FacadeRule, Solid } from './schema';
 import { facadeRule, levelsFor, planVertices, roofSpec, solid, uid } from './defaults';
 import { offsetRing, oriented, ringValid, sampleRing } from './plan';
+import { levelsUpTo } from './modeling';
 
 const levelsSorted = (b: Building3) => [...b.levels].sort((p, q) => p.elevation - q.elevation);
 const topOf = (b: Building3) => {
@@ -44,13 +45,15 @@ export function setbackOn(b: Building3, s: Solid, inset = 2, levels = 1): Solid 
     base: s.base + s.height,
     height: typ * levels,
     roof: structuredClone(s.roof.kind === 'terrace' ? roofSpec('flat') : s.roof),
-    facade: s.facade.map((f) => ({ ...structuredClone(f), id: uid(), edges: [], except: {} })),
+    // O recuo é andar de cima: regras do térreo (portas, lojas) ficam no volume de baixo.
+    facade: s.facade.filter((f) => f.levels !== 'ground').map((f) => ({ ...structuredClone(f), id: uid(), edges: [], except: {} })),
     materials: structuredClone(s.materials),
     plinth: 0,
   });
   s.roof = roofSpec('terrace');
   b.solids.push(n);
-  if (n.base + n.height > topOf(b) + 0.3) changeLevels(b, Math.round((n.base + n.height - topOf(b)) / typ));
+  // Níveis novos sem esticar nada (o volume de baixo continua com a altura dele).
+  levelsUpTo(b, n.base + n.height);
   return n;
 }
 
@@ -122,7 +125,7 @@ export const FACADE_PRESETS: { id: string; name: string; rules: () => FacadeRule
   { id: 'off', name: 'Escritórios', rules: () => [facadeRule('door-glass', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-ribbon', { mode: 'max', value: 5, margin: 0.4 })] },
   { id: 'col', name: 'Colonial', rules: () => [facadeRule('door-arched', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-sash', { mode: 'spacing', value: 2.6 })] },
   { id: 'mod', name: 'Moderna', rules: () => [facadeRule('door-glass', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-tall', { mode: 'spacing', value: 2.2 })] },
-  { id: 'bal', name: 'Com sacadas', rules: () => [facadeRule('door-double', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-casement', { levels: 'ground', mode: 'max', value: 3 }), facadeRule('balcony-glass', { levels: 'upper', mode: 'spacing', value: 4.2 })] },
+  { id: 'bal', name: 'Com sacadas', rules: () => [facadeRule('door-double', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-casement', { levels: 'ground', mode: 'max', value: 3 }), facadeRule('balcony-glass', { levels: 'upper', mode: 'max', value: 3.6 })] },
   { id: 'ind', name: 'Industrial', rules: () => [facadeRule('loading-dock', { levels: 'ground', mode: 'count', value: 1 }), facadeRule('win-industrial', { mode: 'max', value: 4.5 })] },
   { id: 'blank', name: 'Cega (sem aberturas)', rules: () => [] },
 ];

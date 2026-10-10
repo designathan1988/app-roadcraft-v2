@@ -35,12 +35,13 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
     case 'soffit':
     case 'reveal':
       return materialKey(s.materials.trim, 'frame');
+    // Interior visto pela janela: fosco e escuro (a luz do céu não entra inteira).
     case 'roomFloor':
-      return materialKey({ finish: 'wood', color: '#8a6f55' }, 'stone');
+      return { role: 'stone', color: '#4a3b2f', roughness: 1, finish: 'interior' };
     case 'roomCeil':
-      return materialKey({ finish: 'paint', color: '#f1ece3' }, 'stone');
+      return { role: 'stone', color: '#9c968c', roughness: 1, finish: 'interior' };
     case 'roomWall':
-      return materialKey({ finish: 'paint', color: '#ddd3c4' }, 'stone');
+      return { role: 'stone', color: '#7d7568', roughness: 1, finish: 'interior' };
     case 'coping':
     case 'band':
       return materialKey(s.materials.trim, 'stone');

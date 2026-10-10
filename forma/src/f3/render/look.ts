@@ -11,6 +11,7 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { MaterialKey } from '../../geometry/parts';
 import { createRenderContext, type RenderContext } from '../../render/context';
+import { DETAIL_MEAN, disposePbr, pbrFor } from './pbr';
 
 const SKY_VERTEX = `
   varying vec3 vDir;
@@ -174,12 +175,40 @@ export function createLook(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   };
 }
 
-/** Relevo por acabamento (bump a partir da própria textura). */
-const BUMP: Record<string, number> = { brick: 1.6, stone: 1.8, tile: 2.0, concrete: 0.35, plaster: 0.5, wood: 0.9, metal: 1.1 };
+/**
+ * Vidro de janela em uma passada, alfa pré-multiplicado: o reflexo (céu e sol)
+ * soma com força total e o que está atrás é atenuado pelo alfa, que cresce
+ * com o Fresnel (de lado o vidro vira espelho). Opacidade comum apagava o
+ * reflexo junto (three.js #15941).
+ */
+function windowGlass(m: THREE.MeshStandardMaterial, color: string): void {
+  m.color.set(color);
+  m.roughness = 0.04;
+  m.metalness = 0;
+  m.envMapIntensity = 1.6;
+  m.transparent = true;
+  m.depthWrite = false;
+  m.blending = THREE.CustomBlending;
+  m.blendSrc = THREE.OneFactor;
+  m.blendDst = THREE.OneMinusSrcAlphaFactor;
+  m.blendEquation = THREE.AddEquation;
+  m.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      `float glassNv = clamp(dot(geometryNormal, geometryViewDir), 0.0, 1.0);
+       float glassF = pow(1.0 - glassNv, 5.0);
+       float glassA = mix(0.22, 1.0, glassF);
+       gl_FragColor = vec4(totalSpecular + totalDiffuse * glassA, glassA);`,
+    );
+  };
+  m.customProgramCacheKey = () => 'forma-window-glass';
+}
 
 /**
- * Contexto de render com materiais mais ricos: relevo nas texturas, vidro com
- * reflexo do céu, metal com brilho. Mantém a interface do contexto do FORMA.
+ * Contexto de render com materiais ricos: texturas PBR reais (cor, normal,
+ * rugosidade) por acabamento, vidro de janela físico, metal com brilho e
+ * interiores escuros (de dia, um cômodo visto de fora é bem mais escuro que a
+ * fachada; a luz do céu não entra inteira).
  */
 export function createLookContext(): RenderContext {
   const base = createRenderContext();
@@ -189,29 +218,30 @@ export function createLookContext(): RenderContext {
     boxGeometry: base.boxGeometry,
     modules: base.modules,
     material(key: MaterialKey) {
-      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}`;
+      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}`;
       let m = extra.get(id);
       if (m) return m;
       m = base.material(key);
-      if (key.role === 'glass' && key.roughness < 0.1) {
-        // Vidro de janela: translúcido (vê-se o cômodo atrás) e refletindo o céu.
-        m.color.set(key.color);
-        m.roughness = 0.03;
-        m.metalness = 0.1;
-        m.envMapIntensity = 1.4;
-        m.transparent = true;
-        m.opacity = 0.38;
-        m.depthWrite = false;
-      } else if (key.role === 'glass') {
+      const pbr = key.texture && key.finish ? pbrFor(key.finish) : null;
+      if (key.role === 'glass' && key.roughness < 0.1) windowGlass(m, key.color);
+      else if (key.role === 'glass') {
         // Vidro sem nada atrás (cobertura, pele de vidro): opaco e espelhado.
         m.color.set(key.color).multiplyScalar(0.6);
         m.roughness = 0.06;
         m.metalness = 0.7;
         m.envMapIntensity = 1.5;
-      } else if (key.texture && m.map) {
-        m.bumpMap = m.map;
-        m.bumpScale = BUMP[key.texture] ?? 0.6;
-        m.roughness = Math.min(1, key.roughness + 0.04);
+      } else if (key.finish === 'interior') {
+        m.roughness = 1;
+        m.envMapIntensity = 0.12;
+      } else if (pbr) {
+        m.map = pbr.map;
+        m.normalMap = pbr.normalMap;
+        m.normalScale.set(pbr.set.normalScale, pbr.set.normalScale);
+        m.roughnessMap = pbr.roughnessMap;
+        m.roughness = Math.min(1, key.roughness + 0.1);
+        m.bumpMap = null;
+        // O detalhe guardado tem média DETAIL_MEAN: a cor compensa.
+        m.color.set(key.color).multiplyScalar(1 / DETAIL_MEAN);
       }
       if ((key.metalness ?? 0) > 0.3 && key.role !== 'glass') m.envMapIntensity = 1.2;
       m.needsUpdate = true;
@@ -222,6 +252,7 @@ export function createLookContext(): RenderContext {
     dispose() {
       extra.clear();
       base.dispose();
+      disposePbr();
     },
   };
 }

@@ -10,6 +10,7 @@ import { buildShellMesh, type ShellMesh } from '../render/shell';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { RenderContext } from '../../render/context';
 import { createLook, createLookContext, type Look } from '../render/look';
+import { onPbrLoad, setPbrAnisotropy } from '../render/pbr';
 import { buildingHidden, buildingLocked, categoryHidden, itemHidden, itemLocked, solidHidden, solidLocked, visibilityKeys } from '../model/layers';
 import { family } from '../families/index';
 
@@ -42,6 +43,7 @@ export class View {
   readonly root = new THREE.Group();
   readonly overlay = new THREE.Group();
   readonly built = new Map<ID, Built>();
+  private unPbr: () => void = () => undefined;
   readonly target = new THREE.Vector3(0, 3, 0);
   theta = 0.75;
   phi = 1.0;
@@ -63,6 +65,12 @@ export class View {
     this.renderer.domElement.className = 'f3-canvas';
     el.prepend(this.renderer.domElement);
     this.look = createLook(this.renderer, this.scene, this.camera);
+    // Texturas PBR: filtro anisotrópico máximo da placa e redesenho quando chegam.
+    setPbrAnisotropy(Math.min(16, this.renderer.capabilities.getMaxAnisotropy()));
+    this.unPbr = onPbrLoad(() => {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.mark();
+    });
     this.ground = new THREE.Mesh(new THREE.CircleGeometry(900, 64), new THREE.MeshStandardMaterial({ color: '#d8d5ca', roughness: 1 }));
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.position.y = -0.02;
@@ -274,6 +282,7 @@ export class View {
 
   dispose(): void {
     cancelAnimationFrame(this.raf);
+    this.unPbr();
     for (const b of this.built.values()) this.drop(b);
     this.built.clear();
     this.look.dispose();
