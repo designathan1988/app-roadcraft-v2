@@ -6,6 +6,7 @@ import {
   type Material,
   type WebGLProgramParametersWithUniforms,
 } from 'three';
+import { m } from '@world/units';
 
 /**
  * Wind: the one moving thing in a scene of static props.
@@ -109,14 +110,38 @@ function install(shader: WebGLProgramParametersWithUniforms, response: WindRespo
     .replace('#include <project_vertex>', projectWithWind());
 }
 
-/** Makes a material's instances bend in the wind. */
+/**
+ * Foliage the camera has come into fades out, a pixel at a time (Godot's
+ * distance fade "Pixel Dither": a fraction of the pixels drawn, the material
+ * kept opaque and its shadow whole): brought down to the street, the camera
+ * stood inside a crown and the screen was leaves (2026-10-09). Ordered (a
+ * 4x4 Bayer matrix), so it does not crawl from frame to frame. Gone nearer
+ * than `NEAR_FADE[0]`, whole beyond `NEAR_FADE[1]`.
+ */
+const NEAR_FADE = [m(1.5), m(5)] as const;
+const NEAR_FADE_GLSL = /* glsl */ `
+  {
+    float nearFade = clamp((length(vViewPosition) - ${NEAR_FADE[0].toFixed(3)}) / ${(NEAR_FADE[1] - NEAR_FADE[0]).toFixed(3)}, 0.0, 1.0);
+    if (nearFade < 1.0) {
+      ivec2 cell = ivec2(mod(gl_FragCoord.xy, 4.0));
+      int k = cell.x + cell.y * 4;
+      float bayer = float(k == 0 ? 0 : k == 1 ? 8 : k == 2 ? 2 : k == 3 ? 10 : k == 4 ? 12 : k == 5 ? 4 : k == 6 ? 14 : k == 7 ? 6
+        : k == 8 ? 3 : k == 9 ? 11 : k == 10 ? 1 : k == 11 ? 9 : k == 12 ? 15 : k == 13 ? 7 : k == 14 ? 13 : 5) / 16.0 + 1.0 / 32.0;
+      if (nearFade < bayer) discard;
+    }
+  }
+`;
+
+/** Makes a material's instances bend in the wind (and fade where the camera is among them). */
 export function applyWind(material: Material, response: WindResponse, key: string): void {
   const previous = material.onBeforeCompile.bind(material);
   material.onBeforeCompile = (shader, renderer) => {
     previous(shader, renderer);
     install(shader, response);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+${NEAR_FADE_GLSL}`);
   };
-  material.customProgramCacheKey = () => `wind-${key}`;
+  material.customProgramCacheKey = () => `wind-${key}-nearfade`;
 }
 
 /** The shadow-pass twin of a wind material, for `mesh.customDepthMaterial`. */

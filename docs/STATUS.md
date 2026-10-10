@@ -170,8 +170,12 @@ o jogo a cada edição.
   (pedestre cara a cara numa esquina; ver PROBLEMAS). Visto no jogo (5173):
   um carro deixou o passageiro e ele saiu andando pela calçada. Também visto:
   hoje os carros do jogo não levam passageiros, então paradas no meio-fio
-  quase não acontecem; e a câmera na altura da rua entra na copa das árvores
-  (a camada da câmera só conhece prédios).
+  quase não acontecem.
+- Câmera entre as árvores: as folhas a menos de 5 m da câmera somem em
+  pontilhado ordenado (Bayer 4x4, o "Pixel Dither" do distance fade do Godot),
+  o material segue opaco e a sombra inteira (`wind.ts` `NEAR_FADE`, em todo
+  material de copa). Visto no jogo (5173): a câmera levada pela roda através de
+  uma copa mostra a calçada, não uma tela de folhas.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga
