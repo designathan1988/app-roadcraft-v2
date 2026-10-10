@@ -340,6 +340,18 @@ o jogo a cada edição.
   triângulos em vez de ~12 mil; em zoom 1,5, ~1,9 mil em vez de ~6,2 mil.
   Na build de produção a verificação de cada shader fica desligada
   (`checkShaderErrors`, como a documentação do three.js recomenda).
+- Detectores de movimento do pedestre (5a, `tests/sim/walkHeight.spec.ts`):
+  nenhum salto no plano além do passo para a frente e do passo de lado
+  (`SIDESTEP`, até 0,45 m/s mesmo parado, como o `maxYSpeed` do SUMO), nenhum
+  giro mais rápido que `turnV`, `prev` sempre o tique anterior. O passo é
+  desenhado na velocidade real do corpo (`sim/people/view.ts` `gaitSpeed`):
+  antes, quem dava passo de lado parado (15 099 vezes em 4 min) ou andava num
+  caminho de lote com `v` = 0 deslizava na pose parada. Ninguém gira no lugar
+  (`tests/sim/agents/citySpin.spec.ts`, cidade gerada como no jogo, e
+  `lotDoors.spec.ts`): o trecho de lote também termina ao chegar a `THERE` do
+  fim (chegada de Reynolds); um caso visto no jogo durante o crescimento da
+  cidade, não reproduzido depois em 495 s com 300 pessoas. Conferência visual
+  do passo lateral pendente (painel do navegador oculto em 2026-10-10).
 - Depois de mexer em código de pessoas: `npm run cook:people`, à mão, uma vez.
 
 ### Veículos e transporte

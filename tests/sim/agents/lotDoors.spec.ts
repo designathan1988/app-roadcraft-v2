@@ -136,12 +136,24 @@ describe('the scenery uses the gates', () => {
     // Standing still on a lot's path: two meeting in single file pass each other (SUMO's narrow jam, 1 s).
     const standing = new Map<number, number>();
     let longestStand = 0;
+    // Spinning on the spot: the heading round more than a whole turn in 2 s
+    // while the body stays within half a metre (Etapa 5a; a walker circled
+    // the end of a short lot stretch at 4 rad/s, 2026-10-10).
+    const windows = new Map<number, { x: number; y: number; heading: number; t: number }>();
+    const spinning = new Set<number>();
+    let spinDetail = '';
     const ticks = Math.round(150 / DT);
     for (let i = 0; i < ticks; i++) {
       step(sim, { traffic: false, pedestrians: true });
       if (i % 5) continue;
       for (const p of inspectAgentWalkers(sim)) {
         if (p.inside) continue;
+        const w = windows.get(p.id);
+        if (!w || i - w.t >= Math.round(2 / DT)) windows.set(p.id, { x: p.x, y: p.y, heading: p.heading, t: i });
+        else if (Math.abs(p.heading - w.heading) > 2 * Math.PI && Math.hypot(p.x - w.x, p.y - w.y) < m(0.5) && !spinning.has(p.id)) {
+          spinning.add(p.id);
+          spinDetail ||= `walker ${p.id} on a ${p.kind} step at ${p.x.toFixed(1)},${p.y.toFixed(1)}: ${(p.heading - w.heading).toFixed(1)} rad in ${((i - w.t) * DT).toFixed(1)} s`;
+        }
         if (p.fromLot) outOfDoor.add(p.id);
         if (p.toLot) inAtDoor.add(p.id);
         if (p.kind !== 'lot') { standing.delete(p.id); continue; }
@@ -164,6 +176,7 @@ describe('the scenery uses the gates', () => {
     expect(inAtDoor.size).toBeGreaterThan(0);
     expect(lotSeconds).toBeGreaterThan(10);
     expect(longestStand, `longest standing on a lot's path: ${longestStand.toFixed(1)} s`).toBeLessThan(4);
+    expect(spinning.size, spinDetail).toBe(0);
     // A body's centre stays a body's radius from any wall or fence (the pursuit cuts a corner a little).
     expect(worst, `nearest a boundary: ${worst.toFixed(2)}`).toBeGreaterThan(m(0.2));
   }, 300_000);

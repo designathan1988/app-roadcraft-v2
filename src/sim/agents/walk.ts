@@ -60,7 +60,7 @@ const BODY = m(0.27);
 /** Two people this far apart side by side pass each other, u. */
 const SHOULDERS = m(0.5);
 /** Fastest a body steps sideways, u/s. */
-const SIDESTEP = m(0.45);
+export const SIDESTEP = m(0.45);
 /** How far ahead others are looked for. */
 const LOOK = m(8);
 /** Faster than this, somebody is walking (coming the other way, say), u/s. */
@@ -1837,7 +1837,13 @@ function stepWalkers(w: SimWorld): void {
       const next = p.steps[p.leg + 1]!;
       // Onto or off a lot's way only at the turn itself: let on early, the
       // body went for the gate from a step to the side of it.
-      const ahead = p.s >= len - m(0.02) || (!st.lot && !next.lot && p.s > len - AHEAD && project(next, p.x, p.y).s >= 0);
+      // A lot's stretch is also done once the body has ARRIVED at its turn
+      // (within `THERE`, Reynolds' "arrival", GDC 1999): a body a little
+      // aside of a short stretch steered for its end at more than 60°, stood,
+      // turned, and circled it at 4 rad/s, never reaching the end's exact `s`
+      // (in a back yard by a barbecue, 2026-10-10).
+      const arrived = st.lot === true && !!st.b && hypot(st.b.x - p.x, st.b.y - p.y) <= THERE;
+      const ahead = p.s >= len - m(0.02) || arrived || (!st.lot && !next.lot && p.s > len - AHEAD && project(next, p.x, p.y).s >= 0);
       if (!ahead) break;
       p.leg++;
       pr = project(next, p.x, p.y);

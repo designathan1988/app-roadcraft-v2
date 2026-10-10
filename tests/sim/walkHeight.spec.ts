@@ -5,7 +5,8 @@ import { Network } from '@world/network';
 import { SimWorld } from '@sim/world';
 import { step } from '@sim/pipeline';
 import { DT } from '@sim/params';
-import { createAgentWalkEngine } from '@sim/agents/walk';
+import { SIDESTEP, createAgentWalkEngine } from '@sim/agents/walk';
+import { gaitSpeed } from '@sim/people/view';
 import { FOOTWAY_RISE } from '@world/roadTypes';
 import { curbRamps, walkingRise } from '@world/curbRamps';
 import { m } from '@world/units';
@@ -96,5 +97,58 @@ describe('walking height', () => {
     // People stepped between the footways and the zebras, or nothing was tested.
     expect(switches).toBeGreaterThan(15);
     expect(worst, detail).toBeLessThanOrEqual(m(0.01));
+  });
+
+  /**
+   * NOR MOVED OR TURNED FURTHER THAN THEY WALK, NOR GLIDING (Etapa 5a). The
+   * body is drawn between `prev` and the tick's position: a step longer than
+   * the walk forward and the step aside allow is a jump ("like a chess
+   * piece"), a turn faster than `turnV` is a snap. A walker steps aside into
+   * its stripe at up to `SIDESTEP` even stood still, as SUMO's striping does
+   * (`MSPModel_Striping` `maxYSpeed`); the gait is drawn at that real speed
+   * (`gaitSpeed`), or the idle pose glided along - 15 099 times in four
+   * minutes on 2026-10-10.
+   */
+  it('moves and turns every walker no further in a tick than its own speed allows', () => {
+    const sim = city();
+    sim.usePedestrianEngine(createAgentWalkEngine());
+    sim.ambient.enabled = true;
+    sim.ambient.source = 'edges';
+    sim.pedestrianCount = 100;
+    const last = new Map<number, { x: number; y: number; heading: number; v: number; turnV: number }>();
+    let samples = 0, stepsAside = 0;
+    const faults: string[] = [];
+    const angle = (a: number): number => Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+    sim.clock.run(Math.round(240 / DT), () => {
+      step(sim, { traffic: true, pedestrians: true });
+      const seen = new Set<number>();
+      for (const v of sim.pedViews) {
+        seen.add(v.id);
+        const before = last.get(v.id);
+        last.set(v.id, { x: v.x, y: v.y, heading: v.heading, v: v.v, turnV: v.turnV });
+        if (!before) continue;
+        samples++;
+        // What the renderer interpolates from is where the walker was.
+        if (Math.hypot(v.prev.x - before.x, v.prev.y - before.y) > 1e-6 || angle(v.prev.heading - before.heading) > 1e-6) {
+          faults.push(`walker ${v.id}: prev is not the last tick's pose`);
+        }
+        const moved = Math.hypot(v.x - before.x, v.y - before.y);
+        const allowed = Math.hypot(Math.max(v.v, before.v), SIDESTEP) * DT * 1.1 + m(0.002);
+        if (moved > allowed) faults.push(`walker ${v.id} at ${v.x.toFixed(1)},${v.y.toFixed(1)}: moved ${(moved / m(0.01)).toFixed(1)} cm, speed allows ${(allowed / m(0.01)).toFixed(1)}`);
+        // Moving at a pace the gait shows (`render/agents.ts`, past 0.15 m/s), the gait is drawn walking.
+        if (moved / DT > m(0.15)) {
+          if (v.v < m(0.15)) stepsAside++;
+          if (gaitSpeed(v) < moved / DT - 1e-6) faults.push(`walker ${v.id}: drawn gliding at ${(moved / DT).toFixed(2)} u/s`);
+        }
+        const turned = angle(v.heading - before.heading);
+        const turn = Math.max(Math.abs(v.turnV), Math.abs(before.turnV)) * DT * 1.1 + 1e-3;
+        if (turned > turn) faults.push(`walker ${v.id} at ${v.x.toFixed(1)},${v.y.toFixed(1)}: turned ${(turned * 180 / Math.PI).toFixed(1)}°, turnV allows ${(turn * 180 / Math.PI).toFixed(1)}°`);
+      }
+      for (const id of [...last.keys()]) if (!seen.has(id)) last.delete(id);
+    });
+    // A crowd walked for four minutes and stepped aside, or nothing was tested.
+    expect(samples).toBeGreaterThan(100_000);
+    expect(stepsAside).toBeGreaterThan(1000);
+    expect(faults.slice(0, 8), `${faults.length} faults`).toEqual([]);
   });
 });

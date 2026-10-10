@@ -1,4 +1,5 @@
 import type { SegmentId } from '@world/ids';
+import { DT } from '../params';
 
 /**
  * A person as everything outside the pedestrian engine sees them.
@@ -128,4 +129,15 @@ export function personHash(id: number): number {
   h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
   h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
   return (h ^ (h >>> 15)) >>> 0;
+}
+
+/**
+ * How fast the body really went this tick, u/s: its walking speed, or what it
+ * moved if more. A walker stepping aside into its stripe moves while its
+ * forward speed is nil (SUMO's striping does the same, `MSPModel_Striping`
+ * `maxYSpeed`); the gait drawn from `v` alone stood still and the body slid
+ * along the ground (Etapa 5a, `tests/sim/walkHeight.spec.ts`).
+ */
+export function gaitSpeed(view: Pick<PedView, 'x' | 'y' | 'prev' | 'v'>): number {
+  return Math.max(view.v, Math.hypot(view.x - view.prev.x, view.y - view.prev.y) / DT);
 }

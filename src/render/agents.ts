@@ -1,4 +1,4 @@
-import type { BodyPart, PersonAgeClass, Severable } from '@sim/people/view';
+import { gaitSpeed, type BodyPart, type PersonAgeClass, type Severable } from '@sim/people/view';
 import { simplified } from './mesh/simplify';
 import {
   BoxGeometry,
@@ -2172,7 +2172,9 @@ export function createAgentMeshes(elevationAt: ElevationAt, onAssetsReady: () =>
             // Shot and still going: the pain on their face over the fright.
             const shown = doing === 'photo' || doing === 'crouch' || doing === 'fall' || doing === 'flinch' || doing === 'look' || doing === 'mourn' || doing === 'crawl' ? doing : ped.bleeding ? 'hurt' : ped.panic ? 'panic' : doing;
             if (ped.bleeding || ped.lost?.length) procBleed?.(ped.id, pose.p.x, pose.p.y, deck);
-            procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, ped.v, ped.walking, gaitDt, shown,
+            // The gait at the body's real speed: a step aside is steps, not a glide.
+            const gait = gaitSpeed(ped);
+            procDraw(ped.id, pose.p.x, pose.p.y, pose.angle, deck, gait, ped.walking || gait > m(0.15), gaitDt, shown,
               ped.lost ?? (ped.maimed ? [ped.maimed] : undefined), ped.gesture ? { t: ped.gesture.t, hold: ped.gesture.hold ?? 0 } : undefined, ped.wound, ped.ageClass);
           }
           else {
