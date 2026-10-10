@@ -63,7 +63,7 @@ import { PLANT_MAP_ZOOM, PLANT_NEAR_ZOOM, buildGardens, buildScenery, buildStree
 import { localToWorld, solidFootprints, storedBounds } from '@world/buildings/geometry';
 import { followPieces } from '@world/buildings/elements';
 import { RoadDoc } from '@world/doc';
-import { compileAhead, drainCompiles, drainUploads, drainWarm } from './uploads';
+import { compileAhead, drainCompiles, drainUploads, drainWarm, shadowStandIn } from './uploads';
 import { GRASS_MIN_ZOOM } from './grass';
 import { advanceWind, setWindWeather } from './wind';
 import { createRain } from './rain';
@@ -108,7 +108,7 @@ import { BLUEPRINTS, instantiate } from '@world/buildings/blueprints';
 import type { Building, BuildingId } from '@world/buildings/types';
 import { QUALITY, QualityGovernor, type QualityLevel, type QualitySettings } from './quality';
 import { GroundDependant, type GroundRecord, type Rect, rectAround, unionRect } from './groundChanges';
-import { buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
+import { FOREST_SPECIES, buildGroundCover, createGroundCoverKit, type CoverPlacement, type ForestSpecies, type GroundCover, type TreePlacement } from './groundCover';
 import { clearingIndex } from '@world/trees';
 import { buildNatureForest, forestRoom, loadNatureTrees, seedOfKind, type NatureForest, type NatureTreeKit } from './natureTrees';
 import { createFogTexture, rasterFog, type FogLayer } from './fogLayer';
@@ -1070,7 +1070,22 @@ export function createSceneRenderer(
   let natureTreesStarted = false;
   const startNatureTrees = (): void => {
     natureTreesStarted = true;
-    void loadNatureTrees(anisotropy).then((kit) => {
+    void loadNatureTrees(anisotropy).then(async (kit) => {
+      // Its programs built before the first forest is drawn - its shadow's
+      // too, wind-swayed (`uploads.ts` shadowStandIn): built by the first
+      // shadow pass, they stopped the opening for 3 s (profile of
+      // 2026-10-10). A loader hands an object to the frame once compiled.
+      const sample = buildNatureForest(FOREST_SPECIES.flatMap((species) => [0.1, 0.35, 0.6, 0.85].map((seed) => ({ x: 0, y: 0, z: 0, size: m(12), yaw: 0, seed, species }))), kit);
+      const lit = new Group(), shadows = new Group();
+      for (const mesh of sample.meshes) {
+        lit.add(mesh);
+        const standIn = shadowStandIn(mesh);
+        if (standIn) shadows.add(standIn);
+      }
+      await Promise.all([compileAhead(lit), compileAhead(shadows, true)]);
+      lit.clear();
+      shadows.clear();
+      sample.dispose();
       natureTreeKit = kit;
       // The kept trees are grown with it at the next look.
       natureKeepFor = '';
@@ -2470,9 +2485,12 @@ export function createSceneRenderer(
     landTop() {
       if (landTopFor !== landVersion) {
         landTopFor = landVersion;
-        let top = -Infinity;
+        // Kept by the planet's atlas as its plates' ground moves: walking the
+        // 864 plates' corners was 40 ms, on the first move of the pointer
+        // after every change of the land.
+        let top = terrain.highest?.() ?? -Infinity;
         const corners = Math.round((TERRAIN_HALF * 2) / TERRAIN_CELL);
-        for (const part of terrain.parts) {
+        if (!terrain.highest) for (const part of terrain.parts) {
           for (let j = 0; j <= corners; j++) {
             for (let i = 0; i <= corners; i++) top = Math.max(top, part.surface.renderedHeightAt(-TERRAIN_HALF + i * TERRAIN_CELL, TERRAIN_HALF - j * TERRAIN_CELL));
           }
@@ -2937,11 +2955,17 @@ export function createSceneRenderer(
           // Shown in the copy: three's compile walks only what is visible, and
           // a mesh hidden until it has something to draw (a piece's water) is
           // compiled here, before it first shows.
+          // And each one's shadow program, which three's compile never builds
+          // (`uploads.ts` shadowStandIn).
+          const shadows = new Group();
           for (const sample of compileSamples) {
             const copy = sample.clone(false);
             copy.visible = true;
             warm.add(copy);
+            const standIn = (sample as Mesh).isMesh ? shadowStandIn(sample as Mesh) : null;
+            if (standIn) shadows.add(standIn);
           }
+          if (shadows.children.length) void compileAhead(shadows, true).then(() => shadows.clear());
           compileSamples.length = 0;
           compiling = true;
           // For the target the scene is drawn into (`drainCompiles`).

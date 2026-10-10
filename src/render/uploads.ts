@@ -1,4 +1,4 @@
-import { WebGLRenderTarget, type BufferGeometry, type Camera, type Light, type Mesh, type Object3D, type Scene, type Texture, type WebGLRenderer } from 'three';
+import { BackSide, BufferGeometry, DoubleSide, Float32BufferAttribute, FrontSide, MeshDepthMaterial, RGBADepthPacking, WebGLRenderTarget, type Camera, type Light, type Material, type Mesh, type Object3D, type Scene, type Side, type Texture, type WebGLRenderer } from 'three';
 
 /**
  * Textures waiting to be sent to the GPU ahead of their first use.
@@ -57,6 +57,31 @@ const toCompile: { object: Object3D; shadow: boolean; done: () => void }[] = [];
 let shadowTarget: WebGLRenderTarget | null = null;
 /** Whether a renderer is answering (none in tests: nothing is waited for there). */
 let compiler = false;
+
+/**
+ * A stand-in drawn with the depth material the shadow pass will draw `mesh`
+ * with, set as three's `WebGLShadowMap.getDepthMaterial` sets it (r186: the
+ * object's own `customDepthMaterial` or the shared RGBA-packed depth
+ * material; the side flipped for a PCF map, the colour map and alpha test
+ * copied), for `compileAhead(..., true)`. three's `compile` builds the
+ * scene's programs only, never a shadow's: the trees' wind-swayed depth
+ * program was built in the first shadow pass, 3 s of the opening frozen on
+ * the driver (profile of 2026-10-10). Null when the mesh casts no shadow.
+ */
+const SHADOW_SIDE: Record<Side, Side> = { [FrontSide]: BackSide, [BackSide]: FrontSide, [DoubleSide]: DoubleSide };
+const plainDepth = new MeshDepthMaterial({ depthPacking: RGBADepthPacking });
+export function shadowStandIn(mesh: Mesh): Mesh | null {
+  if (!mesh.castShadow || Array.isArray(mesh.material)) return null;
+  const material = mesh.material as Material & { map?: Texture | null; shadowSide?: Side | null };
+  const depth = ((mesh as Mesh & { customDepthMaterial?: Material }).customDepthMaterial ?? plainDepth) as Material & { map?: Texture | null };
+  depth.side = material.shadowSide ?? SHADOW_SIDE[material.side];
+  depth.alphaTest = material.alphaToCoverage ? 0.5 : material.alphaTest;
+  depth.map = material.map ?? null;
+  const copy = mesh.clone(false);
+  copy.material = depth;
+  copy.visible = true;
+  return copy;
+}
 
 /** `shadow`: the object's material is a shadow's depth material, compiled for a shadow map. */
 export function compileAhead(object: Object3D, shadow = false): Promise<void> {
@@ -172,4 +197,18 @@ function warmOne(renderer: WebGLRenderer, camera: Camera, scene: Scene, target: 
     renderer.setRenderTarget(previous);
     done();
   }
+}
+
+/**
+ * The geometry three's FullScreenQuad draws (`postprocessing/Pass.js`): one
+ * triangle with a position and a uv. A pass's program compiled ahead must be
+ * compiled with it: the attributes are part of the program's key (three's
+ * `vertexNormals`), and compiled on a plane, with normals, it was another
+ * program, and the real one was still built in the frame it was first drawn.
+ */
+export function fullScreenTriangle(): BufferGeometry {
+  const quad = new BufferGeometry();
+  quad.setAttribute('position', new Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
+  quad.setAttribute('uv', new Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
+  return quad;
 }

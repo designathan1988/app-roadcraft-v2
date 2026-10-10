@@ -1,6 +1,6 @@
 import {
-  BufferGeometry, Color, DepthTexture, Float32BufferAttribute, HalfFloatType, Matrix4, Mesh, NoBlending,
-  PlaneGeometry, RedFormat, Scene, ShaderMaterial, UnsignedByteType, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
+  Color, DepthTexture, HalfFloatType, Matrix4, Mesh, NoBlending,
+  RedFormat, Scene, ShaderMaterial, UnsignedByteType, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
@@ -18,6 +18,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 
 import type { QualityLevel, QualitySettings } from './quality';
+import { fullScreenTriangle } from './uploads';
 
 /**
  * The post chain: ambient occlusion, then anti-aliasing, then tone mapping.
@@ -45,6 +46,7 @@ import type { QualityLevel, QualitySettings } from './quality';
  * drawn straight to the canvas with the driver's own MSAA, which is what keeps a
  * weak GPU playable.
  */
+
 
 export interface PostChain {
   readonly enabled: boolean;
@@ -267,9 +269,7 @@ export function createPostChain(
     // Submit both fullscreen programs now, while the rest of the game boots,
     // using the same depth input and target format as the first real pass.
     gtao.setGBuffer(target.depthTexture!);
-    const quad = new BufferGeometry();
-    quad.setAttribute('position', new Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
-    quad.setAttribute('uv', new Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
+    const quad = fullScreenTriangle();
     const warm = new Scene();
     warm.add(new Mesh(quad, gtao.gtaoMaterial), new Mesh(quad, gtao.pdMaterial));
     const previous = renderer.getRenderTarget();
@@ -296,7 +296,10 @@ export function createPostChain(
   // of its own targets, as it draws them (render targets are part of a
   // program's key).
   {
-    const quad = new PlaneGeometry();
+    // FullScreenQuad's own triangle (position and uv, no normals): the
+    // attributes are part of a program's key, and a plane's normals built
+    // another program than the one drawn.
+    const quad = fullScreenTriangle();
     const warm = new Scene();
     for (const material of [bloom.materialHighPassFilter, ...bloom.separableBlurMaterials, bloom.compositeMaterial, bloom.blendMaterial]) {
       warm.add(new Mesh(quad, material));
@@ -390,7 +393,7 @@ export function createPostChain(
     // With its two inner programs, the bodies' and the shadow map's, each for
     // the target it draws into.
     {
-      const quad = new PlaneGeometry();
+      const quad = fullScreenTriangle();
       const previous = renderer.getRenderTarget();
       const builds = ([[clouds.material, composer.renderTarget1], [bodiesQuad!.material, bodiesTargets[0]!], [shadowMapQuad!.material, shadowMapTarget]] as const).map(([material, target]) => {
         const warm = new Scene();
@@ -402,7 +405,7 @@ export function createPostChain(
       // Not drawn until they are built: drawn while the driver still builds
       // them, the frame waits all the same (three asks for the program's log,
       // which blocks until the link is done).
-      void Promise.all(builds).finally(() => { quad.dispose(); cloudsReady = true; console.info('[warm] clouds ready', Math.round(performance.now())); });
+      void Promise.all(builds).finally(() => { quad.dispose(); cloudsReady = true; });
     }
   }
   const smaa = quality.smaa ? new SMAAPass() : null;

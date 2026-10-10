@@ -1,9 +1,10 @@
 import {
-  ClampToEdgeWrapping, HalfFloatType, LinearFilter, Matrix4, NoBlending, ShaderMaterial, Vector3, WebGLRenderTarget,
-  type Camera, type WebGLRenderer,
+  ClampToEdgeWrapping, HalfFloatType, LinearFilter, Matrix4, Mesh, NoBlending, OrthographicCamera, Scene, ShaderMaterial, Vector3, WebGLRenderTarget,
+  type Camera, type Material, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { PLANET_RADIUS } from '@core/cubeSphere';
+import { fullScreenTriangle } from '../uploads';
 
 /**
  * THE AIR ROUND THE PLANET, from the ground to space, one model for all of it:
@@ -471,20 +472,36 @@ export function createAir(renderer: WebGLRenderer): Air {
   const multi = target(MULTI, MULTI);
   const sky = target(SKY_W, SKY_H);
   const perspective = target(SLICES * SLICES, SLICES);
-  const previous = renderer.getRenderTarget();
-  {
-    const bake = quad(TRANSMITTANCE_FRAGMENT, {});
+  // Every program built ahead, in parallel (KHR_parallel_shader_compile:
+  // three's compileAsync), each for the target it draws into, and nothing of
+  // the air drawn until they are: built in the frame they were first drawn,
+  // the volume's alone stopped the opening for 2 s (profile of 2026-10-10) -
+  // drawn while the driver still builds it, a frame waits all the same.
+  const quadCamera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  // FullScreenQuad's own triangle: a program's key holds the geometry's attributes (`postprocess.ts` fullScreenTriangle).
+  const quadPlane = fullScreenTriangle();
+  const compileFor = (material: Material, into: WebGLRenderTarget): Promise<unknown> => {
+    const scene = new Scene();
+    scene.add(new Mesh(quadPlane, material));
+    const before = renderer.getRenderTarget();
+    renderer.setRenderTarget(into);
+    const built = renderer.compileAsync(scene, quadCamera).catch(() => {});
+    renderer.setRenderTarget(before);
+    return built;
+  };
+  let ready = false;
+  const bake = quad(TRANSMITTANCE_FRAGMENT, {});
+  const ms = quad(MULTI_FRAGMENT, { tAirTransmittance: { value: transmittance.texture } });
+  const baked = Promise.all([compileFor(bake.material, transmittance), compileFor(ms.material, multi)]).then(() => {
+    // The two LUTs, once: as soon as their programs are in.
+    const before = renderer.getRenderTarget();
     renderer.setRenderTarget(transmittance);
     bake.render(renderer);
-    bake.material.dispose();
-    bake.dispose();
-    const ms = quad(MULTI_FRAGMENT, { tAirTransmittance: { value: transmittance.texture } });
     renderer.setRenderTarget(multi);
     ms.render(renderer);
-    ms.material.dispose();
-    ms.dispose();
-  }
-  renderer.setRenderTarget(previous);
+    renderer.setRenderTarget(before);
+    for (const q of [bake, ms]) { q.material.dispose(); q.dispose(); }
+  });
 
   const uniforms: Record<string, { value: unknown }> = {
     uAirCentre: { value: new Vector3() },
@@ -507,6 +524,8 @@ export function createAir(renderer: WebGLRenderer): Air {
     uProjectionInverse: { value: new Matrix4() }, uCameraWorld: { value: new Matrix4() },
   });
   const volumeU = (volumeQuad.material as ShaderMaterial).uniforms;
+  void Promise.all([baked, compileFor(skyQuad.material, sky), compileFor(volumeQuad.material, perspective)])
+    .finally(() => { ready = true; quadPlane.dispose(); });
   const up = new Vector3();
   const side = new Vector3();
   const forward = new Vector3();
@@ -528,7 +547,7 @@ export function createAir(renderer: WebGLRenderer): Air {
       (volumeU['uSun']!.value as Vector3).copy(frame.sun);
       (volumeU['uMoonDir']!.value as Vector3).copy(frame.moon);
       volumeU['uMoon']!.value = frame.moonLight;
-      if (!inside) return;
+      if (!inside || !ready) return;
       // The LUT's frame: the eye's up as z, the sun in the xz plane.
       const sunCos = Math.max(-1, Math.min(1, frame.sun.dot(up)));
       forward.copy(frame.sun).addScaledVector(up, -sunCos);
@@ -546,7 +565,7 @@ export function createAir(renderer: WebGLRenderer): Air {
       gl.setRenderTarget(previousTarget);
     },
     renderPerspective(gl, camera) {
-      if (!inside) return;
+      if (!inside || !ready) return;
       camera.updateMatrixWorld();
       (volumeU['uProjectionInverse']!.value as Matrix4).copy(camera.projectionMatrixInverse);
       (volumeU['uCameraWorld']!.value as Matrix4).copy(camera.matrixWorld);
