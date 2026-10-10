@@ -214,10 +214,22 @@ export function touchesRoad(net: Network, rect: readonly Vec2[]): boolean {
   const box = boundsOf(rect);
   const own = chartAt((box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
   for (const chart of chartsReaching(own, box.minX, box.minY, box.maxX, box.maxY)) {
-    if (chart !== own && contacts.touches(carryPoints(own, chart, rect))) return true;
+    if (chart !== own && contacts.touches(carryPoints(own, chart, rect), CHART_SLACK)) return true;
   }
   return false;
 }
+
+/**
+ * The share of a road's reach a building carried onto another chart may come
+ * within it and still not touch it. A piece's map is true to the sphere along
+ * its radii and stretched across them by (d / R) / sin(d / R): 0.5 % at the
+ * farthest a chart keeps anything (a piece's corner and its reach, about
+ * 650 units out). A road and a building each laid exactly on its own chart
+ * read on another can so meet by that share of their distance - a house
+ * flush with the footway of a road's piece kept on one chart overlapped by a
+ * few millimetres the footway of the next piece, kept on its neighbour's.
+ */
+const CHART_SLACK = 0.006;
 
 /** A road's reach, or a junction's carriageway, with its box (`RoadContacts`). */
 type Contact =
@@ -273,7 +285,8 @@ class RoadContacts {
     }
   }
 
-  touches(rect: readonly Vec2[]): boolean {
+  /** `slack`: a share of each road's reach let pass (`CHART_SLACK`). */
+  touches(rect: readonly Vec2[], slack = 0): boolean {
     const box = boundsOf(rect);
     const stamp = ++this.stamp;
     for (let i = Math.floor(box.minX / CONTACT_CELL); i <= Math.floor(box.maxX / CONTACT_CELL); i++) {
@@ -283,7 +296,7 @@ class RoadContacts {
           this.seen.set(c, stamp);
           if (c.minX > box.maxX || c.maxX < box.minX || c.minY > box.maxY || c.maxY < box.minY) continue;
           if (c.kind === 'road') {
-            if (polylineDistance(c.line, rect) < c.reach - ROAD_CONTACT_EPS) return true;
+            if (polylineDistance(c.line, rect) < c.reach * (1 - slack) - ROAD_CONTACT_EPS) return true;
           } else if (polygonsOverlap(c.ring, rect) && overlapArea(c.ring, rect) > JUNCTION_TOUCH) {
             return true;
           }

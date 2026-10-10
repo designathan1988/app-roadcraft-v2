@@ -1,4 +1,5 @@
 import { DEFAULT_FLAG, type FlagDesign } from '@world/buildings/flags';
+import { onChartOf } from '@world/planet/charts';
 import type { Vec2 } from '@core/vec2';
 import { signedArea } from '@core/polygon';
 import {
@@ -16,7 +17,7 @@ import { FloorCache, type PavedAt, floorHeight } from '@world/buildings/foundati
 import { edgeFrame, localFootprint, overlapArea } from '@world/buildings/footprints';
 import { GRID } from '@world/buildings/geometry';
 import { METERS_PER_UNIT, m } from '@world/units';
-import { MIN_SIZE, topLevel, baysOn, footprintBox, levelElevation, levelHeight, liftAt, localDirToWorld, localToWorld, reliefAt, volumeElevation, worldToLocal } from '@world/buildings/geometry';
+import { MIN_SIZE, topLevel, baysOn, footprintBox, levelElevation, levelHeight, liftAt, localDirToWorld, localToWorld, reliefAt, volumeElevation, worldToLocal, worldToLocalAt } from '@world/buildings/geometry';
 import { type Handle, buildingHandles } from '@world/buildings/handles';
 import { type BuildingHit, type Ray3, pickBuilding } from '@world/buildings/pick';
 import { FINISH_COLOUR, type MaterialSpec, type MaterialTarget, applyMaterial, applyStyle, materialAt } from '@world/buildings/materials';
@@ -278,9 +279,9 @@ export class BuildingTool {
    */
   private onCutFloor(b: Building, screen: Vec2, level: number): Vec2 {
     const z = this.floorOf(b) + levelElevation(b, level);
-    const first = worldToLocal(b, this.view.planeAt(screen, z));
+    const first = worldToLocalAt(b, this.view.planeAt(screen, z));
     const lift = liftAt(b, level, first.x, first.y);
-    return lift === 0 ? first : worldToLocal(b, this.view.planeAt(screen, z + lift));
+    return lift === 0 ? first : worldToLocalAt(b, this.view.planeAt(screen, z + lift));
   }
 
   /** Drops a selection whose building or volume no longer exists (after an undo). */
@@ -663,7 +664,7 @@ export class BuildingTool {
       const s = this.selection;
       if (!existing || !s) return null;
       const draft = cloneBuilding(existing);
-      const points = this.planPoints.map((p) => worldToLocal(draft, p));
+      const points = this.planPoints.map((p) => worldToLocalAt(draft, p));
       if (this.planAction === 'cut') {
         // A cut is a block too - a void one, as tall as the block it is drawn
         // on: it takes its space out when drawn, and stays a block that can be
@@ -1388,9 +1389,11 @@ export class BuildingTool {
 
   private pointOnPlan(screen: Vec2, world: Vec2, free: boolean): Vec2 {
     const height = this.planHeight;
-    const p = height === null ? world : this.view.planeAt(screen, height);
-    if (free) return p;
+    const raw = height === null ? world : this.view.planeAt(screen, height);
+    if (free) return raw;
     const building = this.selected();
+    // Compared with the building's outline on its own chart (on the planet).
+    const p = building ? onChartOf(raw, building) : raw;
     let closest: Vec2 | null = null;
     let best = this.view.pickPixels * .8;
     if (building) for (const volume of building.volumes) {
@@ -1751,7 +1754,7 @@ export class BuildingTool {
       this.host.changed();
       return;
     }
-    const local = points.map((p) => worldToLocal(building, p));
+    const local = points.map((p) => worldToLocalAt(building, p));
     // A stair laid along the path climbs the floor being edited, its rise
     // spread over the segments in proportion to their length: the run turns
     // where the trace turns and still lands on the floor above.
@@ -1848,7 +1851,7 @@ export class BuildingTool {
     if (hit && v && hit.face !== 'top') {
       candidates = elementsAgainstBay(b, v, { volume: v.id, side: hit.face, index: hit.index, storey: hit.storey }, kind);
     } else {
-      const local = worldToLocal(b, world);
+      const local = worldToLocalAt(b, world);
       const f = footprintBox(b);
       // Facing away from the building, towards the side the pointer is off.
       const dx = local.x < f.x0 ? f.x0 - local.x : local.x > f.x1 ? local.x - f.x1 : 0;
@@ -2262,7 +2265,7 @@ export class BuildingTool {
     switch (drag.kind) {
       case 'vertex': {
         const p = this.view.planeAt(screen, drag.z);
-        const local = worldToLocal(draft, p);
+        const local = worldToLocalAt(draft, p);
         movePlanVertex(draft, drag.volume, drag.vertex, local, !this.free);
         break;
       }
@@ -2301,7 +2304,10 @@ export class BuildingTool {
         const p = this.view.planeAt(screen, drag.z);
         const f = footprintBox(draft);
         const c = localDirToWorld(draft, (f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2);
-        const centre = { x: draft.x + c.x + p.x - drag.start.x, y: draft.y + c.y + p.y - drag.start.y };
+        // The pointer's travel on the building's own chart (on the planet the
+        // two may be kept on charts turned against each other).
+        const at = onChartOf(p, draft), from = onChartOf(drag.start, draft);
+        const centre = { x: draft.x + c.x + at.x - from.x, y: draft.y + c.y + at.y - from.y };
         const ctx = this.host.context();
         const snap = snapPlacement(ctx.doc, ctx.net, footprintSize(draft), centre, draft.rotation, draft.id);
         if (snap.kind === 'road') {
@@ -2332,8 +2338,8 @@ export class BuildingTool {
         // One block of the building, dragged in its own plan: the block goes
         // where it is put, and the validator says whether it still stands.
         const p = this.view.planeAt(screen, drag.z);
-        const a = worldToLocal(draft, drag.start);
-        const b = worldToLocal(draft, p);
+        const a = worldToLocalAt(draft, drag.start);
+        const b = worldToLocalAt(draft, p);
         opMoveBlock(draft, drag.volume, b.x - a.x, b.y - a.y, !this.free);
         // It clicks into place against the other blocks, like a brick.
         if (!this.free) {

@@ -1,4 +1,5 @@
 import { paletteOf, roofMaterial } from '@world/buildings/materials';
+import { onChartOf } from '@world/planet/charts';
 import type { Vec2 } from '@core/vec2';
 import clipping from 'polygon-clipping';
 import { signedArea } from '@core/polygon';
@@ -31,6 +32,7 @@ import {
   localToWorld,
   planOverlap,
   worldToLocal,
+  worldToLocalAt,
 } from '@world/buildings/geometry';
 import {
   type BuildingProblem,
@@ -935,7 +937,16 @@ export function weldInto(ctx: BuildingContext, draft: Building, skip: readonly B
   const mine = buildingBounds(draft, 0.5);
   for (const other of [...ctx.doc.buildings.all()]) {
     if (other.id === draft.id || skip.includes(other.id)) continue;
-    const box = buildingBounds(other, 0.5);
+    // On the draft's chart (on the planet, `world/planet/charts.ts`): a
+    // building kept on the next piece's chart is 1 600 units or more away as
+    // it stands, and no weld was tried - the validator refused the drop.
+    const there = (p: Vec2): Vec2 => onChartOf(p, draft);
+    const otherRings = [...footprintRects(other), ...groundProjections(other), ...groundElements(other)].map((ring) => ring.map(there));
+    const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    for (const ring of otherRings) for (const p of ring) {
+      box.minX = Math.min(box.minX, p.x - 0.5); box.maxX = Math.max(box.maxX, p.x + 0.5);
+      box.minY = Math.min(box.minY, p.y - 0.5); box.maxY = Math.max(box.maxY, p.y + 0.5);
+    }
     if (box.maxX < mine.minX || box.minX > mine.maxX || box.maxY < mine.minY || box.minY > mine.maxY) continue;
     // Does anything actually touch or overlap? A shared edge counts.
     // Measured on the real outlines, a hair grown: bounding boxes of turned or
@@ -944,11 +955,10 @@ export function weldInto(ctx: BuildingContext, draft: Building, skip: readonly B
     // shapes the validator compares, so a weld is tried exactly where the
     // validator would otherwise refuse.
     const mineRings = [...footprintRects(draft, 0.05), ...groundProjections(draft, 0.05), ...groundElements(draft, 0.05)];
-    const otherRings = [...footprintRects(other), ...groundProjections(other), ...groundElements(other)];
     const touches = mineRings.some((a) => otherRings.some((c) => overlapArea(a, c) > 1e-6));
     if (!touches) continue;
     for (const v of other.volumes) {
-      const ring = localFootprint(v).map((p) => worldToLocal(draft, localToWorld(other, p.x, p.y)));
+      const ring = localFootprint(v).map((p) => worldToLocalAt(draft, localToWorld(other, p.x, p.y)));
       const volume = JSON.parse(JSON.stringify(v)) as Volume;
       volume.id = draft.nextVolumeId++;
       volume.x = polygonBounds(ring).minX;

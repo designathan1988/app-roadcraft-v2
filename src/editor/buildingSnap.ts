@@ -7,6 +7,26 @@ import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import { Level, halfWidth } from '@world/roadTypes';
 import { normaliseAngle } from './buildings';
+import { chartAt, chartToChartInto, directionOnChart, onChartOf, pointViews } from '@world/planet/charts';
+
+/**
+ * ON THE PLANET a snap to a road is worked out on that road's own chart and
+ * kept there (each road read against the pointer carried onto its chart);
+ * any other on the chart of the pointer's point. What else is compared with
+ * it is carried onto the snap's chart, `here`: another road's frame, a
+ * building's outline, and its bearing turned with it (`bearingOn`) - two
+ * neighbouring charts are turned against each other, a quarter turn across
+ * an edge of the cube. On the flat map every carry is the point.
+ */
+const carry = (from: number, to: number, p: Vec2): Vec2 => (from === to ? p : chartToChartInto(from, to, p.x, p.y, { x: 0, y: 0 }));
+
+/** A building's bearing (its local x) as it reads on `chart`'s map. */
+function bearingOn(b: Building, chart: number): number {
+  const own = chartAt(b.x, b.y);
+  if (own === chart) return b.rotation;
+  const d = directionOnChart(own, chart, b, { x: Math.cos(b.rotation), y: Math.sin(b.rotation) });
+  return Math.atan2(d.y, d.x);
+}
 
 /**
  * Where a footprint goes when the pointer is at `cursor`. See
@@ -56,10 +76,11 @@ export function snapPlacement(
   const near = nearestBuilding(doc, cursor, ignore);
   if (near) {
     const quarter = Math.PI / 2;
-    const k = Math.round(normaliseAngle(rotation - near.rotation) / quarter);
+    const bearing = bearingOn(near, chartAt(cursor.x, cursor.y));
+    const k = Math.round(normaliseAngle(rotation - bearing) / quarter);
     const aligned: PlacementSnap = {
-      anchor: frontAnchor(cursor, size, near.rotation + k * quarter),
-      rotation: normaliseAngle(near.rotation + k * quarter),
+      anchor: frontAnchor(cursor, size, bearing + k * quarter),
+      rotation: normaliseAngle(bearing + k * quarter),
       kind: 'building',
     };
     return flush(doc, aligned, size, true, ignore);
@@ -78,24 +99,32 @@ function frontAnchor(centre: Vec2, size: FootprintSize, rotation: number): Vec2 
 
 function snapToRoad(net: Network, size: FootprintSize, cursor: Vec2): PlacementSnap | null {
   let best: { distance: number; anchor: Vec2; rotation: number; ribbon: number } | null = null;
+  const view = pointViews(cursor, size.depth + ROAD_REACH + 60);
   for (const ribbon of net.ribbons.values()) {
     const segment = net.doc.segment(ribbon.id);
     if (!segment || segment.structure === 'tunnel') continue;
+    const chart = net.polylines.chart(net.doc, ribbon.id);
+    const at = view(chart);
+    if (!at) continue;
     // The front on the back of the footway itself (see `ROAD_CLEARANCE`).
     const half = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
-    const hit = ribbon.full.closestPoint(cursor);
+    const hit = ribbon.full.closestPoint(at);
     if (hit.distance > half + size.depth + ROAD_REACH) continue;
     if (best && hit.distance >= best.distance) continue;
     const frame = ribbon.full.sampleAt(hit.s);
-    const side = (cursor.x - frame.p.x) * frame.n.x + (cursor.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
-    const ox = frame.n.x * side;
-    const oy = frame.n.y * side;
-    // The front (local -y) faces the road: (sin r, -cos r) = -outward.
-    const rotation = Math.atan2(-ox, oy);
+    const side = (at.x - frame.p.x) * frame.n.x + (at.y - frame.p.y) * frame.n.y >= 0 ? 1 : -1;
     // Along the road, the anchor snaps to the grid from the road's start.
     const step = GRID;
     const s = Math.round(hit.s / step) * step;
     const along = ribbon.full.sampleAt(Math.max(0, Math.min(ribbon.full.length, s)));
+    // Worked out, and kept, on the road's own chart: flush with its footway
+    // exactly (another chart's map is true to the sphere only to about 1 %
+    // near a piece's edge, and a front laid on the back of the footway from
+    // there touched it).
+    const ox = frame.n.x * side;
+    const oy = frame.n.y * side;
+    // The front (local -y) faces the road: (sin r, -cos r) = -outward.
+    const rotation = Math.atan2(-ox, oy);
     best = {
       distance: hit.distance,
       anchor: { x: along.p.x + ox * half, y: along.p.y + oy * half },
@@ -104,7 +133,8 @@ function snapToRoad(net: Network, size: FootprintSize, cursor: Vec2): PlacementS
     };
   }
   if (!best) return null;
-  return { anchor: cornerFlush(net, best.anchor, best.rotation, size, best.ribbon, cursor), rotation: normaliseAngle(best.rotation), kind: 'road' };
+  // The pointer on the road's chart too, for the corner's test.
+  return { anchor: cornerFlush(net, best.anchor, best.rotation, size, best.ribbon, onChartOf(cursor, best.anchor)), rotation: normaliseAngle(best.rotation), kind: 'road' };
 }
 
 /**
@@ -121,17 +151,21 @@ function cornerFlush(net: Network, anchor: Vec2, rotation: number, size: Footpri
   const vx = -Math.sin(rotation), vy = Math.cos(rotation);
   let shift = 0;
   let bestNeed = Infinity;
+  const here = chartAt(anchor.x, anchor.y);
   for (const ribbon of net.ribbons.values()) {
     if (ribbon.id === snapped) continue;
     const segment = net.doc.segment(ribbon.id);
     if (!segment || segment.structure === 'tunnel') continue;
+    const chart = net.polylines.chart(net.doc, ribbon.id);
     const back = halfWidth(ribbon.road, Level.Sidewalk) + ROAD_CLEARANCE;
     for (const side of [-1, 1]) {
       const px = anchor.x + ux * side * size.width / 2 + vx * size.depth / 2;
       const py = anchor.y + uy * side * size.width / 2 + vy * size.depth / 2;
-      const hit = ribbon.full.closestPoint({ x: px, y: py });
+      const hit = ribbon.full.closestPoint(carry(here, chart, { x: px, y: py }));
       if (hit.distance > back + size.width + size.module) continue;
-      const frame = ribbon.full.sampleAt(hit.s);
+      const frame0 = ribbon.full.sampleAt(hit.s);
+      // The road's frame there, on `here`.
+      const frame = { p: carry(chart, here, frame0.p), t: directionOnChart(chart, here, frame0.p, frame0.t) };
       // The road runs along this side (its tangent along the depth).
       if (Math.abs(frame.t.x * vx + frame.t.y * vy) < 0.9) continue;
       // And lies beyond it: how far the side is from that road's footway.
@@ -157,8 +191,10 @@ function nearestBuilding(doc: RoadDoc, cursor: Vec2, ignore?: BuildingId): Build
   for (const b of doc.buildings.all()) {
     if (b.id === ignore) continue;
     const box = buildingBounds(b);
-    const dx = Math.max(box.minX - cursor.x, 0, cursor.x - box.maxX);
-    const dy = Math.max(box.minY - cursor.y, 0, cursor.y - box.maxY);
+    // The pointer on the building's chart.
+    const at = onChartOf(cursor, b);
+    const dx = Math.max(box.minX - at.x, 0, at.x - box.maxX);
+    const dy = Math.max(box.minY - at.y, 0, at.y - box.maxY);
     const d = Math.hypot(dx, dy);
     if (d < bestDistance) {
       bestDistance = d;
@@ -183,14 +219,18 @@ function flush(doc: RoadDoc, snap: PlacementSnap, size: FootprintSize, both: boo
   let bestU = EDGE_SNAP * size.module;
   let bestV = EDGE_SNAP * size.module;
   const reach = Math.max(size.width, size.depth) * 2 + 20;
+  const here = chartAt(snap.anchor.x, snap.anchor.y);
   for (const b of doc.buildings.all()) {
     if (b.id === ignore) continue;
-    const turn = Math.abs(normaliseAngle((b.rotation - snap.rotation) * 4)) / 4;
+    const turn = Math.abs(normaliseAngle((bearingOn(b, here) - snap.rotation) * 4)) / 4;
     if (turn > 0.02) continue;
     const box = buildingBounds(b);
-    if (box.minX > snap.anchor.x + reach || box.maxX < snap.anchor.x - reach ||
-      box.minY > snap.anchor.y + reach || box.maxY < snap.anchor.y - reach) continue;
-    for (const rect of footprintRects(b)) {
+    const near = onChartOf(snap.anchor, b);
+    if (box.minX > near.x + reach || box.maxX < near.x - reach ||
+      box.minY > near.y + reach || box.maxY < near.y - reach) continue;
+    const own = chartAt(b.x, b.y);
+    for (const kept of footprintRects(b)) {
+      const rect = kept.map((p) => carry(own, here, p));
       let minU = Infinity;
       let maxU = -Infinity;
       let minV = Infinity;
