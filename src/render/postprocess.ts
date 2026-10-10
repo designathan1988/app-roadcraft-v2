@@ -827,7 +827,11 @@ const CLOUD_SHADOWS = {
         } else {
           through = shadowThrough(hit);
         }
-        colour *= 1.0 - uStrength * (1.0 - exp(-through * 7.0));
+        // On the planet only ground turned to the sun has sunlight for a
+        // cloud to take: on the night side its march still met clouds on the
+        // far side of the globe, and laid their shadows where no sun falls.
+        float facing = uPlanet.w > 0.0 ? smoothstep(0.0, 0.15, dot(normalize(hit - uPlanet.xyz), uSunDir)) : 1.0;
+        colour *= 1.0 - uStrength * facing * (1.0 - exp(-through * 7.0));
       }
       // The air between the eye and what the pixel sees: from the view's
       // equivalent eye (\`uEyeShift\`). Measured from the orthographic camera,
