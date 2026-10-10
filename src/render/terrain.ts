@@ -2683,8 +2683,25 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   let ecologyRevision = 0;
   /** The ecosystem must be read again; done when no stroke is held (as the water is). */
   let ecologyStale = true;
+  /**
+   * Where: the corners terrain strokes moved since it was last read, or the
+   * whole map (the water, the paint, the biome or the map changed). A stroke
+   * re-read the whole map, 82 ms, and could change trees far from the brush.
+   */
+  let ecologyDirty: TerrainRegion | 'all' | null = 'all';
+  const ecologyAll = (): void => { ecologyStale = true; ecologyDirty = 'all'; };
+  const ecologyOver = (box: TerrainRegion): void => {
+    ecologyStale = true;
+    if (ecologyDirty === 'all') return;
+    ecologyDirty = ecologyDirty === null ? box : [
+      Math.min(ecologyDirty[0], box[0]), Math.max(ecologyDirty[1], box[1]),
+      Math.min(ecologyDirty[2], box[2]), Math.max(ecologyDirty[3], box[3]),
+    ];
+  };
   const refreshEcology = (): void => {
     ecologyStale = false;
+    const dirty = ecologyDirty;
+    ecologyDirty = null;
     const data = ecologyTexture.image.data as Uint8Array;
     if (!nature) {
       if (ecologyField) {
@@ -2702,11 +2719,12 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
     }
     const startedAt = performance.now();
+    const over = ecologyField && dirty !== 'all' && dirty !== null ? dirty : null;
     const field = computeEcology({
       side: GRID, cell: TERRAIN_CELL, heights: natural, water: wet,
       sandstone: material.userData['sandCorners'] as Float32Array, basalt: material.userData['basaltCorners'] as Float32Array,
       painted: biomePainted ? biomeCorners : null, settings: nature,
-    });
+    }, over && ecologyField ? { previous: ecologyField, ix0: over[0], ix1: over[1], iy0: over[2], iy1: over[3] } : undefined);
     performance.measure('hitch:ecology', { start: startedAt, end: performance.now() });
     ecologyField = field;
     const byte = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 255);
@@ -2789,7 +2807,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     waterBox = box && !box.isEmpty() ? { minX: box.min.x, maxX: box.max.x, minY: -box.max.z, maxY: -box.min.z } : null;
     waterRevision++;
     // The water moved, and with it the rivers' forests and the veredas.
-    ecologyStale = true;
+    ecologyAll();
   };
   /** How near the water a moved corner can be and still leave it as it was: two water cells and two terrain cells. */
   const WATER_REACH = 2 * WATER_CELL + 2 * TERRAIN_CELL;
@@ -2953,7 +2971,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     if (doc.natureRevision !== natureSeen) {
       natureSeen = doc.natureRevision;
       nature = doc.nature;
-      ecologyStale = true;
+      ecologyAll();
     }
     paintStep(doc);
     // The ecosystem follows the land, the water and the paint, once no stroke
@@ -2971,13 +2989,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     const lay = (dab: PaintDab): void => {
       if (isGeologyKind(dab.kind)) {
         geologyRects.push(rasterGeology(sandCorners, basaltCorners, dab));
-        ecologyStale = true;
+        ecologyAll();
         return;
       }
       if (isBiomeKind(dab.kind)) {
         rasterBiome(biomeCorners, dab);
         biomePainted = true;
-        ecologyStale = true;
+        ecologyAll();
         return;
       }
       rasterPaint(paint, dab);
@@ -2996,7 +3014,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       basaltCorners.fill(0);
       biomeCorners.fill(0);
       biomePainted = false;
-      ecologyStale = true;
+      ecologyAll();
       for (const dab of dabs) lay(dab);
       covered = true;
       geologyChanges.mark(null);
@@ -3102,7 +3120,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
         // and the ecosystem, which reads the land's heights, is read again.
         (groundTexture.image.data as Float32Array).set(grid);
         groundTexture.needsUpdate = true;
-        ecologyStale = true;
+        ecologyOver(dirty);
         return;
       }
       rebuildWater(lastStamps);

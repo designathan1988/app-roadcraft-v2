@@ -106,6 +106,13 @@ o jogo a cada edição.
   vias novas em 2026-10-09** (sistema de vias, `docs/VIAS.md`): quando a
   etapa V7 entrar, via nova sai com o conjunto de mobiliário escolhido
   (padrão "completo"); vias existentes não mudam sozinhas.
+- Pincelada de terreno relê o ecossistema só onde a terra mudou (5g,
+  `world/ecology.ts` `EcologyUpdate`, `render/terrain.ts` `ecologyDirty`): a
+  região tocada mais o alcance de um vértice (média local de 8, declive);
+  mapa inteiro só se a água, a pintura, o bioma ou o ponto mais baixo mudou.
+  110 → 3 ms por pincelada (Node, grade do jogo); fora dela o campo, e com ele
+  as árvores, fica idêntico (`tests/world/ecologyRegion.spec.ts`). Dentro, a
+  vegetação segue a nova forma do terreno (decisão do jogador se deve).
 - Pincel de terreno com rios e túneis; geologia por região (granito, arenito,
   basalto) e relevos (mesa, cânion, escarpa, pão de açúcar); mapas novos
   nascem num relevo natural.

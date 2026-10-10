@@ -80,7 +80,25 @@ export interface EcologyField {
   readonly rocky: Float32Array;
   /** The biome that holds most of each corner, as an index in `REGIONS` (which species grow). */
   readonly region: Uint8Array;
+  /** What a later update reuses: the distance to water per corner and the lowest ground (`computeEcology`). */
+  readonly waterDistance: Float32Array;
+  readonly lowest: number;
 }
+
+/**
+ * A field brought up to date over a region (Etapa 5g): the corners whose
+ * ground changed, inclusive, in grid indices, read again from `previous`
+ * with the same water. A terrain stroke re-read the whole map, 82 ms, and
+ * every tree of the countryside could change under a stroke far away.
+ */
+export interface EcologyUpdate {
+  readonly previous: EcologyField;
+  readonly ix0: number; readonly ix1: number; readonly iy0: number; readonly iy1: number;
+}
+
+/** How far a corner's answer reaches: the local mean's radius, and a corner either side for the slope. */
+const MEAN_RADIUS = 8;
+const REACH = MEAN_RADIUS + 1;
 
 /** One plant community: the densities of its strata. */
 interface Community {
@@ -293,6 +311,27 @@ function waterDistance(water: ArrayLike<number>, side: number, cell: number): Fl
 }
 
 /** The mean of the heights round each corner over a square of `radius` corners: a separable box blur. */
+/**
+ * `localMean` over the corners x0..x1, y0..y1 only (the rest 0): read from a
+ * crop `radius` wider, which gives the same means inside it - the box at the
+ * crop's inner edges is cut only where the grid's own edge cuts it.
+ */
+function localMeanIn(heights: ArrayLike<number>, side: number, radius: number, x0: number, x1: number, y0: number, y1: number): Float32Array {
+  const cx0 = Math.max(0, x0 - radius), cx1 = Math.min(side - 1, x1 + radius);
+  const cy0 = Math.max(0, y0 - radius), cy1 = Math.min(side - 1, y1 + radius);
+  const out = new Float32Array(side * side);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      let sum = 0, n = 0;
+      for (let yy = Math.max(cy0, y - radius); yy <= Math.min(cy1, y + radius); yy++) {
+        for (let xx = Math.max(cx0, x - radius); xx <= Math.min(cx1, x + radius); xx++) { sum += heights[yy * side + xx] as number; n++; }
+      }
+      out[y * side + x] = sum / n;
+    }
+  }
+  return out;
+}
+
 function localMean(heights: ArrayLike<number>, side: number, radius: number): Float32Array {
   const rows = new Float32Array(side * side);
   const out = new Float32Array(side * side);
@@ -320,21 +359,28 @@ function localMean(heights: ArrayLike<number>, side: number, radius: number): Fl
 }
 
 /** Reads the land and answers what grows at every corner. */
-export function computeEcology(input: EcologyInput): EcologyField {
+export function computeEcology(input: EcologyInput, update?: EcologyUpdate): EcologyField {
   const { side, cell, heights } = input;
   const count = side * side;
-  const field: EcologyField = {
+  let lowest = Infinity;
+  for (let i = 0; i < count; i++) lowest = Math.min(lowest, heights[i] as number);
+  // Over a region only when that is the same answer: the lowest ground (every
+  // corner's altitude is read from it) and the field's size unchanged.
+  const prev = update && update.previous.side === side && update.previous.lowest === lowest ? update.previous : null;
+  const x0 = prev ? Math.max(0, update!.ix0 - REACH) : 0, x1 = prev ? Math.min(side - 1, update!.ix1 + REACH) : side - 1;
+  const y0 = prev ? Math.max(0, update!.iy0 - REACH) : 0, y1 = prev ? Math.min(side - 1, update!.iy1 + REACH) : side - 1;
+  const field: EcologyField = prev ?? {
     side,
     canopy: new Float32Array(count), trees: new Float32Array(count), emergent: new Float32Array(count),
     shrub: new Float32Array(count), palm: new Float32Array(count), cactus: new Float32Array(count),
     grass: new Float32Array(count), dry: new Float32Array(count), wet: new Float32Array(count),
     rocky: new Float32Array(count), region: new Uint8Array(count),
+    waterDistance: waterDistance(input.water, side, cell), lowest,
   };
-  const distance = waterDistance(input.water, side, cell);
-  // A valley floor or a ridge against the ground some 130 m round it.
-  const mean = localMean(heights, side, 8);
-  let lowest = Infinity;
-  for (let i = 0; i < count; i++) lowest = Math.min(lowest, heights[i] as number);
+  const distance = field.waterDistance;
+  // A valley floor or a ridge against the ground some 130 m round it: over
+  // the region, from a crop a mean's radius wider still (exact inside it).
+  const mean = prev ? localMeanIn(heights, side, MEAN_RADIUS, x0, x1, y0, y1) : localMean(heights, side, MEAN_RADIUS);
   const seedX = (input.settings.seed % 997) * 1.731;
   const seedY = (Math.floor(input.settings.seed / 997) % 997) * 2.113;
   const half = ((side - 1) * cell) / 2;
@@ -344,8 +390,8 @@ export function computeEcology(input: EcologyInput): EcologyField {
   const total = community({});
   const keys = Object.keys(total) as (keyof Community)[];
   const weights = new Float32Array(REGIONS.length);
-  for (let iy = 0; iy < side; iy++) {
-    for (let ix = 0; ix < side; ix++) {
+  for (let iy = y0; iy <= y1; iy++) {
+    for (let ix = x0; ix <= x1; ix++) {
       const i = iy * side + ix;
       const x = -half + ix * cell, y = half - iy * cell;
       const h = heights[i] as number;
@@ -397,7 +443,7 @@ export function computeEcology(input: EcologyInput): EcologyField {
     }
   }
   // Nothing grows in the water itself.
-  for (let i = 0; i < count; i++) {
+  for (let iy = y0; iy <= y1; iy++) for (let i = iy * side + x0; i <= iy * side + x1; i++) {
     if ((input.water[i] as number) <= 0.5) continue;
     field.canopy[i] = 0; field.trees[i] = 0; field.emergent[i] = 0; field.shrub[i] = 0;
     field.palm[i] = 0; field.cactus[i] = 0; field.rocky[i] = 0;
