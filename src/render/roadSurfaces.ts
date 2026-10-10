@@ -190,6 +190,14 @@ export interface RoadSurfaces {
   readonly rebuilt: readonly TileRect[];
   /** The time the tiles and their blocks took, ms, without the frames between slices. */
   readonly workMs: number;
+  /**
+   * Puts the blocks kept from the build before into `group`, at the swap.
+   * A mesh has one parent (three.js `Object3D.add` takes it from the one it
+   * had): added while the steps ran, each kept block left the roads still
+   * drawn, and the streets showed as grass until the new ones took their
+   * place - for as long as the job took, or longer when an edit overtook it.
+   */
+  adopt(): void;
   dispose(): void;
 }
 
@@ -303,6 +311,7 @@ export function buildRoadSurfaces(
   const steps = roadSurfaceSteps(net, elevation, materials, terrainAt, reuse, groundMaterial);
   let step = steps.next();
   while (!step.done) step = steps.next();
+  step.value.adopt();
   return step.value;
 }
 
@@ -893,7 +902,8 @@ export function* roadSurfaceSteps(
         }
         if (!mesh) continue;
         usedChunks.add(key);
-        group.add(mesh);
+        // A kept block stays where it is drawn until the swap (`adopt`).
+        if (mesh.parent === null) group.add(mesh);
         meshes.push(mesh);
         triangles += (mesh.geometry.index?.count ?? 0) / 3;
       }
@@ -913,6 +923,10 @@ export function* roadSurfaceSteps(
     reused,
     rebuilt,
     workMs: tilesMs + mergeMs,
+    adopt() {
+      // Every block, in the order it was built: the order a fresh build draws them in.
+      for (const mesh of meshes) group.add(mesh);
+    },
     dispose() {
       // Meshes the cache keeps are freed by `disposeSurfaceReuse`.
       if (!chunks) for (const mesh of meshes) disposeMesh(mesh);

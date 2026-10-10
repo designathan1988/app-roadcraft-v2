@@ -147,12 +147,21 @@ o jogo a cada edição.
   em três tentativas (mapa recém-gerado, mapa recarregado do salvamento, bomba
   logo ao sair da cortina de carga; alturas do terreno sob a via medidas a cada
   200 ms: nunca acima do asfalto). A única vez foi logo depois de o servidor de
-  desenvolvimento ser reiniciado por outra sessão. Aberto, sem reprodução. Quarta tentativa com o cache das vias apagado (cidade montada do zero):
-  também não. Detector no renderer (`watchRoads`): uma vez por segundo confere
-  as malhas das vias na cena e o terreno desenhado sob pontos de via (fora de
-  túnel); falhando, registra no F9 uma vez, com o estado da reconstrução.
-  Conferido tirando o grupo das vias da cena: o aviso saiu na hora; com o mapa
-  normal, nenhum. O painel da bomba
+  desenvolvimento ser reiniciado por outra sessão. Detector no renderer
+  (`watchRoads`): uma vez por segundo confere as malhas das vias na cena e o
+  terreno desenhado sob pontos de via (fora de túnel); falhando, registra no F9
+  uma vez, com o estado da reconstrução. **Causa achada e corrigida
+  (2026-10-09):** contando a cada quadro os blocos do grupo das vias na cena,
+  uma bomba junto da rua o fez cair de 176 para 10 durante a reconstrução. Os
+  blocos aproveitados do cache (`roadSurfaces.ts`) são os mesmos objetos já
+  desenhados, e `group.add` no grupo novo os tirava do grupo na tela (um objeto
+  do three.js tem um pai só, `Object3D.add`): as ruas viravam grama enquanto a
+  reconstrução corria, e por mais tempo quando uma edição a atropelava. Agora o
+  grupo novo recebe só os blocos recém-feitos, e os aproveitados mudam de grupo
+  na troca (`RoadSurfaces.adopt`). Medido no 5173: uma bomba, 338 quadros com
+  176 blocos; três bombas seguidas, 381 quadros com 176 blocos (antes: 10). Teste
+  em `tests/render/roadTiles.spec.ts` (sem a correção, 18 de 110 blocos
+  ficavam na tela). O painel da bomba
   mostra a ajuda da bomba (antes a do Demolir).
 - Bomba num prédio (resto do PA-U2): as peças soltas de um golpe saem numa fila,
   4 ms por quadro (`destruction.ts` `release`/`loosen`), em vez de todas no

@@ -7,7 +7,7 @@ import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { buildRoadElevation, type RoadElevation } from '@world/elevation';
 import type { SceneMaterials } from '@render/materials';
-import { buildRoadSurfaces, type SurfaceReuse } from '@render/roadSurfaces';
+import { buildRoadSurfaces, roadSurfaceSteps, type SurfaceReuse } from '@render/roadSurfaces';
 import { buildDefaultTown } from '@world/defaultTown';
 
 /**
@@ -161,6 +161,26 @@ describe('road surface tiles', () => {
     expect(same).toBeGreaterThan(after.meshes.length * 0.6);
     const fresh = buildRoadSurfaces(net, elevation, kept, ground, reuseFor(() => elevation));
     expect(fingerprint(after.group)).toBe(fingerprint(fresh.group));
+
+    // The roads still drawn keep every block they share until the swap: built
+    // in steps, the next roads take the kept blocks only at `adopt` (seen in
+    // the game, 2026-10-09: a bomb's rebuild took 166 of 176 blocks off the
+    // screen, and the streets showed as grass while it ran).
+    const drawn = after.group.children.length;
+    town.addSegment(end.id, town.addNode({ x: end.x + 40, y: end.y - 50 }).id, 1);
+    net.rebuild();
+    elevation = buildRoadElevation(net, ground);
+    const steps = roadSurfaceSteps(net, elevation, kept, ground, reuse);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const next = step.value;
+    const shared = next.meshes.filter((mesh) => after.meshes.includes(mesh));
+    expect(shared.length).toBeGreaterThan(next.meshes.length * 0.6);
+    expect(after.group.children.length).toBe(drawn);
+    for (const mesh of shared) expect(mesh.parent).toBe(after.group);
+    next.adopt();
+    for (const mesh of next.meshes) expect(mesh.parent).toBe(next.group);
+    expect(next.group.children.length).toBe(next.meshes.length);
   }, 120_000);
 
   it('changes the solve only near a short street joined to a long one, and the cache stays exact over many edits', () => {

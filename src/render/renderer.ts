@@ -1723,6 +1723,7 @@ export function createSceneRenderer(
     if (utilities) { triangles -= utilities.triangles; world.remove(utilities.group); if (utilities !== freshUtilities) utilities.dispose(); }
     for (const mesh of surfaceReuse.retired?.splice(0) ?? []) disposeMesh(mesh);
     roads = freshRoads;
+    roads.adopt();
     world.add(roads.group);
     details = freshDetails;
     world.add(details.group);
