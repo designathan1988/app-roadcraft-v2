@@ -15,10 +15,10 @@ Nenhuma etapa começa com a anterior aberta. Uma etapa só fecha com o critério
 de pronto dela verificado no jogo aberto, com fotos, e com a linha do
 `docs/PROBLEMAS.md` atualizada.
 
-As regras de andamento e de ritmo (dois estados de entrega, um item por vez,
-só a etapa ATUAL, uma sessão por vez, testes só do que foi tocado, sonda no
-máximo duas vezes, documentação no mesmo commit) ficam no `CLAUDE.md`, seção
-"Pace and done", que toda sessão carrega.
+As regras de trabalho (pesquisa antes de mudar, verificação no jogo com fotos,
+testes só do que foi tocado, sonda no máximo duas vezes, documentação no mesmo
+commit, "feito" medido e visto, "fechado" só pelo jogador) ficam no
+`CLAUDE.md`, que toda sessão carrega.
 
 ## Estado
 
@@ -31,8 +31,8 @@ máximo duas vezes, documentação no mesmo commit) ficam no `CLAUDE.md`, seçã
 | 1d | `main.ts` dividido: cada ferramenta no seu módulo, o laço do quadro em `src/frameLoop.ts` | feita: lote/zona, cercas, postes, paisagismo, pincel de terreno, nuvens, ações, via (`5d7dd24f`), demolição (`10ea0371`), mover nó (`7a7ab0dd`), câmera (`ad3f053b`, em `view/`), laço do quadro (`65b75bb5`). `main.ts` de cerca de 6 000 para 4 533 linhas; os `let` que restam são de ligação. Cada ferramenta testada com mouse real |
 | 3 | Otimização completa, guiada pelo monitor | **pausada** em 2026-10-09 pela Etapa 5 (a CPU do quadro já está em 2,4 ms de mediana; o que o jogador vê de errado é visual e de física). Feitos: linha de base por sistema (`probe-baseline.mjs`, `__frames`); edição de via só refaz o que muda (P24); abertura sem a cópia JSON das texturas (P25) e com a topologia como carga (P26); câmera e criação de pessoas medidas sem custo de CPU do jogo (P27, P28); P18 e P19 fechados. 2026-10-09: P4, P7a, P22 e P23 medidos e fechados (400/400 a 4x por 80 s sem quadro longo); P70 com mais dois passos (MOBIL, curvas, motorista); P3 medido com o painel aberto e o passo longo das fatias da edição corrigido (Pump 51,6 → 33,4 ms), aguardando o jogador. Falta: P70 (orçamento de 4 ms na iGPU) e a conferência única do jogador na RTX (ver "Metas") |
 | 4 | Todos os defeitos abertos | a fazer |
-| 5 | Física e realismo visual: detectores de invariantes, objeto composto do lote, pedestres sem salto, câmera, luzes, variedade, postes que cruzam ruas (pedidos de 2026-10-09) | **ATUAL** (sessão principal), na ordem 5c (feito, aguardando o jogador), 5h, 5d, 5a, 5b, 5e, 5f, 5g |
-| 6 | Sistema de vias: perfil livre, construção com elevação, conectores, cruzamentos inteligentes, sinalização, mobiliário, economia mínima | em paralelo, por um agente no ramo `vias` (worktree), etapas V0-V8 em `docs/VIAS.md`, cada uma aprovada pelo jogador antes do merge |
+| 5 | Física e realismo visual: detectores de invariantes, objeto composto do lote, pedestres sem salto, câmera, luzes, variedade, postes que cruzam ruas (pedidos de 2026-10-09) | **ATUAL**. Feitos, aguardando o jogador: 5c (`cd2ecf69`, `4620de9c`), 5h (`b12ebaa3`), 5d (`898ab0e4`), 5b (`6c82ee4e`, `49cd33f7`), 5e (`117534eb`, `a237c511`, `88e0b234`), 5f2 primeira entrega (cinco marcos, 2026-10-10). Falta: 5a (três detectores), 5f, 5g |
+| 6 | Sistema de vias: perfil livre, construção com elevação, conectores, cruzamentos inteligentes, sinalização, mobiliário, economia mínima | V0-V7 no `master` (o agente do ramo `vias` foi cancelado em 2026-10-09 e o ramo está todo incorporado); V8 em andamento na sessão principal: faltam ônibus com baia, retornos, balão e casos de borda (`docs/VIAS.md`) |
 
 **Por que 1d vem depois do monitor:** dividir o `main.ts` (6 000 linhas) é a
 mudança mais arriscada do plano. Com o monitor ligado, um erro ou um quadro

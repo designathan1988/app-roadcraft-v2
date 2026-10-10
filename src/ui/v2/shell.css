@@ -55,7 +55,7 @@
   -webkit-backdrop-filter: blur(18px) saturate(130%);
 }
 /* A name kept for screen readers and the tooltip, not drawn. */
-.v2-icon > span, .v2-pill > span, .v2-seg-b > span, .v2-tabs.compact .v2-tab.icon:not(.on) > span, .v2-choice.icon > span,
+.v2-icon > span, .v2-pill > span, .v2-seg-b > span, .v2-tabs.compact .v2-tab.icon:not(.on) > span, .v2-tabs.tight .v2-tab.icon > span, .v2-choice.icon > span,
 .v2-verb > span, .v2-act > span {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
@@ -156,7 +156,8 @@
   border-radius: var(--v-r); overflow: hidden;
 }
 .v2-drawer:has(> .v2-drawer-head > .v2-tabs[hidden]) { grid-template-areas: "body close"; }
-.v2-drawer-head { grid-area: head; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--v-line); }
+.v2-drawer-head { grid-area: head; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; border-bottom: 1px solid var(--v-line); }
+.v2-drawer-head > .v2-tabs { min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 .v2-drawer-head:has(> .v2-tabs[hidden]) { display: none; }
 .v2-drawer > .v2-icon { grid-area: close; width: 34px; height: auto; align-self: stretch; margin: 0; border: 0; border-bottom: 1px solid var(--v-line); border-radius: 0; background: none; }
 .v2-drawer:has(> .v2-drawer-head > .v2-tabs[hidden]) > .v2-icon { align-self: center; width: 26px; height: 26px; margin: 0 6px; border: 1px solid var(--v-line); border-radius: 8px; }
@@ -167,7 +168,7 @@
 /* A mode: its icon and its name; squeezed, only the mode in use keeps the name. */
 .v2-tab.icon { display: inline-flex; align-items: center; gap: 6px; position: relative; padding: 0 10px 0 8px; }
 .v2-tab.icon > svg { flex: none; }
-.v2-tabs.compact .v2-tab.icon:not(.on) { width: 34px; padding: 0; justify-content: center; }
+.v2-tabs.compact .v2-tab.icon:not(.on), .v2-tabs.tight .v2-tab.icon { width: 34px; padding: 0; justify-content: center; }
 .v2-tab:hover:not(:disabled) { color: var(--v-text); background: var(--v-raise-2); }
 .v2-tab.on { color: var(--v-accent-ink); background: var(--v-accent); border-color: var(--v-accent); }
 .v2-hint { display: none !important; }
@@ -327,6 +328,16 @@
 @media (max-width: 1100px) {
   .v2-stats { display: none; }
 }
+/* The centred dock (~490 px) and the tool options (300 px at the left) meet
+   below ~1140 px: the dock then stands right of the options' place, scrolling
+   if it must, so neither covers a control of the other (seen at 1024 × 768).
+   Always there, options open or not: a dock that moved when a tool opened
+   left the cursor on the next tool. */
+@media (781px <= width < 1160px) {
+  .v2 > .v2-dock {
+    left: calc(24px + var(--v-opts-w)); transform: none; max-width: calc(100vw - var(--v-opts-w) - 36px);
+  }
+}
 @media (max-width: 780px) {
   :root { --v-dock-h: 70px; --v-hud-h: 50px; --v-opts-w: calc(100vw - 16px); }
   .v2-hud { top: 8px; left: 8px; right: 8px; grid-template-columns: 1fr auto; padding: 0 8px; }
@@ -375,3 +386,7 @@
   background: var(--v-bg-solid) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a3b4b0' stroke-width='2'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 4px center / 14px;
   border: 1px solid var(--v-line); color: var(--v-text);
 }
+/* A choice has no unit: it takes the unit's column too and is as wide as its
+   longest option, so "Prédio residencial" is not cut to "Prédio re…". */
+.v2-shell #builder .bw-field:has(> .bw-field-select) { grid-template-columns: minmax(0, 1fr) auto; }
+.v2-shell #builder .bw-field-select { grid-column: 2 / -1; width: auto; min-width: 100px; max-width: 200px; }

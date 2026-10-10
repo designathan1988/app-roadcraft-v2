@@ -3,7 +3,7 @@ import { laneWidth } from '@world/roadTypes';
 import { LANE_TURN_RULES, ROAD_SECTION_LIMITS, type LaneTurnRule, type RoadSection } from '@world/roadSection';
 import type { SegmentDirection } from '@world/doc';
 import { METERS_PER_UNIT, UNITS_PER_METER } from '@world/units';
-import { t } from './i18n';
+import { formatDecimal, t } from './i18n';
 
 /** Editing is opt-in; saved road dimensions remain readable without the flag. */
 export const freeRoadsEnabled = (): boolean =>
@@ -69,7 +69,7 @@ export function mountRoadSectionEditor(
     input.value = String(section[field] / scale);
     input.dataset['sectionField'] = field;
     const update = (): void => {
-      output.value = `${Number(input.value).toFixed(step < 1 ? 1 : 0)} ${unit}`.trim();
+      output.value = `${formatDecimal(Number(input.value), step < 1 ? 1 : 0)} ${unit}`.trim();
     };
     update();
     input.oninput = () => { section[field] = Number(input.value) * scale; update(); draw(); };

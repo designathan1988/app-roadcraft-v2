@@ -20,6 +20,7 @@ import {
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 import { signatureKind } from '@world/buildings/towerKit';
+import { LANDMARKS } from './landmarks';
 import type { Building } from '@world/buildings/types';
 import { m } from '@world/units';
 
@@ -250,6 +251,38 @@ function makeMaterials(): Record<Mat, Material> {
     for (let i = 0; i < 2500; i++) { const v = Math.random() > 0.5 ? 255 : 0; g.fillStyle = `rgba(${v},${v},${v},${dot})`; g.fillRect(Math.random() * s, Math.random() * s, 2, 2); }
     g.fillStyle = 'rgba(0,0,0,.18)'; for (let k = 1; k <= lines; k++) { g.fillRect(0, (k * s) / (lines + 1), s, 2); g.fillRect((k * s) / (lines + 1), 0, 2, s); }
   }, 1 / 4, 1 / 4);
+  // Rusticated stone: 0.6 m courses with deep shadowed joints, long blocks.
+  const rusticated = (base: string, joint: string): CanvasTexture => canvasTexture(256, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 600; i++) { g.fillStyle = `rgba(${120 + Math.random() * 60},${110 + Math.random() * 50},${90 + Math.random() * 40},.12)`; g.fillRect(Math.random() * s, Math.random() * s, 3, 3); }
+    for (let r = 0; r < 4; r++) {
+      const y = (r * s) / 4;
+      g.fillStyle = joint; g.fillRect(0, y, s, 7);
+      g.fillStyle = 'rgba(255,255,255,.25)'; g.fillRect(0, y + 7, s, 2);
+      for (let c = 0; c < 2; c++) { g.fillStyle = joint; g.fillRect((c + (r % 2) * 0.5) * (s / 2), y, 5, s / 4); }
+    }
+  }, 1 / 2.4, 1 / 2.4);
+  // An Art Deco gilded panel: a stepped sunburst and zigzags.
+  const decoPanel = (base: string, gold: string): CanvasTexture => canvasTexture(128, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    g.strokeStyle = gold; g.lineWidth = 4;
+    for (let k = 0; k < 4; k++) g.strokeRect(8 + k * 10, 8 + k * 10, s - 16 - k * 20, s - 16 - k * 20);
+    g.fillStyle = gold;
+    for (let k = 0; k < 7; k++) { g.beginPath(); g.moveTo(s / 2, s * 0.62); g.lineTo(s * (0.2 + k * 0.1), s * 0.25); g.lineTo(s * (0.24 + k * 0.1), s * 0.25); g.fill(); }
+  }, 1 / 1.6, 1 / 1.1);
+  // A standing-seam copper roof: vertical seams 0.5 m apart.
+  const seams = (base: string, seam: string): CanvasTexture => canvasTexture(64, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    g.fillStyle = seam; for (let k = 0; k < 4; k++) g.fillRect((k * s) / 4, 0, 3, s);
+    g.fillStyle = 'rgba(255,255,255,.08)'; for (let k = 0; k < 4; k++) g.fillRect((k * s) / 4 + 3, 0, 2, s);
+  }, 1 / 2, 1 / 2);
+  // Art Deco spandrel: gilded chevrons on dark bronze.
+  const chevrons = (base: string, gold: string): CanvasTexture => canvasTexture(128, (g, s) => {
+    g.fillStyle = base; g.fillRect(0, 0, s, s);
+    g.strokeStyle = gold; g.lineWidth = 5;
+    for (let k = 0; k < 3; k++) { const y = s * (0.25 + k * 0.25); g.beginPath(); g.moveTo(0, y + s * 0.12); g.lineTo(s / 2, y - s * 0.08); g.lineTo(s, y + s * 0.12); g.stroke(); }
+    g.fillStyle = gold; g.fillRect(0, 0, s, 5); g.fillRect(0, s - 5, s, 5);
+  }, 1 / 1.5, 1 / 1);
   const courses = (base: string, line: string, rows: number): CanvasTexture => canvasTexture(128, (g, s) => {
     g.fillStyle = base; g.fillRect(0, 0, s, s);
     for (let r = 0; r < rows; r++) { g.fillStyle = line; g.fillRect(0, (r * s) / rows, s, 2); for (let c = 0; c < 6; c++) g.fillRect((c + (r % 2) * 0.5) * (s / 6), (r * s) / rows, 1, s / rows); g.fillStyle = `rgba(0,0,0,${Math.random() * 0.08})`; g.fillRect(0, (r * s) / rows + 2, s, s / rows - 2); }
@@ -298,6 +331,26 @@ function makeMaterials(): Record<Mat, Material> {
     darkPanel: std({ color: 0x2f3439, roughness: 0.6, metalness: 0.3 }),
     lightGrid: std({ color: 0xc4c9cd, roughness: 0.6 }),
     podiumGlass: std({ color: 0x40505c, emissive: 0x5a4630, emissiveIntensity: 0.3, roughness: 0.08, metalness: 0.7 }),
+    // The landmarks' (`landmarks.ts`): warm limestone, rusticated courses, a copper roof gone green.
+    limestone: std({ map: ashlar('#cbbb9c', 'rgba(110,92,64,.35)'), roughness: 0.82 }),
+    rustic: std({ map: rusticated('#c8b898', 'rgba(70,58,40,.75)'), roughness: 0.85 }),
+    copperRoof: std({ map: seams('#4a645a', '#2c3d36'), roughness: 0.65, metalness: 0.1 }),
+    awning: std({ color: 0x2c5a44, roughness: 0.8, side: DoubleSide }),
+    decoStone: std({ map: ashlar('#d8c6a0', 'rgba(120,100,70,.3)'), roughness: 0.78 }),
+    decoSpandrel: std({ map: chevrons('#5a4527', '#d8b157'), roughness: 0.4, metalness: 0.6 }),
+    glassDeco: std({ color: 0x33403f, emissive: 0x6b5236, emissiveIntensity: 0.32, roughness: 0.08, metalness: 0.7 }),
+    glassBlue: std({ color: 0x4a6f93, emissive: 0x4a4a3a, emissiveIntensity: 0.18, roughness: 0.05, metalness: 0.75 }),
+    lightStrip: std({ color: 0xfff0d2, emissive: 0xffd49a, emissiveIntensity: 1.3 }),
+    terracotta: std({ map: courses('#b0603a', '#7d3c22', 14), roughness: 0.75 }),
+    alu: std({ color: 0xb9c0c6, roughness: 0.35, metalness: 0.6 }),
+    // The landmarks' glass: glass, reflecting the sky and the street (the scene's environment), no picture behind it.
+    glassLit: std({ color: 0x8a9cab, roughness: 0.06, metalness: 0.75 }),
+    glassBlueLit: std({ color: 0x5b8cc0, roughness: 0.05, metalness: 0.7 }),
+    frameWhite: std({ color: 0xeee7da, roughness: 0.55 }),
+    frameBronze: std({ color: 0x5a4632, roughness: 0.4, metalness: 0.5 }),
+    soil: std({ color: 0x4a3a2a, roughness: 1 }),
+    decoGold: std({ map: decoPanel('#2a2420', '#d7ad55'), roughness: 0.35, metalness: 0.6 }),
+    paving: std({ map: courses('#cfc6b4', 'rgba(120,108,90,.55)', 5), roughness: 0.9 }),
   };
 }
 
@@ -1683,6 +1736,7 @@ const DESIGNS: Partial<Record<string, Design>> = {
   ...Object.fromEntries(Object.entries(LOOKS).map(([kind, look]) => [kind, towerOf(look)])),
   twistGreen, hexTerracotta, stepGarden, waveWhite, cubeBalcony, twinNavy, octCopper, stackedBlocks, pinkCorner, triangleDark,
   cityHallBrick, decoSpire, hospitalA, loftBrick, cityHallWhite, forum, church, bank, school, fireStation, police, hospitalB, cemetery,
+  ...LANDMARKS,
 };
 
 /** Whether this module draws the building's body. */

@@ -8,7 +8,7 @@ import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, travelLanes, type RoadType
 import { METERS_PER_UNIT, UNITS_PER_METER } from '@world/units';
 import type { SimWorld } from '@sim/world';
 import { signalStateFor } from '@sim/signals/query';
-import { language, plural, t } from './i18n';
+import { formatDecimal, language, plural, t } from './i18n';
 import { roadTypeName } from './labels';
 import { surfaceMode } from '@world/junction/build';
 import type { RoadSection } from '@world/roadSection';
@@ -401,7 +401,7 @@ function nodeStats(doc: RoadDoc, sim: SimWorld, id: NodeId): string | null {
   ];
 
   if (controller && junction?.signalised) {
-    rows.push([t('inspector.cycle'), `${controller.plan.cycle.toFixed(0)} s`]);
+    rows.push([t('inspector.cycle'), `${Math.round(controller.plan.cycle)} s`]);
     rows.push([
       t('inspector.phase'),
       `${controller.stageIndex + 1}/${controller.plan.stages.length} · ${phaseLabel(controller.sub)}`,
@@ -542,7 +542,7 @@ const signalLabel = (value: string): string => t(`signal.${value}`);
 const phaseLabel = (value: string): string => t(`phase.${value}`);
 
 
-const meters = (units: number): string => (units * METERS_PER_UNIT).toFixed(1);
+const meters = (units: number): string => formatDecimal(units * METERS_PER_UNIT, 1);
 
 /** A curve's bulge: how far the arc leaves the straight line, signed by side. */
 const curveText = (units: number): string =>
@@ -564,7 +564,7 @@ const grid = (rows: readonly [string, string][]): string =>
 
 /** A height as a stepper of the interface, half a metre a step (V5). */
 function heightStepper(end: 'A' | 'B', label: string, metres: number): string {
-  const v = Math.abs(metres - Math.round(metres)) < 1e-6 ? String(Math.round(metres)) : metres.toFixed(1).replace('.', ',');
+  const v = Math.abs(metres - Math.round(metres)) < 1e-6 ? String(Math.round(metres)) : formatDecimal(metres, 1);
   return `<div class="rp-row"><div class="rp-label">${label}</div><div class="rp-ctrls"><div class="rp-step">` +
     `<button type="button" data-height-end="${end}" data-step="-0.5" aria-label="${t('junction.lower')}">−</button><output>${v} m</output>` +
     `<button type="button" data-height-end="${end}" data-step="0.5" aria-label="${t('junction.raise')}">+</button></div></div></div>`;

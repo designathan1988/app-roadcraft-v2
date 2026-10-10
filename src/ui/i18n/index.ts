@@ -101,6 +101,33 @@ export function plural(key: string, count: number): string {
   return t(count === 1 ? `${key}.one` : `${key}.other`, { count });
 }
 
+const decimalFormats = new Map<string, Intl.NumberFormat>();
+/**
+ * A measure with `digits` decimals, in the interface language's notation
+ * ("22,0" in Portuguese, "22.0" in English). One `Intl.NumberFormat` per
+ * language and precision, kept: labels drawn every frame use it (MDN,
+ * `Number.prototype.toLocaleString`, "Performance").
+ */
+export function formatDecimal(value: number, digits: number, lang: LanguageCode = current): string {
+  const key = `${lang}:${digits}`;
+  let format = decimalFormats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat(lang, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    decimalFormats.set(key, format);
+  }
+  return format.format(value);
+}
+
+/**
+ * A number the player typed, with a decimal comma or point: "3,1" and "3.1"
+ * are 3.1. Grouping marks are not accepted (a field holds a measure, not a
+ * sum of money). NaN when it is not a number.
+ */
+export function parseDecimal(text: string): number {
+  const s = text.trim().replace(',', '.');
+  return s === '' || !/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s) ? Number.NaN : Number(s);
+}
+
 export function setLanguage(next: LanguageCode): void {
   if (next === current) return;
   current = next;

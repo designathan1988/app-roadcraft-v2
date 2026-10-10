@@ -25,7 +25,7 @@ import { createReferenceModel, type ReferenceTarget } from '@render/buildings/re
 import { buildFromReference } from '@editor/fromReference';
 import { buildingBounds } from '@world/buildings/geometry';
 import { initBuilderWorkspace, type BuilderActions, type BuilderState } from '@ui/builder/workspace';
-import { plural, t } from '@ui/i18n';
+import { formatDecimal, plural, t } from '@ui/i18n';
 import { createInsideBar } from '@ui/insideBar';
 
 /**
@@ -255,7 +255,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
         const where = referenceTarget();
         if (where) reference.placeOn(where);
         deps.flash('hint.reference.loaded', {
-          name: info.name, w: info.size[0].toFixed(1), d: info.size[1].toFixed(1), h: info.size[2].toFixed(1),
+          name: info.name, w: formatDecimal(info.size[0], 1), d: formatDecimal(info.size[1], 1), h: formatDecimal(info.size[2], 1),
         });
       }).catch(() => deps.flash('hint.reference.failed'));
     };
@@ -885,7 +885,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
         fields.push({ id: 'volBase', labelKey: 'builder.field.baseLevel', value: volume.base, unit: 'count', min: 0, max: 99, step: 1 });
         fields.push({ id: 'mode', labelKey: 'builder.field.blockMode', value: 0, text: t(`builder.blockMode.${volume.mode ?? 'solid'}`) });
       }
-      fields.push({ id: 'area', labelKey: 'builder.field.area', value: area, unit: 'm', text: `${area.toFixed(1)} m²` });
+      fields.push({ id: 'area', labelKey: 'builder.field.area', value: area, unit: 'm', text: `${formatDecimal(area, 1)} m²` });
       const pitched = volume.roof === 'gable' || volume.roof === 'hip' || volume.roof === 'shed' || volume.roof === 'sawtooth';
       if (pitched) {
         fields.push({ id: 'pitch', labelKey: 'builder.field.pitch', value: volume.pitch ?? DEFAULT_PITCH[volume.roof] ?? 30, unit: 'deg', min: 5, max: 60, step: 1 });
@@ -1213,7 +1213,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
       if (preview) {
         const floors = topLevel(preview.building);
         const f = footprintBox(preview.building);
-        const size = `${((f.x1 - f.x0) * METERS_PER_UNIT).toFixed(1)} × ${((f.y1 - f.y0) * METERS_PER_UNIT).toFixed(1)} m`;
+        const size = `${formatDecimal((f.x1 - f.x0) * METERS_PER_UNIT, 1)} × ${formatDecimal((f.y1 - f.y0) * METERS_PER_UNIT, 1)} m`;
         const text = preview.problem
           ? t(`building.problem.${preview.problem}`)
           : `${plural('building.floors', floors)} · ${size}`;
@@ -1234,7 +1234,7 @@ export function createBuildingWiring(deps: BuildingWiringDeps): BuildingWiring {
           ? {
             text: tool.measure.kind === 'floors'
               ? plural('building.floors', tool.measure.value)
-              : `${(tool.measure.value * METERS_PER_UNIT).toFixed(tool.measure.kind === 'depth' ? 2 : 1)} m`,
+              : `${formatDecimal(tool.measure.value * METERS_PER_UNIT, tool.measure.kind === 'depth' ? 2 : 1)} m`,
             x: tool.measure.x,
             y: tool.measure.y,
             z: tool.measure.z,

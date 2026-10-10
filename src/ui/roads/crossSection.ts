@@ -1,5 +1,6 @@
 import type { ProfileElement, RoadProfileSpec } from '@world/roads/profile';
 import { METERS_PER_UNIT } from '@world/units';
+import { formatDecimal } from '../i18n';
 
 /**
  * A road's CROSS-SECTION drawn as a street section (docs/VIAS.md V2), the way
@@ -60,10 +61,10 @@ const ICON_Y = 36;
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const r1 = (v: number): number => Math.round(v * 10) / 10;
 
-/** A width in metres as the panels write it: whole metres plain, else one decimal with a comma. */
+/** A width in metres as the panels write it: whole metres plain, else one decimal in the interface language's notation. */
 export function metresText(units: number): string {
   const v = units * METERS_PER_UNIT;
-  return Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1).replace('.', ',');
+  return Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : formatDecimal(v, 1);
 }
 
 export function drawSection(profile: RoadProfileSpec, options: SectionOptions): SectionDrawing {

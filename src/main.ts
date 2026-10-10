@@ -97,7 +97,7 @@ import { formatCost } from '@ui/roads/money';
 import { type BuildMode, buildRuns } from '@world/roads/buildMode';
 import { profileRoad } from '@world/roads/profile';
 import { mountAbout } from '@ui/about';
-import { LANGUAGES, applyTranslations, hasKey, initLanguage, language, onLanguageChange, setGlobalParams, setLanguage, t } from '@ui/i18n';
+import { LANGUAGES, applyTranslations, formatDecimal, hasKey, initLanguage, language, onLanguageChange, setGlobalParams, setLanguage, t } from '@ui/i18n';
 import { onRoadKeysChange, roadKeyAction, roadKeyParams } from '@ui/roads/keys';
 import {
   nodeCountLabel,
@@ -2015,7 +2015,7 @@ function updateRoadHeightValue(): void {
   if (value) {
     const metres = game.roadHeightOffset / UNITS_PER_METER;
     value.textContent = `${Math.abs(metres - Math.round(metres)) < 1e-6
-      ? Math.round(metres) : metres.toFixed(1)} m`;
+      ? Math.round(metres) : formatDecimal(metres, 1)} m`;
   }
   if (context) {
     context.dataset['i18n'] = stateKey;
@@ -3873,8 +3873,8 @@ function drawOverlayScreen(): void {
 
     const height = terrainBrush.level ?? sceneHeightAt(brush);
     const label = game.terrainMode === 'flatten'
-      ? `${t('terrain.level')} ${height.toFixed(1)}`
-      : height.toFixed(1);
+      ? `${t('terrain.level')} ${formatDecimal(height, 1)}`
+      : formatDecimal(height, 1);
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
@@ -4094,7 +4094,7 @@ function drawOverlayScreen(): void {
       const grade = pathLength > 1
         ? Math.round(Math.abs(previewHeight - roadPreview.startHeightOffset) / pathLength * 100)
         : 0;
-      const label = `${metres >= 0 ? '+' : ''}${metres.toFixed(1)} m · ${grade}%`;
+      const label = `${metres >= 0 ? '+' : ''}${formatDecimal(metres, 1)} m · ${grade}%`;
       if (Math.abs(previewHeight) > 0.25 ||
         Math.abs(previewHeight - roadPreview.startHeightOffset) > 0.25) {
         const x = clamp(end.x + 16, 12, Math.max(12, w - 430));

@@ -4,7 +4,7 @@ import { type ApproachRule, type ApproachRuleEntry, GREEN_LIMITS, OFFSET_LIMIT, 
 import { UNITS_PER_METER } from '@world/units';
 import type { SimWorld } from '@sim/world';
 import { greenWave } from '@sim/roads/greenWave';
-import { t } from '../i18n';
+import { formatDecimal, t } from '../i18n';
 import './roads.css';
 
 /**
@@ -251,7 +251,7 @@ function withoutFixed(s: SignalSettings | undefined): SignalSettings | undefined
   return Object.keys(rest).length ? rest : undefined;
 }
 
-const fmt = (v: number): string => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(1).replace('.', ','));
+const fmt = (v: number): string => (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : formatDecimal(v, 1));
 
 function div(className: string): HTMLDivElement {
   const d = document.createElement('div');

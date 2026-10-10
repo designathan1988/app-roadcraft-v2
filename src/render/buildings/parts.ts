@@ -214,18 +214,19 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
     if (!sample || !renderer || !kit || !scene || !camera) return;
     try {
       const meshes = buildBuildingMeshes([sample], () => 0, kit);
+      // A signature building's body is drawn with its own parts, as in the
+      // town (`layer.ts`); the shared kit drew only its lot - nothing at all
+      // for a landmark, which has no lot parts (`landmarks.ts`).
+      const floor = drawsSignature(sample) ? emitChunk(sample, () => 0).signatureFloor : undefined;
+      const signature = floor !== undefined ? buildSignature(sample, floor) : null;
       // A part that builds nothing keeps its glyph: an empty tile is a defect.
       // (Read from the meshes: reading the picture's pixels back stopped the
       // frame until the GPU had finished - MDN, "WebGL best practices".)
-      if (meshes.triangles === 0) {
+      if (meshes.triangles === 0 && !signature) {
         meshes.dispose();
         return;
       }
       scene.add(meshes.group);
-      // A signature building's body is drawn with its own parts, as in the
-      // town (`layer.ts`); the shared kit drew only its lot.
-      const floor = drawsSignature(sample) ? emitChunk(sample, () => 0).signatureFloor : undefined;
-      const signature = floor !== undefined ? buildSignature(sample, floor) : null;
       if (signature) meshes.group.add(signature);
       const box = buildingBounds(sample);
       const height = Math.max(buildingHeight(sample), 3);

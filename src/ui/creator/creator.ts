@@ -7,7 +7,7 @@ import { garmentsFor, hairFor, isWhole, itemLabel } from '@people/wardrobe';
 import { proxyUrl } from '@people/body/proxy';
 import { EARRING_STYLES, FRAME_COLOURS, GLASSES_STYLES, LENS_TINTS, METALS } from '@people/gen/accessories';
 import { ANCESTRIES, BROW_STYLES, CLOTH_COLOURS, IRIS_COLOURS, LIP_COLOURS, darker, typical, type PersonParams } from '@people/gen/person';
-import { applyTranslations, t } from '../i18n';
+import { applyTranslations, formatDecimal, t } from '../i18n';
 import { icon } from './icons';
 import { deleteSaved, exportPerson, importPerson, loadSaved, savePerson } from './store';
 
@@ -311,7 +311,7 @@ export class Creator {
   private syncValues(): void {
     for (const r of this.rows) r.sync(this.person);
     const m = this.host.measure(this.person);
-    this.el['readout']!.textContent = t('hgen.readout', { cm: Math.round(m.heightCm), kg: Math.round(m.massKg), bmi: (m.massKg / (m.heightCm / 100) ** 2).toFixed(1) });
+    this.el['readout']!.textContent = t('hgen.readout', { cm: Math.round(m.heightCm), kg: Math.round(m.massKg), bmi: formatDecimal(m.massKg / (m.heightCm / 100) ** 2, 1) });
     this.el['undo']!.toggleAttribute('disabled', this.past.length === 0);
     this.el['redo']!.toggleAttribute('disabled', this.future.length === 0);
   }
@@ -369,7 +369,7 @@ export class Creator {
     host.append(note);
     for (let i = 0; i < count; i++) {
       this.slider(host, t(label, { n: i + 1 }), () => [-3, 3, 0.02], (p) => p[field][i] ?? 0,
-        (p, v) => ({ ...p, [field]: p[field].map((c, j) => (j === i ? v : c)) }), (v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}`, 0, true);
+        (p, v) => ({ ...p, [field]: p[field].map((c, j) => (j === i ? v : c)) }), (v) => `${v > 0 ? '+' : ''}${formatDecimal(v, 1)}`, 0, true);
     }
   }
 
@@ -435,7 +435,7 @@ export class Creator {
     this.heading(host, 'hgen.group.build');
     this.slider(host, t('hgen.height'), (p) => { const m = typical(p.sex, p.years).heightCm; return [Math.round(m * 0.8), Math.round(m * 1.2), 1]; },
       (p) => p.heightCm, (p, v) => ({ ...p, heightCm: v }), (v) => `${Math.round(v)} cm`, null);
-    this.slider(host, t('hgen.bmi'), () => [15, 42, 0.1], (p) => p.bmi, (p, v) => ({ ...p, bmi: v }), (v) => v.toFixed(1), null);
+    this.slider(host, t('hgen.bmi'), () => [15, 42, 0.1], (p) => p.bmi, (p, v) => ({ ...p, bmi: v }), (v) => formatDecimal(v, 1), null);
     this.slider(host, t('hgen.muscle'), () => [0, 1, 0.01], (p) => p.muscle, (p, v) => ({ ...p, muscle: v }), (v) => `${Math.round(v * 100)}`, 0);
   }
 

@@ -16,7 +16,7 @@ import {
   tabSpec,
 } from './catalog';
 import { FACADE_PATTERNS, ELEMENT_KINDS } from '@world/buildings/types';
-import { applyTranslations, onLanguageChange, plural, t } from '../i18n';
+import { applyTranslations, formatDecimal, onLanguageChange, parseDecimal, plural, t } from '../i18n';
 import { builderIconSvg } from './icons';
 import { materialSwatch } from '../materialSwatch';
 import { planSwatch } from '../planSwatch';
@@ -981,6 +981,9 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     const signature = `${info.titleKey}|${info.name}|${info.material ?? ''}|${info.fields.map((f) => `${f.id}:${f.text ?? f.value}`).join(',')}`;
     if (inspectorBody.dataset['signature'] === signature) return;
     const focused = document.activeElement;
+    // What is being typed, read before the redraw: removing the field fires
+    // its blur, which writes the value out in full.
+    const typed = focused instanceof HTMLInputElement && focused.dataset['field'] ? { id: focused.dataset['field'], text: focused.value } : null;
     inspectorBody.dataset['signature'] = signature;
     inspectorBody.innerHTML = '';
     inspectorTitle.textContent = t(info.titleKey);
@@ -1014,21 +1017,49 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
         inspectorBody.appendChild(row);
         continue;
       }
+      // A text field, not `type=number`: Chrome writes a number field's
+      // decimal in the system's notation whatever the page's language ("3,10"
+      // in English); here it is the interface language's, and a comma or a
+      // point is read (ctrl.blog, "HTML5 input number localization").
       const input = el('input', 'bw-field-input');
-      input.type = 'number';
-      if (field.min !== undefined) input.min = String(field.min);
-      if (field.max !== undefined) input.max = String(field.max);
-      input.step = String(field.step ?? (field.unit === 'count' ? 1 : 0.05));
-      input.value = field.unit === 'count' ? String(Math.round(field.value)) : field.value.toFixed(2);
+      input.type = 'text';
+      input.inputMode = field.unit === 'count' ? 'numeric' : 'decimal';
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      const step = field.step ?? (field.unit === 'count' ? 1 : 0.05);
+      const shown = (v: number): string => (field.unit === 'count' ? String(Math.round(v)) : formatDecimal(v, 2));
+      const clamp = (v: number): number => Math.min(field.max ?? Infinity, Math.max(field.min ?? -Infinity, v));
+      // The field being typed in keeps what was typed through the redraw each
+      // change causes: "3," is not rewritten to "3,00" under the cursor.
+      input.value = typed?.id === field.id ? typed.text : shown(field.value);
       input.dataset['field'] = field.id;
-      // Live: every step of the arrows or the wheel shows on the building at
+      // Live: every key, arrow step or wheel step shows on the building at
       // once, not only when the field is left.
+      const nudge = (sign: number): void => {
+        const now = parseDecimal(input.value);
+        const next = clamp(Math.round(((Number.isFinite(now) ? now : field.value) + sign * step) / step) * step);
+        input.value = shown(next);
+        actions.setField(field.id, next);
+      };
       input.oninput = () => {
-        const n = Number(input.value);
-        if (Number.isFinite(n)) actions.setField(field.id, n);
+        const n = parseDecimal(input.value);
+        if (Number.isFinite(n)) actions.setField(field.id, clamp(n));
+      };
+      input.onblur = () => {
+        const n = parseDecimal(input.value);
+        input.value = shown(Number.isFinite(n) ? clamp(n) : field.value);
+      };
+      input.onwheel = (e) => {
+        if (document.activeElement !== input) return;
+        e.preventDefault();
+        nudge(e.deltaY < 0 ? 1 : -1);
       };
       input.onkeydown = (e) => {
         if (e.key === 'Enter') input.blur();
+        else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          nudge(e.key === 'ArrowUp' ? 1 : -1);
+        }
         e.stopPropagation();
       };
       row.appendChild(input);
@@ -1048,7 +1079,11 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     }
     if (focused instanceof HTMLInputElement && focused.dataset['field']) {
       const again = inspectorBody.querySelector<HTMLInputElement>(`[data-field="${focused.dataset['field']}"]`);
-      again?.focus();
+      if (again) {
+        again.focus();
+        // The caret where the typing was: at the end of what was typed.
+        again.setSelectionRange(again.value.length, again.value.length);
+      }
     }
   }
 

@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { drawSection, metresText } from '@ui/roads/crossSection';
+import { formatDecimal } from '@ui/i18n';
 import { closeProfileEditor, insertionIndex, moved, openProfileEditor, withWidth } from '@ui/roads/profileEditor';
 import { mountProfilePanel } from '@ui/roads/profilePanel';
 import type { RoadSegment } from '@world/doc';
@@ -117,9 +118,9 @@ describe('the drawn section', () => {
     expect(drawing.svg).not.toContain('xs-person');
   });
 
-  it('writes widths in metres with a decimal comma', () => {
+  it('writes widths in metres: whole metres plain, else one decimal in the interface language', () => {
     expect(metresText(m(3))).toBe('3');
-    expect(metresText(m(2.4))).toBe('2,4');
+    expect(metresText(m(2.4))).toBe(formatDecimal(2.4, 1));
   });
 
   it('is cheap enough to redraw on every pointer move', () => {

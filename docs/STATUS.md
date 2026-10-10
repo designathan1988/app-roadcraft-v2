@@ -70,6 +70,20 @@ o jogo a cada edição.
   via inválida) aparecem num aviso no topo. Sonda de função: 44/44 controles
   mudam o estado do jogo.
 - O jogo abre num mapa vazio. Textos em `ui/i18n/en.ts` e `pt-BR.ts`.
+- Números com casas decimais na notação da língua da interface ("22,0 m" em
+  português, "22.0 m" em inglês): `ui/i18n` `formatDecimal` (um
+  `Intl.NumberFormat` guardado por língua e precisão, 0,64 µs por chamada) e
+  `parseDecimal` (lê vírgula ou ponto). Os campos do inspetor do Construtor são
+  de texto: o `type=number` do Chrome escreve o decimal na língua do sistema,
+  qualquer que seja a da página. Guarda: `tests/ui/decimals.spec.ts` reprova
+  `toFixed` em texto da interface.
+- Entre 781 e 1159 px de largura o dock fica à direita do painel de opções da
+  ferramenta, sempre (a 1024 px ele cobria o botão "Ocultar outros"); a gaveta
+  de itens fica centrada no vão entre o painel de opções e o painel Seleção, e
+  as abas dela encolhem até só ícones e, por último, rolam: nenhuma fica sob o
+  botão de fechar. O campo Função do inspetor tem a largura da opção mais longa.
+  As medidas das arestas ficam logo acima da seta de arrastar de cada lado,
+  sem cobri-la. Conferido a 1024 × 768 e no painel largo, em português e inglês.
 
 ### Vias e terreno
 - Rua transversal reta perto da emenda de um prolongamento ou do fim de uma
@@ -276,6 +290,13 @@ o jogo a cada edição.
   somem: ficam desenhados e viram lotes de verdade no primeiro clique de
   edição (frente, cantos, dividir, juntar, apagar). Tirar zona tira também
   o prédio (`zoneLots`, `tests/world/unzone.spec.ts`). Conferido no jogo.
+- Marcos (5f2, primeira entrega, `render/buildings/landmarks.ts` e
+  `facadeKit.ts`): hotel Beaux-Arts (mansarda de cobre com lucarnas, base
+  rusticada, toldos), torre art déco (recuos com floreiras, painéis dourados,
+  pináculo), escritório modernista, residencial com terraços e torre de vidro
+  azul, montados com módulos de verdade (janelas, cornijas, varandas) e
+  oferecidos no Construtor com miniatura. Vistos no jogo (5173, 2026-10-10).
+  Aguardando o jogador.
 - Construtor com blocos não destrutivos, operações booleanas e fachadas;
   construir a partir de um modelo 3D de referência (`editor/fromReference.ts`).
 - Zoneamento com crescimento de prédios nos lotes (`world/lots.ts`), planejador
@@ -355,7 +376,7 @@ o jogo a cada edição.
 
 ## Aberto
 
-- Desempenho e defeitos: `docs/PROBLEMAS.md` (P16, P20, P70).
+- Desempenho e defeitos: `docs/PROBLEMAS.md` (P70, P92).
 - Zoneamento: o meio-nível só é escolhido no crescimento (o construtor não
   tem controle para mudar `lift`; as alças e os arrastes já seguem a cota de
   cada bloco, P89); andar de baixo com garagem no lado da descida não é

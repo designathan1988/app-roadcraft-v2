@@ -2,6 +2,7 @@ import type { Vec2 } from '@core/vec2';
 import { edgeFrame } from '@world/buildings/footprints';
 import { volumeSides } from '@world/buildings/footprints';
 import { METERS_PER_UNIT } from '@world/units';
+import { formatDecimal } from '../i18n';
 import {
   bayCentreLocal,
   bayWidth,
@@ -136,8 +137,13 @@ export function drawBuildingOverlay(ctx: CanvasRenderingContext2D, input: Buildi
           const f = edgeFrame(v, side);
           const local = { x: f.x + f.tx * f.length / 2 + f.nx * 1.3, y: f.y + f.ty * f.length / 2 + f.ny * 1.3 };
           const world = localToWorld(b, local.x, local.y);
-          const at = project(world.x, world.y, sel.floor + 1);
-          const label = `${(f.length * METERS_PER_UNIT).toFixed(1)} m`;
+          // The side's drag arrow stands on the same mid-edge point: the
+          // length sits just above it, touching, never over it (labels above
+          // their point read best: arXiv 2407.11996).
+          const arrow = input.handles.find((h) => h.kind === 'side' && h.side === side);
+          const handleAt = arrow ? project(arrow.x, arrow.y, arrow.z) : project(world.x, world.y, sel.floor + 1);
+          const at = { x: handleAt.x, y: handleAt.y - 19 };
+          const label = `${formatDecimal(f.length * METERS_PER_UNIT, 1)} m`;
           ctx.font = '600 11px system-ui, sans-serif';
           const width = ctx.measureText(label).width + 10;
           ctx.fillStyle = 'rgba(10,28,23,.86)';

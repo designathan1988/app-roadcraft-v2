@@ -1680,9 +1680,10 @@ export function mountShell(deps: ShellDeps): void {
     fitDrawer();
   }
   /**
-   * The asset panel stands centred over the dock but never over the tool
-   * options (left) or the selection (right): its width is what is left between
-   * them, whatever the screen.
+   * The asset panel stands centred in the room between the tool options
+   * (left) and the selection (right), never over either: its width is all of
+   * that room, whatever the screen. With neither open it is the screen's
+   * centre, over the dock.
    */
   function fitDrawer(): void {
     if (drawer.hidden) return;
@@ -1696,12 +1697,17 @@ export function mountShell(deps: ShellDeps): void {
       // Only what reaches down to the panel's height matters.
       if (r.bottom > drawer.getBoundingClientRect().top - 4) right = Math.min(right, r.left - 12);
     }
-    const half = Math.max(160, Math.min(vw / 2 - left, right - vw / 2));
-    drawer.style.maxWidth = `${Math.floor(Math.min(1100, half * 2))}px`;
+    const room = Math.max(320, right - left);
+    // A narrow screen pins the panel to both edges (`shell.css`, max-width: 780px).
+    drawer.style.left = vw <= 780 ? '' : `${Math.round(right - left >= 320 ? (left + right) / 2 : vw / 2)}px`;
+    drawer.style.maxWidth = `${Math.floor(Math.min(1100, room))}px`;
     // The modes keep their names while they fit; when they do not, only the
-    // one in use keeps its name (the others show the icon, the name in the tooltip).
-    tabs.classList.remove('compact');
+    // one in use keeps its name (the others show the icon, the name in the
+    // tooltip); tighter still, none does. Past that the row scrolls: a mode
+    // never hides under the close button (8 modes in 284 px, 2026-10-10).
+    tabs.classList.remove('compact', 'tight');
     if (!tabs.hidden && tabs.scrollWidth > head.clientWidth - 8) tabs.classList.add('compact');
+    if (!tabs.hidden && tabs.scrollWidth > head.clientWidth - 8) tabs.classList.add('tight');
   }
   window.addEventListener('resize', () => fitDrawer());
 

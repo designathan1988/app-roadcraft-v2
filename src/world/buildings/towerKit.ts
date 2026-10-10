@@ -31,11 +31,15 @@ export const TOWER_KINDS = [
   // The city's buildings: town halls, hospitals, a church, a school, services, a cemetery.
   'cityHallBrick', 'decoSpire', 'hospitalA', 'loftBrick', 'cityHallWhite', 'forum', 'church', 'bank', 'school',
   'fireStation', 'police', 'hospitalB', 'cemetery',
+  // The landmarks (2026-10-09): built from the facade kit's modules (`render/buildings/landmarks.ts`).
+  'beauxArts', 'decoTower', 'modernOffice', 'residentialTerrace', 'glassSpire',
 ] as const;
 /** The second set, drawn by `render/buildings/signature.ts` per floor. */
 export const SECOND_SET: readonly TowerKind[] = TOWER_KINDS.slice(10, 20);
 /** The city's buildings: low, stood in a row of their own in front of the towers. */
-export const CIVIC_SET: readonly TowerKind[] = TOWER_KINDS.slice(20);
+export const CIVIC_SET: readonly TowerKind[] = TOWER_KINDS.slice(20, 33);
+/** The landmarks: composed of real modules - windows, cornices, balconies, a mansard - not facade pictures. */
+export const LANDMARK_SET: readonly TowerKind[] = TOWER_KINDS.slice(33);
 export type TowerKind = (typeof TOWER_KINDS)[number];
 
 export interface TowerSpec {
@@ -167,13 +171,19 @@ const STYLES: Record<TowerKind, Style> = {
   police: second('police', 'commercial', [3, 3], 28, 22),
   hospitalB: second('hospital', 'commercial', [8, 9], 32, 30),
   cemetery: second('cemetery', 'commercial', [3, 3], 40, 40),
+  // A Beaux-Arts hotel: tall classical storeys; an Art Deco office; a modernist office; flats; a glass office tower.
+  beauxArts: second('hotel', 'commercial', [10, 10], 25, 20, 3.7, 5.6),
+  decoTower: second('office', 'commercial', [23, 23], 22, 18, 3.6, 5.2),
+  modernOffice: second('office', 'commercial', [17, 17], 30, 19, 3.7, 4.6),
+  residentialTerrace: second('apartments', 'mixed', [22, 22], 25, 21, 3.1, 4.6),
+  glassSpire: second('office', 'commercial', [24, 24], 22, 22, 3.7, 5.2),
 };
 
 /** A second-set kind: only its blocks' sizes matter, its look is its own (`signature.ts`). */
-function second(fn: Style['fn'], use: Style['use'], floors: readonly [number, number], w: number, d: number): Style {
+function second(fn: Style['fn'], use: Style['use'], floors: readonly [number, number], w: number, d: number, storey = 3.2, ground = 4.5): Style {
   return {
     fn, use, floors, width: [w, w], depth: [d, d], wall: PLASTER_LIGHT, base: BASE_LIGHT, fill: 'window', ends: 'window',
-    podium: [2, 2], inset: 0, crown: 0, opening: { w: 0.6, h: 0.6, sill: 0.8 }, storey: 3.2, ground: 4.5,
+    podium: [2, 2], inset: 0, crown: 0, opening: { w: 0.6, h: 0.6, sill: 0.8 }, storey, ground,
   };
 }
 
