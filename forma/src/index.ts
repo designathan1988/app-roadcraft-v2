@@ -17,3 +17,5 @@ export * as interiorOps from './editor/interior-ops';
 export { WalkPhysics, walkStart } from './editor/walk';
 export { buildLotGroup } from './render/lot';
 export * as lotOps from './editor/lot-ops';
+export { straightSkeleton, SkeletonError, type SkeletonResult } from './geometry/roofs/skeleton';
+export { skeletonRoof, gableEdges, type RoofGeometry, type SkeletonRoofOptions } from './geometry/roofs/skeleton-roof';

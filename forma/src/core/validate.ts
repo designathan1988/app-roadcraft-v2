@@ -69,6 +69,8 @@ function checkMass(c: Check, m: Mass, storeyIds: Set<string>, l: Limits): void {
   c.oneOf(m.roof?.kind, 'Tipo de cobertura', ROOFS);
   c.num(m.roof.height, 'Altura da cobertura', 0.2, 10);
   c.color(m.roof.color, 'Cor da cobertura');
+  if (m.roof.direction !== undefined) c.num(m.roof.direction, 'Direção da cumeeira', -360, 360);
+  if (m.roof.overhang !== undefined) c.num(m.roof.overhang, 'Beiral', 0, 1.5);
   c.oneOf(m.facade?.pattern, 'Distribuição da fachada', PATTERNS);
   c.num(m.facade.windowWidth, 'Largura da janela', 0.25, 5);
   c.num(m.facade.windowHeight, 'Altura da janela', 0.3, 4);

@@ -8,6 +8,8 @@ import { bounds } from './polygon';
 import { ringPoints, massEdges } from './ring';
 import { clamp } from './polygon';
 import { legacyRoofPositions } from './roofs/legacy';
+import { skeletonRoof } from './roofs/skeleton-roof';
+import { SkeletonError } from './roofs/skeleton';
 import { stairFootprint } from './stairs';
 import { buildInteriorParts } from './interior-parts';
 import type { BoxPart, BuildingParts, MaterialKey, PartData, Vec3, WallHole } from './parts';
@@ -20,6 +22,8 @@ export interface MassPartsOptions {
   cutY?: number;
   /** Inclui paredes internas, portas e escadas (padrão: sim). */
   interiors?: boolean;
+  /** Usa as coberturas do v1 (retângulo envolvente) em vez do esqueleto reto. */
+  legacyRoofs?: boolean;
 }
 
 /** Abertura já resolvida no plano da aresta (u = centro / comprimento). */
@@ -232,8 +236,23 @@ export function buildMassParts(b: Building, m: Mass, opts: MassPartsOptions = {}
     if (m.roof.kind === 'flat') {
       out.slabs.push({ mat: roofMat, y: base + height + 0.04, thickness: 0.16, outer, holes, data: roofData });
     } else {
-      const kind = m.roof.kind === 'shed' || m.roof.kind === 'dome' ? m.roof.kind : 'gable';
-      out.meshes.push({ mat: roofMat, positions: legacyRoofPositions(kind, outer, holes, height, m.roof.height, base), data: roofData });
+      const k = m.roof.kind;
+      let done = false;
+      if (!opts.legacyRoofs && (k === 'hip' || k === 'gable' || k === 'mansard')) {
+        try {
+          // Topo da laje de cobertura: o telhado nasce na face externa das paredes.
+          const g = skeletonRoof(outer, holes, { kind: k, top: base + height + 0.16, height: m.roof.height, overhang: m.roof.overhang ?? 0.4, direction: m.roof.direction });
+          out.meshes.push({ mat: roofMat, positions: g.roof, data: roofData });
+          if (g.gables.length) out.meshes.push({ mat: wallMat, positions: g.gables, data: dataOf({ part: 'gable' }) });
+          done = true;
+        } catch (e) {
+          if (!(e instanceof SkeletonError)) throw e;
+        }
+      }
+      if (!done) {
+        const kind = k === 'shed' || k === 'dome' ? k : 'gable';
+        out.meshes.push({ mat: roofMat, positions: legacyRoofPositions(kind, outer, holes, height, m.roof.height, base), data: roofData });
+      }
     }
     if (m.flags.garden && m.roof.kind === 'flat') {
       const bd = bounds(outer),

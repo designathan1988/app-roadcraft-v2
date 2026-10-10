@@ -28,6 +28,9 @@ export interface VolumeView {
   roof: string;
   roofColor: string;
   roofHeight: number;
+  roofOverhang: number;
+  /** Direção da cumeeira (graus) ou indefinida (automática). */
+  roofDirection?: number;
 }
 
 export interface Defaults {
@@ -73,6 +76,8 @@ export const ROOFS: [string, string, string][] = [
   ['flat', 'flat', 'Plana'],
   ['shed', 'shed', 'Inclinada'],
   ['gable', 'gable', 'Duas águas'],
+  ['hip', 'hip', 'Quatro águas'],
+  ['mansard', 'mansard', 'Mansarda'],
   ['dome', 'dome', 'Curva'],
 ];
 
@@ -108,8 +113,7 @@ export function inspectorHTML(s: PanelState): string {
 <div class="row"><label for="base-input">Elevação</label><input id="base-input" type="number" data-prop="base" aria-label="Elevação" min="0" max="100" step=".1" value="${v.base.toFixed(1)}"></div>
 <div class="rule"></div><div class="caption">Material${s.faceLabel ? ' da face' : ''}</div><div class="swatches">${swatches(v.color, false)}</div>
 <div class="rule"></div><div class="caption">Cobertura</div>
-<div class="roof-mini">${ROOFS.map(([id, ic, label]) => `<button data-roof="${id}" class="${v.roof === id ? 'active' : ''}" title="${label}" aria-label="Cobertura ${label}" data-icon="${ic}"></button>`).join('')}</div>
-<div class="roof-labels">${ROOFS.map((r) => `<span>${r[2]}</span>`).join('')}</div></div>
+<div class="roof-mini">${ROOFS.map(([id, ic, label]) => `<div class="roof-pick"><button data-roof="${id}" class="${v.roof === id ? 'active' : ''}" title="${label}" aria-label="Cobertura ${label}" data-icon="${ic}"></button><span>${label}</span></div>`).join('')}</div></div>
 <div class="inspector-foot"><span id="selection-info">${info} · ${Math.round(s.selectionArea).toLocaleString('pt-BR')} m²</span><button data-action="floor" data-icon="extrude" title="Adicionar andar" aria-label="Adicionar andar"></button></div>`;
 }
 
@@ -158,9 +162,15 @@ export function shelfHTML(s: PanelState): string {
     html += group('Forma da cobertura', `<div class="tool-row">${ROOFS.map(([id, ic, name]) => `<button class="roof-tool ${roof === id ? 'active' : ''}" data-roof="${id}" data-icon="${ic}">${name}</button>`).join('')}</div>`);
     html += group(
       'Perfil',
-      `<div class="field-col"><div class="field-row">${field('roofHeight', 'Elevação', v ? v.roofHeight : 2.3, 0.1, 0.2, 10)}</div><div class="field-row"><label>Cor<input type="color" data-prop="roofColor" aria-label="Cor da cobertura" value="${v ? v.roofColor : '#474c4e'}"></label><button class="toggle-button ${v?.garden ? 'active' : ''}" data-toggle="garden" data-icon="tree">Jardim</button></div></div>`,
+      `<div class="field-col"><div class="field-row">${field('roofHeight', 'Elevação', v ? v.roofHeight : 2.3, 0.1, 0.2, 10)}${['hip', 'gable', 'mansard'].includes(roof) ? field('roofOverhang', 'Beiral', v ? v.roofOverhang : 0.4, 0.1, 0, 1.5) : ''}</div><div class="field-row"><label>Cor<input type="color" data-prop="roofColor" aria-label="Cor da cobertura" value="${v ? v.roofColor : '#474c4e'}"></label><button class="toggle-button ${v?.garden ? 'active' : ''}" data-toggle="garden" data-icon="tree">Jardim</button></div></div>`,
       true,
     );
+    if (roof === 'gable')
+      html += group(
+        'Cumeeira',
+        `<div class="field-col"><select data-prop="roofDirection" aria-label="Direção da cumeeira">${[['', 'Automática'], ['0', 'Ao longo da largura'], ['90', 'Ao longo da profundidade']].map(([val, name]) => `<option value="${val}" ${String(v?.roofDirection ?? '') === val ? 'selected' : ''}>${name}</option>`).join('')}</select><div class="help-inline">Empenas nas pontas da cumeeira.</div></div>`,
+        true,
+      );
     html += group(
       'Terraços e níveis',
       `<div class="field-col"><button data-action="setback" class="action-tool" data-icon="setback">Criar volume recuado</button><button data-action="floor" class="action-tool" data-icon="extrude">Adicionar andar</button></div>`,

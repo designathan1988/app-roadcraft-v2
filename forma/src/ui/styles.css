@@ -184,3 +184,27 @@
 .forma-app .field-row input[data-storeyprop="name"] {
   width: 140px;
 }
+
+/* Coberturas no inspetor: grade de 3 colunas, nome sob o ícone. */
+.forma-app .roof-mini{display:grid;grid-template-columns:repeat(3,1fr);gap:7px 6px}
+.forma-app .roof-pick{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
+.forma-app .roof-mini .roof-pick button{width:100%;height:34px}
+.forma-app .roof-pick span{font-size:9px;line-height:1.15;color:var(--muted);text-align:center}
+/* Inspetor nunca passa da área 3D: rola quando a janela é baixa. */
+.forma-app #inspector{max-height:calc(100% - 30px);overflow-y:auto;scrollbar-width:thin}
+.forma-app #inspector .swatches{flex-wrap:nowrap;justify-content:space-between;gap:4px}
+.forma-app #inspector .swatches .swatch{flex:0 1 29px;min-width:24px;aspect-ratio:1}
+/* Cabeçalho médio (761–1100 px): botões de arquivo só com ícone, nome do projeto visível. */
+@container forma (max-width:1100px){
+.forma-app header{gap:8px}
+.forma-app header .header-button:not(.level-toggle) span{display:none}
+.forma-app header .header-button:not(.level-toggle){padding:7px}
+.forma-app #project-name{width:150px;min-width:90px;flex:0 1 150px}
+}
+@container forma (max-width:1100px){
+.forma-app .shelf-actions button{font-size:0;gap:0;padding:6px}
+.forma-app .shelf-actions button svg{width:16px;height:16px}
+}
+/* Barra de ferramentas rola em janelas baixas, sem esconder iluminação e ajuda. */
+.forma-app .rail{overflow-y:auto;scrollbar-width:none}
+.forma-app .rail>*{flex-shrink:0}

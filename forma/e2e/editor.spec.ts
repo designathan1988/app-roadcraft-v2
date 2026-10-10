@@ -357,3 +357,47 @@ test('interiores: pavimento, paredes, cômodos, porta, escada e caminhar', async
   await expect(page.locator('#walk-hint')).toBeHidden();
   expect(errors).toEqual([]);
 });
+
+test('coberturas pelo esqueleto: quatro águas, duas águas com empena, mansarda, beiral', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  await page.locator('#shelf-content [data-shape="l"]').click();
+  await view(page, [0, 0, 0], 40);
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  const parts = () =>
+    page.evaluate(() => {
+      const ed = (globalThis as any).Forma.editor;
+      const b = ed.getProject().buildings[0];
+      const out: Record<string, number> = {};
+      ed.scene.built.get(b.id).group.traverse((o: any) => {
+        if (o.isMesh && !o.isInstancedMesh) out[o.userData.part] = (out[o.userData.part] ?? 0) + o.geometry.attributes.position.count;
+      });
+      return out;
+    });
+  await page.locator('#inspector [data-roof="hip"]').click();
+  expect((await project(page)).buildings[0].masses[0].roof.kind).toBe('hip');
+  expect((await parts()).roof).toBeGreaterThan(0);
+  expect((await parts()).gable).toBeUndefined();
+  await page.locator('#inspector [data-roof="gable"]').click();
+  expect((await parts()).gable).toBe(6); // duas empenas (pontas das alas do L)
+  await page.locator('#inspector [data-roof="mansard"]').click();
+  expect((await parts()).roof).toBeGreaterThan(0);
+  // Beiral e direção no modo avançado.
+  await page.locator('#inspector [data-roof="gable"]').click();
+  await page.locator('#ui-level').click();
+  await page.locator('[data-tab="roofs"]').click();
+  await page.locator('#shelf-content input[data-prop="roofOverhang"]').fill('1');
+  await page.locator('#shelf-content input[data-prop="roofOverhang"]').press('Tab');
+  await page.locator('#shelf-content select[data-prop="roofDirection"]').selectOption('90');
+  const roof = (await project(page)).buildings[0].masses[0].roof;
+  expect(roof.overhang).toBe(1);
+  expect(roof.direction).toBe(90);
+  await page.locator('#undo').click();
+  expect((await project(page)).buildings[0].masses[0].roof.direction).toBeUndefined();
+  expect(errors).toEqual([]);
+});

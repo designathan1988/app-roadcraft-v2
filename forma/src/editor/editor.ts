@@ -210,6 +210,8 @@ export class Editor {
       roof: m.roof.kind,
       roofColor: m.roof.color,
       roofHeight: m.roof.height,
+      roofOverhang: m.roof.overhang ?? 0.4,
+      roofDirection: m.roof.direction,
     };
   }
 
@@ -816,6 +818,11 @@ export class Editor {
       else if (prop === 'rotation') ops.setRotation(n, Number(value));
       else if (prop === 'roofHeight') m.roof.height = clamp(Number(value), 0.2, 10);
       else if (prop === 'roofColor') m.roof.color = String(value);
+      else if (prop === 'roofOverhang') m.roof.overhang = ops.r2(clamp(Number(value), 0, 1.5));
+      else if (prop === 'roofDirection') {
+        if (value === '' || !Number.isFinite(Number(value))) delete m.roof.direction;
+        else m.roof.direction = Number(value);
+      }
       else if (prop === 'roof') ops.setRoof(n, value as RoofKind);
       else if (prop === 'cornice' || prop === 'garden' || prop === 'pilotis') ops.setFlag(n, prop, !!value);
       else if (facadeProps[prop]) ops.setFacadeProp(n, face && n.id === b.id ? face : null, facadeProps[prop]!, value);

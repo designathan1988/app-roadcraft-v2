@@ -19,7 +19,7 @@ describe('paridade com o app legado', () => {
     for (const b of p.buildings) {
       const ref = refs[name]![b.id]!;
       expect(ref, `referência de ${b.id}`).toBeDefined();
-      const built = buildBuilding(b, { context: ctx });
+      const built = buildBuilding(b, { context: ctx, legacyRoofs: true });
       const meshes: Record<string, number> = {},
         instances: Record<string, number> = {},
         sig: Record<string, number> = {},

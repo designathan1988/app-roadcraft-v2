@@ -53,6 +53,18 @@ No modo incorporado o editor:
 
 O exemplo completo está em `src/app/host-scene.html`.
 
+### Coberturas
+
+Quatro águas, duas águas e mansarda saem de um esqueleto reto próprio (Felkel & Obdržálek, com pesos), em `src/geometry/roofs/skeleton.ts`. Funcionam em qualquer planta: L, U, T, pátios, polígonos livres.
+- **Duas águas:** as pontas da cumeeira viram empenas verticais. `roof.direction` (graus no eixo local; 0 = largura, 90 = profundidade) escolhe a orientação.
+- **Beiral:** `roof.overhang` (m, padrão 0,4) prolonga as águas para fora das paredes.
+- **Falhas:** se o esqueleto falhar ou passar de 250 ms, a massa volta à cobertura simples do v1 (`roofs/legacy.ts`). A opção `legacyRoofs: true` em `buildBuilding` força esse modo.
+
+```ts
+import { skeletonRoof, straightSkeleton } from 'forma';
+const { roof, gables } = skeletonRoof(outer, holes, { kind: 'gable', top: 9.6, height: 2.5, overhang: 0.5 });
+```
+
 ## Formato do projeto (`forma/2`)
 
 Lote → Edifício → Pavimentos → Massas → Aberturas. Unidades em metros, Y para cima, planta em `[x, z]`.
