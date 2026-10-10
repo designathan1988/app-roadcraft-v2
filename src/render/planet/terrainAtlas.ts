@@ -5,6 +5,7 @@ import type { TerrainStamp } from '@world/terrain';
 import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
 import { FACE_REACH, faceCellOf, faceCentre } from '@world/planet/atlas';
+import { faceGround } from '@world/planet/relief';
 import type { Mesh } from 'three';
 import { GroundChanges } from '../groundChanges';
 import {
@@ -44,6 +45,8 @@ class FaceSource implements TerrainSource {
   /** The document's own stamps and dabs this face's were made from, in order. */
   stampSources: readonly TerrainStamp[] = [];
   paintSources: readonly PaintDab[] = [];
+  /** The face's land, read at the sphere so neighbours meet at the same height (`planet/relief.ts`). */
+  terrainGround?: (x: number, y: number) => number;
 }
 
 interface Tile {
@@ -100,7 +103,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       tiles.forEach((tile, i) => {
         const sources = doc.terrainStamps.filter((s) => reaches(tile, s.x, s.y, s.radius));
         tile.source.terrainRelief = doc.terrainRelief;
-        if (!reliefMoved && sameList(sources, tile.source.stampSources)) return;
+        if (reliefMoved || !tile.source.terrainGround) tile.source.terrainGround = faceGround(tile.face, doc.terrainRelief);
+        if (!reliefMoved && tile.source.terrainRevision !== 0 && sameList(sources, tile.source.stampSources)) return;
         const copies = stampCopies[i] as WeakMap<TerrainStamp, TerrainStamp>;
         tile.source.stampSources = sources;
         tile.source.terrainStamps = sources.map((s) => {

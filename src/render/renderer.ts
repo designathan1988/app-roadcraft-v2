@@ -81,6 +81,7 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
+import { installPlanet, planetScene } from './planet/bend';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -406,6 +407,8 @@ export function createSceneRenderer(
   initialQuality: QualityLevel | 'auto' = 'auto',
   onAssetsReady: () => void = () => {},
 ): SceneHandle {
+  // The planet: three's vertex chunks bent round it before any program is built (`planet/bend.ts`).
+  if (__PLANET__) installPlanet();
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,
@@ -525,6 +528,7 @@ export function createSceneRenderer(
   /** Behind the map while building it (`draw`): a plain dark blue. */
   const MAP_BACKGROUND = new Color(0x0c1a2c);
   const scene = new Scene();
+  if (__PLANET__) planetScene(scene);
   // The root never moves. Keep its identity matrix from forcing every static
   // world child to recompute a world matrix on every render pass.
   scene.matrixAutoUpdate = false;
@@ -3124,6 +3128,7 @@ export function createSceneRenderer(
         rain.update(weather.rain, target, span, rainWind, step);
         weatherActive = weather.rain > 0 || weather.lightning > 0 || flash > 0 || (weather.wind > 0 && placedCloudsShown);
       }
+      if (__PLANET__) environment.setTwist(rig.twist);
       const dark = environment.setTimeOfDay(clock);
       // What a cloud's shadow can take: the sun's share of the light now.
       post.setDirectShare(environment.directShare());
@@ -3327,6 +3332,8 @@ export function createSceneRenderer(
           performance.mark('opening:shown', { detail: { waitedMs: performance.now() - openingSince, workedMs: reveal.worked, whole } });
         }
       }
+      // Out at the globe the contact shading is off (`PostChain.setAmbientOcclusion`).
+      if (__PLANET__) post.setAmbientOcclusion((rig.viewport.globe ?? 0) < 0.02);
       if (reveal.opened) post.render(delta);
       else onAssetsReady();
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });

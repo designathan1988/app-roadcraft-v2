@@ -3338,6 +3338,8 @@ function frame(now: number): void {
   const wall = frameClock.tick(now);
   // The camera's glide: keys held, the wheel's notches being spent.
   if (cameraMotion.step(wall)) persistence.saveSettingsSoon(sessionSettings);
+  // The coast of a drag let go (`cameraGestures.ts`).
+  cameraHand.step(wall);
   frameTimer.mark('câmera');
 
   // The opening puts the town together in parts (`SceneHandle.worldBusy`):
@@ -3431,7 +3433,7 @@ function frame(now: number): void {
   healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || cameraMotion.moving || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || cameraHand.coasting || cameraMotion.moving || scene.busy())) requestDraw();
   // Only the clouds moving (they drift, form and fade): a slower frame.
   else if (!document.hidden && scene.drifting()) frameClock.drift();
 }

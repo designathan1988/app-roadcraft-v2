@@ -8,7 +8,10 @@ import {
 } from 'three';
 
 import type { Vec2 } from '@core/vec2';
+import { PLANET_RADIUS } from '@core/cubeSphere';
 import { WORLD_HALF } from '@world/bounds';
+import { faceCellOf } from '@world/planet/atlas';
+import { anchorPlanet, inFaceChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
 
@@ -19,7 +22,8 @@ import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewD
  * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
  */
 export const MIN_HALF_HEIGHT = 2;
-export const MAX_HALF_HEIGHT = 1_600;
+/** On the planet, out to the whole globe: half again its radius. */
+export const MAX_HALF_HEIGHT = __PLANET__ ? Math.round(PLANET_RADIUS * 1.5) : 1_600;
 
 /**
  * The zoom range the iso rig can represent at a given viewport height.
@@ -70,6 +74,11 @@ export const PERSPECTIVE_FOV = 35;
 const DOLLY_REACH = 2.5;
 const TAU = Math.PI * 2;
 
+const smooth = (v: number): number => {
+  const t = Math.min(1, Math.max(0, v));
+  return t * t * (3 - 2 * t);
+};
+
 export function clampElevation(e: number): number {
   return Math.min(MAX_ELEVATION, Math.max(MIN_ELEVATION, e));
 }
@@ -110,6 +119,12 @@ export interface IsoRig {
    * building without a jump and never blocked.
    */
   setSolids(floorAt: ((x: number, y: number) => number) | null): void;
+  /**
+   * On the planet: the turn of the world's axes the view's centre has taken
+   * crossing faces, rad (each crossing's `rehome` turn, summed). The sun turns
+   * with it (`SceneEnvironment.setTwist`).
+   */
+  readonly twist: number;
 }
 
 /** The pull in front of a building (`apply`): samples along the line of sight. */
@@ -186,26 +201,43 @@ export function createIsoRig(
       return;
     }
     elevation = tiltNow();
-    // The view's centre stays over the map: dragged off it, the view
-    // showed nothing but sky - a white screen.
-    target.x = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.x));
-    target.z = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.z));
-    let distance = DISTANCE;
+    if (__PLANET__) {
+      // On the planet there is no edge: a centre dragged over a face's border
+      // goes on on the face it reached, the view turned by the turn between
+      // the two faces' axes there, so nothing on screen moves.
+      const moved = rehome(target.x, -target.z);
+      if (moved) {
+        target.x = moved.x;
+        target.z = -moved.y;
+        azimuth = wrapAzimuth(azimuth + moved.turn);
+        twist = wrapAzimuth(twist + moved.turn);
+      }
+      anchorPlanet(target.x, target.z);
+    } else {
+      // The view's centre stays over the map: dragged off it, the view
+      // showed nothing but sky - a white screen.
+      target.x = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.x));
+      target.z = Math.max(-VIEW_REACH, Math.min(VIEW_REACH, target.z));
+    }
+    // Pulled back from the planet to see it whole: how far the view has gone
+    // from the ground to the globe (0 near the ground, 1 the globe filling it).
+    const globe = globeNow = __PLANET__ ? smooth((halfHeight - PLANET_RADIUS * 0.15) / (PLANET_RADIUS * 1.05)) : 0;
+    let distance = DISTANCE + globe * PLANET_RADIUS * 2.4;
     if (camera === ortho) {
       ortho.left = -halfHeight * aspect;
       ortho.right = halfHeight * aspect;
       ortho.top = halfHeight;
       ortho.bottom = -halfHeight;
-      ortho.far = 14000;
+      ortho.far = Math.max(14000, distance + PLANET_RADIUS * 2.6 * (__PLANET__ ? 1 : 0));
     } else {
       // As far back as makes the view `halfHeight` tall at the centre: the
       // same scale there as the orthographic view had, through a lens that
       // widens in the street (`cameraProfile`).
       persp.fov = fieldOfView(halfHeight);
-      distance = viewDistance(halfHeight);
+      distance = viewDistance(halfHeight) + globe * PLANET_RADIUS * 2.4;
       persp.aspect = aspect;
       persp.near = Math.max(0.2, distance * 0.02);
-      persp.far = distance * 4 + 6000;
+      persp.far = distance * 4 + 6000 + (__PLANET__ ? PLANET_RADIUS * 2.6 : 0);
     }
 
     // In perspective the view looks at the ground itself, at its height
@@ -215,11 +247,13 @@ export function createIsoRig(
     // Close up, the point looked at rises to a person's eyes: the closest
     // view is a pedestrian's, looking down the street, not at the asphalt.
     if (camera === persp) target.y = (groundAt ? groundAt(target.x, -target.z) : 0) + eyeLift(halfHeight);
-    const looked = target;
+    // Out at the globe, the view slides from the ground it looked at down to
+    // the planet's centre: the globe whole in the middle of the screen.
+    const looked = globe > 0 ? globeLook.set(target.x, target.y - globe * PLANET_RADIUS, target.z) : target;
     const horizontal = Math.cos(elevation) * distance;
     camera.position.set(
       looked.x + Math.cos(azimuth) * horizontal,
-      (camera === persp ? looked.y : 0) + Math.sin(elevation) * distance,
+      (camera === persp || globe > 0 ? looked.y : 0) + Math.sin(elevation) * distance,
       looked.z + Math.sin(azimuth) * horizontal,
     );
     // "Up" on screen is the way the camera faces over the ground. At any tilt
@@ -271,9 +305,18 @@ export function createIsoRig(
       if (camera.position.y < floor) camera.position.y = floor;
     }
     camera.lookAt(looked);
+    // Pixels per unit where the view looks at the ground (the globe's pull back included).
+    scaleNow = camera === persp
+      ? height / Math.max(1e-6, 2 * camera.position.distanceTo(target) * Math.tan((persp.fov * Math.PI) / 360))
+      : height / Math.max(1e-6, halfHeight * 2);
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
   };
+  const globeLook = new Vector3();
+  /** How far out to the globe the view is, and its scale at the centre, as `apply` last set them. */
+  let globeNow = 0;
+  let twist = 0;
+  let scaleNow = 1;
   /** The drawn ground's height at a map point (`setGround`). */
   let groundAt: ((x: number, y: number) => number) | null = null;
   /** The lowest the eye may stand over buildings (`setSolids`). */
@@ -294,11 +337,19 @@ export function createIsoRig(
   const hitAt = (px: number, py: number, atHeight: number): Vec2 | null => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
     raycaster.setFromCamera(ndc, camera);
+    // On the planet: where the ray meets the sphere at that height, exactly.
+    if (__PLANET__) return planetPick(raycaster.ray, atHeight);
     ground.constant = -atHeight;
     const ok = raycaster.ray.intersectPlane(ground, hit);
     ground.constant = 0;
     return ok ? { x: hit.x, y: -hit.z } : null;
   };
+  /**
+   * A map point as the view's own face measures it: on the planet two points
+   * on different faces are subtracted in the chart of the face the view's
+   * centre is on (`inFaceChart`); on the flat map, the point itself.
+   */
+  const chart = (p: Vec2): Vec2 => (__PLANET__ ? inFaceChart(faceCellOf(target.x, -target.z), p.x, p.y) : p);
 
   /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
   /**
@@ -334,10 +385,11 @@ export function createIsoRig(
     // first left. Close up the tilt, the lens and the eye's lift change with
     // the zoom too: a third step.
     for (let pass = camera === persp ? 3 : 1; pass > 0; pass--) {
-      const after = hitAt(px, py, atHeight);
-      if (!after) break;
-      target.x += before.x - after.x;
-      target.z -= before.y - after.y;
+      const found = hitAt(px, py, atHeight);
+      if (!found) break;
+      const was = chart(before), after = chart(found);
+      target.x += was.x - after.x;
+      target.z -= was.y - after.y;
       apply();
     }
   };
@@ -348,7 +400,8 @@ export function createIsoRig(
    */
   const dolly = (px: number, py: number, excess: number, atHeight: number): void => {
     const step = viewDistance(MIN_HALF_HEIGHT) * DOLLY_REACH * Math.log(excess);
-    const at = hitAt(px, py, atHeight);
+    const found = hitAt(px, py, atHeight);
+    const at = found && chart(found);
     let dx = -Math.cos(azimuth), dz = -Math.sin(azimuth);
     let move = step;
     if (at) {
@@ -368,7 +421,8 @@ export function createIsoRig(
     toWorld: (px, py) => worldAt(px, py),
     toWorldAt: (px, py, atHeight) => worldAt(px, py, atHeight),
     toScreen(p, cssW, cssH, atHeight = 0) {
-      projected.set(p.x, atHeight, -p.y).project(camera);
+      if (__PLANET__) projected.copy(planetWorld(p.x, atHeight, -p.y)).project(camera);
+      else projected.set(p.x, atHeight, -p.y).project(camera);
       return {
         x: (projected.x * 0.5 + 0.5) * cssW,
         y: (-projected.y * 0.5 + 0.5) * cssH,
@@ -382,10 +436,18 @@ export function createIsoRig(
       // ground, the view's height moves with its centre: a second step takes
       // up what the first left. A ray that misses the plane moves nothing.
       for (let pass = camera === persp && groundAt ? 2 : 1; pass > 0; pass--) {
-        const now = hitAt(px, py, atHeight);
-        if (!now) break;
-        target.x += grabbed.x - now.x;
-        target.z -= grabbed.y - now.y;
+        let found = hitAt(px, py, atHeight);
+        // Off the globe's limb: the ground nearest the ray, so a drag past
+        // the edge still turns the planet.
+        if (!found && __PLANET__) {
+          ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
+          raycaster.setFromCamera(ndc, camera);
+          found = planetNearest(raycaster.ray);
+        }
+        if (!found) break;
+        const held = chart(grabbed), now = chart(found);
+        target.x += held.x - now.x;
+        target.z -= held.y - now.y;
         apply();
       }
     },
@@ -455,6 +517,12 @@ export function createIsoRig(
       const turns = Math.round((azimuth - DEFAULT_AZIMUTH) / (Math.PI * 0.5));
       return (((turns % 4) + 4) % 4) as Facing;
     },
+    get globe() {
+      return globeNow;
+    },
+    get scaleAtCentre() {
+      return scaleNow;
+    },
     get zoomBounds() {
       return isoZoomBounds(height);
     },
@@ -478,6 +546,9 @@ export function createIsoRig(
     target,
     get chasing() {
       return chase !== null;
+    },
+    get twist() {
+      return twist;
     },
     setGround(next) {
       groundAt = next;

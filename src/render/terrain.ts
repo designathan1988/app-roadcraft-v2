@@ -128,7 +128,10 @@ export const SEASON_DRY: { value: number } = { value: 0.4 };
  * What the surface reads of the document: the map's own, or (on the planet)
  * one face's share of it, in the face's coordinates (`planet/terrainAtlas.ts`).
  */
-export type TerrainSource = Pick<RoadDoc, 'changes' | 'terrainRevision' | 'terrainStamps' | 'terrainRelief' | 'natureRevision' | 'nature' | 'paintRevision' | 'terrainPaint'>;
+export type TerrainSource = Pick<RoadDoc, 'changes' | 'terrainRevision' | 'terrainStamps' | 'terrainRelief' | 'natureRevision' | 'nature' | 'paintRevision' | 'terrainPaint'> & {
+  /** The land under the stamps when it is not the plane's relief (a planet face's, `planet/relief.ts`). */
+  readonly terrainGround?: (x: number, y: number) => number;
+};
 
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
@@ -2799,7 +2802,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     // a fixed world datum it vanished under raised ground, and level with the
     // banks it covered the whole valley as one flat sheet.
     const land = stamps.filter((stamp) => stamp.mode !== 'river');
-    const landIndex = new TerrainIndex(land, 0, index.relief);
+    const landIndex = new TerrainIndex(land, 0, index.relief, index.ground);
     const landAt = (x: number, y: number): number => TERRAIN_BASE + sampleTerrainHeight(landIndex, x, y);
 
     // A river drawn as a stroke is ONE body of water along its course: a
@@ -3215,7 +3218,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       const previous = index;
       const before = revision;
       revision = doc.terrainRevision;
-      index = new TerrainIndex(doc.terrainStamps, revision, doc.terrainRelief);
+      index = new TerrainIndex(doc.terrainStamps, revision, doc.terrainRelief, doc.terrainGround);
 
       // Only the cells a new stamp reaches are rewritten. A brush stroke adds
       // one 80-unit stamp; rewriting all 90 601 corners for it is what made

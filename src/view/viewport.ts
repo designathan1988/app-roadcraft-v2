@@ -93,6 +93,14 @@ export interface Viewport {
    * reload of a zoomed-in session back to 320%.
    */
   readonly zoomBounds: { readonly min: number; readonly max: number };
+  /**
+   * On the planet, how far out to the whole globe the view is: 0 at the
+   * ground, 1 the globe whole. Absent on the flat map. Past a little of it
+   * the hand turns the camera round the planet (`cameraGestures.ts`).
+   */
+  readonly globe?: number;
+  /** Screen pixels per world unit at the point looked at, as drawn (with the globe's own pull back). */
+  readonly scaleAtCentre?: number;
 }
 
 /** The existing flat camera, behind the same seam. */

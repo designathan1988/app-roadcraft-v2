@@ -4,6 +4,8 @@ import {
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
+import { PLANET_RADIUS } from '@core/cubeSphere';
+import { planetCentre, planetPointInto } from './planet/bend';
 import { m } from '@world/units';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -78,6 +80,12 @@ export interface PostChain {
    * lies over, and the map's settings - or none.
    */
   setGroundFog(fog: { texture: Texture; low: number; high: number; density: number } | null): void;
+  /**
+   * The contact shading on or off. Out at the planet's globe it is a shade
+   * of a unit on ground thousands away, and its depth-rebuilt normals drew a
+   * dark line across the globe: off there.
+   */
+  setAmbientOcclusion(on: boolean): void;
   dispose(): void;
 }
 
@@ -118,6 +126,9 @@ export function createPostChain(
       setSize() {
         /* the renderer's own resize is enough */
       },
+      setAmbientOcclusion() {
+        /* no contact shading without the chain */
+      },
       setNight() {
         /* no bloom without the chain */
       },
@@ -156,6 +167,8 @@ export function createPostChain(
   const composer = new EffectComposer(renderer, target);
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(size.x, size.y);
+  // The passes, for the browser checks (a pass switched off to find what draws a defect).
+  if (import.meta.env.DEV) Object.assign(window, { __composer: composer });
   const scenePass = new RenderPass(scene, camera);
   composer.addPass(scenePass);
   /**
@@ -372,6 +385,9 @@ export function createPostChain(
   return {
     enabled: true,
     target,
+    setAmbientOcclusion(on) {
+      if (gtao) gtao.enabled = on;
+    },
     render(delta) {
       if (clouds) {
         camera.updateMatrixWorld();
@@ -380,8 +396,13 @@ export function createPostChain(
         const u = clouds.uniforms as Record<string, { value: unknown }>;
         const count = layClouds(u['uCloud']!.value as Vector4[], u['uPuff']!.value as Vector4[], u['uLife']!.value as number[], u['uBase']!.value as number[], u['uShow']!.value as number[], placedClouds, cloudDrift);
         u['uCloudCount']!.value = count;
-        const plane = cloudShadowFrame(u['uCloud']!.value as Vector4[], u['uBase']!.value as number[], count,
+        // On the planet no plane lies under every cloud: each shadow is marched.
+        const plane = __PLANET__ ? null : cloudShadowFrame(u['uCloud']!.value as Vector4[], u['uBase']!.value as number[], count,
           u['uSunDir']!.value as Vector3, u['uShadowRect']!.value as Vector4);
+        if (__PLANET__) {
+          planetCentre(onPlanet);
+          (u['uPlanet']!.value as Vector4).set(onPlanet.x, onPlanet.y, onPlanet.z, PLANET_RADIUS);
+        }
         u['uShadowMapOn']!.value = plane === null ? 0 : 1;
         if (plane !== null) u['uShadowPlane']!.value = plane;
         (clouds.uniforms['uProjectionInverse'] as { value: Matrix4 }).value.copy(camera.projectionMatrixInverse);
@@ -515,7 +536,8 @@ function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: 
     // depth goes with the concentration, so the whole cloud fades evenly).
     // Fed to `life` it eroded the shape instead, and a cloud near the edge
     // broke into loose white flecks, one lying over the land (2026-10-08).
-    const at = driftedCloud(cloud, drift);
+    // On the planet there is no edge to wrap round: the wind carries it on over the faces.
+    const at = __PLANET__ ? { x: cloud.x + drift.x, y: cloud.y + drift.y, show: 1 } : driftedCloud(cloud, drift);
     layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
     shows[slot] = at.show;
     // Each its own flat base, at its own height (one height for the whole
@@ -526,18 +548,28 @@ function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: 
   return slot;
 }
 
+const onPlanet = new Vector3();
+/** A sphere of the flat sky (centre x, height y, z; radius w) where the planet draws it. */
+function placeOnPlanet(v: Vector4): void {
+  planetPointInto(v.x, v.y, v.z, onPlanet);
+  v.set(onPlanet.x, onPlanet.y, onPlanet.z, v.w);
+}
+
 /** One cloud into slot `i`: its bounding sphere, its puffs (jittered by `id`), how grown it is (`life`). */
 function layOne(i: number, id: number, x: number, z: number, base: number, size: number, yaw: number, life: number, grown: number,
   bounds: Vector4[], puffs: Vector4[], lives: number[]): void {
   lives[i] = life;
   const c = Math.cos(yaw), sn = Math.sin(yaw);
   bounds[i]!.set(x, base + size * 0.5, z, size * 1.12);
+  // On the planet: carried to where the planet draws that point of the sky.
+  if (__PLANET__) placeOnPlanet(bounds[i]!);
   for (let k = 0; k < CLOUD_PUFFS; k++) {
     const [a, up, b, r] = PUFFS[k]!;
     const ja = a + (cloudHash(id * 11 + k, 6) - 0.5) * 0.16;
     const jb = b + (cloudHash(id * 11 + k, 7) - 0.5) * 0.16;
     const jr = r * (0.88 + 0.24 * cloudHash(id * 11 + k, 8)) * grown;
     puffs[i * CLOUD_PUFFS + k]!.set(x + (ja * c - jb * sn) * size, base + up * size * grown, z + (ja * sn + jb * c) * size, jr * size);
+    if (__PLANET__) placeOnPlanet(puffs[i * CLOUD_PUFFS + k]!);
   }
 }
 
@@ -586,6 +618,7 @@ const CLOUD_SHADOWS = {
     uGroundFog: { value: new Vector4() },
     uGroundFogSlab: { value: new Vector2() },
     uMapHalf: { value: WORLD_HALF },
+    uPlanet: { value: new Vector4() },
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
     // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera
@@ -654,9 +687,11 @@ const CLOUD_SHADOWS = {
     uniform float uMapHalf;
     uniform float uBackdrop;
     uniform float uEyeShift;
-    // Height over the ground's base level.
+    // The planet as drawn (\`planet/bend.ts\`): its centre and radius; w 0 on the flat map.
+    uniform vec4 uPlanet;
+    // Height over the ground's base level: over the sphere on the planet.
     float altitude(vec3 p) {
-      return p.y;
+      return uPlanet.w > 0.0 ? length(p - uPlanet.xyz) - uPlanet.w : p.y;
     }
     uniform vec3 uSkyDeep;
     uniform vec3 uSkyGlow;
@@ -785,7 +820,7 @@ const CLOUD_SHADOWS = {
       // (a roof over a low cloud's base) the march itself.
       if (!sky && uStrength > 0.0 && uCloudCount > 0) {
         float through = 0.0;
-        if (uShadowMapOn > 0.5 && hit.y <= uShadowPlane) {
+        if (uShadowMapOn > 0.5 && altitude(hit) <= uShadowPlane) {
           vec3 onPlane = hit + uSunDir * ((uShadowPlane - hit.y) / uSunDir.y);
           vec2 at = (onPlane.xz - uShadowRect.xy) / (uShadowRect.zw - uShadowRect.xy);
           if (at.x >= 0.0 && at.y >= 0.0 && at.x <= 1.0 && at.y <= 1.0) through = texture2D(tCloudShadow, at).r;

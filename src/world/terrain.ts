@@ -267,8 +267,16 @@ export class TerrainIndex {
   /** The land under the stamps (`ReliefVersion`). */
   readonly relief: ReliefVersion;
 
-  constructor(stamps: readonly TerrainStamp[], revision: number, relief: ReliefVersion = RELIEF_LEGACY) {
+  /**
+   * The land under the stamps when it is not the plane's own relief: a planet
+   * face's, read at the sphere (`planet/relief.ts` faceGround). Undefined on
+   * the flat map.
+   */
+  readonly ground: ((x: number, y: number) => number) | undefined;
+
+  constructor(stamps: readonly TerrainStamp[], revision: number, relief: ReliefVersion = RELIEF_LEGACY, ground?: (x: number, y: number) => number) {
     this.relief = relief;
+    this.ground = ground;
     // COPIED, not aliased. The document's stamp list is mutated in place, so
     // holding the live array made every index look identical to the next one and
     // the renderer could never tell what had just changed.
@@ -321,7 +329,8 @@ export function sampleTerrainHeight(
 ): number {
   const list = stamps instanceof TerrainIndex ? stamps.near(x, y) : stamps;
   const relief = stamps instanceof TerrainIndex ? stamps.relief : RELIEF_LEGACY;
-  let height = relief === RELIEF_FLAT ? 0 : relief === RELIEF_NATURAL ? naturalRelief(x, y) : baseRelief(x, y);
+  const ground = stamps instanceof TerrainIndex ? stamps.ground : undefined;
+  let height = ground ? ground(x, y) : relief === RELIEF_FLAT ? 0 : relief === RELIEF_NATURAL ? naturalRelief(x, y) : baseRelief(x, y);
   // The stroke being gathered (see `TerrainStamp.stroke`): its id, its mode,
   // and the strongest signed move any of its dabs makes here so far.
   let stroke: number | undefined;

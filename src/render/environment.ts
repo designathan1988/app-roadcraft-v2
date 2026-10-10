@@ -92,6 +92,13 @@ export interface SceneEnvironment {
    * light; the moon at night. Returns how dark it is, 0 by day to 1 at night.
    */
   setTimeOfDay(minutes: number): number;
+  /**
+   * On the planet: how far the world's axes have turned under the view's
+   * centre as it crossed faces (`IsoRig.twist`), rad. The sun's bearing turns
+   * with them, so it stays where it is over the planet and the light never
+   * jumps when the view goes on onto another face.
+   */
+  setTwist(angle: number): void;
   /** Smoke in the air, 0..1: the fog closes in and browns, the light dims. */
   setSmog(k: number): void;
   /**
@@ -159,6 +166,8 @@ export function createEnvironment(
   const groundTint = new Color(0x6f7a68);
   const sunColor = new Color(0xfff0d2);
 
+  /** The planet's turn of the world's axes under the view (`setTwist`). */
+  let twist = 0;
   const sunDirection = new Vector3(
     Math.cos(SUN_AZIMUTH) * Math.cos(SUN_ELEVATION),
     Math.sin(SUN_ELEVATION),
@@ -359,6 +368,9 @@ export function createEnvironment(
       sun.target.position.copy(snapped);
       sun.target.updateMatrixWorld();
     },
+    setTwist(angle) {
+      twist = angle;
+    },
     setTimeOfDay(minutes) {
       const hour = (((minutes / 60) % 24) + 24) % 24;
       // The sun's day: up at six, highest at noon, down at six, crossing the
@@ -370,11 +382,11 @@ export function createEnvironment(
       const dark = 1 - light;
       if (height > -0.1) {
         const elevation = Math.max(0.12, height) * (58 * Math.PI) / 180;
-        const azimuth = SUN_AZIMUTH + (Math.min(1, Math.max(0, day)) - 0.5) * (110 * Math.PI) / 180;
+        const azimuth = SUN_AZIMUTH + twist + (Math.min(1, Math.max(0, day)) - 0.5) * (110 * Math.PI) / 180;
         sunDirection.set(Math.cos(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.sin(azimuth) * Math.cos(elevation)).normalize();
       } else {
         // The moon: high, cold and faint, from a fixed bearing.
-        sunDirection.set(Math.cos(SUN_AZIMUTH + 0.6) * 0.55, 0.83, Math.sin(SUN_AZIMUTH + 0.6) * 0.55).normalize();
+        sunDirection.set(Math.cos(SUN_AZIMUTH + twist + 0.6) * 0.55, 0.83, Math.sin(SUN_AZIMUTH + twist + 0.6) * 0.55).normalize();
       }
       // Low sun is warm and weaker; the moon is blue. Daylight is near white
       // (some 5500 K with the sun high); a sun of (1, 0.94, 0.81), and half
