@@ -390,3 +390,24 @@
    longest option, so "Prédio residencial" is not cut to "Prédio re…". */
 .v2-shell #builder .bw-field:has(> .bw-field-select) { grid-template-columns: minmax(0, 1fr) auto; }
 .v2-shell #builder .bw-field-select { grid-column: 2 / -1; width: auto; min-width: 100px; max-width: 200px; }
+
+/* ---------------------------------------------------------------- the compass (compass.ts) */
+/* Bottom right, clear of the dock (centre) and the side panel (top right). */
+.v2-compass {
+  position: absolute; right: 16px; bottom: 16px; width: 52px; height: 52px; padding: 0;
+  pointer-events: auto; touch-action: none; border-radius: 50%;
+  background: var(--v-bg); border: 1px solid var(--v-line); box-shadow: var(--v-shadow);
+  backdrop-filter: blur(18px) saturate(130%); -webkit-backdrop-filter: blur(18px) saturate(130%);
+  cursor: grab; transition: border-color 120ms ease, transform 120ms ease;
+}
+.v2-compass:hover { border-color: var(--v-accent-line); transform: scale(1.06); }
+.v2-compass.held { cursor: grabbing; border-color: var(--v-accent); }
+.v2-compass svg { display: block; width: 100%; height: 100%; }
+.v2-compass-ring { fill: none; stroke: var(--v-line); stroke-width: 1.5; }
+.v2-compass-needle { transform-origin: 24px 24px; transform-box: view-box; }
+.v2-compass-n { fill: #ff6f61; }
+.v2-compass-s { fill: var(--v-muted); opacity: 0.7; }
+.v2-compass text { fill: #fff; font: 700 8px/1 Inter, ui-sans-serif, sans-serif; pointer-events: none; }
+@media (max-width: 780px) {
+  .v2-compass { right: 8px; bottom: calc(8px + var(--v-dock-h) + 8px); width: 44px; height: 44px; }
+}

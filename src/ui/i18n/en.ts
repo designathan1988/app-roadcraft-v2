@@ -187,6 +187,7 @@ export const EN: Dictionary = {
   'action.traffic': 'Pause or resume the simulation (Space)',
   'action.resetView': 'Frame the camera (Home)',
   'camera.label': 'Camera',
+  'compass.label': 'Compass: click to face north, drag to turn and tilt',
   'camera.turnLeft': 'Turn left (Q) · right-drag turns and tilts freely',
   'camera.turnRight': 'Turn right (E) · right-drag turns and tilts freely',
   'camera.tiltUp': 'Raise the camera, towards a plan view',

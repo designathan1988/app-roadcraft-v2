@@ -1,4 +1,4 @@
-import { FACE_HALF, faceOfDirection, faceToSphereInto, sphereToFaceInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
+import { FACE_HALF, PLANET_RADIUS, faceOfDirection, faceToSphereInto, sphereToFaceInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
 import { TILES, TILES_PER_SIDE, TILE_COUNT, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import type { Vec2 } from '@core/vec2';
 import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
@@ -79,6 +79,28 @@ export function snapToFaceGridInto(x: number, y: number, step: number, offset: n
   const fx = Math.round((fp.x - offset) / step) * step + offset;
   const fy = Math.round((fp.y - offset) / step) * step + offset;
   faceToSphereInto(face, fx, fy, s3);
+  return sphereToChartInto(chart, s3, out);
+}
+
+/**
+ * The point `step` world units from an atlas point towards the planet's north
+ * pole (the planet frame's z, the axis the sun turns round, `sun.ts`), along
+ * the ground and written on the same chart, into `out`: what a compass
+ * points at. Up the map (+y) on the flat map, and at a pole itself, where
+ * every way is south.
+ */
+export function towardsNorthInto(x: number, y: number, step: number, out: FacePoint): FacePoint {
+  if (identity()) { out.x = x; out.y = y + step; return out; }
+  const chart = tileCellOf(x, y);
+  atlasToSphereInto(x, y, s3);
+  // The pole's direction laid on the ground there: z less its part along the up.
+  const nx = -s3.z * s3.x, ny = -s3.z * s3.y, nz = 1 - s3.z * s3.z;
+  const n = Math.hypot(nx, ny, nz);
+  if (n < 1e-9) { out.x = x; out.y = y + step; return out; }
+  const a = step / PLANET_RADIUS, c = Math.cos(a), s = Math.sin(a) / n;
+  s3.x = s3.x * c + nx * s;
+  s3.y = s3.y * c + ny * s;
+  s3.z = s3.z * c + nz * s;
   return sphereToChartInto(chart, s3, out);
 }
 

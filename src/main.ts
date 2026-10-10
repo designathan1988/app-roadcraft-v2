@@ -1,6 +1,7 @@
 import { profileOf } from '@world/roads/profile';
 import { planetLocalMinutes } from '@world/planet/sun';
 import { hasTransit } from '@world/transit';
+import { mountCompass, northOnScreen, northTurn, type Compass } from '@ui/v2/compass';
 import { gestureChart, ownPoint } from './editor/planetFrame';
 import { chartAt, onChartOf, toOwner } from '@world/planet/charts';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
@@ -1493,6 +1494,14 @@ canvas.addEventListener('pointermove', (e) => {
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
   if (game.tool === 'road') roadTool.pointerAt(screen);
+  // The pointer's look (`app.css`): a closed hand while it turns or drags
+  // the camera; on the planet the arrow over space, where no tool reaches.
+  const held = cameraHand.active ? 'held' : '';
+  if (canvas.dataset['camera'] !== held) canvas.dataset['camera'] = held;
+  if (__PLANET__ && e.buttons === 0) {
+    const over = view.grab?.(screen.x, screen.y, 0) ? 'ground' : 'space';
+    if (canvas.dataset['over'] !== over) canvas.dataset['over'] = over;
+  }
   // A pinch, an orbit or a pan takes the move first.
   if (cameraHand.move(e.pointerId, screen)) return;
 
@@ -1598,6 +1607,8 @@ function endPointer(e: PointerEvent): void {
 }
 
 canvas.addEventListener('pointerup', endPointer);
+// The camera let go: the pointer's own look again.
+for (const type of ['pointerup', 'pointercancel'] as const) canvas.addEventListener(type, () => { canvas.dataset['camera'] = ''; });
 // Nothing to aim at off the map: no hover preview left behind on it.
 canvas.addEventListener('pointerleave', () => {
   if (hoverAnchor) {
@@ -2665,6 +2676,20 @@ function mountUnifiedChrome(): void {
       requestDraw();
     },
   });
+  // The compass in a corner (`ui/v2/compass.ts`): a click faces north, a drag turns and tilts.
+  if (UI_V2 && view.kind !== '2d') {
+    compass = mountCompass(document.querySelector<HTMLElement>('.v2') ?? document.body, {
+      north: () => {
+        cameraMotion.aim(() => northTurn(view, surface.cssW, surface.cssH));
+        requestDraw();
+      },
+      drag: (turn, tilt) => {
+        view.orbit(turn, tilt);
+        persistence.saveSettingsSoon(sessionSettings);
+        requestDraw();
+      },
+    });
+  }
 }
 // Mounted after this module has finished evaluating: moving the toolbar and
 // the panels is a layout change, and a pointer already over the canvas can fire
@@ -2995,15 +3020,15 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('#cameraContro
 // A flat view has nothing to turn or tilt.
 if (view.kind === '2d') (document.getElementById('cameraControls') as HTMLElement).style.display = 'none';
 let needleAngle = NaN;
-/** Points the needle where north lies on screen. */
+/** The compass in a corner of the v2 interface (`mountUnifiedChrome`). */
+let compass: Compass | null = null;
+/** Points the needles where north lies on screen: up the map on the flat map, the pole on the planet. */
 function updateCameraNeedle(): void {
+  if (!cameraNeedle && !compass) return;
+  const north = northOnScreen(view, surface.cssW, surface.cssH);
+  compass?.point(north);
   if (!cameraNeedle) return;
-  const { cssW: w, cssH: h } = surface;
-  const c = view.centre;
-  const a = view.toScreen(c, w, h);
-  // North is +Y (`lanelets.ts`, `classifyTurn`): up the map.
-  const b = view.toScreen({ x: c.x, y: c.y + 10 }, w, h);
-  const angle = Math.round((Math.atan2(b.x - a.x, a.y - b.y) * 180) / Math.PI);
+  const angle = Math.round((north * 180) / Math.PI);
   if (angle === needleAngle) return;
   needleAngle = angle;
   cameraNeedle.style.transform = `rotate(${angle}deg)`;

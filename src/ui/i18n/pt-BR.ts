@@ -183,6 +183,7 @@ export const PT_BR: Dictionary = {
   'action.traffic': 'Pausar ou retomar a simulação (Espaço)',
   'action.resetView': 'Enquadrar a câmera (Home)',
   'camera.label': 'Câmera',
+  'compass.label': 'Bússola: clique para ficar de frente para o norte, arraste para girar e inclinar',
   'camera.turnLeft': 'Girar à esquerda (Q) · arrastar com o botão direito gira e inclina livremente',
   'camera.turnRight': 'Girar à direita (E) · arrastar com o botão direito gira e inclina livremente',
   'camera.tiltUp': 'Erguer a câmera, rumo à vista de cima',

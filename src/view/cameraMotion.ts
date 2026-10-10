@@ -55,6 +55,11 @@ export interface MotionHost {
   heightUnder(at: { x: number; y: number }): number;
 }
 
+/** An aimed turn (`aim`) is over when less than this is left, rad; under `AIM_SNAP` the rest is taken at once. */
+const AIM_CLOSE = 1e-3;
+const AIM_SNAP = 4e-3;
+const AIM_MAX_S = 3;
+
 export class CameraMotion {
   private readonly held = new Map<string, readonly [Axis, 1 | -1]>();
   private readonly velocity: Record<Axis, number> = { forward: 0, right: 0, turn: 0, tilt: 0, zoom: 0 };
@@ -69,6 +74,13 @@ export class CameraMotion {
   private zoomAt: { x: number; y: number; height: number; grabbed: Vec2 | null } = { x: 0, y: 0, height: 0, grabbed: null };
   /** Turn still to spend, rad. */
   private pendingTurn = 0;
+  /**
+   * A heading being turned to (`aim`): what is still left of the turn, asked
+   * again each frame, as the view now stands. Null when none.
+   */
+  private aiming: (() => number) | null = null;
+  /** Seconds the aim has been turning: given up after `AIM_MAX_S`, so a heading never reached cannot hold the frames going. */
+  private aimedFor = 0;
 
   constructor(private readonly host: MotionHost) {}
 
@@ -114,17 +126,30 @@ export class CameraMotion {
     this.pendingTurn += angle;
   }
 
+  /**
+   * Turns smoothly to a heading (the compass's north): `left` gives the turn
+   * still wanted (rad, `Viewport.orbit`'s azimuth) as the view stands, and is
+   * asked again every frame - a closed loop, as a turn worked out once
+   * misses where a step of the orbit does not turn the ground by just its
+   * angle (out at the globe). Over when less than a milliradian is left.
+   */
+  aim(left: () => number): void {
+    this.aiming = left;
+    this.aimedFor = 0;
+  }
+
   /** Stops everything at once. */
   stop(): void {
     this.held.clear();
     for (const axis of AXES) this.velocity[axis] = 0;
     this.pendingZoom = 0;
     this.pendingTurn = 0;
+    this.aiming = null;
   }
 
   /** Something is still moving (or held): the frame loop keeps going. */
   get moving(): boolean {
-    return this.held.size > 0 || this.pendingZoom !== 0 || this.pendingTurn !== 0
+    return this.held.size > 0 || this.pendingZoom !== 0 || this.pendingTurn !== 0 || this.aiming !== null
       || AXES.some((axis) => this.velocity[axis] !== 0);
   }
 
@@ -153,6 +178,12 @@ export class CameraMotion {
       const spend = Math.abs(this.pendingTurn) < 1e-4 ? this.pendingTurn : this.pendingTurn * (1 - Math.exp(-seconds / TURN_EASE_S));
       this.pendingTurn -= spend;
       turn += spend;
+    }
+    if (this.aiming) {
+      const left = this.aiming();
+      this.aimedFor += seconds;
+      if (!Number.isFinite(left) || Math.abs(left) < AIM_CLOSE || this.aimedFor > AIM_MAX_S) this.aiming = null;
+      else turn += Math.abs(left) < AIM_SNAP ? left : left * (1 - Math.exp(-seconds / TURN_EASE_S));
     }
     const tilt = vel.tilt * TILT_PER_S * seconds;
     if (turn !== 0 || tilt !== 0) view.orbit(turn, tilt);
