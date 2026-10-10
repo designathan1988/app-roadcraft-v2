@@ -99,6 +99,20 @@ const stop = (signal) => {
   else child.kill(signal);
   process.exitCode = signal === 'SIGINT' ? 130 : 143;
 };
+// Chrome does not keep the affinity and priority it was started with: a
+// headless probe's GPU and renderer processes ran on all 24 processors at
+// normal priority and took the machine to 97%. One small PowerShell loop
+// puts every process under the job back on the same cores, below normal,
+// every two seconds while the job lives.
+const guard = windows && child.pid
+  ? spawn('powershell.exe', ['-NoProfile', '-Command',
+    `$root = ${child.pid}; while (Get-Process -Id $root -ErrorAction SilentlyContinue) { ` +
+    `$all = Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId; $ids = @($root); $grew = $true; ` +
+    `while ($grew) { $grew = $false; foreach ($p in $all) { if ($ids -contains $p.ParentProcessId -and -not ($ids -contains $p.ProcessId)) { $ids += $p.ProcessId; $grew = $true } } }; ` +
+    `foreach ($i in $ids) { try { $q = Get-Process -Id $i -ErrorAction Stop; if ($q.ProcessorAffinity -ne ${affinity}) { $q.ProcessorAffinity = ${affinity} }; if ($q.PriorityClass -ne 'BelowNormal' -and $q.PriorityClass -ne 'Idle') { $q.PriorityClass = 'BelowNormal' } } catch {} }; ` +
+    `Start-Sleep -Seconds 2 }`], { stdio: 'ignore', windowsHide: true })
+  : null;
+child.on('exit', () => { try { guard?.kill(); } catch { /* gone */ } });
 const runaway = setTimeout(() => {
   process.stderr.write(`[run-limited] stopped after ${TIMEOUT_S} s (RUN_LIMITED_TIMEOUT_S)
 `);

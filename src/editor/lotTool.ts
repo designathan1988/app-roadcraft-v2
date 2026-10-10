@@ -1,5 +1,5 @@
 import type { Vec2 } from '@core/vec2';
-import { onChartOf, ownPointer, ownShape, pointerChartOf } from '@world/planet/charts';
+import { chartAt, onChartOf, ownPointer, ownShape, pointerChartOf } from '@world/planet/charts';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import {
@@ -10,6 +10,9 @@ import { solidFootprints } from '@world/buildings/geometry';
 import type { BuildingId } from '@world/buildings/types';
 import { m } from '@world/units';
 import type { ZoneDensity, ZoneUse } from '@world/zones';
+
+/** How far apart a zone stroke is sampled between two pointer reports: under any lot's front. */
+const STROKE_STEP = m(2);
 
 /**
  * THE ZONING TOOL: the lots the player draws, edits and zones
@@ -85,7 +88,7 @@ export class LotTool {
    * once it is (`brushProposed`), never dropped: a stroke made while the
    * proposal restarted (each new lot restarts it) zoned nothing (Etapa 5g).
    */
-  private stroke: { pointer: number; remove: boolean; ids: Set<number>; fresh: Set<number>; pending: Vec2[] } | null = null;
+  private stroke: { pointer: number; remove: boolean; ids: Set<number>; fresh: Set<number>; pending: Vec2[]; last: Vec2 } | null = null;
   /**
    * A stroke let go before the proposal it waits on was worked out: made in
    * the frame the proposal is done (`advanceProposal`), never in one go - the
@@ -104,7 +107,7 @@ export class LotTool {
   private drawn: { pointer: number; chart: number; a: Vec2; b: Vec2; angle: number } | null = null;
   private joinFirst: number | null = null;
   /** A stroke of the delete mode: the lots and buildings it has passed over, removed on release as one undo step. */
-  private erase: { pointer: number; lots: Set<number>; buildings: Set<BuildingId> } | null = null;
+  private erase: { pointer: number; last: Vec2; lots: Set<number>; buildings: Set<BuildingId> } | null = null;
 
   constructor(private readonly host: LotToolHost) {}
 
@@ -423,13 +426,13 @@ export class LotTool {
       this.drawn = { pointer, chart, a: this.snap(world), b: this.snap(world), angle: this.streetAngleNear(at) };
     } else if (settings.mode === 'delete') {
       // Lots, the buildings on them or anywhere under the stroke, and the zoned cells: all at once.
-      this.erase = { pointer, lots: new Set(), buildings: new Set() };
+      this.erase = { pointer, last: at, lots: new Set(), buildings: new Set() };
       this.eraseUnder(at);
     } else {
       // The brush zones the lots it passes over, and the proposed lots of the
       // street land (`proposal`), made when it is let go.
       const remove = shift || settings.eraser;
-      this.stroke = { pointer, remove, ids: new Set(lot ? [lot.id] : []), fresh: new Set(), pending: [] };
+      this.stroke = { pointer, remove, ids: new Set(lot ? [lot.id] : []), fresh: new Set(), pending: [], last: at };
       if (!lot && !remove) this.brushProposed(at);
     }
     host.redraw();
@@ -439,14 +442,38 @@ export class LotTool {
   move(pointer: number, world: Vec2): boolean {
     const { host } = this;
     if (this.stroke?.pointer === pointer) {
+      const stroke = this.stroke;
       const at = ownPointer(world);
-      const lot = this.lotAt(at);
-      if (lot) this.stroke.ids.add(lot.id);
-      else if (!this.stroke.remove) this.brushProposed(at);
+      // The whole way from the last sample, a step shorter than any lot's
+      // front: a fast drag reports its pointer far apart (the browser
+      // coalesces moves, a slow frame more so - MDN, PointerEvent
+      // getCoalescedEvents), and a stroke along a street zoned every third
+      // lot and left grass between (seen in the game).
+      const from = onChartOf(stroke.last, at);
+      const steps = Math.min(400, Math.ceil(Math.hypot(at.x - from.x, at.y - from.y) / STROKE_STEP));
+      for (let k = 1; k <= steps; k++) {
+        const p = k === steps ? at : ownPointer({ x: from.x + (at.x - from.x) * k / steps, y: from.y + (at.y - from.y) * k / steps }, chartAt(at.x, at.y));
+        const lot = this.lotAt(p);
+        if (lot) stroke.ids.add(lot.id);
+        else if (!stroke.remove) this.brushProposed(p);
+      }
+      stroke.last = at;
       host.redraw();
       return true;
     }
-    if (this.erase?.pointer === pointer) { this.eraseUnder(ownPointer(world)); host.redraw(); return true; }
+    if (this.erase?.pointer === pointer) {
+      // The whole way from the last sample, as the brush's stroke.
+      const erase = this.erase;
+      const at = ownPointer(world);
+      const from = onChartOf(erase.last, at);
+      const steps = Math.min(400, Math.ceil(Math.hypot(at.x - from.x, at.y - from.y) / STROKE_STEP));
+      for (let k = 1; k <= steps; k++) {
+        this.eraseUnder(k === steps ? at : ownPointer({ x: from.x + (at.x - from.x) * k / steps, y: from.y + (at.y - from.y) * k / steps }, chartAt(at.x, at.y)));
+      }
+      erase.last = at;
+      host.redraw();
+      return true;
+    }
     if (this.corner?.pointer === pointer) { this.corner.to = this.snapExcept(world, this.corner.from); host.redraw(); return true; }
     if (this.drawn?.pointer === pointer) { this.drawn.b = this.snap(world); host.redraw(); return true; }
     if (this.cutLine?.pointer === pointer) { this.cutLine.b = { ...world }; host.redraw(); return true; }

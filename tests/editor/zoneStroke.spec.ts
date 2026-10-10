@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { RoadDoc } from '@world/doc';
 import { Network } from '@world/network';
 import { m } from '@world/units';
+import { lotCentre } from '@world/lots';
 import { LotTool } from '@editor/lotTool';
 
 /**
@@ -40,5 +41,31 @@ describe('the zone brush over street land', () => {
     expect(hints).toContain('hint.zone.painted');
     const zoned = doc.lots.filter((l) => l.use === 'residential');
     expect(zoned.length).toBeGreaterThan(2);
+  });
+
+  it('zones every lot a fast stroke passed, not only those under its samples', () => {
+    // A fast drag reports its pointer far apart (the browser coalesces the
+    // moves): one report at each end of 120 m of street.
+    const doc = new RoadDoc();
+    const a = doc.addNode({ x: m(-120), y: 0 }).id, b = doc.addNode({ x: m(120), y: 0 }).id;
+    doc.addSegment(a, b, 1);
+    const net = new Network(doc);
+    net.rebuild();
+    const tool = new LotTool({
+      doc, net, zoom: () => 1,
+      settings: () => ({ mode: 'brush', use: 'residential', density: 'low', eraser: false, splitKind: 'grid', splitParts: 2 } as never),
+      mutate: (fn) => { fn(); },
+      hint: () => {},
+      redraw: () => {},
+    });
+    while (tool.advanceProposal()) { /* the proposal worked out first */ }
+    tool.down(1, { x: m(-100), y: m(14) }, false, 1);
+    tool.move(1, { x: m(100), y: m(14) });
+    tool.up(1, true);
+    const zoned = doc.lots.filter((l) => l.use === 'residential' && lotCentre(l).y > 0)
+      .map((l) => lotCentre(l).x).sort((p, q) => p - q);
+    // The whole run between the two reports, lot after lot.
+    expect(zoned.length).toBeGreaterThanOrEqual(8);
+    for (let i = 1; i < zoned.length; i++) expect(zoned[i]! - zoned[i - 1]!).toBeLessThan(m(30));
   });
 });

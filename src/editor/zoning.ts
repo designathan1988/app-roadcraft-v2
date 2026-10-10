@@ -1,5 +1,6 @@
 import { Rng } from '@core/rng';
-import { onChartOf, pointViews } from '@world/planet/charts';
+import { atlasToSphereInto, onChartOf, pointViews } from '@world/planet/charts';
+import { faceOfDirection, sphereToFaceInto } from '@core/cubeSphere';
 import type { Vec2 } from '@core/vec2';
 import { type Signature, bodySignature, madeToMeasure, signatureDistance } from '@world/buildings/procedural';
 import type { Era } from '@world/buildings/architecture';
@@ -492,18 +493,50 @@ function cornerOf(ctx: SiteContext, anchor: Vec2, u: Vec2, n: Vec2, width: numbe
  * `era` the same over a quarter of about 220 m - its period, old towards the
  * middle of the map more often, new towards the edges.
  */
-function quarterOf(anchor: Vec2, n: Vec2): { character: number; era: Era } {
+export function quarterOf(anchor: Vec2, n: Vec2, doc: RoadDoc): { character: number; era: Era } {
   const hash = (a: number, b: number, c: number): number => {
     let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(c | 0, 0x3c6ef372);
     h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
     return (h ^ (h >>> 13)) >>> 0;
   };
   const facing = Math.round(Math.atan2(n.y, n.x) / (Math.PI / 2));
-  const character = hash(Math.floor(anchor.x / m(60)), Math.floor(anchor.y / m(60)), facing + 11);
-  const q = hash(Math.floor(anchor.x / m(220)), Math.floor(anchor.y / m(220)), 5) / 4_294_967_296;
-  const central = Math.hypot(anchor.x, anchor.y) < m(450);
+  // On the planet the cells are the cube face's own (its equiangular metres,
+  // as the grid's, `world/planet/charts.ts` snapToFaceGridInto): a quarter
+  // across a border between two pieces is one quarter, not two; the face
+  // goes into the hash. The old middle is the town's own - its first
+  // building - not the atlas's origin, a piece like any other.
+  let cx = anchor.x, cy = anchor.y, salt = 0;
+  let central: boolean;
+  if (__PLANET__) {
+    const face = faceAt(anchor, FACE_POINT);
+    cx = FACE_POINT.x; cy = FACE_POINT.y; salt = face * 7919;
+    const core = firstBuilding(doc);
+    const at = core ? onChartOf(core, anchor) : anchor;
+    central = Math.hypot(at.x - anchor.x, at.y - anchor.y) < m(450);
+  } else {
+    central = Math.hypot(anchor.x, anchor.y) < m(450);
+  }
+  const character = hash(Math.floor(cx / m(60)) + salt, Math.floor(cy / m(60)), facing + 11);
+  const q = hash(Math.floor(cx / m(220)) + salt, Math.floor(cy / m(220)), 5) / 4_294_967_296;
   const era: Era = central ? (q < 0.5 ? 0 : q < 0.8 ? 1 : 2) : (q < 0.15 ? 0 : q < 0.5 ? 1 : 2);
   return { character, era };
+}
+
+const FACE_POINT = { x: 0, y: 0 };
+const SPHERE_POINT = { x: 0, y: 0, z: 0 };
+/** The cube face a point lies on and its metres there, into `out` (`core/cubeSphere.ts`). */
+function faceAt(p: Vec2, out: { x: number; y: number }): number {
+  atlasToSphereInto(p.x, p.y, SPHERE_POINT);
+  const face = faceOfDirection(SPHERE_POINT);
+  sphereToFaceInto(face, SPHERE_POINT, out);
+  return face;
+}
+
+/** Where the town's first building stands (the lowest id), or null: its old middle on the planet. */
+function firstBuilding(doc: RoadDoc): Vec2 | null {
+  let best: Building | null = null;
+  for (const b of doc.buildings.all()) if (!best || b.id < best.id) best = b;
+  return best ? { x: best.x, y: best.y } : null;
 }
 
 /** Where the building grown last stands (the highest id grown on a lot), or null. */
@@ -564,7 +597,7 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
     const envelope = {
       W: env.x1 - env.x0, D: env.y1 - env.y0,
       backDoor: plan.back.use !== 'none' && plan.back.use !== 'loading',
-      ...quarterOf(frame.anchor, n),
+      ...quarterOf(frame.anchor, n, doc),
       ...(driveSide ? { driveSide } : {}),
       neighbours: neighbourStoreys(doc, frame.anchor, frame.width),
     };
