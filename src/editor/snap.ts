@@ -3,7 +3,11 @@ import { type Vec2, addScaled, angleOf, dist, fromAngle, normalize, sub } from '
 import type { NodeId, SegmentId } from '@world/ids';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
-import { orientedPolyline } from '@world/geometry';
+import { carryPolyline, nodeChart, orientedPolyline } from '@world/geometry';
+import { chartToChartInto, inChartInto, pointerChartOf } from '@world/planet/charts';
+import type { FacePoint } from '@core/cubeSphere';
+
+const chartToChart = (from: number, to: number, p: Vec2): Vec2 => chartToChartInto(from, to, p.x, p.y, { x: 0, y: 0 });
 import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
@@ -107,16 +111,22 @@ export function findAnchor(
   const nodeRadius = 30 / zoom;
   let best: Anchor = { kind: 'free', at: p };
   let bestScore = Infinity;
+  // On the planet the pointer's point is written on one chart (the gesture's,
+  // `world/planet/charts.ts`): every node and road is read on it, and what is
+  // found is given on it.
+  const chart = pointerChartOf(p.x, p.y);
+  const on: FacePoint = { x: 0, y: 0 };
 
   for (const node of doc.nodes.values()) {
     if (exclude?.has(node.id)) continue;
     if (targetHeightOffset !== undefined &&
       Math.abs(node.heightOffset - targetHeightOffset) > 0.75) continue;
-    const d = dist(p, { x: node.x, y: node.y });
+    inChartInto(chart, node.x, node.y, on);
+    const d = dist(p, on);
     if (d > nodeRadius) continue;
     if (d < bestScore) {
       bestScore = d;
-      best = { kind: 'node', at: { x: node.x, y: node.y }, node: node.id };
+      best = { kind: 'node', at: { x: on.x, y: on.y }, node: node.id };
     }
   }
 
@@ -126,6 +136,7 @@ export function findAnchor(
   // the projected segment is exactly zero away. The segment then stole the
   // click and the Move tool panned the camera instead of moving the junction.
   if (best.kind === 'node') return best;
+  const carried = new Map<number, Vec2>();
 
   for (const [id, seg] of doc.segments) {
     // A pointer visibly inside a road must be able to attach to that road even
@@ -137,6 +148,13 @@ export function findAnchor(
       casingHalf(roadProfile(seg.type, seg.lanes, seg.direction, seg.section, seg.parking)),
     );
     const pl = net.polylines.get(doc, id);
+    // The pointer on the road's own chart (one carry per chart, not per road).
+    const own = net.polylines.chart(doc, id);
+    let q = p;
+    if (own !== chart) {
+      q = carried.get(own) ?? chartToChart(chart, own, p);
+      carried.set(own, q);
+    }
     // Reject by bounding box first. `closestPoint` walks every flattened point
     // of the polyline, and this ran on EVERY segment of the map for every
     // pointer move — so simply sliding the mouse across a large map cost a full
@@ -145,14 +163,14 @@ export function findAnchor(
     // the closest point, and the box test is four comparisons.
     const bb = pl.bbox;
     if (
-      p.x < bb.minX - segRadius ||
-      p.x > bb.maxX + segRadius ||
-      p.y < bb.minY - segRadius ||
-      p.y > bb.maxY + segRadius
+      q.x < bb.minX - segRadius ||
+      q.x > bb.maxX + segRadius ||
+      q.y < bb.minY - segRadius ||
+      q.y > bb.maxY + segRadius
     ) {
       continue;
     }
-    const hit = pl.closestPoint(p);
+    const hit = pl.closestPoint(q);
     if (hit.distance > segRadius) continue;
     if (targetHeightOffset !== undefined) {
       const fraction = hit.s / Math.max(1e-6, pl.length);
@@ -163,7 +181,7 @@ export function findAnchor(
     }
     if (hit.distance < bestScore) {
       bestScore = hit.distance;
-      best = { kind: 'segment', at: hit.point, segment: id, s: hit.s };
+      best = { kind: 'segment', at: own === chart ? hit.point : chartToChart(own, chart, hit.point), segment: id, s: hit.s };
     }
     void seg;
   }
@@ -237,7 +255,8 @@ function snapHeading(
     for (const segId of node?.incident ?? []) {
       const seg = doc.segment(segId);
       if (!seg) continue;
-      const pl = orientedPolyline(doc, seg, start.node);
+      // On the gesture's chart: neighbouring charts can be turned against each other.
+      const pl = carryPolyline(orientedPolyline(doc, seg, start.node), nodeChart(doc, start.node), pointerChartOf(start.at.x, start.at.y));
       const look = Math.min(12, Math.max(1, pl.length * 0.2));
       const outgoing = angleOf(normalize(sub(pl.sampleAt(look).p, pl.point(0))));
       candidates.push({ angle: outgoing + Math.PI, guide: 'continue' });
@@ -359,7 +378,8 @@ export function snapEndpoint(
   // as solid as before — and it arrives at an angle the editor is willing to
   // build.
   if (network.kind === 'segment' && network.segment !== undefined && useAngles) {
-    const target = net.polylines.get(doc, network.segment);
+    // The road landed on, on the gesture's chart.
+    const target = net.polylines.at(doc, network.segment, pointerChartOf(start.at.x, start.at.y));
     const points = target.toPoints();
     const reach = dist(start.at, raw) * 2 + 1;
     const heading = angleOf(sub(raw, start.at));

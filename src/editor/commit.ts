@@ -23,6 +23,8 @@ import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
+import { PLANET_MAX_PIECE, enterFrame, gestureChart, groundOnChart, leaveFrame, splitLongPieces } from './planetFrame';
+import { onOneChart } from '@world/planet/charts';
 import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
 import { roadsBefore, settleRoadEdit } from './roads/economy';
 import { COARSE_EPS, EPS } from '@core/scalar';
@@ -114,6 +116,7 @@ export function commitRoadPath(
     return { committed: false, reason: 'degenerate' };
   }
   pieces = joinShortPieces(pieces);
+  if (__PLANET__ && !onPlanetChart) return commitOnChart(doc, net, start, end, type, pieces, lanes, parking, ground, options);
   // Each step of a road drawn timed (`hitch:` entries, scripts/probe-hitches.mjs; docs/performance.md).
   let lap = performance.now();
   const timed = (what: string): void => { const now = performance.now(); performance.measure(`hitch:commit/${what}`, { start: lap, end: now }); lap = now; };
@@ -279,6 +282,49 @@ function draftStations(
     ? bore.elevation
     : buildRoadElevation(workNet, ground, sampled ? (bore.elevation ?? previous) : null);
   return stationsAlong(workNet, elevation, ground, orderAlong(work, laid, startAt), STATION_STEP);
+}
+
+/** Whether a road edit is being worked out on one chart of the planet (`commitOnChart`). */
+let onPlanetChart = false;
+
+/**
+ * `commitRoadPath` on the planet (`planetFrame.ts`): the gesture, its long
+ * pieces cut to `PLANET_MAX_PIECE`, worked out on the chart it was drawn on
+ * - a copy of the map with the roads round it brought onto that chart, the
+ * edit made there by the very same code, every point then written back on
+ * its own piece's chart. A dry run's stations are on that chart.
+ */
+function commitOnChart(
+  doc: RoadDoc, net: Network, start: Anchor, end: Anchor, type: number, pieces: readonly RoadPathPiece[],
+  lanes: number | null, parking: SegmentParking | undefined, ground: ((x: number, y: number) => number) | undefined,
+  options: { readonly dryRun?: boolean; readonly groundSolve?: RoadElevation | null },
+): DraftResult {
+  const split = splitLongPieces(pieces, PLANET_MAX_PIECE,
+    (p) => (p.curve ? controlPoint(p.start.at, p.end.at, p.curve) : { x: (p.start.at.x + p.end.at.x) / 2, y: (p.start.at.y + p.end.at.y) / 2 }),
+    shapeFromControl);
+  const chart = gestureChart(split);
+  const points = split.flatMap((p) => [p.start.at, p.end.at]);
+  const framed = doc.clone();
+  const frame = enterFrame(framed, chart, points);
+  const framedNet = new Network(framed);
+  onPlanetChart = true;
+  let result: DraftResult;
+  try {
+    result = onOneChart(() => {
+      framedNet.rebuild();
+      return commitRoadPath(framed, framedNet, start, end, type, split, lanes, parking,
+        ground && groundOnChart(chart, ground), { dryRun: options.dryRun === true, groundSolve: null });
+    });
+  } finally {
+    onPlanetChart = false;
+  }
+  if (!result.committed || options.dryRun) return result;
+  leaveFrame(framed, frame, doc);
+  doc.replaceWith(framed);
+  net.rebuild();
+  // Its heights were solved on the chart: the game solves them again on the pieces.
+  const { elevation: _solved, ...laid } = result;
+  return laid;
 }
 
 /**

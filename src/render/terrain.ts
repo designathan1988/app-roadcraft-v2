@@ -2140,6 +2140,11 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   ground.position.set(origin.x, 0, -origin.y);
   ground.updateMatrix();
 
+  // A planet piece (`tile` set) meets its neighbours' ground: it has no rim, so
+  // neither the land beyond it nor its cut sides are built (on 96 pieces they
+  // were over a second of the boot and 70 MB, all hidden).
+  const rim = tile < 0;
+
   // Land beyond the editable plate, so the map does not end in mid-air.
   //
   // It is a FRAME, not a plane. A plane under the plate is the wrong shape: the
@@ -2168,7 +2173,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   // backdrop is drawn over the rim and hides them.
   const walls = new Mesh(
     new BufferGeometry(),
-    wallMaterial(anisotropy),
+    // Without a rim nothing draws them: the strata texture is not baked.
+    rim ? wallMaterial(anisotropy) : new MeshStandardMaterial(),
   );
   walls.name = 'terrain-walls';
   walls.receiveShadow = false;
@@ -2353,6 +2359,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   const FRAME_FAR = 13_000;
   const DISTANT_LEVEL = TERRAIN_BASE - 3.5;
   const rebuildFrame = (): void => {
+    if (!rim) return;
     const half = TERRAIN_HALF;
     const perSide = TERRAIN_SEGMENTS;
     const count = perSide * 4;
@@ -3142,7 +3149,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
 
   const parts: TerrainPart[] = [];
   const surface: TerrainSurface = {
-    meshes: [backdrop, walls, ground, water],
+    meshes: rim ? [backdrop, walls, ground, water] : [ground, water],
     parts,
     regionOf(box) {
       const last = TERRAIN_SEGMENTS;

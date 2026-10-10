@@ -90,12 +90,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     const c = tileCentre(face);
     return { face, cx: c.x, cy: c.y, surface: createTerrainSurface(anisotropy, c, face), source: new FaceSource() };
   });
-  // The faces meet: no backdrop round each plate, no cut sides under it.
-  for (const tile of tiles) {
-    for (const mesh of tile.surface.meshes) {
-      if (mesh.name === 'terrain-backdrop' || mesh.name === 'terrain-walls') mesh.visible = false;
-    }
-  }
+  // The pieces meet: a plate with a piece has no backdrop round it, no cut sides (`createTerrainSurface`).
   const tileAt = (x: number, y: number): Tile => tiles[tileCellOf(x, y)] as Tile;
 
   /**

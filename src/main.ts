@@ -1,4 +1,7 @@
 import { profileOf } from '@world/roads/profile';
+import { planetLocalMinutes } from '@world/planet/sun';
+import { gestureChart, ownPoint } from './editor/planetFrame';
+import { chartAt } from '@world/planet/charts';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
 import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
@@ -1297,6 +1300,8 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
+  // A gesture starting is read on the map of the planet's piece it starts on (`Viewport.holdChart`).
+  if (!gestureInProgress()) view.holdChart?.(e.clientX - r.left, e.clientY - r.top);
   const world = pointerWorld(e);
   if (game.tool === 'road') roadTool.pointerAt({ x: e.clientX - r.left, y: e.clientY - r.top });
   // A curve waiting for its bend: this press sets it.
@@ -1466,6 +1471,8 @@ canvas.addEventListener('pointermove', (e) => {
   // A mouse whose button is no longer down has ended its stroke, whether or
   // not the release reached us.
   if (e.pointerType === 'mouse' && e.buttons === 0 && terrainBrush.stroking) endTerrainStroke();
+  // No gesture going on: the pointer reads the piece it is over again.
+  if (e.buttons === 0 && !gestureInProgress()) view.releaseChart?.();
   const r = canvas.getBoundingClientRect();
   const screen: Vec2 = { x: e.clientX - r.left, y: e.clientY - r.top };
   if (game.tool === 'road') roadTool.pointerAt(screen);
@@ -3740,13 +3747,17 @@ function drawOverlayScreen(): void {
   if (bulldozeBox) {
     const { a, b } = bulldozeBox;
     const corners = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }];
+    // On the planet the box is on the map of the piece it was pressed on: each
+    // point of its edges is drawn where it lies (`editor/planetFrame.ts`).
+    const boxChart = chartAt(a.x, a.y);
     ctx.save();
     ctx.beginPath();
     corners.forEach((p, i) => {
       const q = corners[(i + 1) % 4]!;
       const n = Math.max(1, Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / GRID_CELL));
       for (let k = 0; k < n; k++) {
-        const g = { x: p.x + (q.x - p.x) * k / n, y: p.y + (q.y - p.y) * k / n };
+        const on = { x: p.x + (q.x - p.x) * k / n, y: p.y + (q.y - p.y) * k / n };
+        const g = __PLANET__ ? ownPoint(boxChart, on) : on;
         const s = view.toScreen(g, w, h, sceneHeightAt(g));
         if (i === 0 && k === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
       }
@@ -3932,6 +3943,12 @@ function drawOverlayScreen(): void {
       chosenWidth === null ? undefined : sectionForWidth(plainRt, chosenWidth, Math.round(plainRt.speedLimit * 3.6 * METERS_PER_UNIT)),
       roadParking());
     const pieces = roadTool.pieces(roadPreview);
+    // On the planet the gesture is on the map of the piece it started on, past
+    // that piece too: each point is drawn, and its ground read, where it lies
+    // (`editor/planetFrame.ts`).
+    const gesture = __PLANET__ ? gestureChart(pieces) : 0;
+    const own = (p: Vec2): Vec2 => (__PLANET__ ? ownPoint(gesture, p) : p);
+    const groundUnder = (p: Vec2): number => { const o = own(p); return scene.terrainHeightAt(o.x, o.y); };
     const points: Vec2[] = [];
     const projected: Vec2[] = [];
     const groundProjected: Vec2[] = [];
@@ -3954,11 +3971,11 @@ function drawOverlayScreen(): void {
         const t = i / Math.max(1, flattened.length - 1);
         const eased = t * t * (3 - 2 * t);
         const offset = previewHeight + (nextHeight - previewHeight) * eased;
-        const ground = scene.terrainHeightAt(p.x, p.y);
+        const ground = groundUnder(p);
         points.push(p);
         offsets.push(offset);
-        groundProjected.push(view.toScreen(p, w, h, ground));
-        projected.push(view.toScreen(p, w, h, ground + offset));
+        groundProjected.push(view.toScreen(own(p), w, h, ground));
+        projected.push(view.toScreen(own(p), w, h, ground + offset));
       }
       previewHeight = nextHeight;
     }
@@ -3972,9 +3989,9 @@ function drawOverlayScreen(): void {
       for (const st of exact) {
         const p = { x: st.x, y: st.y };
         points.push(p);
-        offsets.push(st.deck - scene.terrainHeightAt(st.x, st.y));
-        projected.push(view.toScreen(p, w, h, st.deck));
-        groundProjected.push(view.toScreen(p, w, h, st.ground));
+        offsets.push(st.deck - groundUnder(p));
+        projected.push(view.toScreen(own(p), w, h, st.deck));
+        groundProjected.push(view.toScreen(own(p), w, h, st.ground));
         modes.push(st.mode);
       }
     }
@@ -3988,9 +4005,11 @@ function drawOverlayScreen(): void {
     // Use the length of both projected world axes. Reading only the horizontal
     // component made the preview several pixels thinner than the committed 3D
     // road in an isometric view, especially at the far zoom.
-    const origin = at({ x: 0, y: 0 });
-    const xAxis = at({ x: 100, y: 0 });
-    const yAxis = at({ x: 0, y: 100 });
+    // Measured where the road is (on the planet the atlas's origin is another place of the sphere).
+    const here = __PLANET__ && points[0] ? own(points[0]) : { x: 0, y: 0 };
+    const origin = at(here);
+    const xAxis = at({ x: here.x + 100, y: here.y });
+    const yAxis = at({ x: here.x, y: here.y + 100 });
     const pixelsPerUnit = (
       Math.hypot(xAxis.x - origin.x, xAxis.y - origin.y) +
       Math.hypot(yAxis.x - origin.x, yAxis.y - origin.y)
@@ -4029,8 +4048,8 @@ function drawOverlayScreen(): void {
         const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
         const p = points[i]!, z = (projected[i] && groundProjected[i]) ? offsets[i]! : 0;
         const l = { x: p.x + nx * half, y: p.y + ny * half }, r = { x: p.x - nx * half, y: p.y - ny * half };
-        left.push(view.toScreen(l, w, h, scene.terrainHeightAt(l.x, l.y) + z));
-        right.push(view.toScreen(r, w, h, scene.terrainHeightAt(r.x, r.y) + z));
+        left.push(view.toScreen(own(l), w, h, groundUnder(l) + z));
+        right.push(view.toScreen(own(r), w, h, groundUnder(r) + z));
       }
       ctx.beginPath();
       left.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
@@ -4562,8 +4581,12 @@ function updateStatus(): void {
   // The cars driving into and out of the lots' bays are cars driving too (`sim/agents/lotTraffic.ts`).
   text('vehicleCount', vehicleCountLabel(sim.vehicles.size + sim.city.lots.moving()));
   text('pedCount', peopleCountLabel(sim.pedViews.length));
-  // The time of day and the residents' day (`sim/city`).
-  const minutes = sim.city.minutes(sim) % 1440;
+  // The time of day and the residents' day (`sim/city`). On the planet the
+  // sun stands over the planet, so the clock reads the time it makes where
+  // the view looks (`world/planet/sun.ts`), as the sky there shows it.
+  const minutes = __PLANET__
+    ? planetLocalMinutes(sim.city.minutes(sim), view.centre.x, view.centre.y)
+    : sim.city.minutes(sim) % 1440;
   text('cityClock', `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.floor(minutes % 60)).padStart(2, '0')}`);
   // The city's numbers, computed all along and shown nowhere (audit P2-02).
   text('metricTrips', String(sim.completedTrips));

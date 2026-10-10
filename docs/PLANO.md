@@ -39,6 +39,36 @@ mudança mais arriscada do plano. Com o monitor ligado, um erro ou um quadro
 lento que a divisão causar aparece na hora, com a causa; sem ele, só o
 jogador veria.
 
+## Planeta (ramo `planeta-cubo`, servidor 5176): o mundo numa esfera
+
+Decisão do jogador em 2026-10-10: o mundo é uma esfera de verdade, e as 96
+peças planas costuradas saem. A pesquisa e as fontes estão na conversa de
+2026-10-10.
+
+- **O que é verdade:** cada coisa (nó de via, prédio, lote, zona, carro,
+  pessoa) é um ponto da esfera.
+- **Como se guarda:** nas coordenadas da carta que é dona do ponto, uma
+  codificação exata e reversível. Nada é cortado na divisa, e uma via pode
+  ligar nós de cartas diferentes.
+- **Como se calcula:** num atlas de cartas sobrepostas, a definição
+  matemática de superfície curva. A esfera é dividida em regiões, numeradas
+  pelas faces de um cubo como no Spore. Cada região tem uma carta plana
+  azimutal equidistante, a dobra do Planetary Annihilation, e calcula na sua
+  carta tudo o que está nela e numa faixa em volta (o halo). Só desenha e
+  simula o que é dela. Com o halo, cada coisa é calculada inteira e com todos
+  os vizinhos, e o motor plano do jogo roda sem mudança dentro de cada carta.
+- **Como se desenha:** cada vértice vai da carta dona para a esfera no
+  shader (`render/planet/bend.ts`).
+
+| Etapa | O quê | Pronto quando |
+|---|---|---|
+| P1 | Base: atlas de cartas sobrepostas (dona, halo, transições), tamanho da região escolhido pelo erro medido | testes de ida e volta, erro medido, dona única |
+| P2 | Documento: cada nó guardado na carta dona; o gesto lido numa carta e cada ponto passado à sua dona; via longa dividida | via construída em qualquer direção e tamanho, guardada e desfeita |
+| P3 | Mundo derivado por carta com halo: vias, cruzamentos, calçadas, faixas; só o que é da carta é desenhado | via e cruzamento sobre a divisa inteiros no jogo, sem fresta nem peça dupla |
+| P4 | Simulação: grafo de faixas unido, pose e corpo passando de carta, proximidade em 3D | carros e pessoas atravessam a divisa sem parar nem saltar |
+| P5 | Prédios, lotes, zonas, postes, terreno moldado pelo halo | cidade sobre a divisa sem peça dupla |
+| P6 | Terreno leve: detalhe por distância (base no ramo `planeta`, `src/planet/surface.ts`) | carga e quadro medidos antes e depois |
+
 ## Fila (pedidos do jogador ainda não atendidos)
 
 1. ~~Árvores low-poly bonitas~~: um só módulo para todas as árvores e

@@ -702,6 +702,20 @@ export class RoadDoc {
   }
 
   /** Moves a node freely; junction geometry adapts to the resulting angle. */
+  /**
+   * Writes a node's point on another chart of the planet (`world/planet/charts.ts`):
+   * the same ground in other coordinates, so no edit - its curves are not
+   * refitted and nothing is clamped. Only a working copy is recoded (an edit
+   * worked out on one chart, `editor/commit.ts`).
+   */
+  recodeNode(id: NodeId, at: Vec2): void {
+    const n = this.nodes.get(id);
+    if (!n || (n.x === at.x && n.y === at.y)) return;
+    n.x = at.x;
+    n.y = at.y;
+    this.markNode(id);
+  }
+
   moveNode(id: NodeId, to: Vec2): boolean {
     const n = this.nodes.get(id);
     if (!n) return false;

@@ -1,7 +1,7 @@
 import { TILE_COUNT } from '@core/planetTiles';
 import { clamp } from '@core/scalar';
 import type { Vec2 } from '@core/vec2';
-import { TILE_PLATE_HALF, TILE_REACH, clampToAtlas, insideAtlas, tileCellOf, tileCentre } from './planet/atlas';
+import { TILE_PLATE_HALF, TILE_REACH, tileCellOf, tileCentre } from './planet/atlas';
 
 /**
  * How big the world is.
@@ -73,8 +73,9 @@ export const MAP_MARGIN = __PLANET__ ? 0 : 64;
 
 /** Whether a point is on the plate at all. */
 export const insideMap = (p: Vec2, margin = 0): boolean =>
+  // A sphere has no edge: every point of the planet is on the map.
   __PLANET__
-    ? insideAtlas(p)
+    ? true
     : p.x >= -MAP_HALF + margin &&
       p.x <= MAP_HALF - margin &&
       p.y >= -MAP_HALF + margin &&
@@ -89,8 +90,10 @@ export const insideMap = (p: Vec2, margin = 0): boolean =>
  * nothing, with no explanation.
  */
 export const clampToMap = (p: Vec2, margin = MAP_MARGIN): Vec2 =>
+  // A sphere has no edge: a point is written on whatever chart the edit is
+  // worked out on (`world/planet/charts.ts`), past its piece too.
   __PLANET__
-    ? clampToAtlas(p)
+    ? p
     : {
         x: clamp(p.x, -MAP_HALF + margin, MAP_HALF - margin),
         y: clamp(p.y, -MAP_HALF + margin, MAP_HALF - margin),

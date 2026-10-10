@@ -1,6 +1,7 @@
 import { FACES, FACE_HALF, PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
 import { TILES, TILES_PER_SIDE, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import { ATLAS_COLUMNS, ATLAS_PITCH, atlasToTileInto, tileCentre, type TileLocal } from '@world/planet/atlas';
+import { planetLocalMinutes as localMinutesAt, planetSunInto } from '@world/planet/sun';
 import { Frustum, Matrix4, ShaderChunk, ShaderLib, Sphere, Vector3, type Object3D, type Ray, type Scene } from 'three';
 
 /**
@@ -49,6 +50,8 @@ const float PLANET_R = ${PLANET_RADIUS.toFixed(4)};
 const float PLANET_PITCH = ${ATLAS_PITCH.toFixed(1)};
 const float PLANET_COLS = ${ATLAS_COLUMNS.toFixed(1)};
 const float PLANET_ROWS = ${(TILES.length / ATLAS_COLUMNS).toFixed(1)};
+const float PLANET_COLS_HALF = ${(ATLAS_COLUMNS / 2).toFixed(1)};
+const float PLANET_ROWS_HALF = ${(TILES.length / ATLAS_COLUMNS / 2).toFixed(1)};
 const float PLANET_HALF = ${FACE_HALF.toFixed(1)};
 const float PLANET_STEP = ${((2 * FACE_HALF) / TILES_PER_SIDE).toFixed(1)};
 const float PLANET_ANGLE = ${(Math.PI / 4 / FACE_HALF).toExponential(8)};
@@ -58,9 +61,9 @@ const vec3 PLANET_N[6] = vec3[6](${FACES.map((f) => v3(f.north)).join(', ')});
 // The piece whose cell of the atlas holds a world point, and the point on its map.
 int planetTile(vec3 p, out vec2 local) {
   vec2 a = vec2(p.x, -p.z);
-  float col = clamp(floor(a.x / PLANET_PITCH + 0.5) + 6.0, 0.0, PLANET_COLS - 1.0);
-  float row = clamp(floor(a.y / PLANET_PITCH + 0.5) + 4.0, 0.0, PLANET_ROWS - 1.0);
-  local = a - vec2((col - 6.0) * PLANET_PITCH, (row - 4.0) * PLANET_PITCH);
+  float col = clamp(floor(a.x / PLANET_PITCH + 0.5) + PLANET_COLS_HALF, 0.0, PLANET_COLS - 1.0);
+  float row = clamp(floor(a.y / PLANET_PITCH + 0.5) + PLANET_ROWS_HALF, 0.0, PLANET_ROWS - 1.0);
+  local = a - vec2((col - PLANET_COLS_HALF) * PLANET_PITCH, (row - PLANET_ROWS_HALF) * PLANET_PITCH);
   return int(row * PLANET_COLS + col);
 }
 // A piece's centre on the sphere and its east and north there (core/planetTiles.ts TILES).
@@ -359,37 +362,17 @@ export function rehome(x: number, y: number): { x: number; y: number; turn: numb
   return { x: c.x + p.x, y: c.y + p.y, turn };
 }
 
-/**
- * THE PLANET'S SUN: fixed over the planet, turning round its axis (the
- * planet frame's z, through the faces 2 and 5) once a day; the camera moves
- * round the planet, the sun does not move with it. At noon (720) it stands
- * over face 0's centre (+x), in the morning over its east (+y), with a little
- * tilt so the poles see it too.
- */
-const SUN_TILT = 0.22;
-const sunPlanet = new Vector3();
-function sunInPlanet(minutes: number, out: Vector3): Vector3 {
-  const sigma = (-(minutes - 720) / 1440) * Math.PI * 2;
-  return out.set(Math.cos(sigma), Math.sin(sigma), SUN_TILT).normalize();
-}
+const sunPlanet: Vec3 = { x: 0, y: 0, z: 0 };
 
-/** The sun's direction as drawn (three's space, unit) at a time of day (minutes). */
+/** The planet's sun (`world/planet/sun.ts`) as drawn (three's space, unit) at a time of day (minutes). */
 export function planetSun(minutes: number, out: Vector3): Vector3 {
-  return sunInPlanet(minutes, out).transformDirection(motion);
+  planetSunInto(minutes, sunPlanet);
+  return out.set(sunPlanet.x, sunPlanet.y, sunPlanet.z).transformDirection(motion);
 }
 
-/**
- * The time the sun makes at the place the view looks at (minutes, 0..1440):
- * noon where it stands overhead, the morning on the side it is rising over.
- */
+/** The time the sun makes at the place the view looks at (minutes, 0..1440). */
 export function planetLocalMinutes(minutes: number): number {
-  sunInPlanet(minutes, sunPlanet);
-  atlasToTileInto(anchor.x, -anchor.z, local);
-  tileToSphereInto(local.tile, local.x, local.y, dir);
-  const at = Math.atan2(dir.y, dir.x), sun = Math.atan2(sunPlanet.y, sunPlanet.x);
-  let delta = (at - sun) / (Math.PI * 2);
-  delta -= Math.round(delta);
-  return ((720 + delta * 1440) % 1440 + 1440) % 1440;
+  return localMinutesAt(minutes, anchor.x, -anchor.z);
 }
 
 /** The motion from the drawn world back to the planet's own frame (the clouds' noise is read there). */

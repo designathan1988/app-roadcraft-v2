@@ -47,6 +47,17 @@ export interface Viewport {
    * drag out a road and see nothing until they let go.
    */
   toScreen(p: Vec2, cssW: number, cssH: number, height?: number): Vec2;
+  /**
+   * On the planet: every point picked from here on is read on the map of the
+   * piece under (px, py) (`render/planet/bend.ts` inTileChart), until
+   * `releaseChart`. Two pieces side by side on the sphere are far apart in the
+   * atlas, so a gesture that ran over a border jumped across the atlas between
+   * two points: a road drawn in zigzags, a demolition box in shards. A
+   * gesture is read on ONE piece's map, which goes on past its border.
+   */
+  holdChart?(px: number, py: number): void;
+  /** Picks read on the piece under the pointer again. */
+  releaseChart?(): void;
   /** Moves the view so `grabbed` (a point at `height`, what was under the pointer) sits under the pointer again. */
   panTo(grabbed: Vec2, px: number, py: number, cssW: number, cssH: number, height?: number): void;
   /** Zooms about a pointer, keeping the ground under it (at `height`, the ground's own height there). */

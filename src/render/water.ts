@@ -234,6 +234,21 @@ function waterNormalTexture(size: number, anisotropy: number): DataTexture {
   return texture;
 }
 
+/**
+ * The ripple texture, baked once per size and filtering and shared by every
+ * water surface (the planet has one per piece): a texture is not freed with
+ * the material that uses it (three.js manual, "How to dispose of Objects"),
+ * so the surfaces never dispose it.
+ */
+const normalsMade = new Map<string, DataTexture>();
+function sharedWaterNormals(anisotropy: number): DataTexture {
+  const size = waterTextureSize(anisotropy);
+  const id = `${size}:${anisotropy}`;
+  let made = normalsMade.get(id);
+  if (!made) normalsMade.set(id, made = waterNormalTexture(size, anisotropy));
+  return made;
+}
+
 export interface WaterSurface {
   readonly material: MeshStandardMaterial;
   /** The clock the shader scrolls by, in seconds. Exposed so it can be read. */
@@ -262,7 +277,7 @@ export interface WaterSurface {
 }
 
 export function createWaterSurface(anisotropy: number): WaterSurface {
-  const normalMap = waterNormalTexture(waterTextureSize(anisotropy), anisotropy);
+  const normalMap = sharedWaterNormals(anisotropy);
 
   const material = new MeshStandardMaterial({
     // White: the colour that reaches the lighting is mixed per pixel from the
@@ -550,7 +565,6 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     },
     dispose() {
       material.dispose();
-      normalMap.dispose();
     },
   };
 }

@@ -7,9 +7,15 @@ import { isNatureSettings } from '@world/ecology';
 import { readEconomy } from '@world/economy';
 import { isSerializedBuildings } from '@world/buildings/serialize';
 
-const KEY = 'roadcraft.world.v7';
+/**
+ * Where the map is kept. The planet keeps its own: its points are written on
+ * the maps of its pieces (`world/planet/atlas.ts`), and a planet saved with
+ * other pieces (the 96 of 2026-10-10, key `roadcraft.world.v7` on its own
+ * server) is left as it was, never read with the wrong ones.
+ */
+const KEY = __PLANET__ ? 'roadcraft.planet.atlas864.v1' : 'roadcraft.world.v7';
 /** Where storage the loader could not read is kept, rather than deleted. */
-export const QUARANTINE_KEY = 'roadcraft.world.v7.unreadable';
+export const QUARANTINE_KEY = `${KEY}.unreadable`;
 const DEBOUNCE_MS = 700;
 /**
  * The longest an edit waits to be saved, however many follow it (lodash

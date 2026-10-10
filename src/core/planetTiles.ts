@@ -22,8 +22,16 @@ import { FACES, FACE_HALF, PLANET_RADIUS, faceOfDirection, faceToSphereInto, sph
  * Pure: no three, no randomness, no allocation in the `*Into` calls.
  */
 
-/** Pieces along each side of a cube face. */
-export const TILES_PER_SIDE = 4;
+/**
+ * Pieces along each side of a cube face: 12, so 864 on the planet, each about
+ * 500 m across. A piece's map is a chart of an atlas of OVERLAPPING charts
+ * (`world/planet/atlas.ts`): what lies on it and within `TILE_REACH` round it
+ * is worked out on it, so its size bounds the map's error on anything it
+ * owns - an arc over `d` from its centre is drawn `d/R / sin(d/R)` long
+ * across, 0.34% at the farthest corner of a piece with 150 m reach past it
+ * (measured 2026-10-10 against 1.8% for the 96 pieces of 4 a side).
+ */
+export const TILES_PER_SIDE = 12;
 /** Pieces on the whole planet. */
 export const TILE_COUNT = 6 * TILES_PER_SIDE * TILES_PER_SIDE;
 

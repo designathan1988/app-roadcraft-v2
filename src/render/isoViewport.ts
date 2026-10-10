@@ -11,6 +11,7 @@ import type { Vec2 } from '@core/vec2';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { WORLD_HALF } from '@world/bounds';
 import { tileCellOf } from '@world/planet/atlas';
+import { setPointerChart } from '@world/planet/charts';
 import { anchorPlanet, inTileChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
@@ -324,13 +325,18 @@ export function createIsoRig(
    * at the end of an elevated road picked open ground thirteen units away and
    * the snap never found the node that was plainly drawn there.
    */
+  /** The piece whose map a gesture is read on (`Viewport.holdChart`), or -1. */
+  let heldTile = -1;
   const worldAt = (px: number, py: number, atHeight = 0): Vec2 => hitAt(px, py, atHeight) ?? { x: target.x, y: -target.z };
   /** The same, or null where the pointer's ray does not reach that plane (three's `Ray.intersectPlane`: above its horizon). */
   const hitAt = (px: number, py: number, atHeight: number): Vec2 | null => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
     raycaster.setFromCamera(ndc, camera);
     // On the planet: where the ray meets the sphere at that height, exactly.
-    if (__PLANET__) return planetPick(raycaster.ray, atHeight);
+    if (__PLANET__) {
+      const found = planetPick(raycaster.ray, atHeight);
+      return found && heldTile >= 0 ? inTileChart(heldTile, found.x, found.y) : found;
+    }
     ground.constant = -atHeight;
     const ok = raycaster.ray.intersectPlane(ground, hit);
     ground.constant = 0;
@@ -419,6 +425,17 @@ export function createIsoRig(
         x: (projected.x * 0.5 + 0.5) * cssW,
         y: (-projected.y * 0.5 + 0.5) * cssH,
       };
+    },
+    holdChart(px, py) {
+      if (!__PLANET__) return;
+      heldTile = -1;
+      const found = hitAt(px, py, 0);
+      heldTile = found ? tileCellOf(found.x, found.y) : tileCellOf(target.x, -target.z);
+      setPointerChart(heldTile);
+    },
+    releaseChart() {
+      heldTile = -1;
+      setPointerChart(-1);
     },
     panTo(grabbed, px, py, _cssW, _cssH, atHeight = 0) {
       // The grabbed point is held on its own plane (the height of what was

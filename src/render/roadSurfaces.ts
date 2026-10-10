@@ -22,6 +22,11 @@ import type { RoadElevation } from '@world/elevation';
 import { m } from '@world/units';
 import { medianNose } from '@world/landscape';
 import { PAINT_RISE, markingQuads, paintMaterial } from './markings';
+import { chartAt, chartToChartInto, chartsReached, onTerritory, territory } from '@world/planet/charts';
+import type { FacePoint } from '@core/cubeSphere';
+
+/** Scratch for a point carried to another chart of the planet. */
+const carried: FacePoint = { x: 0, y: 0 };
 import type { SceneMaterials } from './materials';
 import { TERRAIN_CELL } from './terrain';
 import {
@@ -784,15 +789,15 @@ export function* roadSurfaceSteps(
     };
     yield;
     for (const name of ['casing', 'sidewalk', 'curb', 'asphalt'] as const) {
-      for (const input of levels[name]) file(input, (into) => into.levels[name].push(input));
+      for (const input of spread(levels[name])) file(input, (into) => into.levels[name].push(input));
     }
     for (const name of ['kerb', 'planting', 'paved'] as const) {
-      for (const input of medians[name]) file(input, (into) => into.medians[name].push(input));
+      for (const input of spread(medians[name])) file(input, (into) => into.medians[name].push(input));
     }
-    for (const input of ramps) file(input, (into) => into.ramps.push(input));
-    for (const input of ribbonAsphalt) file(input, (into) => into.ribbons.push(input));
+    for (const input of spread(ramps)) file(input, (into) => into.ramps.push(input));
+    for (const input of spread(ribbonAsphalt)) file(input, (into) => into.ribbons.push(input));
     for (const [color, list] of quads) {
-      for (const input of list) {
+      for (const input of spread(list)) {
         file(input, (into) => {
           const bucket = into.quads.get(color);
           if (bucket) bucket.push(input);
@@ -936,6 +941,44 @@ export function* roadSurfaceSteps(
   };
 }
 
+/**
+ * On the planet, every input also on the charts whose pieces it reaches
+ * (`world/planet/charts.ts`): written on its own chart, a junction plate or
+ * a road near a piece's border lies partly on the next piece, which draws
+ * that part (`territoryCut`) - so each chart merges, bands and clips with
+ * everything that lies on its ground, and every surface is drawn whole, once.
+ * On the flat map, the list itself.
+ */
+function spread(list: readonly Input[]): readonly Input[] {
+  if (!__PLANET__) return list;
+  const out: Input[] = [];
+  const reached = new Set<number>();
+  for (const input of list) {
+    out.push(input);
+    const own = chartAt((input.minX + input.maxX) / 2, (input.minY + input.maxY) / 2);
+    // A box on its piece holds a ring on it (a piece's ground is near enough convex on its map).
+    if (onTerritory(own, input.minX, input.minY) && onTerritory(own, input.maxX, input.minY) &&
+      onTerritory(own, input.minX, input.maxY) && onTerritory(own, input.maxX, input.maxY)) continue;
+    chartsReached(own, input.poly[0] as readonly (readonly number[])[], reached);
+    for (const chart of reached) {
+      const there = inputOf(input.poly.map((ring) => ring.map((point) => {
+        chartToChartInto(own, chart, point[0] as number, point[1] as number, carried);
+        return [carried.x, carried.y];
+      })));
+      if (there) out.push(there);
+    }
+  }
+  return out;
+}
+
+/** The ground a tile's chart draws, as clipper input, or null when the whole tile is on it. */
+function territoryCut(rect: TileRect): MultiPoly | null {
+  const chart = chartAt((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2);
+  if (onTerritory(chart, rect[0], rect[1]) && onTerritory(chart, rect[2], rect[1]) &&
+    onTerritory(chart, rect[0], rect[3]) && onTerritory(chart, rect[2], rect[3])) return null;
+  return [[territory(chart).map(([x, y]) => [x, y])]];
+}
+
 function inputsOf(polys: readonly Poly[]): Input[] {
   const out: Input[] = [];
   for (const poly of polys) {
@@ -979,6 +1022,7 @@ function buildTile(
   };
   let ribbonsOnly: MultiPoly | null = null;
   const bundle = new Map<string, Tile>();
+  const cut = __PLANET__ ? territoryCut(rect) : null;
   for (const spec of specs) {
     const source = spec.source;
     let polygons: MultiPoly;
@@ -994,7 +1038,9 @@ function buildTile(
         polygons = intersection(merged(list), ribbonsOnly);
       }
     }
-    const inside = polygons.length > 0 ? clipToRect(polygons, rect) : [];
+    let inside = polygons.length > 0 ? clipToRect(polygons, rect) : [];
+    // On the planet a tile draws only its chart's own ground (`spread`).
+    if (inside.length > 0 && cut) inside = intersection(inside, cut);
     if (inside.length > 0) bundle.set(spec.options.name, meshTile({ ...spec.options, polygons: inside }, rect));
   }
   return bundle;

@@ -9,7 +9,7 @@ const p = { x: 0, y: 0 };
 
 describe('the planet cut into flat maps', () => {
   it('every piece owns its own centre, and the pieces tile the sphere', () => {
-    expect(TILE_COUNT).toBe(96);
+    expect(TILE_COUNT).toBe(864);
     for (let id = 0; id < TILE_COUNT; id++) expect(tileOfDirection(TILES[id]!.centre)).toBe(id);
     console.info(`planet tiles: ${TILE_COUNT}, a piece within ±${TILE_HALF.toFixed(0)} of its centre`);
   });
@@ -27,13 +27,16 @@ describe('the planet cut into flat maps', () => {
     expect(worst).toBeLessThan(1e-6);
   });
 
-  it('keeps every shape on the sphere: a right angle within a degree, a length within 1.5%, anywhere on the piece', () => {
+  // Shapes on a piece's map, on the piece (reach 0) and on what it owns reaching past its border (150 m).
+  it.each([[0, 0.15, 0.0025], [150, 0.25, 0.004]])('keeps every shape on the sphere %i m past the piece: a right angle within %f degree, a length within %f', (reach, angleLimit, scaleLimit) => {
     let worstAngle = 0, worstScale = 0;
-    for (let id = 0; id < TILE_COUNT; id++) {
+    for (let id = 0; id < TILE_COUNT; id += reach ? 7 : 1) {
       for (let gx = -1; gx <= 1; gx += 0.125) {
         for (let gy = -1; gy <= 1; gy += 0.125) {
-          const x = gx * TILE_HALF, y = gy * TILE_HALF;
-          if (!onTile(id, x, y)) continue;
+          const x = gx * (TILE_HALF + reach), y = gy * (TILE_HALF + reach);
+          // On the piece, or within `reach` of it (its point that far nearer the centre is on it).
+          const r = Math.hypot(x, y), back = r > reach ? 1 - reach / r : 0;
+          if (!onTile(id, x * back, y * back)) continue;
           for (const turn of [0, Math.PI / 6, Math.PI / 4, Math.PI / 3]) {
             const ux = Math.cos(turn), uy = Math.sin(turn);
             tileToSphereInto(id, x, y, s);
@@ -48,9 +51,9 @@ describe('the planet cut into flat maps', () => {
         }
       }
     }
-    console.info(`planet tiles: worst right angle off by ${worstAngle.toFixed(2)} deg, worst length off by ${(worstScale * 100).toFixed(2)}%`);
-    expect(worstAngle).toBeLessThan(1);
-    expect(worstScale).toBeLessThan(0.015);
+    console.info(`planet tiles, ${reach} m past: worst right angle off by ${worstAngle.toFixed(3)} deg, worst length off by ${(worstScale * 100).toFixed(3)}%`);
+    expect(worstAngle).toBeLessThan(angleLimit);
+    expect(worstScale).toBeLessThan(scaleLimit);
   });
 
   it('carries a point and its heading over to a neighbour', () => {
