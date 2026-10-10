@@ -926,6 +926,8 @@ export class Network {
     // one-way pieces carry one flow on (one arrives, the other leaves - the
     // ring of a roundabout), people cross the arms, never the ring.
     if (this.circulating(seg, node)) return 0;
+    // A turning circle is walked round on its footway (`walkways.ts`), not crossed.
+    if (this.doc.node(node)?.end === 'bulb' && this.doc.degree(node) === 1) return 0;
     if (this.doc.node(node)?.incident.some((id) => {
       const kind = this.doc.segment(id)?.type;
       return kind !== undefined &&

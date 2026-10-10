@@ -13,7 +13,8 @@ import { linksDigest, linksOf } from './roads/connectors';
 import { orientedPolyline } from './geometry';
 import { type ApproachGroup, computeApproachGroups } from './approachGroups';
 import { TUNNELS_DRAWN } from './structures';
-import { JunctionSurface, turnPath } from './turnPaths';
+import { JunctionSurface, bulbTurnPath, turnPath } from './turnPaths';
+import { BULB_TURN_RADIUS } from './junction/bulb';
 import type { BodyClass } from './conflictPoints';
 
 /**
@@ -377,7 +378,9 @@ export class LaneletGraph {
     previous: Map<string, JunctionCache>, next: Map<string, JunctionCache>): Generator<void, void, void> {
     for (const [nodeId, node] of doc.nodes) {
       yield;
-      if (node.incident.length < 2) continue;
+      // A road's end that is a turning circle turns its traffic round (`junction/bulb.ts`).
+      const bulb = node.incident.length === 1 && node.end === 'bulb';
+      if (node.incident.length < 2 && !bulb) continue;
       // The surface a turn has to stay on, built once per node and only when
       // the node actually has a movement to shape.
       let surface: JunctionSurface | null | undefined;
@@ -464,7 +467,9 @@ export class LaneletGraph {
         const waiting = inbound
           .map((id) => this.lanelets.get(id))
           .filter((l): l is Lanelet => !!l && l.id !== inId);
-        const turnResult = turnPath(inLane.centre, outLane.centre, surfaceOf(), waiting);
+        const turnResult = bulb
+          ? bulbTurnPath(inLane.centre, outLane.centre, surfaceOf(), { x: node.x, y: node.y }, BULB_TURN_RADIUS)
+          : turnPath(inLane.centre, outLane.centre, surfaceOf(), waiting);
         const path = turnResult.path;
         const lanelet: Lanelet = {
           id: cid,

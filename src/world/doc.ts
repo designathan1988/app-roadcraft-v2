@@ -105,7 +105,17 @@ export interface RoadNode {
   approachRules?: readonly ApproachRuleEntry[];
   /** A signal's settings (V5): fixed time, greens, offset, bus priority; absent: adaptive. */
   signal?: SignalSettings;
+  /**
+   * What a road's end is (docs/VIAS.md V8): absent, the map's edge, where
+   * traffic leaves and comes in; 'bulb', a turning circle where it turns
+   * round (the player's choice per end, 2026-10-10). Read only while the
+   * node is the end of one road.
+   */
+  end?: RoadEnd;
 }
+
+/** A road's end that is not the map's edge: a turning circle (balão de retorno). */
+export type RoadEnd = 'bulb';
 
 export type NodeCrossingKind = 'zebra' | 'signal';
 export interface NodeCrossing {
@@ -513,6 +523,16 @@ export class RoadDoc {
     return this.nodes.get(id)?.incident.length ?? 0;
   }
 
+  /**
+   * Whether a node is the map's edge: the end of one road, where traffic and
+   * people come in from outside and leave - not a turning circle the player
+   * made of it (`RoadNode.end`, docs/VIAS.md V8).
+   */
+  mapEdge(id: NodeId): boolean {
+    const node = this.nodes.get(id);
+    return !!node && node.incident.length === 1 && node.end !== 'bulb';
+  }
+
   // ---------------------------------------------------------------- mutation
 
   /**
@@ -805,6 +825,15 @@ export class RoadDoc {
     if (this.markingStyle === style) return;
     this.markingStyle = style;
     this.roadsChanged(null, false, { detail: 'paint style' });
+  }
+
+  /** What a road's end is (`RoadNode.end`): a turning circle, or (undefined) the map's edge. */
+  setNodeEnd(id: NodeId, end: RoadEnd | undefined): void {
+    const node = this.nodes.get(id);
+    if (!node || node.end === end) return;
+    if (end) node.end = end;
+    else delete node.end;
+    this.markNode(id);
   }
 
   /** Each leg's rule at a junction (`RoadNode.approachRules`); undefined: all derived. */
@@ -1252,6 +1281,7 @@ export class RoadDoc {
         ...(node.laneLinks ? { laneLinks: node.laneLinks.map((l) => ({ ...l })) } : {}),
         ...(node.approachRules ? { approachRules: node.approachRules.map((e) => ({ ...e })) } : {}),
         ...(node.signal ? { signal: { ...node.signal, ...(node.signal.greens ? { greens: [...node.signal.greens] } : {}) } } : {}),
+        ...(node.end ? { end: node.end } : {}),
       });
     }
     for (const [id, segment] of source.segments) {
@@ -1425,6 +1455,7 @@ export class RoadDoc {
         ...(n.laneLinks ? { laneLinks: n.laneLinks.map((l) => ({ ...l })) } : {}),
         ...(n.approachRules ? { approachRules: n.approachRules.map((e) => ({ ...e })) } : {}),
         ...(n.signal ? { signal: { ...n.signal, ...(n.signal.greens ? { greens: [...n.signal.greens] } : {}) } } : {}),
+        ...(n.end ? { end: n.end } : {}),
       })),
       segments: [...this.segments.values()].map((s) => ({
         id: s.id,
@@ -1579,6 +1610,7 @@ export class RoadDoc {
       if (rules) node.approachRules = rules;
       const signal = normalizeSignalSettings(n.signal);
       if (signal) node.signal = signal;
+      if (n.end === 'bulb') node.end = 'bulb';
     }
     for (const dab of data.paint ?? []) {
       if (!isPaintKind(dab.kind) || ![dab.x, dab.y, dab.radius, dab.strength].every(Number.isFinite)) continue;
@@ -1742,6 +1774,8 @@ export interface SerializedDoc {
     approachRules?: readonly { segment: number; rule: string }[];
     /** A signal's settings (V5); absent on every older map. */
     signal?: unknown;
+    /** A road's end that is a turning circle (V8); absent: the map's edge. */
+    end?: string;
   }[];
   readonly segments: readonly {
     id: number;
@@ -1824,7 +1858,7 @@ function sameNode(p: RoadNode, q: RoadNode): boolean {
     p.control === q.control && sameList(p.incident, q.incident) && sameList(p.blockedMovements, q.blockedMovements) &&
     p.crossing?.kind === q.crossing?.kind && p.crossing?.segment === q.crossing?.segment &&
     linksDigest(p.laneLinks) === linksDigest(q.laneLinks) && rulesDigest(p.approachRules) === rulesDigest(q.approachRules) &&
-    signalDigest(p.signal) === signalDigest(q.signal);
+    signalDigest(p.signal) === signalDigest(q.signal) && p.end === q.end;
 }
 
 /** Whether two versions of a segment are the same, field for field (its ends' positions aside). */

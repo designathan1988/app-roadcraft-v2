@@ -59,7 +59,7 @@ function entryLanes(w: SimWorld): string[] {
   for (const lane of w.graph.lanelets.values()) {
     if (lane.kind !== 'link' || lane.length < 30) continue;
     if (w.rt(lane.id).ghost) continue;
-    if (lane.from !== undefined && w.doc.degree(lane.from) === 1) out.push(lane.id);
+    if (lane.from !== undefined && w.doc.mapEdge(lane.from)) out.push(lane.id);
   }
   return out.sort();
 }
@@ -347,7 +347,7 @@ export function stepDespawn(w: SimWorld): void {
     const body = bodyClassOfArchetype(v.archetype);
     const nowhereToGo = w.graph.exitsOf(v.lanelet).every((id) =>
       (w.connector(id)?.maxBodyClass ?? -1) < body);
-    const roadEnd = lane.to !== undefined && w.doc.degree(lane.to) === 1;
+    const roadEnd = lane.to !== undefined && w.doc.mapEdge(lane.to);
     // A car of the ambient traffic that may be on screen waits there: taken away out of sight.
     if (lane.kind === 'link' && atEnd && nowhereToGo && roadEnd && !w.ambient.sighted.has(v.id)) {
       if (v.destination === lane.id) w.completedTrips++;

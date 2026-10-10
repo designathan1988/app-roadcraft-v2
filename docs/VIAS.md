@@ -375,6 +375,18 @@ jogador, e só com a aprovação dele a etapa entra em `master` e a seguinte com
   aceite da V0 ("debitado e devolvido"). A conferir.
 
 ## Andamento da V8
+- Balão de retorno (decisão do jogador, 2026-10-10: opção por ponta; a ponta continua saída do mapa por
+  padrão): no inspetor da via, "Ponta inicial/final: Saída do mapa | Balão de retorno" (`RoadNode.end`). O
+  balão é uma junção de uma perna (`world/junction/bulb.ts`): pista de 13 m de raio (bombeiros: Chico, CA,
+  48 ft; Hebron, OH, 44 ft), concordâncias de meio-fio de 7,5 m (Silverton, OR, 25 ft), cada nível externo
+  concêntrico; a via é cortada onde a concordância começa; sem zebra nem retenção; a calçada contorna o
+  círculo (`walkways.ts`), sem travessia nem rampa na ponta. Meia-volta própria (`turnPaths.ts`
+  `bulbTurnPath`): entra pela faixa, segue o círculo a 10 m do centro pelo fundo e sai pela outra; carros e
+  utilitários cabem; ônibus e caminhão cabem sozinhos, mas um segundo atrás do primeiro encostaria nele
+  (verificação de dobra da varredura), então não são mandados para rua com balão. A ponta com balão não é
+  saída nem entrada do mapa (`RoadDoc.mapEdge`). O que estava em pé na pista do balão (poste, banco) sai
+  no mesmo passo (`clearBulbs`). Detectores: `tests/world/bulb.spec.ts`, `tests/sim/bulb.spec.ts`. Visto no
+  jogo (5173): círculo, meio-fio, calçada, poste removido; a volta dos carros vista só na simulação.
 - Conta-gotas: no inspetor da via, "Desenhar com este perfil" passa a via como ela está para a ferramenta de vias (abre o
   painel de vias com o cartão "Via copiada" escolhido; um perfil em mãos que não é nenhum cartão aparece sempre como
   primeiro cartão, `catalogPanel.ts`).

@@ -282,6 +282,53 @@ export function turnPath(inCentre: Polyline, outCentre: Polyline, surface: Junct
   return { path, maxBodyClass };
 }
 
+/**
+ * Turning round in a turning circle at a road's end (`junction/bulb.ts`):
+ * from the arriving lane on into the circle, round it the far way at
+ * `radius` from its centre, and out along the departing lane - as a car or a
+ * bus turns in a cul-de-sac, keeping to its own side. A curve straight
+ * across between two lanes a few metres apart fits no body; this one is
+ * swept like any other turn for the largest that fits.
+ */
+export function bulbTurnPath(inCentre: Polyline, outCentre: Polyline, surface: JunctionSurface | null,
+  centre: Vec2, radius: number): TurnPathResult {
+  const start = inCentre.sampleAt(inCentre.length), end = outCentre.sampleAt(0);
+  const a = start.p, b = end.p;
+  const angleAt = (p: Vec2): number => Math.atan2(p.y - centre.y, p.x - centre.x);
+  const aIn = angleAt(a), aOut = angleAt(b);
+  // Round the side the arriving lane looks into: the far side of the circle.
+  const ahead = { x: a.x + start.t.x * radius, y: a.y + start.t.y * radius };
+  const back = angleAt(ahead);
+  const wrap = (x: number): number => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const ccwSweep = wrap(aOut - aIn);
+  const sign = wrap(back - aIn) < ccwSweep ? 1 : -1;
+  const sweep = sign > 0 ? ccwSweep : 2 * Math.PI - ccwSweep;
+  // On the circle 45° in from each end, joined to the lanes by cubics tangent to both: entered
+  // further round, a bus swung its side out past the kerb return (measured, 60°: 0.7 m out).
+  const lead = Math.min(Math.PI / 4, sweep / 3);
+  const p1a = aIn + sign * lead, p2a = aIn + sign * (sweep - lead);
+  const on = (ang: number): Vec2 => ({ x: centre.x + Math.cos(ang) * radius, y: centre.y + Math.sin(ang) * radius });
+  const tangent = (ang: number): Vec2 => ({ x: -Math.sin(ang) * sign, y: Math.cos(ang) * sign });
+  const cubic = (p0: Vec2, t0: Vec2, p3: Vec2, t3: Vec2, out: Vec2[]): void => {
+    const h = 0.45 * Math.hypot(p3.x - p0.x, p3.y - p0.y);
+    const c1 = addScaled(p0, t0, h), c2 = addScaled(p3, t3, -h);
+    for (let i = out.length ? 1 : 0; i <= STEPS / 2; i++) {
+      const t = i / (STEPS / 2), u = 1 - t;
+      const w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+      out.push({ x: w0 * p0.x + w1 * c1.x + w2 * c2.x + w3 * p3.x, y: w0 * p0.y + w1 * c1.y + w2 * c2.y + w3 * p3.y });
+    }
+  };
+  const pts: Vec2[] = [];
+  cubic(a, start.t, on(p1a), tangent(p1a), pts);
+  const arcSteps = Math.max(4, Math.ceil(((sweep - 2 * lead) * radius) / m(1)));
+  for (let i = 1; i <= arcSteps; i++) pts.push(on(p1a + sign * ((sweep - 2 * lead) * i) / arcSteps));
+  cubic(on(p2a), tangent(p2a), b, end.t, pts);
+  const path = Polyline.fromPoints(pts);
+  if (!surface || surface.empty) return { path, maxBodyClass: HEAVY };
+  const maxBodyClass = ([HEAVY, 1, 0] as const).find((body) => turnFits(inCentre, path, outCentre, surface, body)) ?? -1;
+  return { path, maxBodyClass };
+}
+
 /** Whether the selected movement contains a body of this size on its drawn surface. */
 export function turnFits(inCentre: Polyline, path: Polyline, outCentre: Polyline,
   surface: JunctionSurface, body: BodyClass): boolean {

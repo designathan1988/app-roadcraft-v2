@@ -328,7 +328,7 @@ export class AmbientWorld {
     const engine = w.pedEngine;
     if (!engine.walkableNear) return this.ends;
     for (const node of w.doc.nodes.values()) {
-      if (w.doc.degree(node.id) !== 1) continue;
+      if (!w.doc.mapEdge(node.id)) continue;
       const found: { x: number; y: number }[] = [];
       // Round the end, out to past the widest footway: each side's walkway once.
       for (let k = 0; k < 16; k++) {

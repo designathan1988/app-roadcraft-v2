@@ -17,6 +17,7 @@ import { levelPolygons } from './surfaces';
 import { pointInPolygon } from '@core/polygon';
 import type { MultiPoly } from '@core/clipper';
 import type { RoadStructure } from './structures';
+import { bulbLine } from './junction/bulb';
 
 /**
  * WHERE PEOPLE WALK, as lanes: the pedestrian network of the city.
@@ -699,10 +700,27 @@ export function* walkwaySteps(net: Network): Generator<void, WalkGraph, void> {
   // crossing joins its two footways, or each side of a street that ends would
   // be an island to whoever walks it (a cul-de-sac, a road off the map).
   for (const [nodeId, here] of ends) {
-    if (doc.requireNode(nodeId).incident.length !== 1) continue;
+    const end = doc.requireNode(nodeId);
+    if (end.incident.length !== 1) continue;
     const left = here.find((e) => e.side > 0), right = here.find((e) => e.side < 0);
     if (!left || !right || left.way.structure !== right.way.structure || left.way.segment === undefined) continue;
     if (Math.hypot(left.p.x - right.p.x, left.p.y - right.p.y) < JOIN) continue;
+    // A turning circle (docs/VIAS.md V8): its footway runs round it, and so
+    // does the walk from one side of the street to the other - on the
+    // footway's walking line, nobody crossing the circle's carriageway.
+    if (end.end === 'bulb') {
+      const offset = Math.abs((left.p.x - end.x) * -left.into.y + (left.p.y - end.y) * left.into.x);
+      let line = bulbLine(doc, net.polylines, nodeId, offset);
+      if (line) {
+        const first = line[0]!, last = line[line.length - 1]!;
+        if (Math.hypot(first.x - left.p.x, first.y - left.p.y) > Math.hypot(last.x - left.p.x, last.y - left.p.y)) line = [...line].reverse();
+        const inset = Math.min(left.inset, right.inset), outer = Math.min(left.outer, right.outer);
+        const lo = left.kerbSide < 0 ? -inset : -outer, hi = left.kerbSide < 0 ? outer : inset;
+        g.add({ kind: 'corner', path: Polyline.fromPoints([left.p, ...line, right.p]), width: hi - lo, lo, hi,
+          kerb: left.kerbSide < 0 ? -1 : 1, node: nodeId, structure: left.way.structure, a: left.node, b: right.node });
+        continue;
+      }
+    }
     g.add({ kind: 'crossing', path: Polyline.fromPoints([left.p, right.p]), width: m(2), lo: -m(1), hi: m(1), kerb: 0,
       segment: left.way.segment, node: nodeId, structure: left.way.structure, a: left.node, b: right.node, unmarked: true });
   }

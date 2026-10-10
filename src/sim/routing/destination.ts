@@ -53,7 +53,7 @@ function pop(heap: RouteStep[]): RouteStep | undefined {
 function boundaryExit(w: SimWorld, id: LaneletId): boolean {
   const lane = w.lanelet(id);
   return !!lane && lane.kind === 'link' && lane.to !== undefined &&
-    w.doc.degree(lane.to) === 1 && w.graph.exitsOf(id).length === 0;
+    w.doc.mapEdge(lane.to) && w.graph.exitsOf(id).length === 0;
 }
 
 /** Stable reachability per entry and topology revision; traffic cost stays live. */

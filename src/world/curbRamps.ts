@@ -99,7 +99,8 @@ function rampSet(net: Network): RampSet {
     // A street that leads nowhere is crossed at its end, with no zebra
     // (`walkways.ts`, the unmarked crossing): a dropped kerb there too.
     if (node.incident.length === 1) {
-      pair(nodeId, node.incident[0]!, 0, UNMARKED_WIDTH / 2);
+      // A turning circle is walked round, not across (`walkways.ts`).
+      if (node.end !== 'bulb') pair(nodeId, node.incident[0]!, 0, UNMARKED_WIDTH / 2);
       continue;
     }
     for (const segmentId of node.incident) {

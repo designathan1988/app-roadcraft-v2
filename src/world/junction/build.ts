@@ -21,6 +21,7 @@ import { isTransition, legWidthStep, transitionRing, transitionRunFor } from './
 import { buildJunctionRing, findSlabViolations } from './polygon';
 import { COARSE_EPS, FINE_EPS } from '@core/scalar';
 import { TUNNEL_HEADROOM } from '../structures';
+import { buildBulb } from './bulb';
 
 /** How a node behaves geometrically. */
 export type SurfaceMode = 'none' | 'junction';
@@ -74,6 +75,8 @@ export interface Junction {
  */
 export function surfaceMode(doc: RoadDoc, cache: PolylineCache, nodeId: NodeId): SurfaceMode {
   const node = doc.node(nodeId);
+  // A road's end marked as a turning circle is a junction of one leg (`bulb.ts`).
+  if (node && node.incident.length === 1 && node.end === 'bulb') return 'junction';
   if (!node || node.incident.length < 2) return 'none';
   if (node.incident.length > 2) return 'junction';
 
@@ -179,6 +182,7 @@ export function buildJunction(
   opts: BuildOptions = {},
 ): Junction | null {
   const node = doc.node(nodeId);
+  if (node && node.incident.length === 1 && node.end === 'bulb') return buildBulb(doc, cache, nodeId, level);
   if (!node || node.incident.length < 2) return null;
 
   const passes = opts.refinePasses ?? 2;

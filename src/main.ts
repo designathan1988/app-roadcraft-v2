@@ -113,6 +113,7 @@ import { levelElevation, roofRise } from '@world/buildings/geometry';
 import { volumeTop } from '@world/buildings/types';
 import { type ZoneUse, type ZoneDensity } from '@world/zones';
 import { LOT_PLAN_VERSION, growOnLot } from '@editor/zoning';
+import { clearBulbs } from '@world/junction/bulb';
 
 type Tool =
   | 'building'
@@ -837,6 +838,8 @@ function mutateBuilt(fn: () => boolean): boolean {
   if (net.revision !== doc.revision) net.rebuild();
   // A road over a building demolishes it, in this same undo step.
   buildings.afterRoadEdit();
+  // And nothing stands in a turning circle's carriageway (V8): what stood on a road end's footway goes.
+  clearBulbs(doc, net);
   // The simulation catches up in the frame AFTER the one that draws the edit
   // (see `topologyAfterDraw`), so the player sees the road first.
   topologyAfterDraw = topologyAfterDraw || sim.topologyRevision !== net.trafficRevision;
@@ -4391,6 +4394,10 @@ function showInspector(): void {
         });
       },
       onSetNodeHeight: setNodeHeightMetres,
+      onSetNodeEnd: (node, end) => mutateRoads(() => {
+        doc.setNodeEnd(node, end);
+        return true;
+      }),
       onReverseDirection: (id) => {
         const seg = doc.segment(id);
         if (!seg) return;

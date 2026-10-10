@@ -1,7 +1,7 @@
 import { streetNameOf, streetNumbers } from '@world/roads/streetNames';
 import { PARKING_KINDS, parkingAllowed, type ParkingKind, type SegmentParking } from '@world/parking';
 import type { NodeId, SegmentId } from '@world/ids';
-import { type JunctionControl, type NodeCrossingKind, type RoadDoc, type SegmentDirection } from '@world/doc';
+import { type JunctionControl, type NodeCrossingKind, type RoadDoc, type RoadEnd, type SegmentDirection } from '@world/doc';
 import type { Network } from '@world/network';
 import type { CurveShape } from '@core/bezier';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, travelLanes, type RoadType } from '@world/roadTypes';
@@ -41,6 +41,8 @@ export interface InspectorActions {
   readonly onDelete: (id: SegmentId) => void;
   readonly onSetDirection?: (id: SegmentId, direction: SegmentDirection) => void;
   readonly onSetNodeHeight?: (id: NodeId, metres: number) => void;
+  /** V8: a road's end as the map's edge (undefined) or a turning circle. */
+  readonly onSetNodeEnd?: (id: NodeId, end: RoadEnd | undefined) => void;
   readonly onReverseDirection?: (id: SegmentId) => void;
   readonly onSplit?: (id: SegmentId) => void;
   /** Places a mid-block pedestrian crossing on the road (`commitPedestrianCrossing`). */
@@ -179,6 +181,15 @@ export function closeInspector(): void {
  * A choice of on-street parking for one side: the kinds this class can carry
  * (`parkingAllowed`), so a highway offers none and an avenue only parallel bays.
  */
+/** What a road's end is (V8), for an end that is the end of this road alone: the map's edge or a turning circle. */
+function endSelect(doc: RoadDoc, node: NodeId, which: 'A' | 'B'): string {
+  if (doc.degree(node) !== 1) return '';
+  const value = doc.node(node)?.end ?? 'edge';
+  const options = (['edge', 'bulb'] as const)
+    .map((kind) => `<option value="${kind}"${kind === value ? ' selected' : ''}>${t(`inspector.end.${kind}`)}</option>`).join('');
+  return `<label class="inspect-select">${t(which === 'A' ? 'inspector.endStart' : 'inspector.endEnd')} <select data-road-end="${which}">${options}</select></label>`;
+}
+
 function parkingSelect(id: string, label: string, value: ParkingKind, rt: RoadType): string {
   const options = PARKING_KINDS.filter((kind) => kind === value || parkingAllowed(kind, rt))
     .map((kind) => `<option value="${kind}"${kind === value ? ' selected' : ''}>${t(`parking.${kind}`)}</option>`).join('');
@@ -268,6 +279,7 @@ function renderSegment(
     // The heights of its two ends as steppers of the interface (V5): no number box.
     `<div class="rp-junction">${heightStepper('A', t('inspector.heightStart'), (doc.node(seg.a)?.heightOffset ?? 0) / UNITS_PER_METER)}` +
     `${heightStepper('B', t('inspector.heightEnd'), (doc.node(seg.b)?.heightOffset ?? 0) / UNITS_PER_METER)}</div>` +
+    (actions.onSetNodeEnd ? endSelect(doc, seg.a, 'A') + endSelect(doc, seg.b, 'B') : '') +
     (profiled ? '' : `<label class="inspect-select">${t('inspector.laneCount')} <select id="inspectLanes">${laneOptions(seg.direction, seg.lanes, rt.lanes)}</select></label>` +
       parkingSelect('inspectParkingLeft', 'inspector.parkingLeft', seg.parking?.left ?? 'none', rt) +
       parkingSelect('inspectParkingRight', 'inspector.parkingRight', seg.parking?.right ?? 'none', rt)) +
@@ -318,6 +330,9 @@ function renderSegment(
       const now = (doc.node(end)?.heightOffset ?? 0) / UNITS_PER_METER;
       actions.onSetNodeHeight?.(end, Math.round((now + Number(b.dataset['step'])) * 2) / 2);
     };
+  });
+  body.querySelectorAll<HTMLSelectElement>('[data-road-end]').forEach((select) => {
+    select.onchange = () => actions.onSetNodeEnd?.(select.dataset['roadEnd'] === 'A' ? seg.a : seg.b, select.value === 'bulb' ? 'bulb' : undefined);
   });
   if (lanes) lanes.onchange = () => actions.onSetLanes?.(id, lanes.value === 'default' ? null : Number(lanes.value));
   const parkingLeft = document.getElementById('inspectParkingLeft') as HTMLSelectElement | null;
