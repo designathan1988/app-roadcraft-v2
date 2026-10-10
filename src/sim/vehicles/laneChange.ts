@@ -66,7 +66,7 @@ const LANE_CHANGE_TIME = 3.5;
  * it can actually drive and misses the turn, which is what a real driver does
  * and is always recoverable on the next block.
  */
-const LANE_CHANGE_MIN_ROOM = 10;
+const LANE_CHANGE_MIN_ROOM = m(4);
 
 /**
  * Room a DISCRETIONARY change needs — six seconds of travel, and much more than
@@ -78,7 +78,7 @@ const LANE_CHANGE_MIN_ROOM = 10;
  * are separated.
  */
 const OVERTAKE_TIME = 6;
-const OVERTAKE_MIN_ROOM = 45;
+const OVERTAKE_MIN_ROOM = m(18);
 
 /** Shortest interval between two discretionary changes by the same driver. */
 const LANE_CHANGE_COOLDOWN = 6;
@@ -122,7 +122,7 @@ export function stepLaneChange(w: SimWorld): void {
     // The body still occupies the space between lanes until the previous
     // manoeuvre finishes. Starting another transfer here compounds the lateral
     // offset and can put the entire vehicle beyond the carriageway edge.
-    if (Math.abs(v.lateral) > 0.02) continue;
+    if (Math.abs(v.lateral) > m(0.008)) continue;
 
     // A granted movement pins the lane: the claim was arbitrated for this
     // lanelet's connector, and moving would abandon it mid-transaction. A rear
@@ -345,7 +345,7 @@ function discretionary(
         leaderIn(w, candidate, f.s, f.id) ?? CLEAR_ROAD,
       );
       const after = idmAccel(f.driver, f.v, f.v0, {
-        gap: Math.max(0.05, v.s - v.archetype.length - f.s),
+        gap: Math.max(m(0.02), v.s - v.archetype.length - f.s),
         speed: v.v,
         kind: 'vehicle',
       });
@@ -358,12 +358,12 @@ function discretionary(
     if (behind) {
       const o = behind.vehicle;
       const before = idmAccel(o.driver, o.v, o.v0, {
-        gap: Math.max(0.05, v.s - v.archetype.length - o.s),
+        gap: Math.max(m(0.02), v.s - v.archetype.length - o.s),
         speed: v.v,
         kind: 'vehicle',
       });
       const after = idmAccel(o.driver, o.v, o.v0, ahead
-        ? { gap: Math.max(0.05, ahead.gap + (v.s - o.s)), speed: ahead.speed, kind: 'vehicle' }
+        ? { gap: Math.max(m(0.02), ahead.gap + (v.s - o.s)), speed: ahead.speed, kind: 'vehicle' }
         : CLEAR_ROAD);
       released = after - before;
     }
@@ -427,7 +427,7 @@ function leaderIn(w: SimWorld, laneId: LaneletId, s: number, self: number): Neig
     if (!other || other.id === self) continue;
     return {
       vehicle: other,
-      gap: Math.max(0.05, other.s - other.archetype.length - s),
+      gap: Math.max(m(0.02), other.s - other.archetype.length - s),
       speed: other.v,
       kind: 'vehicle',
     };
@@ -451,7 +451,7 @@ function followerIn(w: SimWorld, laneId: LaneletId, rear: number, self: number):
     if (!other || other.id === self) continue;
     return {
       vehicle: other,
-      gap: Math.max(0.05, rear - other.s),
+      gap: Math.max(m(0.02), rear - other.s),
       speed: other.v,
       kind: 'vehicle',
     };
@@ -488,7 +488,7 @@ function canLeaveLane(w: SimWorld, v: Vehicle, target: LaneletId): boolean {
     const ahead = body.vehicle;
     if (ahead.id === v.id || !ahead.shadow || ahead.shadow.lanelet !== v.lanelet) continue;
     const gap = body.s - ahead.archetype.length - v.s;
-    if (gap >= -0.05 && gap < need && ahead.v < Math.max(v.v, CRAWL)) return false;
+    if (gap >= -m(0.02) && gap < need && ahead.v < Math.max(v.v, CRAWL)) return false;
   }
   return true;
 }

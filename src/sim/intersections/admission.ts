@@ -372,7 +372,7 @@ function evaluate(w: SimWorld, r: Request): Verdict {
   // Stop control is not merely a lower arbitration rank.  The driver must
   // first reach a near standstill at the line, then use the same conservative
   // gap acceptance as a yield movement before taking the box.
-  if (r.row === 'stop' && r.v.v > 0.4) {
+  if (r.row === 'stop' && r.v.v > m(0.16)) {
     return { ok: false, reason: 'yield' };
   }
 
@@ -751,7 +751,7 @@ function convoyCanEnter(w: SimWorld, r: Request, conn: Connector): boolean {
   // queue that will sit on it motionless — and that is exactly `v > CONVOY_ROLLING`.
   // A standing vehicle is still refused unless it is at the line itself, which
   // is how the head of a queue starts the convoy in the first place.
-  const atLine = r.d <= Math.max(6, r.v.driver.s0 + 2);
+  const atLine = r.d <= Math.max(m(2.4), r.v.driver.s0 + m(0.8));
   if (!atLine && r.v.v <= CONVOY_ROLLING) return false;
   return [...owners.values()].every((owner) => {
     const lane = w.lanelet(owner.lanelet);
@@ -1223,7 +1223,7 @@ function clearTime(w: SimWorld, r: Request): number {
     ? Math.max(0, exit + r.v.archetype.length / 2)
     : r.conn.length;
   const lanelet = w.lanelet(r.conn.lanelet);
-  const speed = Math.max(2, Math.min(r.v.v0, lanelet?.speedLimit ?? r.v.v0) * 0.6);
+  const speed = Math.max(m(0.8), Math.min(r.v.v0, lanelet?.speedLimit ?? r.v.v0) * 0.6);
   return (r.d + last) / speed;
 }
 
@@ -1463,7 +1463,7 @@ function arrivalDirection(w: SimWorld, lane: string): { x: number; y: number } |
   const l = w.lanelet(lane);
   if (!l || l.centre.length < 0.5) return null;
   const end = l.centre.sampleAt(l.centre.length).p;
-  const before = l.centre.sampleAt(Math.max(0, l.centre.length - 6)).p;
+  const before = l.centre.sampleAt(Math.max(0, l.centre.length - m(2.4))).p;
   const len = Math.hypot(end.x - before.x, end.y - before.y) || 1;
   return { x: (end.x - before.x) / len, y: (end.y - before.y) / len };
 }

@@ -4,6 +4,7 @@ import type { Vehicle } from '../vehicles/state';
 import { bodyClassOfArchetype } from '../vehicles/archetypes';
 import { routeToDestination } from './destination';
 import { planTrip } from '../drive/tactical';
+import { m } from '@world/units';
 
 /** Horizon for a vehicle with no reachable boundary destination. */
 const HORIZON = 24;
@@ -270,9 +271,9 @@ function routeCost(
   if (trapLanes(w, body).has(out.id)) return Infinity;
 
   const runtime = w.rt(out.id);
-  const density = runtime.order.length / Math.max(1, out.length / 12);
-  const travel = out.length / Math.max(0.5, out.speedLimit);
-  const connectorTravel = connector.length / Math.max(0.5, out.speedLimit * 0.65);
+  const density = runtime.order.length / Math.max(1, out.length / m(4.8));
+  const travel = out.length / Math.max(m(0.2), out.speedLimit);
+  const connectorTravel = connector.length / Math.max(m(0.2), out.speedLimit * 0.65);
   const turnPenalty = connector.turn === 'uturn' ? 4 : connector.turn === 'through' ? 0 : 0.35;
   const here = connectorTravel + travel * (1 + density * 2.6) + turnPenalty;
   const next = w.graph.exitsOf(out.id);

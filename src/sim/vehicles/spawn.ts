@@ -57,7 +57,7 @@ export function trafficTarget(w: SimWorld): number {
 function entryLanes(w: SimWorld): string[] {
   const out: string[] = [];
   for (const lane of w.graph.lanelets.values()) {
-    if (lane.kind !== 'link' || lane.length < 30) continue;
+    if (lane.kind !== 'link' || lane.length < m(12)) continue;
     if (w.rt(lane.id).ghost) continue;
     if (lane.from !== undefined && w.doc.mapEdge(lane.from)) out.push(lane.id);
   }
@@ -188,7 +188,7 @@ function spawnAt(w: SimWorld, id: string): boolean {
       tailSpeed = body.vehicle.v;
     }
   }
-  const entryClearance = Math.max(0.5, Math.min(1.5, arch.width / 4));
+  const entryClearance = Math.max(m(0.2), Math.min(m(0.6), arch.width / 4));
   // `s` is the front of the vehicle. Its rear must be on the authored road
   // at birth; the entry node has no lanelet behind it to carry the body.
   if (lane.length <= arch.length + entryClearance) return false;

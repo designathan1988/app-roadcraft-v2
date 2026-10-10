@@ -47,7 +47,7 @@ function iidm(p: DriverParams, v: number, v0: number, o: Obstacle | null): numbe
   if (!o) return free;
   const dv = v - o.speed;
   const sStar = p.s0 + Math.max(0, v * p.T + (v * dv) / (2 * Math.sqrt(p.a * p.b)));
-  const z = sStar / Math.max(o.gap, 0.05);
+  const z = sStar / Math.max(o.gap, m(0.02));
   if (v <= v0s) return z >= 1 ? p.a * (1 - z * z) : free * (1 - Math.pow(z, (2 * p.a) / Math.max(free, 1e-6)));
   return z >= 1 ? free + p.a * (1 - z * z) : free;
 }
@@ -59,7 +59,7 @@ function cah(p: DriverParams, v: number, o: Obstacle): number {
   // passed a 60 m/s² "braking" down the queue behind it.
   const al = clamp(o.accel ?? 0, -p.bEmergency, p.a);
   const vl = o.speed;
-  const s = Math.max(o.gap, 0.05);
+  const s = Math.max(o.gap, m(0.02));
   if (vl * (v - vl) <= -2 * s * al) return (v * v * al) / Math.max(vl * vl - 2 * s * al, 1e-6);
   const closing = Math.max(0, v - vl);
   return al - (closing * closing) / (2 * s);

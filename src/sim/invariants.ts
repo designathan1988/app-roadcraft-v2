@@ -5,6 +5,7 @@ import { anyGreen, signalStateFor } from './signals/query';
 import type { SignalController } from './signals/fsm';
 import { COARSE_EPS } from '@core/scalar';
 import { pedestrianAffectsSpan, reservationCoversCrossing } from './intersections/crossingSpans';
+import { m } from '@world/units';
 
 /**
  * Runtime invariant checks.
@@ -126,7 +127,7 @@ export function runAudit(w: SimWorld, level: 'cheap' | 'full'): AuditIssue[] {
       }
     }
 
-    if (lane.kind === 'link' && lane.controlled && v.v < 0.1) {
+    if (lane.kind === 'link' && lane.controlled && v.v < m(0.04)) {
       const stalled = w.clock.since(v.lastMovedTick);
       const wedgeLimit = 2 * maxCycle(w);
 
@@ -199,7 +200,7 @@ export function runAudit(w: SimWorld, level: 'cheap' | 'full'): AuditIssue[] {
       const b = bId === undefined ? undefined : w.veh(bId);
       if (!a || !b) continue;
       const gap = b.s - b.archetype.length - a.s;
-      if (gap < -0.01) {
+      if (gap < -m(0.004)) {
         out.push(issue('overlap', tick, `${a.id}/${b.id}`, `gap ${gap.toFixed(3)}`));
       }
     }

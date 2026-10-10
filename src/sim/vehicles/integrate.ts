@@ -9,6 +9,7 @@ import { planFrom } from '../routing/router';
 import { bodyClassOfArchetype } from './archetypes';
 import { COARSE_EPS } from '@core/scalar';
 import { addScaled, dot, perp, sub } from '@core/vec2';
+import { m } from '@world/units';
 
 const CLEARANCE_EPSILON = COARSE_EPS;
 
@@ -136,7 +137,7 @@ export function integrateAll(w: SimWorld): void {
       );
     }
 
-    if (travelled > 0.02) {
+    if (travelled > m(0.008)) {
       v.lastMovedTick = w.clock.tick;
       v.waited = 0;
     } else {
@@ -149,7 +150,7 @@ export function integrateAll(w: SimWorld): void {
     // so a correctly stopped vehicle could never earn right-on-red credit.
     if (
       finalLane?.kind === 'link' &&
-      v.v < 0.3 &&
+      v.v < m(0.12) &&
       finalLane.length - v.s <= v.driver.s0 + 0.5
     ) {
       v.rorStopped += DT;
@@ -186,7 +187,7 @@ function applyLaneChange(w: SimWorld, v: Vehicle): ReturnType<SimWorld['lanelet'
   const target = v.laneChange;
   v.laneChange = null;
   if (target === null || target === v.lanelet) return undefined;
-  if (Math.abs(v.lateral) > 0.02) return undefined;
+  if (Math.abs(v.lateral) > m(0.008)) return undefined;
 
   const lane = w.lanelet(target);
   if (!lane || lane.kind !== 'link') return undefined;

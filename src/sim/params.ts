@@ -86,7 +86,7 @@ export const REQUEST_MIN_DISTANCE = m(8);
  * must be moving too. Anything at or below this is a standing queue, and a
  * standing queue may not take a claim it would then sit on.
  */
-export const CONVOY_ROLLING = 0.5;
+export const CONVOY_ROLLING = m(0.2);
 
 /** Critical gaps for yielding movements, in seconds. */
 export const CRITICAL_GAP = {

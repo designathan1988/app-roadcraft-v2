@@ -16,6 +16,7 @@ import { snapshotInto, type Vehicle } from './vehicles/state';
 import { runAudit } from './invariants';
 import { signalStateFor } from './signals/query';
 import { bodyClassOfArchetype } from './vehicles/archetypes';
+import { m } from '@world/units';
 
 export interface StepOptions {
   readonly traffic?: boolean;
@@ -216,7 +217,7 @@ function collectGhosts(w: SimWorld): void {
 function updateStallCounters(w: SimWorld): void {
   for (const v of w.vehicles.values()) {
     const lane = w.lanelet(v.lanelet);
-    if (!lane || lane.kind !== 'link' || !lane.controlled || v.v >= 0.1) {
+    if (!lane || lane.kind !== 'link' || !lane.controlled || v.v >= m(0.04)) {
       // BOTH counters reset here.
       //
       // `greenDenied` used to be left untouched on this path, so a vehicle
@@ -236,7 +237,7 @@ function updateStallCounters(w: SimWorld): void {
     const impeded = v.constraints.obstacles.some(
       (o) =>
         // The driver's standstill gap, as everywhere else that reads s0.
-        (o.kind === 'vehicle' && o.gap < v.driver.s0 + 3) ||
+        (o.kind === 'vehicle' && o.gap < v.driver.s0 + m(1.2)) ||
         o.kind === 'yield' ||
         o.kind === 'conflict' ||
         o.kind === 'pedestrian' ||

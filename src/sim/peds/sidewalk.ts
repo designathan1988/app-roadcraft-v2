@@ -10,6 +10,7 @@ import { orientedPolyline } from '@world/geometry';
 import type { LaneletGraph, LaneletId } from '@world/lanelets';
 import { makeCrossingId, type CrossingId } from '../signals/plan';
 import { COARSE_EPS } from '@core/scalar';
+import { m } from '@world/units';
 
 export type SidewalkNodeId = string;
 export type SidewalkEdgeId = string;
@@ -233,7 +234,7 @@ function kerbDistance(
   // already clamped it against the junction mouth; re-clamping against a bare
   // fraction of the segment would undo that and push the kerb back into the
   // carriageway.
-  const floor = Math.max(mouthDistance, Math.min(2, segmentLength * 0.2));
+  const floor = Math.max(mouthDistance, Math.min(m(0.8), segmentLength * 0.2));
   return Math.max(floor, Math.min(from, segmentLength * 0.5));
 }
 

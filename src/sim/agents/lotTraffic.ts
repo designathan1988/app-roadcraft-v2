@@ -95,7 +95,7 @@ interface LotCar {
   reserved: boolean;
 }
 
-const bayKey = (b: { x: number; y: number }): string => `${Math.round(b.x * 4)},${Math.round(b.y * 4)}`;
+const bayKey = (b: { x: number; y: number }): string => `${Math.round(b.x / m(0.1))},${Math.round(b.y / m(0.1))}`;
 
 export class LotTraffic {
   private readonly cars = new Map<VehicleId, LotCar>();
@@ -312,7 +312,7 @@ export class LotTraffic {
     const c = v.commute;
     if (!c || car.t > CALL_TIMEOUT || (v.destination !== c.lanelet && v.lanelet !== c.lanelet)) { this.release(w, car); return; }
     // Stopped before the gate (or just past it: a lane change can carry it on, and the stop then holds it there).
-    if (v.lanelet !== c.lanelet || v.v > 0.3 || v.s < c.at - m(2.5)) return;
+    if (v.lanelet !== c.lanelet || v.v > m(0.12) || v.s < c.at - m(2.5)) return;
     const pose = vehiclePose(w, v, 1);
     if (!pose) { this.release(w, car); return; }
     w.removeVehicle(v);

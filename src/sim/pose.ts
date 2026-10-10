@@ -7,6 +7,7 @@ import type { PedView } from '@sim/people/view';
 import { HEADING_CHORD, chordHeading } from '@world/heading';
 import { cycleShift } from '@sim/vehicles/cycleLane';
 import { onChartOf } from '@world/planet/charts';
+import { m } from '@world/units';
 
 export interface Pose {
   readonly p: Vec2;
@@ -22,7 +23,7 @@ export interface Pose {
  * motion is at most `v * DT` plus a lane width, so this is generous enough
  * never to fire on a real step and tight enough to catch a re-seat.
  */
-const POSE_JUMP_LIMIT = 60;
+const POSE_JUMP_LIMIT = m(24);
 
 /**
  * Angle a vehicle points into its own lane change.

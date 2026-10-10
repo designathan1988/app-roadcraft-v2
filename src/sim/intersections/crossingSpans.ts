@@ -159,11 +159,11 @@ function sameFloats(a: Float64Array, b: Float64Array): boolean {
 
 /** A person's radius, a minimum pace assumed for someone about to move, and the look-ahead. */
 export const PED_BODY = 1;
-export const PED_MIN_PACE = 2;
+export const PED_MIN_PACE = m(0.8);
 export const PED_REACH_TIME = 4;
 /** Reserve the near half of a zebra before stopping a car for a pedestrian. */
-export const PED_CROSSING_STOP_BUFFER = CROSSWALK_DEPTH / 2 + 0.5;
-const CLEAR_PAST = 6;
+export const PED_CROSSING_STOP_BUFFER = CROSSWALK_DEPTH / 2 + m(0.2);
+const CLEAR_PAST = m(2.4);
 
 /** Whether this vehicle's current reservation still protects a zebra span. */
 export function reservationCoversCrossing(w: SimWorld, v: Vehicle, connector: Connector,

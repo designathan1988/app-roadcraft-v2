@@ -872,7 +872,7 @@ const WALK_DECAY = m(470);
  */
 const WAYS_MS = 1.5;
 /** A bay's place as a key (a quarter of a unit), as the lots' traffic keys its bays. */
-const spotKey = (p: { x: number; y: number }): string => `${Math.round(p.x * 4)},${Math.round(p.y * 4)}`;
+const spotKey = (p: { x: number; y: number }): string => `${Math.round(p.x / m(0.1))},${Math.round(p.y / m(0.1))}`;
 const NO_WAY: readonly { x: number; y: number }[] = [];
 const REVERSED = new WeakMap<DoorWay, readonly { x: number; y: number }[]>();
 /** A lot's way the other way round: from the gate's foot on the footway in to the door. */

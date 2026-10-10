@@ -2,6 +2,7 @@ import type { NodeId, SegmentId } from '@world/ids';
 import { mainRoadLegs, type SignalSettings } from '@world/roads/rules';
 import type { SimWorld } from '../world';
 import { fixedCycle } from '../signals/fsm';
+import { m } from '@world/units';
 
 /**
  * A GREEN WAVE along the main road through a junction (docs/VIAS.md V5): the
@@ -89,7 +90,7 @@ function corridorFrom(w: SimWorld, start: NodeId): CorridorStop[] {
   for (let k = 0; k < ahead.length; k++) {
     const here = ahead[k]!;
     const ribbon = w.net.ribbons.get(here.via);
-    travel += (ribbon?.full.length ?? 0) / Math.max(1, ribbon?.road.speedLimit ?? 14);
+    travel += (ribbon?.full.length ?? 0) / Math.max(m(0.4), ribbon?.road.speedLimit ?? m(5.6));
     const leaving = ahead[k + 1]?.via ?? otherLeg(here.node, here.via);
     if (leaving === undefined) break;
     out.push({ node: here.node, from: here.via, to: leaving, travel });

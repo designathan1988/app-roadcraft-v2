@@ -1,6 +1,7 @@
 import type { LaneletGraph, LaneletId } from '@world/lanelets';
 import { JAM_GAP } from '../params';
 import type { SimWorld } from '../world';
+import { m } from '@world/units';
 
 /**
  * Small closed loops of road: rings of streets, roundabouts drawn as polygons.
@@ -26,7 +27,7 @@ export interface RoadCycle {
 }
 
 /** Loops with more storage than this are a street network, not a ring. */
-const MAX_CYCLE_STORAGE = 1400;
+const MAX_CYCLE_STORAGE = m(560);
 /** Share of a loop's storage past which nobody more is let on. */
 const METER_SHARE = 0.7;
 

@@ -5,6 +5,7 @@ import { canStopComfortably, type Obstacle } from './idm';
 import { bodyClassOfArchetype } from './archetypes';
 import { pullOutRoom } from './laneChange';
 import { outOfTheWay } from './cycleLane';
+import { m } from '@world/units';
 
 /** How many lanelets ahead the leader search will walk. */
 const LOOKAHEAD_HOPS = 3;
@@ -74,7 +75,7 @@ export function findLeader(w: SimWorld, v: Vehicle): Obstacle | null {
 
   let dist = here.length - v.s;
   const horizon = Math.max(
-    50,
+    m(20),
     v.v * v.driver.T * 3 + (v.v * v.v) / (2 * v.driver.b),
   );
 
@@ -155,7 +156,7 @@ export function divergeObstacle(w: SimWorld, v: Vehicle): Obstacle | null {
     if (w.laneHead(here.id)?.id !== v.id) return null;
     connectorId = v.route[1];
     offset = here.length - v.s;
-    const horizon = Math.max(50, v.v * v.driver.T * 3 + (v.v * v.v) / (2 * v.driver.b));
+    const horizon = Math.max(m(20), v.v * v.driver.T * 3 + (v.v * v.v) / (2 * v.driver.b));
     if (offset > horizon) return null;
   }
   if (connectorId === undefined) return null;
@@ -191,7 +192,7 @@ export function divergeObstacle(w: SimWorld, v: Vehicle): Obstacle | null {
 }
 
 /** Sideways clearance kept from a body in the lane being left, world units. */
-const SHADOW_SIDE_MARGIN = 0.4;
+const SHADOW_SIDE_MARGIN = m(0.16);
 
 /**
  * A vehicle mid-lane-change is itself an obstacle for its OWN forward motion

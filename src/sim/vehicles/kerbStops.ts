@@ -240,7 +240,7 @@ export function stepKerbStops(w: SimWorld): void {
     }
     switch (stop.phase) {
       case 'approach':
-        if (v.v < 0.05 && stop.at - v.s < m(1)) {
+        if (v.v < m(0.02) && stop.at - v.s < m(1)) {
           // Stopped: the stop is where the car stands, and it is held there
           // until its doors are shut (a bus's door brake interlock). Kept at
           // the place it aimed for, up to a metre on, the car crept on to it
@@ -339,7 +339,7 @@ function setDoor(v: Vehicle, door: number, open: number): void {
 function plan(w: SimWorld, v: Vehicle): void {
   const lane = w.lanelet(v.lanelet);
   if (!lane || lane.kind !== 'link' || lane.segment === undefined || lane.laneIndex === undefined) return;
-  if (v.admittedConnector || v.desiredLane || v.laneIntent || Math.abs(v.lateral) > 0.02) return;
+  if (v.admittedConnector || v.desiredLane || v.laneIntent || Math.abs(v.lateral) > m(0.008)) return;
   // The kerb lane is the outermost: no sibling beyond it.
   if (w.graph.siblingLanes(lane.id).some((id) => (w.lanelet(id)?.laneIndex ?? -1) > lane.laneIndex!)) return;
   const structure = w.doc.segment(lane.segment)?.structure ?? 'ground';

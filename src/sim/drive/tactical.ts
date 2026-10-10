@@ -105,10 +105,10 @@ function connectorCost(w: SimWorld, connectorId: LaneletId, body: BodyClass, sha
   if (!connector || connector.maxBodyClass < body || !out || out.kind !== 'link' || w.rt(out.id).ghost) return Infinity;
   // A bus lane is buses only (docs/VIAS.md V4).
   if (!w.graph.laneUsable(out.id, shape)) return Infinity;
-  const density = w.rt(out.id).order.length / Math.max(1, out.length / 12);
-  const travel = out.length / Math.max(0.5, out.speedLimit) * (1 + density * 2.6);
+  const density = w.rt(out.id).order.length / Math.max(1, out.length / m(4.8));
+  const travel = out.length / Math.max(m(0.2), out.speedLimit) * (1 + density * 2.6);
   const turn = connector.turn === 'uturn' ? 4 : connector.turn === 'through' ? 0 : 0.35;
-  return connector.length / Math.max(0.5, out.speedLimit * 0.65) + travel + turn;
+  return connector.length / Math.max(m(0.2), out.speedLimit * 0.65) + travel + turn;
 }
 
 /**

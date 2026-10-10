@@ -51,7 +51,7 @@ export class VehicleMotionMetrics {
           if (this.events.length < 16) this.events.push({ id: v.id, age: v.age, x: pose.p.x, y: pose.p.y,
             before: old.v / m(1), after: v.v / m(1), acceleration: a / m(1),
             obstacles: v.constraints.obstacles.map(o => ({ kind: o.kind, gap: o.gap / m(1), speed: o.speed / m(1) })) });
-          const key = `${Math.round(pose.p.x / 25) * 25},${Math.round(pose.p.y / 25) * 25}`;
+          const key = `${Math.round(pose.p.x / m(10)) * m(10)},${Math.round(pose.p.y / m(10)) * m(10)}`;
           this.hot.set(key, (this.hot.get(key) ?? 0) + 1);
         }
       }

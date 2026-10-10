@@ -66,13 +66,13 @@ export function idmAccel(p: DriverParams, v: number, v0: number, o: Obstacle): n
   // at a median of 0.6 s bumper to bumper where urban drivers keep 1.2 to 2 s.
   // The release now fades out as the follower gets going, and is gone by
   // `RELEASE_FADE`, a little over a walking-pace crawl.
-  const releasing = o.kind === 'vehicle' && o.speed > 0.25 && v < o.speed + 2
+  const releasing = o.kind === 'vehicle' && o.speed > m(0.1) && v < o.speed + m(0.8)
     ? 1 - smooth(v / RELEASE_FADE)
     : 0;
   const standstill = p.s0 * (1 - 0.6 * releasing);
   const headway = p.T * (1 - 0.6 * releasing);
   const sStar = standstill + Math.max(0, v * headway + (v * dv) / (2 * Math.sqrt(p.a * p.b)));
-  const s = Math.max(o.gap, 0.05);
+  const s = Math.max(o.gap, m(0.02));
   return p.a * (1 - Math.pow(v / Math.max(v0, 0.01), 4) - (sStar / s) ** 2);
 }
 

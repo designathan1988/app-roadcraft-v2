@@ -1,6 +1,7 @@
 import type { LaneletId } from '@world/lanelets';
 import type { BodyClass } from '@world/conflictPoints';
 import type { SimWorld } from '../world';
+import { m } from '@world/units';
 
 interface RouteStep {
   readonly lane: LaneletId;
@@ -127,10 +128,10 @@ export function routeToDestination(w: SimWorld, start: LaneletId, goal: LaneletI
       const connector = w.connector(id);
       const out = connector && w.lanelet(connector.toLane);
       if (!connector || connector.maxBodyClass < body || !out || out.kind !== 'link' || w.rt(out.id).ghost) continue;
-      const density = w.rt(out.id).order.length / Math.max(1, out.length / 12);
-      const travel = out.length / Math.max(0.5, out.speedLimit) * (1 + density * 2.6);
+      const density = w.rt(out.id).order.length / Math.max(1, out.length / m(4.8));
+      const travel = out.length / Math.max(m(0.2), out.speedLimit) * (1 + density * 2.6);
       const turn = connector.turn === 'uturn' ? 4 : connector.turn === 'through' ? 0 : 0.35;
-      const cost = current.cost + connector.length / Math.max(0.5, out.speedLimit * 0.65) + travel + turn;
+      const cost = current.cost + connector.length / Math.max(m(0.2), out.speedLimit * 0.65) + travel + turn;
       if (cost >= (best.get(out.id) ?? Infinity) - 1e-9) continue;
       best.set(out.id, cost);
       parent.set(out.id, { lane: current.lane, connector: id });
