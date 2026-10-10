@@ -421,8 +421,11 @@ export class Editor3 {
     } else if (this.sel.item) {
       const it = this.activeItem();
       if (it && (it.host.kind === 'free' || it.host.kind === 'roof')) {
-        const p = it.host.kind === 'free' ? it.host.p : [it.host.p[0], 0, it.host.p[1]];
-        const c = W([p[0]!, p[2]!], (p[1] ?? 0) + 0.05);
+        // Altura real da peça (no telhado, a da superfície onde ela está).
+        const pl = built?.ev.placements.find((q) => q.tag.item === it.id);
+        const y = pl ? pl.frame[13]! : it.host.kind === 'free' ? it.host.p[1] : 0;
+        const p = it.host.kind === 'free' ? it.host.p : [it.host.p[0], y, it.host.p[1]];
+        const c = W([p[0]!, p[2]!], y + 0.05);
         handles.push(...this.moveHandles(c, ax, az), this.rotateHandle(c, 2.5));
       }
       // Peça presa à face: alças de largura, altura e peitoril sobre ela.

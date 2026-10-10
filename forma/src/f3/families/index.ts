@@ -8,6 +8,10 @@ import { BALCONY, VERANDA } from './balconies';
 import { FENCE, GATE, HEDGE, WALL_RUN } from './fences';
 import { JULIETTE, RAILING } from './railings';
 import { BEAM, COLUMN, PERGOLA, PORTICO } from './structure';
+import { RAMP, STAIR } from './stairs';
+import { AWNING, BRISE, CANOPY, COBOGO, PORCH_ROOF, ROLL_SHUTTER } from './canopies';
+import { BAND, CLOCK, CORNICE, DOWNPIPE, PEDIMENT, PILASTER, QUOINS, SIGN } from './ornament';
+import { CHIMNEY, CUPOLA, DORMER, LADDER, SILO, SKYLIGHT, SOLAR, STACK, TANK, VENT, WATER_TANK } from './roofgear';
 
 const families = new Map<string, Family>();
 
@@ -23,7 +27,7 @@ export function allFamilies(): Family[] {
   return [...families.values()];
 }
 
-for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO]) registerFamily(f);
+for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO, STAIR, RAMP, CANOPY, AWNING, PORCH_ROOF, BRISE, COBOGO, ROLL_SHUTTER, CORNICE, PILASTER, QUOINS, PEDIMENT, BAND, SIGN, CLOCK, DOWNPIPE, CHIMNEY, SKYLIGHT, SOLAR, WATER_TANK, VENT, CUPOLA, DORMER, SILO, STACK, LADDER, TANK]) registerFamily(f);
 
 const t = (id: string, fam: string, name: string, params: ComponentType['params'] = {}): ComponentType => ({ id, family: fam, name, params });
 
@@ -78,6 +82,56 @@ export const BUILTIN_TYPES: ComponentType[] = [
   t('beam', 'beam', 'Viga'),
   t('pergola', 'pergola', 'Pérgola'),
   t('portico', 'portico', 'Pórtico com frontão'),
+  t('stair-straight', 'stair', 'Escada reta'),
+  t('stair-L', 'stair', 'Escada em L', { shape: 'L' }),
+  t('stair-U', 'stair', 'Escada em U', { shape: 'U' }),
+  t('stair-spiral', 'stair', 'Escada caracol', { shape: 'spiral', structure: 'center', treadColor: '#4a4f52', treadFinish: 'metal' }),
+  t('stair-steel', 'stair', 'Escada metálica', { structure: 'stringers', treadColor: '#5b6064', treadFinish: 'metal', structColor: '#3a3e41' }),
+  t('ramp', 'ramp', 'Rampa acessível'),
+  t('canopy-concrete', 'canopy', 'Marquise de concreto'),
+  t('canopy-glass', 'canopy', 'Marquise de vidro', { kind: 'glass', thick: 0.04, rods: true }),
+  t('canopy-metal', 'canopy', 'Marquise metálica', { kind: 'metal', color: '#3b3f43', tilt: 8 }),
+  t('awning-green', 'awning', 'Toldo listrado verde'),
+  t('awning-red', 'awning', 'Toldo listrado vermelho', { color: '#a8332c' }),
+  t('awning-plain', 'awning', 'Toldo liso', { striped: false, color: '#c9a66b', scallop: false }),
+  t('porch', 'porchroof', 'Alpendre'),
+  t('brise-h', 'brise', 'Brise horizontal'),
+  t('brise-v', 'brise', 'Brise vertical', { dir: 'v', angle: 25, color: '#a87b54', finish: 'wood' }),
+  t('cobogo', 'cobogo', 'Cobogó'),
+  t('cobogo-round', 'cobogo', 'Cobogó redondo', { pattern: 'round' }),
+  t('rollshutter', 'rollshutter', 'Persiana de enrolar'),
+  t('cornice-classic', 'cornice', 'Cornija clássica'),
+  t('cornice-modern', 'cornice', 'Cornija moderna', { profile: 'modern' }),
+  t('cornice-dentil', 'cornice', 'Cornija com dentículos', { dentils: true }),
+  t('pilaster', 'pilaster', 'Pilastra'),
+  t('pilaster-fluted', 'pilaster', 'Pilastra canelada', { fluted: true }),
+  t('quoins', 'quoins', 'Cunhais de pedra'),
+  t('pediment-tri', 'pediment', 'Frontão triangular'),
+  t('pediment-seg', 'pediment', 'Frontão em arco', { shape: 'segment' }),
+  t('band', 'band', 'Faixa entre pisos'),
+  t('sign-panel', 'sign', 'Letreiro'),
+  t('sign-blade', 'sign', 'Letreiro bandeira', { kind: 'blade', width: 1, height: 0.8 }),
+  t('sign-letters', 'sign', 'Letras soltas', { kind: 'letters' }),
+  t('clock', 'clock', 'Relógio'),
+  t('downpipe', 'downpipe', 'Condutor de água'),
+  t('chimney', 'chimney', 'Chaminé de tijolo'),
+  t('skylight', 'skylight', 'Claraboia'),
+  t('skylight-dome', 'skylight', 'Claraboia domo', { kind: 'dome' }),
+  t('solar', 'solar', 'Placas solares'),
+  t('watertank', 'watertank', "Caixa-d'água"),
+  t('watertank-box', 'watertank', "Caixa-d'água retangular", { shape: 'box', color: '#d9d9d4', stand: 0 }),
+  t('vent-turbine', 'vent', 'Exaustor eólico'),
+  t('vent-ac', 'vent', 'Condensadora de ar', { kind: 'ac', width: 0.8 }),
+  t('cupola-dome', 'cupola', 'Lanternim com cúpula'),
+  t('cupola-spire', 'cupola', 'Torre com agulha', { top: 'spire', flag: true, color: '#e8dcc4', roofColor: '#4a4f55' }),
+  t('cupola-onion', 'cupola', 'Cúpula bulbo', { top: 'onion', roofColor: '#c8a85a' }),
+  t('dormer-gable', 'dormer', 'Lucarna duas águas'),
+  t('dormer-shed', 'dormer', 'Lucarna uma água', { roof: 'shed' }),
+  t('dormer-round', 'dormer', 'Lucarna arredondada', { roof: 'round' }),
+  t('silo', 'silo', 'Silo'),
+  t('stack', 'stack', 'Chaminé industrial'),
+  t('ladder', 'ladder', 'Escada marinheiro'),
+  t('tank', 'tank', 'Tanque horizontal'),
 ];
 
 const builtinById = new Map(BUILTIN_TYPES.map((x) => [x.id, x]));

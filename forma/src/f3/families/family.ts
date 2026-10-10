@@ -83,6 +83,8 @@ export interface PartSink {
   prism(m: PartMat, profile: [number, number][], z0: number, z1: number, holes?: [number, number][][]): void;
   /** Placa em planta: contorno no plano xz (x, z) de y0 a y1 (lajes, degraus, bases). */
   slab(m: PartMat, plan: [number, number][], y0: number, y1: number, holes?: [number, number][][]): void;
+  /** Sólido de revolução: perfil (raio, y) girado em torno do eixo y local (cúpulas, cones, torres, potes). */
+  lathe(m: PartMat, profile: [number, number][], sides?: number, center?: [number, number, number]): void;
   /** O mesmo sumidouro com a origem deslocada. */
   translated(x: number, y: number, z: number): PartSink;
   /** O mesmo sumidouro girado em torno de y (graus) e deslocado. */

@@ -314,25 +314,19 @@ export function hash01(a: number, b = 0): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-/**
- * Tronco de cone em pé por fatias de cilindro (o sumidouro não tem cone):
- * `steps` fatias de r0 (base) a r1 (topo). r1 = 0 dá um cone em degraus finos.
- */
-export function cone(out: PartSink, m: PartMat, base: Vec3, r0: number, r1: number, h: number, steps = 8, sides = 20): void {
-  const n = Math.max(1, steps);
-  for (let i = 0; i < n; i++) {
-    const r = r0 + ((r1 - r0) * (i + 0.5)) / n;
-    out.cylinder(m, [base[0], base[1] + (h * i) / n, base[2]], Math.max(0.002, r), h / n, sides);
-  }
+/** Tronco de cone liso (revolução) de r0 (base) a r1 (topo). */
+export function cone(out: PartSink, m: PartMat, base: Vec3, r0: number, r1: number, h: number, _steps = 8, sides = 24): void {
+  out.lathe(m, [[Math.max(0.002, r0), 0], [Math.max(0, r1), h]], sides, base);
 }
 
-/** Calota (meia esfera achatada ou não) por fatias: raio r, altura h. */
-export function dome(out: PartSink, m: PartMat, base: Vec3, r: number, h: number, steps = 8, sides = 20): void {
-  const n = Math.max(2, steps);
-  for (let i = 0; i < n; i++) {
-    const t = (i + 0.5) / n;
-    out.cylinder(m, [base[0], base[1] + (h * i) / n, base[2]], Math.max(0.004, r * Math.sqrt(1 - t * t)), h / n, sides);
+/** Calota lisa (revolução): raio r, altura h. */
+export function dome(out: PartSink, m: PartMat, base: Vec3, r: number, h: number, steps = 10, sides = 24): void {
+  const prof: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    prof.push([r * Math.cos((t * Math.PI) / 2), h * Math.sin((t * Math.PI) / 2)]);
   }
+  out.lathe(m, prof, sides, base);
 }
 
 /** Pilar quadrado afunilado por fatias (o sumidouro não tem tronco de pirâmide). */

@@ -157,6 +157,42 @@ export class FrameSink implements PartSink {
     new FrameSink(this.out, rot, this.tag).prism(m, plan.map(([x, z]) => [x, -z] as [number, number]), y0, y1, holes.map((h) => h.map(([x, z]) => [x, -z] as [number, number])));
   }
 
+  lathe(m: PartMat, profile: [number, number][], sides = 24, c: Vec3 = [0, 0, 0]): void {
+    if (profile.length < 2) return;
+    const pos: number[] = [];
+    const P = (r: number, y: number, a: number): Vec3 => apply(this.frame, [c[0] + Math.cos(a) * r, c[1] + y, c[2] + Math.sin(a) * r]);
+    for (let i = 0; i < sides; i++) {
+      const a0 = (i / sides) * Math.PI * 2,
+        a1 = ((i + 1) / sides) * Math.PI * 2;
+      for (let j = 0; j + 1 < profile.length; j++) {
+        const [r0, y0] = profile[j]!,
+          [r1, y1] = profile[j + 1]!;
+        const A = P(r0, y0, a0),
+          B = P(r0, y0, a1),
+          C = P(r1, y1, a1),
+          D = P(r1, y1, a0);
+        // Normal para fora (perfil subindo): A, D, C e A, C, B.
+        pos.push(...A, ...D, ...C, ...A, ...C, ...B);
+      }
+    }
+    // Tampas onde o perfil começa ou termina fora do eixo.
+    const cap = (r: number, y: number, up: boolean) => {
+      if (r < 1e-4) return;
+      const ctr = apply(this.frame, [c[0], c[1] + y, c[2]]);
+      for (let i = 0; i < sides; i++) {
+        const a0 = (i / sides) * Math.PI * 2,
+          a1 = ((i + 1) / sides) * Math.PI * 2;
+        const A = P(r, y, a0),
+          B = P(r, y, a1);
+        if (up) pos.push(...ctr, ...B, ...A);
+        else pos.push(...ctr, ...A, ...B);
+      }
+    };
+    cap(profile[0]![0], profile[0]![1], false);
+    cap(profile[profile.length - 1]![0], profile[profile.length - 1]![1], true);
+    this.out.meshes.push({ mat: m, positions: pos, tag: this.tag });
+  }
+
   translated(x: number, y: number, z: number): FrameSink {
     return new FrameSink(this.out, mul(this.frame, translation(x, y, z)), this.tag);
   }
