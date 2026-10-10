@@ -1,0 +1,41 @@
+{
+  "name": "forma",
+  "version": "2.0.0-alpha.0",
+  "description": "FORMA — construtor de edifícios em lotes para three.js (editor, visualizador e gerador).",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist"],
+  "main": "./dist/forma.js",
+  "exports": {
+    ".": "./dist/forma.js",
+    "./core": "./dist/core.js"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build:app": "vite build",
+    "build:lib": "vite build --config vite.lib.config.ts",
+    "build": "npm run build:lib && npm run build:app",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "legacy:extract": "node scripts/extract-legacy.mjs"
+  },
+  "peerDependencies": {
+    "three": ">=0.170.0"
+  },
+  "dependencies": {
+    "polygon-clipping": "0.15.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "24.0.0",
+    "@types/three": "0.170.0",
+    "three": "0.170.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.4",
+    "vite-plugin-singlefile": "2.3.3",
+    "vitest": "5.0.3"
+  }
+}
