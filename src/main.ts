@@ -70,7 +70,7 @@ import { summarize } from '@sim/audit';
 import { type Anchor, anchorForHeight, findAnchor, roadSnap, setRoadSnap } from '@editor/snap';
 import { duplicateSegment, joinSegments, splitSegment } from '@editor/commit';
 import { type RoadEditRefusal, guardRoadEdit } from '@editor/editRules';
-import { commitPedestrianCrossing } from '@editor/streetObjects';
+import { commitPedestrianCrossing, commitUturn } from '@editor/streetObjects';
 import { commitRoundabout } from '@editor/roundabout';
 import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { Bulldozer } from '@editor/bulldozer';
@@ -4432,6 +4432,21 @@ function showInspector(): void {
           select(null, null, placed, 'ponto inserido na via');
           showInspector();
         }
+      },
+      onAddUturn: (id, toward) => {
+        if (!doc.segment(id)) return;
+        const chosen = game.selectedSegment === id && game.selectedSegmentS !== null ? game.selectedSegmentS : undefined;
+        let placed: NodeId | null = null;
+        mutateRoads(() => {
+          const result = commitUturn(doc, net, id, toward, chosen);
+          if (!result.committed) {
+            flashHint(`hint.uturn.${result.reason}`);
+            return false;
+          }
+          placed = result.node;
+          return true;
+        });
+        if (placed !== null) flashHint('hint.uturn.placed');
       },
       onRemoveCrossing: (node) => {
         mutate(() => {

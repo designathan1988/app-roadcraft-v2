@@ -329,6 +329,51 @@ export function bulbTurnPath(inCentre: Polyline, outCentre: Polyline, surface: J
   return { path, maxBodyClass };
 }
 
+/**
+ * The tightest a body of each class turns, on its centreline: AASHTO's design
+ * vehicles (Green Book Table 2-2b, via Iowa DOT 6A-2 and TxDOT Table 4-1) -
+ * a car 21 ft, a city bus 37.8 ft, a single-unit lorry 38 ft; a motorcycle
+ * about 3 m.
+ */
+export const CENTRE_TURN_RADIUS: readonly number[] = [m(3), m(6.4), m(11.6)];
+
+/**
+ * A U-turn through an opening in the median (docs/VIAS.md V8, retorno): a
+ * half circle from the end of the arriving lane round to the start of the
+ * departing one, as wide as the two lanes are apart. A body takes it only if
+ * it turns that tight (`CENTRE_TURN_RADIUS`) and stays on the road: a car
+ * needs 12.8 m from lane to lane - the FHWA's median U-turn minimum from the
+ * inner lane to the far one (18 ft of median, 12 ft lanes) - a bus 23 m.
+ */
+export function medianUturnPath(inCentre: Polyline, outCentre: Polyline, surface: JunctionSurface | null): TurnPathResult {
+  const start = inCentre.sampleAt(inCentre.length), end = outCentre.sampleAt(0);
+  const a = start.p, b = end.p, t = start.t;
+  // Across, towards the departing lane; and how far along the road it starts from here.
+  const across = { x: b.x - a.x, y: b.y - a.y };
+  const ahead = across.x * t.x + across.y * t.y;
+  const side = { x: across.x - t.x * ahead, y: across.y - t.y * ahead };
+  const width = Math.hypot(side.x, side.y);
+  if (width < GEO_EPS) return { path: Polyline.fromPoints([a, b]), maxBodyClass: -1 };
+  const n = { x: side.x / width, y: side.y / width };
+  const r = width / 2;
+  // Straight on first where the departing lane begins further along (`ahead` > 0).
+  const from = ahead > 0 ? addScaled(a, t, ahead) : a;
+  const centre = addScaled(from, n, r);
+  const pts: Vec2[] = ahead > GEO_EPS ? [a] : [];
+  const steps = Math.max(12, Math.ceil((Math.PI * r) / m(0.5)));
+  for (let i = 0; i <= steps; i++) {
+    const phi = (Math.PI * i) / steps;
+    // From `from` (angle -n), forward round the far side (+t), to the other lane (+n).
+    const c = Math.cos(phi), s = Math.sin(phi);
+    pts.push({ x: centre.x - n.x * r * c + t.x * r * s, y: centre.y - n.y * r * c + t.y * r * s });
+  }
+  if (ahead < -GEO_EPS) pts.push(b);
+  const path = Polyline.fromPoints(pts);
+  const maxBodyClass = ([HEAVY, 1, 0] as const).find((body) => r >= (CENTRE_TURN_RADIUS[body] ?? Infinity) - m(0.05) &&
+    (!surface || surface.empty || turnFits(inCentre, path, outCentre, surface, body))) ?? -1;
+  return { path, maxBodyClass };
+}
+
 /** Whether the selected movement contains a body of this size on its drawn surface. */
 export function turnFits(inCentre: Polyline, path: Polyline, outCentre: Polyline,
   surface: JunctionSurface, body: BodyClass): boolean {

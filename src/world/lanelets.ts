@@ -13,7 +13,7 @@ import { linksDigest, linksOf } from './roads/connectors';
 import { orientedPolyline } from './geometry';
 import { type ApproachGroup, computeApproachGroups } from './approachGroups';
 import { TUNNELS_DRAWN } from './structures';
-import { JunctionSurface, bulbTurnPath, turnPath } from './turnPaths';
+import { JunctionSurface, bulbTurnPath, medianUturnPath, turnPath } from './turnPaths';
 import { BULB_TURN_RADIUS } from './junction/bulb';
 import type { BodyClass } from './conflictPoints';
 
@@ -412,6 +412,7 @@ export class LaneletGraph {
       const key = `${nodeId}|${new Digest().addText(String(surfaceKey)).addText(node.control)
         .addText(node.crossing ? `${node.crossing.kind},${node.crossing.segment}` : '-')
         .addText(node.incident.join(',')).addText(node.blockedMovements.join(',')).addText(linksDigest(node.laneLinks))
+        .addText(`${node.uturn ?? '-'}${node.end ?? '-'}`)
         .addText(inbound.map((id) => this.laneletKeys.get(id) ?? id).join('|'))
         .addText(outbound.map((id) => this.laneletKeys.get(id) ?? id).join('|')).value()}`;
       const known = key ? previous.get(key) : undefined;
@@ -469,7 +470,9 @@ export class LaneletGraph {
           .filter((l): l is Lanelet => !!l && l.id !== inId);
         const turnResult = bulb
           ? bulbTurnPath(inLane.centre, outLane.centre, surfaceOf(), { x: node.x, y: node.y }, BULB_TURN_RADIUS)
-          : turnPath(inLane.centre, outLane.centre, surfaceOf(), waiting);
+          : node.uturn === inLane.segment && turn === 'uturn' && node.incident.length === 2
+            ? medianUturnPath(inLane.centre, outLane.centre, surfaceOf())
+            : turnPath(inLane.centre, outLane.centre, surfaceOf(), waiting);
         const path = turnResult.path;
         const lanelet: Lanelet = {
           id: cid,
@@ -596,6 +599,20 @@ export class LaneletGraph {
           // losing `carried` here made the dropped lane give way at a node of
           // three legs, and the lane beside it never had to let it in.
           addConnector(inId, inLane, fallback.outId, fallback.outLane, fallback.turn, fallback.carried);
+        }
+      }
+
+      // A U-turn through the median (docs/VIAS.md V8, retorno): from the
+      // inner lane of the road it serves, by the median, back the other way -
+      // swept like any turn, so only what a body fits is driven (`maxBodyClass`).
+      if (node.uturn !== undefined && node.incident.length === 2) {
+        for (const inId of inbound) {
+          const inLane = this.lanelets.get(inId);
+          if (!inLane || inLane.segment !== node.uturn || (inLane.laneIndex ?? 0) !== 0) continue;
+          for (const outId of outbound) {
+            const outLane = this.lanelets.get(outId);
+            if (outLane?.segment === inLane.segment) addConnector(inId, inLane, outId, outLane, 'uturn');
+          }
         }
       }
 

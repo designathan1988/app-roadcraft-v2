@@ -48,6 +48,8 @@ export interface InspectorActions {
   /** Places a mid-block pedestrian crossing on the road (`commitPedestrianCrossing`). */
   readonly onAddCrossing?: (id: SegmentId, kind: NodeCrossingKind) => void;
   readonly onRemoveCrossing?: (node: NodeId) => void;
+  /** V8: a U-turn through the median where the road was clicked, or its middle (`commitUturn`). */
+  readonly onAddUturn?: (id: SegmentId, toward: 'a' | 'b') => void;
   readonly onAddHeightPoint?: (id: SegmentId) => void;
   readonly onDuplicate?: (id: SegmentId) => void;
   readonly onSetControl?: (id: NodeId, control: JunctionControl) => void;
@@ -293,6 +295,8 @@ function renderSegment(
     `<button type="button" id="inspectSplit">${t('inspector.splitMiddle')}</button>` +
     `<button type="button" id="inspectZebra">${t('inspector.addZebra')}</button>` +
     `<button type="button" id="inspectSignalCrossing">${t('inspector.addSignalCrossing')}</button>` +
+    (actions.onAddUturn && seg.direction === 'both' && rt.median > 0
+      ? `<button type="button" data-uturn="b">${t('inspector.addUturnToEnd')}</button><button type="button" data-uturn="a">${t('inspector.addUturnToStart')}</button>` : '') +
     `<button type="button" id="inspectAddHeightPoint">${t('inspector.addHeightPoint')}</button>` +
     `<button type="button" id="inspectDelete" class="danger">${t('inspector.demolish')}</button>` +
     `</div>`;
@@ -351,6 +355,9 @@ function renderSegment(
   if (zebra) zebra.onclick = () => actions.onAddCrossing?.(id, 'zebra');
   if (signalCrossing) signalCrossing.onclick = () => actions.onAddCrossing?.(id, 'signal');
   if (heightPoint) heightPoint.onclick = () => actions.onAddHeightPoint?.(id);
+  body.querySelectorAll<HTMLButtonElement>('[data-uturn]').forEach((b) => {
+    b.onclick = () => actions.onAddUturn?.(id, b.dataset['uturn'] === 'a' ? 'a' : 'b');
+  });
   if (curve) {
     curve.oninput = () => {
       if (curveValueOutput) curveValueOutput.value = curveText(Number(curve.value));
