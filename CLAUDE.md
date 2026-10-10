@@ -19,7 +19,8 @@ have a `CLAUDE.md` with their couplings and traps. Crime and police
    issues, and how shipped games and engines solve it (GDC talks, engine docs,
    post-mortems). Search the exact error, and check the versions this repo uses.
 3. Before editing, tell the player in one short message what you found, with
-   links, and the approach. Then code; never improvise or "try and measure" blind.
+   links, and the approach. Then code. Trial and error is forbidden: never
+   improvise, guess or "try and see"; every attempt rests on what you read.
 4. After two failed attempts at the same problem (verification failed or did not
    confirm the fix), stop and research again before a third. Changing tool or
    approach does not reset the count. Report what the new research showed and
@@ -46,14 +47,18 @@ Research never widens scope or replaces local verification.
 
 ## Verify
 
-- Any visible change (UI, styles, models, materials, light, camera, animation)
-  is checked in the real game before it is called done: in-app browser with the
-  pane displayed (hidden it draws 0 fps), used as the player does, camera low
-  and close. Open and inspect every screenshot; watch motion over time. Code,
-  logs, no errors or green tests prove nothing visual. Fix what you see, look
-  again, and report what each picture showed.
-- Cannot look, or nothing visible changed: say so plainly with the reason;
-  never claim it works.
+No exceptions, for every change, visual or not:
+- Open the game in the in-app browser with the pane displayed (hidden it draws
+  0 fps) and use the change as the player does, with several different inputs
+  in sequence, camera low and close.
+- Take screenshots, open every one, and look for what the player would see
+  wrong (hidden or cut text, overlaps, misalignment, floating or sunken parts,
+  wrong language). Watch motion over time; a still does not prove it. Fix every
+  defect seen and look again.
+- Code, logs, no errors or green tests never prove that something works.
+- Report, picture by picture, what was checked.
+- Cannot open or use it: write **NOT VERIFIED** with the reason, and never call
+  the task done or say it works.
 - Servers: 5173 `roadcraft-dev` runs the current code; 4180 `roadcraft-play`
   serves the last build in `C:/Codex-Shared/road-play-dist`. Use 4180 when
   another session is editing; build with
