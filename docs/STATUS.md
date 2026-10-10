@@ -470,6 +470,9 @@ o jogo a cada edição.
 - Cidade: sem chão vazio dentro das quadras, mas os pátios e praças do meio
   das quadras ficam; nunca prédio novo no meio de uma quadra.
 - O objeto acompanha o terreno.
+- Construindo, em qualquer altura da câmera, o mapa é o bloco de terra com o
+  corte em camadas sobre o azul-escuro liso: sem céu, sem terra nem fundo verde
+  além da borda (2026-10-10). Céu e terra em volta só no modo de jogo.
 - O jogador escolhe a qualidade gráfica; sem tela de carregamento.
 - Otimizar sem tirar visual. Mudanças visuais pequenas por velocidade são
   decisão minha; pergunto só se mudar a jogabilidade ou sair um recurso.
