@@ -65,6 +65,9 @@ export interface PanelState {
   lot: { lot: Lot; indices: LotIndices | null } | null;
   /** Estilos disponíveis (incluídos + do projeto). */
   styles: StyleCard[];
+  /** Modelos prontos e o escolhido para o próximo clique. */
+  templates: { id: string; name: string; description: string; icon: string }[];
+  pendingTemplate: string | null;
 }
 
 export interface StyleCard {
@@ -138,6 +141,10 @@ export function shelfHTML(s: PanelState): string {
   if (s.tab === 'lot') return lotShelfHTML(s);
   if (s.tab === 'styles') return stylesShelfHTML(s);
   if (s.tab === 'volumes') {
+    html += group(
+      'Modelos prontos',
+      `<div class="tool-row">${s.templates.map((t) => `<button class="shape-tool ${s.pendingTemplate === t.id ? 'active' : ''}" data-template="${t.id}" data-icon="${t.icon}" title="${escapeHTML(t.description)}">${escapeHTML(t.name)}</button>`).join('')}</div>`,
+    );
     const shapes: [string, string, string][] = [['rect', 'rect', 'Retângulo'], ['l', 'l', 'L'], ['u', 'u', 'U'], ['circle', 'circle', 'Circular'], ['polygon', 'polygon', 'Livre']];
     html += group(
       'Formas básicas',
@@ -284,7 +291,7 @@ export function lotShelfHTML(s: PanelState): string {
 export const NEW_HTML = `<div class="modal-head"><h2>Novo espaço de criação</h2><button data-modal="close" data-icon="close" aria-label="Fechar"></button></div><p>Salve o projeto atual se quiser guardá-lo antes de começar outro. Um mapa vazio permite desenhar sua própria construção.</p><div class="modal-footer"><button class="secondary" data-modal="close">Cancelar</button><button class="primary" data-modal="empty">Criar mapa vazio</button></div>`;
 
 export function helpHTML(): string {
-  return `<div class="modal-head"><h2>Construa com as mãos.</h2><button data-modal="close" data-icon="close" aria-label="Fechar"></button></div><div class="help-grid"><div><strong>${icon('rect')} Desenhe a base</strong><kbd>B</kbd> e arraste no chão. Escolha L, U ou circular. <kbd>P</kbd> desenha um contorno livre; Enter fecha.</div><div><strong>${icon('extrude')} Puxe e componha</strong>Arraste a alça vertical. Os pontos nos cantos alteram a base. Desenhe no topo para empilhar volumes.</div><div><strong>${icon('window')} Edite a fachada</strong>Escolha Face, clique na parede e altere ritmo, proporção ou material. Arraste Janela, Porta ou Vão sobre ela.</div><div><strong>${icon('cut')} Abra um pátio</strong>Selecione o volume, pressione <kbd>C</kbd> e desenhe o recorte. A subtração também pode dividir o volume.</div><div><strong>${icon('cursor')} Navegue</strong>Botão direito orbita. Shift + direito desloca. Scroll aproxima. No toque, dois dedos orbitam e aproximam.</div><div><strong>${icon('save')} Continue e exporte</strong>Salvamento local automático. Salvar baixa o projeto JSON. Exportar GLB preserva geometria e materiais.</div></div><p><kbd>V</kbd> selecionar · <kbd>G</kbd> mover · <kbd>E</kbd> puxar · <kbd>F</kbd> enquadrar · Ctrl+clique multisseleciona · Ctrl+D duplica · Ctrl+Z desfaz · Esc cancela. O botão Modo avançado mostra todos os controles.</p><div class="modal-footer"><button class="secondary" data-modal="example">Carregar exemplo</button><button class="primary" data-modal="close">Continuar criando</button></div>`;
+  return `<div class="modal-head"><h2>Construa com as mãos.</h2><button data-modal="close" data-icon="close" aria-label="Fechar"></button></div><div class="help-grid"><div><strong>${icon('rect')} Desenhe a base</strong><kbd>B</kbd> e arraste no chão. Escolha L, U ou circular. <kbd>P</kbd> desenha um contorno livre; Enter fecha.</div><div><strong>${icon('extrude')} Puxe e componha</strong>Arraste a alça vertical. Os pontos nos cantos alteram a base. Desenhe no topo para empilhar volumes.</div><div><strong>${icon('window')} Edite a fachada</strong>Escolha Face, clique na parede e altere ritmo, proporção ou material. Arraste Janela, Porta ou Vão sobre ela.</div><div><strong>${icon('cut')} Abra um pátio</strong>Selecione o volume, pressione <kbd>C</kbd> e desenhe o recorte. A subtração também pode dividir o volume.</div><div><strong>${icon('cursor')} Navegue</strong>Botão direito orbita. Shift + direito desloca. Scroll aproxima. No toque, dois dedos orbitam e aproximam.</div><div><strong>${icon('save')} Continue e exporte</strong>Salvamento local automático. Salvar baixa o projeto JSON. Exportar GLB preserva geometria e materiais.</div></div><p><strong>Medidas exatas:</strong> logo depois de desenhar, puxar ou mover, digite o valor e Enter: <kbd>12;8</kbd> (largura;profundidade), <kbd>15</kbd> (altura ou distância). A caixa Medidas, na barra de baixo, mostra o que está sendo medido.</p><p><kbd>V</kbd> selecionar · <kbd>B</kbd> desenhar · <kbd>P</kbd> base livre · <kbd>G</kbd> mover · <kbd>E</kbd> puxar · <kbd>C</kbd> recortar · <kbd>L</kbd> lote · <kbd>I</kbd> conta-gotas de estilo · <kbd>F</kbd> enquadrar · <kbd>?</kbd> ajuda · Ctrl+clique multisseleciona · Ctrl+D duplica · Ctrl+Z desfaz · Esc cancela. O botão Modo avançado mostra todos os controles.</p><div class="modal-footer"><button class="secondary" data-action="tutorial">Ver tutorial</button><button class="secondary" data-modal="example">Carregar exemplo</button><button class="primary" data-modal="close">Continuar criando</button></div>`;
 }
 
 // ── Interiores ────────────────────────────────────────────────────────
@@ -365,6 +372,10 @@ export function stylesShelfHTML(s: PanelState): string {
   let html = group(
     `Estilo · ${target}`,
     `<div class="style-grid">${card('', 'Sem estilo', 'Fachada pelo ritmo automático e cores livres.', ['#8a8f91'])}${s.styles.map((st) => card(st.id, st.name, st.description, st.colors)).join('')}</div>`,
+  );
+  html += group(
+    'Copiar de um volume',
+    `<div class="field-col"><button data-tool="eyedrop" class="action-tool ${s.tool === 'eyedrop' ? 'active' : ''}" data-icon="eyedrop" title="Conta-gotas · I">Conta-gotas</button><div class="help-inline">Clique num volume para copiar o visual e depois nos que devem recebê-lo.</div></div>`,
   );
   html += group(
     'Arquivo de estilo',

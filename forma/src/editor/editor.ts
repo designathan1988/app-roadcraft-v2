@@ -1,5 +1,6 @@
 // Editor FORMA 2: estado, seleção, ferramentas, ações, interface e API pública.
 // Portado da lógica do FORMA v1 e adaptado ao modelo forma/2.
+import { TEMPLATES, templateById } from './templates';
 import { allStyles, styleResolver, validateStylePack, type StylePack } from '../styles';
 import * as THREE from 'three';
 import type { Building, FacadePattern, ID, Limits, Lot, LotRules, Project, RoofKind, Storey, Vec2 } from '../core/schema';
@@ -29,7 +30,7 @@ import { inspectorHTML, layersHTML, shelfHTML, helpHTML, NEW_HTML, interiorShelf
 import * as persist from '../io/persistence';
 import { download, exportGLB as glb, exportJSON as json, exportOBJ as obj, filename } from '../io/export';
 
-export type Tool = 'select' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints' | 'lot' | 'lotpolygon' | 'frontage' | 'wall' | 'idoor' | 'stair' | 'room';
+export type Tool = 'select' | 'eyedrop' | 'draw' | 'polygon' | 'extrude' | 'move' | 'cut' | 'window' | 'door' | 'opening' | 'editpoints' | 'lot' | 'lotpolygon' | 'frontage' | 'wall' | 'idoor' | 'stair' | 'room';
 
 export interface EditorOptions extends SceneHost {
   /** Contêiner da interface. Obrigatório quando ui ≠ 'none'. */
@@ -42,6 +43,8 @@ export interface EditorOptions extends SceneHost {
   storage?: false | { key: string };
   /** Abre o projeto de exemplo quando não há projeto salvo. */
   example?: boolean;
+  /** Mostra o tutorial na primeira visita (padrão: sim, com interface). */
+  onboarding?: boolean;
 }
 
 export interface EditorEvents extends Record<string, unknown> {
@@ -80,7 +83,21 @@ const HINTS: Record<string, string> = {
   idoor: 'Clique numa parede interna para abrir uma porta.',
   stair: 'Clique os pontos do caminho da escada (2 = reta, 3 = em L, 4 = em U). Enter ou duplo clique conclui.',
   room: 'Clique dentro de um cômodo para dar nome a ele.',
+  eyedrop: 'Clique num volume para copiar o visual dele; depois clique nos que devem recebê-lo. Esc termina.',
 };
+
+/** Metros em pt-BR, sem zeros à toa (12; 12,5; 12,35). */
+const fmtM = (n: number): string => (Math.round(n * 100) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+
+const MEASURE_LABELS = { rect: 'Dimensões (L;P)', height: 'Altura', move: 'Distância' } as const;
+
+const COACH: { title: string; text: string; target: string; tab?: string }[] = [
+  { title: 'Bem-vindo ao FORMA', text: 'Escolha um modelo pronto ou uma forma e clique no chão. Para escolher o tamanho, arraste.', target: '#shelf-content', tab: 'volumes' },
+  { title: 'Puxe e meça', text: 'Arraste a alça laranja de cima para mudar a altura. Para uma medida exata, digite o número logo depois e tecle Enter.', target: '#measure-box' },
+  { title: 'Dê um estilo', text: 'Na aba Estilos, um clique aplica fachada, materiais e cobertura. O conta-gotas copia o visual de um volume para outro.', target: '[data-tab="styles"]' },
+  { title: 'Por dentro e em detalhe', text: 'Escolha um pavimento na barra da vista para desenhar paredes, portas e escadas. O Modo avançado mostra todos os controles.', target: '#ui-level' },
+];
+const COACH_KEY = 'forma_onboarded';
 
 export class Editor {
   readonly events = new Emitter<EditorEvents>();
@@ -108,6 +125,12 @@ export class Editor {
   private moveFrame = 0;
   private touches = new Map<number, { x: number; y: number }>();
   private cleanup: (() => void)[] = [];
+  /** Caixa de medidas: última operação que aceita valor digitado. */
+  private measure: { kind: keyof typeof MEASURE_LABELS; ids: ID[]; from?: Vec2[]; dir?: Vec2 } | null = null;
+  private typed = '';
+  private pendingTemplate: string | null = null;
+  private brush: ops.StyleBrush | null = null;
+  private coachStep = -1;
   private disposed = false;
   private selectedLot: ID | null = null;
   private lotIndices = new Map<ID, LotIndices>();
@@ -176,6 +199,15 @@ export class Editor {
       this.shell.app.dataset.ready = 'true';
     }
     if (restoreError) this.toast('O projeto salvo não pôde ser aberto e foi guardado à parte: ' + restoreError);
+    if (this.shell && opts.onboarding !== false && this.storageKey) {
+      let seen = true;
+      try {
+        seen = localStorage.getItem(COACH_KEY) === '1';
+      } catch {
+        /* sem armazenamento: não insiste no tutorial */
+      }
+      if (!seen) this.startTutorial();
+    }
     queueMicrotask(() => this.events.emit('ready', undefined));
   }
 
@@ -241,6 +273,8 @@ export class Editor {
       repeatCount: this.repeatCount,
       repeatSpace: this.repeatSpace,
       lot: !b && this.selectedLot && this.lotById(this.selectedLot) ? { lot: this.lotById(this.selectedLot)!, indices: this.lotIndices.get(this.selectedLot) ?? null } : null,
+      templates: TEMPLATES.map(({ id, name, description, icon }) => ({ id, name, description, icon })),
+      pendingTemplate: this.pendingTemplate,
       styles: allStyles(this.project).map((st) => ({
         id: st.id,
         name: st.name,
@@ -525,7 +559,158 @@ export class Editor {
   }
 
   private updateHint(): void {
-    if (this.shell) this.$('#hint').textContent = HINTS[this.tool] ?? HINTS.select!;
+    if (!this.shell) return;
+    const t = this.pendingTemplate && this.tool === 'draw' ? templateById(this.pendingTemplate) : undefined;
+    this.$('#hint').textContent = t
+      ? `Clique no chão para colocar: ${t.name}. Esc cancela.`
+      : this.tool === 'eyedrop' && this.brush
+        ? 'Clique nos volumes que devem receber o visual copiado. Alt + clique copia de outro volume. Esc termina.'
+        : (HINTS[this.tool] ?? HINTS.select!);
+  }
+
+  // ── Caixa de medidas ────────────────────────────────────────────────
+  private setMeasure(m: Editor['measure']): void {
+    const pending = this.typed;
+    this.measure = m;
+    this.typed = '';
+    if (m && pending) {
+      this.typed = pending;
+      this.applyMeasure();
+    } else this.renderMeasure();
+  }
+
+  private renderMeasure(): void {
+    if (!this.shell) return;
+    const box = this.$('#measure-box');
+    if (!box) return;
+    const dragKind = this.drag?.type === 'draw' ? 'rect' : this.drag?.type === 'height' ? 'height' : this.drag?.type === 'move' ? 'move' : null;
+    const kind = this.measure?.kind ?? dragKind;
+    let current = '';
+    const b = this.measure ? this.byId(this.measure.ids[0]!) : undefined;
+    if (b && kind === 'rect') {
+      const bd = bounds(ops.outerOf(b));
+      current = `${fmtM(bd.maxX - bd.minX)};${fmtM(bd.maxZ - bd.minZ)}`;
+    } else if (b && kind === 'height') current = fmtM(ops.heightOf(b));
+    box.querySelector('.measure-label')!.textContent = kind ? MEASURE_LABELS[kind] : 'Medidas';
+    box.querySelector('.measure-value')!.textContent = this.typed ? this.typed + ' ⏎' : current;
+    box.classList.toggle('active', !!kind);
+    box.classList.toggle('typing', !!this.typed);
+  }
+
+  /** Teclas da caixa de medidas; devolve true se consumiu a tecla. */
+  private measureKey(e: KeyboardEvent): boolean {
+    const dragging = !!this.drag && ['draw', 'height', 'move'].includes(this.drag.type);
+    if ((!this.measure && !dragging) || e.ctrlKey || e.metaKey || e.altKey) return false;
+    const k = e.key;
+    if (/^[0-9.,;xX*]$/.test(k) || (k === '-' && !this.typed) || (k === ' ' && this.typed)) {
+      if (!this.typed && /^[xX*;,]$/.test(k)) return false;
+      this.typed += k === '*' ? 'x' : k;
+    } else if (k === 'Backspace' && this.typed) this.typed = this.typed.slice(0, -1);
+    else if (k === 'Escape' && this.typed) this.typed = '';
+    else if (k === 'Enter' && this.typed) {
+      e.preventDefault();
+      if (!dragging) this.applyMeasure();
+      return true;
+    } else return false;
+    e.preventDefault();
+    this.renderMeasure();
+    return true;
+  }
+
+  private applyMeasure(): void {
+    const m = this.measure,
+      raw = this.typed.trim();
+    this.typed = '';
+    if (!m || !raw) return this.renderMeasure();
+    const nums = raw
+      .replace(/,/g, '.')
+      .split(/\s*[;xX]\s*|\s+/)
+      .filter(Boolean)
+      .map(Number);
+    if (!nums.length || nums.some((n) => !Number.isFinite(n))) {
+      this.toast('Medida inválida: use números, como 12;8 ou 15.');
+      return this.renderMeasure();
+    }
+    const bs = m.ids.map((id) => this.byId(id)).filter((b): b is Building => !!b);
+    if (!bs.length) {
+      this.measure = null;
+      return this.renderMeasure();
+    }
+    let msg = '';
+    if (m.kind === 'rect') {
+      const [w, d] = nums as [number, number | undefined];
+      if (w < 0.5 || (d !== undefined && d < 0.5)) {
+        this.toast('Cada lado precisa de pelo menos 0,5 m.');
+        return this.renderMeasure();
+      }
+      for (const b of bs) {
+        ops.scaleFootprint(b, 'width', w);
+        if (d !== undefined) ops.scaleFootprint(b, 'depth', d);
+      }
+      const bd = bounds(ops.outerOf(bs[0]!));
+      msg = `Base de ${fmtM(bd.maxX - bd.minX)} × ${fmtM(bd.maxZ - bd.minZ)} m.`;
+    } else if (m.kind === 'height') {
+      const h = clamp(nums[0]!, 0.5, this.limits.maxHeight);
+      for (const b of bs) ops.setHeight(b, h);
+      msg = `Altura de ${fmtM(ops.heightOf(bs[0]!))} m.`;
+    } else {
+      const dist = nums[0]!;
+      bs.forEach((b, i) => {
+        const f = m.from?.[i];
+        if (f && m.dir) b.position = [ops.r2(f[0] + m.dir[0] * dist), ops.r2(f[1] + m.dir[1] * dist)];
+      });
+      msg = `Movido ${fmtM(dist)} m.`;
+    }
+    this.rebuild(m.ids);
+    this.commit(msg);
+    this.renderMeasure();
+  }
+
+  // ── Modelos prontos, conta-gotas e tutorial ─────────────────────────
+  private placeTemplate(id: string, p: Vec2): void {
+    const t = templateById(id);
+    if (!t) return;
+    if (this.project.buildings.length >= this.limits.maxBuildings) return this.toast(`Limite de ${this.limits.maxBuildings} volumes por projeto.`);
+    const same = this.project.buildings.filter((b) => b.name.startsWith(t.name)).length;
+    const b = t.build([ops.r2(p[0]), ops.r2(p[1])], same ? `${t.name} ${same + 1}` : t.name);
+    this.addBuildings([b], `Modelo ${t.name} colocado. Tudo nele pode ser editado.`);
+    if (this.byId(b.id)) this.setMeasure({ kind: 'rect', ids: [b.id] });
+  }
+
+  startTutorial(): void {
+    if (!this.shell) return;
+    this.coachStep = 0;
+    this.renderCoach();
+  }
+
+  private renderCoach(): void {
+    if (!this.shell) return;
+    const el = this.$('#coach');
+    this.$$('.coach-target').forEach((x) => x.classList.remove('coach-target'));
+    const st = COACH[this.coachStep];
+    if (!st) {
+      el.classList.remove('show');
+      el.innerHTML = '';
+      return;
+    }
+    if (st.tab && this.tab !== st.tab) {
+      this.tab = st.tab;
+      this.renderUI();
+    }
+    const last = this.coachStep === COACH.length - 1;
+    el.innerHTML = `<div class="coach-step">${this.coachStep + 1} de ${COACH.length}</div><h3>${st.title}</h3><p>${st.text}</p><div class="coach-actions"><button class="secondary" data-coach="skip">${last ? 'Fechar' : 'Pular'}</button><button class="primary" data-coach="next">${last ? 'Começar a criar' : 'Próximo'}</button></div>`;
+    el.classList.add('show');
+    this.$(st.target)?.classList.add('coach-target');
+  }
+
+  private endTutorial(): void {
+    this.coachStep = -1;
+    this.renderCoach();
+    try {
+      localStorage.setItem(COACH_KEY, '1');
+    } catch {
+      /* navegador sem armazenamento: o tutorial pode reaparecer */
+    }
   }
 
   toast(message: string): void {
@@ -712,6 +897,9 @@ export class Editor {
   }
 
   private select(id: ID | null, edge: ID | null = null, add = false, showContext = false, e: PointerEvent | null = null): void {
+    this.measure = null;
+    this.typed = '';
+    this.renderMeasure();
     if (id && this.selectedLot) {
       this.selectedLot = null;
       this.scene.rebuildLots(this.project, this.lotIndices, null);
@@ -742,6 +930,15 @@ export class Editor {
       this.toast('Escolha um pavimento na barra à esquerda da vista para desenhar o interior.');
       next = 'select';
     }
+    if (next !== 'eyedrop') this.brush = null;
+    else if (!this.brush && this.selected.size === 1) {
+      this.brush = ops.captureStyle(this.selectedBuilding()!);
+      this.toast(`Visual de ${this.selectedBuilding()!.name} copiado. Clique nos volumes que devem recebê-lo.`);
+    }
+    if (next !== 'draw') this.pendingTemplate = null;
+    this.measure = null;
+    this.typed = '';
+    this.renderMeasure();
     this.tool = next;
     this.sketch = [];
     this.chain = [];
@@ -853,6 +1050,10 @@ export class Editor {
   private doAction(action: string): void {
     const b = this.selectedBuilding();
     if (action === 'style-import') return this.$<HTMLInputElement>('#style-input').click();
+    if (action === 'tutorial') {
+      this.closeModal();
+      return this.startTutorial();
+    }
     if (action === 'style-export') return this.exportStyle();
     if (action === 'section') {
       this.scene.section = !this.scene.section;
@@ -1066,6 +1267,17 @@ export class Editor {
       else if (d.select) this.select(d.select, null, e.ctrlKey || e.metaKey);
       else if (d.color) this.applyProperty('color', d.color);
       else if (d.style) this.applyStyle(d.style === 'none' ? '' : d.style);
+      else if (d.template) {
+        this.setTool('draw');
+        this.pendingTemplate = d.template;
+        this.renderShelf();
+        this.updateHint();
+      } else if (d.coach) {
+        if (d.coach === 'next' && this.coachStep < COACH.length - 1) {
+          this.coachStep++;
+          this.renderCoach();
+        } else this.endTutorial();
+      }
       else if (d.roof) {
         this.defaults.roof = d.roof;
         this.applyProperty('roof', d.roof);
@@ -1236,6 +1448,8 @@ export class Editor {
     if (this.disposed) return;
     const modalOpen = this.shell && this.$('#modal-backdrop').style.display === 'flex';
     if (this.walk) return;
+    if (!modalOpen && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName) && this.measureKey(e)) return;
+    if (e.key === 'Escape' && this.coachStep >= 0) return this.endTutorial();
     if (e.key === 'Escape') {
       if (modalOpen) return this.closeModal();
       this.cancelDrag();
@@ -1297,7 +1511,7 @@ export class Editor {
     } else if (key === 'f') this.scene.fitView();
     else if (key === '?' && this.shell) this.modal(helpHTML());
     else {
-      const map: Record<string, Tool> = { v: 'select', b: 'draw', p: 'polygon', e: 'extrude', g: 'move', c: 'cut', l: 'lot' };
+      const map: Record<string, Tool> = { v: 'select', b: 'draw', p: 'polygon', e: 'extrude', g: 'move', c: 'cut', l: 'lot', i: 'eyedrop' };
       if (map[key]) this.setTool(map[key]!);
     }
   }
@@ -1469,9 +1683,23 @@ export class Editor {
       return;
     }
     if (e.button !== 0) return;
-    const handle = this.tool === 'select' || this.tool === 'editpoints' ? sc.pickHandle(e) : null;
+    // No toque, o alvo das alças é maior (dedo cobre mais que o cursor).
+    const handle = this.tool === 'select' || this.tool === 'editpoints' ? sc.pickHandle(e, e.pointerType === 'touch' ? 24 : undefined) : null;
     const picked = handle ? null : sc.pick(e);
     const tool = this.tool;
+    if (tool === 'eyedrop') {
+      const b = picked ? this.byId(picked.data.buildingId) : undefined;
+      if (!b) return this.toast(this.brush ? 'Clique num volume para aplicar o visual copiado.' : 'Clique num volume para copiar o visual dele.');
+      if (!this.brush || e.altKey) {
+        this.brush = ops.captureStyle(b);
+        this.updateHint();
+        return this.toast(`Visual de ${b.name} copiado. Clique nos volumes que devem recebê-lo; Esc termina.`);
+      }
+      ops.pasteStyle(b, this.brush);
+      this.rebuild([b.id]);
+      this.commit(`Visual aplicado em ${b.name}.`);
+      return;
+    }
     if (handle?.kind === 'node') {
       const b = this.activeBuilding();
       if (b) this.drag = { type: 'node', id: handle.id, snapshot: structuredClone(this.project) };
@@ -1862,9 +2090,35 @@ export class Editor {
         x = s[0];
         z = s[1];
       }
+      if (this.pendingTemplate) {
+        const id = this.pendingTemplate;
+        this.pendingTemplate = null;
+        this.setTool('select');
+        this.placeTemplate(id, [x, z]);
+        return;
+      }
       if (w < 0.5 || dep < 0.5) return this.toast('Desenhe uma base com pelo menos 0,5 m de cada lado.');
+      const count = this.project.buildings.length;
       this.newVolume({ points: shape(this.defaults.shape, w, dep), position: [x, z], base: ops.r2(d.y as number), height: this.defaults.height, floors: this.defaults.floors, color: this.defaults.color, roof: this.defaults.roof as RoofKind });
       this.setTool('select');
+      if (this.project.buildings.length > count) this.setMeasure({ kind: 'rect', ids: [this.project.buildings.at(-1)!.id] });
+      return;
+    }
+    if (d.type === 'height') {
+      this.commit();
+      this.setMeasure({ kind: 'height', ids: [d.id as ID] });
+      return;
+    }
+    if (d.type === 'move') {
+      const originals = d.originals as { id: ID; position: Vec2 }[];
+      this.commit();
+      const first = originals[0] && this.byId(originals[0].id);
+      if (first) {
+        const dx = first.position[0] - originals[0]!.position[0],
+          dz = first.position[1] - originals[0]!.position[1],
+          l = Math.hypot(dx, dz);
+        if (l > 1e-6) this.setMeasure({ kind: 'move', ids: originals.map((o) => o.id), from: originals.map((o) => [...o.position] as Vec2), dir: [dx / l, dz / l] });
+      }
       return;
     }
     if (d.type === 'cut') {

@@ -214,6 +214,8 @@ export function scaleFootprint(b: Building, axis: 'width' | 'depth', size: numbe
     q[k] = c + (p[k] - c) * ratio;
     return q;
   });
+  // As áreas dos cômodos mudam com a escala.
+  for (const st of b.storeys) if (st.rooms.length) updateRooms(b, st.id);
 }
 
 /** Move a origem do edifício para o centro da base, sem mudar nada no mundo. */
@@ -565,5 +567,32 @@ export function applyStyle(b: Building, pack: StylePack | null): void {
     for (const o of Object.values(m.edges)) {
       for (const k of ['pattern', 'windowWidth', 'windowHeight', 'spacing', 'wall', 'trim', 'balconies', 'brise'] as const) delete o[k];
     }
+  }
+}
+
+/** Visual de um edifício (estilo, materiais, cobertura, fachada e detalhes) para o conta-gotas. */
+export interface StyleBrush {
+  styleRef?: ID;
+  finish: Mass['finish'];
+  roof: Mass['roof'];
+  facade: Mass['facade'];
+  flags: Mass['flags'];
+}
+
+export function captureStyle(b: Building): StyleBrush {
+  const m = mainMass(b);
+  return structuredClone({ styleRef: m.style ?? b.styleRef, finish: m.finish, roof: m.roof, facade: m.facade, flags: m.flags });
+}
+
+export function pasteStyle(b: Building, s: StyleBrush): void {
+  if (s.styleRef) b.styleRef = s.styleRef;
+  else delete b.styleRef;
+  for (const m of b.masses) {
+    delete m.style;
+    m.finish = structuredClone(s.finish);
+    m.roof = structuredClone(s.roof);
+    m.facade = structuredClone(s.facade);
+    m.flags = structuredClone(s.flags);
+    for (const o of Object.values(m.edges)) for (const k of ['pattern', 'windowWidth', 'windowHeight', 'spacing', 'wall', 'trim', 'balconies', 'brise'] as const) delete o[k];
   }
 }

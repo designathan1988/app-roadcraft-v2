@@ -85,6 +85,14 @@ validateStylePack(json); // lista de erros em português (vazia = válido)
 
 Na interface, a aba **Estilos** aplica com um clique. No modo avançado ela também importa e exporta arquivos de estilo. Faces com ajuste próprio e aberturas desenhadas à mão continuam valendo por cima do estilo.
 
+### Facilidades
+
+- **Modelos prontos** (aba Volumes): Casa térrea (com cômodos e portas), Sobrado (com escada), Prédio, Galpão e Torre. Escolha o modelo e clique no chão. API: `TEMPLATES` e `templateById`.
+- **Medidas digitadas** (como a caixa de medidas do SketchUp): durante ou logo depois de desenhar, puxar ou mover, digite o valor e Enter. `12;8` ou `12x8` dá largura × profundidade; um número sozinho dá altura ou distância. A vírgula é decimal (`9,5`).
+- **Conta-gotas de estilo** (`I`): copia o visual de um volume (estilo, materiais, cobertura, fachada e detalhes) e aplica em outros com um clique. Alt + clique copia de outro volume.
+- **Tutorial** de 4 passos na primeira visita (`onboarding: false` desliga); reaparece pela Ajuda (`?`).
+- **Toque:** um dedo seleciona e arrasta; dois dedos orbitam e aproximam. As alças têm alvo maior no toque.
+
 ## Formato do projeto (`forma/2`)
 
 Lote → Edifício → Pavimentos → Massas → Aberturas. Unidades em metros, Y para cima, planta em `[x, z]`.

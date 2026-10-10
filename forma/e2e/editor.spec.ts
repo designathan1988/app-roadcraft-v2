@@ -36,7 +36,10 @@ async function open(page: Page, errors: string[]) {
     if (m.type() === 'error' || m.text().includes('Multiple instances of Three.js')) errors.push(m.text());
   });
   await page.goto('/');
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('forma_onboarded', '1');
+  });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]');
 }
@@ -460,4 +463,119 @@ test('estilos: aplicar pela aba, próximos volumes, importar com módulo glTF, e
   await page.waitForSelector('body[data-ready="true"]');
   expect((await project(page)).styles.map((s: any) => s.id)).toEqual(['meu:ornamentado']);
   expect(errors).toEqual([]);
+});
+
+test('facilidade: tutorial, modelo pronto, medidas digitadas, conta-gotas e atalhos', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  // Primeira visita: tutorial de 4 passos; Esc encerra e não volta.
+  await expect(page.locator('#coach')).toContainText('1 de 4');
+  await page.locator('[data-coach="next"]').click();
+  await expect(page.locator('#coach')).toContainText('Puxe e meça');
+  await expect(page.locator('#measure-box')).toHaveClass(/coach-target/);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#coach')).not.toHaveClass(/show/);
+  await page.reload();
+  await page.waitForSelector('body[data-ready="true"]');
+  await expect(page.locator('#coach')).not.toHaveClass(/show/);
+  // Modelo pronto: clique no botão e no chão.
+  await page.locator('#new').click();
+  await page.locator('[data-modal="empty"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="volumes"]').click();
+  await page.locator('[data-template="sobrado"]').click();
+  await expect(page.locator('#hint')).toContainText('Clique no chão para colocar: Sobrado');
+  await view(page, [0, 0, 0], 40);
+  const c = await screen(page, 0, 0, 0);
+  await page.mouse.click(c.x, c.y);
+  let p = await project(page);
+  expect(p.buildings).toHaveLength(1);
+  expect(p.buildings[0].stairs).toHaveLength(1);
+  await expect(page.locator('#measure-box')).toContainText('Dimensões (L;P)8;10');
+  // Medidas digitadas logo depois: largura;profundidade (vírgula é decimal).
+  await page.keyboard.type('9,5;12');
+  await expect(page.locator('#measure-box')).toContainText('9,5;12 ⏎');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toHaveText('Base de 9,5 × 12 m.');
+  // Altura: puxar a alça e digitar o valor.
+  const b = (await project(page)).buildings[0];
+  const top = await screen(page, b.position[0], 6, b.position[1]);
+  await page.locator('#shelf-content').hover();
+  await page.mouse.move(top.x, top.y - 2);
+  const handle = await page.evaluate(() => {
+    const sc = (globalThis as any).Forma.editor.scene;
+    const h = sc.gizmos.children.find((o: any) => o.userData?.handle && o.userData.kind === 'height');
+    const v = h.position.clone().project(sc.camera);
+    const r = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-0.5 * v.y + 0.5) * r.height };
+  });
+  await page.mouse.move(handle.x, handle.y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x, handle.y - 30, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator('#measure-box')).toContainText('Altura');
+  await page.keyboard.type('7');
+  await page.keyboard.press('Enter');
+  p = await project(page);
+  expect(p.buildings[0].storeys.reduce((m: number, s: any) => Math.max(m, s.elevation + s.height), 0)).toBeCloseTo(7, 2);
+  // Medida inválida: aviso claro, nada muda.
+  await page.keyboard.type('1.2.3');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#toast')).toContainText('Medida inválida');
+  // Conta-gotas: copia de um volume e aplica em outro.
+  await page.keyboard.press('Escape');
+  await page.locator('[data-template="galpao"]').click();
+  const g = await screen(page, 18, 0, 0);
+  await page.mouse.click(g.x, g.y);
+  p = await project(page);
+  expect(p.buildings.map((x: any) => x.styleRef)).toEqual(['builtin:colonial', 'builtin:industrial']);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('i');
+  await expect(page.locator('[data-tool="eyedrop"]').first()).toHaveClass(/active/);
+  const s0 = await screen(page, 18, 7, 0);
+  await page.mouse.click(s0.x, s0.y);
+  await expect(page.locator('#toast')).toContainText('copiado');
+  const s1 = await screen(page, 0, 2, 6);
+  await page.mouse.click(s1.x, s1.y);
+  await expect(page.locator('#toast')).toContainText('Visual aplicado');
+  p = await project(page);
+  expect(p.buildings[0].styleRef).toBe('builtin:industrial');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-tool="select"]').first()).toHaveClass(/active/);
+  // Ajuda lista os atalhos e abre o tutorial de novo.
+  await page.keyboard.press('?');
+  await expect(page.locator('#modal')).toContainText('conta-gotas');
+  await page.locator('#modal [data-action="tutorial"]').click();
+  await expect(page.locator('#coach')).toHaveClass(/show/);
+  expect(errors).toEqual([]);
+});
+
+test.describe('toque', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test('tocar seleciona um volume e o alvo das alças é maior no toque', async ({ page }) => {
+    const errors: string[] = [];
+    await open(page, errors);
+    const target = await page.evaluate(() => (globalThis as any).Forma.getProject().buildings.find((b: any) => b.name === 'Torre curva'));
+    await page.evaluate(() => (globalThis as any).Forma.editor.selectIds([]));
+    await view(page, [target.position[0], 0, target.position[1]], 30);
+    const c = await screen(page, target.position[0], 4, target.position[1]);
+    await page.touchscreen.tap(c.x, c.y);
+    await expect.poll(async () => (await page.evaluate(() => (globalThis as any).Forma.getSelection())).ids ?? (await page.evaluate(() => (globalThis as any).Forma.getSelection()))).toContain(target.id);
+    // Alça de altura pega a 20 px (o mouse precisaria de 12 px).
+    const px = await page.evaluate(() => {
+      const sc = (globalThis as any).Forma.editor.scene;
+      const h = sc.gizmos.children.find((o: any) => o.userData?.handle && o.userData.kind === 'height');
+      const v = h.position.clone().project(sc.camera);
+      const r = document.querySelector('canvas')!.getBoundingClientRect();
+      const x = r.left + (v.x * 0.5 + 0.5) * r.width + 20,
+        y = r.top + (-0.5 * v.y + 0.5) * r.height;
+      return [sc.pickHandle({ clientX: x, clientY: y })?.kind ?? null, sc.pickHandle({ clientX: x, clientY: y }, 24)?.kind ?? null];
+    });
+    expect(px).toEqual([null, 'height']);
+    expect(errors).toEqual([]);
+  });
 });

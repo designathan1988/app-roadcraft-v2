@@ -115,7 +115,10 @@ export function detectRooms(segments: [Vec2, Vec2][], outer: Vec2[][], holes: Ve
     if (signedArea(f) <= 1e-6) continue;
     const poly = f;
     // Ponto interior representativo (centroide do primeiro triângulo válido).
-    const c = interiorPoint(poly);
+    // Um cômodo em L pode ter um vão (escada) sob o primeiro ponto candidato:
+    // só é "dentro do vão" se nenhum candidato ficar fora dele.
+    const cands = interiorPoints(poly);
+    const c = cands.find((q) => !holes.some((h) => pointInPolygon(q[0], q[1], h))) ?? cands[0]!;
     if (!outer.some((o) => pointInPolygon(c[0], c[1], o))) continue;
     if (holes.some((h) => pointInPolygon(c[0], c[1], h))) continue;
     // Pátios inteiros dentro do cômodo viram furos dele.
@@ -129,7 +132,13 @@ export function detectRooms(segments: [Vec2, Vec2][], outer: Vec2[][], holes: Ve
 
 /** Um ponto garantidamente dentro do polígono simples. */
 export function interiorPoint(poly: Vec2[]): Vec2 {
+  return interiorPoints(poly)[0]!;
+}
+
+/** Pontos interiores candidatos (centroides das orelhas), o melhor primeiro. */
+export function interiorPoints(poly: Vec2[]): Vec2[] {
   const n = poly.length;
+  const out: Vec2[] = [];
   for (let i = 0; i < n; i++) {
     const a = poly[(i - 1 + n) % n]!,
       b = poly[i]!,
@@ -138,10 +147,10 @@ export function interiorPoint(poly: Vec2[]): Vec2 {
     if (cross <= 1e-9) continue;
     const m: Vec2 = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3];
     // O triângulo da orelha não pode conter outro vértice.
-    if (poly.every((p, j) => j === i || j === (i + 1) % n || j === (i - 1 + n) % n || !pointInPolygon(p[0], p[1], [a, b, c]))) return m;
+    if (poly.every((p, j) => j === i || j === (i + 1) % n || j === (i - 1 + n) % n || !pointInPolygon(p[0], p[1], [a, b, c]))) out.push(m);
   }
-  const s = poly.reduce((acc, p) => [acc[0] + p[0] / n, acc[1] + p[1] / n] as Vec2, [0, 0] as Vec2);
-  return s;
+  if (!out.length) out.push(poly.reduce((acc, p) => [acc[0] + p[0] / n, acc[1] + p[1] / n] as Vec2, [0, 0] as Vec2));
+  return out;
 }
 
 /** Casa os cômodos detectados com os anteriores (sobreposição > 50%). */

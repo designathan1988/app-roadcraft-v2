@@ -19,3 +19,4 @@ export { buildLotGroup } from './render/lot';
 export * as lotOps from './editor/lot-ops';
 export { straightSkeleton, SkeletonError, type SkeletonResult } from './geometry/roofs/skeleton';
 export { skeletonRoof, gableEdges, type RoofGeometry, type SkeletonRoofOptions } from './geometry/roofs/skeleton-roof';
+export { TEMPLATES, templateById, type Template } from './editor/templates';

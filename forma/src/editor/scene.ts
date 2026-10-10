@@ -352,7 +352,7 @@ export class EditorScene {
    * Alça sob o ponteiro. As esferas têm poucos pixels na tela, então vale a
    * mais próxima num raio de HANDLE_PX pixels (alvo confortável para o mouse).
    */
-  pickHandle(e: { clientX: number; clientY: number }): HandleData | null {
+  pickHandle(e: { clientX: number; clientY: number }, px = HANDLE_PX): HandleData | null {
     const r = this.renderer.domElement.getBoundingClientRect();
     const v = new THREE.Vector3();
     let best: { d: number; data: HandleData } | null = null;
@@ -363,7 +363,7 @@ export class EditorScene {
       const sx = r.left + (v.x * 0.5 + 0.5) * r.width,
         sy = r.top + (-0.5 * v.y + 0.5) * r.height;
       const d = Math.hypot(sx - e.clientX, sy - e.clientY);
-      if (d <= HANDLE_PX && (!best || d < best.d)) best = { d, data: o.userData as HandleData };
+      if (d <= px && (!best || d < best.d)) best = { d, data: o.userData as HandleData };
     }
     return best ? best.data : null;
   }

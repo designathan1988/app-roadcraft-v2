@@ -51,7 +51,11 @@ export function createShell(container: HTMLElement, level: UiLevel): Shell {
   $('[data-tab="lot"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="interior" data-icon="wall">Interior</button>');
   // Aba Estilos, depois de Coberturas.
   $('[data-tab="roofs"]').insertAdjacentHTML('afterend', '<div class="separator"></div><button class="tab" data-tab="styles" data-icon="style">Estilos</button>');
-  app.insertAdjacentHTML('beforeend', '<input type="file" id="style-input" accept=".json,application/json" hidden>');
+  app.insertAdjacentHTML('beforeend', '<input type="file" id="style-input" accept=".json,application/json" hidden><div id="coach" role="dialog" aria-label="Tutorial"></div>');
+  // Caixa de medidas (como no SketchUp): digite valores depois de desenhar, puxar ou mover.
+  $('#status-metric').insertAdjacentHTML('beforebegin', '<span id="measure-box" class="measure-box" title="Digite um valor e Enter logo depois de desenhar, puxar ou mover"><span class="measure-label">Medidas</span><span class="measure-value"></span></span>');
+  // Conta-gotas de estilo na barra de ferramentas.
+  $('[data-tool="cut"]').insertAdjacentHTML('afterend', '<button data-tool="eyedrop" data-icon="eyedrop" title="Conta-gotas de estilo · I" aria-label="Conta-gotas de estilo"></button>');
   // Barra de pavimentos, rótulos de cômodos e indicações do modo caminhar.
   $('#viewport').insertAdjacentHTML(
     'beforeend',
