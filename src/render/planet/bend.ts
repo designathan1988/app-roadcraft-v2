@@ -221,8 +221,46 @@ export function installPlanet(): void {
     } else {
       return object.call(this, target);
     }
-    return this.intersectsSphere(bent(sphere));
+    return this.intersectsSphere(bent(sphere)) && !beyondHorizon(sphere);
   };
+}
+
+/** The eye the world is drawn from this frame (\`planetEye\`): what lies past its horizon is not drawn. */
+const eye = new Vector3();
+let eyeKnown = false;
+const occluder = new Vector3();
+const cv = new Vector3();
+const vt = new Vector3();
+/** How far the ground may lie under the sphere (valleys, cuttings, water beds), world units. */
+const HORIZON_SLACK = 200;
+
+/** Sets the eye the next frame is drawn from (three's space). */
+export function planetEye(at: Vector3): void {
+  eye.copy(at);
+  eyeKnown = true;
+}
+
+/**
+ * Whether a sphere (as the planet draws it) lies wholly past the planet's
+ * horizon from the eye: Cesium's horizon culling (Kevin Ring, "Horizon
+ * Culling", 2013 - a point is hidden when it is behind the plane of the
+ * horizon circle AND inside the cone of the eye's tangents), for the
+ * sphere's centre against the planet shrunk by the sphere's radius and by
+ * the deepest ground can go (\`HORIZON_SLACK\`), so nothing that shows is
+ * ever left out. At the globe half the planet's plates, and their shadows,
+ * were drawn behind it.
+ */
+function beyondHorizon(s: Sphere): boolean {
+  if (!eyeKnown) return false;
+  const r = PLANET_RADIUS - HORIZON_SLACK - s.radius;
+  if (r <= 0) return false;
+  planetCentre(occluder);
+  cv.subVectors(eye, occluder).divideScalar(r);
+  const vh2 = cv.lengthSq() - 1;
+  if (vh2 <= 0) return false;
+  vt.subVectors(s.center, occluder).divideScalar(r).sub(cv);
+  const vtDotVc = -vt.dot(cv);
+  return vtDotVc > vh2 && (vtDotVc * vtDotVc) / vt.lengthSq() > vh2;
 }
 
 /** Whether the world's scene is being drawn (its shadows with it): only then is culling done on the planet. */

@@ -81,7 +81,7 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
-import { installPlanet, planetCentre, planetLocalMinutes, planetMotion, planetScene, planetSun } from './planet/bend';
+import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetScene, planetSun } from './planet/bend';
 import { createSpace } from './planet/space';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
@@ -3367,6 +3367,8 @@ export function createSceneRenderer(
       }
       // Out at the globe the contact shading is off (`PostChain.setAmbientOcclusion`).
       if (__PLANET__) post.setAmbientOcclusion((rig.viewport.globe ?? 0) < 0.02);
+      // Past the planet's horizon nothing is drawn (\`planet/bend.ts\`).
+      if (__PLANET__) planetEye(rig.camera.position);
       if (reveal.opened) post.render(delta);
       else onAssetsReady();
       performance.measure('hitch:draw/Render', { start: atRender, end: performance.now() });
