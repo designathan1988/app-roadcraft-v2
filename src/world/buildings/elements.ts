@@ -3,6 +3,7 @@ import { convexHull, pointInPolygon } from '@core/polygon';
 import { m } from '../units';
 import { edgeFrame, localFootprint, overlapArea } from './footprints';
 import { STEP_RISE, STEP_RUN } from './foundation';
+import { isRetainingStone } from './cityBuildings';
 import {
   EPS,
   GRID,
@@ -462,4 +463,91 @@ export function elementAt(b: Building, kind: ElementKind, p: Vec2, facing: Side)
   const top = b.volumes.reduce((z, v) => Math.max(z, volumeHeight(b, v)), 0);
   const z = kind === 'canopy' ? Math.min(top, m(2.6)) : 0;
   return { kind, x: snap(p.x), y: snap(p.y), facing, w, d, z, h };
+}
+
+// ------------------------------------------------------------------ parts through parts
+
+/** Laid on the ground to stand things on (`lotPlan.ts` FLAT_KINDS): a surface, not a footprint. */
+const SURFACE_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>(['pavement', 'drain', 'parking']);
+/** The lot's boundary and its posts: runs meet each other at joints by design. */
+const BOUNDARY_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>(['wall', 'fence', 'hedge', 'railing', 'gate', 'pillar']);
+/** Planting, which grows under a tree's crown. */
+const PLANT_KINDS: ReadonlySet<ElementKind> = new Set<ElementKind>(['flowers', 'shrub', 'hedge', 'planter']);
+/** How far two parts may run into each other: a contact, a footing set into paving. */
+const MEET = m(0.03);
+/** A tree's trunk, and where its crown starts as a share of its height. */
+const TRUNK = m(0.4);
+const CROWN_FROM = 0.35;
+
+/**
+ * The yard's earthworks - a flight, a ramp, a retaining wall in its stone:
+ * shaped with the land, they meet each other and the boundary by design (a
+ * flight through its retaining wall), and dressing gives way to them.
+ */
+export function isEarthwork(e: BuildingElement): boolean {
+  return e.kind === 'stair' || e.kind === 'ramp' || (e.kind === 'slab' && isRetainingStone(e.material));
+}
+/** Laid with the lot's structure (its boundary, its earthworks): dressing in its way is cleared. */
+export function isStructure(e: BuildingElement): boolean {
+  return BOUNDARY_KINDS.has(e.kind) || isEarthwork(e);
+}
+
+interface Footprint { readonly cx: number; readonly cy: number; readonly hx: number; readonly hy: number; readonly a: number }
+
+function footprintOf(e: BuildingElement, size?: number): Footprint {
+  const alongY = e.facing === 0 || e.facing === 2;
+  return {
+    cx: e.x, cy: e.y,
+    hx: (size ?? (alongY ? e.w : e.d)) / 2, hy: (size ?? (alongY ? e.d : e.w)) / 2,
+    a: e.angle ?? 0,
+  };
+}
+
+/** How deep two turned rectangles run into each other (separating axes); <= 0 when apart. */
+function planDepth(p: Footprint, q: Footprint): number {
+  // Far apart for any turn (bounding circles), without the trigonometry: most pairs.
+  const gap = Math.hypot(q.cx - p.cx, q.cy - p.cy) - Math.hypot(p.hx, p.hy) - Math.hypot(q.hx, q.hy);
+  if (gap > 0) return -gap;
+  let best = Infinity;
+  for (const t of [p.a, p.a + Math.PI / 2, q.a, q.a + Math.PI / 2]) {
+    const ux = Math.cos(t), uy = Math.sin(t);
+    const reach = (b: Footprint): number =>
+      b.hx * Math.abs(Math.cos(b.a) * ux + Math.sin(b.a) * uy) + b.hy * Math.abs(-Math.sin(b.a) * ux + Math.cos(b.a) * uy);
+    best = Math.min(best, reach(p) + reach(q) - Math.abs((q.cx - p.cx) * ux + (q.cy - p.cy) * uy));
+  }
+  return best;
+}
+
+/** Heights running into each other by more than a contact (a flush joint of two plates is a contact). */
+const heightsMeet = (a0: number, a1: number, b0: number, b1: number): boolean => Math.min(a1, b1) - Math.max(a0, b0) > MEET + m(0.001);
+
+/**
+ * Whether two parts of a lot stand in each other (Etapa 5a): a bench in a
+ * bench, a bin in the rocks, a shed's roof through a tree's crown. A part's
+ * footprint is its own, as in The Sims' placement: nothing solid shares it,
+ * and only what stands ON something - a surface, a joint of the boundary -
+ * meets it by design. A tree is its trunk to the ground and its crown above:
+ * planting grows under the crown, a roof does not go through it.
+ */
+export function elementsMeet(a: BuildingElement, b: BuildingElement): boolean {
+  if (SURFACE_KINDS.has(a.kind) || SURFACE_KINDS.has(b.kind)) return false;
+  if (isStructure(a) && isStructure(b)) return false;
+  // A plant against a thin run of the boundary grows through it (a shrub
+  // through a fence); a shed or a cabinet (a `wall` box) is no run.
+  const thinRun = (e: BuildingElement): boolean => (e.kind === 'wall' || e.kind === 'fence' || e.kind === 'railing') && Math.min(e.w, e.d) <= m(0.3);
+  if ((PLANT_KINDS.has(a.kind) && thinRun(b)) || (PLANT_KINDS.has(b.kind) && thinRun(a))) return false;
+  // Foliage into foliage: a shrub grown into a hedge.
+  const foliage = (e: BuildingElement): boolean => e.kind === 'shrub' || e.kind === 'hedge';
+  if (foliage(a) && foliage(b)) return false;
+  if (a.kind === 'tree' || b.kind === 'tree') {
+    const [tree, other] = a.kind === 'tree' ? [a, b] : [b, a];
+    if (other.kind === 'tree') return heightsMeet(a.z, a.z + a.h, b.z, b.z + b.h) && planDepth(footprintOf(a, TRUNK), footprintOf(b, TRUNK)) > MEET;
+    const crown = tree.z + tree.h * CROWN_FROM;
+    const trunkMeets = heightsMeet(tree.z, tree.z + tree.h, other.z, other.z + other.h)
+      && planDepth(footprintOf(tree, TRUNK), footprintOf(other)) > MEET;
+    if (trunkMeets && !PLANT_KINDS.has(other.kind)) return true;
+    return !PLANT_KINDS.has(other.kind) && heightsMeet(crown, tree.z + tree.h, other.z, other.z + other.h)
+      && other.z >= crown - MEET && planDepth(footprintOf(tree), footprintOf(other)) > MEET;
+  }
+  return heightsMeet(a.z, a.z + a.h, b.z, b.z + b.h) && planDepth(footprintOf(a), footprintOf(b)) > MEET + m(0.001);
 }

@@ -322,6 +322,15 @@ o jogo a cada edição.
     triângulos, exato (`tests/render/lawnGround.spec.ts`); os 4 cantos e o
     centro deixavam cristas atravessarem a peça. Mesmo custo (1 530 prédios:
     ~3,4 s antes e depois, Node). Conferência visual pendente (painel oculto).
+  - nenhuma peça do lote dentro de outra (`world/buildings/elements.ts`
+    `elementsMeet`, aplicado em `editor/lotPlan.ts` `fits`): a pegada de um
+    sólido é só dele, como no The Sims; superfícies, juntas do limite e das
+    obras de terra (escada no arrimo), plantas sob a copa ou contra a cerca se
+    encontram por projeto; o limite e as obras de terra tiram do caminho o
+    enfeite. Antes, 2 949 numa cidade gerada (lixeira nas pedras, floreira no
+    pilar do portão, telhado do depósito na copa, banco no banco); agora 0
+    (`tests/world/lotClash.spec.ts`), 4% de peças a menos, crescimento da
+    cidade no mesmo tempo (~4,3 s). Conferência visual pendente.
 
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas

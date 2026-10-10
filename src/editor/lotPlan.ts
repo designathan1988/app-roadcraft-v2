@@ -1,7 +1,7 @@
 import type { Rng } from '@core/rng';
 import type { BlueprintBody } from '@world/buildings/blueprints';
 import { RETAINING_STONE, mat } from '@world/buildings/cityBuildings';
-import { FOLLOWS_GROUND, elementClash, unsupportedElements } from '@world/buildings/elements';
+import { FOLLOWS_GROUND, elementClash, elementsMeet, isStructure, unsupportedElements } from '@world/buildings/elements';
 import type { MaterialSpec } from '@world/buildings/materials';
 import type { MadeBuilding, Rect } from '@world/buildings/procedural';
 import { type Building, type BuildingElement, type ElementKind, type LotSurface, MAX_ELEMENTS, MAX_TERRACE, type Side, type Volume } from '@world/buildings/types';
@@ -196,7 +196,7 @@ interface Lot {
   tile(region: Rect, holes: readonly Rect[], s: LotSurface): void;
   put(kind: ElementKind, x: number, y: number, facing: Side, w: number, d: number, h: number, z?: number, material?: MaterialSpec): boolean;
   /** Whether `put` would take that part now (the same rules), without laying it. */
-  fits(kind: ElementKind, x: number, y: number, facing: Side, w: number, d: number, h: number, z?: number): boolean;
+  fits(kind: ElementKind, x: number, y: number, facing: Side, w: number, d: number, h: number, z?: number, material?: MaterialSpec): boolean;
   /** A run of `kind` along x at `y` from `x0` to `x1`, with gaps [middle, width]. */
   runX(kind: ElementKind, y: number, x0: number, x1: number, h: number, gaps?: readonly (readonly [number, number])[], z?: number): void;
   runY(kind: ElementKind, x: number, y0: number, y1: number, h: number, z?: number): void;
@@ -264,7 +264,7 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         }
       }
     },
-    fits(kind, x, y, facing, w, d, h, z = 0) {
+    fits(kind, x, y, facing, w, d, h, z = 0, material) {
       // The boundary - walls, fences, hedges, gates - is laid last, so the
       // budget keeps room for it: dressing that used it up left holes in the
       // front wall (the player's order of 2026-10-05).
@@ -281,12 +281,22 @@ export function furnishLot(body: BlueprintBody, plan: LotPlan, made: MadeBuildin
         // at the least, ADA 403.5.1).
         if (y - hd < Math.max(F, 1) && gateWays.some((g) => x + hw > g.x0 && x - hw < g.x1)) return false;
       }
-      return !elementClash(probe(), { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h) });
+      const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h) };
+      if (elementClash(probe(), el)) return false;
+      // Nothing solid in another's footprint (Etapa 5a: a bench in a bench,
+      // a bin in the rocks, a shed's roof through a crown - 2 949 in a
+      // generated city). The lot's structure - its boundary, laid last, and
+      // its earthworks - wins: what dressing stands in its way is cleared
+      // when it is laid (`put`).
+      return laying || isStructure(material ? { ...el, material } : el) || !elements.some((o) => elementsMeet(el, o));
     },
     put(kind, x, y, facing, w, d, h, z = 0, material) {
-      if (!lot.fits(kind, x, y, facing, w, d, h, z)) return false;
+      if (!lot.fits(kind, x, y, facing, w, d, h, z, material)) return false;
       const el: BuildingElement = { id: nextElement, kind, x: X(x), y: Y(y), facing, w: m(Math.min(w, 40)), d: m(d), z: m(z), h: m(h),
         ...(material ? { material } : {}) };
+      if (laying || isStructure(el)) {
+        for (let i = elements.length - 1; i >= 0; i--) if (elementsMeet(el, elements[i]!)) elements.splice(i, 1);
+      }
       elements.push(el);
       nextElement++;
       return true;
