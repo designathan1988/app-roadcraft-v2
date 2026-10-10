@@ -321,6 +321,12 @@ export interface TerrainSurface {
   rectOf(region: TerrainRegion): readonly [number, number, number, number];
   /** The plates the ground is made of, each with its own surface (`TerrainPart`). */
   readonly parts: readonly TerrainPart[];
+  /**
+   * The highest corner of the drawn ground, when the surface keeps it as its
+   * ground moves (the planet's atlas, from its plates' horizon caps): read
+   * instead of every corner of every plate (`SceneHandle.landTop`).
+   */
+  highest?(): number;
   dispose(): void;
 }
 

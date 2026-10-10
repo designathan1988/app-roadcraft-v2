@@ -109,6 +109,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
   });
   const lows = new Float64Array(TILE_COUNT);
   const measured = new Set<Tile>(tiles);
+  /** The highest corner of all the plates (`highest`), measured with the caps. */
+  let highest = 0;
   const measure = (): void => {
     if (measured.size === 0) return;
     for (const t of measured) {
@@ -124,7 +126,11 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     }
     measured.clear();
     let floor = Infinity;
-    for (let i = 0; i < TILE_COUNT; i++) floor = Math.min(floor, lows[i]!);
+    highest = -Infinity;
+    for (let i = 0; i < TILE_COUNT; i++) {
+      floor = Math.min(floor, lows[i]!);
+      highest = Math.max(highest, caps[i]!.top);
+    }
     setPlanetGroundFloor(floor);
   };
   const tileAt = (x: number, y: number): Tile => tiles[tileCellOf(x, y)] as Tile;
@@ -215,6 +221,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
   const lastLook = { waves: NaN, foam: NaN, current: NaN, windX: NaN, windZ: NaN, windSpeed: NaN };
   return {
     meshes,
+    highest: () => highest,
     ground: first.surface.ground,
     parts,
     // Each plate is its piece's flat map (east x, up y, north -z at its
