@@ -51,6 +51,10 @@ export interface Viewport {
   panTo(grabbed: Vec2, px: number, py: number, cssW: number, cssH: number, height?: number): void;
   /** Zooms about a pointer, keeping the ground under it (at `height`, the ground's own height there). */
   zoomAt(px: number, py: number, factor: number, cssW: number, cssH: number, height?: number): void;
+  /** Moves the view over the ground, world units: `right` across the screen, `forward` the way the camera faces. */
+  slide(right: number, forward: number): void;
+  /** Where the camera's eye is (x, y on the map, z its height), or null for a flat view. */
+  readonly eye: { readonly x: number; readonly y: number; readonly z: number } | null;
   /** Turns the view. A no-op where there is nothing to turn. */
   rotate(quarterTurns: number, px: number, py: number, cssW: number, cssH: number): void;
   /**
@@ -106,6 +110,14 @@ export function flatViewport(camera: Camera): Viewport {
     },
     zoomAt(px, py, factor, cssW, cssH) {
       camera.zoomAt(px, py, factor, cssW, cssH);
+    },
+    slide(right, forward) {
+      // Screen up is -y on the flat canvas.
+      camera.x += right;
+      camera.y -= forward;
+    },
+    get eye() {
+      return null;
     },
     rotate() {
       // A top-down view has one orientation. Offering three that do nothing

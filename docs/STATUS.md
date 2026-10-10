@@ -113,6 +113,14 @@ o jogo a cada edição.
   azul do mapa de rugosidade (`textureBaker.ts` `metallic`); o quarto atrás da
   janela é desenhado sem receber a luz da fachada, como no interior mapping
   (`kit.ts` `roomDaylight`), e o sol já não pinta as vidraças de bege.
+- Câmera até a rua (trabalho do agente cancelado, ramo `camera`, terminado):
+  inclinação, lente e altura do olhar mudam com a distância
+  (`view/cameraProfile.ts`), teclas seguradas e roda viram deslizamento
+  (`view/cameraMotion.ts`: WASD/setas, Q/E, Page Up/Down, + e -), o zoom vira
+  passeio no mínimo. Perto da rua o olho é trazido para a frente do prédio que
+  fica entre ele e o ponto olhado (raio a partir do alvo, como o
+  camera-controls; `world/buildings/cameraSolids.ts`); de longe isso se apaga
+  (`pullWeight`), e a vista geral nunca fica presa entre as torres.
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

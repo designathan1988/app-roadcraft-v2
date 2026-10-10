@@ -76,6 +76,7 @@ import { RoadTool, type RoadDraft } from '@editor/roadTool';
 import { Bulldozer } from '@editor/bulldozer';
 import { NodeMover } from '@editor/nodeMover';
 import { CameraGestures } from '@view/cameraGestures';
+import { CameraMotion } from '@view/cameraMotion';
 import { freeRoadsEnabled } from '@ui/roadSectionEditor';
 import { applyProfileTo } from '@editor/roads/profile';
 import { drawProfile } from '@ui/roads/drawProfile';
@@ -524,8 +525,14 @@ const cameraHand = new CameraGestures({
   redraw: () => requestDraw(),
   heightUnder: (at) => groundHeightUnder(at),
 });
-/** Camera turn per Q/E press, rad. */
+/** Camera turn per press of the camera panel's buttons, rad. */
 const KEY_TURN = Math.PI / 12;
+/** The keys held and the wheel's notches, spent as a glide frame by frame (`view/cameraMotion.ts`). */
+const cameraMotion = new CameraMotion({
+  view: () => view,
+  size: () => ({ w: surface.cssW, h: surface.cssH }),
+  heightUnder: (at) => groundHeightUnder(at),
+});
 /** The Move tool's node drag (`editor/nodeMover.ts`), previewed live and dropped as one undo step. */
 const mover = new NodeMover({
   doc,
@@ -1591,8 +1598,9 @@ canvas.addEventListener(
     const at = { x: e.clientX - r.left, y: e.clientY - r.top };
     // About the ground under the pointer at its real height: on the plane at
     // zero a hill or a chapada under the pointer slid away as the view zoomed.
-    view.zoomAt(at.x, at.y, Math.exp(-e.deltaY * 0.0013), surface.cssW, surface.cssH, groundHeightUnder(at));
-    persistence.saveSettingsSoon(sessionSettings);
+    // Spent over the next frames, a glide rather than a jump per notch.
+    const lines = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+    cameraMotion.wheel(-e.deltaY * lines * 0.0013, at);
     requestDraw();
   },
   { passive: false },
@@ -1636,10 +1644,11 @@ window.addEventListener('keydown', (e) => {
   // viewport answers `rotate` with nothing rather than pretending.
   // Q/E turn the camera by 15 degrees, Shift by a quarter turn. Home (below,
   // with the arrows) puts it back where the game starts and frames the map.
-  if (!meta && (e.key === 'q' || e.key === 'Q' || e.key === 'e' || e.key === 'E')) {
-    const sign = e.key.toLowerCase() === 'q' ? -1 : 1;
-    view.orbit(sign * (e.shiftKey ? Math.PI / 2 : KEY_TURN), 0);
-    persistence.saveSettingsSoon(sessionSettings);
+  // Held, Q/E turn the camera smoothly; Shift+Q/E a quarter turn, glided.
+  if (!meta && !e.altKey && (e.code === 'KeyQ' || e.code === 'KeyE')) {
+    if (e.shiftKey) {
+      if (!e.repeat) cameraMotion.turn((e.code === 'KeyQ' ? -1 : 1) * Math.PI / 2);
+    } else cameraMotion.press(e.code, false);
     requestDraw();
     return;
   }
@@ -3211,19 +3220,14 @@ const arrowPan = (e: KeyboardEvent): void => {
     }
     return;
   }
-  // Along the SCREEN's axes: with the camera turned, "up" is wherever the
-  // camera faces, not the map's north.
-  const step = e.shiftKey ? 120 : 40;
-  const { cssW: w, cssH: h } = surface;
-  const along = (dx: number, dy: number): void => view.moveTo(view.toWorld(w / 2 + dx, h / 2 + dy, w, h));
-  // W A S D as well as the arrows, as in every city builder; never with
-  // Ctrl or Alt (Ctrl+S saves, Ctrl+D duplicates).
-  const key = e.ctrlKey || e.metaKey || e.altKey ? '' : e.key.toLowerCase();
-  if (e.key === 'ArrowLeft' || key === 'a') along(-step, 0);
-  else if (e.key === 'ArrowRight' || key === 'd') along(step, 0);
-  else if (e.key === 'ArrowUp' || key === 'w') along(0, -step);
-  else if (e.key === 'ArrowDown' || key === 's') along(0, step);
-  else if (e.key === 'Home') {
+  // W A S D and the arrows move over the ground the way the camera faces,
+  // Page Up/Down tilt, + and - zoom: held, as a glide (`view/cameraMotion.ts`);
+  // never with Ctrl or Alt (Ctrl+S saves, Ctrl+D duplicates). Q/E are taken
+  // above, with the other keys of the game.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code !== 'KeyQ' && e.code !== 'KeyE' && cameraMotion.press(e.code, e.shiftKey)) {
+    // Fall through.
+  } else if (e.key === 'Home') {
     view.setOrbit(DEFAULT_AZIMUTH, DEFAULT_ELEVATION);
     fitView();
   } else return;
@@ -3231,6 +3235,9 @@ const arrowPan = (e: KeyboardEvent): void => {
   requestDraw();
 };
 window.addEventListener('keydown', arrowPan);
+window.addEventListener('keyup', (e) => { cameraMotion.release(e.code, e.shiftKey); });
+// A key let go elsewhere never comes up here: nothing stays held.
+window.addEventListener('blur', () => cameraMotion.releaseAll());
 
 // ------------------------------------------------------------- run loop
 /** The frame asked for, and the time between frames (`frameLoop.ts`). */
@@ -3326,6 +3333,9 @@ function frame(now: number): void {
   if (doc.natureRevision !== mapBiomeShown) syncMapBiome();
   frameTimer.mark('painéis');
   const wall = frameClock.tick(now);
+  // The camera's glide: keys held, the wheel's notches being spent.
+  if (cameraMotion.step(wall)) persistence.saveSettingsSoon(sessionSettings);
+  frameTimer.mark('câmera');
 
   // The opening puts the town together in parts (`SceneHandle.worldBusy`):
   // the traffic waits for the roads it drives on to be drawn.
@@ -3418,7 +3428,7 @@ function frame(now: number): void {
   healthWatch.frameEnded(timed.start, timed.end);
 
   // Keep animating while anything is moving; otherwise settle.
-  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || scene.busy())) requestDraw();
+  if (!document.hidden && (!game.paused || roadTool.draft || mover.dragging || cameraHand.active || cameraMotion.moving || scene.busy())) requestDraw();
   // Only the clouds moving (they drift, form and fade): a slower frame.
   else if (!document.hidden && scene.drifting()) frameClock.drift();
 }
