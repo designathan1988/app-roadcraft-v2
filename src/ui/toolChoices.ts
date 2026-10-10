@@ -131,21 +131,8 @@ export function setElementBrush(change: Partial<ElementBrush>): void {
   elementBrushes = { ...elementBrushes, [elementKindNow]: { ...elementBrush(), ...change } };
   try { localStorage.setItem(ELEMENT_BRUSH_KEY, JSON.stringify(elementBrushes)); } catch { /* not kept */ }
 }
-/** The element sliders (index.html) made to show the chosen kind's settings. */
-export function syncElementInputs(): void {
-  const b = elementBrush();
-  const set = (id: string, v: number): void => {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (input) input.value = String(v);
-    const out = document.getElementById(`${id}Value`);
-    if (out) out.textContent = String(v);
-  };
-  set('elDensity', b.density); set('elSize', b.size); set('elVariation', b.variation);
-  set('elSpacing', b.spacing); set('elStrength', b.strength); set('elIntensity', b.intensity);
-}
 export function setElementKind(next: ElementKind): void {
   elementKindNow = next;
-  syncElementInputs();
 }
 
 /** The cloud tool (Paisagem > Terreno > Nuvens): what a click does. Not kept between sessions. */

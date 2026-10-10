@@ -21,6 +21,7 @@ export const PT_BR: Dictionary = {
   'zone.lot.join': 'Juntar lotes',
   'zone.lot.add': 'Novo lote',
   'zone.lot.delete': 'Apagar lotes e construções',
+  'zone.lot.delete.short': 'Apagar lotes',
   'zone.lot.front': 'Definir frente',
   'zone.lot.shape.rect': 'Retângulo (arrastar)',
   'zone.lot.shape.polygon': 'Polígono (ponto a ponto)',

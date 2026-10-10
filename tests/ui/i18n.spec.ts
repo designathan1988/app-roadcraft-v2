@@ -40,13 +40,15 @@ describe('markup', () => {
     const used = [...html.matchAll(/data-i18n(?:-title|-label|-html)?="([^"]+)"/g)].map(
       (m) => m[1] as string,
     );
-    expect(used.length).toBeGreaterThan(30);
+    // The page holds the canvas, the Builder's root, the road inspector and the
+    // About dialog; the interface is built by `ui/v2/shell.ts`.
+    expect(used.length).toBeGreaterThan(5);
     const unknown = [...new Set(used)].filter((key) => !(key in EN));
     expect(unknown).toEqual([]);
   });
 
   it('opens in English, so the shipped markup matches the reference dictionary', () => {
-    expect(html).toMatch(/<html lang="en">/);
+    expect(html).toMatch(/<html lang="en"[ >]/);
   });
 
   it('leaves no Portuguese text in the shipped markup', () => {

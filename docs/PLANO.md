@@ -381,7 +381,15 @@ quadra e isoladas, com as fotos conferidas pelo jogador.
   desenho), e só culpar medidas síncronas;
 - interface v2 lê e clica a interface antiga escondida a cada 250 ms
   (`ui/v2/shell.ts:1589`, botões em triplicata). Solução: a v2 lê o estado do
-  jogo (`gameState.watch`) e a interface antiga sai;
+  jogo (`gameState.watch`) e a interface antiga sai. **Feito (2026-10-10)**:
+  a shell lê `gameState` (chaves novas `canUndo`, `canRedo`, `sky`,
+  `inspectorOpen`), recebe os números da cidade e as dicas por evento
+  (`onStatus`, `onHint`) e chama os comandos do `main.ts` (`ShellDeps`,
+  controles deslizantes num registro `SLIDERS`); o index.html ficou com o
+  canvas, a raiz do Builder, o inspetor de vias e o Sobre; saíram o minimapa
+  escondido (desenhado 10×/s), a barra de status, o `?ui=v1` e as barras
+  escondidas do Builder. DOM de 980 para 257 nós; mutações do DOM com o jogo
+  parado de 2/s para 0. Falta a conferência do jogador;
 - o servidor de desenvolvimento recarrega o `main.ts` quando outra sessão
   edita, o que zera o desfazer e o relógio: jogue na build
   (`roadcraft-play`).

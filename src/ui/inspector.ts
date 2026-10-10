@@ -165,6 +165,20 @@ function renderCurrent(): void {
   panel.setAttribute('aria-hidden', 'false');
   panel.classList.remove('hidden');
   document.getElementById('app')?.classList.add('inspector-open');
+  tellOpen(true);
+}
+
+/** Whether the panel is open, told to whoever shows it (`main.ts` writes it in the game's state). */
+const openListeners: ((open: boolean) => void)[] = [];
+let openNow = false;
+function tellOpen(open: boolean): void {
+  if (open === openNow) return;
+  openNow = open;
+  for (const listen of openListeners) listen(open);
+}
+/** Called whenever the panel opens or closes, by a command or by itself (what it showed is gone). */
+export function onInspectorChange(listen: (open: boolean) => void): void {
+  openListeners.push(listen);
 }
 
 export function closeInspector(): void {
@@ -177,6 +191,7 @@ export function closeInspector(): void {
     panel.setAttribute('aria-hidden', 'true');
   }
   document.getElementById('app')?.classList.remove('inspector-open');
+  tellOpen(false);
 }
 
 /**

@@ -195,7 +195,7 @@ for (let i = 0; i < ROADS; i++) {
   const [[x0, y0], [x1, y1]] = TOWN
     ? [[300 + (i % 4) * 180, 200 + (i >> 2) * 220], [420 + (i % 4) * 180, 260 + (i >> 2) * 220]]
     : i % 2 ? [[180 + k * 220, 90], [180 + k * 220, 640]] : [[100, 120 + k * 160], [1180, 120 + k * 160]];
-  await page.evaluate(() => document.querySelector('.tool[data-tool="road"]')?.click());
+  await page.evaluate(() => document.querySelector('.v2-cat[data-cat="roads"]')?.click());
   await page.waitForTimeout(150);
   await page.mouse.move(x0, y0, { steps: 3 }); await page.mouse.down(); await page.mouse.up();
   await page.mouse.move(x1, y1, { steps: 25 }); await page.mouse.down(); await page.mouse.up();

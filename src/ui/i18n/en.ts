@@ -24,6 +24,7 @@ export const EN: Dictionary = {
   'zone.lot.join': 'Join lots',
   'zone.lot.add': 'New lot',
   'zone.lot.delete': 'Delete lots and buildings',
+  'zone.lot.delete.short': 'Delete lots',
   'zone.lot.front': 'Set front',
   'zone.lot.shape.rect': 'Rectangle (drag)',
   'zone.lot.shape.polygon': 'Polygon (point by point)',

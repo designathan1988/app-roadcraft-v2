@@ -56,7 +56,9 @@ const report = (name, stats, extra = {}) => {
 await page.goto(base, { waitUntil: 'domcontentloaded' });
 await opened();
 await page.waitForTimeout(1500);
-const pick = (tool) => page.evaluate((t) => document.querySelector(`.tool[data-tool="${t}"]`)?.click(), tool);
+// A tool taken from the interface's dock (`ui/v2/shell.ts`), as the player does.
+const DOCK = { road: 'roads', zone: 'zones', building: 'build', terrain: 'landscape', transit: 'transit', bulldoze: 'demolish', inspect: 'info' };
+const pick = (tool) => page.evaluate((c) => document.querySelector(`.v2-cat[data-cat="${c}"]`)?.click(), DOCK[tool] ?? tool);
 
 if (only.has('empty')) {
   await pick('road');
