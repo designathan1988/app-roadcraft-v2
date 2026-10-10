@@ -1482,7 +1482,7 @@ export function mountShell(deps: ShellDeps): void {
     const wantPictures: string[] = [];
     for (const s of sections) {
       for (const x of s.tools ?? []) wantPictures.push(x.id);
-      if (s.shelf === 'models') wantPictures.push(...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((b) => b.key), ...state.userBlueprints.map((b) => b.key));
+      if (s.shelf === 'models') wantPictures.push(...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((b) => b.key), ...state.userBlueprints.map((b) => b.key), ...LOT_NAMES.map(lotKey));
       if (s.shelf === 'patterns') wantPictures.push(...FACADE_PATTERNS);
     }
     ask(wantPictures);

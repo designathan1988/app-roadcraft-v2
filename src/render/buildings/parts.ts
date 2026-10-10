@@ -12,10 +12,12 @@ import {
   type BayComponent,
 } from '@world/buildings/types';
 import { ELEMENT_DEFAULTS, elementAt } from '@world/buildings/elements';
-import { BLUEPRINTS, blueprintByKey, instantiate } from '@world/buildings/blueprints';
+import { BLUEPRINTS, type BlueprintBody, blueprintByKey, instantiate } from '@world/buildings/blueprints';
 import { cityBuilding } from '@world/buildings/cityBuildings';
 import { buildingBounds, buildingHeight } from '@world/buildings/geometry';
-import { buildBuildingMeshes } from './buildingMesh';
+import { buildBuildingMeshes, emitChunk } from './buildingMesh';
+import { buildSignature, disposeSignature, drawsSignature } from './signature';
+import { loadLot, loadedLot } from '@world/buildings/lotLibrary';
 import { type BuildingKit, createBuildingKit } from './kit';
 import { forgetOtherDerived, readDerivedAll, writeDerived } from '../derivedCache';
 
@@ -74,6 +76,11 @@ function blank(): Building | null {
  * standing on it.
  */
 export function partSample(id: string): Building | null {
+  // A lot of the lot lab, once read (`ThumbnailStudio.request` reads it first).
+  if (id.startsWith('lot:')) {
+    const lot = loadedLot(id.slice(4));
+    return lot ? ({ ...instantiate(lot.body as BlueprintBody, { x: 0, y: 0 }, Math.PI / 4), id: -1 } as Building) : null;
+  }
   if (id.startsWith('city:')) {
     const model = cityBuilding(id.slice(5));
     return model ? ({ ...instantiate(model.body, { x: 0, y: 0 }, Math.PI / 4), id: -1 } as Building) : null;
@@ -215,6 +222,11 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
         return;
       }
       scene.add(meshes.group);
+      // A signature building's body is drawn with its own parts, as in the
+      // town (`layer.ts`); the shared kit drew only its lot.
+      const floor = drawsSignature(sample) ? emitChunk(sample, () => 0).signatureFloor : undefined;
+      const signature = floor !== undefined ? buildSignature(sample, floor) : null;
+      if (signature) meshes.group.add(signature);
       const box = buildingBounds(sample);
       const height = Math.max(buildingHeight(sample), 3);
       // An element on its own stands on nothing: it is framed round itself,
@@ -261,6 +273,7 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
         onBatch(new Map([[id, URL.createObjectURL(blob)]]));
       }, 'image/png');
       scene.remove(meshes.group);
+      if (signature) { meshes.group.remove(signature); disposeSignature(signature); }
       meshes.dispose();
     } catch {
       // A part that will not build keeps its glyph: the gallery still works.
@@ -316,8 +329,9 @@ export function createThumbnailStudio(gl: WebGLRenderer): ThumbnailStudio {
       for (const id of fresh) queued.add(id);
       if (!fresh.length) return;
       // The pictures kept from earlier sessions go up at once, with no GPU;
-      // only the others are taken.
-      void keptPictures().then((pictures) => {
+      // only the others are taken. A lot is read before its picture.
+      const lots = fresh.filter((id) => id.startsWith('lot:')).map((id) => loadLot(id.slice(4)));
+      void Promise.all(lots).then(() => keptPictures()).then((pictures) => {
         const ready = new Map<string, string>();
         for (const id of fresh) {
           const blob = pictures.get(id);

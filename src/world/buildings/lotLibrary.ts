@@ -20,9 +20,21 @@ export const LOT_NAMES: readonly string[] = Object.keys(loaders).map(nameOf).sor
 /** The key a lot goes by in the builder's models. */
 export const lotKey = (name: string): string => `lot:${name}`;
 
+/** The lots read so far, by name (`loadedLot`). */
+const loaded = new Map<string, LotTemplate>();
+
 /** Reads one lot, or null when there is none of that name. */
 export async function loadLot(name: string): Promise<LotTemplate | null> {
+  const known = loaded.get(name);
+  if (known) return known;
   const path = Object.keys(loaders).find((p) => nameOf(p) === name);
   const load = path ? loaders[path] : undefined;
-  return load ? await load() : null;
+  if (!load) return null;
+  const lot = await load();
+  loaded.set(name, lot);
+  return lot;
 }
+
+/** A lot already read (`loadLot`), or null: for what must answer at once (a picture of it). */
+export const loadedLot = (name: string): LotTemplate | null => loaded.get(name) ?? null;
+

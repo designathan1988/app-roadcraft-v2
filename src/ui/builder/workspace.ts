@@ -664,11 +664,11 @@ export function initBuilderWorkspace(actions: BuilderActions): BuilderWorkspace 
     const ids: string[] = [];
     for (const section of tabSpec(tab).sections) {
       for (const tool of section.tools ?? []) ids.push(tool.id);
-      if (section.shelf === 'models') ids.push(...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((bp) => bp.key), ...state.userBlueprints.map((bp) => bp.key));
+      if (section.shelf === 'models') ids.push(...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((bp) => bp.key), ...state.userBlueprints.map((bp) => bp.key), ...LOT_NAMES.map(lotKey));
       if (section.shelf === 'patterns') ids.push(...FACADE_PATTERNS);
       if (section.shelf === 'finishes') ids.push(...FINISHES);
     }
-    const known = new Set<string>([...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((bp) => bp.key),
+    const known = new Set<string>([...CITY_BUILDINGS.map((c) => `city:${c.fn}`), ...BLUEPRINTS.map((bp) => bp.key), ...LOT_NAMES.map(lotKey),
       ...state.userBlueprints.map((bp) => bp.key), ...PICTURED]);
     const wanted = ids.filter((id) => known.has(id) && !thumbnails.has(id));
     if (wanted.length) actions.requestThumbnails(wanted);
