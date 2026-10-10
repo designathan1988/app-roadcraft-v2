@@ -1,4 +1,5 @@
 import { GRID_CELL } from '@world/grid';
+import { TILE_COUNT as PLANET_TILE_COUNT } from '@core/planetTiles';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
 import type { Archetype } from '@sim/vehicles/archetypes';
@@ -403,6 +404,12 @@ function gardenPlants(all: Iterable<Building>, groundAt: (x: number, y: number) 
   }
   return out;
 }
+
+/**
+ * The most ground the view may take in (the screen's half height, world
+ * units) with the trees still drawn: past it a tree is a pixel or two.
+ */
+const TREE_VIEW = 1000;
 
 export function createSceneRenderer(
   canvas: HTMLCanvasElement,
@@ -2148,6 +2155,9 @@ export function createSceneRenderer(
     readonly budget: number;
     room: number[] | null;
   }
+  /** One plate's tree density as last swept, and what it was swept for (`natureSweep`), by surface. */
+  interface NaturePlate { readonly key: string; readonly part: TerrainPart; readonly odds: Float32Array; readonly band: Uint8Array; readonly di: number; readonly dj: number; readonly sum: number }
+  const naturePlates = new WeakMap<object, NaturePlate>();
   const natureSweep = (key: string): NatureSweep => {
     const trees: Candidate[] = [];
     if (quality.vegetation <= 0 || !terrain.parts.some((p) => p.surface.ecology())) return { key, trees, budget: 0, room: null };
@@ -2164,14 +2174,29 @@ export function createSceneRenderer(
     // its own coordinates; the lattice's cells numbered over the whole
     // world, so no two plates grow the same wood.
     const cells = Math.floor((TERRAIN_HALF * 2) / NATURE_SPACING);
-    const plates: { part: TerrainPart; odds: Float32Array; band: Uint8Array; di: number; dj: number }[] = [];
+    const plates: NaturePlate[] = [];
     let treeSum = 0;
     const d = m(6);
+    // What a plate's density reads besides its own ecology: the land's
+    // revision and the vegetation setting (the key less the ecology summed
+    // over every plate).
+    const rest = key.slice(key.indexOf(':'));
     for (const part of terrain.parts) {
       const field = part.surface.ecology();
       if (!field) continue;
-      const odds = new Float32Array(cells * cells);
-      const band = new Uint8Array(cells * cells);
+      // Kept from the last sweep while its own ecology and the land are as
+      // they were: on the planet every piece brought in full or let go swept
+      // all the others again (half a second over a camera's turn).
+      const plateKey = `${part.surface.ecologyRevision}${rest}`;
+      const known = naturePlates.get(part.surface);
+      if (known && known.key === plateKey) {
+        plates.push(known);
+        treeSum += known.sum;
+        continue;
+      }
+      const odds = known?.odds ?? new Float32Array(cells * cells);
+      const band = known?.band ?? new Uint8Array(cells * cells);
+      let plateSum = 0;
       const di = Math.round(part.cx / NATURE_SPACING), dj = Math.round(part.cy / NATURE_SPACING);
       // The land's own slope, before the roads cut and fill it: a wood
       // holds a hillside, not the bank of a street (and a street drawn no
@@ -2197,13 +2222,21 @@ export function createSceneRenderer(
           else if (density > 0.5) { odds[o] = 0.25 + (density - 0.5) / 0.12 * 0.6; band[o] = 2; }
           else if (density > 0.38) { odds[o] = 0.025; band[o] = 1; }
           else { odds[o] = 0.003; band[o] = 1; }
-          treeSum += odds[o]!;
+          plateSum += odds[o]!;
         }
       }
-      plates.push({ part, odds, band, di, dj });
+      const plate: NaturePlate = { key: plateKey, part, odds, band, di, dj, sum: plateSum };
+      naturePlates.set(part.surface, plate);
+      plates.push(plate);
+      treeSum += plateSum;
     }
     const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
-    const treeScale = Math.min(1, budget / Math.max(1, treeSum));
+    // On the planet only the pieces kept in full are swept (`planet/terrainAtlas.ts`):
+    // the budget is shared as if every piece were, so the woods are as thick
+    // whichever and however many are in full (a sum over the few made them
+    // denser the closer the view, trees popping in and out with the zoom).
+    const plannedSum = __PLANET__ ? (treeSum / Math.max(1, plates.length)) * PLANET_TILE_COUNT : treeSum;
+    const treeScale = Math.min(1, budget / Math.max(1, plannedSum));
     for (const { part, odds, band, di, dj } of plates) {
       for (let j = 0; j < cells; j++) {
         for (let i = 0; i < cells; i++) {
@@ -2913,6 +2946,17 @@ export function createSceneRenderer(
           }
         }
       }
+      // No tree drawn once the view takes in so much ground that one is a dot
+      // of a pixel or two: on the planet, seen from the sky, the woods were a
+      // scatter of dark specks over the land (the player, 2026-10-10). The
+      // screen's half height in world units, as the relief's window reads it.
+      if (__PLANET__) {
+        const across = renderer.domElement.clientHeight / Math.max(1e-3, 2 * rig.viewport.zoom);
+        const treesShown = across < TREE_VIEW;
+        for (const forest of [natureForest, paintedForest, plantedForest]) {
+          if (forest) for (const mesh of forest.meshes) if (mesh.visible !== treesShown) mesh.visible = treesShown;
+        }
+      }
       // Near trees in full, far ones light, by their distance to the camera.
       if (natureForest) {
         const eye = rig.camera.position;
@@ -3395,6 +3439,8 @@ export function createSceneRenderer(
           gulliesFor = net.doc.gullyRevision;
           terrain.setGullies(net.doc.gullyDabs, net.doc.gullyAuto);
         }
+        // The planet keeps in full only the pieces near what the view takes in (`planet/terrainAtlas.ts`).
+        terrain.focus?.(centre.x, centre.y, halfHeight);
         terrain.bakeRelief(renderer, close ? reliefFocus : null);
       }
       {

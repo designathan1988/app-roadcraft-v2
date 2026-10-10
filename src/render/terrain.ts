@@ -24,9 +24,11 @@ import {
   Vector3,
   Vector4,
   type Material,
+  type Object3D,
   type Texture,
   type WebGLRenderer,
 } from 'three';
+import { TILE_COUNT as PLANET_TILE_COUNT } from '@core/planetTiles';
 
 import type { RoadDoc } from '@world/doc';
 import { BIOME_KINDS, COVER_KINDS, PAINT_KINDS, isBiomeKind, isGeologyKind, type CoverKind, type GeologyKind, type PaintDab } from '@world/terrainPaint';
@@ -66,7 +68,7 @@ const TERRAIN_SIZE = MAP_SIZE;
  * The planet's faces are wider (6 km): 375 keeps the same cell.
  */
 const TERRAIN_SEGMENTS = __PLANET__ ? Math.round(MAP_SIZE / 16) : 300;
-const TERRAIN_BASE = -0.12;
+export const TERRAIN_BASE = -0.12;
 
 /** Radius of a river's water disc, as a fraction of the stamp that carved it. */
 const WATER_RADIUS = 0.92;
@@ -183,6 +185,14 @@ export const GRASS_FIELD: { value: [number, number, number, number] } = { value:
  */
 export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0, 2400] };
 /**
+ * The planet's pieces drawn in full (`planet/terrainAtlas.ts`), one bit a
+ * piece, 24 to a float (exact in a float's mantissa): the far globe's ground
+ * draws the others only. A uniform array, not a texture: the terrain's
+ * fragment shader already holds the 16 texture units WebGL guarantees.
+ */
+export const PLANET_ACTIVE_WORDS = Math.ceil(PLANET_TILE_COUNT / 24);
+export const PLANET_ACTIVE_TILES: { value: Float32Array } = { value: new Float32Array(PLANET_ACTIVE_WORDS) };
+/**
  * How far into the dry season the land is, 0 (the rains: everything green)
  * to 1 (the height of the drought: the savanna's grass straw-gold). Shared
  * by the ground and the grass; the seasons set it.
@@ -199,7 +209,7 @@ export type TerrainSource = Pick<RoadDoc, 'changes' | 'terrainRevision' | 'terra
 };
 
 export interface TerrainSurface {
-  readonly meshes: readonly Mesh[];
+  readonly meshes: readonly Object3D[];
   readonly ground: Mesh;
   /**
    * Where the sun is (a direction towards it, three's axes): the relief's
@@ -335,6 +345,12 @@ export interface TerrainSurface {
    * instead of every corner of every plate (`SceneHandle.landTop`).
    */
   highest?(): number;
+  /**
+   * Where the view looks (atlas x, y) and how much ground it takes in (the
+   * screen's half height, world units): the planet's atlas keeps in full the
+   * pieces near it (`planet/terrainAtlas.ts`). Nothing on the flat map.
+   */
+  focus?(x: number, y: number, reach: number): void;
   dispose(): void;
 }
 
@@ -1199,6 +1215,9 @@ function terrainMaterial(
     // The planet's piece this plate is (-1: none): it draws only its own part
     // of the sphere (\`planet/bend.ts\` planetOwns).
     uPlanetTile: { value: -1 },
+    // The planet's pieces drawn in full this frame (`PLANET_ACTIVE_TILES`):
+    // the far globe's ground (`uPlanetTile` -2) is not drawn over them.
+    ...(__PLANET__ ? { uPlanetActive: PLANET_ACTIVE_TILES } : {}),
   };
   material.userData['terrainUniforms'] = uniforms;
 
@@ -1240,14 +1259,22 @@ function terrainMaterial(
           ? `#include <clipping_planes_fragment>
              // Each piece's ground draws its own part of the sphere, with half a
              // grid cell over its border so no hairline opens between two.
-             if (uPlanetTile >= 0.0 && !planetOwnsDirection(normalize(vTerrainDir), uPlanetTile, ${(TERRAIN_CELL / 2).toFixed(1)})) discard;`
+             if (uPlanetTile >= 0.0 && !planetOwnsDirection(normalize(vTerrainDir), uPlanetTile, ${(TERRAIN_CELL / 2).toFixed(1)})) discard;
+             // The far globe's ground (\`planet/globeGround.ts\`): not over a piece drawn in full.
+             if (uPlanetTile < -1.5) {
+               vec2 globeLocal;
+               int globeTile = planetTile(vTerrainAtlas, globeLocal);
+               int globeWord = globeTile / 24;
+               float globeBits = uPlanetActive[globeWord];
+               if (mod(floor(globeBits / exp2(float(globeTile - globeWord * 24))), 2.0) > 0.5) discard;
+             }`
           : '#include <clipping_planes_fragment>',
       )
       .replace(
         '#include <common>',
         `#include <common>
          uniform float uPlanetTile;
-         ${__PLANET__ ? 'varying vec3 vTerrainDir;' : ''}
+         ${__PLANET__ ? `varying vec3 vTerrainDir; uniform float uPlanetActive[${PLANET_ACTIVE_WORDS}];` : ''}
          ${PLANET_BIOME_NOISE}
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
