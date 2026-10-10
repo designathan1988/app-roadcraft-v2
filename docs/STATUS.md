@@ -100,6 +100,12 @@ o jogo a cada edição.
   talude de grama até o chão.
 - Estacionamento paralelo ao meio-fio, por trecho e lado
   (`world/parking.ts`), e ciclofaixas.
+- Ponta de rua: saída do mapa por padrão, ou balão de retorno, escolhido no
+  inspetor (V8, 2026-10-10, `world/junction/bulb.ts`): carros e utilitários
+  dão a volta, ônibus e caminhão não entram; a calçada contorna o balão.
+- Retorno no canteiro central, um sentido por abertura, só onde o carro gira
+  de verdade (V8, `editor/streetObjects.ts` `commitUturn`); o bulevar padrão
+  recusa por canteiro estreito (falta o "loon"). Detalhes em `docs/VIAS.md`.
 - Nada é gerado sozinho nas ruas nem no terreno (ordem do jogador de
   2026-10-05). Mobiliário, árvores de rua e postes só pela ferramenta de
   paisagismo e pela de postes, que ficam só nas calçadas. **Revogada para
@@ -345,7 +351,9 @@ o jogo a cada edição.
     enfeite. Antes, 2 949 numa cidade gerada (lixeira nas pedras, floreira no
     pilar do portão, telhado do depósito na copa, banco no banco); agora 0
     (`tests/world/lotClash.spec.ts`), 4% de peças a menos, crescimento da
-    cidade no mesmo tempo (~4,3 s). Conferência visual pendente.
+    cidade no mesmo tempo (~4,3 s). Visto no jogo (servidor de
+    conferência com o HEAD, cidade gerada, 2026-10-10): peças do quintal
+    separadas.
 
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas
