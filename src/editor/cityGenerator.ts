@@ -56,9 +56,10 @@ export function widenCityFootways(doc: RoadDoc): void {
 /**
  * The generated city's green (V7): a square in each neighbourhood
  * (`world/cityGen/squares.ts`, its lots taken away, its ground painted, its
- * trees planted) and every street's furniture, the complete set: street
- * trees, avenue medians planted, lamps, bins, benches, hydrants. Returns how
- * many squares and pieces were laid.
+ * trees planted) and every street's furniture: lamps, bins, benches,
+ * hydrants - no street trees, on the footways or down the medians (the
+ * player, 2026-10-09: "não gere ruas com árvores"). Returns how many squares
+ * and pieces were laid.
  */
 export function greenCity(doc: RoadDoc, net: Network, seed: number): { squares: number; pieces: number } {
   const squares = planSquares(doc, seed);
@@ -70,7 +71,7 @@ export function greenCity(doc: RoadDoc, net: Network, seed: number): { squares: 
   if (net.revision !== doc.revision) net.rebuild();
   // The power lines first (their poles lit), the furniture round them.
   const power = layPowerLines(doc, net, doc.segments.keys()) > 0;
-  const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values(), power);
+  const pieces = furnitureFor(net, doc.segments.keys(), 'complete', doc.landscape.values(), power, false);
   for (const piece of pieces) doc.addLandscape(piece.kind, piece.at);
   // Every street named (V8).
   for (const name of nameFor(net, doc.segments.keys())) doc.addLandscape('streetname', name.at, { text: name.text });

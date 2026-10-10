@@ -74,7 +74,9 @@ export interface FurniturePlacement {
  */
 export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: FurnitureSet, existing: Iterable<LandscapeItem>,
   /** The left side carries a power line whose poles hold the street lights (`editor/roads/powerLine.ts`): no lamp columns there. */
-  powerLeft = false): FurniturePlacement[] {
+  powerLeft = false,
+  /** Street trees, on the footways and down a planted median; the rest of the set without them when false. */
+  trees = true): FurniturePlacement[] {
   if (set === 'none') return [];
   const out: FurniturePlacement[] = [];
   // The items already standing, in cells: each street asks only those near it
@@ -107,7 +109,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
     const endS = line.length - net.mouthDistance(id, segment.b);
     // A planted median takes the street's trees (a boulevard's row down the
     // middle); the footways then keep theirs clear for the walkers.
-    const medianTrees = set === 'complete' && segment.direction === 'both' && plantedMedian(ribbon.road);
+    const medianTrees = trees && set === 'complete' && segment.direction === 'both' && plantedMedian(ribbon.road);
     if (medianTrees) {
       const shift = travelShift(ribbon.road);
       for (let s = startS + m(8); s <= endS - m(6); s += m(10)) {
@@ -130,7 +132,7 @@ export function furnitureFor(net: Network, segments: Iterable<SegmentId>, set: F
       for (const pattern of SETS[set]) {
         if (pattern.rightOnly && side !== 'right') continue;
         if (pattern.kind === 'lamp' && powerLeft && side === 'left') continue;
-        if (pattern.kind === 'tree' && medianTrees) continue;
+        if (pattern.kind === 'tree' && (medianTrees || !trees)) continue;
         // NBR 9050: the piece leaves a clear walk of 1,20 m beside it, or it is not put.
         if (footway - (furnitureEntry(pattern.kind)?.depth ?? BENCH_ZONE) < NBR9050_CLEAR_WALK - 1e-6) continue;
         for (let s = startS + pattern.first + (pattern.kind === 'lamp' ? stagger : 0); s <= endS - m(4); s += pattern.every) {

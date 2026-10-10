@@ -8,8 +8,8 @@ import { applyLots, insideLot, planLots, type Lot } from '@world/lots';
 import { Network } from '@world/network';
 
 /**
- * THE GENERATED CITY'S GREEN (docs/VIAS.md V7): street trees on every
- * footway and down the avenues' medians, one square per neighbourhood made
+ * THE GENERATED CITY'S GREEN (docs/VIAS.md V7): no street trees (the
+ * player, 2026-10-09), the streets' furniture, one square per neighbourhood made
  * of a whole block (no loose lawn inside a block), its trees inside it, and
  * all of it laid fast.
  */
@@ -37,11 +37,12 @@ describe('a generated city is planted', () => {
     const cells = new Map<string, number>();
     const removed = lotsBefore.filter((l) => !lotsAfter.some((k) => k.id === l.id));
     expect(removed.length).toBeGreaterThan(0);
-    // Street trees: on footways and in medians.
-    const trees = [...doc.landscape.values()].filter((i) => i.kind === 'tree');
-    expect(trees.length).toBeGreaterThan(100);
-    expect(trees.some((t) => medianAt(net, t) !== null)).toBe(true);
-    expect(trees.some((t) => footwayAt(net, t) !== null)).toBe(true);
+    // No street trees (the player, 2026-10-09): none on a footway or in a
+    // median, while the rest of the furniture is laid.
+    const items = [...doc.landscape.values()];
+    expect(items.filter((i) => i.kind === 'tree')).toEqual([]);
+    expect(items.some((i) => i.kind !== 'tree' && i.kind !== 'streetname' && (footwayAt(net, i) !== null || medianAt(net, i) !== null))).toBe(true);
+    expect(items.filter((i) => i.kind === 'bench').length).toBeGreaterThan(20);
     const squareTrees = doc.trees;
     for (const t of squareTrees) {
       const key = `${Math.floor(t.x / NEIGHBOURHOOD)},${Math.floor(t.y / NEIGHBOURHOOD)}`;
