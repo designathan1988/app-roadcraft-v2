@@ -13,24 +13,42 @@ import type { RoadPathPiece } from './roadPath';
  * it (`world/planet/charts.ts`). A road drawn is worked out where it was
  * drawn: on the chart of the piece the gesture started on, which the gesture
  * was read on (`Viewport.holdChart`) and whose map goes on past its piece.
- * The roads round the gesture are brought onto that chart in the working copy
- * (`enterFrame`: the same ground, other coordinates, no edit), the edit runs
- * there unchanged - crossings, splits, joins, heights - and every point is
- * written back on its own piece's chart (`leaveFrame`), a node the edit did
- * not move getting its very coordinates back.
+ * EVERY point of the working copy is brought onto that chart (`enterFrame`:
+ * the same ground, other coordinates, no edit), the edit runs there with the
+ * flat map's own code - crossings, splits, joins, heights, rules, price - and
+ * every point is written back on its own piece's chart (`leaveFrame`), a node
+ * the edit did not move getting its very coordinates back.
+ *
+ * Every point, not only those near the gesture: the flat code measures any
+ * two points of the copy against each other (a road between two nodes, a
+ * junction's legs, the price of every road), and two points written on two
+ * different charts are ~30 km apart in the atlas when they are 500 m apart on
+ * the sphere. Bringing only the roads round the gesture left a road with one
+ * end brought and one not drawn straight across the atlas: a phantom tens of
+ * km long that the gesture crossed - a junction with nothing, a crossing
+ * refused as squeezed or overlapping, a price of hundreds of millions. It is
+ * the rule PostGIS states for the same reason: an operation on two
+ * geometries needs both in one spatial reference system, and geography's
+ * planar operations (`ST_Buffer`) project ALL their input onto one plane,
+ * work there and project back (https://postgis.net/docs/ST_Buffer.html).
+ * Far from the chart's centre its map stretches, but every rule and price is
+ * differential (`editRules.ts`, `economy.ts`): what the edit did not touch
+ * reads the same before and after it.
  *
  * On the flat map nothing here is called.
  */
 
-/** How far round the gesture the roads are brought onto its chart, world units: a road the edit can meet, and its other end. */
-const FRAME_REACH = 400;
-
-/** The longest piece of road laid in one segment on the planet: what is worked out on one chart stays near it. */
+/**
+ * The longest road left in one segment on the planet: a segment is drawn on
+ * the chart halfway along it (`world/geometry.ts` `segmentChart`), and a short
+ * one stays close to it. Applied to the roads an edit laid, once its crossings
+ * are made (`commit.ts` `cutLongRoads`).
+ */
 export const PLANET_MAX_PIECE = 200;
 
 export interface EditFrame {
   readonly chart: number;
-  /** The nodes brought onto the chart, and where they were written before. */
+  /** Every node of the copy, and where it was written before. */
   readonly kept: ReadonlyMap<NodeId, Vec2>;
   /** The terrain stamps as they were written. */
   readonly stamps: readonly TerrainStamp[];
@@ -43,42 +61,21 @@ export const gestureChart = (pieces: readonly RoadPathPiece[]): number =>
   chartAt(pieces[0]?.start.at.x ?? 0, pieces[0]?.start.at.y ?? 0);
 
 /**
- * Brings the roads round a gesture (its points on `chart`'s map) onto that
- * chart in the working copy `work`: every node within `FRAME_REACH` of the
- * gesture's bounds, and the other end of every road at one of them; and the
- * terrain stamps there.
+ * Brings every point of the working copy `work` onto `chart`: every node and
+ * every terrain stamp, so that no two points the edit measures against each
+ * other are written on different charts.
  */
-export function enterFrame(work: RoadDoc, chart: number, points: readonly Vec2[]): EditFrame {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-  }
-  minX -= FRAME_REACH; minY -= FRAME_REACH; maxX += FRAME_REACH; maxY += FRAME_REACH;
-  const near = new Set<NodeId>();
-  for (const node of work.nodes.values()) {
-    inChartInto(chart, node.x, node.y, q);
-    if (q.x >= minX && q.x <= maxX && q.y >= minY && q.y <= maxY) near.add(node.id);
-  }
-  for (const id of [...near]) {
-    for (const segId of work.requireNode(id).incident) {
-      const seg = work.requireSegment(segId);
-      near.add(seg.a);
-      near.add(seg.b);
-    }
-  }
+export function enterFrame(work: RoadDoc, chart: number): EditFrame {
   const kept = new Map<NodeId, Vec2>();
-  for (const id of near) {
-    const node = work.requireNode(id);
-    kept.set(id, { x: node.x, y: node.y });
+  for (const node of work.nodes.values()) {
+    kept.set(node.id, { x: node.x, y: node.y });
     inChartInto(chart, node.x, node.y, q);
-    work.recodeNode(id, { x: q.x, y: q.y });
+    work.recodeNode(node.id, { x: q.x, y: q.y });
   }
   const stamps = work.terrainStamps.map((s) => ({ ...s }));
   for (let i = 0; i < work.terrainStamps.length; i++) {
     const s = work.terrainStamps[i]!;
     inChartInto(chart, s.x, s.y, q);
-    if (q.x + s.radius < minX || q.x - s.radius > maxX || q.y + s.radius < minY || q.y - s.radius > maxY) continue;
     work.terrainStamps[i] = { ...s, x: q.x, y: q.y };
   }
   return { chart, kept, stamps };
@@ -86,12 +83,12 @@ export function enterFrame(work: RoadDoc, chart: number, points: readonly Vec2[]
 
 /**
  * Writes every point of the working copy back on its own piece's chart: a
- * node brought onto the chart and not moved by the edit gets its very
- * coordinates back (so the edit changes nothing it did not touch); one it
- * moved, and every new one, is written on the chart of the piece it now lies
- * on. The terrain stamps as they were.
+ * node the edit did not move gets its very coordinates back (so the edit
+ * changes nothing it did not touch); one it moved, and every new one, is
+ * written on the chart of the piece it now lies on. The terrain stamps as
+ * they were.
  */
-export function leaveFrame(work: RoadDoc, frame: EditFrame, before: RoadDoc): void {
+export function leaveFrame(work: RoadDoc, frame: EditFrame): void {
   for (const node of work.nodes.values()) {
     const was = frame.kept.get(node.id);
     if (was) {
@@ -100,7 +97,7 @@ export function leaveFrame(work: RoadDoc, frame: EditFrame, before: RoadDoc): vo
         work.recodeNode(node.id, was);
         continue;
       }
-    } else if (before.nodes.has(node.id)) continue;
+    }
     toOwnerInto(frame.chart, node.x, node.y, q);
     work.recodeNode(node.id, { x: q.x, y: q.y });
   }
@@ -119,40 +116,3 @@ export function groundOnChart(chart: number, ground: (x: number, y: number) => n
 
 /** A point of `chart`'s map written on its own piece's chart (a gesture's preview drawn). */
 export const ownPoint = (chart: number, p: Readonly<Vec2>): Vec2 => toOwnerInto(chart, p.x, p.y, { x: 0, y: 0 });
-
-const lerp = (a: Vec2, b: Vec2, t: number): Vec2 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-
-/**
- * The gesture with every piece longer than `max` cut into equal parts (a
- * quadratic's parts are quadratics, de Casteljau), each its own segment: on
- * the planet a segment is worked out on the chart halfway along it
- * (`world/geometry.ts` `segmentChart`), and a short one stays close to it.
- */
-export function splitLongPieces(pieces: readonly RoadPathPiece[], max: number,
-  controlOf: (piece: RoadPathPiece) => Vec2,
-  shapeOf: (a: Vec2, b: Vec2, c: Vec2) => RoadPathPiece['curve']): RoadPathPiece[] {
-  const out: RoadPathPiece[] = [];
-  for (const piece of pieces) {
-    const a = piece.start.at, b = piece.end.at;
-    const c = controlOf(piece);
-    const length = Math.hypot(c.x - a.x, c.y - a.y) + Math.hypot(b.x - c.x, b.y - c.y);
-    const parts = Math.ceil(length / max);
-    if (parts <= 1) { out.push(piece); continue; }
-    const at = (t: number): Vec2 => lerp(lerp(a, c, t), lerp(c, b, t), t);
-    for (let k = 0; k < parts; k++) {
-      const t0 = k / parts, t1 = (k + 1) / parts;
-      const p0 = at(t0), p1 = at(t1);
-      // The part's control: its start plus its length in parameter times the tangent there.
-      const d = { x: (1 - t0) * (c.x - a.x) + t0 * (b.x - c.x), y: (1 - t0) * (c.y - a.y) + t0 * (b.y - c.y) };
-      const pc = { x: p0.x + d.x * (t1 - t0), y: p0.y + d.y * (t1 - t0) };
-      const h0 = piece.start.heightOffset + (piece.end.heightOffset - piece.start.heightOffset) * t0;
-      const h1 = piece.start.heightOffset + (piece.end.heightOffset - piece.start.heightOffset) * t1;
-      out.push({
-        start: { at: p0, heightOffset: h0 },
-        end: { at: p1, heightOffset: h1 },
-        curve: piece.curve ? shapeOf(p0, p1, pc) : null,
-      });
-    }
-  }
-  return out;
-}

@@ -1,5 +1,5 @@
 import { FACE_HALF, faceToSphereInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
-import { TILES, TILES_PER_SIDE, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
+import { TILES, TILES_PER_SIDE, TILE_COUNT, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import type { Vec2 } from '@core/vec2';
 import { atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
 
@@ -181,19 +181,73 @@ export function onTerritory(chart: number, x: number, y: number): boolean {
   return onTile(chart, x - c.x, y - c.y);
 }
 
+/** How far past a piece's border its neighbours are looked for, world units. */
+const NEIGHBOUR_PROBE = 8;
+const neighbourLists = new Map<number, readonly number[]>();
+
 /**
- * The other charts whose pieces a set of points of `chart`'s map reaches
- * (the points' own pieces, `chart` left out), into `out`. Empty when every
- * point is on `chart`'s piece.
+ * The pieces round `chart`'s on the sphere: every one sharing a side or a
+ * corner with it (eight, or seven beside a corner of the cube), found just
+ * outside its border - its territory grown by `NEIGHBOUR_PROBE`, the corners
+ * pushed out diagonally into the pieces that touch them there.
  */
-export function chartsReached(chart: number, points: Iterable<readonly [number, number] | readonly number[]>, out: Set<number>): Set<number> {
+function neighbours(chart: number): readonly number[] {
+  const known = neighbourLists.get(chart);
+  if (known) return known;
+  const found = new Set<number>();
+  const c = tileCentre(chart);
+  for (const [x, y] of territory(chart, NEIGHBOUR_PROBE)) {
+    tileToSphereInto(chart, x - c.x, y - c.y, s3);
+    const t = tileOfDirection(s3);
+    if (t !== chart) found.add(t);
+  }
+  const list = [...found];
+  neighbourLists.set(chart, list);
+  return list;
+}
+
+const pieceBoxes = new Map<number, readonly [number, number, number, number]>();
+const onMap: FacePoint = { x: 0, y: 0 };
+
+/** The box round `other`'s piece on `chart`'s map (its territory carried there). */
+function pieceBox(chart: number, other: number): readonly [number, number, number, number] {
+  const key = chart * TILE_COUNT + other;
+  const known = pieceBoxes.get(key);
+  if (known) return known;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of territory(other)) {
+    chartToChartInto(other, chart, x, y, onMap);
+    minX = Math.min(minX, onMap.x); minY = Math.min(minY, onMap.y);
+    maxX = Math.max(maxX, onMap.x); maxY = Math.max(maxY, onMap.y);
+  }
+  const box = [minX, minY, maxX, maxY] as const;
+  pieceBoxes.set(key, box);
+  return box;
+}
+
+/**
+ * The other charts whose pieces may hold part of a box of `chart`'s map,
+ * into `out`: every neighbour of `chart`'s piece whose ground's box meets
+ * it. For a box smaller than a piece (a road's surface, a junction's plate),
+ * which can only reach the pieces round its own; a chart that gets one it
+ * does not reach cuts it away (`territory`), so more is never wrong.
+ *
+ * Not the pieces the box's corners - or a polygon's vertices - lie on: the
+ * pieces are curved quadrilaterals turned on `chart`'s map, and the corner of
+ * a neighbour can stand in the middle of a straight road's side with no
+ * vertex on it. That neighbour was never given the road and `chart` cut it
+ * away: a pinched gap in the asphalt where four pieces meet. It is why a
+ * grid with corner lookups requires cells aligned with the box and larger
+ * than it; with any other cells the box is tested against the cells round
+ * its own (the "loose grid" of N's broad phase,
+ * https://www.metanetsoftware.com/2016/n-tutorial-b-broad-phase-collision).
+ */
+export function chartsTouching(chart: number, minX: number, minY: number, maxX: number, maxY: number, out: Set<number>): Set<number> {
   out.clear();
   if (identity()) return out;
-  const c = tileCentre(chart);
-  for (const p of points) {
-    tileToSphereInto(chart, (p[0] as number) - c.x, (p[1] as number) - c.y, s3);
-    const t = tileOfDirection(s3);
-    if (t !== chart) out.add(t);
+  for (const other of neighbours(chart)) {
+    const [x0, y0, x1, y1] = pieceBox(chart, other);
+    if (x0 <= maxX && x1 >= minX && y0 <= maxY && y1 >= minY) out.add(other);
   }
   return out;
 }

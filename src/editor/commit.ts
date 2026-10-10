@@ -23,7 +23,7 @@ import { ROAD_TYPES } from '@world/roadTypes';
 import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
-import { PLANET_MAX_PIECE, enterFrame, gestureChart, groundOnChart, leaveFrame, splitLongPieces } from './planetFrame';
+import { PLANET_MAX_PIECE, enterFrame, gestureChart, groundOnChart, leaveFrame } from './planetFrame';
 import { onOneChart } from '@world/planet/charts';
 import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
 import { roadsBefore, settleRoadEdit } from './roads/economy';
@@ -288,10 +288,10 @@ function draftStations(
 let onPlanetChart = false;
 
 /**
- * `commitRoadPath` on the planet (`planetFrame.ts`): the gesture, its long
- * pieces cut to `PLANET_MAX_PIECE`, worked out on the chart it was drawn on
- * - a copy of the map with the roads round it brought onto that chart, the
- * edit made there by the very same code, every point then written back on
+ * `commitRoadPath` on the planet (`planetFrame.ts`): the gesture worked out on
+ * the chart it was drawn on - a copy of the map with every point brought onto
+ * that chart, the edit made there by the very same code, the roads it laid
+ * then cut to `PLANET_MAX_PIECE` (`cutLongRoads`), every point written back on
  * its own piece's chart. A dry run's stations are on that chart.
  */
 function commitOnChart(
@@ -299,32 +299,57 @@ function commitOnChart(
   lanes: number | null, parking: SegmentParking | undefined, ground: ((x: number, y: number) => number) | undefined,
   options: { readonly dryRun?: boolean; readonly groundSolve?: RoadElevation | null },
 ): DraftResult {
-  const split = splitLongPieces(pieces, PLANET_MAX_PIECE,
-    (p) => (p.curve ? controlPoint(p.start.at, p.end.at, p.curve) : { x: (p.start.at.x + p.end.at.x) / 2, y: (p.start.at.y + p.end.at.y) / 2 }),
-    shapeFromControl);
-  const chart = gestureChart(split);
-  const points = split.flatMap((p) => [p.start.at, p.end.at]);
+  const chart = gestureChart(pieces);
   const framed = doc.clone();
-  const frame = enterFrame(framed, chart, points);
+  const frame = enterFrame(framed, chart);
   const framedNet = new Network(framed);
+  const existing = new Set(framed.segments.keys());
   onPlanetChart = true;
   let result: DraftResult;
   try {
     result = onOneChart(() => {
       framedNet.rebuild();
-      return commitRoadPath(framed, framedNet, start, end, type, split, lanes, parking,
+      const laid = commitRoadPath(framed, framedNet, start, end, type, pieces, lanes, parking,
         ground && groundOnChart(chart, ground), { dryRun: options.dryRun === true, groundSolve: null });
+      if (laid.committed && !options.dryRun) cutLongRoads(framed, framedNet, existing, PLANET_MAX_PIECE);
+      return laid;
     });
   } finally {
     onPlanetChart = false;
   }
   if (!result.committed || options.dryRun) return result;
-  leaveFrame(framed, frame, doc);
+  leaveFrame(framed, frame);
   doc.replaceWith(framed);
   net.rebuild();
   // Its heights were solved on the chart: the game solves them again on the pieces.
   const { elevation: _solved, ...laid } = result;
   return laid;
+}
+
+/**
+ * Cuts every road an edit laid (a segment not in `existing`) that is longer
+ * than `max` into equal parts, as PostGIS `ST_Segmentize` limits a line's
+ * segments: "always split into equal-length subsegments", the vertices
+ * already there kept (https://postgis.net/docs/ST_Segmentize.html). Done once
+ * the edit has made its crossings, so a road between two junctions is cut
+ * between them and no cut lands beside a junction: every part is longer than
+ * `max / 2`. Cut before, on the gesture, a cut could fall a few metres from a
+ * road the gesture then crossed, and the crossing was refused as squeezed (a
+ * leg too short to part its lanes) or as a road laid on a road.
+ */
+function cutLongRoads(doc: RoadDoc, net: Network, existing: ReadonlySet<SegmentId>, max: number): void {
+  for (const id of [...doc.segments.keys()]) {
+    if (existing.has(id)) continue;
+    const pl = net.polylines.get(doc, id);
+    const parts = Math.ceil(pl.length / max);
+    if (parts <= 1) continue;
+    const cuts: TaggedCut<number>[] = [];
+    for (let k = 1; k < parts; k++) {
+      const s = (pl.length * k) / parts;
+      cuts.push({ at: pl.sampleAt(s).p, s, tag: k });
+    }
+    splitSegmentAtCuts(doc, net, id, cuts);
+  }
 }
 
 /**

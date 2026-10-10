@@ -28,6 +28,15 @@ owner in docs/STATUS.md before changing them.
   `main.ts`), not by a fixed interval.
 - **A missing hint key shows a blank hint bar, not an error.** `hintKey` derives
   the key from the tool.
+- **On the planet, two points written on different charts are ~30 km apart in
+  the atlas** when they are neighbours on the sphere. A road edit runs the flat
+  code on ONE chart with every point of its copy brought there
+  (`planetFrame.ts` `enterFrame`); bringing only the roads near the gesture drew
+  phantom roads across the atlas and refused crossings. Long roads are cut to
+  `PLANET_MAX_PIECE` after the edit's crossings (`commit.ts` `cutLongRoads`),
+  never on the gesture. Code that measures points against each other outside
+  that frame (the pole tool, `layPowerLines`, the furniture) is not ported yet.
+  Planet specs: `npx vitest run --config vitest.planet.config.ts`.
 
 ## How to add
 

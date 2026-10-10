@@ -22,7 +22,7 @@ import type { RoadElevation } from '@world/elevation';
 import { m } from '@world/units';
 import { medianNose } from '@world/landscape';
 import { PAINT_RISE, markingQuads, paintMaterial } from './markings';
-import { chartAt, chartToChartInto, chartsReached, onTerritory, territory } from '@world/planet/charts';
+import { chartAt, chartToChartInto, chartsTouching, onTerritory, territory } from '@world/planet/charts';
 import type { FacePoint } from '@core/cubeSphere';
 
 /** Scratch for a point carried to another chart of the planet. */
@@ -959,7 +959,7 @@ function spread(list: readonly Input[]): readonly Input[] {
     // A box on its piece holds a ring on it (a piece's ground is near enough convex on its map).
     if (onTerritory(own, input.minX, input.minY) && onTerritory(own, input.maxX, input.minY) &&
       onTerritory(own, input.minX, input.maxY) && onTerritory(own, input.maxX, input.maxY)) continue;
-    chartsReached(own, input.poly[0] as readonly (readonly number[])[], reached);
+    chartsTouching(own, input.minX, input.minY, input.maxX, input.maxY, reached);
     for (const chart of reached) {
       const there = inputOf(input.poly.map((ring) => ring.map((point) => {
         chartToChartInto(own, chart, point[0] as number, point[1] as number, carried);
