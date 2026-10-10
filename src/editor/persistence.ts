@@ -7,7 +7,7 @@ import { isNatureSettings } from '@world/ecology';
 import { readEconomy } from '@world/economy';
 import { isSerializedBuildings } from '@world/buildings/serialize';
 import { unitFactor } from '@world/rescale';
-import { METERS_PER_UNIT } from '@world/units';
+import { METERS_PER_UNIT, perM } from '@world/units';
 
 /**
  * Where the map is kept. The planet keeps its own: its points are written on
@@ -465,7 +465,7 @@ function cameraInUnit(settings: SavedSettings): SavedSettings['camera'] {
 }
 
 function defaultSettings(): SavedSettings {
-  return { camera: { x: 0, y: 0, zoom: 1 }, paused: false, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false, unit: METERS_PER_UNIT };
+  return { camera: { x: 0, y: 0, zoom: perM(2.5) }, paused: false, speed: 1, trafficIntensity: 1, pedestrianIntensity: 1, congestionOverlay: false, unit: METERS_PER_UNIT };
 }
 
 function isSavedSession(value: unknown): value is SavedSession {

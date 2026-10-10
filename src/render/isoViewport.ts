@@ -10,6 +10,7 @@ import {
 import type { Vec2 } from '@core/vec2';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { WORLD_HALF } from '@world/bounds';
+import { m, perM } from '@world/units';
 import { tileCellOf } from '@world/planet/atlas';
 import { setPointerChart } from '@world/planet/charts';
 import { anchorPlanet, inTileChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
@@ -18,13 +19,13 @@ import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewD
 
 /**
  * Close inspection of pedestrian faces, gaits and the people inside vehicles.
- * At 18 (a view 14 m tall) a person was about eighty pixels high; at 5 the view
- * is 4 m tall and a person fills about half of it; at 2 (the player asked to
- * come closer, 2026-10-02) the view is 1.6 m tall: a face and shoulders.
+ * A view 14 m tall showed a person about eighty pixels high; at 4 m a person
+ * fills about half of it; at 1.6 m (the player asked to come closer,
+ * 2026-10-02) the view is a face and shoulders.
  */
-export const MIN_HALF_HEIGHT = 2;
+export const MIN_HALF_HEIGHT = m(0.8);
 /** On the planet, out to the whole globe: half again its radius. */
-export const MAX_HALF_HEIGHT = __PLANET__ ? Math.round(PLANET_RADIUS * 1.5) : 1_600;
+export const MAX_HALF_HEIGHT = __PLANET__ ? Math.round(PLANET_RADIUS * 1.5) : m(640);
 
 /**
  * The zoom range the iso rig can represent at a given viewport height.
@@ -55,9 +56,9 @@ export const DEFAULT_ELEVATION = (48 * Math.PI) / 180;
 export const MIN_ELEVATION = (20 * Math.PI) / 180;
 export const MAX_ELEVATION = Math.PI / 2;
 /** How far from the middle of the map the view's centre may go, units. */
-const VIEW_REACH = WORLD_HALF + 200;
+const VIEW_REACH = WORLD_HALF + m(80);
 /** The orthographic camera's distance from the view's centre: past the farthest ground a zoomed-out low view takes in. */
-const DISTANCE = 5000;
+const DISTANCE = m(2000);
 /**
  * The perspective camera's vertical field of view far away, degrees: a long
  * lens, so a street keeps its proportions and the town still reads as a
@@ -119,7 +120,7 @@ export interface IsoRig {
 /** The pull in front of a building (`apply`): samples along the line of sight. */
 const PULL_SAMPLES = 24;
 /** How far over the ground under it the perspective camera keeps, units. */
-const GROUND_CLEARANCE = 4;
+const GROUND_CLEARANCE = m(1.6);
 
 /** A free camera: where the eye is, what it looks at, its field of view, and whose view it is. */
 export interface Chase {
@@ -129,15 +130,15 @@ export interface Chase {
   readonly focus: Vector3;
 }
 /** The zoom the play camera reports: the closest detail of everything. */
-const CHASE_ZOOM = 60;
+const CHASE_ZOOM = perM(150);
 
 export function createIsoRig(
   initial: Vec2,
   initialHalfHeight: number,
   orbit: { azimuth: number; elevation: number } = { azimuth: DEFAULT_AZIMUTH, elevation: DEFAULT_ELEVATION },
 ): IsoRig {
-  const ortho = new OrthographicCamera(-1, 1, 1, -1, 1, 14000);
-  const persp = new PerspectiveCamera(PERSPECTIVE_FOV, 1, 1, 20000);
+  const ortho = new OrthographicCamera(-1, 1, 1, -1, m(0.4), m(5600));
+  const persp = new PerspectiveCamera(PERSPECTIVE_FOV, 1, m(0.4), m(8000));
   let perspective = false;
   let camera: OrthographicCamera | PerspectiveCamera = ortho;
   const target = new Vector3(initial.x, 0, -initial.y);
@@ -179,8 +180,8 @@ export function createIsoRig(
       persp.fov = chase.fov;
       persp.aspect = aspect;
       // Close enough for a face at arm's length, far enough for the horizon.
-      persp.near = 0.25;
-      persp.far = 16000;
+      persp.near = m(0.1);
+      persp.far = m(6400);
       persp.up.set(0, 1, 0);
       persp.position.copy(chase.eye);
       target.copy(chase.focus);
@@ -216,7 +217,7 @@ export function createIsoRig(
       ortho.right = halfHeight * aspect;
       ortho.top = halfHeight;
       ortho.bottom = -halfHeight;
-      ortho.far = Math.max(14000, distance + PLANET_RADIUS * 2.6 * (__PLANET__ ? 1 : 0));
+      ortho.far = Math.max(m(5600), distance + PLANET_RADIUS * 2.6 * (__PLANET__ ? 1 : 0));
     } else {
       // As far back as makes the view `halfHeight` tall at the centre: the
       // same scale there as the orthographic view had, through a lens that
@@ -224,8 +225,8 @@ export function createIsoRig(
       persp.fov = fieldOfView(halfHeight);
       distance = viewDistance(halfHeight) + globe * PLANET_RADIUS * 2.4;
       persp.aspect = aspect;
-      persp.near = Math.max(0.2, distance * 0.02);
-      persp.far = distance * 4 + 6000 + (__PLANET__ ? PLANET_RADIUS * 2.6 : 0);
+      persp.near = Math.max(m(0.08), distance * 0.02);
+      persp.far = distance * 4 + m(2400) + (__PLANET__ ? PLANET_RADIUS * 2.6 : 0);
     }
 
     // In perspective the view looks at the ground itself, at its height
@@ -287,7 +288,7 @@ export function createIsoRig(
           }
           // Faded out with the distance (`pullWeight`): continuous in the zoom.
           camera.position.lerp(looked, free * pull);
-          persp.near = Math.max(0.2, camera.position.distanceTo(looked) * 0.02);
+          persp.near = Math.max(m(0.08), camera.position.distanceTo(looked) * 0.02);
         }
       }
     }
@@ -406,7 +407,7 @@ export function createIsoRig(
       if (!found) break;
       const was = chart(before), after = chart(found);
       const dx = was.x - after.x, dy = was.y - after.y;
-      if (Math.abs(dx) + Math.abs(dy) < 0.01) break;
+      if (Math.abs(dx) + Math.abs(dy) < m(0.004)) break;
       target.x += dx;
       target.z -= dy;
       apply();

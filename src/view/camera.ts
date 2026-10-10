@@ -1,9 +1,11 @@
 import { clamp } from '@core/scalar';
 import type { Vec2 } from '@core/vec2';
 import type { Aabb } from '@core/aabb';
+import { perM } from '@core/units';
 
-export const MIN_ZOOM = 0.18;
-export const MAX_ZOOM = 3.2;
+/** The flat camera's zoom range, CSS pixels a world unit (written in pixels a metre). */
+export const MIN_ZOOM = perM(0.45);
+export const MAX_ZOOM = perM(8);
 
 /**
  * The camera is applied as a canvas transform and nothing else.
@@ -22,8 +24,8 @@ export class Camera {
   /** World point at the centre of the viewport. */
   x = 0;
   y = 0;
-  /** CSS pixels per world unit. */
-  zoom = 1;
+  /** CSS pixels per world unit (2.5 px a metre at first). */
+  zoom = perM(2.5);
 
   /** Transform mapping world coordinates to device pixels. */
   matrix(dpr: number, cssW: number, cssH: number): DOMMatrix2DInit {
@@ -81,7 +83,7 @@ export class Camera {
     const h = Math.max(1, bounds.maxY - bounds.minY) * pad;
     this.x = (bounds.minX + bounds.maxX) / 2;
     this.y = (bounds.minY + bounds.maxY) / 2;
-    this.zoom = clamp(Math.min(cssW / w, cssH / h), MIN_ZOOM, 1.5);
+    this.zoom = clamp(Math.min(cssW / w, cssH / h), MIN_ZOOM, perM(3.75));
   }
 
   /** `n` CSS pixels expressed in world units, for hairlines and hit radii. */
