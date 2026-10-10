@@ -4,7 +4,7 @@ import type { NodeId, SegmentId } from '@world/ids';
 import type { RoadDoc } from '@world/doc';
 import type { Network } from '@world/network';
 import { carryPolyline, nodeChart, orientedPolyline } from '@world/geometry';
-import { chartToChartInto, inChartInto, pointerChartOf } from '@world/planet/charts';
+import { chartToChartInto, faceGridHeading, inChartInto, pointerChartOf } from '@world/planet/charts';
 import type { FacePoint } from '@core/cubeSphere';
 
 const chartToChart = (from: number, to: number, p: Vec2): Vec2 => chartToChartInto(from, to, p.x, p.y, { x: 0, y: 0 });
@@ -249,6 +249,7 @@ function snapHeading(
   landing?: number,
 ): { angle: number; guide: SnapResult['guide'] } {
   const candidates: { angle: number; guide: SnapResult['guide'] }[] = [];
+  let gridOnly = false;
 
   if (start.node !== undefined) {
     const node = doc.node(start.node);
@@ -278,19 +279,26 @@ function snapHeading(
       candidates.push({ angle: landing + (i * Math.PI) / 12, guide: 'angle' });
     }
   } else {
-    // World orthogonals plus 45s, which is the grid most street layouts follow.
-    for (let i = 0; i < 8; i++) {
-      candidates.push({ angle: (i * Math.PI) / 4, guide: 'orthogonal' });
-    }
-    // And every 15 degrees, as a coarser fallback.
-    for (let i = 0; i < 24; i++) {
-      candidates.push({ angle: (i * Math.PI) / 12, guide: 'angle' });
+    // The grid's orthogonals plus 45s, which is the grid most street layouts
+    // follow - on the planet the face grid's own lines where the road starts
+    // (`gridHeadings`), not the map's axes.
+    const grid = gridHeadings(start.at);
+    for (const angle of grid) candidates.push({ angle, guide: 'orthogonal' });
+    // And every 15 degrees from them, as a coarser fallback - but not while
+    // the grid is drawn (its cells, `setGridSnapStep`): a road then runs along
+    // its lines or its diagonals, the nearest of the eight, whatever the drag.
+    // A drag 20 degrees off a line took the 15 or 30 and crossed the cells
+    // askew, its ends alone on the grid (the player, 2026-10-10).
+    if (gridSnapStep > GRID_STEP) gridOnly = true;
+    else for (let i = 0; i < 24; i++) {
+      candidates.push({ angle: grid[0]! + (i * Math.PI) / 12, guide: 'angle' });
     }
   }
 
   let angle = heading;
   let guide: SnapResult['guide'] = null;
-  let bestDiff = CONE;
+  // With the grid drawn, one of its eight headings always (each covers 45 degrees).
+  let bestDiff = gridOnly ? Math.PI : CONE;
 
   for (const c of candidates) {
     const diff = Math.abs(normalizeAngle(c.angle - heading));
@@ -478,17 +486,30 @@ export function snapEndpoint(
 function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengthStep: number): Vec2 {
   const g = gridSnapStep, o = gridSnapOffset;
   const startOnGrid = onGrid(start, g, o);
-  const eighth = Math.round(angle / (Math.PI / 4));
-  if (startOnGrid && Math.abs(angle - eighth * (Math.PI / 4)) < 1e-9) {
-    const diagonal = eighth % 2 !== 0;
+  const grid = gridHeadings(start);
+  const k = grid.findIndex((h) => Math.abs(normalizeAngle(angle - h)) < 1e-9);
+  if (startOnGrid && k >= 0) {
+    const diagonal = k >= 4;
     const unit = diagonal ? g * Math.SQRT2 : g;
     // A length snap in whole cells on an axis is already on the grid.
     const step = !diagonal && lengthStep > 0 ? lengthStep : unit;
     const steps = Math.max(1, Math.round(length / step));
-    const d = fromAngle(eighth * (Math.PI / 4));
+    const d = fromAngle(grid[k]!);
     return snapToGrid(addScaled(start, d, steps * step), g, o);
   }
   return snapToGrid(at, g, o);
+}
+
+/**
+ * The grid's eight headings at a point: its two lines both ways, then the
+ * diagonals between them. The world's axes and 45s on the flat map; on the
+ * planet the face grid's lines through the point (`faceGridHeading`), which a
+ * piece's map turns.
+ */
+function gridHeadings(p: Vec2): number[] {
+  const e = faceGridHeading(p.x, p.y, 0), n = faceGridHeading(p.x, p.y, 1);
+  const d1 = e + normalizeAngle(n - e) / 2, d2 = n + normalizeAngle(e + Math.PI - n) / 2;
+  return [e, n, e + Math.PI, n + Math.PI, d1, d2, d1 + Math.PI, d2 + Math.PI];
 }
 
 /**

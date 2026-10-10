@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { FACE_HALF, PLANET_RADIUS, faceToSphereInto, type Vec3 } from '@core/cubeSphere';
 import { TILES_PER_SIDE, tileOfDirection } from '@core/planetTiles';
 import { GRID_CELL, onGrid, snapToGrid } from '@world/grid';
-import { atlasToSphereInto, sphereToChartInto } from '@world/planet/charts';
+import { atlasToSphereInto, faceGridHeading, sphereToChartInto } from '@world/planet/charts';
+import { faceOfDirection, sphereToFaceInto } from '@core/cubeSphere';
+import { RoadDoc } from '@world/doc';
+import { Network } from '@world/network';
+import { setGridSnapStep, snapRoadEndpoint } from '@editor/snap';
 
 /**
  * THE GRID ON THE PLANET (`world/grid.ts` snapToGrid, `world/planet/charts.ts`
@@ -52,6 +56,31 @@ describe('the grid on the planet', () => {
       }
     });
   }
+
+  it('lays a road drawn with the grid shown along its line, near a corner of the cube too', () => {
+    // Near a cube corner, dragged some 17 degrees off the grid's line (the player's road).
+    const d = faceToSphereInto(0, 2610, 2560, s());
+    const chart = tileOfDirection(d);
+    const start = snapToGrid(sphereToChartInto(chart, d, { x: 0, y: 0 }), GRID_CELL);
+    const east = faceGridHeading(start.x, start.y, 0);
+    const doc = new RoadDoc();
+    const net = new Network(doc);
+    net.rebuild();
+    setGridSnapStep(GRID_CELL);
+    const off = east + 0.3;
+    const raw = { x: start.x + Math.cos(off) * 230, y: start.y + Math.sin(off) * 230 };
+    const end = snapRoadEndpoint(doc, net, { kind: 'free', at: start }, raw, 1, 0).at;
+    const face = (p: { x: number; y: number }) => {
+      const q = atlasToSphereInto(p.x, p.y, s());
+      return sphereToFaceInto(faceOfDirection(q), q, { x: 0, y: 0 })!;
+    };
+    const a = face(start), b = face(end);
+    // On the grid line it started on, nine cells on.
+    expect(Math.abs(b.y - a.y)).toBeLessThan(1e-6);
+    // Some 9 cells on (cells shrink on the ground towards a cube corner).
+    expect(Math.round((b.x - a.x) / GRID_CELL)).toBeGreaterThanOrEqual(9);
+    expect(Math.round((b.x - a.x) / GRID_CELL)).toBeLessThanOrEqual(10);
+  });
 
   it('keeps its cells a cell across and its points on their chart', () => {
     const chart = 2 * TILES_PER_SIDE * TILES_PER_SIDE + 6 * TILES_PER_SIDE + 6;

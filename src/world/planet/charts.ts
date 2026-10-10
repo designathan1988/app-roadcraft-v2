@@ -104,6 +104,26 @@ export function towardsNorthInto(x: number, y: number, step: number, out: FacePo
   return sphereToChartInto(chart, s3, out);
 }
 
+const gridAt: FacePoint = { x: 0, y: 0 };
+/**
+ * The heading, on the chart an atlas point is written on, of the face grid's
+ * line through it (`snapToFaceGridInto`): along the face's x (`axis` 0) or
+ * its y (1). A piece's map is turned against its face's grid away from the
+ * face's middle (tens of degrees near a cube corner): a road snapped to the
+ * map's own axes ran across the grid drawn under it. 0 and pi/2 on the flat
+ * map.
+ */
+export function faceGridHeading(x: number, y: number, axis: 0 | 1): number {
+  if (identity()) return axis === 0 ? 0 : Math.PI / 2;
+  const chart = tileCellOf(x, y);
+  atlasToSphereInto(x, y, s3);
+  const face = faceOfDirection(s3);
+  sphereToFaceInto(face, s3, gridAt);
+  faceToSphereInto(face, gridAt.x + (axis === 0 ? 1 : 0), gridAt.y + (axis === 1 ? 1 : 0), s3);
+  sphereToChartInto(chart, s3, gridAt);
+  return Math.atan2(gridAt.y - y, gridAt.x - x);
+}
+
 /** A sphere direction on `chart`'s map, as atlas coordinates, into `out`. */
 export function sphereToChartInto(chart: number, d: Readonly<Vec3>, out: FacePoint): FacePoint {
   sphereToTileInto(chart, d, fp);
