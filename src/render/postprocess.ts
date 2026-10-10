@@ -6,8 +6,9 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { planetCentre, planetInverse, planetPointInto } from './planet/bend';
+import { AIR_GLSL, airUniforms } from './planet/air';
 import { m } from '@world/units';
-import { driftedCloud, type PlacedCloud } from '@world/clouds';
+import { drawnCloudHeight, driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
@@ -68,6 +69,12 @@ export interface PostChain {
    * (`SceneEnvironment.directShare`): all a cloud's shadow can take away.
    */
   setDirectShare(share: number): void;
+  /**
+   * On the planet, the air round it as drawn this frame (`planet/space.ts`
+   * `Space.air`): a cloud's shadow takes from the ground's light seen through
+   * it, never from the air's own.
+   */
+  setAir(air: Readonly<Record<string, { value: unknown }>>): void;
   /**
    * The sky the player set (`Atmosphere`), the light it is lit by, and
    * whether the map is seen as a model over the void (building it), when
@@ -141,6 +148,9 @@ export function createPostChain(
         /* no bloom without the chain */
       },
       setDirectShare() {
+        /* no cloud shadows without the chain */
+      },
+      setAir() {
         /* no cloud shadows without the chain */
       },
       setAtmosphere() {
@@ -390,7 +400,10 @@ export function createPostChain(
   /** How far out to space the view is (`setSpace`). */
   let space = 0;
   let directShare = CLOUD_SHADOW_STRENGTH;
-  const shadowStrength = (): number => directShare * Math.max(0, 1 - night * 1.5);
+  // On the planet the sun stands at another height at each place in view, and
+  // night is where it has set: both are taken per pixel there
+  // (CLOUD_SHADOWS), and this is the shadow under the zenith's sun.
+  const shadowStrength = (): number => (__PLANET__ ? CLOUD_SHADOW_STRENGTH : directShare * Math.max(0, 1 - night * 1.5));
 
   return {
     enabled: true,
@@ -443,6 +456,13 @@ export function createPostChain(
       bloom.strength = bloomStrength * Math.max(Math.min(1, dark), space);
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = shadowStrength();
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
+    },
+    setAir(air) {
+      if (!clouds) return;
+      for (const name of ['uAirCentre', 'uAirSun'] as const) {
+        ((clouds.uniforms[name] as { value: Vector3 }).value).copy(air[name]!.value as Vector3);
+      }
+      (clouds.uniforms['uAirStrength'] as { value: number }).value = air['uAirStrength']!.value as number;
     },
     setDirectShare(share) {
       if (Math.abs(share - directShare) < 0.005) return;
@@ -552,13 +572,14 @@ function layClouds(bounds: Vector4[], puffs: Vector4[], lives: number[], bases: 
     // depth goes with the concentration, so the whole cloud fades evenly).
     // Fed to `life` it eroded the shape instead, and a cloud near the edge
     // broke into loose white flecks, one lying over the land (2026-10-08).
-    // On the planet there is no edge to wrap round: the wind carries it on over the faces.
-    const at = __PLANET__ ? { x: cloud.x + drift.x, y: cloud.y + drift.y, show: 1 } : driftedCloud(cloud, drift);
-    layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, cloud.height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
+    // (On the planet there is no edge to wrap round: `driftedCloud`.)
+    const at = driftedCloud(cloud, drift);
+    const height = drawnCloudHeight(cloud.height);
+    layOne(slot, 1_000_003 + cloud.id * 7919, at.x, -at.y, height, cloud.size, cloud.yaw, cloud.density, 1, bounds, puffs, lives);
     shows[slot] = at.show;
     // Each its own flat base, at its own height (one height for the whole
     // sky cut away every cloud set lower than it, and its shadow with it).
-    bases[slot] = cloud.height;
+    bases[slot] = height;
     slot++;
   }
   return slot;
@@ -636,6 +657,7 @@ const CLOUD_SHADOWS = {
     uMapHalf: { value: WORLD_HALF },
     uPlanet: { value: new Vector4() },
     uPlanetInverse: { value: new Matrix4() },
+    ...(__PLANET__ ? airUniforms() : {}),
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
     // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera
@@ -679,6 +701,7 @@ const CLOUD_SHADOWS = {
   fragmentShader: /* glsl */ `
     #define MAX_CLOUDS ${MAX_CLOUDS}
     #define PUFFS ${CLOUD_PUFFS}
+    ${__PLANET__ ? AIR_GLSL : ''}
     uniform sampler2D tDiffuse;
     uniform sampler2D tDepth;
     uniform mat4 uProjectionInverse;
@@ -857,8 +880,26 @@ const CLOUD_SHADOWS = {
         // On the planet only ground turned to the sun has sunlight for a
         // cloud to take: on the night side its march still met clouds on the
         // far side of the globe, and laid their shadows where no sun falls.
-        float facing = uPlanet.w > 0.0 ? smoothstep(0.0, 0.15, dot(normalize(hit - uPlanet.xyz), uSunDir)) : 1.0;
-        colour *= 1.0 - uStrength * facing * (1.0 - exp(-through * 7.0));
+        // And of the light on lit ground a cloud takes the sun's direct part
+        // alone: the sky's own light (about a fifth of the sun's from the
+        // zenith on a clear day) still falls in its shadow. Low sun, little
+        // of the light is direct, and a shadow there is faint: per pixel, as
+        // the sun stands at each place of the globe (one strength for the
+        // whole view, read where it looks, laid the long shadows of an
+        // evening town as dark as a noon one).
+        float sunUp = uPlanet.w > 0.0 ? dot(normalize(hit - uPlanet.xyz), uSunDir) : 1.0;
+        float facing = uPlanet.w > 0.0 ? smoothstep(0.0, 0.15, sunUp) * 1.2 * max(sunUp, 0.0) / (max(sunUp, 0.0) + 0.2) : 1.0;
+        float shaded = 1.0 - uStrength * facing * (1.0 - exp(-through * 7.0));
+        ${__PLANET__ ? `
+        // Seen from above the planet the pixel is the air's own light plus the
+        // ground's through it (the shell drawn with ONE, SRC_ALPHA,
+        // planet/air.ts): the shadow takes from the ground's part only.
+        // Taken from the whole, the air in front of a shadow went dark with
+        // it and from space each was a black stain beside its cloud.
+        if (shaded < 1.0 && uAirStrength > 0.0) {
+          vec3 airOwn = airLight(ro, rd).rgb;
+          colour = airOwn + (colour - airOwn) * shaded;
+        } else colour *= shaded;` : 'colour *= shaded;'}
       }
       // The air between the eye and what the pixel sees: from the view's
       // equivalent eye (\`uEyeShift\`). Measured from the orthographic camera,

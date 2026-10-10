@@ -3195,6 +3195,7 @@ export function createSceneRenderer(
           centre: spaceCentre, motion: planetMotion(), pixelRatio: renderer.getPixelRatio() });
         environment.setSpace(space.spaceShare);
         post.setSpace(space.spaceShare);
+        post.setAir(space.air);
       }
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;

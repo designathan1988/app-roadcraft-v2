@@ -1,7 +1,7 @@
 import { profileOf } from '@world/roads/profile';
 import { planetLocalMinutes } from '@world/planet/sun';
 import { gestureChart, ownPoint } from './editor/planetFrame';
-import { chartAt } from '@world/planet/charts';
+import { chartAt, onChartOf, toOwner } from '@world/planet/charts';
 import { flipProfile, streetChain } from '@world/roads/streetChain';
 import { furnitureChosen } from '@ui/roads/furnitureChoice';
 import { isMarkingStyle } from '@world/roads/markingStyle';
@@ -43,7 +43,7 @@ import {
 } from '@editor/poles';
 import { blockGridChoice, onRoadGridChange, roadGridShown, signChoice, strikeChoice, zoneColoursShown, paintKind, poleLampMode, poleToolMode, roadWidth, streetscapeKind, fogErase, fogBrush, setFogBrush, gullyErase, treeMode, treeKind, treeBrush, setTreeBrush, cloudMode, cloudBrush, setCloudBrush, elementKind, elementMode, elementBrush, setElementBrush, syncElementInputs } from '@ui/toolChoices';
 import { TERRAIN_MIN_MS, TerrainBrush, type DabSettings } from '@editor/terrainBrush';
-import { scatterClouds } from '@world/clouds';
+import { scatterClouds, type PlacedCloud } from '@world/clouds';
 import { CloudTool } from '@editor/cloudTool';
 import { playThunder } from '@ui/thunder';
 import { MAP_SIZE } from '@world/bounds';
@@ -1203,15 +1203,31 @@ const cloudTool = new CloudTool({
   bind('cloudSize', () => cloudBrush().size, (v) => setCloudBrush({ size: v }));
   bind('cloudHeight', () => cloudBrush().height, (v) => setCloudBrush({ height: v }));
   bind('cloudDensity', () => cloudBrush().density, (v) => setCloudBrush({ density: v }));
+  /**
+   * Clouds spread about the view (`scatterClouds`, which lays them about the
+   * map's middle). On the planet the map's middle is one piece at the atlas's
+   * origin, wherever the player looks: they are laid about the place in the
+   * middle of the view instead, each kept on the chart of the piece it comes
+   * to lie over, and kept apart from the clouds already there, on its chart.
+   */
+  const scatterCloudsHere = (count: number, like: Parameters<typeof scatterClouds>[1], variation: number,
+    existing: readonly PlacedCloud[]): ReturnType<typeof scatterClouds> => {
+    if (!__PLANET__) return scatterClouds(count, like, variation, MAP_SIZE / 2, existing, Math.random);
+    const centre = view.toWorld(surface.cssW / 2, surface.cssH / 2, surface.cssW, surface.cssH);
+    const chart = chartAt(centre.x, centre.y);
+    const near = existing.map((c) => { const q = onChartOf(c, centre); return { ...c, x: q.x - centre.x, y: q.y - centre.y }; });
+    return scatterClouds(count, like, variation, MAP_SIZE / 2, near, Math.random)
+      .map((c) => ({ ...c, ...toOwner(chart, { x: centre.x + c.x, y: centre.y + c.y }) }));
+  };
   // Spread clouds over the sky: as many as asked, about the tool's size,
   // height and density, varied - each one then to move, set or take away.
   (document.getElementById('scatterClouds') as HTMLButtonElement | null)?.addEventListener('click', () => {
     const count = Number((document.getElementById('cloudCount') as HTMLInputElement | null)?.value ?? 8);
     const variation = Number((document.getElementById('cloudVariation') as HTMLInputElement | null)?.value ?? 40) / 100;
     const brush = cloudBrush();
-    const laid = scatterClouds(count, {
+    const laid = scatterCloudsHere(count, {
       size: brush.size * UNITS_PER_METER, height: brush.height * UNITS_PER_METER, density: brush.density / 100,
-    }, variation, MAP_SIZE / 2, doc.clouds, Math.random);
+    }, variation, doc.clouds);
     history.record(doc);
     const added = doc.addClouds(laid);
     if (added < count) flashHint('hint.cloud.full');

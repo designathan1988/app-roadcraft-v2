@@ -6,6 +6,8 @@ import {
   SphereGeometry, SrcAlphaFactor, Vector3, WebGLRenderTarget, type Camera, type Scene, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { AIR_GLSL, ATMOSPHERE_TOP, airUniforms } from './air';
+export { ATMOSPHERE_TOP } from './air';
 
 /**
  * THE SPACE ROUND THE PLANET: the stars and the Milky Way, the sun, the moon
@@ -35,17 +37,6 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
  *   threshold; from the ground the sky dome draws it.
  */
 
-/**
- * The top of the air over the sphere: 15 % of the radius. The Earth's is
- * 1.6 % and O'Neil draws 2.5 %; this planet is a few kilometres round and
- * its clouds float hundreds of metres up (`world/clouds.ts`, 450 units by
- * default), so a thinner shell left them hanging in black space past the
- * limb. The optical depth stays the Earth's (`AIR_SCALE`): only the glow
- * round the limb is wider.
- */
-export const ATMOSPHERE_TOP = PLANET_RADIUS * 1.15;
-/** Earth metres per world unit of the air: its 100 km over our shell's thickness. */
-const AIR_SCALE = 100e3 / (ATMOSPHERE_TOP - PLANET_RADIUS);
 /** The moon: radius and distance from the planet's centre. */
 const MOON_RADIUS = PLANET_RADIUS * 0.27;
 const MOON_DISTANCE = PLANET_RADIUS * 16;
@@ -72,74 +63,9 @@ const ATMOSPHERE_VERTEX = /* glsl */ `
 
 const ATMOSPHERE_FRAGMENT = /* glsl */ `
   varying vec3 vWorld;
-  uniform vec3 uCentre;
-  uniform vec3 uSun;
-  uniform float uPlanet;
-  uniform float uTop;
-  uniform vec3 uBetaR;
-  uniform float uBetaM;
-  uniform float uScaleR;
-  uniform float uScaleM;
-  uniform float uIntensity;
-  uniform float uStrength;
-  const float PI = 3.14159265;
-  const int I_STEPS = 12;
-  const int J_STEPS = 4;
-  const float G = 0.758;
-  // Near and far distances along a ray to a sphere at the origin (far < near: a miss).
-  vec2 rsi(vec3 r0, vec3 rd, float sr) {
-    float b = dot(rd, r0);
-    float c = dot(r0, r0) - sr * sr;
-    float d = b * b - c;
-    if (d < 0.0) return vec2(1e9, -1e9);
-    float s = sqrt(d);
-    return vec2(-b - s, -b + s);
-  }
+  ${AIR_GLSL}
   void main() {
-    vec3 ro = cameraPosition - uCentre;
-    vec3 rd = normalize(vWorld - cameraPosition);
-    vec2 air = rsi(ro, rd, uTop);
-    if (air.x > air.y || air.y < 0.0) discard;
-    vec2 ground = rsi(ro, rd, uPlanet);
-    float t0 = max(air.x, 0.0);
-    float t1 = air.y;
-    bool hitsGround = ground.x < ground.y && ground.x > 0.0;
-    if (hitsGround) t1 = min(t1, ground.x);
-    float ds = (t1 - t0) / float(I_STEPS);
-    float odR = 0.0, odM = 0.0;
-    vec3 sumR = vec3(0.0), sumM = vec3(0.0);
-    for (int i = 0; i < I_STEPS; i++) {
-      vec3 p = ro + rd * (t0 + ds * (float(i) + 0.5));
-      float h = length(p) - uPlanet;
-      float hr = exp(-h / uScaleR) * ds;
-      float hm = exp(-h / uScaleM) * ds;
-      odR += hr;
-      odM += hm;
-      // Towards the sun: none where the planet shades this point.
-      vec2 shade = rsi(p, uSun, uPlanet);
-      if (shade.x < shade.y && shade.x > 0.0) continue;
-      float lj = rsi(p, uSun, uTop).y / float(J_STEPS);
-      float jR = 0.0, jM = 0.0;
-      for (int j = 0; j < J_STEPS; j++) {
-        vec3 q = p + uSun * (lj * (float(j) + 0.5));
-        float hj = max(length(q) - uPlanet, 0.0);
-        jR += exp(-hj / uScaleR) * lj;
-        jM += exp(-hj / uScaleM) * lj;
-      }
-      vec3 tau = uBetaR * (odR + jR) + uBetaM * 1.1 * (odM + jM);
-      vec3 att = exp(-tau);
-      sumR += att * hr;
-      sumM += att * hm;
-    }
-    float mu = dot(rd, uSun);
-    float mu2 = mu * mu;
-    float pR = 3.0 / (16.0 * PI) * (1.0 + mu2);
-    float g2 = G * G;
-    float pM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu2)) / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * mu * G, 1.5));
-    vec3 light = uIntensity * (pR * uBetaR * sumR + pM * uBetaM * sumM);
-    vec3 through = exp(-(uBetaR * odR + uBetaM * 1.1 * odM));
-    float behind = hitsGround ? dot(through, vec3(0.3333)) : 1.0;
-    gl_FragColor = vec4(light * uStrength, mix(1.0, behind, uStrength));
+    gl_FragColor = airLight(cameraPosition, normalize(vWorld - cameraPosition));
   }
 `;
 
@@ -427,6 +353,8 @@ export interface Space {
   readonly spaceShare: number;
   /** Parts kept hidden by name (`space-stars`, `space-air`...): for the browser checks. */
   readonly hidden: Set<string>;
+  /** The air's uniforms as drawn this frame (`air.ts`): the clouds' shadows leave its light be. */
+  readonly air: Readonly<Record<string, { value: unknown }>>;
   dispose(): void;
 }
 
@@ -513,18 +441,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   moon.userData = skip;
 
   const airMaterial = new ShaderMaterial({
-    uniforms: {
-      uCentre: { value: new Vector3() },
-      uSun: { value: new Vector3() },
-      uPlanet: { value: PLANET_RADIUS },
-      uTop: { value: ATMOSPHERE_TOP },
-      uBetaR: { value: new Vector3(5.5e-6, 13.0e-6, 22.4e-6).multiplyScalar(AIR_SCALE) },
-      uBetaM: { value: 21e-6 * AIR_SCALE },
-      uScaleR: { value: 8e3 / AIR_SCALE },
-      uScaleM: { value: 1.2e3 / AIR_SCALE },
-      uIntensity: { value: 5 },
-      uStrength: { value: 0 },
-    },
+    uniforms: airUniforms(),
     vertexShader: ATMOSPHERE_VERTEX,
     fragmentShader: ATMOSPHERE_FRAGMENT,
     side: BackSide,
@@ -558,6 +475,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
 
   return {
     hidden,
+    air: airMaterial.uniforms,
     get spaceShare() {
       return spaceShare;
     },
@@ -597,9 +515,9 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       moon.visible = true;
       // The air round the planet, seen from above it.
       air.position.copy(centre);
-      (airMaterial.uniforms['uCentre']!.value as Vector3).copy(centre);
-      (airMaterial.uniforms['uSun']!.value as Vector3).copy(frame.sun);
-      airMaterial.uniforms['uStrength']!.value = spaceShare;
+      (airMaterial.uniforms['uAirCentre']!.value as Vector3).copy(centre);
+      (airMaterial.uniforms['uAirSun']!.value as Vector3).copy(frame.sun);
+      airMaterial.uniforms['uAirStrength']!.value = spaceShare;
       air.visible = spaceShare > 0.001;
       for (const object of [galaxy, stars, sun, moon, air]) if (hidden.has(object.name)) object.visible = false;
       void camera;
