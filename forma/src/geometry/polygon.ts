@@ -50,6 +50,33 @@ export function clean(p: Vec2[]): Vec2[] {
   return q;
 }
 
+/**
+ * Remove vértices que formam arestas menores que `minEdge` e vértices
+ * colineares com os vizinhos. Usado depois de operações booleanas, que podem
+ * gerar lascas de milímetros quando dois contornos quase coincidem.
+ */
+export function simplifyRing(p: Vec2[], minEdge = 0.02, collinear = 1e-4): Vec2[] {
+  let q = p.slice();
+  let changed = true;
+  while (changed && q.length > 3) {
+    changed = false;
+    for (let i = 0; i < q.length && q.length > 3; i++) {
+      const prev = q[(i - 1 + q.length) % q.length]!,
+        cur = q[i]!,
+        next = q[(i + 1) % q.length]!;
+      const short = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]) < minEdge;
+      const len = Math.hypot(next[0] - prev[0], next[1] - prev[1]) || 1;
+      const flat = Math.abs(cross(prev, cur, next)) / len < collinear;
+      if (short || flat) {
+        q = q.filter((_, j) => j !== i);
+        changed = true;
+        i--;
+      }
+    }
+  }
+  return q;
+}
+
 export interface Bounds {
   minX: number;
   maxX: number;

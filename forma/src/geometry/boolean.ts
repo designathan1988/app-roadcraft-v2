@@ -1,7 +1,7 @@
 // Operações booleanas em planta (polygon-clipping) e validação de pátios.
 import * as clipNs from 'polygon-clipping';
 import type { Vec2 } from '../core/schema';
-import { area, clean, validPolygon, type PolygonLimits, DEFAULT_POLYGON_LIMITS } from './polygon';
+import { area, clean, simplifyRing, validPolygon, type PolygonLimits, DEFAULT_POLYGON_LIMITS } from './polygon';
 
 // O pacote só tem exportação padrão no ESM, mas os tipos declaram exportações nomeadas.
 const clip = ((clipNs as unknown as { default?: typeof clipNs }).default ?? clipNs) as typeof clipNs;
@@ -31,8 +31,12 @@ export function validHoles(points: Vec2[], holes: Vec2[][], limits: PolygonLimit
 function normalize(result: clipNs.MultiPolygon, minArea = 0.15): PolygonWithHoles[] {
   return result
     .filter((p) => area(p[0] as Vec2[]) > minArea)
-    .map((p) => p.map((r) => clean(r as Vec2[])));
+    .map((p) => p.map((r) => simplifyRing(clean(r as Vec2[]))).filter((r, i) => i === 0 || area(r) > 0.01));
 }
+
+/** Parte utilizável como base: polígono simples e pátios válidos. */
+export const validPart = (p: PolygonWithHoles, limits: PolygonLimits = DEFAULT_POLYGON_LIMITS): boolean =>
+  validPolygon(p[0], limits) && validHoles(p[0]!, p.slice(1), limits);
 
 export function union(polys: PolygonWithHoles[]): PolygonWithHoles[] {
   if (polys.length < 2) return polys.map((p) => p.map((r) => clean(r)));
