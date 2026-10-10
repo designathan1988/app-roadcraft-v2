@@ -1,4 +1,5 @@
 import { Rng } from '@core/rng';
+import { onChartOf, pointViews } from '@world/planet/charts';
 import type { Vec2 } from '@core/vec2';
 import { type Signature, bodySignature, madeToMeasure, signatureDistance } from '@world/buildings/procedural';
 import type { Era } from '@world/buildings/architecture';
@@ -420,11 +421,17 @@ const signatureOfRecord = (b: Building): Signature => {
   return s;
 };
 
+/** How far `a` is from `b`, on `b`'s chart (on the planet, `world/planet/charts.ts`). */
+function apart(a: Vec2, b: Vec2): number {
+  const q = onChartOf(a, b);
+  return Math.hypot(q.x - b.x, q.y - b.y);
+}
+
 /** The buildings round a point: each one's signature and how far it stands. */
 function nearSignatures(doc: RoadDoc, at: Vec2): { signature: Signature; distance: number }[] {
   const out: { signature: Signature; distance: number }[] = [];
   for (const b of doc.buildings.all()) {
-    const d = Math.hypot(b.x - at.x, b.y - at.y);
+    const d = apart(b, at);
     if (d < LIKE_REACH) out.push({ signature: signatureOfRecord(b), distance: d });
   }
   return out;
@@ -446,7 +453,7 @@ function unlikeness(body: Building | Omit<Building, 'id' | 'x' | 'y' | 'rotation
 function neighbourStoreys(doc: RoadDoc, anchor: Vec2, width: number): number[] {
   const out: number[] = [];
   for (const b of doc.buildings.all()) {
-    if (Math.hypot(b.x - anchor.x, b.y - anchor.y) > width + m(12)) continue;
+    if (apart(b, anchor) > width + m(12)) continue;
     const top = Math.max(0, ...b.volumes.filter((v) => !v.open).map((v) => v.base + v.storeys.length));
     if (top > 0) out.push(top);
   }
@@ -462,11 +469,14 @@ function cornerOf(ctx: SiteContext, anchor: Vec2, u: Vec2, n: Vec2, width: numbe
   const net = ctx.net;
   if (!net) return undefined;
   const ribbons = [...net.ribbons.values()].filter((r) => ctx.doc.segment(r.id)?.structure === 'ground');
-  const onStreet = (p: Vec2): boolean => ribbons.some((r) => {
+  // Each street read on its own chart (on the planet, `world/planet/charts.ts`).
+  const onStreet = (at: Vec2): boolean => { const view = pointViews(at, m(40)); return ribbons.some((r) => {
+    const p = view(net.polylines.chart(net.doc, r.id));
+    if (!p) return false;
     const bb = r.full.bbox, reach = halfWidth(r.road, Level.Sidewalk) + m(0.6);
     if (p.x < bb.minX - reach || p.x > bb.maxX + reach || p.y < bb.minY - reach || p.y > bb.maxY + reach) return false;
     return r.full.distanceTo(p) < reach;
-  });
+  }); };
   for (const [side, sign] of [['left', -1], ['right', 1]] as const) {
     const along = sign * (width / 2 + m(2));
     const hits = [0.35, 0.65].filter((k) => onStreet({ x: anchor.x + u.x * along + n.x * depth * k, y: anchor.y + u.y * along + n.y * depth * k })).length;
@@ -521,8 +531,7 @@ export function growOnLot(ctx: SiteContext, refused: Set<number>, seed: number):
   if (last) {
     let best = GROW_ON_REACH;
     for (const l of open) {
-      const c = lotCentre(l);
-      const d = Math.hypot(c.x - last.x, c.y - last.y);
+      const d = apart(lotCentre(l), last);
       if (d < best) { best = d; lot = l; }
     }
   }
