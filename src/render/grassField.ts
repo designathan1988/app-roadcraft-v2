@@ -43,7 +43,7 @@ import { m } from '@world/units';
 export interface Grass {
   readonly mesh: Mesh;
   /** The ground's heights over the plate, `side` x `side` samples, rows from the south edge (y = -size/2) north. */
-  setHeights(heights: Float32Array, side: number, size: number): void;
+  setHeights(heights: Float32Array, side: number, size: number, centre?: { readonly x: number; readonly y: number }): void;
   /** Where blades may not grow: road surfaces and footprints, in world x/y. */
 
   /**
@@ -92,7 +92,7 @@ export type MaskRect = readonly [number, number, number, number];
 export interface GrassMask {
   readonly texture: Texture;
   /** Draws the blocked ground within `rect` (the whole map when null). */
-  draw(polys: readonly MultiPoly[], rings: readonly (readonly { x: number; y: number }[])[], size: number, rect: MaskRect | null): void;
+  draw(polys: readonly MultiPoly[], rings: readonly (readonly { x: number; y: number }[])[], size: number, rect: MaskRect | null, centre?: { readonly x: number; readonly y: number }): void;
 }
 
 export function createGrassMask(): GrassMask {
@@ -108,20 +108,22 @@ export function createGrassMask(): GrassMask {
   const g = canvas.getContext('2d', { willReadFrequently: true })!;
   return {
     texture,
-    draw(polys, rings, size, rect) {
+    draw(polys, rings, size, rect, centre = { x: 0, y: 0 }) {
+      // The plate's centre (a planet face's; the origin on the flat map).
+      const cx = centre.x, cy = centre.y;
       const k = MASK_SIDE / size, half = size / 2;
       // The rectangle in mask pixels (rows from the north edge), a pixel wider each way.
       let x0 = 0, y0 = 0, x1 = MASK_SIDE, y1 = MASK_SIDE;
       if (rect) {
-        x0 = Math.max(0, Math.floor((rect[0] + half) * k) - 1);
-        x1 = Math.min(MASK_SIDE, Math.ceil((rect[2] + half) * k) + 1);
-        y0 = Math.max(0, Math.floor((half - rect[3]) * k) - 1);
-        y1 = Math.min(MASK_SIDE, Math.ceil((half - rect[1]) * k) + 1);
+        x0 = Math.max(0, Math.floor((rect[0] - cx + half) * k) - 1);
+        x1 = Math.min(MASK_SIDE, Math.ceil((rect[2] - cx + half) * k) + 1);
+        y0 = Math.max(0, Math.floor((half + cy - rect[3]) * k) - 1);
+        y1 = Math.min(MASK_SIDE, Math.ceil((half + cy - rect[1]) * k) + 1);
         if (x1 <= x0 || y1 <= y0) return;
       }
       const w = x1 - x0, h = y1 - y0;
       // Only what reaches the rectangle is drawn, in world units.
-      const wx0 = x0 / k - half, wx1 = x1 / k - half, wy0 = half - y1 / k, wy1 = half - y0 / k;
+      const wx0 = cx + x0 / k - half, wx1 = cx + x1 / k - half, wy0 = cy + half - y1 / k, wy1 = cy + half - y0 / k;
       const reaches = (pts: Iterable<{ x: number; y: number } | readonly number[]>): boolean => {
         let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
         for (const p of pts) {
@@ -139,7 +141,7 @@ export function createGrassMask(): GrassMask {
       g.rect(x0, y0, w, h);
       g.clip();
       // World x/y to mask pixels: x east, y north -> rows from the north edge.
-      g.setTransform(k, 0, 0, -k, half * k, half * k);
+      g.setTransform(k, 0, 0, -k, (half - cx) * k, (half + cy) * k);
       g.fillStyle = '#000';
       for (const multi of polys) {
         for (const poly of multi) {
@@ -220,6 +222,8 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
     uGrassHeight: { value: heightTexture as Texture },
     uGrassMask: { value: mask.texture },
     uGrassPlate: { value: [0, 1] as [number, number] },
+    // The plate's centre, world x/y (a planet face's; the origin on the flat map).
+    uGrassCentre: { value: [0, 0] as [number, number] },
     uGrassEco: { value: blankEcology as Texture },
     // half, cell and corners per side of the ecology grid
     uGrassEcoGrid: { value: [1, 1, 1] as [number, number, number] },
@@ -244,6 +248,7 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
         uniform sampler2D uGrassHeight;
         uniform sampler2D uGrassMask;
         uniform vec2 uGrassPlate; // half and size of the plate
+        uniform vec2 uGrassCentre; // where the plate's centre stands
         uniform sampler2D uGrassEco;
         uniform vec3 uGrassEcoGrid;
         uniform float uGrassSeasonDry;
@@ -266,7 +271,7 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
           return vec3(id, sqrt(best));
         }
         // World x/y (y north) to the plate's texture space, as the terrain's paint is read.
-        vec2 grassUv(vec2 p) { return vec2((p.x + uGrassPlate.x) / uGrassPlate.y, (p.y + uGrassPlate.x) / uGrassPlate.y); }`)
+        vec2 grassUv(vec2 w) { vec2 p = w - uGrassCentre; return vec2((p.x + uGrassPlate.x) / uGrassPlate.y, (p.y + uGrassPlate.x) / uGrassPlate.y); }`)
       .replace('#include <beginnormal_vertex>', `
         // ---- the blade's place, from its index and the ground cell it stands in
         float gi = float(gl_InstanceID);
@@ -290,7 +295,8 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
         float grassPatch = smoothstep(0.15, 0.55, grassHash(floor(root / ${m(7).toFixed(3)})) * 0.6 + clumpH * 0.6);
         float tall = (${m(0.14).toFixed(3)} + ${m(0.32).toFixed(3)} * (clumpH * 0.7 + r1 * 0.3)) * mix(0.55, 1.0, grassPatch);
         // The ecosystem (world/ecology.ts): R canopy, G dry savanna grass, B wet, A bare.
-        vec4 eco = texture2D(uGrassEco, (vec2(root.x + uGrassEcoGrid.x, uGrassEcoGrid.x - root.y) / uGrassEcoGrid.y + 0.5) / uGrassEcoGrid.z);
+        vec2 ecoAt = root - uGrassCentre;
+        vec4 eco = texture2D(uGrassEco, (vec2(ecoAt.x + uGrassEcoGrid.x, uGrassEcoGrid.x - ecoAt.y) / uGrassEcoGrid.y + 0.5) / uGrassEcoGrid.z);
         float sparse = (1.0 - eco.a * 0.92) * (1.0 - eco.r * 0.55);
         float keep = allowed * fade * step(0.25, allowed) * step(r2 * 0.999, sparse);
         // The savanna's capim stands taller, the more so the drier the season.
@@ -359,10 +365,11 @@ export function createGrass(quality: { readonly grassBlades: number }, ring: Gra
 
   return {
     mesh,
-    setHeights(heights, n, size) {
+    setHeights(heights, n, size, centre = { x: 0, y: 0 }) {
       heightTexture.image = { data: heights, width: n, height: n } as unknown as typeof heightTexture.image;
       heightTexture.needsUpdate = true;
       uniforms.uGrassPlate.value = [size / 2, size];
+      uniforms.uGrassCentre.value = [centre.x, centre.y];
     },
     setEcology(texture, half, cell, season) {
       uniforms.uGrassEco.value = texture;

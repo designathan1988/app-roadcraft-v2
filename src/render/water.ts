@@ -255,7 +255,7 @@ export interface WaterSurface {
    * fan triangles, the depth bent at every triangle edge, and the foam band
    * and the fade drawn from it came out as a sawtooth along every bank.
    */
-  setGround(texture: Texture, half: number, cell: number, size: number): void;
+  setGround(texture: Texture, half: number, cell: number, size: number, origin?: { readonly x: number; readonly y: number }): void;
   /** The waves, foam and current (`WaterLook`). */
   setLook(look: WaterLook): void;
   dispose(): void;
@@ -305,6 +305,8 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
     uGround: { value: null as Texture | null },
     // half extent, cell, corners per side; z = 0 until a ground is set.
     uGroundGrid: { value: new Vector3(0, 1, 0) },
+    // Where the ground's grid is centred, three's x, z (a planet face's centre).
+    uGroundOrigin: { value: new Vector2() },
     uWaves: { value: 0.3 },
     uFoamAmount: { value: 0.4 },
     uCurrent: { value: 3 },
@@ -359,10 +361,12 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
          uniform vec2 uDriftB;
          uniform sampler2D uGround;
          uniform vec3 uGroundGrid;
+         uniform vec2 uGroundOrigin;
          // The terrain mesh's own surface at a world (x, z): the same corners
          // and the same diagonal split as \`sampleGrid\` in terrain.ts, read
          // with texelFetch so nothing is filtered.
-         float waterGroundAt(vec2 xz) {
+         float waterGroundAt(vec2 world) {
+           vec2 xz = world - uGroundOrigin;
            float gx = (xz.x + uGroundGrid.x) / uGroundGrid.y;
            float gy = (xz.y + uGroundGrid.x) / uGroundGrid.y;
            float last = uGroundGrid.z - 2.0;
@@ -525,9 +529,10 @@ export function createWaterSurface(anisotropy: number): WaterSurface {
   return {
     material,
     time,
-    setGround(texture, half, cell, size) {
+    setGround(texture, half, cell, size, origin) {
       uniforms.uGround.value = texture;
       uniforms.uGroundGrid.value.set(half, cell, size);
+      if (origin) uniforms.uGroundOrigin.value.set(origin.x, -origin.y);
     },
     setLook(look) {
       uniforms.uWaves.value = look.waves;

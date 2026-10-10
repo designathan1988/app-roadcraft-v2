@@ -8,7 +8,7 @@ import {
 } from 'three';
 
 import type { Vec2 } from '@core/vec2';
-import { MAP_HALF } from '@world/bounds';
+import { WORLD_HALF } from '@world/bounds';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
 
@@ -50,7 +50,7 @@ export const DEFAULT_ELEVATION = (48 * Math.PI) / 180;
 export const MIN_ELEVATION = (20 * Math.PI) / 180;
 export const MAX_ELEVATION = Math.PI / 2;
 /** How far from the middle of the map the view's centre may go, units. */
-const VIEW_REACH = MAP_HALF + 200;
+const VIEW_REACH = WORLD_HALF + 200;
 /** The orthographic camera's distance from the view's centre: past the farthest ground a zoomed-out low view takes in. */
 const DISTANCE = 5000;
 /**

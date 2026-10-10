@@ -3,7 +3,7 @@ import {
   PlaneGeometry, RedFormat, Scene, ShaderMaterial, UnsignedByteType, Vector2, Vector3, Vector4, WebGLRenderTarget, type Camera, type Texture, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { MAP_SIZE } from '@world/bounds';
+import { WORLD_HALF } from '@world/bounds';
 import { m } from '@world/units';
 import { driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -585,7 +585,7 @@ const CLOUD_SHADOWS = {
     tGroundFog: { value: null as Texture | null },
     uGroundFog: { value: new Vector4() },
     uGroundFogSlab: { value: new Vector2() },
-    uMapHalf: { value: MAP_SIZE / 2 },
+    uMapHalf: { value: WORLD_HALF },
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
     // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera

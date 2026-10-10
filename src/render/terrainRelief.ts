@@ -250,6 +250,10 @@ const BAKE_FRAGMENT = /* glsl */ `
 `;
 
 export interface ReliefBake {
+  /** This bake's relief, for its own ground's shader (each plate of the planet has one). */
+  readonly texture: { value: Texture };
+  /** This bake's close window (`RELIEF_WINDOW` alike). */
+  readonly window: { value: Vector4 };
   /** The land moved: bake again at the next chance. */
   markDirty(): void;
   /** The player's gully dabs and how much of the steep land carries gullies of itself (0..1): bake again. */
@@ -316,7 +320,11 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
   const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const frame = material.uniforms['uFrame']!.value as Vector3;
   const octaves = material.uniforms['uOctaves']!;
-  const window = RELIEF_WINDOW.value;
+  // Its own uniforms: a planet has six plates, each baked apart. The flat
+  // map's one bake is still read through `RELIEF_TEXTURE` and `RELIEF_WINDOW`.
+  const textureUniform = { value: RELIEF_TEXTURE.value };
+  const windowUniform = { value: new Vector4(0, 0, WINDOW_SPAN, 0) };
+  const window = windowUniform.value;
   let dirty = true;
   let closeDirty = true;
   const layer = (renderer: WebGLRenderer, index: number, x: number, z: number, span: number, count: number): void => {
@@ -328,6 +336,8 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
     renderer.setRenderTarget(previous);
   };
   return {
+    texture: textureUniform,
+    window: windowUniform,
     markDirty() { dirty = true; closeDirty = true; },
     setGullies(dabs, auto) {
       // Rasterised with the dabs culled per row, as the fog's map is.
@@ -358,7 +368,7 @@ export function createReliefBake(gridN: number, cell: number, half: number, macr
         for (let i = 0; i < corners.length; i++) corners[i] = grid[i]!;
         heights.needsUpdate = true;
         layer(renderer, 0, -half, -half, 2 * half, OCTAVES_MAP);
-        RELIEF_TEXTURE.value = target.texture;
+        textureUniform.value = target.texture;
         performance.measure('hitch:terrain-relief', { start: startedAt, end: performance.now() });
       }
       if (!focus) { window.w = 0; return; }

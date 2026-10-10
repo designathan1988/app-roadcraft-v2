@@ -73,13 +73,14 @@ import { buildStructureDetails, structureRibbons, type StructureDetails } from '
 import { createExhaust } from './exhaust';
 import { GROW_MINUTES } from '@world/landscape';
 import { applyWear, createWearField } from './wear';
-import { MAP_SIZE } from '@world/bounds';
+import { MAP_REGIONS, MAP_SIZE, WORLD_HALF, regionAt } from '@world/bounds';
 import { buildSigns, type SignLayer } from './signs';
 import { RevealGate } from './revealGate';
 import { buildPolePreview, buildUtilities, poleGroundAt, type PolePreviewInput, type Utilities } from './utilities';
 import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
-import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainRegion, type TerrainSurface } from './terrain';
+import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
+import { createTerrainAtlas } from './planet/terrainAtlas';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -540,15 +541,16 @@ export function createSceneRenderer(
 
   const materials: SceneMaterials = createMaterials(anisotropy);
   // Streets and footways wear with use (`wear.ts`).
-  const wear = createWearField(MAP_SIZE);
+  const wear = createWearField(WORLD_HALF * 2);
   let lastWall = -1;
-  applyWear(materials.asphalt, wear, MAP_SIZE, 0, 'asphalt');
-  applyWear(materials.footway, wear, MAP_SIZE, 1, 'footway');
+  applyWear(materials.asphalt, wear, WORLD_HALF * 2, 0, 'asphalt');
+  applyWear(materials.footway, wear, WORLD_HALF * 2, 1, 'footway');
   materials.setDetail(quality.surfaceDetail);
   // Every prop model and material, built once. A rebuild writes only the
   // instance matrices.
   const sceneryKit: SceneryKit = createSceneryKit();
-  const terrain: TerrainSurface = createTerrainSurface(anisotropy);
+  // On the planet, six plates: the cube's faces side by side (`planet/terrainAtlas.ts`).
+  const terrain: TerrainSurface = __PLANET__ ? createTerrainAtlas(anisotropy) : createTerrainSurface(anisotropy);
   // The perspective view looks at the ground and stays over it (`IsoRig.setGround`).
   rig.setGround((x, y) => terrain.renderedHeightAt(x, y));
   // The grass field round the camera (`grass.ts`): its ground heights and the
@@ -1341,34 +1343,26 @@ export function createSceneRenderer(
   };
   const changedBlocks = (before: RoadElevation, after: RoadElevation): [number, number, number, number][] => {
     const out: [number, number, number, number][] = [];
-    const half = MAP_SIZE / 2;
     // Only blocks a road that differs reaches can differ (`differences`):
     // every block of the map used to be digested twice on every edit.
     const where = after.differences?.(before) ?? null;
     if (where && !where.length) return out;
-    for (let x = -half; x < half; x += SHAPE_BLOCK) {
-      for (let y = -half; y < half; y += SHAPE_BLOCK) {
-        const x1 = x + SHAPE_BLOCK, y1 = y + SHAPE_BLOCK;
-        if (where && !where.some((r) => r.minX <= x1 && r.maxX >= x && r.minY <= y1 && r.maxY >= y)) continue;
-        if (blockRead(before, x, y) !== blockRead(after, x, y)) out.push([x, y, x1, y1]);
+    // Every plate's own blocks (the planet's six faces; the flat map's one).
+    for (const plate of MAP_REGIONS) {
+      for (let x = plate.cx - plate.half; x < plate.cx + plate.half; x += SHAPE_BLOCK) {
+        for (let y = plate.cy - plate.half; y < plate.cy + plate.half; y += SHAPE_BLOCK) {
+          const x1 = x + SHAPE_BLOCK, y1 = y + SHAPE_BLOCK;
+          if (where && !where.some((r) => r.minX <= x1 && r.maxX >= x && r.minY <= y1 && r.maxY >= y)) continue;
+          if (blockRead(before, x, y) !== blockRead(after, x, y)) out.push([x, y, x1, y1]);
+        }
       }
     }
     return out;
   };
   /** A terrain region (`terrainRegion`) back as the world box it covers, a cell round. */
-  const regionRect = (region: TerrainRegion): Rect => [
-    (region[0] - 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[3] + 1) * TERRAIN_CELL,
-    (region[1] + 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[2] - 1) * TERRAIN_CELL,
-  ];
+  const regionRect = (region: TerrainRegion): Rect => terrain.rectOf(region);
   /** A world box as the terrain grid corners it covers. */
-  const terrainRegion = (box: readonly [number, number, number, number]): TerrainRegion => {
-    const last = MAP_SIZE / TERRAIN_CELL;
-    const clamp = (v: number): number => Math.max(0, Math.min(last, v));
-    return [
-      clamp(Math.floor((box[0] + TERRAIN_HALF) / TERRAIN_CELL)), clamp(Math.ceil((box[2] + TERRAIN_HALF) / TERRAIN_CELL)),
-      clamp(Math.floor((TERRAIN_HALF - box[3]) / TERRAIN_CELL)), clamp(Math.ceil((TERRAIN_HALF - box[1]) / TERRAIN_CELL)),
-    ];
-  };
+  const terrainRegion = (box: readonly [number, number, number, number]): TerrainRegion => terrain.regionOf(box);
   /**
    * `region`: a brush dab while the stroke is held - only the ground under it
    * is cut and filled again, against the platforms as they stood when the
@@ -1536,12 +1530,16 @@ export function createSceneRenderer(
   let landDirty: Rect | 'all' | null = null;
   /** The shaping blocks a world box reaches, on the grid `changedBlocks` uses. */
   const blocksOver = (box: Rect): [number, number, number, number][] => {
-    const half = MAP_SIZE / 2;
     const out: [number, number, number, number][] = [];
-    const x0 = Math.max(-half, Math.floor((box[0] + half) / SHAPE_BLOCK) * SHAPE_BLOCK - half);
-    const y0 = Math.max(-half, Math.floor((box[1] + half) / SHAPE_BLOCK) * SHAPE_BLOCK - half);
-    for (let x = x0; x < Math.min(half, box[2]); x += SHAPE_BLOCK) {
-      for (let y = y0; y < Math.min(half, box[3]); y += SHAPE_BLOCK) out.push([x, y, x + SHAPE_BLOCK, y + SHAPE_BLOCK]);
+    for (const plate of MAP_REGIONS) {
+      const left = plate.cx - plate.half, right = plate.cx + plate.half;
+      const bottom = plate.cy - plate.half, top = plate.cy + plate.half;
+      if (box[2] <= left || box[0] >= right || box[3] <= bottom || box[1] >= top) continue;
+      const x0 = Math.max(left, Math.floor((box[0] - left) / SHAPE_BLOCK) * SHAPE_BLOCK + left);
+      const y0 = Math.max(bottom, Math.floor((box[1] - bottom) / SHAPE_BLOCK) * SHAPE_BLOCK + bottom);
+      for (let x = x0; x < Math.min(right, box[2]); x += SHAPE_BLOCK) {
+        for (let y = y0; y < Math.min(top, box[3]); y += SHAPE_BLOCK) out.push([x, y, x + SHAPE_BLOCK, y + SHAPE_BLOCK]);
+      }
     }
     return out;
   };
@@ -1616,7 +1614,7 @@ export function createSceneRenderer(
     // The footways moved where the solve did: the grass mask is drawn again there.
     if (changed === null) markGrass(null);
     else for (const block of changed) markGrass(block);
-    const local = blocks !== null && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_SIZE * MAP_SIZE * 0.25;
+    const local = blocks !== null && blocks.length * SHAPE_BLOCK * SHAPE_BLOCK < MAP_REGIONS.length * MAP_SIZE * MAP_SIZE * 0.25;
     pendingBlocks = local ? blocks : null;
     // The land itself changed: at once. After a road edit, and for the first
     // world when the game opens: a few milliseconds a frame (`pumpWorld`) -
@@ -2007,13 +2005,23 @@ export function createSceneRenderer(
    */
   const SCRUB_SPACING = m(2.4);
   const SCRUB_MAX = 12_000;
-  /** The cell range [i0, i1, j0, j1] of a grid of `spacing` that the painted covers reach; empty when none. */
-  const paintedCells = (doc: RoadDoc, spacing: number): [number, number, number, number] => {
+  /** The cell ranges [i0, i1, j0, j1] of a grid of `spacing` that the painted covers reach, one a plate; none when nothing is painted. */
+  const paintedCells = (doc: RoadDoc, spacing: number): [number, number, number, number][] => {
     const area = forestAreaOf(doc);
-    if (!area) return [0, -1, 0, -1];
-    const last = Math.floor((TERRAIN_HALF * 2) / spacing) - 1;
-    const cell = (v: number): number => Math.max(0, Math.min(last, Math.floor((v + TERRAIN_HALF) / spacing)));
-    return [cell(area[0]), cell(area[2]), cell(area[1]), cell(area[3])];
+    if (!area) return [];
+    // On one lattice anchored at the first plate's corner, within each plate
+    // (the planet's faces; the flat map's one) the painting reaches.
+    const out: [number, number, number, number][] = [];
+    for (const plate of MAP_REGIONS) {
+      const first = Math.ceil((plate.cx - plate.half + TERRAIN_HALF) / spacing);
+      const last = Math.floor((plate.cx + plate.half + TERRAIN_HALF) / spacing) - 1;
+      const firstY = Math.ceil((plate.cy - plate.half + TERRAIN_HALF) / spacing);
+      const lastY = Math.floor((plate.cy + plate.half + TERRAIN_HALF) / spacing) - 1;
+      const i0 = Math.max(first, Math.floor((area[0] + TERRAIN_HALF) / spacing)), i1 = Math.min(last, Math.floor((area[2] + TERRAIN_HALF) / spacing));
+      const j0 = Math.max(firstY, Math.floor((area[1] + TERRAIN_HALF) / spacing)), j1 = Math.min(lastY, Math.floor((area[3] + TERRAIN_HALF) / spacing));
+      if (i0 <= i1 && j0 <= j1) out.push([i0, i1, j0, j1]);
+    }
+    return out;
   };
   /** -1..1 value noise of about 25 m: where scrub gathers into thickets. */
   const scrubClump = (x: number, y: number): number => {
@@ -2072,8 +2080,7 @@ export function createSceneRenderer(
   }
   const natureSweep = (key: string): NatureSweep => {
     const trees: Candidate[] = [];
-    const field = terrain.ecology();
-    if (!field || quality.vegetation <= 0) return { key, trees, budget: 0, room: null };
+    if (quality.vegetation <= 0 || !terrain.parts.some((p) => p.surface.ecology())) return { key, trees, budget: 0, room: null };
     // THE TREE MAP, as Horizon Zero Dawn's Placement_Trees (Guerrilla, GDC
     // 2017): one density per place, decoded by a curve into bands - the
     // inner forest, its edge, scattered trees - and below them open
@@ -2083,63 +2090,78 @@ export function createSceneRenderer(
     // ecosystem's canopy and trees, broad patches of a slow noise, and the
     // slopes and valleys (woods hold the hillsides; the plains are the
     // fields a town is built on).
+    // Plate by plate (the planet's faces; the flat map's one), each read in
+    // its own coordinates; the lattice's cells numbered over the whole
+    // world, so no two plates grow the same wood.
     const cells = Math.floor((TERRAIN_HALF * 2) / NATURE_SPACING);
-    const odds = new Float32Array(cells * cells);
-    const band = new Uint8Array(cells * cells);
+    const plates: { part: TerrainPart; odds: Float32Array; band: Uint8Array; di: number; dj: number }[] = [];
     let treeSum = 0;
     const d = m(6);
-    for (let j = 0; j < cells; j++) {
-      for (let i = 0; i < cells; i++) {
-        const x = -TERRAIN_HALF + (i + 0.5) * NATURE_SPACING, y = -TERRAIN_HALF + (j + 0.5) * NATURE_SPACING;
-        const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
-        const k = iy * field.side + ix;
-        const ecology = Math.min(1, (field.canopy[k] ?? 0) * 0.9 + (field.trees[k] ?? 0) * 0.5 + (field.emergent[k] ?? 0) * 0.3);
-        const patch = natureNoise(x, y, m(170), 7) * 0.6 + natureNoise(x, y, m(55), 9) * 0.3 + natureNoise(x, y, m(18), 11) * 0.1;
-        // The land's own slope, before the roads cut and fill it: a wood
-        // holds a hillside, not the bank of a street (and a street drawn no
-        // longer moves the woods round it).
-        const natural = terrain.naturalRenderedHeightAt;
-        const slope = Math.hypot(natural(x + d, y) - natural(x - d, y), natural(x, y + d) - natural(x, y - d)) / (2 * d);
-        const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
-        // The patches drawn out to clear masses: woods on the plains too, as
-        // capões, and clean meadows between them.
-        const masses = Math.min(1, Math.max(0, (patch - 0.47) / 0.3));
-        const density = masses * 0.72 + hillside * 0.3 + ecology * 0.3 - 0.06;
-        const o = j * cells + i;
-        // The bands: inner forest, its edge, scattered trees, a rare lone one.
-        if (density > 0.62) { odds[o] = 0.92; band[o] = 3; }
-        else if (density > 0.5) { odds[o] = 0.25 + (density - 0.5) / 0.12 * 0.6; band[o] = 2; }
-        else if (density > 0.38) { odds[o] = 0.025; band[o] = 1; }
-        else { odds[o] = 0.003; band[o] = 1; }
-        treeSum += odds[o]!;
+    for (const part of terrain.parts) {
+      const field = part.surface.ecology();
+      if (!field) continue;
+      const odds = new Float32Array(cells * cells);
+      const band = new Uint8Array(cells * cells);
+      const di = Math.round(part.cx / NATURE_SPACING), dj = Math.round(part.cy / NATURE_SPACING);
+      // The land's own slope, before the roads cut and fill it: a wood
+      // holds a hillside, not the bank of a street (and a street drawn no
+      // longer moves the woods round it).
+      const natural = part.surface.naturalRenderedHeightAt;
+      for (let j = 0; j < cells; j++) {
+        for (let i = 0; i < cells; i++) {
+          const x = -TERRAIN_HALF + (i + 0.5) * NATURE_SPACING, y = -TERRAIN_HALF + (j + 0.5) * NATURE_SPACING;
+          const ix = Math.round((x + TERRAIN_HALF) / TERRAIN_CELL), iy = Math.round((TERRAIN_HALF - y) / TERRAIN_CELL);
+          const k = iy * field.side + ix;
+          const ecology = Math.min(1, (field.canopy[k] ?? 0) * 0.9 + (field.trees[k] ?? 0) * 0.5 + (field.emergent[k] ?? 0) * 0.3);
+          const wx = x + part.cx, wy = y + part.cy;
+          const patch = natureNoise(wx, wy, m(170), 7) * 0.6 + natureNoise(wx, wy, m(55), 9) * 0.3 + natureNoise(wx, wy, m(18), 11) * 0.1;
+          const slope = Math.hypot(natural(x + d, y) - natural(x - d, y), natural(x, y + d) - natural(x, y - d)) / (2 * d);
+          const hillside = Math.min(1, Math.max(0, (slope - 0.06) / 0.35));
+          // The patches drawn out to clear masses: woods on the plains too, as
+          // capões, and clean meadows between them.
+          const masses = Math.min(1, Math.max(0, (patch - 0.47) / 0.3));
+          const density = masses * 0.72 + hillside * 0.3 + ecology * 0.3 - 0.06;
+          const o = j * cells + i;
+          // The bands: inner forest, its edge, scattered trees, a rare lone one.
+          if (density > 0.62) { odds[o] = 0.92; band[o] = 3; }
+          else if (density > 0.5) { odds[o] = 0.25 + (density - 0.5) / 0.12 * 0.6; band[o] = 2; }
+          else if (density > 0.38) { odds[o] = 0.025; band[o] = 1; }
+          else { odds[o] = 0.003; band[o] = 1; }
+          treeSum += odds[o]!;
+        }
       }
+      plates.push({ part, odds, band, di, dj });
     }
     const budget = NATURE_TREES * Math.min(1, quality.vegetation / 2_600);
     const treeScale = Math.min(1, budget / Math.max(1, treeSum));
-    for (let j = 0; j < cells; j++) {
-      for (let i = 0; i < cells; i++) {
-        const o = j * cells + i;
-        if (cellHash(i, j, 41) >= odds[o]! * treeScale) continue;
-        const x = -TERRAIN_HALF + (i + 0.5 + (cellHash(i, j, 43) - 0.5) * 0.9) * NATURE_SPACING;
-        const y = -TERRAIN_HALF + (j + 0.5 + (cellHash(i, j, 44) - 0.5) * 0.9) * NATURE_SPACING;
-        // Tall in the heart of a wood, crowns meeting into one canopy;
-        // lower at its edge; short and crooked out in the open.
-        const inner = band[o] === 3, edge = band[o] === 2;
-        const h = inner ? m(11) + m(8) * cellHash(i, j, 45) : edge ? m(8) + m(6) * cellHash(i, j, 45) : m(5.5) + m(4) * cellHash(i, j, 45);
-        const roll = cellHash(i, j, 46);
-        const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
-        // Which of the low-poly trees (`natureTrees.ts`): oaks and cypresses
-        // most, a palm now and then out in the open.
-        const pick = cellHash(i, j, 49);
-        const kind = pick < 0.55 ? 'oak' : pick < (inner ? 0.97 : 0.85) ? 'cypress' : 'palm';
-        trees.push({ x, y, size: h, yaw: cellHash(i, j, 47) * Math.PI * 2, seed: seedOfKind(kind, cellHash(i, j, 48)), species });
+    for (const { part, odds, band, di, dj } of plates) {
+      for (let j = 0; j < cells; j++) {
+        for (let i = 0; i < cells; i++) {
+          const o = j * cells + i;
+          const gi = i + di, gj = j + dj;
+          if (cellHash(gi, gj, 41) >= odds[o]! * treeScale) continue;
+          const x = part.cx - TERRAIN_HALF + (i + 0.5 + (cellHash(gi, gj, 43) - 0.5) * 0.9) * NATURE_SPACING;
+          const y = part.cy - TERRAIN_HALF + (j + 0.5 + (cellHash(gi, gj, 44) - 0.5) * 0.9) * NATURE_SPACING;
+          // Tall in the heart of a wood, crowns meeting into one canopy;
+          // lower at its edge; short and crooked out in the open.
+          const inner = band[o] === 3, edge = band[o] === 2;
+          const h = inner ? m(11) + m(8) * cellHash(gi, gj, 45) : edge ? m(8) + m(6) * cellHash(gi, gj, 45) : m(5.5) + m(4) * cellHash(gi, gj, 45);
+          const roll = cellHash(gi, gj, 46);
+          const species = inner ? (roll < 0.6 ? 'broadleafTall' : 'broadleaf') : roll < 0.25 ? 'broadleafTall' : 'broadleaf';
+          // Which of the low-poly trees (`natureTrees.ts`): oaks and cypresses
+          // most, a palm now and then out in the open.
+          const pick = cellHash(gi, gj, 49);
+          const kind = pick < 0.55 ? 'oak' : pick < (inner ? 0.97 : 0.85) ? 'cypress' : 'palm';
+          trees.push({ x, y, size: h, yaw: cellHash(gi, gj, 47) * Math.PI * 2, seed: seedOfKind(kind, cellHash(gi, gj, 48)), species });
+        }
       }
     }
     return { key, trees, budget, room: null };
   };
   /** Water, a cliff, a road or a building: nothing of the ecosystem grows there. */
   const natureOpen = (net: Network, x: number, y: number, z: number): boolean => {
-    if (Math.abs(x) > TERRAIN_HALF - m(2) || Math.abs(y) > TERRAIN_HALF - m(2)) return false;
+    const plate = regionAt(x, y);
+    if (Math.abs(x - plate.cx) > plate.half - m(2) || Math.abs(y - plate.cy) > plate.half - m(2)) return false;
     const level = terrain.shoreLevelAt(x, y);
     if (level !== null && level > z - m(0.3)) return false;
     const g = m(2);
@@ -2195,8 +2217,7 @@ export function createSceneRenderer(
     // The trees of the painted forest (`world/terrainPaint.ts` 'forest').
     const forest: Candidate[] = [];
     {
-      const [i0, i1, j0, j1] = paintedCells(doc, FOREST_SPACING);
-      for (let j = j0; j <= j1; j++) {
+      for (const [i0, i1, j0, j1] of paintedCells(doc, FOREST_SPACING)) for (let j = j0; j <= j1; j++) {
         for (let i = i0; i <= i1; i++) {
           const cx = -TERRAIN_HALF + (i + 0.5) * FOREST_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * FOREST_SPACING;
           const density = terrain.forestAt(cx, cy);
@@ -2217,8 +2238,7 @@ export function createSceneRenderer(
     // map's grid was some 640 000 cells and stalled every dab of a stroke.
     const scrub: Candidate[] = [];
     {
-      const [i0, i1, j0, j1] = paintedCells(doc, SCRUB_SPACING);
-      for (let j = j0; j <= j1; j++) {
+      for (const [i0, i1, j0, j1] of paintedCells(doc, SCRUB_SPACING)) for (let j = j0; j <= j1; j++) {
         for (let i = i0; i <= i1; i++) {
           const cx = -TERRAIN_HALF + (i + 0.5) * SCRUB_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * SCRUB_SPACING;
           const density = terrain.coverAt('scrub', cx, cy);
@@ -2233,8 +2253,7 @@ export function createSceneRenderer(
     // The painted stones ('rocks').
     const rocks: Candidate[] = [];
     {
-      const [i0, i1, j0, j1] = paintedCells(doc, ROCK_SPACING);
-      for (let j = j0; j <= j1; j++) {
+      for (const [i0, i1, j0, j1] of paintedCells(doc, ROCK_SPACING)) for (let j = j0; j <= j1; j++) {
         for (let i = i0; i <= i1; i++) {
           const cx = -TERRAIN_HALF + (i + 0.5) * ROCK_SPACING, cy = -TERRAIN_HALF + (j + 0.5) * ROCK_SPACING;
           const density = terrain.coverAt('rocks', cx, cy);
@@ -2398,8 +2417,10 @@ export function createSceneRenderer(
         landTopFor = landVersion;
         let top = -Infinity;
         const corners = Math.round((TERRAIN_HALF * 2) / TERRAIN_CELL);
-        for (let j = 0; j <= corners; j++) {
-          for (let i = 0; i <= corners; i++) top = Math.max(top, terrain.renderedHeightAt(-TERRAIN_HALF + i * TERRAIN_CELL, TERRAIN_HALF - j * TERRAIN_CELL));
+        for (const part of terrain.parts) {
+          for (let j = 0; j <= corners; j++) {
+            for (let i = 0; i <= corners; i++) top = Math.max(top, part.surface.renderedHeightAt(-TERRAIN_HALF + i * TERRAIN_CELL, TERRAIN_HALF - j * TERRAIN_CELL));
+          }
         }
         landTopValue = top;
       }

@@ -22,6 +22,7 @@ import {
   RepeatWrapping,
   SRGBColorSpace,
   Vector3,
+  Vector4,
   type Material,
   type Texture,
   type WebGLRenderer,
@@ -47,7 +48,7 @@ import { bakeSurface, fbm, makeNoise, type SurfaceBake, type SurfaceRecipe } fro
 import { DETAIL_GLSL, detailSwitch, detailTextures } from './mesh/detailLayer';
 import { WATER_DEPTH_ATTRIBUTE, WATER_FLOW_ATTRIBUTE, createWaterSurface, type WaterLook } from './water';
 import type { GullyDab } from '@world/gullies';
-import { RELIEF_RES, RELIEF_TEXTURE, RELIEF_WINDOW, createReliefBake } from './terrainRelief';
+import { RELIEF_RES, RELIEF_TEXTURE, createReliefBake } from './terrainRelief';
 
 /**
  * Side of the playable, editable terrain plate, in world units.
@@ -59,8 +60,11 @@ import { RELIEF_RES, RELIEF_TEXTURE, RELIEF_WINDOW, createReliefBake } from './t
  * spent on ground nobody builds on.
  */
 const TERRAIN_SIZE = MAP_SIZE;
-/** Cells per side. 300 gives a 16-unit cell: 6.4 m, fine enough for a brush. */
-const TERRAIN_SEGMENTS = 300;
+/**
+ * Cells per side. 300 gives a 16-unit cell: 6.4 m, fine enough for a brush.
+ * The planet's faces are wider (6 km): 375 keeps the same cell.
+ */
+const TERRAIN_SEGMENTS = __PLANET__ ? 375 : 300;
 const TERRAIN_BASE = -0.12;
 
 /** Radius of a river's water disc, as a fraction of the stamp that carved it. */
@@ -119,6 +123,12 @@ export const TERRAIN_GRID: { value: [number, number, number] } = { value: [25, 0
  * by the ground and the grass; the seasons set it.
  */
 export const SEASON_DRY: { value: number } = { value: 0.4 };
+
+/**
+ * What the surface reads of the document: the map's own, or (on the planet)
+ * one face's share of it, in the face's coordinates (`planet/terrainAtlas.ts`).
+ */
+export type TerrainSource = Pick<RoadDoc, 'changes' | 'terrainRevision' | 'terrainStamps' | 'terrainRelief' | 'natureRevision' | 'nature' | 'paintRevision' | 'terrainPaint'>;
 
 export interface TerrainSurface {
   readonly meshes: readonly Mesh[];
@@ -188,9 +198,9 @@ export interface TerrainSurface {
    * because a road has to be laid on the natural ground before the ground can
    * be asked to come and meet it.
    */
-  update(doc: RoadDoc, stroking?: boolean): boolean;
+  update(doc: TerrainSource, stroking?: boolean): boolean;
   /** Brings the painted ground up to `doc.paintRevision`. */
-  updatePaint(doc: RoadDoc): void;
+  updatePaint(doc: TerrainSource): void;
   /** How much forest was painted at a point, 0..1 (`world/terrainPaint.ts` 'forest'). */
   forestAt(x: number, y: number): number;
   /** How much of a cover (forest, scrub, flowers, rocks) was painted at a point, 0..1. */
@@ -237,11 +247,28 @@ export interface TerrainSurface {
    * bounds again: an edit touching 20 blocks paid that 20 times).
    */
   shapeToRoads(shape: TerrainShaper | null, region?: TerrainRegion | readonly TerrainRegion[] | null): boolean;
+  /** The grid corners a world box covers, as `shapeToRoads` takes them. */
+  regionOf(box: readonly [number, number, number, number]): TerrainRegion;
+  /** A region back as the world box it covers, a cell round. */
+  rectOf(region: TerrainRegion): readonly [number, number, number, number];
+  /** The plates the ground is made of, each with its own surface (`TerrainPart`). */
+  readonly parts: readonly TerrainPart[];
   dispose(): void;
 }
 
 /** A box of grid corners, inclusive: x0..x1 across, y0..y1 down. */
 export type TerrainRegion = readonly [number, number, number, number];
+
+/**
+ * A plate of the ground and where its centre stands: the flat map is one, at
+ * the origin; the planet's atlas six (`planet/terrainAtlas.ts`). `surface`
+ * speaks the plate's own coordinates, about its centre.
+ */
+export interface TerrainPart {
+  readonly surface: TerrainSurface;
+  readonly cx: number;
+  readonly cy: number;
+}
 
 /** What `shapeToRoads` needs to know about the road network. */
 export interface TerrainShaper {
@@ -1051,9 +1078,14 @@ function terrainMaterial(
     uSoilDetail: { value: soilDetail.map },
     uSoilDetailN: { value: soilDetail.normalMap },
     uSoilDetailScale: { value: 1 / soilDetail.worldSize },
+    // Set to the surface's own bake (`createTerrainSurface`).
     uRelief: RELIEF_TEXTURE,
-    uReliefWindow: RELIEF_WINDOW,
+    uReliefWindow: { value: new Vector4(0, 0, 1, 0) },
+    // Where this plate stands in the world (the planet's atlas: each face's
+    // own); the map's grids are read from it. Zero on the flat map.
+    uTileOrigin: { value: new Vector3() },
   };
+  material.userData['terrainUniforms'] = uniforms;
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -1062,14 +1094,19 @@ function terrainMaterial(
         '#include <common>',
         `#include <common>
          varying vec3 vTerrainWorld;
+         varying vec3 vTerrainAtlas;
          varying vec3 vTerrainNormal;
          attribute float aSteep;
-         varying float vTerrainSteep;`,
+         varying float vTerrainSteep;
+         uniform vec3 uTileOrigin;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
-         vTerrainWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+         // The plate's own coordinates (its grids, its textures), and the
+         // world's (what lies round the camera).
+         vTerrainAtlas = (modelMatrix * vec4(transformed, 1.0)).xyz;
+         vTerrainWorld = vTerrainAtlas - uTileOrigin;
          vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);
          vTerrainSteep = aSteep;`,
       );
@@ -1079,6 +1116,7 @@ function terrainMaterial(
         '#include <common>',
         `#include <common>
          varying vec3 vTerrainWorld;
+         varying vec3 vTerrainAtlas;
          varying vec3 vTerrainNormal;
          varying float vTerrainSteep;
          uniform sampler2DArray uRelief;
@@ -1740,7 +1778,7 @@ function terrainMaterial(
          // effects to go. The scene's own light shapes the hills.)
          // Under the grass field the ground is the shade between the blades:
          // darker, so the blades stand in a lawn and not on a bright card.
-         float grassDist = distance(vec2(vTerrainWorld.x, -vTerrainWorld.z), uGrassField.xy);
+         float grassDist = distance(vec2(vTerrainAtlas.x, -vTerrainAtlas.z), uGrassField.xy);
          float grassUnder = uGrassField.w * (1.0 - smoothstep(uGrassField.z * 0.45, uGrassField.z * 0.95, grassDist));
          blended.rgb *= mix(1.0, 0.8, grassUnder * (1.0 - clamp(dirtMix + rockMix, 0.0, 1.0)));
          // Painted ground (world/terrainPaint.ts): a weight per layer, the
@@ -2037,7 +2075,13 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
   return material;
 }
 
-export function createTerrainSurface(anisotropy: number): TerrainSurface {
+/**
+ * `origin`: where the plate's centre stands in the world - the origin on the
+ * flat map, a face's centre in the planet's atlas (`render/planet/terrainAtlas.ts`).
+ * Every coordinate the surface is given or returns is the plate's own, about
+ * its centre; only its meshes are moved there.
+ */
+export function createTerrainSurface(anisotropy: number, origin: { readonly x: number; readonly y: number } = { x: 0, y: 0 }): TerrainSurface {
   const bakes = terrainBakes(anisotropy);
   const material = terrainMaterial(bakes, anisotropy);
 
@@ -2058,6 +2102,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   // every shadow the player is actually looking at.
   ground.castShadow = false;
   ground.matrixAutoUpdate = false;
+  ground.position.set(origin.x, 0, -origin.y);
   ground.updateMatrix();
 
   // Land beyond the editable plate, so the map does not end in mid-air.
@@ -2079,6 +2124,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   backdrop.name = 'terrain-backdrop';
   backdrop.receiveShadow = false;
   backdrop.matrixAutoUpdate = false;
+  backdrop.position.set(origin.x, 0, -origin.y);
   backdrop.updateMatrix();
 
   // The map's cut sides, SimCity 4's slab: from the rim straight down to a flat
@@ -2093,6 +2139,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   walls.receiveShadow = false;
   walls.castShadow = false;
   walls.matrixAutoUpdate = false;
+  walls.position.set(origin.x, 0, -origin.y);
   walls.updateMatrix();
 
   const waterSurface = createWaterSurface(anisotropy);
@@ -2101,6 +2148,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   water.receiveShadow = false;
   water.castShadow = false;
   water.matrixAutoUpdate = false;
+  water.position.set(origin.x, 0, -origin.y);
   water.updateMatrix();
   // The river animates itself from here on: nothing in the draw loop has to
   // know that the terrain owns something with a clock in it.
@@ -2118,6 +2166,13 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const grid = new Float64Array(GRID * GRID);
   /** The fine relief the light reads, baked from `grid` (`terrainRelief.ts`). */
   const relief = createReliefBake(GRID, TERRAIN_CELL, TERRAIN_HALF, material.userData['macro'] as Texture);
+  {
+    // The ground reads its own bake, and its grids from where it stands.
+    const own = material.userData['terrainUniforms'] as { uRelief: { value: Texture }; uReliefWindow: { value: Vector4 }; uTileOrigin: { value: Vector3 } };
+    own.uRelief = relief.texture;
+    own.uReliefWindow = relief.window;
+    own.uTileOrigin.value.set(origin.x, 0, -origin.y);
+  }
   /** The same corners before any road shaped them, so shaping is idempotent. */
   const natural = new Float64Array(GRID * GRID);
   /**
@@ -2156,7 +2211,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   groundTexture.magFilter = NearestFilter;
   groundTexture.minFilter = NearestFilter;
   groundTexture.generateMipmaps = false;
-  waterSurface.setGround(groundTexture, TERRAIN_HALF, TERRAIN_CELL, GRID);
+  waterSurface.setGround(groundTexture, TERRAIN_HALF, TERRAIN_CELL, GRID, origin);
 
   /**
    * Which diagonal each cell is drawn with: 0 the plane's own (b-d), 1 the
@@ -2906,7 +2961,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     performance.measure('hitch:terrain-light', { start: startedAt, end: performance.now() });
     performance.measure('terrain-light/worker', { start: startedAt - result.ms, end: startedAt, detail: `${width}x${rect.y1 - rect.y0 + 1} corners` });
     // Rows run from +y downwards.
-    diary?.record('light', [[-TERRAIN_HALF + rect.x0 * TERRAIN_CELL, TERRAIN_HALF - rect.y1 * TERRAIN_CELL, -TERRAIN_HALF + rect.x1 * TERRAIN_CELL, TERRAIN_HALF - rect.y0 * TERRAIN_CELL]],
+    diary?.record('light', [[origin.x - TERRAIN_HALF + rect.x0 * TERRAIN_CELL, origin.y + TERRAIN_HALF - rect.y1 * TERRAIN_CELL, origin.x - TERRAIN_HALF + rect.x1 * TERRAIN_CELL, origin.y + TERRAIN_HALF - rect.y0 * TERRAIN_CELL]],
       { cause: 'luz do terreno refeita', ...(lightCause ? { parent: lightCause } : {}), ms: result.ms, detail: `${width}×${rect.y1 - rect.y0 + 1} cantos, num worker` });
   };
   if (typeof Worker !== 'undefined') {
@@ -2967,7 +3022,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
   const sandCorners = material.userData['sandCorners'] as Float32Array;
   const basaltCorners = material.userData['basaltCorners'] as Float32Array;
   const geologyChanges = new GroundChanges();
-  const updatePaint = (doc: RoadDoc): void => {
+  const updatePaint = (doc: TerrainSource): void => {
     if (doc.natureRevision !== natureSeen) {
       natureSeen = doc.natureRevision;
       nature = doc.nature;
@@ -2978,7 +3033,7 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     // is held (a stroke defers the water, and with it this).
     if (ecologyStale && !waterStale) refreshEcology();
   };
-  const paintStep = (doc: RoadDoc): void => {
+  const paintStep = (doc: TerrainSource): void => {
     if (doc.paintRevision === paintRevision) return;
     paintRevision = doc.paintRevision;
     const dabs = doc.terrainPaint;
@@ -3047,8 +3102,24 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
     }
   };
 
-  return {
+  const parts: TerrainPart[] = [];
+  const surface: TerrainSurface = {
     meshes: [backdrop, walls, ground, water],
+    parts,
+    regionOf(box) {
+      const last = TERRAIN_SEGMENTS;
+      const clamp = (v: number): number => Math.max(0, Math.min(last, v));
+      return [
+        clamp(Math.floor((box[0] + TERRAIN_HALF) / TERRAIN_CELL)), clamp(Math.ceil((box[2] + TERRAIN_HALF) / TERRAIN_CELL)),
+        clamp(Math.floor((TERRAIN_HALF - box[3]) / TERRAIN_CELL)), clamp(Math.ceil((TERRAIN_HALF - box[1]) / TERRAIN_CELL)),
+      ];
+    },
+    rectOf(region) {
+      return [
+        (region[0] - 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[3] + 1) * TERRAIN_CELL,
+        (region[1] + 1) * TERRAIN_CELL - TERRAIN_HALF, TERRAIN_HALF - (region[2] - 1) * TERRAIN_CELL,
+      ];
+    },
     ground,
     setSun,
     setGullies(dabs, auto) { relief.setGullies(dabs, auto); },
@@ -3224,6 +3295,8 @@ export function createTerrainSurface(anisotropy: number): TerrainSurface {
       groundTexture.dispose();
     },
   };
+  parts.push({ surface, cx: 0, cy: 0 });
+  return surface;
 }
 
 export interface WaterStamp {

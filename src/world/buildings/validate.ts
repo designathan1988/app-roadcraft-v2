@@ -1,7 +1,7 @@
 import { validOutline, overlapArea, roofPartFits } from './footprints';
 import type { Vec2 } from '@core/vec2';
 import { pointInPolygon } from '@core/polygon';
-import { MAP_HALF } from '../bounds';
+import { MAP_REACH, regionAt } from '../bounds';
 import type { RoadDoc } from '../doc';
 import type { Network } from '../network';
 import { Level, halfWidth } from '../roadTypes';
@@ -157,8 +157,11 @@ export function validateBuilding(
   if (structural) return structural;
 
   const box = buildingBounds(b);
-  const limit = MAP_HALF - BUILDING_MAP_MARGIN;
-  if (box.minX < -limit || box.minY < -limit || box.maxX > limit || box.maxY > limit) return 'bounds';
+  // Its own plate's (on the planet, the face its middle stands on, and as far
+  // past the border as a face's reach goes).
+  const plate = regionAt((box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
+  const limit = plate.half + MAP_REACH - BUILDING_MAP_MARGIN;
+  if (box.minX < plate.cx - limit || box.minY < plate.cy - limit || box.maxX > plate.cx + limit || box.maxY > plate.cy + limit) return 'bounds';
 
   const rects = [...footprintRects(b, -TOUCH), ...groundProjections(b, -TOUCH), ...groundElements(b, -TOUCH)];
   const party = [...footprintRects(b, -PARTY_WALL), ...groundProjections(b, -TOUCH), ...groundElements(b, -TOUCH)];

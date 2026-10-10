@@ -3,7 +3,7 @@ import { validOutline, roofPartFits } from './footprints';
 import type { Vec2 } from '@core/vec2';
 import { clamp } from '@core/scalar';
 import { m } from '@world/units';
-import { MAP_HALF } from '@world/bounds';
+import { clampToMap } from '@world/bounds';
 import {
   type BayComponent,
   type Building,
@@ -342,8 +342,7 @@ export function migrateBuilding(raw: unknown): Building | null {
     id: asBuildingId(raw.id),
     schema: BUILDING_SCHEMA,
     // A file can put a building anywhere; the map cannot. Unchanged when on it.
-    x: clamp(raw.x as number, -MAP_HALF, MAP_HALF),
-    y: clamp(raw.y as number, -MAP_HALF, MAP_HALF),
+    ...clampToMap({ x: raw.x as number, y: raw.y as number }, 0),
     rotation: finite(raw.rotation) ? raw.rotation : 0,
     use: isBuildingUse(raw.use) ? raw.use : 'residential',
     module,
