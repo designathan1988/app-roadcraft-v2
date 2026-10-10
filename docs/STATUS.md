@@ -316,6 +316,12 @@ o jogo a cada edição.
   - prédio em meio-nível na encosta (`world/buildings/splitLevel.ts`,
     `Volume.lift`): o fundo meio andar ou um andar acima ou abaixo da rua,
     cada bloco no seu platô, o quintal na cota dos fundos (P74).
+  - peças do gramado assentadas no ponto mais alto do chão DESENHADO sob toda
+    a área delas (`render/buildings/lawnGround.ts`): cantos, vértices da malha
+    do terreno dentro da peça e cruzamentos das bordas com as arestas dos
+    triângulos, exato (`tests/render/lawnGround.spec.ts`); os 4 cantos e o
+    centro deixavam cristas atravessarem a peça. Mesmo custo (1 530 prédios:
+    ~3,4 s antes e depois, Node). Conferência visual pendente (painel oculto).
 
 ### Pessoas
 - Na rua andam só os NPCs do cenário (`sim/ambient`), entrando pelas pontas

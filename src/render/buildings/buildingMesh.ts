@@ -70,6 +70,8 @@ import {
 import { FOLLOWS_GROUND, elementRect, followPieces, onGround, partGroups, stairSteps, unsupportedElements } from '@world/buildings/elements';
 import { planRoofPlant } from '@world/buildings/roofPlant';
 import { isRetainingStone } from '@world/buildings/cityBuildings';
+import { TERRAIN_CELL, TERRAIN_HALF } from '../terrain';
+import { highestGroundUnder } from './lawnGround';
 import {
   type BayComponent,
   type Building,
@@ -1504,6 +1506,9 @@ const POOL_WATER_DROP = m(0.12);
  * it. When the building is only lots, its free parts (trees, benches, paths,
  * fences) stand on them here.
  */
+/** The grid the terrain is drawn on, whose triangles a lawn's parts are seated over (`lawnGround.ts`). */
+const LAWN_LATTICE = { cell: TERRAIN_CELL, half: TERRAIN_HALF } as const;
+
 function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, groundAt: GroundAt, shell: Shell,
   parts: Record<PartKind, Placement[]>, buildingFloor?: number, pavedAt?: PavedAt,
   onLot?: (el: BuildingElement) => boolean): LotGround | undefined {
@@ -1641,13 +1646,18 @@ function emitLots(b: Building, lots: readonly Volume[], withParts: boolean, grou
       const g = groups.get(el.id);
       if (g === undefined || earthworks.has(g) || el.z > lowest.get(g)! + m(0.05)) continue;
       const [x0, y0, x1, y1] = elementRect(el);
-      for (const [px, py] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1], [(x0 + x1) / 2, (y0 + y1) / 2]] as const) {
-        if (!onLawn(px, py)) continue;
-        const ground = at(px, py);
-        const seat = seats.get(g);
-        if (!seat) seats.set(g, { base: ground, lowest: lowest.get(g)! });
-        else seat.base = Math.max(seat.base, ground);
-      }
+      const points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [(x0 + x1) / 2, (y0 + y1) / 2]] as const;
+      const lawn = points.filter(([px, py]) => onLawn(px, py));
+      if (lawn.length === 0) continue;
+      // All on the lawn: the highest the drawn ground rises anywhere under it,
+      // ridges of the terrain's triangles included (`lawnGround.ts`); partly
+      // on a terrace or paving, the lawn's points of it.
+      const ground = lawn.length === points.length
+        ? highestGroundUnder(points.slice(0, 4).map(([px, py]) => { const w = e.L(px, py, 0); return [w[0], w[1]] as const; }), groundAt, LAWN_LATTICE)
+        : Math.max(...lawn.map(([px, py]) => at(px, py)));
+      const seat = seats.get(g);
+      if (!seat) seats.set(g, { base: ground, lowest: lowest.get(g)! });
+      else seat.base = Math.max(seat.base, ground);
     }
   }
   for (const el of b.elements ?? []) {
