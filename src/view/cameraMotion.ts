@@ -1,3 +1,4 @@
+import type { Vec2 } from '@core/vec2';
 import type { Viewport } from './viewport';
 
 /**
@@ -58,9 +59,14 @@ export class CameraMotion {
   private readonly held = new Map<string, readonly [Axis, 1 | -1]>();
   private readonly velocity: Record<Axis, number> = { forward: 0, right: 0, turn: 0, tilt: 0, zoom: 0 };
   private shift = false;
-  /** Zoom still to spend (log factor) and the point it holds. */
+  /**
+   * Zoom still to spend (log factor), the screen point it is about, and the
+   * ground point it holds there - picked once when the zoom began
+   * (`Viewport.grab`), null over the sky or space (then it is about the
+   * view's centre, as Cesium zooms with the pointer off the globe).
+   */
   private pendingZoom = 0;
-  private zoomAt = { x: 0, y: 0, height: 0 };
+  private zoomAt: { x: number; y: number; height: number; grabbed: Vec2 | null } = { x: 0, y: 0, height: 0, grabbed: null };
   /** Turn still to spend, rad. */
   private pendingTurn = 0;
 
@@ -96,7 +102,9 @@ export class CameraMotion {
   wheel(logFactor: number, at: { x: number; y: number }): void {
     // A new point: what is left of the last notch goes to the new one.
     if (this.pendingZoom === 0 || Math.hypot(at.x - this.zoomAt.x, at.y - this.zoomAt.y) > 2) {
-      this.zoomAt = { x: at.x, y: at.y, height: this.host.heightUnder(at) };
+      const ground = this.host.heightUnder(at);
+      const held = this.host.view().grab?.(at.x, at.y, ground) ?? null;
+      this.zoomAt = { x: at.x, y: at.y, height: held ? held.height : ground, grabbed: held ? held.world : null };
     }
     this.pendingZoom += logFactor;
   }
@@ -152,7 +160,9 @@ export class CameraMotion {
     if (this.pendingZoom !== 0) {
       const spend = Math.abs(this.pendingZoom) < 1e-4 ? this.pendingZoom : this.pendingZoom * (1 - Math.exp(-seconds / ZOOM_EASE_S));
       this.pendingZoom -= spend;
-      view.zoomAt(this.zoomAt.x, this.zoomAt.y, Math.exp(spend), w, h, this.zoomAt.height);
+      const at = this.zoomAt;
+      if (at.grabbed) view.zoomAt(at.x, at.y, Math.exp(spend), w, h, at.height, at.grabbed);
+      else view.zoomAt(w / 2, h / 2, Math.exp(spend), w, h, this.host.heightUnder({ x: w / 2, y: h / 2 }));
     }
     return true;
   }

@@ -60,8 +60,21 @@ export interface Viewport {
   releaseChart?(): void;
   /** Moves the view so `grabbed` (a point at `height`, what was under the pointer) sits under the pointer again. */
   panTo(grabbed: Vec2, px: number, py: number, cssW: number, cssH: number, height?: number): void;
-  /** Zooms about a pointer, keeping the ground under it (at `height`, the ground's own height there). */
-  zoomAt(px: number, py: number, factor: number, cssW: number, cssH: number, height?: number): void;
+  /**
+   * Zooms about a pointer, keeping the ground under it (at `height`, the
+   * ground's own height there). `grabbed`: the point `grab` picked when the
+   * zoom began, held under the pointer for the whole glide - re-read each
+   * step, what one step left off was taken as the point to hold by the
+   * next, and over the globe the place pointed at slid away (Cesium's
+   * `handleZoom` picks once, when a zoom gesture starts).
+   */
+  zoomAt(px: number, py: number, factor: number, cssW: number, cssH: number, height?: number, grabbed?: Vec2): void;
+  /**
+   * The point a zoom about (px, py) holds, and the height of the plane it is
+   * held on (the ground's `height`, or the plane the view holds instead far
+   * down a street); null where the pointer is over the sky or space.
+   */
+  grab?(px: number, py: number, height: number): { readonly world: Vec2; readonly height: number } | null;
   /** Moves the view over the ground, world units: `right` across the screen, `forward` the way the camera faces. */
   slide(right: number, forward: number): void;
   /** Where the camera's eye is (x, y on the map, z its height), or null for a flat view. */

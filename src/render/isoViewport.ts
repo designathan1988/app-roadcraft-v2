@@ -66,6 +66,8 @@ const DISTANCE = 5000;
  */
 export const PERSPECTIVE_FOV = 35;
 const TAU = Math.PI * 2;
+/** The most steps a zoom or a turn takes to bring the point it holds back under the pointer (`keeping`). */
+const KEEP_PASSES = 8;
 
 const smooth = (v: number): number => {
   const t = Math.min(1, Math.max(0, v));
@@ -381,9 +383,10 @@ export function createIsoRig(
     if (t !== null && t <= limit) return atHeight;
     return raycaster.ray.origin.y + raycaster.ray.direction.y * limit;
   };
-  const keeping = (px: number, py: number, change: () => void, groundHeight = 0): void => {
-    const atHeight = holdHeight(px, py, groundHeight);
-    const before = hitAt(px, py, atHeight);
+  const keeping = (px: number, py: number, change: () => void, groundHeight = 0, grabbed?: Vec2): void => {
+    // A point grabbed when the gesture began is held on its own plane as it is.
+    const atHeight = grabbed ? groundHeight : holdHeight(px, py, groundHeight);
+    const before = grabbed ?? hitAt(px, py, atHeight);
     change();
     apply();
     // A pointer over the horizon holds no ground: the change is made about
@@ -394,12 +397,18 @@ export function createIsoRig(
     // height moves with its centre, and a second step takes up what the
     // first left. Close up the tilt, the lens and the eye's lift change with
     // the zoom too: a third step.
-    for (let pass = camera === persp ? 3 : 1; pass > 0; pass--) {
+    // On the globe a point near the limb, and in the street a point far
+    // down the road, need more: the steps go on until the point stands
+    // within a hundredth of a unit (`KEEP_PASSES` at most), as a fixed
+    // three left it pixels off there and the place pointed at slid away.
+    for (let pass = camera === persp ? KEEP_PASSES : 1; pass > 0; pass--) {
       const found = hitAt(px, py, atHeight);
       if (!found) break;
       const was = chart(before), after = chart(found);
-      target.x += was.x - after.x;
-      target.z -= was.y - after.y;
+      const dx = was.x - after.x, dy = was.y - after.y;
+      if (Math.abs(dx) + Math.abs(dy) < 0.01) break;
+      target.x += dx;
+      target.z -= dy;
       apply();
     }
   };
@@ -450,7 +459,12 @@ export function createIsoRig(
         apply();
       }
     },
-    zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0) {
+    grab(px, py, atHeight) {
+      const held = holdHeight(px, py, atHeight);
+      const world = hitAt(px, py, held);
+      return world ? { world, height: held } : null;
+    },
+    zoomAt(px, py, factor, _cssW, _cssH, atHeight = 0, grabbed) {
       if (!(factor > 0) || !Number.isFinite(factor)) return;
       const wanted = halfHeight / factor;
       // The closest zoom is a person's eyes on the ground, and the zoom stops
@@ -459,7 +473,7 @@ export function createIsoRig(
       if (wanted < MIN_HALF_HEIGHT && halfHeight <= MIN_HALF_HEIGHT) return;
       keeping(px, py, () => {
         halfHeight = Math.min(MAX_HALF_HEIGHT, Math.max(MIN_HALF_HEIGHT, wanted));
-      }, atHeight);
+      }, atHeight, grabbed);
     },
     slide(right, forward) {
       // Along the ground the camera faces: forward is away from the camera
