@@ -1,7 +1,7 @@
 import { FACE_HALF, faceToSphereInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
 import { TILES, TILES_PER_SIDE, TILE_COUNT, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import type { Vec2 } from '@core/vec2';
-import { atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
+import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
 
 /**
  * THE PLANET'S CHARTS AND THEIR TRANSITION MAPS.
@@ -221,6 +221,26 @@ export function onTerritory(chart: number, x: number, y: number): boolean {
   if (identity()) return true;
   const c = tileCentre(chart);
   return onTile(chart, x - c.x, y - c.y);
+}
+
+/**
+ * The charts whose stored shapes may reach a box of `chart`'s map: its own,
+ * and every neighbour whose piece lies within `TILE_REACH` of the box - a
+ * shape kept on a piece's chart (a road, a lot, a building) can stand that
+ * far past the piece's border. Just `chart` on the flat map.
+ */
+export function chartsReaching(chart: number, minX: number, minY: number, maxX: number, maxY: number): number[] {
+  if (identity()) return [chart];
+  const out = [chart];
+  for (const other of chartsTouching(chart, minX - TILE_REACH, minY - TILE_REACH, maxX + TILE_REACH, maxY + TILE_REACH, reaching)) out.push(other);
+  return out;
+}
+const reaching = new Set<number>();
+
+/** Points of `from`'s map on `to`'s map (the same ground); the points themselves when the charts are one. */
+export function carryPoints(from: number, to: number, points: readonly Vec2[]): Vec2[] {
+  if (from === to || identity()) return points as Vec2[];
+  return points.map((p) => chartToChartInto(from, to, p.x, p.y, { x: 0, y: 0 }));
 }
 
 /** How far past a piece's border its neighbours are looked for, world units. */

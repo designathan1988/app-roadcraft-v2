@@ -2,6 +2,7 @@ import { validOutline, overlapArea, roofPartFits } from './footprints';
 import type { Vec2 } from '@core/vec2';
 import { pointInPolygon } from '@core/polygon';
 import { MAP_REACH, regionAt } from '../bounds';
+import { carryPoints, chartAt, chartsReaching } from '../planet/charts';
 import type { RoadDoc } from '../doc';
 import type { Network } from '../network';
 import { Level, halfWidth } from '../roadTypes';
@@ -167,16 +168,32 @@ export function validateBuilding(
   const party = [...footprintRects(b, -PARTY_WALL), ...groundProjections(b, -TOUCH), ...groundElements(b, -TOUCH)];
   if (ctx.net && rects.some((rect) => touchesRoad(ctx.net as Network, rect))) return 'road';
 
+  // On the planet the neighbours kept on other pieces' charts are met on
+  // their own charts (planet/charts.ts): compared in the atlas, a building
+  // across a border was never in the way.
+  const own = chartAt((box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
+  const reach = chartsReaching(own, box.minX, box.minY, box.maxX, box.maxY);
+  const partyOn = new Map<number, Vec2[][]>([[own, party]]);
+  const boxOn = new Map<number, ReturnType<typeof boundsOf>>([[own, box]]);
+  for (const chart of reach) {
+    if (chart === own) continue;
+    const carried = party.map((ring) => carryPoints(own, chart, ring));
+    partyOn.set(chart, carried);
+    boxOn.set(chart, boundsOf(carried.flat()));
+  }
   for (const other of ctx.doc.buildings.all()) {
     if (other.id === b.id || ignored?.has(other.id)) continue;
     const ob = storedBounds(other);
-    if (ob.minX > box.maxX || ob.maxX < box.minX || ob.minY > box.maxY || ob.maxY < box.minY) continue;
+    const chart = chartAt((ob.minX + ob.maxX) / 2, (ob.minY + ob.maxY) / 2);
+    const mine = partyOn.get(chart), mineBox = boxOn.get(chart);
+    if (!mine || !mineBox) continue;
+    if (ob.minX > mineBox.maxX || ob.maxX < mineBox.minX || ob.minY > mineBox.maxY || ob.maxY < mineBox.minY) continue;
     const others = [...footprintRects(other), ...groundProjections(other), ...groundElements(other)];
     // Two buildings may share a party wall: their volumes meet, and may run a
     // few centimetres into each other, as terraced houses and a row of shops
     // do. Measured with each volume shrunk by `PARTY_WALL`, so a joint is
     // never a gap (the player's order of 2026-10-05).
-    for (const a of party) for (const c of others) if (overlapArea(a, c) > 1e-5) return 'building';
+    for (const a of mine) for (const c of others) if (overlapArea(a, c) > 1e-5) return 'building';
   }
 
   if (ctx.groundAt) {
@@ -188,7 +205,18 @@ export function validateBuilding(
 
 /** Whether a footprint rectangle reaches any road's footway or junction plate. */
 export function touchesRoad(net: Network, rect: readonly Vec2[]): boolean {
-  return roadContacts(net).touches(rect);
+  const contacts = roadContacts(net);
+  if (contacts.touches(rect)) return true;
+  if (!__PLANET__ || !rect.length) return false;
+  // The roads kept on the neighbouring pieces' charts, met on their charts:
+  // a road whose segment is kept on the next piece can run past the border
+  // right beside the building.
+  const box = boundsOf(rect);
+  const own = chartAt((box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2);
+  for (const chart of chartsReaching(own, box.minX, box.minY, box.maxX, box.maxY)) {
+    if (chart !== own && contacts.touches(carryPoints(own, chart, rect))) return true;
+  }
+  return false;
 }
 
 /** A road's reach, or a junction's carriageway, with its box (`RoadContacts`). */
