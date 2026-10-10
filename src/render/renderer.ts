@@ -81,7 +81,9 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
-import { installPlanet, planetLocalMinutes, planetScene, planetSun } from './planet/bend';
+import { installPlanet, planetCentre, planetLocalMinutes, planetMotion, planetScene, planetSun } from './planet/bend';
+import { createSpace } from './planet/space';
+import { PLANET_RADIUS } from '@core/cubeSphere';
 import { GRASS_NEAR_REACH, type MaskRect, createGrass, createGrassMask } from './grassField';
 import { surfaces as roadSurfacesOf } from '@world/surfaces';
 import { buildingPads, type Pad } from '@world/buildings/pads';
@@ -544,6 +546,11 @@ export function createSceneRenderer(
     shadows: quality.shadows,
     shadowMapSize: quality.shadowMapSize,
   });
+  // On the planet: the stars, the sun, the moon and the air round it (`planet/space.ts`).
+  const space = __PLANET__ ? createSpace(scene, renderer) : null;
+  if (import.meta.env.DEV && space) Object.assign(window, { __space: space, __spaceCamera: () => rig.camera });
+  const spaceCentre = new Vector3();
+  const spaceUp = new Vector3();
 
   const materials: SceneMaterials = createMaterials(anisotropy);
   // Streets and footways wear with use (`wear.ts`).
@@ -3010,10 +3017,12 @@ export function createSceneRenderer(
       {
         const fov = rig.camera instanceof PerspectiveCamera ? rig.camera.fov : 0;
         const open = rig.chasing || (rig.perspective && rig.viewport.elevation < ((fov / 2 + 4) * Math.PI) / 180);
+        // On the planet there is no map edge to hide: round the ground is the
+        // sky, and further out space (`planet/space.ts` fades the sky dome).
         const sky = scene.getObjectByName('sky');
-        if (sky) sky.visible = open;
+        if (sky && !__PLANET__) sky.visible = open;
         for (const mesh of terrain.meshes) if (mesh.name === 'terrain-backdrop') mesh.visible = open;
-        scene.background = open ? null : MAP_BACKGROUND;
+        scene.background = open || __PLANET__ ? null : MAP_BACKGROUND;
       }
       if (scenery) {
         scenery.grass.visible = quality.detailProps && rig.viewport.zoom >= GRASS_MIN_ZOOM;
@@ -3092,7 +3101,13 @@ export function createSceneRenderer(
       // Day and night, by the city's clock (`sim/city/city.ts`).
       // "Dia": four in the afternoon, the sun 29 degrees up - long enough
       // shadows to model the land, as the player's picture (2026-10-07).
-      const clock = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : sim.city.minutes(sim);
+      // On the planet "always day" and "always night" are the hour WHERE THE
+      // VIEW LOOKS: a fixed 16:00 of the planet's clock left half the globe,
+      // and often the place looked at, in the night. The sun's hour at a place
+      // is the clock plus its longitude (\`world/planet/sun.ts\`), so the clock
+      // that makes it there is the hour less that offset.
+      const fixedHour = skyMode === 'day' ? 16 * 60 : skyMode === 'night' ? 22 * 60 : null;
+      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - planetLocalMinutes(0) : fixedHour;
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
         // bends the plants and the smoke; the rain falls through the view;
@@ -3135,6 +3150,19 @@ export function createSceneRenderer(
       const dark = __PLANET__ ? environment.setTimeOfDay(planetLocalMinutes(clock), planetSun(clock, planetSunNow)) : environment.setTimeOfDay(clock);
       // What a cloud's shadow can take: the sun's share of the light now.
       post.setDirectShare(environment.directShare());
+      if (space) {
+        planetCentre(spaceCentre);
+        // The real horizon from the eye's height over the sphere.
+        spaceUp.subVectors(rig.camera.position, spaceCentre);
+        const eyeRadius = spaceUp.length();
+        spaceUp.divideScalar(Math.max(1e-6, eyeRadius));
+        const dipCos = Math.min(1, PLANET_RADIUS / Math.max(PLANET_RADIUS, eyeRadius));
+        environment.setHorizon(spaceUp, Math.sqrt(1 - dipCos * dipCos));
+        space.update({ camera: rig.camera, globe: rig.viewport.globe ?? 0, dark, minutes: clock, sun: planetSunNow,
+          centre: spaceCentre, motion: planetMotion(), pixelRatio: renderer.getPixelRatio() });
+        environment.setSpace(space.spaceShare);
+        post.setSpace(space.spaceShare);
+      }
       if (Math.abs(dark - lastDark) > 0.01) {
         lastDark = dark;
         post.setNight(dark);
@@ -3304,7 +3332,9 @@ export function createSceneRenderer(
       const eyeShift = rig.perspective ? 0
         : rig.camera.position.distanceTo(rig.target) - halfHeight / Math.tan((PERSPECTIVE_FOV * Math.PI) / 360);
       post.setAtmosphere(air, environment.sun.position.clone().sub(environment.sun.target.position), environment.skyColor,
-        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing, eyeShift);
+        // On the planet there is no void round a model: space and the air round
+        // the planet are drawn instead (`planet/space.ts`).
+        sunLight.copy(environment.sun.color).multiplyScalar(environment.sun.intensity), !rig.chasing && !__PLANET__, eyeShift);
       const atRender = performance.now();
       // The people's skeletons on the GPU (`people/crowdAnimation.ts`), before anybody draws them.
       agents.renderPalettes(renderer);
@@ -3389,6 +3419,7 @@ export function createSceneRenderer(
       terrain.dispose();
       materials.dispose();
       environment.dispose();
+      space?.dispose();
       post.dispose();
       lotOverlay?.dispose();
       renderer.dispose();

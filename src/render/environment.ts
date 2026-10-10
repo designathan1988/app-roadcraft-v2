@@ -101,6 +101,17 @@ export interface SceneEnvironment {
   /** Smoke in the air, 0..1: the fog closes in and browns, the light dims. */
   setSmog(k: number): void;
   /**
+   * How far the view has gone out to space, on the planet (0 the ground's sky
+   * .. 1 black space, `planet/space.ts`): the sky dome fades to black, and
+   * the stars, the sun and the air round the planet show instead.
+   */
+  setSpace(share: number): void;
+  /**
+   * The eye's up and how far below the level its horizon lies (sine of the
+   * dip), on the planet: the sky dome reaches down to the real horizon.
+   */
+  setHorizon(up: Vector3, dipSine: number): void;
+  /**
    * The weather on the light (`world/weather.ts`): how overcast (0 clear ..
    * 1 a storm sky - the sun dimmed behind the clouds, the sky greyed, the
    * shadows softened into the sky's light) and how bright a lightning flash
@@ -133,16 +144,22 @@ const SKY_FRAGMENT = `
   uniform vec3 uGround;
   uniform vec3 uSunDirection;
   uniform vec3 uSunColor;
+  uniform float uSpace;
+  uniform vec3 uUp;
+  uniform float uDip;
 
   void main() {
-    float h = vSkyDirection.y;
+    // Height over the horizon: on the planet the horizon dips below the
+    // level as the eye climbs (cos dip = R / (R + h)), and the sky reaches
+    // down to it; on the flat map the level is the horizon.
+    float h = (dot(normalize(vSkyDirection), uUp) + uDip) / (1.0 + uDip);
     vec3 sky = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.62));
     sky = mix(uGround, sky, smoothstep(-0.12, 0.02, h));
     // A broad, soft glow around the sun, and a tighter core inside it. Enough
     // to tell the eye where the light comes from without drawing a disc.
     float sun = max(dot(normalize(vSkyDirection), uSunDirection), 0.0);
     sky += uSunColor * (pow(sun, 7.0) * 0.28 + pow(sun, 120.0) * 0.9);
-    gl_FragColor = vec4(sky, 1.0);
+    gl_FragColor = vec4(sky * (1.0 - uSpace), 1.0);
   }
 `;
 
@@ -178,6 +195,9 @@ export function createEnvironment(
       uGround: { value: groundTint },
       uSunDirection: { value: sunDirection },
       uSunColor: { value: sunColor },
+      uSpace: { value: 0 },
+      uUp: { value: new Vector3(0, 1, 0) },
+      uDip: { value: 0 },
     },
     vertexShader: SKY_VERTEX,
     fragmentShader: SKY_FRAGMENT,
@@ -305,6 +325,10 @@ export function createEnvironment(
   let flash = 0;
   const STORM_SKY = new Color(0x6f7782);
   const FLASH = new Color(0xdfe6ff);
+  /** How far out to space the view is, on the planet (`setSpace`). */
+  let space = 0;
+  const FILL_WHITE = new Color(0xf2f2ee);
+  const SPACE_SUN = new Color(1, 0.98, 0.95);
   return {
     sun,
     skyColor: horizon,
@@ -370,7 +394,11 @@ export function createEnvironment(
       // The sun's day: up at six, highest at noon, down at six, crossing the
       // sky from east to west round the bearing that throws shadows well.
       const day = (hour - 6) / 12;
-      const height = Math.sin(Math.PI * day);
+      // On the planet, the sun's real height where the view looks (the
+      // planet is set down with that place's up as three's y, \`bend.ts\`):
+      // near a pole a tilted sun circles low all day, and an hour read off
+      // the longitude called a sun 3.5 degrees up night.
+      const height = towards ? Math.max(-1, Math.min(1, towards.y)) : Math.sin(Math.PI * day);
       // How much daylight: full from a few degrees up, none below the horizon.
       const light = Math.min(1, Math.max(0, (height + 0.1) / 0.25));
       const dark = 1 - light;
@@ -407,6 +435,28 @@ export function createEnvironment(
         fill.intensity = Math.min(1.0 * light, (0.5 * keyOnGround) / Math.sin(fillElevation));
       }
       ambient.intensity = 0.07 * light + 0.05 * dark;
+      fill.color.copy(FILL_WHITE);
+      if (towards) {
+        // ON THE PLANET the light is the real sun, wherever the view looks:
+        // the ground turned from it is night by its own shape (the light's
+        // N.L), so the sun never becomes the moon - a moon over the view lit
+        // the whole globe from above, the day side as dark as the night. Near
+        // the ground the day's warmth and strength follow the local hour as
+        // on the flat map, and the moon is the fill light; out in space the
+        // sun has its full, white strength, and no sky fills the shade.
+        sunDirection.copy(towards);
+        const ground = 4.2 * (0.25 + 0.75 * Math.min(1, Math.max(0, height) * 2.5 + 0.2)) * light;
+        sun.intensity = ground + (4.2 - ground) * space;
+        sun.color.setRGB(1, 0.96 - warm * 0.12 * light, 0.9 - warm * 0.28 * light).lerp(SPACE_SUN, space);
+        if (dark > 0) {
+          fill.position.set(Math.cos(SUN_AZIMUTH + 0.6) * 0.55, 0.83, Math.sin(SUN_AZIMUTH + 0.6) * 0.55).multiplyScalar(1000);
+          fill.color.copy(FILL_WHITE).lerp(MOON, dark);
+          fill.intensity = Math.max(fill.intensity * light, 0.85 * dark);
+        }
+        fill.intensity *= 1 - space;
+        hemisphere.intensity = hemisphere.intensity * (1 - space) + 0.05 * space;
+        ambient.intensity = ambient.intensity * (1 - space) + 0.012 * space;
+      }
       zenith.copy(DAY_ZENITH).lerp(NIGHT_ZENITH, dark);
       horizon.copy(DAY_HORIZON).lerp(DUSK_HORIZON, warm * light * 0.7).lerp(NIGHT_HORIZON, dark);
       // An overcast sky: the sun behind the clouds - much less of it, and
@@ -428,7 +478,7 @@ export function createEnvironment(
       sunColor.copy(DAY_SUN).lerp(DUSK_SUN, warm).multiplyScalar(light);
       // No town-wide haze (the player: the smoke stays where the fire is).
       void smog; void SMOG;
-      scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4);
+      scene.environmentIntensity = 0.6 * (0.2 + 0.8 * light) * (1 - smog * 0.4) * (1 - 0.85 * space);
       return dark;
     },
     directShare() {
@@ -441,6 +491,15 @@ export function createEnvironment(
       return direct / Math.max(1e-6, direct + diffuse);
     },
     setSmog(k) { smog = Math.max(0, Math.min(1, k)); },
+    setHorizon(up, dipSine) {
+      (skyMaterial.uniforms['uUp']!.value as Vector3).copy(up);
+      skyMaterial.uniforms['uDip']!.value = dipSine;
+    },
+    setSpace(share) {
+      space = share;
+      skyMaterial.uniforms['uSpace']!.value = share;
+      sky.visible = share < 0.999;
+    },
     setWeather(k, f) { overcast = Math.max(0, Math.min(1, k)); flash = Math.max(0, Math.min(1.5, f)); },
     setQuality(next) {
       sun.castShadow = next.shadows;

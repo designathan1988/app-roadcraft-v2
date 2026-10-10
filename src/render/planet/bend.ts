@@ -120,6 +120,16 @@ bool planetOwns(vec3 p, float tile, float margin) {
   vec2 hi = lo + PLANET_STEP + 2.0 * margin;
   return all(greaterThanEqual(q, lo)) && all(lessThanEqual(q, hi));
 }
+// How much of a directional light reaches a view-space point: none past the
+// planet's own horizon there. The shadow map covers the ground round the view
+// only; out at the globe nothing else stood between the sun and the night
+// side, and the leaves' two-sided cards (the back face's normal turned to the
+// light) lit every tree on it.
+float planetDaylight(vec3 viewPos, vec3 lightDirView) {
+  if (planetOn < 0.5) return 1.0;
+  vec3 centre = (viewMatrix * vec4(planetT[3].xyz, 1.0)).xyz;
+  return smoothstep(-0.04, 0.06, dot(normalize(viewPos - centre), lightDirView));
+}
 // A view-space point of the flat world to its view-space point on the planet.
 vec4 planetView(vec4 mv) {
   if (planetOn < 0.5) return mv;
@@ -174,6 +184,12 @@ export function installPlanet(): void {
      }
      #endif
 `;
+  // The planet shades its own night side from every directional light.
+  chunks['lights_fragment_begin'] = (chunks['lights_fragment_begin'] as string).replace(
+    'getDirectionalLightInfo( directionalLight, directLight );',
+    `getDirectionalLightInfo( directionalLight, directLight );
+     directLight.color *= planetDaylight( geometryPosition, directLight.direction );`,
+  );
   for (const shader of Object.values(ShaderLib)) {
     shader.uniforms['planetOn'] = PLANET_ON;
     shader.uniforms['planetT'] = PLANET_T;
@@ -373,6 +389,11 @@ export function planetSun(minutes: number, out: Vector3): Vector3 {
 /** The time the sun makes at the place the view looks at (minutes, 0..1440). */
 export function planetLocalMinutes(minutes: number): number {
   return localMinutesAt(minutes, anchor.x, -anchor.z);
+}
+
+/** The motion setting the planet down: its own frame to three's space (`space.ts`). */
+export function planetMotion(): Readonly<Matrix4> {
+  return motion;
 }
 
 /** The motion from the drawn world back to the planet's own frame (the clouds' noise is read there). */

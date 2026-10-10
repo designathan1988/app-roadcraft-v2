@@ -59,6 +59,11 @@ export interface PostChain {
    */
   setNight(dark: number): void;
   /**
+   * How far the view has gone out to space (0 the ground .. 1), on the
+   * planet: the sun's disc and the brightest stars bloom there, by day too.
+   */
+  setSpace(share: number): void;
+  /**
    * How much of the light on the ground comes straight from the sun
    * (`SceneEnvironment.directShare`): all a cloud's shadow can take away.
    */
@@ -128,6 +133,9 @@ export function createPostChain(
       },
       setAmbientOcclusion() {
         /* no contact shading without the chain */
+      },
+      setSpace() {
+        /* no bloom without the chain */
       },
       setNight() {
         /* no bloom without the chain */
@@ -379,6 +387,8 @@ export function createPostChain(
   // the morning (some a fifth of the light at 06:30), and from the map's
   // zoom the land was covered in near-black blotches (2026-10-08).
   let night = 0;
+  /** How far out to space the view is (`setSpace`). */
+  let space = 0;
   let directShare = CLOUD_SHADOW_STRENGTH;
   const shadowStrength = (): number => directShare * Math.max(0, 1 - night * 1.5);
 
@@ -422,10 +432,15 @@ export function createPostChain(
       }
       composer.render(delta);
     },
+    setSpace(share) {
+      space = share;
+      bloom.enabled = night > 0.05 || space > 0.01;
+      bloom.strength = bloomStrength * Math.max(Math.min(1, night), space);
+    },
     setNight(dark) {
-      bloom.enabled = dark > 0.05;
-      bloom.strength = bloomStrength * Math.min(1, dark);
       night = dark;
+      bloom.enabled = dark > 0.05 || space > 0.01;
+      bloom.strength = bloomStrength * Math.max(Math.min(1, dark), space);
       if (clouds) (clouds.uniforms['uStrength'] as { value: number }).value = shadowStrength();
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
     },
