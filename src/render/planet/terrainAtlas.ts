@@ -5,10 +5,10 @@ import type { PaintDab } from '@world/terrainPaint';
 import type { TerrainStamp } from '@world/terrain';
 import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
-import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
+import { TILE_PLATE_HALF, TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
 import { tileGround } from '@world/planet/relief';
 import type { Mesh } from 'three';
-import { planetSunOnPlanet } from './bend';
+import { planetSunOnPlanet, setPlanetGroundFloor, type PlanetCap } from './bend';
 import { setLightFocus } from '../terrainLightPool';
 import { GroundChanges } from '../groundChanges';
 import {
@@ -96,6 +96,37 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     return { face, cx: c.x, cy: c.y, surface: createTerrainSurface(anisotropy, c, face), source: new FaceSource() };
   });
   // The pieces meet: a plate with a piece has no backdrop round it, no cut sides (`createTerrainSurface`).
+  /**
+   * Each plate's ground as the horizon sees it (`bend.ts` `PlanetCap`): its
+   * piece's centre, its corners' arc, the highest its ground stands; and the
+   * lowest ground of all, the sphere that hides (`setPlanetGroundFloor`).
+   * Measured again for a plate only when its ground moved.
+   */
+  const caps: PlanetCap[] = tiles.map((t) => {
+    const cap: PlanetCap = { dir: TILES[t.face]!.centre, reach: TILE_PLATE_HALF * Math.SQRT2, top: 0 };
+    t.surface.ground.userData['planetCap'] = cap;
+    return cap;
+  });
+  const lows = new Float64Array(TILE_COUNT);
+  const measured = new Set<Tile>(tiles);
+  const measure = (): void => {
+    if (measured.size === 0) return;
+    for (const t of measured) {
+      const heights = t.surface.ground.geometry.getAttribute('position').array;
+      let low = Infinity, high = -Infinity;
+      for (let i = 1; i < heights.length; i += 3) {
+        const h = heights[i]!;
+        if (h < low) low = h;
+        if (h > high) high = h;
+      }
+      caps[t.face]!.top = high;
+      lows[t.face] = low;
+    }
+    measured.clear();
+    let floor = Infinity;
+    for (let i = 0; i < TILE_COUNT; i++) floor = Math.min(floor, lows[i]!);
+    setPlanetGroundFloor(floor);
+  };
   const tileAt = (x: number, y: number): Tile => tiles[tileCellOf(x, y)] as Tile;
 
   /**
@@ -242,8 +273,9 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       sync(doc);
       let moved = false;
       for (const t of tiles) {
-        if (t.surface.update(t.source, stroking)) { moved = true; lastTile = t; }
+        if (t.surface.update(t.source, stroking)) { moved = true; lastTile = t; measured.add(t); }
       }
+      measure();
       return moved;
     },
     updatePaint(doc) {
@@ -284,7 +316,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
         : typeof region[0] === 'number' ? [region as TerrainRegion] : region as readonly TerrainRegion[];
       let moved = false;
       if (list === null) {
-        for (const t of tiles) if (t.surface.shapeToRoads(shape && shaperFor(t, shape), null)) moved = true;
+        for (const t of tiles) if (t.surface.shapeToRoads(shape && shaperFor(t, shape), null)) { moved = true; measured.add(t); }
+        measure();
         return moved;
       }
       const byTile = new Map<Tile, TerrainRegion[]>();
@@ -294,7 +327,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
         if (!mine) byTile.set(tile, mine = []);
         mine.push(local);
       }
-      for (const [t, regions] of byTile) if (t.surface.shapeToRoads(shape && shaperFor(t, shape), regions)) moved = true;
+      for (const [t, regions] of byTile) if (t.surface.shapeToRoads(shape && shaperFor(t, shape), regions)) { moved = true; measured.add(t); }
+      measure();
       return moved;
     },
     regionOf(box) {

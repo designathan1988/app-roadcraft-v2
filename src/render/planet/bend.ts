@@ -223,8 +223,60 @@ export function installPlanet(): void {
     } else {
       return object.call(this, target);
     }
-    return this.intersectsSphere(bent(sphere)) && !beyondHorizon(sphere);
+    if (!this.intersectsSphere(bent(sphere))) return false;
+    const cap = target.userData['planetCap'] as PlanetCap | undefined;
+    return cap ? !capBeyondHorizon(cap) : !beyondHorizon(sphere);
   };
+}
+
+/**
+ * A plate of ground as the horizon sees it (`userData.planetCap`): the cap of
+ * the sphere it covers - its centre's direction from the planet's centre (the
+ * planet's own frame), how far its farthest corner lies along the ground
+ * (an arc, world units: a piece's map keeps distances from its centre), and
+ * the highest its ground stands. Its bounding sphere stands a plate's width
+ * over the ground and kept plates 120 degrees round from the eye drawn.
+ */
+export interface PlanetCap {
+  readonly dir: Readonly<Vec3>;
+  readonly reach: number;
+  top: number;
+}
+
+/**
+ * The lowest ground on the planet (`setPlanetGroundFloor`), world units: the
+ * sphere under it hides what the horizon hides. Until the land is known, the
+ * deepest it may go (`HORIZON_SLACK`, declared below).
+ */
+let groundFloor = -200;
+
+/** The lowest the planet's ground stands now, for the plates' horizon test (`PlanetCap`). */
+export function setPlanetGroundFloor(height: number): void {
+  groundFloor = Math.min(0, height) - 2;
+}
+
+const eyeOnPlanet = new Vector3();
+
+/**
+ * Whether a plate lies wholly past the horizon (`PlanetCap`). From a point at
+ * distance d from the centre of a sphere of radius r, the ground is seen out
+ * to acos(r/d) round from under the eye, and a point at height H over the
+ * centre shows over the rim out to acos(r/H) farther (the two tangents meet
+ * at the horizon - Kevin Ring, "Horizon Culling", Cesium 2013, for a point; a
+ * cap is all hidden when its nearest point is). The sphere is the lowest
+ * ground (`groundFloor`), so a valley never hides what it should not.
+ */
+function capBeyondHorizon(cap: PlanetCap): boolean {
+  if (!eyeKnown) return false;
+  const floor = PLANET_RADIUS + groundFloor;
+  eyeOnPlanet.copy(eye).applyMatrix4(inverseT);
+  const d = eyeOnPlanet.length();
+  if (d <= floor) return false;
+  const cos = (eyeOnPlanet.x * cap.dir.x + eyeOnPlanet.y * cap.dir.y + eyeOnPlanet.z * cap.dir.z) / d;
+  const theta = Math.acos(Math.max(-1, Math.min(1, cos)));
+  const top = PLANET_RADIUS + cap.top + 2;
+  const seen = Math.acos(floor / d) + (top > floor ? Math.acos(floor / top) : 0);
+  return theta - (cap.reach * 1.05 + 4) / PLANET_RADIUS > seen;
 }
 
 /** The eye the world is drawn from this frame (`planetEye`): what lies past its horizon is not drawn. */
