@@ -111,6 +111,17 @@ export function ownerOfChartPointInto(chart: number, x: number, y: number, out: 
   return sphereToChartInto(tileOfDirection(s3), s3, out);
 }
 
+/**
+ * A point of `chart`'s map written on the chart of the piece it lies on, as
+ * it is to be kept - but as it is inside an edit worked out on one chart
+ * (`onOneChart`), where every point stays on that chart until the edit is
+ * left (`editor/planetFrame.ts` leaveFrame). The point itself on the flat map.
+ */
+export function onOwner(chart: number, p: Readonly<Vec2>): Vec2 {
+  if (identity()) return { x: p.x, y: p.y };
+  return toOwnerInto(chart, p.x, p.y, { x: 0, y: 0 });
+}
+
 /** `toOwnerInto`, allocating. */
 export const toOwner = (chart: number, p: Readonly<Vec2>): Vec2 => toOwnerInto(chart, p.x, p.y, { x: 0, y: 0 });
 

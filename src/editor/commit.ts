@@ -24,7 +24,7 @@ import { roadStructure, type RoadStructure } from '@world/structures';
 import type { Anchor } from './snap';
 import type { RoadPathPiece } from './roadPath';
 import { PLANET_MAX_PIECE, enterFrame, gestureChart, groundOnChart, leaveFrame } from './planetFrame';
-import { onOneChart } from '@world/planet/charts';
+import { chartAt, inChart, onOneChart, onOwner } from '@world/planet/charts';
 import { type RoadEditRefusal, refuseRoadEdit, snapshotRoads } from './editRules';
 import { roadsBefore, settleRoadEdit } from './roads/economy';
 import { COARSE_EPS, EPS } from '@core/scalar';
@@ -324,6 +324,46 @@ function commitOnChart(
   // Its heights were solved on the chart: the game solves them again on the pieces.
   const { elevation: _solved, ...laid } = result;
   return laid;
+}
+
+/**
+ * An edit of the roads worked out on one chart of the planet, as a road is
+ * laid (`commitOnChart`): the document cloned and every point of it carried
+ * onto `chart` (`enterFrame`), `work` run there on one plane - the flat
+ * map's own code, every comparison true - and, committed, every road it left
+ * longer than a piece cut (`cutLongRoads`: on the planet no road is longer,
+ * so the ones it stretched), the points written back on their own pieces'
+ * charts (`leaveFrame`) and the document replaced. Moving a node and laying
+ * a roundabout were run on the stored points as they stood: a node dropped
+ * on one across a border did not join it, a road dragged across another on
+ * the next piece's chart crossed it with no junction, a ring was measured
+ * against roads kept on other charts and buried them. The edit itself on the
+ * flat map, or inside an edit already on a chart.
+ */
+export function editOnChart<R extends { readonly committed: boolean }>(
+  doc: RoadDoc, net: Network, chart: number, work: (doc: RoadDoc, net: Network) => R,
+): R {
+  if (!__PLANET__ || onPlanetChart) return work(doc, net);
+  const framed = doc.clone();
+  const frame = enterFrame(framed, chart);
+  const framedNet = new Network(framed);
+  onPlanetChart = true;
+  let result: R;
+  try {
+    result = onOneChart(() => {
+      framedNet.rebuild();
+      const done = work(framed, framedNet);
+      if (done.committed) cutLongRoads(framed, framedNet, new Set(), PLANET_MAX_PIECE);
+      return done;
+    });
+  } finally {
+    onPlanetChart = false;
+  }
+  if (!result.committed) return result;
+  leaveFrame(framed, frame);
+  doc.replaceWith(framed);
+  net.rebuild();
+  return result;
 }
 
 /**
@@ -879,6 +919,8 @@ export function reconcileMovedNode(doc: RoadDoc, net: Network, id: NodeId, depth
  * left as the drop made it, and the caller restores it.
  */
 export function moveNodeChecked(doc: RoadDoc, net: Network, id: NodeId, to: Vec2): DraftResult {
+  // On the planet, on the chart the drop is read on (`editOnChart`).
+  if (__PLANET__ && !onPlanetChart) return editOnChart(doc, net, chartAt(to.x, to.y), (d, n) => moveNodeChecked(d, n, id, to));
   const before = snapshotRoads(doc, net);
   const money = roadsBefore(doc);
   if (!doc.moveNode(id, to)) return { committed: false, reason: 'duplicate' };
@@ -1024,8 +1066,13 @@ function splitSegmentAtCuts<Tag>(
 
   const originalA = doc.requireNode(seg.a);
   const originalB = doc.requireNode(seg.b);
-  const a = { x: originalA.x, y: originalA.y };
-  const b = { x: originalB.x, y: originalB.y };
+  // On the segment's own chart, where its polyline is laid (on the planet:
+  // its ends can be kept on two pieces' charts, and a curve split between
+  // them as they stood was junk). The curve is kept relative to its chord
+  // (`CurveShape`), the same on every chart.
+  const chart = net.polylines.chart(doc, id);
+  const a = inChart(chart, originalA);
+  const b = inChart(chart, originalB);
   const control = seg.curve ? controlPoint(a, b, seg.curve) : null;
 
   for (const request of ordered) {
@@ -1045,14 +1092,17 @@ function splitSegmentAtCuts<Tag>(
     }
 
     const q = parameterAtArc(pl, request.s);
-    const at = control ? splitQuad(a, control, b, q).left[2] : request.at;
+    // On the planet a straight segment is cut where its own polyline is
+    // (the request's point may be written on another chart).
+    const at = control ? splitQuad(a, control, b, q).left[2] : __PLANET__ ? pl.sampleAt(request.s).p : request.at;
     interior.push({ at, s: request.s, q, tags: [request.tag] });
   }
 
   if (!interior.length) return result;
 
+  // Each new node kept on the chart of the piece it lies on (on the planet).
   const nodes = interior.map((cut) =>
-    doc.addNode(cut.at, (originalA.heightOffset ?? 0) +
+    doc.addNode(onOwner(chart, cut.at), (originalA.heightOffset ?? 0) +
       ((originalB.heightOffset ?? 0) - (originalA.heightOffset ?? 0)) *
       (cut.s / Math.max(1e-6, pl.length))));
   for (let i = 0; i < interior.length; i++) {
@@ -1062,7 +1112,7 @@ function splitSegmentAtCuts<Tag>(
   }
 
   const nodeIds = [seg.a, ...nodes.map((node) => node.id), seg.b];
-  const points = [a, ...nodes.map((node) => ({ x: node.x, y: node.y })), b];
+  const points = [a, ...interior.map((cut) => cut.at), b];
   const params = [0, ...interior.map((cut) => cut.q), 1];
   const arcs = [0, ...interior.map((cut) => cut.s), pl.length];
   const type = seg.type;
