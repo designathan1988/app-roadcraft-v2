@@ -142,6 +142,7 @@ export const EN: Dictionary = {
   'hint.zone.removed': 'Zone removed',
   'hint.zone.painted': 'Zone painted: buildings will grow on it',
   'hint.zone.empty': 'No lot here: draw a lot to zone it',
+  'hint.zone.pending': 'Zoning as soon as the street lots are worked out…',
   'tool.roundabout': 'Roundabout',
   'hint.roundabout': 'Click vacant ground to place a roundabout · Connect its four arms with the road tool',
   'hint.mobile.roundabout': 'Tap vacant ground to place a roundabout · Connect its four arms with the road tool',

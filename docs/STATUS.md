@@ -47,6 +47,9 @@ o jogo a cada edição.
   jogador fazia. Botão de pulso na barra de cima (ponto verde, amarelo ou
   vermelho) e F9: abas Saúde, Mudanças e Estado; "copiar registro" para um
   relato. O registro sobrevive a recarregar a página. `__health()`.
+  Quadro longo é trabalho (scripts + desenho, ou `blockingDuration`), não
+  tempo de relógio: o navegador parado não entra; só as etapas `hitch:`
+  contidas no quadro (síncronas) são culpadas (`tests/ui/healthWatch.spec.ts`).
 - **Ferramentas em módulos próprios** (`src/editor/`): via (`roadTool.ts`),
   demolição (`bulldozer.ts`), mover nó (`nodeMover.ts`), lote e zona,
   cercas, postes, paisagismo, pincel de terreno, nuvens; a câmera à mão em
@@ -303,6 +306,11 @@ o jogo a cada edição.
   de lote (`editor/lotPlan.ts`). Estratégia e medidas em `docs/ZONEAMENTO.md`:
   - com a ferramenta de zona na mão, lotes propostos ao longo das vias
     (contorno fraco); o pincel cria e zoneia os que pinta (`lotTool.ts`);
+  - pincelada nunca perdida (5g): os pontos pintados enquanto a proposta é
+    refeita esperam por ela; solta antes, a pincelada é feita no quadro em que
+    a proposta fica pronta, em fatias (de uma vez seriam 0,6 s numa cidade
+    gerada), com o aviso "Zoneando assim que os lotes da rua estiverem
+    prontos…" (`tests/editor/zoneStroke.spec.ts`);
   - prédio escolhido entre 4 candidatos, o menos parecido com os vizinhos a
     90 m; 6 formas de casa, 5 de prédio, esquemas de cor como dados
     (`procedural.ts`); altura perto da dos vizinhos baixos; lote de esquina

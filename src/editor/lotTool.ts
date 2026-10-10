@@ -72,7 +72,19 @@ export class LotTool {
    * first lot of a join. A stroke takes stored lots (`ids`) and proposed
    * ones (`fresh`, by their index in the proposal), made on release.
    */
-  private stroke: { pointer: number; remove: boolean; ids: Set<number>; fresh: Set<number> } | null = null;
+  /**
+   * A zone stroke: the lots it passed, the proposed lots it passed, and the
+   * points it passed while the proposal was still being worked out - read
+   * once it is (`brushProposed`), never dropped: a stroke made while the
+   * proposal restarted (each new lot restarts it) zoned nothing (Etapa 5g).
+   */
+  private stroke: { pointer: number; remove: boolean; ids: Set<number>; fresh: Set<number>; pending: Vec2[] } | null = null;
+  /**
+   * A stroke let go before the proposal it waits on was worked out: made in
+   * the frame the proposal is done (`advanceProposal`), never in one go - the
+   * whole proposal at once is 0.6 s on a generated city.
+   */
+  private waiting: { stroke: NonNullable<LotTool['stroke']>; use: ZoneUse; density: ZoneDensity } | null = null;
   /**
    * The land along the streets cut into lots while the Zoning tool is in
    * hand, as Cities: Skylines shows its zonable land along every road: the
@@ -113,6 +125,8 @@ export class LotTool {
 
   /** Every gesture dropped without committing it. */
   cancel(): void {
+    // A stroke already let go is the player's: made now, not dropped.
+    if (this.waiting) this.advanceProposal(Infinity);
     this.polygon = [];
     this.drawn = null;
     this.corner = null;
@@ -155,6 +169,12 @@ export class LotTool {
         p.steps = null;
         p.lots = r.value.add.map((c) => c.corners);
         p.keys = r.value.keys;
+        if (this.waiting) {
+          const { stroke, use, density } = this.waiting;
+          this.waiting = null;
+          this.readPending(stroke);
+          this.commitStroke(stroke, use, density);
+        }
         return false;
       }
       if (performance.now() >= until) return true;
@@ -166,6 +186,44 @@ export class LotTool {
     const prop = this.proposal;
     if (!prop || prop.steps || prop.key !== this.proposalKey()) return -1;
     return prop.lots.findIndex((corners) => insideLot(p, { corners }));
+  }
+
+  /** A stroke's points that waited on the proposal, read once it is ready. */
+  private readPending(stroke: NonNullable<LotTool['stroke']>): void {
+    if (!stroke.pending.length || this.proposalReady() < 0) return;
+    for (const p of stroke.pending) { const k = this.proposedAt(p); if (k >= 0) stroke.fresh.add(k); }
+    stroke.pending.length = 0;
+  }
+
+  /** A stroke made: the proposed lots it passed laid, and zoned with the stored ones, in one undo step. */
+  private commitStroke(stroke: NonNullable<LotTool['stroke']>, use: ZoneUse, density: ZoneDensity): void {
+    const { doc, host } = this;
+    if (!stroke.ids.size && !stroke.fresh.size) { host.hint('hint.zone.empty'); return; }
+    const fresh = [...stroke.fresh].map((k) => this.proposal?.lots[k]).filter((c): c is Vec2[] => !!c);
+    host.mutate(() => {
+      const first = doc.nextLotId;
+      if (fresh.length) applyLots(doc, { add: fresh.map((corners) => ({ key: '', corners })), keys: [], drop: [] });
+      for (let id = first; id < doc.nextLotId; id++) stroke.ids.add(id);
+      return zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use, density }) || fresh.length > 0;
+    });
+    this.refused.clear();
+    host.hint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
+    host.redraw();
+  }
+
+  /**
+   * The zone brush over the street land at `at`: the proposed lot under it,
+   * or the point kept until the proposal is ready (`readPending`).
+   */
+  private brushProposed(at: Vec2): void {
+    const stroke = this.stroke;
+    if (!stroke) return;
+    const ready = this.proposalReady() >= 0;
+    this.readPending(stroke);
+    if (ready) { const k = this.proposedAt(at); if (k >= 0) stroke.fresh.add(k); return; }
+    // A point a metre from the last one kept is enough: a lot is metres wide.
+    const last = stroke.pending[stroke.pending.length - 1];
+    if (!last || Math.hypot(at.x - last.x, at.y - last.y) > m(1)) stroke.pending.push({ x: at.x, y: at.y });
   }
 
   /** Whether the proposal for the land as it is now is ready (probes). */
@@ -345,8 +403,8 @@ export class LotTool {
       // The brush zones the lots it passes over, and the proposed lots of the
       // street land (`proposal`), made when it is let go.
       const remove = shift || settings.eraser;
-      this.stroke = { pointer, remove, ids: new Set(lot ? [lot.id] : []), fresh: new Set() };
-      if (!lot && !remove) { const k = this.proposedAt(world); if (k >= 0) this.stroke.fresh.add(k); }
+      this.stroke = { pointer, remove, ids: new Set(lot ? [lot.id] : []), fresh: new Set(), pending: [] };
+      if (!lot && !remove) this.brushProposed(world);
     }
     host.redraw();
   }
@@ -357,7 +415,7 @@ export class LotTool {
     if (this.stroke?.pointer === pointer) {
       const lot = this.lotAt(world);
       if (lot) this.stroke.ids.add(lot.id);
-      else if (!this.stroke.remove) { const k = this.proposedAt(world); if (k >= 0) this.stroke.fresh.add(k); }
+      else if (!this.stroke.remove) this.brushProposed(world);
       host.redraw();
       return true;
     }
@@ -376,19 +434,12 @@ export class LotTool {
     if (this.stroke?.pointer === pointer) {
       const stroke = this.stroke;
       this.stroke = null;
-      if (commit && !stroke.ids.size && !stroke.fresh.size) host.hint('hint.zone.empty');
-      else if (commit) {
-        const fresh = [...stroke.fresh].map((k) => this.proposal?.lots[k]).filter((c): c is Vec2[] => !!c);
-        host.mutate(() => {
-          // The proposed lots painted are made, and zoned with the stored ones, in one undo step.
-          const first = doc.nextLotId;
-          if (fresh.length) applyLots(doc, { add: fresh.map((corners) => ({ key: '', corners })), keys: [], drop: [] });
-          for (let id = first; id < doc.nextLotId; id++) stroke.ids.add(id);
-          return zoneLots(doc, [...stroke.ids], stroke.remove ? null : { use: settings.use, density: settings.density }) || fresh.length > 0;
-        });
-        this.refused.clear();
-        host.hint(stroke.remove ? 'hint.zone.removed' : 'hint.zone.painted');
-      }
+      this.readPending(stroke);
+      if (commit && stroke.pending.length) {
+        // The street land it passed is still being worked out: made when it is.
+        this.waiting = { stroke, use: settings.use, density: settings.density };
+        host.hint('hint.zone.pending');
+      } else if (commit) this.commitStroke(stroke, settings.use, settings.density);
       host.redraw();
     }
     if (this.corner?.pointer === pointer) {

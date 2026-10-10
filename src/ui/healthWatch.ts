@@ -30,6 +30,38 @@ export interface HealthWatch {
 
 const KEPT_KEY = 'roadcraft.health.v1';
 
+/** A long animation frame as the browser reports it (MDN, PerformanceLongAnimationFrameTiming). */
+export interface LongFrameEntry {
+  readonly startTime: number;
+  readonly duration: number;
+  readonly blockingDuration?: number;
+  readonly renderStart?: number;
+  readonly scripts?: readonly { readonly duration: number }[];
+}
+
+/**
+ * The work in a long frame, ms: its scripts and its rendering (Chrome,
+ * "Long animation frames": render from `renderStart` to the end), or what
+ * blocked input if more. A frame the browser held open with nothing to do -
+ * the page in the background, the machine asleep - is no work: 57 s entries
+ * with no script reached the F9 monitor as long frames (2026-10-09).
+ */
+export function longFrameWork(entry: LongFrameEntry): number {
+  const scripts = (entry.scripts ?? []).reduce((sum, s) => sum + s.duration, 0);
+  const render = entry.renderStart ? entry.startTime + entry.duration - entry.renderStart : 0;
+  return Math.max(Math.min(entry.duration, scripts + render), entry.blockingDuration ?? 0);
+}
+
+/**
+ * The code's measured steps that ran IN a frame: begun and ended within it,
+ * as a synchronous step does. A step with an `await` in it spans frames (a
+ * person fitted over a second, `proceduralCrowd.ts`) and was blamed for
+ * every long frame it overlapped.
+ */
+export function stepsWithin<T extends { readonly start: number; readonly end: number }>(steps: readonly T[], start: number, end: number): T[] {
+  return steps.filter((h) => h.start >= start - 1 && h.end <= end + 1);
+}
+
 /** Text of console arguments, short. */
 function textOf(args: readonly unknown[]): string {
   return args.map((a) => (a instanceof Error ? `${a.name}: ${a.message}` : typeof a === 'string' ? a : safeJSON(a))).join(' ').slice(0, 400);
@@ -133,9 +165,9 @@ export function watchHealth(options: {
     }).observe({ type: 'measure', buffered: false });
   } catch { /* no measure entries in this browser */ }
 
-  const slowFrame = (start: number, end: number, scripts: string[]): void => {
+  const slowFrame = (start: number, end: number, scripts: string[], work = end - start): void => {
     const systems = systemsOf(frames.between(start, end));
-    const steps = hitches.filter((h) => h.end >= start && h.start <= end && h.end - h.start >= 2)
+    const steps = stepsWithin(hitches, start, end).filter((h) => h.end - h.start >= 2)
       .sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 5)
       .map((h) => `${h.name} ${Math.round(h.end - h.start)} ms`);
     const top = systems[0];
@@ -144,7 +176,7 @@ export function watchHealth(options: {
     try { where = context(); } catch { /* without it */ }
     const detail = [...(steps.length ? [`etapas: ${steps.join(' · ')}`] : []), ...(scripts.length ? [`scripts: ${scripts.join(' · ')}`] : [])].join('\n');
     log.record('slow-frame', 'slow', message, {
-      ms: Math.round(end - start), systems, ...(detail ? { detail } : {}), ...(where ? { context: where } : {}),
+      ms: Math.round(work), systems, ...(detail ? { detail } : {}), ...(where ? { context: where } : {}),
     });
   };
 
@@ -155,11 +187,14 @@ export function watchHealth(options: {
       new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           if (entry.duration < LONG_FRAME_MS) continue;
-          const loaf = entry as PerformanceEntry & { scripts?: readonly { duration: number; invoker?: string; sourceFunctionName?: string; sourceURL?: string }[] };
+          const loaf = entry as PerformanceEntry & LongFrameEntry & { scripts?: readonly { duration: number; invoker?: string; sourceFunctionName?: string; sourceURL?: string }[] };
+          // Long by the clock with no work in it is the browser idle, not a hitch.
+          const work = longFrameWork(loaf);
+          if (work < LONG_FRAME_MS) continue;
           const scripts = [...(loaf.scripts ?? [])].sort((a, b) => b.duration - a.duration).slice(0, 3)
             .filter((s) => s.duration >= 5)
             .map((s) => `${s.sourceFunctionName || s.invoker || s.sourceURL?.split('/').pop() || '?'} ${Math.round(s.duration)} ms`);
-          slowFrame(entry.startTime, entry.startTime + entry.duration, scripts);
+          slowFrame(entry.startTime, entry.startTime + entry.duration, scripts, work);
         }
       }).observe({ type: 'long-animation-frame', buffered: true });
     }
