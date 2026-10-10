@@ -26,7 +26,7 @@ function measure(ev: ReturnType<typeof evaluateBuilding>) {
 
 describe('avaliação forma/3', () => {
   it('caixa plana sem platibanda tem o volume da caixa', () => {
-    const b = building({ solids: [solid({ plan: { outer: rectPlan(10, 8), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) })] });
+    const b = building({ solids: [solid({ plinth: 0, plan: { outer: rectPlan(10, 8), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) })] });
     const ev = evaluateBuilding(b);
     expect(ev.warnings).toEqual([]);
     expect(measure(ev).vol).toBeCloseTo(480, 1);
@@ -35,29 +35,29 @@ describe('avaliação forma/3', () => {
   it('dois volumes sobrepostos viram um sólido (união, sem contar a sobreposição duas vezes)', () => {
     const b = building({
       solids: [
-        solid({ plan: { outer: rectPlan(10, 8), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) }),
-        solid({ plan: { outer: rectPlan(10, 8, 5, 0), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) }),
+        solid({ plinth: 0, plan: { outer: rectPlan(10, 8), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) }),
+        solid({ plinth: 0, plan: { outer: rectPlan(10, 8, 5, 0), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) }),
       ],
     });
     expect(measure(evaluateBuilding(b)).vol).toBeCloseTo(15 * 8 * 6, 1);
   });
 
   it('subtração abre um pátio e interseção recorta', () => {
-    const base = solid({ plan: { outer: rectPlan(20, 20), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) });
-    const court = solid({ op: 'subtract', plan: { outer: rectPlan(8, 8), holes: [] }, base: -1, height: 10, roof: roofSpec('flat', { parapet: 0 }) });
+    const base = solid({ plinth: 0, plan: { outer: rectPlan(20, 20), holes: [] }, height: 6, roof: roofSpec('flat', { parapet: 0 }) });
+    const court = solid({ plinth: 0, op: 'subtract', plan: { outer: rectPlan(8, 8), holes: [] }, base: -1, height: 10, roof: roofSpec('flat', { parapet: 0 }) });
     expect(measure(evaluateBuilding(building({ solids: [base, court] }))).vol).toBeCloseTo((400 - 64) * 6, 1);
-    const cap = solid({ op: 'intersect', plan: { outer: rectPlan(10, 30), holes: [] }, base: 0, height: 3, roof: roofSpec('flat', { parapet: 0 }) });
+    const cap = solid({ plinth: 0, op: 'intersect', plan: { outer: rectPlan(10, 30), holes: [] }, base: 0, height: 3, roof: roofSpec('flat', { parapet: 0 }) });
     expect(measure(evaluateBuilding(building({ solids: [base, cap] }))).vol).toBeCloseTo(10 * 20 * 3, 1);
   });
 
   it('afunilamento reduz o topo', () => {
-    const b = building({ solids: [solid({ plan: { outer: rectPlan(10, 10), holes: [] }, height: 10, taper: 2, roof: roofSpec('flat', { parapet: 0 }) })] });
+    const b = building({ solids: [solid({ plinth: 0, plan: { outer: rectPlan(10, 10), holes: [] }, height: 10, taper: 2, roof: roofSpec('flat', { parapet: 0 }) })] });
     // Tronco de pirâmide: h/3 (A1 + A2 + √(A1·A2)) = 10/3 (100 + 36 + 60)
     expect(measure(evaluateBuilding(b)).vol).toBeCloseTo((10 / 3) * (100 + 36 + 60), 0);
   });
 
   it.each<RoofKind>(['gable', 'hip', 'mansard', 'gambrel', 'shed', 'pyramid', 'dome', 'vault', 'sawtooth', 'terrace', 'flat'])('telhado %s fecha e sobe acima das paredes', (kind) => {
-    const b = building({ solids: [solid({ plan: { outer: rectPlan(12, 9), holes: [] }, height: 6, roof: roofSpec(kind) })] });
+    const b = building({ solids: [solid({ plinth: 0, plan: { outer: rectPlan(12, 9), holes: [] }, height: 6, roof: roofSpec(kind) })] });
     const ev = evaluateBuilding(b);
     const m = measure(ev);
     expect(ev.warnings).toEqual([]);

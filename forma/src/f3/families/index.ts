@@ -4,6 +4,10 @@ import type { ComponentType, ID, Project3 } from '../model/schema';
 import type { Family } from './family';
 import { BAY_WINDOW, WINDOW } from './windows';
 import { DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT } from './doors';
+import { BALCONY, VERANDA } from './balconies';
+import { FENCE, GATE, HEDGE, WALL_RUN } from './fences';
+import { JULIETTE, RAILING } from './railings';
+import { BEAM, COLUMN, PERGOLA, PORTICO } from './structure';
 
 const families = new Map<string, Family>();
 
@@ -19,7 +23,7 @@ export function allFamilies(): Family[] {
   return [...families.values()];
 }
 
-for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT]) registerFamily(f);
+for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO]) registerFamily(f);
 
 const t = (id: string, fam: string, name: string, params: ComponentType['params'] = {}): ComponentType => ({ id, family: fam, name, params });
 
@@ -50,6 +54,30 @@ export const BUILTIN_TYPES: ComponentType[] = [
   t('loading-dock', 'loading', 'Porta de doca'),
   t('shopfront', 'shopfront', 'Vitrine com toldo'),
   t('shopfront-plain', 'shopfront', 'Vitrine simples', { awning: false, bays: 4 }),
+  t('balcony-bars', 'balcony', 'Sacada com grade'),
+  t('balcony-glass', 'balcony', 'Sacada de vidro', { infill: 'glass' }),
+  t('balcony-balusters', 'balcony', 'Sacada com balaústres', { infill: 'balusters', support: 'corbels' }),
+  t('balcony-solid', 'balcony', 'Sacada com mureta', { guard: 'solid' }),
+  t('juliette', 'juliette', 'Guarda-corpo de janela'),
+  t('veranda', 'veranda', 'Varanda coberta'),
+  t('railing-bars', 'railing', 'Guarda-corpo de barras'),
+  t('railing-glass', 'railing', 'Guarda-corpo de vidro', { infill: 'glass' }),
+  t('railing-balusters', 'railing', 'Balaustrada', { infill: 'balusters' }),
+  t('wall-run', 'wallrun', 'Muro de alvenaria'),
+  t('fence-picket', 'fence', 'Cerca de estacas'),
+  t('fence-slats', 'fence', 'Cerca de ripas', { style: 'slats' }),
+  t('fence-mesh', 'fence', 'Alambrado', { style: 'mesh' }),
+  t('fence-wrought', 'fence', 'Gradil de ferro', { style: 'wrought' }),
+  t('gate-double', 'gate', 'Portão de duas folhas'),
+  t('gate-sliding', 'gate', 'Portão de correr', { operation: 'sliding' }),
+  t('hedge', 'hedge', 'Cerca viva'),
+  t('column-square', 'column', 'Pilar quadrado'),
+  t('column-round', 'column', 'Pilar roliço', { kind: 'round' }),
+  t('column-classical', 'column', 'Coluna clássica', { kind: 'classical' }),
+  t('column-steel', 'column', 'Pilar de aço', { kind: 'ibeam' }),
+  t('beam', 'beam', 'Viga'),
+  t('pergola', 'pergola', 'Pérgola'),
+  t('portico', 'portico', 'Pórtico com frontão'),
 ];
 
 const builtinById = new Map(BUILTIN_TYPES.map((x) => [x.id, x]));

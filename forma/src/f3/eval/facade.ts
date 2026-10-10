@@ -206,7 +206,7 @@ export function typeResolver(project?: Pick<Project3, 'types'>): TypeResolver {
 }
 
 /** Componentes das regras de fachada de um sólido. */
-export function rulePlacements(b: Building3, s: Solid, regions: Map<string, EdgeRegion>, types: TypeResolver, warnings: string[]): Placement[] {
+export function rulePlacements(b: Building3, s: Solid, regions: Map<string, EdgeRegion>, types: TypeResolver, warnings: string[], taken: Placement[] = []): Placement[] {
   const out: Placement[] = [];
   const levels = solidLevels(b, s);
   for (const rule of s.facade) {
@@ -250,6 +250,8 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
           const [ww, hh] = t.family.size(p);
           const oh = t.family.opening?.(p)?.h ?? hh;
           if (!fits(r, c - ww / 2, c + ww / 2, y, y + oh / vy)) return;
+          // Peça avulsa no mesmo lugar tem prioridade: a regra libera a posição.
+          if (taken.some((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && Math.abs(q.host.s - c) < (q.length + ww) / 2 + 0.05 && q.host.y < y + hh + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)) return;
           placed++;
           out.push({
             family: t.family,

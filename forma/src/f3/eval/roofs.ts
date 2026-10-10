@@ -108,7 +108,18 @@ export function roofMesh(s: Solid, rings: SolidRings, table: FaceTable): RoofBui
       const out = offsetRing(hole, hole.map(() => -t));
       if (ringValid(out, -1)) heightPrism(mb, [...out].reverse(), [hole], [], () => yTop + h, yTop - 0.01, faces);
     }
-    return { parts: [mb], rise: h };
+    // Rufo: capa saliente no topo da platibanda (sombra que marca o coroamento).
+    const parts: MeshBuilder[] = [mb];
+    const cid = table.add({ kind: 'coping', solid: s.id });
+    const cf = { top: () => cid, bottom: cid, side: () => cid };
+    const capOut = offsetRing(outer, outer.map(() => -0.05)),
+      capIn = offsetRing(outer, outer.map(() => t + 0.04));
+    if (ringValid(capOut, 1) && ringValid(capIn, 1)) {
+      const cap = new MeshBuilder();
+      heightPrism(cap, capOut, [[...capIn].reverse()], [], () => yTop + h + 0.07, yTop + h - 0.02, cf);
+      parts.push(cap);
+    }
+    return { parts, rise: h + 0.07 };
   }
 
   // Cúpula e abóbada nascem na parede; mansarda e gambrel têm beiral curto (a água de baixo é íngreme).

@@ -7,7 +7,8 @@ import { kernel, Scope, type Manifold } from '../kernel/kernel';
 import { bodyMesh, solidRings } from './body';
 import { FaceTable, type FaceInfo } from './faces';
 import { roofMesh } from './roofs';
-import { MeshBuilder, prismMesh } from './mesh';
+import { heightPrism, MeshBuilder, prismMesh } from './mesh';
+import { offsetRing, ringValid } from '../model/plan';
 import { edgeRegions, itemPlacements, rulePlacements, typeResolver, type Placement } from './facade';
 import { emptyParts3, FrameSink, type Parts3 } from './parts';
 import { openingProfile } from '../families/shapes';
@@ -58,6 +59,30 @@ export function solidManifold(s: Solid, table: FaceTable, scope: Scope): Manifol
   return good.length ? scope.keep(k.Manifold.union([body, ...good])) : body;
 }
 
+function withPlinths(b: Building3, acc: Manifold, table: FaceTable, scope: Scope): Manifold {
+  const k = kernel();
+  const ps = b.solids.map((s) => plinthManifold(s, table, scope)).filter((m): m is Manifold => !!m);
+  if (!ps.length) return acc;
+  let band = scope.keep(k.Manifold.union(ps));
+  const cutters = b.solids.filter((s) => s.op === 'subtract' && !s.hidden).map((s) => solidManifold(s, new FaceTable(), scope)).filter((m): m is Manifold => !!m);
+  if (cutters.length) band = scope.keep(band.subtract(scope.keep(k.Manifold.union(cutters))));
+  return scope.keep(acc.add(band));
+}
+
+/** Embasamento: faixa saliente no pé das paredes (volumes que tocam o chão). */
+function plinthManifold(s: Solid, table: FaceTable, scope: Scope): Manifold | null {
+  if (s.op !== 'add' || s.hidden || !(s.plinth > 0.05) || s.base > 0.3) return null;
+  const k = kernel();
+  const rings = solidRings(s);
+  const pid = table.add({ kind: 'plinth', solid: s.id });
+  const out = offsetRing(rings.outer.pts, rings.outer.pts.map(() => -0.04));
+  if (!ringValid(out, 1)) return null;
+  const mb = new MeshBuilder();
+  heightPrism(mb, out, rings.holes.map((h) => offsetRing(h.pts, h.pts.map(() => -0.04))), [], () => s.base + Math.min(s.plinth, s.height * 0.4), s.base - 0.02, { top: () => pid, bottom: pid, side: () => pid });
+  const pm = scope.keep(mb.toManifold(k));
+  return pm.status() === 'NoError' && !pm.isEmpty() ? pm : null;
+}
+
 export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?: Pick<Project3, 'types'>): Evaluated {
   const t0 = performance.now();
   const k = kernel();
@@ -86,8 +111,9 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
       const regions = edgeRegions(shell0, table.faces);
       const types = typeResolver(project);
       const roofY = roofHeight(shell0);
-      for (const s of b.solids) if (!s.hidden && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings));
-      placements.push(...itemPlacements(b, regions, types, roofY, warnings));
+      const items = itemPlacements(b, regions, types, roofY, warnings);
+      for (const s of b.solids) if (!s.hidden && s.op === 'add') placements.push(...rulePlacements(b, s, regions, types, warnings, items));
+      placements.push(...items);
       // Vãos: um sólido só com todos os recortes.
       const cuts: Manifold[] = [];
       for (const pl of placements) {
@@ -99,12 +125,15 @@ export function evaluateBuilding(b: Building3, opts: EvalOptions = {}, project?:
         const cm = scope.keep(mb.toManifold(k));
         if (cm.status() === 'NoError' && !cm.isEmpty()) cuts.push(cm);
       }
+      // Embasamento depois da fachada (não esconde o pé das portas), sem atravessar recortes.
+      acc = withPlinths(b, acc, table, scope);
       if (cuts.length) acc = scope.keep(acc.subtract(scope.keep(k.Manifold.union(cuts))));
       for (const pl of placements) {
         const tag = parts.tags.push(pl.tag) - 1;
         pl.family.build(pl.params, new FrameSink(parts, pl.frame, tag), { length: pl.length, reveal: pl.opening?.depth ?? 0, index: 0, ...(pl.path ? { path: pl.path } : {}) });
       }
     }
+    if (acc && opts.preview) acc = withPlinths(b, acc, table, scope);
     if (acc && opts.cutY !== undefined) acc = scope.keep(acc.trimByPlane([0, -1, 0], -opts.cutY));
     const shell = acc ? toShell(acc) : emptyShell();
     void placements;

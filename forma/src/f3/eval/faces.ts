@@ -21,6 +21,10 @@ export type FaceKind =
   /** Forro do beiral (face de baixo). */
   | 'soffit'
   | 'parapet'
+  /** Rufo/capa no topo da platibanda. */
+  | 'coping'
+  /** Embasamento no pé das paredes. */
+  | 'plinth'
   /** Superfície criada por um vão recortado. */
   | 'reveal'
   /** Face interna de um sólido de subtração (vira parede do recorte). */

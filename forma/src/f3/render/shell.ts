@@ -34,6 +34,10 @@ export function faceMaterial(b: Building3, f: FaceInfo): MaterialKey {
     case 'soffit':
     case 'reveal':
       return materialKey(s.materials.trim, 'frame');
+    case 'coping':
+      return materialKey(s.materials.trim, 'stone');
+    case 'plinth':
+      return materialKey(s.materials.base, 'stone');
     case 'bottom':
       return materialKey(s.materials.base, 'stone');
   }
