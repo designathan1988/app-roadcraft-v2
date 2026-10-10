@@ -6,7 +6,7 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { planetCentre, planetInverse, planetPointInto } from './planet/bend';
-import { AIR_GLSL, airUniforms } from './planet/air';
+import { AIR_GLSL, ATMOSPHERE_TOP, type Air } from './planet/air';
 import { m } from '@world/units';
 import { drawnCloudHeight, driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -74,7 +74,7 @@ export interface PostChain {
    * `Space.air`): a cloud's shadow takes from the ground's light seen through
    * it, never from the air's own.
    */
-  setAir(air: Readonly<Record<string, { value: unknown }>>): void;
+  setAir(air: Air): void;
   /**
    * The sky the player set (`Atmosphere`), the light it is lit by, and
    * whether the map is seen as a model over the void (building it), when
@@ -350,6 +350,7 @@ export function createPostChain(
     const shade = pass.render.bind(pass);
     pass.render = (...args: Parameters<ShaderPass['render']>) => {
       pass.uniforms['tDepth']!.value = sceneDepth;
+      if (__PLANET__ && planetAir?.inside) planetAir.renderPerspective(args[0], camera);
       const on = (pass.uniforms['uCloudCount']!.value as number) > 0;
       pass.uniforms['uCloudsOn']!.value = on ? 1 : 0;
       const gl = args[0];
@@ -397,6 +398,8 @@ export function createPostChain(
   // the morning (some a fifth of the light at 06:30), and from the map's
   // zoom the land was covered in near-black blotches (2026-10-08).
   let night = 0;
+  /** The planet's air (`setAir`): its aerial perspective volume is made for this camera before the pass reads it. */
+  let planetAir: Air | null = null;
   /** How far out to space the view is (`setSpace`). */
   let space = 0;
   let directShare = CLOUD_SHADOW_STRENGTH;
@@ -426,6 +429,10 @@ export function createPostChain(
           planetCentre(onPlanet);
           (u['uPlanet']!.value as Vector4).set(onPlanet.x, onPlanet.y, onPlanet.z, PLANET_RADIUS);
           (u['uPlanetInverse']!.value as Matrix4).copy(planetInverse());
+          // The aerial perspective's distance scale by the eye's height: a
+          // quarter of the true air by the ground, all of it at the top.
+          const high = Math.min(1, Math.max(0, (camera.position.distanceTo(onPlanet) - PLANET_RADIUS) / (ATMOSPHERE_TOP - PLANET_RADIUS)));
+          u['uAirScale']!.value = 0.25 + 0.75 * high * high * (3 - 2 * high);
         }
         u['uShadowMapOn']!.value = plane === null ? 0 : 1;
         if (plane !== null) u['uShadowPlane']!.value = plane;
@@ -441,7 +448,7 @@ export function createPostChain(
         // Nothing of it shows - no cloud, no mist, no painted fog, no air round
         // the map: the pass is skipped, not run over every pixel for nothing.
         clouds.enabled = count > 0 || (u['uFog']!.value as number) > 0 || (u['uGroundFog']!.value as Vector4).w > 0.5
-          || (u['uBackdrop']!.value as number) > 0.5;
+          || (u['uBackdrop']!.value as number) > 0.5 || (__PLANET__ && !!planetAir?.inside);
       }
       composer.render(delta);
     },
@@ -458,11 +465,15 @@ export function createPostChain(
       if (clouds) (clouds.uniforms['uDark'] as { value: number }).value = dark;
     },
     setAir(air) {
+      planetAir = air;
       if (!clouds) return;
+      const from = air.uniforms;
       for (const name of ['uAirCentre', 'uAirSun'] as const) {
-        ((clouds.uniforms[name] as { value: Vector3 }).value).copy(air[name]!.value as Vector3);
+        ((clouds.uniforms[name] as { value: Vector3 }).value).copy(from[name]!.value as Vector3);
       }
-      (clouds.uniforms['uAirStrength'] as { value: number }).value = air['uAirStrength']!.value as number;
+      for (const name of ['uAirIntensity', 'uAirInside', 'tAirTransmittance', 'tAirMulti', 'tAirSky', 'tAirPerspective'] as const) {
+        clouds.uniforms[name]!.value = from[name]!.value;
+      }
     },
     setDirectShare(share) {
       if (Math.abs(share - directShare) < 0.005) return;
@@ -657,7 +668,16 @@ const CLOUD_SHADOWS = {
     uMapHalf: { value: WORLD_HALF },
     uPlanet: { value: new Vector4() },
     uPlanetInverse: { value: new Matrix4() },
-    ...(__PLANET__ ? airUniforms() : {}),
+    // The planet's air (`planet/air.ts`, `setAir`): set each frame.
+    ...(__PLANET__ ? {
+      uAirCentre: { value: new Vector3() }, uAirSun: { value: new Vector3(0, 1, 0) }, uAirIntensity: { value: 1 }, uAirInside: { value: 0 },
+      tAirTransmittance: { value: null as Texture | null }, tAirMulti: { value: null as Texture | null },
+      tAirSky: { value: null as Texture | null }, tAirPerspective: { value: null as Texture | null },
+      // How far the aerial perspective's distances are scaled (Unreal's
+      // "Aerial Perspective Distance Scale"): the town seen from close by
+      // keeps its colours, and it reaches the true air towards the top.
+      uAirScale: { value: 1 },
+    } : {}),
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
     // (`setAtmosphere`): 0 in perspective; in the orthographic view the camera
@@ -727,6 +747,7 @@ const CLOUD_SHADOWS = {
     uniform float uMapHalf;
     uniform float uBackdrop;
     uniform float uEyeShift;
+    ${__PLANET__ ? 'uniform float uAirScale;' : ''}
     // The planet as drawn (\`planet/bend.ts\`): its centre and radius; w 0 on the flat map.
     uniform vec4 uPlanet;
     // The drawn world back to the planet's own frame: what is fixed on the
@@ -896,11 +917,20 @@ const CLOUD_SHADOWS = {
         // planet/air.ts): the shadow takes from the ground's part only.
         // Taken from the whole, the air in front of a shadow went dark with
         // it and from space each was a black stain beside its cloud.
-        if (shaded < 1.0 && uAirStrength > 0.0) {
-          vec3 airOwn = airLight(ro, rd).rgb;
+        // (From inside the air the air is laid on below, after the shadow.)
+        if (shaded < 1.0 && uAirInside < 0.5) {
+          vec3 airOwn = airRay(ro, rd, tScene).rgb;
           colour = airOwn + (colour - airOwn) * shaded;
         } else colour *= shaded;` : 'colour *= shaded;'}
       }
+      ${__PLANET__ ? `
+      // THE AIR in front of what the pixel sees, from inside it (Hillaire's
+      // aerial perspective volume, \`planet/air.ts\`): what is seen through
+      // it plus its own light. From space the shell over the scene draws it.
+      if (!sky && uAirInside > 0.5) {
+        vec4 ap = airPerspective(vUv, tScene * uAirScale);
+        colour = colour * ap.a + ap.rgb;
+      }` : ''}
       // The air between the eye and what the pixel sees: from the view's
       // equivalent eye (\`uEyeShift\`). Measured from the orthographic camera,
       // 5 000 units back whatever the zoom, rain mist covered half of every

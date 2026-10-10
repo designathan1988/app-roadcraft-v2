@@ -6,7 +6,7 @@ import {
   SphereGeometry, SrcAlphaFactor, Vector3, WebGLRenderTarget, type Camera, type Scene, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { AIR_GLSL, ATMOSPHERE_TOP, airUniforms } from './air';
+import { AIR_GLSL, ATMOSPHERE_TOP, createAir, type Air } from './air';
 export { ATMOSPHERE_TOP } from './air';
 
 /**
@@ -45,6 +45,8 @@ const LUNAR_MONTH = 29.53;
 /** The moon's orbit's tilt to the sun's path, radians. */
 const MOON_TILT = (5.1 * Math.PI) / 180;
 const STAR_COUNT = 9000;
+/** The full moon's light on the air as a share of the sun's: far above the true 1/400 000, so a moonlit night has a sky, deep blue. */
+const MOONLIGHT = 0.012;
 /** Just inside the far plane: what is drawn there shows only where nothing stands in front. */
 const FAR_GLSL = /* glsl */ `
   void atFar(inout vec4 clip, float k) { clip.z = clip.w * (1.0 - k * 1.0e-6); }
@@ -56,8 +58,10 @@ const ATMOSPHERE_VERTEX = /* glsl */ `
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorld = world.xyz;
     gl_Position = projectionMatrix * viewMatrix * world;
-    // Never cut by the far plane: the air behind the planet is the planet's limb.
-    gl_Position.z = min(gl_Position.z, gl_Position.w * 0.999999);
+    // At the far end of the depth range, never cut by it: from inside the air
+    // (depth tested) it shows only where nothing stands in front - the sky -
+    // and over the moon, which writes its depth just behind it.
+    gl_Position.z = gl_Position.w * (1.0 - 4.0e-6);
   }
 `;
 
@@ -65,7 +69,24 @@ const ATMOSPHERE_FRAGMENT = /* glsl */ `
   varying vec3 vWorld;
   ${AIR_GLSL}
   void main() {
-    gl_FragColor = airLight(cameraPosition, normalize(vWorld - cameraPosition));
+    vec3 rd = normalize(vWorld - cameraPosition);
+    // Inside the air the sky round the eye (the sky-view LUT; the ground's
+    // own air is the post pass's, by its depth); from space the march.
+    gl_FragColor = uAirInside > 0.5 ? airSky(cameraPosition, rd) : airRay(cameraPosition, rd, 1e9);
+  }
+`;
+
+/**
+ * How much of the stars and the Milky Way shows through the sky's own light
+ * where they are: none against the day's blue, all of them in a dark sky, the
+ * first ones away from the sun at dusk (the sky-view LUT, \`air.ts\`). The
+ * air in front still dims them (the shell, drawn over them).
+ */
+const SKY_GLOW_GLSL = /* glsl */ `
+  float starsThrough(vec3 dir) {
+    if (uAirInside < 0.5) return 1.0;
+    vec3 sky = airSky(cameraPosition, dir).rgb;
+    return 1.0 - smoothstep(0.004, 0.08, dot(sky, vec3(0.2126, 0.7152, 0.0722)));
   }
 `;
 
@@ -76,13 +97,15 @@ const STARS_VERTEX = /* glsl */ `
   uniform float uPixel;
   varying vec3 vTint;
   ${FAR_GLSL}
+  ${AIR_GLSL}
+  ${SKY_GLOW_GLSL}
   void main() {
     vec3 dir = uSky * position;
     vec4 clip = projectionMatrix * viewMatrix * vec4(cameraPosition + dir * 1000.0, 1.0);
     atFar(clip, 1.0);
     gl_Position = clip;
     gl_PointSize = size * uPixel;
-    vTint = tint;
+    vTint = tint * starsThrough(dir);
   }
 `;
 
@@ -131,9 +154,13 @@ const GALAXY_BAKE = /* glsl */ `
 const GALAXY_VERTEX = /* glsl */ `
   uniform mat3 uSky;
   varying vec3 vDir;
+  varying float vThrough;
   ${FAR_GLSL}
+  ${AIR_GLSL}
+  ${SKY_GLOW_GLSL}
   void main() {
     vDir = position;
+    vThrough = starsThrough(normalize(uSky * position));
     vec4 clip = projectionMatrix * viewMatrix * vec4(cameraPosition + (uSky * position) * 1000.0, 1.0);
     atFar(clip, 1.0);
     gl_Position = clip;
@@ -144,11 +171,12 @@ const GALAXY_FRAGMENT = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uShow;
   varying vec3 vDir;
+  varying float vThrough;
   const float PI = 3.14159265;
   void main() {
     vec3 d = normalize(vDir);
     vec2 uv = vec2(atan(d.y, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.z, -1.0, 1.0)) / PI + 0.5);
-    gl_FragColor = vec4(texture2D(uMap, uv).rgb * uShow, 1.0);
+    gl_FragColor = vec4(texture2D(uMap, uv).rgb * uShow * vThrough, 1.0);
   }
 `;
 
@@ -156,9 +184,25 @@ const SUN_VERTEX = /* glsl */ `
   uniform vec3 uSun;
   uniform float uSize;
   varying vec2 vUv;
+  varying vec3 vTint;
   ${FAR_GLSL}
+  ${AIR_GLSL}
   void main() {
     vUv = position.xy;
+    // Its colour through the air towards it (the transmittance LUT, from
+    // where its ray enters the air when the eye is above it): white in
+    // space, orange and red low over the horizon. The shell over it takes
+    // the mean of that light away; this keeps its hue.
+    vec3 p = cameraPosition - uAirCentre;
+    float r = length(p);
+    vTint = vec3(1.0);
+    vec2 top = airSphere(p, uSun, AIR_TOP);
+    bool through = r <= AIR_TOP || (top.x < top.y && top.x > 0.0);
+    if (r > AIR_TOP && through) { p += uSun * top.x; r = length(p); }
+    if (through) {
+      vec3 T = airSunTransmittance(r, dot(uSun, p / r));
+      vTint = clamp(T / max(dot(T, vec3(1.0 / 3.0)), 1e-3), 0.0, 3.0);
+    }
     vec4 view = viewMatrix * vec4(cameraPosition + uSun * 1000.0, 1.0);
     view.xy += position.xy * uSize * 1000.0;
     vec4 clip = projectionMatrix * view;
@@ -171,6 +215,7 @@ const SUN_FRAGMENT = /* glsl */ `
   uniform float uShow;
   uniform float uDisc;
   varying vec2 vUv;
+  varying vec3 vTint;
   void main() {
     float r = length(vUv);
     float disc = 1.0 - smoothstep(uDisc * 0.92, uDisc, r);
@@ -181,7 +226,7 @@ const SUN_FRAGMENT = /* glsl */ `
     // Down to nothing before the quad's edge: any step there, with the bloom
     // over it, drew the square the glow is painted on.
     float window = 1.0 - smoothstep(0.55, 0.98, r);
-    vec3 c = vec3(1.0, 0.96, 0.9) * (disc * 40.0 + (glow + rays) * window);
+    vec3 c = vec3(1.0, 0.96, 0.9) * vTint * (disc * 40.0 + (glow + rays) * window);
     gl_FragColor = vec4(c * uShow, 1.0);
   }
 `;
@@ -353,8 +398,8 @@ export interface Space {
   readonly spaceShare: number;
   /** Parts kept hidden by name (`space-stars`, `space-air`...): for the browser checks. */
   readonly hidden: Set<string>;
-  /** The air's uniforms as drawn this frame (`air.ts`): the clouds' shadows leave its light be. */
-  readonly air: Readonly<Record<string, { value: unknown }>>;
+  /** The air round the planet (`air.ts`): its LUTs and uniforms, for the post pass's aerial perspective and clouds. */
+  readonly air: Air;
   dispose(): void;
 }
 
@@ -365,6 +410,9 @@ const smooth = (a: number, b: number, x: number): number => {
 
 export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   const skip = { planetSkip: true };
+  // The air (`air.ts`): its LUTs baked now; the stars, the sun and the shell read them.
+  const airModel = createAir(renderer);
+  const air$ = airModel.uniforms;
   // THE MILKY WAY, baked once.
   const galaxyTarget = new WebGLRenderTarget(2048, 1024, { type: HalfFloatType, depthBuffer: false, magFilter: LinearFilter, minFilter: LinearFilter });
   galaxyTarget.texture.wrapS = RepeatWrapping;
@@ -385,7 +433,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   }
   const sky = new Matrix3();
   const galaxyMaterial = new ShaderMaterial({
-    uniforms: { uMap: { value: galaxyTarget.texture }, uShow: { value: 0 }, uSky: { value: sky } },
+    uniforms: { ...air$, uMap: { value: galaxyTarget.texture }, uShow: { value: 0 }, uSky: { value: sky } },
     vertexShader: GALAXY_VERTEX,
     fragmentShader: GALAXY_FRAGMENT,
     side: BackSide,
@@ -400,7 +448,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   galaxy.userData = skip;
 
   const starsMaterial = new ShaderMaterial({
-    uniforms: { uSky: { value: sky }, uShow: { value: 0 }, uPixel: { value: 1 } },
+    uniforms: { ...air$, uSky: { value: sky }, uShow: { value: 0 }, uPixel: { value: 1 } },
     vertexShader: STARS_VERTEX,
     fragmentShader: STARS_FRAGMENT,
     depthWrite: false,
@@ -414,7 +462,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   stars.userData = skip;
 
   const sunMaterial = new ShaderMaterial({
-    uniforms: { uSun: { value: new Vector3() }, uShow: { value: 0 }, uSize: { value: 0.16 }, uDisc: { value: 0.034 } },
+    uniforms: { ...air$, uSun: { value: new Vector3() }, uShow: { value: 0 }, uSize: { value: 0.16 }, uDisc: { value: 0.034 } },
     vertexShader: SUN_VERTEX,
     fragmentShader: SUN_FRAGMENT,
     depthWrite: false,
@@ -441,7 +489,8 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   moon.userData = skip;
 
   const airMaterial = new ShaderMaterial({
-    uniforms: airUniforms(),
+    // The air's own uniform objects: what it sets each frame, this reads.
+    uniforms: airModel.uniforms,
     vertexShader: ATMOSPHERE_VERTEX,
     fragmentShader: ATMOSPHERE_FRAGMENT,
     side: BackSide,
@@ -475,12 +524,12 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
 
   return {
     hidden,
-    air: airMaterial.uniforms,
+    air: airModel,
     get spaceShare() {
       return spaceShare;
     },
     update(frame) {
-      const { globe, dark, minutes, centre, motion, camera } = frame;
+      const { globe, minutes, centre, motion, camera } = frame;
       // From the ground's sky to space as the view climbs to the globe.
       spaceShare = smooth(0.0, 0.12, globe);
       // The sky turns with the sun round the planet's axis (`world/planet/sun.ts`).
@@ -488,16 +537,16 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       rotation.extractRotation(motion);
       spin.makeRotationZ(sigma);
       sky.setFromMatrix4(spin.premultiply(rotation));
-      // Stars on the ground at night (under what light the sky still has), and all of them in space.
-      const starsShow = Math.max(spaceShare, smooth(0.55, 0.95, dark) * 0.9);
-      starsMaterial.uniforms['uShow']!.value = starsShow;
+      // The stars, the Milky Way and the sun are always there: the sky's own
+      // light hides the stars by day (`starsThrough`), and the air in front
+      // dims and reddens the sun (the shell over them, its tint).
+      starsMaterial.uniforms['uShow']!.value = 1;
       starsMaterial.uniforms['uPixel']!.value = frame.pixelRatio;
-      galaxyMaterial.uniforms['uShow']!.value = starsShow;
-      stars.visible = galaxy.visible = starsShow > 0.001;
-      // The sun's own disc from space; from the ground the dome draws it.
-      sunMaterial.uniforms['uShow']!.value = spaceShare;
+      galaxyMaterial.uniforms['uShow']!.value = 1;
+      stars.visible = galaxy.visible = true;
+      sunMaterial.uniforms['uShow']!.value = 1;
       (sunMaterial.uniforms['uSun']!.value as Vector3).copy(frame.sun);
-      sun.visible = spaceShare > 0.001;
+      sun.visible = true;
       // The moon: phase by its lag behind the sun, on an orbit tilted a little.
       const phase = (minutes / 1440 / LUNAR_MONTH) % 1;
       const lunar = sigma - phase * Math.PI * 2;
@@ -511,16 +560,18 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       basis.makeBasis(toward, side, up);
       moon.quaternion.setFromRotationMatrix(basis);
       (moonMaterial.uniforms['uSun']!.value as Vector3).copy(frame.sun);
-      moonMaterial.uniforms['uShow']!.value = Math.max(spaceShare, smooth(0.3, 0.8, dark));
+      // By day too, pale against the blue (the shell adds the sky over it).
+      moonMaterial.uniforms['uShow']!.value = 1;
       moon.visible = true;
-      // The air round the planet, seen from above it.
+      // The air round the planet, from the ground to space: the sky round the
+      // eye inside it, over everything from above it (\`air.ts\`). The moon
+      // lights it a little at night, by its phase (the lit share of its disc).
+      const lit = (1 - moonDir.dot(frame.sun)) / 2;
+      airModel.update(renderer, { centre, eye: camera.position, sun: frame.sun, moon: moonDir, moonLight: MOONLIGHT * lit });
       air.position.copy(centre);
-      (airMaterial.uniforms['uAirCentre']!.value as Vector3).copy(centre);
-      (airMaterial.uniforms['uAirSun']!.value as Vector3).copy(frame.sun);
-      airMaterial.uniforms['uAirStrength']!.value = spaceShare;
-      air.visible = spaceShare > 0.001;
+      airMaterial.depthTest = airModel.inside;
+      air.visible = true;
       for (const object of [galaxy, stars, sun, moon, air]) if (hidden.has(object.name)) object.visible = false;
-      void camera;
     },
     dispose() {
       for (const object of [galaxy, stars, sun, moon, air]) {
@@ -529,6 +580,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
         (object.material as ShaderMaterial).dispose();
       }
       galaxyTarget.dispose();
+      airModel.dispose();
     },
   };
 }

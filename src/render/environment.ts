@@ -498,7 +498,9 @@ export function createEnvironment(
     setSpace(share) {
       space = share;
       skyMaterial.uniforms['uSpace']!.value = share;
-      sky.visible = share < 0.999;
+      // On the planet the sky is the air's own, from the ground to space
+      // (\`planet/air.ts\`, drawn by \`planet/space.ts\`): the dome is not drawn.
+      sky.visible = false;
     },
     setWeather(k, f) { overcast = Math.max(0, Math.min(1, k)); flash = Math.max(0, Math.min(1.5, f)); },
     setQuality(next) {
