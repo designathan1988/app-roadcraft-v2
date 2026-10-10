@@ -14,6 +14,7 @@ import { FINISHES } from '../render/finishes';
 import { allFamilies, family, typeById, BUILTIN_TYPES } from '../families/index';
 import { resolveParams, type ParamDef } from '../families/family';
 import { icon } from './icons';
+import { changeLevels, courtyardIn, FACADE_PRESETS, podiumUnder, setbackOn } from '../model/quick';
 
 const ROOFS: [RoofKind, string, string][] = [
   ['flat', 'Plano', 'flat'],
@@ -93,6 +94,7 @@ function buildingPanel(b: Building3, inside = false): string {
     ${field('levels', 'Quantidade', levels.length, 1)}${field('ground', 'Térreo (m)', levels[0]?.height ?? 3)}
     ${field('typical', 'Demais (m)', levels[1]?.height ?? 3)}${field('rotation', 'Rotação (°)', b.rotation, 15)}
   </div></div>
+  <div class="f3-sec"><div class="f3-row"><button class="f3-btn" data-quick="lvup">+ Pavimento</button><button class="f3-btn" data-quick="lvdown">− Pavimento</button></div></div>
   <div class="f3-sec"><h3>Posição</h3><div class="f3-grid2">${field('px', 'X (m)', b.position[0])}${field('pz', 'Z (m)', b.position[1])}</div></div>
   <div class="f3-sec"><div class="f3-row">${inside ? '' : `<button class="f3-btn primary" data-act="enter">${icon('enter')}Editar volumes</button>`}<button class="f3-btn" data-act="dup">${icon('copy')}Duplicar</button><button class="f3-btn danger" data-act="del">${icon('trash')}Excluir</button></div>
   <p class="f3-empty" style="padding:8px 0 0">${b.solids.length} volume(s), ${b.items.length} componente(s) avulso(s).</p></div>`;
@@ -134,6 +136,13 @@ function solidPanel(ed: Editor3, b: Building3, s: Solid): string {
     <div class="f3-grid2">${field('height', 'Altura (m)', s.height)}${field('base', 'Base (m)', s.base)}${field('cx', 'Centro X (m)', centerOf(s)[0])}${field('cz', 'Centro Z (m)', centerOf(s)[1])}${field('spin', 'Girar (°)', 0, 15, 'placeholder="0"')}${field('taper', 'Afunilar topo (m)', s.taper)}${field('round', 'Arredondar cantos (m)', s.plan.outer[0]?.round ?? 0)}${field('chamfer', 'Chanfrar cantos (m)', s.plan.outer[0]?.chamfer ?? 0)}</div>
     <div class="f3-row" style="margin-top:8px"><button class="f3-btn" data-act="levelsfit">Altura = pavimentos</button><button class="f3-btn" data-act="mirror">${icon('mirror')}Espelhar</button></div>
   </div>
+  <div class="f3-sec"><h3>Modelar rápido</h3><div class="f3-row">
+    <button class="f3-btn" data-quick="lvup" title="Mais um pavimento no edifício">+ Pavimento</button>
+    <button class="f3-btn" data-quick="lvdown" title="Um pavimento a menos">− Pavimento</button>
+    <button class="f3-btn" data-quick="setback" title="Pavimento recuado em cima; o de baixo vira terraço">Recuo no topo</button>
+    <button class="f3-btn" data-quick="podium" title="Pódio mais largo no térreo, com lojas">Embasamento</button>
+    <button class="f3-btn" data-quick="court" title="Recorte no meio (pátio interno)">Pátio</button></div>
+    <label class="f3-field" style="margin-top:8px"><span>Fachada pronta</span><select data-quick-facade><option value="">Escolher…</option>${FACADE_PRESETS.map((f) => `<option value="${f.id}">${f.name}</option>`).join('')}</select></label></div>
   <div class="f3-sec"><h3>Cobertura</h3><div class="f3-chips">${ROOFS.map(([k, l, ic]) => `<button class="f3-chip" data-roof="${k}" aria-pressed="${r.kind === k}">${icon(ic)}${l}</button>`).join('')}</div>
     <div class="f3-grid2" style="margin-top:8px">${roofParams}</div></div>
   <div class="f3-sec"><h3>Materiais</h3><div style="display:grid;gap:6px">${finishSelect('wall', 'Paredes', s.materials.wall)}${finishSelect('roof', 'Telhado', s.materials.roof)}${finishSelect('trim', 'Detalhes', s.materials.trim)}${finishSelect('base', 'Base', s.materials.base)}</div></div>
@@ -307,6 +316,28 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
   );
   $$<HTMLButtonElement>('[data-sel]').forEach((el) => el.addEventListener('click', () => ed.selectElems(el.dataset.sel as 'row')));
   $$<HTMLButtonElement>('[data-align]').forEach((el) => el.addEventListener('click', () => ed.align(el.dataset.align as never)));
+  $$<HTMLButtonElement>('[data-quick]').forEach((el) =>
+    el.addEventListener('click', () => {
+      const q = el.dataset.quick!;
+      if (q === 'lvup' || q === 'lvdown') return void ed.change(b.id, (x) => changeLevels(x, q === 'lvup' ? 1 : -1), q === 'lvup' ? 'Mais um pavimento.' : 'Um pavimento a menos.');
+      if (!s) return;
+      let made: string | null = null;
+      const ok = ed.change(b.id, (x) => {
+        const so = x.solids.find((y) => y.id === s.id)!;
+        const n = q === 'setback' ? setbackOn(x, so) : q === 'podium' ? podiumUnder(x, so) : courtyardIn(x, so);
+        if (!n) return false;
+        made = n.id;
+      }, q === 'setback' ? 'Recuo criado; o volume de baixo virou terraço.' : q === 'podium' ? 'Embasamento com lojas criado.' : 'Pátio recortado.');
+      if (ok && made) ed.select({ building: b.id, solids: [made] });
+      else if (!ok) ed.toast('Não cabe: o volume é pequeno demais para isso.');
+    }),
+  );
+  $$<HTMLSelectElement>('[data-quick-facade]').forEach((el) =>
+    el.addEventListener('change', () => {
+      const pr = FACADE_PRESETS.find((f) => f.id === el.value);
+      if (pr) ed.changeSolid((x) => void (x.facade = pr.rules()), `Fachada ${pr.name.toLowerCase()}.`);
+    }),
+  );
   // Ações.
   $$<HTMLButtonElement>('[data-act]').forEach((el) =>
     el.addEventListener('click', () => {
