@@ -11,7 +11,7 @@ const chartToChart = (from: number, to: number, p: Vec2): Vec2 => chartToChartIn
 import { casingHalf, roadProfile } from '@world/roadTypes';
 import { segSeg } from '@core/intersect';
 import { roadStructure } from '@world/structures';
-import { GRID_STEP, snapToGrid } from '@world/grid';
+import { GRID_STEP, onGrid, snapToGrid } from '@world/grid';
 
 export type AnchorKind = 'node' | 'segment' | 'free';
 
@@ -477,8 +477,7 @@ export function snapEndpoint(
  */
 function onGridAlong(start: Vec2, at: Vec2, angle: number, length: number, lengthStep: number): Vec2 {
   const g = gridSnapStep, o = gridSnapOffset;
-  const startOnGrid = Math.abs((start.x - o) / g - Math.round((start.x - o) / g)) < 1e-6 &&
-    Math.abs((start.y - o) / g - Math.round((start.y - o) / g)) < 1e-6;
+  const startOnGrid = onGrid(start, g, o);
   const eighth = Math.round(angle / (Math.PI / 4));
   if (startOnGrid && Math.abs(angle - eighth * (Math.PI / 4)) < 1e-9) {
     const diagonal = eighth % 2 !== 0;

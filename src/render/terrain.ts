@@ -1186,6 +1186,7 @@ function terrainMaterial(
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
          varying vec3 vTerrainNormal;
+         ${__PLANET__ ? 'varying vec3 vTerrainDir;' : ''}
          attribute float aSteep;
          varying float vTerrainSteep;
          uniform vec3 uTileOrigin;`,
@@ -1197,6 +1198,12 @@ function terrainMaterial(
          // world's (what lies round the camera).
          vTerrainAtlas = (modelMatrix * vec4(transformed, 1.0)).xyz;
          vTerrainWorld = vTerrainAtlas - uTileOrigin;
+         ${__PLANET__ ? `
+         // The point's direction from the planet's centre, once a vertex: the
+         // fragments read it interpolated (a 16-unit cell's chord is off the
+         // arc by a hundredth of a unit) instead of each working its piece's
+         // frame and trigonometry out again.
+         { vec3 pe, pn; vTerrainDir = planetDirection(vTerrainAtlas, pe, pn); }` : ''}
          vTerrainNormal = normalize(mat3(modelMatrix) * objectNormal);
          vTerrainSteep = aSteep;`,
       );
@@ -1208,13 +1215,14 @@ function terrainMaterial(
           ? `#include <clipping_planes_fragment>
              // Each piece's ground draws its own part of the sphere, with half a
              // grid cell over its border so no hairline opens between two.
-             if (uPlanetTile >= 0.0 && !planetOwns(vTerrainAtlas, uPlanetTile, ${(TERRAIN_CELL / 2).toFixed(1)})) discard;`
+             if (uPlanetTile >= 0.0 && !planetOwnsDirection(normalize(vTerrainDir), uPlanetTile, ${(TERRAIN_CELL / 2).toFixed(1)})) discard;`
           : '#include <clipping_planes_fragment>',
       )
       .replace(
         '#include <common>',
         `#include <common>
          uniform float uPlanetTile;
+         ${__PLANET__ ? 'varying vec3 vTerrainDir;' : ''}
          ${PLANET_BIOME_NOISE}
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
@@ -1908,11 +1916,43 @@ function terrainMaterial(
          diffuseColor *= blended;
          // The grid: a line a pixel wide at every cell, on the map only.
          if (uGrid.y > 0.0) {
+           ${__PLANET__ ? `
+           // On the planet: the cube face's own grid (\`world/planet/charts.ts\`
+           // snapToFaceGridInto), in the face's equiangular metres, so its lines
+           // run on across every piece's border and every face's edge - one
+           // grid for the sphere, the one the road tool snaps to.
+           vec2 g;
+           float onMap = 1.0;
+           {
+             vec3 d = normalize(vTerrainDir);
+             // The face the point lies on (its largest component, as
+             // \`core/cubeSphere.ts\` faceOfDirection) - not the piece's: two
+             // pieces' grounds overlap a little over their border, and past a
+             // cube edge one face's chart lays its lines towards the next
+             // face's centre, a second grid beside the true one.
+             vec3 ad = abs(d);
+             int f = ad.x >= ad.y && ad.x >= ad.z ? (d.x >= 0.0 ? 0 : 3)
+               : ad.y >= ad.z ? (d.y >= 0.0 ? 1 : 4) : (d.z >= 0.0 ? 2 : 5);
+             g = atan(vec2(dot(d, PLANET_E[f]), dot(d, PLANET_N[f])) / max(dot(d, PLANET_C[f]), 1e-4)) / PLANET_ANGLE / uGrid.x;
+           }` : `
            vec2 g = vec2(vTerrainWorld.x, -vTerrainWorld.z) / uGrid.x;
-           vec2 toLine = abs(fract(g - 0.5) - 0.5) / max(fwidth(g), vec2(1e-4));
+           float onMap = step(abs(vTerrainWorld.x), uGrid.z) * step(abs(vTerrainWorld.z), uGrid.z);`}
+           vec2 gw = fwidth(g);
+           ${__PLANET__ ? `
+           // Where a pixel's neighbours lie on another face (along a cube
+           // edge) the face's metres jump and fwidth with them: the pixel's
+           // own footprint, read on the piece's map (continuous over its
+           // plate), bounds it - the edge's own line stays whole.
+           gw = min(gw, vec2(1.5 * max(fwidth(vTerrainAtlas.x), fwidth(vTerrainAtlas.z)) / uGrid.x));` : ''}
+           vec2 toLine = abs(fract(g - 0.5) - 0.5) / max(gw, vec2(1e-4));
            float line = 1.0 - min(min(toLine.x, toLine.y), 1.0);
-           float onMap = step(abs(vTerrainWorld.x), uGrid.z) * step(abs(vTerrainWorld.z), uGrid.z);
-           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), line * uGrid.y * onMap);
+           // Gone before its cells shrink under a few pixels: a grid finer than
+           // the screen is only a pale wash over the land.
+           line *= 1.0 - smoothstep(0.1, 0.25, max(gw.x, gw.y));
+           // White over the land, dark over snow and sand: seen on any ground.
+           float bright = smoothstep(0.45, 0.7, dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)));
+           vec3 ink = mix(vec3(1.0), vec3(0.08, 0.1, 0.12), bright);
+           diffuseColor.rgb = mix(diffuseColor.rgb, ink, line * uGrid.y * onMap * (1.0 + 1.5 * bright));
          }`,
       )
       .replace(

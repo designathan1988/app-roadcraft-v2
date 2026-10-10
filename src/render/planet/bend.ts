@@ -106,9 +106,7 @@ vec3 planetTurn(vec3 v, vec3 at) {
 // Whether a world point of a piece's cell lies on that piece itself, give or
 // take \`margin\` units over its border: each piece's ground draws only its
 // own part of the sphere, the margin closing the hairline between two.
-bool planetOwns(vec3 p, float tile, float margin) {
-  vec3 e, n;
-  vec3 d = planetDirection(p, e, n);
+bool planetOwnsDirection(vec3 d, float tile, float margin) {
   int t = int(tile + 0.5);
   int f = t / ${TILES_PER_SIDE * TILES_PER_SIDE};
   int k = t - f * ${TILES_PER_SIDE * TILES_PER_SIDE};
@@ -119,6 +117,10 @@ bool planetOwns(vec3 p, float tile, float margin) {
   vec2 lo = -PLANET_HALF + ij * PLANET_STEP - margin;
   vec2 hi = lo + PLANET_STEP + 2.0 * margin;
   return all(greaterThanEqual(q, lo)) && all(lessThanEqual(q, hi));
+}
+bool planetOwns(vec3 p, float tile, float margin) {
+  vec3 e, n;
+  return planetOwnsDirection(planetDirection(p, e, n), tile, margin);
 }
 // How much of a directional light reaches a view-space point: none past the
 // planet's own horizon there. The shadow map covers the ground round the view

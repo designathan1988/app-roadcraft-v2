@@ -1,4 +1,4 @@
-import { FACE_HALF, faceToSphereInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
+import { FACE_HALF, faceOfDirection, faceToSphereInto, sphereToFaceInto, type FacePoint, type Vec3 } from '@core/cubeSphere';
 import { TILES, TILES_PER_SIDE, TILE_COUNT, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
 import type { Vec2 } from '@core/vec2';
 import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from './atlas';
@@ -53,6 +53,33 @@ export const chartAt = (x: number, y: number): number => (identity() ? 0 : tileC
 export function atlasToSphereInto(x: number, y: number, out: Vec3): Vec3 {
   atlasToTileInto(x, y, local);
   return tileToSphereInto(local.tile, local.x, local.y, out);
+}
+
+/**
+ * The grid point nearest an atlas point, written on the same chart, into
+ * `out`. On the planet the grid is the cube faces' own (`core/cubeSphere.ts`):
+ * lines at whole steps of a face's equiangular metres, whose angle is linear
+ * in them, so two faces measure their shared border alike and the lines run
+ * on across it (Ronchi, Iacono and Paolucci, "The Cubed Sphere", 1996) - and
+ * across every piece's border, one grid for the whole planet as the ground
+ * draws it (`render/terrain.ts` uGrid). `offset` moves the points into the
+ * cells' middles. The flat map's grid on the flat map and in an edit on one
+ * chart.
+ */
+export function snapToFaceGridInto(x: number, y: number, step: number, offset: number, out: FacePoint): FacePoint {
+  if (identity()) {
+    out.x = Math.round((x - offset) / step) * step + offset;
+    out.y = Math.round((y - offset) / step) * step + offset;
+    return out;
+  }
+  const chart = tileCellOf(x, y);
+  atlasToSphereInto(x, y, s3);
+  const face = faceOfDirection(s3);
+  sphereToFaceInto(face, s3, fp);
+  const fx = Math.round((fp.x - offset) / step) * step + offset;
+  const fy = Math.round((fp.y - offset) / step) * step + offset;
+  faceToSphereInto(face, fx, fy, s3);
+  return sphereToChartInto(chart, s3, out);
 }
 
 /** A sphere direction on `chart`'s map, as atlas coordinates, into `out`. */
