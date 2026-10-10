@@ -38,12 +38,22 @@ import { PLANET_RADIUS } from '@core/cubeSphere';
  */
 
 const R = PLANET_RADIUS;
-/** The Rayleigh scale height: 3 % of the radius (the Earth's 8 km of 6360 km is 0.13 %): a wide, soft limb. */
-const RAYLEIGH_HEIGHT = R * 0.03;
+/**
+ * The Rayleigh scale height: 7 % of the radius (the Earth's 8 km of 6360 km
+ * is 0.13 %): a tall, soft limb. At 3 % the blue hugged the ground - under
+ * a 60-storey tower's top, a thin line on the horizon from mid altitude (the
+ * player, 2026-10-10: "a atmosfera está muito baixa"). Unreal's sky
+ * atmosphere draws its small planets so (a 300 km ground radius, the
+ * Rayleigh height 8 to 32 km, the air 100 km tall: "Sky Atmosphere
+ * Component", Epic). The air's thickness straight up stays the Earth's
+ * (`METRES` follows the height), so the sky's colour over the ground does not
+ * change: only how high it reaches.
+ */
+const RAYLEIGH_HEIGHT = R * 0.07;
 /** The aerosols' scale height, the Earth's ratio to the Rayleigh one (1.2 km : 8 km) and a little more haze. */
-const MIE_HEIGHT = R * 0.0085;
-/** The top of the air: eight Rayleigh heights (what is left above is e^-8 of the ground's air). */
-export const ATMOSPHERE_TOP = R + RAYLEIGH_HEIGHT * 8;
+const MIE_HEIGHT = R * 0.02;
+/** The top of the air: six Rayleigh heights (what is left above is e^-6 of the ground's air, a quarter of a percent). */
+export const ATMOSPHERE_TOP = R + RAYLEIGH_HEIGHT * 6;
 /** Earth metres per world unit for the gases and the aerosols: their heights over ours. */
 const METRES = 8000 / RAYLEIGH_HEIGHT;
 const MIE_METRES = 1200 / MIE_HEIGHT;
