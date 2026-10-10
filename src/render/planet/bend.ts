@@ -1,12 +1,14 @@
-import { FACES, FACE_HALF, PLANET_RADIUS, faceOfDirection, faceToSphereInto, sphereToFaceInto, type Vec3 } from '@core/cubeSphere';
-import { ATLAS_PITCH, atlasToFaceInto, faceCentre, type FaceLocal } from '@world/planet/atlas';
+import { FACES, FACE_HALF, PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
+import { TILES, TILES_PER_SIDE, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto } from '@core/planetTiles';
+import { ATLAS_COLUMNS, ATLAS_PITCH, atlasToTileInto, tileCentre, type TileLocal } from '@world/planet/atlas';
 import { Frustum, Matrix4, ShaderChunk, ShaderLib, Sphere, Vector3, type Object3D, type Ray, type Scene } from 'three';
 
 /**
- * THE PLANET, DRAWN: every point of the world (the atlas of the cube's six
- * faces, `world/planet/atlas.ts`) is carried in the vertex shader to its point
- * on the sphere (`core/cubeSphere.ts`, the equiangular chart), its height
- * becoming height over the sphere - the flat geometry bent onto the planet as
+ * THE PLANET, DRAWN: every point of the world (the atlas of the planet's
+ * pieces, `world/planet/atlas.ts`) is carried in the vertex shader to its
+ * point on the sphere (`core/planetTiles.ts`: each piece's own azimuthal
+ * equidistant map, true to within a degree and 1.3%), its height becoming
+ * height over the sphere - the flat geometry bent onto the planet as
  * Planetary Annihilation bends its brushes (Allen Chou, "Bending Solid
  * Geometry in Planetary Annihilation", 2013). Nothing is built bent: the
  * world, its meshes and the simulation stay flat, and only the picture is
@@ -45,39 +47,75 @@ uniform float planetOn;
 uniform mat4 planetT;
 const float PLANET_R = ${PLANET_RADIUS.toFixed(4)};
 const float PLANET_PITCH = ${ATLAS_PITCH.toFixed(1)};
+const float PLANET_COLS = ${ATLAS_COLUMNS.toFixed(1)};
+const float PLANET_ROWS = ${(TILES.length / ATLAS_COLUMNS).toFixed(1)};
+const float PLANET_HALF = ${FACE_HALF.toFixed(1)};
+const float PLANET_STEP = ${((2 * FACE_HALF) / TILES_PER_SIDE).toFixed(1)};
 const float PLANET_ANGLE = ${(Math.PI / 4 / FACE_HALF).toExponential(8)};
 const vec3 PLANET_C[6] = vec3[6](${FACES.map((f) => v3(f.centre)).join(', ')});
 const vec3 PLANET_E[6] = vec3[6](${FACES.map((f) => v3(f.east)).join(', ')});
 const vec3 PLANET_N[6] = vec3[6](${FACES.map((f) => v3(f.north)).join(', ')});
-// The face whose cell of the atlas holds a world point, and the point in it.
-int planetFace(vec3 p, out vec2 local) {
+// The piece whose cell of the atlas holds a world point, and the point on its map.
+int planetTile(vec3 p, out vec2 local) {
   vec2 a = vec2(p.x, -p.z);
-  float col = clamp(floor(a.x / PLANET_PITCH + 0.5) + 1.0, 0.0, 2.0);
-  float row = a.y >= 0.0 ? 0.0 : 1.0;
-  local = a - vec2((col - 1.0) * PLANET_PITCH, row < 0.5 ? 0.5 * PLANET_PITCH : -0.5 * PLANET_PITCH);
-  return int(row * 3.0 + col);
+  float col = clamp(floor(a.x / PLANET_PITCH + 0.5) + 6.0, 0.0, PLANET_COLS - 1.0);
+  float row = clamp(floor(a.y / PLANET_PITCH + 0.5) + 4.0, 0.0, PLANET_ROWS - 1.0);
+  local = a - vec2((col - 6.0) * PLANET_PITCH, (row - 4.0) * PLANET_PITCH);
+  return int(row * PLANET_COLS + col);
 }
-// The unit direction from the planet's centre of a world point.
-vec3 planetDirection(vec3 p, out int face) {
-  vec2 local;
-  face = planetFace(p, local);
-  vec2 t = tan(local * PLANET_ANGLE);
-  return normalize(PLANET_C[face] + t.x * PLANET_E[face] + t.y * PLANET_N[face]);
+// A piece's centre on the sphere and its east and north there (core/planetTiles.ts TILES).
+void planetTileFrame(int t, out vec3 c, out vec3 e, out vec3 n) {
+  int f = t / ${TILES_PER_SIDE * TILES_PER_SIDE};
+  int k = t - f * ${TILES_PER_SIDE * TILES_PER_SIDE};
+  vec2 ij = vec2(float(k - (k / ${TILES_PER_SIDE}) * ${TILES_PER_SIDE}), float(k / ${TILES_PER_SIDE}));
+  vec2 m = tan((-PLANET_HALF + (ij + 0.5) * PLANET_STEP) * PLANET_ANGLE);
+  c = normalize(PLANET_C[f] + m.x * PLANET_E[f] + m.y * PLANET_N[f]);
+  e = normalize(PLANET_E[f] - dot(PLANET_E[f], c) * c);
+  n = cross(c, e);
+}
+// The unit direction from the planet's centre of a world point (its piece's
+// azimuthal equidistant map), and that piece's east and north at its centre.
+vec3 planetDirection(vec3 p, out vec3 e, out vec3 n) {
+  vec2 l;
+  int t = planetTile(p, l);
+  vec3 c;
+  planetTileFrame(t, c, e, n);
+  float r = length(l);
+  if (r < 1e-4) return c;
+  float th = r / PLANET_R;
+  return cos(th) * c + (sin(th) / r) * (l.x * e + l.y * n);
 }
 vec3 planetPoint(vec3 p) {
   if (planetOn < 0.5) return p;
-  int face;
-  vec3 s = planetDirection(p, face);
+  vec3 e, n;
+  vec3 s = planetDirection(p, e, n);
   return (planetT * vec4(s * (PLANET_R + p.y), 1.0)).xyz;
 }
 // A direction of the flat world at a point, as the planet turns it there.
 vec3 planetTurn(vec3 v, vec3 at) {
   if (planetOn < 0.5) return v;
-  int face;
-  vec3 s = planetDirection(at, face);
-  vec3 e = normalize(PLANET_E[face] - dot(PLANET_E[face], s) * s);
+  vec3 e0, n0;
+  vec3 s = planetDirection(at, e0, n0);
+  vec3 e = normalize(e0 - dot(e0, s) * s);
   vec3 n = cross(s, e);
   return mat3(planetT) * (v.x * e + v.y * s - v.z * n);
+}
+// Whether a world point of a piece's cell lies on that piece itself, give or
+// take \`margin\` units over its border: each piece's ground draws only its
+// own part of the sphere, the margin closing the hairline between two.
+bool planetOwns(vec3 p, float tile, float margin) {
+  vec3 e, n;
+  vec3 d = planetDirection(p, e, n);
+  int t = int(tile + 0.5);
+  int f = t / ${TILES_PER_SIDE * TILES_PER_SIDE};
+  int k = t - f * ${TILES_PER_SIDE * TILES_PER_SIDE};
+  vec2 ij = vec2(float(k - (k / ${TILES_PER_SIDE}) * ${TILES_PER_SIDE}), float(k / ${TILES_PER_SIDE}));
+  float along = dot(d, PLANET_C[f]);
+  if (along <= 0.0) return false;
+  vec2 q = atan(vec2(dot(d, PLANET_E[f]), dot(d, PLANET_N[f])) / along) / PLANET_ANGLE;
+  vec2 lo = -PLANET_HALF + ij * PLANET_STEP - margin;
+  vec2 hi = lo + PLANET_STEP + 2.0 * margin;
+  return all(greaterThanEqual(q, lo)) && all(lessThanEqual(q, hi));
 }
 // A view-space point of the flat world to its view-space point on the planet.
 vec4 planetView(vec4 mv) {
@@ -139,13 +177,12 @@ export function installPlanet(): void {
   }
 
   // Culling where the planet draws a thing: its bounding sphere's centre
-  // carried there, the sphere a little wider (the chart's scale is within
-  // 0.67..1.16, more past a face's border).
+  // carried there, the sphere a little wider (a piece's map is true to 1.3%).
   const object = Frustum.prototype.intersectsObject;
   const sphere = new Sphere();
   const bent = (s: Sphere): Sphere => {
     planetPointInto(s.center.x, s.center.y, s.center.z, s.center);
-    s.radius = s.radius * 1.6 + 4;
+    s.radius = s.radius * 1.05 + 4;
     return s;
   };
   Frustum.prototype.intersectsObject = function (this: Frustum, target: Object3D): boolean {
@@ -183,15 +220,15 @@ export function planetScene(scene: Scene): void {
 /** GLSL and uniforms for a hand-written vertex shader that must sit on the planet too. */
 export const PLANET_SHADER = { glsl: PLANET_GLSL, on: PLANET_ON, t: PLANET_T };
 
-const local: FaceLocal = { face: 0, x: 0, y: 0 };
+const local: TileLocal = { tile: 0, x: 0, y: 0 };
 const dir: Vec3 = { x: 0, y: 0, z: 0 };
 const tmp = new Vector3();
 
 /** A world point (three's x, height y, z) on the planet as drawn, into `out`. */
 export function planetPointInto(x: number, y: number, z: number, out: Vector3): Vector3 {
   if (PLANET_ON.value < 0.5) return out.set(x, y, z);
-  atlasToFaceInto(x, -z, local);
-  faceToSphereInto(local.face, local.x, local.y, dir);
+  atlasToTileInto(x, -z, local);
+  tileToSphereInto(local.tile, local.x, local.y, dir);
   const r = PLANET_RADIUS + y;
   return out.set(dir.x * r, dir.y * r, dir.z * r).applyMatrix4(motion);
 }
@@ -209,9 +246,9 @@ const north = new Vector3();
  */
 export function anchorPlanet(x: number, z: number): void {
   anchor.set(x, 0, z);
-  atlasToFaceInto(x, -z, local);
-  faceToSphereInto(local.face, local.x, local.y, dir);
-  const f = FACES[local.face]!;
+  atlasToTileInto(x, -z, local);
+  tileToSphereInto(local.tile, local.x, local.y, dir);
+  const f = TILES[local.tile]!;
   up.set(dir.x, dir.y, dir.z);
   east.set(f.east.x, f.east.y, f.east.z);
   east.addScaledVector(up, -east.dot(up)).normalize();
@@ -267,12 +304,12 @@ export function planetNearest(ray: Ray): { x: number; y: number } {
   return sphereToAtlas(hitPoint);
 }
 
-/** A point of the planet's frame (its direction) as the atlas point of the face it lies on. */
+/** A point of the planet's frame (its direction) as the atlas point of the piece it lies on. */
 function sphereToAtlas(p: Vector3): { x: number; y: number } {
   dir.x = p.x; dir.y = p.y; dir.z = p.z;
-  const face = faceOfDirection(dir);
-  sphereToFaceInto(face, dir, fp);
-  const c = faceCentre(face);
+  const tile = tileOfDirection(dir);
+  sphereToTileInto(tile, dir, fp);
+  const c = tileCentre(tile);
   return { x: c.x + fp.x, y: c.y + fp.y };
 }
 
@@ -281,44 +318,44 @@ const eA = new Vector3();
 const eB = new Vector3();
 const uS = new Vector3();
 
-/** A face's east on the sphere at a unit direction (the tangent of its x axis there). */
-function eastAt(face: number, s: Readonly<Vec3>, out: Vector3): Vector3 {
-  const e = FACES[face]!.east;
+/** A piece's east on the sphere at a unit direction (its centre's east, made level there). */
+function eastAt(tile: number, s: Readonly<Vec3>, out: Vector3): Vector3 {
+  const e = TILES[tile]!.east;
   uS.set(s.x, s.y, s.z);
   return out.set(e.x, e.y, e.z).addScaledVector(uS, -(e.x * s.x + e.y * s.y + e.z * s.z)).normalize();
 }
 
 /**
- * An atlas point in a face's own (extended) chart: the same ground, in that
- * face's metres - past its border too.
+ * An atlas point on a piece's own map: the same ground, in that piece's
+ * coordinates - past its border too.
  */
-export function inFaceChart(face: number, x: number, y: number): { x: number; y: number } {
-  atlasToFaceInto(x, y, local);
-  faceToSphereInto(local.face, local.x, local.y, sTmp);
-  const c = faceCentre(face);
-  const out = sphereToFaceInto(face, sTmp, fp);
-  return out ? { x: c.x + out.x, y: c.y + out.y } : { x, y };
+export function inTileChart(tile: number, x: number, y: number): { x: number; y: number } {
+  atlasToTileInto(x, y, local);
+  if (local.tile === tile) return { x, y };
+  tileToSphereInto(local.tile, local.x, local.y, sTmp);
+  const c = tileCentre(tile);
+  sphereToTileInto(tile, sTmp, fp);
+  return { x: c.x + fp.x, y: c.y + fp.y };
 }
 
 /**
- * An atlas point that has wandered past its face's border (the view's centre
- * dragged over it), taken to the face it now stands on: the same ground in
- * that face's place, and the turn (rad, to add to an azimuth) between the two
- * faces' axes there. Null when it is still on its own face.
+ * An atlas point that has wandered past its piece's border (the view's centre
+ * dragged over it), taken to the piece it now stands on: the same ground in
+ * that piece's place, and the turn (rad, to add to an azimuth) between the
+ * two pieces' axes there. Null when it is still on its own piece.
  */
 export function rehome(x: number, y: number): { x: number; y: number; turn: number } | null {
-  atlasToFaceInto(x, y, local);
-  if (Math.abs(local.x) <= FACE_HALF && Math.abs(local.y) <= FACE_HALF) return null;
-  const from = local.face;
-  faceToSphereInto(from, local.x, local.y, sTmp);
-  const to = faceOfDirection(sTmp);
+  atlasToTileInto(x, y, local);
+  if (onTile(local.tile, local.x, local.y)) return null;
+  const from = local.tile;
+  tileToSphereInto(from, local.x, local.y, sTmp);
+  const to = tileOfDirection(sTmp);
   if (to === from) return null;
-  const p = sphereToFaceInto(to, sTmp, fp);
-  if (!p) return null;
+  const p = sphereToTileInto(to, sTmp, fp);
   eastAt(from, sTmp, eA);
   eastAt(to, sTmp, eB);
   const turn = Math.atan2(eA.clone().cross(eB).dot(uS), eA.dot(eB));
-  const c = faceCentre(to);
+  const c = tileCentre(to);
   return { x: c.x + p.x, y: c.y + p.y, turn };
 }
 
@@ -347,8 +384,8 @@ export function planetSun(minutes: number, out: Vector3): Vector3 {
  */
 export function planetLocalMinutes(minutes: number): number {
   sunInPlanet(minutes, sunPlanet);
-  atlasToFaceInto(anchor.x, -anchor.z, local);
-  faceToSphereInto(local.face, local.x, local.y, dir);
+  atlasToTileInto(anchor.x, -anchor.z, local);
+  tileToSphereInto(local.tile, local.x, local.y, dir);
   const at = Math.atan2(dir.y, dir.x), sun = Math.atan2(sunPlanet.y, sunPlanet.x);
   let delta = (at - sun) / (Math.PI * 2);
   delta -= Math.round(delta);

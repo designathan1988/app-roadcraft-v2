@@ -64,7 +64,7 @@ const TERRAIN_SIZE = MAP_SIZE;
  * Cells per side. 300 gives a 16-unit cell: 6.4 m, fine enough for a brush.
  * The planet's faces are wider (6 km): 375 keeps the same cell.
  */
-const TERRAIN_SEGMENTS = __PLANET__ ? 375 : 300;
+const TERRAIN_SEGMENTS = __PLANET__ ? Math.round(MAP_SIZE / 16) : 300;
 const TERRAIN_BASE = -0.12;
 
 /** Radius of a river's water disc, as a fraction of the stamp that carved it. */
@@ -672,7 +672,7 @@ export function terrainBakes(anisotropy: number): {
  *    ground has weather in it rather than one flat green.
  */
 /** Texels across the map in each painted-ground weight texture. */
-const PAINT_RES = 1024;
+const PAINT_RES = __PLANET__ ? 256 : 1024;
 
 /**
  * The water's level at every terrain corner within a few cells of water, for
@@ -817,6 +817,25 @@ function bakedRows(texture: Texture): Uint8Array | Uint8ClampedArray | null {
  * layer chosen in the shader by index (three's DataArrayTexture; Terrain3D
  * keeps its terrain textures the same way).
  */
+/**
+ * The rock layers and the macro map, made once and shared by every plate of
+ * ground: the planet has 96 plates, and an array of the rock textures made
+ * per plate was gigabytes of the same pixels.
+ */
+const layersMade = new Map<string, DataArrayTexture>();
+function sharedLayers(key: string, textures: readonly Texture[], srgb: boolean, anisotropy: number): DataArrayTexture {
+  const id = `${key}:${anisotropy}`;
+  let made = layersMade.get(id);
+  if (!made) layersMade.set(id, made = layeredTexture(textures, srgb, anisotropy));
+  return made;
+}
+const macroMade = new Map<number, DataTexture>();
+function sharedMacro(anisotropy: number): DataTexture {
+  let made = macroMade.get(anisotropy);
+  if (!made) macroMade.set(anisotropy, made = macroTexture(anisotropy));
+  return made;
+}
+
 function layeredTexture(textures: readonly Texture[], srgb: boolean, anisotropy: number): DataArrayTexture {
   const first = textures[0]!.image as { width: number; height: number };
   const width = first.width, height = first.height;
@@ -961,7 +980,7 @@ function rasterPaint(layers: readonly Uint8Array[], dab: PaintDab): void {
 }
 
 /** Side of the forest density grid over the plate (7.5 m a cell). */
-const FOREST_RES = 256;
+const FOREST_RES = __PLANET__ ? 128 : 256;
 
 /**
  * Lays one dab into the cover densities: its own cover towards full, every
@@ -1051,7 +1070,7 @@ function terrainMaterial(
   // Read by the relief's bake, which carries its brightness in its blue
   // channel: the terrain shader is at the sixteen textures a fragment shader
   // may bind, and the relief took the macro map's place.
-  material.userData['macro'] = macroTexture(anisotropy);
+  material.userData['macro'] = sharedMacro(anisotropy);
   const uniforms = {
     uPaint: { value: paint as Texture },
     uPaintHalf: { value: TERRAIN_HALF },
@@ -1060,8 +1079,8 @@ function terrainMaterial(
     uGrid: TERRAIN_GRID,
     uShore: { value: shore as Texture },
     uShoreGrid: { value: new Vector3(TERRAIN_HALF, TERRAIN_CELL, GRID) },
-    uRockMap: { value: layeredTexture(bakes.rocks.map((bake) => bake.map), true, anisotropy) as Texture },
-    uRockNormal: { value: layeredTexture(bakes.rocks.map((bake) => bake.normalMap), false, anisotropy) as Texture },
+    uRockMap: { value: sharedLayers('map', bakes.rocks.map((bake) => bake.map), true, anisotropy) as Texture },
+    uRockNormal: { value: sharedLayers('normal', bakes.rocks.map((bake) => bake.normalMap), false, anisotropy) as Texture },
     uDirtMap: { value: bakes.dirt.map as Texture },
     uEcology: { value: ecologyTexture as Texture },
     uSeasonDry: SEASON_DRY,
@@ -1087,6 +1106,9 @@ function terrainMaterial(
     // Where this plate stands in the world (the planet's atlas: each face's
     // own); the map's grids are read from it. Zero on the flat map.
     uTileOrigin: { value: new Vector3() },
+    // The planet's piece this plate is (-1: none): it draws only its own part
+    // of the sphere (\`planet/bend.ts\` planetOwns).
+    uPlanetTile: { value: -1 },
   };
   material.userData['terrainUniforms'] = uniforms;
 
@@ -1116,8 +1138,18 @@ function terrainMaterial(
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
+        '#include <clipping_planes_fragment>',
+        __PLANET__
+          ? `#include <clipping_planes_fragment>
+             // Each piece's ground draws its own part of the sphere, with half a
+             // grid cell over its border so no hairline opens between two.
+             if (uPlanetTile >= 0.0 && !planetOwns(vTerrainAtlas, uPlanetTile, ${(TERRAIN_CELL / 2).toFixed(1)})) discard;`
+          : '#include <clipping_planes_fragment>',
+      )
+      .replace(
         '#include <common>',
         `#include <common>
+         uniform float uPlanetTile;
          varying vec3 vTerrainWorld;
          varying vec3 vTerrainAtlas;
          varying vec3 vTerrainNormal;
@@ -2084,7 +2116,7 @@ function wallMaterial(anisotropy: number): MeshStandardMaterial {
  * Every coordinate the surface is given or returns is the plate's own, about
  * its centre; only its meshes are moved there.
  */
-export function createTerrainSurface(anisotropy: number, origin: { readonly x: number; readonly y: number } = { x: 0, y: 0 }): TerrainSurface {
+export function createTerrainSurface(anisotropy: number, origin: { readonly x: number; readonly y: number } = { x: 0, y: 0 }, tile = -1): TerrainSurface {
   const bakes = terrainBakes(anisotropy);
   const material = terrainMaterial(bakes, anisotropy);
 
@@ -2171,7 +2203,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   const relief = createReliefBake(GRID, TERRAIN_CELL, TERRAIN_HALF, material.userData['macro'] as Texture);
   {
     // The ground reads its own bake, and its grids from where it stands.
-    const own = material.userData['terrainUniforms'] as { uRelief: { value: Texture }; uReliefWindow: { value: Vector4 }; uTileOrigin: { value: Vector3 } };
+    const own = material.userData['terrainUniforms'] as { uRelief: { value: Texture }; uReliefWindow: { value: Vector4 }; uTileOrigin: { value: Vector3 }; uPlanetTile: { value: number } };
+    own.uPlanetTile.value = tile;
     own.uRelief = relief.texture;
     own.uReliefWindow = relief.window;
     own.uTileOrigin.value.set(origin.x, 0, -origin.y);
@@ -2918,6 +2951,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   vergeMaterial.userData = landData;
   vergeMaterial.onBeforeCompile = (shader, renderer) => {
     material.onBeforeCompile(shader, renderer);
+    // The batter belongs to a road, not to a piece of the planet's ground: never cut away.
+    shader.uniforms['uPlanetTile'] = { value: -1 };
     shader.fragmentShader = shader.fragmentShader.replace(
       'float slopeDeg = terrainSlope();',
       'float slopeDeg = 0.0;',

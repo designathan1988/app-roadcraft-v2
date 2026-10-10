@@ -63,7 +63,9 @@ import { DEFAULT_GULLY_AUTO, gulliesAt, type GullyDab } from '@world/gullies';
  */
 
 /** Texels across a level: 2.3 units a texel over the 4800-unit map, 0.3 in the close window. */
-export const RELIEF_RES = 2048;
+// On the planet a plate is 1.9 km, not 4.8: 512 keeps its texel near the
+// flat map's (3.7 units against 2.3), at a sixteenth of the memory, for 96 plates.
+export const RELIEF_RES = __PLANET__ ? 512 : 2048;
 /** The close window's side, world units. */
 const WINDOW_SPAN = 600;
 /** How far the view's ground may wander from the window's centre before it is baked again. */

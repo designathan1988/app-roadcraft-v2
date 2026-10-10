@@ -1,11 +1,12 @@
-import { FACE_COUNT, FACE_HALF } from '@core/cubeSphere';
+import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
+import { TILES, TILE_COUNT, TILE_HALF, sphereToTileInto, tileToSphereInto } from '@core/planetTiles';
 import type { CoverKind } from '@world/terrainPaint';
 import type { PaintDab } from '@world/terrainPaint';
 import type { TerrainStamp } from '@world/terrain';
 import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
-import { FACE_REACH, faceCellOf, faceCentre } from '@world/planet/atlas';
-import { faceGround } from '@world/planet/relief';
+import { TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
+import { tileGround } from '@world/planet/relief';
 import type { Mesh } from 'three';
 import { GroundChanges } from '../groundChanges';
 import {
@@ -18,15 +19,17 @@ import {
 } from '../terrain';
 
 /**
- * THE PLANET'S GROUND: six terrain plates, one a face of the cube, each the
- * flat map's own surface (`terrain.ts`) standing at its face's centre in the
- * atlas (`world/planet/atlas.ts`). Nothing of the surface itself changed: it
- * is handed its face's share of the document in the face's own coordinates
- * (`FaceSource`), and every question asked in the atlas's coordinates is sent
- * to the face whose cell holds the point.
+ * THE PLANET'S GROUND: a terrain plate for each of the planet's pieces
+ * (`core/planetTiles.ts`), each the flat map's own surface (`terrain.ts`)
+ * standing at its piece's centre in the atlas (`world/planet/atlas.ts`).
+ * Nothing of the surface itself changed: it is handed its piece's share of
+ * the document in the piece's own coordinates (`FaceSource`), and every
+ * question asked in the atlas's coordinates is sent to the piece whose cell
+ * holds the point.
  *
- * A stamp (or a painted dab) belongs to every face its disc reaches, its
- * border's reach included, so a hill on a border rises on both sides.
+ * A stamp (or a painted dab) belongs to every piece its disc reaches on the
+ * sphere, each given it on its own map (carried there through the sphere, not
+ * by an offset), so a hill on a border rises the same on both sides.
  */
 
 /** Grid regions of several plates in one number line: a plate's corners are offset by its index times this. */
@@ -57,19 +60,35 @@ interface Tile {
   readonly source: FaceSource;
 }
 
-/** Whether a disc of the atlas reaches a face's square with its reach. */
-const reaches = (tile: Tile, x: number, y: number, radius: number): boolean => {
-  const h = FACE_HALF + FACE_REACH + radius;
-  return Math.abs(x - tile.cx) <= h && Math.abs(y - tile.cy) <= h;
+const where: TileLocal = { tile: 0, x: 0, y: 0 };
+const onSphere: Vec3 = { x: 0, y: 0, z: 0 };
+const there = { x: 0, y: 0 };
+/** How far from a piece's centre (an arc, world units) anything of it can lie, with its reach. */
+const PIECE_REACH = TILE_HALF * Math.SQRT2 + TILE_REACH;
+
+/**
+ * A disc of the atlas (its centre in its own piece's cell) on another piece's
+ * map: its centre carried through the sphere, or null when it cannot reach
+ * that piece.
+ */
+const placeOn = (tile: Tile, x: number, y: number, radius: number): { x: number; y: number } | null => {
+  atlasToTileInto(x, y, where);
+  if (where.tile === tile.face) return { x: where.x, y: where.y };
+  tileToSphereInto(where.tile, where.x, where.y, onSphere);
+  const c = TILES[tile.face]!.centre;
+  const arc = Math.acos(Math.min(1, onSphere.x * c.x + onSphere.y * c.y + onSphere.z * c.z)) * PLANET_RADIUS;
+  if (arc > PIECE_REACH + radius) return null;
+  sphereToTileInto(tile.face, onSphere, there);
+  return { x: there.x, y: there.y };
 };
 
 const sameList = (a: readonly unknown[], b: readonly unknown[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
 export function createTerrainAtlas(anisotropy: number): TerrainSurface {
-  const tiles: Tile[] = Array.from({ length: FACE_COUNT }, (_, face) => {
-    const c = faceCentre(face);
-    return { face, cx: c.x, cy: c.y, surface: createTerrainSurface(anisotropy, c), source: new FaceSource() };
+  const tiles: Tile[] = Array.from({ length: TILE_COUNT }, (_, face) => {
+    const c = tileCentre(face);
+    return { face, cx: c.x, cy: c.y, surface: createTerrainSurface(anisotropy, c, face), source: new FaceSource() };
   });
   // The faces meet: no backdrop round each plate, no cut sides under it.
   for (const tile of tiles) {
@@ -77,14 +96,22 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       if (mesh.name === 'terrain-backdrop' || mesh.name === 'terrain-walls') mesh.visible = false;
     }
   }
-  const tileAt = (x: number, y: number): Tile => tiles[faceCellOf(x, y)] as Tile;
+  const tileAt = (x: number, y: number): Tile => tiles[tileCellOf(x, y)] as Tile;
 
-  /** A stamp or dab of the atlas in a face's coordinates. */
-  const localStamp = (tile: Tile, s: TerrainStamp): TerrainStamp => ({ ...s, x: s.x - tile.cx, y: s.y - tile.cy });
-  const localDab = (tile: Tile, d: PaintDab): PaintDab => ({ ...d, x: d.x - tile.cx, y: d.y - tile.cy });
-  /** The local copies made, by face, so an unchanged stamp keeps its copy (the surface compares them by identity). */
-  const stampCopies = tiles.map(() => new WeakMap<TerrainStamp, TerrainStamp>());
-  const dabCopies = tiles.map(() => new WeakMap<PaintDab, PaintDab>());
+  /**
+   * The local copies made, by piece (null: it does not reach that piece), so
+   * an unchanged stamp keeps its copy - the surface compares them by identity.
+   */
+  const stampCopies = tiles.map(() => new WeakMap<TerrainStamp, TerrainStamp | null>());
+  const dabCopies = tiles.map(() => new WeakMap<PaintDab, PaintDab | null>());
+  const copyOn = <T extends { readonly x: number; readonly y: number; readonly radius: number }>(copies: WeakMap<T, T | null>, tile: Tile, item: T): T | null => {
+    let local = copies.get(item);
+    if (local === undefined) {
+      const at = placeOn(tile, item.x, item.y, item.radius);
+      copies.set(item, local = at ? { ...item, x: at.x, y: at.y } : null);
+    }
+    return local;
+  };
 
   let seenTerrain = -1;
   let seenRelief: RoadDoc['terrainRelief'] | null = null;
@@ -101,32 +128,24 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       const reliefMoved = seenRelief !== null && seenRelief !== doc.terrainRelief;
       seenRelief = doc.terrainRelief;
       tiles.forEach((tile, i) => {
-        const sources = doc.terrainStamps.filter((s) => reaches(tile, s.x, s.y, s.radius));
+        const copies = stampCopies[i] as WeakMap<TerrainStamp, TerrainStamp | null>;
+        const sources = doc.terrainStamps.filter((s) => copyOn(copies, tile, s) !== null);
         tile.source.terrainRelief = doc.terrainRelief;
-        if (reliefMoved || !tile.source.terrainGround) tile.source.terrainGround = faceGround(tile.face, doc.terrainRelief);
+        if (reliefMoved || !tile.source.terrainGround) tile.source.terrainGround = tileGround(tile.face, doc.terrainRelief);
         if (!reliefMoved && tile.source.terrainRevision !== 0 && sameList(sources, tile.source.stampSources)) return;
-        const copies = stampCopies[i] as WeakMap<TerrainStamp, TerrainStamp>;
         tile.source.stampSources = sources;
-        tile.source.terrainStamps = sources.map((s) => {
-          let local = copies.get(s);
-          if (!local) copies.set(s, local = localStamp(tile, s));
-          return local;
-        });
+        tile.source.terrainStamps = sources.map((s) => copies.get(s) as TerrainStamp);
         tile.source.terrainRevision = doc.terrainRevision;
       });
     }
     if (doc.paintRevision !== seenPaint) {
       seenPaint = doc.paintRevision;
       tiles.forEach((tile, i) => {
-        const sources = doc.terrainPaint.filter((d) => reaches(tile, d.x, d.y, d.radius));
+        const copies = dabCopies[i] as WeakMap<PaintDab, PaintDab | null>;
+        const sources = doc.terrainPaint.filter((d) => copyOn(copies, tile, d) !== null);
         if (sameList(sources, tile.source.paintSources)) return;
-        const copies = dabCopies[i] as WeakMap<PaintDab, PaintDab>;
         tile.source.paintSources = sources;
-        tile.source.terrainPaint = sources.map((d) => {
-          let local = copies.get(d);
-          if (!local) copies.set(d, local = localDab(tile, d));
-          return local;
-        });
+        tile.source.terrainPaint = sources.map((d) => copies.get(d) as PaintDab);
         tile.source.paintRevision = doc.paintRevision;
       });
     }
@@ -174,7 +193,12 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     setWaterLook(look) { for (const t of tiles) t.surface.setWaterLook(look); },
     setGullies(dabs: readonly GullyDab[], auto) {
       for (const t of tiles) {
-        t.surface.setGullies(dabs.filter((d) => reaches(t, d.x, d.y, d.radius)).map((d) => ({ ...d, x: d.x - t.cx, y: d.y - t.cy })), auto);
+        const mine: GullyDab[] = [];
+        for (const d of dabs) {
+          const at = placeOn(t, d.x, d.y, d.radius);
+          if (at) mine.push({ ...d, x: at.x, y: at.y });
+        }
+        t.surface.setGullies(mine, auto);
       }
     },
     vergeMaterial: first.surface.vergeMaterial,

@@ -1,7 +1,7 @@
-import { FACE_HALF } from '@core/cubeSphere';
+import { TILE_COUNT } from '@core/planetTiles';
 import { clamp } from '@core/scalar';
 import type { Vec2 } from '@core/vec2';
-import { FACE_REACH, clampToAtlas, faceCentre, insideAtlas } from './planet/atlas';
+import { TILE_PLATE_HALF, TILE_REACH, clampToAtlas, insideAtlas, tileCellOf, tileCentre } from './planet/atlas';
 
 /**
  * How big the world is.
@@ -15,11 +15,11 @@ import { FACE_REACH, clampToAtlas, faceCentre, insideAtlas } from './planet/atla
  *
  * It belongs here, where the document can see it.
  *
- * On the planet (`__PLANET__`) the world is six such plates, the cube's faces,
- * side by side in one plane (`planet/atlas.ts`): `MAP_SIZE` is then one face's
- * side, and `MAP_REGIONS` lists the plates.
+ * On the planet (`__PLANET__`) the world is its 96 pieces, each a flat map,
+ * side by side in one plane (`planet/atlas.ts`): `MAP_SIZE` is then a piece's
+ * plate, and `MAP_REGIONS` lists the plates.
  */
-export const MAP_SIZE = __PLANET__ ? FACE_HALF * 2 : 4_800;
+export const MAP_SIZE = __PLANET__ ? TILE_PLATE_HALF * 2 : 4_800;
 export const MAP_HALF = MAP_SIZE / 2;
 
 /** One square plate of ground: its centre and half its side. */
@@ -29,10 +29,10 @@ export interface MapRegion {
   readonly half: number;
 }
 
-/** Every plate the world has: one about the origin, or the planet's six faces. */
+/** Every plate the world has: one about the origin, or the planet's pieces. */
 export const MAP_REGIONS: readonly MapRegion[] = Object.freeze(
   __PLANET__
-    ? Array.from({ length: 6 }, (_, f) => Object.freeze({ cx: faceCentre(f).x, cy: faceCentre(f).y, half: MAP_HALF }))
+    ? Array.from({ length: TILE_COUNT }, (_, t) => Object.freeze({ cx: tileCentre(t).x, cy: tileCentre(t).y, half: MAP_HALF }))
     : [Object.freeze({ cx: 0, cy: 0, half: MAP_HALF })],
 );
 
@@ -43,18 +43,13 @@ export const MAP_REGIONS: readonly MapRegion[] = Object.freeze(
  * laid over this.
  */
 export const WORLD_HALF = __PLANET__
-  ? Math.max(...MAP_REGIONS.map((r) => Math.max(Math.abs(r.cx), Math.abs(r.cy)) + r.half)) + FACE_REACH
+  ? Math.max(...MAP_REGIONS.map((r) => Math.max(Math.abs(r.cx), Math.abs(r.cy)) + r.half)) + TILE_REACH
   : MAP_HALF;
 
 /** The plate whose cell holds a point: the nearest one. */
 export function regionAt(x: number, y: number): MapRegion {
   if (!__PLANET__) return MAP_REGIONS[0] as MapRegion;
-  let best = MAP_REGIONS[0] as MapRegion, bestD = Infinity;
-  for (const r of MAP_REGIONS) {
-    const d = Math.max(Math.abs(x - r.cx), Math.abs(y - r.cy));
-    if (d < bestD) { bestD = d; best = r; }
-  }
-  return best;
+  return MAP_REGIONS[tileCellOf(x, y)] as MapRegion;
 }
 
 /**
@@ -62,7 +57,7 @@ export function regionAt(x: number, y: number): MapRegion {
  * on the planet, over the face's border onto the neighbour's ground
  * (`planet/atlas.ts` FACE_REACH).
  */
-export const MAP_REACH = __PLANET__ ? FACE_REACH : 0;
+export const MAP_REACH = __PLANET__ ? TILE_REACH : 0;
 
 /**
  * How far inside the edge anything the player builds is kept.
@@ -79,7 +74,7 @@ export const MAP_MARGIN = __PLANET__ ? 0 : 64;
 /** Whether a point is on the plate at all. */
 export const insideMap = (p: Vec2, margin = 0): boolean =>
   __PLANET__
-    ? insideAtlas(p, margin)
+    ? insideAtlas(p)
     : p.x >= -MAP_HALF + margin &&
       p.x <= MAP_HALF - margin &&
       p.y >= -MAP_HALF + margin &&
@@ -95,7 +90,7 @@ export const insideMap = (p: Vec2, margin = 0): boolean =>
  */
 export const clampToMap = (p: Vec2, margin = MAP_MARGIN): Vec2 =>
   __PLANET__
-    ? clampToAtlas(p, margin)
+    ? clampToAtlas(p)
     : {
         x: clamp(p.x, -MAP_HALF + margin, MAP_HALF - margin),
         y: clamp(p.y, -MAP_HALF + margin, MAP_HALF - margin),

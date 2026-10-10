@@ -10,8 +10,8 @@ import {
 import type { Vec2 } from '@core/vec2';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { WORLD_HALF } from '@world/bounds';
-import { faceCellOf } from '@world/planet/atlas';
-import { anchorPlanet, inFaceChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
+import { tileCellOf } from '@world/planet/atlas';
+import { anchorPlanet, inTileChart, planetNearest, planetPick, planetWorld, rehome } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
 
@@ -339,9 +339,9 @@ export function createIsoRig(
   /**
    * A map point as the view's own face measures it: on the planet two points
    * on different faces are subtracted in the chart of the face the view's
-   * centre is on (`inFaceChart`); on the flat map, the point itself.
+   * centre is on (`inTileChart`); on the flat map, the point itself.
    */
-  const chart = (p: Vec2): Vec2 => (__PLANET__ ? inFaceChart(faceCellOf(target.x, -target.z), p.x, p.y) : p);
+  const chart = (p: Vec2): Vec2 => (__PLANET__ ? inTileChart(tileCellOf(target.x, -target.z), p.x, p.y) : p);
 
   /** Re-applies, keeping the ground point that was under (px, py) - at `atHeight` - under it. */
   /**

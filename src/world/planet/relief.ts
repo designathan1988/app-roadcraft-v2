@@ -1,4 +1,5 @@
-import { PLANET_RADIUS, faceToSphereInto, type Vec3 } from '@core/cubeSphere';
+import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
+import { tileToSphereInto } from '@core/planetTiles';
 import { RELIEF_FLAT, RELIEF_NATURAL, type ReliefVersion } from '../terrain';
 
 /**
@@ -76,15 +77,15 @@ export function baseRelief3(x: number, y: number, z: number): number {
 }
 
 /**
- * The land under one face's map: a face point (its own coordinates, about
- * its centre) to the height of the planet's land there.
+ * The land under one piece's map (`core/planetTiles.ts`): a point of it (its
+ * own coordinates, about its centre) to the height of the planet's land there.
  */
-export function faceGround(face: number, relief: ReliefVersion): (x: number, y: number) => number {
+export function tileGround(tile: number, relief: ReliefVersion): (x: number, y: number) => number {
   if (relief === RELIEF_FLAT) return () => 0;
   const s: Vec3 = { x: 0, y: 0, z: 0 };
   const land = relief === RELIEF_NATURAL ? naturalRelief3 : baseRelief3;
   return (x, y) => {
-    faceToSphereInto(face, x, y, s);
+    tileToSphereInto(tile, x, y, s);
     return land(s.x * PLANET_RADIUS, s.y * PLANET_RADIUS, s.z * PLANET_RADIUS);
   };
 }
