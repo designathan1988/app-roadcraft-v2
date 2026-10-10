@@ -44,6 +44,8 @@ export interface PanelState {
   /** Configuração ativa: a face selecionada (modo Face) ou o volume. */
   faceLabel: string | null;
   selectedCount: number;
+  /** Soma das áreas de base da seleção (m²). */
+  selectionArea: number;
   defaults: Defaults;
   tool: string;
   tab: string;
@@ -103,7 +105,7 @@ export function inspectorHTML(s: PanelState): string {
 <div class="rule"></div><div class="caption">Cobertura</div>
 <div class="roof-mini">${ROOFS.map(([id, ic, label]) => `<button data-roof="${id}" class="${v.roof === id ? 'active' : ''}" title="${label}" aria-label="Cobertura ${label}" data-icon="${ic}"></button>`).join('')}</div>
 <div class="roof-labels">${ROOFS.map((r) => `<span>${r[2]}</span>`).join('')}</div></div>
-<div class="inspector-foot"><span id="selection-info">${info} · ${Math.round(v.area)} m²</span><button data-action="floor" data-icon="extrude" title="Adicionar andar" aria-label="Adicionar andar"></button></div>`;
+<div class="inspector-foot"><span id="selection-info">${info} · ${Math.round(s.selectionArea).toLocaleString('pt-BR')} m²</span><button data-action="floor" data-icon="extrude" title="Adicionar andar" aria-label="Adicionar andar"></button></div>`;
 }
 
 export function shelfHTML(s: PanelState): string {

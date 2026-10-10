@@ -225,3 +225,31 @@ test('incorporado numa cena three.js externa, sem cópia duplicada do three', as
   await expect(page.locator('#log')).toHaveText('Prédio gerado (1).');
   expect(errors).toEqual([]);
 });
+
+test('base livre por cliques e vértice pego a 6 px da alça', async ({ page }) => {
+  const errors: string[] = [];
+  await open(page, errors);
+  await view(page, [-30, 0, 30], 60);
+  await page.keyboard.press('p');
+  for (const [x, z] of [[-40, 20], [-28, 20], [-28, 30], [-36, 34], [-40, 20]] as const) {
+    const s = await screen(page, x, 0, z);
+    await page.mouse.click(s.x, s.y);
+  }
+  let p = await project(page);
+  expect(p.buildings).toHaveLength(6);
+  const b = p.buildings[5];
+  expect(b.masses[0].outer.vertices).toHaveLength(4);
+  await page.locator('#shelf-content [data-tool="editpoints"]').click();
+  // Vértice em (-36, 34) no mundo; o clique começa 6 px ao lado da alça.
+  const v = await screen(page, -36, 0.1, 34);
+  const to = await screen(page, -39, 0.1, 37);
+  await page.mouse.move(v.x + 6, v.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 6 });
+  await page.mouse.up();
+  p = await project(page);
+  const moved = p.buildings[5];
+  const world = moved.masses[0].outer.vertices.map((x: any) => [x.p[0] + moved.position[0], x.p[1] + moved.position[1]]);
+  expect(world).toContainEqual([-39, 37]);
+  expect(errors).toEqual([]);
+});

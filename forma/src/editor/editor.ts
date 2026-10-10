@@ -189,6 +189,7 @@ export class Editor {
       view: b ? this.view(b) : null,
       faceLabel: b ? this.faceLabel(b) : null,
       selectedCount: this.selected.size,
+      selectionArea: this.selectedList().reduce((t, x) => t + ops.footprintArea(x), 0),
       defaults: this.defaults,
       tool: this.tool,
       tab: this.tab,
@@ -377,7 +378,7 @@ export class Editor {
       sc.line([sc.toWorld(b, center, base + h + 0.22), end]);
       sc.handle(end, { kind: 'height', id: b.id });
       sc.cone(end);
-      if (this.tool === 'editpoints') pts.forEach((p, i) => sc.handle(sc.toWorld(b, p, base + 0.1), { kind: 'vertex', id: b.id, index: i }, true));
+      if (this.tool === 'editpoints') pts.forEach((p, i) => sc.handle(sc.toWorld(b, p, base + 0.1), { kind: 'vertex', id: b.id, index: i }));
       else
         for (const [sx, sz] of [[0, 0], [1, 0], [1, 1], [0, 1]] as const)
           sc.handle(sc.toWorld(b, [sx ? bd.maxX : bd.minX, sz ? bd.maxZ : bd.minZ], base + 0.16), { kind: 'resize', id: b.id, sx, sz });

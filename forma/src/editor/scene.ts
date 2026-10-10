@@ -9,6 +9,11 @@ import { buildBuilding, type BuiltBuilding } from '../render/build-building';
 import { createRenderContext } from '../render/context';
 import { worldPolygon } from './ops';
 
+/** Raio de captura das alças, em pixels de tela. */
+const HANDLE_PX = 12;
+/** Diâmetro visível das alças, em pixels de tela. */
+const HANDLE_DIAMETER = 12;
+
 export interface SceneHost {
   renderer?: THREE.WebGLRenderer;
   scene?: THREE.Scene;
@@ -56,7 +61,6 @@ export class EditorScene {
   private sphereGeo = new THREE.SphereGeometry(0.18, 12, 8);
   private coneGeo = new THREE.ConeGeometry(0.18, 0.35, 8);
   private gizmoMat = new THREE.MeshBasicMaterial({ color: '#ee8b38', depthTest: false });
-  private gizmoWhite = new THREE.MeshBasicMaterial({ color: '#ffe3c4', depthTest: false });
   private hemi?: THREE.HemisphereLight;
   private sun?: THREE.DirectionalLight;
   private grid?: THREE.GridHelper;
@@ -180,6 +184,7 @@ export class EditorScene {
     this.camera.position.set(t.x + d * Math.sin(phi) * Math.sin(theta), t.y + d * Math.cos(phi), t.z + d * Math.sin(phi) * Math.cos(theta));
     this.camera.lookAt(t);
     this.camera.updateMatrixWorld();
+    this.rescaleHandles();
     if (this.scene.fog instanceof THREE.Fog && this.withEnvironment) {
       this.scene.fog.near = Math.max(100, d * 1.4);
       this.scene.fog.far = Math.max(220, d * 3);
@@ -269,7 +274,7 @@ export class EditorScene {
 
   /** Libera geometrias e materiais do grupo, exceto os compartilhados. */
   disposeGroup(group: THREE.Object3D): void {
-    const keep = new Set<unknown>([this.ctx.boxGeometry, this.sphereGeo, this.coneGeo, this.gizmoMat, this.gizmoWhite]);
+    const keep = new Set<unknown>([this.ctx.boxGeometry, this.sphereGeo, this.coneGeo, this.gizmoMat]);
     group.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.geometry && !keep.has(m.geometry)) m.geometry.dispose();
@@ -292,9 +297,24 @@ export class EditorScene {
     return this.pointerRay(e).ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), p) ? p : null;
   }
 
+  /**
+   * Alça sob o ponteiro. As esferas têm poucos pixels na tela, então vale a
+   * mais próxima num raio de HANDLE_PX pixels (alvo confortável para o mouse).
+   */
   pickHandle(e: { clientX: number; clientY: number }): HandleData | null {
-    const hit = this.pointerRay(e).intersectObjects(this.gizmos.children, false).find((x) => x.object.userData.handle);
-    return hit ? (hit.object.userData as HandleData) : null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    let best: { d: number; data: HandleData } | null = null;
+    for (const o of this.gizmos.children) {
+      if (!o.userData.handle) continue;
+      v.copy(o.position).project(this.camera);
+      if (v.z > 1) continue;
+      const sx = r.left + (v.x * 0.5 + 0.5) * r.width,
+        sy = r.top + (-0.5 * v.y + 0.5) * r.height;
+      const d = Math.hypot(sx - e.clientX, sy - e.clientY);
+      if (d <= HANDLE_PX && (!best || d < best.d)) best = { d, data: o.userData as HandleData };
+    }
+    return best ? best.data : null;
   }
 
   pick(e: { clientX: number; clientY: number }): PickResult | null {
@@ -324,13 +344,24 @@ export class EditorScene {
     return l;
   }
 
-  handle(pos: THREE.Vector3, data: Omit<HandleData, 'handle'>, white = false): void {
-    const m = new THREE.Mesh(this.sphereGeo, white ? this.gizmoWhite : this.gizmoMat);
+  handle(pos: THREE.Vector3, data: Omit<HandleData, 'handle'>): void {
+    const m = new THREE.Mesh(this.sphereGeo, this.gizmoMat);
     m.position.copy(pos);
-    m.scale.setScalar(clamp(this.distance / 50, 0.5, 2.5));
     m.userData = { handle: true, ...data };
     m.renderOrder = 20;
     this.gizmos.add(m);
+    this.rescaleHandle(m);
+  }
+
+  /** Mantém a alça com HANDLE_DIAMETER pixels na tela, em qualquer zoom. */
+  private rescaleHandle(o: THREE.Object3D): void {
+    const h = this.renderer.domElement.clientHeight || 600;
+    const worldPerPx = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * this.camera.position.distanceTo(o.position)) / h;
+    o.scale.setScalar((HANDLE_DIAMETER / 2) * worldPerPx / 0.18);
+  }
+
+  private rescaleHandles(): void {
+    for (const o of this.gizmos.children) if (o.userData.handle) this.rescaleHandle(o);
   }
 
   cone(pos: THREE.Vector3): void {
@@ -364,7 +395,6 @@ export class EditorScene {
     this.sphereGeo.dispose();
     this.coneGeo.dispose();
     this.gizmoMat.dispose();
-    this.gizmoWhite.dispose();
     this.ctx.dispose();
     this.root.removeFromParent();
     if (!this.hosted) {
