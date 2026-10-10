@@ -327,7 +327,21 @@ export function createIsoRig(
    */
   /** The piece whose map a gesture is read on (`Viewport.holdChart`), or -1. */
   let heldTile = -1;
-  const worldAt = (px: number, py: number, atHeight = 0): Vec2 => hitAt(px, py, atHeight) ?? { x: target.x, y: -target.z };
+  const worldAt = (px: number, py: number, atHeight = 0): Vec2 => hitAt(px, py, atHeight) ?? missed(px, py);
+  /**
+   * The ground for a pointer whose ray meets none: on the flat map the view's
+   * centre; on the planet, past its limb, the ground nearest the ray - the
+   * limb under the pointer, as a drag of the view holds it (\`panTo\`). The
+   * view's centre there sent a road drawn off the globe's edge to the middle
+   * of the screen, round the back of the planet.
+   */
+  const missed = (px: number, py: number): Vec2 => {
+    if (!__PLANET__) return { x: target.x, y: -target.z };
+    ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);
+    raycaster.setFromCamera(ndc, camera);
+    const limb = planetNearest(raycaster.ray);
+    return heldTile >= 0 ? inTileChart(heldTile, limb.x, limb.y) : limb;
+  };
   /** The same, or null where the pointer's ray does not reach that plane (three's `Ray.intersectPlane`: above its horizon). */
   const hitAt = (px: number, py: number, atHeight: number): Vec2 | null => {
     ndc.set((px / Math.max(1, width)) * 2 - 1, 1 - (py / Math.max(1, height)) * 2);

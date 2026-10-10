@@ -1150,7 +1150,10 @@ export function createSceneRenderer(
   let roadsReported = false;
   const watchRoads = (net: Network): void => {
     const now = performance.now();
-    if (now - roadsWatchedAt < 1000 || !reveal.opened || net.doc.segments.size === 0) return;
+    // Not while the world is being rebuilt: until the job lands the new roads
+    // have no picture yet by design (on the planet a rebuild spans seconds,
+    // and the first road drawn was reported missing every time).
+    if (now - roadsWatchedAt < 1000 || !reveal.opened || net.doc.segments.size === 0 || worldJob !== null) return;
     roadsWatchedAt = now;
     let vertices = 0;
     roads?.group.traverse((o) => {
