@@ -14,6 +14,7 @@ import { createVehicle, snapshot, type Vehicle } from './state';
 import { planFrom } from '../routing/router';
 import { chooseVehicleDestination } from '../routing/destination';
 import { assignOccupancy } from './kerbStops';
+import { curveSpeedCap } from './curvature';
 
 /**
  * Arrival rate at one boundary entry lane, vehicles per second, at traffic
@@ -283,6 +284,11 @@ export function spawnVehicleAt(w: SimWorld, id: string, s: number, arch: Archety
   const vehicle = createVehicle(w.nextVehicleId++, arch, driver, color, id, v0, w.clock.tick);
   vehicle.s = s;
   vehicle.v = speed;
+  // Nor faster than the bends ahead allow (SUMO inserts a vehicle only if it
+  // can brake for what is ahead, ibid.): born in a bend at its cruise, it
+  // took the bend 1 m/s over the speed its driver would ever drive it at
+  // (`curvature.spec`, broken by the map filled at once on 2026-10-09).
+  vehicle.v = Math.min(vehicle.v, curveSpeedCap(w, vehicle));
   vehicle.prev = snapshot(vehicle);
   assignOccupancy(w, vehicle);
   w.vehicles.set(vehicle.id, vehicle);

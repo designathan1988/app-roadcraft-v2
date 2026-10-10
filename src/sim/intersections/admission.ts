@@ -304,7 +304,12 @@ function revokeStaleGrants(w: SimWorld): void {
     // whole junction stayed reserved by a car that could not move - a
     // motorcycle behind a car filling a ten-unit exit held them past ten
     // seconds (fuzz `staleClaim`, seed 12).
-    if (v.v <= CONVOY_ROLLING && !hasDownstreamStorage(w, v, conn)) {
+    // Likewise a holder standing short of its line for somebody on foot in
+    // front of it (`stoppedForWalker`): it cannot go, and held, the box was
+    // kept from every other movement for as long as the walker stood there
+    // (`shortLinkBox.spec`, `staleClaim` with the town's people put on its
+    // footways at once, 2026-10-09).
+    if (v.v <= CONVOY_ROLLING && (!hasDownstreamStorage(w, v, conn) || stoppedForWalker(v, Math.max(0, lane.length - v.s)))) {
       w.claims.releaseConnector(v.id, conn.id, w.conflicts);
       v.claims = [...w.claims.points(v.id)];
       v.admittedConnector = null;
@@ -421,7 +426,7 @@ function evaluate(w: SimWorld, r: Request): Verdict {
     return { ok: false, reason: 'yield' };
   }
 
-  if (crossingBusy(w, r.conn) || crossingReachedFirst(w, r)) {
+  if (crossingBusy(w, r.conn) || crossingReachedFirst(w, r) || stoppedForWalker(r.v, r.d)) {
     return { ok: false, reason: 'pedestrian' };
   }
   if (pedestrianHasPriority(w, r)) {
@@ -1236,6 +1241,19 @@ function movementIsActive(w: SimWorld, other: Connector): boolean {
   const junction = w.graph.junctions.get(other.node);
   if (!controller || !junction?.signalised) return true;
   return signalStateFor(controller, other.group) !== 'red';
+}
+
+/**
+ * True when the vehicle stands for somebody on foot between its nose and its
+ * stop line (its own driving constraints, `pedestrianAhead`): the crossing
+ * spans (`crossingBusy`) did not always see a walker standing at the kerb's
+ * edge that the driver stops for, and the movement was granted to a car that
+ * could not move - it held the box for as long as the walker stood.
+ */
+function stoppedForWalker(v: Vehicle, toLine: number): boolean {
+  if (v.v > CONVOY_ROLLING) return false;
+  for (const o of v.constraints.obstacles) if (o.kind === 'pedestrian' && o.gap <= toLine + PED_BODY) return true;
+  return false;
 }
 
 /**

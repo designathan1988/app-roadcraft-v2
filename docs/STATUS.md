@@ -158,6 +158,20 @@ o jogo a cada edição.
   tarefa por bomba depois da primeira: 465-494 → 199-238 ms. A primeira bomba
   da sessão ainda compila os shaders das ruínas (~80-140 ms); o que resta é a
   rede elétrica e o mobiliário refeitos quando a bomba derruba postes.
+- Simulação (os testes que falhavam no começo da sessão, achados por bissecção
+  no `fb481b81`, a cidade aberta já povoada): carro posto no meio da faixa
+  nasce no máximo à velocidade que as curvas adiante permitem (`spawn.ts`,
+  `curvature.spec`); carro parado por um pedestre antes da linha não é
+  admitido no cruzamento, e o admitido devolve a vaga (`admission.ts`
+  `stoppedForWalker`, `shortLinkBox.spec`); o motor de caminhada passou a
+  embarcar e desembarcar gente nas paradas no meio-fio (`walk.ts` `hailable`,
+  `board`, `alight`, vazios desde 5/10; quem desce sai sobre a calçada,
+  `kerbStops.spec`). `tests/sim`: 168 de 171; as 3 que restam são o P101
+  (pedestre cara a cara numa esquina; ver PROBLEMAS). Visto no jogo (5173):
+  um carro deixou o passageiro e ele saiu andando pela calçada. Também visto:
+  hoje os carros do jogo não levam passageiros, então paradas no meio-fio
+  quase não acontecem; e a câmera na altura da rua entra na copa das árvores
+  (a camada da câmera só conhece prédios).
 - Abertura: a cidade aparece inteira, vias e prédios no mesmo quadro
   (`renderer.ts`, marca `opening:shown`); os texels das superfícies ficam
   guardados no navegador e não são assados de novo a cada abertura; a carga

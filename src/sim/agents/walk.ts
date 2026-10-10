@@ -823,11 +823,71 @@ function wayKey(way: Walkway): string {
   return key;
 }
 
+/** How far from a lane's centre somebody on the footway may be hailed from (`hailable`). */
+const HAIL_REACH = m(9);
+/** How far from the door the walkway somebody gets out onto may be (`alight`). */
+const ALIGHT_SNAP = m(4);
+/** Ways tried for somebody getting out of a car (`alight`). */
+const ALIGHT_TRIES = 4;
+
 export function createAgentWalkEngine(): PedestrianEngine {
   const bridge: PeopleBridge = {
-    hailable: () => null,
-    board: () => null,
-    alight: () => {},
+    // A car stopping at the kerb for somebody (`vehicles/kerbStops.ts`): a
+    // grown-up walking on the footway on the kerb side of the lane, between
+    // `s0` and `s1` along it, the nearest the car first. Stubs since this
+    // engine came in: nobody was ever picked up but a lorry's own mate.
+    hailable(w, lanelet, s0, s1, exclude) {
+      const lane = w.lanelet(lanelet);
+      if (!lane) return null;
+      let best: { id: number; s: number } | null = null;
+      for (const p of stateOf(w).walkers) {
+        if (p.done || p.inside || p.player || p.act || p.rush || (p.fright ?? 0) > p.age) continue;
+        if (p.view.ageClass === 'child' || p.view.ground !== 'footway' || exclude?.has(p.id)) continue;
+        const hit = lane.centre.closestPoint({ x: p.x, y: p.y });
+        if (hit.s < s0 || hit.s > s1 || hit.distance > HAIL_REACH) continue;
+        // The kerb side: right of the way the lane runs (`kerbStops.ts` kerbSide).
+        const f = lane.centre.sampleAt(hit.s);
+        if ((p.x - f.p.x) * f.t.y - (p.y - f.p.y) * f.t.x <= 0) continue;
+        if (!best || hit.s < best.s) best = { id: p.id, s: hit.s };
+      }
+      return best;
+    },
+    // Into the car: off the street, as they stand, if they are still free
+    // and within `reach` of the door.
+    board(w, id, door, reach) {
+      const s = stateOf(w);
+      const p = s.byId.get(id);
+      if (!p || p.done || p.inside || p.player || hypot(p.x - door.x, p.y - door.y) > reach) return null;
+      const boarder = { seed: p.id, gender: p.view.gender, ageClass: p.view.ageClass, footX: p.x, footY: p.y, footHeading: p.heading };
+      finish(s, p, false);
+      prune(s);
+      return boarder;
+    },
+    // Somebody out of a car at the kerb (`vehicles/kerbStops.ts`): a walker
+    // from where they stand by the door, off along the footways to somewhere
+    // 60 to 200 m away. It was a stub since this engine came in (2026-10-05):
+    // nobody dropped off ever stepped onto the pavement (`kerbStops.spec`).
+    // The way is drawn from the person's seed: `sim` never calls Math.random.
+    alight(w, person) {
+      const s = stateOf(w);
+      ensureGraph(w, s);
+      const h = personHash(person.seed);
+      // Out onto the walkway nearest the door, not the point by the door off
+      // it: begun there, the walker stood on the open ground (the terrain's
+      // height) a step and then rose onto the footway.
+      const at = nearestWay(s, { x: person.footX, y: person.footY }, ALIGHT_SNAP);
+      const foot = at ? at.way.path.sampleAt(at.s).p : { x: person.footX, y: person.footY };
+      for (let k = 0; k < ALIGHT_TRIES; k++) {
+        const a = (((h >>> (k * 5)) & 0x3ff) / 0x400) * Math.PI * 2;
+        const d = m(60) + (((h >>> (k * 3 + 7)) & 0xff) / 0xff) * m(140);
+        const hit = nearestWay(s, { x: person.footX + Math.cos(a) * d, y: person.footY + Math.sin(a) * d }, m(30));
+        if (!hit) continue;
+        const to = hit.way.path.sampleAt(hit.s).p;
+        const trip = { trip: -1, fromX: foot.x, fromY: foot.y, toX: to.x, toY: to.y, seed: person.seed, ageClass: person.ageClass, reach: m(6) };
+        const made = startWalk(w, trip);
+        if (made !== null) { ((globalThis as any).__alighted ??= new Set()).add(made); return; }
+      }
+    },
     anyoneWithin(w, x, y, radius, except) {
       // The walkers by cell, filed once a tick (every walker was read at every ask).
       const s = stateOf(w);
