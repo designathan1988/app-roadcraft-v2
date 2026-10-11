@@ -460,6 +460,7 @@ export function createPostChain(
           // share at the top (`SURFACE_AIR`), so crossing it changes nothing.
           const high = Math.min(1, Math.max(0, (camera.position.distanceTo(onPlanet) - PLANET_RADIUS) / (ATMOSPHERE_TOP - PLANET_RADIUS)));
           u['uAirScale']!.value = 0.25 + (SURFACE_AIR - 0.25) * high * high * (3 - 2 * high);
+          u['uAirHigh']!.value = high * high * (3 - 2 * high);
           // The clouds and their shadows give way as the view takes in the
           // globe: by how tall the view is over the ground under the eye,
           // in planet widths - whole up to 0.2, gone at 0.6 (the whole globe
@@ -720,6 +721,7 @@ const CLOUD_SHADOWS = {
       // "Aerial Perspective Distance Scale"): the town seen from close by
       // keeps its colours, and it reaches the true air towards the top.
       uAirScale: { value: 1 },
+      uAirHigh: { value: 0 },
     } : {}),
     uBackdrop: { value: 0 },
     // How far in front of the camera the view's equivalent eye stands, units
@@ -790,7 +792,7 @@ const CLOUD_SHADOWS = {
     uniform float uMapHalf;
     uniform float uBackdrop;
     uniform float uEyeShift;
-    ${__PLANET__ ? 'uniform float uAirScale;' : ''}
+    ${__PLANET__ ? 'uniform float uAirScale; uniform float uAirHigh;' : ''}
     // The planet as drawn (\`planet/bend.ts\`): its centre and radius; w 0 on the flat map.
     uniform vec4 uPlanet;
     uniform float uGlobeFade;
@@ -983,7 +985,19 @@ const CLOUD_SHADOWS = {
       // aerial perspective volume, \`planet/air.ts\`): what is seen through
       // it plus its own light. From space the shell over the scene draws it.
       if (!sky && uAirInside > 0.5) {
-        vec4 ap = airPerspective(vUv, tScene * uAirScale);
+        // Near the ground the air's distances are scaled (Unreal's "Aerial
+        // Perspective View Distance Scale"); as the eye climbs, what it gives
+        // is scaled instead, as the shell over the ground from space scales
+        // it (\`space.ts\`, \`SURFACE_AIR\`, with the limb's rays taking the
+        // whole air): at the top of the air the two are one. A distance scaled
+        // from high up kept only the thin top of each ray, and leaving the air
+        // turned the land blue in one notch of the wheel (its blue 41 -> 66).
+        vec4 near = airPerspective(vUv, tScene * uAirScale);
+        vec4 whole = airPerspective(vUv, tScene);
+        float pass = length(cross(ro - uAirCentre, rd));
+        float share = mix(uAirScale, 1.0, smoothstep(AIR_R * 0.9, AIR_R * 1.002, pass));
+        vec4 far = vec4(whole.rgb * share, mix(1.0, whole.a, share));
+        vec4 ap = mix(near, far, uAirHigh);
         colour = colour * ap.a + ap.rgb;
       }` : ''}
       // The air between the eye and what the pixel sees: from the view's

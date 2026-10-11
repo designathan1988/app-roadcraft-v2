@@ -366,8 +366,16 @@ export function createIsoRig(
     // (the player, 2026-10-10: "próximo ao solo, até 300, 400 m, plano; e
     // se subisse ia ficando esférico, de forma muito sutil"). The point
     // looked at stays put at every curvature (`bend.ts` planetBent).
+    // The height is the eye's own over the planet's sphere - its distance from
+    // the planet's centre as drawn, less the radius - the one the air reads
+    // (`planet/air.ts`: inside the air below its top). Taken as the camera's
+    // height over the point looked at, a tilted view's eye stood far higher
+    // than that: it left the air with the ground still flattened to half the
+    // planet's curvature, and the air's shell, drawn round the planet's own
+    // sphere, lay over the land up to the horizon (the player: "a atmosfera
+    // deforma o formato do mapa" between the sphere and the plane).
     if (__PLANET__) {
-      const over = camera.position.y - target.y;
+      const over = camera.position.distanceTo(planetCentre(eyeCentre)) - PLANET_RADIUS;
       const u = Math.min(1, Math.max(0, (over - FLAT_HEIGHT) / (CURVED_HEIGHT - FLAT_HEIGHT)));
       setPlanetCurvature(FLAT_K + (1 - FLAT_K) * u * u * (3 - 2 * u));
     }
@@ -378,6 +386,8 @@ export function createIsoRig(
     camera.updateMatrixWorld(true);
   };
   const globeLook = new Vector3();
+  /** The planet's centre as drawn, for the eye's height (`apply`). */
+  const eyeCentre = new Vector3();
   /** How far out to the globe the view is, and its scale at the centre, as `apply` last set them. */
   let globeNow = 0;
   let scaleNow = 1;
