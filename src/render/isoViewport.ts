@@ -15,6 +15,7 @@ import { WORLD_HALF } from '@world/bounds';
 import { m, perM } from '@world/units';
 import { tileCellOf, tileCentre } from '@world/planet/atlas';
 import { atlasToSphereInto, setPointerChart } from '@world/planet/charts';
+import { ATMOSPHERE_TOP } from './planet/air';
 import { anchorPlanet, inTileChart, planetCentre, planetMotion, planetNearest, planetPick, planetWorld, rehomeFrom, setPlanetCurvature } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
@@ -73,7 +74,9 @@ const TAU = Math.PI * 2;
 const KEEP_PASSES = 8;
 /** Under this height over the ground the planet is drawn flat (its curvature `FLAT_K`); it is whole from `CURVED_HEIGHT`. */
 const FLAT_HEIGHT = m(400);
-const CURVED_HEIGHT = PLANET_RADIUS * 1.2;
+// Whole by the top of the air: above it the air's shell is drawn round the
+// planet's own sphere, and a ground still flattened came out of it at the limb.
+const CURVED_HEIGHT = ATMOSPHERE_TOP - PLANET_RADIUS;
 /** The flattest curvature: the ground on a sphere 50 times the planet's - flat to the eye. */
 const FLAT_K = 0.02;
 /** The tilt out at the globe: straight down, a hair short of it so the view keeps its heading. */
