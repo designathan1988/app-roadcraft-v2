@@ -13,6 +13,7 @@ import type { MaterialKey } from '../../geometry/parts';
 import { createRenderContext, type RenderContext } from '../../render/context';
 import { DETAIL_MEAN, disposePbr, pbrFor } from './pbr';
 import { disposeProc, procFor, type ProcTextures } from './procedural';
+import { imageTexture } from './images';
 
 const SKY_VERTEX = `
   varying vec3 vDir;
@@ -255,13 +256,16 @@ export function createLookContext(): RenderContext {
     boxGeometry: base.boxGeometry,
     modules: base.modules,
     material(key: MaterialKey) {
-      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}|${key.color2 ?? ''}|${key.params ?? ''}`;
+      const id = `${key.role}|${key.color}|${key.roughness}|${key.metalness ?? 0}|${key.doubleSide ? 2 : 1}|${key.texture ?? ''}|${key.textureScale ?? 1}|${key.finish ?? ''}|${key.color2 ?? ''}|${key.params ?? ''}|${key.image ?? ''}`;
       let m = extra.get(id);
       if (m) return m;
       m = base.material(key);
       const pbr = key.texture && key.finish ? pbrFor(key.finish) : null;
       const proc = key.texture && key.finish && !pbr ? procFor(key.finish, key.params ? (Object.fromEntries(JSON.parse(key.params) as [string, number][]) as Record<string, number>) : undefined) : null;
-      if (key.role === 'glass' && key.roughness < 0.1) windowGlass(m, key.color);
+      if (key.image !== undefined) {
+        m = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.65, map: imageTexture(key.image) });
+        m.name = 'imagem';
+      } else if (key.role === 'glass' && key.roughness < 0.1) windowGlass(m, key.color);
       else if (key.role === 'glass') {
         // Vidro sem nada atrás (cobertura, pele de vidro): opaco e espelhado.
         m.color.set(key.color).multiplyScalar(0.6);

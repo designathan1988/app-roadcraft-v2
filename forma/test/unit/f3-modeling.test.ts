@@ -193,6 +193,18 @@ describe('peça que nasce no topo de outro volume', () => {
   });
 });
 
+describe('peça avulsa no meio da fachada', () => {
+  it('"1 porta" continua uma porta só quando uma placa divide a fileira', () => {
+    const s = box({ plan: { outer: rectPlan(12, 8), holes: [] }, height: 6.4, roof: roofSpec('gable') });
+    const b = building({ solids: [s] });
+    s.facade = presetRules('col', s);
+    const front = s.facade.find((r) => r.mode === 'count')!.edges[0]!;
+    b.items.push({ id: 'p', type: 'area-stone', params: { width: 1.5, height: 2.5 }, host: { kind: 'face', solid: s.id, edge: front, u: 6, y: 0 } });
+    const ev = evaluateBuilding(b);
+    expect(ev.placements.filter((p) => p.family.category === 'doors')).toHaveLength(1);
+  });
+});
+
 describe('fachada pronta', () => {
   it('porta só na frente e janelas redistribuídas ao lado dela no térreo', () => {
     const s = box({ plan: { outer: rectPlan(12, 8), holes: [] }, height: 6.4, roof: roofSpec('gable') });

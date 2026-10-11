@@ -200,6 +200,17 @@ export function distribute(rule: Pick<FacadeRule, 'mode' | 'value' | 'justify'>,
   return Array.from({ length: n }, (_, i) => a + ((i + 0.5) * avail) / n);
 }
 
+/** Reparte n inteiros proporcionalmente aos pesos (maior resto; a soma é n). */
+export function apportion(n: number, weights: number[]): number[] {
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  const exact = weights.map((w) => (n * w) / total);
+  const out = exact.map(Math.floor);
+  let left = n - out.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i] as [number, number]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0 && k < order.length; k++, left--) out[order[k]![1]]!++;
+  return out;
+}
+
 /** Tira dos trechos [a, b] os intervalos ocupados. */
 export function carve(spans: { a: number; b: number }[], cuts: [number, number][]): { a: number; b: number }[] {
   let out = spans;
@@ -270,12 +281,14 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
         // Fileira coberta por outro volume (embasamento, anexo): nada a fazer, sem aviso.
         const open = raw.reduce((acc, [a, b]) => acc + (b - a), 0);
         const spans = carve(raw.map(([a, b]) => ({ a: a + rule.margin, b: b - rule.margin })), blockers).filter((q) => q.b - q.a >= w);
-        const total = spans.reduce((acc, q) => acc + (q.b - q.a), 0);
         const centers: number[] = [];
-        for (const q of spans) {
-          const share = rule.mode === 'count' && spans.length > 1 ? { ...rule, value: Math.max(1, Math.round((rule.value * (q.b - q.a)) / total)) } : rule;
+        // Quantidade fixa: reparte entre os trechos pelo maior resto (a soma é o pedido).
+        const counts = rule.mode === 'count' && spans.length > 1 ? apportion(Math.max(1, Math.round(rule.value)), spans.map((q) => q.b - q.a)) : null;
+        spans.forEach((q, i) => {
+          if (counts && !counts[i]) return;
+          const share = counts ? { ...rule, value: counts[i]! } : rule;
           centers.push(...distribute(share, q.a, q.b, w));
-        }
+        });
         centers.forEach((c, i) => {
           const k = `${r.edge}:${lv.index}:${i}`;
           const ex = rule.except[k];

@@ -43,7 +43,7 @@ export const CATEGORY_NAMES: Record<Category, string> = {
   site: 'Terreno',
 };
 
-export type ParamKind = 'length' | 'angle' | 'count' | 'ratio' | 'enum' | 'bool' | 'color' | 'finish';
+export type ParamKind = 'length' | 'angle' | 'count' | 'ratio' | 'enum' | 'bool' | 'color' | 'finish' | 'text';
 
 export interface ParamDef {
   key: string;
@@ -69,6 +69,10 @@ export interface PartMat {
   slot: Slot;
   color: string;
   finish?: string;
+  /** 2ª cor do acabamento procedural (junta). */
+  color2?: string;
+  /** Imagem do projeto (placas de imagem). */
+  image?: string;
 }
 
 /** Recebe as peças no referencial local da família. */

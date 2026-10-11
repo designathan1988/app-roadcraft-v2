@@ -241,6 +241,7 @@ function paramInputs(defs: ParamDef[], values: Record<string, unknown>, override
     if (!ds.length) continue;
     html += `<div class="f3-sec"><h3>${groups[g]}</h3><div class="f3-grid2">`;
     for (const d of ds) {
+      if (d.kind === 'text') continue;
       const v = values[d.key];
       const over = d.key in overrides ? ' over' : '';
       if (d.kind === 'enum') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${d.scope}">${d.options!.map((o) => `<option value="${o.value}" ${o.value === v ? 'selected' : ''}>${o.label}</option>`).join('')}</select></label>`;

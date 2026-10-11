@@ -26,6 +26,8 @@ export interface MaterialKey {
   /** 2ª cor e parâmetros do acabamento procedural (JSON estável). */
   color2?: string;
   params?: string;
+  /** Imagem do projeto como textura (placas de imagem). */
+  image?: string;
 }
 
 /** Dados de seleção ligados a cada peça. */

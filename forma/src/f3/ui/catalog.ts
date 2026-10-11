@@ -9,6 +9,8 @@ import { createThumbnailer, type Thumbnailer } from '../render/thumbs';
 import { icon } from './icons';
 import { BLOCKS } from '../model/blocks';
 import { MATERIAL_PRESETS, materialThumb } from './materials';
+import { readImageFile } from '../render/images';
+import { uid } from '../model/defaults';
 
 const FAV_KEY = 'forma3_favorites';
 const ORDER: Category[] = ['windows', 'doors', 'balconies', 'railings', 'fences', 'gates', 'structure', 'stairs', 'canopies', 'shading', 'ornament', 'roofgear', 'industrial', 'site', 'walls', 'facade'];
@@ -116,11 +118,13 @@ export function mountCatalog(ed: Editor3): { open(): void } {
       return;
     }
     const items = list();
-    if (!items.length) {
+    // Revestimentos e fachada: além das áreas, o cartão de imagem própria.
+    const upload = tab === 'facade' && !query ? `<div class="f3-card" data-upload title="Escolher uma imagem do computador e colocar numa parede (cartaz, grafite, logo, mural)"><div class="f3-blockico">${icon('open')}</div><span>Imagem…</span></div>` : '';
+    if (!items.length && !upload) {
       cards.innerHTML = `<p class="f3-empty" style="padding:6px 4px">${tab === 'fav' && !query ? 'Marque ★ nos componentes que mais usa.' : tab === 'mine' && !query ? 'Tipos criados com "Tornar único" aparecem aqui.' : 'Nada encontrado.'}</p>`;
       return;
     }
-    cards.innerHTML = items
+    cards.innerHTML = upload + items
       .map((t) => {
         const f = family(t.family)!;
         const host = f.host === 'face' ? 'parede' : f.host === 'path' ? 'caminho' : f.host === 'roof' ? 'telhado' : 'chão';
@@ -139,7 +143,30 @@ export function mountCatalog(ed: Editor3): { open(): void } {
         ed.view.mark();
       }).catch(() => undefined);
     });
-    cards.querySelectorAll<HTMLElement>('.f3-card').forEach((c) => {
+    cards.querySelector<HTMLElement>('[data-upload]')?.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.addEventListener('change', async () => {
+        const f = input.files?.[0];
+        if (!f) return;
+        try {
+          const im = await readImageFile(f);
+          const w = Math.min(4, Math.max(0.5, im.w / 400));
+          const type = { id: uid(), family: 'image-decal', name: im.name, params: { image: im.id, width: Math.round(w * 100) / 100, height: Math.round(((w * im.h) / im.w) * 100) / 100 }, user: true };
+          (ed.project.images ??= []).push(im);
+          ed.project.types.push(type);
+          ed.store.commit(null, 'Imagem adicionada ao projeto.', false);
+          ed.startPlacing(type.id);
+          ed.toggleLibrary(false);
+          ed.toast(`${im.name}: clique numa parede para colocar.`);
+        } catch (err) {
+          ed.toast(`Não foi possível usar a imagem: ${(err as Error).message}`);
+        }
+      });
+      input.click();
+    });
+    cards.querySelectorAll<HTMLElement>('.f3-card[data-type]').forEach((c) => {
       c.addEventListener('click', (e) => {
         if ((e.target as HTMLElement).closest('.fav')) return;
         ed.startPlacing(c.dataset.type!);

@@ -29,7 +29,8 @@ const SLOT_FINISH: Partial<Record<PartMat['slot'], string>> = { glass: 'glass', 
 
 export function partMaterial(m: PartMat, textured = true): MaterialKey {
   const finish = m.finish ?? SLOT_FINISH[m.slot] ?? 'paint';
-  const full = materialKey({ finish, color: m.color }, SLOT_ROLE[m.slot]);
+  if (m.image !== undefined) return { role: 'frame', color: '#ffffff', roughness: 0.65, image: m.image };
+  const full = materialKey({ finish, color: m.color, ...(m.color2 ? { color2: m.color2 } : {}) }, SLOT_ROLE[m.slot]);
   // Primitivas instanciadas têm UV unitário: sem textura (esticaria o padrão).
   const { texture, textureScale, ...plain } = full;
   void textureScale;
@@ -62,7 +63,7 @@ export interface PartsMesh {
   dispose(): void;
 }
 
-const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}`;
+const keyOf = (k: MaterialKey) => `${k.role}|${k.color}|${k.roughness}|${k.metalness ?? 0}|${k.texture ?? ''}|${k.textureScale ?? 1}|${k.finish ?? ''}|${k.color2 ?? ''}|${k.params ?? ''}|${k.image ?? ''}`;
 
 export function buildPartsMesh(parts: Parts3, ctx: RenderContext, shadows = true, visible?: (tag: PartTag) => boolean): PartsMesh {
   const show = visible ? parts.tags.map((t) => visible(t)) : null;

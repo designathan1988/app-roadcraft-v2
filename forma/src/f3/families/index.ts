@@ -12,6 +12,7 @@ import { RAMP, STAIR } from './stairs';
 import { AWNING, BRISE, CANOPY, COBOGO, PORCH_ROOF, ROLL_SHUTTER } from './canopies';
 import { BAND, CLOCK, CORNICE, DOWNPIPE, PEDIMENT, PILASTER, QUOINS, SIGN } from './ornament';
 import { CHIMNEY, CUPOLA, DORMER, LADDER, SILO, SKYLIGHT, SOLAR, STACK, TANK, VENT, WATER_TANK } from './roofgear';
+import { CLADDING, IMAGE_DECAL } from './decal';
 
 const families = new Map<string, Family>();
 
@@ -27,12 +28,16 @@ export function allFamilies(): Family[] {
   return [...families.values()];
 }
 
-for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO, STAIR, RAMP, CANOPY, AWNING, PORCH_ROOF, BRISE, COBOGO, ROLL_SHUTTER, CORNICE, PILASTER, QUOINS, PEDIMENT, BAND, SIGN, CLOCK, DOWNPIPE, CHIMNEY, SKYLIGHT, SOLAR, WATER_TANK, VENT, CUPOLA, DORMER, SILO, STACK, LADDER, TANK]) registerFamily(f);
+for (const f of [WINDOW, BAY_WINDOW, DOOR, GARAGE_DOOR, LOADING_DOOR, SHOPFRONT, BALCONY, VERANDA, RAILING, JULIETTE, WALL_RUN, FENCE, GATE, HEDGE, COLUMN, BEAM, PERGOLA, PORTICO, STAIR, RAMP, CANOPY, AWNING, PORCH_ROOF, BRISE, COBOGO, ROLL_SHUTTER, CORNICE, PILASTER, QUOINS, PEDIMENT, BAND, SIGN, CLOCK, DOWNPIPE, CHIMNEY, SKYLIGHT, SOLAR, WATER_TANK, VENT, CUPOLA, DORMER, SILO, STACK, LADDER, TANK, IMAGE_DECAL, CLADDING]) registerFamily(f);
 
 const t = (id: string, fam: string, name: string, params: ComponentType['params'] = {}): ComponentType => ({ id, family: fam, name, params });
 
 /** Tipos incluídos (variações prontas de cada família). */
 export const BUILTIN_TYPES: ComponentType[] = [
+  t('area-stone', 'cladding', 'Revestimento de pedra'),
+  t('area-brick', 'cladding', 'Revestimento de tijolo', { finish: 'brick', color: '#a8553a', color2: '#d8d2c6', thick: 0.02 }),
+  t('area-wood', 'cladding', 'Revestimento de madeira', { finish: 'wood', color: '#8a5f3e', color2: '#2c241d', thick: 0.025 }),
+  t('area-tile', 'cladding', 'Revestimento cerâmico', { finish: 'floor', color: '#e9e5dd', color2: '#bdb6aa', thick: 0.012 }),
   t('win-casement', 'window', 'Janela de abrir 2 folhas'),
   t('win-sash', 'window', 'Guilhotina colonial', { operation: 'sash', leaves: 1, muntins: 'colonial', width: 1.0, height: 1.7, shutters: 'louvered', frameColor: '#ffffff' }),
   t('win-sliding', 'window', 'Janela de correr', { operation: 'sliding', leaves: 2, width: 1.6, height: 1.2, frameColor: '#cfd2d3', frameFinish: 'metal', trim: 0, sill: true }),

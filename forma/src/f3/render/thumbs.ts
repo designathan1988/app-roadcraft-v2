@@ -11,6 +11,7 @@
 // hora num buffer de pixels e só espera a GPU depois; o alvo pode ser reusado
 // no desenho seguinte.
 import * as THREE from 'three';
+import { flushProc } from './procedural';
 import type { RenderContext } from '../../render/context';
 import type { Family, Params } from '../families/family';
 import { resolveParams } from '../families/family';
@@ -191,6 +192,8 @@ export function createThumbnailer(renderer: THREE.WebGLRenderer, ctx: RenderCont
       renderer.setClearColor(0x000000, 0);
       renderer.autoClear = true;
       renderer.clear();
+      // Texturas procedurais dos materiais da peça precisam estar assadas.
+      flushProc();
       renderer.render(scene, camera);
     } finally {
       renderer.setRenderTarget(prevTarget);

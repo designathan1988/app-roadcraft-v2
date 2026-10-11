@@ -12,6 +12,7 @@ import type { RenderContext } from '../../render/context';
 import { createLook, createLookContext, type Look } from '../render/look';
 import { onPbrLoad, setPbrAnisotropy } from '../render/pbr';
 import { onProcBaked, setProcRenderer } from '../render/procedural';
+import { onImageLoad, setProjectImages } from '../render/images';
 import { buildingHidden, buildingLocked, categoryHidden, itemHidden, itemLocked, solidHidden, solidLocked, visibilityKeys } from '../model/layers';
 import { family } from '../families/index';
 
@@ -46,6 +47,7 @@ export class View {
   readonly built = new Map<ID, Built>();
   private unPbr: () => void = () => undefined;
   private unProc: () => void = () => undefined;
+  private unImg: () => void = () => undefined;
   readonly target = new THREE.Vector3(0, 3, 0);
   theta = 0.75;
   phi = 1.0;
@@ -70,6 +72,7 @@ export class View {
     // Texturas PBR: filtro anisotrópico máximo da placa e redesenho quando chegam.
     setPbrAnisotropy(Math.min(16, this.renderer.capabilities.getMaxAnisotropy()));
     setProcRenderer(this.renderer, Math.min(16, this.renderer.capabilities.getMaxAnisotropy()));
+    this.unImg = onImageLoad(() => this.mark());
     this.unProc = onProcBaked(() => {
       this.renderer.shadowMap.needsUpdate = true;
       this.mark();
@@ -168,6 +171,7 @@ export class View {
     let changed = false;
     const t0 = performance.now();
     const vis = visibilityKeys(p);
+    setProjectImages(p.images);
     const partVisible = (b: Building3) => (tag: PartTag) => {
       const f = family(tag.family);
       if (f && categoryHidden(p, f.category)) return false;
@@ -291,6 +295,7 @@ export class View {
     cancelAnimationFrame(this.raf);
     this.unPbr();
     this.unProc();
+    this.unImg();
     for (const b of this.built.values()) this.drop(b);
     this.built.clear();
     this.look.dispose();

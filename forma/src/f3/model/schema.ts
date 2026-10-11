@@ -23,6 +23,17 @@ export interface Project3 {
   layers?: Layer[];
   /** Estado da vista: categorias de componente escondidas e camada ativa. */
   view?: ViewState;
+  /** Imagens do projeto (placas de imagem nas fachadas), embutidas. */
+  images?: ProjectImage[];
+}
+
+export interface ProjectImage {
+  id: ID;
+  name: string;
+  /** Imagem embutida (data URL), no máximo 2048 px. */
+  data: string;
+  w: number;
+  h: number;
 }
 
 /**

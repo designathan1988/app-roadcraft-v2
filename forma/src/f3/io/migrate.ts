@@ -576,6 +576,10 @@ export function validateForma3(raw: unknown): string[] {
     else for (const l of p.layers) if (!isObj(l) || !str(l.id) || !str(l.name, 60) || typeof l.visible !== 'boolean' || typeof l.locked !== 'boolean' || !str(l.color)) e.add('Projeto', 'camada inválida.');
   }
   if (p.view !== undefined && (!isObj(p.view) || !Array.isArray(p.view.hiddenCategories))) e.add('Projeto', 'estado da vista inválido.');
+  if (p.images !== undefined) {
+    if (!Array.isArray(p.images) || p.images.length > 200) e.add('Projeto', 'imagens inválidas.');
+    else for (const im of p.images) if (!isObj(im) || !str(im.id) || typeof im.data !== 'string' || !im.data.startsWith('data:image/') || !fin(im.w) || !fin(im.h)) e.add('Projeto', 'imagem inválida.');
+  }
   if (!Array.isArray(p.types)) e.add('Projeto', 'tipos de componente inválidos.');
   else {
     const ids = new Set<string>();

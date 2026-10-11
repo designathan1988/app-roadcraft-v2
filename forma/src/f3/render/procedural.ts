@@ -611,6 +611,11 @@ function bake(key: string): void {
   c.baked = true;
 }
 
+/** Assa já o que estiver na fila (miniaturas precisam das texturas prontas). */
+export function flushProc(): void {
+  flush();
+}
+
 function flush(): void {
   if (!renderer || !pending.length) return;
   while (pending.length) bake(pending.shift()!);
