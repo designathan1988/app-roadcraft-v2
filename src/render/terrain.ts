@@ -39,6 +39,7 @@ import { GroundChanges } from './groundChanges';
 import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
 import { submitLight } from './terrainLightPool';
 import { ecologyOffPage, readEcology } from './ecologyPool';
+import { steepnessInto } from './terrainSteep';
 import type { ChangeJournal } from '@world/changes';
 import { MAP_SIZE } from '@world/bounds';
 import {
@@ -2879,22 +2880,10 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     const length = cb.length();
     if (length > 1e-9) faceSteep = Math.max(faceSteep, Math.acos(Math.min(1, Math.abs(cb.y) / length)) * (180 / Math.PI));
   };
-  /** Every corner's steepest face, over the whole plate. */
+  /** Every corner's steepest face, over the whole plate (`terrainSteep.ts`). */
+  const cellSteep = new Float32Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS);
   const refreshAllSteep = (): void => {
-    for (let v = 0; v < GRID * GRID; v++) {
-      faceSteep = 0;
-      sum.set(0, 0, 0);
-      const ix = v % GRID;
-      const iy = (v - ix) / GRID;
-      for (let cy = iy - 1; cy <= iy; cy++) {
-        for (let cx = ix - 1; cx <= ix; cx++) {
-          if (cx < 0 || cy < 0 || cx >= TERRAIN_SEGMENTS || cy >= TERRAIN_SEGMENTS) continue;
-          const a = cx + GRID * cy, b = cx + GRID * (cy + 1), c = cx + 1 + GRID * (cy + 1), d = cx + 1 + GRID * cy;
-          if (flip[cx + cy * TERRAIN_SEGMENTS]) { addFace(a, b, c); addFace(a, c, d); } else { addFace(a, b, d); addFace(b, c, d); }
-        }
-      }
-      steep[v] = faceSteep;
-    }
+    steepnessInto(position.array as ArrayLike<number>, flip, GRID, cellSteep, steep);
     steepAttribute.needsUpdate = true;
   };
   /**
