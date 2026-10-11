@@ -1,5 +1,5 @@
 import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
-import { TILES, TILE_COUNT, TILE_HALF, sphereToTileInto, tileToSphereInto } from '@core/planetTiles';
+import { TILES, TILE_COUNT, TILE_HALF, onTile, sphereToTileInto, tileToSphereInto } from '@core/planetTiles';
 import type { CoverKind, GeologyKind } from '@world/terrainPaint';
 import type { PaintDab } from '@world/terrainPaint';
 import type { TerrainStamp } from '@world/terrain';
@@ -7,7 +7,7 @@ import { RELIEF_EARTH, RELIEF_FLAT, type ReliefVersion } from '@world/terrain';
 import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
 import { TILE_PLATE_HALF, TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
-import { atlasToSphereInto, chartAt, chartsReaching } from '@world/planet/charts';
+import { atlasToSphereInto, chartAt, chartsReaching, ownerOfChartPointInto } from '@world/planet/charts';
 import { tileGround } from '@world/planet/relief';
 import { Group, type Material, type WebGLRenderer } from 'three';
 import { planetSunOnPlanet, setPlanetGroundFloor, type PlanetCap } from './bend';
@@ -462,9 +462,26 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     return total;
   };
 
-  /** A question asked in the atlas's coordinates: the piece's surface, or the land itself where it has none. */
+  /**
+   * A question asked in the atlas's coordinates: the piece's surface, or the
+   * land itself where it has none - always the piece that OWNS that ground.
+   * A point written on a chart past its own piece (a junction's plate, a
+   * blast's debris, a torn wire, the camera's eye, all worked out on one
+   * chart) lies over the neighbour's ground: each plate draws only its own
+   * piece, and read off the chart's plate it got that plate's edge, or the
+   * land of another piece altogether (a torn wire stood up over the
+   * buildings). As terrain tiles are sampled by the tile that holds the
+   * point (Unity `TerrainMap`), it is carried to its owner first.
+   */
+  const owned = { x: 0, y: 0 };
   const ask = <T>(x: number, y: number, read: (s: TerrainSurface, lx: number, ly: number) => T, bareRead: (t: Tile, lx: number, ly: number) => T): T => {
-    const tile = tileAt(x, y);
+    let tile = tileAt(x, y);
+    if (!onTile(tile.face, x - tile.cx, y - tile.cy)) {
+      ownerOfChartPointInto(tile.face, x, y, owned);
+      x = owned.x;
+      y = owned.y;
+      tile = tileAt(x, y);
+    }
     return tile.surface ? read(tile.surface, x - tile.cx, y - tile.cy) : bareRead(tile, x - tile.cx, y - tile.cy);
   };
 

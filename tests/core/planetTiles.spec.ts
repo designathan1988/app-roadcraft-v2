@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
-import { TILES, TILE_COUNT, TILE_HALF, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto, tileTransferInto } from '@core/planetTiles';
+import { TILES, TILE_COUNT, TILE_HALF, TILE_INNER, onTile, sphereToTileInto, tileOfDirection, tileToSphereInto, tileTransferInto } from '@core/planetTiles';
 
 const s: Vec3 = { x: 0, y: 0, z: 0 };
 const a: Vec3 = { x: 0, y: 0, z: 0 };
@@ -12,6 +12,22 @@ describe('the planet cut into flat maps', () => {
     expect(TILE_COUNT).toBe(864);
     for (let id = 0; id < TILE_COUNT; id++) expect(tileOfDirection(TILES[id]!.centre)).toBe(id);
     console.info(`planet tiles: ${TILE_COUNT}, a piece within ±${TILE_HALF.toFixed(0)} of its centre`);
+  });
+
+  // The quick test of `onTile`: the square inside every piece is inside every piece.
+  it('the inner square lies on every piece, and is most of the narrowest piece', () => {
+    // The corner pieces of a cube face are the narrowest: under half the widest.
+    expect(TILE_INNER).toBeGreaterThan(TILE_HALF * 0.4);
+    let outside = 0;
+    for (let id = 0; id < TILE_COUNT; id++) {
+      for (let k = 0; k <= 16; k++) {
+        const t = -TILE_INNER + (2 * TILE_INNER * k) / 16;
+        for (const [x, y] of [[t, -TILE_INNER], [t, TILE_INNER], [-TILE_INNER, t], [TILE_INNER, t]] as const) {
+          if (tileOfDirection(tileToSphereInto(id, x, y, s)) !== id) outside++;
+        }
+      }
+    }
+    expect(outside).toBe(0);
   });
 
   it('takes a map point to the sphere and back exactly, on the piece and past it', () => {

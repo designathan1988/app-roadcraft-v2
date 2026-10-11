@@ -106,6 +106,17 @@ UHD 770, cerca de 5× mais lenta que a RTX 3060 do jogador.
 | PV2 | (sistema de vias, V2, ramo `vias`) No editor de perfil, arrastar um elemento pelo ar acima dele (onde ficam a seta e o carro) não fazia nada | visto no jogo: arrasto da faixa a partir da altura da seta não mudava a ordem nem a seleção | `ui/roads/crossSection.ts`: o grupo de cada elemento só tinha a laje e os desenhos; o espaço vazio acima não pertencia a nenhum elemento | um retângulo transparente por elemento, da borda de cima até a laje (`xs-hit`), só no desenho editável | feito, aguardando o jogador | detector: `tests/ui/roadProfileEditor.spec.ts` (coluna inteira de cada elemento) |  |
 | PV3 | (sistema de vias, V3, ramo `vias`) Pontas de muro e alas de portal de túnel como placas cinza em pé acima do terreno (revisão do coordenador) | fotos de perto, câmera baixa: ala do portal numa altura só, saindo do chão onde o morro cai ao lado; muros de arrimo erguidos nos acessos de um túnel em aterro | `render/structures.ts`: ombreiras do portal em uma caixa da altura da testa até a borda da ala; `world/roads/buildMode.ts`: todo trecho de um segmento `tunnel` fora do furo contava como trincheira, até em aterro | alas em fatias de 3 u que seguem o chão mais alto de cada lado da testa (+0,6 u), nenhuma sobre chão abaixo da via, coroamento só sobre a abertura; o trecho de um túnel fora do furo é classificado como qualquer via | feito, aguardando o jogador | detector `tests/world/cutWalls.spec.ts` (topo de muro e de ala <= chão ao lado + folga) |  |
 
+## Planeta (ramo `planeta-esfera`, auditoria de 2026-10-11)
+
+Linhas PL: defeitos do modo planeta achados na auditoria pedida pelo jogador
+("auditoria nível engenharia sênior para lançamento"). Medidas no servidor
+5175 (`npm run dev:planet`); "headless" = Chrome sem janela na iGPU Intel.
+
+| # | Problema | Antes | Causa (arquivo) | Estratégia | Estado | Depois | Commit |
+|---|---|---|---|---|---|---|---|
+| PL1 | Vite: a primeira carga respondia 504 e recarregava | Varredura de dependências falhava em `labs/building/forma` (pacote `manifold-3d` só instalado lá) | `vite.config.ts` sem `optimizeDeps.entries`: o Vite varre todo `.html` | Só as páginas do jogo: `entries: ['*.html']` (vite.dev, dep-optimization-options) | feito | Servidor sobe sem o erro de varredura | ded64259 |
+| PL2 | "Ao soltar uma bomba em um poste os fios crescem verticalmente ultrapassando os prédios" | Vão de dois postes 24 m um do outro sobre a divisa de duas peças: fios soltos retos por 1 800 unidades do atlas, atravessando a tela inteira e sem nunca assentar (fotos s4, headless) | `actionsWiring.ts` `explodeAt`: pontas do fio em cartas diferentes; o raio da explosão medido no atlas (postes, prédios, carros, árvores do outro lado da divisa fora do alcance). `terrainAtlas.ts` `ask`: ponto escrito numa carta além da sua peça lia o chão na borda da placa ou de outra peça | Tudo medido e entregue à cena na carta do ponto da explosão (`onChartOf`); toda pergunta de altura respondida pela peça dona do ponto (como o `TerrainMap` da Unity acha o tile que contém o ponto); `onTile` com quadrado interno sem trigonometria (`TILE_INNER`) | feito | Mesmo vão: fios saem do poste em pé e deitam no chão até a cratera (fotos s4b 1,5 s e 9 s); bomba numa cidade de uma peça sem regressão (s5) | (este commit) |
+
 ## Já tentado e que não resolveu
 
 Para não repetir:

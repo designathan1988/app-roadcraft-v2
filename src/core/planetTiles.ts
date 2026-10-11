@@ -143,8 +143,35 @@ export const TILE_HALF: number = (() => {
   return widest;
 })();
 
+/**
+ * Half the side of a square about a piece's centre that lies inside EVERY
+ * piece on its own map (the narrowest piece's, a little in from its border):
+ * a point of a piece's map within it is on that piece, with no trigonometry.
+ * Each piece's ground being star-shaped about its centre, a square of half h
+ * fits inside when every point of its border lies at least h out along x or y.
+ */
+export const TILE_INNER: number = (() => {
+  let narrowest = Infinity;
+  const step = (2 * FACE_HALF) / TILES_PER_SIDE;
+  for (let id = 0; id < TILE_COUNT; id++) {
+    const t = tileFrame(id);
+    for (let k = 0; k <= 32; k++) {
+      const a = -FACE_HALF + t.i * step + (k / 32) * step;
+      const b = -FACE_HALF + t.j * step + (k / 32) * step;
+      for (const [x, y] of [[a, -FACE_HALF + t.j * step], [a, -FACE_HALF + (t.j + 1) * step], [-FACE_HALF + t.i * step, b], [-FACE_HALF + (t.i + 1) * step, b]] as const) {
+        faceToSphereInto(t.face, x, y, probe);
+        sphereToTileInto(id, probe, fp);
+        narrowest = Math.min(narrowest, Math.max(Math.abs(fp.x), Math.abs(fp.y)));
+      }
+    }
+  }
+  // Between the samples the border bows by far less than this.
+  return narrowest * 0.98;
+})();
+
 /** Whether a point of a piece's map lies on that piece (not on a neighbour reached past its border). */
 export function onTile(id: number, x: number, y: number): boolean {
+  if (Math.abs(x) <= TILE_INNER && Math.abs(y) <= TILE_INNER) return true;
   return tileOfDirection(tileToSphereInto(id, x, y, probe)) === id;
 }
 
