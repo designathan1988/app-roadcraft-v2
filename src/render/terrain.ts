@@ -39,11 +39,13 @@ import { GroundChanges } from './groundChanges';
 import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
 import { submitLight } from './terrainLightPool';
 import { ecologyOffPage, readEcology } from './ecologyPool';
+import { SEA_LEVEL } from '@world/planet/relief';
 import { steepnessInto } from './terrainSteep';
 import type { ChangeJournal } from '@world/changes';
 import { MAP_SIZE } from '@world/bounds';
 import {
   MAX_TERRAIN_STAMPS,
+  RELIEF_EARTH,
   RIVER_BED_FLOOR,
   TERRAIN_WATER_HEIGHT,
   TerrainIndex,
@@ -2965,6 +2967,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
   let nature: NatureSettings | null = null;
   let natureSeen = -1;
   let ecologyField: EcologyField | null = null;
+  /** Whether the land has a sea (the planet's Earth): its bed is water for what grows. */
+  let seaBed = false;
   let ecologyRevision = 0;
   /** The ecosystem must be read again; done when no stroke is held (as the water is). */
   let ecologyStale = true;
@@ -3001,7 +3005,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
     const wet = new Uint8Array(GRID * GRID);
     for (let i = 0; i < wet.length; i++) {
       const level = levels[i] as number;
-      wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
+      wet[i] = (level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05) || (seaBed && (natural[i] as number) < SEA_LEVEL) ? 1 : 0;
     }
     const over = ecologyField && dirty !== 'all' && dirty !== null && !ecologyInFlight ? dirty : null;
     const sand = material.userData['sandCorners'] as Float32Array, basalt = material.userData['basaltCorners'] as Float32Array;
@@ -3047,7 +3051,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       wet = new Uint8Array(GRID * GRID);
       for (let i = 0; i < wet.length; i++) {
         const level = levels[i] as number;
-        wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
+        wet[i] = (level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05) || (seaBed && (natural[i] as number) < SEA_LEVEL) ? 1 : 0;
       }
     }
     const startedAt = performance.now();
@@ -3539,6 +3543,8 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       const before = revision;
       revision = doc.terrainRevision;
       index = new TerrainIndex(doc.terrainStamps, revision, doc.terrainRelief, doc.terrainGround);
+      // The Earth's land has a sea: under its level the ground is sea bed (`refreshEcology`).
+      if (seaBed !== (doc.terrainRelief === RELIEF_EARTH)) { seaBed = doc.terrainRelief === RELIEF_EARTH; ecologyAll(); }
 
       // Only the cells a new stamp reaches are rewritten. A brush stroke adds
       // one 80-unit stamp; rewriting all 90 601 corners for it is what made

@@ -30,7 +30,7 @@ import { DEFAULT_CITY, planCity, type CityOptions } from '@world/cityGen/plan';
 import { greenCity, layCity, widenCityFootways, zoneCity } from '@editor/cityGenerator';
 import { LAST_UPGRADE_CLASS, ROAD_TYPES, roadProfile, roadType } from '@world/roadTypes';
 import { UNITS_PER_METER } from '@world/units';
-import { MAX_TERRAIN_STAMPS, RELIEF_FLAT, type TerrainMode } from '@world/terrain';
+import { MAX_TERRAIN_STAMPS, RELIEF_EARTH, RELIEF_FLAT, type TerrainMode } from '@world/terrain';
 import type { GeologyKind } from '@world/terrainPaint';
 import { DEFAULT_REGION, isRegionId, type NatureSettings } from '@world/ecology';
 import type { NodeId, SegmentId } from '@world/ids';
@@ -174,7 +174,10 @@ const healthWatch = watchHealth({
 
 const doc = new RoadDoc();
 // A new map is a level plain (the player, 2026-10-09); a saved one keeps its own (restored below).
-doc.terrainRelief = RELIEF_FLAT;
+// On the planet a new map is the Earth: continents and oceans (the player,
+// 2026-10-10: "quero que crie o planeta Terra com continentes e oceano").
+const NEW_RELIEF = __PLANET__ ? RELIEF_EARTH : RELIEF_FLAT;
+doc.terrainRelief = NEW_RELIEF;
 /** A new map's ecosystem: the default biome, its patches laid by a seed of its own. */
 const newNature = (region = DEFAULT_REGION): NatureSettings => ({ region, seed: Math.floor(Math.random() * 1_000_000_000) });
 doc.nature = newNature();
@@ -247,7 +250,7 @@ if (saved) {
     console.error('The saved map could not be loaded; it was set aside.', error);
     persistence.quarantineStored();
     const fresh = new RoadDoc();
-    fresh.terrainRelief = RELIEF_FLAT;
+    fresh.terrainRelief = NEW_RELIEF;
     fresh.nature = null;
     doc.replaceWith(fresh);
     net.rebuild();
@@ -3052,7 +3055,7 @@ let cityBuiltIn = 0;
   // this did not, which left Ctrl+Z unable to recover a map cleared by mistake.
   history.record(doc);
   // A new map is empty, painted to the Brazilian standard (docs/VIAS.md V6).
-  applySnapshot({ ...new RoadDoc().toJSON(), relief: RELIEF_FLAT, markingStyle: 'br' }, 'import');
+  applySnapshot({ ...new RoadDoc().toJSON(), relief: NEW_RELIEF, markingStyle: 'br' }, 'import');
   roadTool.reset();
   fitView();
   flashHint('hint.newMap');

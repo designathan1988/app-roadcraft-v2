@@ -241,7 +241,7 @@ function waterNormalTexture(size: number, anisotropy: number): DataTexture {
  * so the surfaces never dispose it.
  */
 const normalsMade = new Map<string, DataTexture>();
-function sharedWaterNormals(anisotropy: number): DataTexture {
+export function sharedWaterNormals(anisotropy: number): DataTexture {
   const size = waterTextureSize(anisotropy);
   const id = `${size}:${anisotropy}`;
   let made = normalsMade.get(id);

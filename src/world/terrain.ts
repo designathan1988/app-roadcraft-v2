@@ -183,14 +183,17 @@ export function valueNoise(x: number, y: number): number {
  * Which land a map starts from (`RoadDoc.terrainRelief`): 1 the gentle
  * four-octave field every map saved before this existed was built on, 2 the
  * natural landform (`naturalRelief`), 3 a level plain (height 0 everywhere,
- * the player's flat map). A map keeps the one it was made on, so its roads
- * never find the ground moved under them.
+ * the player's flat map), 4 the planet's Earth: continents and oceans
+ * (`planet/relief.ts` `earthRelief3`; read only through the planet's own
+ * ground, the flat map never makes it). A map keeps the one it was made on,
+ * so its roads never find the ground moved under them.
  */
-export type ReliefVersion = 1 | 2 | 3;
+export type ReliefVersion = 1 | 2 | 3 | 4;
 export const RELIEF_LEGACY: ReliefVersion = 1;
 export const RELIEF_NATURAL: ReliefVersion = 2;
 export const RELIEF_FLAT: ReliefVersion = 3;
-export const isReliefVersion = (value: unknown): value is ReliefVersion => value === 1 || value === 2 || value === 3;
+export const RELIEF_EARTH: ReliefVersion = 4;
+export const isReliefVersion = (value: unknown): value is ReliefVersion => value === 1 || value === 2 || value === 3 || value === 4;
 
 /** 0..1 smoothstep of `t`, clamped. */
 const smooth01 = (t: number): number => {

@@ -3,7 +3,7 @@ import { TILES, TILE_COUNT, TILE_HALF, sphereToTileInto, tileToSphereInto } from
 import type { CoverKind, GeologyKind } from '@world/terrainPaint';
 import type { PaintDab } from '@world/terrainPaint';
 import type { TerrainStamp } from '@world/terrain';
-import { RELIEF_FLAT, type ReliefVersion } from '@world/terrain';
+import { RELIEF_EARTH, RELIEF_FLAT, type ReliefVersion } from '@world/terrain';
 import type { GullyDab } from '@world/gullies';
 import type { RoadDoc } from '@world/doc';
 import { TILE_PLATE_HALF, TILE_REACH, atlasToTileInto, tileCellOf, tileCentre, type TileLocal } from '@world/planet/atlas';
@@ -26,6 +26,7 @@ import {
   type TerrainSurface,
 } from '../terrain';
 import { buildGlobeGround } from './globeGround';
+import { createPlanetOcean, type PlanetOcean } from './ocean';
 
 /**
  * THE PLANET'S GROUND: the far globe at low detail in one draw
@@ -169,6 +170,32 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     globe.visible = true;
     for (const t of tiles) if (!t.surface) measured.add(t);
     measure();
+    // The Earth's seas (`ocean.ts`): laid a few pieces a frame (`layOcean`),
+    // the nearest the view first, as the globe's woods are.
+    if (ocean) { root.remove(ocean.mesh); ocean.dispose(); ocean = null; }
+    oceanQueue.length = 0;
+    if (relief === RELIEF_EARTH) {
+      ocean = createPlanetOcean(anisotropy);
+      if (lookGiven) ocean.setLook(lastLook);
+      root.add(ocean.mesh);
+      for (let i = 0; i < TILE_COUNT; i++) oceanQueue.push(i);
+    }
+  };
+  let ocean: PlanetOcean | null = null;
+  /** The pieces whose sea is still to be read (`layOcean`). */
+  const oceanQueue: number[] = [];
+  /** Within the ocean's budget a frame, the pieces nearest the view read into the sea. */
+  const OCEAN_BUDGET_MS = 3;
+  const layOcean = (dir: Vec3): void => {
+    if (!ocean || !oceanQueue.length) return;
+    const near = (i: number): number => { const c = TILES[i]!.centre; return c.x * dir.x + c.y * dir.y + c.z * dir.z; };
+    oceanQueue.sort((a, b) => near(a) - near(b));
+    const started = performance.now();
+    while (oceanQueue.length && performance.now() - started < OCEAN_BUDGET_MS) {
+      const t = tiles[oceanQueue.pop()!]!;
+      ocean.setPiece(t.face, (x, y) => (t.surface ? t.surface.heightAt(x, y) : bareAt(t, x, y)));
+    }
+    ocean.commit();
   };
 
   /**
@@ -383,6 +410,8 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
         tile.source.stampSources = sources;
         tile.source.terrainStamps = sources.map((s) => copies.get(s) as TerrainStamp);
         tile.source.terrainRevision = doc.terrainRevision;
+        // Its sea read again over the ground as edited.
+        if (ocean && !oceanQueue.includes(tile.face)) oceanQueue.push(tile.face);
       });
     }
     if (doc.paintRevision !== seenPaint) {
@@ -481,6 +510,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       // The pieces whose ground the view takes in, and a piece's half round them.
       const radius = Math.min(NEAR_RADIUS, Math.max(TILE_HALF * 1.5, reach * 1.6) + TILE_HALF * 1.5);
       atlasToSphereInto(x, y, focusDir);
+      layOcean(focusDir);
       const next: number[] = [];
       if (wantNear) {
         const cos = Math.cos(radius / PLANET_RADIUS);
@@ -523,6 +553,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       Object.assign(was, look);
       lookGiven = true;
       for (const t of tiles) t.surface?.setWaterLook(look);
+      ocean?.setLook(look);
     },
     setGullies(dabs: readonly GullyDab[], auto) {
       lastGullies = { dabs, auto };
@@ -617,6 +648,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     dispose() {
       for (const t of tiles) t.surface?.dispose();
       globeSurface.dispose();
+      ocean?.dispose();
     },
   };
 }

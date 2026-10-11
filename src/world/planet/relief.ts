@@ -1,6 +1,7 @@
 import { PLANET_RADIUS, type Vec3 } from '@core/cubeSphere';
-import { tileToSphereInto } from '@core/planetTiles';
-import { RELIEF_FLAT, RELIEF_NATURAL, type ReliefVersion } from '../terrain';
+import { TILES, tileToSphereInto } from '@core/planetTiles';
+import { RELIEF_EARTH, RELIEF_FLAT, RELIEF_NATURAL, type ReliefVersion } from '../terrain';
+import { atlasToTileInto, tileCellOf, type TileLocal } from './atlas';
 
 /**
  * THE PLANET'S LAND: the same landforms as the flat map's (`terrain.ts`
@@ -26,13 +27,15 @@ export function valueNoise3(x: number, y: number, z: number): number {
   const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z);
   const fx = x - x0, fy = y - y0, fz = z - z0;
   const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy), sz = fz * fz * (3 - 2 * fz);
-  const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-  const layer = (k: number): number => lerp(
-    lerp(hash3(x0, y0, k), hash3(x0 + 1, y0, k), sx),
-    lerp(hash3(x0, y0 + 1, k), hash3(x0 + 1, y0 + 1, k), sx),
-    sy,
-  );
-  return lerp(layer(z0), layer(z0 + 1), sz);
+  // No closure made per call: it runs some 25 times a point of land, a
+  // hundred thousand points a piece.
+  const x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
+  const a00 = hash3(x0, y0, z0), a10 = hash3(x1, y0, z0), a01 = hash3(x0, y1, z0), a11 = hash3(x1, y1, z0);
+  const b00 = hash3(x0, y0, z1), b10 = hash3(x1, y0, z1), b01 = hash3(x0, y1, z1), b11 = hash3(x1, y1, z1);
+  const ay0 = a00 + (a10 - a00) * sx, ay1 = a01 + (a11 - a01) * sx;
+  const by0 = b00 + (b10 - b00) * sx, by1 = b01 + (b11 - b01) * sx;
+  const a = ay0 + (ay1 - ay0) * sy, b = by0 + (by1 - by0) * sy;
+  return a + (b - a) * sz;
 }
 
 const smooth01 = (t: number): number => {
@@ -76,6 +79,157 @@ export function baseRelief3(x: number, y: number, z: number): number {
   return 32 * (broad * 0.42 + middle * 0.29 + fine * 0.2 + grain * 0.09);
 }
 
+// ------------------------------------------------------------------ the Earth
+
+/**
+ * THE PLANET'S EARTH: continents and oceans, read at the point of the sphere
+ * (its unit direction), so every piece's map and both sides of every border
+ * agree.
+ *
+ * Built as Sebastian Lague builds his Earth-like planets ("Coding Adventure:
+ * Procedural Moons and Planets", `EarthHeight.compute` in SebLague/Solar-System):
+ * a low-frequency CONTINENT noise decides land and sea; under the sea a
+ * smooth maximum holds the ocean floor; over the land a RIDGED noise raises
+ * mountains where a third, slow MASK noise allows them. The continent noise
+ * is DOMAIN-WARPED (Inigo Quilez, "Domain Warping": the noise read at a point
+ * moved by another noise) so coasts wind into bays, peninsulas and capes
+ * rather than the round blobs plain noise draws.
+ *
+ * Shaped after the Earth's two levels (continents and ocean floors) and its
+ * margins (Wikipedia, "Continental shelf": a shelf of gentle gradient to a
+ * break, then a steeper slope down to the abyssal plain): under the sea the
+ * ground runs out as a shallow shelf - pale water over sand - before it falls
+ * to the deep. On land the plains rise slowly from a low coast, so a town has
+ * room to grow, and the mountains stand inland.
+ *
+ * World units (2.5 to the metre); sea level is 0 (`SEA_LEVEL`). Mountains
+ * and the floor stay within some 4% of the radius, so the globe's outline
+ * stays round from orbit. No allocation; deterministic.
+ */
+
+/** The sea's surface, world units: what lies under it is the sea (the ocean is drawn there). */
+export const SEA_LEVEL = 0;
+/** The deepest the ocean floor goes, world units. */
+export const OCEAN_FLOOR = -150;
+/** The tallest a mountain range stands over its plain, world units. */
+const MOUNTAIN_HEIGHT = 175;
+/**
+ * The continent noise's level at the coast: the share of the planet above it
+ * is land (`tests/planet/earth.spec.ts` measures it).
+ */
+const COAST_LEVEL = 0.225;
+
+/** The piece the game opens on (the camera's first place, atlas 0, 0): the home continent stands there. */
+export const HOME_TILE = tileCellOf(0, 0);
+const HOME = TILES[HOME_TILE]!.centre;
+/** Within this arc of home (radians) the land is raised to a continent, fading out by `HOME_REACH`. */
+const HOME_CORE = 0.2;
+const HOME_REACH = 0.5;
+/** How much the home continent lifts the continent noise. */
+const HOME_LIFT = 0.55;
+/** Within this arc of home the mountains are held down: room to build. */
+const HOME_PLAIN = 0.32;
+const cosCore = Math.cos(HOME_CORE);
+const cosReach = Math.cos(HOME_REACH);
+const cosPlain = Math.cos(HOME_PLAIN);
+
+/** Fractal value noise, normalised to about -1..1: `octaves` layers, `lacunarity` times the frequency and `gain` the amplitude each. */
+function fbm3(x: number, y: number, z: number, octaves: number, lacunarity: number, gain: number): number {
+  let sum = 0, weight = 0, amplitude = 1, f = 1;
+  for (let o = 0; o < octaves; o++) {
+    sum += valueNoise3(x * f + o * 17.31, y * f - o * 9.73, z * f + o * 5.19) * amplitude;
+    weight += amplitude;
+    amplitude *= gain;
+    f *= lacunarity;
+  }
+  return sum / weight;
+}
+
+/** A smooth maximum (Inigo Quilez, "Smooth minimum", the polynomial one): `a` and `b` blended over `k`. */
+function smoothMax(a: number, b: number, k: number): number {
+  const h = Math.min(1, Math.max(0, 0.5 + (0.5 * (a - b)) / k));
+  return b + (a - b) * h + k * h * (1 - h);
+}
+
+/** The continent noise's first octaves alone (`continentAt` sets it): the land's broad rise inland, without the coast's detail. */
+let broadLevel = 0;
+/** Octaves of the continent noise: the coast's detail. */
+const CONTINENT_OCTAVES = 6;
+/** Of them, the broad ones the land's rise inland follows. */
+const BROAD_OCTAVES = 2;
+
+/**
+ * How far into a continent a unit direction lies: positive on land (the
+ * further inland, the larger), negative at sea, 0 on the coast.
+ */
+export function continentAt(sx: number, sy: number, sz: number): number {
+  const n = valueNoise3;
+  // The warp: a slow noise moving the point the continents are read at.
+  const qx = sx * 1.55, qy = sy * 1.55, qz = sz * 1.55;
+  const px = qx + 0.55 * n(qx * 1.3 + 3.1, qy * 1.3 - 7.4, qz * 1.3 + 1.7);
+  const py = qy + 0.55 * n(qx * 1.3 - 11.2, qy * 1.3 + 2.6, qz * 1.3 - 4.9);
+  const pz = qz + 0.55 * n(qx * 1.3 + 6.3, qy * 1.3 + 9.8, qz * 1.3 + 12.4);
+  let sum = 0, weight = 0, amplitude = 1, f = 1, broad = 0;
+  for (let o = 0; o < CONTINENT_OCTAVES; o++) {
+    sum += n(px * f + o * 17.31, py * f - o * 9.73, pz * f + o * 5.19) * amplitude;
+    weight += amplitude;
+    if (o === BROAD_OCTAVES - 1) broad = sum;
+    amplitude *= 0.5;
+    f *= 2.03;
+  }
+  const home = HOME_LIFT * smooth01((sx * HOME.x + sy * HOME.y + sz * HOME.z - cosReach) / (cosCore - cosReach));
+  broadLevel = broad / weight - COAST_LEVEL + home;
+  return sum / weight - COAST_LEVEL + home;
+}
+
+/** The Earth's land at a unit direction of the sphere, world units over sea level. */
+export function earthHeight(sx: number, sy: number, sz: number): number {
+  const n = valueNoise3;
+  const e = continentAt(sx, sy, sz);
+  if (e < 0) {
+    // The shelf, gentle, to some -9 off the coast; then the continental
+    // slope to the floor, held there by a smooth maximum.
+    // (A shelf 3.6 m deep under a plane at sea level was lost in the depth
+    // buffer from any height: water and bed fought pixel by pixel.)
+    const sea = e > -0.15 ? 400 * e : -60 + 900 * (e + 0.15);
+    const floor = smoothMax(sea, OCEAN_FLOOR, 40);
+    // The floor's own hills, coming in off the shelf.
+    return floor + 7 * n(sx * 40 + 1.3, sy * 40 - 2.2, sz * 40 + 7.7) * smooth01(-e / 0.2);
+  }
+  // The coast: a low strand rising gently off the water (the full noise,
+  // its every bay); inland the land rises with the broad noise only, so the
+  // plains are wide and gentle, never the coast's detail at a hill's height.
+  const coast = 3 * smooth01(e / 0.15);
+  const inland = smooth01(e / 0.12);
+  const plateau = 26 * smooth01(broadLevel / 0.45) * inland;
+  // Rolling ground, quiet at the shore so a beach stays a beach.
+  const rolling = (2.6 * n(sx * 24 + 2.2, sy * 24 - 8.8, sz * 24 + 0.7) + 0.6 * n(sx * 90 + 4.4, sy * 90 + 1.3, sz * 90 - 2.1)) * inland;
+  // Mountains: where the slow mask allows, inland, held down round the home site.
+  const homePlain = smooth01((sx * HOME.x + sy * HOME.y + sz * HOME.z - cosPlain) / (cosCore - cosPlain));
+  const mask = smooth01((fbm3(sx * 2.4 + 21.7, sy * 2.4 - 3.3, sz * 2.4 + 9.1, 3, 2.1, 0.5) + 0.02) / 0.22)
+    * smooth01((e - 0.06) / 0.2) * (1 - 0.95 * homePlain);
+  let mountains = 0;
+  if (mask > 0) {
+    let ridge = 0, weight = 0, amplitude = 1, f = 7.5;
+    for (let o = 0; o < 5; o++) {
+      const r = 1 - Math.abs(n(sx * f + o * 13.7, sy * f - o * 9.1, sz * f + o * 5.3));
+      ridge += r * r * amplitude;
+      weight += amplitude;
+      amplitude *= 0.5;
+      f *= 2.07;
+    }
+    ridge /= weight;
+    mountains = MOUNTAIN_HEIGHT * mask * ridge * ridge;
+  }
+  return 0.4 + coast + plateau + rolling + mountains;
+}
+
+/** `earthHeight` at a point of the sphere (world units from its centre). */
+export function earthRelief3(x: number, y: number, z: number): number {
+  const l = Math.hypot(x, y, z) || 1;
+  return earthHeight(x / l, y / l, z / l);
+}
+
 /**
  * The land under one piece's map (`core/planetTiles.ts`): a point of it (its
  * own coordinates, about its centre) to the height of the planet's land there.
@@ -83,9 +237,34 @@ export function baseRelief3(x: number, y: number, z: number): number {
 export function tileGround(tile: number, relief: ReliefVersion): (x: number, y: number) => number {
   if (relief === RELIEF_FLAT) return () => 0;
   const s: Vec3 = { x: 0, y: 0, z: 0 };
+  if (relief === RELIEF_EARTH) {
+    return (x, y) => {
+      tileToSphereInto(tile, x, y, s);
+      return earthHeight(s.x, s.y, s.z);
+    };
+  }
   const land = relief === RELIEF_NATURAL ? naturalRelief3 : baseRelief3;
   return (x, y) => {
     tileToSphereInto(tile, x, y, s);
     return land(s.x * PLANET_RADIUS, s.y * PLANET_RADIUS, s.z * PLANET_RADIUS);
+  };
+}
+
+const atAtlas: TileLocal = { tile: 0, x: 0, y: 0 };
+const onSphere: Vec3 = { x: 0, y: 0, z: 0 };
+
+/**
+ * The planet's land at an atlas point (read on the point's own piece), for a
+ * relief: the analytic field, for what has no piece's terrain at hand (the
+ * editor's tunnel test, `editor/commit.ts`).
+ */
+export function atlasGround(relief: ReliefVersion): (x: number, y: number) => number {
+  if (relief === RELIEF_FLAT) return () => 0;
+  const land = relief === RELIEF_NATURAL ? naturalRelief3 : baseRelief3;
+  return (x, y) => {
+    atlasToTileInto(x, y, atAtlas);
+    tileToSphereInto(atAtlas.tile, atAtlas.x, atAtlas.y, onSphere);
+    if (relief === RELIEF_EARTH) return earthHeight(onSphere.x, onSphere.y, onSphere.z);
+    return land(onSphere.x * PLANET_RADIUS, onSphere.y * PLANET_RADIUS, onSphere.z * PLANET_RADIUS);
   };
 }
