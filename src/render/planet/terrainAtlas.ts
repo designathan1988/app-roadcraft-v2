@@ -26,7 +26,6 @@ import {
   type TerrainSurface,
 } from '../terrain';
 import { buildGlobeGround } from './globeGround';
-import { createGlobeForest, type GlobeForest } from './globeForest';
 
 /**
  * THE PLANET'S GROUND: the far globe at low detail in one draw
@@ -77,14 +76,6 @@ const NEAR_BUDGET_MS = 8;
  * and the pieces with something on them.
  */
 const NEAR_VIEW = 2400;
-/**
- * The far woods (`globeForest.ts`) are drawn while the ground the view takes
- * in (the screen's half height) is under this: past it a tree is under a
- * pixel or two across.
- */
-const FOREST_VIEW = 60_000;
-/** Milliseconds a frame for growing the far woods, piece by piece. */
-const FOREST_BUDGET_MS = 3;
 
 /** One face's share of the document, in the face's coordinates (what `TerrainSurface.update` reads). */
 class FaceSource implements TerrainSource {
@@ -165,7 +156,6 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
   globe.visible = false;
   root.add(globe);
   let globeRelief: ReliefVersion | null = null;
-  let forest: GlobeForest | null = null;
   /** Each piece's lowest and highest ground on the far globe (`globeGround.ts`), for the horizon. */
   let globeLow: Float32Array = new Float32Array(TILE_COUNT), globeHigh: Float32Array = new Float32Array(TILE_COUNT);
   const buildGlobe = (relief: ReliefVersion): void => {
@@ -177,11 +167,6 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     globeLow = built.low;
     globeHigh = built.high;
     globe.visible = true;
-    // Its woods, grown again on the new ground a few pieces a frame (`focus`).
-    if (forest) { root.remove(forest.mesh); forest.dispose(); }
-    forest = createGlobeForest(built.heightAt, 1);
-    for (const t of tiles) if (t.shown) forest.setShown(t.face, true);
-    root.add(forest.mesh);
     for (const t of tiles) if (!t.surface) measured.add(t);
     measure();
   };
@@ -283,7 +268,6 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     t.shown = on;
     const s = t.surface!;
     if (on) root.add(...s.meshes); else root.remove(...s.meshes);
-    forest?.setShown(t.face, on);
     // The piece's bit in its word (`PLANET_ACTIVE_TILES`: 24 to a float).
     const word = Math.floor(t.face / 24), bit = 2 ** (t.face % 24);
     const has = Math.floor(activeBits[word]! / bit) % 2 === 1;
@@ -491,10 +475,6 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     ground: firstSurface.ground,
     get parts() { return partsShown; },
     focus(x, y, reach) {
-      if (forest) {
-        forest.build(FOREST_BUDGET_MS);
-        forest.mesh.visible = reach < FOREST_VIEW;
-      }
       // Proland's split rule on the pieces: in full within some times the
       // ground the view takes in of what it looks at, none from far out.
       const wantNear = reach < NEAR_VIEW;
@@ -637,7 +617,6 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     dispose() {
       for (const t of tiles) t.surface?.dispose();
       globeSurface.dispose();
-      forest?.dispose();
     },
   };
 }

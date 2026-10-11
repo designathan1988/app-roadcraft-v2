@@ -1,7 +1,7 @@
 /**
  * The woods' masses: smooth value noise over the map's own coordinates, one
- * octave at a scale, by `salt` (`renderer.ts` natureSweep, `planet/globeForest.ts`).
- * Shared so the far globe's woods stand where the near ones do. Pure.
+ * octave at a scale, by `salt` (`renderer.ts` natureSweep, the planet's
+ * woods tone in `terrain.ts`). Shared so the far woods stand where the near ones do. Pure.
  */
 export function natureNoise(x: number, y: number, scale: number, salt: number): number {
   const gx = x / scale, gy = y / scale;

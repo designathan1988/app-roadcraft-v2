@@ -1903,7 +1903,7 @@ function terrainMaterial(
          ${PLANET_BIOMES}
          ${__PLANET__ ? `
          // The woods' own tone under the trees and in their place from afar
-         // (\`globeForest.ts\` shrinks each far tree away with the distance):
+         // (the trees end with the full pieces; past them only this tone):
          // the masses stay, as a forest seen from orbit is a darker tone of
          // the land - never a pop from trees to bare ground. Worked out per
          // pixel from the same noise the trees stand by (\`natureNoise.ts\`),
