@@ -6,7 +6,7 @@ import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { WORLD_HALF } from '@world/bounds';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { planetCentre, planetInverse, planetPointInto } from './planet/bend';
-import { AIR_GLSL, ATMOSPHERE_TOP, type Air } from './planet/air';
+import { AIR_GLSL, ATMOSPHERE_TOP, type Air, SURFACE_AIR } from './planet/air';
 import { m } from '@world/units';
 import { drawnCloudHeight, driftedCloud, type PlacedCloud } from '@world/clouds';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -456,9 +456,10 @@ export function createPostChain(
           (u['uPlanet']!.value as Vector4).set(onPlanet.x, onPlanet.y, onPlanet.z, PLANET_RADIUS);
           (u['uPlanetInverse']!.value as Matrix4).copy(planetInverse());
           // The aerial perspective's distance scale by the eye's height: a
-          // quarter of the true air by the ground, all of it at the top.
+          // quarter of the true air by the ground, rising to the shell's own
+          // share at the top (`SURFACE_AIR`), so crossing it changes nothing.
           const high = Math.min(1, Math.max(0, (camera.position.distanceTo(onPlanet) - PLANET_RADIUS) / (ATMOSPHERE_TOP - PLANET_RADIUS)));
-          u['uAirScale']!.value = 0.25 + 0.75 * high * high * (3 - 2 * high);
+          u['uAirScale']!.value = 0.25 + (SURFACE_AIR - 0.25) * high * high * (3 - 2 * high);
           // The clouds and their shadows give way as the view takes in the
           // globe: by how tall the view is over the ground under the eye,
           // in planet widths - whole up to 0.2, gone at 0.6 (the whole globe

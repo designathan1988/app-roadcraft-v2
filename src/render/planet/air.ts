@@ -55,6 +55,19 @@ const RAYLEIGH_HEIGHT = R * 0.07;
 const MIE_HEIGHT = R * 0.02;
 /** The top of the air: six Rayleigh heights (what is left above is e^-6 of the ground's air, a quarter of a percent). */
 export const ATMOSPHERE_TOP = R + RAYLEIGH_HEIGHT * 6;
+/**
+ * How much of the air's own light and dimming the ground takes, seen from the
+ * top of the air and out in space (Unreal's "Aerial Perspective View
+ * Distance Scale" carried out to the shell): the air's heights are the
+ * Earth's stretched over a small world, so a ray down to the ground crosses a
+ * whole Earth's column of air at every angle, and the land came out teal and
+ * the woods navy from a few kilometres up (the player, 2026-10-10: "manchas
+ * azuladas"). The sky, the limb and the dusk keep the full air: only the
+ * rays that reach the ground are scaled, eased in towards the limb. The post
+ * pass's own scale inside the air rises to this same value at the air's top,
+ * so crossing it changes nothing.
+ */
+export const SURFACE_AIR = 0.4;
 /** Earth metres per world unit for the gases and the aerosols: their heights over ours. */
 const METRES = 8000 / RAYLEIGH_HEIGHT;
 const MIE_METRES = 1200 / MIE_HEIGHT;

@@ -7,7 +7,7 @@ import {
   SphereGeometry, SrcAlphaFactor, Vector3, WebGLRenderTarget, type Camera, type Scene, type WebGLRenderer,
 } from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { AIR_GLSL, ATMOSPHERE_TOP, createAir, type Air } from './air';
+import { AIR_GLSL, ATMOSPHERE_TOP, createAir, type Air, SURFACE_AIR } from './air';
 export { ATMOSPHERE_TOP } from './air';
 
 /**
@@ -81,7 +81,15 @@ const ATMOSPHERE_FRAGMENT = /* glsl */ `
     vec3 rd = normalize(vWorld - cameraPosition);
     // Inside the air the sky round the eye (the sky-view LUT; the ground's
     // own air is the post pass's, by its depth); from space the march.
-    gl_FragColor = uAirInside > 0.5 ? airSky(cameraPosition, rd) : airRay(cameraPosition, rd, 1e9);
+    if (uAirInside > 0.5) { gl_FragColor = airSky(cameraPosition, rd); return; }
+    vec4 air = airRay(cameraPosition, rd, 1e9);
+    // The ground's share of the air (\`SURFACE_AIR\`): rays that reach the
+    // ground take it, those that pass over the limb the whole air, eased
+    // between by how close to the ground the ray passes.
+    vec3 ro = cameraPosition - uAirCentre;
+    float pass = length(cross(ro, rd));
+    float k = mix(${SURFACE_AIR.toFixed(3)}, 1.0, smoothstep(AIR_R * 0.9, AIR_R * 1.002, pass));
+    gl_FragColor = vec4(air.rgb * k, mix(1.0, air.a, k));
   }
 `;
 
