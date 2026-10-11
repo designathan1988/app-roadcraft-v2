@@ -197,14 +197,18 @@ export class CameraGestures {
     if (!coast) return false;
     const seconds = Math.min(0.1, Math.max(0, dt));
     const view = this.host.view();
-    if (coast.kind === 'orbit') view.orbit(coast.vx * seconds, coast.vy * seconds);
+    // The way the speed decays over this step, and the distance it covers -
+    // the exact integral of v e^(-t/tau), tau (1 - e^(-dt/tau)) v: stepped as
+    // v dt the coast went about dt/2tau further than its cap allows.
+    const keep = Math.exp(-seconds / COAST_DECAY_S);
+    const span = COAST_DECAY_S * (1 - keep);
+    if (coast.kind === 'orbit') view.orbit(coast.vx * span, coast.vy * span);
     else {
       // The pan's own sense: the ground follows the hand, so the view's
       // centre goes the other way across the screen and away down it.
-      const units = seconds / Math.max(1e-6, view.scaleAtCentre ?? view.zoom);
+      const units = span / Math.max(1e-6, view.scaleAtCentre ?? view.zoom);
       view.slide(-coast.vx * units, coast.vy * units);
     }
-    const keep = Math.exp(-seconds / COAST_DECAY_S);
     coast.vx *= keep;
     coast.vy *= keep;
     const min = coast.kind === 'orbit' ? COAST_MIN_ORBIT : COAST_MIN_PAN;

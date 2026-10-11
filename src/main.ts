@@ -648,6 +648,90 @@ function savedQualityLevel(): QualityLevel {
 primeSurfaceBake(await surfaceBake);
 sim.conflicts.seed(await keptZones);
 const scene: SceneHandle = createSceneRenderer(canvas3d, { x: camera.x, y: camera.y }, camera.zoom, savedQualityLevel(), requestDraw);
+
+// ------------------------------------------------------------- free flight
+// The free camera (`render/planet/flight.ts`): V takes off from where the view
+// is and lands back over the ground ahead. The mouse steers - locked to the
+// canvas once clicked, as flight games have it - and the keys fly.
+const flight = scene.flight;
+const flightHud = document.createElement('div');
+flightHud.className = 'flight-hud';
+flightHud.hidden = true;
+flightHud.style.cssText = 'position:fixed;left:16px;bottom:96px;z-index:30;pointer-events:none;color:#e8f4ff;font:500 13px/1.45 system-ui,sans-serif;'
+  + 'background:rgba(6,14,24,.55);border:1px solid rgba(140,200,255,.25);border-radius:10px;padding:10px 12px;max-width:min(560px,calc(100vw - 32px));text-shadow:0 1px 2px #000';
+document.body.append(flightHud);
+let flightShownAt = 0;
+const metresText = (units: number): string => {
+  const metres = units / UNITS_PER_METER;
+  return metres >= 10_000 ? `${formatDecimal(metres / 1000, 0)} km` : metres >= 1000 ? `${formatDecimal(metres / 1000, 1)} km` : `${formatDecimal(metres, 0)} m`;
+};
+function updateFlightHud(now: number): void {
+  if (!flight?.active) return;
+  if (now - flightShownAt < 100) return;
+  flightShownAt = now;
+  const st = flight.state;
+  const speed = metresText(st.speed);
+  flightHud.innerHTML = `<div style="font-size:15px;font-weight:700">${t('flight.speed')}: ${speed}/s${st.boost ? ' ⚡' : ''}</div>`
+    + `<div>${t('flight.height', { body: t(`flight.body.${st.near}`) })}: ${metresText(st.height)}</div>`
+    + `<div>${t('flight.throttle')}: ${formatDecimal(st.throttle, st.throttle < 1 ? 2 : 1)}×</div>`
+    + `<div style="opacity:.8;margin-top:4px">${document.pointerLockElement === canvas ? t('flight.hint') : t('flight.clickToSteer') + ' · ' + t('flight.hint')}</div>`;
+}
+function takeOff(): void {
+  if (!flight || flight.active) return;
+  cameraMotion.stop();
+  flight.enter();
+  flightHud.hidden = false;
+  flightShownAt = 0;
+  requestDraw();
+}
+function land(): void {
+  if (!flight?.active) return;
+  const { landing, height } = flight.exit();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  flightHud.hidden = true;
+  if (landing) { camera.x = landing.x; camera.y = landing.y; }
+  // As much ground in view as the height the flight left at.
+  camera.zoom = Math.max(view.zoomBounds.min, surface.cssH / (2 * Math.max(m(8), height * 0.55)));
+  syncViewFromFlatCamera();
+  requestDraw();
+}
+window.addEventListener('keydown', (e) => {
+  if (!flight) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === 'KeyV' && !e.repeat) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (flight.active) land(); else takeOff();
+    return;
+  }
+  if (!flight.active) return;
+  if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); land(); return; }
+  if (flight.press(e.code, e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); requestDraw(); }
+}, { capture: true });
+window.addEventListener('keyup', (e) => { if (flight?.active) flight.release(e.code, e.shiftKey); }, { capture: true });
+window.addEventListener('blur', () => flight?.releaseAll());
+canvas.addEventListener('pointerdown', (e) => {
+  if (!flight?.active) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  if (document.pointerLockElement !== canvas) void canvas.requestPointerLock?.();
+}, { capture: true });
+canvas.addEventListener('pointermove', (e) => {
+  if (!flight?.active) return;
+  e.stopImmediatePropagation();
+  // Locked: every move steers; otherwise a drag does.
+  if (document.pointerLockElement === canvas || e.buttons !== 0) { flight.look(e.movementX, e.movementY); requestDraw(); }
+}, { capture: true });
+for (const type of ['pointerup', 'pointercancel', 'contextmenu'] as const) {
+  canvas.addEventListener(type, (e) => { if (flight?.active) { e.stopImmediatePropagation(); e.preventDefault(); } }, { capture: true });
+}
+canvas.addEventListener('wheel', (e) => {
+  if (!flight?.active) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  flight.wheel(-Math.sign(e.deltaY));
+  requestDraw();
+}, { capture: true, passive: false });
 // The traffic's topology is not built here: it is built a slice a frame while
 // the opening puts the town together (`TopologyCatchUp`, its frames not yet
 // shown), the traffic held until it is in. Built here, its conflict zones
@@ -3386,7 +3470,11 @@ function frame(now: number): void {
   frameTimer.mark('painéis');
   const wall = frameClock.tick(now);
   // The camera's glide: keys held, the wheel's notches being spent.
-  if (cameraMotion.step(wall)) persistence.saveSettingsSoon(sessionSettings);
+  if (flight?.active) {
+    flight.step(wall);
+    updateFlightHud(now);
+    requestDraw();
+  } else if (cameraMotion.step(wall)) persistence.saveSettingsSoon(sessionSettings);
   // The coast of a drag let go (`cameraGestures.ts`).
   cameraHand.step(wall);
   frameTimer.mark('câmera');

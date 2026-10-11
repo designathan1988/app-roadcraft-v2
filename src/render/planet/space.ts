@@ -40,6 +40,14 @@ export { ATMOSPHERE_TOP } from './air';
 /** The moon: radius and distance from the planet's centre. */
 const MOON_RADIUS = PLANET_RADIUS * 0.27;
 const MOON_DISTANCE = PLANET_RADIUS * 16;
+/**
+ * The sun as a body one can fly to (\`flight.ts\`): its distance from the
+ * planet's centre, and its radius - the angle its disc is drawn at from the
+ * planet (0.0054 rad, about the real sun's from the Earth).
+ */
+export const SUN_DISTANCE = PLANET_RADIUS * 60;
+const SUN_ANGLE = 0.16 * 0.034;
+export const SUN_RADIUS = SUN_DISTANCE * Math.tan(SUN_ANGLE);
 /** A synodic month, in days of the game. */
 const LUNAR_MONTH = 29.53;
 /** The moon's orbit's tilt to the sun's path, radians. */
@@ -182,6 +190,7 @@ const GALAXY_FRAGMENT = /* glsl */ `
 
 const SUN_VERTEX = /* glsl */ `
   uniform vec3 uSun;
+  uniform vec3 uSunView;
   uniform float uSize;
   varying vec2 vUv;
   varying vec3 vTint;
@@ -203,7 +212,8 @@ const SUN_VERTEX = /* glsl */ `
       vec3 T = airSunTransmittance(r, dot(uSun, p / r));
       vTint = clamp(T / max(dot(T, vec3(1.0 / 3.0)), 1e-3), 0.0, 3.0);
     }
-    vec4 view = viewMatrix * vec4(cameraPosition + uSun * 1000.0, 1.0);
+    // Where the sun's body is seen from the eye (\`uSunView\`), as big as it is from there (\`uSize\`).
+    vec4 view = viewMatrix * vec4(cameraPosition + uSunView * 1000.0, 1.0);
     view.xy += position.xy * uSize * 1000.0;
     vec4 clip = projectionMatrix * view;
     atFar(clip, 1.0);
@@ -214,19 +224,59 @@ const SUN_VERTEX = /* glsl */ `
 const SUN_FRAGMENT = /* glsl */ `
   uniform float uShow;
   uniform float uDisc;
+  uniform float uSize;
   varying vec2 vUv;
   varying vec3 vTint;
+  float sunHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float sunNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(sunHash(i), sunHash(i + vec2(1, 0)), f.x), mix(sunHash(i + vec2(0, 1)), sunHash(i + vec2(1, 1)), f.x), f.y);
+  }
+  // Granulation: convection cells, bright centres and dark lanes between -
+  // a cellular (Worley) field, the nearest of a jittered point per cell.
+  float sunCells(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    float best = 8.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        vec2 o = vec2(float(x), float(y));
+        vec2 q = o + vec2(sunHash(i + o), sunHash(i + o + 17.3)) - f;
+        best = min(best, dot(q, q));
+      }
+    }
+    return sqrt(best);
+  }
   void main() {
     float r = length(vUv);
-    float disc = 1.0 - smoothstep(uDisc * 0.92, uDisc, r);
-    float glow = exp(-r * 12.0) * 1.6 + exp(-r * 4.5) * 0.22;
+    // The quad's uv times \`uSize\` is the angle from the sun's centre
+    // (radians, near enough): the disc is \`uDisc\` of it, 0.0054 rad as the
+    // sun is seen from the planet, as big as it is from wherever the free
+    // camera flew (\`flight.ts\`). The glare is the eye's, not the sun's: it
+    // reaches the same angle past the limb however big the disc is (scaled
+    // with the disc, it covered the whole view near the sun). Near, the eye
+    // adapts as a camera's exposure would - the disc no longer 40 times
+    // white - and its face shows the limb darkening and the granulation
+    // (Eddington's law, I/I0 = 0.4 + 0.6 mu).
+    float near = smoothstep(0.16, 1.2, uSize);
+    float g = r / uDisc;
+    float beyond = max(r - uDisc, 0.0) * uSize + 0.0054;
+    float disc = 1.0 - smoothstep(0.92, 1.0, g);
+    float mu = sqrt(max(0.0, 1.0 - min(g, 1.0) * min(g, 1.0)));
+    vec2 q = vUv / uDisc;
+    float grain = (1.0 - smoothstep(0.25, 0.75, sunCells(q * 34.0))) * 0.75 + sunNoise(q * 7.0) * 0.25;
+    // Near, its photosphere's colour: yellow-white at the centre, deeper
+    // orange and darker towards the limb (the light from higher, cooler gas).
+    vec3 photosphere = mix(vec3(1.0, 0.42, 0.1), vec3(1.0, 0.86, 0.6), mu) * (0.4 + 0.6 * mu) * (0.55 + 0.6 * grain);
+    vec3 face = mix(vec3(1.0, 0.96, 0.9), photosphere, near);
+    float glow = (exp(-beyond * 75.0) * 1.6 + exp(-beyond * 28.0) * 0.22) * mix(1.0, 0.3, near);
     // A faint six-point star of the eye's lashes over the glare.
     float a = atan(vUv.y, vUv.x);
-    float rays = pow(abs(cos(a * 3.0)), 40.0) * exp(-r * 6.0) * 0.5;
+    float rays = pow(abs(cos(a * 3.0)), 40.0) * exp(-beyond * 37.5) * 0.5 * mix(1.0, 0.5, near) * (1.0 - disc * near);
     // Down to nothing before the quad's edge: any step there, with the bloom
     // over it, drew the square the glow is painted on.
     float window = 1.0 - smoothstep(0.55, 0.98, r);
-    vec3 c = vec3(1.0, 0.96, 0.9) * vTint * (disc * 40.0 + (glow + rays) * window);
+    vec3 c = vTint * (face * disc * mix(40.0, 0.95, near) + vec3(1.0, mix(0.96, 0.78, near), mix(0.9, 0.55, near)) * (glow * (1.0 - disc) + rays) * window);
     gl_FragColor = vec4(c * uShow, 1.0);
   }
 `;
@@ -250,6 +300,9 @@ const MOON_VERTEX = /* glsl */ `
 const MOON_FRAGMENT = /* glsl */ `
   uniform vec3 uSun;
   uniform float uShow;
+  uniform float uGain;
+  uniform vec3 uEarth;
+  uniform float uEarthLight;
   varying vec3 vLocal;
   varying vec3 vNormal;
   varying vec3 vWorld;
@@ -281,17 +334,33 @@ const MOON_FRAGMENT = /* glsl */ `
       vec3 centre = c + 0.15 + 0.7 * hash33(c + seed * 1.3);
       float r = 0.12 + 0.33 * hash13(c - seed);
       float d = length(q - centre) / r;
-      if (d > 2.6) continue;
+      // Every term continuous (a step in the height drew a dotted ring
+      // through the bump), and gone before the 27 cells' reach (r * 2.2 <
+      // one cell), where a crater was cut along a straight line.
+      if (d > 2.2) continue;
       float bowl = d < 1.0 ? (d * d - 1.0) * 0.4 : 0.0;
       float rim = exp(-pow((d - 1.0) / 0.2, 2.0)) * 0.16;
-      float ejecta = d > 1.0 ? 0.05 * exp(-(d - 1.0) * 2.5) : 0.0;
-      h += (bowl + rim + ejecta) * r;
+      float ejecta = d > 1.0 ? 0.05 * (1.0 - exp(-(d - 1.0) * 10.0)) * exp(-(d - 1.0) * 2.5) : 0.0;
+      h += (bowl + rim + ejecta) * r * (1.0 - smoothstep(1.6, 2.2, d));
     }
     return h / cells;
   }
   void main() {
     vec3 p = normalize(vLocal);
     float h = craters(p, 3.0, 1.0, 0.55) + craters(p, 8.0, 7.0, 0.5) + craters(p, 22.0, 13.0, 0.45) * 0.8;
+    // Close by (the free camera, \`flight.ts\`): smaller craters and the
+    // regolith's lumps, each faded out before it is finer than a pixel.
+    float px = length(fwidth(p));
+    if (px < 0.004) {
+      h += craters(p, 90.0, 21.0, 0.4) * 0.8 * (1.0 - smoothstep(0.0015, 0.004, px));
+      float a = 0.0012;
+      float f = 300.0;
+      for (int o = 0; o < 4; o++) {
+        a *= 0.5;
+        h += (noise(p * f) - 0.5) * a * (1.0 - smoothstep(0.25, 0.8, px * f));
+        f *= 3.1;
+      }
+    }
     // Maria: the dark basalt plains, on the near side mostly.
     float maria = smoothstep(0.55, 0.7, noise(p * 2.2 + 4.0) * 0.65 + noise(p * 5.0) * 0.35) * smoothstep(-0.4, 0.3, p.x);
     float albedo = mix(0.17, 0.075, maria) * (0.85 + 0.3 * noise(p * 40.0));
@@ -309,7 +378,10 @@ const MOON_FRAGMENT = /* glsl */ `
     float mu = max(dot(n, view), 0.0);
     // Lommel-Seeliger with a little Lambert: the full moon bright to its limb.
     float lit = mix(mu0 / max(mu0 + mu, 1e-3) * 2.0, mu0, 0.35);
-    vec3 c = vec3(1.0, 0.98, 0.95) * albedo * lit * 9.0 + vec3(0.02, 0.025, 0.035) * albedo;
+    // Earthshine: the planet's lit side lights the moon's night (strongest
+    // at the new moon, when the planet is full from there).
+    float earth = max(dot(n, uEarth), 0.0) * uEarthLight;
+    vec3 c = vec3(1.0, 0.98, 0.95) * albedo * lit * uGain + vec3(0.55, 0.68, 0.95) * albedo * earth + vec3(0.02, 0.025, 0.035) * albedo;
     gl_FragColor = vec4(c * uShow, 1.0);
   }
 `;
@@ -400,6 +472,8 @@ export interface Space {
   readonly hidden: Set<string>;
   /** The air round the planet (`air.ts`): its LUTs and uniforms, for the post pass's aerial perspective and clouds. */
   readonly air: Air;
+  /** The bodies the free camera can fly to and is pulled by (`flight.ts`): their centres (three's space) and radii, as last updated. */
+  bodies(): readonly { readonly name: 'moon' | 'sun'; readonly centre: Vector3; readonly radius: number }[];
   dispose(): void;
 }
 
@@ -462,7 +536,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   stars.userData = skip;
 
   const sunMaterial = new ShaderMaterial({
-    uniforms: { ...air$, uSun: { value: new Vector3() }, uShow: { value: 0 }, uSize: { value: 0.16 }, uDisc: { value: 0.034 } },
+    uniforms: { ...air$, uSun: { value: new Vector3() }, uSunView: { value: new Vector3() }, uShow: { value: 0 }, uSize: { value: 0.16 }, uDisc: { value: 0.034 } },
     vertexShader: SUN_VERTEX,
     fragmentShader: SUN_FRAGMENT,
     depthWrite: false,
@@ -476,7 +550,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   sun.userData = skip;
 
   const moonMaterial = new ShaderMaterial({
-    uniforms: { uSun: { value: new Vector3() }, uShow: { value: 0 } },
+    uniforms: { uSun: { value: new Vector3() }, uShow: { value: 0 }, uGain: { value: 9 }, uEarth: { value: new Vector3() }, uEarthLight: { value: 0 } },
     vertexShader: MOON_VERTEX,
     fragmentShader: MOON_FRAGMENT,
     side: FrontSide,
@@ -519,6 +593,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   const up = new Vector3();
   const side = new Vector3();
   const basis = new Matrix4();
+  const sunBody = new Vector3();
   let spaceShare = 0;
   const hidden = new Set<string>();
 
@@ -527,6 +602,12 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
     air: airModel,
     get spaceShare() {
       return spaceShare;
+    },
+    bodies() {
+      return [
+        { name: 'moon' as const, centre: moon.position, radius: MOON_RADIUS },
+        { name: 'sun' as const, centre: sunBody, radius: SUN_RADIUS },
+      ];
     },
     update(frame) {
       const { globe, minutes, centre, motion, camera } = frame;
@@ -546,6 +627,12 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       stars.visible = galaxy.visible = true;
       sunMaterial.uniforms['uShow']!.value = 1;
       (sunMaterial.uniforms['uSun']!.value as Vector3).copy(frame.sun);
+      // The body: from the eye, its direction and its size (it grows as the free camera flies to it).
+      sunBody.copy(centre).addScaledVector(frame.sun, SUN_DISTANCE);
+      const toSun = (sunMaterial.uniforms['uSunView']!.value as Vector3).subVectors(sunBody, camera.position);
+      const sunFar = Math.max(SUN_RADIUS * 1.01, toSun.length());
+      toSun.divideScalar(sunFar);
+      sunMaterial.uniforms['uSize']!.value = Math.min(22, Math.asin(SUN_RADIUS / sunFar) / 0.034);
       sun.visible = true;
       // The moon: phase by its lag behind the sun, on an orbit tilted a little.
       const phase = (minutes / 1440 / LUNAR_MONTH) % 1;
@@ -560,6 +647,14 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       basis.makeBasis(toward, side, up);
       moon.quaternion.setFromRotationMatrix(basis);
       (moonMaterial.uniforms['uSun']!.value as Vector3).copy(frame.sun);
+      // Its light as the eye adapts: 9 times its albedo while it is a disc in
+      // the sky (bright against the blue), as the planet's ground once the
+      // free camera is close enough for it to fill the view - at 9 the lit
+      // side was all white there.
+      const moonAngle = Math.asin(Math.min(1, MOON_RADIUS / Math.max(MOON_RADIUS, camera.position.distanceTo(moon.position))));
+      moonMaterial.uniforms['uGain']!.value = 9 + (2.4 - 9) * smooth(0.05, 0.45, moonAngle);
+      (moonMaterial.uniforms['uEarth']!.value as Vector3).copy(moonDir).negate();
+      moonMaterial.uniforms['uEarthLight']!.value = 1.6 * (1 + moonDir.dot(frame.sun)) / 2;
       // By day too, pale against the blue (the shell adds the sky over it).
       moonMaterial.uniforms['uShow']!.value = 1;
       moon.visible = true;

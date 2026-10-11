@@ -82,6 +82,7 @@ import { buildBarriers, type Barriers } from './barriers';
 import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
+import { Flight } from './planet/flight';
 import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetPointInto, planetScene, planetSphereInView, planetSun } from './planet/bend';
 import { planetLocalMinutes as planetLocalMinutesAt } from '@world/planet/sun';
 import { createSpace } from './planet/space';
@@ -285,6 +286,8 @@ export interface SceneHandle {
    * as long as it is on; null gives the orbit (and the projection it had) back.
    */
   setChase(chase: PlayCamera | null): void;
+  /** The free camera (`planet/flight.ts`): null off the planet. */
+  readonly flight: Flight | null;
   /** A person not drawn (the player's own body, seen from inside the head). */
   setHiddenPerson(id: number | null): void;
   /**
@@ -560,6 +563,13 @@ export function createSceneRenderer(
   });
   // On the planet: the stars, the sun, the moon and the air round it (`planet/space.ts`).
   const space = __PLANET__ ? createSpace(scene, renderer) : null;
+  // The free camera, flying over and away from the planet.
+  const flight = __PLANET__ && space ? new Flight({
+    get camera() { return rig.camera as PerspectiveCamera; },
+    bodies: () => space.bodies(),
+    groundAt: (x, y) => terrain.renderedHeightAt(x, y),
+    setPose: (pose) => rig.setFlight(pose),
+  }) : null;
   if (import.meta.env.DEV && space) Object.assign(window, { __space: space, __spaceCamera: () => rig.camera });
   const spaceCentre = new Vector3();
   /**
@@ -571,6 +581,8 @@ export function createSceneRenderer(
    */
   /** The longitude offset (minutes) the fixed sky's sun stands at now, or -1. */
   let fixedOffset = -1;
+  /** The planet's hour frozen at a free flight's take-off (`flight`), or -1. */
+  let flightClock = -1;
   /** The offset it is going to (`fixedOffset` eases there), or -1. */
   let fixedTarget = -1;
   /** How far the view may go from it before the fixed sky's sun follows, minutes of longitude. */
@@ -2441,6 +2453,7 @@ export function createSceneRenderer(
     // effects, and now the physics the bodies fall with (`warmPhysics`). The
     // idle preload below makes the effects only.
     effects: () => loadEffects().then(() => import('./ragdoll')).then((mod) => mod.warmPhysics()),
+    flight,
     setChase(chase) {
       if (chase && orbitPerspective === null) {
         orbitPerspective = rig.perspective;
@@ -3263,7 +3276,15 @@ export function createSceneRenderer(
         const step = Math.sign(left) * Math.min(Math.abs(left), FIXED_SKY_TURN * Math.min(0.1, Math.max(0, delta)));
         fixedOffset = (((fixedOffset + step) % 1440) + 1440) % 1440;
       } else fixedOffset = fixedTarget = -1;
-      const clock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - fixedOffset : fixedHour;
+      const viewClock = fixedHour === null ? sim.city.minutes(sim) : __PLANET__ ? fixedHour - fixedOffset : fixedHour;
+      // In free flight the sky is space itself: the fixed hour's sun, set by
+      // the place looked at, stays where it was at take-off - followed, the sun
+      // and the moon (`space.ts`, its orbit by the hour) moved with the view
+      // and could never be reached.
+      if (flight?.active && fixedHour !== null) {
+        if (flightClock < 0) flightClock = viewClock;
+      } else flightClock = -1;
+      const clock = flightClock >= 0 ? flightClock : viewClock;
       {
         // THE WEATHER (`world/weather.ts`): the wind carries the clouds and
         // bends the plants and the smoke; the rain falls through the view;
