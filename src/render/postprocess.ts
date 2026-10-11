@@ -905,6 +905,17 @@ const CLOUD_SHADOWS = {
     uniform float uShadowPlane;
     uniform vec4 uShadowRect;
     // How much cloud lies from a point towards the sun, through each heap.
+    // What a cloud's shadow is cast by: the density the cloud is drawn with
+    // (\`cloudDensity\`) with its noises at their mean - the base shape less
+    // the mean erosion - so the shadow is the cloud's own size. Cast by the
+    // whole smooth heap, it was the cloud's bounding outline: shadows twice
+    // the clouds' size, dark where no cloud was seen (2026-10-10).
+    float shadowDensity(int c, vec3 p) {
+      float life = uLife[c];
+      float shape = clamp(heap(c, p) * 3.2 - 0.5 * (0.55 + 0.4 * (1.0 - life)) - (1.0 - life) * 0.8, 0.0, 1.0);
+      float erode = 0.5 * (0.55 + 0.3 * (1.0 - life));
+      return clamp((shape - erode) / (1.0 - erode), 0.0, 1.0) * uShow[c];
+    }
     float shadowThrough(vec3 from) {
       float through = 0.0;
       for (int c = 0; c < MAX_CLOUDS; c++) {
@@ -914,7 +925,7 @@ const CLOUD_SHADOWS = {
         float a = max(span.x, 0.0);
         float len = (span.y - a) / 5.0;
         for (int i = 0; i < 5; i++) {
-          through += clamp(heap(c, from + uSunDir * (a + (float(i) + 0.5) * len)) * 5.0 - (1.0 - uLife[c]) * 1.2, 0.0, 1.0) * uShow[c] * len / uCloud[c].w;
+          through += shadowDensity(c, from + uSunDir * (a + (float(i) + 0.5) * len)) * len / uCloud[c].w;
         }
       }
       return through;
