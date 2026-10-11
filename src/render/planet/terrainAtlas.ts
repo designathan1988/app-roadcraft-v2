@@ -27,6 +27,7 @@ import {
 } from '../terrain';
 import { buildGlobeGround } from './globeGround';
 import { createPlanetOcean, type PlanetOcean } from './ocean';
+import { compileAhead } from '../uploads';
 
 /**
  * THE PLANET'S GROUND: the far globe at low detail in one draw
@@ -175,9 +176,11 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
     if (ocean) { root.remove(ocean.mesh); ocean.dispose(); ocean = null; }
     oceanQueue.length = 0;
     if (relief === RELIEF_EARTH) {
-      ocean = createPlanetOcean(anisotropy);
-      if (lookGiven) ocean.setLook(lastLook);
-      root.add(ocean.mesh);
+      const made = ocean = createPlanetOcean(anisotropy);
+      if (lookGiven) made.setLook(lastLook);
+      // Into the scene once its program is built, in parallel (`compileAhead`):
+      // drawn first, it stopped a frame for as long as the driver took.
+      void compileAhead(made.mesh).then(() => { if (ocean === made) root.add(made.mesh); });
       for (let i = 0; i < TILE_COUNT; i++) oceanQueue.push(i);
     }
   };

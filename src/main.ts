@@ -245,6 +245,14 @@ if (saved) {
   try {
     doc.changes.causeNext('mapa salvo carregado');
     restoreInto(doc, saved, net);
+    // A planet map saved with nothing on its ground (no road, building or
+    // terrain edit) opens as the Earth: nothing stands there to be moved, and
+    // a map saved before the Earth existed stayed a green ball with no sea
+    // (the player, 2026-10-10: "cadê a Terra").
+    if (__PLANET__ && doc.terrainRelief !== RELIEF_EARTH && doc.nodes.size === 0 && doc.segments.size === 0
+      && doc.buildings.size === 0 && doc.terrainStamps.length === 0 && doc.terrainPaint.length === 0) {
+      doc.terrainRelief = RELIEF_EARTH;
+    }
     doc.changes.causeNext('jogo');
   } catch (error) {
     console.error('The saved map could not be loaded; it was set aside.', error);

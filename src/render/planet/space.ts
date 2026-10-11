@@ -1,3 +1,4 @@
+import { compileAhead } from '../uploads';
 import { createAsteroids, type Asteroids } from './asteroids';
 import { PLANET_RADIUS } from '@core/cubeSphere';
 import { Rng } from '@core/rng';
@@ -603,7 +604,8 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
   air.userData = skip;
 
   for (const object of [galaxy, stars, sun, moon, air]) scene.add(object);
-  scene.add(asteroids.group);
+  // The rocks join the scene once their programs are built (`compileAhead`).
+  void compileAhead(asteroids.group).then(() => scene.add(asteroids.group));
 
   const axis = new Vector3();
   const spin = new Matrix4();
