@@ -375,7 +375,11 @@ const MOON_FRAGMENT = /* glsl */ `
     n = normalize(abs(det) * n - grad);
     float mu0 = max(dot(n, uSun), 0.0);
     vec3 view = normalize(cameraPosition - vWorld);
-    float mu = max(dot(n, view), 0.0);
+    // The eye's angle on the smooth sphere, not the bumped ground: at the
+    // limb it goes to nothing and Lommel-Seeliger's mu0 / (mu0 + mu) to its
+    // most, and read off the bump, single pixels of the rim did - a ring of
+    // white sparks round the small moon.
+    float mu = max(dot(normalize(vNormal), view), 0.0);
     // Lommel-Seeliger with a little Lambert: the full moon bright to its limb.
     float lit = mix(mu0 / max(mu0 + mu, 1e-3) * 2.0, mu0, 0.35);
     // Earthshine: the planet's lit side lights the moon's night (strongest
@@ -654,7 +658,7 @@ export function createSpace(scene: Scene, renderer: WebGLRenderer): Space {
       const moonAngle = Math.asin(Math.min(1, MOON_RADIUS / Math.max(MOON_RADIUS, camera.position.distanceTo(moon.position))));
       moonMaterial.uniforms['uGain']!.value = 9 + (2.4 - 9) * smooth(0.05, 0.45, moonAngle);
       (moonMaterial.uniforms['uEarth']!.value as Vector3).copy(moonDir).negate();
-      moonMaterial.uniforms['uEarthLight']!.value = 1.6 * (1 + moonDir.dot(frame.sun)) / 2;
+      moonMaterial.uniforms['uEarthLight']!.value = 0.45 * (1 + moonDir.dot(frame.sun)) / 2;
       // By day too, pale against the blue (the shell adds the sky over it).
       moonMaterial.uniforms['uShow']!.value = 1;
       moon.visible = true;
