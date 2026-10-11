@@ -217,6 +217,22 @@ export const CSS = `
 /* Janelas */
 .f3-modal{position:absolute;inset:0;background:#0009;z-index:40;display:grid;place-items:start center;padding-top:12vh}
 .f3-modal>div{background:var(--panel-solid);border:1px solid var(--line);border-radius:12px;max-width:min(720px,92vw);max-height:76vh;overflow:auto;padding:16px 18px;box-shadow:0 24px 70px #000a;color:var(--ink)}
+/* Grupos automáticos de elementos (categoria → tipo → variação) */
+.f3-groups{display:grid;gap:1px}
+.f3-grp{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer;min-width:0}
+.f3-grp:hover{background:var(--raise)}
+.f3-grp.d0{font-weight:600}
+.f3-grp.d1{padding-left:18px;color:var(--muted)}
+.f3-grp.d2{padding-left:30px;color:var(--faint)}
+.f3-grp.d2 .nm::before{content:'↳ '}
+.f3-grp .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f3-grp .n{font:600 10.5px ui-monospace,Consolas,monospace;color:var(--faint)}
+.f3-grp[aria-pressed=true]{background:var(--sel-2);color:var(--ink)}
+.f3-grp[data-part] .n{color:var(--accent)}
+.f3-chips{display:flex;flex-wrap:wrap;gap:4px}
+.f3-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:999px;height:24px;padding:0 10px;font:inherit;cursor:pointer;max-width:100%;overflow:hidden;white-space:nowrap}
+.f3-chip:hover{background:var(--field-h)}
+.f3-chip b{font:600 10.5px ui-monospace,Consolas,monospace;color:var(--muted)}
 .f3-help h2{margin:0 0 10px;font-size:16px}
 .f3-modal>.f3-help{width:min(980px,94vw);max-width:none}
 .f3-help .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px 26px;font-size:12px}

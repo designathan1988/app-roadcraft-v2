@@ -164,4 +164,25 @@ describe('fachada forma/3', () => {
     expect(m.project.buildings[0]!.items.map((x) => x.id)).toEqual(['ok']);
     expect(m.notes).toHaveLength(1);
   });
+  it('elemento solto da regra (avulso com origem) não reflui a regra: os outros ficam onde estavam', async () => {
+    const { facadeRule, levelsFor } = await import('../../src/f3/model/defaults');
+    const plan = rectPlan(8, 8);
+    const mk = () => solid({ plan: { outer: plan, holes: [] }, height: 6, roof: roofSpec('flat'), facade: [facadeRule('balcony-glass', { mode: 'count', value: 2, levels: 'upper', edges: [plan[0]!.id] })] });
+    const before = evaluateBuilding(building({ levels: levelsFor(2, 3, 3), solids: [mk()] }));
+    const balc = before.placements.filter((p) => p.family.id === 'balcony');
+    expect(balc).toHaveLength(2);
+    // Soltar a primeira: exceção "none" na regra + avulso no mesmo lugar, com a origem.
+    const s = mk();
+    const b = building({ levels: levelsFor(2, 3, 3), solids: [s] });
+    const first = balc[0]!;
+    const key = first.tag.key!;
+    s.facade[0]!.except[key] = 'none';
+    b.items.push({ id: 'solta', type: 'balcony-glass', params: {}, host: { kind: 'face', solid: s.id, edge: first.host!.edge, u: first.host!.s, y: first.host!.y }, origin: { solid: s.id, rule: s.facade[0]!.id, key } });
+    const after = evaluateBuilding(b);
+    expect(after.warnings).toEqual([]);
+    const rest = after.placements.filter((p) => p.family.id === 'balcony' && p.tag.rule);
+    expect(rest).toHaveLength(1);
+    expect(rest[0]!.host!.s).toBeCloseTo(balc[1]!.host!.s, 5);
+    expect(after.placements.some((p) => p.tag.item === 'solta')).toBe(true);
+  });
 });

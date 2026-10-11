@@ -8,7 +8,7 @@ import type { Building3, ID, Item, MaterialRef, Project3, Solid, Vec2, Vec3 } fr
 import { building as newBuilding, circlePlan, levelsFor, planVertices, project as newProject, roofSpec, solid as newSolid, uid } from '../model/defaults';
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, planValid as planValidOps, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, topRing, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
-import { extrudeSide, insetSide, insetTop, offsetCopy, offsetSolid, setSolidSize, splitAtHeight } from '../model/modeling';
+import { edgeLength, extrudeSide, insetSide, insetTop, offsetCopy, offsetSolid, setSolidSize, splitAtHeight } from '../model/modeling';
 import { activeLayer, buildingHidden, buildingLocked, itemHidden, itemLocked, solidHidden, solidLocked } from '../model/layers';
 import { boxPicks, combine, marqueeRect, selMode } from './selection';
 import { Store } from './store';
@@ -21,11 +21,11 @@ import { createShell3, type Shell3 } from '../ui/shell';
 import { icon } from '../ui/icons';
 import { closeOnOutside } from '../ui/kit';
 import { family, typeById } from '../families/index';
-import { resolveParams } from '../families/family';
+import { CATEGORY_NAMES, resolveParams } from '../families/family';
 import { emptyParts3, faceMatrix, FrameSink } from '../eval/parts';
 import { buildPartsMesh, type PartsMesh } from '../render/parts';
 import type { FaceInfo } from '../eval/faces';
-import { between, column, elemKey, elementsOf, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem } from './elements';
+import { between, column, elemKey, elementsOf, groupElements, grow, row, rowOnFace, sameFace, sameType, shift, shrink, type Elem, type GroupRow } from './elements';
 
 export type Tool = 'select' | 'push' | 'rect' | 'circle' | 'polygon' | 'place' | 'paint' | 'block' | 'tape';
 
@@ -398,21 +398,7 @@ export class Editor3 {
     }
     // Elementos selecionados: caixa de contorno em cada um.
     if (this.sel.elems.length && built) {
-      const set = new Set(this.sel.elems);
-      const pos: number[] = [];
-      const mm = new THREE.Matrix4();
-      for (const pl of built.ev.placements) {
-        const k = elemKey(pl);
-        if (!k || !set.has(k)) continue;
-        const [w, h, dd] = pl.family.size(pl.params);
-        mm.fromArray(pl.frame).premultiply(M);
-        const c = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(mm);
-        const xs = [-w / 2 - 0.05, w / 2 + 0.05],
-          ys = [-0.05, h + 0.05],
-          zs = [-0.05, Math.max(0.12, dd) + 0.05];
-        const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => c(xs[i & 1]!, ys[(i >> 1) & 1]!, zs[(i >> 2) & 1]!));
-        for (const [a, b2] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]] as [number, number][]) pos.push(...corners[a]!.toArray(), ...corners[b2]!.toArray());
-      }
+      const pos = this.elemBoxes(b, new Set(this.sel.elems));
       if (pos.length) {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1017,6 +1003,80 @@ export class Editor3 {
     this.drawSelection();
   }
 
+  /** Arestas (pares de pontos) das caixas dos elementos `keys` do edifício `b`, no mundo. */
+  private elemBoxes(b: Building3, keys: Set<string>): number[] {
+    const built = this.view.built.get(b.id);
+    if (!built) return [];
+    const M = this.view.buildingMatrix(b);
+    const pos: number[] = [];
+    const mm = new THREE.Matrix4();
+    for (const pl of built.ev.placements) {
+      const k = elemKey(pl);
+      if (!k || !keys.has(k)) continue;
+      const [w, h, dd] = pl.family.size(pl.params);
+      mm.fromArray(pl.frame).premultiply(M);
+      const c = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(mm);
+      const xs = [-w / 2 - 0.05, w / 2 + 0.05],
+        ys = [-0.05, h + 0.05],
+        zs = pl.host ? [-0.05, Math.max(0.12, dd) + 0.05] : [-dd / 2 - 0.05, dd / 2 + 0.05];
+      const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => c(xs[i & 1]!, ys[(i >> 1) & 1]!, zs[(i >> 2) & 1]!));
+      for (const [a, b2] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]] as [number, number][]) pos.push(...corners[a]!.toArray(), ...corners[b2]!.toArray());
+    }
+    return pos;
+  }
+
+  /** Grupos automáticos dos elementos do edifício em edição (categoria → tipo → variação). */
+  elementGroups(): GroupRow[] {
+    return groupElements(
+      this.elements(),
+      (t) => {
+        const ty = typeById(t, this.project);
+        const f = ty && family(ty.family);
+        return ty && f ? { name: ty.name, category: f.category, ...(ty.base ? { base: ty.base } : {}) } : undefined;
+      },
+      (c) => CATEGORY_NAMES[c as keyof typeof CATEGORY_NAMES] ?? c,
+      Object.keys(CATEGORY_NAMES),
+    );
+  }
+
+  /** Seleciona um grupo (com os modificadores do clique: Ctrl soma, Shift alterna, Ctrl+Shift tira). */
+  selectGroup(id: string, e: Mods): void {
+    const b = this.activeBuilding();
+    const g = this.elementGroups().find((x) => x.id === id);
+    if (!b || !g) return;
+    const next = combine(this.sel.elems, g.keys, selMode(e));
+    this.selectElemKeys(b.id, next);
+    this.toast(`${next.length} elemento(s) selecionado(s).`);
+  }
+
+  private groupHover = new THREE.Group();
+  /** Pré-destaque no modelo do que um grupo do painel acrescentaria à seleção (null apaga). */
+  previewElems(keys: string[] | null): void {
+    if (!keys && !this.groupHover.children.length) return;
+    if (!this.groupHover.parent) this.view.overlay.add(this.groupHover);
+    for (const c of [...this.groupHover.children]) {
+      this.groupHover.remove(c);
+      const m = c as THREE.LineSegments;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    const b = this.activeBuilding();
+    // Só o que o clique acrescentaria: o que já está selecionado tem o destaque laranja.
+    const sel = new Set(this.sel.elems);
+    const add = keys?.filter((k) => !sel.has(k)) ?? [];
+    const pos = b && add.length ? this.elemBoxes(b, new Set(add)) : [];
+    if (pos.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const front = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#5b9cff', depthTest: true }));
+      const behind = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#5b9cff', depthTest: false, transparent: true, opacity: 0.3 }));
+      front.renderOrder = 24;
+      behind.renderOrder = 23;
+      this.groupHover.add(front, behind);
+    }
+    this.view.mark();
+  }
+
   /** Edifícios selecionados, o principal primeiro. */
   selectedBuildings(): ID[] {
     return this.sel.building ? [this.sel.building, ...this.sel.others] : [];
@@ -1164,7 +1224,7 @@ export class Editor3 {
   }
 
   /** Ações em lote sobre os elementos selecionados. */
-  elemAction(kind: 'remove' | 'restore' | 'swap' | 'vary', typeId?: ID): void {
+  elemAction(kind: 'remove' | 'restore' | 'swap' | 'vary' | 'detach', typeId?: ID): void {
     const b = this.activeBuilding();
     if (!b || !this.sel.elems.length) return;
     const keys = this.sel.elems;
@@ -1174,10 +1234,13 @@ export class Editor3 {
       const first = this.elements().find((e) => e.key === keys[0]);
       const base = first && typeById(first.type, this.project);
       if (!base) return;
-      const v = { id: uid(), family: base.family, name: base.name + ' (variação)', params: structuredClone(base.params), user: true };
+      const v = { id: uid(), family: base.family, name: base.name + ' (variação)', params: structuredClone(base.params), user: true, base: base.base ?? base.id };
       this.store.project.types.push(v);
       varied = v.id;
     }
+    // Soltar da regra: cada elemento vira componente avulso no mesmo lugar (Figma: desanexar).
+    const detached: string[] = [];
+    const placed = kind === 'detach' ? new Map(this.elements().map((e) => [e.key, e])) : null;
     this.change(b.id, (x) => {
       for (const k of keys) {
         const parts = k.split('|');
@@ -1185,20 +1248,41 @@ export class Editor3 {
           const rule = findSolid(x, parts[1]!)?.facade.find((f) => f.id === parts[2]);
           if (!rule) continue;
           const pos = parts[3]!;
-          if (kind === 'remove') rule.except[pos] = 'none';
+          if (kind === 'detach') {
+            const el = placed!.get(k);
+            if (!el?.pl.host) continue;
+            const ex = rule.except[pos];
+            const id = uid();
+            x.items.push({ id, type: ex && ex !== 'none' ? ex : rule.type, params: structuredClone(rule.params), host: { kind: 'face', solid: el.pl.host.solid, edge: el.pl.host.edge, u: el.pl.host.s, y: el.pl.host.y }, origin: { solid: parts[1]!, rule: rule.id, key: pos, ...(ex && ex !== 'none' ? { prev: ex } : {}) } });
+            rule.except[pos] = 'none';
+            detached.push(`i|${id}|0`);
+          } else if (kind === 'remove') rule.except[pos] = 'none';
           else if (kind === 'restore') delete rule.except[pos];
           else if (kind === 'swap' && typeId) rule.except[pos] = typeId;
           else if (kind === 'vary' && varied) rule.except[pos] = varied;
         } else if (parts[0] === 'i') {
-          if (kind === 'remove') x.items = x.items.filter((i) => i.id !== parts[1]);
+          if (kind === 'restore') {
+            // Avulso que veio de uma regra: sai, e a regra volta a ocupar a posição.
+            const it = x.items.find((i) => i.id === parts[1]);
+            const o = it?.origin;
+            if (!o) continue;
+            const rule = findSolid(x, o.solid)?.facade.find((f) => f.id === o.rule);
+            if (rule) {
+              // A posição volta como era antes de soltar (com a variação de tipo, se tinha).
+              if (o.prev) rule.except[o.key] = o.prev;
+              else delete rule.except[o.key];
+            }
+            x.items = x.items.filter((i) => i.id !== it.id);
+          } else if (kind === 'remove') x.items = x.items.filter((i) => i.id !== parts[1]);
           else if ((kind === 'swap' && typeId) || (kind === 'vary' && varied)) {
             const it = x.items.find((i) => i.id === parts[1]);
             if (it) it.type = (typeId ?? varied)!;
           }
         }
       }
-    }, kind === 'remove' ? `${keys.length} elemento(s) removido(s).` : kind === 'restore' ? 'Elementos voltaram à regra.' : kind === 'vary' ? 'Variação criada: edite os campos para mudar só estes.' : 'Tipo trocado.');
-    if (kind === 'remove') this.select({ building: b.id });
+    }, kind === 'remove' ? `${keys.length} elemento(s) removido(s).` : kind === 'restore' ? 'Elementos voltaram à regra.' : kind === 'vary' ? 'Variação criada: edite os campos para mudar só estes.' : kind === 'detach' ? `${keys.filter((k) => k.startsWith('r|')).length} elemento(s) soltos da regra: movem e mudam sozinhos.` : 'Tipo trocado.');
+    if (kind === 'remove' || kind === 'restore') this.select({ building: b.id });
+    else if (kind === 'detach') this.selectElemKeys(b.id, detached);
     else if (varied) this.variation = varied;
   }
 
@@ -1824,8 +1908,12 @@ export class Editor3 {
       this.startDrag(h.kind, b, e, { handle: h.kind, at: h.at.clone(), dir: h.dir!.clone(), id: it.id, w0: Number(p.width ?? 1), h0: Number(p.height ?? 1), y0: it.host.y }, true);
       const label = h.kind === 'cwidth' ? 'Largura' : h.kind === 'cheight' ? 'Altura' : 'Peitoril';
       this.setMeasure(label, (txt) => {
-        const v = parseLength(txt);
+        let v = parseLength(txt);
         if (v === null || v <= 0) return false;
+        // Largura e altura nos limites do parâmetro (a mensagem diz o que ficou valendo).
+        const pk = h.kind === 'cwidth' ? 'width' : h.kind === 'cheight' ? 'height' : null;
+        const pd = pk ? fam.params.find((q) => q.key === pk) : undefined;
+        if (pd) v = Math.max(pd.min ?? 0.3, Math.min(pd.max ?? Infinity, v));
         return this.change(b.id, (x) => {
           const y = x.items.find((q) => q.id === it.id)!;
           if (h.kind === 'cwidth') y.params.width = v;
@@ -1931,7 +2019,20 @@ export class Editor3 {
     // Altura real da peça (no telhado, a da superfície onde ela está): o arrasto anda nessa altura.
     const pl = this.view.built.get(b.id)?.ev.placements.find((q) => q.tag.item === it.id);
     const y0 = pl ? pl.frame[13]! : it.host.kind === 'free' ? it.host.p[1] : 0;
-    this.startDrag('move-item', b, e, { handle: h?.kind ?? 'move-xz', axis: h?.dir?.clone() ?? null, at: h?.at.clone() ?? null, id: it.id, y0 }, true);
+    // Na face: o arrasto anda no plano da própria face, a partir do ponto pego (a peça cobre a
+    // parede onde se segura, então não dá para depender de acertar a parede sob o cursor).
+    let face: Record<string, unknown> | null = null;
+    if (it.host.kind === 'face' && pl) {
+      const F = new THREE.Matrix4().fromArray(pl.frame).premultiply(this.view.buildingMatrix(b));
+      const n = new THREE.Vector3().setFromMatrixColumn(F, 2).normalize();
+      const o = new THREE.Vector3().setFromMatrixPosition(F);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, o);
+      const p0 = this.view.rayFrom(e).ray.intersectPlane(plane, new THREE.Vector3());
+      const s = findSolid(b, it.host.solid);
+      const [w, hh] = pl.family.size(pl.params);
+      if (p0 && s) face = { plane, p0, ux: new THREE.Vector3().setFromMatrixColumn(F, 0).normalize().negate(), vy: new THREE.Vector3().setFromMatrixColumn(F, 1).normalize(), u0: it.host.u, yf0: it.host.y, len: edgeLength(s, it.host.edge), w, h: hh, top: s.height };
+    }
+    this.startDrag('move-item', b, e, { handle: h?.kind ?? 'move-xz', axis: h?.dir?.clone() ?? null, at: h?.at.clone() ?? null, id: it.id, y0, face }, true);
   }
 
   private setMoveMeasure(): void {
@@ -2083,6 +2184,31 @@ export class Editor3 {
       const it = b.items.find((i) => i.id === d.data.id),
         io = orig.items.find((i) => i.id === d.data.id);
       if (!it || !io) return;
+      if (it.host.kind === 'face' && io.host.kind === 'face' && d.data.face) {
+        // No plano da face: deslocamento desde o ponto pego, dentro dos limites da face.
+        const f = d.data.face as { plane: THREE.Plane; p0: THREE.Vector3; ux: THREE.Vector3; vy: THREE.Vector3; u0: number; yf0: number; len: number; w: number; h: number; top: number };
+        const p = this.view.rayFrom(e).ray.intersectPlane(f.plane, new THREE.Vector3());
+        if (!p) return;
+        p.sub(f.p0);
+        let du = p.dot(f.ux),
+          dv = p.dot(f.vy);
+        if (this.infer.enabled && !e.altKey) {
+          // Inferência de eixo (SketchUp): movimento claramente horizontal não mexe na altura, e vice-versa.
+          if (Math.abs(dv) < 0.3 && Math.abs(du) > 3 * Math.abs(dv)) dv = 0;
+          else if (Math.abs(du) < 0.3 && Math.abs(dv) > 3 * Math.abs(du)) du = 0;
+        }
+        let u = f.u0 + du,
+          y = f.yf0 + dv;
+        if (this.infer.enabled && !e.altKey) {
+          if (du) u = Math.round(u / 0.1) * 0.1;
+          if (dv) y = Math.round(y / 0.05) * 0.05;
+        }
+        it.host.u = f.len > f.w ? Math.max(f.w / 2, Math.min(f.len - f.w / 2, u)) : f.len / 2;
+        it.host.y = Math.max(0, Math.min(Math.max(0, f.top - f.h), y));
+        this.store.touch([b.id]);
+        this.showDim(`${fmt(it.host.u)} m ao longo · ${fmt(it.host.y)} m de altura`, e);
+        return;
+      }
       if (it.host.kind === 'face' && io.host.kind === 'face') {
         // Arrasta ao longo da face: projeta no plano da face.
         const hit = this.pickAt(e, b.id);
@@ -2160,11 +2286,17 @@ export class Editor3 {
       if (!it || it.host.kind !== 'face') return;
       let t = this.dragAlong(d, e, d.data.at as THREE.Vector3, d.data.dir as THREE.Vector3);
       if (!e.altKey && this.infer.enabled) t = Math.round(t / 0.05) * 0.05;
+      // Nos limites do próprio parâmetro da família: a medida mostrada é a que fica valendo.
+      const fam = family(typeById(it.type, this.project)?.family ?? '');
+      const lim = (k: string, v: number) => {
+        const p = fam?.params.find((q) => q.key === k);
+        return Math.max(p?.min ?? 0.3, Math.min(p?.max ?? Infinity, v));
+      };
       if (d.kind === 'cwidth') {
-        it.params.width = Math.max(0.3, (d.data.w0 as number) + 2 * t);
+        it.params.width = lim('width', (d.data.w0 as number) + 2 * t);
         this.showDim(`largura ${fmt(it.params.width as number)} m`, e);
       } else if (d.kind === 'cheight') {
-        it.params.height = Math.max(0.3, (d.data.h0 as number) + t);
+        it.params.height = lim('height', (d.data.h0 as number) + t);
         this.showDim(`altura ${fmt(it.params.height as number)} m`, e);
       } else {
         it.host.y = Math.max(0, (d.data.y0 as number) - t);
@@ -3174,7 +3306,7 @@ export class Editor3 {
     if (!b || !it) return;
     const base = typeById(it.type, this.project);
     if (!base) return;
-    const n = { id: uid(), family: base.family, name: base.name + ' (único)', params: { ...structuredClone(base.params), ...structuredClone(it.params) }, user: true };
+    const n = { id: uid(), family: base.family, name: base.name + ' (único)', params: { ...structuredClone(base.params), ...structuredClone(it.params) }, user: true, base: base.base ?? base.id };
     this.store.project.types.push(n);
     this.change(b.id, (x) => {
       const y = x.items.find((q) => q.id === it.id)!;

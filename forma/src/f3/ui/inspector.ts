@@ -65,6 +65,8 @@ export function mountInspector(ed: Editor3): void {
     // Não redesenha enquanto o usuário digita num campo.
     if (key === lastKey && side.contains(document.activeElement)) return;
     lastKey = key;
+    // O painel vai ser trocado: o pré-destaque de um grupo sob o mouse não pode ficar para trás.
+    ed.previewElems(null);
     if (ed.tool === 'paint') {
       side.innerHTML = paintPanel(ed);
       bindPaintPanel(ed, side);
@@ -83,7 +85,7 @@ export function mountInspector(ed: Editor3): void {
     else if (it && ed.sel.elems.length <= 1) side.innerHTML = itemPanel(ed, b, it.id);
     else if (ed.sel.elems.length) side.innerHTML = elementsPanel(ed);
     else if (s) side.innerHTML = solidPanel(ed, b, s);
-    else side.innerHTML = buildingPanel(b, true);
+    else side.innerHTML = buildingPanel(b, true, groupsSection(ed));
     bind(ed, b, s);
     polish(side);
   };
@@ -97,9 +99,10 @@ function emptyHelp(): string {
   <div class="f3-keys">${k('R C L', 'Desenhar no chão ou sobre laje')}${k('K', 'Biblioteca de blocos e componentes')}${k('V', 'Selecionar; duplo clique entra')}${k('P', 'Empurrar faces (Ctrl extruda)')}${k('Ctrl K', 'Buscar qualquer comando')}${k('?', 'Todos os atalhos')}</div></div>`;
 }
 
-function buildingPanel(b: Building3, inside = false): string {
+function buildingPanel(b: Building3, inside = false, groups = ''): string {
   const levels = [...b.levels].sort((x, y) => x.elevation - y.elevation);
   return `<div class="f3-title"><input data-b="name" value="${esc(b.name)}" aria-label="Nome do edifício"><span class="f3-kind">Edifício</span></div>
+  ${groups}
   <div class="f3-sec"><h3>Uso</h3><div class="f3-seg">${(
     [
       ['residential', 'Moradia'],
@@ -244,11 +247,13 @@ function paramInputs(defs: ParamDef[], values: Record<string, unknown>, override
       if (d.kind === 'text') continue;
       const v = values[d.key];
       const over = d.key in overrides ? ' over' : '';
-      if (d.kind === 'enum') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${d.scope}">${d.options!.map((o) => `<option value="${o.value}" ${o.value === v ? 'selected' : ''}>${o.label}</option>`).join('')}</select></label>`;
-      else if (d.kind === 'bool') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${d.scope}" data-bool="1"><option value="1" ${v === true ? 'selected' : ''}>Sim</option><option value="0" ${v !== true ? 'selected' : ''}>Não</option></select></label>`;
-      else if (d.kind === 'color') html += `<label class="f3-field${over}"><span>${d.label}</span><input type="color" data-p="${d.key}" data-scope="${d.scope}" value="${v}"></label>`;
-      else if (d.kind === 'finish') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${d.scope}">${FINISHES.map((f) => `<option value="${f.id}" ${f.id === v ? 'selected' : ''}>${f.name}</option>`).join('')}</select></label>`;
-      else html += `<label class="f3-field${over}"><span>${d.label}${d.kind === 'length' ? ' (m)' : d.kind === 'angle' ? ' (°)' : ''}</span><input data-p="${d.key}" data-scope="${d.scope}" inputmode="decimal" value="${typeof v === 'number' ? num(v) : v}"></label>`;
+      // Campo azul (sobreposto nesta ocorrência) edita a sobreposição, não o tipo.
+      const sc = d.key in overrides ? 'instance' : d.scope;
+      if (d.kind === 'enum') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${sc}">${d.options!.map((o) => `<option value="${o.value}" ${o.value === v ? 'selected' : ''}>${o.label}</option>`).join('')}</select></label>`;
+      else if (d.kind === 'bool') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${sc}" data-bool="1"><option value="1" ${v === true ? 'selected' : ''}>Sim</option><option value="0" ${v !== true ? 'selected' : ''}>Não</option></select></label>`;
+      else if (d.kind === 'color') html += `<label class="f3-field${over}"><span>${d.label}</span><input type="color" data-p="${d.key}" data-scope="${sc}" value="${v}"></label>`;
+      else if (d.kind === 'finish') html += `<label class="f3-field${over}"><span>${d.label}</span><select data-p="${d.key}" data-scope="${sc}">${FINISHES.map((f) => `<option value="${f.id}" ${f.id === v ? 'selected' : ''}>${f.name}</option>`).join('')}</select></label>`;
+      else html += `<label class="f3-field${over}"><span>${d.label}${d.kind === 'length' ? ' (m)' : d.kind === 'angle' ? ' (°)' : ''}</span><input data-p="${d.key}" data-scope="${sc}" inputmode="decimal" value="${typeof v === 'number' ? num(v) : v}"></label>`;
     }
     html += '</div></div>';
   }
@@ -265,7 +270,7 @@ function itemPanel(ed: Editor3, b: Building3, id: string): string {
   const arr = it.array;
   return `<div class="f3-title"><span style="flex:1;font-weight:600">${esc(t.name)}</span><span class="f3-kind">${esc(f.name)}</span></div>
   <div class="f3-sec" style="padding-top:8px"><div class="f3-row"><span class="f3-kind" title="Campos do tipo mudam todas as ocorrências; campos azuis valem só para esta">Tipo em ${users} uso(s)</span><span class="f3-sp"></span>
-  <button class="f3-btn" data-act="unique" title="Cria um tipo próprio para esta ocorrência">${icon('unique')}Tornar único</button><button class="f3-btn ic danger" data-act="del" title="Excluir">${icon('trash')}</button></div></div>
+  ${it.origin ? `<button class="f3-btn" data-act="restore" title="Apaga este avulso e devolve a posição à regra de fachada">Voltar à regra</button>` : ''}<button class="f3-btn" data-act="unique" title="Cria um tipo próprio para esta ocorrência">${icon('unique')}Tornar único</button><button class="f3-btn ic danger" data-act="del" title="Excluir">${icon('trash')}</button></div></div>
   <div class="f3-sec"><h3>${icon('array')} Repetição</h3><div class="f3-grid2">${field('acount', 'Cópias', arr?.along.count ?? 1, 1)}${field('aspace', 'Distância (m)', arr?.along.value ?? (f.size(values)[0] + 1), 0.1)}${field('rcount', 'Fileiras', arr?.across?.count ?? 1, 1)}${field('rspace', 'Entre fileiras (m)', arr?.across?.spacing ?? 3, 0.1)}</div></div>
   ${paramInputs(f.params, values, it.params)}`;
 }
@@ -286,8 +291,17 @@ function elementsPanel(ed: Editor3): string {
       '<button data-escope="type" aria-pressed="' + (scope === 'type') + '">Todos do tipo (' + users + ')</button>' +
       '<button data-escope="sel" aria-pressed="' + (scope === 'sel') + '">Só os selecionados (' + picked.length + ')</button></div></div>' +
       paramInputs(f.params, resolveParams(f, t.params), {});
-  } else params = '<div class="f3-sec"><p class="f3-empty" style="padding:8px 0 0">Tipos diferentes: use "Mesmo tipo" para editar parâmetros.</p></div>';
+  } else {
+    // Tipos misturados: a divisão por tipo; um clique fica só com aquele tipo (e os parâmetros dele).
+    const chips = types
+      .map((id) => [id, typeById(id, ed.project)?.name ?? id, picked.filter((e) => e.type === id).length] as const)
+      .sort((a, b) => b[2] - a[2])
+      .map(([id, name, n]) => '<button class="f3-chip" data-onlytype="' + esc(id) + '" title="Ficar só com estes">' + esc(name) + ' <b>' + n + '</b></button>')
+      .join('');
+    params = '<div class="f3-sec"><h3>Tipos na seleção</h3><div class="f3-chips">' + chips + '</div><p class="f3-empty" style="padding:6px 0 0">Escolha um tipo para editar os parâmetros dele.</p></div>';
+  }
   return '<div class="f3-title"><span style="flex:1;font-weight:600">' + (t ? esc(t.name) : picked.length + ' elemento(s)') + '</span><span class="f3-kind">' + (f ? esc(f.name) : 'Fachada') + ' · ' + picked.length + '</span></div>' +
+  groupsSection(ed) +
   '<div class="f3-sec"><h3>Selecionar</h3><div class="f3-row">' +
   btn('row', 'Fileira', 'O mesmo pavimento em todas as faces (duplo clique numa janela)') +
   btn('rowFace', 'Fileira na face', 'O mesmo pavimento só nesta face') +
@@ -300,8 +314,29 @@ function elementsPanel(ed: Editor3): string {
   params +
   '<div class="f3-sec"><h3>Aplicar aos selecionados</h3><div class="f3-row">' +
   '<button class="f3-btn" data-act="swapsel">Trocar por outro tipo…</button>' +
-  '<button class="f3-btn" data-act="restore">Voltar à regra</button>' +
+  (picked.some((e) => e.key.startsWith('r|')) ? '<button class="f3-btn" data-act="detach" title="Vira componente avulso no mesmo lugar: move e muda sozinho, sem seguir a regra">Soltar da regra</button>' : '') +
+  '<button class="f3-btn" data-act="restore" title="Desfaz exceções e devolve à regra os elementos soltos dela">Voltar à regra</button>' +
   '<button class="f3-btn danger" data-act="removesel">Remover</button></div></div>';
+}
+
+/**
+ * Grupos automáticos do edifício (docs/SELECAO.md): categoria → tipo →
+ * variação, com quantos há e quantos estão selecionados. Clique seleciona o
+ * grupo (Ctrl soma, Shift alterna, Ctrl+Shift tira); passar o mouse destaca
+ * no modelo o que vai ser selecionado.
+ */
+function groupsSection(ed: Editor3): string {
+  const rows = ed.elementGroups();
+  if (!rows.length) return '';
+  const sel = new Set(ed.sel.elems);
+  const html = rows
+    .map((r) => {
+      const n = r.keys.filter((k) => sel.has(k)).length;
+      const part = n > 0 && n < r.keys.length;
+      return `<button class="f3-grp d${r.depth}" data-group="${esc(r.id)}" aria-pressed="${n > 0 && n === r.keys.length}"${part ? ' data-part' : ''}><span class="nm">${esc(r.label)}</span><span class="n">${part ? `${n}/` : ''}${r.keys.length}</span></button>`;
+    })
+    .join('');
+  return `<div class="f3-sec"><h3 title="Clique seleciona o grupo; Ctrl soma, Shift alterna, Ctrl+Shift tira">Elementos do edifício</h3><div class="f3-groups">${html}</div></div>`;
 }
 
 function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
@@ -500,6 +535,17 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
     }),
   );
   $$<HTMLButtonElement>('[data-sel]').forEach((el) => el.addEventListener('click', () => ed.selectElems(el.dataset.sel as 'row')));
+  for (const el of $$<HTMLButtonElement>('[data-group]')) {
+    const id = el.dataset.group!;
+    el.addEventListener('click', (e) => ed.selectGroup(id, e));
+    el.addEventListener('mouseenter', () => ed.previewElems(ed.elementGroups().find((g) => g.id === id)?.keys ?? null));
+    el.addEventListener('mouseleave', () => ed.previewElems(null));
+  }
+  for (const el of $$<HTMLButtonElement>('[data-onlytype]'))
+    el.addEventListener('click', () => {
+      const keys = ed.elements().filter((x) => x.type === el.dataset.onlytype && ed.sel.elems.includes(x.key)).map((x) => x.key);
+      ed.selectElemKeys(b.id, keys);
+    });
   $$<HTMLButtonElement>('[data-align]').forEach((el) => el.addEventListener('click', () => ed.align(el.dataset.align as never)));
   $$<HTMLButtonElement>('[data-quick]').forEach((el) =>
     el.addEventListener('click', () => {
@@ -544,6 +590,7 @@ function bind(ed: Editor3, b: Building3, s: Solid | undefined): void {
       else if (a === 'swapsel') swapMenu(ed, el);
       else if (a === 'vary') ed.elemAction('vary');
       else if (a === 'restore') ed.elemAction('restore');
+      else if (a === 'detach') ed.elemAction('detach');
       else if (a === 'removesel') ed.elemAction('remove');
     }),
   );

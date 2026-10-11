@@ -34,3 +34,28 @@ describe('seleção múltipla', () => {
     expect(boxPicks([{ x: 10, y: 10, behind: true }], r, false)).toBe(false);
   });
 });
+
+describe('grupos automáticos de elementos', () => {
+  it('agrupa por categoria, tipo e variação (a variação fica sob o tipo de origem)', async () => {
+    const { groupElements } = await import('../../src/f3/editor/elements');
+    const el = (key: string, type: string) => ({ key, type, side: 's', level: 0, s: 0, pl: {} as never });
+    const all = [el('a', 'jan'), el('b', 'jan'), el('c', 'jan-v'), el('d', 'porta'), el('e', 'sacada')];
+    const info = (t: string) =>
+      ({
+        jan: { name: 'Janela de abrir', category: 'windows' },
+        'jan-v': { name: 'Janela de abrir (variação)', category: 'windows', base: 'jan' },
+        porta: { name: 'Porta', category: 'doors' },
+        sacada: { name: 'Sacada', category: 'balconies' },
+      })[t];
+    const rows = groupElements(all, info, (c) => c.toUpperCase(), ['windows', 'doors', 'balconies']);
+    expect(rows.map((r) => [r.id, r.depth, r.keys.length])).toEqual([
+      ['c:windows', 0, 3],
+      ['t:jan', 1, 3],
+      ['v:jan-v', 2, 1],
+      ['c:doors', 0, 1],
+      ['t:porta', 1, 1],
+      ['c:balconies', 0, 1],
+      ['t:sacada', 1, 1],
+    ]);
+  });
+});

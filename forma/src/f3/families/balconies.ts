@@ -39,7 +39,8 @@ export const BALCONY: Family = {
   host: 'face',
   tags: ['sacada', 'balcão', 'varanda', 'laje em balanço', 'guarda-corpo', 'porta-balcão'],
   params: [
-    P.len('width', 'Largura', 3, 0.8, 12),
+    // Nunca mais estreita que uma porta-balcão (porta mínima 0,7 m + batentes + folga).
+    P.len('width', 'Largura', 3, 1.2, 12),
     P.len('depth', 'Projeção', 1.2, 0.3, 3),
     P.len('thickness', 'Espessura da laje', 0.15, 0.08, 0.4, 'type', 'size', 0.01),
     { ...P.len('sillH', 'Altura do piso', 0, -0.3, 3, 'instance'), group: 'size' },
@@ -67,7 +68,8 @@ export const BALCONY: Family = {
     P.finish('floorFinish', 'Acabamento do piso', 'floor'),
     P.color('wallColor', 'Cor da mureta', '#ebe4d6'),
   ],
-  size: (p) => [Math.max(num(p, 'width'), bool(p, 'withDoor') ? num(p, 'doorWidth') + 0.3 : 0), Math.max(num(p, 'railH'), bool(p, 'withDoor') ? num(p, 'doorHeight') : 0), num(p, 'depth')],
+  // A porta efetiva (a do vão e a construída) cabe na laje: a largura é a da sacada.
+  size: (p) => [Math.max(num(p, 'width'), bool(p, 'withDoor') ? Math.min(num(p, 'doorWidth'), num(p, 'width') - 0.2) + 0.16 : 0), Math.max(num(p, 'railH'), bool(p, 'withDoor') ? num(p, 'doorHeight') : 0), num(p, 'depth')],
   sill: (p) => num(p, 'sillH'),
   opening: (p) => (bool(p, 'withDoor') ? { w: Math.min(num(p, 'doorWidth'), num(p, 'width') - 0.2), h: num(p, 'doorHeight'), shape: 'rect', depth: 0.35, room: 2.4 } : null),
   build(p, out, ctx) {

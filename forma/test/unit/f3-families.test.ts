@@ -69,4 +69,15 @@ describe('famílias de componentes', () => {
     expect(stairCount(3, 0.18)).toBe(17);
     expect(stairCount(2.88, 0.18)).toBe(16);
   });
+
+  it('sacada estreita: a porta efetiva cabe nela e o tamanho declarado é o da laje', () => {
+    const f = family('balcony')!;
+    for (const width of [0.5, 1.2, 1.5, 3]) {
+      const p = resolveParams(f, { width });
+      const w = Math.max(1.2, width);
+      expect(f.size(p)[0]).toBeCloseTo(w, 5);
+      expect(f.opening!(p)!.w).toBeLessThanOrEqual(w - 0.2 + 1e-9);
+      expect(f.opening!(p)!.w).toBeGreaterThanOrEqual(0.7);
+    }
+  });
 });

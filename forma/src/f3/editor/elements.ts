@@ -138,3 +138,55 @@ export function between(all: Elem[], a: string, b: string): Set<string> {
   }
   return new Set([a, b]);
 }
+
+/** Linha dos grupos automáticos: categoria (0), tipo (1) ou variação de um tipo (2). */
+export interface GroupRow {
+  id: string;
+  label: string;
+  depth: 0 | 1 | 2;
+  keys: string[];
+}
+
+/**
+ * Grupos automáticos dos elementos de um edifício: por categoria da família
+ * (Janelas, Portas…), dentro dela por tipo, e as variações debaixo do tipo de
+ * origem. O tipo leva junto as variações (é o "grupo das janelas de abrir");
+ * a variação, só as dela. Categorias na ordem dada; tipos do mais usado.
+ */
+export function groupElements(all: Elem[], info: (type: string) => { name: string; category: string; base?: string } | undefined, catName: (c: string) => string, order: readonly string[]): GroupRow[] {
+  const byType = new Map<string, string[]>();
+  for (const e of all) {
+    const k = byType.get(e.type);
+    if (k) k.push(e.key);
+    else byType.set(e.type, [e.key]);
+  }
+  // Raiz de cada tipo usado: o tipo de origem quando é uma variação de um tipo conhecido.
+  const root = (t: string) => {
+    const b = info(t)?.base;
+    return b && b !== t && info(b) ? b : t;
+  };
+  const cats = new Map<string, Map<string, string[]>>();
+  for (const t of byType.keys()) {
+    const i = info(t);
+    if (!i) continue;
+    const r = root(t);
+    const c = info(r)?.category ?? i.category;
+    const m = cats.get(c) ?? new Map<string, string[]>();
+    cats.set(c, m);
+    const list = m.get(r) ?? [];
+    if (!list.includes(t)) list.push(t);
+    m.set(r, list);
+  }
+  const rank = (c: string) => (order.indexOf(c) < 0 ? order.length : order.indexOf(c));
+  const out: GroupRow[] = [];
+  for (const [c, roots] of [...cats].sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    const keysOf = (ts: string[]) => ts.flatMap((t) => byType.get(t) ?? []);
+    const rows = [...roots].map(([r, ts]) => ({ r, ts, keys: keysOf([r, ...ts.filter((t) => t !== r)]) })).sort((a, b) => b.keys.length - a.keys.length);
+    out.push({ id: `c:${c}`, label: catName(c), depth: 0, keys: rows.flatMap((x) => x.keys) });
+    for (const { r, ts, keys } of rows) {
+      out.push({ id: `t:${r}`, label: info(r)!.name, depth: 1, keys });
+      for (const t of ts.filter((x) => x !== r)) out.push({ id: `v:${t}`, label: info(t)!.name, depth: 2, keys: byType.get(t) ?? [] });
+    }
+  }
+  return out;
+}

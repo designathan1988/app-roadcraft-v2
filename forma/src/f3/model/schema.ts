@@ -236,6 +236,8 @@ export interface ComponentType {
   params: Record<string, ParamValue>;
   /** Tipo criado pelo usuário (salvo no projeto e na biblioteca). */
   user?: boolean;
+  /** Variação de outro tipo (aparece debaixo dele nos grupos de elementos). */
+  base?: ID;
 }
 
 export type ItemHost =
@@ -268,6 +270,8 @@ export interface Item {
   layer?: ID;
   hidden?: boolean;
   locked?: boolean;
+  /** Elemento solto de uma regra de fachada (posição "lado:nível:índice"; `prev`, a exceção de tipo que a posição tinha): "Voltar à regra" o devolve. */
+  origin?: { solid: ID; rule: ID; key: string; prev?: ID };
 }
 
 /** Que níveis do sólido uma regra de fachada ocupa. */

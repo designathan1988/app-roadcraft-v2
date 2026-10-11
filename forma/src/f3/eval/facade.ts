@@ -253,6 +253,8 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
       continue;
     }
     const edges = [...regions.values()].filter((r) => r.solid === s.id && (rule.edges.length ? rule.edges.includes(r.edge) : !s.edges[r.edge]?.blank));
+    // Avulsos soltos desta regra não a recortam: ela mantém o arranjo, com a posição deles vazia.
+    const own = new Set(b.items.filter((i) => i.origin?.rule === rule.id).map((i) => i.id));
     for (const r of edges) {
       for (const lv of pickLevels(rule.levels, levels)) {
         const seg0 = r.segs[0]!;
@@ -275,6 +277,7 @@ export function rulePlacements(b: Building3, s: Solid, regions: Map<string, Edge
         // a regra se redistribui no que sobra ao lado delas, com folga.
         const GAP = Math.max(0.35, rule.margin * 0.6);
         const blockers = taken
+          .filter((q) => !(q.tag.item && own.has(q.tag.item)))
           .filter((q) => q.host && q.host.solid === s.id && q.host.edge === r.edge && q.host.y < y + openH / vy + 0.05 && q.host.y + (q.family.size(q.params)[1] ?? 0) > y - 0.05)
           .map((q) => [q.host!.s - q.length / 2 - GAP, q.host!.s + q.length / 2 + GAP] as [number, number]);
         const raw = rowIntervals(r, y, y + openH / vy);
