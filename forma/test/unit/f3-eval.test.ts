@@ -140,4 +140,28 @@ describe('fachada forma/3', () => {
     expect(ev.parts.inst.length).toBeGreaterThan(0);
     for (const it of ev.parts.inst) expect(det(it.m)).toBeGreaterThan(0);
   });
+  it('cópia de edifício mantém os componentes presos às faces copiadas', async () => {
+    const { cloneBuilding } = await import('../../src/f3/model/ops');
+    const plan = rectPlan(8, 6);
+    const s = solid({ plan: { outer: plan, holes: [] }, height: 6, roof: roofSpec('flat') });
+    const b = building({ solids: [s] });
+    b.items.push({ id: 'arandela', type: 'lamp-lantern', params: {}, host: { kind: 'face', solid: s.id, edge: plan[0]!.id, u: 2, y: 2 } });
+    const c = cloneBuilding(b);
+    expect(c.items[0]!.host).toMatchObject({ solid: c.solids[0]!.id, edge: c.solids[0]!.plan.outer[0]!.id });
+    const ev = evaluateBuilding(c);
+    expect(ev.warnings).toEqual([]);
+    expect(ev.placements.some((p) => p.tag.item === c.items[0]!.id)).toBe(true);
+  });
+  it('projeto salvo com componente em face perdida abre consertado (com nota), sem cair nos exemplos', async () => {
+    const { project } = await import('../../src/f3/model/defaults');
+    const { migrateForma3 } = await import('../../src/f3/io/migrate');
+    const plan = rectPlan(8, 6);
+    const s = solid({ plan: { outer: plan, holes: [] }, height: 6, roof: roofSpec('flat') });
+    const b = building({ solids: [s] });
+    b.items.push({ id: 'ok', type: 'lamp-lantern', params: {}, host: { kind: 'face', solid: s.id, edge: plan[1]!.id, u: 1, y: 2 } });
+    b.items.push({ id: 'solto', type: 'lamp-lantern', params: {}, host: { kind: 'face', solid: s.id, edge: 'lado-que-sumiu', u: 1, y: 2 } });
+    const m = migrateForma3(JSON.parse(JSON.stringify(project({ buildings: [b] }))));
+    expect(m.project.buildings[0]!.items.map((x) => x.id)).toEqual(['ok']);
+    expect(m.notes).toHaveLength(1);
+  });
 });

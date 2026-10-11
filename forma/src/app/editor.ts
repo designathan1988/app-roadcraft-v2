@@ -15,9 +15,13 @@ import { exportGLB, exportOBJ, exportGameJSON } from '../f3/io/export';
 
 await loadKernel(wasmUrl);
 let initial: Project3 | undefined;
+// O que dizer ao abrir: projeto salvo consertado ou que não abriu (a cópia fica guardada).
+let startNote = '';
 try {
   const r = loadAutosave();
   initial = r.project ?? undefined;
+  if (r.error) startNote = `O projeto salvo não abriu (${r.error}) Uma cópia ficou guardada no navegador; abrimos os exemplos.`;
+  else if (r.notes.length) startNote = `Projeto aberto com ${r.notes.length} ajuste(s): ${r.notes.slice(0, 2).join(' ')}`;
 } catch {
   initial = undefined;
 }
@@ -29,6 +33,7 @@ mountLayers(editor);
 mountPalette(editor);
 mountTime(editor);
 (globalThis as { forma3?: Editor3 }).forma3 = editor;
+if (startNote) editor.toast(startNote);
 
 const root = editor.shell.root;
 const fileInput = root.querySelector<HTMLInputElement>('[data-file="project"]')!;

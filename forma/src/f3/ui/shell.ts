@@ -118,7 +118,7 @@ export const CSS = `
 .f3-dim{position:absolute;z-index:8;pointer-events:none;font:600 11.5px ui-monospace,Consolas,monospace;background:#1d1f23;color:#fff;padding:2px 6px;border-radius:4px;transform:translate(-50%,-50%);white-space:nowrap;box-shadow:0 2px 6px #0003}
 .f3-toast{position:absolute;left:58px;bottom:50px;z-index:9;background:var(--panel-solid);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:12px;opacity:0;transform:translateY(4px);transition:opacity .18s,transform .18s;pointer-events:none;max-width:420px;box-shadow:var(--shadow)}
 .f3-toast.on{opacity:1;transform:none}
-.f3-warn{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:5;max-width:min(520px,40%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
+.f3-warn{position:absolute;left:50%;top:54px;transform:translateX(-50%);z-index:5;width:max-content;max-width:min(560px,46%);background:#3a2a12f2;border:1px solid #7a5a22;color:#ffd79a;border-radius:8px;padding:5px 10px;font-size:11.5px;line-height:1.35;display:none;white-space:normal;overflow-wrap:anywhere;box-shadow:var(--shadow)}
 .f3-warn.on{display:block}
 .f3-tip{position:fixed;z-index:60;pointer-events:none;background:#0d0e10f2;color:#f3f4f5;border:1px solid #ffffff14;border-radius:6px;padding:4px 8px;font:12px/1.35 Inter,"Segoe UI",system-ui,sans-serif;max-width:280px;box-shadow:0 6px 18px #0006;opacity:0;transition:opacity .12s}
 .f3-tip.on{opacity:1}
@@ -143,6 +143,9 @@ export const CSS = `
 .f3-field>span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
 .f3-field.w{grid-column:1/-1;grid-template-columns:116px minmax(0,1fr)}
 .f3-field.w>span{max-width:none;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.15;overflow-wrap:anywhere}
+/* Caixa de seleção: borda clara com halo escuro (lê sobre céu, tijolo ou vidro). */
+.f3-marquee{position:absolute;z-index:6;pointer-events:none;border:2px solid #6aa6ff;background:#5b9cff2e;box-shadow:0 0 0 1px #0b1220aa,inset 0 0 0 1px #0b122066}
+.f3-marquee.cross{border:2px dashed #5fd39b;background:#4cc38a26}
 .f3-field.st{grid-template-columns:minmax(0,1fr);gap:3px}
 .f3-field.st>span{-webkit-line-clamp:1}
 .f3-in{position:relative;min-width:0;display:block}
@@ -215,7 +218,10 @@ export const CSS = `
 .f3-modal{position:absolute;inset:0;background:#0009;z-index:40;display:grid;place-items:start center;padding-top:12vh}
 .f3-modal>div{background:var(--panel-solid);border:1px solid var(--line);border-radius:12px;max-width:min(720px,92vw);max-height:76vh;overflow:auto;padding:16px 18px;box-shadow:0 24px 70px #000a;color:var(--ink)}
 .f3-help h2{margin:0 0 10px;font-size:16px}
-.f3-help .cols{display:grid;grid-template-columns:1fr 1fr;gap:6px 22px;font-size:12px}
+.f3-modal>.f3-help{width:min(980px,94vw);max-width:none}
+.f3-help .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px 26px;font-size:12px}
+.f3-help h3{grid-column:1/-1;margin:0 0 2px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.f3-help .f3-keys>span{white-space:nowrap}
 .f3-menu{position:absolute;z-index:30;background:var(--panel-solid);border:1px solid var(--line);border-radius:9px;box-shadow:0 14px 40px #0008;padding:4px;min-width:210px;color:var(--ink)}
 .f3-menu button{display:flex;width:100%;border:0;background:transparent;border-radius:6px;height:30px;padding:0 9px;gap:9px;align-items:center;text-align:left;color:var(--ink);letter-spacing:0;font-weight:400}
 .f3-menu button:hover{background:var(--raise)}

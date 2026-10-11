@@ -22,14 +22,19 @@ export function elemKey(pl: Placement): string | null {
   return null;
 }
 
-/** Elementos de fachada de um edifício avaliado (só os presos a faces). */
+/**
+ * Elementos de um edifício avaliado: os presos a faces (com lado e posição na
+ * grade da fachada) e os componentes no chão, no telhado ou em caminho (cada
+ * um num "lado" só dele, para Fileira/Coluna não os misturarem).
+ */
 export function elementsOf(placements: Placement[], typeOf: (pl: Placement) => string, levelOf: (pl: Placement) => number): Elem[] {
   const out: Elem[] = [];
   for (const pl of placements) {
     const key = elemKey(pl);
-    if (!key || !pl.host) continue;
+    if (!key) continue;
     const level = levelOf(pl);
-    out.push({ key, pl, side: `${pl.host.solid}|${pl.host.edge}`, level, s: pl.host.s, type: typeOf(pl) });
+    if (pl.host) out.push({ key, pl, side: `${pl.host.solid}|${pl.host.edge}`, level, s: pl.host.s, type: typeOf(pl) });
+    else out.push({ key, pl, side: `free|${key}`, level, s: 0, type: typeOf(pl) });
   }
   return out;
 }
@@ -106,9 +111,10 @@ export function shift(all: Elem[], sel: Set<string>, dir: 'left' | 'right' | 'up
     let n: Elem | undefined;
     if (dir === 'up' || dir === 'down') n = same.find((x) => x.level === e.level + (dir === 'up' ? 1 : -1) && Math.abs(x.s - e.s) < COL_TOL);
     else {
+      // s cresce no sentido u da face, que fica à esquerda de quem olha a fachada de fora.
       const mates = same.filter((x) => x.level === e.level).sort((a, b) => a.s - b.s);
       const i = mates.indexOf(e);
-      n = mates[i + (dir === 'right' ? 1 : -1)];
+      n = mates[i + (dir === 'right' ? -1 : 1)];
     }
     out.add((n ?? e).key);
   }

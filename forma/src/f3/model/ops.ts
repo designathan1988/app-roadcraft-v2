@@ -212,8 +212,8 @@ export function mirrorSolid(s: Solid, axis: 'x' | 'z', c: Vec2 = planCenter(s)):
 }
 
 /** Cópia de um sólido com IDs novos (lados e regras remapeados). */
-export function cloneSolid(s: Solid): Solid {
-  const map = new Map<ID, ID>();
+/** Cópia com ids novos; `map` recebe vértice antigo → novo (as arestas têm o id do vértice inicial). */
+export function cloneSolid(s: Solid, map = new Map<ID, ID>()): Solid {
   const ring = (r: PlanVertex[]) =>
     r.map((v) => {
       const id = uid();
@@ -232,8 +232,9 @@ export function cloneBuilding(b: Building3): Building3 {
   const c: Building3 = structuredClone(b);
   c.id = uid();
   const solidMap = new Map<ID, ID>();
+  const vertexMap = new Map<ID, ID>();
   c.solids = b.solids.map((s) => {
-    const n = cloneSolid(s);
+    const n = cloneSolid(s, vertexMap);
     solidMap.set(s.id, n.id);
     return n;
   });
@@ -241,6 +242,8 @@ export function cloneBuilding(b: Building3): Building3 {
     const n = structuredClone(it);
     n.id = uid();
     if (n.host.kind === 'face' || n.host.kind === 'roof') n.host.solid = solidMap.get(n.host.solid) ?? n.host.solid;
+    // A face é a aresta (id do vértice inicial, com sufixo de trecho curvo): segue o vértice copiado.
+    if (n.host.kind === 'face') n.host.edge = n.host.edge.replace(/^[^:]+/, (e) => vertexMap.get(e) ?? e);
     return n;
   });
   return c;

@@ -26,7 +26,7 @@ export interface EdgeRegion {
 export interface Placement {
   family: Family;
   params: Params;
-  /** Referencial da peça: origem no centro da base, x ao longo, y para cima, z para fora. */
+  /** Referencial da peça (destro): origem no centro da base, x à direita de quem olha a face, y para cima, z para fora. */
   frame: M4;
   opening: Opening | null;
   tag: PartTag;

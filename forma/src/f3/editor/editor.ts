@@ -9,7 +9,8 @@ import { building as newBuilding, circlePlan, levelsFor, planVertices, project a
 import { bendEdge, cloneBuilding, cloneSolid, dirToLocal, edgeNormal, findSolid, mirrorSolid, moveVertex, planCenter, planValid as planValidOps, pushEdge, removeVertex, rotateSolid, splitEdge, toLocal, topRing, toWorld, topAt, translateSolid } from '../model/ops';
 import { solidRings } from '../eval/body';
 import { extrudeSide, insetSide, insetTop, offsetCopy, offsetSolid, setSolidSize, splitAtHeight } from '../model/modeling';
-import { activeLayer } from '../model/layers';
+import { activeLayer, buildingHidden, buildingLocked, itemHidden, itemLocked, solidHidden, solidLocked } from '../model/layers';
+import { boxPicks, combine, marqueeRect, selMode } from './selection';
 import { Store } from './store';
 import { alignBuildings, alignSolids, type AlignOp } from '../model/align';
 import { BLOCKS, blockSolid, type BlockPlacement } from '../model/blocks';
@@ -41,6 +42,9 @@ export interface Selection {
   /** Canto (vértice da planta) selecionado no primeiro sólido. */
   vertex?: ID | null;
 }
+
+/** Modificadores de um gesto (clique ou caixa). */
+type Mods = { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean; altKey: boolean };
 
 interface Measure {
   label: string;
@@ -93,6 +97,9 @@ export class Editor3 {
   measure: Measure | null = null;
   warnings: string[] = [];
   private drag: Drag | null = null;
+  /** Caixa de seleção em curso (de onde, até onde, modificadores do começo). */
+  private marquee: { ax: number; ay: number; bx: number; by: number; active: boolean; hit: Hit | null; ev: Mods } | null = null;
+  private marqueeEl: HTMLElement | null = null;
   private draft: { points: THREE.Vector3[]; y: number; bid: ID | null; hover: THREE.Vector3 | null } | null = null;
   private selOverlay = new THREE.Group();
   private snapOverlay = new THREE.Group();
@@ -603,7 +610,8 @@ export class Editor3 {
         if (s) this.changeSolid((x) => mirrorSolid(x, 'x'), 'Volume espelhado.');
         break;
       case 'rot90':
-        if (b) this.change(b.id, (x) => void (x.rotation = (x.rotation + 90) % 360), 'Girado 90°.', false);
+        if (b && this.context !== b.id && this.sel.others.length) this.rotateBuildings(90);
+        else if (b) this.change(b.id, (x) => void (x.rotation = (x.rotation + 90) % 360), 'Girado 90°.', false);
         break;
       case 'del':
         this.remove();
@@ -675,13 +683,20 @@ export class Editor3 {
       this.select({ building: b.id, solids: ids });
       return;
     }
-    const c = cloneBuilding(b);
-    c.position = [b.position[0] + 4, b.position[1] + 4];
-    c.name = b.name + ' (cópia)';
-    this.store.project.buildings.push(c);
-    this.store.commit([c.id], 'Edifício duplicado.');
-    this.toast('Edifício duplicado.');
-    this.select({ building: c.id });
+    // Todos os edifícios selecionados (o arranjo entre eles se mantém).
+    const copies = this.selectedBuildings().flatMap((id) => {
+      const src = this.store.building(id);
+      if (!src) return [];
+      const c = cloneBuilding(src);
+      c.position = [src.position[0] + 4, src.position[1] + 4];
+      c.name = src.name + ' (cópia)';
+      this.store.project.buildings.push(c);
+      return [c.id];
+    });
+    const msg = copies.length > 1 ? `${copies.length} edifícios duplicados.` : 'Edifício duplicado.';
+    this.store.commit(copies, msg);
+    this.toast(msg);
+    this.selectBuildings(copies);
   }
 
   remove(): void {
@@ -705,10 +720,12 @@ export class Editor3 {
       }, 'Volume excluído.');
       return this.select({ building: b.id });
     }
-    this.store.project.buildings = this.store.project.buildings.filter((x) => x.id !== b.id);
-    if (this.context === b.id) this.context = null;
-    this.store.commit(null, 'Edifício excluído.');
-    this.toast('Edifício excluído. Ctrl+Z desfaz.');
+    const del = new Set(this.context === b.id ? [b.id] : this.selectedBuildings());
+    this.store.project.buildings = this.store.project.buildings.filter((x) => !del.has(x.id));
+    if (this.context && del.has(this.context)) this.context = null;
+    const msg = del.size > 1 ? `${del.size} edifícios excluídos.` : 'Edifício excluído.';
+    this.store.commit(null, msg);
+    this.toast(`${msg} Ctrl+Z desfaz.`);
     this.select({});
   }
 
@@ -858,8 +875,40 @@ export class Editor3 {
     }
   }
 
-  /** Cotas da seleção: cada lado do volume e a altura, sempre visíveis. */
+  /** Cotas da seleção: cada lado do volume e a altura, sempre visíveis e sem encostar uma na outra. */
   private drawSelDims(): void {
+    this.placeSelDims();
+    this.declutterDims();
+  }
+
+  /**
+   * Rotulagem gulosa: cada cota, na ordem, sai de perto das já colocadas
+   * (folga de 6 px), descendo; se sair da vista, sobe. Uma passada basta para
+   * as poucas cotas de uma seleção.
+   */
+  private declutterDims(): void {
+    const els = [...this.shell.view.querySelectorAll<HTMLElement>('.f3-sdim')];
+    const H = this.shell.view.clientHeight;
+    const GAP = 6;
+    const placed: DOMRect[] = [];
+    for (const el of els) {
+      let r = el.getBoundingClientRect();
+      const hit = (q: DOMRect) => placed.find((p) => q.left < p.right + GAP && q.right > p.left - GAP && q.top < p.bottom + GAP && q.bottom > p.top - GAP);
+      for (let k = 0; k < 6; k++) {
+        const p = hit(r);
+        if (!p) break;
+        const top = parseFloat(el.style.top);
+        const down = p.bottom + GAP - r.top;
+        const up = r.bottom - (p.top - GAP);
+        const dy = top + down + r.height < H ? down : -up;
+        el.style.top = `${top + dy}px`;
+        r = el.getBoundingClientRect();
+      }
+      placed.push(r);
+    }
+  }
+
+  private placeSelDims(): void {
     this.shell.view.querySelectorAll('.f3-sdim').forEach((x) => x.remove());
     const b = this.activeBuilding();
     if (!b || this.drag) return;
@@ -931,6 +980,154 @@ export class Editor3 {
     }
   }
 
+  // ── Seleção múltipla (docs/SELECAO.md) ───────────────────────────────
+  /** Clique parado pendente (dentro de uma seleção múltipla, sem arrasto). */
+  private pendingClick: Hit | null = null;
+
+  /** O ponto pressionado já está selecionado (com `multi`, numa seleção de vários)? */
+  private inSelection(hit: Hit, multi: boolean): boolean {
+    const b = hit.building;
+    if (this.context !== b.id) return (!multi || this.sel.others.length > 0) && this.selectedBuildings().includes(b.id);
+    const p = hit.part;
+    const key = p ? (p.rule ? `r|${p.solid}|${p.rule}|${p.key}` : p.item ? `i|${p.item}|${p.key ?? '0'}` : null) : null;
+    if (key) return multi ? this.sel.elems.length > 1 && this.sel.elems.includes(key) : this.sel.item === p!.item || this.sel.elems.includes(key);
+    return (!multi || this.sel.solids.length > 1) && !!hit.face && this.sel.solids.includes(hit.face.solid);
+  }
+
+  /** Gira os edifícios selecionados juntos, em torno do centro comum (cada um gira e anda no círculo). */
+  rotateBuildings(deg: number): void {
+    const bs = this.selectedBuildings().map((id) => this.store.building(id)).filter((x): x is Building3 => !!x);
+    if (!bs.length) return;
+    const centers = bs.map((x) => {
+      const add = x.solids.filter((s) => s.op === 'add');
+      const c = add.map((s) => planCenter(s));
+      return toWorld(x, c.length ? [c.reduce((a, q) => a + q[0], 0) / c.length, c.reduce((a, q) => a + q[1], 0) / c.length] : [0, 0]);
+    });
+    const G: Vec2 = [centers.reduce((a, q) => a + q[0], 0) / centers.length, centers.reduce((a, q) => a + q[1], 0) / centers.length];
+    const a = rad(deg);
+    for (const x of bs) {
+      const dx = x.position[0] - G[0],
+        dz = x.position[1] - G[1];
+      // Mesma rotação de buildingMatrix/toWorld: (x, z) → (x cos a + z sin a, −x sin a + z cos a).
+      x.position = [G[0] + dx * Math.cos(a) + dz * Math.sin(a), G[1] - dx * Math.sin(a) + dz * Math.cos(a)];
+      x.rotation = (((x.rotation + deg) % 360) + 360) % 360;
+    }
+    this.store.commit(bs.map((x) => x.id), `${bs.length} edifícios girados ${deg}°.`, false);
+    this.toast(`${bs.length} edifícios girados ${deg}°.`);
+    this.drawSelection();
+  }
+
+  /** Edifícios selecionados, o principal primeiro. */
+  selectedBuildings(): ID[] {
+    return this.sel.building ? [this.sel.building, ...this.sel.others] : [];
+  }
+
+  selectBuildings(ids: ID[]): void {
+    if (!ids.length) return this.select({});
+    this.select({ building: ids[0]!, others: ids.slice(1) });
+  }
+
+  /** Seleciona elementos por chave; um componente sozinho abre o painel dele. */
+  selectElemKeys(bid: ID, keys: string[]): void {
+    if (!keys.length) return this.select({ building: bid });
+    const only = keys.length === 1 && keys[0]!.startsWith('i|') ? keys[0]!.split('|')[1]! : null;
+    this.select({ building: bid, elems: keys, item: only });
+  }
+
+  private moveMarquee(e: { clientX: number; clientY: number }): void {
+    const m = this.marquee!;
+    m.bx = e.clientX;
+    m.by = e.clientY;
+    if (!m.active && Math.hypot(m.bx - m.ax, m.by - m.ay) < 5) return;
+    m.active = true;
+    if (!this.marqueeEl) {
+      this.marqueeEl = document.createElement('div');
+      this.marqueeEl.className = 'f3-marquee';
+      this.shell.view.appendChild(this.marqueeEl);
+    }
+    const el = this.marqueeEl;
+    const rv = this.shell.view.getBoundingClientRect();
+    const { rect, window: win } = marqueeRect(m.ax, m.ay, m.bx, m.by);
+    el.hidden = false;
+    el.classList.toggle('cross', !win);
+    el.style.left = `${rect.x0 - rv.left}px`;
+    el.style.top = `${rect.y0 - rv.top}px`;
+    el.style.width = `${rect.x1 - rect.x0}px`;
+    el.style.height = `${rect.y1 - rect.y0}px`;
+    this.drawHover(null);
+    this.shell.status.hint.textContent = win ? 'Janela (→): pega só o que fica inteiro dentro' : 'Cruzada (←): pega tudo o que a caixa toca';
+  }
+
+  private endMarquee(): void {
+    const m = this.marquee!;
+    this.marquee = null;
+    if (this.marqueeEl) this.marqueeEl.hidden = true;
+    if (!m.active) return this.clickSelect(m.hit, m.ev);
+    this.applyMarquee(m);
+    this.updateHint();
+  }
+
+  /** O que a caixa pega: edifícios fora de um edifício; dentro, elementos (ou volumes, se não houver). */
+  private applyMarquee(m: { ax: number; ay: number; bx: number; by: number; ev: Mods }): void {
+    const cr = this.view.renderer.domElement.getBoundingClientRect();
+    const { rect, window: win } = marqueeRect(m.ax - cr.left, m.ay - cr.top, m.bx - cr.left, m.by - cr.top);
+    const mode = selMode(m.ev);
+    const scr = (v: THREE.Vector3) => this.view.toScreen(v);
+    const solidPts = (s: Solid, M: THREE.Matrix4) => s.plan.outer.flatMap((v) => [new THREE.Vector3(v.p[0], s.base, v.p[1]).applyMatrix4(M), new THREE.Vector3(v.p[0], s.base + s.height, v.p[1]).applyMatrix4(M)]);
+    const b = this.context ? this.store.building(this.context) : null;
+    if (!b) {
+      const ids = this.project.buildings
+        .filter((x) => !buildingHidden(this.project, x) && !buildingLocked(this.project, x))
+        .filter((x) => {
+          const M = this.view.buildingMatrix(x);
+          return boxPicks(x.solids.filter((s) => s.op === 'add').flatMap((s) => solidPts(s, M)).map(scr), rect, win);
+        })
+        .map((x) => x.id);
+      const next = combine(this.selectedBuildings(), ids, mode);
+      this.selectBuildings(next);
+      if (next.length) this.toast(`${next.length} edifício(s) selecionado(s).`);
+      return;
+    }
+    const M = this.view.buildingMatrix(b);
+    const cam = this.view.camera.position;
+    const mm = new THREE.Matrix4(),
+      n = new THREE.Vector3(),
+      c = new THREE.Vector3();
+    const keys: string[] = [];
+    for (const el of this.elements()) {
+      const pl = el.pl;
+      const it = pl.tag.item ? b.items.find((x) => x.id === pl.tag.item) : undefined;
+      if (it && (itemHidden(this.project, it) || itemLocked(this.project, it))) continue;
+      const [w, h, d] = pl.family.size(pl.params);
+      mm.fromArray(pl.frame).premultiply(M);
+      if (pl.host) {
+        // Só faces voltadas para a câmera: a caixa não pega o fundo do prédio.
+        n.setFromMatrixColumn(mm, 2);
+        c.setFromMatrixPosition(mm);
+        if (n.dot(c.sub(cam).negate()) <= 0) continue;
+      }
+      let pts: THREE.Vector3[];
+      if (pl.path) pts = pl.path.flatMap((p) => [new THREE.Vector3(p[0], p[1], p[2]), new THREE.Vector3(p[0], p[1] + h, p[2])].map((v) => v.applyMatrix4(mm)));
+      else {
+        const zs = pl.host ? [0, Math.max(0.05, d)] : [-d / 2, d / 2];
+        pts = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => new THREE.Vector3(i & 1 ? w / 2 : -w / 2, i & 2 ? h : 0, zs[(i >> 2) & 1]!).applyMatrix4(mm));
+      }
+      if (boxPicks(pts.map(scr), rect, win)) keys.push(el.key);
+    }
+    if (keys.length) {
+      const next = combine(this.sel.elems, keys, mode);
+      this.selectElemKeys(b.id, next);
+      this.toast(`${next.length} elemento(s) selecionado(s).`);
+      return;
+    }
+    // Nenhum elemento na caixa: volumes.
+    const sids = b.solids.filter((s) => !solidHidden(this.project, s) && !solidLocked(this.project, s) && boxPicks(solidPts(s, M).map(scr), rect, win)).map((s) => s.id);
+    if (!sids.length && mode !== 'replace') return;
+    const next = combine(this.sel.solids, sids, mode);
+    this.select({ building: b.id, solids: next });
+    if (next.length) this.toast(`${next.length} volume(s) selecionado(s).`);
+  }
+
   // ── Elementos de fachada ─────────────────────────────────────────────
   /** Elementos (janelas, portas…) do edifício em edição. */
   elements(): Elem[] {
@@ -943,9 +1140,8 @@ export class Editor3 {
       const ex = rule?.except[pl.tag.key!];
       return ex && ex !== 'none' ? ex : (rule?.type ?? '');
     }, (pl) => {
-      // Pavimento pela cota real (regras e peças avulsas na mesma numeração).
-      const s = findSolid(b, pl.host!.solid);
-      const y = (s?.base ?? 0) + pl.host!.y + 0.05;
+      // Pavimento pela cota real da peça (regras, avulsas e componentes livres na mesma numeração).
+      const y = (pl.path ? (pl.path[0]?.[1] ?? 0) : pl.frame[13]!) + 0.05;
       const lv = [...b.levels].sort((p, q) => p.elevation - q.elevation);
       let i = 0;
       lv.forEach((l, k) => {
@@ -1162,7 +1358,7 @@ export class Editor3 {
     const t =
       text ??
       ({
-        select: this.context ? 'Clique num volume, face ou componente. Arraste o volume para mover; use as setas e as alças. Duplo clique numa face seleciona só ela.' : 'Clique num edifício para selecionar; arraste para mover. Duplo clique entra para editar.',
+        select: this.context ? 'Clique num volume, face ou componente; Ctrl soma, Shift alterna; arraste no vazio para a caixa. Duplo clique numa janela pega a fileira.' : 'Clique num edifício; Ctrl soma, Shift alterna; arraste no vazio para a caixa. Duplo clique entra para editar.',
         push: 'Arraste uma face para empurrar ou puxar. Digite a distância e Enter.',
         rect: 'Clique dois cantos (no chão ou sobre um telhado plano). Depois digite 10x8 e Enter para largura × profundidade, ou um número para a altura.',
         circle: 'Clique o centro e depois o raio.',
@@ -1278,6 +1474,25 @@ export class Editor3 {
         }
         return;
       }
+      // Ctrl sobre o que já está selecionado: arrastar copia (SketchUp); parado, nada muda.
+      const copyGrab = !!hit && (e.ctrlKey || e.metaKey) && !e.shiftKey && this.inSelection(hit, false);
+      // Vazio, ou Ctrl/Shift em qualquer lugar: caixa de seleção; parado, vale como clique na soltura.
+      if (this.tool === 'select' && !copyGrab && (!hit || e.ctrlKey || e.shiftKey || e.metaKey)) {
+        this.marquee = { ax: e.clientX, ay: e.clientY, bx: e.clientX, by: e.clientY, active: false, hit, ev: { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, metaKey: e.metaKey, altKey: e.altKey } };
+        return;
+      }
+      // Pressionar algo que já está numa seleção múltipla não a desfaz: arrastar move o
+      // grupo; soltar sem arrastar seleciona só aquilo (como no SketchUp e no Figma).
+      if (hit && (copyGrab || this.inSelection(hit, true))) {
+        const b0 = this.activeBuilding()!;
+        if (this.context !== b0.id) this.beginMoveBuilding(b0, e, hit);
+        else if (this.sel.item && !this.sel.elems.length) this.beginMoveItem(b0, e, hit);
+        else if (this.sel.solids.length && !this.sel.elems.length) this.beginMoveSolids(b0, e, hit);
+        const ev = { ctrlKey: copyGrab, shiftKey: false, metaKey: false, altKey: false };
+        if (this.drag) this.drag.data.click = { hit, ev };
+        else if (!copyGrab) this.pendingClick = hit;
+        return;
+      }
       // Clique de novo num edifício já selecionado (sem arrastar) entra nele e pega o volume.
       const drill = hit && this.context !== hit.building.id && this.sel.building === hit.building.id && !e.shiftKey && !this.sel.others.length ? hit.face?.solid : undefined;
       this.clickSelect(hit, e);
@@ -1301,8 +1516,11 @@ export class Editor3 {
     if (this.tool === 'paint') return this.paintAt(e);
   }
 
-  private clickSelect(hit: Hit | null, e: PointerEvent): void {
+  private clickSelect(hit: Hit | null, e: Mods): void {
+    const mode = selMode(e);
     if (!hit) {
+      // Clique no vazio com modificador não perde a seleção.
+      if (mode !== 'replace') return;
       if (this.context) {
         if (this.sel.solids.length || this.sel.item) return this.select({ building: this.context });
         const id = this.context;
@@ -1314,37 +1532,25 @@ export class Editor3 {
     const b = hit.building;
     if (this.context !== b.id) {
       if (this.context) this.context = null;
-      // Shift+clique: vários edifícios (para alinhar e distribuir).
-      if (e.shiftKey && this.sel.building && this.sel.building !== b.id) {
-        const others = new Set(this.sel.others);
-        if (others.has(b.id)) others.delete(b.id);
-        else others.add(b.id);
-        return this.select({ building: this.sel.building, others: [...others] });
-      }
+      // Vários edifícios (para alinhar e distribuir).
+      if (mode !== 'replace') return this.selectBuildings(combine(this.selectedBuildings(), [b.id], mode));
       return this.select({ building: b.id });
     }
     if (hit.part) {
       const key = hit.part.rule ? `r|${hit.part.solid}|${hit.part.rule}|${hit.part.key}` : hit.part.item ? `i|${hit.part.item}|${hit.part.key ?? '0'}` : null;
-      if (key && (e.shiftKey || e.ctrlKey) && this.sel.elems.length) {
-        // Shift: acrescenta/tira; Ctrl+Shift: o trecho entre o último e este.
-        const set = e.ctrlKey && e.shiftKey ? new Set([...this.sel.elems, ...between(this.elements(), this.sel.elems[this.sel.elems.length - 1]!, key)]) : new Set(this.sel.elems);
-        if (!(e.ctrlKey && e.shiftKey)) {
-          if (set.has(key)) set.delete(key);
-          else set.add(key);
-        }
-        return this.select({ building: b.id, elems: [...set], item: set.size === 1 && hit.part.item ? hit.part.item : null });
-      }
+      // Alt: o trecho da fileira entre o último selecionado e este.
+      if (key && e.altKey && this.sel.elems.length) return this.selectElemKeys(b.id, combine(this.sel.elems, [...between(this.elements(), this.sel.elems[this.sel.elems.length - 1]!, key)], 'add'));
+      if (key && mode !== 'replace') return this.selectElemKeys(b.id, combine(this.sel.elems, [key], mode));
       if (hit.part.item) return this.select({ building: b.id, item: hit.part.item, elems: key ? [key] : [] });
       if (key) return this.select({ building: b.id, elems: [key] });
     }
     const f = hit.face;
     if (!f) return;
     const sid = f.solid;
-    if (e.shiftKey && !this.sel.item) {
-      const set = new Set(this.sel.solids);
-      if (set.has(sid)) set.delete(sid);
-      else set.add(sid);
-      return this.select({ building: b.id, solids: [...set] });
+    if (mode !== 'replace') {
+      // Com modificador, a parede só entra numa seleção de volumes; com elementos selecionados, nada muda.
+      if (this.sel.item || this.sel.elems.length) return;
+      return this.select({ building: b.id, solids: combine(this.sel.solids, [sid], mode) });
     }
     // Primeiro clique: o volume; clique de novo no mesmo volume: a face.
     const already = this.sel.solids.length === 1 && this.sel.solids[0] === sid;
@@ -1373,6 +1579,7 @@ export class Editor3 {
   }
 
   private onMove(e: PointerEvent): void {
+    if (this.marquee) return this.moveMarquee(e);
     if (this.drag) return this.updateDrag(e);
     if (this.tool === 'select') {
       this.handles.setHover(this.handles.hit(e));
@@ -1521,11 +1728,19 @@ export class Editor3 {
   }
 
   private onUp(e: PointerEvent): void {
+    if (this.marquee) return this.endMarquee();
+    if (this.pendingClick) {
+      const hit = this.pendingClick;
+      this.pendingClick = null;
+      return this.clickSelect(hit, { ctrlKey: false, shiftKey: false, metaKey: false, altKey: false });
+    }
     if (this.drag) return this.finishDrag(e);
     if ((this.tool === 'rect' || this.tool === 'circle') && this.draft && this.draft.points.length === 1 && this.draft.hover && this.draft.hover.distanceTo(this.draft.points[0]!) > 0.6) this.drawDown(e);
   }
 
   cancel(): void {
+    this.marquee = null;
+    if (this.marqueeEl) this.marqueeEl.hidden = true;
     if (this.drag) {
       this.store.revert();
       this.drag = null;
@@ -1691,7 +1906,12 @@ export class Editor3 {
 
   private beginMoveBuilding(b: Building3, e: PointerEvent, hit: Hit | null, h?: Handle): void {
     const p0 = this.view.onPlane(e, 0) ?? new THREE.Vector3(b.position[0], 0, b.position[1]);
-    this.startDrag('move-building', b, e, { handle: h?.kind ?? 'move-xz', p0, axis: h?.dir?.clone() ?? null, copy: e.ctrlKey, hitY: hit?.point.y ?? 0 }, false);
+    // Os outros edifícios selecionados andam junto (posição de partida de cada um).
+    const others = this.sel.building === b.id ? this.sel.others.flatMap((id) => {
+      const o = this.store.building(id);
+      return o ? [[id, [...o.position]] as [ID, number[]]] : [];
+    }) : [];
+    this.startDrag('move-building', b, e, { handle: h?.kind ?? 'move-xz', p0, axis: h?.dir?.clone() ?? null, copy: e.ctrlKey, hitY: hit?.point.y ?? 0, others }, false);
     this.setMoveMeasure();
   }
 
@@ -2104,12 +2324,21 @@ export class Editor3 {
     const b = bid ? this.store.building(bid) : undefined;
     if (!b) return;
     if ((d && d.kind === 'move-building') || (!d && this.lastMoved?.kind === 'building')) {
-      const orig = d ? d.origBuilding : null;
-      const base = orig ? orig.position : [b.position[0] - this.lastMoved!.delta.x, b.position[1] - this.lastMoved!.delta.z];
-      b.position = [base[0]! + delta.x, base[1]! + delta.z];
+      // Partida: a do arrasto ou, ao redigitar a distância, a de antes do último movimento.
+      const moveTo = (x: Building3, orig: number[] | null) => {
+        const base = orig ?? [x.position[0] - this.lastMoved!.delta.x, x.position[1] - this.lastMoved!.delta.z];
+        x.position = [base[0]! + delta.x, base[1]! + delta.z];
+      };
+      moveTo(b, d ? d.origBuilding.position : null);
+      const others = d ? ((d.data.others as [ID, number[]][] | undefined) ?? []) : this.lastMoved!.ids.map((id) => [id, null] as [ID, null]);
+      for (const [id, p] of others) {
+        const x = this.store.building(id);
+        if (x) moveTo(x, p);
+      }
+      const ids = others.map((o) => o[0]);
       if (commit) {
-        this.lastMoved = { kind: 'building', bid: b.id, ids: [], delta: delta.clone(), copied: this.lastMoved?.copied ?? false };
-        this.store.commit([b.id], `Movido ${fmt(delta.length())} m.`, false);
+        this.lastMoved = { kind: 'building', bid: b.id, ids, delta: delta.clone(), copied: this.lastMoved?.copied ?? false };
+        this.store.commit([b.id, ...ids], `Movido ${fmt(delta.length())} m.`, false);
       } else this.view.sync(this.store.project, this.store.revision, this.preview);
       this.drawSelection();
       return;
@@ -2136,10 +2365,23 @@ export class Editor3 {
     const b = this.store.building(d.bid)!;
     if (d.kind === 'move-building') {
       const c = cloneBuilding(b);
+      c.name = b.name + ' (cópia)';
       this.store.project.buildings.push(c);
       d.bid = c.id;
       d.origBuilding = structuredClone(c);
       this.sel.building = c.id;
+      // Os outros selecionados também viram cópias, e são as cópias que andam.
+      const others = (d.data.others as [ID, number[]][] | undefined) ?? [];
+      d.data.others = others.flatMap(([id, p]) => {
+        const src = this.store.building(id);
+        if (!src) return [];
+        const k = cloneBuilding(src);
+        k.name = src.name + ' (cópia)';
+        k.position = [p[0]!, p[1]!];
+        this.store.project.buildings.push(k);
+        return [[k.id, p] as [ID, number[]]];
+      });
+      this.sel.others = (d.data.others as [ID, number[]][]).map((o) => o[0]);
     } else if (d.kind === 'move-solids') {
       const ids: ID[] = [];
       for (const sid of d.data.ids as ID[]) {
@@ -2193,6 +2435,12 @@ export class Editor3 {
       this.enter(d.bid);
       return this.select({ building: d.bid, solids: [d.data.drill as ID] });
     }
+    if (!d.moved && d.data.click) {
+      // Clique parado num objeto da seleção múltipla: fica só ele.
+      this.store.revert();
+      const c = d.data.click as { hit: Hit; ev: Mods };
+      return this.clickSelect(c.hit, c.ev);
+    }
     if (!d.moved) {
       this.store.revert();
       // Clique sem arrastar numa alça: vale como clique no modelo (selecionar face, etc.).
@@ -2204,8 +2452,9 @@ export class Editor3 {
     if (d.kind === 'move-building' && b) {
       const delta = new THREE.Vector3(b.position[0] - d.origBuilding.position[0], 0, b.position[1] - d.origBuilding.position[1]);
       this.lastMove = delta.clone();
-      this.lastMoved = { kind: 'building', bid: b.id, ids: [], delta, copied: !!d.data.copied };
-      this.store.commit([b.id], d.data.copied ? 'Copiado. Digite 5x para mais cópias.' : `Movido ${fmt(delta.length())} m.`, !!d.data.copied);
+      const ids = ((d.data.others as [ID, number[]][] | undefined) ?? []).map((o) => o[0]);
+      this.lastMoved = { kind: 'building', bid: b.id, ids, delta, copied: !!d.data.copied };
+      this.store.commit([b.id, ...ids], d.data.copied ? 'Copiado. Digite 5x para mais cópias.' : `Movido ${fmt(delta.length())} m.`, !!d.data.copied);
       if (d.data.copied) this.toast('Copiado. Digite 5x para mais cópias.');
       return;
     }

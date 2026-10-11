@@ -45,15 +45,61 @@ export function toForma3(raw: unknown): Project3 {
 export function migrateForma3(raw: unknown): Migration {
   const r = raw as { schema?: unknown } | null;
   if (r && typeof r === 'object' && r.schema === SCHEMA3) {
-    const errors = validateForma3(r);
+    const copy = structuredClone(r) as Project3;
+    const notes = repairRefs(copy);
+    const errors = validateForma3(copy);
     if (errors.length) throw new Error(`Projeto forma/3 inválido: ${errors.slice(0, 3).join(' ')}`);
-    return { project: normalize3(structuredClone(r as Project3)), notes: [] };
+    return { project: normalize3(copy), notes };
   }
   const v2 = loadProject(raw);
   const out = fromForma2(v2);
   const errors = validateForma3(out.project);
   if (errors.length) throw new Error(`A conversão para o FORMA 3 falhou: ${errors.slice(0, 3).join(' ')}`);
   return out;
+}
+
+/**
+ * Referências soltas (componente, regra ou ajuste apontando para um lado ou
+ * volume que não existe mais) são consertadas em vez de derrubar o projeto
+ * inteiro: saem, e cada saída vira uma nota para o usuário. O resto da
+ * validação continua valendo.
+ */
+function repairRefs(p: Project3): string[] {
+  const notes: string[] = [];
+  if (!Array.isArray(p.buildings)) return notes;
+  for (const b of p.buildings) {
+    if (!isObj(b) || !Array.isArray(b.solids)) continue;
+    const name = typeof b.name === 'string' ? b.name : 'edifício';
+    const sides = new Map<string, Set<string>>();
+    for (const s of b.solids) {
+      if (!isObj(s) || !isObj(s.plan) || !Array.isArray(s.plan.outer)) continue;
+      const rings = [s.plan.outer, ...(Array.isArray(s.plan.holes) ? s.plan.holes : [])];
+      const vids = new Set(rings.flatMap((ring) => (Array.isArray(ring) ? ring.map((v) => (isObj(v) ? v.id : undefined)) : [])).filter((id): id is string => typeof id === 'string'));
+      sides.set(s.id, vids);
+      if (isObj(s.edges))
+        for (const id of Object.keys(s.edges))
+          if (!vids.has(id)) {
+            delete s.edges[id];
+            notes.push(`${name}: ajuste de um lado que não existe mais foi descartado.`);
+          }
+      if (Array.isArray(s.facade))
+        for (const rule of s.facade)
+          if (isObj(rule) && Array.isArray(rule.edges) && rule.edges.some((id) => !vids.has(id))) {
+            rule.edges = rule.edges.filter((id) => vids.has(id));
+            notes.push(`${name}: uma regra de fachada perdeu lados que não existem mais.`);
+          }
+    }
+    if (!Array.isArray(b.items)) continue;
+    b.items = b.items.filter((it) => {
+      const h = isObj(it) ? it.host : null;
+      if (!isObj(h) || h.kind !== 'face') return true;
+      const vids = sides.get(h.solid);
+      if (vids && vids.has(h.edge)) return true;
+      notes.push(`${name}: componente removido (a face onde estava não existe mais).`);
+      return false;
+    });
+  }
+  return notes;
 }
 
 /** O JSON troca NaN por null: o peitoril "do tipo" volta a ser NaN. */
