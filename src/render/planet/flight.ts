@@ -291,8 +291,12 @@ export class Flight {
     const radial = v1.subVectors(this.position, world.centre).normalize();
     const overNear = (this.position.distanceTo(world.centre) - world.radius) / world.radius;
     const bound = 1 - Math.min(1, Math.max(0, (overNear - FREE_FROM) / (FREE_AT - FREE_FROM)));
-    const own = cameraUp.set(0, 1, 0).applyQuaternion(this.orientation);
-    this.up.copy(own).lerp(radial, bound * bound * (3 - 2 * bound)).normalize();
+    // Far out the up stays as it was (a free, steady view); near, it is the
+    // radial; between, it leans that far towards the radial. Taken from the
+    // camera's own up it fed back into itself whenever the view was pitched,
+    // and the view turned on and on (the player, 2026-10-10: "ao apertar V
+    // fica tudo rodando e não para mais").
+    this.up.lerp(radial, bound * bound * (3 - 2 * bound)).normalize();
     tmpQ.setFromUnitVectors(v2, this.up);
     this.forward.applyQuaternion(tmpQ);
     this.heading.applyQuaternion(tmpQ);

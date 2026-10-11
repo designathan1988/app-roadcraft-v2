@@ -700,6 +700,25 @@ document.head.append(cleanStyle);
 const setClean = (on: boolean): void => { document.body.classList.toggle('flight-clean', on); };
 let flightShownAt = 0;
 const flightLocked = (): boolean => document.pointerLockElement === canvas;
+/**
+ * The pointer's place on the canvas (-1..1 from the middle) while the mouse is
+ * not captured: as a flight game's mouse aim, its offset from the middle is a
+ * rate of turn (`steerByPointer`), with a dead zone round the middle to hold
+ * the course. The mouse freed with Esc to use the panels does not steer.
+ */
+const flightAim = { x: 0, y: 0, on: false, freed: false };
+const AIM_DEAD = 0.08;
+/** Turn at the edge of the screen, CSS px of mouse motion a second (`Flight.look`). */
+const AIM_RATE = 1100;
+function steerByPointer(seconds: number): void {
+  if (!flight?.active || flightLocked() || !flightAim.on || flightAim.freed) return;
+  const shape = (v: number): number => {
+    const a = Math.max(0, Math.abs(v) - AIM_DEAD) / (1 - AIM_DEAD);
+    return Math.sign(v) * a * a;
+  };
+  const dx = shape(flightAim.x), dy = shape(flightAim.y);
+  if (dx !== 0 || dy !== 0) flight.look(dx * AIM_RATE * seconds, dy * AIM_RATE * seconds);
+}
 const metresText = (units: number): string => {
   const metres = units / UNITS_PER_METER;
   return metres >= 10_000 ? `${formatDecimal(metres / 1000, 0)} km` : metres >= 1000 ? `${formatDecimal(metres / 1000, 1)} km` : `${formatDecimal(metres, 0)} m`;
@@ -711,7 +730,7 @@ function updateFlightHud(now: number): void {
   const st = flight.state;
   const speed = metresText(st.speed);
   // Freed with Esc: how to take the mouse again, for as long as it is free.
-  const hint = !flightLocked()
+  const hint = flightAim.freed && !flightLocked()
     ? `<div style="opacity:.85">${t('flight.clickToSteer')}</div>`
     : now - flightStartedAt < FLIGHT_HINT_MS ? `<div style="opacity:.75">${t('flight.hint')}</div>` : '';
   flightHud.innerHTML = hint + `<div>${speed}/s${st.boost ? ' ⚡' : ''} · ${t('flight.height', { body: t(`flight.body.${st.near}`) })}: ${metresText(st.height)}`
@@ -736,6 +755,7 @@ function takeOff(): void {
   flightSight.hidden = false;
   flightShownAt = 0;
   flightStartedAt = performance.now();
+  flightAim.freed = false;
   window.addEventListener('beforeunload', holdTab);
   captureFlightMouse();
   requestDraw();
@@ -757,8 +777,8 @@ function land(): void {
 // The mouse freed (Esc, or the browser took it back): the keys let go, the sight hidden.
 document.addEventListener('pointerlockchange', () => {
   if (!flight?.active) return;
-  flightSight.hidden = !flightLocked();
-  if (!flightLocked()) flight.releaseAll();
+  // Freed by Esc: the keys let go. Lost otherwise, the pointer's aim steers on.
+  if (!flightLocked() && flightAim.freed) flight.releaseAll();
   flightShownAt = 0;
   requestDraw();
 });
@@ -775,7 +795,13 @@ window.addEventListener('keydown', (e) => {
   }
   if (!flight.active) return;
   // Esc frees the mouse (the browser does it when locked); the flight goes on.
-  if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (flightLocked()) document.exitPointerLock(); return; }
+  if (e.code === 'Escape') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (flightLocked()) document.exitPointerLock();
+    flightAim.freed = true;
+    flightShownAt = 0;
+    return;
+  }
   if (e.code === 'KeyU' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); setClean(!document.body.classList.contains('flight-clean')); return; }
   if (flight.press(e.code, e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); requestDraw(); }
 }, { capture: true });
@@ -787,15 +813,24 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!flight?.active) return;
   e.stopImmediatePropagation();
   e.preventDefault();
-  // A click on the scene takes the mouse again.
+  // A click on the scene takes the mouse again (and the aim, uncaptured).
+  flightAim.freed = false;
+  flightShownAt = 0;
   captureFlightMouse();
 }, { capture: true });
 canvas.addEventListener('pointermove', (e) => {
   if (!flight?.active) return;
   e.stopImmediatePropagation();
-  // Only the captured mouse steers: freed, it is the panels'.
-  if (flightLocked()) { flight.look(e.movementX, e.movementY); requestDraw(); }
+  // Captured, every move turns the view. Not captured (the browser or the
+  // app's pane refused the lock: the player, 2026-10-10, "por que o V não
+  // toma o mouse"), the pointer's place steers - `steerByPointer`.
+  if (flightLocked()) { flight.look(e.movementX, e.movementY); requestDraw(); return; }
+  const r = canvas.getBoundingClientRect();
+  flightAim.x = ((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1;
+  flightAim.y = ((e.clientY - r.top) / Math.max(1, r.height)) * 2 - 1;
+  flightAim.on = true;
 }, { capture: true });
+canvas.addEventListener('pointerleave', () => { flightAim.on = false; }, { capture: true });
 for (const type of ['pointerup', 'pointercancel', 'contextmenu'] as const) {
   canvas.addEventListener(type, (e) => { if (flight?.active) { e.stopImmediatePropagation(); e.preventDefault(); } }, { capture: true });
 }
@@ -3545,6 +3580,7 @@ function frame(now: number): void {
   const wall = frameClock.tick(now);
   // The camera's glide: keys held, the wheel's notches being spent.
   if (flight?.active) {
+    steerByPointer(Math.min(0.1, wall));
     flight.step(wall);
     updateFlightHud(now);
     requestDraw();
