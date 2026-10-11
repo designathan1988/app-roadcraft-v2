@@ -2460,6 +2460,7 @@ export const EN: Dictionary = {
   'play.start': 'Play in the scenery (J)',
   'city.building': 'Building the city: {done} of {total} lots',
   'map.loading': 'Loading the map…',
+  'flight.button': 'Fly',
   'flight.on': 'Free flight (V)',
   'flight.hint': 'Mouse steers · W/S forward/back · A/D sideways · R/F up/down · Q/E roll · Shift boost · wheel throttle · V or Esc: back to the map',
   'flight.speed': 'Speed',

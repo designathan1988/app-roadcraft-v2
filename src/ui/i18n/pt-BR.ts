@@ -2446,6 +2446,7 @@ export const PT_BR: Dictionary = {
   'play.start': 'Jogar no cenário (J)',
   'city.building': 'Construindo a cidade: {done} de {total} lotes',
   'map.loading': 'Carregando o mapa…',
+  'flight.button': 'Voar',
   'flight.on': 'Voo livre (V)',
   'flight.hint': 'Mouse direciona · W/S avança/recua · A/D lados · R/F sobe/desce · Q/E inclina · Shift acelera · rodinha potência · V ou Esc: volta ao mapa',
   'flight.speed': 'Velocidade',

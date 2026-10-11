@@ -92,6 +92,7 @@ const ICON: Record<string, string> = {
   info: '<circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   camera: '<path d="M3 8h4l2-3h6l2 3h4v11H3Z"/><circle cx="12" cy="13" r="3.5"/>',
+  rocket: '<path d="M12 2c3 2 5 6 5 10l-2 4H9l-2-4c0-4 2-8 5-10Z"/><circle cx="12" cy="9" r="1.6"/><path d="M9 16l-2 4 3-1M15 16l2 4-3-1"/>',
   sim: '<path d="M4 18 9 9l4 5 3-4 4 8"/><path d="M4 18h16"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.5"/><path d="M12 17.5v.5"/>',
   undo: '<path d="M9 7 4 12l5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/>',
@@ -421,6 +422,9 @@ export function mountShell(deps: ShellDeps): void {
   const layersB = button('v2-pill', t('v2.layers'), () => toggle('layers', layersB), svg('layers', 18));
   // Into the scenery on foot (`play.ts`): the way in, in plain sight, not only the J key.
   const playB = button('v2-pill v2-play', t('play.button'), () => press('#playButton'), svg('player', 18));
+  // The free flight (`render/planet/flight.ts`, main.ts): in plain sight, not only the V key.
+  const flightB = button('v2-pill', t('flight.button'), () => window.dispatchEvent(new CustomEvent('roadcraft:flight')), svg('rocket', 18));
+  flightB.title = t('flight.on');
   playB.title = t('play.start');
   // See inside the buildings (the Builder's own toggle, `workspace.ts`): its
   // switch is a layer; while it is on, the floor and a step down and up stay in the bar.
@@ -449,7 +453,7 @@ export function mountShell(deps: ShellDeps): void {
   syncInside();
   onRoadGridChange(syncInside);
   // "Play" only with walking the city on (`__PLAY_MODE__`, vite.config.ts).
-  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), insideBar, layersB, simB, camB, undo, redo, helpB, menuB);
+  actionsBar.append(...(__PLAY_MODE__ ? [playB] : []), ...(__PLANET__ ? [flightB] : []), insideBar, layersB, simB, camB, undo, redo, helpB, menuB);
   hud.append(city, speed, actionsBar);
 
   // ================================================================ popovers

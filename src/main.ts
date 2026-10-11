@@ -709,6 +709,8 @@ window.addEventListener('keydown', (e) => {
   if (flight.press(e.code, e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); requestDraw(); }
 }, { capture: true });
 window.addEventListener('keyup', (e) => { if (flight?.active) flight.release(e.code, e.shiftKey); }, { capture: true });
+// The bar's Fly button (`ui/v2/shell.ts`): takes off, or lands while flying.
+window.addEventListener('roadcraft:flight', () => { if (flight?.active) land(); else takeOff(); });
 window.addEventListener('blur', () => flight?.releaseAll());
 canvas.addEventListener('pointerdown', (e) => {
   if (!flight?.active) return;
