@@ -1,3 +1,4 @@
+import { onEcologyRead } from './ecologyPool';
 import { GRID_CELL } from '@world/grid';
 import { MAP_HALF } from '@world/bounds';
 import type { BodyPart, Severable } from '@sim/people/view';
@@ -426,6 +427,8 @@ export function createSceneRenderer(
 ): SceneHandle {
   // The planet: three's vertex chunks bent round it before any program is built (`planet/bend.ts`).
   if (__PLANET__) installPlanet();
+  // A plate's ecosystem read off the page (`ecologyPool.ts`) is drawn as it comes back.
+  if (__PLANET__) onEcologyRead(onAssetsReady);
   const renderer = new WebGLRenderer({
     canvas,
     antialias: true,

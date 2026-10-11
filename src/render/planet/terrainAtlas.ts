@@ -12,6 +12,7 @@ import { tileGround } from '@world/planet/relief';
 import { Group, type Material, type WebGLRenderer } from 'three';
 import { planetSunOnPlanet, setPlanetGroundFloor, type PlanetCap } from './bend';
 import { setLightFocus } from '../terrainLightPool';
+import { setEcologyFocus } from '../ecologyPool';
 import { GroundChanges } from '../groundChanges';
 import type { WaterLook } from '../water';
 import {
@@ -531,7 +532,7 @@ export function createTerrainAtlas(anisotropy: number): TerrainSurface {
       const at = focus ? tileAt(focus.x, -focus.z) : null;
       if (at) focusFace = at.face;
       // The plates nearest the view are lit first (terrainLightPool.ts).
-      if (at) setLightFocus(at.face);
+      if (at) { setLightFocus(at.face); setEcologyFocus(at.face); }
       for (const t of shownList) t.surface!.bakeRelief(renderer, t === at && focus ? { x: focus.x - t.cx, z: focus.z + t.cy } : null);
     },
     // Asked every frame; passed to the plates only when the weather changed it.

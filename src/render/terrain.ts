@@ -38,6 +38,7 @@ import { REGIONS, computeEcology, type EcologyField, type NatureSettings } from 
 import { GroundChanges } from './groundChanges';
 import { createLandLighter, unionCorners, type CornerRect, type LightRequest, type LightResult } from './terrainLightCompute';
 import { submitLight } from './terrainLightPool';
+import { ecologyOffPage, readEcology } from './ecologyPool';
 import type { ChangeJournal } from '@world/changes';
 import { MAP_SIZE } from '@world/bounds';
 import {
@@ -3013,15 +3014,65 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       const level = levels[i] as number;
       wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
     }
+    const over = ecologyField && dirty !== 'all' && dirty !== null && !ecologyInFlight ? dirty : null;
+    const sand = material.userData['sandCorners'] as Float32Array, basalt = material.userData['basaltCorners'] as Float32Array;
+    const ask = ++ecologyAsk;
+    // A planet plate's whole field is read off the page (`ecologyPool.ts`):
+    // 90 ms of a frame each time the view brought a plate in. The plate shows
+    // the field it had (none, new) until it comes back; a newer reading
+    // asked meanwhile wins. A stroke's small region stays here.
+    if (tile >= 0 && !over && ecologyOffPage()) {
+      const input = {
+        side: GRID, cell: TERRAIN_CELL, heights: Float64Array.from(natural), water: wet,
+        sandstone: Float32Array.from(sand), basalt: Float32Array.from(basalt),
+        painted: biomePainted ? Float32Array.from(biomeCorners) : null, settings: nature,
+      };
+      const transfer: ArrayBuffer[] = [input.heights.buffer, wet.buffer, input.sandstone.buffer, input.basalt.buffer];
+      if (input.painted) transfer.push(input.painted.buffer);
+      ecologyInFlight = true;
+      readEcology(tile, input, transfer, (field) => {
+        if (ask !== ecologyAsk || disposed) return;
+        ecologyInFlight = false;
+        applyEcology(field);
+      }, () => {
+        if (ask !== ecologyAsk || disposed) return;
+        ecologyInFlight = false;
+        ++ecologyAsk;
+        readOnPage(null);
+      });
+      return;
+    }
+    ecologyInFlight = false;
+    readOnPage(over, wet);
+  };
+  /** Whether a plate's field is being read off the page (`refreshEcology`). */
+  let ecologyInFlight = false;
+  /** The latest reading asked: an older one coming back is dropped. */
+  let ecologyAsk = 0;
+  let disposed = false;
+  const readOnPage = (over: TerrainRegion | null, wetGiven?: Uint8Array): void => {
+    if (!nature) return;
+    let wet = wetGiven;
+    if (!wet) {
+      const levels = material.userData['shoreLevels'] as Float32Array;
+      wet = new Uint8Array(GRID * GRID);
+      for (let i = 0; i < wet.length; i++) {
+        const level = levels[i] as number;
+        wet[i] = level > NO_WATER / 2 && level >= (grid[i] as number) + 0.05 ? 1 : 0;
+      }
+    }
     const startedAt = performance.now();
-    const over = ecologyField && dirty !== 'all' && dirty !== null ? dirty : null;
     const field = computeEcology({
       side: GRID, cell: TERRAIN_CELL, heights: natural, water: wet,
       sandstone: material.userData['sandCorners'] as Float32Array, basalt: material.userData['basaltCorners'] as Float32Array,
       painted: biomePainted ? biomeCorners : null, settings: nature,
     }, over && ecologyField ? { previous: ecologyField, ix0: over[0], ix1: over[1], iy0: over[2], iy1: over[3] } : undefined);
     performance.measure('hitch:ecology', { start: startedAt, end: performance.now() });
+    applyEcology(field);
+  };
+  const applyEcology = (field: EcologyField): void => {
     ecologyField = field;
+    const data = ecologyTexture.image.data as Uint8Array;
     const byte = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 255);
     for (let i = 0; i < GRID * GRID; i++) {
       const canopy = field.canopy[i] as number, trees = field.trees[i] as number, grass = field.grass[i] as number;
@@ -3565,6 +3616,7 @@ export function createTerrainSurface(anisotropy: number, origin: { readonly x: n
       return true;
     },
     dispose() {
+      disposed = true;
       relief.dispose();
       geometry.dispose();
       material.dispose();
