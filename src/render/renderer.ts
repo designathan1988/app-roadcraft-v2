@@ -84,7 +84,7 @@ import { buildTrackPreview, buildTransit, type TransitMeshes } from './transit';
 import { GRASS_FIELD, SEASON_DRY, TERRAIN_CELL, TERRAIN_GRID, TERRAIN_HALF, createTerrainSurface, type TerrainPart, type TerrainRegion, type TerrainSurface } from './terrain';
 import { createTerrainAtlas } from './planet/terrainAtlas';
 import { Flight } from './planet/flight';
-import { installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetPointInto, planetScene, planetSphereInView, planetSun } from './planet/bend';
+import { forcePlanetCurvature, installPlanet, planetCentre, planetEye, planetLocalMinutes, planetMotion, planetPick, planetPointInto, planetScene, planetSphereInView, planetSun } from './planet/bend';
 import { planetLocalMinutes as planetLocalMinutesAt } from '@world/planet/sun';
 import { createSpace } from './planet/space';
 import { PLANET_RADIUS } from '@core/cubeSphere';
@@ -642,7 +642,7 @@ export function createSceneRenderer(
   grass.setEcology(terrain.ecologyTexture, TERRAIN_HALF, TERRAIN_CELL, SEASON_DRY);
   grassFar.setEcology(terrain.ecologyTexture, TERRAIN_HALF, TERRAIN_CELL, SEASON_DRY);
   if (import.meta.env.DEV) (window as unknown as { __grass?: unknown; __scene?: unknown }).__grass = grass;
-  if (import.meta.env.DEV) Object.assign(window, { __scene: scene, __gl: renderer });
+  if (import.meta.env.DEV) Object.assign(window, { __scene: scene, __gl: renderer, __curvature: forcePlanetCurvature });
   let grassGroundFor = '';
   let grassMaskFor = '';
   /** Where the grass mask must be drawn again: a rectangle, the whole map, or nowhere. */

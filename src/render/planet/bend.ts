@@ -35,6 +35,17 @@ const PLANET_ON = { value: 0 };
  * this must stay ONE array every material reads.
  */
 const PLANET_T = { value: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+/**
+ * THE PLANET'S CURVATURE AS DRAWN, 0..1 (the player, 2026-10-10: "ao chegar
+ * próximo da Terra o mapa ficar plano, e esférico quando subir"): the ground
+ * about the point looked at is laid on a sphere of radius R / k tangent to
+ * the planet there - nearly a plane near the ground, the planet itself (1)
+ * from high up. The point looked at and every distance from it along the
+ * ground stay the same at every k (the planet's azimuthal map about it, bent
+ * by k), so nothing jumps as it changes. `setPlanetCurvature`; carried to
+ * the shaders in `planetT` (see `PLANET_GLSL`).
+ */
+
 /** The same motion, for the CPU. */
 const motion = new Matrix4();
 /** The motion's inverse, for picks. */
@@ -46,6 +57,11 @@ const v3 = (v: Readonly<Vec3>): string => `vec3(${v.x.toFixed(1)}, ${v.y.toFixed
 export const PLANET_GLSL = /* glsl */ `
 uniform float planetOn;
 uniform mat4 planetT;
+// The curvature drawn (\`PLANET_K\`), carried in planetT's unused corner (its
+// bottom row's first element, which only the discarded w reads): three copies a
+// built-in material's number uniforms when it builds the material, and a
+// uniform of its own stayed at its first value; the matrix's array is shared.
+#define planetK (1.0 - planetT[0][3])
 const float PLANET_R = ${PLANET_RADIUS.toFixed(4)};
 const float PLANET_PITCH = ${ATLAS_PITCH.toFixed(1)};
 const float PLANET_COLS = ${ATLAS_COLUMNS.toFixed(1)};
@@ -88,20 +104,58 @@ vec3 planetDirection(vec3 p, out vec3 e, out vec3 n) {
   float th = r / PLANET_R;
   return cos(th) * c + (sin(th) / r) * (l.x * e + l.y * n);
 }
+// The point looked at (planetT's up row, the planet's frame) and the ground's
+// way out from it towards s, with the angle along the ground (rad).
+void planetFromAnchor(vec3 s, out vec3 a, out vec3 t, out float theta) {
+  mat3 r = mat3(planetT);
+  a = vec3(r[0][1], r[1][1], r[2][1]);
+  float c = clamp(dot(s, a), -1.0, 1.0);
+  vec3 tv = s - c * a;
+  float tl = length(tv);
+  t = tl > 1e-7 ? tv / tl : vec3(r[0][0], r[1][0], r[2][0]);
+  theta = acos(c);
+}
+// A point of the sphere (unit s, height h) as the planet is drawn at its
+// curvature (planetK): on the sphere of radius R / k tangent at the point
+// looked at, the same distance along the ground from it. The planet's own
+// frame; k = 1 the planet itself.
+vec3 planetBent(vec3 s, float h) {
+  if (planetK > 0.9999) return s * (PLANET_R + h);
+  vec3 a, t; float theta;
+  planetFromAnchor(s, a, t, theta);
+  float rk = PLANET_R / planetK;
+  float phi = theta * planetK;
+  float hs = sin(phi * 0.5);
+  return a * (PLANET_R + h * cos(phi) - 2.0 * rk * hs * hs) + t * ((rk + h) * sin(phi));
+}
 vec3 planetPoint(vec3 p) {
   if (planetOn < 0.5) return p;
   vec3 e, n;
   vec3 s = planetDirection(p, e, n);
-  return (planetT * vec4(s * (PLANET_R + p.y), 1.0)).xyz;
+  return (planetT * vec4(planetBent(s, p.y), 1.0)).xyz;
 }
-// A direction of the flat world at a point, as the planet turns it there.
+// A direction of the flat world at a point, as the planet turns it there
+// (and, under a curvature below 1, as the bent ground turns it: the turn
+// from the sphere's up there to the bent one, about the way to the anchor).
 vec3 planetTurn(vec3 v, vec3 at) {
   if (planetOn < 0.5) return v;
   vec3 e0, n0;
   vec3 s = planetDirection(at, e0, n0);
   vec3 e = normalize(e0 - dot(e0, s) * s);
   vec3 n = cross(s, e);
-  return mat3(planetT) * (v.x * e + v.y * s - v.z * n);
+  vec3 w = v.x * e + v.y * s - v.z * n;
+  if (planetK < 0.9999) {
+    vec3 a, t; float theta;
+    planetFromAnchor(s, a, t, theta);
+    vec3 k = cross(a, t);
+    float kl = length(k);
+    if (kl > 1e-7) {
+      k /= kl;
+      float d = theta * planetK - theta;
+      w = w * cos(d) + cross(k, w) * sin(d) + k * dot(k, w) * (1.0 - cos(d));
+    }
+  }
+  return mat3(planetT) * w;
 }
 // Whether a world point of a piece's cell lies on that piece itself, give or
 // take \`margin\` units over its border: each piece's ground draws only its
@@ -267,7 +321,9 @@ const eyeOnPlanet = new Vector3();
  * ground (`groundFloor`), so a valley never hides what it should not.
  */
 function capBeyondHorizon(cap: PlanetCap): boolean {
-  if (!eyeKnown) return false;
+  // Under a curvature below 1 the ground drawn is not the planet's sphere:
+  // its horizon lies farther, and nothing is left out by the planet's.
+  if (!eyeKnown || curvature < 0.9999) return false;
   const floor = PLANET_RADIUS + groundFloor;
   eyeOnPlanet.copy(eye).applyMatrix4(inverseT);
   const d = eyeOnPlanet.length();
@@ -305,7 +361,7 @@ export function planetEye(at: Vector3): void {
  * were drawn behind it.
  */
 function beyondHorizon(s: Sphere): boolean {
-  if (!eyeKnown) return false;
+  if (!eyeKnown || curvature < 0.9999) return false;
   const r = PLANET_RADIUS - HORIZON_SLACK - s.radius;
   if (r <= 0) return false;
   planetCentre(occluder);
@@ -377,8 +433,68 @@ export function planetPointInto(x: number, y: number, z: number, out: Vector3): 
   if (PLANET_ON.value < 0.5) return out.set(x, y, z);
   atlasToTileInto(x, -z, local);
   tileToSphereInto(local.tile, local.x, local.y, dir);
-  const r = PLANET_RADIUS + y;
-  return out.set(dir.x * r, dir.y * r, dir.z * r).applyMatrix4(motion);
+  return bentInto(dir, y, out).applyMatrix4(motion);
+}
+
+/** The curvature the planet is drawn with (`setPlanetCurvature`), and the anchor's frame (the planet's) for it. */
+let curvature = 1;
+const kA = new Vector3();
+const kT = new Vector3();
+const kS = new Vector3();
+/** `planetBent` (GLSL) on the CPU: a unit sphere direction and a height, the planet's frame. */
+function bentInto(s: Readonly<Vec3>, h: number, out: Vector3): Vector3 {
+  if (curvature > 0.9999) return out.set(s.x * (PLANET_RADIUS + h), s.y * (PLANET_RADIUS + h), s.z * (PLANET_RADIUS + h));
+  kS.set(s.x, s.y, s.z);
+  const c = Math.max(-1, Math.min(1, kS.dot(kA)));
+  kT.copy(kS).addScaledVector(kA, -c);
+  const tl = kT.length();
+  if (tl > 1e-7) kT.divideScalar(tl); else kT.copy(east);
+  const theta = Math.acos(c);
+  const rk = PLANET_RADIUS / curvature, phi = theta * curvature, half = Math.sin(phi * 0.5);
+  return out.copy(kA).multiplyScalar(PLANET_RADIUS + h * Math.cos(phi) - 2 * rk * half * half).addScaledVector(kT, (rk + h) * Math.sin(phi));
+}
+/** The bent ground's centre (the planet's frame) and radius: the sphere a ray meets. */
+const bentCentre = new Vector3();
+function bentSphere(): number {
+  const rk = PLANET_RADIUS / curvature;
+  bentCentre.copy(kA).multiplyScalar(PLANET_RADIUS - rk);
+  return rk;
+}
+/** A point of the bent ground (the planet's frame) back to its unit sphere direction, into `dir`. */
+function unbend(p: Vector3): void {
+  if (curvature > 0.9999) { const l = p.length() || 1; dir.x = p.x / l; dir.y = p.y / l; dir.z = p.z / l; return; }
+  const rk = bentSphere();
+  kS.subVectors(p, bentCentre).normalize();
+  const c = Math.max(-1, Math.min(1, kS.dot(kA)));
+  kT.copy(kS).addScaledVector(kA, -c);
+  const tl = kT.length();
+  if (tl > 1e-7) kT.divideScalar(tl); else kT.copy(east);
+  // The angle on the bent sphere, back to the planet's: theta = phi / k.
+  const theta = Math.min(Math.PI, Math.acos(c) * rk / PLANET_RADIUS);
+  dir.x = kA.x * Math.cos(theta) + kT.x * Math.sin(theta);
+  dir.y = kA.y * Math.cos(theta) + kT.y * Math.sin(theta);
+  dir.z = kA.z * Math.cos(theta) + kT.z * Math.sin(theta);
+}
+
+/**
+ * Sets the curvature the planet is drawn with (0..1): by the
+ * eye's height, the renderer each frame. The anchor's frame (`anchorPlanet`)
+ * must be set first.
+ */
+let forcedCurvature: number | null = null;
+/** Holds the curvature at `k` whatever the eye's height (null: by the height again), for the browser checks. */
+export function forcePlanetCurvature(k: number | null): void {
+  forcedCurvature = k;
+  if (k !== null) setPlanetCurvature(k);
+}
+export function setPlanetCurvature(k: number): void {
+  if (forcedCurvature !== null) k = forcedCurvature;
+  curvature = Math.min(1, Math.max(0.02, k));
+  PLANET_T.value[3] = 1 - curvature;
+}
+/** The curvature as drawn (1: the planet itself). */
+export function planetCurvature(): number {
+  return curvature;
 }
 
 /** The anchor `planetT` sets down where it stands on the flat map: the point looked at. */
@@ -409,7 +525,9 @@ export function anchorPlanet(x: number, z: number): void {
     0, 0, 0, 1,
   );
   PLANET_T.value.set(motion.elements);
+  PLANET_T.value[3] = 1 - curvature;
   inverseT.copy(motion).invert();
+  kA.copy(up);
 }
 
 /** The planet's centre as drawn (three's space). */
@@ -429,14 +547,19 @@ const fp = { x: 0, y: 0 };
 export function planetPick(ray: Ray, h: number): { x: number; y: number } | null {
   origin.copy(ray.origin).applyMatrix4(inverseT);
   direction.copy(ray.direction).transformDirection(inverseT);
-  const r = PLANET_RADIUS + h;
+  // The ground as drawn: at a curvature below 1, the bent sphere (`bentInto`),
+  // its centre moved out along the anchor's up, radius R / k (+ h).
+  const r = bentSphere() + h;
+  origin.sub(bentCentre);
   const b = origin.dot(direction);
   const c = origin.lengthSq() - r * r;
   const disc = b * b - c;
   if (disc < 0) return null;
   const t = -b - Math.sqrt(disc);
   if (t < 0) return null;
-  hitPoint.copy(origin).addScaledVector(direction, t);
+  hitPoint.copy(origin).addScaledVector(direction, t).add(bentCentre);
+  unbend(hitPoint);
+  hitPoint.set(dir.x, dir.y, dir.z);
   return sphereToAtlas(hitPoint);
 }
 
@@ -447,8 +570,12 @@ export function planetPick(ray: Ray, h: number): { x: number; y: number } | null
 export function planetNearest(ray: Ray): { x: number; y: number } {
   origin.copy(ray.origin).applyMatrix4(inverseT);
   direction.copy(ray.direction).transformDirection(inverseT);
+  bentSphere();
+  origin.sub(bentCentre);
   const t = Math.max(0, -origin.dot(direction));
-  hitPoint.copy(origin).addScaledVector(direction, t);
+  hitPoint.copy(origin).addScaledVector(direction, t).add(bentCentre);
+  unbend(hitPoint);
+  hitPoint.set(dir.x, dir.y, dir.z);
   return sphereToAtlas(hitPoint);
 }
 

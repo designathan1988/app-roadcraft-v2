@@ -15,7 +15,7 @@ import { WORLD_HALF } from '@world/bounds';
 import { m, perM } from '@world/units';
 import { tileCellOf, tileCentre } from '@world/planet/atlas';
 import { atlasToSphereInto, setPointerChart } from '@world/planet/charts';
-import { anchorPlanet, inTileChart, planetCentre, planetMotion, planetNearest, planetPick, planetWorld, rehomeFrom } from './planet/bend';
+import { anchorPlanet, inTileChart, planetCentre, planetMotion, planetNearest, planetPick, planetWorld, rehomeFrom, setPlanetCurvature } from './planet/bend';
 import type { Facing, Viewport } from '@view/viewport';
 import { FAR_TILT, eyeLift, fieldOfView, minTilt, profileTilt, pullWeight, viewDistance } from '@view/cameraProfile';
 
@@ -71,6 +71,11 @@ export const PERSPECTIVE_FOV = 35;
 const TAU = Math.PI * 2;
 /** The most steps a zoom or a turn takes to bring the point it holds back under the pointer (`keeping`). */
 const KEEP_PASSES = 8;
+/** Under this height over the ground the planet is drawn flat (its curvature `FLAT_K`); it is whole from `CURVED_HEIGHT`. */
+const FLAT_HEIGHT = m(400);
+const CURVED_HEIGHT = PLANET_RADIUS * 1.2;
+/** The flattest curvature: the ground on a sphere 50 times the planet's - flat to the eye. */
+const FLAT_K = 0.02;
 /** The tilt out at the globe: straight down, a hair short of it so the view keeps its heading. */
 const GLOBE_TILT = Math.PI / 2 - 1e-4;
 
@@ -226,6 +231,8 @@ export function createIsoRig(
       persp.updateProjectionMatrix();
       persp.updateMatrixWorld(true);
       globeNow = flight.globe;
+      // In flight the planet as it is: its ground, its collisions, its horizon.
+      setPlanetCurvature(1);
       return;
     }
     elevation = tiltNow();
@@ -351,6 +358,16 @@ export function createIsoRig(
     }
     camera.lookAt(looked);
     // Pixels per unit where the view looks at the ground (the globe's pull back included).
+    // The curvature drawn by the eye's height over the point looked at: flat
+    // within `FLAT_HEIGHT` of the ground, the planet itself from the globe
+    // (the player, 2026-10-10: "próximo ao solo, até 300, 400 m, plano; e
+    // se subisse ia ficando esférico, de forma muito sutil"). The point
+    // looked at stays put at every curvature (`bend.ts` planetBent).
+    if (__PLANET__) {
+      const over = camera.position.y - target.y;
+      const u = Math.min(1, Math.max(0, (over - FLAT_HEIGHT) / (CURVED_HEIGHT - FLAT_HEIGHT)));
+      setPlanetCurvature(FLAT_K + (1 - FLAT_K) * u * u * (3 - 2 * u));
+    }
     scaleNow = camera === persp
       ? height / Math.max(1e-6, 2 * camera.position.distanceTo(target) * Math.tan((persp.fov * Math.PI) / 360))
       : height / Math.max(1e-6, halfHeight * 2);
